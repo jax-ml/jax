@@ -2035,16 +2035,34 @@ class ArrayPjitTest(jtu.JaxTestCase):
     cache_info3 = NamedSharding.devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
 
+  @jax.enable_custom_prng()
   def test_device_put_sharding_prng(self):
     mesh = jtu.create_global_mesh((8,), ('x',))
     s = NamedSharding(mesh, P('x'))
 
     x = jax.random.split(jax.random.PRNGKey(0), len(jax.devices()))
     y = jax.device_put(x, s)
+    self.assertIsInstance(y, jax.random.KeyArray)
+    self.assertEqual(y.sharding, s)
 
-    if config.jax_enable_custom_prng:
-      self.assertIsInstance(y, jax.random.KeyArray)
-      self.assertEqual(y.sharding, s)
+    s1 = SingleDeviceSharding(jax.devices()[1])
+    z = jax.device_put(x, s1)
+    self.assertIsInstance(z, jax.random.KeyArray)
+    self.assertEqual(z.sharding, s1)
+
+    out_p = jax.pmap(lambda x: x)(np.arange(jax.device_count()))
+    a = jax.device_put(x, out_p.sharding)
+    self.assertIsInstance(a, jax.random.KeyArray)
+    self.assertEqual(a.sharding, out_p.sharding)
+
+    op = xc.OpSharding()
+    op.type = xc.OpSharding.Type.OTHER
+    op.tile_assignment_dimensions = [8]
+    op.tile_assignment_devices = [0, 1, 2, 3, 4, 5, 6, 7]
+    gs = GSPMDSharding(tuple(mesh.devices.flat), op)
+    b = jax.device_put(x, gs)
+    self.assertIsInstance(b, jax.random.KeyArray)
+    self.assertEqual(b.sharding, gs)
 
   def test_device_put_on_different_sharding(self):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
