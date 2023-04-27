@@ -573,6 +573,10 @@ class KeyTy:
   def name(self) -> str:
     return f'key<{self.impl.tag}>'
 
+  @property
+  def itemsize(self) -> int:
+    return math.prod(self.impl.key_shape) * np.dtype('uint32').itemsize
+
   def __repr__(self) -> str:
     return self.name
 
