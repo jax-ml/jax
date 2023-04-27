@@ -49,7 +49,7 @@ from jax._src.numpy.array_methods import (
     _array_operators, _set_array_base_attributes, _IndexUpdateHelper)
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding_impls import (
-    NamedSharding, PmapSharding, GSPMDSharding)
+    NamedSharding, PmapSharding, GSPMDSharding, XLACompatibleSharding)
 from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip
 
@@ -363,15 +363,30 @@ class KeyTyRules:
     return new_op_sharding
 
   @staticmethod
-  def logical_op_sharding(aval, phys_sharding) -> GSPMDSharding:
-    key_shape = aval.dtype.impl.key_shape
-    phys_op_sharding = phys_sharding._to_xla_op_sharding(
-        aval.ndim + len(key_shape))
-    logical_op_sharding = phys_op_sharding.clone()
-    tad = list(logical_op_sharding.tile_assignment_dimensions)
-    tad = tad[:-len(key_shape)]
-    logical_op_sharding.tile_assignment_dimensions = tad
-    return GSPMDSharding(phys_sharding._device_assignment, logical_op_sharding)
+  def logical_op_sharding(aval, phys_sharding) -> XLACompatibleSharding:
+    if dispatch.is_single_device_sharding(phys_sharding):
+      return phys_sharding
+    elif isinstance(phys_sharding, PmapSharding):
+      key_shape = aval.dtype.impl.key_shape
+      logical_sharding_spec = sharding_specs.ShardingSpec(
+          sharding=phys_sharding.sharding_spec.sharding[:-len(key_shape)],
+          mesh_mapping=phys_sharding.sharding_spec.mesh_mapping)
+      return PmapSharding(devices=phys_sharding.devices,
+                          sharding_spec=logical_sharding_spec)
+    elif isinstance(phys_sharding, NamedSharding):
+      key_shape = aval.dtype.impl.key_shape
+      return pxla.create_mesh_pspec_sharding(
+          phys_sharding.mesh,
+          PartitionSpec(*phys_sharding.spec[:-len(key_shape)]))
+    else:
+      key_shape = aval.dtype.impl.key_shape
+      phys_op_sharding = phys_sharding._to_xla_op_sharding(
+          aval.ndim + len(key_shape))
+      logical_op_sharding = phys_op_sharding.clone()
+      tad = list(logical_op_sharding.tile_assignment_dimensions)
+      tad = tad[:-len(key_shape)]
+      logical_op_sharding.tile_assignment_dimensions = tad
+      return GSPMDSharding(phys_sharding._device_assignment, logical_op_sharding)
 
   @staticmethod
   def result_handler(sticky_device, aval):
