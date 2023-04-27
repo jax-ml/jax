@@ -1786,6 +1786,15 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertFalse(traced)  # We are not tracing again
 
 
+def _random_split(key, num, impl):
+  prev = jax.config.jax_default_prng_impl
+  try:
+    jax.config.update('jax_default_prng_impl', impl)
+    return jax.random.split(key, num)
+  finally:
+    jax.config.update('jax_default_prng_impl', prev)
+
+
 # List containing either harnesses, or lists of harnesses
 _POLY_SHAPE_TEST_HARNESSES = [
     PolyHarness("add", "",
@@ -2304,6 +2313,10 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda key, a: jax.random.categorical(key, a, axis=1),
                 arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 5, 0), _f32)],
                 poly_axes=[None, (0, 1)]),
+    PolyHarness("random_split", "unsafe_rbg",
+                lambda key, a: _random_split(key, 2 * a.shape[0], 'unsafe_rbg'),
+                arg_descriptors=[RandArg((4,), np.uint32), RandArg((3, 4), _f32)],
+                poly_axes=[None, (0,)]),
     # Works when the known dimensions are known to be even or odd.
     PolyHarness("random_uniform", "even_1",
                 lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32) + a,
@@ -2746,6 +2759,9 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         raise unittest.SkipTest(
             "native lowering with shape polymorphism requires additional StableHLO feature support")
 
+      if "random_split_unsafe_rbg" in harness.fullname:
+        # https://github.com/openxla/stablehlo/issues/1344
+        raise unittest.SkipTest("native lowering with shape polymorphism not implemented for rng_bit_generator")
       if "top_k" in harness.fullname:
         # https://github.com/openxla/stablehlo/issues/1255
         raise unittest.SkipTest("native lowering with shape polymorphism not implemented for top_k")
