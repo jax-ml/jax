@@ -2094,7 +2094,12 @@ def dim_value_dtype():
   return dtypes.canonicalize_dtype(np.int64)
 
 def dim_constant(ct: int):
-  return np.array(ct, dtype=dim_value_dtype())
+  dtype = dim_value_dtype()
+  assert dtype in (np.int32, np.int64)
+  if dtype == np.int32:
+    return np.int32(ct)
+  elif dtype == np.int64:
+    return np.int64(ct)
 
 def dim_value_aval() -> AbstractValue:
   return ShapedArray((), dim_value_dtype(), weak_type=True)
