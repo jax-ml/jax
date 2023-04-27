@@ -1638,6 +1638,14 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(g[0], k1.dtype)
     self.assertEqual(g[0], k2.dtype)
 
+  def test_key_dtype_attributes(self):
+    key = self.make_keys()
+    key_raw = key.unsafe_raw_array()
+
+    self.assertStartsWith(key.dtype.name, "key")
+    self.assertEqual(key.size * key.dtype.itemsize,
+                     key_raw.size * key_raw.dtype.itemsize)
+
   def test_isinstance(self):
     @jax.jit
     def f(k):
