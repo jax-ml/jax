@@ -653,6 +653,7 @@ jax_test(
         ],
         "tpu": [
             "noasan",  # Times out under asan/tsan.
+            "notsan",
             "optonly",
         ],
     },
