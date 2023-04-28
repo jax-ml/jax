@@ -1638,6 +1638,14 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(g[0], k1.dtype)
     self.assertEqual(g[0], k2.dtype)
 
+  def test_key_dtype_attributes(self):
+    key = self.make_keys()
+    key_raw = key.unsafe_raw_array()
+
+    self.assertStartsWith(key.dtype.name, "key")
+    self.assertEqual(key.size * key.dtype.itemsize,
+                     key_raw.size * key_raw.dtype.itemsize)
+
   def test_isinstance(self):
     @jax.jit
     def f(k):
@@ -1999,6 +2007,17 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     out_key = jax.jit(key_func)(*key_args)
     self.assertIsInstance(out_key, random.KeyArray)
     self.assertArraysEqual(out_key.unsafe_raw_array(), out_arr)
+
+  @parameterized.parameters([
+    [(2, 3), 'shape', (2, 3)],
+    [(2, 3), 'size', 6],
+    [(2, 3), 'ndim', 2]
+  ])
+  def test_properties(self, shape, prop, expected):
+    get_prop = lambda x: getattr(x, prop)
+    key = random.split(random.PRNGKey(0), math.prod(shape)).reshape(shape)
+    self.assertEqual(get_prop(key), expected)
+    self.assertEqual(jax.jit(get_prop)(key), expected)
 
   def test_reshape(self):
     key = random.PRNGKey(123)
