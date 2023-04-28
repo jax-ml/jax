@@ -765,8 +765,13 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
     reverse_map[index].append(axis)
     if index > max_index:
       max_index = index
-  partitions = tuple(tuple(reverse_map[i]) if reverse_map[i] else None
-                     for i in range(max_index + 1))
+  partitions = []
+  for i in range(max_index + 1):
+    axis = reverse_map[i]
+    if axis:
+      partitions.append(axis[0] if len(axis) == 1 else tuple(axis))
+    else:
+      partitions.append(None)
   return PartitionSpec(*partitions)
 
 def get_array_mapping(

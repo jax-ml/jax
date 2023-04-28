@@ -1149,8 +1149,8 @@ class CustomPartitionerTest(jtu.JaxTestCase):
         precision, arg_shapes, arg_shardings, result_shape, result_sharding
     ):
       self.assertEqual(arg_shardings[0], result_sharding)
-      self.assertEqual(P(('x',)), result_sharding.spec)
-      self.assertEqual(P(('y',)), arg_shardings[1].spec)
+      self.assertEqual(P('x'), result_sharding.spec)
+      self.assertEqual(P('y'), arg_shardings[1].spec)
 
       def lower_fn(x, y):
         axis_name = arg_shardings[1].spec[0][0]
@@ -3679,10 +3679,10 @@ class UtilTest(jtu.JaxTestCase):
       roundtrip(P(*spec))
 
   @parameterized.named_parameters(
-      ("linear", {'x': 0, 'y': 1, 'z': 2}, P(('x',), ('y',), ('z',))),
-      ("combine", {'x': 0, 'y': 0, 'z': 1}, P(('x', 'y'), ('z',))),
-      ("skip", {'x': 0, 'y': 0, 'z': 2}, P(('x', 'y'), None, ('z',))),
-      ("multi_skip", {'x': 0, 'y': 1, 'z': 3}, P(('x',), ('y',), None, ('z',))),
+      ("linear", {'x': 0, 'y': 1, 'z': 2}, P('x', 'y', 'z')),
+      ("combine", {'x': 0, 'y': 0, 'z': 1}, P(('x', 'y'), 'z')),
+      ("skip", {'x': 0, 'y': 0, 'z': 2}, P(('x', 'y'), None, 'z')),
+      ("multi_skip", {'x': 0, 'y': 1, 'z': 3}, P('x', 'y', None, 'z')),
   )
   def test_array_mapping_to_axis_resources(self, inp, expected_out):
     self.assertEqual(
@@ -3935,12 +3935,12 @@ class UtilTest(jtu.JaxTestCase):
     recovered_parsed_pspec = parse_flatten_op_sharding(
         s._to_xla_op_sharding(3), mesh)
     self.assertEqual(recovered_parsed_pspec[0].get_partition_spec(),
-                     P(('x',), ('y',)))
+                     P('x', 'y'))
 
     out_of_sync_parsed_pspec = sharding_impls.ParsedPartitionSpec(
         P('x', 'y'), ('x', 'y'), sharding_impls.SpecSync.OUT_OF_SYNC)
     self.assertEqual(out_of_sync_parsed_pspec.get_partition_spec(),
-                     P(('x',), ('y',)))
+                     P('x', 'y'))
 
   def test_mesh_with_list_devices(self):
     mesh = jax.sharding.Mesh(jax.devices(), ('x',))
