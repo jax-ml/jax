@@ -105,7 +105,7 @@ from jax._src import xla_bridge as xb
 import tensorflow as tf  # type: ignore[import]
 
 # pylint: disable=g-direct-tensorflow-import
-from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
+from tensorflow.compiler.tf2xla.ops import gen_xla_ops
 # pylint: enable=g-direct-tensorflow-import
 
 
@@ -129,6 +129,7 @@ class CompatTestData:
   mlir_module_text: str
   mlir_module_serialized: bytes
   xla_call_module_version: int  # The version of XlaCallModule to use for testing
+  function_list: List[str]
 
 
 # The dummy_data is used for getting started for adding a new test and for
@@ -136,7 +137,7 @@ class CompatTestData:
 
 # Pasted from the test output (see module docstring)
 dummy_data_dict = dict(
-    testdata_version = CURRENT_TESTDATA_VERSION,
+    testdata_version=CURRENT_TESTDATA_VERSION,
     platform="cpu",
     custom_call_targets=[],
     serialized_date=datetime.date(2023, 3, 15),
@@ -152,6 +153,7 @@ dummy_data_dict = dict(
 """,
     mlir_module_serialized=b"ML\xefR\x03MLIRxxx-trunk\x00\x01\x17\x05\x01\x05\x01\x03\x05\x03\x07\x07\t\x0b\x03K5\x07\x01\x1b\x07\x0b\x13\x0b3\x0b\x0b\x0b\x0b\x0f\x0b\x13\x0b\x03\x1b\x0f\x1b\x0b\x0b\x0b\x0b\x0b\x0f\x13\x0b\x0b\x0b\x0b\x03\x07\x0f\x17\x07\x02\xa7\x1f\x05\r\x03\x03\x03\x07\x05\x0f\x03\x0b\x0b\x1b\r'\x0f)\x031\x113\x05\x11\x05\x13\x05\x15\x05\x17\x1d\x15\x17\x05\x19\x17\x19\xef\x01\x05\x1b\x03\x03\x1d\r\x05\x1f!#%\x1d\x1d\x1d\x1f\x1d!\x1d##\x03\x03\x03+\r\x03-/\x1d%\x1d'\x1d)\x1d+)\x01\x05\x11\x03\x01\x03\x01\t\x04A\x05\x01\x11\x01\x05\x07\x03\x01\x05\x03\x11\x01\t\x05\x03\x05\x0b\x03\x01\x01\x05\x06\x13\x03\x01\x03\x01\x07\x04\x01\x03\x03\x06\x03\x01\x05\x01\x00\x9a\x04-\x0f\x0b\x03!\x1b\x1d\x05\x1b\x83/\x1f\x15\x1d\x15\x11\x13\x15\x11\x11\x0f\x0b\x11builtin\x00vhlo\x00module\x00func_v1\x00sine_v1\x00return_v1\x00sym_name\x00jit_sin\x00arg_attrs\x00function_type\x00res_attrs\x00sym_visibility\x00jit(sin)/jit(main)/sin\x00third_party/py/jax/experimental/jax2tf/tests/back_compat_test.py\x00jax.arg_info\x00x\x00mhlo.sharding\x00{replicated}\x00jax.result_info\x00\x00main\x00public\x00",
     xla_call_module_version=4,
+    function_list=[],
 )  # End paste
 
 
@@ -275,13 +277,15 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     )
 
     def f_tf(*args_tf):
-      return tfxla.call_module(
+      return gen_xla_ops.xla_call_module(
           args_tf,
           version=data.xla_call_module_version,
           Tout=[r.dtype for r in res_tf],
           Sout=[r.shape for r in res_tf],
           module=data.mlir_module_serialized,
-          platforms=[data.platform.upper()])
+          platforms=[data.platform.upper()],
+          function_list=data.function_list,
+      )
 
     # We need this to run the TPU code on the TPU
     with tf.device(tf_preferred_devices[0]):
