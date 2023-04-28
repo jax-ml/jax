@@ -29,7 +29,6 @@ from jax import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax._src.lib.mlir import ir
-from tensorflow.core.framework import function_pb2
 
 import numpy as np
 
@@ -61,7 +60,7 @@ _parameterized_jit = parameterized.named_parameters(
     _named_test(with_jit=with_jit)
     for with_jit in [True, False])
 
-_call_tf_non_compilable_error = "Error compiling TensorFlow function. call_tf can used in a staged context .* only with compilable functions"
+_call_tf_non_compilable_error = "Error compiling TensorFlow function"
 _call_tf_dynamic_shape_error = "call_tf cannot call functions whose output has dynamic shape"
 
 class CallTfTest(tf_test_util.JaxToTfTestCase):
@@ -1215,7 +1214,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
       expect_error = "Dimensions must be equal, but are 4 and 9 for .* AddV2"
     if kind == "bad_dim" and config.jax2tf_default_native_serialization:
       # TODO(b/268386622): call_tf with shape polymorphism and native serialization.
-      expect_error = "Error compiling TensorFlow function. call_tf can used .* only with compilable functions with static output shapes"
+      expect_error = "Error compiling TensorFlow function"
     fun_tf_rt = _maybe_tf_jit(with_jit,
         jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))
     with self.assertRaisesRegex(expect_ex, expect_error):
