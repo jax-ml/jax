@@ -143,8 +143,14 @@ def _create_device_mesh_for_nd_torus(
       # If the num_axes for loop did not break, i.e. none of the candidates work
       # goto here with this while-else construct.
       if logical_axis_size > 1:
-        raise NotImplementedError(f'Failed to find assignment for '
-                                  f'logical_axis_index {logical_axis_index}')
+        raise NotImplementedError(
+            'Failed to find assignment for logical_axis_index'
+            f' {logical_axis_index} of size {logical_axis_size} with remaining'
+            f' assignable mesh {assignable_physical_mesh}. The size of each'
+            ' axis in your logical mesh must be equal to the product of'
+            ' some subset of the physical mesh axis sizes. E.g logical mesh (4,'
+            ' 16) is compatible with physical mesh 4x4x4 since 4=4 and 16=4x4.'
+        )
   # Flatten the assignment, e.g., [(), (2,), (0, 1)] -> (2, 0, 1).
   transpose: List[int] = []
   for x in assignment:
