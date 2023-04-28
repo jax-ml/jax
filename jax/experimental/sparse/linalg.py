@@ -569,8 +569,8 @@ def spsolve(data, indices, indptr, b, tol=1e-6, reorder=1):
     b : The right hand side of the linear system.
     tol : Tolerance to decide if singular or not. Defaults to 1e-6.
     reorder : The reordering scheme to use to reduce fill-in. No reordering if
-        `reorder=0'. Otherwise, symrcm, symamd, or csrmetisnd (`reorder=1,2,3'),
-        respectively. Defaults to symrcm.
+      ``reorder=0``. Otherwise, symrcm, symamd, or csrmetisnd (``reorder=1,2,3``),
+      respectively. Defaults to symrcm.
 
   Returns:
     An array with the same dtype and size as b representing the solution to
