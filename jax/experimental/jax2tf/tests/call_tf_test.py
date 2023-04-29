@@ -1393,22 +1393,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
         native_serialization_strict_checks=False,
         with_gradient=False,
     )
-    _, restored_model = tf_test_util.SaveAndLoadFunction(
-        tf_f_rt, input_args=[inputs]
-    )
-    func_def = restored_model.f.concrete_functions[0]
-
-    xla_call_module_list = []
-    for node_def in func_def.graph.as_graph_def().node:
-      if node_def.op == "XlaCallModule":
-        xla_call_module_list.append(node_def)
-    # There is only one xla_call_module in the saved model.
-    self.assertLen(xla_call_module_list, 1)
-
-    # Check the xla_call_module verison and function_list attributes.
-    xla_call_module = xla_call_module_list[0]
-    self.assertEqual(xla_call_module.attr["version"].i, 5)
-    self.assertIn("function_list", str(xla_call_module.attr))
+    _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt, input_args=[inputs])
 
 
 if __name__ == "__main__":

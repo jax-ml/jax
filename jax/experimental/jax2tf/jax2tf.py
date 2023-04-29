@@ -779,12 +779,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   call_module_attrs = dict(
       version=exported.xla_call_module_version,
       Tout=out_types,
-      Sout=out_shapes_tf,
-      function_list=[
-          concrete_fn.function_def.signature.name
-          for concrete_fn in _thread_local_state.call_tf_concrete_function_set
-      ],
-  )
+      Sout=out_shapes_tf)
 
   if exported.xla_call_module_version >= 3:
     if exported.strict_checks:
