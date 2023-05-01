@@ -1809,6 +1809,24 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(ys, random.KeyArray)
     self.assertEqual(ys.shape, (3, 2, 1))
 
+  def test_device_put(self):
+    device = jax.devices()[0]
+    keys = self.make_keys(4)
+    keys_on_device = jax.device_put(keys, device)
+    self.assertArraysEqual(keys, keys_on_device)
+
+  def test_device_put_sharded(self):
+    devices = jax.devices()
+    keys = self.make_keys(len(devices))
+    keys_on_device = jax.device_put_sharded(list(keys), devices)
+    self.assertArraysEqual(keys, keys_on_device)
+
+  def test_device_put_replicated(self):
+    devices = jax.devices()
+    key = self.make_keys()
+    keys_on_device = jax.device_put_replicated(key, devices)
+    self.assertArraysEqual(jnp.broadcast_to(key, keys_on_device.shape), keys_on_device)
+
   # TODO(frostig,mattjj): more polymorphic primitives tests
 
 
