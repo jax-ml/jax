@@ -12,6 +12,8 @@ Remember to align the itemized text with the first line of an item within a list
   * The flags experimental_cpp_jit, experimental_cpp_pjit and 
     experimental_cpp_pmap have been removed.
     They are now always on.
+  * Python 3.8 support has been dropped as per
+    https://jax.readthedocs.io/en/latest/deprecation.html
 
 * Deprecations
   * `jax.experimental.gda_serialization` is deprecated and has been renamed to
@@ -27,6 +29,10 @@ Remember to align the itemized text with the first line of an item within a list
     since it has been unused for a very long time.
 
 ## jaxlib 0.4.9
+
+* Changes
+  * Python 3.8 support has been dropped as per
+    https://jax.readthedocs.io/en/latest/deprecation.html
 
 ## jax 0.4.8 (March 29, 2023)
 
