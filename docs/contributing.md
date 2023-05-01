@@ -50,7 +50,7 @@ Follow these steps to contribute code:
    changes.
 
    ```bash
-   git remote add upstream http://www.github.com/google/jax
+   git remote add upstream https://www.github.com/google/jax
    ```
 
 6. Create a branch where you will develop from:
