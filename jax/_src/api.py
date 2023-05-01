@@ -2526,9 +2526,11 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
                        f"consistent shape and dtype, but got {a1} and {a2}.")
     stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)
     sharding_spec = sharding_specs.create_pmap_sharding_spec(stacked_aval.shape)
-    return pxla.batched_device_put(
-        stacked_aval, PmapSharding(np.array(devices), sharding_spec),
-        xs, list(devices))
+    sharding = PmapSharding(np.array(devices), sharding_spec)
+    if core.is_opaque_dtype(stacked_aval.dtype):
+      return stacked_aval.dtype._rules.device_put_sharded(xs, stacked_aval, sharding, devices)
+    return pxla.batched_device_put(stacked_aval, sharding, xs, list(devices))
+
 
   with config_explicit_device_put_scope():
     return tree_map(_device_put_sharded, *shards)
@@ -2571,13 +2573,14 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
   def _device_put_replicated(x):
     aval = core.unmapped_aval(len(devices), core.no_axis_name, 0,
                               core.raise_to_shaped(core.get_aval(x)))
-    assert (isinstance(aval, ShapedArray) and
-            len(xla.aval_to_xla_shapes(aval)) == 1)
+    assert isinstance(aval, ShapedArray)
     sharding_spec = sharding_specs.create_pmap_sharding_spec(aval.shape)
     buf = device_put(x, devices[0])
-    return pxla.batched_device_put(
-        aval, PmapSharding(np.array(devices), sharding_spec),
-        [buf] * len(devices), devices)
+    sharding = PmapSharding(np.array(devices), sharding_spec)
+    if core.is_opaque_dtype(aval.dtype):
+      return aval.dtype._rules.device_put_replicated(buf, aval, sharding, devices)
+    assert len(xla.aval_to_xla_shapes(aval)) == 1
+    return pxla.batched_device_put(aval, sharding, [buf] * len(devices), devices)
 
   with config_explicit_device_put_scope():
     return tree_map(_device_put_replicated, x)
