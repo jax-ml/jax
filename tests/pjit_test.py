@@ -3311,6 +3311,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # and 2 in _array_shard_arg.
     self.assertEqual(cache_info2.misses, cache_info1.misses + 4)
 
+  def test_same_named_sharding_pspec_on_eager_ops(self):
+    mesh = jtu.create_global_mesh((1, 8, 1), ('x', 'y', 'z'))
+    sharding = jax.sharding.NamedSharding(mesh, P('x', 'y', 'z'))
+    x = jax.device_put(jnp.arange(32).reshape(1, -1, 1), sharding)
+    y = x + 1
+    self.assertEqual(x.sharding, y.sharding)
+
 
 class TempSharding(Sharding):
 
@@ -3660,6 +3667,8 @@ class UtilTest(jtu.JaxTestCase):
       spec = [()] * dims
       for axis in rng.permutation(mesh_axes)[:rng.randint(low=1, high=len(mesh_axes) + 1)]:
         spec[rng.choice(dims)] += (axis,)
+      while spec and spec[-1] == ():
+        spec.pop()
       roundtrip(P(*spec))
 
   @parameterized.named_parameters(

@@ -2435,13 +2435,18 @@ orig_out_sharding_handlers[sharding_impls.PositionalSharding] = _gspmd_to_positi
 
 
 def _get_out_sharding_from_orig_sharding(
-    out_shardings, orig_s, are_out_sharding_from_xla):
+    out_shardings, orig_s, orig_aval, are_out_sharding_from_xla):
   out = []
   orig_handler = orig_out_sharding_handlers[type(orig_s)]
   for o, from_xla in safe_zip(out_shardings, are_out_sharding_from_xla):
     if isinstance(o, sharding_impls.GSPMDSharding):
       try:
-        out.append((orig_handler(o._op_sharding, orig_s), False))
+        if (orig_aval is not None and
+            sharding_impls.are_op_shardings_equal(
+                o._op_sharding, orig_s._to_xla_op_sharding(orig_aval.ndim))):
+          out.append((orig_s, False))
+        else:
+          out.append((orig_handler(o._op_sharding, orig_s), False))
       except:
         out.append((o, from_xla))
     else:
@@ -2449,20 +2454,22 @@ def _get_out_sharding_from_orig_sharding(
   return out
 
 def maybe_get_orig_out_sharding(
-    in_shardings, out_shardings, are_out_shardings_from_xla):
+    in_shardings, out_shardings, are_out_shardings_from_xla, in_avals):
   if all(hasattr(o, '_original_sharding') for o in out_shardings):
     return ([o._original_sharding for o in out_shardings],
             (False,) * len(out_shardings))
 
   orig_s = None
-  for i in in_shardings:
+  orig_aval = None
+  for i, aval in safe_zip(in_shardings, in_avals):
     oi = getattr(i, '_original_sharding', None)
     if type(oi) in orig_out_sharding_handlers:
       orig_s = oi
+      orig_aval = aval
       break
   if orig_s is not None:
     return zip(*_get_out_sharding_from_orig_sharding(
-        out_shardings, orig_s, are_out_shardings_from_xla))
+        out_shardings, orig_s, orig_aval, are_out_shardings_from_xla))
 
   return out_shardings, are_out_shardings_from_xla
 
@@ -2675,7 +2682,8 @@ class UnloadedMeshExecutable:
           xla_executable.local_devices(), len(in_shardings), len(out_shardings))
 
     out_shardings, are_out_shardings_from_xla = maybe_get_orig_out_sharding(
-        in_shardings, out_shardings, are_out_shardings_from_xla)
+        in_shardings, out_shardings, are_out_shardings_from_xla,
+        global_in_avals)
 
     return UnloadedMeshExecutable(
         xla_executable=xla_executable,
