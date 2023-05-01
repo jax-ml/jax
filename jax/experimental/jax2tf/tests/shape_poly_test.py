@@ -1366,14 +1366,24 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       config.update("jax_enable_custom_prng", True)
 
       def f_jax(x):  # x: f32[b1, b2]
-        key = random.PRNGKey(123)  #  key
+        key = random.PRNGKey(123)  #  key: key<fry>[]
         # Exercise key operations that have custom lowering rules
-        broadcast_keys = lax.broadcast_in_dim(key, x.shape, ())  # key[b1, b2]
+        broadcast_keys = lax.broadcast_in_dim(key, x.shape, ())  # key<fry>[b1, b2]
         gather_keys = lax.broadcast_in_dim(broadcast_keys[0], (1, x.shape[1]), (1,))  # : key[1, b2]
         slice_keys1 = lax.slice(broadcast_keys, (0, 0), (1, x.shape[1]), (1, 1))  # key[1, b2]
         slice_keys2 = lax.dynamic_slice(broadcast_keys, (0, 0), slice_sizes=(1, x.shape[1]))  # key[1, b2]
         upd1 = lax.dynamic_update_slice(slice_keys2, slice_keys1, start_indices=(0, 0))  # key[1, b2]
         _ = lax.dynamic_update_slice(upd1, gather_keys, start_indices=(0, 0))
+
+        # We need to test the special case for vmap(while)
+        xs = broadcast_keys
+        counts = jnp.arange(broadcast_keys.shape[0], dtype=np.int32)
+        def f_vmap_jax(counts, xs):  # counts: i32[b1], xs: key<fry>[b1, b2]
+          def inner(count, x):  # count i32, x: key<fry>[b2]
+            return lax.fori_loop(0, count, lambda _, acc: acc, x)
+          return jax.vmap(inner)(counts, xs)
+
+        _ = f_vmap_jax(counts, xs)
         return x
 
       check_shape_poly(self, f_jax,
@@ -2319,8 +2329,8 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 poly_axes=[None, (0,)]),
     # Works when the known dimensions are known to be even or odd.
     PolyHarness("random_uniform", "even_1",
-                lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32) + a,
-                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 4), _f32)],
+                lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
+                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 4, 5), _f32)],
                 poly_axes=[None, 0]),
     PolyHarness("random_uniform", "even_2",
                 lambda key, a: jax.random.uniform(key, (2 * a.shape[0], a.shape[1]),
