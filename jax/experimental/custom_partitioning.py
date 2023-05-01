@@ -26,6 +26,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src import custom_api_util
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.api_util import argnums_partial
 
@@ -412,14 +413,10 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
   # partitioner runs so we keep it alive by attaching it to the executable.
   ctx.module_context.add_keepalive(sharding_callback_info)
 
-  mlir_shapes = [mlir.aval_to_ir_types(s) for s in call.out_avals]
-  if len(mlir_shapes) == 1:
-    out_type = mlir_shapes[0]
-  else:
-    out_type = [ir.TupleType.get_tuple(mlir_shapes)]
-
+  result_types = [mlir.aval_to_ir_type(s) for s in call.out_avals]
   out = hlo.CustomCallOp(
-      out_type,
+      (result_types if xla_extension_version >= 150 or len(result_types) == 1
+       else [ir.TupleType.get(result_types)]),
       list(values),
       call_target_name=ir.StringAttr.get(_CUSTOM_PARTITIONING_CALL_NAME),
       has_side_effect=ir.BoolAttr.get(False),
@@ -428,14 +425,13 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       backend_config=ir.StringAttr.get(key),
       operand_layouts=None,
       result_layouts=None)
-  if len(mlir_shapes) == 1:
-    return [out.result]
+  if xla_extension_version >= 150 or len(result_types) == 1:
+    return out.results
   else:
     return [
         hlo.GetTupleElementOp(out, mlir.i32_attr(i)).result
-        for i in range(len(mlir_shapes))
+        for i in range(len(result_types))
     ]
-
 
 mlir.register_lowering(custom_partitioning_p,
                        _custom_partitioning_lowering_rule)

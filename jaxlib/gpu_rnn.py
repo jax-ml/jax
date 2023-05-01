@@ -62,12 +62,7 @@ def cudnn_rnn_lowering(ctx, input, h_0, c_0, weights, seq_lengths, *,
   i32_type = ir.IntegerType.get_signless(32)
 
   out = hlo.CustomCallOp(
-      [
-          ir.TupleType.get_tuple([
-              output_type, h_0.type, c_0.type, workspace_type,
-              reserve_space_type
-          ])
-      ],
+      [output_type, h_0.type, c_0.type, workspace_type, reserve_space_type],
       [input, h_0, c_0, weights, seq_lengths],
       call_target_name=ir.StringAttr.get('cudnn_rnn'),
       has_side_effect=ir.BoolAttr.get(False),
@@ -75,10 +70,7 @@ def cudnn_rnn_lowering(ctx, input, h_0, c_0, weights, seq_lengths, *,
       api_version=ir.IntegerAttr.get(i32_type, 2),
       called_computations=ir.ArrayAttr.get([]),
   )
-  return [
-      hlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
-      for i in range(5)
-  ]
+  return out.results
 
 
 def _hlo_zeros_f32(shape):
@@ -104,7 +96,7 @@ def cudnn_rnn_bwd_lowering(ctx, dy, dhn, dcn, x, h0, c0, w, y, workspace,
   i32_type = ir.IntegerType.get_signless(32)
   zeroed_dw = _hlo_zeros_f32(ctx.avals_out[3].shape)
   out = hlo.CustomCallOp(
-      [ir.TupleType.get_tuple([x.type, h0.type, c0.type, w.type])], [
+      [x.type, h0.type, c0.type, w.type], [
           dy, dhn, dcn, x, h0, c0, w, y, workspace, reserve_space, zeroed_dw,
           seq_lengths
       ],
@@ -119,7 +111,4 @@ def cudnn_rnn_bwd_lowering(ctx, dy, dhn, dcn, x, h0, c0, w, y, workspace,
               operand_index=10,
               operand_tuple_indices=[])
       ]))
-  return [
-      hlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
-      for i in range(4)
-  ]
+  return out.results

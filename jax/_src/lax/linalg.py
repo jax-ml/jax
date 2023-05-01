@@ -45,6 +45,7 @@ from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -611,22 +612,25 @@ def _eigh_jacobi_lowering_rule(ctx, operand, lower, sort_eigenvalues):
 
   eigvals_type = mlir.aval_to_ir_type(ctx.avals_out[0])
   eigvecs_type = mlir.aval_to_ir_type(ctx.avals_out[1])
-  eigh_type = ir.TupleType.get_tuple([eigvecs_type, eigvals_type])
+  result_types = [eigvecs_type, eigvals_type]
 
   backend_config = f"{int(lower)},{int(sort_eigenvalues)},100,1e-6"
   op = hlo.CustomCallOp(
-      [eigh_type],
-      [operand],
-      call_target_name=ir.StringAttr.get("Eigh"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(backend_config),
-      api_version=mlir.i32_attr(1),
+    (result_types if xla_extension_version >= 150 else
+     [ir.TupleType.get_tuple(result_types)]),
+    [operand],
+    call_target_name=ir.StringAttr.get("Eigh"),
+    has_side_effect=ir.BoolAttr.get(False),
+    backend_config=ir.StringAttr.get(backend_config),
+    api_version=mlir.i32_attr(1),
   )
-  return (
-      hlo.GetTupleElementOp(op, 1).result,
-      hlo.GetTupleElementOp(op, 0).result,
-  )
-
+  if xla_extension_version >= 150:
+    return op.results[1], op.results[0]
+  else:
+    return (
+        hlo.GetTupleElementOp(op, 1).result,
+        hlo.GetTupleElementOp(op, 0).result,
+    )
 
 eigh_jacobi_p = Primitive('eigh_jacobi')
 eigh_jacobi_p.multiple_results = True
@@ -1215,20 +1219,26 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand):
 
 
 def _lu_tpu_lowering_rule(ctx, operand):
-
+  result_types = [
+    mlir.aval_to_ir_type(ctx.avals_out[0]),
+    mlir.aval_to_ir_type(ctx.avals_out[1]),
+    mlir.aval_to_ir_type(ctx.avals_out[2])
+  ]
   op = hlo.CustomCallOp(
-      [ir.TupleType.get_tuple([mlir.aval_to_ir_type(ctx.avals_out[0]),
-                               mlir.aval_to_ir_type(ctx.avals_out[1]),
-                               mlir.aval_to_ir_type(ctx.avals_out[2])])],
-      [operand],
-      call_target_name=ir.StringAttr.get("LuDecomposition"),
-      has_side_effect=ir.BoolAttr.get(False),
+   (result_types if xla_extension_version >= 150 else
+    [ir.TupleType.get(result_types)]),
+    [operand],
+    call_target_name=ir.StringAttr.get("LuDecomposition"),
+    has_side_effect=ir.BoolAttr.get(False),
   )
-  return (
-      hlo.GetTupleElementOp(op, 0).result,
-      hlo.GetTupleElementOp(op, 1).result,
-      hlo.GetTupleElementOp(op, 2).result,
-  )
+  if xla_extension_version >= 150:
+    return op.results
+  else:
+    return (
+        hlo.GetTupleElementOp(op, 0).result,
+        hlo.GetTupleElementOp(op, 1).result,
+        hlo.GetTupleElementOp(op, 2).result,
+    )
 
 
 lu_p = Primitive('lu')
@@ -1346,17 +1356,22 @@ def _geqrf_batching_rule(batched_args, batch_dims):
 def _geqrf_lowering_rule(ctx, operand):
   ts_type = mlir.aval_to_ir_type(ctx.avals_out[0])
   r_type = mlir.aval_to_ir_type(ctx.avals_out[1])
+  result_types = [ts_type, r_type]
   op = hlo.CustomCallOp(
-      [ir.TupleType.get_tuple([ts_type, r_type])],
+      (result_types if xla_extension_version >= 150
+       else [ir.TupleType.get(result_types)]),
       [operand],
       call_target_name=ir.StringAttr.get("Qr"),
       has_side_effect=ir.BoolAttr.get(False),
       api_version=mlir.i32_attr(1),
   )
-  return (
-      hlo.GetTupleElementOp(op, 0).result,
-      hlo.GetTupleElementOp(op, 1).result,
-  )
+  if xla_extension_version >= 150:
+    return op.results
+  else:
+    return (
+        hlo.GetTupleElementOp(op, 0).result,
+        hlo.GetTupleElementOp(op, 1).result,
+    )
 
 def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a):
   if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
