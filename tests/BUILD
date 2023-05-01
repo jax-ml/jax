@@ -673,7 +673,8 @@ jax_test(
         "tpu": [
             "noasan",
             "notsan",
-        ],  # Times out on TPU with asan/tsan.
+            "nomsan",
+        ],  # Times out on TPU with asan/tsan/msan.
     },
     shard_count = 4,
 )
