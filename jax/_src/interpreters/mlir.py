@@ -1200,6 +1200,8 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
         dense_int_elements(broadcast_dimensions),
     ).result
   else:
+    assert all(d != ir.ShapedType.get_dynamic_size()
+               for d in aval_out.shape), aval_out  # type: ignore
     return hlo.BroadcastInDimOp(
         aval_to_ir_type(aval_out), op,
         dense_int_elements(broadcast_dimensions)).result
