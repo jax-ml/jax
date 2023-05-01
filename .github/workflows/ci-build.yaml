@@ -1,7 +1,7 @@
 name: CI
 
 # We test all supported Python versions as follows:
-# - 3.8  : Documentation build
+# - 3.9  : Documentation build
 # - 3.9  : Part of Matrix with NumPy dispatch
 # - 3.10 : Part of Matrix
 # - 3.11 : Part of Matrix
@@ -31,10 +31,10 @@ jobs:
           access_token: ${{ github.token }}
         if: ${{github.ref != 'refs/heads/main'}}
       - uses: actions/checkout@v3
-      - name: Set up Python 3.8
+      - name: Set up Python 3.9
         uses: actions/setup-python@v4
         with:
-          python-version: 3.8
+          python-version: 3.9
       - uses: pre-commit/action@v3.0.0
 
   build:
@@ -127,7 +127,7 @@ jobs:
     timeout-minutes: 5
     strategy:
       matrix:
-        python-version: [3.8]
+        python-version: [3.9]
     steps:
     - name: Cancel previous
       uses: styfle/cancel-workflow-action@0.11.0
