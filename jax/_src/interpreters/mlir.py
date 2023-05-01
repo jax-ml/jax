@@ -1671,9 +1671,13 @@ def _layout_to_mlir_layout(minor_to_major: Optional[Sequence[int]]):
     layout = np.array(minor_to_major, dtype="int64")
   return ir.DenseIntElementsAttr.get(layout, type=ir.IndexType.get())
 
-def _aval_to_default_layout(aval):
+def _aval_to_default_layouts(aval):
+  if core.is_opaque_dtype(aval.dtype):
+    avals = aval.dtype._rules.physical_avals(aval)
+  else:
+    avals = [aval]
   # Row major order is default for `NumPy`.
-  return list(range(aval.ndim - 1, -1, -1))
+  return [list(range(aval.ndim - 1, -1, -1)) for aval in avals]
 
 def emit_python_callback(
     ctx: LoweringRuleContext, callback, token: Optional[Any],
@@ -1695,17 +1699,12 @@ def emit_python_callback(
       [xla.aval_to_xla_shapes(op_aval) for op_aval in operand_avals])
   # Handling layouts
   if operand_layouts is None:
-    operand_layouts = map(_aval_to_default_layout, operand_avals)
-  operand_mlir_layouts = [
-      _layout_to_mlir_layout(_aval_to_default_layout(layout)) if layout is None
-      else _layout_to_mlir_layout(layout) for layout, aval
-      in zip(operand_layouts, operand_avals)]
+    operand_layouts = util.concatenate(
+        map(_aval_to_default_layouts, operand_avals))
+  operand_mlir_layouts = map(_layout_to_mlir_layout, operand_layouts)
   if result_layouts is None:
-    result_layouts = map(_aval_to_default_layout, result_avals)
-  result_mlir_layouts = [
-      _layout_to_mlir_layout(_aval_to_default_layout(aval)) if layout is None
-      else _layout_to_mlir_layout(layout) for layout, aval
-      in zip(result_layouts, result_avals)]
+    result_layouts = util.concatenate(map(_aval_to_default_layouts, result_avals))
+  result_mlir_layouts = map(_layout_to_mlir_layout, result_layouts)
 
   # First we apply checks to ensure output shapes and dtypes match the expected
   # ones.
