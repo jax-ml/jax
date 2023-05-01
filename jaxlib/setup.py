@@ -45,7 +45,7 @@ setup(
     author='JAX team',
     author_email='jax-dev@google.com',
     packages=['jaxlib', 'jaxlib.xla_extension'],
-    python_requires='>=3.8',
+    python_requires='>=3.9',
     install_requires=['scipy>=1.7', 'numpy>=1.21', 'ml_dtypes>=0.0.3'],
     url='https://github.com/google/jax',
     license='Apache-2.0',
