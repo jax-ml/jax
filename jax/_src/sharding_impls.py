@@ -1167,6 +1167,7 @@ def parse_flatten_op_sharding(op_sharding: xc.OpSharding,
         raise NotImplementedError("Unhandled OpSharding type. Please open a bug report!")
     if replicate_on_last_tile_dim:
       partitions = partitions[:-1]
-    return [ParsedPartitionSpec('<internally generated spec>', partitions)]
+    return [CanonicalizedParsedPartitionSpec(
+        ParsedPartitionSpec('<internally generated spec>', partitions))]
   else:
     raise AssertionError("Unhandled OpSharding type. Please open a bug report!")
