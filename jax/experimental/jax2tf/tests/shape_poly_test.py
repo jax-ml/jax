@@ -2726,12 +2726,15 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
       # Set of harness.group_name:platform that are implemented with custom call
       custom_call_harnesses = {
-          "vmap_cholesky:cpu", "vmap_cholesky:gpu", "vmap_eig:cpu",
-          "vmap_eigh:cpu", "vmap_eigh:gpu", "vmap_fft:cpu",
+          "vmap_cholesky:cpu", "vmap_cholesky:gpu",
+          "vmap_eig:cpu",
+          "vmap_eigh:cpu", "vmap_eigh:gpu", "vmap_eigh:tpu",
+          "vmap_fft:cpu",
           "householder_product:cpu", "householder_product:gpu",
           "vmap_geqrf:cpu", "vmap_geqrf:gpu",
-          "vmap_lu:cpu", "vmap_lu:gpu", "vmap_qr:cpu", "vmap_qr:gpu",
-          "vmap_svd:cpu", "vmap_svd:gpu",
+          "vmap_lu:cpu", "vmap_lu:gpu",
+          "vmap_qr:cpu", "vmap_qr:gpu", "vmap_qr:tpu",
+          "vmap_svd:cpu", "vmap_svd:gpu", "vmap_svd:tpu",
           "random_gamma:gpu", "vmap_random_gamma:gpu",
           "random_categorical:gpu", "vmap_random_categorical:gpu",
           "random_randint:gpu", "vmap_random_randint:gpu",
@@ -2746,50 +2749,27 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         elif "nr_fft_lengths=2" in harness.fullname:
           raise unittest.SkipTest("native serialization with shape polymorphism not implemented for fft with non-constant fft_lengths on GPU and TPU")
 
-      # Set of harness.group_name or harness.group_name:platform that are implemented with HLO fallback lowering rules
-      fallback_lowering_harnesses = {
-          "vmap_approx_top_k", "vmap_bessel_i0e", "vmap_eigh:tpu",
-          "vmap_erf_inv", "vmap_igamma", "vmap_igammac", "vmap_lu",
-          "vmap_regularized_incomplete_beta", "vmap_qr:tpu",
-          "vmap_random_gamma:cpu", "random_gamma:tpu",
-          "vmap_random_gamma:tpu", "vmap_svd:tpu"}
-      if (harness.group_name in fallback_lowering_harnesses or
-          f"{harness.group_name}:{jtu.device_under_test()}" in fallback_lowering_harnesses):
-        raise unittest.SkipTest(
-            "native serialization with shape polymorphism not implemented for JAX primitives still using HLO fallback lowering; b/261682623")
-
-      # Set of harness.group_name that are unsupported in serialization
-      require_stablehlo_feature_support = {
-          # Tan (b/274462307) and TopK (openxla/stablehlo#1255) require support.
-          "vmap_tan", "vmap_top_k",
-          # Crash due to openxla/stablehlo#1328
-          "vmap_random_randint", "vmap_random_uniform"
-      }
-      if harness.group_name in require_stablehlo_feature_support:
+      if harness.group_name == "vmap_tan":
+        # Tan (b/274462307) require support for custom call mhlo.tan.
         raise unittest.SkipTest(
             "native lowering with shape polymorphism requires additional StableHLO feature support")
 
       if "random_split_unsafe_rbg" in harness.fullname:
-        # https://github.com/openxla/stablehlo/issues/1344
+        # https://github.com/openxla/stablehlo/issues/1344: need DynamicRngBitGenerator
         raise unittest.SkipTest("native lowering with shape polymorphism not implemented for rng_bit_generator")
+
       if "top_k" in harness.fullname:
-        # https://github.com/openxla/stablehlo/issues/1255
+        # https://github.com/openxla/stablehlo/issues/1255: need DynamicTopK
         raise unittest.SkipTest("native lowering with shape polymorphism not implemented for top_k")
-      if (jtu.device_under_test() == "tpu" and
+
+      if (jtu.device_under_test() in ["tpu", "gpu"] and
           harness.fullname in [
               "jnp.cumsum_reduce_axis=poly",
               "jnp.insert_insert=constant", "jnp.insert_insert=poly",
               "jnp.nonzero_size=constant", "jnp.nonzero_size=poly"]):
-        # https://github.com/openxla/stablehlo/issues/1258
+        # https://github.com/openxla/stablehlo/issues/1258: need DynamicReduceWindowOp
         raise unittest.SkipTest(
-            "native serialization with shape polymorphism not implemented for window_reductions on TPU")
-      if (jtu.device_under_test() == "gpu" and
-          harness.fullname in [
-              "jnp.cumsum_reduce_axis=poly",
-              "jnp.insert_insert=constant", "jnp.insert_insert=poly",
-              "jnp.nonzero_size=constant", "jnp.nonzero_size=poly"]):
-        raise unittest.SkipTest(
-            "TODO(b/271645610): investigate inconclusive dimension operation for cumsum on gpu")
+            "native serialization with shape polymorphism not implemented for window_reductions")
 
     harness.run_test(self)
 
