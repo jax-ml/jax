@@ -2673,10 +2673,18 @@ for key_i, key in enumerate([
     np.array([0, 0xFFFFFFFF], dtype=np.uint32),
     np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)
 ]):
+  if jax.config.jax_enable_custom_prng:
+    def wrap_and_split(key):
+      key = prng.random_wrap(key, impl=jax.random.default_prng_impl())
+      result = jax.random.split(key, 2)
+      return prng.random_unwrap(result)
+  else:
+    def wrap_and_split(key):
+      return jax.random.split(key, 2)
   define(
       "random_split",
       f"i={key_i}",
-      jax.jit(lambda key: jax.random.split(key, 2)), [key],
+      jax.jit(wrap_and_split), [key],
       dtype=key.dtype)
 
 # A few library functions from jax.random
