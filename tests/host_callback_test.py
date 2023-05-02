@@ -1908,6 +1908,15 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, r"Support for \*\*kwargs in ``id_tap``"):
       hcb.id_tap(func, 1, y=2)
 
+  def test_tap_id_tap_random_key(self):
+    # See https://github.com/google/jax/issues/13949
+    with jax.enable_custom_prng():
+      @jax.jit
+      def f(x):
+        def tap(tap_x, _): pass
+        return hcb.id_tap(tap, x, result=x)
+      f(jax.random.PRNGKey(123))
+
   def test_tap_odeint(self):
     # TODO: find a smaller repro for bug #4015
     # Seems to be xla_call(scan(xla_call)), all under grad.
