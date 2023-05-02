@@ -1038,6 +1038,15 @@ class ShardingTest(jtu.JaxTestCase):
         "dimension size is 1"):
       s.devices_indices_map(shape)
 
+  def test_scalar_input_wrong_pspec(self):
+    mesh = jtu.create_global_mesh((1, ), ('x'))
+    shape = ()
+    s = jax.sharding.NamedSharding(mesh, P('x'))
+    with self.assertRaisesRegex(
+        ValueError,
+        r"For scalars the PartitionSpec should be P()"):
+      s.is_compatible_aval(shape)
+
 
 class RngShardingTest(jtu.JaxTestCase):
   # tests that the PRNGs are automatically sharded as expected
