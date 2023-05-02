@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+import enum
 from functools import partial
 import math
 from unittest import SkipTest, skipIf
@@ -67,6 +68,11 @@ PRNG_IMPLS = [('threefry2x32', prng.threefry_prng_impl),
               ('unsafe_rbg', prng.unsafe_rbg_prng_impl)]
 
 
+class OnX64(enum.Enum):
+  ALSO = enum.auto()
+  SKIP = enum.auto()
+  ONLY = enum.auto()
+
 class RandomValuesCase(NamedTuple):
   name: str
   prng_impl: str
@@ -74,7 +80,7 @@ class RandomValuesCase(NamedTuple):
   dtype: Any
   params: dict
   expected: np.ndarray
-  skip_on_x64: bool = False
+  on_x64: OnX64 = OnX64.ALSO
   atol: Optional[float] = None
   rtol: Optional[float] = None
 
@@ -97,13 +103,24 @@ class RandomValuesCase(NamedTuple):
 _RANDOM_VALUES_CASES = [
   # TODO(jakevdp) add coverage for other distributions.
   RandomValuesCase("bernoulli", "threefry2x32", (5,), None, {'p': 0.5},
-    np.array([False, True, True, True, False]), skip_on_x64=True),
+    np.array([False, True, True, True, False]), on_x64=OnX64.SKIP),
   RandomValuesCase("bernoulli", "rbg", (5,), None, {'p': 0.5},
-    np.array([True, True, True, True, True]), skip_on_x64=True),
+    np.array([True, True, True, True, True]), on_x64=OnX64.SKIP),
   RandomValuesCase("beta", "threefry2x32", (5,), np.float32, {'a': 0.8, 'b': 0.9},
     np.array([0.533685, 0.843179, 0.063495, 0.573444, 0.459514], dtype='float32')),
   RandomValuesCase("beta", "rbg", (5,), np.float32, {'a': 0.8, 'b': 0.9},
     np.array([0.841308, 0.669989, 0.731763, 0.985127, 0.022745], dtype='float32')),
+  # TODO(frostig,jakevdp) add coverage for non-threefry bits
+  RandomValuesCase("bits", "threefry2x32", (5,), np.uint8, {},
+    np.array([10, 158, 82, 54, 158], dtype='uint8')),
+  RandomValuesCase("bits", "threefry2x32", (5,), np.uint16, {},
+    np.array([6738, 38161, 50695, 57337, 61600], dtype='uint16')),
+  RandomValuesCase("bits", "threefry2x32", (5,), np.uint32, {},
+    np.array([1978747883, 4134381225, 3628107870,  689687174, 2788938207], dtype='uint32')),
+  RandomValuesCase("bits", "threefry2x32", (5,), np.uint64, {},
+    np.array([17649965731882839947, 1415307058040849897, 8282622628079774249,
+              14024425113645909402, 2012979996110532418], dtype='uint64'),
+    on_x64=OnX64.ONLY),
   RandomValuesCase("cauchy", "threefry2x32", (5,), np.float32, {},
     np.array([ -0.088416, -10.169713, 3.49677, -1.18056, 0.34556], dtype='float32'), rtol=1E-5),
   RandomValuesCase("cauchy", "rbg", (5,), np.float32, {},
@@ -113,9 +130,9 @@ _RANDOM_VALUES_CASES = [
   RandomValuesCase("dirichlet", "rbg", (2,), np.float32, {'alpha': np.array([0.5, 0.6, 0.7], dtype='float32')},
     np.array([[0.024769, 0.002189, 0.973041], [0.326, 0.00244, 0.67156]], dtype='float32')),
   RandomValuesCase("double_sided_maxwell", "threefry2x32", (5,), np.float32, {"loc": 1, "scale": 2},
-    np.array([-2.408914, -3.370437, 3.235352, -0.907734, -1.708732], dtype='float32'), skip_on_x64=True),
+    np.array([-2.408914, -3.370437, 3.235352, -0.907734, -1.708732], dtype='float32'), on_x64=OnX64.SKIP),
   RandomValuesCase("double_sided_maxwell", "rbg", (5,), np.float32, {"loc": 1, "scale": 2},
-    np.array([4.957495, 3.003086, 5.33935, 2.942878, -1.203524], dtype='float32'), skip_on_x64=True),
+    np.array([4.957495, 3.003086, 5.33935, 2.942878, -1.203524], dtype='float32'), on_x64=OnX64.SKIP),
   RandomValuesCase("exponential", "threefry2x32", (5,), np.float32, {},
     np.array([0.526067, 0.043046, 0.039932, 0.46427 , 0.123886], dtype='float32')),
   RandomValuesCase("exponential", "rbg", (5,), np.float32, {},
@@ -145,9 +162,9 @@ _RANDOM_VALUES_CASES = [
   RandomValuesCase("maxwell", "rbg", (5,), np.float32, {},
     np.array([2.048746, 0.470027, 1.053105, 1.01969, 2.710645], dtype='float32')),
   RandomValuesCase("multivariate_normal", "threefry2x32", (2,), np.float32, {"mean": np.ones((1, 3)), "cov": np.eye(3)},
-    np.array([[ 1.067826,  1.215599,  0.234166], [-0.237534,  1.32591, 1.413987]], dtype='float32'), skip_on_x64=True),
+    np.array([[ 1.067826,  1.215599,  0.234166], [-0.237534,  1.32591, 1.413987]], dtype='float32'), on_x64=OnX64.SKIP),
   RandomValuesCase("multivariate_normal", "rbg", (2,), np.float32, {"mean": np.ones((1, 3)), "cov": np.eye(3)},
-    np.array([[-0.036897, 0.770969, 0.756959], [1.755091, 2.350553, 0.627142]], dtype='float32'), skip_on_x64=True),
+    np.array([[-0.036897, 0.770969, 0.756959], [1.755091, 2.350553, 0.627142]], dtype='float32'), on_x64=OnX64.SKIP),
   RandomValuesCase("normal", "threefry2x32", (5,), np.float32, {},
     np.array([-1.173234, -1.511662, 0.070593, -0.099764, 1.052845], dtype='float32')),
   RandomValuesCase("normal", "rbg", (5,), np.float32, {},
@@ -160,9 +177,9 @@ _RANDOM_VALUES_CASES = [
     np.array([7, 3, 6, 11, 6], dtype='int32')),
   # Note: poisson not implemented for rbg sampler.
   RandomValuesCase("rademacher", "threefry2x32", (5,), np.int32, {},
-    np.array([-1, -1, -1, -1, 1], dtype='int32'), skip_on_x64=True),
+    np.array([-1, -1, -1, -1, 1], dtype='int32'), on_x64=OnX64.SKIP),
   RandomValuesCase("rademacher", "rbg", (5,), np.int32, {},
-    np.array([1, 1, 1, -1, -1], dtype='int32'), skip_on_x64=True),
+    np.array([1, 1, 1, -1, -1], dtype='int32'), on_x64=OnX64.SKIP),
   RandomValuesCase("randint", "threefry2x32", (5,), np.int32, {"minval": 0, "maxval": 10},
     np.array([0, 5, 7, 7, 5], dtype='int32')),
   RandomValuesCase("randint", "rbg", (5,), np.int32, {"minval": 0, "maxval": 10},
@@ -328,8 +345,10 @@ class PrngTest(jtu.JaxTestCase):
     this test should involve a deprecation cycle following the procedures outlined at
     https://jax.readthedocs.io/en/latest/api_compatibility.html
     """
-    if config.x64_enabled and case.skip_on_x64:
+    if config.x64_enabled and case.on_x64 == OnX64.SKIP:
       self.skipTest("test produces different values when jax_enable_x64=True")
+    if not config.x64_enabled and case.on_x64 == OnX64.ONLY:
+      self.skipTest("test only valid when jax_enable_x64=True")
     with jax.default_prng_impl(case.prng_impl):
       func = getattr(random, case.name)
       key = random.PRNGKey(case._seed())
@@ -368,6 +387,13 @@ class PrngTest(jtu.JaxTestCase):
     self.assertAllClose(
         _prng_key_as_array(random.fold_in(k, 4)),
         np.array([2285895361,  433833334], dtype='uint32'))
+
+  def test_random_bits_error(self):
+    msg = 'dtype argument .* must be an unsigned int dtype'
+    with self.assertRaisesRegex(ValueError, msg):
+      random.bits(random.PRNGKey(0), (3, 4), np.dtype('int8'))
+    with self.assertRaisesRegex(ValueError, msg):
+      random.bits(random.PRNGKey(0), (3, 4), np.dtype('float16'))
 
   @skipIf(not config.jax_threefry_partitionable, 'enable after upgrade')
   def test_threefry_split_fold_in_symmetry(self):
