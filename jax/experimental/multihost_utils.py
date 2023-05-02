@@ -57,8 +57,8 @@ def broadcast_one_to_all(in_tree: Any, is_source: Optional[bool] = None) -> Any:
   if is_source is None:
     is_source = jax.process_index() == 0
 
-  devices = np.array(jax.devices()).reshape(jax.process_count(),
-                                            jax.local_device_count())
+  devices: np.ndarray = np.array(
+      jax.devices()).reshape(jax.process_count(), jax.local_device_count())
   global_mesh = jax.sharding.Mesh(devices, ('processes', 'local_devices'))
   pspec = P('processes')
 
