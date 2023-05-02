@@ -1375,9 +1375,9 @@ tf_not_yet_impl = [
     "inspect_sharding",
     "io_callback",
     "shard_map",
-
+    "global_array_to_host_local_array",
+    "host_local_array_to_global_array",
     "call_exported",
-
     # Not high priority?
     "after_all",
     "all_to_all",
