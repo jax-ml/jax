@@ -80,6 +80,7 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
+python_version = (sys.version_info[0], sys.version_info[1])
 numpy_version = jtu.numpy_version()
 
 def _check_instance(self, x):
