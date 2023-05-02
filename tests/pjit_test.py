@@ -3318,6 +3318,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
     y = x + 1
     self.assertEqual(x.sharding, y.sharding)
 
+  def test_different_named_sharding_object_replicated(self):
+    mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
+    sharding = jax.sharding.NamedSharding(mesh, P('x'))
+    x = jax.device_put(np.arange(16).reshape(8, 2), sharding)
+    y = jnp.sum(x)
+    self.assertNotEqual(x.sharding, y.sharding)
+
 
 class TempSharding(Sharding):
 
