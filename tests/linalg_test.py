@@ -344,6 +344,20 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           np.linalg.norm(np.matmul(a, v) - w * v), 40 * eps * np.linalg.norm(a)
       )
 
+  def testEighRankDeficient(self):
+    rng = jtu.rand_default(self.rng())
+    eps = jnp.finfo(np.float32).eps
+    for rank in [1, 3, 299]:
+      a = rng((300, rank), dtype=np.float32)
+      a = a @ np.conj(a.T)
+      w, v = jnp.linalg.eigh(a)
+      w = w.astype(v.dtype)
+      with jax.numpy_rank_promotion("allow"):
+        self.assertLessEqual(
+            np.linalg.norm(np.matmul(a, v) - w * v),
+            40 * eps * np.linalg.norm(a),
+        )
+
   @jtu.sample_product(
     n=[0, 4, 5, 50, 512],
     dtype=float_types + complex_types,

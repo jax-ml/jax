@@ -297,6 +297,11 @@ def _eigh_work(H, n, termination_size=256):
   # multiplications in_split_spectrum_jittable are the identity.
   eigenvectors = jnp.eye(N, dtype=H.dtype)
 
+  # Keep a copy of the initial matrix Frobenius norm, so we know when to stop
+  # recursing. When the sub-matrix norm is less than eps*H0_norm, the contents are
+  # pure numerical noise, and we should just stop.
+  H0_norm = jnp_linalg.norm(_mask(H, (n, n)))
+
   # blocks is an array representing a stack of Hermitian matrix blocks that we
   # need to recursively decompose. Subproblems are different sizes, so the stack
   # of blocks is ragged. Subproblems are left-aligned (i.e. starting at the 0th
@@ -377,16 +382,24 @@ def _eigh_work(H, n, termination_size=256):
       agenda = agenda.push(_Subproblem(offset, rank))
       return agenda, blocks, eigenvectors
 
-    # If the matrix is nearly diagonal, terminate the execution. This is
-    # necessary to handle matrices with clusters of eigenvalues. See Nakatsukasa
-    # and Higham section 5.2.
+    # If the matrix is nearly diagonal or has a tiny Frobenius norm compared to
+    # the original input matrix,, terminate the execution. This is necessary to
+    # handle matrices with clusters of eigenvalues, including rank deficient
+    # matrices. See Nakatsukasa and Higham section 5.2.
     norm = jnp_linalg.norm(H)
-    tol = jnp.asarray(5 * jnp.finfo(H.dtype).eps, dtype=norm.dtype)
+    eps = jnp.asarray(jnp.finfo(H.dtype).eps, dtype=norm.dtype)
     off_diag_norm = jnp_linalg.norm(
         H - jnp.diag(jnp.diag(ufuncs.real(H)).astype(H.dtype)))
-    nearly_diagonal = off_diag_norm <= tol * norm
-    return lax.cond(nearly_diagonal, nearly_diagonal_case, default_case,
-                    agenda, blocks, eigenvectors)
+    nearly_diagonal = off_diag_norm <= 5 * eps * norm
+    tiny = norm < eps * H0_norm
+    return lax.cond(
+        nearly_diagonal | tiny,
+        nearly_diagonal_case,
+        default_case,
+        agenda,
+        blocks,
+        eigenvectors,
+    )
 
   def loop_cond(state):
     agenda, _, _ = state
