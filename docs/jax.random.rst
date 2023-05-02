@@ -19,6 +19,7 @@ List of Available Functions
     ball
     bernoulli
     beta
+    bits
     categorical
     cauchy
     chisquare
