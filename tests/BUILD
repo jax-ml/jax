@@ -727,7 +727,6 @@ jax_test(
     },
     tags = [
         "noasan",
-        "notap",  # TODO(b/271883906): Failing on xla.opt.debug.tpu_hw tap
         "notsan",
     ],  # Times out
 )
