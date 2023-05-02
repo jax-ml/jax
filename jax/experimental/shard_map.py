@@ -40,6 +40,7 @@ from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
+from jax._src import array
 from jax._src.core import Tracer
 from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
@@ -57,6 +58,8 @@ from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            tree_structure, tree_leaves, keystr)
 from jax._src.tree_util import (broadcast_prefix, prefix_errors, PyTreeDef,
                                 generate_key_paths, KeyPath)
+from jax.experimental.multihost_utils import (host_local_array_to_global_array,
+                                              global_array_to_host_local_array)
 
 P = PartitionSpec
 
@@ -1180,25 +1183,46 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
   devices = tuple(devices) if devices is not None else devices
   axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
       f, axis_name, static_broadcasted_argnums, donate_argnums, in_axes, out_axes)
-  return jax.jit(
-      HashablePartial(_pmapped, (f, axis_name, in_axes, out_axes, devices,
-                                 backend, axis_size, static_broadcasted_tuple,
-                                 donate_tuple)),
-      static_argnums=static_broadcasted_argnums,
-      donate_argnums=donate_argnums)
 
-def _pmapped(metadata, *args, **kwargs):
-  (f, axis_name, in_axes, out_axes, devices, backend, axis_size,
-   static_broadcasted_tuple, donate_tuple) = metadata
-  p = _prepare_pmap(f, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
-                    devices, backend, axis_size, args, kwargs)
-  in_specs = tuple(map(partial(_axis_to_spec, axis_name), p.in_axes_flat))
-  out_specs = lambda: map(partial(_axis_to_spec, axis_name), p.out_axes_thunk())
-  fun = _handle_reshapes(p.flat_fun, p.in_axes_flat, p.out_axes_thunk)
-  mesh = Mesh(_get_devices(p, backend), (axis_name,))
-  out = _shard_map(fun.call_wrapped, mesh, in_specs, out_specs,
-                   check_rep=False)(*p.flat_args)
-  return tree_unflatten(p.out_tree(), out)
+  def infer_params(*args, **kwargs):
+    p = _prepare_pmap(f, in_axes, out_axes, static_broadcasted_tuple,
+                      donate_tuple, devices, backend, axis_size, args, kwargs)
+    for arg in p.flat_args:
+      dispatch.check_arg(arg)
+    mesh = Mesh(_get_devices(p, backend), (axis_name,))
+    _pmapped, in_specs, out_specs = _cached_shard_map(
+        p.flat_fun, mesh, p.in_axes_flat, p.out_axes_thunk, axis_name)
+    flat_global_args = host_local_array_to_global_array(
+        p.flat_args, mesh, list(in_specs))
+    jitted_f = jax.jit(
+        _pmapped,
+        donate_argnums=(i for i, val in enumerate(p.donated_invars) if val))
+    return jitted_f, flat_global_args, p.out_tree, mesh, out_specs
+
+  def wrapped(*args, **kwargs):
+    (jitted_f, flat_global_args, out_tree, mesh,
+     out_specs) = infer_params(*args, **kwargs)
+    with jax.spmd_mode('allow_all'):
+      outs = jitted_f(*flat_global_args)
+      outs = global_array_to_host_local_array(outs, mesh, out_specs())
+    return tree_unflatten(out_tree(), outs)
+
+  def lower(*args, **kwargs):
+    jitted_f, _, _, _, _ = infer_params(*args, **kwargs)
+    with jax.spmd_mode('allow_all'):
+      return jitted_f.lower(*args, **kwargs)
+  wrapped.lower = lower
+
+  return wrapped
+
+
+@lu.cache
+def _cached_shard_map(flat_fun, mesh, in_axes_flat, out_axes_thunk, axis_name):
+  in_specs = tuple(map(partial(_axis_to_spec, axis_name), in_axes_flat))
+  out_specs = lambda: map(partial(_axis_to_spec, axis_name), out_axes_thunk())
+  fun = _handle_reshapes(flat_fun, in_axes_flat, out_axes_thunk)
+  return (_shard_map(fun.call_wrapped, mesh, in_specs, out_specs, check_rep=False),
+          in_specs, out_specs)
 
 @lu.transformation
 def _handle_reshapes(in_axes, out_axes_thunk, *args, **kwargs):
@@ -1222,4 +1246,6 @@ def _get_devices(p, backend):
     devs = jax.devices(backend=backend)
   else:
     devs = jax.devices() if p.devices is None else p.devices
+  if jax.process_count() > 1:
+    return devs[:p.global_axis_size]
   return devs[:p.local_axis_size]
