@@ -31,10 +31,10 @@ jobs:
           access_token: ${{ github.token }}
         if: ${{github.ref != 'refs/heads/main'}}
       - uses: actions/checkout@v3
-      - name: Set up Python 3.9
+      - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:
-          python-version: 3.9
+          python-version: 3.11
       - uses: pre-commit/action@v3.0.0
 
   build:

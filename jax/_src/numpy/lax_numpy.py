@@ -1169,10 +1169,10 @@ def _split(op: str, ary: ArrayLike,
                                                f"in jax.numpy.{op} argument 1")
     part_size, r = divmod(size, num_sections)
     if r == 0:
-      split_indices = [np.int64(i) * part_size
-                       for i in range(num_sections + 1)]
+      split_indices = np.array([np.int64(i) * part_size
+                                for i in range(num_sections + 1)])
     elif op == "array_split":
-      split_indices = (
+      split_indices = np.array(
         [np.int64(i) * (part_size + 1) for i in range(r + 1)] +
         [np.int64(i) * part_size + ((r + 1) * (part_size + 1) - 1)
          for i in range(num_sections - r)])
