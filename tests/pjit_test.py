@@ -3343,6 +3343,11 @@ class ArrayPjitTest(jtu.JaxTestCase):
     y = jnp.sum(x)
     self.assertNotEqual(x.sharding, y.sharding)
 
+  def test_vmap_pjit_single_device(self):
+    jf = pjit(lambda x: x, device=jax.devices()[0])
+    out = jax.vmap(jf)(jnp.ones((3,)))  # doesn't crash
+    self.assertIsInstance(out.sharding, SingleDeviceSharding)
+
 
 class TempSharding(Sharding):
 
