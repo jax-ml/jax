@@ -53,13 +53,13 @@ jobs:
             pip install --pre libtpu-nightly \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
+            rm -rf /tmp/xla
             pushd /tmp
             git clone https://github.com/openxla/xla
             cd xla
             git checkout $INPUTS_BUILD_JAXLIB_USING_XLA_COMMIT
             popd
 
-            rm dist/*
             python3 build/build.py --enable_tpu --bazel_options="--override_repository=xla=/tmp/xla"
             pip install dist/*
 
