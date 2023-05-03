@@ -23,58 +23,68 @@ def custom_call(
     call_target_name: Union[str, bytes],
     out_types: Sequence[ir.Type],
     operands: Sequence[ir.Value],
-    operand_layouts: Sequence[Sequence[int]],
-    result_layouts: Sequence[Sequence[int]],
-    backend_config: Optional[str] = None,
+    operand_layouts: Optional[Sequence[Sequence[int]]] = None,
+    result_layouts: Optional[Sequence[Sequence[int]]] = None,
+    backend_config: str = "",
     has_side_effect: bool = False,
     api_version: int = 2,
     operand_output_aliases: Dict[int, int] = {},
-    indices_of_shape_operands: Sequence[int] = (),
-) -> Union[ir.Value, Sequence[ir.Value]]:
-  """Less-verbose helper for building a CustomCallOp.
-
-  Once https://github.com/llvm/llvm-project/issues/54932 is fixed, this helper
-  may be able to go away.
+    result_shapes: Optional[Sequence[ir.Value]] = None,
+) -> Sequence[ir.Value]:
+  """Wraps a hlo.CustomCall
 
   Args:
   ...
-  operand_output_alias: a dictionary mapping input numbers -> output numbers
-    that must alias.
-  indices_of_shape_operands: in presence of dynamic shapes, must pass in the
-    output shapes as some of the operands. These are the indices of those
-    operands.
+  operand_output_alias: a dictionary mapping input operand index -> output
+    index that must alias.
+  result_shapes: 1D integer tensors that represent the result shapes, to be
+      used when the results have dynamic shapes. Its length must
+      match the number of the results. They are appended to the list
+      of operands.
   """
   i32_type = ir.IntegerType.get_signless(32)
-  results = (out_types
-             if len(out_types) == 1 else [ir.TupleType.get_tuple(out_types)])
   attributes = dict(
       call_target_name=ir.StringAttr.get(call_target_name),
       has_side_effect=ir.BoolAttr.get(has_side_effect),
-      backend_config=ir.StringAttr.get(
-          "" if backend_config is None else backend_config),
+      backend_config=ir.StringAttr.get(backend_config),
       api_version=ir.IntegerAttr.get(i32_type, api_version),
       called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(
-              np.atleast_1d(np.asarray(l, dtype=np.int64)),
-              type=ir.IndexType.get()) for l in operand_layouts
-      ]),
-      result_layouts=ir.ArrayAttr.get([
-          ir.DenseIntElementsAttr.get(
-              np.atleast_1d(np.asarray(l, dtype=np.int64)),
-              type=ir.IndexType.get()) for l in result_layouts
-      ]),
       output_operand_aliases=ir.ArrayAttr.get([
           hlo.OutputOperandAlias.get(
-              output_tuple_indices=[] if len(out_types) == 1 else [output],
-              operand_index=input,
+              # if len(out_types) == 1 then the aliasing refers implicitly to
+              # the only output.
+              output_tuple_indices=[output_idx] if len(out_types) > 1 else [],
+              operand_index=input_idx,
               operand_tuple_indices=[])
-          for input, output in operand_output_aliases.items()
+          for input_idx, output_idx in operand_output_aliases.items()
       ])
   )
-  if indices_of_shape_operands:
+  if result_shapes is not None:
+    # We add the result_shapes at the end of the operands, and must pass
+    # the indices_of_output_operands attribute.
+    assert len(result_shapes) == len(out_types), (result_shapes, out_types)
+    # We will add the result_shapes at the end of the operands
     attributes["indices_of_shape_operands"] = ir.DenseIntElementsAttr.get(
-        np.asarray(indices_of_shape_operands, dtype=np.int64))
+        np.asarray(list(range(len(operands), len(operands) + len(result_shapes))),
+                   dtype=np.int64))
+    if operand_layouts is not None:
+      assert len(operand_layouts) == len(operands), (operand_layouts, operands)
+      operand_layouts = list(operand_layouts) + [(0,)] * len(result_shapes)
+    operands = list(operands) + list(result_shapes)
+
+  if operand_layouts is not None:
+    assert result_layouts is not None
+    assert len(result_layouts) == len(out_types), (result_layouts, out_types)
+    attributes["operand_layouts"] = ir.ArrayAttr.get([
+        ir.DenseIntElementsAttr.get(
+            np.atleast_1d(np.asarray(l, dtype=np.int64)),
+            type=ir.IndexType.get()) for l in operand_layouts
+    ])
+    attributes["result_layouts"] = ir.ArrayAttr.get([
+        ir.DenseIntElementsAttr.get(
+            np.atleast_1d(np.asarray(l, dtype=np.int64)),
+            type=ir.IndexType.get()) for l in result_layouts
+    ])
 
   # TODO(necula): CustomCall constructor does not yet support
   # indices_of_shape_operands, so we use the generic builder
@@ -83,11 +93,6 @@ def custom_call(
   # of the callers did not call .result
   operands = [opnd if isinstance(opnd, ir.Value) else opnd.result
               for opnd in operands]
-  out = hlo.CustomCallOp.build_generic(results=results, operands=operands, attributes=attributes)
-  if len(out_types) == 1:
-    return out.result
-  else:
-    return [
-        hlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
-        for i in range(len(out_types))
-    ]
+  out = hlo.CustomCallOp.build_generic(results=out_types,
+                                       operands=operands, attributes=attributes)
+  return out.results

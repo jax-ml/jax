@@ -2304,8 +2304,8 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 poly_axes=[0]),
     PolyHarness("random_gamma", "",
                 lambda key, a: jax.random.gamma(key, a),
-                arg_descriptors=[RandArg((3, 2), np.uint32), RandArg((3, 3), _f32)],
-                poly_axes=[0, 0]),
+                arg_descriptors=[RandArg((3, 2), np.uint32), RandArg((3, 4, 5), _f32)],
+                poly_axes=[0, (0, 1)]),
     # The known dimensions product must be even.
     PolyHarness("random_categorical", "axis=0",
                 lambda key, a: jax.random.categorical(key, a, axis=0),
@@ -2334,9 +2334,9 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 poly_axes=[None, 0]),
     PolyHarness("random_uniform", "even_2",
                 lambda key, a: jax.random.uniform(key, (2 * a.shape[0], a.shape[1]),
-                                                  dtype=_f32) + jnp.concatenate([a, a], axis=0),
-                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 1), _f32)],
-                poly_axes=[None, 0]),
+                                                  dtype=_f32),
+                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 4), _f32)],
+                poly_axes=[None, (0, 1)]),
     PolyHarness("random_uniform", "error_not_even",
                 lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
                 arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 5), _f32)],
@@ -2729,24 +2729,18 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
           "vmap_cholesky:cpu", "vmap_cholesky:gpu",
           "vmap_eig:cpu",
           "vmap_eigh:cpu", "vmap_eigh:gpu", "vmap_eigh:tpu",
-          "vmap_fft:cpu",
+          "vmap_fft:cpu", "fft:cpu",
           "householder_product:cpu", "householder_product:gpu",
           "vmap_geqrf:cpu", "vmap_geqrf:gpu",
           "vmap_lu:cpu", "vmap_lu:gpu",
           "vmap_qr:cpu", "vmap_qr:gpu", "vmap_qr:tpu",
           "vmap_svd:cpu", "vmap_svd:gpu", "vmap_svd:tpu",
-          "random_gamma:gpu", "vmap_random_gamma:gpu",
-          "random_categorical:gpu", "vmap_random_categorical:gpu",
-          "random_randint:gpu", "vmap_random_randint:gpu",
-          "random_uniform:gpu", "vmap_random_uniform:gpu",
-          "vmap_random_split:gpu"}
+      }
       if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
         raise unittest.SkipTest("native serialization with shape polymorphism not implemented for custom calls; b/261671778")
 
       if "fft_fft_type" in harness.fullname:
-        if jtu.device_under_test() == "cpu":
-          raise unittest.SkipTest("native serialization with shape polymorphism not implemented for custom calls; b/261671778")
-        elif "nr_fft_lengths=2" in harness.fullname:
+        if "nr_fft_lengths=2" in harness.fullname:
           raise unittest.SkipTest("native serialization with shape polymorphism not implemented for fft with non-constant fft_lengths on GPU and TPU")
 
       if harness.group_name == "vmap_tan":
@@ -2770,6 +2764,11 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         # https://github.com/openxla/stablehlo/issues/1258: need DynamicReduceWindowOp
         raise unittest.SkipTest(
             "native serialization with shape polymorphism not implemented for window_reductions")
+
+    if harness.group_name == "random_gamma":
+      # TODO: this is for both native and graph serialization.
+      raise unittest.SkipTest(
+          "shape shape polymorphism not implemented for random_gamma")
 
     harness.run_test(self)
 
