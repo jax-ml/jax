@@ -7,7 +7,9 @@ on:
       build_jaxlib_using_xla_commit:
         type: string
         default: ""
-        required: false
+      jaxlib_versions:
+        type: string
+        default: '["latest", "nightly"]'
 # This should also be set to read-only in the project settings, but it's nice to
 # document and enforce the permissions here.
 permissions:
@@ -17,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
-        jaxlib-version: ["latest", "nightly", "build"]
+        jaxlib-version: ${{ fromJSON(inputs.jaxlib_versions) }}
         tpu-type: ["v3-8", "v4-8"]
         pjrt: ["true", "false"]
     if: |
