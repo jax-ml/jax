@@ -271,7 +271,7 @@ def _rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
     if len(unmentioned) > 1:
       need_rep = ','.join(map(str, unmentioned))
       got_rep = ','.join(map(str, rep))
-      diff = ','.join(map(str, unmentioned - rep))
+      diff = ','.join(map(str, [n for n in unmentioned if n not in rep]))
       msgs.append(
           f"* out_specs{keystr(spec_key)} is {spec} which implies that the "
           f"corresponding output value is replicated across mesh axes "
@@ -296,8 +296,9 @@ def _rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
          "check_rep=False argument to shard_map.")
   return msg
 
-def _unmentioned(mesh: Mesh, names: AxisNames) -> Set[AxisName]:
-  return set(mesh.axis_names) - {n for ns in names.values() for n in ns}
+def _unmentioned(mesh: Mesh, names: AxisNames) -> List[AxisName]:
+  name_set = {n for ns in names.values() for n in ns}
+  return [n for n in mesh.axis_names if n not in name_set]
 
 def _try_infer_args(f, tree):
   dummy_args = tree_unflatten(tree, [False] * tree.num_leaves)
@@ -491,7 +492,7 @@ def _output_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[Set[AxisName]],
   return map(read, jaxpr.outvars)
 
 def _valid_repeats(mesh: Mesh, rep: Set[AxisName], dst: AxisNames) -> bool:
-  return _unmentioned(mesh, dst).issubset(rep)
+  return set(_unmentioned(mesh, dst)).issubset(rep)
 
 # Lowering
 
