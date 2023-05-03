@@ -254,26 +254,39 @@ rocm_orgqr = partial(_orgqr_hlo, "hip", _hipsolver)
 
 
 def _syevd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
-               lower=False):
+               batch_size: ir.Value,
+               result_shape_v: ir.Value, result_shape_w: ir.Value,
+               result_shape_info: ir.Value, lower=False):
   """Symmetric (Hermitian) eigendecomposition."""
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
   assert len(dims) >= 2
   m, n = dims[-2:]
-  assert m == n
+  assert m == n, dims
+  assert n != ir.ShapedType.get_dynamic_size(), dims
   batch_dims = tuple(dims[:-2])
+
   num_bd = len(batch_dims)
-  batch = math.prod(batch_dims)
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
-  if have_jacobi_solver and n <= 32:
+  dynamic_batch_dims = any(d == ir.ShapedType.get_dynamic_size()
+                           for d in batch_dims)
+  if dynamic_batch_dims:
+    batch_int = -1  # Signals to the kernel that the batch is an operand.
+  else:
+    batch_int = math.prod(batch_dims)
+
+  if have_jacobi_solver and n <= 32 and not dynamic_batch_dims:
+    # We cannot use syevj for dynamic shapes because the workspace size
+    # depends on the batch size.
     kernel = f"{platform}solver_syevj"
     lwork, opaque = gpu_solver.build_syevj_descriptor(
-        np.dtype(dtype), lower, batch, n)
+        np.dtype(dtype), lower, batch_int, n)
   else:
     kernel = f"{platform}solver_syevd"
     lwork, opaque = gpu_solver.build_syevd_descriptor(
-        np.dtype(dtype), lower, batch, n)
+        np.dtype(dtype), lower, batch_int, n)
+    assert lwork > 0
 
   if ir.ComplexType.isinstance(a_type.element_type):
     eigvals_type = ir.ComplexType(a_type.element_type).element_type
@@ -281,6 +294,19 @@ def _syevd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
     eigvals_type = a_type.element_type
 
   i32_type = ir.IntegerType.get_signless(32)
+  operands = [a]
+  operand_layouts = [layout]
+  if dynamic_batch_dims:
+    result_shapes = [result_shape_v, result_shape_w, result_shape_info]
+    # workspace has constant shape
+    workspace_shape = hlo.ConstantOp(
+        ir.DenseElementsAttr.get(np.array([lwork], dtype=np.int32),
+                                 type=i32_type)).result
+    result_shapes.append(workspace_shape)
+    operands.append(batch_size)
+    operand_layouts.append(())
+  else:
+    result_shapes = None
   out = custom_call(
       kernel,
       [
@@ -289,16 +315,17 @@ def _syevd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
           ir.RankedTensorType.get(batch_dims, i32_type),
           ir.RankedTensorType.get([lwork], a_type.element_type),
       ],
-      [a],
+      operands,
       backend_config=opaque,
-      operand_layouts=[layout],
+      operand_layouts=operand_layouts,
       result_layouts=[
           layout,
           tuple(range(num_bd, -1, -1)),
           tuple(range(num_bd - 1, -1, -1)),
           [0],
       ],
-      operand_output_aliases={0: 0})
+      operand_output_aliases={0: 0},
+      result_shapes=result_shapes)
   return out[:3]
 
 cuda_syevd = partial(_syevd_hlo, "cu", _cusolver, True)
