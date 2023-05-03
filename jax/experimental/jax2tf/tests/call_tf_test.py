@@ -891,7 +891,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     def assert_all_close_support_bfloat16(baseline, candidate):
       def conversion(x):
         # convert scalar to array and bfloat16 to float32
-        # to support self.assertAllClose numpy array comparision.
+        # to support self.assertAllClose numpy array comparison.
         if x.shape == tf.TensorShape([]):
           x = tf.convert_to_tensor([x])
         if dtype == jnp.float16:
@@ -910,7 +910,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
         tf.function(tf_f)(x), tf.function(tf_f_rt)(x)
     )
 
-    # Compiled fucntion mode with jit_compiled=True
+    # Compiled function mode with jit_compiled=True
     assert_all_close_support_bfloat16(
         tf.function(tf_f, jit_compile=True)(x),
         tf.function(tf_f_rt, jit_compile=True)(x),
@@ -1295,7 +1295,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
         for op in block:
           cls._walk_stablehlo_operations(op, cb)
 
-  def test_use_custom_call(self):
+  def test_call_tf_graph(self):
     const = tf.Variable(0.0, dtype=tf.float32)
 
     @tf.function(jit_compile=True)
@@ -1317,14 +1317,14 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
         jax.ShapeDtypeStruct(x.shape, x.dtype),
         jax.ShapeDtypeStruct(z.shape, z.dtype),
     )
-    f_jax = jax.jit(jax2tf.call_tf(tf_func_3, use_custom_call=False))
+    f_jax = jax.jit(jax2tf.call_tf(tf_func_3, call_tf_graph=False))
     stablehlo_module = f_jax.lower(x, y, z).compiler_ir("stablehlo")
     self.assertNotIn("stablehlo.custom_call", str(stablehlo_module))
 
     f_jax = jax.jit(
         jax2tf.call_tf(
             tf_func_3,
-            use_custom_call=True,
+            call_tf_graph=True,
             output_shape_dtype=output_shape_dtype,
         )
     )
@@ -1336,8 +1336,8 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     def _extract_info(op):
       if op.operation.name != "stablehlo.custom_call":
         return
-      tf_metadata = ir.DictAttr(op.attributes["tf_metadata"])
-      caller_name = ir.StringAttr(tf_metadata["caller_name"]).value
+      tf_backend_config = ir.DictAttr(op.attributes["tf.backend_config"])
+      caller_name = ir.StringAttr(tf_backend_config["caller_name"]).value
       caller_name_list.append(caller_name)
 
     self._walk_stablehlo_operations(stablehlo_module, _extract_info)
@@ -1355,20 +1355,20 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
           output_shape_dtype=None,
       ),
   )
-  def test_use_custom_call_non_compilable(self, tf_f, output_shape_dtype):
+  def test_call_tf_graph_non_compilable(self, tf_f, output_shape_dtype):
     inputs = jnp.ones([10], dtype=jnp.float32)
     caller_name_list = []
 
     def _extract_info(op):
       if op.operation.name != "stablehlo.custom_call":
         return
-      tf_metadata = ir.DictAttr(op.attributes["tf_metadata"])
-      caller_name = ir.StringAttr(tf_metadata["caller_name"]).value
+      tf_backend_config = ir.DictAttr(op.attributes["tf.backend_config"])
+      caller_name = ir.StringAttr(tf_backend_config["caller_name"]).value
       caller_name_list.append(caller_name)
 
     jax_f = jax2tf.call_tf(
         tf_f,
-        use_custom_call=True,
+        call_tf_graph=True,
         output_shape_dtype=output_shape_dtype,
     )
 
@@ -1381,7 +1381,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
         "stablehlo.custom_call @tf_function_custom_call",
         str(stablehlo_module),
     )
-    self.assertIn("tf_metadata", str(stablehlo_module))
+    self.assertIn("tf.backend_config", str(stablehlo_module))
     self._walk_stablehlo_operations(stablehlo_module, _extract_info)
     self.assertLen(caller_name_list, 1)
 
@@ -1393,7 +1393,22 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
         native_serialization_strict_checks=False,
         with_gradient=False,
     )
-    _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt, input_args=[inputs])
+    _, restored_model = tf_test_util.SaveAndLoadFunction(
+        tf_f_rt, input_args=[inputs]
+    )
+    func_def = restored_model.f.concrete_functions[0]
+
+    xla_call_module_list = []
+    for node_def in func_def.graph.as_graph_def().node:
+      if node_def.op == "XlaCallModule":
+        xla_call_module_list.append(node_def)
+    # There is only one xla_call_module in the saved model.
+    self.assertLen(xla_call_module_list, 1)
+
+    # Check the xla_call_module version and function_list attributes.
+    xla_call_module = xla_call_module_list[0]
+    self.assertEqual(xla_call_module.attr["version"].i, 5)
+    self.assertIn("function_list", str(xla_call_module.attr))
 
 
 if __name__ == "__main__":
