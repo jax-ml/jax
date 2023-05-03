@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: "0 14 * * *" # daily at 7am PST
   workflow_dispatch: # allows triggering the workflow run manually
+    inputs:
+      build_jaxlib_using_xla_commit:
+        type: string
+        default: ""
+        required: false
 # This should also be set to read-only in the project settings, but it's nice to
 # document and enforce the permissions here.
 permissions:
@@ -12,9 +17,12 @@ jobs:
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
-        jaxlib-version: ["latest", "nightly"]
+        jaxlib-version: ["latest", "nightly", "build"]
         tpu-type: ["v3-8", "v4-8"]
         pjrt: ["true", "false"]
+    if: |
+      (inputs.build_jaxlib_using_xla_commit && matrix.jaxlib-version == "build") ||
+      (!inputs.build_jaxlib_using_xla_commit && matrix.jaxlib-version != "build")
     name: "TPU test (${{ matrix.jaxlib-version }}, pjrt=${{ matrix.pjrt }}, ${{ matrix.tpu-type }})"
     runs-on: ["self-hosted", "tpu", "${{ matrix.tpu-type }}"]
     timeout-minutes: 60
@@ -40,6 +48,23 @@ jobs:
             pip install --pre libtpu-nightly \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
             pip install requests
+
+          elif [ "${{ matrix.jaxlib-version }}" == "build" ]; then
+            pip install .
+            pip install --pre libtpu-nightly \
+              -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+
+            pushd /tmp
+            git clone https://github.com/openxla/xla
+            cd xla
+            git checkout $INPUTS_BUILD_JAXLIB_USING_XLA_COMMIT
+            popd
+
+            rm dist/*
+            python3 build/build.py --enable_tpu --bazel_options="--override_repository=xla=/tmp/xla"
+            pip install dist/*
+
+            rm -rf /tmp/xla
 
           else
             echo "Unknown jaxlib-version: ${{ matrix.jaxlib-version }}"
