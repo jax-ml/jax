@@ -22,9 +22,6 @@ jobs:
         jaxlib-version: ${{ fromJSON(inputs.jaxlib_versions) }}
         tpu-type: ["v3-8", "v4-8"]
         pjrt: ["true", "false"]
-    if: |
-      (inputs.build_jaxlib_using_xla_commit && matrix.jaxlib-version == "build") ||
-      (!inputs.build_jaxlib_using_xla_commit && matrix.jaxlib-version != "build")
     name: "TPU test (${{ matrix.jaxlib-version }}, pjrt=${{ matrix.pjrt }}, ${{ matrix.tpu-type }})"
     runs-on: ["self-hosted", "tpu", "${{ matrix.tpu-type }}"]
     timeout-minutes: 60
