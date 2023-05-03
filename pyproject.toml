@@ -72,7 +72,6 @@ filterwarnings = [
     "ignore:DeviceArray, ShardedDeviceArray, and GlobalDeviceArray have been deprecated.*:DeprecationWarning",
     "ignore:backend and device argument on jit is deprecated.*:DeprecationWarning",
     "ignore:GlobalDeviceArray has been deprecated.*:DeprecationWarning",
-    "ignore:jax.interpreters.pxla.make_sharded_device_array is deprecated.*:DeprecationWarning",
     # TODO(skyewm, yashkatariya): Remove after jaxlib 0.4.7 is released.
     "ignore:jax.interpreters.pxla.ShardedDeviceArray is deprecated.*:DeprecationWarning"
 ]
