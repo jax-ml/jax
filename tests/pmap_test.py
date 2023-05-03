@@ -871,8 +871,10 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     # test that we can handle device movement on dispatch
     bufs = y._arrays[::-1]
-    sharding_spec = y.sharding.sharding_spec
-    y = pxla.make_sharded_device_array(y.aval, sharding_spec, bufs)
+    sharding = jax.sharding.PmapSharding(
+        [b.device() for b in bufs], y.sharding.sharding_spec
+    )
+    y = jax.make_array_from_single_device_arrays(y.shape, sharding, bufs)
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
 
@@ -882,7 +884,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     # test that we can lexically capture a sda as a constant.
     g = jit(lambda z: z + y)
     self.assertAllClose(g(7), y + 7)
-
 
   # Tests edge cases in lax._reshape_sharded_device_array
   @parameterized.named_parameters(
@@ -1867,7 +1868,8 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     @jax.jit
     @jax.pmap
-    def foo(x): return x + x
+    def foo(x):
+      return x + x
 
     x = np.ones((2,2,2), dtype=np.float32)
     for _ in range(10):
@@ -1886,14 +1888,14 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     @jax.jit
     @jax.pmap
-    def foo(x): return x + x
+    def foo(x):
+      return x + x
 
     x = np.ones((2,2,2), dtype=np.float32)
 
     hlo = foo.lower(x).as_text("stablehlo")
     self.assertIn(f"mhlo.num_replicas = {2}", hlo)
     self.assertIn("mhlo.num_partitions = 1", hlo)
-
 
   def testPsumZeroCotangents(self):
     # https://github.com/google/jax/issues/3651
