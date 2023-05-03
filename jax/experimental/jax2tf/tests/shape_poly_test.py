@@ -1795,6 +1795,57 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(res_jax, f_tf(x))
     self.assertFalse(traced)  # We are not tracing again
 
+  def test_eval_poly_shapes(self):
+    def f1(x, y):  # x: f32[a, 5] y: f[a, 5] -> f32[a, 10]
+      return jnp.concatenate([x, y], axis=1)
+    def f2(x, z):  # x: f32[a, 5] z: f32[a, 10]
+      return jnp.concatenate([x, jax.lax.slice_in_dim(z, 0, 5, axis=1)],
+                             axis=1),
+
+    x = np.arange(np.prod((3, 5)), dtype=np.float32).reshape((3, 5))
+    y = x
+
+    x_polymorphic_shape = "a, _"
+    y_polymorphic_shape = x_polymorphic_shape
+    z_spec, z_polymorphic_shape = jax2tf.eval_polymorphic_shape(
+        f1,
+        polymorphic_shapes=[x_polymorphic_shape, y_polymorphic_shape])(x, y)
+    self.assertEqual(np.float32, z_spec.dtype)
+    self.assertEqual("(a, 10)", z_polymorphic_shape)
+
+    # We can use the z_polymorphic_shape for jax2tf.convert
+    z = jax2tf.convert(
+        f1,
+        polymorphic_shapes=[x_polymorphic_shape, y_polymorphic_shape])(x, y)
+    res = jax2tf.convert(
+        f2,
+        polymorphic_shapes=[x_polymorphic_shape, z_polymorphic_shape])(x, z)
+    self.assertAllClose(f2(x, f1(x, y)), res)
+
+  def test_eval_poly_shapes_tuple_output(self):
+    def f1(x, y):  # x: f32[a, 5] y: f[b, 5] -> (f32[a, 5], f32[a + b, 5])
+      return (x, jnp.concatenate([x, y], axis=0))
+    def f2(z, w):  # z: f32[a, 5] w: f32[a + b, 5] -> f32[2*a + b, 10]
+      return jnp.concatenate([z, w], axis=0)
+    x = np.arange(np.prod((3, 5)), dtype=np.float32).reshape((3, 5))
+    y = np.arange(np.prod((4, 5)), dtype=np.float32).reshape((4, 5))
+
+    x_polymorphic_shape = "a, _"
+    y_polymorphic_shape = "b, _"
+    zw_specs, zw_polymorphic_shapes = jax2tf.eval_polymorphic_shape(
+        f1,
+        polymorphic_shapes=[x_polymorphic_shape, y_polymorphic_shape])(x, y)
+    self.assertEqual(np.float32, zw_specs[0].dtype)
+    self.assertEqual(np.float32, zw_specs[1].dtype)
+    self.assertEqual(("(a, 5)", "(a + b, 5)"), zw_polymorphic_shapes)
+
+    # We can use the zw_polymorphic_shapes for jax2tf.convert
+    z, w = jax2tf.convert(
+        f1,
+        polymorphic_shapes=[x_polymorphic_shape, y_polymorphic_shape])(x, y)
+    res = jax2tf.convert(f2, polymorphic_shapes=zw_polymorphic_shapes)(z, w)
+    self.assertAllClose(f2(* f1(x, y)), res)
+
 
 def _random_split(key, num, impl):
   prev = jax.config.jax_default_prng_impl
