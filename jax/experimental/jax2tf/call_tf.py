@@ -66,7 +66,7 @@ def call_tf(
     callable_tf: Callable,
     has_side_effects=True,
     output_shape_dtype=None,
-    use_custom_call=False,
+    call_tf_graph=False,
 ) -> Callable:
   """Calls a TensorFlow function from JAX, with support for reverse autodiff.
 
@@ -106,8 +106,8 @@ def call_tf(
       Must be a pytree matching the structure of the nested structure returned
       from the TensorFlow function, containing objects with `.shape` and
       `.dtype` attributes, e.g., `jax.ShapeDtypeStruct` or `jax.Array`.
-    use_custom_call: EXPERIMENTAL, DO NOT USE. We may
-      change the name in the future.
+    call_tf_graph: EXPERIMENTAL, DO NOT USE. We may change the name in the
+      future.
   Returns: a JAX callable that can be invoked with JAX pytree arguments, in
     op-by-op mode or in a staged context. This callable can be used with JAX's
     reverse-mode autodiff (:func:`jax.grad`).
@@ -169,10 +169,10 @@ def call_tf(
 
     # Prepare a tf.function ahead of time, to cache the concrete functions. This
     # won't be used in op-by-op execution mode.
-    # `jit_compile` is not enabled when `use_custom_call` is True, since the
+    # `jit_compile` is not enabled when `call_tf_graph` is True, since the
     # custom call function won't be compilable.
     function_flat_tf = tf.function(
-        callable_flat_tf, autograph=False, jit_compile=not use_custom_call)
+        callable_flat_tf, autograph=False, jit_compile=not call_tf_graph)
 
     res_jax_flat = call_tf_p.bind(
         *args_flat_jax,
@@ -182,8 +182,7 @@ def call_tf(
         args_flat_sig_tf=args_flat_sig_tf,
         output_avals=output_avals,
         has_side_effects=has_side_effects,
-        use_custom_call=use_custom_call,
-    )
+        call_tf_graph=call_tf_graph)
 
     # We must have called callable_flat_tf by nοw
     assert res_treedef is not None
@@ -366,7 +365,7 @@ def _call_tf_abstract_eval(
     args_flat_sig_tf,
     has_side_effects,
     output_avals,
-    use_custom_call,
+    call_tf_graph,
     **__):
   # Called only when we form a Jaxpr, i.e., under jit, scan, etc.
   effects = {call_tf_effect} if has_side_effects else set()
@@ -377,7 +376,7 @@ def _call_tf_abstract_eval(
   # there is a small cost of calling it more often than needed.
   concrete_function_flat_tf = _get_concrete_function_tf(function_flat_tf,
                                                         args_flat_sig_tf)
-  # TODO(b/278298710): when `use_custom_call=True` for non-compilable tf function,
+  # TODO(b/278298710): when `call_tf_graph=True` for non-compilable tf function,
   # Tensorflow shape inference is not supported and the concrete function has
   # no structured output shapes attributes sometimes.
   # So users always need provide output_shape_dtypes. However, in some case if
@@ -385,9 +384,9 @@ def _call_tf_abstract_eval(
   if len(concrete_function_flat_tf.outputs) == 0:
     return tuple(), effects
 
-  if use_custom_call and output_avals is None:
+  if call_tf_graph and output_avals is None:
     raise ValueError(
-        "call_tf with `use_custom_call=True` must provide output_shape_dtype"
+        "call_tf with `call_tf_graph=True` must provide output_shape_dtype"
         " arg.")
   if output_avals is not None:
     return output_avals, effects
@@ -422,7 +421,7 @@ def _call_tf_lowering(
     function_flat_tf,
     args_flat_sig_tf,
     has_side_effects,
-    use_custom_call,
+    call_tf_graph,
     output_avals,
     **_):
   # We use the same TF lowering device as for the embedding JAX computation.
@@ -460,7 +459,7 @@ def _call_tf_lowering(
       for inp in captured_inputs
   )
 
-  if use_custom_call:
+  if call_tf_graph:
     with jax2tf_internal.inside_call_tf():
       return emit_tf_embedded_graph_custom_call(
           concrete_function_flat_tf,
@@ -579,7 +578,7 @@ def emit_tf_embedded_graph_custom_call(
       concrete_function_flat_tf.function_def.signature.name
   )
   call_target_name = "tf_function_custom_call"
-  tf_metadata = {
+  tf_backend_config = {
       "caller_name": ir.StringAttr.get(concrete_function_flat_tf_name),
   }
   result_avals = output_avals if output_avals is not None else tuple()
@@ -597,5 +596,5 @@ def emit_tf_embedded_graph_custom_call(
       backend_config=ir.StringAttr.get(""),
   )
   # Store TF metadata in unregistered attribute
-  result.attributes["tf_metadata"] = ir.DictAttr.get(tf_metadata)
+  result.attributes["tf.backend_config"] = ir.DictAttr.get(tf_backend_config)
   return result.results

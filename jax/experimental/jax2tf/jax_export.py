@@ -271,7 +271,7 @@ def export(fun_jax: Callable,
       mlir_module = _add_dim_arg_computation(mlir_module, args_avals_flat,
                                              args_kwargs_tree=lowered.in_tree)
 
-    xla_call_module_version = 4
+    xla_call_module_version = 5
     mlir_str = mlir.module_to_bytecode(mlir_module)
     target_version = stablehlo.get_earliest_forward_compatible_version()
     mlir_module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
