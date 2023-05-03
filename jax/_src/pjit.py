@@ -1367,6 +1367,8 @@ def _pjit_batcher_for_sharding(
   if is_unspecified(s):
     return s
   if not val:
+    if sharding_impls.is_op_sharding_replicated(s._op_sharding):  # type: ignore
+      return s
     new_op = s._op_sharding.clone()  # type: ignore
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)
