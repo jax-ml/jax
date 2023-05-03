@@ -1857,6 +1857,10 @@ def _make_triangular_eigh_operand(shape, dtype, lower: bool, rng: Rng):
 
 
 for dtype in jtu.dtypes.all_inexact:
+  # The eigh implementation for TPU uses different lowering for n >= 256
+  # TODO: add a test case for n=300. First attempt resulted in significant
+  # numerical differences.
+  # And the implementation on GPU uses different lowering for n >= 32
   for shape in [(0, 0), (50, 50), (2, 20, 20)]:
     for lower in [False, True]:
       define(

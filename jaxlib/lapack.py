@@ -387,19 +387,19 @@ def gesdd_hlo(dtype, a, full_matrices=True, compute_uv=True):
 
 # # syevd: Symmetric eigendecomposition
 
-def syevd_hlo(dtype, a, lower=False):
+def syevd_hlo(dtype, a: ir.Value, batch_size: ir.Value,
+              result_shape_v: ir.Value, result_shape_w: ir.Value,
+              result_shape_info: ir.Value, lower=False):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
   assert len(dims) >= 2
   m, n = dims[-2:]
-  assert m == n
+  assert m == n, dims
+  # Non-batch dimensions must be static
+  assert n != ir.ShapedType.get_dynamic_size(), dims
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
-  b = 1
-  for d in batch_dims:
-    b *= d
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
   i32_type = ir.IntegerType.get_signless(32)
   if dtype == np.float32:
@@ -410,7 +410,6 @@ def syevd_hlo(dtype, a, lower=False):
                                 a_type.element_type),
         ir.RankedTensorType.get([_lapack.syevd_iwork_size(n)], i32_type),
     ]
-    workspace_layouts = [[0], [0]]
   elif dtype == np.float64:
     fn = b"lapack_dsyevd"
     eigvals_type = ir.F64Type.get()
@@ -419,7 +418,6 @@ def syevd_hlo(dtype, a, lower=False):
                                 a_type.element_type),
         ir.RankedTensorType.get([_lapack.syevd_iwork_size(n)], i32_type),
     ]
-    workspace_layouts = [[0], [0]]
   elif dtype == np.complex64:
     fn = b"lapack_cheevd"
     eigvals_type = ir.F32Type.get()
@@ -429,7 +427,6 @@ def syevd_hlo(dtype, a, lower=False):
         ir.RankedTensorType.get([_lapack.heevd_rwork_size(n)], eigvals_type),
         ir.RankedTensorType.get([_lapack.syevd_iwork_size(n)], i32_type),
     ]
-    workspace_layouts = [[0], [0], [0]]
   elif dtype == np.complex128:
     fn = b"lapack_zheevd"
     eigvals_type = ir.F64Type.get()
@@ -439,12 +436,27 @@ def syevd_hlo(dtype, a, lower=False):
         ir.RankedTensorType.get([_lapack.heevd_rwork_size(n)], eigvals_type),
         ir.RankedTensorType.get([_lapack.syevd_iwork_size(n)], i32_type),
     ]
-    workspace_layouts = [[0], [0], [0]]
   else:
     raise NotImplementedError(f"Unsupported dtype {dtype}")
 
+  batch_size = hlo.ConvertOp(ir.RankedTensorType.get((), i32_type),
+                             batch_size).result
   scalar_layout = []
+  shape_layout = [0]
+  workspace_layouts = [shape_layout] * len(workspace)
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+
+  if any(d == ir.ShapedType.get_dynamic_size() for d in batch_dims):
+    # The workspace outputs have constant shapes
+    def mk_constant_shape_tensor(ranked_type: ir.RankedTensorType) -> ir.Value:
+      return hlo.ConstantOp(
+          ir.DenseElementsAttr.get(np.array(ranked_type.shape, dtype=np.int32),
+                                  type=i32_type)).result
+    workspace_shapes = [mk_constant_shape_tensor(t) for t in workspace]
+    result_shapes = [result_shape_v, result_shape_w, result_shape_info] + workspace_shapes
+  else:
+    result_shapes = None
+
   out = custom_call(
       fn,
       [
@@ -452,7 +464,7 @@ def syevd_hlo(dtype, a, lower=False):
           ir.RankedTensorType.get(batch_dims + (n,), eigvals_type),
           ir.RankedTensorType.get(batch_dims, i32_type),
       ] + workspace,
-      [_hlo_s32(1 if lower else 0), _hlo_s32(b), _hlo_s32(n), a],
+      [_hlo_s32(1 if lower else 0), batch_size, _hlo_s32(n), a],
       operand_layouts=[scalar_layout] * 3 + [layout],
       result_layouts=[
           layout,
@@ -460,6 +472,7 @@ def syevd_hlo(dtype, a, lower=False):
           tuple(range(num_bd - 1, -1, -1)),
       ] + workspace_layouts,
       operand_output_aliases={3: 0},
+      result_shapes=result_shapes,
   )
   return out[:3]
 

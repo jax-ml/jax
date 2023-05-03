@@ -87,11 +87,13 @@ def shape_tensor(sizes: Sequence[Union[int, ir.RankedTensorType]]
       return ir_constant(np.array([d], np.int32))
     else:
       return hlo.ReshapeOp(int1d, hlo.ConvertOp(aval_to_ir_type(core.ShapedArray((), np.int32)), d))
-  d, *ds = map(lower_dim, sizes)
+  ds = map(lower_dim, sizes)
   if not ds:
-    return d
+    return ir_constant(np.array([], np.int32))
+  elif len(ds) == 1:
+    return ds[0]
   else:
-    return hlo.ConcatenateOp([d, *ds], i64_attr(0)).result
+    return hlo.ConcatenateOp(ds, i64_attr(0)).result
 
 
 def delegate_lowering(ctx, lowering_fun, *args, **ctx_override_kwargs):
@@ -1803,12 +1805,13 @@ def custom_call(
     call_target_name: str,
     out_types: Sequence[ir.Type],
     operands: Sequence[ir.Value],
+    *,
     backend_config: Optional[str] = None,
     has_side_effect: bool = False,
     result_shapes: Optional[Sequence[ir.Value]] = None,
     api_version: int = 2,
 ) -> ir.Operation:
-  """Wraps a hlo.CustomCall
+  """Wraps a hlo.CustomCall.
 
   Args:
     result_shapes: tensors that represent the result shapes, to be used when

@@ -29,7 +29,7 @@ from jax._src import api
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.core import (
-    Primitive, ShapedArray, raise_to_shaped, is_constant_shape)
+    Primitive, ShapedArray, raise_to_shaped, is_constant_dim, is_constant_shape)
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -44,6 +44,7 @@ from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
@@ -615,14 +616,27 @@ def _eigh_jacobi_lowering_rule(ctx, operand, lower, sort_eigenvalues):
   result_types = [eigvecs_type, eigvals_type]
 
   backend_config = f"{int(lower)},{int(sort_eigenvalues)},100,1e-6"
-  op = hlo.CustomCallOp(
-    (result_types if xla_extension_version >= 150 else
-     [ir.TupleType.get_tuple(result_types)]),
-    [operand],
-    call_target_name=ir.StringAttr.get("Eigh"),
-    has_side_effect=ir.BoolAttr.get(False),
-    backend_config=ir.StringAttr.get(backend_config),
-    api_version=mlir.i32_attr(1),
+
+  if any(not is_constant_shape(aval_out.shape)
+         for aval_out in ctx.avals_out):
+    if jaxlib_version < (0, 4, 9):
+      raise ValueError("shape polymorphism with native lowering for eigh on "
+                       "TPU requires jaxlib version 0.4.9.")
+    result_shapes = [
+        mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, aval_out.shape))
+        # The custom call returns the results swapped
+        for aval_out in list(reversed(ctx.avals_out))
+    ]
+  else:
+    result_shapes = None
+  op = mlir.custom_call(
+      "Eigh",
+      (result_types if xla_extension_version >= 150 else
+       [ir.TupleType.get_tuple(result_types)]),
+      [operand],
+      backend_config=backend_config,
+      api_version=1,
+      result_shapes=result_shapes,
   )
   if xla_extension_version >= 150:
     return op.results[1], op.results[0]
@@ -662,14 +676,38 @@ def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues):
 
 def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
                            sort_eigenvalues):
-  if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
-    raise NotImplementedError("Shape polymorphism for custom call is not implemented (eigh); b/261671778")
-
   del sort_eigenvalues  # The CPU/GPU implementations always sort.
   operand_aval, = ctx.avals_in
   v_aval, w_aval = ctx.avals_out
+
   batch_dims = operand_aval.shape[:-2]
-  v, w, info = syevd_impl(operand_aval.dtype, operand, lower=lower)
+
+  if jaxlib_version < (0, 4, 9):
+    if not is_constant_shape(operand_aval.shape):
+      raise NotImplementedError("Shape polymorphism for native lowering for "
+                                "eigh requires "
+                                "jaxlib version 0.4.9; b/261671778")
+    v, w, info = syevd_impl(operand_aval.dtype, operand, lower=lower)
+  else:
+    # The eigh implementation on CPU and GPU uses lapack helper routines to
+    # find the size of the workspace based on the non-batch dimensions.
+    # Therefore, we cannot yet support dynamic non-batch dimensions.
+    if not is_constant_shape(operand_aval.shape[-2:]):
+      raise NotImplementedError(
+          "Shape polymorphism for for native lowering for eigh is implemented "
+          f"only for the batch dimensions: {operand_aval.shape}")
+
+    batch_size_num = math.prod(batch_dims) if batch_dims else 1
+    batch_size = mlir.eval_dynamic_shape(ctx, (batch_size_num,))[0]
+    if isinstance(batch_size, int):
+      batch_size = mlir.ir_constant(np.int32(batch_size))
+    v_shape: ir.Value = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, v_aval.shape))
+    w_shape: ir.Value = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, w_aval.shape))
+    info_shape: ir.Value = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, batch_dims))
+    v, w, info = syevd_impl(operand_aval.dtype, operand, batch_size,
+                            v_shape, w_shape, info_shape,
+                            lower=lower)
+
   zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
   ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")
   select_v_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
@@ -693,7 +731,11 @@ def _eigh_tpu_impl(x, *, lower, sort_eigenvalues):
   assert m == n, (m, n)
 
   termination_size = 256
-
+  if not is_constant_dim(m):
+    # TODO: maybe we can relax the check below for shape polymorphism?
+      raise NotImplementedError(
+          "Shape polymorphism for for native lowering for eigh is implemented "
+          f"only for the batch dimensions: {x.shape}")
   if m <= termination_size:
     eig_vals, eig_vecs = eigh_jacobi(x, lower=lower,
                                      sort_eigenvalues=sort_eigenvalues)
