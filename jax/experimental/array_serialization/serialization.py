@@ -20,6 +20,7 @@ import logging
 from functools import partial
 import os
 import re
+import time
 import threading
 from typing import Awaitable, Any, Callable, Dict, Optional, Sequence, Union
 
@@ -396,6 +397,7 @@ class AsyncManager:
       current_process = jax.process_index()
       logger.info('Starting commit to storage layer by process: %s',
                    current_process)
+      thread_start_time = time.time()
       for future in self._commit_futures:
         future.result()
       logger.info('Finished committing to storage layer by process: %s',
@@ -416,6 +418,10 @@ class AsyncManager:
         self._client.key_value_set(key_for_barrier, _CHECKPOINT_SUCCESS)
         logger.info('Process 0 successfully set key %s in the kv store',
                     key_for_barrier)
+
+      jax.monitoring.record_event_duration_secs(
+          '/jax/checkpoint/write/async/thread_duration_sec',
+          time.time() - thread_start_time)
 
     except Exception as e:
       self._exception = e
