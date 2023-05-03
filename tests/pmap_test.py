@@ -871,8 +871,9 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     # test that we can handle device movement on dispatch
     bufs = y._arrays[::-1]
-    sharding_spec = y.sharding.sharding_spec
-    y = pxla.make_sharded_device_array(y.aval, sharding_spec, bufs)
+    sharding = jax.sharding.PmapSharding(
+        [b.device() for b in bufs], y.sharding.sharding_spec)
+    y = jax.make_array_from_single_device_arrays(y.shape, sharding, bufs)
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
 
