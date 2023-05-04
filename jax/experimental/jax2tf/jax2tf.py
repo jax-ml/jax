@@ -2669,9 +2669,14 @@ tf_impl[lax.rng_uniform_p] = _rng_uniform
 
 
 def _iota_2x32_shape(*, shape):
-  def _add(x, y): return x + y
-  def _mul(x, y): return x * y
-  def _cast32(xs): return tf.dtypes.cast(xs, _to_tf_dtype(jnp.uint32))
+  def _add(x, y):
+    return x + y
+  def _mul(x, y):
+    if not core.is_constant_dim(x):
+      x = tf.cast(_eval_shape((x,))[0], y.dtype)
+      x = tf.broadcast_to(x, tf.shape(y))
+    return x * y
+  def _cast32(xs): return tf.cast(xs, _to_tf_dtype(jnp.uint32))
   iotas = [_iota(dtype=jnp.uint64, shape=shape, dimension=dimension)
            for dimension in range(len(shape))]
   counts = prng.bcast_iotas_to_reshaped_iota(_add, _mul, shape, iotas)

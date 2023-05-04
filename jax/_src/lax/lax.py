@@ -4231,6 +4231,9 @@ def _rng_algorithm(algorithm: RandomAlgorithm):
 
 def _rng_bit_generator_lowering(
     ctx, key, *, shape, dtype, algorithm):
+  if any(not core.is_constant_shape(aval_out.shape)
+         for aval_out in ctx.avals_out):
+    raise NotImplementedError("shape polymorphism with native lowering not yet implemented for RngBitGenerator")
   key_type = ir.RankedTensorType(key.type)
   key_shape, key_etype = key_type.shape, key_type.element_type
   # While the RngBitGenerator HLO accepts a u64[2] key on all backends, we
@@ -4413,16 +4416,7 @@ def _iota_lower(ctx, *dyn_shape, dtype, shape, dimension):
   aval_out, = ctx.avals_out
   if dyn_shape:
     aval_out = aval_out.update(shape=_merge_dyn_shape(shape, dyn_shape))
-  if not core.is_constant_shape(aval_out.shape):
-    shape = mlir.eval_dynamic_shape(ctx, aval_out.shape)
-    return hlo.DynamicIotaOp(
-        mlir.aval_to_ir_type(aval_out),
-        mlir.shape_tensor(shape),
-        mlir.i64_attr(dimension),
-    ).results
-  else:
-    return hlo.IotaOp(mlir.aval_to_ir_type(aval_out),
-                      mlir.i64_attr(dimension)).results
+  return [mlir.iota(ctx, aval_out, dimension=dimension)]
 mlir.register_lowering(iota_p, _iota_lower)
 
 def _iota_batching_rule(in_vals, in_dims, *, dtype, shape, dimension):
