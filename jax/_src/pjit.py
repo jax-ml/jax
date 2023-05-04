@@ -438,10 +438,12 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
         device, backend)
   else:
     in_shardings = tree_map(
-        lambda x: _create_sharding_for_array(pjit_mesh, x, 'in_shardings'),
+        lambda x: _create_sharding_for_array(pjit_mesh, x, 'in_shardings',
+                                             jit_name),
         user_in_shardings)
     out_shardings = tree_map(
-        lambda x: _create_sharding_for_array(pjit_mesh, x, 'out_shardings'),
+        lambda x: _create_sharding_for_array(pjit_mesh, x, 'out_shardings',
+                                             jit_name),
         user_out_shardings)
 
   del user_in_shardings, user_out_shardings
@@ -750,7 +752,7 @@ def _create_mesh_pspec_sharding_from_parsed_pspec(mesh, x):
   return pxla.create_mesh_pspec_sharding(mesh, x.user_spec, x)
 
 
-def _create_sharding_for_array(mesh, x, name):
+def _create_sharding_for_array(mesh, x, name, api_name):
   if isinstance(x, XLACompatibleSharding) or is_unspecified_or_auto(x):
     return x
   if mesh is None:
@@ -768,11 +770,10 @@ def _create_sharding_for_array(mesh, x, name):
     raise RuntimeError(msg)
   if mesh.empty:
     raise RuntimeError(
-        'pjit requires a non-empty mesh if you are passing `PartitionSpec`s or'
-        ' `None` to in_shardings or out_shardings! Is a mesh defined at the'
-        ' call site? Alternatively, provide `XLACompatibleSharding`s to'
-        ' `in_shardings` and `out_shardings` and then the mesh context manager'
-        ' is not required.')
+        f'{api_name} requires a non-empty mesh if you are passing'
+        f' `PartitionSpec`s or `None` to {name}! Is a mesh defined at the call'
+        f' site? Alternatively, provide `XLACompatibleSharding`s to {name} and'
+        ' then the mesh context manager is not required.')
   # A nice user error is raised in prepare_axis_resources.
   assert isinstance(x, ParsedPartitionSpec), x
   return _create_mesh_pspec_sharding_from_parsed_pspec(mesh, x)
@@ -1788,7 +1789,8 @@ def with_sharding_constraint(x, shardings=UNSPECIFIED,
   resource_env = mesh_lib.thread_resources.env
   mesh = resource_env.physical_mesh
 
-  shardings_flat = [_create_sharding_for_array(mesh, a, 'shardings')
+  shardings_flat = [_create_sharding_for_array(mesh, a, 'shardings',
+                                               'with_sharding_constraint')
                     for a in user_shardings_flat]
   unconstrained_dims = [get_unconstrained_dims(s)
                         if isinstance(s, NamedSharding) else {}
