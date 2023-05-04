@@ -1087,6 +1087,8 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
       # The float0 type is not known to TF.
       if jax_dtype == dtypes.float0:
         val = np.zeros(np.shape(val), conversion_dtype.as_numpy_dtype)
+      if hasattr(val, 'dtype') and core.is_opaque_dtype(val.dtype):
+        val = val.dtype._rules.physical_const(val)
       tf_val = tf.convert_to_tensor(val, dtype=conversion_dtype)
       if do_memoize:
         _thread_local_state.constant_cache[const_key] = (val, tf_val)

@@ -1751,6 +1751,32 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(res_tf.numpy(), res_jax)
 
 
+@jtu.with_config(jax_enable_custom_prng=True)
+class Jax2tfWithCustomPRNGTest(tf_test_util.JaxToTfTestCase):
+  def test_key_argument(self):
+    func = lambda key: jax.random.uniform(key, ())
+    key = jax.random.PRNGKey(0)
+    key_raw = jax.random.key_data(key)
+    with self.assertWarnsRegex(FutureWarning, "Raw arrays as random keys.*"):
+      tf_result = jax2tf.convert(func)(key_raw)
+    jax_result = func(key)
+    self.assertEqual(tf_result, jax_result)
+
+  def test_key_from_seed(self):
+    func = lambda seed: jax.random.uniform(jax.random.PRNGKey(seed), ())
+    seed = 1701
+    tf_result = jax2tf.convert(func)(seed)
+    jax_result = func(seed)
+    self.assertEqual(tf_result, jax_result)
+
+  def test_key_closure(self):
+    func = lambda: jax.random.uniform(global_key, ())
+    global_key = jax.random.PRNGKey(0)
+    tf_result = jax2tf.convert(func)()
+    jax_result = func()
+    self.assertEqual(tf_result, jax_result)
+
+
 if __name__ == "__main__":
   # TODO: Remove once tensorflow is 2.10.0 everywhere.
   if not hasattr(tfxla, "optimization_barrier"):
