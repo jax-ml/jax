@@ -1378,7 +1378,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     # Jit mode
     stablehlo_module = jax.jit(jax_f).lower(inputs).compiler_ir("stablehlo")
     self.assertIn(
-        "stablehlo.custom_call @tf_function_custom_call",
+        "stablehlo.custom_call @tf.call_tf_function",
         str(stablehlo_module),
     )
     self.assertIn("tf.backend_config", str(stablehlo_module))
