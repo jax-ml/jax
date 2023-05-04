@@ -299,7 +299,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   )
   def testEigh(self, n, dtype, lower):
     rng = jtu.rand_default(self.rng())
-    tol = np.maximum(n, 80) * np.finfo(dtype).eps
+    tol = 0.5 * np.maximum(n, 80) * np.finfo(dtype).eps
     args_maker = lambda: [rng((n, n), dtype)]
 
     uplo = "L" if lower else "U"
@@ -310,7 +310,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                            UPLO=uplo, symmetrize_input=False)
     w = w.astype(v.dtype)
     self.assertLessEqual(
-        np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 1.2e-4
+        np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 4 * tol
     )
     with jax.numpy_rank_promotion('allow'):
       self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
@@ -327,9 +327,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                   [1., -1., -1.,  0.]], dtype=np.float32)
     w, v = jnp.linalg.eigh(a)
     w = w.astype(v.dtype)
+    eps = jnp.finfo(a.dtype).eps
     with jax.numpy_rank_promotion('allow'):
       self.assertLessEqual(
-          np.linalg.norm(np.matmul(a, v) - w * v), 1e-5 * np.linalg.norm(a)
+          np.linalg.norm(np.matmul(a, v) - w * v), 2 * eps * np.linalg.norm(a)
       )
 
   def testEighTinyNorm(self):
@@ -341,22 +342,24 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     w = w.astype(v.dtype)
     with jax.numpy_rank_promotion("allow"):
       self.assertLessEqual(
-          np.linalg.norm(np.matmul(a, v) - w * v), 40 * eps * np.linalg.norm(a)
+          np.linalg.norm(np.matmul(a, v) - w * v), 20 * eps * np.linalg.norm(a)
       )
 
-  def testEighRankDeficient(self):
+  @jtu.sample_product(
+      rank=[1, 3, 299],
+  )
+  def testEighRankDeficient(self, rank):
     rng = jtu.rand_default(self.rng())
     eps = jnp.finfo(np.float32).eps
-    for rank in [1, 3, 299]:
-      a = rng((300, rank), dtype=np.float32)
-      a = a @ np.conj(a.T)
-      w, v = jnp.linalg.eigh(a)
-      w = w.astype(v.dtype)
-      with jax.numpy_rank_promotion("allow"):
-        self.assertLessEqual(
-            np.linalg.norm(np.matmul(a, v) - w * v),
-            40 * eps * np.linalg.norm(a),
-        )
+    a = rng((300, rank), dtype=np.float32)
+    a = a @ np.conj(a.T)
+    w, v = jnp.linalg.eigh(a)
+    w = w.astype(v.dtype)
+    with jax.numpy_rank_promotion("allow"):
+      self.assertLessEqual(
+          np.linalg.norm(np.matmul(a, v) - w * v),
+          80 * eps * np.linalg.norm(a),
+      )
 
   @jtu.sample_product(
     n=[0, 4, 5, 50, 512],
@@ -389,8 +392,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       a = rng((n, n), dtype)
       a = (a + np.conj(a.T)) / 2
       return [a]
-    self._CheckAgainstNumpy(np.linalg.eigvalsh, jnp.linalg.eigvalsh, args_maker,
-                            tol=5e-5)
+    self._CheckAgainstNumpy(
+        np.linalg.eigvalsh, jnp.linalg.eigvalsh, args_maker, tol=3e-6
+    )
 
   @jtu.sample_product(
     shape=[(1, 1), (4, 4), (5, 5), (50, 50), (2, 10, 10)],
@@ -568,7 +572,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       max_backward_error = np.amax(backward_error)
       return max_backward_error
 
-    tol = 100 * jnp.finfo(dtype).eps
+    tol = 80 * jnp.finfo(dtype).eps
     reconstruction_tol = 2 * tol
     unitariness_tol = tol
 
