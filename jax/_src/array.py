@@ -597,6 +597,8 @@ def make_array_from_callback(
       for device in sharding.addressable_devices
   ]
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
+  if core.is_opaque_dtype(aval.dtype):
+    return aval.dtype._rules.make_sharded_array(aval, sharding, arrays, committed=True)
   return ArrayImpl(aval, sharding, arrays, committed=True)
 
 
@@ -642,6 +644,8 @@ def make_array_from_single_device_arrays(
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
+  if core.is_opaque_dtype(aval.dtype):
+    return aval.dtype._rules.make_sharded_array(aval, sharding, arrays, committed=True)
   # TODO(phawkins): ideally the cast() could be checked. Revisit this after
   # removing DeviceArray.
   return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),
