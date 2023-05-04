@@ -396,6 +396,9 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
                       check_results=partial(self.check_eigh_results, operand))
 
   def test_tpu_Eigh(self):
+    self.skipTest(
+        "TODO(b/280668311): Change input matrix to not be ill-conditioned."
+    )
     # For lax.linalg.eigh
     shape = (8, 8)
     dtype = np.float32
