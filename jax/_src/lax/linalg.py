@@ -674,7 +674,7 @@ def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues):
     v, w = operand, operand
   return v, w
 
-def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
+def _eigh_cpu_gpu_lowering(syevd_impl, platform: str, ctx, operand, *, lower,
                            sort_eigenvalues):
   del sort_eigenvalues  # The CPU/GPU implementations always sort.
   operand_aval, = ctx.avals_in
@@ -689,6 +689,9 @@ def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
                                 "jaxlib version 0.4.9; b/261671778")
     v, w, info = syevd_impl(operand_aval.dtype, operand, lower=lower)
   else:
+    if platform in ["cuda", "rocm"] and not is_constant_shape(operand_aval.shape):
+      raise NotImplementedError("Shape polymorphism for native lowering for "
+                                "eigh is not yet ready for GPU; b/280774309")
     # The eigh implementation on CPU and GPU uses lapack helper routines to
     # find the size of the workspace based on the non-batch dimensions.
     # Therefore, we cannot yet support dynamic non-batch dimensions.
@@ -733,9 +736,9 @@ def _eigh_tpu_impl(x, *, lower, sort_eigenvalues):
   termination_size = 256
   if not is_constant_dim(m):
     # TODO: maybe we can relax the check below for shape polymorphism?
-      raise NotImplementedError(
-          "Shape polymorphism for for native lowering for eigh is implemented "
-          f"only for the batch dimensions: {x.shape}")
+    raise NotImplementedError(
+        "Shape polymorphism for for native lowering for eigh is implemented "
+        f"only for the batch dimensions: {x.shape}")
   if m <= termination_size:
     eig_vals, eig_vecs = eigh_jacobi(x, lower=lower,
                                      sort_eigenvalues=sort_eigenvalues)
@@ -811,15 +814,15 @@ ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
 batching.primitive_batchers[eigh_p] = _eigh_batching_rule
 
 mlir.register_lowering(
-    eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_hlo),
+    eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_hlo, 'cpu'),
     platform='cpu')
 
 if gpu_solver is not None:
   mlir.register_lowering(
-    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.cuda_syevd),
+    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.cuda_syevd, 'cuda'),
     platform='cuda')
   mlir.register_lowering(
-    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.rocm_syevd),
+    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.rocm_syevd, 'rocm'),
     platform='rocm')
 
 mlir.register_lowering(
