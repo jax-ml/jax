@@ -1853,6 +1853,28 @@ class KeyArrayTest(jtu.JaxTestCase):
     keys_on_device = jax.device_put_replicated(key, devices)
     self.assertArraysEqual(jnp.broadcast_to(key, keys_on_device.shape), keys_on_device)
 
+  def test_make_array_from_callback(self):
+    devices = jax.devices()
+    shape = (len(devices),) if config.jax_enable_custom_prng else (len(devices), 2)
+    mesh = jtu.create_global_mesh((len(devices),), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
+    def callback(index):
+      i = jnp.arange(len(devices))[index[0]]
+      return jax.vmap(jax.random.PRNGKey)(i)
+    result = jax.make_array_from_callback(shape, sharding, callback)
+    expected = jax.vmap(jax.random.PRNGKey)(jnp.arange(len(devices)))
+    self.assertArraysEqual(result, expected)
+
+  def test_make_array_from_single_device_arrays(self):
+    devices = jax.devices()
+    shape = (len(devices),) if config.jax_enable_custom_prng else (len(devices), 2)
+    mesh = jtu.create_global_mesh((len(devices),), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
+    keys = jax.random.split(jax.random.PRNGKey(0), len(devices))
+    arrays = [jax.device_put(keys[i:i + 1], device) for i, device in enumerate(devices)]
+    result = jax.make_array_from_single_device_arrays(shape, sharding, arrays)
+    self.assertArraysEqual(result, keys)
+
   # TODO(frostig,mattjj): more polymorphic primitives tests
 
 

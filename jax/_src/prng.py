@@ -449,6 +449,17 @@ class KeyTyRules:
       return PRNGKeyArrayImpl(aval.dtype.impl, phys_handler(bufs))
     return handler
 
+  @staticmethod
+  def make_sharded_array(aval, sharding, arrays, committed):
+    phys_aval, = KeyTyRules.physical_avals(aval)
+    phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
+    phys_arrays = [random_unwrap(arr) for arr in arrays]
+
+    phys_sharding = make_key_array_phys_sharding(aval, sharding, False)
+    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed, False)
+    phys_result = phys_handler(phys_arrays)
+    return PRNGKeyArrayImpl(aval.dtype.impl, phys_result)
+
   # element-type-polymorphic primitive lowering rules
 
   @staticmethod
