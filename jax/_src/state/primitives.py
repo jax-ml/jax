@@ -29,7 +29,7 @@ from jax._src.lax import lax
 from jax._src.typing import Array
 from jax._src.state.types import (AbstractRef, ReadEffect, WriteEffect,
                                   AccumEffect)
-from jax._src.util import safe_map, safe_zip, partition_list, tuple_insert
+from jax._src.util import safe_map, safe_zip, tuple_insert
 
 
 ## General utilities
@@ -71,8 +71,16 @@ def _unpack_idx(idx: Indexer, ndim: int
                ) -> Tuple[Tuple[Array, ...], Tuple[bool, ...]]:
   if _is_trivial_indexer(idx):
     idx = tuple(slice(None) for _ in range(ndim))
-  indexed_dims_ = [type(i) != slice for i in idx]
-  _, non_slice_idx = partition_list(indexed_dims_, idx)
+  indexed_dims_ = []
+  non_slice_idx = []
+  for i in idx:
+    if isinstance(i, slice):
+      if i.start is not None or i.stop is not None or i.step is not None:
+        raise NotImplementedError("Reference indexing only supports trivial slices")
+      indexed_dims_.append(False)
+    else:
+      non_slice_idx.append(i)
+      indexed_dims_.append(True)
   indexed_dims = indexed_dims_ + [False] * (ndim - len(indexed_dims_))
   import jax.numpy as jnp
   return (tuple(map(jnp.int32, non_slice_idx)), tuple(indexed_dims))
