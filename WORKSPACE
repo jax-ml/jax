@@ -7,10 +7,10 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 #    and update the sha256 with the result.
 http_archive(
     name = "xla",
-    sha256 = "12a1a9dbb3bccad1e6fca444357e2ae9ef512612fb0c627d1ac4d88667f9ecd6",
-    strip_prefix = "xla-61a7666906f384bf08af1eb0eef9d8ace88be484",
+    sha256 = "0e32c717ec6091ac9d2a620ca895a90f1b996657a36fca952ade4ccda54e5eea",
+    strip_prefix = "xla-48b5796215744b2de022250720731c782039c39d",
     urls = [
-        "https://github.com/openxla/xla/archive/61a7666906f384bf08af1eb0eef9d8ace88be484.tar.gz",
+        "https://github.com/openxla/xla/archive/48b5796215744b2de022250720731c782039c39d.tar.gz",
     ],
 )
 
