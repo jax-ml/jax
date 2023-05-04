@@ -1912,7 +1912,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         RuntimeError,
         r'pjit requires a non-empty mesh if you are passing `PartitionSpec`s or'
-        r' `None` to in_shardings or out_shardings.*'):
+        r' `None` to in_shardings.*'):
       pjit(lambda x: x, in_shardings=P('x'))(arr)
 
     with self.assertRaisesRegex(
@@ -3564,9 +3564,16 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testEmptyMesh(self):
     error = (
         r'pjit requires a non-empty mesh if you are passing `PartitionSpec`s or'
-        r' `None` to in_shardings or out_shardings.*')
+        r' `None` to in_shardings.*')
     with self.assertRaisesRegex(RuntimeError, error):
       pjit(lambda x: x, in_shardings=None, out_shardings=None)(jnp.arange(4))
+
+  def test_pspec_to_wsc_without_mesh(self):
+    error = (
+        r'with_sharding_constraint requires a non-empty mesh if you are '
+        r'passing `PartitionSpec`s or `None` to shardings.*')
+    with self.assertRaisesRegex(RuntimeError, error):
+      pjit(lambda x: with_sharding_constraint(x, P('x')))(jnp.arange(4))
 
   @jtu.with_mesh([('x', 2)])
   def testAxisResourcesMismatch(self):
