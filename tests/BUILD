@@ -210,7 +210,7 @@ jax_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps("numpy"),
 )
 
 jax_test(
