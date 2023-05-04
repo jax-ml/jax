@@ -1189,30 +1189,44 @@ iota_2x32_shape_p.def_impl(partial(dispatch.apply_primitive, iota_2x32_shape_p))
 def iota_2x32_shape_abstract_eval(*, shape):
   return (core.ShapedArray(shape, np.dtype('uint32')),) * 2
 
-def bcast_iotas_to_reshaped_iota(add, mul, shape, iotas):
-  strides = (*map(int, np.cumprod(shape[1:][::-1])[::-1]), 1)
+def bcast_iotas_to_reshaped_iota(
+    add: Callable[[mlir.ir.Value, mlir.ir.Value], mlir.ir.Value],
+    mul: Callable[[core.DimSize, mlir.ir.Value], mlir.ir.Value],
+    shape: core.Shape,
+    iotas: Sequence[mlir.ir.Value]) -> mlir.ir.Value:
+  strides: core.Shape = (*(np.cumprod(shape[1:][::-1])[::-1]), 1)  # type: ignore
   return reduce(add, [mul(s, i) for i, s in zip(iotas, strides)])  # type: ignore
 
 def iota_2x32_shape_lowering(ctx, *, shape):
-  def _add(x, y):
+  aval_out, _ = ctx.avals_out
+  aval_u64 = core.ShapedArray(shape, np.dtype('uint64'))
+
+  def _add(x: mlir.ir.Value, y: mlir.ir.Value) -> mlir.ir.Value:
     return mlir.hlo.AddOp(x, y).result
 
-  def _mul(x, y):
-    x_const = mlir.ir_constant(np.array(x, np.dtype('uint64')),
-                               canonicalize_types=False)
-    x_bcast = mlir.hlo.BroadcastOp(x_const, mlir.dense_int_elements(shape))
+  def _mul(x: core.DimSize, y: mlir.ir.Value) -> mlir.ir.Value:
+    if core.is_constant_dim(x):
+      x_const = mlir.ir_constant(np.array(x, np.dtype('uint64')),
+                                 canonicalize_types=False)
+    else:
+      x_const, = mlir.eval_dynamic_shape(ctx, (x,))
+      x_const = hlo.ConvertOp(
+          mlir.ir.RankedTensorType.get(
+              (),
+              mlir.dtype_to_ir_type(np.dtype('uint64'))), x_const).result
+    x_bcast = mlir.broadcast_in_dim(ctx, x_const, aval_u64,
+                                    broadcast_dimensions=[])
     return mlir.hlo.MulOp(x_bcast, y).result
 
   assert len(shape) > 0
-  aval_out, _ = ctx.avals_out
-  aval_u64 = core.ShapedArray(shape, np.dtype('uint64'))
-  iotas = [mlir.hlo.IotaOp(mlir.aval_to_ir_type(aval_u64),
-                            mlir.i64_attr(dimension)).result
+
+  iotas = [mlir.iota(ctx, aval_u64, dimension=dimension)
            for dimension in range(len(shape))]
   counts = bcast_iotas_to_reshaped_iota(_add, _mul, shape, iotas)
   shift = mlir.ir_constant(np.array(32, np.dtype('uint64')),
                            canonicalize_types=False)
-  shift = mlir.hlo.BroadcastOp(shift, mlir.dense_int_elements(shape)).result
+  shift = mlir.broadcast_in_dim(ctx, shift, aval_u64,
+                                broadcast_dimensions=[])
   counts_shifted = mlir.hlo.ShiftRightLogicalOp(counts, shift).result
   counts_lo = mlir.hlo.ConvertOp(mlir.aval_to_ir_type(aval_out), counts).result
   counts_hi = mlir.hlo.ConvertOp(mlir.aval_to_ir_type(aval_out),
@@ -1254,11 +1268,13 @@ def threefry_2x32(keypair, count):
   return lax.reshape(out[:-1] if odd_size else out, count.shape)
 
 
-def threefry_split(key: typing.Array, num: int) -> typing.Array:
+def threefry_split(key: typing.Array, num: core.DimSize) -> typing.Array:
+  if not core.is_special_dim_size(num):
+    num = core.concrete_or_error(op.index, num)
   if config.jax_threefry_partitionable:
-    return _threefry_split_foldlike(key, int(num))  # type: ignore
+    return _threefry_split_foldlike(key, num)  # type: ignore
   else:
-    return _threefry_split_original(key, int(num))  # type: ignore
+    return _threefry_split_original(key, num)  # type: ignore
 
 @partial(jit, static_argnums=(1,), inline=True)
 def _threefry_split_original(key, num) -> typing.Array:
@@ -1289,8 +1305,7 @@ def threefry_random_bits(key: typing.Array, bit_width, shape):
   if bit_width not in (8, 16, 32, 64):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
 
-  if (config.jax_threefry_partitionable and
-      not any(core.is_special_dim_size(d) for d in shape)):
+  if config.jax_threefry_partitionable:
     return _threefry_random_bits_partitionable(key, bit_width, shape)
   else:
     return _threefry_random_bits_original(key, bit_width, shape)
