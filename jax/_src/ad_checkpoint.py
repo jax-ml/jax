@@ -348,15 +348,22 @@ class WrapHashably:
 # See api_benchmark.py:bench_remat_eager_retracing_overheads_static_argnums.
 # On that benchmark, including this caching makes a ~10x difference (which can
 # be made arbitrary large by involving larger functions to be traced).
-@weakref_lru_cache
 def _dyn_args_fun(fun: Callable, static_argnums: FrozenSet[int],
                   static_args: Tuple[WrapHashably, ...], nargs: int):
+  if any(isinstance(x.val, core.Tracer) for x in static_args):
+    return _dyn_args_fun_uncached(fun, static_argnums, static_args, nargs)
+  return _dyn_args_fun_cached(fun, static_argnums, static_args, nargs)
+
+def _dyn_args_fun_uncached(fun: Callable, static_argnums: FrozenSet[int],
+                           static_args: Tuple[WrapHashably, ...], nargs: int):
   def new_fun(*dyn_args, **kwargs):
     static_args_, dyn_args_ = iter(static_args), iter(dyn_args)
     full_args = [next(static_args_).val if i in static_argnums
                  else next(dyn_args_) for i in range(nargs)]
     return fun(*full_args, **kwargs)
   return new_fun
+
+_dyn_args_fun_cached = weakref_lru_cache(_dyn_args_fun_uncached)
 
 # This helper is similar to those in control_flow/common.py, but with
 # remat-specific errors.
