@@ -364,6 +364,10 @@ class KeyTyRules:
                              jnp.dtype('uint32'))]
 
   @staticmethod
+  def physical_const(val) -> Array:
+    return val.unsafe_raw_array()
+
+  @staticmethod
   def physical_op_sharding(aval, op_sharding_proto):
     key_shape = aval.dtype.impl.key_shape
     new_op_sharding = op_sharding_proto.clone()
