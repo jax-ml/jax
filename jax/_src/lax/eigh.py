@@ -49,6 +49,8 @@ from jax._src.lax.stack import Stack
 
 # TODO(phawkins): consider extracting _mask/_slice/_update_slice into a
 # separate module.
+def _round_up(i, n):
+  return ((i+n-1) // n) * n
 
 def _mask(x, dims, alternative=0):
   """Masks `x` up to the dynamic shape `dims`.
@@ -418,16 +420,28 @@ def _eigh_work(H, n, termination_size=256):
 
   # It would be wasteful to perform all computation padded up to the original
   # matrix size. Instead, we form buckets of padded sizes e.g.,
-  # [256, 512, 1024, ..., N], aiming for a balance between compilation time
+  # [N_0, N_1, ... N_k], aiming for a balance between compilation time
   # and runtime.
   cutoff = min(N, termination_size)
   buckets = [cutoff]
   branches = [partial(base_case, cutoff)]
-  i = cutoff
-  while i < N:
-    i = min(2 * i, N)
-    buckets.append(i)
-    branches.append(partial(recursive_case, i))
+  if N > termination_size:
+    # If N > termination_size  We use the following schedule:
+    #   1. N_0 = N,
+    #   2. N_i = _round_up(int(N_{i-1} / 1.98), 32), 0 < i < k
+    #   3. N_k = termination_size
+    # the rule for N_i is to avoid falling into the original large bucket
+    # when not splitting exactly at the half-way point during the recursion.
+    buckets.append(N)
+    branches.append(partial(recursive_case, N))
+    multiplier = 1.98
+    granularity = 32
+    i = int(N / multiplier)
+    while i > cutoff:
+      bucket_size = _round_up(i, granularity)
+      buckets.append(bucket_size)
+      branches.append(partial(recursive_case, bucket_size))
+      i = i // 2
   buckets = jnp.array(buckets, dtype='int32')
 
   def loop_body(state):
@@ -468,9 +482,6 @@ def eigh(H, *, precision="float32", termination_size=256, n=None,
       H = _mask(H, (n, n))
     return lax_linalg.eigh_jacobi(
         H, sort_eigenvalues=sort_eigenvalues)
-
-  # TODO(phawkins): consider rounding N up to a larger size to maximize reuse
-  # between matrices.
 
   n = N if n is None else n
   with jax.default_matmul_precision(precision):
