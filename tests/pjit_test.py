@@ -3378,7 +3378,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     spec = P(resources, None)
     mesh_size = str(math.prod([dim[1] for dim in mesh]))
     error = re.compile(
-        r"One of pjit arguments.*" + spec_regex(spec) + r".*"
+        r"One of pjit arguments with pytree key path x.*" + spec_regex(spec) + r".*"
         r"implies that the global size of its dimension 0 should be "
         r"divisible by " + mesh_size + r", but it is equal to 3 "
         r"\(full shape: \(3, 2\)\)", re.M | re.S)
@@ -3391,11 +3391,12 @@ class PJitErrorTest(jtu.JaxTestCase):
     spec = P(resources, None)
     mesh_size = str(math.prod([dim[1] for dim in mesh]))
     error = re.compile(
-        r"One of pjit outputs.*" + spec_regex(spec) + r".*"
+        r"One of pjit outputs with pytree key path \['rrr'\].*" + spec_regex(spec) + r".*"
         r"implies that the global size of its dimension 0 should be "
         r"divisible by " + mesh_size + r", but it is equal to 3", re.M | re.S)
     with self.assertRaisesRegex(ValueError, error):
-      pjit(lambda x: x, in_shardings=None, out_shardings=P(resources, None))(x)
+      pjit(lambda x: {'rrr': x}, in_shardings=None,
+           out_shardings=P(resources, None))(x)
 
   @check_1d_2d_mesh(set_mesh=False)
   @jtu.with_mesh([('z', 1)])
