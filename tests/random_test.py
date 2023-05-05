@@ -40,6 +40,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax import vmap
 from jax.interpreters import xla
+from jax.experimental import multihost_utils
 
 from jax._src import random as jax_random
 from jax._src import prng as prng_internal
@@ -1874,6 +1875,18 @@ class KeyArrayTest(jtu.JaxTestCase):
     arrays = [jax.device_put(keys[i:i + 1], device) for i, device in enumerate(devices)]
     result = jax.make_array_from_single_device_arrays(shape, sharding, arrays)
     self.assertArraysEqual(result, keys)
+
+  def test_multihost_utils(self):
+    devices = jax.devices()
+    pspec = jax.sharding.PartitionSpec('x')
+    mesh = jax.sharding.Mesh(devices, pspec)
+    key_local = self.make_keys(len(devices))
+
+    key_global = multihost_utils.host_local_array_to_global_array(key_local, mesh, pspec)
+    self.assertArraysEqual(key_local, key_global)
+
+    key_local_2 = multihost_utils.global_array_to_host_local_array(key_global, mesh, pspec)
+    self.assertArraysEqual(key_local, key_local_2)
 
   # TODO(frostig,mattjj): more polymorphic primitives tests
 

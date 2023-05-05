@@ -249,10 +249,11 @@ def host_local_array_to_global_array_impl(
 
   global_aval = _local_to_global_aval(
       core.ShapedArray(arr.shape, arr.dtype), global_mesh, pspec)
-
-  return pxla.batched_device_put(
-      global_aval, jax.sharding.NamedSharding(global_mesh, pspec),
-      arrays, list(global_mesh.local_mesh.devices.flat))
+  sharding = jax.sharding.NamedSharding(global_mesh, pspec)
+  devices = list(global_mesh.local_mesh.devices.flat)
+  if core.is_opaque_dtype(global_aval.dtype):
+    return global_aval.dtype._rules.device_put_sharded(arrays, global_aval, sharding, devices)
+  return pxla.batched_device_put(global_aval, sharding, arrays, devices)
 
 
 def host_local_array_to_global_array(
@@ -350,9 +351,11 @@ def global_array_to_host_local_array_impl(
     arrays = list(
         arr[index]
         for d, index in local_sharding.devices_indices_map(arr.shape).items())
-    return pxla.batched_device_put(
-        local_aval, local_sharding, arrays,
-        list(global_mesh.local_mesh.devices.flat))
+    devices = list(global_mesh.local_mesh.devices.flat)
+    if core.is_opaque_dtype(local_aval.dtype):
+      return local_aval.dtype._rules.device_put_sharded(
+          arrays, local_aval, local_sharding, devices)
+    return pxla.batched_device_put(local_aval, local_sharding, arrays, devices)
 
 
 def global_array_to_host_local_array(
