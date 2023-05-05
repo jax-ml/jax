@@ -47,6 +47,7 @@ Then create a pull request that adds a file named
   11830: `jax.remat` / `jax.checkpoint` new implementation <11830-new-remat-checkpoint>
   12049: Type Annotation Roadmap for JAX <12049-type-annotations>
   14273: `shard_map` (`shmap`) for simple per-device code <14273-shard-map>
+  15856: `jax.extend`, an extensions module <15856-jex>
 
 
 Several early JEPs were converted in hindsight from other documentation,
