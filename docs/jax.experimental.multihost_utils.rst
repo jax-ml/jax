@@ -14,7 +14,6 @@ Multihost Utils API Reference
    sync_global_devices
    process_allgather
    assert_equal
-   reached_preemption_sync_point
    host_local_array_to_global_array
    global_array_to_host_local_array
 
