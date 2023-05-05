@@ -268,13 +268,13 @@ def host_local_array_to_global_array(
   to pjit. Example usage.
 
   >>> from jax.experimental import multihost_utils
-
+  >>>
   >>> global_inputs = multihost_utils.host_local_array_to_global_array(host_local_inputs, global_mesh, in_pspecs)
-
+  >>>
   >>> with mesh:
   >>>   global_out = pjitted_fun(global_inputs)
-
-  >>> host_local_output = multihost_utils.global_array_to_host_local_array(global_out, mesh, out_pspecs)
+  >>>
+  >>> host_local_output = multihost_utils.global_array_to_host_local_array(global_out, mesh, out_pspecs) # doctest: +SKIP
 
   Args:
     local_inputs: A Pytree of host local values.
@@ -363,13 +363,13 @@ def global_array_to_host_local_array(
   be a mechanical change. Example usage
 
   >>> from jax.experimental import multihost_utils
-
+  >>>
   >>> global_inputs = multihost_utils.host_local_array_to_global_array(host_local_inputs, global_mesh, in_pspecs)
-
+  >>>
   >>> with mesh:
   >>>   global_out = pjitted_fun(global_inputs)
-
-  >>> host_local_output = multihost_utils.global_array_to_host_local_array(global_out, mesh, out_pspecs)
+  >>>
+  >>> host_local_output = multihost_utils.global_array_to_host_local_array(global_out, mesh, out_pspecs) # doctest: +SKIP
 
   Args:
     global_inputs: A Pytree of global jax.Array's.
