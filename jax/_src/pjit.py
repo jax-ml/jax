@@ -1389,6 +1389,8 @@ def _pjit_batcher_for_sharding(
     return new_gs
   else:
     assert isinstance(s, GSPMDSharding)
+    if isinstance(getattr(s, '_original_sharding', None), NamedSharding):
+      mesh = s._original_sharding.mesh  # type: ignore
     assert mesh is not None and not mesh.empty
     parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]  # type: ignore
     parsed_pspec = parsed_pspec.insert_axis_partitions(dim, val)

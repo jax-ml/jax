@@ -2916,23 +2916,22 @@ class ArrayPjitTest(jtu.JaxTestCase):
     x = jnp.arange(math.prod(shape)).reshape(shape)
 
     def f(inp):
-      return with_sharding_constraint(inp, P('data', None, None))
+      sharding = NamedSharding(mesh, P('data', None, None))
+      return with_sharding_constraint(inp, sharding)
 
-    with mesh:
-      out = jax.vmap(jax.jit(f), spmd_axis_name='mdl')(x)
-      ns, _ = op_shardings.get_num_ways_dim_sharded(
-          out.sharding._to_xla_op_sharding(out.ndim))
-      self.assertListEqual(ns, [2, 2, 1, 1])
+    out = jax.vmap(jax.jit(f), spmd_axis_name='mdl')(x)
+    ns, _ = op_shardings.get_num_ways_dim_sharded(
+        out.sharding._to_xla_op_sharding(out.ndim))
+    self.assertListEqual(ns, [2, 2, 1, 1])
 
     def apply_with_scan(x):
       x, _ = jax.lax.scan(lambda x, _: (f(x), None), x, None, length=1)
       return x
 
-    with mesh:
-      out2 = jax.vmap(apply_with_scan, spmd_axis_name='mdl')(x)
-      ns2, _ = op_shardings.get_num_ways_dim_sharded(
-          out2.sharding._to_xla_op_sharding(out2.ndim))
-      self.assertListEqual(ns2, [2, 2, 1, 1])
+    out2 = jax.vmap(apply_with_scan, spmd_axis_name='mdl')(x)
+    ns2, _ = op_shardings.get_num_ways_dim_sharded(
+        out2.sharding._to_xla_op_sharding(out2.ndim))
+    self.assertListEqual(ns2, [2, 2, 1, 1])
 
   def test_device_put_sharding_nondivisible_sharding_error(self):
     mesh = jtu.create_global_mesh((2,), ('x',))
