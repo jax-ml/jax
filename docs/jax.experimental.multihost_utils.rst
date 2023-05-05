@@ -1,5 +1,5 @@
 ``jax.experimental.multihost_utils`` module
-==================================
+===========================================
 
 .. automodule:: jax.experimental.multihost_utils
 
