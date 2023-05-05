@@ -628,18 +628,33 @@ def make_array_from_single_device_arrays(
     >>> from jax.sharding import PartitionSpec as P
     >>> import numpy as np
     ...
-    >>> shape = (8, 8)
+    >>> global_shape = (8, 8)
     >>> global_mesh = Mesh(np.array(jax.devices()).reshape(2, 4), ('x', 'y'))
     >>> sharding = jax.sharding.NamedSharding(global_mesh, P('x', 'y'))
-    >>> inp_data = np.arange(math.prod(shape)).reshape(shape)
+    >>> inp_data = np.arange(math.prod(global_shape)).reshape(global_shape)
     ...
     >>> arrays = [
     ...     jax.device_put(inp_data[index], d)
-    ...     for d, index in sharding.addressable_devices_indices_map(shape).items()]
+    ...     for d, index in sharding.addressable_devices_indices_map(global_shape).items()]
     ...
-    >>> arr = jax.make_array_from_single_device_arrays(shape, sharding, arrays)
+    >>> arr = jax.make_array_from_single_device_arrays(global_shape, sharding, arrays)
     >>> arr.addressable_data(0).shape
     (4, 2)
+
+    In multi-process case, if the input is process local and data parallel
+    i.e. each process receives a different part of the data, then you can use
+    `make_array_from_single_device_arrays` to create a global jax.Array
+
+    >>> global_shape = (8, 2)
+    >>> host_array = np.arange(math.prod(global_shape)).reshape(global_shape)
+    >>> arrays = jax.device_put(
+    ...   np.split(host_array, len(global_mesh.local_devices), axis=0),
+    ...   global_mesh.local_devices)
+    >>> arr = jax.make_array_from_single_device_arrays(
+    ...   global_shape, jax.sharding.NamedSharding(global_mesh, P(('x', 'y'))),
+    ...   arrays)
+    >>> arr.addressable_data(0).shape
+    (1, 2)
   """
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
