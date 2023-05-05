@@ -630,7 +630,10 @@ jax_test(
     srcs = ["random_test.py"],
     backend_tags = {
         "cpu": ["notsan"],  # Times out
-        "tpu": ["optonly"],
+        "tpu": [
+            "optonly",
+            "nomsan",  # Times out
+        ],
     },
     shard_count = {
         "cpu": 30,
@@ -775,6 +778,7 @@ jax_test(
     srcs = ["sparsify_test.py"],
     args = ["--jax_bcoo_cusparse_lowering=true"],
     backend_tags = {
+        "cpu": ["noasan"],  # Times out under asan
         "tpu": [
             "noasan",  # Times out under asan.
         ],
