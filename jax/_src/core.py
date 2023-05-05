@@ -1729,6 +1729,8 @@ class DArray:
     if isinstance(other, DArray) and self._aval == other._aval:
       return self._data == other._data
     return False
+  def __len__(self):
+    return self.shape[0]
 
 pytype_aval_mappings[DArray] = \
     lambda x: DConcreteArray(x._aval.shape, x._aval.dtype, x._aval.weak_type,

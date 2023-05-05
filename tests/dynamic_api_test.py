@@ -1490,42 +1490,47 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     self.assertEqual(y.shape, (sz, 4))
     self.assertAllClose(y._data, x)
 
-@unittest.skip("Test does not work with jax.Array")
-@jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
+@jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow",
+                 jax_disable_jit=True, jax_traceback_filtering='off')
 class PileTest(jtu.JaxTestCase):
 
   def test_internal_pile(self):
-    xs = jax.vmap(lambda n: jnp.arange(n).sum())(jnp.array([3, 1, 4]))
+    ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    xs = jax.vmap(lambda n: jax.lax.iota('int32', n).sum())(ins)
     self.assertAllClose(xs, jnp.array([3, 0, 6]), check_dtypes=False)
 
   def test_make_pile_from_dynamic_shape(self):
     # We may not want to support returning piles from vmapped functions (instead
     # preferring to have a separate API which allows piles). But for now it
     # makes for a convenient way to construct piles for the other tests!
-    p = jax.vmap(partial(jnp.arange, dtype='int32'), out_axes=batching.pile_axis
-                 )(jnp.array([3, 1, 4]))
+    ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    p = jax.vmap(partial(jnp.arange, dtype='int32'),
+                 out_axes=batching.pile_axis)(ins)
     self.assertIsInstance(p, batching.Pile)
-    self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[\[3 1 4\]\.Var[0-9]+\]')
-    data = jnp.concatenate([jnp.arange(3), jnp.arange(1), jnp.arange(4)])
+    self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[bint\{≤5\}\[3\] with value:\n\[3 1 4\]\.Var[0-9]+\]')
+    data = jax.lax.broadcasted_iota('int32', (3, 5), 1)
     self.assertAllClose(p.data, data, check_dtypes=False)
 
   def test_pile_map_eltwise(self):
-    p = jax.vmap(partial(jnp.arange, dtype='int32'), out_axes=batching.pile_axis
-                 )(jnp.array([3, 1, 4]))
+    ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    p = jax.vmap(partial(jnp.arange, dtype='int32'),
+                 out_axes=batching.pile_axis)(ins)
     p = pile_map(lambda x: x ** 2)(p)
     self.assertIsInstance(p, batching.Pile)
-    self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[\[3 1 4\]\.Var[0-9]+\]')
-    data = jnp.concatenate([jnp.arange(3), jnp.arange(1), jnp.arange(4)]) ** 2
+    self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[bint\{≤5\}\[3\] with value:\n\[3 1 4\]\.Var[0-9]+\]')
+    data = jax.lax.broadcasted_iota('int32', (3, 5), 1) ** 2
     self.assertAllClose(p.data, data, check_dtypes=False)
 
   def test_pile_map_vector_dot(self):
-    p = jax.vmap(jnp.arange, out_axes=batching.pile_axis)(jnp.array([3, 1, 4]))
+    ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    p = jax.vmap(partial(jnp.arange, dtype='int32'),
+                 out_axes=batching.pile_axis)(ins)
     y = pile_map(jnp.dot)(p, p)
     self.assertIsInstance(y, batching.Pile)
     self.assertAllClose(y.data, jnp.array([5, 0, 14]))
 
   def test_pile_map_matrix_dot(self):
-    sizes = jnp.array([3, 1, 4])
+    sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
     p1 = jax.vmap(lambda n: jnp.ones((7, n)), out_axes=batching.pile_axis
                   )(sizes)
     p2 = jax.vmap(lambda n: jnp.ones((n, 7)), out_axes=batching.pile_axis

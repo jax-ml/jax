@@ -51,7 +51,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
-from jax._src.interpreters.batching import ConcatAxis
+from jax._src.interpreters.batching import RaggedAxis
 from jax._src.lax import slicing
 from jax._src.lax.utils import (
   _input_dtype,
@@ -2546,21 +2546,16 @@ def _dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
   lhs, rhs = batched_args
   lbd, rbd = batch_dims
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
-  if (type(lbd) is type(rbd) is ConcatAxis and
-      lbd.axis in lhs_contract and rbd.axis in rhs_contract):
-    # first handle any other part of the dot with these as batch dims
-    lhs_contract_ = [d for d in lhs_contract if d != lbd.axis]
-    rhs_contract_ = [d for d in rhs_contract if d != rbd.axis]
-    lhs_batch_ = (lbd.axis, *lhs_batch)
-    rhs_batch_ = (rbd.axis, *rhs_batch)
-    new_dnums = ((lhs_contract_, rhs_contract_), (lhs_batch_, rhs_batch_))
-    out = dot_general(lhs, rhs, new_dnums, precision=precision,
-                      preferred_element_type=preferred_element_type)
-    # now a segment sum along that batch axis
-    return batching.segment_sum(out, lbd.segment_lengths), 0
-
+  left_stack_dim = lbd.stacked_axis if type(lbd) is RaggedAxis else lbd
+  right_stack_dim = rbd.stacked_axis if type(rbd) is RaggedAxis else rbd
   new_dimension_numbers, result_batch_dim = _dot_general_batch_dim_nums(
-      (lhs.ndim, rhs.ndim), batch_dims, dimension_numbers)
+      (lhs.ndim, rhs.ndim), (left_stack_dim, right_stack_dim), dimension_numbers)
+  # TODO Should probably check that any ragged dimensions have corresponding
+  # sizes, because otherwise the dot product is technically undefined.
+  if type(lbd) is RaggedAxis:
+    lhs = batching.mask_ragged_axis(lhs, _get_sum_identity, lbd)
+  if type(rbd) is RaggedAxis:
+    rhs = batching.mask_ragged_axis(rhs, _get_sum_identity, rbd)
   batched_out = dot_general(lhs, rhs, new_dimension_numbers,
                             precision=precision,
                             preferred_element_type=preferred_element_type)
@@ -2586,34 +2581,13 @@ def _dot_general_batch_dim_nums(ndims, batch_dims, dimension_numbers):
     lhs_contract = bump_dims(lhs_contract, lbd)
     rhs_contract = bump_dims(rhs_contract, rbd)
     result_batch_dim = 0
-  elif rbd is None and type(lbd) is ConcatAxis and lbd.axis not in lhs_contract:
-    if lbd.axis in lhs_batch:
-      axis = int(np.sum(np.less(lhs_batch, lbd.axis)))
-    else:
-      lhs_tensor = [d for d in range(lhs_ndim)
-                    if d not in lhs_batch and d not in lhs_contract]
-      axis = len(lhs_batch) + int(np.sum(np.less(lhs_tensor, lbd.axis)))
-    result_batch_dim = ConcatAxis(axis, lbd.segment_lengths)
-  elif lbd is None and type(rbd) is ConcatAxis and rbd.axis not in rhs_contract:
-    if rbd.axis in rhs_batch:
-      axis = int(np.sum(np.less(rhs_batch, rbd.axis)))
-    else:
-      rhs_tensor = [d for d in range(rhs_ndim)
-                    if d not in rhs_batch and d not in rhs_contract]
-      axis = (lhs_ndim - len(lhs_contract) +
-              int(sum(np.less(rhs_tensor, rbd.axis))))
-    result_batch_dim = ConcatAxis(axis, rbd.segment_lengths)
-  elif (type(lbd) is int and
-        (rbd is None or type(rbd) is ConcatAxis and
-         rbd.axis not in rhs_contract)):
+  elif (type(lbd) is int and rbd is None):
     lhs_tensor = [d for d in range(lhs_ndim)
                   if d not in lhs_batch and d not in lhs_contract]
     result_batch_dim = len(lhs_batch) + int(sum(np.less(lhs_tensor, lbd)))
     lhs_batch = bump_dims(lhs_batch, lbd)
     lhs_contract = bump_dims(lhs_contract, lbd)
-  elif (type(rbd) is int and
-        (lbd is None or type(lbd) is ConcatAxis and
-         lbd.axis not in lhs_contract)):
+  elif (type(rbd) is int and lbd is None):
     rhs_tensor = [d for d in range(rhs_ndim)
                   if d not in rhs_batch and d not in rhs_contract]
     result_batch_dim = (lhs_ndim - len(lhs_contract) +
@@ -2771,10 +2745,11 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
         dyn_shape_bdims[0] is not None):
     (d,), (d_bdim,) = dyn_shape, dyn_shape_bdims  # NotImplementedError above
     assert d_bdim == 0  # must be scalar in the program to be batched
-    new_shape = _merge_dyn_shape(shape, (int(d.sum()),))
+    bound = d.dtype.bound
+    new_shape = (len(d),) + _merge_dyn_shape(shape, (bound,))
     out = broadcast_in_dim(operand, new_shape, broadcast_dimensions)
     idx, = (i for i, s in enumerate(shape) if s is None)
-    return out, batching.ConcatAxis(idx, d)
+    return out, batching.RaggedAxis(0, idx+1, d)
   else:
     raise NotImplementedError  # TODO(mattjj)
 
@@ -3633,7 +3608,7 @@ reduce_sum_p = standard_primitive(
   _reduce_sum_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_sum'),
   'reduce_sum')
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
-batching.defreducer(reduce_sum_p)
+batching.defreducer(reduce_sum_p, _get_sum_identity)
 pe.padding_rules[reduce_sum_p] = partial(_reducer_padding, _reduce_sum,
                                          _get_sum_identity)
 
@@ -3657,7 +3632,7 @@ reduce_prod_p = standard_primitive(
   _reduce_op_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_prod'),
   'reduce_prod')
 ad.primitive_jvps[reduce_prod_p] = _reduce_prod_jvp_rule
-batching.defreducer(reduce_prod_p)
+batching.defreducer(reduce_prod_p, _get_prod_identity)
 pe.padding_rules[reduce_prod_p] = partial(_reducer_padding, _reduce_prod,
                                           _get_prod_identity)
 
@@ -3679,7 +3654,7 @@ def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
 reduce_max_p = standard_primitive(_reduce_op_shape_rule, _input_dtype,
                                   'reduce_max')
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
-batching.defreducer(reduce_max_p)
+batching.defreducer(reduce_max_p, _get_max_identity)
 pe.padding_rules[reduce_max_p] = partial(_reducer_padding, _reduce_max,
                                          _get_max_identity)
 
@@ -3687,7 +3662,7 @@ pe.padding_rules[reduce_max_p] = partial(_reducer_padding, _reduce_max,
 reduce_min_p = standard_primitive(_reduce_op_shape_rule, _input_dtype,
                                   'reduce_min')
 ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
-batching.defreducer(reduce_min_p)
+batching.defreducer(reduce_min_p, _get_min_identity)
 pe.padding_rules[reduce_min_p] = partial(_reducer_padding, _reduce_min,
                                          _get_min_identity)
 
@@ -3733,12 +3708,12 @@ def _compute_argminmax(value_comparator, get_identity,
 
 argmin_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmin', weak_type_rule=_strip_weak_type)
-batching.defreducer(argmin_p)
+batching.defreducer(argmin_p, _get_min_identity)
 ad.defjvp_zero(argmin_p)
 
 argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmax', weak_type_rule=_strip_weak_type)
-batching.defreducer(argmax_p)
+batching.defreducer(argmax_p, _get_max_identity)
 ad.defjvp_zero(argmax_p)
 
 mlir.register_lowering(argmin_p, mlir.cache_lowering(mlir.lower_fun(
@@ -3758,19 +3733,19 @@ def _reduce_logical_shape_rule(operand, *, axes):
 reduce_or_p = standard_primitive(
     _reduce_logical_shape_rule, _input_dtype, 'reduce_or',
     weak_type_rule=_strip_weak_type)
-batching.defreducer(reduce_or_p)
+batching.defreducer(reduce_or_p, _get_bitwise_or_identity)
 
 
 reduce_and_p = standard_primitive(
     _reduce_logical_shape_rule, _input_dtype, 'reduce_and',
     weak_type_rule=_strip_weak_type)
-batching.defreducer(reduce_and_p)
+batching.defreducer(reduce_and_p, _get_bitwise_and_identity)
 
 
 reduce_xor_p = standard_primitive(
     _reduce_logical_shape_rule, _input_dtype, 'reduce_xor',
     weak_type_rule=_strip_weak_type)
-batching.defreducer(reduce_xor_p)
+batching.defreducer(reduce_xor_p, _get_bitwise_or_identity)
 
 
 def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes):
@@ -4478,9 +4453,12 @@ mlir.register_lowering(iota_p, _iota_lower)
 
 def _iota_batching_rule(in_vals, in_dims, *, dtype, shape, dimension):
   (segment_lengths,), (ax,) = in_vals, in_dims
-  shapes = [_merge_dyn_shape(shape, (d,)) for d in segment_lengths]
-  iotas = [broadcasted_iota(dtype, s, dimension) for s in shapes]
-  return concatenate(iotas, dimension), batching.ConcatAxis(ax, segment_lengths)
+  assert ax == 0
+  bound = segment_lengths.dtype.bound
+  ragged_axis, = [i for i, dim in enumerate(shape) if dim is None]
+  shape = (len(segment_lengths),) + _merge_dyn_shape(shape, (bound,))
+  iota = broadcasted_iota(dtype, shape, dimension+1)
+  return iota, batching.RaggedAxis(ax, ragged_axis+1, segment_lengths)
 batching.primitive_batchers[iota_p] = _iota_batching_rule
 
 def _iota_pp_rule(eqn, context, settings):
