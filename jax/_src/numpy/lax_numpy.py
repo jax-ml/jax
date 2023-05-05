@@ -2895,9 +2895,8 @@ def delete(arr, obj, axis=None, *, assume_unique_indices=False):
 
   # Case 2: obj is a static slice.
   if isinstance(obj, slice):
-    # TODO(jakevdp): we should be able to do this dynamically with care.
-    indices = np.delete(np.arange(arr.shape[axis]), obj)
-    return take(arr, indices, axis=axis)
+    obj = arange(arr.shape[axis])[obj]
+    assume_unique_indices = True
 
   # Case 3: obj is an array
   # NB: pass both arrays to check for appropriate error message.
