@@ -160,12 +160,16 @@ def serial_loop(name: ResourceAxisName, length: int):
 
   Example::
 
-    with loop('l', 4):
-      out = xmap(
-        lambda x: jnp.sin(x) * 5,  # This will be called 4 times with different
-                                   # slices of x.
-        in_axes=['i'], out_axes=['i'],
-        axis_resources={'i': 'l'})(x)
+    >>> x = jnp.linspace(0, jnp.pi, 4)
+    ...
+    >>> with serial_loop('l', len(x)):
+    ...   out = xmap(
+    ...     lambda x: jnp.sin(x) * 5,  # This will be called 4 times with different
+    ...                                # slices of x.
+    ...     in_axes=['i'], out_axes=['i'],
+    ...     axis_resources={'i': 'l'})(x)
+    >>> out.shape
+    (4,)
   """
   old_env: ResourceEnv = getattr(thread_resources, "env", EMPTY_ENV)
   thread_resources.env = old_env.with_extra_loop(mesh_lib.Loop(name, length))
