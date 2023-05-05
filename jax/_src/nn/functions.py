@@ -454,6 +454,9 @@ def one_hot(x: Array, num_classes: int, *,
     num_classes = core.concrete_or_error(
         int, num_classes,
         "The error arose in jax.nn.one_hot argument `num_classes`.")
+  x = jnp.asarray(x)
+  if not jnp.issubdtype(x.dtype, jnp.integer):
+    raise ValueError(f"jax.nn.one_hot: expected integer type, got {x.dtype=}")
   return _one_hot(x, num_classes, dtype=dtype, axis=axis)
 
 

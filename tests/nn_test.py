@@ -215,6 +215,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
                           [False, False, True]])
     self.assertAllClose(actual, expected)
 
+  def testOneHotNonIntInput(self):
+    with self.assertRaisesRegex(ValueError, "jax.nn.one_hot: expected integer type"):
+      nn.one_hot(jnp.array([0.0, 1.0, 2.0]), 3)
+
   def testOneHotConcretizationError(self):
     # https://github.com/google/jax/issues/3654
     msg = r"in jax.nn.one_hot argument `num_classes`"
