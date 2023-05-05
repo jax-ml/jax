@@ -592,7 +592,7 @@ def bench_pjit_check_aval_sharding(state):
   aval = jax.core.ShapedArray((8, 2), np.int32)
 
   while state:
-    pjit_check_aval_sharding([s] * 100, [aval] * 100, 'benchmark', False)
+    pjit_check_aval_sharding([s] * 100, [aval] * 100, None, 'benchmark', False)
 
 
 @google_benchmark.register
