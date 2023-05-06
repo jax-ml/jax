@@ -1410,6 +1410,28 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual(xla_call_module.attr["version"].i, 5)
     self.assertIn("function_list", str(xla_call_module.attr))
 
+  def test_b279454591(self):
+    inputs = jnp.ones([10], dtype=jnp.float32)
+
+    # With one or more outputs, it is okay.
+    def tf_f(x):
+      y = tf.math.sin(3.0)
+      tf.print(y)
+      return x
+
+    jax_f = jax2tf.call_tf(tf.function(tf_f), call_tf_graph=True, output_shape_dtype=jax.ShapeDtypeStruct((10,), jnp.float32))
+    tf_f_rt = jax2tf.convert(jax_f, native_serialization=True, native_serialization_strict_checks=False, with_gradient=False)
+    _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt, input_args=[inputs])
+
+    # With zero output, it return `StatefulPartitionedCall` op instead.
+    def tf_f_2():
+      y = tf.math.sin(3.0)
+      tf.print(y)
+      return
+
+    jax_f_2 = jax2tf.call_tf(tf.function(tf_f_2), call_tf_graph=True)
+    tf_f_rt_2 = jax2tf.convert(jax_f_2, native_serialization=True, native_serialization_strict_checks=False, with_gradient=False)
+    _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt_2, input_args=[])
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
