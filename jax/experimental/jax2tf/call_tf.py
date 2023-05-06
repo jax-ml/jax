@@ -145,6 +145,26 @@ def call_tf(
     def callable_flat_tf(*args_tf_flat: TfVal) -> Sequence[TfVal]:
       args_tf = args_treedef.unflatten(args_tf_flat)
       res_tf = callable_tf(*args_tf)
+
+      # b/279454591: When `callable_tf` is a tf function with zero outputs, it
+      # returns a `StatefulPartitionedCall` (if the function is stateful) or
+      # `PartitionedCall` (if the function is stateless) op instead of
+      # tf.Tensors. We work around this issue by replacing the output `res_tf`
+      # with an empty list.
+
+      if isinstance(res_tf, tf.Operation):
+        assert (
+            res_tf.type == "StatefulPartitionedCall"
+            or res_tf.type == "PartitionedCall"
+        )
+        t_out = res_tf.get_attr("Tout")
+        # t_out should be an empty list.
+        assert not t_out, (
+            "The TF function returned an unexpected result, please check its"
+            f" function body. res_tf = {res_tf}"
+        )
+        res_tf = t_out
+
       nonlocal res_treedef, res_tf_flat
       res_tf_flat, res_treedef_now = tree_util.tree_flatten(res_tf)
       assert res_treedef is None or res_treedef == res_treedef_now, (
