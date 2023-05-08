@@ -2670,11 +2670,6 @@ def _make_vmap_primitive_harnesses() -> Sequence[PolyHarness]:
     # And the jax2tf limitations that are known to result in TF error.
     if any(l.expect_tf_error for l in _get_jax2tf_limitations(device, h)):
       continue
-    # TODO(marcvanzee): We currently exclude tests with enable_xla=False because
-    # this doesn't work with vmap due to a call to lax.gather. We should include
-    # them once vmap works with enable_xla=False.
-    if not h.params.get("enable_xla", True):
-      continue
     harness_groups[h.group_name].append(h)
 
   selected_harnesses = []
