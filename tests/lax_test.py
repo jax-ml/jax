@@ -2051,13 +2051,16 @@ class LaxTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=[np.float32, np.int32, np.uint32],
-    shape=[(3,), (5, 3)],
-    k=[1, 3],
+    shape=[(20,), (5, 20), (2000,)],
+    k=[1, 3, 12],
+    negative=[False, True]
   )
-  def testTopK(self, shape, dtype, k):
+  def testTopK(self, shape, dtype, k, negative):
     def args_maker():
       flat_values = np.arange(math.prod(shape), dtype=dtype)
       values = self.rng().permutation(flat_values).reshape(shape)
+      if negative:
+        values = -values
       return [values]
     def reference_top_k(x):
       bcast_idxs = np.broadcast_to(np.arange(shape[-1], dtype=np.int32), shape)
