@@ -201,9 +201,11 @@ static absl::Status DnnRNNForward_(gpuStream_t stream, void** buffers,
   auto seq_lengths_buf = buffers[4];
   std::vector<int32_t> seq_length_vector(d.batch_size, 0);
   int32_t* seq_length_array = &seq_length_vector[0];
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpy(
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpyAsync(
       seq_length_array, seq_lengths_buf,
-      seq_length_vector.size() * sizeof(int32_t), gpuMemcpyDeviceToHost)));
+      seq_length_vector.size() * sizeof(int32_t), gpuMemcpyDeviceToHost,
+      stream)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
 
   cudnnRNNDataDescriptor_t input_data_desc;
   JAX_RETURN_IF_ERROR(

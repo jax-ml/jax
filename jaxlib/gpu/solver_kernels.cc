@@ -465,7 +465,7 @@ static absl::Status Syevd_(gpuStream_t stream, void** buffers,
                    reinterpret_cast<const std::int64_t*>(buffers[1]),
                    sizeof(batch), gpuMemcpyDeviceToHost,
                    stream);
-    gpuStreamSynchronize(stream);
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
     output_idx = 2;
   }
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpyAsync(
