@@ -328,7 +328,11 @@ def register_pjrt_plugin_factories(plugins_from_env: str) -> None:
         library_path = path
         options = None
 
-      xla_client.load_pjrt_plugin_dynamically(name, library_path)
+      if xla_extension_version >= 152:
+        if not xla_client.pjrt_plugin_exists(name):
+          xla_client.load_pjrt_plugin_dynamically(name, library_path)
+        else:
+          xla_client.load_pjrt_plugin_dynamically(name, library_path)
       return xla_client.make_c_api_client(name, options)
 
     return factory

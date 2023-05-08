@@ -24,6 +24,7 @@ from jax._src.lib import xla_client as xc
 from jax.interpreters import xla
 
 from jax._src.config import config
+
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
@@ -34,19 +35,26 @@ class XlaBridgeTest(jtu.JaxTestCase):
 
   def test_set_device_assignment_no_partition(self):
     compile_options = xb.get_compile_options(
-        num_replicas=4, num_partitions=1, device_assignment=[0, 1, 2, 3])
-    expected_device_assignment = ("Computations: 1 Replicas: 4\nComputation 0: "
-                                  "0 1 2 3 \n")
-    self.assertEqual(compile_options.device_assignment.__repr__(),
-                     expected_device_assignment)
+        num_replicas=4, num_partitions=1, device_assignment=[0, 1, 2, 3]
+    )
+    expected_device_assignment = (
+        "Computations: 1 Replicas: 4\nComputation 0: 0 1 2 3 \n"
+    )
+    self.assertEqual(
+        compile_options.device_assignment.__repr__(), expected_device_assignment
+    )
 
   def test_set_device_assignment_with_partition(self):
     compile_options = xb.get_compile_options(
-        num_replicas=2, num_partitions=2, device_assignment=[[0, 1], [2, 3]])
-    expected_device_assignment = ("Computations: 2 Replicas: 2\nComputation 0: "
-                                  "0 2 \nComputation 1: 1 3 \n")
-    self.assertEqual(compile_options.device_assignment.__repr__(),
-                     expected_device_assignment)
+        num_replicas=2, num_partitions=2, device_assignment=[[0, 1], [2, 3]]
+    )
+    expected_device_assignment = (
+        "Computations: 2 Replicas: 2\nComputation 0: "
+        "0 2 \nComputation 1: 1 3 \n"
+    )
+    self.assertEqual(
+        compile_options.device_assignment.__repr__(), expected_device_assignment
+    )
 
   def test_parameter_replication_default(self):
     c = xc.XlaBuilder("test")
@@ -56,8 +64,9 @@ class XlaBridgeTest(jtu.JaxTestCase):
 
   def test_parameter_replication(self):
     c = xc.XlaBuilder("test")
-    _ = xla.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()), "",
-                     False)
+    _ = xla.parameter(
+        c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()), "", False
+    )
     built_c = c.Build()
     assert "parameter_replication={false}" in built_c.as_hlo_text()
 
@@ -79,15 +88,17 @@ class XlaBridgeTest(jtu.JaxTestCase):
           if time.time() - start > time_to_wait:
             raise ValueError(
                 "This test should not hang for more than "
-                f"{time_to_wait} seconds.")
+                f"{time_to_wait} seconds."
+            )
           time.sleep(0.1)
 
         self.assertLen(w, 1)
         msg = str(w[-1].message)
         self.assertIn("Did you run your code on all TPU hosts?", msg)
 
-      with mock.patch.object(xc, "make_tpu_client",
-                             side_effect=_mock_tpu_client):
+      with mock.patch.object(
+          xc, "make_tpu_client", side_effect=_mock_tpu_client
+      ):
         xb.tpu_client_timer_callback(0.01)
 
   def test_register_plugin(self):
@@ -98,7 +109,10 @@ class XlaBridgeTest(jtu.JaxTestCase):
       with mock.patch.object(
           xc, "load_pjrt_plugin_dynamically", autospec=True
       ) as mock_load_plugin:
-        client_factory()
+        with mock.patch.object(
+            xc, "pjrt_plugin_exists", autospec=True
+        ) as mock_plugin_exists:
+          client_factory()
 
     self.assertRegex(
         log_output[1][0],
@@ -108,6 +122,8 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertIn("name1", xb._backend_factories)
     self.assertIn("name2", xb._backend_factories)
     self.assertEqual(priotiy, 400)
+    if xc._version >= 152:
+      mock_plugin_exists.assert_called_once_with("name1")
     mock_load_plugin.assert_called_once_with("name1", "path1")
     if xc._version >= 134:
       mock_make.assert_called_once_with("name1", None)
@@ -126,10 +142,15 @@ class XlaBridgeTest(jtu.JaxTestCase):
       with mock.patch.object(
           xc, "load_pjrt_plugin_dynamically", autospec=True
       ) as mock_load_plugin:
-        client_factory()
+        with mock.patch.object(
+            xc, "pjrt_plugin_exists", autospec=True
+        ) as mock_plugin_exists:
+          client_factory()
 
     self.assertIn("name1", xb._backend_factories)
     self.assertEqual(priority, 400)
+    if xc._version >= 152:
+      mock_plugin_exists.assert_called_once_with("name1")
     mock_load_plugin.assert_called_once_with(
         "name1", "/path/pjrt_plugin_name1.so"
     )
@@ -147,6 +168,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
 class GetBackendTest(jtu.JaxTestCase):
 
   class _DummyBackend:
+
     def __init__(self, platform, device_count):
       self.platform = platform
       self._device_count = device_count
@@ -160,24 +182,29 @@ class GetBackendTest(jtu.JaxTestCase):
     def local_devices(self):
       return []
 
-  def _register_factory(self, platform: str, priority, device_count=1,
-                        assert_used_at_most_once=False):
+  def _register_factory(
+      self,
+      platform: str,
+      priority,
+      device_count=1,
+      assert_used_at_most_once=False,
+  ):
     if assert_used_at_most_once:
       used = []
+
     def factory():
       if assert_used_at_most_once:
         if used:
           # We need to fail aggressively here since exceptions are caught by
           # the caller and suppressed.
-          logging.fatal("Backend factory for %s was called more than once",
-                        platform)
+          logging.fatal(
+              "Backend factory for %s was called more than once", platform
+          )
         else:
           used.append(True)
       return self._DummyBackend(platform, device_count)
 
-    xb.register_backend_factory(
-        platform, factory,
-        priority=priority)
+    xb.register_backend_factory(platform, factory, priority=priority)
 
   def setUp(self):
     self._orig_factories = xb._backend_factories
@@ -253,7 +280,8 @@ class GetBackendTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         RuntimeError,
         "Backend 'no_devices' failed to initialize: "
-        "Backend 'no_devices' provides no devices."):
+        "Backend 'no_devices' provides no devices.",
+    ):
       xb.get_backend("no_devices")
 
     self._reset_backend_state()
@@ -264,7 +292,8 @@ class GetBackendTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         RuntimeError,
         "Backend 'no_devices2' failed to initialize: "
-        "Backend 'no_devices2' provides no devices."):
+        "Backend 'no_devices2' provides no devices.",
+    ):
       xb.get_backend("no_devices2")
 
   def test_factory_returns_none(self):
@@ -274,7 +303,8 @@ class GetBackendTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         RuntimeError,
         "Backend 'none' failed to initialize: "
-        "Could not initialize backend 'none'"):
+        "Could not initialize backend 'none'",
+    ):
       xb.get_backend("none")
 
   def cpu_fallback_warning(self):
