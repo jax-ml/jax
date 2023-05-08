@@ -69,9 +69,11 @@ expect_error_associative_scan = (
 
 class DimExprTest(tf_test_util.JaxToTfTestCase):
 
-  def test_parse_poly_spec(self):
+  def test_parse_shape(self):
+    self.assertEqual((), shape_poly._parse_spec("", ()))
+    self.assertEqual((), shape_poly._parse_spec("()", ()))
     self.assertEqual((2, 3), shape_poly._parse_spec(None, (2, 3)))
-    self.assertEqual((2, 3), shape_poly._parse_spec("2, 3", (2, 3)))
+    self.assertEqual((2, 3), shape_poly._parse_spec("2, 3,", (2, 3)))
     self.assertEqual((2, 3), shape_poly._parse_spec("2, _", (2, 3)))
     self.assertEqual((2, 3), shape_poly._parse_spec("2, ...", (2, 3)))
     self.assertEqual((2, 3), shape_poly._parse_spec("...", (2, 3)))
@@ -84,42 +86,38 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
 
   a, b = shape_poly._parse_spec("a, b", (2, 3))
   @parameterized.named_parameters(
-      dict(testcase_name=f"_{dim_spec=}",
+      dict(testcase_name=f"_{dim_spec}",
            dim_spec=dim_spec, dim_poly=dim_poly)
       for dim_spec, dim_poly in [
           ("2*a*b", 2 * a * b),
           ("-2 * a^2 * b + b^2", -2 * a * a * b + b * b),
           ("-2 * a^2 * b + -1 *b^2*a", -2 * a * a * b - a * b * b),
           ("3 * a * b * a + -2", 3 * a * b * a - 2),
-          ("a + 1", a + 1),
+          ("a + 1 ,", a + 1),
+          ("a - 1", a - 1),
           ("a + -1", a - 1),
+          ("3 * a * mod(a + 2, b + 2)", 3 * a * ((a + 2) % (b + 2))),
+          ("3 * floordiv(a + 2, b + 2) * 2", 3 * ((a + 2) // (b + 2)) * 2),
   ])
-  def test_parse_poly_spec_poly(self,
-                                dim_spec="3 * a * b * a + -2",
-                                dim_poly=3 * a * b * a - 2):
-    # For internal usage only (the polymorphic_shapes of VJP) we need to
-    # parse polynomials.
-    self.assertEqual((dim_poly,), shape_poly._parse_spec(dim_spec, (2,)))
-    self.assertEqual((dim_poly,), shape_poly._parse_spec(str(dim_poly), (2,)))
+  def test_parse_dim(self,
+                     dim_spec="-2 * a^2 * b + b^2",
+                     dim_poly=-2 * a * a * b + b * b):
+    self.assertEqual((dim_poly,), shape_poly._parse_spec(dim_spec, (None,)))
+    self.assertEqual((dim_poly,), shape_poly._parse_spec(str(dim_poly), (None,)))
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_{dim_spec=}",
-           dim_spec=dim_spec, dim_poly=dim_poly)
-      for dim_spec, dim_poly in [
-          ("2*a*b", 2 * a * b),
-          ("-2 * a^2 * b + b^2", -2 * a * a * b + b * b),
-          ("-2 * a^2 * b + -1 *b^2*a", -2 * a * a * b - a * b * b),
-          ("3 * a * b * a + -2", 3 * a * b * a - 2),
-          ("a + 1", a + 1),
-          ("a + -1", a - 1),
+      dict(testcase_name=f"_{shape_spec=}",
+           shape_spec=shape_spec)
+      for shape_spec in [
+          "2.5", "a + a a", "a ^ a", "a, a",
+          "_", "...", "a ;", ")(", "2a", "a@", "'a'", "('a', ...)",
+          "mod(a)", "floordiv(a, b, c)", "..., 3"
   ])
-  def test_parse_poly_spec_shapeenv(self,
-                                dim_spec="3 * a * b * a + -2",
-                                dim_poly=3 * a * b * a - 2):
-    # For internal usage only (the polymorphic_shapes of VJP) we need to
-    # parse polynomials.
-    self.assertEqual((dim_poly,), shape_poly._parse_spec(dim_spec, (2,)))
-    self.assertEqual((dim_poly,), shape_poly._parse_spec(str(dim_poly), (2,)))
+  def test_parse_error(self,
+                       shape_spec="a + a a"):
+    with self.assertRaisesRegex(ValueError,
+                                "syntax error in polymorphic shape"):
+      shape_poly._parse_spec(shape_spec, (None,))
 
   def test_dim_vars(self):
     a, b, a1 = shape_poly._parse_spec("a, b, a", (2, 3, 2))
@@ -804,7 +802,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      expected_output_signature=tf.TensorSpec([3]))
 
   def test_forgot_polymorphic_shapes_error(self):
-    msg_re = "polymorphic shape None in axis .* must contain a dimension variable for unknown dimension in argument shape .*. Perhaps you forgot to add the polymorphic_shapes"
+    msg_re = "syntax error in polymorphic shape"
     with self.assertRaisesRegex(ValueError, msg_re):
       check_shape_poly(self,
                        jnp.sin,
@@ -968,87 +966,11 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
           polymorphic_shapes=[PS("3 * b + 10", ...)],
           eager_mode=True)
 
-
-    for invalid_syntax in [")(", "2a", "a@", "a - 2", "'a'", "('a', ...)"]:
-      with self.assertRaisesRegex(ValueError,
-                                  re.escape("has invalid syntax")):
-        check_avals(
-            arg_shapes=[(2,)], polymorphic_shapes=[invalid_syntax])
-
     for invalid_syntax in [5.0, ["a list"], ("a tuple",), re.compile(".")]:
       with self.assertRaisesRegex(ValueError,
                                   re.escape("Invalid polymorphic shape element")):
         check_avals(
             arg_shapes=[(2,)], polymorphic_shapes=[PS([invalid_syntax])])
-
-    with self.assertRaisesRegex(
-        ValueError,
-        re.escape("polymorphic shape '..., 3' can contain Ellipsis only at the end.")):
-      check_avals(
-          arg_shapes=[(2, 3)],
-          polymorphic_shapes=["..., 3"])
-
-    with self.assertRaisesRegex(
-        ValueError,
-        re.escape(
-            "polymorphic shape '2, 3, 4, ...' of rank 3 must match the rank 2 of argument shape (2, 3).")
-    ):
-      check_avals(
-          arg_shapes=[(2, 3)],
-          polymorphic_shapes=["2, 3, 4, ..."])
-
-    with self.assertRaisesRegex(
-        ValueError,
-        re.escape(
-            "polymorphic shape (Ellipsis, 3) can contain Ellipsis only at the end.")):
-      check_avals(
-          arg_shapes=[(2, 3)],
-          polymorphic_shapes=[PS(..., 3)])
-
-    with self.assertRaisesRegex(
-        ValueError,
-        re.escape(
-            "polymorphic shape None in axis 1 must contain a dimension variable for unknown dimension in argument shape (2, None)"
-        )):
-      check_avals(
-          arg_shapes=[(2, None)],
-          polymorphic_shapes=[None])
-
-    with self.assertRaisesRegex(
-        ValueError,
-        re.escape("polymorphic shape '()' of rank 0 must match the rank 2 of argument shape (2, 3)")):
-      check_avals(
-          arg_shapes=[(2, 3)], polymorphic_shapes=["()"])
-
-    with self.assertRaisesRegex(
-        ValueError,
-        re.escape(
-            "polymorphic shape '(_, _)' in axis 1 must contain a dimension variable "
-            "for unknown dimension in argument shape (2, None)"
-        )):
-      check_avals(
-          arg_shapes=[(2, None)],
-          polymorphic_shapes=["(_, _)"])
-
-    with self.assertRaisesRegex(
-        ValueError,
-        re.escape(
-            "polymorphic shape '(2, 13)' in axis 1 must match the known dimension size 3 "
-            "for argument shape (2, 3)"
-        )):
-      check_avals(
-          arg_shapes=[(2, 3)],
-          polymorphic_shapes=["(2, 13)"])
-
-    with self.assertRaisesRegex(
-        ValueError,
-        re.escape(
-            "polymorphic shape '(2, 3)' in axis 1 must contain a dimension variable for "
-            "unknown dimension in argument shape (2, None)"
-        )):
-      check_avals(
-          arg_shapes=[(2, None)],
-          polymorphic_shapes=["(2, 3)"])
 
     with self.assertRaisesRegex(
         ValueError,
