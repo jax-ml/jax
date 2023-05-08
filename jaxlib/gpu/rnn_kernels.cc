@@ -75,7 +75,7 @@ DoRnnComputeWorkspaceReserveSpaceSizes(int input_size, int hidden_size,
                                        int num_layers, int batch_size,
                                        int max_seq_length, float dropout,
                                        bool bidirectional) {
-  auto h = DnnHandlePool::Borrow();
+  auto h = DnnHandlePool::Borrow(/*stream=*/nullptr);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
 

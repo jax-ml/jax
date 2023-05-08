@@ -550,7 +550,7 @@ void CooMatmat(gpuStream_t stream, void** buffers, const char* opaque,
 template <typename T, typename F>
 static absl::Status gtsv2(F computeGtsv2, gpuStream_t stream, void** buffers,
                           const char* opaque, std::size_t opaque_len) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
 
