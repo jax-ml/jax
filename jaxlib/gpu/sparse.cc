@@ -108,7 +108,7 @@ DenseVecDescriptor BuildDenseVecDescriptor(const py::dtype& data_dtype,
 std::pair<size_t, py::bytes> BuildCsrToDenseDescriptor(
     const py::dtype& data_dtype, const py::dtype& index_dtype, int rows,
     int cols, int nnz) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor d =
@@ -185,7 +185,7 @@ void CsrToDense(gpuStream_t stream, void** buffers, const char* opaque,
 std::pair<size_t, py::bytes> BuildCsrFromDenseDescriptor(
     const py::dtype& data_dtype, const py::dtype& index_dtype, int rows,
     int cols, int nnz) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor d =
@@ -262,7 +262,7 @@ std::pair<size_t, py::bytes> BuildCsrMatvecDescriptor(
     const py::dtype& data_dtype, const py::dtype& x_dtype,
     const py::dtype& compute_dtype, const py::dtype& index_dtype, int rows,
     int cols, int nnz, bool transpose) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor A =
@@ -310,7 +310,7 @@ std::pair<size_t, py::bytes> BuildCsrMatmatDescriptor(
     const py::dtype& data_dtype, const py::dtype& b_dtype,
     const py::dtype& compute_dtype, const py::dtype& index_dtype, int rows,
     int cols, int BCcols, int nnz, bool transpose) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor A =
@@ -361,7 +361,7 @@ std::pair<size_t, py::bytes> BuildCsrMatmatDescriptor(
 std::pair<size_t, py::bytes> BuildCooToDenseDescriptor(
     const py::dtype& data_dtype, const py::dtype& index_dtype, int rows,
     int cols, int nnz) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor d =
@@ -398,7 +398,7 @@ std::pair<size_t, py::bytes> BuildCooToDenseDescriptor(
 std::pair<size_t, py::bytes> BuildCooFromDenseDescriptor(
     const py::dtype& data_dtype, const py::dtype& index_dtype, int rows,
     int cols, int nnz) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor d =
@@ -435,7 +435,7 @@ std::pair<size_t, py::bytes> BuildCooMatvecDescriptor(
     const py::dtype& data_dtype, const py::dtype& x_dtype,
     const py::dtype& compute_dtype, const py::dtype& index_dtype, int rows,
     int cols, int nnz, bool transpose) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor A =
@@ -489,7 +489,7 @@ std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
   // All three matrices A, B, and C must have the same batch count.
   // Use batch stride to trigger individual mode, e.g.,
   // `rhs_batch_stride = 0` for C_i = A_i B.
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
 
@@ -554,7 +554,7 @@ py::bytes BuildGtsv2Descriptor(int m, int n, int ldb) {
 
 template <typename F>
 size_t Gtsv2BufferSize(F f, int m, int n, int ldb) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   size_t size;
