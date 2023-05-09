@@ -674,7 +674,7 @@ def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues):
     v, w = operand, operand
   return v, w
 
-def _eigh_cpu_gpu_lowering(syevd_impl, platform: str, ctx, operand, *, lower,
+def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
                            sort_eigenvalues):
   del sort_eigenvalues  # The CPU/GPU implementations always sort.
   operand_aval, = ctx.avals_in
@@ -689,9 +689,6 @@ def _eigh_cpu_gpu_lowering(syevd_impl, platform: str, ctx, operand, *, lower,
                                 "jaxlib version 0.4.9; b/261671778")
     v, w, info = syevd_impl(operand_aval.dtype, operand, lower=lower)
   else:
-    if platform in ["cuda", "rocm"] and not is_constant_shape(operand_aval.shape):
-      raise NotImplementedError("Shape polymorphism for native lowering for "
-                                "eigh is not yet ready for GPU; b/280774309")
     # The eigh implementation on CPU and GPU uses lapack helper routines to
     # find the size of the workspace based on the non-batch dimensions.
     # Therefore, we cannot yet support dynamic non-batch dimensions.
@@ -814,15 +811,15 @@ ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
 batching.primitive_batchers[eigh_p] = _eigh_batching_rule
 
 mlir.register_lowering(
-    eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_hlo, 'cpu'),
+    eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_hlo),
     platform='cpu')
 
 if gpu_solver is not None:
   mlir.register_lowering(
-    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.cuda_syevd, 'cuda'),
+    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.cuda_syevd),
     platform='cuda')
   mlir.register_lowering(
-    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.rocm_syevd, 'rocm'),
+    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.rocm_syevd),
     platform='rocm')
 
 mlir.register_lowering(

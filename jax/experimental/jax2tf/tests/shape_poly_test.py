@@ -16,6 +16,7 @@ import contextlib
 import math
 import unittest
 
+from absl import logging
 from absl.testing import absltest, parameterized
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -402,7 +403,8 @@ class PolyHarness(Harness):
                expect_error: Tuple[Optional[Any], Optional[str]] = (None, None),
                skip_jax_run: bool = False,
                check_result: bool = True,
-               tol: Optional[float] = None):
+               tol: Optional[float] = None,
+               limitations: Sequence[Jax2TfLimitation] = ()):
     """Args:
 
       group_name, name: The name for the harness. See `Harness.__init__`.
@@ -434,6 +436,8 @@ class PolyHarness(Harness):
       check_result: specifies if we want to check that the result of the shape
         polymorphic conversion produces the same result and the JAX function.
       tol: the tolerance to use for checking results.
+      limitations: if given, then apply the custom_assert and tolerance from the
+        Jax2TfLimitations.
     """
     super().__init__(group_name, name, fun, arg_descriptors,
                      dtype=np.float32)
@@ -446,6 +450,7 @@ class PolyHarness(Harness):
     self.enable_xla = enable_xla
     self.tol = tol
     self.check_result = check_result
+    self.limitations = limitations
 
   # Replicate the harness for both enable and disable xla
   def both_enable_and_disable_xla(self) -> Tuple["PolyHarness", "PolyHarness"]:
@@ -465,6 +470,9 @@ class PolyHarness(Harness):
     return (self, other)
 
   def run_test(self, tst: tf_test_util.JaxToTfTestCase):
+    def log_message(extra: str):
+      return f"[{tst._testMethodName}]: {extra}"
+
     # Make polymorphic_shapes and input_signature from poly_axes.
     if self.poly_axes is None:
       polymorphic_shapes = self.polymorphic_shapes
@@ -510,7 +518,7 @@ class PolyHarness(Harness):
           input_signature.append(arg_tensorspec)
 
     expect_error_type, expect_error_regex = self.expect_error
-    if self.skip_jax_run and self.arg_descriptors == ():
+    if self.skip_jax_run and not self.arg_descriptors:
       f_jax = self.fun
     else:
       f_jax = self.dyn_fun
@@ -548,7 +556,27 @@ class PolyHarness(Harness):
     if not self.skip_jax_run:
       res_jax = f_jax(*args)
       if self.check_result:
-        tst.assertAllClose(res_jax, res_tf, atol=self.tol, rtol=self.tol)
+        res_tf = tf.nest.map_structure(lambda t: t.numpy(), res_tf)  # type: ignore
+        custom_assert_lims = [
+            l for l in self.limitations if l.custom_assert is not None]
+        assert len(custom_assert_lims) <= 1, custom_assert_lims
+        tol = None
+        if self.tol is not None:
+          tol = self.tol
+        elif self.limitations:
+          max_lim = self.limitations[0].get_max_tolerance_limitation(
+              self.limitations)
+          if max_lim is not None:
+            tol = max_lim.tol
+
+        if not custom_assert_lims:
+          tst.assertAllClose(res_jax, res_tf, atol=tol, rtol=tol)
+        else:
+          logging.info(log_message(
+              f"Running custom_assert with tol={tol} due "
+              f"to {custom_assert_lims[0]}"))
+          custom_assert_lims[0].custom_assert(tst, res_jax, res_tf, args=args,  # type: ignore
+                                              tol=tol, err_msg=None)
 
 
 def check_shape_poly(tst, f_jax: Callable, *,
@@ -2690,7 +2718,6 @@ def _make_vmap_primitive_harnesses() -> Sequence[PolyHarness]:
       "conv_general_dilated",
 
       "tridiagonal_solve",  # batching not implemented in JAX
-      "iota",  # vmap does not make sense for 0-argument functions
       "rng_bit_generator",  # vmap not implemented
   ])
 
@@ -2721,20 +2748,15 @@ def _make_vmap_primitive_harnesses() -> Sequence[PolyHarness]:
     if not new_args:
       continue
 
-    # We do not check the result of harnesses that require custom assertions.
-    check_result = all(not l.custom_assert and not l.skip_comparison and l.tol is None
-                       for l in _get_jax2tf_limitations(device, h))
-    if h.group_name == "cumsum":
-      # TODO(necula): why do we need to adjust the cumsum tolerance?
-      tol = 1e-5
-    else:
-      tol = None
+    limitations = [
+        l for l in _get_jax2tf_limitations(device, h)
+        if not l.skip_comparison and (l.custom_assert or l.tol is not None)]
+
     vmap_harness = PolyHarness("vmap_" + h.group_name, h.name,
                                jax.vmap(h.dyn_fun, in_axes=0, out_axes=0),
                                arg_descriptors=new_args,
                                poly_axes=[0] * len(new_args),
-                               check_result=check_result,
-                               tol=tol)
+                               limitations=limitations)
     vmap_harness.original_harness = h
     res.append(vmap_harness)
   return res
@@ -2774,7 +2796,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       custom_call_harnesses = {
           "vmap_cholesky:cpu", "vmap_cholesky:gpu",
           "vmap_eig:cpu",
-          "vmap_eigh:gpu",  # b/280774309
           "vmap_fft:cpu", "fft:cpu",
           "householder_product:cpu", "householder_product:gpu",
           "vmap_geqrf:cpu", "vmap_geqrf:gpu",
@@ -2788,6 +2809,13 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       if "fft_fft_type" in harness.fullname:
         if "nr_fft_lengths=2" in harness.fullname:
           raise unittest.SkipTest("native serialization with shape polymorphism not implemented for fft with non-constant fft_lengths on GPU and TPU")
+
+      if harness.group_name == "vmap_eigh" and jtu.device_under_test() == "gpu":
+        # For eigh on GPU with shape polymorphism under native serialization,
+        # we use a different lowering for small matrices. See README.md.
+        shape = harness.original_harness.params["shape"]
+        if 0 < shape[-1] <= 32:
+          harness.check_result = False
 
       if harness.group_name == "vmap_tan":
         # Tan (b/274462307) require support for custom call mhlo.tan.
@@ -2815,6 +2843,22 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       # TODO: this is for both native and graph serialization.
       raise unittest.SkipTest(
           "shape shape polymorphism not implemented for random_gamma")
+
+    if not config.jax2tf_default_native_serialization:
+      if harness.group_name == "vmap_cumsum":
+        # For cumsum we use a different implementation than JAX native
+        # See README.md for associative scan reductions
+        harness.tol = 1e-5
+
+      if "vmap_" in harness.group_name:
+        # For non-native serialization, it seems that we cannot just use
+        # the custom_asserts; we get too many errors.
+        if [l for l in harness.limitations if l.custom_assert]:
+          harness.check_result = False
+
+      if "vmap_integer_pow" in harness.group_name:
+        # For non-native serialization the overflow behavior is different.
+        harness.check_result = False
 
     harness.run_test(self)
 
