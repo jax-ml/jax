@@ -3347,6 +3347,24 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = jax.vmap(jf)(jnp.ones((3,)))  # doesn't crash
     self.assertIsInstance(out.sharding, SingleDeviceSharding)
 
+  def test_to_gspmd_sharding_cache_with_and_without_device(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    np_inp = jnp.arange(4)
+
+    def identity(x):
+      return x
+
+    # Fill up the to_gspmd_sharding cache so that the next jit will miss it.
+    out = jax.jit(identity,
+                  in_shardings=SingleDeviceSharding(jax.devices()[0]))(np_inp)
+    self.assertEqual(out.device(), jax.devices()[0])
+    self.assertArraysEqual(out, np_inp)
+
+    out2 = jax.jit(identity, device=jax.devices()[0])(
+        jax.device_put(np_inp, NamedSharding(mesh, P('x'))))
+    self.assertEqual(out2.device(), jax.devices()[0])
+    self.assertArraysEqual(out2, np_inp)
+
 
 class TempSharding(Sharding):
 

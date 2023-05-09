@@ -433,9 +433,11 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
   # If backend or device is set as an arg on jit, then resolve them to
   # in_shardings and out_shardings as if user passed in in_shardings
   # and out_shardings.
+  device_or_backend_set = False
   if backend or device:
     in_shardings = out_shardings = _create_sharding_with_device_backend(
         device, backend)
+    device_or_backend_set = True
   else:
     in_shardings = tree_map(
         lambda x: _create_sharding_for_array(pjit_mesh, x, 'in_shardings',
@@ -466,11 +468,12 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
     in_type = in_avals = tuple(avals)
 
   canonicalized_in_shardings_flat = _process_in_axis_resources(
-      hashable_pytree(in_shardings), in_avals, in_tree, resource_env, dbg)
+      hashable_pytree(in_shardings), in_avals, in_tree, resource_env, dbg,
+      device_or_backend_set)
 
   jaxpr, consts, canonicalized_out_shardings_flat = _pjit_jaxpr(
       flat_fun, hashable_pytree(out_shardings), in_type, dbg,
-      HashableFunction(out_tree, closure=()),
+      device_or_backend_set, HashableFunction(out_tree, closure=()),
       HashableFunction(res_paths, closure=()))
 
   assert len(explicit_args) == len(canonicalized_in_shardings_flat)
@@ -787,7 +790,6 @@ def _create_sharding_with_device_backend(device, backend):
     assert device is None
     out = SingleDeviceSharding(
         xb.get_backend(backend).get_default_device_assignment(1)[0])
-  out._device_backend = True
   return out
 
 
@@ -851,7 +853,7 @@ class PytreeLeaf:
 
 @lru_cache(maxsize=4096)
 def _process_in_axis_resources(in_shardings_thunk, in_avals, in_tree,
-                               resource_env, debug_info):
+                               resource_env, debug_info, device_or_backend_set):
   orig_in_shardings = in_shardings_thunk()
   # Only do this if original in_shardings are unspecified. If it is AUTO, go
   # via flatten_axis_resources.
@@ -867,7 +869,8 @@ def _process_in_axis_resources(in_shardings_thunk, in_avals, in_tree,
                              None if debug_info is None else debug_info.arg_names,
                              "pjit arguments", allow_uneven_sharding=False)
   canonicalized_shardings = tuple(
-      i if is_unspecified_or_auto(i) else to_gspmd_sharding(i, aval.ndim)
+      i if is_unspecified_or_auto(i) else
+      to_gspmd_sharding(i, aval.ndim, device_or_backend_set)
       for i, aval in zip(in_shardings_flat, in_avals))
   return canonicalized_shardings
 
@@ -899,7 +902,7 @@ def _create_pjit_jaxpr(fun, in_type, debug_info, out_paths):
 
 @lru_cache(maxsize=4096)
 def _check_and_canonicalize_out_shardings(
-    out_shardings_thunk, out_tree, out_type, debug_info):
+    out_shardings_thunk, out_tree, out_type, debug_info, device_or_backend_set):
   orig_out_shardings = out_shardings_thunk()
   # TODO(yashkatariya): Remove the if branch and fix flatten_axis_resources
   # instead. This condition exists because flatten_axis_resources passes in an
@@ -920,18 +923,20 @@ def _check_and_canonicalize_out_shardings(
         "pjit outputs", allow_uneven_sharding=False)
 
   canonicalized_out_shardings_flat = tuple(
-      o if is_unspecified(o) or is_auto(o) else to_gspmd_sharding(o, aval.ndim)
+      o if is_unspecified(o) or is_auto(o) else
+      to_gspmd_sharding(o, aval.ndim, device_or_backend_set)
       for o, aval in zip(out_shardings_flat, out_type)
   )
   return canonicalized_out_shardings_flat
 
 
-def _pjit_jaxpr(fun, out_shardings_thunk, in_type, debug_info, out_tree,
-                result_paths):
+def _pjit_jaxpr(fun, out_shardings_thunk, in_type, debug_info,
+                device_or_backend_set, out_tree, result_paths):
   jaxpr, final_consts, out_type = _create_pjit_jaxpr(
       fun, in_type, debug_info, result_paths)
   canonicalized_out_shardings_flat = _check_and_canonicalize_out_shardings(
-      out_shardings_thunk, out_tree, tuple(out_type), jaxpr.jaxpr.debug_info)
+      out_shardings_thunk, out_tree, tuple(out_type), jaxpr.jaxpr.debug_info,
+      device_or_backend_set)
   # lu.cache needs to be able to create weakrefs to outputs, so we can't return a plain tuple
   return jaxpr, final_consts, canonicalized_out_shardings_flat
 
@@ -1895,11 +1900,14 @@ pxla.custom_resource_typing_rules[sharding_constraint_p] = \
 # -------------------- helpers --------------------
 
 @lru_cache(maxsize=2048)
-def to_gspmd_sharding(s: XLACompatibleSharding, ndim: int) -> GSPMDSharding:
+def to_gspmd_sharding(s: XLACompatibleSharding, ndim: int,
+                      device_or_backend_set: bool = False) -> GSPMDSharding:
   if isinstance(s, GSPMDSharding):
     return s
   gs = GSPMDSharding(s._device_assignment, s._to_xla_op_sharding(ndim))
   gs._original_sharding = s
+  if device_or_backend_set:
+    gs._original_sharding._device_backend = device_or_backend_set
   return gs
 
 
