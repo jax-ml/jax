@@ -1880,7 +1880,7 @@ class BCOOTest(sptu.SparseTestCase):
     with self.assertRaisesRegex(ValueError, ".*cannot mix batch and sparse dimensions.*"):
       x.reshape(3, 2, 2)
     y = sparse.BCOO((x.data[:1], x.indices), shape=x.shape)
-    with self.assertRaisesRegex(NotImplementedError, "reshape of arrays with broadacsted batch dimensions."):
+    with self.assertRaisesRegex(NotImplementedError, "reshape of arrays with broadcasted batch dimensions."):
       y.reshape(2, 3, 2)
 
   @jtu.sample_product(
