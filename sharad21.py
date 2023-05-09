@@ -15,7 +15,6 @@ zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
 
 jax.config.update('jax_dynamic_shapes', True)
-jax.config.update('jax_array', False)
 
 
 if typing.TYPE_CHECKING:
@@ -42,17 +41,19 @@ def shapecheck(f):
   dummy_args = [np.zeros(ty.shape, ty.dtype)
                 for param in sig.parameters.values()
                 for ty in [subst_vars(eval(param.annotation))]]
-  abstracted_axes = [eval(param.annotation).shape
-                     for param in sig.parameters.values()]
+  abstracted_axes_ = [eval(param.annotation).shape
+                      for param in sig.parameters.values()]
+  abstracted_axes = [{i:n for i, n in enumerate(ax) if type(n) is not int}
+                     for ax in abstracted_axes_]
 
   jaxpr = jax.make_jaxpr(f, abstracted_axes=tuple(abstracted_axes))(*dummy_args)
 
   out_type, = jaxpr.out_avals
 
-  num_dim_vars = len({d for ann in abstracted_axes for d in ann})
-  env = {jaxpr_var:annotation_var
+  num_dim_vars = len({d for ann in abstracted_axes for d in ann.values()})
+  env = {jaxpr_var:ann[i]
          for v, ann in zip(jaxpr.jaxpr.invars[num_dim_vars:], abstracted_axes)
-         for jaxpr_var, annotation_var in zip(v.aval.shape, ann)
+         for i, jaxpr_var in enumerate(v.aval.shape)
          if type(jaxpr_var) is core.Var}
   annotation_shape = eval(sig.return_annotation).shape
   v, = jaxpr.jaxpr.outvars
@@ -68,8 +69,8 @@ def axis_size_vars(*args):
 m, k, n = axis_size_vars('m', 'k', 'n')
 
 @shapecheck
-def f(x: f32[m, k], y:f32[k, n]) -> f32[n]:
-  z = jnp.dot(x, y)
+def f(x: f32[3, n], y:f32[3, n]) -> f32[3]:
+  z = jnp.dot(x, y.T)
   w = jnp.tanh(z)
   return w.sum(0)
 
