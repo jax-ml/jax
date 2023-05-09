@@ -404,7 +404,8 @@ class PolyHarness(Harness):
                skip_jax_run: bool = False,
                check_result: bool = True,
                tol: Optional[float] = None,
-               limitations: Sequence[Jax2TfLimitation] = ()):
+               limitations: Sequence[Jax2TfLimitation] = (),
+               override_jax_config_flags: Dict[str, Any] = {}):
     """Args:
 
       group_name, name: The name for the harness. See `Harness.__init__`.
@@ -438,6 +439,8 @@ class PolyHarness(Harness):
       tol: the tolerance to use for checking results.
       limitations: if given, then apply the custom_assert and tolerance from the
         Jax2TfLimitations.
+      override_jax_config_flags: jax.config flags to override for the duration
+        of the test.
     """
     super().__init__(group_name, name, fun, arg_descriptors,
                      dtype=np.float32)
@@ -451,6 +454,7 @@ class PolyHarness(Harness):
     self.tol = tol
     self.check_result = check_result
     self.limitations = limitations
+    self.override_jax_config_flags = override_jax_config_flags
 
   # Replicate the harness for both enable and disable xla
   def both_enable_and_disable_xla(self) -> Tuple["PolyHarness", "PolyHarness"]:
@@ -472,6 +476,11 @@ class PolyHarness(Harness):
   def run_test(self, tst: tf_test_util.JaxToTfTestCase):
     def log_message(extra: str):
       return f"[{tst._testMethodName}]: {extra}"
+
+    # Check that we have overriden the jax.config flags
+    for fname, fvalue in self.override_jax_config_flags.items():
+      tst.assertEqual(getattr(jax.config, fname), fvalue, (
+          f"Flag {fname} current value {getattr(jax.config, fname)} != {fvalue}"))
 
     # Make polymorphic_shapes and input_signature from poly_axes.
     if self.poly_axes is None:
@@ -1875,15 +1884,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f2(* f1(x, y)), res)
 
 
-def _random_split(key, num, impl):
-  prev = jax.config.jax_default_prng_impl
-  try:
-    jax.config.update('jax_default_prng_impl', impl)
-    return jax.random.split(key, num)
-  finally:
-    jax.config.update('jax_default_prng_impl', prev)
-
-
 # List containing either harnesses, or lists of harnesses
 _POLY_SHAPE_TEST_HARNESSES = [
     PolyHarness("add", "",
@@ -2381,47 +2381,72 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda x: jnp.nanquantile(x, .5, axis=0),
                 arg_descriptors=[RandArg((3, 5), _f32)],
                 poly_axes=[0]),
-    PolyHarness("random_gamma", "",
-                lambda key, a: jax.random.gamma(key, a),
-                arg_descriptors=[RandArg((3, 2), np.uint32), RandArg((3, 4, 5), _f32)],
-                poly_axes=[0, (0, 1)]),
-    # The known dimensions product must be even.
-    PolyHarness("random_categorical", "axis=0",
-                lambda key, a: jax.random.categorical(key, a, axis=0),
-                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 8), _f32)],
-                poly_axes=[None, 0]),
-    PolyHarness("random_categorical", "axis=1",
-                lambda key, a: jax.random.categorical(key, a, axis=1),
-                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 5, 8), _f32)],
-                poly_axes=[None, (0, 1)]),
-    PolyHarness("random_categorical", "axis=1_then_reshape",
-                lambda key, a: jax.random.categorical(key, a, axis=1).reshape((-1)),
-                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 5, 8), _f32)],
-                poly_axes=[None, (0, 1)]),
-    PolyHarness("random_categorical", "0_dim",  # One axis has 0 size
-                lambda key, a: jax.random.categorical(key, a, axis=1),
-                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 5, 0), _f32)],
-                poly_axes=[None, (0, 1)]),
-    PolyHarness("random_split", "unsafe_rbg",
-                lambda key, a: _random_split(key, 2 * a.shape[0], 'unsafe_rbg'),
-                arg_descriptors=[RandArg((4,), np.uint32), RandArg((3, 4), _f32)],
-                poly_axes=[None, (0,)]),
-    # Works when the known dimensions are known to be even or odd.
-    PolyHarness("random_uniform", "even_1",
-                lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
-                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 4, 5), _f32)],
-                poly_axes=[None, 0]),
-    PolyHarness("random_uniform", "even_2",
-                lambda key, a: jax.random.uniform(key, (2 * a.shape[0], a.shape[1]),
-                                                  dtype=_f32),
-                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 4), _f32)],
-                poly_axes=[None, (0, 1)]),
-    PolyHarness("random_uniform", "error_not_even",
-                lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
-                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 5), _f32)],
-                poly_axes=[None, 0],
-                expect_error=(core.InconclusiveDimensionOperation,
-                              "the product of the known dimensions must be even")),
+    [
+      # The random primitive tests, with threefry (both partitionable and
+      # non-partitionable), and unsafe_rbg.
+      [
+        PolyHarness("random_gamma", f"{flags_name}",
+                    lambda key, a: jax.random.gamma(key, a),
+                    arg_descriptors=[RandArg((3, key_size), np.uint32), RandArg((3, 4, 5), _f32)],
+                    poly_axes=[0, (0, 1)],
+                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+        # The known dimensions product must be even.
+        PolyHarness("random_categorical", f"axis=0_{flags_name}",
+                    lambda key, a: jax.random.categorical(key, a, axis=0),
+                    arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 8), _f32)],
+                    poly_axes=[None, 0],
+                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+        PolyHarness("random_categorical", f"axis=1_{flags_name}",
+                    lambda key, a: jax.random.categorical(key, a, axis=1),
+                    arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 5, 8), _f32)],
+                    poly_axes=[None, (0, 1)],
+                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+        PolyHarness("random_categorical", f"axis=1_then_reshape_{flags_name}",
+                    lambda key, a: jax.random.categorical(key, a, axis=1).reshape((-1)),
+                    arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 5, 8), _f32)],
+                    poly_axes=[None, (0, 1)],
+                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+        PolyHarness("random_categorical", f"0_dim_{flags_name}",  # One axis has 0 size
+                    lambda key, a: jax.random.categorical(key, a, axis=1),
+                    arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 5, 0), _f32)],
+                    poly_axes=[None, (0, 1)],
+                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+        PolyHarness("random_split", f"{flags_name}",
+                    lambda key, a: jax.random.split(key, 2 * a.shape[0]),
+                    arg_descriptors=[RandArg((key_size,), np.uint32),
+                                     RandArg((3, 4), _f32)],
+                    poly_axes=[None, (0,)],
+                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+        # Works when the known dimensions are known to be even or odd.
+        PolyHarness("random_uniform", f"even_1_{flags_name}",
+                    lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
+                    arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 4, 5), _f32)],
+                    poly_axes=[None, 0],
+                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+        PolyHarness("random_uniform", f"even_2_{flags_name}",
+                    lambda key, a: jax.random.uniform(key, (2 * a.shape[0], a.shape[1]),
+                                                      dtype=_f32),
+                    arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 4), _f32)],
+                    poly_axes=[None, (0, 1)],
+                    override_jax_config_flags=override_jax_config_flags),  # type: ignore
+        PolyHarness("random_uniform", f"error_not_even_{flags_name}",
+                    lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
+                    arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 5), _f32)],
+                    poly_axes=[None, 0],
+                    expect_error=(
+                        (core.InconclusiveDimensionOperation,
+                         "the product of the known dimensions must be even") if flags_name == "threefry_non_partitionable" else (None, None)),
+                    override_jax_config_flags=override_jax_config_flags)  # type: ignore
+      ]
+        for key_size, flags_name, override_jax_config_flags in [
+          (2, "threefry_non_partitionable",
+           dict(jax_default_prng_impl="threefry2x32", jax_threefry_partitionable=False)),
+          (2, "threefry_partitionable",
+           dict(jax_default_prng_impl="threefry2x32", jax_threefry_partitionable=True)),
+          (4, "unsafe_rbg",
+           dict(jax_default_prng_impl="unsafe_rbg"))
+        ]
+    ],
     PolyHarness("reduce_window", "min",
                 # x.shape = (b, 8)
                 lambda x: lax.reduce_window(x, np.array(1., _f32), lax.min,
@@ -2767,7 +2792,7 @@ def _flatten_harnesses(harnesses):
   res = []
   for h in harnesses:
     if isinstance(h, Sequence):
-      res.extend(h)
+      res.extend(_flatten_harnesses(h))
     else:
       res.append(h)
   return res
@@ -2788,6 +2813,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   )
   def test_harness(self, harness: PolyHarness):
     # Exclude some harnesses that are known to fail for native serialization
+    # FOR GRAPH SERIALIZATION
     if config.jax2tf_default_native_serialization:
       if not harness.enable_xla:
         raise unittest.SkipTest("disabled for native_serialization and enable_xla=False")
@@ -2822,7 +2848,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         raise unittest.SkipTest(
             "native lowering with shape polymorphism requires additional StableHLO feature support")
 
-      if "random_split_unsafe_rbg" in harness.fullname:
+      if "_unsafe_rbg" in harness.fullname:
         # https://github.com/openxla/stablehlo/issues/1344: need DynamicRngBitGenerator
         raise unittest.SkipTest("native lowering with shape polymorphism not implemented for rng_bit_generator")
 
@@ -2839,12 +2865,12 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         raise unittest.SkipTest(
             "native serialization with shape polymorphism not implemented for window_reductions")
 
-    if harness.group_name == "random_gamma":
-      # TODO: this is for both native and graph serialization.
-      raise unittest.SkipTest(
-          "shape shape polymorphism not implemented for random_gamma")
-
+    # FOR GRAPH SERIALIZATION
     if not config.jax2tf_default_native_serialization:
+      if ("random_gamma_threefry_non_partitionable" in harness.fullname and
+          jtu.device_under_test() == "cpu"):
+        harness.tol = 1e-6
+
       if harness.group_name == "vmap_cumsum":
         # For cumsum we use a different implementation than JAX native
         # See README.md for associative scan reductions
@@ -2860,7 +2886,17 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         # For non-native serialization the overflow behavior is different.
         harness.check_result = False
 
-    harness.run_test(self)
+    prev_jax_config_flags = {
+      fname: getattr(jax.config, fname)
+      for fname, fvalue in harness.override_jax_config_flags.items()
+    }
+    try:
+      for fname, fvalue in harness.override_jax_config_flags.items():
+        jax.config.update(fname, fvalue)
+      harness.run_test(self)
+    finally:
+      for fname, _ in harness.override_jax_config_flags.items():
+        jax.config.update(fname, prev_jax_config_flags[fname])
 
 
 if __name__ == "__main__":

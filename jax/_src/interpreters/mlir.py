@@ -625,10 +625,16 @@ def lower_jaxpr_to_module(
         arg_names=arg_names,
         result_names=result_names)
 
-  if not ctx.module.operation.verify():
+  try:
+    if not ctx.module.operation.verify():
+      module_string = module_to_string(ctx.module)
+      raise ValueError(
+          f"Cannot lower jaxpr with verifier errors: {module_string}")
+  except ir.MLIRError as e:
     module_string = module_to_string(ctx.module)
     raise ValueError(
-        f"Cannot lower jaxpr with verifier errors: {module_string}")
+        f"Cannot lower jaxpr with verifier errors: {module_string}") from e
+
   return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks)
 
 def module_to_string(module: ir.Module) -> str:
@@ -1189,6 +1195,8 @@ register_lowering(core.closed_call_p,
 
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,
                      broadcast_dimensions) -> ir.Value:
+  # broadcast_dimension[i] is the axis of the result where the axis i of
+  # op is broadcast.
   # Lower a possibly-dynamic broadcast_in_dim
   if core.is_opaque_dtype(aval_out.dtype):  # type: ignore
     return aval_out.dtype._rules.broadcast_in_dim_mlir(  # type: ignore
@@ -1305,6 +1313,18 @@ def pad(ctx: LoweringRuleContext, aval_out,
     return hlo.DynamicPadOp(
         aval_to_ir_type(aval_out),
         x, padding_value, padding_low, padding_high, padding_interior).result
+
+def iota(ctx: LoweringRuleContext, aval_out, *, dimension: int):
+  if not core.is_constant_shape(aval_out.shape):
+    shape = eval_dynamic_shape(ctx, aval_out.shape)
+    return hlo.DynamicIotaOp(
+        aval_to_ir_type(aval_out),
+        shape_tensor(shape),
+        i64_attr(dimension),
+    ).result
+  else:
+    return hlo.IotaOp(aval_to_ir_type(aval_out),
+                      i64_attr(dimension)).result
 
 def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
