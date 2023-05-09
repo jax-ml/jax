@@ -2779,8 +2779,8 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
           "householder_product:cpu", "householder_product:gpu",
           "vmap_geqrf:cpu", "vmap_geqrf:gpu",
           "vmap_lu:cpu", "vmap_lu:gpu",
-          "vmap_qr:cpu", "vmap_qr:gpu", "vmap_qr:tpu",
-          "vmap_svd:cpu", "vmap_svd:gpu", "vmap_svd:tpu",
+          "vmap_qr:cpu", "vmap_qr:gpu",
+          "vmap_svd:cpu", "vmap_svd:gpu",
       }
       if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
         raise unittest.SkipTest("native serialization with shape polymorphism not implemented for custom calls; b/261671778")
