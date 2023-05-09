@@ -582,6 +582,53 @@ def _put_x(x, s: Sharding, aval: core.AbstractValue, committed: bool):
   map_ = s.devices_indices_map(aval.shape)  # type: ignore
   return result_handler(pxla.shard_arg(x, list(map_), list(map_.values()), s))
 
+def _override_get_device_assignment(sharding, *args, **kwargs):
+  da = sharding._device_assignment
+  return xb.get_device_backend(da[0]), da
+
+def _identity_fn(x):
+  return x
+
+def _mcjax_reshard(x, target_sharding):
+  from jax._src import api, array
+
+  inp_sharding = x.sharding
+
+  if inp_sharding._device_assignment == target_sharding._device_assignment:
+    return api.jit(_identity_fn, out_shardings=target_sharding)(x)
+
+  if len(inp_sharding.device_set.intersection(
+      target_sharding.device_set)) != len(target_sharding.device_set):
+    inp_ids = [d.id for d in inp_sharding._device_assignment]
+    inp_plat = inp_sharding._device_assignment[0].platform.upper()
+    target_ids = [d.id for d in target_sharding._device_assignment]
+    target_plat = target_sharding._device_assignment[0].platform.upper()
+    raise ValueError("Input and target sharding should have the same set of "
+                     f"devices. Got input's device set ids: {inp_ids} on "
+                     f"platform {inp_plat} and target sharding's device set "
+                     f"ids: {target_ids} on platform {target_plat}")
+
+  permute_order = np.vectorize(target_sharding._device_assignment.index,
+                               otypes=[int])(inp_sharding._device_assignment)
+
+  old_op_sharding = inp_sharding._to_xla_op_sharding(x.ndim)
+  new_op_sharding = old_op_sharding.clone()
+  new_op_sharding.tile_assignment_devices = np.take(
+      old_op_sharding.tile_assignment_devices, permute_order)
+
+  new_x = array.make_array_from_single_device_arrays(
+      x.shape,
+      GSPMDSharding(target_sharding._device_assignment, new_op_sharding),
+      x._arrays)
+
+  _orig_get_and_check_device_assignment = pxla._get_and_check_device_assignment
+  pxla._get_and_check_device_assignment = partial(
+      _override_get_device_assignment, target_sharding)
+  try:
+    return api.jit(_identity_fn, out_shardings=target_sharding)(new_x)
+  finally:
+    pxla._get_and_check_device_assignment = _orig_get_and_check_device_assignment
+
 
 def _device_put_impl(
     x,
@@ -596,13 +643,19 @@ def _device_put_impl(
 
   if isinstance(device, Sharding):
     s = device
+    _check_sharding(aval, s)
+    if getattr(x, 'sharding', None) == s:
+      return x
+    if (not s.is_fully_addressable and  # type: ignore
+        isinstance(x, array.ArrayImpl) and not x.is_fully_addressable):
+      # This has to be XLACompatible because _mcjax_reshard will run a
+      # XLA computation.
+      assert isinstance(s, XLACompatibleSharding)
+      return _mcjax_reshard(x, s)
     if not s.is_fully_addressable:  # type: ignore
       raise ValueError(
           "device_put's second argument must be a Device or a Sharding which "
           f"represents addressable devices, but got {s}")
-    _check_sharding(aval, s)
-    if getattr(x, 'sharding', None) == s:
-      return x
     return _put_x(x, s, aval, True)
 
   # Only `Device` exists below. `Sharding` instance is handled above.
