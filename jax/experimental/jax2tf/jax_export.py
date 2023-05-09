@@ -105,7 +105,7 @@ class Exported:
   _get_vjp: Optional[Callable[["Exported"], "Exported"]]
 
   @property
-  def mlir_module(self) -> mlir.ir.Module:
+  def mlir_module(self) -> ir.Module:
     return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
 
   def __str__(self):
@@ -314,9 +314,9 @@ def export(fun_jax: Callable,
   return do_export
 
 
-def _add_dim_arg_computation(module: mlir.ir.Module,
+def _add_dim_arg_computation(module: ir.Module,
                              args_avals_flat: Sequence[core.ShapedArray], *,
-                             args_kwargs_tree: tree_util.PyTreeDef) -> mlir.ir.Module:
+                             args_kwargs_tree: tree_util.PyTreeDef) -> ir.Module:
   """Wraps the lowered module with a new "main" that computes the dim args.
 
   JAX lowering in presence of shape polymorphism produces a `module` that
@@ -385,7 +385,7 @@ def _add_dim_arg_computation(module: mlir.ir.Module,
     symbol_table.insert(new_main_op)
     entry_block = new_main_op.add_entry_block()
     with ir.InsertionPoint(entry_block):
-      orig_main_args: List[mlir.ir.Value] = []
+      orig_main_args: List[ir.Value] = []
       module_context = mlir.ModuleContext(
           "cpu", "cpu", sharding_impls.ShardingContext([]),
           source_info_util.new_name_stack(),
@@ -411,9 +411,9 @@ def _add_dim_arg_computation(module: mlir.ir.Module,
 def _compute_dim_args(
     ctx: mlir.LoweringRuleContext,
     args_avals_flat: Sequence[core.ShapedArray],
-    array_args: Sequence[mlir.ir.Value],
-    dim_arg_types: Sequence[mlir.ir.Type], *,
-    args_kwargs_tree: tree_util.PyTreeDef) -> Sequence[mlir.ir.Value]:
+    array_args: Sequence[ir.Value],
+    dim_arg_types: Sequence[ir.Type], *,
+    args_kwargs_tree: tree_util.PyTreeDef) -> Sequence[ir.Value]:
   """Compute the values of the dimension arguments.
 
   Args:
@@ -522,7 +522,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = [
     "LuDecomposition",
 ]
 
-def _check_module(mod: mlir.ir.Module, *,
+def _check_module(mod: ir.Module, *,
                   allow_non_replicated_sharding: bool,
                   allow_all_custom_calls: bool):
   """Run a number of checks on the module.
@@ -533,19 +533,19 @@ def _check_module(mod: mlir.ir.Module, *,
     allow_all_custom_calls: whether we should allow all custom calls, or
       only those who we have explicitly marked as stable.
   """
-  sharding_attr = mlir.ir.StringAttr.get("Sharding", mod.context)
+  sharding_attr = ir.StringAttr.get("Sharding", mod.context)
   allowed_custom_call_targets_attrs = [
-      mlir.ir.StringAttr.get(target, mod.context)
+      ir.StringAttr.get(target, mod.context)
       for target in _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE]
   disallowed_custom_call_ops: List[str] = []
-  def check_sharding(op: mlir.ir.Operation, loc: mlir.ir.Location):
+  def check_sharding(op: ir.Operation, loc: ir.Location):
     if not allow_non_replicated_sharding:
       try:
         sharding = op.attributes["mhlo.sharding"]
       except KeyError:
         pass
       else:
-        if mlir.ir.StringAttr(sharding).value not in ["{replicated}", ""]:
+        if ir.StringAttr(sharding).value not in ["{replicated}", ""]:
           raise ValueError(
               "Lowered function does not have a top-level pjit but it has"
               f" non-replicated sharding annotations, e.g., {op} at {loc}.\nSee"
@@ -553,7 +553,7 @@ def _check_module(mod: mlir.ir.Module, *,
               " for a discussion."
           )
 
-  def check_op(op: mlir.ir.Operation):
+  def check_op(op: ir.Operation):
     op_name = op.operation.name
     if op_name == "func.func":
       check_sharding(op.operation, op.location)
@@ -722,7 +722,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
         f"The exported function '{exported.fun_name}' was lowered for "
         f"platform '{exported.lowering_platform}' but it is used "
         f"on '{platform}'.")
-  submodule = mlir.ir.Module.parse(exported.mlir_module)
+  submodule = ir.Module.parse(exported.mlir_module)
   symtab = ir.SymbolTable(submodule.operation)
   callee_result_types = symtab["main"].type.results
   # TODO: maybe cache multiple calls
