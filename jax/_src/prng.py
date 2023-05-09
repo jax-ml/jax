@@ -44,6 +44,7 @@ from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
+from jax._src.lib.mlir import ir
 from jax._src.lib import gpu_prng
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir.dialects import hlo
@@ -463,12 +464,12 @@ class KeyTyRules:
   # element-type-polymorphic primitive lowering rules
 
   @staticmethod
-  def empty_mlir(ctx, aval_out) -> Sequence[mlir.ir.Value]:
+  def empty_mlir(ctx, aval_out) -> Sequence[ir.Value]:
     return mlir.ir_constants(np.zeros(aval_out.dtype.impl.key_shape,
                                       dtype=np.dtype('uint32')))
 
   @staticmethod
-  def slice_mlir(ctx, aval_out, x, start_indices, limit_indices, strides) -> mlir.ir.Value:
+  def slice_mlir(ctx, aval_out, x, start_indices, limit_indices, strides) -> ir.Value:
     key_shape = aval_out.dtype.impl.key_shape
     trailing_zeros = [0] * len(key_shape)
     trailing_ones  = [1] * len(key_shape)
@@ -480,7 +481,7 @@ class KeyTyRules:
                          start_indices=start_indices, limit_indices=limit_indices, strides=strides)
 
   @staticmethod
-  def dynamic_slice_mlir(ctx, aval_out, x, start_indices) -> mlir.ir.Value:
+  def dynamic_slice_mlir(ctx, aval_out, x, start_indices) -> ir.Value:
     dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
     key_shape = aval_out.dtype.impl.key_shape
     trailing_zeros = [mlir.ir_constant(np.array(0, dtype))] * len(key_shape)
@@ -490,7 +491,7 @@ class KeyTyRules:
                               start_indices=start_indices)
 
   @staticmethod
-  def dynamic_update_slice_mlir(ctx, aval_out, x, update, *start_indices) -> mlir.ir.Value:
+  def dynamic_update_slice_mlir(ctx, aval_out, x, update, *start_indices) -> ir.Value:
     dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
     key_shape = aval_out.dtype.impl.key_shape
     zeros = [mlir.ir_constant(np.array(0, dtype=dtype))] * len(key_shape)
@@ -501,7 +502,7 @@ class KeyTyRules:
 
   @staticmethod
   def broadcast_in_dim_mlir(ctx, aval_out, x,
-                            broadcast_dimensions) -> mlir.ir.Value:
+                            broadcast_dimensions) -> ir.Value:
     key_shape = aval_out.dtype.impl.key_shape
     trailing_dims = [aval_out.ndim + i for i in range(len(key_shape))]
     broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
@@ -509,7 +510,7 @@ class KeyTyRules:
     return mlir.broadcast_in_dim(ctx, x, physical_aval_out, broadcast_dimensions=broadcast_dimensions)
 
   @staticmethod
-  def transpose_mlir(ctx, aval_out, x, *, permutation) -> mlir.ir.Value:
+  def transpose_mlir(ctx, aval_out, x, *, permutation) -> ir.Value:
     key_shape = aval_out.dtype.impl.key_shape
     trailing_dims = [aval_out.ndim + i for i in range(len(key_shape))]
     perm = [*permutation, *trailing_dims]
@@ -518,7 +519,7 @@ class KeyTyRules:
   @staticmethod
   def gather_mlir(ctx, avals_in, aval_out, x, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
-                  indices_are_sorted, mode, fill_value) -> mlir.ir.Value:
+                  indices_are_sorted, mode, fill_value) -> ir.Value:
     aval_x, aval_indices = avals_in
     aval_y = aval_out
     key_shape = aval_x.dtype.impl.key_shape
@@ -1111,7 +1112,7 @@ def _threefry2x32_gpu_lowering(lowering_func, ctx, k1, k2, x1, x2):
   if not core.is_constant_dim(out_len):
     length = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, [out_len]))
     length = mlir.hlo.ConvertOp(
-        mlir.ir.RankedTensorType.get((1,), mlir.ir.IntegerType.get_signless(64)),
+        ir.RankedTensorType.get((1,), ir.IntegerType.get_signless(64)),
         length).result
     output_shape = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, aval_out.shape))
   else:
@@ -1212,10 +1213,10 @@ def iota_2x32_shape_abstract_eval(*, shape):
   return (core.ShapedArray(shape, np.dtype('uint32')),) * 2
 
 def bcast_iotas_to_reshaped_iota(
-    add: Callable[[mlir.ir.Value, mlir.ir.Value], mlir.ir.Value],
-    mul: Callable[[core.DimSize, mlir.ir.Value], mlir.ir.Value],
+    add: Callable[[ir.Value, ir.Value], ir.Value],
+    mul: Callable[[core.DimSize, ir.Value], ir.Value],
     shape: core.Shape,
-    iotas: Sequence[mlir.ir.Value]) -> mlir.ir.Value:
+    iotas: Sequence[ir.Value]) -> ir.Value:
   strides: core.Shape = (*(np.cumprod(shape[1:][::-1])[::-1]), 1)  # type: ignore
   return reduce(add, [mul(s, i) for i, s in zip(iotas, strides)])  # type: ignore
 
@@ -1223,17 +1224,17 @@ def iota_2x32_shape_lowering(ctx, *, shape):
   aval_out, _ = ctx.avals_out
   aval_u64 = core.ShapedArray(shape, np.dtype('uint64'))
 
-  def _add(x: mlir.ir.Value, y: mlir.ir.Value) -> mlir.ir.Value:
+  def _add(x: ir.Value, y: ir.Value) -> ir.Value:
     return mlir.hlo.AddOp(x, y).result
 
-  def _mul(x: core.DimSize, y: mlir.ir.Value) -> mlir.ir.Value:
+  def _mul(x: core.DimSize, y: ir.Value) -> ir.Value:
     if core.is_constant_dim(x):
       x_const = mlir.ir_constant(np.array(x, np.dtype('uint64')),
                                  canonicalize_types=False)
     else:
       x_const, = mlir.eval_dynamic_shape(ctx, (x,))
       x_const = hlo.ConvertOp(
-          mlir.ir.RankedTensorType.get(
+          ir.RankedTensorType.get(
               (),
               mlir.dtype_to_ir_type(np.dtype('uint64'))), x_const).result
     x_bcast = mlir.broadcast_in_dim(ctx, x_const, aval_u64,
