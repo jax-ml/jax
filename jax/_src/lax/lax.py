@@ -3372,6 +3372,12 @@ def _select_jvp(primals, tangents):
 
 def _select_hlo_lowering(ctx, which, *cases):
   which_aval = ctx.avals_in[0]
+  aval_out, = ctx.avals_out
+
+  if core.is_opaque_dtype(aval_out.dtype):
+    return [aval_out.dtype._rules.select_mlir(
+        ctx, ctx.avals_in, aval_out, which, *cases)]
+
   if which_aval.dtype == np.dtype(np.bool_):
     assert len(cases) <= 2
     if len(cases) == 1: return cases

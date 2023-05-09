@@ -1835,6 +1835,25 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(ys, random.KeyArray)
     self.assertEqual(ys.shape, (3, 2, 1))
 
+  @skipIf(not config.jax_enable_custom_prng,
+          'requires config.jax_enable_custom_prng')
+  def test_select(self):
+    ks = self.make_keys(3, 2)
+    cs = jnp.array([True, False, False, True, False, True]).reshape(3, 2)
+    ys = jax.jit(lax.select)(cs, ks, ks)
+    self.assertIsInstance(ys, random.KeyArray)
+    self.assertEqual(ys.shape, (3, 2))
+
+  @skipIf(not config.jax_enable_custom_prng,
+          'requires config.jax_enable_custom_prng')
+  def test_select2(self):
+    # See https://github.com/google/jax/issues/15869
+    def f(x):
+      keys = lax.broadcast(jax.random.PRNGKey(0), x.shape)
+      return lax.select(x, keys, keys)
+    x = jnp.array([True, False, False])
+    f(x)  # doesn't crash
+
   def test_device_put(self):
     device = jax.devices()[0]
     keys = self.make_keys(4)
