@@ -1402,13 +1402,21 @@ def _geqrf_lowering_rule(ctx, operand):
   ts_type = mlir.aval_to_ir_type(ctx.avals_out[0])
   r_type = mlir.aval_to_ir_type(ctx.avals_out[1])
   result_types = [ts_type, r_type]
-  op = hlo.CustomCallOp(
+  if any(not is_constant_shape(aval_out.shape)
+         for aval_out in ctx.avals_out):
+    result_shapes = [
+        mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, aval_out.shape))
+        for aval_out in ctx.avals_out
+    ]
+  else:
+    result_shapes = None
+  op = mlir.custom_call(
+      "Qr",
       (result_types if xla_extension_version >= 150
        else [ir.TupleType.get(result_types)]),
       [operand],
-      call_target_name=ir.StringAttr.get("Qr"),
-      has_side_effect=ir.BoolAttr.get(False),
-      api_version=mlir.i32_attr(1),
+      api_version=1,
+      result_shapes=result_shapes
   )
   if xla_extension_version >= 150:
     return op.results
@@ -1507,13 +1515,18 @@ def _householder_product_batching_rule(batched_args, batch_dims):
                batching.moveaxis(taus, b_taus, 0)), (0,)
 
 def _householder_product_lowering_rule(ctx, a, taus):
-  op = hlo.CustomCallOp(
-      [mlir.aval_to_ir_type(ctx.avals_out[0])],
+  aval_out, = ctx.avals_out
+  if not is_constant_shape(aval_out.shape):
+    result_shapes = [
+        mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, aval_out.shape))]
+  else:
+    result_shapes = None
+  op = mlir.custom_call(
+      "ProductOfElementaryHouseholderReflectors",
+      [mlir.aval_to_ir_type(aval_out)],
       [a, taus],
-      call_target_name=ir.StringAttr.get("ProductOfElementaryHouseholderReflectors"),
-      has_side_effect=ir.BoolAttr.get(False),
-      api_version=mlir.i32_attr(1),
-  )
+      api_version=1,
+      result_shapes=result_shapes)
   return [op.result]
 
 def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus):
