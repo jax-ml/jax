@@ -817,6 +817,21 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       _ = f(3.)
     self.assertEqual(count[0], 0)
 
+  def test_goodfellow_custom_jvp(self):
+    def h(fext):
+      checkify.check(True, "")
+      return jax.nn.relu(fext)
+
+    h = checkify.checkify(h)
+
+    def h_out(fext):
+      _, out = h(fext)
+      return out
+
+    h_grad = jax.grad(h_out)
+    h_grad(0.)  # doesn't crash
+
+
 
 @jtu.with_config(jax_check_tracer_leaks=True)
 class AssertPrimitiveTests(jtu.JaxTestCase):
