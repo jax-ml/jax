@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   lint_and_typecheck:
-    runs-on: ubuntu-20.04-16core
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Cancel previous
@@ -123,7 +123,7 @@ jobs:
 
 
   documentation:
-    runs-on: ubuntu-20.04-16core
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
       matrix:
