@@ -170,6 +170,7 @@ py_extension(
         "@local_config_python//:headers",
         "@pybind11",
         "@stablehlo//:stablehlo_capi_headers",
+        "@stablehlo//:stablehlo_py_api",
         "@stablehlo//:stablehlo_serialization",
         "@stablehlo//:version",
     ],
