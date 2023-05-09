@@ -266,6 +266,21 @@ def gather(operand: ArrayLike, start_indices: ArrayLike,
   Returns:
     An array containing the gather output.
   """
+  return _gather(operand, start_indices, dimension_numbers, slice_sizes, 
+                 unique_indices=unique_indices,
+                 indices_are_sorted=indices_are_sorted, mode=mode,
+                 fill_value=fill_value, check=False)
+
+def _gather(operand: ArrayLike, start_indices: ArrayLike,
+           dimension_numbers: GatherDimensionNumbers,
+           slice_sizes: Shape,
+           *,
+           unique_indices: bool = False,
+           indices_are_sorted: bool = False,
+           mode: Optional[Union[str, GatherScatterMode]] = None,
+           fill_value = None,
+           check=False,
+          ) -> Array:
   if mode is None:
     mode = GatherScatterMode.PROMISE_IN_BOUNDS
   parsed_mode = GatherScatterMode.from_any(mode)
@@ -290,7 +305,9 @@ def gather(operand: ArrayLike, start_indices: ArrayLike,
       unique_indices=bool(unique_indices),
       indices_are_sorted=bool(indices_are_sorted),
       mode=parsed_mode,
-      fill_value=fill_value)
+      fill_value=fill_value,
+      check=jax.config.check_gathers,
+  )
 
 
 class ScatterDimensionNumbers(NamedTuple):
@@ -906,7 +923,9 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
   return _gather_batching_rule(
     [operand, index], [operand_bd, index_bdim], dimension_numbers=dnums,
     slice_sizes=slice_sizes, unique_indices=True, indices_are_sorted=True,
-    mode=GatherScatterMode.PROMISE_IN_BOUNDS, fill_value=None)
+    mode=GatherScatterMode.PROMISE_IN_BOUNDS, fill_value=None,
+    # Not checking dynamic_slice (yet).
+    check=False)
 
 def _dynamic_slice_staging_rule(trace, x, *starts_and_dyn_sizes, slice_sizes):
   start_indices, dyn = util.split_list(starts_and_dyn_sizes, [x.ndim])
@@ -1097,7 +1116,7 @@ def _no_duplicate_dims(dims, op_name, name):
 
 def _gather_shape_rule(operand, indices, *, dimension_numbers,
                        slice_sizes, unique_indices, indices_are_sorted,
-                       mode, fill_value):
+                       mode, fill_value, check):
   """Validates the well-formedness of the arguments to Gather.
 
   The code implements the checks based on the detailed operation semantics of
@@ -1105,6 +1124,7 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
   operator and following the outline of the implementation of
   ShapeInference::InferGatherShape in TensorFlow.
   """
+  del check
 
   offset_dims = dimension_numbers.offset_dims
   collapsed_slice_dims = dimension_numbers.collapsed_slice_dims
@@ -1246,15 +1266,15 @@ def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
 
 def _gather_jvp_rule(g, operand, indices, *, dimension_numbers,
                      slice_sizes, unique_indices, indices_are_sorted, mode,
-                     fill_value):
-  return gather(g, indices, dimension_numbers, slice_sizes,
-                unique_indices=unique_indices,
-                indices_are_sorted=indices_are_sorted, mode=mode,
-                fill_value=0)
+                     fill_value, check):
+  return _gather(g, indices, dimension_numbers, slice_sizes,
+                 unique_indices=unique_indices,
+                 indices_are_sorted=indices_are_sorted, mode=mode,
+                 fill_value=0, check=check)
 
 def _gather_transpose_rule(t, operand, indices, *, dimension_numbers,
                            slice_sizes, unique_indices, indices_are_sorted,
-                           mode, fill_value):
+                           mode, fill_value, check):
   assert ad.is_undefined_primal(operand)
   operand_shape = operand.aval.shape
   if type(t) is ad_util.Zero:
@@ -1273,7 +1293,7 @@ def _gather_transpose_rule(t, operand, indices, *, dimension_numbers,
 
 def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
                           slice_sizes, unique_indices, indices_are_sorted,
-                          mode, fill_value):
+                          mode, fill_value, check):
   operand, indices = batched_args
   operand_bdim, indices_bdim = batch_dims
 
@@ -1287,10 +1307,10 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
         offset_dims=offset_dims,
         collapsed_slice_dims=collapsed_slice_dims,
         start_index_map=start_index_map)
-    return gather(operand, indices, dimension_numbers=dnums,
-                  slice_sizes=slice_sizes, unique_indices=unique_indices,
-                  indices_are_sorted=indices_are_sorted, mode=mode,
-                  fill_value=fill_value), 0
+    return _gather(operand, indices, dimension_numbers=dnums,
+                   slice_sizes=slice_sizes, unique_indices=unique_indices,
+                   indices_are_sorted=indices_are_sorted, mode=mode,
+                   fill_value=fill_value, check=check), 0
 
   elif operand_bdim is None and indices_bdim is not None:
     indices = batching.moveaxis(indices, indices_bdim, 0)
@@ -1301,9 +1321,10 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
         start_index_map=dimension_numbers.start_index_map)
     # If batching indexed accesses into the same array, the batched gather may
     # no longer have sorted or unique indices.
-    return gather(operand, indices, dimension_numbers=dnums,
-                  slice_sizes=slice_sizes, unique_indices=False,
-                  indices_are_sorted=False, mode=mode, fill_value=fill_value), 0
+    return _gather(operand, indices, dimension_numbers=dnums,
+                   slice_sizes=slice_sizes, unique_indices=False,
+                   indices_are_sorted=False, mode=mode, fill_value=fill_value,
+                   check=check), 0
 
   else:
     # move batch dimensions to the front to simplify logic
@@ -1322,7 +1343,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
                            dtypes.canonicalize_dtype(indices.dtype)),
           dimension_numbers=dimension_numbers, slice_sizes=slice_sizes,
           unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
-          mode=mode, fill_value=fill_value)
+          mode=mode, fill_value=fill_value, check=check)
       return lax.full((0,) + output_shape, lax._zero(operand)), 0
 
     # Example: user code had indices shape (3, 4, 5), and we have to deal with
@@ -1350,15 +1371,16 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
 
 def _gather_pad_rule(in_avals, out_avals, operand, indices, *,
                      dimension_numbers, slice_sizes, unique_indices,
-                     indices_are_sorted, mode, fill_value):
+                     indices_are_sorted, mode, fill_value, check):
   operand_aval, indices_aval = in_avals
   if any(isinstance(d, pe.BoundedAxisSize) for d in operand_aval.shape):
     raise NotImplementedError
   if mode != GatherScatterMode.PROMISE_IN_BOUNDS:
     # with fill, jnp.where on operand; with clip, jnp.where on indices
     raise NotImplementedError
-  return [gather(operand, indices, dimension_numbers=dimension_numbers,
-                 slice_sizes=slice_sizes, mode=mode, fill_value=fill_value)]
+  return [_gather(operand, indices, dimension_numbers=dimension_numbers,
+                  slice_sizes=slice_sizes, mode=mode, fill_value=fill_value,
+                  check=check)]
 
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
@@ -1371,13 +1393,15 @@ pe.padding_rules[gather_p] = _gather_pad_rule
 
 def _gather_lower(ctx, operand, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
-                  indices_are_sorted, mode, fill_value):
+                  indices_are_sorted, mode, fill_value, check):
   aval_out, = ctx.avals_out
   if core.is_opaque_dtype(aval_out.dtype):
     return [aval_out.dtype._rules.gather_mlir(
         ctx, ctx.avals_in, aval_out, operand, indices, dimension_numbers=dimension_numbers,
         slice_sizes=slice_sizes, unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)]
+        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value,
+        check=check
+    )]
 
   if mode == GatherScatterMode.FILL_OR_DROP:
     gather_fill_fn = mlir.lower_fun(_gather_fill, multiple_results=False)

@@ -1104,6 +1104,8 @@ config.define_bool_state(
           'work under pmap/pjit.')
 )
 
+check_gathers = config.define_bool_state("check_gathers", False, "check OOBs")
+
 @contextlib.contextmanager
 def explicit_device_put_scope() -> Iterator[None]:
   """Indicates that the current context is an explicit device_put*() call."""

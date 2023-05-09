@@ -518,7 +518,7 @@ class KeyTyRules:
   @staticmethod
   def gather_mlir(ctx, avals_in, aval_out, x, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
-                  indices_are_sorted, mode, fill_value) -> mlir.ir.Value:
+                  indices_are_sorted, mode, fill_value, check) -> mlir.ir.Value:
     aval_x, aval_indices = avals_in
     aval_y = aval_out
     key_shape = aval_x.dtype.impl.key_shape
@@ -529,7 +529,9 @@ class KeyTyRules:
     gather_lower = partial(
         lax_internal.slicing._gather_lower, dimension_numbers=dimension_numbers,
         slice_sizes=slice_sizes, unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
+        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value,
+        check=check
+    )
     res, = mlir.delegate_lowering(
         ctx, gather_lower, x, indices,
         avals_in=[keys_aval_to_base_arr_aval(aval_x), aval_indices],
