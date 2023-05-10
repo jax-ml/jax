@@ -6,10 +6,14 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.9
+## jax 0.4.10
+
+## jaxlib 0.4.10
+
+## jax 0.4.9 (May 9, 2023)
 
 * Changes
-  * The flags experimental_cpp_jit, experimental_cpp_pjit and 
+  * The flags experimental_cpp_jit, experimental_cpp_pjit and
     experimental_cpp_pmap have been removed.
     They are now always on.
   * Accuracy of singular value decomposition (SVD) on TPU has been improved
@@ -28,7 +32,7 @@ Remember to align the itemized text with the first line of an item within a list
   * `instantiate_const_outputs` argument has been removed from `jax.xla_computation`
     since it has been unused for a very long time.
 
-## jaxlib 0.4.9
+## jaxlib 0.4.9 (May 9, 2023)
 
 ## jax 0.4.8 (March 29, 2023)
 
