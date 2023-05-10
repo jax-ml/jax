@@ -482,7 +482,8 @@ class KeyTyRules:
 
   @staticmethod
   def dynamic_slice_mlir(ctx, aval_out, x, start_indices) -> ir.Value:
-    dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
+    index_avals = ctx.avals_in[1:]
+    dtype = dtypes.canonicalize_dtype(index_avals[0].dtype if index_avals else 'int64')
     key_shape = aval_out.dtype.impl.key_shape
     trailing_zeros = [mlir.ir_constant(np.array(0, dtype))] * len(key_shape)
     start_indices = (*start_indices, *trailing_zeros)
@@ -492,7 +493,8 @@ class KeyTyRules:
 
   @staticmethod
   def dynamic_update_slice_mlir(ctx, aval_out, x, update, *start_indices) -> ir.Value:
-    dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
+    index_avals = ctx.avals_in[2:]
+    dtype = dtypes.canonicalize_dtype(index_avals[0].dtype if index_avals else 'int64')
     key_shape = aval_out.dtype.impl.key_shape
     zeros = [mlir.ir_constant(np.array(0, dtype=dtype))] * len(key_shape)
     start_indices = (*start_indices, *zeros)
