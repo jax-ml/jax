@@ -12,6 +12,8 @@ Remember to align the itemized text with the first line of an item within a list
   * The flags experimental_cpp_jit, experimental_cpp_pjit and 
     experimental_cpp_pmap have been removed.
     They are now always on.
+  * Accuracy of singular value decomposition (SVD) on TPU has been improved
+    (requires jaxlib 0.4.9).
 
 * Deprecations
   * `jax.experimental.gda_serialization` is deprecated and has been renamed to
