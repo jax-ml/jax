@@ -119,6 +119,20 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
                                 "syntax error in polymorphic shape"):
       shape_poly._parse_spec(shape_spec, (None,))
 
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_{shape_spec=}",
+           shape_spec=shape_spec, arg_shape=arg_shape)
+      for shape_spec, arg_shape in [
+          ("3", (4,)),
+          ("b, 3", (None, 4)),
+  ])
+  def test_parse_mismatch_error(self,
+                                shape_spec="3", arg_shape=(4,)):
+    with self.assertRaisesRegex(ValueError,
+                                "polymorphic shape .* in axis .* must match the known dimension size"):
+      shape_poly._parse_spec(shape_spec, arg_shape)
+
+
   def test_dim_vars(self):
     a, b, a1 = shape_poly._parse_spec("a, b, a", (2, 3, 2))
     self.assertEqual(True, a == a)
