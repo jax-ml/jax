@@ -1261,6 +1261,8 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand):
 
 
 def _lu_tpu_lowering_rule(ctx, operand):
+  if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
+    raise NotImplementedError(f"Shape polymorphism for custom call is not implemented (lu); b/261671778; {ctx.avals_in + ctx.avals_out}")
   result_types = [
     mlir.aval_to_ir_type(ctx.avals_out[0]),
     mlir.aval_to_ir_type(ctx.avals_out[1]),

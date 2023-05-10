@@ -2669,22 +2669,11 @@ def _make_vmap_primitive_harnesses() -> Sequence[PolyHarness]:
     (dtype, _), = c.most_common(1)
     selected_harnesses.extend([h for h in hlist if h.dtype == dtype])
 
-  # We do not yet support shape polymorphism for vmap for some primitives
-  _NOT_SUPPORTED_YET = frozenset([
-      # In linalg._lu_python we do reshape(-1, ...)
-      "lu",
-      "custom_linear_solve",
-
-      # We do *= shapes in the batching rule for conv_general_dilated
-      "conv_general_dilated",
-
-      "tridiagonal_solve",  # batching not implemented in JAX
-      "rng_bit_generator",  # vmap not implemented
-  ])
-
   batch_size = 3
   for h in selected_harnesses:
-    if h.group_name in _NOT_SUPPORTED_YET:
+    if h.group_name in [
+        "tridiagonal_solve",  # batching not implemented in JAX
+    ]:
       continue
 
     def make_batched_arg_descriptor(
@@ -2761,7 +2750,9 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
           "vmap_fft:cpu", "fft:cpu",
           "householder_product:cpu", "householder_product:gpu",
           "vmap_geqrf:cpu", "vmap_geqrf:gpu",
-          "vmap_lu:cpu", "vmap_lu:gpu",
+          "vmap_lu:cpu", "vmap_lu:gpu", "vmap_lu:tpu",
+          # custom_linear_solve uses lu
+          "vmap_custom_linear_solve:cpu", "vmap_custom_linear_solve:gpu", "vmap_custom_linear_solve:tpu",
           "vmap_qr:cpu", "vmap_qr:gpu",
           "vmap_svd:cpu", "vmap_svd:gpu",
       }
@@ -2821,6 +2812,11 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       if "vmap_integer_pow" in harness.group_name:
         # For non-native serialization the overflow behavior is different.
         harness.check_result = False
+
+    # FOR BOTH NATIVE AND GRAPH SERIALIZATION
+    if harness.group_name == "vmap_conv_general_dilated":
+      # https://github.com/openxla/stablehlo/issues/1268
+      raise unittest.SkipTest("Need more dynamism for DynamicConvOp")
 
     prev_jax_config_flags = {
       fname: getattr(jax.config, fname)
