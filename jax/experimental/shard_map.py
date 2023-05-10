@@ -393,7 +393,8 @@ def _shard_map_staging(
   in_avals_ = map(partial(_shard_aval, mesh), in_names, in_avals)
   main = trace.main
   with core.new_sublevel(), core.extend_axis_env_nd(mesh.shape.items()):
-    jaxpr, out_avals_generic, consts = pe.trace_to_subjaxpr_dynamic(f, main, in_avals_)
+    jaxpr, out_avals_generic, consts = pe.trace_to_subjaxpr_dynamic(
+        f, main, in_avals_)
   out_avals_ = map(_check_shapedarray, out_avals_generic)
   _check_names(out_names_thunk(), out_avals_)
   if check_rep:
@@ -495,19 +496,21 @@ def _valid_repeats(mesh: Mesh, rep: Set[AxisName], dst: AxisNames) -> bool:
 def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
                         check_rep):
   del check_rep
-  sharded_avals = [v.aval for v in jaxpr.invars]
+  in_avals_ = [v.aval for v in jaxpr.invars]
+  out_avals_ = [x.aval for x in jaxpr.outvars]
   in_nodes_ = map(partial(_xla_shard, ctx, mesh), in_names, ctx.avals_in,
-                  sharded_avals, in_nodes)
+                  in_avals_, in_nodes)
   new_axis_context = sharding_impls.SPMDAxisContext(
       mesh, frozenset(mesh.axis_names)
   )
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   with core.extend_axis_env_nd(tuple(mesh.shape.items())):
-    out_nodes_, _ = mlir.jaxpr_subcomp(sub_ctx, jaxpr, mlir.TokenSet(),
-                                       (), *in_nodes_,
-                                       dim_var_values=ctx.dim_var_values)
-  sharded_avals = [v.aval for v in jaxpr.outvars]
-  return map(partial(_xla_unshard, ctx, mesh), out_names, sharded_avals,
+    out_nodes_, _ = mlir._call_lowering(
+        "shmap_body", (), jaxpr, None, sub_ctx, in_avals_, out_avals_,
+        mlir.TokenSet(), *in_nodes_, dim_var_values=ctx.dim_var_values,
+        arg_names=map(_pspec_mhlo_attrs, in_names, in_avals_),
+        result_names=map(_pspec_mhlo_attrs, out_names, out_avals_))
+  return map(partial(_xla_unshard, ctx, mesh), out_names, out_avals_,
              ctx.avals_out, out_nodes_)
 mlir.register_lowering(shard_map_p, _shard_map_lowering)
 
@@ -535,6 +538,11 @@ def _xla_unshard(ctx: mlir.LoweringRuleContext,
   if core.is_opaque_dtype(aval_out.dtype):
     shard_proto = aval_out.dtype._rules.physical_op_sharding(aval_out, shard_proto)
   return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, shard_proto, set())
+
+def _pspec_mhlo_attrs(names: AxisNames, aval: core.AbstractValue) -> str:
+  if isinstance(aval, core.ShapedArray):
+    return str(map(names.get, range(aval.ndim)))
+  return ''
 
 # Eager evaluation
 

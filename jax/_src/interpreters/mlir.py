@@ -845,7 +845,7 @@ def lower_jaxpr_to_fun(
     del out_avals
 
   if (replicated_args is not None or ir_arg_shardings is not None
-      or input_output_aliases is not None):
+      or input_output_aliases is not None or arg_names is not None):
     arg_attrs: List[Dict[str, ir.Attribute]] = [
         {} for _ in range(len(flat_input_types))]
 
@@ -1146,23 +1146,29 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   return f_lowered
 
 
-def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects):
-  if not call_jaxpr.consts:
+def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects,
+                               arg_names=None, result_names=None):
+  if not call_jaxpr.consts and arg_names is result_names is None:
     # Cacheable.
     key = (fn_name, call_jaxpr.jaxpr, tuple(effects))
     try:
       func_op = ctx.cached_call_jaxpr_lowerings[key]
     except KeyError:
-      func_op = lower_jaxpr_to_fun(ctx, fn_name, call_jaxpr, effects)
+      func_op = lower_jaxpr_to_fun(
+          ctx, fn_name, call_jaxpr, effects, arg_names=arg_names,
+          result_names=result_names)
       ctx.cached_call_jaxpr_lowerings[key] = func_op
   else:
-    func_op = lower_jaxpr_to_fun(ctx, fn_name, call_jaxpr, effects)
+    func_op = lower_jaxpr_to_fun(
+        ctx, fn_name, call_jaxpr, effects, arg_names=arg_names,
+        result_names=result_names)
   return func_op
 
 
 def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
                    avals_out, tokens_in, *args,
-                   dim_var_values: Sequence[ir.Value]):
+                   dim_var_values: Sequence[ir.Value],
+                   arg_names=None, result_names=None):
   if isinstance(call_jaxpr, core.Jaxpr):
     call_jaxpr = core.ClosedJaxpr(call_jaxpr, ())
   xla.check_backend_matches(backend, ctx.platform)
@@ -1170,7 +1176,9 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
   output_types = map(aval_to_ir_types, avals_out)
   output_types = [token_type()] * len(effects) + output_types
   flat_output_types = util.flatten(output_types)
-  symbol_name = _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects).name.value
+  symbol_name = _lower_jaxpr_to_fun_cached(
+      ctx, fn_name, call_jaxpr, effects, arg_names=arg_names,
+      result_names=result_names).name.value
   tokens = [tokens_in.get(eff) for eff in effects]
   args = tuple([*dim_var_values, *tokens, *args])
   call = func_dialect.CallOp(flat_output_types,
