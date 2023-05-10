@@ -145,10 +145,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         if "custom_linear_solve" in harness.fullname:
           skipCustomCallTest("lapack_sgetrf, lapack_dgetrf")
 
-      elif device == "tpu":
-        if "approx_top_k_large=True" in harness.fullname:
-          skipCustomCallTest("PartialReduce")  # ApproxTopK
-
       elif device == "gpu":
         if "custom_linear_solve_" in harness.fullname:
           skipCustomCallTest("cusolver_geqrf, cublas_geqrf_batched")

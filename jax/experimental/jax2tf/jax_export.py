@@ -520,6 +520,8 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = [
     # "hipblas_getrf_batched", "hipsolver_getrf",
     # lu on TPU
     "LuDecomposition",
+    # ApproxTopK on TPU
+    "ApproxTopK",
 ]
 
 def _check_module(mod: ir.Module, *,
