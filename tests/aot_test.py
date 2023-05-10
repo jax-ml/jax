@@ -26,6 +26,7 @@ from jax._src.config import flags
 from jax.experimental.pjit import pjit
 from jax.experimental.serialize_executable import (
     serialize, deserialize_and_load)
+from jax._src.lib import xla_extension_version
 from jax.experimental import topologies
 from jax.sharding import PartitionSpec as P
 
@@ -39,24 +40,16 @@ with contextlib.suppress(ImportError):
   pytestmark = pytest.mark.multiaccelerator
 
 
+@unittest.skipIf(
+    xla_extension_version < 151, 'Test requires xla_extension_version >= 151'
+)
 class JaxAotTest(jtu.JaxTestCase):
 
-  def check_for_compile_options(self):
-    example_exe = jax.jit(lambda x: x * x).lower(
-        core.ShapedArray(
-            (2, 2), dtype=np.float32)).compile()._executable.xla_executable
-
-    # Skip if CompileOptions is not available. This is true on
-    # CPU/GPU/Cloud TPU for now.
-    try:
-      example_exe.compile_options()
-    except Exception as e:
-      if str(e) == 'UNIMPLEMENTED: CompileOptions not available.':
-        raise unittest.SkipTest('Serialization not supported')
-      raise e
-
+  @jtu.skip_on_devices('cpu', 'gpu')
   def test_pickle_pjit_lower(self):
-    self.check_for_compile_options()
+    platform_version = jax.devices()[0].client.platform_version
+    if platform_version.startswith('StreamExecutor TPU'):
+      raise unittest.SkipTest('bad platform version: %s' % platform_version)
 
     def fun(x):
       return x * x
@@ -78,8 +71,6 @@ class JaxAotTest(jtu.JaxTestCase):
             np.zeros((len(jax.devices()), 4), dtype=np.float32)))
 
   def test_topology_pjit_serialize(self):
-    self.check_for_compile_options()
-
     try:
       aot_topo = topologies.get_topology_desc(
           platform=jax.devices()[0].platform

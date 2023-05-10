@@ -65,10 +65,9 @@ class _JaxPjrtPickler(pickle.Pickler):
 
   def persistent_id(self, obj):
     if isinstance(obj, xc.LoadedExecutable):
-      return ('exec', obj.client.serialize_executable(obj),
-              obj.compile_options())
+      return ('exec', obj.client.serialize_executable(obj))
     if isinstance(obj, xc._xla.Executable):
-      return ('exec', obj.serialize(), obj.compile_options())
+      return ('exec', obj.serialize())
     if isinstance(obj, self.device_types):
       return ('device', obj.id)
     if isinstance(obj, self.client_types):
@@ -84,7 +83,7 @@ class _JaxPjrtUnpickler(pickle.Unpickler):
 
   def persistent_load(self, pid):
     if pid[0] == 'exec':
-      return self.backend.deserialize_executable(pid[1], pid[2])
+      return self.backend.deserialize_executable(pid[1])
     if pid[0] == 'device':
       return self.devices_by_id[pid[1]]
     if pid[0] == 'client':
