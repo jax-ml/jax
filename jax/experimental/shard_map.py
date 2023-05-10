@@ -29,6 +29,7 @@ import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec, Mesh
 from jax._src import core
 from jax._src import ad_util
+from jax._src import callback
 from jax._src import custom_derivatives
 from jax._src import debugging
 from jax._src import dispatch
@@ -811,6 +812,10 @@ def _pjit_rule(mesh, *in_rep, jaxpr, **kwargs):
 @register_rule(debugging.debug_callback_p)
 def _debug_callback_rule(mesh, *in_rep, **_):
   return []
+
+@register_rule(callback.pure_callback_p)
+def _pure_callback_rule(mesh, *in_rep, result_avals, **_):
+  return [set()] * len(result_avals)
 
 @register_rule(dispatch.device_put_p)
 def _device_put_rep_rule(mesh, x, *, src, device):
