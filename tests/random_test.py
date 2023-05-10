@@ -1801,9 +1801,18 @@ class KeyArrayTest(jtu.JaxTestCase):
 
   def test_dynamic_slice(self):
     ks = self.make_keys(3, 4)
-    ys = jax.jit(lambda x, i: lax.dynamic_slice_in_dim(x, i, 2))(ks, 1)
+    index = np.int16(1)  # non-default int type to catch type errors.
+    ys = jax.jit(partial(lax.dynamic_slice_in_dim, slice_size=2))(ks, index)
     self.assertIsInstance(ys, random.KeyArray)
     self.assertEqual(ys.shape, (2, 4))
+
+  def test_dynamic_update_slice(self):
+    ks = self.make_keys(3, 4)
+    k = self.make_keys(1, 4)
+    index = np.int16(1)  # non-default int type to catch type errors.
+    ys = jax.jit(partial(lax.dynamic_update_slice_in_dim, axis=0))(ks, k, index)
+    self.assertIsInstance(ys, random.KeyArray)
+    self.assertEqual(ys.shape, (3, 4))
 
   def test_transpose(self):
     ks = self.make_keys(3, 4)
