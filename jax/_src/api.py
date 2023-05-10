@@ -750,14 +750,12 @@ def _check_scalar(x):
 def _check_input_dtype_revderiv(name, holomorphic, allow_int, x):
   dispatch.check_arg(x)
   aval = core.get_aval(x)
-  if core.is_opaque_dtype(aval.dtype):
-    raise TypeError(
-        f"{name} with input element type {aval.dtype.name}")
   if holomorphic:
     if not dtypes.issubdtype(aval.dtype, np.complexfloating):
       raise TypeError(f"{name} with holomorphic=True requires inputs with complex dtype, "
                       f"but got {aval.dtype.name}.")
-  if (dtypes.issubdtype(aval.dtype, np.integer) or
+  if (core.is_opaque_dtype(aval.dtype) or
+      dtypes.issubdtype(aval.dtype, np.integer) or
       dtypes.issubdtype(aval.dtype, np.bool_)):
     if not allow_int:
       raise TypeError(f"{name} requires real- or complex-valued inputs (input dtype "

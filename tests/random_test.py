@@ -1998,8 +1998,10 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
           "https://github.com/numpy/numpy/issues/19305")
   def test_grad_of_prng_key(self):
     key = self.seed_prng(73)
-    with self.assertRaisesRegex(TypeError, 'input element type key<fry2>'):
-      jax.grad(lambda x: 1., allow_int=True)(key)
+    with self.assertRaisesRegex(TypeError, 'grad requires real- or complex-valued inputs'):
+      jax.grad(lambda x: 1.)(key)
+    out = jax.grad(lambda x: 1., allow_int=True)(key)
+    self.assertArraysEqual(out, np.zeros(key.shape, jax.dtypes.float0))
 
 
 # TODO(frostig): remove `with_config` we always enable_custom_prng
@@ -2060,8 +2062,10 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
   @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_grad_of_prng_key(self):
     key = self.seed_prng(73)
-    with self.assertRaisesRegex(TypeError, 'input element type key<.?rbg>'):
-      jax.grad(lambda x: 1., allow_int=True)(key)
+    with self.assertRaisesRegex(TypeError, 'grad requires real- or complex-valued inputs'):
+      jax.grad(lambda x: 1.)(key)
+    out = jax.grad(lambda x: 1., allow_int=True)(key)
+    self.assertArraysEqual(out, np.zeros(key.shape, jax.dtypes.float0))
 
   def test_random_split_doesnt_device_put_during_tracing(self):
     return  # this test doesn't apply to the RBG PRNG
