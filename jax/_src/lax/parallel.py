@@ -812,6 +812,7 @@ batching.axis_primitive_batchers[psum_p] = \
   partial(_batched_reduction_collective, psum_p, lambda v, axis_size: axis_size * v)
 core.axis_substitution_rules[psum_p] = partial(_subst_all_names_in_param, 'axes')
 
+
 # We set a special bind rule for psum so that psum(1, 'i') can be evaluated at
 # tracing time.
 @psum_p.def_custom_bind
