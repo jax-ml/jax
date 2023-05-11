@@ -778,7 +778,10 @@ jax_test(
     srcs = ["sparsify_test.py"],
     args = ["--jax_bcoo_cusparse_lowering=true"],
     backend_tags = {
-        "cpu": ["noasan"],  # Times out under asan
+        "cpu": [
+            "noasan",  # Times out under asan
+            "notsan",  # Times out under asan
+        ],
         "tpu": [
             "noasan",  # Times out under asan.
         ],
