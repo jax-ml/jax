@@ -40,7 +40,7 @@ def get_topology_desc(
     platform: Optional[str] = None,
     **kwargs
 ) -> TopologyDescription:
-  if platform == "tpu":
+  if platform == "tpu" or platform is None:
     if topology_name is not None:
       kwargs.update(topology_name=topology_name)
     return TopologyDescription(
