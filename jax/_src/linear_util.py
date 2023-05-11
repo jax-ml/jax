@@ -373,9 +373,8 @@ def _copy_main_traces(x):
 
 
 @transformation
-def hashable_partial(x, *args):
-  ans = yield (x,) + args, {}
-  yield ans
+def hashable_partial(*args):
+  yield (yield args, {})
 
 
 def merge_linear_aux(aux1, aux2):

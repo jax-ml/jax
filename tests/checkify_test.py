@@ -831,6 +831,13 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     h_grad = jax.grad(h_out)
     h_grad(0.)  # doesn't crash
 
+  def test_closed_call(self):
+    # lots of golfing went into this test
+    y = jnp.array([3.14])
+    summify = lambda f: lambda x: f(x).sum()
+    f = checkify.checkify(jax.grad(summify(jax.remat(
+        partial(partial, jax.lax.map)(lambda x: jnp.sin(x * y))))))
+    f(jnp.array([3.]))  # don't crash
 
 
 @jtu.with_config(jax_check_tracer_leaks=True)
