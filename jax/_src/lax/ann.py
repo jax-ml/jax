@@ -303,10 +303,10 @@ def _comparator_builder_mlir(ctx, op_type, is_max_k):
 
   return comparator
 
-def _approx_top_k_tpu_lowering(ctx, operand, *, k,
+def _approx_top_k_lowering(ctx, operand, *, k,
                                   reduction_dimension, recall_target, is_max_k,
                                   reduction_input_size_override,
-                                  aggregate_to_topk):
+                                  aggregate_to_topk, fallback=False):
   assert ctx.avals_in
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in)
 
@@ -339,7 +339,9 @@ def _approx_top_k_tpu_lowering(ctx, operand, *, k,
     "recall_target" : mlir.ir.FloatAttr.get(recall_type, recall_target),
     "aggregate_to_topk" : mlir.ir.BoolAttr.get(aggregate_to_topk),
     "reduction_input_size_override" :
-      mlir.i64_attr(reduction_input_size_override) }
+      mlir.i64_attr(reduction_input_size_override)}
+  if fallback:
+    backend_config["is_fallback"] = mlir.ir.BoolAttr.get(fallback)
 
   out = hlo.CustomCallOp([mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
                          [operand, iota, init_val, init_arg],
@@ -439,9 +441,13 @@ approx_top_k_p = core.Primitive('approx_top_k')
 approx_top_k_p.multiple_results = True
 approx_top_k_p.def_impl(partial(dispatch.apply_primitive, approx_top_k_p))
 approx_top_k_p.def_abstract_eval(_approx_top_k_abstract_eval)
-xla.register_translation(approx_top_k_p, _approx_top_k_fallback_translation)
+if xc.mlir_api_version > 48:
+  mlir.register_lowering(approx_top_k_p,
+                        partial(_approx_top_k_lowering, fallback=True))
+else:
+  xla.register_translation(approx_top_k_p, _approx_top_k_fallback_translation)
 if xc.mlir_api_version > 47:
-  mlir.register_lowering(approx_top_k_p, _approx_top_k_tpu_lowering,
+  mlir.register_lowering(approx_top_k_p, _approx_top_k_lowering,
                           platform='tpu')
 else:
   xla.register_translation(approx_top_k_p, _approx_top_k_tpu_translation,
