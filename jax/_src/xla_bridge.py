@@ -694,4 +694,11 @@ def using_pjrt_c_api(backend=None):
 
 # TODO(parkers): Get rid of this in favor of a generic way to get topologies.
 def make_pjrt_tpu_topology(topology_name=None, **kwargs):
+  if xla_extension_version >= 153:
+    # TODO(b/261484192): Make a system for lazily loading libtpu.so and call
+    # that inside make_tfrt_tpu_c_api_device_topology.
+    get_backend()  # Properly initialize libtpu.so.
+    return xla_client.make_tfrt_tpu_c_api_device_topology(
+        topology_name, **kwargs
+    )
   raise NotImplementedError('make_pjrt_tpu_topology is not implemented')
