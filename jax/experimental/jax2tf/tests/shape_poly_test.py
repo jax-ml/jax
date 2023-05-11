@@ -129,7 +129,7 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
   def test_parse_mismatch_error(self,
                                 shape_spec="3", arg_shape=(4,)):
     with self.assertRaisesRegex(ValueError,
-                                "polymorphic shape .* in axis .* must match the known dimension size"):
+                                "syntax error in polymorphic shape .* different size"):
       shape_poly._parse_spec(shape_spec, arg_shape)
 
 
