@@ -372,9 +372,9 @@ def seed_with_impl(impl: PRNGImpl, seed: Union[int, Array]) -> PRNGKeyArrayImpl:
 def keys_shaped_array(impl, shape):
   return core.ShapedArray(shape, KeyTy(impl))
 
+# TODO(frostig): remove in favor of physical_aval call
 def keys_aval_to_base_arr_aval(keys_aval):
-  shape = (*keys_aval.shape, *keys_aval.dtype.impl.key_shape)
-  return core.ShapedArray(shape, np.dtype('uint32'))
+  return core.physical_aval(keys_aval)
 
 def base_arr_shape_to_keys_shape(impl, base_arr_shape):
   base_ndim = len(impl.key_shape)
@@ -419,10 +419,8 @@ class KeyTyRules:
     return random_wrap(key_data, impl=dtype.impl)
 
   @staticmethod
-  def physical_avals(aval) -> Sequence[core.AbstractValue]:  # TODO(frostig): rename to `grounded_avals`
-    # TODO(frostig): dedup with `keys_aval_to_base_arr_aval``
-    return [core.ShapedArray((*aval.shape, *aval.dtype.impl.key_shape),  # type: ignore
-                             jnp.dtype('uint32'))]
+  def physical_element_aval(dtype) -> core.ShapedArray:
+    return core.ShapedArray(dtype.impl.key_shape, jnp.dtype('uint32'))
 
   @staticmethod
   def physical_const(val) -> Array:
@@ -472,7 +470,7 @@ class KeyTyRules:
 
   @staticmethod
   def local_sharded_result_handler(aval, sharding, indices):
-    phys_aval, = KeyTyRules.physical_avals(aval)
+    phys_aval = core.physical_aval(aval)
     key_shape = aval.dtype.impl.key_shape
     phys_handler_maker = pxla.local_result_handlers[core.ShapedArray]
 
@@ -499,7 +497,7 @@ class KeyTyRules:
   @staticmethod
   def global_sharded_result_handler(aval, out_sharding, committed,
                                     is_out_sharding_from_xla):
-    phys_aval, = KeyTyRules.physical_avals(aval)
+    phys_aval = core.physical_aval(aval)
     phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
 
     phys_sharding = make_key_array_phys_sharding(
@@ -512,7 +510,7 @@ class KeyTyRules:
 
   @staticmethod
   def make_sharded_array(aval, sharding, arrays, committed):
-    phys_aval, = KeyTyRules.physical_avals(aval)
+    phys_aval = core.physical_aval(aval)
     phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
     phys_arrays = [random_unwrap(arr) for arr in arrays]
 
@@ -536,7 +534,7 @@ class KeyTyRules:
     start_indices = (*start_indices, *trailing_zeros)
     limit_indices = (*limit_indices, *key_shape)
     strides = (*strides, *trailing_ones)
-    physical_aval_out, = KeyTyRules.physical_avals(aval_out)
+    physical_aval_out = core.physical_aval(aval_out)
     return mlir.slice_op(ctx, x, physical_aval_out,
                          start_indices=start_indices, limit_indices=limit_indices, strides=strides)
 
@@ -547,7 +545,7 @@ class KeyTyRules:
     key_shape = aval_out.dtype.impl.key_shape
     trailing_zeros = [mlir.ir_constant(np.array(0, dtype))] * len(key_shape)
     start_indices = (*start_indices, *trailing_zeros)
-    physical_aval_out, = KeyTyRules.physical_avals(aval_out)
+    physical_aval_out = core.physical_aval(aval_out)
     return mlir.dynamic_slice(ctx, physical_aval_out, x,
                               start_indices=start_indices)
 
@@ -558,7 +556,7 @@ class KeyTyRules:
     key_shape = aval_out.dtype.impl.key_shape
     zeros = [mlir.ir_constant(np.array(0, dtype=dtype))] * len(key_shape)
     start_indices = (*start_indices, *zeros)
-    physical_aval_out, = KeyTyRules.physical_avals(aval_out)
+    physical_aval_out = core.physical_aval(aval_out)
     return mlir.dynamic_update_slice(ctx, physical_aval_out, x, update,
                                      start_indices=start_indices)
 
@@ -568,7 +566,7 @@ class KeyTyRules:
     key_shape = aval_out.dtype.impl.key_shape
     trailing_dims = [aval_out.ndim + i for i in range(len(key_shape))]
     broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
-    physical_aval_out, = KeyTyRules.physical_avals(aval_out)
+    physical_aval_out = core.physical_aval(aval_out)
     return mlir.broadcast_in_dim(ctx, x, physical_aval_out, broadcast_dimensions=broadcast_dimensions)
 
   @staticmethod

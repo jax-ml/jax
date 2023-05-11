@@ -2838,8 +2838,8 @@ class FooTyRules:
   # handlers
 
   @staticmethod
-  def physical_avals(aval):
-    return [core.ShapedArray((*aval.shape, 2), jnp.dtype('uint32'))]
+  def physical_element_aval(dtype) -> core.ShapedArray:
+    return core.ShapedArray((2,), jnp.dtype('uint32'))
 
   @staticmethod
   def physical_op_sharding(aval, op_sharding_proto):

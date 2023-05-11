@@ -30,7 +30,7 @@ import types
 from typing import (Any, Callable, ClassVar, DefaultDict, Dict, FrozenSet,
                     Generator, Generic, Hashable, Iterable, Iterator, List,
                     NamedTuple, Optional, Sequence, Set, Tuple, Type, TypeVar,
-                    Union, cast)
+                    Union, cast, overload)
 import warnings
 from weakref import ref
 
@@ -1378,6 +1378,25 @@ def concrete_or_error(force: Any, val: Any, context=""):
 # TODO(frostig): update inliners of the four functions below to call them
 def has_opaque_dtype(x: Any) -> bool:
   return dtypes.is_opaque_dtype(get_aval(x).dtype)
+
+@overload
+def physical_aval(aval: ShapedArray) -> ShapedArray: ...
+@overload
+def physical_aval(aval: DShapedArray) -> DShapedArray: ...
+@overload                       # TODO(frostig): remove this case
+def physical_aval(aval: AbstractValue) -> AbstractValue: ...
+
+def physical_aval(aval):
+  aval_dtype = getattr(aval, 'dtype', None)
+  if aval_dtype and dtypes.is_opaque_dtype(aval_dtype):
+    ctor = type(aval)
+    aval_shape = getattr(aval, 'shape', None)
+    assert aval_shape is not None, (ctor, aval)
+    elt_aval = aval_dtype._rules.physical_element_aval(aval_dtype)
+    assert type(elt_aval) is ShapedArray
+    return ctor((*aval_shape, *elt_aval.shape), elt_aval.dtype)  # pytype: disable=wrong-arg-count
+  else:
+    return aval
 
 def _short_dtype_name(dtype) -> str:
   if type(dtype) in dtypes.opaque_dtypes:

@@ -143,9 +143,7 @@ def dtype_to_ir_type(dtype: Union[np.dtype, np.generic]) -> ir.Type:
 
 def _array_ir_types(aval: Union[core.ShapedArray, core.DShapedArray]
                     ) -> Sequence[ir.Type]:
-  if dtypes.is_opaque_dtype(aval.dtype):
-    phys_avals = aval.dtype._rules.physical_avals(aval)
-    return tuple(itertools.chain(*map(_array_ir_types, phys_avals)))
+  aval = core.physical_aval(aval)  # type: ignore
   if not core.is_constant_shape(aval.shape):
     return _dynamic_array_ir_types(aval)  # type: ignore
   return (ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype)),)
@@ -1243,10 +1241,7 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
   return out
 
 def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Value:
-  if dtypes.is_opaque_dtype(aval_out.dtype):  # type: ignore
-    # TODO(frostig,mattjj,necula): asserts a single physical aval, and a
-    # particular reshape rule (reshape to the output physical aval's shape)
-    aval_out, = aval_out.dtype._rules.physical_avals(aval_out)  # type: ignore
+  aval_out = core.physical_aval(aval_out)
   if not core.is_constant_shape(aval_out.shape):  # type: ignore
     shape = eval_dynamic_shape(ctx, aval_out.shape)  # type: ignore
     return hlo.DynamicReshapeOp(
@@ -1704,10 +1699,7 @@ def _layout_to_mlir_layout(minor_to_major: Optional[Sequence[int]]):
   return ir.DenseIntElementsAttr.get(layout, type=ir.IndexType.get())
 
 def _aval_to_default_layouts(aval):
-  if dtypes.is_opaque_dtype(aval.dtype):
-    avals = aval.dtype._rules.physical_avals(aval)
-  else:
-    avals = [aval]
+  avals = [core.physical_aval(aval)]
   # Row major order is default for `NumPy`.
   return [list(range(aval.ndim - 1, -1, -1)) for aval in avals]
 

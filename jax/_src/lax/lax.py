@@ -4728,9 +4728,9 @@ mlir.register_lowering(empty_p, _empty_lower)
 
 class BIntRules:
   @staticmethod
-  def physical_avals(aval) -> Sequence[core.AbstractValue]:
-    dtype = dtypes._scalar_type_to_dtype(int)
-    return [core.ShapedArray(aval.shape, dtype)]
+  def physical_element_aval(dtype) -> core.ShapedArray:
+    int_dtype = dtypes._scalar_type_to_dtype(int)
+    return core.ShapedArray((), int_dtype)
 
   @staticmethod
   def result_handler(sticky_device, aval):
@@ -4742,7 +4742,7 @@ class BIntRules:
   @staticmethod
   def global_sharded_result_handler(aval, out_sharding, committed,
                                     is_out_sharding_from_xla):
-    phys_aval, = BIntRules.physical_avals(aval)
+    phys_aval = core.physical_aval(aval)
     phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
 
     if not dispatch.is_single_device_sharding(out_sharding):
