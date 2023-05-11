@@ -47,9 +47,8 @@ class JaxAotTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices('cpu', 'gpu')
   def test_pickle_pjit_lower(self):
-    platform_version = jax.devices()[0].client.platform_version
-    if platform_version.startswith('StreamExecutor TPU'):
-      raise unittest.SkipTest('bad platform version: %s' % platform_version)
+    if jtu.is_se_tpu():
+      raise unittest.SkipTest('StreamExecutor not supported.')
 
     def fun(x):
       return x * x
