@@ -873,13 +873,13 @@ class _Parser:
     if expr is None:
       raise self.parse_err(tok,
                            ("unexpected placeholder for unknown dimension "
-                            f"in argument shape {self.arg_shape}"))
+                            f"for argument shape {self.arg_shape}"))
     arg_shape_dim = self.arg_shape[len(self.dimensions)]
     if core.is_constant_dim(expr) and arg_shape_dim is not None:
       if expr != arg_shape_dim:
-        raise ValueError(
-            f"polymorphic shape {self.shape_spec_repr} in axis {len(self.dimensions)} "
-            f"must match the known dimension size in arg shape {self.arg_shape}")
+        raise self.parse_err(tok,
+                             (f"different size {expr} for known dimension "
+                              f"for argument shape {self.arg_shape}"))
     self.dimensions.append(expr)
 
   def parse_err(self, tok: Optional[tokenize.TokenInfo], detail: str) -> Exception:
