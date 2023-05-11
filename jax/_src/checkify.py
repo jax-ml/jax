@@ -47,7 +47,7 @@ from jax._src.tree_util import tree_map
 from jax._src.tree_util import tree_unflatten
 from jax._src.typing import Array
 from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
-                           unzip3, weakref_lru_cache)
+                           unzip3, weakref_lru_cache, HashableWrapper)
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
@@ -353,8 +353,13 @@ def default_checkify_rule(primitive: core.Primitive, error: Error,
 
   # call_jaxpr handling
   call_jaxpr = params.pop('call_jaxpr')
+  if isinstance(call_jaxpr, core.ClosedJaxpr):  # handle closed_call_p
+    jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
+  else:
+    jaxpr, consts = call_jaxpr, ()
+  consts_ = tuple(HashableWrapper(c) for c in consts)
   partial_checkify = lu.hashable_partial(lu.wrap_init(
-      checkify_jaxpr_flat), call_jaxpr, (), enabled_errors, err_tree)
+      checkify_jaxpr_flat_hashable), jaxpr, consts_, enabled_errors, err_tree)
   partial_checkify, metadata = _flatten_and_get_error_metadata_thunk(
       partial_checkify)
 
@@ -423,6 +428,11 @@ def checkify_jaxpr_flat(jaxpr: core.Jaxpr, consts: Sequence[core.Value],
       write_env(eqn.outvars[0], outvals)
 
   return error, map(read_env, jaxpr.outvars)
+
+def checkify_jaxpr_flat_hashable(jaxpr, hashable_consts, enabled_errors,
+                                 err_tree, *args):
+  consts = tuple(c.x for c in hashable_consts)
+  return checkify_jaxpr_flat(jaxpr, consts, enabled_errors, err_tree, *args)
 
 @lu.transformation_with_aux
 def flatten_fun_output(*args):
@@ -984,6 +994,7 @@ def custom_vjp_call_jaxpr_rule(in_err, enabled_errors, *in_vals, fun_jaxpr,
     out_err = jtu.tree_unflatten(err_tree, err_vals)
   return out_err, out_vals
 error_checks[custom_derivatives.custom_vjp_call_jaxpr_p] = custom_vjp_call_jaxpr_rule
+
 
 def check_discharge_rule(error, enabled_errors, *args, err_tree, debug):
   del debug
