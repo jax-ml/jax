@@ -41,6 +41,7 @@ from jax._src import profiler
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
+from jax._src import op_shardings
 from jax._src import xla_bridge as xb
 from jax._src.config import config, flags
 from jax._src.interpreters import ad
@@ -607,13 +608,15 @@ def _mcjax_reshard(x, target_sharding):
                      f"platform {inp_plat} and target sharding's device set "
                      f"ids: {target_ids} on platform {target_plat}")
 
-  permute_order = np.vectorize(target_sharding._device_assignment.index,
-                               otypes=[int])(inp_sharding._device_assignment)
-
   old_op_sharding = inp_sharding._to_xla_op_sharding(x.ndim)
-  new_op_sharding = old_op_sharding.clone()
-  new_op_sharding.tile_assignment_devices = np.take(
-      old_op_sharding.tile_assignment_devices, permute_order)
+  if op_shardings.is_op_sharding_replicated(old_op_sharding):
+    new_op_sharding = old_op_sharding
+  else:
+    permute_order = np.vectorize(target_sharding._device_assignment.index,
+                                 otypes=[int])(inp_sharding._device_assignment)
+    new_op_sharding = old_op_sharding.clone()
+    new_op_sharding.tile_assignment_devices = np.take(
+        old_op_sharding.tile_assignment_devices, permute_order)
 
   new_x = array.make_array_from_single_device_arrays(
       x.shape,
