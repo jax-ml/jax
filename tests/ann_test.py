@@ -107,6 +107,8 @@ class AnnTest(jtu.JaxTestCase):
   def test_autodiff(self, shape, dtype, reduction_dimension, k, is_max_k):
     if reduction_dimension >= len(shape):
       self.skipTest(f'{reduction_dimension=} >= {len(shape)=}')
+    if k > shape[reduction_dimension]:
+      self.skipTest(f'{k=} > {shape[reduction_dimension]=}')
     vals = np.arange(math.prod(shape), dtype=dtype)
     vals = self.rng().permutation(vals).reshape(shape)
     if is_max_k:
