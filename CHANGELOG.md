@@ -10,6 +10,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.10
 
+* Changes
+  * Fixed `'apple-m1' is not a recognized processor for this target (ignoring
+    processor)` issue that prevented previous release from running on Mac M1.
+
 ## jax 0.4.9 (May 9, 2023)
 
 * Changes
