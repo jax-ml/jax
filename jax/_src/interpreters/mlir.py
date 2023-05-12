@@ -1254,23 +1254,31 @@ def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Va
 def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
              start_indices, limit_indices, strides) -> ir.Value:
   if dtypes.is_opaque_dtype(aval_out.dtype):
-    return [aval_out.dtype._rules.slice_mlir(
-        ctx, aval_out, x, start_indices, limit_indices, strides)]
-
-  if any(not core.is_constant_shape(s) for s in (start_indices, limit_indices, strides)):
-    start_indices = eval_dynamic_shape(ctx, start_indices)
-    limit_indices = eval_dynamic_shape(ctx, limit_indices)
-    strides = eval_dynamic_shape(ctx, strides)
-    return hlo.RealDynamicSliceOp(aval_to_ir_type(aval_out),
-                                  x,
-                                  shape_tensor(start_indices),
-                                  shape_tensor(limit_indices),
-                                  shape_tensor(strides)).result
+    elt_shape = aval_out.dtype._rules.physical_element_aval(
+        aval_out.dtype).shape
+    trailing_zeros = [0] * len(elt_shape)
+    trailing_ones  = [1] * len(elt_shape)
+    start_indices = (*start_indices, *trailing_zeros)
+    limit_indices = (*limit_indices, *elt_shape)
+    strides = (*strides, *trailing_ones)
+    physical_aval_out = core.physical_aval(aval_out)
+    return slice_op(ctx, x, physical_aval_out, start_indices=start_indices,
+                    limit_indices=limit_indices, strides=strides)
   else:
-    return hlo.SliceOp(x,
-                       dense_int_elements(start_indices),
-                       dense_int_elements(limit_indices),
-                       dense_int_elements(strides)).result
+    if any(not core.is_constant_shape(s) for s in (start_indices, limit_indices, strides)):
+      start_indices = eval_dynamic_shape(ctx, start_indices)
+      limit_indices = eval_dynamic_shape(ctx, limit_indices)
+      strides = eval_dynamic_shape(ctx, strides)
+      return hlo.RealDynamicSliceOp(aval_to_ir_type(aval_out),
+                                    x,
+                                    shape_tensor(start_indices),
+                                    shape_tensor(limit_indices),
+                                    shape_tensor(strides)).result
+    else:
+      return hlo.SliceOp(x,
+                         dense_int_elements(start_indices),
+                         dense_int_elements(limit_indices),
+                         dense_int_elements(strides)).result
 
 def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:

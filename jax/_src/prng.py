@@ -522,18 +522,6 @@ class KeyTyRules:
   # element-type-polymorphic primitive lowering rules
 
   @staticmethod
-  def slice_mlir(ctx, aval_out, x, start_indices, limit_indices, strides) -> ir.Value:
-    key_shape = aval_out.dtype.impl.key_shape
-    trailing_zeros = [0] * len(key_shape)
-    trailing_ones  = [1] * len(key_shape)
-    start_indices = (*start_indices, *trailing_zeros)
-    limit_indices = (*limit_indices, *key_shape)
-    strides = (*strides, *trailing_ones)
-    physical_aval_out = core.physical_aval(aval_out)
-    return mlir.slice_op(ctx, x, physical_aval_out,
-                         start_indices=start_indices, limit_indices=limit_indices, strides=strides)
-
-  @staticmethod
   def dynamic_slice_mlir(ctx, aval_out, x, start_indices) -> ir.Value:
     index_avals = ctx.avals_in[1:]
     dtype = dtypes.canonicalize_dtype(index_avals[0].dtype if index_avals else 'int64')
