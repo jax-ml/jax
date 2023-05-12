@@ -6,9 +6,13 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.10
+## jax 0.4.11
 
-## jaxlib 0.4.10
+## jaxlib 0.4.11
+
+## jax 0.4.10 (May 11, 2023)
+
+## jaxlib 0.4.10 (May 11, 2023)
 
 * Changes
   * Fixed `'apple-m1' is not a recognized processor for this target (ignoring
