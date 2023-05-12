@@ -296,7 +296,6 @@ def _comparator_builder_mlir(ctx, op_type, is_max_k):
   entry_block = comparator.add_entry_block()
   with ir.InsertionPoint(entry_block):
     p0, p1, _, _ = entry_block.arguments
-    print(p0, p1)
     direction = hlo.ComparisonDirectionAttr.get('GT' if is_max_k else 'LT')
     cmp_result = hlo.CompareOp(p0, p1, comparison_direction=direction)
     hlo.ReturnOp(cmp_result)
