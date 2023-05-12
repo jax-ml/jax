@@ -522,13 +522,6 @@ class KeyTyRules:
   # element-type-polymorphic primitive lowering rules
 
   @staticmethod
-  def transpose_mlir(ctx, aval_out, x, *, permutation) -> ir.Value:
-    key_shape = aval_out.dtype.impl.key_shape
-    trailing_dims = [aval_out.ndim + i for i in range(len(key_shape))]
-    perm = [*permutation, *trailing_dims]
-    return hlo.TransposeOp(x, mlir.dense_int_elements(perm)).result
-
-  @staticmethod
   def gather_mlir(ctx, avals_in, aval_out, x, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
                   indices_are_sorted, mode, fill_value) -> ir.Value:

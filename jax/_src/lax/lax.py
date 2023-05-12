@@ -3273,7 +3273,10 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
   if dtypes.is_opaque_dtype(aval_out.dtype):
-    return [aval_out.dtype._rules.transpose_mlir(ctx, aval_out, x, permutation=permutation)]
+    elt_shape = aval_out.dtype._rules.physical_element_aval(
+        aval_out.dtype).shape
+    trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
+    permutation = [*permutation, *trailing_dims]
   return hlo.TransposeOp(x, mlir.dense_int_elements(permutation)).results
 
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
