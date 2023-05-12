@@ -2870,25 +2870,6 @@ class FooTyRules:
   # element-type-polymorphic primitive lowering rules
 
   @staticmethod
-  def gather_mlir(ctx, avals_in, aval_out, x, indices, *,
-                  dimension_numbers, slice_sizes, unique_indices,
-                  indices_are_sorted, mode, fill_value):
-    aval_x, aval_indices = avals_in
-    aval_y = aval_out
-    dimension_numbers = dimension_numbers._replace(
-        offset_dims=(*dimension_numbers.offset_dims, aval_y.ndim))
-    slice_sizes = (*slice_sizes, 2)
-    gather_lower = partial(
-        lax_internal.slicing._gather_lower, dimension_numbers=dimension_numbers,
-        slice_sizes=slice_sizes, unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
-    aval_x_raw = core.ShapedArray((*aval_x.shape, 2), np.dtype('uint32'))
-    aval_y_raw = core.ShapedArray((*aval_y.shape, 2), np.dtype('uint32'))
-    return mlir.delegate_lowering(ctx, gather_lower, x, indices,
-                                  avals_in=[aval_x_raw, aval_indices],
-                                  avals_out=[aval_y_raw])[0]
-
-  @staticmethod
   def select_mlir(ctx, avals_in, aval_out, which, *cases):
     assert all(aval_case == aval_out for aval_case in avals_in[1:])
     assert avals_in[0].ndim == aval_out.ndim

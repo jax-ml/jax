@@ -522,27 +522,6 @@ class KeyTyRules:
   # element-type-polymorphic primitive lowering rules
 
   @staticmethod
-  def gather_mlir(ctx, avals_in, aval_out, x, indices, *,
-                  dimension_numbers, slice_sizes, unique_indices,
-                  indices_are_sorted, mode, fill_value) -> ir.Value:
-    aval_x, aval_indices = avals_in
-    aval_y = aval_out
-    key_shape = aval_x.dtype.impl.key_shape
-    trailing_offset_dims = [aval_y.ndim + i for i in range(len(key_shape))]
-    dimension_numbers = dimension_numbers._replace(
-        offset_dims=(*dimension_numbers.offset_dims, *trailing_offset_dims))
-    slice_sizes = (*slice_sizes, *key_shape)
-    gather_lower = partial(
-        lax_internal.slicing._gather_lower, dimension_numbers=dimension_numbers,
-        slice_sizes=slice_sizes, unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
-    res, = mlir.delegate_lowering(
-        ctx, gather_lower, x, indices,
-        avals_in=[keys_aval_to_base_arr_aval(aval_x), aval_indices],
-        avals_out=[keys_aval_to_base_arr_aval(aval_y)])
-    return res
-
-  @staticmethod
   def scatter_mlir(ctx, avals_in, aval_out, x, indices, updates, *,
                    update_jaxpr, update_consts, dimension_numbers,
                    unique_indices, indices_are_sorted, mode):

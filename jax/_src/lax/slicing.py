@@ -1369,15 +1369,36 @@ batching.primitive_batchers[gather_p] = _gather_batching_rule
 pe.padding_rules[gather_p] = _gather_pad_rule
 
 
+def _gather_lower_opaque(ctx, operand, indices, *,
+                         dimension_numbers, slice_sizes, unique_indices,
+                         indices_are_sorted, mode, fill_value) -> ir.Value:
+  aval_x, aval_indices = ctx.avals_in
+  aval_y, = ctx.avals_out
+  elt_shape = aval_x.dtype._rules.physical_element_aval(aval_x.dtype).shape
+  trailing_offset_dims = [aval_y.ndim + i for i in range(len(elt_shape))]
+  dimension_numbers = dimension_numbers._replace(
+      offset_dims=(*dimension_numbers.offset_dims, *trailing_offset_dims))
+  slice_sizes = (*slice_sizes, *elt_shape)
+  gather_lower = partial(
+      _gather_lower, dimension_numbers=dimension_numbers,
+      slice_sizes=slice_sizes, unique_indices=unique_indices,
+      indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
+  res, = mlir.delegate_lowering(
+      ctx, gather_lower, operand, indices,
+      avals_in=[core.physical_aval(aval_x), aval_indices],
+      avals_out=[core.physical_aval(aval_y)])
+  return res
+
 def _gather_lower(ctx, operand, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
                   indices_are_sorted, mode, fill_value):
   aval_out, = ctx.avals_out
   if dtypes.is_opaque_dtype(aval_out.dtype):
-    return [aval_out.dtype._rules.gather_mlir(
-        ctx, ctx.avals_in, aval_out, operand, indices, dimension_numbers=dimension_numbers,
+    return [_gather_lower_opaque(
+        ctx, operand, indices, dimension_numbers=dimension_numbers,
         slice_sizes=slice_sizes, unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)]
+        indices_are_sorted=indices_are_sorted, mode=mode,
+        fill_value=fill_value)]
 
   if mode == GatherScatterMode.FILL_OR_DROP:
     gather_fill_fn = mlir.lower_fun(_gather_fill, multiple_results=False)
