@@ -1071,7 +1071,7 @@ def _split(x, indices, axis):
 
 
 def vmap(fun: F,
-         in_axes: Union[int, Sequence[Any]] = 0,
+         in_axes: Union[int, None, Sequence[Any]] = 0,
          out_axes: Any = 0,
          axis_name: Optional[AxisName] = None,
          axis_size: Optional[int] = None,
