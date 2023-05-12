@@ -564,28 +564,6 @@ class KeyTyRules:
                                  lax_internal._get_bitwise_or_identity))
 
   @staticmethod
-  def select_mlir(ctx, avals_in, aval_out, which, *cases):
-    assert all(aval_case == aval_out for aval_case in avals_in[1:])
-    assert avals_in[0].ndim == aval_out.ndim
-    select_lower = lax_internal._select_hlo_lowering
-    key_shape = aval_out.dtype.impl.key_shape
-
-    aval_which = avals_in[0]
-    aval_which_bcast = core.ShapedArray(
-        (*aval_which.shape, *key_shape), aval_which.dtype)
-    aval_out_raw = core.ShapedArray(
-        (*aval_out.shape, *key_shape), np.dtype('uint32'))
-    aval_cases_raw = [aval_out_raw] * (len(avals_in) - 1)
-
-    bcast_dims = list(range(aval_which.ndim))
-    which_bcast = mlir.broadcast_in_dim(
-        ctx, which, aval_which_bcast, broadcast_dimensions=bcast_dims)
-
-    return mlir.delegate_lowering(ctx, select_lower, which_bcast, *cases,
-                                  avals_in=[aval_which_bcast, *aval_cases_raw],
-                                  avals_out=[aval_out_raw])[0]
-
-  @staticmethod
   def device_put_sharded(vals, aval, sharding, devices):
     physical_aval = keys_aval_to_base_arr_aval(aval)
     physical_buffers = tree_util.tree_map(random_unwrap, vals)
