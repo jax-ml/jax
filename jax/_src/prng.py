@@ -522,11 +522,6 @@ class KeyTyRules:
   # element-type-polymorphic primitive lowering rules
 
   @staticmethod
-  def empty_mlir(ctx, aval_out) -> Sequence[ir.Value]:
-    return mlir.ir_constants(np.zeros(aval_out.dtype.impl.key_shape,
-                                      dtype=np.dtype('uint32')))
-
-  @staticmethod
   def slice_mlir(ctx, aval_out, x, start_indices, limit_indices, strides) -> ir.Value:
     key_shape = aval_out.dtype.impl.key_shape
     trailing_zeros = [0] * len(key_shape)

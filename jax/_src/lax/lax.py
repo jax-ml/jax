@@ -4720,9 +4720,9 @@ def empty(dtype):
 empty_p = core.Primitive('empty')
 empty_p.def_abstract_eval(lambda *, dtype: core.ShapedArray((), dtype))
 def _empty_lower(ctx, *, dtype):
-  if dtypes.is_opaque_dtype(dtype):
-    return dtype._rules.empty_mlir(ctx, ctx.avals_out[0])
-  return mlir.ir_constants(np.zeros((), np.dtype(dtype)))
+  dtype = dtype if dtypes.is_opaque_dtype(dtype) else np.dtype(dtype)
+  phys_aval = core.physical_aval(core.ShapedArray((), dtype))
+  return mlir.ir_constants(np.zeros(phys_aval.shape, phys_aval.dtype))
 mlir.register_lowering(empty_p, _empty_lower)
 
 

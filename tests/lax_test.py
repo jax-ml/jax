@@ -2870,10 +2870,6 @@ class FooTyRules:
   # element-type-polymorphic primitive lowering rules
 
   @staticmethod
-  def empty_mlir(ctx, aval_out):
-    return mlir.ir_constants(np.zeros((2,), dtype=np.dtype('uint32')))
-
-  @staticmethod
   def slice_mlir(ctx, aval_out, x, start_indices, limit_indices, strides):
     start_indices = (*start_indices, 0)
     limit_indices = (*limit_indices, 2)
