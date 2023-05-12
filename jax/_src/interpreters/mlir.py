@@ -1283,21 +1283,30 @@ def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
 def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:
   if dtypes.is_opaque_dtype(aval_out.dtype):
-    return aval_out.dtype._rules.dynamic_slice_mlir(ctx, aval_out, x,
-                                                    start_indices)
-  slice_sizes = aval_out.shape
-  if not core.is_constant_shape(slice_sizes):
-    slice_sizes = eval_dynamic_shape(ctx, slice_sizes)
-    return hlo.RealDynamicSliceOp(
-        aval_to_ir_type(aval_out), x,
-        shape_tensor(start_indices),
-        hlo.AddOp(shape_tensor(start_indices),
-                  shape_tensor(slice_sizes)).result,
-        shape_tensor([1] * len(slice_sizes))
-    ).result
+    elt_shape = aval_out.dtype._rules.physical_element_aval(
+        aval_out.dtype).shape
+    index_avals = ctx.avals_in[1:]
+    dtype = dtypes.canonicalize_dtype(
+        index_avals[0].dtype if index_avals else 'int64')  # type: ignore
+    trailing_zeros = [ir_constant(np.array(0, dtype))] * len(elt_shape)
+    start_indices = (*start_indices, *trailing_zeros)
+    physical_aval_out = core.physical_aval(aval_out)
+    return dynamic_slice(ctx, physical_aval_out, x,
+                              start_indices=start_indices)
   else:
-    return hlo.DynamicSliceOp(x, start_indices,
-                              dense_int_elements(slice_sizes)).result
+    slice_sizes = aval_out.shape
+    if not core.is_constant_shape(slice_sizes):
+      slice_sizes = eval_dynamic_shape(ctx, slice_sizes)
+      return hlo.RealDynamicSliceOp(
+          aval_to_ir_type(aval_out), x,
+          shape_tensor(start_indices),
+          hlo.AddOp(shape_tensor(start_indices),
+                    shape_tensor(slice_sizes)).result,
+          shape_tensor([1] * len(slice_sizes))
+      ).result
+    else:
+      return hlo.DynamicSliceOp(x, start_indices,
+                                dense_int_elements(slice_sizes)).result
 
 def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                          start_indices) -> ir.Value:
