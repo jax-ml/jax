@@ -2179,21 +2179,43 @@ ad.defjvp_zero(shift_right_logical_p)
 mlir.register_lowering(shift_right_logical_p,
                        partial(_nary_lower_hlo, hlo.ShiftRightLogicalOp))
 
+def _opaque_comparison_hlo(direction, reduction_op, identity, ctx,
+                           avals_in, aval_out, x, y):
+  aval_x, aval_y = avals_in
+  base_aval_x = core.physical_aval(aval_x)
+  base_aval_y = core.physical_aval(aval_y)
+  base_aval_out = core.ShapedArray(base_aval_x.shape, aval_out.dtype)
+  reduce_axes = tuple(range(aval_out.ndim, base_aval_out.ndim))
+  res, = mlir.delegate_lowering(
+      ctx, partial(_compare_lower_hlo, direction),
+      x, y, avals_in=[base_aval_x, base_aval_y], avals_out=[base_aval_out])
+  return mlir.delegate_lowering(
+      ctx, partial(_unary_reduce_lower, reduction_op, identity,
+                   axes=reduce_axes),
+      res, avals_in=[base_aval_out], avals_out=[aval_out])
+
+_opaque_eq_hlo = partial(
+    _opaque_comparison_hlo, 'EQ', hlo.AndOp, _get_bitwise_and_identity)
+_opaque_ne_hlo = partial(
+    _opaque_comparison_hlo, 'NE', hlo.OrOp, _get_bitwise_or_identity)
+
+def _compare_lower_hlo_opaque(direction: str, ctx, avals_in, aval_out, x, y):
+  broadcast_avals_in = tuple(
+      core.ShapedArray(aval_out.shape, aval.dtype) for aval in avals_in)
+  if direction == 'EQ':
+    return _opaque_eq_hlo(ctx, broadcast_avals_in, aval_out, x, y)
+  elif direction == 'NE':
+    return _opaque_ne_hlo(ctx, broadcast_avals_in, aval_out, x, y)
+  else:
+    raise NotImplementedError(
+        f"HLO comparison {direction} for opaque dtype {avals_in[0].dtype}")
+
 def _compare_lower_hlo(direction: str, ctx, x, y):
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
   x_dtype = avals_in[0].dtype
   x, y = mlir.multi_broadcast_in_dim(ctx, (x, y), avals_in, aval_out.shape)
   if dtypes.is_opaque_dtype(x_dtype):
-    broadcast_avals_in = tuple(
-        core.ShapedArray(aval_out.shape, aval.dtype) for aval in avals_in)
-    if direction == 'EQ':
-      return x_dtype._rules.eq_mlir(ctx, broadcast_avals_in, aval_out, x, y)
-    elif direction == 'NE':
-      return x_dtype._rules.ne_mlir(ctx, broadcast_avals_in, aval_out, x, y)
-    else:
-      raise NotImplementedError(
-          f"HLO comparison {direction} for opaque dtype {x_dtype}")
-
+    return _compare_lower_hlo_opaque(direction, ctx, avals_in, aval_out, x, y)
   if dtypes.issubdtype(x_dtype, np.inexact):
     compare_type = "FLOAT"
   elif dtypes.issubdtype(x_dtype, np.signedinteger):

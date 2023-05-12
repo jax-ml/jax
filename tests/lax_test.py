@@ -39,7 +39,6 @@ from jax.interpreters import xla
 from jax._src.interpreters import mlir
 from jax.interpreters import batching
 from jax._src import array
-from jax._src.lib.mlir.dialects import hlo
 from jax._src import dtypes
 from jax._src.interpreters import pxla
 from jax._src import test_util as jtu
@@ -2885,10 +2884,12 @@ class FooTy:
 make_p = core.Primitive('make')
 bake_p = core.Primitive('bake')
 take_p = core.Primitive('take')
+jake_p = core.Primitive('jake')
 
 def make(shape): return make_p.bind(shape=tuple(shape))
 def bake(k):     return bake_p.bind(k)
 def take(k):     return take_p.bind(k)
+def jake(k):     return jake_p.bind(k)
 
 @make_p.def_abstract_eval
 def make_abstract_eval(*, shape):
@@ -2902,6 +2903,10 @@ def bake_abstract_eval(x):
 @take_p.def_abstract_eval
 def take_abstract_eval(x):
   return core.ShapedArray(x.shape, jnp.dtype('float32'))
+
+@jake_p.def_abstract_eval
+def jake_abstract_eval(x):
+  return x
 
 # runtime ('outside jit') data types
 
@@ -2939,6 +2944,8 @@ def bake_lowering(k):
 def take_lowering(k):
   return jnp.broadcast_to(jnp.float32(k.size), k.shape)
 
+def jake_lowering(k):
+  return jnp.ones((*k.shape, 2), 'uint32')
 
 def bake_vmap(batched_args, batch_dims):
   xs, = batched_args
@@ -2963,6 +2970,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     mlir.register_lowering(make_p, mlir.lower_fun(make_lowering, False))
     mlir.register_lowering(bake_p, mlir.lower_fun(bake_lowering, False))
     mlir.register_lowering(take_p, mlir.lower_fun(take_lowering, False))
+    mlir.register_lowering(jake_p, mlir.lower_fun(jake_lowering, False))
     batching.defvectorized(take_p)
     batching.primitive_batchers[bake_p] = bake_vmap
 
@@ -3151,6 +3159,25 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     ys = jax.jit(lambda x, y: x.at[idx].set(y))(ks, k)
     self.assertIsInstance(ys, FooArray)
     self.assertEqual(ys.shape, (3,))
+
+  def test_equality(self):
+    eq = jax.jit(lambda k1, k2: k1 == k2)
+    ne = jax.jit(lambda k1, k2: k1 != k2)
+
+    k1 = jax.jit(lambda: make(()))()
+    k2 = jax.jit(lambda: jake(make(())))()
+
+    self.assertTrue(eq(k1, k1))
+    self.assertFalse(eq(k1, k2))
+    self.assertTrue(ne(k1, k2))
+    self.assertFalse(ne(k1, k1))
+
+    size = 5
+    idx = slice(2, 4)
+    ks = jax.jit(lambda k: jake(make((size,))).at[idx].set(k))(k1)
+    expected = jnp.zeros(size, dtype=bool).at[idx].set(True)
+    self.assertArraysEqual(eq(k1, ks), expected)
+    self.assertArraysEqual(ne(k1, ks), ~expected)
 
   def test_select(self):
     ks = jax.jit(lambda: make((3,)))()
