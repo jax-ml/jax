@@ -3139,6 +3139,19 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     self.assertIsInstance(ys, FooArray)
     self.assertEqual(ys.shape, (3, 2, 1))
 
+  @parameterized.parameters([
+    (0,),
+    (slice(1),),
+    (np.array([0, 2]),),
+    (np.array([False, True, True]),)
+  ])
+  def test_scatter(self, idx):
+    k  = jax.jit(lambda: make(()))()
+    ks = jax.jit(lambda: make((3,)))()
+    ys = jax.jit(lambda x, y: x.at[idx].set(y))(ks, k)
+    self.assertIsInstance(ys, FooArray)
+    self.assertEqual(ys.shape, (3,))
+
   def test_select(self):
     ks = jax.jit(lambda: make((3,)))()
     cs = jnp.array([True, False, False])
