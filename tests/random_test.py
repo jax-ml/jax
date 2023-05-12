@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import copy
 import enum
 from functools import partial
 import math
@@ -2073,6 +2073,13 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
   def test_randint_out_of_range(self):
     # TODO(mattjj): enable this test if/when RngBitGenerator supports it
     raise SkipTest('8-bit types not supported with RBG PRNG')
+
+  def test_copy(self):
+    key = random.PRNGKey(8459302)
+    self.assertArraysEqual(key, key.copy())
+    self.assertArraysEqual(key, copy.copy(key))
+    self.assertArraysEqual(key, copy.deepcopy(key))
+    self.assertArraysEqual(key, jax.jit(lambda k: k.copy())(key))
 
 
 # TODO(frostig): remove `with_config` we always enable_custom_prng
