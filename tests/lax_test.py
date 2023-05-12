@@ -2870,13 +2870,6 @@ class FooTyRules:
   # element-type-polymorphic primitive lowering rules
 
   @staticmethod
-  def broadcast_in_dim_mlir(ctx, aval_out, x, broadcast_dimensions):
-    broadcast_dimensions = [*broadcast_dimensions, aval_out.ndim]
-    return hlo.BroadcastInDimOp(
-        mlir.aval_to_ir_type(aval_out), x,
-        mlir.dense_int_elements(broadcast_dimensions)).result
-
-  @staticmethod
   def transpose_mlir(ctx, aval_out, x, *, permutation):
     perm = [*permutation, len(permutation)]
     return hlo.TransposeOp(x, mlir.dense_int_elements(perm)).result

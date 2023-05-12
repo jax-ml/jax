@@ -522,15 +522,6 @@ class KeyTyRules:
   # element-type-polymorphic primitive lowering rules
 
   @staticmethod
-  def broadcast_in_dim_mlir(ctx, aval_out, x,
-                            broadcast_dimensions) -> ir.Value:
-    key_shape = aval_out.dtype.impl.key_shape
-    trailing_dims = [aval_out.ndim + i for i in range(len(key_shape))]
-    broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
-    physical_aval_out = core.physical_aval(aval_out)
-    return mlir.broadcast_in_dim(ctx, x, physical_aval_out, broadcast_dimensions=broadcast_dimensions)
-
-  @staticmethod
   def transpose_mlir(ctx, aval_out, x, *, permutation) -> ir.Value:
     key_shape = aval_out.dtype.impl.key_shape
     trailing_dims = [aval_out.ndim + i for i in range(len(key_shape))]
