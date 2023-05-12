@@ -2870,13 +2870,6 @@ class FooTyRules:
   # element-type-polymorphic primitive lowering rules
 
   @staticmethod
-  def dynamic_update_slice_mlir(ctx, aval_out, x, update, *start_indices):
-    aval_out, = ctx.avals_out
-    dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
-    start_indices = (*start_indices, mlir.ir_constant(np.array(0, dtype=dtype)))
-    return hlo.DynamicUpdateSliceOp(x, update, start_indices).result
-
-  @staticmethod
   def broadcast_in_dim_mlir(ctx, aval_out, x, broadcast_dimensions):
     broadcast_dimensions = [*broadcast_dimensions, aval_out.ndim]
     return hlo.BroadcastInDimOp(
