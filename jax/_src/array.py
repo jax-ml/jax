@@ -211,8 +211,9 @@ class ArrayImpl(basearray.Array):
     for db in self._arrays:
       if db.shape != ss:
         raise ValueError(
-            f"Expected shard shape {ss} doesn't match the buffer "
-            f"shape {db.shape} for buffer: {db}")
+            f"Expected shard shape {ss} doesn't match the single device array "
+            f"shape {db.shape}. Shape of Array is "
+            f"{self.aval.str_short()} with sharding {self.sharding}")
 
     # Rearrange arrays based on the device assignment.
     if isinstance(self.sharding, XLACompatibleSharding):
