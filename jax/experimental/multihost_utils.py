@@ -337,12 +337,17 @@ def global_array_to_host_local_array_impl(
   if isinstance(arr, array.ArrayImpl) and arr.is_fully_addressable:
     return arr
 
+  global_sharding = jax.sharding.NamedSharding(global_mesh, pspec)
   local_sharding = jax.sharding.NamedSharding(global_mesh.local_mesh, pspec)
   local_aval = _global_to_local_aval(
       core.ShapedArray(arr.shape, arr.dtype), global_mesh, pspec)
 
   if isinstance(arr, array.ArrayImpl):
-    arrays = arr._arrays
+    if arr.sharding.is_equivalent_to(global_sharding, arr.ndim):
+      arrays = arr._arrays
+    else:
+      resharded_array = jax.device_put(arr, global_sharding)
+      arrays = resharded_array._arrays
     return array.ArrayImpl(local_aval, local_sharding, arrays, committed=True)
   else:
     # numpy array can show up here during AD.

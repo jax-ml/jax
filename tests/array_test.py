@@ -397,7 +397,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         f"Expected shard shape {str_expected_shard_shape} doesn't match the "
-        "buffer shape"):
+        "single device array shape"):
       array.make_array_from_callback(shape, mps, lambda idx: inp_data)
 
   def test_mismatch_dtype(self):
