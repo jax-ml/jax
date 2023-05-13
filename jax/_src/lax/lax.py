@@ -2377,23 +2377,30 @@ mlir.register_lowering(bitcast_convert_type_p, _bitcast_convert_type_lower)
 
 
 def _validate_preferred_element_type(input_dtype, preferred_element_type):
-
-  if dtypes.issubdtype(input_dtype, np.integer) and dtypes.issubdtype(preferred_element_type, np.floating):
+  if (dtypes.issubdtype(input_dtype, np.integer) and
+      dtypes.issubdtype(preferred_element_type, np.floating)):
     # Special-case integer->float multiply. This is allowed, and also allows
     # different signedness between input and output.
     pass
   else:
     allowed_types = (np.integer, np.floating, np.complexfloating)
-    if any(dtypes.issubdtype(input_dtype, t) and not dtypes.issubdtype(preferred_element_type, t) for t in allowed_types):
-      raise TypeError("Input type is incompatible with `preferred_element_type`. The compatible combinations of "
-                      "(input_type, preferred_element_type) are (integral, integral), (integral, floating), "
+    if any(dtypes.issubdtype(input_dtype, t) and not
+           dtypes.issubdtype(preferred_element_type, t) for t in allowed_types):
+      raise TypeError("Input type is incompatible with "
+                      "`preferred_element_type`. The compatible combinations "
+                      "of (input_type, preferred_element_type) are "
+                      "(integral, integral), (integral, floating), "
                       "(floating, floating), (complex, complex.")
-    if dtypes.issubdtype(input_dtype, np.signedinteger) and not dtypes.issubdtype(preferred_element_type, np.signedinteger):
-      raise TypeError("`preferred_element_type` must have the same signedness as the original type.")
+    if (dtypes.issubdtype(input_dtype, np.signedinteger) and
+        not dtypes.issubdtype(preferred_element_type, np.signedinteger)):
+      raise TypeError("`preferred_element_type` must have the same signedness "
+                      "as the original type.")
   input_bitwidth = np.dtype(input_dtype).itemsize
   preferred_bitwidth = np.dtype(preferred_element_type).itemsize
   if preferred_bitwidth < input_bitwidth:
-    raise TypeError("`preferred_element_type` must not be narrower than the original type.")
+    raise TypeError("`preferred_element_type` must not be narrower than the "
+                    "original type.")
+
 
 def _precision_config(precision):
   if precision is not None:
@@ -2484,10 +2491,50 @@ def tuple_delete(tup, idx):
 
 def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
                             preferred_element_type: Optional[DTypeLike]):
-  input_dtype = naryop_dtype_rule(_input_dtype, [_any, _any], 'dot_general', lhs, rhs)
-  if preferred_element_type is None:
-    return input_dtype
-  _validate_preferred_element_type(input_dtype, preferred_element_type)
+  # We're mostly matching XLA's logic here, namely in shape_inference.cc and
+  # primitive_util.h's HigherPrecisionType, e.g.
+  # https://github.com/openxla/xla/blob/ea3a841768d0dcf192e5820c9b25c34c73f2226a/xla/primitive_util.h#L329
+  def component_type(dt):
+    if   dt == np.dtype('complex64' ): return np.dtype('float32')
+    elif dt == np.dtype('complex128'): return np.dtype('float64')
+    else: raise TypeError(dt)
+  def type_properties(dt):
+    c = component_type(dt) if dtypes.issubdtype(dt, np.complexfloating) else dt
+    return (dtypes.issubdtype(dt, np.complexfloating),
+            dtypes.finfo(c).maxexp if dtypes.issubdtype(c, np.floating) else -1,
+            dtypes.finfo(c).nmant  if dtypes.issubdtype(c, np.floating) else -1,
+            _bit_width(c),
+            not dtypes.issubdtype(c, np.unsignedinteger))
+  lhs_prop, rhs_prop = type_properties(lhs.dtype), type_properties(rhs.dtype)
+  if lhs_prop > rhs_prop:
+    result_dtype = lhs.dtype
+  elif rhs_prop > lhs_prop:
+    result_dtype = rhs.dtype
+  else:
+    if lhs.dtype != rhs.dtype:
+      raise TypeError(
+          f"lax.dot_general argument type error: {lhs.dtype}, {rhs.dtype}")
+    result_dtype = lhs.dtype
+
+  return _maybe_upcast(result_dtype, preferred_element_type)
+
+def _bit_width(d):
+  if dtypes.issubdtype(d, np.inexact): return dtypes.finfo(d).bits
+  elif dtypes.issubdtype(d, np.integer): return dtypes.iinfo(d).bits
+  elif d == np.dtype('bool'): return 8
+  else: assert False, d  # should be unreachable, open an issue!
+
+def _maybe_upcast(result_dtype, preferred_element_type):
+  # replicates the logic in shape_inference.cc's MaybeUpcast
+  if (preferred_element_type is None or
+      result_dtype == preferred_element_type):
+    return result_dtype
+  if (not dtypes.issubdtype(result_dtype, np.floating) and
+      _bit_width(preferred_element_type) < _bit_width(result_dtype)):
+    raise TypeError("`preferred_element_type` must not be narrower than the "
+                    "original type, got preferred_element_type of "
+                    f"{preferred_element_type} for result type of "
+                    f"{result_dtype}.")
   return preferred_element_type
 
 def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
@@ -2504,19 +2551,24 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   dims = ((ans_y, y_kept), (ans_batch, y_batch))
   x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))  # type: ignore[arg-type]
   out_axes = np.argsort(list(x_batch) + x_kept + x_contract_sorted_by_y)
-  return transpose(dot_general(g, y, dims, precision=precision,
-                               preferred_element_type=preferred_element_type),
-                   tuple(out_axes))
+  x_bar = transpose(dot_general(g, y, dims, precision=precision,
+                                preferred_element_type=preferred_element_type),
+                    tuple(out_axes))
+  if x_bar.dtype != x.aval.dtype:
+    x_bar = _convert_element_type(x_bar, x.aval.dtype, x.aval.weak_type)
+  return x_bar
 
 def _dot_general_transpose_rhs(g, x, y, *, dimension_numbers, precision,
                                preferred_element_type: Optional[DTypeLike]):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
-  return _dot_general_transpose_lhs(
+  y_bar = _dot_general_transpose_lhs(
     g, y, x, dimension_numbers=swapped_dimension_numbers, precision=precision,
     preferred_element_type=preferred_element_type,
     swap_ans=True)
-
+  if y_bar.dtype != y.aval.dtype:
+    y_bar = _convert_element_type(y_bar, y.aval.dtype, y.aval.weak_type)
+  return y_bar
 
 def _dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
                             precision,
@@ -2645,19 +2697,47 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: Optional[np.dtype]):
   del preferred_element_type  # Implied by the output aval
   lhs_aval, rhs_aval = ctx.avals_in
+  lhs_dtype, rhs_dtype = lhs_aval.dtype, rhs_aval.dtype
   aval_out, = ctx.avals_out
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
 
+  # TODO(b/...): JAX's dot_general primitive accepts the same input dtype
+  # combinations that are accepted in XLA's shape_inference.cc (the canonical
+  # reference for the HLO type system), but actually different XLA platforms
+  # fail on codegen for different accepted cases. To handle those cases, we
+  # insert ConvertOps on the input, in a platform-dependent way.
+  if lhs_dtype != rhs_dtype:
+    if ctx.module_context.platform == "tpu":
+      handled = lambda dt: (dtypes.issubdtype(dt, np.floating) or
+                            dtypes.issubdtype(dt, np.integer))
+      if not (handled(lhs_dtype) and handled(rhs_dtype)):
+        dt = mlir.dtype_to_ir_type(aval_out.dtype)
+        lhs = hlo.ConvertOp(ir.RankedTensorType.get(lhs_aval.shape, dt), lhs
+                            ).result
+        rhs = hlo.ConvertOp(ir.RankedTensorType.get(rhs_aval.shape, dt), rhs
+                            ).result
+        lhs_dtype = rhs_dtype = aval_out.dtype
+    else:  # cpu and gpu
+      dt = mlir.dtype_to_ir_type(aval_out.dtype)
+      lhs = hlo.ConvertOp(ir.RankedTensorType.get(lhs_aval.shape, dt), lhs
+                          ).result
+      rhs = hlo.ConvertOp(ir.RankedTensorType.get(rhs_aval.shape, dt), rhs
+                          ).result
+      lhs_dtype = rhs_dtype = aval_out.dtype
+
   # TODO(b/195364460): Work around slow XLA/CPU implementation of float16 matmul
   if ctx.module_context.platform == "cpu":
-    if lhs_aval.dtype == np.float16:
+    if lhs_dtype == np.float16:
       f32 = mlir.dtype_to_ir_type(np.dtype(np.float32))
       lhs = hlo.ConvertOp(ir.RankedTensorType.get(lhs_aval.shape, f32),
                           lhs).result
-    if rhs_aval.dtype == np.float16:
+      lhs_dtype = np.dtype('float32')
+    if rhs_dtype == np.float16:
       f32 = mlir.dtype_to_ir_type(np.dtype(np.float32))
       rhs = hlo.ConvertOp(ir.RankedTensorType.get(rhs_aval.shape, f32),
                           rhs).result
+      rhs_dtype = np.dtype('float32')
+
   dot_dnums = hlo.DotDimensionNumbers.get(
       lhs_batching_dimensions=list(lhs_batch),
       rhs_batching_dimensions=list(rhs_batch),
