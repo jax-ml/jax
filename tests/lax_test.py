@@ -976,12 +976,17 @@ class LaxTest(jtu.JaxTestCase):
                                            padding=(3, 3))
 
   @jtu.sample_product(
-      [
-          dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
-          for lhs_shape in [(3,), (4, 3)]
-          for rhs_shape in [(3,), (3, 6)]
-      ],
-      dtype=lax_test_util.all_dtypes,
+      [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+       for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]],
+      [dict(lhs_dtype=lhs_dtype, rhs_dtype=rhs_dtype)
+       for lhs_dtype, rhs_dtype in
+       itertools.chain(
+           itertools.product(lax_test_util.int_dtypes +
+                             lax_test_util.float_dtypes +
+                             lax_test_util.complex_dtypes +
+                             lax_test_util.uint_dtypes,
+                             repeat=2),
+           zip(lax_test_util.bool_dtypes, lax_test_util.bool_dtypes))],
       precision=[
           None,
           lax.Precision.DEFAULT,
@@ -990,9 +995,9 @@ class LaxTest(jtu.JaxTestCase):
           (lax.Precision.DEFAULT, lax.Precision.HIGHEST),
       ],
   )
-  def testDot(self, lhs_shape, rhs_shape, dtype, precision):
+  def testDot(self, lhs_shape, rhs_shape, lhs_dtype, rhs_dtype, precision):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+    args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     self._CompileAndCheck(partial(lax.dot, precision=precision), args_maker)
 
   @jtu.sample_product(
@@ -1001,7 +1006,8 @@ class LaxTest(jtu.JaxTestCase):
     [dict(dtype=d, preferred_element_type=p)
      for d, p in preferred_type_combinations],
   )
-  def testDotPreferredElement(self, lhs_shape, rhs_shape, dtype, preferred_element_type):
+  def testDotPreferredElement(self, lhs_shape, rhs_shape, dtype,
+                              preferred_element_type):
     if (not config.x64_enabled and
        (dtype == np.float64 or preferred_element_type == np.float64
         or dtype == np.int64 or preferred_element_type == np.int64)):
@@ -1011,7 +1017,8 @@ class LaxTest(jtu.JaxTestCase):
       raise SkipTest("np.complex128 is not yet supported on TPU")
     if jtu.device_under_test() == "gpu":
       # TODO(b/189287598)
-      raise SkipTest("dot_general with preferred_element_type returns NaN non-deterministically on GPU")
+      raise SkipTest("dot_general with preferred_element_type returns NaN "
+                     "non-deterministically on GPU")
     rng = jtu.rand_default(self.rng())
     x = rng(lhs_shape, dtype)
     y = rng(rhs_shape, dtype)
