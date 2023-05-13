@@ -2987,7 +2987,7 @@ def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
     return None
 
   conversion_dtype = promote_tf_dtype(operand.dtype)
-  if core.is_special_dim_size(k):
+  if not core.is_constant_dim(k):
     k_tf = _eval_shape((k,))[0]
     k_tf = tf.cast(k_tf, tf.int32)  # TopK works only for int32
   else:

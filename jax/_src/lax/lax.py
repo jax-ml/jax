@@ -1174,8 +1174,9 @@ def top_k(operand: ArrayLike, k: int) -> Tuple[Array, Array]:
   - :func:`jax.lax.approx_max_k`
   - :func:`jax.lax.approx_min_k`
   """
-  if not core.is_special_dim_size(k):
-    k = int(k)
+  k = core.concrete_or_error(
+      core.as_dim, k,
+      "The error arose in lax.top_k argument `k`.")
   if k < 0:
     raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
   return top_k_p.bind(operand, k=k)
@@ -4004,7 +4005,7 @@ top_k_p.multiple_results = True
 top_k_p.def_impl(partial(dispatch.apply_primitive, top_k_p))
 top_k_p.def_abstract_eval(_top_k_abstract_eval)
 def _top_k_lower(ctx, operand, k):
-  if core.is_special_dim_size(k):
+  if not core.is_constant_dim(k):
     # TODO: https://github.com/openxla/stablehlo/issues/1396
     raise ValueError("native serialization with shape polymorphism not implemented for top_k")
   return chlo.TopKOp(operand, mlir.i64_attr(k)).results

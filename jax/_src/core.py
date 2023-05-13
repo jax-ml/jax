@@ -1890,11 +1890,6 @@ def _dim_handler_and_canonical(*dlist: DimSize) -> Tuple[DimensionHandler, Tuple
     raise ValueError(msg)
   return next(iter(special_handlers), _dimension_handler_int), tuple(canonical)
 
-def is_special_dim_size(v: Any) -> bool:
-  """Checks if a value is a special DimSize."""
-  handler = _get_special_dim_handler(v)
-  return (handler is not None)
-
 def is_constant_dim(d: DimSize) -> bool:
   # Whether the dimension is a static integer constant.
   try:
@@ -1904,7 +1899,16 @@ def is_constant_dim(d: DimSize) -> bool:
     return False
 
 def is_dim(v: Any) -> bool:
-  return is_special_dim_size(v) or is_constant_dim(v)
+  try:
+    as_dim(v)
+    return True
+  except:
+    return False
+
+def as_dim(v: Any) -> DimSize:
+  # Convert `v` to a DimSize
+  handler = _get_special_dim_handler(v)
+  return v if handler is not None else operator.index(v)
 
 def is_constant_shape(s: Shape) -> bool:
   # Whether the shape is a static constant.
@@ -2021,7 +2025,7 @@ def _canonicalize_dimension(dim: DimSize) -> DimSize:
   elif (config.jax_dynamic_shapes and isinstance(dim, DArray) and
         type(dim._aval.dtype) is bint and not dim._aval.shape):
     return dim
-  elif is_special_dim_size(dim):
+  elif _get_special_dim_handler(dim) is not None:
     return dim
   else:
     raise type_error

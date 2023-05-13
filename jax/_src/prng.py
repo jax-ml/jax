@@ -1294,8 +1294,7 @@ def threefry_2x32(keypair, count):
 
 
 def threefry_split(key: typing.Array, num: core.DimSize) -> typing.Array:
-  if not core.is_special_dim_size(num):
-    num = core.concrete_or_error(op.index, num)
+  num = core.concrete_or_error(core.as_dim, num)
   if config.jax_threefry_partitionable:
     return _threefry_split_foldlike(key, num)  # type: ignore
   else:

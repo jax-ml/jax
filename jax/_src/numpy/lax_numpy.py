@@ -1106,8 +1106,8 @@ def bincount(x: ArrayLike, weights: Optional[ArrayLike] = None,
       "The error occurred because of argument 'x' of jnp.bincount. "
       "To avoid this error, pass a static `length` argument.")
     length = max(minlength, x_arr.size and int(x_arr.max()) + 1)
-  elif not core.is_special_dim_size(length):
-    length = core.concrete_or_error(operator.index, length,
+  else:
+    length = core.concrete_or_error(core.as_dim, length,
         "The error occurred because of argument 'length' of jnp.bincount.")
   if weights is None:
     weights = np.array(1, dtype=int_)
@@ -1326,10 +1326,9 @@ def nonzero(a: ArrayLike, *, size: Optional[int] = None,
   mask = arr if arr.dtype == bool else (arr != 0)
   if size is None:
     size = mask.sum()
-  if not core.is_special_dim_size(size):
-    size = core.concrete_or_error(operator.index, size,
-      "The size argument of jnp.nonzero must be statically specified "
-      "to use jnp.nonzero within JAX transformations.")
+  size = core.concrete_or_error(core.as_dim, size,
+    "The size argument of jnp.nonzero must be statically specified "
+    "to use jnp.nonzero within JAX transformations.")
   if arr.size == 0 or size == 0:
     return tuple(zeros(size, int) for dim in arr.shape)
   flat_indices = reductions.cumsum(bincount(reductions.cumsum(mask), length=size))
@@ -1399,7 +1398,7 @@ def _broadcast_to_pairs(nvals: PadValueLike, nd: int, name: str) -> PadValue:
     raise
 
   def as_scalar_dim(v):
-    if core.is_special_dim_size(v) or not np.shape(v):
+    if not np.shape(v):
       return v
     else:
       raise TypeError(f'`{name}` entries must be the same shape: {nvals}')
@@ -2256,7 +2255,7 @@ def arange(start: DimSize, stop: Optional[DimSize] = None,
   for name, val in [(start_name, start), ("stop", stop), ("step", step)]:
     if val is not None and np.ndim(val) != 0:
       raise ValueError(f"jax.numpy.arange: arguments must be scalars; got {name}={val}")
-  if any(core.is_special_dim_size(d) for d in (start, stop, step)):
+  if any(not core.is_constant_dim(d) for d in (start, stop, step) if d is not None):
     if stop is None and step is None:
       stop = start
       start = 0
@@ -2284,7 +2283,7 @@ def arange(start: DimSize, stop: Optional[DimSize] = None,
 def _arange_dynamic(
     start: DimSize, stop: DimSize, step: DimSize, dtype: DTypeLike) -> Array:
   # Here if at least one of start, stop, step are dynamic.
-  if any([(not core.is_special_dim_size(v) and not isinstance(v, int))
+  if any([not core.is_dim(v)
           for v in (start, stop, step)]):
     raise ValueError(
         "In arange with non-constant arguments all of start, stop, and step "
@@ -2562,7 +2561,7 @@ will be repeated.
 def repeat(a: ArrayLike, repeats: ArrayLike, axis: Optional[int] = None, *,
            total_repeat_length: Optional[int] = None) -> Array:
   util.check_arraylike("repeat", a)
-  core.is_special_dim_size(repeats) or util.check_arraylike("repeat", repeats)
+  util.check_arraylike("repeat", repeats)
 
   if axis is None:
     a = ravel(a)
@@ -2573,7 +2572,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: Optional[int] = None, *,
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.repeat()")
   assert isinstance(axis, int)  # to appease mypy
 
-  if core.is_special_dim_size(repeats):
+  if not core.is_constant_dim(repeats):
     if total_repeat_length is not None:
       raise ValueError("jnp.repeat with a non-constant `repeats` is supported only "
                        "when `total_repeat_length` is None")
@@ -3619,7 +3618,7 @@ def argsort(a: ArrayLike, axis: Optional[int] = -1, kind: str = 'stable', order=
     return argsort(arr.ravel(), 0)
   else:
     axis_num = _canonicalize_axis(axis, arr.ndim)
-    use_64bit_index = core.is_special_dim_size(arr.shape[axis_num]) or arr.shape[axis_num] >= (1 << 31)
+    use_64bit_index = not core.is_constant_dim(arr.shape[axis_num]) or arr.shape[axis_num] >= (1 << 31)
     iota = lax.broadcasted_iota(int64 if use_64bit_index else int_, arr.shape, axis_num)
     _, perm = lax.sort_key_val(arr, iota, dimension=axis_num)
     return perm
