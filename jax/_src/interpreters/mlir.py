@@ -82,11 +82,14 @@ def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
 def shape_tensor(sizes: Sequence[Union[int, ir.RankedTensorType]]
                  ) -> ir.RankedTensorType:
   int1d = aval_to_ir_type(core.ShapedArray((1,), np.int32))
+  i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
   def lower_dim(d):
     if type(d) is int:
       return ir_constant(np.array([d], np.int32))
     else:
-      return hlo.ReshapeOp(int1d, hlo.ConvertOp(aval_to_ir_type(core.ShapedArray((), np.int32)), d))
+      if d.type != i32_type:
+        d = hlo.ConvertOp(i32_type, d)
+      return hlo.ReshapeOp(int1d, d)
   ds = map(lower_dim, sizes)
   if not ds:
     return ir_constant(np.array([], np.int32))

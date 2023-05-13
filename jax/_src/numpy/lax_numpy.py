@@ -2291,7 +2291,7 @@ def arange(start: DimSize, stop: Optional[DimSize] = None,
       step = 1
     elif stop is not None and step is None:
       step = 1
-    return _arange_dynamic(start, stop, step, dtype or int_)
+    return _arange_dynamic(start, stop, step, dtype or dtypes.canonicalize_dtype(np.int64))
   if dtype is None:
     dtype = result_type(start, *(x for x in [stop, step] if x is not None))
   dtype = _jnp_dtype(dtype)

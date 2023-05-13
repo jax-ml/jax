@@ -715,7 +715,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
           ("0_b_1_f32", lambda b: (0, b, 1, np.float32))
       ]
   ])
-  def test_arange(self, make_args=lambda b: (0, 0, b)):
+  def test_arange(self, make_args=lambda b: (0, -b, 2, None)):
     def f_jax(x):  # x: i32[b]
       return x[0] + jnp.arange(*(make_args(x.shape[0])))
     x = np.ones((3,), dtype=np.int32)
@@ -850,9 +850,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         avals = tuple(map(shape_poly.arg_aval, arg_shapes, arg_dtypes, polymorphic_shapes))
         dim_vars = shape_poly.all_dim_vars(avals)
         dim_values, _ = jax2tf.jax2tf._interpret_fun_jax(
-            partial(shape_poly.unify_avals_with_args, avals, dim_vars,
-                    use_static_dimension_size=False,
-                    args_kwargs_tree=tree_util.tree_flatten((avals, {}))[1]),
+            partial(shape_poly.compute_dim_vars_from_arg_shapes,
+                    avals, args_kwargs_tree=tree_util.tree_flatten((avals, {}))[1]),
             args_tf, avals, "")
         if expected_avals is not None:
           self.assertEqual(expected_avals, avals)
@@ -988,7 +987,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        "Found inconsistency when solving.*"):
+        "Found inconsistency 3 != 2 when solving.*"):
       check_avals(
           arg_shapes=[(2, 3)],
           polymorphic_shapes=["(a, a)"],
@@ -997,7 +996,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # Same error across multiple arguments
     with self.assertRaisesRegex(
         ValueError,
-        "Found inconsistency when solving.*"):
+        "Found inconsistency 5 != 2 when solving.*"):
       check_avals(
           arg_shapes=[(2, 3), (5,)],
           polymorphic_shapes=["a, ...", "a"],
@@ -1480,11 +1479,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # JAX with static shapes sees that the x.shape[0] == 0
     self.assertEqual(jnp.array([0.], dtype=np.float32), f1_jax(x0))
 
-    # jax2tf catches the broken assumption b >= 1 if the converted function is executed
-    # eagerly.
     with self.assertRaisesRegex(
         ValueError,
-        "Dimension variable 'b' must have integer value >= 1. Found value 0 when solving .*"):
+        "Dimension variable 'b' must have integer value >= 1. Found 0"):
       jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
                      native_serialization=False)(x0)
 
@@ -1511,8 +1508,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     # jax2tf catches the broken assumption b >= 1 if the converted function is executed
     # eagerly.
-    with self.assertRaisesRegex(ValueError,
-                                "Found inconsistency when solving b == .*"):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Found inconsistency 5 != 4 when solving b == args\[0\].shape\[1\]"):
       jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
                      native_serialization=False)(x45)
 

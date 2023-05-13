@@ -564,9 +564,8 @@ class GraphSerializationImpl(SerializationImpl):
         map(lambda a: core.raise_to_shaped(core.get_aval(a)), args_specs_flat))
     dim_vars = shape_poly.all_dim_vars(self.args_avals_flat)
     dim_values, _ = _interpret_fun_jax(
-        partial(shape_poly.unify_avals_with_args, self.args_avals_flat, dim_vars,
-                use_static_dimension_size=False,
-                args_kwargs_tree=self.in_tree),
+        partial(shape_poly.compute_dim_vars_from_arg_shapes,
+                self.args_avals_flat, args_kwargs_tree=self.in_tree),
         self.args_flat_tf, self.args_avals_flat, self.name_stack)
     _thread_local_state.shape_env = zip(dim_vars, dim_values)
 
