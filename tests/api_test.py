@@ -2076,6 +2076,12 @@ class APITest(jtu.JaxTestCase):
     expected = 6
     self.assertEqual(actual, expected)
 
+  def test_linear_transpose_dce(self):
+    # https://github.com/google/jax/issues/15660
+    f = jit(lambda x: (2 * x, x > 0))
+    g = lambda x: f(x)[0]
+    api.linear_transpose(g, 1.)(1.)
+
   def test_linear_transpose_error(self):
     with self.assertRaisesRegex(
         TypeError, "linear_transpose only supports"):
