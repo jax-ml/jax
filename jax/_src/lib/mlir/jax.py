@@ -1,4 +1,4 @@
-# Copyright 2021 The JAX Authors.
+# Copyright 2023 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,13 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractmethod
+# flake8: noqa: F401
 
-class CacheInterface(ABC):
-    @abstractmethod
-    def get(self, key: str):
-        pass
+import jaxlib.mlir.jax as _jax
 
-    @abstractmethod
-    def put(self, key: str, value: bytes):
-        pass
+del _jax

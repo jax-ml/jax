@@ -27,7 +27,10 @@ load(
     "pytype_strict_library",
 )
 
-package(default_visibility = [":internal"])
+package(
+    default_applicable_licenses = [],
+    default_visibility = [":internal"],
+)
 
 licenses(["notice"])
 
@@ -110,7 +113,6 @@ py_library_providing_imports_info(
         "_src/prng.py",
         "_src/public_test_util.py",
         "_src/random.py",
-        "_src/sharding_impls.py",
         "_src/stages.py",
     ] + glob(
         [
@@ -147,10 +149,7 @@ py_library_providing_imports_info(
         "experimental/shard_map.py",
         # until checkify is moved out of experimental
         "experimental/checkify.py",
-        # to avoid circular dependencies
         "experimental/compilation_cache/compilation_cache.py",
-        "experimental/compilation_cache/gfile_cache.py",
-        "experimental/compilation_cache/cache_interface.py",
     ],
     lib_rule = pytype_library,
     pytype_srcs = glob(
@@ -166,6 +165,7 @@ py_library_providing_imports_info(
         ":api_util",
         ":basearray",
         ":cloud_tpu_init",
+        ":compilation_cache_internal",
         ":config",
         ":core",
         ":custom_api_util",
@@ -183,6 +183,7 @@ py_library_providing_imports_info(
         ":pretty_printer",
         ":profiler",
         ":sharding",
+        ":sharding_impls",
         ":sharding_specs",
         ":source_info_util",
         ":traceback_util",
@@ -247,6 +248,25 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "compilation_cache_internal",
+    srcs = ["_src/compilation_cache.py"],
+    visibility = [":internal"] + jax_visibility("compilation_cache"),
+    deps = [
+        ":compilation_cache_interface",
+        ":config",
+        ":gfile_cache",
+        ":path",
+        "//jax/_src/lib",
+    ] + py_deps("numpy") + py_deps("zstandard"),
+)
+
+pytype_strict_library(
+    name = "compilation_cache_interface",
+    srcs = ["_src/compilation_cache_interface.py"],
+    deps = [":path"],
+)
+
+pytype_strict_library(
     name = "config",
     srcs = ["_src/config.py"],
     deps = [
@@ -300,6 +320,15 @@ pytype_strict_library(
     ] + py_deps("numpy"),
 )
 
+pytype_strict_library(
+    name = "gfile_cache",
+    srcs = ["_src/gfile_cache.py"],
+    deps = [
+        ":compilation_cache_interface",
+        ":path",
+    ],
+)
+
 pytype_library(
     name = "iree",
     srcs = ["_src/iree.py"],
@@ -345,6 +374,7 @@ pytype_strict_library(
         ":effects",
         ":op_shardings",
         ":partial_eval",
+        ":sharding_impls",
         ":source_info_util",
         ":util",
         ":xla",
@@ -370,6 +400,7 @@ pytype_strict_library(
     name = "partial_eval",
     srcs = ["_src/interpreters/partial_eval.py"],
     deps = [
+        ":ad_util",
         ":api_util",
         ":config",
         ":core",
@@ -414,8 +445,25 @@ pytype_strict_library(
     srcs = ["_src/sharding.py"],
     deps = [
         ":util",
+        ":xla_bridge",
         "//jax/_src/lib",
     ],
+)
+
+pytype_strict_library(
+    name = "sharding_impls",
+    srcs = ["_src/sharding_impls.py"],
+    deps = [
+        ":mesh",
+        ":op_shardings",
+        ":partition_spec",
+        ":sharding",
+        ":sharding_specs",
+        ":tree_util",
+        ":util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -504,6 +552,7 @@ pytype_strict_library(
         ":abstract_arrays",
         ":config",
         ":core",
+        ":sharding_impls",
         ":source_info_util",
         ":typing",
         ":util",
@@ -644,7 +693,6 @@ pytype_library(
     name = "compilation_cache",
     srcs = [
         "experimental/compilation_cache/compilation_cache.py",
-        "experimental/compilation_cache/gfile_cache.py",
     ],
     visibility = ["//visibility:public"],
     deps = [":jax"],

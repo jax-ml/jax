@@ -28,7 +28,7 @@ import jax
 from jax import lax
 from jax import tree_util
 from jax import vmap
-from jax.config import config
+from jax import config
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import (
   nfold_vmap, _count_stored_elements,
@@ -744,39 +744,6 @@ def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_num
 _bcoo_dot_general_default_lowering = mlir.lower_fun(
     _bcoo_dot_general_impl, multiple_results=False)
 
-
-def _hlo_reshape(x, shape):
-  x_type = ir.RankedTensorType(x.type)
-  return hlo.ReshapeOp(
-      ir.RankedTensorType.get(shape, x_type.element_type), x).result
-
-def _bcoo_get_row_col(ctx, indices):
-  shape = ir.RankedTensorType(indices.type).shape
-  assert len(shape) == 2
-  if shape[1] == 1:
-    col = _hlo_reshape(indices, shape[:1])
-    row = mlir.full_like_aval(
-        ctx, 0, core.ShapedArray(ir.RankedTensorType(col.type).shape,
-                                 np.dtype(np.int32)))
-  elif shape[1] == 2:
-    row = _hlo_reshape(
-        hlo.SliceOp(
-            indices,
-            start_indices=mlir.dense_int_elements([0, 0]),
-            limit_indices=mlir.dense_int_elements([shape[0], 1]),
-            strides=mlir.dense_int_elements([1, 1])).result,
-        shape[:1])
-    col = _hlo_reshape(
-        hlo.SliceOp(
-            indices,
-            start_indices=mlir.dense_int_elements([0, 1]),
-            limit_indices=mlir.dense_int_elements([shape[0], 2]),
-            strides=mlir.dense_int_elements([1, 1])).result,
-        shape[:1])
-  else:
-    raise ValueError(f"expected shape[1] in (1, 2), got {shape=}")
-
-  return row, col
 
 def _bcoo_dot_general_fallback(data, indices, spinfo):
   if data.dtype not in CUSPARSE_DATA_DTYPES:
@@ -1608,7 +1575,7 @@ def bcoo_update_layout(mat: BCOO, *, n_batch: Optional[int] = None, n_dense: Opt
     n = current_n_dense - n_dense
     @partial(nfold_vmap, N=current_n_batch + 1)
     def _update(d, i):
-      new_d = d.reshape(np.prod(d.shape[:n]), *d.shape[n:])
+      new_d = d.reshape(math.prod(d.shape[:n]), *d.shape[n:])
       meshes = jnp.meshgrid(*(jnp.arange(s, dtype=i.dtype) for s in d.shape[:n]),
                             indexing='ij')
       new_i = jnp.column_stack([jnp.broadcast_to(i, (new_d.shape[0], i.size)),
@@ -1616,10 +1583,10 @@ def bcoo_update_layout(mat: BCOO, *, n_batch: Optional[int] = None, n_dense: Opt
       return new_d, new_i
     new_data, new_indices = _update(new_data, new_indices)
     new_data = new_data.reshape(*new_data.shape[:current_n_batch],
-                                np.prod(new_data.shape[current_n_batch:current_n_batch + 2]),
+                                math.prod(new_data.shape[current_n_batch:current_n_batch + 2]),
                                 *new_data.shape[current_n_batch + 2:])
     new_indices = new_indices.reshape(*new_indices.shape[:current_n_batch],
-                                      np.prod(new_indices.shape[current_n_batch: current_n_batch + 2]),
+                                      math.prod(new_indices.shape[current_n_batch: current_n_batch + 2]),
                                       *new_indices.shape[current_n_batch + 2:])
     current_n_dense = n_dense
 
@@ -1628,10 +1595,10 @@ def bcoo_update_layout(mat: BCOO, *, n_batch: Optional[int] = None, n_dense: Opt
     @partial(nfold_vmap, N=n_batch)
     def _update(d, i):
       nse = i.shape[-2]
-      new_d = d.reshape(np.prod(d.shape[:n + 1]), *d.shape[n + 1:])
+      new_d = d.reshape(math.prod(d.shape[:n + 1]), *d.shape[n + 1:])
       meshes = jnp.meshgrid(*(jnp.arange(d, dtype=i.dtype) for d in (*i.shape[:n], nse)),
                             indexing='ij')
-      new_i = i.reshape(np.prod(i.shape[:n + 1]), *i.shape[n + 1:])
+      new_i = i.reshape(math.prod(i.shape[:n + 1]), *i.shape[n + 1:])
       new_i = jnp.column_stack((*(m.ravel() for m in meshes[:-1]), new_i))
       return new_d, new_i
     new_data, new_indices = _update(new_data, new_indices)
@@ -1702,7 +1669,7 @@ def _bcoo_broadcast_in_dim(data: Array, indices: Array, *, spinfo: SparseInfo, s
   new_n_dense = props.n_dense and len(shape) - min(broadcast_dimensions[-props.n_dense:])
   new_n_sparse = len(shape) - new_n_batch - new_n_dense
 
-  if np.prod(spinfo.shape[props.n_batch: props.n_batch + props.n_sparse]) != np.prod(shape[new_n_batch:new_n_batch + new_n_sparse]):
+  if math.prod(spinfo.shape[props.n_batch: props.n_batch + props.n_sparse]) != math.prod(shape[new_n_batch:new_n_batch + new_n_sparse]):
     raise NotImplementedError("Adding sparse dimensions with lengths != 1")
   new_data, new_indices = data, indices
 
@@ -1794,7 +1761,7 @@ def bcoo_concatenate(operands: Sequence[BCOO], *, dimension: int) -> BCOO:
   return BCOO((new_data, new_indices), shape=out_aval.shape)
 
 
-def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int], dimensions: Sequence[int]) -> BCOO:
+def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int], dimensions: Optional[Sequence[int]] = None) -> BCOO:
   """Sparse implementation of {func}`jax.lax.reshape`.
 
   Args:
@@ -1812,13 +1779,13 @@ def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int], dimensions: Sequence[in
   """
   if (mat.indices.shape[:mat.n_batch] != mat.data.shape[:mat.n_batch] != mat.shape[:mat.n_batch]):
     # TODO(jakevdp) implement this case via broadcast_in_dim
-    raise NotImplementedError("reshape of arrays with broadacsted batch dimensions.")
+    raise NotImplementedError("reshape of arrays with broadcasted batch dimensions.")
 
   batch_shape, sparse_shape, dense_shape = split_list(mat.shape, [mat.n_batch, mat.n_sparse])
   batch_perm, sparse_perm, dense_perm = _validate_permutation(
     mat.data, mat.indices, dimensions or tuple(range(mat.ndim)), mat.shape)
-  batch_size = np.prod(batch_shape, dtype=int)
-  sparse_size = np.prod(sparse_shape, dtype=int)
+  batch_size = math.prod(batch_shape)
+  sparse_size = math.prod(sparse_shape)
 
   cuml_shape = np.cumprod(new_sizes)
   if batch_size != 1 and batch_size not in cuml_shape:
@@ -1830,7 +1797,7 @@ def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int], dimensions: Sequence[in
 
   i1 = cuml_shape.searchsorted(batch_size, side='right')
   i2 = cuml_shape.searchsorted(batch_size * sparse_size, side='right')
-  new_batch_shape, new_sparse_shape, new_dense_shape = split_list(new_sizes, [i1, i2])
+  new_batch_shape, new_sparse_shape, new_dense_shape = split_list(new_sizes, [int(i1), int(i2)])
 
   # Reshape batch & dense dimensions: this is accomplished via a standard reshape.
   data = lax.reshape(
@@ -1982,7 +1949,7 @@ def bcoo_slice(mat: BCOO, *, start_indices: Sequence[int], limit_indices: Sequen
     keep_data = lax.expand_dims(keep[..., 0], range(mat.n_batch + 1, mat.n_batch + 1 + mat.n_dense))
     new_data = jnp.where(keep_data, new_data, 0)
 
-    new_nse = int(np.prod(new_shape_sparse))
+    new_nse = math.prod(new_shape_sparse)
     if mat.nse > new_nse:
       new_data, new_indices = _bcoo_sum_duplicates(
         new_data, new_indices, spinfo=SparseInfo(shape=new_shape), nse=new_nse)
@@ -2062,8 +2029,8 @@ def bcoo_dynamic_slice(mat: BCOO, start_indices: Sequence[Any], slice_sizes: Seq
     keep_data = lax.expand_dims(keep[..., 0], range(mat.n_batch + 1, mat.n_batch + 1 + mat.n_dense))
     new_data = jnp.where(keep_data, new_data, 0)
 
-    if mat.nse > np.prod(size_sparse):
-      new_nse = int(np.prod(size_sparse))
+    if mat.nse > math.prod(size_sparse):
+      new_nse = math.prod(size_sparse)
       new_data, new_indices = _bcoo_sum_duplicates(
         new_data, new_indices, spinfo=SparseInfo(shape=new_shape), nse=new_nse)
 
@@ -2132,7 +2099,7 @@ def _bcoo_reduce_sum(data: Array, indices: Array, *, spinfo: SparseInfo, axes: S
 
   new_batch_dims = tuple(sorted(set(range(n_batch)) - batch_axes))
   new_batch_shape = tuple(data.shape[i] for i in new_batch_dims)
-  new_nse = int(nse * np.prod([data.shape[i] for i in batch_axes]))
+  new_nse = nse * math.prod([data.shape[i] for i in batch_axes])
 
   data = lax.reshape(data,
                      (*new_batch_shape, new_nse, *data.shape[n_batch + 1:]),

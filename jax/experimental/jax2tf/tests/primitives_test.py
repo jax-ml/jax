@@ -64,7 +64,7 @@ import jax
 from jax import dtypes
 from jax import numpy as jnp
 from jax._src import test_util as jtu
-from jax.config import config
+from jax import config
 from jax.experimental import jax2tf
 from jax.interpreters import mlir
 from jax._src.interpreters import xla
@@ -145,10 +145,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         if "custom_linear_solve" in harness.fullname:
           skipCustomCallTest("lapack_sgetrf, lapack_dgetrf")
 
-      elif device == "tpu":
-        if "approx_top_k_large=True" in harness.fullname:
-          skipCustomCallTest("PartialReduce")  # ApproxTopK
-
       elif device == "gpu":
         if "custom_linear_solve_" in harness.fullname:
           skipCustomCallTest("cusolver_geqrf, cublas_geqrf_batched")
@@ -192,8 +188,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     for p in all_primitives:
       if p.name == "axis_index":
         continue
-      # TODO: remove once we delete sharded_jit.py
-      if p.name in ["sharded_call", "sharding_constraint"]:
+      if p.name == "sharding_constraint":
         continue
       # TODO: Remove once tensorflow is 2.10.0 everywhere.
       if p.name == "optimization_barrier":

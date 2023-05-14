@@ -34,27 +34,8 @@ from jax._src import linear_util as lu
 from jax._src.linear_util import TracingDebugInfo
 from jax._src.util import (safe_map, WrapKwArgs, Hashable, HashableFunction,
                            Unhashable)
-from jax._src.config import flags, bool_env
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
-
-FLAGS = flags.FLAGS
-
-flags.DEFINE_bool(
-    "experimental_cpp_jit", bool_env("JAX_CPP_JIT", True),
-    "A flag enabling the C++ jax.jit fast path."
-    "Set this to `False` only if it crashes otherwise and report "
-    "the error to the jax-team.")
-flags.DEFINE_bool(
-    "experimental_cpp_pmap", bool_env("JAX_CPP_PMAP", True),
-    "A flag enabling the C++ jax.pmap fast path. Until the default "
-    "is switched to True, the feature is not supported and possibly broken "
-    "(e.g. it may use unreleased code from jaxlib.")
-flags.DEFINE_bool(
-    "experimental_cpp_pjit", bool_env("JAX_CPP_PJIT", True),
-    "A flag enabling the C++ pjit fast path. Until the default "
-    "is switched to True, the feature is not supported and possibly broken "
-    "(e.g. it may use unreleased code from jaxlib.")
 
 map = safe_map
 
@@ -662,7 +643,7 @@ def jaxpr_debug_info(jaxpr: core.Jaxpr, trace_debug: Optional[TracingDebugInfo],
     result_paths = trace_debug.result_paths()  # type: ignore
   debug_info = core.JaxprDebugInfo(
       trace_debug.traced_for, trace_debug.func_src_info,
-      trace_debug.arg_names, result_paths)
+      trace_debug.arg_names, tuple(result_paths))
   return jaxpr.replace(debug_info=debug_info)
 
 def debug_info_final(f: lu.WrappedFun, dbg: Optional[TracingDebugInfo],

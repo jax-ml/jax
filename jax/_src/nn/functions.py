@@ -302,7 +302,7 @@ def log_softmax(x: Array,
   elements to the range :math:`[-\infty, 0)`.
 
   .. math ::
-    \mathrm{log\_softmax}(x) = \log \left( \frac{\exp(x_i)}{\sum_j \exp(x_j)}
+    \mathrm{log\_softmax}(x)_i = \log \left( \frac{\exp(x_i)}{\sum_j \exp(x_j)}
     \right)
 
   Args:
@@ -343,9 +343,33 @@ def softmax(x: Array,
     initial: The minimum value used to shift the input array. Must be present
       when :code:`where` is not None.
   """
+  if jax.config.jax_softmax_custom_jvp:
+    return _softmax(x, axis, where, initial)
+  else:
+    return _softmax_deprecated(x, axis, where, initial)
+
+# TODO(mattjj): replace softmax with _softmax when deprecation flag is removed
+@partial(jax.custom_jvp, nondiff_argnums=(1,))
+def _softmax(
+    x,
+    axis: Optional[Union[int, Tuple[int, ...]]] = -1,
+    where: Optional[Array] = None,
+    initial: Optional[Array] = None) -> Array:
+  x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
+  unnormalized = jnp.exp(x - x_max)
+  return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
+
+@_softmax.defjvp
+def _softmax_jvp(axis, primals, tangents):
+  (x, where, initial), (x_dot, _, _) = primals, tangents
+  y = _softmax(x, axis, where, initial)
+  return y, y * (x_dot - (y * x_dot).sum(axis, where=where, keepdims=True))
+
+def _softmax_deprecated(x, axis, where, initial):
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
   return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
+
 
 @partial(jax.jit, static_argnames=("axis",))
 def standardize(x: Array,
@@ -379,9 +403,10 @@ def normalize(x: Array,
 @partial(jax.jit, static_argnames=("num_classes", "dtype", "axis"))
 def _one_hot(x: Array, num_classes: int, *,
              dtype: Any, axis: Union[int, AxisName]) -> Array:
-  num_classes = core.concrete_or_error(
-      int, num_classes,
-      "The error arose in jax.nn.one_hot argument `num_classes`.")
+  if not core.is_special_dim_size(num_classes):
+    num_classes = core.concrete_or_error(
+        int, num_classes,
+        "The error arose in jax.nn.one_hot argument `num_classes`.")
   dtype = dtypes.canonicalize_dtype(dtype)
   x = jnp.asarray(x)
   try:
@@ -402,7 +427,7 @@ def _one_hot(x: Array, num_classes: int, *,
 
 def one_hot(x: Array, num_classes: int, *,
             dtype: Any = jnp.float_, axis: Union[int, AxisName] = -1) -> Array:
-  """One-hot encodes the given indicies.
+  """One-hot encodes the given indices.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
   ``num_classes`` with the element at ``index`` set to one::
@@ -412,7 +437,7 @@ def one_hot(x: Array, num_classes: int, *,
            [0., 1., 0.],
            [0., 0., 1.]], dtype=float32)
 
-  Indicies outside the range [0, num_classes) will be encoded as zeros::
+  Indices outside the range [0, num_classes) will be encoded as zeros::
 
     >>> jax.nn.one_hot(jnp.array([-1, 3]), 3)
     Array([[0., 0., 0.],
@@ -425,9 +450,10 @@ def one_hot(x: Array, num_classes: int, *,
     axis: the axis or axes along which the function should be
       computed.
   """
-  num_classes = core.concrete_or_error(
-      int, num_classes,
-      "The error arose in jax.nn.one_hot argument `num_classes`.")
+  if not core.is_special_dim_size(num_classes):
+    num_classes = core.concrete_or_error(
+        int, num_classes,
+        "The error arose in jax.nn.one_hot argument `num_classes`.")
   return _one_hot(x, num_classes, dtype=dtype, axis=axis)
 
 

@@ -17,7 +17,7 @@ import inspect
 from jax._src import core
 from jax import tree_util
 from jax._src import linear_util as lu
-from jax.experimental import pjit
+from jax._src import sharding_impls
 from jax.errors import UnexpectedTracerError
 from jax._src import mesh as mesh_lib
 from jax._src.lib.mlir.dialects import hlo
@@ -26,6 +26,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src import custom_api_util
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.api_util import argnums_partial
 
@@ -95,9 +96,18 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
       _to_jax_shape(sharding.tile(s))
       for sharding, s in zip(arg_shardings, arg_shapes)
   ]
+  tiled_results = [
+      _to_jax_shape(sharding.tile(s))
+      for sharding, s in zip([result_sharding], [result_shape])
+  ]
   closed_jaxpr = jax.make_jaxpr(
       lower_fn, axis_env=list(info.mesh.shape.items()))(*tiled_args)
-  axis_context = mlir.SPMDAxisContext(info.mesh)
+  if closed_jaxpr.out_avals != tiled_results:
+    raise ValueError(
+        "Mismatch in result shapes. %s vs %s"
+        % (repr(closed_jaxpr.out_avals), repr(tiled_results))
+    )
+  axis_context = sharding_impls.SPMDAxisContext(info.mesh)
   built = mlir.build_xla_computation_helper(
       closed_jaxpr,
       name="tmp_xla_computation",
@@ -373,9 +383,9 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
   mesh = mesh_lib.thread_resources.env.physical_mesh
   axis_context = ctx.module_context.axis_context
 
-  if isinstance(axis_context, mlir.ShardingContext):
+  if isinstance(axis_context, sharding_impls.ShardingContext):
     devices = axis_context.device_assignment
-  elif isinstance(axis_context, mlir.SPMDAxisContext):
+  elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     devices = list(axis_context.mesh.devices.flat)
   else:
     devices = None
@@ -389,8 +399,8 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       from jax._src.sharding_impls import GSPMDSharding
       assert devices is not None
       return GSPMDSharding(devices, op_sharding)
-    pspec = pjit.parse_flatten_op_sharding(op_sharding,
-                                           mesh)[0].get_partition_spec()
+    pspec = sharding_impls.parse_flatten_op_sharding(
+        op_sharding, mesh)[0].get_partition_spec()
     return jax.sharding.NamedSharding(mesh, pspec)
 
   sharding_callback_info = _ShardingCallbackInfo(propagate_user_sharding, partition,
@@ -403,14 +413,10 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
   # partitioner runs so we keep it alive by attaching it to the executable.
   ctx.module_context.add_keepalive(sharding_callback_info)
 
-  mlir_shapes = [mlir.aval_to_ir_types(s) for s in call.out_avals]
-  if len(mlir_shapes) == 1:
-    out_type = mlir_shapes[0]
-  else:
-    out_type = [ir.TupleType.get_tuple(mlir_shapes)]
-
+  result_types = [mlir.aval_to_ir_type(s) for s in call.out_avals]
   out = hlo.CustomCallOp(
-      out_type,
+      (result_types if xla_extension_version >= 150 or len(result_types) == 1
+       else [ir.TupleType.get(result_types)]),
       list(values),
       call_target_name=ir.StringAttr.get(_CUSTOM_PARTITIONING_CALL_NAME),
       has_side_effect=ir.BoolAttr.get(False),
@@ -419,14 +425,13 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       backend_config=ir.StringAttr.get(key),
       operand_layouts=None,
       result_layouts=None)
-  if len(mlir_shapes) == 1:
-    return [out.result]
+  if xla_extension_version >= 150 or len(result_types) == 1:
+    return out.results
   else:
     return [
         hlo.GetTupleElementOp(out, mlir.i32_attr(i)).result
-        for i in range(len(mlir_shapes))
+        for i in range(len(result_types))
     ]
-
 
 mlir.register_lowering(custom_partitioning_p,
                        _custom_partitioning_lowering_rule)

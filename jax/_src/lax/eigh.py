@@ -49,6 +49,8 @@ from jax._src.lax.stack import Stack
 
 # TODO(phawkins): consider extracting _mask/_slice/_update_slice into a
 # separate module.
+def _round_up(i, n):
+  return ((i+n-1) // n) * n
 
 def _mask(x, dims, alternative=0):
   """Masks `x` up to the dynamic shape `dims`.
@@ -136,10 +138,10 @@ def _projector_subspace(P, H, n, rank, maxiter=2):
   """
   # Choose an initial guess: the `rank` largest-norm columns of P.
   N, _ = P.shape
-  column_norms = jnp_linalg.norm(P, axis=1)
+  negative_column_norms = -jnp_linalg.norm(P, axis=1)
   # `jnp.argsort` ensures NaNs sort last, so set masked-out column norms to NaN.
-  column_norms = _mask(column_norms, (n,), jnp.nan)
-  sort_idxs = jnp.argsort(column_norms)
+  negative_column_norms = _mask(negative_column_norms, (n,), jnp.nan)
+  sort_idxs = jnp.argsort(negative_column_norms)
   X = P[:, sort_idxs]
   # X = X[:, :rank]
   X = _mask(X, (n, rank))
@@ -158,7 +160,7 @@ def _projector_subspace(P, H, n, rank, maxiter=2):
     # TODO: might be able to get away with lower precision here
     error_matrix = jnp.dot(V2.conj().T, H)
     error_matrix = jnp.dot(error_matrix, V1)
-    error = jnp_linalg.norm(error_matrix) / H_norm
+    error = jnp_linalg.norm(error_matrix)
     return V1, V2, error
 
   def cond_f(args):
@@ -177,7 +179,6 @@ def _projector_subspace(P, H, n, rank, maxiter=2):
   one = jnp.ones(1, dtype=jnp.int32)
   V1, V2, _, error = lax.while_loop(cond_f, body_f, (V1, V2, one, error))
   return V1, V2
-
 
 def split_spectrum(H, n, split_point, V0=None):
   """ The Hermitian matrix `H` is split into two matrices `H_minus`
@@ -205,9 +206,21 @@ def split_spectrum(H, n, split_point, V0=None):
   N, _ = H.shape
   H_shift = H - (split_point * jnp.eye(N, dtype=split_point.dtype)).astype(H.dtype)
   U, _, _, _ = qdwh.qdwh(H_shift, is_hermitian=True, dynamic_shape=(n, n))
-  P = -0.5 * (U - _mask(jnp.eye(N, dtype=H.dtype), (n, n)))
-  rank = jnp.round(jnp.trace(ufuncs.real(P))).astype(jnp.int32)
+  I = _mask(jnp.eye(N, dtype=H.dtype), (n, n))
+  P_minus = -0.5 * (U - I)
+  rank_minus = jnp.round(jnp.trace(ufuncs.real(P_minus))).astype(jnp.int32)
+  P_plus = 0.5 * (U + I)
+  rank_plus = n - rank_minus
 
+  # Run subspace iteration on whichever projector P_minus or P_plus that has the
+  # smallest rank. This can save a significant amount of work when H has
+  # rank << n or if our estimate of the median eigenvalue is poor, because
+  # the subspace iteration involves computing the QR decomposition of a
+  # matrix of size n x rank.
+  swap = rank_plus < rank_minus
+  P, rank = lax.cond(
+      swap, lambda: (P_plus, rank_plus), lambda: (P_minus, rank_minus)
+  )
   V_minus, V_plus = _projector_subspace(P, H, n, rank)
   H_minus = (V_minus.conj().T @ H) @ V_minus
   H_plus = (V_plus.conj().T @ H) @ V_plus
@@ -297,6 +310,11 @@ def _eigh_work(H, n, termination_size=256):
   # multiplications in_split_spectrum_jittable are the identity.
   eigenvectors = jnp.eye(N, dtype=H.dtype)
 
+  # Keep a copy of the initial matrix Frobenius norm, so we know when to stop
+  # recursing. When the sub-matrix norm is less than eps*H0_norm, the contents are
+  # pure numerical noise, and we should just stop.
+  H0_norm = jnp_linalg.norm(_mask(H, (n, n)))
+
   # blocks is an array representing a stack of Hermitian matrix blocks that we
   # need to recursively decompose. Subproblems are different sizes, so the stack
   # of blocks is ragged. Subproblems are left-aligned (i.e. starting at the 0th
@@ -338,7 +356,7 @@ def _eigh_work(H, n, termination_size=256):
     # the eigenvalues for this reason! This is currently not true of JAX's CPU
     # and GPU eigendecompositions, and for those platforms this algorithm will
     # only do the right thing if termination_size == 1.
-    H = _mask(H, (b, b), jnp.eye(B, dtype=H.dtype))
+    H = _mask(H, (b, b))
     eig_vecs, eig_vals = lax.linalg.eigh(H, sort_eigenvalues=False)
     eig_vecs = _mask(eig_vecs, (b, b))
     eig_vals = _mask(eig_vals, (b,))
@@ -377,17 +395,24 @@ def _eigh_work(H, n, termination_size=256):
       agenda = agenda.push(_Subproblem(offset, rank))
       return agenda, blocks, eigenvectors
 
-    # If the matrix is nearly diagonal, terminate the execution. This is
-    # necessary to handle matrices with clusters of eigenvalues. See Nakatsukasa
-    # and Higham section 5.2.
+    # If the matrix is nearly diagonal or has a tiny Frobenius norm compared to
+    # the original input matrix,, terminate the execution. This is necessary to
+    # handle matrices with clusters of eigenvalues, including rank deficient
+    # matrices. See Nakatsukasa and Higham section 5.2.
     norm = jnp_linalg.norm(H)
-    tol = jnp.asarray(10 * jnp.finfo(H.dtype).eps / 2, dtype=norm.dtype)
+    eps = jnp.asarray(jnp.finfo(H.dtype).eps, dtype=norm.dtype)
     off_diag_norm = jnp_linalg.norm(
         H - jnp.diag(jnp.diag(ufuncs.real(H)).astype(H.dtype)))
-    # We also handle nearly-all-zero matrices matrices here.
-    nearly_diagonal = (norm < tol) | (off_diag_norm / norm < tol)
-    return lax.cond(nearly_diagonal, nearly_diagonal_case, default_case,
-                    agenda, blocks, eigenvectors)
+    nearly_diagonal = off_diag_norm <= 5 * eps * norm
+    tiny = norm < eps * H0_norm
+    return lax.cond(
+        nearly_diagonal | tiny,
+        nearly_diagonal_case,
+        default_case,
+        agenda,
+        blocks,
+        eigenvectors,
+    )
 
   def loop_cond(state):
     agenda, _, _ = state
@@ -395,16 +420,28 @@ def _eigh_work(H, n, termination_size=256):
 
   # It would be wasteful to perform all computation padded up to the original
   # matrix size. Instead, we form buckets of padded sizes e.g.,
-  # [256, 512, 1024, ..., N], aiming for a balance between compilation time
+  # [N_0, N_1, ... N_k], aiming for a balance between compilation time
   # and runtime.
   cutoff = min(N, termination_size)
   buckets = [cutoff]
   branches = [partial(base_case, cutoff)]
-  i = cutoff
-  while i < N:
-    i = min(2 * i, N)
-    buckets.append(i)
-    branches.append(partial(recursive_case, i))
+  if N > termination_size:
+    # If N > termination_size  We use the following schedule:
+    #   1. N_0 = N,
+    #   2. N_i = _round_up(int(N_{i-1} / 1.98), 32), 0 < i < k
+    #   3. N_k = termination_size
+    # the rule for N_i is to avoid falling into the original large bucket
+    # when not splitting exactly at the half-way point during the recursion.
+    buckets.append(N)
+    branches.append(partial(recursive_case, N))
+    multiplier = 1.98
+    granularity = 32
+    i = int(N / multiplier)
+    while i > cutoff:
+      bucket_size = _round_up(i, granularity)
+      buckets.append(bucket_size)
+      branches.append(partial(recursive_case, bucket_size))
+      i = i // 2
   buckets = jnp.array(buckets, dtype='int32')
 
   def loop_body(state):
@@ -442,12 +479,9 @@ def eigh(H, *, precision="float32", termination_size=256, n=None,
 
   if N <= termination_size:
     if n is not None:
-      H = _mask(H, (n, n), jnp.eye(N, dtype=H.dtype))
+      H = _mask(H, (n, n))
     return lax_linalg.eigh_jacobi(
         H, sort_eigenvalues=sort_eigenvalues)
-
-  # TODO(phawkins): consider rounding N up to a larger size to maximize reuse
-  # between matrices.
 
   n = N if n is None else n
   with jax.default_matmul_precision(precision):

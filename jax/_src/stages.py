@@ -33,7 +33,8 @@ from __future__ import annotations
 import warnings
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, NamedTuple, Optional, Protocol, Sequence, Tuple
+from typing import (
+    Any, Dict, List, NamedTuple, Optional, Protocol, Sequence, Tuple, Union)
 
 import jax
 
@@ -54,6 +55,8 @@ traceback_util.register_exclusion(__file__)
 xla_extension = xc._xla
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
+
+CompilerOptions = Dict[str, Union[str, bool]]
 
 
 # -- Internal protocols
@@ -145,7 +148,8 @@ class Executable(Protocol):
 class Lowering(Protocol):
   """Protocol for lowerings, which a user-facing ``Lowered`` encapsulates."""
 
-  def compile(self, compiler_options=None) -> Executable:
+  def compile(
+      self, compiler_options: Optional[CompilerOptions] = None) -> Executable:
     """Compile and return a corresponding ``Executable``."""
     raise NotImplementedError
 
@@ -193,6 +197,7 @@ class Lowering(Protocol):
     """
     # TODO(frostig): improve annotation (arbitrary pytree)
     raise NotImplementedError
+
 
 # -- Internal adapters from XLA-related objects to the above protocols
 
@@ -282,7 +287,9 @@ class XlaLowering(Lowering):
 
   def hlo(self) -> xc.XlaComputation:
     """Return an HLO representation of this computation."""
-    raise NotImplementedError("must override")
+    return xla_extension.mlir.mlir_module_to_xla_computation(
+        mlir.module_to_string(self.stablehlo()),
+        use_tuple_args=self.compile_args["tuple_args"])
 
   def mhlo(self) -> ir.Module:
     """Return an MHLO representation of this computation."""
@@ -295,7 +302,8 @@ class XlaLowering(Lowering):
     """Return a StableHLO representation of this computation."""
     raise NotImplementedError("must override")
 
-  def compile(self, compiler_options=None) -> Executable:
+  def compile(
+      self, compiler_options: Optional[CompilerOptions] = None) -> Executable:
     raise NotImplementedError("must override")
 
   def as_text(self, dialect: Optional[str] = None) -> str:
@@ -587,20 +595,10 @@ class Lowered(Stage):
         out_tree,
         no_kwargs=no_kwargs)
 
-  def compile(self, compiler_options=None) -> Compiled:
+  def compile(
+      self, compiler_options: Optional[CompilerOptions] = None) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
-    from jax._src.interpreters import pxla
-
-    kw = {"compiler_options": compiler_options}
-
-    if isinstance(self._lowering, pxla.MeshComputation):
-      kw.update(
-          _allow_propagation_to_outputs=[
-              pxla._is_unspecified(o)
-              for o in self._lowering.compile_args["out_shardings"]
-          ]
-      )
-
+    kw: Dict[str, Any] = {"compiler_options": compiler_options}
     return Compiled(
         self._lowering.compile(**kw),  # pytype: disable=wrong-keyword-args
         self.args_info,

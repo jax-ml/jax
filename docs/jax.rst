@@ -141,7 +141,9 @@ Callbacks
   :toctree: _autosummary
 
     pure_callback
+    experimental.io_callback
     debug.callback
+    debug.print
 
 Miscellaneous
 -------------
@@ -151,3 +153,5 @@ Miscellaneous
 
     Device
     print_environment_info
+    live_arrays
+    clear_caches

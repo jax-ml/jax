@@ -14,28 +14,42 @@
 
 from __future__ import annotations
 
+import collections
+import dataclasses
+import enum
 import functools
-from collections import Counter
+import itertools
+import math
 import operator as op
-from typing import (Any, Sequence, List, Tuple, Optional, Mapping, Dict, Set,
-                    FrozenSet, Union, cast)
+import sys
+from typing import (Any, Dict, FrozenSet, List, Mapping, Optional, OrderedDict,
+                    NamedTuple, Sequence, Set, Tuple, Union, cast)
 
 from jax._src import mesh as mesh_lib
-from jax._src import op_shardings
+from jax._src.op_shardings import (
+    is_op_sharding_replicated, are_op_shardings_equal, get_num_ways_dim_sharded,
+    op_sharding_to_indices)
 from jax._src import sharding
 from jax._src import sharding_specs
+from jax._src import tree_util
+from jax._src import util
 from jax._src import xla_bridge
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax._src.interpreters import mlir
 from jax._src.partition_spec import PartitionSpec
 
 import numpy as np
 
+if sys.version_info >= (3, 9):
+  OrderedDictType = OrderedDict
+else:
+  OrderedDictType = Dict
+
+
 Shape = Tuple[int, ...]
 Device = xc.Device
 Index = Tuple[slice, ...]
-XLADeviceAssignment = Sequence[Device]
+XLADeviceAssignment = Tuple[Device, ...]
 
 
 # Shardings that inherit from XLACompatibleSharding should implement the
@@ -68,15 +82,15 @@ class XLACompatibleSharding(sharding.Sharding):
 
   @functools.cached_property
   def _addressable_device_assignment(self) -> XLADeviceAssignment:
-    return [d for d in self._device_assignment
-            if d.process_index == d.client.process_index()]
+    return tuple(d for d in self._device_assignment
+                 if d.process_index == d.client.process_index())
 
   @functools.lru_cache(maxsize=4096)
   def shard_shape(self, global_shape: Shape) -> Shape:
     op_sharding = cast(xc.OpSharding, self._to_xla_op_sharding(len(global_shape)))
-    if op_shardings.is_op_sharding_replicated(op_sharding):
+    if is_op_sharding_replicated(op_sharding):
       return global_shape
-    partitions, _ = op_shardings.get_num_ways_dim_sharded(op_sharding)
+    partitions, _ = get_num_ways_dim_sharded(op_sharding)
     assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
     out = []
     for dim, (s, p) in enumerate(safe_zip(global_shape, partitions)):
@@ -94,12 +108,9 @@ class XLACompatibleSharding(sharding.Sharding):
   def is_equivalent_to(self: XLACompatibleSharding,  # type: ignore
                        other: XLACompatibleSharding, ndim: int) -> bool:
     try:
-      return (
-          op_shardings.are_op_shardings_equal(
-              self._to_xla_op_sharding(ndim), other._to_xla_op_sharding(ndim)
-          )
-          and self._device_assignment == other._device_assignment
-      )
+      return (are_op_shardings_equal(self._to_xla_op_sharding(ndim),
+                                     other._to_xla_op_sharding(ndim))
+              and self._device_assignment == other._device_assignment)
     # NotImplementedError is raised by PmapSharding because it can't lower
     # to OpSharding. So if `other` is a PmapSharding, default to a strict
     # equality check.
@@ -134,7 +145,7 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
         'create a device to index mapping for your sharding from which replica '
         'ids will be calculated.') from None
 
-  index_to_replica: Dict[int, int] = Counter()
+  index_to_replica: Dict[int, int] = collections.Counter()
   out = {}
   for device, index in device_indices_map_fn(global_shape).items():
     h_index = hashed_index(index)
@@ -181,7 +192,7 @@ class NamedSharding(XLACompatibleSharding):
 
   mesh: mesh_lib.Mesh
   spec: PartitionSpec
-  _parsed_pspec: Optional[Any]
+  _parsed_pspec: ParsedPartitionSpec
 
   @use_cpp_method()
   def __init__(
@@ -204,8 +215,7 @@ class NamedSharding(XLACompatibleSharding):
     # TODO(yaskatariya): Remove this and replace this with a normalized
     # representation of Parsed Pspec
     if self._parsed_pspec is None:
-      from jax._src import pjit
-      self._parsed_pspec, _, _ = pjit._prepare_axis_resources(
+      self._parsed_pspec, _, _ = prepare_axis_resources(
           self.spec, "NamedSharding spec")
 
     _check_mesh_resource_axis(self.mesh, self._parsed_pspec)
@@ -223,37 +233,62 @@ class NamedSharding(XLACompatibleSharding):
       return False
     if id(self) == id(other):
       return True
-    if id(self.mesh) == id(other.mesh) and self._parsed_pspec == other._parsed_pspec:
+    parsed_pspec_equal = self._parsed_pspec == other._parsed_pspec
+    if id(self.mesh) == id(other.mesh) and parsed_pspec_equal:
       return True
-    return self.mesh == other.mesh and self._parsed_pspec == other._parsed_pspec
+    return self.mesh == other.mesh and parsed_pspec_equal
 
   def is_compatible_aval(self, aval_shape: Shape):
     assert self._parsed_pspec is not None
     if len(aval_shape) < len(self._parsed_pspec):
+      extra_msg = (' For scalars the PartitionSpec should be P()'
+                   if len(aval_shape) == 0 else '')
       raise ValueError(
           f"Sharding {self} is only valid for values of rank at least "
           f"{len(self._parsed_pspec)}, but was applied to a value of rank "
-          f"{len(aval_shape)}")
+          f"{len(aval_shape)}.{extra_msg}")
 
   @classmethod
   def _from_parsed_pspec(cls, mesh, parsed_pspec):
     return cls(mesh, parsed_pspec.get_partition_spec(), parsed_pspec)
 
-  @functools.cached_property
+  @property
   def device_set(self) -> Set[Device]:
-    return set(self.mesh.devices.flat)
+    return self.mesh._flat_devices_set
+
+  @property
+  def _device_assignment(self) -> XLADeviceAssignment:
+    return self.mesh._flat_devices_tuple
+
+  @property
+  def is_fully_addressable(self) -> bool:
+    # Speed up `is_fully_addressable` since there is a high chance that the
+    # mesh across multiple NamedSharding objects will be the same.
+    return not self.mesh.is_multi_process
+
+  @property
+  def addressable_devices(self) -> Set[Device]:
+    # Override addressable devices because there is a high chance that the mesh
+    # across multiple NamedSharding objects will be the same.
+    return self.mesh._local_devices_set
 
   @functools.cached_property
-  def _device_assignment(self) -> XLADeviceAssignment:
-    return list(self.mesh.devices.flat)
+  def is_fully_replicated(self) -> bool:
+    if self.mesh.size == 1:
+      return True
+    array_mapping = cast(ParsedPartitionSpec, get_array_mapping(self._parsed_pspec))
+    mesh_shape = self.mesh.shape
+    num_partitions = 1
+    for name in array_mapping:
+      num_partitions *= mesh_shape[name]
+    return num_partitions == 1
 
   @functools.lru_cache(maxsize=4096)
   def _to_xla_op_sharding(
       self,
       num_dimensions: int,
-      axis_ctx: Optional[Union[mlir.SPMDAxisContext, mlir.ShardingContext]] = None
+      axis_ctx: Optional[Union[SPMDAxisContext, ShardingContext]] = None
   ) -> xc.OpSharding:
-    from jax._src.pjit import get_array_mapping
     assert self._parsed_pspec is not None
     array_mapping = get_array_mapping(self._parsed_pspec)
     # TODO(yashkatariya): Move away from sharding spec in NamedSharding
@@ -263,7 +298,7 @@ class NamedSharding(XLACompatibleSharding):
     # Used in `with_sharding_constraint`.
     special_axes = {}
     # Manual axes is only used with xmap.
-    if axis_ctx is not None and isinstance(axis_ctx, mlir.SPMDAxisContext):
+    if axis_ctx is not None and isinstance(axis_ctx, SPMDAxisContext):
       axis_names = self.mesh.axis_names
       # Ignore type because mypy doesn't recognize the `hasattr` check above.
       for manual_axis in axis_ctx.manual_axes:  # type: ignore
@@ -304,7 +339,9 @@ class SingleDeviceSharding(XLACompatibleSharding):
     return f"SingleDeviceSharding(device={repr(self._device)})"
 
   def __hash__(self):
-    return hash(self._device)
+    if not hasattr(self, '_hash'):
+      self._hash = hash(self._device)
+    return self._hash
 
   def __eq__(self, other):
     if not isinstance(other, SingleDeviceSharding):
@@ -322,10 +359,14 @@ class SingleDeviceSharding(XLACompatibleSharding):
 
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
-    return [self._device]
+    return (self._device,)
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     return get_replicated_op_sharding()
+
+  @property
+  def is_fully_replicated(self) -> bool:
+    return True
 
 
 @use_cpp_class(xc.PmapSharding)
@@ -373,13 +414,18 @@ class PmapSharding(XLACompatibleSharding):
 
   # TODO(yashkatariya): Expose `sharded_dim_size` in the API if required.
   @classmethod
-  def default(cls, shape: Shape, sharded_dim: int = 0) -> PmapSharding:
+  def default(cls, shape: Shape, sharded_dim: int = 0,
+              devices: Optional[Sequence[xc.Device]] = None) -> PmapSharding:
     """Creates a `PmapSharding` which matches the implicit device order used by
-    `pmap`.
+    `pmap` if devices is None. If devices is specified, it will use those
+    devices.
 
     Args:
       shape: The shape of the input array.
       sharded_dim: Dimension the input array is sharded on. Defaults to 0.
+      devices: Optional sequence of devices used to create PmapSharding. If not
+        specified, it will use the implicit device order used by pmap which is
+        the order of jax.local_devices()
     """
     # The dtype doesn't matter here. Its only used for creating the
     # sharding_spec.
@@ -395,8 +441,11 @@ class PmapSharding(XLACompatibleSharding):
           '`None` to sharded_dim is not supported. Please file a jax '
           'issue if you need this feature.')
 
-    pmap_devices: np.ndarray = np.array(
-        xla_bridge.local_devices()[:num_ways_sharded])
+    if devices is None:
+      pmap_devices: np.ndarray = np.array(
+          xla_bridge.local_devices()[:num_ways_sharded])
+    else:
+      pmap_devices = np.array(devices)
     return cls(pmap_devices, sharding_spec)
 
   @functools.cached_property
@@ -411,10 +460,17 @@ class PmapSharding(XLACompatibleSharding):
 
   @functools.cached_property
   def _device_assignment(self) -> XLADeviceAssignment:
-    return list(self.devices.flat)
+    return tuple(self.devices.flat)
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     raise NotImplementedError("pmap doesn't use OpSharding.")
+
+  @functools.cached_property
+  def is_fully_replicated(self) -> bool:
+    for s in self.sharding_spec.sharding:
+      if isinstance(s, sharding_specs.Unstacked):
+        return False
+    return True
 
   @functools.lru_cache(maxsize=4096)
   def shard_shape(self, global_shape: Shape) -> Shape:
@@ -436,8 +492,32 @@ class PmapSharding(XLACompatibleSharding):
     return global_shape[:sharded_dim] + global_shape[sharded_dim+1:]
 
 
+def _from_op_sharding_to_pos_sharding(
+    op_sharding: xc.OpSharding,
+    device_assignment: Sequence[xc.Device]) -> PositionalSharding:
+  if op_sharding.type == xc.OpSharding.Type.REPLICATED:
+    return PositionalSharding(device_assignment).replicate()
+
+  if op_sharding.last_tile_dims == [xc.OpSharding.Type.REPLICATED]:
+    replicate_on_last_tile_dim = True
+  else:
+    replicate_on_last_tile_dim = op_sharding.replicate_on_last_tile_dim
+    if op_sharding.last_tile_dims:
+      raise NotImplementedError(
+          "Unhandled OpSharding type. Please open a bug report!")
+
+  name = device_assignment[0].platform.upper()
+  ids = np.array([DeviceIdSet(name, i)
+                  for i in op_sharding.tile_assignment_devices])
+  p = PositionalSharding.remake(tuple(device_assignment), ids)
+  p = p.reshape(op_sharding.tile_assignment_dimensions)
+  if replicate_on_last_tile_dim:
+    p = p.replicate(-1, keepdims=False)
+  return p
+
+
 class PositionalSharding(XLACompatibleSharding):
-  _devices: List[xc.Device]
+  _devices: Tuple[xc.Device, ...]
   _ids: np.ndarray  # dtype DeviceIdSet
 
   def __init__(self, devices: Union[Sequence[xc.Device], np.ndarray]):
@@ -446,7 +526,7 @@ class PositionalSharding(XLACompatibleSharding):
     if not devices.size:
       raise ValueError(f"{self.__class__.__name__}.__init__ requires at least "
                        f"one device, got {devices}")
-    self._devices = list(devices.flat)
+    self._devices = tuple(devices.flat)
     name = self._devices[0].platform.upper()
     self._ids = np.array([DeviceIdSet(name, i) for i in range(devices.size)],
                          dtype='object').reshape(devices.shape)
@@ -477,7 +557,7 @@ class PositionalSharding(XLACompatibleSharding):
 
   @classmethod
   def remake(
-      cls, devices: List[xc.Device], ids: np.ndarray) -> PositionalSharding:
+      cls, devices: Tuple[xc.Device, ...], ids: np.ndarray) -> PositionalSharding:
     self = cls.__new__(cls)
     self._devices = devices
     self._ids = ids
@@ -486,12 +566,19 @@ class PositionalSharding(XLACompatibleSharding):
   # Hashable
 
   def __hash__(self) -> int:
-    return id(self._devices)
+    if not hasattr(self, '_hash'):
+      self._hash = hash(self._devices)
+    return self._hash
 
   def __eq__(self, other) -> bool:
-    return (isinstance(other, PositionalSharding) and
-            id(self._devices) == id(other._devices) and
-            bool(np.all(self._ids == other._ids)))
+    if not isinstance(other, PositionalSharding):
+      return False
+    if id(self) == id(other):
+      return True
+    all_ids_equal = np.array_equal(self._ids,other._ids)
+    if id(self._devices) == id(other._devices) and all_ids_equal:
+      return True
+    return self._devices == other._devices and all_ids_equal
 
   # Sharding interface
 
@@ -499,7 +586,15 @@ class PositionalSharding(XLACompatibleSharding):
   def device_set(self) -> set[xc.Device]:
     return set(self._devices)
 
+  @functools.cached_property
+  def is_fully_replicated(self) -> bool:
+    return self.shape == (1,) * self.ndim
+
   # XLACompatibleSharding interface
+
+  @property
+  def _device_assignment(self) -> XLADeviceAssignment:
+    return self._devices
 
   @functools.lru_cache(maxsize=4096)
   def _to_xla_op_sharding(self, num_dimensions: int, axis_ctx=None):
@@ -519,11 +614,9 @@ class PositionalSharding(XLACompatibleSharding):
     else:
       pbuf.tile_assignment_dimensions = shape
     pbuf.tile_assignment_devices = [i for ids in self._ids.flat for i in ids]
+    assert math.prod(pbuf.tile_assignment_dimensions) == len(pbuf.tile_assignment_devices)
     return pbuf
 
-  @property
-  def _device_assignment(self) -> list[xc.Device]:
-    return self._devices
 
 class DeviceIdSet:
   _name: str
@@ -576,12 +669,8 @@ class GSPMDSharding(XLACompatibleSharding):
       return False
     if id(self) == id(other):
       return True
-    return (
-        op_shardings.are_op_shardings_equal(
-            self._op_sharding, other._op_sharding
-        )
-        and self._devices == other._devices
-    )
+    return (are_op_shardings_equal(self._op_sharding, other._op_sharding)
+            and self._devices == other._devices)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
@@ -592,7 +681,7 @@ class GSPMDSharding(XLACompatibleSharding):
     return f'GSPMDSharding({repr(xc.HloSharding.from_proto(self._op_sharding))})'
 
   def is_compatible_aval(self, aval_shape: Shape):
-    num_ways_dim_sharded, _ = op_shardings.get_num_ways_dim_sharded(
+    num_ways_dim_sharded, _ = get_num_ways_dim_sharded(
         self._op_sharding)
     if len(aval_shape) < len(num_ways_dim_sharded):
       raise ValueError(
@@ -607,18 +696,485 @@ class GSPMDSharding(XLACompatibleSharding):
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
     self.shard_shape(global_shape)  # raises a good error message
-    indices = op_shardings.op_sharding_to_indices(
-        self._op_sharding, global_shape, len(self._devices))
+    indices = op_sharding_to_indices(self._op_sharding, global_shape,
+                                     len(self._devices))
     return dict(safe_zip(self._devices, indices))
 
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
-    return list(self._devices)
+    return self._devices
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     return self._op_sharding
 
+  @functools.cached_property
+  def is_fully_replicated(self) -> bool:
+    return is_op_sharding_replicated(self._op_sharding)
+
   @classmethod
   def get_replicated(cls, device_assignment):
     proto = get_replicated_op_sharding()
-    return cls(device_assignment, proto)
+    return cls(tuple(device_assignment), proto)
+
+
+class AUTOAxisResource:
+  pass
+AUTO = AUTOAxisResource()
+
+def is_auto(x):
+  return isinstance(x, AUTOAxisResource)
+
+
+class UnspecifiedValue:
+  def __repr__(self):
+    return "UnspecifiedValue"
+UNSPECIFIED = UnspecifiedValue()
+
+def is_unspecified(x):
+  return isinstance(x, UnspecifiedValue)
+
+def is_unspecified_or_auto(x):
+  return is_auto(x) or is_unspecified(x)
+
+
+MeshAxisName = Any
+
+"""
+ArrayMapping specifies how an ndarray should map to mesh axes.
+
+Note that the ordering is crucial for the cases when this mapping is non-injective
+(i.e. when multiple mesh axes map to the same positional axis). Then, the
+order of entries of the mapping determines a major-to-minor order on mesh axes,
+according to which chunks of the value along the repeated dimension will be assigned.
+
+For example, consider a mapping {'x': 1, 'y': 1} and a mesh with shape {'x': 2, 'y': 3}.
+The second dimension of the value would get chunked into 6 pieces, and assigned to the
+mesh in a way that treats 'y' as the fastest changing (minor) dimension. In this case,
+that would mean that a flat list of chunks would get assigned to a flattened list of
+mesh devices without any modifications. If the mapping was {'y': 1, 'x': 1}, then the
+mesh devices ndarray would have to be transposed before flattening and assignment.
+"""
+ArrayMapping = OrderedDictType[MeshAxisName, int]
+ArrayMappingOrAutoOrUnspecified = Union[ArrayMapping, AUTOAxisResource,
+                                        UnspecifiedValue]
+
+def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
+  if not array_mapping:
+    return PartitionSpec()
+  max_index = -1
+  reverse_map = collections.defaultdict(list)
+  for axis, index in array_mapping.items():
+    reverse_map[index].append(axis)
+    if index > max_index:
+      max_index = index
+  partitions = []
+  for i in range(max_index + 1):
+    axis = reverse_map[i]
+    if axis:
+      partitions.append(axis[0] if len(axis) == 1 else tuple(axis))
+    else:
+      partitions.append(None)
+  return PartitionSpec(*partitions)
+
+def get_array_mapping(
+    axis_resources: Union[ParsedPartitionSpec, AUTOAxisResource, UnspecifiedValue]
+) -> ArrayMappingOrAutoOrUnspecified:
+  # TODO(yashkatariya): Use `TypeGuard` on `is_auto` when it is supported.
+  # Don't use `is_auto` here to satisfy pytype and mypy.
+  if isinstance(axis_resources, (AUTOAxisResource, UnspecifiedValue)):
+    return axis_resources
+  return OrderedDict((axis, i)
+                     for i, axes in enumerate(axis_resources)
+                     if axes is not None for axis in axes)
+
+
+get_single_pspec = lambda p: array_mapping_to_axis_resources(
+    cast(ArrayMapping, get_array_mapping(p)))
+
+
+class SpecSync(enum.IntEnum):
+  """Encodes how much out of sync the real value of partitions is compared to the user specified one.
+
+  We use this to make sure we don't show garbage modified values while claiming
+  that the users have specified them like that.
+  """
+  OUT_OF_SYNC = 0  # Arbitrary changes, including new axes inserted
+  DIM_PERMUTE = 1  # Dimensions permuted, but no new sharding axes
+  IN_SYNC = 2  # Entirely in sync
+
+class ParsedPartitionSpec:
+  __slots__ = ('unsafe_user_spec', 'partitions', 'sync')
+
+  def __init__(self, user_spec, partitions, sync=SpecSync.IN_SYNC):
+    self.unsafe_user_spec = user_spec
+    # None in partitions represents unconstrained dim.
+    # TODO(yashkatariya): May use a sentinel value.
+    self.partitions = tuple(partitions)
+    self.sync = sync
+
+  @property
+  def user_spec(self):
+    return self.unsynced_user_spec(SpecSync.IN_SYNC)
+
+  def get_partition_spec(self) -> PartitionSpec:
+    if self.sync < SpecSync.IN_SYNC:
+      return get_single_pspec(self)
+    else:
+      if isinstance(self.unsafe_user_spec, PartitionSpec):
+        return self.unsafe_user_spec
+      else:
+        return get_single_pspec(self)
+
+  def unsynced_user_spec(self, min_sync):
+    if self.sync < min_sync:
+      raise AssertionError(f"Please open a bug report! ({self.sync} >= {min_sync})")
+    return self.unsafe_user_spec
+
+  def insert_axis_partitions(self, dim, val):
+    parts = self.partitions
+    too_short = dim - len(parts)
+    if too_short > 0:
+      parts += ((),) * too_short
+    new_partitions = util.tuple_insert(parts, dim, val)
+    new_sync = SpecSync.DIM_PERMUTE if (val == () or val is None) else SpecSync.OUT_OF_SYNC
+    return ParsedPartitionSpec(self.unsafe_user_spec, new_partitions, sync=new_sync)
+
+  @classmethod
+  def from_user_input(cls, entry, arg_name, allow_unconstrained_dims=False):
+    if entry is None:
+      return cls(entry, ())
+    if not isinstance(entry, PartitionSpec):
+      raise TypeError(f"{arg_name} are expected to be "
+                      f"PartitionSpec instances or None, but got {entry}")
+    axis_specs = []
+    for axis_spec in entry:
+      if axis_spec is None:
+        axis_spec = ()
+      elif isinstance(axis_spec, (list, tuple)):
+        axis_spec = tuple(axis_spec)
+      elif axis_spec == PartitionSpec.UNCONSTRAINED:
+        if not allow_unconstrained_dims:
+          raise ValueError(f"Unconstrained dims are not allowed: {entry}")
+        axis_spec = None
+      else:
+        axis_spec = (axis_spec,)
+      axis_specs.append(axis_spec)
+    return cls(entry, axis_specs)
+
+  def __hash__(self):
+    return hash((self.partitions, self.sync))
+
+  def __eq__(self, other):
+    return (self.partitions == other.partitions and
+            self.sync == other.sync)
+
+  def __len__(self):
+    return len(self.partitions)
+
+  def __getitem__(self, i):
+    return self.partitions[i]
+
+  def __iter__(self):
+    return iter(self.partitions)
+
+  def __repr__(self):
+    return (f"ParsedPartitionSpec(partitions={self.partitions}, "
+            f"unsafe_user_spec={self.unsafe_user_spec}, "
+            f"sync={self.sync})")
+
+class CanonicalizedParsedPartitionSpec(ParsedPartitionSpec):
+  """ParsedPartitionSpecs that are canonicalized.
+
+  ParsedPartitionSpecs may contain trailing empty tuples, that make them
+  semantically different in general, and yet in some situations we prefer
+  to regard them as equivalent. For example, partitions of () and ((),)
+  cannot be always considered equivalent, since the first one is a valid
+  spec for a scalar value, while the second is not! However, when either of
+  those are applied to a 2D array, they both mean that the array is fully
+  replicated.
+
+  So CanonicalizedParsedPartitionSpecs removes the trailing empty tuples from
+  partitions.
+  """
+
+  def __init__(self, parsed_pspec: ParsedPartitionSpec):
+    partitions = list(parsed_pspec.partitions)
+    while partitions and partitions[-1] == ():
+      partitions.pop()
+
+    super().__init__(parsed_pspec.unsafe_user_spec, partitions,
+                     parsed_pspec.sync)
+
+  def __repr__(self):
+    return (f"CanonicalizedParsedPartitionSpec(partitions={self.partitions}, "
+            f"unsafe_user_spec={self.unsafe_user_spec}, "
+            f"sync={self.sync})")
+
+
+def check_all_or_none_unspecified(axis_resources, name):
+  if not axis_resources:
+    return False
+  unspecified_count = 0
+  unspecified = is_unspecified(axis_resources[0])
+  for resource in axis_resources:
+    current_is_unspecified = is_unspecified(resource)
+    if current_is_unspecified:
+      unspecified_count += 1
+      assert unspecified_count == 1
+    if current_is_unspecified != unspecified:
+      raise ValueError(f'`pjit.UNSPECIFIED` exists in {name}. '
+                       f'Make sure that every entry in {name} is '
+                       '`pjit.UNSPECIFIED`.')
+  return unspecified
+
+
+def prepare_axis_resources(axis_resources,
+                           arg_name,
+                           allow_unconstrained_dims=False):
+  # PyTrees don't treat None values as leaves, so we use an is_leaf function.
+  entries, treedef = tree_util.tree_flatten(
+      axis_resources, is_leaf=lambda x: x is None)
+  what = f"{arg_name} leaf specifications"
+  # All entries should be specified or if unspecified then there should only
+  # be 1 entry for that since UNSPECIFIED is a private API.
+  check_all_or_none_unspecified(entries, arg_name)
+
+  new_entries = []
+  for entry in entries:
+    if is_unspecified_or_auto(entry):
+      new_entries.append(entry)
+    elif isinstance(entry, sharding.Sharding):
+      if isinstance(entry, PmapSharding):
+        raise ValueError(f'One of {what} got sharding {entry} which is not '
+                         'allowed.')
+      if not isinstance(entry, XLACompatibleSharding):
+        raise ValueError(f'One of {what} got sharding {entry} which is not a '
+                         'subclass of XLACompatibleSharding.')
+      new_entries.append(entry)
+    else:
+      new_entries.append(ParsedPartitionSpec.from_user_input(
+          entry, what, allow_unconstrained_dims=allow_unconstrained_dims))
+
+  _check_unique_resources(new_entries, arg_name)
+  return tree_util.tree_unflatten(treedef, new_entries), new_entries, treedef
+
+
+def _check_unique_resources(axis_resources, arg_name):
+  for arg_axis_resources in axis_resources:
+    if not arg_axis_resources: continue
+    if (is_unspecified_or_auto(arg_axis_resources) or
+        isinstance(arg_axis_resources, XLACompatibleSharding)):
+      continue
+    constrained_dims = [d for d in arg_axis_resources if d is not None]
+    resource_counts = collections.Counter(
+        itertools.chain.from_iterable(constrained_dims))
+    if not resource_counts: continue
+    if resource_counts.most_common(1)[0][1] > 1:
+      multiple_uses = [r for r, c in resource_counts.items() if c > 1]
+      if multiple_uses:
+        raise ValueError(f"A single {arg_name} specification can map every mesh axis "
+                         f"to at most one positional dimension, but {arg_axis_resources.user_spec} "
+                         f"has duplicate entries for {mesh_lib.show_axes(multiple_uses)}")
+
+# Axis environments
+
+class AxisEnv(NamedTuple):
+  """Represents a pmap mesh (only along the replica axes)."""
+  nreps: int
+  names: Tuple[Any, ...]
+  sizes: Tuple[int, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class SPMDAxisContext:
+  """A hardware axis context for parallel computations that use the GSPMD partitioner.
+
+  This includes the mesh that will later by used to execute this computation,
+  as well as a set of mesh axes that are currently (e.g. because the current lowering
+  is invoked inside an xmap) lowered in the MANUAL sharding mode.
+  """
+  mesh: mesh_lib.Mesh
+  manual_axes: FrozenSet[MeshAxisName] = frozenset()
+
+  @property
+  def axis_env(self):
+    # All collectives that touch axis_env should remember to set use_global_device_ids
+    # when this context is enabled!
+    if self.manual_axes != frozenset(self.mesh.axis_names):
+      raise NotImplementedError(
+          "Collectives in manually partitioned computations are only supported "
+          "when all mesh axes are partitioned manually (no partial automatic sharding). "
+          "Make sure that you mention all mesh axes in axis_resources!")
+    return self.unsafe_axis_env
+
+  @property
+  def unsafe_axis_env(self):
+    return AxisEnv(
+        nreps=self.mesh.size,
+        names=self.mesh.axis_names,
+        sizes=tuple(self.mesh.shape.values()))
+
+  def extend_manual(self, axes: FrozenSet[MeshAxisName]) -> SPMDAxisContext:
+    return SPMDAxisContext(self.mesh, self.manual_axes | axes)
+
+
+@dataclasses.dataclass(frozen=True)
+class ReplicaAxisContext:
+  """A hardware axis context for parallel computations that are partitioned by JAX.
+
+  Unlike in the SPMDAxisContext, this means that JAX might need to emit calls to
+  explicit collectives.
+  """
+  axis_env: AxisEnv
+
+
+@dataclasses.dataclass(frozen=True)
+class ShardingContext:
+  """A hardware axis context for parallel computations that use the sharding
+  interface.
+
+  This context also uses the GSPMD partitioner.
+  """
+  device_assignment: Sequence[xc.Device]
+
+  # Similar to SPMDContext as ShardingContext also uses the GSPMD partitioner.
+  @property
+  def axis_env(self):
+    return AxisEnv(nreps=1, names=(), sizes=())
+
+
+# -------------------- XLA OpSharding to PartitionSpec --------------------
+# Note that OpSharding is more expressive than PartitionSpecs, so it's not
+# always possible to convert them, but the code below should at least
+# support handle all cases when this is possible.
+
+def strides_for_sizes(sizes):
+  """Returns an array of strides for major-to-minor sizes."""
+  return np.cumprod(sizes[::-1])[::-1] // np.asarray(sizes)
+
+def unflatten_array(named_sizes, assignment):
+  """Recovers the ordering of axis names based on a device assignment.
+
+  The device assignments that this function can convert into axis orders
+  are of the form::
+
+    np.arange(np.prod(named_sizes.values())).transpose(...).flatten()
+
+  for some transposition ``...``. This is satisfied by all OpSharding assignments
+  generated from partition specs.
+
+  Arguments:
+    named_sizes: A dictionary mapping axis names to their sizes.
+    assignment: A permutation of integers between 0 and the product of all
+      named sizes.
+
+  Returns:
+    A major-to-minor list of axis names that corresponds to the given assignment.
+  """
+  named_sizes = {name: size for name, size in named_sizes.items() if size != 1}
+  sizes = np.fromiter(named_sizes.values(), dtype=np.int64)
+  strides = strides_for_sizes(sizes)
+  dims = explode_superdims(sizes, unflatten_superdims(assignment))
+  dim_to_name = {(size, stride): name for size, stride, name in zip(sizes, strides, named_sizes)}
+  return [dim_to_name[d] for d in dims]
+
+def unflatten_superdims(assignment):
+  """Unflatten a list of dimension sizes and their strides that generates assignment.
+
+  If this function succeeds for a given ``assignment``, then the following property
+  should be satisfied::
+
+    dims_with_strides = unflatten_superdims(assignment)
+    base_array = np.arange(map(fst, sorted(dims_with_strides, key=snd, reverse=True)))
+    assignment == base_array.transpose(argsort(dims_with_strides, key=snd, reverse=True)).flatten()
+
+  That is, the returned dimensions list all sizes of the base array (with strides
+  indicating their initial order). The order of dimensions in the list corresponds
+  to the permutation that applied to the base array generates the assignment.
+  """
+  def check(cond):
+    if cond: return
+    raise NotImplementedError("Failed to convert OpSharding into a ShardingSpec. "
+                              "Please open a bug report!")
+  flat_assignment = np.asarray(assignment, dtype=np.int64)
+  check(flat_assignment[0] == 0)
+  dims = []
+  while flat_assignment.size > 1:
+    stride = flat_assignment[1]
+    for i in range(len(flat_assignment)):
+      if flat_assignment[i] != i * stride: break
+    else:
+      # After this loop i should point to an "element after the sequence", so
+      # we have to increment it if the whole array is a strided sequence.
+      i += 1
+    size = i
+    dims.append((size, stride))
+    assert size > 1  # Ensure progress
+    flat_assignment = flat_assignment[::size]
+  return dims
+
+def explode_superdims(sizes, dims):
+  """Explode superdims to fit a known shape.
+
+  The unflattening process might mistakenly generate too few too large dimensions.
+  For example, ``unflatten_superdims(np.arange(n))`` always returns ``[(n, 1)]``.
+  This function takes a list of such contiguous super-dimensions and splits them
+  into smaller dimensions such that::
+
+    set(map(fst, explode_superdims(sizes, dims))) == set(sizes)
+  """
+  strides_to_sizes = {stride: size for size, stride in zip(sizes, strides_for_sizes(sizes))}
+  dims = list(reversed(dims))
+  final_dims = []
+  for size, stride in dims:
+    target_size = strides_to_sizes[stride]
+    new_dims = []
+    while size > target_size:
+      assert target_size > 1  # Ensure progress
+      assert size % target_size == 0
+      new_dims.append((target_size, stride))
+      size //= target_size
+      stride *= target_size
+      target_size = strides_to_sizes[stride]
+    assert size == target_size
+    new_dims.append((size, stride))
+    final_dims += reversed(new_dims)
+  return final_dims
+
+def parse_flatten_op_sharding(op_sharding: xc.OpSharding,
+                              mesh: mesh_lib.Mesh) -> Sequence[ParsedPartitionSpec]:
+  if op_sharding.type == xc.OpSharding.Type.TUPLE:
+    out: List[ParsedPartitionSpec] = []
+    for s in op_sharding.tuple_shardings:
+      out.extend(parse_flatten_op_sharding(s, mesh))
+    return out
+  elif op_sharding.type == xc.OpSharding.Type.REPLICATED:
+    return [CanonicalizedParsedPartitionSpec(
+        ParsedPartitionSpec(PartitionSpec(), ()))]
+  elif op_sharding.type == xc.OpSharding.Type.OTHER:
+    mesh_shape = mesh.shape
+    mesh_axis_order = unflatten_array(mesh.shape, op_sharding.tile_assignment_devices)
+    mesh_axis = iter(mesh_axis_order)
+    shape = op_sharding.tile_assignment_dimensions
+    partitions = []
+    for dim_size in shape:
+      dim_partitions = []
+      while dim_size > 1:
+        axis = next(mesh_axis)
+        axis_size = mesh_shape[axis]
+        assert dim_size % axis_size == 0
+        dim_size //= axis_size
+        dim_partitions.append(axis)
+      partitions.append(tuple(dim_partitions))
+    if op_sharding.last_tile_dims == [xc.OpSharding.Type.REPLICATED]:
+      replicate_on_last_tile_dim = True
+    else:
+      replicate_on_last_tile_dim = op_sharding.replicate_on_last_tile_dim
+      if op_sharding.last_tile_dims:
+        raise NotImplementedError("Unhandled OpSharding type. Please open a bug report!")
+    if replicate_on_last_tile_dim:
+      partitions = partitions[:-1]
+    return [CanonicalizedParsedPartitionSpec(
+        ParsedPartitionSpec('<internally generated spec>', partitions))]
+  else:
+    raise AssertionError("Unhandled OpSharding type. Please open a bug report!")

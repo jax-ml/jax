@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-import functools
 from functools import partial
 import itertools
 import unittest
@@ -29,11 +28,12 @@ from jax import numpy as jnp
 from jax import lax
 from jax import scipy as jsp
 from jax.tree_util import tree_map
+from jax._src.scipy import special as lsp_special_internal
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 from jax.scipy import cluster as lsp_cluster
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
@@ -220,15 +220,45 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(lsp_special.xlogy(0., 0.), 0., check_dtypes=False)
 
   def testGradOfXlogyAtZero(self):
-    partial_xlogy = functools.partial(lsp_special.xlogy, 0.)
-    self.assertAllClose(jax.grad(partial_xlogy)(0.), 0., check_dtypes=False)
+    # https://github.com/google/jax/issues/15598
+    x0, y0 = 0.0, 3.0
+    d_xlog1py_dx = jax.grad(lsp_special.xlogy, argnums=0)(x0, y0)
+    self.assertAllClose(d_xlog1py_dx, lax.log(y0))
+
+    d_xlog1py_dy = jax.grad(lsp_special.xlogy, argnums=1)(x0, y0)
+    self.assertAllClose(d_xlog1py_dy, 0.0)
+
+    jtu.check_grads(lsp_special.xlogy, (x0, y0), order=2)
 
   def testXlog1pyShouldReturnZero(self):
     self.assertAllClose(lsp_special.xlog1py(0., -1.), 0., check_dtypes=False)
 
   def testGradOfXlog1pyAtZero(self):
-    partial_xlog1py = functools.partial(lsp_special.xlog1py, 0.)
-    self.assertAllClose(jax.grad(partial_xlog1py)(-1.), 0., check_dtypes=False)
+    # https://github.com/google/jax/issues/15598
+    x0, y0 = 0.0, 3.0
+    d_xlog1py_dx = jax.grad(lsp_special.xlog1py, argnums=0)(x0, y0)
+    self.assertAllClose(d_xlog1py_dx, lax.log1p(y0))
+
+    d_xlog1py_dy = jax.grad(lsp_special.xlog1py, argnums=1)(x0, y0)
+    self.assertAllClose(d_xlog1py_dy, 0.0)
+
+    jtu.check_grads(lsp_special.xlog1py, (x0, y0), order=2)
+
+  def testXLogX(self):
+    scipy_op = lambda x: osp_special.xlogy(x, x)
+    lax_op = lsp_special_internal._xlogx
+    rng = jtu.rand_positive(self.rng())
+    args_maker = lambda: [rng((2, 3, 4), np.float32)]
+    self._CheckAgainstNumpy(scipy_op, lax_op, args_maker)
+    self._CompileAndCheck(lax_op, args_maker)
+    jtu.check_grads(lax_op, args_maker(), order=1,
+                    atol=jtu.if_device_under_test("tpu", .1, 1e-3),
+                    rtol=.1, eps=1e-3)
+
+  def testGradOfEntrAtZero(self):
+    # https://github.com/google/jax/issues/15709
+    self.assertEqual(jax.jacfwd(lsp_special.entr)(0.0), jnp.inf)
+    self.assertEqual(jax.jacrev(lsp_special.entr)(0.0), jnp.inf)
 
   @jtu.sample_product(
     [dict(order=order, z=z, n_iter=n_iter)

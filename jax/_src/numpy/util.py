@@ -16,7 +16,7 @@ from functools import partial
 import re
 import textwrap
 from typing import (
-    Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Type, TypeVar
+    Any, Callable, Dict, List, NamedTuple, Optional, Sequence, TypeVar
 )
 import warnings
 
@@ -271,7 +271,7 @@ def promote_dtypes(*args: ArrayLike) -> List[Array]:
     return [lax.asarray(arg) for arg in args]
   else:
     to_dtype, weak_type = dtypes._lattice_result_type(*args)
-    to_dtype = dtypes.canonicalize_dtype(to_dtype)
+    to_dtype = dtypes.canonicalize_dtype(to_dtype, allow_opaque_dtype=True)
     return [lax._convert_element_type(x, to_dtype, weak_type) for x in args]
 
 
@@ -280,7 +280,7 @@ def promote_dtypes_inexact(*args: ArrayLike) -> List[Array]:
 
   Promotes arguments to an inexact type."""
   to_dtype, weak_type = dtypes._lattice_result_type(*args)
-  to_dtype = dtypes.canonicalize_dtype(to_dtype)
+  to_dtype = dtypes.canonicalize_dtype(to_dtype, allow_opaque_dtype=True)
   to_dtype_inexact = dtypes.to_inexact_dtype(to_dtype)
   return [lax._convert_element_type(x, to_dtype_inexact, weak_type)
           for x in args]
@@ -316,12 +316,6 @@ def _complex_elem_type(dtype: DTypeLike) -> DType:
 def _arraylike(x: ArrayLike) -> bool:
   return (isinstance(x, np.ndarray) or isinstance(x, Array) or
           hasattr(x, '__jax_array__') or np.isscalar(x))
-
-
-def _stackable(*args: Any) -> bool:
-  return all(type(arg) in stackables for arg in args)
-stackables: Set[Type] = set()
-_register_stackable: Callable[[Type], None] = stackables.add
 
 
 def check_arraylike(fun_name: str, *args: Any):
@@ -389,8 +383,6 @@ def _broadcast_arrays(*args: ArrayLike) -> List[Array]:
 
 
 def _broadcast_to(arr: ArrayLike, shape: Shape) -> Array:
-  if hasattr(arr, "broadcast_to"):
-    return arr.broadcast_to(shape)  # type: ignore[union-attr]
   check_arraylike("broadcast_to", arr)
   arr = arr if isinstance(arr, Array) else lax.asarray(arr)
   if not isinstance(shape, tuple) and np.ndim(shape) == 0:

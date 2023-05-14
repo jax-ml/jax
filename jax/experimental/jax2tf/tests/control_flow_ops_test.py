@@ -23,7 +23,7 @@ import numpy as np
 
 from jax.experimental.jax2tf.tests import tf_test_util
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 

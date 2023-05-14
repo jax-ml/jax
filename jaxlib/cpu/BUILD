@@ -22,7 +22,10 @@ load(
 
 licenses(["notice"])
 
-package(default_visibility = ["//:__subpackages__"])
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//:__subpackages__"],
+)
 
 # LAPACK
 

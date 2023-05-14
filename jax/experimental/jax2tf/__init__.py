@@ -14,6 +14,7 @@
 
 from jax.experimental.jax2tf.jax2tf import (
   convert as convert,
+  eval_polymorphic_shape as eval_polymorphic_shape,
   dtype_of_val as dtype_of_val,
   split_to_logical_devices as split_to_logical_devices,
   PolyShape as PolyShape

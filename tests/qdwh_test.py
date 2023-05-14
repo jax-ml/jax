@@ -16,7 +16,7 @@
 import functools
 
 import jax
-from jax.config import config
+from jax import config
 import jax.numpy as jnp
 import numpy as np
 import scipy.linalg as osp_linalg
@@ -171,10 +171,10 @@ class QdwhTest(jtu.JaxTestCase):
   )
   def testQdwhWithOnRankDeficientInput(self, m, n, log_cond):
     """Tests qdwh with rank-deficient input."""
-    a = jnp.triu(jnp.ones((m, n))).astype(_QDWH_TEST_DTYPE)
+    a = np.triu(np.ones((m, n))).astype(_QDWH_TEST_DTYPE)
 
     # Generates a rank-deficient input.
-    u, s, v = jnp.linalg.svd(a, full_matrices=False)
+    u, s, v = np.linalg.svd(a, full_matrices=False)
     cond = 10**log_cond
     s = jnp.linspace(cond, 1, min(m, n))
     s = jnp.expand_dims(s.at[-1].set(0), range(u.ndim - 1))
@@ -185,9 +185,6 @@ class QdwhTest(jtu.JaxTestCase):
     actual_u, actual_h, _, _ = qdwh.qdwh(a, is_hermitian=is_hermitian,
                                          max_iterations=max_iterations)
     _, expected_h = osp_linalg.polar(a)
-
-    # Sets the test tolerance.
-    rtol = 1E4 * _QDWH_TEST_EPS
 
     # For rank-deficient matrix, `u` is not unique.
     with self.subTest('Test h.'):
@@ -203,7 +200,8 @@ class QdwhTest(jtu.JaxTestCase):
       actual_results = _dot(actual_u.T.conj(), actual_u)
       expected_results = np.eye(n)
       self.assertAllClose(
-          actual_results, expected_results, rtol=rtol, atol=1E-6)
+          actual_results, expected_results, rtol=_QDWH_TEST_EPS, atol=1e-6
+      )
 
   @jtu.sample_product(
     [dict(m=m, n=n, r=r, c=c) for m, n, r, c in [(4, 3, 1, 1), (5, 2, 0, 0)]],

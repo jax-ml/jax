@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for call_tf."""
-import base64
 from functools import partial
 from typing import Callable, Dict, Tuple
 import unittest
@@ -26,11 +25,10 @@ from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
 from jax._src import test_util as jtu
-from jax.config import config
+from jax import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax._src.lib.mlir import ir
-from tensorflow.core.framework import function_pb2
 
 import numpy as np
 
@@ -62,7 +60,7 @@ _parameterized_jit = parameterized.named_parameters(
     _named_test(with_jit=with_jit)
     for with_jit in [True, False])
 
-_call_tf_non_compilable_error = "Error compiling TensorFlow function. call_tf can used in a staged context .* only with compilable functions"
+_call_tf_non_compilable_error = "Error compiling TensorFlow function"
 _call_tf_dynamic_shape_error = "call_tf cannot call functions whose output has dynamic shape"
 
 class CallTfTest(tf_test_util.JaxToTfTestCase):
@@ -893,7 +891,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     def assert_all_close_support_bfloat16(baseline, candidate):
       def conversion(x):
         # convert scalar to array and bfloat16 to float32
-        # to support self.assertAllClose numpy array comparision.
+        # to support self.assertAllClose numpy array comparison.
         if x.shape == tf.TensorShape([]):
           x = tf.convert_to_tensor([x])
         if dtype == jnp.float16:
@@ -912,7 +910,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
         tf.function(tf_f)(x), tf.function(tf_f_rt)(x)
     )
 
-    # Compiled fucntion mode with jit_compiled=True
+    # Compiled function mode with jit_compiled=True
     assert_all_close_support_bfloat16(
         tf.function(tf_f, jit_compile=True)(x),
         tf.function(tf_f_rt, jit_compile=True)(x),
@@ -1216,7 +1214,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
       expect_error = "Dimensions must be equal, but are 4 and 9 for .* AddV2"
     if kind == "bad_dim" and config.jax2tf_default_native_serialization:
       # TODO(b/268386622): call_tf with shape polymorphism and native serialization.
-      expect_error = "Error compiling TensorFlow function. call_tf can used .* only with compilable functions with static output shapes"
+      expect_error = "Error compiling TensorFlow function"
     fun_tf_rt = _maybe_tf_jit(with_jit,
         jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))
     with self.assertRaisesRegex(expect_ex, expect_error):
@@ -1297,7 +1295,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
         for op in block:
           cls._walk_stablehlo_operations(op, cb)
 
-  def test_use_custom_call(self):
+  def test_call_tf_graph(self):
     const = tf.Variable(0.0, dtype=tf.float32)
 
     @tf.function(jit_compile=True)
@@ -1319,100 +1317,147 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
         jax.ShapeDtypeStruct(x.shape, x.dtype),
         jax.ShapeDtypeStruct(z.shape, z.dtype),
     )
-    f_jax = jax.jit(jax2tf.call_tf(tf_func_3, use_custom_call=False))
+    f_jax = jax.jit(jax2tf.call_tf(tf_func_3, call_tf_graph=False))
     stablehlo_module = f_jax.lower(x, y, z).compiler_ir("stablehlo")
     self.assertNotIn("stablehlo.custom_call", str(stablehlo_module))
 
     f_jax = jax.jit(
         jax2tf.call_tf(
             tf_func_3,
-            use_custom_call=True,
+            call_tf_graph=True,
             output_shape_dtype=output_shape_dtype,
         )
     )
     stablehlo_module = f_jax.lower(x, y, z).compiler_ir("stablehlo")
     self.assertIn("stablehlo.custom_call", str(stablehlo_module))
 
-    concrete_function_flat_tf = tf_func_3.get_concrete_function(x, y, z)
-    expect_function_def_dict = {}
-    expect_function_def_dict[
-        concrete_function_flat_tf.function_def.signature.name
-    ] = concrete_function_flat_tf.function_def
-    for k, v in concrete_function_flat_tf.graph._functions.items():
-      expect_function_def_dict[k] = v.definition
+    caller_name_list = []
 
-    deserialized_function_def_dict = {}
-
-    def extract_func_def(op):
+    def _extract_info(op):
       if op.operation.name != "stablehlo.custom_call":
         return
-      tf_metadata = ir.DictAttr(op.attributes["tf_metadata"])
-      function_def_list = ir.ArrayAttr(tf_metadata["function_def_list"])
+      tf_backend_config = ir.DictAttr(op.attributes["tf.backend_config"])
+      caller_name = ir.StringAttr(tf_backend_config["caller_name"]).value
+      caller_name_list.append(caller_name)
 
-      for fdef_str in function_def_list:
-        fdef_str_bytes = base64.b64decode(str(fdef_str)[1:-1])
-        fdef = function_pb2.FunctionDef()
-        fdef.ParseFromString(fdef_str_bytes)
-        deserialized_function_def_dict.update({fdef.signature.name: fdef})
+    self._walk_stablehlo_operations(stablehlo_module, _extract_info)
+    self.assertLen(caller_name_list, 1)
 
-    self._walk_stablehlo_operations(stablehlo_module, extract_func_def)
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="multiple_outputs",
+          tf_f=lambda x: tf.py_function(np.sin, [x], tf.float32),
+          output_shape_dtype=jax.ShapeDtypeStruct((10,), jnp.float32),
+      ),
+      dict(
+          testcase_name="zero_outputs",
+          tf_f=lambda x: print(tf.strings.length(tf.constant("hello, world"))),
+          output_shape_dtype=None,
+      ),
+  )
+  def test_call_tf_graph_non_compilable(self, tf_f, output_shape_dtype):
+    inputs = jnp.ones([10], dtype=jnp.float32)
+    caller_name_list = []
+    xla_call_module_list = []
 
-    for k, _ in expect_function_def_dict.items():
-      self.assertEqual(
-          expect_function_def_dict[k], deserialized_function_def_dict[k]
-      )
-
-  def test_use_custom_call_non_compilable(self):
-    deserialized_function_def_dict = {}
-
-    def extract_func_def(op):
+    def _extract_info(op):
       if op.operation.name != "stablehlo.custom_call":
         return
-      tf_metadata = ir.DictAttr(op.attributes["tf_metadata"])
-      function_def_list = ir.ArrayAttr(tf_metadata["function_def_list"])
+      tf_backend_config = ir.DictAttr(op.attributes["tf.backend_config"])
+      caller_name = ir.StringAttr(tf_backend_config["caller_name"]).value
+      caller_name_list.append(caller_name)
 
-      for fdef_str in function_def_list:
-        fdef_str_bytes = base64.b64decode(str(fdef_str)[1:-1])
-        fdef = function_pb2.FunctionDef()
-        fdef.ParseFromString(fdef_str_bytes)
-        deserialized_function_def_dict.update({fdef.signature.name: fdef})
-
-    @tf.function(jit_compile=False)
-    def my_op(x):
-      return tf.py_function(np.sin, [x], tf.float32)
-
-    x = jnp.ones([10], dtype=jnp.float32)
-    output_shape_dtype = jax.ShapeDtypeStruct(x.shape, x.dtype)
-    f_jax = jax.jit(
-        jax2tf.call_tf(
-            my_op,
-            use_custom_call=False,
-            output_shape_dtype=output_shape_dtype,
-        )
+    jax_f = jax2tf.call_tf(
+        tf_f,
+        call_tf_graph=True,
+        output_shape_dtype=output_shape_dtype,
     )
 
-    f_jax = jax.jit(
-        jax2tf.call_tf(
-            my_op,
-            use_custom_call=True,
-            output_shape_dtype=output_shape_dtype,
-        )
+    # Eager mode
+    self.assertAllClose(tf_f(inputs), jax_f(inputs))
+
+    # Jit mode
+    stablehlo_module = jax.jit(jax_f).lower(inputs).compiler_ir("stablehlo")
+    self.assertIn(
+        "stablehlo.custom_call @tf.call_tf_function",
+        str(stablehlo_module),
     )
-    stablehlo_module = f_jax.lower(x).compiler_ir("stablehlo")
-    concrete_function_flat_tf = my_op.get_concrete_function(x)
-    expect_function_def_dict = {}
-    expect_function_def_dict[
-        concrete_function_flat_tf.function_def.signature.name
-    ] = concrete_function_flat_tf.function_def
-    for k, v in concrete_function_flat_tf.graph._functions.items():
-      expect_function_def_dict[k] = v.definition
+    self.assertIn("tf.backend_config", str(stablehlo_module))
+    self._walk_stablehlo_operations(stablehlo_module, _extract_info)
+    self.assertLen(caller_name_list, 1)
 
-    self._walk_stablehlo_operations(stablehlo_module, extract_func_def)
-    for k, _ in expect_function_def_dict.items():
-      self.assertEqual(
-          expect_function_def_dict[k], deserialized_function_def_dict[k]
-      )
+    # Test model exporting and reloading.
+    # There is no runtime support yet so it can not run.
+    tf_f_rt = jax2tf.convert(
+        jax_f,
+        native_serialization=True,
+        native_serialization_strict_checks=False,
+        with_gradient=False,
+    )
+    _, restored_model = tf_test_util.SaveAndLoadFunction(
+        tf_f_rt, input_args=[inputs]
+    )
+    func_def = restored_model.f.concrete_functions[0]
 
+    for node_def in func_def.graph.as_graph_def().node:
+      if node_def.op == "XlaCallModule":
+        xla_call_module_list.append(node_def)
+    # There is only one xla_call_module in the saved model.
+    self.assertLen(xla_call_module_list, 1)
+
+    # Check the xla_call_module version and function_list attributes.
+    xla_call_module = xla_call_module_list[0]
+    self.assertEqual(xla_call_module.attr["version"].i, 5)
+    self.assertIn("function_list", str(xla_call_module.attr))
+    xla_call_module_list.clear()
+    caller_name_list.clear()
+
+    # If JAX calls same tensorflow function by `jax2tf.call_tf` twice,
+    # it should return two different tf concrete functions.
+    def jax_f_2(x):
+      res1 = jax2tf.call_tf(
+          tf_f,
+          call_tf_graph=True,
+          output_shape_dtype=output_shape_dtype,
+      )(x)
+      res2 = jax2tf.call_tf(
+          tf_f,
+          call_tf_graph=True,
+          output_shape_dtype=output_shape_dtype,
+      )(x)
+      return res1, res2
+
+    stablehlo_module = jax.jit(jax_f_2).lower(inputs).compiler_ir("stablehlo")
+    self._walk_stablehlo_operations(stablehlo_module, _extract_info)
+    self.assertLen(caller_name_list, 2)
+    self.assertNotEqual(caller_name_list[0], caller_name_list[1])
+    logging.info("caller_name_list = %s", caller_name_list)
+    xla_call_module_list.clear()
+    caller_name_list.clear()
+
+  def test_b279454591(self):
+    """Test case when tensorflow function returns `StatefulPartitionedCall` op."""
+    inputs = jnp.ones([10], dtype=jnp.float32)
+
+    # With one or more outputs, it is okay.
+    def tf_f(x):
+      y = tf.math.sin(3.0)
+      tf.print(y)
+      return x
+
+    jax_f = jax2tf.call_tf(tf.function(tf_f), call_tf_graph=True, output_shape_dtype=jax.ShapeDtypeStruct((10,), jnp.float32))
+    tf_f_rt = jax2tf.convert(jax_f, native_serialization=True, native_serialization_strict_checks=False, with_gradient=False)
+    _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt, input_args=[inputs])
+
+    # With zero output, it return `StatefulPartitionedCall` op instead.
+    def tf_f_2():
+      y = tf.math.sin(3.0)
+      tf.print(y)
+      return
+
+    jax_f_2 = jax2tf.call_tf(tf.function(tf_f_2), call_tf_graph=True)
+    tf_f_rt_2 = jax2tf.convert(jax_f_2, native_serialization=True, native_serialization_strict_checks=False, with_gradient=False)
+    _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt_2, input_args=[])
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

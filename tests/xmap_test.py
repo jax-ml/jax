@@ -50,7 +50,7 @@ from jax._src.lax.parallel import pgather
 from jax.interpreters import batching
 from jax.ad_checkpoint import checkpoint
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 
@@ -278,9 +278,9 @@ class XMapTest(XMapTestCase):
                 out_axes=({0: 'a', 1: 'b'}, ['c', ...]),
                 axis_resources={'a': 'x', 'b': 'y', 'c': 'x'})
       ashape = (16, 8, 5)
-      a = jnp.arange(np.prod(ashape)).reshape(ashape)
+      a = jnp.arange(math.prod(ashape)).reshape(ashape)
       bshape = (2, 7)
-      b = jnp.arange(np.prod(bshape)).reshape(bshape)
+      b = jnp.arange(math.prod(bshape)).reshape(bshape)
       c, d = fm(a, b)
       self.assertAllClose(c, a * 2)
       self.assertAllClose(d, b * 4)
@@ -292,9 +292,9 @@ class XMapTest(XMapTestCase):
               out_axes=(['b', ...], {0: 'c'}),
               axis_resources={'a': 'x', 'b': 'y', 'c': 'x'})
     ashape = (16, 8, 5)
-    a = jnp.arange(np.prod(ashape)).reshape(ashape)
+    a = jnp.arange(math.prod(ashape)).reshape(ashape)
     bshape = (2, 7)
-    b = jnp.arange(np.prod(bshape)).reshape(bshape)
+    b = jnp.arange(math.prod(bshape)).reshape(bshape)
     c, d = fm(a, b)
     self.assertAllClose(c, (a * 2).sum(0))
     self.assertAllClose(d, b * 4)
@@ -330,7 +330,7 @@ class XMapTest(XMapTestCase):
     fm = xmap(f, in_axes=['a', ...], out_axes=({}, {1: 'a'}),
               axis_resources={'a': ('x', 'y')})
     vshape = (4, 5)
-    v = jnp.arange(np.prod(vshape)).reshape(vshape)
+    v = jnp.arange(math.prod(vshape)).reshape(vshape)
     ans, ans2 = fm(v)
     self.assertAllClose(ans, (v * 2).sum(0))
     self.assertAllClose(ans2, v.T * 4)
@@ -344,7 +344,7 @@ class XMapTest(XMapTestCase):
     fyx = xmap(f, in_axes=['a', ...], out_axes={1: 'a'},
                axis_resources={'a': ('y', 'x')})
     vshape = (4, 5)
-    v = jnp.arange(np.prod(vshape)).reshape(vshape)
+    v = jnp.arange(math.prod(vshape)).reshape(vshape)
     zxy = fxy(v)
     zxy_op_sharding = zxy.sharding._to_xla_op_sharding(zxy.ndim)
     self.assertListEqual(zxy_op_sharding.tile_assignment_dimensions, [1, 4])
@@ -419,7 +419,7 @@ class XMapTest(XMapTestCase):
       return h(y)
 
     xshape = (4, 2, 5)
-    x = jnp.arange(np.prod(xshape), dtype=float).reshape(xshape)
+    x = jnp.arange(math.prod(xshape), dtype=float).reshape(xshape)
     y = f(x)
     self.assertAllClose(
         y, ((jnp.sin(x * 2) *
@@ -707,11 +707,10 @@ class XMapTest(XMapTestCase):
     f_exe = f.lower(x_f32).compile()
     self.assertRaisesRegex(
         TypeError,
-        "Computation was compiled for different input types and called with "
-        "different types. One of the mismatches is:\n"
-        "Compiled with:\n.*float32.*\n"
-        "called with:\n.*int32.*",
-        lambda: f_exe(x_i32))
+        r"Computation was compiled for different input types and called with "
+        r"different types. Here are the 1 mismatches:\n"
+        r"Compiled with.*float32.*and called with.*int32.*",
+      lambda: f_exe(x_i32))
 
   def testLowerAsText(self):
     f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
@@ -730,6 +729,19 @@ class XMapTest(XMapTestCase):
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='stablehlo'))
+
+  @jtu.with_mesh([('x', 2)])
+  def testLowerPartitionsAttribute(self):
+    f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...],
+             axis_resources={'i': 'x'})
+    x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
+    hlo = f.lower(x).as_text(dialect='stablehlo')
+    if config.experimental_xmap_spmd_lowering:
+      self.assertIn("mhlo.num_partitions = 2", hlo)
+      self.assertIn("mhlo.num_replicas = 1", hlo)
+    else:
+      self.assertIn("mhlo.num_partitions = 1", hlo)
+      self.assertIn("mhlo.num_replicas = 2", hlo)
 
   @jtu.ignore_warning(category=DeprecationWarning)
   def testLowerCompileCompilerIR(self):
@@ -812,7 +824,7 @@ class XMapTestSPMD(SPMDTestMixin, XMapTest):
              in_axes=[None, 'a', 'b', ...], out_axes=(['a', 'b', ...], {}),
              axis_resources={'a': 'x', 'b': 'y'})
     xshape = (8, 2, 4, 5)
-    x = jnp.arange(np.prod(xshape), dtype=float).reshape(xshape)
+    x = jnp.arange(math.prod(xshape), dtype=float).reshape(xshape)
     hlo = f.lower(x).compiler_ir(dialect="hlo").as_hlo_text()
     match = re.search(r"sharding={devices=\[([0-9,]+)\][0-9,]+}", hlo)
     self.assertIsNot(match, None)
@@ -1636,7 +1648,7 @@ class XMapErrorTest(jtu.JaxTestCase):
           return x
         return h(x)
     xshape = (2, 5, 6)
-    x = jnp.arange(np.prod(xshape)).reshape(xshape)
+    x = jnp.arange(math.prod(xshape)).reshape(xshape)
     with self.assertRaisesRegex(RuntimeError,
                                 "Changing the physical mesh is not allowed.*"):
       f(x)

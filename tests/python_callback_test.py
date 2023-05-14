@@ -29,11 +29,12 @@ from jax._src import test_util as jtu
 from jax._src import util
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax.config import config
+from jax import config
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax.interpreters import mlir
 from jax.experimental.maps import xmap
+from jax.experimental.shard_map import shard_map
 from jax.experimental import io_callback
 import jax.numpy as jnp
 from jax.sharding import Mesh
@@ -699,15 +700,6 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
         np.testing.assert_allclose(
             out, np.sin(np.arange(jax.local_device_count()))
         )
-
-        if jax.local_device_count() > 1:
-          with self.assertRaisesRegex(
-              NotImplementedError, 'when all mesh axes are partitioned manually'
-          ):
-            pjit.pjit(without_xmap_f, in_shardings=spec, out_shardings=spec)(
-                inp
-            )
-
     finally:
       jtu.restore_spmd_manual_lowering_flag()
       jtu.restore_spmd_lowering_flag()
@@ -874,6 +866,57 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
 
     x = np.arange(6, dtype=np.int32).reshape((3, 2))
     np.testing.assert_allclose(g(x), x)
+
+  def test_can_shard_pure_callback_maximally(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest(
+          'Host callback not supported for runtime type: stream_executor.'
+      )
+
+    mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
+
+    spec = jax.sharding.PartitionSpec('x')
+    sharding = jax.sharding.NamedSharding(mesh, spec)
+
+    def func(x):
+      return x + np.arange(x.shape[0], dtype=x.dtype)
+
+    def f(x):
+      return jax.pure_callback(func, x, x)
+
+    inp = jnp.arange(float(jax.local_device_count()))
+    out = jax.jit(f, in_shardings=sharding, out_shardings=sharding)(inp)
+    jax.block_until_ready(out)
+    np.testing.assert_allclose(
+        out, np.arange(jax.local_device_count()) * 2
+    )
+
+  def test_can_shard_pure_callback_manually(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest(
+          'Host callback not supported for runtime type: stream_executor.'
+      )
+
+    mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
+
+    spec = jax.sharding.PartitionSpec('x')
+    sharding = jax.sharding.NamedSharding(mesh, spec)
+
+    def func(x):
+      return x + np.arange(x.shape[0], dtype=x.dtype)
+
+    def f(x):
+      return jax.pure_callback(func, x, x)
+    f = shard_map(f, mesh=mesh, in_specs=(spec,), out_specs=spec)
+
+    inp = jnp.arange(float(jax.local_device_count() * 2))
+    out = jax.jit(f, in_shardings=sharding, out_shardings=sharding)(inp)
+    y = np.tile(np.arange(2, dtype=inp.dtype), jax.local_device_count())
+    jax.block_until_ready(out)
+    np.testing.assert_allclose(
+        out, inp + y
+    )
+
 
 class IOPythonCallbackTest(jtu.JaxTestCase):
 

@@ -64,6 +64,7 @@ data must be immutable, because it will be stored in function memoization tables
 from __future__ import annotations
 
 from functools import partial
+import operator
 from typing import Any, Tuple, Callable, Optional, NamedTuple
 import weakref
 
@@ -108,6 +109,27 @@ class Store:
     return self._val is not _EMPTY_STORE_VALUE
 
   __bool__ = __nonzero__
+
+class EqualStore:
+  __slots__ = ('_store',)
+
+  def __init__(self):
+    self._store = Store()
+
+  val = property(operator.attrgetter('_store.val'))
+
+  def store(self, val):
+    try:
+      self._store.store(val)
+    except StoreException as e:
+      try:
+        okay = bool(self._store._val == val)
+      except:
+        raise e from None
+      else:
+        if not okay:
+          raise StoreException("Store occupied with not-equal value") from None
+
 
 
 class WrappedFun:
@@ -219,9 +241,10 @@ def transformation(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
   return fun.wrap(gen, gen_static_args, None)
 
 @curry
-def transformation_with_aux(gen, fun: WrappedFun, *gen_static_args) -> Tuple[WrappedFun, Any]:
+def transformation_with_aux(gen, fun: WrappedFun, *gen_static_args,
+                            use_eq_store=False) -> Tuple[WrappedFun, Any]:
   """Adds one more transformation with auxiliary output to a WrappedFun."""
-  out_store = Store()
+  out_store = Store() if not use_eq_store else EqualStore()
   out_thunk = lambda: out_store.val
   return fun.wrap(gen, gen_static_args, out_store), out_thunk
 
@@ -330,7 +353,16 @@ def cache(call: Callable):
   memoized_fun.cache_clear = fun_caches.clear  # type: ignore
   memoized_fun.evict_function = _evict_function  # type: ignore
 
+  cache_clearing_funs.add(fun_caches.clear)
+
   return memoized_fun
+
+cache_clearing_funs = weakref.WeakSet()  # type: ignore
+
+def clear_all_caches():
+  global cache_clearing_funs
+  for clear in cache_clearing_funs:
+    clear()
 
 @partial(partial, tree_map)
 def _copy_main_traces(x):
@@ -341,9 +373,8 @@ def _copy_main_traces(x):
 
 
 @transformation
-def hashable_partial(x, *args):
-  ans = yield (x,) + args, {}
-  yield ans
+def hashable_partial(*args):
+  yield (yield args, {})
 
 
 def merge_linear_aux(aux1, aux2):

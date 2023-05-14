@@ -41,7 +41,7 @@ import jax.scipy as jsp
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax.control_flow import for_loop
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 
@@ -489,10 +489,21 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     vmap_test(arr, arr)
 
   def testForiLoopErrors(self):
-    """Test typing error messages for while."""
+    """Test typing error messages for fori_loop."""
     with self.assertRaisesRegex(
       TypeError, "arguments to fori_loop must have equal types"):
       lax.fori_loop(np.int16(0), jnp.int32(10), (lambda i, c: c), jnp.float32(7))
+
+  def testForiLoopScalarLimits(self):
+    """Test that scalar limits passed to fori_loop do not cause typing errors."""
+    body = lambda i, c: c + 1
+    init = jnp.float32(10)
+
+    result = lax.fori_loop(np.int16(0), 10, body, init)
+    self.assertEqual(result, init + 10)
+
+    result = lax.fori_loop(0, np.int16(10), body, init)
+    self.assertEqual(result, init + 10)
 
   def testForiLoopBatched(self):
     def body_fun(i, loop_carry):

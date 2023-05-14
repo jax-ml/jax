@@ -49,7 +49,7 @@ from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, _wraps
 from jax._src.util import safe_zip
 from jax._src import array
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
@@ -1523,6 +1523,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     np_fun = lambda arg: np.delete(arg, idx, axis=axis)
     jnp_fun = lambda arg: jnp.delete(arg, idx, axis=axis)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+      for shape in nonempty_nonscalar_array_shapes
+      for axis in [None] + list(range(-len(shape), len(shape)))
+    ],
+    dtype=all_dtypes,
+    idx_shape=all_shapes,
+  )
+  def testDeleteUniqueIndices(self, shape, dtype, axis, idx_shape):
+    rng = jtu.rand_default(self.rng())
+    max_idx = np.zeros(shape).size if axis is None else np.zeros(shape).shape[axis]
+    idx_size = np.zeros(idx_shape).size
+    if idx_size > max_idx:
+      self.skipTest("Too many indices to be unique")
+    def args_maker():
+      x = rng(shape, dtype)
+      idx = self.rng().choice(max_idx, idx_shape, replace=False)
+      return x, idx
+    np_fun = partial(np.delete, axis=axis)
+    jnp_fun = partial(jnp.delete, axis=axis, assume_unique_indices=True)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -3805,16 +3828,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testTakeAlongAxis(self, x_shape, i_shape, dtype, index_dtype, axis):
     rng = jtu.rand_default(self.rng())
 
-    i_shape = np.array(i_shape)
+    i_shape = list(i_shape)
     if axis is None:
-      i_shape = [np.prod(i_shape, dtype=np.int64)]
+      i_shape = [math.prod(i_shape)]
     else:
       # Test the case where the size of the axis doesn't necessarily broadcast.
       i_shape[axis] *= 3
-      i_shape = list(i_shape)
     def args_maker():
       x = rng(x_shape, dtype)
-      n = np.prod(x_shape, dtype=np.int32) if axis is None else x_shape[axis]
+      n = math.prod(x_shape) if axis is None else x_shape[axis]
       if np.issubdtype(index_dtype, np.unsignedinteger):
         index_rng = jtu.rand_int(self.rng(), 0, n)
       else:

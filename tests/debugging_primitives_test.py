@@ -19,7 +19,7 @@ import unittest
 from absl.testing import absltest
 import jax
 from jax import lax
-from jax.config import config
+from jax import config
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax.interpreters import pxla
@@ -28,6 +28,7 @@ from jax._src import debugging
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
+from jax._src.lib import xla_extension_version
 import jax.numpy as jnp
 import numpy as np
 
@@ -1149,7 +1150,7 @@ class InspectShardingTest(jtu.JaxTestCase):
 
     if jtu.is_cloud_tpu():
       raise unittest.SkipTest("Inspect sharding is not supported on libtpu.")
-    if xla_bridge.using_pjrt_c_api():
+    if xla_bridge.using_pjrt_c_api() and xla_extension_version < 150:
       raise unittest.SkipTest("Inspect sharding is not supported on Cloud TPU")
 
     is_called = False

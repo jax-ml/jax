@@ -14,6 +14,7 @@
 # ==============================================================================
 """Utils for building a device mesh."""
 
+import collections
 import itertools
 import logging
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -142,8 +143,14 @@ def _create_device_mesh_for_nd_torus(
       # If the num_axes for loop did not break, i.e. none of the candidates work
       # goto here with this while-else construct.
       if logical_axis_size > 1:
-        raise NotImplementedError(f'Failed to find assignment for '
-                                  f'logical_axis_index {logical_axis_index}')
+        raise NotImplementedError(
+            'Failed to find assignment for logical_axis_index'
+            f' {logical_axis_index} of size {logical_axis_size} with remaining'
+            f' assignable mesh {assignable_physical_mesh}. The size of each'
+            ' axis in your logical mesh must be equal to the product of'
+            ' some subset of the physical mesh axis sizes. E.g logical mesh (4,'
+            ' 16) is compatible with physical mesh 4x4x4 since 4=4 and 16=4x4.'
+        )
   # Flatten the assignment, e.g., [(), (2,), (0, 1)] -> (2, 0, 1).
   transpose: List[int] = []
   for x in assignment:
@@ -174,20 +181,26 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
       v2 and v3, global_z is instead cores_per_chip (i.e., 2).
   """
   device_kind = jax_devices[0].device_kind
-  def sort_key(device):
-    x, y, z = device.coords
-    core = device.core_on_chip
-    if device_kind in (_TPU_V2, _TPU_V3):
-      assert z == 0
-      return (x, y, core)
-    else:
-      if core != 0:
-        raise ValueError(
-            'Creating meshes for TPU >v3 requires one device per chip')
-      return (x, y, z)
-  sorted_devices = sorted(jax_devices, key=sort_key)
-  x, y, *_ = _bounds_from_last_device(sorted_devices[-1])
-  return np.array(sorted_devices).reshape((x, y, -1))
+  device_coords = [d.coords for d in jax_devices]
+  dims = tuple(d + 1 for d in max(device_coords))
+  assert len(dims) == 3, dims
+  if device_kind in (_TPU_V2, _TPU_V3):
+    cores_per_chip = max(d.core_on_chip for d in jax_devices) + 1
+    out = np.empty(dims[:2] + (cores_per_chip,), dtype=object)
+    for coords, d in zip(device_coords, jax_devices):
+      assert coords[2] == 0, d
+      out[coords[0], coords[1], d.core_on_chip] = d
+  else:
+    out = np.empty(dims, dtype=object)
+    for coords, d in zip(device_coords, jax_devices):
+      if d.core_on_chip != 0:
+        raise AssertionError(
+            'Creating meshes for TPU >v3 requires one device per chip.'
+            f'Got device id {d.core_on_chip} for a device of kind {device_kind}'
+            f': {d}'
+        )
+      out[coords[0], coords[1], coords[2]] = d
+  return out
 
 
 # jekbradbury's famous trick for creating contiguous submeshes (where available)
@@ -299,14 +312,10 @@ def create_hybrid_device_mesh(mesh_shape: Sequence[int],
     devices = jax.devices()
   attr = 'process_index' if process_is_granule else 'slice_index'
   assert hasattr(devices[0], attr)
-  granule_id, granules = 0, []
-  while True:
-    granule = [dev for dev in devices if getattr(dev, attr) == granule_id]
-    if granule:
-      granules.append(granule)
-      granule_id += 1
-    else:
-      break
+  granule_dict = collections.defaultdict(list)
+  for dev in devices:
+    granule_dict[getattr(dev, attr)].append(dev)
+  granules = list(granule_dict[key] for key in sorted(granule_dict.keys()))
   if np.prod(dcn_mesh_shape) != len(granules):
     raise ValueError(
         'Number of slices must equal the product of dcn_mesh_shape')

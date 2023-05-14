@@ -23,6 +23,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import sharding_impls
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import ad
@@ -107,13 +108,28 @@ def pure_callback_lowering(ctx, *args, callback, **params):
 
   sharding = None
   axis_context = ctx.module_context.axis_context
-  if isinstance(axis_context, mlir.ShardingContext):
-    if len(axis_context.device_assignment) > 1:
+  if isinstance(axis_context, sharding_impls.SPMDAxisContext):
+    # If we have fully manual sharding during lowering, that means the JAX
+    # program has per-device semantics, so we run the callback on each device.
+    if axis_context.manual_axes != frozenset(axis_context.mesh.axis_names):
       raise NotImplementedError(
           "pure_callback is only supported in spmd computations when all mesh"
           " axes are partitioned manually (no partial automatic sharding)."
       )
-  if isinstance(axis_context, mlir.SPMDAxisContext):
+    sharding = xc.OpSharding()
+    sharding.type = xc.OpSharding.Type.MANUAL
+  elif isinstance(axis_context, sharding_impls.ShardingContext):
+    # If we have fully automatic sharding during lowering, that means the JAX
+    # program has bulk array semantics, so we run the callback with a MAXIMAL
+    # sharding and hence execute it only once on the full logical value).
+    sharding = xc.OpSharding()
+    sharding.type = xc.OpSharding.Type.MAXIMAL
+    sharding.tile_assignment_dimensions = [1]
+    sharding.tile_assignment_devices = [0]
+  else:
+    # When there's no SPMD partitioning going on, don't annotate a sharding.
+    sharding = None
+  if isinstance(axis_context, sharding_impls.SPMDAxisContext):
     if axis_context.manual_axes != frozenset(axis_context.mesh.axis_names):
       raise NotImplementedError(
           "pure_callback is only supported in spmd computations when all mesh"
@@ -138,6 +154,32 @@ def _check_shape_dtype(shape_dtype):
 
 def pure_callback(callback: Callable[..., Any], result_shape_dtypes: Any,
                   *args: Any, vectorized: bool = False, **kwargs: Any):
+  """Calls a pure Python callback.
+
+  For more explanation, see `External Callbacks`_.
+
+  Args:
+    callback: function to execute on the host. The callback is assumed to be a pure
+      function (i.e. one without side-effects): if an impure function is passed, it
+      may behave in unexpected ways, particularly under transformation.
+    result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype`` attributes,
+      whose structure matches the expected output of the callback function at runtime.
+    *args: arguments to be passed to the callback function
+    vectorized: boolean specifying whether the callback function can operate in a
+      vectorized manner.
+    **kwargs: keyword arguments to be passed to the callback function
+
+  Returns:
+    result: a pytree of :class:`jax.Array` objects whose structure matches that of
+      ``result_shape_dtypes``.
+
+  See Also:
+    - :func:`jax.experimental.io_callback`: callback designed for impure functions.
+    - :func:`jax.debug.callback`: callback designed for general-purpose debugging.
+    - :func:`jax.debug.print`: callback designed for printing.
+
+  .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
+  """
   def _flat_callback(*flat_args):
     args, kwargs = tree_util.tree_unflatten(in_tree, flat_args)
     return tree_util.tree_leaves(callback(*args, **kwargs))
@@ -272,7 +314,7 @@ def io_callback_lowering(ctx, *args, callback, ordered, **params):
   # can only safely maximally shard. Should we allow device_index to be passed
   # in like host_callback?
   if isinstance(ctx.module_context.axis_context,
-                (mlir.SPMDAxisContext, mlir.ShardingContext)):
+                (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext)):
     # Apply maximal sharding so pjit only executes the callback on device 0.
     sharding = xc.OpSharding()
     sharding.type = xc.OpSharding.Type.MAXIMAL
@@ -297,6 +339,31 @@ mlir.register_lowering(io_callback_p, io_callback_lowering)
 
 def io_callback(callback: Callable[..., Any], result_shape_dtypes: Any,
                 *args: Any, ordered: bool = False, **kwargs: Any):
+  """Calls an impure Python callback.
+
+  For more explanation, see `External Callbacks`_.
+
+  Args:
+    callback: function to execute on the host. It is assumet to be an impure function.
+      If ``callback`` is pure, using :func:`jax.pure_callback` instead may lead to
+      more efficient execution.
+    result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype`` attributes,
+      whose structure matches the expected output of the callback function at runtime.
+    *args: arguments to be passed to the callback function
+    ordered: boolean specifying whether sequential calls to callback must be ordered.
+    **kwargs: keyword arguments to be passed to the callback function
+
+  Returns:
+    result: a pytree of :class:`jax.Array` objects whose structure matches that of
+      ``result_shape_dtypes``.
+
+  See Also:
+    - :func:`jax.pure_callback`: callback designed for pure functions.
+    - :func:`jax.debug.callback`: callback designed for general-purpose debugging.
+    - :func:`jax.debug.print`: callback designed for printing.
+
+  .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
+  """
   def _flat_callback(*flat_args):
     args, kwargs = tree_util.tree_unflatten(in_tree, flat_args)
     return tree_util.tree_leaves(callback(*args, **kwargs))

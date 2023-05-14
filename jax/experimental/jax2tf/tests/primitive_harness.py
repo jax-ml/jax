@@ -768,7 +768,10 @@ for dtype in jtu.dtypes.all:
       dtype=dtype)
 
 for dtype in jtu.dtypes.all_integer + jtu.dtypes.all_unsigned:
-  arg = np.array([-1, -2, 0, 1], dtype=dtype)
+  if np.issubdtype(dtype, np.unsignedinteger):
+    arg = np.array([0, 1, 2], dtype=dtype)
+  else:
+    arg = np.array([-1, -2, 0, 1], dtype=dtype)
   define(
       "population_count",
       f"{jtu.dtype_str(dtype)}",
@@ -1854,6 +1857,10 @@ def _make_triangular_eigh_operand(shape, dtype, lower: bool, rng: Rng):
 
 
 for dtype in jtu.dtypes.all_inexact:
+  # The eigh implementation for TPU uses different lowering for n >= 256
+  # TODO: add a test case for n=300. First attempt resulted in significant
+  # numerical differences.
+  # And the implementation on GPU uses different lowering for n >= 32
   for shape in [(0, 0), (50, 50), (2, 20, 20)]:
     for lower in [False, True]:
       define(
@@ -2666,10 +2673,18 @@ for key_i, key in enumerate([
     np.array([0, 0xFFFFFFFF], dtype=np.uint32),
     np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)
 ]):
+  if jax.config.jax_enable_custom_prng:
+    def wrap_and_split(key):
+      key = prng.random_wrap(key, impl=jax.random.default_prng_impl())
+      result = jax.random.split(key, 2)
+      return prng.random_unwrap(result)
+  else:
+    def wrap_and_split(key):
+      return jax.random.split(key, 2)
   define(
       "random_split",
       f"i={key_i}",
-      jax.jit(lambda key: jax.random.split(key, 2)), [key],
+      jax.jit(wrap_and_split), [key],
       dtype=key.dtype)
 
 # A few library functions from jax.random

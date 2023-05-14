@@ -28,7 +28,7 @@ from jax._src import core
 from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
-from jax._src import pjit
+from jax._src import sharding_impls
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import ad
@@ -36,10 +36,12 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import GSPMDSharding, NamedSharding
+from jax._src.sharding_impls import (GSPMDSharding, NamedSharding,
+                                     parse_flatten_op_sharding)
 
 # pytype: disable=import-error
 try:
@@ -123,13 +125,16 @@ ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 def debug_callback_lowering(ctx, *args, effect, callback, **params):
 
   axis_context = ctx.module_context.axis_context
-  if (isinstance(axis_context, mlir.SPMDAxisContext) and
+  if (isinstance(axis_context, sharding_impls.SPMDAxisContext) and
         set(axis_context.manual_axes) == set(axis_context.mesh.axis_names)):
     # If we have fully manual sharding during lowering, that means the JAX
     # program has per-device semantics, so we run the callback on each device.
     sharding = xc.OpSharding()
     sharding.type = xc.OpSharding.Type.MANUAL
-  elif isinstance(axis_context, (mlir.ShardingContext, mlir.SPMDAxisContext)):
+  elif isinstance(
+      axis_context,
+      (sharding_impls.ShardingContext, sharding_impls.SPMDAxisContext),
+  ):
     # If we have fully automatic sharding during lowering, that means the JAX
     # program has bulk array semantics, so we run the callback with a MAXIMAL
     # sharding and hence execute it only once on the full logical value).
@@ -196,8 +201,10 @@ pe.partial_eval_jaxpr_custom_rules[debug_callback_p] = (
     _debug_callback_partial_eval_custom)
 
 def debug_callback(callback: Callable[..., Any], *args: Any,
-                   ordered: bool = False, **kwargs: Any):
+                   ordered: bool = False, **kwargs: Any) -> None:
   """Calls a stageable Python callback.
+
+  For more explanation, see `External Callbacks`_.
 
   `debug_callback` enables you to pass in a Python function that can be called
   inside of a staged JAX program. A `debug_callback` follows existing JAX
@@ -218,8 +225,16 @@ def debug_callback(callback: Callable[..., Any], *args: Any,
       staged out computation will enforce ordering of this callback w.r.t.
       other ordered callbacks.
     **kwargs: The keyword arguments to the callback.
+
   Returns:
-    The value of `callback(*args, **kwargs)`.
+    None
+
+  See Also:
+    - :func:`jax.experimental.io_callback`: callback designed for impure functions.
+    - :func:`jax.pure_callback`: callback designed for pure functions.
+    - :func:`jax.debug.print`: callback designed for printing.
+
+  .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
   """
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
   effect = ordered_debug_effect if ordered else debug_effect
@@ -227,8 +242,7 @@ def debug_callback(callback: Callable[..., Any], *args: Any,
     args, kwargs = tree_util.tree_unflatten(in_tree, flat_args)
     callback(*args, **kwargs)
     return []
-  return debug_callback_p.bind(*flat_args, callback=_flat_callback,
-                               effect=effect)
+  debug_callback_p.bind(*flat_args, callback=_flat_callback, effect=effect)
 
 class _DebugPrintFormatChecker(string.Formatter):
 
@@ -312,9 +326,9 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
   mesh = mesh_lib.thread_resources.env.physical_mesh
   axis_context = ctx.module_context.axis_context
 
-  if isinstance(axis_context, mlir.ShardingContext):
+  if isinstance(axis_context, sharding_impls.ShardingContext):
     devices = axis_context.device_assignment
-  elif isinstance(axis_context, mlir.SPMDAxisContext):
+  elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     devices = list(axis_context.mesh.devices.flat)
   else:
     raise NotImplementedError(type(axis_context))
@@ -323,7 +337,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
     if mesh.empty:
       return callback(GSPMDSharding(
         devices, op_sharding))
-    pspec = pjit.parse_flatten_op_sharding(
+    pspec = parse_flatten_op_sharding(
         op_sharding, mesh)[0].get_partition_spec()
     return callback(NamedSharding(mesh, pspec))
 
@@ -345,11 +359,17 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
   # custom partitioning code can access it.
   sharding_callback_info = ShardingCallbackInfo(_hlo_sharding_callback,
                                                 ctx.module_context)
-  key = str(id(sharding_callback_info))
-  sharding_callbacks[key] = sharding_callback_info
-  # We need to make sure `sharding_callback_info` is still alive when the SPMD
-  # partitioner runs so we keep it alive by attaching it to the executable.
-  ctx.module_context.add_keepalive(sharding_callback_info)
+  if xla_extension_version < 150:
+    key = str(id(sharding_callback_info))
+    sharding_callbacks[key] = sharding_callback_info
+    # We need to make sure `sharding_callback_info` is still alive when the SPMD
+    # partitioner runs so we keep it alive by attaching it to the executable.
+    ctx.module_context.add_keepalive(sharding_callback_info)
+  else:
+    key = xc.encode_inspect_sharding_callback(_hlo_sharding_callback)
+    # We need to make sure `_hlo_sharding_callback` is still alive when the SPMD
+    # partitioner runs so we keep it alive by attaching it to the executable.    #
+    ctx.module_context.add_keepalive(_hlo_sharding_callback)
 
   hlo.CustomCallOp([value.type], [value],
                    call_target_name=ir.StringAttr.get(
@@ -400,10 +420,14 @@ def inspect_sharding_infer_sharding_from_operands(arg_shapes, arg_shardings,
   del arg_shapes, shape, backend_string
   return arg_shardings[0]
 
-xc.register_custom_call_partitioner(  # pytype: disable=module-attr
-    _INSPECT_SHARDING_CALL_NAME, inspect_sharding_prop_user_sharding,
-    inspect_sharding_partition, inspect_sharding_infer_sharding_from_operands,
-    True)
+if xla_extension_version < 150:
+  xc.register_custom_call_partitioner(  # pytype: disable=module-attr
+      _INSPECT_SHARDING_CALL_NAME,
+      inspect_sharding_prop_user_sharding,
+      inspect_sharding_partition,
+      inspect_sharding_infer_sharding_from_operands,
+      True,
+  )
 
 def _slice_to_chunk_idx(size: int, slc: slice) -> int:
   if slc.stop == slc.start == None:

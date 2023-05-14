@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import dataclasses
 from functools import partial
 import itertools
 import time
 from typing import (Any, Callable, Dict, Iterator, Optional,
-                    Set, Tuple, List, Union, NamedTuple)
+                    Set, Tuple, List, Union, NamedTuple, Sequence)
 import logging
 import os
 import re
@@ -30,6 +31,7 @@ import warnings
 
 import numpy as np
 
+from jax._src import compilation_cache
 from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
@@ -39,6 +41,7 @@ from jax._src import profiler
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
+from jax._src import op_shardings
 from jax._src import xla_bridge as xb
 from jax._src.config import config, flags
 from jax._src.interpreters import ad
@@ -53,7 +56,8 @@ from jax._src.monitoring import record_event_duration_secs
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    PmapSharding, SingleDeviceSharding, NamedSharding, XLACompatibleSharding)
+    PmapSharding, SingleDeviceSharding, NamedSharding, XLACompatibleSharding,
+    UNSPECIFIED, GSPMDSharding)
 
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
@@ -104,17 +108,32 @@ def arg_spec(x: Any) -> ArgSpec:
     return aval, None
 
 
+@dataclasses.dataclass(frozen=True)
+class OrigShardings:
+  shardings: Sequence[Optional[GSPMDSharding]]
+
+  def __hash__(self):
+    return hash(tuple(s for s in self.shardings))
+
+  def __eq__(self, other):
+    if not isinstance(other, OrigShardings):
+      return False
+    return all(getattr(s, "_original_sharding", s) == getattr(o, "_original_sharding", o)
+               for s, o in zip(self.shardings, other.shardings))
+
+
 def apply_primitive(prim, *args, **params):
   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
   from jax._src import pjit
 
   try:
-    compiled_fun = xla_primitive_callable(prim, *unsafe_map(arg_spec, args),
-                                          **params)
+    in_avals, in_shardings = util.unzip2([arg_spec(a) for a in args])
+    compiled_fun = xla_primitive_callable(
+        prim, in_avals, OrigShardings(in_shardings), **params)
   except pxla.DeviceAssignmentMismatchError as e:
     fails, = e.args
     # TODO(yashkatariya): Thread through a signature_fun via every primitive
-    # using apply_primtive so that the error message has the right argument
+    # using apply_primitive so that the error message has the right argument
     # name instead of `args[0]`, etc.
     arg_names = api_util._arg_names(prim.impl, args, {}, (), ())
     msg = pjit._device_assignment_mismatch_error(
@@ -192,42 +211,45 @@ def wait_for_tokens():
   runtime_tokens.block_until_ready()
 
 @util.cache()
-def xla_primitive_callable(prim, *arg_specs: ArgSpec, **params):
-  donated_invars = (False,) * len(arg_specs)
+def xla_primitive_callable(prim, in_avals, orig_in_shardings, **params):
   def prim_fun(*args):
     out = prim.bind(*args, **params)
     if prim.multiple_results:
       return out
     else:
       return out,
-  compiled = _xla_callable_uncached(lu.wrap_init(prim_fun), prim.name,
-                                    donated_invars, False, *arg_specs)
+  donated_invars = (False,) * len(in_avals)
+  compiled = _xla_callable_uncached(
+      lu.wrap_init(prim_fun), prim.name, donated_invars, False, in_avals,
+      orig_in_shardings)
   if not prim.multiple_results:
     return lambda *args, **kw: compiled(*args, **kw)[0]
   else:
     return compiled
 
 
-def sharded_lowering(fun, name, donated_invars, keep_unused,
-                     *arg_specs, lowering_platform: Optional[str]):
-  in_avals, in_shardings = util.unzip2(arg_specs)
-  in_shardings = [pxla._UNSPECIFIED if i is None else i for i in in_shardings]  # type: ignore
+def sharded_lowering(fun, name, donated_invars, keep_unused, inline,
+                     in_avals, in_shardings, lowering_platform: Optional[str]):
+  if isinstance(in_shardings, OrigShardings):
+    in_shardings = in_shardings.shardings
 
-  # Pass in a singleton `_UNSPECIFIED` for out_shardings because we don't know
+  in_shardings = [UNSPECIFIED if i is None else i for i in in_shardings]  # type: ignore
+
+  # Pass in a singleton `UNSPECIFIED` for out_shardings because we don't know
   # the number of output avals at this stage. lower_sharding_computation will
   # apply it to all out_avals.
   return pxla.lower_sharding_computation(
-      fun, 'jit', name, in_shardings, pxla._UNSPECIFIED, donated_invars,
-      in_avals, keep_unused=keep_unused, always_lower=False,
+      fun, 'jit', name, in_shardings, UNSPECIFIED, donated_invars,
+      tuple(in_avals), keep_unused=keep_unused, inline=inline, always_lower=False,
       devices_from_context=None, lowering_platform=lowering_platform)
 
 
 def _xla_callable_uncached(fun: lu.WrappedFun, name, donated_invars,
-                           keep_unused, *arg_specs):
-  computation = sharded_lowering(fun, name, donated_invars, keep_unused,
-                                 *arg_specs, lowering_platform=None)
-  allow_prop = [True] * len(computation.compile_args['global_out_avals'])
-  return computation.compile(_allow_propagation_to_outputs=allow_prop).unsafe_call
+                           keep_unused, in_avals, orig_in_shardings):
+  computation = sharded_lowering(
+      fun, name, donated_invars, keep_unused, True, in_avals, orig_in_shardings,
+      lowering_platform=None)
+  return computation.compile().unsafe_call
 
 
 def is_single_device_sharding(sharding) -> bool:
@@ -245,7 +267,8 @@ def log_elapsed_time(fmt: str, event: Optional[str] = None):
     start_time = time.time()
     yield
     elapsed_time = time.time() - start_time
-    logger.log(log_priority, fmt.format(elapsed_time=elapsed_time))
+    if logger.isEnabledFor(log_priority):
+      logger.log(logging.WARNING, fmt.format(elapsed_time=elapsed_time))
     if event is not None:
       record_event_duration_secs(event, elapsed_time)
 
@@ -320,7 +343,7 @@ def jaxpr_shardings(
         ndmin = max(names) + 1 if names else 0
         return PartitionSpec(*(names.get(i) for i in range(ndmin)))
       yield from ((NamedSharding(eqn.params['mesh'], _names_to_pspec(names)), source_info)
-                  for names in eqn.params['in_names'])
+                  for names in [*eqn.params['in_names'], *eqn.params['out_names']])
   for subjaxpr in core.subjaxprs(jaxpr):
     yield from jaxpr_shardings(subjaxpr)
 
@@ -420,7 +443,15 @@ def _check_special(name, dtype, buf):
 
 
 @profiler.annotate_function
-def backend_compile(backend, built_c, options, host_callbacks):
+def backend_compile(backend, module: ir.Module, options, host_callbacks):
+  # Convert ir.Module to a string representation, unless the
+  # back-end expliclity flags the ability to handle a module directly
+  # (avoiding the overhead of back and forth conversions)
+  if getattr(backend, "needs_str_ir", True):
+    built_c = mlir.module_to_bytecode(module)
+  else:
+    built_c = module
+
   # we use a separate function call to ensure that XLA compilation appears
   # separately in Python profiling results
   if host_callbacks:
@@ -443,25 +474,13 @@ def _dump_ir_to_file(name: str, ir: str):
   name.write_text(ir)
 
 
-def compile_or_get_cached(backend, computation: ir.Module, compile_options,
-                          host_callbacks):
-  # Avoid import cycle between jax and jax.experimental
-  from jax.experimental.compilation_cache import compilation_cache as cc
-
+def compile_or_get_cached(backend, computation: ir.Module, devices: np.ndarray,
+                          compile_options, host_callbacks):
   sym_name = computation.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
 
   if FLAGS.jax_dump_ir_to:
     _dump_ir_to_file(module_name, mlir.module_to_string(computation))
-
-  # Convert ir.Module to a string representation, unless the
-  # back-end expliclity flags the ability to handle a module directly
-  # (avoiding the overhead of back and forth conversions)
-  serialized_computation: Union[str, bytes, ir.Module]
-  if getattr(backend, "needs_str_ir", True):
-    serialized_computation = mlir.module_to_bytecode(computation)
-  else:
-    serialized_computation = computation
 
   # Persistent compilation cache only implemented on TPU and GPU.
   # TODO(skye): add warning when initializing cache on unsupported default platform
@@ -469,34 +488,37 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
   # (b/233850967) CPU caching can be enabled if XLA Runtime is enabled.
   if "--xla_cpu_use_xla_runtime=true" in os.environ.get("XLA_FLAGS", ""):
     supported_platforms.append("cpu")
-  if cc.is_initialized() and backend.platform in supported_platforms:
-    cached_executable = _cache_read(serialized_computation, module_name,
-                                    compile_options, backend)
-    if cached_executable is not None:
-      logger.info("Persistent compilation cache hit for '%s'", module_name)
-      return cached_executable
-    else:
-      start_time = time.monotonic()
-      compiled = backend_compile(backend, serialized_computation,
-                                 compile_options, host_callbacks)
-      compile_time = time.monotonic() - start_time
-      _cache_write(serialized_computation, compile_time, module_name,
-                   compile_options, backend, compiled, host_callbacks)
-      return compiled
+  use_compilation_cache = (compilation_cache.is_initialized() and
+                           backend.platform in supported_platforms)
 
-  return backend_compile(backend, serialized_computation, compile_options,
-                         host_callbacks)
+  if not use_compilation_cache:
+    return backend_compile(backend, computation, compile_options,
+                           host_callbacks)
+
+  cache_key = compilation_cache.get_cache_key(
+      computation, devices, compile_options, backend)
+
+  cached_executable = _cache_read(module_name, cache_key, compile_options,
+                                  backend)
+  if cached_executable is not None:
+    logger.info("Persistent compilation cache hit for '%s'", module_name)
+    return cached_executable
+  else:
+    start_time = time.monotonic()
+    executable = backend_compile(backend, computation,
+                                compile_options, host_callbacks)
+    compile_time = time.monotonic() - start_time
+    _cache_write(cache_key, compile_time, module_name, backend, executable,
+                 host_callbacks)
+    return executable
 
 
-def _cache_read(computation: Union[str, bytes, ir.Module], module_name: str,
-                compile_options: CompileOptions,
-                backend: Backend) -> Optional[xc.LoadedExecutable]:
+def _cache_read(
+    module_name: str, cache_key: str, compile_options, backend
+) -> Optional[xc.LoadedExecutable]:
   """Looks up `computation` in the persistent compilation cache."""
-  # Avoid import cycle between jax and jax.experimental
-  from jax.experimental.compilation_cache import compilation_cache as cc
-
   try:
-    return cc.get_executable(computation, compile_options, backend)
+    return compilation_cache.get_executable(cache_key, compile_options, backend)
   except Exception as ex:
     if config.jax_raise_persistent_cache_errors:
       raise
@@ -506,15 +528,12 @@ def _cache_read(computation: Union[str, bytes, ir.Module], module_name: str,
     return None
 
 
-def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
+def _cache_write(cache_key: str,
                  compile_time_secs: float,
-                 module_name: str, compile_options: CompileOptions,
-                 backend: Backend, compiled: xc.LoadedExecutable,
+                 module_name: str,
+                 backend: Backend, executable: xc.LoadedExecutable,
                  host_callbacks: List[Any]):
   """Writes `serialized_computation` to the persistent compilation cache."""
-  # Avoid import cycle between jax and jax.experimental
-  from jax.experimental.compilation_cache import compilation_cache as cc
-
   if host_callbacks:
     logger.info(
         "Not writing persistent cache entry for '%s' because it uses host "
@@ -536,8 +555,8 @@ def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
           compile_time_secs)
 
   try:
-    cc.put_executable(module_name, serialized_computation, compile_options,
-                      compiled, backend)
+    compilation_cache.put_executable(cache_key, module_name, executable,
+                                     backend)
   except Exception as ex:
     if config.jax_raise_persistent_cache_errors:
       raise
@@ -553,7 +572,7 @@ def _check_sharding(aval, s):
 
   if isinstance(s, XLACompatibleSharding) and not isinstance(s, PmapSharding):
     pjit.pjit_check_aval_sharding(
-        (s,), (aval,), "device_put args", allow_uneven_sharding=False)
+        (s,), (aval,), None, "device_put args", allow_uneven_sharding=False)
 
   assert isinstance(aval, core.ShapedArray), aval
   s.shard_shape(aval.shape)  # should raise an Error if incompatible
@@ -563,6 +582,54 @@ def _put_x(x, s: Sharding, aval: core.AbstractValue, committed: bool):
   result_handler = pxla.global_aval_to_result_handler(aval, s, committed, False)
   map_ = s.devices_indices_map(aval.shape)  # type: ignore
   return result_handler(pxla.shard_arg(x, list(map_), list(map_.values()), s))
+
+def _override_get_device_assignment(sharding, *args, **kwargs):
+  da = sharding._device_assignment
+  return xb.get_device_backend(da[0]), da
+
+def _identity_fn(x):
+  return x
+
+def _mcjax_reshard(x, target_sharding):
+  from jax._src import api, array
+
+  inp_sharding = x.sharding
+
+  if inp_sharding._device_assignment == target_sharding._device_assignment:
+    return api.jit(_identity_fn, out_shardings=target_sharding)(x)
+
+  if inp_sharding.device_set != target_sharding.device_set:
+    inp_ids = [d.id for d in inp_sharding._device_assignment]
+    inp_plat = inp_sharding._device_assignment[0].platform.upper()
+    target_ids = [d.id for d in target_sharding._device_assignment]
+    target_plat = target_sharding._device_assignment[0].platform.upper()
+    raise ValueError("Input and target sharding should have the same set of "
+                     f"devices. Got input's device set ids: {inp_ids} on "
+                     f"platform {inp_plat} and target sharding's device set "
+                     f"ids: {target_ids} on platform {target_plat}")
+
+  old_op_sharding = inp_sharding._to_xla_op_sharding(x.ndim)
+  if op_shardings.is_op_sharding_replicated(old_op_sharding):
+    new_op_sharding = old_op_sharding
+  else:
+    permute_order = np.vectorize(target_sharding._device_assignment.index,
+                                 otypes=[int])(inp_sharding._device_assignment)
+    new_op_sharding = old_op_sharding.clone()
+    new_op_sharding.tile_assignment_devices = np.take(
+        old_op_sharding.tile_assignment_devices, permute_order)
+
+  new_x = array.make_array_from_single_device_arrays(
+      x.shape,
+      GSPMDSharding(target_sharding._device_assignment, new_op_sharding),
+      x._arrays)
+
+  _orig_get_and_check_device_assignment = pxla._get_and_check_device_assignment
+  pxla._get_and_check_device_assignment = partial(
+      _override_get_device_assignment, target_sharding)
+  try:
+    return api.jit(_identity_fn, out_shardings=target_sharding)(new_x)
+  finally:
+    pxla._get_and_check_device_assignment = _orig_get_and_check_device_assignment
 
 
 def _device_put_impl(
@@ -578,13 +645,19 @@ def _device_put_impl(
 
   if isinstance(device, Sharding):
     s = device
+    _check_sharding(aval, s)
+    if getattr(x, 'sharding', None) == s:
+      return x
+    if (not s.is_fully_addressable and  # type: ignore
+        isinstance(x, array.ArrayImpl) and not x.is_fully_addressable):
+      # This has to be XLACompatible because _mcjax_reshard will run a
+      # XLA computation.
+      assert isinstance(s, XLACompatibleSharding)
+      return _mcjax_reshard(x, s)
     if not s.is_fully_addressable:  # type: ignore
       raise ValueError(
           "device_put's second argument must be a Device or a Sharding which "
           f"represents addressable devices, but got {s}")
-    _check_sharding(aval, s)
-    if getattr(x, 'sharding', None) == s:
-      return x
     return _put_x(x, s, aval, True)
 
   # Only `Device` exists below. `Sharding` instance is handled above.
@@ -615,6 +688,4 @@ batching.defvectorized(device_put_p)
 
 def _device_put_lowering(ctx, x, *, device, src):
   return [x]
-
-
 mlir.register_lowering(device_put_p, _device_put_lowering)

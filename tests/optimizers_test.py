@@ -26,7 +26,7 @@ from jax import tree_util
 from jax import lax
 from jax.example_libraries import optimizers
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 

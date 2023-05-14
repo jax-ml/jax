@@ -27,7 +27,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 import jax.scipy.signal as jsp_signal
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 onedim_shapes = [(1,), (2,), (5,), (10,)]
@@ -78,18 +78,51 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     ],
     mode=['full', 'same', 'valid'],
     op=['convolve', 'correlate'],
+    method=['auto', 'direct', 'fft'],
     dtype=default_dtypes,
   )
-  def testConvolutions(self, xshape, yshape, dtype, mode, op):
+  def testConvolutions(self, xshape, yshape, dtype, mode, op, method):
     jsp_op = getattr(jsp_signal, op)
     osp_op = getattr(osp_signal, op)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
-    osp_fun = partial(osp_op, mode=mode)
-    jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
-    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-12, np.complex64: 1e-2, np.complex128: 1e-12}
+    osp_fun = partial(osp_op, mode=mode, method=method)
+    jsp_fun = partial(jsp_op, mode=mode, method=method, precision=lax.Precision.HIGHEST)
+    if method == 'fft':
+      tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-6,
+             np.complex64: 1e-2, np.complex128: 1e-6}
+    else:
+      tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-12,
+             np.complex64: 1e-2, np.complex128: 1e-12}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
+
+  @jtu.sample_product(
+    [dict(xshape=xshape, yshape=yshape)
+     for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
+     for xshape in shapeset
+     for yshape in shapeset
+    ],
+    mode=['full', 'same', 'valid'],
+    pass_axes=[True, False],
+    dtype=default_dtypes,
+  )
+  def testFFTConvolution(self, xshape, yshape, dtype, mode, pass_axes):
+    if pass_axes:
+      # unspecified axes effectively act as batch dimensions, so their shape
+      # must be equal
+      axes = tuple(i for i in range(len(xshape)) if xshape[i] != yshape[i]) or 0
+    else:
+      axes = None
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
+    osp_fun = partial(osp_signal.fftconvolve, mode=mode, axes=axes)
+    jsp_fun = partial(jsp_signal.fftconvolve, mode=mode, axes=axes)
+    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-6,
+           np.complex64: 1e-2, np.complex128: 1e-6}
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False,
+                            tol=tol)
+    self._CompileAndCheck(jsp_fun, args_maker, tol=tol)
 
   @jtu.sample_product(
     mode=['full', 'same', 'valid'],

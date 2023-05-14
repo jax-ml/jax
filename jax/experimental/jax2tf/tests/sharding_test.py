@@ -31,7 +31,7 @@ from absl.testing import parameterized
 
 import jax
 from jax._src import test_util as jtu
-from jax.config import config
+from jax import config
 from jax import lax
 from jax.experimental import jax2tf
 from jax.experimental import pjit
@@ -187,7 +187,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       for out_shardings in ("missing", None, "P")
   )
   @jtu.with_mesh([("x", 2)])
-  def test_pjit_basic(self, in_shardings=None, out_shardings="missing"):
+  def test_pjit_basic(self, in_shardings="P", out_shardings="P"):
     # Ensure that we can distinguish the inputs and outputs by shape
     def f_jax(x):  # f32[10,20] -> f32[20,10]
       return jnp.sin(x.T)
@@ -317,17 +317,15 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(res_tf, res_jax)
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_nested_pjit={nested_pjit}_constraint={constraint=}_poly={poly}",
+      dict(testcase_name=f"_nested_pjit={nested_pjit}_constraint={constraint}_poly={poly}",
            nested_pjit=nested_pjit, constraint=constraint, poly=poly)
       # We add a constraint either with a nested pjit or with a sharding_constraint
       for nested_pjit in (True, False)
       for constraint in (None, "P")
-      for poly in (None, "b1,_", "_,b2", "b1,b2")
+      for poly in (None, "2*b1,_", "_,b2", "2*b1,b2")
   )
   @jtu.with_mesh([("x", 2)])
-  def test_pjit_sharding_constraint(self, nested_pjit=True, constraint="P", poly=None):
-    if poly is not None:
-      raise unittest.SkipTest("TODO: Sharding custom calls lack shape refinement")
+  def test_pjit_sharding_constraint(self, nested_pjit=True, constraint="P", poly="2*b1,b2"):
     constraint_sharding = P("x", None) if constraint == "P" else None
     @partial(pjit.pjit, in_shardings=None,
              out_shardings=None)
@@ -372,7 +370,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       for out_shardings in ("missing", None, "P")
   )
   @jtu.with_mesh([("x", 2)])
-  def test_grad_pjit(self, in_shardings="missing", out_shardings="None"):
+  def test_grad_pjit(self, in_shardings="P", out_shardings=None):
     def f_jax(x):  # x: f32[10,20] -> f32[20,10]
       return jnp.sin(x.T)
 
@@ -628,7 +626,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       raise unittest.SkipTest("TODO(b/268295912): ShardingRemover crash")
 
     mesh = Mesh(self.devices, axis_names=('x'))
-    a = np.arange(np.prod(4 * 4), dtype=np.float32).reshape((4, 4))
+    a = np.arange(4 * 4, dtype=np.float32).reshape((4, 4))
 
     @partial(pjit.pjit,
              in_shardings=(P('x', None),), out_shardings=P(None, 'x'))
@@ -680,7 +678,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       return lax.ppermute(b, 'x', perm=perm)
 
     with mesh:
-      a = np.arange(np.prod(4 * 4)).reshape((4, 4))
+      a = np.arange(4 * 4).reshape((4, 4))
       res_jax = f_jax(a)
       b0, b1 = np.split(a, 2, axis=0)  # The shard_map splits on axis 0
       b0, b1 = b1, b0
@@ -697,15 +695,13 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_poly={poly}", poly=poly)
-      for poly in (None, "b1,_", "_,b2", "b1,b2")
+      for poly in (None, "2*b1,_", "_,b2", "2*b1,b2")
   )
   def test_shmap_collective_permute(self, poly=None):
     if jtu.device_under_test() == "cpu":
       raise unittest.SkipTest("TODO(b/268295912): ShardingRemover crash")
-    if poly is not None:
-      raise unittest.SkipTest("TODO: Sharding custom calls lack shape refinement")
     mesh = Mesh(self.devices, axis_names=('x'))
-    a = np.arange(np.prod(4 * 4), dtype=np.float32).reshape((4, 4))
+    a = np.arange(4 * 4, dtype=np.float32).reshape((4, 4))
 
     @partial(pjit.pjit,
              in_shardings=(P('x', None),), out_shardings=P('x', None))

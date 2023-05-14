@@ -20,10 +20,12 @@ import operator
 from typing import (Any, Callable, Generic, Iterable, Iterator, List,
                     Optional, Sequence, Set, Tuple, TypeVar, overload,
                     TYPE_CHECKING, cast)
+import weakref
 
 import numpy as np
 
 from jax._src.lib import xla_client as xc
+from jax._src.lib import utils as jaxlib_utils
 from jax._src.config import config
 
 logger = logging.getLogger(__name__)
@@ -35,46 +37,76 @@ T1 = TypeVar("T1")
 T2 = TypeVar("T2")
 T3 = TypeVar("T3")
 
-# safe_zip cannot yet be fully annotated, so we use a strategy similar
-# to that used for builtins.zip in python/typeshed. This supports
-# return types matching input types for up to three arguments.
-@overload
-def safe_zip(__arg1: Iterable[T1]) -> List[Tuple[T1]]: ...
-@overload
-def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2]) -> List[Tuple[T1, T2]]: ...
-@overload
-def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> List[Tuple[T1, T2, T3]]: ...
-@overload
-def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> List[Tuple[Any, ...]]: ...
 
-def safe_zip(*args):
-  args = list(map(list, args))
-  n = len(args[0])
-  for arg in args[1:]:
-    assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
-  return list(zip(*args))
+if TYPE_CHECKING:
+  # safe_zip cannot yet be fully annotated, so we use a strategy similar
+  # to that used for builtins.zip in python/typeshed. This supports
+  # return types matching input types for up to three arguments.
+  @overload
+  def safe_zip(__arg1: Iterable[T1]) -> List[Tuple[T1]]: ...
+  @overload
+  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2]) -> List[Tuple[T1, T2]]: ...
+  @overload
+  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> List[Tuple[T1, T2, T3]]: ...
+  @overload
+  def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> List[Tuple[Any, ...]]: ...
 
-# safe_map cannot yet be fully annotated, so we use a strategy similar
-# to that used for builtins.map in python/typeshed. This supports
-# checking input types for the callable with up to three arguments.
-@overload
-def safe_map(f: Callable[[T1], T], __arg1: Iterable[T1]) -> List[T]: ...
+  def safe_zip(*args):
+    args = list(map(list, args))
+    n = len(args[0])
+    for arg in args[1:]:
+      assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
+    return list(zip(*args))
 
-@overload
-def safe_map(f: Callable[[T1, T2], T], __arg1: Iterable[T1], __arg2: Iterable[T2]) -> List[T]: ...
+else:
+  # TODO(phawkins): remove the hasattr condition after jaxlib 0.4.9 is the
+  # minimum
+  if hasattr(jaxlib_utils, 'safe_zip'):
+    safe_zip = jaxlib_utils.safe_zip
+  else:
+    def safe_zip(*args):
+      args = list(map(list, args))
+      n = len(args[0])
+      for arg in args[1:]:
+        assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
+      return list(zip(*args))
 
-@overload
-def safe_map(f: Callable[[T1, T2, T3], T], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> List[T]: ...
 
-@overload
-def safe_map(f: Callable[..., T], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> List[T]: ...
+if TYPE_CHECKING:
+  # safe_map cannot yet be fully annotated, so we use a strategy similar
+  # to that used for builtins.map in python/typeshed. This supports
+  # checking input types for the callable with up to three arguments.
+  @overload
+  def safe_map(f: Callable[[T1], T], __arg1: Iterable[T1]) -> List[T]: ...
 
-def safe_map(f, *args):
-  args = list(map(list, args))
-  n = len(args[0])
-  for arg in args[1:]:
-    assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
-  return list(map(f, *args))
+  @overload
+  def safe_map(f: Callable[[T1, T2], T], __arg1: Iterable[T1], __arg2: Iterable[T2]) -> List[T]: ...
+
+  @overload
+  def safe_map(f: Callable[[T1, T2, T3], T], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> List[T]: ...
+
+  @overload
+  def safe_map(f: Callable[..., T], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> List[T]: ...
+
+  def safe_map(f, *args):
+    args = list(map(list, args))
+    n = len(args[0])
+    for arg in args[1:]:
+      assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
+    return list(map(f, *args))
+
+else:
+  # TODO(phawkins): remove the hasattr condition after jaxlib 0.4.9 is the
+  # minimum
+  if hasattr(jaxlib_utils, 'safe_map'):
+    safe_map = jaxlib_utils.safe_map
+  else:
+    def safe_map(f, *args):
+      args = list(map(list, args))
+      n = len(args[0])
+      for arg in args[1:]:
+        assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
+      return list(map(f, *args))
 
 def unzip2(xys: Iterable[Tuple[T1, T2]]
     ) -> Tuple[Tuple[T1, ...], Tuple[T2, ...]]:
@@ -266,7 +298,15 @@ def weakref_lru_cache(call: Callable, maxsize=2048):
   and strong refs to all subsequent operations. In all other respects it should
   behave similar to `functools.lru_cache`.
   """
-  return xc.weakref_lru_cache(config._trace_context, call, maxsize)
+  global _weakref_lru_caches
+  cached_call = xc.weakref_lru_cache(config._trace_context, call, maxsize)
+  _weakref_lru_caches.add(cached_call)
+  return cached_call
+_weakref_lru_caches = weakref.WeakSet()  # type: ignore
+
+def clear_all_weakref_lru_caches():
+  for cached_call in _weakref_lru_caches:
+    cached_call.cache_clear()
 
 class Unhashable:
   __slots__ = ["val"]
@@ -505,6 +545,14 @@ def _original_func(f):
   elif isinstance(f, functools.cached_property):
     return f.func
   return f
+
+
+def set_module(module):
+  def wrapper(func):
+    if module is not None:
+      func.__module__ = module
+    return func
+  return wrapper
 
 
 if TYPE_CHECKING:

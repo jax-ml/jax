@@ -23,7 +23,7 @@ from jax._src import config as jax_config
 from jax._src.lib.mlir import ir
 from jax import numpy as jnp
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 

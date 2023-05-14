@@ -21,6 +21,7 @@ This is done dynamically in order to avoid circular imports.
 
 __all__ = ['register_jax_array_methods']
 
+import abc
 from functools import partial, wraps
 import inspect
 from typing import Any, List, Optional, Tuple, Union
@@ -40,7 +41,10 @@ from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.ops import scatter
 from jax._src.typing import Array, ArrayLike, DimSize, DTypeLike, Shape
-from jax._src.util import safe_zip
+from jax._src.util import safe_zip, safe_map
+
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
 
 ### add method and operator overloads to arraylike classes
@@ -118,11 +122,15 @@ def _compute_newshape(a: ArrayLike, newshape: Union[DimSize, Shape]) -> Shape:
   try:
     iter(newshape)  # type: ignore[arg-type]
   except:
-    iterable = False
-  else:
-    iterable = True
-  newshape = core.canonicalize_shape(newshape if iterable else [newshape])  # type: ignore[arg-type]
-  return tuple(- core.divide_shape_sizes(np.shape(a), newshape)
+    newshape = [newshape]
+  newshape = core.canonicalize_shape(newshape)  # type: ignore[arg-type]
+  neg1s = [i for i, d in enumerate(newshape) if type(d) is int and d == -1]
+  if len(neg1s) == 1:
+    i, = neg1s
+    sz = core.cancel_divide_tracers(np.shape(a), (*newshape[:i], *newshape[i+1:]))
+    if sz is not None:
+      return (*newshape[:i], sz, *newshape[i+1:])
+  return tuple(-core.divide_shape_sizes(np.shape(a), newshape)
                if core.symbolic_equal_dim(d, -1) else d
                for d in newshape)
 
@@ -336,7 +344,7 @@ def _multi_slice(arr: ArrayLike,
   DeviceArray method here to avoid circular imports.
   """
   results: List[Array] = []
-  for starts, limits, removed in safe_zip(start_indices, limit_indices, removed_dims):
+  for starts, limits, removed in zip(start_indices, limit_indices, removed_dims):
     sliced = lax.slice(arr, starts, limits)
     if removed:
       sliced = lax.squeeze(sliced, removed)
@@ -471,7 +479,7 @@ def allow_pass_by_position_with_warning(f):
       warnings.warn(
           f"jnp.ndarray.at[...].{f.__name__}: Passing '{keywords[0]}' by position is deprecated. "
           f"Pass by keyword instead", category=FutureWarning, stacklevel=2)
-      converted_kwargs = dict(zip(keywords, args[n_positional:]))
+      converted_kwargs = dict(unsafe_zip(keywords, args[n_positional:]))
       return f(*args[:n_positional], **converted_kwargs, **kwargs)
     else:
       return f(*args, **kwargs)
@@ -541,8 +549,8 @@ class _IndexUpdateRef:
 
     See :mod:`jax.ops` for details.
     """
-    def _scatter_apply(x, indices, _, dims, **kwargs):
-      return lax.scatter_apply(x, indices, func, dims, **kwargs)
+    def _scatter_apply(x, indices, y, dims, **kwargs):
+      return lax.scatter_apply(x, indices, func, dims, update_shape=y.shape, **kwargs)
     return scatter._scatter_update(self.array, self.index,
                                    lax_internal._zero(self.array.dtype),
                                    _scatter_apply,
@@ -777,8 +785,34 @@ def _set_shaped_array_attributes(shaped_array):
     setattr(shaped_array, prop_name, core.aval_property(prop))
   setattr(shaped_array, "_array_module", staticmethod(__array_module__))
 
+def _forward_operator_to_aval(name):
+  def op(self, *args):
+    return getattr(self.aval, f"_{name}")(self, *args)
+  return op
 
-def _set_device_array_base_attributes(device_array, include=None, exclude=None):
+def _forward_method_to_aval(name):
+  def meth(self, *args, **kwargs):
+    return getattr(self.aval, name).fun(self, *args, **kwargs)
+  return meth
+
+def _forward_property_to_aval(name):
+  @property
+  def prop(self):
+    return getattr(self.aval, name).fget(self)
+  return prop
+
+def _set_tracer_aval_forwarding(tracer, exclude=()):
+  for operator_name in _array_operators:
+    if operator_name not in exclude:
+      setattr(tracer, f"__{operator_name}__", _forward_operator_to_aval(operator_name))
+  for method_name in _array_methods:
+    if method_name not in exclude:
+      setattr(tracer, method_name, _forward_method_to_aval(method_name))
+  for prop_name in _array_properties:
+    if prop_name not in exclude:
+      setattr(tracer, prop_name, _forward_property_to_aval(prop_name))
+
+def _set_array_base_attributes(device_array, include=None, exclude=None):
   # Forward operators, methods, and properties on DeviceArray to lax_numpy
   # functions (with no Tracers involved; this forwarding is direct)
   def maybe_setattr(attr_name, target):
@@ -797,16 +831,36 @@ def _set_device_array_base_attributes(device_array, include=None, exclude=None):
   for name, func in _impl_only_array_methods.items():
     setattr(device_array, name, func)
 
-def _set_device_array_attributes(device_array):
+def _set_array_attributes(device_array):
   setattr(device_array, "__array_module__", __array_module__)
 
+def _make_abstract_method(name, func):
+  @abc.abstractmethod
+  @wraps(func)
+  def method(*args, **kwargs):
+    raise NotImplementedError(f"Cannot call abstract method {name}")
+  return method
+
+def _set_array_abstract_methods(basearray):
+  for operator_name, function in _array_operators.items():
+    setattr(basearray, f"__{operator_name}__",
+            _make_abstract_method(f"__{operator_name}__", function))
+  for method_name, method in _array_methods.items():
+    setattr(basearray, method_name,
+            _make_abstract_method(method_name, method))
+  for prop_name, prop in _array_properties.items():
+    setattr(basearray, prop_name,
+            property(_make_abstract_method(prop_name, prop)))
 
 def register_jax_array_methods():
   """Call this function once to register methods of JAX arrays"""
   _set_shaped_array_attributes(core.ShapedArray)
   _set_shaped_array_attributes(core.DShapedArray)
 
-  _set_device_array_base_attributes(ArrayImpl, exclude={'__getitem__'})
-  _set_device_array_attributes(ArrayImpl)
+  _set_array_base_attributes(ArrayImpl, exclude={'__getitem__'})
+  _set_tracer_aval_forwarding(core.Tracer, exclude={*_impl_only_array_methods, "at"})
+  _set_array_attributes(ArrayImpl)
+
+  _set_array_abstract_methods(Array)
 
   Array.at.__doc__ = _IndexUpdateHelper.__doc__

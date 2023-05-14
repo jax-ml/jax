@@ -55,6 +55,7 @@ from jax._src.interpreters.batching import ConcatAxis
 from jax._src.lax import slicing
 from jax._src.lax.utils import (
   _input_dtype,
+  dtype_to_string,
   standard_abstract_eval,
   standard_multi_result_abstract_eval,
   standard_named_shape_rule,
@@ -126,8 +127,9 @@ def asarray(x: ArrayLike) -> Array:
   """Lightweight conversion of ArrayLike input to Array output."""
   if isinstance(x, Array):
     return x
-  elif isinstance(x, np.ndarray) or np.isscalar(x):
-    return api.device_put(x)
+  if isinstance(x, np.ndarray) or np.isscalar(x):
+    # Call device_put_impl directly to avoid binding the primitive.
+    return dispatch._device_put_impl(x)
   else:
     raise TypeError(f"asarray: expected ArrayLike, got {x} of type {type(x)}.")
 
@@ -1172,7 +1174,8 @@ def top_k(operand: ArrayLike, k: int) -> Tuple[Array, Array]:
   - :func:`jax.lax.approx_max_k`
   - :func:`jax.lax.approx_min_k`
   """
-  k = int(k)
+  if not core.is_special_dim_size(k):
+    k = int(k)
   if k < 0:
     raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
   return top_k_p.bind(operand, k=k)
@@ -1500,7 +1503,7 @@ _strip_weak_type = lambda *args, **_: False
 def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
   if not any(dtypes.issubdtype(aval.dtype, t) for t in accepted_dtypes):
     msg = '{} does not accept dtype {}. Accepted dtypes are subtypes of {}.'
-    typename = str(np.dtype(aval.dtype).name)
+    typename = dtype_to_string(aval.dtype)
     accepted_typenames = (t.__name__ for t in accepted_dtypes)
     raise TypeError(msg.format(name, typename, ', '.join(accepted_typenames)))
   return result_dtype(aval.dtype)
@@ -1518,11 +1521,16 @@ standard_unop = partial(unop, _identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
 
 
-def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
-  aval_dtypes = [aval.dtype for aval in avals]
-  for i, (aval_dtype, types) in enumerate(zip(aval_dtypes, accepted_dtypes)):
-    if not any(dtypes.issubdtype(aval_dtype, t) for t in types):
-      if aval_dtype == dtypes.float0:
+def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals,
+                      allow_opaque_dtype=False, **kwargs):
+  del kwargs
+  assert len(avals) == len(accepted_dtypes), (avals, accepted_dtypes)
+  for i, aval in enumerate(avals):
+    if allow_opaque_dtype and core.is_opaque_dtype(aval.dtype):
+      continue
+    types = accepted_dtypes[i]
+    if not any(dtypes.issubdtype(aval.dtype, t) for t in types):
+      if aval.dtype == dtypes.float0:
         raise TypeError(
             f"Called {name} with a float0 at position {i}. "
             "float0s do not support any operations by design, because they "
@@ -1534,10 +1542,10 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
       else:
         msg = ('{} does not accept dtype {} at position {}. '
                'Accepted dtypes at position {} are subtypes of {}.')
-        typename = str(np.dtype(aval_dtype).name)
+        typename = dtype_to_string(aval.dtype)
         typenames = ', '.join(t.__name__ for t in types)
         raise TypeError(msg.format(name, typename, i, i, typenames))
-  _check_same_dtypes(name, False, *aval_dtypes)
+  check_same_dtypes(name, *avals)
   return result_dtype(*avals)
 
 
@@ -1580,8 +1588,9 @@ def _naryop_weak_type_rule(name, *avals, **kwargs):
         "taken a gradient with respect to an integer argument.")
   return all(aval.weak_type for aval in avals)
 
-def naryop(result_dtype, accepted_dtypes, name):
-  dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name)
+def naryop(result_dtype, accepted_dtypes, name, allow_opaque_dtype=False):
+  dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name,
+                       allow_opaque_dtype=allow_opaque_dtype)
   shape_rule = partial(broadcasting_shape_rule, name)
   weak_type_rule = partial(_naryop_weak_type_rule, name)
   prim = standard_primitive(shape_rule, dtype_rule, name,
@@ -2170,6 +2179,16 @@ def _compare_lower_hlo(direction: str, ctx, x, y):
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
   x_dtype = avals_in[0].dtype
   x, y = mlir.multi_broadcast_in_dim(ctx, (x, y), avals_in, aval_out.shape)
+  if core.is_opaque_dtype(x_dtype):
+    broadcast_avals_in = tuple(
+        core.ShapedArray(aval_out.shape, aval.dtype) for aval in avals_in)
+    if direction == 'EQ':
+      return x_dtype._rules.eq_mlir(ctx, broadcast_avals_in, aval_out, x, y)
+    elif direction == 'NE':
+      return x_dtype._rules.ne_mlir(ctx, broadcast_avals_in, aval_out, x, y)
+    else:
+      raise NotImplementedError(
+          f"HLO comparison {direction} for opaque dtype {x_dtype}")
 
   if dtypes.issubdtype(x_dtype, np.inexact):
     compare_type = "FLOAT"
@@ -2179,11 +2198,11 @@ def _compare_lower_hlo(direction: str, ctx, x, y):
     compare_type = "UNSIGNED"
   return mlir.compare_hlo(x, y, direction, compare_type).results
 
-eq_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'eq')
+eq_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'eq', allow_opaque_dtype=True)
 ad.defjvp_zero(eq_p)
 mlir.register_lowering(eq_p, partial(_compare_lower_hlo, "EQ"))
 
-ne_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'ne')
+ne_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'ne', allow_opaque_dtype=True)
 ad.defjvp_zero(ne_p)
 mlir.register_lowering(ne_p, partial(_compare_lower_hlo, "NE"))
 
@@ -2208,6 +2227,13 @@ def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type):
   return operand.shape
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type):
+  if operand.dtype != new_dtype:
+    if core.is_opaque_dtype(operand.dtype):
+      raise ValueError(
+          f"Cannot call convert_element_type on dtype {dtype_to_string(operand.dtype)}")
+    if core.is_opaque_dtype(new_dtype):
+      raise ValueError(
+          f"Cannot convert_element_type to dtype={dtype_to_string(new_dtype)}")
   return new_dtype
 
 def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type):
@@ -2932,7 +2958,7 @@ def _concatenate_shape_rule(*operands, **kwargs):
   return ex_shape[:dimension] + (concat_size,) + ex_shape[dimension+1:]
 
 def _concatenate_dtype_rule(*operands, **kwargs):
-  _check_same_dtypes('concatenate', False, *(o.dtype for o in operands))
+  check_same_dtypes('concatenate', *operands)
   return operands[0].dtype
 
 def _concatenate_transpose_rule(t, *operands, dimension):
@@ -3268,7 +3294,7 @@ def _select_shape_rule(which, *cases):
   return cases[0].shape
 
 def _select_dtype_rule(which, *cases):
-  _check_same_dtypes("select", False, *(c.dtype for c in cases))
+  check_same_dtypes("select", *cases)
   if (not dtypes.issubdtype(which.dtype, np.bool_) and
       not dtypes.issubdtype(which.dtype, np.integer)):
     raise TypeError("select `which` must be boolean or integer type, got "
@@ -3346,6 +3372,12 @@ def _select_jvp(primals, tangents):
 
 def _select_hlo_lowering(ctx, which, *cases):
   which_aval = ctx.avals_in[0]
+  aval_out, = ctx.avals_out
+
+  if core.is_opaque_dtype(aval_out.dtype):
+    return [aval_out.dtype._rules.select_mlir(
+        ctx, ctx.avals_in, aval_out, which, *cases)]
+
   if which_aval.dtype == np.dtype(np.bool_):
     assert len(cases) <= 2
     if len(cases) == 1: return cases
@@ -3517,7 +3549,7 @@ mlir.register_lowering(reduce_p, _reduce_lower)
 def _reduce_number_dtype_rule(name, operand, *args, **kw):
   if not dtypes.issubdtype(operand.dtype, np.number):
     raise TypeError("{} does not accept dtype {}. Accepted dtypes are subtypes "
-                    "of number.".format(name, np.dtype(operand.dtype).name))
+                    "of number.".format(name, dtype_to_string(operand.dtype)))
   return dtypes.canonicalize_dtype(operand.dtype)
 
 def _reduce_sum_shape_rule(operand, *, axes):
@@ -3621,7 +3653,7 @@ def _argminmax_shape_rule(operand, *, axes, index_dtype):
 def _argminmax_dtype_rule(operand, *, axes, index_dtype):
   if not dtypes.issubdtype(index_dtype, np.integer):
     raise TypeError("index_dtype must be an integer type, but got {}"
-                    .format(np.dtype(index_dtype).name))
+                    .format(dtype_to_string(index_dtype)))
   return index_dtype
 
 def _compute_argminmax(value_comparator, get_identity,
@@ -3972,6 +4004,9 @@ top_k_p.multiple_results = True
 top_k_p.def_impl(partial(dispatch.apply_primitive, top_k_p))
 top_k_p.def_abstract_eval(_top_k_abstract_eval)
 def _top_k_lower(ctx, operand, k):
+  if core.is_special_dim_size(k):
+    # TODO: https://github.com/openxla/stablehlo/issues/1396
+    raise ValueError("native serialization with shape polymorphism not implemented for top_k")
   return chlo.TopKOp(operand, mlir.i64_attr(k)).results
 mlir.register_lowering(top_k_p, _top_k_lower)
 ad.primitive_jvps[top_k_p] = _top_k_jvp
@@ -4202,6 +4237,9 @@ def _rng_algorithm(algorithm: RandomAlgorithm):
 
 def _rng_bit_generator_lowering(
     ctx, key, *, shape, dtype, algorithm):
+  if any(not core.is_constant_shape(aval_out.shape)
+         for aval_out in ctx.avals_out):
+    raise NotImplementedError("shape polymorphism with native lowering not yet implemented for RngBitGenerator")
   key_type = ir.RankedTensorType(key.type)
   key_shape, key_etype = key_type.shape, key_type.element_type
   # While the RngBitGenerator HLO accepts a u64[2] key on all backends, we
@@ -4343,7 +4381,7 @@ def _iota_abstract_eval(*, dtype, shape, dimension):
   _check_shapelike("iota", "shape", shape)
   if not any(dtypes.issubdtype(dtype, t) for t in _num):
     msg = 'iota does not accept dtype {}. Accepted dtypes are subtypes of {}.'
-    typename = str(np.dtype(dtype).name)
+    typename = dtype_to_string(dtype)
     accepted_typenames = (t.__name__ for t in _num)
     raise TypeError(msg.format(typename, ', '.join(accepted_typenames)))
   if not 0 <= dimension < len(shape):
@@ -4384,16 +4422,7 @@ def _iota_lower(ctx, *dyn_shape, dtype, shape, dimension):
   aval_out, = ctx.avals_out
   if dyn_shape:
     aval_out = aval_out.update(shape=_merge_dyn_shape(shape, dyn_shape))
-  if not core.is_constant_shape(aval_out.shape):
-    shape = mlir.eval_dynamic_shape(ctx, aval_out.shape)
-    return hlo.DynamicIotaOp(
-        mlir.aval_to_ir_type(aval_out),
-        mlir.shape_tensor(shape),
-        mlir.i64_attr(dimension),
-    ).results
-  else:
-    return hlo.IotaOp(mlir.aval_to_ir_type(aval_out),
-                      mlir.i64_attr(dimension)).results
+  return [mlir.iota(ctx, aval_out, dimension=dimension)]
 mlir.register_lowering(iota_p, _iota_lower)
 
 def _iota_batching_rule(in_vals, in_dims, *, dtype, shape, dimension):
@@ -4541,28 +4570,22 @@ _JNP_FUNCTION_EQUIVALENTS = {
   'tanh': 'tanh'
 }
 
-def _check_same_dtypes(name, ignore_fp_precision, *ttypes):
+def check_same_dtypes(name: str, *avals: core.UnshapedArray) -> None:
   """Check that dtypes agree, possibly ignoring float precision."""
   # the `ignore_fp_precision` flag exists because the XLA shape inference logic
   # allows mixed floating point precision, but the HLO verifier often rejects it
-  if any(core.is_opaque_dtype(t) for t in ttypes):
+  if any(core.is_opaque_dtype(aval.dtype) for aval in avals):
     return  # TODO(mattjj,frostig): do some checking, friend
-  types = map(np.dtype, ttypes)  # canonicalize
-  if ignore_fp_precision:
-    types = [
-        np.floating if dtypes.issubdtype(dtype, np.floating)
-        else np.complexfloating if dtypes.issubdtype(dtype, np.complexfloating)
-        else dtype for dtype in types]
-  if len({dtypes.canonicalize_dtype(t) for t in types}) != 1:
-    if ignore_fp_precision:
-      msg = ("lax.{} requires arguments to have same dtypes up to floating point "
-             "precision, got {}.")
-    else:
-      msg = "lax.{} requires arguments to have the same dtypes, got {}."
+  if len(avals) < 2:
+    return
+
+  dtype = dtypes.canonicalize_dtype(avals[0].dtype)
+  if any(dtypes.canonicalize_dtype(aval.dtype) != dtype for aval in avals[1:]):
+    msg = "lax.{} requires arguments to have the same dtypes, got {}."
     if name in _JNP_FUNCTION_EQUIVALENTS:
       equiv = _JNP_FUNCTION_EQUIVALENTS[name]
       msg += f" (Tip: jnp.{equiv} is a similar function that does automatic type promotion on inputs)."
-    raise TypeError(msg.format(name, ", ".join(map(str, types))))
+    raise TypeError(msg.format(name, ", ".join(str(a.dtype) for a in avals)))
 
 
 def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):

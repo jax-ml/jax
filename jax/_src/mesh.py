@@ -18,6 +18,7 @@ from __future__ import annotations
 import collections
 import contextlib
 import functools
+import math
 import threading
 from typing import Any, Hashable, NamedTuple, Set, Sequence, Tuple, Union
 
@@ -199,13 +200,13 @@ class Mesh(contextlib.ContextDecorator):
 
   @property
   def size(self):
-    return np.prod(list(self.shape.values()))
+    return math.prod(self.shape.values())
 
   @property
   def empty(self):
     return self.devices.ndim == 0
 
-  @property
+  @functools.cached_property
   def is_multi_process(self):
     return self.devices.size != len(self.local_devices)
 
@@ -240,15 +241,31 @@ class Mesh(contextlib.ContextDecorator):
           "global device mesh")
     return Mesh(self.devices[subcube_indices], self.axis_names)
 
-  @property
+  @functools.cached_property
   def device_ids(self):
     assert not self.empty
     return np.vectorize(lambda d: d.id, otypes=[int])(self.devices)
 
-  def __repr__(self):
+  @functools.cached_property
+  def _local_devices_set(self):
+    return set(self.local_devices)
+
+  @functools.cached_property
+  def _flat_devices_tuple(self):
+    return tuple(self.devices.flat)
+
+  @functools.cached_property
+  def _flat_devices_set(self):
+    return set(self.devices.flat)
+
+  @functools.cached_property
+  def _repr(self):
     if self.empty:
       return "Mesh(device_ids=[], axis_names=())"
     return f"Mesh(device_ids={self.device_ids!r}, axis_names={self.axis_names!r})"
+
+  def __repr__(self):
+    return self._repr
 
   @functools.cached_property
   def local_devices(self):

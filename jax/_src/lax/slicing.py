@@ -14,6 +14,7 @@
 
 import enum
 from functools import partial
+import math
 from typing import Callable, List, NamedTuple, Optional, Sequence, Tuple, Union
 import weakref
 
@@ -513,6 +514,7 @@ def scatter_apply(
   operand: Array, scatter_indices: Array,
   func: Callable[[Array], Array],
   dimension_numbers: ScatterDimensionNumbers, *,
+  update_shape: Shape = (),
   indices_are_sorted: bool = False, unique_indices: bool = False,
   mode: Optional[Union[str, GatherScatterMode]] = None) -> Array:
   """Scatter-apply operator.
@@ -538,6 +540,7 @@ def scatter_apply(
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
+    update_shape: the shape of the updates at the given indices.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
     unique_indices: whether the elements to be updated in ``operand`` are
@@ -554,7 +557,7 @@ def scatter_apply(
     An array containing the result of applying `func` to `operand` at the given indices.
   """
   # TODO: can we implement this without a placeholder?
-  unused = lax.full(scatter_indices.shape[:1], 0, operand.dtype)
+  unused = lax.full(update_shape, 0, operand.dtype)
   _apply = lambda x, _: func(x)
   try:
     _apply = _scatter_apply_cache.setdefault(func, _apply)
@@ -614,7 +617,7 @@ def scatter(
     An array containing the sum of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(_scatter_reduction_computation,
-                                       lax._abstractify(lax._const(operand, 0)))
+                                       core.ShapedArray((), lax.dtype(operand)))
   return scatter_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -988,8 +991,7 @@ def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
   return operand.shape
 
 def _dynamic_update_slice_dtype_rule(operand, update, *start_indices):
-  lax._check_same_dtypes("dynamic_update_slice", False, operand.dtype,
-                         update.dtype)
+  lax.check_same_dtypes("dynamic_update_slice", operand, update)
   if any(i.dtype != start_indices[0].dtype or
          not dtypes.issubdtype(i.dtype, np.integer) for i in start_indices):
     msg = ("index arguments to dynamic_update_slice must be integers of the "
@@ -1420,8 +1422,8 @@ mlir.register_lowering(gather_p, _gather_lower)
 def _scatter_dtype_rule(operand, indices, updates, **kwargs):
   if not dtypes.issubdtype(indices.dtype, np.integer):
     raise ValueError("indices must have an integer type")
-  lax._check_same_dtypes("scatter", False, operand.dtype, updates.dtype)
-  return dtypes.canonicalize_dtype(operand.dtype)
+  lax.check_same_dtypes("scatter", operand, updates)
+  return dtypes.canonicalize_dtype(operand.dtype, allow_opaque_dtype=True)
 
 def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
                         update_consts, dimension_numbers, indices_are_sorted,
@@ -1892,7 +1894,7 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
   #    on the IDs.
   ids_shape = np.array(updates.shape, dtype=np.int64)
   ids_shape[dnums.update_window_dims,] = 1
-  num_ids = np.prod(ids_shape)
+  num_ids = math.prod(ids_shape)
   id_dtype = np.uint32 if (num_ids + 1) < np.iinfo(np.uint32).max else np.uint64
   update_ids = lax.add(lax.reshape(lax.iota(id_dtype, num_ids), ids_shape),
                        lax._ones(updates, dtype=id_dtype))
@@ -1996,12 +1998,18 @@ batching.primitive_batchers[scatter_p] = (
 def _scatter_lower(ctx, operand, indices, updates, *,
                    update_jaxpr, update_consts, dimension_numbers,
                    indices_are_sorted, unique_indices, mode):
+  aval_out, = ctx.avals_out
+  if core.is_opaque_dtype(aval_out.dtype):
+    return [aval_out.dtype._rules.scatter_mlir(
+        ctx, ctx.avals_in, aval_out, operand, indices, updates,
+        update_jaxpr=update_jaxpr, update_consts=update_consts,
+        dimension_numbers=dimension_numbers, unique_indices=unique_indices,
+        indices_are_sorted=indices_are_sorted, mode=mode)]
   if mode == GatherScatterMode.CLIP:
     clip_fn = mlir.lower_fun(_clamp_scatter_indices, multiple_results=False)
     (indices,), = clip_fn(ctx.replace(avals_out=None), operand, indices,
                           updates, dnums=dimension_numbers)
 
-  aval_out, = ctx.avals_out
   dnums = dimension_numbers
   scatter_dnums = hlo.ScatterDimensionNumbers.get(
     update_window_dims=list(dnums.update_window_dims),

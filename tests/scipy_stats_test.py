@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from functools import partial
 import itertools
 
@@ -27,7 +26,7 @@ from jax._src import dtypes, test_util as jtu, tree_util
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 scipy_version = tuple(map(int, scipy.version.version.split('.')[:3]))

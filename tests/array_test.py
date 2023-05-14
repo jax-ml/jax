@@ -28,14 +28,16 @@ from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.util import safe_zip
+from jax._src.sharding_impls import _from_op_sharding_to_pos_sharding
 from jax.experimental.pjit import pjit
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
 from jax._src import array
 from jax._src import prng
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 
@@ -395,7 +397,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         f"Expected shard shape {str_expected_shard_shape} doesn't match the "
-        "buffer shape"):
+        "single device array shape"):
       array.make_array_from_callback(shape, mps, lambda idx: inp_data)
 
   def test_mismatch_dtype(self):
@@ -504,11 +506,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     _check(arr[0:6:1], np_inp[0:6:1], (2, 2, 1))
     _check(arr[:4], np_inp[:4], (2, 2, 1))
     _check(arr[::-1], np_inp[::-1], (2, 2, 1))
-
-    # TODO(yashkatariya): This returns a replicated output because the int
-    # indexing in `_rewriting_take` goes via `dynamic_index_in_dim` rather than
-    # `_gather`.
-    # _check(arr[1], np_inp[1], (2, 1))
+    _check(arr[1], np_inp[1], (2, 1))
 
   def test_array_getitem_replicated_multi_device(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
@@ -698,6 +696,20 @@ class JaxArrayTest(jtu.JaxTestCase):
     x.copy_to_host_async()  # doesn't crash
     self.assertArraysEqual(np.arange(8.), x)
 
+  def test_array_fully_replicated_shard(self):
+    if xla_extension_version < 148:
+      self.skipTest('Requires xla_extension_version >= 148')
+
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    inp_shape = (8, 2)
+    arr, inp_data = create_array(
+        inp_shape, jax.sharding.NamedSharding(global_mesh, P()))
+    fs = arr._fully_replicated_shard()
+    self.assertEqual(fs.shape, inp_shape)
+    self.assertTrue(dispatch.is_single_device_sharding(fs.sharding))
+    self.assertArraysEqual(fs, inp_data)
+    self.assertArraysEqual(arr.addressable_data(0), inp_data)
+
 
 class ShardingTest(jtu.JaxTestCase):
 
@@ -827,7 +839,7 @@ class ShardingTest(jtu.JaxTestCase):
       ("mesh_xy",               P(("x", "y")), (8, 1), (),   False),
       ("mesh_fully_replicated", P(),           (4, 2), None, False),
   )
-  def test_devices_sharding_op_sharding_lowering(
+  def test_positional_sharding_op_sharding_lowering(
       self, pspec, shape, axes, transpose):
     value_shape = (8, 4)
 
@@ -845,6 +857,72 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(mps.shard_shape(value_shape),
                      devices_sharding.shard_shape(value_shape))
     self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
+
+  @parameterized.named_parameters(
+      ("2d_mesh_x_y",              (4, 2), P("x", "y")),
+      ("2d_mesh_x",                (4, 2), P("x")),
+      ("2d_mesh_y",                (4, 2), P("y")),
+      ("2d_mesh_none_y",           (4, 2), P(None, "y")),
+      ("2d_mesh_none_x",           (4, 2), P(None, "x")),
+      ("2d_mesh_xy",               (4, 2), P(("x", "y"))),
+      ("2d_mesh_none_xy",          (4, 2), P(None, ("x", "y"))),
+      ("2d_mesh_x_none",           (2, 1), P(('x',), None)),
+      ("2d_mesh_fully_replicated", (4, 2), P()),
+      ("3d_mesh_none_none_z",      (2, 2, 2), P(None, None, 'z')),
+      ("3d_mesh_none_y_none",      (2, 2, 2), P(None, 'y', None)),
+      ("3d_mesh_x_y_none",         (2, 2, 2), P('x', 'y', None)),
+      ("3d_mesh_none_yz",          (2, 2, 2), P(None, ('y', 'z'))),
+      ("3d_mesh2_none_none_z",     (1, 2, 4), P(None, None, 'z')),
+      ("3d_mesh2_x_none_none",     (1, 2, 4), P('x', None, None)),
+      ("3d_mesh_x_none_none",      (2, 1, 1), P('x', None, None)),
+  )
+  def test_positional_sharding_from_op_sharding(self, mesh_shape, pspec):
+    ndim = len(mesh_shape)
+    mesh = jtu.create_global_mesh(
+        mesh_shape, ('x', 'y') if ndim == 2 else ('x', 'y', 'z'))
+    mps = jax.sharding.NamedSharding(mesh, pspec)
+    original_op_sharding = mps._to_xla_op_sharding(ndim)
+    ps = _from_op_sharding_to_pos_sharding(original_op_sharding,
+                                           mps._device_assignment)
+    out_op_sharding = ps._to_xla_op_sharding(ndim)
+    self.assertTrue(op_shardings.are_op_shardings_equal(
+        original_op_sharding, out_op_sharding))
+
+  @parameterized.named_parameters(
+      ("2d_mesh_x",                (1, 1), P("x", "y")),
+      ("2d_mesh_x_y",              (4, 2), P("x", "y")),
+      ("2d_mesh_empty",            (2, 1), P()),
+      ("2d_mesh_p_none",           (2, 1), P(None)),
+      ("2d_mesh_none_none",        (2, 1), P(None, None)),
+      ("2d_mesh_tuple_empty",      (2, 1), P((),)),
+      ("2d_mesh_x_none",           (2, 1), P(('x',), None)),
+      ("2d_mesh_xy_none",          (2, 1), P(('x', 'y'), None)),
+      ("2d_mesh_none",             (2, 1), None),
+      ("2d_mesh_x_tuple_empty",    (2, 1), P('x', (), (), ())),
+      ("2d_mesh_3_tuple_empty",    (2, 1), P((), (), ())),
+      ("3d_mesh2_x_none_none",     (1, 2, 4), P('x', None, None)),
+      ("3d_mesh2_x_y_none",        (1, 1, 4), P('x', 'y', None)),
+      ("3d_mesh2_xy_none",         (1, 1, 4), P(('x', 'y'), None)),
+  )
+  def test_is_fully_replicated_named_sharding(self, mesh_shape, pspec):
+    if len(mesh_shape) == 2:
+      axis_names = ('x', 'y')
+    elif len(mesh_shape) == 3:
+      axis_names = ('x', 'y', 'z')
+    else:
+      axis_names = ('x',)
+    mesh = jtu.create_global_mesh(mesh_shape, axis_names)
+    mps = jax.sharding.NamedSharding(mesh, pspec)
+    shape = (8, 2, 4)
+    mps_op_sharding = mps._to_xla_op_sharding(len(shape))
+    ops_ifr = op_shardings.is_op_sharding_replicated(mps_op_sharding)
+    self.assertEqual(mps.is_fully_replicated, ops_ifr)
+
+    ps = _from_op_sharding_to_pos_sharding(mps_op_sharding,
+                                           mps._device_assignment)
+    self.assertEqual(ps.is_fully_replicated,
+                     op_shardings.is_op_sharding_replicated(
+                         ps._to_xla_op_sharding(len(shape))))
 
   def test_devices_sharding_respects_init_mesh_shape(self):
     value_shape = (8, 4)
@@ -879,12 +957,21 @@ class ShardingTest(jtu.JaxTestCase):
       self.skipTest('Test needs >= 4 devices.')
     ps = jax.sharding.PmapSharding.default(shape, sharded_dim)
 
-    inp = jnp.arange(np.prod(shape)).reshape(shape)
+    inp = jnp.arange(math.prod(shape)).reshape(shape)
     compiled = jax.pmap(lambda x: x, in_axes=sharded_dim).lower(inp).compile()
     pmap_in_sharding, = compiled._executable.unsafe_call.in_handler.in_shardings
 
     self.assertEqual(ps._device_assignment, pmap_in_sharding._device_assignment)
     self.assertEqual(ps.sharding_spec, pmap_in_sharding.sharding_spec)
+
+  def test_default_pmap_sharding_with_devices(self):
+    if jax.device_count() < 4:
+      self.skipTest('Test needs >= 4 devices.')
+
+    devs = jax.devices()
+    new_order = (devs[0], devs[3], devs[2], devs[1])
+    ps = jax.sharding.PmapSharding.default((4, 2), devices=new_order)
+    self.assertEqual(ps._device_assignment, new_order)
 
   def test_mesh_repr(self):
     mesh = jtu.create_global_mesh((1, 1), ('x', 'y'))
@@ -950,6 +1037,15 @@ class ShardingTest(jtu.JaxTestCase):
         "Sharding.*implies that array axis 0 is partitioned 2 times, but the "
         "dimension size is 1"):
       s.devices_indices_map(shape)
+
+  def test_scalar_input_wrong_pspec(self):
+    mesh = jtu.create_global_mesh((1, ), ('x'))
+    shape = ()
+    s = jax.sharding.NamedSharding(mesh, P('x'))
+    with self.assertRaisesRegex(
+        ValueError,
+        r"For scalars the PartitionSpec should be P()"):
+      s.is_compatible_aval(shape)
 
 
 class RngShardingTest(jtu.JaxTestCase):

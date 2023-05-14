@@ -51,6 +51,7 @@ from jax._src.config import (
   check_tracer_leaks as check_tracer_leaks,
   checking_leaks as checking_leaks,
   enable_custom_prng as enable_custom_prng,
+  softmax_custom_jvp as softmax_custom_jvp,
   enable_custom_vjp_by_custom_transpose as enable_custom_vjp_by_custom_transpose,
   debug_nans as debug_nans,
   debug_infs as debug_infs,
@@ -79,6 +80,7 @@ from jax._src.api import block_until_ready as block_until_ready
 from jax._src.ad_checkpoint import checkpoint_wrapper as checkpoint
 from jax._src.ad_checkpoint import checkpoint_policies as checkpoint_policies
 from jax._src.api import clear_backends as clear_backends
+from jax._src.api import clear_caches as clear_caches
 from jax._src.custom_derivatives import closure_convert as closure_convert
 from jax._src.util import curry as _deprecated_curry
 from jax._src.custom_derivatives import custom_gradient as custom_gradient
@@ -180,6 +182,8 @@ from jax import util as util
 # Also circular dependency.
 from jax._src.array import Shard as Shard
 
+import jax.experimental.compilation_cache.compilation_cache as _ccache
+del _ccache
 
 _deprecations = {
   # Added 28 March 2023

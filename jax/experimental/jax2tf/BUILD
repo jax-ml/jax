@@ -20,7 +20,10 @@ load(
 
 licenses(["notice"])
 
-package(default_visibility = ["//visibility:private"])
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//visibility:private"],
+)
 
 py_library(
     name = "jax2tf",
@@ -39,6 +42,7 @@ py_library(
     srcs_version = "PY3",
     # TODO: b/255503696: enable pytype
     tags = ["pytype_unchecked_annotations"],
+    visibility = ["//third_party/py/jax/experimental/jax2tf:__subpackages__"],
     deps = [
         "//jax",
     ] + py_deps("numpy"),

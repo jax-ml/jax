@@ -236,18 +236,18 @@ def count_jit_and_pmap_compiles():
   # No need to clear any caches since we generally jit and pmap fresh callables
   # in tests.
 
-  mlir_jaxpr_subcomp = mlir.jaxpr_subcomp
+  mlir_lower = mlir.lower_jaxpr_to_module
   count = [0]
 
-  def mlir_jaxpr_subcomp_and_count(*args, **kwargs):
+  def mlir_lower_and_count(*args, **kwargs):
     count[0] += 1
-    return mlir_jaxpr_subcomp(*args, **kwargs)
+    return mlir_lower(*args, **kwargs)
 
-  mlir.jaxpr_subcomp = mlir_jaxpr_subcomp_and_count
+  mlir.lower_jaxpr_to_module = mlir_lower_and_count
   try:
     yield count
   finally:
-    mlir.jaxpr_subcomp = mlir_jaxpr_subcomp
+    mlir.lower_jaxpr_to_module = mlir_lower
 
 @contextmanager
 def assert_num_jit_and_pmap_compilations(times):
@@ -290,6 +290,15 @@ def is_device_cuda():
 
 def is_cloud_tpu():
   return 'libtpu' in xla_bridge.get_backend().platform_version
+
+
+def is_se_tpu():
+  return (
+      is_cloud_tpu() and not xla_bridge.using_pjrt_c_api()
+  ) or xla_bridge.get_backend().platform_version.startswith(
+      'StreamExecutor TPU'
+  )
+
 
 def is_device_tpu_v4():
   return jax.devices()[0].device_kind == "TPU v4"
@@ -487,7 +496,7 @@ def rand_fullrange(rng, standardize_nans=False):
   """Random numbers that span the full range of available bits."""
   def gen(shape, dtype, post=lambda x: x):
     dtype = np.dtype(dtype)
-    size = dtype.itemsize * np.prod(_dims_of_shape(shape), dtype=int)
+    size = dtype.itemsize * math.prod(_dims_of_shape(shape))
     vals = rng.randint(0, np.iinfo(np.uint8).max, size=size, dtype=np.uint8)
     vals = post(vals).view(dtype)
     if shape is PYTHON_SCALAR_SHAPE:
@@ -905,8 +914,8 @@ class JaxTestCase(parameterized.TestCase):
 
   def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
     if not config.x64_enabled and canonicalize_dtypes:
-      self.assertEqual(_dtypes.canonicalize_dtype(_dtype(x)),
-                       _dtypes.canonicalize_dtype(_dtype(y)))
+      self.assertEqual(_dtypes.canonicalize_dtype(_dtype(x), allow_opaque_dtype=True),
+                       _dtypes.canonicalize_dtype(_dtype(y), allow_opaque_dtype=True))
     else:
       self.assertEqual(_dtype(x), _dtype(y))
 

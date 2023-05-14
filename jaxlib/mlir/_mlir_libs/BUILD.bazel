@@ -32,16 +32,15 @@ COPTS = [
 ]
 
 LINKOPTS = select({
-        "@tsl//tsl:macos": [
-            "-Wl,-rpath,@loader_path/",
-            "-Wl,-rename_section,__TEXT,text_env,__TEXT,__text",
-        ],
-        "@tsl//tsl:windows": [],
-        "//conditions:default": [
-            "-Wl,-rpath,$$ORIGIN/",
-        ],
-    })
-
+    "@tsl//tsl:macos": [
+        "-Wl,-rpath,@loader_path/",
+        "-Wl,-rename_section,__TEXT,text_env,__TEXT,__text",
+    ],
+    "@tsl//tsl:windows": [],
+    "//conditions:default": [
+        "-Wl,-rpath,$$ORIGIN/",
+    ],
+})
 
 py_extension(
     name = "_mlir",
@@ -131,8 +130,8 @@ py_extension(
         "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:MLIRBindingsPythonHeaders",
         "@local_config_python//:headers",
-        "@xla//xla/mlir_hlo:CAPIHeaders",
         "@pybind11",
+        "@xla//xla/mlir_hlo:CAPIHeaders",
     ],
 )
 
@@ -176,6 +175,24 @@ py_extension(
     ],
 )
 
+# JAX plugins
+
+py_extension(
+    name = "_jax_passes",
+    srcs = [
+        "py_jax_passes.cc",
+    ],
+    copts = COPTS,
+    linkopts = LINKOPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "//jaxlib/mlir/_mlir_libs/passes:capi_jax_passes_headers",
+        "@pybind11",
+    ],
+)
+
+# Shared C++ extension library
+
 cc_library(
     name = "jaxlib_mlir_capi_shared_library",
     srcs = select({
@@ -192,12 +209,13 @@ cc_library(
 cc_library(
     name = "jaxlib_mlir_capi_objects",
     deps = [
+        "//jaxlib/mlir/_mlir_libs/passes:capi_jax_passes",
         "@llvm-project//mlir:CAPISparseTensorObjects",
         "@llvm-project//mlir:CAPITransformsObjects",
         "@llvm-project//mlir:MLIRBindingsPythonCAPIObjects",
-        "@xla//xla/mlir_hlo:CAPIObjects",
         "@stablehlo//:chlo_capi_objects",
         "@stablehlo//:stablehlo_capi_objects",
+        "@xla//xla/mlir_hlo:CAPIObjects",
     ],
 )
 

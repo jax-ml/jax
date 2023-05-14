@@ -231,7 +231,7 @@ def lstm(x: Array, h_0: Array, c_0: Array, weights: Array, seq_lengths: Array,
     c_0: (num_directions * num_layers, batch_size, hidden_size)
     weights: (num_params,) where num_params = get_num_params_in_lstm(...)
     seq_lengths: (batch_size,)
-  Returns: (y, h_n, c_n, workspace, reserve_space).
+  Returns: (y, h_n, c_n, reserve_space).
     y: (batch_size, max_seq_length, hidden_size * num_directions)
     h_n: (num_directions * num_layers, batch_size, hidden_size)
     c_n: (num_directions * num_layers, batch_size, hidden_size)
@@ -370,7 +370,8 @@ def lstm_fwd(x: Array, h_0: Array, c_0: Array, w: Array, seq_lengths: Array,
              bidirectional: bool):
   if seq_lengths.dtype != jnp.dtype("int32"):
     raise NotImplementedError("`seq_lengths` can only be int32.")
-  y, h_n, c_n, workspace, reserve_space = rnn_fwd_p.bind(
+  if jax._src.lib.version < (0, 4, 9):
+    y, h_n, c_n, workspace, reserve_space = rnn_fwd_p.bind(
       x,
       h_0,
       c_0,
@@ -381,8 +382,21 @@ def lstm_fwd(x: Array, h_0: Array, c_0: Array, w: Array, seq_lengths: Array,
       num_layers=num_layers,
       dropout=dropout,
       bidirectional=bidirectional)
-  return (y, h_n, c_n), (x, h_0, c_0, w, seq_lengths, y, workspace,
-                         reserve_space)
+    return (y, h_n, c_n), (x, h_0, c_0, w, seq_lengths, y, workspace,
+                          reserve_space)
+  else:
+    y, h_n, c_n, reserve_space = rnn_fwd_p.bind(
+        x,
+        h_0,
+        c_0,
+        w,
+        seq_lengths,
+        input_size=input_size,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        dropout=dropout,
+        bidirectional=bidirectional)
+    return (y, h_n, c_n), (x, h_0, c_0, w, seq_lengths, y, reserve_space)
 
 
 def rnn_abstract_eval(x_aval, h_0_aval, c_0_aval, w_aval, seq_lengths_aval,
@@ -392,13 +406,21 @@ def rnn_abstract_eval(x_aval, h_0_aval, c_0_aval, w_aval, seq_lengths_aval,
   num_directions = 2 if bidirectional else 1
   output_shape = (batch_size, max_seq_length, num_directions * hidden_size)
   output_aval = core.ShapedArray(output_shape, x_aval.dtype)
-  workspace_size, reserve_space_size = (
+  if jax._src.lib.version < (0, 4, 9):
+    workspace_size, reserve_space_size = (
       gpu_rnn.compute_rnn_workspace_reserve_space_sizes(  # pytype: disable=attribute-error
           input_size, hidden_size, num_layers, batch_size, max_seq_length,
           dropout, bidirectional))
-  workspace_aval = core.ShapedArray((workspace_size,), jnp.float32)
-  reserve_space_aval = core.ShapedArray((reserve_space_size,), jnp.float32)
-  return output_aval, h_0_aval, c_0_aval, workspace_aval, reserve_space_aval
+    workspace_aval = core.ShapedArray((workspace_size,), jnp.float32)
+    reserve_space_aval = core.ShapedArray((reserve_space_size,), jnp.float32)
+    return output_aval, h_0_aval, c_0_aval, workspace_aval, reserve_space_aval
+  else:
+    _, reserve_space_size = (
+        gpu_rnn.compute_rnn_workspace_reserve_space_sizes(  # pytype: disable=attribute-error
+            input_size, hidden_size, num_layers, batch_size, max_seq_length,
+            dropout, bidirectional))
+    reserve_space_aval = core.ShapedArray((reserve_space_size,), jnp.float32)
+    return output_aval, h_0_aval, c_0_aval, reserve_space_aval
 
 
 rnn_fwd_p = core.Primitive('rnn_fwd')
@@ -411,33 +433,61 @@ if gpu_rnn:
 
 def lstm_bwd(input_size: int, hidden_size: int, num_layers: int, dropout: float,
              bidirectional, residuals, gradients):
-  x, h_0, c_0, w, seq_lengths, y, workspace, reserve_space = residuals
-  dy, dh_n, dc_n = gradients
-  dx, dh_0, dc_0, dw = rnn_bwd_p.bind(
-      dy,
-      dh_n,
-      dc_n,
-      x,
-      h_0,
-      c_0,
-      w,
-      y,
-      workspace,
-      reserve_space,
-      seq_lengths,
-      input_size=input_size,
-      hidden_size=hidden_size,
-      num_layers=num_layers,
-      dropout=dropout,
-      bidirectional=bidirectional)
-  return (dx, dh_0, dc_0, dw, jnp.zeros_like(seq_lengths))
+  if jax._src.lib.version < (0, 4, 9):
+    x, h_0, c_0, w, seq_lengths, y, workspace, reserve_space = residuals
+    dy, dh_n, dc_n = gradients
+    dx, dh_0, dc_0, dw = rnn_bwd_p.bind(
+        dy,
+        dh_n,
+        dc_n,
+        x,
+        h_0,
+        c_0,
+        w,
+        y,
+        workspace,
+        reserve_space,
+        seq_lengths,
+        input_size=input_size,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        dropout=dropout,
+        bidirectional=bidirectional)
+    return (dx, dh_0, dc_0, dw, jnp.zeros_like(seq_lengths))
+  else:
+    x, h_0, c_0, w, seq_lengths, y, reserve_space = residuals
+    dy, dh_n, dc_n = gradients
+    dx, dh_0, dc_0, dw = rnn_bwd_p.bind(
+        dy,
+        dh_n,
+        dc_n,
+        x,
+        h_0,
+        c_0,
+        w,
+        y,
+        reserve_space,
+        seq_lengths,
+        input_size=input_size,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        dropout=dropout,
+        bidirectional=bidirectional)
+    return (dx, dh_0, dc_0, dw, jnp.zeros_like(seq_lengths))
 
 
-def rnn_bwd_abstract_eval(dy_aval, dhn_aval, dcn_aval, x_aval, h0_aval, c0_aval,
+if jax._src.lib.version < (0, 4, 9):
+  def rnn_bwd_abstract_eval(dy_aval, dhn_aval, dcn_aval, x_aval, h0_aval, c0_aval,
                           w_aval, y_aval, workspace_aval, reserve_space_aval,
                           seq_lengths_aval, input_size: int, hidden_size: int,
                           num_layers: int, dropout: float, bidirectional: bool):
-  return x_aval, h0_aval, c0_aval, w_aval
+    return x_aval, h0_aval, c0_aval, w_aval
+else:
+  def rnn_bwd_abstract_eval(dy_aval, dhn_aval, dcn_aval, x_aval, h0_aval, c0_aval,  # type: ignore
+                            w_aval, y_aval, reserve_space_aval,
+                            seq_lengths_aval, input_size: int, hidden_size: int,
+                            num_layers: int, dropout: float, bidirectional: bool):
+    return x_aval, h0_aval, c0_aval, w_aval
 
 
 rnn_bwd_p = core.Primitive('rnn_bwd')

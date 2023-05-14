@@ -1113,6 +1113,24 @@ Applies to non-native serialization only.
 There is currently no support for `pmap`, `xmap`, `shard_map`,
 nor for the collective operations, except in native serialization.
 
+### Shape polymorphism with native serialization limitations for `lax.linalg.eigh`
+
+Applies to native serialization only.
+
+JAX lowers `lax.linalg.eigh` using custom calls, and needs to call helper
+functions to determine the workspace size based on the non-batch dimensions.
+Therefore, dynamic dimensions are supported only for the batch dimensions
+(all but the last two dimensions).
+
+Additionally, on GPU, JAX lowering uses the `cuSolver` library and chooses
+`syevj` method (using Jacobi algorithm) for non-batch dimension size less or
+equal to 32, and the `syevd` method (using QR algorithm) for larger dimensions.
+
+In presence of shape polymorphism, JAX will always use `syevd`, because `syevj`
+requires knowing the batch dimensions statically in order to compute
+the workspace size. This means that the performance and the numerical behavior
+may be slightly different for small matrices.
+
 ### Slow implementation of associative reductions for CPU
 
 Applies to non-native serialization only.

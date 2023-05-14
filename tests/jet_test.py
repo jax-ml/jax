@@ -29,7 +29,7 @@ from jax.example_libraries import stax
 from jax.experimental.jet import jet, fact, zero_series
 from jax import lax
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 def jvp_taylor(fun, primals, series):

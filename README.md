@@ -426,6 +426,12 @@ installing CUDA and CUDNN using the pip wheels, since it is much easier!
 You must first install the NVIDIA driver. We
 recommend installing the newest driver available from NVIDIA, but the driver
 must be version >= 525.60.13 for CUDA 12 and >= 450.80.02 for CUDA 11 on Linux.
+If you need to use an newer CUDA toolkit with an older driver, for example
+on a cluster where you cannot update the NVIDIA driver easily, you may be
+able to use the
+[CUDA forward compatibility packages](https://docs.nvidia.com/deploy/cuda-compatibility/)
+that NVIDIA provides for this purpose.
+
 
 ```bash
 pip install --upgrade pip
@@ -457,11 +463,9 @@ able to use the
 [CUDA forward compatibility packages](https://docs.nvidia.com/deploy/cuda-compatibility/)
 that NVIDIA provides for this purpose.
 
-JAX currently ships three CUDA wheel variants:
+JAX currently ships two CUDA wheel variants:
 * CUDA 12.0 and CuDNN 8.8.
 * CUDA 11.8 and CuDNN 8.6.
-* CUDA 11.4 and CuDNN 8.2. This wheel is deprecated and will be discontinued
-  with jax 0.4.8.
 
 You may use a JAX wheel provided the major version of your CUDA and CuDNN
 installation matches, and the minor version is at least as new as the version
@@ -485,9 +489,6 @@ pip install --upgrade "jax[cuda12_local]" -f https://storage.googleapis.com/jax-
 # Installs the wheel compatible with CUDA 11 and cuDNN 8.6 or newer.
 # Note: wheels only available on linux.
 pip install --upgrade "jax[cuda11_local]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-
-# Installs the wheel compatible with Cuda 11.4+ and cudnn 8.2+ (deprecated).
-pip install "jax[cuda11_cudnn82]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ```
 
 **These `pip` installations do not work with Windows, and may fail silently; see

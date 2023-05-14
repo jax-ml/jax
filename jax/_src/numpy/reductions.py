@@ -747,7 +747,7 @@ def _quantile(a: Array, q: Array, axis: Optional[Union[int, Tuple[int, ...]]],
       dimensions[i], dimensions[s] = dimensions[s], dimensions[i]
     do_not_touch_shape = tuple(x for idx,x in enumerate(a.shape) if idx not in axis)
     touch_shape = tuple(x for idx,x in enumerate(a.shape) if idx in axis)
-    a = lax.reshape(a, do_not_touch_shape + (int(np.prod(touch_shape)),), dimensions)
+    a = lax.reshape(a, do_not_touch_shape + (math.prod(touch_shape),), dimensions)
     axis = _canonicalize_axis(-1, a.ndim)
   else:
     axis = _canonicalize_axis(axis, a.ndim)

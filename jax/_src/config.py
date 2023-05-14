@@ -470,6 +470,7 @@ class Config:
             self.jax_dynamic_shapes, self.jax_numpy_dtype_promotion,
             self.jax_default_device, self.jax_array,
             self.jax_threefry_partitionable,
+            self.jax_softmax_custom_jvp,
             # Technically this affects jaxpr->MHLO lowering, not tracing.
             self.jax_hlo_source_file_canonicalization_regex)
 
@@ -561,6 +562,7 @@ class _GlobalExtraJitContext(NamedTuple):
   default_matmul_precision: Optional[Any] = None
   dynamic_shapes: bool = False
   threefry_partitionable: bool = False
+  softmax_custom_jvp: bool = True
 
 
 def _update_global_jit_state(**kw):
@@ -585,6 +587,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   numpy_dtype_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
   dynamic_shapes: bool = False
+  softmax_custom_jvp: bool = True
 
 
 class _ThreadLocalStateCache(threading.local):
@@ -786,12 +789,17 @@ jit_pjit_api_merge = config.define_bool_state(
           "imported."))
 
 
+pmap_shmap_merge = config.define_bool_state(
+    name='jax_pmap_shmap_merge',
+    default=False,
+    upgrade=True,
+    help='If True, pmap and shard_map API will be merged.')
+
+
 spmd_mode = config.define_enum_state(
     name='jax_spmd_mode',
     enum_values=['allow_all', 'allow_jit', 'allow_pjit'],
-    # TODO(yashkatariya): Default to `allow_jit` when the training wheels come
-    # off.
-    default='allow_pjit',
+    default='allow_jit',
     help=("Decides whether Math on `jax.Array`'s that are not fully addressable "
           "(i.e. spans across multiple processes) is allowed. The options are: "
           "* allow_pjit: Default, only `pjit` computations are allowed to "
@@ -841,6 +849,20 @@ threefry_partitionable = config.define_bool_state(
     update_thread_local_hook=lambda val: update_thread_local_jit_state(
         threefry_partitionable=val))
 
+
+softmax_custom_jvp = config.define_bool_state(
+    name='jax_softmax_custom_jvp',
+    default=True,
+    upgrade=True,
+    help=('Use a new custom_jvp rule for jax.nn.softmax. The new rule should '
+          'improve memory usage and stability. Set False to revert to old '
+          'behavior. See https://github.com/google/jax/pull/15677'),
+    update_global_hook=lambda val: _update_global_jit_state(
+        softmax_custom_jvp=val),
+    update_thread_local_hook=lambda val: update_thread_local_jit_state(
+        softmax_custom_jvp=val))
+
+
 enable_custom_vjp_by_custom_transpose = config.define_bool_state(
     name='jax_enable_custom_vjp_by_custom_transpose',
     default=False,
@@ -864,6 +886,18 @@ persistent_cache_min_compile_time_secs = config.define_float_state(
     help=('The minimum compile time of a computation to be written to the '
           'persistent compilation cache. This threshold can be raised to '
           'decrease the number of entries written to the cache.'))
+
+compilation_cache_include_metadata_in_key = config.define_bool_state(
+    name='jax_compilation_cache_include_metadata_in_key',
+    default=False,
+    help=(
+        'Include metadata, such as file names and line numbers, in the'
+        ' compilation cache key. If false, the cache will still get hits even'
+        ' if functions or files are moved, etc. However, it means that'
+        ' executables loaded from the cache may have stale metadata, which'
+        ' may show up in, e.g., profiles.'
+    ),
+)
 
 hlo_source_file_canonicalization_regex = config.define_string_state(
     name='jax_hlo_source_file_canonicalization_regex',

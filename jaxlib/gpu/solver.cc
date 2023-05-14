@@ -57,7 +57,7 @@ SolverType DtypeToSolverType(const py::dtype& np_type) {
 std::pair<int, py::bytes> BuildGetrfDescriptor(const py::dtype& dtype, int b,
                                                int m, int n) {
   SolverType type = DtypeToSolverType(dtype);
-  auto h = SolverHandlePool::Borrow();
+  auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   int lwork;
@@ -96,7 +96,7 @@ std::pair<int, py::bytes> BuildGetrfDescriptor(const py::dtype& dtype, int b,
 std::pair<int, py::bytes> BuildGeqrfDescriptor(const py::dtype& dtype, int b,
                                                int m, int n) {
   SolverType type = DtypeToSolverType(dtype);
-  auto h = SolverHandlePool::Borrow();
+  auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   int lwork;
@@ -148,7 +148,7 @@ py::bytes BuildCsrlsvqrDescriptor(const py::dtype& dtype, int n, int nnzA,
 std::pair<int, py::bytes> BuildOrgqrDescriptor(const py::dtype& dtype, int b,
                                                int m, int n, int k) {
   SolverType type = DtypeToSolverType(dtype);
-  auto h = SolverHandlePool::Borrow();
+  auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   int lwork;
@@ -191,7 +191,7 @@ std::pair<int, py::bytes> BuildOrgqrDescriptor(const py::dtype& dtype, int b,
 std::pair<int, py::bytes> BuildSyevdDescriptor(const py::dtype& dtype,
                                                bool lower, int b, int n) {
   SolverType type = DtypeToSolverType(dtype);
-  auto h = SolverHandlePool::Borrow();
+  auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   int lwork;
@@ -230,7 +230,7 @@ std::pair<int, py::bytes> BuildSyevdDescriptor(const py::dtype& dtype,
 std::pair<int, py::bytes> BuildSyevjDescriptor(const py::dtype& dtype,
                                                bool lower, int batch, int n) {
   SolverType type = DtypeToSolverType(dtype);
-  auto h = SolverHandlePool::Borrow();
+  auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   int lwork;
@@ -298,7 +298,7 @@ std::pair<int, py::bytes> BuildGesvdDescriptor(const py::dtype& dtype, int b,
                                                int m, int n, bool compute_uv,
                                                bool full_matrices) {
   SolverType type = DtypeToSolverType(dtype);
-  auto h = SolverHandlePool::Borrow();
+  auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   int lwork;
@@ -343,7 +343,7 @@ std::pair<int, py::bytes> BuildGesvdjDescriptor(const py::dtype& dtype,
                                                 int batch, int m, int n,
                                                 bool compute_uv, int econ) {
   SolverType type = DtypeToSolverType(dtype);
-  auto h = SolverHandlePool::Borrow();
+  auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   int lwork;
@@ -426,7 +426,7 @@ std::pair<int, py::bytes> BuildGesvdjDescriptor(const py::dtype& dtype,
 std::pair<int, py::bytes> BuildSytrdDescriptor(const py::dtype& dtype,
                                                bool lower, int b, int n) {
   SolverType type = DtypeToSolverType(dtype);
-  auto h = SolverHandlePool::Borrow();
+  auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   int lwork;

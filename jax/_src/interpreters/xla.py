@@ -22,7 +22,7 @@ import itertools as it
 import math
 import operator
 import re
-from typing import (Any, Callable, Dict, NamedTuple, Optional, Protocol,
+from typing import (Any, Callable, Dict, Optional, Protocol,
                     Sequence, Set, Type, Tuple, Union, TYPE_CHECKING)
 
 import numpy as np
@@ -34,6 +34,7 @@ from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src.abstract_arrays import numpy_scalar_types
 from jax._src.core import ConcreteArray, ShapedArray
+from jax._src.sharding_impls import AxisEnv
 from jax._src.util import safe_zip, safe_map
 
 from jax._src.typing import Shape
@@ -53,11 +54,15 @@ def identity(x): return x
 
 _scalar_types = dtypes.python_scalar_dtypes.keys()
 
-def _make_array_shape(a: ShapedArray) -> Sequence[xc.Shape]:
-  if a.dtype == dtypes.float0:
-    return (xc.Shape.array_shape(np.dtype('bool'), a.shape),)
+def _make_array_shape(aval: ShapedArray) -> Sequence[xc.Shape]:
+  def dt(aval):
+    return np.dtype('bool') if aval.dtype == dtypes.float0 else aval.dtype
+
+  if core.is_opaque_dtype(aval.dtype):
+    avals = aval.dtype._rules.physical_avals(aval)
   else:
-    return (xc.Shape.array_shape(a.dtype, a.shape),)
+    avals = [aval]
+  return tuple(xc.Shape.array_shape(dt(a), a.shape) for a in avals)
 
 def get_canonical_source_file(frame: source_info_util.Frame):
   source_file = frame.file_name
@@ -254,13 +259,6 @@ def primitive_subcomputation(platform: str, axis_env: 'AxisEnv',
 
 ### compiling jaxprs
 
-
-class AxisEnv(NamedTuple):
-  """Represents a pmap mesh (only along the replica axes)."""
-  nreps: int
-  names: Tuple[Any, ...]
-  sizes: Tuple[int, ...]
-
 @dataclasses.dataclass
 class TranslationContext:
   builder: xc.XlaBuilder
@@ -271,8 +269,6 @@ class TranslationContext:
   name_stack: Union[str, source_info_util.NameStack]
 
   def replace(self, **kw): return dataclasses.replace(self, **kw)
-
-
 
 def xla_destructure(c, ans):
   num_elements = len(c.get_shape(ans).tuple_shapes())

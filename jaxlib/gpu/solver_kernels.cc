@@ -456,19 +456,31 @@ static absl::Status Syevd_(gpuStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
+
+  std::int64_t batch = d.batch;
+  int output_idx = 1;  // with static shapes buffers[1] is the first output
+  if (d.batch == -1) {
+    // the batch is passed as a second operand
+    gpuMemcpyAsync((void*)&batch,
+                   reinterpret_cast<const std::int64_t*>(buffers[1]),
+                   sizeof(batch), gpuMemcpyDeviceToHost,
+                   stream);
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
+    output_idx = 2;
+  }
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpyAsync(
-      buffers[1], buffers[0],
-      SizeOfSolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+      buffers[output_idx], buffers[0],
+      SizeOfSolverType(d.type) * batch *
           static_cast<std::int64_t>(d.n) * static_cast<std::int64_t>(d.n),
       gpuMemcpyDeviceToDevice, stream)));
   gpusolverEigMode_t jobz = GPUSOLVER_EIG_MODE_VECTOR;
-  int* info = static_cast<int*>(buffers[3]);
-  void* work = buffers[4];
+  int* info = static_cast<int*>(buffers[output_idx + 2]);
+  void* work = buffers[output_idx + 3];
   switch (d.type) {
     case SolverType::F32: {
-      float* a = static_cast<float*>(buffers[1]);
-      float* w = static_cast<float*>(buffers[2]);
-      for (int i = 0; i < d.batch; ++i) {
+      float* a = static_cast<float*>(buffers[output_idx]);
+      float* w = static_cast<float*>(buffers[output_idx + 1]);
+      for (int i = 0; i < batch; ++i) {
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
             gpusolverDnSsyevd(handle.get(), jobz, d.uplo, d.n, a, d.n, w,
                               static_cast<float*>(work), d.lwork, info)));
@@ -479,9 +491,9 @@ static absl::Status Syevd_(gpuStream_t stream, void** buffers,
       break;
     }
     case SolverType::F64: {
-      double* a = static_cast<double*>(buffers[1]);
-      double* w = static_cast<double*>(buffers[2]);
-      for (int i = 0; i < d.batch; ++i) {
+      double* a = static_cast<double*>(buffers[output_idx]);
+      double* w = static_cast<double*>(buffers[output_idx + 1]);
+      for (int i = 0; i < batch; ++i) {
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
             gpusolverDnDsyevd(handle.get(), jobz, d.uplo, d.n, a, d.n, w,
                               static_cast<double*>(work), d.lwork, info)));
@@ -492,9 +504,9 @@ static absl::Status Syevd_(gpuStream_t stream, void** buffers,
       break;
     }
     case SolverType::C64: {
-      gpuComplex* a = static_cast<gpuComplex*>(buffers[1]);
-      float* w = static_cast<float*>(buffers[2]);
-      for (int i = 0; i < d.batch; ++i) {
+      gpuComplex* a = static_cast<gpuComplex*>(buffers[output_idx]);
+      float* w = static_cast<float*>(buffers[output_idx + 1]);
+      for (int i = 0; i < batch; ++i) {
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
             gpusolverDnCheevd(handle.get(), jobz, d.uplo, d.n, a, d.n, w,
                               static_cast<gpuComplex*>(work), d.lwork, info)));
@@ -505,9 +517,9 @@ static absl::Status Syevd_(gpuStream_t stream, void** buffers,
       break;
     }
     case SolverType::C128: {
-      gpuDoubleComplex* a = static_cast<gpuDoubleComplex*>(buffers[1]);
-      double* w = static_cast<double*>(buffers[2]);
-      for (int i = 0; i < d.batch; ++i) {
+      gpuDoubleComplex* a = static_cast<gpuDoubleComplex*>(buffers[output_idx]);
+      double* w = static_cast<double*>(buffers[output_idx + 1]);
+      for (int i = 0; i < batch; ++i) {
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnZheevd(
             handle.get(), jobz, d.uplo, d.n, a, d.n, w,
             static_cast<gpuDoubleComplex*>(work), d.lwork, info)));

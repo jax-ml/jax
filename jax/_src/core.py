@@ -48,7 +48,8 @@ from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, as_hashable_function,
-                           HashableFunction, HashableWrapper, weakref_lru_cache)
+                           HashableFunction, HashableWrapper, weakref_lru_cache,
+                           partition_list)
 import jax._src.pretty_printer as pp
 from jax._src.lib import jax_jit
 from jax._src import traceback_util
@@ -239,8 +240,25 @@ class JaxprEqn(NamedTuple):
   def __repr__(self):
     return str(pp_eqn(self, JaxprPpContext(), JaxprPpSettings())).rstrip()
 
-  def replace(self, *args, **kwargs):
-    return self._replace(*args, **kwargs)
+  def replace(
+      self,
+      invars: Optional[List[Atom]] = None,
+      outvars: Optional[List[Var]] = None,
+      primitive: Optional[Primitive] = None,
+      params: Optional[Dict[str, Any]] = None,
+      effects: Optional[Effects] = None,
+      source_info: Optional[source_info_util.SourceInfo] = None,
+  ):
+    # It is slightly faster to rebuild the tuple directly than to call _replace.
+    return JaxprEqn(
+      self.invars if invars is None else invars,
+      self.outvars if outvars is None else outvars,
+      self.primitive if primitive is None else primitive,
+      self.params if params is None else params,
+      self.effects if effects is None else effects,
+      self.source_info if source_info is None else source_info,
+    )
+
 
 # TODO(mattjj): call typecheck rules here, so we don't form bad eqns
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None):
@@ -252,6 +270,8 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None)
 
 @total_ordering
 class Var:
+  __slots__ = ["count", "suffix", "aval"]
+
   count: int
   suffix: str
   aval: AbstractValue
@@ -407,7 +427,7 @@ def traverse_jaxpr_params(f, params):
           if type(p) in (Jaxpr, ClosedJaxpr)}
 
 
-def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
+def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True):
   def read(v: Atom) -> Any:
     return v.val if isinstance(v, Literal) else env[v]
 
@@ -422,7 +442,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
   for eqn in jaxpr.eqns:
     subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
-    with source_info_util.user_context(eqn.source_info.traceback, name_stack=name_stack):
+    traceback = eqn.source_info.traceback if propagate_source_info else None
+    with source_info_util.user_context(traceback, name_stack=name_stack):
       ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
@@ -512,7 +533,8 @@ class Trace(Generic[TracerType]):
            "to handle custom_transpose_call primitives")
     raise NotImplementedError(msg)
 
-  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, out_trees):
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers,
+                              out_trees, symbolic_zeros):
     msg = (f"{type(self)} must override process_custom_vjp_call "
            "to handle custom_vjp primitives")
     raise NotImplementedError(msg)
@@ -630,61 +652,12 @@ class Tracer(typing.Array):
   def get_referent(self) -> Any:
     return self  # Override for object equivalence checking
 
-  # Python looks up special methods only on classes, not instances. This means
-  # these methods needs to be defined explicitly rather than relying on
-  # __getattr__.
-  def __neg__(self): return self.aval._neg(self)
-  def __pos__(self): return self.aval._pos(self)
-  def __eq__(self, other): return self.aval._eq(self, other)
-  def __ne__(self, other): return self.aval._ne(self, other)
-  def __lt__(self, other): return self.aval._lt(self, other)
-  def __le__(self, other): return self.aval._le(self, other)
-  def __gt__(self, other): return self.aval._gt(self, other)
-  def __ge__(self, other): return self.aval._ge(self, other)
-  def __abs__(self): return self.aval._abs(self)
-  def __add__(self, other): return self.aval._add(self, other)
-  def __radd__(self, other): return self.aval._radd(self, other)
-  def __sub__(self, other): return self.aval._sub(self, other)
-  def __rsub__(self, other): return self.aval._rsub(self, other)
-  def __mul__(self, other): return self.aval._mul(self, other)
-  def __rmul__(self, other): return self.aval._rmul(self, other)
-  def __div__(self, other): return self.aval._div(self, other)
-  def __rdiv__(self, other): return self.aval._rdiv(self, other)
-  def __truediv__(self, other): return self.aval._truediv(self, other)
-  def __rtruediv__(self, other): return self.aval._rtruediv(self, other)
-  def __floordiv__(self, other): return self.aval._floordiv(self, other)
-  def __rfloordiv__(self, other): return self.aval._rfloordiv(self, other)
-  def __divmod__(self, other): return self.aval._divmod(self, other)
-  def __rdivmod__(self, other): return self.aval._rdivmod(self, other)
-  def __mod__(self, other): return self.aval._mod(self, other)
-  def __rmod__(self, other): return self.aval._rmod(self, other)
-  def __pow__(self, other): return self.aval._pow(self, other)
-  def __rpow__(self, other): return self.aval._rpow(self, other)
-  def __matmul__(self, other): return self.aval._matmul(self, other)
-  def __rmatmul__(self, other): return self.aval._rmatmul(self, other)
-  def __and__(self, other): return self.aval._and(self, other)
-  def __rand__(self, other): return self.aval._rand(self, other)
-  def __or__(self, other): return self.aval._or(self, other)
-  def __ror__(self, other): return self.aval._ror(self, other)
-  def __xor__(self, other): return self.aval._xor(self, other)
-  def __rxor__(self, other): return self.aval._rxor(self, other)
-  def __invert__(self): return self.aval._invert(self)
-  def __lshift__(self, other): return self.aval._lshift(self, other)
-  def __rlshift__(self, other): return self.aval._rlshift(self, other)
-  def __rshift__(self, other): return self.aval._rshift(self, other)
-  def __rrshift__(self, other): return self.aval._rrshift(self, other)
-  def __getitem__(self, idx): return self.aval._getitem(self, idx)
-  def __nonzero__(self): return self.aval._nonzero(self)
   def __bool__(self): return self.aval._bool(self)
   def __int__(self): return self.aval._int(self)
-  def __long__(self): return self.aval._long(self)
   def __hex__(self): return self.aval._hex(self)
   def __oct__(self): return self.aval._oct(self)
   def __float__(self): return self.aval._float(self)
   def __complex__(self): return self.aval._complex(self)
-  def __copy__(self): return self.aval._copy(self)
-  def __deepcopy__(self, memo): return self.aval._deepcopy(self, memo)
-  def __round__(self, ndigits=None): return self.aval._round(self, ndigits)
 
   # raises a useful error on attempts to pickle a Tracer.
   def __reduce__(self):
@@ -1239,6 +1212,9 @@ def same_referent(x: Any, y: Any) -> bool:
 def dedup_referents(itr: Iterable[Any]) -> List[Any]:
   return list({HashableWrapper(get_referent(x)):x for x in itr}.values())
 
+def definitely_equal(x, y):
+  return x is y or same_referent(x, y) or symbolic_equal_dim(x, y)
+
 
 # -------------------- abstract values --------------------
 
@@ -1507,7 +1483,9 @@ class ShapedArray(UnshapedArray):
     return ShapedArray(shape, dtype, weak_type, named_shape)
 
   ndim = property(lambda self: len(self.shape))
-  size = property(lambda self: math.prod(self.shape))
+  size = property(lambda self:
+                  0 if any(type(d) is int and d == 0 for d in self.shape)
+                  else math.prod(self.shape))
 
   broadcast: ClassVar[Optional[aval_method]] = None
   transpose: ClassVar[Optional[aval_method]] = None
@@ -1654,7 +1632,9 @@ class DShapedArray(UnshapedArray):
     self.weak_type = weak_type
 
   ndim = property(lambda self: len(self.shape))
-  size = property(lambda self: math.prod(self.shape))
+  size = property(lambda self:
+                  0 if any(type(d) is int and d == 0 for d in self.shape)
+                  else math.prod(self.shape))
 
   def str_short(self, short_dtypes=False) -> str:
     del short_dtypes  # ignored
@@ -1703,7 +1683,6 @@ class DConcreteArray(DShapedArray):
 
 
 pytype_aval_mappings: Dict[type, Callable[[Any], AbstractValue]] = {}
-
 
 
 class DArray:
@@ -1850,8 +1829,8 @@ class DimensionHandler:
     Raise InconclusiveDimensionOperation if there is no such integer for all
     contexts,
     """
-    sz1 = int(np.prod(s1))
-    sz2 = int(np.prod(s2))
+    sz1 = math.prod(s1)
+    sz2 = math.prod(s2)
     if sz1 == 0 and sz2 == 0:
       return 1
     if sz1 % sz2:
@@ -1932,7 +1911,7 @@ def is_constant_shape(s: Shape) -> bool:
   return all(is_constant_dim(d) for d in s)
 
 def symbolic_equal_dim(d1: DimSize, d2: DimSize) -> bool:
-  if d1 is d2 or get_referent(d1) is get_referent(d2): return True
+  if d1 is d2 or same_referent(d1, d2): return True
   handler, ds = _dim_handler_and_canonical(d1, d2)
   return handler.symbolic_equal(*ds)
 
@@ -1975,7 +1954,31 @@ def divide_shape_sizes(s1: Shape, s2: Shape) -> DimSize:
   return handler.divide_shape_sizes(ds[:len(s1)], ds[len(s1):])
 
 def same_shape_sizes(s1: Shape, s2: Shape) -> bool:
+  maybe_result = cancel_divide_tracers(s1, s2)
+  if maybe_result is not None: return maybe_result == 1
   return 1 == divide_shape_sizes(s1, s2)
+
+def cancel_divide_tracers(num, denom):
+  partition = lambda l: partition_list([isinstance(d, Tracer) for d in l], l)
+  num, num_tracers = partition(num)
+  denom, denom_tracers = partition(denom)
+  if num_tracers or denom_tracers:
+    factor = _cancel_divide(num_tracers, denom_tracers)
+    if factor is not None:
+      size1 = math.prod(num)
+      size2 = math.prod(denom)
+      if size1 == size2 or size2 != 0:
+        return factor * (size1 // size2 if size1 != size2 else 1)
+
+def _cancel_divide(num, denom):
+  num = list(num)
+  for a in denom:
+    i = next((i for i, b in enumerate(num) if definitely_equal(a, b)), None)
+    if i is None:
+      break  # couldn't cancel
+    del num[i]
+  else:
+    return math.prod(num)
 
 def is_empty_shape(s: Shape) -> bool:
   return any(symbolic_equal_dim(d, 0) for d in s)
@@ -2091,7 +2094,12 @@ def dim_value_dtype():
   return dtypes.canonicalize_dtype(np.int64)
 
 def dim_constant(ct: int):
-  return np.array(ct, dtype=dim_value_dtype())
+  dtype = dim_value_dtype()
+  assert dtype in (np.int32, np.int64)
+  if dtype == np.int32:
+    return np.int32(ct)
+  elif dtype == np.int64:
+    return np.int64(ct)
 
 def dim_value_aval() -> AbstractValue:
   return ShapedArray((), dim_value_dtype(), weak_type=True)
@@ -2438,8 +2446,8 @@ def extend_axis_env(axis_name: AxisName, size: int, tag: Any):
                              if f.name is not no_axis_name))
 
 @contextmanager
-def extend_axis_env_nd(axes: Iterable[Tuple[AxisName, int]]):
-  frames = [AxisEnvFrame(axis_name, size, None) for axis_name, size in axes]
+def extend_axis_env_nd(axes: Iterable[Tuple[AxisName, int]], tag: Any = None):
+  frames = [AxisEnvFrame(axis_name, size, tag) for axis_name, size in axes]
   ts = thread_local_state.trace_state
   ts.axis_env.extend(frames)
   jax_config.update_thread_local_jit_state(

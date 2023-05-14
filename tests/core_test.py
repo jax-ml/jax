@@ -28,7 +28,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import jvp, linearize, vjp, jit, make_jaxpr
 from jax.api_util import flatten_fun_nokwargs
-from jax.config import config
+from jax import config
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map, tree_reduce,
                            tree_leaves)
 

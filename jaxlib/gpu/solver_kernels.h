@@ -103,7 +103,7 @@ void Orgqr(gpuStream_t stream, void** buffers, const char* opaque,
 struct SyevdDescriptor {
   SolverType type;
   gpusolverFillMode_t uplo;
-  int batch, n;
+  int batch, n;  // batch may be -1 in which case it is passed as operand.
   int lwork;
 };
 

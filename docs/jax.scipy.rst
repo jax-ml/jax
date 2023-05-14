@@ -11,6 +11,8 @@ jax.scipy.fft
 
    dct
    dctn
+   idct
+   idctn
 
 jax.scipy.linalg
 ----------------
@@ -77,6 +79,7 @@ jax.scipy.signal
 .. autosummary::
   :toctree: _autosummary
 
+   fftconvolve
    convolve
    convolve2d
    correlate
@@ -117,6 +120,7 @@ jax.scipy.special
    expi
    expit
    expn
+   gamma
    gammainc
    gammaincc
    gammaln

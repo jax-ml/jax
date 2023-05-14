@@ -32,6 +32,7 @@ from jax._src import profiler
 from jax._src import xla_bridge
 from jax._src.config import config
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
@@ -210,8 +211,9 @@ class ArrayImpl(basearray.Array):
     for db in self._arrays:
       if db.shape != ss:
         raise ValueError(
-            f"Expected shard shape {ss} doesn't match the buffer "
-            f"shape {db.shape} for buffer: {db}")
+            f"Expected shard shape {ss} doesn't match the single device array "
+            f"shape {db.shape}. Shape of Array is "
+            f"{self.aval.str_short()} with sharding {self.sharding}")
 
     # Rearrange arrays based on the device assignment.
     if isinstance(self.sharding, XLACompatibleSharding):
@@ -330,7 +332,7 @@ class ArrayImpl(basearray.Array):
 
   @property
   def is_fully_replicated(self) -> bool:
-    return self.shape == self._arrays[0].shape
+    return self.sharding.is_fully_replicated
 
   def __repr__(self):
     prefix = 'Array('
@@ -423,6 +425,8 @@ class ArrayImpl(basearray.Array):
 
   def addressable_data(self, index: int) -> ArrayImpl:
     self._check_if_deleted()
+    if self.is_fully_replicated and xla_extension_version >= 148:
+      return self._fully_replicated_shard()
     return self._arrays[index]
 
   @functools.cached_property
@@ -594,6 +598,8 @@ def make_array_from_callback(
       for device in sharding.addressable_devices
   ]
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
+  if core.is_opaque_dtype(aval.dtype):
+    return aval.dtype._rules.make_sharded_array(aval, sharding, arrays, committed=True)
   return ArrayImpl(aval, sharding, arrays, committed=True)
 
 
@@ -623,22 +629,39 @@ def make_array_from_single_device_arrays(
     >>> from jax.sharding import PartitionSpec as P
     >>> import numpy as np
     ...
-    >>> shape = (8, 8)
+    >>> global_shape = (8, 8)
     >>> global_mesh = Mesh(np.array(jax.devices()).reshape(2, 4), ('x', 'y'))
     >>> sharding = jax.sharding.NamedSharding(global_mesh, P('x', 'y'))
-    >>> inp_data = np.arange(math.prod(shape)).reshape(shape)
+    >>> inp_data = np.arange(math.prod(global_shape)).reshape(global_shape)
     ...
     >>> arrays = [
     ...     jax.device_put(inp_data[index], d)
-    ...     for d, index in sharding.addressable_devices_indices_map(shape).items()]
+    ...     for d, index in sharding.addressable_devices_indices_map(global_shape).items()]
     ...
-    >>> arr = jax.make_array_from_single_device_arrays(shape, sharding, arrays)
+    >>> arr = jax.make_array_from_single_device_arrays(global_shape, sharding, arrays)
     >>> arr.addressable_data(0).shape
     (4, 2)
+
+    In multi-process case, if the input is process local and data parallel
+    i.e. each process receives a different part of the data, then you can use
+    `make_array_from_single_device_arrays` to create a global jax.Array
+
+    >>> global_shape = (8, 2)
+    >>> host_array = np.arange(math.prod(global_shape)).reshape(global_shape)
+    >>> arrays = jax.device_put(
+    ...   np.split(host_array, len(global_mesh.local_devices), axis=0),
+    ...   global_mesh.local_devices)
+    >>> arr = jax.make_array_from_single_device_arrays(
+    ...   global_shape, jax.sharding.NamedSharding(global_mesh, P(('x', 'y'))),
+    ...   arrays)
+    >>> arr.addressable_data(0).shape
+    (1, 2)
   """
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
+  if core.is_opaque_dtype(aval.dtype):
+    return aval.dtype._rules.make_sharded_array(aval, sharding, arrays, committed=True)
   # TODO(phawkins): ideally the cast() could be checked. Revisit this after
   # removing DeviceArray.
   return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),

@@ -705,8 +705,11 @@ def _conv_general_dilated_lower(
   window_reversal = mlir.dense_bool_elements([False] * num_spatial_dims)
   if (not core.is_constant_shape(window_strides) or
       not core.is_constant_shape(lhs_dilation) or
-      not core.is_constant_shape(rhs_dilation)):
-    raise NotImplementedError("Convolutions with non-static strides or dilation")
+      not core.is_constant_shape(rhs_dilation) or
+      not core.is_constant_dim(feature_group_count) or
+      not core.is_constant_dim(batch_group_count)):
+    # TODO(https://github.com/openxla/stablehlo/issues/1268)
+    raise NotImplementedError("Convolutions with non-static strides, dilation, feature_group_count, or batch_group_count")
   if all(core.is_constant_shape(p) for p in padding):
     return [
         hlo.ConvolutionOp(

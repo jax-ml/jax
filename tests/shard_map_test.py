@@ -28,13 +28,14 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax.config import config
+from jax import config
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
+from jax._src.interpreters import partial_eval as pe
 from jax._src import tree_util
 import jax.numpy as jnp
 
@@ -169,7 +170,6 @@ class ShardMapTest(jtu.JaxTestCase):
     c = fwd(a)
     self.assertAllClose(c[1, :], a[0, :])
 
-  @jtu.skip_on_devices("cpu")  # all_to_all has a warning on cpu
   def test_all_to_all(self):
     devices = np.array(jax.devices())
     mesh = Mesh(devices, axis_names=('x'))
@@ -377,6 +377,10 @@ class ShardMapTest(jtu.JaxTestCase):
       shard_map(foo, mesh=mesh, in_specs=({'hi': P('x')},), out_specs=())(
           {'hi': [jnp.array(3.)]})
 
+    with self.assertRaisesRegex(ValueError,
+                                r'consider using an in_specs entry of `P\(\)`'):
+      shard_map(foo, mesh=mesh, in_specs=P(None), out_specs=())(3.)
+
   def test_reverse_mode_ad(self):
     mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))
 
@@ -439,6 +443,18 @@ class ShardMapTest(jtu.JaxTestCase):
 
     g2 = jax.grad(lambda x: f2(x).sum())(x)  # doesn't crash
     self.assertAllClose(g2, jnp.cos(x), check_dtypes=False)
+
+  def test_remat_scalar_residuals(self):
+    mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
+
+    @partial(jax.remat, policy=jax.checkpoint_policies.everything_saveable)
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      return jnp.sin(jnp.sin(jnp.sin(x.sum()))[None])
+
+    x = jnp.arange(8.)
+    _ = jax.grad(lambda x: f(x).sum())(x)  # doesn't crash
+    jtu.check_grads(f, (x,), modes=['rev'], order=2, atol=1e-2, rtol=1e-2)
 
   def test_check_rep_false_doesnt_hit_rep_rules(self):
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
@@ -566,8 +582,266 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.random.randint(key[0], shape=(1, 16), minval=0, maxval=16,
                                 dtype=jnp.int32)
 
-    g = shard_map(f, mesh, in_specs=(P('x', None),), out_specs=P('x', None))
+    pspec = P('x') if config.jax_enable_custom_prng else P('x', None)
+    g = shard_map(f, mesh, in_specs=(pspec,), out_specs=pspec)
     _ = g(sharded_rng)  # don't crash!
+
+  def test_functools_partial_rank_error(self):
+    mesh = jtu.create_global_mesh((4,), ('x',))
+
+    @partial
+    def f(x):
+      return x
+
+    g = shard_map(f, mesh, in_specs=(P('x', None),), out_specs=P('x',))
+    x = jnp.arange(4)
+    with self.assertRaises(ValueError):
+      g(x)
+
+  def test_in_specs_none_error(self):
+    mesh = jtu.create_global_mesh((4,), ('x',))
+
+    def f(x): return x
+
+    with self.assertRaisesRegex(TypeError, "but it was None"):
+      shard_map(f, mesh, in_specs=None, out_specs=P())(3.)
+
+    # TODO(mattjj): enable this test once we fix the tree_map(f, None, 3.0) bug
+    # with self.assertRaises(TypeError):
+    #   shard_map(f, mesh, in_specs=(None,), out_specs=P())(3.)
+
+    shard_map(f, mesh, in_specs=P(), out_specs=P())(3.)  # doesn't crash
+
+  def test_scan_rep_rule(self):
+    mesh = jtu.create_global_mesh((2, 2,), ('x', 'y'))
+
+    def f(x, y, z):
+      x, y, z = x.sum(), y.sum(), z.sum()
+      def body(c, _):
+        c, *cs = c
+        return (*cs, c), None
+      out, _  = jax.lax.scan(body, (x, y, z), None, length=3)
+      return [jnp.expand_dims(a, 0) for a in out]
+
+    x = jnp.arange(4)
+
+    # doesn't crash, because out_spec assumes no replication (and there is none)
+    shard_map(f, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+              out_specs=P(('x', 'y')))(x, x, x)
+
+    # does crash, because output incorrectly promises replication
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(f, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+                out_specs=P('x'))(x, x, x)
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(f, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+                out_specs=P('y'))(x, x, x)
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(f, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+                out_specs=P(None))(x, x, x)
+
+    def g(x, y, z):
+      x, y, z = x.sum(), y.sum(), z.sum()
+      def body(c, _):
+        return c, None
+      out, _  = jax.lax.scan(body, (x, y, z), None, length=1)
+      return [jnp.expand_dims(a, 0) for a in out]
+
+    # doesn't crash, because everything matches
+    shard_map(g, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+              out_specs=[P(None), P('x'), P(('x', 'y'))])(x, x, x)
+
+    # does crash, because the second guy is wrong
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(g, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+                out_specs=[P(None), P(None), P(('x', 'y'))])(x, x, x)
+
+  def test_eager_notimplemented_error_message_custom_jvp(self):
+    @jax.custom_jvp
+    def foo(x):
+      return 2. * x
+
+    @foo.defjvp
+    def foo_jvp(primals, tangents):
+      (x,), (x_dot,) = primals, tangents
+      return foo(x), 2. * x_dot
+
+    mesh = jtu.create_global_mesh((4,), ('x',))
+    g = shard_map(foo, mesh, in_specs=(P('x'),), out_specs=P('x'))
+    x = jnp.arange(4.)
+    with self.assertRaisesRegex(NotImplementedError, 'custom_jvp'):
+      g(x)
+
+  def test_eager_notimplemented_error_message_custom_vjp(self):
+    @jax.custom_vjp
+    def foo(x):
+      return 2. * x
+
+    def foo_fwd(x):
+      return x, None
+
+    def foo_bwd(_, y_bar):
+      return 2. * y_bar,
+
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    mesh = jtu.create_global_mesh((4,), ('x',))
+    g = shard_map(foo, mesh, in_specs=(P('x'),), out_specs=P('x'))
+    x = jnp.arange(4.)
+    with self.assertRaisesRegex(NotImplementedError, 'custom_vjp'):
+      g(x)
+
+  def test_eager_notimplemented_error_message_axis_index(self):
+    def foo(x):
+      return x + jax.lax.axis_index('x')
+
+    mesh = jtu.create_global_mesh((4,), ('x',))
+    g = shard_map(foo, mesh, in_specs=(P('x'),), out_specs=P('x'))
+    x = jnp.arange(4.)
+    with self.assertRaisesRegex(NotImplementedError, 'axis_index'):
+      g(x)
+
+  def test_jaxpr_shardings_with_no_outputs(self):
+    # https://github.com/google/jax/issues/15385
+    mesh = jtu.create_global_mesh((4,), ('i',))
+
+    @jax.jit
+    @partial(shard_map, mesh=mesh, in_specs=(), out_specs=P('i'))
+    def f():
+      return jax.lax.iota(jnp.dtype('int32'), 4)
+    f()  # don't crash
+
+    @partial(shard_map, mesh=mesh, in_specs=(P('i'),), out_specs=P('i'))
+    def g(a_block):
+      i = jnp.arange(a_block.shape[0])
+      return i + a_block
+
+    g(np.arange(32))  # don't crash
+
+  def test_device_put(self):
+    mesh = jtu.create_global_mesh((4,), ('i',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def f(x):
+      return x + jax.device_put(1)
+
+    x = jnp.arange(32.)
+    f(x)  # doesn't crash
+    jax.jit(f)(x)  # doesn't crash
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def g(x):
+      return x + jax.device_put(1, jax.devices()[0])
+
+    with self.assertRaisesRegex(ValueError, "got device"):
+      g(x)
+
+    # jit means device_puts are ignored, even those within shmap bodies, so no
+    # error!
+    jax.jit(g)(x)  # doesn't crash
+
+  # same method appears in api_test.py:DCETest
+  # TODO(mattjj): consider moving this method to be a helper in jtu
+  def assert_dce_result(self, jaxpr: core.Jaxpr, used_outputs: List[bool],
+                        expected_used_inputs: List[bool],
+                        expected_num_eqns: Optional[int] = None,
+                        check_diff: bool = True):
+    jaxpr_dce, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs)
+    core.check_jaxpr(jaxpr_dce)
+    self.assertEqual(used_inputs, expected_used_inputs)
+    if expected_num_eqns is not None:
+      all_jaxprs = it.chain([jaxpr_dce], core.subjaxprs(jaxpr_dce))
+      num_eqns = sum(len(subjaxpr.eqns) for subjaxpr in all_jaxprs)
+      self.assertEqual(num_eqns, expected_num_eqns, msg=str(jaxpr_dce))
+
+    rand_ = jtu.rand_small(np.random.RandomState(0))
+    rand  = lambda v: rand_(v.aval.shape, v.aval.dtype)
+    consts = [rand(v) for v in jaxpr.constvars]
+    inputs = [rand(v) for v in jaxpr.invars   ]
+    inputs_dce = [x for x, used in zip(inputs, used_inputs) if used]
+    full_outs = core.eval_jaxpr(jaxpr    , consts, *inputs)
+    expected_outs_dce = [y for y, used in zip(full_outs, used_outputs) if used]
+    outs = core.eval_jaxpr(jaxpr_dce, consts, *inputs_dce)
+    self.assertAllClose(outs, expected_outs_dce)
+
+    if check_diff and expected_num_eqns != 0:
+      f = lambda *args: core.eval_jaxpr(jaxpr_dce, consts, *args)
+      jtu.check_grads(f, inputs_dce, order=2, modes=['rev'])
+
+  def test_dce(self):
+    mesh = jtu.create_global_mesh((4, 2), ('i', 'j'))
+
+    def f(x, y, z):
+      @partial(shard_map, mesh=mesh, in_specs=(P('i', 'j'), P(None, 'i')),
+               out_specs=(P(None, None), P(None, 'i'), P('i', 'j')))
+      def g(y, z): return jnp.sin(x), jnp.cos(z), jnp.tan(y)
+      return g(y, z)
+
+    x = jnp.zeros((4, 4))
+    y = jnp.zeros((8, 8))
+    z = jnp.zeros((16, 16))
+    jaxpr = jax.make_jaxpr(f)(x, y, z).jaxpr
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertLen(jaxpr.eqns[0].params['jaxpr'].eqns, 3)
+
+    # If we use all outputs, nothing should be deleted.
+    self.assert_dce_result(
+        jaxpr,  used_outputs=[True, True, True],
+        expected_used_inputs=[True, True, True],
+        expected_num_eqns=1 + 3,  # one outer eqn, three remain in body
+        check_diff=False)
+
+    # If we drop the last output, the second input should be dropped.
+    self.assert_dce_result(
+        jaxpr,  used_outputs=[True, True, False],
+        expected_used_inputs=[True, False, True],
+        expected_num_eqns=1 + 2,  # one outer eqn, two remain in body
+        check_diff=False)
+    # If we drop the second output, the last input should be dropped.
+    self.assert_dce_result(
+        jaxpr,  used_outputs=[True, False, True],
+        expected_used_inputs=[True, True, False],
+        expected_num_eqns=1 + 2,  # one outer eqn, two remain in body
+        check_diff=False)
+    # If we drop the latter two outputs, the latter two inputs should be dropped
+    self.assert_dce_result(
+        jaxpr,  used_outputs=[True, False, False],
+        expected_used_inputs=[True, False, False],
+        expected_num_eqns=1 + 1,  # one outer eqn, two remain in body
+        check_diff=False)
+
+    # Finally, try dropping the closed-over value.
+    self.assert_dce_result(
+        jaxpr,  used_outputs=[False, True, False],
+        expected_used_inputs=[False, False, True],
+        expected_num_eqns=1 + 1,  # one outer eqn, two remain in body
+        check_diff=False)
+
+  def test_post_process_partial_eval_with_scalar_res(self):
+    mesh = jtu.create_global_mesh((4, 2), ('i', 'j'))
+    g = jax.grad(lambda x: shard_map(lambda: jnp.sin(x), mesh=mesh,
+                                     in_specs=P(), out_specs=P())())(2.0)
+    self.assertAllClose(g, jnp.cos(2.0), check_dtypes=False)
+
+  def test_sharding_metadata_in_mhlo_attrs(self):
+    mesh = Mesh(jax.devices(), ('i',))
+    x = jnp.arange(len(jax.devices()), dtype='float32')
+    y = jnp.array([3.], dtype='float32')
+
+    def foo(x):
+      x = jnp.sin(x)
+      x = shard_map(lambda x: jnp.cos(x * y), mesh,
+                    in_specs=P('i'), out_specs=P('i'))(x)
+      x = shard_map(lambda x: jnp.cos(x * y), mesh,
+                    in_specs=P('i'), out_specs=P('i'))(x)
+      return x
+
+    mhlo_str = str(jax.jit(foo).lower(x).compiler_ir('mhlo'))
+    self.assertIn("call @shmap_body", mhlo_str)
+    self.assertIn("call @shmap_body_0", mhlo_str)
+    self.assertIn("%arg0: tensor<1xf32> {jax.arg_info = \"[None]\"}", mhlo_str)
+    self.assertIn("%arg1: tensor<1xf32> {jax.arg_info = \"[('i',)]\"}", mhlo_str)
+    self.assertIn("-> (tensor<1xf32> {jax.result_info = \"[('i',)]\"})", mhlo_str)
 
 
 class FunSpec(NamedTuple):

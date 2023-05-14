@@ -16,6 +16,7 @@
 Specific JAX primitive conversion tests are in primitives_test."""
 import collections
 import contextlib
+import math
 import os
 import re
 from typing import Callable, Dict, Optional, Tuple
@@ -34,7 +35,7 @@ from jax._src import core
 from jax._src import source_info_util
 from jax._src import test_util as jtu
 import jax._src.xla_bridge
-from jax.config import config
+from jax import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf import jax_export
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -318,7 +319,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(4., tape.gradient(v, y))
 
   @jtu.sample_product(with_function=[False, True])
-  def test_gradients_pytree(self, with_function=True):
+  def test_gradients_pytree(self, with_function=False):
     def f(xy: Tuple[float, float]) -> Dict[str, float]:
       x, y = xy
       return dict(one=x * x, two=x * y)
@@ -500,7 +501,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     d_dx_jax = grad_g(x)
     d_dx_tf = jax2tf.convert(grad_g)(x)
     self.assertEqual(d_dx_jax.dtype, dtypes.float0)
-    self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), np.int32),
+    self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), np.bool_),
                         d_dx_tf.numpy())
 
     shape = (3, 4)
@@ -508,7 +509,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     d_dx_jax = grad_g(x)
     d_dx_tf = jax2tf.convert(grad_g)(x)
     self.assertEqual(d_dx_jax.dtype, dtypes.float0)
-    self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), np.int32),
+    self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), np.bool_),
                         d_dx_tf.numpy())
 
   @jtu.sample_product(with_function=[False, True])
@@ -597,8 +598,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         if k in expected_overrides:
           if expected_overrides[k] == "ZERO":
             e = np.zeros_like(w)
-          elif expected_overrides[k] == "ZERO_INT32":
-            e = np.zeros(np.shape(w), dtype=np.int32)
+          elif expected_overrides[k] == "ZERO_BOOL":
+            e = np.zeros(np.shape(w), dtype=np.bool_)
           elif expected_overrides[k] == "ONE":
             e = np.ones_like(w)
           else:
@@ -667,10 +668,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     grad_tf_vjp_jax, = tf_vjp_jax_fun(*args_vjp)
     compare_with_overrides(what=grad_tf_vjp_jax,
                            expected=grad_tf_0,
-                           bool_passthrough="ZERO_INT32",
-                           bool_unused="ZERO_INT32", bool_used="ZERO_INT32",
-                           int_passthrough="ZERO_INT32", int_unused="ZERO_INT32",
-                           int_used="ZERO_INT32")
+                           bool_passthrough="ZERO_BOOL",
+                           bool_unused="ZERO_BOOL", bool_used="ZERO_BOOL",
+                           int_passthrough="ZERO_BOOL", int_unused="ZERO_BOOL",
+                           int_used="ZERO_BOOL")
 
   def test_readme_gradient_int(self):
     x = np.array(2, dtype=np.int16)
@@ -701,7 +702,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_convert_argument_non_tensor_error(self):
     with self.assertRaisesRegex(TypeError,
-                                "Argument.*should be NumPy array"):
+                                "Argument.*is not a valid JAX type"):
       jax2tf.convert(lambda x: x)(lambda y: y)
 
   def test_argument_eager_tensor(self):
@@ -893,7 +894,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return jax2tf.convert(jnp.sin)(y)  # Inner convert takes tracer args
     with self.assertRaisesRegex(
         ValueError, "convert must be used outside all JAX transformations"):
-      jax2tf.convert(outer)(np.ones((4, )))
+      jax2tf.convert(outer)(np.ones((4,), dtype=np.float32))
 
   def test_nested_convert_error_non_tracer(self):
     """The inner convert takes non-tracer arguments"""
@@ -1065,7 +1066,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
                         jnp.bfloat16(2.750))
 
   @jtu.sample_product(with_function=[False, True])
-  def test_kwargs(self, with_function=True):
+  def test_kwargs(self, with_function=False):
     # Re: https://github.com/google/jax/issues/6791
     def f_jax(*, x):
       return jnp.sum(x)
@@ -1286,7 +1287,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return carry
 
     shape = (3, 2)
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     jax_comp = jax.xla_computation(f_while)(x)
     backend = jax._src.xla_bridge.get_backend()
@@ -1531,11 +1532,11 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         stack.enter_context(mesh)
       # Run the JAX native version, to check it works, and to fill caches.
       _ = func_to_convert(*args)
-      exported = jax_export.serialize_native(
+      exported = jax_export.export(
           func_to_convert,
-          [core.ShapedArray(a.shape, a.dtype) for a in args],
           lowering_platform='tpu',
-          strict_checks=True)
+          strict_checks=True
+      )(*(core.ShapedArray(a.shape, a.dtype) for a in args))
 
     if transform1 == "shard_map":
       self.assertIn("stablehlo.all_gather", str(exported.mlir_module))
@@ -1608,7 +1609,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return jnp.sin(x)
 
     with self.assertRaisesRegex(NotImplementedError,
-                                "keepalive must be empty"):
+                                "serialization of host_callbacks is not yet implemented"):
       jax2tf.convert(f_jax, native_serialization=True)(np.float32(42.))
 
     def f_ordered_jax(x):
@@ -1616,7 +1617,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return jnp.sin(x)
 
     with self.assertRaisesRegex(NotImplementedError,
-                                "keepalive must be empty"):
+                                "serialization of host_callbacks is not yet implemented"):
       jax2tf.convert(f_ordered_jax, native_serialization=True)(np.float32(42.))
 
   def test_tuple_args(self):
@@ -1723,7 +1724,7 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
       return x + y
 
     shape = (8, 10)
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     in_axis_resources = (P("x"), P("x"))
     out_axis_resources = None
     res_jax = pjit.pjit(
@@ -1748,6 +1749,32 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
 
     res_tf = tf.function(f_tf, jit_compile=True, autograph=False)(x, x)[0]
     self.assertAllClose(res_tf.numpy(), res_jax)
+
+
+@jtu.with_config(jax_enable_custom_prng=True)
+class Jax2tfWithCustomPRNGTest(tf_test_util.JaxToTfTestCase):
+  def test_key_argument(self):
+    func = lambda key: jax.random.uniform(key, ())
+    key = jax.random.PRNGKey(0)
+    key_raw = jax.random.key_data(key)
+    with self.assertWarnsRegex(FutureWarning, "Raw arrays as random keys.*"):
+      tf_result = jax2tf.convert(func)(key_raw)
+    jax_result = func(key)
+    self.assertEqual(tf_result, jax_result)
+
+  def test_key_from_seed(self):
+    func = lambda seed: jax.random.uniform(jax.random.PRNGKey(seed), ())
+    seed = 1701
+    tf_result = jax2tf.convert(func)(seed)
+    jax_result = func(seed)
+    self.assertEqual(tf_result, jax_result)
+
+  def test_key_closure(self):
+    func = lambda: jax.random.uniform(global_key, ())
+    global_key = jax.random.PRNGKey(0)
+    tf_result = jax2tf.convert(func)()
+    jax_result = func()
+    self.assertEqual(tf_result, jax_result)
 
 
 if __name__ == "__main__":

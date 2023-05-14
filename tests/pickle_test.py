@@ -26,7 +26,7 @@ except ImportError:
 
 import jax
 from jax import numpy as jnp
-from jax.config import config
+from jax import config
 from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax._src import test_util as jtu

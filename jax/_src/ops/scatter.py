@@ -39,7 +39,6 @@ else:
     SingleIndex = Union[None, int, slice, Sequence[int], Array]
 Index = Union[SingleIndex, Tuple[SingleIndex, ...]]
 Scalar = Union[complex, float, int, np.number]
-Numeric = Union[Array, Scalar]
 
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
@@ -64,9 +63,13 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
   Returns:
     An ndarray representing an updated `x` after performing the scatter-update.
   """
-
   x = jnp.asarray(x)
-  y = jnp.asarray(y)
+  if (isinstance(y, int) and np.issubdtype(x.dtype, np.integer) and
+      np.iinfo(x.dtype).min <= y <= np.iinfo(x.dtype).max):
+    y = jnp.asarray(y, dtype=x.dtype)
+  else:
+    y = jnp.asarray(y)
+
   # XLA gathers and scatters are very similar in structure; the scatter logic
   # is more or less a transpose of the gather equivalent.
   treedef, static_idx, dynamic_idx = jnp._split_index_for_jit(idx, x.shape)

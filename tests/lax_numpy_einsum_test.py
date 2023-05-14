@@ -26,7 +26,7 @@ from jax import lax
 import jax.numpy as jnp
 import jax._src.test_util as jtu
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 
@@ -347,6 +347,21 @@ class EinsumTest(jtu.JaxTestCase):
     y = r.randn(2, 2)
     jaxpr = jax.make_jaxpr(partial(jnp.einsum, "ijk,kl->ijl"))(x, y)
     self.assertNotIn('transpose', str(jaxpr))
+
+  def test_preferred_element_type(self):
+    r = self.rng()
+    x = r.randn(2, 2).astype('bfloat16')
+    y = r.randn(2).astype('bfloat16')
+    pattern = "ij,j->i"
+    f1 = partial(jnp.einsum, pattern)
+    jaxpr = jax.make_jaxpr(f1)(x, y)
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertIsNone(jaxpr.eqns[0].params['preferred_element_type'])
+
+    f2 = partial(jnp.einsum, pattern, preferred_element_type='float32')
+    jaxpr = jax.make_jaxpr(f2)(x, y)
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertEqual(jaxpr.eqns[0].params['preferred_element_type'], 'float32')
 
 
 if __name__ == '__main__':

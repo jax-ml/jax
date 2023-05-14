@@ -27,6 +27,9 @@ from jax import lax
 from jax import random
 from jax._src import core
 from jax._src import dtypes
+from jax._src.util import set_module
+
+export = set_module('jax.nn.initializers')
 
 KeyArray = random.KeyArray
 Array = Any
@@ -37,6 +40,7 @@ DTypeLikeComplex = Any
 DTypeLikeInexact = Any  # DTypeLikeFloat | DTypeLikeComplex
 RealNumeric = Any  # Scalar jnp array or float
 
+@export
 class Initializer(Protocol):
   @staticmethod
   def __call__(key: KeyArray,
@@ -44,6 +48,7 @@ class Initializer(Protocol):
                dtype: DTypeLikeInexact = jnp.float_) -> Array:
     ...
 
+@export
 def zeros(key: KeyArray,
           shape: core.Shape,
           dtype: DTypeLikeInexact = jnp.float_) -> Array:
@@ -58,6 +63,7 @@ def zeros(key: KeyArray,
   """
   return jnp.zeros(shape, dtypes.canonicalize_dtype(dtype))
 
+@export
 def ones(key: KeyArray,
          shape: core.Shape,
          dtype: DTypeLikeInexact = jnp.float_) -> Array:
@@ -73,6 +79,7 @@ def ones(key: KeyArray,
   """
   return jnp.ones(shape, dtypes.canonicalize_dtype(dtype))
 
+@export
 def constant(value: Array,
              dtype: DTypeLikeInexact = jnp.float_
              ) -> Initializer:
@@ -95,6 +102,7 @@ def constant(value: Array,
     return jnp.full(shape, value, dtype=dtype)
   return init
 
+@export
 def uniform(scale: RealNumeric = 1e-2,
             dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
   """Builds an initializer that returns real uniformly-distributed random arrays.
@@ -120,6 +128,7 @@ def uniform(scale: RealNumeric = 1e-2,
     return random.uniform(key, shape, dtype) * scale
   return init
 
+@export
 def normal(stddev: RealNumeric = 1e-2,
            dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
   """Builds an initializer that returns real normally-distributed random arrays.
@@ -145,6 +154,7 @@ def normal(stddev: RealNumeric = 1e-2,
     return random.normal(key, shape, dtype) * stddev
   return init
 
+@export
 def _compute_fans(shape: core.NamedShape,
                   in_axis: Union[int, Sequence[int]] = -2,
                   out_axis: Union[int, Sequence[int]] = -1,
@@ -163,15 +173,15 @@ def _compute_fans(shape: core.NamedShape,
   if isinstance(in_axis, int):
     in_size = shape[in_axis]
   else:
-    in_size = int(np.prod([shape[i] for i in in_axis]))
+    in_size = math.prod([shape[i] for i in in_axis])
   if isinstance(out_axis, int):
     out_size = shape[out_axis]
   else:
-    out_size = int(np.prod([shape[i] for i in out_axis]))
+    out_size = math.prod([shape[i] for i in out_axis])
   if isinstance(batch_axis, int):
     batch_size = shape[batch_axis]
   else:
-    batch_size = int(np.prod([shape[i] for i in batch_axis]))
+    batch_size = math.prod([shape[i] for i in batch_axis])
   receptive_field_size = shape.total / in_size / out_size / batch_size
   fan_in = in_size * receptive_field_size
   fan_out = out_size * receptive_field_size
@@ -208,6 +218,7 @@ def _complex_truncated_normal(key: KeyArray, upper: Array,
   theta = 2 * jnp.pi * random.uniform(key_theta, shape, real_dtype).astype(dtype)
   return r * jnp.exp(1j * theta)
 
+@export
 def variance_scaling(
   scale: RealNumeric,
   mode: Union[Literal["fan_in"], Literal["fan_out"], Literal["fan_avg"]],
@@ -295,6 +306,7 @@ def variance_scaling(
 
   return init
 
+@export
 def glorot_uniform(in_axis: Union[int, Sequence[int]] = -2,
                    out_axis: Union[int, Sequence[int]] = -1,
                    batch_axis: Sequence[int] = (),
@@ -332,7 +344,7 @@ def glorot_uniform(in_axis: Union[int, Sequence[int]] = -2,
 
 xavier_uniform = glorot_uniform
 
-
+@export
 def glorot_normal(in_axis: Union[int, Sequence[int]] = -2,
                   out_axis: Union[int, Sequence[int]] = -1,
                   batch_axis: Sequence[int] = (),
@@ -370,6 +382,7 @@ def glorot_normal(in_axis: Union[int, Sequence[int]] = -2,
 
 xavier_normal = glorot_normal
 
+@export
 def lecun_uniform(in_axis: Union[int, Sequence[int]] = -2,
                   out_axis: Union[int, Sequence[int]] = -1,
                   batch_axis: Sequence[int] = (),
@@ -405,6 +418,7 @@ def lecun_uniform(in_axis: Union[int, Sequence[int]] = -2,
   return variance_scaling(1.0, "fan_in", "uniform", in_axis=in_axis,
                           out_axis=out_axis, batch_axis=batch_axis, dtype=dtype)
 
+@export
 def lecun_normal(in_axis: Union[int, Sequence[int]] = -2,
                  out_axis: Union[int, Sequence[int]] = -1,
                  batch_axis: Sequence[int] = (),
@@ -440,7 +454,7 @@ def lecun_normal(in_axis: Union[int, Sequence[int]] = -2,
   return variance_scaling(1.0, "fan_in", "truncated_normal", in_axis=in_axis,
                           out_axis=out_axis, batch_axis=batch_axis, dtype=dtype)
 
-
+@export
 def he_uniform(in_axis: Union[int, Sequence[int]] = -2,
                out_axis: Union[int, Sequence[int]] = -1,
                batch_axis: Sequence[int] = (),
@@ -478,7 +492,7 @@ def he_uniform(in_axis: Union[int, Sequence[int]] = -2,
 
 kaiming_uniform = he_uniform
 
-
+@export
 def he_normal(in_axis: Union[int, Sequence[int]] = -2,
               out_axis: Union[int, Sequence[int]] = -1,
               batch_axis: Sequence[int] = (),
@@ -516,7 +530,7 @@ def he_normal(in_axis: Union[int, Sequence[int]] = -2,
 
 kaiming_normal = he_normal
 
-
+@export
 def orthogonal(scale: RealNumeric = 1.0,
                column_axis: int = -1,
                dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
@@ -560,7 +574,7 @@ def orthogonal(scale: RealNumeric = 1.0,
     return scale * Q
   return init
 
-
+@export
 def delta_orthogonal(
   scale: RealNumeric = 1.0,
   column_axis: int = -1,

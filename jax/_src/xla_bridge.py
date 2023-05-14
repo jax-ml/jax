@@ -328,7 +328,12 @@ def register_pjrt_plugin_factories(plugins_from_env: str) -> None:
         library_path = path
         options = None
 
-      xla_client.load_pjrt_plugin_dynamically(name, library_path)
+      if xla_extension_version >= 152:
+        # Plugin may already be statically linked in some configurations.
+        if not xla_client.pjrt_plugin_loaded(name):
+          xla_client.load_pjrt_plugin_dynamically(name, library_path)
+      else:
+        xla_client.load_pjrt_plugin_dynamically(name, library_path)
       return xla_client.make_c_api_client(name, options)
 
     return factory
@@ -598,7 +603,7 @@ def default_backend() -> str:
   """Returns the platform name of the default XLA backend."""
   return get_backend(None).platform
 
-
+@lru_cache
 def local_devices(process_index: Optional[int] = None,
                   backend: Optional[Union[str, xla_client.Client]] = None,
                   host_id: Optional[int] = None) -> List[xla_client.Device]:
@@ -656,6 +661,7 @@ def host_id(backend: Optional[Union[str, xla_client.Client]] = None) -> int:
   return process_index(backend)
 
 
+@lru_cache
 def process_count(
     backend: Optional[Union[str, xla_client.Client]] = None
 ) -> int:
@@ -684,3 +690,15 @@ def host_ids(
 
 def using_pjrt_c_api(backend=None):
   return "PJRT C API" in get_backend(backend).platform_version
+
+
+# TODO(parkers): Get rid of this in favor of a generic way to get topologies.
+def make_pjrt_tpu_topology(topology_name=None, **kwargs):
+  if xla_extension_version >= 153:
+    # TODO(b/261484192): Make a system for lazily loading libtpu.so and call
+    # that inside make_tfrt_tpu_c_api_device_topology.
+    get_backend()  # Properly initialize libtpu.so.
+    return xla_client.make_tfrt_tpu_c_api_device_topology(
+        topology_name, **kwargs
+    )
+  raise NotImplementedError('make_pjrt_tpu_topology is not implemented')

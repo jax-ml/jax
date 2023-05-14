@@ -18,12 +18,22 @@ import functools
 from typing import (Mapping, Optional, Sequence, Set, Tuple)
 
 from jax._src import util
+from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 
 Shape = Tuple[int, ...]
 Device = xc.Device
 Index = Tuple[slice, ...]
 XLADeviceAssignment = Sequence[Device]
+
+
+@functools.lru_cache(maxsize=4096)
+def _addressable_devices_indices_map(
+    sharding: Sharding, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+  if sharding.is_fully_addressable:
+    return sharding.devices_indices_map(global_shape)
+  return {d: ind for d, ind in sharding.devices_indices_map(global_shape).items()
+          if d.process_index == d.client.process_index()}
 
 
 @util.use_cpp_class(xc.Sharding)
@@ -70,12 +80,20 @@ class Sharding:
     """
     raise NotImplementedError('Subclasses should implement this method.')
 
+  @property
+  def is_fully_replicated(self) -> bool:
+    """Returns if a sharding is fully replicated on all the devices."""
+    raise NotImplementedError('Subclasses should implement this method.')
+
   #############################################################################
   # Default implementations below that all subclasses will inherit.
 
   @functools.cached_property
   def addressable_devices(self) -> Set[Device]:
     """A set of devices that are addressable by the current process."""
+    # Add a fast path for single controller runtimes.
+    if xb.process_count() == 1:
+      return self.device_set
     return {d for d in self.device_set
             if d.process_index == d.client.process_index()}
 
@@ -86,7 +104,6 @@ class Sharding:
     # The pytype disable is because pytype can't recognize a cached property.
     return len(self.device_set) == len(self.addressable_devices)  # type: ignore
 
-  @functools.lru_cache(maxsize=4096)
   def addressable_devices_indices_map(
       self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
     """A mapping from addressable device to the slice of global data it contains.
@@ -94,5 +111,4 @@ class Sharding:
     ``addressable_devices_indices_map`` contains that part of
     ``device_indices_map`` that applies to the addressable devices.
     """
-    return {d: ind for d, ind in self.devices_indices_map(global_shape).items()
-            if d.process_index == d.client.process_index()}
+    return _addressable_devices_indices_map(self, global_shape)

@@ -498,6 +498,7 @@ import atexit
 import functools
 import itertools
 import logging
+import math
 import threading
 import traceback
 from typing import (Any, Callable, Dict, List, Optional, Sequence,
@@ -506,7 +507,7 @@ import warnings
 
 from jax._src import api
 from jax._src import core
-from jax.config import config
+from jax import config
 from jax import custom_derivatives
 from jax._src import dtypes
 from jax import lax
@@ -518,9 +519,9 @@ from jax._src.interpreters import xla
 from jax._src import ad_checkpoint
 from jax._src import dispatch
 from jax._src import pretty_printer as pp
+from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import util
-from jax._src import lib as jaxlib
 from jax._src.lib import pytree
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client
@@ -1245,8 +1246,10 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
       result_arrays = ()
     return result_arrays
 
-  if isinstance(ctx.module_context.axis_context,
-                (mlir.SPMDAxisContext, mlir.ShardingContext)):
+  if isinstance(
+      ctx.module_context.axis_context,
+      (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
+  ):
     # Apply maximal sharding so pjit only executes the callback on device device_index.
     sharding = xla_client.OpSharding()
     sharding.type = xla_client.OpSharding.Type.MAXIMAL
@@ -1378,7 +1381,7 @@ def _add_transform(params: Dict, name: str, *transform_params) -> Dict:
 
 
 def _aval_is_empty(aval) -> bool:
-  return np.prod(aval.shape) == 0
+  return math.prod(aval.shape) == 0
 
 def _instantiate_zeros(tan, arg):
   """Turn special ad.zero tangents into arrays of 0s for sending to host.
@@ -1715,11 +1718,17 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 eqn.params,
                 jaxpr=_rewrite_closed_jaxpr(jaxpr, True, True),
                 donated_invars=eqn.params["donated_invars"] + (False, False),
-                in_shardings=(eqn.params["in_shardings"] +
-                              (pjit._UNSPECIFIED, pjit._UNSPECIFIED)),
-                out_shardings=(eqn.params["out_shardings"] +
-                               (pjit._UNSPECIFIED, pjit._UNSPECIFIED)),
-            )))
+                in_shardings=(
+                    eqn.params["in_shardings"]
+                    + (sharding_impls.UNSPECIFIED, sharding_impls.UNSPECIFIED)
+                ),
+                out_shardings=(
+                    eqn.params["out_shardings"]
+                    + (sharding_impls.UNSPECIFIED, sharding_impls.UNSPECIFIED)
+                ),
+            ),
+        )
+    )
   elif eqn.primitive is ad_checkpoint.remat_p:
     jaxpr_ = cast(core.Jaxpr, eqn.params["jaxpr"])
     eqns.append(

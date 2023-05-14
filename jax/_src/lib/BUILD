@@ -19,7 +19,10 @@ load(
     "pytype_strict_library",
 )
 
-package(default_visibility = ["//:__subpackages__"])
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//:__subpackages__"],
+)
 
 py_library_providing_imports_info(
     name = "lib",
@@ -27,6 +30,7 @@ py_library_providing_imports_info(
         "__init__.py",
         "mlir/__init__.py",
         "mlir/dialects/__init__.py",
+        "mlir/jax.py",
     ],
     lib_rule = pytype_strict_library,
     visibility = ["//jax:internal"] + jax_visibility("lib"),
@@ -36,12 +40,15 @@ py_library_providing_imports_info(
         "//jax:enable_jaxlib_build": [
             "//jaxlib",
             "//jaxlib:cpu_feature_guard",
+            "//jaxlib:utils",
+            "//jaxlib/mlir:jax",
             "//jaxlib/mlir:builtin_dialect",
             "//jaxlib/mlir:chlo_dialect",
             "//jaxlib/mlir:func_dialect",
             "//jaxlib/mlir:ir",
             "//jaxlib/mlir:mhlo_dialect",
             "//jaxlib/mlir:ml_program_dialect",
+            "//jaxlib/mlir:pass_manager",
             "//jaxlib/mlir:sparse_tensor_dialect",
             "//jaxlib/mlir:stablehlo_dialect",
             # xla_client

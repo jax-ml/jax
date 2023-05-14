@@ -17,8 +17,9 @@ import numpy as np
 import itertools as it
 from collections import OrderedDict, abc
 from typing import (Callable, Iterable, Tuple, Optional, Dict, Any, Set,
-                    NamedTuple, Union, Sequence)
+                    NamedTuple, Union, Sequence, Mapping)
 from functools import wraps, partial, partialmethod, lru_cache
+import math
 
 from jax import lax
 from jax import numpy as jnp
@@ -26,9 +27,10 @@ from jax import numpy as jnp
 from jax._src import core
 from jax._src import dispatch
 from jax._src import effects
-from jax._src import mesh
+from jax._src import mesh as mesh_lib
 from jax._src import linear_util as lu
 from jax._src import op_shardings
+from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import stages
 from jax._src import traceback_util
@@ -47,10 +49,11 @@ from jax._src.interpreters.partial_eval import (
   convert_constvars_jaxpr, new_jaxpr_eqn)
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
-from jax._src.pjit import (
-    sharding_constraint_p, ParsedPartitionSpec, get_unconstrained_dims,
-    GSPMDSharding)
-from jax._src.sharding_impls import NamedSharding
+from jax._src.pjit import (sharding_constraint_p, get_unconstrained_dims,
+                           GSPMDSharding)
+from jax._src.sharding_impls import (
+    ArrayMapping, NamedSharding, ParsedPartitionSpec,
+    array_mapping_to_axis_resources)
 from jax._src.tree_util import (tree_flatten, tree_unflatten, all_leaves,
                                 tree_map, treedef_tuple)
 from jax._src.util import (safe_map, safe_zip, HashableFunction, unzip2, unzip3,
@@ -90,12 +93,12 @@ class FrozenDict(abc.Mapping):
 # Multi-dimensional generalized map
 
 AxisName = core.AxisName
-ResourceAxisName = mesh.ResourceAxisName  # Different name just for documentation purposes
-Mesh = mesh.Mesh
-MeshAxisName = mesh.MeshAxisName
-ResourceEnv = mesh.ResourceEnv
-EMPTY_ENV = mesh.EMPTY_ENV
-thread_resources = mesh.thread_resources
+ResourceAxisName = mesh_lib.ResourceAxisName  # Different name just for documentation purposes
+Mesh = mesh_lib.Mesh
+MeshAxisName = mesh_lib.MeshAxisName
+ResourceEnv = mesh_lib.ResourceEnv
+EMPTY_ENV = mesh_lib.EMPTY_ENV
+thread_resources = mesh_lib.thread_resources
 
 
 class SerialLoop:
@@ -157,15 +160,19 @@ def serial_loop(name: ResourceAxisName, length: int):
 
   Example::
 
-    with loop('l', 4):
-      out = xmap(
-        lambda x: jnp.sin(x) * 5,  # This will be called 4 times with different
-                                   # slices of x.
-        in_axes=['i'], out_axes=['i'],
-        axis_resources={'i': 'l'})(x)
+    >>> x = jnp.linspace(0, jnp.pi, 4)
+    ...
+    >>> with serial_loop('l', len(x)):
+    ...   out = xmap(
+    ...     lambda x: jnp.sin(x) * 5,  # This will be called 4 times with different
+    ...                                # slices of x.
+    ...     in_axes=['i'], out_axes=['i'],
+    ...     axis_resources={'i': 'l'})(x)
+    >>> out.shape
+    (4,)
   """
   old_env: ResourceEnv = getattr(thread_resources, "env", EMPTY_ENV)
-  thread_resources.env = old_env.with_extra_loop(mesh.Loop(name, length))
+  thread_resources.env = old_env.with_extra_loop(mesh_lib.Loop(name, length))
   try:
     yield
   finally:
@@ -269,8 +276,8 @@ def xmap(fun: Callable,
          in_axes,
          out_axes,
          *,
-         axis_sizes: Dict[AxisName, int] = {},
-         axis_resources: Dict[AxisName, ResourceSet] = {},
+         axis_sizes: Optional[Mapping[AxisName, int]] = None,
+         axis_resources: Optional[Mapping[AxisName, ResourceSet]] = None,
          donate_argnums: Union[int, Sequence[int]] = (),
          backend: Optional[str] = None) -> stages.Wrapped:
   """Assign a positional signature to a program that uses named array axes.
@@ -457,6 +464,9 @@ def xmap(fun: Callable,
   else:
     out_axes, out_axes_entries, out_axes_treedef = _prepare_axes(out_axes, "out_axes")
     out_axes_entries = tuple(out_axes_entries)  # Make entries hashable
+
+  axis_sizes = {} if axis_sizes is None else axis_sizes
+  axis_resources = {} if axis_resources is None else axis_resources
 
   axis_sizes_names = set(axis_sizes.keys())
   in_axes_names = set(it.chain(*(spec.keys() for spec in in_axes_entries)))
@@ -677,9 +687,9 @@ def make_xmap_callable(fun: lu.WrappedFun,
       tiling_method = pxla.TileManual(manual_mesh_axes)
     else:
       tiling_method = pxla.TileVectorize()
-    in_shardings = [NamedSharding(mesh, pxla.array_mapping_to_axis_resources(i))
+    in_shardings = [NamedSharding(mesh, array_mapping_to_axis_resources(i))
                     for i in mesh_in_axes]
-    out_shardings = [NamedSharding(mesh, pxla.array_mapping_to_axis_resources(o))
+    out_shardings = [NamedSharding(mesh, array_mapping_to_axis_resources(o))
                      for o in mesh_out_axes]
     return pxla.lower_mesh_computation(
         f, 'xmap', name, mesh,
@@ -689,7 +699,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         lowering_platform=lowering_platform)
   else:
     return dispatch.sharded_lowering(
-        f, name, donated_invars, True, *[(a, None) for a in in_avals],
+        f, name, donated_invars, True, False, in_avals, (None,) * len(in_avals),
         lowering_platform=lowering_platform)
 
 
@@ -937,7 +947,7 @@ def _resource_typing_xmap(avals,
     raise JAXTypeError(
         f"Detected disallowed xmap axis name shadowing at "
         f"{source_info_util.summarize(source_info)} "
-        f"(shadowed axes: {mesh.show_axes(overlap)})")
+        f"(shadowed axes: {mesh_lib.show_axes(overlap)})")
 
   if resource_env.physical_mesh != params['resource_env'].physical_mesh:
     raise RuntimeError("Changing the physical mesh is not allowed inside xmap.")
@@ -965,9 +975,9 @@ def _resource_typing_xmap(avals,
         raise JAXTypeError(
             f"One of xmapped function ({params['name']}) outputs is broadcast "
             f"along axis `{baxis}` which is assigned to resources "
-            f"{mesh.show_axes(baxis_resources)}, but the output is already "
-            f"partitioned along {mesh.show_axes(overlap)}, because its "
-            f"named shape contains {mesh.show_axes(partitioning_axes)}")
+            f"{mesh_lib.show_axes(baxis_resources)}, but the output is already "
+            f"partitioned along {mesh_lib.show_axes(overlap)}, because its "
+            f"named shape contains {mesh_lib.show_axes(partitioning_axes)}")
 pxla.custom_resource_typing_rules[xmap_p] = _resource_typing_xmap
 
 
@@ -1269,7 +1279,7 @@ batching.BatchTrace.post_process_xmap = _batch_trace_post_process_xmap
 # -------- nested xmap handling --------
 
 def _xmap_lowering_rule(ctx, *args, **kwargs):
-  if isinstance(ctx.module_context.axis_context, mlir.SPMDAxisContext):
+  if isinstance(ctx.module_context.axis_context, sharding_impls.SPMDAxisContext):
     if config.experimental_xmap_spmd_lowering_manual:
       return _xmap_lowering_rule_spmd_manual(ctx, *args, **kwargs)
     else:
@@ -1277,9 +1287,9 @@ def _xmap_lowering_rule(ctx, *args, **kwargs):
   # Here ShardingContext is used in place of ReplicaAxisContext because when
   # axis_resources and mesh is not used with xmap, `make_xmap_callable` will
   # go via `dispatch.sharded_lowering` path which sets the context to
-  # ShardingContext. mlir.ShardingContext is not used for SPMD.
+  # ShardingContext. sharding_impls.ShardingContext is not used for SPMD.
   elif isinstance(ctx.module_context.axis_context,
-                  (mlir.ReplicaAxisContext, mlir.ShardingContext)):
+                  (sharding_impls.ReplicaAxisContext, sharding_impls.ShardingContext)):
     return _xmap_lowering_rule_replica(ctx, *args, **kwargs)
   else:
     raise AssertionError("Unrecognized axis context type!")
@@ -1382,7 +1392,7 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
 
   # XXX: We modify mesh_in_axes and mesh_out_axes here
   def add_spmd_axes(
-      flat_mesh_axes: Sequence[pxla.ArrayMapping],
+      flat_mesh_axes: Sequence[ArrayMapping],
       flat_extra_axes: Optional[Sequence[Sequence[Sequence[MeshAxisName]]]]):
     if flat_extra_axes is None:
       return
@@ -1399,7 +1409,7 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
 
   global_sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)
   sharded_global_in_nodes = [
-    [mlir.wrap_with_sharding_op(node, global_sharding_spec(aval, aval_axes).sharding_proto())]
+    [mlir.wrap_with_sharding_op(ctx, node, aval, global_sharding_spec(aval, aval_axes).sharding_proto())]
     if aval_axes else [node]
     for node, aval, aval_axes in zip(global_in_nodes, global_in_avals, mesh_in_axes)
   ]
@@ -1417,7 +1427,7 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
       dim_var_values=ctx.dim_var_values)
 
   sharded_global_out_nodes = [
-    mlir.wrap_with_sharding_op(node, global_sharding_spec(aval, aval_axes).sharding_proto())
+    mlir.wrap_with_sharding_op(ctx, node, aval, global_sharding_spec(aval, aval_axes).sharding_proto())
     if aval_axes else node
     for (node,), aval, aval_axes in zip(global_out_nodes, global_out_avals, mesh_out_axes)
   ]
@@ -1456,7 +1466,8 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
 
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
-  assert isinstance(ctx.module_context.axis_context, mlir.SPMDAxisContext)
+  assert isinstance(ctx.module_context.axis_context,
+                    sharding_impls.SPMDAxisContext)
   sub_ctx = ctx.module_context.replace(
       name_stack=ctx.module_context.name_stack.extend(wrap_name(name, 'xmap')),
       axis_context=ctx.module_context.axis_context.extend_manual(manual_mesh_axes))
@@ -1567,9 +1578,9 @@ def _get_axis_resource_count(
     if local_res_shape is None:
       nlocal = None
     else:
-      nlocal = int(np.prod(map(local_res_shape.get, resources), dtype=np.int64))
+      nlocal = math.prod(map(local_res_shape.get, resources))
     resource_count_map[axis] = ResourceCount(
-        int(np.prod(map(global_res_shape.get, resources), dtype=np.int64)),
+        math.prod(map(global_res_shape.get, resources)),
         nlocal, distributed)
   return resource_count_map
 
@@ -1599,16 +1610,6 @@ def _get_axis_sizes(args_flat: Iterable[Any],
                             f"occurs in dimension {dim}: {global_dim_size} != {expected_global_dim_size}")
       global_axis_sizes[name] = global_dim_size
   return FrozenDict(global_axis_sizes)
-
-
-def lookup_exactly_one_of(d: AxisNamePos, names: Set[AxisName]) -> Optional[int]:
-  res = None
-  for name in names:
-    if name in d:
-      if res is not None:
-        raise ValueError("An input was mapped to the same resource twice")
-      res = d[name]
-  return res
 
 
 @lu.transformation
@@ -1755,7 +1756,7 @@ def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
 
       s = arg.sharding
       xmap_sharding = pxla.create_mesh_pspec_sharding(
-          mesh, pxla.array_mapping_to_axis_resources(xmap_array_mapping))
+          mesh, array_mapping_to_axis_resources(xmap_array_mapping))
       # This check is cached because comparing OpSharding is expensive during
       # dispatch and if the shardings are the same, then there is no need to
       # compare twice.

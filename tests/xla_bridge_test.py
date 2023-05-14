@@ -98,7 +98,13 @@ class XlaBridgeTest(jtu.JaxTestCase):
       with mock.patch.object(
           xc, "load_pjrt_plugin_dynamically", autospec=True
       ) as mock_load_plugin:
-        client_factory()
+        if xc._version >= 152:
+          with mock.patch.object(
+              xc, "pjrt_plugin_loaded", autospec=True
+          ) as mock_plugin_loaded:
+            client_factory()
+        else:
+          client_factory()
 
     self.assertRegex(
         log_output[1][0],
@@ -108,7 +114,10 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertIn("name1", xb._backend_factories)
     self.assertIn("name2", xb._backend_factories)
     self.assertEqual(priotiy, 400)
-    mock_load_plugin.assert_called_once_with("name1", "path1")
+    if xc._version >= 152:
+      mock_plugin_loaded.assert_called_once_with("name1")
+    else:
+      mock_load_plugin.assert_called_once_with("name1", "path1")
     if xc._version >= 134:
       mock_make.assert_called_once_with("name1", None)
     else:
@@ -126,13 +135,22 @@ class XlaBridgeTest(jtu.JaxTestCase):
       with mock.patch.object(
           xc, "load_pjrt_plugin_dynamically", autospec=True
       ) as mock_load_plugin:
-        client_factory()
+        if xc._version >= 152:
+          with mock.patch.object(
+              xc, "pjrt_plugin_loaded", autospec=True
+          ) as mock_plugin_loaded:
+            client_factory()
+        else:
+          client_factory()
 
     self.assertIn("name1", xb._backend_factories)
     self.assertEqual(priority, 400)
-    mock_load_plugin.assert_called_once_with(
-        "name1", "/path/pjrt_plugin_name1.so"
-    )
+    if xc._version >= 152:
+      mock_plugin_loaded.assert_called_once_with("name1")
+    else:
+      mock_load_plugin.assert_called_once_with(
+          "name1", "/path/pjrt_plugin_name1.so"
+      )
     mock_make.assert_called_once_with(
         "name1",
         {
@@ -147,6 +165,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
 class GetBackendTest(jtu.JaxTestCase):
 
   class _DummyBackend:
+
     def __init__(self, platform, device_count):
       self.platform = platform
       self._device_count = device_count

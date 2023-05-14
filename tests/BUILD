@@ -23,7 +23,10 @@ load(
 
 licenses(["notice"])
 
-package(default_visibility = ["//visibility:private"])
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//visibility:private"],
+)
 
 jax_generate_backend_suites()
 
@@ -145,7 +148,7 @@ jax_test(
     shard_count = {
         "cpu": 10,
         "gpu": 10,
-        "tpu": 10,
+        "tpu": 20,
     },
 )
 
@@ -207,7 +210,7 @@ jax_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
-    ],
+    ] + py_deps("numpy"),
 )
 
 jax_test(
@@ -416,7 +419,7 @@ jax_test(
     shard_count = {
         "cpu": 40,
         "gpu": 40,
-        "tpu": 30,
+        "tpu": 40,
         "iree": 40,
     },
     deps = [
@@ -537,6 +540,9 @@ jax_test(
 jax_test(
     name = "nn_test",
     srcs = ["nn_test.py"],
+    shard_count = {
+        "tpu": 10,
+    },
 )
 
 jax_test(
@@ -624,12 +630,15 @@ jax_test(
     srcs = ["random_test.py"],
     backend_tags = {
         "cpu": ["notsan"],  # Times out
-        "tpu": ["optonly"],
+        "tpu": [
+            "optonly",
+            "nomsan",  # Times out
+        ],
     },
     shard_count = {
         "cpu": 30,
         "gpu": 30,
-        "tpu": 30,
+        "tpu": 40,
         "iree": 30,
     },
     tags = ["noasan"],  # Times out
@@ -646,7 +655,9 @@ jax_test(
             "notsan",
         ],
         "tpu": [
-            "noasan",  # Times out under asan/tsan.
+            "noasan",  # Times out under asan/msan/tsan.
+            "nomsan",
+            "notsan",
             "optonly",
         ],
     },
@@ -666,7 +677,8 @@ jax_test(
         "tpu": [
             "noasan",
             "notsan",
-        ],  # Times out on TPU with asan/tsan.
+            "nomsan",
+        ],  # Times out on TPU with asan/tsan/msan.
     },
     shard_count = 4,
 )
@@ -711,6 +723,9 @@ jax_test(
 jax_test(
     name = "scipy_stats_test",
     srcs = ["scipy_stats_test.py"],
+    backend_tags = {
+        "tpu": ["nomsan"],  # Times out
+    },
     shard_count = {
         "cpu": 40,
         "gpu": 30,
@@ -719,7 +734,6 @@ jax_test(
     },
     tags = [
         "noasan",
-        "notap",  # TODO(b/271883906): Failing on xla.opt.debug.tpu_hw tap
         "notsan",
     ],  # Times out
 )
@@ -764,6 +778,10 @@ jax_test(
     srcs = ["sparsify_test.py"],
     args = ["--jax_bcoo_cusparse_lowering=true"],
     backend_tags = {
+        "cpu": [
+            "noasan",  # Times out under asan
+            "notsan",  # Times out under asan
+        ],
         "tpu": [
             "noasan",  # Times out under asan.
         ],
@@ -861,7 +879,7 @@ py_test(
     srcs = ["gfile_cache_test.py"],
     deps = [
         "//jax",
-        "//jax:compilation_cache",
+        "//jax:gfile_cache",
         "//jax:test_util",
     ],
 )
@@ -873,8 +891,7 @@ jax_test(
         "tpu": ["nomsan"],  # TODO(b/213388298): this test fails msan.
     },
     deps = [
-        "//jax:compilation_cache",
-        "//jax:experimental",
+        "//jax:compilation_cache_internal",
     ],
 )
 
@@ -1023,7 +1040,7 @@ jax_test(
     shard_count = {
         "cpu": 20,
         "gpu": 10,
-        "tpu": 10,
+        "tpu": 20,
     },
 )
 
@@ -1031,7 +1048,7 @@ jax_test(
     name = "shard_map_test",
     srcs = ["shard_map_test.py"],
     shard_count = {
-        "cpu": 20,
+        "cpu": 30,
         "gpu": 10,
         "tpu": 10,
     },
@@ -1058,6 +1075,24 @@ jax_test(
     shard_count = 8,
     deps = [
         "//jax:rnn",
+    ],
+)
+
+py_test(
+    name = "source_info_test",
+    srcs = ["source_info_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ],
+)
+
+py_test(
+    name = "package_structure_test",
+    srcs = ["package_structure_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
     ],
 )
 

@@ -1,7 +1,7 @@
 name: CI
 
 # We test all supported Python versions as follows:
-# - 3.8  : Documentation build
+# - 3.9  : Documentation build
 # - 3.9  : Part of Matrix with NumPy dispatch
 # - 3.10 : Part of Matrix
 # - 3.11 : Part of Matrix
@@ -22,19 +22,19 @@ permissions:
 
 jobs:
   lint_and_typecheck:
-    runs-on: ubuntu-20.04-16core
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Cancel previous
         uses: styfle/cancel-workflow-action@0.11.0
         with:
           access_token: ${{ github.token }}
-        if: ${{github.ref != 'refs/head/main'}}
+        if: ${{github.ref != 'refs/heads/main'}}
       - uses: actions/checkout@v3
-      - name: Set up Python 3.8
+      - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:
-          python-version: 3.8
+          python-version: 3.11
       - uses: pre-commit/action@v3.0.0
 
   build:
@@ -74,7 +74,7 @@ jobs:
       uses: styfle/cancel-workflow-action@0.11.0
       with:
         access_token: ${{ github.token }}
-      if: ${{github.ref != 'refs/head/main'}}
+      if: ${{github.ref != 'refs/heads/main'}}
     - uses: actions/checkout@v3
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
@@ -123,17 +123,17 @@ jobs:
 
 
   documentation:
-    runs-on: ubuntu-20.04-16core
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
       matrix:
-        python-version: [3.8]
+        python-version: [3.9]
     steps:
     - name: Cancel previous
       uses: styfle/cancel-workflow-action@0.11.0
       with:
         access_token: ${{ github.token }}
-      if: ${{github.ref != 'refs/head/main'}}
+      if: ${{github.ref != 'refs/heads/main'}}
     - uses: actions/checkout@v3
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
@@ -160,4 +160,4 @@ jobs:
         JAX_ARRAY: 1
       run: |
         pytest -n auto --tb=short docs
-        pytest -n auto --tb=short --doctest-modules jax --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/interpreters/mlir.py --ignore=jax/_src/iree.py --ignore=jax/experimental/array_serialization --ignore=jax/experimental/gda_serialization --ignore=jax/collect_profile.py
+        pytest -n auto --tb=short --doctest-modules jax --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/interpreters/mlir.py --ignore=jax/_src/iree.py --ignore=jax/experimental/array_serialization --ignore=jax/collect_profile.py

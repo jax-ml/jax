@@ -6,7 +6,26 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.9
+## jax 0.4.11
+
+## jaxlib 0.4.11
+
+## jax 0.4.10 (May 11, 2023)
+
+## jaxlib 0.4.10 (May 11, 2023)
+
+* Changes
+  * Fixed `'apple-m1' is not a recognized processor for this target (ignoring
+    processor)` issue that prevented previous release from running on Mac M1.
+
+## jax 0.4.9 (May 9, 2023)
+
+* Changes
+  * The flags experimental_cpp_jit, experimental_cpp_pjit and
+    experimental_cpp_pmap have been removed.
+    They are now always on.
+  * Accuracy of singular value decomposition (SVD) on TPU has been improved
+    (requires jaxlib 0.4.9).
 
 * Deprecations
   * `jax.experimental.gda_serialization` is deprecated and has been renamed to
@@ -16,8 +35,12 @@ Remember to align the itemized text with the first line of an item within a list
     deprecated. Please use `in_shardings` and `out_shardings` respectively.
   * The function `jax.numpy.msort` has been removed. It has been deprecated since
     JAX v0.4.1. Use `jnp.sort(a, axis=0)` instead.
+  * `in_parts` and `out_parts` arguments have been removed from `jax.xla_computation`
+    since they were only used with sharded_jit and sharded_jit is long gone.
+  * `instantiate_const_outputs` argument has been removed from `jax.xla_computation`
+    since it has been unused for a very long time.
 
-## jaxlib 0.4.9
+## jaxlib 0.4.9 (May 9, 2023)
 
 ## jax 0.4.8 (March 29, 2023)
 

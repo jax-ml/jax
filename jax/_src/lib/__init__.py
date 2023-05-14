@@ -83,6 +83,12 @@ version = check_jaxlib_version(
 import jaxlib.cpu_feature_guard as cpu_feature_guard
 cpu_feature_guard.check_cpu_features()
 
+# TODO(phawkins): remove after minimium jaxlib version is 0.4.9 or newer.
+try:
+  import jaxlib.utils as utils
+except ImportError:
+  utils = None
+
 import jaxlib.xla_client as xla_client
 import jaxlib.lapack as lapack
 

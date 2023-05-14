@@ -42,6 +42,12 @@ def gammaln(x: ArrayLike) -> Array:
   return lax.lgamma(x)
 
 
+@_wraps(osp_special.gammaln, module='scipy.special')
+def gamma(x: ArrayLike) -> Array:
+  x, = promote_args_inexact("gamma", x)
+  return lax.exp(lax.lgamma(x))
+
+
 betaln = _wraps(
     osp_special.betaln,
     module='scipy.special',
@@ -114,22 +120,51 @@ def expit(x: ArrayLike) -> Array:
 logsumexp = _wraps(osp_special.logsumexp, module='scipy.special')(ops_special.logsumexp)
 
 
+@custom_derivatives.custom_jvp
 @_wraps(osp_special.xlogy, module='scipy.special')
 def xlogy(x: ArrayLike, y: ArrayLike) -> Array:
+  # Note: xlogy(0, 0) should return 0 according to the function documentation.
   x, y = promote_args_inexact("xlogy", x, y)
   x_ok = x != 0.
   safe_x = jnp.where(x_ok, x, 1.)
   safe_y = jnp.where(x_ok, y, 1.)
   return jnp.where(x_ok, lax.mul(safe_x, lax.log(safe_y)), jnp.zeros_like(x))
 
+def _xlogy_jvp(primals, tangents):
+  (x, y) = primals
+  (x_dot, y_dot) = tangents
+  result = xlogy(x, y)
+  return result, (x_dot * lax.log(y) + y_dot * x / y).astype(result.dtype)
+xlogy.defjvp(_xlogy_jvp)
 
+
+@custom_derivatives.custom_jvp
 @_wraps(osp_special.xlog1py, module='scipy.special', update_doc=False)
 def xlog1py(x: ArrayLike, y: ArrayLike) -> Array:
+  # Note: xlog1py(0, -1) should return 0 according to the function documentation.
   x, y = promote_args_inexact("xlog1py", x, y)
   x_ok = x != 0.
   safe_x = jnp.where(x_ok, x, 1.)
   safe_y = jnp.where(x_ok, y, 1.)
   return jnp.where(x_ok, lax.mul(safe_x, lax.log1p(safe_y)), jnp.zeros_like(x))
+
+def _xlog1py_jvp(primals, tangents):
+  (x, y) = primals
+  (x_dot, y_dot) = tangents
+  result = xlog1py(x, y)
+  return result, (x_dot * lax.log1p(y) + y_dot * x / (1 + y)).astype(result.dtype)
+xlog1py.defjvp(_xlog1py_jvp)
+
+@custom_derivatives.custom_jvp
+def _xlogx(x):
+  """Compute x log(x) with well-defined derivatives."""
+  return xlogy(x, x)
+
+def _xlogx_jvp(primals, tangents):
+  x, = primals
+  x_dot, = tangents
+  return  _xlogx(x), x_dot * (lax.log(x) + 1)
+_xlogx.defjvp(_xlogx_jvp)
 
 
 @_wraps(osp_special.entr, module='scipy.special')
@@ -137,7 +172,7 @@ def entr(x: ArrayLike) -> Array:
   x, = promote_args_inexact("entr", x)
   return lax.select(lax.lt(x, _lax_const(x, 0)),
                     lax.full_like(x, -np.inf),
-                    lax.neg(xlogy(x, x)))
+                    lax.neg(_xlogx(x)))
 
 
 @_wraps(osp_special.multigammaln, update_doc=False)

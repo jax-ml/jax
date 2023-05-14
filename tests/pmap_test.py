@@ -43,6 +43,7 @@ from jax._src import core
 from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
 from jax._src import config as jax_config
+from jax._src import sharding_impls
 from jax._src import sharding_specs
 from jax._src import xla_bridge
 from jax._src.lib import xla_extension
@@ -54,7 +55,7 @@ from jax._src import array
 from jax._src.sharding_impls import PmapSharding
 from jax.ad_checkpoint import checkpoint as new_checkpoint
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 prev_xla_flags = None
@@ -109,9 +110,6 @@ def tearDownModule():
 ignore_jit_of_pmap_warning = partial(
   jtu.ignore_warning, message=".*jit-of-pmap.*")
 
-ignore_slow_all_to_all_warning = partial(
-  jtu.ignore_warning, message="all_to_all.*expect significant slowdowns.*")
-
 ignore_xmap_warning = partial(
   jtu.ignore_warning, message=".*is an experimental.*")
 
@@ -138,7 +136,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   @property
   def pmap(self):
-    return src_api._python_pmap
+    return src_api.pmap
 
   def testDeviceBufferToArray(self):
     sda = self.pmap(lambda x: x)(jnp.ones((jax.device_count(), 2)))
@@ -189,7 +187,10 @@ class PythonPmapTest(jtu.JaxTestCase):
     # the default order of pmap for single-host jobs.
     device_order = jax.devices()
     pmap_sharding = pmap(lambda x: x)(np.arange(jax.device_count())).sharding
-    self.assertListEqual(device_order, pmap_sharding.devices.tolist())
+    if jax.config.jax_pmap_shmap_merge:
+      self.assertListEqual(device_order, pmap_sharding._device_assignment)
+    else:
+      self.assertListEqual(device_order, pmap_sharding.devices.tolist())
 
   def testLowerCompile(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
@@ -242,10 +243,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     f_exe = f.lower(x_f32).compile()
     self.assertRaisesRegex(
         TypeError,
-        "Computation was compiled for different input types and called with "
-        "different types. One of the mismatches is:\n"
-        "Compiled with:\n.*float32.*\n"
-        "called with:\n.*int32.*",
+        r"Computation was compiled for different input types and called with "
+        r"different types. Here are the 1 mismatches:\n"
+        r"Compiled with.*float32.*and called with.*int32.*for arg x",
         lambda: f_exe(x_i32))
 
   def testLowerCompileMultiArg(self):
@@ -395,6 +395,16 @@ class PythonPmapTest(jtu.JaxTestCase):
     x_shape = core.ShapedArray(x.shape, x.dtype)
     self.assertAllClose(f.lower(x_shape).compile()(x), f(x))
 
+  def testLowerHasReplicaAttributes(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    num_devices = jax.device_count()
+    shape = (num_devices, 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    lowered = f.lower(x)
+    hlo = lowered.as_text("stablehlo")
+    self.assertIn(f"mhlo.num_replicas = {num_devices}", hlo)
+    self.assertIn("mhlo.num_partitions = 1", hlo)
+
   def testMean(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
 
@@ -514,7 +524,6 @@ class PythonPmapTest(jtu.JaxTestCase):
       self.assertAllClose(
           actual, expected[i // 2 * scatter_len:(i // 2 + 1) * scatter_len])
 
-  @ignore_slow_all_to_all_warning()
   def testTrees(self):
     ptranspose = lambda x, axis_name: lax.all_to_all(x, axis_name, 0, 0)
     def protate(x, axis_name):
@@ -571,11 +580,10 @@ class PythonPmapTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
       "split_axis": split_axis, "concat_axis": concat_axis}
       for split_axis, concat_axis in it.product(range(2), range(2)))
-  @ignore_slow_all_to_all_warning()
   def testAllToAll(self, split_axis, concat_axis):
     pmap_in_axis = 0
     shape = (jax.device_count(),) * 3
-    x = np.arange(np.prod(shape)).reshape(shape)
+    x = np.arange(math.prod(shape)).reshape(shape)
 
     @partial(self.pmap, axis_name='i')
     def f(x):
@@ -591,13 +599,12 @@ class PythonPmapTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
        "split_axis": split_axis, "concat_axis": concat_axis}
       for split_axis, concat_axis in it.product(range(2), range(2)))
-  @ignore_slow_all_to_all_warning()
   def testAllToAllSplitAxis(self, split_axis, concat_axis):
     if jax.device_count() < 4:
       raise SkipTest("test requires at least four devices")
     pmap_in_axis = 0
     shape = (4, 4, 4)
-    x = np.arange(np.prod(shape)).reshape(shape)
+    x = np.arange(math.prod(shape)).reshape(shape)
 
     @partial(self.pmap, axis_name='i')
     @partial(self.pmap, axis_name='j')
@@ -864,8 +871,9 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     # test that we can handle device movement on dispatch
     bufs = y._arrays[::-1]
-    sharding_spec = y.sharding.sharding_spec
-    y = pxla.make_sharded_device_array(y.aval, sharding_spec, bufs)
+    sharding = jax.sharding.PmapSharding(
+        [b.device() for b in bufs], y.sharding.sharding_spec)
+    y = jax.make_array_from_single_device_arrays(y.shape, sharding, bufs)
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
 
@@ -1029,7 +1037,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     ] for name, prim in
     (('Gather', lax.all_gather), ('ReduceScatter', lax.psum_scatter))
   ))
-  @ignore_slow_all_to_all_warning()
   def testGradOf(self, prim, tiled, use_axis_index_groups):
     if jtu.device_under_test() == "gpu":
       raise SkipTest("XLA:GPU with ReduceScatter deadlocks")  # b/264516146
@@ -1091,7 +1098,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   def testAxisGroups(self):
-    axis_env = xla.AxisEnv(8, ('i', 'j'), (4, 2))
+    axis_env = sharding_impls.AxisEnv(8, ('i', 'j'), (4, 2))
     groups = xla.axis_groups(axis_env, 'i')
     self.assertEqual(groups, ((0, 2, 4, 6), (1, 3, 5, 7)))
 
@@ -1312,7 +1319,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     ans_devices = ans.sharding._device_assignment
     # TODO(mattjj,sharadmv): fix physical layout with eager pmap, remove 'if'
     if not config.jax_disable_jit:
-      self.assertEqual(ans_devices, devices)
+      self.assertEqual(ans_devices, tuple(devices))
 
   def testPmapConstantError(self):
     device_count = jax.device_count()
@@ -1548,7 +1555,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(expected_bz1, bz1, check_dtypes=False)
     self.assertAllClose(bz2, bz2, check_dtypes=False)
 
-  @ignore_slow_all_to_all_warning()
   def testPswapaxes(self):
     device_count = jax.device_count()
     shape = (device_count, 3, device_count, 5)
@@ -1558,7 +1564,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = np.swapaxes(x, 0, 2)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_slow_all_to_all_warning()
   def testGradOfPswapaxes(self):
     device_count = jax.device_count()
     shape = (device_count, 1, device_count)
@@ -1574,7 +1579,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = np.tile(w, reps=device_count).reshape(shape)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_slow_all_to_all_warning()
   def testAllToAllReplicaGroups(self):
     # If num_devices = 4, these would be the inputs/outputs:
     # input = [[0, 1], [2, 3], [4, 5], [6, 7]]
@@ -1603,7 +1607,6 @@ class PythonPmapTest(jtu.JaxTestCase):
         0, 2).reshape(shape)
     self.assertAllClose(fn(x), expected, check_dtypes=False)
 
-  @ignore_slow_all_to_all_warning()
   def testGradOfAllToAllReplicaGroups(self):
     device_count = jax.device_count()
     if device_count % 2 != 0:
@@ -1873,6 +1876,25 @@ class PythonPmapTest(jtu.JaxTestCase):
       with jtu.ignore_warning(
           message=".*Using jit-of-pmap can lead to inefficient data movement"):
         x = foo(x)
+
+  @jtu.ignore_warning(
+      message=".*Using jit-of-pmap can lead to inefficient data movement")
+  def testJitOfPmapLowerHasReplicaAttributes(self):
+    device_count = jax.device_count()
+
+    if device_count == 1 or config.jax_disable_jit:
+      raise SkipTest("test requires at least two devices")
+
+    @jax.jit
+    @jax.pmap
+    def foo(x): return x + x
+
+    x = np.ones((2,2,2), dtype=np.float32)
+
+    hlo = foo.lower(x).as_text("stablehlo")
+    self.assertIn(f"mhlo.num_replicas = {2}", hlo)
+    self.assertIn("mhlo.num_partitions = 1", hlo)
+
 
   def testPsumZeroCotangents(self):
     # https://github.com/google/jax/issues/3651
@@ -2159,6 +2181,8 @@ class CppPmapTest(PythonPmapTest):
 
   @property
   def pmap(self):
+    if jax.config.jax_pmap_shmap_merge:
+      return src_api.pmap
     return src_api._cpp_pmap
 
   def pmap_fast_path_is_enabled(self):
@@ -2321,7 +2345,6 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
        "split_axis": split_axis, "concat_axis": concat_axis, "vmap_axis": vmap_axis}
       for split_axis, concat_axis, vmap_axis in it.product(range(3), range(3), range(4)))
-  @ignore_slow_all_to_all_warning()
   def testAllToAllInVmap(self, split_axis, concat_axis, vmap_axis):
     def f(x):
       return lax.all_to_all(x, 'i', split_axis=split_axis, concat_axis=concat_axis)
@@ -2382,7 +2405,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     verify_ref()
 
     shape = (jax.device_count(),) * 5
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     self.assertAllClose(pmap(vmap(f, in_axes=vmap_axis), axis_name='i')(x),
                         reference(x, split_axis, concat_axis, vmap_axis))
 
@@ -2390,13 +2413,12 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
        "split_axis": split_axis, "concat_axis": concat_axis}
       for split_axis, concat_axis in it.product(range(3), range(3)))
-  @ignore_slow_all_to_all_warning()
   def testAllToAllVsVmap(self, split_axis, concat_axis):
     def f(x):
       return lax.all_to_all(x, 'i', split_axis=split_axis, concat_axis=concat_axis)
 
     shape = (jax.device_count(),) * 4
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     self.assertAllClose(pmap(f, axis_name='i')(x),
                         vmap(f, axis_name='i')(x))
 
@@ -2405,7 +2427,6 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
        "axes": axes, "split_axis": split_axis, "concat_axis": concat_axis}
       for axes, split_axis, concat_axis
       in it.product([('i', 'j'), ('j', 'i')], range(3), range(3)))
-  @ignore_slow_all_to_all_warning()
   @unittest.skip("multi-axis all_to_all broken after #4835")  # TODO(mattjj,apaszke)
   def testAllToAllMultipleAxesVsVmap(self, axes, split_axis, concat_axis):
     if jax.device_count() < 4:
@@ -2415,7 +2436,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
       return lax.all_to_all(x, axes, split_axis=split_axis, concat_axis=concat_axis)
 
     shape = (2, 2, 4, 4, 4)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     self.assertAllClose(pmap(pmap(f, axis_name='j'), axis_name='i')(x),
                         vmap(vmap(f, axis_name='j'), axis_name='i')(x))
 
@@ -2440,7 +2461,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     if jax.device_count() < 4:
       raise SkipTest("test requires at least four devices")
     shape = (4, 4, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     f = partial(prim, axis_name='i', tiled=tiled)
     self.assertAllClose(vmap(f, axis_name='i')(x), pmap(f, axis_name='i')(x))
 
@@ -3215,7 +3236,7 @@ class EagerPmapMixin:
     super().tearDown()
 
 @jtu.pytest_mark_if_available('multiaccelerator')
-class EagerPythonPmapTest(EagerPmapMixin, PythonPmapTest):
+class PythonPmapEagerTest(EagerPmapMixin, PythonPmapTest):
 
   def test_custom_jvp(self):
 
@@ -3251,19 +3272,19 @@ class EagerPythonPmapTest(EagerPmapMixin, PythonPmapTest):
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
-class EagerCppPmapTest(EagerPmapMixin, CppPmapTest):
+class CppPmapEagerTest(EagerPmapMixin, CppPmapTest):
   pass
 
 @jtu.pytest_mark_if_available('multiaccelerator')
-class EagerPmapWithDevicesTest(EagerPmapMixin, PmapWithDevicesTest):
+class PmapWithDevicesEagerTest(EagerPmapMixin, PmapWithDevicesTest):
   pass
 
 @jtu.pytest_mark_if_available('multiaccelerator')
-class EagerVmapOfPmapTest(EagerPmapMixin, VmapOfPmapTest):
+class VmapOfPmapEagerTest(EagerPmapMixin, VmapOfPmapTest):
   pass
 
 @jtu.pytest_mark_if_available('multiaccelerator')
-class EagerArrayPmapTest(EagerPmapMixin, ArrayPmapTest):
+class ArrayPmapEagerTest(EagerPmapMixin, ArrayPmapTest):
   pass
 
 

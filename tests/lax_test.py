@@ -47,7 +47,7 @@ from jax._src import lax_reference
 from jax._src.lax import lax as lax_internal
 from jax._src.internal_test_util import lax_test_util
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 
@@ -641,7 +641,7 @@ class LaxTest(jtu.JaxTestCase):
       if c == 'N':
         self.assertEqual(out_c, patch_c)
       elif c == 'C':
-        self.assertEqual(out_c * np.prod(filter_shape), patch_c)
+        self.assertEqual(out_c * math.prod(filter_shape), patch_c)
       else:
         self.assertEqual(out_c, patch_c * filter_shape[filter_spec.index(c)])
 
@@ -2051,13 +2051,16 @@ class LaxTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=[np.float32, np.int32, np.uint32],
-    shape=[(3,), (5, 3)],
-    k=[1, 3],
+    shape=[(20,), (5, 20), (2000,)],
+    k=[1, 3, 12],
+    negative=[False, True]
   )
-  def testTopK(self, shape, dtype, k):
+  def testTopK(self, shape, dtype, k, negative):
     def args_maker():
       flat_values = np.arange(math.prod(shape), dtype=dtype)
       values = self.rng().permutation(flat_values).reshape(shape)
+      if negative:
+        values = -values
       return [values]
     def reference_top_k(x):
       bcast_idxs = np.broadcast_to(np.arange(shape[-1], dtype=np.int32), shape)
@@ -2925,6 +2928,24 @@ class FooTyRules:
                                   avals_in=[aval_x_raw, aval_indices],
                                   avals_out=[aval_y_raw])[0]
 
+  @staticmethod
+  def select_mlir(ctx, avals_in, aval_out, which, *cases):
+    assert all(aval_case == aval_out for aval_case in avals_in[1:])
+    assert avals_in[0].ndim == aval_out.ndim
+    select_lower = lax_internal._select_hlo_lowering
+    aval_which = avals_in[0]
+    aval_which_bcast = core.ShapedArray(
+        (*aval_which.shape, 2), aval_which.dtype)
+    aval_out_raw = core.ShapedArray(
+        (*aval_out.shape, 2), np.dtype('uint32'))
+    aval_cases_raw = [aval_out_raw] * (len(avals_in) - 1)
+    bcast_dims = list(range(aval_which.ndim))
+    which_bcast = mlir.broadcast_in_dim(
+        ctx, which, aval_which_bcast, broadcast_dimensions=bcast_dims)
+    return mlir.delegate_lowering(ctx, select_lower, which_bcast, *cases,
+                                  avals_in=[aval_which_bcast, *aval_cases_raw],
+                                  avals_out=[aval_out_raw])[0]
+
 
 class FooTy:
   name = 'foo'
@@ -3196,6 +3217,13 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     ys = jax.jit(lambda x: x[:, 2:4, 3:4])(ks)
     self.assertIsInstance(ys, FooArray)
     self.assertEqual(ys.shape, (3, 2, 1))
+
+  def test_select(self):
+    ks = jax.jit(lambda: make((3,)))()
+    cs = jnp.array([True, False, False])
+    ys = jax.jit(lax.select)(cs, ks, ks)
+    self.assertIsInstance(ys, FooArray)
+    self.assertEqual(ys.shape, (3,))
 
   def test_xla_reverse_bug(self):
     # Regression test for b/248295786

@@ -35,7 +35,7 @@ from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lax import lax as lax_internal
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 # We disable the whitespace continuation check in this file because otherwise it
@@ -452,10 +452,25 @@ class IndexingTest(jtu.JaxTestCase):
       return y
     def jnp_op(x, idx):
       return jnp.asarray(x).at[idx].apply(jnp_func)
+
+    # Test with traced integer index
     args_maker = lambda: [rng(size, dtype), idx_rng(size, int)]
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
+    # Test with slice index
+    idx = slice(1, 5)
+    np_op_idx = partial(np_op, idx=idx)
+    jnp_op_idx = partial(jnp_op, idx=idx)
+    args_maker = lambda: [rng(size, dtype)]
+    self._CheckAgainstNumpy(np_op_idx, jnp_op_idx, args_maker)
+    self._CompileAndCheck(jnp_op_idx, args_maker)
+
+  def testIndexUpdateScalarBug(self):
+    # https://github.com/google/jax/issues/14923
+    a = jnp.arange(10.)
+    out = a.at[0].apply(jnp.cos)
+    self.assertArraysEqual(out, a.at[0].set(1))
 
   @jtu.sample_product(
     [dict(name=name, shape=shape, indexer=indexer, mode=mode)
@@ -854,6 +869,32 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(expected, primals)
     self.assertAllClose(np.zeros_like(x), tangents)
 
+  def testSimpleIndexingUsesSlice(self):
+    jaxpr = jax.make_jaxpr(lambda x: x[:2, :2])(jnp.ones((3, 4)))
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 7)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.dynamic_slice_p)
+
+    jaxpr = jax.make_jaxpr(lambda x: x[0, :2, 1])(jnp.ones((3, 4, 5)))
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 11)
+    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+
+    jaxpr = jax.make_jaxpr(lambda x: x[0, 0])(jnp.ones((3, 4, 5)))
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 11)
+    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+
+    jaxpr = jax.make_jaxpr(lambda x: x[:, 1])(jnp.ones((3, 4, 5)))
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 11)
+    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+
+    # Simple reverses lower to lax.rev_p
+    jaxpr = jax.make_jaxpr(lambda x: x[:, ::-1])(jnp.ones((3, 4)))
+    print(jaxpr)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
+    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
+
   def testTrivialGatherIsntGenerated(self):
     # https://github.com/google/jax/issues/1621
     jaxpr = jax.make_jaxpr(lambda x: x[:, None])(np.arange(4))
@@ -862,12 +903,23 @@ class IndexingTest(jtu.JaxTestCase):
 
     jaxpr = jax.make_jaxpr(lambda x: x[0:6:1])(np.arange(4))
     self.assertEqual(len(jaxpr.jaxpr.eqns), 0)
+
     jaxpr = jax.make_jaxpr(lambda x: x[:4])(np.arange(4))
     self.assertEqual(len(jaxpr.jaxpr.eqns), 0)
 
     jaxpr = jax.make_jaxpr(lambda x: x[::-1])(np.arange(4))
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
     self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
+
+  def testOOBEmptySlice(self):
+    x = jnp.arange(4, dtype='float32')
+    self.assertArraysEqual(x[1:0], jnp.empty(0, dtype='float32'))
+    self.assertArraysEqual(x[-2:-10], jnp.empty(0, dtype='float32'))
+    self.assertArraysEqual(x[5:10], jnp.empty(0, dtype='float32'))
+
+    x = jnp.arange(6, dtype='float32').reshape(2, 3)
+    self.assertArraysEqual(x[-1:-4], jnp.empty((0, 3), dtype='float32'))
+    self.assertArraysEqual(x[:, 3:2], jnp.empty((2, 0), dtype='float32'))
 
   def testIndexingEmptyDimension(self):
     # Issue 2671: XLA error when indexing into dimension of size 0
@@ -1466,6 +1518,17 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     fn = lambda x: x.at[1:].set(1 + x[:-1])
     y = jnp.zeros(8)
     self.assertArraysEqual(fn(y), jax.jit(fn)(y))
+
+  def testScatterValuesCastToTargetDType(self):
+    # https://github.com/google/jax/issues/15505
+    a = jnp.zeros(1, dtype=jnp.uint32)
+    val = 2**32 - 1  # too large for int32
+
+    b = a.at[0].set(jnp.uint32(val))
+    self.assertEqual(int(b[0]), val)
+
+    c = a.at[0].set(val)
+    self.assertEqual(int(c[0]), val)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

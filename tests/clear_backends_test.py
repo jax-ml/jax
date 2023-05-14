@@ -18,7 +18,7 @@ import unittest
 from absl.testing import absltest
 
 import jax
-from jax.config import config
+from jax import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 

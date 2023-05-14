@@ -89,3 +89,16 @@ but not with batching transforms like :func:`jax.vmap`.
    csr_matmat
    csr_matvec
    csr_todense
+
+``jax.experimental.sparse.linalg``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: jax.experimental.sparse.linalg
+
+.. currentmodule:: jax.experimental.sparse.linalg
+
+.. autosummary::
+   :toctree: _autosummary
+
+   spsolve
+   lobpcg_standard

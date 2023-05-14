@@ -19,7 +19,7 @@ from typing import Any, Callable, Optional, Sequence, Union
 import jax
 from jax import lax
 from jax import numpy as jnp
-from jax.config import config
+from jax import config
 from jax._src import test_util as jtu
 from jax._src import dtypes
 from jax.experimental.jax2tf.tests import primitive_harness
@@ -208,6 +208,22 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def approx_top_k(cls, harness: primitive_harness.Harness):
     supported_dtypes = jtu.supported_dtypes()
+    def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
+      del tol, err_msg
+      # Tests only that the indices correspond to the returned values
+      jax_values, jax_indices = result_jax
+      tf_values, tf_indices = result_tf
+      operand, = args
+      def operand_values(indices):
+        if operand.ndim == 1:
+          return operand[indices]
+        elif operand.ndim == 2:
+          return operand[np.arange(operand.shape[0]).reshape((-1, 1)), indices]
+        else:
+          assert False
+      tst.assertAllClose(operand_values(jax_indices), jax_values)
+      tst.assertAllClose(operand_values(tf_indices), tf_values)
+
     return [
         missing_tf_kernel(
             dtypes=[t for t in [jnp.bfloat16, np.float16, np.float32, np.float64]
@@ -218,7 +234,13 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             "compilation not supported for float64.",
             dtypes=[np.float64],
             devices=("cpu", "gpu"),
-            modes=("compiled",))]
+            modes=("compiled",)),
+        custom_numeric(
+            dtypes=[t for t in [jnp.bfloat16, np.float16, np.float32, np.float64]
+                    if t in supported_dtypes],
+            devices=("cpu", "gpu"),
+            modes=("eager", "graph"),
+            custom_assert=custom_assert)]
 
   @classmethod
   def argmax(cls, harness: primitive_harness.Harness):

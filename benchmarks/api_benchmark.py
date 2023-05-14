@@ -15,12 +15,12 @@
 
 import enum
 import functools
+import math
 import operator
 
 import google_benchmark
 import jax
 from jax import lax
-from jax._src import config as jax_config
 from jax.experimental import sparse
 from jax._src.api_util import shaped_abstractify  # technically not an api fn
 from jax._src.ad_checkpoint import checkpoint  # new jax.remat implementation
@@ -34,7 +34,7 @@ from jax.experimental import multihost_utils
 import jax.numpy as jnp
 import numpy as np
 
-from jax.config import config
+from jax import config
 
 config.parse_flags_with_absl()
 
@@ -55,7 +55,7 @@ def required_devices(num_devices_required):
 
 
 def create_mesh(shape, axis_names, state):
-  size = np.prod(shape)
+  size = math.prod(shape)
   if len(jax.devices()) < size:
     state.skip_with_error(f"Requires {size} devices")
     return None
@@ -422,7 +422,7 @@ def sda_index_8(state):
 def _sparse_bcoo_fromdense(state, jit: bool = False, compile: bool = False):
   shape = (2000, 2000)
   nse = 10000
-  size = np.prod(shape)
+  size = math.prod(shape)
   rng = np.random.RandomState(1701)
   data = rng.randn(nse)
   indices = np.unravel_index(
@@ -461,7 +461,7 @@ def sparse_bcoo_fromdense_compile(state):
 def _sparse_bcoo_todense(state, jit: bool = False, compile: bool = False):
   shape = (2000, 2000)
   nse = 10000
-  size = np.prod(shape)
+  size = math.prod(shape)
   rng = np.random.RandomState(1701)
   data = rng.randn(nse)
   indices = np.unravel_index(
@@ -592,7 +592,7 @@ def bench_pjit_check_aval_sharding(state):
   aval = jax.core.ShapedArray((8, 2), np.int32)
 
   while state:
-    pjit_check_aval_sharding([s] * 100, [aval] * 100, 'benchmark', False)
+    pjit_check_aval_sharding([s] * 100, [aval] * 100, None, 'benchmark', False)
 
 
 @google_benchmark.register
@@ -601,7 +601,7 @@ def bench_addressable_shards_index(state):
   if mesh is None:
     return
   shape = (8, 2)
-  inp = np.arange(np.prod(shape)).reshape(shape)
+  inp = np.arange(math.prod(shape)).reshape(shape)
   s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x', 'y'))
   arr = jax.device_put(inp, s)
 
@@ -615,7 +615,7 @@ def bench_addressable_shards_replica_id(state):
   if mesh is None:
     return
   shape = (64, 32)
-  inp = np.arange(np.prod(shape)).reshape(shape)
+  inp = np.arange(math.prod(shape)).reshape(shape)
   s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x', 'y'))
   arr = jax.device_put(inp, s)
 
@@ -693,9 +693,6 @@ def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
 
   x = [x for _ in range(num_args)]
 
-  prev_state = jax_config.FLAGS.experimental_cpp_pjit
-  jax_config.FLAGS.experimental_cpp_pjit = cpp_jit
-
   in_axis_resources = jax.sharding.NamedSharding(mesh, spec)
   out_axis_resources = jax.sharding.NamedSharding(mesh, spec)
 
@@ -713,54 +710,40 @@ def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
   while state:
     x = f(x)
 
-  jax_config.FLAGS.experimental_cpp_pjit = prev_state
-
 
 @google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
+@google_benchmark.option.arg_names(['num_args'])
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([10])
+@google_benchmark.option.args([100])
 def pjit_simple_1_device(state):
   pjit_simple_benchmark(
       state, num_devices=1, num_args=state.range(0), cpp_jit=state.range(1))
 
 @google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
+@google_benchmark.option.arg_names(['num_args'])
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([10])
+@google_benchmark.option.args([100])
 def pjit_simple_4_device(state):
   pjit_simple_benchmark(
       state, num_devices=4, num_args=state.range(0), cpp_jit=state.range(1))
 
 @google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
+@google_benchmark.option.arg_names(['num_args'])
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([10])
+@google_benchmark.option.args([100])
 def pjit_simple_4000_device(state):
   pjit_simple_benchmark(
       state, num_devices=4000, num_args=state.range(0), cpp_jit=state.range(1))
 
 
 @google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
+@google_benchmark.option.arg_names(['num_args'])
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([10])
+@google_benchmark.option.args([100])
 def pjit_aot_1_device(state):
   pjit_simple_benchmark(
       state,
@@ -771,13 +754,10 @@ def pjit_aot_1_device(state):
 
 
 @google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
+@google_benchmark.option.arg_names(['num_args'])
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([10])
+@google_benchmark.option.args([100])
 def pjit_aot_4_device(state):
   pjit_simple_benchmark(
       state,
@@ -788,13 +768,10 @@ def pjit_aot_4_device(state):
 
 
 @google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
+@google_benchmark.option.arg_names(['num_args'])
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([10])
+@google_benchmark.option.args([100])
 def pjit_aot_4000_device(state):
   pjit_simple_benchmark(
       state,
@@ -809,7 +786,7 @@ def pjit_aot_4000_device(state):
 def host_local_array_to_global_array(state):
   global_mesh = create_mesh((4, 2), ('x', 'y'), state)
   input_shape = (8, 2)
-  input_data = np.arange(np.prod(input_shape)).reshape(input_shape)
+  input_data = np.arange(math.prod(input_shape)).reshape(input_shape)
   in_pspec = jax.sharding.PartitionSpec('x', 'y')
 
   while state:
@@ -932,6 +909,25 @@ google_benchmark.register(
 google_benchmark.register(
     partial(batch_inplace_while, 'dynamic_update_slice'),
     name='batch_inplace_while_dynamic_update_slice')
+
+
+@google_benchmark.register
+@google_benchmark.option.arg_names(['arg_lengths', 'num_args'])
+@google_benchmark.option.args_product([[0, 1, 2, 5, 10, 100], [1, 2, 3]])
+def safe_map(state):
+  args = tuple(list(range(state.range(0))) for _ in range(state.range(1)))
+  def f(*args): return tuple(args)
+  while state:
+    jax.util.safe_map(f, *args)
+
+@google_benchmark.register
+@google_benchmark.option.arg_names(['arg_lengths', 'num_args'])
+@google_benchmark.option.args_product([[0, 1, 2, 5, 10, 100], [1, 2, 3]])
+def safe_zip(state):
+  args = tuple(list(range(state.range(0))) for _ in range(state.range(1)))
+  while state:
+    jax.util.safe_zip(*args)
+
 
 if __name__ == "__main__":
   google_benchmark.main()

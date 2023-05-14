@@ -13,7 +13,9 @@
 # limitations under the License.
 
 
+import enum
 from functools import partial
+import math
 from unittest import SkipTest, skipIf
 from typing import Any, Tuple, NamedTuple, Optional
 import zlib
@@ -32,6 +34,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import prng
 from jax import random
+from jax import tree_util
 from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -41,7 +44,7 @@ from jax.interpreters import xla
 from jax._src import random as jax_random
 from jax._src import prng as prng_internal
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 float_dtypes = jtu.dtypes.all_floating
@@ -65,6 +68,11 @@ PRNG_IMPLS = [('threefry2x32', prng.threefry_prng_impl),
               ('unsafe_rbg', prng.unsafe_rbg_prng_impl)]
 
 
+class OnX64(enum.Enum):
+  ALSO = enum.auto()
+  SKIP = enum.auto()
+  ONLY = enum.auto()
+
 class RandomValuesCase(NamedTuple):
   name: str
   prng_impl: str
@@ -72,7 +80,7 @@ class RandomValuesCase(NamedTuple):
   dtype: Any
   params: dict
   expected: np.ndarray
-  skip_on_x64: bool = False
+  on_x64: OnX64 = OnX64.ALSO
   atol: Optional[float] = None
   rtol: Optional[float] = None
 
@@ -95,13 +103,24 @@ class RandomValuesCase(NamedTuple):
 _RANDOM_VALUES_CASES = [
   # TODO(jakevdp) add coverage for other distributions.
   RandomValuesCase("bernoulli", "threefry2x32", (5,), None, {'p': 0.5},
-    np.array([False, True, True, True, False]), skip_on_x64=True),
+    np.array([False, True, True, True, False]), on_x64=OnX64.SKIP),
   RandomValuesCase("bernoulli", "rbg", (5,), None, {'p': 0.5},
-    np.array([True, True, True, True, True]), skip_on_x64=True),
+    np.array([True, True, True, True, True]), on_x64=OnX64.SKIP),
   RandomValuesCase("beta", "threefry2x32", (5,), np.float32, {'a': 0.8, 'b': 0.9},
     np.array([0.533685, 0.843179, 0.063495, 0.573444, 0.459514], dtype='float32')),
   RandomValuesCase("beta", "rbg", (5,), np.float32, {'a': 0.8, 'b': 0.9},
     np.array([0.841308, 0.669989, 0.731763, 0.985127, 0.022745], dtype='float32')),
+  # TODO(frostig,jakevdp) add coverage for non-threefry bits
+  RandomValuesCase("bits", "threefry2x32", (5,), np.uint8, {},
+    np.array([10, 158, 82, 54, 158], dtype='uint8')),
+  RandomValuesCase("bits", "threefry2x32", (5,), np.uint16, {},
+    np.array([6738, 38161, 50695, 57337, 61600], dtype='uint16')),
+  RandomValuesCase("bits", "threefry2x32", (5,), np.uint32, {},
+    np.array([1978747883, 4134381225, 3628107870,  689687174, 2788938207], dtype='uint32')),
+  RandomValuesCase("bits", "threefry2x32", (5,), np.uint64, {},
+    np.array([17649965731882839947, 1415307058040849897, 8282622628079774249,
+              14024425113645909402, 2012979996110532418], dtype='uint64'),
+    on_x64=OnX64.ONLY),
   RandomValuesCase("cauchy", "threefry2x32", (5,), np.float32, {},
     np.array([ -0.088416, -10.169713, 3.49677, -1.18056, 0.34556], dtype='float32'), rtol=1E-5),
   RandomValuesCase("cauchy", "rbg", (5,), np.float32, {},
@@ -111,9 +130,9 @@ _RANDOM_VALUES_CASES = [
   RandomValuesCase("dirichlet", "rbg", (2,), np.float32, {'alpha': np.array([0.5, 0.6, 0.7], dtype='float32')},
     np.array([[0.024769, 0.002189, 0.973041], [0.326, 0.00244, 0.67156]], dtype='float32')),
   RandomValuesCase("double_sided_maxwell", "threefry2x32", (5,), np.float32, {"loc": 1, "scale": 2},
-    np.array([-2.408914, -3.370437, 3.235352, -0.907734, -1.708732], dtype='float32'), skip_on_x64=True),
+    np.array([-2.408914, -3.370437, 3.235352, -0.907734, -1.708732], dtype='float32'), on_x64=OnX64.SKIP),
   RandomValuesCase("double_sided_maxwell", "rbg", (5,), np.float32, {"loc": 1, "scale": 2},
-    np.array([4.957495, 3.003086, 5.33935, 2.942878, -1.203524], dtype='float32'), skip_on_x64=True),
+    np.array([4.957495, 3.003086, 5.33935, 2.942878, -1.203524], dtype='float32'), on_x64=OnX64.SKIP),
   RandomValuesCase("exponential", "threefry2x32", (5,), np.float32, {},
     np.array([0.526067, 0.043046, 0.039932, 0.46427 , 0.123886], dtype='float32')),
   RandomValuesCase("exponential", "rbg", (5,), np.float32, {},
@@ -143,9 +162,9 @@ _RANDOM_VALUES_CASES = [
   RandomValuesCase("maxwell", "rbg", (5,), np.float32, {},
     np.array([2.048746, 0.470027, 1.053105, 1.01969, 2.710645], dtype='float32')),
   RandomValuesCase("multivariate_normal", "threefry2x32", (2,), np.float32, {"mean": np.ones((1, 3)), "cov": np.eye(3)},
-    np.array([[ 1.067826,  1.215599,  0.234166], [-0.237534,  1.32591, 1.413987]], dtype='float32'), skip_on_x64=True),
+    np.array([[ 1.067826,  1.215599,  0.234166], [-0.237534,  1.32591, 1.413987]], dtype='float32'), on_x64=OnX64.SKIP),
   RandomValuesCase("multivariate_normal", "rbg", (2,), np.float32, {"mean": np.ones((1, 3)), "cov": np.eye(3)},
-    np.array([[-0.036897, 0.770969, 0.756959], [1.755091, 2.350553, 0.627142]], dtype='float32'), skip_on_x64=True),
+    np.array([[-0.036897, 0.770969, 0.756959], [1.755091, 2.350553, 0.627142]], dtype='float32'), on_x64=OnX64.SKIP),
   RandomValuesCase("normal", "threefry2x32", (5,), np.float32, {},
     np.array([-1.173234, -1.511662, 0.070593, -0.099764, 1.052845], dtype='float32')),
   RandomValuesCase("normal", "rbg", (5,), np.float32, {},
@@ -158,9 +177,9 @@ _RANDOM_VALUES_CASES = [
     np.array([7, 3, 6, 11, 6], dtype='int32')),
   # Note: poisson not implemented for rbg sampler.
   RandomValuesCase("rademacher", "threefry2x32", (5,), np.int32, {},
-    np.array([-1, -1, -1, -1, 1], dtype='int32'), skip_on_x64=True),
+    np.array([-1, -1, -1, -1, 1], dtype='int32'), on_x64=OnX64.SKIP),
   RandomValuesCase("rademacher", "rbg", (5,), np.int32, {},
-    np.array([1, 1, 1, -1, -1], dtype='int32'), skip_on_x64=True),
+    np.array([1, 1, 1, -1, -1], dtype='int32'), on_x64=OnX64.SKIP),
   RandomValuesCase("randint", "threefry2x32", (5,), np.int32, {"minval": 0, "maxval": 10},
     np.array([0, 5, 7, 7, 5], dtype='int32')),
   RandomValuesCase("randint", "rbg", (5,), np.int32, {"minval": 0, "maxval": 10},
@@ -326,8 +345,10 @@ class PrngTest(jtu.JaxTestCase):
     this test should involve a deprecation cycle following the procedures outlined at
     https://jax.readthedocs.io/en/latest/api_compatibility.html
     """
-    if config.x64_enabled and case.skip_on_x64:
+    if config.x64_enabled and case.on_x64 == OnX64.SKIP:
       self.skipTest("test produces different values when jax_enable_x64=True")
+    if not config.x64_enabled and case.on_x64 == OnX64.ONLY:
+      self.skipTest("test only valid when jax_enable_x64=True")
     with jax.default_prng_impl(case.prng_impl):
       func = getattr(random, case.name)
       key = random.PRNGKey(case._seed())
@@ -367,6 +388,13 @@ class PrngTest(jtu.JaxTestCase):
         _prng_key_as_array(random.fold_in(k, 4)),
         np.array([2285895361,  433833334], dtype='uint32'))
 
+  def test_random_bits_error(self):
+    msg = 'dtype argument .* must be an unsigned int dtype'
+    with self.assertRaisesRegex(ValueError, msg):
+      random.bits(random.PRNGKey(0), (3, 4), np.dtype('int8'))
+    with self.assertRaisesRegex(ValueError, msg):
+      random.bits(random.PRNGKey(0), (3, 4), np.dtype('float16'))
+
   @skipIf(not config.jax_threefry_partitionable, 'enable after upgrade')
   def test_threefry_split_fold_in_symmetry(self):
     with jax.default_prng_impl('threefry2x32'):
@@ -393,41 +421,58 @@ class PrngTest(jtu.JaxTestCase):
       self.assertArraysEqual(f2, s2)
       self.assertArraysEqual(f3, s3)
 
-  @jtu.sample_product([
-      {"seed": 0, "type": int, "jit": True, "key": [0, 0]},
-      {"seed": 0, "type": int, "jit": False, "key": [0, 0]},
-      {"seed": 1, "type": np.int32, "jit": True, "key": [0, 1]},
-      {"seed": 1, "type": np.int32, "jit": False, "key": [0, 1]},
-      {"seed": 2, "type": np.uint32, "jit": True, "key": [0, 2]},
-      {"seed": 2, "type": np.uint32, "jit": False, "key": [0, 2]},
-      {"seed": 3, "type": np.int64, "jit": True, "key": [0, 3]},
-      {"seed": 3, "type": np.int64, "jit": False, "key": [0, 3]},
-      {"seed": -1, "type": int, "jit": True, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
-      {"seed": -1, "type": int, "jit": False, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
-      {"seed": -2, "type": np.int32, "jit": True, "key": [0, 4294967294]},
-      {"seed": -2, "type": np.int32, "jit": False, "key": [0, 4294967294]},
-      {"seed": -3, "type": np.int64, "jit": True, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
-      {"seed": -3, "type": np.int64, "jit": False, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
-      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": True, "key": [0, 2147483747]},
-      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": False, "key": [0, 2147483747]},
-      {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": True, "key": [0, 2147483748]},
-      {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": False, "key": [0, 2147483748]},
-      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": True, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
-      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": False, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
-      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": True, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
-      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": False, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
+  @parameterized.parameters([
+      {"seed": 0, "typ": int, "jit": True, "key": [0, 0]},
+      {"seed": 0, "typ": int, "jit": False, "key": [0, 0]},
+      {"seed": 1, "typ": np.int32, "jit": True, "key": [0, 1]},
+      {"seed": 1, "typ": np.int32, "jit": False, "key": [0, 1]},
+      {"seed": 2, "typ": np.uint32, "jit": True, "key": [0, 2]},
+      {"seed": 2, "typ": np.uint32, "jit": False, "key": [0, 2]},
+      {"seed": 3, "typ": np.int64, "jit": True, "key": [0, 3]},
+      {"seed": 3, "typ": np.int64, "jit": False, "key": [0, 3]},
+      {"seed": -1, "typ": int, "jit": True, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
+      {"seed": -1, "typ": int, "jit": False, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
+      {"seed": -2, "typ": np.int32, "jit": True, "key": [0, 4294967294]},
+      {"seed": -2, "typ": np.int32, "jit": False, "key": [0, 4294967294]},
+      {"seed": -3, "typ": np.int64, "jit": True, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
+      {"seed": -3, "typ": np.int64, "jit": False, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
+      {"seed": np.iinfo(np.int32).max + 100, "typ": int, "jit": True, "key": [0, 2147483747]},
+      {"seed": np.iinfo(np.int32).max + 100, "typ": int, "jit": False, "key": [0, 2147483747]},
+      {"seed": np.iinfo(np.int32).max + 101, "typ": np.uint32, "jit": True, "key": [0, 2147483748]},
+      {"seed": np.iinfo(np.int32).max + 101, "typ": np.uint32, "jit": False, "key": [0, 2147483748]},
+      {"seed": np.iinfo(np.int32).min - 100, "typ": int, "jit": True, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 100, "typ": int, "jit": False, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 101, "typ": np.int64, "jit": True, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
+      {"seed": np.iinfo(np.int32).min - 101, "typ": np.int64, "jit": False, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
   ])
-  def test_prng_seeds_and_keys(self, seed, type, jit, key):
-    if (jit and type is int and not config.x64_enabled and
-        (seed < np.iinfo('int32').min or seed > np.iinfo('int32').max)):
-      self.skipTest("Expected failure: integer out of range for jit.")
-    seed = type(seed)
+  def test_prng_seeds_and_keys(self, seed, typ, jit, key):
+    seed = typ(seed)
     if jit:
-      actual = _prng_key_as_array(jax.jit(random.PRNGKey)(seed))
+      maker = lambda k: _prng_key_as_array(jax.jit(random.PRNGKey)(k))
     else:
-      actual = _prng_key_as_array(random.PRNGKey(seed))
-    expected = jnp.array(key, dtype=jnp.uint32)
-    self.assertArraysEqual(actual, expected)
+      maker = lambda k: _prng_key_as_array(random.PRNGKey(k))
+    if (jit and typ is int and not config.x64_enabled and
+        (seed < np.iinfo('int32').min or seed > np.iinfo('int32').max)):
+      # We expect an error to be raised.
+      # NOTE: we check 'if jit' because some people rely on builtin int seeds
+      # (e.g. from PRNGKey(hash("altair is best plotting library"))) outside jit
+
+      # First check with no cache entry (note lambda above).
+      with self.assertRaises(OverflowError):
+        maker(seed)
+
+      # Then populate a cache entry.
+      maker(typ(0)).block_until_ready()
+
+      # Then check now that we have a cache entry.
+      with self.assertRaises(OverflowError):
+        maker(seed)
+
+    else:
+      # Otherwise we expect no error.
+      actual = maker(seed)
+      expected = jnp.array(key, dtype=jnp.uint32)
+      self.assertArraysEqual(actual, expected)
 
   def test_default_prng_selection(self):
     if not config.jax_enable_custom_prng:
@@ -507,6 +552,18 @@ class PrngTest(jtu.JaxTestCase):
       self.skipTest("test requires config.jax_enable_custom_prng")
     key = random.PRNGKey(0)
     self.assertIsInstance(key, jax.Array)
+
+  def test_key_output_vjp(self):
+    # See https://github.com/google/jax/issues/14856
+    def f(seed): return random.PRNGKey(seed)
+    jax.vjp(f, 1)  # doesn't crash
+
+
+class ThreefryPrngTest(jtu.JaxTestCase):
+  def test_seed_no_implicit_transfers(self):
+    # See https://github.com/google/jax/issues/15613
+    with jax.transfer_guard('disallow'):
+      random.threefry2x32_key(jax.device_put(42))  # doesn't crash
 
 
 class LaxRandomTest(jtu.JaxTestCase):
@@ -672,7 +729,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for ndim in [1 if is_range else len(input_range_or_shape)]
       for axis in range(-ndim, ndim or 1)
       for ninputs in [input_range_or_shape if is_range else input_range_or_shape[axis]]
-      if replace or np.prod(shape) <= ninputs
+      if replace or math.prod(shape) <= ninputs
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.integer,
     weighted=[True, False],
@@ -685,7 +742,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = self.seed_prng(0)
     is_range = type(input_range_or_shape) is int
     x = (input_range_or_shape if is_range else
-         self.rng().permutation(np.arange(np.prod(
+         self.rng().permutation(np.arange(math.prod(
            input_range_or_shape), dtype=dtype)).reshape(input_range_or_shape))
     N = x if is_range else x.shape[axis]
     if weighted:
@@ -701,7 +758,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertEqual(np_shape, sample.shape)
     if not replace and shape:
       def lsort(x):
-        if not np.prod(x.shape): return x
+        if not math.prod(x.shape): return x
         ind = np.lexsort(np.swapaxes(x, axis, -1).reshape((-1, x.shape[axis])))
         return jnp.take(x, ind, axis)
       self.assertArraysEqual(lsort(sample), lsort(np.unique(sample, axis=axis)))
@@ -724,7 +781,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     is_range = type(range_or_shape) is int
     x = (range_or_shape if is_range else
          self.rng().permutation(np.arange(
-           np.prod(range_or_shape), dtype=dtype)).reshape(range_or_shape))
+           math.prod(range_or_shape), dtype=dtype)).reshape(range_or_shape))
     shape = ((range_or_shape,) if is_range else range_or_shape)
     x_ = np.copy(x)
     rand = lambda key, x: random.permutation(key, x, axis, independent=independent)
@@ -733,7 +790,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertFalse(np.all(perm == x))  # seems unlikely!
     arr = np.arange(x) if is_range else x
     def lsort(x):
-      if not np.prod(x.shape): return x
+      if not math.prod(x.shape): return x
       ind = np.lexsort(np.swapaxes(x, axis, -1).reshape((-1, x.shape[axis])))
       return jnp.take(x, ind, axis)
     if not independent:
@@ -843,11 +900,13 @@ class LaxRandomTest(jtu.JaxTestCase):
     samples = random.beta(key, a, b, shape=(100,), dtype=dtype)
 
     # With such small parameters, all samples should be exactly zero or one.
+    tol = 5E-2 if jtu.device_under_test() == "tpu" else 1E-3
+
     zeros = samples[samples < 0.5]
-    self.assertAllClose(zeros, jnp.zeros_like(zeros))
+    self.assertAllClose(zeros, jnp.zeros_like(zeros), atol=tol)
 
     ones = samples[samples >= 0.5]
-    self.assertAllClose(ones, jnp.ones_like(ones))
+    self.assertAllClose(ones, jnp.ones_like(ones), atol=tol)
 
   @jtu.sample_product(dtype=float_dtypes)
   def testCauchy(self, dtype):
@@ -1585,7 +1644,7 @@ class KeyArrayTest(jtu.JaxTestCase):
   def make_keys(self, *shape, seed=None):
     if seed is None:
       seed = 28
-    seeds = seed + jnp.arange(np.prod(shape), dtype=jnp.uint32)
+    seeds = seed + jnp.arange(math.prod(shape), dtype=jnp.uint32)
     make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
     return jnp.reshape(jax.vmap(make_key)(seeds), shape)
 
@@ -1605,6 +1664,24 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(g[0], k1.dtype)
     self.assertEqual(g[0], k2.dtype)
 
+  def test_key_dtype_attributes(self):
+    key = self.make_keys()
+    key_raw = key.unsafe_raw_array()
+
+    self.assertStartsWith(key.dtype.name, "key")
+    self.assertEqual(key.size * key.dtype.itemsize,
+                     key_raw.size * key_raw.dtype.itemsize)
+
+  def test_isinstance(self):
+    @jax.jit
+    def f(k):
+      self.assertIsInstance(k, random.KeyArray)
+      return k
+
+    k1 = self.make_keys()
+    k2 = f(k1)
+    self.assertIsInstance(k1, random.KeyArray)
+    self.assertIsInstance(k2, random.KeyArray)
 
   # -- prng primitives
 
@@ -1724,9 +1801,18 @@ class KeyArrayTest(jtu.JaxTestCase):
 
   def test_dynamic_slice(self):
     ks = self.make_keys(3, 4)
-    ys = jax.jit(lambda x, i: lax.dynamic_slice_in_dim(x, i, 2))(ks, 1)
+    index = np.int16(1)  # non-default int type to catch type errors.
+    ys = jax.jit(partial(lax.dynamic_slice_in_dim, slice_size=2))(ks, index)
     self.assertIsInstance(ys, random.KeyArray)
     self.assertEqual(ys.shape, (2, 4))
+
+  def test_dynamic_update_slice(self):
+    ks = self.make_keys(3, 4)
+    k = self.make_keys(1, 4)
+    index = np.int16(1)  # non-default int type to catch type errors.
+    ys = jax.jit(partial(lax.dynamic_update_slice_in_dim, axis=0))(ks, k, index)
+    self.assertIsInstance(ys, random.KeyArray)
+    self.assertEqual(ys.shape, (3, 4))
 
   def test_transpose(self):
     ks = self.make_keys(3, 4)
@@ -1757,6 +1843,65 @@ class KeyArrayTest(jtu.JaxTestCase):
     ys = jax.jit(lambda x: x[:, 2:4, 3:4])(ks)
     self.assertIsInstance(ys, random.KeyArray)
     self.assertEqual(ys.shape, (3, 2, 1))
+
+  @skipIf(not config.jax_enable_custom_prng,
+          'requires config.jax_enable_custom_prng')
+  def test_select(self):
+    ks = self.make_keys(3, 2)
+    cs = jnp.array([True, False, False, True, False, True]).reshape(3, 2)
+    ys = jax.jit(lax.select)(cs, ks, ks)
+    self.assertIsInstance(ys, random.KeyArray)
+    self.assertEqual(ys.shape, (3, 2))
+
+  @skipIf(not config.jax_enable_custom_prng,
+          'requires config.jax_enable_custom_prng')
+  def test_select2(self):
+    # See https://github.com/google/jax/issues/15869
+    def f(x):
+      keys = lax.broadcast(jax.random.PRNGKey(0), x.shape)
+      return lax.select(x, keys, keys)
+    x = jnp.array([True, False, False])
+    f(x)  # doesn't crash
+
+  def test_device_put(self):
+    device = jax.devices()[0]
+    keys = self.make_keys(4)
+    keys_on_device = jax.device_put(keys, device)
+    self.assertArraysEqual(keys, keys_on_device)
+
+  def test_device_put_sharded(self):
+    devices = jax.devices()
+    keys = self.make_keys(len(devices))
+    keys_on_device = jax.device_put_sharded(list(keys), devices)
+    self.assertArraysEqual(keys, keys_on_device)
+
+  def test_device_put_replicated(self):
+    devices = jax.devices()
+    key = self.make_keys()
+    keys_on_device = jax.device_put_replicated(key, devices)
+    self.assertArraysEqual(jnp.broadcast_to(key, keys_on_device.shape), keys_on_device)
+
+  def test_make_array_from_callback(self):
+    devices = jax.devices()
+    shape = (len(devices),) if config.jax_enable_custom_prng else (len(devices), 2)
+    mesh = jtu.create_global_mesh((len(devices),), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
+    def callback(index):
+      i = jnp.arange(len(devices))[index[0]]
+      return jax.vmap(jax.random.PRNGKey)(i)
+    result = jax.make_array_from_callback(shape, sharding, callback)
+    expected = jax.vmap(jax.random.PRNGKey)(jnp.arange(len(devices)))
+    self.assertArraysEqual(result, expected)
+
+  def test_make_array_from_single_device_arrays(self):
+    devices = jax.devices()
+    shape = (len(devices),) if config.jax_enable_custom_prng else (len(devices), 2)
+    mesh = jtu.create_global_mesh((len(devices),), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
+    keys = jax.random.split(jax.random.PRNGKey(0), len(devices))
+    arrays = [jax.device_put(keys[i:i + 1], device) for i, device in enumerate(devices)]
+    result = jax.make_array_from_single_device_arrays(shape, sharding, arrays)
+    self.assertArraysEqual(result, keys)
 
   # TODO(frostig,mattjj): more polymorphic primitives tests
 
@@ -1846,15 +1991,17 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
   def test_cannot_add(self):
     key = self.seed_prng(73)
     self.assertRaisesRegex(
-        TypeError, r'unsupported operand type\(s\) for \+*',
+        ValueError, r'dtype=key<.*> is not a valid dtype for JAX type promotion.',
         lambda: key + 47)
 
   @skipIf(np.__version__ == "1.21.0",
           "https://github.com/numpy/numpy/issues/19305")
   def test_grad_of_prng_key(self):
     key = self.seed_prng(73)
-    with self.assertRaisesRegex(TypeError, 'input element type key<fry2>'):
-      jax.grad(lambda x: 1., allow_int=True)(key)
+    with self.assertRaisesRegex(TypeError, 'grad requires real- or complex-valued inputs'):
+      jax.grad(lambda x: 1.)(key)
+    out = jax.grad(lambda x: 1., allow_int=True)(key)
+    self.assertArraysEqual(out, np.zeros(key.shape, jax.dtypes.float0))
 
 
 # TODO(frostig): remove `with_config` we always enable_custom_prng
@@ -1907,7 +2054,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
   def test_cannot_add(self):
     key = self.seed_prng(73)
     self.assertRaisesRegex(
-        TypeError, r'unsupported operand type\(s\) for \+*',
+        ValueError, r'dtype=key<.*> is not a valid dtype for JAX type promotion.',
         lambda: key + 47)
 
   @skipIf(np.__version__ == "1.21.0",
@@ -1915,8 +2062,10 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
   @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_grad_of_prng_key(self):
     key = self.seed_prng(73)
-    with self.assertRaisesRegex(TypeError, 'input element type key<.?rbg>'):
-      jax.grad(lambda x: 1., allow_int=True)(key)
+    with self.assertRaisesRegex(TypeError, 'grad requires real- or complex-valued inputs'):
+      jax.grad(lambda x: 1.)(key)
+    out = jax.grad(lambda x: 1., allow_int=True)(key)
+    self.assertArraysEqual(out, np.zeros(key.shape, jax.dtypes.float0))
 
   def test_random_split_doesnt_device_put_during_tracing(self):
     return  # this test doesn't apply to the RBG PRNG
@@ -1938,91 +2087,226 @@ def like(keys):
 @skipIf(not config.jax_enable_custom_prng,
         'custom PRNG tests require config.jax_enable_custom_prng')
 class JnpWithKeyArrayTest(jtu.JaxTestCase):
+  def check_shape(self, func, *args):
+    out_key = func(*args)
+    self.assertIsInstance(out_key, random.KeyArray)
+    out_like_key = func(*tree_util.tree_map(like, args))
+    self.assertIsInstance(out_like_key, jax.Array)
+    self.assertEqual(out_key.shape, out_like_key.shape)
+
+  def check_against_reference(self, key_func, arr_func, *key_args):
+    out_arr = arr_func(*tree_util.tree_map(lambda x: x.unsafe_raw_array(), key_args))
+    self.assertIsInstance(out_arr, jax.Array)
+
+    out_key = key_func(*key_args)
+    self.assertIsInstance(out_key, random.KeyArray)
+    self.assertArraysEqual(out_key.unsafe_raw_array(), out_arr)
+
+    out_key = jax.jit(key_func)(*key_args)
+    self.assertIsInstance(out_key, random.KeyArray)
+    self.assertArraysEqual(out_key.unsafe_raw_array(), out_arr)
+
+  @parameterized.parameters([
+    [(2, 3), 'shape', (2, 3)],
+    [(2, 3), 'size', 6],
+    [(2, 3), 'ndim', 2]
+  ])
+  def test_properties(self, shape, prop, expected):
+    get_prop = lambda x: getattr(x, prop)
+    key = random.split(random.PRNGKey(0), math.prod(shape)).reshape(shape)
+    self.assertEqual(get_prop(key), expected)
+    self.assertEqual(jax.jit(get_prop)(key), expected)
+
   def test_reshape(self):
     key = random.PRNGKey(123)
     keys = random.split(key, 4)
-    out = jnp.reshape(keys,       (2, 2))
-    ref = jnp.reshape(like(keys), (2, 2))
-    self.assertEqual(out.shape, ref.shape)
-    self.assertEqual(out.shape, (2, 2))
+
+    newshape = (2, 2)
+    key_func = partial(jnp.reshape, newshape=newshape)
+    arr_func = partial(jnp.reshape, newshape=(*newshape, *key.impl.key_shape))
+
+    self.check_shape(key_func, keys)
+    self.check_against_reference(key_func, arr_func, keys)
 
   def test_tile(self):
     key = random.PRNGKey(123)
-    out = jnp.tile(key,       3)
-    ref = jnp.tile(like(key), 3)
-    self.assertEqual(out.shape, ref.shape)
-    self.assertEqual(out.shape, (3,))
+
+    reps = 3
+    key_func = partial(jnp.tile, reps=reps)
+    arr_func = lambda x: jnp.tile(x[None], reps=(reps, *(1 for _ in key.impl.key_shape)))
+
+    self.check_shape(key_func, key)
+    self.check_against_reference(key_func, arr_func, key)
 
   def test_concatenate(self):
-    self.skipTest('jnp.concatenate on key arrays') # TODO(frostig)
     key = random.PRNGKey(123)
-    keys = random.split(key, 2)
-    ref = jnp.concatenate([like(keys)] * 3, axis=0)
-    out = jnp.concatenate([keys, keys, keys], axis=0)
-    self.assertEqual(out.shape, ref.shape)
-    self.assertEqual(out.shape, (6,))
-    out = jax.jit(lambda xs: jnp.concatenate(xs, axis=0))([keys, keys, keys])
-    self.assertEqual(out.shape, ref.shape)
-    self.assertEqual(out.shape, (6,))
+    args = [random.split(k, 2) for k in random.split(key, 3)]
+
+    key_func = arr_func = partial(jnp.concatenate, axis=0)
+
+    self.check_shape(key_func, args)
+    self.check_against_reference(key_func, arr_func, args)
 
   def test_broadcast_to(self):
     key = random.PRNGKey(123)
-    out = jnp.broadcast_to(key,       (3,))
-    ref = jnp.broadcast_to(like(key), (3,))
-    self.assertEqual(out.shape, ref.shape)
-    self.assertEqual(out.shape, (3,))
-    out = jnp.broadcast_to(key, 3)
-    self.assertEqual(out.shape, ref.shape)
-    self.assertEqual(out.shape, (3,))
+
+    shape = (3,)
+    key_func = partial(jnp.broadcast_to, shape=shape)
+    arr_func = partial(jnp.broadcast_to, shape=(*shape, *key.impl.key_shape))
+
+    self.check_shape(key_func, key)
+    self.check_against_reference(key_func, arr_func, key)
 
   def test_expand_dims(self):
     key = random.PRNGKey(123)
-    keys = random.split(key, 6)
-    keys = jnp.reshape(keys, (2, 3))
-    out = jnp.expand_dims(keys,       1)
-    ref = jnp.expand_dims(like(keys), 1)
-    self.assertEqual(out.shape, ref.shape)
-    self.assertEqual(out.shape, (2, 1, 3))
+    keys = random.split(key, 6).reshape(2, 3)
+
+    key_func = arr_func = partial(jnp.expand_dims, axis=1)
+
+    self.check_shape(key_func, keys)
+    self.check_against_reference(key_func, arr_func, keys)
 
   def test_broadcast_arrays(self):
     key = random.PRNGKey(123)
     keys = jax.random.split(key, 3)
-    out, _ = jnp.broadcast_arrays(key,       keys)
-    ref, _ = jnp.broadcast_arrays(like(key), like(keys))
-    self.assertEqual(out.shape, ref.shape)
-    self.assertEqual(out.shape, (3,))
+
+    key_func = arr_func = lambda *args: jnp.broadcast_arrays(*args)[0]
+
+    self.check_shape(key_func, key, keys)
+    self.check_against_reference(key_func, arr_func, key, keys)
 
   def test_append(self):
-    self.skipTest('jnp.append on key arrays') # TODO(frostig)
     key = random.PRNGKey(123)
-    out = jnp.append(key,       key)
-    ref = jnp.append(like(key), like(key))
-    self.assertEqual(out.shape, ref.shape)
-    self.assertEqual(out.shape, (2,))
-    out1 = jnp.append(out,       out)
-    ref1 = jnp.append(like(out), like(out))
-    self.assertEqual(out1.shape, ref1.shape)
-    self.assertEqual(out1.shape, (4,))
-    out2 = jax.jit(jnp.append)(key, key)
-    self.assertEqual(out2.shape, ref.shape)
-    self.assertEqual(out2.shape, (6,))
+    keys = random.split(key, 4)
+
+    key_func = jnp.append
+    arr_func = lambda keys, key: jnp.append(keys, key[None], axis=0)
+
+    self.check_shape(key_func, keys, key)
+    self.check_against_reference(key_func, arr_func, keys, key)
 
   def test_ravel(self):
     key = random.PRNGKey(123)
-    keys = jax.random.split(key, 4)
-    keys = jnp.reshape(keys, (2, 2))
-    out = jnp.ravel(keys)
-    ref = jnp.ravel(like(keys))
-    self.assertEqual(out.shape, ref.shape)
-    self.assertEqual(out.shape, (4,))
+    keys = jax.random.split(key, 4).reshape(2, 2)
+
+    key_func = jnp.ravel
+    arr_func = partial(jnp.reshape, newshape=(4, *key.impl.key_shape))
+
+    self.check_shape(key_func, keys)
+    self.check_against_reference(key_func, arr_func, keys)
 
   def test_stack(self):
     key = random.PRNGKey(123)
     keys = jax.random.split(key, 2)
-    out = jnp.stack([keys, keys, keys], axis=0)
-    ref = jnp.stack([like(keys)] * 3, axis=0)
-    self.assertEqual(out.shape, ref.shape)
-    self.assertEqual(out.shape, (3, 2))
+
+    key_func = arr_func = partial(jnp.stack, axis=0)
+
+    self.check_shape(key_func, keys)
+    self.check_against_reference(key_func, arr_func, keys)
+
+  def test_array(self):
+    key = random.PRNGKey(123)
+    self.assertArraysEqual(key, jnp.array(key))
+    self.assertArraysEqual(key, jnp.asarray(key))
+    self.assertArraysEqual(key, jax.jit(jnp.array)(key))
+    self.assertArraysEqual(key, jax.jit(jnp.asarray)(key))
+
+  def test_array_user_dtype(self):
+    key = random.PRNGKey(123)
+    self.assertArraysEqual(key, jnp.array(key, dtype=key.dtype))
+    self.assertArraysEqual(key, jnp.asarray(key, dtype=key.dtype))
+
+  @parameterized.parameters([
+    (0,),
+    (slice(1),),
+    (np.array([0, 2]),),
+    (np.array([False, True, True]),)
+  ])
+  def test_getitem(self, idx):
+    key = random.PRNGKey(123)
+    keys = jax.random.split(key, 3)
+
+    key_func = arr_func = lambda x: x[idx]
+
+    self.check_shape(key_func, keys)
+    self.check_against_reference(key_func, arr_func, keys)
+
+  @parameterized.parameters([
+    (0,),
+    (slice(1),),
+    (np.array([0, 2]),),
+    (np.array([False, True, True]),)
+  ])
+  def test_gather(self, idx):
+    key = random.PRNGKey(123)
+    keys = jax.random.split(key, 3)
+
+    key_func = arr_func = lambda x: x.at[idx].get()
+
+    self.check_shape(key_func, keys)
+    self.check_against_reference(key_func, arr_func, keys)
+
+  def test_equality(self):
+    key = random.PRNGKey(123)
+    key2 = random.PRNGKey(456)
+
+    self.assertTrue(key == key)
+    self.assertFalse(key == key2)
+
+    self.assertTrue(key != key2)
+    self.assertFalse(key != key)
+
+    size = 5
+    idx = slice(2, 4)
+    key_arr = random.split(key, size).at[idx].set(key)
+    expected = jnp.zeros(size, dtype=bool).at[idx].set(True)
+
+    self.assertArraysEqual(key == key_arr, expected)
+    self.assertArraysEqual(key != key_arr, ~expected)
+
+  @parameterized.parameters([
+    (0,),
+    (slice(1),),
+    (np.array([0, 2]),),
+    (np.array([False, True, True]),)
+  ])
+  def test_scatter(self, idx):
+    key = random.PRNGKey(123)
+    keys = jax.random.split(key, 3)
+
+    key_func = arr_func = lambda x, y: x.at[idx].set(y)
+
+    self.check_shape(key_func, keys, key)
+    self.check_against_reference(key_func, arr_func, keys, key)
+
+
+
+  def test_errors(self):
+    key = random.PRNGKey(123)
+    with self.assertRaisesRegex(ValueError, "dtype=key<fry> is not a valid dtype"):
+      jnp.add(key, 1)
+    with self.assertRaisesRegex(ValueError, "dtype=key<fry> is not a valid dtype"):
+      key + 1
+    with self.assertRaisesRegex(TypeError, "add does not accept dtype key<fry>"):
+      jnp.add(key, key)
+    with self.assertRaisesRegex(TypeError, "add does not accept dtype key<fry>"):
+      key + key
+    with self.assertRaisesRegex(TypeError, "neg does not accept dtype key<fry>"):
+      jnp.negative(key)
+    with self.assertRaisesRegex(TypeError, "neg does not accept dtype key<fry>"):
+      -key
+    with self.assertRaisesRegex(ValueError, "Cannot call convert_element_type on dtype key<fry>"):
+      lax.convert_element_type(key, int)
+
+  def test_eval_shape(self):
+    key = jax.random.PRNGKey(1701)
+    shapedtype = jax.ShapeDtypeStruct(key.shape, key.dtype)
+    out = jax.eval_shape(lambda x: x, shapedtype)
+    self.assertEqual(out, shapedtype)
+
+  def test_result_type(self):
+    key = jax.random.PRNGKey(123456)
+    self.assertEqual(jnp.result_type(key), key.dtype)
 
 
 def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
