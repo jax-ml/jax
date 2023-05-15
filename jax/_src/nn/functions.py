@@ -320,8 +320,6 @@ def log_softmax(x: Array,
   return shifted - shifted_logsumexp
 
 
-# TODO(phawkins): this jit was found to change numerics in a test. Debug this.
-#@partial(jax.jit, static_argnames=("axis",))
 def softmax(x: Array,
             axis: Optional[Union[int, Tuple[int, ...]]] = -1,
             where: Optional[Array] = None,
@@ -334,6 +332,10 @@ def softmax(x: Array,
   .. math ::
     \mathrm{softmax}(x) = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
 
+  See ``jax.nn.softmax_alt`` for a version of this function which computes the
+  same values but uses an alternative differentiation rule which may improve
+  memory usage in some cases.
+
   Args:
     x : input array
     axis: the axis or axes along which the softmax should be computed. The
@@ -343,12 +345,12 @@ def softmax(x: Array,
     initial: The minimum value used to shift the input array. Must be present
       when :code:`where` is not None.
   """
+  # TODO(mattjj): remove this flag
   if jax.config.jax_softmax_custom_jvp:
     return _softmax(x, axis, where, initial)
   else:
-    return _softmax_deprecated(x, axis, where, initial)
+    return softmax_alt(x, axis, where, initial)
 
-# TODO(mattjj): replace softmax with _softmax when deprecation flag is removed
 @partial(jax.custom_jvp, nondiff_argnums=(1,))
 def _softmax(
     x,
@@ -365,11 +367,38 @@ def _softmax_jvp(axis, primals, tangents):
   y = _softmax(x, axis, where, initial)
   return y, y * (x_dot - (y * x_dot).sum(axis, where=where, keepdims=True))
 
-def _softmax_deprecated(x, axis, where, initial):
+
+# TODO(phawkins): this jit was found to change numerics in a test. Debug this.
+#@partial(jax.jit, static_argnames=("axis",))
+def softmax_alt(x: Array,
+                axis: Optional[Union[int, Tuple[int, ...]]] = -1,
+                where: Optional[Array] = None,
+                initial: Optional[Array] = None) -> Array:
+  r"""Softmax function with alternative differentiation rule.
+
+  This function computes the same values as ``jax.nn.softmax``, but it uses an
+  alternative differentiation rule. This alternative rule has different memory
+  usage behavior, and so if using ``jax.nn.softmax`` causes out-of-memory errors
+  then using this function may help.
+
+  Computes the function which rescales elements to the range :math:`[0, 1]`
+  such that the elements along :code:`axis` sum to :math:`1`.
+
+  .. math ::
+    \mathrm{softmax}(x) = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
+
+  Args:
+    x : input array
+    axis: the axis or axes along which the softmax should be computed. The
+      softmax output summed across these dimensions should sum to :math:`1`.
+      Either an integer or a tuple of integers.
+    where: Elements to include in the :code:`softmax`.
+    initial: The minimum value used to shift the input array. Must be present
+      when :code:`where` is not None.
+  """
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
   return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
-
 
 @partial(jax.jit, static_argnames=("axis",))
 def standardize(x: Array,
