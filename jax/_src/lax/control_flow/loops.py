@@ -26,6 +26,7 @@ from jax import config  # type: ignore[no-redef]
 from jax._src.core import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            tree_map, tree_flatten_with_path, keystr)
+from jax._src.api_util import shaped_abstractify
 from jax._src.tree_util import equality_errors
 from jax._src import ad_checkpoint
 from jax._src import ad_util
@@ -692,7 +693,9 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
 
 def _maybe_put(x):
   if isinstance(x, np.ndarray):
-    return jax.device_put(x, jax.devices('cpu')[0])
+    return dispatch._put_x(
+        x, jax.sharding.SingleDeviceSharding(jax.devices('cpu')[0]),
+        shaped_abstractify(x), False)
   else:
     return x
 
