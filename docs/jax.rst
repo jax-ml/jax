@@ -26,6 +26,7 @@ Subpackages
    jax.stages
    jax.tree_util
    jax.typing
+   jax.extend
    jax.example_libraries
    jax.experimental
 
