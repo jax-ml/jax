@@ -23,7 +23,6 @@ from functools import partial, lru_cache
 import threading
 import warnings
 
-import jax
 from jax._src import core
 from jax._src import stages
 from jax._src import dispatch
@@ -33,7 +32,6 @@ from jax._src import op_shardings
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
-from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.api_util import (
     argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
@@ -66,7 +64,7 @@ from jax._src.tree_util import (
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, weakref_lru_cache,
-    merge_lists)
+    merge_lists, flatten, unflatten)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -210,10 +208,6 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
 
   @api_boundary
   def cache_miss(*args, **kwargs):
-    log_priority = logging.WARNING if jax.config.jax_log_compiles else logging.DEBUG
-    if logger.isEnabledFor(log_priority):
-      logger.log(log_priority, "C++ fastpath cache miss")
-
     outs, out_flat, out_tree, args_flat = _python_pjit_helper(
         fun, infer_params_fn, *args, **kwargs)
 
@@ -1307,32 +1301,48 @@ def _pjit_abstract_eval(*args, jaxpr, out_shardings, resource_env, **_):
 pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
+def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
+                                    out_shardings, api_name):
+  mod_ctx = ctx.module_context
+  key = (pjit_p, name, jaxpr, effects,
+         pxla.SemanticallyEqualShardings(in_shardings),
+         pxla.SemanticallyEqualShardings(out_shardings), api_name)
+
+  func = mod_ctx.cached_primitive_lowerings.get(key, None)
+  if func is None:
+    arg_shardings = [None if is_unspecified(i) else i._to_xla_op_sharding(aval.ndim)
+                     for aval, i in zip(ctx.avals_in, in_shardings)]
+    result_shardings = [None if is_unspecified(o) else o._to_xla_op_sharding(aval.ndim)
+                        for aval, o in zip(ctx.avals_out, out_shardings)]
+    # TODO(b/228598865): inlined calls cannot have shardings set directly on the
+    # inputs or outputs because they are lost during MLIR->HLO conversion.
+    # using_sharding_annotation=False means we add an identity operation instead.
+    func = mlir.lower_jaxpr_to_fun(
+        mod_ctx, name, jaxpr, effects, arg_shardings=arg_shardings,
+        result_shardings=result_shardings, use_sharding_annotations=False,
+        api_name=api_name)
+    mod_ctx.cached_primitive_lowerings[key] = func
+  return func
+
+
 def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                    out_shardings, resource_env, donated_invars,
                    keep_unused, inline):
   effects = list(ctx.tokens_in.effects())
   output_types = map(mlir.aval_to_ir_types, ctx.avals_out)
   output_types = [mlir.token_type()] * len(effects) + output_types
-  flat_output_types = util.flatten(output_types)
+  flat_output_types = flatten(output_types)
 
-  arg_shardings = [None if is_unspecified(i) else i._to_xla_op_sharding(aval.ndim)
-                   for aval, i in zip(ctx.avals_in, in_shardings)]
-  result_shardings = [None if is_unspecified(o) else o._to_xla_op_sharding(aval.ndim)
-                      for aval, o in zip(ctx.avals_out, out_shardings)]
+  func = _pjit_cached_lower_jaxpr_to_fun(
+      ctx, name, jaxpr, tuple(effects), in_shardings,
+      out_shardings, api_name=('jit' if resource_env is None else 'pjit'))
 
-  # TODO(b/228598865): inlined calls cannot have shardings set directly on the
-  # inputs or outputs because they are lost during MLIR->HLO conversion.
-  # using_sharding_annotation=False means we add an identity operation instead.
-  func = mlir.lower_jaxpr_to_fun(
-      ctx.module_context, name, jaxpr, effects, arg_shardings=arg_shardings,
-      result_shardings=result_shardings, use_sharding_annotations=False,
-      api_name=('jit' if resource_env is None else 'pjit'))
   tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
   args = (*ctx.dim_var_values, *tokens_in, *args)
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(func.name.value),
                              mlir.flatten_lowering_ir_args(args))
-  out_nodes = util.unflatten(call.results, map(len, output_types))
+  out_nodes = unflatten(call.results, map(len, output_types))
   tokens, out_nodes = split_list(out_nodes, [len(effects)])
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(zip(effects, tokens)))
   ctx.set_tokens_out(tokens_out)
