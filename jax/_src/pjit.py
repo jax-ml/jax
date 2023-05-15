@@ -886,9 +886,9 @@ def _process_in_axis_resources(in_shardings_thunk, in_avals, in_tree,
 
 @lu.cache
 def _create_pjit_jaxpr(fun, in_type, debug_info, out_paths):
-  with dispatch.log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
-                                  "for pjit in {elapsed_time} sec",
-                                  event=dispatch.JAXPR_TRACE_EVENT):
+  with dispatch.log_elapsed_time(
+      "Finished tracing + transforming {fun_name} for pjit in {elapsed_time} sec",
+      fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
     pe_debug = debug_info and pe.debug_info_final(fun, debug_info.traced_for)
     if config.jax_dynamic_shapes:
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic2(

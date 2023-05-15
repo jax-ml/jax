@@ -742,9 +742,9 @@ def stage_parallel_callable(
       for axis, aval in safe_zip(pci.in_axes, pci.avals))
 
   with core.extend_axis_env(pci.axis_name, pci.global_axis_size, None):  # type: ignore
-    with dispatch.log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
-                                   "for pmap in {elapsed_time} sec",
-                                   event=dispatch.JAXPR_TRACE_EVENT):
+    with dispatch.log_elapsed_time(
+        "Finished tracing + transforming {fun_name} for pmap in {elapsed_time} sec",
+        fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(
           fun, sharded_avals, pe.debug_info_final(fun, "pmap"))
   jaxpr = api_util.jaxpr_debug_info(jaxpr, fun.debug_info)
@@ -877,8 +877,8 @@ def lower_parallel_callable(
     unordered_effects = list(
         effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
     with dispatch.log_elapsed_time(
-        f"Finished jaxpr to MLIR module conversion {name_stack} "
-        "in {elapsed_time} sec", event=dispatch.JAXPR_TO_MLIR_MODULE_EVENT):
+        "Finished jaxpr to MLIR module conversion {fun_name} in {elapsed_time} sec",
+        fun_name=str(name_stack), event=dispatch.JAXPR_TO_MLIR_MODULE_EVENT):
       lowering_result = mlir.lower_jaxpr_to_module(
           module_name,
           closed_jaxpr,
@@ -1081,8 +1081,8 @@ class UnloadedPmapExecutable:
           ordered_effects, jaxpr_debug_info)
 
     with dispatch.log_elapsed_time(
-        f"Finished XLA compilation of {pci.name} in {{elapsed_time}} sec",
-         event=dispatch.BACKEND_COMPILE_EVENT):
+        "Finished XLA compilation of {fun_name} in {elapsed_time} sec",
+        fun_name=pci.name, event=dispatch.BACKEND_COMPILE_EVENT):
       compiled = dispatch.compile_or_get_cached(
           pci.backend, hlo, device_assignment, compile_options,
           host_callbacks)
@@ -1820,8 +1820,8 @@ def _trace_to_jaxpr_and_dce(fun_or_jaxpr, global_in_avals, api_name, fun_name,
 
   if isinstance(fun_or_jaxpr, lu.WrappedFun):
     with dispatch.log_elapsed_time(
-        f"Finished tracing + transforming {name_stack} "
-        "in {elapsed_time} sec", event=dispatch.JAXPR_TRACE_EVENT):
+        "Finished tracing + transforming {fun_name} in {elapsed_time} sec",
+        fun_name=str(name_stack), event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(
           fun_or_jaxpr, global_in_avals)
   else:
@@ -1921,8 +1921,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
   ordered_effects = list(effects.ordered_effects.filter_in(closed_jaxpr.effects))
 
   with dispatch.log_elapsed_time(
-        f"Finished jaxpr to MLIR module conversion {name_stack} "
-        "in {elapsed_time} sec", event=dispatch.JAXPR_TO_MLIR_MODULE_EVENT):
+        "Finished jaxpr to MLIR module conversion {fun_name} in {elapsed_time} sec",
+        fun_name=str(name_stack), event=dispatch.JAXPR_TO_MLIR_MODULE_EVENT):
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
@@ -2191,8 +2191,8 @@ def lower_mesh_computation(
   with core.extend_axis_env_nd(mesh.shape.items()):
     if isinstance(fun_or_jaxpr, lu.WrappedFun):
       with dispatch.log_elapsed_time(
-          f"Finished tracing + transforming {name_stack} in "
-          "{elapsed_time} sec", event=dispatch.JAXPR_TRACE_EVENT):
+          "Finished tracing + transforming {fun_name} in {elapsed_time} sec",
+          fun_name=str(name_stack), event=dispatch.JAXPR_TRACE_EVENT):
         jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(
             fun_or_jaxpr, in_jaxpr_avals)
     else:
@@ -2250,8 +2250,8 @@ def lower_mesh_computation(
     ordered_effects = list(effects.ordered_effects.filter_in(
       closed_jaxpr.effects))
     with dispatch.log_elapsed_time(
-        f"Finished jaxpr to MLIR module conversion {name_stack} "
-        "in {elapsed_time} sec", event=dispatch.JAXPR_TO_MLIR_MODULE_EVENT):
+        "Finished jaxpr to MLIR module conversion {fun_name} in {elapsed_time} sec",
+        fun_name=str(name_stack), event=dispatch.JAXPR_TO_MLIR_MODULE_EVENT):
       lowering_result = mlir.lower_jaxpr_to_module(
           module_name,
           closed_jaxpr,
@@ -2556,9 +2556,9 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
   if hasattr(backend, "compile_replicated"):
     return None, compile_options
 
-  with dispatch.log_elapsed_time(f"Finished XLA compilation of {name} "
-                                 "in {elapsed_time} sec",
-                                 event=dispatch.BACKEND_COMPILE_EVENT):
+  with dispatch.log_elapsed_time(
+      "Finished XLA compilation of {fun_name} in {elapsed_time} sec",
+      fun_name=name, event=dispatch.BACKEND_COMPILE_EVENT):
     xla_executable = dispatch.compile_or_get_cached(
         backend, computation, dev, compile_options, host_callbacks)
   return xla_executable, compile_options

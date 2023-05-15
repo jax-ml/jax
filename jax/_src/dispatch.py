@@ -259,10 +259,8 @@ def is_single_device_sharding(sharding) -> bool:
   return len(sharding.device_set) == 1 and not isinstance(sharding, PmapSharding)
 
 
-# TODO(yashkatariya): This API takes in a string which means that string is
-# created even if it is not going to be logged.
 @contextlib.contextmanager
-def log_elapsed_time(fmt: str, event: Optional[str] = None):
+def log_elapsed_time(fmt: str, fun_name: str, event: Optional[str] = None):
   if _on_exit:
     yield
   else:
@@ -271,7 +269,8 @@ def log_elapsed_time(fmt: str, event: Optional[str] = None):
     yield
     elapsed_time = time.time() - start_time
     if logger.isEnabledFor(log_priority):
-      logger.log(logging.WARNING, fmt.format(elapsed_time=elapsed_time))
+      logger.log(logging.WARNING, fmt.format(
+          fun_name=fun_name, elapsed_time=elapsed_time))
     if event is not None:
       record_event_duration_secs(event, elapsed_time)
 
