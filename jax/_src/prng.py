@@ -294,6 +294,9 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
       pp.text('PRNGKeyArray:') +
       pp.nest(2, pp.brk() + pp_keys + pp.brk() + pp_impl)))
 
+  def copy(self):
+    return self.__class__(self.impl, self._base_array.copy())
+
   # Overwritten immediately below
   @property
   def at(self)                  -> _IndexUpdateHelper: assert False
