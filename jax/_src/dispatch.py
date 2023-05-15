@@ -61,6 +61,7 @@ from jax._src.sharding_impls import (
 
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
+JAXPR_TO_MLIR_MODULE_EVENT = "/jax/core/compile/jaxpr_to_mlir_module_duration"
 BACKEND_COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
 
 FLAGS = flags.FLAGS
@@ -258,6 +259,8 @@ def is_single_device_sharding(sharding) -> bool:
   return len(sharding.device_set) == 1 and not isinstance(sharding, PmapSharding)
 
 
+# TODO(yashkatariya): This API takes in a string which means that string is
+# created even if it is not going to be logged.
 @contextlib.contextmanager
 def log_elapsed_time(fmt: str, event: Optional[str] = None):
   if _on_exit:
