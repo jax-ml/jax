@@ -443,12 +443,14 @@ approx_top_k_p.def_abstract_eval(_approx_top_k_abstract_eval)
 if xc.mlir_api_version > 48:
   mlir.register_lowering(approx_top_k_p,
                         partial(_approx_top_k_lowering, fallback=True))
-else:
+  mlir.register_lowering(approx_top_k_p, _approx_top_k_lowering,
+                          platform='tpu')
+elif xc.mlir_api_version == 48:
   xla.register_translation(approx_top_k_p, _approx_top_k_fallback_translation)
-if xc.mlir_api_version > 47:
   mlir.register_lowering(approx_top_k_p, _approx_top_k_lowering,
                           platform='tpu')
 else:
+  xla.register_translation(approx_top_k_p, _approx_top_k_fallback_translation)
   xla.register_translation(approx_top_k_p, _approx_top_k_tpu_translation,
                             platform='tpu')
 batching.primitive_batchers[approx_top_k_p] = _approx_top_k_batch_rule
