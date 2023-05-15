@@ -289,8 +289,12 @@ def export(fun_jax: Callable,
     # Log and then check the module.
     if logging.vlog_is_on(3):
       mlir_module_text = mlir.module_to_string(mlir_module)
-      logmsg = f"version={xla_call_module_version} lowering_platform={lowering_platform}"
-      logging.vlog(3, "Lowered JAX module: %s\n%s", logmsg, mlir_module_text)
+      logmsg = (f"version={xla_call_module_version} "
+                f"lowering_platform={lowering_platform_str} "
+                f"strict_checks={strict_checks}")
+      logging.info("Lowered JAX module: %s\n", logmsg)
+      for l in mlir_module_text.splitlines():
+        logging.info(l)
 
     _check_module(mlir_module,
                   allow_non_replicated_sharding=allow_non_replicated_sharding,

@@ -1559,6 +1559,29 @@ purposes of `call_tf`.)
 <!-- Next line must match the copybara config. -->
 <!-- Link to internal documentation. -->
 
+## Debugging JAX native serialization
+
+Inside Google, you can turn on logging by using the `--vmodule` argument to
+specify the logging levels for different modules,
+e.g., `--vmodule=jax_export=3`.
+following modules are useful for debugging JAX native serialization:
+
+  * `jax_export=3` - will log the StableHLO module on serialization.
+  * `jax2tf=3` - will log the parameters to `XlaCallModule` op on serialization.
+  * `xla_call_module_loader=3` - will log the StableHLO module upong loading,
+    after shape refinementas, and on verification error. You can use level `4`
+    to add location information, and level `5` to also print the module before
+    and after each transformation.
+  * `xla_call_module_op=3` - will log the HLO module generated after
+    shape refinement and conversion from StableHLO.
+
+For the two `xla` modules mentioned above, you can control logging in OSS
+with environment variables, e.g.:
+
+```
+TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=xla_call_module_loader=3 python ...
+```
+
 ## TensorFlow versions supported
 
 The ``jax2tf.convert`` and `call_tf` require fairly recent versions of TensorFlow.
