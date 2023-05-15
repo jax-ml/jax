@@ -51,6 +51,7 @@ prefixed with underscores, although we do not entirely comply with this yet.
 * `jax.interpreters`
 * `jax.experimental`
 * `jax.example_libraries`
+* `jax.extend` (see [details](https://jax.readthedocs.io/en/latest/jax.extend.html))
 
 
 These lists are not exhaustive.
