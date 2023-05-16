@@ -274,6 +274,7 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertTrue(dtypes.issubdtype(dt, np.floating))
       self.assertTrue(dtypes.issubdtype(dt, np.inexact))
       self.assertTrue(dtypes.issubdtype(dt, np.number))
+      self.assertFalse(dtypes.issubdtype(dt, np.float64))
 
   def testArrayCasts(self):
     for t in [jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64]:

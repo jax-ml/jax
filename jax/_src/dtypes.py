@@ -228,6 +228,9 @@ def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
   a = a if _issubclass(a, np.generic) else np.dtype(a)
   b = b if _issubclass(b, np.generic) else np.dtype(b)
   if a in _custom_float_dtypes:
+    # Avoid implicitly casting list elements below to a dtype.
+    if isinstance(b, np.dtype):
+      return a == b
     return b in [a, np.floating, np.inexact, np.number]
   return np.issubdtype(a, b)
 
