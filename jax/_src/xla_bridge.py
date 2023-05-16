@@ -482,7 +482,9 @@ def _clear_backends() -> None:
 def _init_backend(platform: str) -> xla_client.Client:
   factory, unused_priority = _backend_factories.get(platform, (None, None))
   if factory is None:
-    raise RuntimeError(f"Unknown backend '{platform}'")
+    raise RuntimeError(
+        f"Backend '{platform}' is not in the list of known backends: "
+        f"{list(_backend_factories.keys())}.")
 
   logger.debug("Initializing backend '%s'", platform)
   backend = factory()
