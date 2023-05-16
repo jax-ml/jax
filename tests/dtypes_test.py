@@ -263,6 +263,18 @@ class DtypesTest(jtu.JaxTestCase):
           self.assertEqual(dtypes.issubdtype(t, category),
                            np.issubdtype(np.dtype(t).type, category))
 
+  @parameterized.product(
+      dtype=[dtypes.bfloat16, dtypes.float8_e4m3fn, dtypes.float8_e5m2]
+  )
+  def testIsSubdtypeCustomFloats(self, dtype):
+    for dt in [dtype, np.dtype(dtype), str(np.dtype(dtype))]:
+      self.assertTrue(dtypes.issubdtype(dt, dt))
+      self.assertTrue(dtypes.issubdtype(dt, np.dtype(dtype)))
+      self.assertTrue(dtypes.issubdtype(dt, str(np.dtype(dtype))))
+      self.assertTrue(dtypes.issubdtype(dt, np.floating))
+      self.assertTrue(dtypes.issubdtype(dt, np.inexact))
+      self.assertTrue(dtypes.issubdtype(dt, np.number))
+
   def testArrayCasts(self):
     for t in [jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64]:
       a = np.array([1, 2.5, -3.7])

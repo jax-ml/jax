@@ -47,6 +47,9 @@ _float8_e5m2_dtype: np.dtype = np.dtype(float8_e5m2)
 bfloat16: Type[np.generic] = ml_dtypes.bfloat16
 _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
+_custom_float_dtypes = (_bfloat16_dtype, _float8_e4m3fn_dtype,
+                        _float8_e5m2_dtype)
+
 # Default types.
 bool_: type = np.bool_
 int_: type = np.int32 if config.jax_default_dtype_bits == '32' else np.int64
@@ -218,38 +221,15 @@ def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
 
   This is like :func:`numpy.issubdtype`, but can handle dtype extensions such as
   :obj:`jax.dtypes.bfloat16`.
-  '"""
-  if a == "float8_e4m3fn":
-    a = float8_e4m3fn
-  if a == float8_e4m3fn:
-    if isinstance(b, np.dtype):
-      return b == _float8_e4m3fn_dtype
-    else:
-      return b in [float8_e4m3fn, np.floating, np.inexact, np.number]
-  if a == "float8_e5m2":
-    a = float8_e5m2
-  if a == float8_e5m2:
-    if isinstance(b, np.dtype):
-      return b == _float8_e5m2_dtype
-    else:
-      return b in [float8_e5m2, np.floating, np.inexact, np.number]
-  if a == "bfloat16":
-    a = bfloat16
-  if a == bfloat16:
-    if isinstance(b, np.dtype):
-      return b == _bfloat16_dtype
-    else:
-      return b in [bfloat16, np.floating, np.inexact, np.number]
-  if not _issubclass(b, np.generic):
-    # Workaround for JAX scalar types. NumPy's issubdtype has a backward
-    # compatibility behavior for the second argument of issubdtype that
-    # interacts badly with JAX's custom scalar types. As a workaround,
-    # explicitly cast the second argument to a NumPy type object.
-    b = np.dtype(b).type
-  try:
-    return np.issubdtype(a, b)
-  except TypeError:  # e.g. if 'a' is not a np.dtype
-    return False
+  """
+  from jax._src import core     # TODO(frostig): break this cycle
+  if core.is_opaque_dtype(a):
+    return a == b
+  a = a if _issubclass(a, np.generic) else np.dtype(a)
+  b = b if _issubclass(b, np.generic) else np.dtype(b)
+  if a in _custom_float_dtypes:
+    return b in [a, np.floating, np.inexact, np.number]
+  return np.issubdtype(a, b)
 
 can_cast = np.can_cast
 issubsctype = np.issubsctype
@@ -290,7 +270,7 @@ def _jax_type(dtype: DType, weak_type: bool) -> JAXType:
   if weak_type:
     if dtype == bool:
       return dtype
-    if dtype in [_float8_e4m3fn_dtype, _float8_e5m2_dtype, _bfloat16_dtype]:
+    if dtype in _custom_float_dtypes:
       return float
     return type(dtype.type(0).item())
   return dtype
