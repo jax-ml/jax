@@ -1650,6 +1650,11 @@ class KeyArrayTest(jtu.JaxTestCase):
     make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
     return jnp.reshape(jax.vmap(make_key)(seeds), shape)
 
+  def test_key_as_seed(self):
+    key = self.make_keys()
+    with self.assertRaisesRegex(TypeError, "PRNGKey accepts a scalar seed"):
+      jax.random.PRNGKey(key)
+
   def test_dtype_property(self):
     k1, k2 = self.make_keys(), self.make_keys()
     self.assertEqual(k1.dtype, k2.dtype)
