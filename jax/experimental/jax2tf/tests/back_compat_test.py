@@ -313,7 +313,8 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         cpu_lapack_geqrf.data_2023_03_17, cuda_threefry2x32.data_2023_03_15,
         cuda_cusolver_geqrf.data_2023_03_18, cuda_cusolver_syev.data_2023_03_17,
         tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17,
-        tpu_Sharding.data_2023_03_16, tpu_ApproxTopK.data_2023_04_17]
+        tpu_Sharding.data_2023_03_16, tpu_ApproxTopK.data_2023_04_17,
+        tpu_ApproxTopK.data_2023_05_16]
     covering_testdatas = itertools.chain(
         *[load_testdata_nested(d) for d in covering_testdatas])
     covered_targets = set()
@@ -466,8 +467,10 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
   def test_approx_top_k(self):
     def func():
       x = np.array([3.0, 1.0, 4.0, 2.0, 5.0, 6.0, 7.0])
-      return lax.approx_max_k(x, 3)
-    data = load_testdata(tpu_ApproxTopK.data_2023_04_17)
+      y = lax.approx_max_k(x, 3)
+      z = lax.approx_max_k(x, 3)
+      return y + z
+    data = load_testdata(tpu_ApproxTopK.data_2023_05_16)
     self.run_one_test(func, data)
 
   def test_cu_threefry2x32(self):

@@ -292,6 +292,7 @@ def _comparator_builder_mlir(ctx, op_type, is_max_k):
     comparator = func.FuncOp(
         "top_k_{}_{}_comparator".format('gt' if is_max_k else 'lt', op_type),
         comparator_type)
+  ctx.module_context.symbol_table.insert(comparator)
 
   entry_block = comparator.add_entry_block()
   with ir.InsertionPoint(entry_block):
