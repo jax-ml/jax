@@ -846,10 +846,14 @@ def _scan_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn
                     num_carry=sum(used_carry_in), linear=tuple(new_linear),
                     jaxpr=core.ClosedJaxpr(jaxpr_dce, jaxpr.consts))
   # TODO(mattjj,sharadmv): don't assume effects are never DCE'd?
+  new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
+  new_outvars = [v for v, used in zip(eqn.outvars, used_outputs) if used]
+  _, new_effects = eqn.primitive.abstract_eval(*[v.aval for v in new_invars],
+                                               **new_params)
   new_eqn = pe.new_jaxpr_eqn(
-      [v for v, used in zip(eqn.invars, used_inputs) if used],
-      [v for v, used in zip(eqn.outvars, used_outputs) if used],
-      eqn.primitive, new_params, eqn.effects, eqn.source_info)
+      new_invars,
+      new_outvars,
+      eqn.primitive, new_params, new_effects, eqn.source_info)
   assert len(new_eqn.invars ) == len(new_params['jaxpr'].in_avals )
   assert len(new_eqn.outvars) == len(new_params['jaxpr'].out_avals)
   return used_inputs, new_eqn

@@ -1067,6 +1067,27 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(make_fun(2))(jnp.arange(8), 0)
     self.assertIn(InputEffect(0), jaxpr.effects)
 
+  def test_jaxpr_input_effect_is_tracked_through_scan_with_dce(self):
+    c = np.ones(2)
+    def make_fun(index):
+      def f(xs, z):
+        def body(z, x):
+          input_effect(x, z, c, index=index)
+          return z, x
+        lax.scan(body, z, xs)
+      return f
+    jaxpr = jax.make_jaxpr(make_fun(0))(jnp.arange(8), 0)
+    jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
+    self.assertIn(InputEffect(1), jaxpr.effects)
+
+    jaxpr = jax.make_jaxpr(make_fun(1))(jnp.arange(8), 0)
+    jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
+    self.assertIn(InputEffect(2), jaxpr.effects)
+
+    jaxpr = jax.make_jaxpr(make_fun(2))(jnp.arange(8), 0)
+    jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
+    self.assertIn(InputEffect(0), jaxpr.effects)
+
   def test_jaxpr_input_effect_is_tracked_through_cond(self):
 
     c = np.ones(2)
