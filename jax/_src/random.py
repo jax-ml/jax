@@ -567,7 +567,7 @@ def choice(key: KeyArray,
     if replace:
       p_cuml = jnp.cumsum(p_arr)
       r = p_cuml[-1] * (1 - uniform(key, shape, dtype=p_cuml.dtype))
-      ind = jnp.searchsorted(p_cuml, r)
+      ind = jnp.searchsorted(p_cuml, r).astype(int)
     else:
       # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
       g = -gumbel(key, (n_inputs,), dtype=p_arr.dtype) - jnp.log(p_arr)
