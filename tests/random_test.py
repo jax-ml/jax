@@ -754,8 +754,10 @@ class LaxRandomTest(jtu.JaxTestCase):
     sample = rand(key, x)
     if not is_range:
       self.assertEqual(dtype, sample.dtype)
-    np_shape = np.shape(np_choice(x, shape or None, replace, p, axis))
-    self.assertEqual(np_shape, sample.shape)
+    expected_shape = np.shape(np_choice(x, shape or None, replace, p, axis))
+    self.assertEqual(expected_shape, sample.shape)
+    expected_dtype = dtypes.result_type(int if is_range else x)
+    self.assertEqual(expected_dtype, sample.dtype)
     if not replace and shape:
       def lsort(x):
         if not math.prod(x.shape): return x
