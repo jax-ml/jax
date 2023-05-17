@@ -20,11 +20,13 @@ XLA. There are also a handful of related casting utilities.
 """
 
 from functools import partial, lru_cache
+import importlib
 import io
 import json
 import logging
 import os
 import platform as py_platform
+import pkgutil
 import threading
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 import warnings
@@ -45,6 +47,17 @@ try:
 except (ModuleNotFoundError, ImportError):
   iree = None
 
+logger = logging.getLogger(__name__)
+
+jax_plugins: Optional[Any]
+try:
+  import jax_plugins  # type: ignore
+except ModuleNotFoundError:
+  jax_plugins = None
+except ImportError as e:
+  logger.error("Failed to import jax_plugins: %s", e)
+  jax_plugins = None
+
 traceback_util.register_exclusion(__file__)
 
 
@@ -52,7 +65,6 @@ XlaBackend = xla_client.Client
 
 FLAGS = flags.FLAGS
 
-logger = logging.getLogger(__name__)
 
 # TODO(phawkins): Remove jax_xla_backend.
 flags.DEFINE_string(
@@ -304,6 +316,29 @@ def _get_pjrt_plugin_config(
     )
   return (config['library_path'], config.get('create_options'))
 
+def discover_pjrt_plugins() -> None:
+  """Discovers plugins in the namespace package `jax_plugins` and import them.
+
+  The plugins need to (1) be place in a root folder `jax_plugins` and follow
+  other namespace package requirements, and (2) implement an initialize()
+  method, which appends `plugin_name:file_path` to env var
+  `PJRT_NAMES_AND_LIBRARY_PATHS`. The file_path is the path to the .so file, or
+  the path to the json file with configurations. Please refer to the comment of
+  register_pjrt_plugin_factories or
+  jax/tests/testdata/example_pjrt_plugin_config.json about the json file format.
+
+  TODO(b/261345120): using env var `PJRT_NAMES_AND_LIBRARY_PATHS` is a short
+  term solution. What initialize() method should do is in discussion.
+  """
+  if jax_plugins is None:
+    return
+  for _, name, _ in pkgutil.iter_modules(
+      jax_plugins.__path__, jax_plugins.__name__ + '.'
+  ):
+    # TODO(b/261345120): Add a try-catch to defend against a broken plugin.
+    module = importlib.import_module(name)
+    module.initialize()
+
 
 def register_pjrt_plugin_factories(plugins_from_env: str) -> None:
   """Registers backend factories for PJRT plugins.
@@ -351,6 +386,8 @@ def register_pjrt_plugin_factories(plugins_from_env: str) -> None:
     )
 
 
+# Plugins in the namespace package `jax_plugins` will be imported.
+discover_pjrt_plugins()
 # The plugin names and paths are set in env var PJRT_NAMES_AND_LIBRARY_PATHS,
 # in the format of 'name1:path1,name2:path2' ('name1;path1,name2;path2' for
 # windows).
