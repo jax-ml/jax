@@ -25,6 +25,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import tree_util
 
+from jax._src import ad_util
 from jax._src import api
 from jax._src import basearray
 from jax._src import config as config_lib
@@ -316,6 +317,8 @@ _set_array_base_attributes(PRNGKeyArrayImpl, include=[
     'at', 'flatten', 'ravel', 'reshape',
     'squeeze', 'swapaxes', 'take', 'transpose', 'T'])
 basearray.Array.register(PRNGKeyArrayImpl)
+
+ad_util.jaxval_zeros_likers[PRNGKeyArrayImpl] = jnp.zeros_like  # type: ignore[has-type]
 
 
 # TODO(frostig): remove, rerouting callers directly to random_seed

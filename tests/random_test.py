@@ -1910,6 +1910,31 @@ class KeyArrayTest(jtu.JaxTestCase):
     result = jax.make_array_from_single_device_arrays(shape, sharding, arrays)
     self.assertArraysEqual(result, keys)
 
+  def test_key_array_custom_jvp(self):
+    def f_raw(x, key):
+        return x * jax.random.normal(key, ())
+
+    f = jax.custom_jvp(f_raw)
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      nonlocal key_dot
+      x, key = primals
+      x_dot, key_dot = tangents
+      rand = jax.random.normal(key, ())
+      tangent_out = x_dot * rand
+      primal_out = x * rand
+      return primal_out, tangent_out
+
+    key_dot = None
+    key = self.make_keys()
+    default_result = jax.grad(f_raw)(0.0, key)
+    custom_result = jax.grad(f)(0.0, key)
+
+    self.assertAllClose(default_result, custom_result)
+    self.assertIsInstance(key_dot, jax.random.PRNGKeyArray)
+    self.assertArraysEqual(jax.random.key_data(key_dot), np.uint32(0))
+
   # TODO(frostig,mattjj): more polymorphic primitives tests
 
 
