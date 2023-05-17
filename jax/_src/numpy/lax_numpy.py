@@ -2270,7 +2270,7 @@ def arange(start: DimSize, stop: Optional[DimSize] = None,
   if stop is None and step is None:
     start_dtype = _dtype(start)
     if (not dtypes.issubdtype(start_dtype, np.integer) and
-        not core.is_opaque_dtype(start_dtype)):
+        not dtypes.is_opaque_dtype(start_dtype)):
       ceil_ = ufuncs.ceil if isinstance(start, core.Tracer) else np.ceil
       start = ceil_(start).astype(int)  # type: ignore
     return lax.iota(dtype, start)

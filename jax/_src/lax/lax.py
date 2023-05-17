@@ -514,8 +514,8 @@ def _convert_element_type(operand: ArrayLike, new_dtype: Optional[DTypeLike] = N
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()  # type: ignore
 
-  if (core.is_opaque_dtype(new_dtype) or
-      core.is_opaque_dtype(getattr(operand, 'dtype', None))):
+  if (dtypes.is_opaque_dtype(new_dtype) or
+      dtypes.is_opaque_dtype(getattr(operand, 'dtype', None))):
     return convert_element_type_p.bind(operand, new_dtype=new_dtype,
                                        weak_type=bool(weak_type))
 
@@ -1526,7 +1526,7 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals,
   del kwargs
   assert len(avals) == len(accepted_dtypes), (avals, accepted_dtypes)
   for i, aval in enumerate(avals):
-    if allow_opaque_dtype and core.is_opaque_dtype(aval.dtype):
+    if allow_opaque_dtype and dtypes.is_opaque_dtype(aval.dtype):
       continue
     types = accepted_dtypes[i]
     if not any(dtypes.issubdtype(aval.dtype, t) for t in types):
@@ -2179,7 +2179,7 @@ def _compare_lower_hlo(direction: str, ctx, x, y):
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
   x_dtype = avals_in[0].dtype
   x, y = mlir.multi_broadcast_in_dim(ctx, (x, y), avals_in, aval_out.shape)
-  if core.is_opaque_dtype(x_dtype):
+  if dtypes.is_opaque_dtype(x_dtype):
     broadcast_avals_in = tuple(
         core.ShapedArray(aval_out.shape, aval.dtype) for aval in avals_in)
     if direction == 'EQ':
@@ -2228,10 +2228,10 @@ def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type):
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type):
   if operand.dtype != new_dtype:
-    if core.is_opaque_dtype(operand.dtype):
+    if dtypes.is_opaque_dtype(operand.dtype):
       raise ValueError(
           f"Cannot call convert_element_type on dtype {dtype_to_string(operand.dtype)}")
-    if core.is_opaque_dtype(new_dtype):
+    if dtypes.is_opaque_dtype(new_dtype):
       raise ValueError(
           f"Cannot convert_element_type to dtype={dtype_to_string(new_dtype)}")
   return new_dtype
@@ -2271,7 +2271,7 @@ def _convert_elt_type_folding_rule(consts, eqn):
   o, = eqn.outvars
   if (type(c) in {np.ndarray, *dtypes.python_scalar_dtypes} and
       isinstance(o.aval, core.UnshapedArray) and not np.shape(c) and
-      not core.is_opaque_dtype(eqn.params['new_dtype'])):
+      not dtypes.is_opaque_dtype(eqn.params['new_dtype'])):
     out = np.array(c, eqn.params['new_dtype'])
     if not o.aval.weak_type:
       return [out], None
@@ -2282,8 +2282,8 @@ def _convert_elt_type_folding_rule(consts, eqn):
 
 def _convert_elt_type_fwd_rule(eqn):
   v, = eqn.invars
-  if (not core.is_opaque_dtype(eqn.params['new_dtype']) and
-      not core.is_opaque_dtype(v.aval.dtype) and
+  if (not dtypes.is_opaque_dtype(eqn.params['new_dtype']) and
+      not dtypes.is_opaque_dtype(v.aval.dtype) and
       v.aval.dtype == eqn.params['new_dtype'] and
       v.aval.weak_type == eqn.params['weak_type']):
     return [v], None
@@ -3268,7 +3268,7 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
 
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
-  if core.is_opaque_dtype(aval_out.dtype):
+  if dtypes.is_opaque_dtype(aval_out.dtype):
     return [aval_out.dtype._rules.transpose_mlir(ctx, aval_out, x, permutation=permutation)]
   return hlo.TransposeOp(x, mlir.dense_int_elements(permutation)).results
 
@@ -3374,7 +3374,7 @@ def _select_hlo_lowering(ctx, which, *cases):
   which_aval = ctx.avals_in[0]
   aval_out, = ctx.avals_out
 
-  if core.is_opaque_dtype(aval_out.dtype):
+  if dtypes.is_opaque_dtype(aval_out.dtype):
     return [aval_out.dtype._rules.select_mlir(
         ctx, ctx.avals_in, aval_out, which, *cases)]
 
@@ -4574,7 +4574,7 @@ def check_same_dtypes(name: str, *avals: core.UnshapedArray) -> None:
   """Check that dtypes agree, possibly ignoring float precision."""
   # the `ignore_fp_precision` flag exists because the XLA shape inference logic
   # allows mixed floating point precision, but the HLO verifier often rejects it
-  if any(core.is_opaque_dtype(aval.dtype) for aval in avals):
+  if any(dtypes.is_opaque_dtype(aval.dtype) for aval in avals):
     return  # TODO(mattjj,frostig): do some checking, friend
   if len(avals) < 2:
     return
@@ -4716,7 +4716,7 @@ def empty(dtype):
 empty_p = core.Primitive('empty')
 empty_p.def_abstract_eval(lambda *, dtype: core.ShapedArray((), dtype))
 def _empty_lower(ctx, *, dtype):
-  if core.is_opaque_dtype(dtype):
+  if dtypes.is_opaque_dtype(dtype):
     return dtype._rules.empty_mlir(ctx, ctx.avals_out[0])
   return mlir.ir_constants(np.zeros((), np.dtype(dtype)))
 mlir.register_lowering(empty_p, _empty_lower)

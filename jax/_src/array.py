@@ -598,7 +598,7 @@ def make_array_from_callback(
       for device in sharding.addressable_devices
   ]
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
-  if core.is_opaque_dtype(aval.dtype):
+  if dtypes.is_opaque_dtype(aval.dtype):
     return aval.dtype._rules.make_sharded_array(aval, sharding, arrays, committed=True)
   return ArrayImpl(aval, sharding, arrays, committed=True)
 
@@ -660,7 +660,7 @@ def make_array_from_single_device_arrays(
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
-  if core.is_opaque_dtype(aval.dtype):
+  if dtypes.is_opaque_dtype(aval.dtype):
     return aval.dtype._rules.make_sharded_array(aval, sharding, arrays, committed=True)
   # TODO(phawkins): ideally the cast() could be checked. Revisit this after
   # removing DeviceArray.
@@ -711,7 +711,7 @@ def _array_global_result_handler(global_aval, out_sharding, committed,
                                  is_out_sharding_from_xla):
   if global_aval.dtype == dtypes.float0:
     return lambda _: np.zeros(global_aval.shape, dtypes.float0)  # type: ignore
-  if core.is_opaque_dtype(global_aval.dtype):
+  if dtypes.is_opaque_dtype(global_aval.dtype):
     return global_aval.dtype._rules.global_sharded_result_handler(
         global_aval, out_sharding, committed, is_out_sharding_from_xla)
   return xc.array_result_handler(
@@ -726,7 +726,7 @@ pxla.global_result_handlers[core.AbstractToken] = lambda *_: lambda *_: core.tok
 def _array_local_result_handler(aval, sharding, indices):
   if aval.dtype == dtypes.float0:
     return lambda _: np.zeros(aval.shape, dtypes.float0)  # type: ignore
-  if core.is_opaque_dtype(aval.dtype):
+  if dtypes.is_opaque_dtype(aval.dtype):
     return aval.dtype._rules.local_sharded_result_handler(
         aval, sharding, indices)
   return xc.array_result_handler(

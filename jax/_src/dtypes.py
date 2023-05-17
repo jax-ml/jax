@@ -37,6 +37,12 @@ traceback_util.register_exclusion(__file__)
 
 FLAGS = flags.FLAGS
 
+# TODO(frostig,mattjj): achieve this w/ a protocol instead of registry?
+opaque_dtypes: Set[OpaqueDType] = set()
+
+def is_opaque_dtype(dtype: Any) -> bool:
+  return type(dtype) in opaque_dtypes
+
 # fp8 support
 float8_e4m3fn: Type[np.generic] = ml_dtypes.float8_e4m3fn
 float8_e5m2: Type[np.generic] = ml_dtypes.float8_e5m2
@@ -102,8 +108,7 @@ def to_complex_dtype(dtype: DTypeLike) -> DType:
 
 @functools.lru_cache(maxsize=None)
 def _canonicalize_dtype(x64_enabled: bool, allow_opaque_dtype: bool, dtype: Any) -> Union[DType, OpaqueDType]:
-  from jax._src import core     # TODO(frostig): break this cycle
-  if core.is_opaque_dtype(dtype):
+  if is_opaque_dtype(dtype):
     if not allow_opaque_dtype:
       raise ValueError(f"Internal: canonicalize_dtype called on opaque dtype {dtype} "
                        "with allow_opaque_dtype=False")
@@ -222,8 +227,7 @@ def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
   This is like :func:`numpy.issubdtype`, but can handle dtype extensions such as
   :obj:`jax.dtypes.bfloat16`.
   """
-  from jax._src import core     # TODO(frostig): break this cycle
-  if core.is_opaque_dtype(a):
+  if is_opaque_dtype(a):
     return a == b
   a = a if _issubclass(a, np.generic) else np.dtype(a)
   b = b if _issubclass(b, np.generic) else np.dtype(b)
@@ -426,21 +430,20 @@ def check_valid_dtype(dtype: DType) -> None:
 
 def dtype(x: Any, *, canonicalize: bool = False) -> DType:
   """Return the dtype object for a value or type, optionally canonicalized based on X64 mode."""
-  from jax._src import core     # TODO(frostig): break this cycle
   if x is None:
     raise ValueError(f"Invalid argument to dtype: {x}.")
   elif isinstance(x, type) and x in python_scalar_dtypes:
     dt = python_scalar_dtypes[x]
   elif type(x) in python_scalar_dtypes:
     dt = python_scalar_dtypes[type(x)]
-  elif core.is_opaque_dtype(getattr(x, 'dtype', None)):
+  elif is_opaque_dtype(getattr(x, 'dtype', None)):
     dt = x.dtype
   else:
     try:
       dt = np.result_type(x)
     except TypeError as err:
       raise TypeError(f"Cannot determine dtype of {x}") from err
-  if dt not in _jax_dtype_set and not core.is_opaque_dtype(dt):
+  if dt not in _jax_dtype_set and not is_opaque_dtype(dt):
     raise TypeError(f"Value '{x}' with dtype {dt} is not a valid JAX array "
                     "type. Only arrays of numeric types are supported by JAX.")
   return canonicalize_dtype(dt, allow_opaque_dtype=True) if canonicalize else dt
@@ -500,8 +503,7 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> Union[DType,
   return (dtype, weak_type) if return_weak_type_flag else dtype
 
 def check_user_dtype_supported(dtype, fun_name=None):
-  from jax._src import core     # TODO(frostig): break this cycle
-  if core.is_opaque_dtype(dtype):
+  if is_opaque_dtype(dtype):
     return
   # Avoid using `dtype in [...]` because of numpy dtype equality overloading.
   if isinstance(dtype, type) and dtype in {bool, int, float, builtins.complex}:

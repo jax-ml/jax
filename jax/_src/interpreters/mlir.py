@@ -143,7 +143,7 @@ def dtype_to_ir_type(dtype: Union[np.dtype, np.generic]) -> ir.Type:
 
 def _array_ir_types(aval: Union[core.ShapedArray, core.DShapedArray]
                     ) -> Sequence[ir.Type]:
-  if core.is_opaque_dtype(aval.dtype):
+  if dtypes.is_opaque_dtype(aval.dtype):
     phys_avals = aval.dtype._rules.physical_avals(aval)
     return tuple(itertools.chain(*map(_array_ir_types, phys_avals)))
   if not core.is_constant_shape(aval.shape):
@@ -959,7 +959,7 @@ def lower_jaxpr_to_fun(
 def _to_physical_op_sharding(
     aval: Optional[core.AbstractValue], sharding: Optional[xc.OpSharding]
 ) -> Optional[xc.OpSharding]:
-  if (isinstance(aval, core.ShapedArray) and core.is_opaque_dtype(aval.dtype)
+  if (isinstance(aval, core.ShapedArray) and dtypes.is_opaque_dtype(aval.dtype)
       and sharding is not None):
     return aval.dtype._rules.physical_op_sharding(aval, sharding)
   return sharding
@@ -1206,7 +1206,7 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
   # broadcast_dimension[i] is the axis of the result where the axis i of
   # op is broadcast.
   # Lower a possibly-dynamic broadcast_in_dim
-  if core.is_opaque_dtype(aval_out.dtype):  # type: ignore
+  if dtypes.is_opaque_dtype(aval_out.dtype):  # type: ignore
     return aval_out.dtype._rules.broadcast_in_dim_mlir(  # type: ignore
         ctx, aval_out, op,
         broadcast_dimensions=broadcast_dimensions)
@@ -1243,7 +1243,7 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
   return out
 
 def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Value:
-  if core.is_opaque_dtype(aval_out.dtype):  # type: ignore
+  if dtypes.is_opaque_dtype(aval_out.dtype):  # type: ignore
     # TODO(frostig,mattjj,necula): asserts a single physical aval, and a
     # particular reshape rule (reshape to the output physical aval's shape)
     aval_out, = aval_out.dtype._rules.physical_avals(aval_out)  # type: ignore
@@ -1258,7 +1258,7 @@ def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Va
 
 def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
              start_indices, limit_indices, strides) -> ir.Value:
-  if core.is_opaque_dtype(aval_out.dtype):
+  if dtypes.is_opaque_dtype(aval_out.dtype):
     return [aval_out.dtype._rules.slice_mlir(
         ctx, aval_out, x, start_indices, limit_indices, strides)]
 
@@ -1279,7 +1279,7 @@ def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
 
 def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:
-  if core.is_opaque_dtype(aval_out.dtype):
+  if dtypes.is_opaque_dtype(aval_out.dtype):
     return aval_out.dtype._rules.dynamic_slice_mlir(ctx, aval_out, x,
                                                     start_indices)
   slice_sizes = aval_out.shape
@@ -1298,7 +1298,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
 
 def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                          start_indices) -> ir.Value:
-  if core.is_opaque_dtype(aval_out.dtype):
+  if dtypes.is_opaque_dtype(aval_out.dtype):
     return aval_out.dtype._rules.dynamic_update_slice_mlir(
         ctx, aval_out, x, update, *start_indices)
 
@@ -1393,7 +1393,7 @@ def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
 
   In particular, treat casts to boolean as x != 0, rather than truncating
   integer values (b/209440332)."""
-  if (not core.is_opaque_dtype(aval_out.dtype) and
+  if (not dtypes.is_opaque_dtype(aval_out.dtype) and
       aval_out.dtype == np.dtype(np.bool_)):
     if dtypes.issubdtype(aval_in.dtype, np.inexact):
       compare_type = "FLOAT"
@@ -1704,7 +1704,7 @@ def _layout_to_mlir_layout(minor_to_major: Optional[Sequence[int]]):
   return ir.DenseIntElementsAttr.get(layout, type=ir.IndexType.get())
 
 def _aval_to_default_layouts(aval):
-  if core.is_opaque_dtype(aval.dtype):
+  if dtypes.is_opaque_dtype(aval.dtype):
     avals = aval.dtype._rules.physical_avals(aval)
   else:
     avals = [aval]

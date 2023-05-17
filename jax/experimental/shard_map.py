@@ -28,6 +28,7 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec, Mesh
 from jax._src import core
+from jax._src import dtypes
 from jax._src import ad_util
 from jax._src import callback
 from jax._src import custom_derivatives
@@ -522,7 +523,7 @@ def _xla_shard(ctx: mlir.LoweringRuleContext,
   shard_proto = NamedSharding(
       mesh, sharding_impls.array_mapping_to_axis_resources(axes)  # type: ignore
   )._to_xla_op_sharding(aval_in.ndim)
-  if core.is_opaque_dtype(aval_in.dtype):
+  if dtypes.is_opaque_dtype(aval_in.dtype):
     shard_proto = aval_in.dtype._rules.physical_op_sharding(aval_in, shard_proto)
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto, unspecified_dims=set())
   return [mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto, set())]
@@ -536,7 +537,7 @@ def _xla_unshard(ctx: mlir.LoweringRuleContext,
   shard_proto = NamedSharding(
       mesh, sharding_impls.array_mapping_to_axis_resources(axes)  # type: ignore
   )._to_xla_op_sharding(aval_out.ndim)
-  if core.is_opaque_dtype(aval_out.dtype):
+  if dtypes.is_opaque_dtype(aval_out.dtype):
     shard_proto = aval_out.dtype._rules.physical_op_sharding(aval_out, shard_proto)
   return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, shard_proto, set())
 

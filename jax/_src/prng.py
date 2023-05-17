@@ -649,7 +649,7 @@ class KeyTy:
     return hash((self.__class__, self.impl))
 
 
-core.opaque_dtypes.add(KeyTy)
+dtypes.opaque_dtypes.add(KeyTy)
 
 
 core.pytype_aval_mappings[PRNGKeyArrayImpl] = lambda x: x.aval

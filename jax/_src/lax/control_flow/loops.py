@@ -1647,7 +1647,7 @@ def _pred_bcast_select_hlo(ctx,
     assert x.type == y.type, (x.type, y.type)
     assert (pred_aval.shape == x_y_aval.shape[:len(pred_aval.shape)]), (
             pred_aval.shape, x_y_aval)
-    if core.is_opaque_dtype(x_y_aval.dtype):
+    if dtypes.is_opaque_dtype(x_y_aval.dtype):
       x_y_aval, = x_y_aval.dtype._rules.physical_avals(x_y_aval)
     bcast_pred = mlir.broadcast_in_dim(ctx, pred, core.DShapedArray(x_y_aval.shape, np.dtype(np.bool_)),
                                        broadcast_dimensions=list(range(len(pred_aval.shape))))

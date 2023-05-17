@@ -990,7 +990,7 @@ def _jax_physical_aval(aval: core.ShapedArray) -> core.ShapedArray:
   physical avals, but we don't support those here. Instead we assert
   there is only one and return it.
   """
-  if core.is_opaque_dtype(aval.dtype):
+  if dtypes.is_opaque_dtype(aval.dtype):
     physical_aval, = aval.dtype._rules.physical_avals(aval)
     assert (len(physical_aval.shape) >= len(aval.shape) and
             physical_aval.shape[:len(aval.shape)] == aval.shape), (physical_aval, aval)
@@ -1087,7 +1087,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
       # The float0 type is not known to TF.
       if jax_dtype == dtypes.float0:
         val = np.zeros(np.shape(val), conversion_dtype.as_numpy_dtype)
-      if hasattr(val, 'dtype') and core.is_opaque_dtype(val.dtype):
+      if hasattr(val, 'dtype') and dtypes.is_opaque_dtype(val.dtype):
         val = val.dtype._rules.physical_const(val)
       tf_val = tf.convert_to_tensor(val, dtype=conversion_dtype)
       if do_memoize:
@@ -2082,7 +2082,7 @@ tf_impl_with_avals[lax.broadcast_in_dim_p] = _broadcast_in_dim
 
 
 def _empty(*, dtype):
-  if core.is_opaque_dtype(dtype):
+  if dtypes.is_opaque_dtype(dtype):
     raise NotImplementedError  # TODO(frostig,mattjj): jax2tf handlers
   return tf.constant(np.array(0, dtype=dtype))
 
@@ -2720,7 +2720,7 @@ def _gather(operand, start_indices, *, dimension_numbers, slice_sizes: core.Shap
 
   operand_aval = _in_avals[0]
   start_indices = _maybe_cast_to_int64(start_indices)
-  if core.is_opaque_dtype(operand_aval.dtype):
+  if dtypes.is_opaque_dtype(operand_aval.dtype):
     opaque_shape = _jax_physical_aval(operand_aval).shape[len(operand_aval.shape):]
     trailing_offset_dims = [len(_out_aval.shape) + i for i in range(len(opaque_shape))]
     dimension_numbers = dimension_numbers._replace(
@@ -2761,7 +2761,7 @@ def _dynamic_slice(operand, *start_indices, slice_sizes: core.Shape,
                    _out_aval: core.ShapedArray):
   start_indices = _maybe_cast_to_int64(tf.stack(start_indices))
   operand_aval = _in_avals[0]
-  if core.is_opaque_dtype(operand_aval.dtype):
+  if dtypes.is_opaque_dtype(operand_aval.dtype):
     opaque_shape = _jax_physical_aval(operand_aval).shape[len(operand_aval.shape):]
     slice_sizes = (*slice_sizes, *opaque_shape)
     start_indices = tf.concat([start_indices, tf.zeros((len(opaque_shape),),
@@ -2783,7 +2783,7 @@ def _dynamic_update_slice(operand, update, *start_indices,
                           _out_aval: core.ShapedArray):
   start_indices = _maybe_cast_to_int64(tf.stack(start_indices))
   operand_aval = _in_avals[0]
-  if core.is_opaque_dtype(operand_aval.dtype):
+  if dtypes.is_opaque_dtype(operand_aval.dtype):
     opaque_shape = _jax_physical_aval(operand_aval).shape[len(operand_aval.shape):]
     start_indices = tf.concat([start_indices, tf.zeros((len(opaque_shape),),
                                                        dtype=start_indices.dtype)],

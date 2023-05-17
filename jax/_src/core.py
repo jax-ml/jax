@@ -53,7 +53,7 @@ from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
 import jax._src.pretty_printer as pp
 from jax._src.lib import jax_jit
 from jax._src import traceback_util
-from jax._src.typing import Array, DimSize, OpaqueDType, Shape
+from jax._src.typing import Array, DimSize, Shape
 from jax._src import typing
 traceback_util.register_exclusion(__file__)
 
@@ -1374,25 +1374,20 @@ def concrete_or_error(force: Any, val: Any, context=""):
 # type for interaction with the compiler and runtime, e.g. when lowering
 # to the compiler's language.
 
-# TODO(frostig,mattjj): achieve this w/ a protocol instead of registry?
-opaque_dtypes: Set[OpaqueDType] = set()
 
 # TODO(frostig): update inliners of the four functions below to call them
 def has_opaque_dtype(x: Any) -> bool:
-  return is_opaque_dtype(get_aval(x).dtype)
-
-def is_opaque_dtype(dtype: Any) -> bool:
-  return type(dtype) in opaque_dtypes
+  return dtypes.is_opaque_dtype(get_aval(x).dtype)
 
 def _short_dtype_name(dtype) -> str:
-  if type(dtype) in opaque_dtypes:
+  if type(dtype) in dtypes.opaque_dtypes:
     return str(dtype)
   else:
     return (dtype.name.replace('float', 'f').replace('uint'   , 'u')
                       .replace('int'  , 'i').replace('complex', 'c'))
 
 def _dtype_object(dtype):
-  return dtype if type(dtype) in opaque_dtypes else np.dtype(dtype)
+  return dtype if type(dtype) in dtypes.opaque_dtypes else np.dtype(dtype)
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']
@@ -1603,7 +1598,7 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
   # float0 tangent type, which works fine for all our current opaque
   # dtype applications. We may some day want to delegate this
   # decision to the dtype rules.
-  if (is_opaque_dtype(primal_dtype) or
+  if (dtypes.is_opaque_dtype(primal_dtype) or
       not dtypes.issubdtype(primal_dtype, np.inexact)):
     return dtypes.float0
   else:
@@ -1730,7 +1725,7 @@ class bint:
 
   def __str__(self) -> str:
     return self.name
-opaque_dtypes.add(bint)
+dtypes.opaque_dtypes.add(bint)
 
 AxisSize = Union[int, DArray, Tracer, Var, DBIdx, InDBIdx, OutDBIdx]
 

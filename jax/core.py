@@ -46,7 +46,6 @@ from jax._src.core import (
   MapPrimitive as MapPrimitive,
   NameGatheringSubst as NameGatheringSubst,
   NamedShape as NamedShape,
-  OpaqueDType as OpaqueDType,
   OutDBIdx as OutDBIdx,
   OutputType as OutputType,
   ParamDict as ParamDict,
@@ -117,7 +116,6 @@ from jax._src.core import (
   is_constant_shape as is_constant_shape,
   is_dim as is_dim,
   is_empty_shape as is_empty_shape,
-  is_opaque_dtype as is_opaque_dtype,
   is_special_dim_size as is_special_dim_size,
   jaxpr_as_fun as jaxpr_as_fun,
   jaxpr_uses_outfeed as jaxpr_uses_outfeed,
@@ -140,7 +138,6 @@ from jax._src.core import (
   new_sublevel as new_sublevel,
   no_axis_name as no_axis_name,
   no_effects as no_effects,
-  opaque_dtypes as opaque_dtypes,
   outfeed_primitives as outfeed_primitives,
   partial as partial,
   pp as pp,
@@ -202,4 +199,8 @@ from jax._src.core import (
   used_axis_names_jaxpr as used_axis_names_jaxpr,
   valid_jaxtype as valid_jaxtype,
   zip as zip,
+)
+
+from jax._src.dtypes import (
+  is_opaque_dtype as is_opaque_dtype,
 )

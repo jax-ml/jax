@@ -170,6 +170,7 @@ py_library_providing_imports_info(
         ":core",
         ":custom_api_util",
         ":deprecations",
+        ":dtypes",
         ":effects",
         ":environment_info",
         ":lazy_loader",
@@ -203,6 +204,7 @@ pytype_strict_library(
     deps = [
         ":ad_util",
         ":core",
+        ":dtypes",
         ":traceback_util",
     ] + py_deps("numpy"),
 )
@@ -226,6 +228,7 @@ pytype_strict_library(
         ":abstract_arrays",
         ":config",
         ":core",
+        ":dtypes",
         ":traceback_util",
         ":tree_util",
         ":util",
@@ -278,12 +281,12 @@ pytype_strict_library(
     name = "core",
     srcs = [
         "_src/core.py",
-        "_src/dtypes.py",
         "_src/errors.py",
         "_src/linear_util.py",
     ],
     deps = [
         ":config",
+        ":dtypes",
         ":effects",
         ":pretty_printer",
         ":source_info_util",
@@ -292,7 +295,7 @@ pytype_strict_library(
         ":typing",
         ":util",
         "//jax/_src/lib",
-    ] + py_deps("ml_dtypes") + py_deps("numpy"),
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -303,6 +306,18 @@ pytype_strict_library(
 pytype_strict_library(
     name = "deprecations",
     srcs = ["_src/deprecations.py"],
+)
+
+pytype_strict_library(
+    name = "dtypes",
+    srcs = [
+        "_src/dtypes.py",
+    ],
+    deps = [
+        ":config",
+        ":traceback_util",
+        ":typing",
+    ] + py_deps("ml_dtypes") + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -371,6 +386,7 @@ pytype_strict_library(
         ":ad_util",
         ":config",
         ":core",
+        ":dtypes",
         ":effects",
         ":op_shardings",
         ":partial_eval",
@@ -404,6 +420,7 @@ pytype_strict_library(
         ":api_util",
         ":config",
         ":core",
+        ":dtypes",
         ":effects",
         ":profiler",
         ":source_info_util",
@@ -552,6 +569,7 @@ pytype_strict_library(
         ":abstract_arrays",
         ":config",
         ":core",
+        ":dtypes",
         ":sharding_impls",
         ":source_info_util",
         ":typing",

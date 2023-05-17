@@ -3031,7 +3031,7 @@ def bake_vmap(batched_args, batch_dims):
 class CustomElementTypesTest(jtu.JaxTestCase):
 
   def setUp(self):
-    core.opaque_dtypes.add(FooTy)
+    dtypes.opaque_dtypes.add(FooTy)
     core.pytype_aval_mappings[FooArray] = \
         lambda x: core.ShapedArray(x.shape, FooTy())
     xla.canonicalize_dtype_handlers[FooArray] = lambda x: x
@@ -3046,7 +3046,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     batching.primitive_batchers[bake_p] = bake_vmap
 
   def tearDown(self):
-    core.opaque_dtypes.remove(FooTy)
+    dtypes.opaque_dtypes.remove(FooTy)
     del core.pytype_aval_mappings[FooArray]
     del xla.canonicalize_dtype_handlers[FooArray]
     del xla.pytype_aval_mappings[FooArray]

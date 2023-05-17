@@ -58,7 +58,7 @@ def _make_array_shape(aval: ShapedArray) -> Sequence[xc.Shape]:
   def dt(aval):
     return np.dtype('bool') if aval.dtype == dtypes.float0 else aval.dtype
 
-  if core.is_opaque_dtype(aval.dtype):
+  if dtypes.is_opaque_dtype(aval.dtype):
     avals = aval.dtype._rules.physical_avals(aval)
   else:
     avals = [aval]

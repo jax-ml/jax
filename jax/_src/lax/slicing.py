@@ -1373,7 +1373,7 @@ def _gather_lower(ctx, operand, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
                   indices_are_sorted, mode, fill_value):
   aval_out, = ctx.avals_out
-  if core.is_opaque_dtype(aval_out.dtype):
+  if dtypes.is_opaque_dtype(aval_out.dtype):
     return [aval_out.dtype._rules.gather_mlir(
         ctx, ctx.avals_in, aval_out, operand, indices, dimension_numbers=dimension_numbers,
         slice_sizes=slice_sizes, unique_indices=unique_indices,
@@ -1999,7 +1999,7 @@ def _scatter_lower(ctx, operand, indices, updates, *,
                    update_jaxpr, update_consts, dimension_numbers,
                    indices_are_sorted, unique_indices, mode):
   aval_out, = ctx.avals_out
-  if core.is_opaque_dtype(aval_out.dtype):
+  if dtypes.is_opaque_dtype(aval_out.dtype):
     return [aval_out.dtype._rules.scatter_mlir(
         ctx, ctx.avals_in, aval_out, operand, indices, updates,
         update_jaxpr=update_jaxpr, update_consts=update_consts,
