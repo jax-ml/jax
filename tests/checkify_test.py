@@ -839,6 +839,13 @@ class CheckifyTransformTests(jtu.JaxTestCase):
         partial(partial, jax.lax.map)(lambda x: jnp.sin(x * y))))))
     f(jnp.array([3.]))  # don't crash
 
+  def test_while_loop_leaks(self):
+    def f(x):
+      n = jnp.minimum(1, 2)
+      return jax.lax.while_loop(lambda i: i < n, lambda i: i + 1, x)
+
+    jax.jit(checkify.checkify(f))(0)  # Does not crash bc of leaked tracer.
+
 
 @jtu.with_config(jax_check_tracer_leaks=True)
 class AssertPrimitiveTests(jtu.JaxTestCase):
