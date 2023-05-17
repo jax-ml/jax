@@ -17,7 +17,7 @@ import abc
 from functools import partial, reduce
 import math
 import operator as op
-from typing import Any, Callable, Hashable, Iterator, NamedTuple, Sequence, Tuple, Union
+from typing import Any, Callable, Hashable, Iterator, NamedTuple, Set, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -48,6 +48,7 @@ from jax._src.lax import utils as lax_utils
 from jax._src.lib.mlir import ir
 from jax._src.lib import gpu_prng
 from jax._src.lib import version as jaxlib_version
+from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.array_methods import (
     _array_operators, _set_array_base_attributes, _IndexUpdateHelper)
@@ -60,6 +61,7 @@ from jax._src.util import safe_map, safe_zip
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
+Device = xc.Device
 
 UINT_DTYPES = {
     8: jnp.uint8, 16: jnp.uint16, 32: jnp.uint32, 64: jnp.uint64}  # type: ignore[has-type]
@@ -138,8 +140,15 @@ class PRNGKeyArray(abc.ABC, metaclass=PRNGKeyArrayMeta):
   @abc.abstractmethod  # TODO(frostig): rename
   def unsafe_raw_array(self) -> PRNGKeyArray: ...
 
+  @property
+  @abc.abstractmethod
+  def unsafe_buffer_pointer(self) -> int: ...
+
   @abc.abstractmethod
   def block_until_ready(self) -> PRNGKeyArray: ...
+
+  @abc.abstractmethod
+  def copy_to_host_async(self) -> None: ...
 
   @property
   @abc.abstractmethod
@@ -191,6 +200,26 @@ class PRNGKeyArray(abc.ABC, metaclass=PRNGKeyArrayMeta):
   @abc.abstractmethod
   def flatten(self, *_, **__)   -> PRNGKeyArray: ...
 
+  @property
+  @abc.abstractmethod
+  def is_fully_addressable(self) -> bool: ...
+  @property
+  @abc.abstractmethod
+  def is_fully_replicated(self) -> bool: ...
+  @abc.abstractmethod
+  def device(self) -> Device: ...
+  @abc.abstractmethod
+  def devices(self) -> Set[Device]: ...
+  @abc.abstractmethod
+  def delete(self) -> None: ...
+  @abc.abstractmethod
+  def is_deleted(self) -> bool: ...
+  @abc.abstractmethod
+  def on_device_size_in_bytes(self) -> int: ...
+
+  # TODO(jakevdp): potentially add tolist(), tobytes(), device_buffer, device_buffers,
+  #    addressable_data(), addressable_shards(), global_shards(), __cuda_interface__()
+
 
 class PRNGKeyArrayImpl(PRNGKeyArray):
   """An array of PRNG keys backed by an RNG implementation.
@@ -228,6 +257,9 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
     _ = self._base_array.block_until_ready()
     return self
 
+  def copy_to_host_async(self):
+    _ = self._base_array.copy_to_host_async()
+
   @property
   def aval(self):
     return keys_shaped_array(self.impl, self.shape)
@@ -250,6 +282,14 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
 
   _device = property(op.attrgetter('_base_array._device'))
   _committed = property(op.attrgetter('_base_array._committed'))
+  device = property(op.attrgetter('_base_array.device'))  # type: ignore[assignment]
+  devices = property(op.attrgetter('_base_array.devices'))  # type: ignore[assignment]
+  is_fully_addressable = property(op.attrgetter('_base_array.is_fully_addressable'))  # type: ignore[assignment]
+  is_fully_replicated = property(op.attrgetter('_base_array.is_fully_replicated'))  # type: ignore[assignment]
+  delete = property(op.attrgetter('_base_array.delete'))  # type: ignore[assignment]
+  is_deleted = property(op.attrgetter('_base_array.is_deleted'))  # type: ignore[assignment]
+  on_device_size_in_bytes = property(op.attrgetter('_base_array.on_device_size_in_bytes'))  # type: ignore[assignment]
+  unsafe_buffer_pointer = property(op.attrgetter('_base_array.unsafe_buffer_pointer'))  # type: ignore[assignment]
 
   @property
   def sharding(self):
@@ -297,6 +337,9 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
 
   def copy(self):
     return self.__class__(self.impl, self._base_array.copy())
+
+  __hash__ = None  # type: ignore[assignment]
+  __array_priority__ = 100
 
   # Overwritten immediately below
   @property
