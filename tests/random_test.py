@@ -2293,8 +2293,6 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_shape(key_func, keys, key)
     self.check_against_reference(key_func, arr_func, keys, key)
 
-
-
   def test_errors(self):
     key = random.PRNGKey(123)
     with self.assertRaisesRegex(ValueError, "dtype=key<fry> is not a valid dtype"):
@@ -2321,6 +2319,47 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
   def test_result_type(self):
     key = jax.random.PRNGKey(123456)
     self.assertEqual(jnp.result_type(key), key.dtype)
+
+  @parameterized.parameters([
+    (jnp.empty_like, ()),
+    (jnp.zeros_like, ()),
+    (jnp.ones_like, ()),
+    (jnp.full_like, (100,)),
+  ])
+  def test_full_like(self, func, args):
+    keys = random.split(random.PRNGKey(789543))
+
+    key_func = arr_func = lambda x: func(x, *args)
+    self.check_shape(key_func, keys)
+    self.check_against_reference(key_func, arr_func, keys)
+
+  def test_full_like_with_key_fillvalue(self):
+    keys = random.split(random.PRNGKey(789543))
+    fill_value = random.PRNGKey(42)
+
+    self.check_shape(jnp.full_like, keys, fill_value)
+    self.check_against_reference(jnp.full_like, jnp.full_like, keys, fill_value)
+
+  @parameterized.parameters([
+    (jnp.empty, {}),
+    (jnp.zeros, {}),
+    (jnp.ones, {}),
+    (jnp.full, {'fill_value': 100}),
+  ])
+  def test_full(self, func, kwds):
+    keys = random.split(random.PRNGKey(789543))
+
+    key_func = arr_func = lambda x: func(x.shape, dtype=x.dtype, **kwds)
+    self.check_shape(key_func, keys)
+    self.check_against_reference(key_func, arr_func, keys)
+
+  def test_full_with_key_fillvalue(self):
+    keys = random.split(random.PRNGKey(789543))
+    fill_value = random.PRNGKey(42)
+    func = lambda x, val: jnp.full(x.shape, val, dtype=x.dtype)
+
+    self.check_shape(func, keys, fill_value)
+    self.check_against_reference(func, func, keys, fill_value)
 
 
 def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
