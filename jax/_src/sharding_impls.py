@@ -614,7 +614,9 @@ class PositionalSharding(XLACompatibleSharding):
     else:
       pbuf.tile_assignment_dimensions = shape
     pbuf.tile_assignment_devices = [i for ids in self._ids.flat for i in ids]
-    assert math.prod(pbuf.tile_assignment_dimensions) == len(pbuf.tile_assignment_devices)
+    product_of_dims = math.prod(pbuf.tile_assignment_dimensions)
+    num_devices = len(pbuf.tile_assignment_devices)
+    assert product_of_dims == num_devices, (product_of_dims, num_devices)
     return pbuf
 
 
