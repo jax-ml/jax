@@ -215,6 +215,8 @@ savez = np.savez
 def _jnp_dtype(obj: Optional[DTypeLike], *, align: bool = False,
                copy: bool = False) -> DType:
   """Similar to np.dtype, but respects JAX dtype defaults."""
+  if dtypes.is_opaque_dtype(obj):
+    return obj  # type: ignore[return-value]
   if obj is None:
     obj = dtypes.float_
   elif isinstance(obj, type) and obj in dtypes.python_scalar_dtypes:

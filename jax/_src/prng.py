@@ -362,6 +362,17 @@ def make_key_array_phys_sharding(aval, sharding, is_sharding_from_xla):
 class KeyTyRules:
 
   @staticmethod
+  def full(shape, fill_value, dtype):
+    physical_shape = (*shape, *dtype.impl.key_shape)
+    if isinstance(fill_value, PRNGKeyArray):
+      key_data = jnp.broadcast_to(random_unwrap(fill_value), physical_shape)
+    else:
+      key_data = lax.full(physical_shape, fill_value, dtype=np.dtype('uint32'))
+    # TODO(frostig,mattjj,vanderplas,lenamartens): consider this consumed from
+    # the outset.
+    return random_wrap(key_data, impl=dtype.impl)
+
+  @staticmethod
   def physical_avals(aval) -> Sequence[core.AbstractValue]:  # TODO(frostig): rename to `grounded_avals`
     # TODO(frostig): dedup with `keys_aval_to_base_arr_aval``
     return [core.ShapedArray((*aval.shape, *aval.dtype.impl.key_shape),  # type: ignore
