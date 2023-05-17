@@ -416,6 +416,9 @@ jax_test(
 jax_test(
     name = "lax_test",
     srcs = ["lax_test.py"],
+    backend_tags = {
+        "tpu": ["noasan"],  # Times out.
+    },
     shard_count = {
         "cpu": 40,
         "gpu": 40,
@@ -629,7 +632,10 @@ jax_test(
     name = "random_test",
     srcs = ["random_test.py"],
     backend_tags = {
-        "cpu": ["notsan"],  # Times out
+        "cpu": [
+            "notsan",  # Times out
+            "nomsan",  # Times out
+        ],
         "tpu": [
             "optonly",
             "nomsan",  # Times out
