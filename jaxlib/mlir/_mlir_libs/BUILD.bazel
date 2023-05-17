@@ -159,6 +159,8 @@ py_extension(
 py_extension(
     name = "_stablehlo",
     srcs = [
+        "@stablehlo//:stablehlo/integrations/python/PortableApi.cpp",
+        "@stablehlo//:stablehlo/integrations/python/PortableApi.h",
         "@stablehlo//:stablehlo/integrations/python/StablehloModule.cpp",
     ],
     copts = COPTS,
@@ -170,8 +172,8 @@ py_extension(
         "@local_config_python//:headers",
         "@pybind11",
         "@stablehlo//:stablehlo_capi_headers",
+        "@stablehlo//:stablehlo_portable_api",
         "@stablehlo//:stablehlo_serialization",
-        "@stablehlo//:version",
     ],
 )
 
