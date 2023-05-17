@@ -3384,6 +3384,31 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # The count should be 1 because `nest`'s lowering to MHLO should be cached.
     self.assertEqual(count[0], 1)
 
+  def test_wsc_eager(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    np_inp = np.arange(8)
+    inp = jax.device_put(np_inp, NamedSharding(mesh, P()))
+    out = with_sharding_constraint(inp, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out, np_inp)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+    for s in out.addressable_shards:
+      self.assertArraysEqual(s.data, np_inp[s.index])
+
+  def test_wsc_eager_no_resharding(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    np_inp = np.arange(8)
+    inp = jax.device_put(np_inp, NamedSharding(mesh, P('x')))
+    out = with_sharding_constraint(inp, NamedSharding(mesh, P('x')))
+    self.assertEqual(id(out), id(inp))
+
+  def test_wsc_eager_different_order_devices(self):
+    mesh1 = jtu.create_global_mesh((2,), ('x',))
+    mesh2 = jax.sharding.Mesh([jax.devices()[1], jax.devices()[0]], 'x')
+    inp = jax.device_put(np.arange(8), NamedSharding(mesh1, P()))
+    with self.assertRaisesRegex(
+        ValueError, "Received incompatible devices for jitted computation"):
+      with_sharding_constraint(inp, NamedSharding(mesh2, P('x')))
+
 
 class TempSharding(Sharding):
 

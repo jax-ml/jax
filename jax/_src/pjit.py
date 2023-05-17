@@ -32,6 +32,7 @@ from jax._src import op_shardings
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
+from jax._src import api
 from jax._src import xla_bridge as xb
 from jax._src.api_util import (
     argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
@@ -1841,11 +1842,14 @@ def with_sharding_constraint(x, shardings=UNSPECIFIED,
           for xf, i, ud in zip(x_flat, shardings_flat, unconstrained_dims)]
   return tree_unflatten(tree, outs)
 
+def _identity_fn(x): return x
+
 def _sharding_constraint_impl(x, sharding, resource_env, unconstrained_dims):
-  # TODO(skye): can we also prevent this from being called in other
-  # non-pjit contexts? (e.g. pmap, control flow)
-  raise NotImplementedError(
-      "with_sharding_constraint() should only be called inside pjit()")
+  if hasattr(x, 'sharding') and x.sharding.is_equivalent_to(sharding, x.ndim):
+    return x
+  # Run a jit here to raise good errors when device assignment don't match.
+  return api.jit(_identity_fn, out_shardings=sharding)(x)
+
 
 sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)
