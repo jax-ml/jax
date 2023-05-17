@@ -1,14 +1,16 @@
 #include <algorithm>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <variant>
 #include <vector>
 
+#include "pybind11/buffer_info.h"
 #include "pybind11/pybind11.h"
+#include "pybind11/pytypes.h"
 #include "pybind11/stl.h"
 #include "absl/base/call_once.h"
 #include "absl/base/optimization.h"
@@ -21,12 +23,21 @@
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
+#include "jaxlib/gpu/triton.pb.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
 #include "pybind11_abseil/status_casters.h"  // IWYU pragma: keep
 #include "xla/service/custom_call_status.h"
+#include "xla/stream_executor/gpu/asm_compiler.h"
 
 #define CUDA_RETURN_IF_ERROR(expr) JAX_RETURN_IF_ERROR(JAX_AS_STATUS(expr))
+
+#define JAX_ASSIGN_OR_RETURN(lhs, rexpr)    \
+  auto statusor = (rexpr);                  \
+  if (ABSL_PREDICT_FALSE(!statusor.ok())) { \
+    return statusor.status();               \
+  }                                         \
+  lhs = (*std::move(statusor))
 
 namespace py = pybind11;
 
@@ -60,31 +71,18 @@ struct CuModuleDeleter {
 using OwnedCUmodule =
     std::unique_ptr<std::remove_pointer_t<CUmodule>, CuModuleDeleter>;
 
-class TritonKernel {
+class ModuleImage {
  public:
-  TritonKernel(std::string module_image, std::string kernel_name,
-               uint32_t num_warps, uint32_t shared_mem_bytes)
-      : module_image_(std::move(module_image)),
-        kernel_name_(std::move(kernel_name)),
-        block_dim_x_(num_warps * kNumThreadsPerWarp),
+  ModuleImage(std::string_view kernel_name, std::vector<uint8_t> module_image,
+              uint32_t shared_mem_bytes)
+      : kernel_name_(kernel_name),
+        module_image_(std::move(module_image)),
         shared_mem_bytes_(shared_mem_bytes) {}
 
-  absl::Status Launch(CUstream stream, uint32_t grid[3], void** params) {
-    CUcontext context;
-    CUDA_RETURN_IF_ERROR(cuStreamGetCtx(stream, &context));
-    absl::StatusOr<CUfunction> kernel = GetFunctionForContext(context);
-    JAX_RETURN_IF_ERROR(kernel.status());
-    return JAX_AS_STATUS(cuLaunchKernel(
-        *kernel, grid[0], grid[1], grid[2], block_dim_x_,
-        /*blockDimY=*/1, /*blockDimZ=*/1, shared_mem_bytes_, stream, params,
-        /*extra=*/nullptr));
-  }
-
- private:
   absl::StatusOr<CUfunction> GetFunctionForContext(CUcontext context) {
     absl::MutexLock lock(&mutex_);
     auto it = functions_.find(context);
-    if (it != functions_.end()) {
+    if (ABSL_PREDICT_TRUE(it != functions_.end())) {
       return it->second;
     }
 
@@ -92,7 +90,7 @@ class TritonKernel {
     absl::Cleanup ctx_restorer = [] { cuCtxPopCurrent(nullptr); };
 
     CUmodule module;
-    CUDA_RETURN_IF_ERROR(cuModuleLoadData(&module, module_image_.c_str()));
+    CUDA_RETURN_IF_ERROR(cuModuleLoadData(&module, module_image_.data()));
     modules_.push_back(OwnedCUmodule(module, CuModuleDeleter()));
 
     CUfunction function;
@@ -139,9 +137,9 @@ class TritonKernel {
     return function;
   }
 
-  std::string module_image_;
+ private:
   std::string kernel_name_;
-  uint32_t block_dim_x_;
+  std::vector<uint8_t> module_image_;
   uint32_t shared_mem_bytes_;
 
   absl::Mutex mutex_;
@@ -149,24 +147,164 @@ class TritonKernel {
   absl::flat_hash_map<CUcontext, CUfunction> functions_ ABSL_GUARDED_BY(mutex_);
 };
 
-struct TritonKernelCallBase {
-  virtual ~TritonKernelCallBase() = default;
+absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
+                                            uint32_t shared_mem_bytes,
+                                            std::string_view ptx,
+                                            int compute_capability) {
+  auto key =
+      std::make_tuple(kernel_name, shared_mem_bytes, ptx, compute_capability);
+
+  static absl::Mutex mutex;
+  static auto& module_images =
+      *new absl::flat_hash_map<decltype(key), std::unique_ptr<ModuleImage>>
+          ABSL_GUARDED_BY(mutex);
+
+  absl::MutexLock lock(&mutex);
+  auto it = module_images.find(key);
+  if (it != module_images.end()) return it->second.get();
+
+  // TODO(cjfj): Support `TRITON_PTXAS_PATH` environment variable?
+  int cc_major = compute_capability / 10;
+  int cc_minor = compute_capability % 10;
+  JAX_ASSIGN_OR_RETURN(
+      std::vector<uint8_t> module_image,
+      stream_executor::CompileGpuAsm(cc_major, cc_minor, ptx.data(),
+                                     stream_executor::GpuAsmOpts{}));
+
+  auto [it2, success] = module_images.insert(
+      {std::move(key),
+       std::make_unique<ModuleImage>(
+           std::move(kernel_name), std::move(module_image), shared_mem_bytes)});
+  CHECK(success);
+  return it2->second.get();
+}
+
+class Kernel {
+ public:
+  Kernel(std::string kernel_name, uint32_t num_warps, uint32_t shared_mem_bytes,
+         std::string ptx, std::string ttir, int compute_capability)
+      : kernel_name_(std::move(kernel_name)),
+        block_dim_x_(num_warps * kNumThreadsPerWarp),
+        shared_mem_bytes_(shared_mem_bytes),
+        ptx_(std::move(ptx)),
+        ttir_(std::move(ttir)),
+        compute_capability_(compute_capability) {}
+
+  absl::Status Launch(CUstream stream, uint32_t grid[3], void** params) {
+    if (ABSL_PREDICT_FALSE(module_image_ == nullptr)) {
+      JAX_ASSIGN_OR_RETURN(module_image_,
+                           GetModuleImage(kernel_name_, shared_mem_bytes_, ptx_,
+                                          compute_capability_));
+    }
+
+    CUcontext context;
+    CUDA_RETURN_IF_ERROR(cuStreamGetCtx(stream, &context));
+    JAX_ASSIGN_OR_RETURN(CUfunction kernel,
+                         module_image_->GetFunctionForContext(context));
+    return JAX_AS_STATUS(cuLaunchKernel(
+        kernel, grid[0], grid[1], grid[2], block_dim_x_,
+        /*blockDimY=*/1, /*blockDimZ=*/1, shared_mem_bytes_, stream, params,
+        /*extra=*/nullptr));
+  }
+
+  static Kernel FromProto(const TritonKernel& proto) {
+    return Kernel(proto.kernel_name(), proto.num_warps(),
+                  proto.shared_mem_bytes(), proto.ptx(), proto.ttir(),
+                  proto.compute_capability());
+  }
+
+  TritonKernel ToProto() const {
+    TritonKernel proto;
+    proto.set_kernel_name(kernel_name_);
+    proto.set_num_warps(block_dim_x_ / kNumThreadsPerWarp);
+    proto.set_shared_mem_bytes(shared_mem_bytes_);
+    proto.set_ptx(ptx_);
+    proto.set_ttir(ttir_);
+    proto.set_compute_capability(compute_capability_);
+    return proto;
+  }
+
+ private:
+  std::string kernel_name_;
+  uint32_t block_dim_x_;
+  uint32_t shared_mem_bytes_;
+  std::string ptx_;
+  std::string ttir_;
+  int compute_capability_;
+
+  ModuleImage* module_image_ = nullptr;
+};
+
+struct KernelCallBase {
+  virtual ~KernelCallBase() = default;
   virtual absl::Status Launch(CUstream stream, void** buffers) = 0;
 };
 
-class TritonKernelCall : public TritonKernelCallBase {
+class KernelCall : public KernelCallBase {
  public:
-  struct ArrayParameter {
-    size_t bytes_to_zero;
-    bool ptr_must_be_divisible_by_16;
+  struct Parameter {
+    struct Array {
+      size_t bytes_to_zero;
+      size_t ptr_divisibility;
+    };
+
+    static absl::StatusOr<Parameter> FromProto(
+        const TritonKernelCall_Parameter& proto) {
+      Parameter param;
+      switch (proto.value_case()) {
+        case TritonKernelCall_Parameter::kArray:
+          param.value = Array{proto.array().bytes_to_zero(),
+                              proto.array().ptr_divisibility()};
+          break;
+        case TritonKernelCall_Parameter::kBool:
+          param.value = proto.bool_();
+          break;
+        case TritonKernelCall_Parameter::kI32:
+          param.value = proto.i32();
+          break;
+        case TritonKernelCall_Parameter::kU32:
+          param.value = proto.u32();
+          break;
+        case TritonKernelCall_Parameter::kI64:
+          param.value = proto.i64();
+          break;
+        case TritonKernelCall_Parameter::kU64:
+          param.value = proto.u64();
+          break;
+        default:
+          return absl::InvalidArgumentError("Unknown scalar parameter type.");
+      }
+      return param;
+    }
+
+    TritonKernelCall_Parameter ToProto() const {
+      TritonKernelCall_Parameter proto;
+      if (std::holds_alternative<Array>(value)) {
+        proto.mutable_array()->set_bytes_to_zero(
+            std::get<Array>(value).bytes_to_zero);
+        proto.mutable_array()->set_ptr_divisibility(
+            std::get<Array>(value).ptr_divisibility);
+      } else if (std::holds_alternative<bool>(value)) {
+        proto.set_bool_(std::get<bool>(value));
+      } else if (std::holds_alternative<int32_t>(value)) {
+        proto.set_i32(std::get<int32_t>(value));
+      } else if (std::holds_alternative<uint32_t>(value)) {
+        proto.set_u32(std::get<uint32_t>(value));
+      } else if (std::holds_alternative<int64_t>(value)) {
+        proto.set_i64(std::get<int64_t>(value));
+      } else {
+        CHECK(std::holds_alternative<uint64_t>(value));
+        proto.set_u64(std::get<uint64_t>(value));
+      }
+      return proto;
+    }
+
+    std::variant<Array, bool, int32_t, uint32_t, int64_t, uint64_t> value;
   };
 
-  // Parameters can be either to either arrays or scalars (encoded as uint64).
-  using Parameter = std::variant<ArrayParameter, uint64_t>;
-
-  TritonKernelCall(TritonKernel& kernel, uint32_t grid_0, uint32_t grid_1,
-                   uint32_t grid_2, std::vector<Parameter> parameters)
-      : kernel_(kernel),
+  KernelCall(Kernel kernel, uint32_t grid_0, uint32_t grid_1, uint32_t grid_2,
+             std::vector<Parameter> parameters)
+      : kernel_(std::move(kernel)),
         grid_{grid_0, grid_1, grid_2},
         parameters_(std::move(parameters)) {}
 
@@ -175,14 +313,16 @@ class TritonKernelCall : public TritonKernelCallBase {
     params.reserve(parameters_.size());
     for (size_t i = 0; i < parameters_.size(); ++i) {
       const Parameter& param = parameters_[i];
-      if (std::holds_alternative<ArrayParameter>(param)) {
-        const ArrayParameter& array = std::get<ArrayParameter>(param);
+      if (std::holds_alternative<Parameter::Array>(param.value)) {
+        const auto& array = std::get<Parameter::Array>(param.value);
         void*& ptr = *(buffers++);
         auto cu_ptr = reinterpret_cast<CUdeviceptr>(ptr);
 
-        if (array.ptr_must_be_divisible_by_16 && (cu_ptr % 16 != 0)) {
-          return absl::InvalidArgumentError(absl::StrFormat(
-              "Parameter %zu (%p) is not divisible by 16.", i, ptr));
+        if (ABSL_PREDICT_FALSE((array.ptr_divisibility != 0) &&
+                               (cu_ptr % array.ptr_divisibility != 0))) {
+          return absl::InvalidArgumentError(
+              absl::StrFormat("Parameter %zu (%p) is not divisible by %d.", i,
+                              ptr, array.ptr_divisibility));
         }
 
         if (array.bytes_to_zero > 0) {
@@ -191,27 +331,52 @@ class TritonKernelCall : public TritonKernelCallBase {
         }
         params.push_back(&ptr);
       } else {
-        params.push_back(const_cast<uint64_t*>(&std::get<uint64_t>(param)));
+        params.push_back(const_cast<void*>(std::visit(
+            [](auto&& arg) { return reinterpret_cast<const void*>(&arg); },
+            param.value)));
       }
     }
 
     return kernel_.Launch(stream, grid_, params.data());
   }
 
+  static absl::StatusOr<KernelCall> FromProto(const TritonKernelCall& proto) {
+    std::vector<KernelCall::Parameter> parameters;
+    for (const TritonKernelCall_Parameter& parameter : proto.parameters()) {
+      JAX_ASSIGN_OR_RETURN(Parameter p, Parameter::FromProto(parameter));
+      parameters.push_back(p);
+    }
+
+    return KernelCall(Kernel::FromProto(proto.kernel()), proto.grid_0(),
+                      proto.grid_1(), proto.grid_2(), std::move(parameters));
+  }
+
+  TritonKernelCall ToProto() const {
+    TritonKernelCall proto;
+    *proto.mutable_kernel() = kernel_.ToProto();
+    proto.set_grid_0(grid_[0]);
+    proto.set_grid_1(grid_[1]);
+    proto.set_grid_2(grid_[2]);
+    for (const Parameter& param : parameters_) {
+      *proto.add_parameters() = param.ToProto();
+    }
+    return proto;
+  }
+
  private:
-  TritonKernel& kernel_;
+  Kernel kernel_;
   uint32_t grid_[3];
   std::vector<Parameter> parameters_;
 };
 
-class TritonAutotunedKernelCall : public TritonKernelCallBase {
+class AutotunedKernelCall : public KernelCallBase {
  public:
   struct Config {
-    py::object kernel_call;
+    KernelCall kernel_call;
     std::string description;
   };
 
-  TritonAutotunedKernelCall(
+  AutotunedKernelCall(
       std::string name, std::vector<Config> configs,
       std::vector<std::tuple<size_t, size_t, size_t>> input_output_aliases)
       : name_(std::move(name)),
@@ -225,8 +390,45 @@ class TritonAutotunedKernelCall : public TritonKernelCallBase {
       }
     });
     JAX_RETURN_IF_ERROR(autotune_status_);
-    auto& kernel_call = py::cast<TritonKernelCall&>(configs_[0].kernel_call);
-    return kernel_call.Launch(stream, buffers);
+    return configs_[0].kernel_call.Launch(stream, buffers);
+  }
+
+  static absl::StatusOr<std::unique_ptr<AutotunedKernelCall>> FromProto(
+      const TritonAutotunedKernelCall& proto) {
+    std::vector<Config> configs;
+    for (const TritonAutotunedKernelCall_Config& config : proto.configs()) {
+      JAX_ASSIGN_OR_RETURN(auto kernel_call,
+                           KernelCall::FromProto(config.kernel_call()));
+      configs.push_back(Config{std::move(kernel_call), config.description()});
+    }
+
+    std::vector<std::tuple<size_t, size_t, size_t>> input_output_aliases;
+    for (const TritonAutotunedKernelCall_InputOutputAlias& a :
+         proto.input_output_aliases()) {
+      input_output_aliases.push_back(std::make_tuple(
+          a.input_buffer_idx(), a.output_buffer_idx(), a.buffer_size_bytes()));
+    }
+
+    return std::make_unique<AutotunedKernelCall>(
+        proto.name(), std::move(configs), std::move(input_output_aliases));
+  }
+
+  TritonAutotunedKernelCall ToProto() const {
+    TritonAutotunedKernelCall proto;
+    proto.set_name(name_);
+    for (const Config& config : configs_) {
+      TritonAutotunedKernelCall_Config* c = proto.add_configs();
+      *c->mutable_kernel_call() = config.kernel_call.ToProto();
+      c->set_description(config.description);
+    }
+    for (const auto& [input_idx, output_idx, size] : input_output_aliases_) {
+      TritonAutotunedKernelCall_InputOutputAlias* a =
+          proto.add_input_output_aliases();
+      a->set_input_buffer_idx(input_idx);
+      a->set_output_buffer_idx(output_idx);
+      a->set_buffer_size_bytes(size);
+    }
+    return proto;
   }
 
  private:
@@ -259,11 +461,10 @@ class TritonAutotunedKernelCall : public TritonKernelCallBase {
     // iterations to run for benchmarking.
     float best = std::numeric_limits<float>::infinity();
     for (Config& config : configs_) {
-      auto& kernel_call = py::cast<TritonKernelCall&>(config.kernel_call);
-      absl::StatusOr<float> t = Benchmark(stream, kernel_call, buffers, 1);
-      JAX_RETURN_IF_ERROR(t.status());
-      LOG(INFO) << config.description << ", ran 1 iter in " << *t << " ms";
-      best = std::min(best, *t);
+      JAX_ASSIGN_OR_RETURN(float t,
+                           Benchmark(stream, config.kernel_call, buffers, 1));
+      LOG(INFO) << config.description << ", ran 1 iter in " << t << " ms";
+      best = std::min(best, t);
     }
 
     int timed_iters =
@@ -279,22 +480,19 @@ class TritonAutotunedKernelCall : public TritonKernelCallBase {
 
     best = std::numeric_limits<float>::infinity();
     for (Config& config : configs_) {
-      auto& kernel_call = py::cast<TritonKernelCall&>(config.kernel_call);
-      absl::StatusOr<float> t =
-          Benchmark(stream, kernel_call, buffers, timed_iters);
-      JAX_RETURN_IF_ERROR(t.status());
+      JAX_ASSIGN_OR_RETURN(
+          float t, Benchmark(stream, config.kernel_call, buffers, timed_iters));
       LOG(INFO) << config.description << ", ran " << timed_iters << " iters in "
-                << *t << " ms";
+                << t << " ms";
 
-      if (*t < best) {
+      if (t < best) {
         LOG(INFO) << config.description << " is the new best config";
-        best = *t;
+        best = t;
         std::swap(config, configs_[0]);
       }
     }
 
     // Discard all but the best config.
-    py::gil_scoped_acquire gil;
     configs_.erase(configs_.begin() + 1, configs_.end());
 
     LOG(INFO) << "Finished autotuning function: " << name_ << " best config "
@@ -311,9 +509,8 @@ class TritonAutotunedKernelCall : public TritonKernelCallBase {
     return JAX_AS_STATUS(cuStreamSynchronize(stream));
   }
 
-  absl::StatusOr<float> Benchmark(CUstream stream,
-                                  TritonKernelCall& kernel_call, void** buffers,
-                                  int num_iterations) {
+  absl::StatusOr<float> Benchmark(CUstream stream, KernelCall& kernel_call,
+                                  void** buffers, int num_iterations) {
     CUevent start, stop;
     CUDA_RETURN_IF_ERROR(cuEventCreate(&start, /*Flags=*/CU_EVENT_DEFAULT));
     CUDA_RETURN_IF_ERROR(cuEventCreate(&stop, /*Flags=*/CU_EVENT_DEFAULT));
@@ -340,72 +537,48 @@ class TritonAutotunedKernelCall : public TritonKernelCallBase {
   absl::Status autotune_status_;
 };
 
-template <typename CppT, typename PyT>
-uint64_t EncodeKernelParameterAs(PyT value) {
-  static_assert(sizeof(CppT) <= sizeof(uint64_t));
-  union {
-    CppT value;
-    uint64_t bits;
-  } encoded;
-  encoded.bits = 0;
-  encoded.value = CppT(value);
-  return encoded.bits;
-}
+absl::StatusOr<KernelCallBase*> GetKernelCall(absl::string_view serialized) {
+  static absl::Mutex mutex;
+  static auto& kernel_calls =
+      *new absl::flat_hash_map<std::string, std::unique_ptr<KernelCallBase>>
+          ABSL_GUARDED_BY(mutex);
 
-absl::StatusOr<uint64_t> EncodeKernelParameter(py::int_ value,
-                                               std::string_view dtype) {
-  if ((dtype == "i1") || (dtype == "i8")) {
-    return EncodeKernelParameterAs<int8_t>(value);
-  } else if (dtype == "u8") {
-    return EncodeKernelParameterAs<uint8_t>(value);
-  } else if (dtype == "i16") {
-    return EncodeKernelParameterAs<int16_t>(value);
-  } else if (dtype == "u16") {
-    return EncodeKernelParameterAs<uint16_t>(value);
-  } else if (dtype == "i32") {
-    return EncodeKernelParameterAs<int32_t>(value);
-  } else if (dtype == "u32") {
-    return EncodeKernelParameterAs<uint32_t>(value);
-  } else if (dtype == "i64") {
-    return EncodeKernelParameterAs<int64_t>(value);
-  } else if (dtype == "u64") {
-    return EncodeKernelParameterAs<uint64_t>(value);
-  } else {
-    return absl::InvalidArgumentError(std::string("unknown dtype: ") +
-                                      dtype.data());
-  }
-}
+  absl::MutexLock lock(&mutex);
+  auto it = kernel_calls.find(serialized);
+  if (ABSL_PREDICT_TRUE(it != kernel_calls.end())) return it->second.get();
 
-absl::StatusOr<uint64_t> EncodeKernelParameter(py::float_ value,
-                                               std::string_view dtype) {
-  if (dtype == "fp32") {
-    return EncodeKernelParameterAs<float>(value);
-  } else if (dtype == "fp64") {
-    return EncodeKernelParameterAs<double>(value);
-  } else {
-    return absl::InvalidArgumentError(std::string("unknown dtype: ") +
-                                      dtype.data());
+  TritonAnyKernelCall proto;
+  if (!proto.ParseFromArray(serialized.data(), serialized.size())) {
+    return absl::InvalidArgumentError("Failed to parse serialized data.");
   }
-}
 
-absl::StatusOr<uint64_t> EncodeKernelParameter(py::bool_ value,
-                                               std::string_view dtype) {
-  if ((dtype == "int1") || (dtype == "B")) {
-    return EncodeKernelParameterAs<bool>(value);
+  std::unique_ptr<KernelCallBase> kernel_call;
+  if (proto.has_kernel_call()) {
+    JAX_ASSIGN_OR_RETURN(auto kernel_call_,
+                         KernelCall::FromProto(proto.kernel_call()));
+    kernel_call = std::make_unique<KernelCall>(std::move(kernel_call_));
+  } else if (proto.has_autotuned_kernel_call()) {
+    JAX_ASSIGN_OR_RETURN(kernel_call, AutotunedKernelCall::FromProto(
+                                          proto.autotuned_kernel_call()));
   } else {
-    return absl::InvalidArgumentError(std::string("unknown dtype: ") +
-                                      dtype.data());
+    return absl::InvalidArgumentError("Unknown kernel call type.");
   }
+
+  auto [it2, success] =
+      kernel_calls.insert({std::string(serialized), std::move(kernel_call)});
+  CHECK(success);
+  return it2->second.get();
 }
 
 }  // namespace
 
 void LaunchTritonKernel(CUstream stream, void** buffers, const char* opaque,
                         size_t opaque_len, XlaCustomCallStatus* status) {
-  CHECK_EQ(opaque_len, sizeof(TritonKernelCallBase*));
-  TritonKernelCallBase* kernel_call;
-  std::memcpy(&kernel_call, opaque, sizeof(TritonKernelCallBase*));
-  absl::Status result = kernel_call->Launch(stream, buffers);
+  absl::Status result = [=] {
+    JAX_ASSIGN_OR_RETURN(KernelCallBase * kernel_call,
+                         GetKernelCall(absl::string_view(opaque, opaque_len)));
+    return kernel_call->Launch(stream, buffers);
+  }();
   if (!result.ok()) {
     absl::string_view msg = result.message();
     XlaCustomCallStatusSetFailure(status, msg.data(), msg.length());
@@ -413,65 +586,89 @@ void LaunchTritonKernel(CUstream stream, void** buffers, const char* opaque,
 }
 
 PYBIND11_MODULE(_triton, m) {
-  py::class_<TritonKernel>(m, "TritonKernel")
-      .def(py::init<std::string, std::string, uint32_t, uint32_t>());
+  py::class_<Kernel>(m, "TritonKernel")
+      .def(py::init<std::string, uint32_t, uint32_t, std::string, std::string,
+                    int>());
 
-  py::class_<TritonKernelCall>(m, "TritonKernelCall")
-      .def(py::init<TritonKernel&, uint32_t, uint32_t, uint32_t,
-                    std::vector<TritonKernelCall::Parameter>>(),
-           py::keep_alive<1, 2>())  // Ensure that the kernel lives long enough.
-      .def_property_readonly("descriptor", [](TritonKernelCall& kernel_call) {
-        union {
-          TritonKernelCall* ptr;
-          char bytes[sizeof(TritonKernelCall*)];
-        } descriptor;
-        descriptor.ptr = &kernel_call;
-        return py::bytes(descriptor.bytes, sizeof(TritonKernelCall*));
-      });
+  py::class_<KernelCall::Parameter>(m, "TritonParameter");
 
-  py::class_<TritonKernelCall::ArrayParameter>(m, "TritonArrayParameter");
+  m.def("create_array_parameter",
+        [](size_t bytes_to_zero, size_t ptr_divisibility) {
+          return KernelCall::Parameter{
+              KernelCall::Parameter::Array{bytes_to_zero, ptr_divisibility}};
+        });
 
-  py::class_<TritonAutotunedKernelCall>(m, "TritonAutotunedKernelCall")
+  m.def("create_scalar_parameter",
+        [](py::bool_ value,
+           std::string_view dtype) -> absl::StatusOr<KernelCall::Parameter> {
+          if ((dtype == "int1") || (dtype == "B")) {
+            return KernelCall::Parameter{static_cast<bool>(value)};
+          } else {
+            return absl::InvalidArgumentError(std::string("unknown dtype: ") +
+                                              dtype.data());
+          }
+        });
+
+  m.def("create_scalar_parameter",
+        [](py::int_ value,
+           std::string_view dtype) -> absl::StatusOr<KernelCall::Parameter> {
+          if (dtype == "i32") {
+            return KernelCall::Parameter{static_cast<int32_t>(value)};
+          } else if (dtype == "u32") {
+            return KernelCall::Parameter{static_cast<uint32_t>(value)};
+          } else if (dtype == "i64") {
+            return KernelCall::Parameter{static_cast<int64_t>(value)};
+          } else if (dtype == "u64") {
+            return KernelCall::Parameter{static_cast<uint64_t>(value)};
+          } else {
+            return absl::InvalidArgumentError(std::string("unknown dtype: ") +
+                                              dtype.data());
+          }
+        });
+
+  py::class_<KernelCall>(m, "TritonKernelCall")
+      .def(py::init<Kernel, uint32_t, uint32_t, uint32_t,
+                    std::vector<KernelCall::Parameter>>())
+      .def("to_proto",
+           [](const KernelCall& kernel_call,
+              py::bytes metadata) -> absl::StatusOr<py::bytes> {
+             TritonAnyKernelCall proto;
+             *proto.mutable_kernel_call() = kernel_call.ToProto();
+             py::buffer_info metadata_info(py::buffer(metadata).request());
+             proto.set_metadata(metadata_info.ptr, metadata_info.size);
+             std::string serialized = proto.SerializeAsString();
+             return py::bytes(serialized.data(), serialized.size());
+           });
+
+  py::class_<AutotunedKernelCall>(m, "TritonAutotunedKernelCall")
       .def(py::init<>([](std::string name,
-                         std::vector<std::pair<py::object, std::string>>
+                         std::vector<std::pair<KernelCall, std::string>>
                              calls_and_descriptions,
                          std::vector<std::tuple<size_t, size_t, size_t>>
                              input_output_aliases) {
-        std::vector<TritonAutotunedKernelCall::Config> configs;
+        std::vector<AutotunedKernelCall::Config> configs;
         configs.reserve(calls_and_descriptions.size());
         for (auto& [kernel_call, desc] : calls_and_descriptions) {
           configs.push_back({std::move(kernel_call), std::move(desc)});
         }
-        return std::make_unique<TritonAutotunedKernelCall>(
+        return std::make_unique<AutotunedKernelCall>(
             std::move(name), std::move(configs),
             std::move(input_output_aliases));
       }))
-      .def_property_readonly(
-          "descriptor", [](TritonAutotunedKernelCall& kernel_call) {
-            union {
-              TritonAutotunedKernelCall* ptr;
-              char bytes[sizeof(TritonAutotunedKernelCall*)];
-            } descriptor;
-            descriptor.ptr = &kernel_call;
-            return py::bytes(descriptor.bytes,
-                             sizeof(TritonAutotunedKernelCall*));
-          });
+      .def("to_proto",
+           [](const AutotunedKernelCall& kernel_call,
+              py::bytes metadata) -> absl::StatusOr<py::bytes> {
+             TritonAnyKernelCall proto;
+             *proto.mutable_autotuned_kernel_call() = kernel_call.ToProto();
+             py::buffer_info metadata_info(py::buffer(metadata).request());
+             proto.set_metadata(metadata_info.ptr, metadata_info.size);
+             std::string serialized = proto.SerializeAsString();
+             return py::bytes(serialized.data(), serialized.size());
+           });
 
   m.def("get_custom_call",
         [] { return jax::EncapsulateFunction(&LaunchTritonKernel); });
 
-  m.def("create_array_parameter",
-        [](size_t bytes_to_zero, bool ptr_must_be_divisible_by_16) {
-          return TritonKernelCall::ArrayParameter{bytes_to_zero,
-                                                  ptr_must_be_divisible_by_16};
-        });
-  m.def("create_scalar_parameter",
-        py::overload_cast<py::int_, std::string_view>(&EncodeKernelParameter));
-  m.def(
-      "create_scalar_parameter",
-      py::overload_cast<py::float_, std::string_view>(&EncodeKernelParameter));
-  m.def("create_scalar_parameter",
-        py::overload_cast<py::bool_, std::string_view>(&EncodeKernelParameter));
   m.def("get_compute_capability", [](int device) -> absl::StatusOr<int> {
     int major, minor;
     CUDA_RETURN_IF_ERROR(cuInit(device));
