@@ -602,7 +602,9 @@ def xmap(fun: Callable,
     return verify_outputs(out_flat, out_tree, params)
 
   @decorate_serial
-  def lower(*args, _experimental_lowering_platform: Optional[str] = None):
+  def lower(*args, **kwargs):
+    _experimental_lowering_platform = kwargs.pop(
+        '_experimental_lowering_platform', None)
     fun_flat, args_flat, params, in_tree, out_tree = infer_params(*args)
     avals_flat = [shaped_abstractify(arg) for arg in args_flat]
     computation = make_xmap_callable(

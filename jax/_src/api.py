@@ -1851,8 +1851,7 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
   # this might naturally be a method, with ``fun`` as a ``self`` and
   # all the other arguments stored as attributes.
   @api_boundary
-  def lower(*args, _experimental_lowering_platform: Optional[str] = None,
-            **kwargs) -> stages.Lowered:
+  def lower(*args, **kwargs) -> stages.Lowered:
     """Lower a parallel-mapped form of this function for the given arguments.
 
     A parallel-mapped and lowered function is staged out of Python and
@@ -1864,6 +1863,8 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
     Returns:
       A ``Lowered`` instance representing the post-map lowering.
     """
+    _experimental_lowering_platform = kwargs.pop(
+        '_experimental_lowering_platform', None)
     p = _prepare_pmap(
         fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
         devices, backend, axis_size, args, kwargs)

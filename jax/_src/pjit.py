@@ -334,8 +334,9 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
     wrapped = _python_pjit(fun, infer_params_fn)
 
   @api_boundary
-  def lower(*args, _experimental_lowering_platform: Optional[str] = None,
-            **kwargs):
+  def lower(*args, **kwargs):
+    _experimental_lowering_platform = kwargs.pop(
+        '_experimental_lowering_platform', None)
     (args_flat, flat_global_in_avals, params, in_tree, out_tree,
      donate_argnums) = infer_params_fn(*args, **kwargs)
     resource_env = params['resource_env']
