@@ -318,7 +318,8 @@ def create_hybrid_device_mesh(mesh_shape: Sequence[int],
   granules = list(granule_dict[key] for key in sorted(granule_dict.keys()))
   if np.prod(dcn_mesh_shape) != len(granules):
     raise ValueError(
-        'Number of slices must equal the product of dcn_mesh_shape')
+        f'Number of slices {len(granules)} must equal the product of '
+        f'dcn_mesh_shape {dcn_mesh_shape}')
   per_granule_meshes = [create_device_mesh(mesh_shape, granule)
                         for granule in granules]
   # TODO(jekbradbury): handle non-uniform DCN topologies
