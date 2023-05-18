@@ -990,12 +990,10 @@ def _jax_physical_aval(aval: core.ShapedArray) -> core.ShapedArray:
   physical avals, but we don't support those here. Instead we assert
   there is only one and return it.
   """
-  if dtypes.is_opaque_dtype(aval.dtype):
-    physical_aval, = aval.dtype._rules.physical_avals(aval)
-    assert (len(physical_aval.shape) >= len(aval.shape) and
-            physical_aval.shape[:len(aval.shape)] == aval.shape), (physical_aval, aval)
-    return physical_aval
-  return aval
+  physical_aval = core.physical_aval(aval)
+  assert (len(physical_aval.shape) >= len(aval.shape) and
+          physical_aval.shape[:len(aval.shape)] == aval.shape), (physical_aval, aval)
+  return physical_aval
 
 def _jax_physical_dtype(dtype):
   # assuming () is a fine stand-in shape

@@ -372,9 +372,9 @@ def seed_with_impl(impl: PRNGImpl, seed: Union[int, Array]) -> PRNGKeyArrayImpl:
 def keys_shaped_array(impl, shape):
   return core.ShapedArray(shape, KeyTy(impl))
 
+# TODO(frostig): remove in favor of physical_aval call
 def keys_aval_to_base_arr_aval(keys_aval):
-  shape = (*keys_aval.shape, *keys_aval.dtype.impl.key_shape)
-  return core.ShapedArray(shape, np.dtype('uint32'))
+  return core.physical_aval(keys_aval)
 
 def base_arr_shape_to_keys_shape(impl, base_arr_shape):
   base_ndim = len(impl.key_shape)
@@ -419,10 +419,8 @@ class KeyTyRules:
     return random_wrap(key_data, impl=dtype.impl)
 
   @staticmethod
-  def physical_avals(aval) -> Sequence[core.AbstractValue]:  # TODO(frostig): rename to `grounded_avals`
-    # TODO(frostig): dedup with `keys_aval_to_base_arr_aval``
-    return [core.ShapedArray((*aval.shape, *aval.dtype.impl.key_shape),  # type: ignore
-                             jnp.dtype('uint32'))]
+  def physical_element_aval(dtype) -> core.ShapedArray:
+    return core.ShapedArray(dtype.impl.key_shape, jnp.dtype('uint32'))
 
   @staticmethod
   def physical_const(val) -> Array:
@@ -472,7 +470,7 @@ class KeyTyRules:
 
   @staticmethod
   def local_sharded_result_handler(aval, sharding, indices):
-    phys_aval, = KeyTyRules.physical_avals(aval)
+    phys_aval = core.physical_aval(aval)
     key_shape = aval.dtype.impl.key_shape
     phys_handler_maker = pxla.local_result_handlers[core.ShapedArray]
 
@@ -499,7 +497,7 @@ class KeyTyRules:
   @staticmethod
   def global_sharded_result_handler(aval, out_sharding, committed,
                                     is_out_sharding_from_xla):
-    phys_aval, = KeyTyRules.physical_avals(aval)
+    phys_aval = core.physical_aval(aval)
     phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
 
     phys_sharding = make_key_array_phys_sharding(
@@ -512,7 +510,7 @@ class KeyTyRules:
 
   @staticmethod
   def make_sharded_array(aval, sharding, arrays, committed):
-    phys_aval, = KeyTyRules.physical_avals(aval)
+    phys_aval = core.physical_aval(aval)
     phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
     phys_arrays = [random_unwrap(arr) for arr in arrays]
 
@@ -520,148 +518,6 @@ class KeyTyRules:
     phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed, False)
     phys_result = phys_handler(phys_arrays)
     return PRNGKeyArrayImpl(aval.dtype.impl, phys_result)
-
-  # element-type-polymorphic primitive lowering rules
-
-  @staticmethod
-  def empty_mlir(ctx, aval_out) -> Sequence[ir.Value]:
-    return mlir.ir_constants(np.zeros(aval_out.dtype.impl.key_shape,
-                                      dtype=np.dtype('uint32')))
-
-  @staticmethod
-  def slice_mlir(ctx, aval_out, x, start_indices, limit_indices, strides) -> ir.Value:
-    key_shape = aval_out.dtype.impl.key_shape
-    trailing_zeros = [0] * len(key_shape)
-    trailing_ones  = [1] * len(key_shape)
-    start_indices = (*start_indices, *trailing_zeros)
-    limit_indices = (*limit_indices, *key_shape)
-    strides = (*strides, *trailing_ones)
-    physical_aval_out, = KeyTyRules.physical_avals(aval_out)
-    return mlir.slice_op(ctx, x, physical_aval_out,
-                         start_indices=start_indices, limit_indices=limit_indices, strides=strides)
-
-  @staticmethod
-  def dynamic_slice_mlir(ctx, aval_out, x, start_indices) -> ir.Value:
-    index_avals = ctx.avals_in[1:]
-    dtype = dtypes.canonicalize_dtype(index_avals[0].dtype if index_avals else 'int64')
-    key_shape = aval_out.dtype.impl.key_shape
-    trailing_zeros = [mlir.ir_constant(np.array(0, dtype))] * len(key_shape)
-    start_indices = (*start_indices, *trailing_zeros)
-    physical_aval_out, = KeyTyRules.physical_avals(aval_out)
-    return mlir.dynamic_slice(ctx, physical_aval_out, x,
-                              start_indices=start_indices)
-
-  @staticmethod
-  def dynamic_update_slice_mlir(ctx, aval_out, x, update, *start_indices) -> ir.Value:
-    index_avals = ctx.avals_in[2:]
-    dtype = dtypes.canonicalize_dtype(index_avals[0].dtype if index_avals else 'int64')
-    key_shape = aval_out.dtype.impl.key_shape
-    zeros = [mlir.ir_constant(np.array(0, dtype=dtype))] * len(key_shape)
-    start_indices = (*start_indices, *zeros)
-    physical_aval_out, = KeyTyRules.physical_avals(aval_out)
-    return mlir.dynamic_update_slice(ctx, physical_aval_out, x, update,
-                                     start_indices=start_indices)
-
-  @staticmethod
-  def broadcast_in_dim_mlir(ctx, aval_out, x,
-                            broadcast_dimensions) -> ir.Value:
-    key_shape = aval_out.dtype.impl.key_shape
-    trailing_dims = [aval_out.ndim + i for i in range(len(key_shape))]
-    broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
-    physical_aval_out, = KeyTyRules.physical_avals(aval_out)
-    return mlir.broadcast_in_dim(ctx, x, physical_aval_out, broadcast_dimensions=broadcast_dimensions)
-
-  @staticmethod
-  def transpose_mlir(ctx, aval_out, x, *, permutation) -> ir.Value:
-    key_shape = aval_out.dtype.impl.key_shape
-    trailing_dims = [aval_out.ndim + i for i in range(len(key_shape))]
-    perm = [*permutation, *trailing_dims]
-    return hlo.TransposeOp(x, mlir.dense_int_elements(perm)).result
-
-  @staticmethod
-  def gather_mlir(ctx, avals_in, aval_out, x, indices, *,
-                  dimension_numbers, slice_sizes, unique_indices,
-                  indices_are_sorted, mode, fill_value) -> ir.Value:
-    aval_x, aval_indices = avals_in
-    aval_y = aval_out
-    key_shape = aval_x.dtype.impl.key_shape
-    trailing_offset_dims = [aval_y.ndim + i for i in range(len(key_shape))]
-    dimension_numbers = dimension_numbers._replace(
-        offset_dims=(*dimension_numbers.offset_dims, *trailing_offset_dims))
-    slice_sizes = (*slice_sizes, *key_shape)
-    gather_lower = partial(
-        lax_internal.slicing._gather_lower, dimension_numbers=dimension_numbers,
-        slice_sizes=slice_sizes, unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
-    res, = mlir.delegate_lowering(
-        ctx, gather_lower, x, indices,
-        avals_in=[keys_aval_to_base_arr_aval(aval_x), aval_indices],
-        avals_out=[keys_aval_to_base_arr_aval(aval_y)])
-    return res
-
-  @staticmethod
-  def scatter_mlir(ctx, avals_in, aval_out, x, indices, updates, *,
-                   update_jaxpr, update_consts, dimension_numbers,
-                   unique_indices, indices_are_sorted, mode):
-    aval_x, aval_indices, aval_updates = avals_in
-    aval_y = aval_out
-    key_shape = aval_x.dtype.impl.key_shape
-    trailing_window_dims = [aval_updates.ndim + i for i in range(len(key_shape))]
-    dimension_numbers = dimension_numbers._replace(
-        update_window_dims=(*dimension_numbers.update_window_dims, *trailing_window_dims))
-    scatter_lower = partial(
-        lax_internal.slicing._scatter_lower, update_jaxpr=update_jaxpr,
-        update_consts=update_consts, dimension_numbers=dimension_numbers,
-        unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
-        mode=mode)
-    res, = mlir.delegate_lowering(
-        ctx, scatter_lower, x, indices, updates,
-        avals_in=[keys_aval_to_base_arr_aval(aval_x), aval_indices,
-                  keys_aval_to_base_arr_aval(aval_updates)],
-        avals_out=[keys_aval_to_base_arr_aval(aval_y)])
-    return res
-
-  def _comparison_mlir(direction, reduction_op, identity,
-                       ctx, avals_in, aval_out, x, y, **kwargs):
-    aval_x, aval_y = avals_in
-    base_aval_x = keys_aval_to_base_arr_aval(aval_x)
-    base_aval_y = keys_aval_to_base_arr_aval(aval_y)
-    base_aval_out = core.ShapedArray(base_aval_x.shape, aval_out.dtype)
-    reduce_axes = tuple(range(aval_out.ndim, base_aval_out.ndim))
-    res, = mlir.delegate_lowering(
-      ctx, partial(lax_internal._compare_lower_hlo, direction),
-      x, y, avals_in=[base_aval_x, base_aval_y], avals_out=[base_aval_out])
-    return mlir.delegate_lowering(
-      ctx, partial(lax_internal._unary_reduce_lower, reduction_op,
-                   identity, axes=reduce_axes),
-      res, avals_in=[base_aval_out], avals_out=[aval_out])
-
-  eq_mlir = staticmethod(partial(_comparison_mlir, 'EQ', hlo.AndOp,
-                                 lax_internal._get_bitwise_and_identity))
-  ne_mlir = staticmethod(partial(_comparison_mlir, 'NE', hlo.OrOp,
-                                 lax_internal._get_bitwise_or_identity))
-
-  @staticmethod
-  def select_mlir(ctx, avals_in, aval_out, which, *cases):
-    assert all(aval_case == aval_out for aval_case in avals_in[1:])
-    assert avals_in[0].ndim == aval_out.ndim
-    select_lower = lax_internal._select_hlo_lowering
-    key_shape = aval_out.dtype.impl.key_shape
-
-    aval_which = avals_in[0]
-    aval_which_bcast = core.ShapedArray(
-        (*aval_which.shape, *key_shape), aval_which.dtype)
-    aval_out_raw = core.ShapedArray(
-        (*aval_out.shape, *key_shape), np.dtype('uint32'))
-    aval_cases_raw = [aval_out_raw] * (len(avals_in) - 1)
-
-    bcast_dims = list(range(aval_which.ndim))
-    which_bcast = mlir.broadcast_in_dim(
-        ctx, which, aval_which_bcast, broadcast_dimensions=bcast_dims)
-
-    return mlir.delegate_lowering(ctx, select_lower, which_bcast, *cases,
-                                  avals_in=[aval_which_bcast, *aval_cases_raw],
-                                  avals_out=[aval_out_raw])[0]
 
   @staticmethod
   def device_put_sharded(vals, aval, sharding, devices):

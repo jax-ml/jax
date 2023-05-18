@@ -143,9 +143,7 @@ def dtype_to_ir_type(dtype: Union[np.dtype, np.generic]) -> ir.Type:
 
 def _array_ir_types(aval: Union[core.ShapedArray, core.DShapedArray]
                     ) -> Sequence[ir.Type]:
-  if dtypes.is_opaque_dtype(aval.dtype):
-    phys_avals = aval.dtype._rules.physical_avals(aval)
-    return tuple(itertools.chain(*map(_array_ir_types, phys_avals)))
+  aval = core.physical_aval(aval)  # type: ignore
   if not core.is_constant_shape(aval.shape):
     return _dynamic_array_ir_types(aval)  # type: ignore
   return (ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype)),)
@@ -1207,22 +1205,27 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
   # op is broadcast.
   # Lower a possibly-dynamic broadcast_in_dim
   if dtypes.is_opaque_dtype(aval_out.dtype):  # type: ignore
-    return aval_out.dtype._rules.broadcast_in_dim_mlir(  # type: ignore
-        ctx, aval_out, op,
-        broadcast_dimensions=broadcast_dimensions)
-  if not core.is_constant_shape(aval_out.shape):  # type: ignore
-    shape = eval_dynamic_shape(ctx, aval_out.shape)  # type: ignore
-    return hlo.DynamicBroadcastInDimOp(
-        aval_to_ir_type(aval_out), op,
-        shape_tensor(shape),
-        dense_int_elements(broadcast_dimensions),
-    ).result
+    elt_shape = aval_out.dtype._rules.physical_element_aval(  # type: ignore
+        aval_out.dtype).shape                                 # type: ignore
+    trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]  # type: ignore
+    broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
+    physical_aval_out = core.physical_aval(aval_out)
+    return broadcast_in_dim(
+        ctx, op, physical_aval_out, broadcast_dimensions=broadcast_dimensions)
   else:
-    assert all(d != ir.ShapedType.get_dynamic_size()
-               for d in aval_out.shape), aval_out  # type: ignore
-    return hlo.BroadcastInDimOp(
-        aval_to_ir_type(aval_out), op,
-        dense_int_elements(broadcast_dimensions)).result
+    if not core.is_constant_shape(aval_out.shape):  # type: ignore
+      shape = eval_dynamic_shape(ctx, aval_out.shape)  # type: ignore
+      return hlo.DynamicBroadcastInDimOp(
+          aval_to_ir_type(aval_out), op,
+          shape_tensor(shape),
+          dense_int_elements(broadcast_dimensions),
+      ).result
+    else:
+      assert all(d != ir.ShapedType.get_dynamic_size()
+                 for d in aval_out.shape), aval_out  # type: ignore
+      return hlo.BroadcastInDimOp(
+          aval_to_ir_type(aval_out), op,
+          dense_int_elements(broadcast_dimensions)).result
 
 def multi_broadcast_in_dim(ctx: LoweringRuleContext,
                            ops: Sequence[ir.Value],
@@ -1243,10 +1246,7 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
   return out
 
 def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Value:
-  if dtypes.is_opaque_dtype(aval_out.dtype):  # type: ignore
-    # TODO(frostig,mattjj,necula): asserts a single physical aval, and a
-    # particular reshape rule (reshape to the output physical aval's shape)
-    aval_out, = aval_out.dtype._rules.physical_avals(aval_out)  # type: ignore
+  aval_out = core.physical_aval(aval_out)
   if not core.is_constant_shape(aval_out.shape):  # type: ignore
     shape = eval_dynamic_shape(ctx, aval_out.shape)  # type: ignore
     return hlo.DynamicReshapeOp(
@@ -1259,51 +1259,76 @@ def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Va
 def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
              start_indices, limit_indices, strides) -> ir.Value:
   if dtypes.is_opaque_dtype(aval_out.dtype):
-    return [aval_out.dtype._rules.slice_mlir(
-        ctx, aval_out, x, start_indices, limit_indices, strides)]
-
-  if any(not core.is_constant_shape(s) for s in (start_indices, limit_indices, strides)):
-    start_indices = eval_dynamic_shape(ctx, start_indices)
-    limit_indices = eval_dynamic_shape(ctx, limit_indices)
-    strides = eval_dynamic_shape(ctx, strides)
-    return hlo.RealDynamicSliceOp(aval_to_ir_type(aval_out),
-                                  x,
-                                  shape_tensor(start_indices),
-                                  shape_tensor(limit_indices),
-                                  shape_tensor(strides)).result
+    elt_shape = aval_out.dtype._rules.physical_element_aval(
+        aval_out.dtype).shape
+    trailing_zeros = [0] * len(elt_shape)
+    trailing_ones  = [1] * len(elt_shape)
+    start_indices = (*start_indices, *trailing_zeros)
+    limit_indices = (*limit_indices, *elt_shape)
+    strides = (*strides, *trailing_ones)
+    physical_aval_out = core.physical_aval(aval_out)
+    return slice_op(ctx, x, physical_aval_out, start_indices=start_indices,
+                    limit_indices=limit_indices, strides=strides)
   else:
-    return hlo.SliceOp(x,
-                       dense_int_elements(start_indices),
-                       dense_int_elements(limit_indices),
-                       dense_int_elements(strides)).result
+    if any(not core.is_constant_shape(s) for s in (start_indices, limit_indices, strides)):
+      start_indices = eval_dynamic_shape(ctx, start_indices)
+      limit_indices = eval_dynamic_shape(ctx, limit_indices)
+      strides = eval_dynamic_shape(ctx, strides)
+      return hlo.RealDynamicSliceOp(aval_to_ir_type(aval_out),
+                                    x,
+                                    shape_tensor(start_indices),
+                                    shape_tensor(limit_indices),
+                                    shape_tensor(strides)).result
+    else:
+      return hlo.SliceOp(x,
+                         dense_int_elements(start_indices),
+                         dense_int_elements(limit_indices),
+                         dense_int_elements(strides)).result
 
 def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:
   if dtypes.is_opaque_dtype(aval_out.dtype):
-    return aval_out.dtype._rules.dynamic_slice_mlir(ctx, aval_out, x,
-                                                    start_indices)
-  slice_sizes = aval_out.shape
-  if not core.is_constant_shape(slice_sizes):
-    slice_sizes = eval_dynamic_shape(ctx, slice_sizes)
-    return hlo.RealDynamicSliceOp(
-        aval_to_ir_type(aval_out), x,
-        shape_tensor(start_indices),
-        hlo.AddOp(shape_tensor(start_indices),
-                  shape_tensor(slice_sizes)).result,
-        shape_tensor([1] * len(slice_sizes))
-    ).result
+    elt_shape = aval_out.dtype._rules.physical_element_aval(
+        aval_out.dtype).shape
+    index_avals = ctx.avals_in[1:]
+    dtype = dtypes.canonicalize_dtype(
+        index_avals[0].dtype if index_avals else 'int64')  # type: ignore
+    trailing_zeros = [ir_constant(np.array(0, dtype))] * len(elt_shape)
+    start_indices = (*start_indices, *trailing_zeros)
+    physical_aval_out = core.physical_aval(aval_out)
+    return dynamic_slice(ctx, physical_aval_out, x,
+                              start_indices=start_indices)
   else:
-    return hlo.DynamicSliceOp(x, start_indices,
-                              dense_int_elements(slice_sizes)).result
+    slice_sizes = aval_out.shape
+    if not core.is_constant_shape(slice_sizes):
+      slice_sizes = eval_dynamic_shape(ctx, slice_sizes)
+      return hlo.RealDynamicSliceOp(
+          aval_to_ir_type(aval_out), x,
+          shape_tensor(start_indices),
+          hlo.AddOp(shape_tensor(start_indices),
+                    shape_tensor(slice_sizes)).result,
+          shape_tensor([1] * len(slice_sizes))
+      ).result
+    else:
+      return hlo.DynamicSliceOp(x, start_indices,
+                                dense_int_elements(slice_sizes)).result
 
 def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                          start_indices) -> ir.Value:
   if dtypes.is_opaque_dtype(aval_out.dtype):
-    return aval_out.dtype._rules.dynamic_update_slice_mlir(
-        ctx, aval_out, x, update, *start_indices)
-
-  # TODO(necula): handle dynamic shapes
-  return hlo.DynamicUpdateSliceOp(x, update, start_indices).result
+    elt_shape = aval_out.dtype._rules.physical_element_aval(
+        aval_out.dtype).shape
+    index_avals = ctx.avals_in[2:]
+    dtype = dtypes.canonicalize_dtype(
+        index_avals[0].dtype if index_avals else 'int64')  # type: ignore
+    zeros = [ir_constant(np.array(0, dtype=dtype))] * len(elt_shape)
+    start_indices = (*start_indices, *zeros)
+    physical_aval_out = core.physical_aval(aval_out)
+    return dynamic_update_slice(ctx, physical_aval_out, x, update,
+                                start_indices=start_indices)
+  else:
+    # TODO(necula): handle dynamic shapes
+    return hlo.DynamicUpdateSliceOp(x, update, start_indices).result
 
 def pad(ctx: LoweringRuleContext, aval_out,
         x, padding_value,
@@ -1704,10 +1729,7 @@ def _layout_to_mlir_layout(minor_to_major: Optional[Sequence[int]]):
   return ir.DenseIntElementsAttr.get(layout, type=ir.IndexType.get())
 
 def _aval_to_default_layouts(aval):
-  if dtypes.is_opaque_dtype(aval.dtype):
-    avals = aval.dtype._rules.physical_avals(aval)
-  else:
-    avals = [aval]
+  avals = [core.physical_aval(aval)]
   # Row major order is default for `NumPy`.
   return [list(range(aval.ndim - 1, -1, -1)) for aval in avals]
 

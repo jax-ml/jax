@@ -39,7 +39,6 @@ from jax.interpreters import xla
 from jax._src.interpreters import mlir
 from jax.interpreters import batching
 from jax._src import array
-from jax._src.lib.mlir.dialects import hlo
 from jax._src import dtypes
 from jax._src.interpreters import pxla
 from jax._src import test_util as jtu
@@ -2838,8 +2837,8 @@ class FooTyRules:
   # handlers
 
   @staticmethod
-  def physical_avals(aval):
-    return [core.ShapedArray((*aval.shape, 2), jnp.dtype('uint32'))]
+  def physical_element_aval(dtype) -> core.ShapedArray:
+    return core.ShapedArray((2,), jnp.dtype('uint32'))
 
   @staticmethod
   def physical_op_sharding(aval, op_sharding_proto):
@@ -2867,85 +2866,6 @@ class FooTyRules:
       return FooArray(aval.shape, buf)
     return handler
 
-  # element-type-polymorphic primitive lowering rules
-
-  @staticmethod
-  def empty_mlir(ctx, aval_out):
-    return mlir.ir_constants(np.zeros((2,), dtype=np.dtype('uint32')))
-
-  @staticmethod
-  def slice_mlir(ctx, aval_out, x, start_indices, limit_indices, strides):
-    start_indices = (*start_indices, 0)
-    limit_indices = (*limit_indices, 2)
-    strides = (*strides, 1)
-    return hlo.SliceOp(x,
-                       mlir.dense_int_elements(start_indices),
-                       mlir.dense_int_elements(limit_indices),
-                       mlir.dense_int_elements(strides)).result
-
-  @staticmethod
-  def dynamic_slice_mlir(ctx, aval_out, x, start_indices):
-    dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
-    start_indices = (*start_indices, mlir.ir_constant(np.array(0, dtype=dtype)))
-    slice_sizes_ = mlir.dense_int_elements((*aval_out.shape, 2))
-    return hlo.DynamicSliceOp(x, start_indices, slice_sizes_).result
-
-  @staticmethod
-  def dynamic_update_slice_mlir(ctx, aval_out, x, update, *start_indices):
-    aval_out, = ctx.avals_out
-    dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
-    start_indices = (*start_indices, mlir.ir_constant(np.array(0, dtype=dtype)))
-    return hlo.DynamicUpdateSliceOp(x, update, start_indices).result
-
-  @staticmethod
-  def broadcast_in_dim_mlir(ctx, aval_out, x, broadcast_dimensions):
-    broadcast_dimensions = [*broadcast_dimensions, aval_out.ndim]
-    return hlo.BroadcastInDimOp(
-        mlir.aval_to_ir_type(aval_out), x,
-        mlir.dense_int_elements(broadcast_dimensions)).result
-
-  @staticmethod
-  def transpose_mlir(ctx, aval_out, x, *, permutation):
-    perm = [*permutation, len(permutation)]
-    return hlo.TransposeOp(x, mlir.dense_int_elements(perm)).result
-
-  @staticmethod
-  def gather_mlir(ctx, avals_in, aval_out, x, indices, *,
-                  dimension_numbers, slice_sizes, unique_indices,
-                  indices_are_sorted, mode, fill_value):
-    aval_x, aval_indices = avals_in
-    aval_y = aval_out
-    dimension_numbers = dimension_numbers._replace(
-        offset_dims=(*dimension_numbers.offset_dims, aval_y.ndim))
-    slice_sizes = (*slice_sizes, 2)
-    gather_lower = partial(
-        lax_internal.slicing._gather_lower, dimension_numbers=dimension_numbers,
-        slice_sizes=slice_sizes, unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
-    aval_x_raw = core.ShapedArray((*aval_x.shape, 2), np.dtype('uint32'))
-    aval_y_raw = core.ShapedArray((*aval_y.shape, 2), np.dtype('uint32'))
-    return mlir.delegate_lowering(ctx, gather_lower, x, indices,
-                                  avals_in=[aval_x_raw, aval_indices],
-                                  avals_out=[aval_y_raw])[0]
-
-  @staticmethod
-  def select_mlir(ctx, avals_in, aval_out, which, *cases):
-    assert all(aval_case == aval_out for aval_case in avals_in[1:])
-    assert avals_in[0].ndim == aval_out.ndim
-    select_lower = lax_internal._select_hlo_lowering
-    aval_which = avals_in[0]
-    aval_which_bcast = core.ShapedArray(
-        (*aval_which.shape, 2), aval_which.dtype)
-    aval_out_raw = core.ShapedArray(
-        (*aval_out.shape, 2), np.dtype('uint32'))
-    aval_cases_raw = [aval_out_raw] * (len(avals_in) - 1)
-    bcast_dims = list(range(aval_which.ndim))
-    which_bcast = mlir.broadcast_in_dim(
-        ctx, which, aval_which_bcast, broadcast_dimensions=bcast_dims)
-    return mlir.delegate_lowering(ctx, select_lower, which_bcast, *cases,
-                                  avals_in=[aval_which_bcast, *aval_cases_raw],
-                                  avals_out=[aval_out_raw])[0]
-
 
 class FooTy:
   name = 'foo'
@@ -2964,10 +2884,12 @@ class FooTy:
 make_p = core.Primitive('make')
 bake_p = core.Primitive('bake')
 take_p = core.Primitive('take')
+jake_p = core.Primitive('jake')
 
 def make(shape): return make_p.bind(shape=tuple(shape))
 def bake(k):     return bake_p.bind(k)
 def take(k):     return take_p.bind(k)
+def jake(k):     return jake_p.bind(k)
 
 @make_p.def_abstract_eval
 def make_abstract_eval(*, shape):
@@ -2981,6 +2903,10 @@ def bake_abstract_eval(x):
 @take_p.def_abstract_eval
 def take_abstract_eval(x):
   return core.ShapedArray(x.shape, jnp.dtype('float32'))
+
+@jake_p.def_abstract_eval
+def jake_abstract_eval(x):
+  return x
 
 # runtime ('outside jit') data types
 
@@ -3018,6 +2944,8 @@ def bake_lowering(k):
 def take_lowering(k):
   return jnp.broadcast_to(jnp.float32(k.size), k.shape)
 
+def jake_lowering(k):
+  return jnp.ones((*k.shape, 2), 'uint32')
 
 def bake_vmap(batched_args, batch_dims):
   xs, = batched_args
@@ -3042,6 +2970,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     mlir.register_lowering(make_p, mlir.lower_fun(make_lowering, False))
     mlir.register_lowering(bake_p, mlir.lower_fun(bake_lowering, False))
     mlir.register_lowering(take_p, mlir.lower_fun(take_lowering, False))
+    mlir.register_lowering(jake_p, mlir.lower_fun(jake_lowering, False))
     batching.defvectorized(take_p)
     batching.primitive_batchers[bake_p] = bake_vmap
 
@@ -3217,6 +3146,38 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     ys = jax.jit(lambda x: x[:, 2:4, 3:4])(ks)
     self.assertIsInstance(ys, FooArray)
     self.assertEqual(ys.shape, (3, 2, 1))
+
+  @parameterized.parameters([
+    (0,),
+    (slice(1),),
+    (np.array([0, 2]),),
+    (np.array([False, True, True]),)
+  ])
+  def test_scatter(self, idx):
+    k  = jax.jit(lambda: make(()))()
+    ks = jax.jit(lambda: make((3,)))()
+    ys = jax.jit(lambda x, y: x.at[idx].set(y))(ks, k)
+    self.assertIsInstance(ys, FooArray)
+    self.assertEqual(ys.shape, (3,))
+
+  def test_equality(self):
+    eq = jax.jit(lambda k1, k2: k1 == k2)
+    ne = jax.jit(lambda k1, k2: k1 != k2)
+
+    k1 = jax.jit(lambda: make(()))()
+    k2 = jax.jit(lambda: jake(make(())))()
+
+    self.assertTrue(eq(k1, k1))
+    self.assertFalse(eq(k1, k2))
+    self.assertTrue(ne(k1, k2))
+    self.assertFalse(ne(k1, k1))
+
+    size = 5
+    idx = slice(2, 4)
+    ks = jax.jit(lambda k: jake(make((size,))).at[idx].set(k))(k1)
+    expected = jnp.zeros(size, dtype=bool).at[idx].set(True)
+    self.assertArraysEqual(eq(k1, ks), expected)
+    self.assertArraysEqual(ne(k1, ks), ~expected)
 
   def test_select(self):
     ks = jax.jit(lambda: make((3,)))()

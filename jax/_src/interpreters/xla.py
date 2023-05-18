@@ -55,14 +55,9 @@ def identity(x): return x
 _scalar_types = dtypes.python_scalar_dtypes.keys()
 
 def _make_array_shape(aval: ShapedArray) -> Sequence[xc.Shape]:
-  def dt(aval):
-    return np.dtype('bool') if aval.dtype == dtypes.float0 else aval.dtype
-
-  if dtypes.is_opaque_dtype(aval.dtype):
-    avals = aval.dtype._rules.physical_avals(aval)
-  else:
-    avals = [aval]
-  return tuple(xc.Shape.array_shape(dt(a), a.shape) for a in avals)
+  aval = core.physical_aval(aval)
+  dtype = np.dtype('bool') if aval.dtype == dtypes.float0 else aval.dtype
+  return (xc.Shape.array_shape(dtype, aval.shape),)
 
 def get_canonical_source_file(frame: source_info_util.Frame):
   source_file = frame.file_name
