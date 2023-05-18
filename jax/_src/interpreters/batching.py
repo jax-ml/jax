@@ -52,7 +52,8 @@ class PileTy:
   length: Union[int, Tracer, core.Var]
   elt_ty: core.DShapedArray
   def __repr__(self) -> str:
-    return f'Var{id(self.binder)}:{self.length} => {self.elt_ty}'
+    # return f'Var{id(self.binder)}:{self.length} => {self.elt_ty}'
+    return f'i:{self.length} => {self.elt_ty}'
   replace = dataclasses.replace
 
 # [3, 1, 4].i
@@ -61,7 +62,7 @@ class IndexedAxisSize:
   idx: core.Var
   lengths: Union[Array, core.Var, Tracer]
   def __repr__(self) -> str:
-    return f'{str(self.lengths)}.Var{id(self.idx)}'
+    return f'{str(self.lengths)}.i'
   replace = dataclasses.replace
 
 # Pile(aval=a:3 => f32[[3 1 4].a],
@@ -107,6 +108,7 @@ def _pile_result(axis_size, stacked_axis, ragged_axis, segment_lens, x):
   shape[ragged_axis-1] = IndexedAxisSize(binder, segment_lens)
   elt_ty = core.DShapedArray(tuple(shape), x.dtype, x.weak_type)
   return Pile(PileTy(binder, axis_size, elt_ty), x)
+
 
 @dataclasses.dataclass(frozen=True)
 class RaggedAxis:
@@ -889,7 +891,9 @@ def reducer_batcher(prim, ident, batched_args, batch_dims, axes, **params):
 def mask_ragged_axis(operand, ident, axis_spec):
   value = ident(operand.dtype)
   positions = jax.lax.broadcasted_iota('int32', operand.shape, axis_spec.ragged_axis)
-  limits = jax.lax.broadcast_in_dim(axis_spec.segment_lengths._data, operand.shape, [axis_spec.stacked_axis])
+  # TODO(mattjj, axch) cant get ._data, need to convert it
+  limits = jax.lax.broadcast_in_dim(axis_spec.segment_lengths._data,
+                                    operand.shape, [axis_spec.stacked_axis])
   mask = positions < limits
   return jax.lax.select(mask, operand, jax.lax.broadcast(value, operand.shape))
 

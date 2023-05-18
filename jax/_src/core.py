@@ -1666,6 +1666,9 @@ class DShapedArray(UnshapedArray):
       weak_type = self.weak_type
     return DShapedArray(shape, dtype, weak_type)
 
+  def _len(self, tracer):
+    return self.shape[0]
+
   def __eq__(self, other):
     return (type(self) is type(other)
             and self.dtype == other.dtype and self.shape == other.shape
@@ -1720,7 +1723,7 @@ class DArray:
     slices = tuple(slice(int(d._data)) if type(d) is DArray and
                    type(d.dtype) is bint else slice(None) for d in self.shape)
     data = self._data[slices]
-    return f'{dtypestr}[{shapestr}] with value:\n{data}'
+    return f'{dtypestr}[{shapestr}] with value: {data}'
   def __hash__(self) -> int:
     if not self.shape:
       return hash((self._aval, int(self._data)))

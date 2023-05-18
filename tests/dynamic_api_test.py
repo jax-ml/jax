@@ -1507,7 +1507,7 @@ class PileTest(jtu.JaxTestCase):
     p = jax.vmap(partial(jnp.arange, dtype='int32'),
                  out_axes=batching.pile_axis)(ins)
     self.assertIsInstance(p, batching.Pile)
-    self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[bint\{≤5\}\[3\] with value:\n\[3 1 4\]\.Var[0-9]+\]')
+    self.assertRegex(str(p.aval), r'i:3 => i32\[bint\{≤5\}\[3\] with value: \[3 1 4\]\.i\]')
     data = jax.lax.broadcasted_iota('int32', (3, 5), 1)
     self.assertAllClose(p.data, data, check_dtypes=False)
 
@@ -1517,7 +1517,7 @@ class PileTest(jtu.JaxTestCase):
                  out_axes=batching.pile_axis)(ins)
     p = pile_map(lambda x: x ** 2)(p)
     self.assertIsInstance(p, batching.Pile)
-    self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[bint\{≤5\}\[3\] with value:\n\[3 1 4\]\.Var[0-9]+\]')
+    self.assertRegex(str(p.aval), r'i:3 => i32\[bint\{≤5\}\[3\] with value: \[3 1 4\]\.i\]')
     data = jax.lax.broadcasted_iota('int32', (3, 5), 1) ** 2
     self.assertAllClose(p.data, data, check_dtypes=False)
 
