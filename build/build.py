@@ -90,40 +90,40 @@ def check_numpy_version(python_bin_path):
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/5.1.1/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/6.1.2/"
 BazelPackage = collections.namedtuple("BazelPackage",
                                       ["base_uri", "file", "sha256"])
 bazel_packages = {
     ("Linux", "x86_64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.1.1-linux-x86_64",
+            file="bazel-6.1.2-linux-x86_64",
             sha256=
-            "5e126060d9169b462a18e97435356c3b3712d20fdbef9ac7609016838a90e7d3"),
+            "e89747d63443e225b140d7d37ded952dacea73aaed896bca01ccd745827c6289"),
     ("Linux", "aarch64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.1.1-linux-arm64",
+            file="bazel-6.1.2-linux-arm64",
             sha256=
-            "a590a28608772e779efc0c29bb678cd2a150deb27a9f8c557cc1d2b131a779ef"),
+            "1c9b249e315601c3703c41668a1204a8fdf0eba7f0f2b7fc38253bad1d1969c7"),
     ("Darwin", "x86_64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.1.1-darwin-x86_64",
+            file="bazel-6.1.2-darwin-x86_64",
             sha256=
-            "91d8958fffd3077c32466a03300b7eba3b680588688f11d378ccbf2ae9000753"),
+            "22d4b605ce6a7aad92d4f387458cc68de9907a2efa08f9b8bda244c2b6010561"),
     ("Darwin", "arm64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.1.1-darwin-arm64",
+            file="bazel-6.1.2-darwin-arm64",
             sha256=
-            "4fad9d066436ccca022578192be9fcc330d833799833c549683949939b3ce717"),
+            "30cdf85af055ca8fdab7de592b1bd64f940955e3f63ed5c503c4e93d0112bd9d"),
     ("Windows", "AMD64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.1.1-windows-x86_64.exe",
+            file="bazel-6.1.2-windows-x86_64.exe",
             sha256=
-            "03061f1e9aac1966155ca402dcd1075c6493dfe85df72aa2cf3e12fcaa258d90"),
+            "47e7f65a3bfa882910f76e2107b4298b28ace33681bd0279e25a8f91551913c0"),
 }
 
 
