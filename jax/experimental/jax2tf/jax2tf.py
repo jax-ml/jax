@@ -199,6 +199,9 @@ class _ThreadLocalState(threading.local):
     # thread-local state).
     self.call_tf_concrete_function_set: set[Any] = set()
 
+    # A cache for the jax2tf.convert native_serilazation option.
+    self.native_serialization: bool = True
+
 _thread_local_state = _ThreadLocalState()
 
 def _get_current_name_stack() -> Union[NameStack, str]:
@@ -220,6 +223,10 @@ def add_to_call_tf_concrete_function_set(func_list: List[Any]) -> None:
       _thread_local_state.inside_call_tf
   ), "Updating call_tf_concrete_function_set can only happen inside call_tf."
   _thread_local_state.call_tf_concrete_function_set.update(func_list)
+
+
+def get_thread_local_state_native_serialization() -> bool:
+  return _thread_local_state.native_serialization
 
 
 @partial(api_util.api_hook, tag="jax2tf_convert")
@@ -495,10 +502,13 @@ class NativeSerializationImpl(SerializationImpl):
 
   def before_conversion(self):
     _thread_local_state.call_tf_concrete_function_set = set()
+    prev_native_serialization = _thread_local_state.native_serialization
 
     def _restore_context():
       _thread_local_state.call_tf_concrete_function_set.clear()
+      _thread_local_state.native_serialization = prev_native_serialization
 
+    _thread_local_state.native_serialization = True
     self._restore_context = _restore_context
     self.exported = jax_export.export(
         self.fun_jax,
@@ -545,17 +555,22 @@ class GraphSerializationImpl(SerializationImpl):
     prev_enable_xla = _thread_local_state.enable_xla
     prev_include_xla_op_metadata = _thread_local_state.include_xla_op_metadata
     prev_tf_outer_name_scope = _thread_local_state.tf_outer_name_scope
+    prev_native_serialization = _thread_local_state.native_serialization
+
     def _restore_context():
       _thread_local_state.enable_xla = prev_enable_xla
       _thread_local_state.include_xla_op_metadata = prev_include_xla_op_metadata
       _thread_local_state.tf_outer_name_scope = prev_tf_outer_name_scope
       _thread_local_state.shape_env = ()
+      _thread_local_state.native_serialization = prev_native_serialization
+
     self._restore_context = _restore_context
     _thread_local_state.enable_xla = self.enable_xla
     # TODO(b/189306134): implement support for XLA metadata
     _thread_local_state.include_xla_op_metadata = False
     _thread_local_state.tf_outer_name_scope = tf.get_current_name_scope()
     assert not _thread_local_state.shape_env, f"Unexpected shape environment {_thread_local_state.shape_env}"
+    _thread_local_state.native_serialization = False
 
     args_specs_flat, self.in_tree = tree_util.tree_flatten(
         (self.args_specs, self.kwargs_specs))
