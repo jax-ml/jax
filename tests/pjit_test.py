@@ -1163,9 +1163,9 @@ class CustomPartitionerTest(jtu.JaxTestCase):
   def test_custom_partitioner(self):
     self.skip_if_custom_partitioning_not_supported()
 
-    def partition(
-        precision, arg_shapes, arg_shardings, result_shape, result_sharding
-    ):
+    def partition(precision, arg_shapes, result_shape):
+      arg_shardings = jax.tree_map(lambda s: s.sharding, arg_shapes)
+      result_sharding = result_shape.sharding
       self.assertEqual(arg_shardings[0], result_sharding)
       self.assertEqual(P('x'), result_sharding.spec)
       self.assertEqual(P('y'), arg_shardings[1].spec)
@@ -1178,9 +1178,8 @@ class CustomPartitionerTest(jtu.JaxTestCase):
 
       return lower_fn, result_sharding, arg_shardings
 
-    def infer_sharding_from_operands(
-        precision, arg_shapes, arg_shardings, shape
-    ):
+    def infer_sharding_from_operands(precision, arg_shapes, result_shape):
+      arg_shardings = jax.tree_map(lambda s: s.sharding, arg_shapes)
       x_shard, y_shard = arg_shardings
       x_shape, y_shape = arg_shapes
       x_names = tuple(x_shard.spec) + tuple(
@@ -1207,22 +1206,60 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     self.assertArraysEqual(result1, result2)
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
-  def test_custom_partitioner_sharding_override(self):
+  def test_custom_partitioner_propagate_user_sharding(self):
     self.skip_if_custom_partitioning_not_supported()
 
-    def partition(arg_shapes, arg_shardings, result_shape, result_sharding):
+    def partition(arg_shapes, result_shape):
       def lower_fn(x):
         return x
 
-      (y_shard,) = arg_shardings
+      return (
+          lower_fn,
+          arg_shapes[0].sharding,
+          [arg_shapes[0].sharding],
+      )
+
+    def infer_sharding_from_operands(arg_shapes, result_shape):
+      return arg_shapes[0].sharding
+
+    def propagate_user_sharding(user_shape):
+      return user_shape.sharding
+
+    @custom_partitioning
+    def f(x):
+      return x
+
+    f.def_partition(
+        infer_sharding_from_operands=infer_sharding_from_operands,
+        partition=partition,
+        propagate_user_sharding=propagate_user_sharding,
+    )
+
+    def f2(a):
+      return a + f(a)
+
+    pjit_f = pjit(f2, in_shardings=(P(None, 'x')), out_shardings=P('x'))
+    x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
+    self.assertArraysEqual(x + x, pjit_f(x))
+
+
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_custom_partitioner_sharding_override(self):
+    self.skip_if_custom_partitioning_not_supported()
+
+    def partition(arg_shapes, result_shape):
+      def lower_fn(x):
+        return x
+
+      y_shard = arg_shapes[0].sharding
       return (
           lower_fn,
           NamedSharding(y_shard.mesh, P(None)),
           [NamedSharding(y_shard.mesh, P(None))],
       )
 
-    def infer_sharding_from_operands(arg_shapes, arg_shardings, shape):
-      (y_shard,) = arg_shardings
+    def infer_sharding_from_operands(arg_shapes, result_shape):
+      y_shard = arg_shapes[0].sharding
       return NamedSharding(y_shard.mesh, P('x'))
 
     @custom_partitioning
@@ -1244,19 +1281,19 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     if xla_extension_version < 149:
       self.skipTest('Requires xla_extension_version >= 149')
 
-    def partition(arg_shapes, arg_shardings, result_shape, result_sharding):
+    def partition(arg_shapes, result_shape):
       def lower_fn(x):
         return x
 
-      (y_shard,) = arg_shardings
+      y_shard = arg_shapes[0].sharding
       return (
           lower_fn,
           NamedSharding(y_shard.mesh, P(None)),
           [NamedSharding(y_shard.mesh, P(None, 'x'))],
       )
 
-    def infer_sharding_from_operands(arg_shapes, arg_shardings, shape):
-      (y_shard,) = arg_shardings
+    def infer_sharding_from_operands(arg_shapes, result_shape):
+      y_shard = arg_shapes[0].sharding
       return NamedSharding(y_shard.mesh, P('x'))
 
     @custom_partitioning

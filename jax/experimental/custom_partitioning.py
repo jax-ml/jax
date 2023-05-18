@@ -14,6 +14,7 @@
 
 import jax
 import inspect
+from typing import Optional
 from jax._src import core
 from jax import tree_util
 from jax._src import linear_util as lu
@@ -64,11 +65,22 @@ def _to_jax_shape(s):
   return core.ShapedArray(s.dimensions(), s.numpy_dtype())
 
 
+def _to_jax_sharded_shape(s, sharding):
+  return jax.ShapeDtypeStruct(
+      s.dimensions(), s.numpy_dtype(), sharding=sharding
+  )
+
+
 def _custom_partitioning_propagate_user_sharding(sharding, shape, backend_string):
   info = _sharding_callbacks[backend_string]
   if info.propagate_user_sharding is None:
     return sharding
-  return info.propagate_user_sharding(*info.static_args, sharding, shape)
+  user_shape = _to_jax_sharded_shape(
+      shape, info.to_mesh_pspec_sharding(sharding)
+  )
+  result = info.propagate_user_sharding(*info.static_args, user_shape)
+  return xc.HloSharding.from_proto(
+      result._to_xla_op_sharding(len(user_shape.shape)))
 
 
 def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
@@ -76,10 +88,15 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
   info = _sharding_callbacks[backend_string]
   lower_fn, result_sharding, arg_shardings = info.partition(
       *info.static_args,
-      [_to_jax_shape(s) for s in arg_shapes],
-      [info.to_mesh_pspec_sharding(s.to_proto()) for s in arg_shardings],
-      _to_jax_shape(result_shape),
-      info.to_mesh_pspec_sharding(result_sharding.to_proto())
+      [
+          _to_jax_sharded_shape(
+              s, info.to_mesh_pspec_sharding(sharding)
+          )
+          for s, sharding in zip(arg_shapes, arg_shardings)
+      ],
+      _to_jax_sharded_shape(
+          result_shape, info.to_mesh_pspec_sharding(result_sharding)
+      )
   )
   module_context = info.module_context
 
@@ -123,8 +140,12 @@ def _custom_partitioning_infer_sharding_from_operands(arg_shapes, arg_shardings,
   result_shape = _to_jax_shape(shape)
   result = info.infer_sharding_from_operands(
       *info.static_args,
-      [_to_jax_shape(s) for s in arg_shapes],
-      [info.to_mesh_pspec_sharding(s.to_proto()) for s in arg_shardings],
+      [
+          _to_jax_sharded_shape(
+              s, info.to_mesh_pspec_sharding(sharding)
+          )
+          for s, sharding in zip(arg_shapes, arg_shardings)
+      ],
       result_shape
   )
   return xc.HloSharding.from_proto(
@@ -176,18 +197,23 @@ class custom_partitioning:
     def f(*args):
       return ...
 
-    def propagate_user_sharding(sharding, shape):
-      '''Update the sharding of the op from a user's sharding.'''
+    def propagate_user_sharding(user_shape):
+      '''Update the sharding of the op from a user's shape.sharding.'''
+      user_sharding = jax.tree_map(lambda x: x.sharding, user_shape)
 
-    def partition(arg_shapes, arg_shardings, result_shape, result_sharding):
+    def partition(arg_shapes, result_shape):
       def lower_fn(*args):
         ... builds computation on per-device shapes ...
+      result_shardings = jax.tree_map(lambda x: x.sharding, result_shape)
+      arg_shardings = jax.tree_map(lambda x: x.sharding, arg_shapes)
       # result_sharding and arg_shardings may optionally be modified and the
       # partitioner will insert collectives to reshape.
       return lower_fn, result_sharding, arg_shardings
 
-    def infer_sharding_from_operands(arg_shapes, arg_shardings, shape):
+    def infer_sharding_from_operands(arg_shapes, shape):
       '''Compute the result sharding from the sharding of the operands.'''
+      arg_shardings = jax.tree_map(lambda x: x.sharding, arg_shapes)
+
 
     f.def_partition(partition, propagate_user_sharding, infer_sharding_from_operands)
 
@@ -239,12 +265,15 @@ class custom_partitioning:
           names = tuple(sharding.spec[:max_shared_dims]) + tuple(None for _ in range(rank - max_shared_dims))
           return NamedSharding(sharding.mesh, P(*names))
 
-      def partition(arg_shapes, arg_shardings, result_shape, result_sharding):
+      def partition(arg_shapes, result_shape):
+          result_shardings = jax.tree_map(lambda x: x.sharding, result_shape)
+          arg_shardings = jax.tree_map(lambda x: x.sharding, arg_shapes)
           return fft, \
               supported_sharding(arg_shardings[0], arg_shapes[0]), \
               [supported_sharding(arg_shardings[0], arg_shapes[0])]
 
-      def infer_sharding_from_operands(arg_shapes, arg_shardings, shape):
+      def infer_sharding_from_operands(arg_shapes, result_shape):
+          arg_shardings = jax.tree_map(lambda x: x.sharding, arg_shapes)
           return supported_sharding(arg_shardings[0], arg_shapes[0])
 
       @custom_partitioning
@@ -394,13 +423,15 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
     return mlir.lower_fun(
         core.jaxpr_as_fun(call), multiple_results=True)(ctx, *values)
 
-  def to_mesh_pspec_sharding(op_sharding: xc.OpSharding):
+  def to_mesh_pspec_sharding(op_sharding: Optional[xc.OpSharding]):
+    if op_sharding is None:
+      return op_sharding
     if mesh.empty:
       from jax._src.sharding_impls import GSPMDSharding
       assert devices is not None
-      return GSPMDSharding(devices, op_sharding)
+      return GSPMDSharding(devices, op_sharding.to_proto())
     pspec = sharding_impls.parse_flatten_op_sharding(
-        op_sharding, mesh)[0].get_partition_spec()
+        op_sharding.to_proto(), mesh)[0].get_partition_spec()
     return jax.sharding.NamedSharding(mesh, pspec)
 
   sharding_callback_info = _ShardingCallbackInfo(propagate_user_sharding, partition,
