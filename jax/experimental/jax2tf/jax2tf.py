@@ -867,6 +867,12 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
       map(partial(_shard_value, skip_replicated_sharding=tf.executing_eagerly()),
           kept_args_flat_tf, kept_args_avals, exported.in_shardings))
   res = tfxla.call_module(args_flat_tf, **call_module_attrs)
+
+  # Under tf.function, zero return function will return the TF op.
+  # Here we force it return empty tuple.
+  if isinstance(res, tf.Operation):
+    res = ()
+
   # TODO(b/278940799): Replace the TF v1 API with public TF2 API.
   # Add the custom call tf.function into the default graph, so those functions
   # will be available during tf.SavedModel.save.
