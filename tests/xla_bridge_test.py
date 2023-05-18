@@ -92,7 +92,8 @@ class XlaBridgeTest(jtu.JaxTestCase):
 
   def test_register_plugin(self):
     with self.assertLogs(level="WARNING") as log_output:
-      xb.register_pjrt_plugin_factories("name1:path1,name2:path2,name3")
+      os.environ['PJRT_NAMES_AND_LIBRARY_PATHS'] = "name1:path1,name2:path2,name3"
+      xb.register_pjrt_plugin_factories_from_env()
     client_factory, priotiy = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
       with mock.patch.object(
@@ -129,7 +130,8 @@ class XlaBridgeTest(jtu.JaxTestCase):
     test_json_file_path = os.path.join(
         os.path.dirname(__file__), "testdata/example_pjrt_plugin_config.json"
     )
-    xb.register_pjrt_plugin_factories(f"name1:{test_json_file_path}")
+    os.environ['PJRT_NAMES_AND_LIBRARY_PATHS'] = f"name1:{test_json_file_path}"
+    xb.register_pjrt_plugin_factories_from_env()
     client_factory, priority = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
       with mock.patch.object(
