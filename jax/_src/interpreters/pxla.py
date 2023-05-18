@@ -2918,7 +2918,6 @@ def _compile_replicated_mesh_executable_from_hlo(
     host_callbacks, has_unordered_effects, ordered_effects, kept_var_idx,
     backend, da, committed, pmap_nreps, jaxpr_debug_info):
   assert not auto_spmd_lowering
-  assert isinstance(da, _DeviceAssignment)
   in_shardings = semantics_in_shardings.shardings
   out_shardings = semantics_out_shardings.shardings
 
