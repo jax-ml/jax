@@ -3535,6 +3535,17 @@ class APITest(jtu.JaxTestCase):
 
     f()  # doesn't crash
 
+  def test_linearize_aux(self):
+    def fn(x):
+      return x * 2 - 3, x > 0
+
+    f, lin_fn, aux = api.linearize(fn, 3.4, has_aux=True)
+    tang = lin_fn(5.)
+
+    self.assertAllClose(f, 3.8)
+    self.assertAllClose(tang, 10.)
+    self.assertEqual(aux, True)
+
   def test_linearize_aval_error(self):
     # https://github.com/google/jax/issues/4622
     f = lambda x: x
