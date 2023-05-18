@@ -1935,6 +1935,36 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(key_dot, jax.random.PRNGKeyArray)
     self.assertArraysEqual(jax.random.key_data(key_dot), np.uint32(0))
 
+  def test_not_hashable(self):
+    key = self.make_keys()
+    with self.assertRaisesRegex(TypeError, "unhashable type"):
+      hash(key)
+
+  def test_array_impl_attributes(self):
+    # Test a number of ArrayImpl attributes
+    key = self.make_keys(10)
+
+    self.assertEqual(key.is_fully_addressable, key._base_array.is_fully_addressable)
+    self.assertEqual(key.is_fully_replicated, key._base_array.is_fully_replicated)
+    self.assertEqual(key.device(), key._base_array.device())
+    self.assertEqual(key.devices(), key._base_array.devices())
+    self.assertEqual(key.on_device_size_in_bytes, key._base_array.on_device_size_in_bytes)
+    self.assertEqual(key.unsafe_buffer_pointer, key._base_array.unsafe_buffer_pointer)
+
+  def test_delete(self):
+    key = self.make_keys(10)
+
+    self.assertFalse(key.is_deleted())
+    key.delete()
+    self.assertTrue(key.is_deleted())
+    self.assertTrue(key._base_array.is_deleted())
+
+  def test_async(self):
+    key = self.make_keys(10)
+
+    self.assertArraysEqual(key, key.block_until_ready())
+    self.assertIsNone(key.copy_to_host_async())
+
   # TODO(frostig,mattjj): more polymorphic primitives tests
 
 
