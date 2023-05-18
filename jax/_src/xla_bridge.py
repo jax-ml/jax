@@ -461,7 +461,22 @@ def register_plugin(
             ' plugin.'
         )
       xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
-    return xla_client.make_c_api_client(plugin_name, options)
+
+    if xla_extension_version < 165:
+      return xla_client.make_c_api_client(plugin_name, options)
+    else:
+      if distributed.global_state.client is None:
+        return xla_client.make_c_api_client(plugin_name, options, None)
+      distribute_options = {
+          'node_id': distributed.global_state.process_id,
+          'num_nodes': distributed.global_state.num_processes,
+      }
+      if options is not None:
+        distribute_options.update(options)
+      return xla_client.make_c_api_client(
+          plugin_name, distribute_options, distributed.global_state.client
+      )
+
 
   logger.debug(
       'registering PJRT plugin %s from %s', plugin_name, library_path
