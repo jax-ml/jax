@@ -37,14 +37,22 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 _fp8_enabled = xla_client._version >= 117 and jtu.device_under_test() == 'gpu'
+_int4_enabled = dtypes.int4 is not None
 
 bool_dtypes = [np.dtype('bool')]
 
-signed_dtypes = [np.dtype('int8'), np.dtype('int16'), np.dtype('int32'),
-                 np.dtype('int64')]
+np_signed_dtypes = [np.dtype('int8'), np.dtype('int16'), np.dtype('int32'),
+                   np.dtype('int64')]
+signed_dtypes = list(np_signed_dtypes)
 
-unsigned_dtypes = [np.dtype('uint8'), np.dtype('uint16'), np.dtype('uint32'),
-                   np.dtype('uint64')]
+np_unsigned_dtypes = [np.dtype('uint8'), np.dtype('uint16'), np.dtype('uint32'),
+                     np.dtype('uint64')]
+unsigned_dtypes = list(np_unsigned_dtypes)
+
+if _int4_enabled:
+  int4_dtypes = [np.dtype('int4'), np.dtype('uint4')]
+  signed_dtypes += [np.dtype('int4')]
+  unsigned_dtypes += [np.dtype('uint4')]
 
 np_float_dtypes = [np.dtype('float16'), np.dtype('float32'),
                    np.dtype('float64')]
@@ -203,12 +211,16 @@ class DtypesTest(jtu.JaxTestCase):
       # TODO(zhangqiaorjc): Consider more dtype promotion rules for fp8.
       if _fp8_enabled and t1 in fp8_dtypes:
         continue
+      if _int4_enabled and t1 in int4_dtypes:
+        continue
       self.assertEqual(np.dtype(np.complex128),
                        dtypes.promote_types(t1, np.complex128))
 
       for t2 in all_dtypes:
         # TODO(zhangqiaorjc): Consider more dtype promotion rules for fp8.
         if _fp8_enabled and t2 in fp8_dtypes:
+          continue
+        if _int4_enabled and t2 in int4_dtypes:
           continue
         # Symmetry
         self.assertEqual(dtypes.promote_types(t1, t2),
@@ -224,14 +236,16 @@ class DtypesTest(jtu.JaxTestCase):
         # TODO(zhangqiaorjc): Consider more dtype promotion rules for fp8.
         if _fp8_enabled and t in fp8_dtypes:
           continue
+        if _int4_enabled and (t in int4_dtypes or i in int4_dtypes):
+          continue
         self.assertEqual(t, dtypes.promote_types(t, i))
 
     # Promotions between exact types, or between inexact types, match NumPy.
-    for groups in [bool_dtypes + signed_dtypes + unsigned_dtypes,
+    for groups in [bool_dtypes + np_signed_dtypes + np_unsigned_dtypes,
                    np_float_dtypes + complex_dtypes]:
       for t1, t2 in itertools.combinations(groups, 2):
         self.assertEqual(np.promote_types(t1, t2),
-                        dtypes.promote_types(t1, t2))
+                         dtypes.promote_types(t1, t2))
 
     # Promotion between weak types matches numpy promotion
     for t1 in [int, float, complex]:
@@ -568,6 +582,8 @@ class TestPromotionTables(jtu.JaxTestCase):
   )
   def testUnaryPromotion(self, dtype, weak_type):
     # Regression test for https://github.com/google/jax/issues/6051
+    if _int4_enabled and dtype in int4_dtypes:
+      self.skipTest("XLA support for int4 is incomplete.")
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     if weak_type:
       if _fp8_enabled:
@@ -588,6 +604,8 @@ class TestPromotionTables(jtu.JaxTestCase):
   def testBinaryNonPromotion(self, dtype, weak_type, promotion):
     if _fp8_enabled and dtype in fp8_dtypes:
       self.skipTest("XLA support for float8 is incomplete.")
+    if _int4_enabled and dtype in int4_dtypes:
+      self.skipTest("XLA support for int4 is incomplete.")
     # Regression test for https://github.com/google/jax/issues/6051
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     with jax.numpy_dtype_promotion(promotion):

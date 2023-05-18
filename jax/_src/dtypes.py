@@ -53,6 +53,17 @@ _float8_e5m2_dtype: np.dtype = np.dtype(float8_e5m2)
 bfloat16: Type[np.generic] = ml_dtypes.bfloat16
 _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
+int4: Optional[Type[np.generic]] = None
+_int4_dtype: Optional[np.dtype] = None
+uint4: Optional[Type[np.generic]] = None
+_uint4_dtype: Optional[np.dtype] = None
+
+if hasattr(ml_dtypes, "int4"):
+  int4 = ml_dtypes.int4
+  uint4 = ml_dtypes.uint4
+  _int4_dtype = np.dtype(int4)
+  _uint4_dtype = np.dtype(uint4)
+
 _custom_float_dtypes = (_bfloat16_dtype, _float8_e4m3fn_dtype,
                         _float8_e5m2_dtype)
 
@@ -202,7 +213,11 @@ def coerce_to_array(x: Any, dtype: Optional[DTypeLike] = None) -> np.ndarray:
     dtype = _scalar_type_to_dtype(type(x), x)
   return np.asarray(x, dtype)
 
-iinfo = np.iinfo
+try:
+  iinfo = ml_dtypes.iinfo
+except AttributeError:
+  iinfo = np.iinfo
+
 try:
   finfo = ml_dtypes.finfo
 except AttributeError as err:
@@ -251,11 +266,22 @@ def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
   # Canonicalizes all concrete types to np.dtype instances
   a = a if _is_typeclass(a) else np.dtype(a)
   b = b if _is_typeclass(b) else np.dtype(b)
-  if isinstance(a, np.dtype) and a in _custom_float_dtypes:
-    # Avoid implicitly casting list elements below to a dtype.
-    if isinstance(b, np.dtype):
-      return a == b
-    return b in [np.floating, np.inexact, np.number]
+  if isinstance(a, np.dtype):
+    if a in _custom_float_dtypes:
+      # Avoid implicitly casting list elements below to a dtype.
+      if isinstance(b, np.dtype):
+        return a == b
+      return b in [np.floating, np.inexact, np.number]
+    # TODO(phawkins): remove the "_int4_dtype is not None" tests after requiring
+    # an ml_dtypes version that has int4 and uint4.
+    if _int4_dtype is not None and a == _int4_dtype:
+      if isinstance(b, np.dtype):
+        return a == b
+      return b in [np.signedinteger, np.integer, np.number]
+    if _uint4_dtype is not None and a == _uint4_dtype:
+      if isinstance(b, np.dtype):
+        return a == b
+      return b in [np.unsignedinteger, np.integer, np.number]
   return np.issubdtype(a, b)
 
 can_cast = np.can_cast
@@ -266,16 +292,32 @@ JAXType = Union[type, DType]
 # Enumeration of all valid JAX types in order.
 _weak_types: List[JAXType] = [int, float, complex]
 _bool_types: List[JAXType] = [np.dtype(bool)]
-_int_types: List[JAXType] = [
-    np.dtype('uint8'),
-    np.dtype('uint16'),
-    np.dtype('uint32'),
-    np.dtype('uint64'),
-    np.dtype('int8'),
-    np.dtype('int16'),
-    np.dtype('int32'),
-    np.dtype('int64'),
-]
+_int_types: List[JAXType]
+if int4 is not None:
+  _int_types = [
+      np.dtype(uint4),
+      np.dtype('uint8'),
+      np.dtype('uint16'),
+      np.dtype('uint32'),
+      np.dtype('uint64'),
+      np.dtype(int4),
+      np.dtype('int8'),
+      np.dtype('int16'),
+      np.dtype('int32'),
+      np.dtype('int64'),
+  ]
+else:
+  _int_types = [
+      np.dtype('uint8'),
+      np.dtype('uint16'),
+      np.dtype('uint32'),
+      np.dtype('uint64'),
+      np.dtype('int8'),
+      np.dtype('int16'),
+      np.dtype('int32'),
+      np.dtype('int64'),
+  ]
+
 _float_types: List[JAXType]
 _float_types = [
   np.dtype(float8_e4m3fn),
@@ -312,18 +354,29 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> Dict[JAXType, Lis
   This DAG maps each type to its immediately higher type on the lattice.
   """
   b1, = _bool_types
-  u1, u2, u4, u8, i1, i2, i4, i8 = _int_types
+  if int4 is not None:
+    _uint4, u1, u2, u4, u8, _int4, i1, i2, i4, i8 = _int_types  # pytype: disable=bad-unpacking
+  else:
+    u1, u2, u4, u8, i1, i2, i4, i8 = _int_types  # pytype: disable=bad-unpacking
   f1_e4m3fn, f1_e5m2, bf, f2, f4, f8 = _float_types
   c4, c8 = _complex_types
   i_, f_, c_ = _weak_types
   if jax_numpy_dtype_promotion == 'standard':
-    return {
+    out: Dict[JAXType, List[JAXType]]
+    out = {
       b1: [i_],
       u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
       i_: [u1, i1], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
       f_: [f1_e4m3fn, f1_e5m2, bf, f2, c_], f1_e4m3fn: [], f1_e5m2: [], bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
       c_: [c4], c4: [c8], c8: [],
     }
+    if _int4_dtype is not None:
+      out[i_].append(_int4_dtype)
+      out[_int4_dtype] = []
+    if _uint4_dtype is not None:
+      out[i_].append(_uint4_dtype)
+      out[_uint4_dtype] = []
+    return out
   elif jax_numpy_dtype_promotion == 'strict':
     return {
       i_: [f_] + _int_types,
@@ -529,7 +582,11 @@ def check_user_dtype_supported(dtype, fun_name=None):
   if isinstance(dtype, type) and dtype in {bool, int, float, builtins.complex}:
     return
   np_dtype = np.dtype(dtype)
-  is_custom_dtype = np_dtype.type in [float8_e4m3fn, float8_e5m2, bfloat16]
+  if int4 is not None:
+    is_custom_dtype = np_dtype.type in [
+        float8_e4m3fn, float8_e5m2, bfloat16, int4, uint4]
+  else:
+    is_custom_dtype = np_dtype.type in [float8_e4m3fn, float8_e5m2, bfloat16]
   if np_dtype.kind not in "biufc" and not is_custom_dtype:
     msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"
     msg += f" in {fun_name}" if fun_name else ""
@@ -542,4 +599,4 @@ def check_user_dtype_supported(dtype, fun_name=None):
            "See https://github.com/google/jax#current-gotchas for more.")
     fun_name = f"requested in {fun_name}" if fun_name else ""
     truncated_dtype = canonicalize_dtype(dtype).name
-    warnings.warn(msg.format(dtype, fun_name , truncated_dtype), stacklevel=3)
+    warnings.warn(msg.format(dtype, fun_name, truncated_dtype), stacklevel=3)

@@ -118,6 +118,8 @@ _dtype_to_ir_type : Dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(np.uint16): partial(ir.IntegerType.get_unsigned, 16),
   np.dtype(np.uint32): partial(ir.IntegerType.get_unsigned, 32),
   np.dtype(np.uint64): partial(ir.IntegerType.get_unsigned, 64),
+  np.dtype(dtypes.float8_e4m3fn): ir.Float8E4M3FNType.get,
+  np.dtype(dtypes.float8_e5m2): ir.Float8E5M2Type.get,
   np.dtype(dtypes.bfloat16): ir.BF16Type.get,
   np.dtype(np.float16): ir.F16Type.get,
   np.dtype(np.float32): ir.F32Type.get,
@@ -126,10 +128,12 @@ _dtype_to_ir_type : Dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(np.complex128): lambda: ir.ComplexType.get(ir.F64Type.get()),
 }
 
-_dtype_to_ir_type.update({
-    np.dtype(dtypes.float8_e4m3fn): ir.Float8E4M3FNType.get,
-    np.dtype(dtypes.float8_e5m2): ir.Float8E5M2Type.get,
-})
+if dtypes.int4 is not None:
+  _dtype_to_ir_type.update({
+    np.dtype(dtypes.int4): partial(ir.IntegerType.get_signless, 4),
+    np.dtype(dtypes.uint4): partial(ir.IntegerType.get_unsigned, 4),
+  })
+
 
 def dtype_to_ir_type(dtype: Union[np.dtype, np.generic]) -> ir.Type:
   assert isinstance(dtype, (np.dtype, np.generic)), type(dtype)
