@@ -21,6 +21,7 @@ Experimental Modules
     jax.experimental.sparse
     jax.experimental.jet
     jax.experimental.custom_partitioning
+    jax.experimental.multihost_utils
 
 Experimental APIs
 -----------------
