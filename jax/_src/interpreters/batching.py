@@ -891,8 +891,9 @@ def mask_ragged_axis(operand, ident, axis_spec):
   value = ident(operand.dtype)
   positions = jax.lax.broadcasted_iota('int32', operand.shape, axis_spec.ragged_axis)
   # TODO(mattjj, axch) cant get ._data, need to convert it
-  limits = jax.lax.broadcast_in_dim(axis_spec.segment_lengths._data,
-                                    operand.shape, [axis_spec.stacked_axis])
+  lengths = jax.lax.convert_element_type(axis_spec.segment_lengths._data, 'int32')
+  limits = jax.lax.broadcast_in_dim(
+      lengths, operand.shape, [axis_spec.stacked_axis])
   mask = positions < limits
   return jax.lax.select(mask, operand, jax.lax.broadcast(value, operand.shape))
 

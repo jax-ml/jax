@@ -1527,7 +1527,7 @@ class PileTest(jtu.JaxTestCase):
                  out_axes=batching.pile_axis)(ins)
     y = pile_map(jnp.dot)(p, p)
     self.assertIsInstance(y, batching.Pile)
-    self.assertAllClose(y.data, jnp.array([5, 0, 14]))
+    self.assertAllClose(y.data, jnp.array([5, 0, 14], dtype='int32'))
 
   def test_pile_map_matrix_dot(self):
     sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
