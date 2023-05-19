@@ -1544,6 +1544,28 @@ class APITest(jtu.JaxTestCase):
     jtu.check_raises(lambda: grad(foo)(1.0), NotImplementedError,
                      "Transpose rule (for reverse-mode differentiation) for 'foo' not implemented")
 
+  def test_wrong_output_abstract_eval(self):
+    foo_p = core.Primitive('foo')
+    def foo(x):
+      return foo_p.bind(x)
+    foo_p.def_abstract_eval(lambda x: [x]) # Shouldn't return a list.
+
+    foo_p.def_impl(lambda x: x)
+    jitted = jit(lambda x: foo(x))
+    jtu.check_raises(lambda: jitted(1.0), ValueError,
+                     "foo.abstract_eval() method should return a tuple or")
+
+    foo2_p = core.Primitive('foo2')
+    foo2_p.multiple_results = True
+    def foo2(x):
+      return foo2_p.bind(x),
+
+    foo2_p.def_abstract_eval(lambda x: x) # Should return a list.
+    foo2_p.def_impl(lambda x: [x])
+    jitted = jit(lambda x: foo2(x))
+    jtu.check_raises(lambda: jitted(1.0), ValueError,
+                     "foo2.abstract_eval() method should return a tuple or")
+
   def test_is_subclass(self):
     self.assertFalse(issubclass(np.ndarray, jax.Array))
 
