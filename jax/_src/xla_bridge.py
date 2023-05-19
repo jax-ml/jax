@@ -320,10 +320,28 @@ def _get_pjrt_plugin_config(
 def discover_pjrt_plugins() -> None:
   """Discovers plugins in the namespace package `jax_plugins` and import them.
 
-  The plugins need to (1) be place in a root folder `jax_plugins` and follow
-  other namespace package requirements, and (2) implement an initialize()
-  method, which calls jax._src.xla_bridge.register_plugin with its plugin_name,
-  path to .so file, and optional create options.
+  There are two methods used to discover plugin modules. They are intended
+  to be used together by implementors in order to cover all packaging and
+  development cases:
+
+  1. Define a globally unique module under the `jax_plugins` namespace
+     package (i.e. just create a `jax_plugins` directory and define your
+     module below it).
+  2. If building a package via pyproject.toml or setup.py, advertise your
+     plugin module name by including an entry-point under the `jax_plugins`
+     group which points to your full module name.
+
+  During Jax startup, Jax will load each module discovered in such a way and
+  call its `initialize()` function. It is expected that this function should
+  register its concrete plugin name/implementations via call(s) to
+  `jax._src.xla_bridge.register_plugin(name, priority=, library_paty=,
+  options=)`. Since `initialize()` functions are called for all installed
+  plugins, they should avoid doing expensive, non-registration related work.
+
+  TODO: We should provide a variant of `register_plugin` which allows the
+  library_path and options to be resolved via a callback. This would enable
+  light-weight plugin registration in cases where options need to be derived
+  from heavy-weight system initialization.
   """
   plugin_modules = set()
   # Scan installed modules under |jax_plugins|. Note that not all packaging
