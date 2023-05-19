@@ -914,6 +914,9 @@ jax_test(
     name = "host_callback_test",
     srcs = ["host_callback_test.py"],
     args = ["--jax_host_callback_outfeed=true"],
+    shard_count = {
+        "tpu": 5,
+    },
     deps = [
         "//jax:experimental",
         "//jax:experimental_host_callback",
