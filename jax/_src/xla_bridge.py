@@ -346,8 +346,8 @@ def discover_pjrt_plugins() -> None:
       from importlib_metadata import entry_points
     except ModuleNotFoundError:
       logger.debug(
-          f"No importlib_metadata found (for Python < 3.10): "
-          f"Plugins advertised from entrypoints will not be found.")
+          "No importlib_metadata found (for Python < 3.10): "
+          "Plugins advertised from entrypoints will not be found.")
       entry_points = None
   else:
     from importlib.metadata import entry_points
