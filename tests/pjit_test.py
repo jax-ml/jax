@@ -1163,9 +1163,12 @@ class CustomPartitionerTest(jtu.JaxTestCase):
   def test_custom_partitioner(self):
     self.skip_if_custom_partitioning_not_supported()
 
+    if xla_extension_version < 154:
+      self.skipTest('Requires xla_extension_version >= 154')
+
     def partition(precision, arg_shapes, result_shape):
       arg_shardings = jax.tree_map(lambda s: s.sharding, arg_shapes)
-      result_sharding = result_shape.sharding
+      result_sharding = result_shape[0].sharding
       self.assertEqual(arg_shardings[0], result_sharding)
       self.assertEqual(P('x'), result_sharding.spec)
       self.assertEqual(P('y'), arg_shardings[1].spec)
@@ -1173,10 +1176,12 @@ class CustomPartitionerTest(jtu.JaxTestCase):
       def lower_fn(x, y):
         axis_name = arg_shardings[1].spec[0][0]
         i = jax.lax.axis_index(axis_name)
-        return jax.lax.psum(
-            jax.lax.dynamic_slice(x, (0, i * 8), (8, 8)) @ y, (axis_name))
+        z = jax.lax.psum(
+            jax.lax.dynamic_slice(x, (0, i * 8), (8, 8)) @ y, (axis_name)
+        )
+        return z, z * z
 
-      return lower_fn, result_sharding, arg_shardings
+      return lower_fn, (result_sharding, result_sharding), arg_shardings
 
     def infer_sharding_from_operands(precision, arg_shapes, result_shape):
       arg_shardings = jax.tree_map(lambda s: s.sharding, arg_shapes)
@@ -1186,11 +1191,13 @@ class CustomPartitionerTest(jtu.JaxTestCase):
           None for _ in range(len(x_shape.shape) - len(x_shard.spec)))
       y_names = tuple(y_shard.spec) + tuple(
           None for _ in range(len(y_shape.shape) - len(y_shard.spec)))
-      return NamedSharding(y_shard.mesh, P(*(x_names[:-1] + y_names[1:])))
+      z_shard = NamedSharding(y_shard.mesh, P(*(x_names[:-1] + y_names[1:])))
+      return z_shard, z_shard
 
     @partial(custom_partitioning, static_argnums=(2,))
     def f(x, y, precision=None):
-      return jnp.matmul(x, y, precision=precision)
+      z = jnp.matmul(x, y, precision=precision)
+      return z, z * z
 
     f.def_partition(
         infer_sharding_from_operands=infer_sharding_from_operands,
@@ -1216,7 +1223,7 @@ class CustomPartitionerTest(jtu.JaxTestCase):
       return (
           lower_fn,
           arg_shapes[0].sharding,
-          [arg_shapes[0].sharding],
+          (arg_shapes[0].sharding,),
       )
 
     def infer_sharding_from_operands(arg_shapes, result_shape):
@@ -1242,7 +1249,6 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
     self.assertArraysEqual(x + x, pjit_f(x))
 
-
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_custom_partitioner_sharding_override(self):
     self.skip_if_custom_partitioning_not_supported()
@@ -1255,7 +1261,7 @@ class CustomPartitionerTest(jtu.JaxTestCase):
       return (
           lower_fn,
           NamedSharding(y_shard.mesh, P(None)),
-          [NamedSharding(y_shard.mesh, P(None))],
+          (NamedSharding(y_shard.mesh, P(None)),),
       )
 
     def infer_sharding_from_operands(arg_shapes, result_shape):
@@ -1289,7 +1295,7 @@ class CustomPartitionerTest(jtu.JaxTestCase):
       return (
           lower_fn,
           NamedSharding(y_shard.mesh, P(None)),
-          [NamedSharding(y_shard.mesh, P(None, 'x'))],
+          (NamedSharding(y_shard.mesh, P(None, 'x')),),
       )
 
     def infer_sharding_from_operands(arg_shapes, result_shape):
