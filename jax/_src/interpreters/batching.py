@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import collections
 import dataclasses
 from functools import partial
 from typing import (Any, Callable, Dict, Iterable, Optional, Sequence, Set,
@@ -102,7 +101,7 @@ register_pytree_node(Pile, _pile_flatten, _pile_unflatten)
 def _pile_result(axis_size, stacked_axis, ragged_axis, segment_lens, x):
   binder = core.Var(0, '', core.ShapedArray((), np.dtype('int32')))
   if stacked_axis != 0:
-    raise NotImplemented  # TODO Transpose x so the stacked axis is axis 0
+    raise NotImplementedError  # TODO Transpose x so the stacked axis is axis 0
   shape = list(x.shape)
   del shape[0]
   shape[ragged_axis-1] = IndexedAxisSize(binder, segment_lens)
