@@ -480,14 +480,14 @@ class PJitTest(jtu.BufferDonationTestCase):
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
-  @jtu.with_mesh([('x', 2), ('y', 2)])
-  def testShardingConstraintPyTreeWithUnconstrainedDims(self):
+  def testShardingConstraintPyTreeWithUnconstrainedDimsWithJit(self):
 
-    @partial(pjit, in_shardings=None, out_shardings=None)
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    @jax.jit
     def f(x):
       x = with_sharding_constraint(
-          x, [P(P.UNCONSTRAINED, 'y', None),
-              P('x', P.UNCONSTRAINED, None)])
+          x, [NamedSharding(mesh, P(P.UNCONSTRAINED, 'y', None)),
+              NamedSharding(mesh, P('x', P.UNCONSTRAINED, None))])
       x = x.copy()
       x[0]['a'] *= 2
       return x

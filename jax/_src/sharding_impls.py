@@ -216,7 +216,7 @@ class NamedSharding(XLACompatibleSharding):
     # representation of Parsed Pspec
     if self._parsed_pspec is None:
       self._parsed_pspec, _, _ = prepare_axis_resources(
-          self.spec, "NamedSharding spec")
+          self.spec, "NamedSharding spec", allow_unconstrained_dims=True)
 
     _check_mesh_resource_axis(self.mesh, self._parsed_pspec)
 
