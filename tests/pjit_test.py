@@ -1335,16 +1335,16 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
     input_data = np.arange(
         math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
-    with global_mesh:
-      f = pjit(lambda x: x, in_shardings=AUTO, out_shardings=AUTO)
+    f = jax.jit(lambda x: x, in_shardings=AUTO(global_mesh),
+                out_shardings=AUTO(global_mesh))
 
-      inp = core.ShapedArray(input_data.shape, input_data.dtype)
-      compiled = f.lower(inp).compile()
-      inputs = [create_array(global_input_shape, global_mesh, ip, input_data)[0]
-                for ip in compiled.input_shardings[0]]
-      out = compiled(*inputs)
-      self.assertIsInstance(out, array.ArrayImpl)
-      self.assertArraysEqual(out._value, input_data)
+    inp = core.ShapedArray(input_data.shape, input_data.dtype)
+    compiled = f.lower(inp).compile()
+    inputs = [create_array(global_input_shape, global_mesh, ip, input_data)[0]
+              for ip in compiled.input_shardings[0]]
+    out = compiled(*inputs)
+    self.assertIsInstance(out, array.ArrayImpl)
+    self.assertArraysEqual(out._value, input_data)
 
   def test_xla_arr_sharding_mismatch(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
@@ -1355,7 +1355,8 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
         math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
     with global_mesh:
-      f = pjit(lambda x: x, in_shardings=AUTO, out_shardings=AUTO)
+      f = pjit(lambda x: x, in_shardings=AUTO(global_mesh),
+               out_shardings=AUTO(global_mesh))
       inp = core.ShapedArray(input_data.shape, input_data.dtype)
       compiled = f.lower(inp).compile()
 
@@ -1379,7 +1380,8 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
         math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
     with global_mesh:
-      f = pjit(lambda x, y, z: (x, y, z), in_shardings=AUTO, out_shardings=AUTO)
+      f = pjit(lambda x, y, z: (x, y, z), in_shardings=AUTO(global_mesh),
+               out_shardings=AUTO(global_mesh))
       inp = core.ShapedArray(input_data.shape, input_data.dtype)
       compiled = f.lower(inp, inp, inp).compile()
       self.assertLen(compiled.output_shardings, 3)
@@ -1390,32 +1392,41 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
     ('2d_array', (4, 2), ('x', 'y'), P('y', 'x')),
     ('1d_array', (8,), ('x'), P('x')),
   )
-  def test_pjit_arr_partial_auto_sharding_array(
+  def test_jit_arr_partial_auto_sharding_array(
       self, mesh_shape, mesh_axis_names, pspec):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('AutoSharding is not supported on stream_executor yet.')
-    global_mesh = jtu.create_global_mesh(mesh_shape, mesh_axis_names)
+    mesh = jtu.create_global_mesh(mesh_shape, mesh_axis_names)
     global_input_shape = (8, 4)
     input_data = np.arange(
         math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+    inp_s = NamedSharding(mesh, pspec)
+    f = jax.jit(
+        lambda x, y: (x, y),
+        in_shardings=(inp_s, AUTO(mesh)),
+        out_shardings=AUTO(mesh))
 
-    in_resource = NamedSharding(global_mesh, pspec)
+    inp = core.ShapedArray(input_data.shape, input_data.dtype)
+    compiled = f.lower(inp, inp).compile()
+    inputs = [create_array(global_input_shape, mesh, ip, input_data)[0]
+              for ip in compiled.input_shardings[0]]
+    self.assertEqual(compiled.input_shardings[0][0], inp_s)
+    out1, out2 = compiled(*inputs)
+    for o in [out1, out2]:
+      self.assertIsInstance(o, array.ArrayImpl)
+      self.assertArraysEqual(o._value, input_data)
 
-    with global_mesh:
-      f = pjit(
-          lambda x, y: (x, y),
-          in_shardings=(in_resource, AUTO),
-          out_shardings=AUTO,
-      )
-
-      inp = core.ShapedArray(input_data.shape, input_data.dtype)
-      compiled = f.lower(inp, inp).compile()
-      inputs = [create_array(global_input_shape, global_mesh, ip, input_data)[0]
-                for ip in compiled.input_shardings[0]]
-      out1, out2 = compiled(*inputs)
-      for o in [out1, out2]:
-        self.assertIsInstance(o, array.ArrayImpl)
-        self.assertArraysEqual(o._value, input_data)
+  def test_jit_different_mesh_in_auto(self):
+    mesh1 = jtu.create_global_mesh((4,), ('x',))
+    dev = jax.devices()
+    mesh2 = jax.sharding.Mesh([dev[0], dev[3], dev[2], dev[1]], 'x')
+    f = jax.jit(lambda x, y: (x, y),
+                in_shardings=(NamedSharding(mesh2, P('x')), AUTO(mesh1)))
+    inp = core.ShapedArray((8, 2), np.float32)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Received incompatible devices for jitted computation"):
+      f.lower(inp, inp).compile()
 
   @unittest.skip('The error is not raised yet. Enable this back once we raise '
                  'the error in pjit again.')
@@ -1429,7 +1440,8 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
         math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
     with global_mesh:
-      f = pjit(lambda x: x, in_shardings=AUTO, out_shardings=AUTO)
+      f = pjit(lambda x: x, in_shardings=AUTO(global_mesh),
+               out_shardings=AUTO(global_mesh))
 
       inp = core.ShapedArray(input_data.shape, input_data.dtype)
       compiled = f.lower(inp).compile()

@@ -719,12 +719,14 @@ class GSPMDSharding(XLACompatibleSharding):
     return cls(tuple(device_assignment), proto)
 
 
-class AUTOAxisResource:
-  pass
-AUTO = AUTOAxisResource()
+class AUTO:
+
+  def __init__(self, mesh: mesh_lib.Mesh):
+    self.mesh = mesh
+
 
 def is_auto(x):
-  return isinstance(x, AUTOAxisResource)
+  return isinstance(x, AUTO)
 
 
 class UnspecifiedValue:
@@ -757,8 +759,7 @@ mesh devices without any modifications. If the mapping was {'y': 1, 'x': 1}, the
 mesh devices ndarray would have to be transposed before flattening and assignment.
 """
 ArrayMapping = OrderedDictType[MeshAxisName, int]
-ArrayMappingOrAutoOrUnspecified = Union[ArrayMapping, AUTOAxisResource,
-                                        UnspecifiedValue]
+ArrayMappingOrAutoOrUnspecified = Union[ArrayMapping, AUTO, UnspecifiedValue]
 
 def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
   if not array_mapping:
@@ -779,11 +780,11 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
   return PartitionSpec(*partitions)
 
 def get_array_mapping(
-    axis_resources: Union[ParsedPartitionSpec, AUTOAxisResource, UnspecifiedValue]
+    axis_resources: Union[ParsedPartitionSpec, AUTO, UnspecifiedValue]
 ) -> ArrayMappingOrAutoOrUnspecified:
   # TODO(yashkatariya): Use `TypeGuard` on `is_auto` when it is supported.
   # Don't use `is_auto` here to satisfy pytype and mypy.
-  if isinstance(axis_resources, (AUTOAxisResource, UnspecifiedValue)):
+  if isinstance(axis_resources, (AUTO, UnspecifiedValue)):
     return axis_resources
   return OrderedDict((axis, i)
                      for i, axes in enumerate(axis_resources)

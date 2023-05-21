@@ -54,7 +54,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import (
     NamedSharding, XLACompatibleSharding, GSPMDSharding,
     XLADeviceAssignment, SingleDeviceSharding, PmapSharding,
-    AUTOAxisResource, UNSPECIFIED, UnspecifiedValue,
+    AUTO, UNSPECIFIED, UnspecifiedValue,
     ParsedPartitionSpec, SpecSync, get_single_pspec, is_auto, is_unspecified,
     is_unspecified_or_auto, prepare_axis_resources, parse_flatten_op_sharding)
 from jax._src.traceback_util import api_boundary
@@ -72,10 +72,10 @@ zip, unsafe_zip = safe_zip, zip
 
 traceback_util.register_exclusion(__file__)
 
-PjitSharding = Union[GSPMDSharding, UnspecifiedValue, AUTOAxisResource]
-PjitShardingMinusUnspecified = Union[GSPMDSharding, AUTOAxisResource]
-MeshSharding = Union[NamedSharding, UnspecifiedValue, AUTOAxisResource]
-MeshShardingMinusUnspecified = Union[NamedSharding, AUTOAxisResource]
+PjitSharding = Union[GSPMDSharding, UnspecifiedValue, AUTO]
+PjitShardingMinusUnspecified = Union[GSPMDSharding, AUTO]
+MeshSharding = Union[NamedSharding, UnspecifiedValue, AUTO]
+MeshShardingMinusUnspecified = Union[NamedSharding, AUTO]
 
 logger = logging.getLogger(__name__)
 
@@ -342,13 +342,22 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
      donate_argnums) = infer_params_fn(*args, **kwargs)
     resource_env = params['resource_env']
     mesh = None if resource_env is None else resource_env.physical_mesh
-    in_shardings = _resolve_in_shardings(
-        args_flat, params['in_shardings'], params['out_shardings'], mesh)
-    lowering = _pjit_lower(
-        params['jaxpr'], in_shardings, params['out_shardings'],
-        params['resource_env'], params['donated_invars'], params['name'],
-        params['keep_unused'], params['inline'], always_lower=True,
-        lowering_platform=_experimental_lowering_platform)
+    try:
+      in_shardings = _resolve_in_shardings(
+          args_flat, params['in_shardings'], params['out_shardings'], mesh)
+      lowering = _pjit_lower(
+          params['jaxpr'], in_shardings, params['out_shardings'],
+          params['resource_env'], params['donated_invars'], params['name'],
+          params['keep_unused'], params['inline'], always_lower=True,
+          lowering_platform=_experimental_lowering_platform)
+    except pxla.DeviceAssignmentMismatchError as e:
+      fails, = e.args
+      api_name = 'jit' if params['resource_env'] is None else 'pjit'
+      arg_names = _get_arg_names(fun, in_tree, args_flat)
+      fun_name = getattr(fun, '__qualname__', getattr(fun, '__name__', str(fun)))
+      msg = _device_assignment_mismatch_error(
+          fun_name, fails, args_flat, api_name, arg_names)
+      raise ValueError(msg) from None
 
     if kwargs:
       args_kwargs_in_tree = in_tree
@@ -1210,29 +1219,9 @@ def _pjit_lower_cached(
     mesh = None
     api_name = 'jit'
 
-  # Convert to `NamedSharding` when `jax_array` is not enabled. This is
-  # because GDA/SDA/DA are dependent on mesh for generating outputs.
-  # NamedSharding is required for host-local inputs too.
-  any_auto = pxla.check_if_any_auto(it.chain(in_shardings,  out_shardings))
-  if any_auto:
-    in_shardings: Tuple[MeshShardingMinusUnspecified, ...] = cast(  # type:ignore[no-redef]
-        Tuple[MeshShardingMinusUnspecified, ...], tuple(
-            NamedSharding._from_parsed_pspec(
-                mesh, parse_flatten_op_sharding(i._op_sharding, mesh)[0]) # type: ignore
-            if isinstance(i, GSPMDSharding) else i
-            for i in in_shardings
-    ))
-    out_shardings: Tuple[MeshSharding, ...] = cast(  # type: ignore[no-redef]
-        Tuple[MeshSharding, ...], tuple(
-            NamedSharding._from_parsed_pspec(
-                mesh, parse_flatten_op_sharding(o._op_sharding, mesh)[0]) # type: ignore
-            if isinstance(o, GSPMDSharding) else o
-            for o in out_shardings
-    ))
-
   # For `pjit(xmap)` cases, it needs to take the `lower_mesh_computation` path
   # because `xmap` only supports SPMDAxisContext right now.
-  if any_auto or dispatch.jaxpr_has_primitive(jaxpr.jaxpr, 'xmap'):
+  if dispatch.jaxpr_has_primitive(jaxpr.jaxpr, 'xmap'):
     return pxla.lower_mesh_computation(
       jaxpr, api_name, name, mesh,
       in_shardings, out_shardings, donated_invars,
@@ -1929,10 +1918,11 @@ def _fast_path_get_device_assignment(
     shardings: Iterable[PjitSharding]) -> Optional[XLADeviceAssignment]:
   da = None
   for i in shardings:
-    if is_auto(i) or is_unspecified(i):
+    if is_unspecified(i):
       continue
-    da = i._device_assignment  # type: ignore
-    break
+    if is_auto(i):
+      return i.mesh._flat_devices_tuple  # type: ignore
+    return i._device_assignment  # type: ignore
   return da
 
 

@@ -62,7 +62,7 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding_impls import (
     ArrayMapping, ArrayMappingOrAutoOrUnspecified,
-    AUTOAxisResource, UnspecifiedValue, UNSPECIFIED,
+    AUTO, UnspecifiedValue, UNSPECIFIED,
     get_array_mapping as _get_array_mapping, is_auto, is_unspecified
 )
 from jax._src.util import (unzip3, safe_map, safe_zip, partition_list,
@@ -1693,7 +1693,7 @@ TilingMethod = Union[TileVectorize, TileManual]
 
 def check_if_any_auto(
     shardings: Iterable[Union[sharding_impls.XLACompatibleSharding,
-                              AUTOAxisResource, UnspecifiedValue]]) -> bool:
+                              AUTO, UnspecifiedValue]]) -> bool:
   for s in shardings:
     if is_auto(s):
       return True
@@ -1755,8 +1755,7 @@ class DeviceAssignmentMismatchError(Exception):
 
 
 ShardingInfo = Tuple[
-    Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue,
-          AUTOAxisResource],
+    Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue, AUTO],
     MismatchType, Optional[Any]]  # Any is dispatch.SourceInfo to avoid circular imports
 
 
@@ -1775,13 +1774,14 @@ def _get_and_check_device_assignment(
     devices = tuple(devices)
 
   for i, s_type, source_info in shardings:
-    if is_auto(i) or is_unspecified(i):
+    if is_unspecified(i):
       continue
-    # Assign `first_sharding_info` after `AUTO` and `UNSPECIFIED` have been
-    # skipped.
+
     if first_sharding_info is None:
-      first_sharding_info = (i._device_assignment, s_type, source_info)  # type: ignore
-    arr_device_assignment = i._device_assignment  # type: ignore
+      first_sharding_info = (
+          (i.mesh._flat_devices_tuple, s_type, source_info) if is_auto(i)  # type: ignore
+          else (i._device_assignment, s_type, source_info))  # type: ignore
+    arr_device_assignment = i.mesh._flat_devices_tuple if is_auto(i) else i._device_assignment  # type: ignore
     if not devices:
       if first_sharding_info[0] != arr_device_assignment:
         raise DeviceAssignmentMismatchError([
@@ -1815,7 +1815,7 @@ def cache_wrap(fn):
 
 @cache_wrap
 def _trace_to_jaxpr_and_dce(fun_or_jaxpr, global_in_avals, api_name, fun_name,
-                            keep_unused, donated_invars):
+                            keep_unused, donated_invars, auto_spmd_lowering):
   name_stack = source_info_util.new_name_stack(wrap_name(fun_name, api_name))
 
   if isinstance(fun_or_jaxpr, lu.WrappedFun):
@@ -1830,7 +1830,7 @@ def _trace_to_jaxpr_and_dce(fun_or_jaxpr, global_in_avals, api_name, fun_name,
     global_out_avals = fun_or_jaxpr.out_avals
     consts = fun_or_jaxpr.consts
 
-  if (keep_unused or
+  if (keep_unused or auto_spmd_lowering or
       any(hasattr(a, "shape") and not core.is_constant_shape(a.shape)
           for a in global_in_avals)):
     kept_var_idx = set(range(len(global_in_avals)))
@@ -2006,10 +2006,14 @@ def lower_sharding_computation(
   the singleton UNSPECIFIED to all out_avals.
   """
   # 1. Trace to jaxpr and preprocess/verify it
+  auto_spmd_lowering = (
+      check_if_any_auto(in_shardings) if is_unspecified(out_shardings) else
+      check_if_any_auto(it.chain.from_iterable([in_shardings, out_shardings])))  # type: ignore
+
   (closed_jaxpr, global_in_avals, global_out_avals, donated_invars,
    kept_var_idx, name_stack) = _trace_to_jaxpr_and_dce(
       fun_or_jaxpr, global_in_avals, api_name, fun_name, keep_unused,
-      donated_invars)
+      donated_invars, auto_spmd_lowering)
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = tuple(s for i, s in enumerate(in_shardings) if i in kept_var_idx)
 
@@ -2091,14 +2095,13 @@ def lower_sharding_computation(
       module,
       False,
       donated_invars,
-      mesh=None,
       global_in_avals=global_in_avals,
       global_out_avals=global_out_avals,
       in_shardings=in_shardings,
       out_shardings=out_shardings,
       spmd_lowering=True,
       tuple_args=tuple_args,
-      auto_spmd_lowering=False,
+      auto_spmd_lowering=auto_spmd_lowering,
       unordered_effects=unordered_effects,
       ordered_effects=ordered_effects,
       host_callbacks=host_callbacks,
@@ -2112,7 +2115,7 @@ def lower_sharding_computation(
 
 
 def _to_logical_sharding(
-    aval: core.AbstractValue, sharding: Union[MaybeSharding, AUTOAxisResource]
+    aval: core.AbstractValue, sharding: Union[MaybeSharding, AUTO]
 ) -> Optional[sharding_impls.XLACompatibleSharding]:
   if is_unspecified(sharding) or is_auto(sharding):
     return None
@@ -2131,9 +2134,9 @@ def lower_mesh_computation(
     api_name: str,
     fun_name: str,
     mesh: Mesh,
-    in_shardings: Sequence[Union[sharding_impls.NamedSharding, AUTOAxisResource]],
-    out_shardings: Sequence[Union[sharding_impls.NamedSharding, AUTOAxisResource,
-                            UnspecifiedValue]],
+    in_shardings: Sequence[Union[sharding_impls.NamedSharding, AUTO]],
+    out_shardings: Sequence[Union[sharding_impls.NamedSharding, AUTO,
+                                  UnspecifiedValue]],
     donated_invars: Sequence[bool],
     spmd_lowering: bool,
     global_in_avals: Sequence[core.ShapedArray],
@@ -2142,11 +2145,6 @@ def lower_mesh_computation(
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
   name_stack = source_info_util.new_name_stack(wrap_name(fun_name, api_name))
-
-  auto_spmd_lowering = check_if_any_auto((*in_shardings, *out_shardings))
-
-  if auto_spmd_lowering and not spmd_lowering:
-    raise ValueError('Enable spmd_lowering to use auto spmd lowering.')
 
   global_axis_sizes = mesh.shape
 
@@ -2171,7 +2169,6 @@ def lower_mesh_computation(
       else:
         raise NotImplementedError(f"Unrecognized tiling method: {tiling_method}")
       assert not callable(out_shardings)
-      assert not auto_spmd_lowering
       assert isinstance(fun_or_jaxpr, lu.WrappedFun)
       # This is the xmap path where there is no `AUTO` or `UNSPECIFIED`, which
       # is why `.spec` can be accessed.
@@ -2181,7 +2178,6 @@ def lower_mesh_computation(
     in_jaxpr_avals = global_in_avals
   else:
     assert isinstance(tiling_method, TileVectorize)
-    assert not auto_spmd_lowering
     # In non-spmd lowering path, there is no `AUTO` or `UNSPECIFIED`, which is
     # why `.spec` can be accessed.
     in_tiled_avals = [tile_aval_nd(global_axis_sizes, get_array_mapping(i.spec), aval)  # type: ignore
@@ -2274,14 +2270,13 @@ def lower_mesh_computation(
       lowering_result.module,
       False,
       donated_invars,
-      mesh=mesh,
       global_in_avals=global_in_avals,
       global_out_avals=global_out_avals,
       in_shardings=in_shardings,
       out_shardings=out_shardings,
       spmd_lowering=spmd_lowering,
       tuple_args=tuple_args,
-      auto_spmd_lowering=auto_spmd_lowering,
+      auto_spmd_lowering=False,
       unordered_effects=unordered_effects,
       ordered_effects=ordered_effects,
       host_callbacks=lowering_result.host_callbacks,
@@ -2501,26 +2496,20 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
   device_assignment = da.device_assignment if isinstance(
       da, _DeviceAssignment) else da
 
-  dev: np.ndarray
-  if auto_spmd_lowering:
-    assert mesh is not None and spmd_lowering
-    dev = mesh.devices
-    num_replicas, num_partitions = 1, mesh.size
+  # TODO(phawkins): One would normally just write:
+  # dev = np.array(device_assignment)
+  # The formulation below is substantially faster if there are many devices.
+  # If we were to optimize __getattr__ on xc.Device we might not need this
+  # workaround.
+  dev = np.vectorize(lambda i: device_assignment[i], otypes=[object])(
+    np.arange(len(device_assignment))
+  )
+  if pmap_nreps > 1:
+    num_replicas, num_partitions = pmap_nreps, 1
+  elif spmd_lowering:
+    num_replicas, num_partitions = 1, dev.size
   else:
-    # TODO(phawkins): One would normally just write:
-    # dev = np.array(device_assignment)
-    # The formulation below is substantially faster if there are many devices.
-    # If we were to optimize __getattr__ on xc.Device we might not need this
-    # workaround.
-    dev = np.vectorize(lambda i: device_assignment[i], otypes=[object])(
-      np.arange(len(device_assignment))
-    )
-    if pmap_nreps > 1:
-      num_replicas, num_partitions = pmap_nreps, 1
-    elif spmd_lowering:
-      num_replicas, num_partitions = 1, dev.size
-    else:
-      num_replicas, num_partitions = dev.size, 1
+    num_replicas, num_partitions = dev.size, 1
 
   if pmap_nreps > 1:
     # In `jit` device_assignment is set to None when num_replicas > 1. Do
@@ -2610,14 +2599,11 @@ class UnloadedMeshExecutable:
   @staticmethod
   def from_hlo(name: str,
                hlo: ir.Module,
-               # TODO(yashkatariya): Remove `mesh` from here once AUTO can work
-               # without mesh.
-               mesh: Optional[Mesh],
                global_in_avals: Sequence[ShapedArray],
                global_out_avals: Sequence[ShapedArray],
-               in_shardings: Sequence[Union[sharding_impls.XLACompatibleSharding, AUTOAxisResource]],
-               out_shardings: Sequence[Union[sharding_impls.XLACompatibleSharding, AUTOAxisResource,
-                                       UnspecifiedValue]],
+               in_shardings: Sequence[Union[sharding_impls.XLACompatibleSharding, AUTO]],
+               out_shardings: Sequence[Union[sharding_impls.XLACompatibleSharding, AUTO,
+                                             UnspecifiedValue]],
                spmd_lowering: bool,
                tuple_args: bool,
                auto_spmd_lowering: bool,
@@ -2641,6 +2627,14 @@ class UnloadedMeshExecutable:
         device_assignment, _DeviceAssignment) else tuple(device_assignment)
     del device_assignment
     allow_prop_to_outputs = tuple(is_unspecified(o) for o in out_shardings)
+
+    mesh = None
+    if auto_spmd_lowering:
+      for i in it.chain.from_iterable([in_shardings, out_shardings]):
+        if is_auto(i):
+          mesh = i.mesh  # type: ignore
+          break
+
     xla_executable, compile_options = _cached_compilation(
         hlo, name, mesh, spmd_lowering,
         tuple_args, auto_spmd_lowering, allow_prop_to_outputs,
@@ -2661,7 +2655,7 @@ class UnloadedMeshExecutable:
       assert mesh is not None
       in_shardings_xla, out_shardings_xla = _get_mesh_pspec_shardings_from_executable(
           xla_executable, mesh)
-      in_shardings = [x if is_auto(i) else i
+      in_shardings = [x if is_auto(i) else getattr(i, '_original_sharding', i)  # type: ignore
                       for x, i in safe_zip(in_shardings_xla, in_shardings)]
       out_shardings_tuple = [
           (x, True) if is_auto(o) else (o, False)
