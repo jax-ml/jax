@@ -3246,7 +3246,8 @@ def _einsum(
     preferred_element_type,
     _dot_general=lax.dot_general,
 ):
-  operands = list(util.promote_dtypes(*operands))
+  if preferred_element_type is None:
+    operands = list(util.promote_dtypes(*operands))
   def sum(x, axes):
     return lax.reduce(x, np.array(0, x.dtype),
                       lax.add if x.dtype != bool_ else lax.bitwise_or, axes)
