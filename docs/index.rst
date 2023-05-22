@@ -101,6 +101,7 @@ installation options, see the `Install Guide`_ in the project README.
    user_guides
    advanced_guide
    contributor_guide
+   building_on_jax
    notes
    jax
 
