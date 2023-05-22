@@ -170,6 +170,7 @@ from jax._src.random import (
   generalized_normal as generalized_normal,
   geometric as geometric,
   gumbel as gumbel,
+  key as key,
   key_data as key_data,
   laplace as laplace,
   logistic as logistic,
