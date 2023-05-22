@@ -559,13 +559,9 @@ def xla_computation(fun: Callable,
           donated_args=donated_invars,
           arg_shardings=None,
           result_shardings=None)
-      if tuple_args is not None:
-        should_tuple = tuple_args
-      else:
-        dispatch.should_tuple_args(len(avals), backend.platform)
       built = xc._xla.mlir.mlir_module_to_xla_computation(
           mlir.module_to_string(lowering_result.module),
-          use_tuple_args=should_tuple,
+          use_tuple_args=tuple_args,
           return_tuple=True)
     out_shapes_flat = [
         ShapeDtypeStruct(a.shape, a.dtype, a.named_shape) for a in out_avals]
