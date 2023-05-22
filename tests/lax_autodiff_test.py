@@ -424,6 +424,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     s = str(jax.make_jaxpr(pullback)(gresult))
     assert "Precision.HIGHEST" in s
 
+  def testDotPreferredElementType(self):
+    # https://github.com/google/jax/issues/10818
+    x = jax.numpy.ones((), jax.numpy.float16)
+    def f(x):
+      return jax.lax.dot_general(x, x, (((), ()), ((), ())),
+                                 preferred_element_type=jax.numpy.float32)
+    jax.jacrev(f)(x)  # don't crash!
+
   @jtu.sample_product(
     shape=[(), (2, 3)],
     dtype=float_dtypes,
