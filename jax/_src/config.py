@@ -909,6 +909,14 @@ hlo_source_file_canonicalization_regex = config.define_string_state(
           'persistent compilation cache, which includes HLO metadata in the '
           'cache key.'))
 
+include_full_tracebacks_in_locations = config.define_bool_state(
+    name='jax_include_full_tracebacks_in_locations',
+    default=False,
+    help=(
+        'Include full Python tracebacks in MLIR locations in IR emitted by JAX.'
+    ),
+)
+
 config.define_enum_state(
     name='jax_default_dtype_bits',
     enum_values=['32', '64'],

@@ -131,7 +131,7 @@ def is_user_filename(filename: str) -> bool:
 
 if hasattr(xla_client.Traceback, "code_addr2location"):
   # Python 3.11+
-  def _raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
+  def raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
     loc = xla_client.Traceback.code_addr2location(code, lasti)
     start_line, start_column, end_line, end_column = loc
     return Frame(file_name=code.co_filename,
@@ -139,7 +139,7 @@ if hasattr(xla_client.Traceback, "code_addr2location"):
                 start_line=start_line, start_column=start_column,
                 end_line=end_line, end_column=end_column)
 else:
-  def _raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
+  def raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
     return Frame(file_name=code.co_filename,
                 function_name=code.co_name,
                 start_line=xla_client.Traceback.code_addr2line(code, lasti),
@@ -155,7 +155,7 @@ def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
   # frames, to allow testing this mechanism from tests.
   traceback = source_info.traceback
   code, lasti = traceback.raw_frames() if traceback else ([], [])
-  return (_raw_frame_to_frame(code[i], lasti[i]) for i in range(len(code))  # type: ignore
+  return (raw_frame_to_frame(code[i], lasti[i]) for i in range(len(code))  # type: ignore
           if is_user_filename(code[i].co_filename))
 
 @functools.lru_cache(maxsize=64)

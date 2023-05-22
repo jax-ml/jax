@@ -317,18 +317,36 @@ register_constant_handler(core.Token, _token_constant_handler)
 
 # Source locations
 
+def _traceback_to_location(tb: xc.Traceback) -> ir.Location:
+  """Converts a full traceback to a callsite() MLIR location."""
+  frame_locs = []
+  for code, lasti in zip(*tb.raw_frames()):
+    frame = source_info_util.raw_frame_to_frame(code, lasti)
+    frame_locs.append(ir.Location.file(xla.get_canonical_source_file(frame),
+                                       frame.start_line, frame.start_column))
+  if len(frame_locs) == 0:
+    return ir.Location.unknown()
+  else:
+    return ir.Location.callsite(frame_locs[-1], frame_locs[-2::-1])
+
 def _source_info_to_location(
     primitive: core.Primitive, params: Dict,
     source_info: source_info_util.SourceInfo,
     name_stack: source_info_util.NameStack) -> ir.Location:
   eqn_str = (f'{str(source_info.name_stack)}/'
              f'{core.str_eqn_compact(primitive.name, params)}')
-  frame = source_info_util.user_frame(source_info)
-  if frame is None:
-    loc = ir.Location.unknown()
+  if config.jax_include_full_tracebacks_in_locations:
+    if source_info.traceback is None:
+      loc = ir.Location.unknown()
+    else:
+      loc = _traceback_to_location(source_info.traceback)
   else:
-    loc = ir.Location.file(xla.get_canonical_source_file(frame),
-                           frame.start_line, frame.start_column)
+    frame = source_info_util.user_frame(source_info)
+    if frame is None:
+      loc = ir.Location.unknown()
+    else:
+      loc = ir.Location.file(xla.get_canonical_source_file(frame),
+                             frame.start_line, frame.start_column)
   loc = ir.Location.name(eqn_str, childLoc=loc)
   # TODO(phawkins): also include primitive.name as the operator type.
   return loc
