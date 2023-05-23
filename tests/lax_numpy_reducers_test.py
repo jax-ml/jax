@@ -753,6 +753,20 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=tol)
 
+  def testMeanLargeArray(self):
+    # https://github.com/google/jax/issues/15068
+    raise unittest.SkipTest("test is slow, but it passes!")
+    x = jnp.ones((16, 32, 1280, 4096), dtype='int8')
+    self.assertEqual(1.0, jnp.mean(x))
+    self.assertEqual(1.0, jnp.mean(x, where=True))
+
+  def testStdLargeArray(self):
+    # https://github.com/google/jax/issues/15068
+    raise unittest.SkipTest("test is slow, but it passes!")
+    x = jnp.ones((16, 32, 1280, 4096), dtype='int8')
+    self.assertEqual(0.0, jnp.std(x))
+    self.assertEqual(0.0, jnp.std(x, where=True))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

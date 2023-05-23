@@ -433,8 +433,9 @@ def _var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
   a = lax_internal.asarray(a).astype(computation_dtype)
   a_mean = mean(a, axis, dtype=computation_dtype, keepdims=True, where=where)
   centered = lax.sub(a, a_mean)
-  if dtypes.issubdtype(centered.dtype, np.complexfloating):
+  if dtypes.issubdtype(computation_dtype, np.complexfloating):
     centered = lax.real(lax.mul(centered, lax.conj(centered)))
+    computation_dtype = centered.dtype  # avoid casting to complex below.
   else:
     centered = lax.square(centered)
 
@@ -443,13 +444,13 @@ def _var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
       normalizer = core.dimension_as_value(np.size(a))
     else:
       normalizer = core.dimension_as_value(_axis_size(a, axis))
+    normalizer = lax.convert_element_type(normalizer, computation_dtype)
   else:
-    normalizer = sum(_broadcast_to(where, np.shape(a)), axis, dtype=dtype, keepdims=keepdims)
-  normalizer = normalizer - ddof
-
-  result = sum(centered, axis, keepdims=keepdims, where=where)
-  result = lax.div(result, lax.convert_element_type(normalizer, result.dtype))
-  return lax.convert_element_type(result, dtype)
+    normalizer = sum(_broadcast_to(where, np.shape(a)), axis,
+                     dtype=computation_dtype, keepdims=keepdims)
+  normalizer = lax.sub(normalizer, lax.convert_element_type(ddof, computation_dtype))
+  result = sum(centered, axis, dtype=computation_dtype, keepdims=keepdims, where=where)
+  return lax.div(result, normalizer).astype(dtype)
 
 
 def _var_promote_types(a_dtype: DTypeLike, dtype: DTypeLike) -> Tuple[DType, DType]:
@@ -486,6 +487,8 @@ def _std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
          where: Optional[ArrayLike] = None) -> Array:
   check_arraylike("std", a)
   dtypes.check_user_dtype_supported(dtype, "std")
+  if dtype is not None and not dtypes.issubdtype(dtype, np.inexact):
+    raise ValueError(f"dtype argument to jnp.std must be inexact; got {dtype}")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.std is not supported.")
   return lax.sqrt(var(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims, where=where))
