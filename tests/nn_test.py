@@ -141,9 +141,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
     self.assertAllClose(out_masked, out_filtered)
 
-    # TODO(mattjj): log_softmax doesn't pass numerical gradient checking, but at
-    # time of writign only softmax has a custom rule to check
-    if fn is nn.softmax:
+    # TODO(mattjj): include log_softmax in these extra tests if/when we add a
+    # custom_jvp rule for it (since otherwise it doesn't pass the numerical
+    # checks below).
+    if fn is nn.softmax and config.jax_softmax_custom_jvp:
       g_fun = lambda x: jnp.take(fn(x, where=m, initial=-jnp.inf),
                                 jnp.array([0, 2, 3]))
       jtu.check_grads(g_fun, (x,), order=2)
