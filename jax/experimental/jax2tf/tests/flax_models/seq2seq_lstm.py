@@ -46,7 +46,9 @@ class EncoderLSTM(nn.Module):
                x: Array) -> tuple[tuple[Array, Array], Array]:
     """Applies the module."""
     lstm_state, is_eos = carry
-    new_lstm_state, y = nn.LSTMCell()(lstm_state, x)
+    new_lstm_state, y = nn.LSTMCell(features=lstm_state[0].shape[-1])(
+        lstm_state, x
+    )
     # Pass forward the previous state if EOS has already been reached.
     def select_carried_state(new_state, old_state):
       return jnp.where(is_eos[:, np.newaxis], old_state, new_state)
@@ -60,8 +62,9 @@ class EncoderLSTM(nn.Module):
   @staticmethod
   def initialize_carry(batch_size: int, hidden_size: int):
     # Use a dummy key since the default state init fn is just zeros.
-    return nn.LSTMCell.initialize_carry(
-        jax.random.PRNGKey(0), (batch_size,), hidden_size)
+    return nn.LSTMCell(hidden_size, parent=None).initialize_carry(
+        jax.random.PRNGKey(0), (batch_size, 1)
+    )
 
 
 class Encoder(nn.Module):
@@ -105,7 +108,7 @@ class DecoderLSTM(nn.Module):
     lstm_state, last_prediction = carry
     if not self.teacher_force:
       x = last_prediction
-    lstm_state, y = nn.LSTMCell()(lstm_state, x)
+    lstm_state, y = nn.LSTMCell(features=lstm_state[0].shape[-1])(lstm_state, x)
     logits = nn.Dense(features=self.vocab_size)(y)
     # Sample the predicted token using a categorical distribution over the
     # logits.
