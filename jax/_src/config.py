@@ -562,7 +562,7 @@ class _GlobalExtraJitContext(NamedTuple):
   default_matmul_precision: Optional[Any] = None
   dynamic_shapes: bool = False
   threefry_partitionable: bool = False
-  softmax_custom_jvp: bool = True
+  softmax_custom_jvp: bool = False
 
 
 def _update_global_jit_state(**kw):
@@ -587,7 +587,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   numpy_dtype_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
   dynamic_shapes: bool = False
-  softmax_custom_jvp: bool = True
+  softmax_custom_jvp: bool = False
 
 
 class _ThreadLocalStateCache(threading.local):
@@ -852,10 +852,10 @@ threefry_partitionable = config.define_bool_state(
 
 softmax_custom_jvp = config.define_bool_state(
     name='jax_softmax_custom_jvp',
-    default=True,
+    default=False,
     upgrade=True,
     help=('Use a new custom_jvp rule for jax.nn.softmax. The new rule should '
-          'improve memory usage and stability. Set False to revert to old '
+          'improve memory usage and stability. Set True to use new '
           'behavior. See https://github.com/google/jax/pull/15677'),
     update_global_hook=lambda val: _update_global_jit_state(
         softmax_custom_jvp=val),
