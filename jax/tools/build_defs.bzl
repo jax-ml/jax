@@ -168,7 +168,7 @@ EOF
     native.genrule(
         name = name + "_jax_to_ir_genrule",
         outs = [name + ".pb", name + ".txt"],
-        exec_tools = [runner],
+        tools = [runner],
         cmd = """
         JAX_PLATFORM_NAME=cpu \
         '$(location {runner})' \
