@@ -356,7 +356,7 @@ def _softmax(
     where: Optional[Array] = None,
     initial: Optional[Array] = None) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
-  unnormalized = jnp.exp(x - x_max)
+  unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
   return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
 
 @_softmax.defjvp
