@@ -39,6 +39,7 @@ py_library_providing_imports_info(
         "gpu_rnn.py",
         "gpu_solver.py",
         "gpu_sparse.py",
+        "gpu_triton.py",
         "hlo_helpers.py",
         "init.py",
         "lapack.py",

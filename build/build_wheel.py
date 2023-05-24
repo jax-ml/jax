@@ -166,6 +166,7 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib("__main__/jaxlib/gpu_prng.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_linalg.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_rnn.py")
+  copy_to_jaxlib("__main__/jaxlib/gpu_triton.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_solver.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_sparse.py")
   copy_to_jaxlib("__main__/jaxlib/version.py")
@@ -186,6 +187,7 @@ def prepare_wheel(sources_path):
     copy_file(f"__main__/jaxlib/cuda/_linalg.{pyext}", dst_dir=cuda_dir)
     copy_file(f"__main__/jaxlib/cuda/_prng.{pyext}", dst_dir=cuda_dir)
     copy_file(f"__main__/jaxlib/cuda/_rnn.{pyext}", dst_dir=cuda_dir)
+    copy_file(f"__main__/jaxlib/cuda/_triton.{pyext}", dst_dir=cuda_dir)
   rocm_dir = os.path.join(jaxlib_dir, "rocm")
   if exists(f"__main__/jaxlib/rocm/_solver.{pyext}"):
     os.makedirs(rocm_dir)
