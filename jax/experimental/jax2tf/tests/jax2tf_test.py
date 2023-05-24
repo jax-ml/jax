@@ -34,6 +34,8 @@ from jax import sharding
 from jax._src import core
 from jax._src import source_info_util
 from jax._src import test_util as jtu
+from jax._src.lib import xla_client
+from jax._src.lib.mlir.dialects import stablehlo
 import jax._src.xla_bridge
 from jax import config
 from jax.experimental import jax2tf
@@ -1653,10 +1655,13 @@ def get_serialized_computation(
   ).lower(*args)
   else:
     lowered = jax.jit(f_jax, abstracted_axes=abstracted_axes).lower(*args)
-  stablehlo_module_text = mlir.module_to_string(lowered._lowering.stablehlo())
-  logging.info("Serialized ir.Module = %s", stablehlo_module_text)
-  return stablehlo_module_text, 3
-
+  mlir_module = lowered._lowering.stablehlo()
+  xla_call_module_version = 5
+  mlir_str = mlir.module_to_bytecode(mlir_module)
+  target_version = stablehlo.get_earliest_forward_compatible_version()
+  mlir_module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
+    mlir_str, target_version)
+  return mlir_module_serialized, xla_call_module_version
 
 class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
   """Unit tests for XlaCallModule. Will move these eventually to TF."""
