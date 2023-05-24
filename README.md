@@ -423,7 +423,7 @@ There are two ways to install JAX with NVIDIA GPU support: using CUDA and CUDNN
 installed from pip wheels, and using a self-installed CUDA/CUDNN. We recommend
 installing CUDA and CUDNN using the pip wheels, since it is much easier!
 
-JAX supports NVIDIA GPUs that are have SM version 5.2 (Maxwell) or newer.
+JAX supports NVIDIA GPUs that have SM version 5.2 (Maxwell) or newer.
 Note that Kepler-series GPUs are no longer supported by JAX since
 NVIDIA has dropped support for Kepler in its software.
 
