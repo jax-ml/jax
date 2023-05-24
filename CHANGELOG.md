@@ -8,6 +8,21 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.11
 
+* Deprecations
+  * The following APIs have been removed after a 3 month deprecation period, in
+    accordance with the {ref}`api-compatibility` policy:
+    - `jax.experimental.PartitionSpec`: use `jax.sharding.PartitionSpec`.
+    - `jax.experimental.maps.Mesh`: use `jax.sharding.Mesh`
+    - `jax.experimental.pjit.NamedSharding`: use `jax.sharding.NamedSharding`.
+    - `jax.experimental.pjit.PartitionSpec`: use `jax.sharding.PartitionSpec`.
+    - `jax.experimental.pjit.FROM_GDA`. Instead pass sharded `jax.Array` objects
+      as input and remove the optional `in_shardings` argument to `pjit`.
+    - `jax.interpreters.pxla.PartitionSpec`: use `jax.sharding.PartitionSpec`.
+    - `jax.interpreters.pxla.Mesh`: use `jax.sharding.Mesh`
+    - `jax.interpreters.xla.Device`: use `jax.Device`.
+    - `jax.interpreters.xla.DeviceArray`: use `jax.Array` instead,
+
+
 ## jaxlib 0.4.11
 
 ## jax 0.4.10 (May 11, 2023)
