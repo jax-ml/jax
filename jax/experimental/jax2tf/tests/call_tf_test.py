@@ -19,17 +19,16 @@ import unittest
 from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
-
 import jax
+from jax import config
 from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
 from jax._src import test_util as jtu
-from jax import config
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import hlo
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
-from jax._src.lib.mlir import ir
-
 import numpy as np
 
 try:
@@ -1445,8 +1444,17 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
       tf.print(y)
       return x
 
-    jax_f = jax2tf.call_tf(tf.function(tf_f), call_tf_graph=True, output_shape_dtype=jax.ShapeDtypeStruct((10,), jnp.float32))
-    tf_f_rt = jax2tf.convert(jax_f, native_serialization=True, native_serialization_strict_checks=False, with_gradient=False)
+    jax_f = jax2tf.call_tf(
+        tf.function(tf_f),
+        call_tf_graph=True,
+        output_shape_dtype=jax.ShapeDtypeStruct((10,), jnp.float32),
+    )
+    tf_f_rt = jax2tf.convert(
+        jax_f,
+        native_serialization=True,
+        native_serialization_strict_checks=False,
+        with_gradient=False,
+    )
     _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt, input_args=[inputs])
 
     # With zero output, it return `StatefulPartitionedCall` op instead.
@@ -1456,8 +1464,74 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
       return
 
     jax_f_2 = jax2tf.call_tf(tf.function(tf_f_2), call_tf_graph=True)
-    tf_f_rt_2 = jax2tf.convert(jax_f_2, native_serialization=True, native_serialization_strict_checks=False, with_gradient=False)
+    tf_f_rt_2 = jax2tf.convert(
+        jax_f_2,
+        native_serialization=True,
+        native_serialization_strict_checks=False,
+        with_gradient=False,
+    )
     _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt_2, input_args=[])
+
+  def test_call_tf_graph_ordered(self):
+    @tf.function
+    def tf_print(x):
+      tf.print(x)
+
+    call_tf_print = jax2tf.call_tf(
+        tf_print,
+        call_tf_graph=True,
+        output_shape_dtype=None,
+        ordered=True,
+    )
+
+    x = jnp.array(1.0, dtype=jnp.float32)
+
+    def body(i, x):
+      call_tf_print(x)
+      return x + 1
+
+    @jax.jit
+    def f_jax(x):
+      return jax.lax.fori_loop(0, 4, body, x)
+
+    lower = f_jax.lower(x)
+    self.assertNotEmpty(lower._lowering.compile_args["ordered_effects"])
+
+    num_custom_calls = 0
+
+    def _check_mlir_ops(op):
+      nonlocal num_custom_calls
+
+      if (
+          op.operation.name == "stablehlo.custom_call"
+          and ir.StringAttr(op.attributes["call_target_name"]).value
+          == "tf.call_tf_function"
+      ):
+        num_custom_calls += 1
+
+        # The custom call op must have `has_token_input_output` attribute.
+        tf_backend_config = ir.DictAttr(op.attributes["tf.backend_config"])
+        self.assertTrue(
+            ir.BoolAttr(tf_backend_config["has_token_input_output"]).value
+        )
+
+        # Verify that the first argument/result of the custom call op is a token
+        # type. This is a calling convention defined by `has_token_input_output`.
+        self.assertTrue(hlo.TokenType.isinstance(op.operands[0].type))
+        self.assertTrue(hlo.TokenType.isinstance(op.results[0].type))
+
+    stablehlo_module = lower.compiler_ir("stablehlo")
+    self._walk_stablehlo_operations(stablehlo_module, _check_mlir_ops)
+    self.assertEqual(num_custom_calls, 1)
+
+    f_tf = jax2tf.convert(
+        f_jax,
+        native_serialization=True,
+        native_serialization_strict_checks=False,
+        with_gradient=False,
+    )
+    _, restored_model = tf_test_util.SaveAndLoadFunction(f_tf, input_args=[x])
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

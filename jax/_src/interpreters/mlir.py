@@ -864,8 +864,13 @@ def lower_jaxpr_to_fun(
          for a, s, types in zip(out_avals, result_shardings, output_types)])
     del out_avals
 
-  if (replicated_args is not None or ir_arg_shardings is not None
-      or input_output_aliases is not None or arg_names is not None):
+  if (
+      replicated_args is not None
+      or ir_arg_shardings is not None
+      or input_output_aliases is not None
+      or arg_names is not None
+      or num_tokens > 0
+  ):
     arg_attrs: List[Dict[str, ir.Attribute]] = [
         {} for _ in range(len(flat_input_types))]
 
@@ -895,6 +900,11 @@ def lower_jaxpr_to_fun(
         if alias is not None:
           attrs["tf.aliasing_output"] = i32_attr(alias)
 
+    if num_tokens > 0:
+      token_arg_attrs = arg_attrs[num_dim_vars:num_tokens]
+      for attrs in token_arg_attrs:
+        attrs["jax.token"] = ir.BoolAttr.get(True)
+
     if arg_names:
       named_arg_attrs = arg_attrs[num_dim_vars + num_tokens:]
       for attrs, name_ in zip(named_arg_attrs, arg_names):
@@ -906,6 +916,11 @@ def lower_jaxpr_to_fun(
 
   result_attrs: List[Dict[str, ir.Attribute]] = [
       {} for _ in range(len(flat_output_types))]
+
+  if num_tokens > 0:
+    token_result_attrs = result_attrs[:num_tokens]
+    for attrs in token_result_attrs:
+      attrs["jax.token"] = ir.BoolAttr.get(True)
 
   if result_names:
     named_result_attrs = result_attrs[num_tokens:]

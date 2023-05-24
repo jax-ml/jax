@@ -65,6 +65,7 @@ _DLPACK_PLATFORMS = ("gpu",)
 def call_tf(
     callable_tf: Callable,
     has_side_effects=True,
+    ordered=False,
     output_shape_dtype=None,
     call_tf_graph=False,
 ) -> Callable:
@@ -98,9 +99,10 @@ def call_tf(
     has_side_effects: if True then it ensures that instances of this primitive
       are not removed or replicated by JAX optimizations such as dead-code
       elimination.
-    output_shape_dtype: An optional declaration of the expected shape and
-      dtype of the result of the called TensorFlow function. If given it will be
-      used during JAX tracing to form the abstract values of the results of the
+    ordered: If true, calls are modeled as having ordered effects.
+    output_shape_dtype: An optional declaration of the expected shape and dtype
+      of the result of the called TensorFlow function. If given it will be used
+      during JAX tracing to form the abstract values of the results of the
       `call_tf`. If not given then we form a `tf.Graph` for the called
       TensorFlow function and we use the TensorFlow-inferred shapes and types.
       Must be a pytree matching the structure of the nested structure returned
@@ -108,6 +110,7 @@ def call_tf(
       `.dtype` attributes, e.g., `jax.ShapeDtypeStruct` or `jax.Array`.
     call_tf_graph: EXPERIMENTAL, DO NOT USE. We may change the name in the
       future.
+
   Returns: a JAX callable that can be invoked with JAX pytree arguments, in
     op-by-op mode or in a staged context. This callable can be used with JAX's
     reverse-mode autodiff (:func:`jax.grad`).
@@ -202,7 +205,9 @@ def call_tf(
         args_flat_sig_tf=args_flat_sig_tf,
         output_avals=output_avals,
         has_side_effects=has_side_effects,
-        call_tf_graph=call_tf_graph)
+        ordered=ordered,
+        call_tf_graph=call_tf_graph,
+    )
 
     # We must have called callable_flat_tf by nοw
     assert res_treedef is not None
@@ -379,16 +384,35 @@ effects.remat_allowed_effects.add_type(CallTfEffect)
 effects.custom_derivatives_allowed_effects.add_type(CallTfEffect)
 
 
+class CallTfOrderedEffect(effects.Effect):
+  __str__ = lambda _: "CallTfOrderedEffect"
+
+
+call_tf_ordered_effect = CallTfOrderedEffect()
+
+effects.lowerable_effects.add_type(CallTfOrderedEffect)
+effects.control_flow_allowed_effects.add_type(CallTfOrderedEffect)
+effects.remat_allowed_effects.add_type(CallTfOrderedEffect)
+effects.custom_derivatives_allowed_effects.add_type(CallTfOrderedEffect)
+effects.ordered_effects.add_type(CallTfOrderedEffect)
+
+
 def _call_tf_abstract_eval(
     *args_flat_avals,
     function_flat_tf,
     args_flat_sig_tf,
     has_side_effects,
+    ordered,
     output_avals,
     call_tf_graph,
-    **__):
+    **__,
+):
   # Called only when we form a Jaxpr, i.e., under jit, scan, etc.
-  effects = {call_tf_effect} if has_side_effects else set()
+  effects = set()
+  if ordered:
+    effects.add(call_tf_ordered_effect)
+  elif has_side_effects:
+    effects.add(call_tf_effect)
 
   # If no output_avals is given, then we ask TF to infer the output shapes.
   # We call this even if output_avals is given because it will ensure that
@@ -441,9 +465,11 @@ def _call_tf_lowering(
     function_flat_tf,
     args_flat_sig_tf,
     has_side_effects,
+    ordered,
     call_tf_graph,
     output_avals,
-    **_):
+    **_,
+):
   # We use the same TF lowering device as for the embedding JAX computation.
   # One example when this is needed is when the code refers to variables on one
   # device. Or, for sharding annotations (only supported on TPU).
@@ -482,10 +508,13 @@ def _call_tf_lowering(
   if call_tf_graph:
     with jax2tf_internal.inside_call_tf():
       return emit_tf_embedded_graph_custom_call(
+          ctx,
           concrete_function_flat_tf,
           tuple(args_op) + captured_ops,
           has_side_effects,
-          output_avals)
+          ordered,
+          output_avals,
+      )
 
   def convert_to_spec(x):
     if isinstance(x, tf.TensorSpec):
@@ -552,6 +581,12 @@ def _call_tf_lowering(
   else:
     flat_results = call.results
 
+  if ordered:
+    raise NotImplementedError(
+        "ordered=True is not supported in the jitted context without"
+        " `call_tf_graph=True`"
+    )
+
   outputs = []
   for op, res_aval, res_shape in zip(flat_results, result_avals,
                                      result_shapes):
@@ -580,9 +615,11 @@ jax2tf_internal.tf_impl[call_tf_p] = _jax2tf_call_tf
 
 
 def emit_tf_embedded_graph_custom_call(
+    ctx: mlir.LoweringRuleContext,
     concrete_function_flat_tf,
     operands: Sequence[ir.Value],
     has_side_effects,
+    ordered,
     output_avals,
 ):
   """Emits a custom call referencing a tf.Graph embedding of the TF function.
@@ -600,13 +637,19 @@ def emit_tf_embedded_graph_custom_call(
   call_target_name = "tf.call_tf_function"
   tf_backend_config = {
       "caller_name": ir.StringAttr.get(concrete_function_flat_tf_name),
+      "has_token_input_output": ir.BoolAttr.get(ordered),
   }
   result_avals = output_avals if output_avals is not None else tuple()
 
-  result_types = util.flatten(
-      [mlir.aval_to_ir_types(aval) for aval in result_avals]
+  operands = list(operands)
+  result_types = list(
+      util.flatten([mlir.aval_to_ir_types(aval) for aval in result_avals])
   )
-  result = hlo.CustomCallOp(
+  if ordered:
+    operands.insert(0, ctx.tokens_in.get(call_tf_ordered_effect)[0])
+    result_types.insert(0, mlir.token_type()[0])
+
+  custom_call = hlo.CustomCallOp(
       result_types,
       operands,
       call_target_name=ir.StringAttr.get(call_target_name),
@@ -616,5 +659,13 @@ def emit_tf_embedded_graph_custom_call(
       backend_config=ir.StringAttr.get(""),
   )
   # Store TF metadata in unregistered attribute
-  result.attributes["tf.backend_config"] = ir.DictAttr.get(tf_backend_config)
-  return result.results
+  custom_call.attributes["tf.backend_config"] = ir.DictAttr.get(
+      tf_backend_config
+  )
+
+  results = list(custom_call.results)
+  if ordered:
+    token = results.pop(0)
+    ctx.set_tokens_out(mlir.TokenSet({call_tf_ordered_effect: (token,)}))
+
+  return results

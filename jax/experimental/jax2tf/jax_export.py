@@ -265,11 +265,14 @@ def export(fun_jax: Callable,
       # For pmap
       module_kept_var_idx = tuple(range(len(args_avals_flat)))
 
-    if not all(core.is_constant_shape(a.shape) for a in args_avals_flat):
+    if not all(
+        core.is_constant_shape(a.shape) for a in args_avals_flat
+    ) or lowering.compile_args.get("ordered_effects", []):
       # All arguments are kept if we have dimension variables.
       assert len(module_kept_var_idx) == len(args_avals_flat)
-      mlir_module = _add_dim_arg_computation(mlir_module, args_avals_flat,
-                                             args_kwargs_tree=lowered.in_tree)
+      mlir_module = _wrap_main_func(
+          mlir_module, args_avals_flat, args_kwargs_tree=lowered.in_tree
+      )
 
     xla_call_module_version = 5
     mlir_str = mlir.module_to_bytecode(mlir_module)
@@ -318,10 +321,13 @@ def export(fun_jax: Callable,
   return do_export
 
 
-def _add_dim_arg_computation(module: ir.Module,
-                             args_avals_flat: Sequence[core.ShapedArray], *,
-                             args_kwargs_tree: tree_util.PyTreeDef) -> ir.Module:
-  """Wraps the lowered module with a new "main" that computes the dim args.
+def _wrap_main_func(
+    module: ir.Module,
+    args_avals_flat: Sequence[core.ShapedArray],
+    *,
+    args_kwargs_tree: tree_util.PyTreeDef,
+) -> ir.Module:
+  """Wraps the lowered module with a new "main".
 
   JAX lowering in presence of shape polymorphism produces a `module` that
   takes one or more dimension arguments, specified using 0-dimensional tensors
@@ -329,7 +335,8 @@ def _add_dim_arg_computation(module: ir.Module,
   The dimension arguments correspond to the dimension variables appearing in
   the `args_avals`, in sorted order.
 
-  Consider the lowering of a function with one array argument of type "f32[w, h]",
+  Consider the lowering of a function with one array argument of type "f32[w,
+  h]",
   where "w" and "h" are two dimension variables. The `module` will also
   contain two dimension arguments, corresponding to "h" and "w" respectively:
 
@@ -346,13 +353,17 @@ def _add_dim_arg_computation(module: ir.Module,
          return res
       }
 
+  In addition, this function also removes token arguments/results from the main
+  function by providing dummy values. This ensures that the main function's
+  calling convention is as expected.
+
   Args:
     module: the HLO module as obtained from lowering. May have a number of
       dimension arguments, followed by the kept array arguments.
-    args_avals_flat: the avals for all the arguments of the lowered function, which
-      correspond to the array arguments of the `module`.
-    args_kwargs_tree: the PyTreeDef corresponding to `(args, kwargs)`, for
-      error messages.
+    args_avals_flat: the avals for all the arguments of the lowered function,
+      which correspond to the array arguments of the `module`.
+    args_kwargs_tree: the PyTreeDef corresponding to `(args, kwargs)`, for error
+      messages.
 
   Returns the wrapped module.
   """
@@ -367,23 +378,43 @@ def _add_dim_arg_computation(module: ir.Module,
     orig_main.attributes["sym_visibility"] = ir.StringAttr.get("private")
     symbol_table.set_symbol_name(orig_main, "_wrapped_jax_export_main")
     orig_main_name = ir.StringAttr(symbol_table.insert(orig_main)).value
+
+    def is_token(attrs):
+      try:
+        return ir.BoolAttr(ir.DictAttr(attrs)["jax.token"]).value
+      except KeyError:
+        return False
+
     orig_input_types = orig_main.type.inputs
-    nr_array_args = len(orig_input_types) - len(dim_vars)
+    arg_attrs = list(ir.ArrayAttr(orig_main.arg_attrs))
+    nr_token_args = sum(1 for attrs in arg_attrs if is_token(attrs))
+    nr_array_args = len(orig_input_types) - len(dim_vars) - nr_token_args
     assert nr_array_args >= 0
+    assert not any(is_token(attrs) for attrs in arg_attrs[-nr_array_args:])
+    new_main_input_types = orig_input_types[-nr_array_args:]
 
-    new_main_input_types = orig_input_types[- nr_array_args:]
     orig_output_types = orig_main.type.results
+    result_attrs = list(ir.ArrayAttr(orig_main.result_attrs))
+    nr_token_results = sum(1 for attrs in result_attrs if is_token(attrs))
+    nr_array_results = len(orig_output_types) - nr_token_results
+    assert nr_array_results >= 0
+    assert not any(
+        is_token(attrs) for attrs in result_attrs[-nr_array_results:]
+    )
+    new_main_output_types = orig_output_types[-nr_array_results:]
 
-    ftype = ir.FunctionType.get(new_main_input_types, orig_output_types)
+    ftype = ir.FunctionType.get(new_main_input_types, new_main_output_types)
     new_main_op = func_dialect.FuncOp(
         "main", ftype, ip=ir.InsertionPoint.at_block_begin(new_module.body))
     new_main_op.attributes["sym_visibility"] = ir.StringAttr.get("public")
     try:
-      new_main_op.arg_attrs = list(orig_main.arg_attrs)[- nr_array_args:]
+      new_main_op.arg_attrs = ir.ArrayAttr.get(arg_attrs[-nr_array_args:])
     except KeyError:
       pass  # TODO: better detection if orig_main.arg_attrs does not exist
     try:
-      new_main_op.result_attrs = orig_main.result_attrs
+      new_main_op.result_attrs = ir.ArrayAttr.get(
+          result_attrs[-nr_array_results:]
+      )
     except KeyError:
       pass
     symbol_table.insert(new_main_op)
@@ -402,12 +433,14 @@ def _add_dim_arg_computation(module: ir.Module,
                                    args_kwargs_tree=args_kwargs_tree)
       # The first arguments are the dimension variable
       orig_main_args.extend(dim_args)
+      # Then the token arguments
+      orig_main_args.extend(list(mlir.dummy_token()) * nr_token_args)
       # Then the array arguments
       orig_main_args.extend(new_main_op.arguments)
       call = func_dialect.CallOp(orig_output_types,
                                  ir.FlatSymbolRefAttr.get(orig_main_name),
                                  orig_main_args)
-      func_dialect.ReturnOp(call.results)
+      func_dialect.ReturnOp(call.results[-nr_array_results:])
     symbol_table.set_symbol_name(new_main_op, "main")
     return new_module
 
@@ -474,14 +507,14 @@ def _check_lowering(lowering) -> None:
       ("auto_spmd_lowering", lambda v: not v, "False"),
       # tuple_args is a compilation flag, does not affect lowering.
       ("tuple_args", lambda v: True, "N/A"),
-      # Used for debug(ordered=True), changes the calling convention, but will
-      # also set keepalive to non-empty.
-      ("ordered_effects", lambda v: not v, "empty"),
       # unordered_effects do not change the calling convention. Those from
       # jax.debug will also result in keepalive being non-empty and unsupported
       # custom calls. The CallTfEffect is an exception, but we want to allow
       # that one.
       ("unordered_effects", lambda v: True, "N/A"),
+      # ordered_effects are allowed and we ensure that the calling convention is
+      # unmodified by passing dummy tokens in the main function wrapper.
+      ("ordered_effects", lambda v: True, "N/A"),
       # used for TPU jax.debug, send/recv. Not supported yet.
       ("host_callbacks", lambda v: not v, "empty"),
       # used on all platforms for callbacks. Not supported yet.
@@ -587,6 +620,7 @@ def _check_module(mod: ir.Module, *,
            f"{disallowed_custom_call_ops_str}.\n"
            "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-lowering-supports-only-select-custom-calls")
     raise ValueError(msg)
+
 
 def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
   # Export the VJP of `primal_fun_jax`. See documentation for Exported.vjp
