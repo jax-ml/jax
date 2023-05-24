@@ -114,29 +114,12 @@ from jax._src.sharding_specs import (
 
 # Deprecations
 
-from jax._src.mesh import Mesh as _deprecated_Mesh
 from jax._src.interpreters.pxla import (
   ShardedDeviceArray as _deprecated_ShardedDeviceArray,
   make_sharded_device_array as _deprecated_make_sharded_device_array,
 )
-from jax._src.partition_spec import (
-  PartitionSpec as _deprecated_PartitionSpec,
-)
 
 _deprecations = {
-    # Added Feb 8, 2023:
-    "Mesh": (
-        "jax.interpreters.pxla.Mesh is deprecated. Use jax.sharding.Mesh.",
-        _deprecated_Mesh,
-    ),
-    # Added Feb 8, 2023:
-    "PartitionSpec": (
-        (
-            "jax.interpreters.pxla.PartitionSpec is deprecated. Use "
-            "jax.sharding.PartitionSpec."
-        ),
-        _deprecated_PartitionSpec,
-    ),
     # Added March 15, 2023:
     "ShardedDeviceArray": (
         (
@@ -165,13 +148,11 @@ _deprecations = {
 
 import typing
 if typing.TYPE_CHECKING:
-  from jax._src.mesh import Mesh as Mesh
   from jax._src.interpreters.pxla import (
     ShardedDeviceArray as ShardedDeviceArray,
     device_put as device_put,
     make_sharded_device_array as make_sharded_device_array,
   )
-  from jax._src.partition_spec import PartitionSpec as PartitionSpec
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

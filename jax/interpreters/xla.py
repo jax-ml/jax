@@ -62,17 +62,6 @@ Buffer = _deprecated_DeviceArray
 
 _deprecations = {
     # Added Feb 9, 2023:
-    "Device": (
-        "jax.interpreters.xla.Device is deprecated. Use jax.Device instead.",
-        _deprecated_Device,
-    ),
-    "DeviceArray": (
-        (
-            "jax.interpreters.xla.DeviceArray is deprecated. Use jax.Array"
-            " instead."
-        ),
-        _deprecated_DeviceArray,
-    ),
     "Buffer": (
         (
             "jax.interpreters.xla.Buffer is deprecated. Use jax.Array"
@@ -102,10 +91,6 @@ del _deprecation_getattr
 
 import typing
 if typing.TYPE_CHECKING:
-  Device = xc.Device
-  from jax._src.interpreters.xla import (
-    DeviceArray as DeviceArray,
-  )
   from jax._src.api import device_put as device_put
   from jax._src.interpreters.xla import xla_call_p as xla_call_p
 del typing
