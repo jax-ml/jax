@@ -460,6 +460,8 @@ that now we can add some real transformations.
 First, a few helper functions:
 
 ```{code-cell}
+import builtins
+
 def zeros_like(val):
   aval = get_aval(val)
   return np.zeros(aval.shape, aval.dtype)
@@ -471,17 +473,15 @@ def unzip2(pairs):
     lst2.append(x2)
   return lst1, lst2
 
-map_ = map
 def map(f, *xs):
-  return list(map_(f, *xs))
+  return list(builtins.map(f, *xs))
 
-zip_ = zip
 def zip(*args):
   fst, *rest = args = map(list, args)
   n = len(fst)
   for arg in rest:
     assert len(arg) == n
-  return list(zip_(*args))
+  return list(builtins.zip(*args))
 ```
 
 The `Tracer` for forward-mode autodiff carries a primal-tangent pair. The
