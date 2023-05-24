@@ -201,16 +201,19 @@ custom_partitioning_p.multiple_results = True
 def _custom_partitioning_abstract_eval(*avals, call, in_tree, out_tree,
                                        propagate_user_sharding, partition,
                                        infer_sharding_from_operands,
+                                       decode_shardings,
                                        static_args):
   del in_tree, out_tree, propagate_user_sharding, partition
-  del infer_sharding_from_operands, static_args
+  del infer_sharding_from_operands, decode_shardings, static_args
   return call.out_avals
 
 
-def _custom_partitioning_impl(*args, call, in_tree, out_tree, propagate_user_sharding,
-                              partition, infer_sharding_from_operands, static_args):
+def _custom_partitioning_impl(*args, call, in_tree, out_tree,
+                              propagate_user_sharding,
+                              partition, infer_sharding_from_operands,
+                              decode_shardings, static_args):
   del in_tree, out_tree, propagate_user_sharding, partition
-  del infer_sharding_from_operands, static_args
+  del infer_sharding_from_operands, decode_shardings, static_args
   return core.jaxpr_as_fun(call)(*args)
 
 
@@ -270,6 +273,9 @@ class custom_partitioning:
     inputs to match).
   * ``infer_sharding_from_operands``: Callable which computes an output ``NamedSharding``
     from the ``NamedSharding`` chosen for each argument.
+  * ``decode_shardings``: When set to True, convert input ``GSPMDSharding``s to
+    ``NamedSharding`` if possible. This may not be possible if the user does not
+    provide a contextual mesh.
 
   Positional arguments can be specified as static using static_argnums. JAX uses
   :code:`inspect.signature(fun)` to resolve these positional arguments.
@@ -401,10 +407,11 @@ class custom_partitioning:
   __getattr__ = custom_api_util.forward_attr
 
   def def_partition(self, partition, infer_sharding_from_operands,
-                    propagate_user_sharding=None):
+                    propagate_user_sharding=None, decode_shardings=True):
     self.partition = partition
     self.propagate_user_sharding = propagate_user_sharding
     self.infer_sharding_from_operands = infer_sharding_from_operands
+    self.decode_shardings = decode_shardings
     return partition
 
   def __call__(self, *args, **kwargs):
@@ -439,6 +446,7 @@ class custom_partitioning:
         partition=self.partition,
         propagate_user_sharding=self.propagate_user_sharding,
         infer_sharding_from_operands=self.infer_sharding_from_operands,
+        decode_shardings=self.decode_shardings,
         in_tree=in_tree,
         out_tree=out_tree(),
         static_args=static_args
@@ -450,6 +458,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
                                        call, in_tree, out_tree,
                                        propagate_user_sharding, partition,
                                        infer_sharding_from_operands,
+                                       decode_shardings,
                                        static_args):
   mesh = mesh_lib.thread_resources.env.physical_mesh
   axis_context = ctx.module_context.axis_context
@@ -468,7 +477,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
   def to_mesh_pspec_sharding(op_sharding: Optional[xc.OpSharding]):
     if op_sharding is None:
       return op_sharding
-    if mesh.empty:
+    if mesh.empty or not decode_shardings:
       from jax._src.sharding_impls import GSPMDSharding
       assert devices is not None
       return GSPMDSharding(devices, op_sharding.to_proto())
