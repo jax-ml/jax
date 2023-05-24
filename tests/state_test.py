@@ -1170,6 +1170,39 @@ class StateControlFlowTest(jtu.JaxTestCase):
     with self.assertRaises(NotImplementedError):
       jax.grad(f)(3.)
 
+  def test_while_with_state_in_body(self):
+    def f(x, y, z):
+      @run_state
+      def body(x_ref):
+        def cond(i):
+          return i < y
+        def body(i):
+          x_ref[...] += z
+          return i + 1
+        lax.while_loop(cond, body, 0)
+      return body(x)
+    jaxpr = jax.make_jaxpr(f)(0, 5, 2).jaxpr
+    self.assertEmpty(jaxpr.effects)
+    self.assertAllClose(jax.jit(f)(0, 5, 2), 10)
+    self.assertAllClose(jax.jit(f)(1, 2, 3), 7)
+
+  def test_scan_with_state_in_body(self):
+    def f(x, w, y, zs):
+      @run_state
+      def body(refs):
+        x_ref, w_ref = refs
+        def body(y, z):
+          x_ref[...] += y
+          w_ref[...] += z
+          return y + 1, ()
+        lax.scan(body, y, zs)
+      return body((x, w))
+    zs = jnp.arange(5)
+    jaxpr = jax.make_jaxpr(f)(0, 1, 5, zs).jaxpr
+    self.assertEmpty(jaxpr.effects)
+    self.assertAllClose(jax.jit(f)(0, 1, 5, zs), (35, 11))
+    self.assertAllClose(jax.jit(f)(1, 1, 2, zs), (21, 11))
+
 class GeneralRefTest(jtu.JaxTestCase):
 
   def test_unshaped_ref(self):
