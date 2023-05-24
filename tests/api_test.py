@@ -50,6 +50,7 @@ import jax.custom_transpose
 import jax.numpy as jnp
 from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
 from jax._src import core
+from jax._src import config as config_internal
 from jax import lax
 from jax._src import api, dtypes, lib, api_util
 from jax.errors import UnexpectedTracerError
@@ -4241,6 +4242,25 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(f._cache_size, 1)
     jax.clear_caches()
     self.assertEqual(f._cache_size, 0)
+
+  def test_clear_cache(self):
+    @jax.jit
+    def add(x):
+      return x * 2
+
+    inp = jnp.arange(8)
+
+    with config_internal.log_compiles(True):
+      with self.assertLogs(level='WARNING') as cm:
+        add(inp)
+        jax.clear_caches()
+        add(inp)
+      tracing_add_count = 0
+      for m in cm.output:
+        if 'Finished tracing + transforming add for pjit' in m:
+          tracing_add_count += 1
+      self.assertEqual(tracing_add_count, 2)
+
 
 class RematTest(jtu.JaxTestCase):
 

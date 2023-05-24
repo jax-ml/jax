@@ -302,6 +302,7 @@ def weakref_lru_cache(call: Callable, maxsize=2048):
   cached_call = xc.weakref_lru_cache(config._trace_context, call, maxsize)
   _weakref_lru_caches.add(cached_call)
   return cached_call
+
 _weakref_lru_caches = weakref.WeakSet()  # type: ignore
 
 def clear_all_weakref_lru_caches():

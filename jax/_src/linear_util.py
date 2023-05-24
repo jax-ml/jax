@@ -353,7 +353,7 @@ def cache(call: Callable):
   memoized_fun.cache_clear = fun_caches.clear  # type: ignore
   memoized_fun.evict_function = _evict_function  # type: ignore
 
-  cache_clearing_funs.add(fun_caches.clear)
+  cache_clearing_funs.add(memoized_fun.cache_clear)
 
   return memoized_fun
 
