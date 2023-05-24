@@ -48,7 +48,7 @@ def deprecation_getattr(module, deprecations):
       message, fn = deprecations[name]
       if fn is None:
         raise AttributeError(message)
-      warnings.warn(message, DeprecationWarning)
+      warnings.warn(message, DeprecationWarning, stacklevel=2)
       return fn
     raise AttributeError(f"module {module!r} has no attribute {name!r}")
 
