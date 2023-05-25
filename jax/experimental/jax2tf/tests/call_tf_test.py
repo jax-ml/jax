@@ -1327,20 +1327,28 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
             output_shape_dtype=output_shape_dtype,
         )
     )
-    stablehlo_module = f_jax.lower(x, y, z).compiler_ir("stablehlo")
-    self.assertIn("stablehlo.custom_call", str(stablehlo_module))
+    with self.assertRaisesRegex(
+        ValueError,
+        "call_tf_graph=True only support exporting by jax2tf.convert currently",
+    ):
+      stablehlo_module = f_jax.lower(x, y, z).compiler_ir("stablehlo")
+      self.assertIn("stablehlo.custom_call", str(stablehlo_module))
 
-    caller_name_list = []
+      called_name_list = []
+      called_index_list = []
 
-    def _extract_info(op):
-      if op.operation.name != "stablehlo.custom_call":
-        return
-      tf_backend_config = ir.DictAttr(op.attributes["tf.backend_config"])
-      caller_name = ir.StringAttr(tf_backend_config["caller_name"]).value
-      caller_name_list.append(caller_name)
+      def _extract_info(op):
+        if op.operation.name != "stablehlo.custom_call":
+          return
+        tf_backend_config = ir.DictAttr(op.attributes["tf.backend_config"])
+        called_name = ir.StringAttr(tf_backend_config["called_name"]).value
+        called_name_list.append(called_name)
+        called_index = ir.IntegerAttr(tf_backend_config["called_index"]).value
+        called_index_list.append(called_index)
 
-    self._walk_stablehlo_operations(stablehlo_module, _extract_info)
-    self.assertLen(caller_name_list, 1)
+      self._walk_stablehlo_operations(stablehlo_module, _extract_info)
+      self.assertLen(called_name_list, 1)
+      self.assertLen(called_index_list, 1)
 
   @parameterized.named_parameters(
       dict(
@@ -1356,15 +1364,18 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
   )
   def test_call_tf_graph_non_compilable(self, tf_f, output_shape_dtype):
     inputs = jnp.ones([10], dtype=jnp.float32)
-    caller_name_list = []
+    called_name_list = []
+    called_index_list = []
     xla_call_module_list = []
 
     def _extract_info(op):
       if op.operation.name != "stablehlo.custom_call":
         return
       tf_backend_config = ir.DictAttr(op.attributes["tf.backend_config"])
-      caller_name = ir.StringAttr(tf_backend_config["caller_name"]).value
-      caller_name_list.append(caller_name)
+      called_name = ir.StringAttr(tf_backend_config["called_name"]).value
+      called_name_list.append(called_name)
+      called_index = ir.IntegerAttr(tf_backend_config["called_index"]).value
+      called_index_list.append(called_index)
 
     jax_f = jax2tf.call_tf(
         tf_f,
@@ -1376,14 +1387,21 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(tf_f(inputs), jax_f(inputs))
 
     # Jit mode
-    stablehlo_module = jax.jit(jax_f).lower(inputs).compiler_ir("stablehlo")
-    self.assertIn(
-        "stablehlo.custom_call @tf.call_tf_function",
-        str(stablehlo_module),
-    )
-    self.assertIn("tf.backend_config", str(stablehlo_module))
-    self._walk_stablehlo_operations(stablehlo_module, _extract_info)
-    self.assertLen(caller_name_list, 1)
+    stablehlo_module = None
+    with self.assertRaisesRegex(
+        ValueError,
+        "call_tf_graph=True only support exporting by jax2tf.convert currently",
+    ):
+      stablehlo_module = jax.jit(jax_f).lower(inputs).compiler_ir("stablehlo")
+    if stablehlo_module:
+      self.assertIn(
+          "stablehlo.custom_call @tf.call_tf_function",
+          str(stablehlo_module),
+      )
+      self.assertIn("tf.backend_config", str(stablehlo_module))
+      self._walk_stablehlo_operations(stablehlo_module, _extract_info)
+      self.assertLen(called_name_list, 1)
+      self.assertLen(called_index_list, 1)
 
     # Test model exporting and reloading.
     # There is no runtime support yet so it can not run.
@@ -1409,7 +1427,8 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual(xla_call_module.attr["version"].i, 5)
     self.assertIn("function_list", str(xla_call_module.attr))
     xla_call_module_list.clear()
-    caller_name_list.clear()
+    called_name_list.clear()
+    called_index_list.clear()
 
     # If JAX calls same tensorflow function by `jax2tf.call_tf` twice,
     # it should return two different tf concrete functions.
@@ -1425,14 +1444,15 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
           output_shape_dtype=output_shape_dtype,
       )(x)
       return res1, res2
-
-    stablehlo_module = jax.jit(jax_f_2).lower(inputs).compiler_ir("stablehlo")
-    self._walk_stablehlo_operations(stablehlo_module, _extract_info)
-    self.assertLen(caller_name_list, 2)
-    self.assertNotEqual(caller_name_list[0], caller_name_list[1])
-    logging.info("caller_name_list = %s", caller_name_list)
+    stablehlo_module = None
+    with self.assertRaisesRegex(ValueError, "call_tf_graph=True only support exporting by jax2tf.convert currently"):
+      stablehlo_module = jax.jit(jax_f_2).lower(inputs).compiler_ir("stablehlo")
+    if stablehlo_module:
+      self._walk_stablehlo_operations(stablehlo_module, _extract_info)
+      self.assertLen(called_name_list, 2)
+      self.assertNotEqual(called_name_list[0], called_name_list[1])
     xla_call_module_list.clear()
-    caller_name_list.clear()
+    called_name_list.clear()
 
   def test_b279454591(self):
     """Test case when tensorflow function returns `StatefulPartitionedCall` op."""
@@ -1494,9 +1514,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     def f_jax(x):
       return jax.lax.fori_loop(0, 4, body, x)
 
-    lower = f_jax.lower(x)
-    self.assertNotEmpty(lower._lowering.compile_args["ordered_effects"])
-
     num_custom_calls = 0
 
     def _check_mlir_ops(op):
@@ -1520,9 +1537,17 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
         self.assertTrue(hlo.TokenType.isinstance(op.operands[0].type))
         self.assertTrue(hlo.TokenType.isinstance(op.results[0].type))
 
-    stablehlo_module = lower.compiler_ir("stablehlo")
-    self._walk_stablehlo_operations(stablehlo_module, _check_mlir_ops)
-    self.assertEqual(num_custom_calls, 1)
+    stablehlo_module = None
+    with self.assertRaisesRegex(
+        ValueError,
+        "call_tf_graph=True only support exporting by jax2tf.convert currently",
+    ):
+      lower = f_jax.lower(x)
+      self.assertNotEmpty(lower._lowering.compile_args["ordered_effects"])
+      stablehlo_module = lower.compiler_ir("stablehlo")
+    if stablehlo_module:
+      self._walk_stablehlo_operations(stablehlo_module, _check_mlir_ops)
+      self.assertEqual(num_custom_calls, 1)
 
     f_tf = jax2tf.convert(
         f_jax,

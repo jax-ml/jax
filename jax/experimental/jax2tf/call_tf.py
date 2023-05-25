@@ -624,20 +624,27 @@ def emit_tf_embedded_graph_custom_call(
 ):
   """Emits a custom call referencing a tf.Graph embedding of the TF function.
 
-  All call_tf caller function information is stored in tf.metadata.
+  All call_tf called function information is stored in tf.metadata.
   This includes:
-  (1) The caller function name: This name will be used by the runtime to execute
+  (1) The called function name: This name will be used by the runtime to execute
   the callback.
+  (2) The called function index in the XLACallModule `function_list` attribute.
   """
-  jax2tf_internal.add_to_call_tf_concrete_function_set(
-      [concrete_function_flat_tf])
+  call_tf_concrete_function_list = jax2tf_internal.get_thread_local_state_call_tf_concrete_function_list()
+  if call_tf_concrete_function_list is None:
+    raise ValueError(
+        "call_tf_graph=True only support exporting by jax2tf.convert currently."
+    )
+  called_index = add_to_call_tf_concrete_function_list(
+      concrete_function_flat_tf, call_tf_concrete_function_list)
   concrete_function_flat_tf_name = (
       concrete_function_flat_tf.function_def.signature.name
   )
   call_target_name = "tf.call_tf_function"
   tf_backend_config = {
-      "caller_name": ir.StringAttr.get(concrete_function_flat_tf_name),
+      "called_name": ir.StringAttr.get(concrete_function_flat_tf_name),
       "has_token_input_output": ir.BoolAttr.get(ordered),
+      "called_index": mlir.i64_attr(called_index),
   }
   result_avals = output_avals if output_avals is not None else tuple()
 
@@ -669,3 +676,11 @@ def emit_tf_embedded_graph_custom_call(
     ctx.set_tokens_out(mlir.TokenSet({call_tf_ordered_effect: (token,)}))
 
   return results
+
+
+def add_to_call_tf_concrete_function_list(concrete_tf_fn: Any, call_tf_concrete_function_list: list[Any]) -> int:
+  func_name = concrete_tf_fn.function_def.signature.name
+  assert func_name not in [f.function_def.signature.name for f in call_tf_concrete_function_list]
+  called_index = len(call_tf_concrete_function_list)
+  call_tf_concrete_function_list.append(concrete_tf_fn)
+  return called_index
