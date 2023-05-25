@@ -23,13 +23,21 @@ from jax._src.lib import xla_extension_version
 
 
 def get_num_ways_dim_sharded(
-    op_sharding: xc.OpSharding) -> Tuple[Sequence[int], int]:
-  partitions = op_sharding.tile_assignment_dimensions
-  if op_sharding.last_tile_dims == [xc.OpSharding.Type.REPLICATED]:
+    op_sharding: Union[xc.OpSharding, xc.HloSharding]) -> Tuple[Sequence[int], int]:
+  if isinstance(op_sharding, xc.OpSharding):
+    partitions = op_sharding.tile_assignment_dimensions
+    subgroup_types = op_sharding.last_tile_dims
+  else:
+    partitions = op_sharding.tile_assignment_dimensions()
+    subgroup_types = op_sharding.subgroup_types()
+
+  if subgroup_types == [xc.OpSharding.Type.REPLICATED]:
     replicate_on_last_tile_dim = True
   else:
-    replicate_on_last_tile_dim = op_sharding.replicate_on_last_tile_dim
-    if op_sharding.last_tile_dims:
+    replicate_on_last_tile_dim = (
+        op_sharding.replicate_on_last_tile_dim if isinstance(op_sharding, xc.OpSharding)
+        else op_sharding.replicate_on_last_tile_dim())
+    if subgroup_types:
       raise NotImplementedError(
           "Unhandled OpSharding type. Please open a bug report!")
   num_replicas = 1
@@ -39,26 +47,43 @@ def get_num_ways_dim_sharded(
   return partitions, num_replicas
 
 
-if xla_extension_version >= 147:
-  is_op_sharding_replicated = xc._xla.is_op_sharding_fully_replicated
-else:
-  def is_op_sharding_replicated(op: xc.OpSharding) -> bool:
+def is_op_sharding_replicated(op: Union[xc.OpSharding, xc.HloSharding]) -> bool:
+  if isinstance(op, xc.OpSharding):
+    if xla_extension_version >= 147:
+      return xc._xla.is_op_sharding_fully_replicated(op)
     if len(op.tile_assignment_devices) == 1:
       return True
     return xc.HloSharding.from_proto(op).is_replicated()  # type: ignore
+  else:
+    assert isinstance(op, xc.HloSharding)
+    if op.num_devices() == 1:
+      return True
+    return op.is_replicated()  # type: ignore
 
-def are_op_shardings_equal(op1: xc.OpSharding, op2: xc.OpSharding) -> bool:
+
+def are_op_shardings_equal(op1: Union[xc.OpSharding, xc.HloSharding],
+                           op2: Union[xc.OpSharding, xc.HloSharding]) -> bool:
   if id(op1) == id(op2):
     return True
   if is_op_sharding_replicated(op1) and is_op_sharding_replicated(op2):
     return True
-  return xc.HloSharding.from_proto(op1) == xc.HloSharding.from_proto(op2)
+
+  if isinstance(op1, xc.OpSharding) and isinstance(op2, xc.OpSharding):
+    return xc.HloSharding.from_proto(op1) == xc.HloSharding.from_proto(op2)
+  elif isinstance(op1, xc.OpSharding) and isinstance(op2, xc.HloSharding):
+    return xc.HloSharding.from_proto(op1) == op2
+  elif isinstance(op1, xc.HloSharding) and isinstance(op2, xc.OpSharding):
+    return op1 == xc.HloSharding.from_proto(op2)
+  else:
+    assert isinstance(op1, xc.HloSharding) and isinstance(op2, xc.HloSharding)
+    return op1 == op2
+
 
 _Index = Union[int, slice, Tuple[Union[int, slice], ...]]
 
 
 def op_sharding_to_numpy_indices(
-    op_sharding: xc.OpSharding, shape: Sequence[int],
+    op_sharding: Union[xc.OpSharding, xc.HloSharding], shape: Sequence[int],
     num_devices: int) -> np.ndarray:
   indices = np.empty(num_devices, dtype=np.object_)
 
@@ -69,7 +94,11 @@ def op_sharding_to_numpy_indices(
     indices.fill((slice(None),) * len(shape))
     return indices
 
-  assert num_devices == len(op_sharding.tile_assignment_devices)
+  if isinstance(op_sharding, xc.OpSharding):
+    assert num_devices == len(op_sharding.tile_assignment_devices)
+  else:
+    assert (isinstance(op_sharding, xc.HloSharding) and
+            num_devices == op_sharding.num_devices())
 
   partitions, num_replicas = get_num_ways_dim_sharded(op_sharding)
   assert len(partitions) == len(shape), (len(partitions), len(shape))
@@ -86,14 +115,20 @@ def op_sharding_to_numpy_indices(
     else:
       raise AssertionError('Unrecognized number of shards. Please file a bug!')
 
-  device_it = iter(op_sharding.tile_assignment_devices)
+  if isinstance(op_sharding, xc.OpSharding):
+    device_it = iter(op_sharding.tile_assignment_devices)
+  else:
+    assert isinstance(op_sharding, xc.HloSharding)
+    device_it = iter(op_sharding.tile_assignment_devices())
+
   for i, idxs in enumerate(itertools.product(*axis_indices)):
     for _ in range(num_replicas):
       indices[next(device_it)] = idxs
   return indices
 
 
-def op_sharding_to_indices(op_sharding: xc.OpSharding, shape: Sequence[int],
-                           num_devices: int) -> Tuple[Tuple[slice, ...], ...]:
+def op_sharding_to_indices(
+    op_sharding: Union[xc.OpSharding, xc.HloSharding], shape: Sequence[int],
+    num_devices: int) -> Tuple[Tuple[slice, ...], ...]:
   indices = op_sharding_to_numpy_indices(op_sharding, shape, num_devices)
   return tuple(indices.flat)
