@@ -259,6 +259,7 @@ namespace; they are listed below.
     logspace
     mask_indices
     matmul
+    matrix_transpose
     max
     maximum
     mean

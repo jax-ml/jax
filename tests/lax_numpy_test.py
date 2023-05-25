@@ -1235,6 +1235,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @jtu.sample_product(
+    shape=[s for s in array_shapes if len(s) >= 2],
+    dtype=default_dtypes,
+    use_property=[True, False]
+  )
+  def testMatrixTranspose(self, shape, dtype, use_property):
+    if use_property:
+      jnp_fun = lambda x: jnp.asarray(x).mT
+    else:
+      jnp_fun = jnp.matrix_transpose
+    if hasattr(np, 'matrix_transpose'):
+      np_fun = np.matrix_transpose
+    else:
+      np_fun = lambda x: np.swapaxes(x, -1, -2)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
     dtype=default_dtypes,
     a_shape=one_dim_array_shapes,
     trim=["f", "b", "fb"],
@@ -5332,7 +5351,7 @@ class NumpyDocTests(jtu.JaxTestCase):
     # Test that docstring wrapping & transformation didn't fail.
 
     # Functions that have their own docstrings & don't wrap numpy.
-    known_exceptions = {'broadcast_arrays', 'fromfile', 'fromiter', 'vectorize'}
+    known_exceptions = {'fromfile', 'fromiter', 'vectorize'}
 
     for name in dir(jnp):
       if name in known_exceptions or name.startswith('_'):
@@ -5348,6 +5367,8 @@ class NumpyDocTests(jtu.JaxTestCase):
         continue
 
       wrapped_fun = obj.__np_wrapped__
+      if wrapped_fun is None:
+        continue
 
       # If the wrapped function has a docstring, obj should too
       if wrapped_fun.__doc__ and not obj.__doc__:
