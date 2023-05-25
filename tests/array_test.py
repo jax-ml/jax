@@ -691,16 +691,27 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, x)
 
   @jtu.sample_product(
-    dtype=[dt for dt in jtu.dtypes.all if dt != jax.dtypes.bfloat16],
+    dtype=jtu.dtypes.all,
     shape=[(), (10), (2, 3)],
   )
-  @unittest.skipIf(xla_extension_version < 157, "Test requires jaxlib >= 0.4.11")
+  @unittest.skipIf(xla_extension_version < 158, "Test requires jaxlib >= 0.4.11")
   def test_buffer_protocol(self, dtype, shape):
     if jtu.device_under_test() != "cpu":
       raise unittest.SkipTest("Buffer protocol only works on CPU")
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
     y = jax.device_put(x)
+    if dtype == jax.dtypes.bfloat16:
+      with self.assertRaises(
+          BufferError,
+          msg=(
+              'Buffers of type BF16 are not supported by the Python buffer'
+              ' protocol.'
+          ),
+      ):
+        memoryview(y)
+      return
+
     x_bytes = memoryview(x).tobytes()
     y_bytes = memoryview(y).tobytes()
     self.assertEqual(x_bytes, y_bytes)
@@ -1151,7 +1162,6 @@ class RngShardingTest(jtu.JaxTestCase):
     y = f(x)
     y_ref1 = f(jax.device_put(x, jax.devices()[0]))
     self.assertArraysEqual(y, y_ref1)
-
 
 
 if __name__ == '__main__':
