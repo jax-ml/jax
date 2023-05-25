@@ -8,6 +8,8 @@
 #include <variant>
 #include <vector>
 
+#include "pybind11/pybind11.h"
+#include "pybind11/stl.h"
 #include "absl/base/call_once.h"
 #include "absl/base/optimization.h"
 #include "absl/cleanup/cleanup.h"
@@ -18,40 +20,34 @@
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
+#include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 #include "pybind11_abseil/status_casters.h"  // IWYU pragma: keep
-#include "pybind11/pybind11.h"
-#include "pybind11/stl.h"
 
-#define RETURN_IF_ERROR(expr)               \
-  do {                                      \
-    absl::Status status = (expr);           \
-    if (ABSL_PREDICT_FALSE(!status.ok())) { \
-      return status;                        \
-    }                                       \
-  } while (false)
-
-#define CUDA_TO_STATUS(expr) \
-  jax_triton::ToStatus(expr, __FILE__, __LINE__, #expr)
-
-#define CUDA_RETURN_IF_ERROR(expr) RETURN_IF_ERROR(CUDA_TO_STATUS(expr))
+#define CUDA_RETURN_IF_ERROR(expr) JAX_RETURN_IF_ERROR(JAX_AS_STATUS(expr))
 
 namespace py = pybind11;
 
-namespace jax_triton {
-namespace {
+namespace jax::JAX_GPU_NAMESPACE {
 
-absl::Status ToStatus(CUresult result, const char* file, int64_t line,
+// TODO(cjfj): Move this to `gpu_kernel_helpers`?
+// Used via JAX_AS_STATUS(expr) macro.
+absl::Status AsStatus(CUresult error, const char* file, std::int64_t line,
                       const char* expr) {
-  if (ABSL_PREDICT_TRUE(result == CUDA_SUCCESS)) {
+  if (ABSL_PREDICT_TRUE(error == CUDA_SUCCESS)) {
     return absl::OkStatus();
   }
 
   const char* str;
-  CHECK_EQ(cuGetErrorName(result, &str), CUDA_SUCCESS);
-  return absl::InternalError(absl::StrFormat("%s:%d: CUDA call `%s` failed: %s",
-                                             file, line, expr, str));
+  CHECK_EQ(cuGetErrorName(error, &str), CUDA_SUCCESS);
+  return absl::InternalError(
+      absl::StrFormat("%s:%d: operation %s failed: %s", file, line, expr, str));
 }
+
+}  // namespace jax::JAX_GPU_NAMESPACE
+
+namespace jax_triton {
+namespace {
 
 constexpr uint32_t kNumThreadsPerWarp = 32;
 
@@ -75,8 +71,8 @@ class TritonKernel {
     CUcontext context;
     CUDA_RETURN_IF_ERROR(cuStreamGetCtx(stream, &context));
     absl::StatusOr<CUfunction> kernel = GetFunctionForContext(context);
-    RETURN_IF_ERROR(kernel.status());
-    return CUDA_TO_STATUS(cuLaunchKernel(
+    JAX_RETURN_IF_ERROR(kernel.status());
+    return JAX_AS_STATUS(cuLaunchKernel(
         *kernel, grid[0], grid[1], grid[2], block_dim_x_,
         /*blockDimY=*/1, /*blockDimZ=*/1, shared_mem_bytes_, stream, params,
         /*extra=*/nullptr));
@@ -221,7 +217,7 @@ class TritonAutotunedKernelCall : public TritonKernelCallBase {
         autotune_status_ = Autotune(stream, buffers);
       }
     });
-    RETURN_IF_ERROR(autotune_status_);
+    JAX_RETURN_IF_ERROR(autotune_status_);
     auto& kernel_call = py::cast<TritonKernelCall&>(configs_[0].kernel_call);
     return kernel_call.Launch(stream, buffers);
   }
@@ -258,7 +254,7 @@ class TritonAutotunedKernelCall : public TritonKernelCallBase {
     for (Config& config : configs_) {
       auto& kernel_call = py::cast<TritonKernelCall&>(config.kernel_call);
       absl::StatusOr<float> t = Benchmark(stream, kernel_call, buffers, 1);
-      RETURN_IF_ERROR(t.status());
+      JAX_RETURN_IF_ERROR(t.status());
       LOG(INFO) << config.description << ", ran 1 iter in " << *t << " ms";
       best = std::min(best, *t);
     }
@@ -279,7 +275,7 @@ class TritonAutotunedKernelCall : public TritonKernelCallBase {
       auto& kernel_call = py::cast<TritonKernelCall&>(config.kernel_call);
       absl::StatusOr<float> t =
           Benchmark(stream, kernel_call, buffers, timed_iters);
-      RETURN_IF_ERROR(t.status());
+      JAX_RETURN_IF_ERROR(t.status());
       LOG(INFO) << config.description << ", ran " << timed_iters << " iters in "
                 << *t << " ms";
 
@@ -302,7 +298,7 @@ class TritonAutotunedKernelCall : public TritonKernelCallBase {
     }
     // Synchronize stream to ensure copies are complete before the host copy
     // is deleted.
-    return CUDA_TO_STATUS(cuStreamSynchronize(stream));
+    return JAX_AS_STATUS(cuStreamSynchronize(stream));
   }
 
   absl::StatusOr<float> Benchmark(CUstream stream,
@@ -311,10 +307,10 @@ class TritonAutotunedKernelCall : public TritonKernelCallBase {
     CUevent start, stop;
     CUDA_RETURN_IF_ERROR(cuEventCreate(&start, /*Flags=*/CU_EVENT_DEFAULT));
     CUDA_RETURN_IF_ERROR(cuEventCreate(&stop, /*Flags=*/CU_EVENT_DEFAULT));
-    RETURN_IF_ERROR(kernel_call.Launch(stream, buffers));  // Warm-up iteration.
+    JAX_RETURN_IF_ERROR(kernel_call.Launch(stream, buffers));  // Warm-up.
     CUDA_RETURN_IF_ERROR(cuEventRecord(start, stream));
     for (int i = 0; i < num_iterations; ++i) {
-      RETURN_IF_ERROR(kernel_call.Launch(stream, buffers));
+      JAX_RETURN_IF_ERROR(kernel_call.Launch(stream, buffers));
     }
     CUDA_RETURN_IF_ERROR(cuEventRecord(stop, stream));
     CUDA_RETURN_IF_ERROR(cuEventSynchronize(stop));

@@ -391,6 +391,7 @@ pybind_extension(
     features = ["-use_header_modules"],
     module_name = "_triton",
     deps = [
+        ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
