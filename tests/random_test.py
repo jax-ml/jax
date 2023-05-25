@@ -1628,6 +1628,51 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertAllClose(samples.mean(), 1 / p, rtol=0.02, check_dtypes=False)
       self.assertAllClose(samples.var(), (1 - p) / (p * p) , rtol=0.05, check_dtypes=False)
 
+  @jtu.sample_product(
+      n= [5, 11, 21, 53, 500],
+      p= [0.1, 0.3, 0.5, 0.7, 0.9],
+      dtype= [np.int16, np.int32, np.int64])
+  def testBinomialSample(self, n, p, dtype):
+    key = self.seed_prng(2)
+    rand = lambda key: random.binomial(key, n, p, shape=(10000, ), dtype=dtype)
+    crand = jax.jit(rand)
+    uncompiled_samples = rand(key)
+    compiled_samples = crand(key)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckChiSquared(samples, scipy.stats.binom(n, p).pmf)
+      self.assertAllClose(samples.mean(), n * p, rtol=0.02, check_dtypes=False)
+      self.assertAllClose(samples.var(), n * p * (1 - p) , rtol=0.03, check_dtypes=False)
+
+  def testBinomialBatched(self):
+    key = self.seed_prng(1)
+    n = jnp.concatenate([2 * jnp.ones(10000), 20 * jnp.ones(10000)])
+    p = jnp.concatenate([0.2 * jnp.ones(10000), 0.8 * jnp.ones(10000)])
+    samples = random.binomial(key, n, p, shape=(20000,))
+    self._CheckChiSquared(samples[:10000], scipy.stats.binom(2.0, 0.2).pmf)
+    self._CheckChiSquared(samples[10000:], scipy.stats.binom(20.0, 0.8).pmf)
+
+  def testBinomialShape(self):
+    key = self.seed_prng(0)
+    x = random.binomial(key, np.array([2.0, 20.0]), np.array([0.2, 0.8]), shape=(3, 2))
+    assert x.shape == (3, 2)
+
+  def testBinomialZeros(self):
+    key = self.seed_prng(0)
+    n = jnp.concatenate([jnp.zeros(10), 20 * jnp.ones(10)])
+    p = jnp.concatenate([0.2 * jnp.ones(10), 0.8 * jnp.ones(10)])
+    samples = random.binomial(key, n, p, shape=(2, 20))
+    self.assertArraysEqual(samples[:, :10], jnp.zeros_like(samples[:, :10]))
+
+  def testBinomialCornerCases(self):
+    key = self.seed_prng(0)
+    n = jnp.array([-1, 0, jnp.nan])
+    samples = random.binomial(key, n, 0.5, shape=(3,))
+    p = jnp.array([np.nan, -0.1, 1.1])
+    samples2 = random.binomial(key, 10, p, shape=(3,))
+    self.assertArraysEqual(samples, jnp.array([-1, 0, -1]), check_dtypes=False)
+    self.assertArraysAllClose(samples2, jnp.array([0, 0, 10]), check_dtypes=False)
+
 class KeyArrayTest(jtu.JaxTestCase):
   # Key arrays involve:
   # * a Python key array type, backed by an underlying uint32 "base" array,

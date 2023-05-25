@@ -155,6 +155,7 @@ from jax._src.random import (
   ball as ball,
   bernoulli as bernoulli,
   beta as beta,
+  binomial as binomial,
   bits as bits,
   categorical as categorical,
   cauchy as cauchy,
