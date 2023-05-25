@@ -657,7 +657,8 @@ jax_test(
     args = ["--jax_enable_custom_prng=true"],
     backend_tags = {
         "cpu": [
-            "noasan",  # Times out under asan/tsan.
+            "noasan",  # Times out under asan/msan/tsan.
+            "nomsan",
             "notsan",
         ],
         "tpu": [
