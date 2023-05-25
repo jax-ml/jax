@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 
+#include "absl/base/optimization.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -193,28 +194,28 @@ std::string ErrorString(T status, const char* file, std::int64_t line,
 
 absl::Status AsStatus(gpuError_t error, const char* file, std::int64_t line,
                       const char* expr) {
-  if (error != gpuSuccess)
+  if (ABSL_PREDICT_FALSE(error != gpuSuccess))
     return absl::InternalError(ErrorString(error, file, line, expr));
   return absl::OkStatus();
 }
 
 absl::Status AsStatus(gpusolverStatus_t status, const char* file,
                       std::int64_t line, const char* expr) {
-  if (status != GPUSOLVER_STATUS_SUCCESS)
+  if (ABSL_PREDICT_FALSE(status != GPUSOLVER_STATUS_SUCCESS))
     return absl::InternalError(ErrorString(status, file, line, expr));
   return absl::OkStatus();
 }
 
 absl::Status AsStatus(gpusparseStatus_t status, const char* file,
                       std::int64_t line, const char* expr) {
-  if (status != GPUSPARSE_STATUS_SUCCESS)
+  if (ABSL_PREDICT_FALSE(status != GPUSPARSE_STATUS_SUCCESS))
     return absl::InternalError(ErrorString(status, file, line, expr));
   return absl::OkStatus();
 }
 
 absl::Status AsStatus(gpublasStatus_t status, const char* file,
                       std::int64_t line, const char* expr) {
-  if (status != GPUBLAS_STATUS_SUCCESS)
+  if (ABSL_PREDICT_FALSE(status != GPUBLAS_STATUS_SUCCESS))
     return absl::InternalError(ErrorString(status, file, line, expr));
   return absl::OkStatus();
 }

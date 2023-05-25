@@ -56,6 +56,7 @@ cc_library(
         ":cuda_vendor",
         "@xla//xla/stream_executor/cuda:cusolver_lib",
         "@xla//xla/stream_executor/cuda:cusparse_lib",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

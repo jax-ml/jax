@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <memory>
 
+#include "absl/base/optimization.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "jaxlib/gpu/vendor.h"
@@ -25,16 +26,17 @@ limitations under the License.
 #define JAX_AS_STATUS(expr) \
   jax::JAX_GPU_NAMESPACE::AsStatus(expr, __FILE__, __LINE__, #expr)
 
-#define JAX_THROW_IF_ERROR(expr)                                           \
-  {                                                                        \
-    auto s___ = (expr);                                                    \
-    if (!s___.ok()) throw std::runtime_error(std::string(s___.message())); \
+#define JAX_THROW_IF_ERROR(expr)                             \
+  {                                                          \
+    auto s___ = (expr);                                      \
+    if (ABSL_PREDICT_FALSE(!s___.ok()))                      \
+      throw std::runtime_error(std::string(s___.message())); \
   }
 
-#define JAX_RETURN_IF_ERROR(expr) \
-  {                               \
-    auto s___ = (expr);           \
-    if (!s___.ok()) return s___;  \
+#define JAX_RETURN_IF_ERROR(expr)                    \
+  {                                                  \
+    auto s___ = (expr);                              \
+    if (ABSL_PREDICT_FALSE(!s___.ok())) return s___; \
   }
 
 namespace jax {
