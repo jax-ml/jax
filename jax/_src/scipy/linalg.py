@@ -34,7 +34,6 @@ from jax._src.numpy.util import (
 from jax._src.typing import Array, ArrayLike
 
 
-_T = lambda x: jnp.swapaxes(x, -1, -2)
 _no_chkfinite_doc = textwrap.dedent("""
 Does not support the Scipy argument ``check_finite=True``,
 because compiled JAX code cannot perform checks of array values at runtime.
@@ -44,8 +43,8 @@ _no_overwrite_and_chkfinite_doc = _no_chkfinite_doc + "\nDoes not support the Sc
 @partial(jit, static_argnames=('lower',))
 def _cholesky(a: ArrayLike, lower: bool) -> Array:
   a, = promote_dtypes_inexact(jnp.asarray(a))
-  l = lax_linalg.cholesky(a if lower else jnp.conj(_T(a)), symmetrize_input=False)
-  return l if lower else jnp.conj(_T(l))
+  l = lax_linalg.cholesky(a if lower else jnp.conj(a.mT), symmetrize_input=False)
+  return l if lower else jnp.conj(l.mT)
 
 @_wraps(scipy.linalg.cholesky,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))

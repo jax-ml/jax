@@ -33,12 +33,8 @@ from jax._src.util import canonicalize_axis
 from jax._src.typing import ArrayLike, Array
 
 
-def _T(x: ArrayLike) -> Array:
-  return jnp.swapaxes(x, -1, -2)
-
-
 def _H(x: ArrayLike) -> Array:
-  return ufuncs.conjugate(jnp.swapaxes(x, -1, -2))
+  return ufuncs.conjugate(jnp.matrix_transpose(x))
 
 
 def _symmetrize(x: Array) -> Array: return (x + _H(x)) / 2
@@ -436,7 +432,7 @@ def pinv(a: ArrayLike, rcond: Optional[ArrayLike] = None,
   rcond = lax.expand_dims(rcond[..., jnp.newaxis], range(s.ndim - rcond.ndim - 1))
   cutoff = rcond * s[..., 0:1]
   s = jnp.where(s > cutoff, s, jnp.inf).astype(u.dtype)
-  res = jnp.matmul(_T(vh), ufuncs.divide(_T(u), s[..., jnp.newaxis]),
+  res = jnp.matmul(vh.mT, ufuncs.divide(u.mT, s[..., jnp.newaxis]),
                    precision=lax.Precision.HIGHEST)
   return lax.convert_element_type(res, arr.dtype)
 
@@ -591,7 +587,7 @@ def qr(a: ArrayLike, mode: str = "reduced") -> Union[Array, Tuple[Array, Array]]
   a, = promote_dtypes_inexact(jnp.asarray(a))
   if mode == "raw":
     a, taus = lax_linalg.geqrf(a)
-    return _T(a), taus
+    return a.mT, taus
   if mode in ("reduced", "r", "full"):
     full_matrices = False
   elif mode == "complete":
