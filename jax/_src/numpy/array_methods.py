@@ -764,6 +764,7 @@ _impl_only_array_methods = {
 _array_properties = {
   "flat": _notimplemented_flat,
   "T": lax_numpy.transpose,
+  "mT": lax_numpy.matrix_transpose,
   "real": ufuncs.real,
   "imag": ufuncs.imag,
   "nbytes": _nbytes,

@@ -168,6 +168,7 @@ from jax._src.numpy.lax_numpy import (
     logspace as logspace,
     mask_indices as mask_indices,
     matmul as matmul,
+    matrix_transpose as matrix_transpose,
     meshgrid as meshgrid,
     moveaxis as moveaxis,
     nan as nan,
