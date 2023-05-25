@@ -25,6 +25,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.11
 
+* Changes
+  * Readded support for the Python buffer protocol (`memoryview`) on CPU
+    devices.
+
 ## jax 0.4.10 (May 11, 2023)
 
 ## jaxlib 0.4.10 (May 11, 2023)
