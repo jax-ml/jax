@@ -1658,7 +1658,12 @@ def get_serialized_computation(
   mlir_module = lowered._lowering.stablehlo()
   xla_call_module_version = 5
   mlir_str = mlir.module_to_bytecode(mlir_module)
-  target_version = stablehlo.get_earliest_forward_compatible_version()
+  if stablehlo.get_api_version() < 4:
+    target_version = stablehlo.get_earliest_forward_compatible_version()
+  else:
+    # See comments next to the usage of stablehlo.get_minimum_version() in
+    # jax_export.py for an explanation how it works.
+    target_version = stablehlo.get_minimum_version()
   mlir_module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
     mlir_str, target_version)
   return mlir_module_serialized, xla_call_module_version
