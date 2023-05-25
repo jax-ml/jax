@@ -1780,7 +1780,10 @@ class Jax2tfWithCustomPRNGTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual(tf_result, jax_result)
 
   def test_key_closure(self):
-    func = lambda: jax.random.uniform(global_key, ())
+    def func():
+      # Include nontrivial shape operations to catch tracing bugs.
+      key = global_key.reshape(1).squeeze()
+      return jax.random.uniform(key)
     global_key = jax.random.PRNGKey(0)
     tf_result = jax2tf.convert(func)()
     jax_result = func()

@@ -1244,8 +1244,8 @@ class TensorFlowTrace(core.Trace):
         return val
     tf_val, jax_dtype = _tfval_to_tensor_jax_dtype(val, memoize_constants=True)
     return TensorFlowTracer(
-        self, val, core.ShapedArray(tf_val.shape, jax_dtype,
-                                    weak_type=dtypes.is_weakly_typed(val)))
+        self, tf_val, core.ShapedArray(np.shape(val), jax_dtype,
+                                       weak_type=dtypes.is_weakly_typed(val)))
 
   def lift(self, val: core.Tracer) -> TensorFlowTracer:
     # This would be called when we need to raise a tracer from a lower-level
