@@ -1563,6 +1563,71 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     x = np.arange(3, dtype=np.int32)
     _ = tf.function(tf_f_2, autograph=False).get_concrete_function(x)
 
+  def test_call_tf_graph_runtime(self):
+
+    @tf.function(jit_compile=True)
+    def tf_func_1(x):
+      return x * x
+
+    @tf.function
+    def tf_func_2(x, y):
+      return tf_func_1(x) + y
+
+    @tf.function
+    def f_tf(x, y, z):
+      return tf_func_2(x, y) + z, z
+
+    x = np.array(3.0, dtype=jnp.float32)
+    y = np.array(3.0, dtype=jnp.float32)
+    z = np.array(5.0, dtype=jnp.float32)
+    res =  f_tf(x, y, z)
+
+    f_jax = jax2tf.call_tf(f_tf,call_tf_graph=True)
+
+    # eager mode
+    res_jax = f_jax(x, y, z)
+    self.assertAllClose(res, res_jax)
+
+    # jax.jit is not supported alone.
+    with self.assertRaisesRegex(ValueError, "call_tf_graph=True only support exporting by jax2tf.convert currently"):
+      _ = jax.jit(f_jax)(x, y, z)
+
+    # After we convert back to tf, it is okay to execute.
+    f_tf_rt = jax2tf.convert(f_jax,
+        native_serialization_strict_checks=False,
+        native_serialization=True, with_gradient=False,
+    )
+    f_tf_rt = tf.function(f_tf_rt, jit_compile=True)
+    res_rt = f_tf_rt(x, y, z)
+    self.assertAllClose(res, res_rt)
+
+    # But `with_gradient=True` does not work yet
+    # GPU err msg: "No registered implementation for custom call"
+    # TPU err msg: "Custom emitter for tf.call_tf_function not found" does not match"
+    with self.assertRaises(
+        Exception,
+    ):
+      f_tf_rt_gradient_true = jax2tf.convert(
+          f_jax,
+          native_serialization_strict_checks=False,
+          native_serialization=True,
+          with_gradient=True,
+      )
+      f_tf_rt_gradient_true = tf.function(
+          f_tf_rt_gradient_true, jit_compile=True
+      )
+      res_rt = f_tf_rt_gradient_true(x, y, z)
+      self.assertAllClose(res, res_rt)
+
+    # After saving and loading, the XLACallModule can not find the renamed tf function.
+    # This is python tf.SavedModel.load issue.
+    with self.assertRaisesRegex(
+        Exception,
+        "Custom emitter for tf.call_tf_function not found",
+    ):
+      f_tf_rt_2, _ = tf_test_util.SaveAndLoadFunction(f_tf_rt, input_args=[x, y, z])
+      res_rt_2 = f_tf_rt_2(x, y, z)
+      self.assertAllClose(res, res_rt_2)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
