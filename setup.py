@@ -112,7 +112,7 @@ setup(
           "nvidia-cuda-cupti-cu12",
           "nvidia-cuda-nvcc-cu12",
           "nvidia-cuda-runtime-cu12",
-          "nvidia-cudnn-cu12>=8.8",
+          "nvidia-cudnn-cu12>=8.9",
           "nvidia-cufft-cu12",
           "nvidia-cusolver-cu12",
           "nvidia-cusparse-cu12",
