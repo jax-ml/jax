@@ -2953,19 +2953,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         "Setting both out_shardings and out_axis_resources is not allowed"):
       pjit(lambda x: x, out_shardings=P('x'), out_axis_resources=P('x'))
 
-  def test_set_none_wsc_axis_resources_and_shardings(self):
-    with self.assertRaisesRegex(
-        ValueError,
-        "Not specifying shardings to `with_sharding_constraint` is not allowed."):
-      pjit(jax.lax.with_sharding_constraint(jnp.arange(8)))
-
-  def test_set_both_wsc_axis_resources_and_shardings(self):
-    with self.assertRaisesRegex(
-        ValueError,
-        "Setting both axis_resources and shardings is not allowed"):
-      pjit(jax.lax.with_sharding_constraint(
-          jnp.arange(8), axis_resources=P('x'), shardings=P('x')))
-
   def test_with_sharding_constraint_spmd_axis_name(self):
     mesh = jtu.create_global_mesh((2, 2, 2), ('replica', 'data', 'mdl'))
     shape = (8, 4, 2, 2)

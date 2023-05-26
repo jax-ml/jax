@@ -1786,32 +1786,7 @@ core.pp_eqn_rules[pjit_p] = _pjit_pp_rule
 
 # -------------------- with_sharding_constraint --------------------
 
-def _resolve_wsc_args(axis_resources, shardings):
-  if not is_unspecified(axis_resources) and not is_unspecified(shardings):
-    raise ValueError(
-        'Setting both axis_resources and shardings is not '
-        'allowed. axis_resources is deprecated. Please use shardings.')
-  if is_unspecified(axis_resources) and is_unspecified(shardings):
-    raise ValueError(
-        'Not specifying shardings to `with_sharding_constraint` is not allowed. '
-        'Please specify the shardings argument with a concrete sharding. Note '
-        'that axis_resources is deprecated, so use the shardings argument.')
-
-  if not is_unspecified(axis_resources):
-    warnings.warn(
-        'axis_resources is deprecated. Please use shardings argument instead.',
-        DeprecationWarning)
-    final_shardings = axis_resources
-  else:
-    final_shardings = shardings
-  return final_shardings
-
-
-# TODO(yashkatariya): Remove the axis_resources argument and make the signature
-# `with_sharding_constraint(x, shardings)` with no defaults after deprecation
-# period is finished. The deprecation period expires 3 months from Feb 13, 2023.
-def with_sharding_constraint(x, shardings=UNSPECIFIED,
-                             axis_resources=UNSPECIFIED):
+def with_sharding_constraint(x, shardings):
   """Mechanism to constrain the sharding of an Array inside a jitted computation
 
   This is a strict constraint for the GSPMD partitioner and not a hint. For examples
@@ -1821,17 +1796,15 @@ def with_sharding_constraint(x, shardings=UNSPECIFIED,
     x: PyTree of jax.Arrays which will have their shardings constrainted
     shardings: PyTree of sharding specifications. Valid values are the same as for
       the ``in_shardings`` argument of :func:`jax.experimental.pjit`.
-    axis_resources: (deprecated) use shardings instead.
   Returns:
     x_with_shardings: PyTree of jax.Arrays with specified sharding constraints.
 
   .. _Distributed arrays and automatic parallelization: https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
   """
-  final_shardings = _resolve_wsc_args(axis_resources, shardings)
   x_flat, tree = tree_flatten(x)
   user_shardings, _, _ = prepare_axis_resources(
-      final_shardings, "shardings", allow_unconstrained_dims=True)
-  del final_shardings
+      shardings, "shardings", allow_unconstrained_dims=True)
+  del shardings
 
   user_shardings_flat = tuple(
       flatten_axes("with_sharding_constraint shardings", tree, user_shardings))
