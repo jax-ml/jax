@@ -16,7 +16,6 @@ from absl.testing import absltest
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax._src import lib
 from jax._src import test_util as jtu
 from jax.experimental import rnn
 
@@ -38,10 +37,6 @@ class RnnTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("cpu", "tpu", "rocm")
   def test_lstm(self, batch_size: int, seq_len: int, input_size: int,
                 hidden_size: int, num_layers: int, bidirectional: bool):
-    if lib.version < (0, 4, 7):
-      # TODO(sharadmv, zhangqiaorjc): remove this when minimum jaxlib version is
-      # bumped
-      self.skipTest("Need latest jaxlib for this test to pass.")
     num_directions = 2 if bidirectional else 1
     seq_length_key, root_key = jax.random.split(jax.random.PRNGKey(0))
 

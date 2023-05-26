@@ -742,9 +742,6 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(np.arange(8.), x)
 
   def test_array_fully_replicated_shard(self):
-    if xla_extension_version < 148:
-      self.skipTest('Requires xla_extension_version >= 148')
-
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     inp_shape = (8, 2)
     arr, inp_data = create_array(

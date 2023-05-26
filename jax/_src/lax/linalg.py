@@ -44,9 +44,7 @@ from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -619,9 +617,6 @@ def _eigh_jacobi_lowering_rule(ctx, operand, lower, sort_eigenvalues):
 
   if any(not is_constant_shape(aval_out.shape)
          for aval_out in ctx.avals_out):
-    if jaxlib_version < (0, 4, 9):
-      raise ValueError("shape polymorphism with native lowering for eigh on "
-                       "TPU requires jaxlib version 0.4.9.")
     result_shapes = [
         mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, aval_out.shape))
         # The custom call returns the results swapped
@@ -631,20 +626,13 @@ def _eigh_jacobi_lowering_rule(ctx, operand, lower, sort_eigenvalues):
     result_shapes = None
   op = mlir.custom_call(
       "Eigh",
-      (result_types if xla_extension_version >= 150 else
-       [ir.TupleType.get_tuple(result_types)]),
+      result_types,
       [operand],
       backend_config=backend_config,
       api_version=1,
       result_shapes=result_shapes,
   )
-  if xla_extension_version >= 150:
-    return op.results[1], op.results[0]
-  else:
-    return (
-        hlo.GetTupleElementOp(op, 1).result,
-        hlo.GetTupleElementOp(op, 0).result,
-    )
+  return op.results[1], op.results[0]
 
 eigh_jacobi_p = Primitive('eigh_jacobi')
 eigh_jacobi_p.multiple_results = True
@@ -682,31 +670,24 @@ def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
 
   batch_dims = operand_aval.shape[:-2]
 
-  if jaxlib_version < (0, 4, 9):
-    if not is_constant_shape(operand_aval.shape):
-      raise NotImplementedError("Shape polymorphism for native lowering for "
-                                "eigh requires "
-                                "jaxlib version 0.4.9; b/261671778")
-    v, w, info = syevd_impl(operand_aval.dtype, operand, lower=lower)
-  else:
-    # The eigh implementation on CPU and GPU uses lapack helper routines to
-    # find the size of the workspace based on the non-batch dimensions.
-    # Therefore, we cannot yet support dynamic non-batch dimensions.
-    if not is_constant_shape(operand_aval.shape[-2:]):
-      raise NotImplementedError(
-          "Shape polymorphism for for native lowering for eigh is implemented "
-          f"only for the batch dimensions: {operand_aval.shape}")
+  # The eigh implementation on CPU and GPU uses lapack helper routines to
+  # find the size of the workspace based on the non-batch dimensions.
+  # Therefore, we cannot yet support dynamic non-batch dimensions.
+  if not is_constant_shape(operand_aval.shape[-2:]):
+    raise NotImplementedError(
+        "Shape polymorphism for for native lowering for eigh is implemented "
+        f"only for the batch dimensions: {operand_aval.shape}")
 
-    batch_size_num = math.prod(batch_dims) if batch_dims else 1
-    batch_size = mlir.eval_dynamic_shape(ctx, (batch_size_num,))[0]
-    if isinstance(batch_size, int):
-      batch_size = mlir.ir_constant(np.int32(batch_size))
-    v_shape: ir.Value = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, v_aval.shape))
-    w_shape: ir.Value = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, w_aval.shape))
-    info_shape: ir.Value = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, batch_dims))
-    v, w, info = syevd_impl(operand_aval.dtype, operand, batch_size,
-                            v_shape, w_shape, info_shape,
-                            lower=lower)
+  batch_size_num = math.prod(batch_dims) if batch_dims else 1
+  batch_size = mlir.eval_dynamic_shape(ctx, (batch_size_num,))[0]
+  if isinstance(batch_size, int):
+    batch_size = mlir.ir_constant(np.int32(batch_size))
+  v_shape: ir.Value = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, v_aval.shape))
+  w_shape: ir.Value = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, w_aval.shape))
+  info_shape: ir.Value = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, batch_dims))
+  v, w, info = syevd_impl(operand_aval.dtype, operand, batch_size,
+                          v_shape, w_shape, info_shape,
+                          lower=lower)
 
   zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
   ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")
@@ -1269,20 +1250,12 @@ def _lu_tpu_lowering_rule(ctx, operand):
     mlir.aval_to_ir_type(ctx.avals_out[2])
   ]
   op = hlo.CustomCallOp(
-   (result_types if xla_extension_version >= 150 else
-    [ir.TupleType.get(result_types)]),
+    result_types,
     [operand],
     call_target_name=ir.StringAttr.get("LuDecomposition"),
     has_side_effect=ir.BoolAttr.get(False),
   )
-  if xla_extension_version >= 150:
-    return op.results
-  else:
-    return (
-        hlo.GetTupleElementOp(op, 0).result,
-        hlo.GetTupleElementOp(op, 1).result,
-        hlo.GetTupleElementOp(op, 2).result,
-    )
+  return op.results
 
 
 lu_p = Primitive('lu')
@@ -1411,19 +1384,12 @@ def _geqrf_lowering_rule(ctx, operand):
     result_shapes = None
   op = mlir.custom_call(
       "Qr",
-      (result_types if xla_extension_version >= 150
-       else [ir.TupleType.get(result_types)]),
+      result_types,
       [operand],
       api_version=1,
       result_shapes=result_shapes
   )
-  if xla_extension_version >= 150:
-    return op.results
-  else:
-    return (
-        hlo.GetTupleElementOp(op, 0).result,
-        hlo.GetTupleElementOp(op, 1).result,
-    )
+  return op.results
 
 def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a):
   if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):

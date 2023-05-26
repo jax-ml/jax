@@ -1285,8 +1285,6 @@ class CustomPartitionerTest(jtu.JaxTestCase):
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_custom_partitioner_invalid_sharding(self):
     self.skip_if_custom_partitioning_not_supported()
-    if xla_extension_version < 149:
-      self.skipTest('Requires xla_extension_version >= 149')
 
     def partition(arg_shapes, result_shape):
       def lower_fn(x):

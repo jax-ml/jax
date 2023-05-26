@@ -62,7 +62,6 @@ from jax._src.api_util import (
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import PmapSharding
@@ -2894,9 +2893,8 @@ def clear_caches():
   xc._xla.PjitFunctionCache.clear_all()
 
   # Clear all C++ compiled executable caches for pmap
-  if xla_extension_version >= 146:  # TODO(frostig): remove when ready
-    for fun in _pmap_cache_clears:
-      fun._cache_clear()
+  for fun in _pmap_cache_clears:
+    fun._cache_clear()
 
   # Clear particular util.cache instances.
   dispatch.xla_primitive_callable.cache_clear()

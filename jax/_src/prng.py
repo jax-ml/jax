@@ -47,7 +47,6 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
 from jax._src.lib.mlir import ir
 from jax._src.lib import gpu_prng
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.array_methods import (
@@ -1037,18 +1036,10 @@ def _threefry2x32_gpu_lowering(lowering_func, ctx, k1, k2, x1, x2):
     length = int(out_len)  # will be passed statically
     output_shape = None
 
-  if (jaxlib_version >= (0, 4, 9)):
-    return lowering_func(
-            (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
-            (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)), length,
-            output_shape)
-  else:
-    if output_shape is not None:
-      raise ValueError("native lowering with shape polymorphism "
-                       "for threefry on GPU requires jaxlib version 0.4.9")
-    return lowering_func(
-            (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
-            (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)), length)
+  return lowering_func(
+          (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
+          (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)), length,
+          output_shape)
 
 threefry2x32_p = core.Primitive("threefry2x32")
 threefry2x32_p.multiple_results = True

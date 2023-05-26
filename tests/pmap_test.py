@@ -47,7 +47,6 @@ from jax._src import sharding_impls
 from jax._src import sharding_specs
 from jax._src import xla_bridge
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.util import safe_map, safe_zip
 from jax._src.interpreters import pxla
 from jax.interpreters import xla
@@ -332,8 +331,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = f.lower(x).compile()
     self.assertIsNotNone(f.runtime_executable())
 
-  @unittest.skipIf(xla_extension_version < 145,
-                   'Test requires xla_extension_version >= 145')
   def test_jit_lower_compile_with_compiler_options(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
@@ -343,8 +340,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     lowered.compile(            # doesn't crash
         compiler_options={"xla_embed_ir_in_executable": True})
 
-  @unittest.skipIf(xla_extension_version < 145,
-                   'Test requires xla_extension_version >= 145')
   def test_jit_lower_compile_with_compiler_options_invalid(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
@@ -361,8 +356,6 @@ class PythonPmapTest(jtu.JaxTestCase):
         lambda: lowered.compile(
             compiler_options={"xla_embed_ir_in_executable": "invalid_value"}))
 
-  @unittest.skipIf(xla_extension_version < 145,
-                   'Test requires xla_extension_version >= 145')
   def test_jit_lower_compile_with_compiler_options_multiple(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)

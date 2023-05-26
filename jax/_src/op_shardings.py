@@ -19,7 +19,6 @@ from typing import List, Sequence, Tuple, Union
 import numpy as np
 
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 
 
 def get_num_ways_dim_sharded(
@@ -49,11 +48,7 @@ def get_num_ways_dim_sharded(
 
 def is_op_sharding_replicated(op: Union[xc.OpSharding, xc.HloSharding]) -> bool:
   if isinstance(op, xc.OpSharding):
-    if xla_extension_version >= 147:
-      return xc._xla.is_op_sharding_fully_replicated(op)
-    if len(op.tile_assignment_devices) == 1:
-      return True
-    return xc.HloSharding.from_proto(op).is_replicated()  # type: ignore
+    return xc._xla.is_op_sharding_fully_replicated(op)
   else:
     assert isinstance(op, xc.HloSharding)
     if op.num_devices() == 1:

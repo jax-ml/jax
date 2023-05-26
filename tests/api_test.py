@@ -68,7 +68,6 @@ from jax._src import prng
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src import linear_util as lu
@@ -1177,8 +1176,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIn("jax.result_info = \"['a']\"", mhlo_str)
     self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
 
-  @unittest.skipIf(xla_extension_version < 145,
-                   'Test requires xla_extension_version >= 145')
   def test_jit_lower_compile_with_compiler_options(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
@@ -1188,8 +1185,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     lowered.compile(            # doesn't crash
         compiler_options={"xla_embed_ir_in_executable": True})
 
-  @unittest.skipIf(xla_extension_version < 145,
-                   'Test requires xla_extension_version >= 145')
   def test_jit_lower_compile_with_compiler_options_invalid(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
@@ -1207,8 +1202,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         lambda: lowered.compile(
             compiler_options={"xla_embed_ir_in_executable": "invalid_value"}))
 
-  @unittest.skipIf(xla_extension_version < 145,
-                   'Test requires xla_extension_version >= 145')
   def test_jit_lower_compile_with_compiler_options_multiple(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
@@ -4231,8 +4224,6 @@ class APITest(jtu.JaxTestCase):
     out = jax.grad(f)(3.0)  # doesn't crash
     self.assertAllClose(out, 1., check_dtypes=False)
 
-  @unittest.skipIf(xla_extension_version < 146,
-                   'Test requires xla_extension_version >= 146')
   def test_cache_clear_pmap(self):
     @jax.pmap
     def f(i):
