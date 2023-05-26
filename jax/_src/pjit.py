@@ -15,6 +15,7 @@
 import dataclasses
 import inspect
 import logging
+import weakref
 import numpy as np
 from typing import (Callable, Sequence, Tuple, Union, cast, List, Optional,
                     Iterable, NamedTuple, Any)
@@ -183,6 +184,32 @@ def _python_pjit(fun: Callable, infer_params_fn):
   wrapped.clear_cache = _python_pjit_evict_fn
   return wrapped
 
+
+def _get_fastpath_data(executable, out_tree, args_flat, out_flat):
+  use_fastpath = (
+      executable is not None and
+      isinstance(executable, pxla.MeshExecutable) and
+      isinstance(executable.unsafe_call, pxla.ExecuteReplicated) and
+      # No effects in computation
+      not executable.unsafe_call.ordered_effects and
+      not executable.unsafe_call.has_unordered_effects and
+      not executable.unsafe_call.has_host_callbacks and
+      all(isinstance(x, xc.ArrayImpl) for x in out_flat)
+  )
+
+  if use_fastpath:
+    out_avals = [o.aval for o in out_flat]
+    out_committed = [o._committed for o in out_flat]
+    kept_var_bitvec = [i in executable._kept_var_idx
+                       for i in range(len(args_flat))]
+    fastpath_data = pxla.MeshExecutableFastpathData(
+        executable.xla_executable, out_tree, executable._in_shardings,
+        executable._out_shardings, out_avals, out_committed, kept_var_bitvec)
+  else:
+    fastpath_data = None
+  return fastpath_data
+
+
 class _MostRecentPjitCallExecutable(threading.local):
   def __init__(self):
     self.value = None
@@ -201,7 +228,10 @@ def _cpp_pjit_evict_fn(self):
   _create_pjit_jaxpr.evict_function(self._fun)  # type: ignore
 
 
-_cpp_pjit_cache = xc._xla.PjitFunctionCache()
+# The entries are doubled here from the default 4096 because _pjit_call_impl
+# also has a cpp dispatch path and that would double the number of entries in
+# the global shared cache.
+_cpp_pjit_cache = xc._xla.PjitFunctionCache(capacity=8192)
 
 
 def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
@@ -211,31 +241,8 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
   def cache_miss(*args, **kwargs):
     outs, out_flat, out_tree, args_flat = _python_pjit_helper(
         fun, infer_params_fn, *args, **kwargs)
-
     executable = _read_most_recent_pjit_call_executable()
-
-    use_fastpath = (
-        executable is not None and
-        isinstance(executable, pxla.MeshExecutable) and
-        isinstance(executable.unsafe_call, pxla.ExecuteReplicated) and
-        # No effects in computation
-        not executable.unsafe_call.ordered_effects and
-        not executable.unsafe_call.has_unordered_effects and
-        not executable.unsafe_call.has_host_callbacks and
-        all(isinstance(x, xc.ArrayImpl) for x in out_flat)
-    )
-
-    if use_fastpath:
-      out_avals = [o.aval for o in out_flat]
-      out_committed = [o._committed for o in out_flat]
-      kept_var_bitvec = [i in executable._kept_var_idx
-                         for i in range(len(args_flat))]
-      fastpath_data = pxla.MeshExecutableFastpathData(
-          executable.xla_executable, out_tree, executable._in_shardings,
-          executable._out_shardings, out_avals, out_committed, kept_var_bitvec)
-    else:
-      fastpath_data = None
-
+    fastpath_data = _get_fastpath_data(executable, out_tree, args_flat, out_flat)
     return outs, fastpath_data
 
   if pjit_has_explicit_sharding:
@@ -1088,9 +1095,9 @@ def _resolve_in_shardings(
   return tuple(resolved_in_shardings)
 
 
-def _pjit_call_impl(*args, jaxpr,
-                    in_shardings, out_shardings, resource_env,
-                    donated_invars, name, keep_unused, inline):
+def _pjit_call_impl_python(
+    *args, jaxpr, in_shardings, out_shardings, resource_env, donated_invars,
+    name, keep_unused, inline):
   global _most_recent_pjit_call_executable
 
   in_shardings = _resolve_in_shardings(
@@ -1120,7 +1127,7 @@ def _pjit_call_impl(*args, jaxpr,
                           ("abstract args", map(xla.abstractify, args)),
                           ("fingerprint", fingerprint))
   try:
-    return compiled.unsafe_call(*args)
+    return compiled.unsafe_call(*args), compiled
   except FloatingPointError:
     assert config.jax_debug_nans or config.jax_debug_infs  # compiled_fun can only raise in this case
 
@@ -1145,6 +1152,41 @@ def _pjit_call_impl(*args, jaxpr,
            "If you see this error, consider opening a bug report at "
            "https://github.com/google/jax.")
     raise FloatingPointError(msg)
+
+
+@weakref_lru_cache
+def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, resource_env,
+                      donated_invars, name, keep_unused, inline):
+  # The input jaxpr to `_get_jaxpr_as_fun` is under a weakref_lru_cache so
+  # returning `core.jaxpr_as_fun(jaxpr)` directly creates a strong reference to
+  # the jaxpr defeating the purpose of weakref_lru_cache. So return a function
+  # that closes over a weakrefed jaxpr and gets called inside that function.
+  # This way there won't be a strong reference to the jaxpr from the output
+  # function.
+  jaxpr = weakref.ref(jaxpr)
+  return lambda *args: core.jaxpr_as_fun(jaxpr())(*args)  # pylint: disable=unnecessary-lambda
+
+
+def _pjit_call_impl(*args, jaxpr,
+                    in_shardings, out_shardings, resource_env,
+                    donated_invars, name, keep_unused, inline):
+  def call_impl_cache_miss(*args_, **kwargs_):
+    out_flat, compiled = _pjit_call_impl_python(
+        *args, jaxpr=jaxpr, in_shardings=in_shardings,
+        out_shardings=out_shardings, resource_env=resource_env,
+        donated_invars=donated_invars, name=name, keep_unused=keep_unused,
+        inline=inline)
+    fastpath_data = _get_fastpath_data(
+        compiled, tree_structure(out_flat), args, out_flat)
+    return out_flat, fastpath_data
+
+  f = _get_jaxpr_as_fun(
+      jaxpr, tuple(getattr(i, '_original_sharding', i) for i in in_shardings),
+      tuple(getattr(o, '_original_sharding', o) for o in out_shardings),
+      resource_env, donated_invars, name, keep_unused, inline)
+  donated_argnums = [i for i, d in enumerate(donated_invars) if d]
+  return xc._xla.pjit(name, f, call_impl_cache_miss, [], [], donated_argnums,
+                      _cpp_pjit_cache)(*args)
 
 pjit_p.def_impl(_pjit_call_impl)
 

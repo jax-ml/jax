@@ -3246,23 +3246,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
     ns = NamedSharding(mesh, P('x'))
     arr = jax.device_put(
         np.arange(16).reshape(8, 2), NamedSharding(mesh, P(None, 'x')))
-    vf = jax.vmap(pjit(lambda x: x * 2, in_shardings=ns))
-    out = vf(arr)
-    cache_info1 = pjit_lib._pjit_lower_cached.cache_info()
-    self.assertIsInstance(out.sharding, NamedSharding)
 
-    out2 = vf(out)
-    cache_info2 = pjit_lib._pjit_lower_cached.cache_info()
-    self.assertIsInstance(out2.sharding, NamedSharding)
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      vf = jax.vmap(pjit(lambda x: x * 2, in_shardings=ns))
+      out = vf(arr)
+      self.assertIsInstance(out.sharding, NamedSharding)
 
-    out3 = vf(out2)
-    cache_info3 = pjit_lib._pjit_lower_cached.cache_info()
-    self.assertIsInstance(out3.sharding, NamedSharding)
+      out2 = vf(out)
+      self.assertIsInstance(out2.sharding, NamedSharding)
 
-    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
-    self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
-    self.assertEqual(cache_info2.misses, cache_info1.misses)
-    self.assertEqual(cache_info3.misses, cache_info2.misses)
+      out3 = vf(out2)
+      self.assertIsInstance(out3.sharding, NamedSharding)
+    self.assertEqual(count[0], 1)
 
   def test_jit_mul_sum_sharding_preserved(self):
     mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
@@ -3445,6 +3440,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, "Received incompatible devices for jitted computation"):
       with_sharding_constraint(inp, NamedSharding(mesh2, P('x')))
+
+  def test_jaxpr_as_fun_fast_path(self):
+    @jax.jit
+    def f(x):
+      return x * 2
+    inp = jax.device_put(jnp.arange(8), jax.devices()[0])
+    jaxpr = jax.make_jaxpr(f)(inp)
+
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      out1 = core.jaxpr_as_fun(jaxpr)(inp)
+      out2 = core.jaxpr_as_fun(jaxpr)(inp)
+    self.assertEqual(count[0], 1)
+    self.assertArraysEqual(out1[0], inp * 2)
+    self.assertArraysEqual(out2[0], inp * 2)
 
 
 class TempSharding(Sharding):
