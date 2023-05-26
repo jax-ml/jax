@@ -71,6 +71,9 @@ class XLACompatibleSharding(sharding.Sharding):
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     raise NotImplementedError('Subclasses should implement this method.')
 
+  def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
+    raise NotImplementedError('Subclasses should implement this method.')
+
   #############################################################################
   # Default implementations below that all subclasses will inherit.
 
@@ -283,12 +286,7 @@ class NamedSharding(XLACompatibleSharding):
       num_partitions *= mesh_shape[name]
     return num_partitions == 1
 
-  @functools.lru_cache(maxsize=4096)
-  def _to_xla_op_sharding(
-      self,
-      num_dimensions: int,
-      axis_ctx: Optional[Union[SPMDAxisContext, ShardingContext]] = None
-  ) -> xc.OpSharding:
+  def _get_sharding_spec(self, num_dimensions, axis_ctx):
     assert self._parsed_pspec is not None
     array_mapping = get_array_mapping(self._parsed_pspec)
     # TODO(yashkatariya): Move away from sharding spec in NamedSharding
@@ -303,7 +301,27 @@ class NamedSharding(XLACompatibleSharding):
       # Ignore type because mypy doesn't recognize the `hasattr` check above.
       for manual_axis in axis_ctx.manual_axes:  # type: ignore
         special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
+    return sharding_spec, special_axes
+
+  @functools.lru_cache(maxsize=4096)
+  def _to_xla_op_sharding(
+      self,
+      num_dimensions: int,
+      axis_ctx: Optional[Union[SPMDAxisContext, ShardingContext]] = None
+  ) -> xc.OpSharding:
+    sharding_spec, special_axes = self._get_sharding_spec(
+        num_dimensions, axis_ctx)
     return sharding_spec.sharding_proto(special_axes=special_axes)
+
+  @functools.lru_cache(maxsize=4096)
+  def _to_xla_hlo_sharding(
+      self, num_dimensions: int,
+      axis_ctx: Optional[Union[SPMDAxisContext, ShardingContext]] = None
+  ) -> xc.HloSharding:
+    sharding_spec, special_axes = self._get_sharding_spec(
+        num_dimensions, axis_ctx)
+    return sharding_spec.sharding_proto(
+        special_axes=special_axes, hlo_sharding=True)
 
 
 @functools.lru_cache()
@@ -311,6 +329,10 @@ def get_replicated_op_sharding():
   proto = xc.OpSharding()
   proto.type = xc.OpSharding.Type.REPLICATED
   return proto
+
+@functools.lru_cache()
+def get_replicated_hlo_sharding():
+  return xc.HloSharding.replicate()
 
 
 @use_cpp_class(xc.SingleDeviceSharding)
@@ -363,6 +385,9 @@ class SingleDeviceSharding(XLACompatibleSharding):
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     return get_replicated_op_sharding()
+
+  def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
+    return get_replicated_hlo_sharding()
 
   @property
   def is_fully_replicated(self) -> bool:
@@ -597,9 +622,7 @@ class PositionalSharding(XLACompatibleSharding):
     return self._devices
 
   @functools.lru_cache(maxsize=4096)
-  def _to_xla_op_sharding(self, num_dimensions: int, axis_ctx=None):
-    assert axis_ctx is None
-
+  def _to_xla_op_sharding(self, num_dimensions: int):
     pbuf = xc.OpSharding()
     if self.shape == (1,) * self.ndim:
       pbuf.type = xc.OpSharding.Type.REPLICATED
@@ -618,6 +641,11 @@ class PositionalSharding(XLACompatibleSharding):
     num_devices = len(pbuf.tile_assignment_devices)
     assert product_of_dims == num_devices, (product_of_dims, num_devices)
     return pbuf
+
+  @functools.lru_cache(maxsize=4096)
+  def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
+    proto = self._to_xla_op_sharding(num_dimensions)
+    return xc.HloSharding.from_proto(proto)
 
 
 class DeviceIdSet:
@@ -652,18 +680,25 @@ class DeviceIdSet:
 @use_cpp_class(xc.GSPMDSharding)
 class GSPMDSharding(XLACompatibleSharding):
   _devices: Tuple[Device, ...]
-  _op_sharding: xc.OpSharding
+  _op_sharding: Union[xc.OpSharding, xc.HloSharding]
 
   @use_cpp_method()
-  def __init__(self, devices: Sequence[Device], op_sharding: xc.OpSharding):
+  def __init__(self, devices: Sequence[Device],
+               op_sharding: Union[xc.OpSharding, xc.HloSharding]):
     self._devices = tuple(devices)
     self._op_sharding = op_sharding
 
   def __reduce__(self):
-    return type(self), (self._devices, self._op_sharding)
+    if isinstance(self._op_sharding, xc.HloSharding):
+      ops = self._op_sharding.to_proto()
+    else:
+      ops = self._op_sharding
+    return type(self), (self._devices, ops)
 
   @functools.cached_property
   def _op_sharding_hash(self):
+    if isinstance(self._op_sharding, xc.HloSharding):
+      return hash(self._op_sharding)
     return hash(xc.HloSharding.from_proto(self._op_sharding))
 
   def __eq__(self, other):
@@ -680,11 +715,12 @@ class GSPMDSharding(XLACompatibleSharding):
     return self._hash
 
   def __repr__(self):
+    if isinstance(self._op_sharding, xc.HloSharding):
+      return f'GSPMDSharding({repr(self._op_sharding)})'
     return f'GSPMDSharding({repr(xc.HloSharding.from_proto(self._op_sharding))})'
 
   def is_compatible_aval(self, aval_shape: Shape):
-    num_ways_dim_sharded, _ = get_num_ways_dim_sharded(
-        self._op_sharding)
+    num_ways_dim_sharded, _ = get_num_ways_dim_sharded(self._op_sharding)
     if len(aval_shape) < len(num_ways_dim_sharded):
       raise ValueError(
           f"Sharding {self} is only valid for values of rank at least "
@@ -707,6 +743,13 @@ class GSPMDSharding(XLACompatibleSharding):
     return self._devices
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
+    if isinstance(self._op_sharding, xc.HloSharding):
+      return self._op_sharding.to_proto()  # type: ignore
+    return self._op_sharding
+
+  def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
+    if isinstance(self._op_sharding, xc.OpSharding):
+      return xc.HloSharding.from_proto(self._op_sharding)
     return self._op_sharding
 
   @functools.cached_property

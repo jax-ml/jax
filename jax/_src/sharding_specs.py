@@ -39,6 +39,7 @@ from jax._src import op_shardings
 from jax._src import util
 from jax._src.lib import pmap_lib
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 
 unsafe_map, map = map, util.safe_map
 
@@ -81,7 +82,8 @@ def get_logical_mesh_ids(mesh_shape):
 _MeshAxisName = Any
 
 def sharding_spec_sharding_proto(
-    self, special_axes: Mapping[int, OpShardingType] = {}):
+    self, special_axes: Mapping[int, OpShardingType] = {},
+    hlo_sharding: bool = False):
   """Converts a ShardingSpec to an OpSharding proto.
 
   See
@@ -104,12 +106,16 @@ def sharding_spec_sharding_proto(
     else:
       util.assert_unreachable(assignment)
 
-  proto = xc.OpSharding()
-  if len(replicated_maxes) == len(self.mesh_mapping) and not special_axes:
-    proto.type = xc.OpSharding.Type.REPLICATED
-    return proto
+  if xla_extension_version >= 157 and hlo_sharding:
+    if len(replicated_maxes) == len(self.mesh_mapping) and not special_axes:
+      return xc.HloSharding.replicate()
   else:
-    proto.type = xc.OpSharding.Type.OTHER
+    proto = xc.OpSharding()
+    if len(replicated_maxes) == len(self.mesh_mapping) and not special_axes:
+      proto.type = xc.OpSharding.Type.REPLICATED
+      return proto
+    else:
+      proto.type = xc.OpSharding.Type.OTHER
 
   mesh_permutation = []
   new_mesh_shape = []
@@ -131,8 +137,8 @@ def sharding_spec_sharding_proto(
 
   # Create a partial sharding proto if tensor is replicated or partitioned
   # specially over some mesh axes.
+  last_tile_dims = []
   if replicated_maxes:
-    last_tile_dims = []
     axes_by_type: Dict[OpShardingType, List[_MeshAxisName]] = {}
     size_by_type: Dict[OpShardingType, int] = collections.defaultdict(lambda: 1)
     assert {x[0] for x in replicated_maxes}.issuperset(set(special_axes.keys()))
@@ -144,13 +150,20 @@ def sharding_spec_sharding_proto(
       last_tile_dims.append(ty)
       new_mesh_shape.append(size_by_type[ty])
       mesh_permutation.extend(axes)
-    proto.last_tile_dims = last_tile_dims
 
   proto_mesh = mesh.transpose(mesh_permutation).reshape(new_mesh_shape)
-  proto.tile_assignment_dimensions = list(proto_mesh.shape)
-  proto.tile_assignment_devices = list(proto_mesh.flat)
-  assert math.prod(proto.tile_assignment_dimensions) == len(proto.tile_assignment_devices)
-  return proto
+
+  if xla_extension_version >= 157 and hlo_sharding:
+    return xc.HloSharding.iota_tile(
+        dims=new_mesh_shape, reshape_dims=list(proto_mesh.shape),
+        transpose_perm=mesh_permutation, subgroup_types=last_tile_dims)
+  else:
+    proto.tile_assignment_dimensions = list(proto_mesh.shape)
+    proto.tile_assignment_devices = list(proto_mesh.flat)
+    if replicated_maxes:
+      proto.last_tile_dims = last_tile_dims
+    assert math.prod(proto.tile_assignment_dimensions) == len(proto.tile_assignment_devices)
+    return proto
 
 
 def _sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:
