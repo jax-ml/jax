@@ -26,7 +26,7 @@ from jax.experimental.jax2tf import jax_export
 try:
   from jax.experimental.jax2tf import jax2tf  # TODO: temporary
 except ImportError:
-  jax2tf = None
+  jax2tf = None  # type: ignore
 
 from jax._src import core
 from jax._src import test_util as jtu
