@@ -389,11 +389,18 @@ pybind_extension(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
+    linkopts = select({
+        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
+            "-Wl,-rpath,$$ORIGIN/../../nvidia/cuda_runtime/lib",
+        ],
+        "//conditions:default": [],
+    }),
     module_name = "_triton",
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
         "@xla//xla/service:custom_call_status",
+        "@xla//xla/stream_executor/cuda:cudart_stub",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
