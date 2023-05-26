@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 class State:
   process_id: int = 0
+  num_processes: int = 1
   service: Optional[Any] = None
   client: Optional[Any] = None
   preemption_sync_manager: Optional[Any] = None
@@ -71,6 +72,8 @@ class State:
       logger.info('Starting JAX distributed service on %s', coordinator_address)
       self.service = xla_extension.get_distributed_runtime_service(
           coordinator_address, num_processes, config.jax_coordination_service)
+
+    self.num_processes = num_processes
 
     if self.client is not None:
       raise RuntimeError('distributed.initialize should only be called once.')
