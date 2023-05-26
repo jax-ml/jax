@@ -416,6 +416,7 @@ pybind_extension(
         "@com_google_absl//absl/synchronization",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:status_casters",
+        "@zlib",
     ],
 )
 

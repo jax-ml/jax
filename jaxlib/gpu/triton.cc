@@ -1,3 +1,5 @@
+#include <zlib.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -537,18 +539,37 @@ class AutotunedKernelCall : public KernelCallBase {
   absl::Status autotune_status_;
 };
 
-absl::StatusOr<KernelCallBase*> GetKernelCall(absl::string_view serialized) {
+absl::StatusOr<KernelCallBase*> GetKernelCall(absl::string_view opaque) {
   static absl::Mutex mutex;
   static auto& kernel_calls =
       *new absl::flat_hash_map<std::string, std::unique_ptr<KernelCallBase>>
           ABSL_GUARDED_BY(mutex);
 
   absl::MutexLock lock(&mutex);
-  auto it = kernel_calls.find(serialized);
+  auto it = kernel_calls.find(opaque);
   if (ABSL_PREDICT_TRUE(it != kernel_calls.end())) return it->second.get();
 
+  // The opaque data is a zlib compressed protobuf.
+  std::string serialized;
+  uLongf dest_len = 5 * opaque.size();
+  while (true) {
+    serialized.resize(dest_len);
+    int ret = uncompress(reinterpret_cast<Bytef*>(serialized.data()), &dest_len,
+                         reinterpret_cast<const Bytef*>(opaque.data()),
+                         opaque.size());
+    if (ret == Z_OK) {
+      // `uncompress` overwrites `dest_len` with the uncompressed size.
+      serialized.resize(dest_len);
+      break;
+    } else if (ret == Z_BUF_ERROR) {
+      dest_len *= 2;  // The string buffer wasn't large enough.
+    } else {
+      return absl::InvalidArgumentError("Failed to uncompress opaque data.");
+    }
+  }
+
   TritonAnyKernelCall proto;
-  if (!proto.ParseFromArray(serialized.data(), serialized.size())) {
+  if (!proto.ParseFromString(serialized)) {
     return absl::InvalidArgumentError("Failed to parse serialized data.");
   }
 
@@ -565,7 +586,7 @@ absl::StatusOr<KernelCallBase*> GetKernelCall(absl::string_view serialized) {
   }
 
   auto [it2, success] =
-      kernel_calls.insert({std::string(serialized), std::move(kernel_call)});
+      kernel_calls.insert({std::string(opaque), std::move(kernel_call)});
   CHECK(success);
   return it2->second.get();
 }
