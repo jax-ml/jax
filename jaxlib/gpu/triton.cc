@@ -23,6 +23,7 @@
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 #include "pybind11_abseil/status_casters.h"  // IWYU pragma: keep
+#include "xla/service/custom_call_status.h"
 
 #define CUDA_RETURN_IF_ERROR(expr) JAX_RETURN_IF_ERROR(JAX_AS_STATUS(expr))
 
@@ -390,13 +391,16 @@ absl::StatusOr<uint64_t> EncodeKernelParameter(py::bool_ value,
 
 }  // namespace
 
-void LaunchTritonKernel(CUstream stream, void** buffers, char* opaque,
-                        size_t opaque_len) {
+void LaunchTritonKernel(CUstream stream, void** buffers, const char* opaque,
+                        size_t opaque_len, XlaCustomCallStatus* status) {
   CHECK_EQ(opaque_len, sizeof(TritonKernelCallBase*));
   TritonKernelCallBase* kernel_call;
   std::memcpy(&kernel_call, opaque, sizeof(TritonKernelCallBase*));
-  absl::Status status = kernel_call->Launch(stream, buffers);
-  LOG_IF(FATAL, !status.ok()) << status;  // TODO(cjfj): Return the `Status`.
+  absl::Status result = kernel_call->Launch(stream, buffers);
+  if (!result.ok()) {
+    absl::string_view msg = result.message();
+    XlaCustomCallStatusSetFailure(status, msg.data(), msg.length());
+  }
 }
 
 PYBIND11_MODULE(_triton, m) {
