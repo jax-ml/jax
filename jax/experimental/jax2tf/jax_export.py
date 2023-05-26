@@ -755,15 +755,19 @@ call_exported_p.multiple_results = True
 def _call_exported_abstract_eval(*in_avals: core.AbstractValue,
                                  exported: Exported) -> Tuple[core.AbstractValue, ...]:
   exported_dim_vars = shape_poly.all_dim_vars(exported.in_avals)
-  if exported_dim_vars:
-    raise NotImplementedError("call_exported for exported with polymorphic shapes")
   assert len(in_avals) == len(exported.in_avals)  # since the pytrees have the same structure
   # Must express the exported_dim_vars in terms of the shapes in in_avals.
-  _ = shape_poly.unify_avals_with_args(
+  exported_dim_values = shape_poly.unify_avals_with_args(
       exported.in_avals, exported_dim_vars, *in_avals,  # type: ignore
       use_static_dimension_size=True,
       args_kwargs_tree=exported.in_tree)
-  return exported.out_avals
+
+  return tuple(
+      core.ShapedArray(core.evaluate_shape(out_aval.shape, exported_dim_vars,
+                                           *exported_dim_values),
+                       dtype=out_aval.dtype, weak_type=out_aval.weak_type,
+                       named_shape=out_aval.named_shape)
+      for out_aval in exported.out_avals)
 
 
 call_exported_p.def_abstract_eval(_call_exported_abstract_eval)
@@ -783,16 +787,32 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
         f"on '{platform}'.")
   submodule = ir.Module.parse(exported.mlir_module)
   symtab = ir.SymbolTable(submodule.operation)
+  # The called function may have been exported with polymorphic shapes and called
+  # now with more refined shapes. We insert hlo.ConvertOp to ensure the module
+  # is valid.
+  def convert_shape(x: ir.Value, x_aval: core.AbstractValue, new_aval: core.AbstractValue) -> ir.Value:
+    new_ir_type = mlir.aval_to_ir_type(new_aval)
+    if x.type != new_ir_type:
+      return mlir.convert_hlo(ctx, x, x_aval, new_aval)
+    else:
+      return x
+
   callee_result_types = symtab["main"].type.results
   # TODO: maybe cache multiple calls
   fn = mlir.merge_mlir_modules(ctx.module_context.module,
                                f"call_exported_{exported.fun_name}",
                                submodule)
-  kept_args = [a for i, a in enumerate(args) if i in exported.module_kept_var_idx]
+  kept_args = [
+      convert_shape(a, a_aval, exported_in_aval)
+      for i, (a, a_aval, exported_in_aval) in enumerate(zip(args, ctx.avals_in, exported.in_avals))
+      if i in exported.module_kept_var_idx]
   call = func_dialect.CallOp(callee_result_types,
                              ir.FlatSymbolRefAttr.get(fn),
                              kept_args)
-  return call.results
+  # The ctx.avals_out already contain the abstract values refined by
+  # _call_exported_abstract_eval.
+  return tuple(convert_shape(out, out_aval, refined_out_aval)
+               for out, out_aval, refined_out_aval in zip(call.results, exported.out_avals, ctx.avals_out))
 
 
 for _p in ("cpu", "tpu", "cuda", "rocm"):

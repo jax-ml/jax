@@ -23,6 +23,11 @@ from jax import tree_util
 from jax import numpy as jnp
 from jax.config import config
 from jax.experimental.jax2tf import jax_export
+try:
+  from jax.experimental.jax2tf import jax2tf  # TODO: temporary
+except ImportError:
+  jax2tf = None
+
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
@@ -208,14 +213,51 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertAllClose(jnp.cos(jnp.sin(jnp.sin(a))),
                         jax_export.call_exported(exp_f2)(a))
 
-  def test_call_poly_error(self):
-    a = np.arange(4, dtype=np.float32)
-    exp_f1 = jax_export.export(jnp.sin)(
-        jax_export.poly_spec(a.shape, a.dtype, "b, ...")
-    )
-    with self.assertRaisesRegex(NotImplementedError,
-        "call_exported for exported with polymorphic shapes"):
-      jax_export.call_exported(exp_f1)(a)
+  # An inner function is exported with polymorphic shapes inner_poly_spec, and
+  # is called from an outer function, that is exported with outer_poly_spec.
+  @parameterized.named_parameters(
+      dict(testcase_name=f"inner={inner_poly_spec}_outer={outer_poly_spec}",
+           inner_poly_spec=inner_poly_spec, outer_poly_spec=outer_poly_spec,
+           expect_error=expect_error)
+      for inner_poly_spec, outer_poly_spec, expect_error in (
+          ("3,a,a+b", "3,4,12", None),
+          ("3,a,a+b", "3,4,c", None),
+          ("3,a,a+b", "3,c,c", r"Dimension variable.*b.*must have.* >= 1. Found value 0"),
+          ("3,a,a+b", "c,4,12", r"Shape mismatch for args\[0\] in dimension 0"),
+          ("3,a,a+b", "3,c+4,12", None),  # TODO: This should be an error, c = 0
+          ("3,4,3*a", "3,4,12", None),
+          ("3,4,5*a", "3,4,12", r"Dimension variable 'a' must have integer value >= 1. Found value 2.4"),
+          # ("3,a,a", "3,a,a", None),  # TODO: wrong error. It should be shape mismatch
+          # ("3,4,5*a", "3,4,c", None),  # TODO: wrong error. It should be "not divisible by 5"
+      ))
+  def test_poly(self, inner_poly_spec="3,a,a+b",
+                outer_poly_spec="3,4,12", expect_error=None):
+    # Polymorphic export called with static or polymorphic shapes
+    def inner(x):  # x: export_poly_spec
+      return jnp.reshape(x, (x.shape[0] * x.shape[1], x.shape[2]))
+
+    x1 = np.arange(3 * 4 * 6, dtype=np.float32).reshape((3, 4, 6))  # x1 : f32[3,4,6]
+    exp1 = jax_export.export(inner)(jax_export.poly_spec(x1.shape, x1.dtype, inner_poly_spec))
+
+    x2 = np.concatenate([x1, x1], axis=2)  # x2: f32[3,4,12]
+    def outer(x):  # x: call_poly_spec
+      # Use an addition to test that the shapes are refined properly for the
+      # result of the call_exported.
+      return jax_export.call_exported(exp1)(x) + inner(x)
+
+    with contextlib.ExitStack() as stack:
+      if expect_error is not None:
+        stack.push(self.assertRaisesRegex(ValueError, expect_error))
+
+      # Call it after exporting again, with polymorphic shapes
+      exp2 = jax_export.export(outer)(
+          jax_export.poly_spec(x2.shape, x2.dtype, outer_poly_spec))
+      # TODO: for now, we use XlaCallModule to run modules with polymorphic shapes
+      # until we create the python bindings to invoke shape refinement.
+      if jax2tf is not None:
+        res2 = jax2tf._run_exported_as_tf([x2], exp2)[0].numpy()
+        # res2 = jax_export.call_exported(exp2)(x2)
+        self.assertAllClose(2. * inner(x2), res2)
 
 
 if __name__ == "__main__":
