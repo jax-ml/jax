@@ -51,11 +51,7 @@ class Rotation(typing.NamedTuple):
       raise ValueError("Expected consecutive axes to be different, "
                        "got {}".format(seq))
     seq = seq.lower()
-    _from_euler = lambda a: _elementary_quat_compose(a, seq, intrinsic, degrees)
-    if angles.ndim == 1:
-      return cls(_from_euler(angles))
-    else:
-      return cls(jax.vmap(_from_euler)(angles))
+    return cls(_elementary_quat_compose(angles, seq, intrinsic, degrees))
 
   @classmethod
   def from_matrix(cls, matrix: jax.Array):
@@ -104,22 +100,12 @@ class Rotation(typing.NamedTuple):
 
   def __mul__(self, other):
     """Compose this rotation with the other."""
-    if self.single and other.single:
-      return Rotation.from_quat(_compose_quat(self.quat, other.quat))
-    else:
-      self_axis = None if self.single else 0
-      other_axis = None if other.quat.ndim == 1 else 0
-      return Rotation.from_quat(jax.vmap(_compose_quat, in_axes=[self_axis, other_axis])(self.quat, other.quat))
+    return Rotation.from_quat(_compose_quat(self.quat, other.quat))
 
   @functools.partial(jax.jit, static_argnames=['inverse'])
   def apply(self, vectors: jax.Array, inverse: bool = False) -> jax.Array:
     """Apply this rotation to one or more vectors."""
-    if self.single and vectors.ndim == 1:
-      return _apply(self, vectors, inverse)
-    else:
-      self_axis = None if self.single else 0
-      vector_axis = None if vectors.ndim == 1 else 0
-      return jax.vmap(_apply, in_axes=[self_axis, vector_axis, None])(self, vectors, inverse)
+    return _apply(self, vectors, inverse)
 
   @functools.partial(jax.jit, static_argnames=['seq', 'degrees'])
   def as_euler(self, seq: str, degrees: bool = False):
@@ -136,11 +122,7 @@ class Rotation(typing.NamedTuple):
       raise ValueError("Expected consecutive axes to be different, "
                        "got {}".format(seq))
     seq = seq.lower()
-    _as_euler = lambda q: _compute_euler_from_quat(q, seq, extrinsic, degrees)
-    if self.single:
-      return _as_euler(self.quat)
-    else:
-      return jax.vmap(_as_euler)(self.quat)
+    return _compute_euler_from_quat(self.quat, seq, extrinsic, degrees)
 
   def as_matrix(self) -> jax.Array:
     """Represent as rotation matrix."""
@@ -236,6 +218,7 @@ class Slerp(typing.NamedTuple):
     return result
 
 
+@functools.partial(jnp.vectorize, signature='(m),(n),()->(n)')
 def _apply(rotation: Rotation, vector: jax.Array, inverse: bool) -> jax.Array:
   matrix = rotation.as_matrix()
   if inverse:
@@ -285,6 +268,7 @@ def _as_rotvec(quat: jax.Array, degrees: bool) -> jax.Array:
   return scale * jnp.array(quat[:3])
 
 
+@functools.partial(jnp.vectorize, signature='(n),(n)->(n)')
 def _compose_quat(p: jax.Array, q: jax.Array) -> jax.Array:
   cross = jnp.cross(p[:3], q[:3])
   return jnp.array([p[3]*q[0] + q[3]*p[0] + cross[0],
@@ -293,6 +277,7 @@ def _compose_quat(p: jax.Array, q: jax.Array) -> jax.Array:
                     p[3]*q[3] - p[0]*q[0] - p[1]*q[1] - p[2]*q[2]])
 
 
+@functools.partial(jnp.vectorize, signature='(m),(),(),()->(n)')
 def _compute_euler_from_quat(quat: jax.Array, seq: str, extrinsic: bool, degrees: bool) -> jax.Array:
   if extrinsic:
     angle_first = 0
@@ -328,7 +313,7 @@ def _compute_euler_from_quat(quat: jax.Array, seq: str, extrinsic: bool, degrees
   return angles
 
 
-def _elementary_basis_index(axis: str):
+def _elementary_basis_index(axis: str) -> int:
   if axis == 'x':
     return 0
   elif axis == 'y':
@@ -337,7 +322,8 @@ def _elementary_basis_index(axis: str):
     return 2
 
 
-def _elementary_quat_compose(angles: jax.Array, seq: str, intrinsic: bool, degrees: bool):
+@functools.partial(jnp.vectorize, signature=('(m),(),(),()->(n)'))
+def _elementary_quat_compose(angles: jax.Array, seq: str, intrinsic: bool, degrees: bool) -> jax.Array:
   if degrees:
     angles = jnp.deg2rad(angles)
   result = _make_elementary_quat(seq[0], angles[0])
@@ -403,7 +389,7 @@ def _magnitude(quat: jax.Array) -> jax.Array:
   return 2. * jnp.arctan2(_vector_norm(quat[:3]), jnp.abs(quat[3]))
 
 
-def _make_elementary_quat(axis: str, angle: jax.Array):
+def _make_elementary_quat(axis: str, angle: jax.Array) -> jax.Array:
   axis_ind = _elementary_basis_index(axis)
   quat = jnp.zeros(4)
   quat = quat.at[3].set(jnp.cos(angle / 2.))
@@ -417,5 +403,5 @@ def _normalize_quaternion(quat: jax.Array) -> jax.Array:
 
 
 @functools.partial(jnp.vectorize, signature='(n)->()')
-def _vector_norm(vector):
+def _vector_norm(vector: jax.Array) -> jax.Array:
   return jnp.sqrt(jnp.dot(vector, vector))
