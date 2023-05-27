@@ -90,7 +90,7 @@ jax.scipy.signal
    welch
 
 jax.scipy.spatial.transform
------------------------
+---------------------------
 
 .. automodule:: jax.scipy.spatial.transform
 
