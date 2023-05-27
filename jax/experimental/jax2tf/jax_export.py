@@ -23,6 +23,7 @@ import re
 from typing import Any, Callable, List, Optional, Sequence, Set, Tuple, Union
 
 from absl import logging
+import numpy as np
 
 import jax
 from jax import sharding
@@ -101,10 +102,10 @@ class Exported:
         expressions in the shapes, with dimension variables among those in
         `in_avals.
     in_shardings: the flattened input shardings. Only for the inputs that are
-        specified in `module_kept_var_idx`.
+        specified in `module_kept_var_idx`. If `None` then it is equivalent
+        to unspecified shardings.
     out_shardings: the flattened output shardings, as long as `in_avals`.
     lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'
-
     mlir_module_serialized: the serialized lowered VHLO module.
     xla_call_module_version: a version number for the serialized module.
         See more versioning details at https://github.com/search?q=repo%3Atensorflow%2Ftensorflow+path%3Axla_call_module+%22int+VERSION_MAXIMUM_SUPPORTED%22&type=code
@@ -113,7 +114,7 @@ class Exported:
         because they are not used. Same length as `in_shardings`.
     module_uses_dim_vars: whether the `mlir_module_serialized` uses shape
         polymorphic dimension variables. This may be from `in_avals` but also
-        from inner calls of Exported modules.
+        from inner calls of shape-polymorphic Exported modules.
     disabled_checks: a list of descriptors of safety checks that have been
         disabled at export time.
     _get_vjp: an optional function that takes the current exported function and
@@ -129,8 +130,8 @@ class Exported:
   out_tree: tree_util.PyTreeDef
   out_avals: Tuple[core.AbstractValue, ...]
 
-  in_shardings: Tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]
-  out_shardings: Tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]
+  in_shardings: Optional[Tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]]
+  out_shardings: Optional[Tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]]
   lowering_platform: str
   disabled_checks: Sequence[DisabledSafetyCheck]
 
@@ -144,6 +145,66 @@ class Exported:
   @property
   def mlir_module(self) -> ir.Module:
     return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
+
+  def shape_check_module(self) -> Optional[Tuple[bytes, Sequence[str]]]:
+    """Generates a serialized shape checking module and the error messages.
+
+    Consider the exporting of a function with one array argument of type
+    "f32[w, 2 * h]", where "w" and "h" are two dimension variables. JAX tracing
+    assumes that `arg.shape[1]` is even, and that both `w` and `h` have
+    values >= 1. We must ensure that these assumptions hold when the function
+    is invoked.
+
+    If we `call_exported` for this module we perform these checks
+    statically (in `call_exported_abstract_eval`).
+
+    But if we wrap the exported module with XlaCallModule for execution outside
+    JAX, we must defer these checks to compile time, when the static shapes
+    are known.
+    We generate a separate MLIR shape checking module with a main
+    function that returns a triple of int32's, with a shape checking code and
+    two shape checking operands. The shape checking code is -1 if the checks
+    pass, or is an index into the returned shape_check_messages otherwise.
+    The returned shape checking operands are substituted for "%1" and "%2" in
+    the shape checking messages to obtain the error message. Here is a shape
+    checking module for our example:
+
+       func public main(arg: f32[?, ?]) {
+         # code will be the index of the last failed shape check.
+         code = op1 = op2 = -1  # Assume no errors initially
+         # Check that w is >= 1
+         arg_w = hlo.get_dimension_size(arg, 0)
+         code = hlo.select(arg_w >= 1, code, 0)  # error message 0
+         op1 = hlo.select(arg_w >= 1, op1, arg_w)
+         op2 = hlo.select(arg_w >= 1, op2, 1)
+         # Check that dim1 is even
+         dim1 = hlo.get_dimension_size(arg, 1)
+         code = hlo.select(dim1 % 2 == 0, code, 1)  # error message 1
+         op1 = hlo.select(dim1 % 2 == 0, op1, dim1 % 2)
+         op2 = hlo.select(dim1 % 2 == 0, op2, 0)
+         # Check that h >= 1
+         arg_h = hlo.floordiv(dim1, 2)
+         code = hlo.select(arg_h >= 1, code, 2)  # error message 2
+         op1 = hlo.select(arg_h >= 1, op1, arg_h)
+         op2 = hlo.select(arg_h >= 1, op2, 1)
+         return (code, op1, op2)
+
+    We also return the following shape checking messages to be used for
+    constructing error messages:
+
+      shape_check_messages = [
+          "Dimension variable 'w' must have integer value >= 1. Found %1",
+          "Dimension variable 'h' must have integer value >= 1. Found non-zero remainder %1",
+          "Dimension variable 'h' must have integer value >= 1. Found %1"]
+    """
+    shape_check_res = _make_shape_check_module(
+        self.in_avals, args_kwargs_tree=self.in_tree)
+    if shape_check_res is None:
+      return None
+    module, shape_check_messages = shape_check_res
+    module_serialized, xla_call_module_version = _serialize_module(module)
+    assert xla_call_module_version == self.xla_call_module_version
+    return module_serialized, shape_check_messages
 
   def __str__(self):
     # This is called to make a MLIR source location when we call an Exported, and we
@@ -186,6 +247,10 @@ def poly_spec(
       convenience, zero or more trailing `_` can be abbreviated with `...`, and
       the surrounding parentheses may be missing.
 
+      Note that this function does not ensure that the provided `arg_shape`
+      is compatible with `polymorphic_shape`. The `arg_shape` is used only
+      to fill-in placeholders from `polymorphic_shape`.
+
       See [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
       for more details.
 
@@ -214,6 +279,10 @@ def poly_specs(
       of the `args`.
       See [how optional parameters are matched to
       arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
+
+      Note that this function does not ensure that the provided `args` shapes
+      are compatible with `polymorphic_shapes`. The `args.shape` are used only
+      to fill-in placeholders from `polymorphic_shapes`.
 
       See docstring of `poly_spec` and
       [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
@@ -290,9 +359,7 @@ def export(fun_jax: Callable,
         *args_specs, **kwargs_specs,
         _experimental_lowering_platform=lowering_platform_str)
     lowering = lowered._lowering  # type: ignore
-
     _check_lowering(lowering)
-
     mlir_module = lowering.stablehlo()
 
     args_avals_flat, _ = tree_util.tree_flatten(lowered.in_avals)
@@ -309,31 +376,7 @@ def export(fun_jax: Callable,
       mlir_module = _wrap_main_func(
           mlir_module, args_avals_flat, args_kwargs_tree=lowered.in_tree
       )
-
-    xla_call_module_version = 6
-    mlir_str = mlir.module_to_bytecode(mlir_module)
-    if stablehlo.get_api_version() < 4:
-      target_version = stablehlo.get_earliest_forward_compatible_version()
-    else:
-      # `target_version` is used to manage situations when a StableHLO producer
-      # (in this case, jax2tf) and a StableHLO consumer were built using
-      # different versions of StableHLO.
-      #
-      # Each StableHLO version `producer_version` has a compatibility window,
-      # i.e. range of versions [`consumer_version_min`, `consumer_version_max`],
-      # where StableHLO portable artifacts serialized by `producer_version`
-      # can be deserialized by `consumer_version` within the window.
-      # See https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md
-      # for the exact extent of these compatibility guarantees.
-      #
-      # `stablehlo.get_minimum_version()` returns `consumer_version_min`
-      # for the current version of StableHLO. We are using it here to maximize
-      # forward compatibility, i.e. to maximize how far into the past we can go
-      # and still have the payloads produced by `serialize_portable_artifact`
-      # compatible with potential consumers from the past.
-      target_version = stablehlo.get_minimum_version()
-    mlir_module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
-        mlir_str, target_version)
+    mlir_module_serialized, xla_call_module_version = _serialize_module(mlir_module)
 
     # Figure out the result types and shapes
     if "global_out_avals" in lowering.compile_args:
@@ -377,6 +420,34 @@ def export(fun_jax: Callable,
   return do_export
 
 
+def _serialize_module(module: ir.Module) -> Tuple[bytes, int]:
+  xla_call_module_version = 6
+  mlir_str = mlir.module_to_bytecode(module)
+  if stablehlo.get_api_version() < 4:
+    target_version = stablehlo.get_earliest_forward_compatible_version()
+  else:
+    # `target_version` is used to manage situations when a StableHLO producer
+    # (in this case, jax2tf) and a StableHLO consumer were built using
+    # different versions of StableHLO.
+    #
+    # Each StableHLO version `producer_version` has a compatibility window,
+    # i.e. range of versions [`consumer_version_min`, `consumer_version_max`],
+    # where StableHLO portable artifacts serialized by `producer_version`
+    # can be deserialized by `consumer_version` within the window.
+    # See https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md
+    # for the exact extent of these compatibility guarantees.
+    #
+    # `stablehlo.get_minimum_version()` returns `consumer_version_min`
+    # for the current version of StableHLO. We are using it here to maximize
+    # forward compatibility, i.e. to maximize how far into the past we can go
+    # and still have the payloads produced by `serialize_portable_artifact`
+    # compatible with potential consumers from the past.
+    target_version = stablehlo.get_minimum_version()
+  module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
+      mlir_str, target_version)
+  return module_serialized, xla_call_module_version
+
+
 def _wrap_main_func(
     module: ir.Module,
     args_avals_flat: Sequence[core.ShapedArray],
@@ -392,7 +463,7 @@ def _wrap_main_func(
   the `args_avals`, in sorted order.
 
   Consider the lowering of a function with one array argument of type "f32[w,
-  h]",
+  2 * h]",
   where "w" and "h" are two dimension variables. The `module` will also
   contain two dimension arguments, corresponding to "h" and "w" respectively:
 
@@ -403,8 +474,9 @@ def _wrap_main_func(
       we rename "main" to "_wrapped_jax_export_main" and add a new "main":
 
       func public main(arg: f32[?, ?]) {
-         arg_h = hlo.get_dimension_size(arg, 1)
          arg_w = hlo.get_dimension_size(arg, 0)
+         dim1 = hlo.get_dimension_size(arg, 1)
+         arg_h = hlo.floordiv(dim1, 2)
          res = call _wrapped_jax_export_main(arg_h, arg_w, arg)
          return res
       }
@@ -424,11 +496,11 @@ def _wrap_main_func(
   Returns the wrapped module.
   """
   dim_vars = shape_poly.all_dim_vars(args_avals_flat)
-  # Make a new module, do not mutate the "module" because it may be cached
   context = mlir.make_ir_context()
   with context, ir.Location.unknown(context):
-    new_module = ir.Module.parse(mlir.module_to_bytecode(module))
-    symbol_table = ir.SymbolTable(new_module.operation)
+    # Make a copy, do not mutate because it may be cached
+    wrapped_module = ir.Module.parse(mlir.module_to_bytecode(module))
+    symbol_table = ir.SymbolTable(wrapped_module.operation)
     orig_main = symbol_table["main"]
     orig_main.attributes["sym_visibility"] = ir.StringAttr.get("private")
     symbol_table.set_symbol_name(orig_main, "_wrapped_jax_export_main")
@@ -446,8 +518,9 @@ def _wrap_main_func(
     nr_array_args = len(orig_input_types) - len(dim_vars) - nr_token_args
     assert nr_array_args >= 0
     assert not any(is_token(attrs) for attrs in arg_attrs[-nr_array_args:])
-    new_main_input_types = orig_input_types[-nr_array_args:]
-
+    # The order of args: dim args, token args, array args.
+    new_main_input_types = orig_input_types[- nr_array_args:]
+    dim_var_input_types = orig_input_types[:len(dim_vars)]
     orig_output_types = orig_main.type.results
     result_attrs = list(ir.ArrayAttr(orig_main.result_attrs))
     nr_token_results = sum(1 for attrs in result_attrs if is_token(attrs))
@@ -457,10 +530,9 @@ def _wrap_main_func(
         is_token(attrs) for attrs in result_attrs[-nr_array_results:]
     )
     new_main_output_types = orig_output_types[-nr_array_results:]
-
-    ftype = ir.FunctionType.get(new_main_input_types, new_main_output_types)
+    new_main_ftype = ir.FunctionType.get(new_main_input_types, new_main_output_types)
     new_main_op = func_dialect.FuncOp(
-        "main", ftype, ip=ir.InsertionPoint.at_block_begin(new_module.body))
+        "main", new_main_ftype, ip=ir.InsertionPoint.at_block_begin(wrapped_module.body))
     new_main_op.attributes["sym_visibility"] = ir.StringAttr.get("public")
     try:
       new_main_op.arg_attrs = ir.ArrayAttr.get(arg_attrs[-nr_array_args:])
@@ -479,13 +551,21 @@ def _wrap_main_func(
       module_context = mlir.ModuleContext(
           "cpu", "cpu", sharding_impls.ShardingContext([]),
           source_info_util.new_name_stack(),
-          [], itertools.count(1), [], module=new_module, context=context)
+          [], itertools.count(1), [], module=wrapped_module, context=context)
       ctx = mlir.LoweringRuleContext(module_context=module_context,
                                      primitive=None, avals_in=args_avals_flat, avals_out=None,
                                      tokens_in=mlir.TokenSet(), tokens_out=None)
-      dim_args = _compute_dim_args(ctx, args_avals_flat, tuple(new_main_op.arguments),
-                                   orig_input_types[:len(dim_vars)],
-                                   args_kwargs_tree=args_kwargs_tree)
+      dim_values = mlir.lower_fun(
+          functools.partial(shape_poly.compute_dim_vars_from_arg_shapes,
+                            args_avals_flat, args_kwargs_tree=args_kwargs_tree),
+          multiple_results=True)(ctx, *new_main_op.arguments)
+
+      dim_args = []
+      for dim_arg, dim_arg_type in zip(util.flatten(dim_values), dim_var_input_types):
+        if dim_arg.type != dim_arg_type:
+          dim_args.append(hlo.ConvertOp(dim_arg_type, dim_arg).result)
+        else:
+          dim_args.append(dim_arg)
       # The first arguments are the dimension variable
       orig_main_args.extend(dim_args)
       # Then the token arguments
@@ -497,40 +577,56 @@ def _wrap_main_func(
                                  orig_main_args)
       func_dialect.ReturnOp(call.results[-nr_array_results:])
     symbol_table.set_symbol_name(new_main_op, "main")
-    return new_module
+
+  return wrapped_module
 
 
-def _compute_dim_args(
-    ctx: mlir.LoweringRuleContext,
-    args_avals_flat: Sequence[core.ShapedArray],
-    array_args: Sequence[ir.Value],
-    dim_arg_types: Sequence[ir.Type], *,
-    args_kwargs_tree: tree_util.PyTreeDef) -> Sequence[ir.Value]:
-  """Compute the values of the dimension arguments.
+def _make_shape_check_module(
+    args_avals_flat: Sequence[core.AbstractValue],
+    *,
+    args_kwargs_tree: tree_util.PyTreeDef
+) -> Optional[Tuple[ir.Module, Sequence[str]]]:
+  """Codegens the shape checking function.
 
-  Args:
-    args_avals_flat: the abstract values of the array arguments.
-    array_args: the values of the array arguments.
-    dim_arg_types: the desired types for the dimension arguments.
-    args_kwargs_tree: the PyTreeDef corresponding to `(args, kwargs)`, for
-      error messages.
+  The shape checking function takes the array inputs and returns a triple.
+  See `Exported.shape_check_module` docstring.
 
-  Returns:
-    the values of the dimension variables, in the sorted order of the
-    dimension variables.
+  Returns the shape checking module and the tuple of shape checking messages.
   """
-  dim_values = mlir.lower_fun(
-      functools.partial(shape_poly.compute_dim_vars_from_arg_shapes,
-                        args_avals_flat, args_kwargs_tree=args_kwargs_tree),
-      multiple_results=True)(ctx, *array_args)
+  context = mlir.make_ir_context()
+  with context, ir.Location.unknown(context):
+    array_input_types = tuple(mlir.aval_to_ir_type(a) for a in args_avals_flat)
+    module = ir.Module.create(loc=ir.Location.unknown(context))
 
-  res = []
-  for dim_arg, dim_arg_type in zip(util.flatten(dim_values), dim_arg_types):
-    if dim_arg.type != dim_arg_type:
-      res.append(hlo.ConvertOp(dim_arg_type, dim_arg).result)
-    else:
-      res.append(dim_arg)
-  return tuple(res)
+    symbol_table = ir.SymbolTable(module.operation)
+    shape_check_code_type = mlir.aval_to_ir_type(core.ShapedArray((), np.int32))
+    shape_check_output_types = (shape_check_code_type,) * 3
+    shape_check_ftype = ir.FunctionType.get(array_input_types,
+                                            shape_check_output_types)
+    shape_check_func = func_dialect.FuncOp(
+      "main", shape_check_ftype,
+      ip=ir.InsertionPoint.at_block_begin(module.body))
+    shape_check_func.attributes["sym_visibility"] = ir.StringAttr.get("public")
+    symbol_table.insert(shape_check_func)
+    entry_block = shape_check_func.add_entry_block()
+    with ir.InsertionPoint(entry_block):
+      module_context = mlir.ModuleContext(
+          "cpu", "cpu", sharding_impls.ShardingContext([]),
+          source_info_util.new_name_stack(),
+          [], itertools.count(1), [], module=module, context=context)
+      ctx = mlir.LoweringRuleContext(module_context=module_context,
+                                     primitive=None, avals_in=args_avals_flat,
+                                     avals_out=None, tokens_in=mlir.TokenSet(),
+                                     tokens_out=None)
+      acc_shape_check_messages: List[str] = []
+      values = mlir.lower_fun(
+          functools.partial(shape_poly.compute_shape_check_from_arg_shapes,
+                            args_avals_flat, args_kwargs_tree=args_kwargs_tree,
+                            acc_shape_check_messages=acc_shape_check_messages),
+          multiple_results=True)(ctx, *shape_check_func.arguments)
+      func_dialect.ReturnOp(util.flatten(values))
+
+  return (module, acc_shape_check_messages) if acc_shape_check_messages else None
 
 
 def _check_lowering(lowering) -> None:
@@ -707,9 +803,9 @@ def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
   # Expand in_shardings to all in_avals even not kept ones.
   all_in_shardings = [sharding_impls.UNSPECIFIED] * len(primal.in_avals)
   for idx, in_s in zip(sorted(primal.module_kept_var_idx),
-                       primal.in_shardings):
+                       primal.in_shardings):  # type: ignore
     all_in_shardings[idx] = in_s  # type: ignore
-  all_shardings = all_in_shardings + list(primal.out_shardings)
+  all_shardings = all_in_shardings + list(primal.out_shardings)  # type: ignore
   # Cannot mix unspecified and specified shardings. Make the unspecified
   # ones replicated.
   specified_shardings = [
@@ -817,16 +913,28 @@ def _call_exported_abstract_eval(*in_avals: core.AbstractValue,
         if (not core.is_constant_dim(actual_aval.shape[dim_idx]) or
             aval_d != actual_aval.shape[dim_idx]):
           raise ValueError(
-              f"Shape mismatch for {pp_arg_dim(dim_idx)} (expected constant): "
+              f"Shape mismatch for {pp_arg_dim(dim_idx)} "
+              "(expected same constant): "
               f"expected {exp_aval.shape} and called with {actual_aval.shape}")
 
   # Must express the exported_dim_vars in terms of the shapes in in_avals.
-  solution, shape_constraints, known_dim_vars = shape_poly.solve_dim_vars(
+  solution, shape_constraints, synth_dim_vars = shape_poly.solve_dim_vars(
       exported.in_avals, args_kwargs_tree=exported.in_tree)
-  known_env = {vname: in_avals[arg_idx].shape[dim_idx]
-               for (vname, arg_idx, dim_idx) in known_dim_vars}
-  shape_constraints.check(known_env)
-  exported_dim_values = [solution[var].evaluate(known_env)
+  synthetic_env = {vname: in_avals[arg_idx].shape[dim_idx]
+                   for (vname, arg_idx, dim_idx) in synth_dim_vars}
+  # We discharge all the constraints statically. This results in much simpler
+  # composability (because we do not have to worry about the constraints of the
+  # Exported called recursively; we only need to worry about entry-point
+  # constraints). This also makes sense from a composibility point of view,
+  # because we get the same errors if we invoke the exported module, or if we
+  # trace the exported function. Consider for example, an exported module with
+  # signature `f32[a, a] -> f32[a]`. If we invoke the module with an argument
+  # `f32[c, d]` it is better to fail because `c == d` is inconclusive, than
+  # succeed and add a compile-time check that `c == d`. In the latter case,
+  # it would be ambiguous whether we should continue tracing with a result
+  # a type `f32[c]` or `f32[d]`.
+  shape_constraints.check_statically(synthetic_env)
+  exported_dim_values = [solution[var].evaluate(synthetic_env)
                          for var in exported_dim_vars]
   return tuple(
       core.ShapedArray(core.evaluate_shape(out_aval.shape, exported_dim_vars,
@@ -881,8 +989,9 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                              kept_args)
   # The ctx.avals_out already contain the abstract values refined by
   # _call_exported_abstract_eval.
-  return tuple(convert_shape(out, out_aval, refined_out_aval)
-               for out, out_aval, refined_out_aval in zip(call.results, exported.out_avals, ctx.avals_out))
+  return tuple(
+      convert_shape(out, out_aval, refined_out_aval)
+      for out, out_aval, refined_out_aval in zip(call.results, exported.out_avals, ctx.avals_out))
 
 
 for _p in ("cpu", "tpu", "cuda", "rocm"):

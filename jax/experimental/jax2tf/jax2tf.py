@@ -575,6 +575,18 @@ class GraphSerializationImpl(SerializationImpl):
         partial(shape_poly.compute_dim_vars_from_arg_shapes,
                 self.args_avals_flat, args_kwargs_tree=self.in_tree),
         self.args_flat_tf, self.args_avals_flat, self.name_stack)
+
+    # We invoke shape checking to give it a chance to raise shape errors that
+    # are evident statically. This should work in TF eager mode because all
+    # the shapes are known.
+    # TODO: handle non-static shape checking for graph serialization
+    acc_shape_check_messages: List[str] = []
+    _, _ = _interpret_fun_jax(
+        partial(shape_poly.compute_shape_check_from_arg_shapes,
+                self.args_avals_flat, args_kwargs_tree=self.in_tree,
+                acc_shape_check_messages=acc_shape_check_messages),
+        self.args_flat_tf, self.args_avals_flat, self.name_stack)
+
     _thread_local_state.shape_env = zip(dim_vars, dim_values)
 
     fun_flat_jax, out_tree_thunk = flatten_fun_jax(self.fun_jax, self.in_tree)

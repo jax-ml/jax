@@ -51,6 +51,7 @@ from jax.interpreters import xla
 
 from jax._src import core
 from jax._src import dtypes
+from jax._src.lax import lax
 from jax._src.interpreters import mlir
 from jax._src.numpy import lax_numpy
 from jax._src import tree_util
@@ -1164,20 +1165,61 @@ class ShapeConstraint:
   comp: Comparator
   left: DimSize
   right: DimSize
-  # make_err_msg is invoked with (left_int, right_int) if the constraint fails.
-  make_err_msg: Callable[[int, int], str]
+  # make_err_msg lazily produces an error message that may refer to the
+  # two operands being compared.
+  make_err_msg: Callable[[Any, Any], str]
 
-  def check(self, shapeenv: DimVarEnv) -> None:
-    """Evaluates a constraint statically and raises an error if fails."""
-    def eval_operand(o: DimSize) -> Union[int, jax.Array]:
-      if core.is_constant_dim(o): return op.index(o)
-      return o.evaluate(shapeenv)  # type: ignore
+  def _eval_operand(self, o: DimSize, shapeenv: DimVarEnv,
+                    ) -> Union[int, jax.Array]:
+    if core.is_constant_dim(o):
+      res = op.index(o)
+    else:
+      res = o.evaluate(shapeenv)  # type: ignore
+    # Ensure we have np.int32
+    res_dtype = dtypes.dtype(res)
+    if res_dtype == np.int32 or is_poly_dim(res):
+      return res
+    if type(res) in dtypes.python_scalar_dtypes:
+      return dtypes.coerce_to_array(res, np.int32)  # type: ignore
+    else:
+      return res.astype(np.int32)
+
+  def _err_msg(self, left, right):
+    return self.make_err_msg(str(left), str(right))
+
+  def check_statically(self, shapeenv: DimVarEnv) -> None:
+    """Evaluates a constraint statically.
+
+    The `shapeenv` maps variables to _DimExpr. If the static checking
+    of the constraint fails, raise ValueError.
+    """
+    left, right = [self._eval_operand(o, shapeenv) for o in [self.left,
+                                                             self.right]]
     try:
-      left1, right1 = eval_operand(self.left), eval_operand(self.right)
-    except KeyError:
-      return None
+      if self.comp == ShapeConstraint.Comparator.EQ:
+        ok = (left == right)
+      elif self.comp == ShapeConstraint.Comparator.GEQ:
+        ok = (left >= right)
+      else: assert False
+    except InconclusiveDimensionOperation as e:
+      raise ValueError(self.make_err_msg(left, right)) from e
+    if not ok:
+      raise ValueError(self.make_err_msg(left, right))
 
-    left_int, right_int = _is_known_constant(left1), _is_known_constant(right1)
+  def compute(self,
+              shapeenv: DimVarEnv
+              ) -> Optional[Tuple[jax.Array, jax.Array, jax.Array]]:
+    """Computes if the constraint is satisfied.
+
+    If the constraint can be resolved statically returns None
+    or raises ValueError otherwise. If the constraint cannot be
+    resolved statically, returns a triple with a boolean encoding if the
+    constraint is satisfied and the int32 operands of binary constraints.
+    """
+    left, right = [self._eval_operand(o, shapeenv) for o in [self.left,
+                                                             self.right]]
+    # Try to evaluate the constraint statically.
+    left_int, right_int = _is_known_constant(left), _is_known_constant(right)
     if left_int is not None and right_int is not None:
       if self.comp == ShapeConstraint.Comparator.EQ:
         if not (left_int == right_int):
@@ -1186,31 +1228,69 @@ class ShapeConstraint:
         if not (left_int >= right_int):
           raise ValueError(self.make_err_msg(left_int, right_int))
       else: assert False
-    else:
-      return None  # TODO: evaluate constraint dynamically
+      return None
+
+    if self.comp == ShapeConstraint.Comparator.EQ:
+      is_ok = lax.eq(left, right)
+    elif self.comp == ShapeConstraint.Comparator.GEQ:
+      is_ok = lax.ge(left, right)
+    else: assert False
+    return is_ok, left, right  # type: ignore
 
   def __str__(self):
     return (f"{self.left} {'==' if self.comp == ShapeConstraint.Comparator.EQ else '>='} {self.right}"
-            f" ({self.make_err_msg(self.left, self.right)})")
+            f" ({self.make_err_msg('%1', '%2')})")
   __repr__ = __str__
 
 
 class ShapeConstraints:
   def __init__(self):
-    self.constraints: Set[ShapeConstraint] = set()  # map DimConstraint to an integer >= 0
-
+    self.constraints: List[ShapeConstraint] = []
 
   def add_constraint(self,
                      comp: ShapeConstraint.Comparator,
                      left: DimSize, right: DimSize,
-                     make_err_msg: Callable[[int, int], str]):
+                     make_err_msg: Callable[[Any, Any], str]):
     # Try to evaluate it statically
     c = ShapeConstraint(comp, left, right, make_err_msg)
-    self.constraints.add(c)
+    self.constraints.append(c)
 
-  def check(self, shapeenv: DimVarEnv) -> None:
+  def check_statically(self, shapeenv: DimVarEnv) -> None:
+    """Evaluates all the constraints statically.
+
+    The `shapeenv` maps variables to _DimExpr. If the static checking
+    of any constraint fails, raise ValueError.
+    """
     for constraint in self.constraints:
-      constraint.check(shapeenv)
+      constraint.check_statically(shapeenv)
+
+  def compute(self, shapeenv: DimVarEnv) -> Tuple[jax.Array, jax.Array, jax.Array, Sequence[str]]:
+    """Computes the error code for the set of constraints.
+
+    The error code is -1 if all constraints are satisfied, or an index into
+    the returned error messages.
+    See Exported.shape_check_module docstring.
+    """
+    # We want to report the errors in the same order as `check_statically`.
+    # So, we process them in order, in case some fail statically, but we
+    # accumulate the errors in reverse order in the computation, because the
+    # code-generation strategy will report the last error that failed.
+    acc: List[Tuple[jax.Array, jax.Array, jax.Array, str]] = []
+    for constraint in self.constraints:
+      check_res = constraint.compute(shapeenv)
+      if check_res is not None:
+        acc.append((*check_res, constraint.make_err_msg("%1", "%2")))  # type: ignore
+
+    shape_check_messages: List[str] = []
+    shape_check_code: jax.Array = np.int32(-1)  # type: ignore
+    shape_check_op1 = shape_check_op2 = shape_check_code
+    for (is_ok, op1, op2, msg) in reversed(acc):
+      shape_check_code = lax.select(is_ok, shape_check_code,
+                                    np.int32(len(shape_check_messages)))
+      shape_check_op1 = lax.select(is_ok, shape_check_op1, op1)
+      shape_check_op2 = lax.select(is_ok, shape_check_op2, op2)
+      shape_check_messages.append(msg)
+    return (shape_check_code, shape_check_op1, shape_check_op2, shape_check_messages)
 
 
 @dataclasses.dataclass
@@ -1256,50 +1336,52 @@ def solve_dim_vars(
 
      args_avals = [ShapedArray((3, a, a + b), f32)]
 
-  we introduce fresh "known" dimension variables to represent the actual dimension
-  size of actual arguments for each non-constant dimension. Each known variable
-  has a name, an arg_idx, and a dim_idx, e.g.:
+  we introduce fresh "synthetic" dimension variables to represent the actual
+  dimension size of actual arguments for each non-constant dimension.
+  Each synthetic variable has a name, an arg_idx, and a dim_idx, e.g.:
 
-    known_vars = [("args[0].shape[1]", 0, 1), ("args[0].shape[2]", 0, 2)]
+    synthetic_vars = [("args[0].shape[1]", 0, 1), ("args[0].shape[2]", 0, 2)]
 
   and then we express the solution for the unknown dimension variables {a, b}
-  as symbolic expressions in terms of the known variables:
+  as symbolic expressions in terms of the synthetic variables:
 
     dict(a=args[0].shape[1], b=args[0].shape[2] - args[0].shape[1])
 
-  Not all equations are solvable. For now, we solve first the linear uni-variate
-  equations, then the solved variables are used to simplify the remaining
-  equations to linear uni-variate equations, and the process continues
-  until all dimension variables are solved.
+  Not all equations are solvable. For now, we solve first the linear
+  uni-variate equations, then the solved variables are used to simplify the
+  remaining equations to linear uni-variate equations, and the process
+  continues until all dimension variables are solved.
 
   Args:
     args_avals: the abstract values of the `args`, with shapes that may
       include unknown dimension variables.
-    args_kwargs_tree: a PyTreeDef that describes the tuple `(args, kwargs)` from
-      which the flat sequence `args_avals` is extracted. Used for describing
-      args and kwargs in known variable names and in error messages.
+    args_kwargs_tree: a PyTreeDef that describes the tuple `(args, kwargs)`
+      from which the flat sequence `args_avals` is extracted. Used for
+      describing args and kwargs in synthetic variable names and in
+      error messages.
 
   Returns: a 3-tuple with: (a) the solution for the unknown dimension variables
    (b) a list of constraints that must be satisfied for the solution to be a
-   valid one, and (c) and the list of known variables that may appear in
+   valid one, and (c) and the list of synthetic variables that may appear in
    the solution and the constraints.
 
   Raises ValueError if it cannot solve some dimension variable.
   """
   dim_equations: List[_DimEquation] = []
-  known_dimension_vars: List[Tuple[str, int, int]] = []
+  synth_dimension_vars: List[Tuple[str, int, int]] = []
   for arg_idx, aval in enumerate(args_avals):
     for dim_idx, aval_d in enumerate(aval.shape):
       if is_poly_dim(aval_d):
-        known_dim_var = pretty_print_dimension_descriptor(args_kwargs_tree,
+        synth_dim_var = pretty_print_dimension_descriptor(args_kwargs_tree,
                                                           arg_idx, dim_idx)
-        known_dimension_vars.append((known_dim_var, arg_idx, dim_idx))
+        synth_dimension_vars.append((synth_dim_var, arg_idx, dim_idx))
         dim_equations.append(
             _DimEquation(dim_expr=_ensure_poly(aval_d, "solve_dim_vars"),
-                         dim_value=_DimExpr.from_var(known_dim_var)))
+                         dim_value=_DimExpr.from_var(synth_dim_var)))
 
   solution, shape_constraints = _solve_dim_equations(dim_equations)
-  return solution, shape_constraints, known_dimension_vars
+  return solution, shape_constraints, synth_dimension_vars
+
 
 def compute_dim_vars_from_arg_shapes(
     args_avals: Sequence[core.AbstractValue],
@@ -1315,15 +1397,45 @@ def compute_dim_vars_from_arg_shapes(
     `all_dim_vars(args_avals)`.
   """
   dim_vars = all_dim_vars(args_avals)
-  solution, shape_constraints, known_dim_vars = solve_dim_vars(
+  solution, shape_constraints, synth_dim_vars = solve_dim_vars(
       tuple(args_avals), args_kwargs_tree=args_kwargs_tree)
 
   # Replace the synthetic vars with the dynamic shape of the actual arg
-  known_env = {vname: dimension_size_p.bind(actual_args[arg_idx], dimension=dim_idx)
-               for (vname, arg_idx, dim_idx) in known_dim_vars}
-  dim_values = [solution[var].evaluate(known_env) for var in dim_vars]
-  shape_constraints.check(known_env)
+  synthetic_env = {vname: dimension_size_p.bind(actual_args[arg_idx],
+                                                dimension=dim_idx)
+                   for (vname, arg_idx, dim_idx) in synth_dim_vars}
+  dim_values = [solution[var].evaluate(synthetic_env) for var in dim_vars]
   return tuple(dim_values)
+
+
+def compute_shape_check_from_arg_shapes(
+    args_avals: Sequence[core.AbstractValue],
+    *actual_args: jax.Array,
+    args_kwargs_tree: tree_util.PyTreeDef,
+    acc_shape_check_messages: List[str]) -> Sequence[jax.Array]:
+  """Computes the shape check code from the actual arguments.
+
+  `acc_shape_check_messages` is an initially empty list where we append the
+  shape checking messages. Each of these correspond to a constraint.
+  See the `Exported.shape_check_module` docstring.
+
+  Returns: a triple of JAX arrays: the shape check code and the values of the
+    two operands for the failed constraint.
+
+  Raises ValueError if a constraint is invalidated statically.
+  """
+  assert not acc_shape_check_messages
+  solution, shape_constraints, synth_dim_vars = solve_dim_vars(
+      tuple(args_avals), args_kwargs_tree=args_kwargs_tree)
+
+  # Replace the synthetic vars with the dynamic shape of the actual arg
+  synthetic_env = {vname: dimension_size_p.bind(actual_args[arg_idx],
+                                                dimension=dim_idx)
+                   for (vname, arg_idx, dim_idx) in synth_dim_vars}
+  shape_check_code, shape_check_op1, shape_check_op2, shape_check_messages = (
+      shape_constraints.compute(synthetic_env))
+  acc_shape_check_messages.extend(shape_check_messages)
+  return (shape_check_code, shape_check_op1, shape_check_op2)
 
 
 def _solve_dim_equations(
@@ -1375,16 +1487,16 @@ def _solve_dim_equations(
         var_value, var_remainder = divmod(dim_value, core.dim_constant(factor_var))  # type: ignore
         shape_constraints.add_constraint(
             ShapeConstraint.Comparator.EQ, var_remainder, 0,
-            make_err_msg=lambda rem_int, _: (
+            make_err_msg=lambda left, _: (
                 f"Dimension variable '{var}' must have integer value >= 1. "
-                f"Non-zero remainder {rem_int} for factor {factor_var} when solving "
+                f"Non-zero remainder {left} for factor {factor_var} when solving "
                 f"{eqn}.{_shapeenv_to_str()}"))
 
       shape_constraints.add_constraint(
           ShapeConstraint.Comparator.GEQ, var_value, 1,
-          make_err_msg=lambda var_int, _: (
+          make_err_msg=lambda left, _: (
               f"Dimension variable '{var}' must have integer value >= 1. "
-              f"Found {var_int} when "
+              f"Found {left} when "
               f"solving {eqn}.{_shapeenv_to_str()}"))
 
       if not isinstance(var_value, _DimExpr):
@@ -1396,8 +1508,8 @@ def _solve_dim_equations(
       shape_constraints.add_constraint(
           ShapeConstraint.Comparator.EQ, eqn.dim_value,
           eqn.dim_expr.evaluate(shapeenv),
-          make_err_msg=lambda val1, val2: (
-              f"Found inconsistency {val1} != {val2} when solving {eqn}.{_shapeenv_to_str()}"))
+          make_err_msg=lambda left, right: (
+              f"Found inconsistency {left} != {right} when solving {eqn}.{_shapeenv_to_str()}"))
       return True
 
   while True:
