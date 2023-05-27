@@ -89,6 +89,17 @@ jax.scipy.signal
    stft
    welch
 
+jax.scipy.spatial.transform
+-----------------------
+
+.. automodule:: jax.scipy.spatial.transform
+
+.. autosummary::
+  :toctree: _autosummary
+
+   Rotation
+   Slerp
+
 jax.scipy.sparse.linalg
 -----------------------
 

@@ -16,10 +16,14 @@ import functools
 import re
 import typing
 
+import scipy.spatial.transform
+
 import jax
 import jax.numpy as jnp
+from jax._src.numpy.util import _wraps
 
 
+@_wraps(scipy.spatial.transform.Rotation)
 class Rotation(typing.NamedTuple):
   """Rotation in 3 dimensions."""
 
@@ -198,7 +202,7 @@ class Rotation(typing.NamedTuple):
     else:
       return jax.vmap(_magnitude)(self.quat)
 
-  def mean(self, weights: typing.Optional[jax.Array] = None) -> jax.Array:
+  def mean(self, weights: typing.Optional[jax.Array] = None):
     """Get the mean of the rotations."""
     weights = jnp.where(weights is None, jnp.ones(self.quat.shape[0]), jnp.asarray(weights))
     if weights.ndim != 1:
@@ -218,6 +222,7 @@ class Rotation(typing.NamedTuple):
     return self.quat.ndim == 1
 
 
+@_wraps(scipy.spatial.transform.Slerp)
 class Slerp(typing.NamedTuple):
   """Spherical Linear Interpolation of Rotations."""
 
@@ -244,12 +249,12 @@ class Slerp(typing.NamedTuple):
     timedelta = jnp.diff(times)
     # if jnp.any(timedelta <= 0):  # this causes a concretization error...
     #   raise ValueError("Times must be in strictly increasing order.")
-    new_rotations = rotations[:-1]
+    new_rotations = Rotation(rotations.as_quat()[:-1])
     return cls(
       times=times,
       timedelta=timedelta,
       rotations=new_rotations,
-      rotvecs=(new_rotations.inv() * rotations[1:]).as_rotvec())
+      rotvecs=(new_rotations.inv() * Rotation(rotations.as_quat()[1:])).as_rotvec())
 
   def __call__(self, times: jax.Array):
     """Interpolate rotations."""
@@ -425,7 +430,7 @@ def _magnitude(quat: jax.Array) -> jax.Array:
   return 2. * jnp.arctan2(_vector_norm(quat[:3]), jnp.abs(quat[3]))
 
 
-def _make_elementary_quat(axis: jax.Array, angle: jax.Array):
+def _make_elementary_quat(axis: str, angle: jax.Array):
   axis_ind = _elementary_basis_index(axis)
   quat = jnp.zeros(4)
   quat = quat.at[3].set(jnp.cos(angle / 2.))
