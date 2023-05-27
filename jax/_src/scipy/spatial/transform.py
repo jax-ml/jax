@@ -60,38 +60,22 @@ class Rotation(typing.NamedTuple):
   @classmethod
   def from_matrix(cls, matrix: jax.Array):
     """Initialize from rotation matrix."""
-    assert matrix.ndim in [2, 3]
-    if matrix.ndim == 2:
-      return cls(_from_matrix(matrix))
-    else:
-      return cls(jax.vmap(_from_matrix)(matrix))
+    return cls(_from_matrix(matrix))
 
   @classmethod
   def from_mrp(cls, mrp: jax.Array):
     """Initialize from Modified Rodrigues Parameters (MRPs)."""
-    assert mrp.ndim in [1, 2]
-    if mrp.ndim == 1:
-      return cls(_from_mrp(mrp))
-    else:
-      return cls(jax.vmap(_from_mrp)(mrp))
+    return cls(_from_mrp(mrp))
 
   @classmethod
   def from_quat(cls, quat: jax.Array):
     """Initialize from quaternions."""
-    assert quat.ndim in [1, 2]
-    if quat.ndim == 1:
-      return cls(_normalize_quaternion(quat))
-    else:
-      return cls(jax.vmap(_normalize_quaternion)(quat))
+    return cls(_normalize_quaternion(quat))
 
   @classmethod
   def from_rotvec(cls, rotvec: jax.Array, degrees: bool = False):
     """Initialize from rotation vectors."""
-    assert rotvec.ndim in [1, 2]
-    if rotvec.ndim == 1:
-      return cls(_from_rotvec(rotvec, degrees))
-    else:
-      return cls(jax.vmap(_from_rotvec, in_axes=[0, None])(rotvec, degrees))
+    return cls(_from_rotvec(rotvec, degrees))
 
   @classmethod
   def identity(cls, num: typing.Optional[int] = None):
@@ -104,10 +88,6 @@ class Rotation(typing.NamedTuple):
   # def random(cls, random_key: jax.random.PRNGKey, num: typing.Optional[int] = None):
   #   """Generate uniformly distributed rotations."""
   #   # Need to implement scipy.stats.special_ortho_group for this to work...
-
-  def __bool__(self):
-    """Comply with Python convention for objects to be True."""
-    return True
 
   def __getitem__(self, indexer):
     """Extract rotation(s) at given index(es) from object."""
@@ -164,25 +144,16 @@ class Rotation(typing.NamedTuple):
 
   def as_matrix(self) -> jax.Array:
     """Represent as rotation matrix."""
-    if self.single:
-      return _as_matrix(self.quat)
-    else:
-      return jax.vmap(_as_matrix)(self.quat)
+    return _as_matrix(self.quat)
 
   def as_mrp(self) -> jax.Array:
     """Represent as Modified Rodrigues Parameters (MRPs)."""
-    if self.single:
-      return _as_mrp(self.quat)
-    else:
-      return jax.vmap(_as_mrp)(self.quat)
+    return _as_mrp(self.quat)
 
   @functools.partial(jax.jit, static_argnames=['degrees'])
   def as_rotvec(self, degrees: bool = False) -> jax.Array:
     """Represent as rotation vectors."""
-    if self.single:
-      return _as_rotvec(self.quat, degrees)
-    else:
-      return jax.vmap(_as_rotvec, in_axes=[0, None])(self.quat, degrees)
+    return _as_rotvec(self.quat, degrees)
 
   def as_quat(self) -> jax.Array:
     """Represent as quaternions."""
@@ -190,17 +161,11 @@ class Rotation(typing.NamedTuple):
 
   def inv(self):
     """Invert this rotation."""
-    if self.single:
-      return Rotation(_inv(self.quat))
-    else:
-      return Rotation(jax.vmap(_inv)(self.quat))
+    return Rotation(_inv(self.quat))
 
   def magnitude(self) -> jax.Array:
     """Get the magnitude(s) of the rotation(s)."""
-    if self.single:
-      return _magnitude(self.quat)
-    else:
-      return jax.vmap(_magnitude)(self.quat)
+    return _magnitude(self.quat)
 
   def mean(self, weights: typing.Optional[jax.Array] = None):
     """Get the mean of the rotations."""
@@ -280,6 +245,7 @@ def _apply(rotation: Rotation, vector: jax.Array, inverse: bool) -> jax.Array:
   return result
 
 
+@functools.partial(jnp.vectorize, signature='(m)->(n,n)')
 def _as_matrix(quat: jax.Array) -> jax.Array:
   x = quat[0]
   y = quat[1]
@@ -300,12 +266,14 @@ def _as_matrix(quat: jax.Array) -> jax.Array:
                     [2 * (xz - yw), 2 * (yz + xw), - x2 - y2 + z2 + w2]])
 
 
+@functools.partial(jnp.vectorize, signature='(m)->(n)')
 def _as_mrp(quat: jax.Array) -> jax.Array:
   sign = jnp.where(quat[3] < 0, -1., 1.)
   denominator = 1. + sign * quat[3]
   return sign * quat[:3] / denominator
 
 
+@functools.partial(jnp.vectorize, signature='(m),()->(n)')
 def _as_rotvec(quat: jax.Array, degrees: bool) -> jax.Array:
   quat = jnp.where(quat[3] < 0, -quat, quat)  # w > 0 to ensure 0 <= angle <= pi
   angle = 2. * jnp.arctan2(_vector_norm(quat[:3]), quat[3])
@@ -381,6 +349,7 @@ def _elementary_quat_compose(angles: jax.Array, seq: str, intrinsic: bool, degre
   return result
 
 
+@functools.partial(jnp.vectorize, signature=('(m),()->(n)'))
 def _from_rotvec(rotvec: jax.Array, degrees: bool) -> jax.Array:
   rotvec = jnp.where(degrees, jnp.deg2rad(rotvec), rotvec)
   angle = _vector_norm(rotvec)
@@ -391,6 +360,7 @@ def _from_rotvec(rotvec: jax.Array, degrees: bool) -> jax.Array:
   return jnp.hstack([scale * rotvec, jnp.cos(angle / 2)])
 
 
+@functools.partial(jnp.vectorize, signature=('(m,m)->(n)'))
 def _from_matrix(matrix: jax.Array) -> jax.Array:
   M = jnp.array(matrix, copy=False)[:3, :3]
   m00 = M[0, 0]
@@ -417,15 +387,18 @@ def _from_matrix(matrix: jax.Array) -> jax.Array:
   return _normalize_quaternion(quat)
 
 
+@functools.partial(jnp.vectorize, signature='(m)->(n)')
 def _from_mrp(mrp: jax.Array) -> jax.Array:
   mrp_squared_plus_1 = jnp.dot(mrp, mrp) + 1
   return jnp.hstack([2 * mrp[:3], (2 - mrp_squared_plus_1)]) / mrp_squared_plus_1
 
 
+@functools.partial(jnp.vectorize, signature='(n)->(n)')
 def _inv(quat: jax.Array) -> jax.Array:
   return quat.at[3].set(-quat[3])
 
 
+@functools.partial(jnp.vectorize, signature='(n)->()')
 def _magnitude(quat: jax.Array) -> jax.Array:
   return 2. * jnp.arctan2(_vector_norm(quat[:3]), jnp.abs(quat[3]))
 
@@ -437,9 +410,12 @@ def _make_elementary_quat(axis: str, angle: jax.Array):
   quat = quat.at[axis_ind].set(jnp.sin(angle / 2.))
   return quat
 
+
+@functools.partial(jnp.vectorize, signature='(n)->(n)')
 def _normalize_quaternion(quat: jax.Array) -> jax.Array:
   return quat / _vector_norm(quat)
 
 
+@functools.partial(jnp.vectorize, signature='(n)->()')
 def _vector_norm(vector):
   return jnp.sqrt(jnp.dot(vector, vector))
