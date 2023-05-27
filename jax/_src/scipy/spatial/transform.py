@@ -37,7 +37,6 @@ class Rotation(typing.NamedTuple):
   @classmethod
   def from_euler(cls, seq: str, angles: jax.Array, degrees: bool = False):
     """Initialize from Euler angles."""
-    assert angles.ndim in [1, 2]
     num_axes = len(seq)
     if num_axes < 1 or num_axes > 3:
       raise ValueError("Expected axis specification to be a non-empty "
@@ -50,8 +49,9 @@ class Rotation(typing.NamedTuple):
     if any(seq[i] == seq[i+1] for i in range(num_axes - 1)):
       raise ValueError("Expected consecutive axes to be different, "
                        "got {}".format(seq))
-    seq = seq.lower()
-    return cls(_elementary_quat_compose(angles, seq, intrinsic, degrees))
+    angles = jnp.atleast_1d(angles)
+    axes = jnp.array([_elementary_basis_index(x) for x in seq.lower()])
+    return cls(_elementary_quat_compose(angles, axes, intrinsic, degrees))
 
   @classmethod
   def from_matrix(cls, matrix: jax.Array):
@@ -121,8 +121,8 @@ class Rotation(typing.NamedTuple):
     if any(seq[i] == seq[i+1] for i in range(2)):
       raise ValueError("Expected consecutive axes to be different, "
                        "got {}".format(seq))
-    seq = seq.lower()
-    return _compute_euler_from_quat(self.quat, seq, extrinsic, degrees)
+    axes = jnp.array([_elementary_basis_index(x) for x in seq.lower()])
+    return _compute_euler_from_quat(self.quat, axes, extrinsic, degrees)
 
   def as_matrix(self) -> jax.Array:
     """Represent as rotation matrix."""
@@ -277,18 +277,18 @@ def _compose_quat(p: jax.Array, q: jax.Array) -> jax.Array:
                     p[3]*q[3] - p[0]*q[0] - p[1]*q[1] - p[2]*q[2]])
 
 
-@functools.partial(jnp.vectorize, signature='(m),(),(),()->(n)')
-def _compute_euler_from_quat(quat: jax.Array, seq: str, extrinsic: bool, degrees: bool) -> jax.Array:
+@functools.partial(jnp.vectorize, signature='(m),(l),(),()->(n)')
+def _compute_euler_from_quat(quat: jax.Array, axes: typing.List[int], extrinsic: bool, degrees: bool) -> jax.Array:
   if extrinsic:
     angle_first = 0
     angle_third = 2
   else:
-    seq = seq[::-1]
+    axes = axes[::-1]
     angle_first = 2
     angle_third = 0
-  i = _elementary_basis_index(seq[0])
-  j = _elementary_basis_index(seq[1])
-  k = _elementary_basis_index(seq[2])
+  i = axes[0]
+  j = axes[1]
+  k = axes[2]
   symmetric = i == k
   if symmetric:
     k = 3 - i - j
@@ -324,16 +324,16 @@ def _elementary_basis_index(axis: str) -> int:
   raise ValueError("Expected axis to be from ['x', 'y', 'z'], got {}".format(axis))
 
 
-@functools.partial(jnp.vectorize, signature=('(m),(),(),()->(n)'))
-def _elementary_quat_compose(angles: jax.Array, seq: str, intrinsic: bool, degrees: bool) -> jax.Array:
+@functools.partial(jnp.vectorize, signature=('(m),(m),(),()->(n)'))
+def _elementary_quat_compose(angles: jax.Array, axes: typing.List[int], intrinsic: bool, degrees: bool) -> jax.Array:
   if degrees:
     angles = jnp.deg2rad(angles)
-  result = _make_elementary_quat(seq[0], angles[0])
-  for idx in range(1, len(seq)):
+  result = _make_elementary_quat(axes[0], angles[0])
+  for idx in range(1, len(axes)):
     if intrinsic:
-      result = _compose_quat(result, _make_elementary_quat(seq[idx], angles[idx]))
+      result = _compose_quat(result, _make_elementary_quat(axes[idx], angles[idx]))
     else:
-      result = _compose_quat(_make_elementary_quat(seq[idx], angles[idx]), result)
+      result = _compose_quat(_make_elementary_quat(axes[idx], angles[idx]), result)
   return result
 
 
@@ -391,11 +391,11 @@ def _magnitude(quat: jax.Array) -> jax.Array:
   return 2. * jnp.arctan2(_vector_norm(quat[:3]), jnp.abs(quat[3]))
 
 
-def _make_elementary_quat(axis: str, angle: jax.Array) -> jax.Array:
-  axis_ind = _elementary_basis_index(axis)
+@functools.partial(jnp.vectorize, signature='(),()->(n)')
+def _make_elementary_quat(axis: int, angle: jax.Array) -> jax.Array:
   quat = jnp.zeros(4)
   quat = quat.at[3].set(jnp.cos(angle / 2.))
-  quat = quat.at[axis_ind].set(jnp.sin(angle / 2.))
+  quat = quat.at[axis].set(jnp.sin(angle / 2.))
   return quat
 
 

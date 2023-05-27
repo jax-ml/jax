@@ -146,12 +146,13 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=float_dtypes,
-    shape=[(3,), (num_samples, 3)],
-    seq=['xyz', 'zyx', 'XYZ', 'ZYX'],
+    size=[1, num_samples],
+    seq=['x', 'xy', 'xyz', 'XYZ'],
     degrees=[True, False],
   )
-  def testRotationFromEuler(self, shape, dtype, seq, degrees):
+  def testRotationFromEuler(self, size, dtype, seq, degrees):
     rng = jtu.rand_default(self.rng())
+    shape = (size, len(seq))
     args_maker = lambda: (rng(shape, dtype),)
     jnp_fn = lambda a: jsp_Rotation.from_euler(seq, a, degrees).as_rotvec()
     np_fn = lambda a: osp_Rotation.from_euler(seq, a, degrees).as_rotvec()
