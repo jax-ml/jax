@@ -290,7 +290,8 @@ def _compute_euler_from_quat(quat: jax.Array, seq: str, extrinsic: bool, degrees
   j = _elementary_basis_index(seq[1])
   k = _elementary_basis_index(seq[2])
   symmetric = i == k
-  k = jnp.where(symmetric, 3 - i - j, k)
+  if symmetric:
+    k = 3 - i - j
   sign = (i - j) * (j - k) * (k - i) // 2
   eps = 1e-7
   a = jnp.where(symmetric, quat[3], quat[3] - quat[j])
@@ -320,6 +321,7 @@ def _elementary_basis_index(axis: str) -> int:
     return 1
   elif axis == 'z':
     return 2
+  raise ValueError("Expected axis to be from ['x', 'y', 'z'], got {}".format(axis))
 
 
 @functools.partial(jnp.vectorize, signature=('(m),(),(),()->(n)'))
