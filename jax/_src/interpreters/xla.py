@@ -23,7 +23,7 @@ import math
 import operator
 import re
 from typing import (Any, Callable, Dict, Optional, Protocol,
-                    Sequence, Set, Type, Tuple, Union, TYPE_CHECKING)
+                    Sequence, Set, Type, Tuple, Union)
 
 import numpy as np
 
@@ -330,9 +330,6 @@ def jaxpr_collectives(jaxpr):
 
 ### xla_call underlying jit
 
-# TODO(yashkatariya): Remove after 1 month from March 23, 2023.
-xla_call_p: core.CallPrimitive = core.CallPrimitive('xla_call')
-
 
 def xla_call_partial_eval_update_params(
     params: core.ParamDict, kept_inputs: Sequence[bool], num_new_inputs: int
@@ -445,12 +442,3 @@ class _BackendSpecificTranslationsAdapter(defaultdict):
 
 backend_specific_translations: Dict[str, _TranslationRuleAdapter]
 backend_specific_translations = _BackendSpecificTranslationsAdapter()
-
-
-if TYPE_CHECKING:
-  DeviceArray = Any
-else:
-  class DeviceArray(object):
-    def __init__(self):
-      raise RuntimeError("DeviceArray is a backward compatibility shim "
-                         "and cannot be instantiated.")
