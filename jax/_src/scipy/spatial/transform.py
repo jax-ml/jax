@@ -105,7 +105,7 @@ class Rotation(typing.NamedTuple):
   @functools.partial(jax.jit, static_argnames=['inverse'])
   def apply(self, vectors: jax.Array, inverse: bool = False) -> jax.Array:
     """Apply this rotation to one or more vectors."""
-    return _apply(self, vectors, inverse)
+    return _apply(self.as_matrix(), vectors, inverse)
 
   @functools.partial(jax.jit, static_argnames=['seq', 'degrees'])
   def as_euler(self, seq: str, degrees: bool = False):
@@ -218,14 +218,9 @@ class Slerp(typing.NamedTuple):
     return result
 
 
-@functools.partial(jnp.vectorize, signature='(m),(n),()->(n)')
-def _apply(rotation: Rotation, vector: jax.Array, inverse: bool) -> jax.Array:
-  matrix = rotation.as_matrix()
-  if inverse:
-    result = jnp.einsum('kj,k->j', matrix, vector)
-  else:
-    result = jnp.einsum('jk,k->j', matrix, vector)
-  return result
+@functools.partial(jnp.vectorize, signature='(m,m),(m),()->(m)')
+def _apply(matrix: jax.Array, vector: jax.Array, inverse: bool) -> jax.Array:
+  return jnp.where(inverse, matrix.T, matrix) @ vector
 
 
 @functools.partial(jnp.vectorize, signature='(m)->(n,n)')
