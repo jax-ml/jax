@@ -19,8 +19,11 @@ Remember to align the itemized text with the first line of an item within a list
       as input and remove the optional `in_shardings` argument to `pjit`.
     * `jax.interpreters.pxla.PartitionSpec`: use `jax.sharding.PartitionSpec`.
     * `jax.interpreters.pxla.Mesh`: use `jax.sharding.Mesh`
+    * `jax.interpreters.xla.Buffer`: use `jax.Array`.
     * `jax.interpreters.xla.Device`: use `jax.Device`.
-    * `jax.interpreters.xla.DeviceArray`: use `jax.Array` instead
+    * `jax.interpreters.xla.DeviceArray`: use `jax.Array`.
+    * `jax.interpreters.xla.device_put`: use `jax.device_put`.
+    * `jax.interpreters.xla.xla_call_p`: use `jax.experimental.pjit.pjit_p`.
     * `axis_resources` argument of `with_sharding_constraint` is removed. Please
       use `shardings` instead.
 
