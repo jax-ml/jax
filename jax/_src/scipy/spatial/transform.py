@@ -77,7 +77,7 @@ class Rotation(typing.NamedTuple):
   def identity(cls, num: typing.Optional[int] = None):
     """Get identity rotation(s)."""
     assert num is None
-    quat = jnp.array([0, 0, 0, 1])
+    quat = jnp.array([0., 0., 0., 1.])
     return cls(quat)
 
   # @classmethod
