@@ -321,14 +321,11 @@ def _elementary_basis_index(axis: str) -> int:
 
 @functools.partial(jnp.vectorize, signature=('(m),(m),(),()->(n)'))
 def _elementary_quat_compose(angles: jax.Array, axes: typing.List[int], intrinsic: bool, degrees: bool) -> jax.Array:
-  if degrees:
-    angles = jnp.deg2rad(angles)
+  angles = jnp.where(degrees, jnp.deg2rad(angles), angles)
   result = _make_elementary_quat(axes[0], angles[0])
   for idx in range(1, len(axes)):
-    if intrinsic:
-      result = _compose_quat(result, _make_elementary_quat(axes[idx], angles[idx]))
-    else:
-      result = _compose_quat(_make_elementary_quat(axes[idx], angles[idx]), result)
+    quat = _make_elementary_quat(axes[idx], angles[idx])
+    result = jnp.where(intrinsic, _compose_quat(result, quat), _compose_quat(quat, result))
   return result
 
 
