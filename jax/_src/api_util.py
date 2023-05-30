@@ -385,6 +385,12 @@ def is_hashable(arg):
     return False
 
 
+class FakeLeaf(object):
+  # placeholder for leaves when flattening axes
+  # custom pytrees must consider FakeLeaf instances as leaves
+  pass
+
+
 def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
   # given an axis spec tree axis_tree (a pytree with integers and Nones at the
   # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
@@ -393,7 +399,7 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
   # TODO(mattjj,phawkins): improve this implementation
 
   proxy = object()
-  dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
+  dummy = tree_unflatten(treedef, [FakeLeaf()] * treedef.num_leaves)
   axes = []
   add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
   try:

@@ -16,6 +16,7 @@
 from jax._src.api_util import (
   argnums_partial,
   donation_vector,
+  FakeLeaf,
   flatten_axes,
   flatten_fun,
   flatten_fun_nokwargs,
