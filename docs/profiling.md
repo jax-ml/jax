@@ -64,6 +64,7 @@ file and open a visualizer. This feature is disabled by passing in
 Tensorboard to the `log_dir` to analyze the trace (see the
 "Tensorboard Profiling" section below).
 
+(tensorboard-profiling)=
 ## TensorBoard profiling
 
 [TensorBoard's
@@ -147,11 +148,13 @@ example. You can specify a different port with the `--port` flag. See
 Then, either select "Profile" in the upper-right dropdown menu, or go directly
 to <http://localhost:6006/#profile>. Available traces appear in the "Runs"
 dropdown menu on the left. Select the run you're interested in, and then under
-"Tools", select "trace_viewer".  You should now see a timeline of the
+"Tools", select `trace_viewer`.  You should now see a timeline of the
 execution. You can use the WASD keys to navigate the trace, and click or drag to
 select events to see more details at the bottom. See [these TensorFlow
 docs](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras#use_the_tensorflow_profiler_to_profile_model_training_performance)
 for more details on using the trace viewer.
+
+You can also use the `memory_viewer`, `op_profile`, and `graph_viewer` tools.
 
 ### Manual capture via TensorBoard
 
@@ -202,13 +205,16 @@ from a running program.
 1. After the capture finishes, TensorBoard should automatically refresh. (Not
    all of the TensorBoard profiling features are hooked up with JAX, so it may
    initially look like nothing was captured.) On the left under "Tools", select
-   "trace_viewer".
+   `trace_viewer`.
 
    You should now see a timeline of the execution. You can use the WASD keys to
    navigate the trace, and click or drag to select events to see more details at
    the bottom. See [these TensorFlow
    docs](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras#use_the_tensorflow_profiler_to_profile_model_training_performance)
-   for more details on using the trace viewer.<br /><br />
+   for more details on using the trace viewer.
+
+   You can also use the `memory_viewer`, `op_profile`, and `graph_viewer`
+   tools.<br /><br />
 
 ### Adding custom trace events
 
@@ -275,11 +281,10 @@ machine. Use the following SSH command to forward the default TensorBoard port
 ssh -L 6006:localhost:6006 <remote server address>
 ```
 
-#### Profiling on a Cloud TPU VM
-
-Cloud TPU VMs come with a special version of TensorFlow pre-installed, so
-there's no need to explicitly install it, and doing so can cause TensorFlow to
-stop working on TPU. Just `pip install tbp-nightly`.
+or if you're using Google Cloud:
+```bash
+$ gcloud compute ssh <machine-name> -- -L 6006:localhost:6006
+```
 
 (multiple_installs)=
 #### Multiple TensorBoard installs
