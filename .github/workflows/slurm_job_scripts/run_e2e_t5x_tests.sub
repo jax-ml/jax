@@ -53,6 +53,7 @@ rm -rf ${E2E_TESTS_WORKSPACE_DIR}/* \
 && python3.8 -m pip uninstall -y cudf dask-cudf \
 && python3.8 -m pip install ${T5X_DIR} \
 && python3.8 -m pip install ${T5X_DIR}/t5x/contrib/gpu/scripts_gpu/dummy_wikipedia_config \
+&& python3.8 -m pip install -U git+https://github.com/google-research/jestimator \
 && hostname > ${E2E_TESTS_WORKSPACE_DIR}/hostname.txt
 EOF
 
