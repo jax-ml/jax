@@ -493,12 +493,11 @@ class NativeSerializationImpl(SerializationImpl):
       self.lowering_platform = None
 
   def before_conversion(self):
+    _prev_func_list = _thread_local_state.call_tf_concrete_function_list
     _thread_local_state.call_tf_concrete_function_list = []
 
     def _restore_context():
-      _thread_local_state.call_tf_concrete_function_list.clear()
-      # We will reset it `None` to avoid misusing by user outside jax2tf.convert.
-      _thread_local_state.call_tf_concrete_function_list = None
+      _thread_local_state.call_tf_concrete_function_list = _prev_func_list
 
     self._restore_context = _restore_context
     self.exported = jax_export.export(
