@@ -234,6 +234,13 @@ def _cpp_pjit_evict_fn(self):
 _cpp_pjit_cache = xc._xla.PjitFunctionCache(capacity=8192)
 
 
+def _get_cpp_global_cache(pjit_has_explicit_sharding):
+  if pjit_has_explicit_sharding:
+    return xc._xla.PjitFunctionCache()
+  else:
+    return _cpp_pjit_cache
+
+
 def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
               donate_argnums, pjit_has_explicit_sharding):
 
@@ -245,14 +252,10 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
     fastpath_data = _get_fastpath_data(executable, out_tree, args_flat, out_flat)
     return outs, fastpath_data
 
-  if pjit_has_explicit_sharding:
-    global_cache = xc._xla.PjitFunctionCache()
-  else:
-    global_cache = _cpp_pjit_cache
   cpp_pjit_f = xc._xla.pjit(  # type: ignore
       getattr(fun, "__name__", "<unnamed function>"),  # type: ignore
       fun, cache_miss, static_argnums, static_argnames,  # type: ignore
-      donate_argnums, global_cache)  # type: ignore
+      donate_argnums, _get_cpp_global_cache(pjit_has_explicit_sharding))  # type: ignore
 
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
   cpp_pjitted_f._fun = fun
@@ -1185,8 +1188,10 @@ def _pjit_call_impl(*args, jaxpr,
       tuple(getattr(o, '_original_sharding', o) for o in out_shardings),
       resource_env, donated_invars, name, keep_unused, inline)
   donated_argnums = [i for i, d in enumerate(donated_invars) if d]
+  has_explicit_sharding = _pjit_explicit_sharding(
+      in_shardings, out_shardings, None, None)
   return xc._xla.pjit(name, f, call_impl_cache_miss, [], [], donated_argnums,
-                      _cpp_pjit_cache)(*args)
+                      _get_cpp_global_cache(has_explicit_sharding))(*args)
 
 pjit_p.def_impl(_pjit_call_impl)
 

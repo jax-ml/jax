@@ -3234,7 +3234,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     arr = jax.device_put(
         np.arange(16).reshape(8, 2), NamedSharding(mesh, P(None, 'x')))
 
-    with jtu.count_pjit_cpp_cache_miss() as count:
+    with jtu.count_jit_and_pmap_compiles() as count:
       vf = jax.vmap(pjit(lambda x: x * 2, in_shardings=ns))
       out = vf(arr)
       self.assertIsInstance(out.sharding, NamedSharding)
