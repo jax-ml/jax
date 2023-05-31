@@ -67,6 +67,10 @@ setup(
         'numpy>=1.21',
         'opt_einsum',
         'scipy>=1.7',
+        # Required by xla_bridge.discover_pjrt_plugins for forwards compat with
+        # Python versions < 3.10. Can be dropped when 3.10 is the minimum
+        # required Python version.
+        'importlib_metadata>=4.6;python_version<"3.10"',
     ],
     extras_require={
         # Minimum jaxlib version; used in testing.
@@ -82,9 +86,7 @@ setup(
         # Cloud TPU VM jaxlib can be installed via:
         # $ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
         'tpu': [f'jaxlib=={_current_jaxlib_version}',
-                f'libtpu-nightly=={_libtpu_version}',
-                # Required by cloud_tpu_init.py
-                'requests'],
+                f'libtpu-nightly=={_libtpu_version}'],
 
         # $ pip install jax[australis]
         'australis': ['protobuf>=3.13,<4'],

@@ -360,20 +360,14 @@ def discover_pjrt_plugins() -> None:
   if sys.version_info < (3, 10):
     # Use the backport library because it provides a forward-compatible
     # implementation.
-    try:
-      from importlib_metadata import entry_points
-    except ModuleNotFoundError:
-      logger.debug(
-          "No importlib_metadata found (for Python < 3.10): "
-          "Plugins advertised from entrypoints will not be found.")
-      entry_points = None
+    from importlib_metadata import entry_points
   else:
     from importlib.metadata import entry_points
-  if entry_points:
-    for entry_point in entry_points(group="jax_plugins"):
-      logger.debug("Discovered entry-point based JAX plugin: %s",
-                   entry_point.value)
-      plugin_modules.add(entry_point.value)
+
+  for entry_point in entry_points(group="jax_plugins"):
+    logger.debug("Discovered entry-point based JAX plugin: %s",
+                 entry_point.value)
+    plugin_modules.add(entry_point.value)
 
   # Now load and initialize them all.
   for plugin_module_name in plugin_modules:
