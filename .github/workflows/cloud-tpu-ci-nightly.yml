@@ -12,7 +12,6 @@ jobs:
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
-        python-version: ["3.10"] # TODO(jakevdp): update to 3.11 when available.
         jaxlib-version: ["latest", "nightly"]
         tpu-type: ["v3-8", "v4-8", "nightly"]
         pjrt: ["true", "false"]
@@ -24,10 +23,6 @@ jobs:
       # mandates using a specific commit for non-Google actions. We use
       # https://github.com/sethvargo/ratchet to pin specific versions.
       - uses: actions/checkout@93ea575cb5d8a053eaa0ac8fa3b40d7e05a33cc8 # ratchet:actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@13ae5bb136fac2878aff31522b9efb785519f984 # ratchet:actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
       - name: Install JAX test requirements
         run: |
           pip install -r build/test-requirements.txt
@@ -51,9 +46,10 @@ jobs:
             exit 1
           fi
 
-          python -c 'import jax; print("jax version:", jax.__version__)'
-          python -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
-          python -c 'import jax; print("libtpu version:",
+          python3 -c 'import sys; print("python version:", sys.version)'
+          python3 -c 'import jax; print("jax version:", jax.__version__)'
+          python3 -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
+          python3 -c 'import jax; print("libtpu version:",
             jax.lib.xla_bridge.get_backend().platform_version)'
       - name: Run tests
         env:
@@ -61,10 +57,10 @@ jobs:
           JAX_USE_PJRT_C_API_ON_TPU: ${{ matrix.pjrt }}
         run: |
           # Run single-accelerator tests in parallel
-          JAX_ENABLE_TPU_XDIST=true python -m pytest -n=4 --tb=short \
+          JAX_ENABLE_TPU_XDIST=true python3 -m pytest -n=4 --tb=short \
             --maxfail=20 -m "not multiaccelerator" tests examples
           # Run multi-accelerator across all chips
-          python -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
+          python3 -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
       - name: Send chat on failure
         # Don't notify when testing the workflow from a branch.
         if: ${{ (failure() || cancelled()) && github.ref_name == 'main' }}
