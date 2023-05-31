@@ -275,6 +275,8 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         mlir_module_serialized=data.mlir_module_serialized,
         xla_call_module_version=data.xla_call_module_version,
         module_kept_var_idx=tuple(range(len(in_avals))),
+        module_uses_dim_vars=any(not core.is_constant_shape(a.shape)
+                                 for a in in_avals),
         _get_vjp=_get_vjp)
 
     # We use pjit in case there are shardings in the exported module.

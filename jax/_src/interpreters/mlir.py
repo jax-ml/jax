@@ -371,6 +371,21 @@ AxisContext = Union[
     sharding_impls.ShardingContext,
 ]
 
+class ShapePolyLoweringState:
+  # The names of the dimension variables, sorted by name. This is the order in
+  # which they are passed to the IR functions that need them. This is only
+  # used for native serialization with polymorphic shapes when
+  # --jax_dynamic_shapes is off.
+  dim_vars: Sequence[str]
+  # Whether the module uses dimension variables, either in its inputs or
+  # from an inner call to a polymorphic Exported.
+  uses_dim_vars: bool
+
+  def __init__(self, dim_vars: Sequence[str]):
+    self.dim_vars = dim_vars
+    self.uses_dim_vars = (len(dim_vars) > 0)
+
+
 @dataclasses.dataclass
 class ModuleContext:
   """Module-wide context information for MLIR lowering."""
@@ -385,11 +400,8 @@ class ModuleContext:
   keepalives: List[Any]
   channel_iterator: Iterator[int]
   host_callbacks: List[Any]
-  # The names of the dimension variables, sorted by name. This is the order in
-  # which they are passed to the IR functions that need them. This is only
-  # used for native serialization with polymorphic shapes when
-  # --jax_dynamic_shapes is off.
-  dim_vars: Sequence[str]
+  # Keep state for the lowering of shape polymorphism
+  shape_poly_state: ShapePolyLoweringState
 
   # Cached primitive lowerings.
   cached_primitive_lowerings: Dict[Any, func_dialect.FuncOp]
@@ -417,7 +429,7 @@ class ModuleContext:
                                                 func_dialect.FuncOp]] = None,
       cached_call_jaxpr_lowerings: Optional[Dict[Any,
                                                  func_dialect.FuncOp]] = None,
-      dim_vars: Sequence[str] = ()):
+      shape_poly_state = None):
     assert platform is not None
     self.context = context or make_ir_context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
@@ -435,7 +447,7 @@ class ModuleContext:
     self.cached_call_jaxpr_lowerings = ({}
                                         if cached_call_jaxpr_lowerings is None
                                         else cached_call_jaxpr_lowerings)
-    self.dim_vars = dim_vars
+    self.shape_poly_state = shape_poly_state or ShapePolyLoweringState(())
 
   @property
   def backend(self) -> xb.XlaBackend:
@@ -466,7 +478,7 @@ class LoweringRuleContext:
   tokens_out: Optional[TokenSet]  # Mutable store for output containers
   axis_size_env: Optional[Dict[core.Var, ir.Value]] = None  # Dynamic axis sizes
   dim_var_values: Sequence[ir.Value] = ()  # The values for the dimension variables
-                                           # in same order as module_context.dim_vars
+                                           # in same order as module_context.shape_poly_state.dim_vars
 
   def set_tokens_out(self, tokens_out: TokenSet):
     assert self.tokens_out is None, 'Should only set `tokens_out` once.'
@@ -535,9 +547,9 @@ def eval_dynamic_shape(ctx: LoweringRuleContext,
   else:
     ctx = ctx.replace(
         primitive="eval_dynamic_shape",
-        avals_in=[core.dim_value_aval()] * len(ctx.module_context.dim_vars))
+        avals_in=[core.dim_value_aval()] * len(ctx.module_context.shape_poly_state.dim_vars))
     res = lower_fun(
-        partial(core.evaluate_shape, shape, ctx.module_context.dim_vars),
+        partial(core.evaluate_shape, shape, ctx.module_context.shape_poly_state.dim_vars),
         multiple_results=True)(ctx, *ctx.dim_var_values)
     return util.flatten(res)  # type: ignore
 
@@ -546,6 +558,7 @@ class LoweringResult(NamedTuple):
   module: ir.Module
   keepalive: Optional[Any]
   host_callbacks: List[Any]
+  shape_poly_state: ShapePolyLoweringState
 
 
 _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
@@ -628,7 +641,8 @@ def lower_jaxpr_to_module(
       if result_shardings is not None else result_shardings)
 
   ctx = ModuleContext(backend_or_name, platform, axis_context, name_stack,
-                      keepalives, channel_iter, host_callbacks, dim_vars=dim_vars)
+                      keepalives, channel_iter, host_callbacks,
+                      shape_poly_state=ShapePolyLoweringState(dim_vars))
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
@@ -658,7 +672,8 @@ def lower_jaxpr_to_module(
     raise ValueError(
         f"Cannot lower jaxpr with verifier errors: {module_string}") from e
 
-  return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks)
+  return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks,
+                        ctx.shape_poly_state)
 
 def module_to_string(module: ir.Module) -> str:
   output = io.StringIO()
@@ -805,7 +820,7 @@ def lower_jaxpr_to_fun(
       aval = core.ShapedArray((), np.dtype(np.bool_))
     return aval_to_ir_types(aval)
 
-  num_dim_vars = len(ctx.dim_vars)
+  num_dim_vars = len(ctx.shape_poly_state.dim_vars)
   dim_var_avals = [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars
   dim_var_types = map(aval_to_types, dim_var_avals)
 
@@ -1006,7 +1021,7 @@ def _to_physical_op_sharding(
 def _emit_lowering_rule_as_fun(lowering_rule,
                                ctx: LoweringRuleContext) -> func_dialect.FuncOp:
   """Emits the contents of a lowering rule as a private function."""
-  num_dim_vars = len(ctx.module_context.dim_vars)
+  num_dim_vars = len(ctx.module_context.shape_poly_state.dim_vars)
   # TODO(necula) maybe only pass the dim_vars if they are needed?
   dim_var_types = map(aval_to_ir_types, [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars)
 
@@ -1049,7 +1064,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   Assumes that an MLIR context, location, and insertion point are set.
 
   dim_var_values: the list of dimension variables values in the current
-    IR function, in the order of ctx.dim_vars.
+    IR function, in the order of ctx.shape_poly_state.dim_vars.
   """
   assert ctx.platform != "gpu"
   def read(v: core.Atom) -> Sequence[ir.Value]:
@@ -1075,7 +1090,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   assert len(args) == len(jaxpr.invars), (jaxpr, args)
   assert len(consts) == len(jaxpr.constvars), (jaxpr, consts)
   assert all(isinstance(v, ir.Value) for vs in consts for v in vs), consts
-  assert len(ctx.dim_vars) == len(dim_var_values), (ctx.dim_vars, dim_var_values)
+  assert len(ctx.shape_poly_state.dim_vars) == len(dim_var_values), (ctx.shape_poly_state.dim_vars, dim_var_values)
   map(write, jaxpr.constvars, consts)
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
