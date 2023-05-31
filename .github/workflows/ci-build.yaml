@@ -119,7 +119,7 @@ jobs:
         echo "JAX_ENABLE_CUSTOM_PRNG=$JAX_ENABLE_CUSTOM_PRNG"
         echo "JAX_THREEFRY_PARTITIONABLE=$JAX_THREEFRY_PARTITIONABLE"
         echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
-        pytest -n auto --tb=short tests examples
+        pytest -n auto --tb=short --maxfail=20 tests examples
 
 
   documentation:
