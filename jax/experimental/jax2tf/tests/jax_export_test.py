@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
-import re
 import unittest
 
 from absl.testing import absltest, parameterized
@@ -69,13 +68,25 @@ class JaxExportTest(jtu.JaxTestCase):
 
   def test_poly_export_only(self):
     a = np.arange(12, dtype=np.float32).reshape((3, 4))
-    def f(a):
-      return jnp.concatenate([a, a], axis=0)
+    def f(a, b):  # a: f32[2w,h]  b: f32[w,h]
+      return jnp.concatenate([a, b], axis=0)
 
     exp = jax_export.export(f)(
+        jax_export.poly_spec(a.shape, a.dtype, "(2*w, h)"),
         jax_export.poly_spec(a.shape, a.dtype, "(w, h)"))
+    self.assertEqual("(2*w, h)", str(exp.in_avals[0].shape))
+    self.assertEqual("(w, h)", str(exp.in_avals[1].shape))
+    self.assertEqual("(3*w, h)", str(exp.out_avals[0].shape))
+
+  def test_poly_pytree_export_only(self):
+    a = np.arange(12, dtype=np.float32).reshape((3, 4))
+    def f(a0, a1, *, ak):
+      return jnp.concatenate([a0, a1, ak], axis=0)
+
+    a_poly_spec = jax_export.poly_spec(a.shape, a.dtype, "(w, h)")
+    exp = jax_export.export(f)(a_poly_spec, a_poly_spec, ak=a_poly_spec)
     self.assertEqual("(w, h)", str(exp.in_avals[0].shape))
-    self.assertEqual("(2*w, h)", str(exp.out_avals[0].shape))
+    self.assertEqual("(3*w, h)", str(exp.out_avals[0].shape))
 
   def test_basic(self):
     f = jnp.sin
@@ -142,11 +153,11 @@ class JaxExportTest(jtu.JaxTestCase):
     exp_f = jax_export.export(f)(f32_4, b=f32_4)
 
     with self.assertRaisesRegex(ValueError,
-        r"Shape mismatch for args\[0\] in dimension 0"):
+        r"Shape mismatch for args\[0\].shape\[0\]"):
       jax_export.call_exported(exp_f)(np.arange(6, dtype=np.float32), b=f32_4)
 
     with self.assertRaisesRegex(ValueError,
-        r"Shape mismatch for kwargs\['b'\] in dimension 0"):
+        r"Shape mismatch for kwargs\['b'\].shape\[0\]"):
       jax_export.call_exported(exp_f)(f32_4, b=np.arange(6, dtype=np.float32))
 
     with self.assertRaisesRegex(ValueError,
@@ -214,50 +225,65 @@ class JaxExportTest(jtu.JaxTestCase):
                         jax_export.call_exported(exp_f2)(a))
 
   # An inner function is exported with polymorphic shapes inner_poly_spec, and
-  # is called from an outer function, that is exported with outer_poly_spec.
+  # is called from an outer function, which is exported with outer_poly_spec.
   @parameterized.named_parameters(
-      dict(testcase_name=f"inner={inner_poly_spec}_outer={outer_poly_spec}",
-           inner_poly_spec=inner_poly_spec, outer_poly_spec=outer_poly_spec,
-           expect_error=expect_error)
-      for inner_poly_spec, outer_poly_spec, expect_error in (
-          ("3,a,a+b", "3,4,12", None),
-          ("3,a,a+b", "3,4,c", None),
-          ("3,a,a+b", "3,c,c", r"Dimension variable.*b.*must have.* >= 1. Found value 0"),
-          ("3,a,a+b", "c,4,12", r"Shape mismatch for args\[0\] in dimension 0"),
-          ("3,a,a+b", "3,c+4,12", None),  # TODO: This should be an error, c = 0
-          ("3,4,3*a", "3,4,12", None),
-          ("3,4,5*a", "3,4,12", r"Dimension variable 'a' must have integer value >= 1. Found value 2.4"),
-          # ("3,a,a", "3,a,a", None),  # TODO: wrong error. It should be shape mismatch
-          # ("3,4,5*a", "3,4,c", None),  # TODO: wrong error. It should be "not divisible by 5"
+      dict(testcase_name=f"inner={d['inner_poly_spec']}_outer={d['outer_poly_spec']}",  # type: ignore
+           **d)  # type: ignore
+      for d in (
+          dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,4,12"),
+          dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,4,c"),
+          dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,c,c",
+               expect_error=(
+                   r"Dimension variable 'b' must have integer value >= 1. "
+                   r"Found 0 when solving a \+ b == args\[0\].shape\[2\]")),
+          dict(inner_poly_spec="3,a,a+b", outer_poly_spec="c,4,12",
+               expect_error=r"Shape mismatch for args\[0\].shape\[0\] \(expected constant\)"),
+          dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,c+4,12"),  # TODO: This should be an error, c = 0
+          dict(inner_poly_spec="3,4,3*a", outer_poly_spec="3,4,12"),
+          dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,12",
+               expect_error=(
+                   r"Dimension variable 'a' must have integer value >= 1. "
+                   r"Non-zero remainder 2 for factor 5 when solving 5\*a == args\[0\].shape\[2\]")),
+          # dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,c"),  # TODO: there should be an error 5*a != c == 12
+          # dict(inner_poly_spec="3,a,a", outer_poly_spec="3,a,a"),  # TODO: this should be a dynamic error
+          dict(inner_poly_spec="3,a", inner_x_shape=(3, 4), outer_poly_spec="3,a,a",
+               expect_error=r"Rank mismatch for args\[0\]"),
+          dict(inner_poly_spec="3,a,a+b", inner_x_dtype=np.int32, outer_poly_spec="3,c,d",
+               expect_error=r"Dtype mismatch for args\[0\]"),
       ))
-  def test_poly(self, inner_poly_spec="3,a,a+b",
-                outer_poly_spec="3,4,12", expect_error=None):
+  def test_poly(self, inner_poly_spec="3,a,a+b", inner_x_shape=(3, 4, 6),
+                inner_x_dtype=np.float32,
+                outer_poly_spec="3,c+4,12",  outer_x_shape=(3, 4, 12),
+                expect_error=None):
     # Polymorphic export called with static or polymorphic shapes
-    def inner(x):  # x: export_poly_spec
-      return jnp.reshape(x, (x.shape[0] * x.shape[1], x.shape[2]))
+    def inner(x):  # x: inner_poly_spec
+      return jnp.reshape(x, (-1, x.shape[1]))
 
-    x1 = np.arange(3 * 4 * 6, dtype=np.float32).reshape((3, 4, 6))  # x1 : f32[3,4,6]
-    exp1 = jax_export.export(inner)(jax_export.poly_spec(x1.shape, x1.dtype, inner_poly_spec))
+    inner_x = np.arange(np.prod(inner_x_shape),
+                        dtype=inner_x_dtype).reshape(inner_x_shape)  # inner_x : f32[3,4,6]
+    inner_exp = jax_export.export(inner)(
+        jax_export.poly_spec(inner_x.shape, inner_x.dtype, inner_poly_spec))
 
-    x2 = np.concatenate([x1, x1], axis=2)  # x2: f32[3,4,12]
-    def outer(x):  # x: call_poly_spec
+    outer_x = np.arange(np.prod(outer_x_shape),
+                        dtype=np.float32).reshape(outer_x_shape)  # outer_x : f32[3,4,12]
+    def outer(x):  # x: outer_poly_spec
       # Use an addition to test that the shapes are refined properly for the
       # result of the call_exported.
-      return jax_export.call_exported(exp1)(x) + inner(x)
+      return jax_export.call_exported(inner_exp)(x) + inner(x)
 
     with contextlib.ExitStack() as stack:
       if expect_error is not None:
         stack.push(self.assertRaisesRegex(ValueError, expect_error))
 
       # Call it after exporting again, with polymorphic shapes
-      exp2 = jax_export.export(outer)(
-          jax_export.poly_spec(x2.shape, x2.dtype, outer_poly_spec))
+      outer_exp = jax_export.export(outer)(
+          jax_export.poly_spec(outer_x.shape, outer_x.dtype, outer_poly_spec))
       # TODO: for now, we use XlaCallModule to run modules with polymorphic shapes
       # until we create the python bindings to invoke shape refinement.
       if jax2tf is not None:
-        res2 = jax2tf._run_exported_as_tf([x2], exp2)[0].numpy()
+        res2 = jax2tf._run_exported_as_tf([outer_x], outer_exp)[0].numpy()
         # res2 = jax_export.call_exported(exp2)(x2)
-        self.assertAllClose(2. * inner(x2), res2)
+        self.assertAllClose(2. * inner(outer_x), res2)
 
 
 if __name__ == "__main__":

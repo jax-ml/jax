@@ -32,6 +32,7 @@ jax2tf.convert docstring, and the
 """
 import collections
 import dataclasses
+from enum import Enum
 import functools
 import itertools
 import io
@@ -53,6 +54,7 @@ from jax._src import dtypes
 from jax._src.interpreters import mlir
 from jax._src.numpy import lax_numpy
 from jax._src import tree_util
+from jax._src import util
 from jax._src.typing import DimSize, Shape
 
 
@@ -640,7 +642,8 @@ class _DimExpr():
 
   def evaluate(self, env: DimVarEnv):
     # Evaluates as a value of dtype=core.dim_value_dtype()
-    terms = [_evaluate_multiply(mon.evaluate(env), core.dim_constant(coeff)) for mon, coeff in self.monomials()]
+    terms = [_evaluate_multiply(mon.evaluate(env), core.dim_constant(coeff))
+             for mon, coeff in self.monomials()]
     return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
   @staticmethod
@@ -1098,21 +1101,80 @@ def all_dim_vars(args_avals: Sequence[core.AbstractValue]) -> Sequence[str]:
         dim_vars = dim_vars.union(d.get_vars())
   return sorted(tuple(dim_vars))
 
-@dataclasses.dataclass
-class DimEquation:
-  # Represents arg.shape[dim_idx] == dim_expr
-  arg: jax.Array
-  dim_idx: int
-  dim_expr: _DimExpr
-  debug_arg_str: Callable[[], str]  # A pretty-printer for a descriptor for `arg`
+
+@dataclasses.dataclass(frozen=True)
+class ShapeConstraint:
+  class Comparator(Enum):
+    EQ = 1
+    GEQ = 2
+
+  comp: Comparator
+  left: DimSize
+  right: DimSize
+  # make_err_msg is invoked with (left_int, right_int) if the constraint fails.
+  make_err_msg: Callable[[int, int], str]
+
+  def check(self, shapeenv: DimVarEnv) -> None:
+    """Evaluates a constraint statically and raises an error if fails."""
+    def eval_operand(o: DimSize) -> Union[int, jax.Array]:
+      if core.is_constant_dim(o): return op.index(o)
+      return o.evaluate(shapeenv)  # type: ignore
+    try:
+      left1, right1 = eval_operand(self.left), eval_operand(self.right)
+    except KeyError:
+      return None
+
+    left_int, right_int = _is_known_constant(left1), _is_known_constant(right1)
+    if left_int is not None and right_int is not None:
+      if self.comp == ShapeConstraint.Comparator.EQ:
+        if not (left_int == right_int):
+          raise ValueError(self.make_err_msg(left_int, right_int))
+      elif self.comp == ShapeConstraint.Comparator.GEQ:
+        if not (left_int >= right_int):
+          raise ValueError(self.make_err_msg(left_int, right_int))
+      else: assert False
+    else:
+      return None  # TODO: evaluate constraint dynamically
 
   def __str__(self):
-    return (f"{self.dim_expr} == {self.debug_arg_str()}"
-            f".shape[{self.dim_idx}] (statically {self.arg.shape[self.dim_idx]})")
+    return (f"{self.left} {'==' if self.comp == ShapeConstraint.Comparator.EQ else '>='} {self.right}"
+            f" ({self.make_err_msg(self.left, self.right)})")
+  __repr__ = __str__
+
+
+class ShapeConstraints:
+  def __init__(self):
+    self.constraints: Set[ShapeConstraint] = set()  # map DimConstraint to an integer >= 0
+
+
+  def add_constraint(self,
+                     comp: ShapeConstraint.Comparator,
+                     left: DimSize, right: DimSize,
+                     make_err_msg: Callable[[int, int], str]):
+    # Try to evaluate it statically
+    c = ShapeConstraint(comp, left, right, make_err_msg)
+    self.constraints.add(c)
+
+  def check(self, shapeenv: DimVarEnv) -> None:
+    for constraint in self.constraints:
+      constraint.check(shapeenv)
+
+
+@dataclasses.dataclass
+class _DimEquation:
+  # Represents dim_expr == dim_value, where `dim_expr` contain unknown dimension
+  # variables, in terms of `dim_value`.
+  dim_expr: _DimExpr
+  dim_value: _DimExpr
+
+  def __str__(self):
+    return f"{self.dim_expr} == {self.dim_value}"
+  __repr__ = __str__
+
 
 def args_kwargs_path_to_str(path: tree_util.KeyPath) -> str:
-  # String description of args or kwargs, assuming the path is in a tree for
-  # the tuple (args, kwargs)
+  # String description of `args` or `kwargs`, assuming the path for a tree for
+  # the tuple `(args, kwargs)`.
   if path[0] == tree_util.SequenceKey(0):
     return f"args{tree_util.keystr(path[1:])}"
   elif path[0] == tree_util.SequenceKey(1):
@@ -1120,92 +1182,104 @@ def args_kwargs_path_to_str(path: tree_util.KeyPath) -> str:
   else:
     assert False
 
-def unify_avals_with_args(
-    args_avals: Sequence[core.AbstractValue],
-    dim_vars: Sequence[str],
-    *args: jax.Array,
-    use_static_dimension_size: bool,
+def pretty_print_dimension_descriptor(
     args_kwargs_tree: tree_util.PyTreeDef,
-    ) -> Sequence[jax.Array]:
-  """Computes values of dimension variables to unify avals with actual arguments.
+    flat_arg_idx: int, dim_idx: Optional[int]) -> str:
+  args_kwargs_with_paths, _ = tree_util.tree_flatten_with_path(
+      args_kwargs_tree.unflatten((0,) * args_kwargs_tree.num_leaves))
+  arg_str = args_kwargs_path_to_str(args_kwargs_with_paths[flat_arg_idx][0])
+  if dim_idx is not None:
+    arg_str += f".shape[{dim_idx}]"
+  return arg_str
 
-  Computes values for dimension variables for which the shapes in `args_avals`
-  (abstract values for a function's parameters) match the shapes of `args` (the
-  actual arguments). This is done by forming equations
-  between the symbolic expressions from `args_avals` and the actual dimension
-  sizes of the actual arguments, and then solving for the dimension variables.
+@util.cache()
+def solve_dim_vars(
+    args_avals: Sequence[core.AbstractValue],
+    args_kwargs_tree: tree_util.PyTreeDef,
+    ) -> Tuple[DimVarEnv, ShapeConstraints, Sequence[Tuple[str, int, int]]]:
+  """Solves dimension variables in a called function's avals in terms of actual argument shapes.
 
-  Not all equations are solvable. For now, the linear uni-variate equations
-  are solved first, then the solved variables are used to simplify the
-  remaining equations to linear uni-variate equations, and the process continues
+  For example, given:
+
+     args_avals = [ShapedArray((3, a, a + b), f32)]
+
+  we introduce fresh "known" dimension variables to represent the actual dimension
+  size of actual arguments for each non-constant dimension. Each known variable
+  has a name, an arg_idx, and a dim_idx, e.g.:
+
+    known_vars = [("args[0].shape[1]", 0, 1), ("args[0].shape[2]", 0, 2)]
+
+  and then we express the solution for the unknown dimension variables {a, b}
+  as symbolic expressions in terms of the known variables:
+
+    dict(a=args[0].shape[1], b=args[0].shape[2] - args[0].shape[1])
+
+  Not all equations are solvable. For now, we solve first the linear uni-variate
+  equations, then the solved variables are used to simplify the remaining
+  equations to linear uni-variate equations, and the process continues
   until all dimension variables are solved.
 
   Args:
     args_avals: the abstract values of the `args`, with shapes that may
-      include dimension variables. A flat sequence.
-    dim_vars: the dimension variables that occur in `args_avals`. The only
-      reason we need these is to ensure that the result of this function is a
-      flat list of jax.Array in the same order.
-    args: the actual function arguments, as jax.Array or any value with `.shape`
-      and `.dtype` attributes if `use_static_dimension_size`.
-    use_static_dimension_size: if `True` then it forms the equations using the
-      static shapes of `args`. This is useful, e.g., when we want to compute
-      the dimension variables statically. If `False` then it forms the
-      equations using the dynamic shapes of `args`, e.g., using
-      `stablehlo.GetDimensionSizeOp` for native serialization or `tf.shape`
-      for TF graph serialization. This is useful when we want to generate
-      code to compute the dimension variables at compilation-time.
+      include unknown dimension variables.
     args_kwargs_tree: a PyTreeDef that describes the tuple `(args, kwargs)` from
-      which the flat sequence `args_avals` is extracted. Used for referencing args and
-      kwargs in error messages.
+      which the flat sequence `args_avals` is extracted. Used for describing
+      args and kwargs in known variable names and in error messages.
 
-  Returns: the values of `dim_vars` in the same order.
+  Returns: a 3-tuple with: (a) the solution for the unknown dimension variables
+   (b) a list of constraints that must be satisfied for the solution to be a
+   valid one, and (c) and the list of known variables that may appear in
+   the solution and the constraints.
 
-  Raises ValueError if it cannot solve for the `dim_vars`.
+  Raises ValueError if it cannot solve some dimension variable.
   """
-  dim_equations: List[DimEquation] = []
-  def debug_arg_str(flat_arg_idx: int) -> str:
-    # Debug descriptor of an argument.
-    args_avals_tree = args_kwargs_tree.unflatten(args_avals)
-    args_avals_with_paths, _ = tree_util.tree_flatten_with_path(args_avals_tree)
-    return args_kwargs_path_to_str(args_avals_with_paths[flat_arg_idx][0])
-
-  for arg_idx, (aval, arg) in enumerate(zip(args_avals, args)):
-    if len(aval.shape) != len(arg.shape):
-      raise ValueError(
-          f"Rank mismatch for {debug_arg_str(arg_idx)}: expected {aval.shape} "
-          f"and called with {arg.shape}")
-      continue
-    if aval.dtype != arg.dtype:
-      raise ValueError(
-          f"Dtype mismatch for {debug_arg_str(arg_idx)}: expected {aval.dtype} "
-          f"and called with {arg.dtype}")
+  dim_equations: List[_DimEquation] = []
+  known_dimension_vars: List[Tuple[str, int, int]] = []
+  for arg_idx, aval in enumerate(args_avals):
     for dim_idx, aval_d in enumerate(aval.shape):
-      # If the aval has a constant dimension then the actual argument must have
-      # a matching constant dimension.
-      if not is_poly_dim(aval_d):
-        if _is_known_constant(arg.shape[dim_idx]) is None or aval_d != arg.shape[dim_idx]:
-          raise ValueError(
-              f"Shape mismatch for {debug_arg_str(arg_idx)} in dimension {dim_idx}: "
-              f"expected {aval.shape} and called with {arg.shape}")
-      else:
+      if is_poly_dim(aval_d):
+        known_dim_var = pretty_print_dimension_descriptor(args_kwargs_tree,
+                                                          arg_idx, dim_idx)
+        known_dimension_vars.append((known_dim_var, arg_idx, dim_idx))
         dim_equations.append(
-            DimEquation(arg=arg,
-                        dim_idx=dim_idx, dim_expr=_ensure_poly(aval_d, "unify_avals_with_args"),
-                        debug_arg_str=functools.partial(debug_arg_str, arg_idx)))
+            _DimEquation(dim_expr=_ensure_poly(aval_d, "solve_dim_vars"),
+                         dim_value=_DimExpr.from_var(known_dim_var)))
 
-  dim_env = _solve_dim_equations(dim_equations,
-                                 use_static_dimension_size=use_static_dimension_size)
-  dim_values = tuple(dim_env[dv] for dv in dim_vars)
-  return dim_values
+  solution, shape_constraints = _solve_dim_equations(dim_equations)
+  return solution, shape_constraints, known_dimension_vars
+
+def compute_dim_vars_from_arg_shapes(
+    args_avals: Sequence[core.AbstractValue],
+    *actual_args: jax.Array,
+    args_kwargs_tree: tree_util.PyTreeDef) -> Sequence[jax.Array]:
+  """Computes values of dimension variables to unify args_avals with actual arguments.
+
+  Like `solve_dim_vars` except that here we express the solution as
+  JAX arrays that reference the `actual_args`. This function can be used to
+  generate the code for computing the dimension variables.
+
+  Returns: the values of the dimension variables, in the order determined by
+    `all_dim_vars(args_avals)`.
+  """
+  dim_vars = all_dim_vars(args_avals)
+  solution, shape_constraints, known_dim_vars = solve_dim_vars(
+      tuple(args_avals), args_kwargs_tree=args_kwargs_tree)
+
+  # Replace the synthetic vars with the dynamic shape of the actual arg
+  known_env = {vname: dimension_size_p.bind(actual_args[arg_idx], dimension=dim_idx)
+               for (vname, arg_idx, dim_idx) in known_dim_vars}
+  dim_values = [solution[var].evaluate(known_env) for var in dim_vars]
+  shape_constraints.check(known_env)
+  return tuple(dim_values)
 
 
-def _solve_dim_equations(eqns: List[DimEquation],
-                         use_static_dimension_size: bool) -> DimVarEnv:
-  # Returns a shape environment if it can solve all dimension variables.
-  # Raises an exception if it cannot.
+def _solve_dim_equations(
+    eqns: List[_DimEquation]
+) -> Tuple[DimVarEnv, ShapeConstraints]:
+  # Returns a shape environment and the shape constraints if it can solve all
+  # dimension variables. Raises an exception if it cannot.
   shapeenv: DimVarEnv = {}
-
+  shape_constraints = ShapeConstraints()
   def _shapeenv_to_str() -> str:
     if shapeenv:
       return (" Partial solution: " +
@@ -1213,27 +1287,17 @@ def _solve_dim_equations(eqns: List[DimEquation],
     else:
       return ""
 
-  def process_one_eqn(eqn: DimEquation) -> bool:
+  def process_one_eqn(eqn: _DimEquation) -> bool:
     # We start with a DimEquation of the form `dim_expr = dim_value`
     # Try to rewrite the equation as `var * factor_var = dim_value_2` (a linear
     # uni-variate equation). Returns `False` if this rewrite fails.
     # Otherwise, compute the `var` value as `dim_value_2 // factor`, add it to
     # `shapeenv` and return `True`.
     #
-    # TODO: does not yet fully handle the cases when `dim_value` is not
-    #  divisible by `factor`, or when the value is not greater or equal to 1.
-
     # Invariant:
     #     var * factor_var + remaining_monomials_from_dim_expr = dim_value
     var, factor_var = None, None
-    if use_static_dimension_size:
-      dim_value = eqn.arg.shape[eqn.dim_idx]
-      if _is_known_constant(dim_value):
-        dim_value = core.dim_constant(dim_value)
-    else:
-      # We use the dimension_size_p primitive when we want to lower to code
-      # that fetches the dimension size at compile-time.
-      dim_value = dimension_size_p.bind(eqn.arg, dimension=eqn.dim_idx)
+    dim_value = eqn.dim_value
 
     for mon, factor in eqn.dim_expr.monomials():
       # Perhaps we can already evaluate this monomial (all vars solved)
@@ -1253,26 +1317,22 @@ def _solve_dim_equations(eqns: List[DimEquation],
 
     if var is not None:
       if factor_var == 1:
-        var_value, var_remainder = dim_value, core.dim_constant(0)
+        var_value = dim_value
       else:
         var_value, var_remainder = divmod(dim_value, core.dim_constant(factor_var))  # type: ignore
+        shape_constraints.add_constraint(
+            ShapeConstraint.Comparator.EQ, var_remainder, 0,
+            make_err_msg=lambda rem_int, _: (
+                f"Dimension variable '{var}' must have integer value >= 1. "
+                f"Non-zero remainder {rem_int} for factor {factor_var} when solving "
+                f"{eqn}.{_shapeenv_to_str()}"))
 
-      # Check that the division is even. Works only in TF eager mode.
-      # TODO: check dynamically if not possible statically
-      # Or maybe we should abort right away if the remainder is not 0?
-      var_remainder_int = _is_known_constant(var_remainder)
-      if var_remainder_int is not None and var_remainder_int != 0:
-        msg = (f"Dimension variable '{var}' must have integer value >= 1. "  # type: ignore
-               f"Found value {int(_is_known_constant(dim_value)) / factor_var} when solving "  # type: ignore
-               f"{eqn}.{_shapeenv_to_str()}")
-        raise ValueError(msg)
-      var_value_int = _is_known_constant(var_value)
-      if var_value_int is not None and var_value_int <= 0:
-        # TODO: check dynamically if not possible statically
-        msg = (f"Dimension variable '{var}' must have integer value >= 1. "
-               f"Found value {int(var_value_int)} when solving "
-               f"{eqn}.{_shapeenv_to_str()}")
-        raise ValueError(msg)
+      shape_constraints.add_constraint(
+          ShapeConstraint.Comparator.GEQ, var_value, 1,
+          make_err_msg=lambda var_int, _: (
+              f"Dimension variable '{var}' must have integer value >= 1. "
+              f"Found {var_int} when "
+              f"solving {eqn}.{_shapeenv_to_str()}"))
 
       if not isinstance(var_value, _DimExpr):
         assert var_value.dtype == core.dim_value_dtype()
@@ -1280,20 +1340,18 @@ def _solve_dim_equations(eqns: List[DimEquation],
       return True
     else:
       # All variables are resolved for this equation
-      dim_value_int = _is_known_constant(dim_value)
-      if dim_value_int is not None and dim_value_int != 0:
-        # TODO: check dynamically if not possible statically
-        err_msg = (
-            "Found inconsistency when solving "
-            f"{eqn}.{_shapeenv_to_str()}")
-        raise ValueError(err_msg)
+      shape_constraints.add_constraint(
+          ShapeConstraint.Comparator.EQ, eqn.dim_value,
+          eqn.dim_expr.evaluate(shapeenv),
+          make_err_msg=lambda val1, val2: (
+              f"Found inconsistency {val1} != {val2} when solving {eqn}.{_shapeenv_to_str()}"))
       return True
 
   while True:
     nr_eqns = len(eqns)
     eqns = [eqn for eqn in eqns if not process_one_eqn(eqn)]
     if not eqns:
-      return shapeenv  # SUCCESS
+      return shapeenv, shape_constraints  # SUCCESS
     elif len(eqns) >= nr_eqns:
       break
 
