@@ -46,7 +46,6 @@ from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -631,20 +630,13 @@ def _eigh_jacobi_lowering_rule(ctx, operand, lower, sort_eigenvalues):
     result_shapes = None
   op = mlir.custom_call(
       "Eigh",
-      (result_types if xla_extension_version >= 150 else
-       [ir.TupleType.get_tuple(result_types)]),
+      result_types,
       [operand],
       backend_config=backend_config,
       api_version=1,
       result_shapes=result_shapes,
   )
-  if xla_extension_version >= 150:
-    return op.results[1], op.results[0]
-  else:
-    return (
-        hlo.GetTupleElementOp(op, 1).result,
-        hlo.GetTupleElementOp(op, 0).result,
-    )
+  return op.results[1], op.results[0]
 
 eigh_jacobi_p = Primitive('eigh_jacobi')
 eigh_jacobi_p.multiple_results = True
@@ -1269,20 +1261,12 @@ def _lu_tpu_lowering_rule(ctx, operand):
     mlir.aval_to_ir_type(ctx.avals_out[2])
   ]
   op = hlo.CustomCallOp(
-   (result_types if xla_extension_version >= 150 else
-    [ir.TupleType.get(result_types)]),
+    result_types,
     [operand],
     call_target_name=ir.StringAttr.get("LuDecomposition"),
     has_side_effect=ir.BoolAttr.get(False),
   )
-  if xla_extension_version >= 150:
-    return op.results
-  else:
-    return (
-        hlo.GetTupleElementOp(op, 0).result,
-        hlo.GetTupleElementOp(op, 1).result,
-        hlo.GetTupleElementOp(op, 2).result,
-    )
+  return op.results
 
 
 lu_p = Primitive('lu')
@@ -1411,19 +1395,12 @@ def _geqrf_lowering_rule(ctx, operand):
     result_shapes = None
   op = mlir.custom_call(
       "Qr",
-      (result_types if xla_extension_version >= 150
-       else [ir.TupleType.get(result_types)]),
+      result_types,
       [operand],
       api_version=1,
       result_shapes=result_shapes
   )
-  if xla_extension_version >= 150:
-    return op.results
-  else:
-    return (
-        hlo.GetTupleElementOp(op, 0).result,
-        hlo.GetTupleElementOp(op, 1).result,
-    )
+  return op.results
 
 def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a):
   if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):

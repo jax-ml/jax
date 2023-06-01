@@ -28,7 +28,6 @@ from jax._src import debugging
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
-from jax._src.lib import xla_extension_version
 import jax.numpy as jnp
 import numpy as np
 
@@ -1150,8 +1149,6 @@ class InspectShardingTest(jtu.JaxTestCase):
 
     if jtu.is_cloud_tpu():
       raise unittest.SkipTest("Inspect sharding is not supported on libtpu.")
-    if xla_bridge.using_pjrt_c_api() and xla_extension_version < 150:
-      raise unittest.SkipTest("Inspect sharding is not supported on Cloud TPU")
 
     is_called = False
     def _cb(sd):

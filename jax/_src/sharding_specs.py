@@ -39,7 +39,6 @@ from jax._src import op_shardings
 from jax._src import util
 from jax._src.lib import pmap_lib
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 
 unsafe_map, map = map, util.safe_map
 
@@ -106,7 +105,7 @@ def sharding_spec_sharding_proto(
     else:
       util.assert_unreachable(assignment)
 
-  if xla_extension_version >= 157 and hlo_sharding:
+  if hlo_sharding:
     if len(replicated_maxes) == len(self.mesh_mapping) and not special_axes:
       return xc.HloSharding.replicate()
   else:
@@ -153,7 +152,7 @@ def sharding_spec_sharding_proto(
 
   proto_mesh = mesh.transpose(mesh_permutation).reshape(new_mesh_shape)
 
-  if xla_extension_version >= 157 and hlo_sharding:
+  if hlo_sharding:
     return xc.HloSharding.iota_tile(
         dims=new_mesh_shape, reshape_dims=list(proto_mesh.shape),
         transpose_perm=mesh_permutation, subgroup_types=last_tile_dims)

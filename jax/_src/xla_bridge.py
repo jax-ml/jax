@@ -31,7 +31,6 @@ import sys
 import threading
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 import warnings
-from jax._src.lib import xla_extension_version
 import numpy as np
 
 from jax._src import lib
@@ -164,11 +163,7 @@ def get_compile_options(
     compile_options.device_assignment = device_assignment
 
   if env_options_overrides is not None:
-    if xla_extension_version >= 145:
-      compile_options.env_option_overrides = list(env_options_overrides.items())
-    else:
-      raise TypeError(
-          "`env_options_overrides` is only supported in later versions of jaxlib")
+    compile_options.env_option_overrides = list(env_options_overrides.items())
 
   debug_options = compile_options.executable_build_options.debug_options
   if lib.cuda_path is not None:
@@ -410,16 +405,8 @@ def register_plugin(
     options: Optional. It is used when creating a PJRT plugin client.
   """
   def factory():
-    if xla_extension_version >= 152:
-      # Plugin may already be statically linked in some configurations.
-      if not xla_client.pjrt_plugin_loaded(plugin_name):
-        if library_path is None:
-          raise ValueError(
-              'The library path is None when trying to dynamically load the'
-              ' plugin.'
-          )
-        xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
-    else:
+    # Plugin may already be statically linked in some configurations.
+    if not xla_client.pjrt_plugin_loaded(plugin_name):
       if library_path is None:
         raise ValueError(
             'The library path is None when trying to dynamically load the'
@@ -810,11 +797,9 @@ def using_pjrt_c_api(backend=None):
 
 # TODO(parkers): Get rid of this in favor of a generic way to get topologies.
 def make_pjrt_tpu_topology(topology_name=None, **kwargs):
-  if xla_extension_version >= 153:
-    # TODO(b/261484192): Make a system for lazily loading libtpu.so and call
-    # that inside make_tfrt_tpu_c_api_device_topology.
-    get_backend()  # Properly initialize libtpu.so.
-    return xla_client.make_tfrt_tpu_c_api_device_topology(
-        topology_name, **kwargs
-    )
-  raise NotImplementedError('make_pjrt_tpu_topology is not implemented')
+  # TODO(b/261484192): Make a system for lazily loading libtpu.so and call
+  # that inside make_tfrt_tpu_c_api_device_topology.
+  get_backend()  # Properly initialize libtpu.so.
+  return xla_client.make_tfrt_tpu_c_api_device_topology(
+      topology_name, **kwargs
+  )

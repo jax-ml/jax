@@ -36,7 +36,6 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
@@ -355,21 +354,10 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
     op_sharding = hlo_sharding.to_proto()
     return _op_sharding_callback(op_sharding)
 
-  # Here we store information in a container that we store globally so the
-  # custom partitioning code can access it.
-  sharding_callback_info = ShardingCallbackInfo(_hlo_sharding_callback,
-                                                ctx.module_context)
-  if xla_extension_version < 150:
-    key = str(id(sharding_callback_info))
-    sharding_callbacks[key] = sharding_callback_info
-    # We need to make sure `sharding_callback_info` is still alive when the SPMD
-    # partitioner runs so we keep it alive by attaching it to the executable.
-    ctx.module_context.add_keepalive(sharding_callback_info)
-  else:
-    key = xc.encode_inspect_sharding_callback(_hlo_sharding_callback)
-    # We need to make sure `_hlo_sharding_callback` is still alive when the SPMD
-    # partitioner runs so we keep it alive by attaching it to the executable.    #
-    ctx.module_context.add_keepalive(_hlo_sharding_callback)
+  key = xc.encode_inspect_sharding_callback(_hlo_sharding_callback)
+  # We need to make sure `_hlo_sharding_callback` is still alive when the SPMD
+  # partitioner runs so we keep it alive by attaching it to the executable.    #
+  ctx.module_context.add_keepalive(_hlo_sharding_callback)
 
   hlo.CustomCallOp([value.type], [value],
                    call_target_name=ir.StringAttr.get(
@@ -419,15 +407,6 @@ def inspect_sharding_infer_sharding_from_operands(arg_shapes, arg_shardings,
                                                   shape, backend_string):
   del arg_shapes, shape, backend_string
   return arg_shardings[0]
-
-if xla_extension_version < 150:
-  xc.register_custom_call_partitioner(  # pytype: disable=module-attr
-      _INSPECT_SHARDING_CALL_NAME,
-      inspect_sharding_prop_user_sharding,
-      inspect_sharding_partition,
-      inspect_sharding_infer_sharding_from_operands,
-      True,
-  )
 
 def _slice_to_chunk_idx(size: int, slc: slice) -> int:
   if slc.stop == slc.start == None:

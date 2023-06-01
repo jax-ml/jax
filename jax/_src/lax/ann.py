@@ -441,18 +441,9 @@ approx_top_k_p = core.Primitive('approx_top_k')
 approx_top_k_p.multiple_results = True
 approx_top_k_p.def_impl(partial(dispatch.apply_primitive, approx_top_k_p))
 approx_top_k_p.def_abstract_eval(_approx_top_k_abstract_eval)
-if xc.mlir_api_version > 48:
-  mlir.register_lowering(approx_top_k_p,
-                        partial(_approx_top_k_lowering, fallback=True))
-  mlir.register_lowering(approx_top_k_p, _approx_top_k_lowering,
-                          platform='tpu')
-elif xc.mlir_api_version == 48:
-  xla.register_translation(approx_top_k_p, _approx_top_k_fallback_translation)
-  mlir.register_lowering(approx_top_k_p, _approx_top_k_lowering,
-                          platform='tpu')
-else:
-  xla.register_translation(approx_top_k_p, _approx_top_k_fallback_translation)
-  xla.register_translation(approx_top_k_p, _approx_top_k_tpu_translation,
-                            platform='tpu')
+mlir.register_lowering(approx_top_k_p,
+                      partial(_approx_top_k_lowering, fallback=True))
+mlir.register_lowering(approx_top_k_p, _approx_top_k_lowering,
+                        platform='tpu')
 batching.primitive_batchers[approx_top_k_p] = _approx_top_k_batch_rule
 ad.primitive_jvps[approx_top_k_p] = _approx_top_k_jvp

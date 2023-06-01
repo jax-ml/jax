@@ -26,7 +26,6 @@ from jax._src.config import flags
 from jax.experimental.pjit import pjit
 from jax.experimental.serialize_executable import (
     serialize, deserialize_and_load)
-from jax._src.lib import xla_extension_version
 from jax.experimental import topologies
 from jax.sharding import PartitionSpec as P
 
@@ -40,9 +39,6 @@ with contextlib.suppress(ImportError):
   pytestmark = pytest.mark.multiaccelerator
 
 
-@unittest.skipIf(
-    xla_extension_version < 151, 'Test requires xla_extension_version >= 151'
-)
 class JaxAotTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices('cpu', 'gpu')
