@@ -581,6 +581,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = [
     "LuDecomposition",
     # ApproxTopK on TPU
     "ApproxTopK",
+    "tf.call_tf_function",  # From jax2tf.call_tf(func, call_tf_graph=True)
 ]
 
 def _check_module(mod: ir.Module, *,
