@@ -114,7 +114,7 @@ jax.pmap(convolve)(xs, ws)
 
 +++ {"id": "E69cVxQPksxe"}
 
-Note that the parallelized `convolve` returns a `ShardedDeviceArray`. That is because the elements of this array are sharded across all of the devices used in the parallelism. If we were to run another parallel computation, the elements would stay on their respective devices, without incurring cross-device communication costs.
+Note that the parallelized `convolve` returns a `jax.Array`. That is because the elements of this array are sharded across all of the devices used in the parallelism. If we were to run another parallel computation, the elements would stay on their respective devices, without incurring cross-device communication costs.
 
 ```{code-cell} ipython3
 :id: P9dUyk-ciquy
@@ -298,7 +298,7 @@ replicated_params = jax.tree_map(lambda x: jnp.array([x] * n_devices), params)
 
 +++ {"id": "dmCMyLP9SV99"}
 
-So far, we've just constructed arrays with an additional leading dimension. The params are all still all on the host (CPU). `pmap` will communicate them to the devices when `update()` is first called, and each copy will stay on its own device subsequently. You can tell because they are a DeviceArray, not a ShardedDeviceArray:
+So far, we've just constructed arrays with an additional leading dimension. The params are all still all on the host (CPU). `pmap` will communicate them to the devices when `update()` is first called, and each copy will stay on its own device subsequently.
 
 ```{code-cell} ipython3
 :id: YSCgHguTSdGW
@@ -309,7 +309,7 @@ type(replicated_params.weight)
 
 +++ {"id": "90VtjPbeY-hD"}
 
-The params will become a ShardedDeviceArray when they are returned by our pmapped `update()` (see further down).
+The params will become a jax.Array when they are returned by our pmapped `update()` (see further down).
 
 +++ {"id": "eGVKxk1CV-m1"}
 
@@ -347,7 +347,7 @@ for i in range(1000):
   # This is where the params and data gets communicated to devices:
   replicated_params, loss = update(replicated_params, x_split, y_split)
 
-  # The returned `replicated_params` and `loss` are now both ShardedDeviceArrays,
+  # The returned `replicated_params` and `loss` are now both jax.Arrays,
   # indicating that they're on the devices.
   # `x_split`, of course, remains a NumPy array on the host.
   if i == 0:
