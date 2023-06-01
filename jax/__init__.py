@@ -93,6 +93,7 @@ from jax._src.api import device_put as device_put
 from jax._src.api import device_put_sharded as device_put_sharded
 from jax._src.api import device_put_replicated as device_put_replicated
 from jax._src.xla_bridge import devices as devices
+from jax._src.xla_bridge import memory_spaces as memory_spaces
 from jax._src.api import disable_jit as disable_jit
 from jax._src.api import eval_shape as eval_shape
 from jax._src.api_util import flatten_fun_nokwargs as _deprecated_flatten_fun_nokwargs

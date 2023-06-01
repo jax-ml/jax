@@ -19,27 +19,26 @@ and provide some automatic type mapping logic for converting between Numpy and
 XLA. There are also a handful of related casting utilities.
 """
 
-from functools import partial, lru_cache
+from functools import lru_cache, partial
 import importlib
 import io
 import json
 import logging
 import os
-import platform as py_platform
 import pkgutil
+import platform as py_platform
 import sys
 import threading
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 import warnings
-import numpy as np
-
-from jax._src import lib
 from jax._src import distributed
-from jax._src.config import flags, bool_env, config, int_env
-from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
+from jax._src import lib
 from jax._src import traceback_util
 from jax._src import util
+from jax._src.config import bool_env, config, flags, int_env
+from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
+import numpy as np
 
 iree: Optional[Any]
 
@@ -712,6 +711,38 @@ def devices(
     List of Device subclasses.
   """
   return get_backend(backend).devices()
+
+
+# TODO(yueshengys): Update the return type annotation to be `List[xla_client.MemorySpace]`, minimum xla_extension_version is 161.
+def memory_spaces(
+    backend: Optional[Union[str, xla_client.Client]] = None
+) -> List[Any]:
+  """Returns a list of all memory spaces for a given backend.
+
+  .. currentmodule:: jaxlib.xla_extension
+
+  Each memory space is represented by a subclass of :class:`MemorySpace`
+  You may find the class in
+  https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/python/xla_extension/__init__.pyi
+
+  If ``backend`` is ``None``, returns all the memory spaces from the default
+  backend.
+  The default backend is generally ``'gpu'`` or ``'tpu'`` if available,
+  otherwise ``'cpu'``.
+
+  Args:
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend: ``'cpu'``, ``'gpu'``, or
+      ``'tpu'``.
+
+  Returns:
+    List of MemorySpace subclasses.
+  """
+  if xla_extension_version >= 161:
+    return get_backend(backend).memory_spaces()
+  raise NotImplementedError(
+      'memory_spaces is not implemented, try updating jaxlib'
+  )
 
 
 def default_backend() -> str:

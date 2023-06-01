@@ -20,10 +20,10 @@ from absl import logging
 from absl.testing import absltest
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.lib import xla_client as xc
-from jax.interpreters import xla
-
 from jax._src.config import config
+from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
+from jax.interpreters import xla
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
@@ -67,6 +67,16 @@ class XlaBridgeTest(jtu.JaxTestCase):
       xb.local_devices(100)
     with self.assertRaisesRegex(RuntimeError, "Unknown backend foo"):
       xb.local_devices(backend="foo")
+
+  def test_memory_spaces(self):
+    if xla_extension_version >= 161:
+      with self.assertRaisesRegex(RuntimeError, "Unknown backend foo"):
+        xb.memory_spaces(backend="foo")
+    else:
+      with self.assertRaisesRegex(
+          NotImplementedError, "memory_spaces is not implemented"
+      ):
+        xb.memory_spaces()
 
   def test_timer_tpu_warning(self):
     with warnings.catch_warnings(record=True) as w:
