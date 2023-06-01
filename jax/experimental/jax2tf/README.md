@@ -1568,12 +1568,13 @@ following modules are useful for debugging JAX native serialization:
 
   * `jax_export=3` - will log the StableHLO module on serialization.
   * `jax2tf=3` - will log the parameters to `XlaCallModule` op on serialization.
-  * `xla_call_module_loader=3` - will log the StableHLO module upong loading,
-    after shape refinementas, and on verification error. You can use level `4`
+  * `xla_call_module_loader=3` - will log the StableHLO module upon loading,
+    after shape refinements, and on verification error. You can use level `4`
     to add location information, and level `5` to also print the module before
     and after each transformation.
   * `xla_call_module_op=3` - will log the HLO module generated after
-    shape refinement and conversion from StableHLO.
+    shape refinement and conversion from StableHLO. Use level `5` to see
+    more intermediate states of the module.
 
 For the two `xla` modules mentioned above, you can control logging in OSS
 with environment variables, e.g.:
