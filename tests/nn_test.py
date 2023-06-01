@@ -133,13 +133,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testSoftmaxWhereMask(self, fn):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
     m = jnp.array([True, False, True, True])
-    x_filtered = jnp.take(x, jnp.array([0, 2, 3]))
 
-    out_masked = jnp.take(
-        fn(x, where=m, initial=-jnp.inf), jnp.array([0, 2, 3]))
-    out_filtered = fn(x_filtered)
+    out = fn(x, where=m, initial=-jnp.inf)
+    self.assertAllClose(out[m], fn(x[m]))
 
-    self.assertAllClose(out_masked, out_filtered)
+    probs = out if fn is nn.softmax else jnp.exp(out)
+    self.assertAllClose(probs.sum(), 1.0)
 
     # TODO(mattjj): include log_softmax in these extra tests if/when we add a
     # custom_jvp rule for it (since otherwise it doesn't pass the numerical

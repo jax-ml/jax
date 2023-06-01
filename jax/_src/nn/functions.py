@@ -317,7 +317,10 @@ def log_softmax(x: Array,
   shifted = x - lax.stop_gradient(x_max)
   shifted_logsumexp = jnp.log(
       jnp.sum(jnp.exp(shifted), axis, where=where, keepdims=True))
-  return shifted - shifted_logsumexp
+  result = shifted - shifted_logsumexp
+  if where is not None:
+    return jnp.where(where, result, -jnp.inf)
+  return result
 
 
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
@@ -357,7 +360,10 @@ def _softmax(
     initial: Optional[Array] = None) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   unnormalized = jnp.exp(x - x_max)
-  return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
+  result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
+  if where is not None:
+    result = jnp.where(where, result, 0)
+  return result
 
 @_softmax.defjvp
 def _softmax_jvp(axis, primals, tangents):
@@ -368,7 +374,10 @@ def _softmax_jvp(axis, primals, tangents):
 def _softmax_deprecated(x, axis, where, initial):
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
-  return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
+  result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
+  if where is not None:
+    result = jnp.where(where, result, 0)
+  return result
 
 
 @partial(jax.jit, static_argnames=("axis",))
