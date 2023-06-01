@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.11
+## jax 0.4.12
+
+## jaxlib 0.4.12
+
+## jax 0.4.11 (May 31, 2023)
 
 * Deprecations
   * The following APIs have been removed after a 3 month deprecation period, in
@@ -28,7 +32,7 @@ Remember to align the itemized text with the first line of an item within a list
       use `shardings` instead.
 
 
-## jaxlib 0.4.11
+## jaxlib 0.4.11 (May 31, 2023)
 
 * Changes
   * Readded support for the Python buffer protocol (`memoryview`) on CPU

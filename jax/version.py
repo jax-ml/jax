@@ -15,7 +15,7 @@
 # This file is included as part of both jax and jaxlib. It is also
 # eval()-ed by setup.py, so it should not have any dependencies.
 
-__version__ = "0.4.11"
+__version__ = "0.4.12"
 _minimum_jaxlib_version = "0.4.7"
 
 def _version_as_tuple(version_str):
