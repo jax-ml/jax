@@ -264,6 +264,8 @@ class JaxExportTest(jtu.JaxTestCase):
     inner_exp = jax_export.export(inner)(
         jax_export.poly_spec(inner_x.shape, inner_x.dtype, inner_poly_spec))
 
+    self.assertEqual(inner_exp.module_uses_dim_vars,
+                     (inner_poly_spec != "3,4,12"))
     outer_x = np.arange(np.prod(outer_x_shape),
                         dtype=np.float32).reshape(outer_x_shape)  # outer_x : f32[3,4,12]
     def outer(x):  # x: outer_poly_spec
@@ -278,12 +280,17 @@ class JaxExportTest(jtu.JaxTestCase):
       # Call it after exporting again, with polymorphic shapes
       outer_exp = jax_export.export(outer)(
           jax_export.poly_spec(outer_x.shape, outer_x.dtype, outer_poly_spec))
-      # TODO: for now, we use XlaCallModule to run modules with polymorphic shapes
-      # until we create the python bindings to invoke shape refinement.
-      if jax2tf is not None:
-        res2 = jax2tf._run_exported_as_tf([outer_x], outer_exp)[0].numpy()
-        # res2 = jax_export.call_exported(exp2)(x2)
-        self.assertAllClose(2. * inner(outer_x), res2)
+      self.assertEqual(outer_exp.module_uses_dim_vars,
+                       (inner_poly_spec != "3,4,12" or outer_poly_spec != "3,4,12"))
+      if not outer_exp.module_uses_dim_vars:
+        res = jax_export.call_exported(outer_exp)(outer_x)
+        self.assertAllClose(2. * inner(outer_x), res)
+      else:
+        # TODO: for now, we use XlaCallModule to run modules with polymorphic shapes
+        # until we create the python bindings to invoke shape refinement.
+        if jax2tf is not None:
+          res = jax2tf._run_exported_as_tf([outer_x], outer_exp)[0].numpy()
+          self.assertAllClose(2. * inner(outer_x), res)
 
 
 if __name__ == "__main__":

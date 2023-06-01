@@ -76,6 +76,9 @@ class Exported:
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
         because they are not used. Same length as `in_shardings`.
+    module_uses_dim_vars: whether the `mlir_module_serialized` uses shape
+        polymorphic dimension variables. This may be from `in_avals` but also
+        from inner calls of Exported modules.
     strict_checks: whether the module was serialized with the following safety
         checking: (A) the lowered computation can only be executed on a platform
         for which it was lowered; (B) the serialized computation contains only
@@ -101,6 +104,7 @@ class Exported:
   mlir_module_serialized: bytes
   xla_call_module_version: int
   module_kept_var_idx: Tuple[int, ...]
+  module_uses_dim_vars: bool
 
   _get_vjp: Optional[Callable[["Exported"], "Exported"]]
 
@@ -264,10 +268,9 @@ def export(fun_jax: Callable,
     else:
       # For pmap
       module_kept_var_idx = tuple(range(len(args_avals_flat)))
-
-    if not all(
-        core.is_constant_shape(a.shape) for a in args_avals_flat
-    ) or lowering.compile_args.get("ordered_effects", []):
+    shape_poly_state = lowering.compile_args["shape_poly_state"]
+    if (not all(core.is_constant_shape(a.shape) for a in args_avals_flat)
+        or lowering.compile_args.get("ordered_effects", [])):
       # All arguments are kept if we have dimension variables.
       assert len(module_kept_var_idx) == len(args_avals_flat)
       mlir_module = _wrap_main_func(
@@ -334,6 +337,7 @@ def export(fun_jax: Callable,
         strict_checks=strict_checks,
         mlir_module_serialized=mlir_module_serialized,
         module_kept_var_idx=module_kept_var_idx,
+        module_uses_dim_vars=shape_poly_state.uses_dim_vars,
         xla_call_module_version=xla_call_module_version,
         _get_vjp=lambda exported: _export_native_vjp(fun_jax, exported))
 
@@ -387,7 +391,6 @@ def _wrap_main_func(
   Returns the wrapped module.
   """
   dim_vars = shape_poly.all_dim_vars(args_avals_flat)
-
   # Make a new module, do not mutate the "module" because it may be cached
   context = mlir.make_ir_context()
   with context, ir.Location.unknown(context):
@@ -512,7 +515,7 @@ def _check_lowering(lowering) -> None:
       "spmd_lowering", "auto_spmd_lowering",
       "tuple_args", "ordered_effects", "unordered_effects",
       "keepalive", "host_callbacks", "pmap_nreps", "committed",
-      "device_assignment", "jaxpr_debug_info"]
+      "device_assignment", "jaxpr_debug_info", "shape_poly_state"]
   for compile_arg in lowering.compile_args.keys():
     if compile_arg not in allowed_compile_args:
       raise NotImplementedError(f"Unrecognized lowered.compile_args[{compile_arg}]")
@@ -538,6 +541,7 @@ def _check_lowering(lowering) -> None:
       # used on all platforms for callbacks. Not supported yet.
       ("keepalive", lambda v: not v, "empty"),
       ("pmap_nreps", lambda v: v == 1, "1"),
+      ("shape_poly_state", lambda v: True, "N/A"),
   ):
     if compile_arg in lowering.compile_args:
       if not check_value(lowering.compile_args[compile_arg]):
@@ -810,6 +814,9 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
         f"The exported function '{exported.fun_name}' was lowered for "
         f"platform '{exported.lowering_platform}' but it is used "
         f"on '{platform}'.")
+  if any(not core.is_constant_shape(a.shape) for a in exported.in_avals):
+    ctx.module_context.shape_poly_state.uses_dim_vars = True
+
   submodule = ir.Module.parse(exported.mlir_module)
   symtab = ir.SymbolTable(submodule.operation)
   # The called function may have been exported with polymorphic shapes and called

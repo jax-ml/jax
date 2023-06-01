@@ -1945,7 +1945,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
       effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
   return (lowering_result.module, lowering_result.keepalive,
           lowering_result.host_callbacks, unordered_effects, ordered_effects,
-          nreps, tuple_args)
+          nreps, tuple_args, lowering_result.shape_poly_state)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2080,7 +2080,7 @@ def lower_sharding_computation(
   semantic_in_shardings = SemanticallyEqualShardings(in_shardings)  # type: ignore
   semantic_out_shardings = SemanticallyEqualShardings(out_shardings)
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
-   nreps, tuple_args) = _cached_lowering_to_hlo(
+   nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, api_name, fun_name, backend, semantic_in_shardings,
        semantic_out_shardings, da_object, lowering_platform,
        donated_invars, name_stack)
@@ -2111,7 +2111,8 @@ def lower_sharding_computation(
       device_assignment=da_object,
       committed=committed,
       pmap_nreps=nreps,
-      jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info)
+      jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info,
+      shape_poly_state=shape_poly_state)
 
 
 def _to_logical_sharding(
@@ -2285,7 +2286,8 @@ def lower_mesh_computation(
       backend=backend,
       device_assignment=_create_da_object(tuple(mesh.devices.flat)),
       committed=True,
-      jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info)
+      jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info,
+      shape_poly_state=lowering_result.shape_poly_state)
 
 class MeshComputation(stages.XlaLowering):
   _hlo: Optional[ir.Module]
@@ -2617,8 +2619,10 @@ class UnloadedMeshExecutable:
                committed: bool,
                pmap_nreps: int = 1,
                jaxpr_debug_info: Optional[core.JaxprDebugInfo] = None,
+               shape_poly_state: Optional[mlir.ShapePolyLoweringState] = None,
                compiler_options=None
   ) -> MeshExecutable:
+    del shape_poly_state
     compiler_options_keys = tuple(
         compiler_options.keys()) if compiler_options is not None else None
     compiler_options_values = tuple(
