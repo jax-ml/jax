@@ -701,6 +701,28 @@ def devices(
   """
   return get_backend(backend).devices()
 
+def memory_spaces(
+    backend: Optional[Union[str, xla_client.Client]] = None
+) -> List[Any]:
+  """Returns a list of all memory spaces for a given backend.
+
+  .. currentmodule:: jaxlib.xla_extension
+
+  Each memory space is represented by a subclass of :class:`MemorySpace`
+
+  If ``backend`` is ``None``, returns all the memory spaces from the default backend.
+  The default backend is generally ``'gpu'`` or ``'tpu'`` if available,
+  otherwise ``'cpu'``.
+
+  Args:
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend: ``'cpu'``, ``'gpu'``, or
+      ``'tpu'``.
+
+  Returns:
+    List of MemorySpace subclasses.
+  """
+  return get_backend(backend).memory_spaces()
 
 def default_backend() -> str:
   """Returns the platform name of the default XLA backend."""
