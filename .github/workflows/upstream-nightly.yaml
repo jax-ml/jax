@@ -69,7 +69,8 @@ jobs:
           echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
-          pytest -n auto --tb=short -rf \
+          echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
+          pytest -n auto --tb=short -rf --maxfail=20 \
               --report-log output-${{ matrix.python-version }}-log.jsonl \
               tests \
               || (
