@@ -74,10 +74,10 @@ class Rotation(typing.NamedTuple):
     return cls(_from_rotvec(rotvec, degrees))
 
   @classmethod
-  def identity(cls, num: typing.Optional[int] = None):
+  def identity(cls, num: typing.Optional[int] = None, dtype=jnp.float32):
     """Get identity rotation(s)."""
     assert num is None
-    quat = jnp.array([0., 0., 0., 1.])
+    quat = jnp.array([0., 0., 0., 1.], dtype=dtype)
     return cls(quat)
 
   # @classmethod
