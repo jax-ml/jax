@@ -1408,7 +1408,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     tf_f_rt = jax2tf.convert(
         jax_f,
         native_serialization=True,
-        native_serialization_strict_checks=False,
         with_gradient=False,
     )
     _, restored_model = tf_test_util.SaveAndLoadFunction(
@@ -1472,7 +1471,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     tf_f_rt = jax2tf.convert(
         jax_f,
         native_serialization=True,
-        native_serialization_strict_checks=False,
         with_gradient=False,
     )
     _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt, input_args=[inputs])
@@ -1487,7 +1485,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     tf_f_rt_2 = jax2tf.convert(
         jax_f_2,
         native_serialization=True,
-        native_serialization_strict_checks=False,
         with_gradient=False,
     )
     _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt_2, input_args=[])
@@ -1552,7 +1549,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(
         f_jax,
         native_serialization=True,
-        native_serialization_strict_checks=False,
         with_gradient=False,
     )
     _, restored_model = tf_test_util.SaveAndLoadFunction(f_tf, input_args=[x])

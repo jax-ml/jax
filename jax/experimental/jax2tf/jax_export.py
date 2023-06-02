@@ -186,7 +186,7 @@ def poly_specs(
       [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
       for more details.
 
-  Returns: a pytree of jax.ShapeDTypeStruct mathcing `args`.
+  Returns: a pytree of jax.ShapeDTypeStruct matching `args`.
   """
   args_flat, args_tree = tree_util.tree_flatten(args)
 
