@@ -17,7 +17,8 @@ import abc
 from functools import partial, reduce
 import math
 import operator as op
-from typing import Any, Callable, Hashable, Iterator, NamedTuple, Set, Sequence, Tuple, Union
+from typing import (Any, Callable, Hashable, Iterator, List, NamedTuple,
+                    Set, Sequence, Tuple, Union)
 
 import numpy as np
 
@@ -62,6 +63,7 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 Device = xc.Device
+Shard = Any  # TODO(jakevdp): fix circular imports and import Shard
 
 UINT_DTYPES = {
     8: jnp.uint8, 16: jnp.uint16, 32: jnp.uint32, 64: jnp.uint64}  # type: ignore[has-type]
@@ -216,9 +218,17 @@ class PRNGKeyArray(abc.ABC, metaclass=PRNGKeyArrayMeta):
   def is_deleted(self) -> bool: ...
   @abc.abstractmethod
   def on_device_size_in_bytes(self) -> int: ...
+  @property
+  @abc.abstractmethod
+  def addressable_shards(self) -> List[Shard]: ...
+  @property
+  @abc.abstractmethod
+  def global_shards(self) -> List[Shard]: ...
+  @abc.abstractmethod
+  def addressable_data(self, index: int) -> PRNGKeyArray: ...
 
-  # TODO(jakevdp): potentially add tolist(), tobytes(), device_buffer, device_buffers,
-  #    addressable_data(), addressable_shards(), global_shards(), __cuda_interface__()
+  # TODO(jakevdp): potentially add tolist(), tobytes(),
+  #    device_buffer, device_buffers, __cuda_interface__()
 
 
 class PRNGKeyArrayImpl(PRNGKeyArray):
@@ -290,6 +300,33 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   is_deleted = property(op.attrgetter('_base_array.is_deleted'))  # type: ignore[assignment]
   on_device_size_in_bytes = property(op.attrgetter('_base_array.on_device_size_in_bytes'))  # type: ignore[assignment]
   unsafe_buffer_pointer = property(op.attrgetter('_base_array.unsafe_buffer_pointer'))  # type: ignore[assignment]
+
+  def addressable_data(self, index: int) -> PRNGKeyArrayImpl:
+    return PRNGKeyArrayImpl(self.impl, self._base_array.addressable_data(index))
+
+  @property
+  def addressable_shards(self) -> List[Shard]:
+    return [
+        type(s)(
+            device=s._device,
+            sharding=s._sharding,
+            global_shape=s._global_shape,
+            data=PRNGKeyArrayImpl(self.impl, s._data),
+        )
+        for s in self._base_array.addressable_shards
+    ]
+
+  @property
+  def global_shards(self) -> List[Shard]:
+    return [
+        type(s)(
+            device=s._device,
+            sharding=s._sharding,
+            global_shape=s._global_shape,
+            data=PRNGKeyArrayImpl(self.impl, s._data),
+        )
+        for s in self._base_array.global_shards
+    ]
 
   @property
   def sharding(self):

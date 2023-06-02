@@ -18,8 +18,8 @@ import math
 import operator as op
 import numpy as np
 import functools
-from typing import (Sequence, Tuple, Callable, Optional, List, cast, Set,
-                    TYPE_CHECKING)
+from typing import (Any, Callable, List, Optional, Sequence, Set, Tuple,
+                    Union, cast, TYPE_CHECKING)
 
 from jax._src import abstract_arrays
 from jax._src import api
@@ -45,6 +45,7 @@ from jax._src.util import use_cpp_class, use_cpp_method
 Shape = Tuple[int, ...]
 Device = xc.Device
 Index = Tuple[slice, ...]
+PRNGKeyArrayImpl = Any  # TODO(jakevdp): fix cycles and import this.
 
 
 class Shard:
@@ -60,7 +61,7 @@ class Shard:
   """
 
   def __init__(self, device: Device, sharding: Sharding, global_shape: Shape,
-               data: Optional[ArrayImpl] = None):
+               data: Union[None, ArrayImpl, PRNGKeyArrayImpl] = None):
     self._device = device
     self._sharding = sharding
     self._global_shape = global_shape
