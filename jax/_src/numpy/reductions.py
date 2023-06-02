@@ -295,11 +295,8 @@ def any(a: ArrayLike, axis: Axis = None, out: None = None,
   return _reduce_any(a, axis=_ensure_optional_axes(axis), out=out,
                      keepdims=keepdims, where=where)
 
-product = prod
 amin = min
 amax = max
-alltrue = all
-sometrue = any
 
 def _axis_size(a: ArrayLike, axis: Union[int, Sequence[int]]):
   if not isinstance(axis, (tuple, list)):
@@ -683,7 +680,6 @@ def _make_cumulative_reduction(np_reduction: Any, reduction: Callable[..., Array
 
 cumsum = _make_cumulative_reduction(np.cumsum, lax.cumsum, fill_nan=False)
 cumprod = _make_cumulative_reduction(np.cumprod, lax.cumprod, fill_nan=False)
-cumproduct = cumprod
 nancumsum = _make_cumulative_reduction(np.nancumsum, lax.cumsum,
                                        fill_nan=True, fill_value=0)
 nancumprod = _make_cumulative_reduction(np.nancumprod, lax.cumprod,

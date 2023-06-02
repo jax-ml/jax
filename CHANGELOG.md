@@ -8,6 +8,18 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.12
 
+* Deprecations
+  * The following APIs have been removed after a 3 month deprecation period, in
+    accordance with the {ref}`api-compatibility` policy:
+    * `jax.numpy.alltrue`: use `jax.numpy.all`. This follows the deprecation
+      of `numpy.alltrue` in NumPy version 1.25.0.
+    * `jax.numpy.sometrue`: use `jax.numpy.any`. This follows the deprecation
+      of `numpy.sometrue` in NumPy version 1.25.0.
+    * `jax.numpy.product`: use `jax.numpy.prod`. This follows the deprecation
+      of `numpy.product` in NumPy version 1.25.0.
+    * `jax.numpy.cumproduct`: use `jax.numpy.cumprod`. This follows the deprecation
+      of `numpy.cumproduct` in NumPy version 1.25.0.
+
 ## jaxlib 0.4.12
 
 ## jax 0.4.11 (May 31, 2023)

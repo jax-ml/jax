@@ -287,7 +287,6 @@ from jax._src.numpy.polynomial import (
 )
 
 from jax._src.numpy.reductions import (
-    alltrue as alltrue,
     amin as amin,
     amax as amax,
     any as any,
@@ -296,7 +295,6 @@ from jax._src.numpy.reductions import (
     count_nonzero as count_nonzero,
     cumsum as cumsum,
     cumprod as cumprod,
-    cumproduct as cumproduct,
     max as max,
     mean as mean,
     median as median,
@@ -315,10 +313,8 @@ from jax._src.numpy.reductions import (
     nanvar as nanvar,
     percentile as percentile,
     prod as prod,
-    product as product,
     ptp as ptp,
     quantile as quantile,
-    sometrue as sometrue,
     std as std,
     sum as sum,
     var as var,
@@ -441,11 +437,32 @@ _deprecations = {
         "jax.numpy.DeviceArray is deprecated. Use jax.Array.",
         ndarray,
     ),
+    # Added June 2, 2023:
+    "alltrue": (
+        "jax.numpy.alltrue is deprecated. Use jax.numpy.all",
+        all,
+    ),
+    "cumproduct": (
+        "jax.numpy.cumproduct is deprecated. Use jax.numpy.cumprod",
+        cumprod,
+    ),
+    "product": (
+        "jax.numpy.product is deprecated. Use jax.numpy.prod",
+        prod,
+    ),
+    "sometrue": (
+        "jax.numpy.sometrue is deprecated. Use jax.numpy.any",
+        any,
+    ),
 }
 
 import typing
 if typing.TYPE_CHECKING:
   from jax._src.basearray import Array as DeviceArray
+  alltrue = all
+  cumproduct = cumprod
+  product = prod
+  sometrue = any
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
