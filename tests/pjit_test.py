@@ -2035,6 +2035,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
         r"argument y of.*\<lambda\> with shape int.*\[3\] and device ids \[1\].*"):
       pjit(lambda x, y: (x, y))(a, b)
 
+  def test_pjit_committed_array_different_devices_variadic_args(self):
+    if jax.device_count() < 2:
+      self.skipTest('Test requires >= 2 devices')
+    a = jax.device_put(np.array([1, 2, 3]), jax.devices()[0])
+    b = jax.device_put(np.array([4, 5, 6]), jax.devices()[1])
+    with self.assertRaisesRegex(
+        ValueError,
+        "Received incompatible devices for pjitted computation. Got argument "
+        r"x of.*\<lambda\> with shape int.*\[3\] and device ids \[0\].*and "
+        r"argument  of.*\<lambda\> with shape int.*\[3\] and device ids \[1\].*"):
+      pjit(lambda *x: x)(a, b)
+
   def test_pjit_pytree_inp_device_assignment_mismatch(self):
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     a = jax.device_put(np.array([1, 2, 3]), jax.devices()[0])

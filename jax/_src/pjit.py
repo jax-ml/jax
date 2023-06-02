@@ -120,7 +120,10 @@ def _get_arg_names(fun, in_tree, args_flat):
     ak, *rem_keys = arg_key
     if sig is not None:
       loc = ''.join(str(k) for k in rem_keys)
-      arg_name = f'{list(sig.arguments.keys())[ak.idx]}{loc}'
+      try:
+        arg_name = f'{list(sig.arguments.keys())[ak.idx]}{loc}'
+      except IndexError:
+        arg_name = ''  # E.g. variadic positional argument.
     else:
       arg_name = ''
     arg_names.append(arg_name)
