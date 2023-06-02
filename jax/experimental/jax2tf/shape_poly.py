@@ -243,6 +243,10 @@ class _DimMon(dict):
   def from_var(cls, v: str) -> '_DimMon':
     return _DimMon({_DimAtom.from_var(v): 1})
 
+  @classmethod
+  def from_atom(clscls, a: _DimAtom, aexp: int):
+    return _DimMon({a: aexp})
+
   def to_var(self) -> Optional[str]:
     """Extract the variable name "x", from a monomial "x".
      Return None, if the monomial is not a single variable."""
@@ -337,11 +341,26 @@ class _DimExpr():
 
   __array_priority__ = 1000   # Same as tracer, for __radd__ and others on ndarray
   def __init__(self, coeffs: Dict[_DimMon, int]):
-    # Do not construct _DimExpr directly, use _DimExpr.normalize
-    self._coeffs = coeffs.copy() or {_DimMon(): 0}
+    # Do not construct _DimExpr directly, unless you are sure that coeffs is
+    # normalized; Use _DimExpr.normalize.
+    # Takes ownership of coeffs
+    self._coeffs = coeffs or {_DimMon(): 0}
 
   def monomials(self) -> Iterable[Tuple[_DimMon, int]]:
     return self._coeffs.items()
+
+  @classmethod
+  def _add_coeffs(cls, coeffs: Dict[_DimMon, int], mon: _DimMon, coeff: int):
+    """Do `coeffs[mon] += coeff` but remove 0 coefficients."""
+    old_c = coeffs.get(mon)
+    if old_c is None:
+      if coeff != 0: coeffs[mon] = coeff
+    else:
+      new_c = old_c + coeff
+      if new_c == 0:
+        del coeffs[mon]
+      else:
+        coeffs[mon] = new_c
 
   @classmethod
   def normalize(cls, coeffs: Dict[_DimMon, int]) -> DimSize:
@@ -350,6 +369,7 @@ class _DimExpr():
     Ensures that the symbolic dimension is normalized, e.g.,
     it is represented as a Python int if it is known to be a constant.
     """
+    # TODO(necula): profile and optimize this
     has_non_zero_degree = False
     free_const = 0
     new_coeffs: Dict[_DimMon, int] = {}
@@ -360,39 +380,27 @@ class _DimExpr():
       else:
         has_non_zero_degree = True
 
-      # Look for floordiv(E, M) * M and turn into E - mod(E, M). This comes
-      # up when handling strided convolution.
-      def normalize_floordiv_times(m: _DimMon, coeff: int) -> Optional['_DimExpr']:
-        floordivs = [(a, aexp) for a, aexp in m.items() if a.operation == _DimAtom.FLOORDIV]
-        # A single floordiv with exponent 1
-        if len(floordivs) != 1 or floordivs[0][1] != 1: return None
-        floordiv, _ = floordivs[0]
-        floordiv_dividend_monomials = list(floordiv.operands[1].monomials())
-        if len(floordiv_dividend_monomials) != 1: return None
-        floordiv_dividend_monomial, floordiv_dividend_coeff = floordiv_dividend_monomials[0]
-        if coeff % floordiv_dividend_coeff: return None
-        try:
-          m_trimmed = m.divide(floordiv_dividend_monomial)
-        except InconclusiveDimensionOperation:
-          return None
-        c = coeff // floordiv_dividend_coeff
-        m_trimmed = m_trimmed.divide(_DimMon({floordiv: 1}))  # Remove the floordiv
-        return (_DimExpr.from_monomial(m_trimmed, c) *
-                 (floordiv.operands[0] - _DimExpr.from_operation(_DimAtom.MOD, *floordiv.operands)))
-
-      mon_poly = normalize_floordiv_times(mon, coeff)
-      if mon_poly is not None:
-        monomials = mon_poly.monomials()
-      else:
-        monomials = [(mon, coeff)]
-      for m, c in monomials:
-        new_coeffs[m] = new_coeffs.get(m, 0) + c
+      new_coeffs[mon] = new_coeffs.get(mon, 0) + coeff
 
     if has_non_zero_degree:
       return _DimExpr(new_coeffs)
     else:
       return int(free_const)
 
+  @classmethod
+  def normalize_floordiv_times_divisor(cls, coeffs: Dict[_DimMon, int]) -> DimSize:
+    # Look for floordiv(E, M) * M and turn into E - mod(E, M). This comes
+    # up when handling strided convolution.
+    for dec in _decompose_expr(_DimExpr(coeffs), _DimAtom.FLOORDIV):
+      # e = factor * floordiv(operands)^exp * rest_monomial + rest_expr
+      if dec.exp != 1:
+        continue
+      if dec.rest_monomial == 1 and dec.factor == 1:
+        continue
+      m_trimmed, m_remainder = divmod(dec.factor * dec.rest_monomial, dec.operands[1])
+      if m_remainder == 0:
+        return m_trimmed * (dec.operands[0] - _DimExpr.from_operation(_DimAtom.MOD, *dec.operands)) + dec.rest_expr
+    return _DimExpr.normalize(coeffs)
 
   @classmethod
   def from_monomial(cls, mon: _DimMon, exp: int):
@@ -466,8 +474,8 @@ class _DimExpr():
     other = _ensure_poly(other, "add")
     coeffs = self._coeffs.copy()
     for mon, coeff in other.monomials():
-      coeffs[mon] = coeffs.get(mon, 0) + coeff
-    return _DimExpr.normalize(coeffs)
+      _DimExpr._add_coeffs(coeffs, mon, coeff)
+    return _DimExpr.normalize_floordiv_times_divisor(coeffs)
 
   def __radd__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
@@ -495,8 +503,8 @@ class _DimExpr():
     for mon1, coeff1 in self.monomials():
       for mon2, coeff2 in other.monomials():
         mon = mon1.mul(mon2)
-        coeffs[mon] = coeffs.get(mon, 0) + coeff1 * coeff2
-    return _DimExpr.normalize(coeffs)
+        _DimExpr._add_coeffs(coeffs, mon, coeff1 * coeff2)
+    return _DimExpr.normalize_floordiv_times_divisor(coeffs)
 
   def __rmul__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
@@ -629,6 +637,24 @@ class _DimExpr():
       lb = lb + min(item_l, item_u)  # type: ignore
       ub = ub + max(item_l, item_u)  # type: ignore
 
+    if lb != np.NINF or ub != np.PINF:
+      return lb, ub
+    # Watch for special-case: ct*a - ct*mod(b, a) >= 1 when ct >= 0 and a >= 0
+    # TODO(necula): add more principled support for floordiv and mod
+    # For example, this will miss "1 + a - mod(b, a)"
+    for dec in _decompose_expr(self, _DimAtom.MOD):
+      # E = factor*mod(op1, op2)^exp * rest_monomial + rest_expr
+      if dec.exp == 1 and dec.rest_monomial == 1 and dec.rest_expr == - dec.factor * dec.operands[1]:
+        try:
+          if dec.operands[1] <= 0:
+            continue
+        except InconclusiveDimensionOperation:
+          continue
+        if dec.factor > 0:
+          return (np.NINF, -1)
+        else:
+          return (1, np.PINF)
+
     return lb, ub
 
   @property
@@ -657,6 +683,33 @@ class _DimExpr():
   def __jax_array__(self):
     # Used for implicit coercions of polynomials as JAX arrays
     return _dim_as_value(self)
+
+@dataclasses.dataclass
+class _Decomposition:
+  """Decomposition of an expression around an operation atom.
+
+  E = factor * mod(*operands)^exp * rest_monomial + rest_expr
+  """
+  factor: int
+  operands: Sequence[_DimExpr]
+  exp: int
+  rest_monomial: _DimExpr
+  rest_expr: _DimExpr
+
+
+def _decompose_expr(e: _DimExpr, operation: str) -> Iterable[_Decomposition]:
+  for m, m_factor in e.monomials():
+    atoms = [(a, aexp) for a, aexp in m.items() if a.operation == operation]
+    if atoms:
+      e_minus_m_coeffs = e._coeffs.copy()
+      del e_minus_m_coeffs[m]
+    for a, aexp in atoms:
+      yield _Decomposition(
+          factor=m_factor,
+          operands=a.operands,
+          exp=aexp,
+          rest_monomial=_DimExpr({m.divide(_DimMon.from_atom(a, aexp)): 1}),
+          rest_expr=_DimExpr(e_minus_m_coeffs))
 
 core.pytype_aval_mappings[_DimExpr] = _DimExpr.get_aval
 xla.pytype_aval_mappings[_DimExpr] = _DimExpr.get_aval
