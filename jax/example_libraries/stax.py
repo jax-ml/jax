@@ -265,7 +265,7 @@ def Dropout(rate):
   def apply_fun(params, inputs, **kwargs):
     mode = kwargs.get('mode', None)
     if mode is None:
-      msg = ("Dropout layer requires apply_fun to be called with a `mode` argument. "
+      msg = ("Dropout layer requires apply_fun to be called with a `mode` argument."
               "That is, instead of `apply_fun(params, inputs)`, call "
               "it like `apply_fun(params, inputs, rng,mode='train')` where `mode` is  "
               "'train' or 'test'.")
