@@ -128,7 +128,7 @@ def _create_device_mesh_for_nd_torus(
         # 4x8 or a single axis. If XLA 2D collectives support non-square plane
         # soon, we can continue to preferentially map to 2D plane in general,
         # otherwise, we should treat non-square 2D plane and 1D submesh equally.
-        if np.product(c_axes) == logical_axis_size:
+        if np.prod(c_axes) == logical_axis_size:
           assignment[logical_axis_index] = c_indices
           # Zero the assigned physical axes.
           assignable_physical_mesh = [
