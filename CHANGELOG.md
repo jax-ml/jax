@@ -8,6 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.12
 
+* Changes
+  * Added {class}`scipy.spatial.transform.Rotation` and {class}`scipy.spatial.transform.Slerp`
+
 * Deprecations
   * The following APIs have been removed after a 3 month deprecation period, in
     accordance with the {ref}`api-compatibility` policy:

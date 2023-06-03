@@ -728,6 +728,12 @@ jax_test(
 )
 
 jax_test(
+    name = "scipy_spatial_test",
+    srcs = ["scipy_spatial_test.py"],
+    deps = py_deps("scipy"),
+)
+
+jax_test(
     name = "scipy_stats_test",
     srcs = ["scipy_stats_test.py"],
     backend_tags = {
