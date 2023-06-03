@@ -1923,7 +1923,7 @@ tf_impl_with_avals[lax.clamp_p] = _clamp
 
 
 def _concatenate(*operands, dimension):
-  return tf.concat(operands, axis=dimension)
+  return tf.concat(operands, axis=tf.cast(dimension, tf.int32))
 
 
 tf_impl[lax.concatenate_p] = _concatenate
