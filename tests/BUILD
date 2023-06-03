@@ -63,6 +63,11 @@ jax_test(
 )
 
 jax_test(
+    name = "chebyshev_test",
+    srcs = ["chebyshev_test.py"],
+)
+
+jax_test(
     name = "core_test",
     srcs = ["core_test.py"],
     shard_count = {
