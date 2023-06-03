@@ -51,8 +51,7 @@ class PileTy:
   length: Union[int, Tracer, core.Var]
   elt_ty: core.DShapedArray
   def __repr__(self) -> str:
-    # return f'Var{id(self.binder)}:{self.length} => {self.elt_ty}'
-    return f'i:{self.length} => {self.elt_ty}'
+    return f'Var{id(self.binder)}:{self.length} => {self.elt_ty}'
   replace = dataclasses.replace
 
 # [3, 1, 4].i
@@ -61,7 +60,7 @@ class IndexedAxisSize:
   idx: core.Var
   lengths: Union[Array, core.Var, Tracer]
   def __repr__(self) -> str:
-    return f'{str(self.lengths)}.i'
+    return f'{str(self.lengths)}.Var{id(self.idx)}'
   replace = dataclasses.replace
 
 # Pile(aval=a:3 => f32[[3 1 4].a],
@@ -112,6 +111,8 @@ def _pile_result(axis_size, stacked_axis, ragged_axis, segment_lens, x):
 @dataclasses.dataclass(frozen=True)
 class RaggedAxis:
   stacked_axis: int
+  # TODO(mattjj,axch): Generalize to multiple ragged dimensions
+  # e.g. `i:(Fin 3) => f32[lens1.i, lens2.i]`
   ragged_axis: int
   segment_lengths: Array
 
