@@ -390,7 +390,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         cpu_ducc_fft.data_2023_03_17, cpu_lapack_syev.data_2023_03_17,
         cpu_lapack_geqrf.data_2023_03_17, cuda_threefry2x32.data_2023_03_15,
         cuda_cusolver_geqrf.data_2023_03_18, cuda_cusolver_syev.data_2023_03_17,
-        tf_call_tf_function.data_2023_05_31,
+        tf_call_tf_function.data_2023_06_02,
         tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17,
         tpu_Sharding.data_2023_03_16, tpu_ApproxTopK.data_2023_04_17,
         tpu_ApproxTopK.data_2023_05_16]
@@ -590,7 +590,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       return jnp.cos(jax2tf.call_tf(func_tf, call_tf_graph=True,
                                     output_shape_dtype=x)(x))
 
-    data = load_testdata(tf_call_tf_function.data_2023_05_31)
+    data = load_testdata(tf_call_tf_function.data_2023_06_02)
     self.run_one_test(func, data, use_tf_graph=True)
 
 

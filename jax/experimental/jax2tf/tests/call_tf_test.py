@@ -1334,20 +1334,16 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
       stablehlo_module = f_jax.lower(x, y, z).compiler_ir("stablehlo")
       self.assertIn("stablehlo.custom_call", str(stablehlo_module))
 
-      called_name_list = []
       called_index_list = []
 
       def _extract_info(op):
         if op.operation.name != "stablehlo.custom_call":
           return
         tf_backend_config = ir.DictAttr(op.attributes["tf.backend_config"])
-        called_name = ir.StringAttr(tf_backend_config["called_name"]).value
-        called_name_list.append(called_name)
         called_index = ir.IntegerAttr(tf_backend_config["called_index"]).value
         called_index_list.append(called_index)
 
       self._walk_stablehlo_operations(stablehlo_module, _extract_info)
-      self.assertLen(called_name_list, 1)
       self.assertLen(called_index_list, 1)
 
   @parameterized.named_parameters(
@@ -1364,7 +1360,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
   )
   def test_call_tf_graph_non_compilable(self, tf_f, output_shape_dtype):
     inputs = jnp.ones([10], dtype=jnp.float32)
-    called_name_list = []
     called_index_list = []
     xla_call_module_list = []
 
@@ -1372,8 +1367,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
       if op.operation.name != "stablehlo.custom_call":
         return
       tf_backend_config = ir.DictAttr(op.attributes["tf.backend_config"])
-      called_name = ir.StringAttr(tf_backend_config["called_name"]).value
-      called_name_list.append(called_name)
       called_index = ir.IntegerAttr(tf_backend_config["called_index"]).value
       called_index_list.append(called_index)
 
@@ -1400,7 +1393,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
       )
       self.assertIn("tf.backend_config", str(stablehlo_module))
       self._walk_stablehlo_operations(stablehlo_module, _extract_info)
-      self.assertLen(called_name_list, 1)
       self.assertLen(called_index_list, 1)
 
     # Test model exporting and reloading.
@@ -1426,7 +1418,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual(xla_call_module.attr["version"].i, 5)
     self.assertIn("function_list", str(xla_call_module.attr))
     xla_call_module_list.clear()
-    called_name_list.clear()
     called_index_list.clear()
 
     # If JAX calls same tensorflow function by `jax2tf.call_tf` twice,
@@ -1448,10 +1439,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
       stablehlo_module = jax.jit(jax_f_2).lower(inputs).compiler_ir("stablehlo")
     if stablehlo_module:
       self._walk_stablehlo_operations(stablehlo_module, _extract_info)
-      self.assertLen(called_name_list, 2)
-      self.assertNotEqual(called_name_list[0], called_name_list[1])
     xla_call_module_list.clear()
-    called_name_list.clear()
 
   def test_b279454591(self):
     """Test case when tensorflow function returns `StatefulPartitionedCall` op."""

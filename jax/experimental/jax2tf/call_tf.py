@@ -637,12 +637,8 @@ def emit_tf_embedded_graph_custom_call(
     )
   called_index = add_to_call_tf_concrete_function_list(
       concrete_function_flat_tf, call_tf_concrete_function_list)
-  concrete_function_flat_tf_name = (
-      concrete_function_flat_tf.function_def.signature.name
-  )
   call_target_name = "tf.call_tf_function"
   tf_backend_config = {
-      "called_name": ir.StringAttr.get(concrete_function_flat_tf_name),
       "has_token_input_output": ir.BoolAttr.get(ordered),
       "called_index": mlir.i64_attr(called_index),
   }
