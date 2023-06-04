@@ -777,7 +777,8 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
     operand: an array
     shape: the shape of the target array
     broadcast_dimensions: to which dimension in the target shape each dimension
-      of the operand shape corresponds to
+      of the operand shape corresponds to.  That is, dimension i of the operand
+      becomes dimension broadcast_dimensions[i] of the result.
 
   Returns:
     An array containing the result.
@@ -2811,26 +2812,55 @@ def _broadcast_in_dim_transpose_rule(ct, operand, *dyn_shape,
 
 def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
                                  broadcast_dimensions):
+  # `dyn_shape` is the dynamic portion of the target shape.  `shape`
+  # is the target shape, with `None` for dynamic sections.
+  # broadcast_dimensions gives indices where dimensions of the input
+  # have to go: dimension i of the input becomes dimension
+  # broadcast_dimensions[i] of the output.
   operand, *dyn_shape = batched_args
   operand_bdim, *dyn_shape_bdims = batch_dims
-  if len(dyn_shape) > 1: raise NotImplementedError
-  if (operand_bdim is not None and
-      (not dyn_shape_bdims or dyn_shape_bdims[0] is None)):
-    new_operand = batching.moveaxis(operand, operand_bdim, 0)
-    new_shape = (operand.shape[operand_bdim],) + _merge_dyn_shape(shape, dyn_shape)
+
+  stacked_size = None
+  if operand_bdim is not None:
+    if isinstance(operand_bdim, RaggedAxis):
+      stacked_axis = operand_bdim.stacked_axis
+    else:
+      stacked_axis = operand_bdim
+    new_operand = batching.moveaxis(operand, stacked_axis, 0)
+    if isinstance(operand_bdim, RaggedAxis):
+      stacked_size = operand_bdim.size
+    else:
+      stacked_size = operand.shape[stacked_axis]
     new_broadcast_dimensions = (0,) + tuple(np.add(1, broadcast_dimensions))
-    return broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions), 0
-  elif (operand_bdim is None and dyn_shape_bdims and
-        dyn_shape_bdims[0] is not None):
-    (d,), (d_bdim,) = dyn_shape, dyn_shape_bdims  # NotImplementedError above
-    assert d_bdim == 0  # must be scalar in the program to be batched
-    bound = d.dtype.bound
-    new_shape = (len(d),) + _merge_dyn_shape(shape, (bound,))
-    out = broadcast_in_dim(operand, new_shape, broadcast_dimensions)
-    idx, = (i for i, s in enumerate(shape) if s is None)
-    return out, batching.RaggedAxis(0, [(idx+1, d)])
   else:
-    raise NotImplementedError  # TODO(mattjj,axch)
+    new_operand = operand
+    new_broadcast_dimensions = tuple(np.add(1, broadcast_dimensions))
+
+  # TODO(reviewer) This section assumes that the shape of the operand
+  # is broadcast-compatible with the requested shape.  Where should
+  # that be checked, and what should be new rules be, in light of
+  # raggedness?
+  dyn_limits = []
+  out_ragged_sizes = []
+  for sizes, bdim in zip(dyn_shape, dyn_shape_bdims):
+    if bdim is None:
+      # TODO(mattjj,axch) Is this what bdim == None means?
+      assert isinstance(sizes, int)
+      bound = sizes
+    else:
+      bound = sizes.dtype.bound
+      out_ragged_sizes.append(sizes)
+      if stacked_size is None:
+        stacked_size = len(sizes)
+      else:
+        msg = "All segments lengths arrays must be the same length"
+        assert len(sizes) == stacked_size, msg
+    dyn_limits.append(bound)
+  new_shape = (stacked_size,) + _merge_dyn_shape(shape, dyn_limits)
+  result = broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions)
+  out_ragged_axes = [idx+1 for idx, s in enumerate(shape) if s is None]
+  out_bdim = batching.make_batch_axis(0, zip(out_ragged_axes, out_ragged_sizes))
+  return result, out_bdim
 
 def _broadcast_in_dim_fwd_rule(eqn):
   v, *dyn = eqn.invars

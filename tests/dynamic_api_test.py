@@ -1540,6 +1540,40 @@ class PileTest(jtu.JaxTestCase):
     self.assertAllClose(y, np.tile(np.array([3, 1, 4])[:, None, None], (7, 7)),
                         check_dtypes=False)
 
+  def test_broadcast_while_ragged(self):
+    ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    def func(size):
+      one_d = jnp.arange(size, dtype='int32')
+      two_d = jax.lax.broadcast_in_dim(one_d, (size, 7), (0,))
+      return two_d
+    p = jax.vmap(func, out_axes=batching.pile_axis)(ins)
+    self.assertIsInstance(p, batching.Pile)
+    data = jax.lax.broadcasted_iota('int32', (3, 5, 7), 1)
+    self.assertAllClose(p.data, data)
+
+  def test_broadcast_to_ragged(self):
+    ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    def func(size):
+      one_d = jnp.arange(12, dtype='int32')
+      two_d = jax.lax.broadcast_in_dim(one_d, (size, 12), (1,))
+      return two_d
+    p = jax.vmap(func, out_axes=batching.pile_axis)(ins)
+    self.assertIsInstance(p, batching.Pile)
+    data = jax.lax.broadcasted_iota('int32', (3, 5, 12), 2)
+    self.assertAllClose(p.data, data)
+
+  def test_broadcast_to_doubly_ragged(self):
+    ins1 = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    ins2 = lax.convert_element_type(jnp.array([2, 5, 1]), core.bint(6))
+    def func(size1, size2):
+      one_d = jnp.arange(size1, dtype='int32')
+      two_d = jax.lax.broadcast_in_dim(one_d, (size1, size2), (0,))
+      return two_d
+    p = jax.vmap(func, out_axes=batching.pile_axis)(ins1, ins2)
+    self.assertIsInstance(p, batching.Pile)
+    data = jax.lax.broadcasted_iota('int32', (3, 5, 6), 1)
+    self.assertAllClose(p.data, data)
+
 def pile_map(f):
   def mapped(*piles):
     return jax.vmap(f, in_axes=batching.pile_axis, out_axes=batching.pile_axis,
