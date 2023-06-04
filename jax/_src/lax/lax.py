@@ -4683,7 +4683,7 @@ _JNP_FUNCTION_EQUIVALENTS = {
   'neg': 'negative',
   'nextafter': 'nextafter',
   'pow': 'float_power',
-  'rount': 'rount',
+  'round': 'round',
   'select': 'where',
   'shift_left': 'left_shift',
   'shift_right_logical': 'right_shift',
