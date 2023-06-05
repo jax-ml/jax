@@ -2859,7 +2859,8 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
   new_shape = (stacked_size,) + _merge_dyn_shape(shape, dyn_limits)
   result = broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions)
   out_ragged_axes = [idx+1 for idx, s in enumerate(shape) if s is None]
-  out_bdim = batching.make_batch_axis(0, zip(out_ragged_axes, out_ragged_sizes))
+  out_bdim = batching.make_batch_axis(
+      result.ndim, 0, zip(out_ragged_axes, out_ragged_sizes))
   return result, out_bdim
 
 def _broadcast_in_dim_fwd_rule(eqn):
