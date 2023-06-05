@@ -66,7 +66,7 @@ build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 build:cuda --repo_env TF_NEED_CUDA=1
 # "sm" means we emit only cubin, which is forward compatible within a GPU generation.
 # "compute" means we emit both cubin and PTX, which is larger but also forward compatible to future GPU generations.
-build:cuda --action_env TF_CUDA_COMPUTE_CAPABILITIES="sm_52,sm_60,sm_70,compute_80"
+build:cuda --action_env TF_CUDA_COMPUTE_CAPABILITIES="sm_52,sm_60,sm_70,sm_80,compute_90"
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --@local_config_cuda//:enable_cuda
 build:cuda --@xla//xla/python:enable_gpu=true
