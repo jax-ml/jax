@@ -2604,9 +2604,9 @@ def _dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
   # TODO Should probably check that any ragged dimensions have corresponding
   # sizes, because otherwise the dot product is technically undefined.
   if type(lbd) is RaggedAxis:
-    lhs = batching.mask_ragged_axis(lhs, _get_sum_identity, lbd)
+    lhs = batching.mask_ragged_axes(lhs, _get_sum_identity, lbd)
   if type(rbd) is RaggedAxis:
-    rhs = batching.mask_ragged_axis(rhs, _get_sum_identity, rbd)
+    rhs = batching.mask_ragged_axes(rhs, _get_sum_identity, rbd)
   batched_out = dot_general(lhs, rhs, new_dimension_numbers,
                             precision=precision,
                             preferred_element_type=preferred_element_type)
@@ -2828,7 +2828,7 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
     new_shape = (len(d),) + _merge_dyn_shape(shape, (bound,))
     out = broadcast_in_dim(operand, new_shape, broadcast_dimensions)
     idx, = (i for i, s in enumerate(shape) if s is None)
-    return out, batching.RaggedAxis(0, idx+1, d)
+    return out, batching.RaggedAxis(0, [(idx+1, d)])
   else:
     raise NotImplementedError  # TODO(mattjj,axch)
 
@@ -4537,7 +4537,7 @@ def _iota_batching_rule(in_vals, in_dims, *, dtype, shape, dimension):
   ragged_axis, = [i for i, dim in enumerate(shape) if dim is None]
   shape = (len(segment_lengths),) + _merge_dyn_shape(shape, (bound,))
   iota = broadcasted_iota(dtype, shape, dimension+1)
-  return iota, batching.RaggedAxis(ax, ragged_axis+1, segment_lengths)
+  return iota, batching.RaggedAxis(ax, [(ragged_axis+1, segment_lengths)])
 batching.primitive_batchers[iota_p] = _iota_batching_rule
 
 def _iota_pp_rule(eqn, context, settings):

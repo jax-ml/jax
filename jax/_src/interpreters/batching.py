@@ -97,13 +97,14 @@ def _pile_unflatten(aval, x):
   return Pile(aval, data)
 register_pytree_node(Pile, _pile_flatten, _pile_unflatten)
 
-def _pile_result(axis_size, stacked_axis, ragged_axis, segment_lens, x):
+def _pile_result(axis_size, stacked_axis, ragged_axes, x):
   binder = core.Var(0, '', core.ShapedArray((), np.dtype('int32')))
   if stacked_axis != 0:
     raise NotImplementedError  # TODO Transpose x so the stacked axis is axis 0
   shape = list(x.shape)
   del shape[0]
-  shape[ragged_axis-1] = IndexedAxisSize(binder, segment_lens)
+  for ragged_axis, segment_lens in ragged_axes:
+    shape[ragged_axis-1] = IndexedAxisSize(binder, segment_lens)
   elt_ty = core.DShapedArray(tuple(shape), x.dtype, x.weak_type)
   return Pile(PileTy(binder, axis_size, elt_ty), x)
 
@@ -111,10 +112,23 @@ def _pile_result(axis_size, stacked_axis, ragged_axis, segment_lens, x):
 @dataclasses.dataclass(frozen=True)
 class RaggedAxis:
   stacked_axis: int
-  # TODO(mattjj,axch): Generalize to multiple ragged dimensions
-  # e.g. `i:(Fin 3) => f32[lens1.i, lens2.i]`
-  ragged_axis: int
-  segment_lengths: Array
+  # For each axis, we store its index and the corresponding segment lengths.
+  # For example, the pile i:(Fin 3) => f32[lens1.i, 7, lens2.i]
+  # would be represented with ragged_axes = [(1, lens1), (3, lens2)]
+  ragged_axes: [(int, Array)]
+
+  @property
+  def size(self):
+    # TODO(mattjj, axch): All the segment lengths arrays better be the
+    # same length!
+    return len(self.ragged_axes[0][1])
+
+
+def make_batch_axis(stacked_axis, ragged_axes):
+  if ragged_axes:
+    return RaggedAxis(stacked_axis, ragged_axes)
+  else:
+    return stacked_axis
 
 
 def _update_annotation(
@@ -182,7 +196,8 @@ def to_elt(trace: Trace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
       raise TypeError("pile input without using pile_axis in_axes spec")
     (d, ias), = ((i, sz) for i, sz in enumerate(x.aval.elt_ty.shape)
                  if type(sz) is IndexedAxisSize)
-    return BatchTracer(trace, x.data, RaggedAxis(0, d+1, ias.lengths))  # type: ignore
+    return BatchTracer(
+        trace, x.data, make_batch_axis(0, [(d+1, ias.lengths)]))  # type: ignore
   elif isinstance(spec, int) or spec is None:
     spec = spec and canonicalize_axis(spec, len(np.shape(x)))
     return (BatchTracer(trace, x, spec, source_info_util.current())
@@ -202,7 +217,7 @@ def from_elt(trace: 'BatchTrace', axis_size: AxisSize, x: Elt, spec: MapSpec
     if spec is not pile_axis:
       # TODO(mattjj): improve this error message
       raise TypeError("ragged output without using pile_axis out_axes spec")
-    return _pile_result(axis_size, bdim.stacked_axis, bdim.ragged_axis, bdim.segment_lengths, val)
+    return _pile_result(axis_size, bdim.stacked_axis, bdim.ragged_axes, val)
   else:
     return matchaxis(trace.axis_name, axis_size, x_.batch_dim, spec, x_.val)
 from_elt_handlers: Dict[Type, FromEltHandler] = {}
@@ -276,11 +291,11 @@ class BatchTracer(Tracer):
       new_aval = core.mapped_aval(
         aval.shape[self.batch_dim.stacked_axis], self.batch_dim.stacked_axis, aval)
       shape = list(new_aval.shape)  # type: ignore
-      size_tracer = BatchTracer(self._trace, self.batch_dim.segment_lengths, 0)
-      ragged_axis = self.batch_dim.ragged_axis
-      if self.batch_dim.stacked_axis < self.batch_dim.ragged_axis:
-        ragged_axis -= 1
-      shape[ragged_axis] = size_tracer
+      for ragged_axis, segment_lengths in self.batch_dim.ragged_axes:
+        size_tracer = BatchTracer(self._trace, segment_lengths, 0)
+        if self.batch_dim.stacked_axis < ragged_axis:
+          ragged_axis -= 1
+        shape[ragged_axis] = size_tracer
       return core.DShapedArray(shape=tuple(shape), dtype=aval.dtype,
                                weak_type=aval.weak_type)
 
@@ -339,7 +354,7 @@ class BatchTrace(Trace):
 
   def get_frame(self, vals, dims) -> core.AxisEnvFrame:
     if any(d is not not_mapped for d in dims):
-      sizes = (x.shape[d] if type(d) is int else len(d.segment_lengths)
+      sizes = (x.shape[d] if type(d) is int else d.size
                for x, d in zip(vals, dims) if d is not not_mapped)
       axis_size, = core.dedup_referents(sizes)
     else:
@@ -878,21 +893,38 @@ def reducer_batcher(prim, ident, batched_args, batch_dims, axes, **params):
     assert ident is not None, "TODO Ragged batching a reduction requires an identity"
     axes = tuple(np.where(np.less(axes, bdim.stacked_axis), axes, np.add(axes, 1)))
     bdim_out = out_axis(axes, bdim.stacked_axis)
-    if bdim.ragged_axis in axes:
-      operand = mask_ragged_axis(operand, ident, bdim)
-      result = prim.bind(operand, axes=axes, **params)
-      return result, bdim_out
-    else:
-      result = prim.bind(operand, axes=axes, **params)
-      return result, RaggedAxis(bdim_out, out_axis(axes, bdim.ragged_axis), bdim.segment_lengths)
+    # For each ragged_axis, we either mask the operand there or append
+    # it to the set of axes that will be ragged in the result.
+    axes_to_mask = []
+    ragged_axes_out = []
+    for ragged_axis, segment_lengths in bdim.ragged_axes:
+      if ragged_axis in axes:
+        axes_to_mask.append((ragged_axis, segment_lengths))
+      else:
+        ragged_axes_out.append((out_axis(axes, ragged_axis), segment_lengths))
+    operand = mask_ragged_axes(
+        operand, ident, RaggedAxis(bdim.stacked_axis, axes_to_mask))
+    result = prim.bind(operand, axes=axes, **params)
+    return result, make_batch_axis(bdim_out, ragged_axes_out)
   else:
     assert False
 
-def mask_ragged_axis(operand, ident, axis_spec):
+def mask_ragged_axes(operand, ident, axis_spec):
+  # TODO(mattjj, axch) Can we mask multiple axes more efficiently at
+  # once, rather than one at a time?
+  for ragged_axis, segment_lengths in axis_spec.ragged_axes:
+    this_axis_spec = RaggedAxis(
+        axis_spec.stacked_axis, [(ragged_axis, segment_lengths)])
+    operand = _mask_one_ragged_axis(operand, ident, this_axis_spec)
+  return operand
+
+def _mask_one_ragged_axis(operand, ident, axis_spec):
+  assert len(axis_spec.ragged_axes) == 1, "Mask just one ragged axis at a time"
+  ragged_axis, segment_lengths = axis_spec.ragged_axes[0]
   value = ident(operand.dtype)
-  positions = jax.lax.broadcasted_iota('int32', operand.shape, axis_spec.ragged_axis)
+  positions = jax.lax.broadcasted_iota('int32', operand.shape, ragged_axis)
   # TODO(mattjj, axch) cant get ._data, need to convert it
-  lengths = jax.lax.convert_element_type(axis_spec.segment_lengths._data, 'int32')
+  lengths = jax.lax.convert_element_type(segment_lengths._data, 'int32')
   limits = jax.lax.broadcast_in_dim(
       lengths, operand.shape, [axis_spec.stacked_axis])
   mask = positions < limits
