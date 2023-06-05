@@ -239,8 +239,14 @@ async def async_deserialize(
     dtype=None,
     byte_limiter: Optional[_LimitInFlightBytes] = None,
     context=TS_CONTEXT,
+    assume_metadata: bool = False,
 ):
-  t = await ts.open(tensorstore_spec, open=True, context=context)
+  t = await ts.open(
+      tensorstore_spec,
+      open=True,
+      assume_metadata=assume_metadata,
+      context=context,
+  )
   shape = t.shape if global_shape is None else global_shape
   new_shard_shape = in_sharding.shard_shape(tuple(shape))
 
