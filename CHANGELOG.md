@@ -22,6 +22,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.12
 
+* Changes
+  * Include PTX/SASS for Hopper (SM version 9.0+) GPUs. Previous
+    versions of jaxlib should work on Hopper but would have a long
+    JIT-compilation delay the first time a JAX operation was executed.
+
 ## jax 0.4.11 (May 31, 2023)
 
 * Deprecations
