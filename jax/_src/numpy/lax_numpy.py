@@ -3747,9 +3747,6 @@ def roll(a: ArrayLike, shift: Union[ArrayLike, Sequence[int]],
     return roll(arr.ravel(), shift, 0).reshape(arr.shape)
   axis = _ensure_index_tuple(axis)
   axis = tuple(_canonicalize_axis(ax, arr.ndim) for ax in axis)
-  if not core.is_constant_shape(arr.shape):
-    # TODO(necula): support static roll for polymorphic shapes.
-    return _roll_dynamic(arr, asarray(shift), axis)
   try:
     shift = _ensure_index_tuple(shift)
   except TypeError:

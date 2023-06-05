@@ -233,9 +233,6 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual(((b + 1) // (a + 1)).bounds(), (0, np.PINF))
     self.assertEqual((-b // (a + 1)).bounds(), (np.NINF, -1))
 
-
-
-
     # Generate test cases for floordiv and mod: (a + N) // +-2, (N - a) // +-2
     # and then evaluate them for a = 1, 5, 10000
     div_mod_atoms = [
@@ -252,6 +249,14 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
         atom_val = atom.evaluate(dict(a=a_val))
         self.assertGreaterEqual(atom_val, lb)
         self.assertLessEqual(atom_val, ub)
+
+    # Inequalities involving mod and floordiv
+    self.assertEqual((5 - a % 5).bounds(), (1, 5))
+    self.assertEqual((-5 - a % (-5)).bounds(), (-5, -1))
+    self.assertEqual((a - 5 % a).bounds(), (1, np.PINF))
+    self.assertEqual((a - 5 % a).bounds(), (1, np.PINF))
+    self.assertEqual((3 * (a + b) - 5 % (3 * (a + b))).bounds(), (1, np.PINF))
+    self.assertEqual((- a + (b - 5) % a).bounds(), (np.NINF, -1))
 
   def test_poly_equal(self):
     a, b = shape_poly._parse_spec("a, b", (2, 3))
@@ -288,6 +293,7 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
     self.assertTrue((a // b) * b == a - a % b)
     self.assertTrue(2 * (a // b) * b * b == 2 * b * a - 2 * b * (a % b))
     self.assertTrue(a // (2 * b) * 2 * b == a - a % (2 * b))
+    self.assertTrue(a // (2 * b) * 2 * b + 2 * a == 3 * a - a % (2 * b))
 
   def test_poly_compare(self):
     a, b = shape_poly._parse_spec("a, b", (2, 3))
