@@ -155,7 +155,7 @@ def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
 
 
 def _python_pjit_helper(fun, infer_params_fn, *args, **kwargs):
-  args_flat, _, params, in_tree, out_tree, _ = infer_params_fn(
+  args_flat, _, params, in_tree, out_tree, _, jaxpr = infer_params_fn(
       *args, **kwargs)
   for arg in args_flat:
     dispatch.check_arg(arg)
@@ -170,7 +170,7 @@ def _python_pjit_helper(fun, infer_params_fn, *args, **kwargs):
         fun_name, fails, args_flat, api_name, arg_names)
     raise ValueError(msg) from None
   outs = tree_unflatten(out_tree, out_flat)
-  return outs, out_flat, out_tree, args_flat
+  return outs, out_flat, out_tree, args_flat, jaxpr
 
 
 def _python_pjit(fun: Callable, infer_params_fn):
@@ -215,15 +215,13 @@ def _get_fastpath_data(executable, out_tree, args_flat, out_flat):
 
 class _MostRecentPjitCallExecutable(threading.local):
   def __init__(self):
-    self.value = None
+    self.weak_key_dict = weakref.WeakKeyDictionary()
 
 _most_recent_pjit_call_executable = _MostRecentPjitCallExecutable()
 
 
-def _read_most_recent_pjit_call_executable():
-  executable = _most_recent_pjit_call_executable.value
-  _most_recent_pjit_call_executable.value = None
-  return executable
+def _read_most_recent_pjit_call_executable(jaxpr):
+  return _most_recent_pjit_call_executable.weak_key_dict.get(jaxpr, None)
 
 
 def _cpp_pjit_evict_fn(self):
@@ -249,9 +247,9 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
 
   @api_boundary
   def cache_miss(*args, **kwargs):
-    outs, out_flat, out_tree, args_flat = _python_pjit_helper(
+    outs, out_flat, out_tree, args_flat, jaxpr = _python_pjit_helper(
         fun, infer_params_fn, *args, **kwargs)
-    executable = _read_most_recent_pjit_call_executable()
+    executable = _read_most_recent_pjit_call_executable(jaxpr)
     fastpath_data = _get_fastpath_data(executable, out_tree, args_flat, out_flat)
     return outs, fastpath_data
 
@@ -352,7 +350,7 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
     _experimental_lowering_platform = kwargs.pop(
         '_experimental_lowering_platform', None)
     (args_flat, flat_global_in_avals, params, in_tree, out_tree,
-     donate_argnums) = infer_params_fn(*args, **kwargs)
+     donate_argnums, _) = infer_params_fn(*args, **kwargs)
     resource_env = params['resource_env']
     mesh = None if resource_env is None else resource_env.physical_mesh
     try:
@@ -530,7 +528,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
       inline=inline,
   )
   return (consts + args_flat, in_type, params, in_tree, out_tree(),
-          donate_argnums)
+          donate_argnums, jaxpr)
 
 def _extract_implicit_args(
   in_type: Sequence[Tuple[core.AbstractValue, bool]],
@@ -1114,7 +1112,7 @@ def _pjit_call_impl_python(
       jaxpr, in_shardings, out_shardings, resource_env,
       donated_invars, name, keep_unused, inline,
       always_lower=False, lowering_platform=None).compile()
-  _most_recent_pjit_call_executable.value = compiled
+  _most_recent_pjit_call_executable.weak_key_dict[jaxpr] = compiled
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.jax_enable_checks:
     pxla.check_gda_or_array_xla_sharding_match(args, compiled._in_shardings,

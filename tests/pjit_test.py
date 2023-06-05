@@ -3447,6 +3447,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out1[0], inp * 2)
     self.assertArraysEqual(out2[0], inp * 2)
 
+  def test_most_recent_executable_outer_inner_cache(self):
+    x = np.zeros((20, 20), dtype=jnp.float64)
+
+    def trace_to_jaxpr(x):
+      jnp.pad(x, [(0, 1), (0, 0)], mode= 'wrap')
+      jnp.pad(x, [(0, 0), (1, 0)], mode= 'constant',
+              constant_values= ((0.0, 0.0), (0.0, 0.0)))
+
+    jaxpr = jax.make_jaxpr(trace_to_jaxpr)(x)
+    jax.core.jaxpr_as_fun(jaxpr)(x)
+
+    jnp.pad(x, [(0, 1), (0, 0)], mode= 'wrap')
+    jnp.pad(x, [(0, 1), (0, 0)], mode= 'wrap')  # doesn't crash
+
 
 class TempSharding(Sharding):
 
