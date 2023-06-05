@@ -610,7 +610,7 @@ def _mcjax_reshard(x, target_sharding):
                      f"platform {inp_plat} and target sharding's device set "
                      f"ids: {target_ids} on platform {target_plat}")
 
-  old_op_sharding = inp_sharding._to_xla_op_sharding(x.ndim)
+  old_op_sharding = inp_sharding._to_xla_hlo_sharding(x.ndim).to_proto()
   if op_shardings.is_op_sharding_replicated(old_op_sharding):
     new_op_sharding = old_op_sharding
   else:

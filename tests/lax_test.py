@@ -44,6 +44,7 @@ from jax._src.interpreters import pxla
 from jax._src import test_util as jtu
 from jax._src import lax_reference
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import xla_client as xc
 from jax._src.internal_test_util import lax_test_util
 
 from jax import config
@@ -2848,11 +2849,13 @@ class FooTyRules:
     return core.ShapedArray((2,), jnp.dtype('uint32'))
 
   @staticmethod
-  def physical_op_sharding(aval, op_sharding_proto):
+  def physical_hlo_sharding(aval, op_sharding_proto):
+    if isinstance(op_sharding_proto, xc.HloSharding):
+      op_sharding_proto = op_sharding_proto.to_proto()
     new_op_sharding = op_sharding_proto.clone()
     tad = list(new_op_sharding.tile_assignment_dimensions)
     new_op_sharding.tile_assignment_dimensions = [*tad, 1]
-    return new_op_sharding
+    return xc.HloSharding.from_proto(new_op_sharding)
 
   @staticmethod
   def result_handler(sticky_device, aval):

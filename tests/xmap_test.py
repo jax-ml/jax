@@ -346,13 +346,13 @@ class XMapTest(XMapTestCase):
     vshape = (4, 5)
     v = jnp.arange(math.prod(vshape)).reshape(vshape)
     zxy = fxy(v)
-    zxy_op_sharding = zxy.sharding._to_xla_op_sharding(zxy.ndim)
-    self.assertListEqual(zxy_op_sharding.tile_assignment_dimensions, [1, 4])
-    self.assertListEqual(zxy_op_sharding.tile_assignment_devices, [0, 1, 2, 3])
+    zxy_op_sharding = zxy.sharding._to_xla_hlo_sharding(zxy.ndim)
+    self.assertListEqual(zxy_op_sharding.tile_assignment_dimensions(), [1, 4])
+    self.assertListEqual(zxy_op_sharding.tile_assignment_devices(), [0, 1, 2, 3])
     zyx = fyx(v)
-    zyx_op_sharding = zyx.sharding._to_xla_op_sharding(zyx.ndim)
-    self.assertListEqual(zyx_op_sharding.tile_assignment_dimensions, [1, 4])
-    self.assertListEqual(zyx_op_sharding.tile_assignment_devices, [0, 2, 1, 3])
+    zyx_op_sharding = zyx.sharding._to_xla_hlo_sharding(zyx.ndim)
+    self.assertListEqual(zyx_op_sharding.tile_assignment_dimensions(), [1, 4])
+    self.assertListEqual(zyx_op_sharding.tile_assignment_devices(), [0, 2, 1, 3])
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testSkipFirstMeshDim(self):
@@ -426,9 +426,10 @@ class XMapTest(XMapTestCase):
              np.arange(xshape[-1], dtype=float)[None, None]).transpose(
                  (1, 2, 0)), (x * 2).sum((0, 1))))
 
-    y_op_sharding = y[0].sharding._to_xla_op_sharding(y[0].ndim)
+    y_op_sharding = y[0].sharding._to_xla_hlo_sharding(y[0].ndim)
     m_size = math.prod([2] + [2] * (len(mesh) - 2))
-    self.assertListEqual(y_op_sharding.tile_assignment_dimensions, [2, 1, 1, m_size])
+    self.assertListEqual(y_op_sharding.tile_assignment_dimensions(),
+                         [2, 1, 1, m_size])
     if config.experimental_xmap_spmd_lowering:
       hlo = f.lower(x).compiler_ir(dialect="hlo").as_hlo_text()
       # Make sure that there are non-partial sharding specs in the HLO

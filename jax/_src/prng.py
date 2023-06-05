@@ -437,10 +437,10 @@ def make_key_array_phys_sharding(aval, sharding, is_sharding_from_xla):
   elif is_sharding_from_xla:
     return sharding
   else:
-    sharding_proto = sharding._to_xla_op_sharding(aval.ndim)
+    sharding_proto = sharding._to_xla_hlo_sharding(aval.ndim)
     return GSPMDSharding(
         sharding._device_assignment,
-        KeyTyRules.physical_op_sharding(aval, sharding_proto))
+        KeyTyRules.physical_hlo_sharding(aval, sharding_proto))
 
 class KeyTyRules:
 
@@ -464,13 +464,15 @@ class KeyTyRules:
     return val.unsafe_raw_array()
 
   @staticmethod
-  def physical_op_sharding(aval, op_sharding_proto):
+  def physical_hlo_sharding(aval, op_sharding_proto):
     key_shape = aval.dtype.impl.key_shape
+    if isinstance(op_sharding_proto, xc.HloSharding):
+      op_sharding_proto = op_sharding_proto.to_proto()
     new_op_sharding = op_sharding_proto.clone()
     tad = list(new_op_sharding.tile_assignment_dimensions)
     tad.extend([1] * len(key_shape))
     new_op_sharding.tile_assignment_dimensions = tad
-    return new_op_sharding
+    return xc.HloSharding.from_proto(new_op_sharding)
 
   @staticmethod
   def logical_op_sharding(aval, phys_sharding) -> XLACompatibleSharding:
@@ -490,13 +492,14 @@ class KeyTyRules:
           PartitionSpec(*phys_sharding.spec[:-len(key_shape)]))
     else:
       key_shape = aval.dtype.impl.key_shape
-      phys_op_sharding = phys_sharding._to_xla_op_sharding(
-          aval.ndim + len(key_shape))
+      phys_op_sharding = phys_sharding._to_xla_hlo_sharding(
+          aval.ndim + len(key_shape)).to_proto()
       logical_op_sharding = phys_op_sharding.clone()
       tad = list(logical_op_sharding.tile_assignment_dimensions)
       tad = tad[:-len(key_shape)]
       logical_op_sharding.tile_assignment_dimensions = tad
-      return GSPMDSharding(phys_sharding._device_assignment, logical_op_sharding)
+      return GSPMDSharding(phys_sharding._device_assignment,
+                           xc.HloSharding.from_proto(logical_op_sharding))
 
   @staticmethod
   def result_handler(sticky_device, aval):

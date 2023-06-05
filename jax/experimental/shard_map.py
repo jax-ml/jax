@@ -522,10 +522,11 @@ def _xla_shard(ctx: mlir.LoweringRuleContext,
   axes = {name: i for i, ns in names.items() for name in ns}
   shard_proto = NamedSharding(
       mesh, sharding_impls.array_mapping_to_axis_resources(axes)  # type: ignore
-  )._to_xla_op_sharding(aval_in.ndim)
+  )._to_xla_hlo_sharding(aval_in.ndim)
   if dtypes.is_opaque_dtype(aval_in.dtype):
-    shard_proto = aval_in.dtype._rules.physical_op_sharding(aval_in, shard_proto)
-  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto, unspecified_dims=set())
+    shard_proto = aval_in.dtype._rules.physical_hlo_sharding(aval_in, shard_proto)
+  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto.to_proto(),  # type: ignore
+                                  unspecified_dims=set())
   return [mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto, set())]
 
 def _xla_unshard(ctx: mlir.LoweringRuleContext,
@@ -536,10 +537,11 @@ def _xla_unshard(ctx: mlir.LoweringRuleContext,
   axes = {name: i for i, ns in names.items() for name in ns}
   shard_proto = NamedSharding(
       mesh, sharding_impls.array_mapping_to_axis_resources(axes)  # type: ignore
-  )._to_xla_op_sharding(aval_out.ndim)
+  )._to_xla_hlo_sharding(aval_out.ndim)
   if dtypes.is_opaque_dtype(aval_out.dtype):
-    shard_proto = aval_out.dtype._rules.physical_op_sharding(aval_out, shard_proto)
-  return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, shard_proto, set())
+    shard_proto = aval_out.dtype._rules.physical_hlo_sharding(aval_out, shard_proto)
+  return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out,
+                                         shard_proto.to_proto(), set())  # type: ignore
 
 def _pspec_mhlo_attrs(names: AxisNames, aval: core.AbstractValue) -> str:
   if isinstance(aval, core.ShapedArray):

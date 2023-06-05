@@ -81,8 +81,7 @@ def get_logical_mesh_ids(mesh_shape):
 _MeshAxisName = Any
 
 def sharding_spec_sharding_proto(
-    self, special_axes: Mapping[int, OpShardingType] = {},
-    hlo_sharding: bool = False):
+    self, special_axes: Mapping[int, OpShardingType] = {}):
   """Converts a ShardingSpec to an OpSharding proto.
 
   See
@@ -93,7 +92,6 @@ def sharding_spec_sharding_proto(
   https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/compiler/xla/experimental/xla_sharding/xla_sharding.py
   """
   mesh_shape = cast(Tuple[int, ...], self.mesh_shape)
-  mesh = get_logical_mesh_ids(self.mesh_shape)
 
   sharded_axes = {}  # maps sharded axis identifiers to mesh axis indices to which they're mapped
   replicated_maxes = []  # lists mesh axis identifiers to replicate over
@@ -105,16 +103,8 @@ def sharding_spec_sharding_proto(
     else:
       util.assert_unreachable(assignment)
 
-  if hlo_sharding:
-    if len(replicated_maxes) == len(self.mesh_mapping) and not special_axes:
-      return xc.HloSharding.replicate()
-  else:
-    proto = xc.OpSharding()
-    if len(replicated_maxes) == len(self.mesh_mapping) and not special_axes:
-      proto.type = xc.OpSharding.Type.REPLICATED
-      return proto
-    else:
-      proto.type = xc.OpSharding.Type.OTHER
+  if len(replicated_maxes) == len(self.mesh_mapping) and not special_axes:
+    return xc.HloSharding.replicate()
 
   mesh_permutation = []
   new_mesh_shape = []
@@ -150,19 +140,9 @@ def sharding_spec_sharding_proto(
       new_mesh_shape.append(size_by_type[ty])
       mesh_permutation.extend(axes)
 
-  proto_mesh = mesh.transpose(mesh_permutation).reshape(new_mesh_shape)
-
-  if hlo_sharding:
-    return xc.HloSharding.iota_tile(
-        dims=new_mesh_shape, reshape_dims=list(proto_mesh.shape),
-        transpose_perm=mesh_permutation, subgroup_types=last_tile_dims)
-  else:
-    proto.tile_assignment_dimensions = list(proto_mesh.shape)
-    proto.tile_assignment_devices = list(proto_mesh.flat)
-    if replicated_maxes:
-      proto.last_tile_dims = last_tile_dims
-    assert math.prod(proto.tile_assignment_dimensions) == len(proto.tile_assignment_devices)
-    return proto
+  return xc.HloSharding.iota_tile(
+      dims=new_mesh_shape, reshape_dims=mesh_shape,
+      transpose_perm=mesh_permutation, subgroup_types=last_tile_dims)
 
 
 def _sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:

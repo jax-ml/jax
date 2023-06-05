@@ -27,6 +27,8 @@ def get_num_ways_dim_sharded(
     partitions = op_sharding.tile_assignment_dimensions
     subgroup_types = op_sharding.last_tile_dims
   else:
+    if op_sharding.is_replicated():  # type: ignore
+      return [], 1
     partitions = op_sharding.tile_assignment_dimensions()
     subgroup_types = op_sharding.subgroup_types()
 

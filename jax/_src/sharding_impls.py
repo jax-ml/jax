@@ -53,7 +53,7 @@ XLADeviceAssignment = Tuple[Device, ...]
 
 
 # Shardings that inherit from XLACompatibleSharding should implement the
-# `_device_assignment` property and `_to_xla_op_sharding` method.
+# `_device_assignment` property and `_to_xla_hlo_sharding` method.
 @use_cpp_class(xc.XLACompatibleSharding)
 class XLACompatibleSharding(sharding.Sharding):
   """A `Sharding` that describes shardings expressible to XLA.
@@ -68,9 +68,6 @@ class XLACompatibleSharding(sharding.Sharding):
   def _device_assignment(self) -> XLADeviceAssignment:
     raise NotImplementedError('Subclasses should implement this method.')
 
-  def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
-    raise NotImplementedError('Subclasses should implement this method.')
-
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     raise NotImplementedError('Subclasses should implement this method.')
 
@@ -79,8 +76,8 @@ class XLACompatibleSharding(sharding.Sharding):
 
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
-    op_sharding = self._to_xla_op_sharding(len(global_shape))
-    gspmd_sharding = GSPMDSharding(self._device_assignment, op_sharding)
+    hlo_sharding = self._to_xla_hlo_sharding(len(global_shape))
+    gspmd_sharding = GSPMDSharding(self._device_assignment, hlo_sharding)
     return gspmd_sharding.devices_indices_map(global_shape)
 
   @functools.cached_property
@@ -90,10 +87,10 @@ class XLACompatibleSharding(sharding.Sharding):
 
   @functools.lru_cache(maxsize=4096)
   def shard_shape(self, global_shape: Shape) -> Shape:
-    op_sharding = cast(xc.OpSharding, self._to_xla_op_sharding(len(global_shape)))
-    if is_op_sharding_replicated(op_sharding):
+    hlo_sharding = self._to_xla_hlo_sharding(len(global_shape))
+    if is_op_sharding_replicated(hlo_sharding):
       return global_shape
-    partitions, _ = get_num_ways_dim_sharded(op_sharding)
+    partitions, _ = get_num_ways_dim_sharded(hlo_sharding)
     assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
     out = []
     for dim, (s, p) in enumerate(safe_zip(global_shape, partitions)):
@@ -111,8 +108,8 @@ class XLACompatibleSharding(sharding.Sharding):
   def is_equivalent_to(self: XLACompatibleSharding,  # type: ignore
                        other: XLACompatibleSharding, ndim: int) -> bool:
     try:
-      return (are_op_shardings_equal(self._to_xla_op_sharding(ndim),
-                                     other._to_xla_op_sharding(ndim))
+      return (are_op_shardings_equal(self._to_xla_hlo_sharding(ndim),
+                                     other._to_xla_hlo_sharding(ndim))
               and self._device_assignment == other._device_assignment)
     # NotImplementedError is raised by PmapSharding because it can't lower
     # to OpSharding. So if `other` is a PmapSharding, default to a strict
@@ -304,24 +301,13 @@ class NamedSharding(XLACompatibleSharding):
     return sharding_spec, special_axes
 
   @functools.lru_cache(maxsize=4096)
-  def _to_xla_op_sharding(
-      self,
-      num_dimensions: int,
-      axis_ctx: Optional[Union[SPMDAxisContext, ShardingContext]] = None
-  ) -> xc.OpSharding:
-    sharding_spec, special_axes = self._get_sharding_spec(
-        num_dimensions, axis_ctx)
-    return sharding_spec.sharding_proto(special_axes=special_axes)
-
-  @functools.lru_cache(maxsize=4096)
   def _to_xla_hlo_sharding(
       self, num_dimensions: int,
       axis_ctx: Optional[Union[SPMDAxisContext, ShardingContext]] = None
   ) -> xc.HloSharding:
     sharding_spec, special_axes = self._get_sharding_spec(
         num_dimensions, axis_ctx)
-    return sharding_spec.sharding_proto(
-        special_axes=special_axes, hlo_sharding=True)
+    return sharding_spec.sharding_proto(special_axes=special_axes)
 
 
 @functools.lru_cache()
@@ -382,9 +368,6 @@ class SingleDeviceSharding(XLACompatibleSharding):
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
     return (self._device,)
-
-  def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
-    return get_replicated_op_sharding()
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     return get_replicated_hlo_sharding()
@@ -487,7 +470,7 @@ class PmapSharding(XLACompatibleSharding):
   def _device_assignment(self) -> XLADeviceAssignment:
     return tuple(self.devices.flat)
 
-  def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
+  def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     raise NotImplementedError("pmap doesn't use OpSharding.")
 
   @functools.cached_property
@@ -518,8 +501,11 @@ class PmapSharding(XLACompatibleSharding):
 
 
 def _from_op_sharding_to_pos_sharding(
-    op_sharding: xc.OpSharding,
+    op_sharding: Union[xc.OpSharding, xc.HloSharding],
     device_assignment: Sequence[xc.Device]) -> PositionalSharding:
+  if isinstance(op_sharding, xc.HloSharding):
+    op_sharding = op_sharding.to_proto()  # type: ignore
+
   if op_sharding.type == xc.OpSharding.Type.REPLICATED:
     return PositionalSharding(device_assignment).replicate()
 
@@ -622,12 +608,11 @@ class PositionalSharding(XLACompatibleSharding):
     return self._devices
 
   @functools.lru_cache(maxsize=4096)
-  def _to_xla_op_sharding(self, num_dimensions: int):
-    pbuf = xc.OpSharding()
+  def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     if self.shape == (1,) * self.ndim:
-      pbuf.type = xc.OpSharding.Type.REPLICATED
-      return pbuf
+      return get_replicated_hlo_sharding()
 
+    pbuf = xc.OpSharding()
     shape = self.shape[self.ndim - num_dimensions:]  # 'rank promotion' of val
     set_size, = {len(device_set) for device_set in self._ids.flat}
     pbuf.type = xc.OpSharding.Type.OTHER
@@ -640,12 +625,7 @@ class PositionalSharding(XLACompatibleSharding):
     product_of_dims = math.prod(pbuf.tile_assignment_dimensions)
     num_devices = len(pbuf.tile_assignment_devices)
     assert product_of_dims == num_devices, (product_of_dims, num_devices)
-    return pbuf
-
-  @functools.lru_cache(maxsize=4096)
-  def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
-    proto = self._to_xla_op_sharding(num_dimensions)
-    return xc.HloSharding.from_proto(proto)
+    return xc.HloSharding.from_proto(pbuf)
 
 
 class DeviceIdSet:
@@ -742,11 +722,6 @@ class GSPMDSharding(XLACompatibleSharding):
   def _device_assignment(self) -> XLADeviceAssignment:
     return self._devices
 
-  def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
-    if isinstance(self._op_sharding, xc.HloSharding):
-      return self._op_sharding.to_proto()  # type: ignore
-    return self._op_sharding
-
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     if isinstance(self._op_sharding, xc.OpSharding):
       return xc.HloSharding.from_proto(self._op_sharding)
@@ -758,8 +733,7 @@ class GSPMDSharding(XLACompatibleSharding):
 
   @classmethod
   def get_replicated(cls, device_assignment):
-    proto = get_replicated_op_sharding()
-    return cls(tuple(device_assignment), proto)
+    return cls(tuple(device_assignment), get_replicated_hlo_sharding())
 
 
 class AUTO:
@@ -1187,8 +1161,10 @@ def explode_superdims(sizes, dims):
     final_dims += reversed(new_dims)
   return final_dims
 
-def parse_flatten_op_sharding(op_sharding: xc.OpSharding,
+def parse_flatten_op_sharding(op_sharding: Union[xc.OpSharding, xc.HloSharding],
                               mesh: mesh_lib.Mesh) -> Sequence[ParsedPartitionSpec]:
+  if isinstance(op_sharding, xc.HloSharding):
+    op_sharding = op_sharding.to_proto()  # type: ignore
   if op_sharding.type == xc.OpSharding.Type.TUPLE:
     out: List[ParsedPartitionSpec] = []
     for s in op_sharding.tuple_shardings:

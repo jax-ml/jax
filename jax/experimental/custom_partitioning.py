@@ -125,7 +125,7 @@ def _to_hlo_sharding(sharding, num_dimensions):
     raise ValueError(
         "Custom Partitioning rules must return XLACompatibleShardings."
     )
-  return xc.HloSharding.from_proto(sharding._to_xla_op_sharding(num_dimensions))
+  return sharding._to_xla_hlo_sharding(num_dimensions)
 
 
 def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,

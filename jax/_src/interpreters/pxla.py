@@ -323,9 +323,9 @@ def make_sharded_device_array(
     sharding = sharding_impls.PmapSharding(
         np.asarray([d.device() for d in device_buffers]), sharding_spec)
   else:
-    op_sharding = sharding_specs.sharding_spec_sharding_proto(sharding_spec)
+    hlo_sharding = sharding_specs.sharding_spec_sharding_proto(sharding_spec)
     pspec = sharding_impls.parse_flatten_op_sharding(
-        op_sharding, mesh)[0].get_partition_spec()
+        hlo_sharding, mesh)[0].get_partition_spec()
     sharding = sharding_impls.NamedSharding(mesh, pspec)
 
   return jax.make_array_from_single_device_arrays(
@@ -1642,7 +1642,8 @@ def _full_to_shard_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh,
   # TODO: Can we short-circuit for replicated values? Probably not.
   aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
-  sharding_proto = mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval_in, axes).sharding_proto()
+  sharding_proto = mesh_sharding_specs(
+      mesh.shape, mesh.axis_names)(aval_in, axes).sharding_proto().to_proto()
   unspecified_dims = set(range(aval_in.ndim)) - set(axes.values())
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, sharding_proto, unspecified_dims=unspecified_dims)
   proto = manual_proto(aval_in, manual_axes, mesh)
@@ -1663,7 +1664,8 @@ def _shard_to_full_lowering(ctx: mlir.LoweringRuleContext, x, *, axes: ArrayMapp
   proto = manual_proto(aval_in, manual_axes, mesh)  # type: ignore
   unspecified_dims = set(range(aval_in.ndim)) - set(axes.values())  # type: ignore
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, proto, unspecified_dims=unspecified_dims)
-  sharding_proto = mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval_out, axes).sharding_proto()
+  sharding_proto = mesh_sharding_specs(
+      mesh.shape, mesh.axis_names)(aval_out, axes).sharding_proto().to_proto()
   return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, sharding_proto, unspecified_dims),
 
 @lu.transformation
@@ -2457,7 +2459,7 @@ def _get_out_sharding_from_orig_sharding(
         if (orig_aval is not None and out_aval is not None and
             out_aval.ndim == orig_aval.ndim and
             sharding_impls.are_op_shardings_equal(
-                o._op_sharding, orig_s._to_xla_op_sharding(orig_aval.ndim))):
+                o._op_sharding, orig_s._to_xla_hlo_sharding(orig_aval.ndim))):
           out.append((orig_s, False))
         else:
           out.append((orig_handler(o._op_sharding, orig_s), False))
@@ -2683,8 +2685,8 @@ class UnloadedMeshExecutable:
           are_out_shardings_from_xla.append(True)
         else:
           if not op_shardings.are_op_shardings_equal(
-              xla_s._to_xla_op_sharding(aval.ndim),  # type: ignore
-              orig._to_xla_op_sharding(aval.ndim)):  # type: ignore
+              xla_s._to_xla_hlo_sharding(aval.ndim),  # type: ignore
+              orig._to_xla_hlo_sharding(aval.ndim)):  # type: ignore
             raise AssertionError(
                 f"Unexpected XLA sharding override: (XLA) {xla_s} != {orig} "
                 "(User sharding)")
@@ -2999,8 +3001,8 @@ def check_gda_or_array_xla_sharding_match(
     if (not check_device_backend_on_shardings([xs]) and
         arg._committed and
         not op_shardings.are_op_shardings_equal(
-            arg.sharding._to_xla_op_sharding(arg.ndim),
-            xs._to_xla_op_sharding(arg.ndim))):
+            arg.sharding._to_xla_hlo_sharding(arg.ndim),
+            xs._to_xla_hlo_sharding(arg.ndim))):
       errors.append(
           f"Got Array sharding: {arg.sharding} and input sharding: {xs} for "
           f"arg {name} with shape: {arg.aval.str_short()}")

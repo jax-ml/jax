@@ -571,7 +571,7 @@ def _to_logical_op_sharding(
     return None
   assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
   assert isinstance(aval, core.ShapedArray)
-  return sharding._to_xla_op_sharding(aval.ndim)
+  return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()  # type: ignore
 
 
 def lower_jaxpr_to_module(
@@ -1014,7 +1014,7 @@ def _to_physical_op_sharding(
 ) -> Optional[xc.OpSharding]:
   if (isinstance(aval, core.ShapedArray) and dtypes.is_opaque_dtype(aval.dtype)
       and sharding is not None):
-    return aval.dtype._rules.physical_op_sharding(aval, sharding)
+    return aval.dtype._rules.physical_hlo_sharding(aval, sharding).to_proto()
   return sharding
 
 

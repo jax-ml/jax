@@ -1411,7 +1411,9 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
 
   global_sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)
   sharded_global_in_nodes = [
-    [mlir.wrap_with_sharding_op(ctx, node, aval, global_sharding_spec(aval, aval_axes).sharding_proto())]
+    [mlir.wrap_with_sharding_op(
+        ctx, node, aval,
+        global_sharding_spec(aval, aval_axes).sharding_proto().to_proto())]
     if aval_axes else [node]
     for node, aval, aval_axes in zip(global_in_nodes, global_in_avals, mesh_in_axes)
   ]
@@ -1429,7 +1431,9 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
       dim_var_values=ctx.dim_var_values)
 
   sharded_global_out_nodes = [
-    mlir.wrap_with_sharding_op(ctx, node, aval, global_sharding_spec(aval, aval_axes).sharding_proto())
+    mlir.wrap_with_sharding_op(
+        ctx, node, aval,
+        global_sharding_spec(aval, aval_axes).sharding_proto().to_proto())
     if aval_axes else node
     for (node,), aval, aval_axes in zip(global_out_nodes, global_out_avals, mesh_out_axes)
   ]
@@ -1736,8 +1740,8 @@ def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
   @lru_cache()
   def _check_sharding(in_sharding, xmap_sharding, ndim, arr_flavor):
     if not op_shardings.are_op_shardings_equal(
-        in_sharding._to_xla_op_sharding(ndim),
-        xmap_sharding._to_xla_op_sharding(ndim)):
+        in_sharding._to_xla_hlo_sharding(ndim),
+        xmap_sharding._to_xla_hlo_sharding(ndim)):
       raise ValueError(
           f"Got an input {arr_flavor} to xmap with different partitioning than "
           "specified in xmap. The partitioning must match. "

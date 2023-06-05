@@ -3281,7 +3281,7 @@ def _shard_value(val: TfVal,
     return val
 
   sharding_proto: xla_client.OpSharding = cast(
-      xla_client.OpSharding, sd._to_xla_op_sharding(aval.ndim))
+      xla_client.OpSharding, sd._to_xla_hlo_sharding(aval.ndim).to_proto())  # type: ignore
 
   if (skip_replicated_sharding and
       op_shardings.is_op_sharding_replicated(sharding_proto)):

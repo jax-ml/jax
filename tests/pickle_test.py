@@ -166,7 +166,7 @@ class PickleTest(jtu.JaxTestCase):
   def testPickleOpSharding(self):
     sharding = pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked((2, 2))),
                                  (pxla.ShardedAxis(0), pxla.ShardedAxis(1)))
-    op_sharding = sharding.sharding_proto()
+    op_sharding = sharding.sharding_proto().to_proto()
     self.assertTrue(
         xc.HloSharding.from_proto(pickle.loads(pickle.dumps(op_sharding))),
         xc.HloSharding.from_proto(op_sharding))

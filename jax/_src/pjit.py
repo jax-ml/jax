@@ -982,7 +982,7 @@ def pjit_check_aval_sharding(
       if hasattr(s, 'is_compatible_aval'):
         s.is_compatible_aval(shape)
       else:
-        s._to_xla_op_sharding(len(shape))
+        s._to_xla_hlo_sharding(len(shape))
     except ValueError as e:
       raise ValueError(
           f'One of {what_aval}{name_str} is incompatible with its sharding '
@@ -990,10 +990,9 @@ def pjit_check_aval_sharding(
     # Use the `OpSharding` proto to find out how many ways each dimension of
     # the aval is sharded. This approach will work across all
     # XLACompatibleSharding.
-    op_sharding = s._to_xla_op_sharding(len(shape))
-    assert op_sharding is not None
-    num_ways_dim_sharded, _ = op_shardings.get_num_ways_dim_sharded(
-        cast(xc.OpSharding, op_sharding))
+    hlo_sharding = s._to_xla_hlo_sharding(len(shape))
+    assert hlo_sharding is not None
+    num_ways_dim_sharded, _ = op_shardings.get_num_ways_dim_sharded(hlo_sharding)
     for i, size in enumerate(num_ways_dim_sharded):
       if not allow_uneven_sharding and shape[i] % size != 0:
         raise ValueError(f"One of {what_aval}{name_str} was given the sharding "
@@ -1086,8 +1085,8 @@ def _resolve_in_shardings(
         if (committed and
             not isinstance(arg_s, PmapSharding) and
             not op_shardings.are_op_shardings_equal(
-                pjit_in_s._to_xla_op_sharding(arg.ndim),  # type: ignore
-                arg_s._to_xla_op_sharding(arg.ndim))):
+                pjit_in_s._to_xla_hlo_sharding(arg.ndim),  # type: ignore
+                arg_s._to_xla_hlo_sharding(arg.ndim))):
           op =  getattr(pjit_in_s, '_original_sharding', pjit_in_s)
           raise ValueError('Sharding passed to pjit does not match the sharding '
                            'on the respective arg. '
@@ -1349,9 +1348,11 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
   output_types = [mlir.token_type()] * len(effects) + output_types
   flat_output_types = flatten(output_types)
 
-  arg_shardings = [None if is_unspecified(i) else i._to_xla_op_sharding(aval.ndim)
+  arg_shardings = [None if is_unspecified(i) else
+                   i._to_xla_hlo_sharding(aval.ndim).to_proto()
                    for aval, i in zip(ctx.avals_in, in_shardings)]
-  result_shardings = [None if is_unspecified(o) else o._to_xla_op_sharding(aval.ndim)
+  result_shardings = [None if is_unspecified(o) else
+                      o._to_xla_hlo_sharding(aval.ndim).to_proto()
                       for aval, o in zip(ctx.avals_out, out_shardings)]
 
   # TODO(b/228598865): inlined calls cannot have shardings set directly on the
@@ -1425,7 +1426,9 @@ def _pjit_batcher_for_sharding(
   if not val:
     if sharding_impls.is_op_sharding_replicated(s._op_sharding):  # type: ignore
       return s
-    new_op = s._op_sharding.clone()  # type: ignore
+    old_op = (s._op_sharding.to_proto()  # type: ignore
+              if isinstance(s._op_sharding, xc.HloSharding) else s._op_sharding)  # type: ignore
+    new_op = old_op.clone()  # type: ignore
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)
     new_op.tile_assignment_dimensions = tad
@@ -1443,7 +1446,7 @@ def _pjit_batcher_for_sharding(
     parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]  # type: ignore
     parsed_pspec = parsed_pspec.insert_axis_partitions(dim, val)
     mps = NamedSharding._from_parsed_pspec(mesh, parsed_pspec)
-    return GSPMDSharding(mps._device_assignment, mps._to_xla_op_sharding(ndim))
+    return GSPMDSharding(mps._device_assignment, mps._to_xla_hlo_sharding(ndim))
 
 
 def _pjit_jvp(primals_in, tangents_in,
@@ -1865,11 +1868,11 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding,
     parsed_pspec = parse_flatten_op_sharding(sharding._op_sharding, mesh)[0]
     mps = NamedSharding._from_parsed_pspec(mesh, parsed_pspec)
     sharding = GSPMDSharding(
-        mps._device_assignment, mps._to_xla_op_sharding(aval.ndim, axis_ctx=axis_ctx))
+        mps._device_assignment, mps._to_xla_hlo_sharding(aval.ndim, axis_ctx=axis_ctx))
   return [
       mlir.wrap_with_sharding_op(ctx,
           x_node, out_aval,
-          sharding._to_xla_op_sharding(aval.ndim),
+          sharding._to_xla_hlo_sharding(aval.ndim).to_proto(),
           unspecified_dims=unconstrained_dims)
   ]
 mlir.register_lowering(sharding_constraint_p,
@@ -1923,7 +1926,7 @@ def to_gspmd_sharding(s: XLACompatibleSharding, ndim: int,
                       device_or_backend_set: bool = False) -> GSPMDSharding:
   if isinstance(s, GSPMDSharding):
     return s
-  gs = GSPMDSharding(s._device_assignment, s._to_xla_op_sharding(ndim))
+  gs = GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim))
   gs._original_sharding = s
   if device_or_backend_set:
     gs._original_sharding._device_backend = device_or_backend_set
