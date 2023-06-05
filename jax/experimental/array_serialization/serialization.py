@@ -378,11 +378,12 @@ class AsyncManager:
     self._thread = None
     self._exception = None
 
-    if distributed.global_state.client is None:
+    if jax.process_count() > 1 and distributed.global_state.client is None:
       raise ValueError('Please initialize the distributed system via '
                        '`jax.distributed.initialize()` at the start of your '
                        'program.')
-    self._client = distributed.global_state.client
+    if jax.process_count() > 1:
+      self._client = distributed.global_state.client
     self._count = None
 
   def __del__(self):
@@ -395,6 +396,7 @@ class AsyncManager:
   def _thread_func(self):
     try:
       current_process = jax.process_index()
+      process_count = jax.process_count()
       logger.info('Starting commit to storage layer by process: %s',
                    current_process)
       thread_start_time = time.time()
@@ -403,21 +405,23 @@ class AsyncManager:
       logger.info('Finished committing to storage layer by process: %s',
                    current_process)
 
-      # All processes will wait at the barrier. When all processes are at the
-      # barrier, the barrier will be satisfied. If not, then it will timeout.
-      key_for_barrier = _get_key(self._count)
-      logger.info('Key used for barrier is %s for process %s',
-                   key_for_barrier, current_process)
-      self._client.wait_at_barrier(key_for_barrier, self._timeout_in_ms)
-      logger.info('Finished waiting at barrier for process %s',
-                   current_process)
+      if process_count > 1:
+        # All processes will wait at the barrier. When all processes are at the
+        # barrier, the barrier will be satisfied. If not, then it will timeout.
+        key_for_barrier = _get_key(self._count)
+        logger.info('Key used for barrier is %s for process %s',
+                    key_for_barrier, current_process)
+        self._client.wait_at_barrier(key_for_barrier, self._timeout_in_ms)
+        logger.info('Finished waiting at barrier for process %s',
+                    current_process)
 
       if current_process == 0:
         self._on_commit_callback()
         logger.info('on_commit_callback successfully ran!')
-        self._client.key_value_set(key_for_barrier, _CHECKPOINT_SUCCESS)
-        logger.info('Process 0 successfully set key %s in the kv store',
-                    key_for_barrier)
+        if process_count > 1:
+          self._client.key_value_set(key_for_barrier, _CHECKPOINT_SUCCESS)
+          logger.info('Process 0 successfully set key %s in the kv store',
+                      key_for_barrier)
 
       jax.monitoring.record_event_duration_secs(
           '/jax/checkpoint/write/async/thread_duration_sec',
@@ -449,7 +453,7 @@ class AsyncManager:
     self.check_for_errors()
     logger.info('Error check finished successfully')
 
-    if self._count is not None:
+    if jax.process_count() > 1 and self._count is not None:
       # Block until process 0 writes success value to the key value store.
       # If it fails to write it, then `blocking_key_value_get` will time out.
       get_key = _get_key(self._count)
@@ -480,10 +484,13 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
       arrays: GlobalDeviceArrays or Arrays that should be serialized.
       tensorstore_specs: TensorStore specs that are used to serialize GDAs or
         Arrays.
-      temp_checkpoint_dir: Temporary checkpoint directory where the checkpoints
-        will be written.
-      final_checkpoint_dir: Final checkpoint directory where the checkpoints
-        will be moved from `temp_checkpoint_dir`.
+      on_commit_callback: This callback will be executed after all processes
+        have finished writing their checkpoints to disk. Filesystems where
+        atomic rename operations are supported, you can rename from the
+        temporary directory to the final directory. On GCS, you write to the
+        final directory directly and in `on_commit_callback` you write a
+        success file indicating that the serialization was successful because
+        GCS does not support atomic rename operations.
     """
     logger.info('Waiting for previous serialization to finish.')
     self.wait_until_finished()
