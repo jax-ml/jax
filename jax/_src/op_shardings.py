@@ -58,16 +58,9 @@ def are_op_shardings_equal(op1: Union[xc.OpSharding, xc.HloSharding],
     return True
   if is_op_sharding_replicated(op1) and is_op_sharding_replicated(op2):
     return True
-
-  if isinstance(op1, xc.HloSharding) and isinstance(op2, xc.HloSharding):
-    return op1 == op2
-  elif isinstance(op1, xc.OpSharding) and isinstance(op2, xc.HloSharding):
-    return xc.HloSharding.from_proto(op1) == op2
-  elif isinstance(op1, xc.HloSharding) and isinstance(op2, xc.OpSharding):
-    return op1 == xc.HloSharding.from_proto(op2)
-  else:
-    assert isinstance(op1, xc.OpSharding) and isinstance(op2, xc.OpSharding)
-    return xc.HloSharding.from_proto(op1) == xc.HloSharding.from_proto(op2)
+  hc1 = xc.HloSharding.from_proto(op1) if isinstance(op1, xc.OpSharding) else op1
+  hc2 = xc.HloSharding.from_proto(op2) if isinstance(op2, xc.OpSharding) else op2
+  return hc1 == hc2
 
 
 _Index = Union[int, slice, Tuple[Union[int, slice], ...]]
