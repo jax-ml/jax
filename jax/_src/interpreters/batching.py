@@ -442,9 +442,12 @@ class BatchTrace(Trace):
     sizes = (x.shape[d] if type(d) is int else len(d.segment_lengths)
              for x, d in zip(vals, dims) if d is not not_mapped)
     axis_size, = core.dedup_referents(sizes)
+    segment_lens, dims = indirectify_ragged_axes(dims)
     f_, dims_out = batch_subtrace(f, self.main, tuple(dims))
-    f_ = _update_annotation(f_, f.in_type, axis_size, self.axis_name, dims, [])
-    vals_out = call_primitive.bind(f_, *vals, **params)
+    f_ = _update_annotation(
+        f_, f.in_type, axis_size, self.axis_name, dims, segment_lens)
+    vals_out = call_primitive.bind(f_, *segment_lens, *vals, **params)
+    vals_out, dims_out = resolve_ragged_axes(vals_out, dims_out())
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out())]
 
@@ -670,13 +673,41 @@ def vtile(f_flat: lu.WrappedFun,
 def batch_subtrace(main, in_dims, *in_vals):
   trace = main.with_cur_sublevel()
   in_dims = in_dims() if callable(in_dims) else in_dims
+  in_vals, in_dims = resolve_ragged_axes(in_vals, in_dims)
   in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
                 if dim is not None else x for x, dim in zip(in_vals, in_dims)]
   outs = yield in_tracers, {}
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
-  yield out_vals, out_dims
+  segment_lens, out_dims = indirectify_ragged_axes(out_dims)
+  yield (*segment_lens, *out_vals), out_dims
 
+def indirectify_ragged_axes(dims):
+  if not any(type(d) is RaggedAxis for d in dims):
+    return [], dims
+  axis_map : Dict[int, Tuple[Array, pe.DBIdx]] = collections.OrderedDict()
+  def canonicalize_segment_lengths(d: RaggedAxis) -> RaggedAxis:
+    new_ragged_axes = []
+    for ragged_axis, segment_lengths in d.ragged_axes:
+      _, dbidx = axis_map.setdefault(
+          id(core.get_referent(segment_lengths)),
+          (segment_lengths, pe.DBIdx(len(axis_map))))
+      new_ragged_axes.append((ragged_axis, dbidx))
+    return RaggedAxis(d.stacked_axis, tuple(new_ragged_axes))
+  new_dims = [canonicalize_segment_lengths(d)
+              if isinstance(d, RaggedAxis) else d for d in dims]
+  segment_lens = [s for s, _ in axis_map.values()]
+  return segment_lens, new_dims
+
+def resolve_ragged_axes(vals, dims):
+  idxs = {lengths_idx.val for d in dims if isinstance(d, RaggedAxis)
+          for (_, lengths_idx) in d.ragged_axes}
+  dims = [RaggedAxis(d.stacked_axis,
+                     [(ragged_axis, vals[lengths_idx.val])
+                      for ragged_axis, lengths_idx in d.ragged_axes])
+          if isinstance(d, RaggedAxis) else d for d in dims]
+  vals = [x for i, x in enumerate(vals) if i not in idxs]
+  return vals, dims
 
 ### API for batching jaxprs
 

@@ -1488,7 +1488,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     self.assertAllClose(y._data, x)
 
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow",
-                 jax_disable_jit=True, jax_traceback_filtering='off')
+                 jax_disable_jit=False, jax_traceback_filtering='off')
 class PileTest(jtu.JaxTestCase):
 
   def test_internal_pile(self):
