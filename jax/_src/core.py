@@ -1935,7 +1935,9 @@ def symbolic_equal_dim(d1: DimSize, d2: DimSize) -> bool:
   return handler.symbolic_equal(*ds)
 
 def symbolic_equal_one_of_dim(d1: DimSize, dlist: Sequence[DimSize]) -> bool:
-  if any(d1 is d for d in dlist): return True  # identical always implies equal
+  # TODO(reviewer): Is there a reason that `same_referent` wasn't
+  # included here before?
+  if any(d1 is d or same_referent(d1, d) for d in dlist): return True  # identical always implies equal
   handler, ds = _dim_handler_and_canonical(d1, *dlist)
   return any([handler.symbolic_equal(ds[0], d) for d in ds[1:]])
 
