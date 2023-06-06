@@ -421,7 +421,7 @@ class ArrayImpl(basearray.Array):
   @property
   def device_buffers(self) -> Sequence[ArrayImpl]:
     self._check_if_deleted()
-    return self._arrays
+    return cast(Sequence[ArrayImpl], self._arrays)
 
   def addressable_data(self, index: int) -> ArrayImpl:
     self._check_if_deleted()
