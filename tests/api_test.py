@@ -7515,6 +7515,19 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     jax.jacfwd(jax.jit(f))(0.1, 0.2)  # don't crash
 
+  def test_custom_jvp_functools_partial(self):
+    def fun(x, y, a):
+      return x + y * a
+
+    fun_wrapped = functools.partial(fun, a = 0.1)
+
+    def jvp_fn(primals, tangents):
+      return jax.jvp(fun_wrapped, primals, tangents)
+
+    fn = jax.custom_jvp(fun_wrapped)
+    fn.defjvp(jvp_fn)
+
+    self.assertEqual((1.0, 0.1), jax.grad(lambda args: fn(*args))((1.0, 2.0)))
 
 class CustomVJPTest(jtu.JaxTestCase):
 
