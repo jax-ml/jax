@@ -3232,9 +3232,9 @@ def _squeeze_transpose_rule(t, operand, *, dimensions):
 def _squeeze_batch_rule(batched_args, batch_dims, *, dimensions):
   operand, = batched_args
   bdim, = batch_dims
-  operand = batching.moveaxis(operand, bdim, 0)
+  operand, bdim_out = batching.move_stacked_axis(operand, bdim, 0)
   dimensions = tuple(np.add(1, dimensions))
-  return squeeze(operand, dimensions=dimensions), 0
+  return squeeze(operand, dimensions=dimensions), bdim_out
 
 squeeze_p = standard_primitive(_squeeze_shape_rule, _squeeze_dtype_rule,
                                'squeeze')

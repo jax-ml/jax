@@ -1574,6 +1574,18 @@ class PileTest(jtu.JaxTestCase):
     data = jax.lax.broadcasted_iota('int32', (3, 5, 6), 1)
     self.assertAllClose(p.data, data)
 
+  def test_squeeze_ragged(self):
+    ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    def func(size):
+      one_d = jnp.arange(size, dtype='int32')
+      two_d = jax.lax.broadcast_in_dim(one_d, (size, 1), (0,))
+      one_again = jax.lax.squeeze(two_d, dimensions=[1])
+      return one_again
+    p = jax.vmap(func, out_axes=batching.pile_axis)(ins)
+    self.assertIsInstance(p, batching.Pile)
+    data = jax.lax.broadcasted_iota('int32', (3, 5), 1)
+    self.assertAllClose(p.data, data)
+
 def pile_map(f):
   def mapped(*piles):
     return jax.vmap(f, in_axes=batching.pile_axis, out_axes=batching.pile_axis,

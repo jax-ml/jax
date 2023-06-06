@@ -123,6 +123,16 @@ class RaggedAxis:
     # same length!
     return len(self.ragged_axes[0][1])
 
+  def move_stacked_axis(self, dst):
+    # Assumes that all stored and incoming axes are already canonicalized
+    def move_axis(ax):
+      if self.stacked_axis > ax and ax >= dst:
+        return ax + 1
+      if self.stacked_axis < ax and ax <= dst:
+        return ax - 1
+      return ax
+    new_ragged_axes = [(move_axis(ax), sizes) for ax, sizes in self.ragged_axes]
+    return RaggedAxis(dst, new_ragged_axes)
 
 def make_batch_axis(ndim, stacked_axis, ragged_axes):
   if ragged_axes:
@@ -930,6 +940,16 @@ def _mask_one_ragged_axis(operand, ident, axis_spec):
       lengths, operand.shape, [axis_spec.stacked_axis])
   mask = positions < limits
   return jax.lax.select(mask, operand, jax.lax.broadcast(value, operand.shape))
+
+def move_stacked_axis(operand, bdim, dst):
+  dst = canonicalize_axis(dst, operand.ndim)
+  if isinstance(bdim, int):
+    return moveaxis(operand, bdim, dst), dst
+  elif isinstance(bdim, RaggedAxis):
+    result = moveaxis(operand, bdim.stacked_axis, dst)
+    return result, bdim.move_stacked_axis(dst)
+  else:
+    raise TypeError("Unrecognized batch dimension type {}".format(bdim))
 
 ### general utilities for manipulating axes on jaxpr types (not vmappables)
 
