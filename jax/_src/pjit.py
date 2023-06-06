@@ -1206,7 +1206,7 @@ class SameDeviceAssignmentTuple:
 
   def __hash__(self):
     shardings_hash = tuple(
-        s._op_sharding_hash if isinstance(s, GSPMDSharding) else s  # type: ignore
+        s._hlo_sharding_hash if isinstance(s, GSPMDSharding) else s  # type: ignore
         for s in self.shardings)
     if self.device_assignment is None:
       return hash(shardings_hash)
@@ -1222,7 +1222,7 @@ class SameDeviceAssignmentTuple:
       o = getattr(o, "_original_sharding", o)
       if isinstance(s, GSPMDSharding) and isinstance(o, GSPMDSharding):
         eq.append(op_shardings.are_op_shardings_equal(
-            s._op_sharding, o._op_sharding))
+            s._hlo_sharding, o._hlo_sharding))
       else:
         eq.append(s == o)
     return all(eq) and self.device_assignment == other.device_assignment
@@ -1424,10 +1424,9 @@ def _pjit_batcher_for_sharding(
   if is_unspecified(s):
     return s
   if not val:
-    if sharding_impls.is_op_sharding_replicated(s._op_sharding):  # type: ignore
+    if sharding_impls.is_op_sharding_replicated(s._hlo_sharding):  # type: ignore
       return s
-    old_op = (s._op_sharding.to_proto()  # type: ignore
-              if isinstance(s._op_sharding, xc.HloSharding) else s._op_sharding)  # type: ignore
+    old_op = s._hlo_sharding.to_proto()  # type: ignore
     new_op = old_op.clone()  # type: ignore
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)
@@ -1443,7 +1442,7 @@ def _pjit_batcher_for_sharding(
     if isinstance(getattr(s, '_original_sharding', None), NamedSharding):
       mesh = s._original_sharding.mesh  # type: ignore
     assert mesh is not None and not mesh.empty
-    parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]  # type: ignore
+    parsed_pspec = parse_flatten_op_sharding(s._hlo_sharding, mesh)[0]  # type: ignore
     parsed_pspec = parsed_pspec.insert_axis_partitions(dim, val)
     mps = NamedSharding._from_parsed_pspec(mesh, parsed_pspec)
     return GSPMDSharding(mps._device_assignment, mps._to_xla_hlo_sharding(ndim))
@@ -1743,7 +1742,7 @@ def _resource_typing_pjit(avals, params, source_info, resource_env, named_axis_r
     else:
       if resource_env is not None:
         parsed_pspec = parse_flatten_op_sharding(
-            s._op_sharding, resource_env.physical_mesh)[0]
+            s._hlo_sharding, resource_env.physical_mesh)[0]
       else:
         parsed_pspec = None
     if parsed_pspec is not None:
@@ -1765,7 +1764,7 @@ def _resource_typing_pjit(avals, params, source_info, resource_env, named_axis_r
     else:
       if resource_env is not None:
         parsed_pspec = parse_flatten_op_sharding(
-            s._op_sharding, resource_env.physical_mesh)[0]
+            s._hlo_sharding, resource_env.physical_mesh)[0]
       else:
         parsed_pspec = None
     if parsed_pspec is not None:
@@ -1865,7 +1864,7 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding,
   # and then convert it back with the added special axes.
   if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
     mesh = resource_env.physical_mesh
-    parsed_pspec = parse_flatten_op_sharding(sharding._op_sharding, mesh)[0]
+    parsed_pspec = parse_flatten_op_sharding(sharding._hlo_sharding, mesh)[0]
     mps = NamedSharding._from_parsed_pspec(mesh, parsed_pspec)
     sharding = GSPMDSharding(
         mps._device_assignment, mps._to_xla_hlo_sharding(aval.ndim, axis_ctx=axis_ctx))
@@ -1912,7 +1911,7 @@ def _resource_typing_sharding_constraint(avals, params, source_info,
     parsed_pspec = params['sharding']._original_sharding._parsed_pspec
   else:
     parsed_pspec = parse_flatten_op_sharding(
-        params['sharding']._op_sharding, resource_env.physical_mesh)[0]
+        params['sharding']._hlo_sharding, resource_env.physical_mesh)[0]
   _check_resources_against_named_axes(
     "with_sharding_constraint input", aval, parsed_pspec, named_axis_resources)
 

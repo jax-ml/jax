@@ -668,7 +668,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     jaxpr = jax.make_jaxpr(jax.vmap(f))(x)
     pjit_eqn, = jaxpr.eqns
     constraint_eqn, = pjit_eqn.params['jaxpr'].eqns
-    op = constraint_eqn.params['sharding']._op_sharding
+    op = constraint_eqn.params['sharding']._hlo_sharding
     self.assertTrue(op.is_tiled())
     self.assertListEqual(op.tile_assignment_dimensions(), [1, 2])
     self.assertListEqual(op.tile_assignment_devices(), [0, 1])
@@ -688,7 +688,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     jaxpr = jax.make_jaxpr(f)(x)
     pjit_eqn, = jaxpr.eqns
     constraint_eqn, = pjit_eqn.params['jaxpr'].eqns
-    op = constraint_eqn.params['sharding']._op_sharding
+    op = constraint_eqn.params['sharding']._hlo_sharding
     self.assertTrue(op.is_tiled())
     self.assertListEqual(op.tile_assignment_dimensions(), [2, 1])
     self.assertListEqual(op.tile_assignment_devices(), [0, 1])
@@ -707,9 +707,10 @@ class PJitTest(jtu.BufferDonationTestCase):
       test_rule_called = True
       in_shardings = kwargs['in_shardings']
       self.assertLen(in_shardings, 1)
-      self.assertListEqual(in_shardings[0]._op_sharding.tile_assignment_dimensions(),
+      self.assertListEqual(in_shardings[0]._hlo_sharding.tile_assignment_dimensions(),
                            [1, 1, 2])
-      self.assertFalse(op_shardings.is_op_sharding_replicated(in_shardings[0]._op_sharding))
+      self.assertFalse(op_shardings.is_op_sharding_replicated(
+          in_shardings[0]._hlo_sharding))
 
       return rule(*args, **kwargs)
     try:

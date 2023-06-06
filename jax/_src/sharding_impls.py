@@ -36,6 +36,7 @@ from jax._src import util
 from jax._src import xla_bridge
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.partition_spec import PartitionSpec
 
 import numpy as np
@@ -660,47 +661,49 @@ class DeviceIdSet:
 @use_cpp_class(xc.GSPMDSharding)
 class GSPMDSharding(XLACompatibleSharding):
   _devices: Tuple[Device, ...]
-  _op_sharding: Union[xc.OpSharding, xc.HloSharding]
+  _hlo_sharding: xc.HloSharding
 
   @use_cpp_method()
   def __init__(self, devices: Sequence[Device],
                op_sharding: Union[xc.OpSharding, xc.HloSharding]):
     self._devices = tuple(devices)
-    self._op_sharding = op_sharding
+    if isinstance(op_sharding, xc.OpSharding):
+      self._hlo_sharding = xc.HloSharding.from_proto(op_sharding)
+    else:
+      self._hlo_sharding = op_sharding
+
+  if xla_extension_version < 159:
+    @property
+    def _hlo_sharding(self):  # type: ignore
+      if isinstance(self._op_sharding, xc.OpSharding):  # type: ignore
+        return xc.HloSharding.from_proto(self._op_sharding)  # type: ignore
+      return self._op_sharding  # type: ignore
 
   def __reduce__(self):
-    if isinstance(self._op_sharding, xc.HloSharding):
-      ops = self._op_sharding.to_proto()
-    else:
-      ops = self._op_sharding
-    return type(self), (self._devices, ops)
+    return type(self), (self._devices, self._hlo_sharding.to_proto())
 
   @functools.cached_property
-  def _op_sharding_hash(self):
-    if isinstance(self._op_sharding, xc.HloSharding):
-      return hash(self._op_sharding)
-    return hash(xc.HloSharding.from_proto(self._op_sharding))
+  def _hlo_sharding_hash(self):
+    return hash(self._hlo_sharding)
 
   def __eq__(self, other):
     if not isinstance(other, GSPMDSharding):
       return False
     if id(self) == id(other):
       return True
-    return (are_op_shardings_equal(self._op_sharding, other._op_sharding)
+    return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
             and self._devices == other._devices)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash((self._devices, self._op_sharding_hash))
+      self._hash = hash((self._devices, self._hlo_sharding_hash))
     return self._hash
 
   def __repr__(self):
-    if isinstance(self._op_sharding, xc.HloSharding):
-      return f'GSPMDSharding({repr(self._op_sharding)})'
-    return f'GSPMDSharding({repr(xc.HloSharding.from_proto(self._op_sharding))})'
+    return f'GSPMDSharding({repr(self._hlo_sharding)})'
 
   def is_compatible_aval(self, aval_shape: Shape):
-    num_ways_dim_sharded, _ = get_num_ways_dim_sharded(self._op_sharding)
+    num_ways_dim_sharded, _ = get_num_ways_dim_sharded(self._hlo_sharding)
     if len(aval_shape) < len(num_ways_dim_sharded):
       raise ValueError(
           f"Sharding {self} is only valid for values of rank at least "
@@ -714,7 +717,7 @@ class GSPMDSharding(XLACompatibleSharding):
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
     self.shard_shape(global_shape)  # raises a good error message
-    indices = op_sharding_to_indices(self._op_sharding, global_shape,
+    indices = op_sharding_to_indices(self._hlo_sharding, global_shape,
                                      len(self._devices))
     return dict(safe_zip(self._devices, indices))
 
@@ -723,13 +726,11 @@ class GSPMDSharding(XLACompatibleSharding):
     return self._devices
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
-    if isinstance(self._op_sharding, xc.OpSharding):
-      return xc.HloSharding.from_proto(self._op_sharding)
-    return self._op_sharding
+    return self._hlo_sharding
 
   @functools.cached_property
   def is_fully_replicated(self) -> bool:
-    return is_op_sharding_replicated(self._op_sharding)
+    return is_op_sharding_replicated(self._hlo_sharding)
 
   @classmethod
   def get_replicated(cls, device_assignment):

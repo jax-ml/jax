@@ -1855,13 +1855,13 @@ class SemanticallyEqualShardings:
 
   def __hash__(self):
     return hash(tuple(
-        s._op_sharding_hash if isinstance(s, sharding_impls.GSPMDSharding) else s  # type: ignore
+        s._hlo_sharding_hash if isinstance(s, sharding_impls.GSPMDSharding) else s  # type: ignore
         for s in self.shardings))
 
   def __eq__(self, other):
     if not isinstance(other, SemanticallyEqualShardings):
       return False
-    return all(op_shardings.are_op_shardings_equal(s._op_sharding, o._op_sharding)
+    return all(op_shardings.are_op_shardings_equal(s._hlo_sharding, o._hlo_sharding)
                if (isinstance(s, sharding_impls.GSPMDSharding) and
                    isinstance(o, sharding_impls.GSPMDSharding))
                else s == o for s, o in zip(self.shardings, other.shardings))
@@ -2459,10 +2459,10 @@ def _get_out_sharding_from_orig_sharding(
         if (orig_aval is not None and out_aval is not None and
             out_aval.ndim == orig_aval.ndim and
             sharding_impls.are_op_shardings_equal(
-                o._op_sharding, orig_s._to_xla_hlo_sharding(orig_aval.ndim))):
+                o._hlo_sharding, orig_s._to_xla_hlo_sharding(orig_aval.ndim))):
           out.append((orig_s, False))
         else:
-          out.append((orig_handler(o._op_sharding, orig_s), False))
+          out.append((orig_handler(o._hlo_sharding, orig_s), False))
       except:
         out.append((o, from_xla))
     else:

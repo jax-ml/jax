@@ -185,7 +185,8 @@ class PickleTest(jtu.JaxTestCase):
   def test_pickle_gspmd_sharding(self):
     op_sharding = xla.xc.OpSharding()
     op_sharding.type = xla.xc.OpSharding.Type.REPLICATED
-    s = jax.sharding.GSPMDSharding(jax.devices(), op_sharding)
+    s = jax.sharding.GSPMDSharding(
+        jax.devices(), xla.xc.HloSharding.from_proto(op_sharding))
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
   @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")

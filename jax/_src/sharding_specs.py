@@ -81,7 +81,7 @@ def get_logical_mesh_ids(mesh_shape):
 _MeshAxisName = Any
 
 def sharding_spec_sharding_proto(
-    self, special_axes: Mapping[int, OpShardingType] = {}):
+    self, special_axes: Mapping[int, OpShardingType] = {}) -> xc.HloSharding:
   """Converts a ShardingSpec to an OpSharding proto.
 
   See
@@ -162,9 +162,9 @@ def _sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:
   has_unstacked = any(isinstance(s, Unstacked) for s in self.sharding)
   # Take the op sharding indices generation route for pjit/xmap cases.
   if not has_unstacked:
-    op_sharding_proto = sharding_spec_sharding_proto(self)
+    hlo_sharding = sharding_spec_sharding_proto(self)
     return op_shardings.op_sharding_to_numpy_indices(
-        op_sharding_proto, shape, math.prod(self.mesh_shape)
+        hlo_sharding, shape, math.prod(self.mesh_shape)
     ).reshape(self.mesh_shape)
 
   axis_indices: List[Sequence[Index]] = []
