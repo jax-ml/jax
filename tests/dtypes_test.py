@@ -29,14 +29,13 @@ from jax import numpy as jnp
 
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_client
 
 from jax._src.config import config
 config.parse_flags_with_absl()
 
 FLAGS = config.FLAGS
 
-_fp8_enabled = xla_client._version >= 117 and jtu.device_under_test() == 'gpu'
+_fp8_enabled = jtu.device_under_test() == 'gpu'
 _int4_enabled = dtypes.int4 is not None
 
 bool_dtypes = [np.dtype('bool')]
@@ -61,7 +60,7 @@ float_dtypes = [np.dtype(dtypes.bfloat16)] + np_float_dtypes
 custom_float_dtypes = [np.dtype(dtypes.bfloat16)]
 if _fp8_enabled:
   fp8_dtypes = [np.dtype(dtypes.float8_e4m3fn), np.dtype(dtypes.float8_e5m2)]
-  if xla_client._version >= 158 and dtypes.float8_e4m3b11fnuz is not None:
+  if dtypes.float8_e4m3b11fnuz is not None:
     fp8_dtypes += [np.dtype(dtypes.float8_e4m3b11fnuz)]
   float_dtypes += fp8_dtypes
   custom_float_dtypes += fp8_dtypes
