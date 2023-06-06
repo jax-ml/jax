@@ -1111,8 +1111,6 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
       sample(config.FLAGS.jax_num_generated_cases, sample_shmap))
   @jax.default_matmul_precision("float32")
   def test_grads(self, fun, mesh, jit, in_specs, out_specs, args, _):
-    if xla_bridge.xla_client._version < 134:
-      raise unittest.SkipTest("requires later jaxlib version")
     mesh = self.make_mesh(mesh)
     args = map(jnp.array, args)
     f = shard_map(fun, mesh, in_specs, out_specs)
@@ -1124,8 +1122,6 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
       sample(config.FLAGS.jax_num_generated_cases, sample_shmap))
   @jax.default_matmul_precision("float32")
   def test_grads_closure(self, fun, mesh, jit, in_specs, out_specs, args, _):
-    if xla_bridge.xla_client._version < 134:
-      raise unittest.SkipTest("requires later jaxlib version")
     mesh = self.make_mesh(mesh)
     no_sharding = [all(elt is None for elt in spec) for spec in in_specs]
     args, closed_over_args = partition_list(no_sharding, args)
