@@ -44,12 +44,10 @@ def get_num_ways_dim_sharded(
 
 def is_op_sharding_replicated(op: Union[xc.OpSharding, xc.HloSharding]) -> bool:
   if isinstance(op, xc.OpSharding):
-    return xc._xla.is_op_sharding_fully_replicated(op)
-  else:
-    assert isinstance(op, xc.HloSharding)
-    if op.num_devices() == 1:
-      return True
-    return op.is_replicated()  # type: ignore
+    op = xc.HloSharding.from_proto(op)
+  if op.num_devices() == 1:
+    return True
+  return op.is_replicated()  # type: ignore
 
 
 def are_op_shardings_equal(op1: Union[xc.OpSharding, xc.HloSharding],
