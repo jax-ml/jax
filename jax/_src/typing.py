@@ -57,6 +57,12 @@ DTypeLike = Union[Any, str, np.dtype, SupportsDType]
 DimSize = Union[int, Any]  # extensible
 Shape = Sequence[DimSize]
 
+class DuckTypedArray(Protocol):
+  @property
+  def dtype(self) -> DType: ...
+  @property
+  def shape(self) -> Shape: ...
+
 # Array is a type annotation for standard JAX arrays and tracers produced by
 # core functions in jax.lax and jax.numpy; it is not meant to include
 # future non-standard array types like KeyArray and BInt. It is imported above.

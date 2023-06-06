@@ -60,7 +60,7 @@ from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.numpy.vectorize import vectorize
-from jax._src.typing import Array, ArrayLike, DimSize, DType, DTypeLike, Shape
+from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DType, DTypeLike, Shape
 from jax._src.util import (unzip2, subvals, safe_zip,
                            ceil_of_ratio, partition_list,
                            canonicalize_axis as _canonicalize_axis)
@@ -320,7 +320,7 @@ def isscalar(element: Any) -> bool:
 iterable = np.iterable
 
 @util._wraps(np.result_type)
-def result_type(*args: ArrayLike) -> DType:
+def result_type(*args: Any) -> DType:
   return dtypes.result_type(*args)
 
 
@@ -2077,9 +2077,11 @@ def copy(a: ArrayLike, order: Optional[str] = None) -> Array:
 
 
 @util._wraps(np.zeros_like)
-def zeros_like(a: ArrayLike, dtype: Optional[DTypeLike] = None,
+def zeros_like(a: Union[ArrayLike, DuckTypedArray],
+               dtype: Optional[DTypeLike] = None,
                shape: Any = None) -> Array:
-  util.check_arraylike("zeros_like", a)
+  if not (hasattr(a, 'dtype') and hasattr(a, 'shape')):  # support duck typing
+    util.check_arraylike("ones_like", a)
   dtypes.check_user_dtype_supported(dtype, "zeros_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
@@ -2087,9 +2089,11 @@ def zeros_like(a: ArrayLike, dtype: Optional[DTypeLike] = None,
 
 
 @util._wraps(np.ones_like)
-def ones_like(a: ArrayLike, dtype: Optional[DTypeLike] = None,
+def ones_like(a: Union[ArrayLike, DuckTypedArray],
+              dtype: Optional[DTypeLike] = None,
               shape: Any = None) -> Array:
-  util.check_arraylike("ones_like", a)
+  if not (hasattr(a, 'dtype') and hasattr(a, 'shape')):  # support duck typing
+    util.check_arraylike("ones_like", a)
   dtypes.check_user_dtype_supported(dtype, "ones_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
@@ -2099,9 +2103,11 @@ def ones_like(a: ArrayLike, dtype: Optional[DTypeLike] = None,
 @util._wraps(np.empty_like, lax_description="""\
 Because XLA cannot create uninitialized arrays, the JAX version will
 return an array initialized with zeros.""")
-def empty_like(prototype: ArrayLike, dtype: Optional[DTypeLike] = None,
+def empty_like(prototype: Union[ArrayLike, DuckTypedArray],
+               dtype: Optional[DTypeLike] = None,
                shape: Any = None) -> Array:
-  util.check_arraylike("empty_like", prototype)
+  if not (hasattr(prototype, 'dtype') and hasattr(prototype, 'shape')):  # support duck typing
+    util.check_arraylike("ones_like", prototype)
   dtypes.check_user_dtype_supported(dtype, "empty_like")
   return zeros_like(prototype, dtype=dtype, shape=shape)
 
@@ -2119,17 +2125,21 @@ def full(shape: Any, fill_value: ArrayLike,
 
 
 @util._wraps(np.full_like)
-def full_like(a: ArrayLike, fill_value: ArrayLike, dtype: Optional[DTypeLike] = None,
+def full_like(a: Union[ArrayLike, DuckTypedArray],
+              fill_value: ArrayLike, dtype: Optional[DTypeLike] = None,
               shape: Any = None) -> Array:
+  if hasattr(a, 'dtype') and hasattr(a, 'shape'):  # support duck typing
+    util.check_arraylike("full_like", 0, fill_value)
+  else:
+    util.check_arraylike("full_like", a, fill_value)
   dtypes.check_user_dtype_supported(dtype, "full_like")
-  util.check_arraylike("full_like", a, fill_value)
   if shape is not None:
     shape = canonicalize_shape(shape)
   if ndim(fill_value) == 0:
     return lax.full_like(a, fill_value, dtype, shape)
   else:
-    shape = np.shape(a) if shape is None else shape
-    dtype = result_type(a) if dtype is None else dtype
+    shape = np.shape(a) if shape is None else shape  # type: ignore[arg-type]
+    dtype = result_type(a) if dtype is None else dtype  # type: ignore[arg-type]
     return broadcast_to(asarray(fill_value, dtype=dtype), shape)
 
 

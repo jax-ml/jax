@@ -2621,6 +2621,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testDuckTypedLike(self):
+    x = jax.ShapeDtypeStruct((1, 2, 3), np.dtype("int32"))
+    self.assertArraysEqual(jnp.zeros_like(x), jnp.zeros(x.shape, x.dtype))
+    self.assertArraysEqual(jnp.ones_like(x), jnp.ones(x.shape, x.dtype))
+    self.assertArraysEqual(jnp.empty_like(x), jnp.empty(x.shape, x.dtype))
+    self.assertArraysEqual(jnp.full_like(x, 2), jnp.full(x.shape, 2, x.dtype))
+
   @jtu.sample_product(
     [dict(func=func, args=args)
      for func, args in [("full_like", (-100,)), ("ones_like", ()), ("zeros_like", ())]
