@@ -116,6 +116,11 @@ class TritonKernel {
         &shared_optin, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN,
         device));
 
+    if (shared_mem_bytes_ > shared_optin) {
+      return absl::InvalidArgumentError(
+          "Shared memory requested exceeds device resources.");
+    }
+
     if (shared_optin > kMaxStaticSharedMemBytes) {
       CUDA_RETURN_IF_ERROR(
           cuFuncSetCacheConfig(function, CU_FUNC_CACHE_PREFER_SHARED));
