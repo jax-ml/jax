@@ -14,6 +14,7 @@
 import contextlib
 import logging
 import math
+import re
 from typing import List
 import unittest
 
@@ -28,6 +29,7 @@ try:
 except ImportError:
   jax2tf = None  # type: ignore
 
+from jax.lib import xla_client as xc
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
@@ -234,19 +236,25 @@ class JaxExportTest(jtu.JaxTestCase):
           dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,4,12"),
           dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,4,c"),
           dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,c,c",
-               expect_error=(
+               expect_error=re.escape(
                    r"Dimension variable 'b' must have integer value >= 1. "
-                   r"Found 0 when solving a \+ b == args\[0\].shape\[2\]")),
+                   r"Found 0 when solving a + b == args[0].shape[2]")),
           dict(inner_poly_spec="3,a,a+b", outer_poly_spec="c,4,12",
                expect_error=r"Shape mismatch for args\[0\].shape\[0\] \(expected constant\)"),
-          dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,c+4,12"),  # TODO: This should be an error, c = 0
+          dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,c+4,12",
+               expect_error=re.escape(
+                   r"Dimension variable 'c' must have integer value >= 1. "
+                   r"Found 0 when solving c + 4 == args[0].shape[1]")),
           dict(inner_poly_spec="3,4,3*a", outer_poly_spec="3,4,12"),
           dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,12",
-               expect_error=(
+               expect_error=re.escape(
                    r"Dimension variable 'a' must have integer value >= 1. "
-                   r"Non-zero remainder 2 for factor 5 when solving 5\*a == args\[0\].shape\[2\]")),
+                   r"Non-zero remainder 2 for factor 5 when solving 5*a == args[0].shape[2]")),
           # dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,c"),  # TODO: there should be an error 5*a != c == 12
-          # dict(inner_poly_spec="3,a,a", outer_poly_spec="3,a,a"),  # TODO: this should be a dynamic error
+          dict(inner_poly_spec="3,a,a", outer_poly_spec="3,a,a",
+               expect_error=re.escape(
+                   r"Found inconsistency 12 != 4 when solving "
+                   r"a == args[0].shape[2]")),
           dict(inner_poly_spec="3,a", inner_x_shape=(3, 4), outer_poly_spec="3,a,a",
                expect_error=r"Rank mismatch for args\[0\]"),
           dict(inner_poly_spec="3,a,a+b", inner_x_dtype=np.int32, outer_poly_spec="3,c,d",
@@ -283,7 +291,8 @@ class JaxExportTest(jtu.JaxTestCase):
           jax_export.poly_spec(outer_x.shape, outer_x.dtype, outer_poly_spec))
       self.assertEqual(outer_exp.module_uses_dim_vars,
                        (inner_poly_spec != "3,4,12" or outer_poly_spec != "3,4,12"))
-      if not outer_exp.module_uses_dim_vars:
+      # TODO(necula): need conditionals until jaxlib 0.4.12 is the minimum version
+      if not outer_exp.module_uses_dim_vars or xc.mlir_api_version >= 50:
         res = jax_export.call_exported(outer_exp)(outer_x)
         self.assertAllClose(2. * inner(outer_x), res)
       else:
