@@ -121,6 +121,7 @@ _dtype_to_ir_type : Dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(np.uint16): partial(ir.IntegerType.get_unsigned, 16),
   np.dtype(np.uint32): partial(ir.IntegerType.get_unsigned, 32),
   np.dtype(np.uint64): partial(ir.IntegerType.get_unsigned, 64),
+  np.dtype(dtypes.float8_e4m3b11fnuz): ir.Float8E4M3B11FNUZType.get,
   np.dtype(dtypes.float8_e4m3fn): ir.Float8E4M3FNType.get,
   np.dtype(dtypes.float8_e5m2): ir.Float8E5M2Type.get,
   np.dtype(dtypes.bfloat16): ir.BF16Type.get,

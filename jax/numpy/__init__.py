@@ -262,6 +262,12 @@ if hasattr(jax._src.numpy.lax_numpy, "int4"):
     int4 as int4,
     uint4 as uint4,
   )
+# TODO(jakevdp): make this import unconditional after increasing the minimum
+# version for ml_dtypes and jaxlib
+if hasattr(jax._src.numpy.lax_numpy, "float8_e4m3b11fnuz"):
+  from jax._src.numpy.lax_numpy import (
+    float8_e4m3b11fnuz as float8_e4m3b11fnuz,
+  )
 
 
 from jax._src.numpy.index_tricks import (
