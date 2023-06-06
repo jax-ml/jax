@@ -1568,12 +1568,15 @@ following modules are useful for debugging JAX native serialization:
 
   * `jax_export=3` - will log the StableHLO module on serialization.
   * `jax2tf=3` - will log the parameters to `XlaCallModule` op on serialization.
-  * `xla_call_module_loader=3` - will log the StableHLO module upong loading,
-    after shape refinementas, and on verification error. You can use level `4`
-    to add location information, and level `5` to also print the module before
-    and after each transformation.
+  * `xla_call_module_loader=3` - will log the StableHLO module upon loading,
+    after shape refinements, and on verification error. You can use level `4` to
+    add location information, and level `5` to also print the module before and
+    after each transformation.
   * `xla_call_module_op=3` - will log the HLO module generated after
     shape refinement and conversion from StableHLO.
+  * `XlaCallModule` lowering has TensorFlow MLIR crash reproducer enabled, which
+    can be instructed to generate a crash reproducer upon MLIR pass failures by
+    setting an environment variable `MLIR_CRASH_REPRODUCER_DIRECTORY`.
 
 For the two `xla` modules mentioned above, you can control logging in OSS
 with environment variables, e.g.:
@@ -1581,6 +1584,9 @@ with environment variables, e.g.:
 ```
 TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=xla_call_module_loader=3 python ...
 ```
+
+In addition, `TF_DUMP_GRAPH_PREFIX` controls where the dump will be stored, `-`
+for stderr, `${SOME_DIR}` to store the dumps in the specified directory. 
 
 ## TensorFlow versions supported
 
