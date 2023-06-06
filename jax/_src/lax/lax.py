@@ -68,7 +68,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import PmapSharding
-from jax._src.typing import Array, ArrayLike, DTypeLike, Shape
+from jax._src.typing import Array, ArrayLike, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
                            split_list)
 
@@ -1330,7 +1330,8 @@ def expand_dims(array: ArrayLike, dimensions: Sequence[int]) -> Array:
 
 ### convenience wrappers around traceables
 
-def full_like(x: ArrayLike, fill_value: ArrayLike, dtype: Optional[DTypeLike] = None,
+def full_like(x: Union[ArrayLike, DuckTypedArray],
+              fill_value: ArrayLike, dtype: Optional[DTypeLike] = None,
               shape: Optional[Shape] = None) -> Array:
   """Create a full array like np.full based on the example array `x`.
 
@@ -1344,7 +1345,7 @@ def full_like(x: ArrayLike, fill_value: ArrayLike, dtype: Optional[DTypeLike] = 
     An ndarray with the same shape as `x` with its entries set equal to
     `fill_value`, similar to the output of np.full.
   """
-  fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)
+  fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)  # type: ignore[arg-type]
   weak_type = dtype is None and dtypes.is_weakly_typed(x)
   dtype = dtype or _dtype(x)
   if dtypes.is_opaque_dtype(dtype):
