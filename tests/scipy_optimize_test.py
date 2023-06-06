@@ -28,7 +28,7 @@ config.parse_flags_with_absl()
 
 def rosenbrock(np):
   def func(x):
-    return np.sum(100. * np.diff(x) ** 2 + (1. - x[:-1]) ** 2)
+    return np.sum(100. * (x[1:] - x[:-1]**2) ** 2 + (1. - x[:-1]) ** 2)
 
   return func
 
