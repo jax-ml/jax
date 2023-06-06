@@ -1500,7 +1500,7 @@ def _wrap_with_spmd_op(name: str,
   else:
     backend_config = ""
   result_type = aval_to_ir_type(aval_out)
-  out_shape = aval_out.shape  # type: ignore
+  out_shape = core.physical_aval(aval_out).shape  # type: ignore
   if core.is_constant_shape(out_shape):
     result_shapes = None
   else:

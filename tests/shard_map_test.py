@@ -740,6 +740,20 @@ class ShardMapTest(jtu.JaxTestCase):
     # error!
     jax.jit(g)(x)  # doesn't crash
 
+  def test_key_array_with_replicated_last_tile_dim(self):
+    # See https://github.com/google/jax/issues/16137
+
+    mesh = jtu.create_global_mesh((2, 4), ('i', 'j'))
+
+    def f(rng):
+      @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'),
+               check_rep=False)
+      def g(rng):
+        return jnp.array([jax.random.normal(rng[0])])
+      return g(jax.random.split(rng, 4))
+
+    jax.jit(f)(jax.random.key(0))  # doesn't crash
+
   # same method appears in api_test.py:DCETest
   # TODO(mattjj): consider moving this method to be a helper in jtu
   def assert_dce_result(self, jaxpr: core.Jaxpr, used_outputs: List[bool],

@@ -470,7 +470,8 @@ class KeyTyRules:
       op_sharding_proto = op_sharding_proto.to_proto()
     new_op_sharding = op_sharding_proto.clone()
     tad = list(new_op_sharding.tile_assignment_dimensions)
-    tad.extend([1] * len(key_shape))
+    suffix = [tad.pop()] if op_sharding_proto.replicate_on_last_tile_dim else []
+    tad.extend([1] * len(key_shape) + suffix)
     new_op_sharding.tile_assignment_dimensions = tad
     return xc.HloSharding.from_proto(new_op_sharding)
 
