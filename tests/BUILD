@@ -1144,6 +1144,15 @@ py_test(
     ],
 )
 
+py_test(
+    name = "logging_test",
+    srcs = ["logging_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ],
+)
+
 exports_files(
     [
         "api_test.py",

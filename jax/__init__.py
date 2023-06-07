@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Set default logging level before any logging happens.
+# Set default C++ logging level before any logging happens.
 import os as _os
 _os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
 del _os
