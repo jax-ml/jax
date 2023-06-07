@@ -831,6 +831,29 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     h_grad = jax.grad(h_out)
     h_grad(0.)  # doesn't crash
 
+  def test_goodfellow_custom_vjp(self):
+    @jax.custom_vjp
+    def sin(x):
+      return jnp.sin(x)
+    def sin_fwd(x):
+      return jnp.sin(x), 2. * x
+    def sin_bwd(x2, g):
+      return jnp.cos(x2 / 2.) * g,
+    sin.defvjp(sin_fwd, sin_bwd)
+
+    def h(fext):
+      checkify.check(True, "")
+      return sin(fext)
+
+    h = checkify.checkify(h)
+
+    def h_out(fext):
+      _, out = h(fext)
+      return out
+
+    h_grad = jax.grad(h_out)
+    h_grad(0.)  # doesn't crash
+
   def test_closed_call(self):
     # lots of golfing went into this test
     y = jnp.array([3.14])
