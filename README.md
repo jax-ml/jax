@@ -486,7 +486,7 @@ To install, run
 ```bash
 pip install --upgrade pip
 
-# Installs the wheel compatible with CUDA 12 and cuDNN 8.8 or newer.
+# Installs the wheel compatible with CUDA 12 and cuDNN 8.9 or newer.
 # Note: wheels only available on linux.
 pip install --upgrade "jax[cuda12_local]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 
