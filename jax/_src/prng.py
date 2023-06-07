@@ -437,10 +437,10 @@ def make_key_array_phys_sharding(aval, sharding, is_sharding_from_xla):
   elif is_sharding_from_xla:
     return sharding
   else:
-    sharding_proto = sharding._to_xla_hlo_sharding(aval.ndim)
+    hlos = sharding._to_xla_hlo_sharding(aval.ndim)
     return GSPMDSharding(
         sharding._device_assignment,
-        KeyTyRules.physical_hlo_sharding(aval, sharding_proto))
+        KeyTyRules.physical_hlo_sharding(aval, hlos))
 
 class KeyTyRules:
 
@@ -464,10 +464,9 @@ class KeyTyRules:
     return val.unsafe_raw_array()
 
   @staticmethod
-  def physical_hlo_sharding(aval, op_sharding_proto):
+  def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
     key_shape = aval.dtype.impl.key_shape
-    if isinstance(op_sharding_proto, xc.HloSharding):
-      op_sharding_proto = op_sharding_proto.to_proto()
+    op_sharding_proto = hlo_sharding.to_proto()  # type: ignore
     new_op_sharding = op_sharding_proto.clone()
     tad = list(new_op_sharding.tile_assignment_dimensions)
     suffix = [tad.pop()] if op_sharding_proto.replicate_on_last_tile_dim else []

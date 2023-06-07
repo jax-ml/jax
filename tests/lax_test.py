@@ -2849,9 +2849,8 @@ class FooTyRules:
     return core.ShapedArray((2,), jnp.dtype('uint32'))
 
   @staticmethod
-  def physical_hlo_sharding(aval, op_sharding_proto):
-    if isinstance(op_sharding_proto, xc.HloSharding):
-      op_sharding_proto = op_sharding_proto.to_proto()
+  def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding):
+    op_sharding_proto = hlo_sharding.to_proto()
     new_op_sharding = op_sharding_proto.clone()
     tad = list(new_op_sharding.tile_assignment_dimensions)
     new_op_sharding.tile_assignment_dimensions = [*tad, 1]

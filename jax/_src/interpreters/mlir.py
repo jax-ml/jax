@@ -575,12 +575,12 @@ _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
 
 def _to_logical_op_sharding(
     aval: core.AbstractValue, sharding: Optional[XLACompatibleSharding],
-) -> Optional[xc.OpSharding]:
+) -> Optional[xc.HloSharding]:
   if sharding is None:
     return None
   assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
   assert isinstance(aval, core.ShapedArray)
-  return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()  # type: ignore
+  return sharding._to_xla_hlo_sharding(aval.ndim)
 
 
 def lower_jaxpr_to_module(
@@ -786,12 +786,12 @@ def lower_jaxpr_to_fun(
     public: bool = False,
     replace_tokens_with_dummy: bool = False,
     replicated_args: Optional[Sequence[bool]] = None,
-    arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
-    result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
+    arg_shardings: Optional[Sequence[Optional[xc.HloSharding]]] = None,
+    result_shardings: Optional[Sequence[Optional[xc.HloSharding]]] = None,
     use_sharding_annotations: bool = True,
     input_output_aliases: Optional[Sequence[Optional[int]]] = None,
     num_output_tokens: int = 0,
-    api_name: str = 'jit',
+    api_name: str = "jit",
     arg_names: Optional[Sequence[Optional[str]]] = None,
     result_names: Optional[Sequence[Optional[str]]] = None,
 ) -> func_dialect.FuncOp:
@@ -1018,13 +1018,14 @@ def lower_jaxpr_to_fun(
 
   return func_op
 
+
 def _to_physical_op_sharding(
-    aval: Optional[core.AbstractValue], sharding: Optional[xc.OpSharding]
+    aval: Optional[core.AbstractValue], sharding: Optional[xc.HloSharding]
 ) -> Optional[xc.OpSharding]:
   if (isinstance(aval, core.ShapedArray) and dtypes.is_opaque_dtype(aval.dtype)
       and sharding is not None):
     return aval.dtype._rules.physical_hlo_sharding(aval, sharding).to_proto()
-  return sharding
+  return None if sharding is None else sharding.to_proto()  # type: ignore
 
 
 def _emit_lowering_rule_as_fun(lowering_rule,

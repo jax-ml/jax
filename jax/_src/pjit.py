@@ -1349,10 +1349,10 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
   flat_output_types = flatten(output_types)
 
   arg_shardings = [None if is_unspecified(i) else
-                   i._to_xla_hlo_sharding(aval.ndim).to_proto()
+                   i._to_xla_hlo_sharding(aval.ndim)
                    for aval, i in zip(ctx.avals_in, in_shardings)]
   result_shardings = [None if is_unspecified(o) else
-                      o._to_xla_hlo_sharding(aval.ndim).to_proto()
+                      o._to_xla_hlo_sharding(aval.ndim)
                       for aval, o in zip(ctx.avals_out, out_shardings)]
 
   # TODO(b/228598865): inlined calls cannot have shardings set directly on the
