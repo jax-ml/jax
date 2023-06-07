@@ -332,27 +332,19 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
   else:
     raise NotImplementedError(type(axis_context))
 
-  def _op_sharding_callback(op_sharding: xc.OpSharding):
+  # If we have a nontrivial parallel computation, we need to wait until the SPMD
+  # partitioner calls back with the `HloSharding.
+  def _hlo_sharding_callback(hlo_sharding: xc.HloSharding):
     if mesh.empty:
-      return callback(GSPMDSharding(
-        devices, op_sharding))
-    pspec = parse_flatten_op_sharding(
-        op_sharding, mesh)[0].get_partition_spec()
+      return callback(GSPMDSharding(devices, hlo_sharding))
+    pspec = parse_flatten_op_sharding(hlo_sharding, mesh)[0].get_partition_spec()
     return callback(NamedSharding(mesh, pspec))
 
   if len(devices) == 1:
-    # If we only have one device in our computation, we can construct a trivial
-    # OpSharding and call it right now.
-    trivial_sharding = xc.OpSharding()
-    trivial_sharding.type = xc.OpSharding.Type.REPLICATED
-    _op_sharding_callback(trivial_sharding)
+    # If we only have one device in our computation, we can construct a
+    # replicated HloSharding and call it right now.
+    _hlo_sharding_callback(sharding_impls.get_replicated_hlo_sharding())
     return []
-
-  # If we have a nontrivial parallel computation, we need to wait until the SPMD
-  # partitioner calls back with the `HloSharding.
-  def _hlo_sharding_callback(hlo_sharding):
-    op_sharding = hlo_sharding.to_proto()
-    return _op_sharding_callback(op_sharding)
 
   key = xc.encode_inspect_sharding_callback(_hlo_sharding_callback)
   # We need to make sure `_hlo_sharding_callback` is still alive when the SPMD

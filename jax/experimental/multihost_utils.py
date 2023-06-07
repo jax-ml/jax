@@ -94,9 +94,8 @@ def _identity_fn(x):
 
 def _handle_array_process_allgather(inp, tiled):
   if isinstance(inp, array.ArrayImpl) and not inp.is_fully_addressable:
-    reps = sharding_impls.GSPMDSharding(
-        inp.sharding._device_assignment,
-        sharding_impls.get_replicated_op_sharding())
+    reps = sharding_impls.GSPMDSharding.get_replicated(
+        inp.sharding._device_assignment)
     out = pjit(_identity_fn, out_shardings=reps)(inp)
   else:
     # All inputs here will be fully addressable.
