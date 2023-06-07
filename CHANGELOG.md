@@ -52,6 +52,10 @@ Remember to align the itemized text with the first line of an item within a list
 ## jaxlib 0.4.11 (May 31, 2023)
 
 * Changes
+  * Added `memory_stats()` method to `Device`s. If supported, this returns a
+    dict of string stat names with int values, e.g. `"bytes_in_use"`, or None if
+    the platform doesn't support memory statistics. The exact stats returned may
+    vary across platforms. Currently only implemented on Cloud TPU.
   * Readded support for the Python buffer protocol (`memoryview`) on CPU
     devices.
 
