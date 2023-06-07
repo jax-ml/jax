@@ -519,7 +519,8 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
   def deserialize(self, shardings: Sequence[sharding.Sharding],
                   tensorstore_specs: Sequence[Dict[str, Any]],
                   global_shapes: Optional[Sequence[array.Shape]] = None,
-                  dtypes: Optional[Sequence[typing.DTypeLike]] = None):
+                  dtypes: Optional[Sequence[typing.DTypeLike]] = None,
+                  concurrent_gb: int = 32):
     self.wait_until_finished()
     return run_deserialization(shardings, tensorstore_specs,
-                               global_shapes, dtypes)
+                               global_shapes, dtypes, concurrent_gb)
