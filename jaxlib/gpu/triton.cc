@@ -296,6 +296,9 @@ class TritonAutotunedKernelCall : public TritonKernelCallBase {
     py::gil_scoped_acquire gil;
     configs_.erase(configs_.begin() + 1, configs_.end());
 
+    LOG(INFO) << "Finished autotuning function: " << name_ << " best config "
+              << configs_[0].description;
+
     // Restore aliased inputs to their original values.
     for (auto [input_idx, _, size] : input_output_aliases_) {
       CUDA_RETURN_IF_ERROR(
