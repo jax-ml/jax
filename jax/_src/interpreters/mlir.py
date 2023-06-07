@@ -1161,7 +1161,8 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
                        f"{eqn}, got output {ans}") from e
 
     assert all(isinstance(v, tuple) for v in out_nodes), (ans, eqn)
-    assert all(isinstance(v, ir.Value) for w in out_nodes for v in w), (ans, eqn)
+    assert all(isinstance(v, ir.Value) for w in out_nodes for v in w), (
+      ans, "lowering function returned a bad output", eqn)
     assert len(ans) == len(eqn.outvars), (ans, eqn)
     map(write, eqn.outvars, out_nodes)
   return map(read, jaxpr.outvars), tokens
