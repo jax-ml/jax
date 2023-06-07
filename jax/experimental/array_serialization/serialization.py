@@ -90,16 +90,18 @@ def _get_kvstore_for_gcs(ckpt_path: str):
   return {'driver': 'gcs', 'bucket': gcs_bucket, 'path': path_without_bucket}
 
 def get_tensorstore_spec(ckpt_path: str, ocdbt: bool = False):
-  is_gcs_path = ckpt_path.startswith('gs://')
   # Normalize path to exclude trailing '/'. In GCS path case, we will need to
   # fix the path prefix to add back the stripped '/'.
   ckpt_path = os.path.normpath(ckpt_path).replace('gs:/', 'gs://')
+  is_gcs_path = ckpt_path.startswith('gs://')
   spec = {'driver': 'zarr', 'kvstore': {}}
   if ocdbt:
-    prefix = 'gs' if is_gcs_path else 'file'
+    if not is_gcs_path and not os.path.isabs(ckpt_path):
+      raise ValueError(f'Checkpoint path should be absolute. Got {ckpt_path}')
+    base_path = os.path.dirname(ckpt_path)
     spec['kvstore'] = {
         'driver': 'ocdbt',
-        'base': f'{prefix}://{os.path.dirname(ckpt_path)}',
+        'base': base_path if is_gcs_path else f'file://{base_path}',
         'path': os.path.basename(ckpt_path),
     }
   else:

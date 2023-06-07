@@ -21,6 +21,7 @@ import pathlib
 import tracemalloc as tm
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
 from jax import config
@@ -290,6 +291,27 @@ class CheckpointTest(jtu.JaxTestCase):
   def test_empty_spec_has_no_metadata(self):
     spec = {}
     self.assertFalse(serialization._spec_has_metadata(spec))
+
+  @parameterized.named_parameters(
+      ('gcs', 'gs://my/ckpt/dir/path'),
+      ('file', '/my/ckpt/dir/path')
+  )
+  def test_get_tensorstore_spec_ocdbt(self, path):
+    spec = serialization.get_tensorstore_spec(path, ocdbt=True)
+    is_gcs_path = path.startswith('gs://')
+    if is_gcs_path:
+      self.assertEqual(spec['kvstore']['base'], os.path.dirname(path))
+    else:
+      self.assertEqual(spec['kvstore']['base'],
+                       f'file://{os.path.dirname(path)}')
+    self.assertEqual(spec['kvstore']['path'], 'path')
+
+  def test_get_tensorstore_spec_not_absolute_path(self):
+    path = 'my/ckpt/path'
+    with self.assertRaisesRegex(ValueError,
+                                "Checkpoint path should be absolute"):
+      serialization.get_tensorstore_spec(path, ocdbt=True)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
