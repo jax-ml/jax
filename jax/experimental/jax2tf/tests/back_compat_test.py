@@ -582,6 +582,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       self.run_one_test(func, data)
 
   def test_tf_call_tf_function(self):
+    self.skipTest("b/286409830: brittle on function naming.")
     # A custom call tf.call_tf_function is generated when we lower call_tf
     # with the call_tf_graph=True option.
     def func(x):
