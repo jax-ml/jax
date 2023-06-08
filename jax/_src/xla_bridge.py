@@ -37,6 +37,7 @@ from jax._src import lib
 from jax._src import distributed
 from jax._src.config import flags, bool_env, config, int_env
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax._src import traceback_util
 from jax._src import util
 
@@ -234,11 +235,24 @@ def make_gpu_client(
   allowed_devices = None
   if visible_devices != "all":
     allowed_devices = {int(x) for x in visible_devices.split(",")}
-  return xla_client.make_gpu_client(
-    distributed_client=distributed.global_state.client,
-    node_id=distributed.global_state.process_id,
-    platform_name=platform_name,
-    allowed_devices=allowed_devices)
+
+  if xla_extension_version < 160:
+    return xla_client.make_gpu_client(
+        distributed_client=distributed.global_state.client,
+        node_id=distributed.global_state.process_id,
+        platform_name=platform_name,
+        allowed_devices=allowed_devices,
+    )
+  else:
+    # Remove `type: ignore` when the min jaxlib version (xla_extension_version)
+    # >= 160.
+    return xla_client.make_gpu_client(
+        distributed_client=distributed.global_state.client,
+        node_id=distributed.global_state.process_id,
+        num_nodes=distributed.global_state.num_processes,
+        platform_name=platform_name,
+        allowed_devices=allowed_devices,
+    )  # type: ignore
 
 
 if hasattr(xla_client, "make_gpu_client"):
