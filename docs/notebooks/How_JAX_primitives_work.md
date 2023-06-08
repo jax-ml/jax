@@ -308,7 +308,7 @@ In the latter case, JAX uses the actual concrete value wrapped as an abstract va
 :id: ctQmEeckIbdo
 :outputId: e751d0cc-460e-4ffd-df2e-fdabf9cffdc2
 
-from jax._src import abstract_arrays
+from jax import core
 @trace("multiply_add_abstract_eval")
 def multiply_add_abstract_eval(xs, ys, zs):
   """Abstract evaluation of the primitive.
@@ -322,7 +322,7 @@ def multiply_add_abstract_eval(xs, ys, zs):
   """
   assert xs.shape == ys.shape
   assert xs.shape == zs.shape
-  return abstract_arrays.ShapedArray(xs.shape, xs.dtype)
+  return core.ShapedArray(xs.shape, xs.dtype)
 
 # Now we register the abstract evaluation with JAX
 multiply_add_p.def_abstract_eval(multiply_add_abstract_eval)

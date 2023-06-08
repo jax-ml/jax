@@ -155,7 +155,7 @@ from jax._src.tree_util import (
 
 # These submodules are separate because they are in an import cycle with
 # jax and rely on the names imported above.
-from jax import abstract_arrays as abstract_arrays
+from jax import abstract_arrays as _deprecated_abstract_arrays
 from jax import custom_derivatives as custom_derivatives
 from jax import custom_batching as custom_batching
 from jax import custom_transpose as custom_transpose
@@ -186,6 +186,11 @@ import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 _deprecations = {
+  # Added 06 June 2023
+  "abstract_arrays": (
+    "jax.abstract_arrays is deprecated. Refer to jax.core.",
+    _deprecated_abstract_arrays
+  ),
   # Added 28 March 2023
   "ShapedArray": (
     "jax.ShapedArray is deprecated. Use jax.core.ShapedArray",
@@ -219,6 +224,7 @@ _deprecations = {
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
+  from jax._src import abstract_arrays as abstract_arrays
   from jax._src.core import ShapedArray as ShapedArray
   from jax.interpreters import ad as ad
   from jax.interpreters import partial_eval as partial_eval
