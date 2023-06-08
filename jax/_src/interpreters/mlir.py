@@ -846,7 +846,6 @@ def lower_jaxpr_to_fun(
     # If we aren't creating tokens they will be the initial inputs to the
     # MLIR function.
     output_token_types = []
-    num_tokens = len(effects)
     token_types = [token_type() for _ in effects]
   token_avals = [core.AbstractToken] * len(effects)
   input_avals = dim_var_avals + token_avals + jaxpr.in_avals
