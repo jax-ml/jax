@@ -476,7 +476,7 @@ instantiate :class:`~jax.Array` objects manually, but rather will create them vi
 
 Copying and Serialization
 ~~~~~~~~~~~~~~~~~~~~~~~~~
-JAX :class:`~jax.Array`` objects are designed to work seamlessly with Python
+JAX :class:`~jax.Array` objects are designed to work seamlessly with Python
 standard library tools where appropriate.
 
 With the built-in :mod:`copy` module, when :func:`copy.copy` or :func:`copy.deepcopy`
