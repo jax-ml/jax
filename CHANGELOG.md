@@ -33,6 +33,8 @@ Remember to align the itemized text with the first line of an item within a list
 * Bug fixes
   * Fixes incorrect source line information in JAX-generated Python tracebacks
     under Python 3.11.
+  * Fixes crash when printing local variables of frames in JAX-generated Python
+    tracebacks (#16027).
 
 ## jax 0.4.11 (May 31, 2023)
 
