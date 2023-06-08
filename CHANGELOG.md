@@ -8,6 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.12
 
+* Changes
+  * Added {class}`scipy.spatial.transform.Rotation` and {class}`scipy.spatial.transform.Slerp`
+
 * Deprecations
   * `jax.abstract_arrays` and its contents are now deprecated. See related
     functionality in :mod:`jax.core`.
