@@ -89,7 +89,7 @@ def shape_tensor(sizes: Sequence[Union[int, ir.RankedTensorType]]
     else:
       if d.type != i32_type:
         d = hlo.ConvertOp(i32_type, d)
-      return hlo.ReshapeOp(int1d, d)
+      return hlo.ReshapeOp(int1d, d).result
   ds = map(lower_dim, sizes)
   if not ds:
     return ir_constant(np.array([], np.int32))

@@ -1823,6 +1823,33 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     res = jax2tf.convert(f2, polymorphic_shapes=zw_polymorphic_shapes)(z, w)
     self.assertAllClose(f2(* f1(x, y)), res)
 
+  def test_gather_1d(self):
+    operand = jnp.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], np.float32)
+    rand_idxs = np.random.randint(0, high=max(operand.shape), size=(3, 1), dtype=np.int32)
+    slice_x = np.zeros((10,), dtype=jnp.float32)
+    dnums = lax.GatherDimensionNumbers(
+        offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)
+    )
+
+    @jax.jit
+    def f_jax(operand, start_indices, x):
+      return lax.gather(
+          operand,
+          start_indices,
+          dimension_numbers=dnums,
+          slice_sizes=x.shape,
+          mode="promise_in_bounds",
+      )
+
+    res = f_jax(operand, rand_idxs, slice_x)
+    f_tf = jax2tf.convert(
+        f_jax,
+        native_serialization=True,
+        polymorphic_shapes=["(t, )", "(3, 1)", "(t)"],
+    )
+    res_tf = f_tf(operand, rand_idxs, slice_x)
+    self.assertAllClose(res, res_tf)
+
 
 # List containing either harnesses, or lists of harnesses
 _POLY_SHAPE_TEST_HARNESSES = [
