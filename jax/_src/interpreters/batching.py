@@ -275,7 +275,7 @@ class BatchTracer(Tracer):
     elif type(self.batch_dim) is RaggedAxis:
       new_aval = core.mapped_aval(
         aval.shape[self.batch_dim.stacked_axis], self.batch_dim.stacked_axis, aval)
-      shape = list(new_aval.shape)
+      shape = list(new_aval.shape)  # type: ignore
       size_tracer = BatchTracer(self._trace, self.batch_dim.segment_lengths, 0)
       ragged_axis = self.batch_dim.ragged_axis
       if self.batch_dim.stacked_axis < self.batch_dim.ragged_axis:
