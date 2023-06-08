@@ -22,39 +22,9 @@ from jax._src.sharding_impls import (
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as PmapSharding,
     GSPMDSharding as GSPMDSharding,
-    # TODO(yashkatariya): Remove OpShardingSharding in 3 months from
-    # Feb 17, 2023.
-    GSPMDSharding as _deprecated_OpShardingSharding,
     PositionalSharding as PositionalSharding,
 )
 from jax._src.partition_spec import (
     PartitionSpec as PartitionSpec,
 )
 from jax._src.interpreters.pxla import Mesh as Mesh
-
-
-_deprecations = {
-    "OpShardingSharding": (
-        (
-            "jax.sharding.OpShardingSharding is deprecated. Please use"
-            " jax.sharding.GSPMDSharding."
-        ),
-        _deprecated_OpShardingSharding,
-    ),
-    "MeshPspecSharding": (
-        (
-            "jax.sharding.MeshPspecSharding has been removed. Please use"
-            " jax.sharding.NamedSharding."
-        ),
-        None,
-    ),
-}
-
-import typing
-if typing.TYPE_CHECKING:
-  from jax._src.sharding_impls import GSPMDSharding as OpShardingSharding
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del typing

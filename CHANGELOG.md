@@ -22,6 +22,8 @@ Remember to align the itemized text with the first line of an item within a list
     of `numpy.product` in NumPy version 1.25.0.
   * `jax.numpy.cumproduct`: use `jax.numpy.cumprod`. This follows the deprecation
     of `numpy.cumproduct` in NumPy version 1.25.0.
+  * `jax.sharding.OpShardingSharding` has been removed since it has been 3
+    months since it was deprecated.
 
 ## jaxlib 0.4.12
 
