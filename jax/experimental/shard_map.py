@@ -850,7 +850,7 @@ def _shard_map_batch(
   if all(bdim is batching.not_mapped for bdim in in_dims):
     return prim.bind(fun, *in_vals, mesh=mesh, in_names=in_names,
                      out_names_thunk=out_names_thunk, check_rep=check_rep)
-  if any(isinstance(d, batching.ConcatAxis) for d in in_dims):
+  if any(isinstance(d, batching.RaggedAxis) for d in in_dims):
     raise NotImplementedError
   fun, out_dims = batching.batch_subtrace(fun, trace.main, tuple(in_dims))
   new_in_names = [{ax + (d is not batching.not_mapped and d <= ax): names[ax]  # type: ignore
