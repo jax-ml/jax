@@ -63,6 +63,7 @@ def _one_to_one_unop(
     fn = lambda x, /: lax_fn(*promote_args_inexact(numpy_fn.__name__, x))
   else:
     fn = lambda x, /: lax_fn(*promote_args(numpy_fn.__name__, x))
+  fn.__name__ = numpy_fn.__name__
   fn.__qualname__ = f"jax.numpy.{numpy_fn.__name__}"
   fn = jit(fn, inline=True)
   if lax_doc:
