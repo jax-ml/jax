@@ -221,8 +221,6 @@ def register_backend_factory(name: str, factory: BackendFactory, *,
   _backend_factories[name] = (factory, priority)
 
 
-register_backend_factory('interpreter', xla_client.make_interpreter_client,
-                         priority=-100)
 register_backend_factory('cpu',
                          partial(xla_client.make_cpu_client, use_tfrt=True),
                          priority=0)
