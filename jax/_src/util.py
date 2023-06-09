@@ -292,6 +292,20 @@ def cache(max_size=4096):
 
 memoize = cache(max_size=None)
 
+def weakref_lru_cache2(call: Callable, maxsize=2048,
+                       explain: Optional[Callable] = None):
+  cached_call = weakref_lru_cache(call, maxsize)
+  def call(fst, *args, **kwargs):
+    misses = cached_call.cache_info().misses
+    out = cached_call(fst, *args, **kwargs)
+    if cached_call.cache_info().misses - misses:
+      ctx = config.config._trace_context()
+      existing_keys = [k for k in cached_call.cache_keys()
+                       if (k[0](), *k[1:]) != (fst, ctx, args, kwargs)]
+      explain(existing_keys, fst, ctx, *args, **kwargs)
+    return out
+  return call
+
 def weakref_lru_cache(call: Callable, maxsize=2048):
   """
   Least recently used cache decorator with weakref support.
