@@ -34,6 +34,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import linear_util as lu
+from jax._src import pickle_util
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import util
@@ -42,6 +43,7 @@ from jax._src.config import config
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
@@ -1780,9 +1782,14 @@ def _emit_tpu_python_callback(
                                    callback.__name__, sharding=sharding)
     outputs.append(out)
     recv_channels.append(channel)
-  opaque = backend.make_python_callback_from_host_send_and_recv(
-      _wrapped_callback, operand_shapes, result_shapes, send_channels,
-      recv_channels)
+  if xla_extension_version < 161:
+    opaque = backend.make_python_callback_from_host_send_and_recv(
+        _wrapped_callback, operand_shapes, result_shapes, send_channels,
+        recv_channels)  # type: ignore  # pylint: disable=missing-parameter
+  else:
+    opaque = backend.make_python_callback_from_host_send_and_recv(
+        _wrapped_callback, operand_shapes, result_shapes, send_channels,
+        recv_channels, pickle_util.dumps)  # type: ignore  # pylint: disable=missing-parameter
   ctx.module_context.add_host_callback(opaque)
   return outputs, token, opaque
 
