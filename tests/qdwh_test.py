@@ -210,7 +210,7 @@ class QdwhTest(jtu.JaxTestCase):
   def testQdwhWithTinyElement(self, m, n, r, c, dtype):
     """Tests qdwh on matrix with zeros and close-to-zero entries."""
     a = jnp.zeros((m, n), dtype=dtype)
-    tiny_elem = jnp.finfo(a).tiny
+    tiny_elem = jnp.finfo(a.dtype).tiny
     a = a.at[r, c].set(tiny_elem)
 
     is_hermitian = _check_symmetry(a)

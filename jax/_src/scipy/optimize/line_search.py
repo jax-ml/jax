@@ -408,8 +408,8 @@ def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
   )
   # Step sizes which are too small causes the optimizer to get stuck with a
   # direction of zero in <64 bit mode - avoid with a floor on minimum step size.
-  alpha_k = state.a_star
-  alpha_k = jnp.where((jnp.finfo(alpha_k).bits != 64)
+  alpha_k = jnp.asarray(state.a_star)
+  alpha_k = jnp.where((jnp.finfo(alpha_k.dtype).bits != 64)
                     & (jnp.abs(alpha_k) < 1e-8),
                       jnp.sign(alpha_k) * 1e-8,
                       alpha_k)

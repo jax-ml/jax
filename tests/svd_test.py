@@ -198,7 +198,7 @@ class SvdTest(jtu.JaxTestCase):
   def testSvdOnTinyElement(self, m, n, r, c, dtype):
     """Tests SVD on matrix of zeros and close-to-zero entries."""
     a = jnp.zeros((m, n), dtype=dtype)
-    tiny_element = jnp.finfo(a).tiny
+    tiny_element = jnp.finfo(a.dtype).tiny
     a = a.at[r, c].set(tiny_element)
 
     @jax.jit
