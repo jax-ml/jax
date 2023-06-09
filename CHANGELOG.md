@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.12
+## jax 0.4.13
+
+## jaxlib 0.4.13
+
+## jax 0.4.12 (June 8, 2023)
 
 * Changes
   * Added {class}`scipy.spatial.transform.Rotation` and {class}`scipy.spatial.transform.Slerp`
@@ -25,7 +29,7 @@ Remember to align the itemized text with the first line of an item within a list
   * `jax.sharding.OpShardingSharding` has been removed since it has been 3
     months since it was deprecated.
 
-## jaxlib 0.4.12
+## jaxlib 0.4.12 (June 8, 2023)
 
 * Changes
   * Includes PTX/SASS for Hopper (SM version 9.0+) GPUs. Previous
