@@ -16,6 +16,7 @@ from functools import partial
 import glob
 import os
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -28,10 +29,7 @@ import jax.profiler
 from jax import config
 import jax._src.test_util as jtu
 
-try:
-  import portpicker
-except ImportError:
-  portpicker = None
+import portpicker
 
 try:
   from tensorflow.python.profiler import profiler_client
@@ -60,14 +58,12 @@ class ProfilerTest(unittest.TestCase):
     self.worker_start = threading.Event()
     self.profile_done = False
 
-  @unittest.skipIf(not portpicker, "Test requires portpicker")
   def testStartStopServer(self):
     port = portpicker.pick_unused_port()
     jax.profiler.start_server(port=port)
     del port
     jax.profiler.stop_server()
 
-  @unittest.skipIf(not portpicker, "Test requires portpicker")
   def testCantStartMultipleServers(self):
     port = portpicker.pick_unused_port()
     jax.profiler.start_server(port=port)
@@ -171,8 +167,8 @@ class ProfilerTest(unittest.TestCase):
                      'Expected one path match: ' + path)
 
   @unittest.skip("Test causes OOMs")
-  @unittest.skipIf(not (portpicker and profiler_client and tf_profiler),
-    "Test requires tensorflow.profiler and portpicker")
+  @unittest.skipIf(not (profiler_client and tf_profiler),
+                   "Test requires tensorflow.profiler")
   def testSingleWorkerSamplingMode(self, delay_ms=None):
     def on_worker(port, worker_start):
       jax.profiler.start_server(port)
@@ -215,27 +211,26 @@ class ProfilerTest(unittest.TestCase):
     self._check_xspace_pb_exist(logdir)
 
   @unittest.skipIf(
-      not (portpicker and profiler_client and tf_profiler and TBP_ENABLED),
-    "Test requires tensorflow.profiler, portpicker and "
-    "tensorboard_profile_plugin")
+      not (profiler_client and tf_profiler and TBP_ENABLED),
+      "Test requires tensorflow.profiler and tensorboard_profile_plugin")
   def test_remote_profiler(self):
     port = portpicker.pick_unused_port()
+    jax.profiler.start_server(port)
 
     logdir = absltest.get_default_test_tmpdir()
     # Remove any existing log files.
     shutil.rmtree(logdir, ignore_errors=True)
     def on_profile():
       os.system(
-          f"python -m jax.collect_profile {port} 500 --log_dir {logdir} "
-          "--no_perfetto_link")
+          f"{sys.executable} -m jax.collect_profile {port} 500 "
+          f"--log_dir {logdir} --no_perfetto_link")
 
     thread_profiler = threading.Thread(
         target=on_profile, args=())
     thread_profiler.start()
-    jax.profiler.start_server(port)
     start_time = time.time()
     y = jnp.zeros((5, 5))
-    while time.time() - start_time < 3:
+    while time.time() - start_time < 5:
       y = jnp.dot(y, y)
     jax.profiler.stop_server()
     thread_profiler.join()
