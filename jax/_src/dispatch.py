@@ -539,7 +539,7 @@ def _cache_write(cache_key: str,
   if host_callbacks:
     logger.info(
         "Not writing persistent cache entry for '%s' because it uses host "
-        "callbacks (e.g. from jax.debug.print or breakpoint)")
+        "callbacks (e.g. from jax.debug.print or breakpoint)", module_name)
     return
 
   min_compile_time = config.jax_persistent_cache_min_compile_time_secs
