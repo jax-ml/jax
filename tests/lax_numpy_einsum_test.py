@@ -291,6 +291,7 @@ class EinsumTest(jtu.JaxTestCase):
     C = self.rng().rand(10, 10)
     np.einsum_path('ea,fb,abcd,gc,hd->efgh', C, C, I, C, C, optimize='greedy')
 
+  @jax.default_matmul_precision("float32")
   def test_einsum_kpmurphy_example(self):
     # code from an email with @murphyk
     N, C, D, K, T = 2, 3, 4, 5, 6
@@ -309,9 +310,8 @@ class EinsumTest(jtu.JaxTestCase):
         L[n,c] = s
 
     path = jnp.einsum_path('ntk,kd,dc->nc', S, W, V, optimize='optimal')[0]
-    rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
     self.assertAllClose(L, jnp.einsum('ntk,kd,dc->nc', S, W, V, optimize=path),
-                        check_dtypes=False, rtol=rtol)
+                        check_dtypes=False)
 
   def test_contraction_broadcasting(self):
     r = self.rng()

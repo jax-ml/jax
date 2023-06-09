@@ -420,7 +420,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAlmostEqual(expected["a"], actual["a"], places=5)
     self.assertAlmostEqual(expected["b"], actual["b"], places=5)
 
-  @jtu.skip_on_devices('tpu')
+  @jax.default_matmul_precision("float32")
   def test_gmres_matmul(self):
     A = CustomOperator(2 * jnp.eye(3))
     b = jnp.arange(9.0).reshape(3, 3)

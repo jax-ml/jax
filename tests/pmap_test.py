@@ -1724,6 +1724,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(f([np.array([i] * ndevices) for i in range(500)]),
                         jnp.array([sum(vals)] * ndevices))
 
+  @jax.default_matmul_precision("float32")
   def testPostProcessMap2(self):
     # code from https://github.com/google/jax/issues/2787
     def vv(x, y):
@@ -1743,8 +1744,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     y = random.normal(key, (10, 50, 1))
     result = batched_mvm(y)
     expected = jnp.einsum('ij,njk->nik', x, y)
-    tol = 1e-1 if jtu.device_under_test() == "tpu" else 1e-3
-    self.assertAllClose(result, expected, check_dtypes=False, atol=tol, rtol=tol)
+    self.assertAllClose(result, expected, check_dtypes=False, atol=1e-3,
+                        rtol=1e-3)
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}

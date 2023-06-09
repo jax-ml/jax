@@ -49,6 +49,7 @@ class BatchingTest(jtu.JaxTestCase):
     expected = 3 * np.ones(4)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @jax.default_matmul_precision("float32")
   def testNestedBatchingMatMat(self):
     matvec = vmap(jnp.vdot, in_axes=(0, None))
     matmat = vmap(matvec, in_axes=(None, 1), out_axes=1)
@@ -59,9 +60,7 @@ class BatchingTest(jtu.JaxTestCase):
 
     ans = matmat(A, B)
     expected = np.dot(A, B)
-    self.assertAllClose(
-        ans, expected, check_dtypes=False,
-        rtol={np.float32:5e-2} if jtu.device_under_test() == "tpu" else None)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
     jaxpr = make_jaxpr(matmat)(A, B)
     self.assertLen(jaxpr.jaxpr.eqns, 1)
@@ -98,6 +97,7 @@ class BatchingTest(jtu.JaxTestCase):
       self.assertEqual(dW.shape, (batch_size,) + W.shape)
       self.assertEqual(db.shape, (batch_size,) + b.shape)
 
+  @jax.default_matmul_precision("float32")
   def testJacobians(self):
     def jacbwd(f, x):
       y, pullback = vjp(f, x)
@@ -118,8 +118,7 @@ class BatchingTest(jtu.JaxTestCase):
     f = lambda x: jnp.tanh(jnp.dot(A, x) + b)
 
     x = R(3)
-    self.assertAllClose(jacfwd(f, x), jacbwd(f, x), check_dtypes=False,
-                        rtol={np.float32:1e-2} if jtu.device_under_test() == "tpu" else None)
+    self.assertAllClose(jacfwd(f, x), jacbwd(f, x), check_dtypes=False)
 
   def testBatchOfCompile(self):
     side = []
@@ -201,6 +200,7 @@ class BatchingTest(jtu.JaxTestCase):
     expected_ans = x > 1.0
     self.assertAllClose(ans, expected_ans)
 
+  @jax.default_matmul_precision("float32")
   def testNpMaximumPerExampleGrad(self):
     R = self.rng().randn
     x = R(10, 5)
@@ -218,9 +218,7 @@ class BatchingTest(jtu.JaxTestCase):
           jnp.maximum(jnp.dot(W_t, jnp.transpose(x_ex)), 0.0), x_ex)
       expected_ans = jnp.transpose(expected_ans)
 
-      self.assertAllClose(
-          ans[i], expected_ans, check_dtypes=False,
-          rtol={np.float32:5e-2} if jtu.device_under_test() == "tpu" else None)
+      self.assertAllClose(ans[i], expected_ans, check_dtypes=False)
 
   def testDotGeneral(self):
     R = self.rng().randn
