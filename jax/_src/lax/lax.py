@@ -3402,8 +3402,13 @@ def _transpose_shape_rule(operand, *, permutation):
 def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   operand, = batched_args
   bdim, = batch_dims
-  perm = (bdim,) + tuple(i if i < bdim else i+1 for i in permutation)
-  return transpose(operand, perm), 0
+  stack_dim = bdim.stacked_axis if isinstance(bdim, RaggedAxis) else bdim
+  perm = (stack_dim,) + tuple(i if i < stack_dim else i+1 for i in permutation)
+  if isinstance(bdim, RaggedAxis):
+    result_bdim = bdim.move_stacked_axis(0).transpose_ragged_axes(perm)
+  else:
+    result_bdim = 0
+  return transpose(operand, perm), result_bdim
 
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out

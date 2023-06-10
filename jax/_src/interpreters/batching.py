@@ -134,6 +134,10 @@ class RaggedAxis:
     new_ragged_axes = [(move_axis(ax), sizes) for ax, sizes in self.ragged_axes]
     return RaggedAxis(dst, new_ragged_axes)
 
+  def transpose_ragged_axes(self, perm):
+    new_ragged_axes = [(perm[ax], size) for ax, size in self.ragged_axes]
+    return RaggedAxis(self.stacked_axis, new_ragged_axes)
+
 def make_batch_axis(
     ndim: int, stacked_axis: int, ragged_axes: List[Tuple[int, Array]]
   ) -> Union[int, RaggedAxis]:
