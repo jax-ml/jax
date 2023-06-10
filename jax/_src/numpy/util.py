@@ -389,7 +389,7 @@ def _broadcast_to(arr: ArrayLike, shape: Shape) -> Array:
     shape = (shape,)
   shape = core.canonicalize_shape(shape)  # check that shape is concrete
   arr_shape = np.shape(arr)
-  if core.symbolic_equal_shape(arr_shape, shape):
+  if core.definitely_equal_shape(arr_shape, shape):
     return arr
   else:
     nlead = len(shape) - len(arr_shape)
@@ -399,7 +399,7 @@ def _broadcast_to(arr: ArrayLike, shape: Shape) -> Array:
     if nlead < 0 or not compatible:
       msg = "Incompatible shapes for broadcasting: {} and requested shape {}"
       raise ValueError(msg.format(arr_shape, shape))
-    diff, = np.where(tuple(not core.symbolic_equal_dim(arr_d, shape_d)
+    diff, = np.where(tuple(not core.definitely_equal(arr_d, shape_d)
                            for arr_d, shape_d in safe_zip(arr_shape, shape_tail)))
     new_dims = tuple(range(nlead)) + tuple(nlead + diff)
     kept_dims = tuple(np.delete(np.arange(len(shape)), new_dims))
