@@ -1529,7 +1529,7 @@ class PileTest(jtu.JaxTestCase):
     self.assertIsInstance(y, batching.Pile)
     self.assertAllClose(y.data, jnp.array([5, 0, 14], dtype='int32'))
 
-  def test_pile_map_matrix_dot(self):
+  def test_pile_map_matrix_dot_ragged_contract(self):
     sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
     p1 = jax.vmap(lambda n: jnp.ones((7, n)), out_axes=batching.pile_axis
                   )(sizes)
@@ -1539,6 +1539,17 @@ class PileTest(jtu.JaxTestCase):
                  axis_size=3)(p1, p2)
     self.assertAllClose(y, np.tile(np.array([3, 1, 4])[:, None, None], (7, 7)),
                         check_dtypes=False)
+
+  def test_pile_map_matrix_dot_ragged_tensor(self):
+    sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    def func(size):
+      lhs_one_d = jnp.arange(size, dtype='int32') + 1
+      lhs_two_d = jax.lax.broadcast_in_dim(lhs_one_d, (size, 2), (0,))
+      rhs = jax.lax.broadcasted_iota('int32', (2, 4), 0) + 1
+      return jnp.dot(lhs_two_d, rhs)
+    p = jax.vmap(func, out_axes=batching.pile_axis)(sizes)
+    self.assertIsInstance(p, batching.Pile)
+    self.assertEqual(p.data.shape, (3, 5, 4))
 
   def test_broadcast_in_dim_while_ragged(self):
     ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
