@@ -92,13 +92,6 @@ def scan_with_for(f, *args, **kwargs):
 def scan_with_remat_for(f, *args, **kwargs):
   return jax.remat(lambda *args: for_loop.scan(f, *args, **kwargs))(*args)
 
-SCAN_IMPLS = [
-    (lax.scan, 'unroll1'),
-    (partial(lax.scan, unroll=2), 'unroll2'),
-    (scan_with_new_checkpoint , 'new_checkpoint'),
-    (scan_with_new_checkpoint2, 'new_checkpoint2'),
-]
-
 SCAN_IMPLS_WITH_FOR = [
     (lax.scan, 'unroll1'),
     (partial(lax.scan, unroll=2), 'unroll2'),
