@@ -11,6 +11,11 @@ Remember to align the itemized text with the first line of an item within a list
   * Fixed incorrect wheel name in CUDA 12 releases (#16362); the correct wheel
     is named `cudnn89` instead of `cudnn88`.
 
+* Deprecations
+  * The `native_serialization_strict_checks` parameter to
+    {func}`jax.experimental.jax2tf.convert` is deprecated in favor of the
+    new `native_serializaation_disabled_checks` ({jax-issue}`#16347`).
+
 ## jaxlib 0.4.13
 
 ## jax 0.4.12 (June 8, 2023)

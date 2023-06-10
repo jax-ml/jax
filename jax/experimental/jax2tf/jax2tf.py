@@ -85,6 +85,8 @@ NameStack = source_info_util.NameStack
 PolyShape = shape_poly.PolyShape
 DType = Any
 
+DisabledSafetyCheck = jax_export.DisabledSafetyCheck
+
 # A temporary internal flag, to enable the wrapping of jax.jit functions
 # with tf.function(jit_compile=True). See #7389. This change has triggered a
 # number of failures in TF. We keep this until we are confident that it does
@@ -232,7 +234,10 @@ def convert(fun_jax: Callable,
             enable_xla: bool = True,
             native_serialization: Union[bool, _DefaultNativeSerialization] = DEFAULT_NATIVE_SERIALIZATION,
             native_serialization_platforms: Sequence[str] = (),
-            native_serialization_strict_checks: bool = True) -> Callable:
+            # TODO(necula): remove native_serialization_strict_checks
+            native_serialization_strict_checks: bool = True,
+            native_serialization_disabled_checks: Sequence[DisabledSafetyCheck] = (),
+            ) -> Callable:
   """Allows calling a JAX function from a TensorFlow program.
 
   See
@@ -310,6 +315,9 @@ def convert(fun_jax: Callable,
       checks: (A) the lowered computation is executed on a platform for which it
       was lowered; (B) the serialized computation contains only custom calls
       with targets that are guaranteed to be stable, (more to come).
+      DEPRECATED in favor of `native_serialization_disabled_checks`.
+    native_serialization_disabled_checks: In conjunction with
+      `native_serialization`, disable the specified safety checks.
 
   Returns:
     A version of `fun_jax` that expects TfVals as arguments (or
@@ -389,7 +397,7 @@ def convert(fun_jax: Callable,
           fun_jax,
           args_specs=args_specs, kwargs_specs=kwargs_specs,
           native_serialization_platforms=native_serialization_platforms,
-          native_serialization_strict_checks=native_serialization_strict_checks)
+          native_serialization_disabled_checks=native_serialization_disabled_checks)
     else:
       impl = GraphSerializationImpl(
           fun_jax,
@@ -483,11 +491,11 @@ class NativeSerializationImpl(SerializationImpl):
   def __init__(self, fun_jax, *,
                args_specs, kwargs_specs,
                native_serialization_platforms: Sequence[str],
-               native_serialization_strict_checks: bool):
+               native_serialization_disabled_checks: Sequence[DisabledSafetyCheck]):
     self.fun_jax = fun_jax
     self.args_specs = args_specs
     self.kwargs_specs = kwargs_specs
-    self.native_serialization_strict_checks = native_serialization_strict_checks
+    self.native_serialization_disabled_checks = native_serialization_disabled_checks
     if native_serialization_platforms:
       self.lowering_platform: Optional[str] = native_serialization_platforms[0]
     else:
@@ -504,7 +512,7 @@ class NativeSerializationImpl(SerializationImpl):
     self.exported = jax_export.export(
         self.fun_jax,
         lowering_platform=self.lowering_platform,
-        strict_checks=self.native_serialization_strict_checks
+        disabled_checks=self.native_serialization_disabled_checks
     )(*self.args_specs, **self.kwargs_specs)
 
   def after_conversion(self):
@@ -832,8 +840,15 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   kept_args_avals = [aval for i, aval in enumerate(exported.in_avals) if i in exported.module_kept_var_idx]
   kept_args_flat_tf = [atf for i, atf in enumerate(args_flat_tf) if i in exported.module_kept_var_idx]
 
+  if hasattr(tfxla, "call_module_maximum_supported_version"):
+    max_version_supported = tfxla.call_module_maximum_supported_version()
+  else:
+    max_version_supported = 5
+  # TODO(necula): cleanup handling of Exported.xla_call_module_version
+  assert exported.xla_call_module_version == 6
+
   call_module_attrs = dict(
-      version=exported.xla_call_module_version,
+      version=max_version_supported,
       Tout=out_types,
       Sout=out_shapes_tf,
       function_list=[
@@ -842,11 +857,15 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
       ] if _thread_local_state.call_tf_concrete_function_list is not None else [],
   )
 
-  if exported.xla_call_module_version >= 3:
-    if exported.strict_checks:
-      call_module_attrs["platforms"] = (exported.lowering_platform.upper(),)
-    else:
-      call_module_attrs["platforms"] = ()  # No platform checking
+  call_module_attrs["platforms"] = (exported.lowering_platform.upper(),)
+  if max_version_supported >= 6:
+    call_module_attrs["disabled_checks"] = tuple(
+        str(dc)
+        for dc in exported.disabled_checks)
+  else:
+    if exported.xla_call_module_version >= 3:
+      if DisabledSafetyCheck.platform() in exported.disabled_checks:
+        call_module_attrs["platforms"] = ()  # No platform checking
 
   if logging.vlog_is_on(3):
     # We already logged the MLIR module when we exported it.
