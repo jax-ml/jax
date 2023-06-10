@@ -1630,6 +1630,19 @@ class PileTest(jtu.JaxTestCase):
     data = jax.lax.broadcasted_iota('int32', (3, 5, 7), 1)
     self.assertAllClose(p.data, data)
 
+  def test_ragged_einsum(self):
+    x_sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    def fprop_layer(x_size):
+      one_d = jnp.arange(x_size, dtype='int32')
+      x = jax.lax.broadcast_in_dim(one_d, (x_size, 11), [0])
+      wqkv = jax.lax.broadcasted_iota('int32', (3, 2, 7, 11), 1)
+      qkv = jnp.einsum('te,ihqe->ithq', x, wqkv)
+      return qkv
+    p = jax.vmap(fprop_layer, out_axes=batching.pile_axis)(x_sizes)
+    self.assertIsInstance(p, batching.Pile)
+    self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[3,bint\{≤5\}\[3\] with value: \[3 1 4\]\.Var[0-9]+,2,7\]')
+    self.assertEqual(p.data.shape, (3, 3, 5, 2, 7))
+
 def pile_map(f):
   def mapped(*piles):
     return jax.vmap(f, in_axes=batching.pile_axis, out_axes=batching.pile_axis,

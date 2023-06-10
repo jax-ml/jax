@@ -3305,7 +3305,7 @@ def _einsum(
     return operand, names
 
   def filter_singleton_dims(operand, names, other_shape, other_names):
-    eq = core.symbolic_equal_dim
+    eq = core.definitely_equal
     keep = [not eq(operand.shape[i], 1) or j == -1 or eq(other_shape[j], 1)
             for i, j in enumerate(map(other_names.find, names))]
     sqez_axes, keep_axes = partition_list(keep, list(range(operand.ndim)))

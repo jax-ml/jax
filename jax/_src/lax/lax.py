@@ -114,10 +114,10 @@ def _try_broadcast_shapes(
       result_shape.append(ds[0])
     else:
       # if all dims are equal (or 1), the result is the non-1 size (or 1)
-      non_1s = [d for d in ds if not core.symbolic_equal_dim(d, 1)]
+      non_1s = [d for d in ds if not core.definitely_equal(d, 1)]
       if not non_1s:
         result_shape.append(1)
-      elif all(core.symbolic_equal_dim(non_1s[0], d) for d in non_1s[1:]):
+      elif all(core.definitely_equal(non_1s[0], d) for d in non_1s[1:]):
         result_shape.append(non_1s[0])
       else:
         return None
@@ -174,7 +174,7 @@ def _broadcast_ranks(s1, s2):
     s1, s2 = s2, s1
   assert len(s1) <= len(s2)
   s1_ = s2[len(s2) - len(s1):]
-  if core.symbolic_equal_shape(s1_, s1): return s2
+  if core.definitely_equal_shape(s1_, s1): return s2
   else: raise ValueError
 
 def _identity(x): return x
