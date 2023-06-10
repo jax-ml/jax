@@ -186,12 +186,6 @@ def batched_device_put(aval: core.ShapedArray,
   return xc.batched_device_put(aval, sharding, xs, devices, committed)  # type: ignore
 
 
-def refine_shape_polymorphism(module: ir.Module) -> ir.Module:
-  # In order to avoid depending on jax2tf/jax_export.py we will monkey patch
-  # this from jax_export to refine the polymorphic shapes in the module.
-  raise NotImplementedError("Compiling modules with shape polymorphism")
-
-
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
 # from the input ShardingSpec, rather than the indices. However, this would
 # require duplicating the ordering logic of spec_to_indices, which is more
@@ -2631,7 +2625,7 @@ class UnloadedMeshExecutable:
                compiler_options=None
   ) -> MeshExecutable:
     if shape_poly_state is not None and shape_poly_state.uses_dim_vars:
-      hlo = refine_shape_polymorphism(hlo)
+      hlo = mlir.refine_polymorphic_shapes(hlo)
     compiler_options_keys = tuple(
         compiler_options.keys()) if compiler_options is not None else None
     compiler_options_values = tuple(

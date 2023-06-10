@@ -24,7 +24,6 @@ from absl import logging
 
 import jax
 from jax import sharding
-from jax.lib import xla_client as xc
 
 from jax._src import core
 from jax._src import dispatch
@@ -38,7 +37,6 @@ from jax._src.lib.mlir.dialects import stablehlo
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
-from jax._src.lib import xla_extension
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
@@ -854,22 +852,3 @@ for _p in ("cpu", "tpu", "cuda", "rocm"):
   mlir.register_lowering(call_exported_p,
                          functools.partial(_call_exported_lowering, platform=_p),
                          platform=_p)
-
-
-def _refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
-  """Refine the polymorphic shapes inside a module.
-
-  Given a module with static input shapes, but using dynamic shapes due to
-  shape polymorphism, run shape refinement to resolve all the dynamic shapes.
-  """
-  if xc.mlir_api_version < 50:
-    raise NotImplementedError("refine_polymorphic_shapes needs jaxlib 0.4.12")
-
-  refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
-    mlir.module_to_bytecode(module)
-  )
-  context = mlir.make_ir_context()
-  with context:
-    return ir.Module.parse(refined_module_str)
-
-pxla.refine_shape_polymorphism = _refine_polymorphic_shapes

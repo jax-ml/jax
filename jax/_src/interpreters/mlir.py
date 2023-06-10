@@ -43,6 +43,7 @@ from jax._src.config import config
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
@@ -1960,3 +1961,19 @@ def custom_call(
     operands = list(operands) + list(result_shapes)
 
   return hlo.CustomCallOp.build_generic(results=out_types, operands=operands, attributes=attributes)
+
+
+def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
+  """Refine the polymorphic shapes inside a module.
+
+  Given a module with static input shapes, but using dynamic shapes due to
+  shape polymorphism, run shape refinement to resolve all the dynamic shapes.
+  """
+  if xc.mlir_api_version < 50:
+    raise NotImplementedError("refine_polymorphic_shapes needs jaxlib 0.4.12")
+
+  refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
+    module_to_bytecode(module))
+  context = make_ir_context()
+  with context:
+    return ir.Module.parse(refined_module_str)
