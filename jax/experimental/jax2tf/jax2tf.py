@@ -3066,26 +3066,25 @@ def _fft(x, *, fft_type, fft_lengths,
          _in_avals: Sequence[core.ShapedArray],
          _out_aval: core.ShapedArray):
   FFT, IFFT, RFFT, IRFFT = list(map(xla_client.FftType, [0, 1, 2, 3]))
-  x_aval, = _in_avals
-  x_shape = x_aval.shape
-  if fft_type == IRFFT:
-    expected_lengths = x_shape[-len(fft_lengths):-1] + ((x_shape[-1] - 1) * 2,)
-  else:
-    expected_lengths = x_shape[-len(fft_lengths):]
-  if expected_lengths != fft_lengths:
-    raise NotImplementedError(
-        f"Unsupported {fft_lengths=} for {fft_type=} of "
-        f"array with shape={x.shape}.")
   tf_funcs = {
       FFT: [tf.signal.fft, tf.signal.fft2d, tf.signal.fft3d],
       IFFT: [tf.signal.ifft, tf.signal.ifft2d, tf.signal.ifft3d],
       RFFT: [tf.signal.rfft, tf.signal.rfft2d, tf.signal.rfft3d],
       IRFFT: [tf.signal.irfft, tf.signal.irfft2d, tf.signal.irfft3d]
   }
-  res = tf_funcs[fft_type][len(fft_lengths) - 1](x)
+  tf_func = tf_funcs[fft_type][len(fft_lengths) - 1]
+  if fft_type in (RFFT, IRFFT):
+    # https://www.tensorflow.org/api_docs/python/tf/signal/irfft
+    # Here we only set `fft_lengths` argument for non-default value.
+    (x_aval,) = _in_avals
+    x_shape = x_aval.shape
+    expected_lengths = x_shape[-len(fft_lengths) : -1] + (
+        (x_shape[-1] - 1) * 2,
+    )
+    if fft_lengths != expected_lengths:
+      tf_func = partial(tf_func, fft_length=_eval_shape(fft_lengths))
+  res = tf_func(x)
   return _ensure_tf_shape_if_dynamic(res, _aval_to_tf_shape(_out_aval))
-
-
 tf_impl_with_avals[lax.fft_p] = _fft
 
 

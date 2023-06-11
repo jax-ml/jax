@@ -1764,10 +1764,11 @@ for fft_type in list(map(xla_client.FftType, [0, 1, 2, 3])):
   for dtype in (jtu.dtypes.floating
                 if fft_type == xla_client.FftType.RFFT else jtu.dtypes.complex):
     shape = (14, 15, 16, 17)
-    for fft_lengths in [
-        (shape[-1],) if fft_type != xla_client.FftType.IRFFT else
-        ((shape[-1] - 1) * 2,)
-    ]:
+    if fft_type != xla_client.FftType.IRFFT:
+      fft_lengths_list = [ (shape[-1],) ]
+    else:
+      fft_lengths_list = [ ((shape[-1] - 1) * 2,), (shape[-1] * 2 - 1,) ]
+    for fft_lengths in fft_lengths_list:
       _make_fft_harness(
           "dtypes",
           shape=shape,

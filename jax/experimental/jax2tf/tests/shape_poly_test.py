@@ -2769,7 +2769,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   )
   def test_harness(self, harness: PolyHarness):
     # Exclude some harnesses that are known to fail for native serialization
-    # FOR GRAPH SERIALIZATION
+    # FOR NATIVE SERIALIZATION
     if config.jax2tf_default_native_serialization:
       if not harness.enable_xla:
         raise unittest.SkipTest("disabled for native_serialization and enable_xla=False")
