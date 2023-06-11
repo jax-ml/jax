@@ -124,6 +124,9 @@ def _is_tfval(v: TfVal) -> bool:
   except:
     return False
 
+class _DefaultNativeSerialization:
+  pass
+DEFAULT_NATIVE_SERIALIZATION = _DefaultNativeSerialization()
 
 # The implementation rules for primitives. The rule will be called with the
 # arguments (TfVal) and must return TfVal (or a sequence thereof,
@@ -224,14 +227,12 @@ def get_thread_local_state_call_tf_concrete_function_list() -> (
 @partial(api_util.api_hook, tag="jax2tf_convert")
 def convert(fun_jax: Callable,
             *,
-            polymorphic_shapes=None,
-            with_gradient=True,
-            enable_xla=True,
-            # TODO(necula): remove the experimental flag
-            experimental_native_lowering="default",
-            native_serialization="default",
-            native_serialization_platforms=(),
-            native_serialization_strict_checks=True) -> Callable:
+            polymorphic_shapes: Optional[str] = None,
+            with_gradient: bool = True,
+            enable_xla: bool = True,
+            native_serialization: Union[bool, _DefaultNativeSerialization] = DEFAULT_NATIVE_SERIALIZATION,
+            native_serialization_platforms: Sequence[str] = (),
+            native_serialization_strict_checks: bool = True) -> Callable:
   """Allows calling a JAX function from a TensorFlow program.
 
   See
@@ -294,7 +295,7 @@ def convert(fun_jax: Callable,
       StableHLO with compatibility guarantees. This makes it easier to have
       confidence that the code executed when calling this function from
       TensorFlow is exactly the same as JAX would run natively.
-      The "default" value defers to `False` if `enable_xla`
+      The DEFAULT_NATIVE_SERIALIZATION value defers to `False` if `enable_xla`
       is set to `False` or to the configuration flag
       `--jax2tf_default_native_serialization` otherwise.
       Native serialization cannot be used with `enable_xla=False`.
@@ -315,7 +316,7 @@ def convert(fun_jax: Callable,
     tuple/lists/dicts thereof), and returns TfVals as outputs, and uses
     only TensorFlow ops and thus can be called from a TensorFlow program.
   """
-  if native_serialization == "default":
+  if native_serialization is DEFAULT_NATIVE_SERIALIZATION:
     if not enable_xla:
       native_serialization = False
     else:
