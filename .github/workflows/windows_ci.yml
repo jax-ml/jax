@@ -1,9 +1,8 @@
-name: Wheel::Windows::x86_64
+name: Windows CI
 on:
+  schedule:
+    - cron: "0 12 * * *" # Daily at 12:00 UTC
   workflow_dispatch: # allows triggering the workflow run manually
-#  pull_request:
-#  release:
-#    types: [published]
 
 env:
   DISTUTILS_USE_SDK: 1
@@ -16,7 +15,7 @@ jobs:
       matrix:
         os: [windows-2019]
         arch: [AMD64]
-        pyver: ['3.9', '3.10', '3.11']
+        pyver: ['3.9']
     name: ${{ matrix.os }} jaxlib Wheel-builder
     runs-on: ${{ matrix.os }}
 
@@ -40,13 +39,7 @@ jobs:
           python -m pip install -r build/test-requirements.txt
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
           python.exe build\build.py `
-            --noenable_tpu `
-            --noenable_remote_tpu `
-            --noenable_mkl_dnn `
-            --target_cpu_features release `
-            --noenable_plugin_device `
             --noremote_build `
-            --noenable_cuda `
             --configure_only 
           bazel build --jobs=1 --subcommands `
             --cxxopt="/Zm2000" `
@@ -73,9 +66,3 @@ jobs:
           python -m pip install --no-index --find-links ${{ github.workspace }}\dist jaxlib
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           pytest -n auto --tb=short tests examples
-
-      - uses: actions/upload-artifact@v2
-        if: ${{ github.event_name == 'release' }}
-        with:
-          name: jaxlib_wheels
-          path: ${{ github.workspace }}\dist\*.whl
