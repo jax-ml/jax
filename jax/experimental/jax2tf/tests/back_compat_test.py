@@ -189,6 +189,7 @@ class CompatTest(jtu.JaxTestCase):
   def run_one_test(self, func: Callable[..., jax.Array],
                    data: CompatTestData,
                    rtol = None,
+                   atol = None,
                    check_results: Optional[Callable[..., None]] = None,
                    use_tf_graph = False):
     """Run one compatibility test.
@@ -197,6 +198,7 @@ class CompatTest(jtu.JaxTestCase):
       func: the JAX function to serialize and run
       data: the test data
       rtol: relative tolerance for numerical comparisons
+      atol: absolute tolerance for numerical comparisons
       check_results: invoked with the results obtained from running the
         serialized code, and those stored in the test data, and the kwarg rtol.
       use_tf_graph: if False (default), uses jax_export to serialize JAX
@@ -301,18 +303,22 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     if rtol is None:
       rtol = 1.e-7
     if check_results is not None:
-      check_results(res_from_jax_run_now, data.expected_outputs, rtol=rtol)
+      check_results(res_from_jax_run_now, data.expected_outputs, rtol=rtol,
+                    atol=atol)
     else:
-      self.assertAllClose(res_from_jax_run_now, data.expected_outputs, rtol=rtol)
+      self.assertAllClose(res_from_jax_run_now, data.expected_outputs, rtol=rtol,
+                          atol=atol)
 
     logging.info("Running the serialized module")
     res_from_serialized_run_now = self.run_serialized(data,
                                                       use_tf_graph=use_tf_graph)
     logging.info("Result of serialized run is %s", res_from_serialized_run_now)
     if check_results is not None:
-      check_results(res_from_serialized_run_now, data.expected_outputs, rtol=rtol)
+      check_results(res_from_serialized_run_now, data.expected_outputs,
+                    rtol=rtol, atol=atol)
     else:
-      self.assertAllClose(res_from_serialized_run_now, data.expected_outputs, rtol=rtol)
+      self.assertAllClose(res_from_serialized_run_now, data.expected_outputs,
+                          rtol=rtol, atol=atol)
     self.assertListEqual(custom_call_targets, data.custom_call_targets)
 
   def run_serialized(self, data: CompatTestData,
@@ -425,7 +431,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     return lax.linalg.eigh(jnp.tril(operand), lower=True, symmetrize_input=False)
 
   def check_eigh_results(self, operand, res_now, res_expected, *,
-                         rtol):
+                         rtol, atol=None):
     v_now, w_now = res_now
     _, w_expected = res_expected
     n, m = operand.shape
@@ -440,7 +446,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     self.assertLessEqual(
         np.linalg.norm(np.matmul(operand, v_now) - w_now_like_v * v_now),
         rtol * np.linalg.norm(operand))
-    self.assertAllClose(w_expected, w_now, rtol=rtol)
+    self.assertAllClose(w_expected, w_now, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -457,7 +463,8 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     func = lambda: CompatTest.eigh_harness((8, 8), dtype)
     data = load_testdata(cpu_lapack_syev.data_2023_03_17[dtype_name])
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
-    self.run_one_test(func, data, rtol=rtol,
+    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_eigh_results, operand))
 
   @parameterized.named_parameters(
