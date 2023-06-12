@@ -385,7 +385,7 @@ class BatchTrace(Trace):
     f_ = _update_annotation(f_, f.in_type, axis_size, self.axis_name, dims, [])
     vals_out = call_primitive.bind(f_, *vals, **params)
     src = source_info_util.current()
-    return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out)]
+    return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out())]
 
   def post_process_call(self, call_primitive, out_tracers, params):
     vals, dims, srcs = unzip3((t.val, t.batch_dim, t.source_info)
