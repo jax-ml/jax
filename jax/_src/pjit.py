@@ -155,7 +155,7 @@ def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
 
 
 def _python_pjit_helper(fun, infer_params_fn, *args, **kwargs):
-  args_flat, _, params, in_tree, out_tree, _, jaxpr = infer_params_fn(
+  args_flat, _, params, in_tree, out_tree, _ = infer_params_fn(
       *args, **kwargs)
   for arg in args_flat:
     dispatch.check_arg(arg)
@@ -170,7 +170,7 @@ def _python_pjit_helper(fun, infer_params_fn, *args, **kwargs):
         fun_name, fails, args_flat, api_name, arg_names)
     raise ValueError(msg) from None
   outs = tree_unflatten(out_tree, out_flat)
-  return outs, out_flat, out_tree, args_flat, jaxpr
+  return outs, out_flat, out_tree, args_flat, params['jaxpr']
 
 
 def _python_pjit(fun: Callable, infer_params_fn):
@@ -350,7 +350,7 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
     _experimental_lowering_platform = kwargs.pop(
         '_experimental_lowering_platform', None)
     (args_flat, flat_global_in_avals, params, in_tree, out_tree,
-     donate_argnums, _) = infer_params_fn(*args, **kwargs)
+     donate_argnums) = infer_params_fn(*args, **kwargs)
     resource_env = params['resource_env']
     mesh = None if resource_env is None else resource_env.physical_mesh
     try:
@@ -528,7 +528,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
       inline=inline,
   )
   return (consts + args_flat, in_type, params, in_tree, out_tree(),
-          donate_argnums, jaxpr)
+          donate_argnums)
 
 def _extract_implicit_args(
   in_type: Sequence[Tuple[core.AbstractValue, bool]],
