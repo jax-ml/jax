@@ -495,7 +495,7 @@ class PmapSharding(XLACompatibleSharding):
     return global_shape[:sharded_dim] + global_shape[sharded_dim+1:]
 
 
-def _from_op_sharding_to_pos_sharding(
+def _op_sharding_to_pos_sharding(
     op_sharding: Union[xc.OpSharding, xc.HloSharding],
     device_assignment: Sequence[xc.Device]) -> PositionalSharding:
   if isinstance(op_sharding, xc.HloSharding):

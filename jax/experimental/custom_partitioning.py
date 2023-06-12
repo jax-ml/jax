@@ -25,6 +25,7 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir import ir
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.sharding_impls import _op_sharding_to_pos_sharding
 from jax._src import custom_api_util
 from jax._src.lib import xla_client as xc
 from jax._src.api_util import flatten_fun_nokwargs
@@ -475,15 +476,14 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
     return mlir.lower_fun(
         core.jaxpr_as_fun(call), multiple_results=True)(ctx, *values)
 
-  def to_mesh_pspec_sharding(op_sharding: Optional[xc.OpSharding]):
-    if op_sharding is None:
-      return op_sharding
+  def to_mesh_pspec_sharding(hlo_sharding: Optional[xc.HloSharding]):
+    if hlo_sharding is None:
+      return hlo_sharding
     if mesh.empty or not decode_shardings:
-      from jax._src.sharding_impls import GSPMDSharding
       assert devices is not None
-      return GSPMDSharding(devices, op_sharding.to_proto())
+      return _op_sharding_to_pos_sharding(hlo_sharding, devices)
     pspec = sharding_impls.parse_flatten_op_sharding(
-        op_sharding.to_proto(), mesh)[0].get_partition_spec()
+        hlo_sharding, mesh)[0].get_partition_spec()
     return jax.sharding.NamedSharding(mesh, pspec)
 
   sharding_callback_info = _ShardingCallbackInfo(propagate_user_sharding,

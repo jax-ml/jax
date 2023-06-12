@@ -2439,7 +2439,7 @@ orig_out_sharding_handlers[sharding_impls.NamedSharding] = _gspmd_to_named_shard
 def _gspmd_to_positional_sharding(
     op_sharding: xc.OpSharding,
     self: sharding_impls.PositionalSharding) -> sharding_impls.PositionalSharding:
-  return sharding_impls._from_op_sharding_to_pos_sharding(
+  return sharding_impls._op_sharding_to_pos_sharding(
       op_sharding, self._device_assignment)
 orig_out_sharding_handlers[sharding_impls.PositionalSharding] = _gspmd_to_positional_sharding
 

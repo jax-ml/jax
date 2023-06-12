@@ -31,7 +31,7 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
-from jax._src.sharding_impls import _from_op_sharding_to_pos_sharding
+from jax._src.sharding_impls import _op_sharding_to_pos_sharding
 from jax.experimental.pjit import pjit
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
@@ -922,7 +922,7 @@ class ShardingTest(jtu.JaxTestCase):
         mesh_shape, ('x', 'y') if ndim == 2 else ('x', 'y', 'z'))
     mps = jax.sharding.NamedSharding(mesh, pspec)
     original_op_sharding = mps._to_xla_hlo_sharding(ndim)
-    ps = _from_op_sharding_to_pos_sharding(original_op_sharding,
+    ps = _op_sharding_to_pos_sharding(original_op_sharding,
                                            mps._device_assignment)
     out_op_sharding = ps._to_xla_hlo_sharding(ndim)
     self.assertTrue(op_shardings.are_op_shardings_equal(
@@ -958,7 +958,7 @@ class ShardingTest(jtu.JaxTestCase):
     ops_ifr = op_shardings.is_op_sharding_replicated(mps_op_sharding)
     self.assertEqual(mps.is_fully_replicated, ops_ifr)
 
-    ps = _from_op_sharding_to_pos_sharding(mps_op_sharding,
+    ps = _op_sharding_to_pos_sharding(mps_op_sharding,
                                            mps._device_assignment)
     self.assertEqual(ps.is_fully_replicated,
                      op_shardings.is_op_sharding_replicated(
