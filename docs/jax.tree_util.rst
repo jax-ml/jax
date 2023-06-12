@@ -22,6 +22,7 @@ List of Functions
    tree_flatten
    tree_flatten_with_path
    tree_leaves
+   tree_leaves_with_path
    tree_map
    tree_map_with_path
    tree_reduce

@@ -723,6 +723,20 @@ def tree_flatten_with_path(
   return _generate_key_paths(tree, is_leaf), tree_def
 
 
+def tree_leaves_with_path(
+    tree: Any, is_leaf: Optional[Callable[[Any], bool]] = None
+) -> List[Tuple[KeyPath, Any]]:
+  """Flattens a pytree like ``tree_leaves``, but also returns each leaf's key path.
+
+  Args:
+    tree: a pytree to flatten. If it contains a custom type, it must be
+      registered with ``register_pytree_with_keys``.
+  Returns:
+    A list of key-leaf pairs, each of which contains a leaf and its key path.
+  """
+  return _generate_key_paths(tree, is_leaf)
+
+
 def generate_key_paths(
     tree: Any, is_leaf: Optional[Callable[[Any], bool]] = None
 ) -> List[Tuple[KeyPath, Any]]:

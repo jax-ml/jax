@@ -480,6 +480,13 @@ class TreeTest(jtu.JaxTestCase):
     from_one_tree = tree_util.tree_map(lambda a: a + 2, tree1)
     self.assertEqual(from_two_trees, from_one_tree)
 
+  def testTreeLeavesWithPath(self):
+    tree = [{i: i for i in range(10)}]
+    actual = tree_util.tree_leaves_with_path(tree)
+    expected = [((tree_util.SequenceKey(0), tree_util.DictKey(i)), i)
+                for i in range(10)]
+    self.assertEqual(actual, expected)
+
   def testKeyStr(self):
     tree1 = [ATuple(12, {'cin': [1, 4, 10], 'bar': None}), jnp.arange(5)]
     flattened, _ = tree_util.tree_flatten_with_path(tree1)

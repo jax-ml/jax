@@ -60,6 +60,7 @@ from jax._src.tree_util import (
   register_pytree_with_keys_class as register_pytree_with_keys_class,
   tree_map_with_path as tree_map_with_path,
   tree_flatten_with_path as tree_flatten_with_path,
+  tree_leaves_with_path as tree_leaves_with_path,
   keystr as keystr,
   SequenceKey as SequenceKey,
   DictKey as DictKey,
