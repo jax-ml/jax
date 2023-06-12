@@ -7,6 +7,9 @@ Remember to align the itemized text with the first line of an item within a list
 -->
 
 ## jax 0.4.13
+* Bug fixes
+  * Fixed incorrect wheel name in CUDA 12 releases (#16362); the correct wheel
+    is named `cudnn89` instead of `cudnn88`.
 
 ## jaxlib 0.4.13
 
