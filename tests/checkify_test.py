@@ -1295,6 +1295,10 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
 
     _ = jax.jit(f, static_argnums=(0,))(True)
 
+  def test_check_pp_rule(self):
+    jaxpr = jax.make_jaxpr(lambda: checkify.check(False, "hi"))()
+    jaxpr.pretty_print(source_info=True, name_stack=True)  # Does not crash.
+
 
 class LowerableChecksTest(jtu.JaxTestCase):
   def setUp(self):
