@@ -14,7 +14,6 @@
 
 # JAX is Autograd and XLA
 
-load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load("//jaxlib:jax.bzl", "if_windows")
