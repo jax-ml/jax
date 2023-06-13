@@ -13,11 +13,11 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [windows-2019]
+        os: [windows-2019-16core]
         arch: [AMD64]
         pyver: ['3.9']
     name: ${{ matrix.os }} jaxlib Wheel-builder
-    runs-on: large-win
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Cancel Previous Runs
