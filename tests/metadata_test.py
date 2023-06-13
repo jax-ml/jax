@@ -94,17 +94,17 @@ class MetadataTest(jtu.JaxTestCase):
       )
 
     # Sanity check
-    self.assertIn("/tests/metadata_test.py", make_hlo())
+    self.assertRegex(make_hlo(), r"[/\\]+tests[/\\]+metadata_test.py")
 
-    with jax_config.hlo_source_file_canonicalization_regex(".*/tests/"):
+    with jax_config.hlo_source_file_canonicalization_regex(r".*[\\/]+tests[/\\]+"):
       hlo = make_hlo()
       self.assertIn("metadata_test.py", hlo)
-      self.assertNotIn("tests/", hlo)
-      self.assertNotIn("/metadata_test.py", hlo)
+      self.assertNotRegex(hlo, r"tests[/\\]+")
+      self.assertNotRegex(hlo, r"[/\\]+metadata_test.py")
 
     with jax_config.hlo_source_file_canonicalization_regex("no_match_xxx"):
       hlo = make_hlo()
-      self.assertIn("/tests/metadata_test.py", hlo)
+      self.assertRegex(hlo, r"[/\\]+tests[/\\]+metadata_test.py")
 
     with jax_config.hlo_source_file_canonicalization_regex(".*"):
       hlo = make_hlo()
@@ -112,7 +112,8 @@ class MetadataTest(jtu.JaxTestCase):
 
     with jax_config.hlo_source_file_canonicalization_regex("test"):
       hlo = make_hlo()
-      self.assertIn("/s/metadata_.py", hlo)
+      self.assertRegex(hlo, r"[/\\]+s[/\\]+metadata_.py")
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
