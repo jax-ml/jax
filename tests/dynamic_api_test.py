@@ -1652,6 +1652,18 @@ class PileTest(jtu.JaxTestCase):
     self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[3,bint\{≤5\}\[3\] with value: \[3 1 4\]\.Var[0-9]+,2,7\]')
     self.assertEqual(p.data.shape, (3, 3, 5, 2, 7))
 
+  def test_split_while_ragged(self):
+    ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    def func(size):
+      one_d = jnp.arange(size, dtype='int32')
+      two_d = jnp.broadcast_to(one_d, (2, size))
+      part_1, part_2 = two_d
+      return part_1
+    p = jax.vmap(func, out_axes=batching.pile_axis)(ins)
+    self.assertIsInstance(p, batching.Pile)
+    data = jax.lax.broadcasted_iota('int32', (3, 5), 1)
+    self.assertAllClose(p.data, data)
+
 def pile_map(f):
   def mapped(*piles):
     return jax.vmap(f, in_axes=batching.pile_axis, out_axes=batching.pile_axis,
