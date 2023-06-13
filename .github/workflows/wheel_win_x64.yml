@@ -51,6 +51,7 @@ jobs:
           pytest -n auto --tb=short tests examples
 
       - uses: actions/upload-artifact@v3
-        name: jaxlib_wheels
-        path: ${{ github.workspace }}\dist\*.whl
-        retention-days: 5
+        with:
+          name: wheels
+          path: ${{ github.workspace }}\dist\*.whl
+          retention-days: 5
