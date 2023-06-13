@@ -15,29 +15,148 @@ import contextlib
 import logging
 import math
 import re
-from typing import List
+from typing import List, Optional, Sequence
 import unittest
 
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 import jax
 from jax import numpy as jnp
 from jax import tree_util
 from jax.config import config
 from jax.experimental.jax2tf import jax_export
-try:
-  from jax.experimental.jax2tf import jax2tf  # TODO: temporary
-except ImportError:
-  jax2tf = None  # type: ignore
-
 from jax.lib import xla_client as xc
+
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.interpreters import mlir
+from jax._src.lib.mlir import ir
+
+from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src.lib import xla_extension
 
 import numpy as np
 
-
 config.parse_flags_with_absl()
+
+
+if xc.mlir_api_version >= 50:
+  def _temp_call_exported(exp: jax_export.Exported, *args: jax.Array,
+                          skip_shape_check: bool = False):
+    assert all(core.is_constant_shape(a.shape) for a in args)
+    return jax_export.call_exported(exp)(*args)
+else:
+  def _temp_call_exported(exp: jax_export.Exported, *args: jax.Array,
+                          skip_shape_check: bool = False):
+    """Temporary runner for an Exported.
+
+    Normally we would use jax_export.call_exported, but if the exported has
+    shape polymorphism and we are using jaxlib before 0.4.12 we use
+    Once we upgrade the jaxlib we can replace all uses of this function with
+    jax_export.call_exported.
+    """
+    assert all(core.is_constant_shape(a.shape) for a in args)
+    if not exp.module_uses_dim_vars:
+      return jax_export.call_exported(exp)(*args)
+    else:
+      # We only get here in external tests, because internal ones use newest jaxlib
+      from jax.experimental.jax2tf import jax2tf  # TODO: temporary
+      # call_exported does the shape checking, we must do it manually for
+      # XlaCallModule.
+      if not skip_shape_check:
+        shape_check = exp.shape_check_module()
+        if shape_check is not None:
+          err_msg = _run_shape_check_module(exp, shape_check[0], shape_check[1], args)
+          if err_msg is not None:
+            raise ValueError(err_msg)
+
+      numpy_results = map(lambda res_tf: res_tf.numpy(),
+                          jax2tf._run_exported_as_tf(args, exp))
+      return exp.out_tree.unflatten(numpy_results)
+
+def _run_shape_check_module(primal_exported: jax_export.Exported,
+                            shape_check_module_serialized: bytes,
+                            shape_check_messages: Sequence[str],
+                            args: Sequence[jax.Array]
+                            ) -> Optional[str]:
+  """Helper to run a shape checking module.
+
+  We only need to do this in tests, because otherwise this will be done
+  implicitly when we call XlaCallModule.
+
+  Returns: the error message, or None if no error.
+  """
+  args = tuple(args)
+  # We cannot just make an Exported and run it, because call_exported will
+  # do the shape checks statically. So, we wrap the shape check module
+  # with static shape arguments
+
+  static_in_avals = tuple(core.get_aval(a) for a in args)
+  context = mlir.make_ir_context()
+  with context, ir.Location.unknown(context):
+    wrapped_module = ir.Module.parse(
+        xla_extension.mlir.deserialize_portable_artifact(
+            shape_check_module_serialized))
+    symbol_table = ir.SymbolTable(wrapped_module.operation)
+    orig_main = symbol_table["main"]
+    orig_main.attributes["sym_visibility"] = ir.StringAttr.get("private")
+    symbol_table.set_symbol_name(orig_main, "_wrapped_jax_export_main")
+    orig_main_name = ir.StringAttr(symbol_table.insert(orig_main)).value
+    # Use static shapes
+    new_main_input_types = [mlir.aval_to_ir_type(a) for a in static_in_avals]
+    orig_output_types = orig_main.type.results
+    new_main_ftype = ir.FunctionType.get(
+      new_main_input_types, orig_output_types
+    )
+    new_main_op = func_dialect.FuncOp(
+      "main",
+      new_main_ftype,
+      ip=ir.InsertionPoint.at_block_begin(wrapped_module.body),
+    )
+    new_main_op.attributes["sym_visibility"] = ir.StringAttr.get("public")
+    symbol_table.insert(new_main_op)
+    entry_block = new_main_op.add_entry_block()
+    with ir.InsertionPoint(entry_block):
+      orig_main_args: List[ir.Value] = []
+      for new_arg, orig_arg_type in zip(
+        new_main_op.arguments, orig_main.type.inputs
+      ):
+        orig_main_args.append(hlo.ConvertOp(orig_arg_type, new_arg).result)
+      call = func_dialect.CallOp(
+        orig_output_types,
+        ir.FlatSymbolRefAttr.get(orig_main_name),
+        orig_main_args,
+      )
+      func_dialect.ReturnOp(call.results)
+  symbol_table.set_symbol_name(new_main_op, "main")
+
+  wrapped_module_serialized, version = jax_export._serialize_module(wrapped_module)
+  # Make an Exported and then run it
+  out_avals = (core.ShapedArray((), dtype=np.int32),) * 3
+  exp = jax_export.Exported(
+    fun_name=f"shape_check_{primal_exported.fun_name}",
+    in_tree=tree_util.tree_flatten((args, {}))[1],
+    in_avals=static_in_avals,
+    out_tree=tree_util.tree_flatten(out_avals)[1],
+    out_avals=out_avals,
+    in_shardings=None,
+    out_shardings=None,
+    lowering_platform=primal_exported.lowering_platform,
+    disabled_checks=(),
+    mlir_module_serialized=wrapped_module_serialized,
+    xla_call_module_version=version,
+    module_kept_var_idx=tuple(sorted(range(len(static_in_avals)))),
+    module_uses_dim_vars=True,
+    _get_vjp=lambda _: None)  # type: ignore
+
+  code, op1, op2 = _temp_call_exported(exp, *args,
+                                       skip_shape_check=True)
+  if code == -1:
+    return None
+  else:
+    return shape_check_messages[code].replace("%1", str(int(op1))).replace(
+      "%2", str(int(op2)))
 
 
 class JaxExportTest(jtu.JaxTestCase):
@@ -171,9 +290,10 @@ class JaxExportTest(jtu.JaxTestCase):
         r"Dtype mismatch for args\[0\]"):
       jax_export.call_exported(exp_f)(f32_4.astype(np.float16), b=f32_4)
 
-  @parameterized.named_parameters(
-      dict(testcase_name=p, platform=p)
-      for p in ("cpu", "cuda", "rocm", "tpu"))
+  @jtu.parameterized_filterable(
+    testcase_name=lambda kw: kw["platform"],
+    kwargs=[dict(platform=p)
+            for p in ("cpu", "cuda", "rocm", "tpu")])
   def test_error_wrong_platform(self, platform):
     a = np.arange(4, dtype=np.float32)
 
@@ -239,6 +359,7 @@ class JaxExportTest(jtu.JaxTestCase):
     exp_vjp = jax.vjp(f1_exp, a, b)[1](out_ct)
     self.assertAllClose(jax_vjp, exp_vjp)
 
+
   def test_roundtrip(self):
     def f1(x):
       return jnp.sin(x)
@@ -253,150 +374,199 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertAllClose(jnp.cos(jnp.sin(jnp.sin(a))),
                         jax_export.call_exported(exp_f2)(a))
 
+  # A function is exported with f32[poly_spec] and is called with different arg
+  # shapes. We use jax_export.call_exported and we also run the shape check
+  # module.
+  @jtu.parameterized_filterable(
+    testcase_name=lambda kw:f"poly_spec={kw['poly_spec']}_arg_shape={kw['arg_shape']}",  # type: ignore
+    #one_containing="",
+    kwargs=[
+      dict(poly_spec="3,4,12", arg_shape=(3, 4, 12)),
+      dict(poly_spec="3,4,12", arg_shape=(3, 4, 13),
+           # The shape check module does not test constant dimensions
+           expect_error_run=re.escape(
+               r"Shape mismatch for args[0].shape[2] (expected same constant)")),
+      dict(poly_spec="3,4,6*a", arg_shape=(3, 4, 12)),
+      dict(poly_spec="3,a,a+8", arg_shape=(3, 4, 12)),
+      dict(poly_spec="3,4,a+1", arg_shape=(3, 4, 1),
+           expect_error=re.escape(
+              r"Dimension variable 'a' must have integer "
+              r"value >= 1. Found 0 when solving "
+              r"a + 1 == args[0].shape[2].")),
+      dict(poly_spec="3,4,6*a", arg_shape=(3, 4, 13),
+           expect_error=re.escape(
+               r"Dimension variable 'a' must have integer value >= 1. "
+               r"Non-zero remainder 1 for factor 6 when solving "
+               r"6*a == args[0].shape[2]")),
+      dict(poly_spec="3,a,a+8", arg_shape=(3, 4, 13),
+           expect_error=re.escape(
+              r"Found inconsistency 13 != 12 when solving "
+              r"a + 8 == args[0].shape[2]")),
+  ])
+  def test_poly_shape_checks(
+      self, poly_spec="3,a,a+8",
+      arg_shape=(3, 4, 12), arg_dtype=np.float32,
+      expect_error=None,  # If given, applies for expect_error_run and expect_error_shape_check
+      expect_error_run=None,  # Error from running the exported module
+      expect_error_shape_check=None):  # Error from running the shape check module
+    if expect_error is not None:
+      self.assertIsNone(expect_error_run, None)
+      self.assertIsNone(expect_error_shape_check, None)
+      expect_error_run = expect_error_shape_check = expect_error
+    def f(x):  # x: f32[poly_spec]
+      return jnp.reshape(x, (-1, x.shape[1]))
+
+    exp_f = jax_export.export(f)(
+        jax_export.poly_spec((3, 4, 12), np.float32, poly_spec))
+    self.assertEqual(exp_f.module_uses_dim_vars, poly_spec != "3,4,12")
+    arg = np.arange(np.prod(arg_shape),
+                    dtype=arg_dtype).reshape(arg_shape)  # arg : f32[3,4,12]
+
+    with contextlib.ExitStack() as stack:
+      if expect_error_run is not None:
+        stack.push(self.assertRaisesRegex(Exception, expect_error_run))
+
+      res = _temp_call_exported(exp_f, arg)
+
+    if not expect_error_run:
+      self.assertAllClose(res, f(arg))
+
+    # Test the shape_check_module
+    shape_check = exp_f.shape_check_module()
+    # We have shape_check only if the exported has polymorphic inputs shapes.
+    if all(core.is_constant_shape(a.shape) for a in exp_f.in_avals):
+      self.assertIsNone(shape_check)
+      self.assertIsNone(expect_error_shape_check)
+    else:
+      self.assertIsNotNone(shape_check)
+      shape_check_module, shape_check_messages = shape_check
+      err_msg = _run_shape_check_module(exp_f,
+          shape_check_module, shape_check_messages, (arg,))
+
+      if expect_error_shape_check is None:
+        self.assertIsNone(err_msg)
+      else:
+        self.assertRegex(err_msg, expect_error_shape_check)
+
+
   # An inner function is exported with polymorphic shapes inner_poly_spec, and
   # is called from an outer function, which is exported with outer_poly_spec.
-  @parameterized.named_parameters(
-      dict(testcase_name=f"inner={d['inner_poly_spec']}_outer={d['outer_poly_spec']}",  # type: ignore
-           **d)  # type: ignore
-      for d in (
-          dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,4,12"),
-          dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,4,c"),
-          dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,c,c",
-               expect_error=re.escape(
-                   r"Dimension variable 'b' must have integer value >= 1. "
-                   r"Found 0 when solving a + b == args[0].shape[2]")),
-          dict(inner_poly_spec="3,a,a+b", outer_poly_spec="c,4,12",
-               expect_error=r"Shape mismatch for args\[0\].shape\[0\] \(expected constant\)"),
-          # dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,c+4,12"),  # TODO: there should be an error
-          dict(inner_poly_spec="3,4,3*a", outer_poly_spec="3,4,12"),
-          dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,12",
-               expect_error=re.escape(
-                   r"Dimension variable 'a' must have integer value >= 1. "
-                   r"Non-zero remainder 2 for factor 5 when solving 5*a == args[0].shape[2]")),
-          # dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,c"),  # TODO: there should be an error 5*a != c == 12
-          # dict(inner_poly_spec="3,a,a", outer_poly_spec="3,a,a"),  # TODO: there should be an error 12 != 4
-          dict(inner_poly_spec="3,a", inner_x_shape=(3, 4), outer_poly_spec="3,a,a",
-               expect_error=r"Rank mismatch for args\[0\]"),
-          dict(inner_poly_spec="3,a,a+b", inner_x_dtype=np.int32, outer_poly_spec="3,c,d",
-               expect_error=r"Dtype mismatch for args\[0\]"),
-      ))
-  def test_poly(self, inner_poly_spec="3,a,a", inner_x_shape=(3, 4, 6),
-                inner_x_dtype=np.float32,
-                outer_poly_spec="3,a,a",  outer_x_shape=(3, 4, 12),
-                expect_error=None):
+  @jtu.parameterized_filterable(
+    testcase_name=lambda kw:f"inner={kw['inner_poly_spec']}_outer={kw['outer_poly_spec']}",  # type: ignore
+    #one_containing="",
+    # By default arg_shape = (3, 4, 12) for both the outer function and the inner
+    # The inner function is exported for f32.
+    kwargs=[
+      # Both inner and outer are static shapes
+      dict(inner_poly_spec="3,4,12", outer_poly_spec="3,4,12"),
+      # Inner has poly shapes but outer has static shapes
+      dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,4,12"),
+      dict(inner_poly_spec="3,4,3*a", outer_poly_spec="3,4,12"),
+      dict(inner_poly_spec="3,a,a", outer_poly_spec="3,4,12",
+           expect_error_outer_exp=re.escape(
+             r"Found inconsistency 12 != 4 when solving a == args[0].shape[2]")),
+      dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,12",
+           expect_error_outer_exp=re.escape(
+             r"Dimension variable 'a' must have integer value >= 1. "
+             r"Non-zero remainder 2 for factor 5 when solving 5*a == args[0].shape[2]")),
+      dict(inner_poly_spec="3,4,12+a", outer_poly_spec="3,4,12",
+           expect_error_outer_exp=re.escape(
+             r"Dimension variable 'a' must have integer value >= 1. "
+             r"Found 0 when solving a + 12 == args[0].shape[2]")),
+      # Both inner and outer have poly shapes.
+      dict(inner_poly_spec="3,a,b", outer_poly_spec="3,4,c"),
+      dict(inner_poly_spec="3,4,3*a", outer_poly_spec="3,4,6*c"),
+      dict(inner_poly_spec="3,a,a+8", outer_poly_spec="3,c+2,c+10"),
+      dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,4,c",
+           expect_error_outer_exp=re.escape(
+             r"Dimension variable 'b' must have integer value >= 1. "
+             r"Found c + -4 when solving a + b == args[0].shape[2]")),
+      dict(inner_poly_spec="3,a,a", outer_poly_spec="3,4,c",
+           expect_error_outer_exp=re.escape(
+             r"Found inconsistency c != 4 when solving a == args[0].shape[2]"
+           )),
+      dict(inner_poly_spec="3,a,a", arg_shape=(3, 4),
+           outer_poly_spec="3,c",
+           expect_error_outer_exp=r"Rank mismatch for args\[0\]"),
+      dict(inner_poly_spec="3,a,a+b", arg_dtype=np.int32,
+           outer_poly_spec="3,c,d",
+           expect_error_outer_exp=r"Dtype mismatch for args\[0\]"),
+
+      dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,c",
+           expect_error_outer_exp=re.escape(
+             r"Dimension variable 'a' must have integer value >= 1. "
+             r"Non-zero remainder mod(c, 5) for factor 5 when solving 5*a == args[0].shape[2]"
+           )),
+      dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,c,c",
+           expect_error_outer_exp=re.escape(
+               r"Dimension variable 'b' must have integer value >= 1. "
+               r"Found 0 when solving a + b == args[0].shape[2]")),
+      dict(inner_poly_spec="3,a,a+b", outer_poly_spec="c,4,12",
+           expect_error_outer_exp=re.escape(
+             r"Shape mismatch for args[0].shape[0] (expected same constant)")),
+      dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,25*c",
+           expect_error_run=re.escape(
+             r"Dimension variable 'c' must have integer value >= 1. "
+             r"Non-zero remainder 12 for factor 25 when solving 25*c == args[0].shape[2]")),
+      dict(inner_poly_spec="3,a,b", outer_poly_spec="3,c+4,12",
+           expect_error_run=re.escape(
+               r"Dimension variable 'c' must have integer value >= 1. "
+               r"Found 0 when solving c + 4 == args[0].shape[1]")),
+      dict(inner_poly_spec="3,a,a", outer_poly_spec="3,a,a",
+           expect_error_run=re.escape(
+               r"Found inconsistency 12 != 4 when solving "
+               r"a == args[0].shape[2]")),
+  ])
+  def test_poly_shape_checks_nested(
+      self, inner_poly_spec="3,4,5*a",
+      arg_shape=(3, 4, 12), arg_dtype=np.float32,
+      outer_poly_spec="3,4,25*c",
+      expect_error_outer_exp=None,
+      expect_error_run=None):
     # Polymorphic export called with static or polymorphic shapes
     def inner(x):  # x: inner_poly_spec
       return jnp.reshape(x, (-1, x.shape[1]))
 
-    inner_x = np.arange(np.prod(inner_x_shape),
-                        dtype=inner_x_dtype).reshape(inner_x_shape)  # inner_x : f32[3,4,6]
+    arg = np.arange(np.prod(arg_shape),
+                    dtype=arg_dtype).reshape(arg_shape)  # x : f32[3,4,12]
     inner_exp = jax_export.export(inner)(
-        jax_export.poly_spec(inner_x.shape, inner_x.dtype, inner_poly_spec))
+        jax_export.poly_spec((3, 4, 12), np.float32, inner_poly_spec))
 
     self.assertEqual(inner_exp.module_uses_dim_vars,
                      (inner_poly_spec != "3,4,12"))
-    outer_x = np.arange(np.prod(outer_x_shape),
-                        dtype=np.float32).reshape(outer_x_shape)  # outer_x : f32[3,4,12]
     def outer(x):  # x: outer_poly_spec
       # Use an addition to test that the shapes are refined properly for the
       # result of the call_exported.
       return jax_export.call_exported(inner_exp)(x) + inner(x)
 
     with contextlib.ExitStack() as stack:
-      if expect_error is not None:
-        stack.push(self.assertRaisesRegex(ValueError, expect_error))
+      if expect_error_outer_exp is not None:
+        stack.push(self.assertRaisesRegex(ValueError, expect_error_outer_exp))
 
       # Call it after exporting again, with polymorphic shapes
       outer_exp = jax_export.export(outer)(
-          jax_export.poly_spec(outer_x.shape, outer_x.dtype, outer_poly_spec))
-      self.assertEqual(outer_exp.module_uses_dim_vars,
-                       (inner_poly_spec != "3,4,12" or outer_poly_spec != "3,4,12"))
-      # TODO(necula): need conditionals until jaxlib 0.4.12 is the minimum version
-      if not outer_exp.module_uses_dim_vars or xc.mlir_api_version >= 50:
-        res = jax_export.call_exported(outer_exp)(outer_x)
-        self.assertAllClose(2. * inner(outer_x), res)
-      else:
-        # TODO: for now, we use XlaCallModule to run modules with polymorphic shapes
-        # until we create the python bindings to invoke shape refinement.
-        if jax2tf is not None:
-          res = jax2tf._run_exported_as_tf([outer_x], outer_exp)[0].numpy()
-          self.assertAllClose(2. * inner(outer_x), res)
+          jax_export.poly_spec(arg.shape, arg.dtype, outer_poly_spec))
 
-  def test_call_poly(self):
-    a_shape = (3, 4)
-    a = np.arange(math.prod(a_shape), dtype=np.float32).reshape(a_shape)
+    if expect_error_outer_exp is not None:
+      return
 
-    def f_inner(x):  # x: f32[w, h]
-      return jnp.reshape(x, (-1,))
+    self.assertEqual(outer_exp.module_uses_dim_vars,
+                     (inner_poly_spec != "3,4,12" or outer_poly_spec != "3,4,12"))
+    shape_check = outer_exp.shape_check_module()
+    if all(core.is_constant_shape(a.shape) for a in outer_exp.in_avals):
+      self.assertIsNone(shape_check)
+    else:
+      self.assertIsNotNone(shape_check)
 
-    exp_inner = jax_export.export(f_inner)(
-        jax_export.poly_spec(a.shape, a.dtype, "w, h")
-    )
+    with contextlib.ExitStack() as stack:
+      if expect_error_run is not None:
+        stack.push(self.assertRaisesRegex(Exception, expect_error_run))
 
-    # There are dynamic shapes in the exported module
-    self.assertIn("?x", exp_inner.mlir_module)
-    self.assertIn("stablehlo.dynamic_reshape", exp_inner.mlir_module)
+      res = _temp_call_exported(outer_exp, arg)
 
-    # Add a wrapper "main" func with static shapes
-    # TODO(necula): We will add this functionality to jax_export.
-    from jax._src.interpreters import mlir
-    from jax._src.lib.mlir import ir
-    from jax._src.lib.mlir.dialects import hlo
-    from jax._src.lib.mlir.dialects import func as func_dialect
-    from jax.lib import xla_client as xc
-    from jax._src.lib import xla_extension
-
-    context = mlir.make_ir_context()
-    with context, ir.Location.unknown(context):
-      wrapped_module = ir.Module.parse(exp_inner.mlir_module)
-      symbol_table = ir.SymbolTable(wrapped_module.operation)
-      orig_main = symbol_table["main"]
-      orig_main.attributes["sym_visibility"] = ir.StringAttr.get("private")
-      symbol_table.set_symbol_name(orig_main, "_wrapped_jax_export_main")
-      orig_main_name = ir.StringAttr(symbol_table.insert(orig_main)).value
-      # Use static shapes
-      new_main_input_types = [
-          mlir.aval_to_ir_type(core.ShapedArray((3, 4), np.float32))
-      ]
-      orig_output_types = orig_main.type.results
-      new_main_ftype = ir.FunctionType.get(
-          new_main_input_types, orig_output_types
-      )
-      new_main_op = func_dialect.FuncOp(
-          "main",
-          new_main_ftype,
-          ip=ir.InsertionPoint.at_block_begin(wrapped_module.body),
-      )
-      new_main_op.attributes["sym_visibility"] = ir.StringAttr.get("public")
-      symbol_table.insert(new_main_op)
-      entry_block = new_main_op.add_entry_block()
-      with ir.InsertionPoint(entry_block):
-        orig_main_args: List[ir.Value] = []
-        for new_arg, orig_arg_type in zip(
-            new_main_op.arguments, orig_main.type.inputs
-        ):
-          orig_main_args.append(hlo.ConvertOp(orig_arg_type, new_arg).result)
-        call = func_dialect.CallOp(
-            orig_output_types,
-            ir.FlatSymbolRefAttr.get(orig_main_name),
-            orig_main_args,
-        )
-        func_dialect.ReturnOp(call.results)
-    symbol_table.set_symbol_name(new_main_op, "main")
-
-    # TODO(necula): need conditionals until jaxlib 0.4.12 is the minimum version
-    if xc.mlir_api_version >= 50:
-      refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
-          mlir.module_to_bytecode(wrapped_module)
-      )
-      context = mlir.make_ir_context()
-      with context:
-        refined_module = ir.Module.parse(refined_module_str)
-
-      logging.info("Postprocessed module %s", str(refined_module))
-      self.assertNotIn("?x", str(refined_module))
-      self.assertNotIn("stablehlo.dynamic_reshape", str(refined_module))
-      self.assertIn("stablehlo.reshape", str(refined_module))
+    if expect_error_run is not None:
+      return
+    self.assertAllClose(2. * inner(arg), res)
 
 
 if __name__ == "__main__":

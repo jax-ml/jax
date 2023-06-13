@@ -22,7 +22,7 @@ import re
 import os
 import tempfile
 import textwrap
-from typing import Callable, List, Generator, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Generator, Optional, Sequence, Tuple, Union
 import unittest
 import warnings
 import zlib
@@ -1207,3 +1207,42 @@ def _parse_version(v: str) -> Tuple[int, ...]:
 
 def numpy_version():
   return _parse_version(np.__version__)
+
+def parameterized_filterable(*,
+    kwargs: Sequence[Dict[str, Any]],
+    testcase_name: Optional[Callable[[Dict[str, Any]], str]] = None,
+    one_containing: Optional[str] = None,
+):
+  """
+  Decorator for named parameterized tests, with filtering.
+
+  Works like parameterized.named_parameters, except that it supports the
+  `one_containing` option. This is useful to select only one of the tests,
+  and to leave the test name unchanged (helps with specifying the desired test
+  when debugging).
+
+  Args:
+    kwargs: Each entry is a set of kwargs to be passed to the test function.
+    testcase_name: Optionally, a function to construct the testcase_name from
+      one kwargs dict. If not given then the kwarg must contain `testcase_name`.
+    one_containing: If given, then leave the test name unchanged, and use
+      only one `kwargs` whose `testcase_name` includes `one_containing`.
+  """
+  # Ensure that all kwargs contain a testcase_name
+  kwargs_with_testcase_name: Sequence[Dict[str, Any]]
+  if testcase_name is not None:
+    kwargs_with_testcase_name = [dict(testcase_name=testcase_name(kw), **kw)
+                                 for kw in kwargs]
+  else:
+    for kw in kwargs:
+      assert "testcase_name" in kw
+    kwargs_with_testcase_name = kwargs
+  if one_containing is not None:
+    filtered = tuple(kw for kw in kwargs_with_testcase_name
+                     if one_containing in kw["testcase_name"])
+    assert filtered, f"No testcase_name contains '{one_containing}'"
+    kw = filtered[0]
+    kw["testcase_name"] = ""
+    return parameterized.named_parameters([kw])
+  else:
+    return parameterized.named_parameters(*kwargs_with_testcase_name)

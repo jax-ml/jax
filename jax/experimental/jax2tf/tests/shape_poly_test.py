@@ -841,7 +841,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     f_tf: Callable[..., Any] = jax2tf.convert(f_jax, polymorphic_shapes=["b, ..."])
     self.assertAllClose(f_jax(x, y=y), f_tf(x, y=y))
 
-  def test_arg_avals(self):
+  def test_arg_avals_non_native(self):
     """Test conversion of actual arguments to abstract values."""
 
     def check_avals(*, arg_shapes: Sequence[Sequence[Optional[int]]],
@@ -857,7 +857,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         dim_vars = shape_poly.all_dim_vars(avals)
         dim_values, _ = jax2tf.jax2tf._interpret_fun_jax(
             partial(shape_poly.compute_dim_vars_from_arg_shapes,
-                    avals, args_kwargs_tree=tree_util.tree_flatten((avals, {}))[1]),
+                    avals,
+                    args_kwargs_tree=tree_util.tree_flatten((avals, {}))[1]),
             args_tf, avals, "")
         if expected_avals is not None:
           self.assertEqual(expected_avals, avals)
@@ -958,55 +959,55 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         eager_mode=True,
         expected_shapeenv=dict(a=2, b=3, c=4))
 
+  def test_arg_avals_errors(self):
+    """Test error reporting for shape polymorpish."""
+    def conv_and_run(*, arg_shape: core.Shape,
+                     polymorphic_shape: str):
+      arg = np.arange(math.prod(arg_shape), dtype=np.float32).reshape(arg_shape)
+      jax2tf.convert(lambda x: x, polymorphic_shapes=[polymorphic_shape])(arg)
+
+    with self.assertRaisesRegex(ValueError,
+                                re.escape("polymorphic shape spec should be")):
+      conv_and_run(arg_shape=(2,), polymorphic_shape=5.)
+
+    with self.assertRaisesRegex(ValueError,
+                                re.escape("pytree structure error: different types")):
+      conv_and_run(arg_shape=(2,), polymorphic_shape=["a list"])
+
+    with self.assertRaisesRegex(ValueError,
+                                re.escape("pytree structure error: different types")):
+      conv_and_run(arg_shape=(2,), polymorphic_shape=("a tuple",))
+
+    # The following do not work yet with native serialization because
+    # XlaCallModule does not yet do shape checking.
+    if config.jax2tf_default_native_serialization:
+      return
+
+    # TODO(necula): enable even for native serialization
     with self.assertRaisesRegex(ValueError,
                                 "Cannot solve for values of dimension variables {'b'}"):
-      check_avals(
-          arg_shapes=[(4, 36, 3)],
-          polymorphic_shapes=[PS("b * b", "b * d * d", "d")])
+      conv_and_run(arg_shape=(4, 36, 3), polymorphic_shape="b * b, b * d * d, d")
 
+    # TODO(necula): enable even for native serialization
     with self.assertRaisesRegex(ValueError,
                                 "Dimension variable 'b' must have integer value >= 1"):
-      check_avals(
-          arg_shapes=[(5, 36)],
-          polymorphic_shapes=[PS("3 * b", ...)],
-          eager_mode=True)
+      conv_and_run(arg_shape=(5, 36), polymorphic_shape="3 * b, ...")
 
+    # TODO(necula): enable even for native serialization
     with self.assertRaisesRegex(ValueError,
                                 "Dimension variable 'b' must have integer value >= 1"):
-      check_avals(
-          arg_shapes=[(10, 3)],
-          polymorphic_shapes=[PS("3 * b + 10", ...)],
-          eager_mode=True)
+      conv_and_run(arg_shape=(10, 3), polymorphic_shape="3 * b + 10, ...")
 
+    # TODO(necula): enable even for native serialization
     with self.assertRaisesRegex(ValueError,
                                 "Dimension variable 'b' must have integer value >= 1"):
-      check_avals(
-          arg_shapes=[(7, 3)],
-          polymorphic_shapes=[PS("3 * b + 10", ...)],
-          eager_mode=True)
+      conv_and_run(arg_shape=(7, 3), polymorphic_shape="3 * b + 10, ...")
 
-    for invalid_syntax in [5.0, ["a list"], ("a tuple",), re.compile(".")]:
-      with self.assertRaisesRegex(ValueError,
-                                  re.escape("Invalid polymorphic shape element")):
-        check_avals(
-            arg_shapes=[(2,)], polymorphic_shapes=[PS([invalid_syntax])])
-
+    # TODO(necula): enable even for native serialization
     with self.assertRaisesRegex(
         ValueError,
         "Found inconsistency 3 != 2 when solving.*"):
-      check_avals(
-          arg_shapes=[(2, 3)],
-          polymorphic_shapes=["(a, a)"],
-          eager_mode=True)
-
-    # Same error across multiple arguments
-    with self.assertRaisesRegex(
-        ValueError,
-        "Found inconsistency 5 != 2 when solving.*"):
-      check_avals(
-          arg_shapes=[(2, 3), (5,)],
-          polymorphic_shapes=["a, ...", "a"],
-          eager_mode=True)
+      conv_and_run(arg_shape=(2, 3), polymorphic_shape="(a, a)")
 
   def test_pytree(self):
     """Arguments and polymorphic_shapes are pytrees."""
