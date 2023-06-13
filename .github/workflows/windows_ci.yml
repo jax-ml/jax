@@ -39,7 +39,7 @@ jobs:
           git clone https://github.com/openxla/xla.git
           python -m pip install -r build/test-requirements.txt
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
-          python.exe build\build.py --override_repository=xla=${{ github.workspace }}\xla
+          python.exe build\build.py --bazel_options=--override_repository=xla=${{ github.workspace }}\xla
 
       - name: Run tests
         env:
