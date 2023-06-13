@@ -401,6 +401,12 @@ def checkify_jaxpr_flat(jaxpr: core.Jaxpr, consts: Sequence[core.Value],
   err_vals, in_args = split_list(args, [err_tree.num_leaves])
   error = jtu.tree_unflatten(err_tree, err_vals)
 
+  last_used = {v: None for v in jaxpr.outvars if not isinstance(v, core.Literal)}
+  for eqn in jaxpr.eqns[::-1]:
+    for v in eqn.invars:
+      if not isinstance(v, core.Literal) and v not in last_used:
+        last_used[v] = eqn
+
   def read_env(var: core.Atom):
     if isinstance(var, core.Literal):
       return var.val
@@ -426,6 +432,10 @@ def checkify_jaxpr_flat(jaxpr: core.Jaxpr, consts: Sequence[core.Value],
       map(write_env, eqn.outvars, outvals)
     else:
       write_env(eqn.outvars[0], outvals)
+    for v in set(v for v in eqn.invars if not isinstance(v, core.Literal)):
+      if last_used[v] is eqn:
+        # Delete ref to variable when it is no longer needed by next equations.
+        del env[v]
 
   return error, map(read_env, jaxpr.outvars)
 
