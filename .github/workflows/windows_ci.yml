@@ -16,7 +16,7 @@ jobs:
         os: [win-2019-16core]
         arch: [AMD64]
         pyver: ['3.9']
-    name: ${{ matrix.os }} jaxlib Wheel-builder
+    name: ${{ matrix.os }} CI build
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -36,9 +36,10 @@ jobs:
         env:
           BAZEL_VC: "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise\\VC"
         run: |
+          git clone https://github.com/openxla/xla.git
           python -m pip install -r build/test-requirements.txt
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
-          python.exe build\build.py
+          python.exe build\build.py --override_repository=xla=${{ github.workspace }}\xla
 
       - name: Run tests
         env:
@@ -49,3 +50,8 @@ jobs:
           python -m pip install --no-index --find-links ${{ github.workspace }}\dist jaxlib
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           pytest -n auto --tb=short tests examples
+
+      - uses: actions/upload-artifact@v3
+        name: jaxlib_wheels
+        path: ${{ github.workspace }}\dist\*.whl
+        retention-days: 5
