@@ -2808,7 +2808,9 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
         "equal to their corresponding dimensions in the target broadcast "
         "shape; got operand of shape {}, target broadcast shape {}, "
         "broadcast_dimensions {} ")
-    raise TypeError(msg.format(operand.shape, shape, broadcast_dimensions))
+    raise TypeError(msg.format(
+        tuple([core.replace_tracer_for_error_message(d) for d in operand.shape]),
+        shape, broadcast_dimensions))
   if (len(broadcast_dimensions) != len(set(broadcast_dimensions)) or
       tuple(broadcast_dimensions) != tuple(sorted(broadcast_dimensions))):
     msg = ("broadcast_in_dim broadcast_dimensions must be strictly increasing; "
@@ -2980,17 +2982,16 @@ def _broadcast_in_dim_pp_rule(eqn, context, settings):
   return core._pp_eqn(new_eqn, context, settings)
 
 def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
-  if dyn_shape: raise NotImplementedError
-  assert not any(d is None for d in shape)  # not implemented
-  del dyn_shape
-  if not any(isinstance(d, core.DArray) and
-             type(core.get_aval(d).dtype) is core.bint for d in shape):
+  if (not dyn_shape and
+      not any(isinstance(d, core.DArray) and
+              type(core.get_aval(d).dtype) is core.bint for d in shape)):
     shape = _broadcast_in_dim_shape_rule(  # error checking
         x, shape=shape, broadcast_dimensions=broadcast_dimensions)
     return core.ShapedArray(shape, x.dtype, x.weak_type, x.named_shape)
-  # If any BInts in shape, produce a DShapedArray (even if x is a ShapedArray)
+  # If any BInts in shape, or Tracers in dyn_shape, produce a DShapedArray
+  # (even if x is a ShapedArray)
   # TODO(mattjj): unify DShapedArray with ShapedArray, and remove this code
-  return core.DShapedArray(shape, x.dtype, x.weak_type)
+  return core.DShapedArray(_merge_dyn_shape(shape, dyn_shape), x.dtype, x.weak_type)
 
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
@@ -4559,8 +4560,10 @@ def rng_bit_generator(key, shape, dtype=np.uint32,
           key, shape=shape, dtype=dtype, algorithm=algorithm))
 
 
-def _iota_abstract_eval(*, dtype, shape, dimension):
-  _check_shapelike("iota", "shape", shape)
+def _iota_abstract_eval(*dyn_shape, dtype, shape, dimension):
+  if not dyn_shape:
+    # TODO(mattjj) Generalize shape_like checking to permit dynamic shapes
+    _check_shapelike("iota", "shape", shape)
   if not any(dtypes.issubdtype(dtype, t) for t in _num):
     msg = 'iota does not accept dtype {}. Accepted dtypes are subtypes of {}.'
     typename = dtype_to_string(dtype)
@@ -4569,11 +4572,12 @@ def _iota_abstract_eval(*, dtype, shape, dimension):
   if not 0 <= dimension < len(shape):
     raise ValueError("iota dimension must be between 0 and len(shape), got "
                      f"{dimension=} for {shape=}")
-  if not any(isinstance(d, core.DArray) and
-             type(core.get_aval(d).dtype) is core.bint for d in shape):
+  if (not dyn_shape and
+      not any(isinstance(d, core.DArray) and
+              type(core.get_aval(d).dtype) is core.bint for d in shape)):
     return ShapedArray(shape, dtype)
   # TODO(mattjj): unify DShapedArray with ShapedArray, and remove this code
-  return core.DShapedArray(shape, dtype, False)
+  return core.DShapedArray(_merge_dyn_shape(shape, dyn_shape), dtype, False)
 
 iota_p = Primitive('iota')
 iota_p.def_impl(partial(dispatch.apply_primitive, iota_p))

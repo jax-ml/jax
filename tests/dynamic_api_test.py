@@ -1570,6 +1570,18 @@ class PileTest(jtu.JaxTestCase):
     data = jax.lax.broadcasted_iota('int32', (3, 5, 12), 2)
     self.assertAllClose(p.data, data)
 
+  def test_broadcast_in_dim_ragged_to_static_error(self):
+    ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    def func(size):
+      one_d = jnp.arange(size, dtype='int32')
+      # Broadcast should error even if the target shape is the same as the
+      # underlying data shape, because the semantic size doesn't match.
+      two_d = jax.lax.broadcast_in_dim(one_d, (4, 5), (1,))
+      return two_d
+    msg = r"got operand of shape \(\[dynamic\],\), target broadcast shape \(4, 5\)"
+    with self.assertRaisesRegex(TypeError, msg):
+      jax.vmap(func, out_axes=batching.pile_axis)(ins)
+
   def test_broadcast_in_dim_to_doubly_ragged(self):
     ins1 = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
     ins2 = lax.convert_element_type(jnp.array([2, 5, 1]), core.bint(6))

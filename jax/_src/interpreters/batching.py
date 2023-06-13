@@ -404,6 +404,8 @@ class BatchTrace(Trace):
     return frame
 
   def process_primitive(self, primitive, tracers, params):
+    if config.jax_dynamic_shapes:
+      primitive.abstract_eval(*(t.aval for t in tracers), **params)
     vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
     is_axis_primitive = primitive in axis_primitive_batchers
     used_names = core.used_axis_names(primitive, params)
