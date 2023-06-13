@@ -17,7 +17,7 @@ jobs:
         arch: [AMD64]
         pyver: ['3.9']
     name: ${{ matrix.os }} jaxlib Wheel-builder
-    runs-on: ${{ matrix.os }}
+    runs-on: large-win
 
     steps:
       - name: Cancel Previous Runs
@@ -39,21 +39,6 @@ jobs:
           python -m pip install -r build/test-requirements.txt
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
           python.exe build\build.py `
-            --noremote_build `
-            --configure_only 
-          bazel build --jobs=1 `
-            --cxxopt="/Zm2000" `
-            --verbose_failures `
-            --jobs=1 `
-            --discard_analysis_cache `
-            --notrack_incremental_state `
-            --nokeep_state_after_build `
-            --experimental_local_memory_estimate="true" `
-            --local_ram_resources=2048 `
-            //jaxlib
-          bazel run `
-            --verbose_failures=true `
-            //build:build_wheel -- `
             --output_path=$(Join-Path -Path (Get-Location) -ChildPath "\tmp") `
             --cpu="AMD64"
 
