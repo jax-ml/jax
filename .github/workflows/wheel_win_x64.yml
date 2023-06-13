@@ -1,9 +1,8 @@
 name: Wheel::Windows::x86_64
 on:
   workflow_dispatch: # allows triggering the workflow run manually
-#  pull_request:
-#  release:
-#    types: [published]
+  release:
+    types: [published]
 
 env:
   DISTUTILS_USE_SDK: 1
@@ -14,10 +13,10 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [windows-2019]
+        os: [win-2019-16core]
         arch: [AMD64]
         pyver: ['3.9', '3.10', '3.11']
-    name: ${{ matrix.os }} jaxlib Wheel-builder
+    name: ${{ matrix.os }} ${{ matrix.pyver }} jaxlib wheel build
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -39,30 +38,7 @@ jobs:
         run: |
           python -m pip install -r build/test-requirements.txt
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
-          python.exe build\build.py `
-            --noenable_tpu `
-            --noenable_remote_tpu `
-            --noenable_mkl_dnn `
-            --target_cpu_features release `
-            --noenable_plugin_device `
-            --noremote_build `
-            --noenable_cuda `
-            --configure_only 
-          bazel build --jobs=1 `
-            --cxxopt="/Zm2000" `
-            --verbose_failures `
-            --jobs=1 `
-            --discard_analysis_cache `
-            --notrack_incremental_state `
-            --nokeep_state_after_build `
-            --experimental_local_memory_estimate="true" `
-            --local_ram_resources=2048 `
-            //jaxlib
-          bazel run `
-            --verbose_failures=true `
-            //build:build_wheel -- `
-            --output_path=$(Join-Path -Path (Get-Location) -ChildPath "\tmp") `
-            --cpu="AMD64"
+          python.exe build\build.py
 
       - name: Run tests
         env:
@@ -74,8 +50,7 @@ jobs:
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           pytest -n auto --tb=short tests examples
 
-      - uses: actions/upload-artifact@v2
-        if: ${{ github.event_name == 'release' }}
-        with:
-          name: jaxlib_wheels
-          path: ${{ github.workspace }}\dist\*.whl
+      - uses: actions/upload-artifact@v3
+        name: jaxlib_wheels
+        path: ${{ github.workspace }}\dist\*.whl
+        retention-days: 5
