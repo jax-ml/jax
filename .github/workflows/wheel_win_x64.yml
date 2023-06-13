@@ -40,6 +40,12 @@ jobs:
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
           python.exe build\build.py
 
+      - uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: ${{ github.workspace }}\dist\*.whl
+          retention-days: 5
+
       - name: Run tests
         env:
           JAX_ENABLE_CHECKS: true
@@ -49,9 +55,3 @@ jobs:
           python -m pip install --no-index --find-links ${{ github.workspace }}\dist jaxlib
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           pytest -n auto --tb=short tests examples
-
-      - uses: actions/upload-artifact@v3
-        with:
-          name: wheels
-          path: ${{ github.workspace }}\dist\*.whl
-          retention-days: 5
