@@ -2836,10 +2836,10 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
     new_operand = operand
     new_broadcast_dimensions = tuple(np.add(1, broadcast_dimensions))
 
-  # TODO(reviewer) This section assumes that the shape of the operand
-  # is broadcast-compatible with the requested shape.  Where should
-  # that be checked, and what should be new rules be, in light of
-  # raggedness?
+  # TODO(mattjj,axch) This section assumes that the shape of the operand is
+  # broadcast-compatible with the requested shape.  We should tweak vmap to run
+  # the abstract_eval rule so this can be checked while the raggedness
+  # information is available.
   dyn_limits = []
   out_ragged_sizes = []
   for sizes, bdim in zip(dyn_shape, dyn_shape_bdims):
