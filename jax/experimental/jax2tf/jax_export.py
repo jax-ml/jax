@@ -15,10 +15,12 @@
 
 This module is used with jax2tf, but has no TensorFlow dependencies.
 """
+import copy
 import dataclasses
 import functools
 import itertools
-from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
+import re
+from typing import Any, Callable, List, Optional, Sequence, Set, Tuple, Union
 
 from absl import logging
 
@@ -48,6 +50,40 @@ zip = util.safe_zip
 
 DType = Any
 
+class DisabledSafetyCheck:
+  # Use a strings representation to aid human readability in serializations.
+  _impl: str
+
+  def __init__(self, _impl:str):
+    # Do not use directly, use builders `platform`, `custom_call`.
+    self._impl = _impl
+
+  def __str__(self):
+    return self._impl
+  __repr__ = __str__
+
+  def __eq__(self, other) -> bool:
+    return isinstance(other, DisabledSafetyCheck) and self._impl == other._impl
+
+  def __hash__(self) -> int:
+    return hash(self._impl)
+
+  @classmethod
+  def platform(cls) -> "DisabledSafetyCheck":
+    """Allows the execution platform to differ from the serialization platform."""
+    return DisabledSafetyCheck("platform")
+
+  @classmethod
+  def custom_call(cls, target_name: str) -> "DisabledSafetyCheck":
+    """Allows the serialization of a call target not known to be stable."""
+    return DisabledSafetyCheck(f"custom_call:{target_name}")
+
+  def is_custom_call(self) -> Optional[str]:
+    """Returns the custom call target allowed by this directive."""
+    m = re.match(r'custom_call:(.+)$', self._impl)
+    return m.group(1) if m else None
+
+
 @dataclasses.dataclass(frozen=True)
 class Exported:
   """A JAX function lowered to StableHLO.
@@ -70,19 +106,16 @@ class Exported:
     lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'
 
     mlir_module_serialized: the serialized lowered VHLO module.
-    mlir_module_version: a version number for the serialized module.
-        The following version numbers are valid:
-           4 - mlir_module_serialized is a portable artifact.
+    xla_call_module_version: a version number for the serialized module.
+        See more versioning details at https://github.com/search?q=repo%3Atensorflow%2Ftensorflow+path%3Axla_call_module+%22int+VERSION_MAXIMUM_SUPPORTED%22&type=code
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
         because they are not used. Same length as `in_shardings`.
     module_uses_dim_vars: whether the `mlir_module_serialized` uses shape
         polymorphic dimension variables. This may be from `in_avals` but also
         from inner calls of Exported modules.
-    strict_checks: whether the module was serialized with the following safety
-        checking: (A) the lowered computation can only be executed on a platform
-        for which it was lowered; (B) the serialized computation contains only
-        custom calls with targets that are guaranteed to be stable, (more to come).
+    disabled_checks: a list of descriptors of safety checks that have been
+        disabled at export time.
     _get_vjp: an optional function that takes the current exported function and
         returns the exported VJP function.
         The VJP function takes a flat list of arguments,
@@ -99,7 +132,7 @@ class Exported:
   in_shardings: Tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]
   out_shardings: Tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]
   lowering_platform: str
-  strict_checks: bool
+  disabled_checks: Sequence[DisabledSafetyCheck]
 
   mlir_module_serialized: bytes
   xla_call_module_version: int
@@ -219,15 +252,15 @@ def poly_specs(
 def export(fun_jax: Callable,
            *,
            lowering_platform: Optional[str] = None,
-           strict_checks: bool = True) -> Callable[..., Exported]:
+           disabled_checks: Sequence[DisabledSafetyCheck] = (),
+           ) -> Callable[..., Exported]:
   """Exports native serialization for a JAX function.
 
   Args:
     fun_jax: the function to lower and serialize.
     lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'. If None, then use
         the default JAX backend.
-    strict_checks: whether to do strict safety checks. See Exported.strict_checks
-        for more details.
+    disabled_checks: the safety checks to disable.
 
   Returns: a function that takes args and kwargs pytrees of jax.ShapeDtypeStruct,
       or values with `.shape` and `.dtype` attributes, and returns an
@@ -277,7 +310,7 @@ def export(fun_jax: Callable,
           mlir_module, args_avals_flat, args_kwargs_tree=lowered.in_tree
       )
 
-    xla_call_module_version = 5
+    xla_call_module_version = 6
     mlir_str = mlir.module_to_bytecode(mlir_module)
     if stablehlo.get_api_version() < 4:
       target_version = stablehlo.get_earliest_forward_compatible_version()
@@ -316,14 +349,14 @@ def export(fun_jax: Callable,
       mlir_module_text = mlir.module_to_string(mlir_module)
       logmsg = (f"version={xla_call_module_version} "
                 f"lowering_platform={lowering_platform_str} "
-                f"strict_checks={strict_checks}")
+                f"disabled_checks={disabled_checks}")
       logging.info("Lowered JAX module: %s\n", logmsg)
       for l in mlir_module_text.splitlines():
         logging.info(l)
 
     _check_module(mlir_module,
                   allow_non_replicated_sharding=allow_non_replicated_sharding,
-                  allow_all_custom_calls=not strict_checks)
+                  disabled_checks=disabled_checks)
 
     return Exported(
         fun_name=fun_name,
@@ -334,7 +367,7 @@ def export(fun_jax: Callable,
         in_shardings=lowering.compile_args["in_shardings"],
         out_shardings=lowering.compile_args["out_shardings"],
         lowering_platform=lowering_platform_str,
-        strict_checks=strict_checks,
+        disabled_checks=tuple(disabled_checks),
         mlir_module_serialized=mlir_module_serialized,
         module_kept_var_idx=module_kept_var_idx,
         module_uses_dim_vars=shape_poly_state.uses_dim_vars,
@@ -554,7 +587,7 @@ def _check_lowering(lowering) -> None:
 
 # These are the JAX custom call target names that are guaranteed to be stable.
 # Their backwards compatibility is tested by back_compat_test.py.
-_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = [
+_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
     "ducc_fft", "cu_threefry2x32",
     # eigh on CPU
@@ -582,23 +615,27 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = [
     # ApproxTopK on TPU
     "ApproxTopK",
     "tf.call_tf_function",  # From jax2tf.call_tf(func, call_tf_graph=True)
-]
+}
 
 def _check_module(mod: ir.Module, *,
                   allow_non_replicated_sharding: bool,
-                  allow_all_custom_calls: bool):
+                  disabled_checks: Sequence[DisabledSafetyCheck]) -> None:
   """Run a number of checks on the module.
 
   Args:
     allow_non_replicated_sharding: whether the module is allowed to contain
       non_replicated sharding annotations.
-    allow_all_custom_calls: whether we should allow all custom calls, or
-      only those who we have explicitly marked as stable.
+    disabled_checks: the safety checks that are disabled.
   """
   sharding_attr = ir.StringAttr.get("Sharding", mod.context)
-  allowed_custom_call_targets_attrs = [
+  allowed_custom_call_targets: Set[str] = copy.copy(_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
+  for dc in disabled_checks:
+    target = dc.is_custom_call()
+    if target is not None:
+      allowed_custom_call_targets.add(target)
+  allowed_custom_call_targets_attrs = set(
       ir.StringAttr.get(target, mod.context)
-      for target in _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE]
+      for target in allowed_custom_call_targets)
   disallowed_custom_call_ops: List[str] = []
   def check_sharding(op: ir.Operation, loc: ir.Location):
     if not allow_non_replicated_sharding:
@@ -622,8 +659,7 @@ def _check_module(mod: ir.Module, *,
 
     elif op_name == "stablehlo.custom_call":
       call_target_name_attr = op.operation.attributes["call_target_name"]
-      if (not allow_all_custom_calls and
-          call_target_name_attr not in allowed_custom_call_targets_attrs):
+      if (call_target_name_attr not in allowed_custom_call_targets_attrs):
         disallowed_custom_call_ops.append(str(op))
       if call_target_name_attr == sharding_attr:
         check_sharding(op, op.location)
@@ -705,7 +741,7 @@ def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
 
   return export(fun_vjp_jax,
                 lowering_platform=primal.lowering_platform,
-                strict_checks=primal.strict_checks)(*vjp_in_avals)
+                disabled_checks=primal.disabled_checks)(*vjp_in_avals)
 
 ### Importing
 
@@ -810,7 +846,8 @@ call_exported_p.def_impl(_call_exported_impl)
 def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                             platform: str,
                             exported: Exported):
-  if platform != exported.lowering_platform:
+  if (platform != exported.lowering_platform and
+      DisabledSafetyCheck.platform() not in exported.disabled_checks):
     raise ValueError(
         f"The exported function '{exported.fun_name}' was lowered for "
         f"platform '{exported.lowering_platform}' but it is used "

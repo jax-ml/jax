@@ -17,6 +17,7 @@ from jax.experimental.jax2tf.jax2tf import (
   eval_polymorphic_shape as eval_polymorphic_shape,
   dtype_of_val as dtype_of_val,
   split_to_logical_devices as split_to_logical_devices,
+  DisabledSafetyCheck as DisabledSafetyCheck,
   PolyShape as PolyShape
 )
 from jax.experimental.jax2tf.call_tf import call_tf as call_tf

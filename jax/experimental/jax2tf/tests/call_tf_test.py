@@ -1415,7 +1415,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
     # Check the xla_call_module version and function_list attributes.
     xla_call_module = xla_call_module_list[0]
-    self.assertEqual(xla_call_module.attr["version"].i, 5)
+    self.assertGreaterEqual(xla_call_module.attr["version"].i, 5)
     self.assertIn("function_list", str(xla_call_module.attr))
     xla_call_module_list.clear()
     called_index_list.clear()

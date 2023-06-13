@@ -39,7 +39,9 @@ want, then pick some inputs, and then add this to the new test to get started.
                      # inputs in `func`.
     data = dataclasses.replace(dummy_data, inputs=inputs,
                                platform=default_jax_backend())
-    self.run_one_test(func, data)
+    self.run_one_test(func, data,
+                      # Temporarily allow calls to "foo"
+                      allow_additional_custom_call_targets=("foo",))
 
 The test will fail, but will save to a file the test data you will need. The
 file name will be printed in the logs. Create a new
@@ -188,10 +190,11 @@ class CompatTest(jtu.JaxTestCase):
 
   def run_one_test(self, func: Callable[..., jax.Array],
                    data: CompatTestData,
-                   rtol = None,
-                   atol = None,
+                   rtol: Optional[float] = None,
+                   atol: Optional[float] = None,
+                   allow_additional_custom_call_targets: Sequence[str] = (),
                    check_results: Optional[Callable[..., None]] = None,
-                   use_tf_graph = False):
+                   use_tf_graph: bool = False):
     """Run one compatibility test.
 
     Args:
@@ -201,6 +204,7 @@ class CompatTest(jtu.JaxTestCase):
       atol: absolute tolerance for numerical comparisons
       check_results: invoked with the results obtained from running the
         serialized code, and those stored in the test data, and the kwarg rtol.
+      allow_additional_custom_call_targets: additional custom call targets to allow.
       use_tf_graph: if False (default), uses jax_export to serialize JAX
         functions and to invoke them. If True then uses tf.Graph to serialize
         and run the functions; expects that `func` contains a `jax2tf.call_tf`
@@ -241,8 +245,9 @@ class CompatTest(jtu.JaxTestCase):
       exported = jax_export.export(
           jax.jit(jax_func_to_export),
           lowering_platform=default_jax_backend(),
-          # Must turn off strict checks to allow custom calls.
-          strict_checks=False
+          disabled_checks=tuple(
+            jax_export.DisabledSafetyCheck.custom_call(target)
+            for target in allow_additional_custom_call_targets)
       )(*(jax.ShapeDtypeStruct(a.shape, a.dtype) for a in data.inputs))
 
       module_str = str(exported.mlir_module)
@@ -342,7 +347,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
           in_shardings=(pxla.UNSPECIFIED,) * len(in_avals),
           out_shardings=(pxla.UNSPECIFIED,) * len(out_avals),
           lowering_platform=data.platform,
-          strict_checks=True,
+          disabled_checks=(),
           mlir_module_serialized=data.mlir_module_serialized,
           xla_call_module_version=data.xla_call_module_version,
           module_kept_var_idx=tuple(range(len(in_avals))),

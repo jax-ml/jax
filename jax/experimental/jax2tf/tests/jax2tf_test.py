@@ -1536,8 +1536,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       _ = func_to_convert(*args)
       exported = jax_export.export(
           func_to_convert,
-          lowering_platform='tpu',
-          strict_checks=True
+          lowering_platform='tpu'
       )(*(core.ShapedArray(a.shape, a.dtype) for a in args))
 
     if transform1 == "shard_map":
@@ -1574,7 +1573,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       self.assertAllClose(jnp.sin(x), f_tf(x))
 
     f_tf = jax2tf.convert(jnp.sin,
-                          native_serialization_strict_checks=False)
+                          native_serialization_disabled_checks=(
+                            jax2tf.DisabledSafetyCheck.platform(),))
     self.assertAllClose(jnp.sin(x), f_tf(x))
 
   def test_native_serialization_grad(self):

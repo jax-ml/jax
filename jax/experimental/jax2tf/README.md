@@ -96,7 +96,7 @@ for `jax2tf.call_tf`.
 For more involved examples, please see examples involving:
 
    * SavedModel for archival ([examples below](#usage-saved-model)), including
-     saving [batch-polymorphic functions](#shape-polymorphic-conversion), 
+     saving [batch-polymorphic functions](#shape-polymorphic-conversion),
    * TensorFlow Lite ([examples](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/tflite/mnist/README.md)),
    * TensorFlow.js ([examples](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/tf_js/quickdraw/README.md)),
    * TFX ([examples](https://github.com/tensorflow/tfx/blob/master/tfx/examples/penguin/README.md#instructions-for-using-flax)),
@@ -1563,8 +1563,10 @@ purposes of `call_tf`.)
 
 Inside Google, you can turn on logging by using the `--vmodule` argument to
 specify the logging levels for different modules,
-e.g., `--vmodule=jax_export=3`.
-following modules are useful for debugging JAX native serialization:
+e.g., `--vmodule=jax_export=3`. You can set `TF_DUMP_GRAPH_PREFIX` to
+a directory where modules should be dumped, or to `"-"` to dump the
+modules to the log.
+The following modules are useful for debugging JAX native serialization:
 
   * `jax_export=3` - will log the StableHLO module on serialization.
   * `jax2tf=3` - will log the parameters to `XlaCallModule` op on serialization.
@@ -1586,7 +1588,7 @@ TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=xla_call_module_loader=3 python ...
 ```
 
 In addition, `TF_DUMP_GRAPH_PREFIX` controls where the dump will be stored, `-`
-for stderr, `${SOME_DIR}` to store the dumps in the specified directory. 
+for stderr, `${SOME_DIR}` to store the dumps in the specified directory.
 
 ## TensorFlow versions supported
 
