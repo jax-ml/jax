@@ -48,7 +48,7 @@ jobs:
             --noremote_build `
             --noenable_cuda `
             --configure_only 
-          bazel build --jobs=1 --subcommands `
+          bazel build --jobs=1 `
             --cxxopt="/Zm2000" `
             --verbose_failures `
             --jobs=1 `

@@ -41,7 +41,7 @@ jobs:
           python.exe build\build.py `
             --noremote_build `
             --configure_only 
-          bazel build --jobs=1 --subcommands `
+          bazel build --jobs=1 `
             --cxxopt="/Zm2000" `
             --verbose_failures `
             --jobs=1 `
