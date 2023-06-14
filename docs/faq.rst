@@ -547,22 +547,22 @@ of how often it arises in control flow.
 
 Here is how the transformations introduce abstract or concrete tracers:
 
-  * :func:`jax.jit`: introduces **abstract tracers** for all positional arguments
-    except those denoted by ``static_argnums``, which remain regular
-    values.
-  * :func:`jax.pmap`: introduces **abstract tracers** for all positional arguments
-    except those denoted by ``static_broadcasted_argnums``.
-  * :func:`jax.vmap`, :func:`jax.make_jaxpr`, :func:`xla_computation`:
-    introduce **abstract tracers** for all positional arguments.
-  * :func:`jax.jvp` and :func:`jax.grad` introduce **concrete tracers**
-    for all positional arguments. An exception is when these transformations
-    are within an outer transformation and the actual arguments are
-    themselves abstract tracers; in that case, the tracers introduced
-    by the autodiff transformations are also abstract tracers.
-  * All higher-order control-flow primitives (:func:`lax.cond`, :func:`lax.while_loop`,
-    :func:`lax.fori_loop`, :func:`lax.scan`) when they process the functionals
-    introduce **abstract tracers**, whether or not there is a JAX transformation
-    in progress.
+* :func:`jax.jit`: introduces **abstract tracers** for all positional arguments
+  except those denoted by ``static_argnums``, which remain regular
+  values.
+* :func:`jax.pmap`: introduces **abstract tracers** for all positional arguments
+  except those denoted by ``static_broadcasted_argnums``.
+* :func:`jax.vmap`, :func:`jax.make_jaxpr`, :func:`xla_computation`:
+  introduce **abstract tracers** for all positional arguments.
+* :func:`jax.jvp` and :func:`jax.grad` introduce **concrete tracers**
+  for all positional arguments. An exception is when these transformations
+  are within an outer transformation and the actual arguments are
+  themselves abstract tracers; in that case, the tracers introduced
+  by the autodiff transformations are also abstract tracers.
+* All higher-order control-flow primitives (:func:`lax.cond`, :func:`lax.while_loop`,
+  :func:`lax.fori_loop`, :func:`lax.scan`) when they process the functionals
+  introduce **abstract tracers**, whether or not there is a JAX transformation
+  in progress.
 
 All of this is relevant when you have code that can operate
 only on regular Python values, such as code that has conditional
