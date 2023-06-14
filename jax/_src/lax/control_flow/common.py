@@ -84,7 +84,11 @@ def _initial_style_jaxprs_with_common_consts(
     prefix = util.concatenate(unused_const_vars[:i])
     suffix = util.concatenate(unused_const_vars[i + 1:])
     constvars = [*prefix, *jaxpr.constvars, *suffix]
-    return jaxpr.replace(constvars=constvars)
+    jaxpr = jaxpr.replace(constvars=constvars)
+    effects = pe.make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
+                                    jaxpr.outvars, jaxpr.eqns)
+    jaxpr = jaxpr.replace(effects=effects)
+    return jaxpr
 
   consts = util.concatenate(all_consts)
   jaxprs = tuple(pad_jaxpr_constvars(i, jaxpr) for i, jaxpr in enumerate(jaxprs))
