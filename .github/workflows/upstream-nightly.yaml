@@ -48,7 +48,7 @@ jobs:
       - name: Install numpy & scipy development versions
         run: |
           pip install \
-            -i https://pypi.anaconda.org/scipy-wheels-nightly/simple \
+            -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple \
             --no-deps \
             --pre \
             --upgrade \
