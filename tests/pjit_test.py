@@ -3462,6 +3462,12 @@ class ArrayPjitTest(jtu.JaxTestCase):
     jnp.pad(x, [(0, 1), (0, 0)], mode= 'wrap')
     jnp.pad(x, [(0, 1), (0, 0)], mode= 'wrap')  # doesn't crash
 
+  def test_shape_dtype_struct_as_const_error(self):
+    const = jax.ShapeDtypeStruct((8,), jnp.int32)
+    with self.assertRaisesRegex(TypeError,
+                                r"Argument.*is not a valid JAX type"):
+      jax.jit(lambda x: (x, const))(jnp.arange(8))
+
 
 class TempSharding(Sharding):
 

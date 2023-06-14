@@ -165,7 +165,8 @@ def canonicalize_dtype(x):
     if handler: return handler(x)
   if hasattr(x, '__jax_array__'):
     return canonicalize_dtype(x.__jax_array__())
-  raise TypeError(f"No canonicalize_dtype handler for type: {type(x)}")
+  raise TypeError(f"Argument '{x}' of type {type(x)} is not a valid "
+                  "JAX type.")
 
 def _canonicalize_masked_array_dtype(x):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
