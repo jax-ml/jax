@@ -19,6 +19,7 @@ and provide some automatic type mapping logic for converting between Numpy and
 XLA. There are also a handful of related casting utilities.
 """
 
+import dataclasses
 from functools import partial, lru_cache
 import importlib
 import io
@@ -31,6 +32,7 @@ import sys
 import threading
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 import warnings
+
 import numpy as np
 
 from jax._src import lib
@@ -202,28 +204,47 @@ def tpu_client_timer_callback(timer_secs: float) -> Optional[xla_client.Client]:
   return client
 
 
-# Backends, in increasing order of preference.
+# Backends
+#
 # We have no particular opinion about how "backends" relate to "devices". For
 # example, there could be multiple backends that provide the same kind of
 # device.
+
 BackendFactory = Callable[[], Optional[xla_client.Client]]
-_backend_factories: Dict[str, Tuple[BackendFactory, int]] = {}
+
+@dataclasses.dataclass
+class BackendRegistration:
+  factory: BackendFactory
+
+  # Priority of this backend when choosing a default backend. Higher = more
+  # preferred.
+  priority: int
+
+  # If this backend fails to initialize, should we log a user-visible warning?
+  # For plugins (e.g., TPU) we usually want a visible failure, because why
+  # install a plugin if you don't intend it to be used?
+  fail_quietly: bool = False
+
+_backend_factories: Dict[str, BackendRegistration] = {}
 _default_backend: Optional[xla_client.Client] = None
 _backends : Dict[str, xla_client.Client] = {}
 _backends_errors : Dict[str, str] = {}
 _backend_lock = threading.Lock()
 
 def register_backend_factory(name: str, factory: BackendFactory, *,
-                             priority: int = 0) -> None:
+                             priority: int = 0,
+                             fail_quietly: bool = True) -> None:
   with _backend_lock:
     if name in _backends:
       raise RuntimeError(f"Backend {name} already initialized")
-  _backend_factories[name] = (factory, priority)
+  _backend_factories[name] = BackendRegistration(
+    factory, priority, fail_quietly)
 
 
 register_backend_factory('cpu',
                          partial(xla_client.make_cpu_client, use_tfrt=True),
-                         priority=0)
+                         priority=0,
+                         fail_quietly=False)
 
 
 def make_gpu_client(
@@ -257,16 +278,21 @@ if hasattr(xla_client, "make_gpu_client"):
   register_backend_factory(
       'cuda', partial(make_gpu_client, platform_name='cuda',
       visible_devices_flag='jax_cuda_visible_devices'),
-      priority=200)
+      priority=200,
+      fail_quietly=True)
   register_backend_factory(
       'rocm', partial(make_gpu_client, platform_name='rocm',
       visible_devices_flag='jax_rocm_visible_devices'),
-      priority=200)
+      priority=200,
+      fail_quietly=True)
 
 
 if hasattr(xla_client, "make_tpu_client"):
+  # TODO(phawkins,skyewm): switch TPU plugin to use the PJRT plugin mechanism,
+  # and then fail loudly on initialization failure.
   register_backend_factory(
-    'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
+    'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300,
+    fail_quietly=True)
 
 
 def _get_pjrt_plugin_names_and_library_paths(
@@ -423,7 +449,8 @@ def register_plugin(
   logger.debug(
       'registering PJRT plugin %s from %s', plugin_name, library_path
   )
-  register_backend_factory(plugin_name, factory, priority=priority)
+  register_backend_factory(plugin_name, factory, priority=priority,
+                           fail_quietly=False)
 
 
 def register_pjrt_plugin_factories_from_env() -> None:
@@ -463,7 +490,8 @@ discover_pjrt_plugins()
 register_pjrt_plugin_factories_from_env()
 
 if iree is not None:
-  register_backend_factory("iree", iree.iree_client_factory, priority=-100)
+  register_backend_factory("iree", iree.iree_client_factory, priority=-100,
+                           fail_quietly=True)
 
 _platform_aliases = {
   "cuda": "gpu",
@@ -530,13 +558,19 @@ def backends() -> Dict[str, xla_client.Client]:
       for platform in jax_platforms:
         platforms.extend(expand_platform_alias(platform))
       priorities = range(len(platforms), 0, -1)
-      platforms_and_priorities = list(zip(platforms, priorities))
+      # If the user specified a list of platforms explicitly, always fail
+      # loudly.
+      fail_quietly_list = [False] * len(platforms)
+      platform_registrations = list(
+        zip(platforms, priorities, fail_quietly_list))
     else:
-      platforms_and_priorities = list(
-          (platform, priority) for platform, (_, priority)
-          in _backend_factories.items())
+      platform_registrations = list(
+          (platform, registration.priority, registration.fail_quietly)
+          for platform, registration
+          in _backend_factories.items()
+      )
     default_priority = -1000
-    for platform, priority in platforms_and_priorities:
+    for platform, priority, fail_quietly in platform_registrations:
       try:
         backend = _init_backend(platform)
         _backends[platform] = backend
@@ -545,21 +579,17 @@ def backends() -> Dict[str, xla_client.Client]:
           _default_backend = backend
           default_priority = priority
       except Exception as err:
-        if platform in ('cpu', 'interpreter'):
-          # We always expect the CPU and interpreter backends to initialize
-          # successfully.
-          raise
+        err_msg = f"Unable to initialize backend '{platform}': {err}"
+        if fail_quietly:
+          _backends_errors[platform] = str(err)
+          logger.info(err_msg)
         else:
-          # If the backend isn't built into the binary, or if it has no devices,
-          # we expect a RuntimeError.
-          err_msg = f"Unable to initialize backend '{platform}': {err}"
           if config.jax_platforms:
             err_msg += " (set JAX_PLATFORMS='' to automatically choose an available backend)"
-            raise RuntimeError(err_msg)
           else:
-            _backends_errors[platform] = str(err)
-            logger.info(err_msg)
-            continue
+            err_msg += " (you may need to uninstall the failing plugin package, or set JAX_PLATFORMS=cpu to skip this backend.)"
+          raise RuntimeError(err_msg)
+
     assert _default_backend is not None
     # We don't warn about falling back to CPU on Mac OS, because we don't
     # support anything else there at the moment and warning would be pointless.
@@ -586,14 +616,14 @@ def _clear_backends() -> None:
 
 
 def _init_backend(platform: str) -> xla_client.Client:
-  factory, unused_priority = _backend_factories.get(platform, (None, None))
-  if factory is None:
+  registration = _backend_factories.get(platform, None)
+  if registration is None:
     raise RuntimeError(
         f"Backend '{platform}' is not in the list of known backends: "
         f"{list(_backend_factories.keys())}.")
 
   logger.debug("Initializing backend '%s'", platform)
-  backend = factory()
+  backend = registration.factory()
   # TODO(skye): consider raising more descriptive errors directly from backend
   # factories instead of returning None.
   if backend is None:
