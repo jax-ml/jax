@@ -11,7 +11,7 @@ env:
 jobs:
   win-wheels:
     strategy:
-      fail-fast: true
+      fail-fast: false  # Don't stop all wheel builds if one has a test failure.
       matrix:
         os: [win-2019-16core]
         arch: [AMD64]
