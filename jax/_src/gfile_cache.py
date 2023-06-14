@@ -48,8 +48,8 @@ class GFileCache(CacheInterface):
         f.write(value)
         f.flush()
         os.fsync(f.fileno())
-      os.rename(tmp_path, path_to_new_file)
+      os.replace(tmp_path, path_to_new_file)
     else:
       tmp_path = self._path / f"_temp_{key}"
       tmp_path.write_bytes(value)
-      tmp_path.rename(str(path_to_new_file))
+      tmp_path.replace(str(path_to_new_file))
