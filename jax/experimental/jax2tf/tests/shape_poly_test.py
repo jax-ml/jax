@@ -2054,6 +2054,16 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda x, idx: lax.dynamic_slice(x, idx, (x.shape[0], 2)),
                 arg_descriptors=[RandArg((3, 4), _f32), np.array([-2, -1], dtype=np.int32)],
                 poly_axes=[0, None]).both_enable_and_disable_xla(),
+    PolyHarness("dynamic_slice", "idx=tuple_int_start_oob_large",
+                # x:shape: (b, 4)
+                lambda x: lax.dynamic_slice(x, (1, 1), (x.shape[0], 2)),
+                arg_descriptors=[RandArg((3, 4), _f32)],
+                poly_axes=[0]).both_enable_and_disable_xla(),
+    PolyHarness("dynamic_slice", "idx=tuple_int_start_oob_small",
+              # x:shape: (b, 4)
+              lambda x: lax.dynamic_slice(x, (-1, 1), (x.shape[0] - 1, 2)),
+              arg_descriptors=[RandArg((3, 4), _f32)],
+              poly_axes=[0]).both_enable_and_disable_xla(),
     PolyHarness("dynamic_slice_in_dim", "idx=0",
                 # x:shape: (b, 4)
                 lambda x: lax.dynamic_slice_in_dim(x, 0, x.shape[0], axis=0),
