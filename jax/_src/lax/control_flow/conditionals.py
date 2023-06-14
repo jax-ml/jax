@@ -78,6 +78,11 @@ def switch(index, branches: Sequence[Callable], *operands,
       index = clamp(0, index, len(branches) - 1)
       return branches[index](*operands)
 
+  Internally this wraps XLA's `Conditional
+  <https://www.tensorflow.org/xla/operation_semantics#conditional>`_
+  operator. However, when transformed with :func:`~jax.vmap` to operate over a
+  batch of predicates, ``cond`` is converted to :func:`~jax.lax.select`.
+
   Args:
     index: Integer scalar type, indicating which branch function to apply.
     branches: Sequence of functions (A -> B) to be applied based on ``index``.
