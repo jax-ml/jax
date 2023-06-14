@@ -42,6 +42,7 @@ jobs:
       - name: Build wheels
         env:
           BAZEL_VC: "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise\\VC"
+          JAXLIB_NIGHTLY: true  # Tag the wheels as dev versions
         run: |
           cd jax
           python -m pip install -r build/test-requirements.txt
