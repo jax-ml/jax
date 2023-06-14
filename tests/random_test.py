@@ -213,6 +213,26 @@ class PrngTest(jtu.JaxTestCase):
       self.assertEqual(key.dtype, jnp.dtype('uint32'))
       self.assertEqual(key.shape, impl.key_shape)
 
+  @jtu.sample_product(
+    num=(None, 6),
+    shape=(None, (6,), (2, 3))
+  )
+  def testSplitSizeShape(self, num, shape):
+    key = jax.random.PRNGKey(0)
+    key_split = jax.random.split(key, num, shape=shape)
+    if num is None and shape is None:
+      assert key_split.shape == (2, *key.shape)
+    elif shape is None:
+      assert key_split.shape == (num, *key.shape)
+    else:
+      assert key_split.shape == (*shape, *key.shape)
+
+  def testSplitSizeShapeMismatch(self):
+    key = jax.random.PRNGKey(0)
+    with self.assertRaisesRegex(
+        ValueError, r".*num=4 is incompatible with shape=\(2, 3\)"):
+      jax.random.split(key, 4, shape=(2, 3))
+
   def testThreefry2x32(self):
     # We test the hash by comparing to known values provided in the test code of
     # the original reference implementation of Threefry. For the values, see

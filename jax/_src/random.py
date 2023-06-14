@@ -242,19 +242,34 @@ def _split(key: KeyArray, num: int = 2) -> KeyArray:
                     f"shape {key.shape} != (). Use jax.vmap for batching.")
   return prng.random_split(key, count=num)
 
-def split(key: KeyArray, num: int = 2) -> KeyArray:
+def split(key: KeyArray, num: Optional[int] = None, *,
+          shape: Optional[Tuple[int, ...]] = None):
   """Splits a PRNG key into `num` new keys by adding a leading axis.
 
   Args:
     key: a PRNG key (from ``PRNGKey``, ``split``, ``fold_in``).
-    num: optional, a positive integer indicating the number of keys to produce
-      (default 2).
+    num: optional, a positive integer indicating the number of keys to produce,
+      defaults to 2 if neither ``num`` nor ``shape`` are specified.
+    shape: optional, tuple of integers indicating the shape of the resulting
+      batch of keys. Defaults to (num,)
 
   Returns:
     An array-like object of `num` new PRNG keys.
   """
   key, wrapped = _check_prng_key(key)
-  return _return_prng_keys(wrapped, _split(key, num))
+  size: int
+  if shape is not None:
+    size = math.prod(shape)
+    if num is not None and num != size:
+      raise ValueError(f"random.split: {num=} is incompatible with {shape=}")
+  elif num is None:
+    size = 2
+    shape = (2,)
+  else:
+    size = num
+    shape = (size,)
+  split_result = _split(key, size).reshape(*shape, *key.shape)
+  return _return_prng_keys(wrapped, split_result)
 
 def _key_data(keys: KeyArray) -> Array:
   assert isinstance(keys, prng.PRNGKeyArray)
