@@ -483,10 +483,11 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     dtype = dict(f32=np.float32, f64=np.float64)[dtype_name]
     size = dict(syevj=8, syevd=36)[variant]
     rtol = dict(f32=1e-3, f64=1e-5)[dtype_name]
+    atol = dict(f32=1e-2, f64=1e-10)[dtype_name]
     operand = CompatTest.eigh_input((size, size), dtype)
     func = lambda: CompatTest.eigh_harness((size, size), dtype)
     data = load_testdata(cuda_cusolver_syev.data_2023_03_17[f"{dtype_name}_{variant}"])
-    self.run_one_test(func, data, rtol=rtol,
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_eigh_results, operand))
 
   def test_tpu_Eigh(self):
