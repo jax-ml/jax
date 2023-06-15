@@ -112,6 +112,7 @@ jobs:
         JAX_THREEFRY_PARTITIONABLE: ${{ matrix.prng-upgrade }}
         JAX_ENABLE_CHECKS: true
         JAX_SKIP_SLOW_TESTS: true
+        PY_COLORS: 1
       run: |
         pip install -e .
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
@@ -158,6 +159,7 @@ jobs:
       env:
         XLA_FLAGS: "--xla_force_host_platform_device_count=8"
         JAX_ARRAY: 1
+        PY_COLORS: 1
       run: |
         pytest -n auto --tb=short docs
         pytest -n auto --tb=short --doctest-modules jax --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/interpreters/mlir.py --ignore=jax/_src/iree.py --ignore=jax/experimental/array_serialization --ignore=jax/collect_profile.py
