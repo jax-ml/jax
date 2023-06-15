@@ -232,11 +232,21 @@ class XlaExecutable(Executable):
       else:
         raise
 
+    # TODO(skyewm): this should return a single Dict (I think returning a list
+    # was to support MPMD executables, which never fully landed)
   def cost_analysis(self) -> List[Dict[str, float]]:
     xla_ext_exe = self.xla_extension_executable()
-    err_msg = ("cost analysis unsupported on current XLA backend: "
-               f"{type(xla_ext_exe)}")
+
     # TODO(b/259255524): Unify/merge the two cost_analysis calls below.
+    if hasattr(xla_ext_exe, "cost_analysis"):
+      try:
+        return [xla_ext_exe.cost_analysis()]
+      except xla_extension.XlaRuntimeError as e:
+        msg, *_ = e.args
+        if not (type(msg) is str and msg.startswith("UNIMPLEMENTED")):
+          raise
+
+    # Try client method if executable cost_analysis method is unimplemented
     if hasattr(xla_ext_exe, "client"):
       try:
         return [
@@ -245,21 +255,12 @@ class XlaExecutable(Executable):
         ]
       except xla_extension.XlaRuntimeError as e:
         msg, *_ = e.args
-        if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
-          raise NotImplementedError(err_msg) from e
-        else:
+        if not (type(msg) is str and msg.startswith("UNIMPLEMENTED")):
           raise
-    elif hasattr(xla_ext_exe, "cost_analysis"):
-      try:
-        return xla_ext_exe.cost_analysis()
-      except xla_extension.XlaRuntimeError as e:
-        msg, *_ = e.args
-        if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
-          raise NotImplementedError(err_msg) from e
-        else:
-          raise
-    else:
-      raise NotImplementedError(err_msg)
+
+    raise NotImplementedError(
+        f"cost analysis unsupported on current XLA backend: {type(xla_ext_exe)}"
+    )
 
   def memory_analysis(self) -> Any:
     xla_ext_exe = self.xla_extension_executable()
