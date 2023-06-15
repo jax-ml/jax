@@ -41,7 +41,6 @@ build --copt=-DMLIR_PYTHON_PACKAGE_PREFIX=jaxlib.mlir.
 # these values are overridden.
 build --@xla//xla/python:enable_gpu=false
 build --@xla//xla/python:enable_tpu=false
-build --@xla//xla/python:enable_plugin_device=false
 
 ###########################################################################
 
@@ -120,8 +119,6 @@ build:short_logs --output_filter=DONT_MATCH_ANYTHING
 
 build:tpu --@xla//xla/python:enable_tpu=true
 build:tpu --define=with_tpu_support=true
-
-build:plugin_device --@xla//xla/python:enable_plugin_device=true
 
 #########################################################################
 # RBE config options below.
