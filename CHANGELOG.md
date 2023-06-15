@@ -7,6 +7,25 @@ Remember to align the itemized text with the first line of an item within a list
 -->
 
 ## jax 0.4.13
+
+* Changes
+  * `jax.jit` now allows `None` to be passed to `in_shardings` and
+    `out_shardings`. The semantics are as follows:
+      * For in_shardings, JAX will mark is as replicated but this behavior
+        can change in the future.
+      * For out_shardings, we will rely on the XLA GSPMD partitioner to
+        determine the output shardings.
+  * `jax.experimental.pjit.pjit` also allows `None` to be passed to
+    `in_shardings` and `out_shardings`. The semantics are as follows:
+    * If the mesh context manager is *not* provided, JAX has the freedom to
+      choose whatever sharding it wants.
+      * For in_shardings, JAX will mark is as replicated but this behavior
+        can change in the future.
+      * For out_shardings, we will rely on the XLA GSPMD partitioner to
+        determine the output shardings.
+    * If the mesh context manager is provided, None will imply that the value
+      will be replicated on all devices of the mesh.
+
 * Bug fixes
   * Fixed incorrect wheel name in CUDA 12 releases (#16362); the correct wheel
     is named `cudnn89` instead of `cudnn88`.

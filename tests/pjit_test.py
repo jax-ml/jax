@@ -2573,7 +2573,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "pjit does not support kwargs when in_shardings is specified."):
-      pjit(lambda x: x, in_shardings=None)(x=jnp.arange(8.))
+      pjit(lambda x: x,
+           in_shardings=SingleDeviceSharding(jax.devices()[0]))(x=jnp.arange(8.))
 
   def test_pjit_keep_unused_true(self):
     @partial(pjit, keep_unused=True)
@@ -2693,17 +2694,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
     jtu.check_grads(g, (jnp.arange(16.).reshape((4, 4)) / 100,), order=2)
 
   def test_pjit_device_backend_axis_resources_error(self):
+    s = SingleDeviceSharding(jax.devices()[0])
     with self.assertRaisesRegex(
         ValueError,
         'If backend or device is specified on jit, then '
         'in_shardings should not be specified.'):
-      pjit(lambda x: x, in_shardings=None, backend='cpu')
+      pjit(lambda x: x, in_shardings=s, backend='cpu')
 
     with self.assertRaisesRegex(
         ValueError,
         'If backend or device is specified on jit, then '
         'out_shardings should not be specified.'):
-      pjit(lambda x: x, out_shardings=None, device=jax.devices()[0])
+      pjit(lambda x: x, out_shardings=s, device=jax.devices()[0])
 
   def test_pjit_device_backend_both_error(self):
     with self.assertRaisesRegex(
@@ -3468,6 +3470,43 @@ class ArrayPjitTest(jtu.JaxTestCase):
                                 r"Argument.*is not a valid JAX type"):
       jax.jit(lambda x: (x, const))(jnp.arange(8))
 
+  def test_jit_out_shardings_none(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    inp = jax.device_put(np_inp, s)
+    out = jax.jit(lambda x: x * 2, out_shardings=None)(inp)
+    self.assertArraysEqual(out, np_inp * 2)
+    self.assertEqual(out.sharding, s)
+
+  def test_jit_in_shardings_none(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    inp = jax.device_put(np_inp, s)
+
+    out = jax.jit(lambda x: x * 2, in_shardings=None)(inp)
+    self.assertArraysEqual(out, np_inp * 2)
+    self.assertEqual(out.sharding, s)
+
+    out2 = jax.jit(lambda x: x * 2, in_shardings=None)(np_inp)
+    self.assertArraysEqual(out2, np_inp * 2)
+    self.assertEqual(out2.sharding, SingleDeviceSharding(jax.devices()[0]))
+
+  def test_jit_both_shardings_none(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    inp = jax.device_put(np_inp, s)
+
+    out = jax.jit(lambda x: x * 2, in_shardings=None, out_shardings=None)(inp)
+    self.assertArraysEqual(out, np_inp * 2)
+    self.assertEqual(out.sharding, s)
+
+    out2 = jax.jit(lambda x: x * 2, in_shardings=None, out_shardings=None)(np_inp)
+    self.assertArraysEqual(out2, np_inp * 2)
+    self.assertEqual(out2.sharding, SingleDeviceSharding(jax.devices()[0]))
+
 
 class TempSharding(Sharding):
 
@@ -3683,11 +3722,8 @@ class PJitErrorTest(jtu.JaxTestCase):
       f(x, x)
 
   def testEmptyMesh(self):
-    error = (
-        r'pjit requires a non-empty mesh if you are passing `PartitionSpec`s or'
-        r' `None` to in_shardings.*')
-    with self.assertRaisesRegex(RuntimeError, error):
-      pjit(lambda x: x, in_shardings=None, out_shardings=None)(jnp.arange(4))
+    out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(jnp.arange(4))
+    self.assertEqual(out.sharding, SingleDeviceSharding(jax.devices()[0]))
 
   def test_pspec_to_wsc_without_mesh(self):
     error = (

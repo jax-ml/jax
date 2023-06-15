@@ -958,8 +958,7 @@ class ShardingTest(jtu.JaxTestCase):
     ops_ifr = op_shardings.is_op_sharding_replicated(mps_op_sharding)
     self.assertEqual(mps.is_fully_replicated, ops_ifr)
 
-    ps = _op_sharding_to_pos_sharding(mps_op_sharding,
-                                           mps._device_assignment)
+    ps = _op_sharding_to_pos_sharding(mps_op_sharding, mps._device_assignment)
     self.assertEqual(ps.is_fully_replicated,
                      op_shardings.is_op_sharding_replicated(
                          ps._to_xla_hlo_sharding(len(shape))))

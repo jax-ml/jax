@@ -187,6 +187,12 @@ def jit(
         - :py:class:`XLACompatibleSharding`, which will decide how the value
             will be partitioned. With this, using a mesh context manager is not
             required.
+        - :py:obj:`None`, will give JAX the freedom to choose whatever sharding
+          it wants.
+          For in_shardings, JAX will mark is as replicated but this behavior
+          can change in the future.
+          For out_shardings, we will rely on the XLA GSPMD partitioner to
+          determine the output shardings.
 
       The size of every dimension has to be a multiple of the total number of
       resources assigned to it. This is similar to pjit's in_shardings.

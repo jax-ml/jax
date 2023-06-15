@@ -266,27 +266,29 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
 
 def _resolve_axis_resources_and_shardings_arg(
     in_shardings, out_shardings, in_axis_resources, out_axis_resources):
-  if not is_unspecified(in_shardings) and not is_unspecified(in_axis_resources):
+  if (in_shardings is not None and in_axis_resources is not None and
+      not is_unspecified(in_shardings) and not is_unspecified(in_axis_resources)):
     raise ValueError(
         'Setting both in_shardings and in_axis_resources is not '
         'allowed. in_axis_resources is deprecated. Please use in_shardings.')
-  if not is_unspecified(out_shardings) and not is_unspecified(out_axis_resources):
+  if (out_shardings is not None and out_axis_resources is not None and
+      not is_unspecified(out_shardings) and not is_unspecified(out_axis_resources)):
     raise ValueError(
         'Setting both out_shardings and out_axis_resources is not '
         'allowed. out_axis_resources is deprecated. Please use out_shardings.')
-  if (not is_unspecified(in_axis_resources) or
-      not is_unspecified(out_axis_resources)):
+  if ((in_axis_resources is not None and not is_unspecified(in_axis_resources)) or
+      (out_axis_resources is not None and not is_unspecified(out_axis_resources))):
     warnings.warn(
         'in_axis_resources and out_axis_resources are deprecated. Please use '
         'in_shardings and out_shardings as their replacement.',
         DeprecationWarning)
 
-  if not is_unspecified(in_axis_resources):
+  if in_axis_resources is not None and not is_unspecified(in_axis_resources):
     final_in_shardings = in_axis_resources
   else:
     final_in_shardings = in_shardings
 
-  if not is_unspecified(out_axis_resources):
+  if out_axis_resources is not None and not is_unspecified(out_axis_resources):
     final_out_shardings = out_axis_resources
   else:
     final_out_shardings = out_shardings
@@ -311,10 +313,10 @@ def pre_infer_params(fun, in_shardings, out_shardings,
     if device is not None and backend is not None:
       raise ValueError("can't specify both a device and a backend for jit, "
                        f"got {device=} and {backend=}")
-    if not is_unspecified(in_shardings):
+    if in_shardings is not None and not is_unspecified(in_shardings):
       raise ValueError('If backend or device is specified on jit, then '
                        'in_shardings should not be specified.')
-    if not is_unspecified(out_shardings):
+    if out_shardings is not None and not is_unspecified(out_shardings):
       raise ValueError('If backend or device is specified on jit, then '
                        'out_shardings should not be specified.')
 
@@ -413,7 +415,8 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
    donate_argnums, device, backend, keep_unused, inline,
    resource_env, abstracted_axes) = pjit_info_args
 
-  if kwargs and not is_unspecified(user_in_shardings):
+  if (kwargs and user_in_shardings is not None and
+      not is_unspecified(user_in_shardings)):
     raise ValueError(
         "pjit does not support kwargs when in_shardings is specified.")
 
@@ -467,13 +470,16 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
     in_shardings = tree_map(
         lambda x: _create_sharding_for_array(pjit_mesh, x, 'in_shardings',
                                              jit_name),
-        user_in_shardings)
+        user_in_shardings, is_leaf=lambda x: x is None)
     out_shardings = tree_map(
         lambda x: _create_sharding_for_array(pjit_mesh, x, 'out_shardings',
                                              jit_name),
-        user_out_shardings)
+        user_out_shardings, is_leaf=lambda x: x is None)
 
   del user_in_shardings, user_out_shardings
+
+  assert in_shardings is not None or all(i is not None for i in in_shardings)
+  assert out_shardings is not None or all(o is not None for o in out_shardings)
 
   if config.jax_dynamic_shapes:
     in_type = pe.infer_lambda_input_type(axes_specs, explicit_args)
@@ -661,11 +667,18 @@ def pjit(
       - :py:class:`XLACompatibleSharding`, which will decide how the value
         will be partitioned. With this, using a mesh context manager is not
         required.
+      - :py:obj:`None` is a special case whose semantics are:
+        - if the mesh context manager is *not* provided, JAX has the freedom to
+          choose whatever sharding it wants.
+          For in_shardings, JAX will mark is as replicated but this behavior
+          can change in the future.
+          For out_shardings, we will rely on the XLA GSPMD partitioner to
+          determine the output shardings.
+        - If the mesh context manager is provided, None will imply that the
+          value will be replicated on all devices of the mesh.
       - For backwards compatibility, in_shardings still supports ingesting
-        :py:class:`PartitionSpec` and :py:obj:`None`. These 2 options can
-        *only* be used with the mesh context manager.
-
-        - :py:obj:`None`, in which case the value will be replicated on all devices
+        :py:class:`PartitionSpec`. This option can *only* be used with the
+        mesh context manager.
         - :py:class:`PartitionSpec`, a tuple of length at most equal to the rank
           of the partitioned value. Each element can be a :py:obj:`None`, a mesh
           axis or a tuple of mesh axes, and specifies the set of resources assigned
@@ -774,14 +787,9 @@ def hashable_pytree(pytree):
                           closure=(treedef, vals))
 
 
-@lru_cache(maxsize=4096)
-def _create_mesh_pspec_sharding_from_parsed_pspec(mesh, x):
-  if is_unspecified_or_auto(x):
-    return x
-  return pxla.create_mesh_pspec_sharding(mesh, x.user_spec, x)
-
-
 def _create_sharding_for_array(mesh, x, name, api_name):
+  if x is None and (mesh is None or mesh.empty):
+    return UNSPECIFIED
   if isinstance(x, XLACompatibleSharding) or is_unspecified_or_auto(x):
     return x
   if mesh is None:
@@ -804,8 +812,9 @@ def _create_sharding_for_array(mesh, x, name, api_name):
         f' site? Alternatively, provide `XLACompatibleSharding`s to {name} and'
         ' then the mesh context manager is not required.')
   # A nice user error is raised in prepare_axis_resources.
-  assert isinstance(x, ParsedPartitionSpec), x
-  return _create_mesh_pspec_sharding_from_parsed_pspec(mesh, x)
+  assert x is None or isinstance(x, ParsedPartitionSpec), x
+  return (pxla.create_mesh_pspec_sharding(mesh, x)
+          if x is None else pxla.create_mesh_pspec_sharding(mesh, x.user_spec, x))
 
 
 def _create_sharding_with_device_backend(device, backend):
