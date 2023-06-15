@@ -55,6 +55,7 @@ jobs:
         env:
           JAX_PLATFORMS: tpu,cpu
           JAX_USE_PJRT_C_API_ON_TPU: ${{ matrix.pjrt }}
+          PY_COLORS: 1
         run: |
           # Run single-accelerator tests in parallel
           JAX_ENABLE_TPU_XDIST=true python3 -m pytest -n=4 --tb=short \
