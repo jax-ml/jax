@@ -1862,6 +1862,15 @@ class KeyArrayTest(jtu.JaxTestCase):
 
   @skipIf(not config.jax_enable_custom_prng,
           'requires config.jax_enable_custom_prng')
+  def test_select_scalar_cond(self):
+    # regression test for https://github.com/google/jax/issues/16422
+    ks = self.make_keys(3)
+    ys = lax.select(True, ks, ks)
+    self.assertIsInstance(ys, random.KeyArray)
+    self.assertEqual(ys.shape, (3,))
+
+  @skipIf(not config.jax_enable_custom_prng,
+          'requires config.jax_enable_custom_prng')
   def test_select2(self):
     # See https://github.com/google/jax/issues/15869
     def f(x):
