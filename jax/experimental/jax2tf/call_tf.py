@@ -42,7 +42,6 @@ from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.lib.mlir.dialects import stablehlo
 from jax.experimental.jax2tf import jax2tf as jax2tf_internal
 from jax.interpreters import mlir
 from jax.interpreters import xla

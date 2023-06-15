@@ -36,7 +36,6 @@ from jax._src import source_info_util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client
-from jax._src.lib.mlir.dialects import stablehlo
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -423,8 +422,8 @@ def export(fun_jax: Callable,
 def _serialize_module(module: ir.Module) -> Tuple[bytes, int]:
   xla_call_module_version = 6
   mlir_str = mlir.module_to_bytecode(module)
-  if stablehlo.get_api_version() < 4:
-    target_version = stablehlo.get_earliest_forward_compatible_version()
+  if hlo.get_api_version() < 4:
+    target_version = hlo.get_earliest_forward_compatible_version()
   else:
     # `target_version` is used to manage situations when a StableHLO producer
     # (in this case, jax2tf) and a StableHLO consumer were built using
@@ -437,12 +436,12 @@ def _serialize_module(module: ir.Module) -> Tuple[bytes, int]:
     # See https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md
     # for the exact extent of these compatibility guarantees.
     #
-    # `stablehlo.get_minimum_version()` returns `consumer_version_min`
+    # `hlo.get_minimum_version()` returns `consumer_version_min`
     # for the current version of StableHLO. We are using it here to maximize
     # forward compatibility, i.e. to maximize how far into the past we can go
     # and still have the payloads produced by `serialize_portable_artifact`
     # compatible with potential consumers from the past.
-    target_version = stablehlo.get_minimum_version()
+    target_version = hlo.get_minimum_version()
   module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
       mlir_str, target_version)
   return module_serialized, xla_call_module_version

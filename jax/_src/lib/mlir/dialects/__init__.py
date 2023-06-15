@@ -20,7 +20,5 @@ import jaxlib.mlir.dialects.func as func
 import jaxlib.mlir.dialects.ml_program as ml_program
 import jaxlib.mlir.dialects.sparse_tensor as sparse_tensor
 
-import jaxlib.mlir.dialects.stablehlo as stablehlo
-
 # Alias that is set up to abstract away the transition from MHLO to StableHLO.
 import jaxlib.mlir.dialects.stablehlo as hlo
