@@ -66,7 +66,7 @@ from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
-from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir.dialects import hlo  # pytype: disable=import-error
 from jax._src.sharding_impls import PmapSharding
 from jax._src.typing import Array, ArrayLike, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,

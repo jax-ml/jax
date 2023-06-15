@@ -38,7 +38,7 @@ from jax._src.interpreters import xla
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir.dialects import hlo  # pytype: disable=import-error
 from jax._src.numpy import lax_numpy
 from jax._src.util import (
     unzip2, canonicalize_axis, safe_map, safe_zip, moveaxis)

@@ -27,7 +27,7 @@ from jax._src.core import Primitive, is_constant_shape
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir.dialects import hlo  # pytype: disable=import-error
 from jax._src.lib import xla_client
 from jax._src.lib import ducc_fft
 from jax._src.numpy.util import promote_dtypes_complex, promote_dtypes_inexact

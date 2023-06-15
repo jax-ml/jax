@@ -47,7 +47,7 @@ from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir.dialects import hlo  # pytype: disable=import-error
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.sharding_impls import XLACompatibleSharding
 

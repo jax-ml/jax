@@ -38,7 +38,7 @@ from jax._src.lax.utils import (
     standard_primitive,
 )
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir.dialects import hlo  # pytype: disable=import-error
 from jax._src.typing import Array, ArrayLike, Shape
 from jax._src.util import safe_map, safe_zip
 

@@ -38,7 +38,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
-from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir.dialects import hlo  # pytype: disable=import-error
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import tree_flatten, tree_unflatten, tree_structure, keystr
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,

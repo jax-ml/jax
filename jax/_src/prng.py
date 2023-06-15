@@ -50,7 +50,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib import gpu_prng
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client as xc
-from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir.dialects import hlo  # pytype: disable=import-error
 from jax._src.numpy.array_methods import (
     _array_operators, _set_array_base_attributes, _IndexUpdateHelper)
 from jax._src.partition_spec import PartitionSpec

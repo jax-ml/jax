@@ -43,7 +43,7 @@ from jax._src.lax import lax
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (safe_map, split_list, partition_list)
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir.dialects import hlo  # pytype: disable=import-error
 import numpy as np
 
 from jax._src.lax.control_flow.common import (
