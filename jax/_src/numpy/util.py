@@ -337,7 +337,7 @@ def check_arraylike_or_none(fun_name: str, *args: Any):
     raise TypeError(msg.format(fun_name, type(arg), pos))
 
 
-def _check_no_float0s(fun_name: str, *args: Any):
+def check_no_float0s(fun_name: str, *args: Any):
   """Check if none of the args have dtype float0."""
   if any(dtypes.dtype(arg) == dtypes.float0 for arg in args):
     raise TypeError(
@@ -348,6 +348,7 @@ def _check_no_float0s(fun_name: str, *args: Any):
         "to cast a float0 array to a regular zeros array. \n"
         "If you didn't expect to get a float0 you might have accidentally "
         "taken a gradient with respect to an integer argument.")
+_check_no_float0s = check_no_float0s
 
 
 def promote_args(fun_name: str, *args: ArrayLike) -> list[Array]:

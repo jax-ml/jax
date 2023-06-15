@@ -55,13 +55,9 @@ from jax._src.interpreters import xla
 from jax._src.interpreters.batching import RaggedAxis
 from jax._src.lax import slicing
 from jax._src.lax.utils import (
-  _input_dtype,
-  dtype_to_string,
-  standard_abstract_eval,
-  standard_multi_result_abstract_eval,
-  standard_named_shape_rule,
-  standard_primitive,
-)
+  _input_dtype, dtype_to_string, standard_abstract_eval,
+  standard_multi_result_abstract_eval, standard_named_shape_rule,
+  standard_primitive)
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
@@ -1508,7 +1504,8 @@ ad_util.jaxval_zeros_likers[array.ArrayImpl] = zeros_like_array
 ### primitives
 
 
-_fixed_dtype = lambda dtype: lambda *args, **kwargs: dtypes.canonicalize_dtype(dtype)
+_fixed_dtype = \
+    lambda dtype: lambda *args, **kwargs: dtypes.canonicalize_dtype(dtype)
 _complex_basetype = lambda dtype: np.abs(np.zeros((), dtype)).dtype
 
 _strip_weak_type = lambda *args, **_: False
@@ -1536,7 +1533,7 @@ _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
 
 
 def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals,
-                      allow_extended_dtype=False, **kwargs):
+                      require_same=True, allow_extended_dtype=False, **kwargs):
   del kwargs
   assert len(avals) == len(accepted_dtypes), (avals, accepted_dtypes)
   for i, aval in enumerate(avals):
@@ -1559,7 +1556,7 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals,
         typename = dtype_to_string(aval.dtype)
         typenames = ', '.join(t.__name__ for t in types)
         raise TypeError(msg.format(name, typename, i, i, typenames))
-  check_same_dtypes(name, *avals)
+  if require_same: check_same_dtypes(name, *avals)
   return result_dtype(*avals)
 
 
@@ -1602,9 +1599,11 @@ def _naryop_weak_type_rule(name, *avals, **kwargs):
         "taken a gradient with respect to an integer argument.")
   return all(aval.weak_type for aval in avals)
 
-def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False):
+def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
+           require_same_dtypes=False):
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name,
-                       allow_extended_dtype=allow_extended_dtype)
+                       allow_extended_dtype=allow_extended_dtype,
+                       require_same=require_same_dtypes)
   shape_rule = partial(broadcasting_shape_rule, name)
   weak_type_rule = partial(_naryop_weak_type_rule, name)
   prim = standard_primitive(shape_rule, dtype_rule, name,
@@ -1959,16 +1958,44 @@ ad.defjvp2(cbrt_p,
            lambda g, ans, x: mul(g, mul(_const(x, 1/3), integer_pow(ans, -2))))
 mlir.register_lowering(cbrt_p, partial(_nary_lower_hlo, hlo.CbrtOp))
 
-pow_p = standard_naryop([_float | _complex, _float | _complex], 'pow')
+def _pow_dtype_rule(x, y):
+  if (dtypes.issubdtype(x.dtype, np.inexact) and
+      dtypes.issubdtype(y.dtype, np.integer)):
+    return x.dtype
+  if x.dtype == y.dtype:
+    return x.dtype
+  raise TypeError("the first argument to pow must have an inexact dtype (float "
+                  "or complex), and the second argument must have an inexact or"
+                  " integer dtype, and two inexact dtypes must match, but got "
+                  f"{x.dtype} and {y.dtype} respectively.")
+pow_p = naryop(_pow_dtype_rule, [_float | _complex, _int | _float | _complex],
+               'pow', require_same_dtypes=False)
 
 def _pow_jvp_lhs(g, ans, x, y):
-  return mul(g, mul(y, pow(x, sub(y, _ones(y)))))
+  y_dtype = dtypes.dtype(y)
+  x, y = jax._src.numpy.util.promote_dtypes_numeric(x, y)  # TODO replace this
+  if dtypes.issubdtype(y_dtype, np.integer):
+    jac = select(eq(y, _const(y, 0)), _ones(y),
+                 mul(_replace_zero(y), pow(x, sub(y, _ones(y)))))
+  else:
+    jac = mul(y, pow(x, sub(y, _ones(y))))
+  return mul(g, jac)
 
 def _pow_jvp_rhs(g, ans, x, y):
-  return mul(g, mul(log(_replace_zero(x)), ans))
-
+  y_dtype = dtypes.dtype(y)
+  assert dtypes.issubdtype(y_dtype, np.inexact)
+  return convert_element_type(mul(g, mul(log(_replace_zero(x)), ans)), y_dtype)
 ad.defjvp2(pow_p, _pow_jvp_lhs, _pow_jvp_rhs)
-mlir.register_lowering(pow_p, partial(_nary_lower_hlo, hlo.PowOp))
+
+def _pow_lower(ctx, x, y):
+  x_aval, y_aval = ctx.avals_in
+  out_aval, = ctx.avals_out
+  dt = mlir.dtype_to_ir_type(out_aval.dtype)
+  x = hlo.ConvertOp(ir.RankedTensorType.get(x_aval.shape, dt), x).result
+  y = hlo.ConvertOp(ir.RankedTensorType.get(y_aval.shape, dt), y).result
+  ctx_ = ctx.replace(avals_in=[x_aval, y_aval.update(dtype=out_aval.dtype)])
+  return _nary_lower_hlo(hlo.PowOp, ctx_, x, y)
+mlir.register_lowering(pow_p, _pow_lower)
 
 
 def _integer_pow_dtype_rule(x, *, y):

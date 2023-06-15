@@ -1519,10 +1519,10 @@ class JumbleTest(jtu.JaxTestCase):
     ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
     p = jax.vmap(partial(jnp.arange, dtype='int32'),
                  out_axes=batching.jumble_axis)(ins)
-    p = jumble_map(jax.jit(lambda x: x ** 2))(p)
+    p = jumble_map(jax.jit(lambda x: x * 3))(p)
     self.assertIsInstance(p, batching.Jumble)
     self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[bint\{≤5\}\[3\] with value: \[3 1 4\]\.Var[0-9]+\]')
-    data = jax.lax.broadcasted_iota('int32', (3, 5), 1) ** 2
+    data = jax.lax.broadcasted_iota('int32', (3, 5), 1) * 3
     self.assertAllClose(p.data, data, check_dtypes=False)
 
   def test_jumble_map_vector_dot(self):
