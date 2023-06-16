@@ -98,12 +98,12 @@ class XlaBridgeTest(jtu.JaxTestCase):
       else:
         os.environ['PJRT_NAMES_AND_LIBRARY_PATHS'] = "name1:path1,name2:path2,name3"
       xb.register_pjrt_plugin_factories_from_env()
-    client_factory, priotiy = xb._backend_factories["name1"]
+    registration = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
       with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
         with mock.patch.object(
             xc, "pjrt_plugin_loaded", autospec=True) as mock_plugin_loaded:
-          client_factory()
+          registration.factory()
 
     self.assertRegex(
         log_output[1][0],
@@ -112,7 +112,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
     )
     self.assertIn("name1", xb._backend_factories)
     self.assertIn("name2", xb._backend_factories)
-    self.assertEqual(priotiy, 400)
+    self.assertEqual(registration.priority, 400)
     mock_plugin_loaded.assert_called_once_with("name1")
     mock_make.assert_called_once_with("name1", None)
 
@@ -122,15 +122,15 @@ class XlaBridgeTest(jtu.JaxTestCase):
     )
     os.environ['PJRT_NAMES_AND_LIBRARY_PATHS'] = f"name1:{test_json_file_path}"
     xb.register_pjrt_plugin_factories_from_env()
-    client_factory, priority = xb._backend_factories["name1"]
+    registration = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
       with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
         with mock.patch.object(
             xc, "pjrt_plugin_loaded", autospec=True) as mock_plugin_loaded:
-          client_factory()
+          registration.factory()
 
     self.assertIn("name1", xb._backend_factories)
-    self.assertEqual(priority, 400)
+    self.assertEqual(registration.priority, 400)
     mock_plugin_loaded.assert_called_once_with("name1")
     mock_make.assert_called_once_with(
         "name1",
@@ -175,9 +175,8 @@ class GetBackendTest(jtu.JaxTestCase):
           used.append(True)
       return self._DummyBackend(platform, device_count)
 
-    xb.register_backend_factory(
-        platform, factory,
-        priority=priority)
+    xb.register_backend_factory(platform, factory, priority=priority,
+                                fail_quietly=False)
 
   def setUp(self):
     self._orig_factories = xb._backend_factories
@@ -238,42 +237,30 @@ class GetBackendTest(jtu.JaxTestCase):
     def factory():
       raise RuntimeError("I'm not a real backend")
 
-    xb.register_backend_factory("error", factory, priority=10)
-    # No error raised if there's a fallback backend.
-    default_backend = xb.get_backend()
-    self.assertEqual(default_backend.platform, "cpu")
+    xb.register_backend_factory("error", factory, priority=10,
+                                fail_quietly=False)
 
-    with self.assertRaisesRegex(RuntimeError, "I'm not a real backend"):
+    with self.assertRaisesRegex(
+      RuntimeError,
+      "Unable to initialize backend 'error': I'm not a real backend"
+    ):
       xb.get_backend("error")
+
 
   def test_no_devices(self):
     self._register_factory("no_devices", -10, device_count=0)
-    default_backend = xb.get_backend()
-    self.assertEqual(default_backend.platform, "cpu")
     with self.assertRaisesRegex(
         RuntimeError,
-        "Backend 'no_devices' failed to initialize: "
+        "Unable to initialize backend 'no_devices': "
         "Backend 'no_devices' provides no devices."):
       xb.get_backend("no_devices")
 
-    self._reset_backend_state()
-
-    self._register_factory("no_devices2", 10, device_count=0)
-    default_backend = xb.get_backend()
-    self.assertEqual(default_backend.platform, "cpu")
-    with self.assertRaisesRegex(
-        RuntimeError,
-        "Backend 'no_devices2' failed to initialize: "
-        "Backend 'no_devices2' provides no devices."):
-      xb.get_backend("no_devices2")
-
   def test_factory_returns_none(self):
-    xb.register_backend_factory("none", lambda: None, priority=10)
-    default_backend = xb.get_backend()
-    self.assertEqual(default_backend.platform, "cpu")
+    xb.register_backend_factory("none", lambda: None, priority=10,
+                                fail_quietly=False)
     with self.assertRaisesRegex(
         RuntimeError,
-        "Backend 'none' failed to initialize: "
+        "Unable to initialize backend 'none': "
         "Could not initialize backend 'none'"):
       xb.get_backend("none")
 
