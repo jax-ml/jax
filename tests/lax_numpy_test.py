@@ -20,6 +20,7 @@ import inspect
 import io
 import itertools
 import math
+import platform
 from typing import cast, Iterator, Optional, List, Tuple
 import unittest
 from unittest import SkipTest
@@ -2366,6 +2367,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @unittest.skipIf(
+    platform.system() == "Windows",
+    "Under Windows, NumPy throws if 2**32 is converted to an int32"
+  )
   def testSearchsortedDtype(self):
     # Test that for large arrays, int64 indices are used. We test this
     # via abstract evaluation to avoid allocating a large array in tests.
