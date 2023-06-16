@@ -2445,7 +2445,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         core.JaxprTypeError,
         r'invalid cond param linear of type str, '
-        r'tuple of bool required:\nmulti\nline',
+        r'tuple of bool required:\r?\nmulti\r?\nline',
         lambda: core.check_jaxpr(jaxpr))
 
   def test_cond_transformation_rule_with_consts(self):

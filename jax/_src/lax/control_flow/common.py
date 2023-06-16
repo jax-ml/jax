@@ -45,8 +45,7 @@ def _typecheck_param(prim, param, name, msg_required, pred):
     param_str = str(param)
     # Avoid using os.linesep here to have the same multi-line error message
     # format on different platforms.
-    sep = '\n' if '\n' in param_str or '\r' in param_str else ' '
-    sep = os.linesep if os.linesep in param_str else ' '
+    sep = os.linesep if '\n' in param_str or '\r' in param_str else ' '
     msg = sep.join([msg, param_str])
     raise core.JaxprTypeError(msg)
 
