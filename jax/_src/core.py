@@ -183,6 +183,18 @@ class ClosedJaxpr:
     self._consts = list(consts)
 
   @property
+  def constvars(self):
+    return self.jaxpr.constvars
+
+  @property
+  def invars(self):
+    return self.jaxpr.invars
+
+  @property
+  def outvars(self):
+    return self.jaxpr.outvars
+
+  @property
   def in_avals(self):
     return [v.aval for v in self.jaxpr.invars]
 
@@ -2902,10 +2914,6 @@ def _check_call(ctx_factory, prim, in_atoms, params):
     raise JaxprTypeError(
         f"Call primitive {prim} missing 'call_jaxpr' parameter")
   call_jaxpr = params["call_jaxpr"]
-
-  # Handle `closed_call`.
-  if isinstance(call_jaxpr, ClosedJaxpr):
-    call_jaxpr = call_jaxpr.jaxpr
 
   if len(in_atoms) != len(call_jaxpr.invars):
     raise JaxprTypeError(f"Call primitive {prim} with {len(in_atoms)} "
