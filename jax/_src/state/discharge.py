@@ -27,6 +27,7 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import mlir
 from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src.config import config
@@ -274,6 +275,7 @@ def _run_state_impl(*args: Any, jaxpr: core.Jaxpr,
   discharged_jaxpr, consts = discharge_state(jaxpr, ())
   return core.eval_jaxpr(discharged_jaxpr, consts, *args)
 run_state_p.def_impl(_run_state_impl)
+mlir.register_lowering(run_state_p, mlir.lower_fun(_run_state_impl))
 
 def _run_state_abstract_eval(*avals: core.AbstractValue, jaxpr: core.Jaxpr,
                              which_linear: tuple[bool, ...]):

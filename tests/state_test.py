@@ -971,6 +971,141 @@ class StateControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(jax.jit(f)(True), 1.)
     self.assertAllClose(jax.jit(f)(False), 0.)
 
+  def test_simple_cond_with_return(self):
+    def f(pred):
+      def body(refs):
+        x_ref, y_ref = refs
+        def true_fun():
+          x_ref[()] = 1.
+          return 4.
+        def false_fun():
+          return 5.
+        out = lax.cond(pred, true_fun, false_fun)
+        y_ref[...] = out
+      return for_loop.run_state(body, (0., 0.))
+    jaxpr = jax.make_jaxpr(f)(True).jaxpr
+    self.assertEmpty(jaxpr.effects)
+    out = jax.jit(f)(True)
+    self.assertTupleEqual(out, (1., 4.))
+    out = jax.jit(f)(False)
+    self.assertTupleEqual(out, (0., 5.))
+
+  def test_cond_with_ref_reuse(self):
+    def f(pred):
+      def body(x_ref):
+        def true_fun():
+          x_ref[()] = 1.
+        def false_fun():
+          x_ref[()] = 2.
+        lax.cond(pred, true_fun, false_fun)
+      return run_state(body)(0.)
+    jaxpr = jax.make_jaxpr(f)(True).jaxpr
+    self.assertEmpty(jaxpr.effects)
+    out_true = jax.jit(f)(True)
+    expected_true = 1.
+    self.assertAllClose(out_true, expected_true)
+    out_false = jax.jit(f)(False)
+    expected_false = 2.
+    self.assertAllClose(out_false, expected_false)
+
+  def test_simple_cond_using_multiple_refs_with_interleaved_consts(self):
+    def f(pred):
+      def body(refs):
+        x_ref, y_ref, z_ref = refs
+        a = jnp.array(2.)
+        b = jnp.array(2.)
+        def true_fun():
+          x_ref[()] = 1. * a
+          y_ref[()] = 1.
+        def false_fun():
+          z_ref[()] = 1.
+          x_ref[()] = 2.
+          x_ref[()] = 2. * b
+        lax.cond(pred, true_fun, false_fun)
+      return run_state(body)((0., 0., 0.))
+    jaxpr = jax.make_jaxpr(f)(True).jaxpr
+    self.assertEmpty(jaxpr.effects)
+    out_true = jax.jit(f)(True)
+    expected_true = (2.,  1., 0.)
+    self.assertAllClose(out_true, expected_true)
+    out_false = jax.jit(f)(False)
+    expected_false = (4., 0., 1.)
+    self.assertAllClose(out_false, expected_false)
+
+  def test_cond_nested_run_state_using_multiple_refs_with_interleaved_consts(
+      self):
+    def f(pred):
+      @run_state
+      def body(refs):
+        x_ref, o_ref1, o_ref2 = refs
+        @run_state
+        def body2(refs):
+          y_ref, o_ref3 = refs
+          @run_state
+          def body3(z_ref):
+            a = jnp.array(2.)
+            b = jnp.array(2.)
+            def true_fun():
+              x_ref[()] = 1. * a
+              y_ref[()] = 1.
+            def false_fun():
+              z_ref[()] = 1.
+              x_ref[()] = 2.
+              x_ref[()] = 2. * b
+            lax.cond(pred, true_fun, false_fun)
+          o_ref3[...] = body3(0.)
+        o_ref1[...], o_ref2[...] = body2((0., 0.))
+      return body((0., 0., 0.))
+    jaxpr = jax.make_jaxpr(f)(True).jaxpr
+    self.assertEmpty(jaxpr.effects)
+    out_true = jax.jit(f)(True)
+    expected_true = (2.,  1., 0.)
+    self.assertAllClose(out_true, expected_true)
+    out_false = jax.jit(f)(False)
+    expected_false = (4., 0., 1.)
+    self.assertAllClose(out_false, expected_false)
+
+  def test_nested_cond_using_multiple_refs_with_interleaved_consts(self):
+    def f(pred1, pred2):
+      def body(refs):
+        x_ref, y_ref, z_ref = refs
+        a = jnp.array(2.)
+        def true_fun():
+          b = jnp.array(2.)
+          def inner_true_fun():
+            x_ref[()] = 1. * a
+            y_ref[()] = 1.
+          def inner_false_fun():
+            z_ref[()] = 1.
+            x_ref[()] = 2.
+            x_ref[()] = 2. * b
+          lax.cond(pred2, inner_true_fun, inner_false_fun)
+        def false_fun():
+          a = jnp.array(2.)
+          b = jnp.array(2.)
+          def inner_true_fun():
+            x_ref[()] = 1. * a
+            z_ref[()] = 4.
+          def inner_false_fun():
+            x_ref[()] = 2. * b
+          lax.cond(pred2, inner_true_fun, inner_false_fun)
+        lax.cond(pred1, true_fun, false_fun)
+      return run_state(body)((0., 0., 0.))
+    jaxpr = jax.make_jaxpr(f)(True, False).jaxpr
+    self.assertEmpty(jaxpr.effects)
+    out = jax.jit(f)(True, True)
+    expected = (2.,  1., 0.)
+    self.assertTupleEqual(out, expected)
+    out = jax.jit(f)(True, False)
+    expected = (4., 0., 1.)
+    self.assertTupleEqual(out, expected)
+    out = jax.jit(f)(False, True)
+    expected = (2., 0., 4.)
+    self.assertTupleEqual(out, expected)
+    out = jax.jit(f)(False, False)
+    expected = (4., 0., 0.)
+    self.assertTupleEqual(out, expected)
+
   def test_nested_cond(self):
     def f(pred):
       def body(x_ref):

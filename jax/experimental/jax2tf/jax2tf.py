@@ -1464,6 +1464,7 @@ tf_not_yet_impl = [
     "full_to_shard",
     "shard_to_full",
     "pure_callback",
+    "run_state",
     "for",
     "inspect_sharding",
     "io_callback",
