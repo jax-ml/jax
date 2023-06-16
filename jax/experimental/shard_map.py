@@ -480,6 +480,7 @@ def _output_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[Set[AxisName]],
 
   map(write, jaxpr.constvars, [set(mesh.axis_names)] * len(jaxpr.constvars))
   map(write, jaxpr.invars, in_rep)
+  last_used = core.last_used(jaxpr)
   for e in jaxpr.eqns:
     rule = _rep_rules.get(e.primitive, partial(_rep_rule, e.primitive))
     out_rep = rule(mesh, *map(read, e.invars), **e.params)
@@ -488,6 +489,7 @@ def _output_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[Set[AxisName]],
       map(write, e.outvars, out_rep)
     else:
       write(e.outvars[0], out_rep)
+    core.clean_up_dead_vars(e, env, last_used)
   return map(read, jaxpr.outvars)
 
 def _valid_repeats(mesh: Mesh, rep: Set[AxisName], dst: AxisNames) -> bool:

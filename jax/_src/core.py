@@ -439,6 +439,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True):
   env: Dict[Var, Any] = {}
   map(write, jaxpr.constvars, consts)
   map(write, jaxpr.invars, args)
+  lu = last_used(jaxpr)
   for eqn in jaxpr.eqns:
     subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
@@ -449,6 +450,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True):
       map(write, eqn.outvars, ans)
     else:
       write(eqn.outvars[0], ans)
+    clean_up_dead_vars(eqn, env, lu)
   return map(read, jaxpr.outvars)
 
 
@@ -3148,3 +3150,23 @@ def pp_effect(effect: Effect, context: JaxprPpContext) -> pp.Doc:
   if hasattr(effect, "_pretty_print"):
     return effect._pretty_print(context)
   return pp.text(str(effect))
+
+# ------------------- Jaxpr util -------------------
+
+def last_used(jaxpr: Jaxpr) -> Dict[Var, Optional[JaxprEqn]]:
+  """Returns a mapping from every var in jaxpr to what equation uses it last."""
+  last_used: Dict[Var, Optional[JaxprEqn]] = {
+      v: None for v in jaxpr.outvars if not isinstance(v, Literal)}
+  for eqn in reversed(jaxpr.eqns):
+    for v in eqn.invars:
+      if not isinstance(v, Literal) and v not in last_used:
+        last_used[v] = eqn
+  return last_used
+
+def clean_up_dead_vars(eqn: JaxprEqn, env: Dict[Var, Any],
+                       last_used: Dict[Var, Optional[JaxprEqn]]):
+  """Remove all eqn.invars from env if eqn is the last time they were used."""
+  for v in set(v for v in eqn.invars if not isinstance(v, Literal)):
+    if last_used[v] is eqn:
+      # Delete ref to variable when it is no longer needed by next equations.
+      del env[v]

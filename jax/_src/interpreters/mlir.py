@@ -1106,6 +1106,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   assert len(ctx.shape_poly_state.dim_vars) == len(dim_var_values), (ctx.shape_poly_state.dim_vars, dim_var_values)
   map(write, jaxpr.constvars, consts)
   map(write, jaxpr.invars, args)
+  last_used = core.last_used(jaxpr)
   for eqn in jaxpr.eqns:
     in_nodes = map(read, eqn.invars)
     assert isinstance(ctx.name_stack, source_info_util.NameStack), type(ctx.name_stack)
@@ -1168,6 +1169,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       ans, "lowering function returned a bad output", eqn)
     assert len(ans) == len(eqn.outvars), (ans, eqn)
     map(write, eqn.outvars, out_nodes)
+    core.clean_up_dead_vars(eqn, env, last_used)
   return map(read, jaxpr.outvars), tokens
 
 def _ir_consts(consts):
