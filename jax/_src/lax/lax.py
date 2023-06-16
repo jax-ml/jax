@@ -33,6 +33,7 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import array
+from jax._src import checks
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -42,6 +43,7 @@ from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.abstract_arrays import array_types
+from jax._src.checks import instrument
 from jax._src.config import config
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
                            raise_to_shaped, abstract_token, canonicalize_shape)
@@ -1513,12 +1515,42 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
     raise TypeError(msg.format(name, typename, ', '.join(accepted_typenames)))
   return result_dtype(aval.dtype)
 
+def is_float(dtype):
+  return np.issubdtype(dtype, np.floating)
+
+def standard_check_impl(prim, *a, **k):
+  from jax._src import checkify
+  if prim is div_p and checkify.DivisionByZeroError in checks.checks:
+    with instrument(remove_checks=checkify.div_checks):
+      check_div(*a, **k)
+  out = dispatch.apply_primitive(prim, *a, **k)
+  if (np.issubdtype(out.dtype, dtypes.float_)
+      and checkify.NaNError in checks.checks):
+    with instrument(remove_checks=checkify.nan_checks):
+      check_nans(prim.name, out)
+  return out
+
+def check_nans(name, outs):
+  from jax._src import checkify
+  import jax.numpy as jnp
+  outs = [outs] if outs.shape == () else outs
+  for out in outs:
+    checkify._check(jnp.any(jnp.isnan(out)), False, checkify.NaNError, name)
+  return []
+
+def check_div(_, y):
+  from jax._src import checkify
+  import jax.numpy as jnp
+  checkify._check(jnp.all(jnp.not_equal(y, 0)), False,
+                  checkify.DivisionByZeroError)
 
 def unop(result_dtype, accepted_dtypes, name):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name)
   weak_type_rule = partial(_naryop_weak_type_rule, name)
   prim = standard_primitive(_attrgetter('shape'), dtype_rule, name,
                             weak_type_rule=weak_type_rule)
+  impl_rule = partial(standard_check_impl, prim)
+  prim.def_impl(impl_rule)
   batching.defvectorized(prim)
   pe.def_trivial_padding(prim)
   return prim
@@ -1600,6 +1632,8 @@ def naryop(result_dtype, accepted_dtypes, name, allow_opaque_dtype=False):
   weak_type_rule = partial(_naryop_weak_type_rule, name)
   prim = standard_primitive(shape_rule, dtype_rule, name,
                             weak_type_rule=weak_type_rule)
+  impl_rule = partial(standard_check_impl, prim)
+  prim.def_impl(impl_rule)
   batching.defbroadcasting(prim)
   pe.def_trivial_padding(prim)
   return prim
@@ -1685,9 +1719,15 @@ def _nary_lower_hlo(op: Callable, ctx,
       ctx, args, avals_in, aval_out.shape)
 
   if explicit_type:
-    return op(mlir.aval_to_ir_type(aval_out), *broadcasted_args).results
+    out = op(mlir.aval_to_ir_type(aval_out), *broadcasted_args).results
   else:
-    return op(*broadcasted_args).results
+    out = op(*broadcasted_args).results
+  from jax._src import checkify
+  if checkify.NaNError in checks.checks:
+    with instrument(remove_checks=checkify.nan_checks):
+      ctx.avals_in = ctx.avals_out
+      mlir.lower_fun(partial(check_nans, type(op).__name__))(ctx, out)
+  return out
 
 
 _float = {np.floating}

@@ -40,6 +40,7 @@ from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.config import config
+from jax._src.checks import instrument
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
@@ -1113,7 +1114,8 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
         name_stack=ctx.name_stack + eqn.source_info.name_stack)
     loc = _source_info_to_location(eqn.primitive, eqn.params, source_info,
                                    ctx.name_stack)
-    with source_info_util.user_context(eqn.source_info.traceback), loc:
+    with (source_info_util.user_context(eqn.source_info.traceback), loc,
+          instrument(eqn.checks)):
       if eqn.primitive in _platform_specific_lowerings[ctx.platform]:
         rule = _platform_specific_lowerings[ctx.platform][eqn.primitive]
       elif eqn.primitive in xla._backend_specific_translations[ctx.platform]:

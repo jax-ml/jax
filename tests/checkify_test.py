@@ -29,7 +29,7 @@ from jax.experimental import pjit
 from jax.sharding import NamedSharding
 from jax._src import array
 from jax._src import core
-from jax._src.checkify import JaxRuntimeError, FailedCheckError, ErrorEffect, OOBError
+from jax._src.checkify import JaxRuntimeError, FailedCheckError, ErrorEffect, OOBError, instrument, catch
 import jax.numpy as jnp
 
 config.parse_flags_with_absl()
@@ -1251,7 +1251,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     def f(x):
       checkify.debug_check(jnp.all(x != x), "{x} cannot be {x}", x=x)
       return x
-    checked_f = checkify.checkify(f, errors={})
+    checked_f = checkify.checkify(f, errors=frozenset({}))
     if with_jit:
       checked_f = jax.jit(checked_f)
     err, _ = checked_f(jnp.ones((1,)))
@@ -1316,6 +1316,72 @@ class LowerableChecksTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(xla_extension.XlaRuntimeError,
                                 "x needs to be positive"):
       f(-1.)
+
+class InstrumentTest(jtu.JaxTestCase):
+  def test_eager_instrument(self):
+    with self.assertRaises(ValueError):
+      with instrument(checkify.float_checks):
+        jnp.sin(jnp.inf)
+
+    with self.assertRaises(ValueError):
+      with instrument(checkify.index_checks):
+        jnp.ones((3,))[jnp.array(4)]
+
+    with self.assertRaises(ValueError):
+      with instrument(checkify.nan_checks):
+        jax.lax.div(jnp.zeros(()), jnp.zeros(()))
+
+    with self.assertRaises(ValueError):
+      with instrument(checkify.div_checks):
+        jax.lax.div(jnp.ones(()), jnp.zeros(()))
+
+  def test_indexing(self):
+    @jax.jit
+    def f(x, i):
+      with instrument(checkify.index_checks):
+        return x[i]
+
+    err, out = catch(f)(jnp.ones((2,)), 3)
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "out-of-bounds indexing")
+
+    def f(x, i):
+      return x[i]
+
+    err, out = catch(f)(jnp.ones((2,)), 3)
+    self.assertIsNone(err.get())
+
+  def test_unhandled_error(self):
+    @jax.jit
+    def f(x, i):
+      with instrument(checkify.nan_checks):
+        return jnp.sin(x)
+
+    with self.assertRaisesRegex(ValueError, "Unhandled check"):
+      _ = f(jnp.ones((2,)), 3)
+
+  def test_grad(self):
+    @jax.grad
+    def f(x, i):
+      with instrument(checkify.index_checks):
+        return x[i]
+
+    err, out = catch(f)(jnp.ones((2,)), 3)
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "out-of-bounds indexing")
+
+  def test_eval_jaxpr(self):
+    def f(x, i):
+      with instrument(checkify.index_checks):
+        return x[i]
+
+    jaxpr = jax.make_jaxpr(f)(jnp.ones((2,)), 3)
+    roundtrip_f = partial(core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts)
+
+    err, out = catch(roundtrip_f)(jnp.ones((2,)), 3)
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "out-of-bounds indexing")
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

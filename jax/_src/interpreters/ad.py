@@ -33,6 +33,7 @@ from jax._src.ad_util import (
 from jax._src.api_util import flatten_fun, flatten_fun_nokwargs
 from jax._src.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
                            raise_to_shaped)
+from jax._src.checks import instrument
 from jax._src.dtypes import dtype, float0
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
                            as_hashable_function, weakref_lru_cache,
@@ -239,7 +240,8 @@ def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack,
       else:
         cts_in, = map(read_cotangent, eqn.outvars)
       name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
-      with source_info_util.user_context(eqn.source_info.traceback, name_stack=name_stack):
+      with (source_info_util.user_context(eqn.source_info.traceback, name_stack=name_stack),
+            instrument(eqn.checks)):
         if eqn.primitive.call_primitive or eqn.primitive.map_primitive:
           cts_in_avals = [v.aval for v in eqn.outvars]
           params = dict(eqn.params)

@@ -2875,7 +2875,6 @@ class FooTyRules:
       return FooArray(aval.shape, buf)
     return handler
 
-
 class FooTy:
   name = 'foo'
   _rules = FooTyRules
