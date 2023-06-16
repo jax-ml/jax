@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import platform
 import time
 import warnings
 
@@ -92,7 +93,10 @@ class XlaBridgeTest(jtu.JaxTestCase):
 
   def test_register_plugin(self):
     with self.assertLogs(level="WARNING") as log_output:
-      os.environ['PJRT_NAMES_AND_LIBRARY_PATHS'] = "name1:path1,name2:path2,name3"
+      if platform.system() == "windows":
+        os.environ['PJRT_NAMES_AND_LIBRARY_PATHS'] = "name1;path1,name2;path2,name3"
+      else:
+        os.environ['PJRT_NAMES_AND_LIBRARY_PATHS'] = "name1:path1,name2:path2,name3"
       xb.register_pjrt_plugin_factories_from_env()
     client_factory, priotiy = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
@@ -104,7 +108,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertRegex(
         log_output[1][0],
         r"invalid value name3 in env var PJRT_NAMES_AND_LIBRARY_PATHS"
-        r" name1:path1,name2:path2,name3",
+        r" name1.path1,name2.path2,name3",
     )
     self.assertIn("name1", xb._backend_factories)
     self.assertIn("name2", xb._backend_factories)
