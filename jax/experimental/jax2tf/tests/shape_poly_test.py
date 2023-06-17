@@ -1951,23 +1951,25 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     precision=None),
                 arg_descriptors=[RandArg((7, 3, 9, 10), _f32), RandArg((3, 3, 4, 5), _f32)],
                 polymorphic_shapes=["b, ...", None]).both_enable_and_disable_xla(),
-    PolyHarness("cummax", "",
-                lambda x: lax_control_flow.cummax(x, axis=1, reverse=False),
-                arg_descriptors=[RandArg((3, 4, 5), _f32)],
-                polymorphic_shapes=["b, ..."]),
-    PolyHarness("jnp.cumsum", "reduce_axis=poly",
-                lambda x: jnp.cumsum(x, axis=0),
-                arg_descriptors=[RandArg((3, 5), _f32)],
-                polymorphic_shapes=["b, ..."],
-                expect_error=(
-                  (None, None) if (not config.jax2tf_default_native_serialization or
-                                   jtu.device_under_test() == "tpu") else
-                  (NotImplementedError,
-                   "associative scan over axis of non-constant size"))),
-    PolyHarness("jnp.cumsum", "reduce_axis=static",
-                lambda x: jnp.cumsum(x, axis=1),
-                arg_descriptors=[RandArg((3, 5), _f32)],
-                polymorphic_shapes=["b, ..."]),
+    [
+      [
+        PolyHarness(cum_name, "reduce_axis=poly",
+                    lambda x: cum_func(x, axis=0),
+                    arg_descriptors=[RandArg((3, 5), _f32)],
+                    polymorphic_shapes=["b, ..."]),
+        PolyHarness(cum_name, "reduce_axis=static",
+                    lambda x: cum_func(x, axis=1),
+                    arg_descriptors=[RandArg((3, 5), _f32)],
+                    polymorphic_shapes=["b, ..."])
+      ]
+      for cum_name, cum_func in [
+          ("cumlogsumexp", lax_control_flow.cumlogsumexp),
+          ("cummax", lax_control_flow.cummax),
+          ("cummin", lax_control_flow.cummin),
+          ("cumsum", lax_control_flow.cumsum),
+          ("cumprod", lax_control_flow.cumprod)
+      ]
+    ],
     PolyHarness("delta", "0",
                 lambda x: lax_internal._delta(_f32, x.shape, axes=(0, 1)) + x,
                 arg_descriptors=[RandArg((3, 1), _f32)],
@@ -2377,28 +2379,89 @@ _POLY_SHAPE_TEST_HARNESSES = [
            dict(jax_default_prng_impl="unsafe_rbg"))
         ]
     ],
-    PolyHarness("reduce_window", "min",
-                # x.shape = (b, 8)
+    # For reduce_window we have a variant with one reduction axis of
+    # non-static shape, and one with additionally the dimension window
+    # non-static.
+    PolyHarness("reduce_window", "min_window_size=static",
+                # x: f32[b, 8]
                 lambda x: lax.reduce_window(x, np.array(1., _f32), lax.min,
                                             (2, 2), (1, 1), "VALID"),
                 arg_descriptors=[RandArg((3, 8), _f32)],
                 polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
-    PolyHarness("reduce_window", "add_0",
-                # x.shape = (b, 8)
-                lambda x: lax.reduce_window(x, 0, lax.add, (2, 2), (1, 1),
-                                            "VALID"),
+    PolyHarness("reduce_window", "min_window_size=dynamic",
+                # x: f32[b, 8]
+                lambda x: lax.reduce_window(x, np.array(1., _f32), lax.min,
+                                            (2, x.shape[0]), (1, 1), "VALID"),
+                arg_descriptors=[RandArg((3, 8), _f32)],
+                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+    PolyHarness("reduce_window", "min_plus_max_window_size=static",
+                # x: f32[b, 8]
+                lambda x: (
+                    # Test that we don't get confusion for the reducer name.
+                    lax.reduce_window(x, np.array(1., _f32), lax.min,
+                                      (2, 2), (1, 1), "VALID") +
+                    lax.reduce_window(x, np.array(1., _f32), lax.max,
+                                      (2, 2), (1, 1), "VALID")),
+                arg_descriptors=[RandArg((3, 8), _f32)],
+                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+    PolyHarness("reduce_window", "min_plus_max_window_size=dynamic",
+                # x: f32[b, 8]
+                lambda x: (
+                    # Test that we don't get confusion for the reducer name.
+                    lax.reduce_window(x, np.array(1., _f32), lax.min,
+                                      (2, x.shape[0]), (1, 1), "VALID") +
+                    lax.reduce_window(x, np.array(1., _f32), lax.max,
+                                      (2, x.shape[0]), (1, 1), "VALID")),
+                arg_descriptors=[RandArg((3, 8), _f32)],
+                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+    PolyHarness("reduce_window", "add_monoid_base_window_size=static",
+                # x: f32[b, 8]
+                lambda x: lax.reduce_window(x, np.array(0., _f32), lax.add,
+                                            (2, 2), (1, 1), "VALID"),
+                arg_descriptors=[RandArg((3, 8), _f32)],
+                polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
+    PolyHarness("reduce_window", "add_monoid_base_window_size=dynamic",
+                # x: f32[b, 8]
+                lambda x: lax.reduce_window(x, np.array(0., _f32), lax.add,
+                                            (2, x.shape[0]), (1, 1), "VALID"),
                 arg_descriptors=[RandArg((3, 8), _f32)],
                 polymorphic_shapes=["b, ..."]).both_enable_and_disable_xla(),
     # https://github.com/google/jax/issues/11804
     # Use the reshape trick to simulate a polymorphic dimension of 16*b.
     # (See test "conv_general_dilated.1d_1" above for more details.)
-    PolyHarness("reduce_window", "add_1",
-                # x.shape = (1, 16*b, 1)
+    PolyHarness("reduce_window", "add_monoid_strides_window_size=static",
+                # x: f32[1, 16*b, 1]
                 lambda x: lax.reduce_window(
                     jnp.reshape(x, (1, -1, 1)),
-                    0., lax.add, (1, 4, 1), (1, 2, 1), "SAME"),
+                    np.array(0., _f32), lax.add, (1, 4, 1), (1, 2, 1), "SAME"),
                 arg_descriptors=[RandArg((1, 128, 16), _f32)],
                 polymorphic_shapes=["_, b1, ..."]).both_enable_and_disable_xla(),
+    PolyHarness("reduce_window", "add_generic_window_size=static",
+                # x: f32[1, 16*b, 1]
+                # Use an initial value of 1. to trigger the generic reduction path
+                lambda x: lax.reduce_window(
+                    jnp.reshape(x, (1, -1, 1)),
+                    np.array(1., _f32), lax.add, (1, 4, 1), (1, 2, 1), "SAME"),
+                arg_descriptors=[RandArg((1, 128, 16), _f32)],
+                polymorphic_shapes=["_, b1, ..."]).both_enable_and_disable_xla(),
+    PolyHarness("reduce_window", "variadic_generic_window_size=static",
+              # x: f32[b, 8]  y: f32[b, 8]
+              lambda x, y: lax.reduce_window(
+                (x, y), (np.array(1., _f32), np.array(2, _i32)),
+                lambda xy0, xy1: (lax.add(xy0[0], xy1[0]),
+                                  lax.sub(xy0[1], xy1[1])),
+                (2, 2), (1, 1), "VALID"),
+              arg_descriptors=[RandArg((3, 8), _f32), RandArg((3, 8), _i32)],
+              polymorphic_shapes=["b, ...", "b, ..."]).both_enable_and_disable_xla(),
+    PolyHarness("reduce_window", "variadic_generic_window_size=dynamic",
+              # x: f32[b, 8]  y: f32[b, 8]
+              lambda x, y: lax.reduce_window(
+                (x, y), (np.array(1., _f32), np.array(2, _i32)),
+                lambda xy0, xy1: (lax.add(xy0[0], xy1[0]),
+                                  lax.sub(xy0[1], xy1[1])),
+                (2, x.shape[0]), (1, 1), "VALID"),
+              arg_descriptors=[RandArg((3, 8), _f32), RandArg((3, 8), _i32)],
+              polymorphic_shapes=["b, ...", "b, ..."]).both_enable_and_disable_xla(),
     # TODO(necula): not yet supported, but also unlikely to come up.
     # PolyHarness("random_uniform", "odd",
     #               lambda key, a: jax.random.uniform(key, (2 * a.shape[0] + 1, a.shape[1]),
@@ -2777,14 +2840,19 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         # https://github.com/openxla/stablehlo/issues/1255: need DynamicTopK
         raise unittest.SkipTest("native lowering with shape polymorphism not implemented for top_k")
 
-      if (jtu.device_under_test() in ["tpu", "gpu"] and
+      if (jtu.device_under_test() in ["cpu", "gpu"] and
           harness.fullname in [
-              "jnp.cumsum_reduce_axis=poly",
+              "cumsum_reduce_axis=poly", "cumprod_reduce_axis=poly",
+              "cummin_reduce_axis=poly", "cummax_reduce_axis=poly",
+              "cumlogsumexp_reduce_axis=poly",
               "jnp.insert_insert=constant", "jnp.insert_insert=poly",
               "jnp.nonzero_size=constant", "jnp.nonzero_size=poly"]):
-        # https://github.com/openxla/stablehlo/issues/1258: need DynamicReduceWindowOp
+        # Need associative scan reductions on CPU and GPU
         raise unittest.SkipTest(
-            "native serialization with shape polymorphism not implemented for window_reductions")
+            "native serialization with shape polymorphism not implemented for window_reductions on GPU")
+
+      if "reduce_window_variadic_generic" and jtu.device_under_test() == "gpu":
+        raise unittest.SkipTest("TODO(b/287709676): crash in XLA:GPU for variadic reduce window")
 
     # FOR GRAPH SERIALIZATION
     if not config.jax2tf_default_native_serialization:
@@ -2809,6 +2877,21 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
       if harness.group_name == "eig" and "left=True_right=True" in harness.fullname:
         raise unittest.SkipTest("jax2tf graph serialization does not support both left and right.")
+
+      if harness.group_name == "reduce_window" and "variadic" in harness.fullname:
+        raise unittest.SkipTest("jax2tf graph serialization does not support variadic reduce_window.")
+
+      if (harness.group_name == "reduce_window" and
+          not harness.enable_xla and
+          "window_size=dynamic" in harness.fullname and
+          any(n in harness.fullname
+              for n in ["min_plus_max", "add_monoid_base", "min_window"])):
+        raise unittest.SkipTest(
+            "jax2tf graph serialization with enable_xla=False does not support "
+            "dynamic tf.nn.pool")
+
+      if "reduce_window_add_generic" in harness.fullname and not harness.enable_xla:
+        raise unittest.SkipTest("TODO(b/287733072): wrong result for enable_xla_False")
 
     # FOR BOTH NATIVE AND GRAPH SERIALIZATION
     if harness.group_name == "vmap_conv_general_dilated":

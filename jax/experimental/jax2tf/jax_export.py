@@ -715,6 +715,10 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     # ApproxTopK on TPU
     "ApproxTopK",
     "tf.call_tf_function",  # From jax2tf.call_tf(func, call_tf_graph=True)
+    # TODO(burmako): maintain backwards compatibility for this, until it
+    # is upstreamed to StableHLO.
+    # See https://github.com/openxla/stablehlo/issues/8.
+    "stablehlo.dynamic_reduce_window",
 }
 
 def _check_module(mod: ir.Module, *,

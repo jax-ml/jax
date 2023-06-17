@@ -641,6 +641,11 @@ def _reduce_monoid(operand, window_dimensions, window_strides, padding,
       has_only_spatial_dims=has_only_spatial_dims)
 
   def tf_pool(inputs, pooling_type):
+    if any(not core.is_constant_shape(s) for s in
+           (window_dimensions, window_strides, dilations)):
+      raise NotImplementedError(
+          f"TODO: use tf.nn.pool with dynamic shapes¨{window_dimensions=} "
+          f" {window_strides=} {dilations=}")
     result = tf.nn.pool(
         inputs,
         window_shape=window_dimensions,

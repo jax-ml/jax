@@ -1956,6 +1956,7 @@ def custom_call(
     backend_config: Optional[str] = None,
     has_side_effect: bool = False,
     result_shapes: Optional[Sequence[ir.Value]] = None,
+    called_computations: Sequence[str] = (),
     api_version: int = 2,
 ) -> ir.Operation:
   """Wraps a hlo.CustomCall.
@@ -1964,6 +1965,7 @@ def custom_call(
     result_shapes: tensors that represent the result shapes, to be used when
       the results have dynamic shapes. If not-None, its length must match the
       number of the results.
+    called_computations: the list of function names called by the custom call.
   """
   attributes = dict(
       call_target_name=ir.StringAttr.get(call_target_name),
@@ -1971,7 +1973,8 @@ def custom_call(
       backend_config=ir.StringAttr.get(
           "" if backend_config is None else backend_config),
       api_version=i32_attr(api_version),
-      called_computations=ir.ArrayAttr.get([]),
+      called_computations=ir.ArrayAttr.get([
+        ir.FlatSymbolRefAttr.get(name) for name in called_computations]),
   )
 
   if result_shapes is not None:
@@ -1984,6 +1987,69 @@ def custom_call(
     operands = list(operands) + list(result_shapes)
 
   return hlo.CustomCallOp.build_generic(results=out_types, operands=operands, attributes=attributes)
+
+def reduce_window(
+    ctx: LoweringRuleContext, *,
+    # Base name to be used for the reducer function
+    reducer_name: str,
+    # Compute the reducer body given the reducer.
+    reducer_body: Callable[[ir.Block], Sequence[ir.Value]],
+    operands: Sequence[ir.Value],
+    init_values: Sequence[ir.Value],
+    init_values_avals: Sequence[core.AbstractValue],
+    out_avals: Sequence[core.AbstractValue],
+    window_dimensions, window_strides, padding, base_dilation, window_dilation):
+  """Builds a ReduceWindowOp, with support for dynamic shapes."""
+
+  scalar_types = [aval_to_ir_type(aval) for aval in init_values_avals]
+  if any(not core.is_constant_shape(s)
+         for s in [window_dimensions, window_dilation, window_strides, base_dilation, *padding]):
+    # d_padding will be an array i32[N, 2] with pad_lo and pad_hi for each
+    # spatial dimension.
+    int2d = aval_to_ir_type(core.ShapedArray((1, 2), np.int32))
+    def prep_one_pad(pad_lo_hi: Tuple[core.DimSize, core.DimSize]):
+      pads = shape_tensor(eval_dynamic_shape(ctx, pad_lo_hi))  # i32[2]
+      return hlo.ReshapeOp(int2d, pads)
+    d_padding = hlo.ConcatenateOp(list(map(prep_one_pad, padding)),
+                                  i64_attr(0)).result
+    # Build the reducer
+    reducer_type = ir.FunctionType.get(scalar_types + scalar_types,
+                                       scalar_types)
+    with ir.InsertionPoint.at_block_begin(ctx.module_context.module.body):
+      reducer = func_dialect.FuncOp(reducer_name, reducer_type)
+    ctx.module_context.symbol_table.insert(reducer)
+    entry_block = reducer.add_entry_block()
+    with ir.InsertionPoint(entry_block):
+      res = reducer_body(entry_block)
+      hlo.ReturnOp(res)
+
+    rw = custom_call(
+      "stablehlo.dynamic_reduce_window",
+      list(map(aval_to_ir_type, out_avals)),
+      [
+        *operands, *init_values,
+        shape_tensor(eval_dynamic_shape(ctx, window_dimensions)),
+        shape_tensor(eval_dynamic_shape(ctx, window_strides)),
+        shape_tensor(eval_dynamic_shape(ctx, base_dilation)),
+        shape_tensor(eval_dynamic_shape(ctx, window_dilation)),
+        d_padding],
+       called_computations=[reducer.name.value],
+    )
+  else:  # Static shapes
+    rw = hlo.ReduceWindowOp(
+        list(map(aval_to_ir_type, out_avals)),
+        operands, init_values,
+        dense_int_elements(window_dimensions),
+        window_strides=dense_int_elements(window_strides),
+        base_dilations=dense_int_elements(base_dilation),
+        window_dilations=dense_int_elements(window_dilation),
+        padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),
+                                            shape=(len(padding), 2)))
+    reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))
+    with ir.InsertionPoint(reducer):
+      res = reducer_body(reducer)
+      hlo.ReturnOp(res)
+  return rw.results
 
 
 def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
