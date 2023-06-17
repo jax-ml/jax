@@ -36,15 +36,13 @@ def get_attached_topology(platform=None) -> TopologyDescription:
 
 
 def get_topology_desc(
-    topology_name: Optional[str] = None,
-    platform: Optional[str] = None,
-    **kwargs
+    topology_name: str = "", platform: Optional[str] = None, **kwargs
 ) -> TopologyDescription:
   if platform == "tpu" or platform is None:
-    if topology_name is not None:
-      kwargs.update(topology_name=topology_name)
     return TopologyDescription(
-        xb.make_pjrt_tpu_topology(**kwargs)._make_compile_only_devices()
+        xb.make_pjrt_tpu_topology(
+            topology_name, **kwargs
+        )._make_compile_only_devices()
     )
   raise NotImplementedError(
       "get_topology_desc(platform=%s) is not implemented" % repr(platform)
