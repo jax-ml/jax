@@ -2021,7 +2021,21 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 # x:shape: (b, 4)
                 lambda x, idx: lax.dynamic_update_slice(x, x, idx),
                 arg_descriptors=[RandArg((3, 4), _f32), np.array([-2, -1], dtype=np.int32)],
-                polymorphic_shapes=["b, ...", None]).both_enable_and_disable_xla(),
+                polymorphic_shapes=["b, _", None]).both_enable_and_disable_xla(),
+    [
+      PolyHarness("eig", f"shape={jtu.format_shape_dtype_string((3, 5, 5), dtype)}_poly={poly}_{left=}_{right=}",
+                  lambda x, left, right: lax.linalg.eig(x, compute_left_eigenvectors=left, compute_right_eigenvectors=right),
+                  arg_descriptors=[RandArg((3, 5, 5), dtype),
+                                   StaticArg(left), StaticArg(right)],
+                  polymorphic_shapes=[poly],
+                  # In non-native serialization, we cannot check exact match,
+                  # we ought to check the invariants of the result.
+                  check_result=config.jax2tf_default_native_serialization)
+      for dtype in [np.float32, np.float64, np.complex64, np.complex128]
+      for poly in ["b, ...", "b, w, w"]
+      for left in ([True, False] if dtype == np.float32 else [True])
+      for right in ([True, False] if dtype == np.float32 else [False])
+    ],
     PolyHarness("einsum", "0",
                 lambda x: jnp.einsum("...i->...", x),
                 arg_descriptors=[RandArg((3, 4), _f32)],
@@ -2728,7 +2742,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       # Set of harness.group_name:platform that are implemented with custom call
       custom_call_harnesses = {
           "vmap_cholesky:cpu", "vmap_cholesky:gpu",
-          "vmap_eig:cpu",
           "vmap_fft:cpu", "fft:cpu",
           "householder_product:cpu", "householder_product:gpu",
           "vmap_geqrf:cpu", "vmap_geqrf:gpu",
@@ -2795,10 +2808,16 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         # For non-native serialization the overflow behavior is different.
         harness.check_result = False
 
+      if harness.group_name == "eig" and "left=True_right=True" in harness.fullname:
+        raise unittest.SkipTest("jax2tf graph serialization does not support both left and right.")
+
     # FOR BOTH NATIVE AND GRAPH SERIALIZATION
     if harness.group_name == "vmap_conv_general_dilated":
       # https://github.com/openxla/stablehlo/issues/1268
       raise unittest.SkipTest("Need more dynamism for DynamicConvOp")
+
+    if harness.group_name == "eig" and jtu.device_under_test() != "cpu":
+      raise unittest.SkipTest("JAX implements eig only on CPU.")
 
     prev_jax_config_flags = {
       fname: getattr(jax.config, fname)

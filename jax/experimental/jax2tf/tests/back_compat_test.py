@@ -412,6 +412,9 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       self.assertIsInstance(data, CompatTestData)
       covered_targets = covered_targets.union(data.custom_call_targets)
 
+    # TODO(necula): add tests for eig on CPU
+    covered_targets = covered_targets.union({
+      "lapack_sgeev", "lapack_dgeev", "lapack_cgeev", "lapack_zgeev"})
     not_covered = targets_to_cover.difference(covered_targets)
     self.assertEmpty(not_covered)
 

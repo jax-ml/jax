@@ -12,13 +12,68 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Helpers for building MLIR operators
-from typing import Dict, Optional, Sequence, Union
+"""A small libary of helpers for use in jaxlib to build MLIR operations."""
+from functools import partial
+from typing import Callable, Dict, Optional, Sequence, Union
+
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
 import numpy as np
 
 
+_dtype_to_ir_type_factory : Dict[np.dtype, Callable[[], ir.Type]] = {
+  np.dtype(np.bool_): partial(ir.IntegerType.get_signless, 1),
+  np.dtype(np.int8): partial(ir.IntegerType.get_signless, 8),
+  np.dtype(np.int16): partial(ir.IntegerType.get_signless, 16),
+  np.dtype(np.int32): partial(ir.IntegerType.get_signless, 32),
+  np.dtype(np.int64): partial(ir.IntegerType.get_signless, 64),
+  np.dtype(np.uint8): partial(ir.IntegerType.get_unsigned, 8),
+  np.dtype(np.uint16): partial(ir.IntegerType.get_unsigned, 16),
+  np.dtype(np.uint32): partial(ir.IntegerType.get_unsigned, 32),
+  np.dtype(np.uint64): partial(ir.IntegerType.get_unsigned, 64),
+  np.dtype(np.float16): ir.F16Type.get,
+  np.dtype(np.float32): ir.F32Type.get,
+  np.dtype(np.float64): ir.F64Type.get,
+  np.dtype(np.complex64): lambda: ir.ComplexType.get(ir.F32Type.get()),
+  np.dtype(np.complex128): lambda: ir.ComplexType.get(ir.F64Type.get()),
+}
+def dtype_to_ir_type(dtype) -> ir.Type:
+  return _dtype_to_ir_type_factory[np.dtype(dtype)]()
+
+def ir_constant(x: np.ndarray) -> ir.Value:
+  assert isinstance(x, np.ndarray)
+  return hlo.ConstantOp(
+      ir.DenseElementsAttr.get(x, type=dtype_to_ir_type(x.dtype))).result
+
+def ir_constant_u8(x: int): return ir_constant(np.array(x, dtype=np.uint8))
+def ir_constant_i32(x: int): return ir_constant(np.array(x, dtype=np.int32))
+
+def shape_dtype_to_ir_type(shape: Sequence[int], dtype) -> ir.Type:
+  return ir.RankedTensorType.get(shape, dtype_to_ir_type(dtype))
+
+
+# TODO(necula): share this with mlir.shape_tensor
+def shape_tensor(sizes: Sequence[Union[int, ir.Value]]) -> ir.Value:
+  int1d = shape_dtype_to_ir_type((1,), np.int32)
+  i32_type = shape_dtype_to_ir_type((), np.int32)
+  def dim_to_i32x1(d):
+    if type(d) is int:
+      return ir_constant(np.array([d], dtype=np.int32))
+    else:
+      if d.type != i32_type:
+        d = hlo.ConvertOp(i32_type, d).result
+      return hlo.ReshapeOp(int1d, d).result
+  ds = [dim_to_i32x1(sz) for sz in sizes]
+  if not ds:
+    return ir_constant(np.array([], np.int32))
+  elif len(ds) == 1:
+    return ds[0]
+  else:
+    return hlo.ConcatenateOp(
+        ds, ir.IntegerAttr.get(ir.IntegerType.get_signless(64), 0)).result
+
+
+# TODO(necula): share this with mlir.custom_call
 def custom_call(
     call_target_name: Union[str, bytes],
     out_types: Sequence[ir.Type],
@@ -42,12 +97,12 @@ def custom_call(
       match the number of the results. They are appended to the list
       of operands.
   """
-  i32_type = ir.IntegerType.get_signless(32)
   attributes = dict(
       call_target_name=ir.StringAttr.get(call_target_name),
       has_side_effect=ir.BoolAttr.get(has_side_effect),
       backend_config=ir.StringAttr.get(backend_config),
-      api_version=ir.IntegerAttr.get(i32_type, api_version),
+      api_version=ir.IntegerAttr.get(
+          ir.IntegerType.get_signless(32), api_version),
       called_computations=ir.ArrayAttr.get([]),
       output_operand_aliases=ir.ArrayAttr.get([
           hlo.OutputOperandAlias.get(
