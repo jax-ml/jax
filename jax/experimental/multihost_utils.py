@@ -285,7 +285,7 @@ def host_local_array_to_global_array(
                               pjit_lib.hashable_pytree(pspecs))
   out_flat = [
       host_local_array_to_global_array_p.bind(inp, global_mesh=global_mesh,
-                                              pspec=in_spec)
+                                              pspec=in_spec if in_spec else P())
       for inp, in_spec in safe_zip(flat_inps, in_pspecs)
   ]
   return tree_unflatten(in_tree, out_flat)
@@ -330,6 +330,7 @@ def global_array_to_host_local_array_impl(
   if isinstance(arr, array.ArrayImpl) and arr.is_fully_addressable:
     return arr
 
+  pspec = pspec if pspec else P()
   global_sharding = jax.sharding.NamedSharding(global_mesh, pspec)
   local_sharding = jax.sharding.NamedSharding(global_mesh.local_mesh, pspec)
   local_aval = _global_to_local_aval(
