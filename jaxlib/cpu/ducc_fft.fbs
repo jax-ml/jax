@@ -37,4 +37,12 @@ table DuccFftDescriptor {
   scale:double;
 }
 
+table DynamicDuccFftDescriptor {
+  ndims:uint32;
+  dtype:DuccFftDtype;
+  fft_type:DuccFftType;
+  axes:[uint32];
+  forward:bool;
+}
+
 root_type DuccFftDescriptor;

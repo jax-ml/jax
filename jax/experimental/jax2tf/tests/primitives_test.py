@@ -14,7 +14,7 @@
 """Tests for JAX primitive coverage.
 
 The bulk of the testing is done by `test_prim`, which is parameterized by
-about 2000+ test harnesses. See `primitive_harness.py` docstring for a
+about 3500+ test harnesses. See `primitive_harness.py` docstring for a
 description of test harnesses. That module contains also the definitions
 of all the test harnesses, and a specification of which are only partially
 implemented for JAX.

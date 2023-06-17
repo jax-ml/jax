@@ -2742,7 +2742,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       # Set of harness.group_name:platform that are implemented with custom call
       custom_call_harnesses = {
           "vmap_cholesky:cpu", "vmap_cholesky:gpu",
-          "vmap_fft:cpu", "fft:cpu",
           "householder_product:cpu", "householder_product:gpu",
           "vmap_geqrf:cpu", "vmap_geqrf:gpu",
           "vmap_lu:cpu", "vmap_lu:gpu",

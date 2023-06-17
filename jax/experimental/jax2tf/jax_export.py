@@ -687,7 +687,7 @@ def _check_lowering(lowering) -> None:
 # Their backwards compatibility is tested by back_compat_test.py.
 _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
-    "ducc_fft", "cu_threefry2x32",
+    "ducc_fft", "dynamic_ducc_fft", "cu_threefry2x32",
     # eigh on CPU
     "lapack_ssyevd", "lapack_dsyevd", "lapack_cheevd", "lapack_zheevd",
     # eigh on GPU

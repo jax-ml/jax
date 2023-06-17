@@ -105,7 +105,10 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
     "lapack_cgees", ComplexGees<std::complex<float>>::Kernel, "Host");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
     "lapack_zgees", ComplexGees<std::complex<double>>::Kernel, "Host");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("ducc_fft", DuccFft, "Host");
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
+    "ducc_fft", DuccFft, "Host");
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
+    "dynamic_ducc_fft", DynamicDuccFft, "Host");
 
 }  // namespace
 }  // namespace jax

@@ -194,7 +194,8 @@ class CompatTest(jtu.JaxTestCase):
                    atol: Optional[float] = None,
                    allow_additional_custom_call_targets: Sequence[str] = (),
                    check_results: Optional[Callable[..., None]] = None,
-                   use_tf_graph: bool = False):
+                   use_tf_graph=False,
+                   compare_with_current: bool = True):
     """Run one compatibility test.
 
     Args:
@@ -203,13 +204,21 @@ class CompatTest(jtu.JaxTestCase):
       rtol: relative tolerance for numerical comparisons
       atol: absolute tolerance for numerical comparisons
       check_results: invoked with the results obtained from running the
-        serialized code, and those stored in the test data, and the kwarg rtol.
+        serialized code, and those stored in the test data, and the kwargs rtol
+        and atol.
       allow_additional_custom_call_targets: additional custom call targets to allow.
       use_tf_graph: if False (default), uses jax_export to serialize JAX
         functions and to invoke them. If True then uses tf.Graph to serialize
         and run the functions; expects that `func` contains a `jax2tf.call_tf`
         and uses `jax2tf.convert` to generate a tf.Graph containing a
         XlaCallModule with the actual MLIR module.
+      compare_with_current: whether to compare the current behavior for
+        `func` with the one stored in `data`. If `True` (default) uses the
+        current version of JAX and XLA to lower and serialize `func` and check
+        its results compared to the stored ones; it also dumps the current
+        test data. If `False`, no current serialization are comparisons are
+        done, tests only the saved serialization. Use this option for a test
+        data for which we have changed the serialization.
     """
     if not isinstance(data, CompatTestData):
       raise ValueError(f"Expecting data: CompatTestData but got {data}. "
@@ -324,7 +333,8 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     else:
       self.assertAllClose(res_from_serialized_run_now, data.expected_outputs,
                           rtol=rtol, atol=atol)
-    self.assertListEqual(custom_call_targets, data.custom_call_targets)
+    if compare_with_current:
+      self.assertListEqual(custom_call_targets, data.custom_call_targets)
 
   def run_serialized(self, data: CompatTestData,
                      use_tf_graph=False):
@@ -398,7 +408,8 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     # Add here all the testdatas that should cover the targets guaranteed
     # stable
     covering_testdatas = [
-        cpu_ducc_fft.data_2023_03_17, cpu_lapack_syev.data_2023_03_17,
+        cpu_ducc_fft.data_2023_03_17, cpu_ducc_fft.data_2023_06_14,
+        cpu_lapack_syev.data_2023_03_17,
         cpu_lapack_geqrf.data_2023_03_17, cuda_threefry2x32.data_2023_03_15,
         cuda_cusolver_geqrf.data_2023_03_18, cuda_cusolver_syev.data_2023_03_17,
         tf_call_tf_function.data_2023_06_02,
@@ -422,8 +433,15 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     def func(x):
       return lax.fft(x, fft_type="fft", fft_lengths=(4,))
 
+    # An old lowering, with ducc_fft. We keep it for 6 months.
     data = load_testdata(cpu_ducc_fft.data_2023_03_17)
+    # We have changed the lowering for fft, do not compare with current.
+    self.run_one_test(func, data, compare_with_current=False)
+
+    # A newer lowering, with dynamic_ducc_fft.
+    data = load_testdata(cpu_ducc_fft.data_2023_06_14)
     self.run_one_test(func, data)
+
 
   @staticmethod
   def eigh_input(shape, dtype):
