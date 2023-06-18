@@ -1132,18 +1132,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
     self.ConvertAndCompare(randint)
 
-  def test_error_disallowed_custom_call(self):
-    if jtu.device_under_test() != "cpu":
-      self.skipTest("Test intended for CPU only")
-    # For now triangular_solve on CPU uses the unsupported "blas_strsm" target
-    a = np.arange(16, dtype=np.float32).reshape((4, 4))
-    b = np.arange(4, dtype=np.float32).reshape((4, 1))
-    with self.assertRaisesRegex(ValueError,
-        "Cannot serialize code with custom calls whose targets .*"):
-      jax2tf.convert(
-          lambda a, b: jax.lax.linalg.triangular_solve(a, b, left_side=True),
-          native_serialization=True)(a, b)
-
   def test_op_metadata_simple(self):
     self.skipTest("include_xla_op_metadata not yet enabled")
     # A simple example

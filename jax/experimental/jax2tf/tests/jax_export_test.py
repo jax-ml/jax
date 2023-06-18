@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
-import logging
-import math
 import re
 from typing import Optional, Sequence
 import unittest
@@ -74,6 +72,7 @@ else:
       numpy_results = map(lambda res_tf: res_tf.numpy(),
                           jax2tf._run_exported_as_tf(args, exp))
       return exp.out_tree.unflatten(numpy_results)
+
 
 def _run_shape_check_module(primal_exported: jax_export.Exported,
                             shape_check_module_serialized: bytes,
@@ -312,24 +311,37 @@ class JaxExportTest(jtu.JaxTestCase):
     res = jax_export.call_exported(exp_f_no_platform_check)(a)
     self.assertAllClose(res, jnp.sin(a))
 
-  def test_error_disallowed_custom_call(self):
-    if jtu.device_under_test() != "cpu":
-      self.skipTest("Test intended for CPU only")
-    # For now triangular_solve on CPU uses the unsupported "blas_strsm" target
-    a = np.arange(16, dtype=np.float32).reshape((4, 4))
-    b = np.arange(4, dtype=np.float32).reshape((4, 1))
+  @jtu.parameterized_filterable(
+    testcase_name=lambda kw: kw["dialect"],
+    kwargs=[dict(dialect=dialect)
+            for dialect in ("mhlo", "stablehlo")]
+  )
+  def test_error_disallowed_custom_call(self, dialect):
+    # If we use hlo.custom_call or mhlo.custom_call we detect
+    # invalid custom call targets.
+    # Set up a primitive with custom lowering rules
+    test_primitive = core.Primitive("_test_primitive_disallowed_custom_call")
+    test_primitive.def_abstract_eval(lambda in_aval: in_aval)
+    def test_primitive_lowering(ctx, arg):
+      from jax._src.lib.mlir.dialects import mhlo
+      op = dict(stablehlo=hlo.CustomCallOp, mhlo=mhlo.CustomCallOp)[dialect]
+      return op([arg.type], [arg], "disallowed_call_target").results
+    mlir.register_lowering(test_primitive, test_primitive_lowering)
+    self.addCleanup(lambda: mlir.register_lowering(test_primitive, None))
+
+    a = np.arange(3, dtype=np.float32)
     with self.assertRaisesRegex(ValueError,
         "Cannot serialize code with custom calls whose targets .*"):
       jax_export.export(
-        lambda a, b: jax.lax.linalg.triangular_solve(a, b, left_side=True),
-      )(a, b)
+        lambda a: a + test_primitive.bind(a)
+      )(a)
 
     # Now try again with the safety check disabled
     exp = jax_export.export(
-        lambda a, b: jax.lax.linalg.triangular_solve(a, b, left_side=True),
-        disabled_checks=(jax_export.DisabledSafetyCheck.custom_call("blas_strsm"),)
-      )(a, b)
-    self.assertIn("blas_strsm", exp.mlir_module)
+      lambda a: a + test_primitive.bind(a),
+      disabled_checks=[jax_export.DisabledSafetyCheck.custom_call("disallowed_call_target")]
+    )(a)
+    self.assertIn("disallowed_call_target", exp.mlir_module)
 
   def test_grad(self):
     f = lambda x: jnp.sum(jnp.sin(x))
