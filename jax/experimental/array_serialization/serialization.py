@@ -307,7 +307,9 @@ def run_deserialization(shardings: Sequence[sharding.Sharding],
   return asyncio.run(_run_deserializer())
 
 
-def _get_key(key: str):
+def _get_key(key: str | None):
+  if key is None:
+    raise ValueError('Input key is undefined, cannot compose the key.')
   return f'tensorstore_checkpoint_{key}'
 
 
@@ -427,6 +429,7 @@ class AsyncManager:
         self._on_commit_callback()
         logger.info('on_commit_callback successfully ran!')
         if process_count > 1:
+          key_for_barrier = _get_key(self._count)
           self._client.key_value_set(key_for_barrier, _CHECKPOINT_SUCCESS)
           logger.info('Process 0 successfully set key %s in the kv store',
                       key_for_barrier)
