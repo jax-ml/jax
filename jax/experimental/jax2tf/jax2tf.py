@@ -310,6 +310,7 @@ def convert(fun_jax: Callable,
       backend on the machine where the lowering is done.
     native_serialization_disabled_checks: In conjunction with
       `native_serialization`, disable the specified safety checks.
+      See docstring of DisabledSafetyCheck.
 
   Returns:
     A version of `fun_jax` that expects TfVals as arguments (or

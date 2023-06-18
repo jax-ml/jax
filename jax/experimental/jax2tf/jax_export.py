@@ -51,8 +51,40 @@ zip = util.safe_zip
 DType = Any
 
 class DisabledSafetyCheck:
-  # Use a strings representation to aid human readability in serializations.
+  """A safety check should be skipped on (de)serialization.
+
+  Most of these checks are performed on serialization, but some are deferred to
+  deserialization. The list of disabled checks is attached to the serialization,
+  e.g., as a sequence of string attributes to `jax_export.Exported` or of
+  `tf.XlaCallModuleOp`.
+
+  You can disable more deserialization safety checks by passing
+  `TF_XLA_FLAGS=--tf_xla_call_module_disabled_checks=platform`.
+  """
   _impl: str
+
+  @classmethod
+  def platform(cls) -> "DisabledSafetyCheck":
+    """Allows the execution platform to differ from the serialization platform.
+
+    Has effect only on deserialization.
+    """
+    return DisabledSafetyCheck("platform")
+
+  @classmethod
+  def custom_call(cls, target_name: str) -> "DisabledSafetyCheck":
+    """Allows the serialization of a call target not known to be stable.
+
+    Has effect only on serialization.
+    Args:
+      target_name: the name of the custom call target to allow.
+    """
+    return DisabledSafetyCheck(f"custom_call:{target_name}")
+
+  def is_custom_call(self) -> Optional[str]:
+    """Returns the custom call target allowed by this directive."""
+    m = re.match(r'custom_call:(.+)$', self._impl)
+    return m.group(1) if m else None
 
   def __init__(self, _impl:str):
     # Do not use directly, use builders `platform`, `custom_call`.
@@ -67,21 +99,6 @@ class DisabledSafetyCheck:
 
   def __hash__(self) -> int:
     return hash(self._impl)
-
-  @classmethod
-  def platform(cls) -> "DisabledSafetyCheck":
-    """Allows the execution platform to differ from the serialization platform."""
-    return DisabledSafetyCheck("platform")
-
-  @classmethod
-  def custom_call(cls, target_name: str) -> "DisabledSafetyCheck":
-    """Allows the serialization of a call target not known to be stable."""
-    return DisabledSafetyCheck(f"custom_call:{target_name}")
-
-  def is_custom_call(self) -> Optional[str]:
-    """Returns the custom call target allowed by this directive."""
-    m = re.match(r'custom_call:(.+)$', self._impl)
-    return m.group(1) if m else None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -115,7 +132,7 @@ class Exported:
         polymorphic dimension variables. This may be from `in_avals` but also
         from inner calls of shape-polymorphic Exported modules.
     disabled_checks: a list of descriptors of safety checks that have been
-        disabled at export time.
+        disabled at export time. See docstring of DisabledSafetyCheck.
     _get_vjp: an optional function that takes the current exported function and
         returns the exported VJP function.
         The VJP function takes a flat list of arguments,
