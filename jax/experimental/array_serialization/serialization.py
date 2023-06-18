@@ -416,7 +416,7 @@ class AsyncManager:
       if process_count > 1:
         # All processes will wait at the barrier. When all processes are at the
         # barrier, the barrier will be satisfied. If not, then it will timeout.
-        key_for_barrier = _get_key(self._count)
+        key_for_barrier = _get_key(str(self._count))
         logger.info('Key used for barrier is %s for process %s',
                     key_for_barrier, current_process)
         self._client.wait_at_barrier(key_for_barrier, self._timeout_in_ms)
@@ -427,6 +427,7 @@ class AsyncManager:
         self._on_commit_callback()
         logger.info('on_commit_callback successfully ran!')
         if process_count > 1:
+          key_for_barrier = _get_key(str(self._count))
           self._client.key_value_set(key_for_barrier, _CHECKPOINT_SUCCESS)
           logger.info('Process 0 successfully set key %s in the kv store',
                       key_for_barrier)
@@ -464,7 +465,7 @@ class AsyncManager:
     if jax.process_count() > 1 and self._count is not None:
       # Block until process 0 writes success value to the key value store.
       # If it fails to write it, then `blocking_key_value_get` will time out.
-      get_key = _get_key(self._count)
+      get_key = _get_key(str(self._count))
       self._client.blocking_key_value_get(get_key, self._timeout_in_ms)
       logger.info('blocking_key_value_get on key %s was successfully '
                   'completed.', get_key)
