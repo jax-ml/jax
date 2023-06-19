@@ -25,7 +25,7 @@ data_2023_04_17 = dict(
     serialized_date=datetime.date(2023, 4, 17),
     inputs=(),
     expected_outputs=(array([7., 6., 5.], dtype=float32), array([6, 5, 4], dtype=int32)),
-    mlir_module_text="""
+    mlir_module_text=r"""
 #loc = loc(unknown)
 module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
   func.func @top_k_gt_comparator(%arg0: tensor<f32> loc(unknown), %arg1: tensor<f32> loc(unknown), %arg2: tensor<i32> loc(unknown), %arg3: tensor<i32> loc(unknown)) -> tensor<i1> {

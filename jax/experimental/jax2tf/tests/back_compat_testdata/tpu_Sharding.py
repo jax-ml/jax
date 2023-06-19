@@ -25,7 +25,7 @@ data_2023_03_16 = dict(
                    [4., 5., 6., 7.]], dtype=float32),),
     expected_outputs=(array([[4., 5., 6., 7.],
                              [0., 1., 2., 3.]], dtype=float32),),
-    mlir_module_text="""
+    mlir_module_text=r"""
 module @jit_wrapped {
   func.func public @main(%arg0: tensor<2x4xf32> {jax.arg_info = "args[0]", mhlo.sharding = "{replicated}"}) -> (tensor<2x4xf32> {jax.result_info = ""}) {
     %0 = call @wrapped(%arg0) : (tensor<2x4xf32>) -> tensor<2x4xf32>

@@ -24,7 +24,7 @@ data_2023_03_15 = dict(
     inputs=(array([42, 43], dtype=uint32),),
     expected_outputs=(array([[0.42591238, 0.0769949 , 0.44370103, 0.72904015],
     [0.17879379, 0.81439507, 0.00191903, 0.68608475]], dtype=float32),),
-    mlir_module_text="""
+    mlir_module_text=r"""
 module @jit_func {
   func.func public @main(%arg0: tensor<2xui32> {jax.arg_info = "x", mhlo.sharding = "{replicated}"}) -> (tensor<2x4xf32> {jax.result_info = ""}) {
     %0 = stablehlo.constant dense<0.000000e+00> : tensor<f32>

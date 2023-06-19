@@ -44,7 +44,7 @@ data_2023_03_17 = dict(
           dtype=float32), array([-2.4598808e+01, -3.3105560e-05, -3.1002426e-05, -1.0103593e-05,
           -1.0022322e-05,  4.0141886e-06,  9.5510331e-06,  2.7659882e+02],
           dtype=float32)),
-        mlir_module_text="""
+        mlir_module_text=r"""
 module @jit__lambda_ {
   func.func public @main() -> (tensor<8x8xf32> {jax.result_info = "[0]"}, tensor<8xf32> {jax.result_info = "[1]"}) {
     %0 = stablehlo.iota dim = 0 : tensor<64xf32>
@@ -139,7 +139,7 @@ module @jit__lambda_ {
           -1.9932120610662194e-14, -5.7323356091157378e-15,
           -4.5459724251334835e-16,  4.0479851042511616e-14,
             9.2325194924982089e-14,  2.7659880477613365e+02])),
-        mlir_module_text="""
+        mlir_module_text=r"""
 module @jit__lambda_ {
   func.func public @main() -> (tensor<8x8xf64> {jax.result_info = "[0]"}, tensor<8xf64> {jax.result_info = "[1]"}) {
     %0 = stablehlo.iota dim = 0 : tensor<64xf64>
@@ -225,7 +225,7 @@ module @jit__lambda_ {
             -0.12186296   +0.j, -0.49314725   +0.j]], dtype=complex64), array([-2.4598808e+01, -3.3105560e-05, -3.1002426e-05, -1.0103593e-05,
           -1.0022322e-05,  4.0141886e-06,  9.5510331e-06,  2.7659882e+02],
           dtype=float32)),
-        mlir_module_text="""
+        mlir_module_text=r"""
 module @jit__lambda_ {
   func.func public @main() -> (tensor<8x8xcomplex<f32>> {jax.result_info = "[0]"}, tensor<8xf32> {jax.result_info = "[1]"}) {
     %0 = stablehlo.iota dim = 0 : tensor<64xcomplex<f32>>
@@ -325,7 +325,7 @@ module @jit__lambda_ {
           -1.9932120610662194e-14, -5.7323356091157378e-15,
           -4.5459724251334835e-16,  4.0479851042511616e-14,
             9.2325194924982089e-14,  2.7659880477613365e+02])),
-        mlir_module_text="""
+        mlir_module_text=r"""
 module @jit__lambda_ {
   func.func public @main() -> (tensor<8x8xcomplex<f64>> {jax.result_info = "[0]"}, tensor<8xf64> {jax.result_info = "[1]"}) {
     %0 = stablehlo.iota dim = 0 : tensor<64xcomplex<f64>>

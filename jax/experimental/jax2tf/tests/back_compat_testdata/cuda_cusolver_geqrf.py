@@ -31,7 +31,7 @@ data_2023_03_18["unbatched"] = dict(
        [-0.8944271 , -0.18257457,  0.40824813]], dtype=float32), array([[-6.7082043e+00, -8.0498438e+00, -9.3914843e+00],
        [ 0.0000000e+00,  1.0954436e+00,  2.1908882e+00],
        [ 0.0000000e+00,  0.0000000e+00,  5.6703755e-08]], dtype=float32)),
-    mlir_module_text="""
+    mlir_module_text=r"""
 module @jit__lambda_ {
   func.func public @main() -> (tensor<3x3xf32> {jax.result_info = "[0]"}, tensor<3x3xf32> {jax.result_info = "[1]"}) {
     %0 = stablehlo.iota dim = 0 : tensor<9xf32>
@@ -110,7 +110,7 @@ data_2023_03_18["batched"] = dict(
        [[-2.1213203e+01, -2.2910259e+01, -2.4607319e+01],
         [ 0.0000000e+00,  3.4641042e-01,  6.9282258e-01],
         [ 0.0000000e+00,  0.0000000e+00,  1.4548683e-06]]], dtype=float32)),
-    mlir_module_text="""
+    mlir_module_text=r"""
 module @jit__lambda_ {
   func.func public @main() -> (tensor<2x3x3xf32> {jax.result_info = "[0]"}, tensor<2x3x3xf32> {jax.result_info = "[1]"}) {
     %0 = stablehlo.iota dim = 0 : tensor<18xf32>
