@@ -415,6 +415,8 @@ class CompatTest(CompatTestBase):
     covered_targets = covered_targets.union({
       # TODO(necula): add tests for eig on CPU
       "lapack_sgeev", "lapack_dgeev", "lapack_cgeev", "lapack_zgeev",
+      # TODO(necula): add tests for qr on CPU in a separate change.
+      "lapack_cpotrf", "lapack_dpotrf", "lapack_spotrf", "lapack_zpotrf",
       # TODO(necula): add tests for svd on CPU
       "lapack_sgesdd", "lapack_dsesdd", "lapack_cgesdd", "lapack_zgesdd",
     })

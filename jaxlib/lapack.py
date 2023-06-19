@@ -180,17 +180,17 @@ def getrf_hlo(dtype, a):
 
 # # ?geqrf: QR decomposition
 
-def geqrf_hlo(dtype, a):
+def geqrf_hlo(dtype, a: ir.Value, *,
+              a_shape_vals: Tuple[DimensionSize, ...]):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
-  dims = a_type.shape
-  assert len(dims) >= 2
-  m, n = dims[-2:]
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  b = 1
-  for d in batch_dims:
-    b *= d
+  assert len(a_shape_vals) >= 2
+  m, n = a_shape_vals[-2:]
+  assert type(m) is int
+  assert type(n) is int
+
+  batch_dims_vals = a_shape_vals[:-2]
+  num_bd = len(batch_dims_vals)
 
   if dtype == np.float32:
     fn = b"lapack_sgeqrf"
@@ -210,15 +210,21 @@ def geqrf_hlo(dtype, a):
   scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
+
+  batch_size_val = ir_constant_i32(1)
+  for b_v in batch_dims_vals:
+    batch_size_val = hlo.MulOp(batch_size_val, _ensure_hlo_s32(b_v)).result
+  shape_type_pairs: Sequence[ShapeTypePair] = [
+      (a_shape_vals, a_type.element_type),
+      (batch_dims_vals + (min(m, n),), a_type.element_type),
+      (batch_dims_vals, i32_type),
+      ([lwork], a_type.element_type),
+  ]
+  result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
   out = custom_call(
       fn,
-      [
-        a.type,
-        ir.RankedTensorType.get(batch_dims + (min(m, n),), a_type.element_type),
-        ir.RankedTensorType.get(batch_dims, i32_type),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
-      ],
-      [_hlo_s32(int(b)), _hlo_s32(m), _hlo_s32(n), _hlo_s32(lwork), a],
+      result_types,
+      [batch_size_val, _hlo_s32(m), _hlo_s32(n), _hlo_s32(lwork), a],
       operand_layouts=[scalar_layout] * 4 + [layout],
       result_layouts=[
         layout,
@@ -227,27 +233,31 @@ def geqrf_hlo(dtype, a):
         [0],
       ],
       operand_output_aliases={4: 0},
+      result_shapes=result_shapes,
   )
   return out[:3]
 
 
 # # ?orgqr: product of elementary Householder reflectors:
-
-def orgqr_hlo(dtype, a, tau):
+def orgqr_hlo(dtype, a: ir.Value, tau, *,
+              a_shape_vals: Tuple[DimensionSize, ...],
+              tau_shape_vals: Tuple[DimensionSize, ...]):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
+  dims_vals = a_shape_vals
   assert len(dims) >= 2
   m, n = dims[-2:]
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  b = 1
-  for d in batch_dims:
-    b *= d
+  assert m != ir.ShapedType.get_dynamic_size()
+  assert n != ir.ShapedType.get_dynamic_size()
+  batch_dims_vals = dims_vals[:-2]
+  num_bd = len(batch_dims_vals)
+  batch_size_val = ir_constant_i32(1)
+  for b_v in batch_dims_vals:
+    batch_size_val = hlo.MulOp(batch_size_val, _ensure_hlo_s32(b_v)).result
 
-  tau_dims = ir.RankedTensorType(tau.type).shape
-  assert tau_dims[:-1] == dims[:-2], (tau.type, a.type)
-  k = tau_dims[-1]
+  k = tau_shape_vals[-1]
+  assert type(k) is int
 
   if dtype == np.float32:
     fn = b"lapack_sorgqr"
@@ -267,14 +277,16 @@ def orgqr_hlo(dtype, a, tau):
   scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
+  shape_type_pairs: Sequence[ShapeTypePair] = [
+      (a_shape_vals, a_type.element_type),
+      (batch_dims_vals, i32_type),
+      ([lwork], a_type.element_type),
+  ]
+  result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
   out = custom_call(
       fn,
-      [
-        a.type,
-        ir.RankedTensorType.get(batch_dims, i32_type),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
-      ],
-      [_hlo_s32(int(b)), _hlo_s32(m), _hlo_s32(n), _hlo_s32(k),
+      result_types,
+      [batch_size_val, _hlo_s32(m), _hlo_s32(n), _hlo_s32(k),
        _hlo_s32(lwork), a, tau],
       operand_layouts=[scalar_layout] * 5 + [
         layout,
@@ -286,6 +298,7 @@ def orgqr_hlo(dtype, a, tau):
         [0],
       ],
       operand_output_aliases={5: 0},
+      result_shapes=result_shapes,
   )
   return out[:2]
 
