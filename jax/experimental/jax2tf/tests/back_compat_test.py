@@ -38,6 +38,7 @@ from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_eigh_lapack_s
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_lu_lapack_getrf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_qr_cusolver_geqrf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_qr_lapack_geqrf
+from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_svd_lapack_gesdd
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_threefry2x32
 from jax.experimental.jax2tf.tests.back_compat_testdata import tf_call_tf_function
 from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Eigh
@@ -100,6 +101,7 @@ class CompatTest(bctu.CompatTestBase):
         cpu_qr_lapack_geqrf.data_2023_03_17, cuda_threefry2x32.data_2023_03_15,
         cpu_lu_lapack_getrf.data_2023_06_14,
         cuda_qr_cusolver_geqrf.data_2023_03_18, cuda_eigh_cusolver_syev.data_2023_03_17,
+        cpu_svd_lapack_gesdd.data_2023_06_19,
         tf_call_tf_function.data_2023_06_02,  # This is tested in back_compat_tf_test.py
         tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17,
         tpu_Sharding.data_2023_03_16, tpu_ApproxTopK.data_2023_04_17,
@@ -340,6 +342,95 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_lu_results, operand,
                                             dtype=dtype))
+
+  def check_svd_results(self, input, res_run, res_exp,
+                        rtol=None, atol=None):
+    # Following linalg_test.testSVD
+    def compute_max_backward_error(operand, reconstructed_operand):
+      error_norm = np.linalg.norm(operand - reconstructed_operand,
+                                  axis=(-2, -1))
+      backward_error = (error_norm /
+                        np.linalg.norm(operand, axis=(-2, -1)))
+      max_backward_error = np.amax(backward_error)
+      return max_backward_error
+
+    tol = 80 * jnp.finfo(input.dtype).eps
+    reconstruction_tol = 2 * tol
+    unitariness_tol = tol
+
+    out = res_run
+    a = input
+    compute_uv = True
+    full_matrices = True
+    b, m, n = input.shape
+    T = lambda x: np.swapaxes(x, -1, -2)
+
+    if compute_uv:
+      # Check the reconstructed matrices
+      out = list(out)
+      out[1] = out[1].astype(out[0].dtype)  # for strict dtype promotion.
+      if m and n:
+        if full_matrices:
+          k = min(m, n)
+          if m < n:
+            max_backward_error = compute_max_backward_error(
+                a, np.matmul(out[1][..., None, :] * out[0], out[2][..., :k, :]))
+            self.assertLess(max_backward_error, reconstruction_tol)
+          else:
+            max_backward_error = compute_max_backward_error(
+                a, np.matmul(out[1][..., None, :] * out[0][..., :, :k], out[2]))
+            self.assertLess(max_backward_error, reconstruction_tol)
+        else:
+          max_backward_error = compute_max_backward_error(
+              a, np.matmul(out[1][..., None, :] * out[0], out[2]))
+          self.assertLess(max_backward_error, reconstruction_tol)
+
+      # Check the unitary properties of the singular vector matrices.
+      unitary_mat = np.real(np.matmul(np.conj(T(out[0])), out[0]))
+      eye_slice = np.eye(out[0].shape[-1], dtype=unitary_mat.dtype)
+      self.assertAllClose(np.broadcast_to(eye_slice, (b,) + eye_slice.shape),
+                          unitary_mat, rtol=unitariness_tol,
+                          atol=unitariness_tol)
+      if m >= n:
+        unitary_mat = np.real(np.matmul(np.conj(T(out[2])), out[2]))
+        eye_slice = np.eye(out[2].shape[-1], dtype=unitary_mat.dtype)
+        self.assertAllClose(np.broadcast_to(eye_slice, (b,) + eye_slice.shape),
+                            unitary_mat, rtol=unitariness_tol,
+                            atol=unitariness_tol)
+      else:
+        unitary_mat = np.real(np.matmul(out[2], np.conj(np.T(out[2]))))
+        eye_slice = np.eye(out[2].shape[-2], dtype=unitary_mat.dtype)
+        self.assertAllClose(np.broadcast_to(eye_slice, (b,) + eye_slice.shape),
+                            unitary_mat, rtol=unitariness_tol,
+                            atol=unitariness_tol)
+    else:
+      self.assertTrue(np.allclose(np.linalg.svd(a, compute_uv=False),
+                                  np.asarray(out), atol=1e-4, rtol=1e-4))
+
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
+  @jax.default_matmul_precision("float32")
+  def test_cpu_svd_lapack_gesdd(self, dtype_name="f32"):
+    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+
+    dtype = dict(f32=np.float32, f64=np.float64,
+                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    shape = (2, 4, 4)
+    input = jtu.rand_default(self.rng())(shape, dtype)
+    # del input  # Input is in the testdata, here for readability
+    def func(input):
+      return lax.linalg.svd(input, full_matrices=True, compute_uv=True)
+
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+
+    data = self.load_testdata(cpu_svd_lapack_gesdd.data_2023_06_19[dtype_name])
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
+                      check_results=partial(self.check_svd_results,
+                                            input))
 
   def test_approx_top_k(self):
     def func():
