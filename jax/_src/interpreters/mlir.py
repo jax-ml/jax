@@ -1958,6 +1958,7 @@ def custom_call(
     result_shapes: Optional[Sequence[ir.Value]] = None,
     called_computations: Sequence[str] = (),
     api_version: int = 2,
+    extra_attributes: Dict[str, ir.Attribute] = {},
 ) -> ir.Operation:
   """Wraps a hlo.CustomCall.
 
@@ -1976,6 +1977,7 @@ def custom_call(
       called_computations=ir.ArrayAttr.get([
         ir.FlatSymbolRefAttr.get(name) for name in called_computations]),
   )
+  attributes.update(extra_attributes)
 
   if result_shapes is not None:
     # We add the result_shapes at the end of the operands, and must pass

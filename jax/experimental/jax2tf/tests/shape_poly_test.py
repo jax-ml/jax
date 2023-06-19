@@ -2832,10 +2832,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         raise unittest.SkipTest(
             "native lowering with shape polymorphism requires additional StableHLO feature support")
 
-      if "_unsafe_rbg" in harness.fullname:
-        # https://github.com/openxla/stablehlo/issues/1344: need DynamicRngBitGenerator
-        raise unittest.SkipTest("native lowering with shape polymorphism not implemented for rng_bit_generator")
-
       if "top_k" in harness.fullname:
         # https://github.com/openxla/stablehlo/issues/1255: need DynamicTopK
         raise unittest.SkipTest("native lowering with shape polymorphism not implemented for top_k")

@@ -101,6 +101,7 @@ from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_ApproxTopK
 from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Qr
 from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Sharding
 from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_stablehlo_dynamic_reduce_window
+from jax.experimental.jax2tf.tests.back_compat_testdata import stablehlo_dynamic_rng_bit_generator
 
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
@@ -431,7 +432,8 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         tpu_Sharding.data_2023_03_16, tpu_ApproxTopK.data_2023_04_17,
         tpu_ApproxTopK.data_2023_05_16,
         tpu_stablehlo_dynamic_reduce_window.data_unary_2023_06_17,
-        tpu_stablehlo_dynamic_reduce_window.data_variadic_2023_06_17]
+        tpu_stablehlo_dynamic_reduce_window.data_variadic_2023_06_17,
+        stablehlo_dynamic_rng_bit_generator.data_2023_06_17,]
     covering_testdatas = itertools.chain(
         *[load_testdata_nested(d) for d in covering_testdatas])
     covered_targets = set()
@@ -658,7 +660,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     data = load_testdata(tpu_stablehlo_dynamic_reduce_window.data_unary_2023_06_17)
     self.run_one_test(
         func, data,
-        polymorphic_shapes=("b, ..."))
+        polymorphic_shapes=("b, ...",))
 
   def test_tpu_stablehlo_dynamic_reduce_window_variadic(self):
     # stablehlo.dynamic_reduce_window is used temporarily on TPU for a
@@ -680,6 +682,39 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     self.run_one_test(
         func, data,
         polymorphic_shapes=("b, ...", "b, ..."))
+
+  def test_stablehlo_dynamic_rbg_bit_generator(self):
+    # stablehlo.dynamic_rbg_bit_generator is used temporarily for a
+    # rbg_bit_generator with dynamic shapes.
+    # See https://github.com/openxla/stablehlo/issues/1344 for the long term.
+    key = np.arange(42, 42+4, dtype=np.uint32)
+    a_shape = (2, 3)
+    a = np.arange(math.prod(a_shape), dtype=np.float32).reshape(a_shape)
+    inputs = (key, a)
+    del inputs  # already in the test data, here only for readability.
+
+    def func(key, a):  # a is only used for its shape
+      return jax.random.key_data(jax.random.split(key, a.shape[0] * a.shape[1]))
+
+    # Note that the test currently checks that the generated sequence is the
+    # same. According to the StableHLO spec: "The output is guaranteed to be
+    # deterministic function of initial_state, but it is not guaranteed to be
+    # deterministic between implementations"
+    # See https://github.com/openxla/stablehlo/blob/main/docs/spec.md#rng_bit_generator
+    # This test will fail when the implementation changes. We expect this to
+    # be rare, and most users may expect the RNG sequence to be the same
+    # upon reloading of a saved model.
+    # In case of an intended change in behavior we will have the option to
+    # replace this strict check with something else.
+    data = load_testdata(stablehlo_dynamic_rng_bit_generator.data_2023_06_17)
+
+    prev_default_prng_impl = jax.config.jax_default_prng_impl
+    try:
+      jax.config.update("jax_default_prng_impl", "unsafe_rbg")
+
+      self.run_one_test(func, data, polymorphic_shapes=(None, "b0, b1"))
+    finally:
+      jax.config.update("jax_default_prng_impl", prev_default_prng_impl)
 
 
 if __name__ == "__main__":
