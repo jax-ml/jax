@@ -134,7 +134,12 @@ class RaggedAxis:
     return RaggedAxis(dst, new_ragged_axes)
 
   def transpose_ragged_axes(self, perm):
-    new_ragged_axes = [(perm[ax], size) for ax, size in self.ragged_axes]
+    new_ragged_axes = []
+    for idx, old_idx in enumerate(perm):
+      for ax, size in self.ragged_axes:
+        if old_idx == ax:
+          new_ragged_axes.append((idx, size))
+          break
     return _sorted_ragged_axis(self.stacked_axis, new_ragged_axes)
 
 def _sorted_ragged_axis(stacked_axis, ragged_axes):
