@@ -135,14 +135,17 @@ class RaggedAxis:
 
   def transpose_ragged_axes(self, perm):
     new_ragged_axes = [(perm[ax], size) for ax, size in self.ragged_axes]
-    return RaggedAxis(self.stacked_axis, new_ragged_axes)
+    return _sorted_ragged_axis(self.stacked_axis, new_ragged_axes)
+
+def _sorted_ragged_axis(stacked_axis, ragged_axes):
+  return RaggedAxis(stacked_axis, list(sorted(ragged_axes, key=lambda p: p[0])))
 
 def make_batch_axis(
     ndim: int, stacked_axis: int, ragged_axes: list[tuple[int, Array]]
   ) -> Union[int, RaggedAxis]:
   if ragged_axes:
     canonical = [(canonicalize_axis(ax, ndim), sz) for ax, sz in ragged_axes]
-    return RaggedAxis(canonicalize_axis(stacked_axis, ndim), canonical)
+    return _sorted_ragged_axis(canonicalize_axis(stacked_axis, ndim), canonical)
   else:
     return canonicalize_axis(stacked_axis, ndim)
 
