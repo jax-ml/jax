@@ -29,11 +29,11 @@ python -V
 
 #If XLA_REPO is not set, then use default
 if [ ! -v XLA_REPO ]; then
-	XLA_REPO="https://github.com/ROCmSoftwarePlatform/tensorflow-upstream"
-	XLA_BRANCH="develop-upstream-jax"
+	XLA_REPO="https://github.com/openxla/xla.git"
+	XLA_BRANCH="main"
 elif [ -z "$XLA_REPO" ]; then
-	XLA_REPO="https://github.com/ROCmSoftwarePlatform/tensorflow-upstream"
-	XLA_BRANCH="develop-upstream-jax"
+	XLA_REPO="https://github.com/openxla/xla.git"
+	XLA_BRANCH="main"
 fi
 
 #If XLA_CLONE_PATH is not set, then use default path. 
@@ -41,13 +41,13 @@ fi
 #Set this when XLA repository has been already clone. This is useful in CI
 #environments and when doing local development
 if [ ! -v XLA_CLONE_DIR ]; then
-	XLA_CLONE_DIR=/tmp/tensorflow-upstream
-	rm -rf /tmp/tensorflow-upstream || true
-	git clone -b ${XLA_BRANCH} ${XLA_REPO} /tmp/tensorflow-upstream
+	XLA_CLONE_DIR=/tmp/xla
+	rm -rf /tmp/xla || true
+	git clone -b ${XLA_BRANCH} ${XLA_REPO} /tmp/xla
 elif [ -z "$XLA_CLONE_DIR" ]; then
-	XLA_CLONE_DIR=/tmp/tensorflow-upstream
-	rm -rf /tmp/tensorflow-upstream || true
-	git clone -b ${XLA_BRANCH} ${XLA_REPO} /tmp/tensorflow-upstream
+	XLA_CLONE_DIR=/tmp/xla
+	rm -rf /tmp/xla || true
+	git clone -b ${XLA_BRANCH} ${XLA_REPO} /tmp/xla
 fi
 
 
