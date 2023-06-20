@@ -346,15 +346,6 @@ pytype_strict_library(
 )
 
 pytype_library(
-    name = "iree",
-    srcs = ["_src/iree.py"],
-    deps = [
-        ":config",
-        "//jax/_src/lib",
-    ] + py_deps("numpy"),
-)
-
-pytype_library(
     name = "lax_reference",
     srcs = ["_src/lax_reference.py"],
     visibility = [":internal"] + jax_visibility("lax_reference"),
@@ -612,7 +603,6 @@ pytype_strict_library(
     deps = [
         ":cloud_tpu_init",
         ":config",
-        ":iree",
         ":traceback_util",
         ":util",
         "//jax/_src/lib",
