@@ -42,7 +42,7 @@ data = dict(
       0.12771341, -0.6378056 ,  0.4931458 ]], dtype=float32), array([-2.4598616e+01, -1.1325381e-03, -1.2342700e-04,  2.9237286e-05,
     5.4759425e-05,  3.0579782e-04,  5.1378174e-04,  2.7659894e+02],
   dtype=float32)),
-    mlir_module_text="""
+    mlir_module_text=r"""
 module @jit__lambda_ {
   func.func public @main() -> (tensor<8x8xf32> {jax.result_info = "[0]"}, tensor<8xf32> {jax.result_info = "[1]"}) {
     %0 = stablehlo.iota dim = 0 : tensor<64xf32>

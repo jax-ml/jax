@@ -548,7 +548,7 @@ module @jit__lambda_ {
             1.49946762e-04,  1.86386926e-04,  1.89535742e-04,  2.40968098e-03,
             2.56012683e-03,  2.69382820e-03,  3.27441283e-03,  2.52088105e+04],
           dtype=float32)),
-        mlir_module_text="""
+        mlir_module_text=r"""
 module @jit__lambda_ {
   func.func public @main() -> (tensor<36x36xf32> {jax.result_info = "[0]"}, tensor<36xf32> {jax.result_info = "[1]"}) {
     %0 = stablehlo.iota dim = 0 : tensor<1296xf32>
@@ -1360,7 +1360,7 @@ module @jit__lambda_ {
             3.0421425292401405e-13,  3.1193691330212636e-13,
             3.1270969371399125e-13,  4.3446674157388007e-13,
             1.6764394233642590e-12,  2.5208822708003838e+04])),
-    mlir_module_text="""
+    mlir_module_text=r"""
 module @jit__lambda_ {
   func.func public @main() -> (tensor<36x36xf64> {jax.result_info = "[0]"}, tensor<36xf64> {jax.result_info = "[1]"}) {
     %0 = stablehlo.iota dim = 0 : tensor<1296xf64>

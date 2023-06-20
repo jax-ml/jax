@@ -27,7 +27,7 @@ data_2023_03_17 = dict(
     expected_outputs=(array([[ 6.+0.j, -2.+2.j, -2.+0.j, -2.-2.j],
        [22.+0.j, -2.+2.j, -2.+0.j, -2.-2.j],
        [38.+0.j, -2.+2.j, -2.+0.j, -2.-2.j]], dtype=complex64),),
-    mlir_module_text="""
+    mlir_module_text=r"""
 module @jit_func {
   func.func public @main(%arg0: tensor<3x4xf32> {jax.arg_info = "x", mhlo.sharding = "{replicated}"}) -> (tensor<3x4xcomplex<f32>> {jax.result_info = ""}) {
     %0 = call @fft(%arg0) : (tensor<3x4xf32>) -> tensor<3x4xcomplex<f32>>

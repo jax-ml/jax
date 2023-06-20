@@ -27,7 +27,7 @@ data_2023_03_21 = dict(
     expected_outputs=(array([[6. , 7. , 8. ],
        [0. , 1. , 2. ],
        [0.5, 0.5, 0. ]], dtype=float32), array([2, 2, 2], dtype=int32), array([2, 0, 1], dtype=int32)),
-    mlir_module_text="""
+    mlir_module_text=r"""
 module @jit__lambda_ {
   func.func public @main() -> (tensor<3x3xf32> {jax.result_info = "[0]"}, tensor<3xi32> {jax.result_info = "[1]"}, tensor<3xi32> {jax.result_info = "[2]"}) {
     %0 = stablehlo.iota dim = 0 : tensor<9xf32>
