@@ -21,6 +21,7 @@ from jax import config
 import jax.dlpack
 import jax.numpy as jnp
 from jax._src import test_util as jtu
+from jax._src.lib import xla_extension_version
 
 import numpy as np
 
@@ -47,6 +48,8 @@ dlpack_dtypes = sorted(list(jax.dlpack.SUPPORTED_DTYPES),
 numpy_dtypes = sorted(
     [dt for dt in jax.dlpack.SUPPORTED_DTYPES if dt != jnp.bfloat16],
     key=lambda x: x.__name__)
+
+cuda_array_interface_dtypes = [dt for dt in dlpack_dtypes if dt != jnp.bfloat16]
 
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (2, 3, 4)]
 empty_array_shapes = []
@@ -162,6 +165,7 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertAllClose(x_np, x_jax)
 
 
+@unittest.skipIf(xla_extension_version < 163, "Test requires jaxlib 0.4.13")
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -171,12 +175,29 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     shape=all_shapes,
-    dtype=dlpack_dtypes,
+    dtype=cuda_array_interface_dtypes,
+  )
+  def testCudaArrayInterfaceWorks(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    y = jnp.array(x)
+    a = y.__cuda_array_interface__
+    self.assertEqual(shape, a["shape"])
+    self.assertEqual(x.__array_interface__["typestr"], a["typestr"])
+
+  def testCudaArrayInterfaceBfloat16Fails(self):
+    rng = jtu.rand_default(self.rng())
+    x = rng((2, 2), jnp.bfloat16)
+    y = jnp.array(x)
+    with self.assertRaisesRegex(RuntimeError, ".*not supported for bfloat16.*"):
+      _ = y.__cuda_array_interface__
+
+  @jtu.sample_product(
+    shape=all_shapes,
+    dtype=cuda_array_interface_dtypes,
   )
   @unittest.skipIf(not cupy, "Test requires CuPy")
   def testJaxToCuPy(self, shape, dtype):
-    if dtype == jnp.bfloat16:
-      raise unittest.SkipTest("cupy does not support bfloat16")
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
     y = jnp.array(x)

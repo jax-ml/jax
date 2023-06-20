@@ -37,6 +37,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.13
 
+* Bug fixes
+  * `__cuda_array_interface__` was broken in previous jaxlib versions and is now
+    fixed ({jax-issue}`16440`).
+
 ## jax 0.4.12 (June 8, 2023)
 
 * Changes
