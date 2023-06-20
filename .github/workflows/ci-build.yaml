@@ -122,8 +122,9 @@ jobs:
 
 
   documentation:
+    name: Documentation - test code snippets
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     strategy:
       matrix:
         python-version: [3.9]
@@ -147,7 +148,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
+        key: ${{ runner.os }}-pip-docs-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
     - name: Install dependencies
       run: |
         pip install -r docs/requirements.txt
@@ -159,3 +160,39 @@ jobs:
       run: |
         pytest -n auto --tb=short docs
         pytest -n auto --tb=short --doctest-modules jax --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/interpreters/mlir.py --ignore=jax/_src/iree.py --ignore=jax/experimental/array_serialization --ignore=jax/collect_profile.py
+
+
+  documentation_render:
+    name: Documentation - render documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: [3.9]
+    steps:
+    - name: Cancel previous
+      uses: styfle/cancel-workflow-action@0.11.0
+      with:
+        access_token: ${{ github.token }}
+      if: ${{github.ref != 'refs/heads/main'}}
+    - uses: actions/checkout@v3
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Get pip cache dir
+      id: pip-cache
+      run: |
+        python -m pip install --upgrade pip wheel
+        echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
+    - name: pip cache
+      uses: actions/cache@v3
+      with:
+        path: ${{ steps.pip-cache.outputs.dir }}
+        key: ${{ runner.os }}-pip-docs-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
+    - name: Install dependencies
+      run: |
+        pip install -r docs/requirements.txt
+    - name: Render documentation
+      run: |
+        sphinx-build --color -W --keep-going -b html -D nb_execution_mode=off docs docs/build/html -j auto
