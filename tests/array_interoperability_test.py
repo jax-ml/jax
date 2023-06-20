@@ -181,9 +181,10 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
     y = jnp.array(x)
+    z = np.asarray(y)
     a = y.__cuda_array_interface__
     self.assertEqual(shape, a["shape"])
-    self.assertEqual(x.__array_interface__["typestr"], a["typestr"])
+    self.assertEqual(z.__array_interface__["typestr"], a["typestr"])
 
   def testCudaArrayInterfaceBfloat16Fails(self):
     rng = jtu.rand_default(self.rng())
