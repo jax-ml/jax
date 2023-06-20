@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import warnings
 
 running_in_cloud_tpu_vm: bool = False
 
@@ -70,3 +71,10 @@ def cloud_tpu_init() -> None:
 
   if 'JAX_USE_PJRT_C_API_ON_TPU' not in os.environ:
     os.environ['JAX_USE_PJRT_C_API_ON_TPU'] = 'true'
+
+  use_pjrt_c_api = os.environ['JAX_USE_PJRT_C_API_ON_TPU']
+  if use_pjrt_c_api in ("false", "0"):
+    warnings.warn(
+        f"JAX_USE_PJRT_C_API_ON_TPU={use_pjrt_c_api} will no longer be "
+        "supported in an upcoming future release. Please file an issue at "
+        "https://github.com/google/jax/issues if you need this setting.")
