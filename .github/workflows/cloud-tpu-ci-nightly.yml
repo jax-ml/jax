@@ -26,6 +26,7 @@ jobs:
       - name: Install JAX test requirements
         run: |
           pip install -r build/test-requirements.txt
+          pip install -r build/collect-profile-requirements.txt
       - name: Install JAX
         run: |
           pip uninstall -y jax jaxlib libtpu-nightly

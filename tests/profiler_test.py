@@ -16,6 +16,7 @@ from functools import partial
 import glob
 import os
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -220,22 +221,22 @@ class ProfilerTest(unittest.TestCase):
     "tensorboard_profile_plugin")
   def test_remote_profiler(self):
     port = portpicker.pick_unused_port()
+    jax.profiler.start_server(port)
 
     logdir = absltest.get_default_test_tmpdir()
     # Remove any existing log files.
     shutil.rmtree(logdir, ignore_errors=True)
     def on_profile():
       os.system(
-          f"python -m jax.collect_profile {port} 500 --log_dir {logdir} "
-          "--no_perfetto_link")
+          f"{sys.executable} -m jax.collect_profile {port} 500 "
+          f"--log_dir {logdir} --no_perfetto_link")
 
     thread_profiler = threading.Thread(
         target=on_profile, args=())
     thread_profiler.start()
-    jax.profiler.start_server(port)
     start_time = time.time()
     y = jnp.zeros((5, 5))
-    while time.time() - start_time < 3:
+    while time.time() - start_time < 5:
       y = jnp.dot(y, y)
     jax.profiler.stop_server()
     thread_profiler.join()
