@@ -234,8 +234,6 @@ def convert(fun_jax: Callable,
             enable_xla: bool = True,
             native_serialization: Union[bool, _DefaultNativeSerialization] = DEFAULT_NATIVE_SERIALIZATION,
             native_serialization_platforms: Sequence[str] = (),
-            # TODO(necula): remove native_serialization_strict_checks
-            native_serialization_strict_checks: bool = True,
             native_serialization_disabled_checks: Sequence[DisabledSafetyCheck] = (),
             ) -> Callable:
   """Allows calling a JAX function from a TensorFlow program.
@@ -310,12 +308,6 @@ def convert(fun_jax: Callable,
       strings, including a subset of: 'cpu', 'cuda', 'rocm', 'tpu'.
       The default (empty tuple), specifies the JAX default
       backend on the machine where the lowering is done.
-    native_serialization_strict_checks: In conjunction with
-      `native_serialization`, enable the following
-      checks: (A) the lowered computation is executed on a platform for which it
-      was lowered; (B) the serialized computation contains only custom calls
-      with targets that are guaranteed to be stable, (more to come).
-      DEPRECATED in favor of `native_serialization_disabled_checks`.
     native_serialization_disabled_checks: In conjunction with
       `native_serialization`, disable the specified safety checks.
 
