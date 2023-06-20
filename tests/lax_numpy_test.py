@@ -4928,7 +4928,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testToBytesJitError(self):
     v = np.arange(12, dtype=np.int32).reshape(3, 4)
     f = jax.jit(lambda x: x.tobytes())
-    msg = r".*The tobytes\(\) method was called on the JAX Tracer object"
+    msg = r".*The tobytes\(\) method was called on traced array"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f(v)
 
@@ -4939,7 +4939,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testToListJitError(self):
     v = np.arange(12, dtype=np.int32).reshape(3, 4)
     f = jax.jit(lambda x: x.tolist())
-    msg = r".*The tolist\(\) method was called on the JAX Tracer object"
+    msg = r".*The tolist\(\) method was called on traced array"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f(v)
 

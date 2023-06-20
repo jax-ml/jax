@@ -185,7 +185,7 @@ class ConcretizationTypeError(JAXTypeError):
   def __init__(self, tracer: core.Tracer, context: str = ""):
     super().__init__(
         "Abstract tracer value encountered where concrete value is expected: "
-        f"{tracer}\n{context}{tracer._origin_msg()}\n")
+        f"{tracer._error_repr()}\n{context}{tracer._origin_msg()}\n")
 
 
 @export
@@ -288,7 +288,7 @@ class TracerArrayConversionError(JAXTypeError):
   on what a Tracer is). It typically occurs in one of a few situations.
 
   Using non-JAX functions in JAX transformations
-    This error can occur if you attempt to use a non-JAX library like `numpy`
+    This error can occur if you attempt to use a non-JAX library like ``numpy``
     or ``scipy`` inside a JAX transformation (:func:`~jax.jit`, :func:`~jax.grad`,
     :func:`jax.vmap`, etc.). For example::
 
@@ -303,7 +303,7 @@ class TracerArrayConversionError(JAXTypeError):
       Traceback (most recent call last):
           ...
       TracerArrayConversionError: The numpy.ndarray conversion method
-      __array__() was called on the JAX Tracer object
+      __array__() was called on traced array with shape int32[4]
 
     In this case, you can fix the issue by using :func:`jax.numpy.sin` in place of
     :func:`numpy.sin`::
@@ -321,8 +321,8 @@ class TracerArrayConversionError(JAXTypeError):
 
   Indexing a numpy array with a tracer
     If this error arises on a line that involves array indexing, it may be that
-    the array being indexed `x` is a standard numpy.ndarray while the indices `idx`
-    are traced JAX arrays. For example::
+    the array being indexed ``x`` is a standard numpy.ndarray while the indices
+    ``idx`` are traced JAX arrays. For example::
 
       >>> x = np.arange(10)
 
@@ -334,7 +334,7 @@ class TracerArrayConversionError(JAXTypeError):
       Traceback (most recent call last):
           ...
       TracerArrayConversionError: The numpy.ndarray conversion method
-      __array__() was called on the JAX Tracer object
+      __array__() was called on traced array with shape int32[0]
 
     Depending on the context, you may fix this by converting the numpy array
     into a JAX array::
@@ -365,7 +365,7 @@ class TracerArrayConversionError(JAXTypeError):
   def __init__(self, tracer: core.Tracer):
     super().__init__(
         "The numpy.ndarray conversion method __array__() was called on "
-        f"the JAX Tracer object {tracer}{tracer._origin_msg()}")
+        f"{tracer._error_repr()}{tracer._origin_msg()}")
 
 
 @export
@@ -389,8 +389,8 @@ class TracerIntegerConversionError(JAXTypeError):
       >>> func(np.arange(4), 0)  # doctest: +IGNORE_EXCEPTION_DETAIL
       Traceback (most recent call last):
           ...
-      TracerIntegerConversionError: The __index__() method was called on the JAX
-      Tracer object
+      TracerIntegerConversionError: The __index__() method was called on
+      traced array with shape int32[0]
 
     When this happens, the solution is often to mark the problematic argument as
     static::
@@ -431,7 +431,8 @@ class TracerIntegerConversionError(JAXTypeError):
       >>> func(0)  # doctest: +IGNORE_EXCEPTION_DETAIL
       Traceback (most recent call last):
           ...
-      TracerIntegerConversionError: The __index__() method was called on the JAX Tracer object
+      TracerIntegerConversionError: The __index__() method was called on
+      traced array with shape int32[0]
 
     Depending on the context, you can generally fix this either by converting
     the list to a JAX array::
@@ -459,7 +460,8 @@ class TracerIntegerConversionError(JAXTypeError):
   """
   def __init__(self, tracer: core.Tracer):
     super().__init__(
-        f"The __index__() method was called on the JAX Tracer object {tracer}")
+        f"The __index__() method was called on {tracer._error_repr()}"
+        f"{tracer._origin_msg()}")
 
 
 @export
