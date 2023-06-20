@@ -69,6 +69,8 @@ filterwarnings = [
     # TODO(skyewm): remove when jaxlib >= 0.4.12 is released (needs
     # https://github.com/openxla/xla/commit/fb9dc3db0999bf14c78d95cb7c3aa6815221ddc7)
     "ignore:ml_dtypes.float8_e4m3b11 is deprecated.",
+    # TODO(skyewm): remove when we remove Python 3.8 CI
+    "ignore:JAX will drop Python 3.8 support in an upcoming future release",
 ]
 doctest_optionflags = [
     "NUMBER",

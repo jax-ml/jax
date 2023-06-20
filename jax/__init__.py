@@ -247,6 +247,24 @@ if not config.jax_jit_pjit_api_merge:
       ' disable jax.config.jax_jit_pjit_api_merge.'
   )
 
+import sys as _sys
+if _sys.version_info < (3, 9):
+  from warnings import warn as _warn
+  import jax._src.cloud_tpu_init as _cloud_tpu_init  # type: ignore[no-redef]
+  msg = ("JAX will drop Python 3.8 support in an upcoming future release "
+         "(see https://jax.readthedocs.io/en/latest/deprecation.html). "
+         "Please upgrade your Python version to 3.9 or higher. "
+         f"Current version: {_sys.version.split(' ')[0]}")
+  if _cloud_tpu_init.running_in_cloud_tpu_vm:
+    msg += (
+      "\n\nIf you're using the Python version shipped with the TPU VM image "
+      "'tpu-vm-base' or similar, we recommend switching to "
+      "'tpu-ubuntu2204-base' for all TPU types.")
+  _warn(msg)
+  del _cloud_tpu_init
+  del _warn
+del _sys
+
 import jax.lib  # TODO(phawkins): remove this export.
 
 # trailer
