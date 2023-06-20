@@ -30,7 +30,7 @@ import platform as py_platform
 import pkgutil
 import sys
 import threading
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple, Union
 import warnings
 
 import numpy as np
@@ -225,20 +225,37 @@ class BackendRegistration:
   # install a plugin if you don't intend it to be used?
   fail_quietly: bool = False
 
+  # Is this plugin experimental? If a plugin is deemed experimental, we issue
+  # a warning when it is initialized. This is mostly to set user expectations
+  # correctly: we don't want users to think that JAX is buggy because of a
+  # a buggy plugin.
+  experimental: bool = False
+
 _backend_factories: Dict[str, BackendRegistration] = {}
 _default_backend: Optional[xla_client.Client] = None
 _backends : Dict[str, xla_client.Client] = {}
 _backends_errors : Dict[str, str] = {}
 _backend_lock = threading.Lock()
 
+# The set of known non-experimental plugins.
+#
+# If a plugin passes the JAX test suite, it can be added to the allowlist below.
+# Send a PR if you would like to be added.
+#
+# It is fine for a plugin not to implement every feature that JAX uses, provided
+# that a reasonable feature set is implemented and the plugin fails gracefully
+# for unimplemented features. Wrong outputs are not acceptable.
+_nonexperimental_plugins: Set[str] = set()
+
 def register_backend_factory(name: str, factory: BackendFactory, *,
                              priority: int = 0,
-                             fail_quietly: bool = True) -> None:
+                             fail_quietly: bool = True,
+                             experimental: bool = False) -> None:
   with _backend_lock:
     if name in _backends:
       raise RuntimeError(f"Backend {name} already initialized")
   _backend_factories[name] = BackendRegistration(
-    factory, priority, fail_quietly)
+    factory, priority, fail_quietly, experimental)
 
 
 register_backend_factory('cpu',
@@ -449,8 +466,9 @@ def register_plugin(
   logger.debug(
       'registering PJRT plugin %s from %s', plugin_name, library_path
   )
+  experimental = plugin_name not in _nonexperimental_plugins
   register_backend_factory(plugin_name, factory, priority=priority,
-                           fail_quietly=False)
+                           fail_quietly=False, experimental=experimental)
 
 
 def register_pjrt_plugin_factories_from_env() -> None:
@@ -622,6 +640,9 @@ def _init_backend(platform: str) -> xla_client.Client:
         f"Backend '{platform}' is not in the list of known backends: "
         f"{list(_backend_factories.keys())}.")
 
+  if registration.experimental:
+    logger.warning(f"Platform '{platform}' is experimental and not all JAX "
+                   "functionality may be correctly supported!")
   logger.debug("Initializing backend '%s'", platform)
   backend = registration.factory()
   # TODO(skye): consider raising more descriptive errors directly from backend

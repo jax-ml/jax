@@ -113,6 +113,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertIn("name1", xb._backend_factories)
     self.assertIn("name2", xb._backend_factories)
     self.assertEqual(registration.priority, 400)
+    self.assertTrue(registration.experimental)
     mock_plugin_loaded.assert_called_once_with("name1")
     mock_make.assert_called_once_with("name1", None)
 
@@ -133,6 +134,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
 
     self.assertIn("name1", xb._backend_factories)
     self.assertEqual(registration.priority, 400)
+    self.assertTrue(registration.experimental)
     mock_plugin_loaded.assert_called_once_with("name1")
     mock_make.assert_called_once_with(
         "name1",
@@ -163,7 +165,7 @@ class GetBackendTest(jtu.JaxTestCase):
       return []
 
   def _register_factory(self, platform: str, priority, device_count=1,
-                        assert_used_at_most_once=False):
+                        assert_used_at_most_once=False, experimental=False):
     if assert_used_at_most_once:
       used = []
     def factory():
@@ -178,7 +180,7 @@ class GetBackendTest(jtu.JaxTestCase):
       return self._DummyBackend(platform, device_count)
 
     xb.register_backend_factory(platform, factory, priority=priority,
-                                fail_quietly=False)
+                                fail_quietly=False, experimental=experimental)
 
   def setUp(self):
     self._orig_factories = xb._backend_factories
@@ -295,6 +297,17 @@ class GetBackendTest(jtu.JaxTestCase):
 
     finally:
       config.FLAGS.jax_platforms = orig_jax_platforms
+
+
+  def test_experimental_warning(self):
+    self._register_factory("platform_A", 20, experimental=True)
+
+    with self.assertLogs("jax._src.xla_bridge", level="WARNING") as logs:
+      _ = xb.get_backend()
+    self.assertEqual(logs.output, [
+      "WARNING:jax._src.xla_bridge:Platform 'platform_A' is experimental and "
+      "not all JAX functionality may be correctly supported!"
+    ])
 
 
 if __name__ == "__main__":
