@@ -1900,12 +1900,35 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     precision = lax.Precision.HIGHEST if jtu.device_under_test() == "tpu" else None
-    np_fun = partial(np_op, mode=mode)
     jnp_fun = partial(jnp_op, mode=mode, precision=precision)
+    def np_fun(x, y):
+      return np_op(x, y, mode=mode).astype(dtypes.to_inexact_dtype(dtype))
     tol = {np.float16: 2e-1, np.float32: 1e-2, np.float64: 1e-14,
            np.complex128: 1e-14}
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
-                            tol=tol)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    mode=['full', 'same', 'valid'],
+    op=['convolve', 'correlate'],
+    dtype=number_dtypes,
+    xshape=one_dim_array_shapes,
+    yshape=one_dim_array_shapes,
+  )
+  @jtu.skip_on_devices("gpu", "tpu", "rocm")  # backends don't support all dtypes.
+  def testConvolutionsPreferredElementType(self, xshape, yshape, dtype, mode, op):
+    jnp_op = getattr(jnp, op)
+    np_op = getattr(np, op)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
+    precision = lax.Precision.HIGHEST if jtu.device_under_test() == "tpu" else None
+    jnp_fun = partial(jnp_op, mode=mode, precision=precision,
+                      preferred_element_type=dtype)
+    def np_fun(x, y):
+      return np_op(x, y, mode=mode).astype(dtype)
+    tol = {np.float16: 2e-1, np.float32: 1e-2, np.float64: 1e-14,
+           np.complex128: 1e-14}
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
