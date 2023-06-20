@@ -1,4 +1,4 @@
-name: Cloud TPU nightly
+name: CI - Cloud TPU (nightly)
 on:
   schedule:
     - cron: "0 14 * * *" # daily at 7am PST

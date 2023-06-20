@@ -1,4 +1,4 @@
-name: CI-numpy-scipy-nightly
+name: CI - with Numpy/Scipy nightly wheels (nightly)
 # This configures a github action that runs the JAX test suite against nightly development builds
 # of numpy and scipy, in order to catch issues with new package versions prior to their release.
 # Unlike our other CI, this is one that we expect to fail frequently, and so we don't run it against
