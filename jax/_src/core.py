@@ -596,24 +596,32 @@ class Tracer(typing.Array):
   __array_priority__ = 1000
   __slots__ = ['_trace', '_line_info']
 
+  def _error_repr(self):
+    if self.aval is None:
+      return f"traced array with aval {self.aval}"
+    return f"traced array with shape {raise_to_shaped(self.aval).str_short()}."
+
   def __array__(self, *args, **kw):
     raise TracerArrayConversionError(self)
 
   def __dlpack__(self, *args, **kw):
     raise ConcretizationTypeError(self,
-      f"The __dlpack__() method was called on the JAX Tracer object {self}")
+      f"The __dlpack__() method was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   def __index__(self):
     raise TracerIntegerConversionError(self)
 
   def tolist(self):
     raise ConcretizationTypeError(self,
-      f"The tolist() method was called on the JAX Tracer object {self}")
+      f"The tolist() method was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   def tobytes(self, order="C"):
     del order
     raise ConcretizationTypeError(self,
-      f"The tobytes() method was called on the JAX Tracer object {self}")
+      f"The tobytes() method was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   def __init__(self, trace: Trace):
     self._trace = trace
@@ -633,12 +641,14 @@ class Tracer(typing.Array):
     # Raising a ConcretizationTypeError would make sense, but for backward compatibility
     # we raise an AttributeError so that hasattr() and getattr() work as expected.
     raise AttributeError(self,
-      f"The 'sharding' attribute is not available on the JAX Tracer object {self}")
+      f"The 'sharding' attribute is not available on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   @property
   def addressable_shards(self):
     raise ConcretizationTypeError(self,
-      f"The 'addressable_shards' attribute is not available on the JAX Tracer object {self}")
+      f"The 'addressable_shards' attribute is not available on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   @property
   def at(self):
@@ -719,63 +729,76 @@ class Tracer(typing.Array):
   # Methods that are only valid for materialized arrays
   def addressable_data(self, index):
     raise ConcretizationTypeError(self,
-      f"The addressable_data() method was called on the JAX Tracer object {self}")
+      f"The addressable_data() method was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   @property
   def block_until_ready(self):
     # Raise AttribureError for backward compatibility with hasattr() and getattr() checks.
     raise AttributeError(self,
-      f"The 'block_until_ready' method is not available on the JAX Tracer object {self}")
+      f"The 'block_until_ready' method is not available on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   @property
   def copy_to_host_async(self):
     # Raise AttribureError for backward compatibility with hasattr() and getattr() checks.
     raise AttributeError(self,
-      f"The 'copy_to_host_async' method is not available on the JAX Tracer object {self}")
+      f"The 'copy_to_host_async' method is not available on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   def delete(self):
     raise ConcretizationTypeError(self,
-      f"The delete() method was called on the JAX Tracer object {self}")
+      f"The delete() method was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   def device(self):
     raise ConcretizationTypeError(self,
-      f"The device() method was called on the JAX Tracer object {self}")
+      f"The device() method was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   def devices(self):
     raise ConcretizationTypeError(self,
-      f"The devices() method was called on the JAX Tracer object {self}")
+      f"The devices() method was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   @property
   def global_shards(self):
     raise ConcretizationTypeError(self,
-      f"The global_shards property was called on the JAX Tracer object {self}")
+      f"The global_shards property was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   def is_deleted(self):
     raise ConcretizationTypeError(self,
-      f"The is_deleted() method was called on the JAX Tracer object {self}")
+      f"The is_deleted() method was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   @property
   def is_fully_addressable(self):
     raise ConcretizationTypeError(self,
-      f"The is_fully_addressable property was called on the JAX Tracer object {self}")
+      f"The is_fully_addressable property was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   @property
   def is_fully_replicated(self):
     raise ConcretizationTypeError(self,
-      f"The is_fully_replicated property was called on the JAX Tracer object {self}")
+      f"The is_fully_replicated property was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   def on_device_size_in_bytes(self):
     raise ConcretizationTypeError(self,
-      f"The on_device_size_in_bytes() method was called on the JAX Tracer object {self}")
+      f"The on_device_size_in_bytes() method was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   @property
   def traceback(self):
     raise ConcretizationTypeError(self,
-      f"The traceback property was called on the JAX Tracer object {self}")
+      f"The traceback property was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
   def unsafe_buffer_pointer(self):
     raise ConcretizationTypeError(self,
-      f"The unsafe_buffer_pointer() method was called on the JAX Tracer object {self}")
+      f"The unsafe_buffer_pointer() method was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
 
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals

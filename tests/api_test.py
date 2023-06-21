@@ -1484,7 +1484,7 @@ class APITest(jtu.JaxTestCase):
     assert jit(f, static_argnums=(0,))(0) == L[0]
     self.assertRaisesRegex(
         TypeError,
-        r"The __index__\(\) method was called on the JAX Tracer object.*",
+        r"The __index__\(\) method was called on traced array.*",
         lambda: jit(f)(0))
 
   def test_range_err(self):
@@ -1496,7 +1496,7 @@ class APITest(jtu.JaxTestCase):
     assert jit(f, static_argnums=(1,))(0, 5) == 10
     self.assertRaisesRegex(
         TypeError,
-        r"The __index__\(\) method was called on the JAX Tracer object.*",
+        r"The __index__\(\) method was called on traced array.*",
         lambda: jit(f)(0, 5))
 
   def test_cast_int(self):
@@ -1511,7 +1511,7 @@ class APITest(jtu.JaxTestCase):
       f = lambda x: castfun(x)
       self.assertRaisesRegex(
           TypeError,
-          r"The __index__\(\) method was called on the JAX Tracer object.*", lambda: jit(f)(0))
+          r"The __index__\(\) method was called on traced array.*", lambda: jit(f)(0))
 
   def test_unimplemented_interpreter_rules(self):
     foo_p = core.Primitive('foo')
