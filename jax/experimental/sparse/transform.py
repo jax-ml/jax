@@ -53,8 +53,10 @@ from typing import (
 
 import numpy as np
 
+import jax
 from jax import lax
 from jax._src import core
+from jax._src.custom_derivatives import lift_jvp
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import sharding_impls
@@ -342,6 +344,11 @@ class SparseTrace(core.Trace):
     bufs_out = call_primitive.bind(fun, *in_bufs, **params)
     setnewattr(self.main, 'spenv', SparsifyEnv(bufs_out))
     return [SparseTracer(self, spvalue=spvalue) for spvalue in out_spvalues()]
+
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, *, symbolic_zeros):
+    # TODO(jakevdp): handle the jvp here
+    del primitive, jvp, symbolic_zeros
+    return fun.call_wrapped(*tracers)
 
 @lu.transformation_with_aux
 def sparsify_subtrace(main, spvalues, *bufs):
@@ -851,6 +858,24 @@ def _todense_sparse_rule(spenv, spvalue, *, tree):
   return (spenv.dense(out),)
 
 sparse_rules_bcoo[sparse.todense_p] = _todense_sparse_rule
+
+def _custom_jvp_sparse_rule(spenv, *spvalues, **params):
+  call_jaxpr = params.pop('call_jaxpr')
+  jvp_jaxpr_thunk = params.pop('jvp_jaxpr_thunk')
+  num_consts = params.pop('num_consts')
+  sp_call_jaxpr, out_tree = _sparsify_jaxpr(spenv, call_jaxpr, *spvalues)
+  @lu.wrap_init
+  def fun(*arrs):
+    sparrs = arrays_to_spvalues(spenv, arrs)
+    out = eval_sparse(call_jaxpr.jaxpr, call_jaxpr.consts, sparrs, spenv)
+    return spvalues_to_arrays(spenv, out)
+  jvp = lift_jvp(num_consts, jvp_jaxpr_thunk)
+  invals = spvalues_to_arrays(spenv, spvalues)
+  outvals = jax.custom_derivatives.custom_jvp_call_p.bind(fun, jvp, *invals, **params)
+  return arrays_to_spvalues(spenv, outvals)
+
+sparse_rules_bcoo[jax.custom_derivatives.custom_jvp_call_p] = _custom_jvp_sparse_rule
+sparse_rules_bcsr[jax.custom_derivatives.custom_jvp_call_p] = _custom_jvp_sparse_rule
 
 
 # ------------------------------------------------------------------------------

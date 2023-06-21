@@ -655,6 +655,24 @@ class SparsifyTest(jtu.JaxTestCase):
       if fmt == "BCSR":
         self.assertArraysAllClose(sparse_result.indptr, mat.indptr)
 
+  def testCustomJVP(self):
+    square = jax.custom_derivatives.custom_jvp(lambda x: x ** 2)
+    square.defjvp(lambda p, t: (p[0] ** 2, 2 * t[0] * p[0]))
+    x = BCOO.fromdense(jnp.arange(5.0))
+
+    # Test calling the function itself.
+    result = self.sparsify(square)(x)
+    expected = self.sparsify(lambda x: x ** 2)(x)
+    self.assertArraysEqual(result.indices, expected.indices)
+    self.assertArraysAllClose(result.data, expected.data)
+
+    # Test evaluating the custom gradient.
+    grad_square_sum = jax.grad(lambda x: square(x).sum())
+    result = self.sparsify(grad_square_sum)(x)
+    expected = self.sparsify(jax.grad(lambda x: jnp.sum(x ** 2)))(x)
+    self.assertArraysEqual(result.indices, expected.indices)
+    self.assertArraysAllClose(result.data, expected.data)
+
 
 class SparsifyTracerTest(SparsifyTest):
   @classmethod
