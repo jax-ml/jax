@@ -131,6 +131,11 @@ def key(seed: Union[int, Array]) -> PRNGKeyArray:
   """
   # TODO(frostig): Take impl as optional argument
   impl = default_prng_impl()
+  if isinstance(seed, prng.PRNGKeyArray):
+    raise TypeError("key accepts a scalar seed, but was given a PRNGKeyArray.")
+  if np.ndim(seed):
+    raise TypeError("key accepts a scalar seed, but was given an array of "
+                    f"shape {np.shape(seed)} != (). Use jax.vmap for batching")
   return prng.seed_with_impl(impl, seed)
 
 def PRNGKey(seed: Union[int, Array]) -> KeyArray:

@@ -1654,6 +1654,22 @@ class KeyArrayTest(jtu.JaxTestCase):
     key = self.make_keys()
     with self.assertRaisesRegex(TypeError, "PRNGKey accepts a scalar seed"):
       jax.random.PRNGKey(key)
+    with self.assertRaisesRegex(TypeError, "key accepts a scalar seed"):
+      jax.random.key(key)
+
+  def test_non_scalar_seed(self):
+    seed_arr = np.arange(4)
+    with self.assertRaisesRegex(TypeError, "PRNGKey accepts a scalar seed"):
+      jax.random.PRNGKey(seed_arr)
+    with self.assertRaisesRegex(TypeError, "key accepts a scalar seed"):
+      jax.random.key(seed_arr)
+
+  def test_non_integer_seed(self):
+    seed = np.pi
+    with self.assertRaisesRegex(TypeError, "PRNG key seed must be an integer"):
+      jax.random.PRNGKey(seed)
+    with self.assertRaisesRegex(TypeError, "PRNG key seed must be an integer"):
+      jax.random.key(seed)
 
   def test_dtype_property(self):
     k1, k2 = self.make_keys(), self.make_keys()
