@@ -41,7 +41,7 @@ from jax._src import config as jax_config
 from jax._src import effects
 from jax._src.config import FLAGS, config
 from jax._src.errors import (
-    ConcretizationTypeError, TracerArrayConversionError,
+    ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
 from jax._src import linear_util as lu
 
@@ -1366,8 +1366,12 @@ def concretization_function_error(fun, suggest_astype=False):
     fname_context += ("If trying to convert the data type of a value, "
                       f"try using `x.astype({fun.__name__})` "
                       f"or `jnp.array(x, {fun.__name__})` instead.")
-  def error(self, arg):
-    raise ConcretizationTypeError(arg, fname_context)
+  if fun is bool:
+    def error(self, arg):
+      raise TracerBoolConversionError(arg)
+  else:
+    def error(self, arg):
+      raise ConcretizationTypeError(arg, fname_context)
   return error
 
 def concrete_or_error(force: Any, val: Any, context=""):
