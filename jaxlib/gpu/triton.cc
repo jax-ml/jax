@@ -22,6 +22,7 @@
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
+#include "jaxlib/kernel_pybind11_helpers.h"
 #include "pybind11_abseil/status_casters.h"  // IWYU pragma: keep
 #include "xla/service/custom_call_status.h"
 
@@ -456,10 +457,8 @@ PYBIND11_MODULE(_triton, m) {
                              sizeof(TritonAutotunedKernelCall*));
           });
 
-  m.def("get_custom_call", [] {
-    return py::capsule(reinterpret_cast<void*>(&LaunchTritonKernel),
-                       "xla._CUSTOM_CALL_TARGET");
-  });
+  m.def("get_custom_call",
+        [] { return jax::EncapsulateFunction(&LaunchTritonKernel); });
 
   m.def("create_array_parameter",
         [](size_t bytes_to_zero, bool ptr_must_be_divisible_by_16) {

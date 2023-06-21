@@ -399,6 +399,7 @@ pybind_extension(
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
+        "//jaxlib:kernel_pybind11_helpers",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/stream_executor/cuda:cudart_stub",
         "@com_google_absl//absl/base",
