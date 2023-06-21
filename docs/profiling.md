@@ -132,6 +132,15 @@ with jax.profiler.trace("/tmp/tensorboard"):
   y.block_until_ready()
 ```
 
+To get the instruction profile information for AoT compilation, you can use
+{func}`jax.profiler.get_profiled_instructions_proto`:
+
+```python
+import jax
+
+profile_proto = jax.profiler.get_profiled_instructions_proto("/tmp/tensorboard")
+```
+
 To view the trace, first start TensorBoard if you haven't already:
 
 ```shell

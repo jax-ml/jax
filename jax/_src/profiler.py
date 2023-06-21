@@ -204,6 +204,25 @@ def stop_trace():
     _profile_state.log_dir = None
 
 
+def get_profiled_instructions_proto(tensorboard_dir: str) -> bytes:
+  """Gets the profiled instructions proto from profile.
+
+  Restore the xplane from the tensorboard dir and convert it to profiled
+  instructions proto.
+
+  For example:
+
+  logdir = '/tmp/logdir'
+  jax.profiler.start_trace(logdir)
+  my_compute()
+  jax.profiler.stop_trace()
+  proto_result = jax.profiler.get_profiled_instructions_proto(logdir)
+
+  This will get the profiled instructions proto as bytes in proto_result.
+  """
+  return xla_client.profiler.get_profiled_instructions_proto(tensorboard_dir)
+
+
 @contextmanager
 def trace(log_dir, create_perfetto_link=False, create_perfetto_trace=False):
   """Context manager to take a profiler trace.

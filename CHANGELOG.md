@@ -13,6 +13,7 @@ Remember to align the itemized text with the first line of an item within a list
     https://jax.readthedocs.io/en/latest/deprecation.html
   * JAX now requires NumPy 1.22 or newer as per
     https://jax.readthedocs.io/en/latest/deprecation.html
+  * Added `jax.profiler.get_profiled_instructions_proto`.
 
 ## jaxlib 0.4.14
 

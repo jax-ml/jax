@@ -19,6 +19,7 @@ from jax._src.profiler import (
   StepTraceAnnotation as StepTraceAnnotation,
   TraceAnnotation as TraceAnnotation,
   device_memory_profile as device_memory_profile,
+  get_profiled_instructions_proto as get_profiled_instructions_proto,
   save_device_memory_profile as save_device_memory_profile,
   start_server as start_server,
   stop_server as stop_server,
