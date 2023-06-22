@@ -25,6 +25,8 @@ Remember to align the itemized text with the first line of an item within a list
         determine the output shardings.
     * If the mesh context manager is provided, None will imply that the value
       will be replicated on all devices of the mesh.
+  * Added a warning if a non-allowlisted `jaxlib` plugin is in use.
+  * Added `jax.tree_util.tree_leaves_with_path`.
 
 * Bug fixes
   * Fixed incorrect wheel name in CUDA 12 releases (#16362); the correct wheel
@@ -37,9 +39,13 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.13
 
+* Changes
+  * Added Windows CPU-only wheels to the `jaxlib` Pypi release.
+
 * Bug fixes
   * `__cuda_array_interface__` was broken in previous jaxlib versions and is now
     fixed ({jax-issue}`16440`).
+  * Concurrent CUDA kernel tracing is now enabled by default on NVIDIA GPUs.
 
 ## jax 0.4.12 (June 8, 2023)
 

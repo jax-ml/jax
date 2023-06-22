@@ -526,10 +526,10 @@ the following in your cloud TPU VM:
 pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 ```
 
-For interactive notebook users: Colab TPUs are no longer supported by JAX as of
-version 0.4. However, for an interactive TPU notebook in the cloud, you can use
-[Kaggle TPU notebooks](https://www.kaggle.com/docs/tpu), which are fully
-supported by JAX.
+For interactive notebook users: Colab TPUs no longer support JAX as of
+JAX version 0.4. However, for an interactive TPU notebook in the cloud, you can
+use [Kaggle TPU notebooks](https://www.kaggle.com/docs/tpu), which fully
+support JAX.
 
 ### pip installation: Apple GPUs
 
