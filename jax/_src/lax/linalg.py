@@ -1412,21 +1412,39 @@ def _geqrf_lowering_rule(ctx, operand):
   )
   return op.results
 
-def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a):
-  if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
-    raise NotImplementedError("Shape polymorphism for custom call is not implemented (geqrf); b/261671778")
+def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a, *,
+                            platform: str):
   a_aval, taus_aval = ctx.avals_out
   *batch_dims, m, n = a_aval.shape
+  # It should be possible to support fully-dynamic shapes, but since
+  # the last two dimensions (m, n) are used in more involved ways, we only
+  # support dynamic dimensions for the batch size for now.
+  if not is_constant_shape([m, n]):
+    raise NotImplementedError(
+      "Shape polymorphism for native serialization for qr on CPU and GPU is "
+      f"implemented only for the batch dimensions: {a_aval.shape}")
   batch = math.prod(batch_dims)
 
   if batch == 0 or m == 0 or n == 0:
     return mlir.full_like_aval(ctx, 0, a_aval), mlir.full_like_aval(ctx, 0, taus_aval)
 
+  if not is_constant_shape(a_aval.shape):
+    if platform in ["cuda", "rocm"] or jaxlib_version < (0, 4, 13):
+      # TODO(necula): remove the platform kwarg when we implement GPU support.
+      raise NotImplementedError(
+          "Shape polymorphism for native serialization for QR is not "
+          f"implemented, try to upgrade jaxlib; b/261671778; {a_aval.shape}")
+
   if (batched_geqrf_impl is not None and batch > 1 and m // batch <= 128 and
       n // batch <= 128):
     a_out, taus = batched_geqrf_impl(a_aval.dtype, a)
   else:
-    a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)
+    if platform in ["cuda", "rocm"] or jaxlib_version < (0, 4, 13):
+      a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)  # type: ignore
+    else:
+      a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
+      a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a,
+                                           a_shape_vals=a_shape_vals)
     zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
     ok = mlir.compare_hlo(info_geqrf, zeros, "EQ", "SIGNED")
     select_ok_a_aval = ShapedArray(batch_dims + [1, 1], np.dtype(np.bool_))
@@ -1447,17 +1465,20 @@ batching.primitive_batchers[geqrf_p] = _geqrf_batching_rule
 mlir.register_lowering(geqrf_p, _geqrf_lowering_rule)
 
 mlir.register_lowering(
-    geqrf_p, partial(_geqrf_cpu_gpu_lowering, lapack.geqrf_hlo, None),
+    geqrf_p, partial(_geqrf_cpu_gpu_lowering, lapack.geqrf_hlo, None,
+                     platform='cpu'),
     platform='cpu')
 mlir.register_lowering(
     geqrf_p,
     partial(_geqrf_cpu_gpu_lowering, gpu_solver.cuda_geqrf,
-            gpu_solver.cuda_geqrf_batched),
+            gpu_solver.cuda_geqrf_batched,
+            platform='cuda'),
     platform='cuda')
 mlir.register_lowering(
     geqrf_p,
     partial(_geqrf_cpu_gpu_lowering, gpu_solver.rocm_geqrf,
-            gpu_solver.rocm_geqrf_batched),
+            gpu_solver.rocm_geqrf_batched,
+            platform='rocm'),
     platform='rocm')
 
 
@@ -1515,16 +1536,31 @@ def _householder_product_lowering_rule(ctx, a, taus):
       result_shapes=result_shapes)
   return [op.result]
 
-def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus):
-  if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
-    raise NotImplementedError("Shape polymorphism for custom call is not implemented (householder product); b/261671778")
-  a_aval, _ = ctx.avals_in
+def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus, *,
+                                          platform: str):
+  a_aval, taus_aval = ctx.avals_in
   *batch_dims, m, n = a_aval.shape
+  if not is_constant_shape([m, n]):
+    raise NotImplementedError(
+      "Shape polymorphism for native serialization for householder_product on "
+      f"CPU and GPU is implemented only for the batch dimensions: {a_aval.shape}")
 
   if m == 0 or n == 0:
     return [mlir.full_like_aval(ctx, 0, a_aval)]
 
-  a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus)
+  if platform in ["rocm", "cuda"] or jaxlib_version < (0, 4, 13):
+    # TODO(necula): remove the platform kwarg when we implement GPU support.
+    if not is_constant_shape(a_aval.shape):
+      raise NotImplementedError(
+          "Shape polymorphism for native serialization for householder_product "
+          f"on GPU is not implemented; b/261671778; {a_aval.shape}")
+    a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus)  # type: ignore
+  else:
+    a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
+    tau_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, taus_aval.shape)
+    a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus,
+                               a_shape_vals=a_shape_vals,
+                               tau_shape_vals=tau_shape_vals)
   zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
   ok = mlir.compare_hlo(info_orgqr, zeros, "EQ", "SIGNED")
   select_a_aval = ShapedArray(batch_dims + [1, 1], np.dtype(np.bool_))
@@ -1542,15 +1578,18 @@ mlir.register_lowering(householder_product_p, _householder_product_lowering_rule
 
 mlir.register_lowering(
     householder_product_p,
-    partial(_householder_product_cpu_gpu_lowering, lapack.orgqr_hlo),
+    partial(_householder_product_cpu_gpu_lowering, lapack.orgqr_hlo,
+            platform='cpu'),
     platform='cpu')
 mlir.register_lowering(
     householder_product_p,
-    partial(_householder_product_cpu_gpu_lowering, gpu_solver.cuda_orgqr),
+    partial(_householder_product_cpu_gpu_lowering, gpu_solver.cuda_orgqr,
+            platform='cuda'),
     platform='cuda')
 mlir.register_lowering(
     householder_product_p,
-    partial(_householder_product_cpu_gpu_lowering, gpu_solver.rocm_orgqr),
+    partial(_householder_product_cpu_gpu_lowering, gpu_solver.rocm_orgqr,
+            platform='rocm'),
     platform='rocm')
 
 
@@ -1627,7 +1666,7 @@ qr_p.def_abstract_eval(_qr_abstract_eval)
 ad.primitive_jvps[qr_p] = qr_jvp_rule
 batching.primitive_batchers[qr_p] = _qr_batching_rule
 
-mlir.register_lowering(qr_p, mlir.lower_fun(_qr_lowering));
+mlir.register_lowering(qr_p, mlir.lower_fun(_qr_lowering))
 
 
 # Singular value decomposition

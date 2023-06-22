@@ -715,6 +715,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "lapack_sgeev", "lapack_dgeev", "lapack_cgeev", "lapack_zgeev",
     # qr on CPU
     "lapack_sgeqrf", "lapack_dgeqrf", "lapack_cgeqrf", "lapack_zgeqrf",
+    # householder product on CPU
     "lapack_sorgqr", "lapack_dorgqr", "lapack_cungqr", "lapack_zungqr",
     # qr on GPU
     "cusolver_geqrf", "cublas_geqrf_batched",

@@ -2314,6 +2314,26 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 arg_descriptors=[RandArg((3, 5), _f32)],
                 polymorphic_shapes=["b, ..."]),
     [
+      PolyHarness(
+          "qr", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}_{full_matrices=}",
+          lambda x, full_matrices: lax.linalg.qr(x, full_matrices=full_matrices),
+          arg_descriptors=[RandArg(shape, dtype), StaticArg(full_matrices)],
+          polymorphic_shapes=[poly],
+          tol=(None if config.jax2tf_default_native_serialization else 1e-5))
+      for dtype in [np.float32, np.float64, np.complex64, np.complex128]
+      # m and n must be static for now
+      for shape, poly, full_matrices in [
+          ((2, 0, 4), "b, ...", False),  # m = 0
+          ((2, 4, 0), "b, ...", False),  # n = 0
+          ((2, 3, 4, 4), "b1, b2, ...", False),  # m == n
+          ((2, 3, 4, 4), "b1, b2, ...", True),
+          ((2, 3, 4, 5), "b1, b2, ...", False),  # m < n
+          ((2, 3, 4, 5), "b1, b2, ...", True),
+          ((2, 3, 8, 4), "b1, b2, ...", False),  # m > n
+          ((2, 3, 8, 4), "b1, b2, ...", True),
+      ]
+    ],
+    [
       # The random primitive tests, with threefry (both partitionable and
       # non-partitionable), and unsafe_rbg.
       [
@@ -2805,12 +2825,12 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       # Set of harness.group_name:platform that are implemented with custom call
       custom_call_harnesses = {
           "vmap_cholesky:cpu", "vmap_cholesky:gpu",
-          "householder_product:cpu", "householder_product:gpu",
-          "vmap_geqrf:cpu", "vmap_geqrf:gpu",
+          "householder_product:gpu",
+          "vmap_geqrf:gpu",
           "vmap_lu:cpu", "vmap_lu:gpu",
           # custom_linear_solve uses lu
           "vmap_custom_linear_solve:cpu", "vmap_custom_linear_solve:gpu",
-          "vmap_qr:cpu", "vmap_qr:gpu",
+          "vmap_qr:gpu",
           "vmap_svd:gpu",
       }
       if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
