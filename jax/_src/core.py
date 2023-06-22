@@ -1143,7 +1143,7 @@ def ensure_compile_time_eval():
   "constant folding") for performance reasons.
 
   This context manager ensures that JAX computations are evaluated eagerly. If
-  eager evaluation is not possible, a ``ConcretizationError`` is raised.
+  eager evaluation is not possible, a ``ConcretizationTypeError`` is raised.
 
   Here's a contrived example::
 
