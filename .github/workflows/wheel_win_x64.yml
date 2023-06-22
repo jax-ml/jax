@@ -1,8 +1,6 @@
 name: Wheel build - Windows CPU x86_64
 on:
   workflow_dispatch: # allows triggering the workflow run manually
-  release:
-    types: [published]
 
 env:
   DISTUTILS_USE_SDK: 1
