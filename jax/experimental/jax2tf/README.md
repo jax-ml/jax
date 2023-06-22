@@ -1010,7 +1010,7 @@ This is primarily a limitation of the SavedModel support for custom gradients.
 Applies to native serialization only.
 
 JAX natively uses custom calls for lowering of certain primitives.
-The most common example are for the implementation of PRNG on GPUs
+The most common example is for the implementation of PRNG on GPUs
 where we get better performance with a custom call (`cu_threefry32`)
 than if we use native StableHLO. Another class of examples are for
 FFT and some linear algebra primitives (e.g., QR decomposition).
@@ -1021,9 +1021,10 @@ code that backs the custom call. For this reason, we maintain
 a list of allowed custom call targets. If you try to serialize
 code that invokes other targets you will get an error.
 
-If you do not care about the compatibility guarantees of the
-serialized artifact, you can set `native_serialization_strict_checks`
-to `False` to disable the check.
+If you want to disable this safety check for a specific custom call
+with target `my_target`, you can add
+`jax2tf.DisabledSafetyCheck.custom_call("my_target")` to the `disabled_checks`
+parameter of the `jax2tf` function.
 
 ### XlaCallModule not supported by some TensorFlow tools
 
