@@ -305,13 +305,11 @@ def orgqr_hlo(dtype, a: ir.Value, tau, *,
 
 # ?potrf: Cholesky decomposition
 
-def potrf_hlo(dtype, a, lower=False):
+def potrf_hlo(dtype, a: ir.Value, *, lower=False,
+              a_shape_vals: Tuple[DimensionSize, ...]):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
-  dims = a_type.shape
-  m, n = dims[-2:]
-  if m != n:
-    raise ValueError(f"potrf expects a square matrix, got {a_type}")
+  n = a_shape_vals[-1]
   if dtype == np.float32:
     fn = b"lapack_spotrf"
   elif dtype == np.float64:
@@ -322,23 +320,29 @@ def potrf_hlo(dtype, a, lower=False):
     fn = b"lapack_zpotrf"
   else:
     raise NotImplementedError(f"Unsupported dtype {dtype}")
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  b = 1
-  for d in batch_dims:
-    b *= d
+  batch_dims_vals = a_shape_vals[:-2]
+  num_bd = len(batch_dims_vals)
+  batch_size_val = ir_constant_i32(1)
+  for b_v in batch_dims_vals:
+    batch_size_val = hlo.MulOp(batch_size_val, _ensure_hlo_s32(b_v)).result
 
   scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   info_layout = tuple(range(num_bd - 1, -1, -1))
+
+  shape_type_pairs: Sequence[ShapeTypePair] = [
+      (a_shape_vals, a_type.element_type),
+      (batch_dims_vals, ir.IntegerType.get_signless(32))
+  ]
+  result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
   out = custom_call(
       fn,
-      [a.type,
-       ir.RankedTensorType.get(batch_dims, ir.IntegerType.get_signless(32))],
-      [_hlo_s32(int(lower)), _hlo_s32(b), _hlo_s32(n), a],
+      result_types,
+      [_hlo_s32(int(lower)), batch_size_val, _ensure_hlo_s32(n), a],
       operand_layouts=[scalar_layout] * 3 + [layout],
       result_layouts=[layout, info_layout],
       operand_output_aliases={3: 0},
+      result_shapes=result_shapes,
   )
   return out[:2]
 
