@@ -307,7 +307,7 @@ def run_deserialization(shardings: Sequence[sharding.Sharding],
   return asyncio.run(_run_deserializer())
 
 
-def _get_key(key: str):
+def _get_key(key: int):
   return f'tensorstore_checkpoint_{key}'
 
 
