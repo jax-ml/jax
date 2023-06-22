@@ -1715,21 +1715,37 @@ def _empty_svd(a, *, full_matrices, compute_uv):
   return s, u, v
 
 def _svd_cpu_gpu_lowering(gesvd_impl, ctx, operand, *, full_matrices,
-                          compute_uv):
-  if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
-    raise NotImplementedError("Shape polymorphism for custom call is not implemented (svd); b/261671778")
+                          compute_uv, platform: str):
   operand_aval, = ctx.avals_in
   s_aval = ctx.avals_out[0]
   m, n = operand_aval.shape[-2:]
+  # Since the last two dimensions (m, n) are used to compute the workspace
+  # size, we support dynamic dimensions only for the batch size for now.
+  if not is_constant_shape([m, n]):
+    raise NotImplementedError(
+      "Shape polymorphism for native serialization for svd on CPU and GPU is "
+      f"implemented only for the batch dimensions: {operand_aval.shape}")
   batch_dims = operand_aval.shape[:-2]
 
   if m == 0 or n == 0:
     return mlir.lower_fun(_empty_svd, multiple_results=True)(
       ctx, operand, full_matrices=full_matrices, compute_uv=compute_uv)
 
-  s, u, vt, info = gesvd_impl(operand_aval.dtype, operand,
-                              full_matrices=full_matrices,
-                              compute_uv=compute_uv)
+  if platform in ["cuda", "rocm"] or jaxlib_version < (0, 4, 13):
+    if not is_constant_shape(operand_aval.shape):
+      # TODO(necula): remove the platform kwarg when we implement GPU support.
+      raise NotImplementedError(
+          "Shape polymorphism for native serialization for SVD is not "
+          f"implemented, try to upgrade jaxlib; b/261671778; {operand_aval.shape}")
+    s, u, vt, info = gesvd_impl(operand_aval.dtype, operand,
+                                full_matrices=full_matrices,
+                                compute_uv=compute_uv)
+  else:
+    a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
+    s, u, vt, info = gesvd_impl(operand_aval.dtype, operand,
+                                full_matrices=full_matrices,
+                                compute_uv=compute_uv,
+                                a_shape_vals=a_shape_vals)
   zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
   ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")
   select_s_aval = ShapedArray(batch_dims + (1,), np.dtype(np.bool_))
@@ -1805,13 +1821,16 @@ ad.primitive_jvps[svd_p] = _svd_jvp_rule
 batching.primitive_batchers[svd_p] = _svd_batching_rule
 
 mlir.register_lowering(
-    svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_hlo),
+    svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_hlo,
+                   platform='cpu'),
     platform='cpu')
 mlir.register_lowering(
-  svd_p, partial(_svd_cpu_gpu_lowering, gpu_solver.cuda_gesvd),
+  svd_p, partial(_svd_cpu_gpu_lowering, gpu_solver.cuda_gesvd,
+                 platform='cuda'),
   platform='cuda')
 mlir.register_lowering(
-  svd_p, partial(_svd_cpu_gpu_lowering, gpu_solver.rocm_gesvd),
+  svd_p, partial(_svd_cpu_gpu_lowering, gpu_solver.rocm_gesvd,
+                 platform='rocm'),
   platform='rocm')
 
 mlir.register_lowering(svd_p, _svd_tpu_lowering_rule)

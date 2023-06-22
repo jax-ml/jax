@@ -21,6 +21,7 @@ import functools
 from functools import partial
 import io
 import itertools
+import operator
 import re
 import typing
 from typing import (Any, Callable, Dict, Iterator, List, NamedTuple, Optional,
@@ -559,17 +560,36 @@ def eval_dynamic_shape(ctx: LoweringRuleContext,
     ctx = ctx.replace(
         primitive="eval_dynamic_shape",
         avals_in=[core.dim_value_aval()] * len(ctx.module_context.shape_poly_state.dim_vars))
+
     res = lower_fun(
         partial(core.evaluate_shape, shape, ctx.module_context.shape_poly_state.dim_vars),
         multiple_results=True)(ctx, *ctx.dim_var_values)
-    return util.flatten(res)  # type: ignore
+    return tuple(operator.index(d) if core.is_constant_dim(d) else d_ir
+                 for d, d_ir in zip(shape, util.flatten(res)))  # type: ignore
 
+# TODO: replace usage of eval_dynamic_shape_as_vals with eval_dynamic_shape_as_ivals
 def eval_dynamic_shape_as_vals(ctx: LoweringRuleContext,
                                shape: core.Shape) -> Tuple[Value, ...]:
   """Evaluates the dynamic shapes as int32 values."""
   def convert_dim(d: Union[int, Value]):
     if type(d) is int:
       return ir_constant(np.array(d, dtype=np.int32))
+    else:
+      i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
+      if d.type != i32_type:  # type: ignore
+        return hlo.ConvertOp(i32_type, d).result
+      else:
+        return d
+  return tuple(convert_dim(v) for v in eval_dynamic_shape(ctx, shape))
+
+
+def eval_dynamic_shape_as_ivals(
+    ctx: LoweringRuleContext, shape: core.Shape
+    ) -> Tuple[Union[int, Value], ...]:
+  """Evaluates the dynamic shapes as int or ir.int32 values."""
+  def convert_dim(d: Union[int, Value]) -> Union[int, ir.Value]:
+    if type(d) is int:
+      return d
     else:
       i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
       if d.type != i32_type:  # type: ignore

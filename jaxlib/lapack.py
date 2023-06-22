@@ -19,7 +19,7 @@ import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
 
 import numpy as np
-from typing import Tuple
+from typing import List, Optional, Sequence, Tuple, Union
 from jaxlib import xla_client
 
 from .hlo_helpers import (
@@ -47,6 +47,38 @@ def _hlo_s32(x):
       ir.DenseElementsAttr.get(
           np.array(x, dtype=np.int32),
           type=ir.IntegerType.get_signless(32))).result
+
+def _ensure_hlo_s32(x):
+  return _hlo_s32(x) if isinstance(x, int) else x
+
+# When we generate custom calls with dynamic shapes we have to pass
+# both the result_types, with ir.ShapedType.get_dynamic_size in place of
+# the dynamic dimensions, and also result_shapes, which are ir.Value representing
+# 1D int32 tensors. If all the shapes are static we can use result_shapes=None.
+# We first construct for each result a pair with the shape and element type,
+# the shape containing either integer or ir.Value.
+DimensionSize = Union[int, ir.Value]  # an ir.Value if not static dimension
+ShapeTypePair = Tuple[Sequence[DimensionSize], ir.Type]
+
+def mk_result_types_and_shapes(
+    shape_type_pairs: Sequence[ShapeTypePair]
+) -> Tuple[List[ir.Type], Optional[List[ir.Value]]]:
+  result_types: List[ir.Type] = []
+  result_shapes: List[ir.Value] = []
+  has_dynamic_shapes = any(
+      any(not isinstance(d, int) for d in rshape)
+      for rshape, _ in shape_type_pairs)
+  for (rshape, rtype) in shape_type_pairs:
+    if has_dynamic_shapes:
+      result_shapes.append(shape_tensor(rshape))
+    result_types.append(
+        ir.RankedTensorType.get(
+            [d if isinstance(d, int) else ir.ShapedType.get_dynamic_size()
+             for d in rshape],
+            rtype))
+  return (result_types,
+          result_shapes if has_dynamic_shapes else None)
+
 
 # TODO(phawkins): it would be nice to avoid duplicating code for each type.
 
@@ -298,29 +330,31 @@ def potrf_hlo(dtype, a, lower=False):
   return out[:2]
 
 
-
 # # ?gesdd: Singular value decomposition
 
-def gesdd_hlo(dtype, a, full_matrices=True, compute_uv=True):
+def gesdd_hlo(dtype, a: ir.Value, *, full_matrices=True, compute_uv=True,
+              a_shape_vals: Tuple[DimensionSize, ...]):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
-  dims = a_type.shape
-  assert len(dims) >= 2
-  m, n = dims[-2:]
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  b = 1
-  for d in batch_dims:
-    b *= d
+  assert len(a_shape_vals) >= 2
+  m, n = a_shape_vals[-2:]
+  assert type(m) is int
+  assert type(n) is int
+  batch_dims_vals = a_shape_vals[:-2]
+  num_bd = len(batch_dims_vals)
+  batch_size_val = ir_constant_i32(1)
+  for b_v in batch_dims_vals:
+    batch_size_val = hlo.MulOp(batch_size_val, _ensure_hlo_s32(b_v)).result
 
   i32_type = ir.IntegerType.get_signless(32)
+  workspace: List[ShapeTypePair]
   if dtype == np.float32:
     fn = b"lapack_sgesdd"
     singular_vals_type = ir.F32Type.get()
     lwork = _lapack.sgesdd_work_size(m, n, compute_uv, full_matrices)
     workspace = [
-        ir.RankedTensorType.get([_lapack.gesdd_iwork_size(m, n)], i32_type),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
+        ([_lapack.gesdd_iwork_size(m, n)], i32_type),
+        ([lwork], a_type.element_type),
     ]
     workspace_layouts = [[0], [0]]
   elif dtype == np.float64:
@@ -328,8 +362,8 @@ def gesdd_hlo(dtype, a, full_matrices=True, compute_uv=True):
     singular_vals_type = ir.F64Type.get()
     lwork = _lapack.dgesdd_work_size(m, n, compute_uv, full_matrices)
     workspace = [
-        ir.RankedTensorType.get([_lapack.gesdd_iwork_size(m, n)], i32_type),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
+        ([_lapack.gesdd_iwork_size(m, n)], i32_type),
+        ([lwork], a_type.element_type),
     ]
     workspace_layouts = [[0], [0]]
   elif dtype == np.complex64:
@@ -337,11 +371,9 @@ def gesdd_hlo(dtype, a, full_matrices=True, compute_uv=True):
     singular_vals_type = ir.F32Type.get()
     lwork = _lapack.cgesdd_work_size(m, n, compute_uv, full_matrices)
     workspace = [
-        ir.RankedTensorType.get([_lapack.gesdd_iwork_size(m, n)], i32_type),
-        ir.RankedTensorType.get(
-            [_lapack.cgesdd_rwork_size(m, n, int(compute_uv))],
-            ir.F32Type.get()),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
+        ([_lapack.gesdd_iwork_size(m, n)], i32_type),
+        ([_lapack.cgesdd_rwork_size(m, n, int(compute_uv))], ir.F32Type.get()),
+        ([lwork], a_type.element_type),
     ]
     workspace_layouts = [[0], [0], [0]]
   elif dtype == np.complex128:
@@ -349,11 +381,9 @@ def gesdd_hlo(dtype, a, full_matrices=True, compute_uv=True):
     singular_vals_type = ir.F64Type.get()
     lwork = _lapack.zgesdd_work_size(m, n, compute_uv, full_matrices)
     workspace = [
-        ir.RankedTensorType.get([_lapack.gesdd_iwork_size(m, n)], i32_type),
-        ir.RankedTensorType.get(
-            [_lapack.cgesdd_rwork_size(m, n, int(compute_uv))],
-            ir.F64Type.get()),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
+        ([_lapack.gesdd_iwork_size(m, n)], i32_type),
+        ([_lapack.cgesdd_rwork_size(m, n, int(compute_uv))], ir.F64Type.get()),
+        ([lwork], a_type.element_type),
     ]
     workspace_layouts = [[0], [0], [0]]
   else:
@@ -361,20 +391,19 @@ def gesdd_hlo(dtype, a, full_matrices=True, compute_uv=True):
 
   scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+
+  shape_type_pairs: Sequence[ShapeTypePair] = [
+    (a_shape_vals, a_type.element_type),
+    (batch_dims_vals + (min(m, n),), singular_vals_type),
+    (batch_dims_vals + (m, m if full_matrices else min(m, n)), a_type.element_type),
+    (batch_dims_vals + (n if full_matrices else min(m, n), n), a_type.element_type),
+    (batch_dims_vals, i32_type),
+  ] + workspace
+  result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
   out = custom_call(
       fn,
-      [
-          a.type,
-          ir.RankedTensorType.get(batch_dims + (min(m, n),), singular_vals_type),
-          ir.RankedTensorType.get(
-            batch_dims + (m, m if full_matrices else min(m, n)),
-            a_type.element_type),
-          ir.RankedTensorType.get(
-            batch_dims + (n if full_matrices else min(m, n), n),
-            a_type.element_type),
-          ir.RankedTensorType.get(batch_dims, i32_type),
-      ] + workspace,
-      [_hlo_s32(int(full_matrices)), _hlo_s32(int(compute_uv)), _hlo_s32(b),
+      result_types,
+      [_hlo_s32(int(full_matrices)), _hlo_s32(int(compute_uv)), batch_size_val,
        _hlo_s32(m), _hlo_s32(n), _hlo_s32(lwork), a],
       operand_layouts=[scalar_layout] * 6 + [layout],
       result_layouts=[
@@ -385,6 +414,7 @@ def gesdd_hlo(dtype, a, full_matrices=True, compute_uv=True):
           tuple(range(num_bd - 1, -1, -1)),
       ] + workspace_layouts,
       operand_output_aliases={6: 0},
+      result_shapes=result_shapes
   )
   return out[1:5]
 
