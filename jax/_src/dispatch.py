@@ -280,7 +280,7 @@ def should_tuple_args(num_args: int, platform: str):
   # do not have small bounds.
   # TPU only needs a tuple for very long lists
   if platform == "tpu":
-    return num_args > 2000
+    return num_args > 4000
   else:
     return False
 
