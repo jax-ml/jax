@@ -19,9 +19,11 @@ load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", 
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
 load("@flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
 load("@tsl//tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
+load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
 
 # Explicitly re-exports names to avoid "unused variable" warnings from .bzl
 # lint tools.
+cc_proto_library = _cc_proto_library
 cuda_library = _cuda_library
 rocm_library = _rocm_library
 pytype_test = native.py_test

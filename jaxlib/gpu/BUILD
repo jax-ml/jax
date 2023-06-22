@@ -14,6 +14,8 @@
 
 # Shared CUDA/ROCM GPU kernels.
 
+load("//jaxlib:jax.bzl", "cc_proto_library")
+
 licenses(["notice"])
 
 package(
@@ -48,3 +50,13 @@ exports_files(srcs = [
     "triton.cc",
     "vendor.h",
 ])
+
+proto_library(
+    name = "triton_proto",
+    srcs = ["triton.proto"],
+)
+
+cc_proto_library(
+    name = "triton_cc_proto",
+    deps = [":triton_proto"],
+)
