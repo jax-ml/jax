@@ -25,6 +25,7 @@ Remember to align the itemized text with the first line of an item within a list
         determine the output shardings.
     * If the mesh context manager is provided, None will imply that the value
       will be replicated on all devices of the mesh.
+    * Executable.cost_analysis() works on Cloud TPU
 
 * Bug fixes
   * Fixed incorrect wheel name in CUDA 12 releases (#16362); the correct wheel
