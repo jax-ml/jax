@@ -115,15 +115,12 @@ JAX_REDUCER_INITIAL_RECORDS = [
               tolerance={jnp.bfloat16: 2e-2}),
     op_record("max", 1, all_dtypes, all_shapes, jtu.rand_default, []),
     op_record("min", 1, all_dtypes, all_shapes, jtu.rand_default, []),
+    op_record("nanprod", 1, inexact_dtypes, all_shapes, jtu.rand_small_positive, []),
+    op_record("nansum", 1, inexact_dtypes, all_shapes, jtu.rand_default, [],
+              tolerance={jnp.bfloat16: 3e-2}),
+    op_record("nanmax", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
+    op_record("nanmin", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
 ]
-if numpy_version >= (1, 22):  # initial & where keywords added in numpy 1.22
-  JAX_REDUCER_INITIAL_RECORDS += [
-      op_record("nanprod", 1, inexact_dtypes, all_shapes, jtu.rand_small_positive, []),
-      op_record("nansum", 1, inexact_dtypes, all_shapes, jtu.rand_default, [],
-                tolerance={jnp.bfloat16: 3e-2}),
-      op_record("nanmax", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
-      op_record("nanmin", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
-  ]
 
 JAX_REDUCER_WHERE_NO_INITIAL_RECORDS = [
     op_record("all", 1, bool_dtypes, all_shapes, jtu.rand_some_zero, []),
@@ -134,16 +131,13 @@ JAX_REDUCER_WHERE_NO_INITIAL_RECORDS = [
               inexact=True),
     op_record("std", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
               inexact=True),
+    op_record("nanmean", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
+              inexact=True, tolerance={np.float16: 3e-3}),
+    op_record("nanvar", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
+              inexact=True, tolerance={np.float16: 3e-3}),
+    op_record("nanstd", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
+              inexact=True, tolerance={np.float16: 1e-3}),
 ]
-if numpy_version >= (1, 22):  # where keyword added in numpy 1.22
-  JAX_REDUCER_WHERE_NO_INITIAL_RECORDS += [
-      op_record("nanmean", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
-                inexact=True, tolerance={np.float16: 3e-3}),
-      op_record("nanvar", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
-                inexact=True, tolerance={np.float16: 3e-3}),
-      op_record("nanstd", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
-                inexact=True, tolerance={np.float16: 1e-3}),
-  ]
 
 JAX_REDUCER_NO_DTYPE_RECORDS = [
     op_record("all", 1, all_dtypes, all_shapes, jtu.rand_some_zero, []),
@@ -531,7 +525,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     np_fun = jtu.promote_like_jnp(np_fun, inexact=True)
     tol = {dtypes.bfloat16: 2e-1, np.float16: 1e-2, np.float32: 1e-5,
            np.float64: 1e-12, np.complex64: 1e-5}
-    check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE and numpy_version >= (1, 22)
+    check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE
     if numpy_version == (1, 23, 0) and keepdims and weights_shape is not None and axis is not None:
       # Known failure: https://github.com/numpy/numpy/issues/21850
       pass
@@ -695,12 +689,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     def np_fun(*args):
       args = [x if jnp.result_type(x) != jnp.bfloat16 else
               np.asarray(x, np.float32) for x in args]
-      if numpy_version <= (1, 22):
-        return getattr(np, op)(*args, axis=axis, keepdims=keepdims,
-                               interpolation=method)
-      else:
-        return getattr(np, op)(*args, axis=axis, keepdims=keepdims,
-                               method=method)
+      return getattr(np, op)(*args, axis=axis, keepdims=keepdims,
+                             method=method)
     jnp_fun = partial(getattr(jnp, op), axis=axis, keepdims=keepdims,
                       method=method)
 
