@@ -36,9 +36,11 @@ from weakref import ref
 
 import numpy as np
 
+from jax._src import checks
 from jax._src import dtypes
 from jax._src import config as jax_config
 from jax._src import effects
+from jax._src.checks import instrument
 from jax._src.config import FLAGS, config
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError,
@@ -236,6 +238,7 @@ class JaxprEqn(NamedTuple):
   params: Dict[str, Any]
   effects: Effects
   source_info: source_info_util.SourceInfo
+  checks: frozenset
 
   def __repr__(self):
     return str(pp_eqn(self, JaxprPpContext(), JaxprPpSettings())).rstrip()
@@ -248,6 +251,7 @@ class JaxprEqn(NamedTuple):
       params: Optional[Dict[str, Any]] = None,
       effects: Optional[Effects] = None,
       source_info: Optional[source_info_util.SourceInfo] = None,
+      checks: FrozenSet = None
   ):
     # It is slightly faster to rebuild the tuple directly than to call _replace.
     return JaxprEqn(
@@ -257,6 +261,7 @@ class JaxprEqn(NamedTuple):
       self.params if params is None else params,
       self.effects if effects is None else effects,
       self.source_info if source_info is None else source_info,
+      self.checks if checks is None else checks,
     )
 
 
@@ -266,7 +271,8 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None)
   if config.jax_enable_checks:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
-  return JaxprEqn(invars, outvars, primitive, params, effects, source_info)
+  return JaxprEqn(invars, outvars, primitive, params, effects, source_info,
+                  checks.checks)
 
 @total_ordering
 class Var:
@@ -444,7 +450,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True):
     subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
     traceback = eqn.source_info.traceback if propagate_source_info else None
-    with source_info_util.user_context(traceback, name_stack=name_stack):
+    with (source_info_util.user_context(eqn.source_info.traceback, name_stack=name_stack),
+          instrument(eqn.checks)):
       ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)

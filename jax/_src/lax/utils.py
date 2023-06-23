@@ -37,11 +37,12 @@ def _argnum_weak_type(*argnums):
   return lambda *args, **_: all(args[i].weak_type for i in argnums)
 
 def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
-                       weak_type_rule=None, named_shape_rule=None):
+                       weak_type_rule=None, named_shape_rule=None, impl_rule=None):
   weak_type_rule = weak_type_rule or _standard_weak_type_rule
   named_shape_rule = named_shape_rule or standard_named_shape_rule
   prim = core.Primitive(name)
-  prim.def_impl(partial(dispatch.apply_primitive, prim))
+  impl_rule = impl_rule or partial(dispatch.apply_primitive, prim)
+  prim.def_impl(impl_rule)
   prim.def_abstract_eval(
       partial(standard_abstract_eval, prim, shape_rule, dtype_rule,
               weak_type_rule, named_shape_rule))
