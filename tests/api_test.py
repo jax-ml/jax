@@ -1471,7 +1471,7 @@ class APITest(jtu.JaxTestCase):
     assert grad(f)(1.0) == 1.0
     assert grad(f)(-1.0) == -1.0
     with self.assertRaisesRegex(core.ConcretizationTypeError,
-                                "Abstract tracer value"):
+                                "Attempted boolean conversion"):
       jit(f)(1)
 
   def test_list_index_err(self):

@@ -9,5 +9,6 @@ along with representative examples of how one might fix them.
 .. autoclass:: ConcretizationTypeError
 .. autoclass:: NonConcreteBooleanIndexError
 .. autoclass:: TracerArrayConversionError
+.. autoclass:: TracerBoolConversionError
 .. autoclass:: TracerIntegerConversionError
 .. autoclass:: UnexpectedTracerError
