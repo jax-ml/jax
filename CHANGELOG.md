@@ -8,7 +8,15 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.14
 
+* Deprecations
+  * Python 3.8 support has been dropped as per
+    https://jax.readthedocs.io/en/latest/deprecation.html
+
 ## jaxlib 0.4.14
+
+* Deprecations
+  * Python 3.8 support has been dropped as per
+      https://jax.readthedocs.io/en/latest/deprecation.html
 
 ## jax 0.4.13 (June 22, 2023)
 
