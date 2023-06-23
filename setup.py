@@ -61,7 +61,7 @@ setup(
     author_email='jax-dev@google.com',
     packages=find_packages(exclude=["examples", "jax/src/internal_test_util"]),
     package_data={'jax': ['py.typed', "*.pyi", "**/*.pyi"]},
-    python_requires='>=3.8',
+    python_requires='>=3.9',
     install_requires=[
         'ml_dtypes>=0.1.0',
         'numpy>=1.21',
