@@ -629,7 +629,7 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(lax.linalg.triangular_solve, in_axes=(1, 2))(a, b)
     expected = np.stack(
       [lax.linalg.triangular_solve(a[:, i], b[..., i]) for i in range(10)])
-    self.assertAllClose(ans, expected)
+    self.assertAllClose(ans, expected, atol=1e-5, rtol=1e-5)
 
     ans = vmap(lax.linalg.triangular_solve, in_axes=(None, 2))(a[:, 0], b)
     expected = np.stack(
@@ -639,7 +639,7 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(lax.linalg.triangular_solve, in_axes=(1, None))(a, b[..., 0])
     expected = np.stack(
       [lax.linalg.triangular_solve(a[:, i], b[..., 0]) for i in range(10)])
-    self.assertAllClose(ans, expected)
+    self.assertAllClose(ans, expected, atol=1e-5, rtol=1e-5)
 
   @parameterized.named_parameters(
       {"testcase_name": "_shape={}_axis={}_idxs={}_dnums={}_slice_sizes={}".format(

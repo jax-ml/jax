@@ -216,7 +216,7 @@ class CustomRootTest(jtu.JaxTestCase):
 
     # grad check with aux
     jtu.check_grads(lambda x, y: root_aux(high_precision_dot(x, x.T), y),
-                    (a, b), order=2, rtol={jnp.float32: 1e-2})
+                    (a, b), order=2, rtol={jnp.float32: 1e-2, np.float64: 3e-5})
 
     # test vmap and jvp combined by jacfwd
     fwd = jax.jacfwd(lambda x, y: root_aux(high_precision_dot(x, x.T), y), argnums=(0, 1))

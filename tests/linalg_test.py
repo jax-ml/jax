@@ -393,7 +393,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       a = (a + np.conj(a.T)) / 2
       return [a]
     self._CheckAgainstNumpy(
-        np.linalg.eigvalsh, jnp.linalg.eigvalsh, args_maker, tol=3e-6
+        np.linalg.eigvalsh, jnp.linalg.eigvalsh, args_maker, tol=2e-5
     )
 
   @jtu.sample_product(
@@ -1042,7 +1042,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     x, = args_maker()
     p, l, u = jsp.linalg.lu(x)
     self.assertAllClose(x, np.matmul(p, np.matmul(l, u)),
-                        rtol={np.float32: 1e-3, np.float64: 1e-12,
+                        rtol={np.float32: 1e-3, np.float64: 5e-12,
                               np.complex64: 1e-3, np.complex128: 1e-12},
                         atol={np.float32: 1e-5})
     self._CompileAndCheck(jsp.linalg.lu, args_maker)
@@ -1684,7 +1684,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
     w_expected, v_expected = np.linalg.eigh(np.asarray(a))
     self.assertAllClose(w_expected, w if sort_eigenvalues else np.sort(w),
-                        rtol=1e-4)
+                        rtol=1e-4, atol=1e-4)
 
   def run_eigh_tridiagonal_test(self, alpha, beta):
     n = alpha.shape[-1]

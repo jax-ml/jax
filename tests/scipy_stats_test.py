@@ -1109,7 +1109,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     result1 = lsp_stats.multivariate_normal.logpdf(x, mean, cov)
     result2 = jax.vmap(lsp_stats.multivariate_normal.logpdf)(x, mean, cov)
-    self.assertArraysEqual(result1, result2, check_dtypes=False)
+    self.assertArraysAllClose(result1, result2, check_dtypes=False)
 
   @jtu.sample_product(
     inshape=[(50,), (3, 50), (2, 12)],

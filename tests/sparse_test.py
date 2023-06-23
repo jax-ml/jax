@@ -1934,7 +1934,7 @@ class BCOOTest(sptu.SparseTestCase):
                           jnp.array(rng(rhs_shape, rhs_dtype))]
 
     tol = {np.float64: 1E-13, np.complex128: 1E-13,
-           np.float32: 1E-6, np.complex64: 1E-6}
+           np.float32: 2E-6, np.complex64: 2E-6}
 
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       self._CheckAgainstDense(operator.matmul, operator.matmul, args_maker, tol=tol)

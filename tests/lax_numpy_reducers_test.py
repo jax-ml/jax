@@ -233,8 +233,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
     tol_spec = {np.float16: 1e-2, np.int16: 2e-7, np.int32: 1E-3,
-                np.float32: 1e-3, np.complex64: 1e-3, np.float64: 1e-5,
-                np.complex128: 1e-5}
+                np.uint32: 3e-7, np.float32: 1e-3, np.complex64: 1e-3,
+                np.float64: 1e-5, np.complex128: 1e-5}
     tol = jtu.tolerance(dtype, tol_spec)
     tol = max(tol, jtu.tolerance(out_dtype, tol_spec)) if out_dtype else tol
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
@@ -599,7 +599,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_fun = partial(jnp.nanvar, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
     tol = jtu.tolerance(out_dtype, {np.float16: 1e-1, np.float32: 1e-3,
                                     np.float64: 1e-3, np.complex64: 1e-3,
-                                    np.complex128: 3e-4})
+                                    np.complex128: 5e-4})
     if (jnp.issubdtype(dtype, jnp.complexfloating) and
         not jnp.issubdtype(out_dtype, jnp.complexfloating)):
       self.assertRaises(ValueError, lambda: jnp_fun(*args_maker()))

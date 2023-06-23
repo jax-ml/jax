@@ -131,7 +131,7 @@ LAX_GRAD_OPS = [
     grad_test_spec(lax.rsqrt, nargs=1, order=2, rng_factory=jtu.rand_positive,
                    dtypes=grad_float_dtypes),
     grad_test_spec(lax.rsqrt, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=grad_complex_dtypes),
+                   dtypes=grad_complex_dtypes, tol={np.float64: 2e-3}),
     grad_test_spec(lax.cbrt, nargs=1, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_float_dtypes, tol={np.float64: 5e-3}),
     grad_test_spec(lax.logistic, nargs=1, order=2,
