@@ -147,7 +147,8 @@ def make_batch_axis(
   else:
     return canonicalize_axis(stacked_axis, ndim)
 
-def bdim_as_shape(bdim, data_shape):
+def bdim_as_shape(
+    bdim: Union[int, RaggedAxis], data_shape: core.Shape) -> core.Shape:
   if isinstance(bdim, RaggedAxis):
     result = list(data_shape)
     binder = core.Var(0, '', core.ShapedArray((), np.dtype('int32')))
@@ -157,7 +158,8 @@ def bdim_as_shape(bdim, data_shape):
   else:
     return data_shape
 
-def shape_as_bdim(stacked_axis, data_shape):
+def shape_as_bdim(
+    stacked_axis: int, data_shape: core.Shape) -> Union[int, RaggedAxis]:
   # This assumes that there is only one binder in the data_shape.
   ragged_axes = [(i, size.lengths) for i, size in enumerate(data_shape)
                  if isinstance(size, IndexedAxisSize)]
