@@ -64,7 +64,7 @@ setup(
     python_requires='>=3.9',
     install_requires=[
         'ml_dtypes>=0.1.0',
-        'numpy>=1.21',
+        'numpy>=1.22',
         'opt_einsum',
         'scipy>=1.7',
         # Required by xla_bridge.discover_pjrt_plugins for forwards compat with

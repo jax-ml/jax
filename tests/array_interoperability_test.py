@@ -145,7 +145,6 @@ class DLPackTest(jtu.JaxTestCase):
     shape=all_shapes,
     dtype=numpy_dtypes,
   )
-  @unittest.skipIf(numpy_version < (1, 22, 0), "Requires numpy 1.22 or newer")
   def testNumpyToJax(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     x_np = rng(shape, dtype)

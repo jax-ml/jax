@@ -240,7 +240,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     dtype=default_dtypes,
   )
   def testUnwrap(self, shape, dtype, axis, discont, period):
-    if numpy_version < (1, 21) and period != "2pi":
+    if period != "2pi":
       self.skipTest("numpy < 1.21 does not support the period argument to unwrap()")
     special_vals = {"pi": np.pi, "2pi": 2 * np.pi}
     period = special_vals.get(period, period)
@@ -253,10 +253,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       if x.dtype == dtypes.bfloat16:
         dtype = x.dtype
         x = x.astype(np.float32)
-      if numpy_version < (1, 21):
-        out = np.unwrap(x, axis=axis, discont=discont or np.pi)
-      else:
-        out = np.unwrap(x, axis=axis, discont=discont, period=period)
+      out = np.unwrap(x, axis=axis, discont=discont, period=period)
       return out if dtype is None else out.astype(dtype)
 
     jnp_fun = partial(jnp.unwrap, axis=axis, discont=discont, period=period)
@@ -405,8 +402,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       raise unittest.SkipTest("complex128 reductions not supported on GPU")
     if "nan" in np_op.__name__ and dtype == jnp.bfloat16:
       raise unittest.SkipTest("NumPy doesn't correctly handle bfloat16 arrays")
-    if numpy_version < (1, 22) and keepdims:
-      raise unittest.SkipTest("NumPy < 1.22 does not support keepdims argument to argmin/argmax")
     kwds = {"keepdims": True} if keepdims else {}
 
     np_fun = jtu.with_jax_dtype_defaults(partial(np_op, axis=axis, **kwds))
@@ -1795,7 +1790,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  @unittest.skipIf(numpy_version < (1, 21), "Numpy < 1.21 does not properly handle NaN values in unique.")
   @jtu.sample_product(dtype=inexact_dtypes)
   def testUniqueNans(self, dtype):
     if numpy_version == (1, 23, 0) and dtype == np.float16:
@@ -5261,9 +5255,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     mismatches = {}
 
     for name, (jnp_fun, np_fun) in func_pairs.items():
-      if numpy_version < (1, 22) and name in ['quantile', 'nanquantile',
-                                              'percentile', 'nanpercentile']:
-        continue
       if numpy_version >= (1, 24) and name in ['histogram', 'histogram2d', 'histogramdd']:
         # numpy 1.24 re-orders the density and weights arguments.
         # TODO(jakevdp): migrate histogram APIs to match newer numpy versions.

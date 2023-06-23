@@ -395,10 +395,9 @@ class DtypesTest(jtu.JaxTestCase):
       assertInfinite(2. ** info.maxexp)
 
     # smallest_normal & smallest_subnormal added in numpy 1.22
-    if jtu.numpy_version() >= (1, 22, 0):
-      assertRepresentable(info.smallest_subnormal)
-      assertZero(info.smallest_subnormal * 0.5)
-      self.assertEqual(info.tiny, info.smallest_normal)
+    assertRepresentable(info.smallest_subnormal)
+    assertZero(info.smallest_subnormal * 0.5)
+    self.assertEqual(info.tiny, info.smallest_normal)
 
     # Identities according to the documentation:
     self.assertAllClose(info.resolution, make_val(10 ** -info.precision))
