@@ -1461,13 +1461,6 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
                     f"indices) + 1). rank(indices) is {_rank(indices)} and "
                     f"gather index leaf dimension is {index_vector_dim}.")
 
-  expanded_indices_shape = list(indices.shape)
-
-  # This case should never happen in JAX, due to the implicit construction of
-  # index_vector_dim, but is included for completeness.
-  if len(expanded_indices_shape) == index_vector_dim:
-    expanded_indices_shape.append(1)
-
   # Start ValidateGatherDimensions
   # In the error messages output by XLA, "offset_dims" is called "Output window
   # dimensions" in error messages. For consistency's sake, our error messages
@@ -1541,7 +1534,24 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
                       f"but bound is {bound} for index "
                       f"{collapsed_slice_dims[i]} at position {i}.")
 
+  return _gather_shape_computation(indices, dimension_numbers, slice_sizes)
+
+
+def _gather_shape_computation(indices, dimension_numbers, slice_sizes):
+  offset_dims = dimension_numbers.offset_dims
+  collapsed_slice_dims = dimension_numbers.collapsed_slice_dims
+  output_shape_rank = len(offset_dims) + _rank(indices) - 1
+
+  index_vector_dim = _rank(indices) - 1
+  expanded_indices_shape = list(indices.shape)
+
+  # This case should never happen in JAX, due to the implicit construction of
+  # index_vector_dim, but is included for completeness.
+  if len(expanded_indices_shape) == index_vector_dim:
+    expanded_indices_shape.append(1)
+
   expanded_indices_shape.pop(index_vector_dim)
+
   indices_shape = iter(expanded_indices_shape)
 
   slice_sizes = (s for i, s in enumerate(slice_sizes)
@@ -1628,17 +1638,32 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
         offset_dims=offset_dims,
         collapsed_slice_dims=collapsed_slice_dims,
         start_index_map=start_index_map)
-    # TODO(reviewer): This should be correct for `operand_bdim` being a
-    # `RaggedAxis` as long as we are not gathering from any ragged axis, and as
-    # long as we have no collapsed_slice_dims.  (The latter could require
-    # adjusting the `ragged_axes` field of `operand_bdim`).  Should we put a
-    # check to confirm?
-    ans = gather(operand, indices, dimension_numbers=dnums,
-                  slice_sizes=lax._merge_dyn_shape(slice_sizes, dyn_slice_size_bounds),
-                  unique_indices=unique_indices,
-                  indices_are_sorted=indices_are_sorted, mode=mode,
-                  fill_value=fill_value), operand_bdim
-    return ans
+    if isinstance(operand_bdim, batching.RaggedAxis):
+      ragged_slice_sizes = batching.bdim_as_shape(operand_bdim, slice_sizes)
+      for orig, fabricated in zip(
+          lax._merge_dyn_shape(slice_sizes, dyn_slice_sizes),
+          ragged_slice_sizes):
+        if isinstance(fabricated, batching.IndexedAxisSize):
+          if not core.same_referent(orig, fabricated.lengths):
+            # Don't know what to do when slicing a ragged dimension with a
+            # different size.  To wit, if the client tries to index outside the
+            # ragged size, the resulting element should be determined by the
+            # out of bounds `mode`, but the underlying gather will only do that
+            # if the client tries to index outside the _padded_ array.  I guess
+            # we should read the mode and apply a mask that writes the correct
+            # fill element into all out-of-bounds locations?
+            raise NotImplementedError
+      bdim_out = batching.shape_as_bdim(
+          operand_bdim.stacked_axis,
+          _gather_shape_computation(indices, dimension_numbers, slice_sizes))
+    else:
+      bdim_out = operand_bdim
+    return gather(
+        operand, indices, dimension_numbers=dnums,
+        slice_sizes=lax._merge_dyn_shape(slice_sizes, dyn_slice_size_bounds),
+        unique_indices=unique_indices,
+        indices_are_sorted=indices_are_sorted, mode=mode,
+        fill_value=fill_value), bdim_out
 
   elif operand_bdim is None and indices_bdim is not None:
     indices = batching.moveaxis(indices, indices_bdim, 0)
