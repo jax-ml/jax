@@ -1294,8 +1294,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     # Singular covariance matrix https://github.com/google/jax/discussions/13293
     mu = jnp.zeros((2,))
     sigma = jnp.ones((2, 2))
-    key = jax.random.PRNGKey(0)
-    result = jax.random.multivariate_normal(key, mean=mu, cov=sigma, shape=(10,), method=method)
+    key = random.PRNGKey(0)
+    result = random.multivariate_normal(key, mean=mu, cov=sigma, shape=(10,), method=method)
     self.assertAllClose(result[:, 0], result[:, 1], atol=1e-3, rtol=1e-3)
 
     # Cholesky fails for singular inputs.
@@ -1536,7 +1536,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def test_large_prng(self):
     # https://github.com/google/jax/issues/11010
     def f():
-      return jax.random.uniform(jax.random.PRNGKey(3), (308000000, 128), dtype=jnp.bfloat16)
+      return random.uniform(random.PRNGKey(3), (308000000, 128), dtype=jnp.bfloat16)
 
     # just lower, don't run, takes too long
     jax.jit(f).lower()
@@ -1550,8 +1550,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     logits_shape.insert(axis % (len(logits_shape_base) + 1), 10)
     assert logits_shape[axis] == 10
     logits = jnp.ones(logits_shape)
-    samples = jax.random.categorical(jax.random.PRNGKey(0), logits=logits,
-                                     axis=axis, shape=shape)
+    samples = random.categorical(random.PRNGKey(0), logits=logits,
+                                 axis=axis, shape=shape)
     self.assertEqual(samples.shape, shape)
 
   @jtu.sample_product(
@@ -1643,46 +1643,43 @@ class KeyArrayTest(jtu.JaxTestCase):
   # might also be a more general test of opaque element types. If
   # so, add a corresponding test to to CustomElementTypesTest as well.
 
-  def make_keys(self, *shape, seed=None):
-    if seed is None:
-      seed = 28
+  def make_keys(self, *shape, seed=28):
     seeds = seed + jnp.arange(math.prod(shape), dtype=jnp.uint32)
-    make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
-    return jnp.reshape(jax.vmap(make_key)(seeds), shape)
+    return jax.vmap(random.key)(seeds).reshape(shape)
 
   def test_key_as_seed(self):
     key = self.make_keys()
     with self.assertRaisesRegex(TypeError, "PRNGKey accepts a scalar seed"):
-      jax.random.PRNGKey(key)
+      random.PRNGKey(key)
     with self.assertRaisesRegex(TypeError, "key accepts a scalar seed"):
-      jax.random.key(key)
+      random.key(key)
 
   def test_non_scalar_seed(self):
     seed_arr = np.arange(4)
     with self.assertRaisesRegex(TypeError, "PRNGKey accepts a scalar seed"):
-      jax.random.PRNGKey(seed_arr)
+      random.PRNGKey(seed_arr)
     with self.assertRaisesRegex(TypeError, "key accepts a scalar seed"):
-      jax.random.key(seed_arr)
+      random.key(seed_arr)
 
   def test_non_integer_seed(self):
     seed = np.pi
     with self.assertRaisesRegex(TypeError, "PRNG key seed must be an integer"):
-      jax.random.PRNGKey(seed)
+      random.PRNGKey(seed)
     with self.assertRaisesRegex(TypeError, "PRNG key seed must be an integer"):
-      jax.random.key(seed)
+      random.key(seed)
 
   def test_dtype_property(self):
     k1, k2 = self.make_keys(), self.make_keys()
     self.assertEqual(k1.dtype, k2.dtype)
 
-    k3, k4 = jax.random.split(k1, 2)
+    k3, k4 = random.split(k1, 2)
     self.assertEqual(k1.dtype, k3.dtype)
     self.assertEqual(k3.dtype, k4.dtype)
 
     g = []
     def f(k):
       g.append(k.dtype)
-      return jax.random.split(k)
+      return random.split(k)
     _ = jax.jit(f)(k1)
     self.assertEqual(g[0], k1.dtype)
     self.assertEqual(g[0], k2.dtype)
@@ -1773,7 +1770,7 @@ class KeyArrayTest(jtu.JaxTestCase):
 
   def test_eval_shape_keys_in_out(self):
     def f(key):
-      return jax.random.split(key)
+      return random.split(key)
     out = jax.eval_shape(f, self.make_keys())
     self.assertEqual(out.shape, (2,))
     # TODO(frostig): check dtype too when available
@@ -1867,8 +1864,6 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(ys, random.KeyArray)
     self.assertEqual(ys.shape, (3, 2, 1))
 
-  @skipIf(not config.jax_enable_custom_prng,
-          'requires config.jax_enable_custom_prng')
   def test_select(self):
     ks = self.make_keys(3, 2)
     cs = jnp.array([True, False, False, True, False, True]).reshape(3, 2)
@@ -1876,8 +1871,6 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(ys, random.KeyArray)
     self.assertEqual(ys.shape, (3, 2))
 
-  @skipIf(not config.jax_enable_custom_prng,
-          'requires config.jax_enable_custom_prng')
   def test_select_scalar_cond(self):
     # regression test for https://github.com/google/jax/issues/16422
     ks = self.make_keys(3)
@@ -1885,12 +1878,10 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(ys, random.KeyArray)
     self.assertEqual(ys.shape, (3,))
 
-  @skipIf(not config.jax_enable_custom_prng,
-          'requires config.jax_enable_custom_prng')
-  def test_select2(self):
+  def test_vmap_of_cond(self):
     # See https://github.com/google/jax/issues/15869
     def f(x):
-      keys = lax.broadcast(jax.random.PRNGKey(0), x.shape)
+      keys = self.make_keys(*x.shape)
       return lax.select(x, keys, keys)
     x = jnp.array([True, False, False])
     f(x)  # doesn't crash
@@ -1920,9 +1911,9 @@ class KeyArrayTest(jtu.JaxTestCase):
     sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
     def callback(index):
       i = jnp.arange(len(devices))[index[0]]
-      return jax.vmap(jax.random.PRNGKey)(i)
+      return jax.vmap(random.PRNGKey)(i)
     result = jax.make_array_from_callback(shape, sharding, callback)
-    expected = jax.vmap(jax.random.PRNGKey)(jnp.arange(len(devices)))
+    expected = jax.vmap(random.PRNGKey)(jnp.arange(len(devices)))
     self.assertArraysEqual(result, expected)
 
   def test_make_array_from_single_device_arrays(self):
@@ -1930,14 +1921,14 @@ class KeyArrayTest(jtu.JaxTestCase):
     shape = (len(devices),) if config.jax_enable_custom_prng else (len(devices), 2)
     mesh = jtu.create_global_mesh((len(devices),), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
-    keys = jax.random.split(jax.random.PRNGKey(0), len(devices))
+    keys = random.split(random.PRNGKey(0), len(devices))
     arrays = [jax.device_put(keys[i:i + 1], device) for i, device in enumerate(devices)]
     result = jax.make_array_from_single_device_arrays(shape, sharding, arrays)
     self.assertArraysEqual(result, keys)
 
   def test_key_array_custom_jvp(self):
     def f_raw(x, key):
-        return x * jax.random.normal(key, ())
+        return x * random.normal(key, ())
 
     f = jax.custom_jvp(f_raw)
 
@@ -1946,7 +1937,7 @@ class KeyArrayTest(jtu.JaxTestCase):
       nonlocal key_dot
       x, key = primals
       x_dot, key_dot = tangents
-      rand = jax.random.normal(key, ())
+      rand = random.normal(key, ())
       tangent_out = x_dot * rand
       primal_out = x * rand
       return primal_out, tangent_out
@@ -1957,8 +1948,8 @@ class KeyArrayTest(jtu.JaxTestCase):
     custom_result = jax.grad(f)(0.0, key)
 
     self.assertAllClose(default_result, custom_result)
-    self.assertIsInstance(key_dot, jax.random.PRNGKeyArray)
-    self.assertArraysEqual(jax.random.key_data(key_dot), np.uint32(0))
+    self.assertIsInstance(key_dot, random.PRNGKeyArray)
+    self.assertArraysEqual(random.key_data(key_dot), np.uint32(0))
 
   def test_not_hashable(self):
     key = self.make_keys()
@@ -2182,8 +2173,7 @@ class LaxRandomWithUnsafeRBGPRNGTest(LaxRandomWithRBGPRNGTest):
 def like(keys):
   return jnp.ones(keys.shape)
 
-@skipIf(not config.jax_enable_custom_prng,
-        'custom PRNG tests require config.jax_enable_custom_prng')
+
 class JnpWithKeyArrayTest(jtu.JaxTestCase):
   def check_shape(self, func, *args):
     out_key = func(*args)
@@ -2211,12 +2201,12 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
   ])
   def test_properties(self, shape, prop, expected):
     get_prop = lambda x: getattr(x, prop)
-    key = random.split(random.PRNGKey(0), math.prod(shape)).reshape(shape)
+    key = random.split(random.key(0), math.prod(shape)).reshape(shape)
     self.assertEqual(get_prop(key), expected)
     self.assertEqual(jax.jit(get_prop)(key), expected)
 
   def test_reshape(self):
-    key = random.PRNGKey(123)
+    key = random.key(123)
     keys = random.split(key, 4)
 
     newshape = (2, 2)
@@ -2227,7 +2217,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_against_reference(key_func, arr_func, keys)
 
   def test_tile(self):
-    key = random.PRNGKey(123)
+    key = random.key(123)
 
     reps = 3
     key_func = partial(jnp.tile, reps=reps)
@@ -2237,7 +2227,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_against_reference(key_func, arr_func, key)
 
   def test_concatenate(self):
-    key = random.PRNGKey(123)
+    key = random.key(123)
     args = [random.split(k, 2) for k in random.split(key, 3)]
 
     key_func = arr_func = partial(jnp.concatenate, axis=0)
@@ -2246,7 +2236,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_against_reference(key_func, arr_func, args)
 
   def test_broadcast_to(self):
-    key = random.PRNGKey(123)
+    key = random.key(123)
 
     shape = (3,)
     key_func = partial(jnp.broadcast_to, shape=shape)
@@ -2256,7 +2246,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_against_reference(key_func, arr_func, key)
 
   def test_expand_dims(self):
-    key = random.PRNGKey(123)
+    key = random.key(123)
     keys = random.split(key, 6).reshape(2, 3)
 
     key_func = arr_func = partial(jnp.expand_dims, axis=1)
@@ -2265,8 +2255,8 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_against_reference(key_func, arr_func, keys)
 
   def test_broadcast_arrays(self):
-    key = random.PRNGKey(123)
-    keys = jax.random.split(key, 3)
+    key = random.key(123)
+    keys = random.split(key, 3)
 
     key_func = arr_func = lambda *args: jnp.broadcast_arrays(*args)[0]
 
@@ -2274,7 +2264,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_against_reference(key_func, arr_func, key, keys)
 
   def test_append(self):
-    key = random.PRNGKey(123)
+    key = random.key(123)
     keys = random.split(key, 4)
 
     key_func = jnp.append
@@ -2284,8 +2274,8 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_against_reference(key_func, arr_func, keys, key)
 
   def test_ravel(self):
-    key = random.PRNGKey(123)
-    keys = jax.random.split(key, 4).reshape(2, 2)
+    key = random.key(123)
+    keys = random.split(key, 4).reshape(2, 2)
 
     key_func = jnp.ravel
     arr_func = partial(jnp.reshape, newshape=(4, *key.impl.key_shape))
@@ -2294,8 +2284,8 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_against_reference(key_func, arr_func, keys)
 
   def test_stack(self):
-    key = random.PRNGKey(123)
-    keys = jax.random.split(key, 2)
+    key = random.key(123)
+    keys = random.split(key, 2)
 
     key_func = arr_func = partial(jnp.stack, axis=0)
 
@@ -2303,14 +2293,14 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_against_reference(key_func, arr_func, keys)
 
   def test_array(self):
-    key = random.PRNGKey(123)
+    key = random.key(123)
     self.assertArraysEqual(key, jnp.array(key))
     self.assertArraysEqual(key, jnp.asarray(key))
     self.assertArraysEqual(key, jax.jit(jnp.array)(key))
     self.assertArraysEqual(key, jax.jit(jnp.asarray)(key))
 
   def test_array_user_dtype(self):
-    key = random.PRNGKey(123)
+    key = random.key(123)
     self.assertArraysEqual(key, jnp.array(key, dtype=key.dtype))
     self.assertArraysEqual(key, jnp.asarray(key, dtype=key.dtype))
 
@@ -2321,8 +2311,8 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     (np.array([False, True, True]),)
   ])
   def test_getitem(self, idx):
-    key = random.PRNGKey(123)
-    keys = jax.random.split(key, 3)
+    key = random.key(123)
+    keys = random.split(key, 3)
 
     key_func = arr_func = lambda x: x[idx]
 
@@ -2336,8 +2326,8 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     (np.array([False, True, True]),)
   ])
   def test_gather(self, idx):
-    key = random.PRNGKey(123)
-    keys = jax.random.split(key, 3)
+    key = random.key(123)
+    keys = random.split(key, 3)
 
     key_func = arr_func = lambda x: x.at[idx].get()
 
@@ -2345,8 +2335,8 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_against_reference(key_func, arr_func, keys)
 
   def test_equality(self):
-    key = random.PRNGKey(123)
-    key2 = random.PRNGKey(456)
+    key = random.key(123)
+    key2 = random.key(456)
 
     self.assertTrue(key == key)
     self.assertFalse(key == key2)
@@ -2369,8 +2359,8 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     (np.array([False, True, True]),)
   ])
   def test_scatter(self, idx):
-    key = random.PRNGKey(123)
-    keys = jax.random.split(key, 3)
+    key = random.key(123)
+    keys = random.split(key, 3)
 
     key_func = arr_func = lambda x, y: x.at[idx].set(y)
 
@@ -2378,7 +2368,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_against_reference(key_func, arr_func, keys, key)
 
   def test_errors(self):
-    key = random.PRNGKey(123)
+    key = random.key(123)
     with self.assertRaisesRegex(ValueError, "dtype=key<fry> is not a valid dtype"):
       jnp.add(key, 1)
     with self.assertRaisesRegex(ValueError, "dtype=key<fry> is not a valid dtype"):
@@ -2395,13 +2385,13 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
       lax.convert_element_type(key, int)
 
   def test_eval_shape(self):
-    key = jax.random.PRNGKey(1701)
+    key = random.key(1701)
     shapedtype = jax.ShapeDtypeStruct(key.shape, key.dtype)
     out = jax.eval_shape(lambda x: x, shapedtype)
     self.assertEqual(out, shapedtype)
 
   def test_result_type(self):
-    key = jax.random.PRNGKey(123456)
+    key = random.key(123456)
     self.assertEqual(jnp.result_type(key), key.dtype)
 
   @parameterized.parameters([
@@ -2411,15 +2401,15 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     (jnp.full_like, (100,)),
   ])
   def test_full_like(self, func, args):
-    keys = random.split(random.PRNGKey(789543))
+    keys = random.split(random.key(789543))
 
     key_func = arr_func = lambda x: func(x, *args)
     self.check_shape(key_func, keys)
     self.check_against_reference(key_func, arr_func, keys)
 
   def test_full_like_with_key_fillvalue(self):
-    keys = random.split(random.PRNGKey(789543))
-    fill_value = random.PRNGKey(42)
+    keys = random.split(random.key(789543))
+    fill_value = random.key(42)
 
     self.check_shape(jnp.full_like, keys, fill_value)
     self.check_against_reference(jnp.full_like, jnp.full_like, keys, fill_value)
@@ -2431,15 +2421,15 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     (jnp.full, {'fill_value': 100}),
   ])
   def test_full(self, func, kwds):
-    keys = random.split(random.PRNGKey(789543))
+    keys = random.split(random.key(789543))
 
     key_func = arr_func = lambda x: func(x.shape, dtype=x.dtype, **kwds)
     self.check_shape(key_func, keys)
     self.check_against_reference(key_func, arr_func, keys)
 
   def test_full_with_key_fillvalue(self):
-    keys = random.split(random.PRNGKey(789543))
-    fill_value = random.PRNGKey(42)
+    keys = random.split(random.key(789543))
+    fill_value = random.key(42)
     func = lambda x, val: jnp.full(x.shape, val, dtype=x.dtype)
 
     self.check_shape(func, keys, fill_value)
