@@ -1132,7 +1132,7 @@ def new_base_main(trace_type: Type[Trace],
 def ensure_compile_time_eval():
   """Context manager to ensure evaluation at trace/compile time (or error).
 
-  Some JAX APIs like :func:`jax.jit`` and :func:`jax.lax.scan` involve staging,
+  Some JAX APIs like :func:`jax.jit` and :func:`jax.lax.scan` involve staging,
   i.e., delaying the evaluation of numerical expressions (like :mod:`jax.numpy`
   function applications) so that instead of performing those computations
   eagerly while evaluating the corresponding Python expressions, their
@@ -1143,7 +1143,7 @@ def ensure_compile_time_eval():
   "constant folding") for performance reasons.
 
   This context manager ensures that JAX computations are evaluated eagerly. If
-  eager evaluation is not possible, a ``ConcretizationError`` is raised.
+  eager evaluation is not possible, a ``ConcretizationTypeError`` is raised.
 
   Here's a contrived example::
 
