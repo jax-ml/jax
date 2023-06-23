@@ -100,8 +100,7 @@ PyObject* SafeMap(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
       return list.release().ptr();
     }
 
-    // TODO(phawkins): use PyObject_Vectorcall after dropping Python 3.8 support
-    py::object out = py::reinterpret_steal<py::object>(_PyObject_Vectorcall(
+    py::object out = py::reinterpret_steal<py::object>(PyObject_Vectorcall(
         fn, &values[1], (nargs - 1) | PY_VECTORCALL_ARGUMENTS_OFFSET,
         /*kwnames=*/nullptr));
     if (PyErr_Occurred()) {
