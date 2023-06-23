@@ -16,7 +16,7 @@ import functools
 import os
 import traceback
 import types
-from typing import Any, Callable, List, Optional, TypeVar, cast
+from typing import Any, Callable, Optional, TypeVar, cast
 
 from jax._src.config import config
 from jax._src.lib import xla_extension
@@ -25,7 +25,7 @@ from jax._src import util
 
 C = TypeVar("C", bound=Callable[..., Any])
 
-_exclude_paths: List[str] = [__file__, util.__file__]
+_exclude_paths: list[str] = [__file__, util.__file__]
 
 def register_exclusion(path: str):
   _exclude_paths.append(path)

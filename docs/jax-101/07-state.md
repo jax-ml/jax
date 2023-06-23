@@ -102,13 +102,11 @@ Part of the problem with our counter was that the returned value didn't depend o
 :id: 53pSdK4KoOEZ
 :outputId: 5ac72b9c-7029-4bf2-de8d-1d412bd74c79
 
-from typing import Tuple
-
 CounterState = int
 
 class CounterV2:
 
-  def count(self, n: CounterState) -> Tuple[int, CounterState]:
+  def count(self, n: CounterState) -> tuple[int, CounterState]:
     # You could just return n+1, but here we separate its role as 
     # the output and as the counter state for didactic purposes.
     return n+1, n+1

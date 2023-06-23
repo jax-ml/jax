@@ -19,7 +19,7 @@ import numpy as np
 import scipy.linalg
 import textwrap
 import warnings
-from typing import cast, overload, Any, Literal, Optional, Tuple, Union
+from typing import cast, overload, Any, Literal, Optional, Union
 
 import jax
 import jax.numpy as jnp
@@ -56,7 +56,7 @@ def cholesky(a: ArrayLike, lower: bool = False, overwrite_a: bool = False,
 @_wraps(scipy.linalg.cho_factor,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def cho_factor(a: ArrayLike, lower: bool = False, overwrite_a: bool = False,
-               check_finite: bool = True) -> Tuple[Array, bool]:
+               check_finite: bool = True) -> tuple[Array, bool]:
   del overwrite_a, check_finite  # Unused
   return (cholesky(a, lower=lower), lower)
 
@@ -72,30 +72,30 @@ def _cho_solve(c: ArrayLike, b: ArrayLike, lower: bool) -> Array:
 
 @_wraps(scipy.linalg.cho_solve, update_doc=False,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_b', 'check_finite'))
-def cho_solve(c_and_lower: Tuple[ArrayLike, bool], b: ArrayLike,
+def cho_solve(c_and_lower: tuple[ArrayLike, bool], b: ArrayLike,
               overwrite_b: bool = False, check_finite: bool = True) -> Array:
   del overwrite_b, check_finite  # Unused
   c, lower = c_and_lower
   return _cho_solve(c, b, lower)
 
 @overload
-def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: Literal[True]) -> Tuple[Array, Array, Array]: ...
+def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: Literal[True]) -> tuple[Array, Array, Array]: ...
 
 @overload
 def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: Literal[False]) -> Array: ...
 
 @overload
-def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: bool) -> Union[Array, Tuple[Array, Array, Array]]: ...
+def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: bool) -> Union[Array, tuple[Array, Array, Array]]: ...
 
 @partial(jit, static_argnames=('full_matrices', 'compute_uv'))
-def _svd(a: ArrayLike, *, full_matrices: bool, compute_uv: bool) -> Union[Array, Tuple[Array, Array, Array]]:
+def _svd(a: ArrayLike, *, full_matrices: bool, compute_uv: bool) -> Union[Array, tuple[Array, Array, Array]]:
   a, = promote_dtypes_inexact(jnp.asarray(a))
   return lax_linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
 
 @overload
 def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: Literal[True] = True,
         overwrite_a: bool = False, check_finite: bool = True,
-        lapack_driver: str = 'gesdd') -> Tuple[Array, Array, Array]: ...
+        lapack_driver: str = 'gesdd') -> tuple[Array, Array, Array]: ...
 
 @overload
 def svd(a: ArrayLike, full_matrices: bool, compute_uv: Literal[False],
@@ -110,13 +110,13 @@ def svd(a: ArrayLike, full_matrices: bool = True, *, compute_uv: Literal[False],
 @overload
 def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
         overwrite_a: bool = False, check_finite: bool = True,
-        lapack_driver: str = 'gesdd') -> Union[Array, Tuple[Array, Array, Array]]: ...
+        lapack_driver: str = 'gesdd') -> Union[Array, tuple[Array, Array, Array]]: ...
 
 @_wraps(scipy.linalg.svd,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite', 'lapack_driver'))
 def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
         overwrite_a: bool = False, check_finite: bool = True,
-        lapack_driver: str = 'gesdd') -> Union[Array, Tuple[Array, Array, Array]]:
+        lapack_driver: str = 'gesdd') -> Union[Array, tuple[Array, Array, Array]]:
   del overwrite_a, check_finite, lapack_driver  # unused
   return _svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
 
@@ -133,15 +133,15 @@ def _eigh(a: ArrayLike, b: Optional[ArrayLike], lower: bool, eigvals_only: Liter
 
 @overload
 def _eigh(a: ArrayLike, b: Optional[ArrayLike], lower: bool, eigvals_only: Literal[False],
-          eigvals: None, type: int) -> Tuple[Array, Array]: ...
+          eigvals: None, type: int) -> tuple[Array, Array]: ...
 
 @overload
 def _eigh(a: ArrayLike, b: Optional[ArrayLike], lower: bool, eigvals_only: bool,
-          eigvals: None, type: int) -> Union[Array, Tuple[Array, Array]]: ...
+          eigvals: None, type: int) -> Union[Array, tuple[Array, Array]]: ...
 
 @partial(jit, static_argnames=('lower', 'eigvals_only', 'eigvals', 'type'))
 def _eigh(a: ArrayLike, b: Optional[ArrayLike], lower: bool, eigvals_only: bool,
-          eigvals: None, type: int) -> Union[Array, Tuple[Array, Array]]:
+          eigvals: None, type: int) -> Union[Array, tuple[Array, Array]]:
   if b is not None:
     raise NotImplementedError("Only the b=None case of eigh is implemented")
   if type != 1:
@@ -162,7 +162,7 @@ def _eigh(a: ArrayLike, b: Optional[ArrayLike], lower: bool, eigvals_only: bool,
 def eigh(a: ArrayLike, b: Optional[ArrayLike] = None, lower: bool = True,
          eigvals_only: Literal[False] = False, overwrite_a: bool = False,
          overwrite_b: bool = False, turbo: bool = True, eigvals: None = None,
-         type: int = 1, check_finite: bool = True) -> Tuple[Array, Array]: ...
+         type: int = 1, check_finite: bool = True) -> tuple[Array, Array]: ...
 
 @overload
 def eigh(a: ArrayLike, b: Optional[ArrayLike] = None, lower: bool = True, *,
@@ -180,7 +180,7 @@ def eigh(a: ArrayLike, b: Optional[ArrayLike], lower: bool,
 def eigh(a: ArrayLike, b: Optional[ArrayLike] = None, lower: bool = True,
          eigvals_only: bool = False, overwrite_a: bool = False,
          overwrite_b: bool = False, turbo: bool = True, eigvals: None = None,
-         type: int = 1, check_finite: bool = True) -> Union[Array, Tuple[Array, Array]]: ...
+         type: int = 1, check_finite: bool = True) -> Union[Array, tuple[Array, Array]]: ...
 
 @_wraps(scipy.linalg.eigh,
         lax_description=_no_overwrite_and_chkfinite_doc,
@@ -188,18 +188,18 @@ def eigh(a: ArrayLike, b: Optional[ArrayLike] = None, lower: bool = True,
 def eigh(a: ArrayLike, b: Optional[ArrayLike] = None, lower: bool = True,
          eigvals_only: bool = False, overwrite_a: bool = False,
          overwrite_b: bool = False, turbo: bool = True, eigvals: None = None,
-         type: int = 1, check_finite: bool = True) -> Union[Array, Tuple[Array, Array]]:
+         type: int = 1, check_finite: bool = True) -> Union[Array, tuple[Array, Array]]:
   del overwrite_a, overwrite_b, turbo, check_finite  # unused
   return _eigh(a, b, lower, eigvals_only, eigvals, type)
 
 @partial(jit, static_argnames=('output',))
-def _schur(a: Array, output: str) -> Tuple[Array, Array]:
+def _schur(a: Array, output: str) -> tuple[Array, Array]:
   if output == "complex":
     a = a.astype(dtypes.to_complex_dtype(a.dtype))
   return lax_linalg.schur(a)
 
 @_wraps(scipy.linalg.schur)
-def schur(a: ArrayLike, output: str = 'real') -> Tuple[Array, Array]:
+def schur(a: ArrayLike, output: str = 'real') -> tuple[Array, Array]:
   if output not in ('real', 'complex'):
     raise ValueError(
       f"Expected 'output' to be either 'real' or 'complex', got {output=}.")
@@ -215,7 +215,7 @@ def inv(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> A
 @_wraps(scipy.linalg.lu_factor,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 @partial(jit, static_argnames=('overwrite_a', 'check_finite'))
-def lu_factor(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> Tuple[Array, Array]:
+def lu_factor(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> tuple[Array, Array]:
   del overwrite_a, check_finite  # unused
   a, = promote_dtypes_inexact(jnp.asarray(a))
   lu, pivots, _ = lax_linalg.lu(a)
@@ -225,7 +225,7 @@ def lu_factor(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True
 @_wraps(scipy.linalg.lu_solve,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_b', 'check_finite'))
 @partial(jit, static_argnames=('trans', 'overwrite_b', 'check_finite'))
-def lu_solve(lu_and_piv: Tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
+def lu_solve(lu_and_piv: tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
              overwrite_b: bool = False, check_finite: bool = True) -> Array:
   del overwrite_b, check_finite  # unused
   lu, pivots = lu_and_piv
@@ -234,16 +234,16 @@ def lu_solve(lu_and_piv: Tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
   return lax_linalg.lu_solve(lu, perm, b, trans)
 
 @overload
-def _lu(a: ArrayLike, permute_l: Literal[True]) -> Tuple[Array, Array]: ...
+def _lu(a: ArrayLike, permute_l: Literal[True]) -> tuple[Array, Array]: ...
 
 @overload
-def _lu(a: ArrayLike, permute_l: Literal[False]) -> Tuple[Array, Array, Array]: ...
+def _lu(a: ArrayLike, permute_l: Literal[False]) -> tuple[Array, Array, Array]: ...
 
 @overload
-def _lu(a: ArrayLike, permute_l: bool) -> Union[Tuple[Array, Array], Tuple[Array, Array, Array]]: ...
+def _lu(a: ArrayLike, permute_l: bool) -> Union[tuple[Array, Array], tuple[Array, Array, Array]]: ...
 
 @partial(jit, static_argnums=(1,))
-def _lu(a: ArrayLike, permute_l: bool) -> Union[Tuple[Array, Array], Tuple[Array, Array, Array]]:
+def _lu(a: ArrayLike, permute_l: bool) -> Union[tuple[Array, Array], tuple[Array, Array, Array]]:
   a, = promote_dtypes_inexact(jnp.asarray(a))
   lu, _, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
@@ -259,35 +259,35 @@ def _lu(a: ArrayLike, permute_l: bool) -> Union[Tuple[Array, Array], Tuple[Array
 
 @overload
 def lu(a: ArrayLike, permute_l: Literal[False] = False, overwrite_a: bool = False,
-       check_finite: bool = True) -> Tuple[Array, Array, Array]: ...
+       check_finite: bool = True) -> tuple[Array, Array, Array]: ...
 
 @overload
 def lu(a: ArrayLike, permute_l: Literal[True], overwrite_a: bool = False,
-       check_finite: bool = True) -> Tuple[Array, Array]: ...
+       check_finite: bool = True) -> tuple[Array, Array]: ...
 
 @overload
 def lu(a: ArrayLike, permute_l: bool = False, overwrite_a: bool = False,
-       check_finite: bool = True) -> Union[Tuple[Array, Array], Tuple[Array, Array, Array]]: ...
+       check_finite: bool = True) -> Union[tuple[Array, Array], tuple[Array, Array, Array]]: ...
 
 @_wraps(scipy.linalg.lu, update_doc=False,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 @partial(jit, static_argnames=('permute_l', 'overwrite_a', 'check_finite'))
 def lu(a: ArrayLike, permute_l: bool = False, overwrite_a: bool = False,
-       check_finite: bool = True) -> Union[Tuple[Array, Array], Tuple[Array, Array, Array]]:
+       check_finite: bool = True) -> Union[tuple[Array, Array], tuple[Array, Array, Array]]:
   del overwrite_a, check_finite  # unused
   return _lu(a, permute_l)
 
 @overload
-def _qr(a: ArrayLike, mode: Literal["r"], pivoting: bool) -> Tuple[Array]: ...
+def _qr(a: ArrayLike, mode: Literal["r"], pivoting: bool) -> tuple[Array]: ...
 
 @overload
-def _qr(a: ArrayLike, mode: Literal["full", "economic"], pivoting: bool) -> Tuple[Array, Array]: ...
+def _qr(a: ArrayLike, mode: Literal["full", "economic"], pivoting: bool) -> tuple[Array, Array]: ...
 
 @overload
-def _qr(a: ArrayLike, mode: str, pivoting: bool) -> Union[Tuple[Array], Tuple[Array, Array]]: ...
+def _qr(a: ArrayLike, mode: str, pivoting: bool) -> Union[tuple[Array], tuple[Array, Array]]: ...
 
 @partial(jit, static_argnames=('mode', 'pivoting'))
-def _qr(a: ArrayLike, mode: str, pivoting: bool) -> Union[Tuple[Array], Tuple[Array, Array]]:
+def _qr(a: ArrayLike, mode: str, pivoting: bool) -> Union[tuple[Array], tuple[Array, Array]]:
   if pivoting:
     raise NotImplementedError(
         "The pivoting=True case of qr is not implemented.")
@@ -306,24 +306,24 @@ def _qr(a: ArrayLike, mode: str, pivoting: bool) -> Union[Tuple[Array], Tuple[Ar
 
 @overload
 def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: Literal["full", "economic"] = "full",
-       pivoting: bool = False, check_finite: bool = True) -> Tuple[Array, Array]: ...
+       pivoting: bool = False, check_finite: bool = True) -> tuple[Array, Array]: ...
 
 @overload
 def qr(a: ArrayLike,  overwrite_a: bool, lwork: Any, mode: Literal["r"],
-       pivoting: bool = False, check_finite: bool = True) -> Tuple[Array]: ...
+       pivoting: bool = False, check_finite: bool = True) -> tuple[Array]: ...
 
 @overload
 def qr(a: ArrayLike,  overwrite_a: bool = False, lwork: Any = None, *, mode: Literal["r"],
-       pivoting: bool = False, check_finite: bool = True) -> Tuple[Array]: ...
+       pivoting: bool = False, check_finite: bool = True) -> tuple[Array]: ...
 
 @overload
 def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "full",
-       pivoting: bool = False, check_finite: bool = True) -> Union[Tuple[Array], Tuple[Array, Array]]: ...
+       pivoting: bool = False, check_finite: bool = True) -> Union[tuple[Array], tuple[Array, Array]]: ...
 
 @_wraps(scipy.linalg.qr,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite', 'lwork'))
 def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "full",
-       pivoting: bool = False, check_finite: bool = True) -> Union[Tuple[Array], Tuple[Array, Array]]:
+       pivoting: bool = False, check_finite: bool = True) -> Union[tuple[Array], tuple[Array, Array]]:
   del overwrite_a, lwork, check_finite  # unused
   return _qr(a, mode, pivoting)
 
@@ -458,7 +458,7 @@ def expm(A: ArrayLike, *, upper_triangular: bool = False, max_squarings: int = 1
   return R
 
 @jit
-def _calc_P_Q(A: ArrayLike) -> Tuple[Array, Array, Array]:
+def _calc_P_Q(A: ArrayLike) -> tuple[Array, Array, Array]:
   A = jnp.asarray(A)
   if A.ndim != 2 or A.shape[0] != A.shape[1]:
     raise ValueError('expected A to be a square matrix')
@@ -513,7 +513,7 @@ def _squaring(R: Array, n_squarings: Array, max_squarings: int) -> Array:
 
   return res
 
-def _pade3(A: Array) -> Tuple[Array, Array]:
+def _pade3(A: Array) -> tuple[Array, Array]:
   b = (120., 60., 12., 1.)
   M, N = A.shape
   ident = jnp.eye(M, N, dtype=A.dtype)
@@ -522,7 +522,7 @@ def _pade3(A: Array) -> Tuple[Array, Array]:
   V: Array = b[2]*A2 + b[0]*ident
   return U, V
 
-def _pade5(A: Array) -> Tuple[Array, Array]:
+def _pade5(A: Array) -> tuple[Array, Array]:
   b = (30240., 15120., 3360., 420., 30., 1.)
   M, N = A.shape
   ident = jnp.eye(M, N, dtype=A.dtype)
@@ -532,7 +532,7 @@ def _pade5(A: Array) -> Tuple[Array, Array]:
   V: Array = b[4]*A4 + b[2]*A2 + b[0]*ident
   return U, V
 
-def _pade7(A: Array) -> Tuple[Array, Array]:
+def _pade7(A: Array) -> tuple[Array, Array]:
   b = (17297280., 8648640., 1995840., 277200., 25200., 1512., 56., 1.)
   M, N = A.shape
   ident = jnp.eye(M, N, dtype=A.dtype)
@@ -543,7 +543,7 @@ def _pade7(A: Array) -> Tuple[Array, Array]:
   V = b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
   return U,V
 
-def _pade9(A: Array) -> Tuple[Array, Array]:
+def _pade9(A: Array) -> tuple[Array, Array]:
   b = (17643225600., 8821612800., 2075673600., 302702400., 30270240.,
        2162160., 110880., 3960., 90., 1.)
   M, N = A.shape
@@ -556,7 +556,7 @@ def _pade9(A: Array) -> Tuple[Array, Array]:
   V = b[8]*A8 + b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
   return U,V
 
-def _pade13(A: Array) -> Tuple[Array, Array]:
+def _pade13(A: Array) -> tuple[Array, Array]:
   b = (64764752532480000., 32382376266240000., 7771770303897600.,
        1187353796428800., 129060195264000., 10559470521600., 670442572800.,
        33522128640., 1323241920., 40840800., 960960., 16380., 182., 1.)
@@ -578,7 +578,7 @@ support the ``method='blockEnlarge'`` argument.
 
 @overload
 def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
-                 compute_expm: Literal[True] = True) -> Tuple[Array, Array]: ...
+                 compute_expm: Literal[True] = True) -> tuple[Array, Array]: ...
 
 @overload
 def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
@@ -586,12 +586,12 @@ def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
 
 @overload
 def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
-                 compute_expm: bool = True) -> Union[Array, Tuple[Array, Array]]: ...
+                 compute_expm: bool = True) -> Union[Array, tuple[Array, Array]]: ...
 
 @_wraps(scipy.linalg.expm_frechet, lax_description=_expm_frechet_description)
 @partial(jit, static_argnames=('method', 'compute_expm'))
 def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
-                 compute_expm: bool = True) -> Union[Array, Tuple[Array, Array]]:
+                 compute_expm: bool = True) -> Union[Array, tuple[Array, Array]]:
   A = jnp.asarray(A)
   E = jnp.asarray(E)
   if A.ndim != 2 or A.shape[0] != A.shape[1]:
@@ -617,8 +617,8 @@ def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
 @jit
 def block_diag(*arrs: ArrayLike) -> Array:
   if len(arrs) == 0:
-    arrs = cast(Tuple[ArrayLike], (jnp.zeros((1, 0)),))
-  arrs = cast(Tuple[ArrayLike], promote_dtypes(*arrs))
+    arrs = cast(tuple[ArrayLike], (jnp.zeros((1, 0)),))
+  arrs = cast(tuple[ArrayLike], promote_dtypes(*arrs))
   bad_shapes = [i for i, a in enumerate(arrs) if jnp.ndim(a) > 2]
   if bad_shapes:
     raise ValueError("Arguments to jax.scipy.linalg.block_diag must have at "
@@ -638,7 +638,7 @@ def block_diag(*arrs: ArrayLike) -> Array:
 @_wraps(scipy.linalg.eigh_tridiagonal)
 @partial(jit, static_argnames=("eigvals_only", "select", "select_range"))
 def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
-                     select: str = 'a', select_range: Optional[Tuple[float, float]] = None,
+                     select: str = 'a', select_range: Optional[tuple[float, float]] = None,
                      tol: Optional[float] = None) -> Array:
   if not eigvals_only:
     raise NotImplementedError("Calculation of eigenvectors is not implemented")
@@ -794,7 +794,7 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
 @partial(jit, static_argnames=('side', 'method'))
 @jax.default_matmul_precision("float32")
 def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: Optional[float] = None,
-          max_iterations: Optional[int] = None) -> Tuple[Array, Array]:
+          max_iterations: Optional[int] = None) -> tuple[Array, Array]:
   r"""Computes the polar decomposition.
 
   Given the :math:`m \times n` matrix :math:`a`, returns the factors of the polar
@@ -936,7 +936,7 @@ def sqrtm(A: ArrayLike, blocksize: int = 1) -> Array:
 
 @_wraps(scipy.linalg.rsf2csf, lax_description=_no_chkfinite_doc)
 @partial(jit, static_argnames=('check_finite',))
-def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> Tuple[Array, Array]:
+def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> tuple[Array, Array]:
   del check_finite  # unused
 
   T = jnp.asarray(T)
@@ -1001,12 +1001,12 @@ def hessenberg(a: ArrayLike, *, calc_q: Literal[False], overwrite_a: bool = Fals
 
 @overload
 def hessenberg(a: ArrayLike, *, calc_q: Literal[True], overwrite_a: bool = False,
-               check_finite: bool = True) -> Tuple[Array, Array]: ...
+               check_finite: bool = True) -> tuple[Array, Array]: ...
 
 @_wraps(scipy.linalg.hessenberg, lax_description=_no_overwrite_and_chkfinite_doc)
 @partial(jit, static_argnames=('calc_q', 'check_finite', 'overwrite_a'))
 def hessenberg(a: ArrayLike, *, calc_q: bool = False, overwrite_a: bool = False,
-               check_finite: bool = True) -> Union[Array, Tuple[Array, Array]]:
+               check_finite: bool = True) -> Union[Array, tuple[Array, Array]]:
   del overwrite_a, check_finite
   n = jnp.shape(a)[-1]
   if n == 0:

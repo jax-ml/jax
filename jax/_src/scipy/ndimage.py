@@ -17,7 +17,7 @@ import functools
 import itertools
 import operator
 import textwrap
-from typing import Callable, Dict, List, Sequence, Tuple
+from typing import Callable, Sequence
 
 import scipy.ndimage
 
@@ -44,7 +44,7 @@ def _mirror_index_fixer(index: Array, size: int) -> Array:
 def _reflect_index_fixer(index: Array, size: int) -> Array:
     return jnp.floor_divide(_mirror_index_fixer(2*index+1, 2*size+1) - 1, 2)
 
-_INDEX_FIXERS: Dict[str, Callable[[Array, int], Array]] = {
+_INDEX_FIXERS: dict[str, Callable[[Array, int], Array]] = {
     'constant': lambda index, size: index,
     'nearest': lambda index, size: jnp.clip(index, 0, size - 1),
     'wrap': lambda index, size: index % size,
@@ -57,13 +57,13 @@ def _round_half_away_from_zero(a: Array) -> Array:
   return a if jnp.issubdtype(a.dtype, jnp.integer) else lax.round(a)
 
 
-def _nearest_indices_and_weights(coordinate: Array) -> List[Tuple[Array, ArrayLike]]:
+def _nearest_indices_and_weights(coordinate: Array) -> list[tuple[Array, ArrayLike]]:
   index = _round_half_away_from_zero(coordinate).astype(jnp.int32)
   weight = coordinate.dtype.type(1)
   return [(index, weight)]
 
 
-def _linear_indices_and_weights(coordinate: Array) -> List[Tuple[Array, ArrayLike]]:
+def _linear_indices_and_weights(coordinate: Array) -> list[tuple[Array, ArrayLike]]:
   lower = jnp.floor(coordinate)
   upper_weight = coordinate - lower
   lower_weight = 1 - upper_weight

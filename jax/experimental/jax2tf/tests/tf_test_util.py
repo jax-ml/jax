@@ -17,7 +17,7 @@ import dataclasses
 import re
 import os
 
-from typing import Any, Callable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Optional, Sequence
 
 from absl.testing import absltest
 from absl import logging
@@ -37,7 +37,7 @@ from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
 
 DType = Any
 
-def _make_tf_input_signature(*tf_args) -> List[tf.TensorSpec]:
+def _make_tf_input_signature(*tf_args) -> list[tf.TensorSpec]:
   # tf_args can be PyTrees
   def _make_one_array_signature(tf_arg):
     return tf.TensorSpec(np.shape(tf_arg), jax2tf.dtype_of_val(tf_arg))
@@ -91,7 +91,7 @@ def SaveAndLoadFunction(f_tf: Callable, *,
                         input_signature: Optional[Sequence[tf.TensorSpec]] = None,
                         input_args: Optional[Sequence[Any]] = None,
                         variables: Sequence[tf.Variable] = (),
-                        save_gradients=True) -> Tuple[Callable, tf.train.Checkpoint]:
+                        save_gradients=True) -> tuple[Callable, tf.train.Checkpoint]:
   # Roundtrip through saved model on disk. Return the Checkpoint also
   # for the cases when there are variables. If you don't pass input_signature
   # then it is created from the input_args.
@@ -213,7 +213,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
     func_tf = jax2tf.convert(func_jax, enable_xla=enable_xla)
 
-    unexpected_successes: List[str] = []
+    unexpected_successes: list[str] = []
     # Run the "compiled" mode first, it is most important
     for mode in ("compiled", "eager", "graph"):
       if mode == "graph" and jtu.device_under_test() == "tpu":

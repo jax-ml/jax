@@ -14,7 +14,7 @@
 """Sharding utilities"""
 
 import itertools
-from typing import List, Sequence, Tuple, Union
+from typing import Sequence, Union
 
 import numpy as np
 
@@ -22,7 +22,7 @@ from jax._src.lib import xla_client as xc
 
 
 def get_num_ways_dim_sharded(
-    hlo_sharding: xc.HloSharding) -> Tuple[Sequence[int], int]:
+    hlo_sharding: xc.HloSharding) -> tuple[Sequence[int], int]:
   if hlo_sharding.is_replicated():  # type: ignore
     return [], 1
   partitions = hlo_sharding.tile_assignment_dimensions()
@@ -61,7 +61,7 @@ def are_op_shardings_equal(op1: Union[xc.OpSharding, xc.HloSharding],
   return hc1 == hc2
 
 
-_Index = Union[int, slice, Tuple[Union[int, slice], ...]]
+_Index = Union[int, slice, tuple[Union[int, slice], ...]]
 
 
 def op_sharding_to_numpy_indices(
@@ -81,7 +81,7 @@ def op_sharding_to_numpy_indices(
   partitions, num_replicas = get_num_ways_dim_sharded(hlo_sharding)
   assert len(partitions) == len(shape), (len(partitions), len(shape))
 
-  axis_indices: List[Sequence[_Index]] = []
+  axis_indices: list[Sequence[_Index]] = []
   for dim, n_shards in zip(shape, partitions):
     if n_shards == 1:
       axis_indices.append([slice(None)])
@@ -103,6 +103,6 @@ def op_sharding_to_numpy_indices(
 
 def op_sharding_to_indices(
     op_sharding: xc.HloSharding, shape: Sequence[int],
-    num_devices: int) -> Tuple[Tuple[slice, ...], ...]:
+    num_devices: int) -> tuple[tuple[slice, ...], ...]:
   indices = op_sharding_to_numpy_indices(op_sharding, shape, num_devices)
   return tuple(indices.flat)

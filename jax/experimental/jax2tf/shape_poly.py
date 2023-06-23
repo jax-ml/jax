@@ -39,8 +39,7 @@ import io
 import math
 import operator as op
 import tokenize
-from typing import (Any, Callable, Dict, Iterable, List, Optional, Sequence,
-                    Set, Tuple, Union)
+from typing import Any, Callable, Iterable, Optional, Sequence, Union
 
 import numpy as np
 import opt_einsum
@@ -60,7 +59,7 @@ from jax._src.typing import DimSize, Shape
 
 
 TfVal = Any
-DimVarEnv = Dict[str, jax.Array]
+DimVarEnv = dict[str, jax.Array]
 DType = Any
 
 class InconclusiveDimensionOperation(core.InconclusiveDimensionOperation):
@@ -117,7 +116,7 @@ class _DimAtom:
   def to_var(self) -> Optional[str]:
     return self.var
 
-  def get_vars(self) -> Set[str]:
+  def get_vars(self) -> set[str]:
     # All the vars that appear
     if self.var is not None:
       return {self.var}
@@ -174,7 +173,7 @@ class _DimAtom:
     else:
       return id(self) < id(other)
 
-  def bounds(self) -> Tuple[float, float]:
+  def bounds(self) -> tuple[float, float]:
     """Returns the lower and upper bounds, or -+ inf."""
     if self.var is not None:
       return (1, np.PINF)  # variables are assumed to be >= 1
@@ -259,7 +258,7 @@ class _DimMon(dict):
       return None
     return a.to_var()
 
-  def get_vars(self) -> Set[str]:
+  def get_vars(self) -> set[str]:
     # All the vars that appear in the monomial
     acc = set()
     for a in self.keys():
@@ -305,7 +304,7 @@ class _DimMon(dict):
       elif diff > 0: d[key] = diff
     return _DimMon(d)
 
-  def bounds(self) -> Tuple[float, float]:
+  def bounds(self) -> tuple[float, float]:
     """Returns the lower and upper bounds, or -+inf."""
     # The bounds of a product are among the product of bounds.
     bounds = []
@@ -341,17 +340,17 @@ class _DimExpr():
   """
 
   __array_priority__ = 1000   # Same as tracer, for __radd__ and others on ndarray
-  def __init__(self, coeffs: Dict[_DimMon, int]):
+  def __init__(self, coeffs: dict[_DimMon, int]):
     # Do not construct _DimExpr directly, unless you are sure that coeffs is
     # normalized; Use _DimExpr.normalize.
     # Takes ownership of coeffs
     self._coeffs = coeffs or {_DimMon(): 0}
 
-  def monomials(self) -> Iterable[Tuple[_DimMon, int]]:
+  def monomials(self) -> Iterable[tuple[_DimMon, int]]:
     return self._coeffs.items()
 
   @classmethod
-  def _add_coeffs(cls, coeffs: Dict[_DimMon, int], mon: _DimMon, coeff: int):
+  def _add_coeffs(cls, coeffs: dict[_DimMon, int], mon: _DimMon, coeff: int):
     """Do `coeffs[mon] += coeff` but remove 0 coefficients."""
     old_c = coeffs.get(mon)
     if old_c is None:
@@ -364,7 +363,7 @@ class _DimExpr():
         coeffs[mon] = new_c
 
   @classmethod
-  def normalize(cls, coeffs: Dict[_DimMon, int]) -> DimSize:
+  def normalize(cls, coeffs: dict[_DimMon, int]) -> DimSize:
     """The main constructor for _DimExpr.
 
     Ensures that the symbolic dimension is normalized, e.g.,
@@ -373,7 +372,7 @@ class _DimExpr():
     # TODO(necula): profile and optimize this
     has_non_zero_degree = False
     free_const = 0
-    new_coeffs: Dict[_DimMon, int] = {}
+    new_coeffs: dict[_DimMon, int] = {}
     for mon, coeff in coeffs.items():
       if coeff == 0: continue
       if mon.degree == 0:  # A constant, there can be a single one
@@ -389,7 +388,7 @@ class _DimExpr():
       return int(free_const)
 
   @classmethod
-  def normalize_floordiv_times_divisor(cls, coeffs: Dict[_DimMon, int]) -> DimSize:
+  def normalize_floordiv_times_divisor(cls, coeffs: dict[_DimMon, int]) -> DimSize:
     # Look for floordiv(E, M) * M and turn into E - mod(E, M). This comes
     # up when handling strided convolution.
     for dec in _decompose_expr(_DimExpr(coeffs), _DimAtom.FLOORDIV):
@@ -425,7 +424,7 @@ class _DimExpr():
       return None
     return mon.to_var()
 
-  def get_vars(self) -> Set[str]:
+  def get_vars(self) -> set[str]:
     """The variables that appear in a symbolic dimension."""
     acc = set()
     for mon, _ in self.monomials():
@@ -500,7 +499,7 @@ class _DimExpr():
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__mul__(other)
     other = _ensure_poly(other, "mul")
-    coeffs: Dict[_DimMon, int] = {}
+    coeffs: dict[_DimMon, int] = {}
     for mon1, coeff1 in self.monomials():
       for mon2, coeff2 in other.monomials():
         mon = mon1.mul(mon2)
@@ -580,7 +579,7 @@ class _DimExpr():
   def __lt__(self, other: DimSize):
     return not self.__ge__(other)
 
-  def divmod(self, divisor: "_DimExpr") -> Tuple[DimSize, int]:
+  def divmod(self, divisor: "_DimExpr") -> tuple[DimSize, int]:
     """
     Floor division with remainder (divmod) generalized to polynomials.
     If the `divisor` is not a constant, the remainder must be 0.
@@ -627,7 +626,7 @@ class _DimExpr():
       return (_DimExpr.from_operation(_DimAtom.FLOORDIV, self, divisor),  # type: ignore
               _DimExpr.from_operation(_DimAtom.MOD, self, divisor))
 
-  def bounds(self) -> Tuple[float, float]:
+  def bounds(self) -> tuple[float, float]:
     """Returns the lower and upper bounds, or -+inf."""
     lb = ub = self._coeffs.get(_DimMon(), 0)  # The free coefficient
     for mon, coeff in self.monomials():
@@ -663,7 +662,7 @@ class _DimExpr():
     return len(self._coeffs) == 1 and next(iter(self._coeffs)).degree == 0
 
   @property
-  def leading_term(self) -> Tuple[_DimMon, int]:
+  def leading_term(self) -> tuple[_DimMon, int]:
     """Returns the highest degree term that comes first lexicographically."""
     return max(self.monomials())
 
@@ -916,7 +915,7 @@ class _Parser:
     self.shape_spec = shape_spec
     self.shape_spec_repr = shape_spec_repr  # For error messages
     self.arg_shape = arg_shape
-    self.dimensions: List[DimSize] = []  # dimensions we have parsed
+    self.dimensions: list[DimSize] = []  # dimensions we have parsed
 
   def parse(self) -> Sequence[DimSize]:
     self.tokstream = tokenize.tokenize(
@@ -967,7 +966,7 @@ class _Parser:
     self.expect_token(tok, [expected])
     return self.next_tok()
 
-  def integer(self, tok: tokenize.TokenInfo) -> Tuple[int, tokenize.TokenInfo]:
+  def integer(self, tok: tokenize.TokenInfo) -> tuple[int, tokenize.TokenInfo]:
     self.expect_token(tok, [tokenize.NUMBER])
     try:
       val = int(tok.string)
@@ -977,7 +976,7 @@ class _Parser:
 
   # What can follow a shape?
   FOLLOW_SHAPE = [tokenize.ENDMARKER, tokenize.RPAR]
-  def shape(self, tok: tokenize.TokenInfo) -> Tuple[Sequence[DimSize], tokenize.TokenInfo]:
+  def shape(self, tok: tokenize.TokenInfo) -> tuple[Sequence[DimSize], tokenize.TokenInfo]:
     # A comma-separated list of _DimExpr, or "_", possibly ended with ...
     if tok.exact_type == tokenize.LPAR:
       res, tok = self.shape(self.next_tok())
@@ -1011,7 +1010,7 @@ class _Parser:
   # What token can follow a _DimExpr
   FOLLOW_EXPR = FOLLOW_SHAPE + [tokenize.COMMA]
 
-  def expr(self, tok: tokenize.TokenInfo) -> Tuple[DimSize, tokenize.TokenInfo]:
+  def expr(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
     # A sum of monomials
     next_m_negated = False
     acc = 0
@@ -1025,7 +1024,7 @@ class _Parser:
       tok = self.next_tok()
 
   FOLLOW_MON = FOLLOW_EXPR + [tokenize.PLUS, tokenize.MINUS]
-  def mon(self, tok: tokenize.TokenInfo) -> Tuple[DimSize, tokenize.TokenInfo]:
+  def mon(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
     # A monomial is product of atoms. Each atom may be raised to an integer power.
     acc = 1
     while True:
@@ -1041,7 +1040,7 @@ class _Parser:
         return acc, tok
       tok = self.consume_token(tok, tokenize.STAR)
 
-  def atom(self, tok: tokenize.TokenInfo) -> Tuple[DimSize, tokenize.TokenInfo]:
+  def atom(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
     if tok.exact_type == tokenize.NAME:
       if tok.string == "mod":
         return self.binary_op(_DimAtom.MOD, self.next_tok())
@@ -1059,7 +1058,7 @@ class _Parser:
     self.expect_token(tok, [tokenize.NAME, tokenize.MINUS, tokenize.NUMBER])
     assert False
 
-  def binary_op(self, op: str, tok) -> Tuple[DimSize, tokenize.TokenInfo]:
+  def binary_op(self, op: str, tok) -> tuple[DimSize, tokenize.TokenInfo]:
     tok = self.consume_token(tok, tokenize.LPAR)
     e1, tok = self.expr(tok)
     tok = self.consume_token(tok, tokenize.COMMA)
@@ -1148,7 +1147,7 @@ def arg_aval(
   return core.ShapedArray(aval_shape, arg_jax_dtype)
 
 def all_dim_vars(args_avals: Sequence[core.AbstractValue]) -> Sequence[str]:
-  dim_vars: Set[str] = set()
+  dim_vars: set[str] = set()
   for a in args_avals:
     for d in a.shape:
       if is_poly_dim(d):
@@ -1208,7 +1207,7 @@ class ShapeConstraint:
 
   def compute(self,
               shapeenv: DimVarEnv
-              ) -> Optional[Tuple[jax.Array, jax.Array, jax.Array]]:
+              ) -> Optional[tuple[jax.Array, jax.Array, jax.Array]]:
     """Computes if the constraint is satisfied.
 
     If the constraint can be resolved statically returns None
@@ -1245,7 +1244,7 @@ class ShapeConstraint:
 
 class ShapeConstraints:
   def __init__(self):
-    self.constraints: List[ShapeConstraint] = []
+    self.constraints: list[ShapeConstraint] = []
 
   def add_constraint(self,
                      comp: ShapeConstraint.Comparator,
@@ -1264,7 +1263,7 @@ class ShapeConstraints:
     for constraint in self.constraints:
       constraint.check_statically(shapeenv)
 
-  def compute(self, shapeenv: DimVarEnv) -> Tuple[jax.Array, jax.Array, jax.Array, Sequence[str]]:
+  def compute(self, shapeenv: DimVarEnv) -> tuple[jax.Array, jax.Array, jax.Array, Sequence[str]]:
     """Computes the error code for the set of constraints.
 
     The error code is -1 if all constraints are satisfied, or an index into
@@ -1275,13 +1274,13 @@ class ShapeConstraints:
     # So, we process them in order, in case some fail statically, but we
     # accumulate the errors in reverse order in the computation, because the
     # code-generation strategy will report the last error that failed.
-    acc: List[Tuple[jax.Array, jax.Array, jax.Array, str]] = []
+    acc: list[tuple[jax.Array, jax.Array, jax.Array, str]] = []
     for constraint in self.constraints:
       check_res = constraint.compute(shapeenv)
       if check_res is not None:
         acc.append((*check_res, constraint.make_err_msg("%1", "%2")))  # type: ignore
 
-    shape_check_messages: List[str] = []
+    shape_check_messages: list[str] = []
     shape_check_code: jax.Array = np.int32(-1)  # type: ignore
     shape_check_op1 = shape_check_op2 = shape_check_code
     for (is_ok, op1, op2, msg) in reversed(acc):
@@ -1329,7 +1328,7 @@ def pretty_print_dimension_descriptor(
 def solve_dim_vars(
     args_avals: Sequence[core.AbstractValue],
     args_kwargs_tree: tree_util.PyTreeDef,
-    ) -> Tuple[DimVarEnv, ShapeConstraints, Sequence[Tuple[str, int, int]]]:
+    ) -> tuple[DimVarEnv, ShapeConstraints, Sequence[tuple[str, int, int]]]:
   """Solves dimension variables in a called function's avals in terms of actual argument shapes.
 
   For example, given:
@@ -1367,8 +1366,8 @@ def solve_dim_vars(
 
   Raises ValueError if it cannot solve some dimension variable.
   """
-  dim_equations: List[_DimEquation] = []
-  synth_dimension_vars: List[Tuple[str, int, int]] = []
+  dim_equations: list[_DimEquation] = []
+  synth_dimension_vars: list[tuple[str, int, int]] = []
   for arg_idx, aval in enumerate(args_avals):
     for dim_idx, aval_d in enumerate(aval.shape):
       if is_poly_dim(aval_d):
@@ -1412,7 +1411,7 @@ def compute_shape_check_from_arg_shapes(
     args_avals: Sequence[core.AbstractValue],
     *actual_args: jax.Array,
     args_kwargs_tree: tree_util.PyTreeDef,
-    acc_shape_check_messages: List[str]) -> Sequence[jax.Array]:
+    acc_shape_check_messages: list[str]) -> Sequence[jax.Array]:
   """Computes the shape check code from the actual arguments.
 
   `acc_shape_check_messages` is an initially empty list where we append the
@@ -1439,8 +1438,8 @@ def compute_shape_check_from_arg_shapes(
 
 
 def _solve_dim_equations(
-    eqns: List[_DimEquation]
-) -> Tuple[DimVarEnv, ShapeConstraints]:
+    eqns: list[_DimEquation]
+) -> tuple[DimVarEnv, ShapeConstraints]:
   # Returns a shape environment and the shape constraints if it can solve all
   # dimension variables. Raises an exception if it cannot.
   shapeenv: DimVarEnv = {}
@@ -1521,8 +1520,8 @@ def _solve_dim_equations(
       break
 
   # We have some equations that we cannot solve further
-  unsolved_vars: Set[str] = set()
-  unsolved_polys: List[_DimExpr] = []
+  unsolved_vars: set[str] = set()
+  unsolved_polys: list[_DimExpr] = []
   for eqn in eqns:
     unsolved_vars = unsolved_vars.union(eqn.dim_expr.get_vars())
     unsolved_polys.append(eqn.dim_expr)

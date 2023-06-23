@@ -15,7 +15,7 @@
 
 from functools import partial
 import operator
-from typing import Optional, Tuple, Union
+from typing import Optional, Union
 
 import numpy as np
 
@@ -110,7 +110,7 @@ Also, it works best on rcond <= 10e-3 values.
 @partial(jit, static_argnames=('deg', 'rcond', 'full', 'cov'))
 def polyfit(x: Array, y: Array, deg: int, rcond: Optional[float] = None,
             full: bool = False, w: Optional[Array] = None, cov: bool = False
-            ) -> Union[Array, Tuple[Array, ...]]:
+            ) -> Union[Array, tuple[Array, ...]]:
   check_arraylike("polyfit", x, y)
   deg = core.concrete_or_error(int, deg, "deg must be int")
   order = deg + 1
@@ -301,7 +301,7 @@ def polymul(a1: ArrayLike, a2: ArrayLike, *, trim_leading_zeros: bool = False) -
   return convolve(a1_arr, a2_arr, mode='full')
 
 @_wraps(np.polydiv, lax_description=_LEADING_ZEROS_DOC)
-def polydiv(u: ArrayLike, v: ArrayLike, *, trim_leading_zeros: bool = False) -> Tuple[Array, Array]:
+def polydiv(u: ArrayLike, v: ArrayLike, *, trim_leading_zeros: bool = False) -> tuple[Array, Array]:
   check_arraylike("polydiv", u, v)
   u_arr, v_arr = promote_dtypes_inexact(u, v)
   m = len(u_arr) - 1

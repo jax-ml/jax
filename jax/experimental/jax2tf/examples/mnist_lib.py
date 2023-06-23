@@ -22,7 +22,7 @@ import functools
 import logging
 import re
 import time
-from typing import Any, Callable, Optional, Sequence, Tuple
+from typing import Any, Callable, Optional, Sequence
 from absl import flags
 
 import flax  # type: ignore[import]
@@ -102,7 +102,7 @@ class PureJaxMNIST:
   name = "mnist_pure_jax"
 
   @staticmethod
-  def predict(params: Sequence[Tuple[Any, Any]], inputs, with_classifier=True):
+  def predict(params: Sequence[tuple[Any, Any]], inputs, with_classifier=True):
     """The prediction function.
 
     Args:

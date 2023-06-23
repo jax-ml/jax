@@ -17,7 +17,7 @@
 import collections
 import itertools
 import logging
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Optional, Sequence
 
 import jax
 import numpy as np
@@ -33,8 +33,8 @@ _TPU_V4 = 'TPU v4'
 #
 # The trick only works for certain topologies and mesh shapes. Trivial dims of
 # size 1 can be added to the shapes listed, and they are also supported.
-_TRANSPOSE_TRICKS: Dict[Tuple[int, ...],
-                        Dict[Tuple[int, ...], Tuple[int, ...]]] = {
+_TRANSPOSE_TRICKS: dict[tuple[int, ...],
+                        dict[tuple[int, ...], tuple[int, ...]]] = {
     (2, 2, 1): {
         (2, 2): (0, 1, 2),
     },
@@ -63,7 +63,7 @@ _TRAY_RING_ORDER = (0, 1, 2, 3, 6, 7, 4, 5)
 
 def _create_device_mesh_for_nd_torus(
     physical_mesh: np.ndarray, mesh_shape: Sequence[int],
-) -> Tuple[np.ndarray, List[Tuple[int, ...]]]:
+) -> tuple[np.ndarray, list[tuple[int, ...]]]:
   """Assigns logical parallelism axes to physical axes of an N-D torus network.
 
   Given logical parallelism axes with sizes in `mesh_shape` and devices in an
@@ -108,7 +108,7 @@ def _create_device_mesh_for_nd_torus(
   # Remaining physical axes to be assigned to logical axes.
   assignable_physical_mesh = list(physical_mesh.shape)
   # Map each logical axis to a subset of physical axes.
-  assignment: List[Tuple[int, ...]] = [() for _ in mesh_shape]
+  assignment: list[tuple[int, ...]] = [() for _ in mesh_shape]
 
   # Assign logical axes from highest network intensity to lowest.
   # `mesh_shape` is assumed to ordered by lowest network intensity first, so
@@ -152,7 +152,7 @@ def _create_device_mesh_for_nd_torus(
             ' 16) is compatible with physical mesh 4x4x4 since 4=4 and 16=4x4.'
         )
   # Flatten the assignment, e.g., [(), (2,), (0, 1)] -> (2, 0, 1).
-  transpose: List[int] = []
+  transpose: list[int] = []
   for x in assignment:
     for y in x:
       transpose.append(int(y))
@@ -213,7 +213,7 @@ def _transpose_trick(physical_mesh: np.ndarray,
         f"create_device_mesh cannot create contiguous submeshes for "
         f"physical mesh topology {topology}")
 
-  mesh_shape_no_trivial_dims: Tuple[int, ...] = ()
+  mesh_shape_no_trivial_dims: tuple[int, ...] = ()
   for dim_size in mesh_shape:
     if dim_size != 1:
       mesh_shape_no_trivial_dims += (dim_size,)

@@ -19,7 +19,7 @@ import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
 
 import numpy as np
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Optional, Sequence, Union
 from jaxlib import xla_client
 
 from .hlo_helpers import (
@@ -58,13 +58,13 @@ def _ensure_hlo_s32(x):
 # We first construct for each result a pair with the shape and element type,
 # the shape containing either integer or ir.Value.
 DimensionSize = Union[int, ir.Value]  # an ir.Value if not static dimension
-ShapeTypePair = Tuple[Sequence[DimensionSize], ir.Type]
+ShapeTypePair = tuple[Sequence[DimensionSize], ir.Type]
 
 def mk_result_types_and_shapes(
     shape_type_pairs: Sequence[ShapeTypePair]
-) -> Tuple[List[ir.Type], Optional[List[ir.Value]]]:
-  result_types: List[ir.Type] = []
-  result_shapes: List[ir.Value] = []
+) -> tuple[list[ir.Type], Optional[list[ir.Value]]]:
+  result_types: list[ir.Type] = []
+  result_shapes: list[ir.Value] = []
   has_dynamic_shapes = any(
       any(not isinstance(d, int) for d in rshape)
       for rshape, _ in shape_type_pairs)
@@ -145,7 +145,7 @@ def trsm_hlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
 # # ?getrf: LU decomposition
 
 def getrf_hlo(dtype, a: ir.Value, *,
-              a_shape_vals: Tuple[DimensionSize, ...]):
+              a_shape_vals: tuple[DimensionSize, ...]):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   assert len(a_shape_vals) >= 2
@@ -196,7 +196,7 @@ def getrf_hlo(dtype, a: ir.Value, *,
 # # ?geqrf: QR decomposition
 
 def geqrf_hlo(dtype, a: ir.Value, *,
-              a_shape_vals: Tuple[DimensionSize, ...]):
+              a_shape_vals: tuple[DimensionSize, ...]):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   assert len(a_shape_vals) >= 2
@@ -255,8 +255,8 @@ def geqrf_hlo(dtype, a: ir.Value, *,
 
 # # ?orgqr: product of elementary Householder reflectors:
 def orgqr_hlo(dtype, a: ir.Value, tau, *,
-              a_shape_vals: Tuple[DimensionSize, ...],
-              tau_shape_vals: Tuple[DimensionSize, ...]):
+              a_shape_vals: tuple[DimensionSize, ...],
+              tau_shape_vals: tuple[DimensionSize, ...]):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -321,7 +321,7 @@ def orgqr_hlo(dtype, a: ir.Value, tau, *,
 # ?potrf: Cholesky decomposition
 
 def potrf_hlo(dtype, a: ir.Value, *, lower=False,
-              a_shape_vals: Tuple[DimensionSize, ...]):
+              a_shape_vals: tuple[DimensionSize, ...]):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   n = a_shape_vals[-1]
@@ -365,7 +365,7 @@ def potrf_hlo(dtype, a: ir.Value, *, lower=False,
 # # ?gesdd: Singular value decomposition
 
 def gesdd_hlo(dtype, a: ir.Value, *, full_matrices=True, compute_uv=True,
-              a_shape_vals: Tuple[DimensionSize, ...]):
+              a_shape_vals: tuple[DimensionSize, ...]):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   assert len(a_shape_vals) >= 2
@@ -379,7 +379,7 @@ def gesdd_hlo(dtype, a: ir.Value, *, full_matrices=True, compute_uv=True,
     batch_size_val = hlo.MulOp(batch_size_val, _ensure_hlo_s32(b_v)).result
 
   i32_type = ir.IntegerType.get_signless(32)
-  workspace: List[ShapeTypePair]
+  workspace: list[ShapeTypePair]
   if dtype == np.float32:
     fn = b"lapack_sgesdd"
     singular_vals_type = ir.F32Type.get()
@@ -546,7 +546,7 @@ def syevd_hlo(dtype, a: ir.Value, batch_size: ir.Value,
 # # geev: Nonsymmetric eigendecomposition (eig)
 
 def geev_hlo(dtype, input, *,
-             input_shape_vals: Tuple[ir.Value, ...],  # input.shape as ir.Values
+             input_shape_vals: tuple[ir.Value, ...],  # input.shape as ir.Values
              jobvl=True, jobvr=True):
   # input_shape_vals are used for when input has dynamic shapes.
   _initialize()

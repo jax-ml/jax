@@ -15,13 +15,13 @@
 """A LazyLoader class."""
 
 import importlib
-from typing import Any, Callable, List, Sequence, Tuple
+from typing import Any, Callable, Sequence
 
 
-def attach(package_name: str, submodules: Sequence[str]) -> Tuple[
+def attach(package_name: str, submodules: Sequence[str]) -> tuple[
     Callable[[str], Any],
-    Callable[[], List[str]],
-    List[str],
+    Callable[[], list[str]],
+    list[str],
 ]:
   """Lazily loads submodules of a package.
 
@@ -31,14 +31,14 @@ def attach(package_name: str, submodules: Sequence[str]) -> Tuple[
   ```
   """
 
-  __all__: List[str] = list(submodules)
+  __all__: list[str] = list(submodules)
 
   def __getattr__(name: str) -> Any:
     if name in submodules:
       return importlib.import_module(f"{package_name}.{name}")
     raise AttributeError(f"module '{package_name}' has no attribute '{name}")
 
-  def __dir__() -> List[str]:
+  def __dir__() -> list[str]:
     return __all__
 
   return __getattr__, __dir__, __all__

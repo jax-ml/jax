@@ -40,8 +40,8 @@ to fail. A Limitation is specific to a harness.
 import operator
 import os
 from functools import partial
-from typing import (Any, Callable, Dict, Iterable, List, Optional,
-                    NamedTuple, Sequence, Tuple, Union)
+from typing import (Any, Callable, Iterable, Optional, NamedTuple, Sequence,
+                    Union)
 
 from absl import testing
 import numpy as np
@@ -72,7 +72,7 @@ class RandArg(NamedTuple):
 
   See description of `Harness`.
   """
-  shape: Tuple[int, ...]
+  shape: tuple[int, ...]
   dtype: DType
 
 
@@ -149,7 +149,7 @@ class Harness:
   jax_unimplemented: Sequence["Limitation"]
   rng_factory: Callable
   # Carry some arbitrary parameters that the test can access.
-  params: Dict[str, Any]
+  params: dict[str, Any]
 
   def __init__(self,
                group_name,
@@ -271,7 +271,7 @@ def dtypes_to_str(dtype_list: Sequence[DType], empty_means_all=False) -> str:
 
 
 ##### All harnesses in this file.
-all_harnesses: List[Harness] = []
+all_harnesses: list[Harness] = []
 
 
 def define(
@@ -710,7 +710,7 @@ for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
   _make_add_any_harness("dtypes", dtype=dtype)
 
 for dtype in jtu.dtypes.all:
-  shape: Tuple[int, ...] = (20, 20)
+  shape: tuple[int, ...] = (20, 20)
   define(
       ad_util.stop_gradient_p,
       f"{jtu.format_shape_dtype_string(shape, dtype)}",

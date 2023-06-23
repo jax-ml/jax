@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import partial
-from typing import (Any, Callable, Optional, Sequence, Union, Tuple)
+from typing import Any, Callable, Optional, Sequence, Union
 import warnings
 
 import numpy as np
@@ -44,7 +44,7 @@ Array = Any
 
 def reduce_window(operand, init_value, computation: Callable,
                   window_dimensions: core.Shape, window_strides: Sequence[int],
-                  padding: Union[str, Sequence[Tuple[int, int]]],
+                  padding: Union[str, Sequence[tuple[int, int]]],
                   base_dilation: Optional[Sequence[int]] = None,
                   window_dilation: Optional[Sequence[int]] = None) -> Array:
   """Wraps XLA's `ReduceWindowWithGeneralPadding
@@ -112,7 +112,7 @@ def _get_monoid_window_reducer(monoid_op: Callable,
 
 def _reduce_window_sum(operand: Array, window_dimensions: core.Shape,
                        window_strides: Sequence[int],
-                       padding: Sequence[Tuple[int, int]],
+                       padding: Sequence[tuple[int, int]],
                        base_dilation: Optional[Sequence[int]] = None,
                        window_dilation: Optional[Sequence[int]] = None) -> Array:
   if base_dilation is None:
@@ -127,7 +127,7 @@ def _reduce_window_sum(operand: Array, window_dimensions: core.Shape,
 
 def _reduce_window_prod(operand: Array, window_dimensions: core.Shape,
                         window_strides: Sequence[int],
-                        padding: Sequence[Tuple[int, int]],
+                        padding: Sequence[tuple[int, int]],
                         base_dilation: Optional[Sequence[int]] = None,
                         window_dilation: Optional[Sequence[int]] = None) -> Array:
   init_value = lax._const(operand, 1)
@@ -146,7 +146,7 @@ def _reduce_window_prod(operand: Array, window_dimensions: core.Shape,
 
 def _reduce_window_max(operand: Array, window_dimensions: core.Shape,
                        window_strides: Sequence[int],
-                       padding: Sequence[Tuple[int, int]],
+                       padding: Sequence[tuple[int, int]],
                        base_dilation: Optional[Sequence[int]] = None,
                        window_dilation: Optional[Sequence[int]] = None) -> Array:
   if base_dilation is None:
@@ -161,7 +161,7 @@ def _reduce_window_max(operand: Array, window_dimensions: core.Shape,
 
 def _reduce_window_min(operand: Array, window_dimensions: core.Shape,
                        window_strides: Sequence[int],
-                       padding: Sequence[Tuple[int, int]],
+                       padding: Sequence[tuple[int, int]],
                        base_dilation: Optional[Sequence[int]] = None,
                        window_dilation: Optional[Sequence[int]] = None) -> Array:
   if base_dilation is None:
@@ -177,7 +177,7 @@ def _reduce_window_min(operand: Array, window_dimensions: core.Shape,
 def _reduce_window_logaddexp(
     operand: Array, window_dimensions: core.Shape,
     window_strides: Sequence[int],
-    padding: Sequence[Tuple[int, int]],
+    padding: Sequence[tuple[int, int]],
     base_dilation: Optional[Sequence[int]] = None,
     window_dilation: Optional[Sequence[int]] = None) -> Array:
   init_value = lax._const(operand, -np.inf)
@@ -197,7 +197,7 @@ def _reduce_window_logaddexp(
 def _select_and_scatter(operand: Array, select: Callable,
                         window_dimensions: core.Shape,
                         window_strides: Sequence[int],
-                        padding: Sequence[Tuple[int, int]], source: Array,
+                        padding: Sequence[tuple[int, int]], source: Array,
                         init_value: Array, scatter: Callable) -> Array:
   select_jaxpr, select_consts = lax._reduction_jaxpr(
     select, lax._abstractify(init_value))
@@ -213,7 +213,7 @@ def _select_and_scatter_add(source: Array, operand: Array,
                             select_prim: core.Primitive,
                             window_dimensions: core.Shape,
                             window_strides: Sequence[int],
-                            padding: Sequence[Tuple[int, int]]) -> Array:
+                            padding: Sequence[tuple[int, int]]) -> Array:
   return select_and_scatter_add_p.bind(
       source, operand, select_prim=select_prim,
       window_dimensions=tuple(window_dimensions),
@@ -223,7 +223,7 @@ def _select_and_gather_add(tangents: Array, operand: Array,
                            select_prim: core.Primitive,
                            window_dimensions: core.Shape,
                            window_strides: Sequence[int],
-                           padding: Sequence[Tuple[int, int]],
+                           padding: Sequence[tuple[int, int]],
                            base_dilation: Sequence[int],
                            window_dilation: Sequence[int]) -> Array:
   """Extracts the tangent corresponding to the minimum or maximum element in

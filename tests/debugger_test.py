@@ -16,7 +16,7 @@ import re
 import textwrap
 import unittest
 
-from typing import IO, Sequence, Tuple
+from typing import IO, Sequence
 
 from absl.testing import absltest
 import jax
@@ -30,7 +30,7 @@ import numpy as np
 
 config.parse_flags_with_absl()
 
-def make_fake_stdin_stdout(commands: Sequence[str]) -> Tuple[IO[str], io.StringIO]:
+def make_fake_stdin_stdout(commands: Sequence[str]) -> tuple[IO[str], io.StringIO]:
   fake_stdin = io.StringIO()
   fake_stdin.truncate(0)
   for command in commands:

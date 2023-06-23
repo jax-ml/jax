@@ -24,8 +24,8 @@ import itertools
 import operator
 import re
 import typing
-from typing import (Any, Callable, Dict, Iterator, List, NamedTuple, Optional,
-                    Protocol, Sequence, Set, Tuple, Type, Union)
+from typing import (Any, Callable, Iterator, NamedTuple, Optional,
+                    Protocol, Sequence, Union)
 import warnings
 
 import numpy as np
@@ -114,7 +114,7 @@ def delegate_lowering(ctx, lowering_fun, *args, **ctx_override_kwargs):
 # IR Types
 
 # Non-canonicalized dtype to IR type mapping.
-_dtype_to_ir_type : Dict[np.dtype, Callable[[], ir.Type]] = {
+_dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(dtypes.float0): partial(ir.IntegerType.get_signless, 1),
   np.dtype(np.bool_): partial(ir.IntegerType.get_signless, 1),
   np.dtype(np.int8): partial(ir.IntegerType.get_signless, 8),
@@ -165,7 +165,7 @@ def _dynamic_array_ir_types(aval: core.ShapedArray) -> Sequence[ir.Type]:
   shape = [d if type(d) is int else dyn_size for d in aval.shape]
   return (ir.RankedTensorType.get(shape, dtype_to_ir_type(aval.dtype)),)
 
-ir_type_handlers: Dict[Type[core.AbstractValue],
+ir_type_handlers: dict[type[core.AbstractValue],
                         Callable[[Any], Sequence[ir.Type]]] = {}
 
 def aval_to_ir_types(aval: core.AbstractValue) -> Sequence[ir.Type]:
@@ -203,7 +203,7 @@ class ConstantHandler(Protocol):
 
     A JAX value is represented by zero or more IR values."""
 
-_constant_handlers : Dict[type, ConstantHandler] = {}
+_constant_handlers : dict[type, ConstantHandler] = {}
 
 def register_constant_handler(type_: type, handler_fun: ConstantHandler):
   _constant_handlers[type_] = handler_fun
@@ -338,7 +338,7 @@ def _traceback_to_location(tb: xc.Traceback) -> ir.Location:
     return ir.Location.callsite(frame_locs[-1], frame_locs[-2::-1])
 
 def _source_info_to_location(
-    primitive: core.Primitive, params: Dict,
+    primitive: core.Primitive, params: dict,
     source_info: source_info_util.SourceInfo,
     name_stack: source_info_util.NameStack) -> ir.Location:
   eqn_str = (f'{str(source_info.name_stack)}/'
@@ -410,15 +410,15 @@ class ModuleContext:
   platform: str
   axis_context: AxisContext
   name_stack: source_info_util.NameStack
-  keepalives: List[Any]
+  keepalives: list[Any]
   channel_iterator: Iterator[int]
-  host_callbacks: List[Any]
+  host_callbacks: list[Any]
   # Keep state for the lowering of shape polymorphism
   shape_poly_state: ShapePolyLoweringState
 
   # Cached primitive lowerings.
-  cached_primitive_lowerings: Dict[Any, func_dialect.FuncOp]
-  cached_call_jaxpr_lowerings: Dict[Any, func_dialect.FuncOp]
+  cached_primitive_lowerings: dict[Any, func_dialect.FuncOp]
+  cached_call_jaxpr_lowerings: dict[Any, func_dialect.FuncOp]
 
 
   @property
@@ -431,16 +431,16 @@ class ModuleContext:
       platform: str,
       axis_context: AxisContext,
       name_stack: source_info_util.NameStack,
-      keepalives: List[Any],
+      keepalives: list[Any],
       channel_iterator: Iterator[int],
-      host_callbacks: List[Any],
+      host_callbacks: list[Any],
       context: Optional[ir.Context] = None,
       module: Optional[ir.Module] = None,
       ip: Optional[ir.InsertionPoint] = None,
       symbol_table: Optional[ir.SymbolTable] = None,
-      cached_primitive_lowerings: Optional[Dict[Any,
+      cached_primitive_lowerings: Optional[dict[Any,
                                                 func_dialect.FuncOp]] = None,
-      cached_call_jaxpr_lowerings: Optional[Dict[Any,
+      cached_call_jaxpr_lowerings: Optional[dict[Any,
                                                  func_dialect.FuncOp]] = None,
       shape_poly_state = None):
     assert platform is not None
@@ -489,7 +489,7 @@ class LoweringRuleContext:
   avals_out: Any  # Usually Sequence[core.AbstractValue], but sometimes None.
   tokens_in: TokenSet
   tokens_out: Optional[TokenSet]  # Mutable store for output containers
-  axis_size_env: Optional[Dict[core.Var, ir.Value]] = None  # Dynamic axis sizes
+  axis_size_env: Optional[dict[core.Var, ir.Value]] = None  # Dynamic axis sizes
   dim_var_values: Sequence[ir.Value] = ()  # The values for the dimension variables
                                            # in same order as module_context.shape_poly_state.dim_vars
 
@@ -509,8 +509,8 @@ if not MYPY:
 else:
   LoweringRule = Any
 
-_lowerings: Dict[core.Primitive, LoweringRule] = {}
-_platform_specific_lowerings: Dict[str, Dict[core.Primitive, LoweringRule]]
+_lowerings: dict[core.Primitive, LoweringRule] = {}
+_platform_specific_lowerings: dict[str, dict[core.Primitive, LoweringRule]]
 _platform_specific_lowerings = collections.defaultdict(dict)
 
 def register_lowering(prim: core.Primitive, rule: LoweringRule,
@@ -553,7 +553,7 @@ def sharded_aval(aval: core.AbstractValue,
 
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,
-                       shape: core.Shape) -> Tuple[Union[int, Value], ...]:
+                       shape: core.Shape) -> tuple[Union[int, Value], ...]:
   if config.jax_dynamic_shapes:
     return tuple(ctx.axis_size_env.get(d, d) for d in shape)  # type: ignore
   else:
@@ -569,7 +569,7 @@ def eval_dynamic_shape(ctx: LoweringRuleContext,
 
 # TODO: replace usage of eval_dynamic_shape_as_vals with eval_dynamic_shape_as_ivals
 def eval_dynamic_shape_as_vals(ctx: LoweringRuleContext,
-                               shape: core.Shape) -> Tuple[Value, ...]:
+                               shape: core.Shape) -> tuple[Value, ...]:
   """Evaluates the dynamic shapes as int32 values."""
   def convert_dim(d: Union[int, Value]):
     if type(d) is int:
@@ -585,7 +585,7 @@ def eval_dynamic_shape_as_vals(ctx: LoweringRuleContext,
 
 def eval_dynamic_shape_as_ivals(
     ctx: LoweringRuleContext, shape: core.Shape
-    ) -> Tuple[Union[int, Value], ...]:
+    ) -> tuple[Union[int, Value], ...]:
   """Evaluates the dynamic shapes as int or ir.int32 values."""
   def convert_dim(d: Union[int, Value]) -> Union[int, ir.Value]:
     if type(d) is int:
@@ -602,7 +602,7 @@ def eval_dynamic_shape_as_ivals(
 class LoweringResult(NamedTuple):
   module: ir.Module
   keepalive: Optional[Any]
-  host_callbacks: List[Any]
+  host_callbacks: list[Any]
   shape_poly_state: ShapePolyLoweringState
 
 
@@ -622,7 +622,7 @@ def _to_logical_op_sharding(
 def lower_jaxpr_to_module(
     module_name: str,
     jaxpr: core.ClosedJaxpr,
-    ordered_effects: List[core.Effect],
+    ordered_effects: list[core.Effect],
     backend_or_name: Optional[Union[str, xb.XlaBackend]],
     platform: str,
     axis_context: AxisContext,
@@ -665,8 +665,8 @@ def lower_jaxpr_to_module(
   # HLO channels need to start at 1
   channel_iter = itertools.count(1)
   # Create a keepalives list that will be mutated during the lowering.
-  keepalives: List[Any] = []
-  host_callbacks: List[Any] = []
+  keepalives: list[Any] = []
+  host_callbacks: list[Any] = []
 
   dim_vars: Sequence[str]
   if not config.jax_dynamic_shapes:
@@ -786,7 +786,7 @@ class TokenSet:
     tokens = [create_token() for _ in effects]
     return TokenSet(zip(effects, tokens))
 
-  def items(self) -> Sequence[Tuple[core.Effect, Token]]:
+  def items(self) -> Sequence[tuple[core.Effect, Token]]:
     return tuple(self._tokens.items())
 
   def effects(self) -> set[core.Effect]:
@@ -934,7 +934,7 @@ def lower_jaxpr_to_fun(
       or arg_names is not None
       or num_tokens > 0
   ):
-    arg_attrs: List[Dict[str, ir.Attribute]] = [
+    arg_attrs: list[dict[str, ir.Attribute]] = [
         {} for _ in range(len(flat_input_types))]
 
     if replicated_args is not None:
@@ -952,7 +952,7 @@ def lower_jaxpr_to_fun(
     if input_output_aliases is not None:
       output_ids = util.unflatten(list(range(len(flat_output_types))),
                                   map(len, output_types))
-      aliases: List[Optional[int]] = []
+      aliases: list[Optional[int]] = []
       for types, alias in zip(input_types, input_output_aliases):
         if alias is None:
           aliases.extend([None] * len(types))
@@ -977,7 +977,7 @@ def lower_jaxpr_to_fun(
     func_op.arg_attrs = ir.ArrayAttr.get(
         [ir.DictAttr.get(attrs) for attrs in arg_attrs])
 
-  result_attrs: List[Dict[str, ir.Attribute]] = [
+  result_attrs: list[dict[str, ir.Attribute]] = [
       {} for _ in range(len(flat_output_types))]
 
   if num_tokens > 0:
@@ -1020,7 +1020,7 @@ def lower_jaxpr_to_fun(
       tokens_in = TokenSet.create(effects)
     else:
       tokens_in = TokenSet(zip(effects, token_args))
-    args: List[List[ir.Value]] = []
+    args: list[list[ir.Value]] = []
     for aval, arg in zip(jaxpr.in_avals, unflattened_args):
       if replace_tokens_with_dummy and aval is core.abstract_token:
         args.append(hlo.CreateTokenOp().results)
@@ -1104,7 +1104,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
                   consts: Sequence[Sequence[ir.Value]],
                   *args: Sequence[ir.Value],
                   dim_var_values: Sequence[ir.Value]
-                  ) -> Tuple[Sequence[Sequence[ir.Value]], TokenSet]:
+                  ) -> tuple[Sequence[Sequence[ir.Value]], TokenSet]:
   """Lowers a jaxpr into MLIR, inlined into an existing function.
 
   Assumes that an MLIR context, location, and insertion point are set.
@@ -1131,7 +1131,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     env[v] = tuple(node)
 
 
-  env: Dict[core.Var, Tuple[ir.Value, ...]] = {}
+  env: dict[core.Var, tuple[ir.Value, ...]] = {}
 
   assert len(args) == len(jaxpr.invars), (jaxpr, args)
   assert len(consts) == len(jaxpr.constvars), (jaxpr, consts)
@@ -1547,7 +1547,7 @@ def _wrap_with_spmd_op(name: str,
                        x: ir.Value,
                        aval_out: core.AbstractValue,
                        sharding_proto: xc.OpSharding,
-                       unspecified_dims: Optional[Set[int]] = None):
+                       unspecified_dims: Optional[set[int]] = None):
   # unspecified_dims indicate dimensions whose shardings are not specified and
   # XLA sharding propagation can change them.
   if unspecified_dims:
@@ -1810,13 +1810,13 @@ def _emit_tpu_python_callback(
     callback,
     token: Optional[Any],
     operands: Sequence[ir.Value],
-    operand_avals: List[core.ShapedArray],
-    operand_shapes: List[xc.Shape],
-    result_avals: List[core.ShapedArray],
-    result_shapes: List[xc.Shape],
+    operand_avals: list[core.ShapedArray],
+    operand_shapes: list[xc.Shape],
+    result_avals: list[core.ShapedArray],
+    result_shapes: list[xc.Shape],
     *,
     sharding: Optional[xc.OpSharding] = None
-) -> Tuple[List[ir.Value], Any, Any]:
+) -> tuple[list[ir.Value], Any, Any]:
   token = token or hlo.CreateTokenOp().result
   _wrapped_callback = callback
 
@@ -1886,12 +1886,12 @@ def _aval_to_default_layouts(aval):
 
 def emit_python_callback(
     ctx: LoweringRuleContext, callback, token: Optional[Any],
-    operands: Sequence[ir.Value], operand_avals: List[core.ShapedArray],
-    result_avals: List[core.ShapedArray],
+    operands: Sequence[ir.Value], operand_avals: list[core.ShapedArray],
+    result_avals: list[core.ShapedArray],
     has_side_effect: bool, *, sharding: Optional[xc.OpSharding] = None,
     operand_layouts: Optional[Sequence[Optional[Sequence[int]]]] = None,
     result_layouts: Optional[Sequence[Optional[Sequence[int]]]] = None,
-    ) -> Tuple[List[ir.Value], Any, Any]:
+    ) -> tuple[list[ir.Value], Any, Any]:
   """Emits MLIR that calls back to a provided Python function."""
   platform = ctx.module_context.platform
   if platform not in {"cpu", "cuda", "rocm", "tpu"}:
@@ -2012,7 +2012,7 @@ def custom_call(
     result_shapes: Optional[Sequence[ir.Value]] = None,
     called_computations: Sequence[str] = (),
     api_version: int = 2,
-    extra_attributes: Dict[str, ir.Attribute] = {},
+    extra_attributes: dict[str, ir.Attribute] = {},
 ) -> ir.Operation:
   """Wraps a hlo.CustomCall.
 
@@ -2063,7 +2063,7 @@ def reduce_window(
     # d_padding will be an array i32[N, 2] with pad_lo and pad_hi for each
     # spatial dimension.
     int2d = aval_to_ir_type(core.ShapedArray((1, 2), np.int32))
-    def prep_one_pad(pad_lo_hi: Tuple[core.DimSize, core.DimSize]):
+    def prep_one_pad(pad_lo_hi: tuple[core.DimSize, core.DimSize]):
       pads = shape_tensor(eval_dynamic_shape(ctx, pad_lo_hi))  # i32[2]
       return hlo.ReshapeOp(int2d, pads)
     d_padding = hlo.ConcatenateOp(list(map(prep_one_pad, padding)),

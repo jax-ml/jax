@@ -501,8 +501,7 @@ import logging
 import math
 import threading
 import traceback
-from typing import (Any, Callable, Dict, List, Optional, Sequence,
-                    Tuple, cast)
+from typing import Any, Callable, Optional, Sequence, cast
 import warnings
 
 from jax._src import api
@@ -788,7 +787,7 @@ def _call(callback_func: Callable,
   for arg in flat_args:
     dispatch.check_arg(arg)
   # See definition of outside_call_p for what parameters it takes
-  params: Dict[str, Any] = {}
+  params: dict[str, Any] = {}
   # TODO: wrap function
   params["callback"] = _CallbackWrapper(callback_func, identity,
                                         call_with_device)
@@ -1291,7 +1290,7 @@ def _outside_call_run_callback(
   the flat list of results to the device.
   """
 
-  def _unpack_transforms(transforms) -> Tuple[Tuple[str, Dict[str, Any]], ...]:
+  def _unpack_transforms(transforms) -> tuple[tuple[str, dict[str, Any]], ...]:
     def _unpack_transform(name, *params):
       if name == "batch":
         return name, dict(batch_dims=params[0])
@@ -1369,7 +1368,7 @@ def _outside_call_run_callback(
     raise e  # Let the exception propagate
 
 
-def _add_transform(params: Dict, name: str, *transform_params) -> Dict:
+def _add_transform(params: dict, name: str, *transform_params) -> dict:
   """Adds the `transform` to the params["transforms"].
 
   Uses a tuple representation internally, will be unpacked before the
@@ -1545,7 +1544,7 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
 
   mk_new_var = core.gensym([jaxpr])
 
-  eqns: List[core.JaxprEqn] = []
+  eqns: list[core.JaxprEqn] = []
   # store the incoming tokens
   last_token_var = mk_new_var(core.abstract_token)
   last_itoken_var = mk_new_var(core.abstract_token)
@@ -1577,7 +1576,7 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
   return new_jaxpr
 
 
-def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
+def _rewrite_eqn(eqn: core.JaxprEqn, eqns: list[core.JaxprEqn],
                  input_token_var: core.Var, output_token_var: core.Var,
                  input_itoken_var: core.Var, output_itoken_var: core.Var,
                  mk_new_var: Callable[[core.AbstractValue], core.Var]):
@@ -1743,7 +1742,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
     raise NotImplementedError(f"outfeed rewrite {eqn.primitive}")
 
 
-def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
+def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: list[core.JaxprEqn],
                                 input_token_var: core.Var,
                                 output_token_var: core.Var,
                                 input_itoken_var: core.Var,
@@ -1870,11 +1869,11 @@ class _CallbackHandlerData:
   initialized: bool
   on_exit: bool
   lock: threading.Lock
-  last_callback_exception: Optional[Tuple[Exception, str]]
-  clients: Tuple[XlaLocalClient, ...]
-  devices: Tuple[XlaDevice, ...]
-  consumer_registry: Dict[Callable, int]
-  consumer_registry_by_id: Dict[int, Callable]
+  last_callback_exception: Optional[tuple[Exception, str]]
+  clients: tuple[XlaLocalClient, ...]
+  devices: tuple[XlaDevice, ...]
+  consumer_registry: dict[Callable, int]
+  consumer_registry_by_id: dict[int, Callable]
 
   def __init__(self):
     self.receiver = None  # Initialize lazily, when first needed
@@ -1907,7 +1906,7 @@ _callback_handler_data = _CallbackHandlerData()
 
 
 # This function is called from C++; it must not allow exceptions through.
-def _callback_input_received(device, consumer_id, arrays: Tuple):
+def _callback_input_received(device, consumer_id, arrays: tuple):
   array_repr = ", ".join([f"({a.dtype}{a.shape})" for a in arrays])
   logger.debug("Callback input received on device %s for consumer %s arrays: %s",
     device, consumer_id, array_repr)

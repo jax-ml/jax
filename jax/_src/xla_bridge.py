@@ -30,7 +30,7 @@ import platform as py_platform
 import pkgutil
 import sys
 import threading
-from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple, Union
+from typing import Any, Callable, Mapping, Optional, Union
 import warnings
 
 import numpy as np
@@ -109,7 +109,7 @@ def get_compile_options(
     use_auto_spmd_partitioning: bool = False,
     auto_spmd_partitioning_mesh_shape=[],
     auto_spmd_partitioning_mesh_ids=[],
-    env_options_overrides: Optional[Dict[str, str]] = None,
+    env_options_overrides: Optional[dict[str, str]] = None,
 ) -> xla_client.CompileOptions:
   """Returns the compile options to use, as derived from flag values.
 
@@ -231,10 +231,10 @@ class BackendRegistration:
   # a buggy plugin.
   experimental: bool = False
 
-_backend_factories: Dict[str, BackendRegistration] = {}
+_backend_factories: dict[str, BackendRegistration] = {}
 _default_backend: Optional[xla_client.Client] = None
-_backends : Dict[str, xla_client.Client] = {}
-_backends_errors : Dict[str, str] = {}
+_backends : dict[str, xla_client.Client] = {}
+_backends_errors : dict[str, str] = {}
 _backend_lock = threading.Lock()
 
 # The set of known non-experimental plugins.
@@ -245,7 +245,7 @@ _backend_lock = threading.Lock()
 # It is fine for a plugin not to implement every feature that JAX uses, provided
 # that a reasonable feature set is implemented and the plugin fails gracefully
 # for unimplemented features. Wrong outputs are not acceptable.
-_nonexperimental_plugins: Set[str] = set()
+_nonexperimental_plugins: set[str] = set()
 
 def register_backend_factory(name: str, factory: BackendFactory, *,
                              priority: int = 0,
@@ -314,7 +314,7 @@ if hasattr(xla_client, "make_tpu_client"):
 
 def _get_pjrt_plugin_names_and_library_paths(
     plugins_from_env: str,
-) -> Dict[str, str]:
+) -> dict[str, str]:
   """Gets the names and library paths of PJRT plugins to load from env var.
 
   Args:
@@ -343,7 +343,7 @@ def _get_pjrt_plugin_names_and_library_paths(
 
 def _get_pjrt_plugin_config(
     json_path: str,
-) -> Tuple[str, Optional[Mapping[str, Union[str, int, List[int], float]]]]:
+) -> tuple[str, Optional[Mapping[str, Union[str, int, list[int], float]]]]:
   """Gets PJRT plugin configuration from a json file.
 
   The json file needs to have a "library_path" field for the plugin library
@@ -440,7 +440,7 @@ def register_plugin(
     *,
     priority: int = 400,
     library_path: Optional[str] = None,
-    options: Optional[Mapping[str, Union[str, int, List[int], float]]] = None,
+    options: Optional[Mapping[str, Union[str, int, list[int], float]]] = None,
 ) -> None:
   """Registers a backend factory for the PJRT plugin.
 
@@ -516,7 +516,7 @@ _platform_aliases = {
   "rocm": "gpu",
 }
 
-_alias_to_platforms: Dict[str, List[str]] = {}
+_alias_to_platforms: dict[str, list[str]] = {}
 for _platform, _alias in _platform_aliases.items():
   _alias_to_platforms.setdefault(_alias, []).append(_platform)
 
@@ -550,7 +550,7 @@ def canonicalize_platform(platform: str) -> str:
                      "Platforms present are: " + ",".join(b.keys()))
 
 
-def expand_platform_alias(platform: str) -> List[str]:
+def expand_platform_alias(platform: str) -> list[str]:
   """Expands, e.g., "gpu" to ["cuda", "rocm"].
 
   This is used for convenience reasons: we expect cuda and rocm to act similarly
@@ -561,7 +561,7 @@ def expand_platform_alias(platform: str) -> List[str]:
 def is_gpu(platform):
   return platform in ("cuda", "rocm")
 
-def backends() -> Dict[str, xla_client.Client]:
+def backends() -> dict[str, xla_client.Client]:
   global _backends
   global _backends_errors
   global _default_backend
@@ -732,7 +732,7 @@ def local_device_count(
 
 def devices(
     backend: Optional[Union[str, xla_client.Client]] = None
-) -> List[xla_client.Device]:
+) -> list[xla_client.Device]:
   """Returns a list of all devices for a given backend.
 
   .. currentmodule:: jaxlib.xla_extension
@@ -765,7 +765,7 @@ def default_backend() -> str:
 @lru_cache
 def local_devices(process_index: Optional[int] = None,
                   backend: Optional[Union[str, xla_client.Client]] = None,
-                  host_id: Optional[int] = None) -> List[xla_client.Device]:
+                  host_id: Optional[int] = None) -> list[xla_client.Device]:
   """Like :py:func:`jax.devices`, but only returns devices local to a given process.
 
   If ``process_index`` is ``None``, returns devices local to this process.
@@ -839,7 +839,7 @@ def host_count(backend: Optional[Union[str, xla_client.Client]] = None) -> int:
 # TODO: remove this sometime after jax 0.2.13 is released
 def host_ids(
     backend: Optional[Union[str, xla_client.Client]] = None
-) -> List[int]:
+) -> list[int]:
   warnings.warn(
       "jax.host_ids has been deprecated; please use range(jax.process_count()) "
       "instead. jax.host_ids will eventually be removed; please update your "

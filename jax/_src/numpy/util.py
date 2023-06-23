@@ -15,9 +15,8 @@
 from functools import partial
 import re
 import textwrap
-from typing import (
-    Any, Callable, Dict, List, NamedTuple, Optional, Sequence, TypeVar
-)
+from typing import Any, Callable, NamedTuple, Optional, Sequence, TypeVar
+
 import warnings
 
 from jax._src import dtypes
@@ -53,7 +52,7 @@ class ParsedDoc(NamedTuple):
   signature: str = ""
   summary: str = ""
   front_matter: str = ""
-  sections: Dict[str, str] = {}
+  sections: dict[str, str] = {}
 
 
 def _parse_numpydoc(docstr: Optional[str]) -> ParsedDoc:
@@ -101,7 +100,7 @@ def _parse_numpydoc(docstr: Optional[str]) -> ParsedDoc:
                    front_matter=front_matter, sections=sections)
 
 
-def _parse_parameters(body: str) -> Dict[str, str]:
+def _parse_parameters(body: str) -> dict[str, str]:
   """Parse the Parameters section of a docstring."""
   title, underline, content = body.split('\n', 2)
   assert title == 'Parameters'
@@ -110,7 +109,7 @@ def _parse_parameters(body: str) -> Dict[str, str]:
   return {p.partition(' : ')[0].partition(', ')[0]: p for p in parameters}
 
 
-def _parse_extra_params(extra_params: str) -> Dict[str, str]:
+def _parse_extra_params(extra_params: str) -> dict[str, str]:
   """Parse the extra parameters passed to _wraps()"""
   parameters = _parameter_break.split(extra_params.strip('\n'))
   return {p.partition(' : ')[0].partition(', ')[0]: p for p in parameters}
@@ -223,7 +222,7 @@ def _wraps(
 
 _dtype = partial(dtypes.dtype, canonicalize=True)
 
-def promote_shapes(fun_name: str, *args: ArrayLike) -> List[Array]:
+def promote_shapes(fun_name: str, *args: ArrayLike) -> list[Array]:
   """Apply NumPy-style broadcasting, making args shape-compatible for lax.py."""
   if len(args) < 2:
     return [lax.asarray(arg) for arg in args]
@@ -264,7 +263,7 @@ def _rank_promotion_warning_or_error(fun_name: str, shapes: Sequence[Shape]):
     raise ValueError(msg.format(fun_name, ' '.join(map(str, shapes))))
 
 
-def promote_dtypes(*args: ArrayLike) -> List[Array]:
+def promote_dtypes(*args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument dtype promotion."""
   # TODO(dougalm,mattjj): This is a performance bottleneck. Consider memoizing.
   if len(args) < 2:
@@ -275,7 +274,7 @@ def promote_dtypes(*args: ArrayLike) -> List[Array]:
     return [lax._convert_element_type(x, to_dtype, weak_type) for x in args]
 
 
-def promote_dtypes_inexact(*args: ArrayLike) -> List[Array]:
+def promote_dtypes_inexact(*args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to an inexact type."""
@@ -286,7 +285,7 @@ def promote_dtypes_inexact(*args: ArrayLike) -> List[Array]:
           for x in args]
 
 
-def promote_dtypes_numeric(*args: ArrayLike) -> List[Array]:
+def promote_dtypes_numeric(*args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to a numeric (non-bool) type."""
@@ -297,7 +296,7 @@ def promote_dtypes_numeric(*args: ArrayLike) -> List[Array]:
           for x in args]
 
 
-def promote_dtypes_complex(*args: ArrayLike) -> List[Array]:
+def promote_dtypes_complex(*args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to a complex type."""
@@ -350,20 +349,20 @@ def _check_no_float0s(fun_name: str, *args: Any):
         "taken a gradient with respect to an integer argument.")
 
 
-def promote_args(fun_name: str, *args: ArrayLike) -> List[Array]:
+def promote_args(fun_name: str, *args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument shape and dtype promotion."""
   check_arraylike(fun_name, *args)
   _check_no_float0s(fun_name, *args)
   return promote_shapes(fun_name, *promote_dtypes(*args))
 
 
-def promote_args_numeric(fun_name: str, *args: ArrayLike) -> List[Array]:
+def promote_args_numeric(fun_name: str, *args: ArrayLike) -> list[Array]:
   check_arraylike(fun_name, *args)
   _check_no_float0s(fun_name, *args)
   return promote_shapes(fun_name, *promote_dtypes_numeric(*args))
 
 
-def promote_args_inexact(fun_name: str, *args: ArrayLike) -> List[Array]:
+def promote_args_inexact(fun_name: str, *args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument shape and dtype promotion.
 
   Promotes non-inexact types to an inexact type."""
@@ -373,7 +372,7 @@ def promote_args_inexact(fun_name: str, *args: ArrayLike) -> List[Array]:
 
 
 @partial(api.jit, inline=True)
-def _broadcast_arrays(*args: ArrayLike) -> List[Array]:
+def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
   """Like Numpy's broadcast_arrays but doesn't return views."""
   shapes = [np.shape(arg) for arg in args]
   if not shapes or all(core.symbolic_equal_shape(shapes[0], s) for s in shapes):

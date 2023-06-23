@@ -20,10 +20,10 @@ during program execution, the registered listeners will be invoked.
 A typical listener callback is to send an event to a metrics collector for
 aggregation/exporting.
 """
-from typing import Callable, List
+from typing import Callable
 
-_event_listeners: List[Callable[[str], None]] = []
-_event_duration_secs_listeners: List[Callable[[str, float], None]] = []
+_event_listeners: list[Callable[[str], None]] = []
+_event_duration_secs_listeners: list[Callable[[str, float], None]] = []
 
 def record_event(event: str) -> None:
   """Record an event."""

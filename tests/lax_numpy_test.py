@@ -21,7 +21,7 @@ import io
 import itertools
 import math
 import platform
-from typing import cast, Iterator, Optional, List, Tuple
+from typing import cast, Iterator, Optional
 import unittest
 from unittest import SkipTest
 import warnings
@@ -4993,7 +4993,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testIssue2347(self):
     # https://github.com/google/jax/issues/2347
-    object_list = List[Tuple[jnp.array, float, float, jnp.array, bool]]
+    object_list = list[tuple[jnp.array, float, float, jnp.array, bool]]
     self.assertRaises(TypeError, jnp.array, object_list)
 
     np_object_list = np.array(object_list)
@@ -5319,7 +5319,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     self.assertEqual(mismatches, {})
 
 
-_available_numpy_dtypes: List[str] = [dtype.__name__ for dtype in jtu.dtypes.all
+_available_numpy_dtypes: list[str] = [dtype.__name__ for dtype in jtu.dtypes.all
                                       if dtype != dtypes.bfloat16]
 
 
@@ -5333,7 +5333,7 @@ def _all_numpy_ufuncs() -> Iterator[str]:
         yield name
 
 
-def _dtypes_for_ufunc(name: str) -> Iterator[Tuple[str, ...]]:
+def _dtypes_for_ufunc(name: str) -> Iterator[tuple[str, ...]]:
   """Generate valid dtypes of inputs to the given numpy ufunc."""
   func = getattr(np, name)
   for arg_dtypes in itertools.product(_available_numpy_dtypes, repeat=func.nin):

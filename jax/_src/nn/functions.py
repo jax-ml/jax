@@ -18,7 +18,7 @@ from functools import partial
 import operator
 import warnings
 import numpy as np
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 import jax
 import jax.numpy as jnp
@@ -293,7 +293,7 @@ logsumexp = _logsumexp
 
 @partial(jax.jit, static_argnames=("axis",))
 def log_softmax(x: Array,
-                axis: Optional[Union[int, Tuple[int, ...]]] = -1,
+                axis: Optional[Union[int, tuple[int, ...]]] = -1,
                 where: Optional[Array] = None,
                 initial: Optional[Array] = None) -> Array:
   r"""Log-Softmax function.
@@ -326,7 +326,7 @@ def log_softmax(x: Array,
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
 #@partial(jax.jit, static_argnames=("axis",))
 def softmax(x: Array,
-            axis: Optional[Union[int, Tuple[int, ...]]] = -1,
+            axis: Optional[Union[int, tuple[int, ...]]] = -1,
             where: Optional[Array] = None,
             initial: Optional[Array] = None) -> Array:
   r"""Softmax function.
@@ -355,7 +355,7 @@ def softmax(x: Array,
 @partial(jax.custom_jvp, nondiff_argnums=(1,))
 def _softmax(
     x,
-    axis: Optional[Union[int, Tuple[int, ...]]] = -1,
+    axis: Optional[Union[int, tuple[int, ...]]] = -1,
     where: Optional[Array] = None,
     initial: Optional[Array] = None) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
@@ -382,7 +382,7 @@ def _softmax_deprecated(x, axis, where, initial):
 
 @partial(jax.jit, static_argnames=("axis",))
 def standardize(x: Array,
-              axis: Optional[Union[int, Tuple[int, ...]]] = -1,
+              axis: Optional[Union[int, tuple[int, ...]]] = -1,
               mean: Optional[Array] = None,
               variance: Optional[Array] = None,
               epsilon: Array = 1e-5,
@@ -400,7 +400,7 @@ def standardize(x: Array,
   return (x - mean) * lax.rsqrt(variance + epsilon)
 
 def normalize(x: Array,
-              axis: Optional[Union[int, Tuple[int, ...]]] = -1,
+              axis: Optional[Union[int, tuple[int, ...]]] = -1,
               mean: Optional[Array] = None,
               variance: Optional[Array] = None,
               epsilon: Array = 1e-5,

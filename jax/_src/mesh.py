@@ -20,7 +20,7 @@ import contextlib
 import functools
 import math
 import threading
-from typing import Any, Hashable, NamedTuple, Set, Sequence, Tuple, Union
+from typing import Any, Hashable, NamedTuple, Sequence, Union
 
 import numpy as np
 
@@ -43,7 +43,7 @@ def show_axes(axes):
 
 class ResourceEnv(NamedTuple):
   physical_mesh: Mesh
-  loops: Tuple[Loop, ...]
+  loops: tuple[Loop, ...]
 
   def with_mesh(self, mesh: Mesh):
     overlap = set(mesh.axis_names) & (self.resource_axes - set(self.physical_mesh.axis_names))
@@ -60,15 +60,15 @@ class ResourceEnv(NamedTuple):
     return self._replace(loops=self.loops + (loop,))
 
   @property
-  def physical_resource_axes(self) -> Set[ResourceAxisName]:
+  def physical_resource_axes(self) -> set[ResourceAxisName]:
     return set(self.physical_mesh.axis_names)
 
   @property
-  def loop_resource_axes(self) -> Set[ResourceAxisName]:
+  def loop_resource_axes(self) -> set[ResourceAxisName]:
     return {loop.name for loop in self.loops}
 
   @property
-  def resource_axes(self) -> Set[ResourceAxisName]:
+  def resource_axes(self) -> set[ResourceAxisName]:
     return self.physical_resource_axes | self.loop_resource_axes
 
   @property
@@ -138,7 +138,7 @@ class Mesh(contextlib.ContextDecorator):
   """
 
   devices: np.ndarray
-  axis_names: Tuple[MeshAxisName, ...]
+  axis_names: tuple[MeshAxisName, ...]
 
   def __init__(self, devices: Union[np.ndarray, Sequence[xc.Device]],
                axis_names: Union[str, Sequence[MeshAxisName]]):

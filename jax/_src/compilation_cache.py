@@ -18,7 +18,7 @@ import logging
 import os
 import re
 import sys
-from typing import Any, List, Optional
+from typing import Any, Optional
 import zlib
 
 import numpy as np
@@ -310,7 +310,7 @@ _xla_flags_to_exclude_from_cache_key = [
     "--xla_tpu_sdc_checker_enable_sdc_event_callbacks",
 ]
 
-extra_flag_prefixes_to_include_in_cache_key: List[str] = []
+extra_flag_prefixes_to_include_in_cache_key: list[str] = []
 
 
 def _hash_xla_flags(hash_obj):

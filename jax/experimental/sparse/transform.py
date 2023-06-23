@@ -48,8 +48,7 @@ Array([-1.2655463 , -0.52060574, -0.14522289, -0.10817424,
 """
 
 import functools
-from typing import (
-  Any, Callable, Dict, NamedTuple, List, Optional, Sequence, Tuple)
+from typing import Any, Callable, NamedTuple, Optional, Sequence
 
 import numpy as np
 
@@ -73,8 +72,8 @@ from jax._src.numpy import lax_numpy
 from jax.experimental import sparse
 from jax.experimental.sparse import BCOO, BCSR
 
-sparse_rules_bcoo : Dict[core.Primitive, Callable] = {}
-sparse_rules_bcsr : Dict[core.Primitive, Callable] = {}
+sparse_rules_bcoo : dict[core.Primitive, Callable] = {}
+sparse_rules_bcsr : dict[core.Primitive, Callable] = {}
 
 _zero_preserving_linear_unary_primitives = [
   lax.copy_p,
@@ -101,7 +100,7 @@ _zero_preserving_unary_primitives = [
   lax.convert_element_type_p,
 ]
 
-_densifying_primitives : List[core.Primitive] = [
+_densifying_primitives : list[core.Primitive] = [
   lax.acos_p,
   lax.acosh_p,
   lax.bessel_i0e_p,
@@ -137,7 +136,7 @@ class SparsifyEnv:
   that may be shared between one or more SparsifyValue objects, which
   represent sparse or dense arrays via indices into the list of buffers.
   """
-  _buffers : List[Array]
+  _buffers : list[Array]
 
   def __init__(self, bufs=()):
     self._buffers = list(bufs)
@@ -195,7 +194,7 @@ class SparsifyEnv:
 
 
 class SparsifyValue(NamedTuple):
-  shape: Tuple[int, ...]
+  shape: tuple[int, ...]
   data_ref: Optional[int]
   indices_ref: Optional[int] = None
   indptr_ref: Optional[int] = None
@@ -360,7 +359,7 @@ def sparsify_subtrace(main, spvalues, *bufs):
   buffers = popattr(main, 'spenv')._buffers
   yield buffers, [out._spvalue for out in out_traces]
 
-def sparsify_fun(wrapped_fun, args: List[ArrayOrSparse]):
+def sparsify_fun(wrapped_fun, args: list[ArrayOrSparse]):
   with core.new_main(SparseTrace) as main:
     spenv = SparsifyEnv()
     spvalues = arrays_to_spvalues(spenv, args)
@@ -390,7 +389,7 @@ def eval_sparse(
     spvalues: Sequence[SparsifyValue],  # mix of sparse and dense pointers into spenv
     spenv: SparsifyEnv,
 ) -> Sequence[SparsifyValue]:
-  env : Dict[core.Var, SparsifyValue] = {}
+  env : dict[core.Var, SparsifyValue] = {}
 
   def read(var: core.Atom) -> SparsifyValue:
     # all literals are dense
@@ -442,7 +441,7 @@ def sparsify_raw(f):
 
   def wrapped(
       spenv: SparsifyEnv, *spvalues: SparsifyValue, **params: Any
-  ) -> Tuple[Sequence[SparsifyValue], pytree.PyTreeDef]:
+  ) -> tuple[Sequence[SparsifyValue], pytree.PyTreeDef]:
     spvalues_flat, in_tree = tree_flatten(spvalues, is_leaf=_is_spvalue)
     in_avals_flat = spvalues_to_avals(spenv, spvalues_flat)
     wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, params), in_tree)

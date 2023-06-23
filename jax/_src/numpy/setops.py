@@ -16,7 +16,7 @@ from functools import partial
 import math
 import operator
 from textwrap import dedent as _dedent
-from typing import Optional, Tuple, Union, cast
+from typing import Optional, Union, cast
 
 import numpy as np
 
@@ -155,7 +155,7 @@ def setxor1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False) -> Arr
 
 
 @partial(jit, static_argnames=['return_indices'])
-def _intersect1d_sorted_mask(ar1: ArrayLike, ar2: ArrayLike, return_indices: bool = False) -> Tuple[Array, ...]:
+def _intersect1d_sorted_mask(ar1: ArrayLike, ar2: ArrayLike, return_indices: bool = False) -> tuple[Array, ...]:
   """
     Helper function for intersect1d which is jit-able
     """
@@ -175,7 +175,7 @@ def _intersect1d_sorted_mask(ar1: ArrayLike, ar2: ArrayLike, return_indices: boo
 
 @_wraps(np.intersect1d)
 def intersect1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
-                return_indices: bool = False) -> Union[Array, Tuple[Array, Array, Array]]:
+                return_indices: bool = False) -> Union[Array, tuple[Array, Array, Array]]:
   check_arraylike("intersect1d", ar1, ar2)
   ar1 = core.concrete_or_error(None, ar1, "The error arose in intersect1d()")
   ar2 = core.concrete_or_error(None, ar2, "The error arose in intersect1d()")
@@ -226,7 +226,7 @@ UNIQUE_SIZE_HINT = (
   "a concrete value for the size argument, which will determine the output size.")
 
 @partial(jit, static_argnums=1)
-def _unique_sorted_mask(ar: Array, axis: int) -> Tuple[Array, Array, Array]:
+def _unique_sorted_mask(ar: Array, axis: int) -> tuple[Array, Array, Array]:
   aux = moveaxis(ar, axis, 0)
   if np.issubdtype(aux.dtype, np.complexfloating):
     # Work around issue in sorting of complex numbers with Nan only in the
@@ -255,7 +255,7 @@ def _unique_sorted_mask(ar: Array, axis: int) -> Tuple[Array, Array, Array]:
 def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bool = False,
             return_counts: bool = False, size: Optional[int] = None,
             fill_value: Optional[ArrayLike] = None, return_true_size: bool = False
-            ) -> Union[Array, Tuple[Array, ...]]:
+            ) -> Union[Array, tuple[Array, ...]]:
   """
   Find the unique elements of an array along a particular axis.
   """
@@ -280,7 +280,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
       result = full_like(result, fill_value, shape=(size, *result.shape[1:]))
   result = moveaxis(result, 0, axis)
 
-  ret: Tuple[Array, ...] = (result,)
+  ret: tuple[Array, ...] = (result,)
   if return_index:
     if aux.size:
       ret += (perm[ind],)

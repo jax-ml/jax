@@ -16,7 +16,7 @@ import contextlib
 import numpy as np
 import itertools as it
 from collections import OrderedDict, abc
-from typing import (Callable, Iterable, Tuple, Optional, Dict, Any, Set,
+from typing import (Callable, Iterable, Optional, Any,
                     NamedTuple, Union, Sequence, Mapping)
 from functools import wraps, partial, partialmethod, lru_cache
 import math
@@ -268,7 +268,7 @@ def _prepare_axes(axes, arg_name):
   return tree_unflatten(treedef, entries), entries, treedef
 
 Resource = Union[ResourceAxisName, SerialLoop]
-ResourceSet = Union[Resource, Tuple[Resource, ...]]
+ResourceSet = Union[Resource, tuple[Resource, ...]]
 
 # TODO: Some syntactic sugar to make the API more usable in a single-axis case?
 # TODO: Are the resource axes scoped lexically or dynamically? Dynamically for now!
@@ -491,7 +491,7 @@ def xmap(fun: Callable,
                      f"in_axes or axis_sizes, but the following are missing: "
                      f"{out_axes_names - defined_names}")
 
-  normalized_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]] = {}
+  normalized_axis_resources: dict[AxisName, tuple[ResourceAxisName, ...]] = {}
   for axis in defined_names:
     resources = axis_resources.get(axis, ())
     if not isinstance(resources, tuple):
@@ -708,10 +708,10 @@ def make_xmap_callable(fun: lu.WrappedFun,
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
   resource_env: ResourceEnv
-  physical_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]]
-  loop_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]]
-  axis_subst_dict: Dict[AxisName, Tuple[ResourceAxisName, ...]]
-  axis_vmap_size: Dict[AxisName, Optional[int]]
+  physical_axis_resources: dict[AxisName, tuple[ResourceAxisName, ...]]
+  loop_axis_resources: dict[AxisName, tuple[ResourceAxisName, ...]]
+  axis_subst_dict: dict[AxisName, tuple[ResourceAxisName, ...]]
+  axis_vmap_size: dict[AxisName, Optional[int]]
 
   @property
   def axis_subst(self) -> core.AxisSubst:
@@ -729,15 +729,15 @@ class EvaluationPlan(NamedTuple):
 
   @classmethod
   def from_axis_resources(cls,
-                          axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]],
+                          axis_resources: dict[AxisName, tuple[ResourceAxisName, ...]],
                           resource_env: ResourceEnv,
-                          global_axis_sizes: Dict[AxisName, int]):
+                          global_axis_sizes: dict[AxisName, int]):
     physical_axis_resources, loop_axis_resources = _unzip_axis_resources(
             axis_resources, resource_env)
     axis_resource_count = _get_axis_resource_count(
         axis_resources, resource_env)
     axis_subst_dict = dict(axis_resources)
-    axis_vmap_size: Dict[AxisName, Optional[int]] = {}
+    axis_vmap_size: dict[AxisName, Optional[int]] = {}
     for naxis, raxes in sorted(axis_resources.items(), key=lambda x: str(x[0])):
       num_resources = axis_resource_count[naxis]
       assert global_axis_sizes[naxis] % num_resources.nglobal == 0
@@ -1038,7 +1038,7 @@ def _xmap_partial_eval_custom_params_updater(
     unks_in: Sequence[bool], inst_in: Sequence[bool],
     kept_outs_known: Sequence[bool], kept_outs_staged: Sequence[bool],
     num_res: int, params_known: dict, params_staged: dict
-  ) -> Tuple[dict, dict]:
+  ) -> tuple[dict, dict]:
   assert params_known['spmd_in_axes'] is None is params_known['spmd_out_axes']
   assert params_staged['spmd_in_axes'] is None is params_staged['spmd_out_axes']
 
@@ -1573,7 +1573,7 @@ class ResourceCount(NamedTuple):
 
 
 def _get_axis_resource_count(
-    axis_resources, resource_env) -> Dict[ResourceAxisName, ResourceCount]:
+    axis_resources, resource_env) -> dict[ResourceAxisName, ResourceCount]:
   global_res_shape = resource_env.shape
   local_res_shape = None
 
@@ -1593,8 +1593,8 @@ def _get_axis_resource_count(
 
 def _get_axis_sizes(args_flat: Iterable[Any],
                     in_axes_flat: Iterable[AxisNamePos],
-                    global_axis_sizes: Dict[AxisName, int],
-                    axis_resource_count: Dict[AxisName, ResourceCount]):
+                    global_axis_sizes: dict[AxisName, int],
+                    axis_resource_count: dict[AxisName, ResourceCount]):
   global_axis_sizes = dict(global_axis_sizes)
   for arg, in_axes in zip(args_flat, in_axes_flat):
     for name, dim in in_axes.items():
@@ -1643,7 +1643,7 @@ def hide_mapped_axes(flat_in_axes, flat_out_axes, *flat_args):
   yield map(_unsqueeze_mapped_axes, flat_outputs, flat_out_axes)
 
 
-def _jaxpr_resources(jaxpr, resource_env) -> Set[ResourceAxisName]:
+def _jaxpr_resources(jaxpr, resource_env) -> set[ResourceAxisName]:
   if isinstance(jaxpr, core.ClosedJaxpr):
     jaxpr = jaxpr.jaxpr
   assert isinstance(jaxpr, core.Jaxpr)
@@ -1661,7 +1661,7 @@ def _jaxpr_resources(jaxpr, resource_env) -> Set[ResourceAxisName]:
 
 
 def _to_resource_axes(axes_specs: Sequence[AxisNamePos],
-                      axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]]):
+                      axis_resources: dict[AxisName, tuple[ResourceAxisName, ...]]):
   """
   Convert in/out_axes parameters ranging over logical dimensions to
   ones that range over resource dimensions.
@@ -1695,7 +1695,7 @@ def _slice_tile(x, dim: Optional[int], i, n: int):
   return lax.dynamic_slice_in_dim(x, i * tile_size, slice_size=tile_size, axis=dim)
 
 
-def _unzip_axis_resources(axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]],
+def _unzip_axis_resources(axis_resources: dict[AxisName, tuple[ResourceAxisName, ...]],
                           resource_env: ResourceEnv):
   """Splits axis_resources into separate dicts for physical and loop resources."""
   physical_axis_resources = {}
@@ -1718,7 +1718,7 @@ def _unzip_axis_resources(axis_resources: Dict[AxisName, Tuple[ResourceAxisName,
 
 def _check_out_avals_vs_out_axes(out_avals: Sequence[core.AbstractValue],
                                  out_axes: Sequence[AxisNamePos],
-                                 global_axis_sizes: Dict[AxisName, int]):
+                                 global_axis_sizes: dict[AxisName, int]):
   defined_axes = set(global_axis_sizes)
   for aval, axes in zip(out_avals, out_axes):
     if not isinstance(aval, core.ShapedArray):

@@ -17,7 +17,7 @@ from functools import partial
 import math
 import operator
 from typing import (
-    overload, Any, Callable, Literal, Optional, Protocol, Sequence, Tuple, Union)
+    overload, Any, Callable, Literal, Optional, Protocol, Sequence, Union)
 import warnings
 
 import numpy as np
@@ -349,15 +349,15 @@ def average(a: ArrayLike, axis: Axis = None, weights: Optional[ArrayLike] = None
             returned: Literal[True], keepdims: bool = False) -> Array: ...
 @overload
 def average(a: ArrayLike, axis: Axis = None, weights: Optional[ArrayLike] = None,
-            returned: bool = False, keepdims: bool = False) -> Union[Array, Tuple[Array, Array]]: ...
+            returned: bool = False, keepdims: bool = False) -> Union[Array, tuple[Array, Array]]: ...
 @_wraps(np.average)
 def average(a: ArrayLike, axis: Axis = None, weights: Optional[ArrayLike] = None,
-            returned: bool = False, keepdims: bool = False) -> Union[Array, Tuple[Array, Array]]:
+            returned: bool = False, keepdims: bool = False) -> Union[Array, tuple[Array, Array]]:
   return _average(a, _ensure_optional_axes(axis), weights, returned, keepdims)
 
 @partial(api.jit, static_argnames=('axis', 'returned', 'keepdims'), inline=True)
 def _average(a: ArrayLike, axis: Axis = None, weights: Optional[ArrayLike] = None,
-             returned: bool = False, keepdims: bool = False) -> Union[Array, Tuple[Array, Array]]:
+             returned: bool = False, keepdims: bool = False) -> Union[Array, tuple[Array, Array]]:
   if weights is None: # Treat all weights as 1
     check_arraylike("average", a)
     a, = promote_dtypes_inexact(a)
@@ -450,7 +450,7 @@ def _var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
   return lax.div(result, normalizer).astype(dtype)
 
 
-def _var_promote_types(a_dtype: DTypeLike, dtype: DTypeLike) -> Tuple[DType, DType]:
+def _var_promote_types(a_dtype: DTypeLike, dtype: DTypeLike) -> tuple[DType, DType]:
   if dtype:
     if (not dtypes.issubdtype(dtype, np.complexfloating) and
         dtypes.issubdtype(a_dtype, np.complexfloating)):
@@ -689,7 +689,7 @@ nancumprod = _make_cumulative_reduction(np.nancumprod, lax.cumprod,
 @_wraps(np.quantile, skip_params=['out', 'overwrite_input'])
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
                                'keepdims', 'method'))
-def quantile(a: ArrayLike, q: ArrayLike, axis: Optional[Union[int, Tuple[int, ...]]] = None,
+def quantile(a: ArrayLike, q: ArrayLike, axis: Optional[Union[int, tuple[int, ...]]] = None,
              out: None = None, overwrite_input: bool = False, method: str = "linear",
              keepdims: bool = False, interpolation: None = None) -> Array:
   check_arraylike("quantile", a, q)
@@ -705,7 +705,7 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: Optional[Union[int, Tuple[int, ..
 @_wraps(np.nanquantile, skip_params=['out', 'overwrite_input'])
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
                                'keepdims', 'method'))
-def nanquantile(a: ArrayLike, q: ArrayLike, axis: Optional[Union[int, Tuple[int, ...]]] = None,
+def nanquantile(a: ArrayLike, q: ArrayLike, axis: Optional[Union[int, tuple[int, ...]]] = None,
                 out: None = None, overwrite_input: bool = False, method: str = "linear",
                 keepdims: bool = False, interpolation: None = None) -> Array:
   check_arraylike("nanquantile", a, q)
@@ -718,7 +718,7 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: Optional[Union[int, Tuple[int,
                   "Use 'method=' instead.", DeprecationWarning)
   return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, interpolation or method, keepdims, True)
 
-def _quantile(a: Array, q: Array, axis: Optional[Union[int, Tuple[int, ...]]],
+def _quantile(a: Array, q: Array, axis: Optional[Union[int, tuple[int, ...]]],
               interpolation: str, keepdims: bool, squash_nans: bool) -> Array:
   if interpolation not in ["linear", "lower", "higher", "midpoint", "nearest"]:
     raise ValueError("interpolation can only be 'linear', 'lower', 'higher', "
@@ -843,7 +843,7 @@ def _quantile(a: Array, q: Array, axis: Optional[Union[int, Tuple[int, ...]]],
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
                                    'keepdims', 'method'))
 def percentile(a: ArrayLike, q: ArrayLike,
-               axis: Optional[Union[int, Tuple[int, ...]]] = None,
+               axis: Optional[Union[int, tuple[int, ...]]] = None,
                out: None = None, overwrite_input: bool = False, method: str = "linear",
                keepdims: bool = False, interpolation: None = None) -> Array:
   check_arraylike("percentile", a, q)
@@ -855,7 +855,7 @@ def percentile(a: ArrayLike, q: ArrayLike,
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
                                'keepdims', 'method'))
 def nanpercentile(a: ArrayLike, q: ArrayLike,
-                  axis: Optional[Union[int, Tuple[int, ...]]] = None,
+                  axis: Optional[Union[int, tuple[int, ...]]] = None,
                   out: None = None, overwrite_input: bool = False, method: str = "linear",
                   keepdims: bool = False, interpolation: None = None) -> Array:
   check_arraylike("nanpercentile", a, q)
@@ -866,7 +866,7 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
 
 @_wraps(np.median, skip_params=['out', 'overwrite_input'])
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'keepdims'))
-def median(a: ArrayLike, axis: Optional[Union[int, Tuple[int, ...]]] = None,
+def median(a: ArrayLike, axis: Optional[Union[int, tuple[int, ...]]] = None,
            out: None = None, overwrite_input: bool = False,
            keepdims: bool = False) -> Array:
   check_arraylike("median", a)
@@ -875,7 +875,7 @@ def median(a: ArrayLike, axis: Optional[Union[int, Tuple[int, ...]]] = None,
 
 @_wraps(np.nanmedian, skip_params=['out', 'overwrite_input'])
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'keepdims'))
-def nanmedian(a: ArrayLike, axis: Optional[Union[int, Tuple[int, ...]]] = None,
+def nanmedian(a: ArrayLike, axis: Optional[Union[int, tuple[int, ...]]] = None,
               out: None = None, overwrite_input: bool = False,
               keepdims: bool = False) -> Array:
   check_arraylike("nanmedian", a)

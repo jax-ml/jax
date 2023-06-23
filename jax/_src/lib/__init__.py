@@ -18,7 +18,7 @@
 import gc
 import pathlib
 import re
-from typing import Optional, Tuple
+from typing import Optional
 
 try:
   import jaxlib as jaxlib
@@ -41,12 +41,12 @@ except Exception as err:
 # Checks the jaxlib version before importing anything else from jaxlib.
 # Returns the jaxlib version string.
 def check_jaxlib_version(jax_version: str, jaxlib_version: str,
-                         minimum_jaxlib_version: str) -> Tuple[int, ...]:
+                         minimum_jaxlib_version: str) -> tuple[int, ...]:
   # Regex to match a dotted version prefix 0.1.23.456.789 of a PEP440 version.
   # PEP440 allows a number of non-numeric suffixes, which we allow also.
   # We currently do not allow an epoch.
   version_regex = re.compile(r"[0-9]+(?:\.[0-9]+)*")
-  def _parse_version(v: str) -> Tuple[int, ...]:
+  def _parse_version(v: str) -> tuple[int, ...]:
     m = version_regex.match(v)
     if m is None:
       raise ValueError(f"Unable to parse jaxlib version '{v}'")

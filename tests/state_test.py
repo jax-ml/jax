@@ -14,7 +14,7 @@
 from functools import partial
 import itertools as it
 
-from typing import Any, Callable, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, NamedTuple, Optional, Sequence, Union
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -811,10 +811,10 @@ if CAN_USE_HYPOTHESIS:
     bat_val = draw(hnp.arrays(np.float32, vmap_index_param.bat_slice_shape))
     return SetVmapParams(vmap_index_param, bat_ref, bat_val, bat_idxs)
 
-  Indexer = Tuple[Union[int, slice, np.ndarray]]
+  Indexer = tuple[Union[int, slice, np.ndarray]]
 
   def _unpack_idx(idx: Indexer
-      ) -> Tuple[Sequence[Union[int, np.ndarray]], Sequence[bool]]:
+      ) -> tuple[Sequence[Union[int, np.ndarray]], Sequence[bool]]:
     indexed_dims = [type(i) != slice for i in idx]
     non_slice_idx = [i for i, b in zip(idx, indexed_dims) if b]
     return non_slice_idx, indexed_dims

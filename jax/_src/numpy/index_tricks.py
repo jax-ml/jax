@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import abc
-from typing import Any, Iterable, List, Tuple, Union
+from typing import Any, Iterable, Union
 
 import jax
 from jax._src import core
@@ -73,7 +73,7 @@ class _Mgrid:
             [0, 1, 2]]], dtype=int32)
   """
 
-  def __getitem__(self, key: Union[slice, Tuple[slice, ...]]) -> Array:
+  def __getitem__(self, key: Union[slice, tuple[slice, ...]]) -> Array:
     if isinstance(key, slice):
       return _make_1d_grid_from_slice(key, op_name="mgrid")
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="mgrid") for k in key)
@@ -117,8 +117,8 @@ class _Ogrid:
   """
 
   def __getitem__(
-      self, key: Union[slice, Tuple[slice, ...]]
-  ) -> Union[Array, List[Array]]:
+      self, key: Union[slice, tuple[slice, ...]]
+  ) -> Union[Array, list[Array]]:
     if isinstance(key, slice):
       return _make_1d_grid_from_slice(key, op_name="ogrid")
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="ogrid") for k in key)
@@ -140,8 +140,8 @@ class _AxisConcat(abc.ABC):
   trans1d: int
   op_name: str
 
-  def __getitem__(self, key: Union[_IndexType, Tuple[_IndexType, ...]]) -> Array:
-    key_tup: Tuple[_IndexType, ...] = key if isinstance(key, tuple) else (key,)
+  def __getitem__(self, key: Union[_IndexType, tuple[_IndexType, ...]]) -> Array:
+    key_tup: tuple[_IndexType, ...] = key if isinstance(key, tuple) else (key,)
 
     params = [self.axis, self.ndmin, self.trans1d, -1]
 
@@ -154,7 +154,7 @@ class _AxisConcat(abc.ABC):
       elif directive == "c":
         params[-1] = 1
       else:
-        vec: List[Any] = directive.split(",")
+        vec: list[Any] = directive.split(",")
         k = len(vec)
         if k < 4:
           vec += params[k:]

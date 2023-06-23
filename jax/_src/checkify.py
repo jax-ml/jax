@@ -16,8 +16,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import itertools as it
-from typing import (Union, Optional, Callable, Dict, Tuple, TypeVar,
-                    FrozenSet, Type, Set, List, Sequence, Any)
+from typing import Union, Optional, Callable, TypeVar, Sequence, Any
 
 import numpy as np
 
@@ -57,8 +56,8 @@ zip, unsafe_zip = safe_zip, zip
 
 Bool = Union[bool, Array]
 Int = Union[int, Array]
-ErrorCategory = Type['JaxException']
-Payload = List[Union[np.ndarray, Array]]
+ErrorCategory = type['JaxException']
+Payload = list[Union[np.ndarray, Array]]
 PyTreeDef = jtu.PyTreeDef
 Out = TypeVar('Out')
 
@@ -102,8 +101,8 @@ class JaxException(Exception):
 @functools.total_ordering
 @dataclasses.dataclass(eq=True, frozen=True)
 class ErrorEffect(effects.Effect):
-  error_type: Type[JaxException]
-  shape_dtypes: Tuple[api.ShapeDtypeStruct, ...]
+  error_type: type[JaxException]
+  shape_dtypes: tuple[api.ShapeDtypeStruct, ...]
 
   def __lt__(self, other: 'ErrorEffect'):
     shape_dtypes = lambda x: tuple((sd.shape, str(sd.dtype))  # dtype is not comparable
@@ -195,7 +194,7 @@ class FailedCheckError(JaxException):
 
 @dataclasses.dataclass
 class BatchedError(JaxException):
-  error_mapping: Dict[Tuple[int, ...], JaxException]
+  error_mapping: dict[tuple[int, ...], JaxException]
 
   def __post_init__(self):
     traceback_info = list(self.error_mapping.values())[0].traceback_info
@@ -212,10 +211,10 @@ class BatchedError(JaxException):
 @jtu.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
 class Error:
-  _pred: Dict[ErrorEffect, Bool]
-  _code: Dict[ErrorEffect, Int]
-  _metadata: Dict[Int, PyTreeDef]  # mapping of code to JaxException treedef.
-  _payload: Dict[ErrorEffect, Payload]
+  _pred: dict[ErrorEffect, Bool]
+  _code: dict[ErrorEffect, Int]
+  _metadata: dict[Int, PyTreeDef]  # mapping of code to JaxException treedef.
+  _payload: dict[ErrorEffect, Payload]
 
   def get(self) -> Optional[str]:
     """Returns error message if error happened, None if no error happened."""
@@ -278,7 +277,7 @@ class Error:
     new_metadata = {**self._metadata, **metadata}
     return Error(new_errs, new_codes, new_metadata, new_payload)
 
-  def _add_placeholder_effects(self, effects: Set[ErrorEffect]):
+  def _add_placeholder_effects(self, effects: set[ErrorEffect]):
     """Fill out Error with `effects` and np.ones arrays of their payloads."""
     new_err = self._pred.copy()
     new_code = self._code.copy()
@@ -337,7 +336,7 @@ def _flatten_and_get_error_metadata_thunk(*invals):
 
 def default_checkify_rule(primitive: core.Primitive, error: Error,
                           enabled_errors, *invals: core.Value,
-                          **params: Any) -> Tuple[Error, Sequence[core.Value]]:
+                          **params: Any) -> tuple[Error, Sequence[core.Value]]:
   """Default rule for primitives in `checkify` interpreter."""
   if 'call_jaxpr' not in params:
     # Default non-HOP case: just call primitive and don't update error.
@@ -389,15 +388,15 @@ def get_shaped_aval(val):
   return core.raise_to_shaped(core.get_aval(val))
 
 def checkify_jaxpr(jaxpr: core.ClosedJaxpr, enabled_errors,
-                   error: Error, *args) -> Tuple[Error, List[core.Value]]:
+                   error: Error, *args) -> tuple[Error, list[core.Value]]:
   err_vals, err_tree = jtu.tree_flatten(error)
   return checkify_jaxpr_flat(jaxpr.jaxpr, jaxpr.consts,
                              enabled_errors, err_tree, *err_vals, *args)
 
 def checkify_jaxpr_flat(jaxpr: core.Jaxpr, consts: Sequence[core.Value],
                         enabled_errors, err_tree: PyTreeDef,
-                        *args: core.Value) -> Tuple[Error, List[Any]]:
-  env: Dict[core.Var, Any] = {}
+                        *args: core.Value) -> tuple[Error, list[Any]]:
+  env: dict[core.Var, Any] = {}
   err_vals, in_args = split_list(args, [err_tree.num_leaves])
   error = jtu.tree_unflatten(err_tree, err_vals)
 
@@ -558,7 +557,7 @@ ad.primitive_jvps[check_p] = check_jvp_rule
 ## checkify rules
 
 ErrorCheckRule = Callable  # (Error, FrozenSet[ErrorCategory], *in_vals, **params) -> (Any, Error)
-error_checks: Dict[core.Primitive, ErrorCheckRule] = {}
+error_checks: dict[core.Primitive, ErrorCheckRule] = {}
 
 
 def summary() -> str:
@@ -740,7 +739,7 @@ error_checks[lax.scatter_max_p] = functools.partial(scatter_error_check,
 @weakref_lru_cache
 def jaxpr_to_checkify_jaxpr(
     jaxpr: core.ClosedJaxpr, enabled_errors, err_tree: PyTreeDef,
-    *flat_err_and_in_vals) -> Tuple[core.ClosedJaxpr, PyTreeDef, Set[ErrorEffect]]:
+    *flat_err_and_in_vals) -> tuple[core.ClosedJaxpr, PyTreeDef, set[ErrorEffect]]:
   checkify_jaxpr_partial = functools.partial(checkify_jaxpr_flat, jaxpr.jaxpr,
                                              jaxpr.consts, enabled_errors,
                                              err_tree)
@@ -823,7 +822,7 @@ error_checks[lax.scan_p] = scan_error_check
 def checkify_while_body_jaxpr(
     cond_jaxpr: core.ClosedJaxpr, body_jaxpr: core.ClosedJaxpr,
     enabled_errors, error: Error,
-    c_consts_num: int) -> Tuple[core.ClosedJaxpr, PyTreeDef, Set[ErrorEffect]]:
+    c_consts_num: int) -> tuple[core.ClosedJaxpr, PyTreeDef, set[ErrorEffect]]:
   cond_f = core.jaxpr_as_fun(cond_jaxpr)
   body_f = core.jaxpr_as_fun(body_jaxpr)
   def new_body_f(*c_consts_and_vals):
@@ -1062,8 +1061,8 @@ all_checks = automatic_checks | user_checks
 
 
 def checkify(f: Callable[..., Out],
-             errors: FrozenSet[ErrorCategory] = user_checks
-             ) -> Callable[..., Tuple[Error, Out]]:
+             errors: frozenset[ErrorCategory] = user_checks
+             ) -> Callable[..., tuple[Error, Out]]:
   """Functionalize `check` calls in `fun`, and optionally add run-time error checks.
 
   Run-time errors are either user-added :func:`~check` assertions, or

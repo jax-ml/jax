@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import itertools
-from typing import Any, Callable, Sequence, Tuple, Union
+from typing import Any, Callable, Sequence, Union
 
 import jax
 from jax._src import core
@@ -28,7 +28,7 @@ from jax.experimental.sparse._base import JAXSparse
 is_sparse = lambda x: isinstance(x, JAXSparse)
 
 
-def flatten_fun_for_sparse_ad(fun, argnums: Union[int, Tuple[int]], args: Tuple[Any]):
+def flatten_fun_for_sparse_ad(fun, argnums: Union[int, tuple[int]], args: tuple[Any]):
   argnums_tup = _ensure_index_tuple(argnums)
   assert all(0 <= argnum < len(args) for argnum in argnums_tup)
 
@@ -71,7 +71,7 @@ def flatten_fun_for_sparse_ad(fun, argnums: Union[int, Tuple[int]], args: Tuple[
 
 
 def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
-                   has_aux=False, **kwargs) -> Callable[..., Tuple[Any, Any]]:
+                   has_aux=False, **kwargs) -> Callable[..., tuple[Any, Any]]:
   """Sparse-aware version of :func:`jax.value_and_grad`
 
   Arguments and return values are the same as :func:`jax.value_and_grad`, but when

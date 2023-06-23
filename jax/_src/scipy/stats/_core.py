@@ -15,7 +15,7 @@
 from collections import namedtuple
 from functools import partial
 import math
-from typing import Optional, Tuple
+from typing import Optional
 
 import jax
 import jax.numpy as jnp
@@ -70,7 +70,7 @@ def mode(a: ArrayLike, axis: Optional[int] = 0, nan_policy: str = "propagate", k
     axis = 0
     x = x.ravel()
 
-  def _mode_helper(x: jax.Array) -> Tuple[jax.Array, jax.Array]:
+  def _mode_helper(x: jax.Array) -> tuple[jax.Array, jax.Array]:
     """Helper function to return mode and count of a given array."""
     if x.size == 0:
       return jnp.array(jnp.nan, dtype=dtypes.canonicalize_dtype(jnp.float_)), jnp.array(jnp.nan, dtype=dtypes.canonicalize_dtype(jnp.float_))

@@ -20,7 +20,7 @@ import functools
 import sys
 import uuid
 
-from typing import Any, Dict, List, Union
+from typing import Any, Union
 
 IS_COLAB_ENABLED = "google.colab" in sys.modules
 if IS_COLAB_ENABLED:
@@ -106,8 +106,8 @@ class StaticDOMElement(DOMElement):
   """An immutable DOM element."""
   _uuid: str = dataclasses.field(init=False)
   name: str
-  children: List[Union[str, DOMElement]]
-  attrs: Dict[str, str]
+  children: list[Union[str, DOMElement]]
+  attrs: dict[str, str]
 
   def html(self):
     attr_str = ""
@@ -137,7 +137,7 @@ class StaticDOMElement(DOMElement):
     return dataclasses.replace(self, **kwargs)
 
 
-def _style_dict_to_str(style_dict: Dict[str, Any]) -> str:
+def _style_dict_to_str(style_dict: dict[str, Any]) -> str:
   return " ".join([f"{k}: {v};" for k, v in style_dict.items()])
 
 

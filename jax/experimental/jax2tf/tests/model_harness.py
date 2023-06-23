@@ -14,7 +14,7 @@
 """All the models to convert."""
 import dataclasses
 import functools
-from typing import Any, Callable, Dict, Optional, Sequence, Union
+from typing import Any, Callable, Optional, Sequence, Union
 import re
 
 import numpy as np
@@ -41,7 +41,7 @@ import tensorflow as tf
 class ModelHarness:
   name: str
   apply: Callable[..., Any]
-  variables: Dict[str, Any]
+  variables: dict[str, Any]
   inputs: Sequence[np.ndarray]
   rtol: float = 1e-4
   polymorphic_shapes: Optional[Sequence[Union[str, None]]] = None
@@ -66,7 +66,7 @@ class ModelHarness:
 
 
 ##### All harnesses in this file.
-ALL_HARNESSES: Dict[str, Callable[[str], ModelHarness]] = {}
+ALL_HARNESSES: dict[str, Callable[[str], ModelHarness]] = {}
 
 
 def _make_harness(harness_fn, name, poly_shapes=None, tensor_specs=None):

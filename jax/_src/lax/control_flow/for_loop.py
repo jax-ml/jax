@@ -15,7 +15,7 @@
 import functools
 import operator
 
-from typing import Any, Callable, Generic, List, Optional, Sequence, Set, Tuple, TypeVar, Union
+from typing import Any, Callable, Generic, Optional, Sequence, TypeVar, Union
 
 import jax.numpy as jnp
 from jax import lax
@@ -92,7 +92,7 @@ def _hoist_consts_to_refs(jaxpr: core.Jaxpr) -> core.Jaxpr:
 
 def _trace_to_jaxpr_with_refs(f, state_tree: PyTreeDef,
                               state_avals: Sequence[core.AbstractValue]
-                              ) -> Tuple[core.Jaxpr, List[Any], PyTreeDef]:
+                              ) -> tuple[core.Jaxpr, list[Any], PyTreeDef]:
   f, out_tree_thunk = flatten_fun_nokwargs(
       lu.wrap_init(f), treedef_tuple((tree_structure(0), state_tree)))
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
@@ -172,12 +172,12 @@ Carry = TypeVar('Carry')
 X = TypeVar('X')
 Y = TypeVar('Y')
 
-def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
+def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
          init: Carry,
          xs: X,
          length: Optional[int] = None,
          reverse: bool = False,
-         unroll: int = 1) -> Tuple[Carry, Y]:
+         unroll: int = 1) -> tuple[Carry, Y]:
   if not callable(f):
     raise TypeError("scan: f argument should be a callable.")
   if unroll < 1:
@@ -253,7 +253,7 @@ def _for_abstract_eval(*avals, jaxpr, **__):
 def _for_discharge_rule(in_avals, _, *args: Any, jaxpr: core.Jaxpr,
                         reverse: bool, which_linear: Sequence[bool],
                         nsteps: int, unroll: int
-                        ) -> Tuple[Sequence[Optional[Any]], Sequence[Any]]:
+                        ) -> tuple[Sequence[Optional[Any]], Sequence[Any]]:
   out_vals = for_p.bind(*args, jaxpr=jaxpr, reverse=reverse,
                         which_linear=which_linear, nsteps=nsteps,
                         unroll=unroll)
@@ -371,7 +371,7 @@ def _partial_eval_jaxpr_custom(jaxpr, in_unknowns, policy):
 
 _save_everything = lambda *_, **__: True
 
-def _is_read_only(ref_effects: Set[StateEffect]) -> bool:
+def _is_read_only(ref_effects: set[StateEffect]) -> bool:
   assert len(ref_effects) > 0
   if len(ref_effects) > 1:
     # Means we must have a write or accum effect so not read-only
@@ -379,7 +379,7 @@ def _is_read_only(ref_effects: Set[StateEffect]) -> bool:
   eff, = ref_effects
   return isinstance(eff, ReadEffect)
 
-def _loop_invariant_outputs(jaxpr: core.Jaxpr) -> List[bool]:
+def _loop_invariant_outputs(jaxpr: core.Jaxpr) -> list[bool]:
   # Get effects for each of the jaxpr inputs and remove the loop index.
   ref_effects = state_types.get_ref_state_effects(
       [v.aval for v in jaxpr.invars], jaxpr.effects)[1:]
@@ -406,8 +406,8 @@ def _loop_invariant_outputs(jaxpr: core.Jaxpr) -> List[bool]:
 
 def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
                       jaxpr: core.Jaxpr, nsteps: int, reverse: bool,
-                      which_linear: Tuple[bool, ...],
-                      unroll: int) -> List[pe.JaxprTracer]:
+                      which_linear: tuple[bool, ...],
+                      unroll: int) -> list[pe.JaxprTracer]:
   num_inputs = len(tracers)
   assert num_inputs == len(jaxpr.invars) - 1
   in_unknowns = [not t.pval.is_known() for t in tracers]
@@ -636,7 +636,7 @@ pe.partial_eval_jaxpr_custom_rules[for_p] = _for_partial_eval_custom
 
 def _convert_outputs_to_writes(
     nsteps: int, jaxpr: core.Jaxpr, loop_invar_res: Sequence[bool]
-    ) -> Tuple[core.Jaxpr, List[core.ShapedArray]]:
+    ) -> tuple[core.Jaxpr, list[core.ShapedArray]]:
   assert not jaxpr.constvars, "Jaxpr shouldn't have constvars."
 
   in_avals = [v.aval for v in jaxpr.invars]  # [i, *orig_ref_avals]
@@ -654,7 +654,7 @@ def _convert_outputs_to_writes(
         res_ref[i] = res_val
     return []
   # TODO(mattjj, sharadmv): better handling of tokens, which don't have shape/dtype
-  res_ref_avals: List[core.AbstractValue] = [
+  res_ref_avals: list[core.AbstractValue] = [
       AbstractRef(v.aval) if loop_invar else  # pytype: disable=attribute-error
       AbstractRef(core.ShapedArray((nsteps, *v.aval.shape),  # pytype: disable=attribute-error
                   v.aval.dtype))  # pytype: disable=attribute-error
@@ -679,7 +679,7 @@ def _convert_inputs_to_reads(
 
   res_val_avals, (i_aval,), orig_ref_avals = \
       split_list([v.aval for v in jaxpr.invars], [num_res, 1])
-  res_ref_avals: List[core.AbstractValue] = [
+  res_ref_avals: list[core.AbstractValue] = [
       AbstractRef(aval) if loop_invar else  # pytype: disable=attribute-error
       AbstractRef(core.ShapedArray((nsteps, *aval.shape),  # pytype: disable=attribute-error
                   aval.dtype))  # pytype: disable=attribute-error
@@ -689,7 +689,7 @@ def _convert_inputs_to_reads(
       eval_jaxpr, [i_aval, *res_ref_avals, *orig_ref_avals])
   return jaxpr
 
-def transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: List[bool]) -> core.Jaxpr:
+def transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: list[bool]) -> core.Jaxpr:
   def trans(i, *args):
     # First we want to run the computation to read all the residual refs. We can
     # do that by using partial evaluation with all linear inputs unknown.

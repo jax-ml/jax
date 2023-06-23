@@ -20,8 +20,8 @@ import functools
 from functools import partial
 import operator as op
 import textwrap
-from typing import (Any, Callable, Hashable, Iterable, List, NamedTuple,
-                    Optional, Tuple, Type, TypeVar, Union, overload)
+from typing import (Any, Callable, Hashable, Iterable, NamedTuple,
+                    Optional, TypeVar, Union, overload)
 import warnings
 
 from jax._src import traceback_util
@@ -33,7 +33,7 @@ from jax._src.util import unzip2
 traceback_util.register_exclusion(__file__)
 
 T = TypeVar("T")
-U = TypeVar("U", bound=Type[Any])
+U = TypeVar("U", bound=type[Any])
 
 Leaf = Any
 PyTreeDef = pytree.PyTreeDef
@@ -41,7 +41,7 @@ PyTreeDef = pytree.PyTreeDef
 
 def tree_flatten(tree: Any,
                  is_leaf: Optional[Callable[[Any], bool]] = None
-                 ) -> Tuple[List[Leaf], PyTreeDef]:
+                 ) -> tuple[list[Leaf], PyTreeDef]:
   """Flattens a pytree.
 
   The flattening order (i.e. the order of elements in the output list)
@@ -79,7 +79,7 @@ def tree_unflatten(treedef: PyTreeDef, leaves: Iterable[Leaf]) -> Any:
 
 def tree_leaves(tree: Any,
                 is_leaf: Optional[Callable[[Any], bool]] = None
-                ) -> List[Leaf]:
+                ) -> list[Leaf]:
   """Gets the leaves of a pytree."""
   return pytree.flatten(tree, is_leaf)[0]
 
@@ -92,7 +92,7 @@ def treedef_tuple(treedefs: Iterable[PyTreeDef]) -> PyTreeDef:
   """Makes a tuple treedef from an iterable of child treedefs."""
   return pytree.tuple(list(treedefs))
 
-def treedef_children(treedef: PyTreeDef) -> List[PyTreeDef]:
+def treedef_children(treedef: PyTreeDef) -> list[PyTreeDef]:
   return treedef.children()
 
 def treedef_is_leaf(treedef: PyTreeDef) -> bool:
@@ -129,8 +129,8 @@ def all_leaves(iterable: Iterable[Any],
 _Children = TypeVar("_Children", bound=Iterable[Any])
 _AuxData = TypeVar("_AuxData", bound=Hashable)
 
-def register_pytree_node(nodetype: Type[T],
-                         flatten_func: Callable[[T], Tuple[_Children, _AuxData]],
+def register_pytree_node(nodetype: type[T],
+                         flatten_func: Callable[[T], tuple[_Children, _AuxData]],
                          unflatten_func: Callable[[_AuxData, _Children], T]):
   """Extends the set of types that are considered internal nodes in pytrees.
 
@@ -393,7 +393,7 @@ register_pytree_node(
 
 def broadcast_prefix(prefix_tree: Any, full_tree: Any,
                      is_leaf: Optional[Callable[[Any], bool]] = None
-                     ) -> List[Any]:
+                     ) -> list[Any]:
   # If prefix_tree is not a tree prefix of full_tree, this code can raise a
   # ValueError; use prefix_errors to find disagreements and raise more precise
   # error messages.
@@ -403,7 +403,7 @@ def broadcast_prefix(prefix_tree: Any, full_tree: Any,
   tree_map(add_leaves, prefix_tree, full_tree, is_leaf=is_leaf)
   return result
 
-def flatten_one_level(pytree: Any) -> Tuple[List[Any], Hashable]:
+def flatten_one_level(pytree: Any) -> tuple[list[Any], Hashable]:
   """Flatten the given pytree node by one level.
 
   Args:
@@ -429,12 +429,12 @@ def flatten_one_level(pytree: Any) -> Tuple[List[Any], Hashable]:
 
 def prefix_errors(prefix_tree: Any, full_tree: Any,
                   is_leaf: Optional[Callable[[Any], bool]] = None,
-                  ) -> List[Callable[[str], ValueError]]:
+                  ) -> list[Callable[[str], ValueError]]:
   return list(_prefix_error((), prefix_tree, full_tree, is_leaf))
 
 def equality_errors(
     tree1: Any, tree2: Any, is_leaf: Optional[Callable[[Any], bool]] = None,
-) -> Iterable[Tuple[KeyPath, str, str, str]]:
+) -> Iterable[tuple[KeyPath, str, str, str]]:
   """Helper to describe structural differences between two pytrees.
 
   Args:
@@ -562,7 +562,7 @@ class FlattenedIndexKey():
 BuiltInKeyEntry = Union[SequenceKey, DictKey, GetAttrKey, FlattenedIndexKey]
 
 KeyEntry = TypeVar("KeyEntry", bound=Hashable)
-KeyPath = Tuple[KeyEntry, ...]
+KeyPath = tuple[KeyEntry, ...]
 
 def keystr(keys: KeyPath):
   """Helper to pretty-print a tuple of keys.
@@ -582,7 +582,7 @@ class _RegistryWithKeypathsEntry(NamedTuple):
 
 
 def register_keypaths(
-    ty: Type[T], handler: Callable[[T], Tuple[KeyEntry, ...]]
+    ty: type[T], handler: Callable[[T], tuple[KeyEntry, ...]]
 ) -> None:
   """[Deprecated] Register the method to get keypaths for type.
 
@@ -603,7 +603,7 @@ def register_keypaths(
 
 
 def _register_keypaths(
-    ty: Type[T], handler: Callable[[T], Tuple[KeyEntry, ...]]
+    ty: type[T], handler: Callable[[T], tuple[KeyEntry, ...]]
 ) -> None:
   def flatten_with_keys(xs):
     children, treedef = _registry[ty].to_iter(xs)
@@ -634,13 +634,13 @@ _register_keypaths(
 
 
 def register_pytree_with_keys(
-    nodetype: Type[T],
+    nodetype: type[T],
     flatten_with_keys: Callable[
-        [T], Tuple[Iterable[Tuple[KeyEntry, Any]], _AuxData]
+        [T], tuple[Iterable[tuple[KeyEntry, Any]], _AuxData]
     ],
     unflatten_func: Callable[[_AuxData, Iterable[Any]], T],
     flatten_func: Optional[
-        Callable[[T], Tuple[Iterable[Any], _AuxData]]
+        Callable[[T], tuple[Iterable[Any], _AuxData]]
     ] = None,
 ):
   """Extends the set of types that are considered internal nodes in pytrees.
@@ -708,7 +708,7 @@ def register_pytree_with_keys_class(cls: U) -> U:
 
 def tree_flatten_with_path(
     tree: Any, is_leaf: Optional[Callable[[Any], bool]] = None
-) -> Tuple[List[Tuple[KeyPath, Any]], PyTreeDef]:
+) -> tuple[list[tuple[KeyPath, Any]], PyTreeDef]:
   """Flattens a pytree like ``tree_flatten``, but also returns each leaf's key path.
 
   Args:
@@ -725,7 +725,7 @@ def tree_flatten_with_path(
 
 def tree_leaves_with_path(
     tree: Any, is_leaf: Optional[Callable[[Any], bool]] = None
-) -> List[Tuple[KeyPath, Any]]:
+) -> list[tuple[KeyPath, Any]]:
   """Gets the leaves of a pytree like ``tree_leaves`` and returns each leaf's key path.
 
   Args:
@@ -739,7 +739,7 @@ def tree_leaves_with_path(
 
 def generate_key_paths(
     tree: Any, is_leaf: Optional[Callable[[Any], bool]] = None
-) -> List[Tuple[KeyPath, Any]]:
+) -> list[tuple[KeyPath, Any]]:
   return list(_generate_key_paths_((), tree, is_leaf))
 _generate_key_paths = generate_key_paths  # alias for backward compat
 
@@ -749,7 +749,7 @@ def _generate_key_paths_(
     key_path: KeyPath,
     tree: Any,
     is_leaf: Optional[Callable[[Any], bool]] = None,
-) -> Iterable[Tuple[KeyPath, Any]]:
+) -> Iterable[tuple[KeyPath, Any]]:
   if is_leaf and is_leaf(tree):
     yield key_path, tree
     return

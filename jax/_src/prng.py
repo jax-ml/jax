@@ -17,8 +17,8 @@ import abc
 from functools import partial, reduce
 import math
 import operator as op
-from typing import (Any, Callable, Hashable, Iterator, List, NamedTuple,
-                    Set, Sequence, Tuple, Union)
+from typing import (Any, Callable, Hashable, Iterator, NamedTuple,
+                    Sequence, Union)
 
 import numpy as np
 
@@ -154,7 +154,7 @@ class PRNGKeyArray(abc.ABC, metaclass=PRNGKeyArrayMeta):
 
   @property
   @abc.abstractmethod
-  def shape(self) -> Tuple[int, ...]: ...
+  def shape(self) -> tuple[int, ...]: ...
 
   @property
   @abc.abstractmethod
@@ -211,7 +211,7 @@ class PRNGKeyArray(abc.ABC, metaclass=PRNGKeyArrayMeta):
   @abc.abstractmethod
   def device(self) -> Device: ...
   @abc.abstractmethod
-  def devices(self) -> Set[Device]: ...
+  def devices(self) -> set[Device]: ...
   @abc.abstractmethod
   def delete(self) -> None: ...
   @abc.abstractmethod
@@ -220,10 +220,10 @@ class PRNGKeyArray(abc.ABC, metaclass=PRNGKeyArrayMeta):
   def on_device_size_in_bytes(self) -> int: ...
   @property
   @abc.abstractmethod
-  def addressable_shards(self) -> List[Shard]: ...
+  def addressable_shards(self) -> list[Shard]: ...
   @property
   @abc.abstractmethod
-  def global_shards(self) -> List[Shard]: ...
+  def global_shards(self) -> list[Shard]: ...
   @abc.abstractmethod
   def addressable_data(self, index: int) -> PRNGKeyArray: ...
 
@@ -305,7 +305,7 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
     return PRNGKeyArrayImpl(self.impl, self._base_array.addressable_data(index))
 
   @property
-  def addressable_shards(self) -> List[Shard]:
+  def addressable_shards(self) -> list[Shard]:
     return [
         type(s)(
             device=s._device,
@@ -317,7 +317,7 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
     ]
 
   @property
-  def global_shards(self) -> List[Shard]:
+  def global_shards(self) -> list[Shard]:
     return [
         type(s)(
             device=s._device,

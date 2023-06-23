@@ -29,7 +29,7 @@ import abc
 import enum
 import sys
 from functools import partial
-from typing import List, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import NamedTuple, Optional, Sequence, Union
 from jax._src.config import config
 
 try:
@@ -95,7 +95,7 @@ class _TextDoc(Doc):
 
 class _ConcatDoc(Doc):
   __slots__ = ("children",)
-  children: List[Doc]
+  children: list[Doc]
 
   def __init__(self, children: Sequence[Doc]):
     self.children = list(children)
@@ -164,7 +164,7 @@ _BreakMode = enum.Enum("_BreakMode", ["FLAT", "BREAK"])
 # non-recursive formulation using an explicit stack, necessary because Python
 # doesn't have a tail recursion optimization.
 
-def _fits(doc: Doc, width: int, agenda: List[Tuple[int, _BreakMode, Doc]]
+def _fits(doc: Doc, width: int, agenda: list[tuple[int, _BreakMode, Doc]]
          ) -> bool:
   while width >= 0 and len(agenda) > 0:
     i, m, doc = agenda.pop()
@@ -234,11 +234,11 @@ class _State(NamedTuple):
 class _Line(NamedTuple):
   text: str
   width: int
-  annotations: Union[Optional[str], List[str]]
+  annotations: Union[Optional[str], list[str]]
 
 
 def _update_color(use_color: bool, state: _ColorState, update: _ColorState
-                 ) -> Tuple[_ColorState, str]:
+                 ) -> tuple[_ColorState, str]:
   if not use_color or colorama is None:
     return update, ""
   color_str = ""

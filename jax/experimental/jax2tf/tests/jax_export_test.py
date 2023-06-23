@@ -15,7 +15,7 @@ import contextlib
 import logging
 import math
 import re
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 import unittest
 
 from absl.testing import absltest
@@ -118,7 +118,7 @@ def _run_shape_check_module(primal_exported: jax_export.Exported,
     symbol_table.insert(new_main_op)
     entry_block = new_main_op.add_entry_block()
     with ir.InsertionPoint(entry_block):
-      orig_main_args: List[ir.Value] = []
+      orig_main_args: list[ir.Value] = []
       for new_arg, orig_arg_type in zip(
         new_main_op.arguments, orig_main.type.inputs
       ):

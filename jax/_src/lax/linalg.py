@@ -16,7 +16,7 @@ import inspect
 import functools
 from functools import partial
 import math
-from typing import cast, Any, Callable, List, Literal, Optional, Tuple, TypeVar, Union, overload
+from typing import cast, Any, Callable, Literal, Optional, TypeVar, Union, overload
 import warnings
 
 import numpy as np
@@ -137,7 +137,7 @@ def cholesky(x: Array, *, symmetrize_input: bool = True) -> Array:
 
 @_warn_on_positional_kwargs
 def eig(x: ArrayLike, *, compute_left_eigenvectors: bool = True,
-        compute_right_eigenvectors: bool = True) -> List[Array]:
+        compute_right_eigenvectors: bool = True) -> list[Array]:
   """Eigendecomposition of a general matrix.
 
   Nonsymmetric eigendecomposition is at present only implemented on CPU.
@@ -147,7 +147,7 @@ def eig(x: ArrayLike, *, compute_left_eigenvectors: bool = True,
 
 @_warn_on_positional_kwargs
 def eigh(x: Array, *, lower: bool = True, symmetrize_input: bool = True,
-         sort_eigenvalues: bool = True) -> Tuple[Array, Array]:
+         sort_eigenvalues: bool = True) -> tuple[Array, Array]:
   r"""Eigendecomposition of a Hermitian matrix.
 
   Computes the eigenvectors and eigenvalues of a complex Hermitian or real
@@ -200,7 +200,7 @@ def lu_pivots_to_permutation(pivots: ArrayLike, permutation_size: int) -> Array:
   return permutation
 
 
-def lu(x: ArrayLike) -> Tuple[Array, Array, Array]:
+def lu(x: ArrayLike) -> tuple[Array, Array, Array]:
   """LU decomposition with partial pivoting.
 
   Computes the matrix decomposition:
@@ -234,7 +234,7 @@ def lu(x: ArrayLike) -> Tuple[Array, Array, Array]:
   return lu, pivots, permutation
 
 @_warn_on_positional_kwargs
-def qr(x: ArrayLike, *, full_matrices: bool = True) -> Tuple[Array, Array]:
+def qr(x: ArrayLike, *, full_matrices: bool = True) -> tuple[Array, Array]:
   """QR decomposition.
 
   Computes the QR decomposition
@@ -265,17 +265,17 @@ def qr(x: ArrayLike, *, full_matrices: bool = True) -> Tuple[Array, Array]:
   return q, r
 
 @overload
-def svd(x: ArrayLike, *, full_matrices: bool = True, compute_uv: Literal[True]) -> Tuple[Array, Array, Array]: ...
+def svd(x: ArrayLike, *, full_matrices: bool = True, compute_uv: Literal[True]) -> tuple[Array, Array, Array]: ...
 
 @overload
 def svd(x: ArrayLike, *, full_matrices: bool = True, compute_uv: Literal[False]) -> Array: ...
 
 @overload
-def svd(x: ArrayLike, *, full_matrices: bool = True, compute_uv: bool = True) -> Union[Array, Tuple[Array, Array, Array]]: ...
+def svd(x: ArrayLike, *, full_matrices: bool = True, compute_uv: bool = True) -> Union[Array, tuple[Array, Array, Array]]: ...
 
 # TODO: Add `max_qdwh_iterations` to the function signature for TPU SVD.
 @_warn_on_positional_kwargs
-def svd(x: ArrayLike, *, full_matrices: bool = True, compute_uv: bool = True) -> Union[Array, Tuple[Array, Array, Array]]:
+def svd(x: ArrayLike, *, full_matrices: bool = True, compute_uv: bool = True) -> Union[Array, tuple[Array, Array, Array]]:
   """Singular value decomposition.
 
   Returns the singular values if compute_uv is False, otherwise returns a triple
@@ -586,7 +586,7 @@ ad.primitive_jvps[eig_p] = eig_jvp_rule
 
 
 def eigh_jacobi(x: ArrayLike, *, lower: bool = True,
-                sort_eigenvalues: bool = True) -> Tuple[Array, Array]:
+                sort_eigenvalues: bool = True) -> tuple[Array, Array]:
   """Helper Jacobi eigendecomposition implemented by XLA.
 
   Used as a subroutine of QDWH-eig on TPU."""
@@ -1389,7 +1389,7 @@ def lu_solve(lu: ArrayLike, permutation: ArrayLike, b: ArrayLike,
 # geqrf and orgqr. The names, while cryptic Fortran alphabet soup, are LAPACK's
 # names for the primitives, and we stick with them for consistency.
 
-def geqrf(a: ArrayLike) -> Tuple[Array, Array]:
+def geqrf(a: ArrayLike) -> tuple[Array, Array]:
   """Computes the QR decomposition of a matrix.
 
   Args:
@@ -2008,7 +2008,7 @@ def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array) -> Array:
 def schur(x: ArrayLike, *,
           compute_schur_vectors: bool = True,
           sort_eig_vals: bool = False,
-          select_callable: Optional[Callable[..., Any]] = None) -> Tuple[Array, Array]:
+          select_callable: Optional[Callable[..., Any]] = None) -> tuple[Array, Array]:
   return schur_p.bind(
       x,
       compute_schur_vectors=compute_schur_vectors,
@@ -2115,7 +2115,7 @@ ad.primitive_jvps[schur_p] = _schur_jvp_rule
 
 # hessenberg: Upper Hessenberg reduction
 
-def hessenberg(a: ArrayLike) -> Tuple[Array, Array]:
+def hessenberg(a: ArrayLike) -> tuple[Array, Array]:
   """Reduces a square matrix to upper Hessenberg form.
 
   Currently implemented on CPU only.
@@ -2187,7 +2187,7 @@ mlir.register_lowering(hessenberg_p, _hessenberg_cpu_hlo, platform='cpu')
 # tridiagonal: Upper Hessenberg reduction
 
 def tridiagonal(a: ArrayLike, *, lower=True
-               ) -> Tuple[Array, Array, Array, Array]:
+               ) -> tuple[Array, Array, Array, Array]:
   """Reduces a symmetric/Hermitian matrix to tridiagonal form.
 
   Currently implemented on CPU and GPU only.

@@ -1,4 +1,4 @@
-from typing import Callable, Tuple
+from typing import Callable
 
 import scipy.linalg
 
@@ -11,7 +11,7 @@ from jax._src.typing import ArrayLike, Array
 
 
 @jit
-def _algorithm_11_1_1(F: Array, T: Array) -> Tuple[Array, Array]:
+def _algorithm_11_1_1(F: Array, T: Array) -> tuple[Array, Array]:
   # Algorithm 11.1.1 from Golub and Van Loan "Matrix Computations"
   N = T.shape[0]
   minden = jnp.abs(T[0, 0])
@@ -50,7 +50,7 @@ will be printed if the error in the array output is estimated to be large.
 """
 
 @_wraps(scipy.linalg.funm, lax_description=_FUNM_LAX_DESCRIPTION)
-def funm(A: ArrayLike, func: Callable[[Array], Array], disp: bool = True) -> Tuple[Array, Array]:
+def funm(A: ArrayLike, func: Callable[[Array], Array], disp: bool = True) -> tuple[Array, Array]:
   A = jnp.asarray(A)
   if A.ndim != 2 or A.shape[0] != A.shape[1]:
     raise ValueError('expected square array_like input')

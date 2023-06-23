@@ -19,7 +19,7 @@ import functools
 from functools import partial
 import math
 import operator
-from typing import Any, List, NamedTuple, Optional, Protocol, Sequence, Tuple, Union
+from typing import Any, NamedTuple, Optional, Protocol, Sequence, Union
 import warnings
 
 import numpy as np
@@ -269,7 +269,7 @@ def bcoo_fromdense(mat: Array, *, nse: Optional[int] = None, n_batch: int = 0,
               shape=mat.shape, indices_sorted=True, unique_indices=True)
 
 def _bcoo_fromdense(mat: Array, *, nse: int, n_batch: int = 0, n_dense: int = 0,
-                    index_dtype: DTypeLike = jnp.int32) -> Tuple[Array, Array]:
+                    index_dtype: DTypeLike = jnp.int32) -> tuple[Array, Array]:
   """Create BCOO-format sparse matrix from a dense matrix.
 
   Args:
@@ -522,7 +522,7 @@ def bcoo_transpose(mat: BCOO, *, permutation: Sequence[int]) -> BCOO:
   return BCOO(buffers, shape=out_shape, unique_indices=mat.unique_indices)
 
 def _bcoo_transpose(data: Array, indices: Array, *,
-                    permutation: Sequence[int], spinfo: SparseInfo) -> Tuple[Array, Array]:
+                    permutation: Sequence[int], spinfo: SparseInfo) -> tuple[Array, Array]:
   permutation = tuple(permutation)
   if permutation == tuple(range(len(spinfo.shape))):
     return data, indices
@@ -1041,7 +1041,7 @@ bcoo_spdot_general_p = core.Primitive('bcoo_spdot_general')
 bcoo_spdot_general_p.multiple_results = True
 
 def _bcoo_spdot_general(lhs_data: Array, lhs_indices: Array, rhs_data: Array, rhs_indices: Array, *,
-                        lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo, dimension_numbers: DotDimensionNumbers) -> Tuple[Array, Array]:
+                        lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo, dimension_numbers: DotDimensionNumbers) -> tuple[Array, Array]:
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   cdims = (api_util._ensure_index_tuple(lhs_contract),
            api_util._ensure_index_tuple(rhs_contract))
@@ -1337,7 +1337,7 @@ def bcoo_sum_duplicates(mat: BCOO, nse: Optional[int] = None) -> BCOO:
   return BCOO((data, indices), shape=mat.shape, indices_sorted=True,
               unique_indices=True)
 
-def _bcoo_sum_duplicates(data: Array, indices: Array, *, spinfo: SparseInfo, nse: Optional[int]) -> Tuple[Array, Array]:
+def _bcoo_sum_duplicates(data: Array, indices: Array, *, spinfo: SparseInfo, nse: Optional[int]) -> tuple[Array, Array]:
   if nse is not None:
     nse = core.concrete_or_error(operator.index, nse, "nse argument of bcoo_sum_duplicates.")
   return bcoo_sum_duplicates_p.bind(data, indices, spinfo=spinfo, nse=nse)
@@ -1651,7 +1651,7 @@ def bcoo_broadcast_in_dim(mat: BCOO, *, shape: Shape, broadcast_dimensions: Sequ
               shape=shape)
 
 def _bcoo_broadcast_in_dim(data: Array, indices: Array, *, spinfo: SparseInfo, shape: Shape,
-                           broadcast_dimensions: Sequence[int]) -> Tuple[Array, Array]:
+                           broadcast_dimensions: Sequence[int]) -> tuple[Array, Array]:
   """BCOO equivalent of lax.broadcast_in_dim"""
   if len(spinfo.shape) != len(broadcast_dimensions):
     raise ValueError(f"{spinfo.shape=} and {broadcast_dimensions=} must have the same length")
@@ -2056,7 +2056,7 @@ def bcoo_reduce_sum(mat: BCOO, *, axes: Sequence[int]) -> BCOO:
       mat.data, mat.indices, spinfo=mat._info, axes=axes)
   return BCOO((out_data, out_indices), shape=out_shape)
 
-def _bcoo_reduce_sum(data: Array, indices: Array, *, spinfo: SparseInfo, axes: Sequence[int]) -> Tuple[Array, Array, Shape]:
+def _bcoo_reduce_sum(data: Array, indices: Array, *, spinfo: SparseInfo, axes: Sequence[int]) -> tuple[Array, Array, Shape]:
   shape = spinfo.shape
   assert all(0 <= a < len(shape) for a in axes)
   n_batch, n_sparse, _, nse = _validate_bcoo(data, indices, shape)
@@ -2127,7 +2127,7 @@ def bcoo_multiply_sparse(lhs: BCOO, rhs: BCOO) -> BCOO:
   return BCOO((out_data, out_indices), shape=out_shape)
 
 def _bcoo_multiply_sparse(lhs_data: Array, lhs_indices: Array, rhs_data: Array, rhs_indices: Array, *,
-                          lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo) -> Tuple[Array, Array, Shape]:
+                          lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo) -> tuple[Array, Array, Shape]:
   lhs_shape = lhs_spinfo.shape
   rhs_shape = rhs_spinfo.shape
 
@@ -2247,8 +2247,8 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
   start_index_map = dimension_numbers.start_index_map
 
   # Expand start_indices & slice_sizes to full rank & use bcoo_dynamic_slice
-  full_start_indices: List[ArrayLike] = [_const(start_indices, 0)] * operand.ndim
-  in_axes: List[Optional[int]] = [None for i in range(operand.ndim)]
+  full_start_indices: list[ArrayLike] = [_const(start_indices, 0)] * operand.ndim
+  in_axes: list[Optional[int]] = [None for i in range(operand.ndim)]
   full_slice_sizes = list(operand.shape)
   for i, j in enumerate(start_index_map):
     full_start_indices[j] = start_indices[..., i].ravel()
@@ -2415,7 +2415,7 @@ class BCOO(JAXSparse):
                                            self.unique_indices))
   _bufs = property(lambda self: (self.data, self.indices))
 
-  def __init__(self, args: Tuple[Array, Array], *, shape: Sequence[int],
+  def __init__(self, args: tuple[Array, Array], *, shape: Sequence[int],
                indices_sorted: bool = False, unique_indices: bool = False):
     self.data, self.indices = map(jnp.asarray, args)
     self.indices_sorted = indices_sorted
@@ -2597,7 +2597,7 @@ class BCOO(JAXSparse):
 
   def transpose(self, axes: Optional[Sequence[int]] = None) -> BCOO:
     """Create a new array containing the transpose."""
-    perm: List[int] = list(range(self.ndim)[::-1] if axes is None else axes)
+    perm: list[int] = list(range(self.ndim)[::-1] if axes is None else axes)
     mat_T = bcoo_transpose(self, permutation=perm)
     shape_T = tuple(self.shape[i] for i in perm)
     sparse_perm = [p - self.n_batch

@@ -19,7 +19,7 @@ import math
 import operator
 import random
 import unittest
-from typing import Iterable, Iterator, NamedTuple, Tuple, Sequence
+from typing import Iterable, Iterator, NamedTuple, Sequence
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -79,14 +79,14 @@ COMPATIBLE_SHAPE_PAIRS = [
 
 
 class BatchedDotGeneralProperties(NamedTuple):
-  lhs_shape: Tuple[int, ...]
-  rhs_shape: Tuple[int, ...]
+  lhs_shape: tuple[int, ...]
+  rhs_shape: tuple[int, ...]
   n_batch: int
   n_dense: int
   dimension_numbers: DotDimensionNumbers
 
 
-def _iter_subsets(s: Sequence) -> Iterable[Tuple]:
+def _iter_subsets(s: Sequence) -> Iterable[tuple]:
   """Return an iterator over all subsets of a sequence s"""
   return itertools.chain.from_iterable(itertools.combinations(s, n) for n in range(len(s) + 1))
 

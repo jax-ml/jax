@@ -19,7 +19,7 @@ from functools import partial
 import operator
 import warnings
 
-from typing import NamedTuple, Optional, Sequence, Tuple, Union
+from typing import NamedTuple, Optional, Sequence, Union
 
 import numpy as np
 
@@ -145,7 +145,7 @@ def _bcsr_to_bcoo(indices: jax.Array, indptr: jax.Array, *,
 
 
 def _bcoo_to_bcsr(indices: Array, *, shape: Sequence[int],
-                  index_dtype: DTypeLike = jnp.int32) -> Tuple[Array, Array]:
+                  index_dtype: DTypeLike = jnp.int32) -> tuple[Array, Array]:
   """Given BCOO (indices), return BCSR (indices, indptr).
 
   Note: this assumes that ``indices`` are lexicographically sorted within each batch.
@@ -203,7 +203,7 @@ def bcsr_fromdense(mat: ArrayLike, *, nse: Optional[int] = None, n_batch: int = 
 
 
 def _bcsr_fromdense(mat: ArrayLike, *, nse: int, n_batch: int = 0, n_dense: int = 0,
-                    index_dtype: DTypeLike = jnp.int32) -> Tuple[Array, Array, Array]:
+                    index_dtype: DTypeLike = jnp.int32) -> tuple[Array, Array, Array]:
   """Create BCSR-format sparse matrix from a dense matrix.
 
   Args:
@@ -743,7 +743,7 @@ class BCSR(JAXSparse):
   def _sparse_shape(self):
     return tuple(self.shape[self.n_batch:self.n_batch + 2])
 
-  def __init__(self, args: Tuple[Array, Array, Array], *, shape: Sequence[int],
+  def __init__(self, args: tuple[Array, Array, Array], *, shape: Sequence[int],
                indices_sorted: bool = False, unique_indices: bool = False):
     self.data, self.indices, self.indptr = map(jnp.asarray, args)
     self.indices_sorted = indices_sorted

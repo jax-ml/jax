@@ -17,7 +17,7 @@ import enum
 from functools import partial
 import itertools
 import typing
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 import warnings
 
 from absl.testing import absltest
@@ -52,9 +52,9 @@ default_dtypes = float_dtypes + jtu.dtypes.integer
 all_dtypes = default_dtypes + jtu.dtypes.boolean
 
 class IndexSpec(typing.NamedTuple):
-  shape: Tuple[int, ...]
+  shape: tuple[int, ...]
   indexer: Any
-  out_shape: Optional[Tuple[int, ...]] = None
+  out_shape: Optional[tuple[int, ...]] = None
 
 
 def check_grads(f, args, order, atol=None, rtol=None, eps=None):

@@ -18,8 +18,8 @@ import math
 import operator as op
 import numpy as np
 import functools
-from typing import (Any, Callable, List, Optional, Sequence, Set, Tuple,
-                    Union, cast, TYPE_CHECKING)
+from typing import (Any, Callable, Optional, Sequence, Union, cast,
+                    TYPE_CHECKING)
 
 from jax._src import abstract_arrays
 from jax._src import api
@@ -42,9 +42,9 @@ from jax._src.sharding_impls import (
 from jax._src.typing import ArrayLike
 from jax._src.util import use_cpp_class, use_cpp_method
 
-Shape = Tuple[int, ...]
+Shape = tuple[int, ...]
 Device = xc.Device
-Index = Tuple[slice, ...]
+Index = tuple[slice, ...]
 PRNGKeyArrayImpl = Any  # TODO(jakevdp): fix cycles and import this.
 
 
@@ -149,7 +149,7 @@ class ArrayImpl(basearray.Array):
 
   aval: core.ShapedArray
   _sharding: Sharding
-  _arrays: List[ArrayImpl]
+  _arrays: list[ArrayImpl]
   _committed: bool
   _skip_checks: bool
   _npy_value: Optional[np.ndarray]
@@ -402,7 +402,7 @@ class ArrayImpl(basearray.Array):
     raise ValueError('Length of devices is greater than 1. '
                      'Please use `.devices()`.')
 
-  def devices(self) -> Set[Device]:
+  def devices(self) -> set[Device]:
     self._check_if_deleted()
     return self.sharding.device_set
 

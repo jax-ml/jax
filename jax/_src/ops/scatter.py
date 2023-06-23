@@ -15,7 +15,7 @@
 # Helpers for indexed updates.
 
 import sys
-from typing import Any, Callable, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Optional, Sequence, Union
 import warnings
 
 import numpy as np
@@ -37,7 +37,7 @@ if sys.version_info >= (3, 10):
     SingleIndex = Union[None, int, slice, Sequence[int], Array, EllipsisType]
 else:
     SingleIndex = Union[None, int, slice, Sequence[int], Array]
-Index = Union[SingleIndex, Tuple[SingleIndex, ...]]
+Index = Union[SingleIndex, tuple[SingleIndex, ...]]
 Scalar = Union[complex, float, int, np.number]
 
 

@@ -15,12 +15,12 @@ from __future__ import annotations
 import os
 import weakref
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 from jax._src.debugger import cli_debugger
 from jax._src.debugger import core as debugger_core
 
-web_pdb_version: Optional[Tuple[int, ...]] = None
+web_pdb_version: Optional[tuple[int, ...]] = None
 try:
   import web_pdb  # pytype: disable=import-error
   web_pdb_version = tuple(map(int, web_pdb.__version__.split(".")))
@@ -29,14 +29,14 @@ except:
   WEB_PDB_ENABLED = False
 
 
-_web_consoles: Dict[Tuple[str, int], web_pdb.WebConsole] = {}
+_web_consoles: dict[tuple[str, int], web_pdb.WebConsole] = {}
 
 class WebDebugger(cli_debugger.CliDebugger):
   """A web-based debugger."""
   prompt = '(jdb) '
   use_rawinput: bool = False
 
-  def __init__(self, frames: List[debugger_core.DebuggerFrame], thread_id,
+  def __init__(self, frames: list[debugger_core.DebuggerFrame], thread_id,
                completekey: str = "tab", host: str = "", port: int = 5555):
     if (host, port) not in _web_consoles:
       _web_consoles[host, port] = web_pdb.WebConsole(host, port, self)
@@ -87,7 +87,7 @@ class WebDebugger(cli_debugger.CliDebugger):
   def run(self):
     return self.cmdloop()
 
-def run_debugger(frames: List[debugger_core.DebuggerFrame],
+def run_debugger(frames: list[debugger_core.DebuggerFrame],
                  thread_id: Optional[int], **kwargs: Any):
   WebDebugger(frames, thread_id, **kwargs).run()
 

@@ -15,7 +15,7 @@
 import builtins
 from functools import partial
 import operator
-from typing import Any, List, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Any, NamedTuple, Optional, Sequence, Union
 
 import numpy as np
 
@@ -51,11 +51,11 @@ class ConvDimensionNumbers(NamedTuple):
   out_spec: Sequence[int]
 
 ConvGeneralDilatedDimensionNumbers = Union[
-  None, ConvDimensionNumbers, Tuple[str, str, str]]
+  None, ConvDimensionNumbers, tuple[str, str, str]]
 
 def conv_general_dilated(
   lhs: Array, rhs: Array, window_strides: Sequence[int],
-  padding: Union[str, Sequence[Tuple[int, int]]],
+  padding: Union[str, Sequence[tuple[int, int]]],
   lhs_dilation: Optional[Sequence[int]] = None,
   rhs_dilation: Optional[Sequence[int]] = None,
   dimension_numbers: ConvGeneralDilatedDimensionNumbers  = None,
@@ -199,7 +199,7 @@ def conv(lhs: Array, rhs: Array, window_strides: Sequence[int],
 
 def conv_with_general_padding(lhs: Array, rhs: Array,
                               window_strides: Sequence[int],
-                              padding: Union[str, Sequence[Tuple[int, int]]],
+                              padding: Union[str, Sequence[tuple[int, int]]],
                               lhs_dilation: Optional[Sequence[int]],
                               rhs_dilation: Optional[Sequence[int]],
                               precision: lax.PrecisionLike = None,
@@ -271,7 +271,7 @@ def _flip_axes(x, axes):
 
 
 def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
-                   padding: Union[str, Sequence[Tuple[int, int]]],
+                   padding: Union[str, Sequence[tuple[int, int]]],
                    rhs_dilation: Optional[Sequence[int]] = None,
                    dimension_numbers: ConvGeneralDilatedDimensionNumbers = None,
                    transpose_kernel: bool = False,
@@ -330,7 +330,7 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
   k_shape = np.take(rhs.shape, dn.rhs_spec)
   k_sdims = k_shape[2:]  # type: ignore[index]
   # Calculate correct output shape given padding and strides.
-  pads: Union[str, Sequence[Tuple[int, int]]]
+  pads: Union[str, Sequence[tuple[int, int]]]
   if isinstance(padding, str) and padding in {'SAME', 'VALID'}:
     if rhs_dilation is None:
       rhs_dilation = (1,) * (rhs.ndim - 2)
@@ -351,7 +351,7 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
 def _conv_general_dilated_shape_rule(
     lhs: core.ShapedArray, rhs: core.ShapedArray, *, window_strides, padding,
     lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
-    batch_group_count, **unused_kwargs) -> Tuple[int, ...]:
+    batch_group_count, **unused_kwargs) -> tuple[int, ...]:
   assert type(dimension_numbers) is ConvDimensionNumbers
   if len(lhs.shape) != len(rhs.shape):
     msg = ("conv_general_dilated lhs and rhs must have the same number of "
@@ -730,7 +730,7 @@ def _conv_general_dilated_lower(
     # d_padding will be an array i32[N, 2] with pad_lo and pad_hi for each
     # spatial dimension.
     int2d = mlir.aval_to_ir_type(core.ShapedArray((1, 2), np.int32))
-    def prep_one_pad(pad_lo_hi: Tuple[core.DimSize, core.DimSize]):
+    def prep_one_pad(pad_lo_hi: tuple[core.DimSize, core.DimSize]):
       pad1 = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, pad_lo_hi))  # i32[2]
       return hlo.ReshapeOp(int2d, pad1)
     d_padding = hlo.ConcatenateOp(list(map(prep_one_pad, padding)),
@@ -910,7 +910,7 @@ def conv_general_permutations(dimension_numbers):
 
 def _conv_general_vjp_lhs_padding(
     in_shape, window_dimensions, window_strides, out_shape, padding,
-    lhs_dilation, rhs_dilation) -> List[Tuple[int, int]]:
+    lhs_dilation, rhs_dilation) -> list[tuple[int, int]]:
   lhs_dilated_shape = lax._dilate_shape(in_shape, lhs_dilation)
   rhs_dilated_shape = lax._dilate_shape(window_dimensions, rhs_dilation)
   out_dilated_shape = lax._dilate_shape(out_shape, window_strides)

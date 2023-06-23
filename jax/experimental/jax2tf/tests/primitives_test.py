@@ -53,7 +53,7 @@ not need limitations, then it must be listed in the
 
 import datetime
 import os
-from typing import Any, Dict, Tuple
+from typing import Any
 import unittest
 
 from absl import logging
@@ -218,7 +218,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       return (h.group_name, l.description, l.devices,
               tuple(np.dtype(d).name for d in l.dtypes), l.modes)
 
-    unique_limitations: Dict[Any, Tuple[primitive_harness.Harness, Jax2TfLimitation]] = {}
+    unique_limitations: dict[Any, tuple[primitive_harness.Harness, Jax2TfLimitation]] = {}
     for h in harnesses:
       for l in h.jax_unimplemented:
         if l.enabled:

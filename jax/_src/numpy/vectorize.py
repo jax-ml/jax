@@ -14,7 +14,7 @@
 
 import functools
 import re
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable
 
 from jax._src import api
 from jax import lax
@@ -30,13 +30,13 @@ _ARGUMENT_LIST = '{0:}(?:,{0:})*'.format(_ARGUMENT)
 _SIGNATURE = '^{0:}->{0:}$'.format(_ARGUMENT_LIST)
 
 
-CoreDims = Tuple[str, ...]
+CoreDims = tuple[str, ...]
 NDArray = Any
 
 
 def _parse_gufunc_signature(
     signature: str,
-) -> Tuple[List[CoreDims], List[CoreDims]]:
+) -> tuple[list[CoreDims], list[CoreDims]]:
   """Parse string signatures for a generalized universal function.
 
   Args:
@@ -56,8 +56,8 @@ def _parse_gufunc_signature(
 
 
 def _update_dim_sizes(
-    dim_sizes: Dict[str, int],
-    shape: Tuple[int, ...],
+    dim_sizes: dict[str, int],
+    shape: tuple[int, ...],
     core_dims: CoreDims,
     error_context: str = "",
     *,
@@ -94,10 +94,10 @@ def _update_dim_sizes(
 
 
 def _parse_input_dimensions(
-    args: Tuple[NDArray, ...],
-    input_core_dims: List[CoreDims],
+    args: tuple[NDArray, ...],
+    input_core_dims: list[CoreDims],
     error_context: str = "",
-) -> Tuple[Tuple[int, ...], Dict[str, int]]:
+) -> tuple[tuple[int, ...], dict[str, int]]:
   """Parse broadcast and core dimensions for vectorize with a signature.
 
   Args:
@@ -114,7 +114,7 @@ def _parse_input_dimensions(
         'wrong number of positional arguments: expected %r, got %r %s'
         % (len(input_core_dims), len(args), error_context))
   shapes = []
-  dim_sizes: Dict[str, int] = {}
+  dim_sizes: dict[str, int] = {}
   for arg, core_dims in zip(args, input_core_dims):
     _update_dim_sizes(dim_sizes, arg.shape, core_dims, error_context,
                       is_input=True)
@@ -127,8 +127,8 @@ def _parse_input_dimensions(
 
 def _check_output_dims(
     func: Callable,
-    dim_sizes: Dict[str, int],
-    expected_output_core_dims: List[CoreDims],
+    dim_sizes: dict[str, int],
+    expected_output_core_dims: list[CoreDims],
     error_context: str = "",
 ) -> Callable:
   """Check that output core dimensions match the signature."""

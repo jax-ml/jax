@@ -24,7 +24,7 @@ __all__ = ['register_jax_array_methods']
 import abc
 from functools import partial, wraps
 import inspect
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, Optional, Union
 import warnings
 
 import numpy as np
@@ -335,15 +335,15 @@ def _deprecated_split(*args, **kwargs):
 @core.stash_axis_env()
 @partial(jax.jit, static_argnums=(1,2,3))
 def _multi_slice(arr: ArrayLike,
-                 start_indices: Tuple[Tuple[int, ...]],
-                 limit_indices: Tuple[Tuple[int, ...]],
-                 removed_dims: Tuple[Tuple[int, ...]]) -> List[Array]:
+                 start_indices: tuple[tuple[int, ...]],
+                 limit_indices: tuple[tuple[int, ...]],
+                 removed_dims: tuple[tuple[int, ...]]) -> list[Array]:
   """Extracts multiple slices from `arr`.
 
   This is used to shard DeviceArray arguments to pmap. It's implemented as a
   DeviceArray method here to avoid circular imports.
   """
-  results: List[Array] = []
+  results: list[Array] = []
   for starts, limits, removed in zip(start_indices, limit_indices, removed_dims):
     sliced = lax.slice(arr, starts, limits)
     if removed:
@@ -354,7 +354,7 @@ def _multi_slice(arr: ArrayLike,
 # The next two functions are related to iter(device_array), implemented here to
 # avoid circular imports.
 @jax.jit
-def _unstack(x: Array) -> List[Array]:
+def _unstack(x: Array) -> list[Array]:
   return [lax.index_in_dim(x, i, keepdims=False) for i in range(x.shape[0])]
 
 def _chunk_iter(x, size):

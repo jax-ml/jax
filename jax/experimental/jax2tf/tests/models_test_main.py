@@ -50,7 +50,7 @@ from jax._src import dtypes
 import jax.numpy as jnp
 
 import datetime
-from typing import Dict, List, Sequence, Tuple
+from typing import Sequence
 
 import tensorflow as tf
 
@@ -82,7 +82,7 @@ flags.DEFINE_bool(
 FLAGS = flags.FLAGS
 
 
-def _write_markdown(results: Dict[str, List[Tuple[str, str,]]]) -> None:
+def _write_markdown(results: dict[str, list[tuple[str, str,]]]) -> None:
   """Writes all results to Markdown file."""
   table_lines = []
   converters = FLAGS.converters

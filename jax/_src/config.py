@@ -19,7 +19,7 @@ import logging
 import os
 import sys
 import threading
-from typing import Any, List, Callable, Hashable, NamedTuple, Iterator, Optional
+from typing import Any, Callable, Hashable, NamedTuple, Iterator, Optional
 
 from jax._src import lib
 from jax._src.lib import jax_jit
@@ -246,7 +246,7 @@ class Config:
                                 default_value=True)
 
   def define_enum_state(
-      self, name: str, enum_values: List[str], default: Optional[str],
+      self, name: str, enum_values: list[str], default: Optional[str],
       help: str, update_global_hook: Optional[Callable[[str], None]] = None,
       update_thread_local_hook: Optional[Callable[[Optional[str]], None]] \
         = None):

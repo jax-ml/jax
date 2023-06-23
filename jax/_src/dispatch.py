@@ -21,8 +21,8 @@ import dataclasses
 from functools import partial
 import itertools
 import time
-from typing import (Any, Callable, Dict, Iterator, Optional,
-                    Set, Tuple, List, Union, NamedTuple, Sequence)
+from typing import (Any, Callable, Iterator, Optional, Union, NamedTuple,
+                    Sequence)
 import logging
 import os
 import re
@@ -94,7 +94,7 @@ _on_exit = False
 
 ### op-by-op execution
 
-ArgSpec = Tuple[core.AbstractValue, Optional[Device]]
+ArgSpec = tuple[core.AbstractValue, Optional[Device]]
 
 def arg_spec(x: Any) -> ArgSpec:
   from jax._src import pjit
@@ -150,9 +150,9 @@ def simple_impl(prim):
 RuntimeToken = Any
 
 class RuntimeTokenSet(threading.local):
-  tokens: Dict[core.Effect, Tuple[RuntimeToken, Device]]
-  output_tokens: Dict[Device, RuntimeToken]
-  output_runtime_tokens: Dict[Device, RuntimeToken]
+  tokens: dict[core.Effect, tuple[RuntimeToken, Device]]
+  output_tokens: dict[Device, RuntimeToken]
+  output_runtime_tokens: dict[Device, RuntimeToken]
 
   def __init__(self):
     self.tokens = {}
@@ -324,7 +324,7 @@ class SourceInfo(NamedTuple):
 
 
 def jaxpr_shardings(
-    jaxpr) -> Iterator[Tuple[XLACompatibleSharding, SourceInfo]]:
+    jaxpr) -> Iterator[tuple[XLACompatibleSharding, SourceInfo]]:
   from jax._src import pjit
   from jax.experimental import shard_map
 
@@ -368,7 +368,7 @@ def _is_bint_axis_size(d: core.AxisSize) -> bool:
   return False
 
 def _prune_unused_inputs(
-    jaxpr: core.Jaxpr) -> Tuple[core.Jaxpr, Set[int], Set[int]]:
+    jaxpr: core.Jaxpr) -> tuple[core.Jaxpr, set[int], set[int]]:
   used_outputs = [True] * len(jaxpr.outvars)
   new_jaxpr, used_consts, used_inputs = pe.dce_jaxpr_consts(jaxpr, used_outputs)
   kept_const_idx = {i for i, b in enumerate(used_consts) if b}
@@ -534,7 +534,7 @@ def _cache_write(cache_key: str,
                  compile_time_secs: float,
                  module_name: str,
                  backend: Backend, executable: xc.LoadedExecutable,
-                 host_callbacks: List[Any]):
+                 host_callbacks: list[Any]):
   """Writes `serialized_computation` to the persistent compilation cache."""
   if host_callbacks:
     logger.info(

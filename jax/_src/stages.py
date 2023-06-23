@@ -33,8 +33,7 @@ from __future__ import annotations
 import warnings
 
 from dataclasses import dataclass
-from typing import (
-    Any, Dict, List, NamedTuple, Optional, Protocol, Sequence, Tuple, Union)
+from typing import Any, NamedTuple, Optional, Protocol, Sequence, Union
 
 import jax
 
@@ -56,7 +55,7 @@ xla_extension = xc._xla
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
-CompilerOptions = Dict[str, Union[str, bool]]
+CompilerOptions = dict[str, Union[str, bool]]
 
 
 # -- Internal protocols
@@ -232,9 +231,9 @@ class XlaExecutable(Executable):
       else:
         raise
 
-    # TODO(skyewm): this should return a single Dict (I think returning a list
+    # TODO(skyewm): this should return a single dict (I think returning a list
     # was to support MPMD executables, which never fully landed)
-  def cost_analysis(self) -> List[Dict[str, float]]:
+  def cost_analysis(self) -> list[dict[str, float]]:
     xla_ext_exe = self.xla_extension_executable()
 
     # TODO(b/259255524): Unify/merge the two cost_analysis calls below.
@@ -284,7 +283,7 @@ class XlaExecutable(Executable):
 class XlaLowering(Lowering):
   """Adapts our various internal XLA-backed computations into a ``Lowering``."""
 
-  compile_args: Dict[str, Any]
+  compile_args: dict[str, Any]
 
   def hlo(self) -> xc.XlaComputation:
     """Return an HLO representation of this computation."""
@@ -331,7 +330,7 @@ class XlaLowering(Lowering):
     else:
       raise ValueError(f"unknown dialect: {dialect}")
 
-  def cost_analysis(self) -> Dict[str, float]:
+  def cost_analysis(self) -> dict[str, float]:
     raise NotImplementedError("must override")
 
 
@@ -578,7 +577,7 @@ class Lowered(Stage):
                      lowering: XlaLowering,
                      in_tree: tree_util.PyTreeDef,
                      in_avals,
-                     donate_argnums: Tuple[int, ...],
+                     donate_argnums: tuple[int, ...],
                      out_tree: tree_util.PyTreeDef,
                      no_kwargs: bool = False):
     """Initialize from flat info (``in_avals`` etc.) and an input PyTreeDef.
@@ -599,7 +598,7 @@ class Lowered(Stage):
   def compile(
       self, compiler_options: Optional[CompilerOptions] = None) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
-    kw: Dict[str, Any] = {"compiler_options": compiler_options}
+    kw: dict[str, Any] = {"compiler_options": compiler_options}
     return Compiled(
         self._lowering.compile(**kw),  # pytype: disable=wrong-keyword-args
         self.args_info,

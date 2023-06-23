@@ -19,7 +19,7 @@ import contextlib
 import math
 import os
 import re
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Optional
 import unittest
 
 from absl import logging
@@ -131,7 +131,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_pytrees(self):
     # Take and return pytrees
-    def f_jax(x: Tuple[float, Dict[str, float]]) -> Tuple[float, Dict[str, float]]:
+    def f_jax(x: tuple[float, dict[str, float]]) -> tuple[float, dict[str, float]]:
       x_a, x_dict = x
       return x_a * 2., {k: v * 3. for k, v in x_dict.items()}
 
@@ -322,7 +322,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.sample_product(with_function=[False, True])
   def test_gradients_pytree(self, with_function=False):
-    def f(xy: Tuple[float, float]) -> Dict[str, float]:
+    def f(xy: tuple[float, float]) -> dict[str, float]:
       x, y = xy
       return dict(one=x * x, two=x * y)
 
@@ -1663,10 +1663,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 def get_serialized_computation(
     f_jax: Callable,
     *args,
-    abstracted_axes: Optional[Tuple[Dict[int, str]]] = None,
+    abstracted_axes: Optional[tuple[dict[int, str]]] = None,
     use_pjit: bool = False,
     in_shardings = None,
-    out_shardings = None) -> Tuple[str, int]:
+    out_shardings = None) -> tuple[str, int]:
   if use_pjit:
     assert not abstracted_axes
     lowered = pjit.pjit(

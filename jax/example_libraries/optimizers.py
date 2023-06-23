@@ -89,7 +89,7 @@ Example Usage:
 .. _Optax: https://github.com/deepmind/optax
 """
 
-from typing import Any, Callable, NamedTuple, Tuple, Union
+from typing import Any, Callable, NamedTuple, Union
 
 from collections import namedtuple
 import functools
@@ -138,7 +138,7 @@ class Optimizer(NamedTuple):
 Schedule = Callable[[Step], float]
 
 def optimizer(opt_maker: Callable[...,
-  Tuple[Callable[[Params], State],
+  tuple[Callable[[Params], State],
         Callable[[Step, Updates, Params], Params],
         Callable[[State], Params]]]) -> Callable[..., Optimizer]:
   """Decorator to make an optimizer defined for arrays generalize to containers.

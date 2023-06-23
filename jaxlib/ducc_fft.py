@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Tuple
-
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
 
@@ -36,8 +34,8 @@ _R2C = 2
 
 
 def _dynamic_ducc_fft_descriptor(
-    dtype, ndims: int, fft_type: FftType, fft_lengths: List[int]
-) -> Tuple[bytes]:
+    dtype, ndims: int, fft_type: FftType, fft_lengths: list[int]
+) -> tuple[bytes]:
   assert len(fft_lengths) >= 1
   assert len(fft_lengths) <= ndims, (fft_lengths, ndims)
 
@@ -69,7 +67,7 @@ def dynamic_ducc_fft_hlo(
     input: ir.Value, *,
     input_dtype: np.dtype, ndims:int, input_shape: ir.Value,
     strides_in: ir.Value, strides_out: ir.Value, scale: ir.Value,
-    fft_type: FftType, fft_lengths: List[int], result_shape: ir.Value):
+    fft_type: FftType, fft_lengths: list[int], result_shape: ir.Value):
   """DUCC FFT kernel for CPU, with support for dynamic shapes."""
   a_type = ir.RankedTensorType(input.type)
 

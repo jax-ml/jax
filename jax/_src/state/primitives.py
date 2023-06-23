@@ -14,7 +14,7 @@
 """Module for state primitives."""
 from functools import partial
 
-from typing import Any, List, Tuple, Union
+from typing import Any, Union
 
 import numpy as np
 
@@ -55,7 +55,7 @@ def _get_impl(ref: AbstractRef, *idx: int, **_):
   raise ValueError("Cannot run stateful primitive.")
 get_p.def_impl(_get_impl)
 
-Indexer = Tuple[Union[int, slice, Array], ...]
+Indexer = tuple[Union[int, slice, Array], ...]
 # or Ellipsis, but that can't be annotated until Python 3.10? (types.EllipsisType)
 
 def _is_trivial_indexer(idx: Indexer) -> bool:
@@ -68,7 +68,7 @@ def _is_trivial_indexer(idx: Indexer) -> bool:
   return False
 
 def _unpack_idx(idx: Indexer, ndim: int
-               ) -> Tuple[Tuple[Array, ...], Tuple[bool, ...]]:
+               ) -> tuple[tuple[Array, ...], tuple[bool, ...]]:
   if _is_trivial_indexer(idx):
     idx = tuple(slice(None) for _ in range(ndim))
   indexed_dims_ = []
@@ -85,9 +85,9 @@ def _unpack_idx(idx: Indexer, ndim: int
   import jax.numpy as jnp
   return (tuple(map(jnp.int32, non_slice_idx)), tuple(indexed_dims))
 
-def _get_slice_output_shape(in_shape: Tuple[int, ...],
-                            idx_shapes: Tuple[Tuple[int, ...], ...],
-                            indexed_dims: Tuple[bool, ...]) -> Tuple[int, ...]:
+def _get_slice_output_shape(in_shape: tuple[int, ...],
+                            idx_shapes: tuple[tuple[int, ...], ...],
+                            indexed_dims: tuple[bool, ...]) -> tuple[int, ...]:
   shape_suffix = [d for i, d in zip(indexed_dims, in_shape) if not i]
   shape_prefix, = set(idx_shapes) or [()]  # tie fighter
   # Move shape prefix dimensions to the front
@@ -95,7 +95,7 @@ def _get_slice_output_shape(in_shape: Tuple[int, ...],
   return shape
 
 def _get_indexer(ref: AbstractRef, idx: Indexer
-                ) -> Tuple[Indexer, Tuple[bool, ...]]:
+                ) -> tuple[Indexer, tuple[bool, ...]]:
   if isinstance(ref.inner_aval, core.ShapedArray):
     non_slice_idx, indexed_dims = _unpack_idx(idx, ref.ndim)
   else:
@@ -201,7 +201,7 @@ get_p.def_effectful_abstract_eval(_get_abstract_eval)
 
 def _swap_abstract_eval(ref_aval: AbstractRef,
                         val_aval: core.AbstractValue,
-                        *idx: core.ShapedArray, indexed_dims: Tuple[bool]):
+                        *idx: core.ShapedArray, indexed_dims: tuple[bool]):
   out_aval: core.AbstractValue
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`swap` must be called on `Ref` types: {ref_aval}.")
@@ -236,7 +236,7 @@ swap_p.def_effectful_abstract_eval(_swap_abstract_eval)
 
 def _addupdate_abstract_eval(ref_aval: AbstractRef,
                              val_aval: core.AbstractValue,
-                             *idx: core.ShapedArray, indexed_dims: Tuple[bool]):
+                             *idx: core.ShapedArray, indexed_dims: tuple[bool]):
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`addupdate` must be called on `Ref` types: {ref_aval}.")
   if idx and not isinstance(ref_aval.inner_aval, core.ShapedArray):
@@ -327,7 +327,7 @@ core.pp_eqn_rules[addupdate_p] = _addupdate_pp_rule
 
 ## get/swap/addupdate JVP rules
 
-def _get_jvp(primals: List[Any], tangents: List[Any], **params: Any):
+def _get_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, *idx = primals
   assert isinstance(ref_primal.aval, AbstractRef)
   ref_tangent, *_ = tangents
@@ -336,7 +336,7 @@ def _get_jvp(primals: List[Any], tangents: List[Any], **params: Any):
           get_p.bind(ref_tangent, *idx, **params))  # type: ignore[arg-type]
 ad.primitive_jvps[get_p] = _get_jvp
 
-def _swap_jvp(primals: List[Any], tangents: List[Any], **params: Any):
+def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, x_primal, *idx = primals
   assert isinstance(ref_primal.aval, AbstractRef)
   ref_tangent, x_tangent, *_ = tangents
@@ -346,7 +346,7 @@ def _swap_jvp(primals: List[Any], tangents: List[Any], **params: Any):
           swap_p.bind(ref_tangent, x_tangent, *idx, **params))  # type: ignore[arg-type]
 ad.primitive_jvps[swap_p] = _swap_jvp
 
-def addupdate_jvp_rule(primals: List[Any], tangents: List[Any], **params: Any):
+def addupdate_jvp_rule(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, x_primal, *idx = primals
   ref_tangent, x_tangent, *_ = tangents
   x_tangent = ad_util.instantiate(x_tangent)
@@ -397,8 +397,8 @@ pe.partial_eval_jaxpr_custom_rules[addupdate_p] = partial(
 
 ##  get/swap/addupdate batching rules
 
-def _output_bdim(indexed_dims: Tuple[bool, ...], ref_dim: int,
-                 idxs_shape: Tuple[int, ...]):
+def _output_bdim(indexed_dims: tuple[bool, ...], ref_dim: int,
+                 idxs_shape: tuple[int, ...]):
   num_idxs_to_left = sum(indexed_dims[:ref_dim])
   return ref_dim - num_idxs_to_left + len(idxs_shape)
 

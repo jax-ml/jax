@@ -27,8 +27,8 @@ from functools import partial
 import inspect
 import math
 import typing
-from typing import (Any, Callable, Generator, Hashable, Iterable, List, Literal,
-                    NamedTuple, Optional, Sequence, Tuple, TypeVar, Union,
+from typing import (Any, Callable, Generator, Hashable, Iterable, Literal,
+                    NamedTuple, Optional, Sequence, TypeVar, Union,
                     overload, cast)
 import weakref
 
@@ -363,7 +363,7 @@ def disable_jit(disable: bool = True):
 
 def xla_computation(fun: Callable,
                     static_argnums: Union[int, Iterable[int]] = (),
-                    axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
+                    axis_env: Optional[Sequence[tuple[AxisName, int]]] = None,
                     in_parts=None, out_parts=None,
                     backend: Optional[str] = None,
                     tuple_args: bool = False,
@@ -658,7 +658,7 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
                    has_aux: bool = False, holomorphic: bool = False,
                    allow_int: bool = False, reduce_axes: Sequence[AxisName] = ()
-  ) -> Callable[..., Tuple[Any, Any]]:
+  ) -> Callable[..., tuple[Any, Any]]:
   """Create a function that evaluates both ``fun`` and the gradient of ``fun``.
 
   Args:
@@ -1069,7 +1069,7 @@ def vmap(fun: F,
          out_axes: Any = 0,
          axis_name: Optional[AxisName] = None,
          axis_size: Optional[int] = None,
-         spmd_axis_name: Optional[Union[AxisName, Tuple[AxisName, ...]]] = None
+         spmd_axis_name: Optional[Union[AxisName, tuple[AxisName, ...]]] = None
          ) -> F:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
@@ -1254,7 +1254,7 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
         f"containing an array, got empty *args={args} and **kwargs={kwargs}"
     )
 
-  def _get_axis_size(name: str, shape: Tuple[core.AxisSize, ...], axis: int
+  def _get_axis_size(name: str, shape: tuple[core.AxisSize, ...], axis: int
                      ) -> core.AxisSize:
     try:
       return shape[axis]
@@ -1328,7 +1328,7 @@ def pmap(
     backend: Optional[str] = None,
     axis_size: Optional[int] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
-    global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
+    global_arg_shapes: Optional[tuple[tuple[int, ...], ...]] = None,
   ) -> Any:
   """Parallel map with support for collective operations.
 
@@ -1888,7 +1888,7 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
 
 def jvp(
     fun: Callable, primals, tangents, has_aux: bool = False
-  ) -> Tuple[Any, ...]:
+  ) -> tuple[Any, ...]:
   """Computes a (forward-mode) Jacobian-vector product of ``fun``.
 
   Args:
@@ -1971,16 +1971,16 @@ def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
 
 @overload
 def linearize(fun: Callable, *primals, has_aux: Literal[False] = False
-              ) -> Tuple[Any, Callable]:
+              ) -> tuple[Any, Callable]:
   ...
 
 @overload
 def linearize(fun: Callable, *primals, has_aux: Literal[True]
-              ) -> Tuple[Any, Callable, Any]:
+              ) -> tuple[Any, Callable, Any]:
   ...
 
 def linearize(fun: Callable, *primals, has_aux: bool = False
-              ) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
+              ) -> Union[tuple[Any, Callable], tuple[Any, Callable, Any]]:
   """Produces a linear approximation to ``fun`` using :py:func:`jvp` and partial eval.
 
   Args:
@@ -2137,17 +2137,17 @@ def _vjp_pullback_wrapper(name, cotangent_dtypes, cotangent_shapes, io_tree,
 def vjp(fun: Callable[..., T],
         *primals: Any,
         has_aux: Literal[False] = False,
-        reduce_axes: Sequence[AxisName] = ()) -> Tuple[T, Callable]:
+        reduce_axes: Sequence[AxisName] = ()) -> tuple[T, Callable]:
   ...
 
 @overload
-def vjp(fun: Callable[..., Tuple[T, U]], *primals: Any,
+def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
         has_aux: Literal[True],
-        reduce_axes: Sequence[AxisName] = ()) -> Tuple[T, Callable, U]:
+        reduce_axes: Sequence[AxisName] = ()) -> tuple[T, Callable, U]:
   ...
 def vjp(  # type: ignore
     fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
-  ) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
+  ) -> Union[tuple[Any, Callable], tuple[Any, Callable, Any]]:
   """Compute a (reverse-mode) vector-Jacobian product of ``fun``.
 
   :py:func:`grad` is implemented as a special case of :py:func:`vjp`.
@@ -2310,7 +2310,7 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
 
 
 def _flat_axes_specs(abstracted_axes, *args, **kwargs
-                     ) -> List[pe.AbstractedAxesSpec]:
+                     ) -> list[pe.AbstractedAxesSpec]:
   if kwargs: raise NotImplementedError
   def ax_leaf(l):
     return (isinstance(l, dict) and all_leaves(l.values()) or
@@ -2323,7 +2323,7 @@ def _flat_axes_specs(abstracted_axes, *args, **kwargs
 @overload
 def make_jaxpr(fun: Callable,  # type: ignore
                static_argnums: Union[int, Iterable[int]] = (),
-               axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
+               axis_env: Optional[Sequence[tuple[AxisName, int]]] = None,
                return_shape: Literal[False] = ...,
                abstracted_axes: Optional[Any] = None,
                ) -> Callable[..., core.ClosedJaxpr]:
@@ -2332,19 +2332,19 @@ def make_jaxpr(fun: Callable,  # type: ignore
 @overload
 def make_jaxpr(fun: Callable,  # type: ignore
                static_argnums: Union[int, Iterable[int]] = (),
-               axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
+               axis_env: Optional[Sequence[tuple[AxisName, int]]] = None,
                return_shape: Literal[True] = ...,
                abstracted_axes: Optional[Any] = None,
-               ) -> Callable[..., Tuple[core.ClosedJaxpr, Any]]:
+               ) -> Callable[..., tuple[core.ClosedJaxpr, Any]]:
   ...
 
 def make_jaxpr(fun: Callable,
                static_argnums: Union[int, Iterable[int]] = (),
-               axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
+               axis_env: Optional[Sequence[tuple[AxisName, int]]] = None,
                return_shape: bool = False,
                abstracted_axes: Optional[Any] = None,
                ) -> Callable[..., Union[core.ClosedJaxpr,
-                                        Tuple[core.ClosedJaxpr, Any]]]:
+                                        tuple[core.ClosedJaxpr, Any]]]:
   """Creates a function that produces its jaxpr given example args.
 
   Args:

@@ -15,7 +15,7 @@
 import os
 from functools import partial
 
-from typing import Any, Callable, List, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 from jax._src import core
 from jax._src import linear_util as lu
@@ -134,7 +134,7 @@ def _initial_style_jaxprs_with_common_consts(
   #     b[] <- 2.0
   #   in () }
   canonical_ref_indices = []
-  canonical_refs: List[Any] = []
+  canonical_refs: list[Any] = []
   tracer_id_to_canonical_id = {}
   all_nonref_consts = []
   canonical_ref_avals = []

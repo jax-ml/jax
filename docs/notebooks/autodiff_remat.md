@@ -497,10 +497,8 @@ For example, one common pattern in large [Transformer models](https://en.wikiped
 +++ {"id": "BUeqKFRS5yPU"}
 
 ```python
-from typing import Tuple, List
-
-LayerParam = Tuple[jnp.ndarray, jnp.ndarray]  # weights, bias pair for a layer
-ParamsList = List[LayerParam]
+LayerParam = tuple[jnp.ndarray, jnp.ndarray]  # weights, bias pair for a layer
+ParamsList = list[LayerParam]
 
 def net(params: ParamsList, x: jnp.ndarray):
   for W, b in params:

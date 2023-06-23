@@ -22,7 +22,7 @@ import re
 import os
 import tempfile
 import textwrap
-from typing import Any, Callable, Dict, List, Generator, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Generator, Optional, Sequence, Union
 import unittest
 import warnings
 import zlib
@@ -1057,7 +1057,7 @@ def ignore_warning(**kw):
 
 # -------------------- Mesh parametrization helpers --------------------
 
-MeshSpec = List[Tuple[str, int]]
+MeshSpec = list[tuple[str, int]]
 
 @contextmanager
 def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
@@ -1199,7 +1199,7 @@ def strict_promotion_if_dtypes_match(dtypes):
   return jax.numpy_dtype_promotion('standard')
 
 _version_regex = re.compile(r"([0-9]+(?:\.[0-9]+)*)(?:(rc|dev).*)?")
-def _parse_version(v: str) -> Tuple[int, ...]:
+def _parse_version(v: str) -> tuple[int, ...]:
   m = _version_regex.match(v)
   if m is None:
     raise ValueError(f"Unable to parse version '{v}'")
@@ -1209,8 +1209,8 @@ def numpy_version():
   return _parse_version(np.__version__)
 
 def parameterized_filterable(*,
-    kwargs: Sequence[Dict[str, Any]],
-    testcase_name: Optional[Callable[[Dict[str, Any]], str]] = None,
+    kwargs: Sequence[dict[str, Any]],
+    testcase_name: Optional[Callable[[dict[str, Any]], str]] = None,
     one_containing: Optional[str] = None,
 ):
   """
@@ -1229,7 +1229,7 @@ def parameterized_filterable(*,
       only one `kwargs` whose `testcase_name` includes `one_containing`.
   """
   # Ensure that all kwargs contain a testcase_name
-  kwargs_with_testcase_name: Sequence[Dict[str, Any]]
+  kwargs_with_testcase_name: Sequence[dict[str, Any]]
   if testcase_name is not None:
     kwargs_with_testcase_name = [dict(testcase_name=testcase_name(kw), **kw)
                                  for kw in kwargs]

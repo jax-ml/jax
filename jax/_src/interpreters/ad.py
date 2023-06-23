@@ -16,7 +16,7 @@ import contextlib
 import functools
 import itertools as it
 from functools import partial
-from typing import Any, Callable, Dict, List, Tuple, Sequence, Optional, Union
+from typing import Any, Callable, Sequence, Optional, Union
 
 import jax
 from jax._src import linear_util as lu
@@ -45,8 +45,8 @@ def identity(x): return x
 
 def _update_annotation(
     f: lu.WrappedFun,
-    orig_type: Optional[Tuple[Tuple[core.AbstractValue, bool], ...]],
-    explicit_nonzeros: List[bool]
+    orig_type: Optional[tuple[tuple[core.AbstractValue, bool], ...]],
+    explicit_nonzeros: list[bool]
   ) -> lu.WrappedFun:
   if orig_type is None:
     return f
@@ -221,13 +221,13 @@ def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack,
     if not is_undefined_primal(val):
       primal_env[v] = val
 
-  primal_env: Dict[Any, Any] = {}
+  primal_env: dict[Any, Any] = {}
   map(write_primal, jaxpr.constvars, consts)
   # FIXME: invars can contain both primal and tangent values, and this line
   #        forces primal_in to contain UndefinedPrimals for tangent values!
   map(write_primal, jaxpr.invars, primals_in)
 
-  ct_env: Dict[Any, Any] = {}
+  ct_env: dict[Any, Any] = {}
   ctx = (source_info_util.transform_name_stack('transpose') if transform_stack
          else contextlib.nullcontext())
   with ctx:
@@ -481,17 +481,17 @@ def _primal_tangent_shapes_match(primal, tangent):
     expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(primal_aval.dtype)
     assert expected_tangent_dtype == tangent_aval.dtype, (expected_tangent_dtype, tangent_aval.dtype)
 
-call_param_updaters: Dict[core.Primitive, Callable] = {}
-call_transpose_param_updaters: Dict[core.Primitive, Callable] = {}
+call_param_updaters: dict[core.Primitive, Callable] = {}
+call_transpose_param_updaters: dict[core.Primitive, Callable] = {}
 
 
 # -------------------- Primitives --------------------
 
-primitive_jvps : Dict[core.Primitive, Callable] = {}
+primitive_jvps : dict[core.Primitive, Callable] = {}
 
-primitive_transposes: Dict[core.Primitive, Callable] = {}
+primitive_transposes: dict[core.Primitive, Callable] = {}
 # transpose rules that internally perform reductions over the given named axes
-reducing_transposes: Dict[core.Primitive, Callable] = {}
+reducing_transposes: dict[core.Primitive, Callable] = {}
 
 
 def deflinear(primitive, transpose_rule):
@@ -693,7 +693,7 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
 
 def jvp_jaxpr(jaxpr: core.ClosedJaxpr, nonzeros: Sequence[bool],
               instantiate: Union[bool, Sequence[bool]]
-              ) -> Tuple[core.ClosedJaxpr, List[bool]]:
+              ) -> tuple[core.ClosedJaxpr, list[bool]]:
   if type(instantiate) is bool:
     instantiate = (instantiate,) * len(jaxpr.out_avals)
   return _jvp_jaxpr(jaxpr, tuple(nonzeros), tuple(instantiate))

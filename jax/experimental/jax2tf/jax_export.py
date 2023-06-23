@@ -20,7 +20,7 @@ import dataclasses
 import functools
 import itertools
 import re
-from typing import Any, Callable, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Optional, Sequence, Union
 
 from absl import logging
 import numpy as np
@@ -142,18 +142,18 @@ class Exported:
   """
   fun_name: str
   in_tree: tree_util.PyTreeDef
-  in_avals: Tuple[core.AbstractValue, ...]
+  in_avals: tuple[core.AbstractValue, ...]
   out_tree: tree_util.PyTreeDef
-  out_avals: Tuple[core.AbstractValue, ...]
+  out_avals: tuple[core.AbstractValue, ...]
 
-  in_shardings: Optional[Tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]]
-  out_shardings: Optional[Tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]]
+  in_shardings: Optional[tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]]
+  out_shardings: Optional[tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]]
   lowering_platform: str
   disabled_checks: Sequence[DisabledSafetyCheck]
 
   mlir_module_serialized: bytes
   xla_call_module_version: int
-  module_kept_var_idx: Tuple[int, ...]
+  module_kept_var_idx: tuple[int, ...]
   module_uses_dim_vars: bool
 
   _get_vjp: Optional[Callable[["Exported"], "Exported"]]
@@ -162,7 +162,7 @@ class Exported:
   def mlir_module(self) -> ir.Module:
     return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
 
-  def shape_check_module(self) -> Optional[Tuple[bytes, Sequence[str]]]:
+  def shape_check_module(self) -> Optional[tuple[bytes, Sequence[str]]]:
     """Generates a serialized shape checking module and the error messages.
 
     Consider the exporting of a function with one array argument of type
@@ -276,7 +276,7 @@ def poly_spec(
   aval_shape = shape_poly._parse_spec(polymorphic_shape, arg_shape)
   return jax.ShapeDtypeStruct(aval_shape, arg_dtype)
 
-def shape_and_dtype_jax_array(a) -> Tuple[Sequence[Optional[int]], DType]:
+def shape_and_dtype_jax_array(a) -> tuple[Sequence[Optional[int]], DType]:
   """Returns the shape and dtype of a jax.Array."""
   aval = core.raise_to_shaped(core.get_aval(a))
   return aval.shape, aval.dtype
@@ -436,7 +436,7 @@ def export(fun_jax: Callable,
   return do_export
 
 
-def _serialize_module(module: ir.Module) -> Tuple[bytes, int]:
+def _serialize_module(module: ir.Module) -> tuple[bytes, int]:
   xla_call_module_version = 6
   mlir_str = mlir.module_to_bytecode(module)
   if hlo.get_api_version() < 4:
@@ -574,7 +574,7 @@ def _wrap_main_func(
                             args_avals_flat, args_kwargs_tree=args_kwargs_tree),
           multiple_results=True)(ctx, *new_main_op.arguments)
       # The arguments to pass to the call to orig_main
-      orig_main_args: List[ir.Value] = []
+      orig_main_args: list[ir.Value] = []
       # The first arguments are the dimension variable
       for dim_arg, dim_arg_type in zip(util.flatten(dim_values), dim_var_input_types):
         if dim_arg.type != dim_arg_type:
@@ -604,7 +604,7 @@ def _make_shape_check_module(
     args_avals_flat: Sequence[core.AbstractValue],
     *,
     args_kwargs_tree: tree_util.PyTreeDef
-) -> Optional[Tuple[ir.Module, Sequence[str]]]:
+) -> Optional[tuple[ir.Module, Sequence[str]]]:
   """Codegens the shape checking function.
 
   The shape checking function takes the array inputs and returns a triple.
@@ -637,7 +637,7 @@ def _make_shape_check_module(
                                      primitive=None, avals_in=args_avals_flat,
                                      avals_out=None, tokens_in=mlir.TokenSet(),
                                      tokens_out=None)
-      acc_shape_check_messages: List[str] = []
+      acc_shape_check_messages: list[str] = []
       values = mlir.lower_fun(
           functools.partial(shape_poly.compute_shape_check_from_arg_shapes,
                             args_avals_flat, args_kwargs_tree=args_kwargs_tree,
@@ -755,7 +755,7 @@ def _check_module(mod: ir.Module, *,
     disabled_checks: the safety checks that are disabled.
   """
   sharding_attr = ir.StringAttr.get("Sharding", mod.context)
-  allowed_custom_call_targets: Set[str] = copy.copy(_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
+  allowed_custom_call_targets: set[str] = copy.copy(_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
   for dc in disabled_checks:
     target = dc.is_custom_call()
     if target is not None:
@@ -763,7 +763,7 @@ def _check_module(mod: ir.Module, *,
   allowed_custom_call_targets_attrs = set(
       ir.StringAttr.get(target, mod.context)
       for target in allowed_custom_call_targets)
-  disallowed_custom_call_ops: List[str] = []
+  disallowed_custom_call_ops: list[str] = []
   def check_sharding(op: ir.Operation, loc: ir.Location):
     if not allow_non_replicated_sharding:
       try:
@@ -921,7 +921,7 @@ call_exported_p.multiple_results = True
 
 @util.cache()
 def _call_exported_abstract_eval(*in_avals: core.AbstractValue,
-                                 exported: Exported) -> Tuple[core.AbstractValue, ...]:
+                                 exported: Exported) -> tuple[core.AbstractValue, ...]:
   exported_dim_vars = shape_poly.all_dim_vars(exported.in_avals)
   assert len(in_avals) == len(exported.in_avals)  # since the pytrees have the same structure
   # Check that the expected shapes match the actual ones

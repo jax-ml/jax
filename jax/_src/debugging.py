@@ -16,7 +16,7 @@
 import functools
 import string
 import sys
-from typing import Any, Dict, Callable, Optional, Sequence, Set, Tuple, Union
+from typing import Any,  Callable, Optional, Sequence, Union
 import weakref
 
 import numpy as np
@@ -413,8 +413,8 @@ def _raise_to_slice(slc: Union[slice, int]):
     return slice(slc, slc + 1)
   return slc
 
-Color = Union[Tuple[float, float, float], str]
-ColorMap = Callable[[float], Tuple[float, float, float, float]]
+Color = Union[tuple[float, float, float], str]
+ColorMap = Callable[[float], tuple[float, float, float, float]]
 
 def _canonicalize_color(color: Color) -> str:
   if isinstance(color, str):
@@ -464,9 +464,9 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
   device_kind = next(iter(sharding.device_set)).platform.upper()
 
   device_indices_map = sharding.devices_indices_map(tuple(shape))
-  slices: Dict[Tuple[int, ...], Set[int]] = {}
-  heights: Dict[Tuple[int, ...], Optional[float]] = {}
-  widths: Dict[Tuple[int, ...], float] = {}
+  slices: dict[tuple[int, ...], set[int]] = {}
+  heights: dict[tuple[int, ...], Optional[float]] = {}
+  widths: dict[tuple[int, ...], float] = {}
 
   for i, (dev, slcs) in enumerate(device_indices_map.items()):
     assert slcs is not None

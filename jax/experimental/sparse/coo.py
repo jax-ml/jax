@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from functools import partial
 import operator
-from typing import Any, Dict, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, NamedTuple, Optional, Sequence
 import warnings
 
 import numpy as np
@@ -40,7 +40,7 @@ import jax.numpy as jnp
 
 
 Dtype = Any
-Shape = Tuple[int, ...]
+Shape = tuple[int, ...]
 
 class COOInfo(NamedTuple):
   shape: Shape
@@ -63,7 +63,7 @@ class COO(JAXSparse):
   data: jax.Array
   row: jax.Array
   col: jax.Array
-  shape: Tuple[int, int]
+  shape: tuple[int, int]
   nse = property(lambda self: self.data.size)
   dtype = property(lambda self: self.data.dtype)
   _info = property(lambda self: COOInfo(
@@ -73,7 +73,7 @@ class COO(JAXSparse):
   _rows_sorted: bool
   _cols_sorted: bool
 
-  def __init__(self, args: Tuple[Array, Array, Array], *, shape: Shape,
+  def __init__(self, args: tuple[Array, Array, Array], *, shape: Shape,
                rows_sorted: bool = False, cols_sorted: bool = False):
     self.data, self.row, self.col = map(jnp.asarray, args)
     self._rows_sorted = rows_sorted
@@ -132,13 +132,13 @@ class COO(JAXSparse):
   def todense(self) -> Array:
     return coo_todense(self)
 
-  def transpose(self, axes: Optional[Tuple[int, ...]] = None) -> COO:
+  def transpose(self, axes: Optional[tuple[int, ...]] = None) -> COO:
     if axes is not None:
       raise NotImplementedError("axes argument to transpose()")
     return COO((self.data, self.col, self.row), shape=self.shape[::-1],
                rows_sorted=self._cols_sorted, cols_sorted=self._rows_sorted)
 
-  def tree_flatten(self) -> Tuple[Tuple[Array, Array, Array], Dict[str, Any]]:
+  def tree_flatten(self) -> tuple[tuple[Array, Array, Array], dict[str, Any]]:
     return (self.data, self.row, self.col), self._info._asdict()
 
   @classmethod
@@ -286,7 +286,7 @@ def coo_fromdense(mat: Array, *, nse: Optional[int] = None, index_dtype: DTypeLi
   return COO(_coo_fromdense(mat, nse=nse_int, index_dtype=index_dtype),
              shape=mat.shape, rows_sorted=True)
 
-def _coo_fromdense(mat: Array, *, nse: int, index_dtype: DTypeLike = jnp.int32) -> Tuple[Array, Array, Array]:
+def _coo_fromdense(mat: Array, *, nse: int, index_dtype: DTypeLike = jnp.int32) -> tuple[Array, Array, Array]:
   """Create COO-format sparse matrix from a dense matrix.
 
   Args:

@@ -15,8 +15,7 @@ from __future__ import annotations
 
 import dataclasses
 from functools import partial
-from typing import (Any, Callable, Dict, Iterable, List, Optional,
-                    Sequence, Set, Tuple, Type, Union)
+from typing import Any, Callable, Iterable, Optional, Sequence, Union
 
 import numpy as np
 
@@ -115,7 +114,7 @@ class RaggedAxis:
   # For each axis, we store its index and the corresponding segment lengths.
   # For example, the pile i:(Fin 3) => f32[lens1.i, 7, lens2.i]
   # would be represented with ragged_axes = [(1, lens1), (3, lens2)]
-  ragged_axes: List[Tuple[int, Array]]
+  ragged_axes: list[tuple[int, Array]]
 
   @property
   def size(self):
@@ -139,7 +138,7 @@ class RaggedAxis:
     return RaggedAxis(self.stacked_axis, new_ragged_axes)
 
 def make_batch_axis(
-    ndim: int, stacked_axis: int, ragged_axes: List[Tuple[int, Array]]
+    ndim: int, stacked_axis: int, ragged_axes: list[tuple[int, Array]]
   ) -> Union[int, RaggedAxis]:
   if ragged_axes:
     canonical = [(canonicalize_axis(ax, ndim), sz) for ax, sz in ragged_axes]
@@ -241,7 +240,7 @@ def to_elt(trace: Trace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
             if spec is not None else x)
   else:
     assert False
-to_elt_handlers: Dict[Type, ToEltHandler] = {}
+to_elt_handlers: dict[type, ToEltHandler] = {}
 
 def from_elt(trace: 'BatchTrace', axis_size: AxisSize, x: Elt, spec: MapSpec
              ) -> Vmappable:
@@ -257,7 +256,7 @@ def from_elt(trace: 'BatchTrace', axis_size: AxisSize, x: Elt, spec: MapSpec
     return _pile_result(axis_size, bdim.stacked_axis, bdim.ragged_axes, val)
   else:
     return matchaxis(trace.axis_name, axis_size, x_.batch_dim, spec, x_.val)
-from_elt_handlers: Dict[Type, FromEltHandler] = {}
+from_elt_handlers: dict[type, FromEltHandler] = {}
 
 def make_iota(axis_size: AxisSize) -> Array:
   handler = make_iota_handlers.get(type(axis_size))
@@ -265,9 +264,9 @@ def make_iota(axis_size: AxisSize) -> Array:
     return handler(axis_size)
   else:
     return jax.lax.iota('int32', int(axis_size))
-make_iota_handlers: Dict[Type, MakeIotaHandler] = {}
+make_iota_handlers: dict[type, MakeIotaHandler] = {}
 
-def register_vmappable(data_type: Type, spec_type: Type, axis_size_type: Type,
+def register_vmappable(data_type: type, spec_type: type, axis_size_type: type,
                        to_elt: Callable, from_elt: Callable,
                        make_iota: Optional[Callable]):
   vmappables[data_type] = (spec_type, axis_size_type)
@@ -275,10 +274,10 @@ def register_vmappable(data_type: Type, spec_type: Type, axis_size_type: Type,
   to_elt_handlers[data_type] = to_elt
   from_elt_handlers[data_type] = from_elt
   if make_iota: make_iota_handlers[axis_size_type] = make_iota
-vmappables: Dict[Type, Tuple[Type, Type]] = {}
-spec_types: Set[Type] = {PileAxis}
+vmappables: dict[type, tuple[type, type]] = {}
+spec_types: set[type] = {PileAxis}
 
-def unregister_vmappable(data_type: Type) -> None:
+def unregister_vmappable(data_type: type) -> None:
   spec_type, axis_size_type = vmappables.pop(data_type)
   spec_types.remove(spec_type)
   del to_elt_handlers[data_type]
@@ -591,8 +590,8 @@ def _main_trace_for_axis_names(main_trace: core.MainTrace,
 ### API for batching callables with vmappable inputs and outputs
 
 def batch(fun: lu.WrappedFun, axis_name: AxisName, axis_size,
-          in_dims, out_dim_dests, main_type: Type[BatchTrace] = BatchTrace,
-          spmd_axis_name: Optional[Tuple[AxisName, ...]] = None
+          in_dims, out_dim_dests, main_type: type[BatchTrace] = BatchTrace,
+          spmd_axis_name: Optional[tuple[AxisName, ...]] = None
           ) -> lu.WrappedFun:
   # we split up _batch_inner and _batch_outer for the leak checker
   f = _batch_inner(fun, axis_size, out_dim_dests)
@@ -624,11 +623,11 @@ def _batch_inner(axis_size, out_dim_dests, main, in_dims, *in_vals):
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
 def vtile(f_flat: lu.WrappedFun,
-          in_axes_flat: Tuple[Optional[int], ...],
-          out_axes_flat: Tuple[Optional[int], ...],
+          in_axes_flat: tuple[Optional[int], ...],
+          out_axes_flat: tuple[Optional[int], ...],
           tile_size: Optional[int],
           axis_name: AxisName,
-          main_type: Type[BatchTrace] = BatchTrace):
+          main_type: type[BatchTrace] = BatchTrace):
   @curry
   def tile_axis(arg, axis: Optional[int], tile_size):
     if axis is None:
@@ -673,22 +672,22 @@ def batch_subtrace(main, in_dims, *in_vals):
 
 def batch_jaxpr2(closed_jaxpr: core.ClosedJaxpr,
                  axis_size: core.AxisSize,
-                 in_axes: Tuple[Union[int, NotMapped], ...],
+                 in_axes: tuple[Union[int, NotMapped], ...],
                  axis_name: AxisName,
                  spmd_axis_name: AxisName,
-                 main_type: Type[BatchTrace],
-                 ) -> Tuple[core.ClosedJaxpr, Tuple[Union[int, NotMapped], ...]]:
+                 main_type: type[BatchTrace],
+                 ) -> tuple[core.ClosedJaxpr, tuple[Union[int, NotMapped], ...]]:
   return _batch_jaxpr2(closed_jaxpr, axis_size, tuple(in_axes), axis_name,
                        spmd_axis_name, main_type)
 
 @weakref_lru_cache
 def _batch_jaxpr2(closed_jaxpr: core.ClosedJaxpr,
                  axis_size: core.AxisSize,
-                 in_axes: Tuple[Union[int, NotMapped], ...],
+                 in_axes: tuple[Union[int, NotMapped], ...],
                  axis_name: AxisName,
                  spmd_axis_name: AxisName,
-                 main_type: Type[BatchTrace],
-                 ) -> Tuple[core.ClosedJaxpr, Tuple[Union[int, NotMapped], ...]]:
+                 main_type: type[BatchTrace],
+                 ) -> tuple[core.ClosedJaxpr, tuple[Union[int, NotMapped], ...]]:
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, out_axes = _batch_jaxpr_inner(f, axis_size)
   f = _batch_jaxpr_outer(f, axis_name, spmd_axis_name, axis_size, in_axes,
@@ -862,10 +861,10 @@ def _matchaxis_symbolic_zeros(axis_name, sz, name, src, dst, x, sum_match=False)
 
 ### utilities for defining primitives' batching rules
 
-BatchingRule = Callable[..., Tuple[Any, Union[None, int, Tuple[Union[None, int], ...]]]]
-primitive_batchers : Dict[core.Primitive, BatchingRule] = {}
-axis_primitive_batchers: Dict[core.Primitive, Callable] = {}
-spmd_axis_primitive_batchers: Dict[core.Primitive, Callable] = {}
+BatchingRule = Callable[..., tuple[Any, Union[None, int, tuple[Union[None, int], ...]]]]
+primitive_batchers : dict[core.Primitive, BatchingRule] = {}
+axis_primitive_batchers: dict[core.Primitive, Callable] = {}
+spmd_axis_primitive_batchers: dict[core.Primitive, Callable] = {}
 
 def defvectorized(prim):
   primitive_batchers[prim] = partial(vectorized_batcher, prim)

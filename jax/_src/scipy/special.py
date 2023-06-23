@@ -14,7 +14,7 @@
 
 from functools import partial
 import operator
-from typing import cast, Any, List, Optional, Tuple
+from typing import cast, Any, Optional
 
 import numpy as np
 import scipy.special as osp_special
@@ -765,7 +765,7 @@ def bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
 
 def _gen_recurrence_mask(
     l_max: int, is_normalized: bool, dtype: Any
-) -> Tuple[Array, Array]:
+) -> tuple[Array, Array]:
   """Generates mask for recurrence relation on the remaining entries.
 
   The remaining entries are with respect to the diagonal and offdiagonal
@@ -1012,7 +1012,7 @@ def _gen_associated_legendre(l_max: int,
   return p
 
 
-def lpmn(m: int, n: int, z: Array) -> Tuple[Array, Array]:
+def lpmn(m: int, n: int, z: Array) -> tuple[Array, Array]:
   """The associated Legendre functions (ALFs) of the first kind.
 
   Args:
@@ -1215,7 +1215,7 @@ def _expint1(x: Array) -> Array:
   return x * f + jnp.euler_gamma + jnp.log(x)
 
 
-def _eval_expint_k(A: List[float], B: List[float], x: Array) -> Array:
+def _eval_expint_k(A: list[float], B: list[float], x: Array) -> Array:
   # helper function for all subsequent intervals
   A_arr = jnp.array(A, dtype=x.dtype)
   B_arr = jnp.array(B, dtype=x.dtype)

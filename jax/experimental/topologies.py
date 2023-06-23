@@ -13,8 +13,7 @@
 # limitations under the License.
 
 import abc
-from typing import (Sequence, List, Tuple, Optional, Mapping, Dict, Set,
-                    FrozenSet, Union, cast)
+from typing import Sequence, Optional
 
 import numpy as np
 
@@ -27,8 +26,8 @@ Device = xc.Device
 
 
 class TopologyDescription(abc.ABC):
-  def __init__(self, devices: List[Device]):
-    self.devices: List[Device] = devices
+  def __init__(self, devices: list[Device]):
+    self.devices: list[Device] = devices
 
 
 def get_attached_topology(platform=None) -> TopologyDescription:
@@ -55,7 +54,7 @@ def get_topology_desc(
 def make_mesh(
     topo: TopologyDescription,
     mesh_shape: Sequence[int],
-    axis_names: Tuple[str, ...],
+    axis_names: tuple[str, ...],
     *,
     contiguous_submeshes: bool = False
 ) -> jax.sharding.Mesh:

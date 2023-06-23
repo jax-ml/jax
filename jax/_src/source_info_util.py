@@ -20,7 +20,7 @@ import os.path
 import sysconfig
 import threading
 import types
-from typing import List, Optional, Iterator, NamedTuple, Union, Tuple
+from typing import Optional, Iterator, NamedTuple, Union
 
 import jax.version
 from jax._src.lib import xla_client
@@ -40,7 +40,7 @@ class Frame(NamedTuple):
   end_column: int
 
 
-_exclude_paths: List[str] = [
+_exclude_paths: list[str] = [
     os.path.dirname(jax.version.__file__),
     # Also exclude stdlib as user frames. In a non-standard Python runtime,
     # the following two may be different.
@@ -54,13 +54,13 @@ def register_exclusion(path: str):
 class Scope(NamedTuple):
   name: str
 
-  def wrap(self, stack: Tuple[str, ...]) -> Tuple[str, ...]:
+  def wrap(self, stack: tuple[str, ...]) -> tuple[str, ...]:
     return (self.name, *stack)
 
 class Transform(NamedTuple):
   name: str
 
-  def wrap(self, stack: Tuple[str, ...]) -> Tuple[str, ...]:
+  def wrap(self, stack: tuple[str, ...]) -> tuple[str, ...]:
     if stack:
       return (f'{self.name}({stack[0]})', *stack[1:])
     else:
@@ -68,9 +68,9 @@ class Transform(NamedTuple):
 
 @dataclasses.dataclass(frozen=True)
 class NameStack:
-  stack: Tuple[Union[Scope, Transform], ...] = ()
+  stack: tuple[Union[Scope, Transform], ...] = ()
 
-  def extend(self, name: Union[Tuple[str, ...], str]) -> 'NameStack':
+  def extend(self, name: Union[tuple[str, ...], str]) -> 'NameStack':
     if not isinstance(name, tuple):
       name = (name,)
     scopes = tuple(map(Scope, name))
@@ -97,7 +97,7 @@ class NameStack:
     return NameStack(other.stack + self.stack)
 
   def __str__(self) -> str:
-    scope: Tuple[str, ...] = ()
+    scope: tuple[str, ...] = ()
     for elem in self.stack[::-1]:
       scope = elem.wrap(scope)
     return '/'.join(scope)

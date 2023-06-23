@@ -22,7 +22,7 @@ import os
 import re
 import time
 import threading
-from typing import Awaitable, Any, Callable, Dict, Optional, Sequence, Union
+from typing import Awaitable, Any, Callable, Optional, Sequence, Union
 
 import jax
 from jax._src import distributed
@@ -236,7 +236,7 @@ def estimate_read_memory_footprint(t: ts.TensorStore,
 
 async def async_deserialize(
     in_sharding: sharding_impls.XLACompatibleSharding,
-    tensorstore_spec: Union[ts.Spec, Dict[str, Any]],
+    tensorstore_spec: Union[ts.Spec, dict[str, Any]],
     global_shape: Optional[Sequence[int]] = None,
     dtype=None,
     byte_limiter: Optional[_LimitInFlightBytes] = None,
@@ -288,7 +288,7 @@ async def async_deserialize(
 
 
 def run_deserialization(shardings: Sequence[sharding.Sharding],
-                        tensorstore_specs: Sequence[Dict[str, Any]],
+                        tensorstore_specs: Sequence[dict[str, Any]],
                         global_shapes: Optional[Sequence[array.Shape]] = None,
                         dtypes: Optional[Sequence[typing.DTypeLike]] = None,
                         concurrent_gb: int = 32):
@@ -370,7 +370,7 @@ class GlobalAsyncCheckpointManagerBase(metaclass=abc.ABCMeta):
 
   @abc.abstractmethod
   def deserialize(self, shardings: Sequence[sharding.Sharding],
-                  tensorstore_specs: Sequence[Dict[str, Any]],
+                  tensorstore_specs: Sequence[dict[str, Any]],
                   global_shapes: Optional[Sequence[array.Shape]] = None,
                   dtypes: Optional[Sequence[typing.DTypeLike]] = None):
     """Deserializes GDAs from TensorStore."""
@@ -519,7 +519,7 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
     self._start_async_commit(on_commit_callback)
 
   def deserialize(self, shardings: Sequence[sharding.Sharding],
-                  tensorstore_specs: Sequence[Dict[str, Any]],
+                  tensorstore_specs: Sequence[dict[str, Any]],
                   global_shapes: Optional[Sequence[array.Shape]] = None,
                   dtypes: Optional[Sequence[typing.DTypeLike]] = None,
                   concurrent_gb: int = 32):

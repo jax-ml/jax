@@ -19,8 +19,8 @@ from functools import partial
 import itertools
 import math
 import operator
-from typing import (Any, Callable, Optional, Sequence, Tuple, List,
-                    TypeVar, Union, cast as type_cast, overload)
+from typing import (Any, Callable, Optional, Sequence, TypeVar, Union,
+                    cast as type_cast, overload)
 import warnings
 
 import numpy as np
@@ -102,7 +102,7 @@ def _validate_shapes(shapes: Sequence[Shape]):
     map(_check_static_shape, shapes)
 
 def _try_broadcast_shapes(
-    shapes: Sequence[Tuple[int, ...]]) -> Optional[Tuple[int, ...]]:
+    shapes: Sequence[tuple[int, ...]]) -> Optional[tuple[int, ...]]:
   if len(shapes) == 1: return shapes[0]
   rank, *others = {len(shape) for shape in shapes}
   if others: return None  # must have consistent rank
@@ -134,11 +134,11 @@ def asarray(x: ArrayLike) -> Array:
     raise TypeError(f"asarray: expected ArrayLike, got {x} of type {type(x)}.")
 
 @overload
-def broadcast_shapes(*shapes: Tuple[int, ...]) -> Tuple[int, ...]: ...
+def broadcast_shapes(*shapes: tuple[int, ...]) -> tuple[int, ...]: ...
 
 @overload
-def broadcast_shapes(*shapes: Tuple[Union[int, core.Tracer], ...]
-                     ) -> Tuple[Union[int, core.Tracer], ...]: ...
+def broadcast_shapes(*shapes: tuple[Union[int, core.Tracer], ...]
+                     ) -> tuple[Union[int, core.Tracer], ...]: ...
 
 def broadcast_shapes(*shapes):
   """Returns the shape that results from NumPy broadcasting of `shapes`."""
@@ -149,7 +149,7 @@ def broadcast_shapes(*shapes):
     return _broadcast_shapes_uncached(*shapes)
 
 @cache()
-def _broadcast_shapes_cached(*shapes: Tuple[int, ...]) -> Tuple[int, ...]:
+def _broadcast_shapes_cached(*shapes: tuple[int, ...]) -> tuple[int, ...]:
   return _broadcast_shapes_uncached(*shapes)
 
 def _broadcast_shapes_uncached(*shapes):
@@ -181,7 +181,7 @@ def _identity(x): return x
 
 def _extract_tracers_dyn_shape(
     shape: Sequence[Union[int, core.Tracer]]
-  ) -> Tuple[List[core.Tracer], List[Optional[int]]]:
+  ) -> tuple[list[core.Tracer], list[Optional[int]]]:
   # Given a sequence representing a shape, pull out Tracers, replacing with None
   if config.jax_dynamic_shapes:
     # We must gate this behavior under a flag because otherwise the errors
@@ -195,7 +195,7 @@ def _extract_tracers_dyn_shape(
 def _merge_dyn_shape(
     static_shape: Sequence[Optional[int]],
     dyn_shape: Sequence[Any],
-  ) -> Tuple[Union[int, mlir.Value, core.Tracer], ...]:
+  ) -> tuple[Union[int, mlir.Value, core.Tracer], ...]:
   # Replace Nones in static_shape with elements of dyn_shape, in order
   dyn_shape_it = iter(dyn_shape)
   shape = tuple(next(dyn_shape_it) if d is None else d for d in static_shape)
@@ -663,8 +663,8 @@ class Precision(xla_client.PrecisionConfig.Precision):  # type: ignore
 
 
 PrecisionType = Precision
-PrecisionLike = Union[None, str, PrecisionType, Tuple[str, str],
-                      Tuple[PrecisionType, PrecisionType]]
+PrecisionLike = Union[None, str, PrecisionType, tuple[str, str],
+                      tuple[PrecisionType, PrecisionType]]
 
 def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
         preferred_element_type: Optional[DTypeLike] = None) -> Array:
@@ -699,8 +699,8 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
         lhs.shape, rhs.shape))
 
 
-DotDimensionNumbers = Tuple[Tuple[Sequence[int], Sequence[int]],
-                            Tuple[Sequence[int], Sequence[int]]]
+DotDimensionNumbers = tuple[tuple[Sequence[int], Sequence[int]],
+                            tuple[Sequence[int], Sequence[int]]]
 
 def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionNumbers,
                 precision: PrecisionLike = None,
@@ -860,7 +860,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
       dimensions=None if dims is None or same_dims else dims)
 
 def pad(operand: ArrayLike, padding_value: ArrayLike,
-        padding_config: Sequence[Tuple[int, int, int]]) -> Array:
+        padding_config: Sequence[tuple[int, int, int]]) -> Array:
   """Applies low, high, and/or interior padding to an array.
 
   Wraps XLA's `Pad
@@ -1111,14 +1111,14 @@ def _reduce_xor(operand: ArrayLike, axes: Sequence[int]) -> Array:
 
 @overload
 def sort(operand: Sequence[Array], dimension: int = -1,
-         is_stable: bool = True, num_keys: int = 1) -> Tuple[Array, ...]: ...
+         is_stable: bool = True, num_keys: int = 1) -> tuple[Array, ...]: ...
 
 @overload
 def sort(operand: Array, dimension: int = -1,
          is_stable: bool = True, num_keys: int = 1) -> Array: ...
 
 def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
-         is_stable: bool = True, num_keys: int = 1) -> Union[Array, Tuple[Array, ...]]:
+         is_stable: bool = True, num_keys: int = 1) -> Union[Array, tuple[Array, ...]]:
   """Wraps XLA's `Sort
   <https://www.tensorflow.org/xla/operation_semantics#sort>`_ operator.
 
@@ -1154,13 +1154,13 @@ def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
     return sort_p.bind(operand, dimension=dimension, is_stable=is_stable, num_keys=1)[0]
 
 def sort_key_val(keys: Array, values: ArrayLike, dimension: int = -1,
-                 is_stable: bool = True) -> Tuple[Array, Array]:
+                 is_stable: bool = True) -> tuple[Array, Array]:
   """Sorts ``keys`` along ``dimension`` and applies the same permutation to ``values``."""
   dimension = canonicalize_axis(dimension, len(keys.shape))
   k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable, num_keys=1)
   return k, v
 
-def top_k(operand: ArrayLike, k: int) -> Tuple[Array, Array]:
+def top_k(operand: ArrayLike, k: int) -> tuple[Array, Array]:
   """Returns top ``k`` values and their indices along the last axis of ``operand``.
 
   Args:
@@ -4833,7 +4833,7 @@ def remaining(original, *removed_lists):
   return [i for i in original if i not in removed]
 
 
-def canonicalize_precision(precision: PrecisionLike) -> Optional[Tuple[PrecisionType, PrecisionType]]:
+def canonicalize_precision(precision: PrecisionLike) -> Optional[tuple[PrecisionType, PrecisionType]]:
   """Turns an API precision specification, into a pair of enumeration values.
 
   The API can take the precision as a string, or int, and either as a single
@@ -4844,7 +4844,7 @@ def canonicalize_precision(precision: PrecisionLike) -> Optional[Tuple[Precision
       return None
     try:
       return type_cast(
-          Tuple[PrecisionType, PrecisionType],
+          tuple[PrecisionType, PrecisionType],
           (Precision(config.jax_default_matmul_precision),
            Precision(config.jax_default_matmul_precision)))
     except TypeError:
@@ -4853,18 +4853,18 @@ def canonicalize_precision(precision: PrecisionLike) -> Optional[Tuple[Precision
           f"{list(Precision._strings)}, but got {config.jax_default_matmul_precision}"
       ) from None
   elif isinstance(precision, str) and precision in Precision._strings:
-    return type_cast(Tuple[PrecisionType, PrecisionType],
+    return type_cast(tuple[PrecisionType, PrecisionType],
                      (Precision(precision), Precision(precision)))
   elif isinstance(precision, xla_client.PrecisionConfig.Precision):
-    return type_cast(Tuple[PrecisionType, PrecisionType], (precision, precision))
+    return type_cast(tuple[PrecisionType, PrecisionType], (precision, precision))
   elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
         all(isinstance(p, xla_client.PrecisionConfig.Precision) for p in precision)):
-    return type_cast(Tuple[PrecisionType, PrecisionType], precision)
+    return type_cast(tuple[PrecisionType, PrecisionType], precision)
   elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
         all(isinstance(s, str) for s in precision)):
     s1, s2 = precision
-    p1 = type_cast(Tuple[PrecisionType, PrecisionType], canonicalize_precision(s1))[0]
-    p2 = type_cast(Tuple[PrecisionType, PrecisionType], canonicalize_precision(s2))[0]
+    p1 = type_cast(tuple[PrecisionType, PrecisionType], canonicalize_precision(s1))[0]
+    p2 = type_cast(tuple[PrecisionType, PrecisionType], canonicalize_precision(s2))[0]
     return (p1, p2)
   else:
     raise ValueError(

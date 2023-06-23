@@ -17,8 +17,8 @@ import inspect
 import logging
 import weakref
 import numpy as np
-from typing import (Callable, Sequence, Tuple, Union, cast, List, Optional,
-                    Iterable, NamedTuple, Any)
+from typing import (Callable, Sequence, Union, cast, Optional, Iterable,
+                    NamedTuple, Any)
 import itertools as it
 from functools import partial, lru_cache
 import threading
@@ -399,9 +399,9 @@ class PjitInfo(NamedTuple):
   fun: Callable
   in_shardings: Any
   out_shardings: Any
-  static_argnums: Tuple[int, ...]
-  static_argnames: Tuple[str, ...]
-  donate_argnums: Tuple[int, ...]
+  static_argnums: tuple[int, ...]
+  static_argnames: tuple[str, ...]
+  donate_argnums: tuple[int, ...]
   device: Optional[xc.Device]
   backend: Optional[str]
   keep_unused: bool
@@ -537,7 +537,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
           donate_argnums)
 
 def _extract_implicit_args(
-  in_type: Sequence[Tuple[core.AbstractValue, bool]],
+  in_type: Sequence[tuple[core.AbstractValue, bool]],
   explicit_args: Sequence[Any]
 ) -> Sequence[core.Tracer]:
   """
@@ -567,7 +567,7 @@ def _extract_implicit_args(
   return [x for x, (_, e) in zip(args, in_type) if not e]  # type: ignore
 
 def _flat_axes_specs(abstracted_axes, *args, **kwargs
-                     ) -> Optional[List[pe.AbstractedAxesSpec]]:
+                     ) -> Optional[list[pe.AbstractedAxesSpec]]:
   if abstracted_axes is None: return None
   if kwargs: raise NotImplementedError
   def ax_leaf(l):
@@ -978,7 +978,7 @@ def _pjit_jaxpr(fun, out_shardings_thunk, in_type, debug_info,
 
 
 def pjit_check_aval_sharding(
-    shardings, flat_avals, names: Optional[Tuple[str, ...]],
+    shardings, flat_avals, names: Optional[tuple[str, ...]],
     what_aval: str, allow_uneven_sharding: bool):
   new_names = [''] * len(shardings) if names is None else names
   for aval, s, name in zip(flat_avals, shardings, new_names):
@@ -1208,7 +1208,7 @@ pjit_p.def_impl(_pjit_call_impl)
 
 @dataclasses.dataclass(frozen=True)
 class SameDeviceAssignmentTuple:
-  shardings: Tuple[PjitSharding, ...]
+  shardings: tuple[PjitSharding, ...]
   # device_assignment is Optional because shardings can contain `AUTO` and in
   # that case `mesh` is compulsory to be used. So in that case
   # `_pjit_lower_cached` cache, resource_env will check against the devices.
@@ -1262,9 +1262,9 @@ def _pjit_lower_cached(
     always_lower: bool,
     *,
     lowering_platform: Optional[str]):
-  in_shardings: Tuple[PjitShardingMinusUnspecified, ...] = cast(
-      Tuple[PjitShardingMinusUnspecified, ...], sdat_in_shardings.shardings)
-  out_shardings: Tuple[PjitSharding, ...] = sdat_out_shardings.shardings
+  in_shardings: tuple[PjitShardingMinusUnspecified, ...] = cast(
+      tuple[PjitShardingMinusUnspecified, ...], sdat_in_shardings.shardings)
+  out_shardings: tuple[PjitSharding, ...] = sdat_out_shardings.shardings
 
   if resource_env is not None:
     pxla.resource_typecheck(jaxpr, resource_env, {}, lambda: "pjit")
@@ -1323,7 +1323,7 @@ pe.custom_staging_rules[pjit_p] = pjit_staging_rule
 
 # TODO(mattjj): remove/trivialize this when jaxprs have type annotation on them,
 # since it's actually not possible in general to infer the type from the term
-def _out_type(jaxpr: core.ClosedJaxpr) -> List[core.AbstractValue]:
+def _out_type(jaxpr: core.ClosedJaxpr) -> list[core.AbstractValue]:
   out = []
   in_idx = {v: i for i, v in enumerate(jaxpr.jaxpr.invars)}
   out_idx = {x: i for i, x in enumerate(jaxpr.jaxpr.invars)
@@ -1430,7 +1430,7 @@ pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True, None)
 
 def _pjit_batcher_for_sharding(
     s: Union[GSPMDSharding, UnspecifiedValue],
-    dim: int, val: Tuple[str, ...], mesh, ndim: int):
+    dim: int, val: tuple[str, ...], mesh, ndim: int):
   if is_unspecified(s):
     return s
   if not val:
@@ -1490,7 +1490,7 @@ ad.primitive_jvps[pjit_p] = _pjit_jvp
 
 @weakref_lru_cache
 def _known_jaxpr_fwd(known_jaxpr: core.ClosedJaxpr,
-                     fwds_known: Tuple[Optional[int]]) -> core.ClosedJaxpr:
+                     fwds_known: tuple[Optional[int]]) -> core.ClosedJaxpr:
   updated_jaxpr = known_jaxpr.jaxpr.replace(
       outvars=[x for x, i in zip(known_jaxpr.jaxpr.outvars, fwds_known)
                if i is None])
@@ -1603,7 +1603,7 @@ def _pjit_partial_eval_custom_params_updater(
     unks_in: Sequence[bool], inst_in: Sequence[bool],
     kept_outs_known: Sequence[bool], kept_outs_staged: Sequence[bool],
     num_res: int, params_known: dict, params_staged: dict
-  ) -> Tuple[dict, dict]:
+  ) -> tuple[dict, dict]:
   # prune inputs to jaxpr_known according to unks_in
   donated_invars_known, _ = pe.partition_list(unks_in, params_known['donated_invars'])
   in_shardings_known, _ = pe.partition_list(unks_in, params_known['in_shardings'])
@@ -1688,14 +1688,14 @@ ad.reducing_transposes[pjit_p] = _pjit_transpose
 
 @weakref_lru_cache
 def _dce_jaxpr_pjit(
-    jaxpr: core.ClosedJaxpr, used_outputs: Tuple[bool]
-) -> Tuple[core.ClosedJaxpr, List[bool]]:
+    jaxpr: core.ClosedJaxpr, used_outputs: tuple[bool]
+) -> tuple[core.ClosedJaxpr, list[bool]]:
   new_jaxpr, used_inputs = pe.dce_jaxpr(jaxpr.jaxpr, used_outputs)
   return core.ClosedJaxpr(new_jaxpr, jaxpr.consts), used_inputs
 
 
-def dce_jaxpr_pjit_rule(used_outputs: List[bool], eqn: core.JaxprEqn
-                        ) -> Tuple[List[bool], Optional[core.JaxprEqn]]:
+def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
+                        ) -> tuple[list[bool], Optional[core.JaxprEqn]]:
   dced_jaxpr, used_inputs = _dce_jaxpr_pjit(
       eqn.params['jaxpr'], tuple(used_outputs))
 
@@ -1965,13 +1965,13 @@ def _get_partition_spec(ppspec: Sequence[ParsedPartitionSpec]) -> Sequence[Parti
 
 
 def _get_op_sharding_from_executable(
-    executable) -> Tuple[Sequence[xc.OpSharding], Sequence[xc.OpSharding]]:
-  in_op_shardings: List[xc.OpSharding] = []
+    executable) -> tuple[Sequence[xc.OpSharding], Sequence[xc.OpSharding]]:
+  in_op_shardings: list[xc.OpSharding] = []
   parameter_shardings_from_xla = executable.get_parameter_shardings()
   if parameter_shardings_from_xla is not None:
     in_op_shardings = parameter_shardings_from_xla
 
-  out_op_shardings: List[xc.OpSharding] = []
+  out_op_shardings: list[xc.OpSharding] = []
   output_shardings_from_xla = executable.get_output_shardings()
   if output_shardings_from_xla is not None:
     out_op_shardings = output_shardings_from_xla
@@ -1979,10 +1979,10 @@ def _get_op_sharding_from_executable(
   return in_op_shardings, out_op_shardings
 
 
-def _get_ppspec_from_executable(executable, mesh) -> Tuple[Sequence[ParsedPartitionSpec], Sequence[ParsedPartitionSpec]]:
+def _get_ppspec_from_executable(executable, mesh) -> tuple[Sequence[ParsedPartitionSpec], Sequence[ParsedPartitionSpec]]:
   input_op_shardings: Sequence[xc.OpSharding] = executable.hlo_modules()[0].spmd_parameters_shardings
   output_op_sharding: xc.OpSharding = executable.hlo_modules()[0].spmd_output_sharding
-  in_ppspec: List[ParsedPartitionSpec] = []
+  in_ppspec: list[ParsedPartitionSpec] = []
   for s in input_op_shardings:
     in_ppspec.extend(parse_flatten_op_sharding(s, mesh))
   out_ppspec = parse_flatten_op_sharding(output_op_sharding, mesh)
@@ -1991,7 +1991,7 @@ def _get_ppspec_from_executable(executable, mesh) -> Tuple[Sequence[ParsedPartit
 
 def _get_pspec_from_executable(
     executable, mesh: pxla.Mesh
-) -> Tuple[Tuple[PartitionSpec, ...], Tuple[PartitionSpec, ...]]:
+) -> tuple[tuple[PartitionSpec, ...], tuple[PartitionSpec, ...]]:
   in_ppspec, out_ppspec = _get_ppspec_from_executable(executable, mesh)
   out_partition_spec = _get_partition_spec(out_ppspec)
   in_partition_spec = _get_partition_spec(in_ppspec)

@@ -33,7 +33,7 @@ import re
 import subprocess
 import sys
 import types
-from typing import Callable, List, NamedTuple, Optional
+from typing import Callable, NamedTuple, Optional
 import unittest
 import warnings
 import weakref
@@ -6013,8 +6013,8 @@ class JaxprTest(jtu.JaxTestCase):
 
 class DCETest(jtu.JaxTestCase):
 
-  def assert_dce_result(self, jaxpr: core.Jaxpr, used_outputs: List[bool],
-                        expected_used_inputs: List[bool],
+  def assert_dce_result(self, jaxpr: core.Jaxpr, used_outputs: list[bool],
+                        expected_used_inputs: list[bool],
                         expected_num_eqns: Optional[int] = None,
                         check_diff: bool = True):
     jaxpr_dce, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs)

@@ -22,7 +22,7 @@ import collections
 import datetime
 import logging
 import os
-from typing import Any, Dict, Sequence, Tuple
+from typing import Any, Sequence
 import unittest
 
 from absl.testing import absltest
@@ -90,13 +90,13 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
     harnesses = primitive_harness.all_harnesses
     print(f"Found {len(harnesses)} harnesses")
 
-    harness_groups: Dict[str, Sequence[primitive_harness.Harness]] = collections.defaultdict(list)
+    harness_groups: dict[str, Sequence[primitive_harness.Harness]] = collections.defaultdict(list)
 
     def unique_hash(h: primitive_harness.Harness, l: primitive_harness.Limitation):
       return (h.group_name, l.description, l.devices,
               tuple(np.dtype(d).name for d in l.dtypes))
 
-    unique_limitations: Dict[Any, Tuple[primitive_harness.Harness,
+    unique_limitations: dict[Any, tuple[primitive_harness.Harness,
                                         primitive_harness.Limitation]] = {}
 
     for h in harnesses:

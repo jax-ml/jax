@@ -18,8 +18,8 @@ import math
 import operator as op
 import os
 from types import SimpleNamespace
-from typing import (Any, Sequence, Set, Iterable, Iterator, NamedTuple,
-                    Callable, Optional, Tuple, List, Generator, TypeVar, Union)
+from typing import (Any, Sequence, Iterable, Iterator, NamedTuple,
+                    Callable, Optional, Generator, TypeVar, Union)
 import unittest
 
 from absl.testing import absltest
@@ -756,8 +756,8 @@ class ShardMapTest(jtu.JaxTestCase):
 
   # same method appears in api_test.py:DCETest
   # TODO(mattjj): consider moving this method to be a helper in jtu
-  def assert_dce_result(self, jaxpr: core.Jaxpr, used_outputs: List[bool],
-                        expected_used_inputs: List[bool],
+  def assert_dce_result(self, jaxpr: core.Jaxpr, used_outputs: list[bool],
+                        expected_used_inputs: list[bool],
                         expected_num_eqns: Optional[int] = None,
                         check_diff: bool = True):
     jaxpr_dce, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs)
@@ -926,7 +926,7 @@ def shmap_reference(
   return f_shmapped
 
 def make_indexer(mesh: Mesh, spec: P, x: Any
-                 ) -> Callable[[Tuple[int, ...]], Tuple[slice, ...]]:
+                 ) -> Callable[[tuple[int, ...]], tuple[slice, ...]]:
   block_shape = [d // math.prod(mesh.shape[ax] for ax in (elt or ()))
                  for d, elt in zip(x.shape, spec)]
   def indexer(idx):
@@ -949,7 +949,7 @@ def make_indexer(mesh: Mesh, spec: P, x: Any
 # choices, we use 'yield from'. That is, we can read 'yield from' in this code
 # as 'call this choice-making function'.
 Option = Any
-CaseSpec = Tuple  # first element is a string test name
+CaseSpec = tuple  # first element is a string test name
 Chooser = Generator[Iterable[Option], Option, CaseSpec]
 
 def sample_shmap() -> Chooser:
@@ -975,7 +975,7 @@ def sample_shmap() -> Chooser:
   name = f'{spec.name}_{mesh.shape}_jit={jit}_{in_specs}_{out_specs}_{in_str}'
   return name, spec.fun, mesh.shape, jit, in_specs, out_specs, args, ref
 
-def unmentioned(mesh: Mesh, pspec: P) -> Set[core.AxisName]:
+def unmentioned(mesh: Mesh, pspec: P) -> set[core.AxisName]:
   return set(mesh.axis_names) - {n for ns in pspec if ns is not None
                                  for n in (ns if type(ns) is tuple else [ns])}
 
@@ -983,7 +983,7 @@ def unmentioned(mesh: Mesh, pspec: P) -> Set[core.AxisName]:
 # To drive the sampler, we have `sample` function which just runs a loop.
 def sample(num: int, make_gen: Callable[[], Chooser]) -> Iterator[CaseSpec]:
   rng = np.random.RandomState(0)
-  seen: Set[str] = set()
+  seen: set[str] = set()
   while len(seen) < num:
     name, *case = sample_one(rng, make_gen())
     if name not in seen:
@@ -1029,7 +1029,7 @@ def dilate(mesh: Mesh, spec: P, shape: ShapeDtypeDuck) -> ShapeDtypeDuck:
 
 def make_out_specs(
     mesh: MeshDuck, out_types: Union[ShapeDtypeDuck, Sequence[ShapeDtypeDuck]],
-    out_reps: Union[Set[core.AxisName], Sequence[Set[core.AxisName]]]
+    out_reps: Union[set[core.AxisName], Sequence[set[core.AxisName]]]
   ) -> Chooser:
   if type(out_types) is not tuple:
     out_spec = yield from make_out_spec(mesh, out_types, out_reps)  # type: ignore
@@ -1042,7 +1042,7 @@ def make_out_specs(
     return tuple(out_specs)
 
 def make_out_spec(
-    mesh: Mesh, out_type: ShapeDtypeDuck, out_rep: Set[core.AxisName]
+    mesh: Mesh, out_type: ShapeDtypeDuck, out_rep: set[core.AxisName]
   ) -> Chooser:
   subset = yield (s for s in powerset(mesh.shape)
                   if out_rep | set(s) == set(mesh.shape))
@@ -1052,9 +1052,9 @@ def make_out_spec(
 # Combinatorial helper functions
 
 T = TypeVar('T')
-def partitions(s: Sequence[T], k: int) -> Iterator[List[List[T]]]:
+def partitions(s: Sequence[T], k: int) -> Iterator[list[list[T]]]:
   for indices in it.product(range(k), repeat=len(s)):
-    outs: List[List[T]] = [[] for _ in range(k)]
+    outs: list[list[T]] = [[] for _ in range(k)]
     for i, elt in zip(indices, s):
       outs[i].append(elt)
     yield outs
@@ -1073,7 +1073,7 @@ def sample_shmap_batched(bdim_size: int) -> Chooser:
   batch_args = map(partial(batchify_arg, bdim_size), bdims, args)
   return name + f'_vmap_{bdims}', bdims, *shmap_specs, batch_args, ref
 
-def all_bdims(*shapes: Tuple[int, ...]
+def all_bdims(*shapes: tuple[int, ...]
               ) -> Iterator[Sequence[Optional[int]]]:
   bdims = ((None, *range(len(shape) + 1)) for shape in shapes)
   return (t for t in it.product(*bdims) if not all(e is None for e in t))

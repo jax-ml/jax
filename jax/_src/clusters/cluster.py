@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import List, Optional, Type, Sequence, Tuple
+from typing import Optional, Sequence
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ class ClusterEnv:
   :class:`ClusterEnv` subclasses are automatically detected when imported.
   """
 
-  _cluster_types: List[Type['ClusterEnv']] = []
+  _cluster_types: list[type['ClusterEnv']] = []
 
   def __init_subclass__(cls, **kwargs):
     super().__init_subclass__(**kwargs)
@@ -41,7 +41,7 @@ class ClusterEnv:
                                            num_processes: Optional[int],
                                            process_id: Optional[int],
                                            local_device_ids: Optional[Sequence[int]]
-                                          ) -> Tuple[Optional[str], Optional[int], Optional[int],
+                                          ) -> tuple[Optional[str], Optional[int], Optional[int],
                                                      Optional[Sequence[int]]]:
     if all(p is not None for p in (coordinator_address, num_processes,
       process_id, local_device_ids)):

@@ -19,7 +19,7 @@ import gzip
 import itertools
 import json
 import types
-from typing import Any, Callable, DefaultDict, Dict, List, Optional, Tuple
+from typing import Any, Callable, DefaultDict, Optional
 
 from jax._src import core
 from jax._src import util
@@ -71,8 +71,8 @@ def source_locations(jaxpr: core.Jaxpr):
 MaybeEqn = Optional[core.JaxprEqn]
 
 def var_defs_and_refs(jaxpr: core.Jaxpr):
-  defs: Dict[core.Var, MaybeEqn] = {}
-  refs: Dict[core.Var, List[MaybeEqn]] = {}
+  defs: dict[core.Var, MaybeEqn] = {}
+  refs: dict[core.Var, list[MaybeEqn]] = {}
 
   def read(a: core.Atom, eqn: MaybeEqn):
     if not isinstance(a, core.Literal):
@@ -119,7 +119,7 @@ def vars_by_fanout(jaxpr: core.Jaxpr):
 
   return [(j, hist(j, reads)) for j, reads in var_defs_and_refs(jaxpr)]  # pytype: disable=bad-unpacking
 
-def print_histogram(histogram: Dict[Any, int]):
+def print_histogram(histogram: dict[Any, int]):
   count_width = max(len(str(v)) for v in histogram.values())
   count_fmt = '{:>' + str(count_width) + 'd}'
   pairs = [(v, k) for k, v in histogram.items()]
@@ -128,7 +128,7 @@ def print_histogram(histogram: Dict[Any, int]):
 
 
 def _pprof_profile(
-    profile: Dict[Tuple[Optional[xla_client.Traceback], core.Primitive], int]
+    profile: dict[tuple[Optional[xla_client.Traceback], core.Primitive], int]
 ) -> bytes:
   """Converts a profile into a compressed pprof protocol buffer.
 
@@ -136,7 +136,7 @@ def _pprof_profile(
   """
   s: DefaultDict[str, int]
   func: DefaultDict[types.CodeType, int]
-  loc: DefaultDict[Tuple[types.CodeType, int], int]
+  loc: DefaultDict[tuple[types.CodeType, int], int]
 
   s = collections.defaultdict(itertools.count(1).__next__)
   func = collections.defaultdict(itertools.count(1).__next__)
@@ -201,7 +201,7 @@ def pprof_equation_profile(jaxpr: core.Jaxpr) -> bytes:
     A gzip-compressed pprof Profile protocol buffer, suitable for passing to
     pprof tool for visualization.
   """
-  d: DefaultDict[Tuple[Optional[xla_client.Traceback], core.Primitive], int]
+  d: DefaultDict[tuple[Optional[xla_client.Traceback], core.Primitive], int]
   d = collections.defaultdict(lambda: 0)
   for _, eqn in all_eqns(jaxpr):
     d[(eqn.source_info.traceback, eqn.primitive)] += 1

@@ -84,7 +84,7 @@ TODO:
 """
 from functools import partial
 import math
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import jax
 import numpy as np
@@ -137,7 +137,7 @@ def _b_hh_l(layer_i: int, input_size: int, hidden_size: int,
 
 def _get_params_shapes_in_lstm(input_size: int, hidden_size: int,
                                num_layers: int,
-                               bidirectional: bool) -> List[Shape]:
+                               bidirectional: bool) -> list[Shape]:
   """Get flat param shapes in LSTM. See module docstring for layout."""
   layer_shapes = []
   num_directions = 2 if bidirectional else 1
@@ -178,7 +178,7 @@ def init_lstm_weight(rng: PRNGKeyArray, input_size: int, hidden_size: int,
 def unpack_lstm_weights(
     weights: Array, input_size: int, hidden_size: int, num_layers: int,
     bidirectional: bool
-) -> Tuple[Dict[int, Array], Dict[int, Array], Dict[int, Array], Dict[int,
+) -> tuple[dict[int, Array], dict[int, Array], dict[int, Array], dict[int,
                                                                       Array]]:
   """Unpack cudnn LSTM weights into individual weights.
 
@@ -195,8 +195,8 @@ def unpack_lstm_weights(
   num_directions = 2 if bidirectional else 1
   num_pseudo_layers = num_layers * num_directions
 
-  W_ih: Dict[int, Array] = {}
-  W_hh: Dict[int, Array] = {}
+  W_ih: dict[int, Array] = {}
+  W_hh: dict[int, Array] = {}
   for l in range(num_pseudo_layers):
     for w_kind in [W_ih, W_hh]:
       shape = flat_shapes[flat_shapes_offset]
@@ -205,8 +205,8 @@ def unpack_lstm_weights(
       w_kind[l] = weights[w_offsets:w_offsets + num_elems].reshape(shape)
       w_offsets += num_elems
 
-  b_ih: Dict[int, Array] = {}
-  b_hh: Dict[int, Array] = {}
+  b_ih: dict[int, Array] = {}
+  b_hh: dict[int, Array] = {}
   for l in range(num_pseudo_layers):
     for w_kind in [b_ih, b_hh]:
       shape = flat_shapes[flat_shapes_offset]
@@ -220,7 +220,7 @@ def unpack_lstm_weights(
 @partial(custom_vjp, nondiff_argnums=(5, 6, 7, 8, 9))
 def lstm(x: Array, h_0: Array, c_0: Array, weights: Array, seq_lengths: Array,
          input_size: int, hidden_size: int, num_layers: int, dropout: float,
-         bidirectional: bool) -> Tuple[Array, Array, Array]:
+         bidirectional: bool) -> tuple[Array, Array, Array]:
   """LSTM via CuDNN or HIPDNN (not-yet-supported).
 
   Assume batch-first inputs.
@@ -251,11 +251,11 @@ def lstm(x: Array, h_0: Array, c_0: Array, weights: Array, seq_lengths: Array,
 
 
 @partial(jax.jit, static_argnums=(8, 9, 10, 11, 12))
-def lstm_ref(x: Array, h_0: Array, c_0: Array, W_ih: Dict[int, Array],
-             W_hh: Dict[int, Array], b_ih: Dict[int, Array],
-             b_hh: Dict[int, Array], seq_lengths: Array, input_size: int,
+def lstm_ref(x: Array, h_0: Array, c_0: Array, W_ih: dict[int, Array],
+             W_hh: dict[int, Array], b_ih: dict[int, Array],
+             b_hh: dict[int, Array], seq_lengths: Array, input_size: int,
              hidden_size: int, num_layers: int, dropout: float,
-             bidirectional: bool) -> Tuple[Array, Array, Array]:
+             bidirectional: bool) -> tuple[Array, Array, Array]:
   """Reference implementation of LSTM.
 
   See https://pytorch.org/docs/stable/generated/torch.nn.LSTM.html#lstm
@@ -340,7 +340,7 @@ def lstm_ref(x: Array, h_0: Array, c_0: Array, W_ih: Dict[int, Array],
   c_n = jnp.stack(final_c)
   return seq_first_y.transpose(1, 0, 2), h_n, c_n
 
-def _extract_output(seq_lengths: Array, out) -> Tuple[Tuple[Array, Array], Array]:
+def _extract_output(seq_lengths: Array, out) -> tuple[tuple[Array, Array], Array]:
   _, ((hs, cs), seq_first_y) = out
   h_t = _select_last_carry(hs, seq_lengths)
   c_t = _select_last_carry(cs, seq_lengths)

@@ -20,7 +20,7 @@ Eigendecomposition on TPU.
 
 from __future__ import annotations
 
-from typing import Any, Tuple
+from typing import Any
 
 import jax
 from jax import lax
@@ -60,7 +60,7 @@ class Stack:
         lambda x, y: lax.dynamic_update_index_in_dim(x, y, self._size, 0),
         self._data, elem))
 
-  def pop(self) -> Tuple[Any, Stack]:
+  def pop(self) -> tuple[Any, Stack]:
     """Pops from the stack, returning an (elem, updated stack) pair."""
     elem = jax.tree_util.tree_map(
       lambda x: lax.dynamic_index_in_dim(x, self._size - 1, 0, keepdims=False),

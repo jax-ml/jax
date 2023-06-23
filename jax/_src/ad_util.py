@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import types
-from typing import Any, Callable, Dict, TypeVar, Union, cast
+from typing import Any, Callable, TypeVar, Union, cast
 
 from jax._src import core
 from jax._src import traceback_util
@@ -30,7 +30,7 @@ T = TypeVar('T')
 
 map = safe_map
 
-jaxval_adders: Dict[type, Callable[[ArrayLike, ArrayLike], Array]] = {}
+jaxval_adders: dict[type, Callable[[ArrayLike, ArrayLike], Array]] = {}
 
 def add_jaxvals(x: ArrayLike, y: ArrayLike) -> Array:
   return add_jaxvals_p.bind(x, y)
@@ -46,7 +46,7 @@ def add_impl(xs, ys):
 def add_abstract(xs, ys):
   return lattice_join(xs, ys)
 
-jaxval_zeros_likers: Dict[type, Callable[[Any], Array]] = {}
+jaxval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 
 def instantiate(z: Union[Zero, Array]) -> Array:
   if type(z) is Zero:
@@ -56,7 +56,7 @@ def instantiate(z: Union[Zero, Array]) -> Array:
 def zeros_like_aval(aval: core.AbstractValue) -> Array:
   return aval_zeros_likers[type(aval)](aval)
 
-aval_zeros_likers: Dict[type, Callable[[Any], Array]] = {}
+aval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 
 def zeros_like_jaxval(val: ArrayLike) -> Array:
   return zeros_like_p.bind(val)

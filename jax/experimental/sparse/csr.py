@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from functools import partial
 import operator
-from typing import Optional, Tuple
+from typing import Optional
 import warnings
 
 import numpy as np
@@ -39,7 +39,7 @@ from jax._src.typing import Array, ArrayLike, DTypeLike
 import jax.numpy as jnp
 
 
-Shape = Tuple[int, ...]
+Shape = tuple[int, ...]
 
 
 @tree_util.register_pytree_node_class
@@ -57,7 +57,7 @@ class CSR(JAXSparse):
   data: jax.Array
   indices: jax.Array
   indptr: jax.Array
-  shape: Tuple[int, int]
+  shape: tuple[int, int]
   nse = property(lambda self: self.data.size)
   dtype = property(lambda self: self.data.dtype)
   _bufs = property(lambda self: (self.data, self.indices, self.indptr))
@@ -144,7 +144,7 @@ class CSC(JAXSparse):
   data: jax.Array
   indices: jax.Array
   indptr: jax.Array
-  shape: Tuple[int, int]
+  shape: tuple[int, int]
   nse = property(lambda self: self.data.size)
   dtype = property(lambda self: self.data.dtype)
 
@@ -317,7 +317,7 @@ def csr_fromdense(mat: Array, *, nse: Optional[int] = None, index_dtype: DTypeLi
   nse_int = core.concrete_or_error(operator.index, nse, "coo_fromdense nse argument")
   return CSR(_csr_fromdense(mat, nse=nse_int, index_dtype=index_dtype), shape=mat.shape)
 
-def _csr_fromdense(mat: Array, *, nse: int, index_dtype: DTypeLike = np.int32) -> Tuple[Array, Array, Array]:
+def _csr_fromdense(mat: Array, *, nse: int, index_dtype: DTypeLike = np.int32) -> tuple[Array, Array, Array]:
   """Create CSR-format sparse matrix from a dense matrix.
 
   Args:

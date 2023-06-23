@@ -31,7 +31,7 @@ import collections
 import functools
 import itertools
 import math
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union, cast
+from typing import Any, Mapping, Optional, Sequence, Union, cast
 
 import numpy as np
 
@@ -91,7 +91,7 @@ def sharding_spec_sharding_proto(
   the code here might help:
   https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/compiler/xla/experimental/xla_sharding/xla_sharding.py
   """
-  mesh_shape = cast(Tuple[int, ...], self.mesh_shape)
+  mesh_shape = cast(tuple[int, ...], self.mesh_shape)
 
   sharded_axes = {}  # maps sharded axis identifiers to mesh axis indices to which they're mapped
   replicated_maxes = []  # lists mesh axis identifiers to replicate over
@@ -128,8 +128,8 @@ def sharding_spec_sharding_proto(
   # specially over some mesh axes.
   last_tile_dims = []
   if replicated_maxes:
-    axes_by_type: Dict[OpShardingType, List[_MeshAxisName]] = {}
-    size_by_type: Dict[OpShardingType, int] = collections.defaultdict(lambda: 1)
+    axes_by_type: dict[OpShardingType, list[_MeshAxisName]] = {}
+    size_by_type: dict[OpShardingType, int] = collections.defaultdict(lambda: 1)
     assert {x[0] for x in replicated_maxes}.issuperset(set(special_axes.keys()))
     for axis, size in replicated_maxes:
       ty = special_axes.get(axis, xc.OpSharding.Type.REPLICATED)
@@ -145,7 +145,7 @@ def sharding_spec_sharding_proto(
       transpose_perm=mesh_permutation, subgroup_types=last_tile_dims)
 
 
-def _sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:
+def _sharding_spec_indices(self, shape: tuple[int, ...]) -> np.ndarray:
   """Returns NumPy-style indices corresponding to a sharding spec.
 
   Args:
@@ -167,7 +167,7 @@ def _sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:
         hlo_sharding, shape, math.prod(self.mesh_shape)
     ).reshape(self.mesh_shape)
 
-  axis_indices: List[Sequence[Index]] = []
+  axis_indices: list[Sequence[Index]] = []
   shard_indices_shape = []
   for dim, sharding in enumerate(self.sharding):
     axis_size = shape[dim]
@@ -223,10 +223,10 @@ ShardingSpec.indices = _sharding_spec_indices
 ShardingSpec.__repr__ = _sharding_spec_repr  # type: ignore
 
 
-Index = Union[int, slice, Tuple[Union[int, slice], ...]]
+Index = Union[int, slice, tuple[Union[int, slice], ...]]
 
 def spec_to_indices(shape: Sequence[int],
-                    spec: ShardingSpec) -> Tuple[Index, ...]:
+                    spec: ShardingSpec) -> tuple[Index, ...]:
   """Returns numpy-style indices corresponding to a sharding spec.
 
   Each index describes a shard of the array. The order of the indices is the
@@ -306,7 +306,7 @@ def pmap_sharding_spec(nrep, axis_size, sharded_shape: Sequence[int],
       mesh_mapping=(Replicated(axis_size),) + maybe_replicate + pspec.mesh_mapping)
 
 
-def create_pmap_sharding_spec(shape: Tuple[int, ...], sharded_dim: int = 0,
+def create_pmap_sharding_spec(shape: tuple[int, ...], sharded_dim: int = 0,
                               sharded_dim_size: Optional[int] = None):
   if sharded_dim is not None:
     sharded_shape = shape[:sharded_dim] + shape[sharded_dim+1:]

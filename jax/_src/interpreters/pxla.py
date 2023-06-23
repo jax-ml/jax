@@ -23,9 +23,8 @@ from functools import partial, lru_cache, cached_property
 import itertools as it
 import logging
 import math
-from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
-                    Sequence, Set, Tuple, Type, Union, Iterable,
-                    TYPE_CHECKING, cast, TypeVar)
+from typing import (Any, Callable, NamedTuple, Optional, Sequence, Union,
+                    Iterable, TYPE_CHECKING, cast, TypeVar)
 
 import numpy as np
 
@@ -81,7 +80,7 @@ unsafe_map, map = map, safe_map  # type: ignore
 
 logger = logging.getLogger(__name__)
 
-Index = Union[int, slice, Tuple[Union[int, slice], ...]]
+Index = Union[int, slice, tuple[Union[int, slice], ...]]
 
 NoSharding = sharding_specs.NoSharding
 Chunked = sharding_specs.Chunked
@@ -140,7 +139,7 @@ def shard_args(
   return [shard_arg(arg, devices, indices[i], shardings[i])
           for i, arg in enumerate(args)]
 
-shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any, Any], Any]] = {}
+shard_arg_handlers: dict[Any, Callable[[Any, Any, Any, Any], Any]] = {}
 
 def _shard_token(x, devices, indices, sharding):
   zeros = np.zeros((), dtype=np.dtype(np.bool_))
@@ -190,8 +189,8 @@ def batched_device_put(aval: core.ShapedArray,
 # from the input ShardingSpec, rather than the indices. However, this would
 # require duplicating the ordering logic of spec_to_indices, which is more
 # subtle and more likely to change than the index logic we have to support here.
-def as_slice_indices(arr: Any, idx: Index) -> Tuple[
-    Tuple[int, ...], Tuple[int, ...], Tuple[int, ...]]:
+def as_slice_indices(arr: Any, idx: Index) -> tuple[
+    tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
   """Returns start_indices, limit_indices, removed_dims"""
   start_indices = [0] * arr.ndim
   limit_indices = list(arr.shape)
@@ -220,7 +219,7 @@ def shard_aval(size, axis: int, aval):
     return shard_aval_handlers[type(aval)](size, axis, aval)
   except KeyError as err:
     raise TypeError(f"No shard_aval handler for type: {type(aval)}") from err
-shard_aval_handlers: Dict[Type[core.AbstractValue], Callable[[int, int, Any], Any]] = {}
+shard_aval_handlers: dict[type[core.AbstractValue], Callable[[int, int, Any], Any]] = {}
 def _shard_abstract_array(size, axis: int, x):
   try:
     if x.shape[axis] != size:
@@ -235,8 +234,8 @@ shard_aval_handlers[ShapedArray] = _shard_abstract_array
 def local_aval_to_result_handler(
     aval: core.AbstractValue,
     sharding: sharding_impls.XLACompatibleSharding,
-    indices: Optional[Tuple[Index, ...]],
-) -> Callable[[List[xc.ArrayImpl]], Any]:
+    indices: Optional[tuple[Index, ...]],
+) -> Callable[[list[xc.ArrayImpl]], Any]:
   """Returns a function for handling the raw buffers of a single output aval.
 
   Args:
@@ -258,7 +257,7 @@ def local_aval_to_result_handler(
         f"No pxla_result_handler for type: {type(aval)}") from err
 
 PxlaResultHandler = Callable[..., Callable[[Any], Any]]
-local_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
+local_result_handlers: dict[type[core.AbstractValue], PxlaResultHandler] = {}
 
 
 def global_aval_to_result_handler(
@@ -288,7 +287,7 @@ def global_aval_to_result_handler(
     raise TypeError(
         f"No pxla_result_handler for type: {type(aval)}") from err
 
-global_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
+global_result_handlers: dict[type[core.AbstractValue], PxlaResultHandler] = {}
 
 ### lazy device-memory persistence and result handling
 
@@ -297,8 +296,8 @@ def make_sharded_device_array(
     aval: ShapedArray,
     sharding_spec: Optional[ShardingSpec],
     # Any is for JAX extensions implementing their own buffer.
-    device_buffers: List[Any],
-    indices: Optional[Tuple[Index, ...]] = None,
+    device_buffers: list[Any],
+    indices: Optional[tuple[Index, ...]] = None,
 ):
   """Returns a ShardedDeviceArray implementation based on arguments.
 
@@ -482,7 +481,7 @@ def _emap_impl(fun: lu.WrappedFun, *args,
       new_outvals.append(out)
   return new_outvals
 
-def _map_schedule(idx: Tuple[Optional[int], ...]) -> Tuple[Optional[int], ...]:
+def _map_schedule(idx: tuple[Optional[int], ...]) -> tuple[Optional[int], ...]:
   # In order to do a multi-map (a simultaneous map over several axes), we will
   # nest several maps. Each time we do a map, we "remove" an input axis so we
   # need to update the remaining map axes. For example, if we are to map over
@@ -498,9 +497,9 @@ def _map_schedule(idx: Tuple[Optional[int], ...]) -> Tuple[Optional[int], ...]:
 # _function object_. Adding this annotation here lets us reuse the same pmap
 # callable for all equivalent primitive pmaps.
 @lru_cache()
-def _multi_pmap(f: Callable, info: EmapInfo, names: List[core.AxisName],
-                all_axes: List[Tuple[Optional[int], ...]]
-                ) -> Tuple[Callable, Dict[core.AxisName, int]]:
+def _multi_pmap(f: Callable, info: EmapInfo, names: list[core.AxisName],
+                all_axes: list[tuple[Optional[int], ...]]
+                ) -> tuple[Callable, dict[core.AxisName, int]]:
   used_names = []
   for i, name in reversed(list(enumerate(names))):
     in_axes = tuple(arg_axis[i] for arg_axis in all_axes)
@@ -609,9 +608,9 @@ def _annot_to_flat(ndim: int, mapped_axes: Iterable[int],
   return [i for i in range(ndim) if i not in mapped_axes_][annotation]
 
 def _match_annot(axis_name: core.AxisName, axis_size: int, val: Any,
-                 shard_axis_src: Dict[core.AxisName, int],
+                 shard_axis_src: dict[core.AxisName, int],
                  dst_annotation: Optional[int]
-                 ) -> Tuple[Any, Dict[core.AxisName, int]]:
+                 ) -> tuple[Any, dict[core.AxisName, int]]:
   shard_axis_out = dict(shard_axis_src)
   src = shard_axis_out.pop(axis_name, None)
   dst = _annot_to_flat(np.ndim(val) + (src is None), shard_axis_out.values(),
@@ -629,9 +628,9 @@ def _match_annot(axis_name: core.AxisName, axis_size: int, val: Any,
       raise NotImplementedError
   return outval, shard_axis_out
 
-def _moveaxis(ndim: int, shard_axes: Dict[core.AxisName, int],
-              src: int, dst: int) -> Dict[core.AxisName, int]:
-  lst: List[Optional[core.AxisName]] = [None] * ndim
+def _moveaxis(ndim: int, shard_axes: dict[core.AxisName, int],
+              src: int, dst: int) -> dict[core.AxisName, int]:
+  lst: list[Optional[core.AxisName]] = [None] * ndim
   for k, v in shard_axes.items():
     lst[v] = k
   name = lst.pop(src)
@@ -641,7 +640,7 @@ def _moveaxis(ndim: int, shard_axes: Dict[core.AxisName, int],
 class MapTracer(core.Tracer):
   __slots__ = ["val", "shard_axes"]
 
-  def __init__(self, trace: MapTrace, val, shard_axes: Dict[core.AxisName, int]):
+  def __init__(self, trace: MapTrace, val, shard_axes: dict[core.AxisName, int]):
     self._trace = trace
     self.val = val
     self.shard_axes = shard_axes
@@ -736,7 +735,7 @@ def find_replicas(
 
 def stage_parallel_callable(
     pci: ParallelCallableInfo, fun: lu.WrappedFun
-) -> Tuple[core.Jaxpr, List[Any], ReplicaInfo, ShardInfo]:
+) -> tuple[core.Jaxpr, list[Any], ReplicaInfo, ShardInfo]:
   sharded_avals = tuple(
       shard_aval(pci.axis_size, axis, aval) if axis is not None else aval
       for axis, aval in safe_zip(pci.in_axes, pci.avals))
@@ -940,8 +939,8 @@ class UnloadedPmapExecutable:
   input_shardings: Sequence[sharding_impls.XLACompatibleSharding]
   local_output_avals: Sequence[ShapedArray]
   output_shardings: Sequence[sharding_impls.XLACompatibleSharding]
-  unordered_effects: List[core.Effect]
-  ordered_effects: List[core.Effect]
+  unordered_effects: list[core.Effect]
+  ordered_effects: list[core.Effect]
   keepalive: Sequence[Any]
   host_callbacks: Sequence[Any]
   jaxpr_debug_info: core.JaxprDebugInfo
@@ -979,9 +978,9 @@ class UnloadedPmapExecutable:
                replicas: ReplicaInfo,
                shards: ShardInfo,
                tuple_args: bool,
-               unordered_effects: List[core.Effect],
-               ordered_effects: List[core.Effect],
-               host_callbacks: List[Any],
+               unordered_effects: list[core.Effect],
+               ordered_effects: list[core.Effect],
+               host_callbacks: list[Any],
                keepalive: Any,
                jaxpr_debug_info: core.JaxprDebugInfo,
                compiler_options=None):
@@ -1156,7 +1155,7 @@ def _get_pmap_sharding(devices, specs):
   return [sharding_impls.PmapSharding(devices, spec) for spec in specs]
 
 
-multi_host_supported_collectives: Set[core.Primitive] = set()
+multi_host_supported_collectives: set[core.Primitive] = set()
 
 
 def check_multihost_collective_allowlist(jaxpr):
@@ -1287,9 +1286,9 @@ class ExecuteReplicated:
 
   def __init__(self, xla_executable, name, backend, in_handler: InputsHandler,
                out_handler: ResultsHandler,
-               unordered_effects: List[core.Effect],
-               ordered_effects: List[core.Effect], keepalive: Any,
-               has_host_callbacks: bool, kept_var_idx: Set[int]):
+               unordered_effects: list[core.Effect],
+               ordered_effects: list[core.Effect], keepalive: Any,
+               has_host_callbacks: bool, kept_var_idx: set[int]):
     self.xla_executable = xla_executable
     self.name = name
     self.backend = backend
@@ -1582,7 +1581,7 @@ class SPMDBatchTrace(batching.BatchTrace):
     return super().get_axis_primitive_batcher(primitive, frame)
 
 
-spmd_primitive_batchers: Dict[core.Primitive, Callable] = {}
+spmd_primitive_batchers: dict[core.Primitive, Callable] = {}
 
 
 def vtile_by_mesh(fun: lu.WrappedFun,
@@ -1611,7 +1610,7 @@ def _full_to_shard_abstract_eval(x, axes, mesh, **_):
 
 def manual_proto(
     aval: core.ShapedArray,
-    manual_axes_set: FrozenSet[sharding_impls.MeshAxisName], mesh: Mesh):
+    manual_axes_set: frozenset[sharding_impls.MeshAxisName], mesh: Mesh):
   """Create an OpSharding proto that declares all mesh axes from `axes` as manual
   and all others as replicated.
   """
@@ -1638,7 +1637,7 @@ def manual_proto(
 
 @partial(mlir.register_lowering, full_to_shard_p)
 def _full_to_shard_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh,
-                            manual_axes: FrozenSet[sharding_impls.MeshAxisName]):
+                            manual_axes: frozenset[sharding_impls.MeshAxisName]):
   # TODO: Can we short-circuit for replicated values? Probably not.
   aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
@@ -1658,7 +1657,7 @@ def _shard_to_full_abstract_eval(x, axes, mesh, **_):
 
 @partial(mlir.register_lowering, shard_to_full_p)
 def _shard_to_full_lowering(ctx: mlir.LoweringRuleContext, x, *, axes: ArrayMapping, mesh: Mesh,
-                            manual_axes: FrozenSet[sharding_impls.MeshAxisName]):
+                            manual_axes: frozenset[sharding_impls.MeshAxisName]):
   aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
   proto = manual_proto(aval_in, manual_axes, mesh)  # type: ignore
@@ -1669,7 +1668,7 @@ def _shard_to_full_lowering(ctx: mlir.LoweringRuleContext, x, *, axes: ArrayMapp
   return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, sharding_proto, unspecified_dims),
 
 @lu.transformation
-def vtile_manual(manual_axes: FrozenSet[sharding_impls.MeshAxisName],
+def vtile_manual(manual_axes: frozenset[sharding_impls.MeshAxisName],
                  mesh: Mesh,
                  in_axes: Sequence[ArrayMapping],
                  out_axes: Sequence[ArrayMapping],
@@ -1688,7 +1687,7 @@ class TileVectorize:
 
 @dataclasses.dataclass(frozen=True)
 class TileManual:
-  manual_axes: FrozenSet[sharding_impls.MeshAxisName]
+  manual_axes: frozenset[sharding_impls.MeshAxisName]
 
 TilingMethod = Union[TileVectorize, TileManual]
 
@@ -1756,7 +1755,7 @@ class DeviceAssignmentMismatchError(Exception):
   pass
 
 
-ShardingInfo = Tuple[
+ShardingInfo = tuple[
     Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue, AUTO],
     MismatchType, Optional[Any]]  # Any is dispatch.SourceInfo to avoid circular imports
 
@@ -1768,7 +1767,7 @@ def _get_default_device() -> xc.Device:
 def _get_and_check_device_assignment(
     shardings: Iterable[ShardingInfo],
     devices: Optional[Sequence[xc.Device]],
-) -> Tuple[xc.Client, Tuple[xc.Device, ...]]:
+) -> tuple[xc.Client, tuple[xc.Device, ...]]:
   first_sharding_info = None
   if devices is None:
     devices = ()
@@ -1851,7 +1850,7 @@ def _trace_to_jaxpr_and_dce(fun_or_jaxpr, global_in_avals, api_name, fun_name,
 
 @dataclasses.dataclass(frozen=True)
 class SemanticallyEqualShardings:
-  shardings: Tuple[Union[sharding_impls.GSPMDSharding, UnspecifiedValue], ...]
+  shardings: tuple[Union[sharding_impls.GSPMDSharding, UnspecifiedValue], ...]
 
   def __hash__(self):
     return hash(tuple(
@@ -1895,8 +1894,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
   dispatch.raise_warnings_or_errors_for_jit_of_pmap(
       nreps, backend, fun_name, jaxpr)
 
-  in_mlir_shardings: Optional[List[Optional[sharding_impls.XLACompatibleSharding]]]
-  out_mlir_shardings: Optional[List[Optional[sharding_impls.XLACompatibleSharding]]]
+  in_mlir_shardings: Optional[list[Optional[sharding_impls.XLACompatibleSharding]]]
+  out_mlir_shardings: Optional[list[Optional[sharding_impls.XLACompatibleSharding]]]
   axis_ctx: mlir.AxisContext
 
   if nreps == 1:
@@ -1952,7 +1951,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
 
 @dataclasses.dataclass(frozen=True)
 class _DeviceAssignment:
-  device_assignment: Tuple[xc.Device, ...]
+  device_assignment: tuple[xc.Device, ...]
 
   @cached_property
   def _hash(self):
@@ -1980,7 +1979,7 @@ class _DeviceAssignment:
 
 @lru_cache(maxsize=2048)
 def _create_da_object(
-    device_assignment: Tuple[xc.Device, ...]) -> _DeviceAssignment:
+    device_assignment: tuple[xc.Device, ...]) -> _DeviceAssignment:
   return _DeviceAssignment(device_assignment)
 
 
@@ -2161,7 +2160,7 @@ def lower_mesh_computation(
 
   # 1. Trace to jaxpr and preprocess/verify it
   if spmd_lowering:
-    manual_axes: FrozenSet[MeshAxisName] = frozenset()
+    manual_axes: frozenset[MeshAxisName] = frozenset()
     # TODO: Consider handling xmap's 'vectorize' in here. We can vmap once instead of vtile twice!
     if tiling_method is not None:
       if isinstance(tiling_method, TileVectorize):
@@ -2217,8 +2216,8 @@ def lower_mesh_computation(
   # 2. Build up the HLO
   tuple_args = dispatch.should_tuple_args(len(in_jaxpr_avals), backend.platform)
 
-  in_partitions: Optional[List[Optional[sharding_impls.XLACompatibleSharding]]]
-  out_partitions: Optional[List[Optional[sharding_impls.XLACompatibleSharding]]]
+  in_partitions: Optional[list[Optional[sharding_impls.XLACompatibleSharding]]]
+  out_partitions: Optional[list[Optional[sharding_impls.XLACompatibleSharding]]]
   axis_ctx: mlir.AxisContext
   if spmd_lowering:
     in_partitions = map(_to_logical_sharding, global_in_avals, in_shardings)
@@ -2330,7 +2329,7 @@ class MeshComputation(stages.XlaLowering):
       return executable
     return self._executable
 
-  def cost_analysis(self) -> Dict[str, float]:
+  def cost_analysis(self) -> dict[str, float]:
     backend = self.compile_args["backend"]
     if xb.using_pjrt_c_api(backend):
       raise NotImplementedError(
@@ -2352,7 +2351,7 @@ def _get_input_indices(
     avals: Sequence[ShapedArray],
     shardings: Sequence[sharding_impls.XLACompatibleSharding],
     da_object: Union[_DeviceAssignment, Sequence[xc.Device]],
-) -> Sequence[Tuple[Optional[Index], ...]]:
+) -> Sequence[tuple[Optional[Index], ...]]:
 
   input_indices = []
   if isinstance(da_object, _DeviceAssignment):
@@ -2378,7 +2377,7 @@ def _get_input_indices(
 def get_gspmd_shardings_from_executable(
     xla_executable, device_assignment: Sequence[xc.Device],
     num_in_avals: int, num_out_avals: int
-) -> Tuple[Sequence[sharding_impls.XLACompatibleSharding],
+) -> tuple[Sequence[sharding_impls.XLACompatibleSharding],
            Sequence[sharding_impls.XLACompatibleSharding]]:
   from jax.experimental import pjit
 
@@ -2411,7 +2410,7 @@ def get_gspmd_shardings_from_executable(
 # without mesh.
 def _get_mesh_pspec_shardings_from_executable(
     xla_executable, mesh: Mesh
-) -> Tuple[Sequence[sharding_impls.NamedSharding],
+) -> tuple[Sequence[sharding_impls.NamedSharding],
            Sequence[sharding_impls.NamedSharding]]:
   from jax.experimental import pjit
 
@@ -2421,7 +2420,7 @@ def _get_mesh_pspec_shardings_from_executable(
 
 
 SubClassT = TypeVar("SubClassT", bound=sharding_impls.XLACompatibleSharding)
-OrigHandlerType = Dict[Type[SubClassT],
+OrigHandlerType = dict[type[SubClassT],
                        Callable[[xc.OpSharding, SubClassT], SubClassT]]
 
 orig_out_sharding_handlers: OrigHandlerType = {}
@@ -2569,11 +2568,11 @@ class UnloadedMeshExecutable:
   committed: bool
   are_out_shardings_from_xla: Sequence[bool]
   name: str
-  unordered_effects: List[core.Effect]
-  ordered_effects: List[core.Effect]
+  unordered_effects: list[core.Effect]
+  ordered_effects: list[core.Effect]
   keepalive: Sequence[Any]
   host_callbacks: Sequence[Any]
-  kept_var_idx: Set[int]
+  kept_var_idx: set[int]
   auto_spmd_lowering: bool
   jaxpr_debug_info: Optional[core.JaxprDebugInfo]
 
@@ -2611,11 +2610,11 @@ class UnloadedMeshExecutable:
                spmd_lowering: bool,
                tuple_args: bool,
                auto_spmd_lowering: bool,
-               unordered_effects: List[core.Effect],
-               ordered_effects: List[core.Effect],
-               host_callbacks: List[Any],
+               unordered_effects: list[core.Effect],
+               ordered_effects: list[core.Effect],
+               host_callbacks: list[Any],
                keepalive: Any,
-               kept_var_idx: Set[int],
+               kept_var_idx: set[int],
                backend: xb.XlaBackend,
                device_assignment: Union[_DeviceAssignment, Sequence[xc.Device]],
                committed: bool,
@@ -2875,7 +2874,7 @@ def _out_shardings_for_trivial(
     jaxpr: core.Jaxpr, consts: Sequence[Any],
     in_shardings: Sequence[sharding_impls.XLACompatibleSharding],
     device_assignment: Sequence[xc.Device],
-  ) -> List[sharding_impls.XLACompatibleSharding]:
+  ) -> list[sharding_impls.XLACompatibleSharding]:
   # For each jaxpr output, compute a Sharding by:
   #   * if the output is a forwarded input, get the corresponding in_sharding;
   #   * if the output is a constant Array, get its .sharding attribute;
@@ -2893,7 +2892,7 @@ def _out_shardings_for_trivial(
     rep = sharding_impls.SingleDeviceSharding(dev)
     in_shardings = (sharding_impls.SingleDeviceSharding(dev),) * len(in_shardings)
 
-  shardings: Dict[core.Var, sharding_impls.XLACompatibleSharding] = {}
+  shardings: dict[core.Var, sharding_impls.XLACompatibleSharding] = {}
   for constvar, constval in zip(jaxpr.constvars, consts):
     if isinstance(constval, array.ArrayImpl):
       shardings[constvar] = constval.sharding
@@ -2903,7 +2902,7 @@ def _out_shardings_for_trivial(
 
 
 def _execute_trivial(jaxpr, consts, in_handler, out_handler, kept_var_idx, *args):
-  env: Dict[core.Var, Any]  = {}
+  env: dict[core.Var, Any]  = {}
   pruned_args = (x for i, x in enumerate(args) if i in kept_var_idx)
   map(env.setdefault, jaxpr.invars, pruned_args)
   map(env.setdefault, jaxpr.constvars, consts)
@@ -3037,7 +3036,7 @@ def _sanitize_mesh_jaxpr(jaxpr):
     core.traverse_jaxpr_params(_sanitize_mesh_jaxpr, eqn.params)
 
 
-custom_resource_typing_rules: Dict[core.Primitive, Callable] = {}
+custom_resource_typing_rules: dict[core.Primitive, Callable] = {}
 
 def resource_typecheck(jaxpr, resource_env, axis_resources, what_jaxpr_thunk):
   if isinstance(jaxpr, core.ClosedJaxpr):
@@ -3113,7 +3112,7 @@ def maybe_extend_axis_env(*args, **kwargs):
 
 
 def device_put(x, devices: Sequence[xc.ArrayImpl],
-               replicate: bool=False) -> List[xc.ArrayImpl]:
+               replicate: bool=False) -> list[xc.ArrayImpl]:
   """Call device_put on a sequence of devices and return a flat sequence of buffers."""
   if replicate:
     return [jax.device_put(x, device) for device in devices]

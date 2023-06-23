@@ -19,7 +19,7 @@ import inspect
 import itertools
 import operator
 
-from typing import Callable, Sequence, List, Tuple
+from typing import Callable, Sequence
 
 from jax import config
 from jax.tree_util import tree_flatten, tree_unflatten
@@ -511,7 +511,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 
   # First, compute output unknowns (unks_out), where an output of the cond is
   # unknown if it would be unknown on any of the branches.
-  unks_out: List[bool] = [False] * len(eqn.outvars)
+  unks_out: list[bool] = [False] * len(eqn.outvars)
   for jaxpr in branches:
     _, _, unks_out_, _, _ = pe.partial_eval_jaxpr_custom(
         jaxpr.jaxpr, in_unknowns=ops_uk, in_inst=True,
@@ -520,9 +520,9 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 
   # Next, use the computed output unknowns to build a known jaxpr and a staged
   # jaxpr for each branch.
-  branches_known_ : List[core.ClosedJaxpr] = []
-  branches_staged_: List[core.ClosedJaxpr] = []
-  branch_res_avals: List[core.AbstractValue] = []
+  branches_known_ : list[core.ClosedJaxpr] = []
+  branches_staged_: list[core.ClosedJaxpr] = []
+  branch_res_avals: list[core.AbstractValue] = []
   for jaxpr in branches:
     jaxpr_known, jaxpr_staged, _, inst_out, num_res = \
         pe.partial_eval_jaxpr_custom(
@@ -653,13 +653,13 @@ def _ordered_unique(xs):
   d = collections.OrderedDict((x, None) for x in xs)
   return list(d.keys())
 
-def _cond_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn,
-                   ) -> Tuple[List[bool], core.JaxprEqn]:
+def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
+                   ) -> tuple[list[bool], core.JaxprEqn]:
   closed_branches = eqn.params['branches']
   branches = [closed_jaxpr.jaxpr for closed_jaxpr in closed_branches]
 
   # First, compute which inputs are used in any branch (not including `pred`).
-  used_inputs: List[bool] = [False] * (len(eqn.invars) - 1)  # -1 for pred
+  used_inputs: list[bool] = [False] * (len(eqn.invars) - 1)  # -1 for pred
   for jaxpr in branches:
     _, used_inputs_ = pe.dce_jaxpr(jaxpr, used_outputs, instantiate=False)
     used_inputs = map(operator.or_, used_inputs, used_inputs_)

@@ -17,7 +17,7 @@ import dataclasses
 from functools import partial
 import operator
 
-from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tuple, Union
+from typing import Any, Callable, Optional, Protocol, Sequence, Union
 
 import numpy as np
 
@@ -55,7 +55,7 @@ PyTreeDef = tree_util.PyTreeDef
 
 def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any], * ,
                     should_discharge: Union[bool, Sequence[bool]] = True
-                    ) -> Tuple[core.Jaxpr, List[Any]]:
+                    ) -> tuple[core.Jaxpr, list[Any]]:
   """Converts a jaxpr that takes in `Ref`s into one that doesn't."""
   if isinstance(should_discharge, bool):
     should_discharge = [should_discharge] * len(jaxpr.invars)
@@ -69,7 +69,7 @@ def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any], * ,
 
 @dataclasses.dataclass
 class Environment:
-  env: Dict[core.Var, Any]
+  env: dict[core.Var, Any]
 
   def read(self, v: core.Atom) -> Any:
     if type(v) is core.Literal:
@@ -84,7 +84,7 @@ class DischargeRule(Protocol):
 
   def __call__(self, in_avals: Sequence[core.AbstractValue],
       out_avals: Sequence[core.AbstractValue], *args: Any,
-      **params: Any) -> Tuple[Sequence[Optional[Any]], Sequence[Any]]:
+      **params: Any) -> tuple[Sequence[Optional[Any]], Sequence[Any]]:
     ...
 
 _discharge_rules: dict[core.Primitive, DischargeRule] = {}
@@ -327,7 +327,7 @@ ad.primitive_jvps[run_state_p] = _run_state_jvp
 _save_everything = lambda *_, **__: True
 
 def _convert_outputs_to_writes(
-    jaxpr: core.Jaxpr) -> Tuple[core.Jaxpr, List[core.ShapedArray]]:
+    jaxpr: core.Jaxpr) -> tuple[core.Jaxpr, list[core.ShapedArray]]:
   assert not jaxpr.constvars, "Jaxpr shouldn't have constvars."
 
   in_avals = [v.aval for v in jaxpr.invars]
@@ -677,7 +677,7 @@ def _run_state_discharge_rule(in_avals: Sequence[core.AbstractValue],
 
 def initial_style_jaxpr(
     fun: Callable, in_tree: PyTreeDef, in_avals: Sequence[core.AbstractValue]
-  ) -> Tuple[core.Jaxpr, List[Any], PyTreeDef]:
+  ) -> tuple[core.Jaxpr, list[Any], PyTreeDef]:
   return _initial_style_jaxpr(fun, in_tree, tuple(in_avals))
 
 @weakref_lru_cache

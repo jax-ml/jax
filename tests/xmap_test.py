@@ -18,7 +18,7 @@ import math
 import os
 import re
 from itertools import product, permutations
-from typing import (Tuple, List, Dict, Generator, Iterator, Union, Optional)
+from typing import Generator, Iterator, Union, Optional
 from unittest import SkipTest
 
 import numpy as np
@@ -132,10 +132,10 @@ core.axis_substitution_rules[constant_introducing_p] = partial(
 
 # -------------------- Axis resources generation --------------------
 
-AxisResources = Dict[str, Union[str, Tuple[str, ...]]]
+AxisResources = dict[str, Union[str, tuple[str, ...]]]
 
-def schedules(sizes: Dict[str, int]
-              ) -> Generator[Tuple[AxisResources, jtu.MeshSpec], None, None]:
+def schedules(sizes: dict[str, int]
+              ) -> Generator[tuple[AxisResources, jtu.MeshSpec], None, None]:
   """Test utility generating xmap parallel schedules from logical names & sizes.
 
   Args:
@@ -201,10 +201,10 @@ def schedules(sizes: Dict[str, int]
     ({'j': 'rj', 'i': ('r1i', 'r2i')}, [('rj', 4), ('r1i', 1), ('r2i', 2)])
     ({'j': 'rj', 'i': ('r1i', 'r2i')}, [('rj', 4), ('r1i', 2), ('r2i', 1)])
   """
-  def divisors(n: int) -> List[int]:
+  def divisors(n: int) -> list[int]:
     return [m for m in range(1, n + 1) if not n % m]
 
-  def divisors2(n: int) -> Iterator[Tuple[int, int]]:
+  def divisors2(n: int) -> Iterator[tuple[int, int]]:
     for k1 in divisors(n):
       for k2 in divisors(n // k1):
         yield (k1, k2)
@@ -1209,9 +1209,9 @@ class NewPrimitiveTestSPMD(SPMDTestMixin, NewPrimitiveTest):
   pass
 
 
-AxisIndices = Tuple[int, ...]
-MatchedAxisIndices = Tuple[AxisIndices, AxisIndices]
-AxisNames = Tuple[str, ...]
+AxisIndices = tuple[int, ...]
+MatchedAxisIndices = tuple[AxisIndices, AxisIndices]
+AxisNames = tuple[str, ...]
 
 class PdotTestSpec:
   # The axis indices stored by a PdotTestSpec are all positional indices
@@ -1298,8 +1298,8 @@ def gen_axis_names():
 
 
 def schedules_from_pdot_spec(
-    spec: PdotTestSpec, lhs_shape: Tuple[int, ...], rhs_shape: Tuple[int, ...]
-    ) -> Generator[Tuple[AxisResources, jtu.MeshSpec], None, None]:
+    spec: PdotTestSpec, lhs_shape: tuple[int, ...], rhs_shape: tuple[int, ...]
+    ) -> Generator[tuple[AxisResources, jtu.MeshSpec], None, None]:
   logical_sizes = {
       name: shape[ax]
       for shape, in_axes in [(lhs_shape, spec.lhs_in_axes),

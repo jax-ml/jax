@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import functools
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Optional
 
 from jax._src import ad_util
 from jax._src import api_util
@@ -51,7 +51,7 @@ class StoreEqual(lu.Store):
 
 @util.curry
 def transformation_with_aux(
-    gen, fun: lu.WrappedFun, *gen_static_args) -> Tuple[lu.WrappedFun, Any]:
+    gen, fun: lu.WrappedFun, *gen_static_args) -> tuple[lu.WrappedFun, Any]:
   out_store = StoreEqual()
   out_thunk = lambda: out_store.val
   return fun.wrap(gen, gen_static_args, out_store), out_thunk

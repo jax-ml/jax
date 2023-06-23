@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import overload, Literal, Optional, Tuple, Union
+from typing import overload, Literal, Optional, Union
 
 import jax
 from jax import lax
@@ -32,14 +32,14 @@ def logsumexp(a: ArrayLike, axis: Optional[int] = None, b: Optional[ArrayLike] =
 
 @overload
 def logsumexp(a: ArrayLike, axis: Optional[int] = None, b: Optional[ArrayLike] = None,
-              keepdims: bool = False, *, return_sign: Literal[True]) -> Tuple[Array, Array]: ...
+              keepdims: bool = False, *, return_sign: Literal[True]) -> tuple[Array, Array]: ...
 
 @overload
 def logsumexp(a: ArrayLike, axis: Optional[int] = None, b: Optional[ArrayLike] = None,
-              keepdims: bool = False, return_sign: bool = False) -> Union[Array, Tuple[Array, Array]]: ...
+              keepdims: bool = False, return_sign: bool = False) -> Union[Array, tuple[Array, Array]]: ...
 
 def logsumexp(a: ArrayLike, axis: Optional[int] = None, b: Optional[ArrayLike] = None,
-              keepdims: bool = False, return_sign: bool = False) -> Union[Array, Tuple[Array, Array]]:
+              keepdims: bool = False, return_sign: bool = False) -> Union[Array, tuple[Array, Array]]:
   r"""Log-sum-exp reduction.
 
   Computes

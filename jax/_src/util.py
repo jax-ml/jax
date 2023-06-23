@@ -17,9 +17,8 @@ from functools import partial
 import itertools as it
 import logging
 import operator
-from typing import (Any, Callable, Generic, Iterable, Iterator, List,
-                    Optional, Sequence, Set, Tuple, TypeVar, overload,
-                    TYPE_CHECKING, cast)
+from typing import (Any, Callable, Generic, Iterable, Iterator, Optional,
+                    Sequence, TypeVar, overload, TYPE_CHECKING, cast)
 import weakref
 
 import numpy as np
@@ -43,13 +42,13 @@ if TYPE_CHECKING:
   # to that used for builtins.zip in python/typeshed. This supports
   # return types matching input types for up to three arguments.
   @overload
-  def safe_zip(__arg1: Iterable[T1]) -> List[Tuple[T1]]: ...
+  def safe_zip(__arg1: Iterable[T1]) -> list[tuple[T1]]: ...
   @overload
-  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2]) -> List[Tuple[T1, T2]]: ...
+  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2]) -> list[tuple[T1, T2]]: ...
   @overload
-  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> List[Tuple[T1, T2, T3]]: ...
+  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> list[tuple[T1, T2, T3]]: ...
   @overload
-  def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> List[Tuple[Any, ...]]: ...
+  def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> list[tuple[Any, ...]]: ...
 
   def safe_zip(*args):
     args = list(map(list, args))
@@ -77,16 +76,16 @@ if TYPE_CHECKING:
   # to that used for builtins.map in python/typeshed. This supports
   # checking input types for the callable with up to three arguments.
   @overload
-  def safe_map(f: Callable[[T1], T], __arg1: Iterable[T1]) -> List[T]: ...
+  def safe_map(f: Callable[[T1], T], __arg1: Iterable[T1]) -> list[T]: ...
 
   @overload
-  def safe_map(f: Callable[[T1, T2], T], __arg1: Iterable[T1], __arg2: Iterable[T2]) -> List[T]: ...
+  def safe_map(f: Callable[[T1, T2], T], __arg1: Iterable[T1], __arg2: Iterable[T2]) -> list[T]: ...
 
   @overload
-  def safe_map(f: Callable[[T1, T2, T3], T], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> List[T]: ...
+  def safe_map(f: Callable[[T1, T2, T3], T], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> list[T]: ...
 
   @overload
-  def safe_map(f: Callable[..., T], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> List[T]: ...
+  def safe_map(f: Callable[..., T], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> list[T]: ...
 
   def safe_map(f, *args):
     args = list(map(list, args))
@@ -108,26 +107,26 @@ else:
         assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
       return list(map(f, *args))
 
-def unzip2(xys: Iterable[Tuple[T1, T2]]
-    ) -> Tuple[Tuple[T1, ...], Tuple[T2, ...]]:
+def unzip2(xys: Iterable[tuple[T1, T2]]
+    ) -> tuple[tuple[T1, ...], tuple[T2, ...]]:
   """Unzip sequence of length-2 tuples into two tuples."""
   # Note: we deliberately don't use zip(*xys) because it is lazily evaluated,
   # is too permissive about inputs, and does not guarantee a length-2 output.
-  xs: List[T1] = []
-  ys: List[T2] = []
+  xs: list[T1] = []
+  ys: list[T2] = []
   for x, y in xys:
     xs.append(x)
     ys.append(y)
   return tuple(xs), tuple(ys)
 
-def unzip3(xyzs: Iterable[Tuple[T1, T2, T3]]
-    ) -> Tuple[Tuple[T1, ...], Tuple[T2, ...], Tuple[T3, ...]]:
+def unzip3(xyzs: Iterable[tuple[T1, T2, T3]]
+    ) -> tuple[tuple[T1, ...], tuple[T2, ...], tuple[T3, ...]]:
   """Unzip sequence of length-3 tuples into three tuples."""
   # Note: we deliberately don't use zip(*xyzs) because it is lazily evaluated,
   # is too permissive about inputs, and does not guarantee a length-3 output.
-  xs: List[T1] = []
-  ys: List[T2] = []
-  zs: List[T3] = []
+  xs: list[T1] = []
+  ys: list[T2] = []
+  zs: list[T3] = []
   for x, y, z in xyzs:
     xs.append(x)
     ys.append(y)
@@ -140,7 +139,7 @@ def subvals(lst, replace):
     lst[i] = v
   return tuple(lst)
 
-def split_list(args: Sequence[T], ns: Sequence[int]) -> List[List[T]]:
+def split_list(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
   args = list(args)
   lists = []
   for n in ns:
@@ -149,14 +148,14 @@ def split_list(args: Sequence[T], ns: Sequence[int]) -> List[List[T]]:
   lists.append(args)
   return lists
 
-def partition_list(bs: Sequence[bool], l: Sequence[T]) -> Tuple[List[T], List[T]]:
+def partition_list(bs: Sequence[bool], l: Sequence[T]) -> tuple[list[T], list[T]]:
   assert len(bs) == len(l)
   lists = [], []  # type: ignore
   for b, x in zip(bs, l):
     lists[b].append(x)
   return lists
 
-def merge_lists(bs: Sequence[bool], l0: Sequence[T], l1: Sequence[T]) -> List[T]:
+def merge_lists(bs: Sequence[bool], l0: Sequence[T], l1: Sequence[T]) -> list[T]:
   assert sum(bs) == len(l1) and len(bs) - sum(bs) == len(l0)
   i0, i1 = iter(l0), iter(l1)
   out = [next(i1) if b else next(i0) for b in bs]
@@ -170,7 +169,7 @@ def split_dict(dct, names):
   assert not dct
   return lst
 
-def concatenate(xs: Iterable[Sequence[T]]) -> List[T]:
+def concatenate(xs: Iterable[Sequence[T]]) -> list[T]:
   """Concatenates/flattens a list of lists."""
   return list(it.chain.from_iterable(xs))
 
@@ -178,7 +177,7 @@ flatten = concatenate
 
 _unflatten_done = object()
 
-def unflatten(xs: Iterable[T], ns: Sequence[int]) -> List[List[T]]:
+def unflatten(xs: Iterable[T], ns: Sequence[int]) -> list[list[T]]:
   """Splits `xs` into subsequences of lengths `ns`.
 
   Unlike `split_list`, the `sum(ns)` must be equal to `len(xs)`."""
@@ -499,8 +498,8 @@ def distributed_debug_log(*pairs):
 
 
 class OrderedSet(Generic[T]):
-  elts_set: Set[T]
-  elts_list: List[T]
+  elts_set: set[T]
+  elts_list: list[T]
 
   def __init__(self):
     self.elts_set = set()

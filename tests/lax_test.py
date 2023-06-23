@@ -20,7 +20,6 @@ import operator
 import types
 import unittest
 from unittest import SkipTest
-from typing import Tuple
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -2920,7 +2919,7 @@ def jake_abstract_eval(x):
 # runtime ('outside jit') data types
 
 class FooArray:
-  shape: Tuple[int, ...]
+  shape: tuple[int, ...]
   data: jax.Array
 
   def __init__(self, shape, data):

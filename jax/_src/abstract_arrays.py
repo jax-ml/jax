@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Set
 
 import numpy as np
 
@@ -40,7 +39,7 @@ def zeros_like_array(x):
   aval = ShapedArray(np.shape(x), dtype, weak_type=weak_type)
   return ad_util.zeros_like_aval(aval)
 
-numpy_scalar_types: Set[type] = {  # pylint: disable=g-bare-generic
+numpy_scalar_types: set[type] = {  # pylint: disable=g-bare-generic
     np.int8, np.int16, np.int32, np.int64,
     np.uint8, np.uint16, np.uint32, np.uint64,
     np.complex64, np.complex128,
@@ -52,7 +51,7 @@ if dtypes.int4 is not None:
 if dtypes.uint4 is not None:
   numpy_scalar_types.add(dtypes.uint4)
 
-array_types: Set[type] = {np.ndarray} | numpy_scalar_types  # pylint: disable=g-bare-generic
+array_types: set[type] = {np.ndarray} | numpy_scalar_types  # pylint: disable=g-bare-generic
 
 def canonical_concrete_aval(val, weak_type=None):
   return ConcreteArray(dtypes.canonicalize_dtype(np.result_type(val)), val,

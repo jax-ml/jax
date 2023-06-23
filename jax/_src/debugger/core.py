@@ -16,7 +16,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import threading
-from typing import Any, Dict, Hashable, List, Optional, Protocol, Tuple
+from typing import Any, Hashable, Optional, Protocol
 
 import numpy as np
 
@@ -72,10 +72,10 @@ def _safe_flatten_dict(dct: dict[Any, Any]
 class DebuggerFrame:
   """Encapsulates Python frame information."""
   filename: str
-  locals: Dict[str, Any]
-  globals: Dict[str, Any]
+  locals: dict[str, Any]
+  globals: dict[str, Any]
   code_context: str
-  source: List[str]
+  source: list[str]
   lineno: int
   offset: Optional[int]
 
@@ -131,10 +131,10 @@ class DebuggerFrame:
 
 class Debugger(Protocol):
 
-  def __call__(self, frames: List[DebuggerFrame], thread_id: Optional[int],
+  def __call__(self, frames: list[DebuggerFrame], thread_id: Optional[int],
       **kwargs: Any) -> None:
     ...
-_debugger_registry: Dict[str, Tuple[int, Debugger]] = {}
+_debugger_registry: dict[str, tuple[int, Debugger]] = {}
 
 
 def get_debugger(backend: Optional[str] = None) -> Debugger:

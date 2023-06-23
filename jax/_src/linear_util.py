@@ -65,7 +65,7 @@ from __future__ import annotations
 
 from functools import partial
 import operator
-from typing import Any, Tuple, Callable, Optional, NamedTuple
+from typing import Any, Callable, Optional, NamedTuple
 import weakref
 
 from jax._src.tree_util import tree_map
@@ -242,7 +242,7 @@ def transformation(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
 
 @curry
 def transformation_with_aux(gen, fun: WrappedFun, *gen_static_args,
-                            use_eq_store=False) -> Tuple[WrappedFun, Any]:
+                            use_eq_store=False) -> tuple[WrappedFun, Any]:
   """Adds one more transformation with auxiliary output to a WrappedFun."""
   out_store = Store() if not use_eq_store else EqualStore()
   out_thunk = lambda: out_store.val
@@ -303,8 +303,8 @@ class TracingDebugInfo(NamedTuple):
   # TODO(mattjj): delete partial_eval.DebugInfo, replace all uses with this cls
   traced_for: str             # e.g. 'jit', 'scan', etc
   func_src_info: str          # e.g. f'{fun.__name__} at {filename}:{lineno}'
-  arg_names: Tuple[str, ...]  # e.g. ('args[0]', ... )
-  result_paths: Optional[Callable[[], Tuple[str, ...]]]
+  arg_names: tuple[str, ...]  # e.g. ('args[0]', ... )
+  result_paths: Optional[Callable[[], tuple[str, ...]]]
 
 def add_debug_info(f: WrappedFun, debug_info: Optional[TracingDebugInfo]
                    ) -> WrappedFun:

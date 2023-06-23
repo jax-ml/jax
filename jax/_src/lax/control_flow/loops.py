@@ -16,7 +16,7 @@ from functools import partial
 import inspect
 import itertools
 import operator
-from typing import Any, Callable, List, Optional, Sequence, Tuple, TypeVar
+from typing import Any, Callable, Optional, Sequence, TypeVar
 
 import jax
 import weakref
@@ -96,12 +96,12 @@ X = TypeVar('X')
 Y = TypeVar('Y')
 
 @api_boundary
-def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
+def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
          init: Carry,
          xs: X,
          length: Optional[int] = None,
          reverse: bool = False,
-         unroll: int = 1) -> Tuple[Carry, Y]:
+         unroll: int = 1) -> tuple[Carry, Y]:
   """Scan a function over leading array axes while carrying along state.
 
   The `Haskell-like type signature`_ in brief is
@@ -820,8 +820,8 @@ def _scan_padding_rule(in_avals, out_avals, *args, jaxpr, **params):
   padded_jaxpr = core.ClosedJaxpr(*pe.pad_jaxpr(jaxpr.jaxpr, jaxpr.consts))
   return scan_p.bind(*args, jaxpr=padded_jaxpr, **params)
 
-def _scan_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn
-                   ) -> Tuple[List[bool], core.JaxprEqn]:
+def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
+                   ) -> tuple[list[bool], core.JaxprEqn]:
   jaxpr = eqn.params['jaxpr']
   num_consts, num_carry = eqn.params['num_consts'], eqn.params['num_carry']
   num_xs = len(jaxpr.in_avals) - num_consts - num_carry

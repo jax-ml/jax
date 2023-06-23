@@ -19,8 +19,7 @@ import inspect
 import itertools as it
 import math
 import operator as op
-from typing import (Any, Callable, Dict, Hashable, List, Optional, Sequence,
-                    Set, Tuple, TypeVar, Union, cast)
+from typing import Any, Callable, Hashable, Optional, Sequence, TypeVar, Union
 
 import numpy as np
 
@@ -141,7 +140,7 @@ def _shard_map(f: Callable, mesh: Mesh, in_specs: Specs,
 
 # Internally use AxisNames = Dict[int, Tuple[AxisName, ...]], not PartitionSpecs
 AxisName = Hashable
-AxisNames = Dict[int, Tuple[AxisName, ...]]  # TODO(mattjj): make it hashable
+AxisNames = dict[int, tuple[AxisName, ...]]  # TODO(mattjj): make it hashable
 def _canonicalize_spec(spec: PartitionSpec) -> AxisNames:
   if isinstance(spec, PartitionSpec):
     return {i: names if isinstance(names, tuple) else (names,)
@@ -175,7 +174,7 @@ no_fail = NoFail()
 
 def _check_specs_vs_args(
     f: Callable, mesh: Mesh, in_tree: PyTreeDef, in_specs: Specs,
-    in_specs_flat: List[P], xs: List) -> None:
+    in_specs_flat: list[P], xs: list) -> None:
   in_avals = map(shaped_abstractify, xs)
   fail = [a if not len(p) <= a.ndim else no_fail
           for p, a in zip(in_specs_flat, in_avals)]
@@ -192,7 +191,7 @@ def _check_specs_vs_args(
 
 def _spec_rank_error(
     error_type: SpecErrorType, f: Callable, tree: PyTreeDef, specs: Specs,
-    fails: List[Union[core.ShapedArray, NoFail]]) -> str:
+    fails: list[Union[core.ShapedArray, NoFail]]) -> str:
   fun_name = getattr(f, '__name__', str(f))
   if error_type == SpecErrorType.input:
     prefix, base = 'in', 'args'
@@ -228,7 +227,7 @@ def _spec_rank_error(
 
 def _spec_divisibility_error(
     f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
-    fails: List[Union[core.ShapedArray, NoFail]]) -> str:
+    fails: list[Union[core.ShapedArray, NoFail]]) -> str:
   ba = _try_infer_args(f, tree)
   fun_name = getattr(f, '__name__', str(f))
   msgs = []
@@ -264,7 +263,7 @@ def _spec_divisibility_error(
   return msg
 
 def _rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
-               fails: List[Union[Set, NoFail]]) -> str:
+               fails: list[Union[set, NoFail]]) -> str:
   fun_name = getattr(f, '__name__', str(f))
   msgs = []
   for (spec_key, spec), (fail_key, rep) in _iter_paths(tree, specs, fails):
@@ -298,7 +297,7 @@ def _rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
          "check_rep=False argument to shard_map.")
   return msg
 
-def _unmentioned(mesh: Mesh, names: AxisNames) -> List[AxisName]:
+def _unmentioned(mesh: Mesh, names: AxisNames) -> list[AxisName]:
   name_set = {n for ns in names.values() for n in ns}
   return [n for n in mesh.axis_names if n not in name_set]
 
@@ -310,8 +309,8 @@ def _try_infer_args(f, tree):
     return None
 
 T = TypeVar('T')
-def _iter_paths(tree: PyTreeDef, specs: Specs, fails: List[Union[T, NoFail]]
-                ) -> List[Tuple[Tuple[KeyPath, P], Tuple[KeyPath, T]]]:
+def _iter_paths(tree: PyTreeDef, specs: Specs, fails: list[Union[T, NoFail]]
+                ) -> list[tuple[tuple[KeyPath, P], tuple[KeyPath, T]]]:
   failures = tree_unflatten(tree, fails)
   failures_aug = generate_key_paths(failures)
   specs_ = tree_unflatten(tree_structure(specs), generate_key_paths(specs))
@@ -330,8 +329,8 @@ class ShardMapPrimitive(core.Primitive):
   multiple_results = True
 
   def bind(self, fun: lu.WrappedFun, *args: MaybeTracer, mesh: Mesh,
-           in_names: Tuple[AxisNames, ...],
-           out_names_thunk: Callable[[], Tuple[AxisNames, ...]],
+           in_names: tuple[AxisNames, ...],
+           out_names_thunk: Callable[[], tuple[AxisNames, ...]],
            check_rep: bool) -> Sequence[MaybeTracer]:
     top_trace = core.find_top_trace(args)
     fun, env_todo = process_env_traces(fun, top_trace.level, mesh,
@@ -387,8 +386,8 @@ def process_env_traces(level: int, mesh, in_names, out_names_thunk, check_rep,
 def _shard_map_staging(
     trace: pe.DynamicJaxprTrace, prim: core.Primitive, f: lu.WrappedFun,
     in_tracers: Sequence[pe.DynamicJaxprTracer], *, mesh: Mesh,
-    in_names: Tuple[AxisNames, ...],
-    out_names_thunk: Callable[[], Tuple[AxisNames, ...]],
+    in_names: tuple[AxisNames, ...],
+    out_names_thunk: Callable[[], tuple[AxisNames, ...]],
     check_rep: bool,
   ) -> Sequence[pe.DynamicJaxprTracer]:
   in_avals = [t.aval for t in in_tracers]
@@ -465,17 +464,17 @@ def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_names, out_names,
   return out_avals, jaxpr.effects
 core.custom_typechecks[shard_map_p] = _shard_map_typecheck
 
-def _in_names_to_rep(mesh: Mesh, names: AxisNames) -> Set[AxisName]:
+def _in_names_to_rep(mesh: Mesh, names: AxisNames) -> set[AxisName]:
   return set(mesh.axis_names) - set(n for ns in names.values() for n in ns)
 
-def _output_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[Set[AxisName]],
-                ) -> Sequence[Set[AxisName]]:
-  env: Dict[core.Var, Set[AxisName]] = {}
+def _output_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[set[AxisName]],
+                ) -> Sequence[set[AxisName]]:
+  env: dict[core.Var, set[AxisName]] = {}
 
-  def read(x: core.Atom) -> Set[AxisName]:
+  def read(x: core.Atom) -> set[AxisName]:
     return env[x] if type(x) is core.Var else set(mesh.axis_names)
 
-  def write(v: core.Var, val: Set[AxisName]) -> None:
+  def write(v: core.Var, val: set[AxisName]) -> None:
     env[v] = val
 
   map(write, jaxpr.constvars, [set(mesh.axis_names)] * len(jaxpr.constvars))
@@ -492,7 +491,7 @@ def _output_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[Set[AxisName]],
     core.clean_up_dead_vars(e, env, last_used)
   return map(read, jaxpr.outvars)
 
-def _valid_repeats(mesh: Mesh, rep: Set[AxisName], dst: AxisNames) -> bool:
+def _valid_repeats(mesh: Mesh, rep: set[AxisName], dst: AxisNames) -> bool:
   return set(_unmentioned(mesh, dst)).issubset(rep)
 
 # Lowering
@@ -597,7 +596,7 @@ def _check_reps(mesh, names, reps):
   if any(f is not no_fail for f in fail): raise _RepError(fail)
 class _RepError(Exception): pass
 
-def _match_spec(mesh: Mesh, rep: Set[AxisName], dst: AxisNames, x: JaxType
+def _match_spec(mesh: Mesh, rep: set[AxisName], dst: AxisNames, x: JaxType
                 ) -> JaxType:
   with core.eval_context():
     return jax.jit(HashablePartial(_match, mesh, tuple(dst.items())))(x)
@@ -693,7 +692,7 @@ class ShardMapTrace(core.Trace):
 
 
 class ShardMapTracer(core.Tracer):
-  rep: Set[AxisName]
+  rep: set[AxisName]
   val: JaxType
 
   def __init__(self, trace, rep, val):
@@ -731,7 +730,7 @@ def _prim_applier(prim, params_tup, mesh, *args):
   spec = P(mesh.axis_names)
   return shard_map(apply, mesh, spec, spec, False)(*args)
 
-eager_rules: Dict[core.Primitive, Callable] = {}
+eager_rules: dict[core.Primitive, Callable] = {}
 
 # TODO(mattjj): working around an apparent XLA or PjRt bug, remove eventually
 def _debug_callback_eager_rule(mesh, *args, callback: Callable[..., Any],
@@ -755,14 +754,14 @@ eager_rules[dispatch.device_put_p] = _device_put_eager_rule
 
 # Static replication checking
 
-def _rep_rule(prim: core.Primitive, mesh: Mesh, *in_rep: Set[AxisName],
-              **params: Any) -> Union[Set[AxisName], List[Set[AxisName]]]:
+def _rep_rule(prim: core.Primitive, mesh: Mesh, *in_rep: set[AxisName],
+              **params: Any) -> Union[set[AxisName], list[set[AxisName]]]:
   raise NotImplementedError(
       f"No replication rule for {prim}. As a workaround, pass the "
       "`check_rep=False` argument to `shard_map`. To get this fixed, open an "
       "issue at https://github.com/google/jax/issues")
 
-_rep_rules: Dict[core.Primitive, Callable] = {}
+_rep_rules: dict[core.Primitive, Callable] = {}
 register_rule = lambda prim: lambda rule: _rep_rules.setdefault(prim, rule)
 register_standard = lambda prim: _rep_rules.setdefault(prim, _standard_rep_rule)
 
@@ -845,8 +844,8 @@ def _scan_rule(mesh, *in_rep, jaxpr, num_consts, num_carry, linear, length,
 def _shard_map_batch(
     trace: batching.BatchTrace, prim: core.Primitive, fun: lu.WrappedFun,
     in_tracers: Sequence[batching.BatchTracer], mesh: Mesh,
-    in_names: Tuple[AxisNames, ...],
-    out_names_thunk: Callable[[], Tuple[AxisNames, ...]],
+    in_names: tuple[AxisNames, ...],
+    out_names_thunk: Callable[[], tuple[AxisNames, ...]],
     check_rep: bool) -> Sequence[batching.BatchTracer]:
   in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in in_tracers)
   if all(bdim is batching.not_mapped for bdim in in_dims):
@@ -1097,8 +1096,8 @@ core.axis_substitution_rules[shard_map_p] = _shard_map_axis_subst
 def _partial_eval_jaxpr_custom_rule(
     saveable: Callable[..., bool], unks_in: Sequence[bool],
     inst_in: Sequence[bool], eqn: core.JaxprEqn
-) -> Tuple[core.JaxprEqn, core.JaxprEqn, Sequence[bool], Sequence[bool],
-           List[core.Var]]:
+) -> tuple[core.JaxprEqn, core.JaxprEqn, Sequence[bool], Sequence[bool],
+           list[core.Var]]:
   jaxpr, mesh = eqn.params['jaxpr'], eqn.params['mesh']
   with core.extend_axis_env_nd(mesh.shape.items()):
     jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = \
@@ -1171,8 +1170,8 @@ def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
 # DCE
 
 # TODO(mattjj): de-duplicate with pe.dce_jaxpr_call_rule, and/or _pmap_dce_rule?
-def _shard_map_dce(used_outputs: List[bool], eqn: core.JaxprEqn
-                   ) -> Tuple[List[bool], Optional[core.JaxprEqn]]:
+def _shard_map_dce(used_outputs: list[bool], eqn: core.JaxprEqn
+                   ) -> tuple[list[bool], Optional[core.JaxprEqn]]:
   with core.extend_axis_env_nd(eqn.params['mesh'].shape.items()):
     jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
   if not any(used_inputs) and not any(used_outputs) and not jaxpr.effects:

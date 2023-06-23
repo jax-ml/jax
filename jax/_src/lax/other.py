@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-from typing import Any, Optional, Sequence, Tuple, Union, cast as type_cast
+from typing import Any, Optional, Sequence, Union, cast as type_cast
 
 import jax
 from jax._src.numpy import lax_numpy as jnp
@@ -26,7 +26,7 @@ def conv_general_dilated_patches(
     lhs: jax.typing.ArrayLike,
     filter_shape: Sequence[int],
     window_strides: Sequence[int],
-    padding: Union[str, Sequence[Tuple[int, int]]],
+    padding: Union[str, Sequence[tuple[int, int]]],
     lhs_dilation: Optional[Sequence[int]] = None,
     rhs_dilation: Optional[Sequence[int]] = None,
     dimension_numbers: Optional[convolution.ConvGeneralDilatedDimensionNumbers] = None,
@@ -122,7 +122,7 @@ def conv_general_dilated_local(
     lhs: jax.typing.ArrayLike,
     rhs: jax.typing.ArrayLike,
     window_strides: Sequence[int],
-    padding: Union[str, Sequence[Tuple[int, int]]],
+    padding: Union[str, Sequence[tuple[int, int]]],
     filter_shape: Sequence[int],
     lhs_dilation: Optional[Sequence[int]] = None,
     rhs_dilation: Optional[Sequence[int]] = None,

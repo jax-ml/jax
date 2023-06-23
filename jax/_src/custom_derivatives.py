@@ -15,8 +15,7 @@
 import dataclasses
 from functools import update_wrapper, reduce, partial
 import inspect
-from typing import (
-  Any, Callable, Generic, List, Optional, Sequence, Tuple, TypeVar)
+from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
 
 from jax._src import core
 from jax._src import custom_api_util
@@ -137,13 +136,13 @@ class custom_jvp(Generic[ReturnValue]):
   .. _tutorial: https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
   """
   fun: Callable[..., ReturnValue]
-  nondiff_argnums: Tuple[int, ...]
-  jvp: Optional[Callable[..., Tuple[ReturnValue, ReturnValue]]] = None
+  nondiff_argnums: tuple[int, ...]
+  jvp: Optional[Callable[..., tuple[ReturnValue, ReturnValue]]] = None
   symbolic_zeros: bool = False
 
   def __init__(self,
                fun: Callable[..., ReturnValue],
-               nondiff_argnums: Tuple[int, ...] = (),
+               nondiff_argnums: tuple[int, ...] = (),
                ):
     update_wrapper(self, fun)
     self.fun = fun
@@ -152,9 +151,9 @@ class custom_jvp(Generic[ReturnValue]):
   __getattr__ = custom_api_util.forward_attr
 
   def defjvp(self,
-             jvp: Callable[..., Tuple[ReturnValue, ReturnValue]],
+             jvp: Callable[..., tuple[ReturnValue, ReturnValue]],
              symbolic_zeros: bool = False,
-             ) -> Callable[..., Tuple[ReturnValue, ReturnValue]]:
+             ) -> Callable[..., tuple[ReturnValue, ReturnValue]]:
     """Define a custom JVP rule for the function represented by this instance.
 
     Args:
@@ -491,19 +490,19 @@ class custom_vjp(Generic[ReturnValue]):
 
   def __init__(self,
                fun: Callable[..., ReturnValue],
-               nondiff_argnums: Tuple[int, ...] = ()):
+               nondiff_argnums: tuple[int, ...] = ()):
     update_wrapper(self, fun)
     self.fun = fun
     self.nondiff_argnums = nondiff_argnums
-    self.fwd: Optional[Callable[..., Tuple[ReturnValue, Any]]] = None
-    self.bwd: Optional[Callable[..., Tuple[Any, ...]]] = None
+    self.fwd: Optional[Callable[..., tuple[ReturnValue, Any]]] = None
+    self.bwd: Optional[Callable[..., tuple[Any, ...]]] = None
     self.symbolic_zeros = False
 
   __getattr__ = custom_api_util.forward_attr
 
   def defvjp(self,
-             fwd: Callable[..., Tuple[ReturnValue, Any]],
-             bwd: Callable[..., Tuple[Any, ...]],
+             fwd: Callable[..., tuple[ReturnValue, Any]],
+             bwd: Callable[..., tuple[Any, ...]],
              symbolic_zeros: bool = False,
              ) -> None:
     """Define a custom VJP rule for the function represented by this instance.
@@ -831,7 +830,7 @@ mlir.register_lowering(custom_vjp_call_jaxpr_p, mlir.lower_fun(
 
 def _custom_vjp_call_jaxpr_jvp(
     primals, tangents, *, fun_jaxpr: core.ClosedJaxpr,
-    fwd_jaxpr_thunk: Callable[..., Tuple[core.Jaxpr, Sequence[Any]]],
+    fwd_jaxpr_thunk: Callable[..., tuple[core.Jaxpr, Sequence[Any]]],
     num_consts: int, bwd: Callable, out_trees: Callable, symbolic_zeros: bool):
   _, args = split_list(primals, [num_consts])
   consts_dot, args_dot = split_list(tangents, [num_consts])
@@ -857,7 +856,7 @@ ad.primitive_jvps[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_jvp
 def _custom_vjp_call_jaxpr_vmap(
     spmd_axis_name, axis_size, axis_name, main_type, args, in_dims, *,
     fun_jaxpr: core.ClosedJaxpr,
-    fwd_jaxpr_thunk: Callable[..., Tuple[core.Jaxpr, Sequence[Any]]],
+    fwd_jaxpr_thunk: Callable[..., tuple[core.Jaxpr, Sequence[Any]]],
     num_consts: int, bwd: Callable, out_trees: Callable, symbolic_zeros: bool):
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
@@ -1006,7 +1005,7 @@ class Residuals:
     return cls(jaxpr, in_tree, out_tree, consts)
 
 
-def closure_convert(fun: Callable, *example_args) -> Tuple[Callable, List[Any]]:
+def closure_convert(fun: Callable, *example_args) -> tuple[Callable, list[Any]]:
   """Closure conversion utility, for use with higher-order custom derivatives.
 
   To define custom derivatives such as with ``jax.custom_vjp(f)``, the target

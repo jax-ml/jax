@@ -15,7 +15,7 @@
 import enum
 from functools import partial
 import math
-from typing import Callable, List, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Callable, NamedTuple, Optional, Sequence, Union
 import weakref
 
 import numpy as np
@@ -178,9 +178,9 @@ class GatherDimensionNumbers(NamedTuple):
   implicit; there is always an index vector dimension and it must always be the
   last dimension. To gather scalar indices, add a trailing dimension of size 1.
   """
-  offset_dims: Tuple[int, ...]
-  collapsed_slice_dims: Tuple[int, ...]
-  start_index_map: Tuple[int, ...]
+  offset_dims: tuple[int, ...]
+  collapsed_slice_dims: tuple[int, ...]
+  start_index_map: tuple[int, ...]
 
 
 class GatherScatterMode(enum.Enum):
@@ -692,7 +692,7 @@ def dynamic_slice_in_dim(operand: Union[Array, np.ndarray],
                          start_index: ArrayLike,
                          slice_size: int, axis: int = 0) -> Array:
   """Convenience wrapper around dynamic_slice applying to one dimension."""
-  start_indices: List[ArrayLike] = [lax._const(start_index, 0)] * operand.ndim
+  start_indices: list[ArrayLike] = [lax._const(start_index, 0)] * operand.ndim
   slice_sizes = list(operand.shape)
 
   axis = int(axis)
@@ -719,7 +719,7 @@ def dynamic_update_slice_in_dim(operand: Union[Array, np.ndarray],
      in a single ``axis``.
   """
   axis = int(axis)
-  start_indices: List[ArrayLike] = [lax._const(start_index, 0)] * lax._ndim(operand)
+  start_indices: list[ArrayLike] = [lax._const(start_index, 0)] * lax._ndim(operand)
   start_indices[axis] = start_index
   return dynamic_update_slice(operand, update, start_indices)
 
@@ -2149,7 +2149,7 @@ mlir.register_lowering(scatter_add_p, _scatter_add_lower_gpu, platform="gpu")
 def _dynamic_slice_indices(
     operand: Union[Array, np.ndarray],
     start_indices: Union[Union[Array, np.ndarray], Sequence[ArrayLike]]
-  ) -> List[ArrayLike]:
+  ) -> list[ArrayLike]:
   # Normalize the start_indices w.r.t. operand.shape
   if len(start_indices) != operand.ndim:
     msg = ("Length of slice indices must match number of operand dimensions ({} "
@@ -2160,7 +2160,7 @@ def _dynamic_slice_indices(
       raise ValueError("Slice indices must be a 1D sequence, got {}"
                        .format(start_indices.shape))  # type: ignore[union-attr]
     start_indices = list(start_indices)
-  result: List[ArrayLike] = []
+  result: list[ArrayLike] = []
   for i, d in zip(start_indices, operand.shape):
     # We test whether i and d are static to avoid unnecessary staging.
     if isinstance(i, (int, np.integer)) and core.is_constant_dim(d):

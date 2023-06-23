@@ -17,7 +17,7 @@ import dataclasses
 from functools import partial, wraps
 import math
 import string
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple
+from typing import Any, Callable, Optional, Sequence
 
 from jax._src import core
 from jax import lax
@@ -35,7 +35,7 @@ import tensorflow as tf  # type: ignore[import]
 # implementations are workarounds, making use of TF ops that do work when XLA is
 # not linked in. They are only used when the argument `enable_xla=False` when
 # calling jax2tf.convert().
-tf_impl_no_xla: Dict[core.Primitive, Callable[..., Any]] = {}
+tf_impl_no_xla: dict[core.Primitive, Callable[..., Any]] = {}
 
 
 TfVal = Any
@@ -70,7 +70,7 @@ def _invert_permutation(perm):
   return tuple(perm.index(i) for i in range(len(perm)))
 
 
-def _transpose_with_shape(x: TfVal, x_shape: core.Shape, permutation) -> Tuple[TfVal, core.Shape]:
+def _transpose_with_shape(x: TfVal, x_shape: core.Shape, permutation) -> tuple[TfVal, core.Shape]:
   """Computes transposition of x and its shape.
 
   x_shape matches x.shape in the known dimensions, and it has dimension
@@ -248,7 +248,7 @@ def _conv_general_dilated(
     lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers: lax.ConvDimensionNumbers, feature_group_count: int,
     batch_group_count: int,
-    precision: Optional[Tuple[PrecisionType, PrecisionType]],
+    precision: Optional[tuple[PrecisionType, PrecisionType]],
     preferred_element_type: Optional[DType],
     _in_avals: Sequence[core.ShapedArray], _out_aval: core.ShapedArray):
   """Implementation of lax.conv_general_dilated_p using XlaConv."""
@@ -358,7 +358,7 @@ tf_impl_no_xla[lax.conv_general_dilated_p] = _conv_general_dilated
 
 
 def _dot_general(lhs, rhs, *, dimension_numbers,
-                 precision: Optional[Tuple[PrecisionType, PrecisionType]],
+                 precision: Optional[tuple[PrecisionType, PrecisionType]],
                  preferred_element_type: Optional[DType],
                  _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray):
@@ -677,8 +677,8 @@ def _reduce_monoid(operand, window_dimensions, window_strides, padding,
 def _reduce_window(*args, jaxpr, consts, window_dimensions,
                    window_strides, padding, base_dilation, window_dilation,
                    _in_avals: Sequence[core.ShapedArray],
-                   _out_aval: Tuple[core.ShapedArray, ...]
-                   ) -> Tuple[TfVal, ...]:
+                   _out_aval: tuple[core.ShapedArray, ...]
+                   ) -> tuple[TfVal, ...]:
   assert len(consts) == 0, "Reduction computation cannot have constants"
   operands, init_values = util.split_list(args, [len(args) // 2])
 
@@ -953,7 +953,7 @@ def _gather_with_batch_dim(args: GatherArgs):
   return result
 
 
-def _gather_generate_indices(shape: Tuple[int, ...]):
+def _gather_generate_indices(shape: tuple[int, ...]):
   """
   Returns the indices of the according to `shape`:
     each element in the output is the index of an element of an array
@@ -1145,7 +1145,7 @@ tf_impl_no_xla[lax.dynamic_update_slice_p] = _dynamic_update_slice
 
 
 def shift_axes_forward(operand,
-                       axes: Tuple[int, ...],
+                       axes: tuple[int, ...],
                        inverse: bool = False,
                        forward: bool = True):
   """Shifts the tuple of axes to the front of an array"""

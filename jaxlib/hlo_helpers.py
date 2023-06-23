@@ -14,14 +14,14 @@
 
 """A small libary of helpers for use in jaxlib to build MLIR operations."""
 from functools import partial
-from typing import Callable, Dict, Optional, Sequence, Union
+from typing import Callable, Optional, Sequence, Union
 
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
 import numpy as np
 
 
-_dtype_to_ir_type_factory : Dict[np.dtype, Callable[[], ir.Type]] = {
+_dtype_to_ir_type_factory : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(np.bool_): partial(ir.IntegerType.get_signless, 1),
   np.dtype(np.int8): partial(ir.IntegerType.get_signless, 8),
   np.dtype(np.int16): partial(ir.IntegerType.get_signless, 16),
@@ -83,7 +83,7 @@ def custom_call(
     backend_config: str = "",
     has_side_effect: bool = False,
     api_version: int = 2,
-    operand_output_aliases: Dict[int, int] = {},
+    operand_output_aliases: dict[int, int] = {},
     result_shapes: Optional[Sequence[ir.Value]] = None,
 ) -> Sequence[ir.Value]:
   """Wraps a hlo.CustomCall

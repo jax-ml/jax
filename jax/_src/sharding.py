@@ -15,15 +15,15 @@
 from __future__ import annotations
 
 import functools
-from typing import (Mapping, Optional, Sequence, Set, Tuple)
+from typing import Mapping, Optional, Sequence
 
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 
-Shape = Tuple[int, ...]
+Shape = tuple[int, ...]
 Device = xc.Device
-Index = Tuple[slice, ...]
+Index = tuple[slice, ...]
 XLADeviceAssignment = Sequence[Device]
 
 
@@ -44,7 +44,7 @@ class Sharding:
 
   # Abstract methods below that subclasses should implement.
   @property
-  def device_set(self) -> Set[Device]:
+  def device_set(self) -> set[Device]:
     """A ``set`` of global devices that this ``Sharding`` spans.
 
     In multi-controller JAX, the set of devices is global, i.e., includes
@@ -89,7 +89,7 @@ class Sharding:
   # Default implementations below that all subclasses will inherit.
 
   @functools.cached_property
-  def addressable_devices(self) -> Set[Device]:
+  def addressable_devices(self) -> set[Device]:
     """A set of devices that are addressable by the current process."""
     # Add a fast path for single controller runtimes.
     if xb.process_count() == 1:

@@ -22,8 +22,7 @@ import itertools as it
 import math
 import operator
 import re
-from typing import (Any, Callable, Dict, Optional, Protocol,
-                    Sequence, Set, Type, Tuple, Union)
+from typing import Any, Callable, Optional, Protocol, Sequence, Union
 
 import numpy as np
 
@@ -91,7 +90,7 @@ def parameter(builder, num, shape, name=None, replicated=None):
 # nesting in this type definition.
 SpatialSharding = Union[Shape,
                         None,
-                        Tuple[Optional[Shape], ...]]
+                        tuple[Optional[Shape], ...]]
 
 def sharding_to_proto(sharding: SpatialSharding):
   """Converts a SpatialSharding to an OpSharding.
@@ -145,7 +144,7 @@ def aval_to_xla_shapes(aval: core.AbstractValue) -> Sequence[xc.Shape]:
   except KeyError as err:
     raise TypeError(f"No xla_shape_handler for type: {type(aval)}") from err
 
-xla_shape_handlers: Dict[Type[core.AbstractValue],
+xla_shape_handlers: dict[type[core.AbstractValue],
                          Callable[[Any], Sequence[xc.Shape]]] = {
     ShapedArray: _make_array_shape,
     ConcreteArray: _make_array_shape,
@@ -179,7 +178,7 @@ def _canonicalize_python_scalar_dtype(typ, x):
   return np.asarray(
       x, dtypes.canonicalize_dtype(dtypes._scalar_type_to_dtype(typ, x)))
 
-canonicalize_dtype_handlers: Dict[Any, Callable] = {}
+canonicalize_dtype_handlers: dict[Any, Callable] = {}
 canonicalize_dtype_handlers.update(
     (t, _canonicalize_ndarray_dtype) for t in numpy_scalar_types)
 canonicalize_dtype_handlers[np.ndarray] = _canonicalize_ndarray_dtype
@@ -217,7 +216,7 @@ def _make_shaped_array_for_numpy_array(x: np.ndarray) -> ShapedArray:
   return ShapedArray(x.shape, dtypes.canonicalize_dtype(dtype))
 
 
-pytype_aval_mappings: Dict[Any, Callable[[Any], core.AbstractValue]] = {}
+pytype_aval_mappings: dict[Any, Callable[[Any], core.AbstractValue]] = {}
 pytype_aval_mappings[core.DArray] = operator.attrgetter('_aval')
 pytype_aval_mappings[core.Token] = lambda _: core.abstract_token
 pytype_aval_mappings.update((t, _make_shaped_array_for_numpy_scalar)
@@ -291,7 +290,7 @@ def axis_read(axis_env, axis_name):
   except ValueError:
     raise NameError(f"unbound axis name: {axis_name}") from None
 
-def axis_groups(axis_env: AxisEnv, name) -> Tuple[Tuple[int, ...]]:
+def axis_groups(axis_env: AxisEnv, name) -> tuple[tuple[int, ...]]:
   if not isinstance(name, (list, tuple)):
     name = (name,)
   mesh_axes = tuple(unsafe_map(partial(axis_read, axis_env), name))
@@ -374,12 +373,12 @@ if not MYPY:
 else:
   TranslationRule = Any
 
-_translations: Dict[core.Primitive, TranslationRule] = {}
-_backend_specific_translations: Dict[str, Dict[core.Primitive, TranslationRule]]
+_translations: dict[core.Primitive, TranslationRule] = {}
+_backend_specific_translations: dict[str, dict[core.Primitive, TranslationRule]]
 _backend_specific_translations = defaultdict(dict)
 
-_collective_primitives: Set[core.Primitive] = set()
-initial_style_primitives: Set[core.Primitive] = set()
+_collective_primitives: set[core.Primitive] = set()
+initial_style_primitives: set[core.Primitive] = set()
 
 def register_initial_style_primitive(prim: core.Primitive):
   initial_style_primitives.add(prim)
@@ -441,5 +440,5 @@ class _BackendSpecificTranslationsAdapter(defaultdict):
         translation_tables, _wrap_old_translation)
     return ret
 
-backend_specific_translations: Dict[str, _TranslationRuleAdapter]
+backend_specific_translations: dict[str, _TranslationRuleAdapter]
 backend_specific_translations = _BackendSpecificTranslationsAdapter()

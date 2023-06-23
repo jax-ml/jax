@@ -17,7 +17,7 @@ import enum
 from functools import partial
 import math
 from unittest import SkipTest, skipIf
-from typing import Any, Tuple, NamedTuple, Optional
+from typing import Any, NamedTuple, Optional
 import zlib
 
 from absl.testing import absltest
@@ -76,7 +76,7 @@ class OnX64(enum.Enum):
 class RandomValuesCase(NamedTuple):
   name: str
   prng_impl: str
-  shape: Tuple[int, ...]
+  shape: tuple[int, ...]
   dtype: Any
   params: dict
   expected: np.ndarray

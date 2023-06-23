@@ -31,8 +31,8 @@ import math
 import operator
 import types
 from typing import (
-  overload, Any, Callable, Dict, FrozenSet, List, Literal,
-  NamedTuple, Optional, Protocol, Sequence, Tuple, TypeVar, Union)
+  overload, Any, Callable, Literal,
+  NamedTuple, Optional, Protocol, Sequence, TypeVar, Union)
 from textwrap import dedent as _dedent
 import warnings
 
@@ -230,7 +230,7 @@ def _jnp_dtype(obj: Optional[DTypeLike], *, align: bool = False,
 
 ### utility functions
 
-_DEFAULT_TYPEMAP: Dict[type, _ScalarMeta] = {
+_DEFAULT_TYPEMAP: dict[type, _ScalarMeta] = {
   np.bool_: bool_,
   np.int_: int_,
   np.float_: float_,
@@ -448,7 +448,7 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
 def histogram(a: ArrayLike, bins: ArrayLike = 10,
               range: Optional[Sequence[ArrayLike]] = None,
               weights: Optional[ArrayLike] = None,
-              density: Optional[bool] = None) -> Tuple[Array, Array]:
+              density: Optional[bool] = None) -> tuple[Array, Array]:
   if weights is None:
     util.check_arraylike("histogram", a, bins)
     a = ravel(*util.promote_dtypes_inexact(a))
@@ -469,10 +469,10 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
   return counts, bin_edges
 
 @util._wraps(np.histogram2d)
-def histogram2d(x: ArrayLike, y: ArrayLike, bins: Union[ArrayLike, List[ArrayLike]] = 10,
+def histogram2d(x: ArrayLike, y: ArrayLike, bins: Union[ArrayLike, list[ArrayLike]] = 10,
                 range: Optional[Sequence[Union[None, Array, Sequence[ArrayLike]]]]=None,
                 weights: Optional[ArrayLike] = None,
-                density: Optional[bool] = None) -> Tuple[Array, Array, Array]:
+                density: Optional[bool] = None) -> tuple[Array, Array, Array]:
   util.check_arraylike("histogram2d", x, y)
   try:
     N = len(bins)  # type: ignore[arg-type]
@@ -488,10 +488,10 @@ def histogram2d(x: ArrayLike, y: ArrayLike, bins: Union[ArrayLike, List[ArrayLik
   return hist, edges[0], edges[1]
 
 @util._wraps(np.histogramdd)
-def histogramdd(sample: ArrayLike, bins: Union[ArrayLike, List[ArrayLike]] = 10,
+def histogramdd(sample: ArrayLike, bins: Union[ArrayLike, list[ArrayLike]] = 10,
                 range: Optional[Sequence[Union[None, Array, Sequence[ArrayLike]]]] = None,
                 weights: Optional[ArrayLike] = None,
-                density: Optional[bool] = None) -> Tuple[Array, List[Array]]:
+                density: Optional[bool] = None) -> tuple[Array, list[Array]]:
   if weights is None:
     util.check_arraylike("histogramdd", sample)
     sample, = util.promote_dtypes_inexact(sample)
@@ -511,14 +511,14 @@ def histogramdd(sample: ArrayLike, bins: Union[ArrayLike, List[ArrayLike]] = 10,
     num_bins = len(bins)  # type: ignore[arg-type]
   except TypeError:
     # when bin_size is integer, the same bin is used for each dimension
-    bins_per_dimension: List[ArrayLike] = D * [bins]  # type: ignore[assignment]
+    bins_per_dimension: list[ArrayLike] = D * [bins]  # type: ignore[assignment]
   else:
     if num_bins != D:
       raise ValueError("should be a bin for each dimension.")
     bins_per_dimension = list(bins)  # type: ignore[arg-type]
 
-  bin_idx_by_dim: List[Array] = []
-  bin_edges_by_dim: List[Array] = []
+  bin_idx_by_dim: list[Array] = []
+  bin_edges_by_dim: list[Array] = []
 
   for i in builtins.range(D):
     range_i = None if range is None else range[i]
@@ -583,7 +583,7 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
 
 @util._wraps(np.rot90, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('k', 'axes'))
-def rot90(m: ArrayLike, k: int = 1, axes: Tuple[int, int] = (0, 1)) -> Array:
+def rot90(m: ArrayLike, k: int = 1, axes: tuple[int, int] = (0, 1)) -> Array:
   util.check_arraylike("rot90", m)
   ax1, ax2 = axes
   ax1 = _canonicalize_axis(ax1, ndim(m))
@@ -605,12 +605,12 @@ def rot90(m: ArrayLike, k: int = 1, axes: Tuple[int, int] = (0, 1)) -> Array:
 
 
 @util._wraps(np.flip, lax_description=_ARRAY_VIEW_DOC)
-def flip(m: ArrayLike, axis: Optional[Union[int, Tuple[int, ...]]] = None) -> Array:
+def flip(m: ArrayLike, axis: Optional[Union[int, tuple[int, ...]]] = None) -> Array:
   util.check_arraylike("flip", m)
   return _flip(asarray(m), reductions._ensure_optional_axes(axis))
 
 @partial(jit, static_argnames=('axis',))
-def _flip(m: Array, axis: Optional[Union[int, Tuple[int, ...]]] = None) -> Array:
+def _flip(m: Array, axis: Optional[Union[int, tuple[int, ...]]] = None) -> Array:
   if axis is None:
     return lax.rev(m, list(range(len(shape(m)))))
   axis = _ensure_index_tuple(axis)
@@ -674,7 +674,7 @@ def diff(a: ArrayLike, n: int = 1, axis: int = -1,
   nd = arr.ndim
   axis = _canonicalize_axis(axis, nd)
 
-  combined: List[Array] = []
+  combined: list[Array] = []
   if prepend is not None:
     util.check_arraylike("diff", prepend)
     if isscalar(prepend):
@@ -734,8 +734,8 @@ def ediff1d(ary: ArrayLike, to_end: Optional[ArrayLike] = None,
 @util._wraps(np.gradient, skip_params=['edge_order'])
 @partial(jit, static_argnames=('axis', 'edge_order'))
 def gradient(f: ArrayLike, *varargs: ArrayLike,
-             axis: Optional[Union[int, Tuple[int, ...]]] = None,
-             edge_order: Optional[int] = None) -> Union[Array, List[Array]]:
+             axis: Optional[Union[int, tuple[int, ...]]] = None,
+             edge_order: Optional[int] = None) -> Union[Array, list[Array]]:
   if edge_order is not None:
     raise NotImplementedError("The 'edge_order' argument to jnp.gradient is not supported.")
   a, *spacing = util.promote_args_inexact("gradient", f, *varargs)
@@ -805,7 +805,7 @@ def ravel(a: ArrayLike, order: str = "C") -> Array:
 
 
 @util._wraps(np.ravel_multi_index)
-def ravel_multi_index(multi_index: Tuple[ArrayLike, ...], dims: Tuple[int, ...],
+def ravel_multi_index(multi_index: tuple[ArrayLike, ...], dims: tuple[int, ...],
                       mode: str = 'raise', order: str = 'C') -> Array:
   assert len(multi_index) == len(dims), f"len(multi_index)={len(multi_index)} != len(dims)={len(dims)}"
   dims = tuple(core.concrete_or_error(operator.index, d, "in `dims` argument of ravel_multi_index().") for d in dims)
@@ -848,7 +848,7 @@ and out-of-bounds indices are clipped into the valid range.
 """
 
 @util._wraps(np.unravel_index, lax_description=_UNRAVEL_INDEX_DOC)
-def unravel_index(indices: ArrayLike, shape: Shape) -> Tuple[Array, ...]:
+def unravel_index(indices: ArrayLike, shape: Shape) -> tuple[Array, ...]:
   util.check_arraylike("unravel_index", indices)
   indices_arr = asarray(indices)
   # Note: we do not convert shape to an array, because it may be passed as a
@@ -888,12 +888,12 @@ def resize(a: ArrayLike, new_shape: Shape) -> Array:
   return reshape(arr, new_shape)
 
 @util._wraps(np.squeeze, lax_description=_ARRAY_VIEW_DOC)
-def squeeze(a: ArrayLike, axis: Optional[Union[int, Tuple[int, ...]]] = None) -> Array:
+def squeeze(a: ArrayLike, axis: Optional[Union[int, tuple[int, ...]]] = None) -> Array:
   util.check_arraylike("squeeze", a)
   return _squeeze(asarray(a), _ensure_index_tuple(axis) if axis is not None else None)
 
 @partial(jit, static_argnames=('axis',), inline=True)
-def _squeeze(a: Array, axis: Tuple[int]) -> Array:
+def _squeeze(a: Array, axis: tuple[int]) -> Array:
   if axis is None:
     a_shape = shape(a)
     if not core.is_constant_shape(a_shape):
@@ -927,7 +927,7 @@ def moveaxis(a: ArrayLike, source: Union[int, Sequence[int]],
                    _ensure_index_tuple(destination))
 
 @partial(jit, static_argnames=('source', 'destination'), inline=True)
-def _moveaxis(a: Array, source: Tuple[int, ...], destination: Tuple[int, ...]) -> Array:
+def _moveaxis(a: Array, source: tuple[int, ...], destination: tuple[int, ...]) -> Array:
   source = tuple(_canonicalize_axis(i, ndim(a)) for i in source)
   destination = tuple(_canonicalize_axis(i, ndim(a)) for i in destination)
   if len(source) != len(destination):
@@ -1064,20 +1064,20 @@ def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
 @overload
 def where(condition: ArrayLike, x: Literal[None] = None, y: Literal[None] = None, *,
           size: Optional[int] = None,
-          fill_value: Union[None, Array, Tuple[ArrayLike]] = None
-          ) -> Tuple[Array, ...]: ...
+          fill_value: Union[None, Array, tuple[ArrayLike]] = None
+          ) -> tuple[Array, ...]: ...
 
 @overload
 def where(condition: ArrayLike, x: ArrayLike, y: ArrayLike, *,
           size: Optional[int] = None,
-          fill_value: Union[None, Array, Tuple[ArrayLike]] = None
+          fill_value: Union[None, Array, tuple[ArrayLike]] = None
           ) -> Array: ...
 
 @overload
 def where(condition: ArrayLike, x: Optional[ArrayLike] = None,
           y: Optional[ArrayLike] = None, *, size: Optional[int] = None,
-          fill_value: Union[None, Array, Tuple[ArrayLike]] = None
-          ) -> Union[Array, Tuple[Array, ...]]: ...
+          fill_value: Union[None, Array, tuple[ArrayLike]] = None
+          ) -> Union[Array, tuple[Array, ...]]: ...
 
 @util._wraps(np.where,
   lax_description=_dedent("""
@@ -1105,8 +1105,8 @@ def where(condition: ArrayLike, x: Optional[ArrayLike] = None,
         remaining elements will be filled with ``fill_value``, which defaults to zero."""))
 def where(condition: ArrayLike, x: Optional[ArrayLike] = None,
           y: Optional[ArrayLike] = None, *, size: Optional[int] = None,
-          fill_value: Union[None, Array, Tuple[ArrayLike]] = None
-    ) -> Union[Array, Tuple[Array, ...]]:
+          fill_value: Union[None, Array, tuple[ArrayLike]] = None
+    ) -> Union[Array, tuple[Array, ...]]:
   if x is None and y is None:
     util.check_arraylike("where", condition)
     return nonzero(condition, size=size, fill_value=fill_value)
@@ -1165,11 +1165,11 @@ def bincount(x: ArrayLike, weights: Optional[ArrayLike] = None,
   return zeros(length, _dtype(weights)).at[clip(x, 0)].add(weights)
 
 @overload
-def broadcast_shapes(*shapes: Tuple[int, ...]) -> Tuple[int, ...]: ...
+def broadcast_shapes(*shapes: tuple[int, ...]) -> tuple[int, ...]: ...
 
 @overload
-def broadcast_shapes(*shapes: Tuple[Union[int, core.Tracer], ...]
-                     ) -> Tuple[Union[int, core.Tracer], ...]: ...
+def broadcast_shapes(*shapes: tuple[Union[int, core.Tracer], ...]
+                     ) -> tuple[Union[int, core.Tracer], ...]: ...
 
 @util._wraps(getattr(np, "broadcast_shapes", None))
 def broadcast_shapes(*shapes):
@@ -1182,7 +1182,7 @@ def broadcast_shapes(*shapes):
 @util._wraps(np.broadcast_arrays, lax_description="""\
 The JAX version does not necessarily return a view of the input.
 """)
-def broadcast_arrays(*args: ArrayLike) -> List[Array]:
+def broadcast_arrays(*args: ArrayLike) -> list[Array]:
   return util._broadcast_arrays(*args)
 
 
@@ -1195,7 +1195,7 @@ def broadcast_to(array: ArrayLike, shape: Shape) -> Array:
 
 def _split(op: str, ary: ArrayLike,
            indices_or_sections: Union[int, Sequence[int], ArrayLike],
-           axis: int = 0) -> List[Array]:
+           axis: int = 0) -> list[Array]:
   util.check_arraylike(op, ary)
   ary = asarray(ary)
   axis = core.concrete_or_error(operator.index, axis, f"in jax.numpy.{op} argument `axis`")
@@ -1234,12 +1234,12 @@ def _split(op: str, ary: ArrayLike,
 
 @util._wraps(np.split, lax_description=_ARRAY_VIEW_DOC)
 def split(ary: ArrayLike, indices_or_sections: Union[int, Sequence[int], ArrayLike],
-          axis: int = 0) -> List[Array]:
+          axis: int = 0) -> list[Array]:
   return _split("split", ary, indices_or_sections, axis=axis)
 
-def _split_on_axis(op: str, axis: int) -> Callable[[ArrayLike, Union[int, ArrayLike]], List[Array]]:
+def _split_on_axis(op: str, axis: int) -> Callable[[ArrayLike, Union[int, ArrayLike]], list[Array]]:
   @util._wraps(getattr(np, op), update_doc=False)
-  def f(ary: ArrayLike, indices_or_sections: Union[int, Sequence[int], ArrayLike]) -> List[Array]:
+  def f(ary: ArrayLike, indices_or_sections: Union[int, Sequence[int], ArrayLike]) -> list[Array]:
     # for 1-D array, hsplit becomes vsplit
     nonlocal axis
     util.check_arraylike(op, ary)
@@ -1255,7 +1255,7 @@ dsplit = _split_on_axis("dsplit", axis=2)
 
 @util._wraps(np.array_split)
 def array_split(ary: ArrayLike, indices_or_sections: Union[int, Sequence[int], ArrayLike],
-                axis: int = 0) -> List[Array]:
+                axis: int = 0) -> list[Array]:
   return _split("array_split", ary, indices_or_sections, axis=axis)
 
 @util._wraps(np.clip, skip_params=['out'])
@@ -1367,8 +1367,8 @@ fill_value : array_like, optional
 
 @util._wraps(np.nonzero, lax_description=_NONZERO_DOC, extra_params=_NONZERO_EXTRA_PARAMS)
 def nonzero(a: ArrayLike, *, size: Optional[int] = None,
-            fill_value: Union[None, ArrayLike, Tuple[ArrayLike]] = None
-    ) -> Tuple[Array, ...]:
+            fill_value: Union[None, ArrayLike, tuple[ArrayLike]] = None
+    ) -> tuple[Array, ...]:
   util.check_arraylike("nonzero", a)
   arr = atleast_1d(a)
   del a
@@ -1394,7 +1394,7 @@ def nonzero(a: ArrayLike, *, size: Optional[int] = None,
 
 @util._wraps(np.flatnonzero, lax_description=_NONZERO_DOC, extra_params=_NONZERO_EXTRA_PARAMS)
 def flatnonzero(a: ArrayLike, *, size: Optional[int] = None,
-                fill_value: Union[None, ArrayLike, Tuple[ArrayLike]] = None) -> Array:
+                fill_value: Union[None, ArrayLike, tuple[ArrayLike]] = None) -> Array:
   return nonzero(ravel(a), size=size, fill_value=fill_value)[0]
 
 
@@ -1428,7 +1428,7 @@ def unwrap(p: ArrayLike, discont: Optional[ArrayLike] = None,
 ### Padding
 
 PadValueLike = Union[T, Sequence[T], Sequence[Sequence[T]]]
-PadValue = Tuple[Tuple[T, T], ...]
+PadValue = tuple[tuple[T, T], ...]
 
 class PadStatFunc(Protocol):
   def __call__(self, array: ArrayLike, /, *,
@@ -1477,7 +1477,7 @@ def _broadcast_to_pairs(nvals: PadValueLike, nd: int, name: str) -> PadValue:
                      f"Valid shapes are ({nd}, 2), (1, 2), (2,), (1,), or ().")
 
 
-def _check_no_padding(axis_padding: Tuple[Any, Any], mode: str):
+def _check_no_padding(axis_padding: tuple[Any, Any], mode: str):
   if (axis_padding[0] > 0 or axis_padding[1] > 0):
     msg = "Cannot apply '{}' padding to empty axis"
     raise ValueError(msg.format(mode))
@@ -1689,7 +1689,7 @@ def _pad(array: ArrayLike, pad_width: PadValueLike[int], mode: str,
   if nd == 0:
     return array
 
-  stat_funcs: Dict[str, PadStatFunc] = {
+  stat_funcs: dict[str, PadStatFunc] = {
       "maximum": reductions.amax,
       "minimum": reductions.amin,
       "mean": reductions.mean,
@@ -1806,7 +1806,7 @@ def tile(A: ArrayLike, reps: Union[DimSize, Sequence[DimSize]]) -> Array:
   try:
     iter(reps)  # type: ignore[arg-type]
   except TypeError:
-    reps_tup: Tuple[DimSize, ...] = (reps,)
+    reps_tup: tuple[DimSize, ...] = (reps,)
   else:
     reps_tup = tuple(reps)  # type: ignore[assignment,arg-type]
   reps_tup = tuple(operator.index(rep) if core.is_constant_dim(rep) else rep
@@ -1932,7 +1932,7 @@ def _atleast_nd(x: ArrayLike, n: int) -> Array:
   m = ndim(x)
   return lax.broadcast(x, (1,) * (n - m)) if m < n else asarray(x)
 
-def _block(xs: Union[ArrayLike, List[ArrayLike]]) -> Tuple[Array, int]:
+def _block(xs: Union[ArrayLike, list[ArrayLike]]) -> tuple[Array, int]:
   if isinstance(xs, tuple):
     raise ValueError("jax.numpy.block does not allow tuples, got {}"
                      .format(xs))
@@ -1950,13 +1950,13 @@ def _block(xs: Union[ArrayLike, List[ArrayLike]]) -> Tuple[Array, int]:
 
 @util._wraps(np.block)
 @jit
-def block(arrays: Union[ArrayLike, List[ArrayLike]]) -> Array:
+def block(arrays: Union[ArrayLike, list[ArrayLike]]) -> Array:
   out, _ = _block(arrays)
   return out
 
 @util._wraps(np.atleast_1d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
-def atleast_1d(*arys: ArrayLike) -> Union[Array, List[Array]]:
+def atleast_1d(*arys: ArrayLike) -> Union[Array, list[Array]]:
   if len(arys) == 1:
     arr = asarray(arys[0])
     return arr if ndim(arr) >= 1 else reshape(arr, -1)
@@ -1966,7 +1966,7 @@ def atleast_1d(*arys: ArrayLike) -> Union[Array, List[Array]]:
 
 @util._wraps(np.atleast_2d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
-def atleast_2d(*arys: ArrayLike) -> Union[Array, List[Array]]:
+def atleast_2d(*arys: ArrayLike) -> Union[Array, list[Array]]:
   if len(arys) == 1:
     arr = asarray(arys[0])
     if ndim(arr) >= 2:
@@ -1981,7 +1981,7 @@ def atleast_2d(*arys: ArrayLike) -> Union[Array, List[Array]]:
 
 @util._wraps(np.atleast_3d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
-def atleast_3d(*arys: ArrayLike) -> Union[Array, List[Array]]:
+def atleast_3d(*arys: ArrayLike) -> Union[Array, list[Array]]:
   if len(arys) == 1:
     arr = asarray(arys[0])
     if ndim(arr) == 0:
@@ -2389,22 +2389,22 @@ def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
 def linspace(start: ArrayLike, stop: ArrayLike, num: int,
              endpoint: bool, retstep: Literal[True],
              dtype: Optional[DTypeLike] = None,
-             axis: int = 0) -> Tuple[Array, Array]: ...
+             axis: int = 0) -> tuple[Array, Array]: ...
 @overload
 def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, *, retstep: Literal[True],
              dtype: Optional[DTypeLike] = None,
-             axis: int = 0) -> Tuple[Array, Array]: ...
+             axis: int = 0) -> tuple[Array, Array]: ...
 @overload
 def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, retstep: bool = False,
              dtype: Optional[DTypeLike] = None,
-             axis: int = 0) -> Union[Array, Tuple[Array, Array]]: ...
+             axis: int = 0) -> Union[Array, tuple[Array, Array]]: ...
 @util._wraps(np.linspace)
 def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, retstep: bool = False,
              dtype: Optional[DTypeLike] = None,
-             axis: int = 0) -> Union[Array, Tuple[Array, Array]]:
+             axis: int = 0) -> Union[Array, tuple[Array, Array]]:
   num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.linspace")
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.linspace")
   return _linspace(start, stop, num, endpoint, retstep, dtype, axis)
@@ -2413,7 +2413,7 @@ def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
 def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
               endpoint: bool = True, retstep: bool = False,
               dtype: Optional[DTypeLike] = None,
-              axis: int = 0) -> Union[Array, Tuple[Array, Array]]:
+              axis: int = 0) -> Union[Array, tuple[Array, Array]]:
   """Implementation of linspace differentiable in start and stop args."""
   dtypes.check_user_dtype_supported(dtype, "linspace")
   if num < 0:
@@ -2526,7 +2526,7 @@ def _geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool 
 
 @util._wraps(np.meshgrid, lax_description=_ARRAY_VIEW_DOC)
 def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
-             indexing: str = 'xy') -> List[Array]:
+             indexing: str = 'xy') -> list[Array]:
   util.check_arraylike("meshgrid", *xi)
   args = [asarray(x) for x in xi]
   if not copy:
@@ -2557,7 +2557,7 @@ def i0(x: ArrayLike) -> Array:
 
 
 @util._wraps(np.ix_)
-def ix_(*args: ArrayLike) -> Tuple[Array, ...]:
+def ix_(*args: ArrayLike) -> tuple[Array, ...]:
   util.check_arraylike("ix", *args)
   n = len(args)
   output = []
@@ -2584,13 +2584,13 @@ def indices(dimensions: Sequence[int], dtype: DTypeLike = int32,
             sparse: Literal[False] = False) -> Array: ...
 @overload
 def indices(dimensions: Sequence[int], dtype: DTypeLike = int32,
-            *, sparse: Literal[True]) -> Tuple[Array, ...]: ...
+            *, sparse: Literal[True]) -> tuple[Array, ...]: ...
 @overload
 def indices(dimensions: Sequence[int], dtype: DTypeLike = int32,
-            sparse: bool = False) -> Union[Array, Tuple[Array, ...]]: ...
+            sparse: bool = False) -> Union[Array, tuple[Array, ...]]: ...
 @util._wraps(np.indices)
 def indices(dimensions: Sequence[int], dtype: DTypeLike = int32,
-            sparse: bool = False) -> Union[Array, Tuple[Array, ...]]:
+            sparse: bool = False) -> Union[Array, tuple[Array, ...]]:
   dimensions = tuple(
       core.concrete_or_error(operator.index, d, "dimensions argument of jnp.indices")
       for d in dimensions)
@@ -2649,10 +2649,10 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: Optional[int] = None, *,
       input_shape = shape(a)
       aux_axis = axis if axis < 0 else axis + 1
       a = expand_dims(a, aux_axis)
-      reps: List[DimSize] = [1] * len(shape(a))
+      reps: list[DimSize] = [1] * len(shape(a))
       reps[aux_axis] = repeats
       a = tile(a, reps)
-      result_shape: List[DimSize] = list(input_shape)
+      result_shape: list[DimSize] = list(input_shape)
       result_shape[axis] *= repeats
       return reshape(a, result_shape)
 
@@ -2781,7 +2781,7 @@ def _triu_size(n, m, k):
 
 
 @util._wraps(np.triu_indices)
-def triu_indices(n: int, k: int = 0, m: Optional[int] = None) -> Tuple[Array, Array]:
+def triu_indices(n: int, k: int = 0, m: Optional[int] = None) -> tuple[Array, Array]:
   n = core.concrete_or_error(operator.index, n, "n argument of jnp.triu_indices")
   k = core.concrete_or_error(operator.index, k, "k argument of jnp.triu_indices")
   m = n if m is None else core.concrete_or_error(operator.index, m, "m argument of jnp.triu_indices")
@@ -2790,7 +2790,7 @@ def triu_indices(n: int, k: int = 0, m: Optional[int] = None) -> Tuple[Array, Ar
 
 
 @util._wraps(np.tril_indices)
-def tril_indices(n: int, k: int = 0, m: Optional[int] = None) -> Tuple[Array, Array]:
+def tril_indices(n: int, k: int = 0, m: Optional[int] = None) -> tuple[Array, Array]:
   n = core.concrete_or_error(operator.index, n, "n argument of jnp.triu_indices")
   k = core.concrete_or_error(operator.index, k, "k argument of jnp.triu_indices")
   m = n if m is None else core.concrete_or_error(operator.index, m, "m argument of jnp.triu_indices")
@@ -2799,13 +2799,13 @@ def tril_indices(n: int, k: int = 0, m: Optional[int] = None) -> Tuple[Array, Ar
 
 
 @util._wraps(np.triu_indices_from)
-def triu_indices_from(arr: ArrayLike, k: int = 0) -> Tuple[Array, Array]:
+def triu_indices_from(arr: ArrayLike, k: int = 0) -> tuple[Array, Array]:
   arr_shape = shape(arr)
   return triu_indices(arr_shape[-2], k=k, m=arr_shape[-1])
 
 
 @util._wraps(np.tril_indices_from)
-def tril_indices_from(arr: ArrayLike, k: int = 0) -> Tuple[Array, Array]:
+def tril_indices_from(arr: ArrayLike, k: int = 0) -> tuple[Array, Array]:
   arr_shape = shape(arr)
   return tril_indices(arr_shape[-2], k=k, m=arr_shape[-1])
 
@@ -3294,7 +3294,7 @@ def _removechars(s, chars):
 @partial(jit, static_argnums=(1, 2, 3, 4), inline=True)
 def _einsum(
     operands: Sequence,
-    contractions: Sequence[Tuple[Tuple[int, ...], FrozenSet[str], str]],
+    contractions: Sequence[tuple[tuple[int, ...], frozenset[str], str]],
     precision,
     preferred_element_type,
     _dot_general=lax.dot_general,
@@ -4315,8 +4315,8 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
   # Pairs of (array, start_dim) values. These will be broadcast into
   # gather_indices_shape, with the array dimensions aligned to start_dim, and
   # then concatenated.
-  gather_indices: List[Tuple[Array, int]] = []
-  gather_indices_shape: List[int] = []
+  gather_indices: list[tuple[Array, int]] = []
+  gather_indices_shape: list[int] = []
 
   # We perform three transformations to y before the scatter op, in order:
   # First, y is broadcast to slice_shape. In general `y` only need broadcast to
@@ -4687,11 +4687,11 @@ def kaiser(M: int, beta: ArrayLike) -> Array:
   return i0(beta * ufuncs.sqrt(1 - ((n - alpha) / alpha) ** 2)) / i0(beta)
 
 
-def _gcd_cond_fn(xs: Tuple[Array, Array]) -> Array:
+def _gcd_cond_fn(xs: tuple[Array, Array]) -> Array:
   x1, x2 = xs
   return reductions.any(x2 != 0)
 
-def _gcd_body_fn(xs: Tuple[Array, Array]) -> Tuple[Array, Array]:
+def _gcd_body_fn(xs: tuple[Array, Array]) -> tuple[Array, Array]:
   x1, x2 = xs
   x1, x2 = (where(x2 != 0, x2, x1),
             where(x2 != 0, lax.rem(x1, x2), _lax_const(x2, 0)))
@@ -4927,7 +4927,7 @@ See the :func:`jax.lax.switch` documentation for more information.
 
 @util._wraps(np.piecewise, lax_description=_PIECEWISE_DOC)
 def piecewise(x: ArrayLike, condlist: Union[Array, Sequence[ArrayLike]],
-              funclist: List[Union[ArrayLike, Callable[..., Array]]],
+              funclist: list[Union[ArrayLike, Callable[..., Array]]],
               *args, **kw) -> Array:
   util.check_arraylike("piecewise", x)
   nc, nf = len(condlist), len(funclist)
@@ -4944,8 +4944,8 @@ def piecewise(x: ArrayLike, condlist: Union[Array, Sequence[ArrayLike]],
                     *args, **kw)
 
 @partial(jit, static_argnames=['funcs'])
-def _piecewise(x: Array, condlist: Array, consts: Dict[int, ArrayLike],
-               funcs: FrozenSet[Tuple[int, Callable[..., Array]]],
+def _piecewise(x: Array, condlist: Array, consts: dict[int, ArrayLike],
+               funcs: frozenset[tuple[int, Callable[..., Array]]],
                *args, **kw) -> Array:
   funcdict = dict(funcs)
   funclist = [consts.get(i, funcdict.get(i)) for i in range(len(condlist) + 1)]

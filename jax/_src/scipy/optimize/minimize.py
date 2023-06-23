@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any, Callable, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Mapping, Optional, Union
 
 import jax
 from jax._src.scipy.optimize.bfgs import minimize_bfgs
@@ -50,7 +50,7 @@ class OptimizeResults(NamedTuple):
 def minimize(
     fun: Callable,
     x0: jax.Array,
-    args: Tuple = (),
+    args: tuple = (),
     *,
     method: str,
     tol: Optional[float] = None,

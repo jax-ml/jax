@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import os
 import platform
-from typing import Any, List, Sequence, Optional
+from typing import Any, Sequence, Optional
 
 import iree.compiler
 import iree.runtime
@@ -73,7 +73,7 @@ class IreeDevice:
   def transfer_from_outfeed(self, shape: xla_client.Shape):
     raise NotImplementedError("transfer_to_outfeed")
 
-  def live_buffers(self) -> List[IreeBuffer]:
+  def live_buffers(self) -> list[IreeBuffer]:
     raise NotImplementedError("live_buffers")
 
 
@@ -123,10 +123,10 @@ class IreeExecutable:
     self.module_object = module_object
     self.function_name = function_name
 
-  def local_devices(self) -> List[IreeDevice]:
+  def local_devices(self) -> list[IreeDevice]:
     return self._devices
 
-  def execute(self, arguments: Sequence[IreeBuffer]) -> List[IreeBuffer]:
+  def execute(self, arguments: Sequence[IreeBuffer]) -> list[IreeBuffer]:
     inputs = [arg.to_iree() for arg in arguments]
     outputs = self.module_object[self.function_name](*inputs)
     # TODO(phawkins): Have a way to just have it always return the list,
@@ -159,10 +159,10 @@ class IreeClient:
   def device_count(self) -> int:
     return len(self._devices)
 
-  def devices(self) -> List[IreeDevice]:
+  def devices(self) -> list[IreeDevice]:
     return self._devices
 
-  def local_devices(self) -> List[IreeDevice]:
+  def local_devices(self) -> list[IreeDevice]:
     return self._devices
 
   def local_device_count(self) -> int:
@@ -170,7 +170,7 @@ class IreeClient:
 
   def get_default_device_assignment(
       self,
-      num_replicas: int) -> List[IreeDevice]:
+      num_replicas: int) -> list[IreeDevice]:
     if num_replicas != 1:
       raise NotImplementedError("Only single-device computations implemented")
     return [self._devices[0]]

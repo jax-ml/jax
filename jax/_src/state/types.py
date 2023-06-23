@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Generic, List, Sequence, Set, Tuple, TypeVar, Union
+from typing import Any, Generic, Sequence, TypeVar, Union
 
 from jax._src import core
 from jax._src import effects
@@ -150,12 +150,12 @@ core.aval_mapping_handlers[AbstractRef] = (_map_ref, _unmap_ref)
 
 def get_ref_state_effects(
     avals: Sequence[core.AbstractValue],
-    effects: core.Effects) -> List[Set[StateEffect]]:
+    effects: core.Effects) -> list[set[StateEffect]]:
   return [{eff for eff in effects
            if isinstance(eff, (ReadEffect, WriteEffect, AccumEffect))
            and eff.input_index == i} for i, _ in enumerate(avals)]
 
-def shaped_array_ref(shape: Tuple[int, ...], dtype,
+def shaped_array_ref(shape: tuple[int, ...], dtype,
                      weak_type: bool = False,
                      named_shape = None) -> AbstractRef[core.AbstractValue]:
   return AbstractRef(core.ShapedArray(shape, dtype, weak_type=weak_type,

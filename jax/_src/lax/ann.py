@@ -70,7 +70,7 @@ Todos::
 """
 
 from functools import partial
-from typing import (Any, Tuple)
+from typing import Any
 
 import numpy as np
 
@@ -98,7 +98,7 @@ def approx_max_k(operand: Array,
                  reduction_dimension: int = -1,
                  recall_target: float = 0.95,
                  reduction_input_size_override: int = -1,
-                 aggregate_to_topk: bool = True) -> Tuple[Array, Array]:
+                 aggregate_to_topk: bool = True) -> tuple[Array, Array]:
   """Returns max ``k`` values and their indices of the ``operand`` in an approximate manner.
 
   See https://arxiv.org/abs/2206.14286 for the algorithm details.
@@ -157,7 +157,7 @@ def approx_min_k(operand: Array,
                  reduction_dimension: int = -1,
                  recall_target: float = 0.95,
                  reduction_input_size_override: int = -1,
-                 aggregate_to_topk: bool = True) -> Tuple[Array, Array]:
+                 aggregate_to_topk: bool = True) -> tuple[Array, Array]:
   """Returns min ``k`` values and their indices of the ``operand`` in an approximate manner.
 
   See https://arxiv.org/abs/2206.14286 for the algorithm details.

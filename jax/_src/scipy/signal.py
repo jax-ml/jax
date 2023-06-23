@@ -15,7 +15,7 @@
 from functools import partial
 import math
 import operator
-from typing import Callable, Optional, Tuple, Union, Sequence
+from typing import Callable, Optional, Union, Sequence
 import warnings
 
 import numpy as np
@@ -289,7 +289,7 @@ def _spectral_helper(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0,
                      detrend_type: Union[bool, str, Callable[[Array], Array]] = 'constant',
                      return_onesided: bool = True, scaling: str = 'density',
                      axis: int = -1, mode: str = 'psd', boundary: Optional[str] = None,
-                     padded: bool = False) -> Tuple[Array, Array, Array]:
+                     padded: bool = False) -> tuple[Array, Array, Array]:
   """LAX-backend implementation of `scipy.signal._spectral_helper`.
 
   Unlike the original helper function, `y` can be None for explicitly
@@ -500,7 +500,7 @@ def _spectral_helper(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0,
 def stft(x: Array, fs: ArrayLike = 1.0, window: str = 'hann', nperseg: int = 256,
          noverlap: Optional[int] = None, nfft: Optional[int] = None,
          detrend: bool = False, return_onesided: bool = True, boundary: Optional[str] = 'zeros',
-         padded: bool = True, axis: int = -1) -> Tuple[Array, Array, Array]:
+         padded: bool = True, axis: int = -1) -> tuple[Array, Array, Array]:
   return _spectral_helper(x, None, fs, window, nperseg, noverlap,
                           nfft, detrend, return_onesided,
                           scaling='spectrum', axis=axis,
@@ -520,7 +520,7 @@ def csd(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0, window: str = 'ha
         nperseg: Optional[int] = None, noverlap: Optional[int] = None,
         nfft: Optional[int] = None, detrend: str = 'constant',
         return_onesided: bool = True, scaling: str = 'density',
-        axis: int = -1, average: str = 'mean') -> Tuple[Array, Array]:
+        axis: int = -1, average: str = 'mean') -> tuple[Array, Array]:
   freqs, _, Pxy = _spectral_helper(x, y, fs, window, nperseg, noverlap, nfft,
                                   detrend, return_onesided, scaling, axis,
                                   mode='psd')
@@ -553,7 +553,7 @@ def welch(x: Array, fs: ArrayLike = 1.0, window: str = 'hann',
           nperseg: Optional[int] = None, noverlap: Optional[int] = None,
           nfft: Optional[int] = None, detrend: str = 'constant',
           return_onesided: bool = True, scaling: str = 'density',
-          axis: int = -1, average: str = 'mean') -> Tuple[Array, Array]:
+          axis: int = -1, average: str = 'mean') -> tuple[Array, Array]:
   freqs, Pxx = csd(x, None, fs=fs, window=window, nperseg=nperseg,
                    noverlap=noverlap, nfft=nfft, detrend=detrend,
                    return_onesided=return_onesided, scaling=scaling,
@@ -615,7 +615,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
           nperseg: Optional[int] = None, noverlap: Optional[int] = None,
           nfft: Optional[int] = None, input_onesided: bool = True,
           boundary: bool = True, time_axis: int = -1,
-          freq_axis: int = -2) -> Tuple[Array, Array]:
+          freq_axis: int = -2) -> tuple[Array, Array]:
   # Input validation
   check_arraylike("istft", Zxx)
   if Zxx.ndim < 2:

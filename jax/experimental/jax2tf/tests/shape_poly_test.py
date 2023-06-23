@@ -18,7 +18,7 @@ import unittest
 
 from absl import logging
 from absl.testing import absltest, parameterized
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Optional, Sequence, Union
 
 import collections
 import functools
@@ -418,12 +418,12 @@ class PolyHarness(Harness):
                input_signature: Optional[Sequence[tf.TensorSpec]] = None,
                expected_output_signature: Optional[tf.TensorSpec] = None,
                enable_xla: bool = True,
-               expect_error: Tuple[Optional[Any], Optional[str]] = (None, None),
+               expect_error: tuple[Optional[Any], Optional[str]] = (None, None),
                skip_jax_run: bool = False,
                check_result: bool = True,
                tol: Optional[float] = None,
                limitations: Sequence[Jax2TfLimitation] = (),
-               override_jax_config_flags: Dict[str, Any] = {}):
+               override_jax_config_flags: dict[str, Any] = {}):
     """Args:
 
       group_name, name: The name for the harness. See `Harness.__init__`.
@@ -463,7 +463,7 @@ class PolyHarness(Harness):
     self.override_jax_config_flags = override_jax_config_flags
 
   # Replicate the harness for both enable and disable xla
-  def both_enable_and_disable_xla(self) -> Tuple["PolyHarness", "PolyHarness"]:
+  def both_enable_and_disable_xla(self) -> tuple["PolyHarness", "PolyHarness"]:
     assert self.enable_xla
     other = PolyHarness(self.group_name,
                         f"{self.name}_enable_xla=False",
@@ -800,7 +800,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     def check_avals(*, arg_shapes: Sequence[Sequence[Optional[int]]],
                     polymorphic_shapes: Sequence[Optional[Union[str, PS]]],
                     expected_avals: Optional[Sequence[core.ShapedArray]] = None,
-                    expected_shapeenv: Optional[Dict[str, int]] = None,
+                    expected_shapeenv: Optional[dict[str, int]] = None,
                     eager_mode: bool = False):
       # Use eager mode only for when all arg_shapes are known, in order to
       # check expected_shapeenv.
@@ -2727,7 +2727,7 @@ def _make_vmap_primitive_harnesses() -> Sequence[PolyHarness]:
   res = []
 
   # Index by group
-  harness_groups: Dict[
+  harness_groups: dict[
     str, Sequence[primitive_harness.Harness]] = collections.defaultdict(list)
   device = jtu.device_under_test()
 

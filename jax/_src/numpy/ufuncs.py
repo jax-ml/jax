@@ -19,7 +19,7 @@ Implements ufuncs for jax.numpy.
 from functools import partial
 import operator
 from textwrap import dedent
-from typing import Any, Callable, Tuple, Union, overload
+from typing import Any, Callable, Union, overload
 
 import numpy as np
 
@@ -285,7 +285,7 @@ def floor_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 @_wraps(np.divmod, module='numpy')
 @jit
-def divmod(x1: ArrayLike, x2: ArrayLike, /) -> Tuple[Array, Array]:
+def divmod(x1: ArrayLike, x2: ArrayLike, /) -> tuple[Array, Array]:
   x1, x2 = promote_args_numeric("divmod", x1, x2)
   if dtypes.issubdtype(dtypes.dtype(x1), np.integer):
     return floor_divide(x1, x2), remainder(x1, x2)
@@ -293,7 +293,7 @@ def divmod(x1: ArrayLike, x2: ArrayLike, /) -> Tuple[Array, Array]:
     return _float_divmod(x1, x2)
 
 
-def _float_divmod(x1: ArrayLike, x2: ArrayLike) -> Tuple[Array, Array]:
+def _float_divmod(x1: ArrayLike, x2: ArrayLike) -> tuple[Array, Array]:
   # see float_divmod in floatobject.c of CPython
   mod = lax.rem(x1, x2)
   div = lax.div(lax.sub(x1, mod), x2)
@@ -521,7 +521,7 @@ def ldexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
 @_wraps(np.frexp, module='numpy')
 @jit
-def frexp(x: ArrayLike, /) -> Tuple[Array, Array]:
+def frexp(x: ArrayLike, /) -> tuple[Array, Array]:
   check_arraylike("frexp", x)
   x, = promote_dtypes_inexact(x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
@@ -616,7 +616,7 @@ def real(val: ArrayLike, /) -> Array:
 
 @_wraps(np.modf, module='numpy', skip_params=['out'])
 @jit
-def modf(x: ArrayLike, /, out=None) -> Tuple[Array, Array]:
+def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]:
   check_arraylike("modf", x)
   x, = promote_dtypes_inexact(x)
   if out is not None:

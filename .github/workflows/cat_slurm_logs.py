@@ -15,7 +15,6 @@
 
 import argparse
 import os
-from typing import List
 
 ISSUE_FORMAT = """\
 <details><summary>Failure summary {name}</summary>
@@ -27,7 +26,7 @@ ISSUE_FORMAT = """\
 </details>
 """
 
-def main(logfiles: List[str], outfile: str):
+def main(logfiles: list[str], outfile: str):
   print(f"extracting content of {logfiles}")
   print(f"and writing to {outfile}")
   with open(outfile, 'w') as f:

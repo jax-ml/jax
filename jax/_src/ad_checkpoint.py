@@ -15,8 +15,7 @@
 import functools
 from functools import partial
 import logging
-from typing import (Any, Callable, FrozenSet, List, Optional, Sequence, Tuple,
-                    Union)
+from typing import Any, Callable, Optional, Sequence, Union
 import types
 
 import numpy as np
@@ -134,7 +133,7 @@ checkpoint_policies = types.SimpleNamespace(
 @api_boundary
 def checkpoint(fun: Callable, *, prevent_cse: bool = True,
                policy: Optional[Callable[..., bool]] = None,
-               static_argnums: Union[int, Tuple[int, ...]] = (),
+               static_argnums: Union[int, tuple[int, ...]] = (),
                ) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
@@ -348,14 +347,14 @@ class WrapHashably:
 # See api_benchmark.py:bench_remat_eager_retracing_overheads_static_argnums.
 # On that benchmark, including this caching makes a ~10x difference (which can
 # be made arbitrary large by involving larger functions to be traced).
-def _dyn_args_fun(fun: Callable, static_argnums: FrozenSet[int],
-                  static_args: Tuple[WrapHashably, ...], nargs: int):
+def _dyn_args_fun(fun: Callable, static_argnums: frozenset[int],
+                  static_args: tuple[WrapHashably, ...], nargs: int):
   if any(isinstance(x.val, core.Tracer) for x in static_args):
     return _dyn_args_fun_uncached(fun, static_argnums, static_args, nargs)
   return _dyn_args_fun_cached(fun, static_argnums, static_args, nargs)
 
-def _dyn_args_fun_uncached(fun: Callable, static_argnums: FrozenSet[int],
-                           static_args: Tuple[WrapHashably, ...], nargs: int):
+def _dyn_args_fun_uncached(fun: Callable, static_argnums: frozenset[int],
+                           static_args: tuple[WrapHashably, ...], nargs: int):
   def new_fun(*dyn_args, **kwargs):
     static_args_, dyn_args_ = iter(static_args), iter(dyn_args)
     full_args = [next(static_args_).val if i in static_argnums
@@ -391,7 +390,7 @@ def _trace_to_jaxpr(fun, in_tree, in_avals):
 
 ### Utilities
 
-def saved_residuals(f, *args, **kwargs) -> List[Tuple[core.AbstractValue, str]]:
+def saved_residuals(f, *args, **kwargs) -> list[tuple[core.AbstractValue, str]]:
   in_leaves, in_tree = tree_flatten((args, kwargs))
 
   def f_(*args):
@@ -409,7 +408,7 @@ def saved_residuals(f, *args, **kwargs) -> List[Tuple[core.AbstractValue, str]]:
   arg_info = pe.arg_info_all(dbg)
   return _saved_residuals(jaxpr, arg_info)
 
-def _saved_residuals(jaxpr, arg_info) -> List[Tuple[core.AbstractValue, str]]:
+def _saved_residuals(jaxpr, arg_info) -> list[tuple[core.AbstractValue, str]]:
   res_lits = [x for x in jaxpr.outvars if     isinstance(x, core.Literal)]
   res_vars = {x for x in jaxpr.outvars if not isinstance(x, core.Literal)}
 
@@ -579,7 +578,7 @@ ad.reducing_transposes[remat_p] = remat_transpose
 def transpose_jaxpr(jaxpr: core.ClosedJaxpr, in_linear: Union[bool, Sequence[bool]],
                     out_zeros: Union[bool, Sequence[bool]],
                     reduce_axes: Sequence[core.AxisName],
-                    ) -> Tuple[core.ClosedJaxpr, List[bool]]:
+                    ) -> tuple[core.ClosedJaxpr, list[bool]]:
   if type(in_linear) is bool:
     in_linear = (in_linear,) * len(jaxpr.in_avals)
   if type(out_zeros) is bool:
@@ -640,8 +639,8 @@ batching.axis_primitive_batchers[remat_p] = partial(remat_vmap, None)
 batching.spmd_axis_primitive_batchers[remat_p] = remat_vmap
 
 # TODO(mattjj,sharadmv): de-duplicate with pe.dce_jaxpr_call_rule
-def remat_dce(used_outputs: List[bool], eqn: core.JaxprEqn
-              ) -> Tuple[List[bool], Optional[core.JaxprEqn]]:
+def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn
+              ) -> tuple[list[bool], Optional[core.JaxprEqn]]:
   new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
   new_params = dict(eqn.params, jaxpr=new_jaxpr)
   if not any(used_inputs) and not any(used_outputs) and not new_jaxpr.effects:
@@ -781,7 +780,7 @@ def checkpoint_wrapper(
     *,
     concrete: bool = False,
     prevent_cse: bool = True,
-    static_argnums: Union[int, Tuple[int, ...]] = (),
+    static_argnums: Union[int, tuple[int, ...]] = (),
     policy: Optional[Callable[..., bool]] = None,
 ) -> Callable:
   if concrete:

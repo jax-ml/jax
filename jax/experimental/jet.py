@@ -52,7 +52,7 @@ r"""Jet is an experimental module for higher-order automatic differentiation
     `outstanding primitive rules <https://github.com/google/jax/issues/2431>`__.
 """
 
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable
 
 from functools import partial
 
@@ -264,7 +264,7 @@ zero_series = ZeroSeries()
 register_pytree_node(ZeroSeries, lambda z: ((), None), lambda _, xs: zero_series)
 
 
-call_param_updaters: Dict[core.Primitive, Callable[..., Any]] = {}
+call_param_updaters: dict[core.Primitive, Callable[..., Any]] = {}
 
 
 ### rule definitions
@@ -715,7 +715,7 @@ jet_rules[lax.scatter_add_p] = _scatter_add_rule
 @weakref_lru_cache
 def _jet_jaxpr(
     jaxpr: core.ClosedJaxpr, order: int, primals_and_series_avals, in_tree_def
-) -> Tuple[core.ClosedJaxpr, Any]:
+) -> tuple[core.ClosedJaxpr, Any]:
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
   f_jet, out_tree_def = traceable(jet_fun(jet_subtrace(f), order), in_tree_def)
   jaxpr_jet, _, consts = pe.trace_to_jaxpr_dynamic(

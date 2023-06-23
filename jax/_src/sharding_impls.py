@@ -22,8 +22,8 @@ import itertools
 import math
 import operator as op
 import sys
-from typing import (Any, Dict, FrozenSet, List, Mapping, Optional, OrderedDict,
-                    NamedTuple, Sequence, Set, Tuple, Union, cast)
+from typing import (Any, Mapping, Optional, OrderedDict, NamedTuple, Sequence,
+                    Union, cast)
 
 from jax._src import mesh as mesh_lib
 from jax._src.op_shardings import (
@@ -44,13 +44,13 @@ import numpy as np
 if sys.version_info >= (3, 9):
   OrderedDictType = OrderedDict
 else:
-  OrderedDictType = Dict
+  OrderedDictType = dict
 
 
-Shape = Tuple[int, ...]
+Shape = tuple[int, ...]
 Device = xc.Device
-Index = Tuple[slice, ...]
-XLADeviceAssignment = Tuple[Device, ...]
+Index = tuple[slice, ...]
+XLADeviceAssignment = tuple[Device, ...]
 
 
 # Shardings that inherit from XLACompatibleSharding should implement the
@@ -146,7 +146,7 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
         'create a device to index mapping for your sharding from which replica '
         'ids will be calculated.') from None
 
-  index_to_replica: Dict[int, int] = collections.Counter()
+  index_to_replica: dict[int, int] = collections.Counter()
   out = {}
   for device, index in device_indices_map_fn(global_shape).items():
     h_index = hashed_index(index)
@@ -255,7 +255,7 @@ class NamedSharding(XLACompatibleSharding):
     return cls(mesh, parsed_pspec.get_partition_spec(), parsed_pspec)
 
   @property
-  def device_set(self) -> Set[Device]:
+  def device_set(self) -> set[Device]:
     return self.mesh._flat_devices_set
 
   @property
@@ -269,7 +269,7 @@ class NamedSharding(XLACompatibleSharding):
     return not self.mesh.is_multi_process
 
   @property
-  def addressable_devices(self) -> Set[Device]:
+  def addressable_devices(self) -> set[Device]:
     # Override addressable devices because there is a high chance that the mesh
     # across multiple NamedSharding objects will be the same.
     return self.mesh._local_devices_set
@@ -355,7 +355,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
     return self._device == other._device
 
   @property
-  def device_set(self) -> Set[Device]:
+  def device_set(self) -> set[Device]:
     return {self._device}
 
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:  # type: ignore
@@ -453,7 +453,7 @@ class PmapSharding(XLACompatibleSharding):
     return cls(pmap_devices, sharding_spec)
 
   @functools.cached_property
-  def device_set(self) -> Set[Device]:
+  def device_set(self) -> set[Device]:
     return set(self.devices.flat)
 
   @functools.lru_cache(maxsize=4096)
@@ -524,7 +524,7 @@ def _op_sharding_to_pos_sharding(
 
 
 class PositionalSharding(XLACompatibleSharding):
-  _devices: Tuple[xc.Device, ...]
+  _devices: tuple[xc.Device, ...]
   _ids: np.ndarray  # dtype DeviceIdSet
 
   def __init__(self, devices: Union[Sequence[xc.Device], np.ndarray]):
@@ -564,7 +564,7 @@ class PositionalSharding(XLACompatibleSharding):
 
   @classmethod
   def remake(
-      cls, devices: Tuple[xc.Device, ...], ids: np.ndarray) -> PositionalSharding:
+      cls, devices: tuple[xc.Device, ...], ids: np.ndarray) -> PositionalSharding:
     self = cls.__new__(cls)
     self._devices = devices
     self._ids = ids
@@ -626,7 +626,7 @@ class PositionalSharding(XLACompatibleSharding):
 
 class DeviceIdSet:
   _name: str
-  _ids: FrozenSet[int]
+  _ids: frozenset[int]
   def __init__(self, name, *ids):
     self._name = name
     self._ids = frozenset(ids)
@@ -655,7 +655,7 @@ class DeviceIdSet:
 
 @use_cpp_class(xc.GSPMDSharding)
 class GSPMDSharding(XLACompatibleSharding):
-  _devices: Tuple[Device, ...]
+  _devices: tuple[Device, ...]
   _hlo_sharding: xc.HloSharding
 
   @use_cpp_method()
@@ -706,7 +706,7 @@ class GSPMDSharding(XLACompatibleSharding):
           f"{len(aval_shape)}")
 
   @functools.cached_property
-  def device_set(self) -> Set[Device]:
+  def device_set(self) -> set[Device]:
     return set(self._devices)
 
   @functools.lru_cache(maxsize=4096)
@@ -997,8 +997,8 @@ def _check_unique_resources(axis_resources, arg_name):
 class AxisEnv(NamedTuple):
   """Represents a pmap mesh (only along the replica axes)."""
   nreps: int
-  names: Tuple[Any, ...]
-  sizes: Tuple[int, ...]
+  names: tuple[Any, ...]
+  sizes: tuple[int, ...]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1010,7 +1010,7 @@ class SPMDAxisContext:
   is invoked inside an xmap) lowered in the MANUAL sharding mode.
   """
   mesh: mesh_lib.Mesh
-  manual_axes: FrozenSet[MeshAxisName] = frozenset()
+  manual_axes: frozenset[MeshAxisName] = frozenset()
 
   @property
   def axis_env(self):
@@ -1030,7 +1030,7 @@ class SPMDAxisContext:
         names=self.mesh.axis_names,
         sizes=tuple(self.mesh.shape.values()))
 
-  def extend_manual(self, axes: FrozenSet[MeshAxisName]) -> SPMDAxisContext:
+  def extend_manual(self, axes: frozenset[MeshAxisName]) -> SPMDAxisContext:
     return SPMDAxisContext(self.mesh, self.manual_axes | axes)
 
 
@@ -1162,7 +1162,7 @@ def parse_flatten_op_sharding(op_sharding: Union[xc.OpSharding, xc.HloSharding],
   if isinstance(op_sharding, xc.HloSharding):
     op_sharding = op_sharding.to_proto()  # type: ignore
   if op_sharding.type == xc.OpSharding.Type.TUPLE:
-    out: List[ParsedPartitionSpec] = []
+    out: list[ParsedPartitionSpec] = []
     for s in op_sharding.tuple_shardings:
       out.extend(parse_flatten_op_sharding(s, mesh))
     return out

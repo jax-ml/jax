@@ -69,7 +69,7 @@ import datetime
 import os
 import re
 import sys
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Iterable, Optional, Sequence
 
 from absl import logging
 
@@ -95,7 +95,7 @@ CURRENT_TESTDATA_VERSION = 1
 class CompatTestData:
   testdata_version: int
   platform: str  # One of: "cpu", "tpu", "cuda", "rocm"
-  custom_call_targets: List[str]
+  custom_call_targets: list[str]
   serialized_date: datetime.date  # e.g., datetime.date(2023, 3, 9)
   inputs: Sequence[np.ndarray]
   expected_outputs: Sequence[np.ndarray]
@@ -132,7 +132,7 @@ class CompatTestBase(jtu.JaxTestCase):
     # Canonicalize to turn into "cuda" or "rocm"
     return xb.canonicalize_platform(jax.default_backend())
 
-  def load_testdata(self, testdata_dict: Dict[str, Any]) -> CompatTestData:
+  def load_testdata(self, testdata_dict: dict[str, Any]) -> CompatTestData:
     if testdata_dict["testdata_version"] == CURRENT_TESTDATA_VERSION:
       return CompatTestData(**testdata_dict)
     else:
@@ -263,7 +263,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       func: Callable, data: CompatTestData, *,
       polymorphic_shapes: Optional[Sequence[str]] = None,
       allow_additional_custom_call_targets: Sequence[str] = ()
-  ) -> Tuple[bytes, str, int]:
+  ) -> tuple[bytes, str, int]:
     """Serializes the test function.
 
     Args:

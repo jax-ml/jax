@@ -13,12 +13,12 @@
 # limitations under the License.
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional, Type, Set
+from typing import Any, Iterable, Optional
 
 class Effect:
   """A generic side-effect."""
 
-Effects = Set[Effect]
+Effects = set[Effect]
 
 class JaxprInputEffect(Effect):
   """A side-effect associated with the input of a jaxpr.
@@ -48,9 +48,9 @@ class JaxprInputEffect(Effect):
 class EffectTypeSet:
 
   def __init__(self):
-    self._effect_types: Set[Type[Effect]] = set()
+    self._effect_types: set[type[Effect]] = set()
 
-  def add_type(self, effect_type: Type[Effect]):
+  def add_type(self, effect_type: type[Effect]):
     self._effect_types.add(effect_type)
 
   def contains(self, eff: Effect) -> bool:

@@ -13,7 +13,7 @@
 # limitations under the License.
 """Tests for call_tf."""
 from functools import partial
-from typing import Callable, Dict, Tuple
+from typing import Callable
 import unittest
 
 from absl import logging
@@ -114,7 +114,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
   @_parameterized_jit
   def test_eval_pytree(self, with_jit=True):
 
-    def fun_tf(x: Dict, y: Tuple) -> Tuple:
+    def fun_tf(x: dict, y: tuple) -> tuple:
       return (x["first"] * x["second"], y[0] + y[1])
 
     x = dict(first=np.float32(3.), second=np.float32(4.))
@@ -372,7 +372,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
   @_parameterized_jit
   def test_grad_pytree(self, with_jit=False):
 
-    def fun_tf(x: Dict, y: Tuple) -> Tuple:
+    def fun_tf(x: dict, y: tuple) -> tuple:
       return x["first"] * x["second"] + 3. * y[0] + 4. * y[1]
 
     x = dict(first=np.float32(3.), second=np.float32(4.))

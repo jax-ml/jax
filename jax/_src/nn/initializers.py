@@ -18,7 +18,7 @@ used in Keras and Sonnet.
 """
 
 import math
-from typing import Any, Literal, Protocol, Sequence, Tuple, Union
+from typing import Any, Literal, Protocol, Sequence, Union
 
 import numpy as np
 
@@ -159,7 +159,7 @@ def _compute_fans(shape: core.NamedShape,
                   in_axis: Union[int, Sequence[int]] = -2,
                   out_axis: Union[int, Sequence[int]] = -1,
                   batch_axis: Union[int, Sequence[int]] = ()
-                  ) -> Tuple[Array, Array]:
+                  ) -> tuple[Array, Array]:
   """
   Compute effective input and output sizes for a linear or convolutional layer.
 

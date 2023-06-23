@@ -16,7 +16,7 @@
 from functools import partial
 import math
 from operator import index
-from typing import Optional, Sequence, Tuple, Union
+from typing import Optional, Sequence, Union
 import warnings
 
 import numpy as np
@@ -67,7 +67,7 @@ def _isnan(x: ArrayLike) -> Array:
   return lax.ne(x, x)
 
 
-def _check_prng_key(key) -> Tuple[prng.PRNGKeyArray, bool]:
+def _check_prng_key(key) -> tuple[prng.PRNGKeyArray, bool]:
   # TODO(frostig): remove once we always enable_custom_prng
   if isinstance(key, prng.PRNGKeyArray):
     return key, False

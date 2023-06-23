@@ -15,7 +15,7 @@
 from contextlib import contextmanager
 from functools import partial
 import itertools as it
-from typing import Any, List, Optional, Callable, Union, TypeVar
+from typing import Any, Optional, Callable, Union, TypeVar
 
 import numpy as np
 from absl.testing import absltest
@@ -1304,7 +1304,7 @@ Int = Union[int, core.Tracer]
 
 # Can't used NamedTuple here b/c those are pytrees
 class NamedArray:
-  names: List[str]
+  names: list[str]
   data: Array
 
   def __init__(self, names, data):
@@ -1365,11 +1365,11 @@ def temporarily_register_named_array_vmappable():
 
 a = TypeVar('a')
 
-def list_pop(lst: List[a], idx: int) -> a:
+def list_pop(lst: list[a], idx: int) -> a:
   lst = list(lst)
   return lst, lst.pop(idx)
 
-def list_insert(lst: List[a], idx: int, val: a) -> List[a]:
+def list_insert(lst: list[a], idx: int, val: a) -> list[a]:
   lst = list(lst)
   lst.insert(idx, val)
   return lst
