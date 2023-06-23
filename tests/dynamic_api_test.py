@@ -1526,7 +1526,7 @@ class PileTest(jtu.JaxTestCase):
     self.assertIsInstance(y, batching.Pile)
     self.assertAllClose(y.data, jnp.array([5, 0, 14], dtype='int32'))
 
-  def test_pile_map_matrix_dot(self):
+  def test_pile_map_matrix_dot_ragged_contract(self):
     sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
     p1 = jax.vmap(lambda n: jnp.ones((7, n)), out_axes=batching.pile_axis
                   )(sizes)
@@ -1536,6 +1536,17 @@ class PileTest(jtu.JaxTestCase):
                  axis_size=3)(p1, p2)
     self.assertAllClose(y, np.tile(np.array([3, 1, 4])[:, None, None], (7, 7)),
                         check_dtypes=False)
+
+  def test_pile_map_matrix_dot_ragged_tensor(self):
+    sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    def func(size):
+      lhs_one_d = jnp.arange(size, dtype='int32') + 1
+      lhs_two_d = jax.lax.broadcast_in_dim(lhs_one_d, (size, 2), (0,))
+      rhs = jax.lax.broadcasted_iota('int32', (2, 4), 0) + 1
+      return jnp.dot(lhs_two_d, rhs)
+    p = jax.vmap(func, out_axes=batching.pile_axis)(sizes)
+    self.assertIsInstance(p, batching.Pile)
+    self.assertEqual(p.data.shape, (3, 5, 4))
 
   def test_broadcast_in_dim_while_ragged(self):
     ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
@@ -1604,6 +1615,30 @@ class PileTest(jtu.JaxTestCase):
     self.assertIsInstance(p, batching.Pile)
     data = jax.lax.broadcasted_iota('int32', (3, 5, 5), 2)
     self.assertAllClose(p.data, data)
+
+  def test_transpose_ragged(self):
+    ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    def func(size):
+      one_d = jnp.arange(size, dtype='int32')
+      two_d = jnp.broadcast_to(one_d, (7, size))
+      return jnp.transpose(two_d, [1, 0])
+    p = jax.vmap(func, out_axes=batching.pile_axis)(ins)
+    self.assertIsInstance(p, batching.Pile)
+    data = jax.lax.broadcasted_iota('int32', (3, 5, 7), 1)
+    self.assertAllClose(p.data, data)
+
+  def test_ragged_einsum(self):
+    x_sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    def fprop_layer(x_size):
+      one_d = jnp.arange(x_size, dtype='int32')
+      x = jax.lax.broadcast_in_dim(one_d, (x_size, 11), [0])
+      wqkv = jax.lax.broadcasted_iota('int32', (3, 2, 7, 11), 1)
+      qkv = jnp.einsum('te,ihqe->ithq', x, wqkv)
+      return qkv
+    p = jax.vmap(fprop_layer, out_axes=batching.pile_axis)(x_sizes)
+    self.assertIsInstance(p, batching.Pile)
+    self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[3,bint\{≤5\}\[3\] with value: \[3 1 4\]\.Var[0-9]+,2,7\]')
+    self.assertEqual(p.data.shape, (3, 3, 5, 2, 7))
 
 def pile_map(f):
   def mapped(*piles):

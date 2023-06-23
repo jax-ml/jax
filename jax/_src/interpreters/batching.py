@@ -134,6 +134,10 @@ class RaggedAxis:
     new_ragged_axes = [(move_axis(ax), sizes) for ax, sizes in self.ragged_axes]
     return RaggedAxis(dst, new_ragged_axes)
 
+  def transpose_ragged_axes(self, perm):
+    new_ragged_axes = [(perm[ax], size) for ax, size in self.ragged_axes]
+    return RaggedAxis(self.stacked_axis, new_ragged_axes)
+
 def make_batch_axis(
     ndim: int, stacked_axis: int, ragged_axes: List[Tuple[int, Array]]
   ) -> Union[int, RaggedAxis]:
@@ -142,6 +146,24 @@ def make_batch_axis(
     return RaggedAxis(canonicalize_axis(stacked_axis, ndim), canonical)
   else:
     return canonicalize_axis(stacked_axis, ndim)
+
+def bdim_as_shape(
+    bdim: Union[int, RaggedAxis], data_shape: core.Shape) -> core.Shape:
+  if isinstance(bdim, RaggedAxis):
+    result = list(data_shape)
+    binder = core.Var(0, '', core.ShapedArray((), np.dtype('int32')))
+    for ragged_axis, segment_lens in bdim.ragged_axes:
+      result[ragged_axis] = IndexedAxisSize(binder, segment_lens)
+    return tuple(result)
+  else:
+    return data_shape
+
+def shape_as_bdim(
+    stacked_axis: int, data_shape: core.Shape) -> Union[int, RaggedAxis]:
+  # This assumes that there is only one binder in the data_shape.
+  ragged_axes = [(i, size.lengths) for i, size in enumerate(data_shape)
+                 if isinstance(size, IndexedAxisSize)]
+  return make_batch_axis(len(data_shape), stacked_axis, ragged_axes)
 
 
 def _update_annotation(

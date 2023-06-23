@@ -1238,7 +1238,10 @@ def dedup_referents(itr: Iterable[Any]) -> List[Any]:
   return list({HashableWrapper(get_referent(x)):x for x in itr}.values())
 
 def definitely_equal(x, y):
-  return x is y or same_referent(x, y) or symbolic_equal_dim(x, y)
+  if isinstance(x, Tracer) or isinstance(y, Tracer):
+    return same_referent(x, y)
+  else:
+    return symbolic_equal_dim(x, y)
 
 
 # -------------------- abstract values --------------------
@@ -1967,6 +1970,10 @@ def symbolic_equal_one_of_dim(d1: DimSize, dlist: Sequence[DimSize]) -> bool:
 def symbolic_equal_shape(s1: Shape, s2: Shape) -> bool:
   return (len(s1) == len(s2) and
           all(unsafe_map(symbolic_equal_dim, s1, s2)))
+
+def definitely_equal_shape(s1: Shape, s2: Shape) -> bool:
+  return (len(s1) == len(s2) and
+          all(unsafe_map(definitely_equal, s1, s2)))
 
 def greater_equal_dim(d1: DimSize, d2: DimSize) -> bool:
   handler, ds = _dim_handler_and_canonical(d1, d2)
