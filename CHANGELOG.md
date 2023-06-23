@@ -13,6 +13,11 @@ Remember to align the itemized text with the first line of an item within a list
     https://jax.readthedocs.io/en/latest/deprecation.html
   * JAX now requires NumPy 1.22 or newer as per
     https://jax.readthedocs.io/en/latest/deprecation.html
+  * `jax.interpreters.pxla.device_put` has been removed. This was deprecated in
+    JAX version 0.4.6: use `jax.device_put` instead.
+  * `jax.interpreters.pxla.make_sharded_device_array` has been removed. This was
+    deprecated in JAX version 0.4.6: use `jax.make_array_from_single_device_arrays`
+    instead.
 
 ## jaxlib 0.4.14
 
