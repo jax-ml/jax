@@ -366,7 +366,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     dtype=float_types + complex_types,
     lower=[True, False],
   )
-  @jtu.skip_on_devices("rocm")
   def testEighIdentity(self, n, dtype, lower):
     tol = np.finfo(dtype).eps
     uplo = "L" if lower else "U"
