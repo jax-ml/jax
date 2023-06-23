@@ -2826,10 +2826,10 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       custom_call_harnesses = {
           "householder_product:cpu", "householder_product:gpu",
           "vmap_geqrf:cpu", "vmap_geqrf:gpu",
-          "vmap_lu:cpu", "vmap_lu:gpu",
-          # custom_linear_solve uses lu
-          "vmap_custom_linear_solve:cpu", "vmap_custom_linear_solve:gpu",
-          "vmap_qr:gpu",
+          "vmap_lu:gpu",
+          # custom_linear_solve works as long as lu works.
+          "vmap_custom_linear_solve:gpu",
+          "vmap_qr:cpu", "vmap_qr:gpu",
           "vmap_svd:gpu",
       }
       if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:

@@ -1239,14 +1239,31 @@ def _lu_batching_rule(batched_args, batch_dims):
   x = batching.moveaxis(x, bd, 0)
   return lu_p.bind(x), (0, 0, 0)
 
-def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand):
-  if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
-    raise NotImplementedError("Shape polymorphism for custom call is not implemented (lu); b/261671778")
+def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand, *,
+                         platform: str):
   operand_aval, = ctx.avals_in
+  # It should be possible to support fully-dynamic shapes, but since
+  # the last two dimensions (m, n) are used in more involved ways, we only
+  # support dynamic dimensions for the batch size for now.
+  if not is_constant_shape(operand_aval.shape[-2:]):
+    raise NotImplementedError(
+      "Shape polymorphism for native lowering for lu on CPU and GPU is "
+      f"implemented only for the batch dimensions: {operand_aval.shape}")
+
   out_aval, pivot_aval, perm_aval = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   m = operand_aval.shape[-2]
-  lu, pivot, info = getrf_impl(operand_aval.dtype, operand)
+  if platform in ["cuda", "rocm"] or jaxlib_version < (0, 4, 14):
+    # TODO(necula): remove the platform kwarg when we implement GPU support.
+    if not is_constant_shape(operand_aval.shape):
+      raise NotImplementedError(
+          "Shape polymorphism for native serialization for lu on GPU is not "
+          f"implemented; b/261671778; {operand_aval.shape}")
+    lu, pivot, info = getrf_impl(operand_aval.dtype, operand)
+  else:
+    op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
+    lu, pivot, info = getrf_impl(
+        operand_aval.dtype, operand, a_shape_vals=op_shape_vals)
   # Subtract 1 from the pivot to get 0-based indices.
   pivot = hlo.SubtractOp(pivot, mlir.full_like_aval(ctx, 1, pivot_aval)).result
   ok = mlir.compare_hlo(
@@ -1294,14 +1311,17 @@ ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
 mlir.register_lowering(lu_p,
-                        partial(_lu_cpu_gpu_lowering, lapack.getrf_hlo),
+                        partial(_lu_cpu_gpu_lowering, lapack.getrf_hlo,
+                                platform='cpu'),
                         platform='cpu')
 
 mlir.register_lowering(
-    lu_p, partial(_lu_cpu_gpu_lowering, gpu_solver.cuda_getrf),
+    lu_p, partial(_lu_cpu_gpu_lowering, gpu_solver.cuda_getrf,
+                  platform='cuda'),
     platform='cuda')
 mlir.register_lowering(
-    lu_p, partial(_lu_cpu_gpu_lowering, gpu_solver.rocm_getrf),
+    lu_p, partial(_lu_cpu_gpu_lowering, gpu_solver.rocm_getrf,
+                  platform='rocm'),
     platform='rocm')
 
 mlir.register_lowering(lu_p, _lu_tpu_lowering_rule, platform='tpu')

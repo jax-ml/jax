@@ -36,6 +36,7 @@ from jax.experimental.jax2tf.tests import back_compat_test_util as bctu
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_ducc_fft
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_eigh_cusolver_syev
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_eigh_lapack_syev
+from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_lu_lapack_getrf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_qr_cusolver_geqrf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_qr_lapack_geqrf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_threefry2x32
@@ -98,6 +99,7 @@ class CompatTest(bctu.CompatTestBase):
         cpu_ducc_fft.data_2023_03_17, cpu_ducc_fft.data_2023_06_14,
         cpu_eigh_lapack_syev.data_2023_03_17,
         cpu_qr_lapack_geqrf.data_2023_03_17, cuda_threefry2x32.data_2023_03_15,
+        cpu_lu_lapack_getrf.data_2023_06_14,
         cuda_qr_cusolver_geqrf.data_2023_03_18, cuda_eigh_cusolver_syev.data_2023_03_17,
         tf_call_tf_function.data_2023_06_02,  # This is tested in back_compat_tf_test.py
         tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17,
@@ -106,6 +108,7 @@ class CompatTest(bctu.CompatTestBase):
         tpu_stablehlo_dynamic_reduce_window.data_unary_2023_06_17,
         tpu_stablehlo_dynamic_reduce_window.data_variadic_2023_06_17,
         stablehlo_dynamic_rng_bit_generator.data_2023_06_17,]
+    # Some of the above are nested structures.
     covering_testdatas = itertools.chain(
         *[self.load_testdata_nested(d) for d in covering_testdatas])
     covered_targets = set()
@@ -265,11 +268,51 @@ class CompatTest(bctu.CompatTestBase):
     operand = jnp.reshape(jnp.arange(math.prod(shape), dtype=dtype), shape)
     return lax.linalg.lu(operand)
 
+  def check_lu_results(self, operand, res_now, res_expected, *,
+                       dtype, rtol=None, atol=None):
+    # Same checker as in linalg_test.py
+    del res_expected  # we do not check against expected
+    lu_now, pivots_now, _ = res_now
+
+    n, m = operand.shape
+    self.assertEqual(n, m)
+    l = np.tril(lu_now, -1) + np.eye(n, dtype=dtype)
+    u = np.triu(lu_now)
+    operand_copy = operand.copy()
+    for i in range(n):
+      operand_copy[[i, pivots_now[i]],] = operand_copy[[pivots_now[i], i],]
+    self.assertAllClose(operand_copy, np.matmul(l, u), rtol=rtol, atol=atol)
+
   def test_tpu_Lu(self):
-    # For lax.linalg.lu
-    func = lambda: CompatTest.lu_harness((3, 3), np.float32)
+    # For lax.linalg.lu on TPU.
+    shape = (3, 3)
+    dtype = np.float32
+    func = lambda: CompatTest.lu_harness(shape, dtype)
     data = self.load_testdata(tpu_Lu.data_2023_03_21)
-    self.run_one_test(func, data, rtol=1e-3)
+    operand = np.reshape(np.arange(math.prod(shape), dtype=dtype), shape)
+    self.run_one_test(func, data, rtol=1e-3,
+                      check_results=partial(self.check_lu_results, operand,
+                                            dtype=dtype))
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}",
+           dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
+  def test_cpu_lu_lapack_getrf(self, dtype_name:str):
+    # For lax.linalg.lu on CPU.
+    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+    dtype = dict(f32=np.float32, f64=np.float64,
+                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    shape = (3, 3)
+    func = lambda: CompatTest.lu_harness(shape, dtype)
+    data = self.load_testdata(cpu_lu_lapack_getrf.data_2023_06_14[dtype_name])
+    operand = np.reshape(np.arange(math.prod(shape), dtype=dtype), shape)
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
+                      check_results=partial(self.check_lu_results, operand,
+                                            dtype=dtype))
 
   def test_approx_top_k(self):
     def func():
