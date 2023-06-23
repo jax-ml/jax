@@ -21,7 +21,7 @@ from setuptools import setup, find_packages
 
 _current_jaxlib_version = '0.4.13'
 # The following should be updated with each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.4.12'
+_latest_jaxlib_version_on_pypi = '0.4.13'
 _available_cuda11_cudnn_versions = ['86']
 _default_cuda11_cudnn_version = '86'
 _default_cuda12_cudnn_version = '89'

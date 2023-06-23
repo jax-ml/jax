@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.13
+## jax 0.4.14
+
+## jaxlib 0.4.14
+
+## jax 0.4.13 (June 22, 2023)
 
 * Changes
   * `jax.jit` now allows `None` to be passed to `in_shardings` and
@@ -38,7 +42,7 @@ Remember to align the itemized text with the first line of an item within a list
     {func}`jax.experimental.jax2tf.convert` is deprecated in favor of the
     new `native_serializaation_disabled_checks` ({jax-issue}`#16347`).
 
-## jaxlib 0.4.13
+## jaxlib 0.4.13 (June 22, 2023)
 
 * Changes
   * Added Windows CPU-only wheels to the `jaxlib` Pypi release.
