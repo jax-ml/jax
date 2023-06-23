@@ -391,16 +391,13 @@ installed as the `jaxlib` package. Use the following instructions to install a
 binary package with `pip` or `conda`, or to [build JAX from
 source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
-We support installing or building `jaxlib` on Linux (Ubuntu 16.04 or later) and
-macOS (10.12 or later) platforms.
+We support installing or building `jaxlib` on Linux (Ubuntu 20.04 or later) and
+macOS (10.12 or later) platforms. There is also *experimental* native Windows
+support.
 
 Windows users can use JAX on CPU and GPU via the [Windows Subsystem for
-Linux](https://docs.microsoft.com/en-us/windows/wsl/about). In addition, there
-is some initial community-driven native Windows support, but since it is still
-somewhat immature, there are no official binary releases and it must be [built
-from source for Windows](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-jaxlib-from-source-on-windows).
-For an unofficial discussion of native Windows builds, see also the [Issue #5795
-thread](https://github.com/google/jax/issues/5795).
+Linux](https://docs.microsoft.com/en-us/windows/wsl/about), or alternatively
+they can use the *experimental* native Windows CPU-only support.
 
 ### pip installation: CPU
 
@@ -413,9 +410,17 @@ pip install --upgrade "jax[cpu]"
 ```
 
 On Linux, it is often necessary to first update `pip` to a version that supports
-`manylinux2014` wheels. Also note that for Linux, we currently release wheels for `x86_64` architectures only, other architectures require building from source. Trying to pip install with other Linux architectures may lead to `jaxlib` not being installed alongside `jax`, although `jax` may successfully install (but fail at runtime).
-**These `pip` installations do not work with Windows, and may fail silently; see
-[above](#installation).**
+`manylinux2014` wheels. We currently release `jaxlib` wheels for the following
+operating systems and architectures:
+* Linux, x86-64
+* Mac, Intel
+* Mac, ARM
+* Windows, x86-64 (*experimental*)
+
+Other operating systems and architectures require building from source. Trying
+to pip install on other operating systems and architectures may lead to `jaxlib`
+not being installed alongside `jax`, although `jax` may successfully install
+(but fail at runtime).
 
 ### pip installation: GPU (CUDA, installed via pip, easier)
 
@@ -425,7 +430,7 @@ installing CUDA and CUDNN using the pip wheels, since it is much easier!
 
 JAX supports NVIDIA GPUs that have SM version 5.2 (Maxwell) or newer.
 Note that Kepler-series GPUs are no longer supported by JAX since
-NVIDIA has dropped support for Kepler in its software.
+NVIDIA has dropped support for Kepler GPUs in its software.
 
 You must first install the NVIDIA driver. We
 recommend installing the newest driver available from NVIDIA, but the driver
