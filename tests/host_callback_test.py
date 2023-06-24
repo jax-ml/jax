@@ -3015,5 +3015,64 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
           in (d, e) }""", f, [np.array([2.], dtype=np.float32)])
 
 
+class RepositoryTest(absltest.TestCase):
+
+  def test_namespace(self):
+    regex_id = hcb.repository("namespace_1").add("regex")
+    self.assertEqual(
+        hcb.repository("namespace_1").get(regex_id), "regex"
+    )
+
+  def test_namespace_same_object(self):
+    repository1 = hcb.repository("namespace_1")
+    repository2 = hcb.repository("namespace_1")
+    self.assertIs(repository1, repository2)
+
+  def test_namespace_different_object(self):
+    repository1 = hcb.repository("namespace_2")
+    repository2 = hcb.repository("namespace_3")
+    self.assertIsNot(repository1, repository2)
+
+  def test_add_and_pop(self):
+    repository = hcb.Repository()
+    self.assertEqual(repository.size, 0)
+    regex_id = repository.add("regex")
+    self.assertEqual(repository.size, 1)
+    self.assertTrue(repository.pop(regex_id))
+    self.assertEqual(repository.size, 0)
+
+  def test_pop_unknown_id(self):
+    repository = hcb.Repository()
+    self.assertEqual(repository.size, 0)
+    self.assertFalse(repository.pop(0))
+    self.assertEqual(repository.size, 0)
+
+  def test_add_and_get(self):
+    repository = hcb.Repository()
+    regex_id = repository.add("regex")
+    self.assertEqual(repository.get(regex_id), "regex")
+
+  def test_get_unknown_id(self):
+    repository = hcb.Repository()
+    with self.assertRaises(KeyError):
+      repository.get(0)
+
+  def test_eviction(self):
+    repository = hcb.Repository(max_size=1)
+    self.assertEqual(repository.size, 0)
+    regex_ids = []
+    for i in range(4):
+      regex_ids.append(repository.add(f"regex_{i}"))
+    self.assertEqual(repository.size, 1)
+
+    # The last regex still remains.
+    self.assertEqual(repository.get(regex_ids[-1]), "regex_3")
+
+    # The others were evicted.
+    for regex_id in regex_ids[:-1]:
+      with self.assertRaises(KeyError):
+        repository.get(regex_id)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

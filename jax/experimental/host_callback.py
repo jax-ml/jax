@@ -495,13 +495,14 @@ Still to do:
 
 """
 import atexit
+import collections
 import functools
 import itertools
 import logging
 import math
 import threading
 import traceback
-from typing import Any, Callable, Optional, Sequence, cast
+from typing import Any, Dict, Callable, Optional, Sequence, cast
 import warnings
 
 from jax._src import api
@@ -2062,3 +2063,119 @@ def stop_outfeed_receiver():
   using lax.outfeed directly after having used host callbacks.
   """
   _callback_handler_data.stop()
+
+
+class Repository:
+  """Thread-safe container of ID-keyed strings to pass strings to host_callback.
+
+  The intended usage is as follows:
+    1. Set up a `Repository` that is accessible from both pre-processing
+       and the model.  For convenience, the function `repository(namespace)`
+       in this module returns a per-namespace singleton `Repository`.
+       Other approaches include a module-level `Repository` variable or a
+       `Repository` injected via hparams.
+    2. In pre-processing, use `repository(namespace).add()` to add strings
+       and pass the resulting string IDs to the model.
+    3. In the model/accelerator, use `repository(namespace).get()` to fetch
+       strings by ID.
+    4. Set the `device_index` argument in host_callback.call match the device
+       that runs pre-processing.
+    5. In post-processing, use `repository(namespace).pop()` to remove strings
+       by ID.  There is also a last-resort eviction policy, see `MAX_SIZE`.
+
+  To avoid OOM when the caller does not promptly pop() the strings they add(),
+  there is a limit on size.  If this grows beyond that limit, then strings are
+  evicted in least-recently-added order.
+
+  TODO(terrykoo): Define string ID using fingerprints to allow caching and
+  reuse. If we do this, however, we will need to add refcounts so pop() only
+  removes an ID when all usages of it have subsided.
+  """
+  # Maximum number of strings held in the repository of each namespace.
+  MAX_SIZE = 10000
+
+  def __init__(self, max_size: int = MAX_SIZE):
+    """Creates an empty repository.
+
+    If you use a non-singleton `Repository`, the generated string IDs might not
+    be sufficiently unique.
+
+    Args:
+      max_size: Maximum number of strings to hold.
+    """
+    self._max_size: int = max_size
+    self._lock: threading.Lock = threading.Lock()
+    self._string_by_id: Dict[int, str] = dict()
+    self._next_id_to_assign: int = 0
+    self._next_id_to_evict: int = 0
+
+  def add(self, string: str) -> int:
+    """Adds new string to the mapping and returns its global ID.
+
+    If necessary, also evicts old regexes to keep this under the maximum size.
+
+    Args:
+      string: String to add.
+
+    Returns:
+      ID of the string.  IDs are unique per LM server provided the caller uses
+      the singleton.
+    """
+    with self._lock:
+      string_id = self._next_id_to_assign
+      self._next_id_to_assign += 1
+      self._string_by_id[string_id] = string
+
+      while len(self._string_by_id) > self._max_size:
+        self._string_by_id.pop(self._next_id_to_evict)
+        self._next_id_to_evict += 1
+
+      return string_id
+
+  def pop(self, string_id: int) -> bool:
+    """Attempts to remove the `string_id`.
+
+    The regex might not be removed if the `string_id` is unknown.
+
+    Args:
+      string_id: ID of the string to remove, as returned by add().
+
+    Returns:
+      True if the string was removed.
+    """
+    with self._lock:
+      return self._string_by_id.pop(string_id, None) is not None
+
+  def get(self, string_id: int) -> str:
+    """Returns the string mapped to `string_id`.
+
+    Args:
+      string_id: ID of the string to fetch, as returned by add().
+
+    Returns:
+      String associated with the `string_id`.
+
+    Raises:
+      KeyError: If the `string_id` is not mapped.
+    """
+    with self._lock:
+      return self._string_by_id[string_id]
+
+  @property
+  def size(self) -> int:
+    """Returns the number of strings in this."""
+    with self._lock:
+      return len(self._string_by_id)
+
+
+# This is defined and instantiated after the class, because (unlike languages
+# like C++, Java, or TypeScript) Python classes don't exist until after their
+# definition ends.
+_global_lock = threading.Lock()
+_global_repository_by_namespace: Dict[str, Repository] = collections.defaultdict(Repository)
+
+
+def repository(namespace: str) -> Repository:
+  """Get global repository by namespace."""
+  with _global_lock:
+    return _global_repository_by_namespace[namespace]
