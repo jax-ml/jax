@@ -303,7 +303,7 @@ class CheckpointTest(jtu.JaxTestCase):
       self.assertEqual(spec['kvstore']['base'], os.path.dirname(path))
     else:
       self.assertEqual(spec['kvstore']['base'],
-                       f'file://{os.path.dirname(path)}')
+                       f'{serialization._DEFAULT_DRIVER}://{os.path.dirname(path)}')
     self.assertEqual(spec['kvstore']['path'], 'path')
 
   def test_get_tensorstore_spec_not_absolute_path(self):

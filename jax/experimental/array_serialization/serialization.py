@@ -39,6 +39,7 @@ TS_CONTEXT = ts.Context({'file_io_concurrency': {'limit': 128}})
 _REMOVED_VALUE = 'Value removed'
 _CHECKPOINT_SUCCESS = 'checkpoint_write_success'
 _module_unique_count = itertools.count()
+_DEFAULT_DRIVER = 'file'
 
 logger = logging.getLogger(__name__)
 
@@ -101,14 +102,14 @@ def get_tensorstore_spec(ckpt_path: str, ocdbt: bool = False):
     base_path = os.path.dirname(ckpt_path)
     spec['kvstore'] = {
         'driver': 'ocdbt',
-        'base': base_path if is_gcs_path else f'file://{base_path}',
+        'base': base_path if is_gcs_path else f'{_DEFAULT_DRIVER}://{base_path}',
         'path': os.path.basename(ckpt_path),
     }
   else:
     if is_gcs_path:
       spec['kvstore'] = _get_kvstore_for_gcs(ckpt_path)
     else:
-      spec['kvstore'] = {'driver': 'file', 'path': ckpt_path}
+      spec['kvstore'] = {'driver': _DEFAULT_DRIVER, 'path': ckpt_path}
 
   return spec
 
