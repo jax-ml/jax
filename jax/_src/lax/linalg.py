@@ -636,7 +636,7 @@ def _eigh_jacobi_lowering_rule(ctx, operand, lower, sort_eigenvalues):
       raise ValueError("shape polymorphism with native lowering for eigh on "
                        "TPU requires jaxlib version 0.4.9.")
     result_shapes = [
-        mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, aval_out.shape))
+        mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
         # The custom call returns the results swapped
         for aval_out in list(reversed(ctx.avals_out))
     ]
@@ -707,9 +707,9 @@ def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
     batch_size = mlir.eval_dynamic_shape(ctx, (batch_size_num,))[0]
     if isinstance(batch_size, int):
       batch_size = mlir.ir_constant(np.int32(batch_size))
-    v_shape: ir.Value = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, v_aval.shape))
-    w_shape: ir.Value = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, w_aval.shape))
-    info_shape: ir.Value = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, batch_dims))
+    v_shape: ir.Value = mlir.eval_dynamic_shape_as_tensor(ctx, v_aval.shape)
+    w_shape: ir.Value = mlir.eval_dynamic_shape_as_tensor(ctx, w_aval.shape)
+    info_shape: ir.Value = mlir.eval_dynamic_shape_as_tensor(ctx, batch_dims)
     v, w, info = syevd_impl(operand_aval.dtype, operand, batch_size,
                             v_shape, w_shape, info_shape,
                             lower=lower)
@@ -1290,7 +1290,7 @@ def _lu_tpu_lowering_rule(ctx, operand):
     mlir.aval_to_ir_type(ctx.avals_out[2])]
   if any(not is_constant_shape(a.shape) for a in ctx.avals_out):
     result_shapes = [
-      mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, a.shape))
+      mlir.eval_dynamic_shape_as_tensor(ctx, a.shape)
       for a in ctx.avals_out]
   else:
     result_shapes = None
@@ -1424,7 +1424,7 @@ def _geqrf_lowering_rule(ctx, operand):
   if any(not is_constant_shape(aval_out.shape)
          for aval_out in ctx.avals_out):
     result_shapes = [
-        mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, aval_out.shape))
+        mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
         for aval_out in ctx.avals_out
     ]
   else:
@@ -1551,7 +1551,7 @@ def _householder_product_lowering_rule(ctx, a, taus):
   aval_out, = ctx.avals_out
   if not is_constant_shape(aval_out.shape):
     result_shapes = [
-        mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, aval_out.shape))]
+        mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)]
   else:
     result_shapes = None
   op = mlir.custom_call(
