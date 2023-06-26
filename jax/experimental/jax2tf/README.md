@@ -1005,12 +1005,22 @@ The `jax2tf`-lowered function supports higher-order gradients, but when the
 function is saved in a SavedModel, only the first-order gradient is saved.
 This is primarily a limitation of the SavedModel support for custom gradients.
 
+### Native serialization supports only select dialects
+
+Applies to native serialization only.
+
+JAX native serialization checks that the code to be serialized contains
+operations only from MLIR dialects that are known to have stability guarantees,
+e.g., StableHLO, and the "builtin" dialect. As an exception, it also accepts
+operations from the MHLO dialect, but they are converted to corresponding
+StableHLO operations upon serialization.
+
 ### Native serialization supports only select custom calls
 
 Applies to native serialization only.
 
 JAX natively uses custom calls for lowering of certain primitives.
-The most common example is for the implementation of PRNG on GPUs
+The most common example is for the implementation of PRNG on GPUs,
 where we get better performance with a custom call (`cu_threefry32`)
 than if we use native StableHLO. Another class of examples are for
 FFT and some linear algebra primitives (e.g., QR decomposition).

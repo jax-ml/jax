@@ -132,7 +132,7 @@ class Exported:
         polymorphic dimension variables. This may be from `in_avals` but also
         from inner calls of shape-polymorphic Exported modules.
     disabled_checks: a list of descriptors of safety checks that have been
-        disabled at export time. See docstring of DisabledSafetyCheck.
+        disabled at export time. See docstring for `DisabledSafetyCheck`.
     _get_vjp: an optional function that takes the current exported function and
         returns the exported VJP function.
         The VJP function takes a flat list of arguments,
@@ -345,7 +345,8 @@ def export(fun_jax: Callable,
     fun_jax: the function to lower and serialize.
     lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'. If None, then use
         the default JAX backend.
-    disabled_checks: the safety checks to disable.
+    disabled_checks: the safety checks to disable. See docstring
+        of `DisabledSafetyCheck`.
 
   Returns: a function that takes args and kwargs pytrees of jax.ShapeDtypeStruct,
       or values with `.shape` and `.dtype` attributes, and returns an
@@ -744,6 +745,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "stablehlo.dynamic_rng_bit_generator",
 }
 
+
 def _check_module(mod: ir.Module, *,
                   allow_non_replicated_sharding: bool,
                   disabled_checks: Sequence[DisabledSafetyCheck]) -> None:
@@ -760,6 +762,7 @@ def _check_module(mod: ir.Module, *,
     target = dc.is_custom_call()
     if target is not None:
       allowed_custom_call_targets.add(target)
+
   allowed_custom_call_targets_attrs = set(
       ir.StringAttr.get(target, mod.context)
       for target in allowed_custom_call_targets)
@@ -784,10 +787,10 @@ def _check_module(mod: ir.Module, *,
     if op_name == "func.func":
       check_sharding(op.operation, op.location)
 
-    elif op_name == "stablehlo.custom_call":
+    elif op_name == "stablehlo.custom_call" or op_name == "mhlo.custom_call":
       call_target_name_attr = op.operation.attributes["call_target_name"]
       if (call_target_name_attr not in allowed_custom_call_targets_attrs):
-        disallowed_custom_call_ops.append(str(op))
+        disallowed_custom_call_ops.append(f"{op} at {op.location}")
       if call_target_name_attr == sharding_attr:
         check_sharding(op, op.location)
 
