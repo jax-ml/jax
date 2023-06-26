@@ -732,6 +732,8 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     # TODO(atondwal, necula): add back_compat tests for lu on CPU/GPU
     # # lu on CPU
     "lapack_sgetrf",  "lapack_dgetrf", "lapack_cgetrf", "lapack_zgetrf",
+    # schur on CPU
+    "lapack_sgees", "lapack_dgees", "lapack_cgees", "lapack_zgees",
     # # lu on GPU
     # "cublas_getrf_batched", "cusolver_getrf",
     # "hipblas_getrf_batched", "hipsolver_getrf",

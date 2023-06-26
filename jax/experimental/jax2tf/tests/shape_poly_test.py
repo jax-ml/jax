@@ -2579,6 +2579,24 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                  RandArg((7, 1), _f32),  # updates: [b, 1]
                                  StaticArg(lax.ScatterDimensionNumbers((1,), (0,), (0, 1,)))],
                 polymorphic_shapes=["b, ...", "b, ...", "b, ..."]),
+    [
+      PolyHarness("schur",
+                  f"shape={jtu.format_shape_dtype_string(shape, dtype)}_{poly=}_{compute_schur_vectors=}",
+                  lambda a, compute_schur_vectors: lax.linalg.schur(
+                    a, compute_schur_vectors=compute_schur_vectors),
+                  arg_descriptors=[RandArg(shape, dtype),
+                                   StaticArg(compute_schur_vectors)],
+                  polymorphic_shapes=[poly],
+                  # In non-native serialization, we cannot check exact match,
+                  # we ought to check the invariants of the result.
+                  check_result=config.jax2tf_default_native_serialization)
+      for dtype in [np.float32, np.float64, np.complex64, np.complex128]
+      for compute_schur_vectors in [True, False]
+      for (shape, poly) in [
+        ((3, 3), "w, w"),
+        ((3, 4, 4), "b, w, w"),
+      ]
+    ],
     PolyHarness("select", "0",
                 # x.shape = (b, 3)
                 lambda x: lax.select(x > 5., x, x),
@@ -2861,6 +2879,9 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
         raise unittest.SkipTest("native serialization with shape polymorphism not implemented for custom calls; b/261671778")
 
+      if harness.group_name == "schur" and jtu.device_under_test() != "cpu":
+        raise unittest.SkipTest("schur decomposition is only implemented on CPU.")
+
       if "fft_fft_type" in harness.fullname:
         if "nr_fft_lengths=2" in harness.fullname:
           raise unittest.SkipTest("native serialization with shape polymorphism not implemented for fft with non-constant fft_lengths on GPU and TPU")
@@ -2915,6 +2936,9 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       if "vmap_integer_pow" in harness.group_name:
         # For non-native serialization the overflow behavior is different.
         harness.check_result = False
+
+      if harness.group_name == "schur":
+        raise unittest.SkipTest("jax2tf graph serialization does not support schur.")
 
       if harness.group_name == "eig" and "left=True_right=True" in harness.fullname:
         raise unittest.SkipTest("jax2tf graph serialization does not support both left and right.")

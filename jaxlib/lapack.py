@@ -568,19 +568,15 @@ def geev_hlo(dtype, input, *,
 
 # # gees : Schur factorization
 
-def gees_hlo(dtype, a, jobvs=True, sort=False, select=None):
+def gees_hlo(dtype, a, *, jobvs=True, sort=False, select=None,
+             a_shape_vals: tuple[DimensionSize, ...]):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   etype = a_type.element_type
-  dims = a_type.shape
-  assert len(dims) >= 2
-  m, n = dims[-2:]
-  assert m == n
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  b = 1
-  for d in batch_dims:
-    b *= d
+  assert len(a_shape_vals) >= 2
+  n = a_shape_vals[-1]
+  batch_dims_vals = a_shape_vals[:-2]
+  num_bd = len(batch_dims_vals)
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
   if sort:
@@ -601,33 +597,38 @@ def gees_hlo(dtype, a, jobvs=True, sort=False, select=None):
   else:
     raise NotImplementedError(f"Unsupported dtype {dtype}")
 
+  workspaces: list[ShapeTypePair]
+  eigvals: list[ShapeTypePair]
   if not np.issubdtype(dtype, np.complexfloating):
-    workspaces = [ir.RankedTensorType.get(dims, etype)]
+    workspaces = [(a_shape_vals, etype)]
     workspace_layouts = [layout]
-    eigvals = [ir.RankedTensorType.get(batch_dims + (n,), etype)] * 2
+    eigvals = [(batch_dims_vals + (n,), etype)] * 2
     eigvals_layouts = [tuple(range(num_bd, -1, -1))] * 2
   else:
-    workspaces = [
-        ir.RankedTensorType.get(dims, etype),
-        ir.RankedTensorType.get([n], ir.ComplexType(etype).element_type),
+    workspaces = [(a_shape_vals, etype),
+                  ([n], ir.ComplexType(etype).element_type),
     ]
     workspace_layouts = [layout, [0]]
-    eigvals = [ir.RankedTensorType.get(batch_dims + (n,), etype)]
+    eigvals = [(batch_dims_vals + (n,), etype)]
     eigvals_layouts = [tuple(range(num_bd, -1, -1))]
 
   i32_type = ir.IntegerType.get_signless(32)
 
   scalar_layout = []
+  batch_size_val = hlo_s32(1)
+  for b_v in batch_dims_vals:
+    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
+  shape_type_pairs = workspaces + eigvals + [
+      (a_shape_vals, etype),
+      (batch_dims_vals, i32_type),
+      (batch_dims_vals, i32_type)]
+  result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
   out = custom_call(
       fn,
-      workspaces + eigvals + [
-        ir.RankedTensorType.get(dims, etype),
-        ir.RankedTensorType.get(batch_dims, i32_type),
-        ir.RankedTensorType.get(batch_dims, i32_type),
-      ],
+      result_types,
       [
-        hlo_s32(b),
-        hlo_s32(n),
+        batch_size_val,
+        ensure_hlo_s32(n),
         hlo_u8(jobvs),
         hlo_u8(sort),
         # TODO: figure out how to put the callable select function here
@@ -640,6 +641,7 @@ def gees_hlo(dtype, a, jobvs=True, sort=False, select=None):
         tuple(range(num_bd - 1, -1, -1)),
       ],
       operand_output_aliases={4: 0},
+      result_shapes=result_shapes,
   )
   if sort == ord('S'):
     return (out[0], out[3], out[4], out[5])

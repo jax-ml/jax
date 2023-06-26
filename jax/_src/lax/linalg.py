@@ -2055,10 +2055,18 @@ def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
   operand_aval, = ctx.avals_in
   batch_dims = operand_aval.shape[:-2]
 
-  gees_result = lapack.gees_hlo(operand_aval.dtype, operand,
-                                jobvs=compute_schur_vectors,
-                                sort=sort_eig_vals,
-                                select=select_callable)
+  if jaxlib_version < (0, 4, 14):
+    gees_result = lapack.gees_hlo(operand_aval.dtype, operand,
+                                  jobvs=compute_schur_vectors,
+                                  sort=sort_eig_vals,
+                                  select=select_callable)  # type: ignore
+  else:
+    a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
+    gees_result = lapack.gees_hlo(operand_aval.dtype, operand,
+                                  jobvs=compute_schur_vectors,
+                                  sort=sort_eig_vals,
+                                  select=select_callable,
+                                  a_shape_vals=a_shape_vals)
 
   # Number of return values depends on value of sort_eig_vals.
   T, vs, *_, info = gees_result
