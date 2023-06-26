@@ -22,6 +22,7 @@ from absl.testing import absltest
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax.interpreters import xla
 
 from jax._src.config import config
@@ -115,7 +116,10 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertEqual(registration.priority, 400)
     self.assertTrue(registration.experimental)
     mock_plugin_loaded.assert_called_once_with("name1")
-    mock_make.assert_called_once_with("name1", None)
+    if xla_extension_version < 165:
+      mock_make.assert_called_once_with("name1", None)
+    else:
+      mock_make.assert_called_once_with("name1", None, None)
 
   def test_register_plugin_with_config(self):
     test_json_file_path = os.path.join(
@@ -136,15 +140,27 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertEqual(registration.priority, 400)
     self.assertTrue(registration.experimental)
     mock_plugin_loaded.assert_called_once_with("name1")
-    mock_make.assert_called_once_with(
-        "name1",
-        {
-            "int_option": 64,
-            "int_list_option": [32, 64],
-            "string_option": "string",
-            "float_option": 1.0,
-        },
-    )
+    if xla_extension_version < 165:
+      mock_make.assert_called_once_with(
+          "name1",
+          {
+              "int_option": 64,
+              "int_list_option": [32, 64],
+              "string_option": "string",
+              "float_option": 1.0,
+          },
+      )
+    else:
+      mock_make.assert_called_once_with(
+          "name1",
+          {
+              "int_option": 64,
+              "int_list_option": [32, 64],
+              "string_option": "string",
+              "float_option": 1.0,
+          },
+          None,
+      )
 
 
 class GetBackendTest(jtu.JaxTestCase):
