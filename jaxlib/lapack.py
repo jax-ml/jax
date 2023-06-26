@@ -19,11 +19,13 @@ import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
 
 import numpy as np
-from typing import Optional, Sequence, Union
+from typing import Sequence
 from jaxlib import xla_client
 
 from .hlo_helpers import (
-    custom_call, ir_constant_u8, ir_constant_i32,
+    custom_call, hlo_u8, hlo_s32,
+    ensure_hlo_s32, hlo_min,
+    DimensionSize, ShapeTypePair, mk_result_types_and_shapes,
     shape_tensor
 )
 from .cpu import _lapack
@@ -34,59 +36,6 @@ for _name, _value in _lapack.registrations().items():
 # Function that lazily initializes the LAPACK kernels in the runtime on first
 # use.
 _initialize = _lapack.initialize
-
-
-def _hlo_u8(x):
-  return hlo.ConstantOp(
-      ir.DenseElementsAttr.get(
-          np.array(x, dtype=np.uint8),
-          type=ir.IntegerType.get_unsigned(8))).result
-
-def _hlo_s32(x):
-  return hlo.ConstantOp(
-      ir.DenseElementsAttr.get(
-          np.array(x, dtype=np.int32),
-          type=ir.IntegerType.get_signless(32))).result
-
-def _ensure_hlo_s32(x):
-  return _hlo_s32(x) if isinstance(x, int) else x
-
-# When we generate custom calls with dynamic shapes we have to pass
-# both the result_types, with ir.ShapedType.get_dynamic_size in place of
-# the dynamic dimensions, and also result_shapes, which are ir.Value representing
-# 1D int32 tensors. If all the shapes are static we can use result_shapes=None.
-# We first construct for each result a pair with the shape and element type,
-# the shape containing either integer or ir.Value.
-DimensionSize = Union[int, ir.Value]  # an ir.Value if not static dimension
-ShapeTypePair = tuple[Sequence[DimensionSize], ir.Type]
-
-def mk_result_types_and_shapes(
-    shape_type_pairs: Sequence[ShapeTypePair]
-) -> tuple[list[ir.Type], Optional[list[ir.Value]]]:
-  result_types: list[ir.Type] = []
-  result_shapes: list[ir.Value] = []
-  has_dynamic_shapes = any(
-      any(not isinstance(d, int) for d in rshape)
-      for rshape, _ in shape_type_pairs)
-  for (rshape, rtype) in shape_type_pairs:
-    if has_dynamic_shapes:
-      result_shapes.append(shape_tensor(rshape))
-    result_types.append(
-        ir.RankedTensorType.get(
-            [d if isinstance(d, int) else ir.ShapedType.get_dynamic_size()
-             for d in rshape],
-            rtype))
-  return (result_types,
-          result_shapes if has_dynamic_shapes else None)
-
-def _hlo_min(x: DimensionSize, y: DimensionSize) -> DimensionSize:
-  if type(x) is int:
-    if type(y) is int:
-      return min(x, y)
-    x = _hlo_s32(x)
-  if type(y) is int:
-    y = _hlo_s32(y)
-  return hlo.MinOp(x, y).result
 
 
 # TODO(phawkins): it would be nice to avoid duplicating code for each type.
@@ -132,9 +81,9 @@ def trsm_hlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
   return custom_call(
       fn,
       [b.type],
-      [_hlo_s32(int(left_side)), _hlo_s32(int(lower)),
-       _hlo_s32((2 if conj_a else 1) if trans_a else 0), _hlo_s32(int(diag)),
-       _hlo_s32(m), _hlo_s32(n), _hlo_s32(num_b),
+      [hlo_s32(int(left_side)), hlo_s32(int(lower)),
+       hlo_s32((2 if conj_a else 1) if trans_a else 0), hlo_s32(int(diag)),
+       hlo_s32(m), hlo_s32(n), hlo_s32(num_b),
        alpha, a, b],
       operand_layouts=[scalar_layout] * 8 + [layout] * 2,
       result_layouts=[layout],
@@ -170,19 +119,19 @@ def getrf_hlo(dtype, a: ir.Value, *,
   i32_type = ir.IntegerType.get_signless(32)
   shape_type_pairs: Sequence[ShapeTypePair] = [
       (a_shape_vals, a_type.element_type),
-      (batch_dims_vals + (_hlo_min(m, n),), i32_type),
+      (batch_dims_vals + (hlo_min(m, n),), i32_type),
       (batch_dims_vals, i32_type)
   ]
   result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
 
-  batch_size_val = ir_constant_i32(1)
+  batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, _ensure_hlo_s32(b_v)).result
+    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
 
   return custom_call(
       fn,
       result_types,
-      [batch_size_val, _ensure_hlo_s32(m), _ensure_hlo_s32(n), a],
+      [batch_size_val, ensure_hlo_s32(m), ensure_hlo_s32(n), a],
       operand_layouts=[scalar_layout] * 3 + [layout],
       result_layouts=[
         layout,
@@ -226,9 +175,9 @@ def geqrf_hlo(dtype, a: ir.Value, *,
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
 
-  batch_size_val = ir_constant_i32(1)
+  batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, _ensure_hlo_s32(b_v)).result
+    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
   shape_type_pairs: Sequence[ShapeTypePair] = [
       (a_shape_vals, a_type.element_type),
       (batch_dims_vals + (min(m, n),), a_type.element_type),
@@ -239,7 +188,7 @@ def geqrf_hlo(dtype, a: ir.Value, *,
   out = custom_call(
       fn,
       result_types,
-      [batch_size_val, _hlo_s32(m), _hlo_s32(n), _hlo_s32(lwork), a],
+      [batch_size_val, hlo_s32(m), hlo_s32(n), hlo_s32(lwork), a],
       operand_layouts=[scalar_layout] * 4 + [layout],
       result_layouts=[
         layout,
@@ -267,9 +216,9 @@ def orgqr_hlo(dtype, a: ir.Value, tau, *,
   assert n != ir.ShapedType.get_dynamic_size()
   batch_dims_vals = dims_vals[:-2]
   num_bd = len(batch_dims_vals)
-  batch_size_val = ir_constant_i32(1)
+  batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, _ensure_hlo_s32(b_v)).result
+    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
 
   k = tau_shape_vals[-1]
   assert type(k) is int
@@ -301,8 +250,8 @@ def orgqr_hlo(dtype, a: ir.Value, tau, *,
   out = custom_call(
       fn,
       result_types,
-      [batch_size_val, _hlo_s32(m), _hlo_s32(n), _hlo_s32(k),
-       _hlo_s32(lwork), a, tau],
+      [batch_size_val, hlo_s32(m), hlo_s32(n), hlo_s32(k),
+       hlo_s32(lwork), a, tau],
       operand_layouts=[scalar_layout] * 5 + [
         layout,
         tuple(range(num_bd, -1, -1)),
@@ -337,9 +286,9 @@ def potrf_hlo(dtype, a: ir.Value, *, lower=False,
     raise NotImplementedError(f"Unsupported dtype {dtype}")
   batch_dims_vals = a_shape_vals[:-2]
   num_bd = len(batch_dims_vals)
-  batch_size_val = ir_constant_i32(1)
+  batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, _ensure_hlo_s32(b_v)).result
+    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
 
   scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
@@ -353,7 +302,7 @@ def potrf_hlo(dtype, a: ir.Value, *, lower=False,
   out = custom_call(
       fn,
       result_types,
-      [_hlo_s32(int(lower)), batch_size_val, _ensure_hlo_s32(n), a],
+      [hlo_s32(int(lower)), batch_size_val, ensure_hlo_s32(n), a],
       operand_layouts=[scalar_layout] * 3 + [layout],
       result_layouts=[layout, info_layout],
       operand_output_aliases={3: 0},
@@ -374,9 +323,9 @@ def gesdd_hlo(dtype, a: ir.Value, *, full_matrices=True, compute_uv=True,
   assert type(n) is int
   batch_dims_vals = a_shape_vals[:-2]
   num_bd = len(batch_dims_vals)
-  batch_size_val = ir_constant_i32(1)
+  batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, _ensure_hlo_s32(b_v)).result
+    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
 
   i32_type = ir.IntegerType.get_signless(32)
   workspace: list[ShapeTypePair]
@@ -435,8 +384,8 @@ def gesdd_hlo(dtype, a: ir.Value, *, full_matrices=True, compute_uv=True,
   out = custom_call(
       fn,
       result_types,
-      [_hlo_s32(int(full_matrices)), _hlo_s32(int(compute_uv)), batch_size_val,
-       _hlo_s32(m), _hlo_s32(n), _hlo_s32(lwork), a],
+      [hlo_s32(int(full_matrices)), hlo_s32(int(compute_uv)), batch_size_val,
+       hlo_s32(m), hlo_s32(n), hlo_s32(lwork), a],
       operand_layouts=[scalar_layout] * 6 + [layout],
       result_layouts=[
           layout,
@@ -530,7 +479,7 @@ def syevd_hlo(dtype, a: ir.Value, batch_size: ir.Value,
           ir.RankedTensorType.get(batch_dims + (n,), eigvals_type),
           ir.RankedTensorType.get(batch_dims, i32_type),
       ] + workspace,
-      [_hlo_s32(1 if lower else 0), batch_size, _hlo_s32(n), a],
+      [hlo_s32(1 if lower else 0), batch_size, hlo_s32(n), a],
       operand_layouts=[scalar_layout] * 3 + [layout],
       result_layouts=[
           layout,
@@ -634,7 +583,7 @@ def geev_hlo(dtype, input, *,
   scalar_layout = []
   info_layout = tuple(range(num_bd - 1, -1, -1))
 
-  batch_size_val = ir_constant_i32(1)
+  batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
     batch_size_val = hlo.MulOp(batch_size_val, b_v).result
 
@@ -656,8 +605,8 @@ def geev_hlo(dtype, input, *,
       fn,
       result_types,
       [batch_size_val, n_val,
-       ir_constant_u8(jobvl_c),
-       ir_constant_u8(jobvr_c),
+       hlo_u8(jobvl_c),
+       hlo_u8(jobvr_c),
        input],
       operand_layouts=[scalar_layout] * 4 + [layout],
       result_layouts=(workspace_layouts + eigvals_layouts + [layout] * 2 +
@@ -729,10 +678,10 @@ def gees_hlo(dtype, a, jobvs=True, sort=False, select=None):
         ir.RankedTensorType.get(batch_dims, i32_type),
       ],
       [
-        _hlo_s32(b),
-        _hlo_s32(n),
-        _hlo_u8(np.uint8(jobvs)),
-        _hlo_u8(np.uint8(sort)),
+        hlo_s32(b),
+        hlo_s32(n),
+        hlo_u8(jobvs),
+        hlo_u8(sort),
         # TODO: figure out how to put the callable select function here
         a
       ],
@@ -789,8 +738,8 @@ def gehrd_hlo(dtype, a):
         ir.RankedTensorType.get(batch_dims, i32_type),
         ir.RankedTensorType.get([lwork], a_type.element_type),
       ],
-      [_hlo_s32(n), _hlo_s32(1), _hlo_s32(n), _hlo_s32(n), _hlo_s32(b),
-       _hlo_s32(lwork), a],
+      [hlo_s32(n), hlo_s32(1), hlo_s32(n), hlo_s32(n), hlo_s32(b),
+       hlo_s32(lwork), a],
       operand_layouts=[[]] * 6 + [layout],
       result_layouts=[
         layout,
@@ -848,8 +797,8 @@ def sytrd_hlo(dtype, a, *, lower):
         ir.RankedTensorType.get(batch_dims, i32_type),
         ir.RankedTensorType.get([lwork], a_type.element_type),
       ],
-      [_hlo_s32(n), _hlo_s32(1 if lower else 0), _hlo_s32(max(1, n)),
-       _hlo_s32(b), _hlo_s32(lwork), a],
+      [hlo_s32(n), hlo_s32(1 if lower else 0), hlo_s32(max(1, n)),
+       hlo_s32(b), hlo_s32(lwork), a],
       operand_layouts=[[]] * 5 + [layout],
       result_layouts=[
         layout,

@@ -40,17 +40,38 @@ _dtype_to_ir_type_factory : dict[np.dtype, Callable[[], ir.Type]] = {
 def dtype_to_ir_type(dtype) -> ir.Type:
   return _dtype_to_ir_type_factory[np.dtype(dtype)]()
 
-def ir_constant(x: np.ndarray) -> ir.Value:
-  assert isinstance(x, np.ndarray)
-  return hlo.ConstantOp(
-      ir.DenseElementsAttr.get(x, type=dtype_to_ir_type(x.dtype))).result
-
-def ir_constant_u8(x: int): return ir_constant(np.array(x, dtype=np.uint8))
-def ir_constant_i32(x: int): return ir_constant(np.array(x, dtype=np.int32))
 
 def shape_dtype_to_ir_type(shape: Sequence[int], dtype) -> ir.Type:
   return ir.RankedTensorType.get(shape, dtype_to_ir_type(dtype))
 
+
+# When we generate custom calls with dynamic shapes we have to pass
+# both the result_types, with ir.ShapedType.get_dynamic_size in place of
+# the dynamic dimensions, and also result_shapes, which are ir.Value
+# representing 1D int32 tensors. If all the shapes are static we can use
+# result_shapes=None. We first construct for each result a pair with the shape
+# and element type, the shape containing either integer or ir.Value.
+DimensionSize = Union[int, ir.Value]  # an ir.Value if not static dimension
+ShapeTypePair = tuple[Sequence[DimensionSize], ir.Type]
+
+def mk_result_types_and_shapes(
+    shape_type_pairs: Sequence[ShapeTypePair]
+) -> tuple[list[ir.Type], Optional[list[ir.Value]]]:
+  result_types: list[ir.Type] = []
+  result_shapes: list[ir.Value] = []
+  has_dynamic_shapes = any(
+      any(not isinstance(d, int) for d in rshape)
+      for rshape, _ in shape_type_pairs)
+  for (rshape, rtype) in shape_type_pairs:
+    if has_dynamic_shapes:
+      result_shapes.append(shape_tensor(rshape))
+    result_types.append(
+        ir.RankedTensorType.get(
+            [d if isinstance(d, int) else ir.ShapedType.get_dynamic_size()
+             for d in rshape],
+            rtype))
+  return (result_types,
+          result_shapes if has_dynamic_shapes else None)
 
 # TODO(necula): share this with mlir.shape_tensor
 def shape_tensor(sizes: Sequence[Union[int, ir.Value]]) -> ir.Value:
@@ -58,19 +79,52 @@ def shape_tensor(sizes: Sequence[Union[int, ir.Value]]) -> ir.Value:
   i32_type = shape_dtype_to_ir_type((), np.int32)
   def dim_to_i32x1(d):
     if type(d) is int:
-      return ir_constant(np.array([d], dtype=np.int32))
+      return hlo_const(np.array([d], dtype=np.int32))
     else:
       if d.type != i32_type:
         d = hlo.ConvertOp(i32_type, d).result
       return hlo.ReshapeOp(int1d, d).result
   ds = [dim_to_i32x1(sz) for sz in sizes]
   if not ds:
-    return ir_constant(np.array([], np.int32))
+    return hlo_const(np.array([], np.int32))
   elif len(ds) == 1:
     return ds[0]
   else:
     return hlo.ConcatenateOp(
         ds, ir.IntegerAttr.get(ir.IntegerType.get_signless(64), 0)).result
+
+def hlo_const(x: np.ndarray) -> ir.Value:
+  assert isinstance(x, np.ndarray)
+  return hlo.ConstantOp(
+      ir.DenseElementsAttr.get(x, type=dtype_to_ir_type(x.dtype))).result
+
+def hlo_u8(x: int):
+  return hlo_const(np.array(x, dtype=np.uint8))
+def hlo_s32(x: int):
+  return hlo_const(np.array(x, dtype=np.int32))
+
+def ensure_hlo_s32(x: DimensionSize):
+  return hlo_s32(x) if isinstance(x, int) else x
+
+
+def hlo_min(x: DimensionSize, y: DimensionSize) -> DimensionSize:
+  if type(x) is int:
+    if type(y) is int:
+      return min(x, y)
+    x = hlo_s32(x)
+  if type(y) is int:
+    y = hlo_s32(y)
+  return hlo.MinOp(x, y).result
+
+
+def hlo_add(x: DimensionSize, y: DimensionSize) -> DimensionSize:
+  if type(x) is int:
+    if type(y) is int:
+      return x + y
+    x = hlo_s32(x)
+  if type(y) is int:
+    y = hlo_s32(y)
+  return hlo.AddOp(x, y).result
 
 
 # TODO(necula): share this with mlir.custom_call
