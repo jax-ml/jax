@@ -15,6 +15,7 @@
 
 from functools import partial
 import math
+from typing import Sequence
 
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
@@ -23,7 +24,9 @@ import numpy as np
 
 from jaxlib import xla_client
 
-from .hlo_helpers import custom_call
+from .hlo_helpers import (
+    DimensionSize, ShapeTypePair, mk_result_types_and_shapes,
+    custom_call, ensure_hlo_s32, hlo_s32)
 
 try:
   from .cuda import _blas as _cublas  # pytype: disable=import-error
@@ -253,28 +256,23 @@ cuda_orgqr = partial(_orgqr_hlo, "cu", _cusolver)
 rocm_orgqr = partial(_orgqr_hlo, "hip", _hipsolver)
 
 
-def _syevd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
-               batch_size: ir.Value,
-               result_shape_v: ir.Value, result_shape_w: ir.Value,
-               result_shape_info: ir.Value, lower=False):
+def _syevd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a, *,
+               a_shape_vals: tuple[DimensionSize, ...], lower=False):
   """Symmetric (Hermitian) eigendecomposition."""
   a_type = ir.RankedTensorType(a.type)
-  dims = a_type.shape
-  assert len(dims) >= 2
-  m, n = dims[-2:]
-  assert m == n, dims
-  assert n != ir.ShapedType.get_dynamic_size(), dims
-  batch_dims = tuple(dims[:-2])
+  assert len(a_shape_vals) >= 2
+  m, n = a_shape_vals[-2:]
+  assert type(m) is int and type(n) is int and m == n, a_shape_vals
+  batch_dims_vals = a_shape_vals[:-2]
 
-  num_bd = len(batch_dims)
+  num_bd = len(batch_dims_vals)
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
-  dynamic_batch_dims = any(d == ir.ShapedType.get_dynamic_size()
-                           for d in batch_dims)
+  dynamic_batch_dims = any(type(d) != int for d in batch_dims_vals)
   if dynamic_batch_dims:
     batch_int = -1  # Signals to the kernel that the batch is an operand.
   else:
-    batch_int = math.prod(batch_dims)
+    batch_int = math.prod(batch_dims_vals)
 
   if have_jacobi_solver and n <= 32 and not dynamic_batch_dims:
     # We cannot use syevj for dynamic shapes because the workspace size
@@ -297,24 +295,21 @@ def _syevd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
   operands = [a]
   operand_layouts = [layout]
   if dynamic_batch_dims:
-    result_shapes = [result_shape_v, result_shape_w, result_shape_info]
-    # workspace has constant shape
-    workspace_shape = hlo.ConstantOp(
-        ir.DenseElementsAttr.get(np.array([lwork], dtype=np.int32),
-                                 type=i32_type)).result
-    result_shapes.append(workspace_shape)
-    operands.append(batch_size)
+    batch_size_val = hlo_s32(1)
+    for b_v in batch_dims_vals:
+      batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
+    operands.append(batch_size_val)
     operand_layouts.append(())
-  else:
-    result_shapes = None
+
+  shape_type_pairs: Sequence[ShapeTypePair] = [
+      (a_shape_vals, a_type.element_type),
+      (batch_dims_vals + (n,), eigvals_type),
+      (batch_dims_vals, i32_type),
+      ([lwork], a_type.element_type)]
+  result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
   out = custom_call(
       kernel,
-      [
-          a.type,
-          ir.RankedTensorType.get(batch_dims + (n,), eigvals_type),
-          ir.RankedTensorType.get(batch_dims, i32_type),
-          ir.RankedTensorType.get([lwork], a_type.element_type),
-      ],
+      result_types,
       operands,
       backend_config=opaque,
       operand_layouts=operand_layouts,

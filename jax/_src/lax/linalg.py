@@ -505,7 +505,10 @@ def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
                                       jobvl=compute_left_eigenvectors,
                                       jobvr=compute_right_eigenvectors)
   else:
-    op_shape_vals = mlir.eval_dynamic_shape_as_vals(ctx, operand_aval.shape)
+    if jaxlib_version < (0, 4, 14):
+      op_shape_vals = mlir.eval_dynamic_shape_as_vals(ctx, operand_aval.shape)
+    else:
+      op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
     w, vl, vr, info = lapack.geev_hlo(operand_aval.dtype, operand,
                                       input_shape_vals=op_shape_vals,
                                       jobvl=compute_left_eigenvectors,
@@ -632,9 +635,6 @@ def _eigh_jacobi_lowering_rule(ctx, operand, lower, sort_eigenvalues):
 
   if any(not is_constant_shape(aval_out.shape)
          for aval_out in ctx.avals_out):
-    if jaxlib_version < (0, 4, 9):
-      raise ValueError("shape polymorphism with native lowering for eigh on "
-                       "TPU requires jaxlib version 0.4.9.")
     result_shapes = [
         mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
         # The custom call returns the results swapped
@@ -688,21 +688,15 @@ def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
 
   batch_dims = operand_aval.shape[:-2]
 
-  if jaxlib_version < (0, 4, 9):
-    if not is_constant_shape(operand_aval.shape):
-      raise NotImplementedError("Shape polymorphism for native lowering for "
-                                "eigh requires "
-                                "jaxlib version 0.4.9; b/261671778")
-    v, w, info = syevd_impl(operand_aval.dtype, operand, lower=lower)
-  else:
-    # The eigh implementation on CPU and GPU uses lapack helper routines to
-    # find the size of the workspace based on the non-batch dimensions.
-    # Therefore, we cannot yet support dynamic non-batch dimensions.
-    if not is_constant_shape(operand_aval.shape[-2:]):
-      raise NotImplementedError(
-          "Shape polymorphism for for native lowering for eigh is implemented "
-          f"only for the batch dimensions: {operand_aval.shape}")
+  # The eigh implementation on CPU and GPU uses lapack helper routines to
+  # find the size of the workspace based on the non-batch dimensions.
+  # Therefore, we cannot yet support dynamic non-batch dimensions.
+  if not is_constant_shape(operand_aval.shape[-2:]):
+    raise NotImplementedError(
+        "Shape polymorphism for for native lowering for eigh is implemented "
+        f"only for the batch dimensions: {operand_aval.shape}")
 
+  if jaxlib_version < (0, 4, 14):
     batch_size_num = math.prod(batch_dims) if batch_dims else 1
     batch_size = mlir.eval_dynamic_shape(ctx, (batch_size_num,))[0]
     if isinstance(batch_size, int):
@@ -713,6 +707,10 @@ def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
     v, w, info = syevd_impl(operand_aval.dtype, operand, batch_size,
                             v_shape, w_shape, info_shape,
                             lower=lower)
+  else:
+    op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
+    v, w, info = syevd_impl(operand_aval.dtype, operand,
+                            a_shape_vals=op_shape_vals, lower=lower)
 
   zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
   ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")

@@ -24,9 +24,8 @@ from jaxlib import xla_client
 
 from .hlo_helpers import (
     custom_call, hlo_u8, hlo_s32,
-    ensure_hlo_s32, hlo_min,
+    ensure_hlo_s32, hlo_add, hlo_min,
     DimensionSize, ShapeTypePair, mk_result_types_and_shapes,
-    shape_tensor
 )
 from .cpu import _lapack
 
@@ -402,84 +401,73 @@ def gesdd_hlo(dtype, a: ir.Value, *, full_matrices=True, compute_uv=True,
 
 # # syevd: Symmetric eigendecomposition
 
-def syevd_hlo(dtype, a: ir.Value, batch_size: ir.Value,
-              result_shape_v: ir.Value, result_shape_w: ir.Value,
-              result_shape_info: ir.Value, lower=False):
+def syevd_hlo(dtype, a: ir.Value,
+              a_shape_vals: tuple[DimensionSize, ...],
+              lower=False):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
-  dims = a_type.shape
-  assert len(dims) >= 2
-  m, n = dims[-2:]
-  assert m == n, dims
+  assert len(a_shape_vals) >= 2
+  m, n = a_shape_vals[-2:]
   # Non-batch dimensions must be static
-  assert n != ir.ShapedType.get_dynamic_size(), dims
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
+  assert type(m) is int and type(n) is int and m == n, a_shape_vals
+
+  batch_dims_vals = a_shape_vals[:-2]
+  num_bd = len(a_shape_vals) - 2
 
   i32_type = ir.IntegerType.get_signless(32)
+  workspace: list[ShapeTypePair]
   if dtype == np.float32:
     fn = b"lapack_ssyevd"
     eigvals_type = ir.F32Type.get()
     workspace = [
-        ir.RankedTensorType.get([_lapack.syevd_work_size(n)],
-                                a_type.element_type),
-        ir.RankedTensorType.get([_lapack.syevd_iwork_size(n)], i32_type),
+        ([_lapack.syevd_work_size(n)], a_type.element_type),
+        ([_lapack.syevd_iwork_size(n)], i32_type),
     ]
   elif dtype == np.float64:
     fn = b"lapack_dsyevd"
     eigvals_type = ir.F64Type.get()
     workspace = [
-        ir.RankedTensorType.get([_lapack.syevd_work_size(n)],
-                                a_type.element_type),
-        ir.RankedTensorType.get([_lapack.syevd_iwork_size(n)], i32_type),
+        ([_lapack.syevd_work_size(n)], a_type.element_type),
+        ([_lapack.syevd_iwork_size(n)], i32_type),
     ]
   elif dtype == np.complex64:
     fn = b"lapack_cheevd"
     eigvals_type = ir.F32Type.get()
     workspace = [
-        ir.RankedTensorType.get([_lapack.heevd_work_size(n)],
-                                a_type.element_type),
-        ir.RankedTensorType.get([_lapack.heevd_rwork_size(n)], eigvals_type),
-        ir.RankedTensorType.get([_lapack.syevd_iwork_size(n)], i32_type),
+        ([_lapack.heevd_work_size(n)], a_type.element_type),
+        ([_lapack.heevd_rwork_size(n)], eigvals_type),
+        ([_lapack.syevd_iwork_size(n)], i32_type),
     ]
   elif dtype == np.complex128:
     fn = b"lapack_zheevd"
     eigvals_type = ir.F64Type.get()
     workspace = [
-        ir.RankedTensorType.get([_lapack.heevd_work_size(n)],
-                                a_type.element_type),
-        ir.RankedTensorType.get([_lapack.heevd_rwork_size(n)], eigvals_type),
-        ir.RankedTensorType.get([_lapack.syevd_iwork_size(n)], i32_type),
+        ([_lapack.heevd_work_size(n)],  a_type.element_type),
+        ([_lapack.heevd_rwork_size(n)], eigvals_type),
+        ([_lapack.syevd_iwork_size(n)], i32_type),
     ]
   else:
     raise NotImplementedError(f"Unsupported dtype {dtype}")
 
-  batch_size = hlo.ConvertOp(ir.RankedTensorType.get((), i32_type),
-                             batch_size).result
+  batch_size_val = hlo_s32(1)
+  for b_v in batch_dims_vals:
+    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
+
   scalar_layout = []
   shape_layout = [0]
   workspace_layouts = [shape_layout] * len(workspace)
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
-  if any(d == ir.ShapedType.get_dynamic_size() for d in batch_dims):
-    # The workspace outputs have constant shapes
-    def mk_constant_shape_tensor(ranked_type: ir.RankedTensorType) -> ir.Value:
-      return hlo.ConstantOp(
-          ir.DenseElementsAttr.get(np.array(ranked_type.shape, dtype=np.int32),
-                                  type=i32_type)).result
-    workspace_shapes = [mk_constant_shape_tensor(t) for t in workspace]
-    result_shapes = [result_shape_v, result_shape_w, result_shape_info] + workspace_shapes
-  else:
-    result_shapes = None
+  result_types, result_shapes = mk_result_types_and_shapes(
+      [(a_shape_vals, a_type.element_type),
+       (batch_dims_vals + (n,),  eigvals_type),
+       (batch_dims_vals, i32_type)] + workspace
+  )
 
   out = custom_call(
       fn,
-      [
-          a.type,
-          ir.RankedTensorType.get(batch_dims + (n,), eigvals_type),
-          ir.RankedTensorType.get(batch_dims, i32_type),
-      ] + workspace,
-      [hlo_s32(1 if lower else 0), batch_size, hlo_s32(n), a],
+      result_types,
+      [hlo_s32(1 if lower else 0), batch_size_val, ensure_hlo_s32(n), a],
       operand_layouts=[scalar_layout] * 3 + [layout],
       result_layouts=[
           layout,
@@ -495,17 +483,15 @@ def syevd_hlo(dtype, a: ir.Value, batch_size: ir.Value,
 # # geev: Nonsymmetric eigendecomposition (eig)
 
 def geev_hlo(dtype, input, *,
-             input_shape_vals: tuple[ir.Value, ...],  # input.shape as ir.Values
+             input_shape_vals: tuple[DimensionSize, ...],  # input.shape as ir.Values
              jobvl=True, jobvr=True):
   # input_shape_vals are used for when input has dynamic shapes.
   _initialize()
   input_shape = ir.RankedTensorType(input.type).shape
   assert len(input_shape) >= 2
-  n = input_shape[-1]
-  n_val: ir.Value = input_shape_vals[-1]
-  batch_dims = tuple(input_shape[:-2])
+  n = input_shape_vals[-1]
   batch_dims_vals = input_shape_vals[:-2]
-  num_bd = len(batch_dims)
+  num_bd = len(batch_dims_vals)
 
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
@@ -518,64 +504,39 @@ def geev_hlo(dtype, input, *,
   c64_type = ir.ComplexType.get(ir.F32Type.get())
   c128_type = ir.ComplexType.get(ir.F64Type.get())
 
-  if n == ir.ShapedType.get_dynamic_size():
-    two_n = ir.ShapedType.get_dynamic_size()
-  else:
-    two_n = n + n
+  workspaces: list[ShapeTypePair]
+  eigvals: list[ShapeTypePair]
   if dtype == np.float32:
     fn = b"lapack_sgeev"
     real = True
     eigvecs_type = c64_type
-    workspace_types = [ir.RankedTensorType.get([n, n], f32_type)] * 3
-    workspace_result_shapes = [shape_tensor((n_val, n_val))] * 3
+    workspaces = [([n, n], f32_type)] * 3
     workspace_layouts = [[0, 1]] * 3
-    eigval_types = [
-        ir.RankedTensorType.get(batch_dims + (n,), f32_type)] * 2
-    eigval_result_shapes = [
-        shape_tensor(batch_dims_vals + (n_val,))] * 2
+    eigvals = [(batch_dims_vals + (n,), f32_type)] * 2
     eigvals_layouts = [tuple(range(num_bd, -1, -1))] * 2
   elif dtype == np.float64:
     fn = b"lapack_dgeev"
     real = True
     eigvecs_type = c128_type
-    workspace_types = [ir.RankedTensorType.get([n, n], f64_type)] * 3
-    workspace_result_shapes = [shape_tensor((n_val, n_val))] * 3
+    workspaces = [([n, n], f64_type)] * 3
     workspace_layouts = [[0, 1]] * 3
-    eigval_types = [
-        ir.RankedTensorType.get(batch_dims + (n,), f64_type)] * 2
-    eigval_result_shapes = [
-        shape_tensor(batch_dims_vals + (n_val,))] * 2
+    eigvals = [(batch_dims_vals + (n,), f64_type)] * 2
     eigvals_layouts = [tuple(range(num_bd, -1, -1))] * 2
   elif dtype == np.complex64:
     fn = b"lapack_cgeev"
     real = False
     eigvecs_type = c64_type
-    workspace_types = [
-        ir.RankedTensorType.get([n, n], c64_type),
-        ir.RankedTensorType.get([two_n], f32_type)]
-    workspace_result_shapes = [
-        shape_tensor((n_val, n_val)),
-        shape_tensor((hlo.AddOp(n_val, n_val).result,))]
+    workspaces = [([n, n], c64_type), ([hlo_add(n, n)], f32_type)]
     workspace_layouts = [[0, 1], [0]]
-    eigval_types = [
-        ir.RankedTensorType.get(batch_dims + (n,), c64_type)]
-    eigval_result_shapes = [shape_tensor(batch_dims_vals + (n_val,))]
+    eigvals = [(batch_dims_vals + (n,), c64_type)]
     eigvals_layouts = [tuple(range(num_bd, -1, -1))]
   elif dtype == np.complex128:
     fn = b"lapack_zgeev"
     real = False
     eigvecs_type = c128_type
-    workspace_types = [
-        ir.RankedTensorType.get([n, n], c128_type),
-        ir.RankedTensorType.get([two_n], f64_type)]
-    workspace_result_shapes = [
-        shape_tensor((n_val, n_val)),
-        shape_tensor((hlo.AddOp(n_val, n_val).result,))]
+    workspaces = [([n, n], c128_type), ([hlo_add(n, n)], f64_type)]
     workspace_layouts = [[0, 1], [0]]
-    eigval_types = [
-        ir.RankedTensorType.get(batch_dims + (n,), c128_type)]
-    eigval_result_shapes = [
-        shape_tensor(batch_dims_vals + (n_val,))]
+    eigvals = [(batch_dims_vals + (n,), c128_type)]
     eigvals_layouts = [tuple(range(num_bd, -1, -1))]
   else:
     raise NotImplementedError(f"Unsupported dtype {dtype}")
@@ -585,26 +546,17 @@ def geev_hlo(dtype, input, *,
 
   batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, b_v).result
+    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
 
-  result_types = (
-      workspace_types + eigval_types + [
-        ir.RankedTensorType.get(input_shape, eigvecs_type),
-        ir.RankedTensorType.get(input_shape, eigvecs_type),
-        ir.RankedTensorType.get(batch_dims, i32_type),
-      ])
-  if any(a == ir.ShapedType.get_dynamic_size() for a in input_shape):
-    result_shapes = workspace_result_shapes + eigval_result_shapes + [
-        shape_tensor(input_shape_vals),
-        shape_tensor(input_shape_vals),
-        shape_tensor(batch_dims_vals),
-    ]
-  else:
-    result_shapes = None
+  shape_type_pairs: Sequence[ShapeTypePair] = workspaces + eigvals + [
+      (input_shape_vals, eigvecs_type),
+      (input_shape_vals, eigvecs_type),
+      (batch_dims_vals, i32_type)]
+  result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
   out = custom_call(
       fn,
       result_types,
-      [batch_size_val, n_val,
+      [batch_size_val, ensure_hlo_s32(n),
        hlo_u8(jobvl_c),
        hlo_u8(jobvr_c),
        input],
