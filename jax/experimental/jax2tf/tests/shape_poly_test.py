@@ -2679,6 +2679,32 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 arg_descriptors=[RandArg((3, 1), _f32)],
                 polymorphic_shapes=["b, ..."]),
     [
+      PolyHarness("triangular_solve",
+                  f"shape={jtu.format_shape_dtype_string(a_shape, dtype)}_{left_side=}_{a_poly=}_{b_poly=}",
+                  lambda a, b, left_side: lax.linalg.triangular_solve(
+                    jnp.tril(a) + 5 * jnp.eye(a.shape[-1], dtype=a.dtype),
+                    b, left_side=left_side,
+                    lower=True, transpose_a=False, conjugate_a=False,
+                    unit_diagonal=False),
+                  arg_descriptors=[RandArg(a_shape, dtype),
+                                   RandArg(b_shape, dtype),
+                                   StaticArg(left_side)],
+                  polymorphic_shapes=[a_poly, b_poly],
+                  # In non-native serialization, we cannot check exact match,
+                  # we ought to check the invariants of the result.
+                  check_result=config.jax2tf_default_native_serialization)
+      for dtype in [np.float32, np.float64, np.complex64, np.complex128]
+      for (left_side, a_shape, b_shape, a_poly, b_poly) in [
+          (True, (3, 4, 4), (3, 4, 5), "b, ...", "b, ..."),
+          (True, (3, 4, 4), (3, 4, 5), "b, k, k", "b, k, m"),
+          (False, (3, 4, 4), (3, 5, 4), "b, ...", "b, ..."),
+          (False, (3, 4, 4), (3, 5, 4), "b, k, k", "b, m, k"),
+          # We use custom calls on CPU if not batched
+          (True, (4, 4), (4, 5), "k, k", "k, m"),
+          (False, (4, 4), (5, 4), "k, k", "m, k"),
+      ]
+    ],
+    [
         PolyHarness("var",
                     f"{axis=}_{keepdims=}_where=None",
                     lambda x, axis, keepdims: jnp.var(x, axis=axis, keepdims=keepdims, where=None),
@@ -2824,12 +2850,12 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
       # Set of harness.group_name:platform that are implemented with custom call
       custom_call_harnesses = {
-          "householder_product:cpu", "householder_product:gpu",
-          "vmap_geqrf:cpu", "vmap_geqrf:gpu",
+          "householder_product:gpu",
+          "vmap_geqrf:gpu",
           "vmap_lu:gpu",
           # custom_linear_solve works as long as lu works.
           "vmap_custom_linear_solve:gpu",
-          "vmap_qr:cpu", "vmap_qr:gpu",
+          "vmap_qr:gpu",
           "vmap_svd:gpu",
       }
       if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:

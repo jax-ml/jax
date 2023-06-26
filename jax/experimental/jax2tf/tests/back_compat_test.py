@@ -123,6 +123,8 @@ class CompatTest(bctu.CompatTestBase):
       "lapack_cpotrf", "lapack_dpotrf", "lapack_spotrf", "lapack_zpotrf",
       # TODO(necula): add tests for svd on CPU
       "lapack_sgesdd", "lapack_dsesdd", "lapack_cgesdd", "lapack_zgesdd",
+      # TODO(necula): add tests for triangular_solve on CPU
+      "blas_strsm", "blas_dtrsm", "blas_ctrsm", "blas_ztrsm",
     })
     not_covered = targets_to_cover.difference(covered_targets)
     self.assertEmpty(not_covered)

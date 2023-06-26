@@ -41,26 +41,19 @@ _initialize = _lapack.initialize
 
 # ?trsm(left_side, lower, trans_a, diag, m, n, alpha, a, b):
 # triangular solve
-def trsm_hlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
-             conj_a=False, diag=False):
+def trsm_hlo(dtype, alpha, a, b,
+             left_side=False, lower=False, trans_a=False,
+             conj_a=False, diag=False, *,
+             b_shape_vals: tuple[DimensionSize, ...]):
   _initialize()
-  a_type = ir.RankedTensorType(a.type)
   b_type = ir.RankedTensorType(b.type)
 
-  dims = b_type.shape
-  m, n = dims[-2:]
-  k = m if left_side else n
-
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  num_b = 1
-  for d in batch_dims:
-    num_b *= d
-
-  if (batch_dims + (k, k) != tuple(a_type.shape) or
-      a_type.element_type != b_type.element_type):
-    raise ValueError("Argument mismatch for trsm, got {} and {}".format(
-      a_type, b_type))
+  m, n = b_shape_vals[-2:]
+  batch_dims_vals = b_shape_vals[:-2]
+  num_bd = len(batch_dims_vals)
+  batch_size_val = hlo_s32(1)
+  for b_v in batch_dims_vals:
+    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
 
   if dtype == np.float32:
     fn = "blas_strsm"
@@ -77,16 +70,19 @@ def trsm_hlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
     raise NotImplementedError("Conjugation without transposition not supported")
   scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  result_types, result_shapes = mk_result_types_and_shapes(
+      [(b_shape_vals, b_type.element_type)])
   return custom_call(
       fn,
-      [b.type],
+      result_types,
       [hlo_s32(int(left_side)), hlo_s32(int(lower)),
        hlo_s32((2 if conj_a else 1) if trans_a else 0), hlo_s32(int(diag)),
-       hlo_s32(m), hlo_s32(n), hlo_s32(num_b),
+       ensure_hlo_s32(m), ensure_hlo_s32(n), batch_size_val,
        alpha, a, b],
       operand_layouts=[scalar_layout] * 8 + [layout] * 2,
       result_layouts=[layout],
       operand_output_aliases={9: 0},
+      result_shapes=result_shapes,
   )
 
 
