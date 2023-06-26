@@ -598,6 +598,10 @@ def eval_dynamic_shape_as_ivals(
         return d
   return tuple(convert_dim(v) for v in eval_dynamic_shape(ctx, shape))
 
+def eval_dynamic_shape_as_tensor(ctx: LoweringRuleContext,
+                                 shape: core.Shape) -> Value:
+  """Evaluates the dynamic shapes as one 1d int32 tensor."""
+  return shape_tensor(eval_dynamic_shape(ctx, shape))
 
 class LoweringResult(NamedTuple):
   module: ir.Module
@@ -1318,10 +1322,10 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
         ctx, op, physical_aval_out, broadcast_dimensions=broadcast_dimensions)
   else:
     if not core.is_constant_shape(aval_out.shape):  # type: ignore
-      shape = eval_dynamic_shape(ctx, aval_out.shape)  # type: ignore
+      shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
       return hlo.DynamicBroadcastInDimOp(
           aval_to_ir_type(aval_out), op,
-          shape_tensor(shape),
+          shape,
           dense_int_elements(broadcast_dimensions),
       ).result
     else:
@@ -1352,10 +1356,9 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
 def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Value:
   aval_out = core.physical_aval(aval_out)
   if not core.is_constant_shape(aval_out.shape):  # type: ignore
-    shape = eval_dynamic_shape(ctx, aval_out.shape)  # type: ignore
+    shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
     return hlo.DynamicReshapeOp(
-        aval_to_ir_type(aval_out), op,
-        shape_tensor(shape),
+        aval_to_ir_type(aval_out), op, shape,
     ).result
   else:
     return hlo.ReshapeOp(aval_to_ir_type(aval_out), op).result
@@ -1375,14 +1378,12 @@ def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
                     limit_indices=limit_indices, strides=strides)
   else:
     if any(not core.is_constant_shape(s) for s in (start_indices, limit_indices, strides)):
-      start_indices = eval_dynamic_shape(ctx, start_indices)
-      limit_indices = eval_dynamic_shape(ctx, limit_indices)
-      strides = eval_dynamic_shape(ctx, strides)
-      return hlo.RealDynamicSliceOp(aval_to_ir_type(aval_out),
-                                    x,
-                                    shape_tensor(start_indices),
-                                    shape_tensor(limit_indices),
-                                    shape_tensor(strides)).result
+      start_indices = eval_dynamic_shape_as_tensor(ctx, start_indices)
+      limit_indices = eval_dynamic_shape_as_tensor(ctx, limit_indices)
+      strides = eval_dynamic_shape_as_tensor(ctx, strides)
+      return hlo.RealDynamicSliceOp(
+        aval_to_ir_type(aval_out),
+        x, start_indices, limit_indices, strides).result
     else:
       return hlo.SliceOp(x,
                          dense_int_elements(start_indices),
@@ -1408,12 +1409,12 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
     # lax.dynamic_slice clamps the start indices, but we are going to
     # lower to RealDynamicSliceOp, which is a version of SliceOp, and does
     # not have the clamping behavior. We clamp start ourselves.
-    slice_sizes = shape_tensor(eval_dynamic_shape(ctx, slice_sizes))
+    slice_sizes = eval_dynamic_shape_as_tensor(ctx, slice_sizes)
     clamped_start = hlo.ClampOp(
       shape_tensor([0] * len(start_indices)),
       shape_tensor(start_indices),
       hlo.SubtractOp(
-        shape_tensor(eval_dynamic_shape(ctx, x_aval.shape)),  # type: ignore
+        eval_dynamic_shape_as_tensor(ctx, x_aval.shape),  # type: ignore
         slice_sizes))
     return hlo.RealDynamicSliceOp(
         aval_to_ir_type(aval_out), x,
@@ -1452,19 +1453,19 @@ def pad(ctx: LoweringRuleContext, aval_out,
                      dense_int_elements(padding_high),
                      dense_int_elements(padding_interior)).result
   else:
-    padding_low = shape_tensor(eval_dynamic_shape(ctx, padding_low))
-    padding_high = shape_tensor(eval_dynamic_shape(ctx, padding_high))
-    padding_interior = shape_tensor(eval_dynamic_shape(ctx, padding_interior))
+    padding_low = eval_dynamic_shape_as_tensor(ctx, padding_low)
+    padding_high = eval_dynamic_shape_as_tensor(ctx, padding_high)
+    padding_interior = eval_dynamic_shape_as_tensor(ctx, padding_interior)
     return hlo.DynamicPadOp(
         aval_to_ir_type(aval_out),
         x, padding_value, padding_low, padding_high, padding_interior).result
 
 def iota(ctx: LoweringRuleContext, aval_out, *, dimension: int):
   if not core.is_constant_shape(aval_out.shape):
-    shape = eval_dynamic_shape(ctx, aval_out.shape)
+    shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
     return hlo.DynamicIotaOp(
         aval_to_ir_type(aval_out),
-        shape_tensor(shape),
+        shape,
         i64_attr(dimension),
     ).result
   else:
@@ -1560,7 +1561,7 @@ def _wrap_with_spmd_op(name: str,
   if core.is_constant_shape(out_shape):
     result_shapes = None
   else:
-    result_shapes = [shape_tensor(eval_dynamic_shape(ctx, out_shape))]
+    result_shapes = [eval_dynamic_shape_as_tensor(ctx, out_shape)]
 
   op = custom_call(name, [result_type], [x],
                    backend_config=backend_config,
@@ -2064,7 +2065,7 @@ def reduce_window(
     # spatial dimension.
     int2d = aval_to_ir_type(core.ShapedArray((1, 2), np.int32))
     def prep_one_pad(pad_lo_hi: tuple[core.DimSize, core.DimSize]):
-      pads = shape_tensor(eval_dynamic_shape(ctx, pad_lo_hi))  # i32[2]
+      pads = eval_dynamic_shape_as_tensor(ctx, pad_lo_hi)  # i32[2]
       return hlo.ReshapeOp(int2d, pads)
     d_padding = hlo.ConcatenateOp(list(map(prep_one_pad, padding)),
                                   i64_attr(0)).result
@@ -2084,10 +2085,10 @@ def reduce_window(
       list(map(aval_to_ir_type, out_avals)),
       [
         *operands, *init_values,
-        shape_tensor(eval_dynamic_shape(ctx, window_dimensions)),
-        shape_tensor(eval_dynamic_shape(ctx, window_strides)),
-        shape_tensor(eval_dynamic_shape(ctx, base_dilation)),
-        shape_tensor(eval_dynamic_shape(ctx, window_dilation)),
+        eval_dynamic_shape_as_tensor(ctx, window_dimensions),
+        eval_dynamic_shape_as_tensor(ctx, window_strides),
+        eval_dynamic_shape_as_tensor(ctx, base_dilation),
+        eval_dynamic_shape_as_tensor(ctx, window_dilation),
         d_padding],
        called_computations=[reducer.name.value],
     )

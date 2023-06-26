@@ -1068,11 +1068,11 @@ def _threefry2x32_gpu_lowering(lowering_func, ctx, k1, k2, x1, x2):
 
   out_len = reduce(op.mul, aval_out.shape, 1)
   if not core.is_constant_dim(out_len):
-    length = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, [out_len]))
+    length = mlir.eval_dynamic_shape_as_tensor(ctx, [out_len])
     length = mlir.hlo.ConvertOp(
         ir.RankedTensorType.get((1,), ir.IntegerType.get_signless(64)),
         length).result
-    output_shape = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, aval_out.shape))
+    output_shape = mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
   else:
     length = int(out_len)  # will be passed statically
     output_shape = None
