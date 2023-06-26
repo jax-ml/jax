@@ -60,9 +60,10 @@ jobs:
         run: |
           # Run single-accelerator tests in parallel
           JAX_ENABLE_TPU_XDIST=true python3 -m pytest -n=4 --tb=short \
-            --maxfail=20 -m "not multiaccelerator" tests examples
+            --maxfail=20 --timeout=600 -m "not multiaccelerator" tests examples
           # Run multi-accelerator across all chips
-          python3 -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
+          python3 -m pytest --tb=short --maxfail=20 --timeout=600 \
+            -m "multiaccelerator" tests
       - name: Send chat on failure
         # Don't notify when testing the workflow from a branch.
         if: ${{ (failure() || cancelled()) && github.ref_name == 'main' }}
