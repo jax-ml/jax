@@ -2684,12 +2684,11 @@ class ShapeDtypeStruct:
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
     self.dtype = dtype if dtypes.is_opaque_dtype(dtype) else np.dtype(dtype)
-    if sharding is not None:
-      if not isinstance(sharding, Sharding):
-        raise ValueError(
-            "sharding should be an instance of `jax.sharding.Sharding`. "
-            f"Got {sharding} of type {type(sharding)}.")
-      self.sharding = sharding
+    if sharding is not None and not isinstance(sharding, Sharding):
+      raise ValueError(
+          "sharding should be an instance of `jax.sharding.Sharding`. "
+          f"Got {sharding} of type {type(sharding)}.")
+    self.sharding = sharding
     self.named_shape = {} if named_shape is None else dict(named_shape)
 
   size = property(lambda self: math.prod(self.shape))
@@ -2699,11 +2698,11 @@ class ShapeDtypeStruct:
     try:
       return self.shape[0]
     except IndexError as e:
-      raise TypeError("len() of unsized object") from e # same as numpy error
+      raise TypeError("len() of unsized object") from e  # same as numpy error
 
   def __repr__(self):
     ns = f", named_shape={self.named_shape}" if self.named_shape else ""
-    sh = f", sharding={self.sharding}" if hasattr(self, "sharding") else ""
+    sh = f", sharding={self.sharding}" if self.sharding is not None else ""
     return (f"{type(self).__name__}(shape={self.shape}, "
             f"dtype={self.dtype.name}{ns}{sh})")
 
@@ -2713,17 +2712,14 @@ class ShapeDtypeStruct:
     if not isinstance(other, ShapeDtypeStruct):
       return False
     else:
-      other_sh = other.sharding if hasattr(other, "sharding") else None
-      sh = self.sharding if hasattr(self, "sharding") else None
-      return ((other.shape, other.dtype, other.named_shape, other_sh) ==
-              (self.shape, self.dtype, self.named_shape, sh))
+      return ((other.shape, other.dtype, other.named_shape, other.sharding) ==
+              (self.shape, self.dtype, self.named_shape, self.sharding))
 
   def __hash__(self):
     # TODO(frostig): avoid the conversion from dict by addressing
     # https://github.com/google/jax/issues/8182
     named = frozenset(self.named_shape.items())
-    sh = self.sharding if hasattr(self, "sharding") else None
-    return hash((self.shape, self.dtype, named, sh))
+    return hash((self.shape, self.dtype, named, self.sharding))
 
 core.pytype_aval_mappings[ShapeDtypeStruct] = (
     lambda x: ShapedArray(x.shape, dtypes.canonicalize_dtype(x.dtype, allow_opaque_dtype=True),

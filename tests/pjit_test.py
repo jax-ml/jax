@@ -3507,6 +3507,29 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out2, np_inp * 2)
     self.assertEqual(out2.sharding, SingleDeviceSharding(jax.devices()[0]))
 
+  def test_jit_lower_shape_dtype_struct_sharding_none(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+
+    lower_inp1 = jax.ShapeDtypeStruct((8, 2), np.int32, sharding=s)
+    # Will be considered as uncommitted and resharded over all the devices of
+    # the mesh.
+    lower_inp2 = jax.ShapeDtypeStruct((8, 2), np.int32)
+
+    compiled = jax.jit(lambda x, y: (x * 2, y * 2)).lower(
+        lower_inp1, lower_inp2).compile()
+
+    np_inp = np.arange(16, dtype=np.int32).reshape(8, 2)
+    inp = jax.device_put(np_inp, s)
+    out1, out2 = compiled(inp, np_inp)
+
+    self.assertArraysEqual(out1, np_inp * 2)
+    self.assertArraysEqual(out2, np_inp * 2)
+    self.assertTupleEqual(out1.sharding._device_assignment,
+                          s.mesh._flat_devices_tuple)
+    self.assertTupleEqual(out2.sharding._device_assignment,
+                          s.mesh._flat_devices_tuple)
+
 
 class TempSharding(Sharding):
 

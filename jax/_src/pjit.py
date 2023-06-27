@@ -1034,6 +1034,10 @@ def _resolve_in_shardings(
   for a in args:
     if hasattr(a, 'sharding'):
       arg_s = a.sharding
+      # arg sharding can be None in case of ShapeDtypeStruct. jax.Array does
+      # not allow None as the sharding.
+      if arg_s is None:
+        continue
       if not isinstance(arg_s, XLACompatibleSharding):
         raise ValueError(f'One of the argument to pjit got sharding {arg_s} '
                          'which is not a subclass of XLACompatibleSharding.')
@@ -1055,8 +1059,11 @@ def _resolve_in_shardings(
 
   resolved_in_shardings = []
   for arg, pjit_in_s in zip(args, pjit_in_shardings):
+    # arg sharding can be None in case of ShapeDtypeStruct. jax.Array does
+    # not allow None as the sharding.
     arg_s, committed = ((arg.sharding, getattr(arg, '_committed', True))
-                        if hasattr(arg, 'sharding') else (UNSPECIFIED, False))
+                        if hasattr(arg, 'sharding') and arg.sharding is not None
+                        else (UNSPECIFIED, False))
     if is_unspecified(pjit_in_s):
       if is_unspecified(arg_s):
         resolved_in_shardings.append(arg_s)
