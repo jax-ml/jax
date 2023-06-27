@@ -384,6 +384,7 @@ cc_library(
 pybind_extension(
     name = "_triton",
     srcs = ["//jaxlib/gpu:triton.cc"],
+    hdrs = ["//jaxlib/gpu:triton.h"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
