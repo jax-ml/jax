@@ -253,7 +253,10 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "compilation_cache_internal",
-    srcs = ["_src/compilation_cache.py"],
+    srcs = [
+        "_src/cache_key.py",
+        "_src/compilation_cache.py",
+    ],
     visibility = [":internal"] + jax_visibility("compilation_cache"),
     deps = [
         ":compilation_cache_interface",
