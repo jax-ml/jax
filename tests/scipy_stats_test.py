@@ -971,6 +971,27 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=5e-4)
       self._CompileAndCheck(lax_fun, args_maker, rtol=1e-5, atol=1e-5)
 
+  @genNamedParametersNArgs(4)
+  def testBinomLogPmf(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.binom.logpmf
+    lax_fun = lsp_stats.binom.logpmf
+
+    def args_maker():
+      k, n, logit, loc = map(rng, shapes, dtypes)
+      k = np.floor(np.abs(k))
+      n = np.ceil(np.abs(n))
+      p = expit(logit)
+      loc = np.floor(loc)
+      return [k, n, p, loc]
+
+    tol = {np.float32: 1e-6, np.float64: 1e-8}
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-4)
+      self._CompileAndCheck(lax_fun, args_maker, rtol=tol, atol=tol)
+
   def testIssue972(self):
     self.assertAllClose(
       np.ones((4,), np.float32),
