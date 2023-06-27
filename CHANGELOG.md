@@ -42,6 +42,11 @@ Remember to align the itemized text with the first line of an item within a list
   * Executable.cost_analysis() works on Cloud TPU
   * Added a warning if a non-allowlisted `jaxlib` plugin is in use.
   * Added `jax.tree_util.tree_leaves_with_path`.
+  * `None` is not a valid input to
+    `jax.experimental.multihost_utils.host_local_array_to_global_array` or
+    `jax.experimental.multihost_utils.global_array_to_host_local_array`.
+    Please use `jax.sharding.PartitionSpec()` if you wanted to replicate your
+    input.
 
 * Bug fixes
   * Fixed incorrect wheel name in CUDA 12 releases (#16362); the correct wheel

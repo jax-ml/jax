@@ -225,6 +225,10 @@ def _global_to_local_aval(global_aval, mesh, pspec):
 
 def host_local_array_to_global_array_impl(
     arr: Any, *, global_mesh: jax.sharding.Mesh, pspec: Any):
+  if pspec is None:
+    raise ValueError(
+        '`None` is not a valid input to the pspecs argument. Please use '
+        'jax.sharding.PartitionSpec() if you wanted to replicate your input.')
   # If the Array is not fully addressable i.e. not host local, return it.
   if isinstance(arr, array.ArrayImpl) and not arr.is_fully_addressable:
     return arr
@@ -326,6 +330,10 @@ mlir.register_lowering(host_local_array_to_global_array_p, _ltg_lowering)
 
 def global_array_to_host_local_array_impl(
     arr: Any, *, global_mesh: jax.sharding.Mesh, pspec: Any):
+  if pspec is None:
+    raise ValueError(
+        '`None` is not a valid input to the pspecs argument. Please use '
+        'jax.sharding.PartitionSpec() if you wanted to replicate your input.')
   # If the Array is already fully addressable i.e. host local, return it.
   if isinstance(arr, array.ArrayImpl) and arr.is_fully_addressable:
     return arr
