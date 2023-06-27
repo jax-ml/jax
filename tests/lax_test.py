@@ -2099,6 +2099,21 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual((2, 3, 4),
                      collapse_first_two(np.zeros((1, 2, 3, 4))).shape)
 
+  def testCollapseLastTwo(self):
+
+    @jax.jit
+    def collapse_last_two_none_end(x):
+      return lax.collapse(x, -2)
+
+    @jax.jit
+    def collapse_last_two_pos_end(x):
+      return lax.collapse(x, -2)
+
+    self.assertEqual((4, 3, 10),
+                     collapse_last_two_none_end(np.zeros((4, 3, 2, 5))).shape)
+    self.assertEqual((4, 3, 10),
+                     collapse_last_two_pos_end(np.zeros((4, 3, 2, 5))).shape)
+
   @jtu.sample_product(
     [dict(shape=shape, idxs=idxs, axes=axes)
       for shape, idxs, axes in [

@@ -1369,7 +1369,7 @@ def full_like(x: Union[ArrayLike, DuckTypedArray],
 
 
 def collapse(operand: Array, start_dimension: int,
-             stop_dimension: int) -> Array:
+             stop_dimension: Optional[int] = None) -> Array:
   """Collapses dimensions of an array into a single dimension.
 
   For example, if ``operand`` is an array with shape ``[2, 3, 4]``,
@@ -1380,13 +1380,17 @@ def collapse(operand: Array, start_dimension: int,
   Args:
     operand: an input array.
     start_dimension: the start of the dimensions to collapse (inclusive).
-    stop_dimension: the end of the dimensions to collapse (exclusive).
+    stop_dimension: the end of the dimensions to collapse (exclusive). Pass None
+      to collapse all the dimensions after start.
 
   Returns:
     An array where dimensions ``[start_dimension, stop_dimension)`` have been
     collapsed (raveled) into a single dimension.
   """
-  lo, hi = start_dimension, stop_dimension
+  lo, hi, _ = slice(start_dimension, stop_dimension).indices(len(operand.shape))
+  if hi < lo:
+    raise ValueError(f"Invalid dimension range passed to collapse: {operand.shape}"
+                     f"[{start_dimension}:{stop_dimension}]")
   size = math.prod(operand.shape[lo:hi])
   new_shape = operand.shape[:lo] + (size,) + operand.shape[hi:]
   return reshape(operand, new_shape)
