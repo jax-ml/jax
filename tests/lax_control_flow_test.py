@@ -696,6 +696,39 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(fun(0), cfun(0))
     self.assertEqual(fun(1), cfun(1))
 
+  def testCondCallableOperands(self):
+    # see https://github.com/google/jax/issues/16413
+
+    @tree_util.register_pytree_node_class
+    class Foo:
+      def __init__(self, x):
+        self.x = x
+
+      def __call__(self, *xs):
+        assert False
+        return xs
+
+      def tree_flatten(self):
+        return (self.x,), None
+
+      @classmethod
+      def tree_unflatten(cls, _, xs):
+        return cls(*xs)
+
+    f_00 = lambda a, b: a + b
+    f_01 = lambda a, b: a + b.x
+    f_10 = lambda a, b: a.x + b
+    f_11 = lambda a, b: a.x + b.x
+
+    # these don't raise
+    a = lax.cond(True, f_00, f_00, 3, 4)
+    b = lax.cond(True, f_01, f_01, 3, Foo(4))
+    c = lax.cond(True, f_10, f_10, Foo(3), 4)
+    d = lax.cond(True, f_11, f_11, Foo(3), Foo(4))
+    self.assertEqual(a, b)
+    self.assertEqual(a, c)
+    self.assertEqual(a, d)
+
   def testSwitch(self):
     def branch(x):
       y = lax.mul(2, x)
