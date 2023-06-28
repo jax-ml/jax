@@ -1329,10 +1329,12 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
     # indices shape (7, 3, 4, 5). We transform that to indices of shape
     # (7, 3, 4, 6) where we concatenated an iota that counts along our batch
     # dimension to the front of the ndindex.
+    index_dtype = _promote_dtype_for_size(indices.dtype, indices.shape[0])
     count_shape = list(indices.shape)
     count_shape[-1] = 1
-    counts = lax.broadcasted_iota(indices.dtype, tuple(count_shape), 0)
-    indices = lax.concatenate([counts, indices], len(count_shape) - 1)
+    counts = lax.broadcasted_iota(index_dtype, tuple(count_shape), 0)
+    indices = lax.concatenate([counts, indices.astype(index_dtype)],
+                              len(count_shape) - 1)
 
     slice_sizes = (1,) + slice_sizes
     collapsed_slice_dims = (0,) + tuple(np.add(1, dimension_numbers.collapsed_slice_dims))
@@ -1347,6 +1349,21 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
                   slice_sizes=slice_sizes, unique_indices=unique_indices,
                   indices_are_sorted=indices_are_sorted, mode=mode,
                   fill_value=fill_value), 0
+
+def _promote_dtype_for_size(dtype, size):
+  if not dtypes.issubdtype(dtype, np.integer):
+    return dtype
+  # size may be a dynamic shape, in which case we return at least int32
+  try:
+    size = int(size)
+  except:
+    return dtype if np.iinfo(dtype).bits >= 32 else np.dtype('int32')
+  if size <= np.iinfo(dtype).max:
+    return dtype
+  elif size <= np.iinfo(np.int32).max:
+    return np.dtype('int32')
+  else:
+    return dtypes.canonicalize_dtype(np.int64)
 
 def _gather_pad_rule(in_avals, out_avals, operand, indices, *,
                      dimension_numbers, slice_sizes, unique_indices,

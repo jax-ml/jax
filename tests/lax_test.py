@@ -3170,6 +3170,15 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     self.assertIsInstance(ys, FooArray)
     self.assertEqual(ys.shape, (3, 2, 1))
 
+  def test_gather_batched_index_dtype(self):
+    # Regression test for https://github.com/google/jax/issues/16557
+    dtype = jnp.int8
+    size = jnp.iinfo(dtype).max + 10
+    indices = jnp.zeros(size, dtype=dtype)
+    values = jnp.zeros((size, 1))
+    results = jax.vmap(lambda x, i: jnp.take(x, i, axis=0))(values, indices)
+    self.assertArraysEqual(results, jnp.zeros(size))
+
   @parameterized.parameters([
     (0,),
     (slice(1),),
