@@ -18,4 +18,5 @@ from jax._src.ad_checkpoint import (
   checkpoint_name,
   print_saved_residuals,
   remat,
+  is_name_primitive,
 )
