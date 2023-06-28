@@ -1,3 +1,5 @@
+#include "jaxlib/gpu/triton.h"
+
 #include <zlib.h>
 
 #include <algorithm>

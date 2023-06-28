@@ -48,6 +48,7 @@ exports_files(srcs = [
     "sparse_kernels.cc",
     "sparse_kernels.h",
     "triton.cc",
+    "triton.h",
     "vendor.h",
 ])
 
