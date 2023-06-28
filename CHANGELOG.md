@@ -19,6 +19,13 @@ Remember to align the itemized text with the first line of an item within a list
     deprecated in JAX version 0.4.6: use `jax.make_array_from_single_device_arrays`
     instead.
 
+* Breaking changes
+  * To fix a corner case, calls to {func}`jax.lax.cond` with five
+    arguments will always resolve to the "common operands" `cond`
+    behavior (as documented) if the second and third arguments are
+    callable, even if other operands are callable as well. See
+    [#16413](https://github.com/google/jax/issues/16413).
+
 ## jaxlib 0.4.14
 
 * Deprecations
