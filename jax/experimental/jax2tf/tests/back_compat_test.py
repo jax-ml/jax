@@ -20,7 +20,6 @@ import dataclasses
 from functools import partial
 import itertools
 import math
-from typing import Callable, Optional, Sequence
 
 from absl.testing import absltest, parameterized
 
@@ -29,7 +28,6 @@ import numpy as np
 import jax
 from jax import config
 from jax import lax
-from jax.experimental import jax2tf
 from jax.experimental.jax2tf import jax_export
 from jax.experimental.jax2tf.tests import back_compat_test_util as bctu
 
@@ -56,7 +54,6 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 
-from jax._src.lib import xla_extension
 from jax._src import test_util as jtu
 
 config.parse_flags_with_absl()
