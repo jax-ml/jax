@@ -968,7 +968,7 @@ def lower_jaxpr_to_fun(
           attrs["tf.aliasing_output"] = i32_attr(alias)
 
     if num_tokens > 0:
-      token_arg_attrs = arg_attrs[num_dim_vars:num_tokens]
+      token_arg_attrs = arg_attrs[num_dim_vars:num_dim_vars + num_tokens]
       for attrs in token_arg_attrs:
         attrs["jax.token"] = ir.BoolAttr.get(True)
 
