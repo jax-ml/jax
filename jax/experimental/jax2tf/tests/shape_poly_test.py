@@ -27,7 +27,6 @@ import operator as op
 import re
 
 import jax
-from jax import core
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf import shape_poly
 from jax.experimental.jax2tf import jax_export
@@ -36,6 +35,7 @@ from jax import lax
 import jax.numpy as jnp
 from jax import random
 from jax import tree_util
+from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lax import lax as lax_internal

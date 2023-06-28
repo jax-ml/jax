@@ -78,12 +78,12 @@ import numpy as np
 from numpy import array, float32
 
 import jax
-from jax import core
 from jax import tree_util
 from jax.experimental.jax2tf import jax_export
 
 from jax.experimental import pjit
 
+from jax._src import core
 from jax._src import test_util as jtu
 from jax._src.interpreters import pxla
 from jax._src import xla_bridge as xb
