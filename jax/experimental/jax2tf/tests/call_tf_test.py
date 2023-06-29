@@ -1541,6 +1541,28 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     )
     _, restored_model = tf_test_util.SaveAndLoadFunction(f_tf, input_args=[x])
 
+  @parameterized.named_parameters([
+    dict(testcase_name=f"{ordered=}", ordered=ordered)
+    for ordered in [True, False]
+  ])
+  def test_call_tf_graph_polymorphic(self, ordered: bool):
+    @tf.function(jit_compile=True, autograph=False)
+    @partial(jax2tf.convert,
+      with_gradient=False,
+      native_serialization=True,
+      polymorphic_shapes=["(b)"])
+    @jax.jit
+    def tf_f_2(x):
+      tf_f = lambda x: print(tf.strings.length(tf.constant("hello, world")))
+      jax2tf.call_tf(tf_f,
+                     call_tf_graph=True,
+                     ordered=ordered,
+                     output_shape_dtype=None)(x)
+      return x
+
+    x = np.arange(3, dtype=np.int32)
+    _ = tf.function(tf_f_2, autograph=False).get_concrete_function(x)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

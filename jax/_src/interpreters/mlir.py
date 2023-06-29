@@ -889,6 +889,7 @@ def lower_jaxpr_to_fun(
     output_token_types = []
     token_types = [token_type() for _ in effects]
   token_avals = [core.AbstractToken] * num_tokens
+  # Order of arguments: dim vars, tokens, array inputs
   input_avals = dim_var_avals + token_avals + jaxpr.in_avals
   input_types = [*dim_var_types, *token_types, *input_types]
   output_avals = [core.AbstractToken] * (len(output_token_types) + num_tokens) + jaxpr.out_avals
@@ -968,7 +969,7 @@ def lower_jaxpr_to_fun(
           attrs["tf.aliasing_output"] = i32_attr(alias)
 
     if num_tokens > 0:
-      token_arg_attrs = arg_attrs[num_dim_vars:num_tokens]
+      token_arg_attrs = arg_attrs[num_dim_vars:num_dim_vars + num_tokens]
       for attrs in token_arg_attrs:
         attrs["jax.token"] = ir.BoolAttr.get(True)
 
