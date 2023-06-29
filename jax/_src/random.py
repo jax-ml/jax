@@ -116,49 +116,65 @@ def default_prng_impl():
 
 ### key operations
 
-def key(seed: Union[int, Array]) -> PRNGKeyArray:
+def resolve_prng_impl(impl_spec: Optional[str]):
+  if impl_spec is None:
+    return default_prng_impl()
+  if impl_spec in PRNG_IMPLS:
+    return PRNG_IMPLS[impl_spec]
+
+  keys_fmt = ', '.join(f'"{s}"' for s in PRNG_IMPLS.keys())
+  raise ValueError(f'unrecognized PRNG implementation "{impl_spec}". '
+                   f'Did you mean one of: {keys_fmt}?')
+
+def _key(ctor_name: str, seed: Union[int, Array], impl_spec: Optional[str]
+         ) -> PRNGKeyArray:
+  impl = resolve_prng_impl(impl_spec)
+  if isinstance(seed, prng.PRNGKeyArray):
+    raise TypeError(
+        f"{ctor_name} accepts a scalar seed, but was given a PRNGKeyArray.")
+  if np.ndim(seed):
+    raise TypeError(
+        f"{ctor_name} accepts a scalar seed, but was given an array of "
+        f"shape {np.shape(seed)} != (). Use jax.vmap for batching")
+  return prng.seed_with_impl(impl, seed)
+
+def key(seed: Union[int, Array], *,
+        impl: Optional[str] = None) -> PRNGKeyArray:
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
   The result is a scalar array with a key that indicates the default PRNG
-  implementation, as determined by the ``jax_default_prng_impl`` config flag.
+  implementation, as determined by the optional ``impl`` argument or,
+  otherwise, by the ``jax_default_prng_impl`` config flag.
 
   Args:
     seed: a 64- or 32-bit integer used as the value of the key.
+    impl: optional string specifying the PRNG implementation (e.g.
+      ``'threefry2x32'``)
 
   Returns:
     A scalar PRNG key array, consumable by random functions as well as ``split``
     and ``fold_in``.
   """
-  # TODO(frostig): Take impl as optional argument
-  impl = default_prng_impl()
-  if isinstance(seed, prng.PRNGKeyArray):
-    raise TypeError("key accepts a scalar seed, but was given a PRNGKeyArray.")
-  if np.ndim(seed):
-    raise TypeError("key accepts a scalar seed, but was given an array of "
-                    f"shape {np.shape(seed)} != (). Use jax.vmap for batching")
-  return prng.seed_with_impl(impl, seed)
+  return _key('key', seed, impl)
 
-def PRNGKey(seed: Union[int, Array]) -> KeyArray:
+def PRNGKey(seed: Union[int, Array], *,
+            impl: Optional[str] = None) -> KeyArray:
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
   The resulting key carries the default PRNG implementation, as
-  determined by the ``jax_default_prng_impl`` config flag.
+  determined by the optional ``impl`` argument or, otherwise, by the
+  ``jax_default_prng_impl`` config flag.
 
   Args:
     seed: a 64- or 32-bit integer used as the value of the key.
+    impl: optional string specifying the PRNG implementation (e.g.
+      ``'threefry2x32'``)
 
   Returns:
     A PRNG key, consumable by random functions as well as ``split``
     and ``fold_in``.
   """
-  impl = default_prng_impl()
-  if isinstance(seed, prng.PRNGKeyArray):
-    raise TypeError("PRNGKey accepts a scalar seed, but was given a PRNGKeyArray.")
-  if np.ndim(seed):
-    raise TypeError("PRNGKey accepts a scalar seed, but was given an array of "
-                    f"shape {np.shape(seed)} != (). Use jax.vmap for batching")
-  key = prng.seed_with_impl(impl, seed)
-  return _return_prng_keys(True, key)
+  return _return_prng_keys(True, _key('PRNGKey', seed, impl))
 
 # TODO(frostig): remove once we always enable_custom_prng
 def _check_default_impl_with_no_custom_prng(impl, name):
