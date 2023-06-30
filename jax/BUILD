@@ -443,6 +443,15 @@ pytype_strict_library(
     deps = py_deps("epath"),
 )
 
+pytype_library(
+    name = "experimental_profiler",
+    srcs = ["experimental/profiler.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//jax/_src/lib",
+    ],
+)
+
 pytype_strict_library(
     name = "pickle_util",
     srcs = ["_src/pickle_util.py"],
