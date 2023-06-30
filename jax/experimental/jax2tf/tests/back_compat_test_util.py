@@ -33,11 +33,14 @@ test here to remove it after 6 months.
 Write the JAX function `func` that exercises the custom call `foo_call` you
 want, then pick some inputs, and then add this to the new test to get started.
 
+  import dataclasses
+  from jax.experimental.jax2tf.tests import back_compat_test_util as bctu
+
   def test_foo_call(self):
     def func(...): ...
     inputs = (...,)  # Tuple of nd.array, keep it small, perhaps generate the
                      # inputs in `func`.
-    data = dataclasses.replace(self.load_testdata(dummy_data_dict),
+    data = dataclasses.replace(self.load_testdata(bctu.dummy_data_dict),
                                inputs=inputs,
                                platform=self.default_jax_backend())
     self.run_one_test(func, data,

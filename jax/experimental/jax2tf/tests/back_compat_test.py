@@ -122,6 +122,7 @@ class CompatTest(bctu.CompatTestBase):
       "lapack_sgesdd", "lapack_dsesdd", "lapack_cgesdd", "lapack_zgesdd",
       # TODO(necula): add tests for triangular_solve on CPU
       "blas_strsm", "blas_dtrsm", "blas_ctrsm", "blas_ztrsm",
+      "tpu_custom_call",  # tested separately
       # TODO(necula): add tests for schur on CPU
       "lapack_sgees", "lapack_dgees", "lapack_cgees", "lapack_zgees",
     })
