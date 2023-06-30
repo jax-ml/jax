@@ -2110,7 +2110,7 @@ def _schur_batching_rule(batched_args, batch_dims, *, compute_schur_vectors,
       select_callable=select_callable), (0,) * (1 + compute_schur_vectors)
 
 
-def _schur_jvp_rule(primals, tangents, *, compute_schur_vectors, sort_eig_vals):
+def _schur_jvp_rule(primals, tangents, **kwds):
   raise NotImplementedError(
       'The differentiation rules for the Schur factorization have not been implemented.'
   )
