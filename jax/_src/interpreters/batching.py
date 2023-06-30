@@ -889,7 +889,7 @@ def broadcast_batcher(prim, args, dims, **params):
   assert len(args) > 1
   shape, dim = next((x.shape, d) for x, d in zip(args, dims)
                     if d is not not_mapped)
-  if all(core.symbolic_equal_shape(shape, x.shape) and d == dim
+  if all(core.definitely_equal_shape(shape, x.shape) and d == dim
          for x, d in zip(args, dims) if np.ndim(x)):
     # if there's only agreeing batch dims and scalars, just call the primitive
     out = prim.bind(*args, **params)

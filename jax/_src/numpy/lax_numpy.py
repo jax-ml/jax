@@ -1155,8 +1155,8 @@ def bincount(x: ArrayLike, weights: Optional[ArrayLike] = None,
       "The error occurred because of argument 'x' of jnp.bincount. "
       "To avoid this error, pass a static `length` argument.")
     length = max(minlength, x_arr.size and int(x_arr.max()) + 1)
-  elif not core.is_special_dim_size(length):
-    length = core.concrete_or_error(operator.index, length,
+  else:
+    length = core.concrete_dim_or_error(length,
         "The error occurred because of argument 'length' of jnp.bincount.")
   if weights is None:
     weights = np.array(1, dtype=int_)
@@ -1375,10 +1375,9 @@ def nonzero(a: ArrayLike, *, size: Optional[int] = None,
   mask = arr if arr.dtype == bool else (arr != 0)
   if size is None:
     size = mask.sum()
-  if not core.is_special_dim_size(size):
-    size = core.concrete_or_error(operator.index, size,
-      "The size argument of jnp.nonzero must be statically specified "
-      "to use jnp.nonzero within JAX transformations.")
+  size = core.concrete_dim_or_error(size,
+    "The size argument of jnp.nonzero must be statically specified "
+    "to use jnp.nonzero within JAX transformations.")
   if arr.size == 0 or size == 0:
     return tuple(zeros(size, int) for dim in arr.shape)
   flat_indices = reductions.cumsum(bincount(reductions.cumsum(mask), length=size))
@@ -1448,7 +1447,7 @@ def _broadcast_to_pairs(nvals: PadValueLike, nd: int, name: str) -> PadValue:
     raise
 
   def as_scalar_dim(v):
-    if core.is_special_dim_size(v) or not np.shape(v):
+    if core.is_dim(v) or not np.shape(v):
       return v
     else:
       raise TypeError(f'`{name}` entries must be the same shape: {nvals}')
@@ -2315,7 +2314,8 @@ def arange(start: DimSize, stop: Optional[DimSize] = None,
   for name, val in [(start_name, start), ("stop", stop), ("step", step)]:
     if val is not None and np.ndim(val) != 0:
       raise ValueError(f"jax.numpy.arange: arguments must be scalars; got {name}={val}")
-  if any(core.is_special_dim_size(d) for d in (start, stop, step)):
+  if any(core.is_dynamic_dim(v) for v in (start, stop, step)):
+    # Some dynamic shapes
     if stop is None and step is None:
       stop = start
       start = 0
@@ -2343,8 +2343,7 @@ def arange(start: DimSize, stop: Optional[DimSize] = None,
 def _arange_dynamic(
     start: DimSize, stop: DimSize, step: DimSize, dtype: DTypeLike) -> Array:
   # Here if at least one of start, stop, step are dynamic.
-  if any([(not core.is_special_dim_size(v) and not isinstance(v, int))
-          for v in (start, stop, step)]):
+  if any(not core.is_dim(v) for v in (start, stop, step)):
     raise ValueError(
         "In arange with non-constant arguments all of start, stop, and step "
         f"must be either dimension expressions or integers: start={start}, "
@@ -2621,7 +2620,7 @@ will be repeated.
 def repeat(a: ArrayLike, repeats: ArrayLike, axis: Optional[int] = None, *,
            total_repeat_length: Optional[int] = None) -> Array:
   util.check_arraylike("repeat", a)
-  core.is_special_dim_size(repeats) or util.check_arraylike("repeat", repeats)
+  core.is_dim(repeats) or util.check_arraylike("repeat", repeats)
 
   if axis is None:
     a = ravel(a)
@@ -2632,10 +2631,10 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: Optional[int] = None, *,
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.repeat()")
   assert isinstance(axis, int)  # to appease mypy
 
-  if core.is_special_dim_size(repeats):
+  if core.is_dynamic_dim(repeats):
     if total_repeat_length is not None:
       raise ValueError("jnp.repeat with a non-constant `repeats` is supported only "
-                       "when `total_repeat_length` is None")
+                       f"when `total_repeat_length` is None. ({repeats=} {total_repeat_length=})")
 
   # If total_repeat_length is not given, use a default.
   if total_repeat_length is None:
@@ -3124,13 +3123,13 @@ def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
       idx_b_other.append(i)
     elif bb is None:
       idx_a_other.append(i)
-    elif core.symbolic_equal_dim(ba, 1):
+    elif core.definitely_equal(ba, 1):
       idx_b_other.append(i)
       a_squeeze.append(len(idx_batch) + len(idx_a_other) + len(a_squeeze))
-    elif core.symbolic_equal_dim(bb, 1):
+    elif core.definitely_equal(bb, 1):
       idx_a_other.append(i)
       b_squeeze.append(len(idx_batch) + len(idx_b_other) + len(b_squeeze))
-    elif core.symbolic_equal_dim(ba, bb):
+    elif core.definitely_equal(ba, bb):
       a_batch.append(len(idx_batch) + len(idx_a_other))
       b_batch.append(len(idx_batch) + len(idx_b_other))
       idx_batch.append(i)
@@ -3678,7 +3677,7 @@ def argsort(a: ArrayLike, axis: Optional[int] = -1, kind: str = 'stable', order=
     return argsort(arr.ravel(), 0)
   else:
     axis_num = _canonicalize_axis(axis, arr.ndim)
-    use_64bit_index = core.is_special_dim_size(arr.shape[axis_num]) or arr.shape[axis_num] >= (1 << 31)
+    use_64bit_index = not core.is_constant_dim(arr.shape[axis_num]) or arr.shape[axis_num] >= (1 << 31)
     iota = lax.broadcasted_iota(int64 if use_64bit_index else int_, arr.shape, axis_num)
     _, perm = lax.sort_key_val(arr, iota, dimension=axis_num)
     return perm
@@ -3991,7 +3990,7 @@ def take_along_axis(arr, indices, axis: Optional[int],
   out_shape = lax.broadcast_shapes(idx_shape, arr_shape)
   if axis_size == 0:
     return zeros(out_shape, arr.dtype)
-  index_dims = [i for i, idx in enumerate(idx_shape) if i == axis or not core.symbolic_equal_dim(idx, 1)]
+  index_dims = [i for i, idx in enumerate(idx_shape) if i == axis or not core.definitely_equal(idx, 1)]
 
   gather_index_shape = tuple(np.array(out_shape)[index_dims]) + (1,)
   gather_indices = []
@@ -4008,12 +4007,12 @@ def take_along_axis(arr, indices, axis: Optional[int],
       start_index_map.append(i)
       collapsed_slice_dims.append(i)
       j += 1
-    elif core.symbolic_equal_dim(idx_shape[i], 1):
+    elif core.definitely_equal(idx_shape[i], 1):
       # If idx_shape[i] == 1, we can just take the entirety of the arr's axis
       # and avoid forming an iota index.
       offset_dims.append(i)
       slice_sizes.append(arr_shape[i])
-    elif core.symbolic_equal_dim(arr_shape[i], 1):
+    elif core.definitely_equal(arr_shape[i], 1):
       # If the array dimension is 1 but the index dimension is not, we
       # broadcast the array dimension to the index dimension by repeatedly
       # gathering the first element.
@@ -4366,7 +4365,7 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
       abstract_i = None
     # Handle basic int indexes.
     if isinstance(abstract_i, (ConcreteArray, ShapedArray)) and _int(abstract_i):
-      if core.symbolic_equal_dim(x_shape[x_axis], 0):
+      if core.definitely_equal(x_shape[x_axis], 0):
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
       i = _normalize_index(i, x_shape[x_axis]) if normalize_indices else i
@@ -4386,15 +4385,15 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
       # Normalize the slice to use None when possible
       start, stop, step = i.start, i.stop, i.step
       try:
-        if step is None or core.symbolic_equal_dim(step, 1):
+        if step is None or core.definitely_equal(step, 1):
           step = None
         if step is None:
-          if start is None or core.symbolic_equal_dim(start, 0):
+          if start is None or core.definitely_equal(start, 0):
             start = None
           if stop is None or (not isinstance(stop, core.Tracer) and
               core.greater_equal_dim(stop, x_shape[x_axis])):
             stop = None
-        elif core.symbolic_equal_dim(step, -1):
+        elif core.definitely_equal(step, -1):
           step = -1
       except (TypeError, core.InconclusiveDimensionOperation):
         pass

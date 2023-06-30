@@ -1344,7 +1344,7 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
   out = []
   for op, op_aval in zip(ops, ops_avals):
     op_aval_shape = op_aval.shape  # type: ignore
-    if core.symbolic_equal_shape(op_aval_shape, out_shape):  # type: ignore
+    if core.definitely_equal_shape(op_aval_shape, out_shape):  # type: ignore
       out.append(op)
     else:
       assert len(op_aval_shape) <= len(out_shape), (op_aval_shape, out_shape)

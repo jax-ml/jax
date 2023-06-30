@@ -375,7 +375,7 @@ def promote_args_inexact(fun_name: str, *args: ArrayLike) -> list[Array]:
 def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
   """Like Numpy's broadcast_arrays but doesn't return views."""
   shapes = [np.shape(arg) for arg in args]
-  if not shapes or all(core.symbolic_equal_shape(shapes[0], s) for s in shapes):
+  if not shapes or all(core.definitely_equal_shape(shapes[0], s) for s in shapes):
     return [lax.asarray(arg) for arg in args]
   result_shape = lax.broadcast_shapes(*shapes)
   return [_broadcast_to(arg, result_shape) for arg in args]
@@ -393,7 +393,7 @@ def _broadcast_to(arr: ArrayLike, shape: Shape) -> Array:
   else:
     nlead = len(shape) - len(arr_shape)
     shape_tail = shape[nlead:]
-    compatible = all(core.symbolic_equal_one_of_dim(arr_d, [1, shape_d])
+    compatible = all(core.definitely_equal_one_of_dim(arr_d, [1, shape_d])
                      for arr_d, shape_d in safe_zip(arr_shape, shape_tail))
     if nlead < 0 or not compatible:
       msg = "Incompatible shapes for broadcasting: {} and requested shape {}"

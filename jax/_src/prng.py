@@ -1250,8 +1250,7 @@ def threefry_2x32(keypair, count):
 
 
 def threefry_split(key: typing.Array, num: core.DimSize) -> typing.Array:
-  if not core.is_special_dim_size(num):
-    num = core.concrete_or_error(op.index, num)
+  num = core.concrete_dim_or_error(num)
   return _threefry_split(key, num)
 
 @partial(jit, static_argnums=(1,))
