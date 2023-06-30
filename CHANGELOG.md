@@ -18,6 +18,9 @@ Remember to align the itemized text with the first line of an item within a list
   * `jax.interpreters.pxla.make_sharded_device_array` has been removed. This was
     deprecated in JAX version 0.4.6: use `jax.make_array_from_single_device_arrays`
     instead.
+  * Passing optional arguments to {func}`jax.numpy.ndarray.at` by position is
+    no longer supported, after being deprecated in JAX version 0.4.7.
+    For example, instead of `x.at[i].get(True)`, use `x.at[i].get(indices_are_sorted=True)`
 
 * Breaking changes
   * To fix a corner case, calls to {func}`jax.lax.cond` with five
