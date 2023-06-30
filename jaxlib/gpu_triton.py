@@ -26,5 +26,6 @@ try:
   create_scalar_parameter = _triton.create_scalar_parameter
   get_compute_capability = _triton.get_compute_capability
   get_custom_call = _triton.get_custom_call
+  get_serialized_metadata = _triton.get_serialized_metadata
 except ImportError:
   _triton = None
