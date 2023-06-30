@@ -95,6 +95,9 @@ class XLACompatibleSharding(sharding.Sharding):
     assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
     out = []
     for dim, (s, p) in enumerate(safe_zip(global_shape, partitions)):
+      if not isinstance(s, int):
+        # TODO Figure out how to partition dynamic shapes
+        raise NotImplementedError
       quotient, remainder = divmod(s, p)
       if remainder != 0:
         raise ValueError(

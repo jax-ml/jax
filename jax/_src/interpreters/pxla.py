@@ -2127,7 +2127,8 @@ def _to_logical_sharding(
   elif isinstance(aval, core.AbstractToken):
     return None
   else:
-    raise TypeError(aval)
+    assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
+    return sharding
 
 
 @profiler.annotate_function

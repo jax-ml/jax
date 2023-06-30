@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import collections
 import dataclasses
 from functools import partial
 from typing import Any, Callable, Iterable, Optional, Sequence, Union
@@ -699,6 +700,27 @@ def indirectify_ragged_axes(dims):
   segment_lens = [s for s, _ in axis_map.values()]
   return segment_lens, new_dims
 
+def indirectify_ragged_axes_against_inputs_outputs(dims, in_vals, out_vals):
+  def canonicalize_segment_lengths(d: RaggedAxis) -> RaggedAxis:
+    new_ragged_axes = []
+    for ragged_axis, segment_lengths in d.ragged_axes:
+      key = id(core.get_referent(segment_lengths))
+      value = _locate_value(key, in_vals, out_vals)
+      new_ragged_axes.append((ragged_axis, value))
+    return RaggedAxis(d.stacked_axis, tuple(new_ragged_axes))
+  new_dims = [canonicalize_segment_lengths(d)
+              if isinstance(d, RaggedAxis) else d for d in dims]
+  return new_dims
+
+def _locate_value(key, in_vals, out_vals):
+  for ix, candidate in enumerate(in_vals):
+    if key == id(candidate):
+      return pe.InDBIdx(ix)
+  for ix, candidate in enumerate(out_vals):
+    if key == id(candidate):
+      return pe.OutDBIdx(ix)
+  assert False, "Could not find segment lengths"
+
 def resolve_ragged_axes(vals, dims):
   idxs = {lengths_idx.val for d in dims if isinstance(d, RaggedAxis)
           for (_, lengths_idx) in d.ragged_axes}
@@ -709,8 +731,25 @@ def resolve_ragged_axes(vals, dims):
   vals = [x for i, x in enumerate(vals) if i not in idxs]
   return vals, dims
 
+def resolve_ragged_axes_against_inputs_outputs(in_vals, out_vals, dims):
+  def fetch(idx):
+    if isinstance(idx, pe.InDBIdx):
+      return in_vals[idx.val]
+    else:
+      assert isinstance(idx, pe.OutDBIdx)
+      return out_vals[idx.val]
+
+  dims = [RaggedAxis(d.stacked_axis,
+                     [(ragged_axis, fetch(lengths_idx))
+                      for ragged_axis, lengths_idx in d.ragged_axes])
+          if isinstance(d, RaggedAxis) else d for d in dims]
+  return dims
+
 ### API for batching jaxprs
 
+# TODO(axch): parameterize RaggedAxis annotations by a type parameter so as to
+# indicate whether we're dealing with instances that contain Arrays or DBIdx.
+# Can reuse same pattern for all dynamic shape stuff.
 def batch_jaxpr2(
     closed_jaxpr: core.ClosedJaxpr,
     axis_size: core.AxisSize,
@@ -731,7 +770,7 @@ def batch_jaxpr2(
 def _batch_jaxpr2(
     closed_jaxpr: core.ClosedJaxpr,
     axis_size: core.AxisSize,
-    in_axes: tuple[Union[int, NotMapped], ...],
+    in_axes: tuple[Union[int, NotMapped, RaggedAxis], ...],
     axis_name: AxisName,
     spmd_axis_name: AxisName,
     main_type: type[BatchTrace],
@@ -740,11 +779,22 @@ def _batch_jaxpr2(
   f, out_axes = _batch_jaxpr_inner(f, axis_size)
   f = _batch_jaxpr_outer(f, axis_name, spmd_axis_name, axis_size, in_axes,
                          main_type)
+  in_axes, avals_in = unzip2([
+      handle_ragged(closed_jaxpr.in_avals, dim, aval) if type(dim) is RaggedAxis
+      else (dim, aval) for dim, aval in zip(in_axes, closed_jaxpr.in_avals)])
   avals_in = [core.unmapped_aval(axis_size, axis_name, b, aval)
               if b is not not_mapped else aval
-              for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
+              for aval, b in unsafe_zip(avals_in, in_axes)]
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
   return core.ClosedJaxpr(jaxpr_out, consts), out_axes()
+
+def handle_ragged(in_avals: List[core.AbstractValue], dim: RaggedAxis,
+                  aval: core.ShapedArray) -> Tuple[int, core.ShapedArray]:
+  new_shape = list(aval.shape)
+  for i, dbi in dim.ragged_axes:
+    new_shape[i - (dim.stacked_axis < i)] = in_avals[dbi.val].dtype.bound
+  new_aval = aval.update(shape=tuple(new_shape))
+  return dim.stacked_axis, new_aval
 
 def batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
                 spmd_axis_name, main_type):
@@ -786,12 +836,15 @@ def _batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest,
 @lu.transformation_with_aux
 def _batch_jaxpr_inner(axis_size, main, in_axes, *in_vals):
   trace = main.with_cur_sublevel()
+  _, in_axes = resolve_ragged_axes(in_vals, in_axes)
   in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
                 for val, dim in zip(in_vals, in_axes)]
   outs = yield in_tracers, {}
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_axes = unzip2((t.val, t.batch_dim) for t in out_tracers)
-  yield out_vals, out_axes
+  new_out_axes = indirectify_ragged_axes_against_inputs_outputs(
+      out_axes, in_vals, out_vals)
+  yield out_vals, new_out_axes
 
 @lu.transformation_with_aux
 def _match_axes_jaxpr(axis_size, out_axes_dest, out_axes, main, in_axes,
@@ -1008,7 +1061,8 @@ def _mask_one_ragged_axis(operand, ident, axis_spec):
   value = ident(operand.dtype)
   positions = jax.lax.broadcasted_iota('int32', operand.shape, ragged_axis)
   # TODO(mattjj, axch) cant get ._data, need to convert it
-  lengths = jax.lax.convert_element_type(segment_lengths._data, 'int32')
+  # lengths = jax.lax.convert_element_type(segment_lengths._data, 'int32')
+  lengths = jax.lax.convert_element_type(segment_lengths, 'int32')
   limits = jax.lax.broadcast_in_dim(
       lengths, operand.shape, [axis_spec.stacked_axis])
   mask = positions < limits

@@ -547,7 +547,7 @@ def sharded_aval(aval: core.AbstractValue,
     return aval
   if isinstance(aval, core.AbstractToken):
     return aval
-  if not isinstance(aval, core.ShapedArray):
+  if not isinstance(aval, (core.ShapedArray, core.DShapedArray)):
     raise NotImplementedError
   return aval.update(sharding.shard_shape(aval.shape))
 
@@ -619,7 +619,7 @@ def _to_logical_op_sharding(
   if sharding is None:
     return None
   assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
-  assert isinstance(aval, core.ShapedArray)
+  assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
   return sharding._to_xla_hlo_sharding(aval.ndim)
 
 

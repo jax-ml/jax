@@ -1398,6 +1398,7 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
                   vals_in, dims_in,
                   jaxpr, in_shardings, out_shardings,
                   resource_env, donated_invars, name, keep_unused, inline):
+  segment_lens, dims_in = batching.indirectify_ragged_axes(dims_in)
   new_jaxpr, axes_out = batching.batch_jaxpr2(
       jaxpr, axis_size, dims_in, axis_name=axis_name,
       spmd_axis_name=spmd_axis_name, main_type=main_type)
@@ -1411,6 +1412,7 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
   else:
     mesh = None
 
+  # TODO(axch): prepend with Nones (?) to account for new segment_lens inputs
   in_shardings = tuple(
       _pjit_batcher_for_sharding(i, axis_in, new_parts, mesh, aval.ndim)
       if axis_in is not None else i
@@ -1429,7 +1431,9 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
     name=name,
     keep_unused=keep_unused,
     inline=inline)
-  return vals_out, axes_out
+  resovled_axes_out = batching.resolve_ragged_axes_against_inputs_outputs(
+      vals_in, vals_out, axes_out)
+  return vals_out, resovled_axes_out
 
 batching.spmd_axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False)
 batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False, None)
