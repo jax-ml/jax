@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package jax;
+
+// Represents the compilation cache entry stored in the cache repository.
+message CompilationCacheEntry {
+  // The cached executable matched to a unique compilation key.
+  bytes executable = 1;
+  // The time spent to compile for the ML module. The compilation_time is used
+  // to measure the latency savings of cache hits.
+  float compilation_duration_sec = 2;
+}
