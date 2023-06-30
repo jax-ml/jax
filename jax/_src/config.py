@@ -828,7 +828,9 @@ enable_custom_prng = config.define_bool_state(
 
 default_prng_impl = config.define_enum_state(
     name='jax_default_prng_impl',
-    enum_values=['threefry2x32', 'rbg', 'unsafe_rbg'],
+    enum_values=['threefry2x32',
+                 'rbg', 'rbg_threefry', 'rbg_philox',
+                 'unsafe_rbg', 'unsafe_rbg_threefry', 'unsafe_rbg_philox'],
     default='threefry2x32',
     help=('Select the default PRNG implementation, used when one is not '
           'explicitly provided at seeding time.'))

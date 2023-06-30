@@ -100,6 +100,10 @@ PRNG_IMPLS = {
     'threefry2x32': prng.threefry_prng_impl,
     'rbg': prng.rbg_prng_impl,
     'unsafe_rbg': prng.unsafe_rbg_prng_impl,
+    'rbg_threefry': prng.rbg_threefry_prng_impl,
+    'unsafe_rbg_threefry': prng.unsafe_rbg_threefry_prng_impl,
+    'rbg_philox': prng.rbg_philox_prng_impl,
+    'unsafe_rbg_philox': prng.unsafe_rbg_philox_prng_impl,
 }
 
 def default_prng_impl():

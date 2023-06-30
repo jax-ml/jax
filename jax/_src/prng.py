@@ -1374,54 +1374,66 @@ threefry_prng_impl = PRNGImpl(
 # stable/deterministic across backends or compiler versions. Correspondingly, we
 # reserve the right to change any of these implementations at any time!
 
-def _rbg_seed(seed: typing.Array) -> typing.Array:
-  assert not seed.shape
-  halfkey = threefry_seed(seed)
-  return jnp.concatenate([halfkey, halfkey])
+def make_rbg_impls(algorithm: lax.RandomAlgorithm, name_suffix: str):
+  rng_bit_generator = partial(lax.rng_bit_generator, algorithm=algorithm)
 
-def _rbg_split(key: typing.Array, num: int) -> typing.Array:
-  if config.jax_threefry_partitionable:
-    _threefry_split = _threefry_split_foldlike
-  else:
-    _threefry_split = _threefry_split_original
-  return vmap(
-      _threefry_split, (0, None), 1)(key.reshape(2, 2), num).reshape(num, 4)
+  def _rbg_seed(seed: typing.Array) -> typing.Array:
+    assert not seed.shape
+    halfkey = threefry_seed(seed)
+    return jnp.concatenate([halfkey, halfkey])
 
-def _rbg_fold_in(key: typing.Array, data: typing.Array) -> typing.Array:
-  assert not data.shape
-  return vmap(_threefry_fold_in, (0, None), 0)(key.reshape(2, 2), data).reshape(4)
+  def _rbg_split(key: typing.Array, num: int) -> typing.Array:
+    if config.jax_threefry_partitionable:
+      _threefry_split = _threefry_split_foldlike
+    else:
+      _threefry_split = _threefry_split_original
+    return vmap(
+        _threefry_split, (0, None), 1)(key.reshape(2, 2), num).reshape(num, 4)
 
-def _rbg_random_bits(key: typing.Array, bit_width: int, shape: Sequence[int]
-                     ) -> typing.Array:
-  if not key.shape == (4,) and key.dtype == jnp.dtype('uint32'):
-    raise TypeError("_rbg_random_bits got invalid prng key.")
-  if bit_width not in (8, 16, 32, 64):
-    raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
-  _, bits = lax.rng_bit_generator(key, shape, dtype=UINT_DTYPES[bit_width])
-  return bits
+  def _rbg_fold_in(key: typing.Array, data: typing.Array) -> typing.Array:
+    assert not data.shape
+    return vmap(_threefry_fold_in, (0, None), 0)(key.reshape(2, 2), data).reshape(4)
 
-rbg_prng_impl = PRNGImpl(
-    key_shape=(4,),
-    seed=_rbg_seed,
-    split=_rbg_split,
-    random_bits=_rbg_random_bits,
-    fold_in=_rbg_fold_in,
-    tag='rbg')
+  def _rbg_random_bits(key: typing.Array, bit_width: int, shape: Sequence[int]
+                       ) -> typing.Array:
+    if not key.shape == (4,) and key.dtype == jnp.dtype('uint32'):
+      raise TypeError("_rbg_random_bits got invalid prng key.")
+    if bit_width not in (8, 16, 32, 64):
+      raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
+    _, bits = rng_bit_generator(key, shape, dtype=UINT_DTYPES[bit_width])
+    return bits
 
-def _unsafe_rbg_split(key: typing.Array, num: int) -> typing.Array:
-  # treat 10 iterations of random bits as a 'hash function'
-  _, keys = lax.rng_bit_generator(key, (10 * num, 4), dtype='uint32')
-  return lax.slice_in_dim(keys, start_index=None, limit_index=None, stride=10)
+  rbg_prng_impl = PRNGImpl(
+      key_shape=(4,),
+      seed=_rbg_seed,
+      split=_rbg_split,
+      random_bits=_rbg_random_bits,
+      fold_in=_rbg_fold_in,
+      tag=f'rbg{name_suffix}')
 
-def _unsafe_rbg_fold_in(key: typing.Array, data: typing.Array) -> typing.Array:
-  assert not data.shape
-  _, random_bits = lax.rng_bit_generator(_rbg_seed(data), (10, 4), dtype='uint32')
-  return key ^ random_bits[-1]
+  def _unsafe_rbg_split(key: typing.Array, num: int) -> typing.Array:
+    # treat 10 iterations of random bits as a 'hash function'
+    _, keys = rng_bit_generator(key, (10 * num, 4), dtype='uint32')
+    return lax.slice_in_dim(keys, start_index=None, limit_index=None, stride=10)
 
-unsafe_rbg_prng_impl = PRNGImpl(
-    key_shape=(4,),
-    seed=_rbg_seed,
-    split=_unsafe_rbg_split,
-    random_bits=_rbg_random_bits,
-    fold_in=_unsafe_rbg_fold_in,
-    tag='urbg')
+  def _unsafe_rbg_fold_in(key: typing.Array, data: typing.Array) -> typing.Array:
+    assert not data.shape
+    _, random_bits = rng_bit_generator(_rbg_seed(data), (10, 4), dtype='uint32')
+    return key ^ random_bits[-1]
+
+  unsafe_rbg_prng_impl = PRNGImpl(
+      key_shape=(4,),
+      seed=_rbg_seed,
+      split=_unsafe_rbg_split,
+      random_bits=_rbg_random_bits,
+      fold_in=_unsafe_rbg_fold_in,
+      tag=f'urbg{name_suffix}')
+
+  return rbg_prng_impl, unsafe_rbg_prng_impl
+
+rbg_prng_impl, unsafe_rbg_prng_impl = make_rbg_impls(
+    lax.RandomAlgorithm.RNG_DEFAULT, '')
+rbg_threefry_prng_impl, unsafe_rbg_threefry_prng_impl = make_rbg_impls(
+    lax.RandomAlgorithm.RNG_THREE_FRY, '_threefry')
+rbg_philox_prng_impl, unsafe_rbg_philox_prng_impl = make_rbg_impls(
+    lax.RandomAlgorithm.RNG_THREE_FRY, '_philox')

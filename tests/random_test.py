@@ -63,9 +63,15 @@ def _maybe_unwrap(key):
   return unwrap(key) if config.jax_enable_custom_prng else key
 
 
-PRNG_IMPLS = [('threefry2x32', prng.threefry_prng_impl),
-              ('rbg', prng.rbg_prng_impl),
-              ('unsafe_rbg', prng.unsafe_rbg_prng_impl)]
+PRNG_IMPLS = [
+    ('threefry2x32', prng_internal.threefry_prng_impl),
+    ('rbg', prng_internal.rbg_prng_impl),
+    ('unsafe_rbg', prng_internal.unsafe_rbg_prng_impl),
+    ('rbg_threefry', prng_internal.rbg_threefry_prng_impl),
+    ('unsafe_rbg_threefry', prng_internal.unsafe_rbg_threefry_prng_impl),
+    ('rbg_philox', prng_internal.rbg_philox_prng_impl),
+    ('unsafe_rbg_philox', prng_internal.unsafe_rbg_philox_prng_impl),
+]
 
 
 class OnX64(enum.Enum):
@@ -102,6 +108,7 @@ class RandomValuesCase(NamedTuple):
 
 _RANDOM_VALUES_CASES = [
   # TODO(jakevdp) add coverage for other distributions.
+  # TODO(frostig) add more coverage for rbg algorithm variants.
   RandomValuesCase("bernoulli", "threefry2x32", (5,), None, {'p': 0.5},
     np.array([False, True, True, True, False]), on_x64=OnX64.SKIP),
   RandomValuesCase("bernoulli", "rbg", (5,), None, {'p': 0.5},
@@ -192,6 +199,10 @@ _RANDOM_VALUES_CASES = [
     np.array([0.298671, 0.073213, 0.873356, 0.260549, 0.412797], dtype='float32')),
   RandomValuesCase("uniform", "rbg", (5,), np.float32, {},
     np.array([0.477161, 0.706508, 0.656261, 0.432547, 0.057772], dtype='float32')),
+  RandomValuesCase("uniform", "rbg_threefry", (5,), np.float32, {},
+    np.array([0.885555, 0.922639, 0.311976, 0.408117, 0.434723], dtype='float32')),
+  RandomValuesCase("uniform", "rbg_philox", (5,), np.float32, {},
+    np.array([0.513093, 0.953681, 0.661804, 0.333255, 0.151863], dtype='float32')),
   RandomValuesCase("weibull_min", "threefry2x32", (5,), np.float32, {"scale": 1, "concentration": 1},
     np.array([1.605863, 0.841809, 0.224218, 0.4826  , 0.027901], dtype='float32')),
   RandomValuesCase("weibull_min", "rbg", (5,), np.float32, {"scale": 1, "concentration": 1},
@@ -509,7 +520,7 @@ class PrngTest(jtu.JaxTestCase):
     if not config.jax_enable_custom_prng:
       self.skipTest("test requires config.jax_enable_custom_prng")
     key = random.rbg_key(42)
-    self.assertIs(key.impl, prng.rbg_prng_impl)
+    self.assertIs(key.impl, prng_internal.rbg_prng_impl)
 
   def test_explicit_unsafe_rbg_key(self):
     if not config.jax_enable_custom_prng:
