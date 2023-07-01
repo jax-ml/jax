@@ -498,7 +498,6 @@ class PrngTest(jtu.JaxTestCase):
         self.assertEqual(k1.shape, impl.key_shape)
         self.assertEqual(k2.shape, impl.key_shape)
 
-
   def test_explicit_threefry2x32_key(self):
     if not config.jax_enable_custom_prng:
       self.skipTest("test requires config.jax_enable_custom_prng")
@@ -516,6 +515,28 @@ class PrngTest(jtu.JaxTestCase):
       self.skipTest("test requires config.jax_enable_custom_prng")
     key = random.unsafe_rbg_key(42)
     self.assertIs(key.impl, prng.unsafe_rbg_prng_impl)
+
+  def test_key_construction_with_explicit_impl_name(self):
+    def check_key_has_impl(key, impl):
+      if isinstance(key, random.PRNGKeyArray):
+        self.assertIs(key.impl, impl)
+      else:
+        self.assertEqual(key.dtype, jnp.dtype('uint32'))
+        self.assertEqual(key.shape, impl.key_shape)
+
+    key = random.key(42, impl='threefry2x32')
+    check_key_has_impl(key, prng.threefry_prng_impl)
+    key = random.key(42, impl='rbg')
+    check_key_has_impl(key, prng.rbg_prng_impl)
+    key = random.key(42, impl='unsafe_rbg')
+    check_key_has_impl(key, prng.unsafe_rbg_prng_impl)
+
+    key = random.PRNGKey(42, impl='threefry2x32')
+    check_key_has_impl(key, prng.threefry_prng_impl)
+    key = random.PRNGKey(42, impl='rbg')
+    check_key_has_impl(key, prng.rbg_prng_impl)
+    key = random.PRNGKey(42, impl='unsafe_rbg')
+    check_key_has_impl(key, prng.unsafe_rbg_prng_impl)
 
   def test_key_array_indexing_0d(self):
     if not config.jax_enable_custom_prng:
