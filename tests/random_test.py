@@ -213,9 +213,6 @@ class PrngTest(jtu.JaxTestCase):
       self.assertEqual(key.dtype, jnp.dtype('uint32'))
       self.assertEqual(key.shape, impl.key_shape)
 
-  def raw_key(self, *args, **kwargs):
-    return _prng_key_as_array(random.key(*args, **kwargs))
-
   def testThreefry2x32(self):
     # We test the hash by comparing to known values provided in the test code of
     # the original reference implementation of Threefry. For the values, see
@@ -2217,12 +2214,29 @@ class LaxRandomWithUnsafeRBGPRNGTest(LaxRandomWithRBGPRNGTest):
   def seed_prng(self, seed):
     return random.unsafe_rbg_key(seed)
 
-def like(keys):
-  return jnp.ones(keys.shape)
+
+def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
+  raise SkipTest('sampler only implemented for default RNG')
+
+for test_prefix in [
+    'testPoisson',
+    'testPoissonBatched',
+    'testPoissonShape',
+    'testPoissonZeros',
+]:
+  for attr in dir(LaxRandomTest):
+    if attr.startswith(test_prefix):
+      setattr(LaxRandomWithCustomPRNGTest, attr,
+              _sampler_unimplemented_with_custom_prng)
+      setattr(LaxRandomWithRBGPRNGTest, attr,
+              _sampler_unimplemented_with_custom_prng)
+      setattr(LaxRandomWithUnsafeRBGPRNGTest, attr,
+              _sampler_unimplemented_with_custom_prng)
 
 
 class JnpWithKeyArrayTest(jtu.JaxTestCase):
   def check_shape(self, func, *args):
+    like = lambda keys: jnp.ones(keys.shape)
     out_key = func(*args)
     self.assertIsInstance(out_key, random.KeyArray)
     out_like_key = func(*tree_util.tree_map(like, args))
@@ -2481,25 +2495,6 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
 
     self.check_shape(func, keys, fill_value)
     self.check_against_reference(func, func, keys, fill_value)
-
-
-def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
-  raise SkipTest('sampler only implemented for default RNG')
-
-for test_prefix in [
-    'testPoisson',
-    'testPoissonBatched',
-    'testPoissonShape',
-    'testPoissonZeros',
-]:
-  for attr in dir(LaxRandomTest):
-    if attr.startswith(test_prefix):
-      setattr(LaxRandomWithCustomPRNGTest, attr,
-              _sampler_unimplemented_with_custom_prng)
-      setattr(LaxRandomWithRBGPRNGTest, attr,
-              _sampler_unimplemented_with_custom_prng)
-      setattr(LaxRandomWithUnsafeRBGPRNGTest, attr,
-              _sampler_unimplemented_with_custom_prng)
 
 
 if __name__ == "__main__":
