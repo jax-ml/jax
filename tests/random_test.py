@@ -529,20 +529,12 @@ class PrngTest(jtu.JaxTestCase):
     self.check_key_has_impl(random.unsafe_rbg_key(42),
                             prng.unsafe_rbg_prng_impl)
 
-  def test_key_construction_with_explicit_impl_name(self):
-    key = random.key(42, impl='threefry2x32')
-    self.check_key_has_impl(key, prng.threefry_prng_impl)
-    key = random.key(42, impl='rbg')
-    self.check_key_has_impl(key, prng.rbg_prng_impl)
-    key = random.key(42, impl='unsafe_rbg')
-    self.check_key_has_impl(key, prng.unsafe_rbg_prng_impl)
-
-    key = random.PRNGKey(42, impl='threefry2x32')
-    self.check_key_has_impl(key, prng.threefry_prng_impl)
-    key = random.PRNGKey(42, impl='rbg')
-    self.check_key_has_impl(key, prng.rbg_prng_impl)
-    key = random.PRNGKey(42, impl='unsafe_rbg')
-    self.check_key_has_impl(key, prng.unsafe_rbg_prng_impl)
+  @parameterized.parameters([{'make_key': ctor, 'name': name, 'impl': impl}
+                             for ctor in KEY_CTORS
+                             for name, impl in PRNG_IMPLS])
+  def test_key_construction_with_explicit_impl_name(self, make_key, name, impl):
+    key = make_key(42, impl=name)
+    self.check_key_has_impl(key, impl)
 
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def test_isinstance(self, make_key):
@@ -557,10 +549,14 @@ class PrngTest(jtu.JaxTestCase):
 
 
 class ThreefryPrngTest(jtu.JaxTestCase):
-  def test_seed_no_implicit_transfers(self):
+  @parameterized.parameters([{'make_key': ctor} for ctor in [
+      random.threefry2x32_key,
+      partial(random.PRNGKey, impl='threefry2x32'),
+      partial(random.key, impl='threefry2x32')]])
+  def test_seed_no_implicit_transfers(self, make_key):
     # See https://github.com/google/jax/issues/15613
     with jax.transfer_guard('disallow'):
-      random.threefry2x32_key(jax.device_put(42))  # doesn't crash
+      make_key(jax.device_put(42))  # doesn't crash
 
 
 class LaxRandomTest(jtu.JaxTestCase):
