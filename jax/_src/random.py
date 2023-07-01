@@ -206,7 +206,7 @@ def unsafe_rbg_key(seed: int) -> KeyArray:
   key = prng.seed_with_impl(impl, seed)
   return _return_prng_keys(True, key)
 
-def _fold_in(key: KeyArray, data: int) -> KeyArray:
+def _fold_in(key: KeyArray, data: IntegerArray) -> KeyArray:
   # Alternative to fold_in() to use within random samplers.
   # TODO(frostig): remove and use fold_in() once we always enable_custom_prng
   assert isinstance(key, prng.PRNGKeyArray)
@@ -218,7 +218,7 @@ def _fold_in(key: KeyArray, data: int) -> KeyArray:
                     f"shape {np.shape(data)} != (). Use jax.vmap for batching.")
   return prng.random_fold_in(key, jnp.uint32(data))
 
-def fold_in(key: KeyArray, data: int) -> KeyArray:
+def fold_in(key: KeyArray, data: IntegerArray) -> KeyArray:
   """Folds in data to a PRNG key to form a new PRNG key.
 
   Args:
