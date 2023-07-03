@@ -39,6 +39,13 @@ limitations under the License.
     if (ABSL_PREDICT_FALSE(!s___.ok())) return s___; \
   }
 
+#define JAX_ASSIGN_OR_RETURN(lhs, expr) \
+  auto s___ = (expr);                   \
+  if (ABSL_PREDICT_FALSE(!s___.ok())) { \
+    return s___.status();               \
+  }                                     \
+  lhs = (*std::move(s___))
+
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
@@ -51,6 +58,10 @@ absl::Status AsStatus(gpusparseStatus_t status, const char* file,
                       std::int64_t line, const char* expr);
 absl::Status AsStatus(gpublasStatus_t status, const char* file,
                       std::int64_t line, const char* expr);
+#ifdef JAX_GPU_CUDA
+absl::Status AsStatus(CUresult error, const char* file, std::int64_t line,
+                      const char* expr);
+#endif
 
 // Builds an array of pointers to each array in a batch, in device memory.
 // Caution: the return value must be kept alive (e.g., via a stream

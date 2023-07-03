@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 
 #include "absl/base/optimization.h"
+#include "absl/log/check.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -27,6 +28,12 @@ namespace {
 std::string ErrorString(gpuError_t error) { return gpuGetErrorString(error); }
 
 #ifdef JAX_GPU_CUDA
+
+std::string ErrorString(CUresult error) {
+  const char* str;
+  CHECK_EQ(cuGetErrorName(error, &str), CUDA_SUCCESS);
+  return str;
+}
 
 std::string ErrorString(gpusparseStatus_t status) {
   return cusparseGetErrorString(status);
@@ -219,6 +226,15 @@ absl::Status AsStatus(gpublasStatus_t status, const char* file,
     return absl::InternalError(ErrorString(status, file, line, expr));
   return absl::OkStatus();
 }
+
+#ifdef JAX_GPU_CUDA
+absl::Status AsStatus(CUresult error, const char* file, std::int64_t line,
+                      const char* expr) {
+  if (ABSL_PREDICT_FALSE(error != CUDA_SUCCESS))
+    return absl::InternalError(ErrorString(error, file, line, expr));
+  return absl::OkStatus();
+}
+#endif
 
 absl::StatusOr<std::unique_ptr<void*[]>> MakeBatchPointers(
     gpuStream_t stream, void* buffer, void* dev_ptrs, int batch,
