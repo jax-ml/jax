@@ -130,7 +130,7 @@ def _compute_newshape(a: ArrayLike, newshape: Union[DimSize, Shape]) -> Shape:
     if sz is not None:
       return (*newshape[:i], sz, *newshape[i+1:])
   return tuple(-core.divide_shape_sizes(np.shape(a), newshape)
-               if core.symbolic_equal_dim(d, -1) else d
+               if core.definitely_equal(d, -1) else d
                for d in newshape)
 
 

@@ -757,14 +757,14 @@ class DimensionHandlerPoly(core.DimensionHandler):
   def divide_shape_sizes(self, s1: Shape, s2: Shape) -> DimSize:
     sz1 = math.prod(s1)
     sz2 = math.prod(s2)
-    if core.symbolic_equal_dim(sz1, sz2):  # Takes care also of sz1 == sz2 == 0
+    if core.definitely_equal(sz1, sz2):  # Takes care also of sz1 == sz2 == 0
       return 1
     err_msg = f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}"
     try:
       q, r = _ensure_poly(sz1, "divide_shape").divmod(_ensure_poly(sz2, "divide_shape"))
     except InconclusiveDimensionOperation as e:
       raise InconclusiveDimensionOperation(err_msg + f"\nDetails: {e}")
-    if not core.symbolic_equal_dim(r, 0):
+    if not core.definitely_equal(r, 0):
       raise InconclusiveDimensionOperation(err_msg + f"\nRemainder is not zero: {r}")
     return q  # type: ignore[return-value]
 

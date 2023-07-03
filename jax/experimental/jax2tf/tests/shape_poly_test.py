@@ -165,22 +165,22 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
 
   def test_dim_vars_symbolic_equal(self):
     a, b = shape_poly._parse_spec("a, b", (2, 3))
-    self.assertTrue(core.symbolic_equal_dim(a, a))
-    self.assertFalse(core.symbolic_equal_dim(a, 1))
-    self.assertFalse(core.symbolic_equal_dim(a, b))
+    self.assertTrue(core.definitely_equal(a, a))
+    self.assertFalse(core.definitely_equal(a, 1))
+    self.assertFalse(core.definitely_equal(a, b))
 
-    self.assertTrue(core.symbolic_equal_one_of_dim(a, [2, a]))
-    self.assertFalse(core.symbolic_equal_one_of_dim(a, [2, b]))
-    self.assertFalse(core.symbolic_equal_one_of_dim(a, []))
+    self.assertTrue(core.definitely_equal_one_of_dim(a, [2, a]))
+    self.assertFalse(core.definitely_equal_one_of_dim(a, [2, b]))
+    self.assertFalse(core.definitely_equal_one_of_dim(a, []))
 
-    self.assertTrue(core.symbolic_equal_one_of_dim(2, [a, 3, 2]))
-    self.assertFalse(core.symbolic_equal_one_of_dim(1, [2, b]))
-    self.assertFalse(core.symbolic_equal_one_of_dim(3, []))
+    self.assertTrue(core.definitely_equal_one_of_dim(2, [a, 3, 2]))
+    self.assertFalse(core.definitely_equal_one_of_dim(1, [2, b]))
+    self.assertFalse(core.definitely_equal_one_of_dim(3, []))
 
-    self.assertTrue(core.symbolic_equal_dim(1, jnp.add(0, 1)))  # A DeviceArray
+    self.assertTrue(core.definitely_equal(1, jnp.add(0, 1)))  # A DeviceArray
     with self.assertRaisesRegex(TypeError,
                                 re.escape("Shapes must be 1D sequences of concrete values of integer type, got (1, 'a').")):
-      self.assertTrue(core.symbolic_equal_dim(1, "a"))
+      self.assertTrue(core.definitely_equal(1, "a"))
 
   def test_poly_bounds(self):
     a, b = shape_poly._parse_spec("a, b", (2, 3))

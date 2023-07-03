@@ -253,7 +253,7 @@ def _resize_nearest(x, output_shape: core.Shape):
   input_shape = x.shape
   assert len(input_shape) == len(output_shape)
   spatial_dims = tuple(i for i in range(len(input_shape))
-                       if not core.symbolic_equal_dim(input_shape[i], output_shape[i]))
+                       if not core.definitely_equal(input_shape[i], output_shape[i]))
   for d in spatial_dims:
     m = input_shape[d]
     n = output_shape[d]
@@ -286,8 +286,8 @@ def _resize(image, shape: core.Shape, method: Union[str, ResizeMethod],
   # since all of the current resize methods (kernels) are interpolating, so the
   # output = input under an identity warp.
   spatial_dims = tuple(i for i in range(len(shape))
-                       if not core.symbolic_equal_dim(image.shape[i], shape[i]))
-  scale = [1.0 if core.symbolic_equal_dim(shape[d], 0) else core.dimension_as_value(shape[d]) / core.dimension_as_value(image.shape[d])
+                       if not core.definitely_equal(image.shape[i], shape[i]))
+  scale = [1.0 if core.definitely_equal(shape[d], 0) else core.dimension_as_value(shape[d]) / core.dimension_as_value(image.shape[d])
            for d in spatial_dims]
   return _scale_and_translate(image, shape, spatial_dims,
                               scale, [0.] * len(spatial_dims), kernel,

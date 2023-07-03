@@ -865,7 +865,7 @@ def _pre_gather_for_multidim_indexing(args: GatherArgs):
           == start_index_map[0] and len(offset_dims) == len(op_shape) - 1):
     raise ValueError("unsupported dimension numbers")
   # We added a trailing dimension of size 1
-  if not core.symbolic_equal_dim(args.start_indices_shape[-1], 1):
+  if not core.definitely_equal(args.start_indices_shape[-1], 1):
     raise ValueError("start_indices shape[-1] should be 1")
   # Guess the axis
   axis = collapsed_slice_dims[0]
@@ -877,7 +877,7 @@ def _pre_gather_for_multidim_indexing(args: GatherArgs):
   if offset_dims != expected_offset_dims:
     raise ValueError("unsupported offset_dims")
   expected_slice_sizes = op_shape[:axis] + (1,) + op_shape[axis + 1:]  # type: ignore
-  if not core.symbolic_equal_shape(args.slice_sizes, expected_slice_sizes):
+  if not core.definitely_equal_shape(args.slice_sizes, expected_slice_sizes):
     raise ValueError("unsupported slice_sizes")
 
 
@@ -912,7 +912,7 @@ def _pre_gather_with_batch_dim(args: GatherArgs):
     raise ValueError("unsupported start_index_map")
 
   # The batch dims in `start_indices` and `operand` should agree.
-  if not core.symbolic_equal_dim(args.op_shape[0], args.start_indices_shape[0]):
+  if not core.definitely_equal(args.op_shape[0], args.start_indices_shape[0]):
     raise ValueError("Batch dimensions in operand and start_indices don't "
                      "agree")
 

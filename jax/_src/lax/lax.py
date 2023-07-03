@@ -690,7 +690,7 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
   Returns:
     An array containing the product.
   """
-  if 1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and core.symbolic_equal_dim(lhs.shape[-1], rhs.shape[0]):
+  if 1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and core.definitely_equal(lhs.shape[-1], rhs.shape[0]):
     return dot_general(lhs, rhs, (((lhs.ndim - 1,), (0,)), ((), ())),
                        precision=precision,
                        preferred_element_type=preferred_element_type)
@@ -843,7 +843,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
   """
   new_sizes = canonicalize_shape(new_sizes)  # TODO
   new_sizes = tuple(new_sizes)
-  same_shape = core.symbolic_equal_shape(np.shape(operand), new_sizes)
+  same_shape = core.definitely_equal_shape(np.shape(operand), new_sizes)
   if dimensions is None:
     same_dims = True
     dims = None
@@ -1175,7 +1175,7 @@ def top_k(operand: ArrayLike, k: int) -> tuple[Array, Array]:
   - :func:`jax.lax.approx_max_k`
   - :func:`jax.lax.approx_min_k`
   """
-  if not core.is_special_dim_size(k):
+  if core.is_constant_dim(k):
     k = int(k)
   if k < 0:
     raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
@@ -1574,10 +1574,10 @@ def broadcasting_shape_rule(name, *avals):
       result_shape.append(ds[0])
     else:
       # if all dims are equal (or 1), the result is the non-1 size
-      non_1s = [d for d in ds if not core.symbolic_equal_dim(d, 1)]
+      non_1s = [d for d in ds if not core.definitely_equal(d, 1)]
       if not non_1s:
         result_shape.append(1)
-      elif all(core.symbolic_equal_dim(non_1s[0], d) for d in non_1s[1:]):
+      elif all(core.definitely_equal(non_1s[0], d) for d in non_1s[1:]):
         result_shape.append(non_1s[0])
       else:
         raise TypeError(f'{name} got incompatible shapes for broadcasting: '
@@ -1632,25 +1632,25 @@ def _unbroadcast(aval, x):
   if not isinstance(aval, (core.DShapedArray, ShapedArray)):
     raise TypeError("transpose with implicit broadcasting of unshaped values")
   x_shape = np.shape(x)
-  if core.symbolic_equal_shape(aval.shape, x_shape):
+  if core.definitely_equal_shape(aval.shape, x_shape):
     return x
   assert not aval.shape or len(x_shape) == len(aval.shape)
   if not aval.shape:
     return _reduce_sum(x, list(range(len(x_shape))))
   else:
-    dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape)) if not core.symbolic_equal_dim(a, b)]
+    dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape)) if not core.definitely_equal(a, b)]
     if config.jax_enable_checks: assert all(aval.shape[i] == 1 for i in dims)
     return reshape(_reduce_sum(x, dims), aval.shape)
 
 def _maybe_broadcast(target_shape, x):
   x_shape = np.shape(x)
-  if core.symbolic_equal_shape(x_shape, target_shape):
+  if core.definitely_equal_shape(x_shape, target_shape):
     return x
   elif not x_shape:
     return broadcast_in_dim(x, target_shape, ())
   else:
     dims = [i for i, (a, b) in enumerate(zip(x_shape, target_shape))
-            if core.symbolic_equal_dim(a, b)]
+            if core.definitely_equal(a, b)]
     squeeze_shape = [x_shape[i] for i in dims]
     return broadcast_in_dim(reshape(x, squeeze_shape), target_shape, dims)
 
@@ -2492,13 +2492,13 @@ def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
     raise TypeError(msg.format(rhs_batch, rhs_contracting))
   lhs_batch_shape = tuple(lhs.shape[i] for i in lhs_batch)
   rhs_batch_shape = tuple(rhs.shape[i] for i in rhs_batch)
-  if not core.symbolic_equal_shape(lhs_batch_shape, rhs_batch_shape):
+  if not core.definitely_equal_shape(lhs_batch_shape, rhs_batch_shape):
     msg = ("dot_general requires lhs batch dimensions and rhs batch dimensions "
            "to have the same shape, got {} and {}.")
     raise TypeError(msg.format(lhs_batch_shape, rhs_batch_shape))
   lhs_contracting_shape = tuple(lhs.shape[i] for i in lhs_contracting)
   rhs_contracting_shape = tuple(rhs.shape[i] for i in rhs_contracting)
-  if not core.symbolic_equal_shape(lhs_contracting_shape, rhs_contracting_shape):
+  if not core.definitely_equal_shape(lhs_contracting_shape, rhs_contracting_shape):
     msg = ("dot_general requires contracting dimensions to have the same "
            "shape, got {} and {}.")
     raise TypeError(msg.format(lhs_contracting_shape, rhs_contracting_shape))
@@ -2800,8 +2800,8 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
     msg = ('broadcast_in_dim broadcast_dimensions must be a subset of output '
            'dimensions, got {} for operand ndim {} and shape {}.')
     raise TypeError(msg.format(broadcast_dimensions, operand_ndim, shape))
-  if not all(core.symbolic_equal_one_of_dim(operand.shape[i],
-                                            [1, shape[broadcast_dimensions[i]]])
+  if not all(core.definitely_equal_one_of_dim(operand.shape[i],
+                                              [1, shape[broadcast_dimensions[i]]])
              for i in range(operand_ndim)):
     msg = (
         "broadcast_in_dim operand dimension sizes must either be 1, or be "
@@ -2836,7 +2836,7 @@ def _broadcast_in_dim_transpose_rule(ct, operand, *dyn_shape,
   if type(ct) is ad_util.Zero:
     return [ad_util.Zero(operand.aval)]
   unit_dims = [i for i, s in enumerate(operand.aval.shape)
-               if core.symbolic_equal_dim(s,  1)]
+               if core.definitely_equal(s, 1)]
   bdims = tuple(np.delete(broadcast_dimensions, unit_dims))
   axes = tuple(np.delete(range(len(shape)), bdims))
   return ([expand_dims(_reduce_sum(ct, axes), unit_dims)] +
@@ -2897,7 +2897,7 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
 
 def _broadcast_in_dim_fwd_rule(eqn):
   v, *dyn = eqn.invars
-  if not dyn and core.symbolic_equal_shape(eqn.params['shape'], v.aval.shape):
+  if not dyn and core.definitely_equal_shape(eqn.params['shape'], v.aval.shape):
     return [v], None
   else:
     return [None], eqn
@@ -3251,7 +3251,7 @@ def _compute_squeeze_shape(shape, dimensions):
     raise ValueError(f"dimensions are not unique: {dimensions}")
   if not all(0 <= d < len(shape) for d in dims_set):
     raise ValueError(f"dimensions outside range [0, ndim): {dimensions}")
-  if any(not core.symbolic_equal_dim(shape[d], 1) for d in dimensions):
+  if any(not core.definitely_equal(shape[d], 1) for d in dimensions):
     raise ValueError(
         "cannot select an axis to squeeze out which has size not equal to "
         f"one, got {shape=} and {dimensions=}")
@@ -4176,7 +4176,7 @@ top_k_p.multiple_results = True
 top_k_p.def_impl(partial(dispatch.apply_primitive, top_k_p))
 top_k_p.def_abstract_eval(_top_k_abstract_eval)
 def _top_k_lower(ctx, operand, k):
-  if core.is_special_dim_size(k):
+  if not core.is_constant_dim(k):
     # TODO: https://github.com/openxla/stablehlo/issues/1396
     raise ValueError("native serialization with shape polymorphism not implemented for top_k")
   return chlo.TopKOp(operand, mlir.i64_attr(k)).results

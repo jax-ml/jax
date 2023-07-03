@@ -412,10 +412,9 @@ def normalize(x: Array,
 @partial(jax.jit, static_argnames=("num_classes", "dtype", "axis"))
 def _one_hot(x: Array, num_classes: int, *,
              dtype: Any, axis: Union[int, AxisName]) -> Array:
-  if not core.is_special_dim_size(num_classes):
-    num_classes = core.concrete_or_error(
-        int, num_classes,
-        "The error arose in jax.nn.one_hot argument `num_classes`.")
+  num_classes = core.concrete_dim_or_error(
+      num_classes,
+      "The error arose in jax.nn.one_hot argument `num_classes`.")
   dtype = dtypes.canonicalize_dtype(dtype)
   x = jnp.asarray(x)
   try:
@@ -459,10 +458,9 @@ def one_hot(x: Array, num_classes: int, *,
     axis: the axis or axes along which the function should be
       computed.
   """
-  if not core.is_special_dim_size(num_classes):
-    num_classes = core.concrete_or_error(
-        int, num_classes,
-        "The error arose in jax.nn.one_hot argument `num_classes`.")
+  num_classes = core.concrete_dim_or_error(
+      num_classes,
+      "The error arose in jax.nn.one_hot argument `num_classes`.")
   return _one_hot(x, num_classes, dtype=dtype, axis=axis)
 
 

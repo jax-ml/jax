@@ -1239,8 +1239,11 @@ def dedup_referents(itr: Iterable[Any]) -> list[Any]:
 def definitely_equal(x, y):
   if isinstance(x, Tracer) or isinstance(y, Tracer):
     return same_referent(x, y)
+  elif x is y:
+    return True
   else:
-    return symbolic_equal_dim(x, y)
+    handler, ds = _dim_handler_and_canonical(x, y)
+    return handler.symbolic_equal(*ds)
 
 
 # -------------------- abstract values --------------------
@@ -1388,6 +1391,12 @@ def concrete_or_error(force: Any, val: Any, context=""):
   else:
     return force(val)
 
+def concrete_dim_or_error(val: Any, context=""):
+  """Like concrete_or_error(operator.index)."""
+  if is_dim(val):
+    return val
+  else:
+    return concrete_or_error(operator.index, val, context=context)
 
 ### Opaque dtypes
 #
@@ -1555,7 +1564,7 @@ class ShapedArray(UnshapedArray):
                        self.weak_type, self.named_shape)
 
   def join(self, other):
-    if symbolic_equal_shape(self.shape, other.shape) and self.dtype == other.dtype:
+    if definitely_equal_shape(self.shape, other.shape) and self.dtype == other.dtype:
       weak_type = self.weak_type and other.weak_type
       named_shape = join_named_shapes(self.named_shape, other.named_shape)
       return self.update(weak_type=weak_type, named_shape=named_shape)
@@ -1709,7 +1718,7 @@ class DShapedArray(UnshapedArray):
     return hash((self.shape, self.dtype, self.weak_type))
 
   def join(self, other):
-    if (symbolic_equal_shape(self.shape, other.shape) and
+    if (definitely_equal_shape(self.shape, other.shape) and
         self.dtype == other.dtype):
       weak_type = self.weak_type and other.weak_type
       return self.update(weak_type=weak_type)
@@ -1897,7 +1906,7 @@ class DimensionHandler:
 
   def dilate(self, d: DimSize, dilation: int) -> DimSize:
     """Implements `d if dilation == 1 else (0 if d == 0 else 1 + dilation * (d - 1)))`"""
-    if symbolic_equal_dim(dilation, 1):
+    if definitely_equal(dilation, 1):
       return d
     return 0 if d == 0 else 1 + dilation * (d - 1)
 
@@ -1940,8 +1949,8 @@ def _dim_handler_and_canonical(*dlist: DimSize) -> tuple[DimensionHandler, tuple
     raise ValueError(msg)
   return next(iter(special_handlers), _dimension_handler_int), tuple(canonical)
 
-def is_special_dim_size(v: Any) -> bool:
-  """Checks if a value is a special DimSize."""
+def is_dynamic_dim(v: Any) -> bool:
+  """Checks if a value is a dynamic DimSize."""
   handler = _get_special_dim_handler(v)
   return (handler is not None)
 
@@ -1954,27 +1963,21 @@ def is_constant_dim(d: DimSize) -> bool:
     return False
 
 def is_dim(v: Any) -> bool:
-  return is_special_dim_size(v) or is_constant_dim(v)
+  return is_dynamic_dim(v) or is_constant_dim(v)
 
 def is_constant_shape(s: Shape) -> bool:
   # Whether the shape is a static constant.
   return all(is_constant_dim(d) for d in s)
 
-def symbolic_equal_dim(d1: DimSize, d2: DimSize) -> bool:
-  if d1 is d2 or same_referent(d1, d2): return True
-  handler, ds = _dim_handler_and_canonical(d1, d2)
-  return handler.symbolic_equal(*ds)
-
-def symbolic_equal_one_of_dim(d1: DimSize, dlist: Sequence[DimSize]) -> bool:
-  if any(d1 is d or same_referent(d1, d) for d in dlist): return True  # identical always implies equal
-  handler, ds = _dim_handler_and_canonical(d1, *dlist)
-  return any([handler.symbolic_equal(ds[0], d) for d in ds[1:]])
-
-def symbolic_equal_shape(s1: Shape, s2: Shape) -> bool:
-  return (len(s1) == len(s2) and
-          all(unsafe_map(symbolic_equal_dim, s1, s2)))
+def definitely_equal_one_of_dim(d1: DimSize, dlist: Sequence[DimSize]) -> bool:
+  return any(definitely_equal(d1, d) for d in dlist)
 
 def definitely_equal_shape(s1: Shape, s2: Shape) -> bool:
+  """Check that two shapes are guaranteed to be element-wise equal.
+
+  In presence of dynamic shapes may return False even when the shapes may
+  be equal at runtime.
+  """
   return (len(s1) == len(s2) and
           all(unsafe_map(definitely_equal, s1, s2)))
 
@@ -2035,7 +2038,7 @@ def _cancel_divide(num, denom):
     return math.prod(num)
 
 def is_empty_shape(s: Shape) -> bool:
-  return any(symbolic_equal_dim(d, 0) for d in s)
+  return any(definitely_equal(d, 0) for d in s)
 
 def dilate_dim(d: DimSize, dilation: DimSize) -> DimSize:
   """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
@@ -2075,7 +2078,7 @@ def _canonicalize_dimension(dim: DimSize) -> DimSize:
   elif (config.jax_dynamic_shapes and isinstance(dim, DArray) and
         type(dim._aval.dtype) is bint and not dim._aval.shape):
     return dim
-  elif is_special_dim_size(dim):
+  elif is_dim(dim):
     return dim
   else:
     raise type_error

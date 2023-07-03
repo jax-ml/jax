@@ -1300,7 +1300,7 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
   (sz, ct), *other_counts = counts = size_counts.most_common()
   def _all_sizes_index(sz):
     for i, isz in enumerate(all_sizes):
-      if core.symbolic_equal_dim(isz, sz): return i
+      if core.definitely_equal(isz, sz): return i
     assert False, (sz, all_sizes)
 
   ex, *examples = [key_paths[_all_sizes_index(sz)] for sz, _ in counts]

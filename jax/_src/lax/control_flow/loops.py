@@ -1906,7 +1906,7 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
   # Check that all inputs have a consistent leading dimension `num_elems`.
   axis = util.canonicalize_axis(axis, elems_flat[0].ndim)
 
-  if core.is_special_dim_size(elems_flat[0].shape[axis]):
+  if not core.is_constant_dim(elems_flat[0].shape[axis]):
     raise NotImplementedError("associative scan over axis "
         f"of non-constant size: {elems_flat[0].shape[axis]}. You may be "
         "able to avoid this on TPU. See b/274176030.")
@@ -2014,7 +2014,6 @@ def _cumred_shape_rule(x, *, axis: int, reverse: bool):
 
 def _cumsum_transpose_rule(t, operand, *, axis: int, reverse: bool):
   return [cumsum(t, axis=axis, reverse=not reverse)]
-
 
 
 def cumred_reduce_window_impl(window_reduce: Callable, x, *, axis: int,

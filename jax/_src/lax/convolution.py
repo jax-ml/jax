@@ -367,7 +367,7 @@ def _conv_general_dilated_shape_rule(
     msg = ("conv_general_dilated feature_group_count must divide lhs feature "
            "dimension size, but {} does not divide {}.")
     raise ValueError(msg.format(feature_group_count, lhs_feature_count))
-  if not core.symbolic_equal_dim(quot, rhs.shape[dimension_numbers.rhs_spec[1]]):
+  if not core.definitely_equal(quot, rhs.shape[dimension_numbers.rhs_spec[1]]):
     msg = ("conv_general_dilated lhs feature dimension size divided by "
            "feature_group_count must equal the rhs input feature dimension "
            "size, but {} // {} != {}.")

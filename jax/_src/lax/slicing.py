@@ -1315,7 +1315,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
     # the number of slices is zero. Likely the best fix would be to change the
     # definition of gather() so it can be batched without the construction of
     # an explicit iota of size-1 slices.
-    if core.symbolic_equal_dim(operand.shape[0], 0):
+    if core.definitely_equal(operand.shape[0], 0):
       output_shape = _gather_shape_rule(
           core.ShapedArray(operand.shape[1:], operand.dtype),
           core.ShapedArray(indices.shape[1:],
@@ -1557,7 +1557,7 @@ def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
   for i in update_scatter_dims:
     if scatter_dims_seen == index_vector_dim:
       scatter_dims_seen += 1
-    if not core.symbolic_equal_dim(updates.shape[i], expanded_indices_shape[scatter_dims_seen]):
+    if not core.definitely_equal(updates.shape[i], expanded_indices_shape[scatter_dims_seen]):
       raise TypeError(f"Bounds of the scatter dimensions of updates must be "
                       f"the same as the bounds of the corresponding dimensions "
                       f"of scatter indices. For scatter dimension {i}, updates "

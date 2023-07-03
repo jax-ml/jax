@@ -393,7 +393,7 @@ def _average(a: ArrayLike, axis: Axis = None, weights: Optional[ArrayLike] = Non
                          "weights differ.")
       elif isinstance(axis, tuple):
         raise ValueError("Single axis expected when shapes of a and weights differ")
-      elif not core.symbolic_equal_dim(weights_shape[0], a_shape[axis]):
+      elif not core.definitely_equal(weights_shape[0], a_shape[axis]):
         raise ValueError("Length of weights not "
                          "compatible with specified axis.")
 
