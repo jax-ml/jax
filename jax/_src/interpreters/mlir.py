@@ -2044,7 +2044,7 @@ def custom_call(
     out_types: Sequence[ir.Type],
     operands: Sequence[ir.Value],
     *,
-    backend_config: Union[str, dict] = "",
+    backend_config: Union[str, dict[str, ir.Attribute]] = "",
     has_side_effect: bool = False,
     result_shapes: Optional[Sequence[ir.Value]] = None,
     called_computations: Sequence[str] = (),

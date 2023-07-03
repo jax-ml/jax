@@ -13,7 +13,6 @@
 # limitations under the License.
 import contextlib
 import re
-from typing import Optional, Sequence
 import unittest
 
 from absl.testing import absltest
@@ -28,134 +27,12 @@ from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
-from jax._src.lib.mlir import ir
 
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.lib.mlir.dialects import func as func_dialect
-from jax._src.lib import xla_extension
 
 import numpy as np
 
 config.parse_flags_with_absl()
-
-
-if xc.mlir_api_version >= 50:
-  def _temp_call_exported(exp: jax_export.Exported, *args: jax.Array,
-                          skip_shape_check: bool = False):
-    assert all(core.is_constant_shape(a.shape) for a in args)
-    return jax_export.call_exported(exp)(*args)
-else:
-  def _temp_call_exported(exp: jax_export.Exported, *args: jax.Array,
-                          skip_shape_check: bool = False):
-    """Temporary runner for an Exported.
-
-    Normally we would use jax_export.call_exported, but if the exported has
-    shape polymorphism and we are using jaxlib before 0.4.12 we use
-    Once we upgrade the jaxlib we can replace all uses of this function with
-    jax_export.call_exported.
-    """
-    assert all(core.is_constant_shape(a.shape) for a in args)
-    if not exp.module_uses_dim_vars:
-      return jax_export.call_exported(exp)(*args)
-    else:
-      # We only get here in external tests, because internal ones use newest jaxlib
-      from jax.experimental.jax2tf import jax2tf  # TODO: temporary
-      # call_exported does the shape checking, we must do it manually for
-      # XlaCallModule.
-      if not skip_shape_check:
-        shape_check = exp.shape_check_module()
-        if shape_check is not None:
-          err_msg = _run_shape_check_module(exp, shape_check[0], shape_check[1], args)
-          if err_msg is not None:
-            raise ValueError(err_msg)
-
-      numpy_results = map(lambda res_tf: res_tf.numpy(),
-                          jax2tf._run_exported_as_tf(args, exp))
-      return exp.out_tree.unflatten(numpy_results)
-
-
-def _run_shape_check_module(primal_exported: jax_export.Exported,
-                            shape_check_module_serialized: bytes,
-                            shape_check_messages: Sequence[str],
-                            args: Sequence[jax.Array]
-                            ) -> Optional[str]:
-  """Helper to run a shape checking module.
-
-  We only need to do this in tests, because otherwise this will be done
-  implicitly when we call XlaCallModule.
-
-  Returns: the error message, or None if no error.
-  """
-  args = tuple(args)
-  # We cannot just make an Exported and run it, because call_exported will
-  # do the shape checks statically. So, we wrap the shape check module
-  # with static shape arguments
-
-  static_in_avals = tuple(core.get_aval(a) for a in args)
-  context = mlir.make_ir_context()
-  with context, ir.Location.unknown(context):
-    wrapped_module = ir.Module.parse(
-        xla_extension.mlir.deserialize_portable_artifact(
-            shape_check_module_serialized))
-    symbol_table = ir.SymbolTable(wrapped_module.operation)
-    orig_main = symbol_table["main"]
-    orig_main.attributes["sym_visibility"] = ir.StringAttr.get("private")
-    symbol_table.set_symbol_name(orig_main, "_wrapped_jax_export_main")
-    orig_main_name = ir.StringAttr(symbol_table.insert(orig_main)).value
-    # Use static shapes
-    new_main_input_types = [mlir.aval_to_ir_type(a) for a in static_in_avals]
-    orig_output_types = orig_main.type.results
-    new_main_ftype = ir.FunctionType.get(
-      new_main_input_types, orig_output_types
-    )
-    new_main_op = func_dialect.FuncOp(
-      "main",
-      new_main_ftype,
-      ip=ir.InsertionPoint.at_block_begin(wrapped_module.body),
-    )
-    new_main_op.attributes["sym_visibility"] = ir.StringAttr.get("public")
-    symbol_table.insert(new_main_op)
-    entry_block = new_main_op.add_entry_block()
-    with ir.InsertionPoint(entry_block):
-      orig_main_args: list[ir.Value] = []
-      for new_arg, orig_arg_type in zip(
-        new_main_op.arguments, orig_main.type.inputs
-      ):
-        orig_main_args.append(hlo.ConvertOp(orig_arg_type, new_arg).result)
-      call = func_dialect.CallOp(
-        orig_output_types,
-        ir.FlatSymbolRefAttr.get(orig_main_name),
-        orig_main_args,
-      )
-      func_dialect.ReturnOp(call.results)
-  symbol_table.set_symbol_name(new_main_op, "main")
-
-  wrapped_module_serialized, version = jax_export._serialize_module(wrapped_module)
-  # Make an Exported and then run it
-  out_avals = (core.ShapedArray((), dtype=np.int32),) * 3
-  exp = jax_export.Exported(
-    fun_name=f"shape_check_{primal_exported.fun_name}",
-    in_tree=tree_util.tree_flatten((args, {}))[1],
-    in_avals=static_in_avals,
-    out_tree=tree_util.tree_flatten(out_avals)[1],
-    out_avals=out_avals,
-    in_shardings=None,
-    out_shardings=None,
-    lowering_platform=primal_exported.lowering_platform,
-    disabled_checks=(),
-    mlir_module_serialized=wrapped_module_serialized,
-    xla_call_module_version=version,
-    module_kept_var_idx=tuple(sorted(range(len(static_in_avals)))),
-    module_uses_dim_vars=True,
-    _get_vjp=lambda _: None)  # type: ignore
-
-  code, op1, op2 = _temp_call_exported(exp, *args,
-                                       skip_shape_check=True)
-  if code == -1:
-    return None
-  else:
-    return shape_check_messages[code].replace("%1", str(int(op1))).replace(
-      "%2", str(int(op2)))
 
 
 class JaxExportTest(jtu.JaxTestCase):
@@ -396,7 +273,7 @@ class JaxExportTest(jtu.JaxTestCase):
       dict(poly_spec="3,4,12", arg_shape=(3, 4, 12)),
       dict(poly_spec="3,4,12", arg_shape=(3, 4, 13),
            # The shape check module does not test constant dimensions
-           expect_error_run=re.escape(
+           expect_error=re.escape(
                r"Shape mismatch for args[0].shape[2] (expected same constant)")),
       dict(poly_spec="3,4,6*a", arg_shape=(3, 4, 12)),
       dict(poly_spec="3,a,a+8", arg_shape=(3, 4, 12)),
@@ -418,48 +295,30 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_poly_shape_checks(
       self, poly_spec="3,a,a+8",
       arg_shape=(3, 4, 12), arg_dtype=np.float32,
-      expect_error=None,  # If given, applies for expect_error_run and expect_error_shape_check
-      expect_error_run=None,  # Error from running the exported module
-      expect_error_shape_check=None):  # Error from running the shape check module
-    if expect_error is not None:
-      self.assertIsNone(expect_error_run, None)
-      self.assertIsNone(expect_error_shape_check, None)
-      expect_error_run = expect_error_shape_check = expect_error
+      expect_error=None):  # If given, error from running the exported module
+
     def f(x):  # x: f32[poly_spec]
       return jnp.reshape(x, (-1, x.shape[1]))
 
-    exp_f = jax_export.export(f)(
+    if xc.mlir_api_version <= 51:
+      disabled_checks = (jax_export.DisabledSafetyCheck.shape_assertions(),)
+    else:
+      disabled_checks = ()
+    exp_f = jax_export.export(f, disabled_checks=disabled_checks)(
         jax_export.poly_spec((3, 4, 12), np.float32, poly_spec))
     self.assertEqual(exp_f.module_uses_dim_vars, poly_spec != "3,4,12")
     arg = np.arange(np.prod(arg_shape),
                     dtype=arg_dtype).reshape(arg_shape)  # arg : f32[3,4,12]
 
     with contextlib.ExitStack() as stack:
-      if expect_error_run is not None:
-        stack.push(self.assertRaisesRegex(Exception, expect_error_run))
+      if expect_error is not None:
+        stack.push(self.assertRaisesRegex(Exception, expect_error))
 
-      res = _temp_call_exported(exp_f, arg)
+      assert core.is_constant_shape(arg.shape)
+      res = jax_export.call_exported(exp_f)(arg)
 
-    if not expect_error_run:
+    if not expect_error:
       self.assertAllClose(res, f(arg))
-
-    # Test the shape_check_module
-    shape_check = exp_f.shape_check_module()
-    # We have shape_check only if the exported has polymorphic inputs shapes.
-    if all(core.is_constant_shape(a.shape) for a in exp_f.in_avals):
-      self.assertIsNone(shape_check)
-      self.assertIsNone(expect_error_shape_check)
-    else:
-      self.assertIsNotNone(shape_check)
-      shape_check_module, shape_check_messages = shape_check
-      err_msg = _run_shape_check_module(exp_f,
-          shape_check_module, shape_check_messages, (arg,))
-
-      if expect_error_shape_check is None:
-        self.assertIsNone(err_msg)
-      else:
-        self.assertRegex(err_msg, expect_error_shape_check)
-
 
   # An inner function is exported with polymorphic shapes inner_poly_spec, and
   # is called from an outer function, which is exported with outer_poly_spec.
@@ -536,12 +395,16 @@ class JaxExportTest(jtu.JaxTestCase):
       expect_error_outer_exp=None,
       expect_error_run=None):
     # Polymorphic export called with static or polymorphic shapes
+    if xc.mlir_api_version <= 51:
+      disabled_checks = (jax_export.DisabledSafetyCheck.shape_assertions(),)
+    else:
+      disabled_checks = ()
     def inner(x):  # x: inner_poly_spec
       return jnp.reshape(x, (-1, x.shape[1]))
 
     arg = np.arange(np.prod(arg_shape),
                     dtype=arg_dtype).reshape(arg_shape)  # x : f32[3,4,12]
-    inner_exp = jax_export.export(inner)(
+    inner_exp = jax_export.export(inner, disabled_checks=disabled_checks)(
         jax_export.poly_spec((3, 4, 12), np.float32, inner_poly_spec))
 
     self.assertEqual(inner_exp.module_uses_dim_vars,
@@ -556,7 +419,7 @@ class JaxExportTest(jtu.JaxTestCase):
         stack.push(self.assertRaisesRegex(ValueError, expect_error_outer_exp))
 
       # Call it after exporting again, with polymorphic shapes
-      outer_exp = jax_export.export(outer)(
+      outer_exp = jax_export.export(outer, disabled_checks=disabled_checks)(
           jax_export.poly_spec(arg.shape, arg.dtype, outer_poly_spec))
 
     if expect_error_outer_exp is not None:
@@ -564,17 +427,12 @@ class JaxExportTest(jtu.JaxTestCase):
 
     self.assertEqual(outer_exp.module_uses_dim_vars,
                      (inner_poly_spec != "3,4,12" or outer_poly_spec != "3,4,12"))
-    shape_check = outer_exp.shape_check_module()
-    if all(core.is_constant_shape(a.shape) for a in outer_exp.in_avals):
-      self.assertIsNone(shape_check)
-    else:
-      self.assertIsNotNone(shape_check)
 
     with contextlib.ExitStack() as stack:
       if expect_error_run is not None:
         stack.push(self.assertRaisesRegex(Exception, expect_error_run))
 
-      res = _temp_call_exported(outer_exp, arg)
+      res = jax_export.call_exported(outer_exp)(arg)
 
     if expect_error_run is not None:
       return

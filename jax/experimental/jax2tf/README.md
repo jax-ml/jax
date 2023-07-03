@@ -547,11 +547,9 @@ cannot be used anymore as dimension parameters and will raise a JAX error.
 
 ### Errors in presence of shape polymorphism
 
-If you write your program assuming that all shapes are tuples of integers,
-and then try to trace it with shape polymorphism you can run into a number
-of errors.
-
-The program:
+Most JAX code assumes that the shapes of JAX arrays are tuples of integers,
+but with shape polymorphism some dimensions may be symbolic expressions.
+This can lead to a number of errors. For example, the program:
 
 ```python
 four_ones = np.ones((4,))
@@ -596,6 +594,30 @@ implicitly converted to JAX arrays.
 The solution is to avoid `np.array`, `float`, or JAX arrays in operations whose
 results are used as shapes, e.g., instead of `np.arange(n) * x.shape[0]` write
 `[i * x.shape[0] for i in range(n)]`.
+
+JAX assumes that dimension variables range over strictly positive integers.
+These assumptions are now checked against the shapes of the actual arguments
+when the lowered code is invoked.
+For example, given the `polymorphic_shapes="(b, b, 2*d)"`
+specification, we will generate code to check the following constraints when
+invoked with actual argument `arg`:
+
+  * `arg.shape[0] >= 1`
+  * `arg.shape[1] == arg.shape[0]`
+  * `arg.shape[2] % 2 == 0` and `arg.shape[0] // 2 >= 1`
+
+When using native serialization these are checked by the `tf.XlaCallModule`
+op (starting with serialization
+[version 7](https://github.com/search?q=repo%3Agoogle%2Fjax+path%3Aconfig.py+jax_serialization_version&type=code)),
+and you will get `tf.errors.InvalidArgument` errors.
+You can disable this checking by including `DisabledSafetyCheck.shape_assertions()`
+in the `disabled_checks` parameter to `jax2tf.convert`, or by setting
+the environment variable
+`TF_XLA_FLAGS=--tf_xla_call_module_disabled_checks=shape_assertions`.
+When using graph serialization these are checked using `tf.debugging.assert`,
+which will also result in `tf.errors.InvalidArgument`.
+Note that due to limitations in TensorFlow, these errors are suppressed when using
+`jit_compile=True` and when running on TPU.
 
 ### Comparison of symbolic dimensions is partially supported
 

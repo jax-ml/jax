@@ -68,6 +68,9 @@ Remember to align the itemized text with the first line of an item within a list
   * JAX now supports a configuration flag --jax_serialization_version
     and a JAX_SERIALIZATION_VERSION environment variable to control the
     serialization version ({jax-issue}`#16746`).
+  * jax2tf in presence of shape polymorphism now generates code that checks
+    certain shape constraints, if the serialization version is at least 7.
+    See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism.
 
 ## jaxlib 0.4.14
 
