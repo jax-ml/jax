@@ -27,7 +27,6 @@ from typing import Any, Sequence
 import unittest
 
 from absl.testing import absltest
-from absl.testing import parameterized
 
 import jax
 from jax._src import test_util as jtu
@@ -180,12 +179,13 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       else:
         assert False
 
-  @parameterized.named_parameters(
+  @jtu.parameterized_filterable(
+    kwargs=[
       dict(testcase_name=f"_in_shardings={in_shardings}_out_shardings={out_shardings}",
            in_shardings=in_shardings, out_shardings=out_shardings)
       for in_shardings in ("missing", None, "P")
       for out_shardings in ("missing", None, "P")
-  )
+  ])
   @jtu.with_mesh([("x", 2)])
   def test_pjit_basic(self, in_shardings="P", out_shardings="P"):
     # Ensure that we can distinguish the inputs and outputs by shape
@@ -316,14 +316,15 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     res_tf = f_tf(x)
     self.assertAllClose(res_tf, res_jax)
 
-  @parameterized.named_parameters(
+  @jtu.parameterized_filterable(
+    kwargs=[
       dict(testcase_name=f"_nested_pjit={nested_pjit}_constraint={constraint}_poly={poly}",
            nested_pjit=nested_pjit, constraint=constraint, poly=poly)
       # We add a constraint either with a nested pjit or with a sharding_constraint
       for nested_pjit in (True, False)
       for constraint in (None, "P")
       for poly in (None, "2*b1,_", "_,b2", "2*b1,b2")
-  )
+  ])
   @jtu.with_mesh([("x", 2)])
   def test_pjit_sharding_constraint(self, nested_pjit=True, constraint="P", poly="2*b1,b2"):
     constraint_sharding = P("x", None) if constraint == "P" else None
@@ -363,12 +364,13 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
             (r"custom_call_target.*Sharding", 2 + count_inner_sharding + count_inner_replicated)
         ])
 
-  @parameterized.named_parameters(
+  @jtu.parameterized_filterable(
+    kwargs=[
       dict(testcase_name=f"_in_shardings={in_shardings}_out_shardings={out_shardings}",
            in_shardings=in_shardings, out_shardings=out_shardings)
       for in_shardings in ("missing", None, "P")
       for out_shardings in ("missing", None, "P")
-  )
+  ])
   @jtu.with_mesh([("x", 2)])
   def test_grad_pjit(self, in_shardings="P", out_shardings=None):
     def f_jax(x):  # x: f32[10,20] -> f32[20,10]
@@ -414,7 +416,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
             (r"f32\[20,10\].*custom_call_target.*Sharding.*sharding.*replicated", count_out_replicated),
         ])
 
-  @parameterized.named_parameters(
+  @jtu.parameterized_filterable(
+    kwargs=[
       dict(testcase_name=f"_kind={kind}_in_shardings={in_shardings}_out_shardings={out_shardings}",
            kind=kind, in_shardings=in_shardings, out_shardings=out_shardings)
       for kind in ("pjit", "jit", "sharding_constraint")
@@ -425,7 +428,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       for out_shardings in (
           ("unspecified",) if kind in ["sharding_constraint", "jit"] else
           ("unspecified", "none", "P"))
-  )
+  ])
   def test_pjit_error_inner_sharding(self, kind="pjit", in_shardings="P",
                                      out_shardings="none"):
     # Check that we raise an error if there is no top-level pjit but we convert
@@ -462,11 +465,12 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       with Mesh(self.devices, axis_names=("x",)):
         f_tf(x)
 
-  @parameterized.named_parameters(
+  @jtu.parameterized_filterable(
+    kwargs=[
       dict(testcase_name=f"_func={func}", func=func)
       for func in ("pjit_sharded", "pjit_replicated",
                    "nested_pjit_sharded", "nested_pjit_replicated")
-  )
+  ])
   def test_pjit_eager_error(self, func="pjit_sharded"):
     if config.jax2tf_default_native_serialization:
       raise unittest.SkipTest("There is no error in eager mode for native serialization")
@@ -693,10 +697,11 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       res_tf = f_tf(a)
       self.assertAllClose(res_tf, expected)
 
-  @parameterized.named_parameters(
+  @jtu.parameterized_filterable(
+    kwargs=[
       dict(testcase_name=f"_poly={poly}", poly=poly)
       for poly in (None, "2*b1,_", "_,b2", "2*b1,b2")
-  )
+    ])
   def test_shmap_collective_permute(self, poly=None):
     if jtu.device_under_test() == "cpu":
       raise unittest.SkipTest("TODO(b/268295912): ShardingRemover crash")

@@ -82,6 +82,15 @@ class DisabledSafetyCheck:
     """
     return DisabledSafetyCheck(f"custom_call:{target_name}")
 
+  @classmethod
+  def shape_assertions(cls) -> "DisabledSafetyCheck":
+    """Allows invocations with shapes that do not meet the constraints.
+
+    Has effect on serialization (to supress the generation of the assertions)
+    and also on deserialization (to suppress the checking of the assertions).
+    """
+    return DisabledSafetyCheck("shape_assertions")
+
   def is_custom_call(self) -> Optional[str]:
     """Returns the custom call target allowed by this directive."""
     m = re.match(r'custom_call:(.+)$', self._impl)
@@ -162,66 +171,6 @@ class Exported:
   @property
   def mlir_module(self) -> ir.Module:
     return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
-
-  def shape_check_module(self) -> Optional[tuple[bytes, Sequence[str]]]:
-    """Generates a serialized shape checking module and the error messages.
-
-    Consider the exporting of a function with one array argument of type
-    "f32[w, 2 * h]", where "w" and "h" are two dimension variables. JAX tracing
-    assumes that `arg.shape[1]` is even, and that both `w` and `h` have
-    values >= 1. We must ensure that these assumptions hold when the function
-    is invoked.
-
-    If we `call_exported` for this module we perform these checks
-    statically (in `call_exported_abstract_eval`).
-
-    But if we wrap the exported module with XlaCallModule for execution outside
-    JAX, we must defer these checks to compile time, when the static shapes
-    are known.
-    We generate a separate MLIR shape checking module with a main
-    function that returns a triple of int32's, with a shape checking code and
-    two shape checking operands. The shape checking code is -1 if the checks
-    pass, or is an index into the returned shape_check_messages otherwise.
-    The returned shape checking operands are substituted for "%1" and "%2" in
-    the shape checking messages to obtain the error message. Here is a shape
-    checking module for our example:
-
-       func public main(arg: f32[?, ?]) {
-         # code will be the index of the last failed shape check.
-         code = op1 = op2 = -1  # Assume no errors initially
-         # Check that w is >= 1
-         arg_w = hlo.get_dimension_size(arg, 0)
-         code = hlo.select(arg_w >= 1, code, 0)  # error message 0
-         op1 = hlo.select(arg_w >= 1, op1, arg_w)
-         op2 = hlo.select(arg_w >= 1, op2, 1)
-         # Check that dim1 is even
-         dim1 = hlo.get_dimension_size(arg, 1)
-         code = hlo.select(dim1 % 2 == 0, code, 1)  # error message 1
-         op1 = hlo.select(dim1 % 2 == 0, op1, dim1 % 2)
-         op2 = hlo.select(dim1 % 2 == 0, op2, 0)
-         # Check that h >= 1
-         arg_h = hlo.floordiv(dim1, 2)
-         code = hlo.select(arg_h >= 1, code, 2)  # error message 2
-         op1 = hlo.select(arg_h >= 1, op1, arg_h)
-         op2 = hlo.select(arg_h >= 1, op2, 1)
-         return (code, op1, op2)
-
-    We also return the following shape checking messages to be used for
-    constructing error messages:
-
-      shape_check_messages = [
-          "Dimension variable 'w' must have integer value >= 1. Found %1",
-          "Dimension variable 'h' must have integer value >= 1. Found non-zero remainder %1",
-          "Dimension variable 'h' must have integer value >= 1. Found %1"]
-    """
-    shape_check_res = _make_shape_check_module(
-        self.in_avals, args_kwargs_tree=self.in_tree)
-    if shape_check_res is None:
-      return None
-    module, shape_check_messages = shape_check_res
-    module_serialized, xla_call_module_version = _serialize_module(module)
-    assert xla_call_module_version == self.xla_call_module_version
-    return module_serialized, shape_check_messages
 
   def __str__(self):
     # This is called to make a MLIR source location when we call an Exported, and we
@@ -359,6 +308,8 @@ def export(fun_jax: Callable,
       exported = jax_export.export(f_jax)(*args, **kwargs)
   """
   fun_name = getattr(fun_jax, "__name__", "unknown")
+  version = config.jax_serialization_version
+
   def do_export(*args_specs, **kwargs_specs) -> Exported:
     if not hasattr(fun_jax, "lower"):
       # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
@@ -373,28 +324,39 @@ def export(fun_jax: Callable,
       allow_non_replicated_sharding = True
 
     lowering_platform_str = lowering_platform or default_lowering_platform()
-    lowered = wrapped_fun_jax.lower(
-        *args_specs, **kwargs_specs,
-        _experimental_lowering_platform=lowering_platform_str)
-    lowering = lowered._lowering  # type: ignore
-    _check_lowering(lowering)
-    mlir_module = lowering.stablehlo()
 
-    args_avals_flat, _ = tree_util.tree_flatten(lowered.in_avals)
-    if "kept_var_idx" in lowering.compile_args:
-      module_kept_var_idx = tuple(sorted(lowering.compile_args["kept_var_idx"]))
-    else:
-      # For pmap
-      module_kept_var_idx = tuple(range(len(args_avals_flat)))
-    shape_poly_state = lowering.compile_args["shape_poly_state"]
-    if (not all(core.is_constant_shape(a.shape) for a in args_avals_flat)
-        or lowering.compile_args.get("ordered_effects", [])):
-      # All arguments are kept if we have dimension variables.
-      assert len(module_kept_var_idx) == len(args_avals_flat)
-      mlir_module = _wrap_main_func(
-          mlir_module, args_avals_flat, args_kwargs_tree=lowered.in_tree
-      )
-    mlir_module_serialized, xla_call_module_version = _serialize_module(mlir_module)
+    # Do not include shape assertions if the version is < 7.
+    enable_shape_assertions = (
+        DisabledSafetyCheck.shape_assertions() not in disabled_checks and
+        version >= 7)  # type: ignore
+    try:
+      prev_enable_shape_assertions = shape_poly.thread_local_state.enable_shape_assertions
+      shape_poly.thread_local_state.enable_shape_assertions = enable_shape_assertions
+      lowered = wrapped_fun_jax.lower(
+          *args_specs, **kwargs_specs,
+          _experimental_lowering_platform=lowering_platform_str)
+
+      lowering = lowered._lowering  # type: ignore
+      _check_lowering(lowering)
+      mlir_module = lowering.stablehlo()
+
+      args_avals_flat, _ = tree_util.tree_flatten(lowered.in_avals)
+      if "kept_var_idx" in lowering.compile_args:
+        module_kept_var_idx = tuple(sorted(lowering.compile_args["kept_var_idx"]))
+      else:
+        # For pmap
+        module_kept_var_idx = tuple(range(len(args_avals_flat)))
+      shape_poly_state = lowering.compile_args["shape_poly_state"]
+      if (not all(core.is_constant_shape(a.shape) for a in args_avals_flat)
+          or lowering.compile_args.get("ordered_effects", [])):
+        # All arguments are kept if we have dimension variables.
+        assert len(module_kept_var_idx) == len(args_avals_flat)
+        mlir_module = _wrap_main_func(
+            mlir_module, args_avals_flat, args_kwargs_tree=lowered.in_tree
+        )
+    finally:
+      shape_poly.thread_local_state.enable_shape_assertions = prev_enable_shape_assertions
+    mlir_module_serialized = _serialize_module(mlir_module)
 
     # Figure out the result types and shapes
     if "global_out_avals" in lowering.compile_args:
@@ -408,7 +370,7 @@ def export(fun_jax: Callable,
     # Log and then check the module.
     if logging.vlog_is_on(3):
       mlir_module_text = mlir.module_to_string(mlir_module)
-      logmsg = (f"version={xla_call_module_version} "
+      logmsg = (f"version={version} "
                 f"lowering_platform={lowering_platform_str} "
                 f"disabled_checks={disabled_checks}")
       logging.info("Lowered JAX module: %s\n", logmsg)
@@ -432,14 +394,13 @@ def export(fun_jax: Callable,
         mlir_module_serialized=mlir_module_serialized,
         module_kept_var_idx=module_kept_var_idx,
         module_uses_dim_vars=shape_poly_state.uses_dim_vars,
-        xla_call_module_version=xla_call_module_version,
+        xla_call_module_version=version,  # type: ignore
         _get_vjp=lambda exported: _export_native_vjp(fun_jax, exported))
 
   return do_export
 
 
-def _serialize_module(module: ir.Module) -> tuple[bytes, int]:
-  xla_call_module_version = config.jax_serialization_version
+def _serialize_module(module: ir.Module) -> bytes:
   mlir_str = mlir.module_to_bytecode(module)
   if hlo.get_api_version() < 4:
     target_version = hlo.get_earliest_forward_compatible_version()
@@ -463,7 +424,7 @@ def _serialize_module(module: ir.Module) -> tuple[bytes, int]:
     target_version = hlo.get_minimum_version()
   module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
       mlir_str, target_version)
-  return module_serialized, xla_call_module_version
+  return module_serialized
 
 
 def _wrap_main_func(
@@ -481,9 +442,9 @@ def _wrap_main_func(
   the `args_avals`, in sorted order.
 
   Consider the lowering of a function with one array argument of type "f32[w,
-  2 * h]",
-  where "w" and "h" are two dimension variables. The `module` will also
-  contain two dimension arguments, corresponding to "h" and "w" respectively:
+  2 * h]", where "w" and "h" are two dimension variables. The `module` will
+  also contain two dimension arguments, corresponding to "h" and "w"
+  respectively:
 
       func public main(arg_h: i32, arg_w: i32, arg: f32[?, ?]) {
         ...
@@ -495,6 +456,7 @@ def _wrap_main_func(
          arg_w = hlo.get_dimension_size(arg, 0)
          dim1 = hlo.get_dimension_size(arg, 1)
          arg_h = hlo.floordiv(dim1, 2)
+         call _check_shape_assertions(arg)  # See below
          res = call _wrapped_jax_export_main(arg_h, arg_w, arg)
          return res
       }
@@ -502,6 +464,31 @@ def _wrap_main_func(
   In addition, this function also removes token arguments/results from the main
   function by providing dummy values. This ensures that the main function's
   calling convention is as expected.
+
+  Note that the lowering contains a call to `_check_shape_assertions`.
+  JAX tracing assumes that `arg.shape[1]` is even, and that both `w` and `h`
+  have values >= 1. We must check these constraints when we invoke the
+  module. We use a special custom call `@shape_assertion` that takes
+  a boolean first operand, a string `error_message` attribute that may contain
+  format specifiers `{0}`, `{1}`, ..., and a variadic number of integer
+  scalar operands corresponding to the format specifiers.
+
+       func private _check_shape_assertions(arg: f32[?, ?]) {
+         # Check that w is >= 1
+         arg_w = hlo.get_dimension_size(arg, 0)
+         custom_call @shape_assertion(arg_w >= 1, arg_w,
+            error_message="Dimension variable 'w' must have integer value >= 1. Found {0}")
+         # Check that dim1 is even
+         dim1 = hlo.get_dimension_size(arg, 1)
+         custom_call @shape_assertion(dim1 % 2 == 0, dim1,
+            error_message="Dimension variable 'h' must have integer value >= 1. Found non-zero remainder {0}")
+         # Check that h >= 1
+         arg_h = hlo.floordiv(dim1, 2)
+         custom_call @shape_assertion(arg_h >= 1, arg_h,
+            error_message=""Dimension variable 'h' must have integer value >= 1. Found {0}")
+
+  If we `call_exported` with this module we perform these checks
+  statically (in `call_exported_abstract_eval`).
 
   Args:
     module: the HLO module as obtained from lowering. May have a number of
@@ -600,55 +587,6 @@ def _wrap_main_func(
     symbol_table.set_symbol_name(new_main_op, "main")
 
   return wrapped_module
-
-
-def _make_shape_check_module(
-    args_avals_flat: Sequence[core.AbstractValue],
-    *,
-    args_kwargs_tree: tree_util.PyTreeDef
-) -> Optional[tuple[ir.Module, Sequence[str]]]:
-  """Codegens the shape checking function.
-
-  The shape checking function takes the array inputs and returns a triple.
-  See `Exported.shape_check_module` docstring.
-
-  Returns the shape checking module and the tuple of shape checking messages.
-  """
-  context = mlir.make_ir_context()
-  with context, ir.Location.unknown(context):
-    array_input_types = tuple(mlir.aval_to_ir_type(a) for a in args_avals_flat)
-    module = ir.Module.create(loc=ir.Location.unknown(context))
-
-    symbol_table = ir.SymbolTable(module.operation)
-    shape_check_code_type = mlir.aval_to_ir_type(core.ShapedArray((), np.int32))
-    shape_check_output_types = (shape_check_code_type,) * 3
-    shape_check_ftype = ir.FunctionType.get(array_input_types,
-                                            shape_check_output_types)
-    shape_check_func = func_dialect.FuncOp(
-      "main", shape_check_ftype,
-      ip=ir.InsertionPoint.at_block_begin(module.body))
-    shape_check_func.attributes["sym_visibility"] = ir.StringAttr.get("public")
-    symbol_table.insert(shape_check_func)
-    entry_block = shape_check_func.add_entry_block()
-    with ir.InsertionPoint(entry_block):
-      module_context = mlir.ModuleContext(
-          "cpu", "cpu", sharding_impls.ShardingContext([]),
-          source_info_util.new_name_stack(),
-          [], itertools.count(1), [], module=module, context=context)
-      ctx = mlir.LoweringRuleContext(module_context=module_context,
-                                     primitive=None, avals_in=args_avals_flat,
-                                     avals_out=None, tokens_in=mlir.TokenSet(),
-                                     tokens_out=None)
-      acc_shape_check_messages: list[str] = []
-      values = mlir.lower_fun(
-          functools.partial(shape_poly.compute_shape_check_from_arg_shapes,
-                            args_avals_flat, args_kwargs_tree=args_kwargs_tree,
-                            acc_shape_check_messages=acc_shape_check_messages),
-          multiple_results=True)(ctx, *shape_check_func.arguments)
-      func_dialect.ReturnOp(util.flatten(values))
-
-  return (module, acc_shape_check_messages) if acc_shape_check_messages else None
-
 
 def _check_lowering(lowering) -> None:
   if not isinstance(lowering, pxla.MeshComputation):
@@ -749,6 +687,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     # See https://github.com/openxla/stablehlo/issues/8.
     "stablehlo.dynamic_reduce_window",
     "stablehlo.dynamic_rng_bit_generator",
+    "shape_assertion",  # Used by shape_poly to evaluate assertions
 }
 
 
@@ -763,6 +702,7 @@ def _check_module(mod: ir.Module, *,
     disabled_checks: the safety checks that are disabled.
   """
   sharding_attr = ir.StringAttr.get("Sharding", mod.context)
+  shape_assertion_attr = ir.StringAttr.get("shape_assertion", mod.context)
   allowed_custom_call_targets: set[str] = copy.copy(_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
   for dc in disabled_checks:
     target = dc.is_custom_call()
@@ -799,6 +739,8 @@ def _check_module(mod: ir.Module, *,
         disallowed_custom_call_ops.append(f"{op} at {op.location}")
       if call_target_name_attr == sharding_attr:
         check_sharding(op, op.location)
+      elif call_target_name_attr == shape_assertion_attr:
+        assert (DisabledSafetyCheck.shape_assertions() not in disabled_checks)
 
   def walk_operations(op):
     check_op(op)

@@ -567,17 +567,6 @@ class GraphSerializationImpl(SerializationImpl):
                 self.args_avals_flat, args_kwargs_tree=self.in_tree),
         self.args_flat_tf, self.args_avals_flat, self.name_stack)
 
-    # We invoke shape checking to give it a chance to raise shape errors that
-    # are evident statically. This should work in TF eager mode because all
-    # the shapes are known.
-    # TODO: handle non-static shape checking for graph serialization
-    acc_shape_check_messages: list[str] = []
-    _, _ = _interpret_fun_jax(
-        partial(shape_poly.compute_shape_check_from_arg_shapes,
-                self.args_avals_flat, args_kwargs_tree=self.in_tree,
-                acc_shape_check_messages=acc_shape_check_messages),
-        self.args_flat_tf, self.args_avals_flat, self.name_stack)
-
     _thread_local_state.shape_env = zip(dim_vars, dim_values)
 
     fun_flat_jax, out_tree_thunk = flatten_fun_jax(self.fun_jax, self.in_tree)
@@ -3385,6 +3374,16 @@ def _dim_as_value_jax2tf(dim: shape_poly.DimSize):
   return dim_tf
 
 tf_impl[shape_poly.dim_as_value_p] = _dim_as_value_jax2tf
+
+def _shape_assertion_jax2tf(assert_what, *error_message_inputs,
+                            error_message: str):
+
+  tf.debugging.assert_equal(
+    assert_what, True,
+    message=error_message.format(*error_message_inputs))
+  return []
+
+tf_impl[shape_poly.shape_assertion_p] = _shape_assertion_jax2tf
 
 def _reduce_precision(x, *, exponent_bits, mantissa_bits):
   return tfxla.reduce_precision(x, exponent_bits=exponent_bits,
