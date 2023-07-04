@@ -76,8 +76,7 @@ from jax._src.core import (
   call_bind_with_continuation as call_bind_with_continuation,
   call_impl as call_impl,
   call_p as call_p,
-  canonicalize_dim as canonicalize_dim,
-  canonicalize_shape as canonicalize_shape,
+  canonicalize_shape as canonicalize_shape,  # TODO(necula): remove this API
   check_eqn as check_eqn,
   check_jaxpr as check_jaxpr,
   check_type as check_type,
@@ -90,13 +89,8 @@ from jax._src.core import (
   cur_sublevel as cur_sublevel,
   custom_typechecks as custom_typechecks,
   dedup_referents as dedup_referents,
-  definitely_equal as symbolic_equal_dim,  # TODO(necula): remove this API
-  diff_dim as diff_dim,
-  diff_shape as diff_shape,
-  dilate_dim as dilate_dim,
-  dilate_shape as dilate_shape,
-  dimension_as_value as dimension_as_value,
-  divide_shape_sizes as divide_shape_sizes,
+  definitely_equal as definitely_equal,  # TODO(necula): remove this API
+  dimension_as_value as dimension_as_value,  # TODO(necula): remove this API
   do_subst_axis_names_jaxpr as do_subst_axis_names_jaxpr,
   dtypes as dtypes,
   ensure_compile_time_eval as ensure_compile_time_eval,
@@ -110,13 +104,9 @@ from jax._src.core import (
   gensym as gensym,
   get_aval as get_aval,
   get_referent as get_referent,
-  greater_equal_dim as greater_equal_dim,
-  greater_equal_shape as greater_equal_shape,
   has_opaque_dtype as has_opaque_dtype,
   is_constant_dim as is_constant_dim,
   is_constant_shape as is_constant_shape,
-  is_dim as is_dim,
-  is_empty_shape as is_empty_shape,
   jaxpr_as_fun as jaxpr_as_fun,
   jaxpr_uses_outfeed as jaxpr_uses_outfeed,
   jaxprs_in_params as jaxprs_in_params,
@@ -165,21 +155,15 @@ from jax._src.core import (
   reset_trace_state as reset_trace_state,
   safe_map as safe_map,
   safe_zip as safe_zip,
-  same_referent as same_referent,
-  same_shape_sizes as same_shape_sizes,
   source_info_util as source_info_util,
   stash_axis_env as stash_axis_env,
   str_eqn_compact as str_eqn_compact,
-  stride_dim as stride_dim,
-  stride_shape as stride_shape,
   subjaxprs as subjaxprs,
   subst_axis_names as subst_axis_names,
   subst_axis_names_eqn as subst_axis_names_eqn,
   subst_axis_names_jaxpr as subst_axis_names_jaxpr,
   subst_axis_names_var as subst_axis_names_var,
   substitute_vars_in_output_ty as substitute_vars_in_output_ty,
-  sum_dim as sum_dim,
-  sum_shapes as sum_shapes,
   thread_local_state as thread_local_state,
   token as token,
   total_ordering as total_ordering,
@@ -197,6 +181,8 @@ from jax._src.core import (
   valid_jaxtype as valid_jaxtype,
   zip as zip,
 )
+
+symbolic_equal_dim = definitely_equal  # TODO(necula): remove this API
 
 from jax._src.dtypes import (
   is_opaque_dtype as is_opaque_dtype,
