@@ -2419,11 +2419,17 @@ def _get_mesh_pspec_shardings_from_executable(
           [sharding_impls.NamedSharding(mesh, o) for o in out_pspec])
 
 
-SubClassT = TypeVar("SubClassT", bound=sharding_impls.XLACompatibleSharding)
-OrigHandlerType = dict[type[SubClassT],
-                       Callable[[xc.OpSharding, SubClassT], SubClassT]]
+_orig_out_sharding_handlers = {}
 
-orig_out_sharding_handlers: OrigHandlerType = {}
+_ShardingT = TypeVar("_ShardingT", bound=sharding_impls.XLACompatibleSharding)
+
+
+def _register_out_sharding_handler(
+    sharding_cls: type[_ShardingT],
+    handler: Callable[[xc.OpSharding, _ShardingT], _ShardingT],
+) -> None:
+  _orig_out_sharding_handlers[sharding_cls] = handler
+
 
 def _gspmd_to_named_sharding(
     op_sharding: xc.OpSharding,
@@ -2432,7 +2438,10 @@ def _gspmd_to_named_sharding(
       op_sharding, self.mesh)[0]
   return create_mesh_pspec_sharding(
       self.mesh, parsed_pspec.get_partition_spec(), parsed_pspec)
-orig_out_sharding_handlers[sharding_impls.NamedSharding] = _gspmd_to_named_sharding
+
+_register_out_sharding_handler(
+    sharding_impls.NamedSharding, _gspmd_to_named_sharding
+)
 
 
 def _gspmd_to_positional_sharding(
@@ -2440,13 +2449,16 @@ def _gspmd_to_positional_sharding(
     self: sharding_impls.PositionalSharding) -> sharding_impls.PositionalSharding:
   return sharding_impls._op_sharding_to_pos_sharding(
       op_sharding, self._device_assignment)
-orig_out_sharding_handlers[sharding_impls.PositionalSharding] = _gspmd_to_positional_sharding
+
+_register_out_sharding_handler(
+    sharding_impls.PositionalSharding, _gspmd_to_positional_sharding
+)
 
 
 def _get_out_sharding_from_orig_sharding(
     out_shardings, out_avals, orig_s, orig_aval, are_out_sharding_from_xla):
   out = []
-  orig_handler = orig_out_sharding_handlers[type(orig_s)]
+  orig_handler = _orig_out_sharding_handlers[type(orig_s)]
   for o, out_aval, from_xla in safe_zip(out_shardings, out_avals,
                                         are_out_sharding_from_xla):
     if isinstance(o, sharding_impls.GSPMDSharding):
@@ -2479,7 +2491,7 @@ def maybe_get_orig_out_sharding(
   orig_aval = None
   for i, aval in safe_zip(in_shardings, in_avals):
     oi = getattr(i, '_original_sharding', None)
-    if type(oi) in orig_out_sharding_handlers:
+    if type(oi) in _orig_out_sharding_handlers:
       orig_s = oi
       orig_aval = aval
       break
