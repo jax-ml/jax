@@ -917,6 +917,15 @@ include_full_tracebacks_in_locations = config.define_bool_state(
     ),
 )
 
+filter_internal_framework_frames = config.define_bool_state(
+    name='jax_filter_internal_framework_frames',
+    default=True,
+    help=(
+        'Filter internal functions frames from Python tracebacks such as'
+        ' internal JAX functions frames.'
+    ),
+)
+
 config.define_enum_state(
     name='jax_default_dtype_bits',
     enum_values=['32', '64'],

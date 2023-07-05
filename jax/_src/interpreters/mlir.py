@@ -28,8 +28,6 @@ from typing import (Any, Callable, Iterator, NamedTuple, Optional,
                     Protocol, Sequence, Union)
 import warnings
 
-import numpy as np
-
 from jax._src import ad_util
 from jax._src import core
 from jax._src import dtypes
@@ -48,9 +46,10 @@ from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import XLACompatibleSharding
+import numpy as np
 
 
 map, unsafe_map = util.safe_map, map
@@ -330,12 +329,31 @@ def _traceback_to_location(tb: xc.Traceback) -> ir.Location:
   frame_locs = []
   for code, lasti in zip(*tb.raw_frames()):
     frame = source_info_util.raw_frame_to_frame(code, lasti)
-    frame_locs.append(ir.Location.file(xla.get_canonical_source_file(frame),
-                                       frame.start_line, frame.start_column))
+    filtered_patterns = [
+        "py/jax/_src",
+        "py/absl",
+        "py/IPython",
+        "<embedded module",
+    ]
+    if config.jax_filter_internal_framework_frames and any(
+        pattern in frame.file_name for pattern in filtered_patterns
+    ):
+      continue
+    file_loc = ir.Location.file(
+        xla.get_canonical_source_file(frame),
+        frame.start_line,
+        frame.start_column,
+    )
+    name_loc = ir.Location.name(frame.function_name, childLoc=file_loc)
+    frame_locs.append(name_loc)
+
   if len(frame_locs) == 0:
     return ir.Location.unknown()
   else:
-    return ir.Location.callsite(frame_locs[-1], frame_locs[-2::-1])
+    if len(frame_locs) == 1:
+      return frame_locs[0]
+
+    return ir.Location.callsite(frame_locs[0], frame_locs[1:])
 
 def _source_info_to_location(
     primitive: core.Primitive, params: dict,
