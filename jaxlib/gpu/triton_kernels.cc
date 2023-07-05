@@ -12,7 +12,6 @@
 #include <variant>
 #include <vector>
 
-#include "absl/base/call_once.h"
 #include "absl/base/optimization.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
@@ -95,10 +94,11 @@ absl::StatusOr<float> Benchmark(CUstream stream, KernelCall& kernel_call,
   return elapsed_ms;
 }
 
-absl::StatusOr<KernelCallBase*> GetKernelCall(absl::string_view opaque) {
+absl::StatusOr<KernelCall*> GetKernelCall(absl::string_view opaque,
+                                          CUstream stream, void** buffers) {
   static absl::Mutex mutex;
   static auto& kernel_calls =
-      *new absl::flat_hash_map<std::string, std::unique_ptr<KernelCallBase>>
+      *new absl::flat_hash_map<std::string, std::unique_ptr<KernelCall>>
           ABSL_GUARDED_BY(mutex);
 
   absl::MutexLock lock(&mutex);
@@ -113,14 +113,21 @@ absl::StatusOr<KernelCallBase*> GetKernelCall(absl::string_view opaque) {
     return absl::InvalidArgumentError("Failed to parse serialized data.");
   }
 
-  std::unique_ptr<KernelCallBase> kernel_call;
+  std::unique_ptr<KernelCall> kernel_call;
   if (proto.has_kernel_call()) {
-    JAX_ASSIGN_OR_RETURN(auto kernel_call_,
+    JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
                          KernelCall::FromProto(proto.kernel_call()));
     kernel_call = std::make_unique<KernelCall>(std::move(kernel_call_));
   } else if (proto.has_autotuned_kernel_call()) {
-    JAX_ASSIGN_OR_RETURN(kernel_call, AutotunedKernelCall::FromProto(
-                                          proto.autotuned_kernel_call()));
+    JAX_ASSIGN_OR_RETURN(
+        AutotunedKernelCall autotuned_call,
+        AutotunedKernelCall::FromProto(proto.autotuned_kernel_call()));
+    {
+      JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
+                           AutotunedKernelCall::Autotune(
+                               std::move(autotuned_call), stream, buffers));
+      kernel_call = std::make_unique<KernelCall>(std::move(kernel_call_));
+    }
   } else {
     return absl::InvalidArgumentError("Unknown kernel call type.");
   }
@@ -376,18 +383,7 @@ AutotunedKernelCall::AutotunedKernelCall(
       configs_(std::move(configs)),
       input_output_aliases_(std::move(input_output_aliases)) {}
 
-absl::Status AutotunedKernelCall::Launch(CUstream stream, void** buffers) {
-  absl::call_once(autotune_once_, [=]() {
-    if (configs_.size() > 1) {
-      autotune_status_ = Autotune(stream, buffers);
-    }
-  });
-  JAX_RETURN_IF_ERROR(autotune_status_);
-  return configs_[0].kernel_call.Launch(stream, buffers);
-}
-
-/*static*/ absl::StatusOr<std::unique_ptr<AutotunedKernelCall>>
-AutotunedKernelCall::FromProto(
+/*static*/ absl::StatusOr<AutotunedKernelCall> AutotunedKernelCall::FromProto(
     const jax_triton::TritonAutotunedKernelCall& proto) {
   std::vector<Config> configs;
   for (const jax_triton::TritonAutotunedKernelCall_Config& config :
@@ -404,8 +400,8 @@ AutotunedKernelCall::FromProto(
         a.input_buffer_idx(), a.output_buffer_idx(), a.buffer_size_bytes()));
   }
 
-  return std::make_unique<AutotunedKernelCall>(proto.name(), std::move(configs),
-                                               std::move(input_output_aliases));
+  return AutotunedKernelCall(proto.name(), std::move(configs),
+                             std::move(input_output_aliases));
 }
 
 jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
@@ -426,7 +422,8 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
   return proto;
 }
 
-absl::Status AutotunedKernelCall::Autotune(CUstream stream, void** buffers) {
+/*static*/ absl::StatusOr<KernelCall> AutotunedKernelCall::Autotune(
+    AutotunedKernelCall kernel_call, CUstream stream, void** buffers) {
   // Ensure a valid context for driver calls that don't take the stream.
   CUcontext context;
   CUDA_RETURN_IF_ERROR(cuStreamGetCtx(stream, &context));
@@ -438,7 +435,7 @@ absl::Status AutotunedKernelCall::Autotune(CUstream stream, void** buffers) {
   // auto-tuning, the final result will be junk, so we take a copy of the
   // input to restore after auto-tuning.
   std::unordered_map<size_t, std::vector<uint8_t>> input_copies;
-  for (auto [input_idx, output_idx, size] : input_output_aliases_) {
+  for (auto [input_idx, output_idx, size] : kernel_call.input_output_aliases_) {
     if (buffers[input_idx] == buffers[output_idx]) {
       std::vector<uint8_t> input_copy(size);
       CUDA_RETURN_IF_ERROR(cuMemcpyDtoHAsync(
@@ -448,11 +445,11 @@ absl::Status AutotunedKernelCall::Autotune(CUstream stream, void** buffers) {
     }
   }
 
-  LOG(INFO) << "Autotuning function: " << name_;
+  LOG(INFO) << "Autotuning function: " << kernel_call.name_;
   // First run a single iteration of each to config to determine how many
   // iterations to run for benchmarking.
   float best = std::numeric_limits<float>::infinity();
-  for (Config& config : configs_) {
+  for (Config& config : kernel_call.configs_) {
     JAX_ASSIGN_OR_RETURN(float t,
                          Benchmark(stream, config.kernel_call, buffers, 1));
     LOG(INFO) << config.description << ", ran 1 iter in " << t << " ms";
@@ -470,7 +467,7 @@ absl::Status AutotunedKernelCall::Autotune(CUstream stream, void** buffers) {
   }
 
   best = std::numeric_limits<float>::infinity();
-  for (Config& config : configs_) {
+  for (Config& config : kernel_call.configs_) {
     JAX_ASSIGN_OR_RETURN(
         float t, Benchmark(stream, config.kernel_call, buffers, timed_iters));
     LOG(INFO) << config.description << ", ran " << timed_iters << " iters in "
@@ -479,32 +476,31 @@ absl::Status AutotunedKernelCall::Autotune(CUstream stream, void** buffers) {
     if (t < best) {
       LOG(INFO) << config.description << " is the new best config";
       best = t;
-      std::swap(config, configs_[0]);
+      std::swap(config, kernel_call.configs_[0]);
     }
   }
 
-  // Discard all but the best config.
-  configs_.erase(configs_.begin() + 1, configs_.end());
-
-  LOG(INFO) << "Finished autotuning function: " << name_ << " best config "
-            << configs_[0].description;
+  LOG(INFO) << "Finished autotuning function: " << kernel_call.name_
+            << " best config " << kernel_call.configs_[0].description;
 
   // Restore aliased inputs to their original values.
-  for (auto [input_idx, _, size] : input_output_aliases_) {
+  for (auto [input_idx, _, size] : kernel_call.input_output_aliases_) {
     CUDA_RETURN_IF_ERROR(
         cuMemcpyHtoDAsync(reinterpret_cast<CUdeviceptr>(buffers[input_idx]),
                           input_copies[input_idx].data(), size, stream));
   }
   // Synchronize stream to ensure copies are complete before the host copy
   // is deleted.
-  return JAX_AS_STATUS(cuStreamSynchronize(stream));
+  CUDA_RETURN_IF_ERROR(cuStreamSynchronize(stream));
+  return std::move(kernel_call.configs_[0].kernel_call);
 }
 
 void TritonKernelCall(CUstream stream, void** buffers, const char* opaque,
                       size_t opaque_len, XlaCustomCallStatus* status) {
   absl::Status result = [=] {
-    JAX_ASSIGN_OR_RETURN(KernelCallBase * kernel_call,
-                         GetKernelCall(absl::string_view(opaque, opaque_len)));
+    JAX_ASSIGN_OR_RETURN(
+        KernelCall * kernel_call,
+        GetKernelCall(absl::string_view(opaque, opaque_len), stream, buffers));
     return kernel_call->Launch(stream, buffers);
   }();
   if (!result.ok()) {

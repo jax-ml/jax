@@ -8,7 +8,6 @@
 #include <variant>
 #include <vector>
 
-#include "absl/base/call_once.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -45,12 +44,7 @@ class Kernel {
   ModuleImage* module_image_ = nullptr;
 };
 
-struct KernelCallBase {
-  virtual ~KernelCallBase() = default;
-  virtual absl::Status Launch(CUstream stream, void** buffers) = 0;
-};
-
-class KernelCall : public KernelCallBase {
+class KernelCall {
  public:
   struct Parameter {
     struct Array {
@@ -68,7 +62,7 @@ class KernelCall : public KernelCallBase {
   KernelCall(Kernel kernel, uint32_t grid_0, uint32_t grid_1, uint32_t grid_2,
              std::vector<Parameter> parameters);
 
-  absl::Status Launch(CUstream stream, void** buffers) override final;
+  absl::Status Launch(CUstream stream, void** buffers);
 
   static absl::StatusOr<KernelCall> FromProto(
       const jax_triton::TritonKernelCall& proto);
@@ -80,7 +74,7 @@ class KernelCall : public KernelCallBase {
   std::vector<Parameter> parameters_;
 };
 
-class AutotunedKernelCall : public KernelCallBase {
+class AutotunedKernelCall {
  public:
   struct Config {
     KernelCall kernel_call;
@@ -91,22 +85,18 @@ class AutotunedKernelCall : public KernelCallBase {
       std::string name, std::vector<Config> configs,
       std::vector<std::tuple<size_t, size_t, size_t>> input_output_aliases);
 
-  absl::Status Launch(CUstream stream, void** buffers) override;
+  static absl::StatusOr<KernelCall> Autotune(AutotunedKernelCall kernel_call,
+                                             CUstream stream, void** buffers);
 
-  static absl::StatusOr<std::unique_ptr<AutotunedKernelCall>> FromProto(
+  static absl::StatusOr<AutotunedKernelCall> FromProto(
       const jax_triton::TritonAutotunedKernelCall& proto);
   jax_triton::TritonAutotunedKernelCall ToProto() const;
 
  private:
-  absl::Status Autotune(CUstream stream, void** buffers);
-
   std::string name_;
-  // After auto-tuning, all configurations, except the best, will be discarded.
   std::vector<Config> configs_;
   // (input buffer idx, output buffer idx, size)
   std::vector<std::tuple<size_t, size_t, size_t>> input_output_aliases_;
-  absl::once_flag autotune_once_;
-  absl::Status autotune_status_;
 };
 
 absl::StatusOr<std::string> ZlibUncompress(absl::string_view compressed);
