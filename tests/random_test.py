@@ -2134,38 +2134,46 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
 @jtu.with_config(jax_default_prng_impl='rbg')
 class LaxRandomWithRBGPRNGTest(LaxRandomTest):
   def seed_prng(self, seed):
-    return random.key(seed, impl='rbg')
+    return random.PRNGKey(seed, impl='rbg')
 
-  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_split_shape(self):
     key = self.seed_prng(73)
     keys = random.split(key, 10)
-    self.assertEqual(keys.shape, (10,))
+    self.assertEqual(keys.shape, (10, *key.shape))
 
-  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_vmap_fold_in_shape(self):
-    LaxRandomWithCustomPRNGTest.test_vmap_fold_in_shape(self)
+    # broadcast with scalar
+    keys = random.split(self.seed_prng(73), 2)
+    msgs = jnp.arange(3)
 
-  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
+    out = vmap(lambda i: random.fold_in(keys[0], i))(msgs)
+    self.assertEqual(out.shape, (3, *keys[0].shape))
+    out = vmap(random.fold_in, in_axes=(None, 0))(keys[0], msgs)
+    self.assertEqual(out.shape, (3, *keys[0].shape))
+
+    out = vmap(lambda k: random.fold_in(k, msgs[0]))(keys)
+    self.assertEqual(out.shape, keys.shape)
+    out = vmap(random.fold_in, in_axes=(0, None))(keys, msgs[0])
+    self.assertEqual(out.shape, keys.shape)
+
   def test_vmap_split_not_mapped_key(self):
     key = self.seed_prng(73)
     single_split_key = random.split(key)
     vmapped_keys = vmap(lambda _: random.split(key))(jnp.zeros(3,))
-    self.assertEqual(vmapped_keys.shape, (3, 2))
+    self.assertEqual(vmapped_keys.shape, (3, 2, *key.shape))
     for vk in vmapped_keys:
-      self.assertArraysEqual(vk.unsafe_raw_array(),
-                             single_split_key.unsafe_raw_array())
+      self.assertArraysEqual(_prng_key_as_array(vk),
+                             _prng_key_as_array(single_split_key))
 
-  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_vmap_split_mapped_key(self):
     key = self.seed_prng(73)
     mapped_keys = random.split(key, num=3)
     forloop_keys = [random.split(k) for k in mapped_keys]
     vmapped_keys = vmap(random.split)(mapped_keys)
-    self.assertEqual(vmapped_keys.shape, (3, 2))
+    self.assertEqual(vmapped_keys.shape, (3, 2, *key.shape))
     for fk, vk in zip(forloop_keys, vmapped_keys):
-      self.assertArraysEqual(fk.unsafe_raw_array(),
-                             vk.unsafe_raw_array())
+      self.assertArraysEqual(_prng_key_as_array(fk),
+                             _prng_key_as_array(vk))
 
   def test_vmap_random_bits(self):
     rand_fun = lambda key: random.randint(key, (), 0, 100)
@@ -2176,9 +2184,10 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     self.assertEqual(rand_nums.shape, (3,))
     self.assertArraysEqual(rand_nums, jnp.array(forloop_rand_nums))
 
-  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key arrays')
   def test_cannot_add(self):
     key = self.seed_prng(73)
+    if not isinstance(key, random.PRNGKeyArray):
+      raise SkipTest('relies on typed key arrays')
     self.assertRaisesRegex(
         ValueError, r'dtype=key<.*> is not a valid dtype for JAX type promotion.',
         lambda: key + 47)
@@ -2200,7 +2209,6 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     raise SkipTest('8-bit types not supported with RBG PRNG')
 
 
-# TODO(frostig): remove `with_config` we always enable_custom_prng
 @jtu.with_config(jax_default_prng_impl='unsafe_rbg')
 class LaxRandomWithUnsafeRBGPRNGTest(LaxRandomWithRBGPRNGTest):
   def seed_prng(self, seed):
