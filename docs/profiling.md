@@ -9,7 +9,7 @@ the trace. If you wish to get profiling information without any interaction,
 check out the Tensorboard profiler below.
 
 ```python
-with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
+with jax.profiler.trace(create_perfetto_link=True):
   # Run the operations to be profiled
   key = jax.random.PRNGKey(0)
   x = jax.random.normal(key, (5000, 5000))
