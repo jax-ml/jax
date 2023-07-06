@@ -612,6 +612,23 @@ class LaxRandomTest(jtu.JaxTestCase):
   def make_key(self, seed):
     return random.threefry2x32_key(seed)
 
+  @jtu.sample_product(
+    num=(None, 6, (6,), (2, 3), (2, 3, 4)),
+  )
+  def test_split_size_shape(self, num):
+    key = self.make_key(0)
+    if num is None:
+      key_split = jax.random.split(key)
+    else:
+      key_split = jax.random.split(key, num)
+
+    if num is None:
+      self.assertEqual(key_split.shape, (2, *key.shape))
+    elif type(num) is tuple:
+      self.assertEqual(key_split.shape, (*num, *key.shape))
+    else:
+      self.assertEqual(key_split.shape, (num, *key.shape))
+
   @jtu.sample_product(dtype=jtu.dtypes.floating)
   def testNumpyAndXLAAgreeOnFloatEndianness(self, dtype):
     bits_dtype = np.uint32 if jnp.finfo(dtype).bits == 32 else np.uint64
@@ -2039,12 +2056,9 @@ def _double_threefry_seed(seed):
   return jnp.vstack([threefry_seed(s1),
                      threefry_seed(s2)])
 
-def _double_threefry_split(key, num):
-  split0 = threefry_split(key[0], num)
-  split1 = threefry_split(key[1], num)
-  merge = jnp.vstack([jnp.expand_dims(split0, axis=0),
-                      jnp.expand_dims(split1, axis=0)])
-  return merge.transpose((1, 0, 2))
+def _double_threefry_split(key, shape):
+  return vmap(
+      threefry_split, (0, None), len(shape))(key, shape)
 
 def _double_threefry_random_bits(key, bit_width, shape):
   bits0 = threefry_random_bits(key[0], bit_width, shape)

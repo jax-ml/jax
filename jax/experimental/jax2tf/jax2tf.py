@@ -2575,18 +2575,18 @@ def _random_seed_impl(seeds: TfVal, *, impl, _in_avals, _out_aval):
 tf_impl_with_avals[prng.random_seed_p] = _random_seed_impl
 
 
-def _random_split_impl(keys: TfVal, *, count, _in_avals, _out_aval):
+def _random_split_impl(keys: TfVal, *, shape, _in_avals, _out_aval):
   keys_aval, = _in_avals
 
-  def impl_wrapper(keys: TfVal, *, count):
+  def impl_wrapper(keys: TfVal, *, shape):
     return prng.random_split_impl_base(
-        keys_aval.dtype.impl, keys, keys_aval.ndim, count=count)
+        keys_aval.dtype.impl, keys, keys_aval.ndim, shape=shape)
 
   converted_impl = _convert_jax_impl(
       impl_wrapper, multiple_results=False, with_physical_avals=True,
       extra_name_stack="random_split")
   return converted_impl(
-      keys, count=count, _in_avals=_in_avals, _out_aval=_out_aval)
+      keys, shape=shape, _in_avals=_in_avals, _out_aval=_out_aval)
 
 tf_impl_with_avals[prng.random_split_p] = _random_split_impl
 
