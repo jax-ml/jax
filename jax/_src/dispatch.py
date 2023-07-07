@@ -32,6 +32,7 @@ import warnings
 import numpy as np
 
 from jax._src import compilation_cache
+from jax._src import compilation_cache_entry_pb2
 from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
@@ -500,15 +501,17 @@ def compile_or_get_cached(backend, computation: ir.Module, devices: np.ndarray,
   cache_key = compilation_cache.get_cache_key(
       computation, devices, compile_options, backend)
 
-  cached_executable = _cache_read(module_name, cache_key, compile_options,
-                                  backend)
-  if cached_executable is not None:
+  cache_entry = _cache_read(module_name, cache_key)
+  if cache_entry is not None:
     logger.info("Persistent compilation cache hit for '%s'", module_name)
-    return cached_executable
+    return backend.deserialize_executable(
+        cache_entry.executable, compile_options
+    )
   else:
     start_time = time.monotonic()
-    executable = backend_compile(backend, computation,
-                                compile_options, host_callbacks)
+    executable = backend_compile(
+        backend, computation, compile_options, host_callbacks
+    )
     compile_time = time.monotonic() - start_time
     _cache_write(cache_key, compile_time, module_name, backend, executable,
                  host_callbacks)
@@ -516,11 +519,11 @@ def compile_or_get_cached(backend, computation: ir.Module, devices: np.ndarray,
 
 
 def _cache_read(
-    module_name: str, cache_key: str, compile_options, backend
-) -> Optional[xc.LoadedExecutable]:
+    module_name: str, cache_key: str
+) -> Optional[compilation_cache_entry_pb2.CompilationCacheEntry]:
   """Looks up `computation` in the persistent compilation cache."""
   try:
-    return compilation_cache.get_executable(cache_key, compile_options, backend)
+    return compilation_cache.get_cache_entry(cache_key)
   except Exception as ex:
     if config.jax_raise_persistent_cache_errors:
       raise
@@ -557,8 +560,9 @@ def _cache_write(cache_key: str,
           compile_time_secs)
 
   try:
-    compilation_cache.put_executable(cache_key, module_name, executable,
-                                     backend)
+    compilation_cache.put_cache_entry(
+        cache_key, module_name, executable, backend, compile_time_secs
+    )
   except Exception as ex:
     if config.jax_raise_persistent_cache_errors:
       raise

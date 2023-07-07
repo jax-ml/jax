@@ -19,6 +19,7 @@ import os
 import random
 import sys
 import tempfile
+import time
 import unittest
 from unittest import SkipTest, mock
 import warnings
@@ -275,7 +276,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
       backend = xla_bridge.get_backend()
       key = cc.get_cache_key(computation, devices, compile_options, backend)
       self.assertEqual(
-          cc.get_executable(key, compile_options, backend), None
+          cc.get_cache_entry(key), None
       )
 
   def test_diff_executables(self):
@@ -287,16 +288,21 @@ class CompilationCacheTest(jtu.JaxTestCase):
           num_replicas=1, num_partitions=1
       )
       backend = xla_bridge.get_backend()
+      start_time = time.monotonic()
       executable1 = backend.compile(computation1, compile_options)
+      compile_time_1 = time.monotonic() - start_time
       executable2 = backend.compile(computation2, compile_options)
-      cc.put_executable("key1", "computation1", executable1, backend)
-      cc.put_executable("key2", "computation2", executable2, backend)
+      compile_time_2 = time.monotonic() - compile_time_1
+      cc.put_cache_entry("key1", "computation1", executable1, backend,
+          compile_time_1)
+      cc.put_cache_entry("key2", "computation2", executable2, backend,
+          compile_time_2)
       self.assertNotEqual(
-          cc.get_executable("key1", compile_options, backend),
-          cc.get_executable("key2", compile_options, backend),
+          cc.get_cache_entry("key1"),
+          cc.get_cache_entry("key2"),
       )
 
-  def test_put_executable(self):
+  def test_put_cache_entry(self):
     with tempfile.TemporaryDirectory() as tmpdir:
       cc.initialize_cache(tmpdir)
       computation = (
@@ -309,10 +315,14 @@ class CompilationCacheTest(jtu.JaxTestCase):
           num_replicas=1, num_partitions=1
       )
       backend = xla_bridge.get_backend()
+      start_time = time.monotonic()
       executable = backend.compile(str(computation), compile_options)
       key = cc.get_cache_key(computation, devices, compile_options, backend)
-      cc.put_executable(key, "alambda", executable, backend)
-      deserialized_executable = cc.get_executable(key, compile_options, backend)
+      cc.put_cache_entry(key, "alambda", executable, backend,
+          time.monotonic() - start_time)
+      cache_entry = cc.get_cache_entry(key)
+      deserialized_executable = backend.deserialize_executable(
+        cache_entry.executable, compile_options)
       inputs_to_executable = (
           np.array(1, dtype=np.int32),
           np.array(2, dtype=np.int32),

@@ -38,6 +38,7 @@ from jax._src.lib import xla_extension_version
 from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager as pm
+from jax._src import compilation_cache_entry_pb2
 
 # TODO(phawkins): remove the conditional import after jaxlib 0.4.9 is the
 # minimum.
@@ -75,49 +76,53 @@ def initialize_cache(path):
   logger.warning("Initialized persistent compilation cache at %s", path)
 
 
-def get_executable(
-    cache_key: str, compile_options, backend
-) -> Optional[xla_client.LoadedExecutable]:
-  """Returns the cached executable if present, or None otherwise."""
+def get_cache_entry(
+    cache_key: str
+) -> Optional[compilation_cache_entry_pb2.CompilationCacheEntry]:
+  """Returns the cache entry if present, or None otherwise."""
   assert (
       _cache is not None
-  ), "initialize_cache must be called before you can call get_executable()"
-  serialized_executable = _cache.get(cache_key)
-  if not serialized_executable:
+  ), "initialize_cache must be called before you can call get_cache_entry()"
+  cache_entry = _cache.get(cache_key)
+  if not cache_entry:
     return None
   if zstandard:
     decompressor = zstandard.ZstdDecompressor()
-    serialized_executable = decompressor.decompress(serialized_executable)
+    cache_entry = decompressor.decompress(cache_entry)
   else:
-    serialized_executable = zlib.decompress(serialized_executable)
-  xla_executable_deserialized = backend.deserialize_executable(
-      serialized_executable, compile_options
+    cache_entry = zlib.decompress(cache_entry)
+  return compilation_cache_entry_pb2.CompilationCacheEntry.FromString(
+      cache_entry
   )
-  return xla_executable_deserialized
 
 
-def put_executable(
+def put_cache_entry(
     cache_key: str,
     module_name: str,
     executable: xla_client.LoadedExecutable,
     backend,
+    compilation_time: float,
 ) -> None:
-  """Adds 'executable' to the cache, possibly evicting older entries."""
+  """Adds 'executable' and compile time to the cache, possibly evicting older entries."""
   assert (
       _cache is not None
-  ), "initialize_cache must be called before you can call put_executable()"
+  ), "initialize_cache must be called before you can call put_cache_entry()"
   logger.info(
       "Writing %s to persistent compilation cache with key %s.",
       module_name,
       cache_key,
   )
   serialized_executable = backend.serialize_executable(executable)
+  cache_entry = compilation_cache_entry_pb2.CompilationCacheEntry(
+      executable=serialized_executable,
+      compilation_duration_sec=compilation_time,
+  )
   if zstandard:
     compressor = zstandard.ZstdCompressor()
-    serialized_executable = compressor.compress(serialized_executable)
+    cache_entry = compressor.compress(cache_entry.SerializeToString())
   else:
-    serialized_executable = zlib.compress(serialized_executable)
-  _cache.put(cache_key, serialized_executable)
+    cache_entry = zlib.compress(cache_entry.SerializeToString())
+  _cache.put(cache_key, cache_entry)
 
 
 def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):

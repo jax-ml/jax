@@ -165,6 +165,7 @@ py_library_providing_imports_info(
         ":api_util",
         ":basearray",
         ":cloud_tpu_init",
+        ":compilation_cache_entry_py_pb2",
         ":compilation_cache_internal",
         ":config",
         ":core",
@@ -256,6 +257,7 @@ pytype_strict_library(
     srcs = ["_src/compilation_cache.py"],
     visibility = [":internal"] + jax_visibility("compilation_cache"),
     deps = [
+        ":compilation_cache_entry_py_pb2",
         ":compilation_cache_interface",
         ":config",
         ":gfile_cache",
@@ -738,4 +740,15 @@ pytype_library(
     srcs = ["experimental/rnn.py"],
     visibility = ["//visibility:public"],
     deps = [":jax"],
+)
+
+proto_library(
+    name = "compilation_cache_entry_proto",
+    srcs = ["_src/compilation_cache_entry.proto"],
+)
+
+py_proto_library(
+    name = "compilation_cache_entry_py_pb2",
+    api_version = 2,
+    deps = [":compilation_cache_entry_proto"],
 )
