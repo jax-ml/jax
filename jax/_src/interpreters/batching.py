@@ -122,7 +122,7 @@ class RaggedAxis:
     # same length!
     return len(self.ragged_axes[0][1])
 
-  def move_stacked_axis(self, dst):
+  def move_stacked_axis(self: RaggedAxis, dst: int) -> RaggedAxis:
     # Assumes that all stored and incoming axes are already canonicalized
     def move_axis(ax):
       if self.stacked_axis > ax and ax >= dst:
@@ -133,16 +133,24 @@ class RaggedAxis:
     new_ragged_axes = [(move_axis(ax), sizes) for ax, sizes in self.ragged_axes]
     return RaggedAxis(dst, new_ragged_axes)
 
-  def transpose_ragged_axes(self, perm):
-    new_ragged_axes = [(perm[ax], size) for ax, size in self.ragged_axes]
-    return RaggedAxis(self.stacked_axis, new_ragged_axes)
+def transpose_ragged_axes(dim: RaggedAxis, perm: tuple[int, ...]) -> RaggedAxis:
+  new_ragged_axes = []
+  for idx, old_idx in enumerate(perm):
+    for ax, size in dim.ragged_axes:
+      if old_idx == ax:
+        new_ragged_axes.append((idx, size))
+        break
+  return _sorted_ragged_axis(dim.stacked_axis, new_ragged_axes)
+
+def _sorted_ragged_axis(stacked_axis, ragged_axes):
+  return RaggedAxis(stacked_axis, list(sorted(ragged_axes, key=lambda p: p[0])))
 
 def make_batch_axis(
     ndim: int, stacked_axis: int, ragged_axes: list[tuple[int, Array]]
   ) -> Union[int, RaggedAxis]:
   if ragged_axes:
     canonical = [(canonicalize_axis(ax, ndim), sz) for ax, sz in ragged_axes]
-    return RaggedAxis(canonicalize_axis(stacked_axis, ndim), canonical)
+    return _sorted_ragged_axis(canonicalize_axis(stacked_axis, ndim), canonical)
   else:
     return canonicalize_axis(stacked_axis, ndim)
 
@@ -404,6 +412,8 @@ class BatchTrace(Trace):
     return frame
 
   def process_primitive(self, primitive, tracers, params):
+    if config.jax_dynamic_shapes:
+      primitive.abstract_eval(*(t.aval for t in tracers), **params)
     vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
     is_axis_primitive = primitive in axis_primitive_batchers
     used_names = core.used_axis_names(primitive, params)
