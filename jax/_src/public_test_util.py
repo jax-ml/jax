@@ -47,14 +47,17 @@ def _dtype(x):
 _default_tolerance = {
   _dtypes.float0: 0,
   np.dtype(np.bool_): 0,
+  np.dtype(_dtypes.int4): 0,
   np.dtype(np.int8): 0,
   np.dtype(np.int16): 0,
   np.dtype(np.int32): 0,
   np.dtype(np.int64): 0,
+  np.dtype(_dtypes.uint4): 0,
   np.dtype(np.uint8): 0,
   np.dtype(np.uint16): 0,
   np.dtype(np.uint32): 0,
   np.dtype(np.uint64): 0,
+  np.dtype(_dtypes.float8_e4m3b11fnuz): 1e-1,
   np.dtype(_dtypes.float8_e4m3fn): 1e-1,
   np.dtype(_dtypes.float8_e5m2): 1e-1,
   np.dtype(_dtypes.bfloat16): 1e-2,
@@ -75,6 +78,7 @@ def default_tolerance():
 
 
 default_gradient_tolerance = {
+  np.dtype(_dtypes.float8_e4m3b11fnuz): 1e-1,
   np.dtype(_dtypes.float8_e4m3fn): 1e-1,
   np.dtype(_dtypes.float8_e5m2): 1e-1,
   np.dtype(_dtypes.bfloat16): 1e-1,
@@ -85,11 +89,6 @@ default_gradient_tolerance = {
   np.dtype(np.complex128): 1e-5,
 }
 
-# TODO(jakevdp): make this unconditional when ml_dtypes>=0.2 is required
-if _dtypes.float8_e4m3b11fnuz is not None:
-  _default_tolerance[np.dtype(_dtypes.float8_e4m3b11fnuz)] = 1e-1
-  default_gradient_tolerance[np.dtype(_dtypes.float8_e4m3b11fnuz)] = 1e-1
-
 def is_python_scalar(val):
   return not isinstance(val, np.generic) and isinstance(val, (bool, int, float, complex))
 
@@ -97,10 +96,8 @@ def _assert_numpy_allclose(a, b, atol=None, rtol=None, err_msg=''):
   if a.dtype == b.dtype == _dtypes.float0:
     np.testing.assert_array_equal(a, b, err_msg=err_msg)
     return
-  custom_dtypes = [_dtypes.float8_e4m3fn, _dtypes.float8_e5m2, _dtypes.bfloat16]
-  # TODO(jakevdp): make this unconditional when ml_dtypes>=0.2 is required
-  if _dtypes.float8_e4m3b11fnuz is not None:
-    custom_dtypes.insert(0, _dtypes.float8_e4m3b11fnuz)
+  custom_dtypes = [_dtypes.float8_e4m3b11fnuz, _dtypes.float8_e4m3fn,
+                   _dtypes.float8_e5m2, _dtypes.bfloat16]
   a = a.astype(np.float32) if a.dtype in custom_dtypes else a
   b = b.astype(np.float32) if b.dtype in custom_dtypes else b
   kw = {}

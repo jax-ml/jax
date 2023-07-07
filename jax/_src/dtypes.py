@@ -34,6 +34,15 @@ from jax._src.typing import DType, DTypeLike, OpaqueDType
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
+try:
+  _ml_dtypes_version = tuple(map(int, ml_dtypes.__version__.split('.')[:3]))
+except:
+  pass
+else:
+  if _ml_dtypes_version < (0, 2, 0):
+    raise ValueError("JAX requires ml_dtypes version 0.2.0 or newer; "
+                     f"installed version is {ml_dtypes.__version__}.")
+
 FLAGS = flags.FLAGS
 
 # TODO(frostig,mattjj): achieve this w/ a protocol instead of registry?
@@ -43,12 +52,11 @@ def is_opaque_dtype(dtype: Any) -> bool:
   return type(dtype) in opaque_dtypes
 
 # fp8 support
-# TODO(jakevdp): remove this if statement when minimum ml_dtypes version > 0.1
-float8_e4m3b11fnuz: Optional[type[np.generic]] = None
+float8_e4m3b11fnuz: type[np.generic] = ml_dtypes.float8_e4m3b11fnuz
 float8_e4m3fn: type[np.generic] = ml_dtypes.float8_e4m3fn
 float8_e5m2: type[np.generic] = ml_dtypes.float8_e5m2
 
-_float8_e4m3b11fnuz_dtype: Optional[np.dtype] = None
+_float8_e4m3b11fnuz_dtype: np.dtype = np.dtype(float8_e4m3b11fnuz)
 _float8_e4m3fn_dtype: np.dtype = np.dtype(float8_e4m3fn)
 _float8_e5m2_dtype: np.dtype = np.dtype(float8_e5m2)
 
@@ -57,32 +65,24 @@ bfloat16: type[np.generic] = ml_dtypes.bfloat16
 _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
 _custom_float_scalar_types = [
+    float8_e4m3b11fnuz,
     float8_e4m3fn,
     float8_e5m2,
     bfloat16,
 ]
 _custom_float_dtypes = [
+    _float8_e4m3b11fnuz_dtype,
     _float8_e4m3fn_dtype,
     _float8_e5m2_dtype,
     _bfloat16_dtype,
 ]
 
-if hasattr(ml_dtypes, "float8_e4m3b11fnuz"):
-  float8_e4m3b11fnuz = ml_dtypes.float8_e4m3b11fnuz
-  _float8_e4m3b11fnuz_dtype = np.dtype(float8_e4m3b11fnuz)
-  _custom_float_scalar_types.insert(0, float8_e4m3b11fnuz)  # type: ignore[arg-type]
-  _custom_float_dtypes.insert(0, _float8_e4m3b11fnuz_dtype)  # type: ignore[arg-type]
+# 4-bit integer support
+int4: type[np.generic] = ml_dtypes.int4
+uint4: type[np.generic] = ml_dtypes.uint4
 
-int4: Optional[type[np.generic]] = None
-_int4_dtype: Optional[np.dtype] = None
-uint4: Optional[type[np.generic]] = None
-_uint4_dtype: Optional[np.dtype] = None
-
-if hasattr(ml_dtypes, "int4"):
-  int4 = ml_dtypes.int4
-  uint4 = ml_dtypes.uint4
-  _int4_dtype = np.dtype(int4)
-  _uint4_dtype = np.dtype(uint4)
+_int4_dtype: np.dtype = np.dtype(int4)
+_uint4_dtype: np.dtype = np.dtype(uint4)
 
 # Default types.
 bool_: type = np.bool_
@@ -226,17 +226,8 @@ def coerce_to_array(x: Any, dtype: Optional[DTypeLike] = None) -> np.ndarray:
     dtype = _scalar_type_to_dtype(type(x), x)
   return np.asarray(x, dtype)
 
-try:
-  iinfo = ml_dtypes.iinfo
-except AttributeError:
-  iinfo = np.iinfo
-
-try:
-  finfo = ml_dtypes.finfo
-except AttributeError as err:
-  _ml_dtypes_version = getattr(ml_dtypes, "__version__", "<unknown>")
-  raise ImportError("JAX requires package ml_dtypes>=0.1.0. "
-                    f"Installed version is {_ml_dtypes_version}.") from err
+iinfo = ml_dtypes.iinfo
+finfo = ml_dtypes.finfo
 
 def _issubclass(a: Any, b: Any) -> bool:
   """Determines if ``a`` is a subclass of ``b``.
@@ -285,13 +276,11 @@ def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
       if isinstance(b, np.dtype):
         return a == b
       return b in [np.floating, np.inexact, np.number]
-    # TODO(phawkins): remove the "_int4_dtype is not None" tests after requiring
-    # an ml_dtypes version that has int4 and uint4.
-    if _int4_dtype is not None and a == _int4_dtype:
+    if a == _int4_dtype:
       if isinstance(b, np.dtype):
         return a == b
       return b in [np.signedinteger, np.integer, np.number]
-    if _uint4_dtype is not None and a == _uint4_dtype:
+    if a == _uint4_dtype:
       if isinstance(b, np.dtype):
         return a == b
       return b in [np.unsignedinteger, np.integer, np.number]

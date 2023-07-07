@@ -107,6 +107,7 @@ from jax._src.numpy.lax_numpy import (
     float16 as float16,
     float32 as float32,
     float64 as float64,
+    float8_e4m3b11fnuz as float8_e4m3b11fnuz,
     float8_e4m3fn as float8_e4m3fn,
     float8_e5m2 as float8_e5m2,
     float_ as float_,
@@ -142,6 +143,7 @@ from jax._src.numpy.lax_numpy import (
     inf as inf,
     inner as inner,
     insert as insert,
+    int4 as int4,
     int8 as int8,
     int16 as int16,
     int32 as int32,
@@ -237,6 +239,7 @@ from jax._src.numpy.lax_numpy import (
     triu_indices_from as triu_indices_from,
     trunc as trunc,
     uint as uint,
+    uint4 as uint4,
     uint8 as uint8,
     uint16 as uint16,
     uint32 as uint32,
@@ -253,22 +256,6 @@ from jax._src.numpy.lax_numpy import (
     zeros as zeros,
     zeros_like as zeros_like,
 )
-
-# TODO(phawkins): make this import unconditional after increasing the ml_dtypes
-# minimum version.
-import jax._src.numpy.lax_numpy
-if hasattr(jax._src.numpy.lax_numpy, "int4"):
-  from jax._src.numpy.lax_numpy import (
-    int4 as int4,
-    uint4 as uint4,
-  )
-# TODO(jakevdp): make this import unconditional after increasing the minimum
-# version for ml_dtypes and jaxlib
-if hasattr(jax._src.numpy.lax_numpy, "float8_e4m3b11fnuz"):
-  from jax._src.numpy.lax_numpy import (
-    float8_e4m3b11fnuz as float8_e4m3b11fnuz,
-  )
-
 
 from jax._src.numpy.index_tricks import (
   c_ as c_,
