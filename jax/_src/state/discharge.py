@@ -26,12 +26,12 @@ from jax._src import api_util
 from jax._src import ad_util
 from jax._src import core
 from jax._src import linear_util as lu
-from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import mlir
 from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src.config import config
 from jax._src.interpreters import ad
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.state.types import AbstractRef, RefEffect
