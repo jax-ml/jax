@@ -59,9 +59,8 @@ np_float_dtypes = [np.dtype('float16'), np.dtype('float32'),
 float_dtypes = [np.dtype(dtypes.bfloat16)] + np_float_dtypes
 custom_float_dtypes = [np.dtype(dtypes.bfloat16)]
 if _fp8_enabled:
-  fp8_dtypes = [np.dtype(dtypes.float8_e4m3fn), np.dtype(dtypes.float8_e5m2)]
-  if dtypes.float8_e4m3b11fnuz is not None:
-    fp8_dtypes += [np.dtype(dtypes.float8_e4m3b11fnuz)]
+  fp8_dtypes = [np.dtype(dtypes.float8_e4m3b11fnuz), np.dtype(dtypes.float8_e4m3fn),
+                np.dtype(dtypes.float8_e5m2)]
   float_dtypes += fp8_dtypes
   custom_float_dtypes += fp8_dtypes
 

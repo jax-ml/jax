@@ -23,6 +23,7 @@ Remember to align the itemized text with the first line of an item within a list
     For example, instead of `x.at[i].get(True)`, use `x.at[i].get(indices_are_sorted=True)`
 
 * Breaking changes
+  * JAX now requires ml_dtypes version 0.2.0 or newer.
   * To fix a corner case, calls to {func}`jax.lax.cond` with five
     arguments will always resolve to the "common operands" `cond`
     behavior (as documented) if the second and third arguments are

@@ -63,7 +63,7 @@ setup(
     package_data={'jax': ['py.typed', "*.pyi", "**/*.pyi"]},
     python_requires='>=3.9',
     install_requires=[
-        'ml_dtypes>=0.1.0',
+        'ml_dtypes>=0.2.0',
         'numpy>=1.22',
         'opt_einsum',
         'scipy>=1.7',
