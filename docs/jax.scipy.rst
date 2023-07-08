@@ -153,6 +153,8 @@ jax.scipy.special
    xlog1py
    xlogy
    zeta
+   kl_div
+   rel_entr
 
 
 jax.scipy.stats

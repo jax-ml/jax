@@ -175,7 +175,6 @@ def entr(x: ArrayLike) -> Array:
                     lax.full_like(x, -np.inf),
                     lax.neg(_xlogx(x)))
 
-
 @_wraps(osp_special.multigammaln, update_doc=False)
 def multigammaln(a: ArrayLike, d: ArrayLike) -> Array:
   d = core.concrete_or_error(int, d, "d argument of multigammaln")
@@ -190,6 +189,50 @@ def multigammaln(a: ArrayLike, d: ArrayLike) -> Array:
                 axis=-1)
   return res + constant
 
+
+@_wraps(osp_special.kl_div, module="scipy.special")
+def kl_div(
+    p: ArrayLike,
+    q: ArrayLike,
+) -> Array:
+    p, q = promote_args_inexact("kl_div", p, q)
+    zero = _lax_const(p, 0.0)
+    both_gt_zero_mask = lax.bitwise_and(lax.gt(p, zero), lax.gt(q, zero))
+    one_zero_mask = lax.bitwise_and(lax.eq(p, zero), lax.ge(q, zero))
+
+    safe_p = jnp.where(both_gt_zero_mask, p, 1)
+    safe_q = jnp.where(both_gt_zero_mask, q, 1)
+
+    log_val = lax.sub(
+        lax.add(
+            lax.sub(_xlogx(safe_p), xlogy(safe_p, safe_q)),
+            safe_q,
+        ),
+        safe_p,
+    )
+    result = jnp.where(
+        both_gt_zero_mask, log_val, jnp.where(one_zero_mask, q, np.inf)
+    )
+    return result
+
+
+@_wraps(osp_special.rel_entr, module="scipy.special")
+def rel_entr(
+    p: ArrayLike,
+    q: ArrayLike,
+) -> Array:
+    p, q = promote_args_inexact("rel_entr", p, q)
+    zero = _lax_const(p, 0.0)
+    both_gt_zero_mask = lax.bitwise_and(lax.gt(p, zero), lax.gt(q, zero))
+    one_zero_mask = lax.bitwise_and(lax.eq(p, zero), lax.ge(q, zero))
+
+    safe_p = jnp.where(both_gt_zero_mask, p, 1)
+    safe_q = jnp.where(both_gt_zero_mask, q, 1)
+    log_val = lax.sub(_xlogx(safe_p), xlogy(safe_p, safe_q))
+    result = jnp.where(
+        both_gt_zero_mask, log_val, jnp.where(one_zero_mask, q, jnp.inf)
+    )
+    return result
 
 # coefs of (2k)! / B_{2k} where B are bernoulli numbers
 # those numbers are obtained using https://www.wolframalpha.com

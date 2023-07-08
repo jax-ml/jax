@@ -137,6 +137,11 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("exp1", 1, [np.float32], jtu.rand_positive, True),
     op_record(
         "expn", 2, (int_dtypes, [np.float32]), jtu.rand_positive, True, (0,)),
+    op_record("kl_div", 2, float_dtypes, jtu.rand_positive, True),
+    op_record(
+        "rel_entr", 2, float_dtypes, jtu.rand_positive, True,
+    ),
+
 ]
 
 
