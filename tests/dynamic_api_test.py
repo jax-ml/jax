@@ -1674,6 +1674,7 @@ class PileTest(jtu.JaxTestCase):
       return part_1
     p = jax.vmap(func, out_axes=batching.pile_axis)(ins)
     self.assertIsInstance(p, batching.Pile)
+    self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[bint\{≤5\}\[3\] with value: \[3 1 4\]\.Var[0-9]+\]')
     data = jax.lax.broadcasted_iota('int32', (3, 5), 1)
     self.assertAllClose(p.data, data)
 
