@@ -601,6 +601,29 @@ class LaxVmapTest(jtu.JaxTestCase):
                         [dtype, idxs.dtype, dtype], jtu.rand_default(self.rng()),
                         rtol={np.float16: 5e-3, dtypes.bfloat16: 7e-2})
 
+  @jtu.sample_product(
+    [dict(arg_shape=arg_shape, idxs=idxs, update_shape=update_shape,
+          dnums=dnums, bdims=bdims)
+      for arg_shape, idxs, update_shape, dnums in [
+          ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
+            update_window_dims=(), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10,), np.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(),
+            scatter_dims_to_operand_dims=(0,))),
+          ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+            update_window_dims=(1,), inserted_window_dims=(0,),
+            scatter_dims_to_operand_dims=(0,))),
+      ]
+      for bdims in lax_test_util.all_bdims(arg_shape, idxs.shape)],
+    dtype=lax_test_util.float_dtypes,
+  )
+  def testScatterApply(self, arg_shape, dtype, idxs, update_shape, dnums, bdims):
+    fun = partial(lax.scatter_apply, func=jnp.sin, update_shape=update_shape, dimension_numbers=dnums)
+    self._CheckBatching(fun, 5, bdims, [arg_shape, idxs.shape],
+                        [dtype, idxs.dtype], jtu.rand_default(self.rng()),
+                        rtol={np.float16: 5e-3, dtypes.bfloat16: 7e-2})
+
   def testShapeUsesBuiltinInt(self):
     x = lax.iota(np.int32, 3) + 1
     self.assertIsInstance(x.shape[0], int)  # not np.int64

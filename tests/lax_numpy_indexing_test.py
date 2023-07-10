@@ -466,6 +466,15 @@ class IndexingTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_op_idx, jnp_op_idx, args_maker)
     self._CompileAndCheck(jnp_op_idx, args_maker)
 
+  def testIndexApplyBatchingBug(self):
+    # https://github.com/google/jax/issues/16655
+    arr = jnp.array([[1, 2, 3, 4, 5, 6]])
+    ind = jnp.array([3])
+    func = lambda a, i: a.at[i].apply(lambda x: x - 1)
+    expected = jnp.array(list(map(func, arr, ind)))
+    out = jax.vmap(func)(arr, ind)
+    self.assertArraysEqual(out, expected)
+
   def testIndexUpdateScalarBug(self):
     # https://github.com/google/jax/issues/14923
     a = jnp.arange(10.)
