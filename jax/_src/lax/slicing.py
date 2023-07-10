@@ -1383,11 +1383,12 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
                                   inserted_window_dims=(),
                                   scatter_dims_to_operand_dims=dims)
   index, index_bdim = _batch_dynamic_slice_indices(start_idx, start_idx_bd)
-  return _scatter_batching_rule(
-    scatter, (operand, index, update), (operand_bd, index_bdim, update_bd),
-    update_jaxpr=None, update_consts=None, dimension_numbers=dnums,
-    indices_are_sorted=True, unique_indices=True,
-    mode=GatherScatterMode.CLIP)
+  return jax.vmap(
+    partial(scatter, dimension_numbers=dnums,
+            indices_are_sorted=True, unique_indices=True,
+            mode=GatherScatterMode.CLIP),
+    in_axes=(operand_bd, index_bdim, update_bd),
+    out_axes=0)(operand, index, update), 0
 
 
 dynamic_update_slice_p = standard_primitive(
@@ -2067,7 +2068,6 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
                            indices_are_sorted, unique_indices, mode):
   operand, indices, updates = batched_args
   operand_bdim, indices_bdim, updates_bdim = batch_dims
-  del update_jaxpr, update_consts  # Unused.
 
   # move the operand batch dim to the front if it is not None, otherwise create
   # it at the front (so that we can scatter into it)
@@ -2086,10 +2086,10 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
         update_window_dims=update_window_dims,
         inserted_window_dims=inserted_window_dims,
         scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
-    return scatter_op(
-      operand, indices, updates, dnums,
+    return scatter_op.bind(
+      operand, indices, updates, dimension_numbers=dnums,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=mode), 0
+      mode=mode, update_jaxpr=update_jaxpr, update_consts=update_consts), 0
 
 
   # see the third case in _gather_batching_rule for comparison and comments
@@ -2108,10 +2108,10 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
       update_window_dims=update_window_dims,
       inserted_window_dims=inserted_window_dims,
       scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
-  return scatter_op(
-      operand, indices, updates, dnums,
+  return scatter_op.bind(
+      operand, indices, updates, dimension_numbers=dnums,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=mode), 0
+      mode=mode, update_jaxpr=update_jaxpr, update_consts=update_consts), 0
 
 scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
@@ -2119,7 +2119,7 @@ scatter_add_p = standard_primitive(
 ad.primitive_jvps[scatter_add_p] = _scatter_add_jvp
 ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
 batching.primitive_batchers[scatter_add_p] = (
-  partial(_scatter_batching_rule, scatter_add))
+  partial(_scatter_batching_rule, scatter_add_p))
 
 scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
@@ -2141,7 +2141,7 @@ ad.defjvp(scatter_mul_p,
           _scatter_mul_jvp_rhs)
 ad.primitive_transposes[scatter_mul_p] = _scatter_mul_transpose_rule
 batching.primitive_batchers[scatter_mul_p] = (
-  partial(_scatter_batching_rule, scatter_mul))
+  partial(_scatter_batching_rule, scatter_mul_p))
 
 def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
                           update_consts, dimension_numbers,
@@ -2248,14 +2248,14 @@ scatter_min_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-min',
     weak_type_rule=_argnum_weak_type(0))
 batching.primitive_batchers[scatter_min_p] = (
-  partial(_scatter_batching_rule, scatter_min))
+  partial(_scatter_batching_rule, scatter_min_p))
 ad.primitive_jvps[scatter_min_p] = partial(_scatter_extremal_jvp, scatter_min_p)
 
 scatter_max_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-max',
     weak_type_rule=_argnum_weak_type(0))
 batching.primitive_batchers[scatter_max_p] = (
-  partial(_scatter_batching_rule, scatter_max))
+  partial(_scatter_batching_rule, scatter_max_p))
 ad.primitive_jvps[scatter_max_p] = partial(_scatter_extremal_jvp, scatter_max_p)
 
 def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
@@ -2401,7 +2401,7 @@ scatter_p = standard_primitive(
 ad.primitive_jvps[scatter_p] = _scatter_jvp
 ad.primitive_transposes[scatter_p] = _scatter_transpose_rule
 batching.primitive_batchers[scatter_p] = (
-  partial(_scatter_batching_rule, scatter))
+  partial(_scatter_batching_rule, scatter_p))
 
 
 def _scatter_lower_opaque(ctx, operand, indices, updates, *,
