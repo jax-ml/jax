@@ -5258,13 +5258,17 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'histogram': ['normed'],
       'histogram2d': ['normed'],
       'histogramdd': ['normed'],
+      'nanstd': ['mean'],
+      'nanvar': ['mean'],
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
       'partition': ['kind', 'order'],
       'row_stack': ['casting'],
       'stack': ['casting'],
+      'std': ['mean'],
       'tri': ['like'],
       'unique': ['equal_nan'],
+      'var': ['mean'],
       'vstack': ['casting'],
       'zeros_like': ['subok', 'order']
     }
