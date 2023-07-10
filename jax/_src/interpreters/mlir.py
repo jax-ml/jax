@@ -143,7 +143,11 @@ if dtypes.int4 is not None:
   })
 
 
-def dtype_to_ir_type(dtype: Union[np.dtype, np.generic]) -> ir.Type:
+def dtype_to_ir_type(dtype: Union[core.bint, np.dtype, np.generic]) -> ir.Type:
+  if isinstance(dtype, core.bint):
+    # TODO Support different-size underlying dtypes to take advantage of the
+    # bound for packing?
+    dtype = np.dtype(np.int32)
   assert isinstance(dtype, (np.dtype, np.generic)), type(dtype)
   dtype = np.dtype(dtype)
   try:
