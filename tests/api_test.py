@@ -1699,6 +1699,15 @@ class APITest(jtu.JaxTestCase):
     ):
       jax.device_put((x, y, z), device=(s1, s2))
 
+  def test_vmap_inconsistent_sizes_constructs_proper_error_message(self):
+    def f(x1, x2, g):
+      return g(x1, x2)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "vmap got inconsistent sizes for array axes to be mapped:"
+    ):
+      jax.vmap(f, (0, 0, None))(jnp.ones(2), jnp.ones(3), jnp.add)
 
   def test_device_get_scalar(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
