@@ -1870,7 +1870,7 @@ class SemanticallyEqualShardings:
 def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             semantic_in_shardings, semantic_out_shardings,
                             da_object, lowering_platform,
-                            donated_invars, name_stack):
+                            donated_invars, name_stack, override_lowering_rules):
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = semantic_in_shardings.shardings
   out_shardings = semantic_out_shardings.shardings
@@ -1940,7 +1940,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
         result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
         num_replicas=nreps,
-        num_partitions=num_partitions)
+        num_partitions=num_partitions,
+        override_lowering_rules=override_lowering_rules)
   tuple_args = dispatch.should_tuple_args(len(global_in_avals), backend.platform)
   unordered_effects = list(
       effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
@@ -1998,6 +1999,8 @@ def lower_sharding_computation(
     always_lower: bool,
     devices_from_context: Optional[Sequence[xc.Device]] = None,
     lowering_platform: Optional[str],
+    override_lowering_rules: Optional[
+        tuple[tuple[core.Primitive, mlir.LoweringRule]]] = None,
 ) -> MeshComputation:
   """Lowers a computation to XLA. It can take arbitrary shardings as input.
 
@@ -2084,7 +2087,7 @@ def lower_sharding_computation(
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, api_name, fun_name, backend, semantic_in_shardings,
        semantic_out_shardings, da_object, lowering_platform,
-       donated_invars, name_stack)
+       donated_invars, name_stack, override_lowering_rules)
 
   # backend and device_assignment is passed through to MeshExecutable because
   # if keep_unused=False and all in_shardings are pruned, then there is no way

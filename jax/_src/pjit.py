@@ -351,6 +351,8 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
   def lower(*args, **kwargs):
     _experimental_lowering_platform = kwargs.pop(
         '_experimental_lowering_platform', None)
+    _experimental_override_lowering_rules = kwargs.pop(
+        '_experimental_override_lowering_rules', None)
     (args_flat, flat_global_in_avals, params, in_tree, out_tree,
      donate_argnums) = infer_params_fn(*args, **kwargs)
     resource_env = params['resource_env']
@@ -362,7 +364,8 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
           params['jaxpr'], in_shardings, params['out_shardings'],
           params['resource_env'], params['donated_invars'], params['name'],
           params['keep_unused'], params['inline'], always_lower=True,
-          lowering_platform=_experimental_lowering_platform)
+          lowering_platform=_experimental_lowering_platform,
+          override_lowering_rules=_experimental_override_lowering_rules)
     except pxla.DeviceAssignmentMismatchError as e:
       fails, = e.args
       api_name = 'jit' if params['resource_env'] is None else 'pjit'
@@ -1268,7 +1271,9 @@ def _pjit_lower_cached(
     inline: bool,
     always_lower: bool,
     *,
-    lowering_platform: Optional[str]):
+    lowering_platform: Optional[str],
+    override_lowering_rules: Optional[
+        tuple[tuple[core.Primitive, mlir.LoweringRule]]] = None):
   in_shardings: tuple[PjitShardingMinusUnspecified, ...] = cast(
       tuple[PjitShardingMinusUnspecified, ...], sdat_in_shardings.shardings)
   out_shardings: tuple[PjitSharding, ...] = sdat_out_shardings.shardings
@@ -1299,7 +1304,9 @@ def _pjit_lower_cached(
         keep_unused=keep_unused, inline=inline, always_lower=always_lower,
         devices_from_context=(
             None if mesh is None or mesh.empty else list(mesh.devices.flat)),
-        lowering_platform=lowering_platform)
+        lowering_platform=lowering_platform,
+        override_lowering_rules=override_lowering_rules,
+)
 
 
 def pjit_staging_rule(trace, *args, **params):

@@ -420,6 +420,10 @@ class ModuleContext:
   cached_primitive_lowerings: dict[Any, func_dialect.FuncOp]
   cached_call_jaxpr_lowerings: dict[Any, func_dialect.FuncOp]
 
+  # A mapping between primitives and user-defined LoweringRules.
+  # When lowering a primitive, give priorioty to the rule in this map over
+  # existing Jax rules.
+  override_lowering_rules: Optional[tuple[tuple[core.Primitive, LoweringRule]]]
 
   @property
   def axis_env(self) -> sharding_impls.AxisEnv:
@@ -442,6 +446,8 @@ class ModuleContext:
                                                 func_dialect.FuncOp]] = None,
       cached_call_jaxpr_lowerings: Optional[dict[Any,
                                                  func_dialect.FuncOp]] = None,
+      override_lowering_rules: Optional[
+          tuple[tuple[core.Primitive, LoweringRule]]] = None,
       shape_poly_state = None):
     assert platform is not None
     self.context = context or make_ir_context()
@@ -460,6 +466,7 @@ class ModuleContext:
     self.cached_call_jaxpr_lowerings = ({}
                                         if cached_call_jaxpr_lowerings is None
                                         else cached_call_jaxpr_lowerings)
+    self.override_lowering_rules = override_lowering_rules
     self.shape_poly_state = shape_poly_state or ShapePolyLoweringState(())
 
   @property
@@ -639,6 +646,8 @@ def lower_jaxpr_to_module(
     result_names: Optional[Sequence[Optional[str]]] = None,
     num_replicas: int = 1,
     num_partitions: int = 1,
+    override_lowering_rules: Optional[
+        tuple[tuple[core.Primitive, LoweringRule]]] = None,
 ) -> LoweringResult:
   """Lowers a top-level jaxpr to an MLIR module.
 
@@ -691,6 +700,7 @@ def lower_jaxpr_to_module(
 
   ctx = ModuleContext(backend_or_name, platform, axis_context, name_stack,
                       keepalives, channel_iter, host_callbacks,
+                      override_lowering_rules=override_lowering_rules,
                       shape_poly_state=ShapePolyLoweringState(dim_vars))
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
@@ -1135,6 +1145,13 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     assert node is not None
     env[v] = tuple(node)
 
+  def get_lowering(primitive: core.Primitive) -> Optional[LoweringRule]:
+    if ctx.override_lowering_rules is None:
+      return None
+    for p, rule in ctx.override_lowering_rules:
+      if primitive is p:
+        return rule
+    return None
 
   env: dict[core.Var, tuple[ir.Value, ...]] = {}
 
@@ -1153,7 +1170,10 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     loc = _source_info_to_location(eqn.primitive, eqn.params, source_info,
                                    ctx.name_stack)
     with source_info_util.user_context(eqn.source_info.traceback), loc:
-      if eqn.primitive in _platform_specific_lowerings[ctx.platform]:
+      override_rule = get_lowering(eqn.primitive)
+      if override_rule is not None:
+        rule = override_rule
+      elif eqn.primitive in _platform_specific_lowerings[ctx.platform]:
         rule = _platform_specific_lowerings[ctx.platform][eqn.primitive]
       elif eqn.primitive in xla._backend_specific_translations[ctx.platform]:
         rule = xla_fallback_lowering(eqn.primitive)

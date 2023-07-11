@@ -10086,5 +10086,25 @@ class DeprecationsTest(jtu.JaxTestCase):
     with self.assertWarns(DeprecationWarning):
       self.assertIs(jax.flatten_fun_nokwargs, jax.api_util.flatten_fun_nokwargs)
 
+
+class OverrideLoweringTest(jtu.JaxTestCase):
+
+  def test_sharding_constraint_as_noop(self):
+    def f(x):
+      return jax.lax.with_sharding_constraint(
+          x, jax.sharding.SingleDeviceSharding(jax.devices()[0]))
+
+    def wsc_as_noop(ctx, operand, *args, **kwargs):
+      del ctx, args, kwargs
+      return [operand]
+
+    rules = ((jax.lax.sharding_constraint_p, wsc_as_noop),)
+    lowered_ir = (
+        jax.jit(f)
+        .lower(jax.ShapeDtypeStruct((2, 4), dtype=jnp.bfloat16),
+               _experimental_override_lowering_rules=rules).as_text())
+    self.assertNotIn("stablehlo.custom_call", lowered_ir)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
