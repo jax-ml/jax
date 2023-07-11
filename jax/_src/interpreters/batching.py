@@ -115,7 +115,7 @@ class RaggedAxis:
   # For each axis, we store its index and the corresponding segment lengths.
   # For example, the pile i:(Fin 3) => f32[lens1.i, 7, lens2.i]
   # would be represented with ragged_axes = [(1, lens1), (3, lens2)]
-  ragged_axes: list[tuple[int, Array]]
+  ragged_axes: tuple[tuple[int, Array], ...]
 
   @property
   def size(self):
@@ -131,8 +131,8 @@ class RaggedAxis:
       if self.stacked_axis < ax and ax <= dst:
         return ax - 1
       return ax
-    new_ragged_axes = [(move_axis(ax), sizes) for ax, sizes in self.ragged_axes]
-    return RaggedAxis(dst, new_ragged_axes)
+    new_axes = tuple([(move_axis(ax), sizes) for ax, sizes in self.ragged_axes])
+    return RaggedAxis(dst, new_axes)
 
 def transpose_ragged_axes(dim: RaggedAxis, perm: tuple[int, ...]) -> RaggedAxis:
   new_ragged_axes = []
@@ -686,7 +686,7 @@ def batch_subtrace(main, in_dims, *in_vals):
 def indirectify_ragged_axes(dims):
   if not any(type(d) is RaggedAxis for d in dims):
     return [], dims
-  axis_map : Dict[int, Tuple[Array, pe.DBIdx]] = collections.OrderedDict()
+  axis_map : dict[int, tuple[Array, pe.DBIdx]] = collections.OrderedDict()
   def canonicalize_segment_lengths(d: RaggedAxis) -> RaggedAxis:
     new_ragged_axes = []
     for ragged_axis, segment_lengths in d.ragged_axes:
@@ -779,17 +779,18 @@ def _batch_jaxpr2(
   f, out_axes = _batch_jaxpr_inner(f, axis_size)
   f = _batch_jaxpr_outer(f, axis_name, spmd_axis_name, axis_size, in_axes,
                          main_type)
-  in_axes, avals_in = unzip2([
-      handle_ragged(closed_jaxpr.in_avals, dim, aval) if type(dim) is RaggedAxis
-      else (dim, aval) for dim, aval in zip(in_axes, closed_jaxpr.in_avals)])
-  avals_in = [core.unmapped_aval(axis_size, axis_name, b, aval)
-              if b is not not_mapped else aval
-              for aval, b in unsafe_zip(avals_in, in_axes)]
-  jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
+  in_axes2, avals_in = unzip2([
+      handle_ragged(closed_jaxpr.in_avals, dim, aval)
+      if isinstance(dim, RaggedAxis) else (dim, aval)
+      for dim, aval in zip(in_axes, closed_jaxpr.in_avals)])
+  avals_in2 = [core.unmapped_aval(axis_size, axis_name, b, aval)
+               if b is not not_mapped else aval
+               for aval, b in unsafe_zip(avals_in, in_axes2)]
+  jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in2)
   return core.ClosedJaxpr(jaxpr_out, consts), out_axes()
 
-def handle_ragged(in_avals: List[core.AbstractValue], dim: RaggedAxis,
-                  aval: core.ShapedArray) -> Tuple[int, core.ShapedArray]:
+def handle_ragged(in_avals: list[core.AbstractValue], dim: RaggedAxis,
+                  aval: core.ShapedArray) -> tuple[int, core.ShapedArray]:
   new_shape = list(aval.shape)
   for i, dbi in dim.ragged_axes:
     new_shape[i - (dim.stacked_axis < i)] = in_avals[dbi.val].dtype.bound
