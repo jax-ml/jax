@@ -425,11 +425,6 @@ del register_jax_array_methods
 # Deprecations
 
 _deprecations = {
-    # Added March 14, 2023:
-    "DeviceArray": (
-        "jax.numpy.DeviceArray is deprecated. Use jax.Array.",
-        ndarray,
-    ),
     # Added June 2, 2023:
     "alltrue": (
         "jax.numpy.alltrue is deprecated. Use jax.numpy.all",
@@ -451,7 +446,6 @@ _deprecations = {
 
 import typing
 if typing.TYPE_CHECKING:
-  from jax._src.basearray import Array as DeviceArray
   alltrue = all
   cumproduct = cumprod
   product = prod
