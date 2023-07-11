@@ -2311,7 +2311,7 @@ def arange(start: DimSize, stop: Optional[DimSize] = None,
   for name, val in [(start_name, start), ("stop", stop), ("step", step)]:
     if val is not None and np.ndim(val) != 0:
       raise ValueError(f"jax.numpy.arange: arguments must be scalars; got {name}={val}")
-  if any(core.is_dynamic_dim(v) for v in (start, stop, step)):
+  if any(core.is_symbolic_dim(v) for v in (start, stop, step)):
     # Some dynamic shapes
     if stop is None and step is None:
       stop = start
@@ -2628,7 +2628,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: Optional[int] = None, *,
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.repeat()")
   assert isinstance(axis, int)  # to appease mypy
 
-  if core.is_dynamic_dim(repeats):
+  if core.is_symbolic_dim(repeats):
     if total_repeat_length is not None:
       raise ValueError("jnp.repeat with a non-constant `repeats` is supported only "
                        f"when `total_repeat_length` is None. ({repeats=} {total_repeat_length=})")
@@ -4389,7 +4389,7 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
           if start is None or core.definitely_equal(start, 0):
             start = None
           if stop is None or (not isinstance(stop, core.Tracer) and
-              core.greater_equal_dim(stop, x_shape[x_axis])):
+              stop >= x_shape[x_axis]):
             stop = None
         elif core.definitely_equal(step, -1):
           step = -1

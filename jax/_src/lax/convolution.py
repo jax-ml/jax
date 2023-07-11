@@ -797,9 +797,7 @@ def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads, batch_group_count=1):
   if np.any(lhs_padded < 0):
     raise ValueError("Negative padding is larger than the size of the corresponding dimension: "
                      f"got padding={pads} for lhs_shape[2:]={lhs_shape[2:]}")
-  out_space = core.stride_shape(lhs_padded, rhs_shape[2:], strides)
-  out_space = [d if core.greater_equal_dim(d, 0) else 0
-               for d in out_space]
+  out_space = tuple(map(core.stride_dim, lhs_padded, rhs_shape[2:], strides))
   if batch_group_count > 1:
     assert lhs_shape[0] % batch_group_count == 0
     out_shape_0 = lhs_shape[0] // batch_group_count
@@ -930,8 +928,7 @@ def _conv_general_vjp_rhs_padding(
   rhs_dilated_shape = lax._dilate_shape(window_dimensions, rhs_dilation)
   out_dilated_shape = lax._dilate_shape(out_shape, window_strides)
   pads_lo, _ = util.unzip2(padding)
-  pads_from_lhs = core.diff_shape(out_dilated_shape, lhs_dilated_shape)
-  pads_from_rhs = core.diff_shape(core.diff_shape(rhs_dilated_shape, pads_lo),
-                                  (1,) * len(pads_lo))
-  pads_hi = core.sum_shapes(pads_from_lhs, pads_from_rhs)
+  pads_from_lhs = map(operator.sub, out_dilated_shape, lhs_dilated_shape)
+  pads_from_rhs = tuple(rd - pd - 1 for rd, pd in zip(rhs_dilated_shape, pads_lo))
+  pads_hi = tuple(map(operator.add, pads_from_lhs, pads_from_rhs))
   return list(zip(pads_lo, pads_hi))

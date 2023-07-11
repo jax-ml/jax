@@ -1241,10 +1241,10 @@ def definitely_equal(x, y):
     return same_referent(x, y)
   elif x is y:
     return True
-  else:
-    handler, ds = _dim_handler_and_canonical(x, y)
-    return handler.symbolic_equal(*ds)
-
+  try:
+    return x == y
+  except InconclusiveDimensionOperation:
+    return False
 
 # -------------------- abstract values --------------------
 
@@ -1837,122 +1837,13 @@ class InconclusiveDimensionOperation(Exception):
   """Raised when we cannot conclusively compute with symbolic dimensions."""
   pass
 
-class DimensionHandler:
-  """Operations on dimension sizes.
+def is_symbolic_dim(v: Any) -> bool:
+  """Checks if a value is a symbolic dimension used for shape polymorphism.
 
-  Dimension sizes are normally integer constants, but can also be symbolic,
-  e.g., masking.Poly or jax2tf.shape_poly.DimVar.
-
-  The base class works for integers only. Subclasses are invoked when at least
-  one of the operands has a type registered in _SPECIAL_DIMENSION_HANDLERS. In
-  that case, all operands are guaranteed to be either the special dimension
-  type, or Python integer scalars.
-
-  Subclasses should raise InconclusiveDimensionOperation if the result cannot
-  be computed in some contexts.
+  This should be used very rarely, because symbolic dimensions overload all
+  operators, and should just work.
   """
-  def is_constant(self, d: DimSize) -> bool:
-    """The dimension is a constant."""
-    return True
-
-  def symbolic_equal(self, d1: DimSize, d2: DimSize) -> bool:
-    """True iff the dimension sizes are equal in all contexts; False otherwise.
-    Unlike `d1 == d2` this never raises InconclusiveDimensionOperation.
-    """
-    return d1 == d2
-
-  def greater_equal(self, d1: DimSize, d2: DimSize) -> bool:
-    """Computes `d1 >= d2`.
-    Raise InconclusiveDimensionOperation if the result is different in
-    different contexts.
-    """
-    return d1 >= d2
-
-  def sum(self, *ds: DimSize) -> DimSize:
-    """Sum of dimensions.
-    Raises InconclusiveDimensionOperation if the result cannot be represented
-    by the same DimSize in all contexts.
-    """
-    return sum(ds)
-
-  def diff(self, d1: DimSize, d2: DimSize) -> DimSize:
-    """Difference of dimensions.
-    Raises InconclusiveDimensionOperation if the result cannot be represented
-    by the same DimSize in all contexts.
-    """
-    return d1 - d2
-
-  def divide_shape_sizes(self, s1: Shape, s2: Shape) -> DimSize:
-    """Computes integer "i" such that i  * size(s2) == size(s1).
-
-    Raise InconclusiveDimensionOperation if there is no such integer for all
-    contexts,
-    """
-    sz1 = math.prod(s1)
-    sz2 = math.prod(s2)
-    if sz1 == 0 and sz2 == 0:
-      return 1
-    if sz1 % sz2:
-      raise InconclusiveDimensionOperation(f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}")
-    return sz1 // sz2
-
-  def stride(self, d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
-    """(d - window_size) // window_stride + 1.
-
-    If d == 0 or window_size > d, returns 0.
-    """
-    if d == 0 or window_size > d: return 0
-    return (d - window_size) // window_stride + 1
-
-  def dilate(self, d: DimSize, dilation: int) -> DimSize:
-    """Implements `d if dilation == 1 else (0 if d == 0 else 1 + dilation * (d - 1)))`"""
-    if definitely_equal(dilation, 1):
-      return d
-    return 0 if d == 0 else 1 + dilation * (d - 1)
-
-  def as_value(self, d: DimSize):
-    """Turns a dimension size into a JAX value that we can compute with."""
-    return d
-
-_dimension_handler_int = DimensionHandler()
-_SPECIAL_DIMENSION_HANDLERS: dict[type, DimensionHandler] = {}
-DArrayDimHandler = type('DArrayDimHandler', (DimensionHandler,), {})()
-
-def _get_special_dim_handler(dim: DimSize) -> Optional[DimensionHandler]:
-  if isinstance(dim, Tracer) and not config.jax_dynamic_shapes:
-    return None
-  if isinstance(dim, DArray) and not dim.shape and type(dim.dtype) is bint:
-    return DArrayDimHandler
-  return _SPECIAL_DIMENSION_HANDLERS.get(type(dim))
-
-def _dim_handler_and_canonical(*dlist: DimSize) -> tuple[DimensionHandler, tuple[DimSize, ...]]:
-  """Finds the handler for the given dimensions; also returns the canonical dimensions.
-
-  A dimension is canonical if it is a Python integer scalar, or has a type
-  registered in _SPECIAL_DIMENSION_HANDLERS.
-  """
-  special_handlers = set()
-  canonical = []
-  for d in dlist:
-    handler = _get_special_dim_handler(d)
-    if handler:
-      special_handlers.add(handler)
-      canonical.append(d)
-    else:
-      try:
-        canonical.append(operator.index(d))
-      except TypeError:
-        raise _invalid_shape_error(dlist)
-
-  if len(special_handlers) > 1:
-    msg = (f"Dimension size operation involves multiple special dimension types {dlist}")
-    raise ValueError(msg)
-  return next(iter(special_handlers), _dimension_handler_int), tuple(canonical)
-
-def is_dynamic_dim(v: Any) -> bool:
-  """Checks if a value is a dynamic DimSize."""
-  handler = _get_special_dim_handler(v)
-  return (handler is not None)
+  return hasattr(v, "dimension_as_value")
 
 def is_constant_dim(d: DimSize) -> bool:
   # Whether the dimension is a static integer constant.
@@ -1963,7 +1854,7 @@ def is_constant_dim(d: DimSize) -> bool:
     return False
 
 def is_dim(v: Any) -> bool:
-  return is_dynamic_dim(v) or is_constant_dim(v)
+  return is_symbolic_dim(v) or is_constant_dim(v)
 
 def is_constant_shape(s: Shape) -> bool:
   # Whether the shape is a static constant.
@@ -1981,39 +1872,17 @@ def definitely_equal_shape(s1: Shape, s2: Shape) -> bool:
   return (len(s1) == len(s2) and
           all(unsafe_map(definitely_equal, s1, s2)))
 
-def greater_equal_dim(d1: DimSize, d2: DimSize) -> bool:
-  handler, ds = _dim_handler_and_canonical(d1, d2)
-  return handler.symbolic_equal(*ds) or handler.greater_equal(*ds)
-
-def greater_equal_shape(s1: Shape, s2: Shape) -> bool:
-  return all(map(greater_equal_dim, s1, s2))
-
-def sum_dim(*ds: DimSize) -> DimSize:
-  handler, ds = _dim_handler_and_canonical(*ds)
-  return handler.sum(*ds)
-
-def sum_shapes(*ss: Shape) -> Shape:
-  return tuple(map(sum_dim, *ss))
-
-def diff_dim(d1: DimSize, d2: DimSize) -> DimSize:
-  handler, ds = _dim_handler_and_canonical(d1, d2)
-  return handler.diff(*ds)
-
-def diff_shape(s1: Shape, s2: Shape) -> Shape:
-  return tuple(map(diff_dim, s1, s2))
-
 def divide_shape_sizes(s1: Shape, s2: Shape) -> DimSize:
   """Returns an integer "i" s.t., i * size(s2) == size(s1).
-  Raises if there is no such integer."""
-  s1 = s1 or (1,)
-  s2 = s2 or (1,)
-  handler, ds = _dim_handler_and_canonical(*s1, *s2)
-  return handler.divide_shape_sizes(ds[:len(s1)], ds[len(s1):])
-
-def same_shape_sizes(s1: Shape, s2: Shape) -> bool:
-  maybe_result = cancel_divide_tracers(s1, s2)
-  if maybe_result is not None: return maybe_result == 1
-  return 1 == divide_shape_sizes(s1, s2)
+  Raises InconclusiveDimensionOperation if there is no such integer."""
+  sz1 = math.prod(s1)
+  sz2 = math.prod(s2)
+  if definitely_equal(sz1, sz2):  # Takes care of sz1 and sz2 being 0
+    return 1
+  q, r = divmod(sz1, sz2)
+  if isinstance(r, Tracer) or r != 0:
+    raise InconclusiveDimensionOperation(f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}")
+  return q
 
 def cancel_divide_tracers(num, denom):
   partition = lambda l: partition_list([isinstance(d, Tracer) for d in l], l)
@@ -2041,23 +1910,28 @@ def is_empty_shape(s: Shape) -> bool:
   return any(definitely_equal(d, 0) for d in s)
 
 def dilate_dim(d: DimSize, dilation: DimSize) -> DimSize:
-  """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
-  handler, ds = _dim_handler_and_canonical(d, dilation)
-  return handler.dilate(*ds)
+  """1 + dilation * (d - 1).
 
-def dilate_shape(s: Shape, dilations: Sequence[int]) -> Shape:
-  return tuple(map(dilate_dim, s, dilations))
+  if d == 0, returns 0.
+  """
+  if definitely_equal(dilation, 1):  # fast path
+    return d
+  return 0 if d == 0 else 1 + dilation * (d - 1)
 
 def stride_dim(d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
-  handler, ds = _dim_handler_and_canonical(d, window_size, window_stride)
-  return handler.stride(*ds)
+  """(d - window_size) // window_stride + 1
 
-def stride_shape(s: Shape, window_size: Shape, window_stride: Shape) -> Shape:
-  """(s - window_size) // window_stride + 1"""
-  return tuple(map(stride_dim, s, window_size, window_stride))
+  If d < window_size, returns 0.
+  We assume window_size >= 1 and window_stride >= 1.
+  """
+  if is_constant_dim(d) and is_constant_dim(window_size):
+    # TODO(necula): Enable this check for non-constant dimensions
+    if d < window_size:
+      return 0
+  return (d - window_size) // window_stride + 1
 
 def dimension_as_value(d: DimSize):
-  """Turns a dimension size into a JAX value that we can compute with.
+  """Turns a dimension size into a JAX array.
      This is the identity function for constant dimensions.
 
      Has the same abstract value as Python constants.
