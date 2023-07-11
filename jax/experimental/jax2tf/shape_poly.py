@@ -440,15 +440,18 @@ class _DimExpr():
     # See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic-dimensions-is-partially-supported
     return False
 
+  def inconclusive_comparison(self, operation: str, op: Any) -> Exception:
+    return InconclusiveDimensionOperation(
+      f"Symbolic dimension comparison '{self}' {operation} '{op}' is inconclusive.\n"
+      "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic0dimensions-is-partially-supported.")
+
   def ge(self, other: DimSize) -> bool:
     lb, ub = _ensure_poly(self - other, "ge").bounds()
     if lb >= 0:
       return True
     if ub < 0:
       return False
-    raise InconclusiveDimensionOperation(
-        f"Symbolic dimension comparison '{self}' >= '{other}' is inconclusive.\n"
-        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic0dimensions-is-partially-supported.")
+    raise self.inconclusive_comparison(">=", other)
 
   def __hash__(self):
     return hash(tuple(sorted(self.monomials())))
@@ -571,13 +574,22 @@ class _DimExpr():
   __ge__ = ge
 
   def __le__(self, other: DimSize):
-    return _ensure_poly(other, "le").__ge__(self)
+    try:
+      return _ensure_poly(other, "le").__ge__(self)
+    except InconclusiveDimensionOperation as e:
+      raise self.inconclusive_comparison("<=", other) from e
 
   def __gt__(self, other: DimSize):
-    return not _ensure_poly(other, "gt").__ge__(self)
+    try:
+      return not _ensure_poly(other, "gt").__ge__(self)
+    except InconclusiveDimensionOperation as e:
+      raise self.inconclusive_comparison(">", other) from e
 
   def __lt__(self, other: DimSize):
-    return not self.__ge__(other)
+    try:
+      return not self.__ge__(other)
+    except InconclusiveDimensionOperation as e:
+      raise self.inconclusive_comparison("<", other) from e
 
   def divmod(self, divisor: "_DimExpr") -> tuple[DimSize, int]:
     """
@@ -735,56 +747,6 @@ def _convertible_to_poly(p: DimSize) -> bool:
 def is_poly_dim(p: DimSize) -> bool:
   return isinstance(p, _DimExpr)
 
-
-class DimensionHandlerPoly(core.DimensionHandler):
-  """See core.DimensionHandler.
-
-  Most methods are inherited.
-  """
-  def is_constant(self, d: DimSize) -> bool:
-    assert isinstance(d, _DimExpr)
-    return False
-
-  def symbolic_equal(self, d1: core.DimSize, d2: core.DimSize) -> bool:
-    try:
-      return _ensure_poly(d1, "equal") == d2
-    except InconclusiveDimensionOperation:
-      return False
-
-  def greater_equal(self, d1: DimSize, d2: DimSize):
-    return _ensure_poly(d1, "ge") >= d2
-
-  def divide_shape_sizes(self, s1: Shape, s2: Shape) -> DimSize:
-    sz1 = math.prod(s1)
-    sz2 = math.prod(s2)
-    if core.definitely_equal(sz1, sz2):  # Takes care also of sz1 == sz2 == 0
-      return 1
-    err_msg = f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}"
-    try:
-      q, r = _ensure_poly(sz1, "divide_shape").divmod(_ensure_poly(sz2, "divide_shape"))
-    except InconclusiveDimensionOperation as e:
-      raise InconclusiveDimensionOperation(err_msg + f"\nDetails: {e}")
-    if not core.definitely_equal(r, 0):
-      raise InconclusiveDimensionOperation(err_msg + f"\nRemainder is not zero: {r}")
-    return q  # type: ignore[return-value]
-
-  def stride(self, d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
-    """Implements `(d - window_size) // window_stride + 1`"""
-    try:
-      # TODO(necula): check for d == 0 or window_size > d and return 0.
-      q, r = _ensure_poly(d - window_size, "stride").divmod(_ensure_poly(window_stride, "stride"))
-      return q + 1
-    except InconclusiveDimensionOperation as e:
-      raise InconclusiveDimensionOperation(
-          f"Cannot compute stride for dimension '{d}', "
-          f"window_size '{window_size}', stride '{window_stride}'.\nDetails: {e}.")
-    return d
-
-  def as_value(self, d: DimSize):
-    """Turns a dimension size into a Jax value that we can compute with."""
-    return _dim_as_value(d)
-
-core._SPECIAL_DIMENSION_HANDLERS[_DimExpr] = DimensionHandlerPoly()
 dtypes.python_scalar_dtypes[_DimExpr] = dtypes.python_scalar_dtypes[int]
 
 def _einsum_contract_path(*operands, **kwargs):

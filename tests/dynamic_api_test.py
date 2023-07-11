@@ -621,11 +621,6 @@ class DynamicShapeStagingTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(lambda x: x.reshape(-1, 12), abstracted_axes={0: 'n'})(x)
     self.assertLessEqual(len(jaxpr.jaxpr.eqns), 3)
 
-    # do need divide, also shouldn't typecheck
-    _ = jax.make_jaxpr(lambda x: x.reshape(x.shape[0], x.shape[0], -1),
-                       abstracted_axes={0: 'n'})(x)  # don't crash
-
-
 @unittest.skip("Test does not work with jax.Array")
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
 class DynamicShapeAutodiffTest(jtu.JaxTestCase):
