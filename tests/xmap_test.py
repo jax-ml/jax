@@ -708,9 +708,9 @@ class XMapTest(XMapTestCase):
     f_exe = f.lower(x_f32).compile()
     self.assertRaisesRegex(
         TypeError,
-        r"Computation was compiled for different input types and called with "
-        r"different types. Here are the 1 mismatches:\n"
-        r"Compiled with.*float32.*and called with.*int32.*",
+        r"Argument types differ .*"
+        r"The mismatches are:\n"
+        r"Argument 1/1 compiled with.*float32.*and called with.*int32.*",
       lambda: f_exe(x_i32))
 
   def testLowerAsText(self):

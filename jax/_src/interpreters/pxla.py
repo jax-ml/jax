@@ -2851,22 +2851,29 @@ def check_arg_avals_for_call(ref_avals, arg_avals,
     raise TypeError(
         f"Computation compiled for {len(ref_avals)} inputs "
         f"but called with {len(arg_avals)}")
-  arg_names = ([''] * len(ref_avals) if jaxpr_debug_info is None else
-               jaxpr_debug_info.arg_names)
+
+  if jaxpr_debug_info is not None:
+    arg_names = [f"'{name}'" for name in jaxpr_debug_info.arg_names]
+  else:
+    num_args = len(ref_avals)
+    arg_names = [f"{i + 1}/{num_args}" for i in range(num_args)]
+
   errors = []
-  num_errors = 5
   for ref_aval, arg_aval, name in safe_zip(ref_avals, arg_avals, arg_names):
     if not core.typematch(ref_aval, arg_aval):
-      errors.append(f"Compiled with {ref_aval} and called with {arg_aval} for "
-                    f"arg {name}")
+      errors.append(
+          f"Argument {name} compiled with {ref_aval.str_short()} and called "
+          f"with {arg_aval.str_short()}")
   if errors:
-    str_errors = '\n'.join(errors[:num_errors])
-    num_mismatch_str = (
-        f'the {len(errors)} mismatches' if len(errors) < num_errors else
-        f"{num_errors} mismatches out of {len(errors)}")
+    max_num_errors = 5
+    str_errors = "\n".join(errors[:max_num_errors])
+    if len(errors) >= max_num_errors:
+      num_mismatch_str = f"The first {max_num_errors} of {len(errors)}"
+    else:
+      num_mismatch_str = "The"
     raise TypeError(
-        "Computation was compiled for different input types and called with "
-        f"different types. Here are {num_mismatch_str}:\n{str_errors}")
+        "Argument types differ from the types for which this computation was "
+        f"compiled. {num_mismatch_str} mismatches are:\n{str_errors}")
 
 
 def _get_metadata_jit_pmap(local_devices, num_in_shardings, num_out_shardings):

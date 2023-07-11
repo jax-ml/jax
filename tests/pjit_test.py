@@ -952,10 +952,10 @@ class PJitTest(jtu.BufferDonationTestCase):
     exe = f.lower(x_f32, x_f32).compile()
     with self.assertRaisesRegex(
         TypeError,
-        r"Computation was compiled for different input types and called with "
-        r"different types. Here are the 2 mismatches:\n"
-        r"Compiled with.*float32.*and called with.*int32.*for arg x\n"
-        r"Compiled with.*float32.*and called with.*int32.*for arg y"):
+        r"Argument types differ .*"
+        r"The mismatches are:\n"
+        r"Argument 'x' compiled with.*float32.*and called with.*int32.*\n"
+        r"Argument 'y' compiled with.*float32.*and called with.*int32.*"):
       exe(x_i32, x_i32)
 
   @jtu.with_mesh([('x', 2), ('y', 2)])

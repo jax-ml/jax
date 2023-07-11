@@ -95,20 +95,18 @@ lowering raises an error:
 
 ```python
 >>> x_1d = y_1d = jnp.arange(3)
->>> jax.jit(f)(i32_scalar, i32_scalar).compile(x_1d, y_1d)
+>>> jax.jit(f).lower(i32_scalar, i32_scalar).compile()(x_1d, y_1d)
 ...
-TypeError: Computation compiled for input types:
-  ShapedArray(int32[]), ShapedArray(int32[])
-called with:
-  ShapedArray(int32[3]), ShapedArray(int32[3])
+TypeError: Argument types differ from the types for which this computation was compiled. The mismatches are:
+Argument 'x' compiled with int32[] and called with int32[3]
+Argument 'y' compiled with int32[] and called with int32[3]
 
->>> x_f = y_f = 72.0
->>> jax.jit(f)(i32_scalar, i32_scalar).compile(x_f, y_f)
+>>> x_f = y_f = jnp.float32(72.)
+>>> jax.jit(f).lower(i32_scalar, i32_scalar).compile()(x_f, y_f)
 ...
-TypeError: Computation compiled for input types:
-  ShapedArray(int32[]), ShapedArray(int32[])
-called with:
-  ShapedArray(float32[]), ShapedArray(float32[])
+TypeError: Argument types differ from the types for which this computation was compiled. The mismatches are:
+Argument 'x' compiled with int32[] and called with float32[]
+Argument 'y' compiled with int32[] and called with float32[]
 ```
 
 Relatedly, AOT-compiled functions [cannot be transformed by JAX's just-in-time
