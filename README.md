@@ -401,6 +401,13 @@ they can use the *experimental* native Windows CPU-only support.
 
 ### pip installation: CPU
 
+We currently release `jaxlib` wheels for the following
+operating systems and architectures:
+* Linux, x86-64
+* Mac, Intel
+* Mac, ARM
+* Windows, x86-64 (*experimental*)
+
 To install a CPU-only version of JAX, which might be useful for doing local
 development on a laptop, you can run
 
@@ -409,13 +416,9 @@ pip install --upgrade pip
 pip install --upgrade "jax[cpu]"
 ```
 
-On Linux, it is often necessary to first update `pip` to a version that supports
-`manylinux2014` wheels. We currently release `jaxlib` wheels for the following
-operating systems and architectures:
-* Linux, x86-64
-* Mac, Intel
-* Mac, ARM
-* Windows, x86-64 (*experimental*)
+On Windows, you may also need to install the
+[Microsoft Visual Studio 2019 Redistributable](https://learn.microsoft.com/en-US/cpp/windows/latest-supported-vc-redist?view=msvc-170#visual-studio-2015-2017-2019-and-2022)
+if it is not already installed on your machine.
 
 Other operating systems and architectures require building from source. Trying
 to pip install on other operating systems and architectures may lead to `jaxlib`
