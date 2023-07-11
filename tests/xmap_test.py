@@ -744,13 +744,11 @@ class XMapTest(XMapTestCase):
       self.assertIn("mhlo.num_partitions = 1", hlo)
       self.assertIn("mhlo.num_replicas = 2", hlo)
 
-  @jtu.ignore_warning(category=DeprecationWarning)
   def testLowerCompileCompilerIR(self):
-    # TODO(frostig): remove (deprecated)
     f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
     x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
     f = f.lower(x).compile()
-    self.assertIsNotNone(f.compiler_ir())
+    self.assertIsNotNone(f.runtime_executable())
 
   def testLowerCompileAsText(self):
     f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])

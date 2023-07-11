@@ -30,8 +30,6 @@ executable protocols described above.
 """
 from __future__ import annotations
 
-import warnings
-
 from dataclasses import dataclass
 from typing import Any, NamedTuple, Optional, Protocol, Sequence, Union
 
@@ -400,21 +398,6 @@ class Compiled(Stage):
     self._params = CompiledCallParams(self._executable, self._no_kwargs,
                                       self.in_tree, self.out_tree)
     self._call = None
-
-  def compiler_ir(self):
-    """Post-compilation IR.
-
-    Compilation typically involves code transformation and
-    optimization. This method exists to reflect the compiler's
-    representation of the program after such passes, whenever
-    possible.
-    """
-    # TODO(frostig): remove (deprecated)
-    warnings.warn(
-        "compiler_ir() is deprecated, consider runtime_executable() instead",
-        DeprecationWarning)
-    exe = self.runtime_executable()
-    return exe.hlo_modules() if exe is not None else None
 
   def as_text(self) -> Optional[str]:
     """A human-readable text representation of this executable.

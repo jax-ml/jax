@@ -284,14 +284,12 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='stablehlo'))
 
-  @jtu.ignore_warning(category=DeprecationWarning)
   def testLowerCompileCompilerIR(self):
-    # TODO(frostig): remove (deprecated)
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f = f.lower(x).compile()
-    self.assertIsNotNone(f.compiler_ir())
+    self.assertIsNotNone(f.runtime_executable())
 
   def testLowerCompileAsText(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
