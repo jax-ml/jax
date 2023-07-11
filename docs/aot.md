@@ -95,7 +95,7 @@ lowering raises an error:
 
 ```python
 >>> x_1d = y_1d = jnp.arange(3)
->>> jax.jit(f)(i32_scalar, i32_scalar).compile(x_1d, y_1d)
+>>> jax.jit(f).lower(i32_scalar, i32_scalar).compile()(x_1d, y_1d)
 ...
 TypeError: Computation compiled for input types:
   ShapedArray(int32[]), ShapedArray(int32[])
@@ -103,7 +103,7 @@ called with:
   ShapedArray(int32[3]), ShapedArray(int32[3])
 
 >>> x_f = y_f = 72.0
->>> jax.jit(f)(i32_scalar, i32_scalar).compile(x_f, y_f)
+>>> jax.jit(f).lower(i32_scalar, i32_scalar).compile()(x_f, y_f)
 ...
 TypeError: Computation compiled for input types:
   ShapedArray(int32[]), ShapedArray(int32[])
