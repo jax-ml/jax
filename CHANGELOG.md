@@ -13,11 +13,6 @@ Remember to align the itemized text with the first line of an item within a list
     https://jax.readthedocs.io/en/latest/deprecation.html
   * JAX now requires NumPy 1.22 or newer as per
     https://jax.readthedocs.io/en/latest/deprecation.html
-  * `jax.interpreters.pxla.device_put` has been removed. This was deprecated in
-    JAX version 0.4.6: use `jax.device_put` instead.
-  * `jax.interpreters.pxla.make_sharded_device_array` has been removed. This was
-    deprecated in JAX version 0.4.6: use `jax.make_array_from_single_device_arrays`
-    instead.
   * Passing optional arguments to {func}`jax.numpy.ndarray.at` by position is
     no longer supported, after being deprecated in JAX version 0.4.7.
     For example, instead of `x.at[i].get(True)`, use `x.at[i].get(indices_are_sorted=True)`
@@ -26,6 +21,17 @@ Remember to align the itemized text with the first line of an item within a list
     * `jax.Array.broadcast`: use {func}`jax.lax.broadcast` instead.
     * `jax.Array.broadcast_in_dim`: use {func}`jax.lax.broadcast_in_dim` instead.
     * `jax.Array.split`: use {func}`jax.numpy.split` instead.
+  * The following APIs have been removed after previous deprecation:
+    * `jax.ad`: use {mod}`jax.interpreters.ad`.
+    * `jax.curry`: use ``curry = lambda f: partial(partial, f)``.
+    * `jax.partial_eval`: use {mod}`jax.interpreters.partial_eval`.
+    * `jax.pxla`: use {mod}`jax.interpreters.pxla`.
+    * `jax.xla`: use {mod}`jax.interpreters.xla`.
+    * `jax.ShapedArray`: use {class}`jax.core.ShapedArray`.
+    * `jax.interpreters.pxla.device_put`: use {func}`jax.device_put`.
+    * `jax.interpreters.pxla.make_sharded_device_array`: use {func}`jax.make_array_from_single_device_arrays`.
+    * `jax.interpreters.pxla.ShardedDeviceArray`: use {class}`jax.Array`.
+    * `jax.numpy.DeviceArray`: use {class}`jax.Array`.
 
 * Breaking changes
   * JAX now requires ml_dtypes version 0.2.0 or newer.

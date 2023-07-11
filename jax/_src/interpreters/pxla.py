@@ -24,7 +24,7 @@ import itertools as it
 import logging
 import math
 from typing import (Any, Callable, NamedTuple, Optional, Sequence, Union,
-                    Iterable, TYPE_CHECKING, cast, TypeVar)
+                    Iterable, cast, TypeVar)
 
 import numpy as np
 
@@ -329,15 +329,6 @@ def make_sharded_device_array(
 
   return jax.make_array_from_single_device_arrays(
       aval.shape, sharding, device_buffers)  # type: ignore
-
-
-if TYPE_CHECKING:
-  ShardedDeviceArray = Any
-else:
-  class ShardedDeviceArray(object):
-    def __init__(self):
-      raise RuntimeError("ShardedDeviceArray is a backward compatibility shim "
-                         "and cannot be instantiated.")
 
 
 def _hashable_index(idx):

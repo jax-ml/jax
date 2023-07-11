@@ -110,31 +110,3 @@ from jax._src.sharding_specs import (
   sharding_spec_sharding_proto as sharding_spec_sharding_proto,
   spec_to_indices as spec_to_indices,
 )
-
-# Deprecations
-
-from jax._src.interpreters.pxla import (
-  ShardedDeviceArray as _deprecated_ShardedDeviceArray,
-)
-
-_deprecations = {
-    # Added March 15, 2023:
-    "ShardedDeviceArray": (
-        (
-            "jax.interpreters.pxla.ShardedDeviceArray is deprecated. Use "
-            "jax.Array."
-        ),
-        _deprecated_ShardedDeviceArray,
-    ),
-}
-
-import typing
-if typing.TYPE_CHECKING:
-  from jax._src.interpreters.pxla import (
-    ShardedDeviceArray as ShardedDeviceArray,
-  )
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del typing
