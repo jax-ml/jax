@@ -1115,6 +1115,7 @@ py_test(
 exports_files(
     [
         "api_test.py",
+        "array_test.py",
         "pmap_test.py",
         "compilation_cache_test.py",
         "pjit_test.py",
