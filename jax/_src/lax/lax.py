@@ -4945,4 +4945,8 @@ class BIntRules:
       return core.DArray(aval, phys_handler(bufs))
     return handler
 
+  @staticmethod
+  def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
+    return hlo_sharding
+
 core.bint._rules = BIntRules
