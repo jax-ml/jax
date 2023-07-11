@@ -4918,8 +4918,7 @@ mlir.register_lowering(empty_p, _empty_lower)
 class BIntRules:
   @staticmethod
   def physical_element_aval(dtype) -> core.ShapedArray:
-    int_dtype = dtypes._scalar_type_to_dtype(int)
-    return core.ShapedArray((), int_dtype)
+    return core.ShapedArray((), np.dtype('int32'))
 
   @staticmethod
   def result_handler(sticky_device, aval):
