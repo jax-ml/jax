@@ -21,6 +21,11 @@ Remember to align the itemized text with the first line of an item within a list
   * Passing optional arguments to {func}`jax.numpy.ndarray.at` by position is
     no longer supported, after being deprecated in JAX version 0.4.7.
     For example, instead of `x.at[i].get(True)`, use `x.at[i].get(indices_are_sorted=True)`
+  * The following `jax.Array` methods have been removed, after being deprecated
+    in JAX v0.4.5:
+    * `jax.Array.broadcast`: use {func}`jax.lax.broadcast` instead.
+    * `jax.Array.broadcast_in_dim`: use {func}`jax.lax.broadcast_in_dim` instead.
+    * `jax.Array.split`: use {func}`jax.numpy.split` instead.
 
 * Breaking changes
   * JAX now requires ml_dtypes version 0.2.0 or newer.

@@ -24,7 +24,6 @@ __all__ = ['register_jax_array_methods']
 import abc
 from functools import partial, wraps
 from typing import Any, Optional, Union
-import warnings
 
 import numpy as np
 import jax
@@ -299,36 +298,6 @@ def _compress_method(a: ArrayLike, condition: ArrayLike,
 
   Refer to :func:`jax.numpy.compress` for full documentation."""
   return lax_numpy.jaxcompress(condition, a, axis, out)
-
-
-@util._wraps(lax.broadcast, lax_description="""
-Deprecated. Use :func:`jax.lax.broadcast` instead.
-""")
-def _deprecated_broadcast(*args, **kwargs):
-  warnings.warn(
-    "The arr.broadcast() method is deprecated. Use jax.lax.broadcast instead.",
-    category=FutureWarning)
-  return lax.broadcast(*args, **kwargs)
-
-
-@util._wraps(lax.broadcast, lax_description="""
-Deprecated. Use :func:`jax.lax.broadcast_in_dim` instead.
-""")
-def _deprecated_broadcast_in_dim(*args, **kwargs):
-  warnings.warn(
-    "The arr.broadcast_in_dim() method is deprecated. Use jax.lax.broadcast_in_dim instead.",
-    category=FutureWarning)
-  return lax.broadcast_in_dim(*args, **kwargs)
-
-
-@util._wraps(lax.broadcast, lax_description="""
-Deprecated. Use :func:`jax.numpy.split` instead.
-""")
-def _deprecated_split(*args, **kwargs):
-  warnings.warn(
-    "The arr.split() method is deprecated. Use jax.numpy.split instead.",
-    category=FutureWarning)
-  return lax_numpy.split(*args, **kwargs)
 
 
 @core.stash_axis_env()
@@ -717,12 +686,6 @@ _array_methods = {
   # Methods exposed in order to avoid circular imports
   "_split": lax_numpy.split,  # used in jacfwd/jacrev
   "_multi_slice": _multi_slice,  # used in pxla for sharding
-
-  # Deprecated methods.
-  # TODO(jakevdp): remove these after June 2023
-  "broadcast": _deprecated_broadcast,
-  "broadcast_in_dim": _deprecated_broadcast_in_dim,
-  "split": _deprecated_split,
 }
 
 _impl_only_array_methods = {
