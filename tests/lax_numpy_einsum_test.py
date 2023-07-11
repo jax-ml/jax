@@ -363,6 +363,13 @@ class EinsumTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.eqns, 1)
     self.assertEqual(jaxpr.eqns[0].params['preferred_element_type'], 'float32')
 
+  def test_preferred_element_type_promotion(self):
+    a = jnp.ones((2, 2), 'float8_e4m3fn')
+    b = jnp.ones((2, 2), 'bfloat16')
+    # mainly testing that this doesn't crash
+    c = jnp.einsum('ab,bc->ac', a, b, preferred_element_type=a.dtype)
+    self.assertEqual(c.dtype, a.dtype)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
