@@ -20,17 +20,14 @@ import random
 import sys
 import tempfile
 import unittest
-from unittest import mock, SkipTest
+from unittest import SkipTest, mock
 import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
 import jax
+from jax import config
 from jax import jit, lax, pmap
-from jax.experimental.maps import xmap
-from jax.experimental.pjit import pjit
-from jax.sharding import PartitionSpec as P
 from jax._src import compilation_cache as cc
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -40,10 +37,11 @@ from jax._src.config import (
     raise_persistent_cache_errors,
 )
 from jax._src.lib import xla_client
-
+from jax._src.lib import xla_extension_version
+from jax.experimental.maps import xmap
+from jax.experimental.pjit import pjit
+from jax.sharding import PartitionSpec as P
 import numpy as np
-
-from jax import config
 
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
@@ -482,6 +480,8 @@ class CompilationCacheTest(jtu.JaxTestCase):
     compile_options.executable_build_options.device_assignment = (
         device_assignment
     )
+    if xla_extension_version > 165:
+      compile_options.executable_build_options.fdo_profile = b"test_profile"
     return compile_options
 
   def get_hashed_value(self, hash_function, hash_function_input):

@@ -94,6 +94,7 @@ flags.DEFINE_string(
     'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
 
+
 def get_compile_options(
     num_replicas: int,
     num_partitions: int,
@@ -103,6 +104,7 @@ def get_compile_options(
     auto_spmd_partitioning_mesh_shape=[],
     auto_spmd_partitioning_mesh_ids=[],
     env_options_overrides: Optional[dict[str, str]] = None,
+    fdo_profile: Optional[bytes] = None,
 ) -> xla_client.CompileOptions:
   """Returns the compile options to use, as derived from flag values.
 
@@ -122,6 +124,8 @@ def get_compile_options(
     auto_spmd_partitioning_mesh_ids: device ids used to create
       auto_spmd_partitioning search space.
     env_options_overrides: dict of additional options parsed by the compiler
+    fdo_profile: Optional profile for feedback-directed optimization passed to
+    XLA.
   """
   compile_options = xla_client.CompileOptions()
   compile_options.num_replicas = num_replicas
@@ -129,6 +133,8 @@ def get_compile_options(
   build_options = compile_options.executable_build_options
   build_options.use_spmd_partitioning = use_spmd_partitioning
   build_options.use_auto_spmd_partitioning = use_auto_spmd_partitioning
+  if xla_extension_version > 165 and fdo_profile is not None:
+    build_options.fdo_profile = fdo_profile
   if use_auto_spmd_partitioning:
     build_options.auto_spmd_partitioning_mesh_shape = auto_spmd_partitioning_mesh_shape
     build_options.auto_spmd_partitioning_mesh_ids = auto_spmd_partitioning_mesh_ids

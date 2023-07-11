@@ -50,6 +50,15 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertEqual(compile_options.device_assignment.__repr__(),
                      expected_device_assignment)
 
+  def test_set_fdo_profile(self):
+    if xla_extension_version > 166:
+      compile_options = xb.get_compile_options(
+          num_replicas=1, num_partitions=1, fdo_profile=b"test_profile"
+      )
+      self.assertEqual(
+          compile_options.executable_build_options.fdo_profile, "test_profile"
+      )
+
   def test_parameter_replication_default(self):
     c = xc.XlaBuilder("test")
     _ = xla.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()))
