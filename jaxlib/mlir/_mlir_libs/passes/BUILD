@@ -74,7 +74,7 @@ cc_library(
     deps = [
         ":jax_pass_inc_gen",
         ":jax_passes",
-        "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:Pass",
     ],
