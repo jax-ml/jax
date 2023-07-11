@@ -195,9 +195,9 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
     for coords, d in zip(device_coords, jax_devices):
       if d.core_on_chip != 0:
         raise AssertionError(
-            'Creating meshes for TPU >v3 requires one device per chip.'
-            f'Got device id {d.core_on_chip} for a device of kind {device_kind}'
-            f': {d}'
+            'Creating meshes for TPU >v3 requires one device per chip'
+            f' ("megacore" mode). Got device id {d.core_on_chip} for a device'
+            f' of kind {device_kind}: {d}.'
         )
       out[coords[0], coords[1], coords[2]] = d
   return out
