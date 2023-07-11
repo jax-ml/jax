@@ -43,13 +43,6 @@ from jax._src.lib import xla_extension_version
 from jax._src import traceback_util
 from jax._src import util
 
-iree: Optional[Any]
-
-try:
-  import jax._src.iree as iree  # type: ignore
-except (ModuleNotFoundError, ImportError):
-  iree = None
-
 logger = logging.getLogger(__name__)
 
 jax_plugins: Optional[Any]
@@ -521,10 +514,6 @@ discover_pjrt_plugins()
 # in the format of 'name1:path1,name2:path2' ('name1;path1,name2;path2' for
 # windows).
 register_pjrt_plugin_factories_from_env()
-
-if iree is not None:
-  register_backend_factory("iree", iree.iree_client_factory, priority=-100,
-                           fail_quietly=True)
 
 _platform_aliases = {
   "cuda": "gpu",
