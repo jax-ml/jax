@@ -30,7 +30,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflowjs as tfjs
 
-import input_pipeline
+import input_pipeline  # type: ignore[import]
 
 
 flags.DEFINE_integer("num_epochs", 5,
