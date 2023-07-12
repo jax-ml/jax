@@ -2165,12 +2165,18 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
 
   Given a module with static input shapes, but using dynamic shapes due to
   shape polymorphism, run shape refinement to resolve all the dynamic shapes.
+  Then verify that there are no more dynamic shapes in the module.
   """
   if xc.mlir_api_version < 50:
     raise NotImplementedError("refine_polymorphic_shapes needs jaxlib 0.4.12")
 
-  refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
-    module_to_bytecode(module))
+  if xc.mlir_api_version < 52:
+    refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
+      module_to_bytecode(module))
+  else:
+    refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
+      module_to_bytecode(module), enable_shape_assertions=True)
+
   context = make_ir_context()
   with context:
     return ir.Module.parse(refined_module_str)
