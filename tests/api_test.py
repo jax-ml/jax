@@ -8597,12 +8597,18 @@ class CustomVJPTest(jtu.JaxTestCase):
       return x, x
 
     def fwd(x, y, z):
+      self.assertIsInstance(x, jax.custom_derivatives.CustomVJPPrimal)
+      self.assertIsInstance(y, jax.custom_derivatives.CustomVJPPrimal)
+      self.assertIsInstance(z, jax.custom_derivatives.CustomVJPPrimal)
       self.assertTrue(x.perturbed)
       self.assertFalse(y.perturbed)
       self.assertFalse(z.perturbed)
       return (x.value, x.value), None
 
     def fwd_all(x, y, z):
+      self.assertIsInstance(x, jax.custom_derivatives.CustomVJPPrimal)
+      self.assertIsInstance(y, jax.custom_derivatives.CustomVJPPrimal)
+      self.assertIsInstance(z, jax.custom_derivatives.CustomVJPPrimal)
       self.assertTrue(x.perturbed)
       self.assertTrue(y.perturbed)
       self.assertTrue(z.perturbed)

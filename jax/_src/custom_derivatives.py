@@ -530,13 +530,16 @@ class custom_vjp(Generic[ReturnValue]):
         derivative rules to detect when certain inputs, and when certain
         output cotangents, are not involved in differentiation. If ``True``:
 
-        * ``fwd`` must accept, in place of each leaf value ``x`` in the pytree
-          comprising an argument to the original function, an object with two
-          attributes instead: ``value`` and ``perturbed``. The ``value`` field
-          is the original primal argument, and ``perturbed`` is a boolean.
-          The ``perturbed`` bit indicates whether the argument is involved in
-          differentiation (i.e., if it is ``False``, then the corresponding
-          Jacobian "column" is zero).
+        * ``fwd`` must accept, in place of each leaf value ``x`` in
+          the pytree comprising an argument to the original function,
+          an object (of type
+          ``jax.custom_derivatives.CustomVJPPrimal``) with two
+          attributes instead: ``value`` and ``perturbed``. The
+          ``value`` field is the original primal argument, and
+          ``perturbed`` is a boolean.  The ``perturbed`` bit indicates
+          whether the argument is involved in differentiation (i.e.,
+          if it is ``False``, then the corresponding Jacobian "column"
+          is zero).
 
         * ``bwd`` will be passed objects representing static symbolic zeros in
           its cotangent argument in correspondence with unperturbed values;
@@ -621,6 +624,7 @@ class custom_vjp(Generic[ReturnValue]):
 
 @dataclasses.dataclass
 class CustomVJPPrimal:
+  """Primal to a ``custom_vjp``'s forward rule when ``symbolic_zeros`` is set"""
   value: Any
   perturbed: bool
 
