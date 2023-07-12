@@ -232,7 +232,7 @@ def fold_in(key: KeyArray, data: IntegerArray) -> KeyArray:
   key, wrapped = _check_prng_key(key)
   return _return_prng_keys(wrapped, _fold_in(key, data))
 
-def _split(key: KeyArray, num: int = 2) -> KeyArray:
+def _split(key: KeyArray, num: Union[int, tuple[int, ...]] = 2) -> KeyArray:
   # Alternative to split() to use within random samplers.
   # TODO(frostig): remove and use split(); we no longer need to wait
   # to always enable_custom_prng
@@ -240,15 +240,16 @@ def _split(key: KeyArray, num: int = 2) -> KeyArray:
   if key.ndim:
     raise TypeError("split accepts a single key, but was given a key array of"
                     f"shape {key.shape} != (). Use jax.vmap for batching.")
-  return prng.random_split(key, count=num)
+  shape = tuple(num) if isinstance(num, Sequence) else (num,)
+  return prng.random_split(key, shape=shape)
 
-def split(key: KeyArray, num: int = 2) -> KeyArray:
+def split(key: KeyArray, num: Union[int, tuple[int, ...]] = 2) -> KeyArray:
   """Splits a PRNG key into `num` new keys by adding a leading axis.
 
   Args:
     key: a PRNG key (from ``PRNGKey``, ``split``, ``fold_in``).
-    num: optional, a positive integer indicating the number of keys to produce
-      (default 2).
+    num: optional, a positive integer (or tuple of integers) indicating
+      the number (or shape) of keys to produce. Defaults to 2.
 
   Returns:
     An array-like object of `num` new PRNG keys.
