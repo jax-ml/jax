@@ -296,7 +296,8 @@ def _resolve_axis_resources_and_shardings_arg(
 
 
 def pre_infer_params(fun, in_shardings, out_shardings,
-                     donate_argnums, static_argnums, static_argnames, device,
+                     donate_argnums, donate_argnames,
+                     static_argnums, static_argnames, device,
                      backend, abstracted_axes):
   if abstracted_axes and not config.jax_dynamic_shapes:
     raise ValueError("abstracted_axes must be used with --jax_dynamic_shapes")
@@ -332,7 +333,7 @@ def pre_infer_params(fun, in_shardings, out_shardings,
   out_shardings, _, _ = prepare_axis_resources(out_shardings, 'out_shardings')
 
   donate_argnums, static_argnums, static_argnames = resolve_argnums(
-      fun, donate_argnums, static_argnums, static_argnames)
+      fun, donate_argnums, donate_argnames, static_argnums, static_argnames)
 
   return (in_shardings, out_shardings, donate_argnums, static_argnums,
           static_argnames)
@@ -453,10 +454,13 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
   else:
     explicit_args, in_tree = tree_flatten(dyn_args)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-    dyn_kwargs = ()
+    dyn_kwargs = {}
   del kwargs
 
   if donate_argnums and not config.jax_debug_nans:
+    # TODO(yashkatariya): Maybe thread donate_argnames to calculate
+    # donation_vector. Currently donate_argnames is normalized into
+    # donate_argnums just like static_argnames.
     donated_invars = donation_vector(donate_argnums, dyn_args, dyn_kwargs)
   else:
     donated_invars = (False,) * len(explicit_args)
@@ -589,7 +593,8 @@ def pjit(
     out_axis_resources=UNSPECIFIED,
     static_argnums: Union[int, Sequence[int], None] = None,
     static_argnames: Union[str, Iterable[str], None] = None,
-    donate_argnums: Union[int, Sequence[int]] = (),
+    donate_argnums: Union[int, Sequence[int], None] = None,
+    donate_argnames: Union[str, Iterable[str], None] = None,
     keep_unused: bool = False,
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
@@ -722,6 +727,11 @@ def pjit(
       should not reuse buffers that you donate to a computation, JAX will raise
       an error if you try to.
       For more details on buffer donation see the `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
+    donate_argnames: An optional string or collection of strings specifying
+      which named arguments are donated to the computation. See the
+      comment on ``donate_argnums`` for details. If not
+      provided but ``donate_argnums`` is set, the default is based on calling
+      ``inspect.signature(fun)`` to find corresponding named arguments.
     keep_unused: If `False` (the default), arguments that JAX determines to be
       unused by `fun` *may* be dropped from resulting compiled XLA executables.
       Such arguments will not be transferred to the device nor provided to the
@@ -762,7 +772,7 @@ def pjit(
 
   (in_shardings, out_shardings, donate_argnums, static_argnums,
    static_argnames) = pre_infer_params(
-       fun, in_shardings, out_shardings, donate_argnums,
+       fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
        static_argnums, static_argnames, device, backend, abstracted_axes)
 
   def infer_params(*args, **kwargs):

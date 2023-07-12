@@ -345,7 +345,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.jit(i, static_argnums=())
     self.jit(i)
 
-  def test_jit_argnames_validation(self):
+  @parameterized.parameters("static_argnames", "donate_argnames")
+  def test_jit_argnames_validation(self, argnum_type: str):
     def f(a, b, c):
       ...
 
@@ -356,28 +357,28 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       ...
 
     # Simplest case
-    self.jit(f, static_argnames=("b", "c"))
+    self.jit(f, **{argnum_type: ("b", "c")})
 
     # Undefined arg without **kwargs
     # with self.assertRaises(ValueError):
     with self.assertWarns(SyntaxWarning):
-      self.jit(f, static_argnames=("b", "c", "not_defined"))
+      self.jit(f, **{argnum_type: ("b", "c", "not_defined")})
 
     # Undefined arg with **kwargs
-    self.jit(g, static_argnames=("a", "b", "not_defined"))
+    self.jit(g, **{argnum_type: ("a", "b", "not_defined")})
 
-    self.jit(h, static_argnames=("b", "c"))
-    self.jit(h, static_argnames=("b", "c", "not_defined"))
+    self.jit(h, **{argnum_type: ("b", "c")})
+    self.jit(h, **{argnum_type: ("b", "c", "not_defined")})
 
     # Positional only
     # with self.assertRaises(ValueError):
     with self.assertWarns(SyntaxWarning):
-      self.jit(h, static_argnames=("a", "c"))
+      self.jit(h, **{argnum_type: ("a", "c")})
 
     # Var positional
     # with self.assertRaises(ValueError):
     with self.assertWarns(SyntaxWarning):
-      self.jit(h, static_argnames=("args", "c"))
+      self.jit(h, **{argnum_type: ("args", "c")})
 
   def test_jit_with_many_args_works(self):
 
@@ -389,10 +390,23 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   # Jit and Donate arguments
 
-  def test_jit_donate_argnums_warning_raised(self):
+  def test_donate_argnames_signature_fail(self):
+    inp = np.arange(4)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Getting the signature of function.*failed. Pass donate_argnums "
+        "instead of donate_argnames."):
+      jax.jit(np.dot, donate_argnames='a')(inp, inp)
+
+  @parameterized.named_parameters(
+      ("argnums", "donate_argnums", (0, 1)),
+      ("argnames", "donate_argnames", ('x', 'y')),
+  )
+  def test_jit_donate_warning_raised(self, argnum_type, argnum_val):
     x = jnp.array([1.0, 2.0], jnp.float32)
     y = jnp.array([1, 2], jnp.int32)
-    f = self.jit(lambda x, y: x.sum() + jnp.float32(y.sum()), donate_argnums=(0, 1))
+    f = self.jit(lambda x, y: x.sum() + jnp.float32(y.sum()),
+                 **{argnum_type: argnum_val})
     with warnings.catch_warnings(record=True) as w:
       warnings.simplefilter("always")
       f(x, y)
@@ -403,20 +417,28 @@ class CPPJitTest(jtu.BufferDonationTestCase):
           "Some donated buffers were not usable:",
           str(w[-1].message))
 
-  def test_jit_donate_argnums_invalidates_input(self):
+  @parameterized.named_parameters(
+      ("argnums", "donate_argnums", 0),
+      ("argnames", "donate_argnames", 'x'),
+  )
+  def test_jit_donate_invalidates_input(self, argnum_type, argnum_val):
     # We can't just use `lambda x: x` because JAX simplifies this away to an
     # empty XLA computation.
-    move = self.jit(lambda x: x + x - x, donate_argnums=0)
+    move = self.jit(lambda x: x + x - x, **{argnum_type: argnum_val})
     x = jnp.ones([])
     y = move(x)
     self.assertDeleted(x)
     self.assertEqual(y, 1.)
 
-  def test_jit_donate_argnums_static_argnums(self):
+  @parameterized.named_parameters(
+      ("donate_argnums", "donate_argnums", (2, 3)),
+      ("donate_argnames", "donate_argnames", ('c', 'd')),
+  )
+  def test_jit_donate_static_argnums(self, argnum_type, argnum_val):
     jit_fun = self.jit(
         lambda a, b, c, d: ((a + b + c), (a + b + d)),
         static_argnums=(0, 1),
-        donate_argnums=(2, 3))
+        **{argnum_type: argnum_val})
 
     c = jax.device_put(jnp.array([2., 2.]))
     d = jax.device_put(jnp.array([1., 1., 1., 1.]))
@@ -426,17 +448,42 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(c)
     self.assertDeleted(d)
 
-  def test_jit_donate_argnums_weak_type(self):
+  def test_jit_donate_argnames_kwargs_static_argnums(self):
+    jit_fun = self.jit(
+        lambda a, b, c, d, e: ((a + b + c), (a + b + d), (a + b + e)),
+        static_argnums=(0, 1),
+        donate_argnames=('d', 'e'))
+
+    c = jax.device_put(jnp.array([2., 2.]))
+    d = jax.device_put(jnp.array([1., 1., 1., 1.]))
+    e = jax.device_put(jnp.array([3., 3., 3., 3.]))
+    f, g, h = jit_fun(1, 2, c, d=d, e=e)
+    np.testing.assert_allclose(f, jnp.array([5., 5.]))
+    np.testing.assert_allclose(g, jnp.array([4., 4., 4., 4.]))
+    np.testing.assert_allclose(h, jnp.array([6., 6., 6., 6.]))
+    self.assertNotDeleted(c)
+    self.assertDeleted(d)
+    self.assertDeleted(e)
+
+  @parameterized.named_parameters(
+      ("argnums", "donate_argnums", 0),
+      ("argnames", "donate_argnames", 'x'),
+  )
+  def test_jit_donate_weak_type(self, argnum_type, argnum_val):
     # input has weak-type, output does not have weak-type
-    move = self.jit(lambda x: x.astype(int), donate_argnums=0)
+    move = self.jit(lambda x: x.astype(int), **{argnum_type: argnum_val})
     x = jnp.broadcast_to(2, (3,))
     move(x)
     self.assertDeleted(x)
 
-  def test_jnp_array_copy(self):
+  @parameterized.named_parameters(
+      ("argnums", "donate_argnums", (0,)),
+      ("argnames", "donate_argnames", ('array',)),
+  )
+  def test_jnp_array_copy(self, argnum_type, argnum_val):
     # https://github.com/google/jax/issues/3412
 
-    @partial(self.jit, donate_argnums=(0,))
+    @partial(self.jit, **{argnum_type: argnum_val})
     def _test(array):
       return array.at[0].set(77)
 
@@ -448,6 +495,13 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     # Gives: RuntimeError: Invalid argument: CopyToHostAsync() called on invalid buffer.
     print(x_copy)  # doesn't crash
+
+  def test_specify_donate_argnums_and_argnames(self):
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Currently only specifying either donate_argnums or donate_argnames is "
+        "allowed"):
+      jax.jit(lambda x: x, donate_argnums=0, donate_argnames='x')
 
   def test_jit_global_cache(self):
     def f(x):

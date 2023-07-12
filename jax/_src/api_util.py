@@ -338,7 +338,10 @@ def donation_vector(donate_argnums, args, kwargs) -> tuple[bool, ...]:
   for i, arg in enumerate(args):
     donate = bool(i in donate_argnums)
     res.extend((donate,) * tree_structure(arg).num_leaves)
-  res.extend((False,) * tree_structure(kwargs).num_leaves)
+  num_args = len(args)
+  for i, val in enumerate(kwargs.values()):
+    donate = bool(i + num_args in donate_argnums)
+    res.extend((donate,) * tree_structure(val).num_leaves)
   return tuple(res)
 
 def rebase_donate_argnums(donate_argnums, static_argnums) -> tuple[int, ...]:
@@ -502,14 +505,11 @@ def infer_argnums_and_argnames(
 
 
 def resolve_argnums(
-    fun, donate_argnums, static_argnums, static_argnames
+    fun, donate_argnums, donate_argnames, static_argnums, static_argnames
 ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[str, ...]]:
-  # Coerce input
-  donate_argnums = _ensure_index_tuple(donate_argnums)
-
   try:
     sig = inspect.signature(fun)
-  except ValueError:
+  except ValueError as e:
     # Some built-in functions don't support signature.
     # See: https://github.com/python/cpython/issues/73485
     # In this case no validation is done
@@ -517,17 +517,34 @@ def resolve_argnums(
         static_argnums)
     static_argnames = () if static_argnames is None else _ensure_str_tuple(
         static_argnames)
+    donate_argnums = () if donate_argnums is None else _ensure_index_tuple(
+        donate_argnums)
+    if donate_argnames is not None:
+      raise ValueError(f"Getting the signature of function {fun} failed. "
+                       "Pass donate_argnums instead of donate_argnames.") from e
   else:
     # Infer argnums and argnames according to docstring
+    # If nums is None and names is not None, then nums are inferred from the
+    # names and vice-versa.
     static_argnums, static_argnames = infer_argnums_and_argnames(
         sig, static_argnums, static_argnames)
+    if donate_argnums is not None and donate_argnames is not None:
+      raise NotImplementedError(
+          "Currently only specifying either donate_argnums or donate_argnames "
+          "is allowed. Please file a feature request at "
+          "https://github.com/google/jax/issues.")
+    donate_argnums, donate_argnames = infer_argnums_and_argnames(
+        sig, donate_argnums, donate_argnames)
 
     # Validation
     validate_argnums(sig, static_argnums, "static_argnums")
-    validate_argnums(sig, donate_argnums, "donate_argnums")
     validate_argnames(sig, static_argnames, "static_argnames")
+    validate_argnums(sig, donate_argnums, "donate_argnums")
+    validate_argnames(sig, donate_argnames, "donate_argnames")
 
   # Compensate for static argnums absorbing args
+  # TODO(yashkatariya): Maybe add static_argnames support too here for cases
+  # when nums cannot be inferred from names.
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
   return donate_argnums, static_argnums, static_argnames
 

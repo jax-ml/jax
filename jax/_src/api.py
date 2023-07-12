@@ -150,7 +150,8 @@ def jit(
   out_shardings=sharding_impls.UNSPECIFIED,
   static_argnums: Union[int, Sequence[int], None] = None,
   static_argnames: Union[str, Iterable[str], None] = None,
-  donate_argnums: Union[int, Sequence[int]] = (),
+  donate_argnums: Union[int, Sequence[int], None] = None,
+  donate_argnames: Union[str, Iterable[str], None] = None,
   keep_unused: bool = False,
   device: Optional[xc.Device] = None,
   backend: Optional[str] = None,
@@ -242,6 +243,11 @@ def jit(
 
       For more details on buffer donation see the
       `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
+    donate_argnames: An optional string or collection of strings specifying
+      which named arguments are donated to the computation. See the
+      comment on ``donate_argnums`` for details. If not
+      provided but ``donate_argnums`` is set, the default is based on calling
+      ``inspect.signature(fun)`` to find corresponding named arguments.
     keep_unused: If `False` (the default), arguments that JAX determines to be
       unused by `fun` *may* be dropped from resulting compiled XLA executables.
       Such arguments will not be transferred to the device nor provided to the
@@ -292,8 +298,8 @@ def jit(
     Array([   0,    1,  256, 6561], dtype=int32)
   """
   (in_shardings, out_shardings, donate_argnums, static_argnums,
-    static_argnames) = pjit.pre_infer_params(
-        fun, in_shardings, out_shardings, donate_argnums,
+   static_argnames) = pjit.pre_infer_params(
+        fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
         static_argnums, static_argnames, device, backend, abstracted_axes)
 
   def infer_params(*args, **kwargs):

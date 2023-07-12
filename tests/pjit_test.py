@@ -305,13 +305,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 2)])
   def testBufferDonation(self):
-    if jax.default_backend() not in {'gpu', 'tpu'}:
-      raise unittest.SkipTest('Buffer donation only supported on GPU and TPU')
-
-    @partial(pjit,
-             in_shardings=P('x'),
-             out_shardings=P('x'),
-             donate_argnums=0)
+    @partial(pjit, in_shardings=P('x'), out_shardings=P('x'), donate_argnums=0)
     def f(x, y):
       return x + y
 
@@ -322,6 +316,63 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(f(x, y), expected)
     self.assertNotDeleted(y)
     self.assertDeleted(x)
+
+  def testBufferDonationWithNames(self):
+    mesh = jtu.create_global_mesh((2,), ('x'))
+    s = NamedSharding(mesh, P('x'))
+
+    @partial(pjit, out_shardings=s, donate_argnames='inp2')
+    def f(inp1, inp2):
+      return inp1 + inp2
+
+    x = jax.device_put(np.ones((2, 5)) * 4, s)
+    y = jax.device_put(np.ones((2, 5)) * 2, s)
+    expected = x + y
+    self.assertAllClose(f(x, y), expected)
+    self.assertNotDeleted(x)
+    self.assertDeleted(y)
+
+  def testBufferDonationWithKwargs(self):
+    mesh = jtu.create_global_mesh((2,), ('x'))
+    s = NamedSharding(mesh, P('x'))
+
+    @partial(pjit, out_shardings=s, donate_argnames=('inp2', 'inp3'))
+    def f(inp1, inp2, inp3):
+      return inp1 + inp2 + inp3, inp3
+
+    x = jax.device_put(np.ones((2, 5)) * 4, s)
+    y = jax.device_put(np.ones((2, 5)) * 2, s)
+    z = jax.device_put(np.ones((2, 5)), s)
+
+    expected = x + y + z
+    self.assertAllClose(f(x, inp2=y, inp3=z)[0], expected)
+    self.assertNotDeleted(x)
+    self.assertDeleted(y)
+    self.assertDeleted(z)
+
+  def testBufferDonationWithPyTreeKwargs(self):
+    mesh = jtu.create_global_mesh((2,), ('x'))
+    s = NamedSharding(mesh, P('x'))
+
+    @partial(pjit, out_shardings=s, donate_argnames='inp2')
+    def f(inp1, inp2, inp3):
+      return jax.tree_map(lambda x, y, z: x + y + z, inp1, inp2, inp3)
+
+    x = np.ones((2, 5)) * 4
+    x_tree = jax.device_put({"a": {"b": x}, "c": x}, s)
+
+    y = np.ones((2, 5)) * 2
+    y_tree = jax.device_put({"a": {"b": y}, "c": y}, s)
+
+    z = np.ones((2, 5))
+    z_tree = jax.device_put({"a": {"b": z}, "c": z}, s)
+
+    expected = x + y + z
+    out = f(x_tree, inp2=y_tree, inp3=z_tree)
+    jax.tree_map(lambda o: self.assertAllClose(o, expected), out)
+    jax.tree_map(self.assertNotDeleted, x_tree)
+    jax.tree_map(self.assertDeleted, y_tree)
+    jax.tree_map(self.assertNotDeleted, z_tree)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingConstraintStablehlo(self):
@@ -734,6 +785,17 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x
     f_low = pjit(f, donate_argnums=(0,),
                  in_shardings=P('x'), out_shardings=P('x')).lower(x)
+    f_com = f_low.compile()
+    f_low.donate_argnums == f_com.donate_argnums == (0,)
+
+  @jtu.with_mesh([('x', 2)])
+  def testLowerDonateArgnumsAvailableWithNames(self):
+    x = jax.ShapeDtypeStruct((2, 2), jnp.float32)
+    def f(inp1):
+      return inp1
+
+    f_low = pjit(f, in_shardings=P('x'), out_shardings=P('x'),
+                 donate_argnames=('inp1',)).lower(x)
     f_com = f_low.compile()
     f_low.donate_argnums == f_com.donate_argnums == (0,)
 
