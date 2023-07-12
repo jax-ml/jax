@@ -363,6 +363,13 @@ class EinsumTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.eqns, 1)
     self.assertEqual(jaxpr.eqns[0].params['preferred_element_type'], 'float32')
 
+  def test_inf_nan(self):
+    x = np.array([[[np.inf, np.inf],
+                   [   1.0,    1.0]]])
+    out = jnp.einsum('baa->ba', x)
+    expected = np.einsum('baa->ba', x)
+    self.assertAllClose(out, expected, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

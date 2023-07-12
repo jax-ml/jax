@@ -3311,12 +3311,13 @@ def _einsum(
     for name, count in counts.items():
       if count > 1:
         axes = [i for i, n in enumerate(names) if n == name]
-        eye = lax_internal._delta(operand.dtype, operand.shape, axes)
+        eye = lax_internal._delta(np.dtype('bool'), operand.shape, axes)
+        operand = lax.select(eye, operand, zeros_like(operand))
         if name not in keep_names:
-          operand = sum(operand * eye, axes)
+          operand = sum(operand, axes)
           names = names.replace(name, '')
         else:
-          operand = sum(operand * eye, axes[:-1])
+          operand = sum(operand, axes[:-1])
           names = names.replace(name, '', count - 1)
     return operand, names
 
