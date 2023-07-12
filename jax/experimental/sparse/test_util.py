@@ -132,22 +132,24 @@ def _rand_sparse(shape: Sequence[int], dtype: DTypeLike, *,
                                                       [n_batch, n_sparse])
   if 0 <= nse < 1:
     nse = int(np.ceil(nse * np.prod(sparse_shape)))
+  nse_int = int(nse)
   data_rng = rand_method(rng)
-  data_shape = (*batch_shape, nse, *dense_shape)
+  data_shape = (*batch_shape, nse_int, *dense_shape)
   data = jnp.array(data_rng(data_shape, dtype))
 
+  int32 = np.dtype('int32')
   if sparse_format == 'bcoo':
-    index_shape = (*batch_shape, nse, n_sparse)
+    index_shape = (*batch_shape, nse_int, n_sparse)
     indices = jnp.array(
-      rng.randint(0, sparse_shape, size=index_shape, dtype=np.int32))  # type: ignore[arg-type]
+      rng.randint(0, sparse_shape, size=index_shape, dtype=int32))
     return sparse.BCOO((data, indices), shape=shape)
   else:
-    index_shape = (*batch_shape, nse)
+    index_shape = (*batch_shape, nse_int)
     indptr_shape = (*batch_shape, sparse_shape[0] + 1)
     indices = jnp.array(
-      rng.randint(0, sparse_shape[1], size=index_shape, dtype=np.int32))  # type: ignore[arg-type]
+      rng.randint(0, sparse_shape[1], size=index_shape, dtype=int32))
     indptr = jnp.sort(
-      rng.randint(0, nse + 1, size=indptr_shape, dtype=np.int32), axis=-1)  # type: ignore[call-overload]
+      rng.randint(0, nse_int + 1, size=indptr_shape, dtype=int32), axis=-1)
     indptr = indptr.at[..., 0].set(0)
     return sparse.BCSR((data, indices, indptr), shape=shape)
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.mypy]
 show_error_codes = true
-disable_error_code = "attr-defined"
+disable_error_code = "attr-defined, name-defined"
 no_implicit_optional = true
 
 [[tool.mypy.overrides]]
