@@ -16,9 +16,8 @@ import hashlib
 import io
 import logging
 import os
-import re
 import sys
-from typing import Any, Optional
+from typing import Optional
 import zlib
 
 import numpy as np
@@ -38,14 +37,7 @@ from jax._src.lib import xla_extension_version
 from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager as pm
-
-# TODO(phawkins): remove the conditional import after jaxlib 0.4.9 is the
-# minimum.
-mlir_jax: Any
-try:
-  from jax._src.lib.mlir import jax as mlir_jax
-except ImportError:
-  mlir_jax = None
+from jax._src.lib.mlir import jax as mlir_jax
 
 
 logger = logging.getLogger(__name__)
@@ -175,18 +167,15 @@ def _serialize_ir(m: ir.Module) -> bytes:
   return output.getvalue()
 
 def _canonicalize_ir(m_original: ir.Module) -> bytes:
-  # TODO(phawkins): remove the 'else' branch when jaxlib 0.4.9 is the minimum.
-  if mlir_jax is not None:
-    with m_original.context:
-      m = m_original.operation.clone()
-      passes = pm.PassManager.parse(
-          "builtin.module(func.func(jax-strip-locations))"
-      )
-      passes.run(m.operation)
-      return _serialize_ir(m)
-  else:
-    bytecode = _serialize_ir(m_original)
-    return re.sub(b" at 0x[a-f0-9]+>", b" at 0x...>", bytecode)
+  # mlir_jax import is required to register jax-strip-locations
+  assert mlir_jax is not None
+  with m_original.context:
+    m = m_original.operation.clone()
+    passes = pm.PassManager.parse(
+        "builtin.module(func.func(jax-strip-locations))"
+    )
+    passes.run(m.operation)
+    return _serialize_ir(m)
 
 def _hash_computation(hash_obj, module):
   if config.jax_compilation_cache_include_metadata_in_key:

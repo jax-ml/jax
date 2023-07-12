@@ -58,17 +58,7 @@ if TYPE_CHECKING:
     return list(zip(*args))
 
 else:
-  # TODO(phawkins): remove the hasattr condition after jaxlib 0.4.9 is the
-  # minimum
-  if hasattr(jaxlib_utils, 'safe_zip'):
-    safe_zip = jaxlib_utils.safe_zip
-  else:
-    def safe_zip(*args):
-      args = list(map(list, args))
-      n = len(args[0])
-      for arg in args[1:]:
-        assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
-      return list(zip(*args))
+  safe_zip = jaxlib_utils.safe_zip
 
 
 if TYPE_CHECKING:
@@ -95,17 +85,7 @@ if TYPE_CHECKING:
     return list(map(f, *args))
 
 else:
-  # TODO(phawkins): remove the hasattr condition after jaxlib 0.4.9 is the
-  # minimum
-  if hasattr(jaxlib_utils, 'safe_map'):
-    safe_map = jaxlib_utils.safe_map
-  else:
-    def safe_map(f, *args):
-      args = list(map(list, args))
-      n = len(args[0])
-      for arg in args[1:]:
-        assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
-      return list(map(f, *args))
+  safe_map = jaxlib_utils.safe_map
 
 def unzip2(xys: Iterable[tuple[T1, T2]]
     ) -> tuple[tuple[T1, ...], tuple[T2, ...]]:
