@@ -16,6 +16,8 @@ limitations under the License.
 #include <complex>
 
 #include "ducc/src/ducc0/fft/fft.h"
+#include "ducc/src/ducc0/fft/fft1d_impl.h"  // NOLINT: required for fft definitions.
+#include "ducc/src/ducc0/fft/fftnd_impl.h"  // NOLINT: required for fft definitions.
 #include "flatbuffers/flatbuffers.h"
 #include "jaxlib/cpu/ducc_fft_generated.h"
 #include "xla/service/custom_call_status.h"
@@ -137,4 +139,4 @@ void DynamicDuccFft(void *out, void **in, XlaCustomCallStatus *) {
               descriptor->forward(), *dynamic_scale);
 }
 
-} // namespace jax
+}  // namespace jax

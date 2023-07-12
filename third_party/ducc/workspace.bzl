@@ -17,13 +17,17 @@
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 def repo():
+    # Attention: tools parse and update these lines.
+    DUCC_COMMIT = "2b2cead005e08d2632478e831d7f45da754162dc"
+    DUCC_SHA256 = "60719aa71d637dba594a03fed682bb6943dfffaa5557f8e8bb51228a295bbd79"
+
     http_archive(
         name = "ducc",
-        strip_prefix = "ducc-356d619a4b5f6f8940d15913c14a043355ef23be",
-        sha256 = "d23eb2d06f03604867ad40af4fe92dec7cccc2c59f5119e9f01b35b973885c61",
+        strip_prefix = "ducc-{commit}".format(commit = DUCC_COMMIT),
+        sha256 = DUCC_SHA256,
         urls = [
-            "https://github.com/mreineck/ducc/archive/356d619a4b5f6f8940d15913c14a043355ef23be.tar.gz",
-            "https://storage.googleapis.com/jax-releases/mirror/ducc/ducc-356d619a4b5f6f8940d15913c14a043355ef23be.tar.gz",
+            "https://gitlab.mpcdf.mpg.de/mtr/ducc/-/archive/{commit}/ducc-{commit}.tar.gz".format(commit = DUCC_COMMIT),
+            "https://storage.googleapis.com/mirror.tensorflow.org/gitlab.mpcdf.mpg.de/mtr/ducc/-/archive/{commit}/ducc-{commit}.tar.gz".format(commit = DUCC_COMMIT),
         ],
         build_file = "@//third_party/ducc:BUILD.bazel",
     )
