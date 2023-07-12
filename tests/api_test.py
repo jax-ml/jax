@@ -4264,6 +4264,14 @@ class APITest(jtu.JaxTestCase):
           tracing_add_count += 1
       self.assertEqual(tracing_add_count, 2)
 
+  @parameterized.named_parameters([
+      {"testcase_name": f"{dtype}", "dtype": dtype}
+      for dtype in jtu.dtypes.custom_floats])
+  def test_jit_custom_floats(self, dtype):
+    f = lambda x: x + 1
+    args_maker = lambda: [jnp.ones((), dtype=dtype)]
+    self._CompileAndCheck(f, args_maker)
+
 
 class RematTest(jtu.JaxTestCase):
 

@@ -1137,6 +1137,12 @@ class _LazyDtypes:
     return type(dtypes)(d for d in dtypes if d in supported)
 
   @_cached_property
+  def custom_floats(self):
+    return [np.dtype(t) for t in [
+      _dtypes.bfloat16, _dtypes.float8_e4m3b11fnuz,
+      _dtypes.float8_e4m3fn, _dtypes.float8_e5m2]]
+
+  @_cached_property
   def floating(self):
     return self.supported([np.float32, np.float64])
 
