@@ -101,12 +101,13 @@ class _DimAtom:
     * var: if specified then the atom is a dimension variable. `operation`
       must be `None`.
     * operation: if specified then the atom is an operation applied to
-      `operands`. One of `FLOORDIR` or `MOD`. `var` must be `None`
+      `operands`. One of `FLOORDIR` or `MOD` or `NON_NEGATIVE`. `var` must be `None`
     * operands: the operands to which the operation is applied.
   """
   # The supported operations
   FLOORDIV = "floordiv"
   MOD = "mod"
+  NON_NEGATIVE = "non_negative"  # The max of the operand and 0
 
   def __init__(self, *operands: '_DimExpr',
                var: Optional[str] = None,
@@ -215,6 +216,10 @@ class _DimAtom:
       else:
         return (np.NINF, np.PINF)
 
+    elif self.operation == _DimAtom.NON_NEGATIVE:
+      (b_l, b_h), = opnd_bounds
+      return (max(0, b_l), max(0, b_h))
+
     else:
       assert False
 
@@ -229,11 +234,12 @@ class _DimAtom:
         raise KeyError(err_msg)
     else:
       operand_values = [opnd.evaluate(env) for opnd in self.operands]
-      div_mod = divmod(*operand_values)  # type: ignore
       if self.operation == _DimAtom.FLOORDIV:
-        return div_mod[0]
+        return divmod(*operand_values)[0]  # type: ignore
       elif self.operation == _DimAtom.MOD:
-        return div_mod[1]
+        return divmod(*operand_values)[1]  # type: ignore
+      elif self.operation == _DimAtom.NON_NEGATIVE:
+        return lax.max(operand_values[0], 0)
       else:
         assert False, self.operation
 
@@ -695,6 +701,9 @@ class _DimExpr():
              for mon, coeff in self.monomials()]
     return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
+  def non_negative(self) -> "_DimExpr":
+    return _DimExpr.from_operation(_DimAtom.NON_NEGATIVE, self)
+
   @staticmethod
   def get_aval(dim: "_DimExpr"):
     return core.dim_value_aval()
@@ -1071,10 +1080,12 @@ class _Parser:
 
   def atom(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
     if tok.exact_type == tokenize.NAME:
-      if tok.string == "mod":
+      if tok.string == _DimAtom.MOD:
         return self.binary_op(_DimAtom.MOD, self.next_tok())
-      if tok.string == "floordiv":
+      if tok.string == _DimAtom.FLOORDIV:
         return self.binary_op(_DimAtom.FLOORDIV, self.next_tok())
+      if tok.string == _DimAtom.NON_NEGATIVE:
+        return self.unary_op(_DimAtom.NON_NEGATIVE, self.next_tok())
       return _DimExpr.from_var(tok.string), self.next_tok()
     number_sign = 1
     if tok.exact_type == tokenize.MINUS:  # -k are negative constants
@@ -1086,6 +1097,12 @@ class _Parser:
       return v * number_sign, tok
     self.expect_token(tok, [tokenize.NAME, tokenize.MINUS, tokenize.NUMBER])
     assert False
+
+  def unary_op(self, op: str, tok) -> tuple[DimSize, tokenize.TokenInfo]:
+    tok = self.consume_token(tok, tokenize.LPAR)
+    e1, tok = self.expr(tok)
+    tok = self.consume_token(tok, tokenize.RPAR)
+    return _DimExpr.from_operation(op, e1), tok  # type: ignore
 
   def binary_op(self, op: str, tok) -> tuple[DimSize, tokenize.TokenInfo]:
     tok = self.consume_token(tok, tokenize.LPAR)

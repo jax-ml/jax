@@ -2358,23 +2358,7 @@ def _arange_dynamic(
         f"be resolved statically if it is > 0 or < 0.\nDetails: {e}")
   gap = step if step_gt_0 else - step
   distance = (stop - start) if step_gt_0 else (start - stop)
-  try:
-    if distance >= 1 - gap:
-      size = (distance + gap - 1) // gap
-    else:
-      size = 0
-  except core.InconclusiveDimensionOperation:
-    # Cannot resolve "distance >= 1 - gap". Perhaps we can resolve "distance >= 1"
-    try:
-        if distance >= 1:
-          assert False
-        else:
-          size = 0
-    except core.InconclusiveDimensionOperation:
-      raise core.InconclusiveDimensionOperation(
-          "In arange with non-constant dimensions the distance between "
-          f"start ({start}) and stop ({stop}) must be resolved statically "
-          f"if it is >= {1 - gap} or >= 1.")
+  size = core.non_negative_dim(distance + gap - 1) // gap
   return (array(start, dtype=dtype) +
           array(step, dtype=dtype) * lax.iota(dtype, size))
 
