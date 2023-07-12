@@ -4622,7 +4622,7 @@ def _iota_batching_rule(in_vals, in_dims, *, dtype, shape, dimension):
   ragged_axis, = [i for i, dim in enumerate(shape) if dim is None]
   shape = (len(segment_lengths),) + _merge_dyn_shape(shape, (bound,))
   iota = broadcasted_iota(dtype, shape, dimension+1)
-  return iota, batching.RaggedAxis(ax, [(ragged_axis+1, segment_lengths)])
+  return iota, batching.RaggedAxis(ax, ((ragged_axis+1, segment_lengths),))
 batching.primitive_batchers[iota_p] = _iota_batching_rule
 
 def _iota_pp_rule(eqn, context, settings):

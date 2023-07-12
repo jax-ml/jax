@@ -144,7 +144,7 @@ def transpose_ragged_axes(dim: RaggedAxis, perm: tuple[int, ...]) -> RaggedAxis:
   return _sorted_ragged_axis(dim.stacked_axis, new_ragged_axes)
 
 def _sorted_ragged_axis(stacked_axis, ragged_axes):
-  return RaggedAxis(stacked_axis, list(sorted(ragged_axes, key=lambda p: p[0])))
+  return RaggedAxis(stacked_axis, tuple(sorted(ragged_axes, key=lambda p: p[0])))
 
 def make_batch_axis(
     ndim: int, stacked_axis: int, ragged_axes: list[tuple[int, Array]]
@@ -725,8 +725,8 @@ def resolve_ragged_axes(vals, dims):
   idxs = {lengths_idx.val for d in dims if isinstance(d, RaggedAxis)
           for (_, lengths_idx) in d.ragged_axes}
   dims = [RaggedAxis(d.stacked_axis,
-                     [(ragged_axis, vals[lengths_idx.val])
-                      for ragged_axis, lengths_idx in d.ragged_axes])
+                     tuple([(ragged_axis, vals[lengths_idx.val])
+                            for ragged_axis, lengths_idx in d.ragged_axes]))
           if isinstance(d, RaggedAxis) else d for d in dims]
   vals = [x for i, x in enumerate(vals) if i not in idxs]
   return vals, dims
@@ -740,8 +740,8 @@ def resolve_ragged_axes_against_inputs_outputs(in_vals, out_vals, dims):
       return out_vals[idx.val]
 
   dims = [RaggedAxis(d.stacked_axis,
-                     [(ragged_axis, fetch(lengths_idx))
-                      for ragged_axis, lengths_idx in d.ragged_axes])
+                     tuple([(ragged_axis, fetch(lengths_idx))
+                            for ragged_axis, lengths_idx in d.ragged_axes]))
           if isinstance(d, RaggedAxis) else d for d in dims]
   return dims
 
@@ -1041,22 +1041,23 @@ def reducer_batcher(prim, ident, batched_args, batch_dims, axes, **params):
       else:
         ragged_axes_out.append((out_axis(axes, ragged_axis), segment_lengths))
     operand = mask_ragged_axes(
-        operand, ident, RaggedAxis(bdim.stacked_axis, axes_to_mask))
+        operand, ident, RaggedAxis(bdim.stacked_axis, tuple(axes_to_mask)))
     result = prim.bind(operand, axes=axes, **params)
     return result, make_batch_axis(operand.ndim, bdim_out, ragged_axes_out)
   else:
     assert False
 
-def mask_ragged_axes(operand, ident, axis_spec):
+def mask_ragged_axes(operand: Array, ident, axis_spec: RaggedAxis) -> Array:
   # TODO(mattjj, axch) Can we mask multiple axes more efficiently at
   # once, rather than one at a time?
   for ragged_axis, segment_lengths in axis_spec.ragged_axes:
     this_axis_spec = RaggedAxis(
-        axis_spec.stacked_axis, [(ragged_axis, segment_lengths)])
+        axis_spec.stacked_axis, ((ragged_axis, segment_lengths),))
     operand = _mask_one_ragged_axis(operand, ident, this_axis_spec)
   return operand
 
-def _mask_one_ragged_axis(operand, ident, axis_spec):
+def _mask_one_ragged_axis(
+    operand: Array, ident, axis_spec: RaggedAxis) -> Array:
   assert len(axis_spec.ragged_axes) == 1, "Mask just one ragged axis at a time"
   ragged_axis, segment_lengths = axis_spec.ragged_axes[0]
   value = ident(operand.dtype)
