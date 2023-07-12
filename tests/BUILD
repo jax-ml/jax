@@ -639,6 +639,7 @@ jax_test(
         "tpu": [
             "optonly",
             "nomsan",  # Times out
+            "notsan",  # Times out
         ],
     },
     shard_count = {
