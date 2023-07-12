@@ -358,12 +358,18 @@ class PrngTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")  # TPU precision causes issues.
   def testRandomDistributionValues(self, case, make_key):
     """
-    Tests values output by various distributions. This will catch any unintentional
-    changes to the implementations that could result in different random sequences.
+    Tests values output by various distributions. This will catch any
+    unintentional changes to the implementations that could result in
+    different random sequences.
 
-    Any refactoring of random distributions that leads to non-trivial differences in
-    this test should involve a deprecation cycle following the procedures outlined at
-    https://jax.readthedocs.io/en/latest/api_compatibility.html
+    Any refactoring of random distributions that leads to non-trivial
+    differences in this test should follow the procedure outlined at
+    https://jax.readthedocs.io/en/latest/api_compatibility.html#numerics-and-randomness
+
+    This includes:
+    * Announcing the change in the CHANGELOG.md
+    * Considering adding a flag that reverts the new behavior, made
+      available for a deprecation window's amount of time.
     """
     if config.x64_enabled and case.on_x64 == OnX64.SKIP:
       self.skipTest("test produces different values when jax_enable_x64=True")
