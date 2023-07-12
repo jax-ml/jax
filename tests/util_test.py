@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import operator
-import unittest
 
 from absl.testing import absltest
 
@@ -122,8 +121,6 @@ class SafeMapTest(jtu.JaxTestCase):
         util.safe_map(make_tuple, range(4), range(4, 8)),
     )
 
-  @unittest.skipIf(not hasattr(jaxlib_utils, 'safe_map'),
-                   "requires jaxlib 0.4.9")
   def test_safe_map_errors(self):
     with self.assertRaisesRegex(
         TypeError, "safe_map requires at least 2 arguments"
@@ -174,8 +171,6 @@ class SafeZipTest(jtu.JaxTestCase):
         util.safe_zip(range(4), range(4, 8)),
     )
 
-  @unittest.skipIf(not hasattr(jaxlib_utils, 'safe_zip'),
-                   "requires jaxlib 0.4.9")
   def test_safe_zip_errors(self):
     with self.assertRaisesRegex(
         TypeError, "safe_zip requires at least 1 argument"
