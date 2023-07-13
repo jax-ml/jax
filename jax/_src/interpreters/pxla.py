@@ -49,6 +49,7 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config
+from jax._src.core import DShapedArray
 from jax._src.core import ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -161,6 +162,10 @@ def _shard_array(x, devices, indices, sharding):
   return out
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
+
+def _shard_darray(x, devices, indices, sharding):
+  return shard_arg(x._data, devices, indices, sharding)
+shard_arg_handlers[core.DArray] = _shard_darray
 
 def shard_device_array(x, devices, indices, sharding):
   start_indices, limit_indices, removed_dims = unzip3(
@@ -2115,7 +2120,7 @@ def _to_logical_sharding(
 ) -> Optional[sharding_impls.XLACompatibleSharding]:
   if is_unspecified(sharding) or is_auto(sharding):
     return None
-  elif isinstance(aval, ShapedArray):
+  elif isinstance(aval, (ShapedArray, DShapedArray)):
     assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
     return sharding
   elif isinstance(aval, core.AbstractToken):

@@ -95,7 +95,11 @@ class XLACompatibleSharding(sharding.Sharding):
     assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
     out = []
     for dim, (s, p) in enumerate(safe_zip(global_shape, partitions)):
-      quotient, remainder = divmod(s, p)
+      try:
+        quotient, remainder = divmod(s, p)
+      except TypeError:
+        # TODO Figure out how to partition dynamic shapes
+        raise NotImplementedError
       if remainder != 0:
         raise ValueError(
             f"Sharding {self} implies that array axis {dim} is partitioned "

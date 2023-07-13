@@ -1553,12 +1553,13 @@ def _gather_shape_computation(indices, dimension_numbers, slice_sizes):
 
   expanded_indices_shape.pop(index_vector_dim)
 
-  indices_shape = iter(expanded_indices_shape)
+  indices_shape_gen = iter(expanded_indices_shape)
 
-  slice_sizes = (s for i, s in enumerate(slice_sizes)
-                 if i not in collapsed_slice_dims)
-  return tuple(next(slice_sizes) if i in offset_dims
-               else next(indices_shape) for i in range(output_shape_rank))
+  slice_sizes_gen = (s for i, s in enumerate(slice_sizes)
+                     if i not in collapsed_slice_dims)
+  ans = tuple(next(slice_sizes_gen) if i in offset_dims
+              else next(indices_shape_gen) for i in range(output_shape_rank))
+  return ans
 
 
 def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
@@ -1656,7 +1657,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
             raise NotImplementedError
       bdim_out = batching.shape_as_bdim(
           operand_bdim.stacked_axis,
-          _gather_shape_computation(indices, dimension_numbers, slice_sizes))
+          _gather_shape_computation(indices, dnums, ragged_slice_sizes))
     else:
       bdim_out = operand_bdim
     return gather(

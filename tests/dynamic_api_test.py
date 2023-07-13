@@ -1488,13 +1488,21 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     self.assertAllClose(y._data, x)
 
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow",
-                 jax_disable_jit=True, jax_traceback_filtering='off')
+                 jax_disable_jit=False, jax_traceback_filtering='off')
 class PileTest(jtu.JaxTestCase):
 
   def test_internal_pile(self):
     ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
     xs = jax.vmap(lambda n: jax.lax.iota('int32', n).sum())(ins)
     self.assertAllClose(xs, jnp.array([3, 0, 6]), check_dtypes=False)
+
+  def test_pile_escapes(self):
+    ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+    xs = jax.vmap(jax.jit(lambda n: jax.lax.iota('int32', n)),
+                  out_axes=batching.pile_axis)(ins)
+    self.assertIsInstance(xs, batching.Pile)
+    data = jax.lax.broadcasted_iota('int32', (3, 5), 1)
+    self.assertAllClose(xs.data, data, check_dtypes=False)
 
   def test_make_pile_from_dynamic_shape(self):
     # We may not want to support returning piles from vmapped functions (instead
@@ -1512,7 +1520,7 @@ class PileTest(jtu.JaxTestCase):
     ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
     p = jax.vmap(partial(jnp.arange, dtype='int32'),
                  out_axes=batching.pile_axis)(ins)
-    p = pile_map(lambda x: x ** 2)(p)
+    p = pile_map(jax.jit(lambda x: x ** 2))(p)
     self.assertIsInstance(p, batching.Pile)
     self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[bint\{≤5\}\[3\] with value: \[3 1 4\]\.Var[0-9]+\]')
     data = jax.lax.broadcasted_iota('int32', (3, 5), 1) ** 2
@@ -1674,6 +1682,7 @@ class PileTest(jtu.JaxTestCase):
       return part_1
     p = jax.vmap(func, out_axes=batching.pile_axis)(ins)
     self.assertIsInstance(p, batching.Pile)
+    self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[bint\{≤5\}\[3\] with value: \[3 1 4\]\.Var[0-9]+\]')
     data = jax.lax.broadcasted_iota('int32', (3, 5), 1)
     self.assertAllClose(p.data, data)
 

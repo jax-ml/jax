@@ -4622,7 +4622,7 @@ def _iota_batching_rule(in_vals, in_dims, *, dtype, shape, dimension):
   ragged_axis, = [i for i, dim in enumerate(shape) if dim is None]
   shape = (len(segment_lengths),) + _merge_dyn_shape(shape, (bound,))
   iota = broadcasted_iota(dtype, shape, dimension+1)
-  return iota, batching.RaggedAxis(ax, [(ragged_axis+1, segment_lengths)])
+  return iota, batching.RaggedAxis(ax, ((ragged_axis+1, segment_lengths),))
 batching.primitive_batchers[iota_p] = _iota_batching_rule
 
 def _iota_pp_rule(eqn, context, settings):
@@ -4918,8 +4918,7 @@ mlir.register_lowering(empty_p, _empty_lower)
 class BIntRules:
   @staticmethod
   def physical_element_aval(dtype) -> core.ShapedArray:
-    int_dtype = dtypes._scalar_type_to_dtype(int)
-    return core.ShapedArray((), int_dtype)
+    return core.ShapedArray((), np.dtype('int32'))
 
   @staticmethod
   def result_handler(sticky_device, aval):
@@ -4944,5 +4943,9 @@ class BIntRules:
     def handler(bufs):
       return core.DArray(aval, phys_handler(bufs))
     return handler
+
+  @staticmethod
+  def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
+    return hlo_sharding
 
 core.bint._rules = BIntRules
