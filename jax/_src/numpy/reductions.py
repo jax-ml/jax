@@ -94,7 +94,7 @@ def _reduction(a: ArrayLike, name: str, np_fun: Any, op: ReductionOp, init_val: 
 
   if initial is None and not has_identity:
     shape = np.shape(a)
-    if not _all(core.greater_equal_dim(shape[d], 1) for d in pos_dims):
+    if not _all(shape[d] >= 1 for d in pos_dims):
       raise ValueError(f"zero-size array to reduction operation {name} which has no identity")
 
   result_dtype = dtype or dtypes.dtype(a)

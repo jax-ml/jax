@@ -21,7 +21,6 @@ from jax._src.interpreters.partial_eval import (
   ConstVar as ConstVar,
   DCERule as DCERule,
   DebugInfo as DebugInfo,
-  DimensionHandlerTracer as DimensionHandlerTracer,
   DynamicJaxprTrace as DynamicJaxprTrace,
   DynamicJaxprTracer as DynamicJaxprTracer,
   ForwardingRule as ForwardingRule,

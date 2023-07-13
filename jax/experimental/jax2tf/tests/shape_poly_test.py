@@ -40,6 +40,7 @@ from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client
 import numpy as np
 
@@ -178,9 +179,7 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
     self.assertFalse(core.definitely_equal_one_of_dim(3, []))
 
     self.assertTrue(core.definitely_equal(1, jnp.add(0, 1)))  # A DeviceArray
-    with self.assertRaisesRegex(TypeError,
-                                re.escape("Shapes must be 1D sequences of concrete values of integer type, got (1, 'a').")):
-      self.assertTrue(core.definitely_equal(1, "a"))
+    self.assertFalse(core.definitely_equal(1, "a"))
 
   def test_poly_bounds(self):
     a, b = shape_poly._parse_spec("a, b", (2, 3))
@@ -312,34 +311,30 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
 
   def test_poly_compare_overload(self):
     a, b = shape_poly._parse_spec("a, b", (2, 3))
+    self.assertTrue(a >= a)
+    self.assertTrue(a >= 0)
+    self.assertTrue(a >= 1)
+
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation, "inconclusive"):
+      a >= 2
+
     poly = 4 * a + b + 3
     self.assertTrue(poly >= 0)
     self.assertTrue(poly >= 8)
     self.assertTrue(poly > 7)
     self.assertTrue(poly >= poly)
     self.assertTrue(poly >= poly - 1)
+    # LHS is an integer
+    self.assertTrue(8 <= poly)
+    self.assertTrue(7 < poly)
+    self.assertTrue(-8 >= -poly)
+    self.assertTrue(-7 > -poly)
 
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation, "inconclusive"):
       poly >= 9
 
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation, "inconclusive"):
       (4 * a - b) >= 0
-
-  def test_core_greater_equal(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
-    self.assertTrue(core.greater_equal_dim(a, a))
-    self.assertTrue(core.greater_equal_dim(a, 0))
-    self.assertTrue(core.greater_equal_dim(a, 1))
-
-    self.assertTrue(core.greater_equal_shape((a, 2), (1, 1)))
-
-    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                "Symbolic dimension comparison .* is inconclusive"):
-      core.greater_equal_dim(a, 2)
-
-    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                "Symbolic dimension comparison .* is inconclusive"):
-      core.greater_equal_dim(a, b)
 
   def test_poly_int_results(self):
     # Whenever the result is an integer, it should be represented as an
@@ -377,28 +372,32 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
     else:
       self.assertEqual((quotient, remainder), divmod(dividend, divisor))
 
-  def test_dilate_shape(self):
+  def test_dilate_dim(self):
     """0 if d == 0 else 1 + dilation * (d - 1))"""
     a, = shape_poly._parse_spec("a,", (2,))
 
-    self.assertEqual((4, 7), core.dilate_shape((2, 3), (3, 3)))
-    self.assertEqual((0, 7), core.dilate_shape((0, 3), (3, 3)))
-    self.assertEqual((a, 7), core.dilate_shape((a, 3), (1, 3)))
-    self.assertEqual((2 * a - 1, 7), core.dilate_shape((a, 3), (2, 3)))
+    self.assertEqual(4, core.dilate_dim(2, 3))
+    self.assertEqual(7, core.dilate_dim(3, 3))
+    self.assertEqual(0, core.dilate_dim(0, 3))
+    self.assertEqual(a, core.dilate_dim(a, 1))
+    self.assertEqual(2 * a - 1, core.dilate_dim(a, 2))
 
-  def test_stride_shape(self):
-    """(s - window_size) // window_stride + 1"""
+  def test_stride_dim(self):
+    """(d - window_size) // window_stride + 1
+
+    If d == 0 or window_size > d, returns 0.
+    """
     a, stride = shape_poly._parse_spec("a, s", (2, 3))
 
-    self.assertEqual((8, 9), core.stride_shape((10, 20), window_size=(3, 3), window_stride=(1, 2)))
-    self.assertEqual((a, 9), core.stride_shape((a, 20), (1, 3), (1, 2)))
+    self.assertEqual(8, core.stride_dim(10, window_size=3, window_stride=1))
+    self.assertEqual(9, core.stride_dim(20, window_size=3, window_stride=2))
+    self.assertEqual(9, core.stride_dim(20, window_size=4, window_stride=2))
+    self.assertEqual(a, core.stride_dim(a, window_size=1, window_stride=1))
 
-    self.assertEqual((a - 1, 9), core.stride_shape((a, 20), (2, 3), (1, 2)))
-    self.assertEqual((a + 1, 9), core.stride_shape((a * stride + 2, 20), (2, 3), (stride, 2)))
-
-    (stride0, stride1) = core.stride_shape((a, 20), (1, 3), (2, 2))
-    self.assertEqual("floordiv(a + -1, 2) + 1", str(stride0))
-    self.assertEqual(9, stride1)
+    self.assertEqual(a - 1, core.stride_dim(a, window_size=2, window_stride=1))
+    self.assertEqual(a + 1, core.stride_dim(a * stride + 2, window_size=2,
+                                            window_stride=stride))
+    self.assertEqual((a - 1) // 2 + 1, core.stride_dim(a, 1, 2))
 
 
 class PolyHarness(Harness):
@@ -2901,6 +2900,17 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       if "top_k" in harness.fullname and "approx_top_k" not in harness.fullname:
         # https://github.com/openxla/stablehlo/issues/1255: need DynamicTopK
         raise unittest.SkipTest("native lowering with shape polymorphism not implemented for top_k")
+
+      # Some tests need the latest jaxlib
+      need_new_jaxlib = []
+      if jaxlib_version < (0, 4, 13):
+        need_new_jaxlib.append("fft")
+      elif jaxlib_version < (0, 4, 14):
+        need_new_jaxlib.extend(("lu", "vmap_lu", "custom_linear_solve",
+                                "vmap_custom_linear_solve",
+                                "vmap_approx_top_k", "schur"))
+      if harness.group_name in need_new_jaxlib:
+        raise unittest.SkipTest("native lowering with shape polymorphism needs newer jaxlib")
 
       if (jtu.device_under_test() in ["cpu", "gpu"] and
           harness.fullname in [
