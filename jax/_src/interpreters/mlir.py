@@ -254,6 +254,8 @@ def _numpy_array_constant(x: np.ndarray, canonicalize_types
       x = np.array(0 if x.item() == 0 else 0xff, np.uint8)
   elif x.dtype == dtypes.bfloat16:
     x = x.view(np.uint16)
+  elif x.dtype in [dtypes.float8_e4m3b11fnuz, dtypes.float8_e4m3fn, dtypes.float8_e5m2]:
+    x = x.view(np.uint8)
   x = np.ascontiguousarray(x)
   attr = ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
   return (hlo.ConstantOp(attr).result,)
