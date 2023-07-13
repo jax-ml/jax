@@ -76,6 +76,11 @@ _custom_float_dtypes = [
     _float8_e5m2_dtype,
     _bfloat16_dtype,
 ]
+_float8_dtypes = [
+    _float8_e4m3b11fnuz_dtype,
+    _float8_e4m3fn_dtype,
+    _float8_e5m2_dtype,
+]
 
 # 4-bit integer support
 int4: type[np.generic] = ml_dtypes.int4
@@ -83,6 +88,11 @@ uint4: type[np.generic] = ml_dtypes.uint4
 
 _int4_dtype: np.dtype = np.dtype(int4)
 _uint4_dtype: np.dtype = np.dtype(uint4)
+
+_int4_dtypes = [
+    _int4_dtype,
+    _uint4_dtype,
+]
 
 # Default types.
 bool_: type = np.bool_
@@ -453,6 +463,18 @@ def _least_upper_bound(jax_numpy_dtype_promotion: str, *nodes: JAXType) -> JAXTy
         f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
         "promotion path when jax_numpy_dtype_promotion=strict. Try explicitly casting "
         "inputs to the desired output type, or set jax_numpy_dtype_promotion=standard.")
+    elif any(n in _float8_dtypes for n in nodes):
+      msg = (
+        f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
+        "promotion path. To avoid unintended promotion, 8-bit floats do not support "
+        "implicit promotion. If you'd like your inputs to be promoted to another type, "
+        "you can do so explicitly using e.g. x.astype('float32')")
+    elif any(n in _int4_dtypes for n in nodes):
+      msg = (
+        f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
+        "promotion path. To avoid unintended promotion, 4-bit integers do not support "
+        "implicit promotion. If you'd like your inputs to be promoted to another type, "
+        "you can do so explicitly using e.g. x.astype('int32')")
     else:
       msg = (
         f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "

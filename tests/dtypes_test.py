@@ -17,6 +17,7 @@ import enum
 import functools
 import itertools
 import operator
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -600,6 +601,26 @@ class TestPromotionTables(jtu.JaxTestCase):
     else:
       expected = x.dtype
     self.assertEqual(dtypes.result_type(x), expected)
+
+  @unittest.skipIf(not _fp8_enabled, "requires fp8 dtypes")
+  @jax.numpy_dtype_promotion('standard')
+  def testFloat8PromotionError(self):
+    for dtype in fp8_dtypes:
+      x = jnp.array(1, dtype=dtype)
+      y = jnp.array(1, dtype='float32')
+      with self.assertRaisesRegex(dtypes.TypePromotionError,
+                                  ".*8-bit floats do not support implicit promotion"):
+        x + y
+
+  @unittest.skipIf(not _int4_enabled, "requires int4 dtypes")
+  @jax.numpy_dtype_promotion('standard')
+  def testInt4PromotionError(self):
+    for dtype in int4_dtypes:
+      x = jnp.array(1, dtype=dtype)
+      y = jnp.array(1, dtype='int32')
+      with self.assertRaisesRegex(dtypes.TypePromotionError,
+                                  ".*4-bit integers do not support implicit promotion"):
+        x + y
 
   @jtu.sample_product(
     dtype=all_dtypes,
