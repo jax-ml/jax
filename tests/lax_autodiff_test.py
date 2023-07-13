@@ -1113,6 +1113,23 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     expected = -1.j
     self.assertEqual(actual, expected)
 
+  def test_scatter_apply_jvp(self):
+    def f(x):
+      return x.at[1].apply(jax.numpy.sin)
+
+    x = jax.numpy.array([1.0, 2.0])
+    with self.assertRaises(NotImplementedError):
+      jax.jacfwd(f)(x)
+
+  def test_scatter_apply_vjp(self):
+    def f(x):
+      return x.at[1].apply(jax.numpy.sin)
+
+    x = jax.numpy.array([1.0, 2.0])
+
+    with self.assertRaises(NotImplementedError):
+      jax.jacrev(f)(x)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
