@@ -15,7 +15,7 @@ limitations under the License.
 
 include "mlir/Pass/PassBase.td"
 
-def StripLocationsPass : Pass<"jax-strip-locations", "mlir::func::FuncOp"> {
+def StripLocationsPass : Pass<"jax-strip-locations", "mlir::ModuleOp"> {
   let summary = "Removes Locations from the IR";
   let constructor = "createStripLocationsPass()";
 }

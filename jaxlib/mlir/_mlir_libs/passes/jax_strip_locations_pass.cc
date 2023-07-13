@@ -13,7 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Block.h"
+#include "mlir/IR/Region.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
 #include "jaxlib/mlir/_mlir_libs/passes/jax_passes.h"
 
@@ -30,14 +33,22 @@ struct JaxStripLocationsPass
   void runOnOperation() override {
     mlir::Operation* operation = getOperation();
     auto unknown_loc = mlir::UnknownLoc::get(operation->getContext());
-    operation->walk(
-        [unknown_loc](mlir::Operation* op) { op->setLoc(unknown_loc); });
+    operation->walk([unknown_loc](mlir::Operation* op) {
+      op->setLoc(unknown_loc);
+      for (mlir::Region& region : op->getRegions()) {
+        for (mlir::Block& block : region.getBlocks()) {
+          for (mlir::BlockArgument& arg : block.getArguments()) {
+            arg.setLoc(unknown_loc);
+          }
+        }
+      }
+    });
   };
 };
 
 }  // namespace
 
-std::unique_ptr<mlir::OperationPass<mlir::func::FuncOp>>
+std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
 createStripLocationsPass() {
   return std::make_unique<JaxStripLocationsPass>();
 }

@@ -15,12 +15,12 @@ limitations under the License.
 
 #include <memory>
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
 namespace jax {
 
-std::unique_ptr<mlir::OperationPass<mlir::func::FuncOp>>
+std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
 createStripLocationsPass();
 
 #define GEN_PASS_REGISTRATION

@@ -58,7 +58,7 @@ cc_library(
     ],
     hdrs = ["jax_passes.h"],
     deps = [
-        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
     ],
 )
@@ -75,7 +75,6 @@ cc_library(
         ":jax_pass_inc_gen",
         ":jax_passes",
         "@llvm-project//mlir:CAPIIRHeaders",
-        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:Pass",
     ],
     alwayslink = True,
