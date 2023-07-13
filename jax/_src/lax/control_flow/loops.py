@@ -984,7 +984,7 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
      type(linear) is tuple and all(type(x) is bool for x in linear))
   tc(unroll, 'unroll', 'positive int', type(unroll) is int and unroll > 0)
 
-  tc(length, 'length', 'non-negative int', length >= 0)
+  tc(length, 'length', 'non-negative int', core.greater_equal_dim(length, 0))
 
   if len(linear) != len(avals):
     raise core.JaxprTypeError(

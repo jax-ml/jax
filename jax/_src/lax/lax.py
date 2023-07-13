@@ -3169,9 +3169,9 @@ def _pad_shape_rule(operand, padding_value, *, padding_config):
   if not all(i >= 0 for _, _, i in padding_config):
     raise ValueError("interior padding in padding_config must be nonnegative, "
                      f"got padding_config {padding_config}")
-  result = tuple(l + h + core.dilate_dim(d, i + 1)
+  result = tuple(core.sum_dim(l, h, core.dilate_dim(d, i + 1))
                  for (l, h, i), d in zip(padding_config, op_shape))
-  if not all(d >= 0 for d in result):
+  if not all(core.greater_equal_dim(d, 0) for d in result):
     msg = (f"Dimension size after padding is not at least 0, "
            f"got result shape {result}, for padding_config {padding_config}"
            f" and operand shape {op_shape}")
@@ -3298,12 +3298,12 @@ def shape_as_value(shape: core.Shape):
   return concatenate(dims, dimension=0)
 
 def _reshape_shape_rule(operand, *, new_sizes, dimensions):
-  if not all(d >= 0 for d in new_sizes):
+  if not all(core.greater_equal_dim(d, 0) for d in new_sizes):
     msg = 'reshape new_sizes must all be positive, got {}.'
     raise TypeError(msg.format(new_sizes))
   # TODO(necula): re-enable this check
   if (not config.jax_dynamic_shapes and
-      not math.prod(np.shape(operand)) == math.prod(new_sizes)):
+      not core.same_shape_sizes(np.shape(operand), new_sizes)):
     msg = 'reshape total size must be unchanged, got new_sizes {} for shape {}.'
     raise TypeError(msg.format(new_sizes, np.shape(operand)))
   if dimensions is not None:
@@ -3822,7 +3822,7 @@ def _argminmax_shape_rule(operand, *, axes, index_dtype):
   axis, = axes
   if not (0 <= axis < len(operand.shape)):
     raise ValueError(f"Invalid axis {axis} for operand shape {operand.shape}")
-  if operand.shape[axis] < 1:
+  if not core.greater_equal_dim(operand.shape[axis], 1):
     raise ValueError("argmin and argmax require non-empty reduced dimension. "
                      f"operand.shape={operand.shape} {axis=}")
   return tuple(np.delete(operand.shape, axis))
@@ -4661,7 +4661,7 @@ def _dilate_shape(shape, dilation):
     msg = "All dilations must be positive, got {}."
     raise TypeError(msg.format(dilation))
   dilation = (1,) * (len(shape) - len(dilation)) + tuple(dilation)
-  return tuple(map(core.dilate_dim, shape, dilation))
+  return core.dilate_shape(shape, dilation)
 
 def _ceil_divide(x1, x2):
   return -np.floor_divide(np.negative(x1), x2)
@@ -4803,7 +4803,7 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
     raise TypeError(msg.format(fun_name, arg_name, tuple(map(type, obj)))) from err
   lower_bound, bound_error = (
       (1, "strictly positive") if non_zero_shape else (0, "nonnegative"))
-  if not all(d >= lower_bound for d in obj_arr):
+  if not all(core.greater_equal_dim(d, lower_bound) for d in obj_arr):
     msg = "{} {} must have every element be {}, got {}."
     raise TypeError(msg.format(fun_name, arg_name, bound_error, obj))
 
