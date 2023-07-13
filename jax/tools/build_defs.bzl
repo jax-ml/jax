@@ -14,6 +14,8 @@
 
 """JAX tools."""
 
+load("//third_party/bazel_rules/rules_python/python:py_binary.bzl", "py_binary")
+
 def _shell_quote(s):
     """Copy of bazel-skylib's shell.quote.
 
@@ -149,7 +151,7 @@ EOF
     else:
         jax_to_ir_rule = "//third_party/py/jax/tools:jax_to_ir"
 
-    native.py_binary(
+    py_binary(
         name = runner,
         srcs = [
             runner + ".py",
