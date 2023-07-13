@@ -1,7 +1,7 @@
 GPU memory allocation
 =====================
 
-**JAX will preallocate 90% of the total GPU memory when the first JAX
+**JAX will preallocate 75% of the total GPU memory when the first JAX
 operation is run.** Preallocating minimizes allocation overhead and memory
 fragmentation, but can sometimes cause out-of-memory (OOM) errors. If your JAX
 process fails with OOM, the following environment variables can be used to
@@ -16,7 +16,7 @@ override the default behavior:
 
 ``XLA_PYTHON_CLIENT_MEM_FRACTION=.XX``
   If preallocation is enabled, this makes JAX preallocate XX% of
-  the total GPU memory, instead of the default 90%. Lowering the
+  the total GPU memory, instead of the default 75%. Lowering the
   amount preallocated can fix OOMs that occur when the JAX program starts.
 
 ``XLA_PYTHON_CLIENT_ALLOCATOR=platform``
