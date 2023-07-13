@@ -18,6 +18,7 @@ import unittest
 import numpy as np
 
 from absl.testing import absltest
+from absl.testing import parameterized
 
 import jax
 import jax.numpy as jnp
@@ -1488,10 +1489,12 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     self.assertAllClose(y._data, x)
 
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow",
-                 jax_disable_jit=False, jax_traceback_filtering='off')
+                 jax_traceback_filtering='off')
 class PileTest(jtu.JaxTestCase):
 
-  def test_internal_pile(self):
+  @parameterized.parameters((True,), (False,))
+  def test_internal_pile(self, disable_jit):
+    config.update('jax_disable_jit', disable_jit)
     ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
     xs = jax.vmap(lambda n: jax.lax.iota('int32', n).sum())(ins)
     self.assertAllClose(xs, jnp.array([3, 0, 6]), check_dtypes=False)
@@ -1534,7 +1537,9 @@ class PileTest(jtu.JaxTestCase):
     self.assertIsInstance(y, batching.Pile)
     self.assertAllClose(y.data, jnp.array([5, 0, 14], dtype='int32'))
 
-  def test_pile_map_matrix_dot_ragged_contract(self):
+  @parameterized.parameters((True,), (False,))
+  def test_pile_map_matrix_dot_ragged_contract(self, disable_jit):
+    config.update('jax_disable_jit', disable_jit)
     sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
     p1 = jax.vmap(lambda n: jnp.ones((7, n)), out_axes=batching.pile_axis
                   )(sizes)
@@ -1545,7 +1550,9 @@ class PileTest(jtu.JaxTestCase):
     self.assertAllClose(y, np.tile(np.array([3, 1, 4])[:, None, None], (7, 7)),
                         check_dtypes=False)
 
-  def test_pile_map_matrix_dot_ragged_tensor(self):
+  @parameterized.parameters((True,), (False,))
+  def test_pile_map_matrix_dot_ragged_tensor(self, disable_jit):
+    config.update('jax_disable_jit', disable_jit)
     sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
     def func(size):
       lhs_one_d = jnp.arange(size, dtype='int32') + 1
@@ -1660,7 +1667,9 @@ class PileTest(jtu.JaxTestCase):
     self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[3,bint\{≤5\}\[3\] with value: \[3 1 4\]\.Var[0-9]+,2,7\]')
     self.assertEqual(p.data.shape, (3, 3, 5, 2, 7))
 
-  def test_einsum_with_ragged_tensor_and_contract_dimensions(self):
+  @parameterized.parameters((True,), (False,))
+  def test_einsum_with_ragged_tensor_and_contract_dimensions(self, disable_jit):
+    config.update('jax_disable_jit', disable_jit)
     ragged_sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
     def fprop_layer(ragged_size):
       one_d = jnp.arange(ragged_size, dtype='int32')
@@ -1685,6 +1694,7 @@ class PileTest(jtu.JaxTestCase):
     self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[bint\{≤5\}\[3\] with value: \[3 1 4\]\.Var[0-9]+\]')
     data = jax.lax.broadcasted_iota('int32', (3, 5), 1)
     self.assertAllClose(p.data, data)
+
 
 def pile_map(f):
   def mapped(*piles):
