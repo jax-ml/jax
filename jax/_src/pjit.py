@@ -1448,9 +1448,9 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
     name=name,
     keep_unused=keep_unused,
     inline=inline)
-  resovled_axes_out = batching.resolve_ragged_axes_against_inputs_outputs(
+  resolved_axes_out = batching.resolve_ragged_axes_against_inputs_outputs(
       vals_in, vals_out, axes_out)
-  return vals_out, resovled_axes_out
+  return vals_out, resolved_axes_out
 
 batching.spmd_axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False)
 batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False, None)
