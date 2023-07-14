@@ -900,7 +900,6 @@ class IndexingTest(jtu.JaxTestCase):
 
     # Simple reverses lower to lax.rev_p
     jaxpr = jax.make_jaxpr(lambda x: x[:, ::-1])(jnp.ones((3, 4)))
-    print(jaxpr)
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
     self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
 
