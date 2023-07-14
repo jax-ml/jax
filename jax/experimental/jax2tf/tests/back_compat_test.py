@@ -32,6 +32,7 @@ from jax.experimental.jax2tf import jax_export
 from jax.experimental.jax2tf.tests import back_compat_test_util as bctu
 
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_ducc_fft
+from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_cholesky_lapack_potrf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_eigh_cusolver_syev
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_eigh_lapack_syev
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_lu_lapack_getrf
@@ -94,6 +95,7 @@ class CompatTest(bctu.CompatTestBase):
     # stable
     covering_testdatas = [
         cpu_ducc_fft.data_2023_03_17, cpu_ducc_fft.data_2023_06_14,
+        cpu_cholesky_lapack_potrf.data_2023_06_19,
         cpu_eigh_lapack_syev.data_2023_03_17,
         cpu_qr_lapack_geqrf.data_2023_03_17, cuda_threefry2x32.data_2023_03_15,
         cpu_lu_lapack_getrf.data_2023_06_14,
@@ -116,8 +118,6 @@ class CompatTest(bctu.CompatTestBase):
     covered_targets = covered_targets.union({
       # TODO(necula): add tests for eig on CPU
       "lapack_sgeev", "lapack_dgeev", "lapack_cgeev", "lapack_zgeev",
-      # TODO(necula): add tests for qr on CPU in a separate change.
-      "lapack_cpotrf", "lapack_dpotrf", "lapack_spotrf", "lapack_zpotrf",
       # TODO(necula): add tests for svd on CPU
       "lapack_sgesdd", "lapack_dsesdd", "lapack_cgesdd", "lapack_zgesdd",
       # TODO(necula): add tests for triangular_solve on CPU
@@ -141,6 +141,31 @@ class CompatTest(bctu.CompatTestBase):
     # A newer lowering, with dynamic_ducc_fft.
     data = self.load_testdata(cpu_ducc_fft.data_2023_06_14)
     self.run_one_test(func, data)
+
+  def cholesky_input(self, shape, dtype):
+    a = jtu.rand_default(self.rng())(shape, dtype)
+    return np.matmul(a, np.conj(np.swapaxes(a, -1, -2)))
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
+  def test_cpu_cholesky_lapack_potrf(self, dtype_name="f32"):
+    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+
+    dtype = dict(f32=np.float32, f64=np.float64,
+                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    shape = (4, 4)
+    input = self.cholesky_input(shape, dtype)
+    del input  # Input is in the testdata, here for readability
+    func = lax.linalg.cholesky
+
+    # data = self.load_testdata(cpu_eig_lapack_geev.data_2023_06_19[dtype_name])
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+
+    data = self.load_testdata(cpu_cholesky_lapack_potrf.data_2023_06_19[dtype_name])
+    self.run_one_test(func, data, rtol=rtol, atol=atol)
 
   @staticmethod
   def eigh_input(shape, dtype):
