@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import enum
+import operator
 from functools import partial
 import math
 from typing import Callable, NamedTuple, Optional, Sequence, Union
@@ -1081,34 +1082,33 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
     msg = ("slice limit_indices must have the same length as start_indices, "
            "got start_indices {} and limit_indices {}.")
     raise TypeError(msg.format(start_indices, limit_indices))
-  if not core.greater_equal_shape(operand.shape, limit_indices):
+  if not all(map(operator.ge, operand.shape, limit_indices)):
     msg = ("slice limit_indices must be less than or equal to operand shape, "
            "got limit_indices {} for operand shape {}.")
     raise TypeError(msg.format(limit_indices, operand.shape))
-  if not all(core.greater_equal_dim(si, 0) for si in start_indices):
+  if not all(si >= 0 for si in start_indices):
     msg = ("slice start_indices must be greater than or equal to zero, "
            "got start_indices of {}.")
     raise TypeError(msg.format(start_indices))
   if not jax.config.jax_dynamic_shapes:
-    if not core.greater_equal_shape(limit_indices, start_indices):
+    if not all(map(operator.ge, limit_indices, start_indices)):
       msg = ("slice limit_indices must be greater than or equal to start_indices,"
             " got start_indices {} and limit_indices {}.")
       raise TypeError(msg.format(start_indices, limit_indices))
+  diff = tuple(map(operator.sub, limit_indices, start_indices))
   if strides is None or tuple(strides) == (1,) * len(operand.shape):
-    shape = [limit if type(start) is int and start == 0 else limit - start
-             for start, limit in zip(start_indices, limit_indices)]
-    return tuple(shape)
+    return diff
 
   lax._check_shapelike("slice", "strides", strides)
   if len(strides) != operand.ndim:
     msg = ("slice strides must have length equal to the number of dimensions "
             "of the operand, got strides {} for operand shape {}.")
     raise TypeError(msg.format(strides, operand.shape))
-  if not core.greater_equal_shape(strides, (0,) * len(strides)):
+  if not all(s >= 0 for s in strides):
     msg = "slice strides must be positive, got {}"
     raise TypeError(msg.format(strides))
-  diff = core.diff_shape(limit_indices, start_indices)
-  return core.stride_shape(diff, (1,) * len(diff), strides)
+  return tuple(core.stride_dim(d, window_size=1, window_stride=s)
+               for d, s in zip(diff, strides))
 
 def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
   assert ad.is_undefined_primal(operand)
@@ -1172,11 +1172,11 @@ def _dynamic_slice_shape_rule(
     msg = ("dynamic_slice slice_sizes must have the same length as "
            "start_indices, got start_indices length {} and slice_sizes {}.")
     raise TypeError(msg.format(len(start_indices), slice_sizes))
-  if not dyn and not core.greater_equal_shape(operand.shape, slice_sizes):
+  if not dyn and not all(map(operator.ge, operand.shape, slice_sizes)):
     msg = ("slice slice_sizes must be less than or equal to operand shape, "
            "got slice_sizes {} for operand shape {}.")
     raise TypeError(msg.format(slice_sizes, operand.shape))
-  if not dyn and not all(core.greater_equal_dim(ssz, 0) for ssz in slice_sizes):
+  if not dyn and not all(ssz >= 0 for ssz in slice_sizes):
     msg = ("slice slice_sizes must be greater than or equal to zero, "
            "got slice_sizes of {}.")
     raise TypeError(msg.format(slice_sizes))
@@ -1321,7 +1321,7 @@ def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
     msg = ("dynamic_update_slice start_indices must have length equal to the "
            "rank of operand, got indices {} for operand shape {}.")
     raise TypeError(msg.format(start_indices, operand.shape))
-  if not core.greater_equal_shape(operand.shape, update.shape):
+  if not all(map(operator.ge, operand.shape, update.shape)):
     msg = ("dynamic_update_slice update shape must be smaller than operand "
            "shape, got update shape {} for operand shape {}.")
     raise TypeError(msg.format(update.shape, operand.shape))
@@ -1522,8 +1522,8 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
     slice_size = slice_sizes[i]
     corresponding_input_size = operand.shape[i]
 
-    if not (core.greater_equal_dim(slice_size, 0) and
-            core.greater_equal_dim(corresponding_input_size, slice_size)):
+    if not (slice_size >= 0 and
+            corresponding_input_size >= slice_size):
       raise TypeError(f"Slice size at index {i} in gather op is out of range, "
                       f"must be within [0, {corresponding_input_size} + 1), "
                       f"got {slice_size}.")
@@ -1918,7 +1918,7 @@ def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
 
   for i in range(len(update_window_dims)):
     update_window_dim = update_window_dims[i]
-    if not core.greater_equal_dim(max_update_slice_sizes[i], updates.shape[update_window_dim]):
+    if max_update_slice_sizes[i] < updates.shape[update_window_dim]:
       raise TypeError(f"Bounds of the window dimensions of updates must not "
                       f"exceed the bounds of the corresponding dimensions of "
                       f"operand. For dimension {update_window_dim}, updates "
