@@ -497,11 +497,41 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     print(x_copy)  # doesn't crash
 
   def test_specify_donate_argnums_and_argnames(self):
+    @partial(jax.jit, donate_argnums=0, donate_argnames=('inp2', 'inp3'))
+    def f(inp1, inp2, inp3):
+      return inp1 * 2, inp2 * 2, inp3 * 2
+
+    x = jnp.ones((2, 5)) * 4
+    y = jnp.ones((2, 5)) * 2
+    z = jnp.ones((2, 5))
+
+    f(x, inp2=y, inp3=z)
+    self.assertDeleted(x)
+    self.assertDeleted(y)
+    self.assertDeleted(z)
+
+  def test_donate_argnames_with_args(self):
+    @partial(jax.jit, donate_argnames='inp1')
+    def f(inp1):
+      return inp1 * 2
+
+    x = jax.device_put(jnp.ones((2, 5)) * 4, jax.devices()[0])
+    f(x)
+    self.assertDeleted(x)
+
+  def test_donate_argnums_with_kwargs(self):
+    @partial(jax.jit, donate_argnums=0)
+    def f(inp1):
+      return inp1 * 2
+
+    x = jax.device_put(jnp.ones((2, 5)) * 4, jax.devices()[0])
+    f(inp1=x)
+    self.assertDeleted(x)
+
+  def test_intersecting_static_and_donate_argnames(self):
     with self.assertRaisesRegex(
-        NotImplementedError,
-        "Currently only specifying either donate_argnums or donate_argnames is "
-        "allowed"):
-      jax.jit(lambda x: x, donate_argnums=0, donate_argnames='x')
+        ValueError, "static_argnames and donate_argnames cannot intersect"):
+      jax.jit(lambda x: x, static_argnames='x', donate_argnames='x')
 
   def test_jit_global_cache(self):
     def f(x):

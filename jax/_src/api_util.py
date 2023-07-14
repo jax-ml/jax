@@ -332,15 +332,25 @@ def _argnames_partial(fixed_kwargs: WrapKwArgs, *args, **dyn_kwargs):
   yield ans
 
 
-def donation_vector(donate_argnums, args, kwargs) -> tuple[bool, ...]:
-  """Returns a tuple with a boolean value for each leaf in args."""
+def donation_vector(donate_argnums, donate_argnames, args, kwargs) -> tuple[bool, ...]:
+  """Returns a tuple with a boolean value for each leaf in args and kwargs.
+
+  What if a user specifies donate_argnums but calls the function with kwargs
+  or vice-versa? In that case, in `resolve_argnums` using the signature of the
+  function, the counterpart (donate_argnames or donate_argnums respectively) is
+  calculated so when this function is called both donate_argnums and
+  donate_argnames are available. This allows JAX to donate kwargs when only
+  donate_argnums is specified and vice-versa.
+
+  When both donate_argnums and donate_argnames are specified, only the args and
+  kwargs specified are donated.
+  """
   res: list[bool] = []
   for i, arg in enumerate(args):
     donate = bool(i in donate_argnums)
     res.extend((donate,) * tree_structure(arg).num_leaves)
-  num_args = len(args)
-  for i, val in enumerate(kwargs.values()):
-    donate = bool(i + num_args in donate_argnums)
+  for key, val in kwargs.items():
+    donate = key in donate_argnames
     res.extend((donate,) * tree_structure(val).num_leaves)
   return tuple(res)
 
@@ -483,7 +493,6 @@ def infer_argnums_and_argnames(
   if argnums is not None and argnames is not None:
     argnums = _ensure_index_tuple(argnums)
     argnames = _ensure_str_tuple(argnames)
-
     return argnums, argnames
 
   parameters = sig.parameters
@@ -506,7 +515,7 @@ def infer_argnums_and_argnames(
 
 def resolve_argnums(
     fun, donate_argnums, donate_argnames, static_argnums, static_argnames
-) -> tuple[tuple[int, ...], tuple[int, ...], tuple[str, ...]]:
+) -> tuple[tuple[int, ...], tuple[str, ...], tuple[int, ...], tuple[str, ...]]:
   try:
     sig = inspect.signature(fun)
   except ValueError as e:
@@ -528,11 +537,6 @@ def resolve_argnums(
     # names and vice-versa.
     static_argnums, static_argnames = infer_argnums_and_argnames(
         sig, static_argnums, static_argnames)
-    if donate_argnums is not None and donate_argnames is not None:
-      raise NotImplementedError(
-          "Currently only specifying either donate_argnums or donate_argnames "
-          "is allowed. Please file a feature request at "
-          "https://github.com/google/jax/issues.")
     donate_argnums, donate_argnames = infer_argnums_and_argnames(
         sig, donate_argnums, donate_argnames)
 
@@ -543,10 +547,17 @@ def resolve_argnums(
     validate_argnames(sig, donate_argnames, "donate_argnames")
 
   # Compensate for static argnums absorbing args
-  # TODO(yashkatariya): Maybe add static_argnames support too here for cases
-  # when nums cannot be inferred from names.
+  assert_no_intersection(static_argnames, donate_argnames)
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
-  return donate_argnums, static_argnums, static_argnames
+  return donate_argnums, donate_argnames, static_argnums, static_argnames
+
+
+def assert_no_intersection(static_argnames, donate_argnames):
+  out = set(static_argnames).intersection(set(donate_argnames))
+  if out:
+    raise ValueError(
+        "static_argnames and donate_argnames cannot intersect. Argument names "
+        f"{out} appear in both static_argnames and donate_argnames")
 
 
 def _dtype(x):

@@ -238,8 +238,16 @@ def jit(
       result. You should not reuse buffers that you donate to a computation, JAX
       will raise an error if you try to. By default, no argument buffers are
       donated.
-      Note that donate_argnums only work for positional arguments, and keyword
-      arguments will not be donated.
+
+      If neither ``donate_argnums`` nor ``donate_argnames`` is provided, no
+      arguments are donated. If ``donate_argnums`` is not provided but
+      ``donate_argnames`` is, or vice versa, JAX uses
+      :code:`inspect.signature(fun)` to find any positional arguments that
+      correspond to ``donate_argnames``
+      (or vice versa). If both ``donate_argnums`` and ``donate_argnames`` are
+      provided, ``inspect.signature`` is not used, and only actual
+      parameters listed in either ``donate_argnums`` or ``donate_argnames`` will
+      be donated.
 
       For more details on buffer donation see the
       `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
@@ -297,7 +305,7 @@ def jit(
     >>> g(jnp.arange(4), 3)
     Array([   0,    1,  256, 6561], dtype=int32)
   """
-  (in_shardings, out_shardings, donate_argnums, static_argnums,
+  (in_shardings, out_shardings, donate_argnums, donate_argnames, static_argnums,
    static_argnames) = pjit.pre_infer_params(
         fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
         static_argnums, static_argnames, device, backend, abstracted_axes)
@@ -307,8 +315,9 @@ def jit(
         fun=fun, in_shardings=in_shardings,
         out_shardings=out_shardings, static_argnums=static_argnums,
         static_argnames=static_argnames, donate_argnums=donate_argnums,
-        device=device, backend=backend, keep_unused=keep_unused,
-        inline=inline, resource_env=None, abstracted_axes=abstracted_axes)
+        donate_argnames=donate_argnames, device=device, backend=backend,
+        keep_unused=keep_unused, inline=inline, resource_env=None,
+        abstracted_axes=abstracted_axes)
     return pjit.common_infer_params(pjit_info_args, *args, **kwargs)
 
   has_explicit_sharding = pjit._pjit_explicit_sharding(
@@ -544,7 +553,7 @@ def xla_computation(fun: Callable,
     f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     if donate_argnums:
-      donated_invars = donation_vector(donate_argnums, dyn_args, kwargs)
+      donated_invars = donation_vector(donate_argnums, (), dyn_args, kwargs)
     else:
       donated_invars = (False,) * len(args_flat)
 
@@ -1657,7 +1666,7 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
   args, in_tree = tree_flatten((dyn_args, kwargs))
 
   if donate_tuple and not config.jax_debug_nans:
-    donated_invars = donation_vector(donate_tuple, dyn_args, kwargs)
+    donated_invars = donation_vector(donate_tuple, (), dyn_args, kwargs)
   else:
     donated_invars = (False,) * len(args)
   try:

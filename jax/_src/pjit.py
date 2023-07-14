@@ -332,11 +332,11 @@ def pre_infer_params(fun, in_shardings, out_shardings,
   in_shardings, _, _ = prepare_axis_resources(in_shardings, 'in_shardings')
   out_shardings, _, _ = prepare_axis_resources(out_shardings, 'out_shardings')
 
-  donate_argnums, static_argnums, static_argnames = resolve_argnums(
+  donate_argnums, donate_argnames, static_argnums, static_argnames = resolve_argnums(
       fun, donate_argnums, donate_argnames, static_argnums, static_argnames)
 
-  return (in_shardings, out_shardings, donate_argnums, static_argnums,
-          static_argnames)
+  return (in_shardings, out_shardings, donate_argnums, donate_argnames,
+          static_argnums, static_argnames)
 
 
 def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
@@ -406,6 +406,7 @@ class PjitInfo(NamedTuple):
   static_argnums: tuple[int, ...]
   static_argnames: tuple[str, ...]
   donate_argnums: tuple[int, ...]
+  donate_argnames: tuple[str, ...]
   device: Optional[xc.Device]
   backend: Optional[str]
   keep_unused: bool
@@ -416,7 +417,7 @@ class PjitInfo(NamedTuple):
 
 def common_infer_params(pjit_info_args, *args, **kwargs):
   (fun, user_in_shardings, user_out_shardings, static_argnums, static_argnames,
-   donate_argnums, device, backend, keep_unused, inline,
+   donate_argnums, donate_argnames, device, backend, keep_unused, inline,
    resource_env, abstracted_axes) = pjit_info_args
 
   if (kwargs and user_in_shardings is not None and
@@ -457,11 +458,9 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
     dyn_kwargs = {}
   del kwargs
 
-  if donate_argnums and not config.jax_debug_nans:
-    # TODO(yashkatariya): Maybe thread donate_argnames to calculate
-    # donation_vector. Currently donate_argnames is normalized into
-    # donate_argnums just like static_argnames.
-    donated_invars = donation_vector(donate_argnums, dyn_args, dyn_kwargs)
+  if (donate_argnums or donate_argnames) and not config.jax_debug_nans:
+    donated_invars = donation_vector(
+        donate_argnums, donate_argnames, dyn_args, dyn_kwargs)
   else:
     donated_invars = (False,) * len(explicit_args)
 
@@ -719,14 +718,27 @@ def pjit(
       comment on ``static_argnums`` for details. If not
       provided but ``static_argnums`` is set, the default is based on calling
       ``inspect.signature(fun)`` to find corresponding named arguments.
-    donate_argnums: Specify which argument buffers are "donated" to the computation.
-      It is safe to donate argument buffers if you no longer need them once the
-      computation has finished. In some cases XLA can make use of donated
-      buffers to reduce the amount of memory needed to perform a computation,
-      for example recycling one of your input buffers to store a result. You
-      should not reuse buffers that you donate to a computation, JAX will raise
-      an error if you try to.
-      For more details on buffer donation see the `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
+    donate_argnums: Specify which positional argument buffers are "donated" to
+      the computation. It is safe to donate argument buffers if you no longer
+      need them once the computation has finished. In some cases XLA can make
+      use of donated buffers to reduce the amount of memory needed to perform a
+      computation, for example recycling one of your input buffers to store a
+      result. You should not reuse buffers that you donate to a computation, JAX
+      will raise an error if you try to. By default, no argument buffers are
+      donated.
+
+      If neither ``donate_argnums`` nor ``donate_argnames`` is provided, no
+      arguments are donated. If ``donate_argnums`` is not provided but
+      ``donate_argnames`` is, or vice versa, JAX uses
+      :code:`inspect.signature(fun)` to find any positional arguments that
+      correspond to ``donate_argnames``
+      (or vice versa). If both ``donate_argnums`` and ``donate_argnames`` are
+      provided, ``inspect.signature`` is not used, and only actual
+      parameters listed in either ``donate_argnums`` or ``donate_argnames`` will
+      be donated.
+
+      For more details on buffer donation see the
+      `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
     donate_argnames: An optional string or collection of strings specifying
       which named arguments are donated to the computation. See the
       comment on ``donate_argnums`` for details. If not
@@ -770,7 +782,7 @@ def pjit(
   in_shardings, out_shardings = _resolve_axis_resources_and_shardings_arg(
       in_shardings, out_shardings, in_axis_resources, out_axis_resources)
 
-  (in_shardings, out_shardings, donate_argnums, static_argnums,
+  (in_shardings, out_shardings, donate_argnums, donate_argnames, static_argnums,
    static_argnames) = pre_infer_params(
        fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
        static_argnums, static_argnames, device, backend, abstracted_axes)
@@ -782,8 +794,8 @@ def pjit(
           fun=fun, in_shardings=in_shardings,
           out_shardings=out_shardings, static_argnums=static_argnums,
           static_argnames=static_argnames, donate_argnums=donate_argnums,
-          device=device, backend=backend, keep_unused=keep_unused,
-          inline=inline, resource_env=resource_env,
+          donate_argnames=donate_argnames, device=device, backend=backend,
+          keep_unused=keep_unused, inline=inline, resource_env=resource_env,
           abstracted_axes=abstracted_axes)
     return common_infer_params(pjit_info_args, *args, **kwargs)
 
@@ -1448,9 +1460,9 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
     name=name,
     keep_unused=keep_unused,
     inline=inline)
-  resovled_axes_out = batching.resolve_ragged_axes_against_inputs_outputs(
+  resolved_axes_out = batching.resolve_ragged_axes_against_inputs_outputs(
       vals_in, vals_out, axes_out)
-  return vals_out, resovled_axes_out
+  return vals_out, resolved_axes_out
 
 batching.spmd_axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False)
 batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False, None)

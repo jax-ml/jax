@@ -8,6 +8,17 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.14
 
+* Changes
+  * `jax.jit` takes `donate_argnames` as an argument. It's semantics are similar
+    to `static_argnames`.
+    If neither donate_argnums nor donate_argnames is provided, no
+    arguments are donated. If donate_argnums is not provided but
+    donate_argnames is, or vice versa, JAX uses
+    `inspect.signature(fun)` to find any positional arguments that
+    correspond to donate_argnames (or vice versa). If both donate_argnums and donate_argnames are provided, inspect.signature is not used, and only actual
+    parameters listed in either donate_argnums or donate_argnames will
+    be donated.
+
 * Deprecations
   * Python 3.8 support has been dropped as per
     https://jax.readthedocs.io/en/latest/deprecation.html

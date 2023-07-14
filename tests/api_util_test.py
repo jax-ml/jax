@@ -42,7 +42,8 @@ class ApiUtilTest(jtu.JaxTestCase):
           if kwargs:
             expected += (False,)
           self.assertEqual(
-              expected, api_util.donation_vector(donate_argnums, args, kwargs))
+              expected,
+              api_util.donation_vector(donate_argnums, (), args, kwargs))
 
   @parameterized.parameters(
       ((0,), (0,)),
