@@ -108,6 +108,7 @@ py_extension(
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:CAPITransformsHeaders",
         "@llvm-project//mlir:MLIRBindingsPythonHeaders",
         "@local_config_python//:headers",
         "@pybind11",
@@ -177,22 +178,6 @@ py_extension(
     ],
 )
 
-# JAX plugins
-
-py_extension(
-    name = "_jax_passes",
-    srcs = [
-        "py_jax_passes.cc",
-    ],
-    copts = COPTS,
-    linkopts = LINKOPTS,
-    deps = [
-        ":jaxlib_mlir_capi_shared_library",
-        "//jaxlib/mlir/_mlir_libs/passes:capi_jax_passes_headers",
-        "@pybind11",
-    ],
-)
-
 # Shared C++ extension library
 
 cc_library(
@@ -211,7 +196,6 @@ cc_library(
 cc_library(
     name = "jaxlib_mlir_capi_objects",
     deps = [
-        "//jaxlib/mlir/_mlir_libs/passes:capi_jax_passes",
         "@llvm-project//mlir:CAPISparseTensorObjects",
         "@llvm-project//mlir:CAPITransformsObjects",
         "@llvm-project//mlir:MLIRBindingsPythonCAPIObjects",

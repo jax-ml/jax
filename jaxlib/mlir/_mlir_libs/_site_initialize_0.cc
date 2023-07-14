@@ -2,6 +2,7 @@
 // This module is called by mlir/__init__.py during initialization.
 
 #include "mlir-c/Dialect/Func.h"
+#include "mlir-c/Transforms.h"
 #include "mlir/Bindings/Python/PybindAdaptors.h"
 
 PYBIND11_MODULE(_site_initialize_0, m) {
@@ -10,5 +11,8 @@ PYBIND11_MODULE(_site_initialize_0, m) {
   m.def("register_dialects", [](MlirDialectRegistry registry) {
     MlirDialectHandle func_dialect = mlirGetDialectHandle__func__();
     mlirDialectHandleInsertDialect(func_dialect, registry);
+
+    // Transforms used by JAX.
+    mlirRegisterTransformsStripDebugInfo();
   });
 }

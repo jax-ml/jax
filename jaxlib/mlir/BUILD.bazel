@@ -156,11 +156,3 @@ symlink_inputs(
         "//jaxlib/mlir/_mlir_libs:_stablehlo",
     ],
 )
-
-py_library(
-    name = "jax",
-    srcs = ["jax.py"],
-    deps = [
-        "//jaxlib/mlir/_mlir_libs:_jax_passes",
-    ],
-)

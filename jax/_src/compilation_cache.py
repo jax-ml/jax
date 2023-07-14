@@ -35,9 +35,13 @@ from jax._src.gfile_cache import GFileCache
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version
 from jax._src.lib import version_str as jaxlib_version_str
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager as pm
-from jax._src.lib.mlir import jax as mlir_jax
+
+if jaxlib_version < (0, 4, 14):
+  import jaxlib.mlir.jax as mlir_jax  # pytype: disable=import-error
+  assert mlir_jax is not None  # Imported for side effects only.
 
 
 logger = logging.getLogger(__name__)
@@ -167,13 +171,16 @@ def _serialize_ir(m: ir.Module) -> bytes:
   return output.getvalue()
 
 def _canonicalize_ir(m_original: ir.Module) -> bytes:
-  # mlir_jax import is required to register jax-strip-locations
-  assert mlir_jax is not None
   with m_original.context:
     m = m_original.operation.clone()
-    passes = pm.PassManager.parse(
-        "builtin.module(func.func(jax-strip-locations))"
-    )
+    if jaxlib_version < (0, 4, 14):
+      passes = pm.PassManager.parse(
+          "builtin.module(func.func(jax-strip-locations))"
+      )
+    else:
+      passes = pm.PassManager.parse(
+          "builtin.module(strip-debuginfo)"
+      )
     passes.run(m.operation)
     return _serialize_ir(m)
 
