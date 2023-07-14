@@ -144,8 +144,11 @@ async def async_serialize(
 ):
   if (isinstance(arr_inp, array.ArrayImpl) and jax.process_count() > 1 and
       arr_inp.is_fully_addressable):
-    raise ValueError('Passing fully addressable Arrays to a multiprocess '
-                     'serialization is not allowed.')
+    raise ValueError(
+        f'Passing fully addressable arrays to a multiprocess '
+        f'serialization is not allowed, as this may lead to a race condition '
+        f'between processes. Serialization have failed for the array with '
+        f'the path "{tensorstore_spec["kvstore"]["path"]}".')
   # 'metadata' may not be present at the top level (for example, if we are using
   # a 'cast' driver).
   if not _spec_has_metadata(tensorstore_spec):
