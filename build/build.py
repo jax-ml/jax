@@ -537,7 +537,7 @@ def main():
 
   command = ([bazel_path] + args.bazel_startup_options +
     ["run", "--verbose_failures=true"] +
-    [":build_wheel", "--",
+    ["//jaxlib/tools:build_wheel", "--",
     f"--output_path={output_path}",
     f"--cpu={wheel_cpu}"])
   if args.editable:

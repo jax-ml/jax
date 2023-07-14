@@ -43,12 +43,12 @@ To build `jaxlib` from source, you must also install some prerequisites:
 
   See below for Windows build instructions.
 
-- Python packages: `numpy`, `wheel`.
+- Python packages: `numpy`, `wheel`, `build`.
 
 You can install the necessary Python dependencies using `pip`:
 
 ```
-pip install numpy wheel
+pip install numpy wheel build
 ```
 
 To build `jaxlib` without CUDA GPU or TPU support (CPU only), you can run:

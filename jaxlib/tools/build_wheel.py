@@ -153,7 +153,7 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib = functools.partial(copy_file, dst_dir=jaxlib_dir)
 
   verify_mac_libraries_dont_reference_chkstack()
-  copy_file("__main__/build/LICENSE.txt", dst_dir=sources_path)
+  copy_file("__main__/jaxlib/tools/LICENSE.txt", dst_dir=sources_path)
   copy_file("__main__/jaxlib/README.md", dst_dir=sources_path)
   copy_file("__main__/jaxlib/setup.py", dst_dir=sources_path)
   copy_file("__main__/jaxlib/setup.cfg", dst_dir=sources_path)
@@ -273,16 +273,15 @@ def build_wheel(sources_path, output_path, cpu):
     ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
     ("Windows", "AMD64"): ("win", "amd64"),
   }[(platform.system(), cpu)]
-  python_tag_arg = (f"--python-tag=cp{sys.version_info.major}"
+  python_tag_arg = (f"-C=--build-option=--python-tag=cp{sys.version_info.major}"
                     f"{sys.version_info.minor}")
-  platform_tag_arg = f"--plat-name={platform_name}_{cpu_name}"
-  cwd = os.getcwd()
+  platform_tag_arg = f"-C=--build-option=--plat-name={platform_name}_{cpu_name}"
   if os.environ.get('JAXLIB_NIGHTLY'):
     edit_jaxlib_version(sources_path)
-  os.chdir(sources_path)
-  subprocess.run([sys.executable, "setup.py", "bdist_wheel",
-                 python_tag_arg, platform_tag_arg], check=True)
-  os.chdir(cwd)
+  subprocess.run(
+    [sys.executable, "-m", "build", "-n", "-w",
+     python_tag_arg, platform_tag_arg],
+    check=True, cwd=sources_path)
   for wheel in glob.glob(os.path.join(sources_path, "dist", "*.whl")):
     output_file = os.path.join(output_path, os.path.basename(wheel))
     sys.stderr.write(f"Output wheel: {output_file}\n\n")
