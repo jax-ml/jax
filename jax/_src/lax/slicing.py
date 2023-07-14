@@ -672,11 +672,9 @@ def scatter(
   Returns:
     An array containing the sum of `operand` and the scattered updates.
   """
-  jaxpr, consts = lax._reduction_jaxpr(_scatter_reduction_computation,
-                                       core.ShapedArray((), lax.dtype(operand)))
   return scatter_p.bind(
-      operand, scatter_indices, updates, update_jaxpr=jaxpr,
-      update_consts=consts, dimension_numbers=dimension_numbers,
+      operand, scatter_indices, updates, update_jaxpr=None,
+      update_consts=(), dimension_numbers=dimension_numbers,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=GatherScatterMode.from_any(mode))
 
@@ -2262,6 +2260,8 @@ ad.primitive_jvps[scatter_max_p] = partial(_scatter_extremal_jvp, scatter_max_p)
 def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
                  dimension_numbers, indices_are_sorted, unique_indices,
                  mode):
+  if update_jaxpr is not None:
+    raise NotImplementedError("scatter_apply JVP not implemented")
   operand, indices, updates = primals
   g_operand, g_indices, g_updates = tangents
   dnums = dimension_numbers
@@ -2430,6 +2430,12 @@ def _scatter_lower_opaque(ctx, operand, indices, updates, *,
 def _scatter_lower(ctx, operand, indices, updates, *,
                    update_jaxpr, update_consts, dimension_numbers,
                    indices_are_sorted, unique_indices, mode):
+  if update_jaxpr is None:
+    assert not update_consts
+    operand_dtype = ctx.avals_in[0].dtype
+    update_jaxpr, update_consts = lax._reduction_jaxpr(
+        _scatter_reduction_computation, core.ShapedArray((), operand_dtype))
+
   aval_out, = ctx.avals_out
   if dtypes.is_opaque_dtype(aval_out.dtype):
     return [_scatter_lower_opaque(

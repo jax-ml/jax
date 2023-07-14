@@ -2830,11 +2830,19 @@ def _scatter_dimensions_proto(indices_shape, dimension_numbers):
   return proto
 
 
+_scatter_reduction_computation = lambda x, y: y
+
+
 def _scatter(operand, scatter_indices, updates, *, update_jaxpr, update_consts,
              dimension_numbers, indices_are_sorted, unique_indices, mode,
              _in_avals: Sequence[core.ShapedArray],
              _out_aval: core.ShapedArray):
   del unique_indices
+  if update_jaxpr is None:
+    assert not update_consts
+    update_jaxpr, update_consts = lax_internal._reduction_jaxpr(
+        _scatter_reduction_computation,
+        core.ShapedArray((), operand.dtype.as_numpy_dtype))
 
   if mode == lax.GatherScatterMode.CLIP:
     clip_fn = _convert_jax_impl(lax_slicing._clamp_scatter_indices,
