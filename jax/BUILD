@@ -21,6 +21,7 @@ load(
     "jax_internal_packages",
     "jax_test_util_visibility",
     "jax_visibility",
+    "mosaic_internal_users",
     "py_deps",
     "py_library_providing_imports_info",
     "pytype_library",
@@ -57,6 +58,13 @@ package_group(
     packages = [
         "//...",
     ] + jax_internal_packages,
+)
+
+package_group(
+    name = "mosaic_users",
+    packages = [
+        "//...",
+    ] + mosaic_internal_users,
 )
 
 # JAX-private test utilities.
@@ -557,6 +565,21 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "tpu_custom_call",
+    srcs = ["_src/tpu_custom_call.py"],
+    visibility = [":internal"],
+    deps = [
+        ":core",
+        ":jax",
+        "//jax/_src/lib",
+        "//jaxlib/mlir:ir",
+        "//jaxlib/mlir:mhlo_dialect",
+        "//jaxlib/mlir:pass_manager",
+        "//jaxlib/mlir:stablehlo_dialect",
+    ] + py_deps("numpy") + py_deps("absl/flags"),
+)
+
+pytype_strict_library(
     name = "util",
     srcs = ["_src/util.py"],
     deps = [
@@ -730,6 +753,19 @@ pytype_library(
     deps = [
         ":experimental",
         ":jax",
+    ],
+)
+
+pytype_library(
+    name = "mosaic",
+    srcs = [
+        "experimental/mosaic/__init__.py",
+        "experimental/mosaic/dialects.py",
+    ],
+    visibility = [":mosaic_users"],
+    deps = [
+        ":tpu_custom_call",
+        "//jax/_src/lib",
     ],
 )
 

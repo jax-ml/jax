@@ -36,6 +36,7 @@ tf_exec_properties = _tf_exec_properties
 tf_cuda_tests_tags = _tf_cuda_tests_tags
 
 jax_internal_packages = []
+mosaic_internal_users = []
 jax_test_util_visibility = []
 loops_visibility = []
 
