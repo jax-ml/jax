@@ -264,12 +264,23 @@ pytype_strict_library(
     srcs = ["_src/compilation_cache.py"],
     visibility = [":internal"] + jax_visibility("compilation_cache"),
     deps = [
+        ":cache_key",
         ":compilation_cache_interface",
         ":config",
         ":gfile_cache",
         ":path",
         "//jax/_src/lib",
     ] + py_deps("numpy") + py_deps("zstandard"),
+)
+
+pytype_strict_library(
+    name = "cache_key",
+    srcs = ["_src/cache_key.py"],
+    visibility = [":internal"] + jax_visibility("compilation_cache"),
+    deps = [
+        ":config",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
