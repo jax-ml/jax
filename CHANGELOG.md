@@ -54,6 +54,11 @@ Remember to align the itemized text with the first line of an item within a list
   * The deprecated config option `jax_jit_pjit_api_merge`, which did nothing,
     has been removed.
 
+* New features
+  * JAX now supports a configuration flag --jax_serialization_version
+    and a JAX_SERIALIZATION_VERSION environment variable to control the
+    serialization version ({jax-issue}`#16746`).
+
 ## jaxlib 0.4.14
 
 * Deprecations

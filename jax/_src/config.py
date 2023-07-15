@@ -687,6 +687,21 @@ jax2tf_default_native_serialization = config.define_bool_state(
     )
 )
 
+jax_serialization_version = config.define_int_state(
+    name='jax_serialization_version',
+    # Note: bump the default serialization version at least one month after
+    # we update XlaCallModule to support the new version, so that serialized
+    # modules are forward compatible with deployed versions of XlaCallModule.
+    # Version 6 of XlaCallModule is supported since June 7th, 2023.
+    default=int_env('JAX_SERIALIZATION_VERSION', 6),
+    help=(
+        'The version number to use for native serialization. This must be '
+        'within the range of versions supported by the tf.XlaCallModule '
+        'used in your deployment environment. '
+        'See https://github.com/search?q=repo%3Atensorflow%2Ftensorflow+path%3Axla_call_module+%22int+VERSION_MAXIMUM_SUPPORTED%22&type=code.'
+    )
+)
+
 jax_platforms = config.define_string_state(
     name='jax_platforms',
     default=None,
