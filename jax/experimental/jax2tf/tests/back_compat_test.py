@@ -39,6 +39,7 @@ from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_eigh_lapack_s
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_lu_lapack_getrf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_qr_cusolver_geqrf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_qr_lapack_geqrf
+from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_schur_lapack_gees
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_svd_lapack_gesdd
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_triangular_solve_blas_trsm
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_threefry2x32
@@ -104,6 +105,7 @@ class CompatTest(bctu.CompatTestBase):
         cpu_qr_lapack_geqrf.data_2023_03_17, cuda_threefry2x32.data_2023_03_15,
         cpu_lu_lapack_getrf.data_2023_06_14,
         cuda_qr_cusolver_geqrf.data_2023_03_18, cuda_eigh_cusolver_syev.data_2023_03_17,
+        cpu_schur_lapack_gees.data_2023_07_16,
         cpu_svd_lapack_gesdd.data_2023_06_19,
         cpu_triangular_solve_blas_trsm.data_2023_07_16,
         tf_call_tf_function.data_2023_06_02,  # This is tested in back_compat_tf_test.py
@@ -123,8 +125,6 @@ class CompatTest(bctu.CompatTestBase):
 
     covered_targets = covered_targets.union({
       "tpu_custom_call",  # tested separately
-      # TODO(necula): add tests for schur on CPU
-      "lapack_sgees", "lapack_dgees", "lapack_cgees", "lapack_zgees",
     })
     not_covered = targets_to_cover.difference(covered_targets)
     self.assertEmpty(not_covered)
@@ -464,6 +464,36 @@ class CompatTest(bctu.CompatTestBase):
       self.assertTrue(np.allclose(np.linalg.svd(a, compute_uv=False),
                                   np.asarray(out), atol=1e-4, rtol=1e-4))
 
+  @jtu.parameterized_filterable(
+    one_containing="f32",
+    kwargs=[
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128")])
+  @jax.default_matmul_precision("float32")
+  def test_cpu_schur_lapack_gees(self, dtype_name="f32"):
+    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+
+    dtype = dict(f32=np.float32, f64=np.float64,
+                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    shape = (4, 4)
+    input = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+
+    def func(input):
+      return lax.linalg.schur(input, compute_schur_vectors=True)
+
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+
+    data = self.load_testdata(cpu_schur_lapack_gees.data_2023_07_16[dtype_name])
+
+    def check_schur_results(res_run, res_expected, *, rtol, atol):
+      t_run, s_run = res_run
+      self.assertAllClose(input, s_run @ t_run @ np.conj(s_run.T),
+                          rtol=rtol, atol=atol)
+
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
+                      check_results=check_schur_results)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
