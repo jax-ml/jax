@@ -728,8 +728,6 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "cusolver_geqrf", "cusolver_orgqr",
     # qr and svd on TPU
     "Qr", "ProductOfElementaryHouseholderReflectors",
-    # svd on CPU
-    "lapack_sgesdd", "lapack_dsesdd", "lapack_cgesdd", "lapack_zgesdd",
     # triangular_solve on CPU
     "blas_strsm", "blas_dtrsm", "blas_ctrsm", "blas_ztrsm",
     # TODO(atondwal, necula): add back_compat tests for lu on CPU/GPU
