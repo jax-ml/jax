@@ -3097,10 +3097,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         raise unittest.SkipTest(
             "native lowering with shape polymorphism requires additional StableHLO feature support")
 
-      if "top_k" in harness.fullname and "approx_top_k" not in harness.fullname:
-        # https://github.com/openxla/stablehlo/issues/1255: need DynamicTopK
-        raise unittest.SkipTest("native lowering with shape polymorphism not implemented for top_k")
-
       # Some tests need the latest jaxlib
       need_new_jaxlib = []
       if jaxlib_version < (0, 4, 13):
