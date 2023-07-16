@@ -14,6 +14,7 @@
 
 import contextlib
 import dataclasses
+import functools
 import re
 import os
 
@@ -34,6 +35,7 @@ from jax._src import xla_bridge
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
+from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 
 DType = Any
 
@@ -153,6 +155,9 @@ def ComputeTfValueAndGrad(tf_f: Callable, tf_args: Sequence,
 @jtu.with_config(jax_numpy_rank_promotion="allow",
                  jax_numpy_dtype_promotion='standard')
 class JaxToTfTestCase(jtu.JaxTestCase):
+  # We want most tests to use the maximum available version, from the locally
+  # installed tfxla module.
+  use_max_serialization_version = True
 
   def setUp(self):
     super().setUp()
@@ -166,6 +171,19 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     # We need --config=cuda build flag for TF to see the GPUs
     self.assertEqual(jtu.device_under_test().upper(),
                      self.tf_default_device.device_type)
+
+    # We run the tests using the maximum version supported, even though
+    # the default serialization version may be held back for a while to
+    # ensure compatibility
+    version = config.jax_serialization_version
+    self.addCleanup(functools.partial(config.update,
+                                      "jax_serialization_version", version))
+    if self.use_max_serialization_version:
+      max_version = tfxla.call_module_maximum_supported_version()
+      self.assertLessEqual(version, max_version)
+      version = max_version
+      config.update("jax_serialization_version", max_version)
+    logging.info("Using JAX serialization version %s", version)
 
     with contextlib.ExitStack() as stack:
       stack.enter_context(tf.device(self.tf_default_device))

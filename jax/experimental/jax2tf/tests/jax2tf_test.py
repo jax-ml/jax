@@ -1677,6 +1677,7 @@ def get_serialized_computation(
 
 class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
   """Unit tests for XlaCallModule. Will move these eventually to TF."""
+  # TODO(necula): move these tests to TF
   def test_simple(self):
 
     def f_jax(x):
@@ -1795,6 +1796,15 @@ class Jax2tfWithCustomPRNGTest(tf_test_util.JaxToTfTestCase):
     tf_result = jax2tf.convert(func)()
     jax_result = func()
     self.assertEqual(tf_result, jax_result)
+
+class Jax2TfVersioningTest(tf_test_util.JaxToTfTestCase):
+  # Use a separate test case with the default jax_serialization_version
+  def setUp(self):
+    self.use_max_serialization_version = False
+    super().setUp()
+
+  def test_simple(self):
+    self.ConvertAndCompare(jnp.sin, 0.7)
 
 
 if __name__ == "__main__":

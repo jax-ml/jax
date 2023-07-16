@@ -843,15 +843,9 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   kept_args_avals = [aval for i, aval in enumerate(exported.in_avals) if i in exported.module_kept_var_idx]
   kept_args_flat_tf = [atf for i, atf in enumerate(args_flat_tf) if i in exported.module_kept_var_idx]
 
-  if hasattr(tfxla, "call_module_maximum_supported_version"):
-    max_version_supported = tfxla.call_module_maximum_supported_version()
-  else:
-    max_version_supported = 5
-  # TODO(necula): cleanup handling of Exported.xla_call_module_version
-  assert exported.xla_call_module_version == 6
-
+  version = exported.xla_call_module_version
   call_module_attrs = dict(
-      version=max_version_supported,
+      version=version,
       Tout=out_types,
       Sout=out_shapes_tf,
       function_list=[
@@ -861,12 +855,12 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   )
 
   call_module_attrs["platforms"] = (exported.lowering_platform.upper(),)
-  if max_version_supported >= 6:
+  if version >= 6:
     call_module_attrs["disabled_checks"] = tuple(
         str(dc)
         for dc in exported.disabled_checks)
   else:
-    if exported.xla_call_module_version >= 3:
+    if version >= 3:
       if DisabledSafetyCheck.platform() in exported.disabled_checks:
         call_module_attrs["platforms"] = ()  # No platform checking
 

@@ -26,6 +26,7 @@ from absl import logging
 import numpy as np
 
 import jax
+from jax import config
 from jax import sharding
 
 from jax._src import core
@@ -438,7 +439,7 @@ def export(fun_jax: Callable,
 
 
 def _serialize_module(module: ir.Module) -> tuple[bytes, int]:
-  xla_call_module_version = 6
+  xla_call_module_version = config.jax_serialization_version
   mlir_str = mlir.module_to_bytecode(module)
   if hlo.get_api_version() < 4:
     target_version = hlo.get_earliest_forward_compatible_version()
