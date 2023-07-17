@@ -501,6 +501,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp.dot, args_maker, atol=tol, rtol=tol)
 
   @jtu.sample_product(
+      lhs_dtype=number_dtypes,
+      rhs_dtype=number_dtypes,
+  )
+  @jax.numpy_dtype_promotion('standard')
+  def testMixedPrecisionDot(self, lhs_dtype, rhs_dtype):
+    # This test confirms that jnp.dot lowers to a single dot_general call,
+    # avoiding explicit type casting of inputs and outputs.
+    lhs = jax.ShapeDtypeStruct((5,), lhs_dtype)
+    rhs = jax.ShapeDtypeStruct((5,), rhs_dtype)
+    jaxpr = jax.make_jaxpr(jnp.dot)(lhs, rhs)
+    self.assertEqual([eqn.primitive for eqn in jaxpr.eqns],
+                     [lax.dot_general_p])
+
+  @jtu.sample_product(
     [dict(name=name, lhs_shape=lhs_shape, rhs_shape=rhs_shape)
       for name, lhs_shape, rhs_shape in [
           ("vector-vector", (3,), (3,)),
