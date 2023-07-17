@@ -162,27 +162,29 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertAllClose(result_sparse.todense(), result_dense)
 
+  @jax.numpy_dtype_promotion('standard')
   def testSparseMatmul(self):
-    X = jnp.arange(16.0).reshape(4, 4)
+    X = jnp.arange(16.0, dtype='float32').reshape(4, 4)
     Xsp = BCOO.fromdense(X)
-    Y = jnp.ones(4)
+    Y = jnp.ones(4, dtype='int32')
     Ysp = BCOO.fromdense(Y)
 
-    func = self.sparsify(operator.matmul)
+    # Note: deliberately testing with mixed precision
+    assert Xsp.dtype != Ysp.dtype
 
     # dot_general
-    result_sparse = func(Xsp, Y)
-    result_dense = operator.matmul(X, Y)
+    result_sparse =  self.sparsify(lax.dot)(Xsp, Y)
+    result_dense = lax.dot(X, Y)
     self.assertAllClose(result_sparse, result_dense)
 
     # rdot_general
-    result_sparse = func(Y, Xsp)
-    result_dense = operator.matmul(Y, X)
+    result_sparse =  self.sparsify(lax.dot)(Y, Xsp)
+    result_dense = lax.dot(Y, X)
     self.assertAllClose(result_sparse, result_dense)
 
-  # spdot_general
-    result_sparse = self.sparsify(operator.matmul)(Xsp, Ysp)
-    result_dense = operator.matmul(X, Y)
+    # spdot_general
+    result_sparse = self.sparsify(lax.dot)(Xsp, Ysp)
+    result_dense = lax.dot(X, Y)
     self.assertAllClose(result_sparse.todense(), result_dense)
 
   def testSparseAdd(self):

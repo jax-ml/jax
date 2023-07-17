@@ -1289,7 +1289,7 @@ class BCOOTest(sptu.SparseTestCase):
 
     def f_sparse(data, indices, Y):
       return sparse_bcoo._bcoo_dot_general(data, indices, Y, lhs_spinfo=sparse_util.SparseInfo(X.shape),
-                                           dimension_numbers=dimension_numbers)
+                                           dimension_numbers=dimension_numbers, preferred_element_type=None)
 
     for data, indices in itertools.product([data, data[:1]], [indices, indices[:1]]):
       X = sparse_bcoo._bcoo_todense(data, indices, spinfo=sparse_util.SparseInfo(X.shape))
