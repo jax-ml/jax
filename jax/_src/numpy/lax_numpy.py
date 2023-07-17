@@ -3068,19 +3068,20 @@ def apply_over_axes(func, a, axes):
 @partial(jit, static_argnames=('precision',), inline=True)
 def dot(a, b, *, precision=None):  # pylint: disable=missing-docstring
   util.check_arraylike("dot", a, b)
-  a, b = util.promote_dtypes(a, b)
   a_ndim, b_ndim = ndim(a), ndim(b)
   if a_ndim == 0 or b_ndim == 0:
-    return lax.mul(a, b)
-  if max(a_ndim, b_ndim) <= 2:
-    return lax.dot(a, b, precision=precision)
+    return lax.mul(*util.promote_dtypes(a, b))
 
+  output_dtype = dtypes.result_type(a, b)
+  if max(a_ndim, b_ndim) <= 2:
+    return lax.dot(a, b, precision=precision, preferred_element_type=output_dtype)
   if b_ndim == 1:
     contract_dims = ((a_ndim - 1,), (0,))
   else:
     contract_dims = ((a_ndim - 1,), (b_ndim - 2,))
   batch_dims = ((), ())
-  return lax.dot_general(a, b, (contract_dims, batch_dims), precision)
+  return lax.dot_general(a, b, (contract_dims, batch_dims), precision,
+                         preferred_element_type=output_dtype)
 
 
 @util._wraps(np.matmul, module='numpy', lax_description=_PRECISION_DOC)
