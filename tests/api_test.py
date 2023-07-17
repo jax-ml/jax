@@ -3898,6 +3898,8 @@ class APITest(jtu.JaxTestCase):
       shape = property(operator.attrgetter('x.shape'))
 
     a = A(jnp.ones((3, 3)))
+    jnp.asarray(a)  # don't crash
+
     f = jax.jit(jnp.matmul)
     f(a, a)  # don't crash
 

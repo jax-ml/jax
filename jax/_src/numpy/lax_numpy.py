@@ -2021,6 +2021,8 @@ def array(object: Any, dtype: Optional[DTypeLike] = None, copy: bool = True,
   if isinstance(object, (bool, int, float, complex)):
     _ = dtypes.coerce_to_array(object, dtype)
 
+  if hasattr(object, '__jax_array__'):
+    object = object.__jax_array__()
   object = tree_map(lambda leaf: leaf.__jax_array__() if hasattr(leaf, "__jax_array__") else leaf,
                     object)
   leaves = tree_leaves(object)
