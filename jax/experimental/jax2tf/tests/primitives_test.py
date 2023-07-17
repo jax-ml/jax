@@ -131,21 +131,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       raise unittest.SkipTest(
           f"TODO(b/272239584): custom call target not guaranteed stable: {target}")
     if config.jax2tf_default_native_serialization:
-      if device == "cpu":
-        if "cholesky_shape" in harness.fullname:
-          skipCustomCallTest("lapack_spotrf, lapack_dpotrf, lapack_zpotrf, lapack_cpotrf")
-        if "eig_shape" in harness.fullname:
-          skipCustomCallTest("lapack_cgeev, lapack_sgeev, lapack_dgeev, lapack_zgeev")
-        if "lu_shape" in harness.fullname:
-          skipCustomCallTest("lapack_zgetrf, lapack_sgetrf")
-        if "svd_shape" in harness.fullname:
-          skipCustomCallTest("lapack_sgesdd, lapack_zgesdd, lapack_cgesdd")
-        if "triangular_solve_" in harness.fullname:
-          skipCustomCallTest("blas_ctrsm, blas_dtrsm, blas_ztrsm, blas_strsm")
-        if "custom_linear_solve" in harness.fullname:
-          skipCustomCallTest("lapack_sgetrf, lapack_dgetrf")
-
-      elif device == "gpu":
+      if device == "gpu":
         if "custom_linear_solve_" in harness.fullname:
           skipCustomCallTest("cusolver_geqrf, cublas_geqrf_batched")
         if "svd_shape" in harness.fullname:

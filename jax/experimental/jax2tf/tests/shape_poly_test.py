@@ -2868,11 +2868,11 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       # Set of harness.group_name:platform that are implemented with custom call
       custom_call_harnesses = {
           "householder_product:gpu",
-          "vmap_geqrf:gpu",
+          "vmap_geqrf:gpu",  # used for linalg.qr
           "vmap_lu:gpu",
           # custom_linear_solve works as long as lu works.
           "vmap_custom_linear_solve:gpu",
-          "vmap_qr:gpu",
+          "vmap_qr:gpu", "qr:gpu",
           "vmap_svd:gpu",
       }
       if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
@@ -2921,10 +2921,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
               "jnp.nonzero_size=constant", "jnp.nonzero_size=poly"]):
         # Need associative scan reductions on CPU and GPU
         raise unittest.SkipTest(
-            "native serialization with shape polymorphism not implemented for window_reductions on GPU")
-
-      if "reduce_window_variadic_generic" and jtu.device_under_test() == "gpu":
-        raise unittest.SkipTest("TODO(b/287709676): crash in XLA:GPU for variadic reduce window")
+            "native serialization with shape polymorphism not implemented for window_reductions on CPU and GPU")
 
     # FOR GRAPH SERIALIZATION
     if not config.jax2tf_default_native_serialization:
