@@ -201,7 +201,7 @@ class NamedSharding(XLACompatibleSharding):
 
   @use_cpp_method()
   def __init__(
-      self, mesh: mesh_lib.Mesh, spec: PartitionSpec, _parsed_pspec = None):
+      self, mesh: mesh_lib.Mesh, spec: PartitionSpec, *, _parsed_pspec = None):
 
     self.mesh = mesh
     self.spec = spec
@@ -256,7 +256,8 @@ class NamedSharding(XLACompatibleSharding):
 
   @classmethod
   def _from_parsed_pspec(cls, mesh, parsed_pspec):
-    return cls(mesh, parsed_pspec.get_partition_spec(), parsed_pspec)
+    return cls(mesh, parsed_pspec.get_partition_spec(),
+               _parsed_pspec=parsed_pspec)
 
   @property
   def device_set(self) -> set[Device]:

@@ -2989,7 +2989,7 @@ def create_mesh_pspec_sharding(
 ) -> sharding_impls.NamedSharding:
   if pspec is None:
     pspec, parsed_pspec = PartitionSpec(), None
-  return sharding_impls.NamedSharding(mesh, pspec, parsed_pspec)
+  return sharding_impls.NamedSharding(mesh, pspec, _parsed_pspec=parsed_pspec)
 
 
 def check_device_backend_on_shardings(shardings) -> bool:
