@@ -31,6 +31,7 @@ from jax import numpy as jnp
 from jax import scipy as jsp
 from jax._src.numpy.util import promote_dtypes_inexact
 from jax._src import test_util as jtu
+from jax._src import xla_bridge
 
 from jax import config
 config.parse_flags_with_absl()
@@ -45,6 +46,12 @@ float_types = jtu.dtypes.floating
 complex_types = jtu.dtypes.complex
 int_types = jtu.dtypes.all_integer
 
+def _is_required_cuda_version_satisfied(cuda_version):
+  version = xla_bridge.get_backend().platform_version
+  if version == "<unknown>" or version.split()[0] == "rocm":
+    return False
+  else:
+    return int(version.split()[-1]) >= cuda_version
 
 class NumpyLinalgTest(jtu.JaxTestCase):
 
@@ -681,6 +688,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   )
   @jax.default_matmul_precision("float32")
   def testQr(self, shape, dtype, full_matrices):
+    if (jtu.device_under_test() == "gpu" and
+        _is_required_cuda_version_satisfied(12000)):
+      self.skipTest("Triggers a bug in cuda-12 b/287345077")
     rng = jtu.rand_default(self.rng())
     m, n = shape[-2:]
 
@@ -1276,6 +1286,10 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     dtype=int_types + float_types + complex_types
   )
   def testExpm(self, n, batch_size, dtype):
+    if (jtu.device_under_test() == "gpu" and
+        _is_required_cuda_version_satisfied(12000)):
+      self.skipTest("Triggers a bug in cuda-12 b/287345077")
+
     rng = jtu.rand_small(self.rng())
     args_maker = lambda: [rng((*batch_size, n, n), dtype)]
 
