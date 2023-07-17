@@ -42,7 +42,7 @@ py_library(
     srcs_version = "PY3",
     # TODO: b/255503696: enable pytype
     tags = ["pytype_unchecked_annotations"],
-    visibility = ["//third_party/py/jax/experimental/jax2tf:__subpackages__"],
+    visibility = ["//visibility:public"],
     deps = [
         "//jax",
     ] + py_deps("numpy"),
