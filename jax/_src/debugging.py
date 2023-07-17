@@ -205,14 +205,14 @@ def debug_callback(callback: Callable[..., Any], *args: Any,
 
   For more explanation, see `External Callbacks`_.
 
-  `debug_callback` enables you to pass in a Python function that can be called
-  inside of a staged JAX program. A `debug_callback` follows existing JAX
+  ``jax.debug.callback`` enables you to pass in a Python function that can be called
+  inside of a staged JAX program. A ``jax.debug.callback`` follows existing JAX
   transformation *pure* operational semantics, which are therefore unaware of
   side-effects. This means the effect could be dropped, duplicated, or
   potentially reordered in the presence of higher-order primitives and
   transformations.
 
-  We want this behavior because we'd like `debug_callback` to be "innocuous",
+  We want this behavior because we'd like ``jax.debug.callback`` to be "innocuous",
   i.e. we want these primitives to change the JAX computation as little as
   possible while revealing as much about them as possible, such as which parts
   of the computation are duplicated or dropped.
@@ -273,8 +273,8 @@ def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
       input arguments.
     *args: A list of positional arguments to be formatted.
     ordered: A keyword only argument used to indicate whether or not the
-      staged out computation will enforce ordering of this ``debug_print``
-      w.r.t. other ordered ``debug_print`` calls.
+      staged out computation will enforce ordering of this ``jax.debug.print``
+      w.r.t. other ordered ``jax.debug.print`` calls.
     **kwargs: Additional keyword arguments to be formatted.
   """
   # Check that we provide the correct arguments to be formatted
