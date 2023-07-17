@@ -3010,17 +3010,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         pf1(jnp.arange(8.))
     self.assertEqual(count[0], 1)
 
-  def test_set_both_axis_resources_and_shardings(self):
-    with self.assertRaisesRegex(
-        ValueError,
-        "Setting both in_shardings and in_axis_resources is not allowed"):
-      pjit(lambda x: x, in_shardings=P('x'), in_axis_resources=P('x'))
-
-    with self.assertRaisesRegex(
-        ValueError,
-        "Setting both out_shardings and out_axis_resources is not allowed"):
-      pjit(lambda x: x, out_shardings=P('x'), out_axis_resources=P('x'))
-
   def test_with_sharding_constraint_spmd_axis_name(self):
     mesh = jtu.create_global_mesh((2, 2, 2), ('replica', 'data', 'mdl'))
     shape = (8, 4, 2, 2)

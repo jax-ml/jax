@@ -19,6 +19,15 @@ Remember to align the itemized text with the first line of an item within a list
     parameters listed in either donate_argnums or donate_argnames will
     be donated.
 
+* Deletions
+  * `in_axis_resources` and `out_axis_resources` have been deleted from pjit since
+    it has been more than 3 months since their deprecation. Please use
+    `in_shardings` and `out_shardings` as the replacement.
+    This is a safe and trivial name replacement. It does not change any of the
+    current pjit semantics and doesn't break any code.
+    You can still pass in `PartitionSpecs` to in_shardings and out_shardings.
+
+
 * Deprecations
   * Python 3.8 support has been dropped as per
     https://jax.readthedocs.io/en/latest/deprecation.html
