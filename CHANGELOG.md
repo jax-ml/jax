@@ -60,8 +60,9 @@ Remember to align the itemized text with the first line of an item within a list
     behavior (as documented) if the second and third arguments are
     callable, even if other operands are callable as well. See
     [#16413](https://github.com/google/jax/issues/16413).
-  * The deprecated config option `jax_jit_pjit_api_merge`, which did nothing,
-    has been removed.
+  * The deprecated config options `jax_array` and `jax_jit_pjit_api_merge`,
+    which did nothing, have been removed. These options have been true by
+    default for many releases.
 
 * New features
   * JAX now supports a configuration flag --jax_serialization_version
