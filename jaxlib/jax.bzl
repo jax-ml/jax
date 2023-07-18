@@ -20,6 +20,7 @@ load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_roc
 load("@flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
 load("@tsl//tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
 load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
+load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 
 # Explicitly re-exports names to avoid "unused variable" warnings from .bzl
 # lint tools.
@@ -43,13 +44,39 @@ pallas_tpu_internal_users = []
 jax_test_util_visibility = []
 loops_visibility = []
 
+def get_importlib_metadata():
+    if HERMETIC_PYTHON_VERSION == "3.9":
+        return ["@pypi_importlib_metadata//:pkg"]
+    return []
+
+_py_deps = {
+    "absl/logging": ["@pypi_absl_py//:pkg"],
+    "absl/testing": ["@pypi_absl_py//:pkg"],
+    "absl/flags": ["@pypi_absl_py//:pkg"],
+    "cloudpickle": ["@pypi_cloudpickle//:pkg"],
+    "colorama": ["@pypi_colorama//:pkg"],
+    "epath": ["@pypi_epath//:pkg"],
+    "hypothesis": ["@pypi_hypothesis//:pkg"],
+    "importlib_metadata": get_importlib_metadata(),
+    "matplotlib": ["@pypi_matplotlib//:pkg"],
+    "opt_einsum": ["@pypi_opt_einsum//:pkg"],
+    "pil": ["@pypi_pillow//:pkg"],
+    "portpicker": ["@pypi_portpicker//:pkg"],
+    "ml_dtypes": ["@pypi_ml_dtypes//:pkg"],
+    "numpy": ["@pypi_numpy//:pkg"],
+    "scipy": ["@pypi_scipy//:pkg"],
+    "tensorflow_core": ["@pypi_tensorflow//:pkg"],
+    "torch": ["@pypi_torch//:pkg"],
+    "zstandard": ["@pypi_zstandard//:pkg"],
+}
+
 def py_deps(_package):
     """Returns the Bazel deps for Python package `package`."""
 
     # We assume the user has installed all dependencies in their Python environment.
     # This indirection exists because in Google's internal build we build
     # dependencies from source with Bazel, but that's not something most people would want.
-    return []
+    return _py_deps[_package]
 
 def jax_visibility(_target):
     """Returns the additional Bazel visibilities for `target`."""

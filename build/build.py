@@ -219,7 +219,7 @@ def get_bazel_version(bazel_path):
   return tuple(int(x) for x in match.group(1).split("."))
 
 
-def write_bazelrc(*, python_bin_path, remote_build,
+def write_bazelrc(*, python_bin_path, python_version, remote_build,
                   cuda_toolkit_path, cudnn_install_path,
                   cuda_version, cudnn_version, rocm_toolkit_path,
                   cpu, cuda_compute_capabilities,
@@ -236,7 +236,10 @@ def write_bazelrc(*, python_bin_path, remote_build,
         build --action_env=PYENV_ROOT
         build --python_path="{python_bin_path}"
         """).format(python_bin_path=python_bin_path))
-
+    if python_version:
+      f.write(textwrap.dedent("""\
+        build --repo_env JAX_PYTHON_VERSION="{python_version}"
+        """).format(python_version=python_version))
     if cuda_toolkit_path:
       tf_cuda_paths.append(cuda_toolkit_path)
       f.write("build --action_env CUDA_TOOLKIT_PATH=\"{cuda_toolkit_path}\"\n"
@@ -518,6 +521,7 @@ def main():
 
   write_bazelrc(
       python_bin_path=python_bin_path,
+      python_version=python_version,
       remote_build=args.remote_build,
       cuda_toolkit_path=cuda_toolkit_path,
       cudnn_install_path=cudnn_install_path,
