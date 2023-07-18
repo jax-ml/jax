@@ -85,6 +85,11 @@ class Sharding:
     """Returns if a sharding is fully replicated on all the devices."""
     raise NotImplementedError('Subclasses should implement this method.')
 
+  @property
+  def memory_kind(self) -> Optional[str]:
+    """Returns the memory kind of the sharding."""
+    raise NotImplementedError('Subclasses should implement this method.')
+
   #############################################################################
   # Default implementations below that all subclasses will inherit.
 

@@ -113,9 +113,15 @@ class XLACompatibleSharding(sharding.Sharding):
   def is_equivalent_to(self: XLACompatibleSharding,  # type: ignore
                        other: XLACompatibleSharding, ndim: int) -> bool:
     try:
-      return (are_op_shardings_equal(self._to_xla_hlo_sharding(ndim),
-                                     other._to_xla_hlo_sharding(ndim))
-              and self._device_assignment == other._device_assignment)
+      if xla_extension_version >= 168:
+        return (are_op_shardings_equal(self._to_xla_hlo_sharding(ndim),
+                                       other._to_xla_hlo_sharding(ndim))
+                and self._device_assignment == other._device_assignment and
+                self.memory_kind == other.memory_kind)
+      else:
+        return (are_op_shardings_equal(self._to_xla_hlo_sharding(ndim),
+                                       other._to_xla_hlo_sharding(ndim))
+                and self._device_assignment == other._device_assignment)
     # NotImplementedError is raised by PmapSharding because it can't lower
     # to OpSharding. So if `other` is a PmapSharding, default to a strict
     # equality check.
@@ -197,19 +203,29 @@ class NamedSharding(XLACompatibleSharding):
 
   mesh: mesh_lib.Mesh
   spec: PartitionSpec
+  memory_kind: Optional[str]
   _parsed_pspec: ParsedPartitionSpec
 
   @use_cpp_method()
   def __init__(
-      self, mesh: mesh_lib.Mesh, spec: PartitionSpec, *, _parsed_pspec = None):
+      self, mesh: mesh_lib.Mesh, spec: PartitionSpec, *,
+      memory_kind: Optional[str] = None, _parsed_pspec = None):
 
     self.mesh = mesh
     self.spec = spec
+    self.memory_kind = memory_kind
     self._parsed_pspec = _parsed_pspec
     self._preprocess()
 
   def __reduce__(self):
-    return type(self), (self.mesh, self.spec)
+    if xla_extension_version >= 168:
+      return (
+          type(self),
+          (self.mesh, self.spec),
+          {'memory_kind': self.memory_kind},
+      )
+    else:
+      return type(self), (self.mesh, self.spec)
 
   def _preprocess(self):
     # This split exists because you can pass `_parsed_pspec` that has been
@@ -227,11 +243,18 @@ class NamedSharding(XLACompatibleSharding):
     _check_mesh_resource_axis(self.mesh, self._parsed_pspec)
 
   def __repr__(self):
-    return f'NamedSharding(mesh={dict(self.mesh.shape)}, spec={self.spec})'
+    if xla_extension_version >= 168:
+      mem = '' if self.memory_kind is None else f', memory_kind={self.memory_kind}'
+      return f'NamedSharding(mesh={dict(self.mesh.shape)}, spec={self.spec}{mem})'
+    else:
+      return f'NamedSharding(mesh={dict(self.mesh.shape)}, spec={self.spec})'
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash((self.mesh, self._parsed_pspec))
+      if xla_extension_version >= 168:
+        self._hash = hash((self.mesh, self.memory_kind, self._parsed_pspec))
+      else:
+        self._hash = hash((self.mesh, self._parsed_pspec))
     return self._hash
 
   def __eq__(self, other):
@@ -240,9 +263,16 @@ class NamedSharding(XLACompatibleSharding):
     if id(self) == id(other):
       return True
     parsed_pspec_equal = self._parsed_pspec == other._parsed_pspec
-    if id(self.mesh) == id(other.mesh) and parsed_pspec_equal:
-      return True
-    return self.mesh == other.mesh and parsed_pspec_equal
+    if xla_extension_version >= 168:
+      if (id(self.mesh) == id(other.mesh) and
+          self.memory_kind == other.memory_kind and parsed_pspec_equal):
+        return True
+      return (self.mesh == other.mesh and self.memory_kind == other.memory_kind
+              and parsed_pspec_equal)
+    else:
+      if id(self.mesh) == id(other.mesh) and parsed_pspec_equal:
+        return True
+      return self.mesh == other.mesh and parsed_pspec_equal
 
   def is_compatible_aval(self, aval_shape: Shape):
     assert self._parsed_pspec is not None
@@ -255,9 +285,13 @@ class NamedSharding(XLACompatibleSharding):
           f"{len(aval_shape)}.{extra_msg}")
 
   @classmethod
-  def _from_parsed_pspec(cls, mesh, parsed_pspec):
-    return cls(mesh, parsed_pspec.get_partition_spec(),
-               _parsed_pspec=parsed_pspec)
+  def _from_parsed_pspec(cls, mesh, parsed_pspec, *, memory_kind=None):
+    if xla_extension_version >= 168:
+      return cls(mesh, parsed_pspec.get_partition_spec(),
+                 memory_kind=memory_kind, _parsed_pspec=parsed_pspec)
+    else:
+      return cls(mesh, parsed_pspec.get_partition_spec(),
+                 _parsed_pspec=parsed_pspec)
 
   @property
   def device_set(self) -> set[Device]:
@@ -336,20 +370,32 @@ class SingleDeviceSharding(XLACompatibleSharding):
   """
 
   _device: Device
+  _memory_kind: Optional[str]
 
   @use_cpp_method()
-  def __init__(self, device: Device):
+  def __init__(self, device: Device, *, memory_kind: Optional[str] = None):
     self._device = device
+    self._memory_kind = memory_kind
 
   def __reduce__(self):
-    return type(self), (self._device,)
+    if xla_extension_version >= 168:
+      return type(self), (self._device,), {'memory_kind': self._memory_kind}
+    else:
+      return type(self), (self._device,)
 
   def __repr__(self):
-    return f"SingleDeviceSharding(device={repr(self._device)})"
+    if xla_extension_version >= 168:
+      mem = '' if self._memory_kind is None else f', memory_kind={self._memory_kind}'
+      return f"SingleDeviceSharding(device={repr(self._device)}{mem})"
+    else:
+      return f"SingleDeviceSharding(device={repr(self._device)})"
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash(self._device)
+      if xla_extension_version >= 168:
+        self._hash = hash((self._device, self._memory_kind))
+      else:
+        self._hash = hash(self._device)
     return self._hash
 
   def __eq__(self, other):
@@ -357,11 +403,22 @@ class SingleDeviceSharding(XLACompatibleSharding):
       return False
     if id(self) == id(other):
       return True
-    return self._device == other._device
+    if xla_extension_version >= 168:
+      return (self._device == other._device and
+              self._memory_kind == other._memory_kind)
+    else:
+      return self._device == other._device
 
   @property
   def device_set(self) -> set[Device]:
     return {self._device}
+
+  @property
+  def memory_kind(self) -> Optional[str]:
+    if xla_extension_version >= 168:
+      return self._memory_kind
+    else:
+      return None
 
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:  # type: ignore
     return {self._device: (slice(None),) * len(global_shape)}
@@ -530,15 +587,18 @@ def _op_sharding_to_pos_sharding(
 
 class PositionalSharding(XLACompatibleSharding):
   _devices: tuple[xc.Device, ...]
+  _memory_kind: Optional[str]
   _ids: np.ndarray  # dtype DeviceIdSet
 
-  def __init__(self, devices: Union[Sequence[xc.Device], np.ndarray]):
+  def __init__(self, devices: Union[Sequence[xc.Device], np.ndarray],
+               *, memory_kind: Optional[str] = None):
     if not isinstance(devices, np.ndarray):
       devices = np.array(devices, dtype='object')
     if not devices.size:
       raise ValueError(f"{self.__class__.__name__}.__init__ requires at least "
                        f"one device, got {devices}")
     self._devices = tuple(devices.flat)
+    self._memory_kind = memory_kind
     name = self._devices[0].platform.upper()
     self._ids = np.array([DeviceIdSet(name, i) for i in range(devices.size)],
                          dtype='object').reshape(devices.shape)
@@ -554,7 +614,8 @@ class PositionalSharding(XLACompatibleSharding):
       ids[idx] = DeviceIdSet(platform_name, *(self._devices[i].id for i in x))
     body = np.array2string(ids, prefix=cls_name + '(', suffix=')',
                            max_line_width=100)
-    return f'{cls_name}({body})'
+    mem = '' if self._memory_kind is None else f', memory_kind={self._memory_kind}'
+    return f'{cls_name}({body}{mem})'
 
   def reshape(self, *shape):
     return self.remake(self._devices, self._ids.reshape(*shape))
@@ -569,17 +630,19 @@ class PositionalSharding(XLACompatibleSharding):
 
   @classmethod
   def remake(
-      cls, devices: tuple[xc.Device, ...], ids: np.ndarray) -> PositionalSharding:
+      cls, devices: tuple[xc.Device, ...], ids: np.ndarray,
+      *, memory_kind: Optional[str] = None) -> PositionalSharding:
     self = cls.__new__(cls)
     self._devices = devices
     self._ids = ids
+    self._memory_kind = memory_kind
     return self
 
   # Hashable
 
   def __hash__(self) -> int:
     if not hasattr(self, '_hash'):
-      self._hash = hash(self._devices)
+      self._hash = hash((self._devices, self._memory_kind))
     return self._hash
 
   def __eq__(self, other) -> bool:
@@ -588,15 +651,24 @@ class PositionalSharding(XLACompatibleSharding):
     if id(self) == id(other):
       return True
     all_ids_equal = np.array_equal(self._ids,other._ids)
-    if id(self._devices) == id(other._devices) and all_ids_equal:
+    if (id(self._devices) == id(other._devices) and
+        self._memory_kind == other._memory_kind and all_ids_equal):
       return True
-    return self._devices == other._devices and all_ids_equal
+    return (self._devices == other._devices and
+            self._memory_kind == other._memory_kind and all_ids_equal)
 
   # Sharding interface
 
   @functools.cached_property
   def device_set(self) -> set[xc.Device]:
     return set(self._devices)
+
+  @property
+  def memory_kind(self) -> Optional[str]:
+    if xla_extension_version >= 168:
+      return self._memory_kind
+    else:
+      return None
 
   @functools.cached_property
   def is_fully_replicated(self) -> bool:
@@ -662,15 +734,18 @@ class DeviceIdSet:
 class GSPMDSharding(XLACompatibleSharding):
   _devices: tuple[Device, ...]
   _hlo_sharding: xc.HloSharding
+  _memory_kind: Optional[str]
 
   @use_cpp_method()
   def __init__(self, devices: Sequence[Device],
-               op_sharding: Union[xc.OpSharding, xc.HloSharding]):
+               op_sharding: Union[xc.OpSharding, xc.HloSharding],
+               *, memory_kind: Optional[str] = None):
     self._devices = tuple(devices)
     if isinstance(op_sharding, xc.OpSharding):
       self._hlo_sharding = xc.HloSharding.from_proto(op_sharding)
     else:
       self._hlo_sharding = op_sharding
+    self._memory_kind = memory_kind
 
   if xla_extension_version < 159:
     @property
@@ -680,7 +755,14 @@ class GSPMDSharding(XLACompatibleSharding):
       return self._op_sharding  # type: ignore
 
   def __reduce__(self):
-    return type(self), (self._devices, self._hlo_sharding.to_proto())
+    if xla_extension_version >= 168:
+      return (
+          type(self),
+          (self._devices, self._hlo_sharding.to_proto()),
+          {'memory_kind': self._memory_kind},
+      )
+    else:
+      return type(self), (self._devices, self._hlo_sharding.to_proto())
 
   @functools.cached_property
   def _hlo_sharding_hash(self):
@@ -691,16 +773,29 @@ class GSPMDSharding(XLACompatibleSharding):
       return False
     if id(self) == id(other):
       return True
-    return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
-            and self._devices == other._devices)
+    if xla_extension_version >= 168:
+      return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
+              and self._devices == other._devices and
+              self._memory_kind == other._memory_kind)
+    else:
+      return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
+              and self._devices == other._devices)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash((self._devices, self._hlo_sharding_hash))
+      if xla_extension_version >= 168:
+        self._hash = hash((self._devices, self._hlo_sharding_hash,
+                          self._memory_kind))
+      else:
+        self._hash = hash((self._devices, self._hlo_sharding_hash))
     return self._hash
 
   def __repr__(self):
-    return f'GSPMDSharding({repr(self._hlo_sharding)})'
+    if xla_extension_version >= 168:
+      mem = '' if self._memory_kind is None else f', memory_kind={self._memory_kind}'
+      return f'GSPMDSharding({repr(self._hlo_sharding)}{mem})'
+    else:
+      return f'GSPMDSharding({repr(self._hlo_sharding)})'
 
   def is_compatible_aval(self, aval_shape: Shape):
     num_ways_dim_sharded, _ = get_num_ways_dim_sharded(self._hlo_sharding)
@@ -713,6 +808,13 @@ class GSPMDSharding(XLACompatibleSharding):
   @functools.cached_property
   def device_set(self) -> set[Device]:
     return set(self._devices)
+
+  @property
+  def memory_kind(self) -> Optional[str]:
+    if xla_extension_version >= 168:
+      return self._memory_kind
+    else:
+      return None
 
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
@@ -733,8 +835,12 @@ class GSPMDSharding(XLACompatibleSharding):
     return is_op_sharding_replicated(self._hlo_sharding)
 
   @classmethod
-  def get_replicated(cls, device_assignment):
-    return cls(tuple(device_assignment), get_replicated_hlo_sharding())
+  def get_replicated(cls, device_assignment, *, memory_kind: Optional[str] = None):
+    if xla_extension_version >= 168:
+      return cls(tuple(device_assignment), get_replicated_hlo_sharding(),
+                 memory_kind=memory_kind)
+    else:
+      return cls(tuple(device_assignment), get_replicated_hlo_sharding())
 
 
 class AUTO:
