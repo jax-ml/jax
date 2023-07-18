@@ -48,6 +48,7 @@ prefixed with underscores, although we do not entirely comply with this yet.
 * `jax.core`
 * `jax.linear_util`
 * `jax.lib`
+* `jax.prng`
 * `jax.interpreters`
 * `jax.experimental`
 * `jax.example_libraries`
