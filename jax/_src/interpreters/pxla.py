@@ -2537,6 +2537,9 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
   else:
     compiler_options = dict(safe_zip(compiler_options_keys, compiler_options_values))
 
+  fdo_profile = (None if compiler_options is None else
+                 compiler_options.pop("fdo_profile", None))
+
   compile_options = xb.get_compile_options(
       num_replicas=num_replicas,
       num_partitions=num_partitions,
@@ -2544,6 +2547,7 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
       use_spmd_partitioning=spmd_lowering,
       use_auto_spmd_partitioning=auto_spmd_lowering,
       env_options_overrides=compiler_options,
+      fdo_profile=fdo_profile,
   )
 
   opts = compile_options.executable_build_options

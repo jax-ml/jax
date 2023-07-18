@@ -196,6 +196,23 @@ jax_test(
 )
 
 jax_test(
+    name = "pgle_test",
+    srcs = ["pgle_test.py"],
+    disable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    env = {"XLA_FLAGS": "--xla_dump_to=sponge --xla_gpu_enable_latency_hiding_scheduler=true"},
+    tags = [
+        "config-cuda-only",
+        "multiaccelerator",
+    ],
+    deps = [
+        "//jax:experimental",
+    ],
+)
+
+jax_test(
     name = "array_test",
     srcs = ["array_test.py"],
     tags = ["multiaccelerator"],
