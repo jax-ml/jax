@@ -1087,11 +1087,9 @@ def _gamma_one(key: KeyArray, alpha, log_space) -> Array:
   # in floating point underflow; for this reason we compute it in log space if
   # specified by the `log_space` argument:
   #   log[Gamma(alpha)] ~ log[Gamma(alpha + 1)] + log[Uniform()] / alpha
-  # Note that log[Uniform()] ~ Exponential(), but the exponential() function is
-  # computed via log[1 - Uniform()] to avoid taking log(0). We want the generated
-  # sequence to match between log_space=True and log_space=False, so we avoid this
-  # for now to maintain backward compatibility with the original implementation.
-  # TODO(jakevdp) should we change the convention to avoid -inf in log-space?
+  # Note that log[Uniform()] ~ -Exponential(), but to avoid problems at x=0
+  # exponential is computed in terms of log[1 - Uniform()]; we must account for this
+  # so that log-space and non-log-space samples match.
   boost_mask = lax.ge(alpha, one)
   alpha_orig = alpha
   alpha = lax.select(boost_mask, alpha, lax.add(alpha, one))
@@ -1128,17 +1126,15 @@ def _gamma_one(key: KeyArray, alpha, log_space) -> Array:
 
   # initial state is chosen such that _cond_fn will return True
   key, subkey = _split(key)
-  u_boost = uniform(subkey, (), dtype=dtype)
   _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, zero, one, _lax_const(alpha, 2)))
   if log_space:
-    # TODO(jakevdp): there are negative infinities here due to issues mentioned above. How should
-    # we handle those?
-    log_boost = lax.select(boost_mask, zero, lax.mul(lax.log(u_boost), lax.div(one, alpha_orig)))
+    log_samples = lax.neg(exponential(subkey, (), dtype=dtype))
+    log_boost = lax.select(boost_mask, zero, lax.mul(log_samples, lax.div(one, alpha_orig)))
     return lax.add(lax.add(lax.log(d), lax.log(V)), log_boost)
   else:
-    boost = lax.select(boost_mask, one, lax.pow(u_boost, lax.div(one, alpha_orig)))
-    z = lax.mul(lax.mul(d, V), boost)
-    return lax.select(lax.eq(z, zero), jnp.finfo(z.dtype).tiny, z)
+    samples = 1 - uniform(subkey, (), dtype=dtype)
+    boost = lax.select(boost_mask, one, lax.pow(samples, lax.div(one, alpha_orig)))
+    return lax.mul(lax.mul(d, V), boost)
 
 
 def _gamma_grad(sample, a, *, log_space):
@@ -1147,7 +1143,7 @@ def _gamma_grad(sample, a, *, log_space):
   if log_space:
     # d[log(sample)] = d[sample] / sample
     # This requires computing exp(log_sample), which may be zero due to float roundoff.
-    # In this case, we use the same zero-correction used in gamma() above.
+    # In this case, correct it to smallest representable float.
     samples = lax.exp(samples)
     zero = lax_internal._const(sample, 0)
     tiny = lax.full_like(samples, jnp.finfo(samples.dtype).tiny)
