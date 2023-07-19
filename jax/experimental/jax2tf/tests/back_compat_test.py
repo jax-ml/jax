@@ -40,6 +40,7 @@ from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_lu_lapack_get
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_qr_cusolver_geqrf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_qr_lapack_geqrf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_svd_lapack_gesdd
+from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_triangular_solve_blas_trsm
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_threefry2x32
 from jax.experimental.jax2tf.tests.back_compat_testdata import tf_call_tf_function
 from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Eigh
@@ -104,6 +105,7 @@ class CompatTest(bctu.CompatTestBase):
         cpu_lu_lapack_getrf.data_2023_06_14,
         cuda_qr_cusolver_geqrf.data_2023_03_18, cuda_eigh_cusolver_syev.data_2023_03_17,
         cpu_svd_lapack_gesdd.data_2023_06_19,
+        cpu_triangular_solve_blas_trsm.data_2023_07_16,
         tf_call_tf_function.data_2023_06_02,  # This is tested in back_compat_tf_test.py
         tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17,
         tpu_Sharding.data_2023_03_16, tpu_ApproxTopK.data_2023_04_17,
@@ -120,10 +122,6 @@ class CompatTest(bctu.CompatTestBase):
       covered_targets = covered_targets.union(data.custom_call_targets)
 
     covered_targets = covered_targets.union({
-      # TODO(necula): add tests for svd on CPU
-      "lapack_sgesdd", "lapack_dsesdd", "lapack_cgesdd", "lapack_zgesdd",
-      # TODO(necula): add tests for triangular_solve on CPU
-      "blas_strsm", "blas_dtrsm", "blas_ctrsm", "blas_ztrsm",
       "tpu_custom_call",  # tested separately
       # TODO(necula): add tests for schur on CPU
       "lapack_sgees", "lapack_dgees", "lapack_cgees", "lapack_zgees",
@@ -490,6 +488,43 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_svd_results,
                                             input))
+
+  @jtu.parameterized_filterable(
+    kwargs=[
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128")])
+  @jax.default_matmul_precision("float32")
+  def test_cpu_triangular_solve_blas_trsm(self, dtype_name="f32"):
+    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+
+    dtype = dict(f32=np.float32, f64=np.float64,
+                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    a_shape = (4, 4)
+    a = np.arange(math.prod(a_shape), dtype=dtype).reshape(a_shape)
+    a = np.tril(a + 5 * np.eye(a.shape[-1], dtype=a.dtype))
+    b_shape = (4, 5)
+    b = np.arange(math.prod(b_shape), dtype=dtype).reshape(b_shape)
+    left_side = True
+    def func(a, b):
+      return lax.linalg.triangular_solve(a, b, lower=True,
+                      transpose_a=False,
+                      conjugate_a=False, unit_diagonal=False,
+                      left_side=left_side)
+
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+
+    data = self.load_testdata(cpu_triangular_solve_blas_trsm.data_2023_07_16[dtype_name])
+
+    def check_triangular_solve_results(res_run, res_expected, *, rtol, atol):
+      x, = res_run
+      matmul = partial(jnp.matmul, precision=lax.Precision.HIGHEST)
+      y = matmul(a, x) if left_side else matmul(x, a)
+      self.assertArraysAllClose(y, jnp.broadcast_to(b, y.shape), rtol=rtol, atol=atol)
+
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
+                      check_results=check_triangular_solve_results)
 
   def test_approx_top_k(self):
     def func():
