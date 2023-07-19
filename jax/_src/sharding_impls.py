@@ -21,7 +21,6 @@ import functools
 import itertools
 import math
 import operator as op
-import sys
 from typing import (Any, Mapping, Optional, OrderedDict, NamedTuple, Sequence,
                     Union, cast)
 
@@ -40,11 +39,6 @@ from jax._src.lib import xla_extension_version
 from jax._src.partition_spec import PartitionSpec
 
 import numpy as np
-
-if sys.version_info >= (3, 9):
-  OrderedDictType = OrderedDict
-else:
-  OrderedDictType = dict
 
 
 Shape = tuple[int, ...]
@@ -889,7 +883,7 @@ that would mean that a flat list of chunks would get assigned to a flattened lis
 mesh devices without any modifications. If the mapping was {'y': 1, 'x': 1}, then the
 mesh devices ndarray would have to be transposed before flattening and assignment.
 """
-ArrayMapping = OrderedDictType[MeshAxisName, int]
+ArrayMapping = OrderedDict[MeshAxisName, int]
 ArrayMappingOrAutoOrUnspecified = Union[ArrayMapping, AUTO, UnspecifiedValue]
 
 def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
