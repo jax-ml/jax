@@ -46,6 +46,8 @@ import numpy as np
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
+FAKE_COMPILE_TIME = 10
+
 
 @jtu.with_config(
     jax_raise_persistent_cache_errors=True,
@@ -272,9 +274,10 @@ class CompilationCacheTest(jtu.JaxTestCase):
       )
       backend = xla_bridge.get_backend()
       key = cc.get_cache_key(computation, devices, compile_options, backend)
-      self.assertEqual(
-          cc.get_executable(key, compile_options, backend), None
-      )
+      executable, compile_time = cc.get_executable_and_time(
+          key, compile_options, backend)
+      self.assertIsNone(executable)
+      self.assertIsNone(compile_time)
 
   def test_diff_executables(self):
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -287,11 +290,13 @@ class CompilationCacheTest(jtu.JaxTestCase):
       backend = xla_bridge.get_backend()
       executable1 = backend.compile(computation1, compile_options)
       executable2 = backend.compile(computation2, compile_options)
-      cc.put_executable("key1", "computation1", executable1, backend)
-      cc.put_executable("key2", "computation2", executable2, backend)
+      cc.put_executable_and_time(
+          "key1", "computation1", executable1, backend, FAKE_COMPILE_TIME)
+      cc.put_executable_and_time(
+          "key2", "computation2", executable2, backend, FAKE_COMPILE_TIME)
       self.assertNotEqual(
-          cc.get_executable("key1", compile_options, backend),
-          cc.get_executable("key2", compile_options, backend),
+          cc.get_executable_and_time("key1", compile_options, backend)[0],
+          cc.get_executable_and_time("key2", compile_options, backend)[0]
       )
 
   def test_put_executable(self):
@@ -309,8 +314,10 @@ class CompilationCacheTest(jtu.JaxTestCase):
       backend = xla_bridge.get_backend()
       executable = backend.compile(str(computation), compile_options)
       key = cc.get_cache_key(computation, devices, compile_options, backend)
-      cc.put_executable(key, "alambda", executable, backend)
-      deserialized_executable = cc.get_executable(key, compile_options, backend)
+      cc.put_executable_and_time(
+          key, "alambda", executable, backend, FAKE_COMPILE_TIME)
+      executable_retrieved, compile_time_retrieved = cc.get_executable_and_time(
+          key, compile_options, backend)
       inputs_to_executable = (
           np.array(1, dtype=np.int32),
           np.array(2, dtype=np.int32),
@@ -319,9 +326,10 @@ class CompilationCacheTest(jtu.JaxTestCase):
           executable, inputs_to_executable, backend
       )
       actual = xla_client.execute_with_python_values(
-          deserialized_executable, inputs_to_executable, backend
+          executable_retrieved, inputs_to_executable, backend
       )
       self.assertEqual(expected, actual)
+      self.assertEqual(FAKE_COMPILE_TIME, compile_time_retrieved)
 
   def test_pmap(self):
     with tempfile.TemporaryDirectory() as tmpdir:

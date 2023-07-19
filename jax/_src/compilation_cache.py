@@ -71,49 +71,59 @@ def initialize_cache(path):
   logger.warning("Initialized persistent compilation cache at %s", path)
 
 
-def get_executable(
+def get_executable_and_time(
     cache_key: str, compile_options, backend
-) -> Optional[xla_client.LoadedExecutable]:
-  """Returns the cached executable if present, or None otherwise."""
-  assert (
-      _cache is not None
-  ), "initialize_cache must be called before you can call get_executable()"
-  serialized_executable = _cache.get(cache_key)
-  if not serialized_executable:
-    return None
+) -> tuple[Optional[xla_client.LoadedExecutable], Optional[int]]:
+  """Returns the cached executable and its compilation time if present, or None
+  otherwise.
+  """
+  assert _cache is not None, (
+      "initialize_cache must be called before you can call"
+      " get_executable_and_time()"
+  )
+  executable_and_time = _cache.get(cache_key)
+  if not executable_and_time:
+    return None, None
   if zstandard:
     decompressor = zstandard.ZstdDecompressor()
-    serialized_executable = decompressor.decompress(serialized_executable)
+    executable_and_time = decompressor.decompress(executable_and_time)
   else:
-    serialized_executable = zlib.decompress(serialized_executable)
+    executable_and_time = zlib.decompress(executable_and_time)
+  serialized_executable, compile_time = extract_executable_and_time(
+      executable_and_time)
   xla_executable_deserialized = backend.deserialize_executable(
-      serialized_executable, compile_options
-  )
-  return xla_executable_deserialized
+      serialized_executable, compile_options)
+  return xla_executable_deserialized, compile_time
 
 
-def put_executable(
+def put_executable_and_time(
     cache_key: str,
     module_name: str,
     executable: xla_client.LoadedExecutable,
     backend,
+    compile_time: int
 ) -> None:
-  """Adds 'executable' to the cache, possibly evicting older entries."""
-  assert (
-      _cache is not None
-  ), "initialize_cache must be called before you can call put_executable()"
+  """Adds the 'executable' and its compilation time to the cache repository,
+  possibly evicting older entries.
+  """
+  assert _cache is not None, (
+      "initialize_cache must be called before you can call"
+      "put_executable_and_time()"
+  )
   logger.info(
       "Writing %s to persistent compilation cache with key %s.",
       module_name,
       cache_key,
   )
   serialized_executable = backend.serialize_executable(executable)
+  executable_and_time = combine_executable_and_time(
+      serialized_executable, compile_time)
   if zstandard:
     compressor = zstandard.ZstdCompressor()
-    serialized_executable = compressor.compress(serialized_executable)
+    executable_and_time = compressor.compress(executable_and_time)
   else:
-    serialized_executable = zlib.compress(serialized_executable)
-  _cache.put(cache_key, serialized_executable)
+    executable_and_time = zlib.compress(executable_and_time)
+  _cache.put(cache_key, executable_and_time)
 
 
 def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
@@ -375,3 +385,32 @@ def reset_cache():
   assert is_initialized()
   logger.info("Resetting cache at %s.", _cache._path)
   _cache = None
+
+
+def combine_executable_and_time(
+    serialized_executable: bytes, compile_time: int
+) -> bytes:
+  """Given the serialized executable and the compilation time, produce a cache
+  entry in the format shown below.
+
+  The cache entry is of the form:
+  Byte:     0    1    2    3    4 ...
+  Content:  compilation time    serialized executable
+            (big-endian int)
+  """
+  return int(compile_time).to_bytes(4, byteorder='big') + serialized_executable
+
+
+def extract_executable_and_time(
+    exectuable_and_time: bytes
+) -> tuple[bytes, int]:
+  """Given the cache entry in the format shown below, extract the serialized
+  executable and the compilation time.
+
+  The cache entry 'executable_and_time' is of the form:
+  Byte:     0    1    2    3    4 ...
+  Content:  compilation time    serialized executable
+            (big-endian int)
+  """
+  return exectuable_and_time[4:], int.from_bytes(
+      exectuable_and_time[:4], byteorder='big')

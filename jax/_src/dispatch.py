@@ -500,11 +500,13 @@ def compile_or_get_cached(backend, computation: ir.Module, devices: np.ndarray,
   cache_key = compilation_cache.get_cache_key(
       computation, devices, compile_options, backend)
 
-  cached_executable = _cache_read(module_name, cache_key, compile_options,
-                                  backend)
-  if cached_executable is not None:
+  executable, compile_time_retrieved = _cache_read(
+      module_name, cache_key, compile_options, backend)
+  if executable is not None:
+    # TODO(b/289098047): Will instrument a metric which uses the 'compile_time'
+    # to measure the savings due to the cache hit.
     logger.info("Persistent compilation cache hit for '%s'", module_name)
-    return cached_executable
+    return executable
   else:
     start_time = time.monotonic()
     executable = backend_compile(backend, computation,
@@ -517,17 +519,20 @@ def compile_or_get_cached(backend, computation: ir.Module, devices: np.ndarray,
 
 def _cache_read(
     module_name: str, cache_key: str, compile_options, backend
-) -> Optional[xc.LoadedExecutable]:
-  """Looks up `computation` in the persistent compilation cache."""
+) -> tuple[Optional[xc.LoadedExecutable], Optional[int]]:
+  """Looks up the `computation` and it's compilation time in the persistent
+  compilation cache repository.
+  """
   try:
-    return compilation_cache.get_executable(cache_key, compile_options, backend)
+    return compilation_cache.get_executable_and_time(
+        cache_key, compile_options, backend)
   except Exception as ex:
     if config.jax_raise_persistent_cache_errors:
       raise
     warnings.warn(
         f"Error reading persistent compilation cache entry for "
         f"'{module_name}': {type(ex).__name__}: {ex}")
-    return None
+    return None, None
 
 
 def _cache_write(cache_key: str,
@@ -535,7 +540,9 @@ def _cache_write(cache_key: str,
                  module_name: str,
                  backend: Backend, executable: xc.LoadedExecutable,
                  host_callbacks: list[Any]):
-  """Writes `serialized_computation` to the persistent compilation cache."""
+  """Writes the `serialized_computation` and its compilation time to the
+  persistent compilation cache repository.
+  """
   if host_callbacks:
     logger.info(
         "Not writing persistent cache entry for '%s' because it uses host "
@@ -557,8 +564,8 @@ def _cache_write(cache_key: str,
           compile_time_secs)
 
   try:
-    compilation_cache.put_executable(cache_key, module_name, executable,
-                                     backend)
+    compilation_cache.put_executable_and_time(
+        cache_key, module_name, executable, backend, int(compile_time_secs))
   except Exception as ex:
     if config.jax_raise_persistent_cache_errors:
       raise
