@@ -2339,7 +2339,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
         PolyHarness("random_gamma", f"{flags_name}",
                     lambda key, a: jax.random.gamma(key, a),
                     arg_descriptors=[RandArg((3, key_size), np.uint32), RandArg((3, 4, 5), _f32)],
-                    polymorphic_shapes=["b, ...", "b, w, ..."],
+                    polymorphic_shapes=["b, ...", "b, w, ..."], tol=1E-5,
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
         # The known dimensions product must be even.
         PolyHarness("random_categorical", f"axis=0_{flags_name}",

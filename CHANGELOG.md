@@ -18,6 +18,12 @@ Remember to align the itemized text with the first line of an item within a list
     correspond to donate_argnames (or vice versa). If both donate_argnums and donate_argnames are provided, inspect.signature is not used, and only actual
     parameters listed in either donate_argnums or donate_argnames will
     be donated.
+  * {func}`jax.random.gamma` has been re-factored to a more efficient algorithm
+    with more robust endpoint behavior ({jax-issue}`#16779`). This means that the
+    sequence of values returned for a given `key` will change between JAX v0.4.13
+    and v0.4.14 for `gamma` and related samplers (including {func}`jax.random.ball`,
+    {func}`jax.random.beta`, {func}`jax.random.chisquare`, {func}`jax.random.dirichlet`, 
+    {func}`jax.random.generalized_normal`, {func}`jax.random.loggamma`, {func}`jax.random.t`).
 
 * Deletions
   * `in_axis_resources` and `out_axis_resources` have been deleted from pjit since
