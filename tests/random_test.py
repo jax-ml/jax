@@ -2139,8 +2139,6 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
         ValueError, r'dtype=key<.*> is not a valid dtype for JAX type promotion.',
         lambda: key + 47)
 
-  @skipIf(np.__version__ == "1.21.0",
-          "https://github.com/numpy/numpy/issues/19305")
   def test_grad_of_prng_key(self):
     key = self.make_key(73)
     with self.assertRaisesRegex(TypeError, 'grad requires real- or complex-valued inputs'):
@@ -2210,8 +2208,6 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
         ValueError, r'dtype=key<.*> is not a valid dtype for JAX type promotion.',
         lambda: key + 47)
 
-  @skipIf(np.__version__ == "1.21.0",
-          "https://github.com/numpy/numpy/issues/19305")
   def test_grad_of_prng_key(self):
     key = self.make_key(73)
     with self.assertRaisesRegex(TypeError, 'grad requires real- or complex-valued inputs'):

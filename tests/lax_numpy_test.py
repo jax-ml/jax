@@ -240,8 +240,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     dtype=default_dtypes,
   )
   def testUnwrap(self, shape, dtype, axis, discont, period):
-    if period != "2pi":
-      self.skipTest("numpy < 1.21 does not support the period argument to unwrap()")
     special_vals = {"pi": np.pi, "2pi": 2 * np.pi}
     period = special_vals.get(period, period)
     discont = special_vals.get(discont, discont)
