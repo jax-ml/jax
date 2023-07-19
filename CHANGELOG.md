@@ -52,6 +52,7 @@ Remember to align the itemized text with the first line of an item within a list
     * `jax.interpreters.pxla.make_sharded_device_array`: use {func}`jax.make_array_from_single_device_arrays`.
     * `jax.interpreters.pxla.ShardedDeviceArray`: use {class}`jax.Array`.
     * `jax.numpy.DeviceArray`: use {class}`jax.Array`.
+    * `jax.stages.Compiled.compiler_ir`: use {func}`jax.stages.Compiled.as_text`.
 
 * Breaking changes
   * JAX now requires ml_dtypes version 0.2.0 or newer.
