@@ -27,15 +27,15 @@ from typing import Any, Callable
 
 import jax
 from jax import core
+from jax._src.config import config
+from jax._src.lib import tpu_mosaic
+from jax._src.lib import xla_client
 from jax.interpreters import mlir
 from jax.interpreters import xla
-from jax._src.config import config
-from jax._src.lib import xla_client
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import mhlo
 from jaxlib.mlir.dialects import stablehlo
 from jaxlib.mlir.passmanager import PassManager
-from jax._src.lib import tpu_mosaic
 import numpy as np
 
 # TODO(sharadmv): remove when minimum jaxlib version is bumped to >= 0.4.14.
@@ -64,6 +64,8 @@ class CustomCallBackendConfig:
   has_communication: bool
   collective_id: int | None
   device_type: str | None
+  kernel_name: str | None
+  kernel_regeneration_metadata: bytes | None
 
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
@@ -83,6 +85,14 @@ class CustomCallBackendConfig:
     if self.collective_id is not None:
       config.write(b', "collective_id": ')
       config.write(str(self.collective_id).encode("ascii"))
+    if self.kernel_name is not None:
+      config.write(b', "kernel_name": "')
+      config.write(self.kernel_name.encode("ascii"))
+      config.write(b'"')
+    if self.kernel_regeneration_metadata is not None:
+      config.write(b', "kernel_regeneration_metadata": "')
+      config.write(base64.b64encode(self.kernel_regeneration_metadata))
+      config.write(b'"')
     config.write(b"}")
     if self.device_type is not None:
       config.write(b', "device_type": ')
@@ -264,6 +274,8 @@ def as_tpu_kernel(
     *,
     backend: str | xla_client.Client = "tpu",
     device_type: str | None = None,
+    kernel_name: str | None = None,
+    kernel_regeneration_metadata: bytes | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   # We use jax.jit to make sure we hit the fast compilation cache.
@@ -281,6 +293,9 @@ def as_tpu_kernel(
   lowered_module_asm, constants = _lower_tpu_kernel(
       module, hardware_generation, device_type=device_type
   )
+  # TODO(amagni): Kernel name and regeneration metadata could alternatively be
+  # added as a custom attribute to the MLIR call op rather than including them
+  # in the backend_config.
   return _lowered_as_tpu_kernel(
       lowered_module_asm,
       out_type,
@@ -288,6 +303,8 @@ def as_tpu_kernel(
       device_type=device_type,
       has_communication=has_communication,
       has_custom_barrier=has_custom_barrier,
+      kernel_name=kernel_name,
+      kernel_regeneration_metadata=kernel_regeneration_metadata,
   )
 
 
@@ -299,6 +316,8 @@ def _lowered_as_tpu_kernel(
     device_type: str | None = None,
     has_communication: bool = False,
     has_custom_barrier: bool = False,
+    kernel_name: str | None = None,
+    kernel_regeneration_metadata: bytes | None = None,
 ):
   """Turns a low-level MLIR Mosaic kernel into a JAX-compatible function."""
   unpack = False
@@ -318,7 +337,12 @@ def _lowered_as_tpu_kernel(
           " barrier"
       )
     config = CustomCallBackendConfig(
-        lowered_module_asm, has_communication, collective_id, device_type
+        lowered_module_asm,
+        has_communication,
+        collective_id,
+        device_type,
+        kernel_name,
+        kernel_regeneration_metadata,
     )
     result = tpu_custom_call_p.bind(
         *args,

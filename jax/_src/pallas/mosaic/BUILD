@@ -32,6 +32,7 @@ py_library_providing_imports_info(
     lib_rule = py_library,
     deps = [
         ":core",
+        ":kernel_regeneration_util",
         ":pallas_call_registration",
         ":primitives",
     ],
@@ -86,4 +87,12 @@ py_library(
         "//jax/_src/lib",
         "//jax/_src/pallas",
     ] + py_deps("numpy"),
+)
+
+py_library(
+    name = "kernel_regeneration_util",
+    srcs = ["kernel_regeneration_util.py"],
+    deps = [
+        "//third_party/py/mlir:ir",
+    ],
 )
