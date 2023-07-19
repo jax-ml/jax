@@ -48,6 +48,7 @@ from jax._src import sharding_specs
 from jax._src import xla_bridge
 from jax._src.lib import xla_extension
 from jax._src.util import safe_map, safe_zip
+from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax.interpreters import xla
 from jax._src import array
@@ -2132,7 +2133,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     lowered = jax.pmap(f).lower(
       {'hi': jnp.array([1.])}, {'hi': jnp.array([2.])}, jnp.array([3.]),
       jnp.array([4.]), z=jnp.array([5.]), w=jnp.array([6.]))
-    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    mhlo_str = mlir.module_to_string(lowered.compiler_ir('mhlo'))
     self.assertNotIn("\"x\"", mhlo_str)
     self.assertIn("y['hi']", mhlo_str)
     self.assertIn("args[0]", mhlo_str)
@@ -2146,7 +2147,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     lowered = jax.pmap(f).lower(jnp.array([1.]), (jnp.array([2]),),
                                 [jnp.array([3])])
-    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    mhlo_str = mlir.module_to_string(lowered.compiler_ir('mhlo'))
     self.assertIn("jax.result_info = \"['a']\"", mhlo_str)
     self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
 

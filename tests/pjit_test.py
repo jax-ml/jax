@@ -3069,7 +3069,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     lowered = pjit(f, in_shardings=P(), out_shardings=P()).lower(
         {'hi': 1.}, {'hi': 2.}, 3., 4.)
-    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    mhlo_str = mlir.module_to_string(lowered.compiler_ir('mhlo'))
     self.assertNotIn("\"x\"", mhlo_str)
     self.assertIn("y['hi']", mhlo_str)
     # TODO(yashkatariya): Add keep_unused support to lower_mesh_computation
@@ -3086,7 +3086,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     lowered = pjit(f, in_shardings=P(), out_shardings=P()).lower(
         1., (2.,), [3.])
-    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    mhlo_str = mlir.module_to_string(lowered.compiler_ir('mhlo'))
     self.assertIn("jax.result_info = \"['a']\"", mhlo_str)
     self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
 

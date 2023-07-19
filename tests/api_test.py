@@ -1205,7 +1205,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       return y['hi'] + args[1] + sum(kwargs.values())
 
     lowered = jax.jit(f).lower({'hi': 1.}, {'hi': 2.}, 3., 4., z=5., w=6.)
-    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    mhlo_str = mlir.module_to_string(lowered.compiler_ir('mhlo'))
     self.assertNotIn("\"x\"", mhlo_str)
     self.assertIn("y['hi']", mhlo_str)
     self.assertNotIn("args[0]", mhlo_str)
@@ -1218,9 +1218,9 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(x, y, *args, **kwargs):
       return y['hi'] + args[1] + sum(kwargs.values())
 
-    lowered = jax.jit(f, static_argnums=static_argnums).lower(
-        (1.,), {'hi': 2.}, 3., 4., z=5., w=6.)
-    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    ir = jax.jit(f, static_argnums=static_argnums).lower(
+        (1.,), {'hi': 2.}, 3., 4., z=5., w=6.).compiler_ir('mhlo')
+    mhlo_str = mlir.module_to_string(ir)
     self.assertNotIn("\"x\"", mhlo_str)
     self.assertIn("y['hi']", mhlo_str)
     self.assertNotIn("args[0]", mhlo_str)
@@ -1233,9 +1233,9 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(x, y, *args, **kwargs):
       return y['hi'] + args[1] + kwargs['z'] + kwargs['w']
 
-    lowered = jax.jit(f, static_argnames=static_argnames).lower(
-        (1.,), {'hi': 2.}, 3., 4., z=5., w=6., a=7., b=8.)
-    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    ir = jax.jit(f, static_argnames=static_argnames).lower(
+        (1.,), {'hi': 2.}, 3., 4., z=5., w=6., a=7., b=8.).compiler_ir('mhlo')
+    mhlo_str = mlir.module_to_string(ir)
     self.assertNotIn("\"x\"", mhlo_str)
     self.assertIn("y['hi']", mhlo_str)
     self.assertNotIn("args[0]", mhlo_str)
@@ -1249,8 +1249,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(x, y, z):
       return {'a': x, 'b': [y]}
 
-    lowered = jax.jit(f).lower(1., (2,), [3])
-    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    ir = jax.jit(f).lower(1., (2,), [3]).compiler_ir('mhlo')
+    mhlo_str = mlir.module_to_string(ir)
     self.assertIn("jax.result_info = \"['a']\"", mhlo_str)
     self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
 

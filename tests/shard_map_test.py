@@ -35,6 +35,7 @@ from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
+from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src import tree_util
 import jax.numpy as jnp
@@ -850,11 +851,13 @@ class ShardMapTest(jtu.JaxTestCase):
                     in_specs=P('i'), out_specs=P('i'))(x)
       return x
 
-    mhlo_str = str(jax.jit(foo).lower(x).compiler_ir('mhlo'))
+    mhlo_str = mlir.module_to_string(jax.jit(foo).lower(x).compiler_ir('mhlo'))
     self.assertIn("call @shmap_body", mhlo_str)
     self.assertIn("call @shmap_body_0", mhlo_str)
-    self.assertIn("%arg0: tensor<1xf32> {jax.arg_info = \"[None]\"}", mhlo_str)
-    self.assertIn("%arg1: tensor<1xf32> {jax.arg_info = \"[('i',)]\"}", mhlo_str)
+    self.assertIn("%arg0: tensor<1xf32>", mhlo_str)
+    self.assertIn("\"[None]\"", mhlo_str)
+    self.assertIn("%arg1: tensor<1xf32>", mhlo_str)
+    self.assertIn("\"[('i',)]\"", mhlo_str)
     self.assertIn("-> (tensor<1xf32> {jax.result_info = \"[('i',)]\"})", mhlo_str)
 
 

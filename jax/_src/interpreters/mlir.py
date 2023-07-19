@@ -41,6 +41,7 @@ from jax._src import xla_bridge as xb
 from jax._src.config import config
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
+from jax._src.lib import mlir_api_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
@@ -751,8 +752,7 @@ def lower_jaxpr_to_module(
 
 def module_to_string(module: ir.Module) -> str:
   output = io.StringIO()
-  module.operation.print(file=output, enable_debug_info=True,
-                         print_generic_op_form=False)
+  module.operation.print(file=output, enable_debug_info=True)
   return output.getvalue()
 
 def module_to_bytecode(module: ir.Module) -> bytes:
@@ -998,7 +998,7 @@ def lower_jaxpr_to_fun(
       for attrs in token_arg_attrs:
         attrs["jax.token"] = ir.BoolAttr.get(True)
 
-    if arg_names:
+    if mlir_api_version < 54 and arg_names:
       named_arg_attrs = arg_attrs[num_dim_vars + num_tokens:]
       for attrs, name_ in zip(named_arg_attrs, arg_names):
         if name_:
@@ -1029,7 +1029,14 @@ def lower_jaxpr_to_fun(
   func_op.result_attrs = ir.ArrayAttr.get(
       [ir.DictAttr.get(attrs) for attrs in result_attrs])
 
-  entry_block = func_op.add_entry_block()
+  if mlir_api_version >= 54 and arg_names:
+    arg_locs = [ir.Location.unknown()] * (num_dim_vars + num_tokens)
+    for n in arg_names:
+      arg_locs.append(ir.Location.name(n) if n else ir.Location.unknown())
+    entry_block = func_op.add_entry_block(arg_locs)
+  else:
+    entry_block = func_op.add_entry_block()
+
   with ir.InsertionPoint(entry_block):
     flat_args = entry_block.arguments
     # We separate out the dimension variable inputs, the token inputs and
