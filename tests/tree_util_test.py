@@ -413,9 +413,11 @@ class TreeTest(jtu.JaxTestCase):
 
   @parameterized.parameters(*TREES)
   def testPickleRoundTrip(self, tree):
-    treedef = tree_util.tree_structure(tree)
+    leaves, treedef = tree_util.tree_flatten(tree)
     treedef_restored = pickle.loads(pickle.dumps(treedef))
     self.assertEqual(treedef, treedef_restored)
+    reconstituted = treedef_restored.unflatten(leaves)
+    self.assertEqual(tree, reconstituted)
 
   def testDictKeysSortable(self):
     d = {"a": 1, 2: "b"}

@@ -520,8 +520,8 @@ from jax._src import dispatch
 from jax._src import pretty_printer as pp
 from jax._src import sharding_impls
 from jax._src import source_info_util
+from jax._src import tree_util
 from jax._src import util
-from jax._src.lib import pytree
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
@@ -626,7 +626,7 @@ def id_tap(tap_func,
                   FutureWarning)
 
   if result is not None:
-    flat_results, result_treedef = pytree.flatten(result)
+    flat_results, result_treedef = tree_util.tree_flatten(result)
     for r in flat_results:
       dispatch.check_arg(r)
 
@@ -642,7 +642,7 @@ def id_tap(tap_func,
     # Return the results, but add a dependency on the call, to ensure it
     # is kept in the graph.
     if FLAGS.jax_host_callback_ad_transforms:
-      call_flat_results, _ = pytree.flatten(call_res)
+      call_flat_results, _ = tree_util.tree_flatten(call_res)
       if call_flat_results:
         call_flat_results = [id_tap_dep_p.bind(r, call_flat_results[0])
                              for r in flat_results]
@@ -783,7 +783,7 @@ def _call(callback_func: Callable,
   _initialize_outfeed_receiver(
       max_callback_queue_size_bytes=FLAGS.jax_host_callback_max_queue_byte_size)
   api.check_callable(callback_func)
-  flat_args, arg_treedef = pytree.flatten(arg)
+  flat_args, arg_treedef = tree_util.tree_flatten(arg)
   for arg in flat_args:
     dispatch.check_arg(arg)
   # See definition of outside_call_p for what parameters it takes
@@ -797,7 +797,7 @@ def _call(callback_func: Callable,
 
   if not identity:
     # Turn abstract values into ShapesDtypeStruct
-    flat_results_shape, result_treedef = pytree.flatten(result_shape)
+    flat_results_shape, result_treedef = tree_util.tree_flatten(result_shape)
     try:
       flat_results_aval = [core.ShapedArray(np.shape(r), dtypes.dtype(r, canonicalize=True))
                            for r in flat_results_shape]
@@ -1316,7 +1316,7 @@ def _outside_call_run_callback(
     else:  # Check the type of the callback results
       assert result_treedef is not None
       assert flat_results_aval is not None
-      actual_flat_results, actual_result_treedef = pytree.flatten(res)
+      actual_flat_results, actual_result_treedef = tree_util.tree_flatten(res)
       if actual_result_treedef != result_treedef:
         msg = (f"Callback func {callback} should have returned a result "
                f"with pytree {result_treedef} but returned "

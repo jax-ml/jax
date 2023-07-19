@@ -45,6 +45,7 @@ from jax._src import profiler
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import stages
+from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
@@ -57,6 +58,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
@@ -2845,7 +2847,12 @@ class MeshExecutable(stages.XlaExecutable):
         fastpath_data = None
       return outs, fastpath_data
 
-    return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [])  # type: ignore
+    if xla_extension_version >= 169:
+      return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [],
+                          tree_util.default_registry)  # type: ignore
+    else:
+      return xc._xla.pjit(
+          self.unsafe_call.name, None, aot_cache_miss, [], [], [])  # type: ignore
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,

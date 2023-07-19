@@ -32,6 +32,7 @@ from jax._src import linear_util as lu
 from jax._src import op_shardings
 from jax._src import sharding_impls
 from jax._src import source_info_util
+from jax._src import tree_util
 from jax._src import traceback_util
 from jax._src import api
 from jax._src import xla_bridge as xb
@@ -52,6 +53,7 @@ from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.sharding_impls import (
     NamedSharding, XLACompatibleSharding, GSPMDSharding,
     XLADeviceAssignment, SingleDeviceSharding, PmapSharding,
@@ -253,10 +255,18 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
     fastpath_data = _get_fastpath_data(executable, out_tree, args_flat, out_flat)
     return outs, fastpath_data
 
-  cpp_pjit_f = xc._xla.pjit(  # type: ignore
+  if xla_extension_version >= 169:
+    cpp_pjit_f = xc._xla.pjit(  # type: ignore
+      getattr(fun, "__name__", "<unnamed function>"),  # type: ignore
+      fun, cache_miss, static_argnums, static_argnames,  # type: ignore
+      donate_argnums, tree_util.default_registry,  # type: ignore
+      _get_cpp_global_cache(pjit_has_explicit_sharding))  # type: ignore
+  else:
+    cpp_pjit_f = xc._xla.pjit(  # type: ignore
       getattr(fun, "__name__", "<unnamed function>"),  # type: ignore
       fun, cache_miss, static_argnums, static_argnames,  # type: ignore
       donate_argnums, _get_cpp_global_cache(pjit_has_explicit_sharding))  # type: ignore
+
 
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
   cpp_pjitted_f._fun = fun
@@ -1194,8 +1204,13 @@ def _pjit_call_impl(*args, jaxpr,
   donated_argnums = [i for i, d in enumerate(donated_invars) if d]
   has_explicit_sharding = _pjit_explicit_sharding(
       in_shardings, out_shardings, None, None)
-  return xc._xla.pjit(name, f, call_impl_cache_miss, [], [], donated_argnums,
-                      _get_cpp_global_cache(has_explicit_sharding))(*args)
+  if xla_extension_version >= 169:
+    return xc._xla.pjit(name, f, call_impl_cache_miss, [], [], donated_argnums,
+                        tree_util.default_registry,
+                        _get_cpp_global_cache(has_explicit_sharding))(*args)
+  else:
+    return xc._xla.pjit(name, f, call_impl_cache_miss, [], [], donated_argnums,  # type: ignore
+                        _get_cpp_global_cache(has_explicit_sharding))(*args)
 
 pjit_p.def_impl(_pjit_call_impl)
 
