@@ -459,16 +459,6 @@ def _flat_out_axes(leaves, treedef, *args, **kwargs):
     raise ValueError(msg) from None
   yield ans, spec_flat
 
-def _isgeneratorfunction(fun):
-  # TODO 3.9+: remove
-  # re-implemented here because of https://bugs.python.org/issue33261
-  while inspect.ismethod(fun):
-    fun = fun.__func__
-  while isinstance(fun, partial):
-    fun = fun.func
-  return inspect.isfunction(fun) and bool(fun.__code__.co_flags & inspect.CO_GENERATOR)
-
-
 def check_callable(fun):
   # In Python 3.10+, the only thing stopping us from supporting staticmethods
   # is that we can't take weak references to them, which the C++ JIT requires.
@@ -476,7 +466,7 @@ def check_callable(fun):
     raise TypeError(f"staticmethod arguments are not supported, got {fun}")
   if not callable(fun):
     raise TypeError(f"Expected a callable value, got {fun}")
-  if _isgeneratorfunction(fun):
+  if inspect.isgeneratorfunction(fun):
     raise TypeError(f"Expected a function, got a generator function: {fun}")
 
 _POSITIONAL_OR_KEYWORD = inspect.Parameter.POSITIONAL_OR_KEYWORD
