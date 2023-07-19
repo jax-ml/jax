@@ -25,8 +25,8 @@ jobs:
       - uses: actions/checkout@93ea575cb5d8a053eaa0ac8fa3b40d7e05a33cc8 # ratchet:actions/checkout@v3
       - name: Install JAX test requirements
         run: |
-          pip install -r build/test-requirements.txt
-          pip install -r build/collect-profile-requirements.txt
+          pip install -U -r build/test-requirements.txt
+          pip install -U -r build/collect-profile-requirements.txt
       - name: Install JAX
         run: |
           pip uninstall -y jax jaxlib libtpu-nightly
