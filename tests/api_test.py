@@ -4358,6 +4358,12 @@ class APITest(jtu.JaxTestCase):
     args_maker = lambda: [jnp.ones((), dtype=dtype)]
     self._CompileAndCheck(f, args_maker)
 
+  def test_jvp_asarray_returns_array(self):
+    # https://github.com/google/jax/issues/15676
+    p, t = jax.jvp(jax.numpy.asarray, (1.,), (2.,))
+    _check_instance(self, p)
+    _check_instance(self, t)
+
 
 class RematTest(jtu.JaxTestCase):
 
