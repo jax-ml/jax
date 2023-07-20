@@ -1,0 +1,403 @@
+/* Copyright 2023 The JAX Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#ifndef TPU_ATTRS
+#define TPU_ATTRS
+
+include "mlir/IR/OpBase.td"
+include "mlir/IR/AttrTypeBase.td"
+include "mlir/IR/BuiltinAttributeInterfaces.td"
+include "mlir/IR/EnumAttr.td"
+include "mlir/Pass/PassBase.td"
+include "mlir/Interfaces/ControlFlowInterfaces.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
+
+def TPU_Dialect : Dialect {
+  let name = "tpu";
+  let cppNamespace = "::mlir::tpu";
+  let useDefaultAttributePrinterParser = 1;
+  let useDefaultTypePrinterParser = 1;
+}
+
+class TPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
+    : AttrDef<TPU_Dialect, name, traits> {
+  let mnemonic = mnemonic_;
+}
+
+class TPU_Type<string name, string mnemonic_, list<Trait> traits = []>
+    : TypeDef<TPU_Dialect, name, traits> {
+  let mnemonic = mnemonic_;
+}
+
+def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore">;
+def TPU_DMASemaphoreType : TPU_Type<"DMASemaphore", "dma_semaphore">;
+def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>;
+
+def TPU_DimensionSemantics : I32EnumAttr<"DimensionSemantics", "Dimension semantics", [
+  I32EnumAttrCase<"parallel", 0>,
+  I32EnumAttrCase<"arbitrary", 1>
+]> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "::mlir::tpu";
+}
+
+def TPU_DimensionSemanticsEnum
+    : EnumAttr<TPU_Dialect, TPU_DimensionSemantics, "dimension_semantics"> {
+    let assemblyFormat = "`<` $value `>`";
+}
+
+def TPU_ContractPrecision : I32EnumAttr<"ContractPrecision", "Contraction precision", [
+  I32EnumAttrCase<"kBF16", 0, "bf16">,
+  I32EnumAttrCase<"kFP32", 1, "fp32">
+]> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "::mlir::tpu";
+}
+
+def TPU_ContractPrecisionEnum
+    : EnumAttr<TPU_Dialect, TPU_ContractPrecision, "contract_precision"> {
+    let assemblyFormat = "`<` $value `>`";
+}
+
+def TPU_TiledCase   : I32EnumAttrCase<"tiled", 0>;
+def TPU_LaneCase    : I32EnumAttrCase<"lanes", 1>;
+def TPU_SublaneCase : I32EnumAttrCase<"sublanes", 2>;
+def TPU_VectorLayoutDim : I32EnumAttr<
+  "VectorLayoutDim", "", [TPU_TiledCase, TPU_LaneCase, TPU_SublaneCase]>;
+
+def TPU_VectorLayoutAttr : TPU_Attr<"VectorLayout", "vpad"> {
+  let description = [{TODO}];
+
+  let parameters = (ins "Layout":$layout);
+  let hasCustomAssemblyFormat = 1;
+}
+
+def TPU_TiledLayoutAttr
+  : TPU_Attr<"TiledLayout", "tiled",
+             [DeclareAttrInterfaceMethods<MemRefLayoutAttrInterface>]> {
+  let description = [{TODO}];
+  let parameters = (ins
+    "int64_t":$rank,
+    ArrayRefParameter<"::xla::Tile", "">:$tiles
+  );
+
+  let hasCustomAssemblyFormat = 1;
+}
+
+def TPU_MemorySpace : I32EnumAttr<"MemorySpace", "Memory space", [
+  I32EnumAttrCase<"vmem", 0>,
+  I32EnumAttrCase<"smem", 1>
+]> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "::mlir::tpu";
+}
+
+def TPU_MemorySpaceEnum
+    : EnumAttr<TPU_Dialect, TPU_MemorySpace, "memory_space"> {
+    let assemblyFormat = "`<` $value `>`";
+}
+
+class TPU_Op<string mnemonic, list<Trait> traits = []> :
+    Op<TPU_Dialect, mnemonic, traits> {
+}
+
+def TPU_ReductionKind : I32EnumAttr<"ReductionKind", "Reduction kind", [
+  I32EnumAttrCase<"SUM", 0, "sum">,
+  I32EnumAttrCase<"MAX", 1, "max">
+]> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "::mlir::tpu";
+}
+
+def TPU_ReductionKindAttr
+    : EnumAttr<TPU_Dialect, TPU_ReductionKind, "reduction_kind"> {
+    let assemblyFormat = "`<` $value `>`";
+}
+
+def TPU_AllReduceOp : TPU_Op<"all_reduce", [Pure, SameOperandsAndResultType]> {
+  let arguments = (ins AnyVector:$input, I64Attr:$dim, TPU_ReductionKindAttr:$kind);
+  let results = (outs AnyVector:$output);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input)
+  }];
+}
+
+// TODO(apaszke): Verify that stores are of native size and are aligned.
+def TPU_StoreOp : TPU_Op<"store", [AttrSizedOperandSegments]> {
+  let arguments = (ins
+    AnyType:$valueToStore,
+    AnyType:$base,
+    Variadic<Index>:$indices,
+    DenseBoolArrayAttr:$sublane_mask,
+    Optional<AnyType>:$mask
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? `sublanes` $sublane_mask attr-dict `:` type($base) `,` type($valueToStore) `,` type($mask)
+  }];
+}
+
+// TODO(apaszke): Verify that loads are of native size and are aligned.
+def TPU_LoadOp : TPU_Op<"load"> {
+  let arguments = (ins
+    AnyType:$base,
+    Variadic<Index>:$indices,
+    DenseBoolArrayAttr:$sublane_mask
+  );
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $base `[` $indices `]` `sublanes` $sublane_mask attr-dict `:` type($base) `,` type($result)
+  }];
+}
+
+def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
+  let arguments = (ins
+    AnyType:$value,
+    SI32Attr:$amount,
+    I32Attr:$dimension
+  );
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $value `by` $amount `dim` $dimension attr-dict `:` type($value)
+  }];
+}
+
+def TPU_IotaOp : TPU_Op<"iota", [Pure]> {
+  let arguments = (ins OptionalAttr<I32Attr>:$dimension);
+  let results = (outs AnyVector:$output);
+  let assemblyFormat = [{ attr-dict `:` type($output) }];
+}
+
+def TPU_RepeatOp : TPU_Op<"repeat", [Pure]> {
+  let arguments = (ins
+    AnyVector:$source,
+    I32Attr:$dimension,
+    I32Attr:$times
+  );
+  let results = (outs AnyVector:$output);
+  let assemblyFormat = [{ $source `,` $dimension `x` $times attr-dict `:` type($source) `->` type($output) }];
+}
+
+def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
+  let arguments = (ins
+    AnyVector:$source,
+    I32Attr:$index
+  );
+  let results = (outs AnyVector:$output);
+  let assemblyFormat = [{ $source `,` $index attr-dict `:` type($source) `->` type($output) }];
+}
+
+def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure]> {
+  let arguments = (ins Variadic<AnyVector>:$sources);
+  let results = (outs AnyVector:$output);
+  let assemblyFormat = [{ $sources attr-dict `:` type($sources) `->` type($output) }];
+}
+
+def TPU_GatherOp : TPU_Op<"gather", [Pure]> {
+  let arguments = (ins
+    AnyVector:$source,
+    DenseI32ArrayAttr:$indices,
+    I32Attr:$dimension
+  );
+  let results = (outs AnyVector:$output);
+  let assemblyFormat = [{
+    $source `[` $indices `]` `in` $dimension attr-dict
+    `:` type($source) `->` type($output)
+  }];
+}
+
+def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure]> {
+  let arguments = (ins
+    AnyVector:$source,
+    AnyVector:$indices,  // If this is 2D, only the first row matters.
+    I32Attr:$dimension
+  );
+  let results = (outs AnyVector:$output);
+  let assemblyFormat = [{
+    $source `[` $indices `]` `in` $dimension attr-dict
+    `:` type($source) `,` type($indices) `->` type($output)
+  }];
+}
+
+def TPU_BitcastOp : TPU_Op<"bitcast", [Pure]> {
+  let arguments = (ins AnyVector:$input);
+  let results = (outs AnyVector:$output);
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+}
+
+def TPU_RollVectorsOp : TPU_Op<"roll_vectors", [Pure]> {
+  let arguments = (ins Variadic<AnyType>:$input);
+  let results = (outs AnyType:$output);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($output)
+  }];
+}
+
+def TPU_UnrollVectorsOp : TPU_Op<"unroll_vectors", [Pure]> {
+  let arguments = (ins AnyType:$input);
+  let results = (outs Variadic<AnyType>:$output);
+  let hasCanonicalizeMethod = 1;
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($output)
+  }];
+}
+
+def TPU_CreateMaskOp : TPU_Op<"create_mask", [Pure, SameVariadicOperandSize]> {
+  // high is exclusive
+  let arguments = (ins Variadic<Index>:$low, Variadic<Index>:$high);
+  let results = (outs AnyType:$output);
+  let assemblyFormat = [{
+    `[` $low `]``[` $high `]` attr-dict `:` type($output)
+  }];
+}
+
+def TPU_CreateSubelementMaskOp : TPU_Op<"create_subelement_mask", [Pure]> {
+  let arguments = (ins
+    I32Attr:$from,  // inclusive
+    I32Attr:$to,  // exclusive
+    I32Attr:$num_subelems
+  );
+  let results = (outs AnyType:$output);  // Verify this is a vmsk with num_subelems
+  let assemblyFormat = [{
+    $from `,` $to `,` $num_subelems attr-dict `:` type($output)
+  }];
+}
+
+def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure]> {
+  let arguments = (ins
+    AnyMemRef:$mem_ref,
+    Variadic<I32>:$base_idx
+  );
+  let results = (outs AnyMemRef:$result);
+  let assemblyFormat = [{
+    $mem_ref `[` $base_idx `]` attr-dict `:` type($mem_ref) `->` type($result)
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
+}
+
+def TPU_EraseLayoutOp : TPU_Op<"erase_memref_layout", [Pure]> {
+  let arguments = (ins AnyMemRef:$operand);
+  let results = (outs AnyMemRef:$result);
+  let assemblyFormat = [{
+    $operand attr-dict `:` type($operand) `->` type($result)
+  }];
+}
+
+def TPU_DeviceIdOp : TPU_Op<"device_id", [Pure]> {
+  let arguments = (ins);
+  let results = (outs I32:$result);
+  let assemblyFormat = [{ attr-dict `:` type($result) }];
+}
+
+def TPU_SemaphoreWaitOp : TPU_Op<"sem_wait"> {
+  let arguments = (ins
+    TPU_SemaphoreType:$semaphore,
+    I32:$amount
+  );
+  let results = (outs);
+  let assemblyFormat = [{ $semaphore `,` $amount attr-dict `:` type($semaphore)}];
+}
+
+def TPU_AllocaSemaphoreOp : TPU_Op<"sem_alloc"> {
+  let arguments = (ins);
+  let results = (outs TPU_SomeSemaphoreType:$result);
+  let assemblyFormat = [{ attr-dict `:` type($result) }];
+}
+
+def TPU_GetBarrierSemaphoreOp : TPU_Op<"sem_barrier"> {
+  let arguments = (ins);
+  let results = (outs TPU_SemaphoreType:$semaphore);
+  let assemblyFormat = [{ attr-dict `:` type($semaphore) }];
+}
+
+def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal"> {
+  let arguments = (ins
+    TPU_SemaphoreType:$semaphore,
+    I32:$amount,
+    Optional<I32>:$device_id
+  );
+  let assemblyFormat = [{
+    $semaphore `,` $amount (`,` $device_id^)? attr-dict
+  }];
+}
+
+def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma"> {
+  let arguments = (ins
+    AnyMemRef:$source,
+    TPU_DMASemaphoreType:$source_semaphore,
+    AnyMemRef:$target,
+    TPU_DMASemaphoreType:$target_semaphore,
+    Optional<I32>:$device_id
+  );
+}
+
+def TPU_WaitDMAOp : TPU_Op<"wait_dma"> {
+  let arguments = (ins
+    TPU_DMASemaphoreType:$semaphore,
+    AnyMemRef:$ref
+  );
+}
+
+def TPU_TraceOp : TPU_Op<"trace", [RecursiveMemoryEffects, SingleBlockImplicitTerminator<"tpu::YieldOp">]> {
+  let arguments = (ins StrAttr:$message, I32Attr:$level);
+  let results = (outs Variadic<AnyType>:$results);
+  let regions = (region AnyRegion:$region);
+}
+
+def TPU_TraceStartOp : TPU_Op<"trace_start", []> {
+  let arguments = (ins StrAttr:$message, I32Attr:$level);
+  let results = (outs);
+}
+
+def TPU_TraceStopOp : TPU_Op<"trace_stop", []> {
+  let arguments = (ins);
+  let results = (outs);
+}
+
+def TPU_YieldOp : TPU_Op<"yield", [Pure, ReturnLike, Terminator]> {
+  let arguments = (ins Variadic<AnyType>:$results);
+  let assemblyFormat = [{ attr-dict ($results^ `:` type($results))? }];
+}
+
+def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mlir::func::FuncOp"> {
+  let dependentDialects = [
+    "::mlir::func::FuncDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::tpu::TPUDialect",
+  ];
+  let constructor = "::mlir::tpu::createLogicalToPhysicalDeviceIdPass(-1)";
+  let options = [Option<"total_devices", "total-devices", "int", "", "">];
+}
+
+def InferVectorLayoutPass : Pass<"tpu-infer-vector-layout", "::mlir::func::FuncOp"> {
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::vector::VectorDialect",
+    "::mlir::tpu::TPUDialect",
+  ];
+  let constructor = "::mlir::tpu::createInferVectorLayoutPass()";
+  let options = [
+    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
+    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
+  ];
+}
+
+
+#endif  // TPU_ATTRS

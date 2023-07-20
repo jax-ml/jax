@@ -84,6 +84,16 @@ def copy_file(src_file, dst_dir, dst_filename=None, from_runfiles=True):
     shutil.copy(src_file, dst_file)
 
 
+def patch_copy_mlir_import(src_file, dst_dir):
+  src_file = r.Rlocation(src_file)
+  src_filename = os.path.basename(src_file)
+  with open(src_file) as f:
+    src = f.read()
+
+  with open(os.path.join(dst_dir, src_filename), 'w') as f:
+    replaced = re.sub(r'^from mlir(\..*)? import (.*)', r'from jaxlib.mlir\1 import \2', src, flags=re.MULTILINE)
+    f.write(replaced)
+
 _XLA_EXTENSION_STUBS = [
     "__init__.pyi",
     "jax_jit.pyi",
@@ -169,6 +179,7 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib("__main__/jaxlib/gpu_triton.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_solver.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_sparse.py")
+  copy_to_jaxlib("__main__/jaxlib/tpu_mosaic.py")
   copy_to_jaxlib("__main__/jaxlib/version.py")
   copy_to_jaxlib("__main__/jaxlib/xla_client.py")
   copy_to_jaxlib(f"__main__/jaxlib/xla_extension.{pyext}")
@@ -200,6 +211,16 @@ def prepare_wheel(sources_path):
   if exists(f"__main__/jaxlib/rocm/_sparse.{pyext}"):
     copy_file(f"__main__/jaxlib/rocm/_sparse.{pyext}", dst_dir=rocm_dir)
 
+  mosaic_dir = os.path.join(jaxlib_dir, "mosaic")
+  mosaic_python_dir = os.path.join(mosaic_dir, "python")
+  os.makedirs(mosaic_dir)
+  os.makedirs(mosaic_python_dir)
+  copy_to_jaxlib("__main__/jaxlib/mosaic/python/apply_vector_layout.py", dst_dir=mosaic_python_dir)
+  copy_to_jaxlib("__main__/jaxlib/mosaic/python/infer_memref_layout.py", dst_dir=mosaic_python_dir)
+  copy_to_jaxlib("__main__/jaxlib/mosaic/python/tpu.py", dst_dir=mosaic_python_dir)
+  copy_file(f"__main__/jaxlib/mosaic/python/_tpu_ext.{pyext}", dst_dir=mosaic_python_dir)
+  copy_file("__main__/jaxlib/mosaic/python/_tpu_ops_ext.py", dst_dir=mosaic_python_dir)
+  patch_copy_mlir_import("__main__/jaxlib/mosaic/python/_tpu_gen.py", dst_dir=mosaic_python_dir)
 
   mlir_dir = os.path.join(jaxlib_dir, "mlir")
   mlir_dialects_dir = os.path.join(jaxlib_dir, "mlir", "dialects")
@@ -223,6 +244,19 @@ def prepare_wheel(sources_path):
   copy_file("__main__/jaxlib/mlir/dialects/sparse_tensor.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/builtin.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/chlo.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/arith.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/_arith_ops_gen.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/_arith_ops_ext.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/math.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/_math_ops_gen.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/memref.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/_memref_ops_gen.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/_memref_ops_ext.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/scf.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/_scf_ops_gen.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/_scf_ops_ext.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/vector.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/_vector_ops_gen.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/mhlo.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/stablehlo.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/func.py", dst_dir=mlir_dialects_dir)
