@@ -542,7 +542,10 @@ def _convert_element_type(operand: ArrayLike, new_dtype: Optional[DTypeLike] = N
     operand = np.asarray(operand).astype(new_dtype)
     old_weak_type = False
 
-  if (old_dtype, old_weak_type) == (new_dtype, weak_type) and isinstance(operand, Array):
+  if ((old_dtype, old_weak_type) == (new_dtype, weak_type) and
+      isinstance(operand, Array) and
+      not (isinstance(operand, core.Tracer) and
+           isinstance(core.get_aval(operand), core.ConcreteArray))):
     return type_cast(Array, operand)
   else:
     return convert_element_type_p.bind(operand, new_dtype=new_dtype,
