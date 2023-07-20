@@ -968,27 +968,3 @@ def _prefix_error(
      f"{prefix_tree_keys} and {full_tree_keys}")
   for k, t1, t2 in zip(prefix_tree_keys, prefix_tree_children, full_tree_children):
     yield from _prefix_error((*key_path, k), t1, t2)
-
-
-# TODO(jakevdp) remove these deprecated wrappers & their imports in jax/__init__.py
-def _deprecate(f):
-
-  @functools.wraps(f)
-  def wrapped(*args, **kwargs):
-    warnings.warn(
-        f"jax.{f.__name__} is deprecated, and will be removed in a future release. "
-        f"Use jax.tree_util.{f.__name__} instead.",
-        category=FutureWarning,
-        stacklevel=2)
-    return f(*args, **kwargs)
-
-  return wrapped
-
-
-def __getattr__(name):
-  prefix = "_deprecated_"
-  if name.startswith(prefix):
-    name = name[len(prefix):]
-    return _deprecate(globals()[name])
-  else:
-    raise AttributeError(f"module {__name__} has no attribute {name!r}")
