@@ -13,6 +13,7 @@
 # limitations under the License.
 """Tests for the shape-polymorphic jax2tf conversion."""
 import contextlib
+import itertools
 import math
 import unittest
 
@@ -69,7 +70,41 @@ expect_error_associative_scan = (
      "associative scan over axis of non-constant size"))
 
 
+
 class DimExprTest(tf_test_util.JaxToTfTestCase):
+
+  def sampled_assert_equal(self,
+                           expected_sym: shape_poly.DimSize,
+                           fun: Callable,
+                           *operands_sym: shape_poly.DimSize
+                           ):
+    """Checks `expected == fun(*operands)` with the `fun` invocation and the
+    equality check both done symbolically, and also concretely by replacing
+    several values for each of the dimension variables.
+
+    This is useful when `fun` can operate both with polynomials and with
+    concrete values, and we want to double-check that the behavior is sound.
+    """
+    computed_sym = fun(*operands_sym)
+    self.assertEqual(expected_sym, computed_sym)
+    dim_vars: set[str] = set()
+    for a in (expected_sym, computed_sym, *operands_sym):
+      if core.is_symbolic_dim(a):
+        dim_vars = dim_vars.union(a.get_vars())
+    if not dim_vars:
+      return
+    dim_vars_tuple = tuple(dim_vars)
+    # All combinations of values
+    for dim_values in itertools.product(*([(1, 2, 5, 10)] * len(dim_vars_tuple))):
+      env = {d: dv for d, dv in zip(dim_vars_tuple, dim_values)}
+      def eval(d: shape_poly.DimSize):
+        return d.evaluate(env) if core.is_symbolic_dim(d) else d  # type: ignore
+
+      compute_concrete = fun(*map(eval, operands_sym))
+      expected_concrete = eval(expected_sym)
+      self.assertEqual(
+        expected_concrete, compute_concrete,
+        f"{expected_sym=} {expected_concrete=} {compute_concrete=} {env=}")
 
   def test_parse_shape(self):
     self.assertEqual((), shape_poly._parse_spec("", ()))
@@ -87,7 +122,9 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual((a, 3), shape_poly._parse_spec("(a, ...) ", tshape))
 
   a, b = shape_poly._parse_spec("a, b", (2, 3))
-  @parameterized.named_parameters(
+
+  @jtu.parameterized_filterable(
+    kwargs=[
       dict(testcase_name=f"_{dim_spec}",
            dim_spec=dim_spec, dim_poly=dim_poly)
       for dim_spec, dim_poly in [
@@ -100,34 +137,37 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
           ("a + -1", a - 1),
           ("3 * a * mod(a + 2, b + 2)", 3 * a * ((a + 2) % (b + 2))),
           ("3 * floordiv(a + 2, b + 2) * 2", 3 * ((a + 2) // (b + 2)) * 2),
-  ])
+          ("non_negative(a - 2)", core.non_negative_dim(a - 2)),
+  ]])
   def test_parse_dim(self,
                      dim_spec="-2 * a^2 * b + b^2",
                      dim_poly=-2 * a * a * b + b * b):
     self.assertEqual((dim_poly,), shape_poly._parse_spec(dim_spec, (None,)))
     self.assertEqual((dim_poly,), shape_poly._parse_spec(str(dim_poly), (None,)))
 
-  @parameterized.named_parameters(
+  @jtu.parameterized_filterable(
+    kwargs=[
       dict(testcase_name=f"_{shape_spec=}",
            shape_spec=shape_spec)
       for shape_spec in [
           "2.5", "a + a a", "a ^ a", "a, a",
           "_", "...", "a ;", ")(", "2a", "a@", "'a'", "('a', ...)",
           "mod(a)", "floordiv(a, b, c)", "..., 3"
-  ])
+  ]])
   def test_parse_error(self,
                        shape_spec="a + a a"):
     with self.assertRaisesRegex(ValueError,
                                 "syntax error in polymorphic shape"):
       shape_poly._parse_spec(shape_spec, (None,))
 
-  @parameterized.named_parameters(
+  @jtu.parameterized_filterable(
+    kwargs=[
       dict(testcase_name=f"_{shape_spec=}",
            shape_spec=shape_spec, arg_shape=arg_shape)
       for shape_spec, arg_shape in [
           ("3", (4,)),
           ("b, 3", (None, 4)),
-  ])
+  ]])
   def test_parse_mismatch_error(self,
                                 shape_spec="3", arg_shape=(4,)):
     with self.assertRaisesRegex(ValueError,
@@ -250,13 +290,19 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
         self.assertGreaterEqual(atom_val, lb)
         self.assertLessEqual(atom_val, ub)
 
-    # Inequalities involving mod and floordiv
+    # Bounds involving mod and floordiv
     self.assertEqual((5 - a % 5).bounds(), (1, 5))
     self.assertEqual((-5 - a % (-5)).bounds(), (-5, -1))
     self.assertEqual((a - 5 % a).bounds(), (1, np.PINF))
     self.assertEqual((a - 5 % a).bounds(), (1, np.PINF))
     self.assertEqual((3 * (a + b) - 5 % (3 * (a + b))).bounds(), (1, np.PINF))
     self.assertEqual((- a + (b - 5) % a).bounds(), (np.NINF, -1))
+
+    # non_negative
+    self.assertEqual(core.non_negative_dim(a).bounds(), (1, np.PINF))
+    self.assertEqual(core.non_negative_dim(a - 5).bounds(), (0, np.PINF))
+    self.assertEqual(core.non_negative_dim(15 - a).bounds(), (0, 14))
+    self.assertEqual((core.non_negative_dim(15 - a) // 3).bounds(), (0, 4))
 
   def test_poly_equal(self):
     a, b = shape_poly._parse_spec("a, b", (2, 3))
@@ -276,24 +322,40 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
 
     self.assertFalse((3 * a * b * a - 2).eq(a * b * a))
 
-    self.assertTrue(a % b == a % b)
-    self.assertTrue(a % b - a % b == 0)
-    self.assertTrue(a // b == a // b)
-    self.assertTrue(a // b - a // b == 0)
+    self.sampled_assert_equal(a % b,
+                              lambda x: x, a % b)
+    self.sampled_assert_equal(a % b - a % b,
+                              lambda x: x, 0)
+    self.sampled_assert_equal(a // b,
+                              lambda x: x, a // b)
+    self.sampled_assert_equal(a // b - a // b,
+                              lambda x: x, 0)
 
-    self.assertTrue(a % b == (2 * a // 2) % (a + b - a))
-    self.assertTrue(a // b == (2 * a // 2) // (a + b - a))
+    self.sampled_assert_equal(a % b,
+                              lambda x: x, (2 * a // 2) % (a + b - a))
+    self.sampled_assert_equal(a // b,
+                              lambda x: x, (2 * a // 2) // (a + b - a))
 
-    self.assertTrue(a, a + (a + b) // b - (b + a) // b)
+    self.sampled_assert_equal(a, lambda x: x,
+                              a + (a + b) // b - (b + a) // b)
 
     # Test the normalization (a // b) * b == a - a % b
-    self.assertTrue((a // 2) * 2 == a - a % 2)
-    self.assertTrue((a // 2) + (a // 2) == a - a % 2)
-    self.assertTrue((a // 2) * 6 == 3 * a - 3 * (a % 2))
-    self.assertTrue((a // b) * b == a - a % b)
-    self.assertTrue(2 * (a // b) * b * b == 2 * b * a - 2 * b * (a % b))
-    self.assertTrue(a // (2 * b) * 2 * b == a - a % (2 * b))
-    self.assertTrue(a // (2 * b) * 2 * b + 2 * a == 3 * a - a % (2 * b))
+    self.sampled_assert_equal((a // 2) * 2,
+                              lambda x: x, a - a % 2)
+    self.sampled_assert_equal((a // 2) + (a // 2),
+                              lambda x: x, a - a % 2)
+    self.sampled_assert_equal((a // 2) * 6,
+                              lambda x: x, 3 * a - 3 * (a % 2))
+    self.sampled_assert_equal((a // b) * b,
+                              lambda x: x, a - a % b)
+    self.sampled_assert_equal(2 * (a // b) * b * b,
+                              lambda x: x, 2 * b * a - 2 * b * (a % b))
+    self.sampled_assert_equal(a // (2 * b) * 2 * b,
+                              lambda x: x, a - a % (2 * b))
+    self.sampled_assert_equal(a // (2 * b) * 2 * b + 2 * a,
+                              lambda x: x, 3 * a - a % (2 * b))
+    self.sampled_assert_equal(a // (2 * b) * 2 * b + 2 * a,
+                              lambda x: x, 3 * a - a % (2 * b))
 
   def test_poly_compare(self):
     a, b = shape_poly._parse_spec("a, b", (2, 3))
@@ -347,7 +409,8 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual(a * 2 // a, 2)
     self.assertIsInstance(a * 2 // a, int)
 
-  @parameterized.named_parameters(
+  @jtu.parameterized_filterable(
+    kwargs=[
       dict(testcase_name=f"_D={dividend}_d={divisor}_q={quotient}_r={remainder}",
            dividend=dividend, divisor=divisor, quotient=quotient,
            remainder=remainder)
@@ -364,40 +427,56 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
           (3 * a, 2, "floordiv(3*a, 2)", "mod(3*a, 2)"),
           (2 * a * b + b * b, a + b, "floordiv(2*a*b + b^2, a + b)", "mod(2*a*b + b^2, a + b)"),
           (3, a, "floordiv(3, a)", "mod(3, a)"),
-  ])
+  ]])
   def test_poly_divmod(self, *, dividend, quotient, divisor, remainder):
     if isinstance(quotient, str):
       d1, d2 = divmod(dividend, divisor)
       self.assertEqual((quotient, remainder), (str(d1), str(d2)))
     else:
-      self.assertEqual((quotient, remainder), divmod(dividend, divisor))
+      self.sampled_assert_equal(quotient, lambda *args: divmod(*args)[0],
+                                dividend, divisor)
+      self.sampled_assert_equal(remainder, lambda *args: divmod(*args)[1],
+                                dividend, divisor)
+
+  def test_non_negative_dim(self):
+    a, = shape_poly._parse_spec("a,", (2,))
+
+    self.sampled_assert_equal(2, core.non_negative_dim, 2)
+    self.sampled_assert_equal(0, core.non_negative_dim, 0)
+    self.sampled_assert_equal(0, core.non_negative_dim, -1)
+    self.sampled_assert_equal(a, core.non_negative_dim, a)
+    self.sampled_assert_equal(2 * a - 1, core.non_negative_dim, 2 * a - 1)
+    self.sampled_assert_equal(core.non_negative_dim(a - 2),
+                              core.non_negative_dim, a - 2)
 
   def test_dilate_dim(self):
     """0 if d == 0 else 1 + dilation * (d - 1))"""
     a, = shape_poly._parse_spec("a,", (2,))
 
-    self.assertEqual(4, core.dilate_dim(2, 3))
-    self.assertEqual(7, core.dilate_dim(3, 3))
-    self.assertEqual(0, core.dilate_dim(0, 3))
-    self.assertEqual(a, core.dilate_dim(a, 1))
-    self.assertEqual(2 * a - 1, core.dilate_dim(a, 2))
+    self.sampled_assert_equal(4, core.dilate_dim, 2, 3)
+    self.sampled_assert_equal(7, core.dilate_dim, 3, 3)
+    self.sampled_assert_equal(0, core.dilate_dim, 0, 3)
+    self.sampled_assert_equal(a, core.dilate_dim, a, 1)
+    self.sampled_assert_equal(2 * a - 1, core.dilate_dim, a, 2)
+    self.sampled_assert_equal(core.non_negative_dim(2 * a - 3),
+                              core.dilate_dim, a - 1, 2)
 
   def test_stride_dim(self):
     """(d - window_size) // window_stride + 1
 
-    If d == 0 or window_size > d, returns 0.
+    If d <  window_size, returns 0.
     """
     a, stride = shape_poly._parse_spec("a, s", (2, 3))
+    self.sampled_assert_equal(8, core.stride_dim, 10, 3, 1)
+    self.sampled_assert_equal(9, core.stride_dim, 20, 3, 2)
+    self.sampled_assert_equal(9, core.stride_dim, 20, 4, 2)
+    self.sampled_assert_equal(a, core.stride_dim, a, 1, 1)
 
-    self.assertEqual(8, core.stride_dim(10, window_size=3, window_stride=1))
-    self.assertEqual(9, core.stride_dim(20, window_size=3, window_stride=2))
-    self.assertEqual(9, core.stride_dim(20, window_size=4, window_stride=2))
-    self.assertEqual(a, core.stride_dim(a, window_size=1, window_stride=1))
-
-    self.assertEqual(a - 1, core.stride_dim(a, window_size=2, window_stride=1))
-    self.assertEqual(a + 1, core.stride_dim(a * stride + 2, window_size=2,
-                                            window_stride=stride))
-    self.assertEqual((a - 1) // 2 + 1, core.stride_dim(a, 1, 2))
+    self.sampled_assert_equal(a - 1, core.stride_dim, a, 2, 1)
+    self.sampled_assert_equal(a + 1, core.stride_dim, a * stride + 2, 2, stride)
+    self.sampled_assert_equal((a - 1) // 2 + 1, core.stride_dim, a, 1, 2)
+    self.sampled_assert_equal(core.non_negative_dim((a - 4) // 2 + 1),
+                              core.stride_dim, a, 4, 2)
 
 
 class PolyHarness(Harness):
@@ -649,7 +728,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.parameterized_filterable(
     # make_args invoked with op.shape[0]: start, stop, step, dtype
+    # b == 6
     kwargs=[
+      # Positive step
       dict(testcase_name="b", make_args=lambda b: (b, None, None, None)),
       dict(testcase_name="0_b+1", make_args=lambda b: (0, b + 1, None, None)),
       dict(testcase_name="0_5b_2", make_args=lambda b: (0, 5 * b, 2, None)),
@@ -659,12 +740,14 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       dict(testcase_name="0_b-2_2", make_args=lambda b: (0, b - 2, 2, None)),
       dict(testcase_name="0_-b_2", make_args=lambda b: (0, -b, 2, None)),
       dict(testcase_name="0_1-b_2", make_args=lambda b: (0, 1 - b, 2, None)),
+      dict(testcase_name="0_b-3_2", make_args=lambda b: (0, b - 3, 2, None)),  # Cannot tell if size >= 0
       # Negative step
       dict(testcase_name="b_0_-1", make_args=lambda b: (b, 0, -1, None)),
       dict(testcase_name="b_1_-2", make_args=lambda b: (b, 1, -2, None)),
       dict(testcase_name="b_-1_-1", make_args=lambda b: (b, -1, -1, None)),
       dict(testcase_name="5b+1_0_-2", make_args=lambda b: (5 * b + 1, 0, -2, None)),
       dict(testcase_name="5b+2_0_-2", make_args=lambda b: (5 * b + 2, 0, -2, None)),
+      dict(testcase_name="b-3_0_-2", make_args=lambda b: (b - 3, 0, -2, None)),  # Cannot tell if size >= 0
       # Symbolic step
       dict(testcase_name="0_10_b", make_args=lambda b: (0, 10, b)),
       dict(testcase_name="0_0_b", make_args=lambda b: (0, 0, b)),
@@ -676,7 +759,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
   def test_arange(self, make_args):
     def f_jax(x):  # x: i32[b]
       return x[0] + jnp.arange(*(make_args(x.shape[0])))
-    x = np.ones((3,), dtype=np.int32)
+    x = np.ones((6,), dtype=np.int32)
     self.assertAllClose(jax2tf.convert(f_jax, polymorphic_shapes="b")(x),
                         f_jax(x))
 
@@ -695,9 +778,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
           ("inconclusive_step_sign", lambda b: (0, b, b - 2),
            core.InconclusiveDimensionOperation,
            "must be resolved statically if it is > 0 or < 0"),
-          ("inconclusive_distance", lambda b: (0, b - 3, 2),
-           core.InconclusiveDimensionOperation,
-           "must be resolved statically if it is >= -1 or >= 1"),
       ]
     ]
   )
@@ -930,37 +1010,26 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                                 re.escape("pytree structure error: different types")):
       conv_and_run(arg_shape=(2,), polymorphic_shape=("a tuple",))
 
-    # The following do not work yet with native serialization because
-    # XlaCallModule does not yet do shape checking.
-    if config.jax2tf_default_native_serialization:
-      return
-
-    # TODO(necula): enable even for native serialization
     with self.assertRaisesRegex(ValueError,
                                 "Cannot solve for values of dimension variables {'b'}"):
       conv_and_run(arg_shape=(4, 36, 3), polymorphic_shape="b * b, b * d * d, d")
 
-    # TODO(necula): enable even for native serialization
-    with self.assertRaisesRegex(ValueError,
+    with self.assertRaisesRegex(tf.errors.InvalidArgumentError,
                                 "Dimension variable 'b' must have integer value >= 1"):
       conv_and_run(arg_shape=(5, 36), polymorphic_shape="3 * b, ...")
 
-    # TODO(necula): enable even for native serialization
-    with self.assertRaisesRegex(ValueError,
+    with self.assertRaisesRegex(tf.errors.InvalidArgumentError,
                                 "Dimension variable 'b' must have integer value >= 1"):
       conv_and_run(arg_shape=(10, 3), polymorphic_shape="3 * b + 10, ...")
 
-    # TODO(necula): enable even for native serialization
-    with self.assertRaisesRegex(ValueError,
+    with self.assertRaisesRegex(tf.errors.InvalidArgumentError,
                                 "Dimension variable 'b' must have integer value >= 1"):
       conv_and_run(arg_shape=(7, 3), polymorphic_shape="3 * b + 10, ...")
 
-    # TODO(necula): enable even for native serialization
     with self.assertRaisesRegex(
-        ValueError,
+        tf.errors.InvalidArgumentError,
         "Found inconsistency 3 != 2 when solving.*"):
       conv_and_run(arg_shape=(2, 3), polymorphic_shape="(a, a)")
-
   def test_pytree(self):
     """Arguments and polymorphic_shapes are pytrees."""
 
@@ -1250,7 +1319,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     res_tf = jax2tf.convert(f, polymorphic_shapes=["(b,)"])(x)
     self.assertAllClose(f(x), res_tf)
 
-  @jtu.sample_product(with_function=[False, True])
+  @jtu.parameterized_filterable(
+    kwargs=[dict(with_function=v) for v in [True, False]]
+  )
   def test_grad_int(self, with_function=False):
     # https://github.com/google/jax/issues/7093
     # Also issue #6975.
@@ -1418,34 +1489,56 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       jax2tf.convert(lambda x: 0 if x.shape[0] + 1 >= x.shape[1] else 1,
                      polymorphic_shapes=["(a, b)"])(np.ones((4, 4)))
 
-    # Unsoundness: not checking that the dimension variable is 0
+    # Checking that the dimension variable is >= 1
     def f1_jax(x):  # f32[b]
       # We have to use "x"
       return jnp.concatenate([x, jnp.array([0. if x.shape[0] == 0 else 1.],
                                            dtype=np.float32)])
 
     x0 = np.array([], np.float32)
-    # JAX with static shapes sees that the x.shape[0] == 0
     self.assertEqual(jnp.array([0.], dtype=np.float32), f1_jax(x0))
 
+    # In graph serialization eager mode we catch the error
     with self.assertRaisesRegex(
-        ValueError,
+        tf.errors.InvalidArgumentError,
         "Dimension variable 'b' must have integer value >= 1. Found 0"):
       jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
                      native_serialization=False)(x0)
 
-    # In native serialization, or if we trace to a TF graph, we miss this
-    res1_tf = jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
-                             native_serialization=True)(x0)
-    self.assertEqual(jnp.array([1.], dtype=np.float32), res1_tf)
-
+    # In graph serialization graph mode we also catch it (except on TPU)
     f1_tf = tf.function(
         jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
-                       native_serialization=False)
+                       native_serialization=False),
+      autograph=False,
     ).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
+    # In graph serialization graph mode we also catch it (except on TPU, where
+    # the behavior is as for jit_compile=1)
+    if jtu.device_under_test() == "tpu":
+      self.assertEqual(jnp.array([1.], dtype=np.float32), f1_tf(x0))
+    else:
+      with self.assertRaisesRegex(
+          tf.errors.InvalidArgumentError,
+          "Dimension variable .* must have integer value"):
+        _ = f1_tf(x0)
+
+    # In graph serialization with jit_compile=True we do not catch the error
+    # and we return the wrong result
+    f1_tf = tf.function(
+        jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
+                       native_serialization=False),
+      autograph=False,
+      jit_compile=True
+    )
     self.assertEqual(jnp.array([1.], dtype=np.float32), f1_tf(x0))
 
-    # Unsoundness: not checking that the actual dimensions denoted by the same
+    # We also catch the error with native serialization
+    with self.assertRaisesRegex(
+        tf.errors.InvalidArgumentError,
+        "Dimension variable 'b' must have integer value >= 1. Found 0"):
+      _ = jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
+                         native_serialization=True)(x0)
+
+    # Checking that the actual dimensions denoted by the same
     # dimension variables have equal sizes.
     def f2_jax(x):  # f32[b, b]
       # We have to use "x"
@@ -1455,24 +1548,45 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # JAX with static shapes sees that x.shape[0] != x.shape[1]
     self.assertEqual(jnp.sum(x45), f2_jax(x45))
 
-    # jax2tf catches the broken assumption b >= 1 if the converted function is executed
-    # eagerly.
+    # In graph serialization eager mode, we catch the broken assumption b >= 1
     with self.assertRaisesRegex(
-        ValueError,
+        tf.errors.InvalidArgumentError,
         r"Found inconsistency 5 != 4 when solving b == args\[0\].shape\[1\]"):
       jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
                      native_serialization=False)(x45)
 
-    # In native serialization, or if we trace to a TF graph, we miss this
-    res2_tf = jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
-                             native_serialization=True)(x45)
-    self.assertEqual(1. + jnp.sum(x45), res2_tf)
+    # In graph serialization graph mode we also catch it (except on TPU, where
+    # the behavior is as for jit_compile=1)
 
     f2_tf = tf.function(
         jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
-                       native_serialization=False)
+                       native_serialization=False),
+        autograph=False,
     ).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
+    if jtu.device_under_test() == "tpu":
+      self.assertEqual(1. + jnp.sum(x45), f2_tf(x45))
+    else:
+      with self.assertRaisesRegex(
+          tf.errors.InvalidArgumentError,
+          r"Found inconsistency"):
+        _ = f2_tf(x45)
+
+    # In graph serialization with jit_compile=True we do not catch the error
+    # and we return the wrong result
+    f2_tf = tf.function(
+        jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
+                       native_serialization=False),
+      autograph=False,
+      jit_compile=True
+    )
     self.assertEqual(1. + jnp.sum(x45), f2_tf(x45))
+
+    # We also catch the error with native serialization
+    with self.assertRaisesRegex(
+        tf.errors.InvalidArgumentError,
+        "Found inconsistency 5 != 4"):
+      _ = jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
+                         native_serialization=True)(x45)
 
     x = np.ones((5,), dtype=np.float32)
     with self.assertRaisesRegex(
@@ -1917,6 +2031,20 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                                                out_spec=(0, 2, 1))),
                 arg_descriptors=[RandArg((1, 13, 16), _f32), RandArg((4, 16, 16), _f32)],
                 polymorphic_shapes=["_, b, _", None]).both_enable_and_disable_xla(),
+    PolyHarness("conv_general_dilated", "1d_stride=2_zero_output",
+              lambda lhs, rhs: lax.conv_general_dilated(
+                lhs, rhs,
+                window_strides=(2,),
+                padding="VALID",
+                rhs_dilation=None,
+                dimension_numbers=lax.ConvDimensionNumbers(lhs_spec=(0, 2, 1),
+                                                           rhs_spec=(2, 1, 0),
+                                                           out_spec=(0, 2, 1))
+              ).shape[1],  # should be 0 in JAX native
+              arg_descriptors=[RandArg((1, 4, 16), _f32),
+                               RandArg((8, 16, 16), _f32)],
+              polymorphic_shapes=["_, b, _",
+                                  None]).both_enable_and_disable_xla(),
     # Issue #11402
     PolyHarness("conv_general_dilated", "1d_2",
                 lambda lhs, rhs: lax.conv_transpose(lhs, rhs,
@@ -2949,6 +3077,9 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
       if harness.group_name == "eig" and "left=True_right=True" in harness.fullname:
         raise unittest.SkipTest("jax2tf graph serialization does not support both left and right.")
+
+      if "conv_general_dilated_1d_stride=2_zero_output_enable_xla=False" in harness.fullname:
+        raise unittest.SkipTest("incomplete support for conv_general_dilated in enable_xla=False")
 
       if harness.group_name == "reduce_window" and "variadic" in harness.fullname:
         raise unittest.SkipTest("jax2tf graph serialization does not support variadic reduce_window.")

@@ -1910,25 +1910,33 @@ def is_empty_shape(s: Shape) -> bool:
   return any(definitely_equal(d, 0) for d in s)
 
 def dilate_dim(d: DimSize, dilation: DimSize) -> DimSize:
-  """1 + dilation * (d - 1).
+  """max(0, 1 + dilation * (d - 1)).
 
-  if d == 0, returns 0.
+  Assumes dilation >= 1.
   """
   if definitely_equal(dilation, 1):  # fast path
     return d
-  return 0 if d == 0 else 1 + dilation * (d - 1)
+  return non_negative_dim(1 + dilation * (d - 1))
 
 def stride_dim(d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
-  """(d - window_size) // window_stride + 1
+  """max(0, (d - window_size) // window_stride + 1)
 
   If d < window_size, returns 0.
   We assume window_size >= 1 and window_stride >= 1.
   """
-  if is_constant_dim(d) and is_constant_dim(window_size):
-    # TODO(necula): Enable this check for non-constant dimensions
-    if d < window_size:
-      return 0
-  return (d - window_size) // window_stride + 1
+  # If d < window_size then (d - window_size) // window_stride < 0
+  return non_negative_dim((d - window_size) // window_stride + 1)
+
+def non_negative_dim(d: DimSize) -> DimSize:
+  """max(d, 0)."""
+  if is_constant_dim(d):
+    return max(0, d)
+  assert is_symbolic_dim(d)
+  try:
+    d_ge_0 = (d >= 0)
+    return d if d_ge_0 else 0
+  except InconclusiveDimensionOperation:
+    return d.non_negative()  # type: ignore
 
 def dimension_as_value(d: DimSize):
   """Turns a dimension size into a JAX array.

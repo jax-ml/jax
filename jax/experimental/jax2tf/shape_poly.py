@@ -38,6 +38,7 @@ import itertools
 import io
 import math
 import operator as op
+import threading
 import tokenize
 from typing import Any, Callable, Iterable, Optional, Sequence, Union
 
@@ -50,6 +51,7 @@ from jax.interpreters import xla
 
 from jax._src import core
 from jax._src import dtypes
+from jax._src import effects
 from jax._src.lax import lax
 from jax._src.interpreters import mlir
 from jax._src.numpy import lax_numpy
@@ -79,6 +81,15 @@ for more details.
     # https://github.com/python/mypy/issues/5887
     super().__init__(error_msg)  # type: ignore
 
+class _ShapePolyThreadLocalState(threading.local):
+
+  def __init__(self):
+    # TODO(necula): this does not play well with some lowering caches, because
+    # this state is not part of the cache key.
+    self.enable_shape_assertions = True
+
+thread_local_state = _ShapePolyThreadLocalState()
+
 class _DimAtom:
   """Represents an atom in a symbolic dimension expression.
 
@@ -90,12 +101,13 @@ class _DimAtom:
     * var: if specified then the atom is a dimension variable. `operation`
       must be `None`.
     * operation: if specified then the atom is an operation applied to
-      `operands`. One of `FLOORDIR` or `MOD`. `var` must be `None`
+      `operands`. One of `FLOORDIR` or `MOD` or `NON_NEGATIVE`. `var` must be `None`
     * operands: the operands to which the operation is applied.
   """
   # The supported operations
   FLOORDIV = "floordiv"
   MOD = "mod"
+  NON_NEGATIVE = "non_negative"  # The max of the operand and 0
 
   def __init__(self, *operands: '_DimExpr',
                var: Optional[str] = None,
@@ -204,6 +216,10 @@ class _DimAtom:
       else:
         return (np.NINF, np.PINF)
 
+    elif self.operation == _DimAtom.NON_NEGATIVE:
+      (b_l, b_h), = opnd_bounds
+      return (max(0, b_l), max(0, b_h))
+
     else:
       assert False
 
@@ -218,11 +234,12 @@ class _DimAtom:
         raise KeyError(err_msg)
     else:
       operand_values = [opnd.evaluate(env) for opnd in self.operands]
-      div_mod = divmod(*operand_values)  # type: ignore
       if self.operation == _DimAtom.FLOORDIV:
-        return div_mod[0]
+        return divmod(*operand_values)[0]  # type: ignore
       elif self.operation == _DimAtom.MOD:
-        return div_mod[1]
+        return divmod(*operand_values)[1]  # type: ignore
+      elif self.operation == _DimAtom.NON_NEGATIVE:
+        return lax.max(operand_values[0], 0)
       else:
         assert False, self.operation
 
@@ -684,6 +701,9 @@ class _DimExpr():
              for mon, coeff in self.monomials()]
     return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
+  def non_negative(self) -> "_DimExpr":
+    return _DimExpr.from_operation(_DimAtom.NON_NEGATIVE, self)
+
   @staticmethod
   def get_aval(dim: "_DimExpr"):
     return core.dim_value_aval()
@@ -791,6 +811,62 @@ def _einsum_contract_path(*operands, **kwargs):
   return contract_operands, contractions
 
 lax_numpy._poly_einsum_handlers[_DimExpr] = _einsum_contract_path
+
+# To implement shape-constraint checking we use a shape assertion primitive.
+#    shape_assertion_p.bind(assert_what: bool, *error_message_inputs,
+#                           error_message="...{0}...{1}")
+# where "{0}" refers to error_message_inputs[0], etc.
+shape_assertion_p = core.Primitive("shape_assertion")
+shape_assertion_p.multiple_results = True
+shape_assertion_p.def_effectful_abstract_eval(
+  lambda *_, **__: ((), {shape_assertion_effect}))  # type: ignore
+
+def _shape_assertion_lowering_rule(ctx: mlir.LoweringRuleContext,
+                                   assert_what: mlir.ir.Value,
+                                   *error_message_inputs: mlir.ir.Value,
+                                   error_message: str):
+  op = mlir.custom_call(
+    "shape_assertion",
+    [],  # No results
+    [assert_what, *error_message_inputs],
+    has_side_effect=True,
+    extra_attributes=dict(error_message=mlir.ir.StringAttr.get(error_message))
+  )
+  return op.results
+
+mlir.register_lowering(shape_assertion_p, _shape_assertion_lowering_rule)
+
+class ShapeAssertionEffect(effects.Effect):
+  __str__ = lambda _: "ShapeAssertionEffect"
+
+shape_assertion_effect = ShapeAssertionEffect()
+
+effects.lowerable_effects.add_type(ShapeAssertionEffect)
+effects.control_flow_allowed_effects.add_type(ShapeAssertionEffect)
+effects.remat_allowed_effects.add_type(ShapeAssertionEffect)
+effects.custom_derivatives_allowed_effects.add_type(ShapeAssertionEffect)
+
+def shape_assertion(assert_what: jax.Array,
+                    *error_message_inputs: jax.Array,
+                    error_message: str) -> None:
+  """Adds a shape assertion in the code.
+
+  Args:
+    assert_what: a boolean asserted to be true. Must be computed based only
+      on dimension expressions, so that it can be evaluated after shape
+      refinement.
+    error_message_inputs: integers expressions whose values can be referenced
+      in the `error_message`. Must be computed based only
+      on dimension expressions, so that they can be evaluated after shape
+      refinement.
+    error_message: an error message, possibly containing format specifiers
+      {0}, {1}, ..., referencing the values of the `error_message_inputs`.
+      The format specifiers are sometimes processed with Python's
+      `string::format` method, and sometimes with `llvm::formatv`.
+  """
+  if thread_local_state.enable_shape_assertions:
+    shape_assertion_p.bind(assert_what, *error_message_inputs,
+                           error_message=error_message)
 
 # A JAX primitive with no array arguments but with a dimension parameter
 # that is a DimExpr. The value of the primitive is the value of the dimension,
@@ -1004,10 +1080,12 @@ class _Parser:
 
   def atom(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
     if tok.exact_type == tokenize.NAME:
-      if tok.string == "mod":
+      if tok.string == _DimAtom.MOD:
         return self.binary_op(_DimAtom.MOD, self.next_tok())
-      if tok.string == "floordiv":
+      if tok.string == _DimAtom.FLOORDIV:
         return self.binary_op(_DimAtom.FLOORDIV, self.next_tok())
+      if tok.string == _DimAtom.NON_NEGATIVE:
+        return self.unary_op(_DimAtom.NON_NEGATIVE, self.next_tok())
       return _DimExpr.from_var(tok.string), self.next_tok()
     number_sign = 1
     if tok.exact_type == tokenize.MINUS:  # -k are negative constants
@@ -1019,6 +1097,12 @@ class _Parser:
       return v * number_sign, tok
     self.expect_token(tok, [tokenize.NAME, tokenize.MINUS, tokenize.NUMBER])
     assert False
+
+  def unary_op(self, op: str, tok) -> tuple[DimSize, tokenize.TokenInfo]:
+    tok = self.consume_token(tok, tokenize.LPAR)
+    e1, tok = self.expr(tok)
+    tok = self.consume_token(tok, tokenize.RPAR)
+    return _DimExpr.from_operation(op, e1), tok  # type: ignore
 
   def binary_op(self, op: str, tok) -> tuple[DimSize, tokenize.TokenInfo]:
     tok = self.consume_token(tok, tokenize.LPAR)
@@ -1054,22 +1138,6 @@ def _evaluate_multiply(v1, v2):
   except:
     pass
   return v1 * v2
-
-def _is_known_constant(v) -> Optional[int]:
-  try:
-    return int(v)
-  except Exception:
-    # TODO(necula): added this so that in jax2tf, in Eager mode, we can tell
-    # that a tensor is a constant. We should move this dependency into some
-    # jax2tf-specific area.
-    if hasattr(v, "val"):
-      try:
-        vint = int(v.val)
-        if isinstance(vint, int):  # In TF, int(tf.Tensor) is tf.Tensor!
-          return vint
-      except Exception:
-        pass
-    return None
 
 # dimension_size(operand, dimension=i) get the operand.shape[i] as a
 # value of type shape_poly.dim_as_value_dtype().
@@ -1180,8 +1248,8 @@ class ShapeConstraint:
     left, right = [self._eval_operand(o, shapeenv) for o in [self.left,
                                                              self.right]]
     # Try to evaluate the constraint statically.
-    left_int, right_int = _is_known_constant(left), _is_known_constant(right)
-    if left_int is not None and right_int is not None:
+    if core.is_constant_shape((left, right)):
+      left_int, right_int = op.index(left), op.index(right)
       if self.comp == ShapeConstraint.Comparator.EQ:
         if not (left_int == right_int):
           raise ValueError(self.make_err_msg(left_int, right_int))
@@ -1225,34 +1293,21 @@ class ShapeConstraints:
     for constraint in self.constraints:
       constraint.check_statically(shapeenv)
 
-  def compute(self, shapeenv: DimVarEnv) -> tuple[jax.Array, jax.Array, jax.Array, Sequence[str]]:
-    """Computes the error code for the set of constraints.
+  def shape_assertions(self, shapeenv: DimVarEnv) -> None:
+    """Computes the shape assertions the set of constraints.
 
-    The error code is -1 if all constraints are satisfied, or an index into
-    the returned error messages.
-    See Exported.shape_check_module docstring.
+    See _wrap_main_func docstring.
     """
     # We want to report the errors in the same order as `check_statically`.
-    # So, we process them in order, in case some fail statically, but we
-    # accumulate the errors in reverse order in the computation, because the
-    # code-generation strategy will report the last error that failed.
-    acc: list[tuple[jax.Array, jax.Array, jax.Array, str]] = []
+    # So, we process them in order, in case some fail statically, and we
+    # generate the shape assertions in the same order.
     for constraint in self.constraints:
       check_res = constraint.compute(shapeenv)
       if check_res is not None:
-        acc.append((*check_res, constraint.make_err_msg("%1", "%2")))  # type: ignore
-
-    shape_check_messages: list[str] = []
-    shape_check_code: jax.Array = np.int32(-1)  # type: ignore
-    shape_check_op1 = shape_check_op2 = shape_check_code
-    for (is_ok, op1, op2, msg) in reversed(acc):
-      shape_check_code = lax.select(is_ok, shape_check_code,
-                                    np.int32(len(shape_check_messages)))
-      shape_check_op1 = lax.select(is_ok, shape_check_op1, op1)
-      shape_check_op2 = lax.select(is_ok, shape_check_op2, op2)
-      shape_check_messages.append(msg)
-    return (shape_check_code, shape_check_op1, shape_check_op2, shape_check_messages)
-
+        is_ok, op1, op2 = check_res
+        shape_assertion(
+          is_ok, op1, op2,
+          error_message=constraint.make_err_msg("{0}", "{1}"))
 
 @dataclasses.dataclass
 class _DimEquation:
@@ -1352,7 +1407,8 @@ def compute_dim_vars_from_arg_shapes(
 
   Like `solve_dim_vars` except that here we express the solution as
   JAX arrays that reference the `actual_args`. This function can be used to
-  generate the code for computing the dimension variables.
+  generate the code for computing the dimension variables. It also generates
+  the shape assertions.
 
   Returns: the values of the dimension variables, in the order determined by
     `all_dim_vars(args_avals)`.
@@ -1366,38 +1422,8 @@ def compute_dim_vars_from_arg_shapes(
                                                 dimension=dim_idx)
                    for (vname, arg_idx, dim_idx) in synth_dim_vars}
   dim_values = [solution[var].evaluate(synthetic_env) for var in dim_vars]
+  shape_constraints.shape_assertions(synthetic_env)
   return tuple(dim_values)
-
-
-def compute_shape_check_from_arg_shapes(
-    args_avals: Sequence[core.AbstractValue],
-    *actual_args: jax.Array,
-    args_kwargs_tree: tree_util.PyTreeDef,
-    acc_shape_check_messages: list[str]) -> Sequence[jax.Array]:
-  """Computes the shape check code from the actual arguments.
-
-  `acc_shape_check_messages` is an initially empty list where we append the
-  shape checking messages. Each of these correspond to a constraint.
-  See the `Exported.shape_check_module` docstring.
-
-  Returns: a triple of JAX arrays: the shape check code and the values of the
-    two operands for the failed constraint.
-
-  Raises ValueError if a constraint is invalidated statically.
-  """
-  assert not acc_shape_check_messages
-  solution, shape_constraints, synth_dim_vars = solve_dim_vars(
-      tuple(args_avals), args_kwargs_tree=args_kwargs_tree)
-
-  # Replace the synthetic vars with the dynamic shape of the actual arg
-  synthetic_env = {vname: dimension_size_p.bind(actual_args[arg_idx],
-                                                dimension=dim_idx)
-                   for (vname, arg_idx, dim_idx) in synth_dim_vars}
-  shape_check_code, shape_check_op1, shape_check_op2, shape_check_messages = (
-      shape_constraints.compute(synthetic_env))
-  acc_shape_check_messages.extend(shape_check_messages)
-  return (shape_check_code, shape_check_op1, shape_check_op2)
-
 
 def _solve_dim_equations(
     eqns: list[_DimEquation]
