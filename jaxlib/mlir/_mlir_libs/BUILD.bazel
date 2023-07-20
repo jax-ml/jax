@@ -106,6 +106,7 @@ py_extension(
     copts = COPTS,
     linkopts = LINKOPTS,
     deps = [
+        ":jax_dialects_capi_headers",
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:CAPITransformsHeaders",
@@ -194,8 +195,33 @@ cc_library(
 )
 
 cc_library(
+    name = "jax_dialects_capi",
+    srcs = ["jax_dialects.cc"],
+    hdrs = ["jax_dialects.h"],
+    deps = [
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:MathDialect",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:Transforms",
+        "@llvm-project//mlir:VectorDialect",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "jax_dialects_capi_headers",
+    hdrs = ["jax_dialects.h"],
+    deps = [
+        "@llvm-project//mlir:CAPIIRHeaders",
+    ],
+)
+
+cc_library(
     name = "jaxlib_mlir_capi_objects",
     deps = [
+        ":jax_dialects_capi",
+        "//jaxlib/mosaic:tpu_dialect_capi_objects",
         "@llvm-project//mlir:CAPISparseTensorObjects",
         "@llvm-project//mlir:CAPITransformsObjects",
         "@llvm-project//mlir:MLIRBindingsPythonCAPIObjects",
