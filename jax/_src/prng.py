@@ -577,9 +577,10 @@ class KeyTyRules:
     return random_wrap(physical_result, impl=aval.dtype.impl)
 
 
-class KeyTy:
+class KeyTy(dtypes.OpaqueDType):
   impl: Hashable  # prng.PRNGImpl. TODO(mattjj,frostig): protocol really
   _rules = KeyTyRules
+  type = dtypes.opaque
 
   def __init__(self, impl):
     self.impl = impl
@@ -601,8 +602,6 @@ class KeyTy:
   def __hash__(self) -> int:
     return hash((self.__class__, self.impl))
 
-
-dtypes.opaque_dtypes.add(KeyTy)
 
 
 core.pytype_aval_mappings[PRNGKeyArrayImpl] = lambda x: x.aval

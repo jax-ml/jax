@@ -19,7 +19,7 @@
 # b) the set of supported types (e.g., bfloat16),
 # so we need our own implementation that deviates from NumPy in places.
 
-
+import abc
 import builtins
 import functools
 from typing import cast, overload, Any, Literal, Optional, Union
@@ -29,7 +29,7 @@ import ml_dtypes
 import numpy as np
 
 from jax._src.config import flags, config
-from jax._src.typing import DType, DTypeLike, OpaqueDType
+from jax._src.typing import DType, DTypeLike
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
@@ -45,11 +45,34 @@ else:
 
 FLAGS = flags.FLAGS
 
-# TODO(frostig,mattjj): achieve this w/ a protocol instead of registry?
-opaque_dtypes: set[OpaqueDType] = set()
+
+class opaque(np.generic):
+  """Scalar class for opaque dtypes.
+
+  This is an abstract class that should never be instantiated, but rather
+  exists for the sake of `jnp.issubdtype`.
+
+  Examples:
+    >>> from jax import random
+    >>> from jax._src import dtypes
+    >>> key = random.key(0)
+    >>> jnp.issubdtype(key.dtype, dtypes.opaque)
+    True
+  """
+  pass
+
+
+class OpaqueDType(metaclass=abc.ABCMeta):
+  """Abstract Base Class for opaque dtypes"""
+  @property
+  @abc.abstractmethod
+  def type(self) -> type: ...
+
 
 def is_opaque_dtype(dtype: Any) -> bool:
-  return type(dtype) in opaque_dtypes
+  # TODO(vanderplas, frostig): remove in favor of inlining `issubdtype`
+  return issubdtype(dtype, opaque)
+
 
 # fp8 support
 float8_e4m3b11fnuz: type[np.generic] = ml_dtypes.float8_e4m3b11fnuz
@@ -169,7 +192,7 @@ def canonicalize_dtype(dtype: Any, allow_opaque_dtype: bool = False) -> Union[DT
 
 def canonicalize_dtype(dtype: Any, allow_opaque_dtype: bool = False) -> Union[DType, OpaqueDType]:
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
-  return _canonicalize_dtype(config.x64_enabled, allow_opaque_dtype, dtype)
+  return _canonicalize_dtype(config.x64_enabled, allow_opaque_dtype, dtype)  # type: ignore[bad-return-type]
 
 # Default dtypes corresponding to Python scalars.
 python_scalar_dtypes : dict[type, DType] = {
@@ -275,8 +298,10 @@ def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
   This is like :func:`numpy.issubdtype`, but can handle dtype extensions such as
   :obj:`jax.dtypes.bfloat16`.
   """
-  if is_opaque_dtype(a):
-    return a == b
+  if isinstance(a, OpaqueDType):
+    return _issubclass(a.type, b)
+  elif _issubclass(b, opaque):
+    return False
   # Canonicalizes all concrete types to np.dtype instances
   a = a if _is_typeclass(a) else np.dtype(a)
   b = b if _is_typeclass(b) else np.dtype(b)
@@ -541,7 +566,8 @@ def dtype(x: Any, *, canonicalize: bool = False) -> DType:
   if dt not in _jax_dtype_set and not is_opaque_dtype(dt):
     raise TypeError(f"Value '{x}' with dtype {dt} is not a valid JAX array "
                     "type. Only arrays of numeric types are supported by JAX.")
-  return canonicalize_dtype(dt, allow_opaque_dtype=True) if canonicalize else dt
+  # TODO(jakevdp): fix return type annotation and remove this ignore.
+  return canonicalize_dtype(dt, allow_opaque_dtype=True) if canonicalize else dt  # type: ignore[return-value]
 
 def _lattice_result_type(*args: Any) -> tuple[DType, bool]:
   dtypes, weak_types = zip(*(_dtype_and_weaktype(arg) for arg in args))
@@ -589,13 +615,15 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> Union[DType,
   """
   if len(args) == 0:
     raise ValueError("at least one array or dtype is required")
+  dtype: DType | OpaqueDType
   dtype, weak_type = _lattice_result_type(*(float_ if arg is None else arg for arg in args))
   if weak_type:
     dtype = canonicalize_dtype(
       _default_types['f' if dtype in _custom_float_dtypes else dtype.kind])
   else:
     dtype = canonicalize_dtype(dtype, allow_opaque_dtype=True)
-  return (dtype, weak_type) if return_weak_type_flag else dtype
+  # TODO(jakevdp): fix return type annotation and remove this ignore.
+  return (dtype, weak_type) if return_weak_type_flag else dtype  # type: ignore[return-value]
 
 def check_user_dtype_supported(dtype, fun_name=None):
   if is_opaque_dtype(dtype):
