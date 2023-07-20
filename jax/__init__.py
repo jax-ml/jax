@@ -138,13 +138,12 @@ from jax.version import __version_info__ as __version_info__
 
 from jax._src.tree_util import (
   tree_map as tree_map,
-  # TODO(jakevdp): remove these deprecated routines after October 2022
-  _deprecated_treedef_is_leaf as treedef_is_leaf,
-  _deprecated_tree_flatten as tree_flatten,
-  _deprecated_tree_leaves as tree_leaves,
-  _deprecated_tree_structure as tree_structure,
-  _deprecated_tree_transpose as tree_transpose,
-  _deprecated_tree_unflatten as tree_unflatten,
+  treedef_is_leaf as _deprecated_treedef_is_leaf,
+  tree_flatten as _deprecated_tree_flatten,
+  tree_leaves as _deprecated_tree_leaves,
+  tree_structure as _deprecated_tree_structure,
+  tree_transpose as _deprecated_tree_transpose,
+  tree_unflatten as _deprecated_tree_unflatten,
 )
 
 # These submodules are separate because they are in an import cycle with
@@ -185,11 +184,43 @@ _deprecations = {
     "jax.abstract_arrays is deprecated. Refer to jax.core.",
     _deprecated_abstract_arrays
   ),
+  # Added July 2022
+  "treedef_is_leaf": (
+    "jax.treedef_is_leaf is deprecated: use jax.tree_util.treedef_is_leaf.",
+    _deprecated_treedef_is_leaf
+  ),
+  "tree_flatten": (
+    "jax.tree_flatten is deprecated: use jax.tree_util.tree_flatten.",
+    _deprecated_tree_flatten
+  ),
+  "tree_leaves": (
+    "jax.tree_leaves is deprecated: use jax.tree_util.tree_leaves.",
+    _deprecated_tree_leaves
+  ),
+  "tree_structure": (
+    "jax.tree_structure is deprecated: use jax.tree_util.tree_structure.",
+    _deprecated_tree_structure
+  ),
+  "tree_transpose": (
+    "jax.tree_transpose is deprecated: use jax.tree_util.tree_transpose.",
+    _deprecated_tree_transpose
+  ),
+  "tree_unflatten": (
+    "jax.tree_unflatten is deprecated: use jax.tree_util.tree_unflatten.",
+    _deprecated_tree_unflatten
+  )
 }
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
   from jax._src import abstract_arrays as abstract_arrays
+  from jax._src.tree_util import treedef_is_leaf as treedef_is_leaf
+  from jax._src.tree_util import tree_flatten as tree_flatten
+  from jax._src.tree_util import tree_leaves as tree_leaves
+  from jax._src.tree_util import tree_structure as tree_structure
+  from jax._src.tree_util import tree_transpose as tree_transpose
+  from jax._src.tree_util import tree_unflatten as tree_unflatten
+
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
