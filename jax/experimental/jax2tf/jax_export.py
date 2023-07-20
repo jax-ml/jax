@@ -134,7 +134,7 @@ class Exported:
     lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'
     mlir_module_serialized: the serialized lowered VHLO module.
     xla_call_module_version: a version number for the serialized module.
-        See more versioning details at https://github.com/search?q=repo%3Atensorflow%2Ftensorflow+path%3Axla_call_module+%22int+VERSION_MAXIMUM_SUPPORTED%22&type=code
+        See more versioning details at https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions.
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
         because they are not used. Same length as `in_shardings`.
