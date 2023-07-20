@@ -219,6 +219,8 @@ class ProfilerTest(unittest.TestCase):
       not (portpicker and profiler_client and tf_profiler and TBP_ENABLED),
     "Test requires tensorflow.profiler, portpicker and "
     "tensorboard_profile_plugin")
+  # Needs tensorboard-plugin-profile>2.13.0 (unreleased as of Jun 2023)
+  @jtu.skip_on_devices("tpu")
   def test_remote_profiler(self):
     port = portpicker.pick_unused_port()
     jax.profiler.start_server(port)
