@@ -22,6 +22,7 @@ from typing import Union, Callable, TypeVar, Any
 import numpy as np
 
 import jax.numpy as jnp
+from jax import dtypes
 from jax import lax
 
 from jax._src import api
@@ -30,7 +31,6 @@ from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import effects
 from jax._src import pjit
-from jax._src import prng
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -576,7 +576,7 @@ def check_nans(prim, error, enabled_errors, out):
     return error
 
   def isnan(x):
-    if isinstance(x, prng.PRNGKeyArray):
+    if jnp.issubdtype(x.dtype, dtypes.prng_key):
       return False
     return jnp.any(jnp.isnan(x))
 

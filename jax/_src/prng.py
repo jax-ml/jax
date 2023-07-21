@@ -447,7 +447,7 @@ class KeyTyRules:
   @staticmethod
   def full(shape, fill_value, dtype):
     physical_shape = (*shape, *dtype.impl.key_shape)
-    if isinstance(fill_value, PRNGKeyArray):
+    if hasattr(fill_value, 'dtype') and jnp.issubdtype(fill_value.dtype, dtypes.prng_key):
       key_data = jnp.broadcast_to(random_unwrap(fill_value), physical_shape)
     else:
       key_data = lax.full(physical_shape, fill_value, dtype=np.dtype('uint32'))
@@ -580,7 +580,7 @@ class KeyTyRules:
 class KeyTy(dtypes.OpaqueDType):
   impl: Hashable  # prng.PRNGImpl. TODO(mattjj,frostig): protocol really
   _rules = KeyTyRules
-  type = dtypes.opaque
+  type = dtypes.prng_key
 
   def __init__(self, impl):
     self.impl = impl
@@ -888,8 +888,8 @@ batching.primitive_batchers[random_wrap_p] = random_wrap_batch_rule
 
 
 def random_unwrap(keys):
-  if not isinstance(keys, PRNGKeyArrayImpl):
-    raise TypeError(f'random_unwrap takes key array operand, got {type(keys)}')
+  if not jnp.issubdtype(keys.dtype, dtypes.prng_key):
+    raise TypeError(f'random_unwrap takes key array operand, got {keys.dtype=}')
   return random_unwrap_p.bind(keys)
 
 random_unwrap_p = core.Primitive('random_unwrap')

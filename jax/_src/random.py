@@ -84,7 +84,7 @@ def _check_prng_key(key) -> tuple[prng.PRNGKeyArray, bool]:
 
 def _return_prng_keys(was_wrapped, key):
   # TODO(frostig): remove once we always enable_custom_prng
-  assert isinstance(key, prng.PRNGKeyArray)
+  assert jnp.issubdtype(key.dtype, dtypes.prng_key)
   if config.jax_enable_custom_prng:
     return key
   else:
@@ -92,7 +92,7 @@ def _return_prng_keys(was_wrapped, key):
 
 
 def _random_bits(key: prng.PRNGKeyArray, bit_width, shape) -> Array:
-  assert isinstance(key, prng.PRNGKeyArray)
+  assert jnp.issubdtype(key.dtype, dtypes.prng_key)
   return prng.random_bits(key, bit_width=bit_width, shape=shape)
 
 
@@ -129,7 +129,7 @@ def resolve_prng_impl(impl_spec: Optional[str]):
 def _key(ctor_name: str, seed: Union[int, Array], impl_spec: Optional[str]
          ) -> PRNGKeyArray:
   impl = resolve_prng_impl(impl_spec)
-  if isinstance(seed, prng.PRNGKeyArray):
+  if hasattr(seed, 'dtype') and jnp.issubdtype(seed.dtype, dtypes.prng_key):
     raise TypeError(
         f"{ctor_name} accepts a scalar seed, but was given a PRNGKeyArray.")
   if np.ndim(seed):
@@ -209,7 +209,7 @@ def unsafe_rbg_key(seed: int) -> KeyArray:
 def _fold_in(key: KeyArray, data: IntegerArray) -> KeyArray:
   # Alternative to fold_in() to use within random samplers.
   # TODO(frostig): remove and use fold_in() once we always enable_custom_prng
-  assert isinstance(key, prng.PRNGKeyArray)
+  assert jnp.issubdtype(key.dtype, dtypes.prng_key)
   if key.ndim:
     raise TypeError("fold_in accepts a single key, but was given a key array of"
                     f"shape {key.shape} != (). Use jax.vmap for batching.")
@@ -236,7 +236,7 @@ def _split(key: KeyArray, num: Union[int, tuple[int, ...]] = 2) -> KeyArray:
   # Alternative to split() to use within random samplers.
   # TODO(frostig): remove and use split(); we no longer need to wait
   # to always enable_custom_prng
-  assert isinstance(key, prng.PRNGKeyArray)
+  assert jnp.issubdtype(key.dtype, dtypes.prng_key)
   if key.ndim:
     raise TypeError("split accepts a single key, but was given a key array of"
                     f"shape {key.shape} != (). Use jax.vmap for batching.")
@@ -258,7 +258,7 @@ def split(key: KeyArray, num: Union[int, tuple[int, ...]] = 2) -> KeyArray:
   return _return_prng_keys(wrapped, _split(key, num))
 
 def _key_data(keys: KeyArray) -> Array:
-  assert isinstance(keys, prng.PRNGKeyArray)
+  assert jnp.issubdtype(keys.dtype, dtypes.prng_key)
   return prng.random_unwrap(keys)
 
 def key_data(keys: KeyArray) -> Array:
