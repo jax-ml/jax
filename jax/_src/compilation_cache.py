@@ -242,6 +242,8 @@ def _hash_compile_options(hash_obj, compile_options_obj):
       _hash_string(hash_obj, kv[1])
     elif isinstance(kv[1], bool):
       _hash_bool(hash_obj, kv[1])
+    elif isinstance(kv[1], int):
+      _hash_int(hash_obj, kv[1])
     else:
       raise RuntimeError("Invalid type: %s" % repr(type(kv[1])))
 
