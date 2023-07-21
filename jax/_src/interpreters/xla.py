@@ -15,6 +15,7 @@
 # Lowering of jaxprs into XLA (HLO) computations.
 
 from collections import defaultdict
+from collections.abc import Sequence
 import dataclasses
 import functools
 from functools import partial
@@ -22,7 +23,7 @@ import itertools as it
 import math
 import operator
 import re
-from typing import Any, Callable, Optional, Protocol, Sequence, Union
+from typing import Any, Callable, Optional, Protocol, Union
 
 import numpy as np
 

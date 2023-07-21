@@ -26,7 +26,8 @@ https://github.com/google/jax/pull/11859/.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, Sequence, Union
+from collections.abc import Sequence
+from typing import Any, Protocol, Union
 import numpy as np
 
 from jax._src.basearray import (

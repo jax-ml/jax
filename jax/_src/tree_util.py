@@ -14,14 +14,14 @@
 from __future__ import annotations
 
 import collections
+from collections.abc import Hashable, Iterable
 from dataclasses import dataclass
 import difflib
 import functools
 from functools import partial
 import operator as op
 import textwrap
-from typing import (Any, Callable, Hashable, Iterable, NamedTuple,
-                    Optional, TypeVar, Union, overload)
+from typing import Any, Callable, NamedTuple, TypeVar, Union, overload
 import warnings
 
 from jax._src import traceback_util
@@ -40,7 +40,7 @@ Leaf = Any
 PyTreeDef = pytree.PyTreeDef
 
 # TODO(phawkins): make this unconditional when jaxlib 0.4.14 is the minimum.
-default_registry: Optional[pytree.PyTreeRegistry]
+default_registry: pytree.PyTreeRegistry | None
 if xla_extension_version >= 169:
   default_registry = pytree.default_registry()
   # Set __module__ and __name__, which allow this registry to be pickled by
@@ -51,7 +51,7 @@ else:
   default_registry = None
 
 def tree_flatten(tree: Any,
-                 is_leaf: Optional[Callable[[Any], bool]] = None
+                 is_leaf: Callable[[Any], bool] | None = None
                  ) -> tuple[list[Leaf], PyTreeDef]:
   """Flattens a pytree.
 
@@ -94,7 +94,7 @@ def tree_unflatten(treedef: PyTreeDef, leaves: Iterable[Leaf]) -> Any:
 
 
 def tree_leaves(tree: Any,
-                is_leaf: Optional[Callable[[Any], bool]] = None
+                is_leaf: Callable[[Any], bool] | None = None
                 ) -> list[Leaf]:
   """Gets the leaves of a pytree."""
   if default_registry:
@@ -104,8 +104,8 @@ def tree_leaves(tree: Any,
 
 
 def tree_structure(tree: Any,
-                   is_leaf: Optional[Callable[[Any],
-                                              bool]] = None) -> PyTreeDef:
+                   is_leaf: None | (Callable[[Any],
+                                              bool]) = None) -> PyTreeDef:
   """Gets the treedef for a pytree."""
   if default_registry:
     return default_registry.flatten(tree, is_leaf)[1]
@@ -135,7 +135,7 @@ def treedef_is_strict_leaf(treedef: PyTreeDef) -> bool:
 
 
 def all_leaves(iterable: Iterable[Any],
-               is_leaf: Optional[Callable[[Any], bool]] = None) -> bool:
+               is_leaf: Callable[[Any], bool] | None = None) -> bool:
   """Tests whether all elements in the given iterable are all leaves.
 
   >>> tree = {"a": [1, 2, 3]}
@@ -214,7 +214,7 @@ def register_pytree_node_class(cls: U) -> U:
 def tree_map(f: Callable[..., Any],
              tree: Any,
              *rest: Any,
-             is_leaf: Optional[Callable[[Any], bool]] = None) -> Any:
+             is_leaf: Callable[[Any], bool] | None = None) -> Any:
   """Maps a multi-input function over pytree args to produce a new pytree.
 
   Args:
@@ -315,7 +315,7 @@ no_initializer = object()
 def tree_reduce(function: Callable[[T, Any], T],
                 tree: Any,
                 *,
-                is_leaf: Optional[Callable[[Any], bool]] = None) -> T:
+                is_leaf: Callable[[Any], bool] | None = None) -> T:
     ...
 
 
@@ -323,14 +323,14 @@ def tree_reduce(function: Callable[[T, Any], T],
 def tree_reduce(function: Callable[[T, Any], T],
                 tree: Any,
                 initializer: T,
-                is_leaf: Optional[Callable[[Any], bool]] = None) -> T:
+                is_leaf: Callable[[Any], bool] | None = None) -> T:
     ...
 
 
 def tree_reduce(function: Callable[[T, Any], T],
                 tree: Any,
                 initializer: Any = no_initializer,
-                is_leaf: Optional[Callable[[Any], bool]] = None) -> T:
+                is_leaf: Callable[[Any], bool] | None = None) -> T:
   if initializer is no_initializer:
     return functools.reduce(function, tree_leaves(tree, is_leaf=is_leaf))
   else:
@@ -448,7 +448,7 @@ register_pytree_node(
 
 
 def broadcast_prefix(prefix_tree: Any, full_tree: Any,
-                     is_leaf: Optional[Callable[[Any], bool]] = None
+                     is_leaf: Callable[[Any], bool] | None = None
                      ) -> list[Any]:
   # If prefix_tree is not a tree prefix of full_tree, this code can raise a
   # ValueError; use prefix_errors to find disagreements and raise more precise
@@ -484,12 +484,12 @@ def flatten_one_level(pytree: Any) -> tuple[list[Any], Hashable]:
     raise ValueError(f"can't tree-flatten type: {type(pytree)}")
 
 def prefix_errors(prefix_tree: Any, full_tree: Any,
-                  is_leaf: Optional[Callable[[Any], bool]] = None,
+                  is_leaf: Callable[[Any], bool] | None = None,
                   ) -> list[Callable[[str], ValueError]]:
   return list(_prefix_error((), prefix_tree, full_tree, is_leaf))
 
 def equality_errors(
-    tree1: Any, tree2: Any, is_leaf: Optional[Callable[[Any], bool]] = None,
+    tree1: Any, tree2: Any, is_leaf: Callable[[Any], bool] | None = None,
 ) -> Iterable[tuple[KeyPath, str, str, str]]:
   """Helper to describe structural differences between two pytrees.
 
@@ -696,9 +696,9 @@ def register_pytree_with_keys(
         [T], tuple[Iterable[tuple[KeyEntry, Any]], _AuxData]
     ],
     unflatten_func: Callable[[_AuxData, Iterable[Any]], T],
-    flatten_func: Optional[
+    flatten_func: None | (
         Callable[[T], tuple[Iterable[Any], _AuxData]]
-    ] = None,
+    ) = None,
 ):
   """Extends the set of types that are considered internal nodes in pytrees.
 
@@ -764,7 +764,7 @@ def register_pytree_with_keys_class(cls: U) -> U:
 
 
 def tree_flatten_with_path(
-    tree: Any, is_leaf: Optional[Callable[[Any], bool]] = None
+    tree: Any, is_leaf: Callable[[Any], bool] | None = None
 ) -> tuple[list[tuple[KeyPath, Any]], PyTreeDef]:
   """Flattens a pytree like ``tree_flatten``, but also returns each leaf's key path.
 
@@ -781,7 +781,7 @@ def tree_flatten_with_path(
 
 
 def tree_leaves_with_path(
-    tree: Any, is_leaf: Optional[Callable[[Any], bool]] = None
+    tree: Any, is_leaf: Callable[[Any], bool] | None = None
 ) -> list[tuple[KeyPath, Any]]:
   """Gets the leaves of a pytree like ``tree_leaves`` and returns each leaf's key path.
 
@@ -795,7 +795,7 @@ def tree_leaves_with_path(
 
 
 def generate_key_paths(
-    tree: Any, is_leaf: Optional[Callable[[Any], bool]] = None
+    tree: Any, is_leaf: Callable[[Any], bool] | None = None
 ) -> list[tuple[KeyPath, Any]]:
   return list(_generate_key_paths_((), tree, is_leaf))
 _generate_key_paths = generate_key_paths  # alias for backward compat
@@ -805,7 +805,7 @@ _generate_key_paths = generate_key_paths  # alias for backward compat
 def _generate_key_paths_(
     key_path: KeyPath,
     tree: Any,
-    is_leaf: Optional[Callable[[Any], bool]] = None,
+    is_leaf: Callable[[Any], bool] | None = None,
 ) -> Iterable[tuple[KeyPath, Any]]:
   if is_leaf and is_leaf(tree):
     yield key_path, tree
@@ -832,7 +832,7 @@ def _generate_key_paths_(
 
 def tree_map_with_path(f: Callable[..., Any],
                        tree: Any, *rest: Any,
-                       is_leaf: Optional[Callable[[Any], bool]] = None) -> Any:
+                       is_leaf: Callable[[Any], bool] | None = None) -> Any:
   """Maps a multi-input function over pytree key path and args to produce a new pytree.
 
   This is a more powerful alternative of ``tree_map`` that can take the key path
@@ -877,7 +877,7 @@ def _prefix_error(
     key_path: KeyPath,
     prefix_tree: Any,
     full_tree: Any,
-    is_leaf: Optional[Callable[[Any], bool]] = None,
+    is_leaf: Callable[[Any], bool] | None = None,
 ) -> Iterable[Callable[[str], ValueError]]:
   # A leaf is a valid prefix of any tree:
   if treedef_is_strict_leaf(tree_structure(prefix_tree, is_leaf=is_leaf)):

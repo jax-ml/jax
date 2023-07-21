@@ -15,11 +15,12 @@
 Parallelization primitives.
 """
 
+from collections.abc import Sequence
 from functools import partial
 import itertools
 import math
 import string
-from typing import Sequence, Union
+from typing import Union
 
 import numpy as np
 

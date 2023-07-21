@@ -14,8 +14,9 @@
 
 # Helpers for indexed updates.
 
+from collections.abc import Sequence
 import sys
-from typing import Any, Callable, Optional, Sequence, Union
+from typing import Any, Callable, Optional, Union
 import warnings
 
 import numpy as np

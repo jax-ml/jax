@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 import contextlib
 import dataclasses
 import functools
 import re
 import os
-
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Optional
 
 from absl.testing import absltest
 from absl import logging

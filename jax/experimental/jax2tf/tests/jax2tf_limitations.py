@@ -13,8 +13,9 @@
 # limitations under the License.
 """See primitives_test docstring for how the Jax2TfLimitations are used."""
 
+from collections.abc import Sequence
 import itertools
-from typing import Any, Callable, Optional, Sequence, Union
+from typing import Any, Callable, Optional, Union
 
 import jax
 from jax import lax

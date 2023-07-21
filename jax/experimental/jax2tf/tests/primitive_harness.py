@@ -37,11 +37,11 @@ The limitations are used to filter out from tests the harnesses that are known
 to fail. A Limitation is specific to a harness.
 """
 
+from collections.abc import Iterable, Sequence
 import operator
 import os
 from functools import partial
-from typing import (Any, Callable, Iterable, Optional, NamedTuple, Sequence,
-                    Union)
+from typing import Any, Callable, Optional, NamedTuple, Union
 
 from absl import testing
 import numpy as np

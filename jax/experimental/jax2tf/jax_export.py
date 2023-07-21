@@ -15,12 +15,14 @@
 
 This module is used with jax2tf, but has no TensorFlow dependencies.
 """
+
+from collections.abc import Sequence
 import copy
 import dataclasses
 import functools
 import itertools
 import re
-from typing import Any, Callable, Optional, Sequence, Union
+from typing import Any, Callable, Optional, Union
 
 from absl import logging
 import numpy as np
@@ -709,9 +711,9 @@ def _check_module(mod: ir.Module, *,
     if target is not None:
       allowed_custom_call_targets.add(target)
 
-  allowed_custom_call_targets_attrs = set(
+  allowed_custom_call_targets_attrs = {
       ir.StringAttr.get(target, mod.context)
-      for target in allowed_custom_call_targets)
+      for target in allowed_custom_call_targets}
   disallowed_custom_call_ops: list[str] = []
   def check_sharding(op: ir.Operation, loc: ir.Location):
     if not allow_non_replicated_sharding:

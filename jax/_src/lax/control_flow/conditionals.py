@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for conditional control flow primitives."""
+
 import collections
+from collections.abc import Sequence
 import functools
 from functools import partial
 import inspect
 import itertools
 import operator
-
-from typing import Callable, Sequence
+from typing import Callable
 
 from jax import config
 from jax.tree_util import tree_flatten, tree_unflatten

@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 import dataclasses
 from functools import update_wrapper, reduce, partial
 import inspect
-from typing import Any, Callable, Generic, Optional, Sequence, TypeVar
+from typing import Any, Callable, Generic, Optional, TypeVar
 
 from jax._src import core
 from jax._src import custom_api_util

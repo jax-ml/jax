@@ -14,11 +14,11 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Hashable, Iterator, Sequence
 from functools import partial, reduce
 import math
 import operator as op
-from typing import (Any, Callable, Hashable, Iterator, NamedTuple,
-                    Sequence, Union)
+from typing import Any, Callable, NamedTuple
 
 import numpy as np
 
@@ -402,7 +402,7 @@ ad_util.jaxval_zeros_likers[PRNGKeyArrayImpl] = jnp.zeros_like  # type: ignore[h
 
 
 # TODO(frostig): remove, rerouting callers directly to random_seed
-def seed_with_impl(impl: PRNGImpl, seed: Union[int, Array]) -> PRNGKeyArrayImpl:
+def seed_with_impl(impl: PRNGImpl, seed: int | Array) -> PRNGKeyArrayImpl:
   return random_seed(seed, impl=impl)
 
 

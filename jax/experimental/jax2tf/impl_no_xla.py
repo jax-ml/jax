@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Workarounds for jax2tf transforms when XLA is not linked in."""
+
 import builtins
+from collections.abc import Sequence
 import dataclasses
 from functools import partial, wraps
 import math
 import string
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Optional
 
 from jax._src import core
 from jax import lax

@@ -13,10 +13,10 @@
 # limitations under the License.
 
 import atexit
+from collections.abc import Sequence
 import logging
 import os
-
-from typing import Any, Optional, Union, Sequence
+from typing import Any, Optional, Union
 
 from jax._src import clusters
 from jax._src.config import config

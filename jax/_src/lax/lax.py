@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import builtins
+from collections.abc import Sequence
 import enum
 import functools
 from functools import partial
 import itertools
 import math
 import operator
-from typing import (Any, Callable, Optional, Sequence, TypeVar, Union,
+from typing import (Any, Callable, Optional, TypeVar, Union,
                     cast as type_cast, overload)
 import warnings
 
@@ -4621,7 +4622,7 @@ def _iota_batching_rule(in_vals, in_dims, *, dtype, shape, dimension):
   (segment_lengths,), (ax,) = in_vals, in_dims
   assert ax == 0
   bound = segment_lengths.dtype.bound
-  ragged_axis, = [i for i, dim in enumerate(shape) if dim is None]
+  ragged_axis, = (i for i, dim in enumerate(shape) if dim is None)
   shape = (len(segment_lengths),) + _merge_dyn_shape(shape, (bound,))
   iota = broadcasted_iota(dtype, shape, dimension+1)
   return iota, batching.RaggedAxis(ax, ((ragged_axis+1, segment_lengths),))

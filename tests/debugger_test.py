@@ -11,12 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from collections.abc import Sequence
 import io
 import re
 import textwrap
+from typing import IO
 import unittest
-
-from typing import IO, Sequence
 
 from absl.testing import absltest
 import jax

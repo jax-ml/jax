@@ -15,14 +15,15 @@
 from __future__ import annotations
 
 import collections
+from collections import OrderedDict
+from collections.abc import Mapping, Sequence
 import dataclasses
 import enum
 import functools
 import itertools
 import math
 import operator as op
-from typing import (Any, Mapping, Optional, OrderedDict, NamedTuple, Sequence,
-                    Union, cast)
+from typing import Any, NamedTuple, Union, cast
 
 from jax._src import mesh as mesh_lib
 from jax._src.op_shardings import (
@@ -123,7 +124,7 @@ class XLACompatibleSharding(sharding.Sharding):
       return self == other
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def _check_mesh_resource_axis(mesh, parsed_pspec):
   try:
     [mesh.shape[r] for p in parsed_pspec if p is not None
@@ -197,13 +198,13 @@ class NamedSharding(XLACompatibleSharding):
 
   mesh: mesh_lib.Mesh
   spec: PartitionSpec
-  memory_kind: Optional[str]
+  memory_kind: str | None
   _parsed_pspec: ParsedPartitionSpec
 
   @use_cpp_method()
   def __init__(
       self, mesh: mesh_lib.Mesh, spec: PartitionSpec, *,
-      memory_kind: Optional[str] = None, _parsed_pspec = None):
+      memory_kind: str | None = None, _parsed_pspec = None):
 
     self.mesh = mesh
     self.spec = spec
@@ -342,14 +343,14 @@ class NamedSharding(XLACompatibleSharding):
   @functools.lru_cache(maxsize=4096)
   def _to_xla_hlo_sharding(
       self, num_dimensions: int,
-      axis_ctx: Optional[Union[SPMDAxisContext, ShardingContext]] = None
+      axis_ctx: SPMDAxisContext | ShardingContext | None = None
   ) -> xc.HloSharding:
     sharding_spec, special_axes = self._get_sharding_spec(
         num_dimensions, axis_ctx)
     return sharding_spec.sharding_proto(special_axes=special_axes)
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def get_replicated_hlo_sharding():
   return xc.HloSharding.replicate()
 
@@ -368,10 +369,10 @@ class SingleDeviceSharding(XLACompatibleSharding):
   """
 
   _device: Device
-  _memory_kind: Optional[str]
+  _memory_kind: str | None
 
   @use_cpp_method()
-  def __init__(self, device: Device, *, memory_kind: Optional[str] = None):
+  def __init__(self, device: Device, *, memory_kind: str | None = None):
     self._device = device
     self._memory_kind = memory_kind
 
@@ -412,7 +413,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
     return {self._device}
 
   @property
-  def memory_kind(self) -> Optional[str]:
+  def memory_kind(self) -> str | None:
     if xla_extension_version >= 168:
       return self._memory_kind
     else:
@@ -439,7 +440,7 @@ class PmapSharding(XLACompatibleSharding):
   sharding_spec: sharding_specs.ShardingSpec
 
   @use_cpp_method()
-  def __init__(self, devices: Union[Sequence[Device], np.ndarray],
+  def __init__(self, devices: Sequence[Device] | np.ndarray,
                sharding_spec: sharding_specs.ShardingSpec):
     self.devices = np.asarray(devices)
     # The sharding spec should be pmap's sharding spec.
@@ -479,7 +480,7 @@ class PmapSharding(XLACompatibleSharding):
   # TODO(yashkatariya): Expose `sharded_dim_size` in the API if required.
   @classmethod
   def default(cls, shape: Shape, sharded_dim: int = 0,
-              devices: Optional[Sequence[xc.Device]] = None) -> PmapSharding:
+              devices: Sequence[xc.Device] | None = None) -> PmapSharding:
     """Creates a `PmapSharding` which matches the implicit device order used by
     `pmap` if devices is None. If devices is specified, it will use those
     devices.
@@ -557,7 +558,7 @@ class PmapSharding(XLACompatibleSharding):
 
 
 def _op_sharding_to_pos_sharding(
-    op_sharding: Union[xc.OpSharding, xc.HloSharding],
+    op_sharding: xc.OpSharding | xc.HloSharding,
     device_assignment: Sequence[xc.Device]) -> PositionalSharding:
   if isinstance(op_sharding, xc.HloSharding):
     op_sharding = op_sharding.to_proto()  # type: ignore
@@ -585,11 +586,11 @@ def _op_sharding_to_pos_sharding(
 
 class PositionalSharding(XLACompatibleSharding):
   _devices: tuple[xc.Device, ...]
-  _memory_kind: Optional[str]
+  _memory_kind: str | None
   _ids: np.ndarray  # dtype DeviceIdSet
 
-  def __init__(self, devices: Union[Sequence[xc.Device], np.ndarray],
-               *, memory_kind: Optional[str] = None):
+  def __init__(self, devices: Sequence[xc.Device] | np.ndarray,
+               *, memory_kind: str | None = None):
     if not isinstance(devices, np.ndarray):
       devices = np.array(devices, dtype='object')
     if not devices.size:
@@ -632,7 +633,7 @@ class PositionalSharding(XLACompatibleSharding):
   @classmethod
   def remake(
       cls, devices: tuple[xc.Device, ...], ids: np.ndarray,
-      *, memory_kind: Optional[str] = None) -> PositionalSharding:
+      *, memory_kind: str | None = None) -> PositionalSharding:
     self = cls.__new__(cls)
     self._devices = devices
     self._ids = ids
@@ -665,7 +666,7 @@ class PositionalSharding(XLACompatibleSharding):
     return set(self._devices)
 
   @property
-  def memory_kind(self) -> Optional[str]:
+  def memory_kind(self) -> str | None:
     if xla_extension_version >= 168:
       return self._memory_kind
     else:
@@ -735,12 +736,12 @@ class DeviceIdSet:
 class GSPMDSharding(XLACompatibleSharding):
   _devices: tuple[Device, ...]
   _hlo_sharding: xc.HloSharding
-  _memory_kind: Optional[str]
+  _memory_kind: str | None
 
   @use_cpp_method()
   def __init__(self, devices: Sequence[Device],
-               op_sharding: Union[xc.OpSharding, xc.HloSharding],
-               *, memory_kind: Optional[str] = None):
+               op_sharding: xc.OpSharding | xc.HloSharding,
+               *, memory_kind: str | None = None):
     self._devices = tuple(devices)
     if isinstance(op_sharding, xc.OpSharding):
       self._hlo_sharding = xc.HloSharding.from_proto(op_sharding)
@@ -811,7 +812,7 @@ class GSPMDSharding(XLACompatibleSharding):
     return set(self._devices)
 
   @property
-  def memory_kind(self) -> Optional[str]:
+  def memory_kind(self) -> str | None:
     if xla_extension_version >= 168:
       return self._memory_kind
     else:
@@ -836,7 +837,7 @@ class GSPMDSharding(XLACompatibleSharding):
     return is_op_sharding_replicated(self._hlo_sharding)
 
   @classmethod
-  def get_replicated(cls, device_assignment, *, memory_kind: Optional[str] = None):
+  def get_replicated(cls, device_assignment, *, memory_kind: str | None = None):
     if xla_extension_version >= 168:
       return cls(tuple(device_assignment), get_replicated_hlo_sharding(),
                  memory_kind=memory_kind)
@@ -905,7 +906,7 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
   return PartitionSpec(*partitions)
 
 def get_array_mapping(
-    axis_resources: Union[ParsedPartitionSpec, AUTO, UnspecifiedValue]
+    axis_resources: ParsedPartitionSpec | AUTO | UnspecifiedValue
 ) -> ArrayMappingOrAutoOrUnspecified:
   # TODO(yashkatariya): Use `TypeGuard` on `is_auto` when it is supported.
   # Don't use `is_auto` here to satisfy pytype and mypy.
@@ -1269,7 +1270,7 @@ def explode_superdims(sizes, dims):
     final_dims += reversed(new_dims)
   return final_dims
 
-def parse_flatten_op_sharding(op_sharding: Union[xc.OpSharding, xc.HloSharding],
+def parse_flatten_op_sharding(op_sharding: xc.OpSharding | xc.HloSharding,
                               mesh: mesh_lib.Mesh) -> Sequence[ParsedPartitionSpec]:
   if isinstance(op_sharding, xc.HloSharding):
     op_sharding = op_sharding.to_proto()  # type: ignore

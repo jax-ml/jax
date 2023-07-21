@@ -37,20 +37,20 @@ python3 models_test_main.py --example_prefix=flax/cnn
 python3 models_test_main.py --examples="flax/cnn_[(b ...)]"
 ```
 """
-from absl import app
-from absl import flags
 
+from collections.abc import Sequence
+import datetime
 import functools
 import numpy as np
 import os
 import re
 import jax
 
+from absl import app
+from absl import flags
+
 from jax._src import dtypes
 import jax.numpy as jnp
-
-import datetime
-from typing import Sequence
 
 import tensorflow as tf
 

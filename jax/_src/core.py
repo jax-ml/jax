@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import collections
 from collections import namedtuple
+from collections.abc import Generator, Hashable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 import functools
@@ -27,9 +28,8 @@ import operator
 from operator import attrgetter
 import threading
 import types
-from typing import (Any, Callable, ClassVar, DefaultDict, Generator, Generic,
-                    Hashable, Iterable, Iterator, NamedTuple, Optional,
-                    Sequence, TypeVar, Union, cast, overload)
+from typing import (Any, Callable, ClassVar, DefaultDict, Generic, NamedTuple,
+                    TypeVar, Union, cast, overload)
 import warnings
 from weakref import ref
 
@@ -70,8 +70,8 @@ no_effects: Effects = effects.no_effects
 class JaxprDebugInfo(NamedTuple):
   traced_for: str     # e.g. 'jit', 'scan', etc
   func_src_info: str  # e.g. f'{fun.__name__} at {filename}:{lineno}'
-  arg_names: tuple[Optional[str], ...]     # e.g. ('args[0]', ... )
-  result_paths: tuple[Optional[str], ...]  # e.g. ('[0]', '[1]', ...)
+  arg_names: tuple[str | None, ...]     # e.g. ('args[0]', ... )
+  result_paths: tuple[str | None, ...]  # e.g. ('[0]', '[1]', ...)
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
@@ -82,7 +82,7 @@ class Jaxpr:
   _outvars: list[Atom]
   _eqns: list[JaxprEqn]
   _effects: Effects
-  _debug_info: Optional[JaxprDebugInfo]
+  _debug_info: JaxprDebugInfo | None
 
   constvars = property(lambda self: self._constvars)
   invars = property(lambda self: self._invars)
@@ -94,7 +94,7 @@ class Jaxpr:
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
                effects: Effects = no_effects,
-               debug_info: Optional[JaxprDebugInfo] = None):
+               debug_info: JaxprDebugInfo | None = None):
     """
     Args:
       constvars: list of variables introduced for constants. Array constants are
@@ -241,12 +241,12 @@ class JaxprEqn(NamedTuple):
 
   def replace(
       self,
-      invars: Optional[list[Atom]] = None,
-      outvars: Optional[list[Var]] = None,
-      primitive: Optional[Primitive] = None,
-      params: Optional[dict[str, Any]] = None,
-      effects: Optional[Effects] = None,
-      source_info: Optional[source_info_util.SourceInfo] = None,
+      invars: list[Atom] | None = None,
+      outvars: list[Var] | None = None,
+      primitive: Primitive | None = None,
+      params: dict[str, Any] | None = None,
+      effects: Effects | None = None,
+      source_info: source_info_util.SourceInfo | None = None,
   ):
     # It is slightly faster to rebuild the tuple directly than to call _replace.
     return JaxprEqn(
@@ -303,7 +303,7 @@ def _jaxpr_vars(jaxpr):
       jaxpr.invars, jaxpr.constvars,
       (v for eqn in jaxpr.eqns for v in eqn.outvars))
 
-def gensym(jaxprs: Optional[Sequence[Jaxpr]] = None,
+def gensym(jaxprs: Sequence[Jaxpr] | None = None,
            suffix: str = '') -> Callable[[AbstractValue], Var]:
   """Produce distinct variables, printed with the optional suffix.
 
@@ -332,7 +332,7 @@ class Literal:
 
   val: Any
   aval: AbstractValue
-  hash: Optional[int]
+  hash: int | None
 
   def __init__(self, val, aval):
     self.val = val
@@ -993,7 +993,7 @@ the following:
   threading.current_thread().pydev_do_not_trace = True
 """
 
-def maybe_find_leaked_tracers(x: Optional[Union[MainTrace, Sublevel]]
+def maybe_find_leaked_tracers(x: MainTrace | Sublevel | None
                               ) -> list[Tracer]:
   """Find the leaked tracers holding a reference to the MainTrace or SubLevel.
 
@@ -1314,8 +1314,8 @@ class Bot(AbstractValue): pass
 bot = Bot()
 
 
-def lattice_join(x: Optional[AbstractValue],
-                 y: Optional[AbstractValue]) -> AbstractValue:
+def lattice_join(x: AbstractValue | None,
+                 y: AbstractValue | None) -> AbstractValue:
   if x is None:
     return cast(AbstractValue, y)
   elif y is None:
@@ -1541,10 +1541,10 @@ class ShapedArray(UnshapedArray):
                   0 if any(type(d) is int and d == 0 for d in self.shape)
                   else math.prod(self.shape))
 
-  broadcast: ClassVar[Optional[aval_method]] = None
-  transpose: ClassVar[Optional[aval_method]] = None
-  reshape: ClassVar[Optional[aval_method]] = None
-  _iter: ClassVar[Optional[staticmethod]] = None
+  broadcast: ClassVar[aval_method | None] = None
+  transpose: ClassVar[aval_method | None] = None
+  reshape: ClassVar[aval_method | None] = None
+  _iter: ClassVar[staticmethod | None] = None
 
   def __eq__(self, other):
     return (type(self) is type(other)
@@ -2009,7 +2009,7 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
   return TypeError(msg)
 
-class SomeTracer(object):
+class SomeTracer:
   __slots__ = ()
   def __repr__(self): return "[dynamic]"
 
@@ -2325,7 +2325,7 @@ def process_env_traces_map(primitive: MapPrimitive, level: int,
   yield outs, (tuple(todo), tuple(out_axes_transforms))
 
 
-def mapped_aval(size: AxisSize, axis: Optional[int],
+def mapped_aval(size: AxisSize, axis: int | None,
                 aval: AbstractValue) -> AbstractValue:
   handler, _ = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
@@ -2333,7 +2333,7 @@ def mapped_aval(size: AxisSize, axis: Optional[int],
   else:
     raise TypeError(f"no mapping handler for {aval} of type {type(aval)}")
 
-def unmapped_aval(size: AxisSize, axis_name, axis: Optional[int],
+def unmapped_aval(size: AxisSize, axis_name, axis: int | None,
                   aval: AbstractValue) -> AbstractValue:
   _, handler = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
@@ -2343,7 +2343,7 @@ def unmapped_aval(size: AxisSize, axis_name, axis: Optional[int],
 
 
 def _map_shaped_array(
-    size: int, axis: Optional[int], aval: ShapedArray) -> ShapedArray:
+    size: int, axis: int | None, aval: ShapedArray) -> ShapedArray:
   assert axis is None or aval.shape[axis] == size
   # TODO: Extend the named shape
   if axis is None: return aval
@@ -2351,7 +2351,7 @@ def _map_shaped_array(
                      named_shape=aval.named_shape, weak_type=aval.weak_type)
 
 def _unmap_shaped_array(
-    size: int, axis_name: AxisName, axis: Optional[int], aval: ShapedArray
+    size: int, axis_name: AxisName, axis: int | None, aval: ShapedArray
   ) -> ShapedArray:
   named_shape = dict(aval.named_shape)
   named_shape.pop(axis_name, None)  # TODO: make this mandatory
@@ -2362,13 +2362,13 @@ def _unmap_shaped_array(
   else: raise TypeError(axis)
 
 def _map_dshaped_array(
-    size: AxisSize, axis: Optional[int], aval: DShapedArray) -> DShapedArray:
+    size: AxisSize, axis: int | None, aval: DShapedArray) -> DShapedArray:
   if axis is None: return aval
   return DShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
                       aval.weak_type)
 
 def _unmap_dshaped_array(
-    size: AxisSize, axis_name: AxisName, axis: Optional[int], aval: DShapedArray
+    size: AxisSize, axis_name: AxisName, axis: int | None, aval: DShapedArray
   ) -> DShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
@@ -2460,7 +2460,7 @@ class _TempAxisName:
     return type(other) is _TempAxisName and self.id < other.id
 
 
-def axis_frame(axis_name: AxisName, main_trace: Optional[MainTrace] = None
+def axis_frame(axis_name: AxisName, main_trace: MainTrace | None = None
                ) -> AxisEnvFrame:
   frames = thread_local_state.trace_state.axis_env
   for frame in reversed(frames):
@@ -2538,7 +2538,7 @@ def subst_axis_names_eqn(eqn: JaxprEqn, subst: AxisSubst, var_map: dict[Var, Var
   params = subst_axis_names(eqn.primitive, eqn.params, subst)
   return eqn.replace(invars=invars, outvars=outvars, params=params)
 
-def do_subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
+def do_subst_axis_names_jaxpr(jaxpr: Jaxpr | ClosedJaxpr, subst: AxisSubst):
   consts = None
   if isinstance(jaxpr, ClosedJaxpr):
     consts = jaxpr.consts
@@ -2554,12 +2554,12 @@ def do_subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst
   return new_jaxpr
 
 @weakref_lru_cache
-def used_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr]):
+def used_axis_names_jaxpr(jaxpr: Jaxpr | ClosedJaxpr):
   subst = NameGatheringSubst()
   do_subst_axis_names_jaxpr(jaxpr, subst)
   return frozenset(subst.axis_names)
 
-def subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
+def subst_axis_names_jaxpr(jaxpr: Jaxpr | ClosedJaxpr, subst: AxisSubst):
   if isinstance(subst, NameGatheringSubst):  # This is a common case, so we optimize it!
     subst.axis_names |= used_axis_names_jaxpr(jaxpr)
     return jaxpr
@@ -2643,7 +2643,7 @@ def check_jaxpr(jaxpr: Jaxpr):
   Raises `JaxprTypeError` if `jaxpr` is determined invalid. Returns `None`
   otherwise.
   """
-  @functools.lru_cache(maxsize=None)
+  @functools.cache
   def ctx_factory():
     ctx = JaxprPpContext()
     pp_settings = JaxprPpSettings()
@@ -3088,9 +3088,9 @@ def pp_effect(effect: Effect, context: JaxprPpContext) -> pp.Doc:
 
 # ------------------- Jaxpr util -------------------
 
-def last_used(jaxpr: Jaxpr) -> dict[Var, Optional[JaxprEqn]]:
+def last_used(jaxpr: Jaxpr) -> dict[Var, JaxprEqn | None]:
   """Returns a mapping from every var in jaxpr to what equation uses it last."""
-  last_used: dict[Var, Optional[JaxprEqn]] = {
+  last_used: dict[Var, JaxprEqn | None] = {
       v: None for v in jaxpr.outvars if not isinstance(v, Literal)}
   for eqn in reversed(jaxpr.eqns):
     for v in eqn.invars:
@@ -3099,9 +3099,9 @@ def last_used(jaxpr: Jaxpr) -> dict[Var, Optional[JaxprEqn]]:
   return last_used
 
 def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
-                       last_used: dict[Var, Optional[JaxprEqn]]):
+                       last_used: dict[Var, JaxprEqn | None]):
   """Remove all eqn.invars from env if eqn is the last time they were used."""
-  for v in set(v for v in eqn.invars if not isinstance(v, Literal)):
+  for v in {v for v in eqn.invars if not isinstance(v, Literal)}:
     if last_used[v] is eqn:
       # Delete ref to variable when it is no longer needed by next equations.
       del env[v]

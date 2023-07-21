@@ -13,8 +13,9 @@
 # limitations under the License.
 """Sharding utilities"""
 
+from collections.abc import Sequence
 import itertools
-from typing import Sequence, Union
+from typing import Union
 
 import numpy as np
 

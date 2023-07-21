@@ -44,7 +44,7 @@ numpy_scalar_types: set[type] = {  # pylint: disable=g-bare-generic
     np.uint8, np.uint16, np.uint32, np.uint64,
     np.complex64, np.complex128,
     np.bool_, np.longlong, np.intc,
-} | set(np.dtype(dt).type for dt in dtypes._float_types)
+} | {np.dtype(dt).type for dt in dtypes._float_types}
 
 if dtypes.int4 is not None:
   numpy_scalar_types.add(dtypes.int4)

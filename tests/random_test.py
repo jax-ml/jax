@@ -428,7 +428,7 @@ class PrngTest(jtu.JaxTestCase):
   def test_threefry_split_fold_in_symmetry(self, make_key):
     with jax.default_prng_impl('threefry2x32'):
       key = make_key(72)
-      f1, f2, f3 = [random.fold_in(key, i) for i in range(3)]
+      f1, f2, f3 = (random.fold_in(key, i) for i in range(3))
       s1, s2, s3 = random.split(key, 3)
       f1, f2, f3 = map(_prng_key_as_array, [f1, f2, f3])
       s1, s2, s3 = map(_prng_key_as_array, [s1, s2, s3])

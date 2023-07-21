@@ -19,10 +19,10 @@ and provide some automatic type mapping logic for converting between Numpy and
 XLA. There are also a handful of related casting utilities.
 """
 
+from collections.abc import Mapping
 import dataclasses
 from functools import partial, lru_cache
 import importlib
-import io
 import json
 import logging
 import os
@@ -30,7 +30,7 @@ import platform as py_platform
 import pkgutil
 import sys
 import threading
-from typing import Any, Callable, Mapping, Optional, Union
+from typing import Any, Callable, Optional, Union
 import warnings
 
 import numpy as np
@@ -351,7 +351,7 @@ def _get_pjrt_plugin_config(
   pairs. Please see xla_client._NameValueMapping for the supported types of
   values.
   """
-  with io.open(json_path, 'r') as f:
+  with open(json_path) as f:
     config = json.load(f)
   if 'library_path' not in config.keys():
     raise ValueError(

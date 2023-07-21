@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from functools import partial
 import math
 import operator
-from typing import Callable, Optional, Union, Sequence
+from typing import Callable, Optional, Union
 import warnings
 
 import numpy as np

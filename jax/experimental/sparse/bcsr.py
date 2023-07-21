@@ -15,11 +15,11 @@
 """BCSR (Bached compressed row) matrix object and associated primitives."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import partial
 import operator
+from typing import Any, NamedTuple
 import warnings
-
-from typing import Any, NamedTuple, Optional, Sequence, Union
 
 import numpy as np
 
@@ -48,12 +48,12 @@ from jax._src.interpreters import mlir
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
 
-def bcsr_eliminate_zeros(mat: BCSR, nse: Optional[int] = None) -> BCSR:
+def bcsr_eliminate_zeros(mat: BCSR, nse: int | None = None) -> BCSR:
   """Eliminate zeros in BCSR representation."""
   return BCSR.from_bcoo(bcoo.bcoo_eliminate_zeros(mat.to_bcoo(), nse=nse))
 
 
-def bcsr_sum_duplicates(mat: BCSR, nse: Optional[int] = None) -> BCSR:
+def bcsr_sum_duplicates(mat: BCSR, nse: int | None = None) -> BCSR:
   """Sums duplicate indices within a BCSR array, returning an array with sorted indices.
 
   Args:
@@ -78,9 +78,9 @@ def _bcsr_batch_dims_to_front(batched_args, batch_dims, spinfo, batch_size=None)
   if not all(b is None or 0 <= b < n_batch for b in batch_dims):
     raise NotImplementedError("batch_dims must be None or satisfy 0 < dim < n_batch. "
                               f"Got {batch_dims=} for {n_batch=}.")
-  batched_data, batched_indices, batched_indptr = [
+  batched_data, batched_indices, batched_indptr = (
       lax.expand_dims(arg, [0]) if bdim is None else jnp.moveaxis(arg, bdim, 0)
-      for arg, bdim in [(data, data_bdim), (indices, indices_bdim), (indptr, indptr_bdim)]]
+      for arg, bdim in [(data, data_bdim), (indices, indices_bdim), (indptr, indptr_bdim)])
   if batch_size is None:
     batch_size = max(arg.shape[dim] for arg, dim in zip(batched_args, batch_dims) if dim is not None)
   batched_spinfo = SparseInfo((batch_size, *spinfo.shape),
@@ -179,7 +179,7 @@ value to the nse (number of stored elements) argument.
 """
 
 
-def bcsr_fromdense(mat: ArrayLike, *, nse: Optional[int] = None, n_batch: int = 0,
+def bcsr_fromdense(mat: ArrayLike, *, nse: int | None = None, n_batch: int = 0,
                    n_dense:int = 0, index_dtype: DTypeLike = jnp.int32) -> BCSR:
   """Create BCSR-format sparse matrix from a dense matrix.
 
@@ -459,7 +459,7 @@ mlir.register_lowering(bcsr_extract_p, mlir.lower_fun(
 bcsr_dot_general_p = core.Primitive('bcsr_dot_general')
 
 
-def bcsr_dot_general(lhs: Union[BCSR, Array], rhs: Array, *,
+def bcsr_dot_general(lhs: BCSR | Array, rhs: Array, *,
                      dimension_numbers: DotDimensionNumbers,
                      precision: None = None,
                      preferred_element_type: None = None) -> Array:
@@ -819,7 +819,7 @@ class BCSR(JAXSparse):
     indptr = jnp.zeros((*batch_shape, sparse_shape[0] + 1), index_dtype)
     return cls((data, indices, indptr), shape=shape)
 
-  def sum_duplicates(self, nse: Optional[int] = None, remove_zeros: bool = True) -> BCSR:
+  def sum_duplicates(self, nse: int | None = None, remove_zeros: bool = True) -> BCSR:
     """Return a copy of the array with duplicate indices summed.
 
     Additionally, this operation will result in explicit zero entries removed, and

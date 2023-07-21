@@ -14,9 +14,10 @@
 from __future__ import annotations
 
 import collections
+from collections.abc import Iterable, Sequence
 import dataclasses
 from functools import partial
-from typing import Any, Callable, Iterable, Optional, Sequence, Union
+from typing import Any, Callable, Union
 
 import numpy as np
 
@@ -48,7 +49,7 @@ zip, unsafe_zip = safe_zip, zip
 @dataclasses.dataclass(frozen=True)
 class JumbleTy:
   binder: core.Var
-  length: Union[int, Tracer, core.Var]
+  length: int | Tracer | core.Var
   elt_ty: core.DShapedArray
   def __repr__(self) -> str:
     return f'Var{id(self.binder)}:{self.length} => {self.elt_ty}'
@@ -58,7 +59,7 @@ class JumbleTy:
 @dataclasses.dataclass(frozen=True)
 class IndexedAxisSize:
   idx: core.Var
-  lengths: Union[Array, core.Var, Tracer]
+  lengths: Array | core.Var | Tracer
   def __repr__(self) -> str:
     return f'{str(self.lengths)}.Var{id(self.idx)}'
   replace = dataclasses.replace
@@ -148,7 +149,7 @@ def _sorted_ragged_axis(stacked_axis, ragged_axes):
 
 def make_batch_axis(
     ndim: int, stacked_axis: int, ragged_axes: list[tuple[int, Array]]
-  ) -> Union[int, RaggedAxis]:
+  ) -> int | RaggedAxis:
   if ragged_axes:
     canonical = [(canonicalize_axis(ax, ndim), sz) for ax, sz in ragged_axes]
     return _sorted_ragged_axis(canonicalize_axis(stacked_axis, ndim), canonical)
@@ -156,7 +157,7 @@ def make_batch_axis(
     return canonicalize_axis(stacked_axis, ndim)
 
 def bdim_as_shape(
-    bdim: Union[int, RaggedAxis], data_shape: core.Shape) -> core.Shape:
+    bdim: int | RaggedAxis, data_shape: core.Shape) -> core.Shape:
   if isinstance(bdim, RaggedAxis):
     result = list(data_shape)
     binder = core.Var(0, '', core.ShapedArray((), np.dtype('int32')))
@@ -167,7 +168,7 @@ def bdim_as_shape(
     return data_shape
 
 def shape_as_bdim(
-    stacked_axis: int, data_shape: core.Shape) -> Union[int, RaggedAxis]:
+    stacked_axis: int, data_shape: core.Shape) -> int | RaggedAxis:
   # This assumes that there is only one binder in the data_shape.
   ragged_axes = [(i, size.lengths) for i, size in enumerate(data_shape)
                  if isinstance(size, IndexedAxisSize)]
@@ -175,9 +176,9 @@ def shape_as_bdim(
 
 
 def _update_annotation(
-    f: lu.WrappedFun, orig_type: Optional[core.InputType],
+    f: lu.WrappedFun, orig_type: core.InputType | None,
     axis_size: core.AxisSize, axis_name: AxisName,
-    explicit_in_dims: Sequence[Optional[Union[int, RaggedAxis]]],
+    explicit_in_dims: Sequence[int | RaggedAxis | None],
     segment_lens: Sequence[Array],
   ) -> lu.WrappedFun:
   if orig_type is None: return f
@@ -251,7 +252,7 @@ def to_elt(trace: Trace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
     assert False
 to_elt_handlers: dict[type, ToEltHandler] = {}
 
-def from_elt(trace: 'BatchTrace', axis_size: AxisSize, x: Elt, spec: MapSpec
+def from_elt(trace: BatchTrace, axis_size: AxisSize, x: Elt, spec: MapSpec
              ) -> Vmappable:
   handler = from_elt_handlers.get(type(x))
   if handler:
@@ -277,7 +278,7 @@ make_iota_handlers: dict[type, MakeIotaHandler] = {}
 
 def register_vmappable(data_type: type, spec_type: type, axis_size_type: type,
                        to_elt: Callable, from_elt: Callable,
-                       make_iota: Optional[Callable]):
+                       make_iota: Callable | None):
   vmappables[data_type] = (spec_type, axis_size_type)
   spec_types.add(spec_type)
   to_elt_handlers[data_type] = to_elt
@@ -313,8 +314,8 @@ not_mapped = None
 class BatchTracer(Tracer):
   __slots__ = ['val', 'batch_dim', 'source_info']
 
-  def __init__(self, trace, val, batch_dim: Union[NotMapped, int, RaggedAxis],
-               source_info: Optional[source_info_util.SourceInfo] = None):
+  def __init__(self, trace, val, batch_dim: NotMapped | int | RaggedAxis,
+               source_info: source_info_util.SourceInfo | None = None):
     if config.jax_enable_checks:
       assert type(batch_dim) in (NotMapped, int, RaggedAxis)
       if type(batch_dim) is int:
@@ -605,7 +606,7 @@ def _main_trace_for_axis_names(main_trace: core.MainTrace,
 
 def batch(fun: lu.WrappedFun, axis_name: AxisName, axis_size,
           in_dims, out_dim_dests, main_type: type[BatchTrace] = BatchTrace,
-          spmd_axis_name: Optional[tuple[AxisName, ...]] = None
+          spmd_axis_name: tuple[AxisName, ...] | None = None
           ) -> lu.WrappedFun:
   # we split up _batch_inner and _batch_outer for the leak checker
   f = _batch_inner(fun, axis_size, out_dim_dests)
@@ -637,20 +638,20 @@ def _batch_inner(axis_size, out_dim_dests, main, in_dims, *in_vals):
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
 def vtile(f_flat: lu.WrappedFun,
-          in_axes_flat: tuple[Optional[int], ...],
-          out_axes_flat: tuple[Optional[int], ...],
-          tile_size: Optional[int],
+          in_axes_flat: tuple[int | None, ...],
+          out_axes_flat: tuple[int | None, ...],
+          tile_size: int | None,
           axis_name: AxisName,
           main_type: type[BatchTrace] = BatchTrace):
   @curry
-  def tile_axis(arg, axis: Optional[int], tile_size):
+  def tile_axis(arg, axis: int | None, tile_size):
     if axis is None:
       return arg
     shape = list(arg.shape)
     shape[axis:axis+1] = [tile_size, shape[axis] // tile_size]
     return arg.reshape(shape)
 
-  def untile_axis(out, axis: Optional[int]):
+  def untile_axis(out, axis: int | None):
     if axis is None:
       return out
     shape = list(out.shape)
@@ -753,11 +754,11 @@ def resolve_ragged_axes_against_inputs_outputs(in_vals, out_vals, dims):
 def batch_jaxpr2(
     closed_jaxpr: core.ClosedJaxpr,
     axis_size: core.AxisSize,
-    in_axes: tuple[Union[int, NotMapped, RaggedAxis], ...],
+    in_axes: tuple[int | NotMapped | RaggedAxis, ...],
     axis_name: AxisName,
     spmd_axis_name: AxisName,
     main_type: type[BatchTrace],
-  ) -> tuple[core.ClosedJaxpr, tuple[Union[int, NotMapped, RaggedAxis], ...]]:
+  ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped | RaggedAxis, ...]]:
   # This is only ever used in pjit.  The difference vs batch_jaxpr is that
   # batch_jaxpr2 lets the callee decide which outputs are batched and what
   # their batch axes are; whereas batch_jaxpr has to obey caller-imposed
@@ -770,11 +771,11 @@ def batch_jaxpr2(
 def _batch_jaxpr2(
     closed_jaxpr: core.ClosedJaxpr,
     axis_size: core.AxisSize,
-    in_axes: tuple[Union[int, NotMapped, RaggedAxis], ...],
+    in_axes: tuple[int | NotMapped | RaggedAxis, ...],
     axis_name: AxisName,
     spmd_axis_name: AxisName,
     main_type: type[BatchTrace],
-  ) -> tuple[core.ClosedJaxpr, tuple[Union[int, NotMapped], ...]]:
+  ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped, ...]]:
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, out_axes = _batch_jaxpr_inner(f, axis_size)
   f = _batch_jaxpr_outer(f, axis_name, spmd_axis_name, axis_size, in_axes,
@@ -1078,7 +1079,7 @@ def move_stacked_axis(operand, bdim, dst):
     result = moveaxis(operand, bdim.stacked_axis, dst)
     return result, bdim.move_stacked_axis(dst)
   else:
-    raise TypeError("Unrecognized batch dimension type {}".format(bdim))
+    raise TypeError(f"Unrecognized batch dimension type {bdim}")
 
 ### general utilities for manipulating axes on jaxpr types (not vmappables)
 

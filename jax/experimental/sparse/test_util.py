@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Sparse test utilities."""
+
+from collections.abc import Sequence
 import functools
-from typing import Any, Callable, Sequence, Union
+from typing import Any, Callable, Union
 
 import numpy as np
 

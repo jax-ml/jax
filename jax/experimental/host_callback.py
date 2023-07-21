@@ -495,13 +495,14 @@ Still to do:
 
 """
 import atexit
+from collections.abc import Sequence
 import functools
 import itertools
 import logging
 import math
 import threading
 import traceback
-from typing import Any, Callable, Optional, Sequence, cast
+from typing import Any, Callable, Optional, cast
 import warnings
 
 from jax._src import api

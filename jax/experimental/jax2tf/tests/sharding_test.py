@@ -18,12 +18,13 @@
   perftools/gputools/profiler/jfprof.sh jax/experimental/jax2tf/tests:sharding_test_tpu -- -c opt --test_filter=ShardingTest.test_shmap_all_to_all --test_arg=--vmodule=jax2tf=3 --
 
 """
+from collections.abc import Sequence
 import contextlib
 from functools import partial
 import logging
 import os
 import re
-from typing import Any, Sequence
+from typing import Any
 import unittest
 
 from absl.testing import absltest

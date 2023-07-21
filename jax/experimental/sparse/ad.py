@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 import itertools
-from typing import Any, Callable, Sequence, Union
+from typing import Any, Callable, Union
 
 import jax
 from jax._src import core

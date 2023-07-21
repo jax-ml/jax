@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+from collections.abc import Sequence
 import operator
-from typing import Optional, Sequence, Union
+from typing import Optional, Union
 import numpy as np
 
 from jax import dtypes

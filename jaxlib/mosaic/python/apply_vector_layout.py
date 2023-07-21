@@ -21,12 +21,13 @@ which should have been populated by an earlier inference pass.
 # mypy: ignore-errors
 import abc
 import collections
+from collections.abc import Sequence
 import dataclasses
 import enum
 import functools
 import math
 import re
-from typing import Any, Callable, Literal, Sequence, Union, overload
+from typing import Any, Callable, Literal, Union, overload
 
 from mlir import ir
 from mlir.dialects import arith

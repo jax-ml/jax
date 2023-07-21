@@ -14,13 +14,14 @@
 from __future__ import annotations
 
 from collections import namedtuple
+from collections.abc import Sequence, Hashable
 from contextlib import contextmanager, AbstractContextManager
 from functools import partial
 import inspect
 import itertools as it
 import operator as op
-from typing import (Any, Callable, NamedTuple, Optional, Sequence,
-                    Union, Hashable)
+from typing import (Any, Callable, NamedTuple, Optional,
+                    Union)
 from weakref import ref
 
 import numpy as np
@@ -60,7 +61,7 @@ ConstId = int
 
 def _update_annotation_known(
     f: lu.WrappedFun,
-    orig_type: Optional[InputType],
+    orig_type: InputType | None,
     in_knowns: list[bool]
   ) -> lu.WrappedFun:
   if orig_type is None: return f
@@ -103,7 +104,7 @@ class PartialVal(tuple):
   * `(<AbstractValue>, None)` indicates an unknown value characterized by an
     abstract value.
   """
-  def __new__(cls, xs: tuple[Optional[AbstractValue], core.Value]):
+  def __new__(cls, xs: tuple[AbstractValue | None, core.Value]):
     pv, const = xs
     if config.jax_enable_checks:
       # type checks
@@ -125,7 +126,7 @@ class PartialVal(tuple):
   def is_known(self) -> bool:
     return self[0] is None
 
-  def get_known(self) -> Optional[core.Value]:
+  def get_known(self) -> core.Value | None:
     """Get the known value, if known, else None."""
     return self[1] if self[0] is None else None
 
@@ -459,7 +460,7 @@ class JaxprTrace(Trace['JaxprTracer']):
       nonlocal out_axes_unknown
       out_axes_unknown, out_axes_known = partition_list(out_knowns, out_axes)
       return tuple(out_axes_known) + (0,) * len(jaxpr.constvars)
-    out_axes_unknown: Optional[list] = None
+    out_axes_unknown: list | None = None
 
     return out, (todo, out_axes_transform)
 
@@ -571,7 +572,7 @@ def partial_eval_wrapper_nounits(
 @lu.transformation_with_aux
 def trace_to_subjaxpr_nounits_dyn(
     main: core.MainTrace, in_knowns: Sequence[bool], in_type: InputType,
-    instantiate: Union[bool, Sequence[bool]],
+    instantiate: bool | Sequence[bool],
     *in_consts: Any):
   trace = main.with_cur_sublevel()
   in_avals, which_explicit = unzip2(in_type)
@@ -580,7 +581,7 @@ def trace_to_subjaxpr_nounits_dyn(
   # for all axis sizes, so that we can then use those tracers in the shapes of
   # avals for unknown inputs' tracers. We use ConstVar recipes for on-the-fly
   # type agreement checking via get_referent.
-  in_consts_full: list[Optional[JaxprTracer]] = [None] * len(in_type)
+  in_consts_full: list[JaxprTracer | None] = [None] * len(in_type)
   in_consts_iter, in_knowns_iter = iter(in_consts), iter(in_knowns)
   for idx, (aval, explicit) in enumerate(in_type):
     if explicit and next(in_knowns_iter):
@@ -646,7 +647,7 @@ def trace_to_subjaxpr_nounits_dyn(
   # Which residuals are just forwarded inputs? Check obj id, then prune.
   id_map = {id(c.recipe.val): i for i, c in enumerate(in_consts_full)  # type: ignore
             if c is not None}
-  fwds: list[Optional[int]] = [id_map.get(id(c)) for c in res]
+  fwds: list[int | None] = [id_map.get(id(c)) for c in res]
   res = tuple([c for c, fwd in zip(res, fwds) if fwd is None])
 
   del main, in_consts, trace, in_consts_iter, in_knowns_iter, in_consts_full, \
@@ -679,7 +680,7 @@ class JaxprTracer(Tracer):
   __slots__ = ['pval', 'recipe']
 
   def __init__(self, trace: JaxprTrace, pval: PartialVal,
-               recipe: Optional[JaxprTracerRecipe]):
+               recipe: JaxprTracerRecipe | None):
     assert isinstance(pval, PartialVal)
     pv, const = pval
     if isinstance(const, Tracer) and const._trace.level >= trace.level:
@@ -731,7 +732,7 @@ class JaxprTracer(Tracer):
 @profiler.annotate_function
 def trace_to_jaxpr(
     fun: lu.WrappedFun, pvals: Sequence[PartialVal],
-    instantiate: Union[bool, Sequence[bool]] = False,
+    instantiate: bool | Sequence[bool] = False,
   ) -> tuple[Jaxpr, list[PartialVal], list[core.Value]]:
   """
   Partially evaluate a function, building a jaxpr for un-evaluated computation.
@@ -768,7 +769,7 @@ def trace_to_jaxpr(
 @profiler.annotate_function
 def trace_to_jaxpr_nounits(
     fun: lu.WrappedFun, pvals: Sequence[PartialVal],
-    instantiate: Union[bool, Sequence[bool]] = False,
+    instantiate: bool | Sequence[bool] = False,
   ) -> tuple[Jaxpr, list[PartialVal], list[core.Value]]:
   current_name_stack = source_info_util.current_name_stack()
   with core.new_main(JaxprTrace, name_stack=current_name_stack) as main:
@@ -782,7 +783,7 @@ def trace_to_jaxpr_nounits(
 @lu.transformation
 def trace_to_subjaxpr_nounits(
     main: core.MainTrace,
-    instantiate: Union[bool, Sequence[bool]],
+    instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
   assert all([isinstance(pv, PartialVal) for pv in in_pvals]), in_pvals
   out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
@@ -817,7 +818,7 @@ def _trace_to_subjaxpr_nounits(main, instantiate, in_pvals):
 @lu.transformation
 def trace_to_subjaxpr_nounits_fwd(
     main: core.MainTrace,
-    instantiate: Union[bool, Sequence[bool]],
+    instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
   assert all([isinstance(pv, PartialVal) for pv in in_pvals]), in_pvals
   out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
@@ -827,7 +828,7 @@ def trace_to_subjaxpr_nounits_fwd(
   # Which out_consts (aka residuals) are just forwarded inputs? Check obj id.
   in_consts  = [pval.get_known()    for pval in in_pvals if     pval.is_known()]
   id_map = {id(c): i for i, c in enumerate(in_consts)}
-  fwds: list[Optional[int]] = [id_map.get(id(c)) for c in out_consts]
+  fwds: list[int | None] = [id_map.get(id(c)) for c in out_consts]
   pruned_consts = [c for c, fwd in zip(out_consts, fwds) if fwd is None]
 
   del out_tracers
@@ -903,7 +904,7 @@ def tracers_to_jaxpr(
   def get_atom(t: JaxprTracer) -> Atom:
     return t.recipe if type(t.recipe) is Literal else t_to_var[id(t)]
 
-  def newvar(t: Optional[JaxprTracer]) -> Var:
+  def newvar(t: JaxprTracer | None) -> Var:
     assert t is not None
     var = gensym(type_substitute(t.aval))
     var_ = t_to_var.setdefault(id(t), var)
@@ -1002,7 +1003,7 @@ def convert_envvars_to_constvars(jaxpr: Jaxpr, num_env_vars: int) -> Jaxpr:
 
 def partial_eval_jaxpr_nounits(
     jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
-    instantiate: Union[bool, Sequence[bool]],
+    instantiate: bool | Sequence[bool],
   ) -> tuple[ClosedJaxpr, ClosedJaxpr, list[bool], list[AbstractValue]]:
   """Unzip a jaxpr in two by data dependence into 'known' and 'unknown' parts.
 
@@ -1117,9 +1118,9 @@ def _partial_eval_jaxpr_nounits(jaxpr, in_unknowns, instantiate):
 def partial_eval_jaxpr_custom(
     jaxpr: Jaxpr,
     in_unknowns: Sequence[bool],
-    in_inst: Union[bool, Sequence[bool]],
-    ensure_out_unknowns: Union[bool, Sequence[bool]],
-    ensure_out_inst: Union[bool, Sequence[bool]],
+    in_inst: bool | Sequence[bool],
+    ensure_out_unknowns: bool | Sequence[bool],
+    ensure_out_inst: bool | Sequence[bool],
     saveable: Callable[..., bool],
   ) -> tuple[Jaxpr, Jaxpr, list[bool], list[bool], int]:
   if type(in_inst) is bool:
@@ -1141,9 +1142,9 @@ def partial_eval_jaxpr_custom(
 def partial_eval_jaxpr_stateful(
     jaxpr: Jaxpr,
     in_unknowns: Sequence[bool],
-    in_inst: Union[bool, Sequence[bool]],
-    ensure_out_unknowns: Union[bool, Sequence[bool]],
-    ensure_out_inst: Union[bool, Sequence[bool]],
+    in_inst: bool | Sequence[bool],
+    ensure_out_unknowns: bool | Sequence[bool],
+    ensure_out_inst: bool | Sequence[bool],
     saveable: Callable[..., bool],
   ) -> tuple[Jaxpr, Jaxpr, list[bool], list[bool], int, int]:
   if type(in_inst) is bool:
@@ -1368,7 +1369,7 @@ partial_eval_jaxpr_custom_rules[core.closed_call_p] = \
             lambda _, __, ___, ____, _____, x, y: (x, y))
 
 
-def _jaxpr_forwarding(jaxpr: Jaxpr) -> list[Optional[int]]:
+def _jaxpr_forwarding(jaxpr: Jaxpr) -> list[int | None]:
   # Compute which inputs are just forwarded to outputs.
   fwds: dict[Var, Var] = dict(zip(jaxpr.invars, jaxpr.invars))
   for eqn in jaxpr.eqns:
@@ -1385,7 +1386,7 @@ def _jaxpr_forwarding(jaxpr: Jaxpr) -> list[Optional[int]]:
 
 
 def dce_jaxpr(jaxpr: Jaxpr, used_outputs: Sequence[bool],
-              instantiate: Union[bool, Sequence[bool]] = False,
+              instantiate: bool | Sequence[bool] = False,
               ) -> tuple[Jaxpr, list[bool]]:
   if type(instantiate) is bool:
     instantiate = (instantiate,) * len(jaxpr.invars)
@@ -1393,7 +1394,7 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: Sequence[bool],
 
 
 def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
-                     instantiate: Union[bool, Sequence[bool]] = False,
+                     instantiate: bool | Sequence[bool] = False,
                      ) -> tuple[Jaxpr, list[bool], list[bool]]:
   jaxpr_ = convert_constvars_jaxpr(jaxpr)
   new_jaxpr_, used_inputs_ = dce_jaxpr(jaxpr_, used_outputs)
@@ -1458,7 +1459,7 @@ dce_rules: dict[Primitive, DCERule] = {}
 
 
 def dce_jaxpr_call_rule(used_outputs: list[bool], eqn: JaxprEqn
-                        ) -> tuple[list[bool], Optional[JaxprEqn]]:
+                        ) -> tuple[list[bool], JaxprEqn | None]:
   new_jaxpr, used_inputs = dce_jaxpr(eqn.params['call_jaxpr'], used_outputs)
   new_params = dict(eqn.params, call_jaxpr=new_jaxpr)
   update_params = call_param_updaters.get(eqn.primitive)
@@ -1617,7 +1618,7 @@ class JaxprStackFrame:
   eqns: list[JaxprEqn]
   invars: list[Var]
   effects: core.Effects
-  debug_info: Optional[DebugInfo]
+  debug_info: DebugInfo | None
 
   def __init__(self):
     self.gensym = core.gensym()
@@ -1743,7 +1744,7 @@ def _inline_literals(
   lits = {v: Literal(c, v.aval) for v, c, e in zip(jaxpr.constvars, constvals,
                                                    has_input_effect)
           if type(c) in core.literalable_types and not np.shape(c) and not e}
-  lit: Callable[[Var], Optional[Literal]] = lits.get
+  lit: Callable[[Var], Literal | None] = lits.get
   newname: Callable[[AbstractValue], Var] = core.gensym()
   newvars: dict[Var, Var] = {}
   newvar = lambda aval: newname(_substitute_vars_in_type(lits, newvars, aval))
@@ -2091,15 +2092,15 @@ def _jvp_jaxpr_zeros(in_zeros, zero_avals, *primal_tangent_avals):
 # api_util.py versions
 
 class DebugInfo(NamedTuple):
-  func_src_info: Optional[str]  # f'{fun.__name__} at {filename}:{lineno}'
-  signature: Optional[inspect.Signature]  # inspect.signature(fun)
-  in_tree: Optional[PyTreeDef]  # caller/constructor might not have this info
-  out_tree: Optional[Callable[[], PyTreeDef]]  # lazy, not avail at trace time
+  func_src_info: str | None  # f'{fun.__name__} at {filename}:{lineno}'
+  signature: inspect.Signature | None  # inspect.signature(fun)
+  in_tree: PyTreeDef | None  # caller/constructor might not have this info
+  out_tree: Callable[[], PyTreeDef] | None  # lazy, not avail at trace time
   has_kwargs: bool  # whether in_tree corresponds to (args, kwargs) or args
   traced_for: str  # "jit", "scan", "make_jaxpr", etc
 
-def debug_info(fn: Callable, in_tree: Optional[PyTreeDef],
-               out_tree_thunk: Optional[Callable[[], PyTreeDef]],
+def debug_info(fn: Callable, in_tree: PyTreeDef | None,
+               out_tree_thunk: Callable[[], PyTreeDef] | None,
                has_kwargs: bool, traced_for: str) -> DebugInfo:
   try: sig = inspect.signature(fn)
   except (ValueError, TypeError): sig = None
@@ -2112,13 +2113,13 @@ def debug_info_final(fn: lu.WrappedFun, traced_for: str) -> DebugInfo:
   in_tree, out_tree, has_kws = flattened_fun_in_tree(fn) or (None, None, False)
   return debug_info(fn.f, in_tree, out_tree, has_kws, traced_for)
 
-def arg_info_all(dbg: DebugInfo) -> Optional[list[tuple[str, KeyPath]]]:
+def arg_info_all(dbg: DebugInfo) -> list[tuple[str, KeyPath]] | None:
   ba = None if dbg.in_tree is None else sig_info(dbg)
   if ba is None: return None
   return [(name, key_path) for name, dummy_arg in ba.arguments.items()
           for key_path, _ in generate_key_paths(dummy_arg)]
 
-def sig_info(dbg: DebugInfo) -> Optional[inspect.BoundArguments]:
+def sig_info(dbg: DebugInfo) -> inspect.BoundArguments | None:
   if dbg.in_tree is None or dbg.signature is None: return None
   try:
     dummy_args = tree_unflatten(dbg.in_tree, [False] * dbg.in_tree.num_leaves)
@@ -2130,7 +2131,7 @@ def sig_info(dbg: DebugInfo) -> Optional[inspect.BoundArguments]:
   except (TypeError, ValueError):
     return None
 
-def result_info(dbg: DebugInfo) -> Optional[list[KeyPath]]:
+def result_info(dbg: DebugInfo) -> list[KeyPath] | None:
   if dbg.out_tree is None: return None
   try:
     num_leaves = dbg.out_tree().num_leaves
@@ -2145,9 +2146,9 @@ def result_info(dbg: DebugInfo) -> Optional[list[KeyPath]]:
 def trace_to_jaxpr_dynamic(
     fun: lu.WrappedFun,
     in_avals: Sequence[AbstractValue],
-    debug_info: Optional[DebugInfo] = None,
+    debug_info: DebugInfo | None = None,
     *,
-    keep_inputs: Optional[list[bool]] = None,
+    keep_inputs: list[bool] | None = None,
 ) -> tuple[Jaxpr, list[AbstractValue], list[Any]]:
   with core.new_main(DynamicJaxprTrace, dynamic=True) as main:  # type: ignore
     main.jaxpr_stack = ()  # type: ignore
@@ -2162,8 +2163,8 @@ def trace_to_subjaxpr_dynamic(
     main: core.MainTrace,
     in_avals: Sequence[AbstractValue],
     *,
-    keep_inputs: Optional[Sequence[bool]] = None,
-    debug_info: Optional[DebugInfo] = None,
+    keep_inputs: Sequence[bool] | None = None,
+    debug_info: DebugInfo | None = None,
 ) -> tuple[Jaxpr, list[AbstractValue], list[Any]]:
   keep_inputs = [True] * len(in_avals) if keep_inputs is None else keep_inputs
 
@@ -2183,7 +2184,7 @@ def trace_to_subjaxpr_dynamic(
 
 @profiler.annotate_function
 def trace_to_jaxpr_dynamic2(
-    fun: lu.WrappedFun, debug_info: Optional[DebugInfo] = None
+    fun: lu.WrappedFun, debug_info: DebugInfo | None = None
   ) -> tuple[Jaxpr, OutputType, list[Any]]:
   with core.new_main(DynamicJaxprTrace, dynamic=True) as main:  # type: ignore
     main.jaxpr_stack = ()  # type: ignore
@@ -2193,7 +2194,7 @@ def trace_to_jaxpr_dynamic2(
 
 def trace_to_subjaxpr_dynamic2(
     fun: lu.WrappedFun, main: core.MainTrace,
-    debug_info: Optional[DebugInfo] = None
+    debug_info: DebugInfo | None = None
 ) -> tuple[Jaxpr, OutputType, list[Any]]:
   in_avals, keep_inputs = unzip2(fun.in_type)
   frame = JaxprStackFrame()
@@ -2223,8 +2224,8 @@ def extend_jaxpr_stack(main, frame):
 def trace_to_jaxpr_final(
     fun: lu.WrappedFun,
     in_avals: Sequence[AbstractValue],
-    debug_info: Optional[DebugInfo] = None,
-    keep_inputs: Optional[Sequence[bool]] = None,
+    debug_info: DebugInfo | None = None,
+    keep_inputs: Sequence[bool] | None = None,
 ) -> tuple[Jaxpr, list[AbstractValue], list[Any]]:
   with core.new_base_main(DynamicJaxprTrace) as main:  # type: ignore
     main.jaxpr_stack = ()  # type: ignore
@@ -2237,7 +2238,7 @@ def trace_to_jaxpr_final(
 
 @profiler.annotate_function
 def trace_to_jaxpr_final2(
-    fun: lu.WrappedFun, debug_info: Optional[DebugInfo] = None
+    fun: lu.WrappedFun, debug_info: DebugInfo | None = None
   ) -> tuple[Jaxpr, OutputType, list[Any]]:
   with core.new_base_main(DynamicJaxprTrace) as main:  # type: ignore
     main.jaxpr_stack = ()  # type: ignore
@@ -2251,7 +2252,7 @@ AbstractedAxisName = Hashable
 AbstractedAxesSpec = Union[dict[int, AbstractedAxisName],
                            tuple[AbstractedAxisName, ...]]
 def infer_lambda_input_type(
-    axes_specs: Optional[Sequence[AbstractedAxesSpec]],
+    axes_specs: Sequence[AbstractedAxesSpec] | None,
     args: Sequence[Any]
   ) -> InputType:
   ndims = [getattr(get_aval(x), 'ndim', 0) for x in args]
@@ -2271,7 +2272,7 @@ def _spec_to_dict(spec: AbstractedAxesSpec) -> dict[int, AbstractedAxisName]:
     return spec
 
 def _canonicalize_specs(
-    ndims: Sequence[int], specs: Optional[Sequence[AbstractedAxesSpec]]
+    ndims: Sequence[int], specs: Sequence[AbstractedAxesSpec] | None
   ) -> list[dict[int, AbstractedAxisName]]:
   if specs is None:
     return [{}] * len(ndims)
@@ -2290,7 +2291,7 @@ def _complete_specs(
   # names (with one new name per unique Tracer object id).
 
   # Identify each user-supplied name in partial_specs with a size.
-  sizes: dict[AbstractedAxisName, Union[int, DynamicJaxprTracer]] = {}
+  sizes: dict[AbstractedAxisName, int | DynamicJaxprTracer] = {}
   for x, spec in zip(args, partial_specs):
     for i, name in spec.items():
       d = sizes.setdefault(name, x.shape[i])
@@ -2353,7 +2354,7 @@ def _arg_type(
   # Produce an AbstractValue by substituting DBIdxs for AbstractedAxisNames.
   aval = get_aval(x)  # aval.shape could contain Tracers
   if not spec: return core.raise_to_shaped(aval)
-  shape: list[Union[int, DBIdx]] = [idxs[spec[i]] if i in spec else d
+  shape: list[int | DBIdx] = [idxs[spec[i]] if i in spec else d
                                     for i, d in enumerate(aval.shape)]
   assert not any(isinstance(d, Tracer) for d in shape)
   return DShapedArray(tuple(shape), aval.dtype, False)
@@ -2478,12 +2479,12 @@ def pad_jaxpr(jaxpr: Jaxpr, consts: Sequence[Const]
   return padded_jaxpr, padded_consts
 
 class BoundedAxisSize(NamedTuple):
-  val: Union[int, DynamicJaxprTracer]
+  val: int | DynamicJaxprTracer
   bound: int
 
 def _eval_jaxpr_padded(
     jaxpr: Jaxpr, consts: list[Const], *args: DynamicJaxprTracer
-  ) -> list[Union[Const, DynamicJaxprTracer]]:
+  ) -> list[Const | DynamicJaxprTracer]:
   env: dict[Var, Val] = {}
 
   def read(x):
@@ -2521,7 +2522,7 @@ def _substitute_axis_sizes(env: dict, aval: AbstractValue) -> AbstractValue:
   else:
     return aval
 
-def _is_bint_axis_size(d: Union[int, core.DArray, core.Var]) -> bool:
+def _is_bint_axis_size(d: int | core.DArray | core.Var) -> bool:
   if isinstance(d, core.DArray):
     assert not d.shape                 # pytype: disable=attribute-error
     return type(d.dtype) is core.bint  # pytype: disable=attribute-error
@@ -2557,7 +2558,7 @@ def call_padding_rule(prim, in_avals, out_avals, *args, call_jaxpr, **params):
 # TODO(mattjj): the following are deprecated; update callers to _nounits version
 # See https://github.com/google/jax/pull/9498
 @lu.transformation
-def trace_to_subjaxpr(main: core.MainTrace, instantiate: Union[bool, Sequence[bool]],
+def trace_to_subjaxpr(main: core.MainTrace, instantiate: bool | Sequence[bool],
                       pvals: Sequence[PartialVal]):
   assert all([isinstance(pv, PartialVal) for pv in pvals]), pvals
   trace = main.with_cur_sublevel()

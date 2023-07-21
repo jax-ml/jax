@@ -18,11 +18,12 @@ moving parts, at the expense of code size), and another using Flax.
 
 See README.md for how these are used.
 """
+from collections.abc import Sequence
 import functools
 import logging
 import re
 import time
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Optional
 from absl import flags
 
 import flax  # type: ignore[import]

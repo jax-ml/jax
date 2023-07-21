@@ -14,9 +14,9 @@
 
 """Tests of the JAX public package structure"""
 
+from collections.abc import Sequence
 import importlib
 import types
-from typing import Sequence
 
 from absl.testing import absltest, parameterized
 

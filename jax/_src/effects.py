@@ -13,7 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 class Effect:
   """A generic side-effect."""
@@ -29,7 +30,7 @@ class JaxprInputEffect(Effect):
   def __init__(self, input_index: Any):
     self.input_index = input_index
 
-  def replace(self, *, input_index: Optional[Any] = None):
+  def replace(self, *, input_index: Any | None = None):
     if input_index is None:
       input_index = self.input_index
     return self.__class__(input_index)

@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Generator, Iterator
 import functools
 import itertools as it
 import math
 import os
 import re
 from itertools import product, permutations
-from typing import Generator, Iterator, Union, Optional
+from typing import Union, Optional
 from unittest import SkipTest
 
 import numpy as np

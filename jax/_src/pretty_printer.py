@@ -26,10 +26,12 @@
 #
 
 import abc
+from collections.abc import Sequence
 import enum
-import sys
 from functools import partial
-from typing import NamedTuple, Optional, Sequence, Union
+import sys
+from typing import NamedTuple, Optional, Union
+
 from jax._src.config import config
 
 try:

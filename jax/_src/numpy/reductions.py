@@ -13,11 +13,11 @@
 # limitations under the License.
 
 import builtins
+from collections.abc import Sequence
 from functools import partial
 import math
 import operator
-from typing import (
-    overload, Any, Callable, Literal, Optional, Protocol, Sequence, Union)
+from typing import overload, Any, Callable, Literal, Optional, Protocol, Union
 import warnings
 
 import numpy as np

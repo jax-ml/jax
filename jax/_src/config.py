@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Hashable, Iterator
 import contextlib
 import functools
 import itertools
@@ -19,7 +20,7 @@ import logging
 import os
 import sys
 import threading
-from typing import Any, Callable, Hashable, NamedTuple, Iterator, Optional
+from typing import Any, Callable, NamedTuple, Optional
 
 from jax._src import lib
 from jax._src.lib import jax_jit

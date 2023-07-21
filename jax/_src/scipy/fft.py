@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from functools import partial
-from typing import Optional, Sequence
 import math
+from typing import Optional
 
 import scipy.fft as osp_fft
 from jax import lax

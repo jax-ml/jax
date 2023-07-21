@@ -14,8 +14,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 import functools
-from typing import Mapping, Optional, Sequence
 
 from jax._src import util
 from jax._src import xla_bridge as xb
@@ -29,7 +29,7 @@ XLADeviceAssignment = Sequence[Device]
 
 @functools.lru_cache(maxsize=4096)
 def _addressable_devices_indices_map(
-    sharding: Sharding, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+    sharding: Sharding, global_shape: Shape) -> Mapping[Device, Index | None]:
   if sharding.is_fully_addressable:
     return sharding.devices_indices_map(global_shape)
   return {d: ind for d, ind in sharding.devices_indices_map(global_shape).items()
@@ -53,7 +53,7 @@ class Sharding:
     raise NotImplementedError('Subclasses should implement this method.')
 
   def devices_indices_map(
-      self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+      self, global_shape: Shape) -> Mapping[Device, Index | None]:
     """A global mapping from device to the slice of the global data it contains.
 
     The devices in this mapping are global devices i.e. includes
@@ -86,7 +86,7 @@ class Sharding:
     raise NotImplementedError('Subclasses should implement this method.')
 
   @property
-  def memory_kind(self) -> Optional[str]:
+  def memory_kind(self) -> str | None:
     """Returns the memory kind of the sharding."""
     raise NotImplementedError('Subclasses should implement this method.')
 
@@ -110,7 +110,7 @@ class Sharding:
     return len(self.device_set) == len(self.addressable_devices)  # type: ignore
 
   def addressable_devices_indices_map(
-      self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+      self, global_shape: Shape) -> Mapping[Device, Index | None]:
     """A mapping from addressable device to the slice of global data it contains.
 
     ``addressable_devices_indices_map`` contains that part of

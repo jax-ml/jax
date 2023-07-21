@@ -2661,7 +2661,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jax.vmap(jax.jacrev(lambda x: cond_id(cond_id(x))))(jnp.ones(1))
 
   @parameterized.named_parameters(
-      {"testcase_name": "impl={}".format(scan_name), "scan": scan_impl}
+      {"testcase_name": f"impl={scan_name}", "scan": scan_impl}
       for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
   def test_scan_hoisting_consts(self, scan):
     A = jnp.arange(4.).reshape(2, 2)

@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+from collections.abc import Sequence
 import functools
 import itertools
 import operator
 import textwrap
-from typing import Callable, Sequence
+from typing import Callable
 
 import scipy.ndimage
 

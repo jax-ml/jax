@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for the loop primitives."""
+
+from collections.abc import Sequence
 from functools import partial
 import inspect
 import itertools
 import operator
-from typing import Any, Callable, Optional, Sequence, TypeVar
+from typing import Any, Callable, Optional, TypeVar
 
 import jax
 import weakref

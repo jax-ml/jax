@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterable, Iterator, Sequence
 import functools
 from functools import partial
 import itertools as it
 import logging
 import operator
-from typing import (Any, Callable, Generic, Iterable, Iterator, Optional,
-                    Sequence, TypeVar, overload, TYPE_CHECKING, cast)
+from typing import (Any, Callable, Generic, Optional, TypeVar, overload, TYPE_CHECKING, cast)
 import weakref
 
 import numpy as np

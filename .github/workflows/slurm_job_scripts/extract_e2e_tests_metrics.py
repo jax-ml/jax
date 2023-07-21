@@ -27,7 +27,7 @@ def main(logfile: str, outmd: str, outjson: str, name: str):
     print(f"Extracting content of {logfile}")
     print(f"and writing to {outmd} and {outjson}")
 
-    with open(logfile, 'r') as fp:
+    with open(logfile) as fp:
         lines = fp.read()
         stats = re.findall(stats_pat,lines)
 

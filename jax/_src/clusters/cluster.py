@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 import logging
-from typing import Optional, Sequence
+from typing import Optional
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 
 logger = logging.getLogger(__name__)

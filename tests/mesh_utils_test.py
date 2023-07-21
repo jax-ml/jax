@@ -15,8 +15,8 @@
 """Tests for mesh utils."""
 
 import collections
+from collections.abc import Sequence
 import dataclasses
-from typing import Sequence
 
 import numpy as np
 

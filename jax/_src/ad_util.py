@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import types
-from typing import Any, Callable, TypeVar, Union, cast
+from typing import Any, Callable, TypeVar, cast
 
 from jax._src import core
 from jax._src import traceback_util
@@ -48,7 +48,7 @@ def add_abstract(xs, ys):
 
 jaxval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 
-def instantiate(z: Union[Zero, Array]) -> Array:
+def instantiate(z: Zero | Array) -> Array:
   if type(z) is Zero:
     return zeros_like_aval(z.aval)
   return cast(Array, z)
@@ -122,9 +122,9 @@ class SymbolicZero:
 JaxTypeOrTracer = Any
 
 def replace_internal_symbolic_zeros(
-    x: Union[JaxTypeOrTracer, Zero]) -> Union[JaxTypeOrTracer, SymbolicZero]:
+    x: JaxTypeOrTracer | Zero) -> JaxTypeOrTracer | SymbolicZero:
   return SymbolicZero(x.aval) if type(x) is Zero else x
 
 def replace_rule_output_symbolic_zeros(
-    x: Union[JaxTypeOrTracer, SymbolicZero]) -> Union[JaxTypeOrTracer, Zero]:
+    x: JaxTypeOrTracer | SymbolicZero) -> JaxTypeOrTracer | Zero:
   return Zero(x.aval) if type(x) is SymbolicZero else x

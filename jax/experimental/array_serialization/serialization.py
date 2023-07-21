@@ -15,6 +15,7 @@
 
 import abc
 import asyncio
+from collections.abc import Awaitable, Sequence
 import itertools
 import logging
 from functools import partial
@@ -22,7 +23,7 @@ import os
 import re
 import time
 import threading
-from typing import Awaitable, Any, Callable, Optional, Sequence, Union
+from typing import Any, Callable, Optional, Union
 
 import jax
 from jax._src import distributed

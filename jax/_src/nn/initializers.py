@@ -17,8 +17,9 @@ Common neural network layer initializers, consistent with definitions
 used in Keras and Sonnet.
 """
 
+from collections.abc import Sequence
 import math
-from typing import Any, Literal, Protocol, Sequence, Union
+from typing import Any, Literal, Protocol, Union
 
 import numpy as np
 

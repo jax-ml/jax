@@ -16,13 +16,13 @@
 from __future__ import annotations
 
 import atexit
+from collections.abc import Iterator, Sequence
 import contextlib
 import dataclasses
 from functools import partial
 import itertools
 import time
-from typing import (Any, Callable, Iterator, Optional, Union, NamedTuple,
-                    Sequence)
+from typing import (Any, Callable, Optional, NamedTuple)
 import logging
 import os
 import re
@@ -111,7 +111,7 @@ def arg_spec(x: Any) -> ArgSpec:
 
 @dataclasses.dataclass(frozen=True)
 class OrigShardings:
-  shardings: Sequence[Optional[GSPMDSharding]]
+  shardings: Sequence[GSPMDSharding | None]
 
   def __hash__(self):
     return hash(tuple(s for s in self.shardings))
@@ -230,7 +230,7 @@ def xla_primitive_callable(prim, in_avals, orig_in_shardings, **params):
 
 
 def sharded_lowering(fun, name, donated_invars, keep_unused, inline,
-                     in_avals, in_shardings, lowering_platform: Optional[str]):
+                     in_avals, in_shardings, lowering_platform: str | None):
   if isinstance(in_shardings, OrigShardings):
     in_shardings = in_shardings.shardings
 
@@ -260,7 +260,7 @@ def is_single_device_sharding(sharding) -> bool:
 
 
 @contextlib.contextmanager
-def log_elapsed_time(fmt: str, fun_name: str, event: Optional[str] = None):
+def log_elapsed_time(fmt: str, fun_name: str, event: str | None = None):
   if _on_exit:
     yield
   else:
@@ -379,7 +379,7 @@ def _prune_unused_inputs(
 # We can optionally set a Jaxpr rewriter that can be applied just before
 # compilation. This mechanism is used for compiling id_tap, we can
 # remove it once we bring the id_tap implementation into the core.
-outfeed_rewriter: Optional[Callable[[core.Jaxpr], core.Jaxpr]] = None
+outfeed_rewriter: Callable[[core.Jaxpr], core.Jaxpr] | None = None
 def apply_outfeed_rewriter(jaxpr: core.Jaxpr) -> core.Jaxpr:
   if outfeed_rewriter is not None:
     return outfeed_rewriter(jaxpr)
@@ -519,7 +519,7 @@ def compile_or_get_cached(backend, computation: ir.Module, devices: np.ndarray,
 
 def _cache_read(
     module_name: str, cache_key: str, compile_options, backend
-) -> tuple[Optional[xc.LoadedExecutable], Optional[int]]:
+) -> tuple[xc.LoadedExecutable | None, int | None]:
   """Looks up the `computation` and it's compilation time in the persistent
   compilation cache repository.
   """
@@ -643,8 +643,8 @@ def _mcjax_reshard(x, target_sharding):
 
 def _device_put_impl(
     x,
-    device: Optional[Union[Device, Sharding]] = None,
-    src: Optional[Union[Device, Sharding]] = None):
+    device: Device | Sharding | None = None,
+    src: Device | Sharding | None = None):
   from jax._src import array
   try:
     aval = xla.abstractify(x)

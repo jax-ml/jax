@@ -207,17 +207,17 @@ def reached_preemption_sync_point(step_id: int) -> bool:
   return sync_manager.reached_sync_point(step_id)
 
 
-@lru_cache()
+@lru_cache
 def _flatten_pspecs(name, in_tree, pspecs_thunk):
   return pjit_lib.flatten_axis_resources(
       name, in_tree, pspecs_thunk(), tupled_args=True)
 
-@lru_cache()
+@lru_cache
 def _local_to_global_aval(local_aval, mesh, pspec):
   return pxla.mesh_local_to_global(mesh, pxla.get_array_mapping(pspec),
                                    local_aval)
 
-@lru_cache()
+@lru_cache
 def _global_to_local_aval(global_aval, mesh, pspec):
   return pxla.mesh_global_to_local(mesh, pxla.get_array_mapping(pspec),
                                    global_aval)

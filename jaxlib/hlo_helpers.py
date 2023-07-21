@@ -13,8 +13,10 @@
 # limitations under the License.
 
 """A small libary of helpers for use in jaxlib to build MLIR operations."""
+
+from collections.abc import Sequence
 from functools import partial
-from typing import Callable, Optional, Sequence, Union
+from typing import Callable, Optional, Union
 
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo

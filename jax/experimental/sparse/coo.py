@@ -15,9 +15,10 @@
 """COO (coordinate format) matrix object and associated primitives."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import partial
 import operator
-from typing import Any, NamedTuple, Optional, Sequence
+from typing import Any, NamedTuple
 import warnings
 
 import numpy as np
@@ -81,7 +82,7 @@ class COO(JAXSparse):
     super().__init__(args, shape=shape)
 
   @classmethod
-  def fromdense(cls, mat: Array, *, nse: Optional[int] = None, index_dtype: DTypeLike = np.int32) -> COO:
+  def fromdense(cls, mat: Array, *, nse: int | None = None, index_dtype: DTypeLike = np.int32) -> COO:
     return coo_fromdense(mat, nse=nse, index_dtype=index_dtype)
 
   def _sort_indices(self) -> COO:
@@ -98,7 +99,7 @@ class COO(JAXSparse):
                           rows_sorted=True)
 
   @classmethod
-  def _empty(cls, shape: Sequence[int], *, dtype: Optional[DTypeLike] = None,
+  def _empty(cls, shape: Sequence[int], *, dtype: DTypeLike | None = None,
              index_dtype: DTypeLike = 'int32') -> COO:
     """Create an empty COO instance. Public method is sparse.empty()."""
     shape = tuple(shape)
@@ -110,7 +111,7 @@ class COO(JAXSparse):
                cols_sorted=True)
 
   @classmethod
-  def _eye(cls, N: int, M: int, k: int, *, dtype: Optional[DTypeLike] = None,
+  def _eye(cls, N: int, M: int, k: int, *, dtype: DTypeLike | None = None,
            index_dtype: DTypeLike = 'int32') -> COO:
     if k > 0:
       diag_size = min(N, M - k)
@@ -132,7 +133,7 @@ class COO(JAXSparse):
   def todense(self) -> Array:
     return coo_todense(self)
 
-  def transpose(self, axes: Optional[tuple[int, ...]] = None) -> COO:
+  def transpose(self, axes: tuple[int, ...] | None = None) -> COO:
     if axes is not None:
       raise NotImplementedError("axes argument to transpose()")
     return COO((self.data, self.col, self.row), shape=self.shape[::-1],
@@ -268,7 +269,7 @@ if gpu_sparse.rocm_is_supported:
 coo_fromdense_p = core.Primitive('coo_fromdense')
 coo_fromdense_p.multiple_results = True
 
-def coo_fromdense(mat: Array, *, nse: Optional[int] = None, index_dtype: DTypeLike = jnp.int32) -> COO:
+def coo_fromdense(mat: Array, *, nse: int | None = None, index_dtype: DTypeLike = jnp.int32) -> COO:
   """Create a COO-format sparse matrix from a dense matrix.
 
   Args:

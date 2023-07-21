@@ -139,7 +139,7 @@ class FramePreview(colab_lib.DynamicDOMElement):
     if inspect.getmodulename(filename):
       if filename not in self._file_cache:
         try:
-          with open(filename, "r") as fp:
+          with open(filename) as fp:
             self._file_cache[filename] = fp.read()
           source = self._file_cache[filename]
           highlight = lineno

@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import collections
+from collections.abc import Iterator, Sequence
 import dataclasses
 import functools
 from functools import partial
@@ -24,8 +25,7 @@ import itertools
 import operator
 import re
 import typing
-from typing import (Any, Callable, Iterator, NamedTuple, Optional,
-                    Protocol, Sequence, Union)
+from typing import (Any, Callable, NamedTuple, Protocol, Union)
 import warnings
 
 from jax._src import ad_util
@@ -83,7 +83,7 @@ def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
 def i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
 def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
 
-def shape_tensor(sizes: Sequence[Union[int, ir.RankedTensorType]]
+def shape_tensor(sizes: Sequence[int | ir.RankedTensorType]
                  ) -> ir.RankedTensorType:
   int1d = aval_to_ir_type(core.ShapedArray((1,), np.int32))
   i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
@@ -143,7 +143,7 @@ if dtypes.int4 is not None:
   })
 
 
-def dtype_to_ir_type(dtype: Union[core.bint, np.dtype, np.generic]) -> ir.Type:
+def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   if isinstance(dtype, core.bint):
     # TODO Support different-size underlying dtypes to take advantage of the
     # bound for packing?
@@ -157,7 +157,7 @@ def dtype_to_ir_type(dtype: Union[core.bint, np.dtype, np.generic]) -> ir.Type:
         f"No dtype_to_ir_type handler for dtype: {dtype}") from err
   return ir_type_factory()
 
-def _array_ir_types(aval: Union[core.ShapedArray, core.DShapedArray]
+def _array_ir_types(aval: core.ShapedArray | core.DShapedArray
                     ) -> Sequence[ir.Type]:
   aval = core.physical_aval(aval)  # type: ignore
   if not core.is_constant_shape(aval.shape):
@@ -422,7 +422,7 @@ class ModuleContext:
   module: ir.Module
   ip: ir.InsertionPoint
   symbol_table: ir.SymbolTable
-  backend_or_name: Optional[Union[str, xb.XlaBackend]]
+  backend_or_name: str | xb.XlaBackend | None
   platform: str
   axis_context: AxisContext
   name_stack: source_info_util.NameStack
@@ -439,7 +439,7 @@ class ModuleContext:
   # A mapping between primitives and user-defined LoweringRules.
   # When lowering a primitive, give priorioty to the rule in this map over
   # existing Jax rules.
-  override_lowering_rules: Optional[tuple[tuple[core.Primitive, LoweringRule]]]
+  override_lowering_rules: tuple[tuple[core.Primitive, LoweringRule]] | None
 
   @property
   def axis_env(self) -> sharding_impls.AxisEnv:
@@ -447,23 +447,23 @@ class ModuleContext:
 
   def __init__(
       self,
-      backend_or_name: Optional[Union[str, xb.XlaBackend]],
+      backend_or_name: str | xb.XlaBackend | None,
       platform: str,
       axis_context: AxisContext,
       name_stack: source_info_util.NameStack,
       keepalives: list[Any],
       channel_iterator: Iterator[int],
       host_callbacks: list[Any],
-      context: Optional[ir.Context] = None,
-      module: Optional[ir.Module] = None,
-      ip: Optional[ir.InsertionPoint] = None,
-      symbol_table: Optional[ir.SymbolTable] = None,
-      cached_primitive_lowerings: Optional[dict[Any,
-                                                func_dialect.FuncOp]] = None,
-      cached_call_jaxpr_lowerings: Optional[dict[Any,
-                                                 func_dialect.FuncOp]] = None,
-      override_lowering_rules: Optional[
-          tuple[tuple[core.Primitive, LoweringRule]]] = None,
+      context: ir.Context | None = None,
+      module: ir.Module | None = None,
+      ip: ir.InsertionPoint | None = None,
+      symbol_table: ir.SymbolTable | None = None,
+      cached_primitive_lowerings: None | (dict[Any,
+                                                func_dialect.FuncOp]) = None,
+      cached_call_jaxpr_lowerings: None | (dict[Any,
+                                                 func_dialect.FuncOp]) = None,
+      override_lowering_rules: None | (
+          tuple[tuple[core.Primitive, LoweringRule]]) = None,
       shape_poly_state = None):
     assert platform is not None
     self.context = context or make_ir_context()
@@ -507,12 +507,12 @@ class ModuleContext:
 class LoweringRuleContext:
   """Per-rule context information for MLIR lowering."""
   module_context: ModuleContext
-  primitive: Optional[core.Primitive]
+  primitive: core.Primitive | None
   avals_in: Sequence[core.AbstractValue]
   avals_out: Any  # Usually Sequence[core.AbstractValue], but sometimes None.
   tokens_in: TokenSet
-  tokens_out: Optional[TokenSet]  # Mutable store for output containers
-  axis_size_env: Optional[dict[core.Var, ir.Value]] = None  # Dynamic axis sizes
+  tokens_out: TokenSet | None  # Mutable store for output containers
+  axis_size_env: dict[core.Var, ir.Value] | None = None  # Dynamic axis sizes
   dim_var_values: Sequence[ir.Value] = ()  # The values for the dimension variables
                                            # in same order as module_context.shape_poly_state.dim_vars
 
@@ -526,8 +526,8 @@ class LoweringRuleContext:
 if not MYPY:
   class LoweringRule(Protocol):
     def __call__(self, ctx: LoweringRuleContext,
-                 *args: Union[ir.Value, Sequence[ir.Value]],
-                 **kw) -> Sequence[Union[ir.Value, Sequence[ir.Value]]]:
+                 *args: ir.Value | Sequence[ir.Value],
+                 **kw) -> Sequence[ir.Value | Sequence[ir.Value]]:
       """Converts a JAX primitive invocation into MLIR."""
 else:
   LoweringRule = Any
@@ -537,7 +537,7 @@ _platform_specific_lowerings: dict[str, dict[core.Primitive, LoweringRule]]
 _platform_specific_lowerings = collections.defaultdict(dict)
 
 def register_lowering(prim: core.Primitive, rule: LoweringRule,
-                      platform: Optional[str] = None):
+                      platform: str | None = None):
   if platform is None:
     _lowerings[prim] = rule
   else:
@@ -551,20 +551,20 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
 
 
 def _unwrap_singleton_ir_values(x): return x[0] if len(x) == 1 else x
-def wrap_singleton_ir_values(x: Union[ir.Value, Sequence[ir.Value]]
+def wrap_singleton_ir_values(x: ir.Value | Sequence[ir.Value]
                              ) -> Sequence[ir.Value]:
   """Adds a consistent tuples to a mixture of tupled and untuple values."""
   return (x,) if isinstance(x, ir.Value) else tuple(x)
 
 def flatten_lowering_ir_args(
-    xs: Sequence[Union[ir.Value, Sequence[ir.Value]]]
+    xs: Sequence[ir.Value | Sequence[ir.Value]]
 ) -> Sequence[Sequence[ir.Value]]:
   return util.flatten(map(wrap_singleton_ir_values, xs))
 
 _module_name_regex = re.compile(r"[^\w.-]")
 
 def sharded_aval(aval: core.AbstractValue,
-                 sharding: Optional[XLACompatibleSharding]) -> core.AbstractValue:
+                 sharding: XLACompatibleSharding | None) -> core.AbstractValue:
   """Returns the new aval sharded based on sharding proto."""
   if sharding is None:
     return aval
@@ -576,7 +576,7 @@ def sharded_aval(aval: core.AbstractValue,
 
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,
-                       shape: core.Shape) -> tuple[Union[int, Value], ...]:
+                       shape: core.Shape) -> tuple[int | Value, ...]:
   if config.jax_dynamic_shapes:
     return tuple(ctx.axis_size_env.get(d, d) for d in shape)  # type: ignore
   else:
@@ -594,7 +594,7 @@ def eval_dynamic_shape(ctx: LoweringRuleContext,
 def eval_dynamic_shape_as_vals(ctx: LoweringRuleContext,
                                shape: core.Shape) -> tuple[Value, ...]:
   """Evaluates the dynamic shapes as int32 values."""
-  def convert_dim(d: Union[int, Value]):
+  def convert_dim(d: int | Value):
     if type(d) is int:
       return ir_constant(np.array(d, dtype=np.int32))
     else:
@@ -608,9 +608,9 @@ def eval_dynamic_shape_as_vals(ctx: LoweringRuleContext,
 
 def eval_dynamic_shape_as_ivals(
     ctx: LoweringRuleContext, shape: core.Shape
-    ) -> tuple[Union[int, Value], ...]:
+    ) -> tuple[int | Value, ...]:
   """Evaluates the dynamic shapes as int or ir.int32 values."""
-  def convert_dim(d: Union[int, Value]) -> Union[int, ir.Value]:
+  def convert_dim(d: int | Value) -> int | ir.Value:
     if type(d) is int:
       return d
     else:
@@ -628,7 +628,7 @@ def eval_dynamic_shape_as_tensor(ctx: LoweringRuleContext,
 
 class LoweringResult(NamedTuple):
   module: ir.Module
-  keepalive: Optional[Any]
+  keepalive: Any | None
   host_callbacks: list[Any]
   shape_poly_state: ShapePolyLoweringState
 
@@ -637,8 +637,8 @@ _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
 
 
 def _to_logical_op_sharding(
-    aval: core.AbstractValue, sharding: Optional[XLACompatibleSharding],
-) -> Optional[xc.HloSharding]:
+    aval: core.AbstractValue, sharding: XLACompatibleSharding | None,
+) -> xc.HloSharding | None:
   if sharding is None:
     return None
   assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
@@ -650,20 +650,20 @@ def lower_jaxpr_to_module(
     module_name: str,
     jaxpr: core.ClosedJaxpr,
     ordered_effects: list[core.Effect],
-    backend_or_name: Optional[Union[str, xb.XlaBackend]],
+    backend_or_name: str | xb.XlaBackend | None,
     platform: str,
     axis_context: AxisContext,
     name_stack: source_info_util.NameStack,
     donated_args: Sequence[bool],
-    replicated_args: Optional[Sequence[bool]] = None,
-    arg_shardings: Optional[Sequence[Optional[XLACompatibleSharding]]] = None,
-    result_shardings: Optional[Sequence[Optional[XLACompatibleSharding]]] = None,
-    arg_names: Optional[Sequence[Optional[str]]] = None,
-    result_names: Optional[Sequence[Optional[str]]] = None,
+    replicated_args: Sequence[bool] | None = None,
+    arg_shardings: Sequence[XLACompatibleSharding | None] | None = None,
+    result_shardings: Sequence[XLACompatibleSharding | None] | None = None,
+    arg_names: Sequence[str | None] | None = None,
+    result_names: Sequence[str | None] | None = None,
     num_replicas: int = 1,
     num_partitions: int = 1,
-    override_lowering_rules: Optional[
-        tuple[tuple[core.Primitive, LoweringRule]]] = None,
+    override_lowering_rules: None | (
+        tuple[tuple[core.Primitive, LoweringRule]]) = None,
 ) -> LoweringResult:
   """Lowers a top-level jaxpr to an MLIR module.
 
@@ -850,15 +850,15 @@ def lower_jaxpr_to_fun(
     create_tokens: bool = False,
     public: bool = False,
     replace_tokens_with_dummy: bool = False,
-    replicated_args: Optional[Sequence[bool]] = None,
-    arg_shardings: Optional[Sequence[Optional[xc.HloSharding]]] = None,
-    result_shardings: Optional[Sequence[Optional[xc.HloSharding]]] = None,
+    replicated_args: Sequence[bool] | None = None,
+    arg_shardings: Sequence[xc.HloSharding | None] | None = None,
+    result_shardings: Sequence[xc.HloSharding | None] | None = None,
     use_sharding_annotations: bool = True,
-    input_output_aliases: Optional[Sequence[Optional[int]]] = None,
+    input_output_aliases: Sequence[int | None] | None = None,
     num_output_tokens: int = 0,
     api_name: str = "jit",
-    arg_names: Optional[Sequence[Optional[str]]] = None,
-    result_names: Optional[Sequence[Optional[str]]] = None,
+    arg_names: Sequence[str | None] | None = None,
+    result_names: Sequence[str | None] | None = None,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -982,7 +982,7 @@ def lower_jaxpr_to_fun(
     if input_output_aliases is not None:
       output_ids = util.unflatten(list(range(len(flat_output_types))),
                                   map(len, output_types))
-      aliases: list[Optional[int]] = []
+      aliases: list[int | None] = []
       for types, alias in zip(input_types, input_output_aliases):
         if alias is None:
           aliases.extend([None] * len(types))
@@ -1093,8 +1093,8 @@ def lower_jaxpr_to_fun(
 
 
 def _to_physical_op_sharding(
-    aval: Optional[core.AbstractValue], sharding: Optional[xc.HloSharding]
-) -> Optional[xc.OpSharding]:
+    aval: core.AbstractValue | None, sharding: xc.HloSharding | None
+) -> xc.OpSharding | None:
   if (isinstance(aval, core.ShapedArray) and dtypes.is_opaque_dtype(aval.dtype)
       and sharding is not None):
     return aval.dtype._rules.physical_hlo_sharding(aval, sharding).to_proto()
@@ -1167,7 +1167,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     assert node is not None
     env[v] = tuple(node)
 
-  def get_lowering(primitive: core.Primitive) -> Optional[LoweringRule]:
+  def get_lowering(primitive: core.Primitive) -> LoweringRule | None:
     if ctx.override_lowering_rules is None:
       return None
     for p, rule in ctx.override_lowering_rules:
@@ -1533,7 +1533,7 @@ register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 register_lowering(ad_util.stop_gradient_p, lambda ctx, x: [x])
 
 
-def compare_hlo(x, y, direction: str, comparison_type: Optional[str] = None):
+def compare_hlo(x, y, direction: str, comparison_type: str | None = None):
   """Creates CompareOp."""
   if comparison_type is None:
     elem_type = ir.RankedTensorType(x.type).element_type
@@ -1591,7 +1591,7 @@ def _wrap_with_spmd_op(name: str,
                        x: ir.Value,
                        aval_out: core.AbstractValue,
                        sharding_proto: xc.OpSharding,
-                       unspecified_dims: Optional[set[int]] = None):
+                       unspecified_dims: set[int] | None = None):
   # unspecified_dims indicate dimensions whose shardings are not specified and
   # XLA sharding propagation can change them.
   if unspecified_dims:
@@ -1809,7 +1809,7 @@ def _dtype_to_xla_type_string(dtype: np.dtype) -> str:
 
 def send_to_host(channel: int, token: hlo.TokenType, operand: Any,
                  aval: core.ShapedArray, name: str, *,
-                 sharding: Optional[xc.OpSharding] = None) -> ir.Value:
+                 sharding: xc.OpSharding | None = None) -> ir.Value:
   channel_handle = hlo.ChannelHandle.get(channel, SEND_TO_HOST_TYPE)
   send_op = hlo.SendOp([operand], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
@@ -1828,7 +1828,7 @@ def send_to_host(channel: int, token: hlo.TokenType, operand: Any,
 
 def receive_from_host(channel: int, token: hlo.TokenType,
                       out_aval: core.ShapedArray, name: str, *,
-                      sharding: Optional[xc.OpSharding] = None) -> ir.Value:
+                      sharding: xc.OpSharding | None = None) -> ir.Value:
   channel_handle = hlo.ChannelHandle.get(channel, RECV_FROM_HOST_TYPE)
   recv_op = hlo.RecvOp([aval_to_ir_type(out_aval),
                         hlo.TokenType.get()], token, channel_handle,
@@ -1852,14 +1852,14 @@ def _emit_tpu_python_callback(
     backend: xb.XlaBackend,
     ctx: LoweringRuleContext,
     callback,
-    token: Optional[Any],
+    token: Any | None,
     operands: Sequence[ir.Value],
     operand_avals: list[core.ShapedArray],
     operand_shapes: list[xc.Shape],
     result_avals: list[core.ShapedArray],
     result_shapes: list[xc.Shape],
     *,
-    sharding: Optional[xc.OpSharding] = None
+    sharding: xc.OpSharding | None = None
 ) -> tuple[list[ir.Value], Any, Any]:
   token = token or hlo.CreateTokenOp().result
   _wrapped_callback = callback
@@ -1915,7 +1915,7 @@ def _emit_tpu_python_callback(
   ctx.module_context.add_host_callback(opaque)
   return outputs, token, opaque
 
-def _layout_to_mlir_layout(minor_to_major: Optional[Sequence[int]]):
+def _layout_to_mlir_layout(minor_to_major: Sequence[int] | None):
   if minor_to_major is None:
     # Needed for token layouts
     layout = np.zeros((0,), dtype="int64")
@@ -1929,12 +1929,12 @@ def _aval_to_default_layouts(aval):
   return [list(range(aval.ndim - 1, -1, -1)) for aval in avals]
 
 def emit_python_callback(
-    ctx: LoweringRuleContext, callback, token: Optional[Any],
+    ctx: LoweringRuleContext, callback, token: Any | None,
     operands: Sequence[ir.Value], operand_avals: list[core.ShapedArray],
     result_avals: list[core.ShapedArray],
-    has_side_effect: bool, *, sharding: Optional[xc.OpSharding] = None,
-    operand_layouts: Optional[Sequence[Optional[Sequence[int]]]] = None,
-    result_layouts: Optional[Sequence[Optional[Sequence[int]]]] = None,
+    has_side_effect: bool, *, sharding: xc.OpSharding | None = None,
+    operand_layouts: Sequence[Sequence[int] | None] | None = None,
+    result_layouts: Sequence[Sequence[int] | None] | None = None,
     ) -> tuple[list[ir.Value], Any, Any]:
   """Emits MLIR that calls back to a provided Python function."""
   platform = ctx.module_context.platform
@@ -2051,9 +2051,9 @@ def custom_call(
     out_types: Sequence[ir.Type],
     operands: Sequence[ir.Value],
     *,
-    backend_config: Union[str, dict[str, ir.Attribute]] = "",
+    backend_config: str | dict[str, ir.Attribute] = "",
     has_side_effect: bool = False,
-    result_shapes: Optional[Sequence[ir.Value]] = None,
+    result_shapes: Sequence[ir.Value] | None = None,
     called_computations: Sequence[str] = (),
     api_version: int = 2,
     extra_attributes: dict[str, ir.Attribute] = {},

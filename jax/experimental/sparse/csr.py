@@ -300,7 +300,7 @@ if gpu_sparse.rocm_is_supported:
 csr_fromdense_p = core.Primitive('csr_fromdense')
 csr_fromdense_p.multiple_results = True
 
-def csr_fromdense(mat: Array, *, nse: Optional[int] = None, index_dtype: DTypeLike = np.int32) -> CSR:
+def csr_fromdense(mat: Array, *, nse: int | None = None, index_dtype: DTypeLike = np.int32) -> CSR:
   """Create a CSR-format sparse matrix from a dense matrix.
 
   Args:

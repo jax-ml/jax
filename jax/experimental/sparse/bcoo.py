@@ -15,11 +15,12 @@
 """BCOO (Bached coordinate format) matrix object and associated primitives."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 import functools
 from functools import partial
 import math
 import operator
-from typing import Any, NamedTuple, Optional, Protocol, Sequence, Union
+from typing import Any, NamedTuple, Optional, Protocol, Union
 import warnings
 
 import numpy as np
@@ -67,9 +68,9 @@ def _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo, batch_size=None)
   if not all(b is None or 0 <= b < n_batch for b in batch_dims):
     raise NotImplementedError("batch_dims must be None or satisfy 0 < dim < n_batch. "
                               f"Got {batch_dims=} for {n_batch=}.")
-  batched_data, batched_indices = [
+  batched_data, batched_indices = (
       lax.expand_dims(arg, [0]) if bdim is None else jnp.moveaxis(arg, bdim, 0)
-      for arg, bdim in [(data, data_bdim), (indices, indices_bdim)]]
+      for arg, bdim in [(data, data_bdim), (indices, indices_bdim)])
   if batch_size is None:
     batch_size = max(arg.shape[dim] for arg, dim in zip((data, indices), batch_dims) if dim is not None)
   batched_spinfo = SparseInfo((batch_size, *spinfo.shape),
@@ -106,7 +107,7 @@ def _bcoo_set_nse(mat: BCOO, nse: int) -> BCOO:
 # TODO(jakevdp) this can be problematic when used with autodiff; see
 # https://github.com/google/jax/issues/10163. Should this be a primitive?
 # Alternatively, maybe roll this into bcoo_sum_duplicates as an optional argument.
-def bcoo_eliminate_zeros(mat: BCOO, nse: Optional[int] = None) -> BCOO:
+def bcoo_eliminate_zeros(mat: BCOO, nse: int | None = None) -> BCOO:
   data, indices, shape = mat.data, mat.indices, mat.shape
   props = _validate_bcoo(data, indices, shape)
   mask = (data == 0).all(tuple(range(props.n_batch + 1, data.ndim)))
@@ -246,7 +247,7 @@ BCOO.fromdense() to be used in traced/compiled code, you must pass a concrete
 value to the nse (number of stored elements) argument.
 """
 
-def bcoo_fromdense(mat: Array, *, nse: Optional[int] = None, n_batch: int = 0,
+def bcoo_fromdense(mat: Array, *, nse: int | None = None, n_batch: int = 0,
                    n_dense: int = 0, index_dtype: DTypeLike = jnp.int32) -> BCOO:
   """Create BCOO-format sparse matrix from a dense matrix.
 
@@ -368,7 +369,7 @@ mlir.register_lowering(bcoo_fromdense_p, mlir.lower_fun(
 bcoo_extract_p = core.Primitive('bcoo_extract')
 
 
-def bcoo_extract(sparr: BCOO, arr: ArrayLike, *, assume_unique: Optional[bool] = None) -> BCOO:
+def bcoo_extract(sparr: BCOO, arr: ArrayLike, *, assume_unique: bool | None = None) -> BCOO:
   """Extract values from a dense array according to the sparse array's indices.
 
   Args:
@@ -606,8 +607,8 @@ mlir.register_lowering(bcoo_transpose_p, mlir.lower_fun(
 
 bcoo_dot_general_p = core.Primitive('bcoo_dot_general')
 
-def bcoo_dot_general(lhs: Union[BCOO, Array], rhs: Union[BCOO, Array], *, dimension_numbers: DotDimensionNumbers,
-                     precision: None = None, preferred_element_type: None = None) -> Union[BCOO, Array]:
+def bcoo_dot_general(lhs: BCOO | Array, rhs: BCOO | Array, *, dimension_numbers: DotDimensionNumbers,
+                     precision: None = None, preferred_element_type: None = None) -> BCOO | Array:
   """A general contraction operation.
 
   Args:
@@ -1367,7 +1368,7 @@ mlir.register_lowering(bcoo_sort_indices_p, _bcoo_sort_indices_hlo)
 bcoo_sum_duplicates_p = core.Primitive("bcoo_sum_duplicates")
 bcoo_sum_duplicates_p.multiple_results = True
 
-def bcoo_sum_duplicates(mat: BCOO, nse: Optional[int] = None) -> BCOO:
+def bcoo_sum_duplicates(mat: BCOO, nse: int | None = None) -> BCOO:
   """Sums duplicate indices within a BCOO array, returning an array with sorted indices.
 
   Args:
@@ -1386,7 +1387,7 @@ def bcoo_sum_duplicates(mat: BCOO, nse: Optional[int] = None) -> BCOO:
   return BCOO((data, indices), shape=mat.shape, indices_sorted=True,
               unique_indices=True)
 
-def _bcoo_sum_duplicates(data: Array, indices: Array, *, spinfo: SparseInfo, nse: Optional[int]) -> tuple[Array, Array]:
+def _bcoo_sum_duplicates(data: Array, indices: Array, *, spinfo: SparseInfo, nse: int | None) -> tuple[Array, Array]:
   if nse is not None:
     nse = core.concrete_or_error(operator.index, nse, "nse argument of bcoo_sum_duplicates.")
   return bcoo_sum_duplicates_p.bind(data, indices, spinfo=spinfo, nse=nse)
@@ -1545,8 +1546,8 @@ mlir.register_lowering(bcoo_sum_duplicates_p, _bcoo_sum_duplicates_hlo)
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
 
-def bcoo_update_layout(mat: BCOO, *, n_batch: Optional[int] = None, n_dense: Optional[int] = None,
-                       on_inefficient: Optional[str] = 'error') -> BCOO:
+def bcoo_update_layout(mat: BCOO, *, n_batch: int | None = None, n_dense: int | None = None,
+                       on_inefficient: str | None = 'error') -> BCOO:
   """Update the storage layout (i.e. n_batch & n_dense) of a BCOO matrix.
 
   In many cases this can be done without introducing undue storage overhead. However,
@@ -1810,7 +1811,7 @@ def bcoo_concatenate(operands: Sequence[BCOO], *, dimension: int) -> BCOO:
   return BCOO((new_data, new_indices), shape=out_aval.shape)
 
 
-def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int], dimensions: Optional[Sequence[int]] = None) -> BCOO:
+def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int], dimensions: Sequence[int] | None = None) -> BCOO:
   """Sparse implementation of {func}`jax.lax.reshape`.
 
   Args:
@@ -1929,7 +1930,7 @@ def bcoo_squeeze(arr: BCOO, *, dimensions: Sequence[int]) -> BCOO:
 
 
 def bcoo_slice(mat: BCOO, *, start_indices: Sequence[int], limit_indices: Sequence[int],
-               strides: Optional[Sequence[int]] = None) -> BCOO:
+               strides: Sequence[int] | None = None) -> BCOO:
   """Sparse implementation of {func}`jax.lax.slice`.
 
   Args:
@@ -2271,7 +2272,7 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
                 slice_sizes: Shape, *,
                 unique_indices: bool = False,
                 indices_are_sorted: bool = False,
-                mode: Optional[Union[str, GatherScatterMode]] = None,
+                mode: str | GatherScatterMode | None = None,
                 fill_value = None) -> BCOO:
   """BCOO version of lax.gather."""
   _validate_bcoo(operand.data, operand.indices, operand.shape)
@@ -2297,7 +2298,7 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
 
   # Expand start_indices & slice_sizes to full rank & use bcoo_dynamic_slice
   full_start_indices: list[ArrayLike] = [_const(start_indices, 0)] * operand.ndim
-  in_axes: list[Optional[int]] = [None for i in range(operand.ndim)]
+  in_axes: list[int | None] = [None for i in range(operand.ndim)]
   full_slice_sizes = list(operand.shape)
   for i, j in enumerate(start_index_map):
     full_start_indices[j] = start_indices[..., i].ravel()
@@ -2502,14 +2503,14 @@ class BCOO(JAXSparse):
     raise NotImplementedError("BCOO.sum")
 
   @classmethod
-  def fromdense(cls, mat: Array, *, nse: Optional[int] = None, index_dtype: DTypeLike = np.int32,
+  def fromdense(cls, mat: Array, *, nse: int | None = None, index_dtype: DTypeLike = np.int32,
                 n_dense: int = 0, n_batch: int = 0) -> BCOO:
     """Create a BCOO array from a (dense) :class:`DeviceArray`."""
     return bcoo_fromdense(
       mat, nse=nse, index_dtype=index_dtype, n_dense=n_dense, n_batch=n_batch)
 
   @classmethod
-  def from_scipy_sparse(cls, mat, *, index_dtype: Optional[DTypeLike]=None,
+  def from_scipy_sparse(cls, mat, *, index_dtype: DTypeLike | None=None,
                         n_dense: int = 0, n_batch: int = 0) -> BCOO:
     """Create a BCOO array from a :mod:`scipy.sparse` array."""
     if n_dense != 0 or n_batch != 0:
@@ -2524,7 +2525,7 @@ class BCOO(JAXSparse):
                unique_indices=False)
 
   @classmethod
-  def _empty(cls, shape: Shape, *, dtype: Optional[DTypeLike] = None, index_dtype: DTypeLike = 'int32',
+  def _empty(cls, shape: Shape, *, dtype: DTypeLike | None = None, index_dtype: DTypeLike = 'int32',
              n_dense: int = 0, n_batch: int = 0, nse: int = 0) -> BCOO:
     """Create an empty BCOO instance. Public method is sparse.empty()."""
     shape = tuple(shape)
@@ -2538,7 +2539,7 @@ class BCOO(JAXSparse):
                unique_indices=True)
 
   @classmethod
-  def _eye(cls, N: int, M: int, k: int, *, dtype: Optional[DTypeLike] = None,
+  def _eye(cls, N: int, M: int, k: int, *, dtype: DTypeLike | None = None,
            index_dtype: DTypeLike = 'int32', n_batch: int = 0, n_dense: int = 0) -> BCOO:
     n_sparse = 2 - n_batch - n_dense
     if n_sparse < 0 or n_dense < 0 or n_batch < 0:
@@ -2583,7 +2584,7 @@ class BCOO(JAXSparse):
     return cls((data, indices), shape=(N, M), indices_sorted=True,
                unique_indices=True)
 
-  def update_layout(self, *, n_batch: Optional[int] = None, n_dense: Optional[int] = None,
+  def update_layout(self, *, n_batch: int | None = None, n_dense: int | None = None,
                     on_inefficient: str = 'error') -> BCOO:
     """Update the storage layout (i.e. n_batch & n_dense) of a BCOO matrix.
 
@@ -2610,7 +2611,7 @@ class BCOO(JAXSparse):
     """
     return bcoo_update_layout(self, n_batch=n_batch, n_dense=n_dense, on_inefficient=on_inefficient)
 
-  def sum_duplicates(self, nse: Optional[int] = None, remove_zeros: bool = True) -> BCOO:
+  def sum_duplicates(self, nse: int | None = None, remove_zeros: bool = True) -> BCOO:
     """Return a copy of the array with duplicate indices summed.
 
     Additionally, this operation will result in explicit zero entries removed, and
@@ -2644,7 +2645,7 @@ class BCOO(JAXSparse):
     """Create a dense version of the array."""
     return bcoo_todense(self)
 
-  def transpose(self, axes: Optional[Sequence[int]] = None) -> BCOO:
+  def transpose(self, axes: Sequence[int] | None = None) -> BCOO:
     """Create a new array containing the transpose."""
     perm: list[int] = list(range(self.ndim)[::-1] if axes is None else axes)
     mat_T = bcoo_transpose(self, permutation=perm)

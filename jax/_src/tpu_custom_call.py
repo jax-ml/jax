@@ -18,10 +18,11 @@
 
 import base64
 import collections.abc
+from collections.abc import Sequence
 import dataclasses
 import functools
 import io
-from typing import Any, Callable, Sequence
+from typing import Any, Callable
 
 from absl import flags
 import jax

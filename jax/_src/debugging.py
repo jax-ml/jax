@@ -13,10 +13,11 @@
 # limitations under the License.
 """Module for JAX debugging primitives and related functionality."""
 
+from collections.abc import Sequence
 import functools
 import string
 import sys
-from typing import Any,  Callable, Optional, Sequence, Union
+from typing import Any, Callable, Optional, Union
 import weakref
 
 import numpy as np
