@@ -460,7 +460,7 @@ class _DimExpr():
   def inconclusive_comparison(self, operation: str, op: Any) -> Exception:
     return InconclusiveDimensionOperation(
       f"Symbolic dimension comparison '{self}' {operation} '{op}' is inconclusive.\n"
-      "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic0dimensions-is-partially-supported.")
+      "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic-dimensions-is-partially-supported.")
 
   def ge(self, other: DimSize) -> bool:
     lb, ub = _ensure_poly(self - other, "ge").bounds()
