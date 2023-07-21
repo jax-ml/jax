@@ -1530,7 +1530,8 @@ class APITest(jtu.JaxTestCase):
       return jnp.dot(x, y)
 
     self.assertRaisesRegex(
-      TypeError, "Incompatible shapes for dot: got \\(3L?,\\) and \\(4L?,\\).",
+        TypeError, ("dot_general requires contracting dimensions to have "
+                    "the same shape, got \\(3L?,\\) and \\(4L?,\\)."),
       lambda: grad(f)(np.zeros(3), np.zeros(4)))
 
   def test_abstract_error_message(self):

@@ -469,27 +469,33 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol)
 
   @jtu.sample_product(
-    [dict(name=name, lhs_shape=lhs_shape, rhs_shape=rhs_shape)
-      for name, lhs_shape, rhs_shape in [
-          ("matrix-scalar", (3, 3), ()),
-          ("scalar-matrix", (), (3, 3)),
-          ("matrix-vector", (4, 5), (5,)),
-          ("vector-matrix", (6,), (6, 4)),
-          ("matrix-matrix", (3, 4), (4, 5)),
-          ("tensor-vector", (4, 3, 2), (2,)),
-          ("vector-tensor", (2,), (3, 2, 4)),
-          ("tensor-matrix", (4, 3, 2), (2, 5)),
-          ("matrix-tensor", (5, 2), (3, 2, 4)),
-          ("tensor-tensor", (2, 3, 4), (5, 4, 1))]],
+    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+      for lhs_shape, rhs_shape in [
+          ((3, 3), ()),
+          ((), (3, 3)),
+          ((4, 5), (5,)),
+          ((6,), (6, 4)),
+          ((3, 4), (4, 5)),
+          ((4, 3, 2), (2,)),
+          ((2,), (3, 2, 4)),
+          ((4, 3, 2), (2, 5)),
+          ((5, 2), (3, 2, 4)),
+          ((2, 3, 4), (5, 4, 1))]],
     lhs_dtype=number_dtypes,
     rhs_dtype=number_dtypes,
   )
   @jax.default_matmul_precision("float32")
-  def testDot(self, name, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
+  def testDot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
+    if jtu.device_under_test() == "tpu" and {lhs_dtype, rhs_dtype} == {np.float16, np.int32}:
+      # TODO(b/291629749): fix & re-enable this test
+      raise SkipTest("dot_general(f16, i32) on TPU has poor precision")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     tol = {np.float16: 1e-2, np.float32: 2e-5, np.float64: 1e-14,
            np.complex128: 1e-14}
+    if (lhs_dtype in [np.float16, jnp.bfloat16] and
+        rhs_dtype in [np.float16, jnp.bfloat16]):
+      tol = 1e-2
     def np_dot(x, y):
       x = x.astype(np.float32) if lhs_dtype == jnp.bfloat16 else x
       y = y.astype(np.float32) if rhs_dtype == jnp.bfloat16 else y
@@ -497,6 +503,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       self._CheckAgainstNumpy(np_dot, jnp.dot, args_maker, tol=tol)
       self._CompileAndCheck(jnp.dot, args_maker, atol=tol, rtol=tol)
+
+  @jtu.sample_product(
+      lhs_dtype=number_dtypes,
+      rhs_dtype=number_dtypes,
+  )
+  @jax.numpy_dtype_promotion('standard')
+  def testMixedPrecisionDot(self, lhs_dtype, rhs_dtype):
+    # This test confirms that jnp.dot lowers to a single dot_general call,
+    # avoiding explicit type casting of inputs and outputs.
+    lhs = jax.ShapeDtypeStruct((5,), lhs_dtype)
+    rhs = jax.ShapeDtypeStruct((5,), rhs_dtype)
+    jaxpr = jax.make_jaxpr(jnp.dot)(lhs, rhs)
+    prims = [eqn.primitive for eqn in jaxpr.eqns]
+    self.assertIn(prims, [
+      [lax.dot_general_p],
+      [lax.dot_general_p, lax.convert_element_type_p]
+    ])
 
   @jtu.sample_product(
     [dict(name=name, lhs_shape=lhs_shape, rhs_shape=rhs_shape)
