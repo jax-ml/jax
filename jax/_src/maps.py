@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
-import numpy as np
-import itertools as it
 from collections import OrderedDict, abc
-from typing import (Callable, Iterable, Optional, Any,
-                    NamedTuple, Union, Sequence, Mapping)
+from collections.abc import Iterable, Sequence, Mapping
+import contextlib
 from functools import wraps, partial, partialmethod, lru_cache
+import itertools as it
 import math
+from typing import (Callable, Optional, Any,
+                    NamedTuple, Union)
+
+import numpy as np
 
 from jax import lax
 from jax import numpy as jnp
@@ -1737,7 +1739,7 @@ def _check_out_avals_vs_out_axes(out_avals: Sequence[core.AbstractValue],
 def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
                                           global_axis_sizes, in_axes_flat,
                                           args_flat):
-  @lru_cache()
+  @lru_cache
   def _check_sharding(in_sharding, xmap_sharding, ndim, arr_flavor):
     if not op_shardings.are_op_shardings_equal(
         in_sharding._to_xla_hlo_sharding(ndim),

@@ -66,7 +66,7 @@ class DynamicDiv(DynamicDOMElement):
   """A `div` that can be edited."""
   _uuid: str = dataclasses.field(init=False)
   _root_elem: DOMElement = dataclasses.field(init=False)
-  elem: Union[DOMElement, str]
+  elem: DOMElement | str
 
   def __post_init__(self):
     self._uuid = str(uuid.uuid4())
@@ -106,7 +106,7 @@ class StaticDOMElement(DOMElement):
   """An immutable DOM element."""
   _uuid: str = dataclasses.field(init=False)
   name: str
-  children: list[Union[str, DOMElement]]
+  children: list[str | DOMElement]
   attrs: dict[str, str]
 
   def html(self):

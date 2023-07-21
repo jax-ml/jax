@@ -13,9 +13,8 @@
 # limitations under the License.
 
 import abc
-from typing import Sequence, Optional
-
-import numpy as np
+from collections.abc import Sequence
+from typing import Optional
 
 import jax
 from jax.experimental import mesh_utils

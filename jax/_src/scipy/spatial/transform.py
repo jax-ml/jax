@@ -110,7 +110,7 @@ class Rotation(typing.NamedTuple):
   def as_euler(self, seq: str, degrees: bool = False):
     """Represent as Euler angles."""
     if len(seq) != 3:
-      raise ValueError("Expected 3 axes, got {}.".format(seq))
+      raise ValueError(f"Expected 3 axes, got {seq}.")
     intrinsic = (re.match(r'^[XYZ]{1,3}$', seq) is not None)
     extrinsic = (re.match(r'^[xyz]{1,3}$', seq) is not None)
     if not (intrinsic or extrinsic):
@@ -308,7 +308,7 @@ def _elementary_basis_index(axis: str) -> int:
     return 1
   elif axis == 'z':
     return 2
-  raise ValueError("Expected axis to be from ['x', 'y', 'z'], got {}".format(axis))
+  raise ValueError(f"Expected axis to be from ['x', 'y', 'z'], got {axis}")
 
 
 @functools.partial(jnp.vectorize, signature=('(m),(m),(),()->(n)'))

@@ -13,14 +13,14 @@
 # limitations under the License.
 """Module for discharging state primitives."""
 from __future__ import annotations
+
+from collections.abc import Sequence
 import dataclasses
 from functools import partial
 import operator
-
-from typing import Any, Callable, Optional, Protocol, Sequence, Union
+from typing import Any, Callable, Protocol
 
 import numpy as np
-
 
 from jax._src import api_util
 from jax._src import ad_util
@@ -54,7 +54,7 @@ PyTreeDef = tree_util.PyTreeDef
 # `Read/Write/Accum` effects.
 
 def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any], * ,
-                    should_discharge: Union[bool, Sequence[bool]] = True
+                    should_discharge: bool | Sequence[bool] = True
                     ) -> tuple[core.Jaxpr, list[Any]]:
   """Converts a jaxpr that takes in `Ref`s into one that doesn't."""
   if isinstance(should_discharge, bool):
@@ -84,7 +84,7 @@ class DischargeRule(Protocol):
 
   def __call__(self, in_avals: Sequence[core.AbstractValue],
       out_avals: Sequence[core.AbstractValue], *args: Any,
-      **params: Any) -> tuple[Sequence[Optional[Any]], Sequence[Any]]:
+      **params: Any) -> tuple[Sequence[Any | None], Sequence[Any]]:
     ...
 
 _discharge_rules: dict[core.Primitive, DischargeRule] = {}
@@ -107,9 +107,9 @@ def _eval_jaxpr_discharge_state(
   # regular values in this interpreter.
   map(env.write, jaxpr.invars, args)
 
-  refs_to_discharge = set(id(v.aval) for v, d
+  refs_to_discharge = {id(v.aval) for v, d
                           in zip(jaxpr.invars, should_discharge) if d
-                          and isinstance(v.aval, AbstractRef))
+                          and isinstance(v.aval, AbstractRef)}
 
   for eqn in jaxpr.eqns:
     if _has_refs(eqn) and any(id(v.aval) in refs_to_discharge

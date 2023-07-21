@@ -19,10 +19,11 @@ too many or too few limitations.
 """
 
 import collections
+from collections.abc import Sequence
 import datetime
 import logging
 import os
-from typing import Any, Sequence
+from typing import Any
 import unittest
 
 from absl.testing import absltest

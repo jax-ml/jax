@@ -67,12 +67,14 @@ then update `test_custom_call_coverage`, and then update your `test_foo_call`:
     self.run_one_test(func, data)
 
 """
+
+from collections.abc import Iterable, Sequence
 import dataclasses
 import datetime
 import os
 import re
 import sys
-from typing import Any, Callable, Iterable, Optional, Sequence
+from typing import Any, Callable, Optional
 
 from absl import logging
 

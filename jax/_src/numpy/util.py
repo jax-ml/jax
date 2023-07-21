@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from functools import partial
 import re
 import textwrap
-from typing import Any, Callable, NamedTuple, Optional, Sequence, TypeVar
+from typing import Any, Callable, NamedTuple, Optional, TypeVar
 
 import warnings
 

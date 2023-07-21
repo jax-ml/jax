@@ -30,8 +30,9 @@ executable protocols described above.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, NamedTuple, Optional, Protocol, Sequence, Union
+from typing import Any, NamedTuple, Protocol, Union
 
 import jax
 
@@ -146,11 +147,11 @@ class Lowering(Protocol):
   """Protocol for lowerings, which a user-facing ``Lowered`` encapsulates."""
 
   def compile(
-      self, compiler_options: Optional[CompilerOptions] = None) -> Executable:
+      self, compiler_options: CompilerOptions | None = None) -> Executable:
     """Compile and return a corresponding ``Executable``."""
     raise NotImplementedError
 
-  def as_text(self, dialect: Optional[str] = None) -> str:
+  def as_text(self, dialect: str | None = None) -> str:
     """A human-readable text representation of this lowering.
 
     Intended for visualization and debugging purposes. This need not be a valid
@@ -158,7 +159,7 @@ class Lowering(Protocol):
     """
     raise NotImplementedError
 
-  def compiler_ir(self, dialect: Optional[str] = None) -> Any:
+  def compiler_ir(self, dialect: str | None = None) -> Any:
     """An arbitrary object representation of this lowering.
 
     Intended for debugging purposes. This need not be a valid nor reliable
@@ -301,10 +302,10 @@ class XlaLowering(Lowering):
     raise NotImplementedError("must override")
 
   def compile(
-      self, compiler_options: Optional[CompilerOptions] = None) -> Executable:
+      self, compiler_options: CompilerOptions | None = None) -> Executable:
     raise NotImplementedError("must override")
 
-  def as_text(self, dialect: Optional[str] = None) -> str:
+  def as_text(self, dialect: str | None = None) -> str:
     if dialect is None:
       dialect = "stablehlo"
     if dialect == "mhlo":
@@ -316,7 +317,7 @@ class XlaLowering(Lowering):
     else:
       raise ValueError(f"unknown dialect: {dialect}")
 
-  def compiler_ir(self, dialect: Optional[str] = None) -> Any:
+  def compiler_ir(self, dialect: str | None = None) -> Any:
     if dialect is None:
       dialect = "stablehlo"
     if dialect == "mhlo":
@@ -399,7 +400,7 @@ class Compiled(Stage):
                                       self.in_tree, self.out_tree)
     self._call = None
 
-  def as_text(self) -> Optional[str]:
+  def as_text(self) -> str | None:
     """A human-readable text representation of this executable.
 
     Intended for visualization and debugging purposes. This is not a valid nor
@@ -413,7 +414,7 @@ class Compiled(Stage):
     except NotImplementedError:
       return None
 
-  def cost_analysis(self) -> Optional[Any]:
+  def cost_analysis(self) -> Any | None:
     """A summary of execution cost estimates.
 
     Intended for visualization and debugging purposes. The object output by
@@ -431,7 +432,7 @@ class Compiled(Stage):
     except NotImplementedError:
       return None
 
-  def memory_analysis(self) -> Optional[Any]:
+  def memory_analysis(self) -> Any | None:
     """A summary of estimated memory requirements.
 
     Intended for visualization and debugging purposes. The object output by
@@ -449,7 +450,7 @@ class Compiled(Stage):
     except NotImplementedError:
       return None
 
-  def runtime_executable(self) -> Optional[Any]:
+  def runtime_executable(self) -> Any | None:
     """An arbitrary object representation of this executable.
 
     Intended for debugging purposes. This is not valid nor reliable
@@ -579,7 +580,7 @@ class Lowered(Stage):
         no_kwargs=no_kwargs)
 
   def compile(
-      self, compiler_options: Optional[CompilerOptions] = None) -> Compiled:
+      self, compiler_options: CompilerOptions | None = None) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
     kw: dict[str, Any] = {"compiler_options": compiler_options}
     return Compiled(
@@ -589,7 +590,7 @@ class Lowered(Stage):
         no_kwargs=self._no_kwargs,
     )
 
-  def as_text(self, dialect: Optional[str] = None) -> str:
+  def as_text(self, dialect: str | None = None) -> str:
     """A human-readable text representation of this lowering.
 
     Intended for visualization and debugging purposes. This need not be a valid
@@ -600,7 +601,7 @@ class Lowered(Stage):
     """
     return self._lowering.as_text(dialect)
 
-  def compiler_ir(self, dialect: Optional[str] = None) -> Optional[Any]:
+  def compiler_ir(self, dialect: str | None = None) -> Any | None:
     """An arbitrary object representation of this lowering.
 
     Intended for debugging purposes. This is not a valid nor reliable
@@ -618,7 +619,7 @@ class Lowered(Stage):
     except NotImplementedError:
       return None
 
-  def cost_analysis(self) -> Optional[Any]:
+  def cost_analysis(self) -> Any | None:
     """A summary of execution cost estimates.
 
     Intended for visualization and debugging purposes. The object output by

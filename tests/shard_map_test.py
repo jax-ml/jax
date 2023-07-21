@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence, Iterable, Iterator, Generator
 from functools import partial
 import itertools as it
 import math
 import operator as op
 import os
 from types import SimpleNamespace
-from typing import (Any, Sequence, Iterable, Iterator, NamedTuple,
-                    Callable, Optional, Generator, TypeVar, Union)
+from typing import Any, NamedTuple, Callable, Optional, TypeVar, Union
 import unittest
 
 from absl.testing import absltest

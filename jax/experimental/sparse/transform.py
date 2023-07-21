@@ -47,8 +47,9 @@ Array([-1.2655463 , -0.52060574, -0.14522289, -0.10817424,
        -0.15574613], dtype=float32)
 """
 
+from collections.abc import Sequence
 import functools
-from typing import Any, Callable, NamedTuple, Optional, Sequence
+from typing import Any, Callable, NamedTuple, Optional
 
 import numpy as np
 
@@ -195,11 +196,11 @@ class SparsifyEnv:
 
 class SparsifyValue(NamedTuple):
   shape: tuple[int, ...]
-  data_ref: Optional[int]
-  indices_ref: Optional[int] = None
-  indptr_ref: Optional[int] = None
-  indices_sorted: Optional[bool] = False
-  unique_indices: Optional[bool] = False
+  data_ref: int | None
+  indices_ref: int | None = None
+  indptr_ref: int | None = None
+  indices_sorted: bool | None = False
+  unique_indices: bool | None = False
 
   @property
   def ndim(self):
@@ -726,7 +727,7 @@ def _sparsify_jaxpr(spenv, jaxpr, *spvalues):
   #   shared data & indices when generating the sparsified jaxpr. The
   #   current approach produces valid sparsified while loops, but they
   #   don't work in corner cases (see associated TODO in sparsify_test.py)
-  out_tree: Optional[pytree.PyTreeDef] = None
+  out_tree: pytree.PyTreeDef | None = None
 
   @lu.wrap_init
   def wrapped(*args_flat):

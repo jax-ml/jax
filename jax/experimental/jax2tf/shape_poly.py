@@ -30,7 +30,9 @@ independent of TF. The best documentation at the moment is in the
 jax2tf.convert docstring, and the
 [README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md).
 """
+
 import collections
+from collections.abc import Iterable, Sequence
 import dataclasses
 from enum import Enum
 import functools
@@ -40,7 +42,7 @@ import math
 import operator as op
 import threading
 import tokenize
-from typing import Any, Callable, Iterable, Optional, Sequence, Union
+from typing import Any, Callable, Optional, Union
 
 import numpy as np
 import opt_einsum
@@ -1222,8 +1224,8 @@ class ShapeConstraint:
     The `shapeenv` maps variables to _DimExpr. If the static checking
     of the constraint fails, raise ValueError.
     """
-    left, right = [self._eval_operand(o, shapeenv) for o in [self.left,
-                                                             self.right]]
+    left, right = (self._eval_operand(o, shapeenv) for o in [self.left,
+                                                             self.right])
     try:
       if self.comp == ShapeConstraint.Comparator.EQ:
         ok = (left == right)
@@ -1245,8 +1247,8 @@ class ShapeConstraint:
     resolved statically, returns a triple with a boolean encoding if the
     constraint is satisfied and the int32 operands of binary constraints.
     """
-    left, right = [self._eval_operand(o, shapeenv) for o in [self.left,
-                                                             self.right]]
+    left, right = (self._eval_operand(o, shapeenv) for o in [self.left,
+                                                             self.right])
     # Try to evaluate the constraint statically.
     if core.is_constant_shape((left, right)):
       left_int, right_int = op.index(left), op.index(right)

@@ -16,11 +16,12 @@
 from __future__ import annotations
 
 import collections
+from collections.abc import Hashable, Sequence
 import contextlib
 import functools
 import math
 import threading
-from typing import Any, Hashable, NamedTuple, Sequence, Union
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -140,8 +141,8 @@ class Mesh(contextlib.ContextDecorator):
   devices: np.ndarray
   axis_names: tuple[MeshAxisName, ...]
 
-  def __init__(self, devices: Union[np.ndarray, Sequence[xc.Device]],
-               axis_names: Union[str, Sequence[MeshAxisName]]):
+  def __init__(self, devices: np.ndarray | Sequence[xc.Device],
+               axis_names: str | Sequence[MeshAxisName]):
     if not isinstance(devices, np.ndarray):
       devices = np.array(devices)
     if isinstance(axis_names, str):

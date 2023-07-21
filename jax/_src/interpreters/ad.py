@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 import contextlib
 import functools
 import itertools as it
 from functools import partial
-from typing import Any, Callable, Sequence, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 import jax
 from jax._src import linear_util as lu

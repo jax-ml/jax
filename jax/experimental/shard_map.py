@@ -13,13 +13,14 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Hashable, Sequence
 import enum
 from functools import partial
 import inspect
 import itertools as it
 import math
 import operator as op
-from typing import Any, Callable, Hashable, Optional, Sequence, TypeVar, Union
+from typing import Any, Callable, Optional, TypeVar, Union
 
 import numpy as np
 
@@ -79,7 +80,7 @@ def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
   return _shard_map(f, mesh, in_specs, out_specs, check_rep)
 
 def _shard_map(f: Callable, mesh: Mesh, in_specs: Specs,
-               out_specs: Union[Specs, Callable[[], Specs]],
+               out_specs: Specs | Callable[[], Specs],
                check_rep: bool = True):
   if not callable(f):
     raise TypeError("shard_map requires a callable for its first argument, "
@@ -191,7 +192,7 @@ def _check_specs_vs_args(
 
 def _spec_rank_error(
     error_type: SpecErrorType, f: Callable, tree: PyTreeDef, specs: Specs,
-    fails: list[Union[core.ShapedArray, NoFail]]) -> str:
+    fails: list[core.ShapedArray | NoFail]) -> str:
   fun_name = getattr(f, '__name__', str(f))
   if error_type == SpecErrorType.input:
     prefix, base = 'in', 'args'
@@ -227,7 +228,7 @@ def _spec_rank_error(
 
 def _spec_divisibility_error(
     f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
-    fails: list[Union[core.ShapedArray, NoFail]]) -> str:
+    fails: list[core.ShapedArray | NoFail]) -> str:
   ba = _try_infer_args(f, tree)
   fun_name = getattr(f, '__name__', str(f))
   msgs = []
@@ -263,7 +264,7 @@ def _spec_divisibility_error(
   return msg
 
 def _rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
-               fails: list[Union[set, NoFail]]) -> str:
+               fails: list[set | NoFail]) -> str:
   fun_name = getattr(f, '__name__', str(f))
   msgs = []
   for (spec_key, spec), (fail_key, rep) in _iter_paths(tree, specs, fails):
@@ -309,7 +310,7 @@ def _try_infer_args(f, tree):
     return None
 
 T = TypeVar('T')
-def _iter_paths(tree: PyTreeDef, specs: Specs, fails: list[Union[T, NoFail]]
+def _iter_paths(tree: PyTreeDef, specs: Specs, fails: list[T | NoFail]
                 ) -> list[tuple[tuple[KeyPath, P], tuple[KeyPath, T]]]:
   failures = tree_unflatten(tree, fails)
   failures_aug = generate_key_paths(failures)
@@ -465,7 +466,7 @@ def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_names, out_names,
 core.custom_typechecks[shard_map_p] = _shard_map_typecheck
 
 def _in_names_to_rep(mesh: Mesh, names: AxisNames) -> set[AxisName]:
-  return set(mesh.axis_names) - set(n for ns in names.values() for n in ns)
+  return set(mesh.axis_names) - {n for ns in names.values() for n in ns}
 
 def _output_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[set[AxisName]],
                 ) -> Sequence[set[AxisName]]:
@@ -755,7 +756,7 @@ eager_rules[dispatch.device_put_p] = _device_put_eager_rule
 # Static replication checking
 
 def _rep_rule(prim: core.Primitive, mesh: Mesh, *in_rep: set[AxisName],
-              **params: Any) -> Union[set[AxisName], list[set[AxisName]]]:
+              **params: Any) -> set[AxisName] | list[set[AxisName]]:
   raise NotImplementedError(
       f"No replication rule for {prim}. As a workaround, pass the "
       "`check_rep=False` argument to `shard_map`. To get this fixed, open an "
@@ -1016,7 +1017,7 @@ def _shard_map_partial_eval_post_process(
     nonlocal out_names_unknown
     out_names_unknown, out_names_known = partition_list(out_knowns, out_names)
     return (*out_names_known,) + ({0: (*mesh.axis_names,)},) * len(jaxpr.constvars)
-  out_names_unknown: Optional[list] = None
+  out_names_unknown: list | None = None
 
   return out, (todo, out_names_transform)
 pe.JaxprTrace.post_process_shard_map = _shard_map_partial_eval_post_process
@@ -1171,7 +1172,7 @@ def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
 
 # TODO(mattjj): de-duplicate with pe.dce_jaxpr_call_rule, and/or _pmap_dce_rule?
 def _shard_map_dce(used_outputs: list[bool], eqn: core.JaxprEqn
-                   ) -> tuple[list[bool], Optional[core.JaxprEqn]]:
+                   ) -> tuple[list[bool], core.JaxprEqn | None]:
   with core.extend_axis_env_nd(eqn.params['mesh'].shape.items()):
     jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
   if not any(used_inputs) and not any(used_outputs) and not jaxpr.effects:

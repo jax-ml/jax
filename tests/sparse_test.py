@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterable, Iterator, Sequence
 import contextlib
 from functools import partial
 import itertools
@@ -19,7 +20,7 @@ import math
 import operator
 import random
 import unittest
-from typing import Iterable, Iterator, NamedTuple, Sequence
+from typing import NamedTuple
 
 from absl.testing import absltest
 from absl.testing import parameterized

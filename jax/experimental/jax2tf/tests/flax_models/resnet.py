@@ -19,8 +19,9 @@ https://github.com/google/flax/tree/main/examples/imagenet
 # See issue #620.
 # pytype: disable=wrong-arg-count
 
+from collections.abc import Sequence
 from functools import partial
-from typing import Any, Callable, Sequence
+from typing import Any, Callable
 
 from flax import linen as nn
 import jax.numpy as jnp

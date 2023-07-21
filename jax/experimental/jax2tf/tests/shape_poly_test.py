@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for the shape-polymorphic jax2tf conversion."""
+
+from collections.abc import Sequence
 import contextlib
 import itertools
 import math
+from typing import Any, Callable, Optional, Union
 import unittest
 
 from absl import logging
 from absl.testing import absltest, parameterized
-from typing import Any, Callable, Optional, Sequence, Union
 
 import collections
 import functools
@@ -2481,7 +2483,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     polymorphic_shapes=[None, "b0, b1, ..."],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
         PolyHarness("random_categorical", f"axis=1_then_reshape_{flags_name}",
-                    lambda key, a: jax.random.categorical(key, a, axis=1).reshape((-1)),
+                    lambda key, a: jax.random.categorical(key, a, axis=1).reshape(-1),
                     arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 5, 8), _f32)],
                     polymorphic_shapes=[None, "b0, b1, ..."],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore

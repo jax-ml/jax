@@ -14,8 +14,9 @@
 """Module for state types."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 import math
-from typing import Any, Generic, Sequence, TypeVar, Union
+from typing import Any, Generic, TypeVar, Union
 
 from jax._src import core
 from jax._src import effects

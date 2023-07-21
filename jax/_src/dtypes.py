@@ -144,7 +144,7 @@ def to_complex_dtype(dtype: DTypeLike) -> DType:
   return np.dtype('complex64')
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _canonicalize_dtype(x64_enabled: bool, allow_opaque_dtype: bool, dtype: Any) -> Union[DType, OpaqueDType]:
   if is_opaque_dtype(dtype):
     if not allow_opaque_dtype:

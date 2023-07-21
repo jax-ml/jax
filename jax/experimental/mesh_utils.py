@@ -15,9 +15,10 @@
 """Utils for building a device mesh."""
 
 import collections
+from collections.abc import Sequence
 import itertools
 import logging
-from typing import Any, Optional, Sequence
+from typing import Any, Optional
 
 import jax
 import numpy as np

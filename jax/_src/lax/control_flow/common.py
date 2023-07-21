@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for the common control flow utilities."""
+
+from collections.abc import Sequence
 import os
 from functools import partial
-
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Optional
 
 from jax._src import core
 from jax._src import linear_util as lu

@@ -19,8 +19,8 @@ import math
 import operator as op
 import numpy as np
 import functools
-from typing import (Any, Callable, Optional, Sequence, Union, cast,
-                    TYPE_CHECKING)
+from typing import Any, Callable, cast, TYPE_CHECKING
+from collections.abc import Sequence
 
 from jax._src import abstract_arrays
 from jax._src import api
@@ -63,7 +63,7 @@ class Shard:
   """
 
   def __init__(self, device: Device, sharding: Sharding, global_shape: Shape,
-               data: Union[None, ArrayImpl, PRNGKeyArrayImpl] = None):
+               data: None | ArrayImpl | PRNGKeyArrayImpl = None):
     self._device = device
     self._sharding = sharding
     self._global_shape = global_shape
@@ -140,9 +140,9 @@ def _process_has_full_value_in_mcjax(s, shape):
     return False
 
   num_unique_indices = len(
-      set(hashed_index(v) for v in s.devices_indices_map(shape).values()))
+      {hashed_index(v) for v in s.devices_indices_map(shape).values()})
   num_addressable_unique_indices = len(
-      set(hashed_index(v) for v in s.addressable_devices_indices_map(shape).values()))
+      {hashed_index(v) for v in s.addressable_devices_indices_map(shape).values()})
   return num_unique_indices == num_addressable_unique_indices
 
 
@@ -154,7 +154,7 @@ class ArrayImpl(basearray.Array):
   _arrays: list[ArrayImpl]
   _committed: bool
   _skip_checks: bool
-  _npy_value: Optional[np.ndarray]
+  _npy_value: np.ndarray | None
 
   @use_cpp_method()
   def __init__(self, aval: core.ShapedArray, sharding: Sharding,
@@ -554,7 +554,7 @@ setattr(ArrayImpl, "__array_priority__", 100)
 
 def make_array_from_callback(
     shape: Shape, sharding: Sharding,
-    data_callback: Callable[[Optional[Index]], ArrayLike]) -> ArrayImpl:
+    data_callback: Callable[[Index | None], ArrayLike]) -> ArrayImpl:
   """Returns a ``jax.Array`` via data fetched from ``data_callback``.
 
   ``data_callback`` is used to fetch the data for each addressable shard of the

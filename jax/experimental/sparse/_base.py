@@ -14,8 +14,8 @@
 
 """Base JAX Sparse object."""
 import abc
+from collections.abc import Sequence
 import math
-from typing import Sequence
 
 import jax
 from jax._src import core

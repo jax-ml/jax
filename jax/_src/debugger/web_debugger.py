@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from __future__ import annotations
-import os
-import weakref
 
-from typing import Any, Optional
+import os
+from typing import Any
+import weakref
 
 from jax._src.debugger import cli_debugger
 from jax._src.debugger import core as debugger_core
 
-web_pdb_version: Optional[tuple[int, ...]] = None
+web_pdb_version: tuple[int, ...] | None = None
 try:
   import web_pdb  # pytype: disable=import-error
   web_pdb_version = tuple(map(int, web_pdb.__version__.split(".")))
@@ -88,7 +88,7 @@ class WebDebugger(cli_debugger.CliDebugger):
     return self.cmdloop()
 
 def run_debugger(frames: list[debugger_core.DebuggerFrame],
-                 thread_id: Optional[int], **kwargs: Any):
+                 thread_id: int | None, **kwargs: Any):
   WebDebugger(frames, thread_id, **kwargs).run()
 
 if WEB_PDB_ENABLED:

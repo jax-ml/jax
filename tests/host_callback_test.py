@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from functools import partial
 import itertools
 import logging
@@ -19,7 +20,7 @@ import os
 import re
 import threading
 import time
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional
 import unittest
 from unittest import skip, SkipTest
 

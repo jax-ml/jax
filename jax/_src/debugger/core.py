@@ -13,10 +13,11 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Hashable
 import dataclasses
 import inspect
 import threading
-from typing import Any, Hashable, Optional, Protocol
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -77,7 +78,7 @@ class DebuggerFrame:
   code_context: str
   source: list[str]
   lineno: int
-  offset: Optional[int]
+  offset: int | None
 
   def tree_flatten(self):
     flat_locals, locals_tree = _safe_flatten_dict(self.locals)
@@ -131,13 +132,13 @@ class DebuggerFrame:
 
 class Debugger(Protocol):
 
-  def __call__(self, frames: list[DebuggerFrame], thread_id: Optional[int],
+  def __call__(self, frames: list[DebuggerFrame], thread_id: int | None,
       **kwargs: Any) -> None:
     ...
 _debugger_registry: dict[str, tuple[int, Debugger]] = {}
 
 
-def get_debugger(backend: Optional[str] = None) -> Debugger:
+def get_debugger(backend: str | None = None) -> Debugger:
   if backend is not None and backend in _debugger_registry:
     return _debugger_registry[backend][1]
   debuggers = sorted(_debugger_registry.values(), key=lambda x: -x[0])
@@ -155,8 +156,8 @@ def register_debugger(name: str, debugger: Debugger, priority: int) -> None:
 debug_lock = threading.Lock()
 
 
-def breakpoint(*, backend: Optional[str] = None, filter_frames: bool = True,
-               num_frames: Optional[int] = None, ordered: bool = False,
+def breakpoint(*, backend: str | None = None, filter_frames: bool = True,
+               num_frames: int | None = None, ordered: bool = False,
                **kwargs):  # pylint: disable=redefined-builtin
   """Enters a breakpoint at a point in a program.
 

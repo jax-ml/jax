@@ -11,10 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from collections.abc import Sequence
 from functools import partial
 import itertools as it
-
-from typing import Any, Callable, NamedTuple, Optional, Sequence, Union
+from typing import Any, Callable, NamedTuple, Optional, Union
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -496,7 +497,7 @@ class StateDischargeTest(jtu.JaxTestCase):
     self.assertLen(discharged_jaxpr.invars, 1)
     self.assertLen(discharged_jaxpr.outvars, 2)
     self.assertIn(lax.dynamic_slice_p,
-                  set(eqn.primitive for eqn in discharged_jaxpr.eqns))
+                  {eqn.primitive for eqn in discharged_jaxpr.eqns})
     # Should be able to evaluate this jaxpr
     inval = jnp.arange(24., dtype=jnp.float32).reshape((4, 3, 2))
     outval, refval = core.eval_jaxpr(discharged_jaxpr, (), inval)
@@ -547,9 +548,9 @@ class StateDischargeTest(jtu.JaxTestCase):
     self.assertLen(discharged_jaxpr.invars, 1)
     self.assertLen(discharged_jaxpr.outvars, 1)
     self.assertIn(lax.dynamic_update_slice_p,
-                  set(eqn.primitive for eqn in discharged_jaxpr.eqns))
+                  {eqn.primitive for eqn in discharged_jaxpr.eqns})
     self.assertIn(lax.dynamic_slice_p,
-                  set(eqn.primitive for eqn in discharged_jaxpr.eqns))
+                  {eqn.primitive for eqn in discharged_jaxpr.eqns})
     # Should be able to evaluate this jaxpr
     inval = jnp.arange(24., dtype=jnp.float32).reshape((4, 3, 2))
     refval, = core.eval_jaxpr(discharged_jaxpr, (), inval)
@@ -598,11 +599,11 @@ class StateDischargeTest(jtu.JaxTestCase):
     self.assertLen(discharged_jaxpr.invars, 1)
     self.assertLen(discharged_jaxpr.outvars, 1)
     self.assertIn(lax.dynamic_update_slice_p,
-                  set(eqn.primitive for eqn in discharged_jaxpr.eqns))
+                  {eqn.primitive for eqn in discharged_jaxpr.eqns})
     self.assertIn(lax.add_p,
-                  set(eqn.primitive for eqn in discharged_jaxpr.eqns))
+                  {eqn.primitive for eqn in discharged_jaxpr.eqns})
     self.assertIn(lax.dynamic_slice_p,
-                  set(eqn.primitive for eqn in discharged_jaxpr.eqns))
+                  {eqn.primitive for eqn in discharged_jaxpr.eqns})
     inval = jnp.arange(24., dtype=jnp.float32).reshape((4, 3, 2))
     refval, = core.eval_jaxpr(discharged_jaxpr, (), inval)
     self.assertTrue((refval == inval.at[0, 1].add(1.)).all())

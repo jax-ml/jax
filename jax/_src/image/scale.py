@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from functools import partial
 import enum
-from typing import Callable, Sequence, Union
+from typing import Callable, Union
 
 import numpy as np
 

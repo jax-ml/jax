@@ -16,7 +16,9 @@
 See the back_compat_test_util module docstring for how to setup and update
 these tests.
 """
-from typing import Callable, Optional, Sequence
+
+from collections.abc import Sequence
+from typing import Callable, Optional
 
 from absl.testing import absltest
 

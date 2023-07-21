@@ -22,8 +22,9 @@ For examples and details, see
 https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax.
 
 """
+from collections.abc import Sequence
 import functools
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Optional
 
 from absl import logging
 import jax

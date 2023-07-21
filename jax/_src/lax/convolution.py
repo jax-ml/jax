@@ -13,9 +13,10 @@
 # limitations under the License.
 
 import builtins
+from collections.abc import Sequence
 from functools import partial
 import operator
-from typing import Any, NamedTuple, Optional, Sequence, Union
+from typing import Any, NamedTuple, Optional, Union
 
 import numpy as np
 

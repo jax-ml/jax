@@ -15,11 +15,13 @@
 # Shims that allow the XLA CPU backend to call scipy-provided LAPACK kernels
 # via CustomCallWithLayout.
 
+from collections.abc import Sequence
+
+import numpy as np
+
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
 
-import numpy as np
-from typing import Sequence
 from jaxlib import xla_client
 
 from .hlo_helpers import (

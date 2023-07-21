@@ -65,7 +65,7 @@ from __future__ import annotations
 
 from functools import partial
 import operator
-from typing import Any, Callable, Optional, NamedTuple
+from typing import Any, Callable, NamedTuple
 import weakref
 
 from jax._src.tree_util import tree_map
@@ -260,7 +260,7 @@ def wrap_init(f, params=None) -> WrappedFun:
   return WrappedFun(f, (), (), params, None, None)
 
 
-def annotate(f: WrappedFun, in_type: Optional[core.InputType]) -> WrappedFun:
+def annotate(f: WrappedFun, in_type: core.InputType | None) -> WrappedFun:
   assert f.in_type is None
   if in_type is None:
     return f
@@ -304,9 +304,9 @@ class TracingDebugInfo(NamedTuple):
   traced_for: str             # e.g. 'jit', 'scan', etc
   func_src_info: str          # e.g. f'{fun.__name__} at {filename}:{lineno}'
   arg_names: tuple[str, ...]  # e.g. ('args[0]', ... )
-  result_paths: Optional[Callable[[], tuple[str, ...]]]
+  result_paths: Callable[[], tuple[str, ...]] | None
 
-def add_debug_info(f: WrappedFun, debug_info: Optional[TracingDebugInfo]
+def add_debug_info(f: WrappedFun, debug_info: TracingDebugInfo | None
                    ) -> WrappedFun:
   """Produce a new WrappedFun with debug_info attached."""
   assert f.debug_info is None

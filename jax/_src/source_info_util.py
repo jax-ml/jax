@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
 import contextlib
 import dataclasses
 import functools
@@ -20,7 +21,7 @@ import os.path
 import sysconfig
 import threading
 import types
-from typing import Optional, Iterator, NamedTuple, Union
+from typing import Optional, NamedTuple, Union
 
 import jax.version
 from jax._src.lib import xla_client

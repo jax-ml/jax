@@ -24,7 +24,8 @@ control over what metadata is saved in the SavedModel. Please copy and
 customize this function as needed.
 """
 
-from typing import Any, Callable, Sequence, Optional, Union
+from collections.abc import Sequence
+from typing import Any, Callable, Optional, Union
 
 from jax.experimental import jax2tf  # type: ignore[import]
 import tensorflow as tf  # type: ignore[import]

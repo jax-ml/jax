@@ -26,13 +26,13 @@ rules for the underlying :code:`lax` primitives.
 
 import builtins
 import collections
+from collections.abc import Sequence
 from functools import partial
 import math
 import operator
 import types
-from typing import (
-  overload, Any, Callable, Literal,
-  NamedTuple, Optional, Protocol, Sequence, TypeVar, Union)
+from typing import (overload, Any, Callable, Literal, NamedTuple, Optional,
+                    Protocol, TypeVar, Union)
 from textwrap import dedent as _dedent
 import warnings
 

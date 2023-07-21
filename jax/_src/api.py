@@ -23,12 +23,13 @@ arrays.
 from __future__ import annotations
 
 import collections
+from collections.abc import Generator, Hashable, Iterable, Sequence
 from functools import partial
 import inspect
 import math
 import typing
-from typing import (Any, Callable, Generator, Hashable, Iterable, Literal,
-                    NamedTuple, Optional, Sequence, TypeVar, Union,
+from typing import (Any, Callable, Literal,
+                    NamedTuple, Optional, TypeVar, Union,
                     overload, cast)
 import weakref
 
@@ -150,15 +151,15 @@ def jit(
   fun: Callable,
   in_shardings=sharding_impls.UNSPECIFIED,
   out_shardings=sharding_impls.UNSPECIFIED,
-  static_argnums: Union[int, Sequence[int], None] = None,
-  static_argnames: Union[str, Iterable[str], None] = None,
-  donate_argnums: Union[int, Sequence[int], None] = None,
-  donate_argnames: Union[str, Iterable[str], None] = None,
+  static_argnums: int | Sequence[int] | None = None,
+  static_argnames: str | Iterable[str] | None = None,
+  donate_argnums: int | Sequence[int] | None = None,
+  donate_argnames: str | Iterable[str] | None = None,
   keep_unused: bool = False,
-  device: Optional[xc.Device] = None,
-  backend: Optional[str] = None,
+  device: xc.Device | None = None,
+  backend: str | None = None,
   inline: bool = False,
-  abstracted_axes: Optional[Any] = None,
+  abstracted_axes: Any | None = None,
 ) -> stages.Wrapped:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
@@ -379,14 +380,14 @@ def disable_jit(disable: bool = True):
 
 
 def xla_computation(fun: Callable,
-                    static_argnums: Union[int, Iterable[int]] = (),
-                    axis_env: Optional[Sequence[tuple[AxisName, int]]] = None,
+                    static_argnums: int | Iterable[int] = (),
+                    axis_env: Sequence[tuple[AxisName, int]] | None = None,
                     in_parts=None, out_parts=None,
-                    backend: Optional[str] = None,
+                    backend: str | None = None,
                     tuple_args: bool = False,
-                    instantiate_const_outputs: Optional[bool] = None,
+                    instantiate_const_outputs: bool | None = None,
                     return_shape: bool = False,
-                    donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
+                    donate_argnums: int | Iterable[int] = ()) -> Callable:
   """Creates a function that produces its XLA computation given example args.
 
   Args:
@@ -601,7 +602,7 @@ def xla_computation(fun: Callable,
 
   return computation_maker
 
-def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
+def grad(fun: Callable, argnums: int | Sequence[int] = 0,
          has_aux: bool = False, holomorphic: bool = False,
          allow_int: bool = False,
          reduce_axes: Sequence[AxisName] = ()) -> Callable:
@@ -672,7 +673,7 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
   return grad_f_aux if has_aux else grad_f
 
-def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
+def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
                    has_aux: bool = False, holomorphic: bool = False,
                    allow_int: bool = False, reduce_axes: Sequence[AxisName] = ()
   ) -> Callable[..., tuple[Any, Any]]:
@@ -808,7 +809,7 @@ def _check_output_dtype_revderiv(name, holomorphic, x):
 _check_output_dtype_grad = partial(_check_output_dtype_revderiv, "grad")
 
 
-def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
+def jacfwd(fun: Callable, argnums: int | Sequence[int] = 0,
            has_aux: bool = False, holomorphic: bool = False) -> Callable:
   """Jacobian of ``fun`` evaluated column-by-column using forward-mode AD.
 
@@ -894,7 +895,7 @@ def _check_output_dtype_jacfwd(holomorphic, x):
       raise TypeError("jacfwd with holomorphic=True requires outputs with complex dtype, "
                       f"but got {aval.dtype.name}.")
 
-def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
+def jacrev(fun: Callable, argnums: int | Sequence[int] = 0,
            has_aux: bool = False, holomorphic: bool = False, allow_int: bool = False) -> Callable:
   """Jacobian of ``fun`` evaluated row-by-row using reverse-mode AD.
 
@@ -964,7 +965,7 @@ _check_input_dtype_jacrev = partial(_check_input_dtype_revderiv, "jacrev")
 _check_output_dtype_jacrev = partial(_check_output_dtype_revderiv, "jacrev")
 
 
-def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
+def hessian(fun: Callable, argnums: int | Sequence[int] = 0,
             has_aux: bool = False, holomorphic: bool = False) -> Callable:
   """Hessian of ``fun`` as a dense array.
 
@@ -1082,11 +1083,11 @@ def _split(x, indices, axis):
 
 
 def vmap(fun: F,
-         in_axes: Union[int, None, Sequence[Any]] = 0,
+         in_axes: int | None | Sequence[Any] = 0,
          out_axes: Any = 0,
-         axis_name: Optional[AxisName] = None,
-         axis_size: Optional[int] = None,
-         spmd_axis_name: Optional[Union[AxisName, tuple[AxisName, ...]]] = None
+         axis_name: AxisName | None = None,
+         axis_size: int | None = None,
+         spmd_axis_name: AxisName | tuple[AxisName, ...] | None = None
          ) -> F:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
@@ -1325,8 +1326,8 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
       if core.definitely_equal(isz, sz): return i
     assert False, (sz, all_sizes)
 
-  ex, *examples = [key_paths[_all_sizes_index(sz)] for sz, _ in counts]
-  ax, *axs = [dims[_all_sizes_index(sz)] for sz, _ in counts]
+  ex, *examples = (key_paths[_all_sizes_index(sz)] for sz, _ in counts)
+  ax, *axs = (dims[_all_sizes_index(sz)] for sz, _ in counts)
   if ct == 1:
     msg.append(f"  * one axis had size {sz}: axis {ax} of {ex};\n")
   else:
@@ -1341,16 +1342,16 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
 
 def pmap(
     fun: Callable,
-    axis_name: Optional[AxisName] = None,
+    axis_name: AxisName | None = None,
     *,
     in_axes=0,
     out_axes=0,
-    static_broadcasted_argnums: Union[int, Iterable[int]] = (),
-    devices: Optional[Sequence[xc.Device]] = None,  # noqa: F811
-    backend: Optional[str] = None,
-    axis_size: Optional[int] = None,
-    donate_argnums: Union[int, Iterable[int]] = (),
-    global_arg_shapes: Optional[tuple[tuple[int, ...], ...]] = None,
+    static_broadcasted_argnums: int | Iterable[int] = (),
+    devices: Sequence[xc.Device] | None = None,  # noqa: F811
+    backend: str | None = None,
+    axis_size: int | None = None,
+    donate_argnums: int | Iterable[int] = (),
+    global_arg_shapes: tuple[tuple[int, ...], ...] | None = None,
   ) -> Any:
   """Parallel map with support for collective operations.
 
@@ -1602,16 +1603,16 @@ class PmapCallInfo(NamedTuple):
   out_tree: Callable[[], PyTreeDef]
   flat_args: Sequence[Any]
   donated_invars: Sequence[bool]
-  in_axes_flat: Sequence[Optional[int]]
+  in_axes_flat: Sequence[int | None]
   local_axis_size: int
   out_axes_thunk: Callable
-  devices: Optional[Sequence[xc.Device]]
+  devices: Sequence[xc.Device] | None
   global_axis_size: int
   is_explicit_global_axis_size: bool
 
 
 def _get_global_axis_size(local_axis_size: int, in_devices, backend_name: str,
-                          global_axis_size: Optional[int]):
+                          global_axis_size: int | None):
   """Determine global_axis_size for multi-host pmap."""
   # TODO(mattjj,skyewm): revive this check (inner_pmap always False now)
   # if xb.process_count() > 1 and global_axis_size is None and inner_pmap:
@@ -1757,15 +1758,15 @@ class _PmapFastpathData(NamedTuple):
 
 def _cpp_pmap(
     fun: Callable,
-    axis_name: Optional[AxisName] = None,
+    axis_name: AxisName | None = None,
     *,
     in_axes=0,
     out_axes=0,
-    static_broadcasted_argnums: Union[int, Iterable[int]] = (),
-    devices: Optional[Sequence[xc.Device]] = None,  # noqa: F811
-    backend: Optional[str] = None,
-    axis_size: Optional[int] = None,
-    donate_argnums: Union[int, Iterable[int]] = (),
+    static_broadcasted_argnums: int | Iterable[int] = (),
+    devices: Sequence[xc.Device] | None = None,  # noqa: F811
+    backend: str | None = None,
+    axis_size: int | None = None,
+    donate_argnums: int | Iterable[int] = (),
   ) -> Any:
   axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
       fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
@@ -1796,7 +1797,7 @@ def _cpp_pmap(
     map_bind_continuation, top_trace, fun_, tracers, params = (
         core.map_bind_with_continuation(pxla.xla_pmap_p, p.flat_fun,
                                         *p.flat_args, **params))
-    execute: Optional[Callable] = None
+    execute: Callable | None = None
     if isinstance(top_trace, core.EvalTrace):
       execute = pxla.xla_pmap_impl_lazy(fun_, *tracers, **params)
       out = map_bind_continuation(execute(*tracers))
@@ -2007,7 +2008,7 @@ def linearize(fun: Callable, *primals, has_aux: Literal[True]
   ...
 
 def linearize(fun: Callable, *primals, has_aux: bool = False
-              ) -> Union[tuple[Any, Callable], tuple[Any, Callable, Any]]:
+              ) -> tuple[Any, Callable] | tuple[Any, Callable, Any]:
   """Produces a linear approximation to ``fun`` using :py:func:`jvp` and partial eval.
 
   Args:
@@ -2174,7 +2175,7 @@ def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
   ...
 def vjp(  # type: ignore
     fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
-  ) -> Union[tuple[Any, Callable], tuple[Any, Callable, Any]]:
+  ) -> tuple[Any, Callable] | tuple[Any, Callable, Any]:
   """Compute a (reverse-mode) vector-Jacobian product of ``fun``.
 
   :py:func:`grad` is implemented as a special case of :py:func:`vjp`.
@@ -2349,29 +2350,29 @@ def _flat_axes_specs(abstracted_axes, *args, **kwargs
 # non-overlapping. Pytype is happy with them.
 @overload
 def make_jaxpr(fun: Callable,  # type: ignore
-               static_argnums: Union[int, Iterable[int]] = (),
-               axis_env: Optional[Sequence[tuple[AxisName, int]]] = None,
+               static_argnums: int | Iterable[int] = (),
+               axis_env: Sequence[tuple[AxisName, int]] | None = None,
                return_shape: Literal[False] = ...,
-               abstracted_axes: Optional[Any] = None,
+               abstracted_axes: Any | None = None,
                ) -> Callable[..., core.ClosedJaxpr]:
   ...
 
 @overload
 def make_jaxpr(fun: Callable,  # type: ignore
-               static_argnums: Union[int, Iterable[int]] = (),
-               axis_env: Optional[Sequence[tuple[AxisName, int]]] = None,
+               static_argnums: int | Iterable[int] = (),
+               axis_env: Sequence[tuple[AxisName, int]] | None = None,
                return_shape: Literal[True] = ...,
-               abstracted_axes: Optional[Any] = None,
+               abstracted_axes: Any | None = None,
                ) -> Callable[..., tuple[core.ClosedJaxpr, Any]]:
   ...
 
 def make_jaxpr(fun: Callable,
-               static_argnums: Union[int, Iterable[int]] = (),
-               axis_env: Optional[Sequence[tuple[AxisName, int]]] = None,
+               static_argnums: int | Iterable[int] = (),
+               axis_env: Sequence[tuple[AxisName, int]] | None = None,
                return_shape: bool = False,
-               abstracted_axes: Optional[Any] = None,
-               ) -> Callable[..., Union[core.ClosedJaxpr,
-                                        tuple[core.ClosedJaxpr, Any]]]:
+               abstracted_axes: Any | None = None,
+               ) -> Callable[..., (core.ClosedJaxpr |
+                                        tuple[core.ClosedJaxpr, Any])]:
   """Creates a function that produces its jaxpr given example args.
 
   Args:
@@ -2477,8 +2478,8 @@ def _infer_src_sharding(src, x):
 
 def device_put(
     x,
-    device: Union[None, xc.Device, Sharding, Any] = None,
-    *, src: Union[None, xc.Device, Sharding, Any] = None):
+    device: None | xc.Device | Sharding | Any = None,
+    *, src: None | xc.Device | Sharding | Any = None):
   """Transfers ``x`` to ``device``.
 
   Args:
@@ -2813,7 +2814,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
 def named_call(
     fun: Callable[..., Any],
     *,
-    name: Optional[str] = None,
+    name: str | None = None,
   ) -> Callable[..., Any]:
   """Adds a user specified name to a function when staging out JAX computations.
 

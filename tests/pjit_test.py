@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import OrderedDict, namedtuple
 import os
 import re
 from functools import partial, lru_cache
@@ -19,7 +20,6 @@ import logging
 import math
 import threading
 import unittest
-from collections import OrderedDict, namedtuple
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -101,7 +101,7 @@ def create_array(global_shape, global_mesh, mesh_axes, global_data=None,
       global_shape, sharding, lambda idx: global_data[idx]), global_data
 
 
-@lru_cache()
+@lru_cache
 def simulated_cached_fun(s):
   return s
 

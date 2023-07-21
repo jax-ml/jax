@@ -28,10 +28,11 @@
 # replica groups for collective operations.
 
 import collections
+from collections.abc import Mapping, Sequence
 import functools
 import itertools
 import math
-from typing import Any, Mapping, Optional, Sequence, Union, cast
+from typing import Any, Optional, Union, cast
 
 import numpy as np
 

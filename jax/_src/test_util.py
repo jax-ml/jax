@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager, ExitStack
 import inspect
 import io
@@ -22,7 +23,7 @@ import re
 import os
 import tempfile
 import textwrap
-from typing import Any, Callable, Generator, Optional, Sequence, Union
+from typing import Any, Callable, Optional, Union
 import unittest
 import warnings
 import zlib
@@ -761,7 +762,7 @@ def named_cases_from_sampler(gen):
 
 # Random sampling for every parameterized test is expensive. Do it once and
 # cache the result.
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _choice(n, m):
   rng = np.random.RandomState(42)
   return rng.choice(n, size=m, replace=False)

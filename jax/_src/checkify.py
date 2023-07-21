@@ -13,10 +13,11 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Sequence
 import dataclasses
 import functools
 import itertools as it
-from typing import Union, Optional, Callable, TypeVar, Sequence, Any
+from typing import Union, Callable, TypeVar, Any
 
 import numpy as np
 
@@ -104,7 +105,7 @@ class ErrorEffect(effects.Effect):
   error_type: type[JaxException]
   shape_dtypes: tuple[api.ShapeDtypeStruct, ...]
 
-  def __lt__(self, other: 'ErrorEffect'):
+  def __lt__(self, other: ErrorEffect):
     shape_dtypes = lambda x: tuple((sd.shape, str(sd.dtype))  # dtype is not comparable
                                    for sd in x.shape_dtypes)
     unpack = lambda x: (str(x.error_type), shape_dtypes(x))
@@ -216,14 +217,14 @@ class Error:
   _metadata: dict[Int, PyTreeDef]  # mapping of code to JaxException treedef.
   _payload: dict[ErrorEffect, Payload]
 
-  def get(self) -> Optional[str]:
+  def get(self) -> str | None:
     """Returns error message if error happened, None if no error happened."""
     exp = self.get_exception()
     if exp is not None:
       return str(exp)
     return None
 
-  def get_exception(self) -> Optional[JaxException]:
+  def get_exception(self) -> JaxException | None:
     """Returns Python exception if error happened, None if no error happened."""
     if any(map(np.shape, self._pred.values())):
       return self._get_batched_exception()
@@ -249,7 +250,7 @@ class Error:
 
   # Internal helpers
 
-  def _get_batched_exception(self) -> Optional[BatchedError]:
+  def _get_batched_exception(self) -> BatchedError | None:
     shape = np.shape(list(self._pred.values())[0])
     error_mapping = {}
     for idx in np.ndindex(*shape):

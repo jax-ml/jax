@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Provides JAX and TensorFlow interoperation APIs."""
+
+from collections.abc import Iterable, Sequence
 from functools import partial
 import contextlib
 import math
@@ -19,7 +21,7 @@ import operator
 import os
 import re
 import threading
-from typing import Any, Callable, Iterable, Optional, Sequence, Union, cast
+from typing import Any, Callable, Optional, Union, cast
 import warnings
 
 from absl import logging

@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 import math
-from typing import Any, Optional, Sequence, Union, cast as type_cast
+from typing import Any, Optional, Union, cast as type_cast
 
 import jax
 from jax._src.numpy import lax_numpy as jnp

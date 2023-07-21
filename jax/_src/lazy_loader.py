@@ -14,8 +14,9 @@
 
 """A LazyLoader class."""
 
+from collections.abc import Sequence
 import importlib
-from typing import Any, Callable, Sequence
+from typing import Any, Callable
 
 
 def attach(package_name: str, submodules: Sequence[str]) -> tuple[

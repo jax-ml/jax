@@ -14,6 +14,7 @@
 
 
 import collections
+from collections.abc import Iterator
 import copy
 from functools import partial
 import inspect
@@ -21,7 +22,7 @@ import io
 import itertools
 import math
 import platform
-from typing import cast, Iterator, Optional
+from typing import cast, Optional
 import unittest
 from unittest import SkipTest
 import warnings
