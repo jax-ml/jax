@@ -1439,14 +1439,14 @@ def physical_aval(aval):
     return aval
 
 def _short_dtype_name(dtype) -> str:
-  if type(dtype) in dtypes.opaque_dtypes:
+  if dtypes.issubdtype(dtype, dtypes.opaque):
     return str(dtype)
   else:
     return (dtype.name.replace('float', 'f').replace('uint'   , 'u')
                       .replace('int'  , 'i').replace('complex', 'c'))
 
 def _dtype_object(dtype):
-  return dtype if type(dtype) in dtypes.opaque_dtypes else np.dtype(dtype)
+  return dtype if dtypes.issubdtype(dtype, dtypes.opaque) else np.dtype(dtype)
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']
@@ -1780,8 +1780,12 @@ pytype_aval_mappings[DArray] = \
                              x._data)
 
 @dataclass(frozen=True, eq=True)
-class bint:
+class bint(dtypes.OpaqueDType):
   bound: int
+
+  @property
+  def type(self) -> type:
+    return dtypes.opaque
 
   @property
   def name(self) -> str:
@@ -1789,7 +1793,6 @@ class bint:
 
   def __str__(self) -> str:
     return self.name
-dtypes.opaque_dtypes.add(bint)
 
 AxisSize = Union[int, DArray, Tracer, Var, DBIdx, InDBIdx, OutDBIdx]
 
