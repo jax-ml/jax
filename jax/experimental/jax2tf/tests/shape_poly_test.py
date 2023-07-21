@@ -1017,21 +1017,82 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       conv_and_run(arg_shape=(4, 36, 3), polymorphic_shape="b * b, b * d * d, d")
 
     with self.assertRaisesRegex(tf.errors.InvalidArgumentError,
-                                "Dimension variable 'b' must have integer value >= 1"):
+                                "Division had remainder 2 when computing the value of 'b'"):
       conv_and_run(arg_shape=(5, 36), polymorphic_shape="3 * b, ...")
 
     with self.assertRaisesRegex(tf.errors.InvalidArgumentError,
-                                "Dimension variable 'b' must have integer value >= 1"):
+                                "Expected value >= 1 for dimension variable 'b'"):
       conv_and_run(arg_shape=(10, 3), polymorphic_shape="3 * b + 10, ...")
 
     with self.assertRaisesRegex(tf.errors.InvalidArgumentError,
-                                "Dimension variable 'b' must have integer value >= 1"):
+                                "Expected value >= 1 for dimension variable 'b'"):
       conv_and_run(arg_shape=(7, 3), polymorphic_shape="3 * b + 10, ...")
 
     with self.assertRaisesRegex(
         tf.errors.InvalidArgumentError,
-        "Found inconsistency 3 != 2 when solving.*"):
+        re.escape(
+          "Found inconsistency between dimension size "
+          "args[0].shape[1] (= 3) and the specification 'a' (= 2)")):
       conv_and_run(arg_shape=(2, 3), polymorphic_shape="(a, a)")
+
+  # Tests details of the shape constraints errors.
+  # This test exists also in jax_export_test.py.
+  @jtu.parameterized_filterable(
+    #one_containing="",
+    testcase_name=lambda kw: kw["shape"],
+    kwargs=[
+      dict(shape=(8, 2, 9),  # a = 2, b = 3, c = 4
+           poly_spec="(a + 2*b, a, a + b + c)"),
+      dict(shape=(2, 2, 6),  # a = 2, b = 0, c = 4
+           poly_spec="(a + 2*b, a, a + b + c)",
+           expect_error=(
+             "Input shapes do not match the polymorphic shapes specification. "
+             "Expected value >= 1 for dimension variable 'b'. "
+             "Using the following polymorphic shapes specifications: args[0].shape = (a + 2*b, a, a + b + c). "
+             "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
+             "'b' = 0 from specification 'a + 2*b' for dimension args[0].shape[0] (= 2), . "
+             "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
+           )),
+      dict(shape=(3, 2, 6),  # a = 2, b = 0.5, c = 4 - b is not integer
+           poly_spec="(a + 2*b, a, a + b + c)",
+           expect_error=(
+             "Input shapes do not match the polymorphic shapes specification. "
+             "Division had remainder 1 when computing the value of 'b'. "
+             "Using the following polymorphic shapes specifications: args[0].shape = (a + 2*b, a, a + b + c). "
+             "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), . "
+             "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
+           )),
+      dict(shape=(8, 2, 6),  # a = 2, b = 3 - inconsistency
+           poly_spec="(a + 2*b, a, a + b)",
+           expect_error=(
+             "Input shapes do not match the polymorphic shapes specification. "
+             "Found inconsistency between dimension size args[0].shape[0] (= 8) and the specification 'a + 2*b' (= 10). "
+             "Using the following polymorphic shapes specifications: args[0].shape = (a + 2*b, a, a + b). "
+             "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
+             "'b' = 4 from specification 'a + b' for dimension args[0].shape[2] (= N/A), . "
+             "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
+           )),
+      dict(shape=(7, 2, 36),  # a = 2, b = 3, c = 6 - cannot solve c
+           poly_spec="(2 * a + b, a, c * c)",
+           expect_error=(
+             "Cannot solve for values of dimension variables {'c'}. "
+             "We can only solve linear uni-variate constraints. "
+             "Using the following polymorphic shapes specifications: args[0].shape = (2*a + b, a, c^2). "
+             "Unprocessed specifications: 'c^2' for dimension size args[0].shape[2]. "
+             "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
+           )),
+  ])
+  def test_shape_constraints_errors(self, *,
+      shape, poly_spec: str, expect_error: Optional[str] = None):
+    def f_jax(x):  # x: f32[a + 2*b, a, a + b + c]
+      return 0.
+
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    with contextlib.ExitStack() as stack:
+      if expect_error is not None:
+        stack.push(self.assertRaisesRegex(Exception, re.escape(expect_error)))
+      _ = jax2tf.convert(f_jax, polymorphic_shapes=[poly_spec])(x)
+
   def test_pytree(self):
     """Arguments and polymorphic_shapes are pytrees."""
 
@@ -1503,7 +1564,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # In graph serialization eager mode we catch the error
     with self.assertRaisesRegex(
         tf.errors.InvalidArgumentError,
-        "Dimension variable 'b' must have integer value >= 1. Found 0"):
+        re.escape("Expected value >= 1 for dimension variable 'b'. "
+                  "Using the following polymorphic shapes specifications: args[0].shape = (b,). "
+                  "Obtained dimension variables: 'b' = 0")):
       jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
                      native_serialization=False)(x0)
 
@@ -1520,7 +1583,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     else:
       with self.assertRaisesRegex(
           tf.errors.InvalidArgumentError,
-          "Dimension variable .* must have integer value"):
+          re.escape("Expected value >= 1 for dimension variable")):
         _ = f1_tf(x0)
 
     # In graph serialization with jit_compile=True we do not catch the error
@@ -1536,7 +1599,10 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # We also catch the error with native serialization
     with self.assertRaisesRegex(
         tf.errors.InvalidArgumentError,
-        "Dimension variable 'b' must have integer value >= 1. Found 0"):
+        re.escape(
+          "Expected value >= 1 for dimension variable 'b'. "
+          "Using the following polymorphic shapes specifications: args[0].shape = (b,). "
+          "Obtained dimension variables: 'b' = 0")):
       _ = jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
                          native_serialization=True)(x0)
 
@@ -1553,7 +1619,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # In graph serialization eager mode, we catch the broken assumption b >= 1
     with self.assertRaisesRegex(
         tf.errors.InvalidArgumentError,
-        r"Found inconsistency 5 != 4 when solving b == args\[0\].shape\[1\]"):
+        re.escape(
+          "Found inconsistency between dimension size args[0].shape[1] (= 5) "
+          "and the specification 'b' (= 4)")):
       jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
                      native_serialization=False)(x45)
 
@@ -1586,7 +1654,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # We also catch the error with native serialization
     with self.assertRaisesRegex(
         tf.errors.InvalidArgumentError,
-        "Found inconsistency 5 != 4"):
+        re.escape(
+          "Found inconsistency between dimension size args[0].shape[1] (= 5) "
+          "and the specification 'b' (= 4)")):
       _ = jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
                          native_serialization=True)(x45)
 

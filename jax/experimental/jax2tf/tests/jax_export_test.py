@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
+import math
 import re
+from typing import Optional
 import unittest
 
 from absl.testing import absltest
@@ -268,7 +270,6 @@ class JaxExportTest(jtu.JaxTestCase):
   # module.
   @jtu.parameterized_filterable(
     testcase_name=lambda kw:f"poly_spec={kw['poly_spec']}_arg_shape={kw['arg_shape']}",  # type: ignore
-    #one_containing="",
     kwargs=[
       dict(poly_spec="3,4,12", arg_shape=(3, 4, 12)),
       dict(poly_spec="3,4,12", arg_shape=(3, 4, 13),
@@ -279,18 +280,19 @@ class JaxExportTest(jtu.JaxTestCase):
       dict(poly_spec="3,a,a+8", arg_shape=(3, 4, 12)),
       dict(poly_spec="3,4,a+1", arg_shape=(3, 4, 1),
            expect_error=re.escape(
-              r"Dimension variable 'a' must have integer "
-              r"value >= 1. Found 0 when solving "
-              r"a + 1 == args[0].shape[2].")),
+               "Expected value >= 1 for dimension variable 'a'. "
+               "Using the following polymorphic shapes specifications: args[0].shape = (3, 4, a + 1). "
+               "Obtained dimension variables: 'a' = 0"
+          )),
       dict(poly_spec="3,4,6*a", arg_shape=(3, 4, 13),
            expect_error=re.escape(
-               r"Dimension variable 'a' must have integer value >= 1. "
-               r"Non-zero remainder 1 for factor 6 when solving "
-               r"6*a == args[0].shape[2]")),
+              "Division had remainder 1 when computing the value of 'a'"
+          )),
       dict(poly_spec="3,a,a+8", arg_shape=(3, 4, 13),
            expect_error=re.escape(
-              r"Found inconsistency 13 != 12 when solving "
-              r"a + 8 == args[0].shape[2]")),
+             "Found inconsistency between dimension size "
+             "args[0].shape[2] (= 13) and the specification 'a + 8' (= 12)"
+          )),
   ])
   def test_poly_shape_checks(
       self, poly_spec="3,a,a+8",
@@ -330,63 +332,69 @@ class JaxExportTest(jtu.JaxTestCase):
     kwargs=[
       # Both inner and outer are static shapes
       dict(inner_poly_spec="3,4,12", outer_poly_spec="3,4,12"),
-      # Inner has poly shapes but outer has static shapes
+      # Inner has poly shapes but outer has static shapes. When we call inner
+      # we do the shape constraint checking
       dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,4,12"),
       dict(inner_poly_spec="3,4,3*a", outer_poly_spec="3,4,12"),
       dict(inner_poly_spec="3,a,a", outer_poly_spec="3,4,12",
            expect_error_outer_exp=re.escape(
-             r"Found inconsistency 12 != 4 when solving a == args[0].shape[2]")),
+             "Found inconsistency between dimension size "
+             "args[0].shape[2] (= 12) and the specification 'a' (= 4)")),
       dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,12",
            expect_error_outer_exp=re.escape(
-             r"Dimension variable 'a' must have integer value >= 1. "
-             r"Non-zero remainder 2 for factor 5 when solving 5*a == args[0].shape[2]")),
+             "Division had remainder 2 when computing the value of 'a'")),
       dict(inner_poly_spec="3,4,12+a", outer_poly_spec="3,4,12",
            expect_error_outer_exp=re.escape(
-             r"Dimension variable 'a' must have integer value >= 1. "
-             r"Found 0 when solving a + 12 == args[0].shape[2]")),
+              "Expected value >= 1 for dimension variable 'a'. "
+              "Using the following polymorphic shapes specifications: args[0].shape = (3, 4, a + 12). "
+              "Obtained dimension variables: 'a' = 0 from specification "
+              "'a + 12' for dimension args[0].shape[2] (= 12)")),
       # Both inner and outer have poly shapes.
       dict(inner_poly_spec="3,a,b", outer_poly_spec="3,4,c"),
       dict(inner_poly_spec="3,4,3*a", outer_poly_spec="3,4,6*c"),
       dict(inner_poly_spec="3,a,a+8", outer_poly_spec="3,c+2,c+10"),
       dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,4,c",
            expect_error_outer_exp=re.escape(
-             r"Dimension variable 'b' must have integer value >= 1. "
-             r"Found c + -4 when solving a + b == args[0].shape[2]")),
+             "Expected value >= 1 for dimension variable 'b'. "
+             "Using the following polymorphic shapes specifications: args[0].shape = (3, a, a + b). "
+             "Obtained dimension variables: 'a' = 4 from specification "
+             "'a' for dimension args[0].shape[1] (= 4), "
+             "'b' = c + -4 from specification 'a + b' for dimension args[0].shape[2] (= c),")),
       dict(inner_poly_spec="3,a,a", outer_poly_spec="3,4,c",
            expect_error_outer_exp=re.escape(
-             r"Found inconsistency c != 4 when solving a == args[0].shape[2]"
-           )),
+             "Found inconsistency between dimension size "
+             "args[0].shape[2] (= c) and the specification 'a' (= 4)")),
       dict(inner_poly_spec="3,a,a", arg_shape=(3, 4),
            outer_poly_spec="3,c",
            expect_error_outer_exp=r"Rank mismatch for args\[0\]"),
       dict(inner_poly_spec="3,a,a+b", arg_dtype=np.int32,
            outer_poly_spec="3,c,d",
            expect_error_outer_exp=r"Dtype mismatch for args\[0\]"),
-
       dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,c",
            expect_error_outer_exp=re.escape(
-             r"Dimension variable 'a' must have integer value >= 1. "
-             r"Non-zero remainder mod(c, 5) for factor 5 when solving 5*a == args[0].shape[2]"
-           )),
+              "Division had remainder mod(c, 5) when computing the value of 'a'")),
       dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,c,c",
            expect_error_outer_exp=re.escape(
-               r"Dimension variable 'b' must have integer value >= 1. "
-               r"Found 0 when solving a + b == args[0].shape[2]")),
+               "Expected value >= 1 for dimension variable 'b'. "
+               "Using the following polymorphic shapes specifications: args[0].shape = (3, a, a + b). "
+               "Obtained dimension variables: 'a' = c from "
+               "specification 'a' for dimension args[0].shape[1] (= c), "
+               "'b' = 0 from specification 'a + b' for dimension args[0].shape[2] (= c)")),
       dict(inner_poly_spec="3,a,a+b", outer_poly_spec="c,4,12",
            expect_error_outer_exp=re.escape(
-             r"Shape mismatch for args[0].shape[0] (expected same constant)")),
+               "Shape mismatch for args[0].shape[0] (expected same constant)")),
       dict(inner_poly_spec="3,4,5*a", outer_poly_spec="3,4,25*c",
            expect_error_run=re.escape(
-             r"Dimension variable 'c' must have integer value >= 1. "
-             r"Non-zero remainder 12 for factor 25 when solving 25*c == args[0].shape[2]")),
+              "Division had remainder 12 when computing the value of 'c'")),
       dict(inner_poly_spec="3,a,b", outer_poly_spec="3,c+4,12",
            expect_error_run=re.escape(
-               r"Dimension variable 'c' must have integer value >= 1. "
-               r"Found 0 when solving c + 4 == args[0].shape[1]")),
+               "Expected value >= 1 for dimension variable 'c'. "
+               "Using the following polymorphic shapes specifications: args[0].shape = (3, c + 4, 12). "
+               "Obtained dimension variables: 'c' = 0")),
       dict(inner_poly_spec="3,a,a", outer_poly_spec="3,a,a",
            expect_error_run=re.escape(
-               r"Found inconsistency 12 != 4 when solving "
-               r"a == args[0].shape[2]")),
+               "Found inconsistency between dimension size "
+               "args[0].shape[2] (= 12) and the specification 'a' (= 4)")),
   ])
   def test_poly_shape_checks_nested(
       self, inner_poly_spec="3,4,5*a",
@@ -437,6 +445,67 @@ class JaxExportTest(jtu.JaxTestCase):
     if expect_error_run is not None:
       return
     self.assertAllClose(2. * inner(arg), res)
+
+  # Tests details of the shape constraints errors
+  # This test exists also in shape_poly_test.py. Here we test the
+  # call_exported error reporting.
+  @jtu.parameterized_filterable(
+    #one_containing="7, 2, 36",
+    testcase_name=lambda kw: kw["shape"],
+    kwargs=[
+      dict(shape=(8, 2, 9),  # a = 2, b = 3, c = 4
+           poly_spec="(a + 2*b, a, a + b + c)"),
+      dict(shape=(2, 2, 6),  # a = 2, b = 0, c = 4
+           poly_spec="(a + 2*b, a, a + b + c)",
+           expect_error=(
+             "Input shapes do not match the polymorphic shapes specification. "
+             "Expected value >= 1 for dimension variable 'b'. "
+             "Using the following polymorphic shapes specifications: args[0].shape = (a + 2*b, a, a + b + c). "
+             "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
+             "'b' = 0 from specification 'a + 2*b' for dimension args[0].shape[0] (= 2), . "
+             "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
+           )),
+      dict(shape=(3, 2, 6),  # a = 2, b = 0.5, c = 4 - b is not integer
+           poly_spec="(a + 2*b, a, a + b + c)",
+           expect_error=(
+             "Input shapes do not match the polymorphic shapes specification. "
+             "Division had remainder 1 when computing the value of 'b'. "
+             "Using the following polymorphic shapes specifications: args[0].shape = (a + 2*b, a, a + b + c). "
+             "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), . "
+             "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
+           )),
+      dict(shape=(8, 2, 6),  # a = 2, b = 3 - inconsistency
+           poly_spec="(a + 2*b, a, a + b)",
+           expect_error=(
+             "Input shapes do not match the polymorphic shapes specification. "
+             "Found inconsistency between dimension size args[0].shape[0] (= 8) and the specification 'a + 2*b' (= 10). "
+             "Using the following polymorphic shapes specifications: args[0].shape = (a + 2*b, a, a + b). "
+             "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
+             "'b' = 4 from specification 'a + b' for dimension args[0].shape[2] (= N/A), . "
+             "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
+           )),
+      dict(shape=(7, 2, 36),  # a = 2, b = 3, c = 6 - cannot solve c
+           poly_spec="(2 * a + b, a, c * c)",
+           expect_error=(
+             "Cannot solve for values of dimension variables {'c'}. "
+             "We can only solve linear uni-variate constraints. "
+             "Using the following polymorphic shapes specifications: args[0].shape = (2*a + b, a, c^2). "
+             "Unprocessed specifications: 'c^2' for dimension size args[0].shape[2]. "
+             "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
+           )),
+  ])
+  def test_shape_constraints_errors(self, *,
+      shape, poly_spec: str, expect_error: Optional[str] = None):
+    def f_jax(x):  # x: f32[a + 2*b, a, a + b + c]
+      return 0.
+
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    with contextlib.ExitStack() as stack:
+      if expect_error is not None:
+        stack.push(self.assertRaisesRegex(Exception, re.escape(expect_error)))
+      exp = jax_export.export(f_jax)(
+          jax_export.poly_spec(x.shape, x.dtype, poly_spec))
+      jax_export.call_exported(exp)(x)
 
 
 if __name__ == "__main__":
