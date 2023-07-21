@@ -776,7 +776,6 @@ You can use `--jax_serialization_version` to adjust the serialization version
 to your deployed consumer. We reserve the right to remove support for
 generating or consuming old serialization versions, e.g., older than 6 months.
 
-
 ## Serialization version numbers
 
 We list here a history of the serialization version numbers:
@@ -801,6 +800,9 @@ We list here a history of the serialization version numbers:
     for `shape_assertions` specified in `disabled_checks`.
     See [Errors in presence of shape polymorphism](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism).
     Used in JAX serialization since July 20th, 2023 (JAX 0.4.14).
+  * Version 8 adds support for the `jax.uses_shape_polymorphism` module
+    attribute and enables the shape refinement pass only when the
+    attribute is present. Not yet used in JAX.
 
 
 ## Known issues

@@ -179,11 +179,14 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     self.addCleanup(functools.partial(config.update,
                                       "jax_serialization_version", version))
     if self.use_max_serialization_version:
-      max_version = tfxla.call_module_maximum_supported_version()
+      # The largest version we support is 7
+      max_version = min(7, tfxla.call_module_maximum_supported_version())
       self.assertLessEqual(version, max_version)
       version = max_version
       config.update("jax_serialization_version", max_version)
-    logging.info("Using JAX serialization version %s", version)
+    logging.info("Using JAX serialization version %s%s",
+                 version,
+                 " (max_version)" if self.use_max_serialization_version else "")
 
     with contextlib.ExitStack() as stack:
       stack.enter_context(tf.device(self.tf_default_device))
