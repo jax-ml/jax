@@ -112,6 +112,12 @@ xla_extension_version: int = getattr(xla_client, '_version', 0)
 
 import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error
 import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error
+try:
+  import jaxlib.tpu_mosaic as tpu_mosaic # pytype: disable=import-error
+except ImportError:
+  # TODO(sharadmv): Remove this when minimum jaxlib version >= 0.4.14
+  # Jaxlib doesn't contain Mosaic bindings
+  tpu_mosaic = None  # type: ignore
 
 # Version number for MLIR:Python APIs, provided by jaxlib.
 mlir_api_version = xla_client.mlir_api_version

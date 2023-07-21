@@ -1113,6 +1113,16 @@ jax_test(
 )
 
 py_test(
+    name = "mosaic_test",
+    srcs = ["mosaic_test.py"],
+    deps = [
+        "//jax",
+        "//jax:mosaic",
+        "//jax:test_util",
+    ],
+)
+
+py_test(
     name = "source_info_test",
     srcs = ["source_info_test.py"],
     deps = [
