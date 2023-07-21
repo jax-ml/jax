@@ -60,12 +60,14 @@ TfVal = jax2tf_internal.TfVal
 # DLPack, if we are careful.
 _DLPACK_PLATFORMS = ("gpu",)
 
+class UnspecifiedOutputShapeDtype:
+  pass
 
 def call_tf(
     callable_tf: Callable,
     has_side_effects=True,
     ordered=False,
-    output_shape_dtype=None,
+    output_shape_dtype=UnspecifiedOutputShapeDtype(),
     call_tf_graph=False,
 ) -> Callable:
   """Calls a TensorFlow function from JAX, with support for reverse autodiff.
@@ -134,7 +136,7 @@ def call_tf(
       return tf.TensorSpec(a_tf_shape, a_tf_dtype)
     args_flat_sig_tf = tuple(map(make_tensorspec, args_flat_jax))
 
-    if output_shape_dtype is not None:
+    if not isinstance(output_shape_dtype, UnspecifiedOutputShapeDtype):
       output_shape_dtype_flat, output_shape_dtype_tree = tree_util.tree_flatten(output_shape_dtype)
       output_avals = tuple(core.ShapedArray(st.shape, st.dtype) for st in output_shape_dtype_flat)
     else:

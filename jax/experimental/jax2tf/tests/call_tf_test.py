@@ -694,6 +694,48 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     grad_res = grad_fun_jax(operand, indices)
     self.assertEqual(grad_res.shape, (100, 128))
 
+  def test_output_shape_dtype_none(self):
+    x = jnp.zeros((10), dtype=jnp.float32)
+
+    @tf.function(jit_compile=True, autograph=False)
+    def fun_tf(x):  # pylint: disable=unused-argument
+      return
+
+    fun_jax_1 = jax2tf.call_tf(fun_tf, output_shape_dtype=None)
+    fun_jax_2 = jax2tf.call_tf(fun_tf)
+    self.assertIsNone(fun_jax_1(x))
+    self.assertIsNone(fun_jax_2(x))
+    fun_jax_3 = jax2tf.call_tf(
+        fun_tf, output_shape_dtype=jax.ShapeDtypeStruct((10,), jnp.float32)
+    )
+    with self.assertRaisesRegex(
+        ValueError,
+        "The pytree of the TensorFlow function results does not match the"
+        " pytree of the declared output_shape_dtype",
+    ):
+      _ = fun_jax_3(x)
+
+  def test_output_shape_dtype_not_none(self):
+    x = jnp.zeros((10), dtype=jnp.float32)
+
+    @tf.function(jit_compile=True, autograph=False)
+    def fun_tf(x):
+      return x
+
+    fun_jax_1 = jax2tf.call_tf(
+        fun_tf, output_shape_dtype=jax.ShapeDtypeStruct((10,), jnp.float32)
+    )
+    fun_jax_2 = jax2tf.call_tf(fun_tf)
+    self.assertAllClose(fun_jax_1(x), fun_jax_2(x))
+
+    fun_jax_3 = jax2tf.call_tf(fun_tf, output_shape_dtype=None)
+    with self.assertRaisesRegex(
+        ValueError,
+        "The pytree of the TensorFlow function results does not match the"
+        " pytree of the declared output_shape_dtype",
+    ):
+      _ = fun_jax_3(x)
+
 
 class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
   "Reloading output of jax2tf into JAX with call_tf"
