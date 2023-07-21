@@ -55,7 +55,7 @@ uint_dtypes = jtu.dtypes.all_unsigned
 
 def _prng_key_as_array(key):
   # TODO(frostig): remove some day when we deprecate "raw" key arrays
-  if isinstance(key, jax.random.PRNGKeyArray):
+  if jnp.issubdtype(key.dtype, dtypes.prng_key):
     return key.unsafe_raw_array()
   else:
     return key
@@ -63,7 +63,7 @@ def _prng_key_as_array(key):
 def _maybe_unwrap(key):
   # TODO(frostig): remove some day when we deprecate "raw" key arrays
   unwrap = prng_internal.random_unwrap
-  return unwrap(key) if isinstance(key, jax.random.PRNGKeyArray) else key
+  return unwrap(key) if jnp.issubdtype(key, dtypes.prng_key) else key
 
 
 PRNG_IMPLS = [('threefry2x32', prng.threefry_prng_impl),
@@ -207,7 +207,7 @@ KEY_CTORS = [random.key, random.PRNGKey]
 class PrngTest(jtu.JaxTestCase):
 
   def check_key_has_impl(self, key, impl):
-    if isinstance(key, random.PRNGKeyArray):
+    if jnp.issubdtype(key.dtype, dtypes.prng_key):
       self.assertIs(key.impl, impl)
     else:
       self.assertEqual(key.dtype, jnp.dtype('uint32'))
@@ -1681,6 +1681,11 @@ class KeyArrayTest(jtu.JaxTestCase):
     key = random.key(42)
     self.assertIsInstance(key, random.PRNGKeyArray)
 
+  def test_issubdtype(self):
+    key = random.key(42)
+    self.assertTrue(jnp.issubdtype(key.dtype, dtypes.prng_key))
+    self.assertFalse(jnp.issubdtype(key.dtype, np.integer))
+
   @skipIf(not config.jax_enable_custom_prng, 'relies on typed key upgrade flag')
   def test_construction_upgrade_flag(self):
     key = random.PRNGKey(42)
@@ -2207,7 +2212,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
 
   def test_cannot_add(self):
     key = self.make_key(73)
-    if not isinstance(key, random.PRNGKeyArray):
+    if not jnp.issubdtype(key.dtype, dtypes.prng_key):
       raise SkipTest('relies on typed key arrays')
     self.assertRaisesRegex(
         ValueError, r'dtype=key<.*> is not a valid dtype for JAX type promotion.',

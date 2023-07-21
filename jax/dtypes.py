@@ -22,6 +22,7 @@ from jax._src.dtypes import (
     float0 as float0,
     iinfo,  # TODO(phawkins): switch callers to jnp.iinfo?
     issubdtype,  # TODO(phawkins): switch callers to jnp.issubdtype?
+    prng_key as prng_key,
     result_type as result_type,
     scalar_type_of as scalar_type_of,
 )

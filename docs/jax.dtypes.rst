@@ -10,5 +10,6 @@
     canonicalize_dtype
     float0
     issubdtype
+    prng_key
     result_type
     scalar_type_of

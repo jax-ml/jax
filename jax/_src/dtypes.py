@@ -46,6 +46,7 @@ else:
 FLAGS = flags.FLAGS
 
 
+# TODO(jakevdp): rename opaque dtypes to something more user-friendly
 class opaque(np.generic):
   """Scalar class for opaque dtypes.
 
@@ -62,6 +63,23 @@ class opaque(np.generic):
   pass
 
 
+class prng_key(opaque):
+  """Scalar class for PRNG Key dtypes.
+
+  This is an abstract class that should never be instantiated, but rather
+  exists for the sake of `jnp.issubdtype`.
+
+  Examples:
+    >>> from jax import random
+    >>> from jax import dtypes
+    >>> key = random.key(0)
+    >>> jnp.issubdtype(key.dtype, dtypes.prng_key)
+    True
+  """
+  pass
+
+
+# TODO(jakevdp): rename opaque dtypes to something more user-friendly
 class OpaqueDType(metaclass=abc.ABCMeta):
   """Abstract Base Class for opaque dtypes"""
   @property
@@ -72,7 +90,6 @@ class OpaqueDType(metaclass=abc.ABCMeta):
 def is_opaque_dtype(dtype: Any) -> bool:
   # TODO(vanderplas, frostig): remove in favor of inlining `issubdtype`
   return issubdtype(dtype, opaque)
-
 
 # fp8 support
 float8_e4m3b11fnuz: type[np.generic] = ml_dtypes.float8_e4m3b11fnuz
