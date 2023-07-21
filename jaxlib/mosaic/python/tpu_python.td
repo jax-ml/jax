@@ -13,5 +13,4 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-include "mlir/Bindings/Python/Attributes.td"
 include "jaxlib/mosaic/dialect/tpu/tpu.td"
