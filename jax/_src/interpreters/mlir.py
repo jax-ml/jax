@@ -972,7 +972,10 @@ def lower_jaxpr_to_fun(
                             in zip(replicated_args, input_types)]
       for attrs, replicated in zip(arg_attrs, util.flatten(replicated_ir_args)):
         if replicated:
-          attrs["mhlo.is_same_data_across_replicas"] = ir.UnitAttr.get()
+          if xla_extension_version < 172:
+            attrs["mhlo.is_same_data_across_replicas"] = ir.UnitAttr.get()
+          else:
+            attrs["mhlo.is_same_data_across_replicas"] = ir.BoolAttr.get(True)
 
     if use_sharding_annotations and ir_arg_shardings is not None:
       for attrs, sharding in zip(arg_attrs, ir_arg_shardings):
