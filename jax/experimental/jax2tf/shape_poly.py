@@ -42,7 +42,7 @@ import math
 import operator as op
 import threading
 import tokenize
-from typing import Any, Callable, Optional, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 import opt_einsum
@@ -1187,6 +1187,19 @@ def all_dim_vars(args_avals: Sequence[core.AbstractValue]) -> Sequence[str]:
   return sorted(tuple(dim_vars))
 
 
+class CachingShapeEvaluator:
+  def __init__(self, **env):
+    self.env = env
+
+  @functools.lru_cache(128)
+  def evaluate(self, e: DimSize):
+    if core.is_constant_dim(e):
+      res = op.index(e)
+    else:
+      res = e.evaluate(self.env)  # type: ignore
+    return res
+
+
 @dataclasses.dataclass(frozen=True)
 class ShapeConstraint:
   class Comparator(Enum):
@@ -1196,68 +1209,44 @@ class ShapeConstraint:
   comp: Comparator
   left: DimSize
   right: DimSize
-  # make_err_msg lazily produces an error message that may refer to the
-  # two operands being compared.
-  make_err_msg: Callable[[Any, Any], str]
+  # `error_message_pieces` is a list of strings and DimSize. The error message
+  # is formed by evaluating the DimSize and concatenating the sequence.
+  error_message_pieces: Sequence[Union[str, DimSize]]
 
-  def _eval_operand(self, o: DimSize, shapeenv: DimVarEnv,
-                    ) -> Union[int, jax.Array]:
-    if core.is_constant_dim(o):
-      res = op.index(o)
-    else:
-      res = o.evaluate(shapeenv)  # type: ignore
-    # Ensure we have np.int32
-    res_dtype = dtypes.dtype(res)
-    if res_dtype == np.int32 or is_poly_dim(res):
-      return res
-    if type(res) in dtypes.python_scalar_dtypes:
-      return dtypes.coerce_to_array(res, np.int32)  # type: ignore
-    else:
-      return res.astype(np.int32)
-
-  def _err_msg(self, left, right):
-    return self.make_err_msg(str(left), str(right))
-
-  def check_statically(self, shapeenv: DimVarEnv) -> None:
-    """Evaluates a constraint statically.
-
-    The `shapeenv` maps variables to _DimExpr. If the static checking
-    of the constraint fails, raise ValueError.
-    """
-    left, right = (self._eval_operand(o, shapeenv) for o in [self.left,
-                                                             self.right])
+  def check_statically(self, eval: CachingShapeEvaluator) -> None:
+    """Evaluates a constraint statically."""
+    left, right = eval.evaluate(self.left), eval.evaluate(self.right)
     try:
       if self.comp == ShapeConstraint.Comparator.EQ:
         ok = (left == right)
       elif self.comp == ShapeConstraint.Comparator.GEQ:
         ok = (left >= right)
-      else: assert False
+      else:
+        assert False  # We are in a context where we know we can evaluate
+                      # all symbolic expressions to constants.
     except InconclusiveDimensionOperation as e:
-      raise ValueError(self.make_err_msg(left, right)) from e
+      raise self.make_error(eval) from e
     if not ok:
-      raise ValueError(self.make_err_msg(left, right))
+      raise self.make_error(eval)
 
-  def compute(self,
-              shapeenv: DimVarEnv
-              ) -> Optional[tuple[jax.Array, jax.Array, jax.Array]]:
+  def compute(self, eval: CachingShapeEvaluator) -> Optional[jax.Array]:
     """Computes if the constraint is satisfied.
 
     If the constraint can be resolved statically returns None
     or raises ValueError otherwise. If the constraint cannot be
-    resolved statically, returns a triple with a boolean encoding if the
-    constraint is satisfied and the int32 operands of binary constraints.
+    resolved statically, returns a value representing if the
+    constraint is satisfied.
     """
-    left, right = (self._eval_operand(o, shapeenv) for o in [self.left,
-                                                             self.right])
+    left, right = eval.evaluate(self.left), eval.evaluate(self.right)
     # Try to evaluate the constraint statically.
     if core.is_constant_shape((left, right)):
       left_int, right_int = op.index(left), op.index(right)
       if self.comp == ShapeConstraint.Comparator.EQ:
         if not (left_int == right_int):
-          raise ValueError(self.make_err_msg(left_int, right_int))
+          raise self.make_error(eval)
       elif self.comp == ShapeConstraint.Comparator.GEQ:
         if not (left_int >= right_int):
-          raise ValueError(self.make_err_msg(left_int, right_int))
+          raise self.make_error(eval)
       else: assert False
       return None
 
@@ -1266,12 +1255,47 @@ class ShapeConstraint:
     elif self.comp == ShapeConstraint.Comparator.GEQ:
       is_ok = lax.ge(left, right)
     else: assert False
-    return is_ok, left, right  # type: ignore
+    return is_ok
 
   def __str__(self):
     return (f"{self.left} {'==' if self.comp == ShapeConstraint.Comparator.EQ else '>='} {self.right}"
-            f" ({self.make_err_msg('%1', '%2')})")
+            f" ({self.error_message_pieces})")
   __repr__ = __str__
+
+  def error_message_and_inputs(
+    self,
+    eval: CachingShapeEvaluator) -> tuple[str, Sequence[Any]]:
+    """Forms the error_message and error message_inputs.
+    See shape_assertion.
+    """
+    # There is currenly a limitation in the shape assertion checker that
+    # it supports at most 4 error_message_inputs. We try to stay within the
+    # limit, reusing a format specifier if possible.
+    # TODO(necula): remove this limit
+    format_specifiers: dict[DimSize, str] = {}
+    error_message_inputs: list[Any] = []
+    error_message_strings: list[str] = []
+    for e in self.error_message_pieces:
+      if isinstance(e, str):
+        error_message_strings.append(e)
+        continue
+      cached_spec = format_specifiers.get(e)
+      if cached_spec is not None:
+        error_message_strings.append(cached_spec)
+        continue
+      if len(error_message_inputs) >= 4:
+        error_message_strings.append("N/A")
+        continue
+      spec = "{" + str(len(error_message_inputs)) + "}"
+      format_specifiers[e] = spec
+      error_message_strings.append(spec)
+      error_message_inputs.append(eval.evaluate(e))
+    return ("".join(error_message_strings),
+            error_message_inputs)
+
+  def make_error(self, eval: CachingShapeEvaluator) -> Exception:
+    error_message, error_message_inputs = self.error_message_and_inputs(eval)
+    return ValueError(error_message.format(*error_message_inputs))
 
 
 class ShapeConstraints:
@@ -1281,45 +1305,44 @@ class ShapeConstraints:
   def add_constraint(self,
                      comp: ShapeConstraint.Comparator,
                      left: DimSize, right: DimSize,
-                     make_err_msg: Callable[[Any, Any], str]):
-    # Try to evaluate it statically
-    c = ShapeConstraint(comp, left, right, make_err_msg)
+                     error_message_pieces: Sequence[Union[str, DimSize]]):
+    c = ShapeConstraint(comp, left, right, error_message_pieces)
     self.constraints.append(c)
 
-  def check_statically(self, shapeenv: DimVarEnv) -> None:
+  def check_statically(self, eval: CachingShapeEvaluator) -> None:
     """Evaluates all the constraints statically.
 
-    The `shapeenv` maps variables to _DimExpr. If the static checking
-    of any constraint fails, raise ValueError.
+    If the static checking of any constraint fails, raises ValueError.
     """
     for constraint in self.constraints:
-      constraint.check_statically(shapeenv)
+      constraint.check_statically(eval)
 
-  def shape_assertions(self, shapeenv: DimVarEnv) -> None:
-    """Computes the shape assertions the set of constraints.
+  def shape_assertions(self, eval: CachingShapeEvaluator) -> None:
+    """Computes the shape assertions for the set of constraints.
 
-    See _wrap_main_func docstring.
+    See jax_export._wrap_main_func docstring.
     """
     # We want to report the errors in the same order as `check_statically`.
     # So, we process them in order, in case some fail statically, and we
     # generate the shape assertions in the same order.
     for constraint in self.constraints:
-      check_res = constraint.compute(shapeenv)
-      if check_res is not None:
-        is_ok, op1, op2 = check_res
-        shape_assertion(
-          is_ok, op1, op2,
-          error_message=constraint.make_err_msg("{0}", "{1}"))
+      is_ok = constraint.compute(eval)
+      if is_ok is None: continue   # Was resolved statically
+      error_message, error_message_inputs = constraint.error_message_and_inputs(eval)
+      shape_assertion(
+          is_ok, *error_message_inputs,
+          error_message=error_message)
 
 @dataclasses.dataclass
 class _DimEquation:
-  # Represents dim_expr == dim_value, where `dim_expr` contain unknown dimension
-  # variables, in terms of `dim_value`.
-  dim_expr: _DimExpr
-  dim_value: _DimExpr
+  # Encodes that `aval_dim_expr`, which is a symbolic expressions containing
+  # unknown dimension variables from the abstract values, is the specification
+  # for dimension named `dim_name` (e.g., "args[0].field.shape[2]").
+  aval_dim_expr: _DimExpr
+  dim_name: str
 
   def __str__(self):
-    return f"{self.dim_expr} == {self.dim_value}"
+    return f"Dimension size of {self.dim_name} with specification '{self.aval_dim_expr}'"
   __repr__ = __str__
 
 
@@ -1333,12 +1356,19 @@ def args_kwargs_path_to_str(path: tree_util.KeyPath) -> str:
   else:
     assert False
 
-def pretty_print_dimension_descriptor(
+@functools.lru_cache(128)
+def _cached_pretty_print_dimension_descriptor(
     args_kwargs_tree: tree_util.PyTreeDef,
-    flat_arg_idx: int, dim_idx: Optional[int]) -> str:
+    flat_arg_idx: int) -> str:
   args_kwargs_with_paths, _ = tree_util.tree_flatten_with_path(
       args_kwargs_tree.unflatten((0,) * args_kwargs_tree.num_leaves))
   arg_str = args_kwargs_path_to_str(args_kwargs_with_paths[flat_arg_idx][0])
+  return arg_str
+
+def pretty_print_dimension_descriptor(
+    args_kwargs_tree: tree_util.PyTreeDef,
+    flat_arg_idx: int, dim_idx: Optional[int]) -> str:
+  arg_str = _cached_pretty_print_dimension_descriptor(args_kwargs_tree, flat_arg_idx)
   if dim_idx is not None:
     arg_str += f".shape[{dim_idx}]"
   return arg_str
@@ -1387,17 +1417,25 @@ def solve_dim_vars(
   """
   dim_equations: list[_DimEquation] = []
   synth_dimension_vars: list[tuple[str, int, int]] = []
+  # tuples with argument name and its polymorphic shape ('args[0]', '(a, a + b'))
+  polymorphic_shape_specs: list[tuple[str, str]] = []
   for arg_idx, aval in enumerate(args_avals):
+    if all(not is_poly_dim(d) for d in aval.shape):
+      continue
+    polymorphic_shape_specs.append(
+      (pretty_print_dimension_descriptor(args_kwargs_tree, arg_idx, None),
+       str(aval.shape)))
     for dim_idx, aval_d in enumerate(aval.shape):
       if is_poly_dim(aval_d):
         synth_dim_var = pretty_print_dimension_descriptor(args_kwargs_tree,
                                                           arg_idx, dim_idx)
         synth_dimension_vars.append((synth_dim_var, arg_idx, dim_idx))
         dim_equations.append(
-            _DimEquation(dim_expr=_ensure_poly(aval_d, "solve_dim_vars"),
-                         dim_value=_DimExpr.from_var(synth_dim_var)))
+            _DimEquation(aval_dim_expr=_ensure_poly(aval_d, "solve_dim_vars"),
+                         dim_name=synth_dim_var))
 
-  solution, shape_constraints = _solve_dim_equations(dim_equations)
+  solution, shape_constraints = _solve_dim_equations(dim_equations,
+                                                     polymorphic_shape_specs)
   return solution, shape_constraints, synth_dimension_vars
 
 
@@ -1423,23 +1461,29 @@ def compute_dim_vars_from_arg_shapes(
   synthetic_env = {vname: dimension_size_p.bind(actual_args[arg_idx],
                                                 dimension=dim_idx)
                    for (vname, arg_idx, dim_idx) in synth_dim_vars}
-  dim_values = [solution[var].evaluate(synthetic_env) for var in dim_vars]
-  shape_constraints.shape_assertions(synthetic_env)
+  synthetic_eval = CachingShapeEvaluator(**synthetic_env)
+  shape_constraints.shape_assertions(synthetic_eval)
+  dim_values = [synthetic_eval.evaluate(solution[var]) for var in dim_vars]
   return tuple(dim_values)
 
 def _solve_dim_equations(
-    eqns: list[_DimEquation]
+    eqns: list[_DimEquation],
+    polymorphic_shape_specs: Sequence[tuple[str, str]]
 ) -> tuple[DimVarEnv, ShapeConstraints]:
   # Returns a shape environment and the shape constraints if it can solve all
   # dimension variables. Raises an exception if it cannot.
   shapeenv: DimVarEnv = {}
-  shape_constraints = ShapeConstraints()
-  def _shapeenv_to_str() -> str:
-    if shapeenv:
-      return (" Partial solution: " +
-              ", ".join([f"{var} = {val}" for var, val in shapeenv.items()]) + ".")
-    else:
-      return ""
+  solution_error_message_pieces: list[Union[str, _DimExpr]] = [
+    " Obtained dimension variables: "
+  ]  # Error message describing the solution
+  # Prepare error message piece describing the polymorphic shape specs
+  poly_specs_err_msg = (
+    " Using the following polymorphic shapes specifications: " +
+    ",".join(f"{arg_name}.shape = {arg_spec}"
+             for arg_name, arg_spec in polymorphic_shape_specs)) + "."
+  solution_err_msg_trailer_errors = ". Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
+
+  shape_constraints = ShapeConstraints()  # accumulate shape constraints
 
   def process_one_eqn(eqn: _DimEquation) -> bool:
     # We start with a DimEquation of the form `dim_expr = dim_value`
@@ -1451,9 +1495,9 @@ def _solve_dim_equations(
     # Invariant:
     #     var * factor_var + remaining_monomials_from_dim_expr = dim_value
     var, factor_var = None, None
-    dim_value = eqn.dim_value
+    dim_value = _DimExpr.from_var(eqn.dim_name)
 
-    for mon, factor in eqn.dim_expr.monomials():
+    for mon, factor in eqn.aval_dim_expr.monomials():
       # Perhaps we can already evaluate this monomial (all vars solved)
       try:
         mon_value = mon.evaluate(shapeenv)
@@ -1476,29 +1520,47 @@ def _solve_dim_equations(
         var_value, var_remainder = divmod(dim_value, core.dim_constant(factor_var))  # type: ignore
         shape_constraints.add_constraint(
             ShapeConstraint.Comparator.EQ, var_remainder, 0,
-            make_err_msg=lambda left, _: (
-                f"Dimension variable '{var}' must have integer value >= 1. "
-                f"Non-zero remainder {left} for factor {factor_var} when solving "
-                f"{eqn}.{_shapeenv_to_str()}"))
-
-      shape_constraints.add_constraint(
-          ShapeConstraint.Comparator.GEQ, var_value, 1,
-          make_err_msg=lambda left, _: (
-              f"Dimension variable '{var}' must have integer value >= 1. "
-              f"Found {left} when "
-              f"solving {eqn}.{_shapeenv_to_str()}"))
+            error_message_pieces=([
+                "Input shapes do not match the polymorphic shapes specification. "
+                "Division had remainder ", var_remainder,
+                f" when computing the value of '{var}'." + poly_specs_err_msg
+              ] + solution_error_message_pieces + [
+                solution_err_msg_trailer_errors]))
 
       if not isinstance(var_value, _DimExpr):
         assert var_value.dtype == core.dim_value_dtype()
       shapeenv[var] = var_value  # type: ignore
+      solution_error_message_pieces.extend([
+        f"'{var}' = ", var_value,
+        f" from specification '{eqn.aval_dim_expr}' "
+        f"for dimension {eqn.dim_name} (= ", _DimExpr.from_var(eqn.dim_name),
+        "), "])
+
+      shape_constraints.add_constraint(
+          ShapeConstraint.Comparator.GEQ, var_value, 1,
+          error_message_pieces=[
+                "Input shapes do not match the polymorphic shapes specification. "
+                f"Expected value >= 1 for dimension variable '{var}'." +
+                poly_specs_err_msg
+              ] + solution_error_message_pieces + [
+              solution_err_msg_trailer_errors])
+
       return True
     else:
-      # All variables are resolved for this equation
+      # All variables are resolved for this equation, we emit an assertion
       shape_constraints.add_constraint(
-          ShapeConstraint.Comparator.EQ, eqn.dim_value,
-          eqn.dim_expr.evaluate(shapeenv),
-          make_err_msg=lambda left, right: (
-              f"Found inconsistency {left} != {right} when solving {eqn}.{_shapeenv_to_str()}"))
+          ShapeConstraint.Comparator.EQ,
+          _DimExpr.from_var(eqn.dim_name),
+          eqn.aval_dim_expr.evaluate(shapeenv),
+          error_message_pieces=([
+            "Input shapes do not match the polymorphic shapes specification. "
+            f"Found inconsistency between dimension size {eqn.dim_name} (= ",
+            _DimExpr.from_var(eqn.dim_name),
+            f") and the specification '{eqn.aval_dim_expr}' (= ",
+            eqn.aval_dim_expr.evaluate(shapeenv),
+            ")." + poly_specs_err_msg] + solution_error_message_pieces +
+            [solution_err_msg_trailer_errors])
+      )
       return True
 
   while True:
@@ -1513,14 +1575,15 @@ def _solve_dim_equations(
   unsolved_vars: set[str] = set()
   unsolved_polys: list[_DimExpr] = []
   for eqn in eqns:
-    unsolved_vars = unsolved_vars.union(eqn.dim_expr.get_vars())
-    unsolved_polys.append(eqn.dim_expr)
+    unsolved_vars = unsolved_vars.union(eqn.aval_dim_expr.get_vars())
+    unsolved_polys.append(eqn.aval_dim_expr)
   unsolved_vars = unsolved_vars.difference(shapeenv.keys())
-  eqns_str = "\n  ".join([str(eqn) for eqn in eqns])
   err_msg = (
-      f"Cannot solve for values of dimension variables {unsolved_vars} from "
-      f"the remaining dimension polynomials\n  {eqns_str}.{_shapeenv_to_str()} "
-      "Dimension variables can be solved only from linear uni-variate polynomials.\n"
-      "\n"
-      "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details.")
+      f"Cannot solve for values of dimension variables {unsolved_vars}. "
+      "We can only solve linear uni-variate constraints." + poly_specs_err_msg +
+      " Unprocessed specifications: " +
+      ", ".join(f"'{eqn.aval_dim_expr}' for dimension size {eqn.dim_name}"
+                for eqn in eqns) +
+      ". Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
+  )
   raise ValueError(err_msg)

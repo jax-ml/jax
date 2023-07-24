@@ -595,8 +595,32 @@ The solution is to avoid `np.array`, `float`, or JAX arrays in operations whose
 results are used as shapes, e.g., instead of `np.arange(n) * x.shape[0]` write
 `[i * x.shape[0] for i in range(n)]`.
 
+### Dimension variables must be solvable from the input shapes
+
+JAX will generate code to derive the values of the dimension variables
+from the input shapes. This works only if the symbolic dimensions in the input shapes are linear.
+For example, the following `polymorphic_shapes` will result in errors:
+
+```python
+polymorphic_shapes = ["a * a"]  # Not a linear polynomial
+polymorphic_shapes = ["a + b"]  # Too few equations to derive both `a` and `b`
+```
+
+The error message for the last specification above would be:
+
+```
+Cannot solve for values of dimension variables {'a', 'b'}. "
+We can only solve linear uni-variate constraints. "
+Using the following polymorphic shapes specifications: args[0].shape = (a + b,).
+Unprocessed specifications: 'a + b' for dimension size args[0].shape[0]. "
+Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details.
+```
+
+### Shape assertion errors
+
 JAX assumes that dimension variables range over strictly positive integers.
-These assumptions are now checked against the shapes of the actual arguments
+Starting with serialization version 7 these assumptions are
+checked against the shapes of the actual arguments
 when the lowered code is invoked.
 For example, given the `polymorphic_shapes="(b, b, 2*d)"`
 specification, we will generate code to check the following constraints when
@@ -604,7 +628,19 @@ invoked with actual argument `arg`:
 
   * `arg.shape[0] >= 1`
   * `arg.shape[1] == arg.shape[0]`
-  * `arg.shape[2] % 2 == 0` and `arg.shape[2] // 2 >= 1`
+  * `arg.shape[2] % 2 == 0`
+  * `arg.shape[2] // 2 >= 1`
+
+An example error for the third constraint above, e.g., when invoked with
+shape `(3, 3, 5)`, would be:
+
+```
+Input shapes do not match the polymorphic shapes specification.
+Division had remainder 1 when computing the value of 'd'.
+Using the following polymorphic shapes specifications: args[0].shape = (b, b, 2*d).
+Obtained dimension variables: 'b' = 3 from specification 'b' for dimension args[0].shape[0] (= 3).
+Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details.
+```
 
 When using native serialization these are checked by the `tf.XlaCallModule`
 op (starting with serialization
@@ -716,26 +752,6 @@ be known to be a multiple of `2`. You can specify that by replacing
 ```python
 jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
                polymorphic_shapes=["(2*b, ...)"])(np.ones((4, 5, 7)))
-```
-
-### Dimension variables must be solvable from the input shapes
-
-`jax2tf` will generate code to derive the values of the dimension variables
-from the input shapes. This works only if the symbolic dimensions in the input shapes are linear.
-For example, the following `polymorphic_shapes` will result in errors:
-
-```python
-polymorphic_shapes = ["a * a"]  # Not a linear polynomial
-polymorphic_shapes = ["a + b"]  # Too few equations to derive both `a` and `b`
-```
-
-If you are using native serialization, the restrictions are stronger: every dimension
-variable must occur as the value of some dimension of some input, e.g.,
-the following will work:
-
-```python
-polymorphic_shapes = ["a, 2*a, b"]
-polymorphic_shapes = ["a * a, a"]
 ```
 
 ## Native serialization versions

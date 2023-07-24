@@ -906,6 +906,7 @@ def _call_exported_abstract_eval(*in_avals: core.AbstractValue,
       exported.in_avals, args_kwargs_tree=exported.in_tree)
   synthetic_env = {vname: in_avals[arg_idx].shape[dim_idx]
                    for (vname, arg_idx, dim_idx) in synth_dim_vars}
+  synthetic_eval = shape_poly.CachingShapeEvaluator(**synthetic_env)
   # We discharge all the constraints statically. This results in much simpler
   # composability (because we do not have to worry about the constraints of the
   # Exported called recursively; we only need to worry about entry-point
@@ -917,8 +918,8 @@ def _call_exported_abstract_eval(*in_avals: core.AbstractValue,
   # succeed and add a compile-time check that `c == d`. In the latter case,
   # it would be ambiguous whether we should continue tracing with a result
   # a type `f32[c]` or `f32[d]`.
-  shape_constraints.check_statically(synthetic_env)
-  exported_dim_values = [solution[var].evaluate(synthetic_env)
+  shape_constraints.check_statically(synthetic_eval)
+  exported_dim_values = [synthetic_eval.evaluate(solution[var])
                          for var in exported_dim_vars]
   return tuple(
       core.ShapedArray(core.evaluate_shape(out_aval.shape, exported_dim_vars,
