@@ -514,8 +514,8 @@ def _convert_element_type(operand: ArrayLike, new_dtype: Optional[DTypeLike] = N
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()  # type: ignore
 
-  if (dtypes.is_opaque_dtype(new_dtype) or
-      dtypes.is_opaque_dtype(getattr(operand, 'dtype', None))):
+  if (dtypes.issubdtype(new_dtype, dtypes.extended) or
+      dtypes.issubdtype(getattr(operand, 'dtype', None), dtypes.extended)):
     return convert_element_type_p.bind(operand, new_dtype=new_dtype,
                                        weak_type=bool(weak_type))
 
@@ -1201,7 +1201,7 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: Optional[DTypeLike] = None)
   if np.shape(fill_value):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(np.shape(fill_value)))
-  if dtypes.is_opaque_dtype(dtype):
+  if dtypes.issubdtype(dtype, dtypes.extended):
     return dtype._rules.full(shape, fill_value, dtype)  # type: ignore[union-attr]
   weak_type = dtype is None and dtypes.is_weakly_typed(fill_value)
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
@@ -1352,7 +1352,7 @@ def full_like(x: Union[ArrayLike, DuckTypedArray],
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)  # type: ignore[arg-type]
   weak_type = dtype is None and dtypes.is_weakly_typed(x)
   dtype = dtype or _dtype(x)
-  if dtypes.is_opaque_dtype(dtype):
+  if dtypes.issubdtype(dtype, dtypes.extended):
     return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type))
   # If the sharding is SingleDeviceSharding then don't take the `if` branch
@@ -1535,11 +1535,11 @@ _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
 
 
 def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals,
-                      allow_opaque_dtype=False, **kwargs):
+                      allow_extended_dtype=False, **kwargs):
   del kwargs
   assert len(avals) == len(accepted_dtypes), (avals, accepted_dtypes)
   for i, aval in enumerate(avals):
-    if allow_opaque_dtype and dtypes.is_opaque_dtype(aval.dtype):
+    if allow_extended_dtype and dtypes.issubdtype(aval.dtype, dtypes.extended):
       continue
     types = accepted_dtypes[i]
     if not any(dtypes.issubdtype(aval.dtype, t) for t in types):
@@ -1601,9 +1601,9 @@ def _naryop_weak_type_rule(name, *avals, **kwargs):
         "taken a gradient with respect to an integer argument.")
   return all(aval.weak_type for aval in avals)
 
-def naryop(result_dtype, accepted_dtypes, name, allow_opaque_dtype=False):
+def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False):
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name,
-                       allow_opaque_dtype=allow_opaque_dtype)
+                       allow_extended_dtype=allow_extended_dtype)
   shape_rule = partial(broadcasting_shape_rule, name)
   weak_type_rule = partial(_naryop_weak_type_rule, name)
   prim = standard_primitive(shape_rule, dtype_rule, name,
@@ -2217,13 +2217,13 @@ def _compare_lower_hlo_opaque(direction: str, ctx, avals_in, aval_out, x, y):
     return _opaque_ne_hlo(ctx, broadcast_avals_in, aval_out, x, y)
   else:
     raise NotImplementedError(
-        f"HLO comparison {direction} for opaque dtype {avals_in[0].dtype}")
+        f"HLO comparison {direction} for extended dtype {avals_in[0].dtype}")
 
 def _compare_lower_hlo(direction: str, ctx, x, y):
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
   x_dtype = avals_in[0].dtype
   x, y = mlir.multi_broadcast_in_dim(ctx, (x, y), avals_in, aval_out.shape)
-  if dtypes.is_opaque_dtype(x_dtype):
+  if dtypes.issubdtype(x_dtype, dtypes.extended):
     return _compare_lower_hlo_opaque(direction, ctx, avals_in, aval_out, x, y)
   if dtypes.issubdtype(x_dtype, np.inexact):
     compare_type = "FLOAT"
@@ -2233,11 +2233,11 @@ def _compare_lower_hlo(direction: str, ctx, x, y):
     compare_type = "UNSIGNED"
   return mlir.compare_hlo(x, y, direction, compare_type).results
 
-eq_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'eq', allow_opaque_dtype=True)
+eq_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'eq', allow_extended_dtype=True)
 ad.defjvp_zero(eq_p)
 mlir.register_lowering(eq_p, partial(_compare_lower_hlo, "EQ"))
 
-ne_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'ne', allow_opaque_dtype=True)
+ne_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'ne', allow_extended_dtype=True)
 ad.defjvp_zero(ne_p)
 mlir.register_lowering(ne_p, partial(_compare_lower_hlo, "NE"))
 
@@ -2263,11 +2263,11 @@ def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type):
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type):
   if operand.dtype != new_dtype:
-    if (dtypes.is_opaque_dtype(operand.dtype) and
+    if (dtypes.issubdtype(operand.dtype, dtypes.extended) and
         not isinstance(operand.dtype, core.bint)):
       raise ValueError(
           f"Cannot call convert_element_type on dtype {dtype_to_string(operand.dtype)}")
-    if (dtypes.is_opaque_dtype(new_dtype) and
+    if (dtypes.issubdtype(new_dtype, dtypes.extended) and
         not isinstance(new_dtype, core.bint)):
       raise ValueError(
           f"Cannot convert_element_type to dtype={dtype_to_string(new_dtype)}")
@@ -2308,7 +2308,7 @@ def _convert_elt_type_folding_rule(consts, eqn):
   o, = eqn.outvars
   if (type(c) in {np.ndarray, *dtypes.python_scalar_dtypes} and
       isinstance(o.aval, core.UnshapedArray) and not np.shape(c) and
-      not dtypes.is_opaque_dtype(eqn.params['new_dtype'])):
+      not dtypes.issubdtype(eqn.params['new_dtype'], dtypes.extended)):
     out = np.array(c, eqn.params['new_dtype'])
     if not o.aval.weak_type:
       return [out], None
@@ -2319,8 +2319,8 @@ def _convert_elt_type_folding_rule(consts, eqn):
 
 def _convert_elt_type_fwd_rule(eqn):
   v, = eqn.invars
-  if (not dtypes.is_opaque_dtype(eqn.params['new_dtype']) and
-      not dtypes.is_opaque_dtype(v.aval.dtype) and
+  if (not dtypes.issubdtype(eqn.params['new_dtype'], dtypes.extended) and
+      not dtypes.issubdtype(v.aval.dtype, dtypes.extended) and
       v.aval.dtype == eqn.params['new_dtype'] and
       v.aval.weak_type == eqn.params['weak_type']):
     return [v], None
@@ -3424,7 +3424,7 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
 
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
-  if dtypes.is_opaque_dtype(aval_out.dtype):
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     elt_shape = aval_out.dtype._rules.physical_element_aval(
         aval_out.dtype).shape
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
@@ -3555,7 +3555,7 @@ def _select_hlo_lowering(ctx, which, *cases):
   which_aval = ctx.avals_in[0]
   aval_out, = ctx.avals_out
 
-  if dtypes.is_opaque_dtype(aval_out.dtype):
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     return [_select_hlo_lowering_opaque(ctx, which, *cases)]
 
   if which_aval.dtype == np.dtype(np.bool_):
@@ -4770,7 +4770,7 @@ def check_same_dtypes(name: str, *avals: core.UnshapedArray) -> None:
   """Check that dtypes agree, possibly ignoring float precision."""
   # the `ignore_fp_precision` flag exists because the XLA shape inference logic
   # allows mixed floating point precision, but the HLO verifier often rejects it
-  if any(dtypes.is_opaque_dtype(aval.dtype) for aval in avals):
+  if any(dtypes.issubdtype(aval.dtype, dtypes.extended) for aval in avals):
     return  # TODO(mattjj,frostig): do some checking, friend
   if len(avals) < 2:
     return
@@ -4912,7 +4912,7 @@ def empty(dtype):
 empty_p = core.Primitive('empty')
 empty_p.def_abstract_eval(lambda *, dtype: core.ShapedArray((), dtype))
 def _empty_lower(ctx, *, dtype):
-  dtype = dtype if dtypes.is_opaque_dtype(dtype) else np.dtype(dtype)
+  dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
   phys_aval = core.physical_aval(core.ShapedArray((), dtype))
   return mlir.ir_constants(np.zeros(phys_aval.shape, phys_aval.dtype))
 mlir.register_lowering(empty_p, _empty_lower)

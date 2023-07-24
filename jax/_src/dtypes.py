@@ -46,9 +46,8 @@ else:
 FLAGS = flags.FLAGS
 
 
-# TODO(jakevdp): rename opaque dtypes to something more user-friendly
-class opaque(np.generic):
-  """Scalar class for opaque dtypes.
+class extended(np.generic):
+  """Scalar class for extended dtypes.
 
   This is an abstract class that should never be instantiated, but rather
   exists for the sake of `jnp.issubdtype`.
@@ -57,13 +56,13 @@ class opaque(np.generic):
     >>> from jax import random
     >>> from jax._src import dtypes
     >>> key = random.key(0)
-    >>> jnp.issubdtype(key.dtype, dtypes.opaque)
+    >>> jnp.issubdtype(key.dtype, dtypes.extended)
     True
   """
   pass
 
 
-class prng_key(opaque):
+class prng_key(extended):
   """Scalar class for PRNG Key dtypes.
 
   This is an abstract class that should never be instantiated, but rather
@@ -79,17 +78,16 @@ class prng_key(opaque):
   pass
 
 
-# TODO(jakevdp): rename opaque dtypes to something more user-friendly
-class OpaqueDType(metaclass=abc.ABCMeta):
-  """Abstract Base Class for opaque dtypes"""
+class ExtendedDType(metaclass=abc.ABCMeta):
+  """Abstract Base Class for extended dtypes"""
   @property
   @abc.abstractmethod
   def type(self) -> type: ...
 
 
+# TODO(jakevdp): remove this function once it's unused downstream.
 def is_opaque_dtype(dtype: Any) -> bool:
-  # TODO(vanderplas, frostig): remove in favor of inlining `issubdtype`
-  return issubdtype(dtype, opaque)
+  return issubdtype(dtype, extended)
 
 # fp8 support
 float8_e4m3b11fnuz: type[np.generic] = ml_dtypes.float8_e4m3b11fnuz
@@ -185,11 +183,11 @@ def to_complex_dtype(dtype: DTypeLike) -> DType:
 
 
 @functools.cache
-def _canonicalize_dtype(x64_enabled: bool, allow_opaque_dtype: bool, dtype: Any) -> Union[DType, OpaqueDType]:
-  if is_opaque_dtype(dtype):
-    if not allow_opaque_dtype:
-      raise ValueError(f"Internal: canonicalize_dtype called on opaque dtype {dtype} "
-                       "with allow_opaque_dtype=False")
+def _canonicalize_dtype(x64_enabled: bool, allow_extended_dtype: bool, dtype: Any) -> Union[DType, ExtendedDType]:
+  if issubdtype(dtype, extended):
+    if not allow_extended_dtype:
+      raise ValueError(f"Internal: canonicalize_dtype called on extended dtype {dtype} "
+                       "with allow_extended_dtype=False")
     return dtype
   try:
     dtype_ = np.dtype(dtype)
@@ -202,14 +200,20 @@ def _canonicalize_dtype(x64_enabled: bool, allow_opaque_dtype: bool, dtype: Any)
     return _dtype_to_32bit_dtype.get(dtype_, dtype_)
 
 @overload
-def canonicalize_dtype(dtype: Any, allow_opaque_dtype: Literal[False] = False) -> DType: ...
+def canonicalize_dtype(dtype: Any, allow_extended_dtype: Literal[False] = False, allow_opaque_dtype: Any = None) -> DType: ...
 
 @overload
-def canonicalize_dtype(dtype: Any, allow_opaque_dtype: bool = False) -> Union[DType, OpaqueDType]: ...
+def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False, allow_opaque_dtype: Any = None) -> Union[DType, ExtendedDType]: ...
 
-def canonicalize_dtype(dtype: Any, allow_opaque_dtype: bool = False) -> Union[DType, OpaqueDType]:
+def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False, allow_opaque_dtype: Any = None) -> Union[DType, ExtendedDType]:
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
-  return _canonicalize_dtype(config.x64_enabled, allow_opaque_dtype, dtype)  # type: ignore[bad-return-type]
+  if allow_opaque_dtype is not None:
+    # TODO(jakevdp): complete the deprecation cycle (Deprecated July 24 2023).
+    warnings.warn(
+      "allow_opaque_dtype argument is deprecated; use allow_extended_dtype.",
+      DeprecationWarning)
+    allow_extended_dtype = allow_opaque_dtype
+  return _canonicalize_dtype(config.x64_enabled, allow_extended_dtype, dtype)  # type: ignore[bad-return-type]
 
 # Default dtypes corresponding to Python scalars.
 python_scalar_dtypes : dict[type, DType] = {
@@ -315,9 +319,9 @@ def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
   This is like :func:`numpy.issubdtype`, but can handle dtype extensions such as
   :obj:`jax.dtypes.bfloat16`.
   """
-  if isinstance(a, OpaqueDType):
+  if isinstance(a, ExtendedDType):
     return _issubclass(a.type, b)
-  elif _issubclass(b, opaque):
+  elif _issubclass(b, extended):
     return False
   # Canonicalizes all concrete types to np.dtype instances
   a = a if _is_typeclass(a) else np.dtype(a)
@@ -573,18 +577,18 @@ def dtype(x: Any, *, canonicalize: bool = False) -> DType:
     dt = python_scalar_dtypes[x]
   elif type(x) in python_scalar_dtypes:
     dt = python_scalar_dtypes[type(x)]
-  elif is_opaque_dtype(getattr(x, 'dtype', None)):
+  elif issubdtype(getattr(x, 'dtype', None), extended):
     dt = x.dtype
   else:
     try:
       dt = np.result_type(x)
     except TypeError as err:
       raise TypeError(f"Cannot determine dtype of {x}") from err
-  if dt not in _jax_dtype_set and not is_opaque_dtype(dt):
+  if dt not in _jax_dtype_set and not issubdtype(dt, extended):
     raise TypeError(f"Value '{x}' with dtype {dt} is not a valid JAX array "
                     "type. Only arrays of numeric types are supported by JAX.")
   # TODO(jakevdp): fix return type annotation and remove this ignore.
-  return canonicalize_dtype(dt, allow_opaque_dtype=True) if canonicalize else dt  # type: ignore[return-value]
+  return canonicalize_dtype(dt, allow_extended_dtype=True) if canonicalize else dt  # type: ignore[return-value]
 
 def _lattice_result_type(*args: Any) -> tuple[DType, bool]:
   dtypes, weak_types = zip(*(_dtype_and_weaktype(arg) for arg in args))
@@ -592,7 +596,7 @@ def _lattice_result_type(*args: Any) -> tuple[DType, bool]:
     out_dtype = dtypes[0]
     out_weak_type = weak_types[0]
   elif len(set(dtypes)) == 1 and not all(weak_types):
-    # Trivial promotion case. This allows opaque dtypes through.
+    # Trivial promotion case. This allows extended dtypes through.
     out_dtype = dtypes[0]
     out_weak_type = False
   elif all(weak_types) and config.jax_numpy_dtype_promotion != 'strict':
@@ -632,18 +636,18 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> Union[DType,
   """
   if len(args) == 0:
     raise ValueError("at least one array or dtype is required")
-  dtype: DType | OpaqueDType
+  dtype: DType | ExtendedDType
   dtype, weak_type = _lattice_result_type(*(float_ if arg is None else arg for arg in args))
   if weak_type:
     dtype = canonicalize_dtype(
       _default_types['f' if dtype in _custom_float_dtypes else dtype.kind])
   else:
-    dtype = canonicalize_dtype(dtype, allow_opaque_dtype=True)
+    dtype = canonicalize_dtype(dtype, allow_extended_dtype=True)
   # TODO(jakevdp): fix return type annotation and remove this ignore.
   return (dtype, weak_type) if return_weak_type_flag else dtype  # type: ignore[return-value]
 
 def check_user_dtype_supported(dtype, fun_name=None):
-  if is_opaque_dtype(dtype):
+  if issubdtype(dtype, extended):
     return
   # Avoid using `dtype in [...]` because of numpy dtype equality overloading.
   if isinstance(dtype, type) and dtype in {bool, int, float, builtins.complex}:

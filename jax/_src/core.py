@@ -1398,26 +1398,26 @@ def concrete_dim_or_error(val: Any, context=""):
   else:
     return concrete_or_error(operator.index, val, context=context)
 
-### Opaque dtypes
+### Extended dtypes
 #
-# Opaque dtypes are JAX-specific dtypes that allow us to represent logical
+# Extended dtypes are JAX-specific dtypes that allow us to represent logical
 # arrays of element types that do not have an obvious direct correspondence
 # to ("physical") arrays of basic types in a compiler. In particular, their
 # element types differ from those of XLA and NumPy (e.g. int32). These dtypes
 # are only known to JAX. Their implementation is determined by:
-# a) an object representing the opaque dtype, accessible via the `dtype`
+# a) an object representing the extended dtype, accessible via the `dtype`
 #    attribute on corresponding JAX arrays and, internally, on avals such
 #    as ShapedArrays that correspond to such JAX arrays;
-# b) a set of rules, available via a private attribute on the opaque dtype
+# b) a set of rules, available via a private attribute on the extended dtype
 #    object in (a).
 # The rules in (b) tell JAX internals how to ground out the element
 # type for interaction with the compiler and runtime, e.g. when lowering
 # to the compiler's language.
 
 
-# TODO(frostig): update inliners of the four functions below to call them
+# TODO(jakevdp): remove this function once it's unused downstream.
 def has_opaque_dtype(x: Any) -> bool:
-  return dtypes.is_opaque_dtype(get_aval(x).dtype)
+  return dtypes.issubdtype(get_aval(x).dtype, dtypes.extended)
 
 @overload
 def physical_aval(aval: ShapedArray) -> ShapedArray: ...
@@ -1428,7 +1428,7 @@ def physical_aval(aval: AbstractValue) -> AbstractValue: ...
 
 def physical_aval(aval):
   aval_dtype = getattr(aval, 'dtype', None)
-  if aval_dtype and dtypes.is_opaque_dtype(aval_dtype):
+  if aval_dtype and dtypes.issubdtype(aval_dtype, dtypes.extended):
     ctor = type(aval)
     aval_shape = getattr(aval, 'shape', None)
     assert aval_shape is not None, (ctor, aval)
@@ -1439,14 +1439,14 @@ def physical_aval(aval):
     return aval
 
 def _short_dtype_name(dtype) -> str:
-  if dtypes.issubdtype(dtype, dtypes.opaque):
+  if dtypes.issubdtype(dtype, dtypes.extended):
     return str(dtype)
   else:
     return (dtype.name.replace('float', 'f').replace('uint'   , 'u')
                       .replace('int'  , 'i').replace('complex', 'c'))
 
 def _dtype_object(dtype):
-  return dtype if dtypes.issubdtype(dtype, dtypes.opaque) else np.dtype(dtype)
+  return dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']
@@ -1653,11 +1653,11 @@ class ConcreteArray(ShapedArray):
   _complex         = concretization_function_error(complex, True)
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
-  # TODO(frostig,mattjj): determines that all opaque dtypes have
-  # float0 tangent type, which works fine for all our current opaque
-  # dtype applications. We may some day want to delegate this
-  # decision to the dtype rules.
-  if (dtypes.is_opaque_dtype(primal_dtype) or
+  # TODO(frostig,mattjj): determines that all extended dtypes have
+  # float0 tangent type, which works fine for all our current
+  # extended dtype applications. We may some day want to delegate
+  # this decision to the dtype rules.
+  if (dtypes.issubdtype(primal_dtype, dtypes.extended) or
       not dtypes.issubdtype(primal_dtype, np.inexact)):
     return dtypes.float0
   else:
@@ -1780,12 +1780,12 @@ pytype_aval_mappings[DArray] = \
                              x._data)
 
 @dataclass(frozen=True, eq=True)
-class bint(dtypes.OpaqueDType):
+class bint(dtypes.ExtendedDType):
   bound: int
 
   @property
   def type(self) -> type:
-    return dtypes.opaque
+    return dtypes.extended
 
   @property
   def name(self) -> str:

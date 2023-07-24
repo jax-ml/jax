@@ -37,8 +37,8 @@ from jax._src.basearray import (
 
 DType = np.dtype
 
-# TODO(jakevdp, froystig): make OpaqueDType a protocol
-OpaqueDType = Any
+# TODO(jakevdp, froystig): make ExtendedDType a protocol
+ExtendedDType = Any
 
 class SupportsDType(Protocol):
   @property
