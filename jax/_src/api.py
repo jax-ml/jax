@@ -773,7 +773,7 @@ def _check_input_dtype_revderiv(name, holomorphic, allow_int, x):
     if not dtypes.issubdtype(aval.dtype, np.complexfloating):
       raise TypeError(f"{name} with holomorphic=True requires inputs with complex dtype, "
                       f"but got {aval.dtype.name}.")
-  if (dtypes.is_opaque_dtype(aval.dtype) or
+  if (dtypes.issubdtype(aval.dtype, dtypes.extended) or
       dtypes.issubdtype(aval.dtype, np.integer) or
       dtypes.issubdtype(aval.dtype, np.bool_)):
     if not allow_int:
@@ -788,7 +788,7 @@ _check_input_dtype_grad = partial(_check_input_dtype_revderiv, "grad")
 
 def _check_output_dtype_revderiv(name, holomorphic, x):
   aval = core.get_aval(x)
-  if dtypes.is_opaque_dtype(aval.dtype):
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):
     raise TypeError(
         f"{name} with output element type {aval.dtype.name}")
   if holomorphic:
@@ -874,7 +874,7 @@ def jacfwd(fun: Callable, argnums: int | Sequence[int] = 0,
 def _check_input_dtype_jacfwd(holomorphic: bool, x: Any) -> None:
   dispatch.check_arg(x)
   aval = core.get_aval(x)
-  if dtypes.is_opaque_dtype(aval.dtype):
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):
     raise TypeError(
         f"jacfwd with input element type {aval.dtype.name}")
   if holomorphic:
@@ -2585,7 +2585,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
     stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)
     sharding_spec = sharding_specs.create_pmap_sharding_spec(stacked_aval.shape)
     sharding = PmapSharding(np.array(devices), sharding_spec)
-    if dtypes.is_opaque_dtype(stacked_aval.dtype):
+    if dtypes.issubdtype(stacked_aval.dtype, dtypes.extended):
       return stacked_aval.dtype._rules.device_put_sharded(xs, stacked_aval, sharding, devices)
     return pxla.batched_device_put(stacked_aval, sharding, xs, list(devices))
 
@@ -2635,7 +2635,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
     sharding_spec = sharding_specs.create_pmap_sharding_spec(aval.shape)
     buf = device_put(x, devices[0])
     sharding = PmapSharding(np.array(devices), sharding_spec)
-    if dtypes.is_opaque_dtype(aval.dtype):
+    if dtypes.issubdtype(aval.dtype, dtypes.extended):
       return aval.dtype._rules.device_put_replicated(buf, aval, sharding, devices)
     assert len(xla.aval_to_xla_shapes(aval)) == 1
     return pxla.batched_device_put(aval, sharding, [buf] * len(devices), devices)
@@ -2711,7 +2711,7 @@ class ShapeDtypeStruct:
     self.shape = tuple(shape)
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
-    self.dtype = dtype if dtypes.is_opaque_dtype(dtype) else np.dtype(dtype)
+    self.dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
     if sharding is not None and not isinstance(sharding, Sharding):
       raise ValueError(
           "sharding should be an instance of `jax.sharding.Sharding`. "
@@ -2750,7 +2750,7 @@ class ShapeDtypeStruct:
     return hash((self.shape, self.dtype, named, self.sharding))
 
 core.pytype_aval_mappings[ShapeDtypeStruct] = (
-    lambda x: ShapedArray(x.shape, dtypes.canonicalize_dtype(x.dtype, allow_opaque_dtype=True),
+    lambda x: ShapedArray(x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
                           weak_type=False, named_shape=x.named_shape))
 
 @api_boundary

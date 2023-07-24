@@ -1410,7 +1410,7 @@ mlir.register_lowering(dynamic_update_slice_p, _dynamic_update_slice_lower)
 def _gather_dtype_rule(operand, indices, *, fill_value, **kwargs):
   if not dtypes.issubdtype(indices.dtype, np.integer):
     raise ValueError("indices must have an integer type")
-  return dtypes.canonicalize_dtype(operand.dtype, allow_opaque_dtype=True)
+  return dtypes.canonicalize_dtype(operand.dtype, allow_extended_dtype=True)
 
 _rank = lambda arr: len(arr.shape)
 
@@ -1784,7 +1784,7 @@ def _gather_lower(ctx, operand, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
                   indices_are_sorted, mode, fill_value):
   aval_out, = ctx.avals_out
-  if dtypes.is_opaque_dtype(aval_out.dtype):
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     return [_gather_lower_opaque(
         ctx, operand, indices, dimension_numbers=dimension_numbers,
         slice_sizes=slice_sizes, unique_indices=unique_indices,
@@ -1835,7 +1835,7 @@ def _scatter_dtype_rule(operand, indices, updates, **kwargs):
   if not dtypes.issubdtype(indices.dtype, np.integer):
     raise ValueError("indices must have an integer type")
   lax.check_same_dtypes("scatter", operand, updates)
-  return dtypes.canonicalize_dtype(operand.dtype, allow_opaque_dtype=True)
+  return dtypes.canonicalize_dtype(operand.dtype, allow_extended_dtype=True)
 
 def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
                         update_consts, dimension_numbers, indices_are_sorted,
@@ -2438,7 +2438,7 @@ def _scatter_lower(ctx, operand, indices, updates, *,
         _scatter_reduction_computation, core.ShapedArray((), operand_dtype))
 
   aval_out, = ctx.avals_out
-  if dtypes.is_opaque_dtype(aval_out.dtype):
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     return [_scatter_lower_opaque(
         ctx, operand, indices, updates,
         update_jaxpr=update_jaxpr, update_consts=update_consts,

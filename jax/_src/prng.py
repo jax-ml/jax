@@ -577,7 +577,7 @@ class KeyTyRules:
     return random_wrap(physical_result, impl=aval.dtype.impl)
 
 
-class KeyTy(dtypes.OpaqueDType):
+class KeyTy(dtypes.ExtendedDType):
   impl: Hashable  # prng.PRNGImpl. TODO(mattjj,frostig): protocol really
   _rules = KeyTyRules
   type = dtypes.prng_key

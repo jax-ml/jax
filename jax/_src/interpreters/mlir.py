@@ -1095,7 +1095,7 @@ def lower_jaxpr_to_fun(
 def _to_physical_op_sharding(
     aval: core.AbstractValue | None, sharding: xc.HloSharding | None
 ) -> xc.OpSharding | None:
-  if (isinstance(aval, core.ShapedArray) and dtypes.is_opaque_dtype(aval.dtype)
+  if (isinstance(aval, core.ShapedArray) and dtypes.issubdtype(aval.dtype, dtypes.extended)
       and sharding is not None):
     return aval.dtype._rules.physical_hlo_sharding(aval, sharding).to_proto()
   return None if sharding is None else sharding.to_proto()  # type: ignore
@@ -1355,7 +1355,7 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
   # broadcast_dimension[i] is the axis of the result where the axis i of
   # op is broadcast.
   # Lower a possibly-dynamic broadcast_in_dim
-  if dtypes.is_opaque_dtype(aval_out.dtype):  # type: ignore
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):  # type: ignore
     elt_shape = aval_out.dtype._rules.physical_element_aval(  # type: ignore
         aval_out.dtype).shape                                 # type: ignore
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]  # type: ignore
@@ -1408,7 +1408,7 @@ def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Va
 
 def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
              start_indices, limit_indices, strides) -> ir.Value:
-  if dtypes.is_opaque_dtype(aval_out.dtype):
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     elt_shape = aval_out.dtype._rules.physical_element_aval(
         aval_out.dtype).shape
     trailing_zeros = [0] * len(elt_shape)
@@ -1436,7 +1436,7 @@ def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
 def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:
   x_aval = ctx.avals_in[0]
-  if dtypes.is_opaque_dtype(aval_out.dtype):
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     elt_shape = aval_out.dtype._rules.physical_element_aval(
         aval_out.dtype).shape
     index_avals = ctx.avals_in[1:]
@@ -1471,7 +1471,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
 
 def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                          start_indices) -> ir.Value:
-  if dtypes.is_opaque_dtype(aval_out.dtype):
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     elt_shape = aval_out.dtype._rules.physical_element_aval(
         aval_out.dtype).shape
     index_avals = ctx.avals_in[2:]
@@ -1574,7 +1574,7 @@ def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
 
   In particular, treat casts to boolean as x != 0, rather than truncating
   integer values (b/209440332)."""
-  if (not dtypes.is_opaque_dtype(aval_out.dtype) and
+  if (not dtypes.issubdtype(aval_out.dtype, dtypes.extended) and
       aval_out.dtype == np.dtype(np.bool_)):
     if dtypes.issubdtype(aval_in.dtype, np.inexact):
       compare_type = "FLOAT"

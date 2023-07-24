@@ -2913,8 +2913,8 @@ class FooTyRules:
     return handler
 
 
-class FooTy(dtypes.OpaqueDType):
-  type = dtypes.opaque
+class FooTy(dtypes.ExtendedDType):
+  type = dtypes.extended
   name = 'foo'
   _rules = FooTyRules
 

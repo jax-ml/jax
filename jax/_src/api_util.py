@@ -567,7 +567,7 @@ def _shaped_abstractify_slow(x):
   weak_type = getattr(x, 'weak_type', False)
   named_shape = getattr(x, 'named_shape', {})
   if hasattr(x, 'dtype'):
-    dtype = dtypes.canonicalize_dtype(x.dtype, allow_opaque_dtype=True)
+    dtype = dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True)
   else:
     raise TypeError(
         f"Cannot interpret value of type {type(x)} as an abstract array; it "
@@ -592,14 +592,14 @@ def _numpy_array_abstractify(x: np.ndarray) -> ShapedArray:
   dtype = x.dtype
   dtypes.check_valid_dtype(dtype)
   return ShapedArray(x.shape,
-      dtypes.canonicalize_dtype(dtype, allow_opaque_dtype=True))
+      dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True))
 _shaped_abstractify_handlers[np.ndarray] = _numpy_array_abstractify
 
 def _np_scalar_abstractify(x: np.generic) -> ShapedArray:
   dtype = np.dtype(x)
   dtypes.check_valid_dtype(dtype)
   return ShapedArray(np.shape(x),
-      dtypes.canonicalize_dtype(dtype, allow_opaque_dtype=True))
+      dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True))
 _shaped_abstractify_handlers.update((t, _np_scalar_abstractify)
                                     for t in numpy_scalar_types)
 

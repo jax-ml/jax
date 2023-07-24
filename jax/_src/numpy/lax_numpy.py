@@ -217,7 +217,7 @@ savez = np.savez
 def _jnp_dtype(obj: Optional[DTypeLike], *, align: bool = False,
                copy: bool = False) -> DType:
   """Similar to np.dtype, but respects JAX dtype defaults."""
-  if dtypes.is_opaque_dtype(obj):
+  if dtypes.issubdtype(obj, dtypes.extended):
     return obj  # type: ignore[return-value]
   if obj is None:
     obj = dtypes.float_
@@ -2038,7 +2038,7 @@ def array(object: Any, dtype: Optional[DTypeLike] = None, copy: bool = True,
       dtype = dtypes._lattice_result_type(*leaves)[0]
 
   if not weak_type:
-    dtype = dtypes.canonicalize_dtype(dtype, allow_opaque_dtype=True)
+    dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)
 
   out: ArrayLike
 
@@ -2085,7 +2085,7 @@ def _convert_to_array_if_dtype_fails(x: ArrayLike) -> ArrayLike:
 def asarray(a: Any, dtype: Optional[DTypeLike] = None, order: Optional[str] = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "asarray")
   if dtype is not None:
-    dtype = dtypes.canonicalize_dtype(dtype, allow_opaque_dtype=True)
+    dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)
   return array(a, dtype=dtype, copy=False, order=order)  # type: ignore
 
 
@@ -2328,7 +2328,7 @@ def arange(start: DimSize, stop: Optional[DimSize] = None,
   if stop is None and step is None:
     start_dtype = _dtype(start)
     if (not dtypes.issubdtype(start_dtype, np.integer) and
-        not dtypes.is_opaque_dtype(start_dtype)):
+        not dtypes.issubdtype(start_dtype, dtypes.extended)):
       ceil_ = ufuncs.ceil if isinstance(start, core.Tracer) else np.ceil
       start = ceil_(start).astype(int)  # type: ignore
     return lax.iota(dtype, start)
