@@ -60,20 +60,15 @@ using ImplicitDim = VectorLayout::ImplicitDim;
 
 static constexpr int kLayoutLog = 10;
 
-template<typename T>
 class Print {
  public:
-  explicit Print(T* t) : payload_(t) {}
-  T* payload_;
+  explicit Print(Operation* t) : payload_(t) {}
+  Operation* payload_;
  private:
-  friend std::ostream &operator<<(std::ostream &, Print<T> &&);
+  friend std::ostream &operator<<(std::ostream &, Print &&);
 };
 
-template<typename T>
-Print(T& t) -> Print<T>;
-
-template<typename T>
-std::ostream &operator<<(std::ostream &os, Print<T> p) {
+std::ostream &operator<<(std::ostream &os, Print p) {
   std::string s;
   llvm::raw_string_ostream tmp_os(s);
   p.payload_->print(tmp_os);

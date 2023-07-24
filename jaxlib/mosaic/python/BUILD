@@ -29,9 +29,6 @@ gentbl_filegroup(
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = ":tpu_python.td",
-    td_srcs = [
-        "@llvm-project//mlir:include/mlir/Bindings/Python/Attributes.td",
-    ],
     deps = [
         "//jaxlib/mosaic:tpu_td_files",
         "@llvm-project//mlir:OpBaseTdFiles",
