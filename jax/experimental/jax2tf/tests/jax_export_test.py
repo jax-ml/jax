@@ -239,7 +239,7 @@ class JaxExportTest(jtu.JaxTestCase):
       lambda a: a + test_primitive.bind(a),
       disabled_checks=[jax_export.DisabledSafetyCheck.custom_call("disallowed_call_target")]
     )(a)
-    self.assertIn("disallowed_call_target", exp.mlir_module)
+    self.assertIn("disallowed_call_target", exp.mlir_module())
 
   def test_grad(self):
     f = lambda x: jnp.sum(jnp.sin(x))
@@ -284,6 +284,7 @@ class JaxExportTest(jtu.JaxTestCase):
                         jax_export.call_exported(exp_f2)(a))
 
   @jtu.parameterized_filterable(
+    #one_containing="",
     kwargs=[
       dict(v=v)
       for v in range(jax_export.minimum_supported_serialization_version - 1,
@@ -302,6 +303,12 @@ class JaxExportTest(jtu.JaxTestCase):
         raise unittest.SkipTest("Not supported in old jaxlib")
       exp = jax_export.export(jnp.sin)(
         jax_export.poly_spec((3, 4), np.float32, "w, h"))
+      # Peek at the module
+      module_str = exp.mlir_module()
+      self.assertEqual(config.jax_serialization_version >= 7,
+                       "shape_assertion" in module_str)
+      self.assertIn("jax.uses_shape_polymorphism = true",
+                    module_str)
       x = np.arange(30, dtype=np.float32).reshape((5, 6))
       res = jax_export.call_exported(exp)(x)
       self.assertAllClose(res, np.sin(x))

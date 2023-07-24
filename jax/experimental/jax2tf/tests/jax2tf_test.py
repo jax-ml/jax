@@ -1528,9 +1528,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       )(*(core.ShapedArray(a.shape, a.dtype) for a in args))
 
     if transform1 == "shard_map":
-      self.assertIn("stablehlo.all_gather", str(exported.mlir_module))
+      self.assertIn("stablehlo.all_gather", str(exported.mlir_module()))
     else:
-      self.assertIn("stablehlo.reduce_window", str(exported.mlir_module))
+      self.assertIn("stablehlo.reduce_window", str(exported.mlir_module()))
 
   def test_cross_platform_error(self):
     f_tf = jax2tf.convert(jnp.sin, native_serialization=True,
