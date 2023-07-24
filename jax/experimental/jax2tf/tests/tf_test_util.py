@@ -31,6 +31,7 @@ from jax import tree_util
 
 from jax import config
 from jax.experimental import jax2tf
+from jax.experimental.jax2tf import jax_export
 from jax._src import xla_bridge
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -156,7 +157,7 @@ def ComputeTfValueAndGrad(tf_f: Callable, tf_args: Sequence,
                  jax_numpy_dtype_promotion='standard')
 class JaxToTfTestCase(jtu.JaxTestCase):
   # We want most tests to use the maximum available version, from the locally
-  # installed tfxla module.
+  # installed tfxla module and jax_export.
   use_max_serialization_version = True
 
   def setUp(self):
@@ -179,14 +180,17 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     self.addCleanup(functools.partial(config.update,
                                       "jax_serialization_version", version))
     if self.use_max_serialization_version:
-      # The largest version we support is 7
-      max_version = min(7, tfxla.call_module_maximum_supported_version())
-      self.assertLessEqual(version, max_version)
-      version = max_version
-      config.update("jax_serialization_version", max_version)
-    logging.info("Using JAX serialization version %s%s",
-                 version,
-                 " (max_version)" if self.use_max_serialization_version else "")
+      # Use the largest supported by both jax_export and tfxla.call_module
+      version = min(jax_export.maximum_supported_serialization_version,
+                    tfxla.call_module_maximum_supported_version())
+      self.assertGreaterEqual(version,
+                              jax_export.minimum_supported_serialization_version)
+      config.update("jax_serialization_version", version)
+    logging.info(
+      "Using JAX serialization version %s (jax_export.max_version %s, tf.XlaCallModule max version %s)",
+      version,
+      jax_export.maximum_supported_serialization_version,
+      tfxla.call_module_maximum_supported_version())
 
     with contextlib.ExitStack() as stack:
       stack.enter_context(tf.device(self.tf_default_device))

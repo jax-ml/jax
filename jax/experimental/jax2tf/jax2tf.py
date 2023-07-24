@@ -834,7 +834,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   kept_args_avals = [aval for i, aval in enumerate(exported.in_avals) if i in exported.module_kept_var_idx]
   kept_args_flat_tf = [atf for i, atf in enumerate(args_flat_tf) if i in exported.module_kept_var_idx]
 
-  version = exported.xla_call_module_version
+  version = exported.serialization_version
   call_module_attrs = dict(
       version=version,
       Tout=out_types,

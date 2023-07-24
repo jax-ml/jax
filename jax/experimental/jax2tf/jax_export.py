@@ -25,7 +25,6 @@ import re
 from typing import Any, Callable, Optional, Union
 
 from absl import logging
-import numpy as np
 
 import jax
 from jax import config
@@ -113,6 +112,9 @@ class DisabledSafetyCheck:
     return hash(self._impl)
 
 
+minimum_supported_serialization_version = 6
+maximum_supported_serialization_version = 7
+
 @dataclasses.dataclass(frozen=True)
 class Exported:
   """A JAX function lowered to StableHLO.
@@ -135,14 +137,15 @@ class Exported:
     out_shardings: the flattened output shardings, as long as `in_avals`.
     lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'
     mlir_module_serialized: the serialized lowered VHLO module.
-    xla_call_module_version: a version number for the serialized module.
+    serialization_version: a version number for the serialized module.
         See more versioning details at https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions.
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
         because they are not used. Same length as `in_shardings`.
-    module_uses_dim_vars: whether the `mlir_module_serialized` uses shape
-        polymorphic dimension variables. This may be from `in_avals` but also
-        from inner calls of shape-polymorphic Exported modules.
+    uses_shape_polymorphism: whether the `mlir_module_serialized` uses shape
+        polymorphism. This may be because `in_avals` contains dimension
+        variables, but also from inner calls of shape-polymorphic
+        Exported modules.
     disabled_checks: a list of descriptors of safety checks that have been
         disabled at export time. See docstring for `DisabledSafetyCheck`.
     _get_vjp: an optional function that takes the current exported function and
@@ -164,9 +167,9 @@ class Exported:
   disabled_checks: Sequence[DisabledSafetyCheck]
 
   mlir_module_serialized: bytes
-  xla_call_module_version: int
+  serialization_version: int
   module_kept_var_idx: tuple[int, ...]
-  module_uses_dim_vars: bool
+  uses_shape_polymorphism: bool
 
   _get_vjp: Optional[Callable[["Exported"], "Exported"]]
 
@@ -311,6 +314,12 @@ def export(fun_jax: Callable,
   """
   fun_name = getattr(fun_jax, "__name__", "unknown")
   version = config.jax_serialization_version
+  if (version < minimum_supported_serialization_version or
+      version > maximum_supported_serialization_version):
+    raise ValueError(
+      f"The requested jax_serialization version {version} is outside the "
+      f"range of supported versions [{minimum_supported_serialization_version}"
+      f"..{maximum_supported_serialization_version}]")
 
   def do_export(*args_specs, **kwargs_specs) -> Exported:
     if not hasattr(fun_jax, "lower"):
@@ -395,8 +404,8 @@ def export(fun_jax: Callable,
         disabled_checks=tuple(disabled_checks),
         mlir_module_serialized=mlir_module_serialized,
         module_kept_var_idx=module_kept_var_idx,
-        module_uses_dim_vars=shape_poly_state.uses_dim_vars,
-        xla_call_module_version=version,  # type: ignore
+        uses_shape_polymorphism=shape_poly_state.uses_dim_vars,
+        serialization_version=version,  # type: ignore
         _get_vjp=lambda exported: _export_native_vjp(fun_jax, exported))
 
   return do_export
@@ -826,6 +835,12 @@ def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
 ### Importing
 
 def call_exported(exported: Exported) -> Callable[..., jax.Array]:
+
+  if (exported.serialization_version >= 7 and
+      exported.uses_shape_polymorphism):
+    if xla_client.mlir_api_version < 52:
+      raise NotImplementedError(
+        "Current jaxlib does not support shape polymorphism with serialization version >= 7")
   @jax.custom_vjp
   def f_flat(*args_flat):
     return call_exported_p.bind(*args_flat, exported=exported)
@@ -945,7 +960,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
         f"The exported function '{exported.fun_name}' was lowered for "
         f"platform '{exported.lowering_platform}' but it is used "
         f"on '{platform}'.")
-  if exported.module_uses_dim_vars:
+  if exported.uses_shape_polymorphism:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
 
   submodule = ir.Module.parse(exported.mlir_module)

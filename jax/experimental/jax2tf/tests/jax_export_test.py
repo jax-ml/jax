@@ -13,6 +13,8 @@
 # limitations under the License.
 import contextlib
 import math
+import functools
+import logging
 import re
 from typing import Optional
 import unittest
@@ -38,6 +40,23 @@ config.parse_flags_with_absl()
 
 
 class JaxExportTest(jtu.JaxTestCase):
+
+  def override_serialization_version(self, version_override: int):
+      version = config.jax_serialization_version
+      if version != version_override:
+        self.addCleanup(functools.partial(config.update,
+                                          "jax_serialization_version",
+                                          version_override))
+        config.update("jax_serialization_version", version_override)
+      logging.info(
+        "Using JAX serialization version %s",
+        config.jax_serialization_version)
+
+  def setUp(self):
+    super().setUp()
+    # Run tests with the maximum supported version by default
+    self.override_serialization_version(
+      jax_export.maximum_supported_serialization_version)
 
   def test_basic_export_only(self):
     def my_fun(x):
@@ -250,7 +269,6 @@ class JaxExportTest(jtu.JaxTestCase):
     exp_vjp = jax.vjp(f1_exp, a, b)[1](out_ct)
     self.assertAllClose(jax_vjp, exp_vjp)
 
-
   def test_roundtrip(self):
     def f1(x):
       return jnp.sin(x)
@@ -264,6 +282,29 @@ class JaxExportTest(jtu.JaxTestCase):
 
     self.assertAllClose(jnp.cos(jnp.sin(jnp.sin(a))),
                         jax_export.call_exported(exp_f2)(a))
+
+  @jtu.parameterized_filterable(
+    kwargs=[
+      dict(v=v)
+      for v in range(jax_export.minimum_supported_serialization_version - 1,
+                     jax_export.maximum_supported_serialization_version + 2)])
+  def test_shape_poly_basic_versions(self, v: int):
+    self.override_serialization_version(v)
+    with contextlib.ExitStack() as e:
+      if not (jax_export.minimum_supported_serialization_version <= v
+              <= jax_export.maximum_supported_serialization_version):
+        e.enter_context(self.assertRaisesRegex(
+          ValueError,
+          f"The requested jax_serialization version {v} is outside the range of supported versions"))
+
+      if (xc.mlir_api_version <= 51 and
+        config.jax_serialization_version >= 7):
+        raise unittest.SkipTest("Not supported in old jaxlib")
+      exp = jax_export.export(jnp.sin)(
+        jax_export.poly_spec((3, 4), np.float32, "w, h"))
+      x = np.arange(30, dtype=np.float32).reshape((5, 6))
+      res = jax_export.call_exported(exp)(x)
+      self.assertAllClose(res, np.sin(x))
 
   # A function is exported with f32[poly_spec] and is called with different arg
   # shapes. We use jax_export.call_exported and we also run the shape check
@@ -299,6 +340,8 @@ class JaxExportTest(jtu.JaxTestCase):
       arg_shape=(3, 4, 12), arg_dtype=np.float32,
       expect_error=None):  # If given, error from running the exported module
 
+    if xc.mlir_api_version <= 51:
+      raise unittest.SkipTest("Not supported in old jaxlib")
     def f(x):  # x: f32[poly_spec]
       return jnp.reshape(x, (-1, x.shape[1]))
 
@@ -308,7 +351,7 @@ class JaxExportTest(jtu.JaxTestCase):
       disabled_checks = ()
     exp_f = jax_export.export(f, disabled_checks=disabled_checks)(
         jax_export.poly_spec((3, 4, 12), np.float32, poly_spec))
-    self.assertEqual(exp_f.module_uses_dim_vars, poly_spec != "3,4,12")
+    self.assertEqual(exp_f.uses_shape_polymorphism, poly_spec != "3,4,12")
     arg = np.arange(np.prod(arg_shape),
                     dtype=arg_dtype).reshape(arg_shape)  # arg : f32[3,4,12]
 
@@ -404,18 +447,16 @@ class JaxExportTest(jtu.JaxTestCase):
       expect_error_run=None):
     # Polymorphic export called with static or polymorphic shapes
     if xc.mlir_api_version <= 51:
-      disabled_checks = (jax_export.DisabledSafetyCheck.shape_assertions(),)
-    else:
-      disabled_checks = ()
+      raise unittest.SkipTest("Not supported in old jaxlib")
     def inner(x):  # x: inner_poly_spec
       return jnp.reshape(x, (-1, x.shape[1]))
 
     arg = np.arange(np.prod(arg_shape),
                     dtype=arg_dtype).reshape(arg_shape)  # x : f32[3,4,12]
-    inner_exp = jax_export.export(inner, disabled_checks=disabled_checks)(
+    inner_exp = jax_export.export(inner)(
         jax_export.poly_spec((3, 4, 12), np.float32, inner_poly_spec))
 
-    self.assertEqual(inner_exp.module_uses_dim_vars,
+    self.assertEqual(inner_exp.uses_shape_polymorphism,
                      (inner_poly_spec != "3,4,12"))
     def outer(x):  # x: outer_poly_spec
       # Use an addition to test that the shapes are refined properly for the
@@ -427,13 +468,13 @@ class JaxExportTest(jtu.JaxTestCase):
         stack.push(self.assertRaisesRegex(ValueError, expect_error_outer_exp))
 
       # Call it after exporting again, with polymorphic shapes
-      outer_exp = jax_export.export(outer, disabled_checks=disabled_checks)(
+      outer_exp = jax_export.export(outer)(
           jax_export.poly_spec(arg.shape, arg.dtype, outer_poly_spec))
 
     if expect_error_outer_exp is not None:
       return
 
-    self.assertEqual(outer_exp.module_uses_dim_vars,
+    self.assertEqual(outer_exp.uses_shape_polymorphism,
                      (inner_poly_spec != "3,4,12" or outer_poly_spec != "3,4,12"))
 
     with contextlib.ExitStack() as stack:
