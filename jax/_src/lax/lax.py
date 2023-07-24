@@ -1286,7 +1286,7 @@ def stop_gradient(x: T) -> T:
   """
   def stop(x):
     # only bind primitive on inexact dtypes, to avoid some staging
-    if core.has_opaque_dtype(x):
+    if dtypes.issubdtype(core.get_aval(x).dtype, dtypes.extended):
       return x
     elif (dtypes.issubdtype(_dtype(x), np.floating) or
         dtypes.issubdtype(_dtype(x), np.complexfloating)):
