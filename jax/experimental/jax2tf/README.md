@@ -815,10 +815,11 @@ We list here a history of the serialization version numbers:
   * Version 7 adds support for `stablehlo.shape_assertion` operations and
     for `shape_assertions` specified in `disabled_checks`.
     See [Errors in presence of shape polymorphism](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism).
-    Used in JAX serialization since July 20th, 2023 (JAX 0.4.14).
+    Available in JAX serialization since July 20th, 2023 (JAX 0.4.14).
   * Version 8 adds support for the `jax.uses_shape_polymorphism` module
     attribute and enables the shape refinement pass only when the
-    attribute is present. Not yet used in JAX.
+    attribute is present. Supported by XlaCallModule since July 21st, 2023
+    (cl/549973693) and available in JAX since July 26th, 2023 (JAX 0.4.14).
 
 
 ## Known issues

@@ -113,7 +113,7 @@ class DisabledSafetyCheck:
 
 
 minimum_supported_serialization_version = 6
-maximum_supported_serialization_version = 7
+maximum_supported_serialization_version = 8
 
 @dataclasses.dataclass(frozen=True)
 class Exported:
@@ -173,7 +173,6 @@ class Exported:
 
   _get_vjp: Optional[Callable[["Exported"], "Exported"]]
 
-  @property
   def mlir_module(self) -> ir.Module:
     return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
 
@@ -367,6 +366,12 @@ def export(fun_jax: Callable,
         )
     finally:
       shape_poly.thread_local_state.enable_shape_assertions = prev_enable_shape_assertions
+
+    with mlir_module.context:
+      mlir_module_attrs = mlir_module.operation.attributes
+      mlir_module_attrs["jax.uses_shape_polymorphism"] = (
+      mlir.ir.BoolAttr.get(shape_poly_state.uses_dim_vars))
+
     mlir_module_serialized = _serialize_module(mlir_module)
 
     # Figure out the result types and shapes
@@ -963,7 +968,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   if exported.uses_shape_polymorphism:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
 
-  submodule = ir.Module.parse(exported.mlir_module)
+  submodule = ir.Module.parse(exported.mlir_module())
   symtab = ir.SymbolTable(submodule.operation)
   # The called function may have been exported with polymorphic shapes and called
   # now with more refined shapes. We insert hlo.ConvertOp to ensure the module

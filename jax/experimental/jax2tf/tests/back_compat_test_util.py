@@ -290,7 +290,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         for target in allow_additional_custom_call_targets)
     )(*args_specs)
 
-    module_str = str(exported.mlir_module)
+    module_str = str(exported.mlir_module())
     serialized = exported.mlir_module_serialized
     module_version = exported.serialization_version
     return serialized, module_str, module_version
