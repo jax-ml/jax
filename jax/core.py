@@ -202,10 +202,10 @@ _deprecations = {
 
 import typing
 if typing.TYPE_CHECKING:
+  from jax._src.dtypes import is_opaque_dtype as is_opaque_dtype
+  from jax._src.core import has_opaque_dtype as has_opaque_dtype
+else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
-else:
-  from jax._src.dtypes import is_opaque_dtype as is_opaque_dtype
-  from jax._src.core import has_opaque_dtype as has_opaque_dtype
 del typing, _deprecated_is_opaque_dtype, _deprecated_has_opaque_dtype
