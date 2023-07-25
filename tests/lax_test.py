@@ -2653,6 +2653,15 @@ class LaxTest(jtu.JaxTestCase):
     self.assertArraysEqual(np.full((1, 30), np.float32(42)),
                            f(np.zeros((1, 24), dtype=np.float32)))
 
+  def testDynamicSliceUnsignedNoNormalization(self):
+    # Test that no negative index correction is done for unsigned indices.
+    f = lambda x, i: lax.dynamic_slice(x, [i], [1])
+    x = np.arange(200)
+    i = np.uint32(128)
+    jaxpr = jax.make_jaxpr(f)(x, i)
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertEqual(jaxpr.eqns[0].primitive, lax.dynamic_slice_p)
+
   def testDynamicSliceU8Index(self):
     # Regression test for u8 index in dynamic-slice (#6122)
     # TODO(b/183216273): enable this test for CPU & GPU when possible.

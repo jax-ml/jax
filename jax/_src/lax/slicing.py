@@ -2559,8 +2559,13 @@ def _dynamic_slice_indices(
                        .format(start_indices.shape))  # type: ignore[union-attr]
     start_indices = list(start_indices)
   result: list[ArrayLike] = []
+  # Loop to correct for negative indices.
   for i, d in zip(start_indices, operand.shape):
-    # We test whether i and d are static to avoid unnecessary staging.
+    # If i is unsigned, then it cannot be negative.
+    if dtypes.issubdtype(_dtype(i), np.unsignedinteger):
+      result.append(i)
+      continue
+    # Test whether i and d are static to avoid unnecessary staging.
     if isinstance(i, (int, np.integer)) and core.is_constant_dim(d):
       result.append(lax.convert_element_type(i + d if i < 0 else i, _dtype(i)))
       continue
