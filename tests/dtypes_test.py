@@ -59,9 +59,9 @@ np_float_dtypes = [np.dtype('float16'), np.dtype('float32'),
 
 float_dtypes = [np.dtype(dtypes.bfloat16)] + np_float_dtypes
 custom_float_dtypes = [np.dtype(dtypes.bfloat16)]
+fp8_dtypes = [np.dtype(dtypes.float8_e4m3b11fnuz), np.dtype(dtypes.float8_e4m3fn),
+              np.dtype(dtypes.float8_e5m2)]
 if _fp8_enabled:
-  fp8_dtypes = [np.dtype(dtypes.float8_e4m3b11fnuz), np.dtype(dtypes.float8_e4m3fn),
-                np.dtype(dtypes.float8_e5m2)]
   float_dtypes += fp8_dtypes
   custom_float_dtypes += fp8_dtypes
 
@@ -124,13 +124,11 @@ class DtypesTest(jtu.JaxTestCase):
       dtypes.canonicalize_dtype("nonsense")
 
   @parameterized.named_parameters(
-    {"testcase_name": f"_{swap=}_{jit=}",
-     "swap": swap, "jit": jit}
-    for swap in [False, True] for jit in [False, True])
+    {"testcase_name": f"_{swap=}_{jit=}_{mode=}", "swap": swap, "jit": jit, "mode": mode}
+    for swap in [False, True] for jit in [False, True] for mode in ["standard", "full"])
   @jtu.ignore_warning(category=UserWarning,
                       message="Explicitly requested dtype.*")
-  @jax.numpy_dtype_promotion('standard')
-  def testBinaryPromotion(self, swap, jit):
+  def testBinaryPromotion(self, swap, jit, mode):
     testcases = [
       (jnp.array(1.), 0., jnp.float64),
       (jnp.array(1.), jnp.array(0.), jnp.float64),
@@ -158,7 +156,8 @@ class DtypesTest(jtu.JaxTestCase):
     op = jax.jit(operator.add) if jit else operator.add
     for x, y, dtype in testcases:
       x, y = (y, x) if swap else (x, y)
-      z = op(x, y)
+      with jax.numpy_dtype_promotion(mode):
+        z = op(x, y)
       self.assertTrue(isinstance(z, jax.Array), msg=(x, y, z))
       self.assertEqual(z.dtype, dtypes.canonicalize_dtype(dtype), msg=(x, y, z))
 
@@ -602,6 +601,25 @@ class TestPromotionTables(jtu.JaxTestCase):
       expected = x.dtype
     self.assertEqual(dtypes.result_type(x), expected)
 
+  @jax.numpy_dtype_promotion('full')
+  def testFloat8FullPromotion(self):
+    for fp8_type in fp8_dtypes:
+      for int_type in signed_dtypes + unsigned_dtypes:
+        actual = dtypes.promote_types(fp8_type, int_type)
+        expected = fp8_type
+        self.assertEqual(expected, actual, f"promote({fp8_type}, {int_type})={actual}, {expected=}")
+      for float_type in float_dtypes + complex_dtypes:
+        actual = dtypes.promote_types(fp8_type, float_type)
+        if float_type == fp8_type:
+          expected = fp8_type
+        elif float_type in ('bfloat16', *fp8_dtypes):
+          expected = 'bfloat16'
+        elif float_type == 'float16':
+          expected = 'float32'
+        else:
+          expected = float_type
+        self.assertEqual(expected, actual, f"promote({fp8_type}, {float_type})={actual}, {expected=}")
+
   @unittest.skipIf(not _fp8_enabled, "requires fp8 dtypes")
   @jax.numpy_dtype_promotion('standard')
   def testFloat8PromotionError(self):
@@ -625,9 +643,10 @@ class TestPromotionTables(jtu.JaxTestCase):
   @jtu.sample_product(
     dtype=all_dtypes,
     weak_type=[True, False],
-    promotion=['standard', 'strict'],
+    promotion=['standard', 'strict', 'full'],
   )
   def testBinaryNonPromotion(self, dtype, weak_type, promotion):
+    print(dtype, weak_type, promotion)
     if _fp8_enabled and dtype in fp8_dtypes:
       self.skipTest("XLA support for float8 is incomplete.")
     if _int4_enabled and dtype in int4_dtypes:
@@ -637,7 +656,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     with jax.numpy_dtype_promotion(promotion):
       y = (x + x)
 
-    if promotion == 'standard' or not weak_type or dtype == dtypes.bool_:
+    if promotion in ['standard', 'full'] or not weak_type or dtype == dtypes.bool_:
       expected_dtype = dtype
     elif dtypes.issubdtype(dtype, np.complexfloating):
       expected_dtype = np.complex128

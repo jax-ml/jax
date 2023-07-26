@@ -907,7 +907,7 @@ config.define_enum_state(
 
 numpy_dtype_promotion = config.define_enum_state(
     name='jax_numpy_dtype_promotion',
-    enum_values=['standard', 'strict'],
+    enum_values=['standard', 'strict', 'full'],
     default='standard',
     help=('Specify the rules used for implicit type promotion in operations '
           'between arrays. Options are "standard" or "strict"; in strict-mode, '

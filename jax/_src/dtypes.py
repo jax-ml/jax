@@ -416,8 +416,24 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> dict[JAXType, lis
   *f1_types, bf, f2, f4, f8 = _float_types
   c4, c8 = _complex_types
   i_, f_, c_ = _weak_types
-  if jax_numpy_dtype_promotion == 'standard':
-    out: dict[JAXType, list[JAXType]]
+  out: dict[JAXType, list[JAXType]]
+  if jax_numpy_dtype_promotion == 'full':
+    out = {
+      b1: [i_],
+      u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
+      i_: [u1, i1], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
+      f_: [*f1_types, bf, f2, c_],
+      **{t: [bf] for t in f1_types}, bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
+      c_: [c4], c4: [c8], c8: [],
+    }
+    if _int4_dtype is not None:
+      out[i_].append(_int4_dtype)
+      out[_int4_dtype] = [i1]
+    if _uint4_dtype is not None:
+      out[i_].append(_uint4_dtype)
+      out[_uint4_dtype] = [u1, i1]
+    return out
+  elif jax_numpy_dtype_promotion == 'standard':
     out = {
       b1: [i_],
       u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
@@ -460,6 +476,7 @@ def _make_lattice_upper_bounds(jax_numpy_dtype_promotion: str) -> dict[JAXType, 
 _lattice_upper_bounds: dict[str, dict[JAXType, set[JAXType]]] = {
   'standard': _make_lattice_upper_bounds('standard'),
   'strict': _make_lattice_upper_bounds('strict'),
+  'full': _make_lattice_upper_bounds('full'),
 }
 
 class TypePromotionError(ValueError):
@@ -513,14 +530,16 @@ def _least_upper_bound(jax_numpy_dtype_promotion: str, *nodes: JAXType) -> JAXTy
       msg = (
         f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
         "promotion path. To avoid unintended promotion, 8-bit floats do not support "
-        "implicit promotion. If you'd like your inputs to be promoted to another type, "
-        "you can do so explicitly using e.g. x.astype('float32')")
+        "implicit promotion. Your options are to either explicitly cast the inputs to "
+        "the desired type (e.g. `x.astype('float32')`), or to locally enable implicit "
+        "float8 promotion using the `jax.numpy_dtype_promotion('full')` context manager.")
     elif any(n in _int4_dtypes for n in nodes):
       msg = (
         f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
         "promotion path. To avoid unintended promotion, 4-bit integers do not support "
-        "implicit promotion. If you'd like your inputs to be promoted to another type, "
-        "you can do so explicitly using e.g. x.astype('int32')")
+        "implicit promotion. Your options are to either explicitly cast the inputs to "
+        "the desired type (e.g. `x.astype('int32')`), or to locally enable implicit "
+        "int4 promotion using the `jax.numpy_dtype_promotion('full')` context manager.")
     else:
       msg = (
         f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
