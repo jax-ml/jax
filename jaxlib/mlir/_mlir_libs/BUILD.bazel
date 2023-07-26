@@ -85,6 +85,25 @@ py_extension(
     ],
 )
 
+# This is here, instead of in jaxlib/mosaic/python, so it's in the same
+# directory as libjaxlib_mlir_capi.so (produced by
+# :jaxlib_mlir_capi_shared_library). This ensures that the RPATH works correctly
+# across platforms. It's not clear if Windows supports RPATH-like functionality
+# across different directories at all.
+py_extension(
+    name = "_tpu_ext",
+    srcs = ["tpu_ext.cc"],
+    copts = COPTS,
+    linkopts = LINKOPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "//jaxlib/mosaic:tpu_dialect_capi_headers",
+        "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
+        "@pybind11",
+    ],
+)
+
 symlink_inputs(
     name = "_mlir_libs",
     rule = py_library,

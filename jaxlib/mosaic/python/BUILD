@@ -14,7 +14,7 @@
 
 # Mosaic Python bindings
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
-load("//jaxlib:jax.bzl", "py_deps", "pybind_extension")
+load("//jaxlib:jax.bzl", "py_deps")
 
 gentbl_filegroup(
     name = "tpu_python_gen_raw",
@@ -51,20 +51,8 @@ py_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        ":_tpu_ext",
+        "//jaxlib/mlir/_mlir_libs:_tpu_ext",
         "//jaxlib/mlir",
-    ],
-)
-
-pybind_extension(
-    name = "_tpu_ext",
-    srcs = ["tpu_ext.cc"],
-    deps = [
-        "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi_shared_library",
-        "//jaxlib/mosaic:tpu_dialect_capi_headers",
-        "@llvm-project//mlir:CAPIIR",
-        "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
-        "@pybind11",
     ],
 )
 
