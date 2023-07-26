@@ -2673,6 +2673,14 @@ class LaxTest(jtu.JaxTestCase):
     np.testing.assert_equal(
         np.array(lax.dynamic_slice(x, np.uint8([128]), (1,))), [128])
 
+  def test_dot_general_batching_python_builtin_arg(self):
+    # https://github.com/google/jax/issues/16805
+    @jax.remat
+    def f(x):
+      return jax.lax.dot_general(x, x, (([], []), ([], [])))
+
+    jax.hessian(f)(1.0)  # don't crash
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
