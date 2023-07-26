@@ -29,6 +29,7 @@ import unittest
 from absl.testing import absltest
 
 from jax._src import test_util as jtu
+from jax._src import maps  # Needed for config flags.
 from jax import config
 
 import numpy as np
@@ -48,7 +49,7 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
   # If you want to run this test for only one harness, add parameter
   # `one_containing="foo"` to parameterized below.
   @primitive_harness.parameterized(primitive_harness.all_harnesses,
-                                   #one_containing="gather_from_slicing_name",
+                                   #one_containing="",
                                    include_jax_unimpl=True)
   @jtu.ignore_warning(category=UserWarning,
                       message="Using reduced precision for gradient.*")
