@@ -858,6 +858,7 @@ def _todense_sparse_rule(spenv, spvalue, *, tree):
   return (spenv.dense(out),)
 
 sparse_rules_bcoo[sparse.todense_p] = _todense_sparse_rule
+sparse_rules_bcsr[sparse.todense_p] = _todense_sparse_rule
 
 def _custom_jvp_sparse_rule(spenv, *spvalues, **params):
   call_jaxpr = params.pop('call_jaxpr')

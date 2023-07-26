@@ -25,7 +25,7 @@ import jax
 from jax import config, jit, lax
 import jax.numpy as jnp
 import jax._src.test_util as jtu
-from jax.experimental.sparse import BCOO, sparsify, todense, SparseTracer
+from jax.experimental.sparse import BCOO, BCSR, sparsify, todense, SparseTracer
 from jax.experimental.sparse.transform import (
   arrays_to_spvalues, spvalues_to_arrays, sparsify_raw, SparsifyValue, SparsifyEnv)
 from jax.experimental.sparse.util import CuSparseEfficiencyWarning
@@ -223,7 +223,6 @@ class SparsifyTest(jtu.JaxTestCase):
     msg = "Addition between a sparse array X and a dense array Y is not implemented"
     with self.assertRaisesRegex(NotImplementedError, msg):
       self.sparsify(operator.add)(x, 1.)
-
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
@@ -564,12 +563,23 @@ class SparsifyTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "sparsified true_fun and false_fun output.*"):
       func(x_bcoo, y)
 
-  def testToDense(self):
-    M = jnp.arange(4)
-    Msp = BCOO.fromdense(M)
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{fmt}", "fmt": fmt}
+      for fmt in ["BCSR", "BCOO"]
+  )
+  def testToDense(self, fmt):
+    M = jnp.arange(4).reshape(2, 2)
+    if fmt == "BCOO":
+      Msp = BCOO.fromdense(M)
+    elif fmt == "BCSR":
+      Msp = BCSR.fromdense(M)
+    else:
+      raise ValueError(f"Unrecognized {fmt=}")
+
     @self.sparsify
     def func(M):
       return todense(M) + 1
+
     self.assertArraysEqual(func(M), M + 1)
     self.assertArraysEqual(func(Msp), M + 1)
     self.assertArraysEqual(jit(func)(M), M + 1)
