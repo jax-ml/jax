@@ -175,6 +175,9 @@ class Harness:
   def __str__(self):
     return self.fullname
 
+  def __repr__(self):
+    return self.fullname
+
   @property
   def fullname(self):
     return self.name if self.group_name is None else f"{self.group_name}_{self.name}"
@@ -378,9 +381,7 @@ def parameterized(harnesses: Iterable[Harness],
       "JAX_TEST_HARNESS_ONE_CONTAINING")
   cases = tuple(
       # Change the testcase name to include the harness name.
-      dict(
-          testcase_name=harness.fullname if one_containing is None else "",
-          harness=harness) for harness in harnesses if harness.filter(
+      dict(harness=harness) for harness in harnesses if harness.filter(
               jtu.device_under_test(),
               one_containing=one_containing,
               include_jax_unimpl=include_jax_unimpl))
@@ -394,7 +395,7 @@ def parameterized(harnesses: Iterable[Harness],
   if not cases:
     # We filtered out all the harnesses.
     return jtu.skip_on_devices(jtu.device_under_test())
-  return testing.parameterized.named_parameters(*cases)
+  return testing.parameterized.parameters(*cases)
 
 
 ###############################################################################
