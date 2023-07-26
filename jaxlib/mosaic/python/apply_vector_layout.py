@@ -27,14 +27,14 @@ import enum
 import functools
 import math
 import re
-from typing import Any, Callable, Literal, Union, overload
+from typing import Any, Callable, Literal, Optional, Union, overload
 
-from mlir import ir
-from mlir.dialects import arith
-from mlir.dialects import func
-from mlir.dialects import math as math_dialect
-from mlir.dialects import scf
-from mlir.dialects import vector
+from jaxlib.mlir import ir
+from jaxlib.mlir.dialects import arith
+from jaxlib.mlir.dialects import func
+from jaxlib.mlir.dialects import math as math_dialect
+from jaxlib.mlir.dialects import scf
+from jaxlib.mlir.dialects import vector
 import numpy as np
 
 from . import infer_memref_layout
@@ -72,7 +72,7 @@ class Replicated(enum.Enum):
 REPLICATED = Replicated.REPLICATED
 
 
-Offset = int | Literal[REPLICATED]
+Offset = Union[int, Literal[REPLICATED]]
 
 
 class ImplicitDim(enum.IntEnum):
@@ -176,7 +176,7 @@ class VectorLayout:
   bitwidth: int
   offsets: tuple[Offset, Offset]  # Replication applies only within a tile.
   tiling: tuple[int, int]
-  implicit_dim: ImplicitDim | None
+  implicit_dim: Optional[ImplicitDim]
 
   def __post_init__(self):
     # TODO(b/275751535): Allow more bitwidths.
@@ -289,7 +289,7 @@ class VectorLayout:
       raise AssertionError(f"Invalid implicit dim: {self.implicit_dim}")
 
   def generalizes(self, other: "VectorLayout",
-                  shape: tuple[int, ...] | None = None) -> bool:
+                  shape: Optional[tuple[int, ...]] = None) -> bool:
     """Returns True if the other layout is a special case of this one.
 
     In here, other is considered "a special case" when the set of vector
@@ -345,7 +345,7 @@ class VectorLayout:
     return True
 
   def equivalent_to(self, other: "VectorLayout",
-                    shape: tuple[int, ...] | None = None) -> bool:
+                    shape: Optional[tuple[int, ...]] = None) -> bool:
     """Returns True if the two layouts are equivalent.
 
     That is, when all potential vector entries where the value can be stored
@@ -804,7 +804,7 @@ class TiledRectangularVRegBounds(VRegDataBounds):
     return ir.DenseBoolArrayAttr.get(mask)
 
 
-Layout = VectorLayout | None
+Layout = Optional[VectorLayout]
 
 PATTERN = re.compile(
     r'#tpu.vpad<"([0-9]+),{([*0-9]+),([*0-9]+)},\(([0-9]+),([0-9]+)\)(,-1|,-2)?">'
@@ -1113,17 +1113,17 @@ class RewriteContext:
   func: func.FuncOp
   hardware_generation: int
 
-  def erase(self, op: ir.Operation | ir.OpView):
+  def erase(self, op: Union[ir.Operation, ir.OpView]):
     if isinstance(op, ir.OpView):
       op = op.operation
     op.erase()
 
-  def replace(self, old: ir.Operation | ir.OpView, new: ValueLike):
+  def replace(self, old: Union[ir.Operation, ir.OpView], new: ValueLike):
     self.replace_all_uses_with(old, new)
     self.erase(old)
 
   def replace_all_uses_with(
-      self, old: ir.Operation | ir.OpView, new: ValueLike
+      self, old: Union[ir.Operation, ir.OpView], new: ValueLike
   ):
     if isinstance(new, (ir.Operation, ir.OpView)):
       new = new.results
@@ -2649,7 +2649,7 @@ def type_bitwidth(ty: ir.Type) -> int:
   raise NotImplementedError(ty)
 
 
-def get_constant(ty: ir.Type, value: int | float) -> ir.Attribute:
+def get_constant(ty: ir.Type, value: Union[int, float]) -> ir.Attribute:
   if ir.IntegerType.isinstance(ty):
     return ir.IntegerAttr.get(ty, value)
   elif ty == ir.IndexType.get():

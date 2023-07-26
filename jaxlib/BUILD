@@ -59,12 +59,14 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:chlo_dialect",
         "//jaxlib/mlir:func_dialect",
         "//jaxlib/mlir:ir",
+        "//jaxlib/mlir:memref_dialect",
         "//jaxlib/mlir:mhlo_dialect",
         "//jaxlib/mlir:ml_program_dialect",
         "//jaxlib/mlir:pass_manager",
+        "//jaxlib/mlir:scf_dialect",
         "//jaxlib/mlir:sparse_tensor_dialect",
         "//jaxlib/mlir:stablehlo_dialect",
-        # placeholder for Mosaic target
+        "//jaxlib/mosaic",
     ],
 )
 

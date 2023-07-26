@@ -15,8 +15,8 @@
 """Inference for memref layout and memory space."""
 
 # mypy: ignore-errors
-from mlir import ir
-from mlir.dialects import func
+from jaxlib.mlir import ir
+from jaxlib.mlir.dialects import func
 import numpy as np
 
 from . import tpu

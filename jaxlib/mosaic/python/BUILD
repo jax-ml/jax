@@ -39,7 +39,7 @@ genrule(
     name = "tpu_python_gen",
     srcs = ["_tpu_gen_raw.py"],
     outs = ["_tpu_gen.py"],
-    cmd = "cat $(location _tpu_gen_raw.py) | sed -e 's/^from \\./from mlir\\.dialects\\./g' > $@",
+    cmd = "cat $(location _tpu_gen_raw.py) | sed -e 's/^from \\./from jaxlib\\.mlir\\.dialects\\./g' > $@",
 )
 
 py_library(
@@ -60,9 +60,9 @@ pybind_extension(
     name = "_tpu_ext",
     srcs = ["tpu_ext.cc"],
     deps = [
-        "//jaxlib/mosaic:tpu_dialect_capi",
+        "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi_shared_library",
+        "//jaxlib/mosaic:tpu_dialect_capi_headers",
         "@llvm-project//mlir:CAPIIR",
-        "@llvm-project//mlir:IR",
         "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
         "@pybind11",
     ],
@@ -83,6 +83,7 @@ py_library(
         "//jaxlib/mlir:func_dialect",
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:math_dialect",
+        "//jaxlib/mlir:memref_dialect",
         "//jaxlib/mlir:pass_manager",
         "//jaxlib/mlir:scf_dialect",
         "//jaxlib/mlir:stablehlo_dialect",

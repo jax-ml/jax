@@ -569,6 +569,7 @@ pytype_strict_library(
     srcs = ["_src/tpu_custom_call.py"],
     visibility = [":internal"],
     deps = [
+        ":config",
         ":core",
         ":jax",
         "//jax/_src/lib",

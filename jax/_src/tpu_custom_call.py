@@ -24,15 +24,15 @@ import functools
 import io
 from typing import Any, Callable
 
-from absl import flags
 import jax
 from jax import core
 from jax.interpreters import mlir
 from jax.interpreters import xla
-from mlir import ir
-from mlir.dialects import mhlo
-from mlir.dialects import stablehlo
-from mlir.passmanager import PassManager
+from jax._src.config import config
+from jaxlib.mlir import ir
+from jaxlib.mlir.dialects import mhlo
+from jaxlib.mlir.dialects import stablehlo
+from jaxlib.mlir.passmanager import PassManager
 from jax._src.lib import tpu_mosaic
 import numpy as np
 
@@ -43,8 +43,10 @@ tpu = tpu_mosaic.tpu
 apply_vector_layout = tpu_mosaic.apply_vector_layout
 infer_memref_layout = tpu_mosaic.infer_memref_layout
 
-_ALLOW_HLO = flags.DEFINE_bool(
-    "jax_mosaic_allow_hlo", False, "Allow hlo dialect in mosaic"
+config.define_bool_state(
+    name="jax_mosaic_allow_hlo",
+    default=False,
+    help="Allow hlo dialects in Mosaic",
 )
 
 tpu_custom_call_p = core.Primitive("tpu_custom_call")
@@ -179,7 +181,7 @@ def _lower_tpu_kernel(module: ir.Module, hardware_generation: int) -> ir.Module:
         module.operation.get_asm(binary=True, enable_debug_info=True)
     )
 
-    if _ALLOW_HLO.value:
+    if config.jax_mosaic_allow_hlo:
       # Run hlo dialect conversion: hlo -> linalg -> vector.
       pipeline = [
           "hlo-legalize-to-arithmetic",

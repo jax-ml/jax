@@ -45,7 +45,7 @@ cc_library(
         "dialect/tpu/layout.h",
         "dialect/tpu/tpu_dialect.h",
     ],
-    compatible_with = ["//buildenv/target:libtpu"],
+    # compatible with libtpu
     deps = [
         ":tpu_inc_gen",
         "@llvm-project//llvm:Support",
@@ -72,7 +72,7 @@ cc_library(
 
 gentbl_cc_library(
     name = "tpu_inc_gen",
-    compatible_with = ["//buildenv/target:libtpu"],
+    # compatible with libtpu
     tbl_outs = [
         (
             ["-gen-op-decls"],
@@ -146,7 +146,7 @@ td_library(
     srcs = [
         "dialect/tpu/tpu.td",
     ],
-    compatible_with = ["//buildenv/target:libtpu"],
+    # compatible with libtpu
     deps = [
         "@llvm-project//mlir:BuiltinDialectTdFiles",
         "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
