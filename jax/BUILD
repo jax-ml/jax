@@ -573,11 +573,15 @@ pytype_strict_library(
         ":core",
         ":jax",
         "//jax/_src/lib",
-        "//jaxlib/mlir:ir",
-        "//jaxlib/mlir:mhlo_dialect",
-        "//jaxlib/mlir:pass_manager",
-        "//jaxlib/mlir:stablehlo_dialect",
-    ] + py_deps("numpy") + py_deps("absl/flags"),
+    ] + select({
+        ":enable_jaxlib_build": [
+            "//jaxlib/mlir:ir",
+            "//jaxlib/mlir:mhlo_dialect",
+            "//jaxlib/mlir:pass_manager",
+            "//jaxlib/mlir:stablehlo_dialect",
+        ],
+        "//conditions:default": [],
+    }) + py_deps("numpy") + py_deps("absl/flags"),
 )
 
 pytype_strict_library(
