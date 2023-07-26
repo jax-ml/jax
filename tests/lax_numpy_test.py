@@ -5102,6 +5102,43 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     actual = jnp.fromstring(s, sep=',', dtype=int)
     self.assertArraysEqual(expected, actual)
 
+  @jtu.sample_product(
+      a_shape=nonempty_nonscalar_array_shapes,
+      i_shape=all_shapes,
+      v_shape=all_shapes,
+      dtype=jtu.dtypes.all,
+      mode=[None, 'wrap', 'clip'],
+  )
+  def testPut(self, mode, a_shape, i_shape, v_shape, dtype):
+    size = math.prod(a_shape)
+    if math.prod(i_shape) > size:
+      self.skipTest("too many indices")
+    rng = jtu.rand_default(self.rng())
+    # Must test unique integers, because overlapping updates in
+    # JAX have implementation-defined order
+    idx_rng = jtu.rand_unique_int(self.rng(), size)
+
+    def args_maker():
+      a = rng(a_shape, dtype)
+      i = idx_rng(i_shape, np.int32)
+      v = rng(v_shape, dtype)
+      # put some indices out of range without duplicating indices
+      if mode == "clip" and i.size:
+        np.put(i, np.argmax(i), size + 2)
+        np.put(i, np.argmin(i), -2)
+      if mode == "wrap" and i.size:
+        np.put(i, 0, np.take(i, 0) + size)
+      return a, i, v
+
+    def np_fun(a, i, v):
+      a_copy = a.copy()
+      np.put(a_copy, i, v, mode=mode)
+      return a_copy
+
+    jnp_fun = partial(jnp.put, mode=mode, inplace=False)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
