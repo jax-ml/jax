@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Hashable, Iterator
 import contextlib
 import functools
@@ -20,7 +22,7 @@ import logging
 import os
 import sys
 import threading
-from typing import Any, Callable, NamedTuple, Optional
+from typing import Any, Callable, Generic, NamedTuple, Optional, TypeVar
 
 from jax._src import lib
 from jax._src.lib import jax_jit
@@ -28,6 +30,8 @@ from jax._src.lib import transfer_guard_lib
 from jax._src.lib import xla_client
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar('_T')
 
 
 def bool_env(varname: str, default: bool) -> bool:
@@ -62,6 +66,16 @@ UPGRADE_BOOL_HELP = (
     "<https://jax.readthedocs.io/en/latest/api_compatibility.html>`_).")
 
 UPGRADE_BOOL_EXTRA_DESC = " (transient)"
+
+
+class FlagHolder(Generic[_T]):
+  def __init__(self, flags: NameSpace, name: str):
+    self._flags = flags
+    self._name = name
+
+  @property
+  def value(self) -> _T:
+    return getattr(self._flags, self._name)
 
 
 class Config:
@@ -112,26 +126,31 @@ class Config:
     if name not in self.values:
       raise AttributeError(f"Unrecognized config option: {name}")
 
-  def DEFINE_bool(self, name, default, *args, **kwargs):
+  def DEFINE_bool(self, name, default, *args, **kwargs) -> FlagHolder[bool]:
     update_hook = kwargs.pop("update_hook", None)
     self.add_option(name, default, bool, args, kwargs, update_hook=update_hook)
+    return FlagHolder(self.FLAGS, name)
 
-  def DEFINE_integer(self, name, default, *args, **kwargs):
+  def DEFINE_integer(self, name, default, *args, **kwargs) -> FlagHolder[int]:
     update_hook = kwargs.pop("update_hook", None)
     self.add_option(name, default, int, args, kwargs, update_hook=update_hook)
+    return FlagHolder(self.FLAGS, name)
 
-  def DEFINE_float(self, name, default, *args, **kwargs):
+  def DEFINE_float(self, name, default, *args, **kwargs) -> FlagHolder[float]:
     update_hook = kwargs.pop("update_hook", None)
     self.add_option(name, default, float, args, kwargs, update_hook=update_hook)
+    return FlagHolder(self.FLAGS, name)
 
-  def DEFINE_string(self, name, default, *args, **kwargs):
+  def DEFINE_string(self, name, default, *args, **kwargs) -> FlagHolder[str]:
     update_hook = kwargs.pop("update_hook", None)
     self.add_option(name, default, str, args, kwargs, update_hook=update_hook)
+    return FlagHolder(self.FLAGS, name)
 
-  def DEFINE_enum(self, name, default, *args, **kwargs):
+  def DEFINE_enum(self, name, default, *args, **kwargs) -> FlagHolder[str]:
     update_hook = kwargs.pop("update_hook", None)
     self.add_option(name, default, 'enum', args, kwargs,
                     update_hook=update_hook)
+    return FlagHolder(self.FLAGS, name)
 
   def config_with_absl(self):
     # Run this before calling `app.run(main)` etc
@@ -551,6 +570,22 @@ config = Config()
 flags = config
 FLAGS = flags.FLAGS
 
+def DEFINE_bool(name, default, *args, **kwargs):
+  return flags.DEFINE_bool(name, default, *args, **kwargs)
+
+def DEFINE_integer(name, default, *args, **kwargs):
+  return flags.DEFINE_integer(name, default, *args, **kwargs)
+
+def DEFINE_float(name, default, *args, **kwargs):
+  return flags.DEFINE_float(name, default, *args, **kwargs)
+
+def DEFINE_string(name, default, *args, **kwargs):
+  return flags.DEFINE_string(name, default, *args, **kwargs)
+
+def DEFINE_enum(name, default, *args, **kwargs):
+  return flags.DEFINE_enum(name, default, *args, **kwargs)
+
+
 already_configured_with_absl = False
 
 
@@ -616,51 +651,6 @@ def update_thread_local_jit_state(**kw):
   tmp = context._replace(**kw)
   tls.extra_jit_context = _thread_local_state_cache.canonicalize(tmp)
 
-
-flags.DEFINE_integer(
-    'jax_tracer_error_num_traceback_frames',
-    int_env('JAX_TRACER_ERROR_NUM_TRACEBACK_FRAMES', 5),
-    help='Set the number of stack frames in JAX tracer error messages.'
-)
-
-flags.DEFINE_bool(
-    'jax_pprint_use_color',
-    bool_env('JAX_PPRINT_USE_COLOR', True),
-    help='Enable jaxpr pretty-printing with colorful syntax highlighting.'
-)
-
-flags.DEFINE_bool(
-    'jax_host_callback_inline',
-    bool_env('JAX_HOST_CALLBACK_INLINE', False),
-    help='Inline the host_callback, if not in a staged context.'
-)
-flags.DEFINE_integer(
-    'jax_host_callback_max_queue_byte_size',
-    int_env('JAX_HOST_CALLBACK_MAX_QUEUE_BYTE_SIZE', int(256 * 1e6)),
-    help=('The size in bytes of the buffer used to hold outfeeds from each '
-          'device. When this capacity is reached consuming outfeeds from the '
-          'device is paused, thus potentially pausing the device computation, '
-          'until the Python callback consume more outfeeds.'),
-    lower_bound=int(16 * 1e6)
-)
-flags.DEFINE_bool(
-    'jax_host_callback_outfeed',
-    bool_env('JAX_HOST_CALLBACK_OUTFEED', False),
-    help=(
-        'Use outfeed implementation for host_callback, even on CPU and GPU. '
-        'If false, use the CustomCall implementation. '
-        'Has no effect on TPU, since only the outfeed mechanism is implemented.'
-    )
-)
-flags.DEFINE_bool(
-    'jax_host_callback_ad_transforms',
-    bool_env('JAX_HOST_CALLBACK_AD_TRANSFORMS', False),
-    help=(
-        'Enable support for jvp/vjp for the host_callback primitives. Default is '
-        'False, which means that host_callback operates only on primals. '
-        'The flag exists only temporarily, for backward compatibility.'
-    )
-)
 
 # TODO(b/214340779): remove flag when XLA:CPU is improved.
 jax2tf_associative_scan_reductions = config.define_bool_state(

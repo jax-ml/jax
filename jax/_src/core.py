@@ -38,7 +38,7 @@ import numpy as np
 from jax._src import dtypes
 from jax._src import config as jax_config
 from jax._src import effects
-from jax._src.config import FLAGS, config
+from jax._src.config import config
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
@@ -58,6 +58,13 @@ traceback_util.register_exclusion(__file__)
 
 zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
+
+
+_TRACER_ERROR_NUM_TRACEBACK_FRAMES = jax_config.DEFINE_integer(
+    'jax_tracer_error_num_traceback_frames',
+    jax_config.int_env('JAX_TRACER_ERROR_NUM_TRACEBACK_FRAMES', 5),
+    help='Set the number of stack frames in JAX tracer error messages.'
+)
 
 
 # -------------------- jaxprs --------------------
@@ -560,7 +567,7 @@ def raise_as_much_as_possible(tracer) -> Tracer:
 
 
 def escaped_tracer_error(tracer, detail=None):
-  num_frames = FLAGS.jax_tracer_error_num_traceback_frames
+  num_frames = _TRACER_ERROR_NUM_TRACEBACK_FRAMES.value
   msg = ('Encountered an unexpected tracer. A function transformed by JAX '
          'had a side effect, allowing for a reference to an intermediate value '
          f'with type {tracer.aval.str_short()} wrapped in a '

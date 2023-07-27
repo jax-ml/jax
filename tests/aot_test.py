@@ -22,7 +22,6 @@ import jax
 import jax.numpy as jnp
 from jax._src import core
 from jax._src import test_util as jtu
-from jax._src.config import flags
 from jax.experimental.pjit import pjit
 from jax.experimental.serialize_executable import (
     serialize, deserialize_and_load)
@@ -73,7 +72,7 @@ class JaxAotTest(jtu.JaxTestCase):
     except NotImplementedError:
       raise unittest.SkipTest('PJRT Topology not supported')
 
-    if flags.FLAGS.jax_test_with_persistent_compilation_cache:
+    if jtu.TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       raise unittest.SkipTest('Compilation caching not yet supported.')
 
     @jax.jit

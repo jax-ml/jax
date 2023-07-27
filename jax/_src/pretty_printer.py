@@ -32,12 +32,19 @@ from functools import partial
 import sys
 from typing import NamedTuple, Optional, Union
 
-from jax._src.config import config
+from jax._src import config
 
 try:
   import colorama  # pytype: disable=import-error
 except ImportError:
   colorama = None
+
+
+_PPRINT_USE_COLOR = config.DEFINE_bool(
+    'jax_pprint_use_color',
+    config.bool_env('JAX_PPRINT_USE_COLOR', True),
+    help='Enable jaxpr pretty-printing with colorful syntax highlighting.'
+)
 
 def _can_use_color() -> bool:
   try:
@@ -63,7 +70,7 @@ class Doc(abc.ABC):
   def format(self, width: int = 80, use_color: Optional[bool] = None,
              annotation_prefix=" # ") -> str:
     if use_color is None:
-      use_color = CAN_USE_COLOR and config.FLAGS.jax_pprint_use_color
+      use_color = CAN_USE_COLOR and _PPRINT_USE_COLOR.value
     return _format(self, width, use_color=use_color,
                    annotation_prefix=annotation_prefix)
 

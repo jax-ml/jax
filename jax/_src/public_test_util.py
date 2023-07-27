@@ -16,9 +16,10 @@ from functools import partial
 import operator
 
 from jax._src import api
+from jax._src import config as jax_config
 from jax._src import dtypes as _dtypes
 from jax._src import xla_bridge
-from jax._src.config import config, flags
+from jax._src.config import config
 from jax._src.tree_util import tree_map, tree_reduce
 
 import numpy as np
@@ -30,7 +31,11 @@ import numpy as np
 __all__ = ['check_grads', 'check_jvp', 'check_vjp']
 
 
-FLAGS = flags.FLAGS
+_TEST_DUT = jax_config.DEFINE_string(
+    'jax_test_dut', '',
+    help=
+    'Describes the device under test in case special consideration is required.'
+)
 
 EPS = 1e-4
 
@@ -292,4 +297,4 @@ def check_grads(f, args, order,
 
 
 def device_under_test():
-  return getattr(FLAGS, 'jax_test_dut', None) or xla_bridge.get_backend().platform
+  return _TEST_DUT.value or xla_bridge.get_backend().platform

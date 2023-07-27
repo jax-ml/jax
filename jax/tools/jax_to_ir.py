@@ -87,7 +87,30 @@ try:
 except ImportError:
   tf = None  # type: ignore
 
-FLAGS = flags.FLAGS
+
+_FN = flags.DEFINE_string(
+    'fn', None, "Fully-qualified name of function that we're going to convert"
+)
+_INPUT_SHAPES = flags.DEFINE_string(
+    'input_shapes', None, 'Python dict indicating XLA shapes of params'
+)
+_CONSTANTS = flags.DEFINE_string(
+    'constants', '{}', 'Python dict giving constant values for some params'
+)
+_EVALED_CONSTANTS = flags.DEFINE_string(
+    'evaled_constants',
+    '{}',
+    'Python dict giving constant values for some params.  '
+    'Values in this dict that are of type str are evaluated '
+    'using ast.literal_eval.',
+)
+_IR_FORMAT = flags.DEFINE_enum(
+    'ir_format', 'HLO', ('HLO', 'TF'), 'Output format.'
+)
+_IR_DEST = flags.DEFINE_string('ir_dest', None, 'File to write IR to')
+_IR_HUMAN_DEST = flags.DEFINE_string(
+    'ir_human_dest', None, 'File to write human readable debug output'
+)
 
 
 def jax_to_ir(fn, input_shapes, *, constants=None, format):
@@ -163,25 +186,25 @@ def main(argv):
   if len(argv) != 1:
     raise app.UsageError('No positional arguments are accepted.')
 
-  if not FLAGS.ir_dest and not FLAGS.ir_human_dest:
+  if not _IR_DEST.value and not _IR_HUMAN_DEST.value:
     raise app.Error('At least one of --ir_dest and '
                     '--ir_human_dest is required.')
 
-  module_name, fn_name = FLAGS.fn.rsplit('.', 1)
+  module_name, fn_name = _FN.value.rsplit('.', 1)
   module = importlib.import_module(module_name)
   fn = getattr(module, fn_name)
 
   input_shapes = [(name, parse_shape_str(shape_str))
-                  for name, shape_str in literal_eval(FLAGS.input_shapes)]
+                  for name, shape_str in literal_eval(_INPUT_SHAPES.value)]
 
   # Parse --constants and --evaled_constants.
   constants = {}
-  for k, v in literal_eval(FLAGS.constants).items():
+  for k, v in literal_eval(_CONSTANTS.value).items():
     if isinstance(v, list):
       v = jnp.asarray(v)
     constants[k] = v
 
-  for k, v in literal_eval(FLAGS.evaled_constants).items():
+  for k, v in literal_eval(_EVALED_CONSTANTS.value).items():
     if isinstance(v, str):
       v = literal_eval(v)
     if isinstance(v, list):
@@ -192,14 +215,14 @@ def main(argv):
     constants[k] = v
 
   ir, debug_ir = jax_to_ir(fn, input_shapes, constants=constants,
-                           format=FLAGS.ir_format)
+                           format=_IR_FORMAT.value)
 
-  if FLAGS.ir_dest:
-    with open(FLAGS.ir_dest, 'wb') as f:
+  if _IR_DEST.value:
+    with open(_IR_DEST.value, 'wb') as f:
       f.write(ir)
 
-  if FLAGS.ir_human_dest:
-    with open(FLAGS.ir_human_dest, 'w') as f:
+  if _IR_HUMAN_DEST.value:
+    with open(_IR_HUMAN_DEST.value, 'w') as f:
       f.write(debug_ir)
 
 
@@ -225,21 +248,6 @@ _SHAPE_RE = re.compile(f"^({'|'.join(_DT)})\\[\\s*(\\d*[\\s*,\\d+]*)\\s*\\]$")
 
 
 def set_up_flags():
-  flags.DEFINE_string(
-      'fn', None,
-      "Fully-qualified name of function that we're going to convert")
-  flags.DEFINE_string('input_shapes', None,
-                      'Python dict indicating XLA shapes of params')
-  flags.DEFINE_string('constants', '{}',
-                      'Python dict giving constant values for some params')
-  flags.DEFINE_string('evaled_constants', '{}',
-                      'Python dict giving constant values for some params.  '
-                      'Values in this dict that are of type str are evaluated '
-                      'using ast.literal_eval.')
-  flags.DEFINE_enum('ir_format', 'HLO', ('HLO', 'TF'), 'Output format.')
-  flags.DEFINE_string('ir_dest', None, 'File to write IR to')
-  flags.DEFINE_string('ir_human_dest', None,
-                      'File to write human readable debug output')
   flags.mark_flag_as_required('fn')
   flags.mark_flag_as_required('input_shapes')
 

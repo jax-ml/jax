@@ -140,7 +140,6 @@ def jax_to_ir(name, deps, fn, input_shapes, constants = None, format = "HLO"):
 from absl import app
 import jax.tools.jax_to_ir as jax_to_ir
 
-jax_to_ir.set_up_flags()
 app.run(jax_to_ir.main)
 EOF
         """.format(runner = runner),

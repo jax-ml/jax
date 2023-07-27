@@ -24,14 +24,19 @@ import numpy as np
 import tensorflow as tf  # type: ignore[import]
 import tensorflow_datasets as tfds  # type: ignore[import]
 
-flags.DEFINE_string('tflite_file_path',
-                    '/usr/local/google/home/qiuminxu/jax2tf/mnist.tflite',
-                    'Path where to save the TensorFlow Lite file.')
-flags.DEFINE_integer('serving_batch_size', 4,
-                     ('For what batch size to prepare the serving signature. '))
-flags.DEFINE_integer('num_epochs', 10, 'For how many epochs to train.')
-
-FLAGS = flags.FLAGS
+_TFLITE_FILE_PATH = flags.DEFINE_string(
+    'tflite_file_path',
+    '/tmp/mnist.tflite',
+    'Path where to save the TensorFlow Lite file.',
+)
+_SERVING_BATCH_SIZE = flags.DEFINE_integer(
+    'serving_batch_size',
+    4,
+    'For what batch size to prepare the serving signature. ',
+)
+_NUM_EPOCHS = flags.DEFINE_integer(
+    'num_epochs', 10, 'For how many epochs to train.'
+)
 
 
 # A helper function to evaluate the TF Lite model using "test" dataset.
@@ -71,10 +76,11 @@ def main(_):
   train_ds = mnist_lib.load_mnist(
       tfds.Split.TRAIN, batch_size=mnist_lib.train_batch_size)
   test_ds = mnist_lib.load_mnist(
-      tfds.Split.TEST, batch_size=FLAGS.serving_batch_size)
+      tfds.Split.TEST, batch_size=_SERVING_BATCH_SIZE)
 
-  (flax_predict,
-   flax_params) = mnist_lib.FlaxMNIST.train(train_ds, test_ds, FLAGS.num_epochs)
+  (flax_predict, flax_params) = mnist_lib.FlaxMNIST.train(
+      train_ds, test_ds, _NUM_EPOCHS.value
+  )
 
   def predict(image):
     return flax_predict(flax_params, image)
@@ -84,7 +90,7 @@ def main(_):
       jax2tf.convert(predict, enable_xla=False),
       input_signature=[
           tf.TensorSpec(
-              shape=[FLAGS.serving_batch_size, 28, 28, 1],
+              shape=[_SERVING_BATCH_SIZE, 28, 28, 1],
               dtype=tf.float32,
               name='input')
       ],
@@ -126,7 +132,7 @@ def main(_):
   print('Quantized model accuracy = %.4f' % quantized_accuracy)
   print('Accuracy drop = %.4f' % (float_accuracy - quantized_accuracy))
 
-  f = open(FLAGS.tflite_file_path, 'wb')
+  f = open(_TFLITE_FILE_PATH.value, 'wb')
   f.write(tflite_quantized_model)
   f.close()
 

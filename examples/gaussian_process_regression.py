@@ -16,7 +16,6 @@
 """
 
 from absl import app
-from absl import flags
 from functools import partial
 from jax import grad
 from jax import jit
@@ -26,8 +25,6 @@ import jax.numpy as jnp
 import jax.random as random
 import jax.scipy as scipy
 import matplotlib.pyplot as plt
-
-FLAGS = flags.FLAGS
 
 
 def main(unused_argv):

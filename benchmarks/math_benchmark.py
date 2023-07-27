@@ -27,8 +27,7 @@ from absl import app
 from absl import flags
 
 
-FLAGS = flags.FLAGS
-flags.DEFINE_multi_string(
+_SET_ENV = flags.DEFINE_multi_string(
     "set_env", None,
     "Specifies additional environment variables to be injected into the "
     "environment (via --set_env=variable=value or --set_env=variable). "
@@ -140,8 +139,8 @@ def jax_binary_op(state, **kwargs):
   )
 
 def main(argv):
-  if FLAGS.set_env:
-    for env_str in FLAGS.set_env:
+  if _SET_ENV.value:
+    for env_str in _SET_ENV.value:
       # Stop matching at the first '=' since we want to capture
       # --set_env='FOO=--foo_a=1 --foo_b=2' all as part of FOO.
       env_list = env_str.split('=', 1)

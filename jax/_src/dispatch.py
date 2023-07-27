@@ -32,6 +32,7 @@ import warnings
 import numpy as np
 
 from jax._src import compilation_cache
+from jax._src import config as jax_config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
@@ -43,7 +44,7 @@ from jax._src import traceback_util
 from jax._src import util
 from jax._src import op_shardings
 from jax._src import xla_bridge as xb
-from jax._src.config import config, flags
+from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -64,9 +65,7 @@ JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
 JAXPR_TO_MLIR_MODULE_EVENT = "/jax/core/compile/jaxpr_to_mlir_module_duration"
 BACKEND_COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
 
-FLAGS = flags.FLAGS
-
-flags.DEFINE_string(
+_DUMP_IR_TO = jax_config.DEFINE_string(
     'jax_dump_ir_to', os.getenv('JAX_DUMP_IR_TO', ''),
     help="Path to which the IR that is emitted by JAX as input to the "
          "compiler should be dumped as text files. Optional. If omitted, JAX "
@@ -472,7 +471,7 @@ def _make_string_safe_for_filename(s: str) -> str:
 def _dump_ir_to_file(name: str, ir: str):
   id = next(_ir_dump_counter)
   name = f"jax_ir{id}_{_make_string_safe_for_filename(name)}.mlir"
-  name = path.Path(FLAGS.jax_dump_ir_to) / name
+  name = path.Path(_DUMP_IR_TO.value) / name
   name.write_text(ir)
 
 
@@ -481,7 +480,7 @@ def compile_or_get_cached(backend, computation: ir.Module, devices: np.ndarray,
   sym_name = computation.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
 
-  if FLAGS.jax_dump_ir_to:
+  if _DUMP_IR_TO.value:
     _dump_ir_to_file(module_name, mlir.module_to_string(computation))
 
   # Persistent compilation cache only implemented on TPU and GPU.

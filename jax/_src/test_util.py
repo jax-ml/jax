@@ -41,11 +41,12 @@ from jax._src.interpreters import mlir
 from jax.tree_util import tree_map, tree_all, tree_flatten, tree_unflatten
 from jax._src import api
 from jax._src import pjit as pjit_lib
+from jax._src import config as jax_config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src.interpreters import pxla
-from jax._src.config import (flags, bool_env, config,
+from jax._src.config import (bool_env, config,
                              raise_persistent_cache_errors,
                              persistent_cache_min_compile_time_secs)
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
@@ -60,19 +61,12 @@ from jax._src import xla_bridge
 # jax.test_util. Functionality appearing here is for internal use only, and
 # may be changed or removed at any time and without any deprecation cycle.
 
-FLAGS = flags.FLAGS
-flags.DEFINE_string(
-    'jax_test_dut', '',
-    help=
-    'Describes the device under test in case special consideration is required.'
-)
-
-flags.DEFINE_integer(
+_NUM_GENERATED_CASES = jax_config.DEFINE_integer(
   'jax_num_generated_cases',
   int(os.getenv('JAX_NUM_GENERATED_CASES', '10')),
   help='Number of generated cases to test')
 
-flags.DEFINE_integer(
+_MAX_CASES_SAMPLING_RETRIES = jax_config.DEFINE_integer(
   'max_cases_sampling_retries',
   int(os.getenv('JAX_MAX_CASES_SAMPLING_RETRIES', '100')),
   'Number of times a failed test sample should be retried. '
@@ -80,24 +74,23 @@ flags.DEFINE_integer(
   'sampling process is terminated.'
 )
 
-flags.DEFINE_bool(
+_SKIP_SLOW_TESTS = jax_config.DEFINE_bool(
     'jax_skip_slow_tests',
     bool_env('JAX_SKIP_SLOW_TESTS', False),
     help='Skip tests marked as slow (> 5 sec).'
 )
 
-flags.DEFINE_string(
+_TEST_TARGETS = jax_config.DEFINE_string(
   'test_targets', os.getenv('JAX_TEST_TARGETS', ''),
   'Regular expression specifying which tests to run, called via re.search on '
   'the test name. If empty or unspecified, run all tests.'
 )
-flags.DEFINE_string(
+_EXCLUDE_TEST_TARGETS = jax_config.DEFINE_string(
   'exclude_test_targets', os.getenv('JAX_EXCLUDE_TEST_TARGETS', ''),
   'Regular expression specifying which tests NOT to run, called via re.search '
   'on the test name. If empty or unspecified, run all tests.'
 )
-
-flags.DEFINE_bool(
+TEST_WITH_PERSISTENT_COMPILATION_CACHE = jax_config.DEFINE_bool(
     'jax_test_with_persistent_compilation_cache',
     bool_env('JAX_TEST_WITH_PERSISTENT_COMPILATION_CACHE', False),
     help='If enabled, the persistent compilation cache will be enabled for all '
@@ -731,7 +724,7 @@ def assert_dot_precision(expected_precision, fun, *args):
 
 def cases_from_gens(*gens):
   sizes = [1, 3, 10]
-  cases_per_size = int(FLAGS.jax_num_generated_cases / len(sizes)) + 1
+  cases_per_size = int(_NUM_GENERATED_CASES.value / len(sizes)) + 1
   for size in sizes:
     for i in range(cases_per_size):
       yield (f'_{size}_{i}',) + tuple(gen(size) for gen in gens)
@@ -744,8 +737,8 @@ def named_cases_from_sampler(gen):
     if not isinstance(x, (list, tuple)):
       x = list(x)
     return [x[rng.randint(len(x))]]
-  while (len(seen) < FLAGS.jax_num_generated_cases and
-         retries < FLAGS.max_cases_sampling_retries):
+  while (len(seen) < _NUM_GENERATED_CASES.value and
+         retries < _MAX_CASES_SAMPLING_RETRIES.value):
     retries += 1
     cases = list(gen(choose_one))
     if not cases:
@@ -773,7 +766,7 @@ def sample_product_testcases(*args, **kw):
   kw = [(k, list(v)) for k, v in kw.items()]
   n = math.prod(len(a) for a in args) * math.prod(len(v) for _, v in kw)
   testcases = []
-  for i in _choice(n, min(n, FLAGS.jax_num_generated_cases)):
+  for i in _choice(n, min(n, _NUM_GENERATED_CASES.value)):
     testcase = {}
     for a in args:
       testcase.update(a[i % len(a)])
@@ -804,12 +797,12 @@ def sample_product(*args, **kw):
 class JaxTestLoader(absltest.TestLoader):
   def getTestCaseNames(self, testCaseClass):
     names = super().getTestCaseNames(testCaseClass)
-    if FLAGS.test_targets:
-      pattern = re.compile(FLAGS.test_targets)
+    if _TEST_TARGETS.value:
+      pattern = re.compile(_TEST_TARGETS.value)
       names = [name for name in names
                if pattern.search(f"{testCaseClass.__name__}.{name}")]
-    if FLAGS.exclude_test_targets:
-      pattern = re.compile(FLAGS.exclude_test_targets)
+    if _EXCLUDE_TEST_TARGETS.value:
+      pattern = re.compile(_EXCLUDE_TEST_TARGETS.value)
       names = [name for name in names
                if not pattern.search(f"{testCaseClass.__name__}.{name}")]
     return names
@@ -874,7 +867,7 @@ class JaxTestCase(parameterized.TestCase):
 
   @classmethod
   def setUpClass(cls):
-    if FLAGS.jax_test_with_persistent_compilation_cache:
+    if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       cls._compilation_cache_exit_stack = ExitStack()
       stack = cls._compilation_cache_exit_stack
       stack.enter_context(raise_persistent_cache_errors(True))
@@ -887,7 +880,7 @@ class JaxTestCase(parameterized.TestCase):
 
   @classmethod
   def tearDownClass(cls):
-    if FLAGS.jax_test_with_persistent_compilation_cache:
+    if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       cls._compilation_cache_exit_stack.close()
 
   def rng(self):

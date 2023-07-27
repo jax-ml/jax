@@ -507,7 +507,7 @@ import warnings
 
 from jax._src import api
 from jax._src import core
-from jax import config
+from jax._src import config
 from jax import custom_derivatives
 from jax._src import dtypes
 from jax import lax
@@ -531,17 +531,46 @@ from jax._src.lib.mlir.dialects import hlo
 import numpy as np
 
 
-FLAGS = config.FLAGS
+_HOST_CALLBACK_INLINE = config.DEFINE_bool(
+    'jax_host_callback_inline',
+    config.bool_env('JAX_HOST_CALLBACK_INLINE', False),
+    help='Inline the host_callback, if not in a staged context.'
+)
+_HOST_CALLBACK_MAX_QUEUE_BYTE_SIZE = config.DEFINE_integer(
+    'jax_host_callback_max_queue_byte_size',
+    config.int_env('JAX_HOST_CALLBACK_MAX_QUEUE_BYTE_SIZE', int(256 * 1e6)),
+    help=('The size in bytes of the buffer used to hold outfeeds from each '
+          'device. When this capacity is reached consuming outfeeds from the '
+          'device is paused, thus potentially pausing the device computation, '
+          'until the Python callback consume more outfeeds.'),
+    lower_bound=int(16 * 1e6)
+)
+_HOST_CALLBACK_OUTFEED = config.DEFINE_bool(
+    'jax_host_callback_outfeed',
+    config.bool_env('JAX_HOST_CALLBACK_OUTFEED', False),
+    help=(
+        'Use outfeed implementation for host_callback, even on CPU and GPU. '
+        'If false, use the CustomCall implementation. '
+        'Has no effect on TPU, since only the outfeed mechanism is implemented.'
+    )
+)
+_HOST_CALLBACK_AD_TRANSFORMS = config.DEFINE_bool(
+    'jax_host_callback_ad_transforms',
+    config.bool_env('JAX_HOST_CALLBACK_AD_TRANSFORMS', False),
+    help=(
+        'Enable support for jvp/vjp for the host_callback primitives. Default is '
+        'False, which means that host_callback operates only on primals. '
+        'The flag exists only temporarily, for backward compatibility.'
+    )
+)
+
 
 logger = logging.getLogger(__name__)
 
 
-def _inline_host_callback() -> bool:
-  return FLAGS.jax_host_callback_inline
-
-
 def _use_outfeed(platform: str) -> bool:
-  return (platform in ("tpu", "gpu", "cuda", "rocm") or FLAGS.jax_host_callback_outfeed)
+  return (platform in ("tpu", "gpu", "cuda", "rocm") or
+          _HOST_CALLBACK_OUTFEED.value)
 
 
 def _raise_if_using_outfeed_with_pjrt_c_api(backend: xb.XlaBackend):
@@ -620,7 +649,7 @@ def id_tap(tap_func,
         "pre-apply keyword arguments, either by using a closure or by passing "
         "``functools.partial(tap_func, **kwargs)``.")
     raise TypeError(msg)
-  if FLAGS.jax_host_callback_ad_transforms:
+  if _HOST_CALLBACK_AD_TRANSFORMS.value:
     warnings.warn('The flag jax_host_callback_ad_transforms is for temporary '
                   'backwards compatibility mode. This flag, and the behavior '
                   'it enabled will be removed soon.',
@@ -642,7 +671,7 @@ def id_tap(tap_func,
   if result is not None:
     # Return the results, but add a dependency on the call, to ensure it
     # is kept in the graph.
-    if FLAGS.jax_host_callback_ad_transforms:
+    if _HOST_CALLBACK_AD_TRANSFORMS.value:
       call_flat_results, _ = tree_util.tree_flatten(call_res)
       if call_flat_results:
         call_flat_results = [id_tap_dep_p.bind(r, call_flat_results[0])
@@ -782,7 +811,7 @@ def _call(callback_func: Callable,
           identity=False):
   # Lazy initialization
   _initialize_outfeed_receiver(
-      max_callback_queue_size_bytes=FLAGS.jax_host_callback_max_queue_byte_size)
+      max_callback_queue_size_bytes=_HOST_CALLBACK_MAX_QUEUE_BYTE_SIZE.value)
   api.check_callable(callback_func)
   flat_args, arg_treedef = tree_util.tree_flatten(arg)
   for arg in flat_args:
@@ -909,7 +938,7 @@ xla.register_translation(id_tap_dep_p,
 id_tap_dep_p.def_abstract_eval(lambda r_a, _: r_a)
 
 def _id_tap_dep_jvp_rule(primals, tangents):
-  if FLAGS.jax_host_callback_ad_transforms:
+  if _HOST_CALLBACK_AD_TRANSFORMS.value:
     assert False
   tangents_instantiated = tuple(map(_instantiate_zeros, tangents, primals))
   return (id_tap_dep_p.bind(primals[0], primals[1]),
@@ -918,7 +947,7 @@ def _id_tap_dep_jvp_rule(primals, tangents):
 ad.primitive_jvps[id_tap_dep_p] = _id_tap_dep_jvp_rule
 
 def _id_tap_dep_transpose_rule(cts, arg_res, arg_tap):
-  if FLAGS.jax_host_callback_ad_transforms:
+  if _HOST_CALLBACK_AD_TRANSFORMS.value:
     assert False
   if ad.is_undefined_primal(arg_res):
     ct_res = _instantiate_zeros(cts, arg_res)
@@ -934,7 +963,7 @@ ad.primitive_transposes[id_tap_dep_p] = _id_tap_dep_transpose_rule
 
 
 def _id_tap_dep_batching_rule(batched_args, batch_dims):
-  if FLAGS.jax_host_callback_ad_transforms:
+  if _HOST_CALLBACK_AD_TRANSFORMS.value:
     assert False
   arg_res, arg_tap = batched_args
   return id_tap_dep_p.bind(arg_res, arg_tap), batch_dims[0]
@@ -1013,7 +1042,7 @@ outside_call_p.def_abstract_eval(_outside_call_abstract_eval)
 
 def _outside_call_impl(*args, **params):
   assert "has_token" not in params
-  if _inline_host_callback():
+  if _HOST_CALLBACK_INLINE.value:
     device_index = params["device_index"]
     device = xb.devices()[device_index]
     results = _outside_call_run_callback(args, device, send_infeed=False, **params)
@@ -1400,7 +1429,7 @@ def _outside_call_jvp_rule(primals, tangents, **params):
   assert "has_token" not in params
   if not params["identity"]:
     raise NotImplementedError("JVP rule is implemented only for id_tap, not for call.")
-  if FLAGS.jax_host_callback_ad_transforms:
+  if _HOST_CALLBACK_AD_TRANSFORMS.value:
     tangents_instantiated = tuple(map(_instantiate_zeros, tangents, primals))
 
     arg_treedef = params["arg_treedef"]
@@ -1425,7 +1454,7 @@ ad.primitive_jvps[outside_call_p] = _outside_call_jvp_rule
 
 def _outside_call_partial_eval_rule(trace, *args, **params):
   # partial eval is used after jvp and before transpose.
-  if not FLAGS.jax_host_callback_ad_transforms:
+  if not _HOST_CALLBACK_AD_TRANSFORMS.value:
     # TODO: just remote the partial eval rule
     return trace.default_process_primitive(outside_call_p, args, params)
   transforms = params.get("transforms", ())
@@ -1492,7 +1521,7 @@ def _outside_call_transpose_rule(cts, *args, **params):
         *cts_instantiated,
         **_add_transform(params, "transpose"))
 
-  if not FLAGS.jax_host_callback_ad_transforms:
+  if not _HOST_CALLBACK_AD_TRANSFORMS.value:
     assert False
 
   assert len(args) % 2 == 0

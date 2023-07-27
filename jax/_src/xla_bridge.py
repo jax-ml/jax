@@ -37,7 +37,8 @@ import numpy as np
 
 from jax._src import lib
 from jax._src import distributed
-from jax._src.config import flags, bool_env, config, int_env
+from jax._src import config as jax_config
+from jax._src.config import bool_env, config, int_env
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version
 from jax._src import traceback_util
@@ -59,37 +60,35 @@ traceback_util.register_exclusion(__file__)
 
 XlaBackend = xla_client.Client
 
-FLAGS = flags.FLAGS
-
 
 # TODO(phawkins): Remove jax_xla_backend.
-flags.DEFINE_string(
+_XLA_BACKEND = jax_config.DEFINE_string(
     'jax_xla_backend', '',
     'Deprecated, please use --jax_platforms instead.')
-flags.DEFINE_string(
+BACKEND_TARGET = jax_config.DEFINE_string(
     'jax_backend_target',
     os.getenv('JAX_BACKEND_TARGET', '').lower(),
     'Either "local" or "rpc:address" to connect to a remote service target.')
 # TODO(skye): warn when this is used once we test out --jax_platforms a bit
-flags.DEFINE_string(
+_PLATFORM_NAME = jax_config.DEFINE_string(
     'jax_platform_name',
     os.getenv('JAX_PLATFORM_NAME', '').lower(),
     'Deprecated, please use --jax_platforms instead.')
-flags.DEFINE_bool(
+_DISABLE_MOST_OPTIMIZATIONS = jax_config.DEFINE_bool(
     'jax_disable_most_optimizations',
     bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
     'Try not to do much optimization work. This can be useful if the cost of '
     'optimization is greater than that of running a less-optimized program.')
-flags.DEFINE_integer(
+_XLA_PROFILE_VERSION = jax_config.DEFINE_integer(
     'jax_xla_profile_version', int_env('JAX_XLA_PROFILE_VERSION', 0),
     'Optional profile version for XLA compilation. '
     'This is meaningful only when XLA is configured to '
     'support the remote compilation profile feature.')
-flags.DEFINE_string(
+CUDA_VISIBLE_DEVICES = jax_config.DEFINE_string(
     'jax_cuda_visible_devices', 'all',
     'Restricts the set of CUDA devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
-flags.DEFINE_string(
+_ROCM_VISIBLE_DEVICES = jax_config.DEFINE_string(
     'jax_rocm_visible_devices', 'all',
     'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
@@ -171,13 +170,13 @@ def get_compile_options(
   if lib.cuda_path is not None:
     debug_options.xla_gpu_cuda_data_dir = lib.cuda_path
 
-  if FLAGS.jax_disable_most_optimizations:
+  if _DISABLE_MOST_OPTIMIZATIONS.value:
 
     debug_options.xla_backend_optimization_level = 0
     debug_options.xla_llvm_disable_expensive_passes = True
     debug_options.xla_test_all_input_layouts = False
 
-  compile_options.profile_version = FLAGS.jax_xla_profile_version
+  compile_options.profile_version = _XLA_PROFILE_VERSION.value
   return compile_options
 
 
@@ -264,9 +263,9 @@ register_backend_factory('cpu',
 
 
 def make_gpu_client(
-    *, platform_name: str, visible_devices_flag: str
+    *, platform_name: str, visible_devices_flag: jax_config.FlagHolder[str]
 ) -> xla_client.Client:
-  visible_devices = getattr(FLAGS, visible_devices_flag, "all")
+  visible_devices = visible_devices_flag.value
   allowed_devices = None
   if visible_devices != "all":
     allowed_devices = {int(x) for x in visible_devices.split(",")}
@@ -292,15 +291,25 @@ def make_gpu_client(
 
 if hasattr(xla_client, "make_gpu_client"):
   register_backend_factory(
-      'cuda', partial(make_gpu_client, platform_name='cuda',
-      visible_devices_flag='jax_cuda_visible_devices'),
+      "cuda",
+      partial(
+          make_gpu_client,
+          platform_name="cuda",
+          visible_devices_flag=CUDA_VISIBLE_DEVICES,
+      ),
       priority=200,
-      fail_quietly=True)
+      fail_quietly=True,
+  )
   register_backend_factory(
-      'rocm', partial(make_gpu_client, platform_name='rocm',
-      visible_devices_flag='jax_rocm_visible_devices'),
+      "rocm",
+      partial(
+          make_gpu_client,
+          platform_name="rocm",
+          visible_devices_flag=_ROCM_VISIBLE_DEVICES,
+      ),
       priority=200,
-      fail_quietly=True)
+      fail_quietly=True,
+  )
 
 
 if hasattr(xla_client, "make_tpu_client"):
@@ -623,7 +632,7 @@ def backends() -> dict[str, xla_client.Client]:
     # support anything else there at the moment and warning would be pointless.
     if (py_platform.system() != "Darwin" and
         _default_backend.platform == "cpu" and
-        FLAGS.jax_platform_name != 'cpu'):
+        _PLATFORM_NAME.value != 'cpu'):
       logger.warning('No GPU/TPU found, falling back to CPU. '
                       '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
     return _backends
@@ -677,8 +686,7 @@ def _get_backend_uncached(
   if platform is not None and not isinstance(platform, str):
     return platform
 
-  platform = (platform or FLAGS.jax_xla_backend or FLAGS.jax_platform_name
-              or None)
+  platform = (platform or _XLA_BACKEND.value or _PLATFORM_NAME.value or None)
 
   bs = backends()
   if platform is not None:

@@ -28,7 +28,7 @@ import warnings
 import ml_dtypes
 import numpy as np
 
-from jax._src.config import flags, config
+from jax._src.config import config
 from jax._src.typing import DType, DTypeLike
 
 from jax._src import traceback_util
@@ -42,8 +42,6 @@ else:
   if _ml_dtypes_version < (0, 2, 0):
     raise ValueError("JAX requires ml_dtypes version 0.2.0 or newer; "
                      f"installed version is {ml_dtypes.__version__}.")
-
-FLAGS = flags.FLAGS
 
 
 class extended(np.generic):
