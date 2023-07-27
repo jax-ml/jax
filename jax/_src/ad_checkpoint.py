@@ -52,6 +52,14 @@ zip = safe_zip
 
 logger = logging.getLogger(__name__)
 
+# This flag is temporary during rollout of the remat barrier.
+# TODO(parkers): Remove if there are no complaints.
+_REMAT_OPT_BARRIER = config.define_bool_state(
+    name='jax_remat_opt_barrier',
+    default=True,
+    help=('Enables using optimization-barrier op for lowering remat.'))
+
+
 allowed_effects: effects.EffectTypeSet = effects.remat_allowed_effects
 
 ### Policies
@@ -661,7 +669,7 @@ def remat_lowering(*args, jaxpr: core.Jaxpr, prevent_cse: bool,
   assert not jaxpr.constvars
 
   if differentiated and prevent_cse:
-    if config.jax_remat_opt_barrier:
+    if _REMAT_OPT_BARRIER.value:
       translation_rule = _remat_translation_using_opt_barrier
     elif is_gpu_platform:
       translation_rule = _remat_translation_using_while

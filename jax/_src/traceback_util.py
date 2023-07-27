@@ -22,6 +22,20 @@ from jax._src.config import config
 from jax._src.lib import xla_extension
 from jax._src import util
 
+_TRACEBACK_FILTERING = config.define_enum_state(
+    name = 'jax_traceback_filtering',
+    enum_values=["off", "tracebackhide", "remove_frames", "auto"],
+    default="auto",
+    help="Controls how JAX filters internal frames out of tracebacks.\n\n"
+         "Valid values are:\n"
+         " * \"off\": disables traceback filtering.\n"
+         " * \"auto\": use \"tracebackhide\" if running under a sufficiently "
+         "new IPython, or \"remove_frames\" otherwise.\n"
+         " * \"tracebackhide\": adds \"__tracebackhide__\" annotations to "
+         " hidden stack frames, which some traceback printers support.\n"
+         " * \"remove_frames\": removes hidden frames from tracebacks, and adds "
+         " the unfiltered traceback as a __cause__ of the exception.\n")
+
 
 C = TypeVar("C", bound=Callable[..., Any])
 
@@ -128,7 +142,7 @@ def _ipython_supports_tracebackhide() -> bool:
   return IPython.version_info[:2] >= (7, 17)
 
 def _filtering_mode() -> str:
-  mode = config.jax_traceback_filtering
+  mode = _TRACEBACK_FILTERING.value
   if mode is None or mode == "auto":
     if (_running_under_ipython() and _ipython_supports_tracebackhide()):
       mode = "tracebackhide"

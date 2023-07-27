@@ -70,6 +70,14 @@ from jax._src.util import (safe_map, safe_zip, partition_list,
                            wrap_name, tuple_delete, distributed_debug_log,
                            unzip2, HashableFunction, weakref_lru_cache)
 
+# TODO(sharadmv,mattjj): set default to True, then remove
+_EAGER_PMAP = config.define_bool_state(
+    name='jax_eager_pmap',
+    default=True,
+    upgrade=True,
+    help='Enable eager-mode pmap when jax_disable_jit is activated.')
+
+
 
 # Built in Python lists don't support weak refs but subclasses of lists do.
 class WeakRefList(list):
@@ -277,7 +285,7 @@ def xla_pmap_impl_lazy(
     donated_invars: Sequence[bool],
     is_explicit_global_axis_size: bool,
 ) -> Callable:
-  if (config.jax_disable_jit and config.jax_eager_pmap and
+  if (config.jax_disable_jit and _EAGER_PMAP.value and
       not is_explicit_global_axis_size and not any(d for d in donated_invars)):
     def _emap_apply_fn(*args):
       return _emap_impl(fun, *args, backend=backend, axis_name=axis_name,

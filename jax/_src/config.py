@@ -196,7 +196,7 @@ class Config:
     update_global_hook: Optional[Callable[[bool], None]] = None,
     update_thread_local_hook: Optional[Callable[[Optional[bool]], None]] = None,
     upgrade: bool = False,
-    extra_description: str = ""):
+    extra_description: str = "") -> _StateContextManager[bool]:
     """Set up thread-local state and return a contextmanager for managing it.
 
     This function is a convenience wrapper. It defines a flag, environment
@@ -256,20 +256,17 @@ class Config:
                      update_hook=update_global_hook)
     self._contextmanager_flags.add(name)
 
-    def get_state(self):
-      val = _thread_local_state.__dict__.get(name, unset)
-      return val if val is not unset else self._read(name)
-    setattr(Config, name, property(get_state))
-
-    return _StateContextManager(name, help, update_thread_local_hook,
-                                extra_description=extra_description,
-                                default_value=True)
+    s =  _StateContextManager(name, help, update_thread_local_hook,
+                              extra_description=extra_description,
+                              default_value=True)
+    setattr(Config, name, property(lambda _: s.value))
+    return s
 
   def define_enum_state(
       self, name: str, enum_values: list[str], default: Optional[str],
       help: str, update_global_hook: Optional[Callable[[str], None]] = None,
       update_thread_local_hook: Optional[Callable[[Optional[str]], None]] \
-        = None):
+        = None) -> _StateContextManager[str]:
     """Set up thread-local state and return a contextmanager for managing it.
     Args:
       name: string, converted to lowercase to define the name of the config
@@ -293,24 +290,21 @@ class Config:
                      update_hook=update_global_hook)
     self._contextmanager_flags.add(name)
 
-    def get_state(self):
-      val = _thread_local_state.__dict__.get(name, unset)
-      return val if val is not unset else self._read(name)
-    setattr(Config, name, property(get_state))
-
     def validate(new_val):
       if (new_val is not None and
           (type(new_val) is not str or new_val not in enum_values)):
         raise ValueError(f"new enum value must be None or in {enum_values}, "
                          f"got {new_val} of type {type(new_val)}.")
 
-    return _StateContextManager(name, help, update_thread_local_hook, validate)
+    s = _StateContextManager(name, help, update_thread_local_hook, validate)
+    setattr(Config, name, property(lambda _: s.value))
+    return s
 
   def define_int_state(
       self, name: str, default: Optional[int],
       help: str, update_global_hook: Optional[Callable[[str], None]] = None,
       update_thread_local_hook: Optional[Callable[[Optional[str]], None]] \
-        = None):
+        = None) -> _StateContextManager[int]:
     """Set up thread-local state and return a contextmanager for managing it.
     Args:
       name: string, converted to lowercase to define the name of the config
@@ -335,23 +329,20 @@ class Config:
     self.DEFINE_integer(name, default, help=help, update_hook=update_global_hook)
     self._contextmanager_flags.add(name)
 
-    def get_state(self):
-      val = _thread_local_state.__dict__.get(name, unset)
-      return val if val is not unset else self._read(name)
-    setattr(Config, name, property(get_state))
-
     def validate(new_val):
       if new_val is not None and not isinstance(new_val, int):
         raise ValueError(f'new int config value must be None or of type int, '
                          f'got {new_val} of type {type(new_val)}')
 
-    return _StateContextManager(name, help, update_thread_local_hook, validate)
+    s = _StateContextManager(name, help, update_thread_local_hook, validate)
+    setattr(Config, name, property(lambda _: s.value))
+    return s
 
   def define_float_state(
       self, name: str, default: Optional[float],
       help: str, update_global_hook: Optional[Callable[[str], None]] = None,
       update_thread_local_hook: Optional[Callable[[Optional[str]], None]] \
-        = None):
+        = None) -> _StateContextManager[float]:
     """Set up thread-local state and return a contextmanager for managing it.
     Args:
       name: string, converted to lowercase to define the name of the config
@@ -376,22 +367,22 @@ class Config:
     self.DEFINE_float(name, default, help=help, update_hook=update_global_hook)
     self._contextmanager_flags.add(name)
 
-    def get_state(self):
-      val = _thread_local_state.__dict__.get(name, unset)
-      return val if val is not unset else self._read(name)
-    setattr(Config, name, property(get_state))
-
     def validate(new_val):
       if new_val is not None and not isinstance(new_val, (float, int)):
         raise ValueError(f'new float config value must be None or of type float, '
                          f'got {new_val} of type {type(new_val)}')
 
-    return _StateContextManager(name, help, update_thread_local_hook, validate)
+    s = _StateContextManager(name, help, update_thread_local_hook, validate)
+    setattr(Config, name, property(lambda _: s.value))
+    return s
 
   def define_string_state(
       self, name: str, default: Optional[str], help: str,
       update_global_hook: Optional[Callable[[str], None]] = None,
-      update_thread_local_hook: Optional[Callable[[Optional[str]], None]] = None):
+      update_thread_local_hook: Optional[
+          Callable[[Optional[str]], None]
+      ] = None,
+  ) -> _StateContextManager[str]:
     """Set up thread-local state and return a contextmanager for managing it.
 
     See docstring for ``define_bool_state``.
@@ -430,7 +421,8 @@ class Config:
       help: str,
       update_global_hook: Optional[Callable[[Any], None]] = None,
       update_thread_local_hook: Optional[Callable[[Any], None]] = None,
-      validate_new_val_hook: Optional[Callable[[Any], None]] = None):
+      validate_new_val_hook: Optional[Callable[[Any], None]] = None,
+  ) -> _StateContextManager[Any]:
     """Set up thread-local state and return a contextmanager for managing it.
 
     Similar to ``define_string_state``, except the context manager will accept
@@ -462,13 +454,10 @@ class Config:
                        update_hook=update_global_hook)
     self._contextmanager_flags.add(name)
 
-    def get_state(self):
-      val = _thread_local_state.__dict__.get(name, unset)
-      return val if val is not unset else self._read(name)
-    setattr(Config, name, property(get_state))
-
-    return _StateContextManager(name, help, update_thread_local_hook,
+    s = _StateContextManager(name, help, update_thread_local_hook,
                                 validate_new_val_hook)
+    setattr(Config, name, property(lambda _: s.value))
+    return s
 
   def _trace_context(self):
     """Returns a tuple of configuration values that affect tracing.
@@ -497,7 +486,7 @@ class Config:
 class NoDefault: pass
 no_default = NoDefault()
 
-class _StateContextManager:
+class _StateContextManager(Generic[_T]):
   def __init__(self, name, help, update_thread_local_hook,
                validate_new_val_hook: Optional[Callable[[Any], None]] = None,
                extra_description: str = "", default_value: Any = no_default):
@@ -508,6 +497,11 @@ class _StateContextManager:
     self._update_thread_local_hook = update_thread_local_hook
     self._validate_new_val_hook = validate_new_val_hook
     self._default_value = default_value
+
+  @property
+  def value(self) -> _T:
+    val = _thread_local_state.__dict__.get(self._name, unset)
+    return val if val is not unset else config._read(self._name)
 
   @contextlib.contextmanager
   def __call__(self, new_val: Any = no_default):
@@ -651,6 +645,7 @@ def update_thread_local_jit_state(**kw):
   tmp = context._replace(**kw)
   tls.extra_jit_context = _thread_local_state_cache.canonicalize(tmp)
 
+# TODO(phawkins): move jax2tf flags into jax2tf.
 
 # TODO(b/214340779): remove flag when XLA:CPU is improved.
 jax2tf_associative_scan_reductions = config.define_bool_state(
@@ -759,12 +754,6 @@ parallel_functions_output_gda = config.define_bool_state(
     name='jax_parallel_functions_output_gda',
     default=False,
     help='If True, pjit will output GDAs.')
-
-pmap_shmap_merge = config.define_bool_state(
-    name='jax_pmap_shmap_merge',
-    default=False,
-    upgrade=True,
-    help='If True, pmap and shard_map API will be merged.')
 
 
 spmd_mode = config.define_enum_state(
@@ -879,13 +868,6 @@ hlo_source_file_canonicalization_regex = config.define_string_state(
           'persistent compilation cache, which includes HLO metadata in the '
           'cache key.'))
 
-include_full_tracebacks_in_locations = config.define_bool_state(
-    name='jax_include_full_tracebacks_in_locations',
-    default=False,
-    help=(
-        'Include full Python tracebacks in MLIR locations in IR emitted by JAX.'
-    ),
-)
 
 config.define_enum_state(
     name='jax_default_dtype_bits',
@@ -1014,20 +996,6 @@ default_matmul_precision = config.define_enum_state(
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(default_matmul_precision=val))
 
-traceback_filtering = config.define_enum_state(
-    name = 'jax_traceback_filtering',
-    enum_values=["off", "tracebackhide", "remove_frames", "auto"],
-    default="auto",
-    help="Controls how JAX filters internal frames out of tracebacks.\n\n"
-         "Valid values are:\n"
-         " * \"off\": disables traceback filtering.\n"
-         " * \"auto\": use \"tracebackhide\" if running under a sufficiently "
-         "new IPython, or \"remove_frames\" otherwise.\n"
-         " * \"tracebackhide\": adds \"__tracebackhide__\" annotations to "
-         " hidden stack frames, which some traceback printers support.\n"
-         " * \"remove_frames\": removes hidden frames from tracebacks, and adds "
-         " the unfiltered traceback as a __cause__ of the exception.\n")
-
 # This flag is for internal use.
 # TODO(tianjianlu): Removes once we always enable cusparse lowering.
 # TODO(b/262050896): Set to true after bug is fixed
@@ -1048,12 +1016,6 @@ config.define_bool_state(
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(dynamic_shapes=val))
 
-# This flag is temporary during rollout of the remat barrier.
-# TODO(parkers): Remove if there are no complaints.
-config.define_bool_state(
-    name='jax_remat_opt_barrier',
-    default=(lib.version >= (0, 3, 6)),
-    help=('Enables using optimization-barrier op for lowering remat.'))
 
 # TODO(b/205307544): Remove flag once coordination service has rolled out.
 config.define_bool_state(
@@ -1065,22 +1027,6 @@ config.define_bool_state(
     )
 )
 
-# TODO(sharadmv,mattjj): set default to True, then remove
-config.define_bool_state(
-    name='jax_eager_pmap',
-    default=True,
-    upgrade=True,
-    help='Enable eager-mode pmap when jax_disable_jit is activated.')
-
-config.define_bool_state(
-    name='jax_experimental_unsafe_xla_runtime_errors',
-    default=False,
-    help=('Enable XLA runtime errors for jax.experimental.checkify.checks '
-          'on CPU and GPU. These errors are async, might get lost and are not '
-          'very readable. But, they crash the computation and enable you '
-          'to write jittable checks without needing to checkify. Does not '
-          'work under pmap/pjit.')
-)
 
 @contextlib.contextmanager
 def explicit_device_put_scope() -> Iterator[None]:

@@ -109,6 +109,14 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 
+_PMAP_SHMAP_MERGE = config.define_bool_state(
+    name='jax_pmap_shmap_merge',
+    default=False,
+    upgrade=True,
+    help='If True, pmap and shard_map API will be merged.')
+
+
+
 def _nan_check_posthook(fun, args, kwargs, output):
   """Hook function called by the C++ jit/pmap to perform NaN checking."""
   buffers = []
@@ -1577,7 +1585,7 @@ def pmap(
 
   # TODO(yashkatariya): Move this out after shard_map is out of experimental and
   # in _src
-  if config.jax_pmap_shmap_merge:
+  if _PMAP_SHMAP_MERGE.value:
     from jax.experimental.shard_map import pmap
     return pmap(fun, axis_name, in_axes=in_axes, out_axes=out_axes,
                 static_broadcasted_argnums=static_broadcasted_argnums,
