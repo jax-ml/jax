@@ -752,7 +752,8 @@ def jaxpr_to_checkify_jaxpr(
   out_tree, error_effects = metadata()
   return checked_jaxpr, out_tree, error_effects
 
-def cond_error_check(error: Error, enabled_errors, index, *ops, branches, linear):
+def cond_error_check(error: Error, enabled_errors, index, *ops, branches, linear,
+                     double_where):
   # Get the error-effects out of all branches so the cond can be called with
   # a merged error with all these effects.
   err_vals, err_tree = jtu.tree_flatten(error)
@@ -774,7 +775,8 @@ def cond_error_check(error: Error, enabled_errors, index, *ops, branches, linear
 
   err_and_outs = lax.cond_p.bind(
       index, *err_vals, *ops,
-      branches=tuple(new_branches), linear=new_linear)
+      branches=tuple(new_branches), linear=new_linear,
+      double_where=double_where)
 
   # we need to merge metadata across out_trees (a tuple)
   err0, out = tree_unflatten(out_trees[0], err_and_outs)
