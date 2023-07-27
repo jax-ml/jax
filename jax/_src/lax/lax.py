@@ -104,8 +104,9 @@ def _validate_shapes(shapes: Sequence[Shape]):
 def _try_broadcast_shapes(
     shapes: Sequence[tuple[int, ...]]) -> Optional[tuple[int, ...]]:
   if len(shapes) == 1: return shapes[0]
-  rank, *others = {len(shape) for shape in shapes}
-  if others: return None  # must have consistent rank
+  ranks = {len(shape) for shape in shapes}
+  if len(ranks) > 1: return None  # must have consistent rank
+  rank = ranks.pop()
   if not rank: return ()  # scalar case
   result_shape = []
   for ds in unsafe_zip(*shapes):
