@@ -139,6 +139,7 @@ class Harness:
   # The group name most often is the primitive name.
   group_name: str
   # Descriptive name of the harness, used as a testcase_name. Unique in a group.
+  # Will be sanitized to work with -k test filtering.
   name: str
   # The function taking all arguments (static and dynamic).
   fun: Callable
@@ -163,8 +164,9 @@ class Harness:
                jax_unimplemented: Sequence["Limitation"] = (),
                **params):
     """See class docstring."""
-    self.group_name = group_name
-    self.name = name
+    self.group_name = jtu.sanitize_test_name(group_name)
+    self.name = jtu.sanitize_test_name(name)
+    self.fullname = self.name if self.group_name is None else f"{self.group_name}_{self.name}"
     self.fun = fun  # type: ignore[assignment]
     self.arg_descriptors = arg_descriptors
     self.rng_factory = rng_factory  # type: ignore[assignment]
@@ -175,9 +177,6 @@ class Harness:
   def __str__(self):
     return self.fullname
 
-  @property
-  def fullname(self):
-    return self.name if self.group_name is None else f"{self.group_name}_{self.name}"
 
   def _arg_maker(self, arg_descriptor, rng: Rng):
     if isinstance(arg_descriptor, StaticArg):
@@ -813,7 +812,7 @@ def _make_argminmax_harness(prim,
   for enable_xla in [True, False]:
     define(
         prim,
-        f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_{axes=}_indexdtype={index_dtype}_enablexla={enable_xla}",
+        f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_{axes=}_indexdtype={index_dtype}_enable_xla={enable_xla}",
         lambda arg: prim.bind(arg, axes=axes, index_dtype=index_dtype), [arr],
         shape=shape,
         dtype=dtype,

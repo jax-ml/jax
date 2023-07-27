@@ -96,6 +96,13 @@ TEST_WITH_PERSISTENT_COMPILATION_CACHE = jax_config.DEFINE_bool(
     help='If enabled, the persistent compilation cache will be enabled for all '
     'test cases. This can be used to increase compilation cache coverage.')
 
+# We sanitize test names to ensure they work with "unitttest -k" and
+# "pytest -k" test filtering. pytest accepts '[' and ']' but unittest -k
+# does not. We replace sequences of problematic characters with a single '_'.
+kSanitizeNameRE = re.compile(r"[ \"'\[\](){}<>=,._]+")
+def sanitize_test_name(s: str) -> str:
+  return kSanitizeNameRE.sub("_", s)
+
 def num_float_bits(dtype):
   return _dtypes.finfo(_dtypes.canonicalize_dtype(dtype)).bits
 
@@ -1226,19 +1233,25 @@ def parameterized_filterable(*,
     testcase_name: Optionally, a function to construct the testcase_name from
       one kwargs dict. If not given then kwarg may contain `testcase_name` and
       if not, the test case name is constructed as `str(kwarg)`.
+      We sanitize the test names to work with -k test filters. See
+      `sanitize_test_name`.
     one_containing: If given, then leave the test name unchanged, and use
       only one `kwargs` whose `testcase_name` includes `one_containing`.
   """
   # Ensure that all kwargs contain a testcase_name
   kwargs_with_testcase_name: Sequence[dict[str, Any]]
   if testcase_name is not None:
-    kwargs_with_testcase_name = [dict(testcase_name=str(testcase_name(kw)), **kw)
-                                 for kw in kwargs]
+    kwargs_with_testcase_name = [
+      dict(testcase_name=sanitize_test_name(str(testcase_name(kw))), **kw)
+      for kw in kwargs]
   else:
     for kw in kwargs:
-      if "testcase_name" not in kw:
-        kw["testcase_name"] = "_".join(f"{k}={str(kw[k])}"
-                                       for k in sorted(kw.keys()))
+      testcase_name = kw.get("testcase_name")
+      if testcase_name is None:
+        testcase_name = "_".join(f"{k}={str(kw[k])}"  # type: ignore
+                                 for k in sorted(kw.keys()))
+      kw["testcase_name"] = sanitize_test_name(testcase_name)  # type: ignore
+
     kwargs_with_testcase_name = kwargs
   if one_containing is not None:
     filtered = tuple(kw for kw in kwargs_with_testcase_name

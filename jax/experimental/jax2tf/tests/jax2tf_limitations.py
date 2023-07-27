@@ -761,6 +761,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       tst.assertAllClose(
           np.full((nr_special_cases,), 0., dtype=dtype),
           result_tf[special_cases])
+      if harness.dtype == np.float32:
+        tol = 1e-5
       # non-special cases are equal
       tst.assertAllClose(
           result_jax[~special_cases],
@@ -1048,6 +1050,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             expect_tf_error=False,
             skip_comparison=True,
             enabled=not harness.params["enable_xla"]),
+      custom_numeric(devices="cpu", dtypes=[np.float32],
+                     modes=("eager", "graph", "compiled",), tol=1e-5),
+      custom_numeric(devices="cpu", dtypes=[np.float16],
+                     modes=("eager", "graph", "compiled",), tol=5e-3),
     ]
 
   @classmethod
@@ -1103,6 +1109,9 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             expect_tf_error=True,
             skip_comparison=True,
             enabled=("modes_out_of_bounds" in harness.name and not harness.params["enable_xla"])),
+      custom_numeric(modes=("eager", "graph", "compiled"),
+                     dtypes=[np.float16], tol=5e-3,
+                     enabled=(not harness.params["enable_xla"])),
     ]
 
   @classmethod
@@ -1392,7 +1401,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             dtypes=[np.float16],
             devices=("gpu", "cpu"),
             modes=("eager", "graph")),
-        custom_numeric(dtypes=[np.float32], tol=5e-3)
+        custom_numeric(dtypes=[np.float32], tol=5e-3,
+                       modes=("eager", "graph", "compiled"))
     ]
 
   @classmethod

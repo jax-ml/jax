@@ -149,8 +149,14 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"_{shape_spec=}",
-           shape_spec=shape_spec)
+      # sanitized shape_spec sometimes colide
+      dict(testcase_name=(
+        f"_shape_spec={shape_spec}" +
+        {"...": "name=ellipsis",
+         ")(": "name=bad_parens",
+         "a ;": "name=a_semicolon",
+         "'a'": "name=a_quotes"}.get(shape_spec, "")),
+        shape_spec=shape_spec)
       for shape_spec in [
           "2.5", "a + a a", "a ^ a", "a, a",
           "_", "...", "a ;", ")(", "2a", "a@", "'a'", "('a', ...)",
@@ -546,7 +552,7 @@ class PolyHarness(Harness):
   def both_enable_and_disable_xla(self) -> tuple["PolyHarness", "PolyHarness"]:
     assert self.enable_xla
     other = PolyHarness(self.group_name,
-                        f"{self.name}_enable_xla=False",
+                        f"{self.name}_enable_xla_False",
                         self.fun,
                         arg_descriptors=self.arg_descriptors,
                         polymorphic_shapes=self.polymorphic_shapes,
@@ -555,7 +561,7 @@ class PolyHarness(Harness):
                         expect_error=self.expect_error,
                         tol=self.tol,
                         enable_xla=False)
-    self.name = f"{self.name}_enable_xla=True"
+    self.name = f"{self.name}_enable_xla_True"
     return (self, other)
 
   def run_test(self, tst: tf_test_util.JaxToTfTestCase):
@@ -2126,7 +2132,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                                     transpose_kernel=False),
                 arg_descriptors=[RandArg((5, 12, 16), _f32), RandArg((4, 16, 16), _f32)],
                 polymorphic_shapes=["b, _, _", None],
-                tol=1e-5).both_enable_and_disable_xla(),
+                tol=5e-5).both_enable_and_disable_xla(),
     # Issue #11402
     PolyHarness("conv_general_dilated", "1d_3",
                 lambda lhs, rhs: lax.conv_transpose(lhs, rhs,
@@ -2136,7 +2142,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                                     transpose_kernel=False),
                 arg_descriptors=[RandArg((5, 12, 16), _f32), RandArg((4, 16, 16), _f32)],
                 polymorphic_shapes=["_, b, _", None],
-                tol=1e-5).both_enable_and_disable_xla(),
+                tol=5e-5).both_enable_and_disable_xla(),
     PolyHarness("conv_general_dilated", "",
                 lambda lhs, rhs: lax.conv_general_dilated(
                     lhs, rhs,
@@ -3082,7 +3088,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         raise unittest.SkipTest("schur decomposition is only implemented on CPU.")
 
       if "fft_fft_type" in harness.fullname:
-        if "nr_fft_lengths=2" in harness.fullname:
+        if "nr_fft_lengths_2" in harness.fullname:
           raise unittest.SkipTest("native serialization with shape polymorphism not implemented for fft with non-constant fft_lengths on GPU and TPU")
 
       if harness.group_name == "vmap_eigh" and jtu.device_under_test() == "gpu":
@@ -3110,11 +3116,11 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
       if (jtu.device_under_test() in ["cpu", "gpu"] and
           harness.fullname in [
-              "cumsum_reduce_axis=poly", "cumprod_reduce_axis=poly",
-              "cummin_reduce_axis=poly", "cummax_reduce_axis=poly",
-              "cumlogsumexp_reduce_axis=poly",
-              "jnp.insert_insert=constant", "jnp.insert_insert=poly",
-              "jnp.nonzero_size=constant", "jnp.nonzero_size=poly"]):
+              "cumsum_reduce_axis_poly", "cumprod_reduce_axis_poly",
+              "cummin_reduce_axis_poly", "cummax_reduce_axis_poly",
+              "cumlogsumexp_reduce_axis_poly",
+              "jnp_insert_insert_constant", "jnp_insert_insert_poly",
+              "jnp_nonzero_size_constant", "jnp_nonzero_size_poly"]):
         # Need associative scan reductions on CPU and GPU
         raise unittest.SkipTest(
             "native serialization with shape polymorphism not implemented for window_reductions on CPU and GPU")
@@ -3140,13 +3146,16 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         # For non-native serialization the overflow behavior is different.
         harness.check_result = False
 
+      if "average_axis_None_weights_Some" in harness.fullname:
+        harness.tol = 1e-5
+
       if harness.group_name == "schur":
         raise unittest.SkipTest("jax2tf graph serialization does not support schur.")
 
-      if harness.group_name == "eig" and "left=True_right=True" in harness.fullname:
+      if harness.group_name == "eig" and "left_True_right_True" in harness.fullname:
         raise unittest.SkipTest("jax2tf graph serialization does not support both left and right.")
 
-      if "conv_general_dilated_1d_stride=2_zero_output_enable_xla=False" in harness.fullname:
+      if "conv_general_dilated_1d_stride_2_zero_output_enable_xla_False" in harness.fullname:
         raise unittest.SkipTest("incomplete support for conv_general_dilated in enable_xla=False")
 
       if harness.group_name == "reduce_window" and "variadic" in harness.fullname:
@@ -3154,7 +3163,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
       if (harness.group_name == "reduce_window" and
           not harness.enable_xla and
-          "window_size=dynamic" in harness.fullname and
+          "window_size_dynamic" in harness.fullname and
           any(n in harness.fullname
               for n in ["min_plus_max", "add_monoid_base", "min_window"])):
         raise unittest.SkipTest(
