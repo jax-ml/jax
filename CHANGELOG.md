@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.14
+## jax 0.4.15
+
+## jaxlib 0.4.15
+
+## jax 0.4.14 (July 27, 2023)
 
 * Changes
   * `jax.jit` takes `donate_argnames` as an argument. It's semantics are similar
@@ -22,7 +26,7 @@ Remember to align the itemized text with the first line of an item within a list
     with more robust endpoint behavior ({jax-issue}`#16779`). This means that the
     sequence of values returned for a given `key` will change between JAX v0.4.13
     and v0.4.14 for `gamma` and related samplers (including {func}`jax.random.ball`,
-    {func}`jax.random.beta`, {func}`jax.random.chisquare`, {func}`jax.random.dirichlet`, 
+    {func}`jax.random.beta`, {func}`jax.random.chisquare`, {func}`jax.random.dirichlet`,
     {func}`jax.random.generalized_normal`, {func}`jax.random.loggamma`, {func}`jax.random.t`).
 
 * Deletions
@@ -79,7 +83,7 @@ Remember to align the itemized text with the first line of an item within a list
     certain shape constraints, if the serialization version is at least 7.
     See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism.
 
-## jaxlib 0.4.14
+## jaxlib 0.4.14 (July 27, 2023)
 
 * Deprecations
   * Python 3.8 support has been dropped as per
