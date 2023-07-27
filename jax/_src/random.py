@@ -969,7 +969,7 @@ def dirichlet(key: KeyArray,
   The values are distributed according the the probability density function:
 
   .. math::
-     f(\{x_i\}; \{\alpha_i\}) = \propto \prod_{i=1}^k x_i^{\alpha_i}
+     f(\{x_i\}; \{\alpha_i\}) = \propto \prod_{i=1}^k x_i^{\alpha_i - 1}
 
   Where :math:`k` is the dimension, and :math:`\{x_i\}` satisfies
 
