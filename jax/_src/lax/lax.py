@@ -104,7 +104,7 @@ def _validate_shapes(shapes: Sequence[Shape]):
 def _try_broadcast_shapes(
     shapes: Sequence[tuple[int, ...]]) -> Optional[tuple[int, ...]]:
   if len(shapes) == 1: return shapes[0]
-  rank, *others = {len(shape) for shape in shapes}
+  rank, *others = {len(shape) for shape in shapes}  # pytype: disable=bad-unpacking
   if others: return None  # must have consistent rank
   if not rank: return ()  # scalar case
   result_shape = []
