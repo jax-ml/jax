@@ -18,7 +18,7 @@ import collections
 from collections.abc import Sequence
 import itertools
 import logging
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import jax
 import numpy as np
@@ -60,6 +60,45 @@ _TRANSPOSE_TRICKS: dict[tuple[int, ...],
 
 # Physical ordering of core IDs in a tray that creates a ring
 _TRAY_RING_ORDER = (0, 1, 2, 3, 6, 7, 4, 5)
+
+
+def _tpu_v2_v3_create_device_mesh(
+    mesh_shape: Sequence[int],
+    devices: Sequence[Any],
+    **unused_kwargs,
+) -> np.ndarray:
+  if len(devices) == 8:
+    logger.info(
+        'Reordering mesh to physical ring order on single-tray TPU v2/v3.'
+    )
+    device_mesh = np.asarray(devices)
+    device_mesh = device_mesh[np.array(_TRAY_RING_ORDER)]
+    device_mesh = device_mesh.reshape(mesh_shape)
+    return device_mesh
+  elif mesh_shape[-1] == 8:
+    device_mesh = np.asarray(devices).reshape(mesh_shape)
+    logger.info(
+        'Reordering mesh to physical ring order on each TPU v2/v3 tray.'
+    )
+    perm = np.array(_TRAY_RING_ORDER)
+    device_mesh = device_mesh[..., perm]
+    return device_mesh
+  else:
+    # TODO(skye): implement 2D mesh_shape logic here:
+    # https://github.com/tensorflow/lingvo/blob/0df40cf604dfcd14e28f7087d73687a0bd2fe5c6/lingvo/core/gshard_utils.py#L187
+    # (possibly replaces above mesh_shape[-1] == 8 case)
+    return np.asarray(devices).reshape(mesh_shape)
+
+
+# Registers functions to create device mesh for specific device kinds. Takes
+# precedence over the more general logic in create_device_mesh().
+device_kind_handler_dict: dict[
+    str,
+    Callable[..., np.ndarray],
+] = {
+    _TPU_V2: _tpu_v2_v3_create_device_mesh,
+    _TPU_V3: _tpu_v2_v3_create_device_mesh,
+}
 
 
 def _create_device_mesh_for_nd_torus(
@@ -256,25 +295,14 @@ def create_device_mesh(
     raise ValueError(f'Number of devices {len(devices)} must equal the product '
                      f'of mesh_shape {mesh_shape}')
   last_device = devices[-1]
-  if last_device.device_kind in (_TPU_V2, _TPU_V3):
-    if len(devices) == 8:
-      logger.info('Reordering mesh to physical ring order on single-tray TPU v2/v3.')
-      device_mesh = np.asarray(devices)
-      device_mesh = device_mesh[np.array(_TRAY_RING_ORDER)]
-      device_mesh = device_mesh.reshape(mesh_shape)
-      return device_mesh
-    elif mesh_shape[-1] == 8:
-      device_mesh = np.asarray(devices).reshape(mesh_shape)
-      logger.info('Reordering mesh to physical ring order on each TPU v2/v3 tray.')
-      perm = np.array(_TRAY_RING_ORDER)
-      device_mesh = device_mesh[..., perm]
-      return device_mesh
-    else:
-      # TODO(skye): implement 2D mesh_shape logic here:
-      # https://github.com/tensorflow/lingvo/blob/0df40cf604dfcd14e28f7087d73687a0bd2fe5c6/lingvo/core/gshard_utils.py#L187
-      # (possibly replaces above mesh_shape[-1] == 8 case)
-      return np.asarray(devices).reshape(mesh_shape)
-  elif last_device.platform == 'tpu':
+
+  handler = device_kind_handler_dict.get(last_device.device_kind, None)
+  if handler is not None:
+    return handler(
+        mesh_shape, devices, contiguous_submeshes=contiguous_submeshes
+    )
+
+  if last_device.platform == 'tpu':
     physical_mesh = _get_physical_tpu_mesh(devices)
     if contiguous_submeshes:
       physical_mesh = _transpose_trick(physical_mesh, mesh_shape)
