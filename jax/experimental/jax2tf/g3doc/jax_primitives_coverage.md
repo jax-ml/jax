@@ -1,11 +1,11 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2023-07-26* (YYYY-MM-DD)
+*Last generated on: 2022-11-07* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
-We use a set of 8255 test harnesses to test
-the implementation of 133 numeric JAX primitives.
+We use a set of 7308 test harnesses to test
+the implementation of 130 numeric JAX primitives.
 We consider a JAX primitive supported for a particular data
 type if it is supported on at least one device type.
 The following table shows the dtypes at which primitives
@@ -46,7 +46,6 @@ be updated.
 | add | 16 | inexact, integer | bool |
 | add_any | 14 | inexact, integer | bool |
 | and | 11 | bool, integer | inexact |
-| approx_top_k | 24 | floating | bool, complex, integer |
 | argmax | 64 | bool, floating, integer | complex |
 | argmin | 64 | bool, floating, integer | complex |
 | asin | 6 | inexact | bool, integer |
@@ -65,7 +64,7 @@ be updated.
 | complex | 4 | float32, float64 | bfloat16, bool, complex, float16, integer |
 | concatenate | 17 | all |  |
 | conj | 5 | complex, float32, float64 | bfloat16, bool, float16, integer |
-| conv_general_dilated | 132 | inexact, signed | bool, unsigned |
+| conv_general_dilated | 114 | inexact, int16, int32, int8 | bool, int64, unsigned |
 | convert_element_type | 201 | all |  |
 | cos | 6 | inexact | bool, integer |
 | cosh | 6 | inexact | bool, integer |
@@ -78,7 +77,7 @@ be updated.
 | device_put | 16 | all |  |
 | digamma | 4 | floating | bool, complex, integer |
 | div | 20 | inexact, integer | bool |
-| dot_general | 1101 | all |  |
+| dot_general | 245 | all |  |
 | dynamic_slice | 68 | all |  |
 | dynamic_update_slice | 46 | all |  |
 | eig | 72 | inexact | bool, integer |
@@ -89,9 +88,9 @@ be updated.
 | erfc | 4 | floating | bool, complex, integer |
 | exp | 6 | inexact | bool, integer |
 | expm1 | 6 | inexact | bool, integer |
-| fft | 32 | complex, float32, float64 | bfloat16, bool, float16, integer |
+| fft | 20 | complex, float32, float64 | bfloat16, bool, float16, integer |
 | floor | 4 | floating | bool, complex, integer |
-| gather | 164 | all |  |
+| gather | 150 | all |  |
 | ge | 17 | all |  |
 | gt | 17 | all |  |
 | igamma | 6 | floating | bool, complex, integer |
@@ -99,7 +98,6 @@ be updated.
 | imag | 2 | complex | bool, floating, integer |
 | integer_pow | 108 | inexact, integer | bool |
 | iota | 16 | inexact, integer | bool |
-| iota_2x32_shape | 3 | uint32 | bool, inexact, signed, uint16, uint64, uint8 |
 | is_finite | 4 | floating | bool, complex, integer |
 | le | 17 | all |  |
 | lgamma | 4 | floating | bool, complex, integer |
@@ -108,8 +106,8 @@ be updated.
 | logistic | 6 | inexact | bool, integer |
 | lt | 17 | all |  |
 | lu | 18 | inexact | bool, integer |
-| max | 27 | all |  |
-| min | 27 | all |  |
+| max | 33 | all |  |
+| min | 33 | all |  |
 | mul | 16 | inexact, integer | bool |
 | ne | 17 | all |  |
 | neg | 14 | inexact, integer | bool |
@@ -130,7 +128,6 @@ be updated.
 | reduce_max | 15 | all |  |
 | reduce_min | 15 | all |  |
 | reduce_or | 1 | bool | inexact, integer |
-| reduce_precision | 32 | floating | bool, complex, integer |
 | reduce_prod | 14 | inexact, integer | bool |
 | reduce_sum | 14 | inexact, integer | bool |
 | reduce_window_add | 50 | inexact, integer | bool |
@@ -197,7 +194,7 @@ and search for "limitation".
 | --- | --- | --- | --- |
 |cholesky|unimplemented|float16|cpu, gpu|
 |clamp|unimplemented|bool, complex|cpu, gpu, tpu|
-|conv_general_dilated|preferred_element_type not implemented for integers|signed|gpu|
+|conv_general_dilated|preferred_element_type not implemented for integers|int16, int32, int8|gpu|
 |dot_general|preferred_element_type must match dtype for floating point|inexact|gpu|
 |eig|only supported on CPU in JAX|all|tpu, gpu|
 |eig|unimplemented|bfloat16, float16|cpu|

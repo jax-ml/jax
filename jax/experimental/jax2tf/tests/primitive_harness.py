@@ -38,7 +38,6 @@ to fail. A Limitation is specific to a harness.
 """
 
 from collections.abc import Iterable, Sequence
-import itertools
 import operator
 import os
 from functools import partial
@@ -2782,8 +2781,7 @@ def _make_dot_general_harness(name,
                               *,
                               lhs_shape=(3, 4),
                               rhs_shape=(4, 2),
-                              lhs_dtype=np.float32,
-                              rhs_dtype=np.float32,
+                              dtype=np.float32,
                               precision=None,
                               dimension_numbers=(((1,), (0,)), ((), ())),
                               preferred_element_type=None):
@@ -2795,18 +2793,17 @@ def _make_dot_general_harness(name,
 
   define(
       lax.dot_general_p,
-      f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, lhs_dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, rhs_dtype)}_dimensionnumbers={dimension_numbers}{suffix}"
+      f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_dimensionnumbers={dimension_numbers}{suffix}"
       .replace(" ", ""),
       lax.dot_general,
       [
-          RandArg(lhs_shape, lhs_dtype),
-          RandArg(rhs_shape, rhs_dtype),
+          RandArg(lhs_shape, dtype),
+          RandArg(rhs_shape, dtype),
           StaticArg(dimension_numbers),
           StaticArg(precision),
           StaticArg(preferred_element_type)
       ],
-      dtype=lhs_dtype,
-      rhs_dtype=rhs_dtype,
+      dtype=dtype,
       lhs_shape=lhs_shape,
       rhs_shape=rhs_shape,
       dimension_numbers=dimension_numbers,
@@ -2816,7 +2813,7 @@ def _make_dot_general_harness(name,
           Limitation("preferred_element_type must match dtype for floating point",
                      devices="gpu",
                      dtypes=[np.float16, dtypes.bfloat16, np.float32, np.float64, np.complex64, np.complex128],
-                     enabled=(preferred_element_type is not None and preferred_element_type != lhs_dtype))
+                     enabled=(preferred_element_type is not None and preferred_element_type != dtype))
       ]
   )
 
@@ -2846,8 +2843,7 @@ for dtype in jtu.dtypes.all:
           lhs_shape=lhs_shape,
           rhs_shape=rhs_shape,
           dimension_numbers=dimension_numbers,
-          lhs_dtype=dtype,
-          rhs_dtype=dtype)
+          dtype=dtype)
 
 # The other tests are only for float32.
 # Validate batch dimensions
@@ -2877,48 +2873,28 @@ for lhs_shape, rhs_shape, dimension_numbers in [
 
 # Validate preferred element type
 # From lax_test.py
-preferred_type_combinations = [
-  (np.float16, np.float16), (np.float16, np.float32), (np.float16, np.float64),
-  (dtypes.bfloat16, dtypes.bfloat16), (dtypes.bfloat16, np.float32),
-  (dtypes.bfloat16, np.float64), (np.float32, np.float32),
-  (np.float32, np.float64),
-  (np.float64, np.float64), (np.int8, np.int8), (np.int8, np.int16),
-  (np.int8, np.int32),
-  (np.int8, np.int64), (np.int16, np.int16), (np.int16, np.int32),
-  (np.int16, np.int64),
-  (np.int32, np.int32), (np.int32, np.int64), (np.int64, np.int64),
-  (np.complex64, np.complex64), (np.complex64, np.complex128),
-  (np.complex128, np.complex128),
-  (np.int8, np.float16), (np.int8, dtypes.bfloat16), (np.int8, np.float32),
-  (np.int8, np.float64),
-  (np.int16, np.float16), (np.int16, dtypes.bfloat16), (np.int16, np.float32),
-  (np.int16, np.float64),
-  (np.int32, np.float32), (np.int32, np.float64), (np.int64, np.float64)]
+preferred_type_combinations = [(np.float16, np.float16), (np.float16,
+                                                          np.float32),
+                               (np.float16, np.float64),
+                               (dtypes.bfloat16, np.float32),
+                               (dtypes.bfloat16, np.float64),
+                               (np.float32, np.float32),
+                               (np.float32, np.float64), (np.int8, np.int16),
+                               (np.int8, np.int32), (np.int8, np.int64),
+                               (np.int16, np.int32), (np.int16, np.int64),
+                               (np.int32, np.int32), (np.int32, np.int64),
+                               (np.complex64, np.complex128)]
 
 for lhs_shape in [(3,), (4, 3)]:
   for rhs_shape in [(3,), (3, 6)]:
     for dtype, preferred_element_type in preferred_type_combinations:
       _make_dot_general_harness(
           "preferred",
-          lhs_dtype=dtype,
-          rhs_dtype=dtype,
+          dtype=dtype,
           lhs_shape=lhs_shape,
           rhs_shape=rhs_shape,
           dimension_numbers=(((len(lhs_shape) - 1,), (0,)), ((), ())),
           preferred_element_type=preferred_element_type)
-
-    # Validate lhs_dtype different than rhs_dtype
-    for lhs_dtype, rhs_dtype in itertools.product(jtu.dtypes.all_integer +
-                                                  jtu.dtypes.all_unsigned +
-                                                  jtu.dtypes.all_inexact,
-                                                  repeat=2):
-      _make_dot_general_harness(
-          "different_dtypes",
-          lhs_dtype=lhs_dtype,
-          rhs_dtype=rhs_dtype,
-          lhs_shape=lhs_shape,
-          rhs_shape=rhs_shape,
-          dimension_numbers=(((len(lhs_shape) - 1,), (0,)), ((), ())))
 
 
 def _make_concatenate_harness(name,
@@ -3004,7 +2980,7 @@ def _make_conv_harness(name,
             Limitation(
                 "preferred_element_type not implemented for integers",
                 devices="gpu",
-                dtypes=(np.int8, np.int16, np.int32, np.int64),
+                dtypes=(np.int8, np.int16, np.int32),
                 enabled=(preferred_element_type in [np.int16, np.int32,
                                                     np.int64])),
         ],

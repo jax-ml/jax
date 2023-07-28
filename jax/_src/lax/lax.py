@@ -2743,28 +2743,32 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       handled = lambda dt: (dtypes.issubdtype(dt, np.floating) or
                             dtypes.issubdtype(dt, np.integer))
       if not (handled(lhs_dtype) and handled(rhs_dtype)):
-        lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
-                               core.ShapedArray(lhs_aval.shape, aval_out.dtype))
-        rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
-                               core.ShapedArray(rhs_aval.shape, aval_out.dtype))
+        dt = mlir.dtype_to_ir_type(aval_out.dtype)
+        lhs = hlo.ConvertOp(ir.RankedTensorType.get(lhs_aval.shape, dt), lhs
+                            ).result
+        rhs = hlo.ConvertOp(ir.RankedTensorType.get(rhs_aval.shape, dt), rhs
+                            ).result
         lhs_dtype = rhs_dtype = aval_out.dtype
     else:  # cpu and gpu
-      lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
-                             core.ShapedArray(lhs_aval.shape, aval_out.dtype))
-      rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
-                             core.ShapedArray(rhs_aval.shape, aval_out.dtype))
+      dt = mlir.dtype_to_ir_type(aval_out.dtype)
+      lhs = hlo.ConvertOp(ir.RankedTensorType.get(lhs_aval.shape, dt), lhs
+                          ).result
+      rhs = hlo.ConvertOp(ir.RankedTensorType.get(rhs_aval.shape, dt), rhs
+                          ).result
       lhs_dtype = rhs_dtype = aval_out.dtype
 
   # TODO(b/195364460): Work around slow XLA/CPU implementation of float16 matmul
   if ctx.module_context.platform == "cpu":
     if lhs_dtype == np.float16:
-      lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
-                             core.ShapedArray(lhs_aval.shape, np.float32))
-
+      f32 = mlir.dtype_to_ir_type(np.dtype(np.float32))
+      lhs = hlo.ConvertOp(ir.RankedTensorType.get(lhs_aval.shape, f32),
+                          lhs).result
+      lhs_dtype = np.dtype('float32')
     if rhs_dtype == np.float16:
-      rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
-                             core.ShapedArray(rhs_aval.shape, np.float32))
-
+      f32 = mlir.dtype_to_ir_type(np.dtype(np.float32))
+      rhs = hlo.ConvertOp(ir.RankedTensorType.get(rhs_aval.shape, f32),
+                          rhs).result
+      rhs_dtype = np.dtype('float32')
 
   dot_dnums = hlo.DotDimensionNumbers.get(
       lhs_batching_dimensions=list(lhs_batch),
