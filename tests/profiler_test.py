@@ -236,7 +236,7 @@ class ProfilerTest(unittest.TestCase):
     thread_profiler.start()
     start_time = time.time()
     y = jnp.zeros((5, 5))
-    while time.time() - start_time < 5:
+    while time.time() - start_time < 10:
       y = jnp.dot(y, y)
     jax.profiler.stop_server()
     thread_profiler.join()
