@@ -40,19 +40,13 @@ want, then pick some inputs, and then add this to the new test to get started.
     def func(...): ...
     inputs = (...,)  # Tuple of nd.array, keep it small, perhaps generate the
                      # inputs in `func`.
-    data = dataclasses.replace(self.load_testdata(bctu.dummy_data_dict),
-                               inputs=inputs,
-                               platform=self.default_jax_backend())
-    self.run_one_test(func, data,
-                      # Temporarily allow calls to "foo"
-                      allow_additional_custom_call_targets=("foo",))
+    data = self.starter_data(inputs)  # This is temporary, just for starting.
+    self.run_one_test(func, data)
 
 The test will fail, but will save to a file the test data you will need. The
 file name will be printed in the logs. Create a new
 file ./back_compat_testdata/foo_call.py and paste the test data that
-you will see printed in the logs. You may want to
-edit the serialization string to remove any pathnames that may be included at
-the end, or gxxxxx3 at the beginning.
+you will see printed in the logs.
 
 Name the literal `data_YYYYY_MM_DD` to include the date of serializaton
 (for readability only). Then add to this file:
@@ -137,6 +131,13 @@ class CompatTestBase(jtu.JaxTestCase):
     # Canonicalize to turn into "cuda" or "rocm"
     return xb.canonicalize_platform(jax.default_backend())
 
+  def starter_data(self, inputs: Sequence[np.ndarray]) -> CompatTestData:
+    # Helper for starting a test, see module docstring.
+    assert isinstance(inputs, Sequence), f"{inputs}"
+    return dataclasses.replace(self.load_testdata(dummy_data_dict),
+                               inputs=inputs,
+                               platform=self.default_jax_backend())
+
   def load_testdata(self, testdata_dict: dict[str, Any]) -> CompatTestData:
     if testdata_dict["testdata_version"] == CURRENT_TESTDATA_VERSION:
       return CompatTestData(**testdata_dict)
@@ -212,7 +213,7 @@ class CompatTestBase(jtu.JaxTestCase):
     np.set_printoptions(threshold=sys.maxsize, floatmode="unique")
     # Print the current test data to simplify updating the test.
     updated_testdata = f"""
-# Pasted from the test output (see back_compat_test.py module docstring)
+# Pasted from the test output (see back_compat_test_util.py module docstring)
 data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     testdata_version={CURRENT_TESTDATA_VERSION},
     platform={repr(self.default_jax_backend())},

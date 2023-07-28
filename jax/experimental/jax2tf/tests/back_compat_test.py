@@ -51,6 +51,7 @@ from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Qr
 from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Sharding
 from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_stablehlo_dynamic_reduce_window
 from jax.experimental.jax2tf.tests.back_compat_testdata import stablehlo_dynamic_rng_bit_generator
+from jax.experimental.jax2tf.tests.back_compat_testdata import stablehlo_dynamic_top_k
 
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
@@ -114,7 +115,9 @@ class CompatTest(bctu.CompatTestBase):
         tpu_ApproxTopK.data_2023_05_16,
         tpu_stablehlo_dynamic_reduce_window.data_unary_2023_06_17,
         tpu_stablehlo_dynamic_reduce_window.data_variadic_2023_06_17,
-        stablehlo_dynamic_rng_bit_generator.data_2023_06_17,]
+        stablehlo_dynamic_rng_bit_generator.data_2023_06_17,
+        stablehlo_dynamic_top_k.data_2023_07_16,
+    ]
     # Some of the above are nested structures.
     covering_testdatas = itertools.chain(
         *[self.load_testdata_nested(d) for d in covering_testdatas])
@@ -129,7 +132,10 @@ class CompatTest(bctu.CompatTestBase):
       "shape_assertion",
     })
     not_covered = targets_to_cover.difference(covered_targets)
-    self.assertEmpty(not_covered)
+    self.assertEmpty(not_covered,
+                     msg=("The following custom call targets are declared "
+                          "stable but are not covered by any tests: "
+                          f"{not_covered}"))
 
   def test_ducc_fft(self):
     def func(x):
@@ -671,6 +677,29 @@ class CompatTest(bctu.CompatTestBase):
                         compare_with_current=False)
     finally:
       jax.config.update("jax_default_prng_impl", prev_default_prng_impl)
+
+  def test_stablehlo_dynamic_top_k(self):
+    # stablehlo.dynamic_top_k is used temporarily for a top_k with dynamism
+    a = np.arange(12, dtype=np.float32).reshape((4, 3))
+
+    def func(a):
+      return lax.top_k(a, k=a.shape[-1] - 1)
+
+    data = self.load_testdata(stablehlo_dynamic_top_k.data_2023_07_16)
+    def check_top_k_results(res_run, res_expected, *, rtol, atol):
+      # The order of the results may be different, but should be the same ones
+      values_expected, _ = res_expected
+      values_run, indices_run = res_run
+      # Check that indices are correct
+      self.assertAllClose(values_run,
+                          a[np.arange(a.shape[0]).reshape(a.shape[0], 1),
+                            indices_run], atol=atol, rtol=rtol)
+      self.assertAllClose(np.sort(values_run), np.sort(values_expected),
+                          atol=atol, rtol=rtol)
+
+    self.run_one_test(func, data,
+                      polymorphic_shapes=("_, b",),
+                      check_results=check_top_k_results)
 
 
 if __name__ == "__main__":
