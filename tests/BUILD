@@ -921,9 +921,13 @@ jax_test(
     backend_tags = {
         "tpu": ["nomsan"],  # TODO(b/213388298): this test fails msan.
     },
-    deps = [
-        "//jax:compilation_cache_internal",
-    ],
+    deps = ["//jax:compilation_cache_internal"],
+)
+
+jax_test(
+    name = "cache_key_test",
+    srcs = ["cache_key_test.py"],
+    deps = ["//jax:cache_key"],
 )
 
 jax_test(
@@ -1144,8 +1148,9 @@ exports_files(
     [
         "api_test.py",
         "array_test.py",
-        "pmap_test.py",
+        "cache_key_test.py",
         "compilation_cache_test.py",
+        "pmap_test.py",
         "pjit_test.py",
         "python_callback_test.py",
         "transfer_guard_test.py",
