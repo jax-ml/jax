@@ -28,6 +28,7 @@ from jax._src import lib
 from jax._src.lib import jax_jit
 from jax._src.lib import transfer_guard_lib
 from jax._src.lib import xla_client
+from jax._src import logging_config
 
 logger = logging.getLogger(__name__)
 
@@ -1205,3 +1206,21 @@ def transfer_guard(new_val: str) -> Iterator[None]:
     stack.enter_context(transfer_guard_device_to_host(new_val))
     stack.enter_context(_transfer_guard(new_val))
     yield
+
+
+def _update_debug_log_modules(module_names_str: Optional[str]):
+  logging_config.disable_all_debug_logging()
+  if not module_names_str:
+    return
+  module_names = module_names_str.split(',')
+  for module_name in module_names:
+    logging_config.enable_debug_logging(module_name)
+
+# Don't define a context manager since this isn't threadsafe.
+config.define_string_state(
+    name='jax_debug_log_modules',
+    default='',
+    help=('Comma-separated list of module names (e.g. "jax" or '
+          '"jax._src.xla_bridge,jax._src.dispatch") to enable debug logging '
+          'for.'),
+    update_global_hook=_update_debug_log_modules)
