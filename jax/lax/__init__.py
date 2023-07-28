@@ -93,6 +93,7 @@ from jax._src.lax.lax import (
   eq_p as eq_p,
   exp as exp,
   exp_p as exp_p,
+  exp2 as exp2,
   expand_dims as expand_dims,
   expm1 as expm1,
   expm1_p as expm1_p,

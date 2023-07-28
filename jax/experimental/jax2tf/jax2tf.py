@@ -1575,6 +1575,8 @@ def _integer_pow(x, *, y: int, _in_avals: Sequence[core.ShapedArray],
 
 tf_impl_with_avals[lax.integer_pow_p] = _integer_pow
 tf_impl[lax.exp_p] = tf.math.exp
+tf_impl[lax_internal.exp2_p] = lambda x: \
+    tf.math.exp(tf.math.multiply(tf.math.log(tf.constant(2, x.dtype)), x))
 tf_impl[lax.expm1_p] = tf.math.expm1
 tf_impl[lax.log_p] = tf.math.log
 tf_impl[lax.log1p_p] = tf.math.log1p

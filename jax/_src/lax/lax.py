@@ -302,6 +302,10 @@ def exp(x: ArrayLike) -> Array:
   r"""Elementwise exponential: :math:`e^x`."""
   return exp_p.bind(x)
 
+def exp2(x: ArrayLike) -> Array:
+  r"""Elementwise base-2 exponential: :math:`2^x`."""
+  return exp2_p.bind(x)
+
 def expm1(x: ArrayLike) -> Array:
   r"""Elementwise :math:`e^{x} - 1`."""
   return expm1_p.bind(x)
@@ -1757,9 +1761,16 @@ mlir.register_lowering(is_finite_p, partial(_nary_lower_hlo, hlo.IsFiniteOp))
 
 exp_p = standard_unop(_float | _complex, 'exp')
 ad.defjvp2(exp_p, lambda g, ans, x: mul(g, ans))
-# For exp_p it is more efficient to use the reconstructed output for the vjp
-# rule instead of computing it again from the input.
 mlir.register_lowering(exp_p, partial(_nary_lower_hlo, hlo.ExpOp))
+
+exp2_p = standard_unop(_float | _complex, 'exp2')
+ad.defjvp2(exp2_p, lambda g, ans, x: mul(log(_const(x, 2)), mul(g, ans)))
+def _exp2_lower(ctx, x):
+  x_aval, = ctx.avals_in
+  log2 = mlir.ir_constant(np.array(np.log(2), x_aval.dtype))
+  log2 = mlir.broadcast_in_dim(ctx, log2, x_aval, broadcast_dimensions=())
+  return hlo.ExpOp(hlo.MulOp(log2, x).result).results
+mlir.register_lowering(exp2_p, _exp2_lower)
 
 log_p = standard_unop(_float | _complex, 'log')
 ad.defjvp(log_p, lambda g, x: div(g, x))

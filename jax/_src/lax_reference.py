@@ -45,6 +45,7 @@ nextafter = np.nextafter
 is_finite = np.isfinite
 
 exp = np.exp
+exp2 = np.exp2
 expm1 = np.expm1
 log = np.log
 log1p = np.log1p
