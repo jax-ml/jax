@@ -86,6 +86,9 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     axis=[-1, 0],
     norm=[None, 'ortho'],
   )
+  # TODO(phawkins): these tests are failing on T4 GPUs in CI with a
+  # CUDA_ERROR_ILLEGAL_ADDRESS.
+  @jtu.skip_on_devices("cuda")
   def testiDct(self, shape, dtype, n, axis, norm):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
