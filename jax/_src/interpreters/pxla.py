@@ -148,8 +148,7 @@ shard_arg_handlers: dict[Any, Callable[[Any, Any, Any, Any], Any]] = {}
 def _shard_token(x, devices, indices, sharding):
   zeros = np.zeros((), dtype=np.dtype(np.bool_))
   aval = api_util.shaped_abstractify(zeros)
-  out = batched_device_put(aval, sharding, [zeros for i in indices], devices)
-  return out
+  return batched_device_put(aval, sharding, [zeros for i in indices], devices)
 shard_arg_handlers[core.Token] = _shard_token
 
 def _masked_array_error(x, devices, indices, sharding):
@@ -161,8 +160,7 @@ def _shard_array(x, devices, indices, sharding):
   if x.dtype == dtypes.float0:
     x = np.zeros(x.shape, dtype=np.dtype(bool))
   aval = api_util.shaped_abstractify(x)
-  out = batched_device_put(aval, sharding, [x[i] for i in indices], devices)
-  return out
+  return batched_device_put(aval, sharding, [x[i] for i in indices], devices)
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
