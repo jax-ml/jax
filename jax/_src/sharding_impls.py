@@ -527,6 +527,10 @@ class PmapSharding(XLACompatibleSharding):
   def _device_assignment(self) -> XLADeviceAssignment:
     return tuple(self.devices.flat)
 
+  @property
+  def memory_kind(self):
+    return None
+
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     raise NotImplementedError("pmap doesn't use OpSharding.")
 
