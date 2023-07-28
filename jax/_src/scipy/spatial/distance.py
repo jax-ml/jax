@@ -14,23 +14,26 @@
 
 from __future__ import annotations
 
+from functools import partial
+from typing import Callable
+
 import scipy.spatial.distance
 
 import jax
 import jax.numpy as jnp
 from jax._src.numpy.util import _wraps
 from jax._src.scipy.special import rel_entr
-from jax._src.typing import DTypeLike
+from jax._src.typing import Array, ArrayLike, DTypeLike
 
 
-def _validate_vector(u: jax.Array, dtype: DTypeLike | None = None) -> jax.Array:
+def _validate_vector(u: ArrayLike, dtype: DTypeLike | None = None) -> Array:
   u = jnp.asarray(u, dtype=dtype)
   if u.ndim != 1:
     raise ValueError("Input vector should be 1-D.")
   return u
 
 
-def _validate_weights(w: jax.Array, dtype: DTypeLike | None = None) -> jax.Array:
+def _validate_weights(w: ArrayLike, dtype: DTypeLike | None = None) -> Array:
   w = jnp.asarray(w, dtype=dtype)
   if jnp.any(w < 0):
     raise ValueError("Input weights should be all non-negative.")
@@ -38,8 +41,8 @@ def _validate_weights(w: jax.Array, dtype: DTypeLike | None = None) -> jax.Array
 
 
 def _nbool_correspond_all(
-  u: jax.Array, v: jax.Array, w: jax.Array | None = None
-) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+  u: Array, v: Array, w: Array | None = None
+) -> tuple[Array, Array, Array, Array]:
   if u.dtype == v.dtype == bool and w is None:
     not_u = ~u
     not_v = ~v
@@ -68,8 +71,8 @@ def _nbool_correspond_all(
 
 
 def _nbool_correspond_ft_tf(
-  u: jax.Array, v: jax.Array, w: jax.Array | None = None
-) -> tuple[jax.Array, jax.Array]:
+  u: Array, v: Array, w: Array | None = None
+) -> tuple[Array, Array]:
   if u.dtype == v.dtype == bool and w is None:
     not_u = ~u
     not_v = ~v
@@ -94,7 +97,7 @@ def _nbool_correspond_ft_tf(
 
 
 @_wraps(scipy.spatial.distance.braycurtis)
-def braycurtis(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def braycurtis(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
   l1_diff = jnp.abs(u - v)
@@ -109,7 +112,7 @@ def braycurtis(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Ar
 
 
 @_wraps(scipy.spatial.distance.canberra)
-def canberra(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def canberra(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
   abs_uv = jnp.abs(u - v)
@@ -125,7 +128,7 @@ def canberra(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Arra
 
 
 @_wraps(scipy.spatial.distance.chebyshev)
-def chebyshev(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def chebyshev(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
 
@@ -140,7 +143,7 @@ def chebyshev(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Arr
 
 
 @_wraps(scipy.spatial.distance.cityblock)
-def cityblock(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def cityblock(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
 
@@ -154,8 +157,8 @@ def cityblock(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Arr
 
 @_wraps(scipy.spatial.distance.correlation)
 def correlation(
-  u: jax.Array, v: jax.Array, w: jax.Array | None = None, centered: bool = True,
-) -> jax.Array:
+  u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None, centered: bool = True,
+) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
   if w is not None:
@@ -177,25 +180,25 @@ def correlation(
 
 
 @_wraps(scipy.spatial.distance.cosine)
-def cosine(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def cosine(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   corr = correlation(u, v, w=w, centered=False)
   return jnp.clip(corr, 0.0, 2.0)
 
 
 @_wraps(scipy.spatial.distance.euclidean)
-def euclidean(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def euclidean(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   return minkowski(u, v, p=2, w=w)
 
 
 @_wraps(scipy.spatial.distance.jensenshannon)
 def jensenshannon(
-  p: jax.Array,
-  q: jax.Array,
+  p: ArrayLike,
+  q: ArrayLike,
   base: int | None = None,
   *,
   axis: int = 0,
   keepdims: bool = False,
-) -> jax.Array:
+) -> Array:
   p = jnp.asarray(p)
   q = jnp.asarray(q)
 
@@ -215,8 +218,8 @@ def jensenshannon(
 
 @_wraps(scipy.spatial.distance.euclidean)
 def minkowski(
-  u: jax.Array, v: jax.Array, p: int = 2, w: jax.Array | None = None
-) -> jax.Array:
+  u: ArrayLike, v: ArrayLike, p: int = 2, w: ArrayLike | None = None
+) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
 
@@ -240,7 +243,7 @@ def minkowski(
 
 
 @_wraps(scipy.spatial.distance.mahalanobis)
-def mahalanobis(u: jax.Array, v: jax.Array, VI: jax.Array) -> jax.Array:
+def mahalanobis(u: ArrayLike, v: ArrayLike, VI: ArrayLike) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
   VI = jnp.atleast_2d(VI)
@@ -252,7 +255,7 @@ def mahalanobis(u: jax.Array, v: jax.Array, VI: jax.Array) -> jax.Array:
 
 
 @_wraps(scipy.spatial.distance.seuclidean)
-def seuclidean(u: jax.Array, v: jax.Array, V: jax.Array) -> jax.Array:
+def seuclidean(u: ArrayLike, v: ArrayLike, V: ArrayLike) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
   V = _validate_vector(V, dtype=jnp.float64)
@@ -265,7 +268,7 @@ def seuclidean(u: jax.Array, v: jax.Array, V: jax.Array) -> jax.Array:
 
 
 @_wraps(scipy.spatial.distance.sqeuclidean)
-def sqeuclidean(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def sqeuclidean(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   utype, vtype = None, None
   if not (hasattr(u, "dtype") and jnp.issubdtype(u.dtype, jnp.inexact)):
     utype = jnp.float64
@@ -286,7 +289,7 @@ def sqeuclidean(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.A
 
 
 @_wraps(scipy.spatial.distance.dice)
-def dice(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def dice(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
 
@@ -308,7 +311,7 @@ def dice(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
 
 
 @_wraps(scipy.spatial.distance.hamming)
-def hamming(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def hamming(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
   if w is not None:
@@ -318,7 +321,7 @@ def hamming(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array
 
 
 @_wraps(scipy.spatial.distance.jaccard)
-def jaccard(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def jaccard(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
 
@@ -340,7 +343,7 @@ def jaccard(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array
 
 
 @_wraps(scipy.spatial.distance.kulczynski1)
-def kulczynski1(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def kulczynski1(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
   if w is not None:
@@ -352,7 +355,7 @@ def kulczynski1(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.A
 
 
 @_wraps(scipy.spatial.distance.rogerstanimoto)
-def rogerstanimoto(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def rogerstanimoto(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
   if w is not None:
@@ -366,7 +369,7 @@ def rogerstanimoto(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> ja
 
 
 @_wraps(scipy.spatial.distance.russellrao)
-def russellrao(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def russellrao(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
 
@@ -385,7 +388,7 @@ def russellrao(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Ar
 
 
 @_wraps(scipy.spatial.distance.sokalmichener)
-def sokalmichener(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def sokalmichener(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
   if w is not None:
@@ -399,7 +402,7 @@ def sokalmichener(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax
 
 
 @_wraps(scipy.spatial.distance.sokalsneath)
-def sokalsneath(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def sokalsneath(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
 
@@ -423,7 +426,7 @@ def sokalsneath(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.A
 
 
 @_wraps(scipy.spatial.distance.yule)
-def yule(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
+def yule(u: ArrayLike, v: ArrayLike, w: ArrayLike | None = None) -> Array:
   u = _validate_vector(u)
   v = _validate_vector(v)
   if w is not None:
@@ -436,3 +439,52 @@ def yule(u: jax.Array, v: jax.Array, w: jax.Array | None = None) -> jax.Array:
     return half_R
   else:
     return 2.0 * half_R / (ntt * nff + half_R)
+
+
+@_wraps(scipy.spatial.distance.directed_hausdorff)
+def directed_hausdorff(u: ArrayLike, v: ArrayLike, seed: int = 0) -> Array:
+  # TODO
+  return jnp.double(0.0)
+
+
+@_wraps(scipy.spatial.distance.cdist)
+def cdist(
+  XA: ArrayLike,
+  XB: ArrayLike,
+  metric: Callable | str = "euclidean",
+  *,
+  out: ArrayLike | None = None,
+  **kwargs,
+) -> Array:
+  # TODO: validate inputs
+  # TODO: use out parameter
+
+  if callable(metric):
+    # TODO: validate callable
+    metric_fn = metric
+  elif isinstance(metric, str):
+    metric_fn = locals()[metric]
+  else:
+    raise TypeError("metric must be a callable or a string.")
+
+  metric_fn_partial = partial(metric_fn, **kwargs)
+
+  return jax.vmap(lambda xa: jax.vmap(lambda xb: metric_fn_partial(xa, xb))(XB))(XA)
+
+
+@_wraps(scipy.spatial.distance.pdist)
+def pdist(
+  X: ArrayLike,
+  metric: Callable | str = "euclidean",
+  *,
+  out: ArrayLike | None = None,
+  **kwargs
+) -> Array:
+  # TODO
+  return jnp.double(0.0)
+
+
+@_wraps(scipy.spatial.distance.squareform)
+def squareform(X: ArrayLike, force: str = "no", checks: bool = True) -> Array:
+  # TODO
+  return jnp.double(0.0)
