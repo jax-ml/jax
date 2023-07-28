@@ -167,6 +167,7 @@ def lax_ops():
       ),
       op_record("is_finite", 1, float_dtypes, test_util.rand_small),
       op_record("exp", 1, float_dtypes + complex_dtypes, test_util.rand_small),
+      op_record("exp2", 1, float_dtypes + complex_dtypes, test_util.rand_small),
       # TODO(b/142975473): on CPU, expm1 for float64 is only accurate to ~float32
       # precision.
       op_record(
