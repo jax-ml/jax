@@ -285,6 +285,12 @@ KernelCall::Parameter::FromProto(
     case TritonKernelCall_Parameter::kU64:
       param.value = proto.u64();
       break;
+    case TritonKernelCall_Parameter::kF32:
+      param.value = proto.f32();
+      break;
+    case TritonKernelCall_Parameter::kF64:
+      param.value = proto.f64();
+      break;
     default:
       return absl::InvalidArgumentError("Unknown scalar parameter type.");
   }
@@ -306,9 +312,13 @@ jax_triton::TritonKernelCall_Parameter KernelCall::Parameter::ToProto() const {
     proto.set_u32(std::get<uint32_t>(value));
   } else if (std::holds_alternative<int64_t>(value)) {
     proto.set_i64(std::get<int64_t>(value));
-  } else {
-    CHECK(std::holds_alternative<uint64_t>(value));
+  } else if (std::holds_alternative<uint64_t>(value)) {
     proto.set_u64(std::get<uint64_t>(value));
+  } else if (std::holds_alternative<float>(value)) {
+    proto.set_f32(std::get<float>(value));
+  } else {
+    CHECK(std::holds_alternative<double>(value));
+    proto.set_f64(std::get<double>(value));
   }
   return proto;
 }

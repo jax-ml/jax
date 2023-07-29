@@ -39,7 +39,7 @@ PYBIND11_MODULE(_triton, m) {
   m.def("create_scalar_parameter",
         [](py::bool_ value,
            std::string_view dtype) -> absl::StatusOr<KernelCall::Parameter> {
-          if ((dtype == "int1") || (dtype == "B")) {
+          if ((dtype == "i1") || (dtype == "B")) {
             return KernelCall::Parameter{static_cast<bool>(value)};
           } else {
             return absl::InvalidArgumentError(std::string("unknown dtype: ") +
@@ -58,6 +58,19 @@ PYBIND11_MODULE(_triton, m) {
             return KernelCall::Parameter{static_cast<int64_t>(value)};
           } else if (dtype == "u64") {
             return KernelCall::Parameter{static_cast<uint64_t>(value)};
+          } else {
+            return absl::InvalidArgumentError(std::string("unknown dtype: ") +
+                                              dtype.data());
+          }
+        });
+
+  m.def("create_scalar_parameter",
+        [](py::float_ value,
+           std::string_view dtype) -> absl::StatusOr<KernelCall::Parameter> {
+          if (dtype == "fp32") {
+            return KernelCall::Parameter{static_cast<float>(value)};
+          } else if (dtype == "fp64") {
+            return KernelCall::Parameter{static_cast<double>(value)};
           } else {
             return absl::InvalidArgumentError(std::string("unknown dtype: ") +
                                               dtype.data());

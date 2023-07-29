@@ -25,6 +25,8 @@ message TritonKernelCall {
       uint32 u32 = 4;
       int64 i64 = 5;
       uint64 u64 = 6;
+      float f32 = 7;
+      double f64 = 8;
     }
   }
 

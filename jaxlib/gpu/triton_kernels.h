@@ -56,7 +56,9 @@ class KernelCall {
         const jax_triton::TritonKernelCall_Parameter& proto);
     jax_triton::TritonKernelCall_Parameter ToProto() const;
 
-    std::variant<Array, bool, int32_t, uint32_t, int64_t, uint64_t> value;
+    std::variant<Array, bool, int32_t, uint32_t, int64_t, uint64_t, float,
+                 double>
+        value;
   };
 
   KernelCall(Kernel kernel, uint32_t grid_0, uint32_t grid_1, uint32_t grid_2,
