@@ -595,6 +595,12 @@ class VectorLayoutInferer {
       auto some_layout = getLayout(op.getSource());
       TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
       auto &layout = *some_layout;
+      if (layout.implicit_dim() == ImplicitDim::kSecondMinor &&
+          src_ty.getDimSize(src_ty.getRank() - 2) == 1) {
+        // Treat the layout as a 2D layout if possible.
+        layout = VectorLayout(layout.bitwidth(), layout.offsets(),
+                              layout.tiling(), ImplicitDim::kNone);
+      }
       TPU_CHECK_OP(layout.implicit_dim() == ImplicitDim::kNone,
                    "expected 2D layout");
       auto src_tiled_shape = src_ty.getShape().take_back(2);

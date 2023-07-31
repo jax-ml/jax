@@ -1348,7 +1348,7 @@ def _elementwise_op_rule(factory,  # pylint: disable=missing-function-docstring
   ty = ir.VectorType(op.result.type)
   check(all(isinstance(l, type(layout_out)) for l in layout_in),
         "inconsistent layout kinds in elementwise operation")
-  check(all(l.generalizes(layout_out) for l in layout_in),
+  check(all(l.generalizes(layout_out, ty.shape) for l in layout_in),
         "incompatible layouts in elementwise operation")
   in_tile_arrays = [disassemble(l, o) for l, o in zip(layout_in, op.operands)]
   # Note that we have to broadcast to handle replicate dimensions.
@@ -2351,16 +2351,19 @@ def _vector_multi_reduction_rule(  # pylint: disable=missing-function-docstring
       if reduce_over == LANES:
         outer = (*batch_ix, six)
         reduced_ix = lix
+        last_reduced_ix = source_tiles.shape[-1] - 1
       else:
         assert reduce_over == SUBLANES
         outer = (*batch_ix, lix)
         reduced_ix = six
-      partial = tpu.AllReduceOp(
-          tile, ir.IntegerAttr.get(i64(), vdim), tpu_kind)
+        last_reduced_ix = source_tiles.shape[-2] - 1
       if reduced_ix == 0:
-        new_acc = partial
+        new_acc = tile
       else:
-        new_acc = pointwise(result_tiles[outer], partial)
+        new_acc = pointwise(result_tiles[outer], tile)
+      if reduced_ix == last_reduced_ix:
+        new_acc = tpu.AllReduceOp(
+            new_acc, ir.IntegerAttr.get(i64(), vdim), tpu_kind)
       result_tiles[outer] = new_acc
     return ctx.replace(op, assemble(op.result.type, layout_out, result_tiles))
   raise NotImplementedError(f"unsupported layout: {src_layout}")
