@@ -173,7 +173,15 @@ class Config:
 
   def complete_absl_config(self, absl_flags):
     for name, _ in self.values.items():
-      flag = absl_flags.FLAGS[name]
+      try:
+        flag = absl_flags.FLAGS[name]
+      except KeyError:
+        # This can happen if a new flag was added after config_with_absl() was
+        # called, but before complete_absl_config was run. We could in principle
+        # add code to DEFINE_... to register any newly added flags with ABSL
+        # if config_with_absl() has already been called, but arguably the user
+        # should have called config_with_absl() later.
+        continue
       if flag.present:
         self.update(name, flag.value)
 
