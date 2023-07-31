@@ -1697,6 +1697,36 @@ def _scf_yield_rule(  # pylint: disable=missing-function-docstring
   return ctx.set_operands(op.operation, unrolled)
 
 
+@_register_rule("tpu.load")
+def _tpu_load_rule(
+    ctx: RewriteContext,
+    op: tpu.LoadOp,
+    layout_in: Sequence[Layout],
+    layout_out: VectorLayout,
+):
+  assert all(li is None for li in layout_in)
+  ty = ir.VectorType(op.result.type)
+
+  # We expect the result is already a native-sized vreg.
+  if layout_out.bitwidth != 32:
+    raise NotImplementedError("Only 32-bit loads supported")
+  assert layout_out == VectorLayout(32, (0, 0), TARGET_SHAPE, None)
+
+  indices = [get_int_const(v, "tpu.load index") for v in op.indices]
+  if indices[1] % TARGET_SHAPE.lanes:
+    raise NotImplementedError(
+        f"Lane index is not a multiple of {TARGET_SHAPE.lanes}"
+    )
+
+  tile = tpu.LoadOp(
+      ty,
+      op.base,
+      op.indices,
+      op.sublane_mask,
+      sublane_stride=op.sublane_stride,
+  )
+  return ctx.replace(op, assemble(ty, layout_out, np.asarray([[tile]])))
+
 @_register_rule("tpu.trace")
 def _tpu_trace_rule(ctx: RewriteContext, op: tpu.TraceOp,  # pylint: disable=missing-function-docstring
                     layout_in: Layout, layout_out: Layout):

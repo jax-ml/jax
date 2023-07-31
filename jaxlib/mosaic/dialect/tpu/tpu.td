@@ -37,6 +37,19 @@ class TPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
   let mnemonic = mnemonic_;
 }
 
+def TPU_Vreg : Type<
+  And<[IsVectorTypePred,
+       Or<[
+        And<[
+          CPred<"llvm::cast<::mlir::VectorType>($_self).getShape() == ArrayRef<int64_t>{8, 128}">,
+          CPred<"llvm::cast<::mlir::VectorType>($_self).getElementType().getIntOrFloatBitWidth() == 32">
+        ]>,
+        CPred<"::llvm::cast<::mlir::VectorType>($_self).getShape() == ArrayRef<int64_t>{"
+          "8, 128, 32 / ::llvm::cast<::mlir::VectorType>($_self).getElementType().getIntOrFloatBitWidth()}">,
+       ]>
+      ]>,
+  "native-sized vreg", "::mlir::VectorType">;
+
 class TPU_Type<string name, string mnemonic_, list<Trait> traits = []>
     : TypeDef<TPU_Dialect, name, traits> {
   let mnemonic = mnemonic_;
@@ -135,10 +148,9 @@ def TPU_AllReduceOp : TPU_Op<"all_reduce", [Pure, SameOperandsAndResultType]> {
   }];
 }
 
-// TODO(apaszke): Verify that stores are of native size and are aligned.
 def TPU_StoreOp : TPU_Op<"store", [AttrSizedOperandSegments]> {
   let arguments = (ins
-    AnyType:$valueToStore,
+    TPU_Vreg:$valueToStore,
     AnyType:$base,
     Variadic<Index>:$indices,
     DenseBoolArrayAttr:$sublane_mask,
@@ -150,16 +162,16 @@ def TPU_StoreOp : TPU_Op<"store", [AttrSizedOperandSegments]> {
   }];
 }
 
-// TODO(apaszke): Verify that loads are of native size and are aligned.
 def TPU_LoadOp : TPU_Op<"load"> {
   let arguments = (ins
     AnyType:$base,
     Variadic<Index>:$indices,
-    DenseBoolArrayAttr:$sublane_mask
+    DenseBoolArrayAttr:$sublane_mask,
+    OptionalAttr<I32Attr>:$sublane_stride  // In sublane-sized units
   );
-  let results = (outs AnyType:$result);
+  let results = (outs TPU_Vreg:$result);
   let assemblyFormat = [{
-    $base `[` $indices `]` `sublanes` $sublane_mask attr-dict `:` type($base) `,` type($result)
+    $base `[` $indices `]` `sublanes` $sublane_mask (`sublane_stride` $sublane_stride^)? attr-dict `:` type($base) `,` type($result)
   }];
 }
 

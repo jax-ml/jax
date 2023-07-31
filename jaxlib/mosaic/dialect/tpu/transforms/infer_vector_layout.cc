@@ -208,6 +208,10 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::LoadOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<tpu::EraseLayoutOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -526,6 +530,21 @@ class VectorLayoutInferer {
     setInLayout(then_yield, result_layout);
     setInLayout(else_yield, result_layout);
     setOutLayout(op, result_layout);
+    return success();
+  }
+
+  LogicalResult infer(tpu::LoadOp op) {
+    auto res_ty = op.getResult().getType();
+    int8_t bitwidth = res_ty.getElementTypeBitWidth();
+
+    // We expect the result is already a native-sized vreg.
+    TPU_CHECK_OP(bitwidth == 32 && res_ty.getShape()[0] == target_shape_[0] &&
+                     res_ty.getShape()[1] == target_shape_[1],
+                 "Only 32-bit loads suppored");
+    SmallVector<Layout, 4> in_layout(op->getNumOperands(), kNoLayout);
+    auto out_layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
+                                   ImplicitDim::kNone);
+    setLayout(op, in_layout, out_layout);
     return success();
   }
 
