@@ -194,8 +194,6 @@ def call_tf(
 
     # Prepare a tf.function ahead of time, to cache the concrete functions. This
     # won't be used in op-by-op execution mode.
-    # `jit_compile` is not enabled when `call_tf_graph` is True, since the
-    # custom call function won't be compilable.
     function_flat_tf = tf.function(
         callable_flat_tf, autograph=False, jit_compile=not call_tf_graph)
 
@@ -422,18 +420,11 @@ def _call_tf_abstract_eval(
   # there is a small cost of calling it more often than needed.
   concrete_function_flat_tf = _get_concrete_function_tf(function_flat_tf,
                                                         args_flat_sig_tf)
-  # TODO(b/278298710): when `call_tf_graph=True` for non-compilable tf function,
-  # Tensorflow shape inference is not supported and the concrete function has
-  # no structured output shapes attributes sometimes.
-  # So users always need provide output_shape_dtypes. However, in some case if
-  # In the case that the tf.function has no return value, the `output_shape_dtype` should be  `None`
+
+  # In the case that the tf.function has no return value
   if len(concrete_function_flat_tf.outputs) == 0:
     return tuple(), effects
 
-  if call_tf_graph and output_avals is None:
-    raise ValueError(
-        "call_tf with `call_tf_graph=True` must provide output_shape_dtype"
-        " arg.")
   if output_avals is not None:
     return output_avals, effects
 
@@ -644,7 +635,7 @@ def emit_tf_embedded_graph_custom_call(
       "has_token_input_output": ir.BoolAttr.get(ordered),
       "called_index": mlir.i64_attr(called_index),
   }
-  result_avals = output_avals if output_avals is not None else tuple()
+  result_avals = ctx.avals_out if ctx.avals_out is not None else tuple()
 
   operands = list(operands)
   result_types = list(
