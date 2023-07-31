@@ -212,6 +212,10 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::StoreOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<tpu::EraseLayoutOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -545,6 +549,23 @@ class VectorLayoutInferer {
     auto out_layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
                                    ImplicitDim::kNone);
     setLayout(op, in_layout, out_layout);
+    return success();
+  }
+
+  LogicalResult infer(tpu::StoreOp op) {
+    auto store_ty = op.getValueToStore().getType();
+    int8_t bitwidth = store_ty.getElementTypeBitWidth();
+
+    // We expect the value to store is already a native-sized vreg.
+    TPU_CHECK_OP(bitwidth == 32 &&
+                     store_ty.getShape()[0] == target_shape_[0] &&
+                     store_ty.getShape()[1] == target_shape_[1],
+                 "Only 32-bit stores suppored");
+    auto store_layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
+                                     ImplicitDim::kNone);
+    SmallVector<Layout, 5> in_layout{store_layout};
+    in_layout.insert(in_layout.end(), op.getIndices().size() + 1, kNoLayout);
+    setInLayout(op, in_layout);
     return success();
   }
 

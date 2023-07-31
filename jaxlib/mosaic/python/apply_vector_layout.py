@@ -1727,6 +1727,41 @@ def _tpu_load_rule(
   )
   return ctx.replace(op, assemble(ty, layout_out, np.asarray([[tile]])))
 
+
+@_register_rule("tpu.store")
+def _tpu_store_rule(  # pylint: disable=missing-function-docstring
+    ctx: RewriteContext,
+    op: tpu.StoreOp,
+    layout_in: Sequence[Layout],
+    layout_out: None,  # pylint: disable=unused-argument
+):
+  to_store_layout, *other_layouts = layout_in
+  assert all(li is None for li in other_layouts)
+
+  # We expect the value to store is already a native-sized vreg.
+  if to_store_layout.bitwidth != 32:
+    raise NotImplementedError("Only 32-bit stores supported")
+  assert to_store_layout == VectorLayout(32, (0, 0), TARGET_SHAPE, None)
+
+  indices = [get_int_const(v, "tpu.store index") for v in op.indices]
+  if indices[1] % TARGET_SHAPE.lanes:
+    raise NotImplementedError(
+        f"Lane index is not a multiple of {TARGET_SHAPE.lanes}"
+    )
+
+  tiles = disassemble(to_store_layout, op.valueToStore)
+  assert tiles.shape == (1, 1)
+  tpu.StoreOp(
+      tiles[0][0],
+      op.base,
+      op.indices,
+      op.sublane_mask,
+      mask=op.mask,
+      sublane_stride=op.sublane_stride,
+  )
+  return ctx.erase(op)
+
+
 @_register_rule("tpu.trace")
 def _tpu_trace_rule(ctx: RewriteContext, op: tpu.TraceOp,  # pylint: disable=missing-function-docstring
                     layout_in: Layout, layout_out: Layout):

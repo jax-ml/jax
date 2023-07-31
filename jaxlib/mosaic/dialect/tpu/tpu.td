@@ -154,11 +154,12 @@ def TPU_StoreOp : TPU_Op<"store", [AttrSizedOperandSegments]> {
     AnyType:$base,
     Variadic<Index>:$indices,
     DenseBoolArrayAttr:$sublane_mask,
-    Optional<AnyType>:$mask
+    Optional<AnyType>:$mask,
+    OptionalAttr<I32Attr>:$sublane_stride  // In sublane-sized units
   );
   let results = (outs);
   let assemblyFormat = [{
-    $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? `sublanes` $sublane_mask attr-dict `:` type($base) `,` type($valueToStore) `,` type($mask)
+    $base `[` $indices `]` `,` $valueToStore (`masked` $mask^)? `sublanes` $sublane_mask  (`sublane_stride` $sublane_stride^)? attr-dict `:` type($base) `,` type($valueToStore) `,` type($mask)
   }];
 }
 
