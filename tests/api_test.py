@@ -528,6 +528,32 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     f(inp1=x)
     self.assertDeleted(x)
 
+  def test_donate_args_info_aot(self):
+    def fn(x, y):
+      return jax.tree_map(lambda i: i * 2, x), y * 2
+
+    x = jax.device_put({"A": np.array(1.0), "B": np.array(2.0)},
+                       jax.devices()[0])
+    y = jax.device_put(np.array(3.0), jax.devices()[0])
+
+    f = jax.jit(fn, donate_argnums=1)
+    lowered = f.lower(x, y)
+    args_info = lowered.args_info[0]
+    # x is not donated.
+    self.assertFalse(args_info[0]['A'].donated)
+    self.assertFalse(args_info[0]['B'].donated)
+    # y is donated.
+    self.assertTrue(args_info[1].donated)
+
+    g = jax.jit(fn, donate_argnums=0)
+    lowered = g.lower(x, y)
+    args_info = lowered.args_info[0]
+    # x is donated.
+    self.assertTrue(args_info[0]['A'].donated)
+    self.assertTrue(args_info[0]['B'].donated)
+    # y is not donated.
+    self.assertFalse(args_info[1].donated)
+
   def test_intersecting_static_and_donate_argnames(self):
     with self.assertRaisesRegex(
         ValueError, "static_argnames and donate_argnames cannot intersect"):

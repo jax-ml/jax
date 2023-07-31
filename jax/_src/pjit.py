@@ -335,7 +335,7 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
     _experimental_override_lowering_rules = kwargs.pop(
         '_experimental_override_lowering_rules', None)
     (args_flat, flat_global_in_avals, params, in_tree, out_tree,
-     donate_argnums) = infer_params_fn(*args, **kwargs)
+     donated_invars) = infer_params_fn(*args, **kwargs)
     resource_env = params['resource_env']
     mesh = None if resource_env is None else resource_env.physical_mesh
     try:
@@ -361,6 +361,7 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
     else:
       args_kwargs_in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
 
+    donate_argnums = tuple(i for i, d in enumerate(donated_invars) if d)
     return stages.Lowered.from_flat_info(
         lowering, args_kwargs_in_tree, flat_global_in_avals, donate_argnums,
         out_tree)
@@ -443,6 +444,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
         donate_argnums, donate_argnames, dyn_args, dyn_kwargs)
   else:
     donated_invars = (False,) * len(explicit_args)
+  del donate_argnums, donate_argnames
 
   # If backend or device is set as an arg on jit, then resolve them to
   # in_shardings and out_shardings as if user passed in in_shardings
@@ -520,7 +522,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
       inline=inline,
   )
   return (consts + args_flat, in_type, params, in_tree, out_tree(),
-          donate_argnums)
+          donated_invars)
 
 def _extract_implicit_args(
   in_type: Sequence[tuple[core.AbstractValue, bool]],
