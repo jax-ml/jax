@@ -510,6 +510,9 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(y)
     self.assertDeleted(z)
 
+  def test_resolve_argnums_signature_fail(self):
+    api_util.resolve_argnums(int, None, None, None, None)  # doesn't crash
+
   def test_donate_argnames_with_args(self):
     @partial(jax.jit, donate_argnames='inp1')
     def f(inp1):

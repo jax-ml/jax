@@ -522,6 +522,8 @@ def resolve_argnums(
     if donate_argnames is not None:
       raise ValueError(f"Getting the signature of function {fun} failed. "
                        "Pass donate_argnums instead of donate_argnames.") from e
+    assert donate_argnames is None
+    donate_argnames = ()
   else:
     # Infer argnums and argnames according to docstring
     # If nums is None and names is not None, then nums are inferred from the
