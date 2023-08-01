@@ -60,7 +60,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -1209,12 +1208,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_jit_lower_compile_cost_analysis(self):
     f = self.jit(lambda x: x).lower(1.).compile()
     g = self.jit(lambda x: x + 4).lower(1.).compile()
-    if xla_extension_version >= 164:
-      self.assertIsNotNone(f.cost_analysis())
-      self.assertIsNotNone(g.cost_analysis())
-    else:
-      f.cost_analysis()  # doesn't raise
-      g.cost_analysis()  # doesn't raise
+    self.assertIsNotNone(f.cost_analysis())
+    self.assertIsNotNone(g.cost_analysis())
 
   @jtu.skip_on_xla_cpu_mlir
   def test_jit_lower_compile_memory_analysis(self):
@@ -1283,8 +1278,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIn("jax.result_info = \"['a']\"", mhlo_str)
     self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
 
-  @unittest.skipIf(xla_extension_version < 171,
-                   'Test requires xla_extension_version >= 171')
   def test_jit_lower_compile_with_compiler_options(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.

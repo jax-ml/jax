@@ -842,11 +842,6 @@ def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
 
 def call_exported(exported: Exported) -> Callable[..., jax.Array]:
 
-  if (exported.serialization_version >= 7 and
-      exported.uses_shape_polymorphism):
-    if xla_client.mlir_api_version < 52:
-      raise NotImplementedError(
-        "Current jaxlib does not support shape polymorphism with serialization version >= 7")
   @jax.custom_vjp
   def f_flat(*args_flat):
     return call_exported_p.bind(*args_flat, exported=exported)

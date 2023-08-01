@@ -22,7 +22,6 @@ import numpy as np
 
 from jax._src.config import config
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
@@ -196,10 +195,7 @@ def _hash_compile_options(hash_obj, compile_options_obj):
 
 
 def _hash_executable_build_options(hash_obj, executable_obj):
-  if xla_extension_version > 165:
-    expected_options = 11
-  else:
-    expected_options = 10
+  expected_options = 11
   # Ignore private and built-in methods. These can unexpectedly change and lead
   # to false positives, e.g. when different Python versions include different
   # built-ins.
@@ -228,7 +224,7 @@ def _hash_executable_build_options(hash_obj, executable_obj):
   _hash_bool_list(
       hash_obj, executable_obj.allow_spmd_sharding_propagation_to_output
   )
-  if xla_extension_version > 165 and executable_obj.fdo_profile is not None:
+  if executable_obj.fdo_profile is not None:
     _hash_string(hash_obj, executable_obj.fdo_profile)
 
 

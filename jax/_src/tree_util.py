@@ -26,7 +26,6 @@ import warnings
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
-from jax._src.lib import xla_extension_version
 from jax._src.util import safe_zip
 from jax._src.util import unzip2
 
@@ -41,14 +40,11 @@ PyTreeDef = pytree.PyTreeDef
 
 # TODO(phawkins): make this unconditional when jaxlib 0.4.14 is the minimum.
 default_registry: pytree.PyTreeRegistry | None
-if xla_extension_version >= 169:
-  default_registry = pytree.default_registry()
-  # Set __module__ and __name__, which allow this registry to be pickled by
-  # reference.
-  default_registry.__module__ = __name__
-  default_registry.__name__ = "default_registry"
-else:
-  default_registry = None
+default_registry = pytree.default_registry()
+# Set __module__ and __name__, which allow this registry to be pickled by
+# reference.
+default_registry.__module__ = __name__
+default_registry.__name__ = "default_registry"
 
 def tree_flatten(tree: Any,
                  is_leaf: Callable[[Any], bool] | None = None

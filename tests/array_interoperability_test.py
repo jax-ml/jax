@@ -21,7 +21,6 @@ from jax import config
 import jax.dlpack
 import jax.numpy as jnp
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version
 
 import numpy as np
 
@@ -164,7 +163,6 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertAllClose(x_np, x_jax)
 
 
-@unittest.skipIf(xla_extension_version < 163, "Test requires jaxlib 0.4.13")
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
   def setUp(self):

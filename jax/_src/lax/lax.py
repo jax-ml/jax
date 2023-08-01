@@ -4194,9 +4194,6 @@ top_k_p.def_abstract_eval(_top_k_abstract_eval)
 def _top_k_lower(ctx, operand, k):
   if core.is_constant_dim(k):
     return chlo.TopKOp(operand, mlir.i64_attr(k)).results
-  if xla_client.mlir_api_version < 54:
-    # TODO: https://github.com/openxla/stablehlo/issues/1396
-    raise ValueError("native serialization with shape polymorphism not implemented for top_k")
   k_value, = mlir.eval_dynamic_shape_as_vals(ctx, (k,))
   out_values_aval, out_indices_aval, = ctx.avals_out
   return mlir.custom_call(

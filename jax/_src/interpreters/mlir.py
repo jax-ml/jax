@@ -41,10 +41,8 @@ from jax._src import xla_bridge as xb
 from jax._src.config import config
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
-from jax._src.lib import mlir_api_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -972,10 +970,7 @@ def lower_jaxpr_to_fun(
                             in zip(replicated_args, input_types)]
       for attrs, replicated in zip(arg_attrs, util.flatten(replicated_ir_args)):
         if replicated:
-          if xla_extension_version < 172:
-            attrs["mhlo.is_same_data_across_replicas"] = ir.UnitAttr.get()
-          else:
-            attrs["mhlo.is_same_data_across_replicas"] = ir.BoolAttr.get(True)
+          attrs["mhlo.is_same_data_across_replicas"] = ir.BoolAttr.get(True)
 
     if use_sharding_annotations and ir_arg_shardings is not None:
       for attrs, sharding in zip(arg_attrs, ir_arg_shardings):
@@ -1000,12 +995,6 @@ def lower_jaxpr_to_fun(
       token_arg_attrs = arg_attrs[num_dim_vars:num_dim_vars + num_tokens]
       for attrs in token_arg_attrs:
         attrs["jax.token"] = ir.BoolAttr.get(True)
-
-    if mlir_api_version < 54 and arg_names:
-      named_arg_attrs = arg_attrs[num_dim_vars + num_tokens:]
-      for attrs, name_ in zip(named_arg_attrs, arg_names):
-        if name_:
-          attrs['jax.arg_info'] = ir.StringAttr.get(name_)
 
     func_op.arg_attrs = ir.ArrayAttr.get(
         [ir.DictAttr.get(attrs) for attrs in arg_attrs])
@@ -1032,7 +1021,7 @@ def lower_jaxpr_to_fun(
   func_op.result_attrs = ir.ArrayAttr.get(
       [ir.DictAttr.get(attrs) for attrs in result_attrs])
 
-  if mlir_api_version >= 54 and arg_names:
+  if arg_names:
     arg_locs = [ir.Location.unknown()] * (num_dim_vars + num_tokens)
     for n in arg_names:
       arg_locs.append(ir.Location.name(n) if n else ir.Location.unknown())
@@ -1907,14 +1896,9 @@ def _emit_tpu_python_callback(
                                    callback.__name__, sharding=sharding)
     outputs.append(out)
     recv_channels.append(channel)
-  if xla_extension_version < 161:
-    opaque = backend.make_python_callback_from_host_send_and_recv(
-        _wrapped_callback, operand_shapes, result_shapes, send_channels,
-        recv_channels)  # type: ignore  # pylint: disable=missing-parameter
-  else:
-    opaque = backend.make_python_callback_from_host_send_and_recv(
-        _wrapped_callback, operand_shapes, result_shapes, send_channels,
-        recv_channels, pickle_util.dumps)  # type: ignore  # pylint: disable=missing-parameter
+  opaque = backend.make_python_callback_from_host_send_and_recv(
+      _wrapped_callback, operand_shapes, result_shapes, send_channels,
+      recv_channels, pickle_util.dumps)  # type: ignore  # pylint: disable=missing-parameter
   ctx.module_context.add_host_callback(opaque)
   return outputs, token, opaque
 
@@ -2183,18 +2167,9 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
   shape polymorphism, runs shape refinement to resolve all the dynamic shapes.
   Then verifies that there are no more dynamic shapes in the module.
   """
-  if xc.mlir_api_version >= 53:
-    refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
-      module_to_bytecode(module), enable_shape_assertions=True,
-      validate_static_shapes=True)
-  elif xc.mlir_api_version == 52:
-    refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
-      module_to_bytecode(module), enable_shape_assertions=True)
-  elif xc.mlir_api_version >= 50:
-    refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
-      module_to_bytecode(module))
-  else:
-    raise NotImplementedError("refine_polymorphic_shapes needs jaxlib 0.4.12")
+  refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
+    module_to_bytecode(module), enable_shape_assertions=True,
+    validate_static_shapes=True)
 
   context = make_ir_context()
   with context:

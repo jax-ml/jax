@@ -28,7 +28,6 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.config import compilation_cache_include_metadata_in_key
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 import numpy as np
 
 
@@ -271,8 +270,7 @@ class CacheKeyTest(jtu.JaxTestCase):
     compile_options.executable_build_options.device_assignment = (
         device_assignment
     )
-    if xla_extension_version > 165:
-      compile_options.executable_build_options.fdo_profile = b"test_profile"
+    compile_options.executable_build_options.fdo_profile = b"test_profile"
     return compile_options
 
   def get_hashed_value(self, hash_function, hash_function_input):

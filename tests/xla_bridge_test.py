@@ -22,7 +22,6 @@ from absl.testing import absltest
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax.interpreters import xla
 
 from jax._src.config import config
@@ -51,13 +50,12 @@ class XlaBridgeTest(jtu.JaxTestCase):
                      expected_device_assignment)
 
   def test_set_fdo_profile(self):
-    if xla_extension_version > 166:
-      compile_options = xb.get_compile_options(
-          num_replicas=1, num_partitions=1, fdo_profile=b"test_profile"
-      )
-      self.assertEqual(
-          compile_options.executable_build_options.fdo_profile, "test_profile"
-      )
+    compile_options = xb.get_compile_options(
+        num_replicas=1, num_partitions=1, fdo_profile=b"test_profile"
+    )
+    self.assertEqual(
+        compile_options.executable_build_options.fdo_profile, "test_profile"
+    )
 
   def test_parameter_replication_default(self):
     c = xc.XlaBuilder("test")
@@ -125,10 +123,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertEqual(registration.priority, 400)
     self.assertTrue(registration.experimental)
     mock_plugin_loaded.assert_called_once_with("name1")
-    if xla_extension_version < 165:
-      mock_make.assert_called_once_with("name1", None)
-    else:
-      mock_make.assert_called_once_with("name1", None, None)
+    mock_make.assert_called_once_with("name1", None, None)
 
   def test_register_plugin_with_config(self):
     test_json_file_path = os.path.join(
@@ -149,27 +144,16 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertEqual(registration.priority, 400)
     self.assertTrue(registration.experimental)
     mock_plugin_loaded.assert_called_once_with("name1")
-    if xla_extension_version < 165:
-      mock_make.assert_called_once_with(
-          "name1",
-          {
-              "int_option": 64,
-              "int_list_option": [32, 64],
-              "string_option": "string",
-              "float_option": 1.0,
-          },
-      )
-    else:
-      mock_make.assert_called_once_with(
-          "name1",
-          {
-              "int_option": 64,
-              "int_list_option": [32, 64],
-              "string_option": "string",
-              "float_option": 1.0,
-          },
-          None,
-      )
+    mock_make.assert_called_once_with(
+        "name1",
+        {
+            "int_option": 64,
+            "int_list_option": [32, 64],
+            "string_option": "string",
+            "float_option": 1.0,
+        },
+        None,
+    )
 
 
 class GetBackendTest(jtu.JaxTestCase):

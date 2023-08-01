@@ -298,9 +298,6 @@ class JaxExportTest(jtu.JaxTestCase):
           ValueError,
           f"The requested jax_serialization version {v} is outside the range of supported versions"))
 
-      if (xc.mlir_api_version <= 51 and
-        config.jax_serialization_version >= 7):
-        raise unittest.SkipTest("Not supported in old jaxlib")
       exp = jax_export.export(jnp.sin)(
         jax_export.poly_spec((3, 4), np.float32, "w, h"))
       # Peek at the module
@@ -347,15 +344,10 @@ class JaxExportTest(jtu.JaxTestCase):
       arg_shape=(3, 4, 12), arg_dtype=np.float32,
       expect_error=None):  # If given, error from running the exported module
 
-    if xc.mlir_api_version <= 51:
-      raise unittest.SkipTest("Not supported in old jaxlib")
     def f(x):  # x: f32[poly_spec]
       return jnp.reshape(x, (-1, x.shape[1]))
 
-    if xc.mlir_api_version <= 51:
-      disabled_checks = (jax_export.DisabledSafetyCheck.shape_assertions(),)
-    else:
-      disabled_checks = ()
+    disabled_checks = ()
     exp_f = jax_export.export(f, disabled_checks=disabled_checks)(
         jax_export.poly_spec((3, 4, 12), np.float32, poly_spec))
     self.assertEqual(exp_f.uses_shape_polymorphism, poly_spec != "3,4,12")
@@ -453,8 +445,6 @@ class JaxExportTest(jtu.JaxTestCase):
       expect_error_outer_exp=None,
       expect_error_run=None):
     # Polymorphic export called with static or polymorphic shapes
-    if xc.mlir_api_version <= 51:
-      raise unittest.SkipTest("Not supported in old jaxlib")
     def inner(x):  # x: inner_poly_spec
       return jnp.reshape(x, (-1, x.shape[1]))
 

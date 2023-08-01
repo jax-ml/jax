@@ -40,7 +40,6 @@ from jax._src import distributed
 from jax._src import config as jax_config
 from jax._src.config import bool_env, config, int_env
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src import traceback_util
 from jax._src import util
 
@@ -132,7 +131,7 @@ def get_compile_options(
   build_options = compile_options.executable_build_options
   build_options.use_spmd_partitioning = use_spmd_partitioning
   build_options.use_auto_spmd_partitioning = use_auto_spmd_partitioning
-  if xla_extension_version > 165 and fdo_profile is not None:
+  if fdo_profile is not None:
     build_options.fdo_profile = fdo_profile
   if use_auto_spmd_partitioning:
     build_options.auto_spmd_partitioning_mesh_shape = auto_spmd_partitioning_mesh_shape
@@ -270,23 +269,13 @@ def make_gpu_client(
   if visible_devices != "all":
     allowed_devices = {int(x) for x in visible_devices.split(",")}
 
-  if xla_extension_version < 160:
-    return xla_client.make_gpu_client(
-        distributed_client=distributed.global_state.client,
-        node_id=distributed.global_state.process_id,
-        platform_name=platform_name,
-        allowed_devices=allowed_devices,
-    )
-  else:
-    # Remove `type: ignore` when the min jaxlib version (xla_extension_version)
-    # >= 160.
-    return xla_client.make_gpu_client(
-        distributed_client=distributed.global_state.client,
-        node_id=distributed.global_state.process_id,
-        num_nodes=distributed.global_state.num_processes,
-        platform_name=platform_name,
-        allowed_devices=allowed_devices,
-    )  # type: ignore
+  return xla_client.make_gpu_client(
+      distributed_client=distributed.global_state.client,
+      node_id=distributed.global_state.process_id,
+      num_nodes=distributed.global_state.num_processes,
+      platform_name=platform_name,
+      allowed_devices=allowed_devices,
+  )
 
 
 if hasattr(xla_client, "make_gpu_client"):
@@ -470,20 +459,17 @@ def register_plugin(
         )
       xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
 
-    if xla_extension_version < 165:
-      return xla_client.make_c_api_client(plugin_name, options)
-    else:
-      if distributed.global_state.client is None:
-        return xla_client.make_c_api_client(plugin_name, options, None)
-      distribute_options = {
-          'node_id': distributed.global_state.process_id,
-          'num_nodes': distributed.global_state.num_processes,
-      }
-      if options is not None:
-        distribute_options.update(options)
-      return xla_client.make_c_api_client(
-          plugin_name, distribute_options, distributed.global_state.client
-      )
+    if distributed.global_state.client is None:
+      return xla_client.make_c_api_client(plugin_name, options, None)
+    distribute_options = {
+        'node_id': distributed.global_state.process_id,
+        'num_nodes': distributed.global_state.num_processes,
+    }
+    if options is not None:
+      distribute_options.update(options)
+    return xla_client.make_c_api_client(
+        plugin_name, distribute_options, distributed.global_state.client
+    )
 
 
   logger.debug(

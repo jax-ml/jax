@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from functools import partial
-import unittest
 import glob
 import logging
 import math
@@ -26,7 +25,6 @@ from jax import config
 from jax._src import test_util as jtu
 from jax.sharding import NamedSharding
 from jax.experimental import profiler as exp_profiler
-from jax._src.lib import xla_extension_version
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 import numpy as np
@@ -37,8 +35,6 @@ config.parse_flags_with_absl()
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PgleTest(jtu.JaxTestCase):
 
-  @unittest.skipIf(xla_extension_version < 169,
-                   'Requires xla_extension_version >= 169')
   def testPassingFDOProfile(self):
     mesh = jtu.create_global_mesh((2,), ('x',))
     @partial(
