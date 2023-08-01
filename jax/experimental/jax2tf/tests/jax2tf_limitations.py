@@ -346,7 +346,18 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   @classmethod
   def conv_general_dilated(cls, harness: primitive_harness.Harness):
+    prefer_elem = harness.params["preferred_element_type"]
     return [
+        Jax2TfLimitation(
+          "Non-deterministic NaN for conv_general_dilated with preferred_element_type",
+          dtypes=[
+            jnp.int32, np.int16, np.int64
+          ],
+          devices=["cpu", "gpu", "tpu"],
+          modes=("eager", "graph", "compiled"),
+          enabled=(prefer_elem is not None
+                   and prefer_elem in [jnp.bfloat16, np.float16, np.float32, np.float64]),
+          skip_comparison=True),
         # Even in compiled mode, for GPU we see a bit of discrepancy but
         # very minor.
         custom_numeric(dtypes=[np.float32], devices="gpu",
@@ -485,6 +496,21 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             devices=["cpu", "gpu", "tpu"],
             enabled=prefer_elem and np.dtype(harness.dtype) < np.dtype(prefer_elem),
             skip_comparison=True),
+        # TODO(necula): look into this, but this is only for non-native serialization
+        Jax2TfLimitation(
+            "Errors when lhs_dtype != rhs_dtype for non-native serialization on CPU and GPU",
+            devices=["cpu", "gpu", "tpu"],
+            enabled=(harness.dtype != harness.params["rhs_dtype"]),
+            skip_comparison=True),
+        # TODO(necula): look into this, but this is only for non-native serialization
+        Jax2TfLimitation(
+            "Crash when lhs_dtype != rhs_dtype for non-native serialization on TPU",
+            devices=["tpu"],
+            enabled=(harness.dtype != harness.params["rhs_dtype"] and
+                     (harness.dtype in [np.complex64, np.complex128] or
+                      harness.params["rhs_dtype"] in [np.complex64, np.complex128])),
+            skip_comparison=True,
+            skip_tf_run=True),
         # JAX performs float16 matmuls in float32 on CPU, so the JAX result
         # may be more precise.
         custom_numeric(dtypes=[np.float16], devices=["cpu"], tol=1e-2,

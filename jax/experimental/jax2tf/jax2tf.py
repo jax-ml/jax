@@ -2049,6 +2049,19 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
                  _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray):
   """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""
+  # TODO(b/293247337): we ought to turn on this safety check, but this leads to
+  # failures. Since we are going to turn on native serializaton soon, wait
+  # until then to turn on this check.
+  # lhs_aval, rhs_aval = _in_avals
+  # if lhs_aval.dtype != rhs_aval.dtype:
+  #   # There are multiple kinds of errors: handling jnp.bfloat16 in xla.py and
+  #   # returning different result dtype than JAX expects for various combinations
+  #   # of types. We ought to implement the same workarounds as in the
+  #   # native dot_general lowering rules, but this is not a high priority now
+  #   # that we deprecate non-native serialization.
+  #   raise NotImplementedError(
+  #     "dot_general with different lhs_dtype and rhs_dtype is not supported "
+  #     "in non-native serialization")
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   dnums_proto = xla_data_pb2.DotDimensionNumbers()
   dnums_proto.lhs_contracting_dimensions.extend(lhs_contracting)
