@@ -773,8 +773,7 @@ pytype_library(
     srcs = ["experimental/mesh_utils.py"],
     visibility = ["//visibility:public"],
     deps = [
-        ":experimental",
-        ":jax",
+        ":xla_bridge",
     ],
 )
 

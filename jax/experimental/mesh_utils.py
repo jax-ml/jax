@@ -20,8 +20,8 @@ import itertools
 import logging
 from typing import Any, Callable, Optional
 
-import jax
 import numpy as np
+from jax._src import xla_bridge as xb
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +290,7 @@ def create_device_mesh(
     into jax.sharding.Mesh with good collective performance.
   """
   if devices is None:
-    devices = jax.devices()
+    devices = xb.devices()
   if np.prod(mesh_shape) != len(devices):
     raise ValueError(f'Number of devices {len(devices)} must equal the product '
                      f'of mesh_shape {mesh_shape}')
@@ -338,7 +338,7 @@ def create_hybrid_device_mesh(mesh_shape: Sequence[int],
     that can be fed into jax.sharding.Mesh for hybrid parallelism.
   """
   if devices is None:
-    devices = jax.devices()
+    devices = xb.devices()
   attr = 'process_index' if process_is_granule else 'slice_index'
   assert hasattr(devices[0], attr)
   granule_dict = collections.defaultdict(list)
