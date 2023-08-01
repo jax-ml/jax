@@ -59,7 +59,8 @@ from jax._src.sharding_impls import (
     XLADeviceAssignment, SingleDeviceSharding, PmapSharding,
     AUTO, UNSPECIFIED, UnspecifiedValue,
     ParsedPartitionSpec, SpecSync, get_single_pspec, is_auto, is_unspecified,
-    is_unspecified_or_auto, prepare_axis_resources, parse_flatten_op_sharding)
+    is_unspecified_or_auto, prepare_axis_resources, parse_flatten_op_sharding,
+    are_mem_kind_of_shardings_equal)
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
@@ -260,7 +261,6 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
     fun, cache_miss, static_argnums, static_argnames,  # type: ignore
     donate_argnums, tree_util.default_registry,  # type: ignore
     _get_cpp_global_cache(pjit_has_explicit_sharding))  # type: ignore
-
 
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
   cpp_pjitted_f._fun = fun
@@ -1092,6 +1092,14 @@ def _resolve_in_shardings(
             'https://jax.readthedocs.io/en/latest/jax_array_migration.html#handling-of-host-local-inputs-to-pjit-like-batch-etc. '
             f'Got arg shape: {arg.shape}, arg value: {arg}')
       if not is_unspecified(arg_s):
+        # jax.jit does not allow resharding across different memory kinds even
+        # if the argument is uncommitted. Use jax.device_put for those cases,
+        # either outside or inside jax.jit.
+        if not are_mem_kind_of_shardings_equal(pjit_in_s, arg_s):  # type: ignore
+          raise ValueError(
+              'Memory kinds passed to jax.jit does not match memory kind on the'
+              f' respective arg. Got pjit memory kind: {pjit_in_s.memory_kind}, '  # type: ignore
+              f'arg memory kind: {arg_s.memory_kind} for arg shape: {arg.shape}')  # type: ignore
         if (committed and
             not isinstance(arg_s, PmapSharding) and
             not op_shardings.are_op_shardings_equal(
@@ -1232,8 +1240,9 @@ class SameDeviceAssignmentTuple:
       s = getattr(s, "_original_sharding", s)
       o = getattr(o, "_original_sharding", o)
       if isinstance(s, GSPMDSharding) and isinstance(o, GSPMDSharding):
-        eq.append(op_shardings.are_op_shardings_equal(
-            s._hlo_sharding, o._hlo_sharding))
+        eq.append(
+            op_shardings.are_op_shardings_equal(s._hlo_sharding, o._hlo_sharding)
+            and are_mem_kind_of_shardings_equal(s, o))
       else:
         eq.append(s == o)
     return all(eq) and self.device_assignment == other.device_assignment
@@ -1944,7 +1953,8 @@ def to_gspmd_sharding(s: XLACompatibleSharding, ndim: int,
                       device_or_backend_set: bool = False) -> GSPMDSharding:
   if isinstance(s, GSPMDSharding):
     return s
-  gs = GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim))
+  gs = GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim),
+                      memory_kind=s.memory_kind)
   gs._original_sharding = s
   if device_or_backend_set:
     gs._original_sharding._device_backend = device_or_backend_set

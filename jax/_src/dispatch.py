@@ -345,6 +345,12 @@ def jaxpr_shardings(
         return PartitionSpec(*(names.get(i) for i in range(ndmin)))
       yield from ((NamedSharding(eqn.params['mesh'], _names_to_pspec(names)), source_info)
                   for names in [*eqn.params['in_names'], *eqn.params['out_names']])
+    elif eqn.primitive is device_put_p:
+      s = eqn.params['device']
+      if isinstance(s, XLACompatibleSharding) and s.memory_kind is not None:
+        source_info = SourceInfo(source_info_util.summarize(eqn.source_info),
+                                 eqn.primitive.name)
+        yield (s, source_info)
   for subjaxpr in core.subjaxprs(jaxpr):
     yield from jaxpr_shardings(subjaxpr)
 
@@ -699,5 +705,14 @@ ad.deflinear2(device_put_p, device_put_transpose_rule)
 batching.defvectorized(device_put_p)
 
 def _device_put_lowering(ctx, x, *, device, src):
+  # TODO(yashkatariya): Make sure `x`'s memory_kind is different from device's
+  # memory_kind. This should probably happen during jaxpr tracing?
+  if isinstance(device, XLACompatibleSharding) and device.memory_kind is not None:
+    aval, = ctx.avals_in
+    out_aval, = ctx.avals_out
+    x = mlir.wrap_with_memory_kind(x, device.memory_kind, out_aval)
+    x = mlir.wrap_with_sharding_op(
+        ctx, x, out_aval, device._to_xla_hlo_sharding(aval.ndim).to_proto())
+    return [x]
   return [x]
 mlir.register_lowering(device_put_p, _device_put_lowering)

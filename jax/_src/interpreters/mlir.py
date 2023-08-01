@@ -25,7 +25,7 @@ import itertools
 import operator
 import re
 import typing
-from typing import (Any, Callable, NamedTuple, Protocol, Union)
+from typing import Any, Callable, NamedTuple, Optional, Protocol, Union
 import warnings
 
 from jax._src import ad_util
@@ -643,6 +643,12 @@ def _to_logical_op_sharding(
   assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
   return sharding._to_xla_hlo_sharding(aval.ndim)
 
+def _get_mem_kind(s: Optional[XLACompatibleSharding]) -> Optional[str]:
+  if s is None:
+    return None
+  assert isinstance(s, sharding_impls.XLACompatibleSharding)
+  return s.memory_kind
+
 
 def lower_jaxpr_to_module(
     module_name: str,
@@ -712,6 +718,11 @@ def lower_jaxpr_to_module(
       map(_to_logical_op_sharding, jaxpr.out_avals, result_shardings)
       if result_shardings is not None else result_shardings)
 
+  arg_memory_kinds = (map(_get_mem_kind, arg_shardings)
+                      if arg_shardings is not None else arg_shardings)
+  result_memory_kinds = (map(_get_mem_kind, result_shardings)
+                         if result_shardings is not None else result_shardings)
+
   ctx = ModuleContext(backend_or_name, platform, axis_context, name_stack,
                       keepalives, channel_iter, host_callbacks,
                       override_lowering_rules=override_lowering_rules,
@@ -733,7 +744,9 @@ def lower_jaxpr_to_module(
         result_shardings=result_op_shardings,
         input_output_aliases=input_output_aliases,
         arg_names=arg_names,
-        result_names=result_names)
+        result_names=result_names,
+        arg_memory_kinds=arg_memory_kinds,
+        result_memory_kinds=result_memory_kinds)
 
   try:
     if not ctx.module.operation.verify():
@@ -839,6 +852,10 @@ def dummy_token_type() -> Sequence[ir.Type]:
 def dummy_token() -> Sequence[ir.Value]:
   return ir_constants(np.zeros(0, np.bool_))
 
+def account_for_tokens(num_tokens, orig, fill_value):
+    tokens = [fill_value] * num_tokens
+    return [*tokens, *orig]
+
 def lower_jaxpr_to_fun(
     ctx: ModuleContext,
     name: str,
@@ -855,8 +872,10 @@ def lower_jaxpr_to_fun(
     input_output_aliases: Sequence[int | None] | None = None,
     num_output_tokens: int = 0,
     api_name: str = "jit",
-    arg_names: Sequence[str | None] | None = None,
-    result_names: Sequence[str | None] | None = None,
+    arg_names: Optional[Sequence[Optional[str]]] = None,
+    result_names: Optional[Sequence[Optional[str]]] = None,
+    arg_memory_kinds: Optional[Sequence[Optional[str]]] = None,
+    result_memory_kinds: Optional[Sequence[Optional[str]]] = None,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -917,22 +936,31 @@ def lower_jaxpr_to_fun(
   input_types = [*dim_var_types, *token_types, *input_types]
   output_avals = [core.AbstractToken] * (len(output_token_types) + num_tokens) + jaxpr.out_avals
   output_types = [*output_token_types, *token_types, *output_types]
+
   if input_output_aliases is not None:
-    token_input_output_aliases = [None] * (num_dim_vars + num_tokens)
-    input_output_aliases = [*token_input_output_aliases, *input_output_aliases]
+    input_output_aliases = account_for_tokens(
+        num_dim_vars + num_tokens, input_output_aliases, None)
     # Update the existing aliases to account for the new output values
     input_output_aliases = [None if a is None
                             else a + num_output_tokens + num_tokens
-                            for a in input_output_aliases]
+                            for a in input_output_aliases]  # type: ignore
+
   if arg_shardings is not None:
-    token_shardings = [None] * (num_dim_vars + num_tokens)
-    arg_shardings = [*token_shardings, *arg_shardings]
+    arg_shardings = account_for_tokens(
+        num_dim_vars + num_tokens, arg_shardings, None)
   if result_shardings is not None:
-    token_shardings = [None] * (num_tokens + num_output_tokens)
-    result_shardings = [*token_shardings, *result_shardings]
+    result_shardings = account_for_tokens(
+        num_tokens + num_output_tokens, result_shardings, None)
   if replicated_args is not None:
-    token_replicated_args = [False] * (num_dim_vars + num_tokens)
-    replicated_args = [*token_replicated_args, *replicated_args]
+    replicated_args = account_for_tokens(
+        num_dim_vars + num_tokens, replicated_args, False)
+  if arg_memory_kinds is not None:
+    arg_memory_kinds = account_for_tokens(
+        num_dim_vars + num_tokens, arg_memory_kinds, None)
+  if result_memory_kinds is not None:
+    result_memory_kinds = account_for_tokens(
+        num_tokens + num_output_tokens, result_memory_kinds, None)
+
   flat_input_types = util.flatten(input_types)
   flat_output_types = util.flatten(output_types)
   ftype = ir.FunctionType.get(flat_input_types, flat_output_types)
@@ -940,6 +968,7 @@ def lower_jaxpr_to_fun(
   func_op.attributes["sym_visibility"] = ir.StringAttr.get(
       "public" if public else "private")
   ctx.symbol_table.insert(func_op)
+
   ir_arg_shardings = None
   if arg_shardings is not None:
     in_avals = [None] * (num_dim_vars + num_tokens) + list(jaxpr.in_avals)
@@ -947,6 +976,12 @@ def lower_jaxpr_to_fun(
         [[_to_physical_op_sharding(a, s)] * len(types)
          for a, s, types in zip(in_avals, arg_shardings, input_types)])
     del in_avals
+
+  ir_arg_memory_kinds = None
+  if arg_memory_kinds is not None:
+    ir_arg_memory_kinds = util.flatten(
+        [[mk] * len(types) for mk, types in zip(arg_memory_kinds, input_types)])
+
   ir_result_shardings = None
   if result_shardings is not None:
     out_avals = [None] * (num_tokens + num_output_tokens) + list(jaxpr.out_avals)
@@ -954,6 +989,11 @@ def lower_jaxpr_to_fun(
         [[_to_physical_op_sharding(a, s)] * len(types)
          for a, s, types in zip(out_avals, result_shardings, output_types)])
     del out_avals
+
+  ir_result_memory_kinds = None
+  if result_memory_kinds is not None:
+    ir_result_memory_kinds = util.flatten(
+        [[mk] * len(types) for mk, types in zip(result_memory_kinds, output_types)])
 
   if (
       replicated_args is not None
@@ -1043,7 +1083,13 @@ def lower_jaxpr_to_fun(
           a if s is None else wrap_with_sharding_op(entry_lowering_ctx, a, a_aval, s)
           for a, s, a_aval in zip(flat_args, ir_arg_shardings, input_avals)]
 
-    _, token_args, unflattened_args = util.split_list(util.unflatten(flat_args, map(len, input_types)),
+    if ir_arg_memory_kinds is not None:
+      flat_args = [
+          a if mk is None else wrap_with_memory_kind(a, mk, a_aval, is_inp=True)
+          for a, mk, a_aval in zip(flat_args, ir_arg_memory_kinds, input_avals)]
+
+    _, token_args, unflattened_args = util.split_list(
+        util.unflatten(flat_args, map(len, input_types)),
         [num_dim_vars, num_tokens])
     if create_tokens:
       tokens_in = TokenSet.create(effects)
@@ -1079,9 +1125,40 @@ def lower_jaxpr_to_fun(
           o if s is None else wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, s)
           for o, s, o_aval in zip(flat_outputs, ir_result_shardings, output_avals)]
 
+    if ir_result_memory_kinds is not None:
+      flat_outputs = [
+          o if mk is None else wrap_with_memory_kind(o, mk, o_aval)
+          for o, mk, o_aval in zip(flat_outputs, ir_result_memory_kinds, output_avals)]
+
     func_dialect.ReturnOp(flat_outputs)
 
   return func_op
+
+
+def get_compute_type(memory_kind):
+  if memory_kind == 'tpu_hbm':
+    return 'dense'
+  elif memory_kind == 'unpinned_host':
+    return 'host'
+  raise ValueError(f'Unknown memory_kind: {memory_kind}')
+
+
+def wrap_with_memory_kind(
+    x: ir.Value, memory_kind: str, aval_out: core.AbstractValue,
+    is_inp: bool = False):
+  if aval_out is None:
+    result_type = x.type
+  else:
+    result_type = aval_to_ir_type(aval_out)
+  op = custom_call("annotate_device_placement", [result_type], [x],
+                   has_side_effect=False,
+                   api_version=1)
+  mka = get_compute_type(memory_kind)
+  dict_attr = {"_xla_compute_type": ir.StringAttr.get(mka)}
+  if is_inp and mka == 'host':
+    dict_attr.update({"_xla_buffer_placement": ir.StringAttr.get("arg")})
+  op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
+  return op.result
 
 
 def _to_physical_op_sharding(

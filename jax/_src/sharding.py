@@ -90,6 +90,10 @@ class Sharding:
     """Returns the memory kind of the sharding."""
     raise NotImplementedError('Subclasses should implement this method.')
 
+  def with_memory_kind(self, kind: str) -> Sharding:
+    """Returns a new Sharding instance with the specified memory kind."""
+    raise NotImplementedError('Subclasses should implement this method')
+
   #############################################################################
   # Default implementations below that all subclasses will inherit.
 
