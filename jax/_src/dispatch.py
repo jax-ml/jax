@@ -663,9 +663,13 @@ def _device_put_impl(
       assert isinstance(s, XLACompatibleSharding)
       return _mcjax_reshard(x, s)
     if not s.is_fully_addressable:  # type: ignore
+      # TODO(yashkatariya,mattjj): Link to a doc about McJAX and jax.Array.
       raise ValueError(
-          "device_put's second argument must be a Device or a Sharding which "
-          f"represents addressable devices, but got {s}")
+          "device_put's second argument must be a Device or a Sharding which"
+          f" represents addressable devices, but got {s}. You are probably"
+          " trying to use device_put in multi-controller JAX which is not"
+          " supported. Please use jax.make_array_from_single_device_arrays API"
+          " or pass device or Sharding which represents addressable devices.")
     return _put_x(x, s, aval, True)
 
   # Only `Device` exists below. `Sharding` instance is handled above.
