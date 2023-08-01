@@ -15,6 +15,7 @@
 """JAX bindings for Mosaic."""
 
 # mypy: ignore-errors
+from __future__ import annotations
 
 import base64
 import collections.abc
@@ -29,6 +30,7 @@ from jax import core
 from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.config import config
+from jax._src.lib import xla_client
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import mhlo
 from jaxlib.mlir.dialects import stablehlo
@@ -38,7 +40,7 @@ import numpy as np
 
 # TODO(sharadmv): remove when minimum jaxlib version is bumped to >= 0.4.14.
 if tpu_mosaic is None:
-  raise ValueError("Cannot use Mosaic without a jaxlib >= 0.4.14.")
+  raise ImportError("Cannot use Mosaic without a jaxlib >= 0.4.14.")
 tpu = tpu_mosaic.tpu
 apply_vector_layout = tpu_mosaic.apply_vector_layout
 infer_memref_layout = tpu_mosaic.infer_memref_layout
@@ -244,7 +246,7 @@ def as_tpu_kernel(
     module: ir.Module,
     out_type: Any,
     *,
-    backend: str = "tpu",
+    backend: str | xla_client.Client = "tpu",
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   # We use jax.jit to make sure we hit the fast compilation cache.

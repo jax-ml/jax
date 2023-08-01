@@ -22,6 +22,8 @@ load(
     "jax_test_util_visibility",
     "jax_visibility",
     "mosaic_internal_users",
+    "pallas_gpu_internal_users",
+    "pallas_tpu_internal_users",
     "py_deps",
     "py_library_providing_imports_info",
     "pytype_library",
@@ -65,6 +67,20 @@ package_group(
     packages = [
         "//...",
     ] + mosaic_internal_users,
+)
+
+package_group(
+    name = "pallas_gpu_users",
+    packages = [
+        "//...",
+    ] + pallas_gpu_internal_users,
+)
+
+package_group(
+    name = "pallas_tpu_users",
+    packages = [
+        "//...",
+    ] + pallas_tpu_internal_users,
 )
 
 # JAX-private test utilities.
@@ -428,6 +444,52 @@ pytype_strict_library(
     deps = [
         "//jax/_src/lib",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "pallas",
+    srcs = glob(
+        [
+            "experimental/pallas/**/*.py",
+        ],
+        exclude = [
+            "experimental/pallas/gpu.py",
+            "experimental/pallas/tpu.py",
+        ],
+    ),
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        ":jax",
+        "//jax/_src/pallas",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "pallas_tpu",
+    srcs = ["experimental/pallas/tpu.py"],
+    visibility = [
+        ":pallas_tpu_users",
+    ],
+    deps = [
+        ":pallas",
+        "//jax/_src/pallas/mosaic",
+        "//jax/_src/pallas/mosaic:core",
+        "//jax/_src/pallas/mosaic:primitives",
+    ],
+)
+
+pytype_strict_library(
+    name = "pallas_gpu",
+    srcs = ["experimental/pallas/gpu.py"],
+    visibility = [
+        ":pallas_gpu_users",
+    ],
+    deps = [
+        ":pallas",
+        "//jax/_src/pallas/triton",
+    ],
 )
 
 pytype_strict_library(
