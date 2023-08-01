@@ -1973,7 +1973,7 @@ def _get_partition_spec(ppspec: Sequence[ParsedPartitionSpec]) -> Sequence[Parti
   return [get_single_pspec(p) for p in ppspec]
 
 
-def _get_op_sharding_from_executable(
+def get_op_sharding_from_executable(
     executable) -> tuple[Sequence[xc.OpSharding], Sequence[xc.OpSharding]]:
   in_op_shardings: list[xc.OpSharding] = []
   parameter_shardings_from_xla = executable.get_parameter_shardings()
@@ -1989,7 +1989,7 @@ def _get_op_sharding_from_executable(
 
 
 def _get_ppspec_from_executable(executable, mesh) -> tuple[Sequence[ParsedPartitionSpec], Sequence[ParsedPartitionSpec]]:
-  input_op_shardings, output_op_sharding = _get_op_sharding_from_executable(
+  input_op_shardings, output_op_sharding = get_op_sharding_from_executable(
       executable
   )
   in_ppspec: list[ParsedPartitionSpec] = []
@@ -2002,7 +2002,7 @@ def _get_ppspec_from_executable(executable, mesh) -> tuple[Sequence[ParsedPartit
   return in_ppspec, out_ppspec
 
 
-def _get_pspec_from_executable(
+def get_pspec_from_executable(
     executable, mesh: pxla.Mesh
 ) -> tuple[tuple[PartitionSpec, ...], tuple[PartitionSpec, ...]]:
   in_ppspec, out_ppspec = _get_ppspec_from_executable(executable, mesh)

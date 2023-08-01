@@ -2262,7 +2262,7 @@ def get_gspmd_shardings_from_executable(
     num_in_avals: int, num_out_avals: int
 ) -> tuple[Sequence[sharding_impls.XLACompatibleSharding],
            Sequence[sharding_impls.XLACompatibleSharding]]:
-  from jax.experimental import pjit
+  from jax._src import pjit
 
   # When the device assignment only has 1 device, SPMD partitioner will not run.
   # Hence the op shardings will not be set on the `hlo_module`. In that case,
@@ -2272,7 +2272,7 @@ def get_gspmd_shardings_from_executable(
     ss = sharding_impls.SingleDeviceSharding(device_assignment[0])
     return [ss] * num_in_avals, [ss] * num_out_avals
 
-  in_op_shardings, out_op_shardings = pjit._get_op_sharding_from_executable(xla_executable)
+  in_op_shardings, out_op_shardings = pjit.get_op_sharding_from_executable(xla_executable)
 
   in_shardings_xla = [sharding_impls.GSPMDSharding(device_assignment, i)
                       for i in in_op_shardings]
@@ -2295,9 +2295,9 @@ def _get_mesh_pspec_shardings_from_executable(
     xla_executable, mesh: Mesh
 ) -> tuple[Sequence[sharding_impls.NamedSharding],
            Sequence[sharding_impls.NamedSharding]]:
-  from jax.experimental import pjit
+  from jax._src import pjit
 
-  in_pspec, out_pspec = pjit._get_pspec_from_executable(xla_executable, mesh)
+  in_pspec, out_pspec = pjit.get_pspec_from_executable(xla_executable, mesh)
   return ([sharding_impls.NamedSharding(mesh, i) for i in in_pspec],
           [sharding_impls.NamedSharding(mesh, o) for o in out_pspec])
 
