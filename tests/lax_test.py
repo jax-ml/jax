@@ -44,6 +44,7 @@ from jax._src import test_util as jtu
 from jax._src import lax_reference
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.internal_test_util import lax_test_util
 
 from jax import config
@@ -2662,13 +2663,10 @@ class LaxTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.eqns, 1)
     self.assertEqual(jaxpr.eqns[0].primitive, lax.dynamic_slice_p)
 
+  @unittest.skipIf(xla_extension_version < 175,
+                   "Test requires jaxlib 0.4.15 or newer")
   def testDynamicSliceU8Index(self):
     # Regression test for u8 index in dynamic-slice (#6122)
-    # TODO(b/183216273): enable this test for CPU & GPU when possible.
-    if jtu.device_under_test() == "cpu":
-      raise unittest.SkipTest("DynamicSliceU8Index test is a known failure on CPU.")
-    if jtu.device_under_test() == "gpu":
-      raise unittest.SkipTest("DynamicSliceU8Index test is a known failure on GPU.")
     x = np.arange(200)
     np.testing.assert_equal(
         np.array(lax.dynamic_slice(x, np.uint8([128]), (1,))), [128])
