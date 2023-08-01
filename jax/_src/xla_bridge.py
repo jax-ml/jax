@@ -21,27 +21,27 @@ XLA. There are also a handful of related casting utilities.
 
 from collections.abc import Mapping
 import dataclasses
-from functools import partial, lru_cache
+from functools import lru_cache, partial
 import importlib
 import json
 import logging
 import os
-import platform as py_platform
 import pkgutil
+import platform as py_platform
 import sys
 import threading
 from typing import Any, Callable, Optional, Union
 import warnings
 
-import numpy as np
-
-from jax._src import lib
-from jax._src import distributed
 from jax._src import config as jax_config
-from jax._src.config import bool_env, config, int_env
-from jax._src.lib import xla_client
+from jax._src import distributed
+from jax._src import lib
 from jax._src import traceback_util
 from jax._src import util
+from jax._src.config import bool_env, config, int_env
+from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,8 @@ def get_compile_options(
   build_options = compile_options.executable_build_options
   build_options.use_spmd_partitioning = use_spmd_partitioning
   build_options.use_auto_spmd_partitioning = use_auto_spmd_partitioning
+  if xla_extension_version > 175:
+    build_options.assume_identical_modules_in_multicontroller_mode = False
   if fdo_profile is not None:
     build_options.fdo_profile = fdo_profile
   if use_auto_spmd_partitioning:
