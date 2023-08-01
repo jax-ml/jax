@@ -111,8 +111,9 @@ def TPU_TiledLayoutAttr
 }
 
 def TPU_MemorySpace : I32EnumAttr<"MemorySpace", "Memory space", [
-  I32EnumAttrCase<"vmem", 0>,
-  I32EnumAttrCase<"smem", 1>
+  I32EnumAttrCase<"kAny", 4294967295, "any">,
+  I32EnumAttrCase<"vmem", 0, "vmem">,
+  I32EnumAttrCase<"smem", 1, "smem">
 ]> {
     let genSpecializedAttr = 0;
     let cppNamespace = "::mlir::tpu";
