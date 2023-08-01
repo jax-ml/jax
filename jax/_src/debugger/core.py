@@ -19,8 +19,6 @@ import inspect
 import threading
 from typing import Any, Protocol
 
-import numpy as np
-
 import jax
 from jax import tree_util
 from jax._src import core
@@ -84,10 +82,7 @@ class DebuggerFrame:
     flat_locals, locals_tree = _safe_flatten_dict(self.locals)
     flat_globals, globals_tree = _safe_flatten_dict(self.globals)
     flat_vars = flat_locals + flat_globals
-    is_valid = [
-        isinstance(l, (core.Tracer, jax.Array, np.ndarray))
-        for l in flat_vars
-    ]
+    is_valid = [isinstance(l, core.Tracer) for l in flat_vars]
     invalid_vars, valid_vars = util.partition_list(is_valid, flat_vars)
     return valid_vars, (is_valid, invalid_vars, locals_tree, globals_tree,
                         len(flat_locals), self.filename, self.code_context,
@@ -158,7 +153,7 @@ debug_lock = threading.Lock()
 
 def breakpoint(*, backend: str | None = None, filter_frames: bool = True,
                num_frames: int | None = None, ordered: bool = False,
-               **kwargs):  # pylint: disable=redefined-builtin
+               token = None, **kwargs):  # pylint: disable=redefined-builtin
   """Enters a breakpoint at a point in a program.
 
   Args:
@@ -172,17 +167,26 @@ def breakpoint(*, backend: str | None = None, filter_frames: bool = True,
     num_frames: The number of frames above the current stack frame to make
       available for inspection in the interactive debugger.
     ordered: A keyword only argument used to indicate whether or not the
-      staged out computation will enforce ordering of this ``debug_print``
-      with respect to other ordered ``debug_print`` calls.
+      staged out computation will enforce ordering of this ``jax.debug.breakpoint``
+      with respect to other ordered ``jax.debug.breakpoint`` and ``jax.debug.print``
+      calls.
+    token: A keyword only argument; an alternative to ``ordered``. If used then a JAX
+      array (or pytree of JAX arrays) should be passed, and the breakpoint will be run
+      once its value is computed.
+      This is returned unchanged, and should be passed back to the computation.
+      If the return value is unused in the later computation, then the whole computation
+      will be pruned and this breakpoint will not be run.
 
   Returns:
-    None.
+    If `token` is passed, then its value is returned unchanged. Otherwise, returns
+    `None`.
   """
+  if token is not None:
+    if ordered:
+      raise ValueError("`ordered` and `token` are mutually exclusive arguments.")
   frame_infos = inspect.stack()
   # Throw out first frame corresponding to this function
   frame_infos = frame_infos[1:]
-  if num_frames is not None:
-    frame_infos = frame_infos[:num_frames]
   # Filter out internal frames
   if filter_frames:
     frames = [
@@ -195,6 +199,8 @@ def breakpoint(*, backend: str | None = None, filter_frames: bool = True,
         DebuggerFrame.from_frameinfo(frame_info)
         for frame_info in frame_infos
     ]
+  if num_frames is not None:
+    frames = frames[:num_frames]
   flat_args, frames_tree = tree_util.tree_flatten(frames)
 
   def _breakpoint_callback(*flat_args):
@@ -208,4 +214,11 @@ def breakpoint(*, backend: str | None = None, filter_frames: bool = True,
     with debug_lock:
       debugger(frames, thread_id, **kwargs)
 
-  debugging.debug_callback(_breakpoint_callback, *flat_args, ordered=ordered)
+  if token is None:
+    debugging.debug_callback(_breakpoint_callback, *flat_args, ordered=ordered)
+  else:
+    def _breakpoint_callback_wrapper(x, *flat_args):
+      _breakpoint_callback(*flat_args)
+      return x
+    token, flat_args = jax.lax.stop_gradient((token, flat_args))
+    return jax.pure_callback(_breakpoint_callback_wrapper, token, token, *flat_args)
