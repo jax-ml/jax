@@ -101,7 +101,7 @@ def mha_forward_kernel(
                                              "backward_pass_impl",
                                              "num_warps", "num_stages", "grid",
                                              "interpret", "debug"])
-def mha(q, k, v, mask,
+def mha(q, k, v, mask=None,
         sm_scale: float = 1.0,
         causal: bool = False,
         block_q: int = 128,
@@ -367,11 +367,13 @@ mha.defvjp(_mha_forward, _mha_backward)
 
 
 @functools.partial(jax.jit, static_argnames=['sm_scale', 'causal'])
-def mha_reference(q, k, v, mask, sm_scale=1.0, causal: bool = False):
+def mha_reference(q, k, v, mask=None, sm_scale=1.0, causal: bool = False):
   q_seq_len = q.shape[1]
   kv_seq_len = k.shape[1]
   big_neg = jnp.finfo(q.dtype).min
   logits = jnp.einsum('bqhc,bkhc->bhqk', q, k).astype(jnp.float32)
+  if mask is None:
+    mask = jnp.ones_like(logits)
   if causal:
     causal_mask = jnp.tril(jnp.ones((1, 1, q_seq_len, kv_seq_len), dtype=bool))
     causal_mask = jnp.broadcast_to(causal_mask, logits.shape)
