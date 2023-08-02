@@ -24,17 +24,18 @@ from jax import lax
 from jax.experimental import pallas as pl
 
 def mha_forward_kernel(
-    q_ref, k_ref, v_ref,  # Input arrays
+    q_ref, k_ref, v_ref, mask_ref,  # Input arrays
     o_ref, # Output
     *residual_refs, # Residual outputs
     sm_scale: float, causal: bool,
     block_q: int, block_d: int, block_k: int):
   seq_len = q_ref.shape[0]
+  big_neg = jnp.finfo(q_ref.dtype).min
   start_q = pl.program_id(0)
 
   # acc is the buffer where we accumulate the output on sram.
   # m_i and l_i (see FlashAttention paper) are updated during the k,v loop.
-  m_i = jnp.zeros(block_q, dtype=jnp.float32) - float('inf')
+  m_i = jnp.zeros(block_q, dtype=jnp.float32) + big_neg
   l_i = jnp.zeros(block_q, dtype=jnp.float32)
   # acc is the buffer where we accumulate the output on sram.
   acc = jnp.zeros((block_q, block_d), dtype=jnp.float32)
@@ -51,6 +52,8 @@ def mha_forward_kernel(
     acc, m_prev, l_prev = carry
 
     k = pl.load(k_ref, (pl.dslice(start_k * block_k, block_k), slice(None)))
+    mask = pl.load(mask_ref, (pl.dslice(start_q * block_q, block_q), pl.dslice(start_k * block_k, block_k)))
+
     qk = jnp.zeros([block_q, block_k], dtype=jnp.float32)
     qk += pl.dot(q, k.T)   # [block_q, block_k]
     if sm_scale != 1.:
@@ -59,7 +62,9 @@ def mha_forward_kernel(
     if causal:
       span_q = start_q * block_q + jnp.arange(block_q)
       span_k = start_k * block_k + jnp.arange(block_k)
-      qk = jnp.where(span_q[:, None] >= span_k[None, :], qk, float('-inf'))
+      mask = jnp.logical_and(mask, span_q[:, None] >= span_k[None, :])
+
+    qk = jnp.where(mask, qk, big_neg)
     # Bring closer to XLA:GPU numerics.
     qk = qk.astype(q_ref.dtype)
     qk = qk.astype(jnp.float32)
@@ -91,12 +96,12 @@ def mha_forward_kernel(
   acc = acc.astype(o_ref.dtype)
   pl.store(o_ref, (pl.dslice(start_q * block_q, block_q), pl.dslice(None)), acc)
 
-@functools.partial(jax.custom_vjp, nondiff_argnums=[3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+@functools.partial(jax.custom_vjp, nondiff_argnums=[4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
 @functools.partial(jax.jit, static_argnames=["sm_scale", "causal", "block_q", "block_k",
                                              "backward_pass_impl",
                                              "num_warps", "num_stages", "grid",
                                              "interpret", "debug"])
-def mha(q, k, v,
+def mha(q, k, v, mask,
         sm_scale: float = 1.0,
         causal: bool = False,
         block_q: int = 128,
@@ -109,6 +114,10 @@ def mha(q, k, v,
         debug: bool = False):
   del backward_pass_impl
   batch_size, seq_len, num_heads, head_dim = q.shape
+
+  if mask is None:
+    mask = jnp.ones((batch_size, num_heads, seq_len, seq_len), dtype=jnp.int32)
+
   block_q = min(block_q, seq_len)
   block_k = min(block_k, seq_len)
   # Heuristics.
@@ -131,6 +140,7 @@ def mha(q, k, v,
         pl.BlockSpec(lambda _, j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)),
         pl.BlockSpec(lambda _, j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)),
         pl.BlockSpec(lambda _, j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)),
+        pl.BlockSpec(lambda _, j, k: (j, k, 0, 0), (None, None, seq_len, seq_len)),
       ],
       out_specs=pl.BlockSpec(lambda _, j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)),
       num_warps=num_warps_,
@@ -138,9 +148,9 @@ def mha(q, k, v,
       out_shape=out_shape,
       debug=debug,
       interpret=interpret,
-      name="mha_forward")(q, k, v)
+      name="mha_forward")(q, k, v, mask)
 
-def _mha_forward(q, k, v, sm_scale: float, causal: bool, block_q: int,
+def _mha_forward(q, k, v, mask, sm_scale: float, causal: bool, block_q: int,
                  block_k: int, backward_pass_impl: str, num_warps: Optional[int],
                  num_stages: int, grid: Any, interpret: bool, debug: bool):
   del backward_pass_impl
@@ -172,6 +182,7 @@ def _mha_forward(q, k, v, sm_scale: float, causal: bool, block_q: int,
         pl.BlockSpec(lambda _, j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)),
         pl.BlockSpec(lambda _, j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)),
         pl.BlockSpec(lambda _, j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)),
+        pl.BlockSpec(lambda _, j, k: (j, k, 0, 0), (None, None, seq_len, seq_len)),
       ],
       out_specs=[
         pl.BlockSpec(lambda _, j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)),
@@ -183,8 +194,8 @@ def _mha_forward(q, k, v, sm_scale: float, causal: bool, block_q: int,
       out_shape=out_shape,
       debug=debug,
       interpret=interpret,
-      name="mha_forward")(q, k, v)
-  return out, (q, k, v, out, l, m)
+      name="mha_forward")(q, k, v, mask)
+  return out, (q, k, v, mask, out, l, m)
 
 def _preprocess_backward_kernel(out_ref, dout_ref, l_ref,
                                 new_dout_ref, delta_ref, *,
@@ -233,7 +244,7 @@ def _preprocess_backward(out, do, l, block_q: int,
 
 def mha_backward_kernel(
     # Inputs
-    q_ref, k_ref, v_ref, out_ref, do_scaled_ref,
+    q_ref, k_ref, v_ref, mask_ref, out_ref, do_scaled_ref,
     l_ref, m_ref, delta_ref, _,
     # Outputs
     dq_ref, dk_ref, dv_ref,
@@ -242,6 +253,7 @@ def mha_backward_kernel(
 ):
   del out_ref, l_ref  # Not needed
   seq_len = q_ref.shape[0]
+  big_neg = jnp.finfo(q_ref.dtype).min
 
   def outer_loop(start_k, _):
 
@@ -259,9 +271,11 @@ def mha_backward_kernel(
       qk = qk.astype(jnp.float32)
       if sm_scale != 1.0:
         qk *= sm_scale
+      mask = pl.load(mask_ref, (pl.ds(start_q * block_q, block_q), pl.ds(start_k * block_k, block_k)))
       if causal:
         span_q = start_q * block_q + jnp.arange(block_q)
-        qk = jnp.where(span_q[:, None] >= span_k[None, :], qk, float('-inf'))
+        mask = jnp.logical_and(mask, span_q[:, None] >= span_k[None, :])
+      qk = jnp.where(mask, qk, big_neg)
       m = pl.load(m_ref, (pl.ds(start_q * block_q, block_q),))
       p = jnp.exp(qk - m[:, None])
       do = pl.load(do_scaled_ref, (pl.ds(start_q * block_q, block_q), slice(None)))
@@ -296,7 +310,7 @@ def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
                   num_stages: int, grid: Any, interpret: bool,
                   debug: bool, res, do):
   del num_warps, num_stages, grid
-  q, k, v, out, l, m = res
+  q, k, v, mask, out, l, m = res
 
   batch_size, seq_len, num_heads, head_dim = q.shape
   block_q = min(block_q, seq_len)
@@ -327,6 +341,7 @@ def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
           pl.BlockSpec(lambda j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)),
           pl.BlockSpec(lambda j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)),
           pl.BlockSpec(lambda j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)),
+          pl.BlockSpec(lambda j, k: (j, k, 0, 0), (None, None, seq_len, seq_len)),
           pl.BlockSpec(lambda j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)),
           pl.BlockSpec(lambda j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)),
           pl.BlockSpec(lambda j, k: (j, k, 0), (None, None, seq_len)),
@@ -344,7 +359,7 @@ def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
         interpret=interpret,
         num_warps=num_warps,
         num_stages=1,
-        input_output_aliases={8: 0})(q, k, v, out, do_scaled, l, m, delta, dq)
+        input_output_aliases={9: 0})(q, k, v, mask, out, do_scaled, l, m, delta, dq)
   else:
     raise ValueError(f"Invalid backward pass implementation: {backward_pass_impl}")
   return dq.astype(q.dtype), dk, dv
@@ -352,13 +367,15 @@ mha.defvjp(_mha_forward, _mha_backward)
 
 
 @functools.partial(jax.jit, static_argnames=['sm_scale', 'causal'])
-def mha_reference(q, k, v, sm_scale=1.0, causal: bool = False):
+def mha_reference(q, k, v, mask, sm_scale=1.0, causal: bool = False):
   q_seq_len = q.shape[1]
   kv_seq_len = k.shape[1]
+  big_neg = jnp.finfo(q.dtype).min
   logits = jnp.einsum('bqhc,bkhc->bhqk', q, k).astype(jnp.float32)
   if causal:
-    mask = jnp.tril(jnp.ones((1, 1, q_seq_len, kv_seq_len), dtype=bool))
-    mask = jnp.broadcast_to(mask, logits.shape)
-    logits = jnp.where(mask, logits, float('-inf'))
+    causal_mask = jnp.tril(jnp.ones((1, 1, q_seq_len, kv_seq_len), dtype=bool))
+    causal_mask = jnp.broadcast_to(causal_mask, logits.shape)
+    mask = jnp.logical_and(mask, causal_mask)
+  logits = jnp.where(mask, logits, big_neg)
   weights = jax.nn.softmax(logits * sm_scale).astype(q.dtype)
   return jnp.einsum('bhqk,bkhc->bqhc', weights, v)
