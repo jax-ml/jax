@@ -39,7 +39,6 @@ from jax._src.interpreters.pxla import (
   WeakRefList as WeakRefList,
   _create_pmap_sharding_spec as _create_pmap_sharding_spec,
   _get_and_check_device_assignment as _get_and_check_device_assignment,
-  _pmap_sharding_spec as _pmap_sharding_spec,
   array_types as array_types,
   custom_resource_typing_rules as custom_resource_typing_rules,
   find_replicas as find_replicas,

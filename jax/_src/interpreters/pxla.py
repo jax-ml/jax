@@ -3030,10 +3030,3 @@ def device_put(x, devices: Sequence[xc.ArrayImpl],
 def _create_pmap_sharding_spec(aval, sharded_dim=0, sharded_dim_size=None):
   return sharding_specs.create_pmap_sharding_spec(
       aval.shape, sharded_dim, sharded_dim_size)
-
-def _pmap_sharding_spec(nrep, axis_size, npart, parts,
-                        sharded_aval, map_axis: int | None) -> ShardingSpec:
-  assert npart == 1, npart
-  assert parts is None, parts
-  return sharding_specs.pmap_sharding_spec(
-      nrep, axis_size, sharded_aval.shape, map_axis)
