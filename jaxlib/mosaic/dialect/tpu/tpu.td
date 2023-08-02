@@ -303,6 +303,15 @@ def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure]> {
   let hasCanonicalizeMethod = 1;
 }
 
+def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure]> {
+  let arguments = (ins AnyMemRef:$input);
+  let results = (outs AnyMemRef:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
 def TPU_EraseLayoutOp : TPU_Op<"erase_memref_layout", [Pure]> {
   let arguments = (ins AnyMemRef:$operand);
   let results = (outs AnyMemRef:$result);
