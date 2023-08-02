@@ -21,7 +21,6 @@ import operator
 import google_benchmark
 import jax
 from jax import lax
-from jax.experimental import sparse
 from jax._src.api_util import shaped_abstractify  # technically not an api fn
 from jax._src.ad_checkpoint import checkpoint  # new jax.remat implementation
 from jax._src.lib import xla_client as xc
@@ -417,119 +416,6 @@ def sda_index_2(state):
 @required_devices(8)
 def sda_index_8(state):
   _run_sda_index_bench(state, 8)
-
-
-def _sparse_bcoo_fromdense(state, jit: bool = False, compile: bool = False):
-  shape = (2000, 2000)
-  nse = 10000
-  size = math.prod(shape)
-  rng = np.random.RandomState(1701)
-  data = rng.randn(nse)
-  indices = np.unravel_index(
-      rng.choice(size, size=nse, replace=False), shape=shape)
-  mat = jnp.zeros(shape).at[indices].set(data)
-
-  f = sparse.BCOO.fromdense
-  if compile or jit:
-    # Note: nse must be specified for JIT.
-    f = jax.jit(partial(f, nse=nse))
-
-  if compile:
-    while state:
-      f.lower(mat).compile()
-  else:
-    f(mat).block_until_ready()
-    while state:
-      f(mat).block_until_ready()
-
-
-@google_benchmark.register
-def sparse_bcoo_fromdense(state):
-  return _sparse_bcoo_fromdense(state)
-
-
-@google_benchmark.register
-def sparse_bcoo_fromdense_jit(state):
-  return _sparse_bcoo_fromdense(state, jit=True)
-
-
-@google_benchmark.register
-def sparse_bcoo_fromdense_compile(state):
-  return _sparse_bcoo_fromdense(state, compile=True)
-
-
-def _sparse_bcoo_todense(state, jit: bool = False, compile: bool = False):
-  shape = (2000, 2000)
-  nse = 10000
-  size = math.prod(shape)
-  rng = np.random.RandomState(1701)
-  data = rng.randn(nse)
-  indices = np.unravel_index(
-      rng.choice(size, size=nse, replace=False), shape=shape)
-  mat = sparse.BCOO((jnp.array(data), jnp.column_stack(indices)), shape=shape)
-
-  f = lambda mat: mat.todense()
-  if jit or compile:
-    f = jax.jit(f)
-
-  if compile:
-    while state:
-      f.lower(mat).compile()
-  else:
-    f(mat).block_until_ready()
-    while state:
-      f(mat).block_until_ready()
-
-
-@google_benchmark.register
-def sparse_bcoo_todense(state):
-  return _sparse_bcoo_todense(state)
-
-
-@google_benchmark.register
-def sparse_bcoo_todense_jit(state):
-  return _sparse_bcoo_todense(state, jit=True)
-
-
-@google_benchmark.register
-def sparse_bcoo_todense_compile(state):
-  return _sparse_bcoo_todense(state, compile=True)
-
-
-def _sparse_bcoo_matvec(state, jit: bool = False, compile: bool = False):
-  shape = (2000, 2000)
-  nse = 10000
-  key = jax.random.PRNGKey(1701)
-  mat = sparse.random_bcoo(key, nse=nse, shape=shape, dtype=jnp.float32,
-                           indices_dtype=jnp.int32, sorted_indices=True)
-  vec = jax.random.uniform(key, shape=(shape[1],), dtype=jnp.float32)
-
-  f = lambda mat, vec: mat @ vec
-  if jit or compile:
-    f = jax.jit(f)
-
-  if compile:
-    while state:
-      f.lower(mat, vec).compile()
-  else:
-    f(mat, vec).block_until_ready()
-    while state:
-      f(mat, vec).block_until_ready()
-
-
-@google_benchmark.register
-def sparse_bcoo_matvec(state):
-  return _sparse_bcoo_matvec(state)
-
-
-@google_benchmark.register
-def sparse_bcoo_matvec_jit(state):
-  return _sparse_bcoo_matvec(state, jit=True)
-
-
-@google_benchmark.register
-def sparse_bcoo_matvec_compile(state):
-  return _sparse_bcoo_matvec(state, compile=True)
 
 
 @google_benchmark.register
