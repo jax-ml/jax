@@ -5104,6 +5104,30 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
       a_shape=nonempty_nonscalar_array_shapes,
+      v_shape=nonempty_shapes,
+      dtype=jtu.dtypes.all,
+  )
+  def testPlace(self, a_shape, v_shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    mask_rng = jtu.rand_bool(self.rng())
+
+    def args_maker():
+      a = rng(a_shape, dtype)
+      m = mask_rng(a_shape, bool)
+      v = rng(v_shape, dtype)
+      return a, m, v
+
+    def np_fun(a, m, v):
+      a_copy = a.copy()
+      np.place(a_copy, m, v)
+      return a_copy
+
+    jnp_fun = partial(jnp.place, inplace=False)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+      a_shape=nonempty_nonscalar_array_shapes,
       i_shape=all_shapes,
       v_shape=all_shapes,
       dtype=jtu.dtypes.all,
