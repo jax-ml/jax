@@ -1062,19 +1062,19 @@ def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
 @overload
 def where(condition: ArrayLike, x: Literal[None] = None, y: Literal[None] = None, *,
           size: Optional[int] = None,
-          fill_value: Union[None, Array, tuple[ArrayLike]] = None
+          fill_value: Union[None, ArrayLike, tuple[ArrayLike, ...]] = None
           ) -> tuple[Array, ...]: ...
 
 @overload
 def where(condition: ArrayLike, x: ArrayLike, y: ArrayLike, *,
           size: Optional[int] = None,
-          fill_value: Union[None, Array, tuple[ArrayLike]] = None
+          fill_value: Union[None, ArrayLike, tuple[ArrayLike, ...]] = None
           ) -> Array: ...
 
 @overload
 def where(condition: ArrayLike, x: Optional[ArrayLike] = None,
           y: Optional[ArrayLike] = None, *, size: Optional[int] = None,
-          fill_value: Union[None, Array, tuple[ArrayLike]] = None
+          fill_value: Union[None, ArrayLike, tuple[ArrayLike, ...]] = None
           ) -> Union[Array, tuple[Array, ...]]: ...
 
 @util._wraps(np.where,
@@ -1103,7 +1103,7 @@ def where(condition: ArrayLike, x: Optional[ArrayLike] = None,
         remaining elements will be filled with ``fill_value``, which defaults to zero."""))
 def where(condition: ArrayLike, x: Optional[ArrayLike] = None,
           y: Optional[ArrayLike] = None, *, size: Optional[int] = None,
-          fill_value: Union[None, Array, tuple[ArrayLike]] = None
+          fill_value: Union[None, ArrayLike, tuple[ArrayLike, ...]] = None
     ) -> Union[Array, tuple[Array, ...]]:
   if x is None and y is None:
     util.check_arraylike("where", condition)
@@ -1365,7 +1365,7 @@ fill_value : array_like, optional
 
 @util._wraps(np.nonzero, lax_description=_NONZERO_DOC, extra_params=_NONZERO_EXTRA_PARAMS)
 def nonzero(a: ArrayLike, *, size: Optional[int] = None,
-            fill_value: Union[None, ArrayLike, tuple[ArrayLike]] = None
+            fill_value: Union[None, ArrayLike, tuple[ArrayLike, ...]] = None
     ) -> tuple[Array, ...]:
   util.check_arraylike("nonzero", a)
   arr = atleast_1d(a)
