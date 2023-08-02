@@ -373,7 +373,7 @@ def mha_reference(q, k, v, mask=None, sm_scale=1.0, causal: bool = False):
   big_neg = jnp.finfo(q.dtype).min
   logits = jnp.einsum('bqhc,bkhc->bhqk', q, k).astype(jnp.float32)
   if mask is None:
-    mask = jnp.ones_like(logits)
+    mask = jnp.ones_like(logits, dtype=jnp.int32)
   if causal:
     causal_mask = jnp.tril(jnp.ones((1, 1, q_seq_len, kv_seq_len), dtype=bool))
     causal_mask = jnp.broadcast_to(causal_mask, logits.shape)
