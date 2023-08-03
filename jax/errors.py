@@ -25,3 +25,4 @@ from jax._src.errors import (
   TracerIntegerConversionError as TracerIntegerConversionError,
   UnexpectedTracerError as UnexpectedTracerError,
 )
+from jax._src.traceback_util import SimplifiedTraceback as SimplifiedTraceback

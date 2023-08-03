@@ -14,6 +14,7 @@
 
 import functools
 import os
+import sys
 import traceback
 import types
 from typing import Any, Callable, Optional, TypeVar, cast
@@ -114,6 +115,16 @@ def format_exception_only(e: BaseException) -> str:
 
 class UnfilteredStackTrace(Exception): pass
 
+_simplified_tb_msg = ("For simplicity, JAX has removed its internal frames from the "
+                      "traceback of the following exception. Set "
+                      "JAX_TRACEBACK_FILTERING=off to include these.")
+
+class SimplifiedTraceback(Exception):
+  def __str__(self):
+    return _simplified_tb_msg
+
+SimplifiedTraceback.__module__ = "jax.errors"
+
 def _running_under_ipython() -> bool:
   """Returns true if we appear to be in an IPython session."""
   try:
@@ -133,7 +144,7 @@ def _filtering_mode() -> str:
     if (_running_under_ipython() and _ipython_supports_tracebackhide()):
       mode = "tracebackhide"
     else:
-      mode = "remove_frames"
+      mode = "quiet_remove_frames"
   return mode
 
 def api_boundary(fun: C) -> C:
@@ -171,22 +182,12 @@ def api_boundary(fun: C) -> C:
       if mode == "tracebackhide":
         _add_tracebackhide_to_hidden_frames(e.__traceback__)
         raise
-      assert mode == "remove_frames", mode
 
-      filtered_tb, unfiltered, mode = None, None, None
+      filtered_tb, unfiltered = None, None
       try:
-        filtered_tb = filter_traceback(e.__traceback__)
-        msg = format_exception_only(e)
-        msg = f'{msg}\n\n{_jax_message_append}'
-        unfiltered = UnfilteredStackTrace(msg)
-        unfiltered.with_traceback(_add_call_stack_frames(e.__traceback__))
-        unfiltered.__context__ = e.__context__
-        unfiltered.__cause__ = e.__cause__
-        unfiltered.__suppress_context__ = e.__suppress_context__
-        e.__context__ = None
-        e.__cause__ = unfiltered
-
-        e.__traceback__ = filtered_tb
+        tb = e.__traceback__
+        filtered_tb = filter_traceback(tb)
+        e.with_traceback(filtered_tb)
         # In Python < 3.11, there seems to be no way to alter the currently
         # raised exception traceback, except via the C API. The interpreter
         # keeps a copy of the traceback (exc_traceback) that is separate to the
@@ -195,7 +196,28 @@ def api_boundary(fun: C) -> C:
         # the XLA extension no longer defines a traceback-replacing method at
         # Python 3.11 and onward.
         if hasattr(xla_extension, "replace_thread_exc_traceback"):
+          # TODO(kidger): remove this line once Python 3.11 is the minimum supported
+          # version.
           xla_extension.replace_thread_exc_traceback(filtered_tb)
+        if sys.version_info >= (3, 11) and mode == "quiet_remove_frames":
+          e.add_note("--------------------\n" + _simplified_tb_msg)
+        else:
+          if mode == "quiet_remove_frames":
+            # TODO(kidger): remove `SimplifiedTraceback` once Python 3.11 is the minimum
+            # supported version.
+            jax_error = SimplifiedTraceback()
+          elif mode == "remove_frames":
+            msg = format_exception_only(e)
+            msg = f'{msg}\n\n{_jax_message_append}'
+            jax_error = UnfilteredStackTrace(msg)
+            jax_error.with_traceback(_add_call_stack_frames(tb))
+          else:
+            raise ValueError(f"JAX_TRACEBACK_FILTERING={mode} is not a valid value.")
+          jax_error.__cause__ = e.__cause__
+          jax_error.__context__ = e.__context__
+          jax_error.__suppress_context__ = e.__suppress_context__
+          e.__cause__ = jax_error
+          e.__context__ = None
         raise
       finally:
         del filtered_tb
