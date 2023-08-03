@@ -945,6 +945,43 @@ def relayout(
       )
     src = new_src
     src_tiles = src_tiles_retiled
+
+  # Handle retiling from (8, 128) to (1, 128) for 32 bits data.
+  if (
+      src.implicit_dim is None
+      and dst.implicit_dim is None
+      and type_bitwidth(vty.element_type) == 32
+      and all((o or 0) == 0 for o in src.offsets)
+      and dst.offsets == (0, 0)
+      and src.tiling == (8, 128)
+      and dst.tiling == (1, 128)
+  ):
+    new_src = VectorLayout(src.bitwidth, dst.offsets, dst.tiling, None)
+    src_tiles_retiled = np.empty(
+        new_src.tile_array_shape(vty.shape), dtype=object
+    )
+    for *batch_idx, dst_row, dst_col in np.ndindex(src_tiles_retiled.shape):
+      src_row = dst_row // 8
+      src_col_0 = dst_col * 8
+      src_tile_vreg_count = (
+          8 if src_col_0 + 8 <= src_tiles.shape[-1] else src_tiles.shape[-1] % 8
+      )
+      src_tiles_retiled[(*batch_idx, dst_row, dst_col)] = src_tiles[
+          (*batch_idx, src_row, src_col_0)
+      ]
+      for i in range(1, src_tile_vreg_count):
+        bounds = RectangularVRegBounds(
+            TargetTuple(slice(i, i + 1), slice(0, TARGET_SHAPE.lanes))
+        )
+        mask = bounds.get_vector_mask(hw_generation)
+        src_tile = src_tiles[(*batch_idx, src_row, src_col_0 + i)]
+        src_tile = tpu.RotateOp(src_tile, amount=i, dimension=0)
+        src_tiles_retiled[(*batch_idx, dst_row, dst_col)] = arith.SelectOp(
+            mask, src_tile, src_tiles_retiled[(*batch_idx, dst_row, dst_col)]
+        )
+    src = new_src
+    src_tiles = src_tiles_retiled
+
   # TODO(kumudbhandari): Generalize the logic below to handle retiling from
   # (8,128) to (x, 128) where x=1, 2, or 4.
   if (
