@@ -72,6 +72,14 @@ LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
   return success();
 }
 
+LogicalResult ReinterpretCastOp::verify() {
+  auto source_type = getMemRefType(getInput());
+  auto target_type = getType();
+  return success(
+      source_type.getMemorySpace() &&  // Require memory space annotations.
+      source_type.getMemorySpace() == target_type.getMemorySpace());
+}
+
 }  // namespace tpu
 }  // namespace mlir
 
