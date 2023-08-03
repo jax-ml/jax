@@ -63,6 +63,7 @@ class CustomCallBackendConfig:
   lowered_module_asm: bytes
   has_communication: bool
   collective_id: int | None
+  device_type: str | None
 
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
@@ -82,7 +83,13 @@ class CustomCallBackendConfig:
     if self.collective_id is not None:
       config.write(b', "collective_id": ')
       config.write(str(self.collective_id).encode("ascii"))
-    config.write(b"}}")
+    config.write(b"}")
+    if self.device_type is not None:
+      config.write(b', "device_type": ')
+      config.write(
+          ('"DEVICE_TYPE_' + self.device_type.upper() + '"').encode("ascii")
+      )
+    config.write(b"}")
     return config.getvalue()
 
 
@@ -156,7 +163,11 @@ mlir.register_lowering(tpu_custom_call_p, _tpu_custom_call_lowering,
                        platform="tpu")
 
 
-def _lower_tpu_kernel(module: ir.Module, hardware_generation: int) -> ir.Module:
+def _lower_tpu_kernel(
+    module: ir.Module,
+    hardware_generation: int,
+    device_type: str | None,
+) -> ir.Module:
   """Runs MLIR passes lowering the given module to an MLIR module.
 
   Args:
@@ -175,68 +186,73 @@ def _lower_tpu_kernel(module: ir.Module, hardware_generation: int) -> ir.Module:
     raise ValueError("The compiled module fails MLIR verification") from e
 
   with ir.Context() as ctx, ir.Location.unknown():
+    vector_constants = []
+
     tpu.register_dialect(ctx)
     mhlo.register_mhlo_dialect(ctx)
     mhlo.register_mhlo_passes()
-    # We'll mutate the module, so clone it.
-    module = ir.Module.parse(
-        module.operation.get_asm(binary=True, enable_debug_info=True)
-    )
 
-    if config.jax_mosaic_allow_hlo:
-      # Run hlo dialect conversion: hlo -> linalg -> vector.
-      pipeline = [
-          "hlo-legalize-to-arithmetic",
-          "func.func(hlo-legalize-to-linalg)",
-          "func.func(linalg-vectorization)",
-      ]
-      PassManager.parse(f"builtin.module({','.join(pipeline)})").run(
-          module.operation
+    if not device_type:
+      # We'll mutate the module, so clone it.
+      module = ir.Module.parse(
+          module.operation.get_asm(binary=True, enable_debug_info=True)
       )
 
-    infer_memref_layout.infer_module(module, hardware_generation)
-
-    pipeline = [
-        "canonicalize",
-        "cse",
-        "func.func(tpu-infer-vector-layout{sublane-count=8 lane-count=128})",
-    ]
-    pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-    pipeline.run(module.operation)
-    module.operation.verify()
-
-    apply_vector_layout.apply(module, hardware_generation)
-    module.operation.verify()
-
-    PassManager.parse("builtin.module(canonicalize)").run(module.operation)
-
-    vector_constants = []
-    for f in module.body:
-      if "vector_constants" not in f.attributes:
-        continue
-      if f.name.value != "main":
-        raise NotImplementedError(
-            "Only the main function can have non-splat vector constants"
+      if config.jax_mosaic_allow_hlo:
+        # Run hlo dialect conversion: hlo -> linalg -> vector.
+        pipeline = [
+            "hlo-legalize-to-arithmetic",
+            "func.func(hlo-legalize-to-linalg)",
+            "func.func(linalg-vectorization)",
+        ]
+        PassManager.parse(f"builtin.module({','.join(pipeline)})").run(
+            module.operation
         )
-      constant_attrs = ir.ArrayAttr(f.attributes["vector_constants"])
-      del f.attributes["vector_constants"]
-      for c in constant_attrs:
-        c = ir.DenseElementsAttr(c)
-        constant_type = ir.VectorType(c.type)
-        if constant_type.element_type == ir.IntegerType.get_signless(32):
-          dtype = np.int32
-        elif ir.F32Type.isinstance(constant_type.element_type):
-          dtype = np.float32
-        else:
-          raise NotImplementedError(constant_type.element_type)
-        if np.issubdtype(dtype, np.integer):
-          c = ir.DenseIntElementsAttr(c)
-        elif np.issubdtype(dtype, np.floating):
-          c = ir.DenseFPElementsAttr(c)
-        else:
-          raise NotImplementedError(dtype)
-        vector_constants.append(
-            np.asarray(c, dtype=dtype).reshape(constant_type.shape))
+
+      infer_memref_layout.infer_module(module, hardware_generation)
+
+      pipeline = [
+          "canonicalize",
+          "cse",
+          "func.func(tpu-infer-vector-layout{sublane-count=8 lane-count=128})",
+      ]
+      pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
+      pipeline.run(module.operation)
+      module.operation.verify()
+
+      apply_vector_layout.apply(module, hardware_generation)
+      module.operation.verify()
+
+      PassManager.parse("builtin.module(canonicalize)").run(module.operation)
+
+      for f in module.body:
+        if "vector_constants" not in f.attributes:
+          continue
+        if f.name.value != "main":
+          raise NotImplementedError(
+              "Only the main function can have non-splat vector constants"
+          )
+        constant_attrs = ir.ArrayAttr(f.attributes["vector_constants"])
+        del f.attributes["vector_constants"]
+        for c in constant_attrs:
+          c = ir.DenseElementsAttr(c)
+          constant_type = ir.VectorType(c.type)
+          if constant_type.element_type == ir.IntegerType.get_signless(32):
+            dtype = np.int32
+          elif ir.F32Type.isinstance(constant_type.element_type):
+            dtype = np.float32
+          else:
+            raise NotImplementedError(constant_type.element_type)
+          if np.issubdtype(dtype, np.integer):
+            c = ir.DenseIntElementsAttr(c)
+          elif np.issubdtype(dtype, np.floating):
+            c = ir.DenseFPElementsAttr(c)
+          else:
+            raise NotImplementedError(dtype)
+          vector_constants.append(
+              np.asarray(c, dtype=dtype).reshape(constant_type.shape)
+          )
+
     bytecode_buffer = io.BytesIO()
     module.operation.write_bytecode(bytecode_buffer, desired_version=0)
     return bytecode_buffer.getvalue(), tuple(vector_constants)
@@ -247,6 +263,7 @@ def as_tpu_kernel(
     out_type: Any,
     *,
     backend: str | xla_client.Client = "tpu",
+    device_type: str | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   # We use jax.jit to make sure we hit the fast compilation cache.
@@ -261,11 +278,14 @@ def as_tpu_kernel(
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
-  lowered_module_asm, constants = _lower_tpu_kernel(module, hardware_generation)
+  lowered_module_asm, constants = _lower_tpu_kernel(
+      module, hardware_generation, device_type=device_type
+  )
   return _lowered_as_tpu_kernel(
       lowered_module_asm,
       out_type,
       constants,
+      device_type=device_type,
       has_communication=has_communication,
       has_custom_barrier=has_custom_barrier,
   )
@@ -276,6 +296,7 @@ def _lowered_as_tpu_kernel(
     out_type: Any,
     constants: Sequence[Any] = (),
     *,
+    device_type: str | None = None,
     has_communication: bool = False,
     has_custom_barrier: bool = False,
 ):
@@ -297,9 +318,13 @@ def _lowered_as_tpu_kernel(
           " barrier"
       )
     config = CustomCallBackendConfig(
-        lowered_module_asm, has_communication, collective_id
+        lowered_module_asm, has_communication, collective_id, device_type
     )
     result = tpu_custom_call_p.bind(
-        *args, *constants, config=config, out_avals=out_avals)
+        *args,
+        *constants,
+        config=config,
+        out_avals=out_avals,
+    )
     return result[0] if unpack else result
   return jax.jit(apply_kernel, static_argnames=["collective_id"])
