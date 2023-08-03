@@ -1025,17 +1025,21 @@ default_matmul_precision = config.define_enum_state(
 
 traceback_filtering = config.define_enum_state(
     name = 'jax_traceback_filtering',
-    enum_values=["off", "tracebackhide", "remove_frames", "auto"],
+    enum_values=["off", "tracebackhide", "remove_frames", "quiet_remove_frames",
+                 "auto"],
     default="auto",
     help="Controls how JAX filters internal frames out of tracebacks.\n\n"
          "Valid values are:\n"
          " * \"off\": disables traceback filtering.\n"
-         " * \"auto\": use \"tracebackhide\" if running under a sufficiently "
-         "new IPython, or \"remove_frames\" otherwise.\n"
-         " * \"tracebackhide\": adds \"__tracebackhide__\" annotations to "
+         " * \"auto\": use \"tracebackhide\" if running under a sufficiently"
+         " new IPython, or \"remove_frames\" otherwise.\n"
+         " * \"tracebackhide\": adds \"__tracebackhide__\" annotations to"
          " hidden stack frames, which some traceback printers support.\n"
-         " * \"remove_frames\": removes hidden frames from tracebacks, and adds "
-         " the unfiltered traceback as a __cause__ of the exception.\n")
+         " * \"remove_frames\": removes hidden frames from tracebacks, and adds"
+         " the unfiltered traceback as a __cause__ of the exception.\n"
+         " * \"quiet_remove_frames\": removes hidden frames from tracebacks, and adds"
+         " a brief message (to the __cause__ of the exception) describing that this has"
+         " happened.\n")
 
 # This flag is for internal use.
 # TODO(tianjianlu): Removes once we always enable cusparse lowering.
