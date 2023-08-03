@@ -25,13 +25,13 @@ _UNCONSTRAINED_PARTITION = _UnconstrainedPartitionSingleton()
 
 
 class PartitionSpec(tuple):
-  """Tuple describing how to partition tensor into mesh .
+  """Tuple describing how to partition an array across a mesh of devices.
 
-  Each element is either None, string or a tuple of strings.
-  See``NamedSharding`` class for more details.
+  Each element is either ``None``, a string, or a tuple of strings.
+  See the documentation of :class:`jax.sharding.NamedSharding` for more details.
 
-  We create a separate class for this so JAX's pytree utilities can distinguish
-  it from a tuple that should be treated as a pytree.
+  This class exists so JAX's pytree utilities can distinguish a partition
+  specifications from tuples that should be treated as pytrees.
   """
 
   # A sentinel value representing a dim is unconstrained.
