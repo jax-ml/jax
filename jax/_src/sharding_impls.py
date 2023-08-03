@@ -22,7 +22,6 @@ import enum
 import functools
 import itertools
 import math
-import operator as op
 from typing import Any, NamedTuple, Union, cast
 
 from jax._src import mesh as mesh_lib
@@ -51,10 +50,10 @@ XLADeviceAssignment = tuple[Device, ...]
 # `_device_assignment` property and `_to_xla_hlo_sharding` method.
 @use_cpp_class(xc.XLACompatibleSharding)
 class XLACompatibleSharding(sharding.Sharding):
-  """A `Sharding` that describes shardings expressible to XLA.
+  """A :class:`Sharding` that describes shardings expressible to XLA.
 
-  Any ``Sharding`` that is a subclass of ``XLACompatibleSharding`` will work
-  with all JAX APIs and transformations that use XLA.
+  Subclasses of :class:`XLACompatibleSharding` work with
+  all JAX APIs and transformations that use XLA.
   """
 
   # Abstract methods below that subclasses should implement.
@@ -157,29 +156,30 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
 
 @use_cpp_class(xc.NamedSharding)
 class NamedSharding(XLACompatibleSharding):
-  r"""NamedSharding is a way to express ``Sharding``\s using named axes.
+  r"""A :class:`NamedSharding` expresses sharding using named axes.
 
-  ``Mesh`` and ``PartitionSpec`` can be used to express a ``Sharding`` with a name.
+  A :class:`NamedSharding` is a pair of a :class:`Mesh` of devices and
+  :class:`PartitionSpec` which describes how to shard an array across that
+  mesh.
 
-  ``Mesh`` is a NumPy array of JAX devices in a multi-dimensional grid,
-  where each axis of the mesh has a name, e.g. 'x' or 'y'. Another name for
-  ``Mesh`` is "logical mesh".
+  A :class:`Mesh` is a multidimensional NumPy array of JAX devices,
+  where each axis of the mesh has a name, e.g. ``'x'`` or ``'y'``.
 
-  ``PartitionSpec`` is a tuple, whose elements can be a ``None``,
-  a mesh axis or a tuple of mesh axes. Each element describes how an input
+  A :class:`PartitionSpec` is a tuple, whose elements can be a ``None``,
+  a mesh axis, or a tuple of mesh axes. Each element describes how an input
   dimension is partitioned across zero or more mesh dimensions. For example,
-  PartitionSpec('x', 'y') is a PartitionSpec where the first dimension of data
+  ``PartitionSpec('x', 'y')`` says that the first dimension of data
   is sharded across ``x`` axis of the mesh, and the second dimension is sharded
   across ``y`` axis of the mesh.
 
   The Distributed arrays and automatic parallelization
   (https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html#namedsharding-gives-a-way-to-express-shardings-with-names)
-  goes into more details and has diagrams to help explain the concept about
-  ``Mesh`` and ``PartitionSpec``.
+  tutorial has more details and diagrams that explain how
+  :class:`Mesh` and :class:`PartitionSpec` are used.
 
   Args:
-    mesh: A ``jax.sharding.Mesh`` object.
-    spec: A ``jax.sharding.PartitionSpec`` object.
+    mesh: A :class:`jax.sharding.Mesh` object.
+    spec: A :class:`jax.sharding.PartitionSpec` object.
 
   Example:
 
@@ -334,7 +334,7 @@ def get_replicated_hlo_sharding():
 
 @use_cpp_class(xc.SingleDeviceSharding)
 class SingleDeviceSharding(XLACompatibleSharding):
-  """A subclass of ``XLACompatibleSharding`` that places its data on a single device.
+  """A :class:`Sharding` that places its data on a single device.
 
   Args:
     device: A single :py:class:`Device`.
@@ -398,6 +398,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
 
 @use_cpp_class(xc.PmapSharding)
 class PmapSharding(XLACompatibleSharding):
+  """Describes a sharding used by :func:`jax.pmap`."""
   devices: np.ndarray
   sharding_spec: sharding_specs.ShardingSpec
 
@@ -443,16 +444,15 @@ class PmapSharding(XLACompatibleSharding):
   @classmethod
   def default(cls, shape: Shape, sharded_dim: int = 0,
               devices: Sequence[xc.Device] | None = None) -> PmapSharding:
-    """Creates a `PmapSharding` which matches the implicit device order used by
-    `pmap` if devices is None. If devices is specified, it will use those
-    devices.
+    """Creates a :class:`PmapSharding` which matches the default placement
+    used by :func:`jax.pmap`.
 
     Args:
       shape: The shape of the input array.
       sharded_dim: Dimension the input array is sharded on. Defaults to 0.
-      devices: Optional sequence of devices used to create PmapSharding. If not
-        specified, it will use the implicit device order used by pmap which is
-        the order of jax.local_devices()
+      devices: Optional sequence of devices to use. If omitted, the implicit
+      device order used by pmap is used, which is the order of
+        :func:`jax.local_devices`.
     """
     # The dtype doesn't matter here. Its only used for creating the
     # sharding_spec.
@@ -571,8 +571,13 @@ class PositionalSharding(XLACompatibleSharding):
       # Will error if memory_kind does not exist on the device.
       self._devices[0].memory(self._memory_kind)
 
-  shape = property(op.attrgetter('_ids.shape'))
-  ndim = property(op.attrgetter('_ids.ndim'))
+  @property
+  def shape(self):
+    return self._ids.shape
+
+  @property
+  def ndim(self):
+    return self._ids.ndim
 
   def __repr__(self) -> str:
     cls_name = self.__class__.__name__
