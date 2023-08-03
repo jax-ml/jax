@@ -832,7 +832,6 @@ CustomVJPCallPrimitive.initial_style = custom_vjp_call_jaxpr_p
 mlir.register_lowering(custom_vjp_call_jaxpr_p, mlir.lower_fun(
     _custom_vjp_call_jaxpr_impl, multiple_results=True))
 
-
 def _custom_vjp_call_jaxpr_jvp(
     primals, tangents, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[..., tuple[core.Jaxpr, Sequence[Any]]],

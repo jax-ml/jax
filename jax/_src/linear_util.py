@@ -130,6 +130,8 @@ class EqualStore:
         if not okay:
           raise StoreException("Store occupied with not-equal value") from None
 
+  def reset(self):
+    self._store.reset()
 
 
 class WrappedFun:

@@ -87,7 +87,7 @@ class DLPackTest(jtu.JaxTestCase):
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
   def testJaxArrayToTorch(self, shape, dtype):
     if xla_extension_version < 186:
-      self.SkipTest("Need xla_extension_version >= 186")
+      self.skipTest("Need xla_extension_version >= 186")
 
     if not config.x64_enabled and dtype in [
         jnp.int64,

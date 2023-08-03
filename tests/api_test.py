@@ -7663,6 +7663,31 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     self.assertEqual((1.0, 0.1), jax.grad(lambda args: fn(*args))((1.0, 2.0)))
 
+  def test_run_rules_more_than_once(self):
+    # https://github.com/google/jax/issues/16614
+
+    @jax.custom_jvp
+    def f(x, y):
+      return x
+
+    @partial(f.defjvp, symbolic_zeros=True)
+    def f_jvp(primals, tangents):
+      x, _ = primals
+      x_dot, _ = tangents
+      return x, x_dot
+
+    def body(x_y, _):
+      x, y = x_y
+      return (f(x, y), x), None
+
+    @jax.grad
+    def g(x):
+      (out, _), _ = lax.scan(body, (x, 1.), xs=None, length=2)
+      return out
+
+    g(1.)  # doesn't crash
+
+
 class CustomVJPTest(jtu.JaxTestCase):
 
   def test_basic(self):
@@ -8979,6 +9004,36 @@ class CustomVJPTest(jtu.JaxTestCase):
     f_ = core.jaxpr_as_fun(jax.make_jaxpr(f)(2., 3.))
     _ = jax.linearize(f_, 2., 3.)
     _ = jax.linearize(lambda x: f_(x, 3.), 2.)  # don't crash!
+
+  def test_run_rules_more_than_once(self):
+    # https://github.com/google/jax/issues/16614
+
+    @jax.custom_vjp
+    def f(x, y):
+      return x + y
+
+    def f_fwd(x, y):
+      if y.perturbed:
+        res = None
+      else:
+        res = []
+      return x.value + y.value, res
+
+    def f_bwd(res, ct):
+      return ct, ct
+
+    f.defvjp(f_fwd, f_bwd, symbolic_zeros=True)
+
+    def body(x_y, _):
+      x, y = x_y
+      return (f(x, y), x), None
+
+    @jax.grad
+    def g(x):
+      (out, _), _ = lax.scan(body, (x, 1.), xs=None, length=2)
+      return out
+
+    g(1.)  # doesn't crash
 
 
 def transpose_unary(f, x_example):
