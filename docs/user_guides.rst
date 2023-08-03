@@ -32,3 +32,5 @@ or deployed codebases.
    aot
    errors
    transfer_guard
+
+   pallas/index

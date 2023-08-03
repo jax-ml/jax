@@ -119,6 +119,7 @@ exclude_patterns = [
     # Ignore markdown source for notebooks; myst-nb builds from the ipynb
     # These are kept in sync using the jupytext pre-commit hook.
     'notebooks/*.md',
+    'pallas/*.md',
     'jep/9407-type-promotion.md',
     'jax-101/*.md',
     'autodidax.md',
@@ -207,6 +208,8 @@ nb_execution_excludepatterns = [
     'notebooks/xmap_tutorial.*',
     'notebooks/Distributed_arrays_and_automatic_parallelization.*',
     'notebooks/autodiff_remat.*',
+    # Requires accelerators
+    'pallas/quickstart.*',
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
