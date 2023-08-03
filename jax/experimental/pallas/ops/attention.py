@@ -362,7 +362,7 @@ def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
         input_output_aliases={9: 0})(q, k, v, mask, out, do_scaled, l, m, delta, dq)
   else:
     raise ValueError(f"Invalid backward pass implementation: {backward_pass_impl}")
-  return dq.astype(q.dtype), dk, dv
+  return dq.astype(q.dtype), dk, dv, None
 mha.defvjp(_mha_forward, _mha_backward)
 
 
