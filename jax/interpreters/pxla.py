@@ -56,7 +56,6 @@ from jax._src.interpreters.pxla import (
   mesh_sharding_specs as mesh_sharding_specs,
   multi_host_supported_collectives as multi_host_supported_collectives,
   parallel_callable as parallel_callable,
-  replicate as replicate,
   resource_typecheck as resource_typecheck,
   shard_arg_handlers as shard_arg_handlers,
   shard_args as shard_args,
