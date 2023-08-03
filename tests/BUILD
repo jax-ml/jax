@@ -918,18 +918,12 @@ py_test(
 jax_test(
     name = "compilation_cache_test",
     srcs = ["compilation_cache_test.py"],
-    backend_tags = {
-        "tpu": ["nomsan"],  # TODO(b/213388298): this test fails msan.
-    },
     deps = ["//jax:compilation_cache_internal"],
 )
 
 jax_test(
     name = "cache_key_test",
     srcs = ["cache_key_test.py"],
-    backend_tags = {
-        "tpu": ["nomsan"],  # TODO(b/213388298): this test fails msan.
-    },
     deps = ["//jax:cache_key"],
 )
 

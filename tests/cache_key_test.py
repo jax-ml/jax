@@ -264,7 +264,7 @@ class CacheKeyTest(jtu.JaxTestCase):
     compile_options.executable_build_options.result_layout = shape
 
     device_assignment = xla_client.DeviceAssignment.create(
-        np.ndarray(shape=(2, 2))
+        np.arange(4).reshape(2, 2)
     )
     compile_options.device_assignment = device_assignment
     compile_options.executable_build_options.device_assignment = (
