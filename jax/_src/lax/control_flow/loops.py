@@ -114,9 +114,8 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
     scan :: (c -> a -> (c, b)) -> c -> [a] -> (c, [b])
 
-  where we use [t] here to denote the type t with an additional leading axis.
-  That is, if t is an array type then [t] represents the type with an additional
-  leading axis, and if t is a pytree (container) type with array leaves then [t]
+  where for any array type specifier ``t``, ``[t]`` represents the type with an additional
+  leading axis, and if ``t`` is a pytree (container) type with array leaves then ``[t]``
   represents the type with the same pytree structure and corresponding leaves
   each with an additional leading axis.
 
