@@ -4949,18 +4949,42 @@ def _piecewise(x: Array, condlist: Array, consts: dict[int, ArrayLike],
   return vectorize(lax.switch, excluded=(1,))(indices, funclist, x)
 
 
+def _tile_to_size(arr: Array, size: int) -> Array:
+  assert arr.ndim == 1
+  if arr.size < size:
+    arr = tile(arr, int(np.ceil(size / arr.size)))
+  assert arr.size >= size
+  return arr[:size] if arr.size > size else arr
+
 
 @util._wraps(np.place, lax_description="""
-Numpy function :func:`numpy.place` is not available in JAX and will raise a
-:class:`NotImplementedError`, because ``np.place`` modifies its arguments in-place,
-and in JAX arrays are immutable. A JAX-compatible approach to array updates
-can be found in :attr:`jax.numpy.ndarray.at`.
+The semantics of :func:`numpy.place` is to modify arrays in-place, which JAX
+cannot do because JAX arrays are immutable. Thus :func:`jax.numpy.place` adds
+the ``inplace`` parameter, which must be set to ``False`` by the user as a
+reminder of this API difference.
+""", extra_params="""
+inplace : bool, default=True
+    If left to its default value of True, JAX will raise an error. This is because
+    the semantics of :func:`numpy.put` are to modify the array in-place, which is
+    not possible in JAX due to the immutability of JAX arrays.
 """)
-def place(*args, **kwargs):
-  raise NotImplementedError(
-    "jax.numpy.place is not implemented because JAX arrays cannot be modified in-place. "
-    "For functional approaches to updating array values, see jax.numpy.ndarray.at: "
-    "https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html.")
+def place(arr: ArrayLike, mask: ArrayLike, vals: ArrayLike, *,
+          inplace: bool = True) -> Array:
+  util.check_arraylike("place", arr, mask, vals)
+  data, mask_arr, vals_arr = asarray(arr), asarray(mask), ravel(vals)
+  if inplace:
+    raise ValueError(
+      "jax.numpy.place cannot modify arrays in-place, because JAX arrays are immutable. "
+      "Pass inplace=False to instead return an updated array.")
+  if data.size != mask_arr.size:
+    raise ValueError("place: arr and mask must be the same size")
+  if not vals_arr.size:
+    raise ValueError("Cannot place values from an empty array")
+  if not data.size:
+    return data
+  indices = where(mask_arr.ravel(), size=mask_arr.size, fill_value=mask_arr.size)[0]
+  vals_arr = _tile_to_size(vals_arr, len(indices))
+  return data.ravel().at[indices].set(vals_arr, mode='drop').reshape(data.shape)
 
 
 @util._wraps(np.put, lax_description="""
@@ -4980,7 +5004,7 @@ def put(a: ArrayLike, ind: ArrayLike, v: ArrayLike,
   arr, ind_arr, v_arr = asarray(a), ravel(ind), ravel(v)
   if not arr.size or not ind_arr.size or not v_arr.size:
     return arr
-  v_arr = tile(v_arr, int(np.ceil(len(ind_arr) / len(v_arr))))[:len(ind_arr)]
+  v_arr = _tile_to_size(v_arr, len(ind_arr))
   if inplace:
     raise ValueError(
       "jax.numpy.put cannot modify arrays in-place, because JAX arrays are immutable. "
