@@ -24,7 +24,7 @@ from jax import lax
 from jax.experimental import pallas as pl
 
 def mha_forward_kernel(
-    q_ref, k_ref, v_ref, q_mask_ref, kv_mask_ref, # Input arrays
+    q_ref, k_ref, v_ref, pad_mask_ref, seg_ids_ref, # Input arrays
     o_ref, # Output
     *residual_refs, # Residual outputs
     sm_scale: float, causal: bool,
@@ -44,8 +44,8 @@ def mha_forward_kernel(
   # read, compute, and write all in 2d chunks. 1 element ~= 1 CUDA thread index.
   # q tile has shape [block_q, block_d], block_d == head_dim.
   q = pl.load(q_ref, (pl.dslice(start_q * block_q, block_q), pl.dslice(None)))
-  q_mask = pl.load(q_mask_ref, (pl.dslice(start_q * block_q, block_q),))
-  q_mask = jnp.expand_dims(q_mask, axis=-1)
+  q_mask = pl.load(pad_mask_ref, (pl.dslice(start_q * block_q, block_q),))
+  q_seg_ids = pl.load(seg_ids_ref, (pl.dslice(start_q * block_q, block_q),))
   # In FlashAttention algorithm 1 there are 2 loops: slow over tiles of kv (size
   # (Bc == block_k here), and fast over blocks of q (size Br == block_q here).
   # Here we only loop over blocks of kv to process entire seq_len, the loop over
@@ -54,9 +54,12 @@ def mha_forward_kernel(
     acc, m_prev, l_prev = carry
 
     k = pl.load(k_ref, (pl.dslice(start_k * block_k, block_k), slice(None)))
-    kv_mask = pl.load(kv_mask_ref, (pl.dslice(start_k * block_k, block_k),))
+    kv_mask = pl.load(pad_mask_ref, (pl.dslice(start_k * block_k, block_k),))
+    kv_seg_ids = pl.load(seg_ids_ref, (pl.dslice(start_k * block_k, block_k),))
 
-    mask = jnp.multiply(q_mask, kv_mask)
+    mask = jnp.multiply(q_mask[:, None], kv_mask[None, :])
+    mask = jnp.logical_and(
+      mask, jnp.equal(q_seg_ids[:, None], kv_seg_ids[None, :]))
 
     qk = jnp.zeros([block_q, block_k], dtype=jnp.float32)
     qk += pl.dot(q, k.T)   # [block_q, block_k]
@@ -100,12 +103,12 @@ def mha_forward_kernel(
   acc = acc.astype(o_ref.dtype)
   pl.store(o_ref, (pl.dslice(start_q * block_q, block_q), pl.dslice(None)), acc)
 
-@functools.partial(jax.custom_vjp, nondiff_argnums=[4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
+@functools.partial(jax.custom_vjp, nondiff_argnums=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
 @functools.partial(jax.jit, static_argnames=["sm_scale", "causal", "block_q", "block_k",
                                              "backward_pass_impl",
                                              "num_warps", "num_stages", "grid",
                                              "interpret", "debug"])
-def mha(q, k, v, q_mask=None, kv_mask=None,
+def mha(q, k, v, pad_mask=None, seg_ids=None,
         sm_scale: float = 1.0,
         causal: bool = False,
         block_q: int = 128,
@@ -118,12 +121,11 @@ def mha(q, k, v, q_mask=None, kv_mask=None,
         debug: bool = False):
   del backward_pass_impl
   batch_size, seq_len, num_heads, head_dim = q.shape
-  kv_seq_len = k.shape[1]
 
-  if q_mask is None:
-    q_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
-  if kv_mask is None:
-    kv_mask = jnp.ones((batch_size, kv_seq_len), dtype=jnp.int32)
+  if pad_mask is None:
+    pad_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
+  if seg_ids is None:
+    seg_ids = jnp.zeros((batch_size, seq_len), dtype=jnp.int32)
 
   block_q = min(block_q, seq_len)
   block_k = min(block_k, seq_len)
@@ -156,9 +158,9 @@ def mha(q, k, v, q_mask=None, kv_mask=None,
       out_shape=out_shape,
       debug=debug,
       interpret=interpret,
-      name="mha_forward")(q, k, v, q_mask, kv_mask)
+      name="mha_forward")(q, k, v, pad_mask, seg_ids)
 
-def _mha_forward(q, k, v, q_mask, kv_mask, sm_scale: float, causal: bool, block_q: int,
+def _mha_forward(q, k, v, pad_mask, seg_ids, sm_scale: float, causal: bool, block_q: int,
                  block_k: int, backward_pass_impl: str, num_warps: Optional[int],
                  num_stages: int, grid: Any, interpret: bool, debug: bool):
   del backward_pass_impl
@@ -203,8 +205,8 @@ def _mha_forward(q, k, v, q_mask, kv_mask, sm_scale: float, causal: bool, block_
       out_shape=out_shape,
       debug=debug,
       interpret=interpret,
-      name="mha_forward")(q, k, v, q_mask, kv_mask)
-  return out, (q, k, v, q_mask, kv_mask, out, l, m)
+      name="mha_forward")(q, k, v, pad_mask, seg_ids)
+  return out, (q, k, v, pad_mask, seg_ids, out, l, m)
 
 def _preprocess_backward_kernel(out_ref, dout_ref, l_ref,
                                 new_dout_ref, delta_ref, *,
@@ -253,7 +255,7 @@ def _preprocess_backward(out, do, l, block_q: int,
 
 def mha_backward_kernel(
     # Inputs
-    q_ref, k_ref, v_ref, q_mask_ref, kv_mask_ref, out_ref, do_scaled_ref,
+    q_ref, k_ref, v_ref, pad_mask_ref, seg_ids_ref, out_ref, do_scaled_ref,
     l_ref, m_ref, delta_ref, _,
     # Outputs
     dq_ref, dk_ref, dv_ref,
@@ -271,20 +273,22 @@ def mha_backward_kernel(
     k = pl.load(k_ref, (pl.ds(start_k * block_k, block_k), slice(None)))
     v = pl.load(v_ref, (pl.ds(start_k * block_k, block_k), slice(None)))
     span_k = start_k * block_k + jnp.arange(block_k)
-
-    kv_mask = pl.load(kv_mask_ref, (pl.ds(start_k * block_k, block_k),))
+    kv_mask = pl.load(pad_mask_ref, (pl.ds(start_k * block_k, block_k),))
+    kv_seg_ids = pl.load(seg_ids_ref, (pl.ds(start_k * block_k, block_k),))
 
     def inner_loop(start_q, carry):
       dv, dk = carry
       q = pl.load(q_ref, (pl.ds(start_q * block_q, block_q), slice(None)))
-      q_mask = pl.load(q_mask_ref, (pl.ds(start_q * block_q, block_q),))
-      q_mask = jnp.expand_dims(q_mask, axis=-1)
+      q_mask = pl.load(pad_mask_ref, (pl.ds(start_q * block_q, block_q),))
+      q_seg_ids = pl.load(seg_ids_ref, (pl.ds(start_q * block_q, block_q),))
       qk = pl.dot(q, k.T)
       qk = qk.astype(q_ref.dtype)
       qk = qk.astype(jnp.float32)
       if sm_scale != 1.0:
         qk *= sm_scale
-      mask = jnp.multiply(q_mask, kv_mask)
+      mask = jnp.multiply(q_mask[:, None], kv_mask[None, :])
+      mask = jnp.logical_and(
+        mask, jnp.equal(q_seg_ids[:, None], kv_seg_ids[None, :]))
       if causal:
         span_q = start_q * block_q + jnp.arange(block_q)
         mask = jnp.logical_and(mask, span_q[:, None] >= span_k[None, :])
@@ -323,7 +327,7 @@ def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
                   num_stages: int, grid: Any, interpret: bool,
                   debug: bool, res, do):
   del num_warps, num_stages, grid
-  q, k, v, q_mask, kv_mask, out, l, m = res
+  q, k, v, pad_mask, seg_ids, out, l, m = res
 
   batch_size, seq_len, num_heads, head_dim = q.shape
   block_q = min(block_q, seq_len)
@@ -373,7 +377,7 @@ def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
         interpret=interpret,
         num_warps=num_warps,
         num_stages=1,
-        input_output_aliases={10: 0})(q, k, v, q_mask, kv_mask, out, do_scaled, l, m, delta, dq)
+        input_output_aliases={10: 0})(q, k, v, pad_mask, seg_ids, out, do_scaled, l, m, delta, dq)
   else:
     raise ValueError(f"Invalid backward pass implementation: {backward_pass_impl}")
   return dq.astype(q.dtype), dk, dv, None, None
@@ -381,17 +385,20 @@ mha.defvjp(_mha_forward, _mha_backward)
 
 
 @functools.partial(jax.jit, static_argnames=['sm_scale', 'causal'])
-def mha_reference(q, k, v, q_mask=None, kv_mask=None, sm_scale=1.0, causal: bool = False):
+def mha_reference(q, k, v, pad_mask=None, seg_ids=None, sm_scale=1.0, causal: bool = False):
   batch_size, q_seq_len, _, _ = q.shape
   kv_seq_len = k.shape[1]
   big_neg = jnp.finfo(q.dtype).min
   logits = jnp.einsum('bqhc,bkhc->bhqk', q, k).astype(jnp.float32)
-  if q_mask is None:
-    q_mask = jnp.ones((batch_size, q_seq_len), dtype=jnp.int32)
-  if kv_mask is None:
-    kv_mask = jnp.ones((batch_size, kv_seq_len), dtype=jnp.int32)
+  if pad_mask is None:
+    pad_mask = jnp.ones((batch_size, q_seq_len), dtype=jnp.int32)
+  if seg_ids is None:
+    seg_ids = jnp.zeros((batch_size, q_seq_len), dtype=jnp.int32)
   mask = jnp.expand_dims(
-    jnp.multiply(jnp.expand_dims(q_mask, axis=-1), jnp.expand_dims(kv_mask, axis=-2)), axis=-3)
+    jnp.multiply(jnp.expand_dims(pad_mask, axis=-1), jnp.expand_dims(pad_mask, axis=-2)), axis=-3)
+  seg_mask = jnp.expand_dims(
+    jnp.equal(jnp.expand_dims(seg_ids, axis=-1), jnp.expand_dims(seg_ids, axis=-2)), axis=-3)
+  mask = jnp.logical_and(mask, seg_mask)
   mask = jnp.broadcast_to(mask, logits.shape)
   if causal:
     causal_mask = jnp.tril(jnp.ones((1, 1, q_seq_len, kv_seq_len), dtype=bool))
