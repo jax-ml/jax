@@ -2216,3 +2216,114 @@ def _geometric(key, p, shape, dtype) -> Array:
   log_one_minus_p = jnp.broadcast_to(log_one_minus_p, shape)
   g = lax.floor(lax.div(log_u, log_one_minus_p)) + 1
   return g.astype(dtype)
+
+
+def triangular(key: KeyArray,
+               left: RealArray,
+               mode: RealArray,
+               right: RealArray,
+               shape: Optional[Shape] = None,
+               dtype: DTypeLikeFloat = dtypes.float_) -> Array:
+  r"""Sample Triangular random values with given shape and float dtype.
+
+  The values are returned according to the probability density function:
+
+  .. math::
+      f(x; a, b, c) = \frac{2}{c-a} \left\{ \begin{array}{ll} \frac{x-a}{b-a} & a \leq x \leq b \\ \frac{c-x}{c-b} & b \leq x \leq c \end{array} \right.
+
+  on the domain :math:`a \leq x \leq c`.
+
+  Args:
+    key: a PRNG key used as the random key.
+    left: a float or array of floats broadcast-compatible with ``shape``
+      representing the lower limit parameter of the distribution.
+    mode: a float or array of floats broadcast-compatible with ``shape``
+      representing the peak value parameter of the distribution, value must
+      fulfill the condition ``left <= mode <= right``.
+    right: a float or array of floats broadcast-compatible with ``shape``
+      representing the upper limit parameter of the distribution, must be
+      larger than ``left``.
+    shape: optional, a tuple of nonnegative integers specifying the result
+      shape. Must be broadcast-compatible with ``left``,``mode`` and ``right``.
+      The default (None) produces a result shape equal to ``left.shape``, ``mode.shape``
+      and ``right.shape``.
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    A random array with the specified dtype and with shape given by ``shape`` if
+    ``shape`` is not None, or else by ``left.shape``, ``mode.shape`` and ``right.shape``.
+  """
+  key, _ = _check_prng_key(key)
+  dtypes.check_user_dtype_supported(dtype)
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError("dtype argument to `triangular` must be a float "
+                     f"dtype, got {dtype}")
+  dtype = dtypes.canonicalize_dtype(dtype)
+  if shape is not None:
+    shape = core.canonicalize_shape(shape)
+  return _triangular(key, left, mode, right, shape, dtype)
+
+@partial(jit, static_argnums=(4, 5), inline=True)
+def _triangular(key, left, mode, right, shape, dtype) -> Array:
+  # https://en.wikipedia.org/wiki/Triangular_distribution#Generating_triangular-distributed_random_variates
+  if shape is None:
+    shape =  lax.broadcast_shapes(np.shape(left), np.shape(mode), np.shape(right))
+  else:
+    _check_shape("triangular", shape, np.shape(left), np.shape(mode), np.shape(right))
+  left = jnp.broadcast_to(left, shape)
+  mode = jnp.broadcast_to(mode, shape)
+  right = jnp.broadcast_to(right, shape)
+  fc = (mode - left) / (right - left)
+  u = uniform(key, shape, dtype)
+  out1 = left + lax.sqrt(u * (right - left) * (mode - left))
+  out2 = right - lax.sqrt((1 - u) * (right - left) * (right - mode))
+  tri = lax.select(u < fc, out1, out2)
+  return tri
+
+
+
+def lognormal(key: KeyArray,
+              sigma: RealArray = np.float32(1),
+              shape: Optional[Shape] = None,
+              dtype: DTypeLikeFloat = dtypes.float_) -> Array:
+  r""" Sample lognormal random values with given shape and float dtype.
+
+  The values are distributed according to the probability density function:
+
+  .. math::
+      f(x) = \frac{1}{x\sqrt{2\pi\sigma^2}}\exp\left(-\frac{(\log x)^2}{2\sigma^2}\right)
+
+  on the domain :math:`x > 0`.
+
+  Args:
+    key: a PRNG key used as the random key.
+    sigma: a float or array of floats broadcast-compatible with ``shape`` representing
+      the standard deviation of the underlying normal distribution. Default 1.
+    shape: optional, a tuple of nonnegative integers specifying the result
+      shape. The default (None) produces a result shape equal to ``()``.
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    A random array with the specified dtype and with shape given by ``shape``.
+  """
+  key, _ = _check_prng_key(key)
+  dtypes.check_user_dtype_supported(dtype)
+  if not dtypes.issubdtype(dtype, np.inexact):
+    raise ValueError(f"dtype argument to `lognormal` must be a float or complex dtype, "
+                     f"got {dtype}")
+  dtype = dtypes.canonicalize_dtype(dtype)
+  if shape is not None:
+    shape = core.canonicalize_shape(shape)
+  return _lognormal(key, sigma, shape, dtype)  # type: ignore
+
+@partial(jit, static_argnums=(2, 3), inline=True)
+def _lognormal(key, sigma, shape, dtype) -> Array:
+  if shape is None:
+    shape =  np.shape(sigma)
+  else:
+    _check_shape("triangular", shape, np.shape(sigma))
+  sigma = jnp.broadcast_to(sigma, shape)
+  scaled_norm = normal(key, shape, dtype) * sigma
+  return lax.exp(scaled_norm)
