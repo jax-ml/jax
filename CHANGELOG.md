@@ -8,6 +8,15 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.15
 
+* Changes
+  * When not running under IPython: when an exception is raised, JAX now filters out the
+    entirety of its internal frames from tracebacks. (Without the "unfiltered stack trace"
+    that previously appeared.) This should produce much friendlier-looking tracebacks. See
+    [here](https://github.com/google/jax/pull/16949) for an example.
+    This behavior can be changed by setting `JAX_TRACEBACK_FILTERING=remove_frames` (for two
+    separate unfiltered/filtered tracebacks, which was the old behavior) or
+    `JAX_TRACEBACK_FILTERING=off` (for one unfiltered traceback).
+
 ## jaxlib 0.4.15
 
 ## jax 0.4.14 (July 27, 2023)
