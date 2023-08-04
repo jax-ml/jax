@@ -24,6 +24,7 @@ from functools import partial, lru_cache, cached_property
 import itertools as it
 import logging
 import math
+import os
 from typing import (Any, Callable, NamedTuple, Optional, Union, cast, TypeVar)
 
 import numpy as np
@@ -37,6 +38,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
+from jax._src import config as jax_config
 from jax._src import mesh as mesh_lib
 from jax._src import op_shardings
 from jax._src import sharding_specs
@@ -69,6 +71,13 @@ from jax._src.util import (safe_map, safe_zip, partition_list,
                            wrap_name, tuple_delete, distributed_debug_log,
                            unzip2, HashableFunction, weakref_lru_cache)
 
+# TODO(yashkatariya): Remove this flag after the host runtime is linked by
+# default and works on cloud TPU.
+_FETCH_MEMORY_KIND_ON_EXECUTABLE = jax_config.DEFINE_bool(
+    'jax_fetch_memory_kind_on_executable',
+    bool(os.getenv('JAX_FETCH_MEMORY_KIND_ON_EXECUTABLE', '')),
+    help=("If True, will allow fetching memory kinds available on executable "
+          "and annotate Shardings with it."))
 
 # Built in Python lists don't support weak refs but subclasses of lists do.
 class WeakRefList(list):
@@ -1689,10 +1698,14 @@ class SemanticallyEqualShardings:
   def __eq__(self, other):
     if not isinstance(other, SemanticallyEqualShardings):
       return False
-    return all(op_shardings.are_op_shardings_equal(s._hlo_sharding, o._hlo_sharding)
-               if (isinstance(s, sharding_impls.GSPMDSharding) and
-                   isinstance(o, sharding_impls.GSPMDSharding))
-               else s == o for s, o in zip(self.shardings, other.shardings))
+    return all(
+        (op_shardings.are_op_shardings_equal(s._hlo_sharding, o._hlo_sharding)
+        and sharding_impls.are_mem_kind_of_shardings_equal(s, o))
+        if (isinstance(s, sharding_impls.GSPMDSharding) and
+            isinstance(o, sharding_impls.GSPMDSharding))
+        else s == o
+        for s, o in zip(self.shardings, other.shardings)
+    )
 
 
 @weakref_lru_cache
@@ -2208,34 +2221,40 @@ def _get_input_indices(
 
 def get_gspmd_shardings_from_executable(
     xla_executable, device_assignment: Sequence[xc.Device],
-    num_in_avals: int, num_out_avals: int
-) -> tuple[Sequence[sharding_impls.XLACompatibleSharding],
-           Sequence[sharding_impls.XLACompatibleSharding]]:
+    num_out_avals: int
+) -> Sequence[sharding_impls.XLACompatibleSharding]:
   from jax._src import pjit
+
+  if _FETCH_MEMORY_KIND_ON_EXECUTABLE.value:
+    try:
+      omk = xla_executable.get_output_memory_kinds()[0]
+    except:
+      omk = [None] * num_out_avals
+  else:
+    omk = [None] * num_out_avals
 
   # When the device assignment only has 1 device, SPMD partitioner will not run.
   # Hence the op shardings will not be set on the `hlo_module`. In that case,
   # just return SingleDeviceShardings since we know the computation is running
   # only on 1 device.
   if len(device_assignment) == 1:
-    ss = sharding_impls.SingleDeviceSharding(device_assignment[0])
-    return [ss] * num_in_avals, [ss] * num_out_avals
+    return [sharding_impls.SingleDeviceSharding(device_assignment[0], memory_kind=mk)
+            for mk in omk]
 
-  in_op_shardings, out_op_shardings = pjit.get_op_sharding_from_executable(xla_executable)
+  _, out_op_shardings = pjit.get_op_sharding_from_executable(xla_executable)
 
-  in_shardings_xla = [sharding_impls.GSPMDSharding(device_assignment, i)
-                      for i in in_op_shardings]
-  out_shardings_xla = [sharding_impls.GSPMDSharding(device_assignment, o)
-                       for o in out_op_shardings]
   # This condition happens when all the elements in the output tuple have the
   # same sharding, so XLA decides to run the `FusionTupleDeduplicator` to
   # put the sharding on ROOT instead of the tuple.
   # TODO(b/245667823): Remove this when XLA fixes this.
-  if len(out_shardings_xla) == 1 and len(out_shardings_xla) < num_out_avals:
-    out_shardings_xla = out_shardings_xla * num_out_avals
-  assert len(out_shardings_xla) == num_out_avals, (
-      len(out_shardings_xla), num_out_avals)
-  return in_shardings_xla, out_shardings_xla
+  if len(out_op_shardings) == 1 and len(out_op_shardings) < num_out_avals:
+    out_op_shardings = out_op_shardings * num_out_avals  # type: ignore
+
+  assert len(out_op_shardings) == num_out_avals == len(omk), (
+      len(out_op_shardings), num_out_avals, len(omk))
+
+  return [sharding_impls.GSPMDSharding(device_assignment, os, memory_kind=mk)
+          for os, mk in safe_zip(out_op_shardings, omk)]
 
 
 # TODO(yashkatariya): Remove this function after `AUTO` can return shardings
@@ -2258,39 +2277,38 @@ _ShardingT = TypeVar("_ShardingT", bound=sharding_impls.XLACompatibleSharding)
 
 def _register_out_sharding_handler(
     sharding_cls: type[_ShardingT],
-    handler: Callable[[xc.OpSharding, _ShardingT], _ShardingT],
+    handler: Callable[[sharding_impls.GSPMDSharding, _ShardingT], _ShardingT],
 ) -> None:
   _orig_out_sharding_handlers[sharding_cls] = handler
 
 
 def _gspmd_to_named_sharding(
-    op_sharding: xc.OpSharding,
-    self: sharding_impls.NamedSharding) -> sharding_impls.NamedSharding:
+    out_s: sharding_impls.GSPMDSharding,
+    orig_in_s: sharding_impls.NamedSharding) -> sharding_impls.NamedSharding:
   parsed_pspec = sharding_impls.parse_flatten_op_sharding(
-      op_sharding, self.mesh)[0]
+      out_s._hlo_sharding, orig_in_s.mesh)[0]
   return create_mesh_pspec_sharding(
-      self.mesh, parsed_pspec.get_partition_spec(), parsed_pspec)
+      orig_in_s.mesh, parsed_pspec.get_partition_spec(), parsed_pspec,
+      out_s.memory_kind)
 
 _register_out_sharding_handler(
-    sharding_impls.NamedSharding, _gspmd_to_named_sharding
-)
+    sharding_impls.NamedSharding, _gspmd_to_named_sharding)
 
 
 def _gspmd_to_positional_sharding(
-    op_sharding: xc.OpSharding,
-    self: sharding_impls.PositionalSharding) -> sharding_impls.PositionalSharding:
+    out_s: sharding_impls.GSPMDSharding,
+    orig_in_s: sharding_impls.PositionalSharding) -> sharding_impls.PositionalSharding:
   return sharding_impls._op_sharding_to_pos_sharding(
-      op_sharding, self._device_assignment)
+      out_s._hlo_sharding, orig_in_s._device_assignment, out_s.memory_kind)
 
 _register_out_sharding_handler(
-    sharding_impls.PositionalSharding, _gspmd_to_positional_sharding
-)
+    sharding_impls.PositionalSharding, _gspmd_to_positional_sharding)
 
 
 def _get_out_sharding_from_orig_sharding(
-    out_shardings, out_avals, orig_s, orig_aval, are_out_sharding_from_xla):
+    out_shardings, out_avals, orig_in_s, orig_aval, are_out_sharding_from_xla):
   out = []
-  orig_handler = _orig_out_sharding_handlers[type(orig_s)]
+  orig_handler = _orig_out_sharding_handlers[type(orig_in_s)]
   for o, out_aval, from_xla in safe_zip(out_shardings, out_avals,
                                         are_out_sharding_from_xla):
     if isinstance(o, sharding_impls.GSPMDSharding):
@@ -2302,10 +2320,11 @@ def _get_out_sharding_from_orig_sharding(
         if (orig_aval is not None and out_aval is not None and
             out_aval.ndim == orig_aval.ndim and
             sharding_impls.are_op_shardings_equal(
-                o._hlo_sharding, orig_s._to_xla_hlo_sharding(orig_aval.ndim))):
-          out.append((orig_s, False))
+                o._hlo_sharding, orig_in_s._to_xla_hlo_sharding(orig_aval.ndim)) and
+            sharding_impls.are_mem_kind_of_shardings_equal(o, orig_in_s)):
+          out.append((orig_in_s, False))
         else:
-          out.append((orig_handler(o._hlo_sharding, orig_s), False))
+          out.append((orig_handler(o, orig_in_s), False))
       except:
         out.append((o, from_xla))
     else:
@@ -2319,17 +2338,17 @@ def maybe_get_orig_out_sharding(
     return ([o._original_sharding for o in out_shardings],
             (False,) * len(out_shardings))
 
-  orig_s = None
+  orig_in_s = None
   orig_aval = None
   for i, aval in safe_zip(in_shardings, in_avals):
     oi = getattr(i, '_original_sharding', None)
     if type(oi) in _orig_out_sharding_handlers:
-      orig_s = oi
+      orig_in_s = oi
       orig_aval = aval
       break
-  if orig_s is not None:
+  if orig_in_s is not None:
     return zip(*_get_out_sharding_from_orig_sharding(
-        out_shardings, out_avals, orig_s, orig_aval, are_out_shardings_from_xla))
+        out_shardings, out_avals, orig_in_s, orig_aval, are_out_shardings_from_xla))
 
   return out_shardings, are_out_shardings_from_xla
 
@@ -2521,9 +2540,8 @@ class UnloadedMeshExecutable:
       assert mesh is None
       device_assignment = da.device_assignment if isinstance(  # type: ignore
           da, _DeviceAssignment) else da
-      _, out_shardings_xla = get_gspmd_shardings_from_executable(  # type: ignore
-          xla_executable, device_assignment,  # type: ignore
-          len(global_in_avals), len(global_out_avals))
+      out_shardings_xla = get_gspmd_shardings_from_executable(  # type: ignore
+          xla_executable, device_assignment, len(global_out_avals))  # type: ignore
       orig_out_shardings = out_shardings
       out_shardings, are_out_shardings_from_xla = [], []  # type: ignore
       for xla_s, orig, aval in safe_zip(out_shardings_xla, orig_out_shardings,
@@ -2532,9 +2550,10 @@ class UnloadedMeshExecutable:
           out_shardings.append(xla_s)
           are_out_shardings_from_xla.append(True)
         else:
-          if not op_shardings.are_op_shardings_equal(
-              xla_s._to_xla_hlo_sharding(aval.ndim),  # type: ignore
-              orig._to_xla_hlo_sharding(aval.ndim)):  # type: ignore
+          xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)  # type: ignore
+          orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)  # type: ignore
+          if (not op_shardings.are_op_shardings_equal(xla_hlo_s, orig_hlo_s) or
+              not sharding_impls.are_mem_kind_of_shardings_equal(xla_s, orig)):  # type: ignore
             raise AssertionError(
                 f"Unexpected XLA sharding override: (XLA) {xla_s} != {orig} "
                 "(User sharding)")
@@ -2823,11 +2842,12 @@ def _compile_replicated_mesh_executable_from_trivial_jaxpr(
 
 @lru_cache
 def create_mesh_pspec_sharding(
-    mesh: Mesh, pspec: PartitionSpec | None, parsed_pspec=None
-) -> sharding_impls.NamedSharding:
+    mesh: Mesh, pspec: Optional[PartitionSpec], parsed_pspec=None,
+    memory_kind: Optional[str] = None) -> sharding_impls.NamedSharding:
   if pspec is None:
     pspec, parsed_pspec = PartitionSpec(), None
-  return sharding_impls.NamedSharding(mesh, pspec, _parsed_pspec=parsed_pspec)
+  return sharding_impls.NamedSharding(mesh, pspec, _parsed_pspec=parsed_pspec,
+                                      memory_kind=memory_kind)
 
 
 def check_device_backend_on_shardings(shardings) -> bool:
@@ -2851,6 +2871,12 @@ def check_gda_or_array_xla_sharding_match(
   for arg, xs, name in safe_zip(args, in_xla_shardings, arg_names):
     if not isinstance(arg, ArrayImpl):
       continue
+
+    # Raise memory kind mismatch error even if the arg is uncommitted.
+    if not sharding_impls.are_mem_kind_of_shardings_equal(arg.sharding, xs):
+      errors.append(
+          f"Got Array sharding: {arg.sharding} and input sharding: {xs} for "
+          f"arg {name} with shape: {arg.aval.str_short()}")
 
     # No need to cache this check since MeshExecutable has a C++ fast path
     # for AOT compiled call.
