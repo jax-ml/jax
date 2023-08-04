@@ -1958,8 +1958,6 @@ class BCOOTest(sptu.SparseTestCase):
   @jtu.ignore_warning(category=sparse.CuSparseEfficiencyWarning)
   def test_bcoo_matmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
     if (jtu.device_under_test() == "gpu" and
-        (lhs_dtype, rhs_dtype) in [(np.complex128, np.complex64),
-                                   (np.complex64, np.int32)] and
         _is_required_cuda_version_satisfied(12000)):
       raise unittest.SkipTest("Triggers a bug in cuda-12 b/287344632")
 
