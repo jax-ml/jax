@@ -2799,6 +2799,28 @@ class SparseSolverTest(sptu.SparseTestCase):
     self.assertAllClose(a @ x, b, rtol=1e-2, atol=1e-3)
     self._CompileAndCheck(sparse_solve, args_maker)
 
+  @jtu.sample_product(
+    size=[10, 20, 50],
+    dtype=jtu.dtypes.floating,
+  )
+  @unittest.skipIf(jtu.device_under_test() == "tpu", "test requires CPU or GPU")
+  @unittest.skipIf(jtu.device_under_test() == "cuda" and not GPU_LOWERING_ENABLED,
+                   "test requires cusparse/cusolver")
+  @jtu.skip_on_devices("rocm", "test requires cusolver")
+  def test_sparse_qr_linear_solver_grads(self, size, dtype):
+    rng = rand_sparse(self.rng())
+    a = rng((size, size), dtype)
+    nse = (a != 0).sum()
+    data, indices, indptr = sparse_csr._csr_fromdense(a, nse=nse)
+
+    rng_k = jtu.rand_default(self.rng())
+    b = rng_k([size], dtype)
+
+    def sparse_solve(data, b, tol=1e-8):
+      return sparse.linalg.spsolve(data, indices, indptr, b, tol=tol)
+
+    jtu.check_grads(sparse_solve, (data, b), order=1, rtol=0.05, atol=0.05)
+
 
 class SparseUtilTest(sptu.SparseTestCase):
 
