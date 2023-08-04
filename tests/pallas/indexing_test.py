@@ -25,6 +25,11 @@ from jax._src import util
 from jax._src.pallas import indexing
 import numpy as np
 
+hp.settings.register_profile(
+    "deterministic", database=None, derandomize=True, deadline=None,
+    max_examples=100, print_blob=True)
+hp.settings.load_profile("deterministic")
+
 Slice = indexing.Slice
 NDIndexer = indexing.NDIndexer
 ds = indexing.ds
