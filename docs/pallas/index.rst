@@ -11,3 +11,4 @@ This section contains tutorials, guides and examples for using Pallas.
 
    design
    quickstart
+   tpu
