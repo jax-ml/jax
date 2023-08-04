@@ -22,6 +22,7 @@ from typing import Any, Callable, Sequence
 from jax import core as jax_core
 from jax import lax
 from jax import tree_util
+from jax._src import custom_derivatives
 from jax._src import debugging
 from jax._src import linear_util as lu
 from jax._src import pjit
@@ -1226,6 +1227,26 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
 
 
 lowering_rules[pjit.pjit_p] = _pjit_lowering_rule
+
+
+def _custom_jvp_call_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    call_jaxpr: jax_core.Jaxpr,
+    jvp_jaxpr_thunk: Callable,
+    num_consts: int,
+    symbolic_zeros: bool,
+):
+  del jvp_jaxpr_thunk
+  if symbolic_zeros: raise NotImplementedError
+  if num_consts: raise NotImplementedError
+  if call_jaxpr.consts: raise NotImplementedError
+  lowering_context = ctx.lowering_context.replace(block_shapes=ctx.block_shapes)
+  return jaxpr_subcomp(lowering_context, call_jaxpr.jaxpr, *args)
+
+
+lowering_rules[custom_derivatives.custom_jvp_call_p] = (
+    _custom_jvp_call_lowering_rule)
 
 
 def _debug_callback_lowering_rule(ctx: LoweringRuleContext, *args, **kwargs):
