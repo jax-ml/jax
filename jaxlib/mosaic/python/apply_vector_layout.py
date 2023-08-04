@@ -2317,9 +2317,8 @@ def _vector_contract_rule(ctx: RewriteContext, op: vector.ContractionOp,  # pyli
   lhs_type = ir.VectorType(op.lhs.type)
   rhs_type = ir.VectorType(op.rhs.type)
   acc_type = ir.VectorType(op.acc.type)
-  f32 = ir.F32Type.get()
-  if acc_type.element_type != f32:
-    raise NotImplementedError("non-fp32 matmuls")
+  if type_bitwidth(acc_type.element_type) != 32:
+    raise NotImplementedError("non-32-bit matmul result")
   if lhs_type.shape[0] % layout_lhs.tiling[0] != 0:
     raise NotImplementedError("layout matmul lhs")
   if rhs_type.shape == [128, 128]:

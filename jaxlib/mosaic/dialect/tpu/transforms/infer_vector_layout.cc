@@ -715,8 +715,8 @@ class VectorLayoutInferer {
     };
     auto res_ty = dyn_cast<VectorType>(op.getType());
     TPU_CHECK_OP(res_ty, "only vector results supported");
-    TPU_CHECK_OP(res_ty.getElementType().isF32(),
-                 "only fp32 matmul results supported");
+    TPU_CHECK_OP(res_ty.getElementTypeBitWidth() == kNativeBitwidth,
+                 "only 32-bit matmul results supported");
     std::array<Layout, 3> in_layout;
     CHECK_EQ(op->getNumOperands(), 3);
     for (int i = 0; i < 3; ++i) {
