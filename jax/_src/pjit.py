@@ -59,8 +59,7 @@ from jax._src.sharding_impls import (
     XLADeviceAssignment, SingleDeviceSharding, PmapSharding,
     AUTO, UNSPECIFIED, UnspecifiedValue,
     ParsedPartitionSpec, SpecSync, get_single_pspec, is_auto, is_unspecified,
-    is_unspecified_or_auto, prepare_axis_resources, parse_flatten_op_sharding,
-    are_mem_kind_of_shardings_equal)
+    is_unspecified_or_auto, prepare_axis_resources, parse_flatten_op_sharding)
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
@@ -1095,7 +1094,7 @@ def _resolve_in_shardings(
         # jax.jit does not allow resharding across different memory kinds even
         # if the argument is uncommitted. Use jax.device_put for those cases,
         # either outside or inside jax.jit.
-        if not are_mem_kind_of_shardings_equal(pjit_in_s, arg_s):  # type: ignore
+        if pjit_in_s.memory_kind != arg_s.memory_kind:  # type: ignore
           raise ValueError(
               'Memory kinds passed to jax.jit does not match memory kind on the'
               f' respective arg. Got pjit memory kind: {pjit_in_s.memory_kind}, '  # type: ignore
@@ -1242,7 +1241,7 @@ class SameDeviceAssignmentTuple:
       if isinstance(s, GSPMDSharding) and isinstance(o, GSPMDSharding):
         eq.append(
             op_shardings.are_op_shardings_equal(s._hlo_sharding, o._hlo_sharding)
-            and are_mem_kind_of_shardings_equal(s, o))
+            and s.memory_kind == o.memory_kind)
       else:
         eq.append(s == o)
     return all(eq) and self.device_assignment == other.device_assignment

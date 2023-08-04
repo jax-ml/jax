@@ -22,6 +22,7 @@ import enum
 import functools
 import itertools
 import math
+import os
 from typing import Any, NamedTuple, Union, cast, Optional
 
 from jax._src import mesh as mesh_lib
@@ -30,11 +31,13 @@ from jax._src.op_shardings import (
     op_sharding_to_indices)
 from jax._src import sharding
 from jax._src import sharding_specs
+from jax._src import config as jax_config
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.partition_spec import PartitionSpec
 
 import numpy as np
@@ -44,6 +47,15 @@ Shape = tuple[int, ...]
 Device = xc.Device
 Index = tuple[slice, ...]
 XLADeviceAssignment = tuple[Device, ...]
+
+
+# TODO(yashkatariya): Remove this flag after the host runtime is linked by
+# default and works on cloud TPU.
+_ENABLE_MEMORY_KIND = jax_config.DEFINE_bool(
+    'jax_enable_memory_kind',
+    bool(os.getenv('JAX_ENABLE_MEMORY_KIND', '')),
+    help=("If True, will allow fetching memory kinds available on executable "
+          "and annotate Shardings with it."))
 
 
 # Shardings that inherit from XLACompatibleSharding should implement the
@@ -109,7 +121,7 @@ class XLACompatibleSharding(sharding.Sharding):
       return (are_op_shardings_equal(self._to_xla_hlo_sharding(ndim),
                                       other._to_xla_hlo_sharding(ndim))
               and self._device_assignment == other._device_assignment and
-              are_mem_kind_of_shardings_equal(self, other))
+              self.memory_kind == other.memory_kind)
     # NotImplementedError is raised by PmapSharding because it can't lower
     # to OpSharding. So if `other` is a PmapSharding, default to a strict
     # equality check.
@@ -163,13 +175,6 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
 def _mem_kinds(client: xc.Client) -> set[str]:
   return set(m.kind for m in client.local_devices()[0].addressable_memories())
 
-@functools.lru_cache
-def _default_mem_kind(client: xc.Client) -> str | None:
-  try:
-    return client.local_devices()[0].default_memory().kind
-  except:
-    return None
-
 def _check_mem_kind(device: xc.Device, mk):
   mem_kinds = _mem_kinds(device.client)
   if mk not in mem_kinds:
@@ -177,26 +182,6 @@ def _check_mem_kind(device: xc.Device, mk):
         f'Could not find memory addressable by device {device.device_kind}.'
         f' Device {device.device_kind} can address the following memory kinds:'
         f' {mem_kinds}. Got memory kind: {mk}')
-
-
-def get_canonicalized_memory_kind(s: XLACompatibleSharding) -> Optional[str]:
-  # TODO(yashkatariya): Remove try;except when CPU and GPU support memories.
-  try:
-    client = s._device_assignment[0].client
-    return _default_mem_kind(client) if s.memory_kind is None else s.memory_kind
-  except:
-    return None
-
-# TODO(yashkatariya): Remove this when the canonicalization happens in __init__
-# of Shardings. That can be done after OSS support is also added for memories.
-def are_mem_kind_of_shardings_equal(s1: XLACompatibleSharding,
-                                    s2: XLACompatibleSharding) -> bool:
-  if s1.memory_kind is None and s2.memory_kind is None:
-    return True
-
-  mk1 = get_canonicalized_memory_kind(s1)
-  mk2 = get_canonicalized_memory_kind(s2)
-  return mk1 == mk2
 
 
 @use_cpp_class(xc.NamedSharding)
@@ -281,8 +266,7 @@ class NamedSharding(XLACompatibleSharding):
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash((self.mesh, get_canonicalized_memory_kind(self),
-                          self._parsed_pspec))
+      self._hash = hash((self.mesh, self.memory_kind, self._parsed_pspec))
     return self._hash
 
   def __eq__(self, other):
@@ -291,7 +275,7 @@ class NamedSharding(XLACompatibleSharding):
     if id(self) == id(other):
       return True
     parsed_pspec_equal = self._parsed_pspec == other._parsed_pspec
-    mem_kind_equal = are_mem_kind_of_shardings_equal(self, other)
+    mem_kind_equal = self.memory_kind == other.memory_kind
     if (id(self.mesh) == id(other.mesh) and mem_kind_equal and
         parsed_pspec_equal):
       return True
@@ -408,7 +392,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash((self._device, get_canonicalized_memory_kind(self)))
+      self._hash = hash((self._device, self.memory_kind))
     return self._hash
 
   def __eq__(self, other):
@@ -417,7 +401,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
     if id(self) == id(other):
       return True
     return (self._device == other._device and
-            are_mem_kind_of_shardings_equal(self, other))
+            self.memory_kind == other.memory_kind)
 
   @property
   def device_set(self) -> set[Device]:
@@ -628,6 +612,9 @@ class PositionalSharding(XLACompatibleSharding):
     if self._memory_kind is not None:
       # Will error if memory_kind does not exist on the device.
       _check_mem_kind(self._devices[0], self._memory_kind)
+    if xla_extension_version >= 177:
+      self._memory_kind = xc.canonicalize_memory_kind(
+          self._memory_kind, self._devices[0])
 
   @property
   def shape(self):
@@ -673,7 +660,7 @@ class PositionalSharding(XLACompatibleSharding):
 
   def __hash__(self) -> int:
     if not hasattr(self, '_hash'):
-      self._hash = hash((self._devices, get_canonicalized_memory_kind(self)))
+      self._hash = hash((self._devices, self.memory_kind))
     return self._hash
 
   def __eq__(self, other) -> bool:
@@ -682,7 +669,7 @@ class PositionalSharding(XLACompatibleSharding):
     if id(self) == id(other):
       return True
     all_ids_equal = np.array_equal(self._ids,other._ids)
-    mem_kind_equal = are_mem_kind_of_shardings_equal(self, other)
+    mem_kind_equal = self.memory_kind == other.memory_kind
     if (id(self._devices) == id(other._devices) and mem_kind_equal and
         all_ids_equal):
       return True
@@ -779,9 +766,9 @@ class GSPMDSharding(XLACompatibleSharding):
     self._memory_kind = memory_kind
 
   def _preprocess(self):
-    if self.memory_kind is not None:
+    if self._memory_kind is not None:
       # Will error if memory_kind does not exist on the device.
-      _check_mem_kind(self._devices[0], self.memory_kind)
+      _check_mem_kind(self._devices[0], self._memory_kind)
 
   def __reduce__(self):
     return (type(self), (self._devices, self._hlo_sharding.to_proto()),
@@ -798,12 +785,12 @@ class GSPMDSharding(XLACompatibleSharding):
       return True
     return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
             and self._devices == other._devices and
-            are_mem_kind_of_shardings_equal(self, other))
+            self.memory_kind == other.memory_kind)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
       self._hash = hash((self._devices, self._hlo_sharding_hash,
-                        get_canonicalized_memory_kind(self)))
+                         self.memory_kind))
     return self._hash
 
   def __repr__(self):
@@ -850,7 +837,7 @@ class GSPMDSharding(XLACompatibleSharding):
   @classmethod
   def get_replicated(cls, device_assignment, *, memory_kind: str | None = None):
     return cls(tuple(device_assignment), get_replicated_hlo_sharding(),
-                memory_kind=memory_kind)
+               memory_kind=memory_kind)
 
 
 class AUTO:

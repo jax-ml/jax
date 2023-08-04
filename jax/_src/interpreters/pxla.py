@@ -24,7 +24,6 @@ from functools import partial, lru_cache, cached_property
 import itertools as it
 import logging
 import math
-import os
 from typing import (Any, Callable, NamedTuple, Optional, Union, cast, TypeVar)
 
 import numpy as np
@@ -38,7 +37,6 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
-from jax._src import config as jax_config
 from jax._src import mesh as mesh_lib
 from jax._src import op_shardings
 from jax._src import sharding_specs
@@ -71,13 +69,6 @@ from jax._src.util import (safe_map, safe_zip, partition_list,
                            wrap_name, tuple_delete, distributed_debug_log,
                            unzip2, HashableFunction, weakref_lru_cache)
 
-# TODO(yashkatariya): Remove this flag after the host runtime is linked by
-# default and works on cloud TPU.
-_FETCH_MEMORY_KIND_ON_EXECUTABLE = jax_config.DEFINE_bool(
-    'jax_fetch_memory_kind_on_executable',
-    bool(os.getenv('JAX_FETCH_MEMORY_KIND_ON_EXECUTABLE', '')),
-    help=("If True, will allow fetching memory kinds available on executable "
-          "and annotate Shardings with it."))
 
 # Built in Python lists don't support weak refs but subclasses of lists do.
 class WeakRefList(list):
@@ -1700,7 +1691,7 @@ class SemanticallyEqualShardings:
       return False
     return all(
         (op_shardings.are_op_shardings_equal(s._hlo_sharding, o._hlo_sharding)
-        and sharding_impls.are_mem_kind_of_shardings_equal(s, o))
+         and s.memory_kind == o.memory_kind)
         if (isinstance(s, sharding_impls.GSPMDSharding) and
             isinstance(o, sharding_impls.GSPMDSharding))
         else s == o
@@ -2225,7 +2216,7 @@ def get_gspmd_shardings_from_executable(
 ) -> Sequence[sharding_impls.XLACompatibleSharding]:
   from jax._src import pjit
 
-  if _FETCH_MEMORY_KIND_ON_EXECUTABLE.value:
+  if sharding_impls._ENABLE_MEMORY_KIND.value:
     try:
       omk = xla_executable.get_output_memory_kinds()[0]
     except:
@@ -2318,10 +2309,10 @@ def _get_out_sharding_from_orig_sharding(
         # replicated then, it doesn't encode the ndim in it. The devices
         # will be the same at this point because those checks happen before.
         if (orig_aval is not None and out_aval is not None and
-            out_aval.ndim == orig_aval.ndim and
-            sharding_impls.are_op_shardings_equal(
-                o._hlo_sharding, orig_in_s._to_xla_hlo_sharding(orig_aval.ndim)) and
-            sharding_impls.are_mem_kind_of_shardings_equal(o, orig_in_s)):
+            out_aval.ndim == orig_aval.ndim
+            and sharding_impls.are_op_shardings_equal(
+                o._hlo_sharding, orig_in_s._to_xla_hlo_sharding(orig_aval.ndim))
+            and o.memory_kind == orig_in_s.memory_kind):
           out.append((orig_in_s, False))
         else:
           out.append((orig_handler(o, orig_in_s), False))
@@ -2553,7 +2544,7 @@ class UnloadedMeshExecutable:
           xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)  # type: ignore
           orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)  # type: ignore
           if (not op_shardings.are_op_shardings_equal(xla_hlo_s, orig_hlo_s) or
-              not sharding_impls.are_mem_kind_of_shardings_equal(xla_s, orig)):  # type: ignore
+              xla_s.memory_kind != orig.memory_kind):  # type: ignore
             raise AssertionError(
                 f"Unexpected XLA sharding override: (XLA) {xla_s} != {orig} "
                 "(User sharding)")
@@ -2873,7 +2864,7 @@ def check_gda_or_array_xla_sharding_match(
       continue
 
     # Raise memory kind mismatch error even if the arg is uncommitted.
-    if not sharding_impls.are_mem_kind_of_shardings_equal(arg.sharding, xs):
+    if arg.sharding.memory_kind != xs.memory_kind:
       errors.append(
           f"Got Array sharding: {arg.sharding} and input sharding: {xs} for "
           f"arg {name} with shape: {arg.aval.str_short()}")

@@ -1742,10 +1742,9 @@ def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
   @lru_cache
   def _check_sharding(in_sharding, xmap_sharding, ndim, arr_flavor):
     if (not op_shardings.are_op_shardings_equal(
-        in_sharding._to_xla_hlo_sharding(ndim),
-        xmap_sharding._to_xla_hlo_sharding(ndim)) or
-        not sharding_impls.are_mem_kind_of_shardings_equal(
-            in_sharding, xmap_sharding)):
+          in_sharding._to_xla_hlo_sharding(ndim),
+          xmap_sharding._to_xla_hlo_sharding(ndim)) or
+        in_sharding.memory_kind != xmap_sharding.memory_kind):
       raise ValueError(
           f"Got an input {arr_flavor} to xmap with different partitioning than "
           "specified in xmap. The partitioning must match. "

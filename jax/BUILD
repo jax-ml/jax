@@ -567,6 +567,7 @@ pytype_strict_library(
     srcs = ["_src/sharding_impls.py"],
     visibility = [":internal"] + jax_visibility("sharding_impls"),
     deps = [
+        ":config",
         ":mesh",
         ":op_shardings",
         ":partition_spec",
