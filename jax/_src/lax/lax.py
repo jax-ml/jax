@@ -2584,7 +2584,7 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   x_ndim = x.aval.ndim
   x_kept = remaining(range(x_ndim), x_contract, x_batch)
-  y_kept = remaining(range(y.ndim), y_contract, y_batch)
+  y_kept = remaining(range(np.ndim(y)), y_contract, y_batch)
   if swap_ans:
     ans_batch, ans_y, _ = ranges_like(x_batch, y_kept, x_kept)
   else:
