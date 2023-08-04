@@ -36,7 +36,8 @@ config.parse_flags_with_absl()
 
 FLAGS = config.FLAGS
 
-_fp8_enabled = jtu.device_under_test() == 'gpu'
+# FP8 types not supported on TPU
+_fp8_enabled = jtu.device_under_test() != 'tpu'
 _int4_enabled = dtypes.int4 is not None
 
 bool_dtypes = [np.dtype('bool')]
@@ -61,7 +62,8 @@ float_dtypes = [np.dtype(dtypes.bfloat16)] + np_float_dtypes
 custom_float_dtypes = [np.dtype(dtypes.bfloat16)]
 if _fp8_enabled:
   fp8_dtypes = [np.dtype(dtypes.float8_e4m3b11fnuz), np.dtype(dtypes.float8_e4m3fn),
-                np.dtype(dtypes.float8_e5m2)]
+                np.dtype(dtypes.float8_e4m3fnuz), np.dtype(dtypes.float8_e5m2),
+                np.dtype(dtypes.float8_e5m2fnuz)]
   float_dtypes += fp8_dtypes
   custom_float_dtypes += fp8_dtypes
 

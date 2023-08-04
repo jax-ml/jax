@@ -125,7 +125,9 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(np.uint64): partial(ir.IntegerType.get_unsigned, 64),
   np.dtype(dtypes.float8_e4m3b11fnuz): ir.Float8E4M3B11FNUZType.get,
   np.dtype(dtypes.float8_e4m3fn): ir.Float8E4M3FNType.get,
+  np.dtype(dtypes.float8_e4m3fnuz): ir.Float8E4M3FNUZType.get,
   np.dtype(dtypes.float8_e5m2): ir.Float8E5M2Type.get,
+  np.dtype(dtypes.float8_e5m2fnuz): ir.Float8E5M2FNUZType.get,
   np.dtype(dtypes.bfloat16): ir.BF16Type.get,
   np.dtype(np.float16): ir.F16Type.get,
   np.dtype(np.float32): ir.F32Type.get,
@@ -257,7 +259,9 @@ def _numpy_array_constant(x: np.ndarray, canonicalize_types
       x = np.array(0 if x.item() == 0 else 0xff, np.uint8)
   elif x.dtype == dtypes.bfloat16:
     x = x.view(np.uint16)
-  elif x.dtype in [dtypes.float8_e4m3b11fnuz, dtypes.float8_e4m3fn, dtypes.float8_e5m2]:
+  elif x.dtype in [dtypes.float8_e4m3b11fnuz, dtypes.float8_e4m3fn,
+                   dtypes.float8_e4m3fnuz, dtypes.float8_e5m2,
+                   dtypes.float8_e5m2fnuz]:
     x = x.view(np.uint8)
   x = np.ascontiguousarray(x)
   attr = ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
