@@ -9,4 +9,5 @@ This section contains tutorials, guides and examples for using Pallas.
    :caption: Guides
    :maxdepth: 1
 
+   design
    quickstart
