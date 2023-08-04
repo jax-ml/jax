@@ -37,7 +37,6 @@ from jax._src.interpreters.pxla import (
   UnloadedMeshExecutable as UnloadedMeshExecutable,
   UnloadedPmapExecutable as UnloadedPmapExecutable,
   WeakRefList as WeakRefList,
-  _create_pmap_sharding_spec as _create_pmap_sharding_spec,
   _get_and_check_device_assignment as _get_and_check_device_assignment,
   array_types as array_types,
   custom_resource_typing_rules as custom_resource_typing_rules,
