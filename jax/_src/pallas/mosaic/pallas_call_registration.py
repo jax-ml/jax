@@ -56,7 +56,7 @@ def pallas_call_tpu_lowering_rule(
         grid_mapping=grid_mapping, **compiler_params)
   if debug:
     print(jaxpr)
-  with ir.Context() as mlir_ctx, ir.Location.unknown():
+  with ir.Context() as mlir_ctx, ir.Location.unknown(mlir_ctx):
     tpu.register_dialect(mlir_ctx)
     if mosaic_params is None:
       mosaic_params = {}

@@ -39,6 +39,7 @@ from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core
 from jax._src.pallas import primitives
+from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.state import discharge as state_discharge
@@ -480,8 +481,10 @@ def _masked_swap_lowering_rule(
   if masked:
     raise NotImplementedError
   ref_block_shape, *_ = ctx.block_shapes
-  ref_aval, *_ = ctx.avals_in
+  ref_aval, val_aval, *_ = ctx.avals_in
   (aval_out,) = ctx.avals_out
+  if not isinstance(val, ir.Value):
+    val = ir_constant(val, mlir_type=mlir.dtype_to_ir_type(val_aval.dtype))
   idx, *_ = tree_util.tree_unflatten(args_tree, args)
   idx_aval, *_ = tree_util.tree_unflatten(args_tree, ctx.avals_in[2:])
   indices = idx.indices
@@ -531,7 +534,9 @@ def _swap_lowering_rule(
     *non_slice_idx,
     indexed_dims: Sequence[bool],
 ):
-  ref_aval, *_ = ctx.avals_in
+  ref_aval, val_aval, *_ = ctx.avals_in
+  if not isinstance(val, ir.Value):
+    val = ir_constant(val, mlir_type=mlir.dtype_to_ir_type(val_aval.dtype))
   (aval_out,) = ctx.avals_out
   ref_block_shape, *_ = ctx.block_shapes
   non_slice_idx_iter = iter(non_slice_idx)
@@ -1086,7 +1091,6 @@ def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, *args):
 
 lowering_rules[lax.select_n_p] = _select_n_lowering_rule
 
-
 def _for_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -1120,6 +1124,66 @@ def _for_lowering_rule(
 
 lowering_rules[for_loop.for_p] = _for_lowering_rule
 
+
+def _lower_jaxpr_to_unrolled_for_loop(ctx: LoweringRuleContext,
+                                      jaxpr: jax_core.Jaxpr, start: int,
+                                      num_steps: int, consts, *args,
+                                      has_loop_index: bool):
+  for i in range(start, start + num_steps):
+    if has_loop_index:
+      lowering_context = ctx.lowering_context.replace(
+          block_shapes=ctx.block_shapes)
+      args = jaxpr_subcomp(
+          lowering_context, jaxpr, *consts,
+          ir_constant(i, mlir_type=mlir.dtype_to_ir_type(jnp.dtype('int32'))),
+          *args)
+    else:
+      lowering_context = ctx.lowering_context.replace(
+          block_shapes=ctx.block_shapes[:len(consts)]
+          + ctx.block_shapes[len(consts) + 1:],
+      )
+      args = jaxpr_subcomp(lowering_context, jaxpr, *consts, *args)
+  return args
+
+
+def _scan_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    jaxpr: jax_core.Jaxpr,
+    linear: tuple[bool, ...],
+    length: int,
+    reverse: bool,
+    unroll: bool,
+    num_consts: int,
+    num_carry: int,
+):
+  # Can only handle fori_loop-like scans
+  num_extensive = len(args) - num_consts - num_carry
+  if num_extensive: raise NotImplementedError
+  if reverse: raise NotImplementedError
+  del linear, num_extensive, unroll, reverse
+
+  jaxpr, jaxpr_consts = jaxpr.jaxpr, jaxpr.consts
+  if jaxpr_consts: raise NotImplementedError
+  del jaxpr_consts
+
+  jaxpr, has_loop_index = (
+      pallas_utils.pattern_match_scan_to_fori_loop(jaxpr, num_consts, num_carry)
+      )
+  consts, args = split_list(args, [num_consts])
+  if has_loop_index:
+    loop_index_start, *args = args
+  else:
+    loop_index_start = 0
+  out = _lower_jaxpr_to_unrolled_for_loop(ctx, jaxpr, loop_index_start, length,
+                                          consts, *args,
+                                          has_loop_index=has_loop_index)
+  if has_loop_index:
+    out = [ir_constant(length,
+                       mlir_type=mlir.dtype_to_ir_type(jnp.dtype('int32'))),
+           *out]
+  return out
+lowering_rules[lax.scan_p] = _scan_lowering_rule
 
 def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, linear):
   del linear
