@@ -222,7 +222,7 @@ class NamedSharding(XLACompatibleSharding):
 
   mesh: mesh_lib.Mesh
   spec: PartitionSpec
-  memory_kind: str | None
+  _memory_kind: str | None
   _parsed_pspec: ParsedPartitionSpec
 
   @use_cpp_method()
@@ -232,13 +232,9 @@ class NamedSharding(XLACompatibleSharding):
 
     self.mesh = mesh
     self.spec = spec
-    self.memory_kind = memory_kind
+    self._memory_kind = memory_kind
     self._parsed_pspec = _parsed_pspec
     self._preprocess()
-
-  def __reduce__(self):
-    return (type(self), (self.mesh, self.spec),
-            {'memory_kind': self.memory_kind})
 
   def _preprocess(self):
     if self.memory_kind is not None:
@@ -263,6 +259,15 @@ class NamedSharding(XLACompatibleSharding):
     mesh_repr = ", ".join(f"'{k}': {v}" for k, v in self.mesh.shape.items())
     mem = '' if self.memory_kind is None else f', memory_kind={self.memory_kind}'
     return f'NamedSharding(mesh=Mesh({mesh_repr}), spec={self.spec}{mem})'
+
+  def __reduce__(self):
+    return (type(self), (self.mesh, self.spec),
+            {'memory_kind': self.memory_kind})
+
+  if xla_extension_version >= 178:
+    @property
+    def memory_kind(self) -> str | None:
+      return self._memory_kind
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
