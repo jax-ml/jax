@@ -231,6 +231,53 @@ class TestLBFGS(jtu.JaxTestCase):
     jax_res = min_op(init)
     self.assertAllClose(jax_res, expect, atol=2e-5)
 
+class TestLSA(jtu.JaxTestCase):
+  """
+  Tests for linear_sum_assignment.
+  """
+
+  @jtu.sample_product(
+    maximize=[False, True],
+    shape=[(10, 10), (100, 60), (60, 100)],
+    dtype=["float32", "int32"],
+  )
+  def test_lsa(self, maximize, shape, dtype):
+
+    costs = jtu.rand_default(self.rng())([10, *shape], dtype)
+
+    scipy_res = [scipy.optimize.linear_sum_assignment(
+        cost,
+        maximize=maximize
+      ) for cost in costs]
+    jax_res = [jax.scipy.optimize.linear_sum_assignment(
+        cost,
+        maximize=maximize
+      ) for cost in costs]
+
+    self.assertAllClose(jax_res, scipy_res)
+
+  @jtu.sample_product(
+    maximize=[False, True],
+    shape=[(10, 10), (100, 60), (60, 100)],
+    dtype=["float32", "int32"],
+  )
+  def test_transform(self, maximize, shape, dtype):
+
+    costs = jtu.rand_default(self.rng())([10, *shape], dtype)
+
+    scipy_res = [scipy.optimize.linear_sum_assignment(
+        cost,
+        maximize=maximize
+      ) for cost in costs]
+    lsa_ = jax.scipy.optimize.linear_sum_assignment
+    lsa = lambda cost : lsa_(cost, maximize=maximize)
+    lsa = jax.vmap(lsa)
+    lsa = jax.jit(lsa)
+    jax_res = lsa(costs)
+    self.assertAllClose(
+      jnp.array(jax_res).transpose(1,0,2),
+      jnp.array(scipy_res)
+    )
 
 if __name__ == "__main__":
   absltest.main()

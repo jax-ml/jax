@@ -19,3 +19,6 @@ from jax._src.scipy.optimize.minimize import (
   minimize as minimize,
   OptimizeResults as OptimizeResults,
 )
+from jax._src.scipy.optimize.linear_sum_assignment import (
+  linear_sum_assignment as linear_sum_assignment
+)
