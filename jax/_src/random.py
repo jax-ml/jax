@@ -267,7 +267,7 @@ def key_data(keys: KeyArray) -> Array:
 
 
 def train_test_split(*arrays: Array, test_size: float = 0.5, shuffle: bool = True,
-                      seed: Optional[int] = None) -> Sequence[Array]:
+                      key: Optional[int] = None) -> Sequence[Array]:
   """Splits arrays into random train and test subsets.
 
   Args:
@@ -282,13 +282,16 @@ def train_test_split(*arrays: Array, test_size: float = 0.5, shuffle: bool = Tru
   Returns:
     A list of train/test subsets of the input arrays.
   """
-  rng = _check_prng_key(seed)
+  
+  if key is None:
+    key = _check_prng_key(seed=42)
+    
   if not 0 <= test_size <= 1:
     raise ValueError(f"test_size={test_size} should be between 0.0 and 1.0")
   if isinstance(test_size, float):
     test_size = int(test_size * arrays[0].shape[0])
   if shuffle:
-    perm = permutation(rng, arrays[0].shape[0])
+    perm = permutation(key, arrays[0].shape[0])
   else:
     perm = jnp.arange(arrays[0].shape[0])
   return [x[perm[test_size:]] for x in arrays], [x[perm[:test_size]] for x in arrays]
