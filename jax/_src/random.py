@@ -266,6 +266,34 @@ def key_data(keys: KeyArray) -> Array:
   return _key_data(keys)
 
 
+def train_test_split(*arrays: Array, test_size: float = 0.5, shuffle: bool = True,
+                      seed: Optional[int] = None) -> Sequence[Array]:
+  """Splits arrays into random train and test subsets.
+
+  Args:
+    *arrays: sequence of array-like objects to be split into train and test sets.
+    test_size: optional, float or int, if float, should be between 0.0 and 1.0
+      and represent the proportion of the dataset to include in the test split.
+      If int, represents the absolute number of test samples. Defaults to 0.5.
+    shuffle: optional, bool, whether or not to shuffle the data before splitting.
+      If False, the data is split in a stratified fashion. Defaults to True.
+    seed: optional, int, seed for the random number generator.
+
+  Returns:
+    A list of train/test subsets of the input arrays.
+  """
+  rng = _check_prng_key(seed)
+  if not 0 <= test_size <= 1:
+    raise ValueError(f"test_size={test_size} should be between 0.0 and 1.0")
+  if isinstance(test_size, float):
+    test_size = int(test_size * arrays[0].shape[0])
+  if shuffle:
+    perm = permutation(rng, arrays[0].shape[0])
+  else:
+    perm = jnp.arange(arrays[0].shape[0])
+  return [x[perm[test_size:]] for x in arrays], [x[perm[:test_size]] for x in arrays]
+
+
 ### random samplers
 
 
