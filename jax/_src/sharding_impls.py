@@ -568,31 +568,29 @@ def _op_sharding_to_pos_sharding(
     op_sharding: Union[xc.OpSharding, xc.HloSharding],
     device_assignment: Sequence[xc.Device],
     memory_kind: Optional[str] = None) -> PositionalSharding:
-  if isinstance(op_sharding, xc.HloSharding):
-    op_sharding = op_sharding.to_proto()  # type: ignore
+  if isinstance(op_sharding, xc.OpSharding):
+    op_sharding = xc.HloSharding.from_proto(op_sharding)  # type: ignore
 
-  if op_sharding.type == xc.OpSharding.Type.REPLICATED:
+  if op_sharding.is_replicated():
     return PositionalSharding(
         device_assignment, memory_kind=memory_kind).replicate()
 
-  if op_sharding.last_tile_dims == [xc.OpSharding.Type.REPLICATED]:
-    replicate_on_last_tile_dim = True
-  else:
-    replicate_on_last_tile_dim = op_sharding.replicate_on_last_tile_dim
-    if op_sharding.last_tile_dims:
-      raise NotImplementedError(
-          "Unhandled OpSharding type. Please open a bug report!")
+  if len(op_sharding.subgroup_types()) > 1:
+    raise NotImplementedError(
+        'Unhandled HloSharding type. Please open a bug report!'
+    )
 
   name = device_assignment[0].platform.upper()
-  ids = np.array([DeviceIdSet(name, i)
-                  for i in op_sharding.tile_assignment_devices])
+  ids = np.array(
+      [DeviceIdSet(name, i) for i in op_sharding.tile_assignment_devices()]
+  )
   if memory_kind is not None:
     # Will error if memory_kind does not exist on the device.
     _check_mem_kind(device_assignment[0], memory_kind)
   p = PositionalSharding._remake(tuple(device_assignment), ids,
                                  memory_kind=memory_kind)
-  p = p.reshape(op_sharding.tile_assignment_dimensions)
-  if replicate_on_last_tile_dim:
+  p = p.reshape(op_sharding.tile_assignment_dimensions())
+  if op_sharding.replicate_on_last_tile_dim():
     p = p.replicate(-1, keepdims=False)
   return p
 
@@ -1270,23 +1268,25 @@ def explode_superdims(sizes, dims):
     final_dims += reversed(new_dims)
   return final_dims
 
-def parse_flatten_op_sharding(op_sharding: xc.OpSharding | xc.HloSharding,
+def parse_flatten_op_sharding(hlo_sharding: xc.OpSharding | xc.HloSharding,
                               mesh: mesh_lib.Mesh) -> Sequence[ParsedPartitionSpec]:
-  if isinstance(op_sharding, xc.HloSharding):
-    op_sharding = op_sharding.to_proto()  # type: ignore
-  if op_sharding.type == xc.OpSharding.Type.TUPLE:
+  if isinstance(hlo_sharding, xc.OpSharding):
+    hlo_sharding = xc.HloSharding.from_proto(hlo_sharding)  # type: ignore
+  if hlo_sharding.tuple_elements():
     out: list[ParsedPartitionSpec] = []
-    for s in op_sharding.tuple_shardings:
+    for s in hlo_sharding.tuple_elements():
       out.extend(parse_flatten_op_sharding(s, mesh))
     return out
-  elif op_sharding.type == xc.OpSharding.Type.REPLICATED:
+  elif hlo_sharding.is_replicated():
     return [CanonicalizedParsedPartitionSpec(
         ParsedPartitionSpec(PartitionSpec(), ()))]
-  elif op_sharding.type == xc.OpSharding.Type.OTHER:
+  elif hlo_sharding.is_tiled():
     mesh_shape = mesh.shape
-    mesh_axis_order = unflatten_array(mesh.shape, op_sharding.tile_assignment_devices)
+    mesh_axis_order = unflatten_array(
+        mesh.shape, hlo_sharding.tile_assignment_devices()
+    )
     mesh_axis = iter(mesh_axis_order)
-    shape = op_sharding.tile_assignment_dimensions
+    shape = hlo_sharding.tile_assignment_dimensions()
     partitions = []
     for dim_size in shape:
       dim_partitions = []
@@ -1297,13 +1297,11 @@ def parse_flatten_op_sharding(op_sharding: xc.OpSharding | xc.HloSharding,
         dim_size //= axis_size
         dim_partitions.append(axis)
       partitions.append(tuple(dim_partitions))
-    if op_sharding.last_tile_dims == [xc.OpSharding.Type.REPLICATED]:
-      replicate_on_last_tile_dim = True
-    else:
-      replicate_on_last_tile_dim = op_sharding.replicate_on_last_tile_dim
-      if op_sharding.last_tile_dims:
-        raise NotImplementedError("Unhandled OpSharding type. Please open a bug report!")
-    if replicate_on_last_tile_dim:
+    if len(hlo_sharding.subgroup_types()) > 1:
+      raise NotImplementedError(
+          'Unhandled HloSharding type. Please open a bug report!'
+      )
+    if hlo_sharding.replicate_on_last_tile_dim():
       partitions = partitions[:-1]
     return [CanonicalizedParsedPartitionSpec(
         ParsedPartitionSpec('<internally generated spec>', partitions))]

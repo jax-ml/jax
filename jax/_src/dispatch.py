@@ -42,7 +42,6 @@ from jax._src import profiler
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
-from jax._src import op_shardings
 from jax._src import xla_bridge as xb
 from jax._src.config import config
 from jax._src.interpreters import ad
@@ -622,20 +621,26 @@ def _mcjax_reshard(x, target_sharding):
                      f"platform {inp_plat} and target sharding's device set "
                      f"ids: {target_ids} on platform {target_plat}")
 
-  old_op_sharding = inp_sharding._to_xla_hlo_sharding(x.ndim).to_proto()
-  if op_shardings.is_op_sharding_replicated(old_op_sharding):
-    new_op_sharding = old_op_sharding
+  old_hlo_sharding = inp_sharding._to_xla_hlo_sharding(x.ndim)
+  if old_hlo_sharding.is_replicated():
+    new_hlo_sharding = old_hlo_sharding
   else:
     permute_order = np.vectorize(target_sharding._device_assignment.index,
                                  otypes=[int])(inp_sharding._device_assignment)
-    new_op_sharding = old_op_sharding.clone()
+    # Unfortunately need to fallback to V1 sharding here.
+    new_op_sharding = old_hlo_sharding.to_proto()
+    new_op_sharding.iota_reshape_dims = []
+    new_op_sharding.iota_transpose_perm = []
     new_op_sharding.tile_assignment_devices = np.take(
-        old_op_sharding.tile_assignment_devices, permute_order)
+        old_hlo_sharding.tile_assignment_devices(), permute_order
+    )
+    new_hlo_sharding = xc.HloSharding.from_proto(new_op_sharding)
 
   new_x = array.make_array_from_single_device_arrays(
       x.shape,
-      GSPMDSharding(target_sharding._device_assignment, new_op_sharding),
-      x._arrays)
+      GSPMDSharding(target_sharding._device_assignment, new_hlo_sharding),
+      x._arrays,
+  )
 
   _orig_get_and_check_device_assignment = pxla._get_and_check_device_assignment
   pxla._get_and_check_device_assignment = partial(

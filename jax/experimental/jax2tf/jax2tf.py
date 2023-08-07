@@ -3318,14 +3318,29 @@ def _shard_value(val: TfVal,
       op_shardings.is_op_sharding_replicated(sharding_proto)):
     return val
 
+  # Tensorflow heavily relies on tile_assignment_devices proto fields specific
+  # to V1 sharding format, falling back to this format.
+  if (
+      not sharding_proto.tile_assignment_devices
+      and sharding_proto.iota_reshape_dims
+  ):
+    tad = list(
+        np.arange(math.prod(sharding_proto.tile_assignment_dimensions))
+        .reshape(sharding_proto.iota_reshape_dims)
+        .transpose(sharding_proto.iota_transpose_perm)
+        .flat
+    )
+  else:
+    tad = sharding_proto.tile_assignment_devices  # type: ignore
+
   # To use xla_sharding.py, we must have a xla_data_pb2.OpSharding.
-  xla_sharding_proto: xla_data_pb2.OpSharding = (
-      xla_data_pb2.OpSharding(
-          type=int(sharding_proto.type),
-          tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
-          tile_assignment_devices=sharding_proto.tile_assignment_devices,
-          replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
-          last_tile_dims=sharding_proto.last_tile_dims))
+  xla_sharding_proto: xla_data_pb2.OpSharding = xla_data_pb2.OpSharding(
+      type=int(sharding_proto.type),
+      tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
+      tile_assignment_devices=tad,
+      replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
+      last_tile_dims=sharding_proto.last_tile_dims,
+  )
   if tf_context.executing_eagerly():
     raise ValueError(
         "A jit function with sharded arguments or results must be used under a `tf.function` context. "
