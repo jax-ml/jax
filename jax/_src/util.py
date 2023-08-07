@@ -584,3 +584,11 @@ else:
           "Decorator got wrong type: @use_cpp_method(is_enabled: bool=True)"
       )
     return decorator
+
+
+try:
+  # numpy 1.25.0 or newer
+  NumpyComplexWarning = np.exceptions.ComplexWarning
+except AttributeError:
+  # legacy numpy
+  NumpyComplexWarning = np.ComplexWarning

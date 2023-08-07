@@ -70,7 +70,7 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import PmapSharding
 from jax._src.typing import Array, ArrayLike, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
-                           split_list)
+                           split_list, NumpyComplexWarning)
 
 xb = xla_bridge
 xc = xla_client
@@ -537,7 +537,7 @@ def _convert_element_type(operand: ArrayLike, new_dtype: Optional[DTypeLike] = N
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     msg = "Casting complex values to real discards the imaginary part"
-    warnings.warn(msg, np.ComplexWarning, stacklevel=2)
+    warnings.warn(msg, NumpyComplexWarning, stacklevel=2)
 
   # Python has big integers, but convert_element_type(2 ** 100, np.float32) need
   # not be an error since the target dtype fits the value. Handle this case by

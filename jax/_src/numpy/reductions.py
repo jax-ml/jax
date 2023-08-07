@@ -33,7 +33,8 @@ from jax._src.numpy.util import (
 from jax._src.lax import lax as lax_internal
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import (
-    canonicalize_axis as _canonicalize_axis, maybe_named_axis)
+    canonicalize_axis as _canonicalize_axis, maybe_named_axis,
+    NumpyComplexWarning)
 
 
 _all = builtins.all
@@ -173,7 +174,7 @@ def _reduction_init_val(a: ArrayLike, init_val: Any) -> np.ndarray:
 
 def _cast_to_bool(operand: ArrayLike) -> Array:
   with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=np.ComplexWarning)
+    warnings.filterwarnings("ignore", category=NumpyComplexWarning)
     return lax.convert_element_type(operand, np.bool_)
 
 def _cast_to_numeric(operand: ArrayLike) -> Array:

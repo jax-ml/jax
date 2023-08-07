@@ -33,6 +33,7 @@ from jax import ops
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import util
+from jax._src.util import NumpyComplexWarning
 from jax._src.lax import lax as lax_internal
 
 from jax import config
@@ -1042,7 +1043,7 @@ class IndexingTest(jtu.JaxTestCase):
       out = x.at[0].set(y)
       self.assertEqual(x.dtype, out.dtype)
 
-    @jtu.ignore_warning(category=np.ComplexWarning,
+    @jtu.ignore_warning(category=NumpyComplexWarning,
                         message="Casting complex values to real")
     def _check_warns(x_type, y_type, msg):
       with self.assertWarnsRegex(FutureWarning, msg):

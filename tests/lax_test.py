@@ -46,6 +46,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.internal_test_util import lax_test_util
+from jax._src.util import NumpyComplexWarning
 
 from jax import config
 config.parse_flags_with_absl()
@@ -2770,7 +2771,7 @@ class LazyConstantTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
       dtype_in=lax_test_util.all_dtypes, dtype_out=lax_test_util.all_dtypes)
-  @jtu.ignore_warning(category=np.ComplexWarning)
+  @jtu.ignore_warning(category=NumpyComplexWarning)
   def testConvertElementTypeAvoidsCopies(self, dtype_in, dtype_out):
     x = jax.device_put(np.zeros(5, dtype_in))
     self.assertEqual(x.dtype, dtype_in)
