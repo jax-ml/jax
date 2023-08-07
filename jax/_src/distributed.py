@@ -21,6 +21,7 @@ from typing import Any, Optional, Union
 from jax._src import clusters
 from jax._src.config import config
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -71,22 +72,29 @@ class State:
       if self.service is not None:
         raise RuntimeError('distributed.initialize should only be called once.')
       logger.info('Starting JAX distributed service on %s', coordinator_address)
-      self.service = xla_extension.get_distributed_runtime_service(
-          coordinator_address, num_processes, config.jax_coordination_service)
+      if xla_extension_version >= 179:
+        self.service = xla_extension.get_distributed_runtime_service(
+            coordinator_address, num_processes)
+      else:
+        self.service = xla_extension.get_distributed_runtime_service(
+            coordinator_address, num_processes, config.jax_coordination_service)
 
     self.num_processes = num_processes
 
     if self.client is not None:
       raise RuntimeError('distributed.initialize should only be called once.')
 
-    self.client = xla_extension.get_distributed_runtime_client(
-        coordinator_address, process_id, config.jax_coordination_service,
-        init_timeout=initialization_timeout)
+    if xla_extension_version >= 179:
+      self.client = xla_extension.get_distributed_runtime_client(
+          coordinator_address, process_id, init_timeout=initialization_timeout)
+    else:
+      self.client = xla_extension.get_distributed_runtime_client(
+          coordinator_address, process_id, config.jax_coordination_service,
+          init_timeout=initialization_timeout)
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
-    if config.jax_coordination_service:
-      self.initialize_preemption_sync_manager()
+    self.initialize_preemption_sync_manager()
 
   def shutdown(self):
     if self.client:

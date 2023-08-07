@@ -1068,16 +1068,6 @@ config.define_bool_state(
     default=(lib.version >= (0, 3, 6)),
     help=('Enables using optimization-barrier op for lowering remat.'))
 
-# TODO(b/205307544): Remove flag once coordination service has rolled out.
-config.define_bool_state(
-    name='jax_coordination_service',
-    default=True,
-    help=(
-         'Use coordination service (experimental) instead of the default PjRT '
-         'distributed runtime.'
-    )
-)
-
 # TODO(sharadmv,mattjj): set default to True, then remove
 config.define_bool_state(
     name='jax_eager_pmap',

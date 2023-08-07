@@ -21,6 +21,8 @@ Remember to align the itemized text with the first line of an item within a list
   * jax2tf now uses native serialization by default. See
     the [jax2tf documentation](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md)
     for details and for mechanisms to override the default.
+  * The option `--jax_coordination_service` has been removed. It is now always
+    `True`.
 
 ## jaxlib 0.4.15
 
