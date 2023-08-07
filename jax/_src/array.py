@@ -51,7 +51,7 @@ PRNGKeyArrayImpl = Any  # TODO(jakevdp): fix cycles and import this.
 
 
 class Shard:
-  """A single data shard of an Array.
+  """A single shard of an Array.
 
   Attributes:
     device : Which device this shard resides on.
