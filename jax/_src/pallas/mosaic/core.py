@@ -78,10 +78,12 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
       self, in_avals, in_tree, out_avals, out_tree
   ) -> tuple[tuple[jax_core.AbstractValue, ...], GridMapping]:
     scalar_avals, in_avals = split_list(in_avals, [self.num_scalar_prefetch])
+    flat_in_specs = tree_util.tree_leaves(self.in_specs)
+    flat_out_specs = tree_util.tree_leaves(self.out_specs)
     in_specs, in_ref_avals, out_specs, out_ref_avals = (
         pallas_core._get_ref_avals(
-            self.grid, in_avals, self.in_specs,
-            out_avals, self.out_specs))
+            self.grid, in_avals, flat_in_specs,
+            out_avals, flat_out_specs))
     scalar_ref_avals = [
         state.shaped_array_ref(aval.shape, aval.dtype)
         for aval in scalar_avals]
