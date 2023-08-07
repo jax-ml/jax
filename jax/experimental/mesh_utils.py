@@ -91,10 +91,11 @@ def _tpu_v2_v3_create_device_mesh(
 
 
 # Registers functions to create device mesh for specific device kinds. Takes
-# precedence over the more general logic in create_device_mesh().
+# precedence over the more general logic in create_device_mesh(). Handler may
+# return None; in that case, it will fall back to using the default logic.
 device_kind_handler_dict: dict[
     str,
-    Callable[..., np.ndarray],
+    Callable[..., Optional[np.ndarray]],
 ] = {
     _TPU_V2: _tpu_v2_v3_create_device_mesh,
     _TPU_V3: _tpu_v2_v3_create_device_mesh,
@@ -298,9 +299,11 @@ def create_device_mesh(
 
   handler = device_kind_handler_dict.get(last_device.device_kind, None)
   if handler is not None:
-    return handler(
+    result = handler(
         mesh_shape, devices, contiguous_submeshes=contiguous_submeshes
     )
+    if result is not None:
+      return result
 
   if last_device.platform == 'tpu':
     physical_mesh = _get_physical_tpu_mesh(devices)
