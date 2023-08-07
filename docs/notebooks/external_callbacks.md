@@ -17,7 +17,7 @@ kernelspec:
 
 +++ {"id": "h6lXo6bSUYGq"}
 
-This guide is a work-in-progress outlining the uses of various callback functions, which allow JAX code to execute certain commands on the host, even while running under `jit`, `vmap`, `grad`, or another transformation.
+This guide outlines the uses of various callback functions, which allow JAX runtimes to execute Python code on the host, even while running under `jit`, `vmap`, `grad`, or another transformation.
 
 +++ {"id": "Xi_nhfpnlmbm"}
 
