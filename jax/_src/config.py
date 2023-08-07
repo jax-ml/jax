@@ -679,7 +679,7 @@ jax2tf_associative_scan_reductions = config.define_bool_state(
 
 jax2tf_default_native_serialization = config.define_bool_state(
     name='jax2tf_default_native_serialization',
-    default=bool_env('JAX2TF_DEFAULT_NATIVE_SERIALIZATION', False),
+    default=bool_env('JAX2TF_DEFAULT_NATIVE_SERIALIZATION', True),
     help=(
         'Sets the default value of the native_serialization parameter to '
         'jax2tf.convert. Prefer using the parameter instead of the flag, '

@@ -17,6 +17,11 @@ Remember to align the itemized text with the first line of an item within a list
     separate unfiltered/filtered tracebacks, which was the old behavior) or
     `JAX_TRACEBACK_FILTERING=off` (for one unfiltered traceback).
 
+* Breaking changes:
+  * jax2tf now uses native serialization by default. See
+    the [jax2tf documentation](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md)
+    for details and for mechanisms to override the default.
+
 ## jaxlib 0.4.15
 
 ## jax 0.4.14 (July 27, 2023)
