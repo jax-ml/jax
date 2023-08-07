@@ -148,6 +148,7 @@ To build intution, let's try to implement a matrix multiplication.
 A simple strategy for implementing a matrix multiplication in Pallas is to implement it recursively. We know our underlying hardware has support for small matrix multiplications (using GPU and TPU tensorcores), so we just express a big matrix multiplication in terms of smaller ones.
 
 Suppose we have input matrices $X$ and $Y$ and are computing $Z = XY$. We first express $X$ and $Y$ as block matrices. $X$ will "row" blocks and $Y$ will have "column" blocks.
+
 $$
 \begin{align*}
 X = \begin{bmatrix}
