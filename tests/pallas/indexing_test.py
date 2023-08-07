@@ -14,17 +14,22 @@
 
 """Tests for Pallas indexing logic and abstractions."""
 from typing import Union
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
-import hypothesis as hp
-import hypothesis.extra.numpy as hnp
-import hypothesis.strategies as hps
 import jax
 from jax._src import util
 from jax._src.pallas import indexing
 import numpy as np
 
+try:
+  import hypothesis as hp
+except (ModuleNotFoundError, ImportError):
+  raise unittest.SkipTest("tests depend on hypothesis library")
+
+import hypothesis.extra.numpy as hnp
+import hypothesis.strategies as hps
 hp.settings.register_profile(
     "deterministic", database=None, derandomize=True, deadline=None,
     max_examples=100, print_blob=True)
