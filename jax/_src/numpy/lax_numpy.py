@@ -64,7 +64,8 @@ from jax._src.numpy.vectorize import vectorize
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DType, DTypeLike, Shape
 from jax._src.util import (unzip2, subvals, safe_zip,
                            ceil_of_ratio, partition_list,
-                           canonicalize_axis as _canonicalize_axis)
+                           canonicalize_axis as _canonicalize_axis,
+                           NumpyComplexWarning)
 
 newaxis = None
 T = TypeVar('T')
@@ -208,7 +209,7 @@ can_cast = dtypes.can_cast
 issubsctype = dtypes.issubsctype
 promote_types = dtypes.promote_types
 
-ComplexWarning = np.ComplexWarning
+ComplexWarning = NumpyComplexWarning
 
 array_str = np.array_str
 array_repr = np.array_repr
