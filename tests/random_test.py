@@ -1653,6 +1653,36 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertAllClose(samples.mean(), 1 / p, rtol=0.02, check_dtypes=False)
       self.assertAllClose(samples.var(), (1 - p) / (p * p) , rtol=0.05, check_dtypes=False)
 
+  @jtu.sample_product(
+      left = [0.2, 0.5, 1., 2.],
+      mode = [3., 5., 8., 9.],
+      right= [10., 20., 30., 40.],
+      dtype= jtu.dtypes.floating)
+  def testTriangular(self, left, mode, right, dtype):
+    key = self.make_key(1)
+    rand = lambda key: random.triangular(key, left, mode, right, shape=(10000, ), dtype=dtype)
+    crand = jax.jit(rand)
+
+    uncompiled_samples = rand(key)
+    compiled_samples = crand(key)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.triang((mode - left) / (right - left), loc=left, scale=right - left).cdf)
+
+  @jtu.sample_product(
+    sigma = [0.2, 0.5, 1., 2.],
+    dtype=jtu.dtypes.floating)
+  def testLogNormal(self, sigma, dtype):
+    key = self.make_key(0)
+    rand = lambda key: random.lognormal(key, sigma, shape=(10000, ), dtype=dtype)
+    crand = jax.jit(rand)
+
+    uncompiled_samples = rand(key)
+    compiled_samples = crand(key)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.lognorm(s=sigma).cdf)
+
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def test_copy(self, make_key):
     key = make_key(8459302)

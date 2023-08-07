@@ -36,6 +36,7 @@ List of Available Functions
     laplace
     loggamma
     logistic
+    lognormal
     maxwell
     multivariate_normal
     normal
@@ -49,6 +50,7 @@ List of Available Functions
     shuffle
     split
     t
+    triangular
     truncated_normal
     uniform
     wald
