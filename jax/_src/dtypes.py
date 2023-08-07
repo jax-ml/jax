@@ -90,11 +90,15 @@ def is_opaque_dtype(dtype: Any) -> bool:
 # fp8 support
 float8_e4m3b11fnuz: type[np.generic] = ml_dtypes.float8_e4m3b11fnuz
 float8_e4m3fn: type[np.generic] = ml_dtypes.float8_e4m3fn
+float8_e4m3fnuz: type[np.generic] = ml_dtypes.float8_e4m3fnuz
 float8_e5m2: type[np.generic] = ml_dtypes.float8_e5m2
+float8_e5m2fnuz: type[np.generic] = ml_dtypes.float8_e5m2fnuz
 
 _float8_e4m3b11fnuz_dtype: np.dtype = np.dtype(float8_e4m3b11fnuz)
 _float8_e4m3fn_dtype: np.dtype = np.dtype(float8_e4m3fn)
+_float8_e4m3fnuz_dtype: np.dtype = np.dtype(float8_e4m3fnuz)
 _float8_e5m2_dtype: np.dtype = np.dtype(float8_e5m2)
+_float8_e5m2fnuz_dtype: np.dtype = np.dtype(float8_e5m2fnuz)
 
 # bfloat16 support
 bfloat16: type[np.generic] = ml_dtypes.bfloat16
@@ -103,19 +107,25 @@ _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 _custom_float_scalar_types = [
     float8_e4m3b11fnuz,
     float8_e4m3fn,
+    float8_e4m3fnuz,
     float8_e5m2,
+    float8_e5m2fnuz,
     bfloat16,
 ]
 _custom_float_dtypes = [
     _float8_e4m3b11fnuz_dtype,
     _float8_e4m3fn_dtype,
+    _float8_e4m3fnuz_dtype,
     _float8_e5m2_dtype,
+    _float8_e5m2fnuz_dtype,
     _bfloat16_dtype,
 ]
 _float8_dtypes = [
     _float8_e4m3b11fnuz_dtype,
     _float8_e4m3fn_dtype,
+    _float8_e4m3fnuz_dtype,
     _float8_e5m2_dtype,
+    _float8_e5m2fnuz_dtype,
 ]
 
 # 4-bit integer support

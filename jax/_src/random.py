@@ -352,7 +352,7 @@ def _uniform(key, shape, dtype, minval, maxval) -> Array:
   nbits, nmant = finfo.bits, finfo.nmant
 
   if nbits not in (16, 32, 64):
-    raise TypeError("uniform only accepts 32- or 64-bit dtypes.")
+    raise TypeError("uniform only accepts 16-, 32-, or 64-bit dtypes, got {dtype}.")
 
   rng_bits = nbits
   if nmant < 8:
