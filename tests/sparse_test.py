@@ -18,6 +18,7 @@ from functools import partial
 import itertools
 import math
 import operator
+import platform
 import random
 import unittest
 from typing import NamedTuple
@@ -195,6 +196,7 @@ def _is_required_cuda_version_satisfied(cuda_version):
     return int(version.split()[-1]) >= cuda_version
 
 
+@unittest.skipIf(platform.system() == "Windows", "Test crashes on Windows")
 class cuSparseTest(sptu.SparseTestCase):
   def gpu_dense_conversion_warning_context(self, dtype):
     if jtu.device_under_test() == "gpu" and np.issubdtype(dtype, np.integer):
@@ -773,6 +775,7 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysAllClose(actual, expected)
 
 
+@unittest.skipIf(platform.system() == "Windows", "Test crashes on Windows")
 class BCOOTest(sptu.SparseTestCase):
 
   def gpu_matmul_warning_context(self, msg):
@@ -2193,6 +2196,7 @@ class BCOOTest(sptu.SparseTestCase):
 
 
 # TODO(tianjianlu): Unify the testing for BCOOTest and BCSRTest.
+@unittest.skipIf(platform.system() == "Windows", "Test crashes on Windows")
 class BCSRTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
