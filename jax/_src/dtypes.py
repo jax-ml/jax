@@ -19,6 +19,8 @@
 # b) the set of supported types (e.g., bfloat16),
 # so we need our own implementation that deviates from NumPy in places.
 
+from __future__ import annotations
+
 import abc
 import builtins
 import functools
@@ -82,10 +84,6 @@ class ExtendedDType(metaclass=abc.ABCMeta):
   @abc.abstractmethod
   def type(self) -> type: ...
 
-
-# TODO(jakevdp): remove this function once it's unused downstream.
-def is_opaque_dtype(dtype: Any) -> bool:
-  return issubdtype(dtype, extended)
 
 # fp8 support
 float8_e4m3b11fnuz: type[np.generic] = ml_dtypes.float8_e4m3b11fnuz

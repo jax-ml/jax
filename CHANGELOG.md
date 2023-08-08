@@ -25,6 +25,11 @@ Remember to align the itemized text with the first line of an item within a list
     `True`.
   * `jax.jaxpr_util` has been removed from the public JAX namespace.
 
+* Internal deprecations:
+  * The internal utilities `jax.core.is_opaque_dtype` and `jax.core.has_opaque_dtype`
+    have been removed. Opaque dtypes have been renamed to Extended dtypes; use
+    `jnp.issubdtype(dtype, jax.dtypes.extended)` instead (available since jax v0.4.14).
+
 ## jaxlib 0.4.15
 
 ## jax 0.4.14 (July 27, 2023)

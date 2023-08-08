@@ -104,7 +104,6 @@ from jax._src.core import (
   gensym as gensym,
   get_aval as get_aval,
   get_referent as get_referent,
-  has_opaque_dtype as _deprecated_has_opaque_dtype,
   is_constant_dim as is_constant_dim,
   is_constant_shape as is_constant_shape,
   jaxpr_as_fun as jaxpr_as_fun,
@@ -183,29 +182,3 @@ from jax._src.core import (
 )
 
 symbolic_equal_dim = definitely_equal  # TODO(necula): remove this API
-
-from jax._src.dtypes import (
-  is_opaque_dtype as _deprecated_is_opaque_dtype,
-)
-
-_deprecations = {
-    # Added May 23, 2023:
-    "is_opaque_dtype": (
-        "jax.core.is_opaque_dtype is deprecated. Use jnp.issubdtype(dt, dtypes.extended).",
-        _deprecated_is_opaque_dtype,
-    ),
-    "has_opaque_dtype": (
-        "jax.core.is_opaque_dtype is deprecated. Use jnp.issubdtype(x.dtype, dtypes.extended).",
-        _deprecated_has_opaque_dtype,
-    ),
-}
-
-import typing
-if typing.TYPE_CHECKING:
-  from jax._src.dtypes import is_opaque_dtype as is_opaque_dtype
-  from jax._src.core import has_opaque_dtype as has_opaque_dtype
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del typing, _deprecated_is_opaque_dtype, _deprecated_has_opaque_dtype

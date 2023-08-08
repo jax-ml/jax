@@ -481,7 +481,7 @@ def he_uniform(in_axis: Union[int, Sequence[int]] = -2,
   Example:
 
   >>> import jax, jax.numpy as jnp
-  >>> initializer = jax.nn.initializers.kaiming_uniform()
+  >>> initializer = jax.nn.initializers.he_uniform()
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
   Array([[ 0.79611576,  1.2789248 ,  1.2896855 ],
          [-1.0108745 , -1.0855657 ,  0.17398663]], dtype=float32)
@@ -519,7 +519,7 @@ def he_normal(in_axis: Union[int, Sequence[int]] = -2,
   Example:
 
   >>> import jax, jax.numpy as jnp
-  >>> initializer = jax.nn.initializers.kaiming_normal()
+  >>> initializer = jax.nn.initializers.he_normal()
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
   Array([[ 0.6604483 ,  1.1900088 ,  1.2047218 ],
          [-0.87225807, -0.95321447,  0.1369438 ]], dtype=float32)

@@ -1421,11 +1421,6 @@ def concrete_dim_or_error(val: Any, context=""):
 # type for interaction with the compiler and runtime, e.g. when lowering
 # to the compiler's language.
 
-
-# TODO(jakevdp): remove this function once it's unused downstream.
-def has_opaque_dtype(x: Any) -> bool:
-  return dtypes.issubdtype(get_aval(x).dtype, dtypes.extended)
-
 @overload
 def physical_aval(aval: ShapedArray) -> ShapedArray: ...
 @overload

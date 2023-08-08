@@ -82,7 +82,8 @@ def get_logical_mesh_ids(mesh_shape):
 _MeshAxisName = Any
 
 def sharding_spec_sharding_proto(
-    self, special_axes: Mapping[int, OpShardingType] = {}) -> xc.HloSharding:
+    self, special_axes: Optional[Mapping[int, OpShardingType]] = None
+) -> xc.HloSharding:
   """Converts a ShardingSpec to an OpSharding proto.
 
   See
@@ -92,6 +93,7 @@ def sharding_spec_sharding_proto(
   the code here might help:
   https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/compiler/xla/experimental/xla_sharding/xla_sharding.py
   """
+  special_axes_dict = {} if special_axes is None else special_axes
   mesh_shape = cast(tuple[int, ...], self.mesh_shape)
 
   sharded_axes = {}  # maps sharded axis identifiers to mesh axis indices to which they're mapped
@@ -104,7 +106,7 @@ def sharding_spec_sharding_proto(
     else:
       util.assert_unreachable(assignment)
 
-  if len(replicated_maxes) == len(self.mesh_mapping) and not special_axes:
+  if len(replicated_maxes) == len(self.mesh_mapping) and not special_axes_dict:
     return xc.HloSharding.replicate()
 
   mesh_permutation = []
@@ -131,9 +133,9 @@ def sharding_spec_sharding_proto(
   if replicated_maxes:
     axes_by_type: dict[OpShardingType, list[_MeshAxisName]] = {}
     size_by_type: dict[OpShardingType, int] = collections.defaultdict(lambda: 1)
-    assert {x[0] for x in replicated_maxes}.issuperset(set(special_axes.keys()))
+    assert {x[0] for x in replicated_maxes}.issuperset(set(special_axes_dict.keys()))
     for axis, size in replicated_maxes:
-      ty = special_axes.get(axis, xc.OpSharding.Type.REPLICATED)
+      ty = special_axes_dict.get(axis, xc.OpSharding.Type.REPLICATED)
       axes_by_type.setdefault(ty, []).append(axis)
       size_by_type[ty] *= size
     for ty, axes in sorted(axes_by_type.items(), key=lambda x: x[0].value):
