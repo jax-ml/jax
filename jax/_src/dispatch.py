@@ -360,18 +360,8 @@ def apply_outfeed_rewriter(jaxpr: core.Jaxpr) -> core.Jaxpr:
     return jaxpr
 
 
-# TODO(mattjj,necula): this duplicates code in core.valid_jaxtype, but one
-# internal user relies on it for duck-typing. must fix downstream user!
-def _valid_jaxtype(arg: Any) -> bool:
-  try:
-    xla.abstractify(arg)  # faster than core.get_aval
-  except TypeError:
-    return core.valid_jaxtype(arg)
-  else:
-    return True
-
 def check_arg(arg: Any):
-  if not (isinstance(arg, core.Tracer) or _valid_jaxtype(arg)):
+  if not (isinstance(arg, core.Tracer) or core.valid_jaxtype(arg)):
     raise TypeError(f"Argument '{arg}' of type {type(arg)} is not a valid "
                     "JAX type.")
 
