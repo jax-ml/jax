@@ -31,6 +31,7 @@ import warnings
 
 import numpy as np
 
+from jax._src import basearray
 from jax._src import compilation_cache
 from jax._src import config as jax_config
 from jax._src import core
@@ -47,7 +48,6 @@ from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
@@ -281,29 +281,6 @@ def should_tuple_args(num_args: int, platform: str) -> bool:
   else:
     return False
 
-
-def raise_warnings_or_errors_for_jit_of_pmap(nreps, backend, name, jaxpr):
-  if nreps > 1:
-    warnings.warn(
-        f"The jitted function {name} includes a pmap. Using "
-         "jit-of-pmap can lead to inefficient data movement, as the outer jit "
-         "does not preserve sharded data representations and instead collects "
-         "input and output arrays onto a single device. "
-         "Consider removing the outer jit unless you know what you're doing. "
-         "See https://github.com/google/jax/issues/2926.")
-
-  if nreps > xb.device_count(backend):
-    raise ValueError(
-        f"compiling computation `{name}` that requires {nreps} replicas, but "
-        f"only {xb.device_count(backend)} XLA devices are available.")
-
-  if xb.process_count() > 1 and (nreps > 1 or
-                                 jaxpr_has_primitive(jaxpr, "xla_pmap")):
-    raise NotImplementedError(
-        "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
-        "extra data movement anyway, so maybe you don't want it after all).")
-
-
 def jaxpr_has_primitive(jaxpr: core.Jaxpr, prim_name: str) -> bool:
   """Whether there is a primitive given by user anywhere inside a Jaxpr."""
   for eqn in jaxpr.eqns:
@@ -371,14 +348,6 @@ def _is_bint_axis_size(d: core.AxisSize) -> bool:
             type(d.aval.dtype) is core.bint)
   return False
 
-def _prune_unused_inputs(
-    jaxpr: core.Jaxpr) -> tuple[core.Jaxpr, set[int], set[int]]:
-  used_outputs = [True] * len(jaxpr.outvars)
-  new_jaxpr, used_consts, used_inputs = pe.dce_jaxpr_consts(jaxpr, used_outputs)
-  kept_const_idx = {i for i, b in enumerate(used_consts) if b}
-  kept_var_idx = {i for i, b in enumerate(used_inputs) if b}
-  return new_jaxpr, kept_const_idx, kept_var_idx
-
 
 # We can optionally set a Jaxpr rewriter that can be applied just before
 # compilation. This mechanism is used for compiling id_tap, we can
@@ -407,40 +376,38 @@ def check_arg(arg: Any):
                     "JAX type.")
 
 
-def jaxpr_replicas(jaxpr) -> int:
+def jaxpr_replicas(jaxpr: core.Jaxpr) -> int:
   """The number of replicas needed for a jaxpr.
 
   For a eqn, multiply the `axis_size` with the `jaxpr_replicas` of the
   subjaxprs. For a list of eqns, take the maximum number of replicas.
   """
-  if isinstance(jaxpr, core.ClosedJaxpr):
-    jaxpr = jaxpr.jaxpr
-  return max(unsafe_map(eqn_replicas, jaxpr.eqns), default=1)
+  return max(unsafe_map(_eqn_replicas, jaxpr.eqns), default=1)
 
 # TODO(mattjj): this function assumes that only pmap has a parameter named
 # axis_size, and that it corresponds to cross-replica mapping
-def eqn_replicas(eqn):
+def _eqn_replicas(eqn: core.JaxprEqn) -> int:
   call_jaxpr = eqn.params.get("call_jaxpr")
   if call_jaxpr:
     return eqn.params.get('axis_size', 1) * jaxpr_replicas(call_jaxpr)
   elif eqn.primitive in xla.initial_style_primitives:
-    return initial_style_primitive_replicas(eqn.params)
+    return _initial_style_primitive_replicas(eqn.params)
   else:
     return 1
 
-def initial_style_primitive_replicas(params):
-  return max(core.traverse_jaxpr_params(jaxpr_replicas, params).values(), default=1)
+def _initial_style_primitive_replicas(params: dict[str, Any]) -> int:
+  return max(core.traverse_jaxpr_params(jaxpr_replicas, params).values(),
+             default=1)
 
-
-def needs_check_special():
+def needs_check_special() -> bool:
   return config.jax_debug_infs or config.jax_debug_nans
 
-def check_special(name, bufs):
+def check_special(name: str, bufs: Sequence[basearray.Array]) -> None:
   if needs_check_special():
     for buf in bufs:
       _check_special(name, buf.dtype, buf)
 
-def _check_special(name, dtype, buf):
+def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
   if dtypes.issubdtype(dtype, np.inexact):
     if config.jax_debug_nans and np.any(np.isnan(np.asarray(buf))):
       raise FloatingPointError(f"invalid value (nan) encountered in {name}")
@@ -449,7 +416,12 @@ def _check_special(name, dtype, buf):
 
 
 @profiler.annotate_function
-def backend_compile(backend, module: ir.Module, options, host_callbacks):
+def backend_compile(
+    backend: Backend,
+    module: ir.Module,
+    options: xc.CompileOptions,
+    host_callbacks: Sequence[Any],
+) -> xc.LoadedExecutable:
   # Convert ir.Module to a string representation, unless the
   # back-end expliclity flags the ability to handle a module directly
   # (avoiding the overhead of back and forth conversions)
@@ -468,6 +440,7 @@ def backend_compile(backend, module: ir.Module, options, host_callbacks):
   # to take in `host_callbacks`
   return backend.compile(built_c, compile_options=options)
 
+
 _ir_dump_counter = itertools.count()
 
 def _make_string_safe_for_filename(s: str) -> str:
@@ -480,8 +453,13 @@ def _dump_ir_to_file(name: str, ir: str):
   name.write_text(ir)
 
 
-def compile_or_get_cached(backend, computation: ir.Module, devices: np.ndarray,
-                          compile_options, host_callbacks):
+def compile_or_get_cached(
+    backend: Backend,
+    computation: ir.Module,
+    devices: np.ndarray,
+    compile_options: xc.CompileOptions,
+    host_callbacks: Sequence[Any],
+) -> xc.LoadedExecutable:
   sym_name = computation.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
 
@@ -522,7 +500,8 @@ def compile_or_get_cached(backend, computation: ir.Module, devices: np.ndarray,
 
 
 def _cache_read(
-    module_name: str, cache_key: str, compile_options, backend
+    module_name: str, cache_key: str, compile_options: xc.CompileOptions,
+    backend: Backend
 ) -> tuple[xc.LoadedExecutable | None, int | None]:
   """Looks up the `computation` and it's compilation time in the persistent
   compilation cache repository.
@@ -543,7 +522,7 @@ def _cache_write(cache_key: str,
                  compile_time_secs: float,
                  module_name: str,
                  backend: Backend, executable: xc.LoadedExecutable,
-                 host_callbacks: list[Any]):
+                 host_callbacks: Sequence[Any]) -> None:
   """Writes the `serialized_computation` and its compilation time to the
   persistent compilation cache repository.
   """
@@ -580,7 +559,7 @@ def _cache_write(cache_key: str,
 
 # TODO(yashkatariya): Generalize is_compatible_aval (maybe renamed) and use that
 # to check if shardings are compatible with the input.
-def _check_sharding(aval, s):
+def _check_sharding(aval: core.AbstractValue, s: Sharding):
   from jax._src import pjit
 
   if isinstance(s, XLACompatibleSharding) and not isinstance(s, PmapSharding):

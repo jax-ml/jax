@@ -25,6 +25,7 @@ import itertools as it
 import logging
 import math
 from typing import (Any, Callable, NamedTuple, Optional, Union, cast, TypeVar)
+import warnings
 
 import numpy as np
 
@@ -1643,6 +1644,16 @@ def cache_wrap(fn):
   return wrapped
 
 
+def prune_unused_inputs(
+    jaxpr: core.Jaxpr,
+) -> tuple[core.Jaxpr, set[int], set[int]]:
+  used_outputs = [True] * len(jaxpr.outvars)
+  new_jaxpr, used_consts, used_inputs = pe.dce_jaxpr_consts(jaxpr, used_outputs)
+  kept_const_idx = {i for i, b in enumerate(used_consts) if b}
+  kept_var_idx = {i for i, b in enumerate(used_inputs) if b}
+  return new_jaxpr, kept_const_idx, kept_var_idx
+
+
 @cache_wrap
 def _trace_to_jaxpr_and_dce(fun_or_jaxpr, global_in_avals, api_name, fun_name,
                             keep_unused, donated_invars, auto_spmd_lowering):
@@ -1665,7 +1676,7 @@ def _trace_to_jaxpr_and_dce(fun_or_jaxpr, global_in_avals, api_name, fun_name,
           for a in global_in_avals)):
     kept_var_idx = set(range(len(global_in_avals)))
   else:
-    jaxpr, kept_const_idx, kept_var_idx = dispatch._prune_unused_inputs(jaxpr)
+    jaxpr, kept_const_idx, kept_var_idx = prune_unused_inputs(jaxpr)
     consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
     global_in_avals = tuple(a for i, a in enumerate(global_in_avals) if i in kept_var_idx)
     donated_invars = tuple(x for i, x in enumerate(donated_invars) if i in kept_var_idx)
@@ -1699,6 +1710,30 @@ class SemanticallyEqualShardings:
     )
 
 
+def _raise_warnings_or_errors_for_jit_of_pmap(
+    nreps: int, backend: xc.Client, name: str, jaxpr: core.Jaxpr) -> None:
+  if nreps > 1:
+    warnings.warn(
+        f"The jitted function {name} includes a pmap. Using "
+         "jit-of-pmap can lead to inefficient data movement, as the outer jit "
+         "does not preserve sharded data representations and instead collects "
+         "input and output arrays onto a single device. "
+         "Consider removing the outer jit unless you know what you're doing. "
+         "See https://github.com/google/jax/issues/2926.")
+
+  if nreps > xb.device_count(backend):
+    raise ValueError(
+        f"compiling computation `{name}` that requires {nreps} replicas, but "
+        f"only {xb.device_count(backend)} XLA devices are available.")
+
+  if xb.process_count() > 1 and (
+      nreps > 1 or dispatch.jaxpr_has_primitive(jaxpr, "xla_pmap")
+  ):
+    raise NotImplementedError(
+        "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
+        "extra data movement anyway, so maybe you don't want it after all).")
+
+
 @weakref_lru_cache
 def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             semantic_in_shardings, semantic_out_shardings,
@@ -1724,8 +1759,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
   # `jax.Array` is turned on by default.
   # TODO(yashkatariya): Remove this when `jit(pmap)` is removed.
   nreps = dispatch.jaxpr_replicas(jaxpr)
-  dispatch.raise_warnings_or_errors_for_jit_of_pmap(
-      nreps, backend, fun_name, jaxpr)
+  _raise_warnings_or_errors_for_jit_of_pmap(nreps, backend, fun_name, jaxpr)
 
   in_mlir_shardings: list[sharding_impls.XLACompatibleSharding | None] | None
   out_mlir_shardings: list[sharding_impls.XLACompatibleSharding | None] | None

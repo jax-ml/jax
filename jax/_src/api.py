@@ -117,7 +117,7 @@ def _nan_check_posthook(fun, args, kwargs, output):
       buffers.extend(leaf.device_buffers)
 
   try:
-    dispatch.check_special(pjit.pjit_p, buffers)
+    dispatch.check_special(pjit.pjit_p.name, buffers)
   except FloatingPointError:
     # compiled_fun can only raise in this case
     assert config.jax_debug_nans or config.jax_debug_infs
