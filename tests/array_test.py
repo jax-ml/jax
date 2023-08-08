@@ -750,6 +750,17 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(fs, inp_data)
     self.assertArraysEqual(arr.addressable_data(0), inp_data)
 
+  def test_shard_device_array_to_fully_replicated(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    sharding = jax.sharding.NamedSharding(global_mesh, P())
+    arr = jnp.arange(16)
+    self.assertFalse(arr._committed)
+    self.assertIsInstance(arr.sharding, jax.sharding.SingleDeviceSharding)
+    out = jax.jit(lambda x: x * 2, in_shardings=sharding)(arr)
+    self.assertTrue(out.sharding.is_fully_replicated)
+    self.assertEqual(out.sharding.device_set, sharding.device_set)
+    self.assertArraysEqual(out, arr * 2)
+
 
 class ShardingTest(jtu.JaxTestCase):
 
