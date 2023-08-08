@@ -38,7 +38,7 @@ import numpy as np
 from jax._src import lib
 from jax._src import distributed
 from jax._src import config as jax_config
-from jax._src.config import bool_env, config, int_env
+from jax._src.config import bool_env, config
 from jax._src.lib import xla_client
 from jax._src import traceback_util
 from jax._src import util
@@ -78,11 +78,6 @@ _DISABLE_MOST_OPTIMIZATIONS = jax_config.DEFINE_bool(
     bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
     'Try not to do much optimization work. This can be useful if the cost of '
     'optimization is greater than that of running a less-optimized program.')
-_XLA_PROFILE_VERSION = jax_config.DEFINE_integer(
-    'jax_xla_profile_version', int_env('JAX_XLA_PROFILE_VERSION', 0),
-    'Optional profile version for XLA compilation. '
-    'This is meaningful only when XLA is configured to '
-    'support the remote compilation profile feature.')
 CUDA_VISIBLE_DEVICES = jax_config.DEFINE_string(
     'jax_cuda_visible_devices', 'all',
     'Restricts the set of CUDA devices that JAX will use. Either "all", or a '
@@ -175,7 +170,7 @@ def get_compile_options(
     debug_options.xla_llvm_disable_expensive_passes = True
     debug_options.xla_test_all_input_layouts = False
 
-  compile_options.profile_version = _XLA_PROFILE_VERSION.value
+  compile_options.profile_version = config.jax_xla_profile_version
   return compile_options
 
 

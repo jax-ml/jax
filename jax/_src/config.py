@@ -1081,6 +1081,14 @@ config.define_bool_state(
           'work under pmap/pjit.')
 )
 
+jax_xla_profile_version = config.define_int_state(
+    name='jax_xla_profile_version',
+    default=0,
+    help=('Optional profile version for XLA compilation. This is meaningful '
+          'only when XLA is configured to support the remote compilation '
+          'profile feature.')
+)
+
 @contextlib.contextmanager
 def explicit_device_put_scope() -> Iterator[None]:
   """Indicates that the current context is an explicit device_put*() call."""
