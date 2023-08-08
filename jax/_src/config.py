@@ -325,8 +325,6 @@ class Config:
       name: string, converted to lowercase to define the name of the config
         option (and absl flag). It is converted to uppercase to define the
         corresponding shell environment variable.
-      enum_values: list of strings representing the possible values for the
-        option.
       default: optional int, default value.
       help: string, used to populate the flag help information as well as the
         docstring of the returned context manager.
@@ -366,8 +364,6 @@ class Config:
       name: string, converted to lowercase to define the name of the config
         option (and absl flag). It is converted to uppercase to define the
         corresponding shell environment variable.
-      enum_values: list of strings representing the possible values for the
-        option.
       default: optional float, default value.
       help: string, used to populate the flag help information as well as the
         docstring of the returned context manager.
