@@ -24,6 +24,7 @@ Remember to align the itemized text with the first line of an item within a list
   * The option `--jax_coordination_service` has been removed. It is now always
     `True`.
   * `jax.jaxpr_util` has been removed from the public JAX namespace.
+  * `JAX_USE_PJRT_C_API_ON_TPU` no longer has an effect (i.e. it always defaults to true).
 
 * Internal deprecations:
   * The internal utilities `jax.core.is_opaque_dtype` and `jax.core.has_opaque_dtype`
