@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from absl.testing import absltest
-
 import os
 import gzip
 import json
 
+from absl.testing import absltest
+
 import jax
-from jax import jaxpr_util, jit, make_jaxpr, numpy as jnp
+from jax import jit, make_jaxpr, numpy as jnp
+from jax._src import jaxpr_util
 from jax._src.lib import xla_client
 from jax._src import test_util as jtu
 from jax import config

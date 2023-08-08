@@ -197,6 +197,7 @@ py_library_providing_imports_info(
         ":dtypes",
         ":effects",
         ":environment_info",
+        ":jaxpr_util",
         ":lazy_loader",
         ":mesh",
         ":mlir",
@@ -399,6 +400,17 @@ pytype_library(
 pytype_strict_library(
     name = "lazy_loader",
     srcs = ["_src/lazy_loader.py"],
+)
+
+pytype_strict_library(
+    name = "jaxpr_util",
+    srcs = ["_src/jaxpr_util.py"],
+    deps = [
+        ":core",
+        ":source_info_util",
+        ":util",
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_strict_library(

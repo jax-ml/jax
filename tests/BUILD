@@ -266,9 +266,14 @@ py_test(
     ] + py_deps("tensorflow_core"),
 )
 
-jax_test(
+py_test(
     name = "jaxpr_util_test",
     srcs = ["jaxpr_util_test.py"],
+    deps = [
+        "//jax",
+        "//jax:jaxpr_util",
+        "//jax:test_util",
+    ],
 )
 
 jax_test(

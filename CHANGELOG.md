@@ -23,6 +23,7 @@ Remember to align the itemized text with the first line of an item within a list
     for details and for mechanisms to override the default.
   * The option `--jax_coordination_service` has been removed. It is now always
     `True`.
+  * `jax.jaxpr_util` has been removed from the public JAX namespace.
 
 ## jaxlib 0.4.15
 
