@@ -58,8 +58,6 @@ py_library(
     srcs_version = "PY3",
     # TODO: b/255503696: enable pytype
     tags = ["pytype_unchecked_annotations"],
-    # TODO(http://b/295023295): Remove the visibility to AICore once we start using StableHLO.
-    visibility = ["//learning/multipod/pax/aicore/graph_split:__subpackages__"],
     deps = [
         ":jax_export",
         "//jax",
