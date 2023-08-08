@@ -99,8 +99,8 @@ def get_compile_options(
     device_assignment=None,
     use_spmd_partitioning: bool = True,
     use_auto_spmd_partitioning: bool = False,
-    auto_spmd_partitioning_mesh_shape=[],
-    auto_spmd_partitioning_mesh_ids=[],
+    auto_spmd_partitioning_mesh_shape: Optional[list[int]] = None,
+    auto_spmd_partitioning_mesh_ids: Optional[list[int]] = None,
     env_options_overrides: Optional[dict[str, str]] = None,
     fdo_profile: Optional[bytes] = None,
 ) -> xla_client.CompileOptions:
@@ -134,8 +134,8 @@ def get_compile_options(
   if fdo_profile is not None:
     build_options.fdo_profile = fdo_profile
   if use_auto_spmd_partitioning:
-    build_options.auto_spmd_partitioning_mesh_shape = auto_spmd_partitioning_mesh_shape
-    build_options.auto_spmd_partitioning_mesh_ids = auto_spmd_partitioning_mesh_ids
+    build_options.auto_spmd_partitioning_mesh_shape = auto_spmd_partitioning_mesh_shape or []
+    build_options.auto_spmd_partitioning_mesh_ids = auto_spmd_partitioning_mesh_ids or []
   if device_assignment is not None:
     logger.debug(
         'get_compile_options: num_replicas=%s num_partitions=%s device_assignment=%s',
