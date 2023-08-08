@@ -1052,7 +1052,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             enabled=not harness.params["enable_xla"]),
       custom_numeric(devices="cpu", dtypes=[np.float32],
                      modes=("eager", "graph", "compiled",), tol=1e-5),
-      custom_numeric(devices="cpu", dtypes=[np.float16],
+      custom_numeric(devices=("cpu", "gpu"), dtypes=[np.float16],
                      modes=("eager", "graph", "compiled",), tol=5e-3),
     ]
 
