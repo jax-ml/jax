@@ -62,6 +62,12 @@ from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib import xla_client
 from jax._src import random as jax_random
 
+# The code in this file relies on the values of some flags that are defined by
+# jtu. Note that the following can not always be moved to a test file since
+# then the test file has to import jtu first (to define the flags) which is not
+# desired if the test file is outside of this project (we don't want a
+# dependency on jtu outside of jax repo).
+config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 Rng = Any  # A random number generator
