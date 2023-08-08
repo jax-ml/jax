@@ -50,7 +50,6 @@ from jax._src.lib import xla_extension
 from jax._src.util import safe_map, safe_zip
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax.interpreters import xla
 from jax._src import array
 from jax._src.sharding_impls import PmapSharding
 from jax.ad_checkpoint import checkpoint as new_checkpoint
@@ -1082,16 +1081,16 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   def testAxisGroups(self):
     axis_env = sharding_impls.AxisEnv(8, ('i', 'j'), (4, 2))
-    groups = xla.axis_groups(axis_env, 'i')
+    groups = pxla.axis_groups(axis_env, 'i')
     self.assertEqual(groups, ((0, 2, 4, 6), (1, 3, 5, 7)))
 
-    groups = xla.axis_groups(axis_env, 'j')
+    groups = pxla.axis_groups(axis_env, 'j')
     self.assertEqual(groups, ((0, 1), (2, 3), (4, 5), (6, 7)))
 
-    groups = xla.axis_groups(axis_env, ('i', 'j'))
+    groups = pxla.axis_groups(axis_env, ('i', 'j'))
     self.assertEqual(groups, ((0, 1, 2, 3, 4, 5, 6, 7,),))
 
-    groups = xla.axis_groups(axis_env, ('j', 'i'))
+    groups = pxla.axis_groups(axis_env, ('j', 'i'))
     self.assertEqual(len(groups), 1)
     self.assertEqual((tuple(sorted(groups[0])),),
                      ((0, 1, 2, 3, 4, 5, 6, 7,),))  # order doesn't matter

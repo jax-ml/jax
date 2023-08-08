@@ -20,14 +20,10 @@ import dataclasses
 import functools
 from functools import partial
 import itertools as it
-import math
 import operator
-import re
 from typing import Any, Callable, Optional, Protocol, Union
 
 import numpy as np
-
-from jax._src.config import config
 
 from jax._src import core
 from jax._src import dtypes
@@ -58,13 +54,6 @@ def _make_array_shape(aval: ShapedArray) -> Sequence[xc.Shape]:
   aval = core.physical_aval(aval)
   dtype = np.dtype('bool') if aval.dtype == dtypes.float0 else aval.dtype
   return (xc.Shape.array_shape(dtype, aval.shape),)
-
-def get_canonical_source_file(frame: source_info_util.Frame):
-  source_file = frame.file_name
-  if config.jax_hlo_source_file_canonicalization_regex:
-    source_file = re.sub(config.jax_hlo_source_file_canonicalization_regex,
-                         '', source_file)
-  return source_file
 
 # Utilities
 
@@ -121,18 +110,6 @@ def tuple_sharding_proto(elems):
   return proto
 
 
-def with_sharding_proto(builder, sharding_proto, op_fn, *args, **kwargs):
-  """Builds op_fn(*args, **kwargs) with sharding annotation."""
-  builder.set_sharding(sharding_proto)
-  try:
-    return op_fn(*args, **kwargs)
-  finally:
-    builder.clear_sharding()
-
-def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
-  """Builds op_fn(*args, **kwargs) with sharding annotation."""
-  return with_sharding_proto(builder, sharding_to_proto(sharding), op_fn, *args,
-                             **kwargs)
 
 
 ### handlers
@@ -141,16 +118,16 @@ def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
 
 def aval_to_xla_shapes(aval: core.AbstractValue) -> Sequence[xc.Shape]:
   try:
-    return xla_shape_handlers[type(aval)](aval)
+    return _xla_shape_handlers[type(aval)](aval)
   except KeyError as err:
     raise TypeError(f"No xla_shape_handler for type: {type(aval)}") from err
 
-xla_shape_handlers: dict[type[core.AbstractValue],
+_xla_shape_handlers: dict[type[core.AbstractValue],
                          Callable[[Any], Sequence[xc.Shape]]] = {
     ShapedArray: _make_array_shape,
     ConcreteArray: _make_array_shape,
 }
-xla_shape_handlers[core.AbstractToken] = lambda _: (xc.Shape.token_shape(),)
+_xla_shape_handlers[core.AbstractToken] = lambda _: (xc.Shape.token_shape(),)
 
 
 # IR constants
@@ -270,52 +247,6 @@ def xla_destructure(c, ans):
   num_elements = len(c.get_shape(ans).tuple_shapes())
   return [xops.GetTupleElement(ans, i) for i in range(num_elements)]
 
-def check_backend_matches(inner_backend, outer_backend):
-  # For nested calls, the outermost call sets the backend for all inner calls;
-  # it's an error if the inner call has a conflicting explicit backend spec.
-  if inner_backend is None:
-    return
-  if (inner_backend != outer_backend and
-      outer_backend not in xb.expand_platform_alias(inner_backend)):
-    raise ValueError(
-        f"Outer-jit backend specification {outer_backend} must match explicit "
-        f"inner-jit backend specification {inner_backend}.")
-
-
-def extend_axis_env(env: AxisEnv, name, size: int):
-  return AxisEnv(env.nreps, env.names + (name,), env.sizes + (size,))
-
-def axis_read(axis_env, axis_name):
-  try:
-    return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
-  except ValueError:
-    raise NameError(f"unbound axis name: {axis_name}") from None
-
-def axis_groups(axis_env: AxisEnv, name) -> tuple[tuple[int, ...]]:
-  if not isinstance(name, (list, tuple)):
-    name = (name,)
-  mesh_axes = tuple(unsafe_map(partial(axis_read, axis_env), name))
-  trailing_size, ragged = divmod(axis_env.nreps, math.prod(axis_env.sizes))
-  assert not ragged
-  mesh_spec = axis_env.sizes + (trailing_size,)
-  return _axis_groups(mesh_spec, mesh_axes)
-
-def _axis_groups(mesh_spec, mesh_axes):
-  """Computes replica group ids for a collective performed over a subset of the mesh.
-
-  Args:
-    mesh_spec: A sequence of integers representing the mesh shape.
-    mesh_axes: A sequence of integers between 0 and `len(mesh_spec)` (exclusive)
-      indicating over which axes the collective is performed.
-  Returns:
-    A tuple of replica groups (i.e. tuples containing replica ids).
-  """
-  iota = np.arange(math.prod(mesh_spec)).reshape(mesh_spec)
-  groups = np.reshape(
-      np.moveaxis(iota, mesh_axes, np.arange(len(mesh_axes))),
-      (math.prod(np.take(mesh_spec, mesh_axes)), -1))
-  return tuple(unsafe_map(tuple, groups.T))
-
 
 # TODO(mattjj,skyewm): the functions here are utilities for checking if
 # not-yet-supported features are used with multi-host programming
@@ -327,37 +258,6 @@ def jaxpr_collectives(jaxpr):
     if eqn.primitive in _collective_primitives:
       yield eqn.primitive
   for subjaxpr in core.subjaxprs(jaxpr): yield from jaxpr_collectives(subjaxpr)
-
-
-### xla_call underlying jit
-
-
-def xla_call_partial_eval_update_params(
-    params: core.ParamDict, kept_inputs: Sequence[bool], num_new_inputs: int
-  ) -> core.ParamDict:
-  donated_invars = params['donated_invars']
-  if not kept_inputs and donated_invars:
-    # JaxprTrace.post_process_call creates a call with no input tracers
-    donated_invars = (False,) * num_new_inputs
-  else:
-    assert len(kept_inputs) == len(donated_invars)
-    # JaxprTrace.process_call drops known input tracers
-    donated_invars = [d for d, kept in zip(donated_invars, kept_inputs) if kept]
-    # Any new inputs are prepended to the left, so mark those as not donated.
-    donated_invars = [False] * num_new_inputs + donated_invars
-  return dict(params, donated_invars=tuple(donated_invars))
-
-def xla_call_jvp_update_params(params, nz_tangents):
-  donated_invars = params['donated_invars']
-  donated_tangents = [d for d, nz in zip(donated_invars, nz_tangents) if nz]
-  new_donated_invars = (*donated_invars, *donated_tangents)
-  return dict(params, donated_invars=new_donated_invars)
-
-def xla_call_transpose_update_params(params, undef_primals, nonzero_cts):
-  donated_invars = params['donated_invars']
-  donated_primals = [d for d, u in zip(donated_invars, undef_primals) if not u]
-  donated_cotangents = [False for nz in nonzero_cts if nz]
-  return dict(params, donated_invars=(*donated_primals, *donated_cotangents))
 
 
 ### translation tables

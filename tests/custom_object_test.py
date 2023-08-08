@@ -123,7 +123,6 @@ core.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 core.raise_to_shaped_mappings[AbstractSparseArray] = lambda aval, _: aval
 xla.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 xla.canonicalize_dtype_handlers[SparseArray] = lambda x: x
-xla.xla_shape_handlers[AbstractSparseArray] = sparse_array_shape_handler
 
 def sparse_array_mlir_type_handler(a):
   return (
@@ -258,7 +257,6 @@ core.pytype_aval_mappings[Empty] = lambda x: ConcreteEmpty()
 core.raise_to_shaped_mappings[AbstractEmpty] = lambda aval, _: aval
 xla.pytype_aval_mappings[Empty] = lambda x: AbstractEmpty()
 xla.canonicalize_dtype_handlers[Empty] = lambda x: x
-xla.xla_shape_handlers[AbstractEmpty] = lambda _: ()
 
 
 @unittest.skip("Test does not work with jax.Array")

@@ -1235,15 +1235,43 @@ def _pmap_dce_rule(used_outputs, eqn):
     return used_inputs, new_eqn
 
 
+def _xla_call_partial_eval_update_params(
+    params: core.ParamDict, kept_inputs: Sequence[bool], num_new_inputs: int
+  ) -> core.ParamDict:
+  donated_invars = params['donated_invars']
+  if not kept_inputs and donated_invars:
+    # JaxprTrace.post_process_call creates a call with no input tracers
+    donated_invars = (False,) * num_new_inputs
+  else:
+    assert len(kept_inputs) == len(donated_invars)
+    # JaxprTrace.process_call drops known input tracers
+    donated_invars = [d for d, kept in zip(donated_invars, kept_inputs) if kept]
+    # Any new inputs are prepended to the left, so mark those as not donated.
+    donated_invars = [False] * num_new_inputs + donated_invars
+  return dict(params, donated_invars=tuple(donated_invars))
+
+def xla_call_jvp_update_params(params, nz_tangents):
+  donated_invars = params['donated_invars']
+  donated_tangents = [d for d, nz in zip(donated_invars, nz_tangents) if nz]
+  new_donated_invars = (*donated_invars, *donated_tangents)
+  return dict(params, donated_invars=new_donated_invars)
+
+def _xla_call_transpose_update_params(params, undef_primals, nonzero_cts):
+  donated_invars = params['donated_invars']
+  donated_primals = [d for d, u in zip(donated_invars, undef_primals) if not u]
+  donated_cotangents = [False for nz in nonzero_cts if nz]
+  return dict(params, donated_invars=(*donated_primals, *donated_cotangents))
+
+
 # Set param update handlers to update `donated_invars` just like xla_call_p
-pe.call_param_updaters[xla_pmap_p] = xla.xla_call_partial_eval_update_params
+pe.call_param_updaters[xla_pmap_p] = _xla_call_partial_eval_update_params
 pe.partial_eval_jaxpr_custom_rules[xla_pmap_p] = \
     partial(pe.call_partial_eval_custom_rule,
             'call_jaxpr', _pmap_partial_eval_custom_params_updater,
             res_aval=_pmap_partial_eval_custom_res_maker)
 pe.dce_rules[xla_pmap_p] = _pmap_dce_rule
-ad.call_param_updaters[xla_pmap_p] = xla.xla_call_jvp_update_params
-ad.call_transpose_param_updaters[xla_pmap_p] = xla.xla_call_transpose_update_params
+ad.call_param_updaters[xla_pmap_p] = xla_call_jvp_update_params
+ad.call_transpose_param_updaters[xla_pmap_p] = _xla_call_transpose_update_params
 
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
 
@@ -1289,6 +1317,38 @@ def _hlo_shard(aval, axis_env, xs, in_axis):
     raise TypeError(aval)
 
 
+def _axis_read(axis_env, axis_name):
+  try:
+    return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
+  except ValueError:
+    raise NameError(f"unbound axis name: {axis_name}") from None
+
+def axis_groups(axis_env: sharding_impls.AxisEnv, name) -> tuple[tuple[int, ...]]:
+  if not isinstance(name, (list, tuple)):
+    name = (name,)
+  mesh_axes = tuple(unsafe_map(partial(_axis_read, axis_env), name))
+  trailing_size, ragged = divmod(axis_env.nreps, math.prod(axis_env.sizes))
+  assert not ragged
+  mesh_spec = axis_env.sizes + (trailing_size,)
+  return _axis_groups(mesh_spec, mesh_axes)
+
+def _axis_groups(mesh_spec, mesh_axes):
+  """Computes replica group ids for a collective performed over a subset of the mesh.
+
+  Args:
+    mesh_spec: A sequence of integers representing the mesh shape.
+    mesh_axes: A sequence of integers between 0 and `len(mesh_spec)` (exclusive)
+      indicating over which axes the collective is performed.
+  Returns:
+    A tuple of replica groups (i.e. tuples containing replica ids).
+  """
+  iota = np.arange(math.prod(mesh_spec)).reshape(mesh_spec)
+  groups = np.reshape(
+      np.moveaxis(iota, mesh_axes, np.arange(len(mesh_axes))),
+      (math.prod(np.take(mesh_spec, mesh_axes)), -1))
+  return tuple(unsafe_map(tuple, groups.T))
+
+
 # TODO(b/110096942): more efficient gather
 def _hlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs, platform):
   if aval is core.abstract_token:
@@ -1311,7 +1371,7 @@ def _hlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs, pl
         x, mlir.dense_int_elements([1])).result
     padded = hlo.DynamicUpdateSliceOp(padded, broadcast_result, idxs).result
     replica_groups = mlir.dense_int_elements(
-      xla.axis_groups(axis_env, axis_env.names[-1]))
+      axis_groups(axis_env, axis_env.names[-1]))
     out = hlo.CrossReplicaSumOp(padded, replica_groups).result
     if out_axis != 0:
       # TODO(apaszke,mattjj): Change the indices to DynamicUpdateSlice instead
@@ -1335,18 +1395,23 @@ def _hlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs, pl
     raise TypeError(aval)
 
 
+def _extend_axis_env(env: sharding_impls.AxisEnv, name, size: int):
+  return sharding_impls.AxisEnv(env.nreps, env.names + (name,),
+                                env.sizes + (size,))
+
+
 def _pmap_lowering(ctx, *in_nodes, axis_name,
                    axis_size, global_axis_size, devices, name,
                    call_jaxpr, backend=None, in_axes, out_axes,
                    donated_invars, is_explicit_global_axis_size):
   del donated_invars  # Unused.
-  xla.check_backend_matches(backend, ctx.module_context.platform)
+  mlir.check_backend_matches(backend, ctx.module_context.platform)
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
   if ctx.module_context.axis_env.names and devices is not None:
     raise ValueError("Nested pmap with explicit devices argument.")
-  new_env = xla.extend_axis_env(ctx.module_context.axis_env, axis_name,
-                                global_axis_size)
+  new_env = _extend_axis_env(ctx.module_context.axis_env, axis_name,
+                             global_axis_size)
   # Shard the in_nodes that are mapped
   in_avals = [v.aval for v in call_jaxpr.invars]
   in_nodes_sharded = (

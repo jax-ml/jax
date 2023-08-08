@@ -16,20 +16,17 @@ from jax._src.interpreters.xla import (
   TranslationContext as TranslationContext,
   TranslationRule as TranslationRule,
   abstractify as abstractify,
-  axis_groups as axis_groups,
   backend_specific_translations as backend_specific_translations,
   canonicalize_dtype as canonicalize_dtype,
   canonicalize_dtype_handlers as canonicalize_dtype_handlers,
-  check_backend_matches as check_backend_matches,
-  parameter as parameter,
   pytype_aval_mappings as pytype_aval_mappings,
   register_collective_primitive as register_collective_primitive,
-  register_initial_style_primitive as register_initial_style_primitive,
   register_translation as register_translation,
-  sharding_to_proto as sharding_to_proto,
   translations as translations,
   xla_destructure as xla_destructure,
-  xla_shape_handlers as xla_shape_handlers,
+)
+from jax._src.interpreters.pxla import (
+  axis_groups as axis_groups,
 )
 
 from jax._src.core import (

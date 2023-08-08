@@ -333,6 +333,13 @@ register_constant_handler(core.Token, _token_constant_handler)
 
 # Source locations
 
+def get_canonical_source_file(frame: source_info_util.Frame) -> str:
+  source_file = frame.file_name
+  if config.jax_hlo_source_file_canonicalization_regex:
+    source_file = re.sub(config.jax_hlo_source_file_canonicalization_regex,
+                         '', source_file)
+  return source_file
+
 def _traceback_to_location(tb: xc.Traceback) -> ir.Location:
   """Converts a full traceback to a callsite() MLIR location."""
   frame_locs = []
@@ -340,7 +347,7 @@ def _traceback_to_location(tb: xc.Traceback) -> ir.Location:
     frame = source_info_util.raw_frame_to_frame(code, lasti)
     if source_info_util.is_user_filename(frame.file_name):
       file_loc = ir.Location.file(
-          xla.get_canonical_source_file(frame),
+          get_canonical_source_file(frame),
           frame.start_line,
           frame.start_column,
       )
@@ -371,7 +378,7 @@ def _source_info_to_location(
     if frame is None:
       loc = ir.Location.unknown()
     else:
-      loc = ir.Location.file(xla.get_canonical_source_file(frame),
+      loc = ir.Location.file(get_canonical_source_file(frame),
                              frame.start_line, frame.start_column)
   loc = ir.Location.name(eqn_str, childLoc=loc)
   # TODO(phawkins): also include primitive.name as the operator type.
@@ -1383,13 +1390,25 @@ def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects,
   return func_op
 
 
+def check_backend_matches(inner_backend, outer_backend):
+  # For nested calls, the outermost call sets the backend for all inner calls;
+  # it's an error if the inner call has a conflicting explicit backend spec.
+  if inner_backend is None:
+    return
+  if (inner_backend != outer_backend and
+      outer_backend not in xb.expand_platform_alias(inner_backend)):
+    raise ValueError(
+        f"Outer-jit backend specification {outer_backend} must match explicit "
+        f"inner-jit backend specification {inner_backend}.")
+
+
 def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
                    avals_out, tokens_in, *args,
                    dim_var_values: Sequence[ir.Value],
                    arg_names=None, result_names=None):
   if isinstance(call_jaxpr, core.Jaxpr):
     call_jaxpr = core.ClosedJaxpr(call_jaxpr, ())
-  xla.check_backend_matches(backend, ctx.platform)
+  check_backend_matches(backend, ctx.platform)
   effects = list(tokens_in.effects())
   output_types = map(aval_to_ir_types, avals_out)
   output_types = [token_type()] * len(effects) + output_types

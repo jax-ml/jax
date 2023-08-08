@@ -50,7 +50,6 @@ from jax._src.interpreters.partial_eval import (
   trace_to_subjaxpr_dynamic, DynamicJaxprTracer,
   convert_constvars_jaxpr, new_jaxpr_eqn)
 from jax._src.interpreters import pxla
-from jax._src.interpreters import xla
 from jax._src.pjit import (sharding_constraint_p, get_unconstrained_dims,
                            GSPMDSharding)
 from jax._src.sharding_impls import (
@@ -868,7 +867,7 @@ core.axis_substitution_rules[xmap_p] = _xmap_axis_subst
 # NOTE: We don't have to handle spmd_{in|out}_axes here, because
 # SPMD batching always gets involved as the last transform before XLA translation
 ad.JVPTrace.process_xmap = ad.JVPTrace.process_call  # type: ignore
-ad.call_param_updaters[xmap_p] = xla.xla_call_jvp_update_params
+ad.call_param_updaters[xmap_p] = pxla.xla_call_jvp_update_params
 
 def _xmap_transpose(params, call_jaxpr, args, cts_in, cts_in_avals, reduce_axes):
   all_args, in_tree_def = tree_flatten(((), args, cts_in))  # empty consts
@@ -1305,7 +1304,7 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
                                 global_axis_sizes,
                                 spmd_in_axes, spmd_out_axes,
                                 axis_resources, resource_env, backend):
-  xla.check_backend_matches(backend, ctx.module_context.platform)
+  mlir.check_backend_matches(backend, ctx.module_context.platform)
   # The only way for any of those two assertions to be violated is when xmap
   # is using the SPMD lowering, but then this rule shouldn't even trigger.
   assert spmd_in_axes is None and spmd_out_axes is None
@@ -1382,7 +1381,7 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
                              donated_invars, global_axis_sizes, spmd_in_axes,
                              spmd_out_axes, axis_resources,
                              resource_env, backend):
-  xla.check_backend_matches(backend, ctx.module_context.platform)
+  mlir.check_backend_matches(backend, ctx.module_context.platform)
   plan = EvaluationPlan.from_axis_resources(
       axis_resources, resource_env, global_axis_sizes)
 
@@ -1450,7 +1449,7 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
                                     resource_env, backend):
   assert spmd_in_axes is None and spmd_out_axes is None
   # This first part (up to vtile_manual) is shared with non-MANUAL SPMD rule.
-  xla.check_backend_matches(backend, ctx.module_context.platform)
+  mlir.check_backend_matches(backend, ctx.module_context.platform)
   plan = EvaluationPlan.from_axis_resources(
       axis_resources, resource_env, global_axis_sizes)
   manual_mesh_axes = frozenset(it.chain.from_iterable(plan.physical_axis_resources.values()))

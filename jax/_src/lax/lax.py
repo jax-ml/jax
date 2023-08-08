@@ -4184,9 +4184,6 @@ def _top_k_batch_rule(batched_args, batch_dims, *, k):
   else:
     return top_k(operand, k=k), (bdim, bdim)
 
-def _top_k_translation_rule(ctx, avals_in, avals_out, x, *, k):
-  return xla.xla_destructure(ctx.builder, xops.TopK(x, k))
-
 top_k_p = Primitive('top_k')
 top_k_p.multiple_results = True
 top_k_p.def_impl(partial(dispatch.apply_primitive, top_k_p))

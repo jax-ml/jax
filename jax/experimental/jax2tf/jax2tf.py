@@ -57,6 +57,7 @@ from jax._src import random as random_internal
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.interpreters import ad
+from jax._src.interpreters import mlir
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
@@ -1217,7 +1218,7 @@ def _make_op_metadata(primitive: core.Primitive,
   return xla_client.OpMetadata(
         op_type=primitive.name,
         op_name=eqn_str,
-        source_file=xla.get_canonical_source_file(frame) if frame else None,
+        source_file=mlir.get_canonical_source_file(frame) if frame else None,
         source_line=frame.start_line if frame else None)
 
 

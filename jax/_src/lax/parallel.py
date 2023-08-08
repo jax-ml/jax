@@ -690,7 +690,7 @@ def _batched_reduction_collective(
   return vals_out, [batching.not_mapped] * len(vals_out)
 
 def _replica_groups(axis_env, axis_name, axis_index_groups):
-  replica_groups = xla.axis_groups(axis_env, axis_name)
+  replica_groups = pxla.axis_groups(axis_env, axis_name)
   if axis_index_groups is not None:
     replica_groups = [[axis_group[i] for i in axis_index_group]
                       for axis_group in replica_groups

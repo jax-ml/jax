@@ -1061,6 +1061,15 @@ def _outside_call_impl(*args, **params):
 outside_call_p.def_impl(_outside_call_impl)
 
 
+def _with_sharding_proto(builder, sharding_proto, op_fn, *args, **kwargs):
+  """Builds op_fn(*args, **kwargs) with sharding annotation."""
+  builder.set_sharding(sharding_proto)
+  try:
+    return op_fn(*args, **kwargs)
+  finally:
+    builder.clear_sharding()
+
+
 def _outside_call_translation_rule(ctx,
                                    avals_in,
                                    avals_out,
@@ -1137,8 +1146,8 @@ def _outside_call_translation_rule(ctx,
         build_infeed = functools.partial(xops.InfeedWithToken,
                                          after_outfeed_itoken,
                                          xla_client.Shape.tuple_shape(shape))
-        outs_and_token = xla.with_sharding_proto(comp, infeed_sharding_proto,
-                                                 build_infeed)
+        outs_and_token = _with_sharding_proto(comp, infeed_sharding_proto,
+                                              build_infeed)
         outs = xops.GetTupleElement(outs_and_token, 0)
         next_itoken = xops.GetTupleElement(outs_and_token, 1)
         non_empty_results = [
