@@ -73,7 +73,7 @@ def main(unused_argv):
           -0.5 * jnp.dot(y.T, kinvy) -
           jnp.sum(jnp.log(jnp.diag(chol))) -
           (numpts / 2.) * log2pi)
-      ml -= jnp.sum(-0.5 * jnp.log(2 * 3.1415) - jnp.log(amp)**2) # lognormal prior
+      ml -= jnp.sum(-0.5 * jnp.log(2 * 3.1415) - jnp.log(amp) - 0.5 * jnp.log(amp)**2) # lognormal prior
       return -ml
 
     if xtest is not None:
