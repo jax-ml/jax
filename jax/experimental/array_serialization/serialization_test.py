@@ -95,6 +95,38 @@ class CheckpointTest(jtu.JaxTestCase):
     self.assertGreater(peak, 30_000_000)
     tm.stop()
 
+  def test_checkpointing_with_path_variant(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    inp_shape = (8, 2)
+    pspec = P('x', 'y')
+    num = math.prod(inp_shape)
+
+    # First Array
+    global_input_data1 = np.arange(num, dtype=np.int32).reshape(inp_shape)
+    a1 = array.make_array_from_callback(
+        inp_shape, NamedSharding(global_mesh, pspec),
+        lambda idx: global_input_data1[idx])
+    ckpt_dir = pathlib.Path(self.create_tempdir('ckpt_variant').full_path)
+    ckpt_path1 = pathlib.Path(
+        self.create_tempdir(f'{ckpt_dir}/first').full_path)
+
+    ckpt_paths = [str(ckpt_path1)]
+    manager = serialization.GlobalAsyncCheckpointManager()
+    manager.serialize_with_paths(
+        [a1], ckpt_paths,
+        on_commit_callback=partial(self._on_commit_callback, ckpt_dir, ckpt_dir))
+    manager.wait_until_finished()
+
+    m1, = manager.deserialize_with_paths(
+        [NamedSharding(global_mesh, pspec)], ckpt_paths)
+    self.assertIsInstance(m1, array.ArrayImpl)
+    self.assertArraysEqual(np.asarray(m1.addressable_shards[0].data),
+                           np.array([[0], [2]], dtype=np.int32))
+    self.assertArraysEqual(np.asarray(m1.addressable_shards[1].data),
+                           np.array([[1], [3]], dtype=np.int32))
+    self.assertEqual(m1.addressable_shards[0].data.shape, (2, 1))
+    self.assertEqual(m1.dtype, np.int32)
+
   def test_checkpointing_jax_array(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     inp_shape = (8, 2)
@@ -107,7 +139,7 @@ class CheckpointTest(jtu.JaxTestCase):
         inp_shape, NamedSharding(global_mesh, pspec),
         lambda idx: global_input_data1[idx])
     ckpt_dir = pathlib.Path(self.create_tempdir('ckpt').full_path)
-    ckpt_path1 = pathlib.Path(self.create_tempfile(f'{ckpt_dir}/first').full_path)
+    ckpt_path1 = pathlib.Path(self.create_tempdir(f'{ckpt_dir}/first').full_path)
 
     # Second Array
     global_input_data2 = np.arange(
