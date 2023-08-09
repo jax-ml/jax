@@ -853,7 +853,7 @@ def j1_small(x: ArrayLike) -> Array:
     w = w * x * (z - Z1) * (z - Z2)
     return w
 
-def j1_large_c(x: ArrayLike) -> Array:  
+def j1_large(x: ArrayLike) -> Array:  
     '''
     Implementation of J1 for x > 5 
     '''  
@@ -888,7 +888,7 @@ def bessel_j1(z: ArrayLike) -> Array:
     if dtypes.issubdtype(z_dtype, complex):
       raise ValueError("complex input not supported.")
 
-    return jnp.sign(z)*jnp.where(jnp.abs(z) < 5.0, j1_small(jnp.abs(z)),j1_large_c(jnp.abs(z)))
+    return jnp.sign(z)*jnp.where(jnp.abs(z) < 5.0, j1_small(jnp.abs(z)),j1_large(jnp.abs(z)))
 
 def j0_small(x: ArrayLike) -> Array:
     '''
