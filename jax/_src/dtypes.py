@@ -234,6 +234,8 @@ def scalar_type_of(x: Any) -> type:
   typ = dtype(x)
   if typ in _custom_float_dtypes:
     return float
+  elif typ in _int4_dtypes:
+    return int
   elif np.issubdtype(typ, np.bool_):
     return bool
   elif np.issubdtype(typ, np.integer):
