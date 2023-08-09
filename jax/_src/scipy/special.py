@@ -967,7 +967,7 @@ def bessel_jn(z: ArrayLike, v: int) -> Array:
         return (jn, jnplus), jnplus
     
     _, jn = scan(body, (bessel_j0(z), bessel_j1(z)), jnp.arange(1,v))
-    return jn[-1]
+    return jnp.where(x<1e-5,0.,jn[-1])
 
 
 def _gen_recurrence_mask(

@@ -1,9 +1,13 @@
 import unittest 
+
 import jax._src.test_util as jtu
 import jax.numpy as jnp
 from jax.scipy.special import bessel_j0, bessel_j1, bessel_jn
 
+from jax.config import config
 from scipy.special import jv
+config.update("jax_enable_x64", True) # this is *absolutely essential* for the jax bessel function to be numerically stable
+
 
 class TestBesselFunctions(unittest.TestCase):
     def test_bessel_j0(self):
