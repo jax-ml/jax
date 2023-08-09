@@ -14,8 +14,7 @@ jobs:
       matrix:
         jaxlib-version: ["latest", "nightly"]
         tpu-type: ["v3-8", "v4-8", "nightly"]
-        pjrt: ["true", "false"]
-    name: "TPU test (${{ matrix.jaxlib-version }}, pjrt=${{ matrix.pjrt }}, ${{ matrix.tpu-type }})"
+    name: "TPU test (${{ matrix.jaxlib-version }}, ${{ matrix.tpu-type }})"
     runs-on: ["self-hosted", "tpu", "${{ matrix.tpu-type }}"]
     timeout-minutes: 60
     steps:
@@ -55,7 +54,6 @@ jobs:
       - name: Run tests
         env:
           JAX_PLATFORMS: tpu,cpu
-          JAX_USE_PJRT_C_API_ON_TPU: ${{ matrix.pjrt }}
           PY_COLORS: 1
         run: |
           # Run single-accelerator tests in parallel
