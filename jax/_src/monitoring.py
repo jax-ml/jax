@@ -44,8 +44,29 @@ def register_event_duration_secs_listener(
   """Register a callback to be invoked during record_event_duration_secs()."""
   _event_duration_secs_listeners.append(callback)
 
+def get_event_duration_listeners() -> list[Callable[[str, float], None]]:
+  return list(_event_duration_secs_listeners)
+
 def _clear_event_listeners():
   """Clear event listeners."""
   global _event_listeners, _event_duration_secs_listeners
   _event_listeners = []
   _event_duration_secs_listeners = []
+
+def _unregister_event_duration_listener_by_callback(
+    callback: Callable[[str, float], None]) -> None:
+  """Unregister an event duration listener by callback.
+
+  This function is supposed to be called for testing only.
+  """
+  assert callback in _event_duration_secs_listeners
+  _event_duration_secs_listeners.remove(callback)
+
+def _unregister_event_duration_listener_by_index(index: int) -> None:
+  """Unregister an event duration listener by index.
+
+  This function is supposed to be called for testing only.
+  """
+  size = len(_event_duration_secs_listeners)
+  assert -size <= index < size
+  del _event_duration_secs_listeners[index]
