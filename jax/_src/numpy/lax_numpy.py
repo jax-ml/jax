@@ -100,9 +100,9 @@ pi = np.pi
 e = np.e
 euler_gamma = np.euler_gamma
 inf = np.inf
-NINF = np.NINF
-PZERO = np.PZERO
-NZERO = np.NZERO
+NINF = -np.inf  # TODO: removed in Numpy 1.26
+PZERO = 0.0  # TODO: removed in Numpy 1.26
+NZERO = -0.0  # TODO: removed in Numpy 1.26
 nan = np.nan
 
 # NumPy utility functions

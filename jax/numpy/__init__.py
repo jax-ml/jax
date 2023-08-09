@@ -22,9 +22,9 @@ from jax._src.basearray import Array as ndarray
 
 from jax._src.numpy.lax_numpy import (
     ComplexWarning as ComplexWarning,
-    NINF as NINF,
-    NZERO as NZERO,
-    PZERO as PZERO,
+    NINF as NINF,  # TODO: removed in Numpy 1.26
+    NZERO as NZERO,  # TODO: removed in Numpy 1.26
+    PZERO as PZERO,  # TODO: removed in Numpy 1.26
     allclose as allclose,
     angle as angle,
     append as append,

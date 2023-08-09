@@ -190,18 +190,18 @@ class _DimAtom:
   def bounds(self) -> tuple[float, float]:
     """Returns the lower and upper bounds, or -+ inf."""
     if self.var is not None:
-      return (1, np.PINF)  # variables are assumed to be >= 1
+      return (1, np.inf)  # variables are assumed to be >= 1
     opnd_bounds = [opnd.bounds() for opnd in self.operands]
     if self.operation == _DimAtom.FLOORDIV:  #  a // b
       (a_l, a_u), (b_l, b_u) = opnd_bounds
       def math_floor_with_inf(a: float, b: float):  # math.floor, but aware of inf
         assert b != 0
         if not np.isinf(b):  # divisor is finite
-          return math.floor(a / b) if not np.isinf(a) else np.NINF if (a >= 0) != (b >= 0) else np.PINF
+          return math.floor(a / b) if not np.isinf(a) else -np.inf if (a >= 0) != (b >= 0) else np.inf
         elif not np.isinf(a):  # dividend is finite and divisor is infinite
           return -1 if (a >= 0) != (b >= 0) else 0
         else:  # both dividend and divisor are infinite
-          return np.NINF if (a >= 0) != (b >= 0) else np.PINF
+          return -np.inf if (a >= 0) != (b >= 0) else np.inf
 
       # Same reasoning as for multiplication: the bounds are among the cross-product
       # of the bounds.
@@ -216,7 +216,7 @@ class _DimAtom:
       elif b_u < 0:  # negative divisor
         return (b_l + 1, 0)
       else:
-        return (np.NINF, np.PINF)
+        return (-np.inf, np.inf)
 
     elif self.operation == _DimAtom.NON_NEGATIVE:
       (b_l, b_h), = opnd_bounds
@@ -668,7 +668,7 @@ class _DimExpr():
       lb = lb + min(item_l, item_u)  # type: ignore
       ub = ub + max(item_l, item_u)  # type: ignore
 
-    if lb != np.NINF or ub != np.PINF:
+    if lb != -np.inf or ub != np.inf:
       return lb, ub
     # Watch for special-case: ct*a - ct*mod(b, a) >= 1 when ct >= 0 and a >= 0
     # TODO(necula): add more principled support for floordiv and mod
@@ -682,9 +682,9 @@ class _DimExpr():
         except InconclusiveDimensionOperation:
           continue
         if dec.factor > 0:
-          return (np.NINF, -1)
+          return (-np.inf, -1)
         else:
-          return (1, np.PINF)
+          return (1, np.inf)
 
     return lb, ub
 
