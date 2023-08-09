@@ -633,15 +633,6 @@ def stage_parallel_callable(
   assert len(out_sharded_avals) == len(pci.out_axes), (
       len(out_sharded_avals), len(pci.out_axes))
 
-  # TODO(skye,mattjj): allow more collectives on multi-host as we test them, but
-  # for now raise an error
-  if pci.devices is not None:
-    is_multi_host_pmap = len(pci.local_devices) != len(pci.devices)
-  else:
-    is_multi_host_pmap = xb.process_count(pci.backend) > 1
-  if is_multi_host_pmap:
-    check_multihost_collective_allowlist(jaxpr)
-
   replicas = find_replicas(jaxpr, pci.axis_size, pci.global_axis_size)
   num_local_shards = replicas.num_local_replicas
   num_global_shards = replicas.num_global_replicas
@@ -1034,17 +1025,6 @@ class PmapExecutable(stages.XlaExecutable):
 
 def _get_pmap_sharding(devices, specs):
   return [sharding_impls.PmapSharding(devices, spec) for spec in specs]
-
-
-multi_host_supported_collectives: set[core.Primitive] = set()
-
-
-def check_multihost_collective_allowlist(jaxpr):
-  used_collectives = set(xla.jaxpr_collectives(jaxpr))
-  if not used_collectives.issubset(multi_host_supported_collectives):
-    bad_collectives = used_collectives - multi_host_supported_collectives
-    msg = "using collectives that aren't supported for multi-host: {}"
-    raise TypeError(msg.format(", ".join(map(str, bad_collectives))))
 
 
 class InputsHandler:
@@ -1982,7 +1962,6 @@ def lower_sharding_computation(
   da_object = _create_da_object(tuple(device_assignment))
 
   if not da_object.is_fully_addressable:
-    check_multihost_collective_allowlist(jaxpr)
     if inline and config.jax_spmd_mode != 'allow_all':
       raise RuntimeError(
           "Running operations on `Array`s that are not fully addressable by this "
@@ -2144,8 +2123,6 @@ def lower_mesh_computation(
                         for aval, o in safe_zip(out_jaxpr_avals, out_shardings)]
 
   _sanitize_mesh_jaxpr(jaxpr)
-  if mesh.is_multi_process:
-    check_multihost_collective_allowlist(jaxpr)
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
   # 2. Build up the HLO

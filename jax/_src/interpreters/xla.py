@@ -248,18 +248,6 @@ def xla_destructure(c, ans):
   return [xops.GetTupleElement(ans, i) for i in range(num_elements)]
 
 
-# TODO(mattjj,skyewm): the functions here are utilities for checking if
-# not-yet-supported features are used with multi-host programming
-
-
-def jaxpr_collectives(jaxpr):
-  """Generates all the collective primitives anywhere inside a Jaxpr."""
-  for eqn in jaxpr.eqns:
-    if eqn.primitive in _collective_primitives:
-      yield eqn.primitive
-  for subjaxpr in core.subjaxprs(jaxpr): yield from jaxpr_collectives(subjaxpr)
-
-
 ### translation tables
 
 MYPY = False

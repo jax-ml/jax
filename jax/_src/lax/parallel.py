@@ -809,7 +809,6 @@ xla.register_collective_primitive(psum_p)
 mlir.register_lowering(
     psum_p, partial(_allreduce_lowering, lax.add_p, lax._reduce_sum))
 ad.deflinear2(psum_p, _psum_transpose_rule)
-pxla.multi_host_supported_collectives.add(psum_p)
 batching.primitive_batchers[psum_p] = partial(_reduction_batcher, psum_p)
 batching.axis_primitive_batchers[psum_p] = \
   partial(_batched_reduction_collective, psum_p, lambda v, axis_size: axis_size * v)
@@ -845,7 +844,6 @@ pmax_p.def_abstract_eval(_allreduce_abstract_eval)
 xla.register_collective_primitive(pmax_p)
 mlir.register_lowering(
     pmax_p, partial(_allreduce_lowering, lax.max_p, lax._reduce_max))
-pxla.multi_host_supported_collectives.add(pmax_p)
 batching.primitive_batchers[pmax_p] = partial(_reduction_batcher, pmax_p)
 batching.axis_primitive_batchers[pmax_p] = \
   partial(_batched_reduction_collective, pmax_p, lambda v, axis_size: v)
@@ -859,7 +857,6 @@ pmin_p.def_abstract_eval(_allreduce_abstract_eval)
 xla.register_collective_primitive(pmin_p)
 mlir.register_lowering(
     pmin_p, partial(_allreduce_lowering, lax.min_p, lax._reduce_min))
-pxla.multi_host_supported_collectives.add(pmin_p)
 batching.primitive_batchers[pmin_p] = partial(_reduction_batcher, pmin_p)
 batching.axis_primitive_batchers[pmin_p] = \
   partial(_batched_reduction_collective, pmin_p, lambda v, axis_size: v)
@@ -928,7 +925,6 @@ ppermute_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 ad.deflinear2(ppermute_p, _ppermute_transpose_rule)
 xla.register_collective_primitive(ppermute_p)
 mlir.register_lowering(ppermute_p, _ppermute_lowering)
-pxla.multi_host_supported_collectives.add(ppermute_p)
 batching.primitive_batchers[ppermute_p] = partial(_collective_batcher, ppermute_p)
 batching.axis_primitive_batchers[ppermute_p] = _ppermute_batcher
 core.axis_substitution_rules[ppermute_p] = partial(_subst_all_names_in_param, 'axis_name')
@@ -1081,7 +1077,6 @@ all_to_all_p.def_abstract_eval(_all_to_all_abstract_eval)
 xla.register_collective_primitive(all_to_all_p)
 mlir.register_lowering(all_to_all_p, _all_to_all_lowering)
 ad.deflinear2(all_to_all_p, _all_to_all_transpose_rule)
-pxla.multi_host_supported_collectives.add(all_to_all_p)
 batching.primitive_batchers[all_to_all_p] = _all_to_all_batcher
 batching.axis_primitive_batchers[all_to_all_p] = _all_to_all_batched_collective
 core.axis_substitution_rules[all_to_all_p] = partial(_subst_all_names_in_param, 'axis_name')
@@ -1294,7 +1289,6 @@ all_gather_p.def_impl(_all_gather_impl)
 xla.register_collective_primitive(all_gather_p)
 mlir.register_lowering(all_gather_p, _all_gather_lowering)
 ad.deflinear2(all_gather_p, _all_gather_transpose_rule)
-pxla.multi_host_supported_collectives.add(all_gather_p)
 batching.primitive_batchers[all_gather_p] = _all_gather_batcher
 batching.axis_primitive_batchers[all_gather_p] = _all_gather_batched_collective
 core.axis_substitution_rules[all_gather_p] = partial(_subst_all_names_in_param, 'axis_name')
@@ -1465,7 +1459,6 @@ xla.register_collective_primitive(reduce_scatter_p)
 mlir.register_lowering(
     reduce_scatter_p,
     partial(_reduce_scatter_lowering, lax.add_p, psum))
-pxla.multi_host_supported_collectives.add(reduce_scatter_p)
 core.axis_substitution_rules[reduce_scatter_p] = \
     partial(_subst_all_names_in_param, 'axis_name')
 
@@ -1585,7 +1578,6 @@ axis_index_p = core.Primitive('axis_index')
 xla.register_collective_primitive(axis_index_p)
 mlir.register_lowering(axis_index_p, _axis_index_lowering)
 axis_index_p.def_abstract_eval(_axis_index_abstract_eval)
-pxla.multi_host_supported_collectives.add(axis_index_p)
 core.axis_substitution_rules[axis_index_p] = partial(_subst_all_names_in_param, 'axis_name')
 
 # Axis index doesn't get any arguments, so that the default bind would have no
@@ -1690,8 +1682,6 @@ def _pdot_transpose_rhs(g, x, y, *, axis_name, pos_contract, pos_batch, precisio
       g, x, y, dimension_numbers=[pos_contract, pos_batch], precision=precision,
       preferred_element_type=None)
 ad.defbilinear(pdot_p, _pdot_transpose_lhs, _pdot_transpose_rhs)
-
-pxla.multi_host_supported_collectives.add(pdot_p)
 
 
 def _pgather_impl(src, idx, *, axes):
