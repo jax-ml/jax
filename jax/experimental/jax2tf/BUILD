@@ -15,6 +15,7 @@
 load(
     "//jaxlib:jax.bzl",
     "jax2tf_deps",
+    "jax_visibility",
     "py_deps",
 )
 
@@ -58,6 +59,7 @@ py_library(
     srcs_version = "PY3",
     # TODO: b/255503696: enable pytype
     tags = ["pytype_unchecked_annotations"],
+    visibility = jax_visibility("jax2tf_internal"),
     deps = [
         ":jax_export",
         "//jax",
