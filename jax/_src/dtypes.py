@@ -54,7 +54,7 @@ class extended(np.generic):
 
   Examples:
     >>> from jax import random
-    >>> from jax._src import dtypes
+    >>> from jax import dtypes
     >>> key = random.key(0)
     >>> jnp.issubdtype(key.dtype, dtypes.extended)
     True
