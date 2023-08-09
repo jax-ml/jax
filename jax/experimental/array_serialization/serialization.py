@@ -523,6 +523,11 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
     # has finished writing.
     self._start_async_commit(on_commit_callback)
 
+  def serialize_with_paths(self, arrays: Sequence[jax.Array],
+                           paths: Sequence[str], *, on_commit_callback):
+    tspecs = jax.tree_map(get_tensorstore_spec, paths)
+    self.serialize(arrays, tspecs, on_commit_callback=on_commit_callback)
+
   def deserialize(self, shardings: Sequence[sharding.Sharding],
                   tensorstore_specs: Sequence[dict[str, Any]],
                   global_shapes: Optional[Sequence[array.Shape]] = None,
@@ -531,3 +536,13 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
     self.wait_until_finished()
     return run_deserialization(shardings, tensorstore_specs,
                                global_shapes, dtypes, concurrent_gb)
+
+  def deserialize_with_paths(
+      self, shardings: Sequence[sharding.Sharding],
+      paths: Sequence[str],
+      global_shapes: Optional[Sequence[array.Shape]] = None,
+      dtypes: Optional[Sequence[typing.DTypeLike]] = None,
+      concurrent_gb: int = 32):
+    tspecs = jax.tree_map(get_tensorstore_spec, paths)
+    return self.deserialize(shardings, tspecs, global_shapes, dtypes,
+                            concurrent_gb)
