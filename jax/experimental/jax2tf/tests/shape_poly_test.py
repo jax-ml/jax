@@ -234,52 +234,52 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
     bounded_le4 = 5 - a
     bounded_ge2 = b + 1
     bounded_ge0_le4 = a % 5
-    self.assertEqual(a.bounds(), (1, np.PINF))
-    self.assertEqual(bounded_le4.bounds(), (np.NINF, 4))
-    self.assertEqual(bounded_ge2.bounds(), (2, np.PINF))
+    self.assertEqual(a.bounds(), (1, np.inf))
+    self.assertEqual(bounded_le4.bounds(), (-np.inf, 4))
+    self.assertEqual(bounded_ge2.bounds(), (2, np.inf))
     self.assertEqual(bounded_ge0_le4.bounds(), (0, 4))
 
     # Additions
-    self.assertEqual((bounded_ge0_le4 + bounded_le4).bounds(), (np.NINF, 8))
-    self.assertEqual((bounded_ge0_le4 + bounded_ge2).bounds(), (2, np.PINF))
-    self.assertEqual((bounded_le4 + bounded_ge2).bounds(), (np.NINF, np.PINF))
+    self.assertEqual((bounded_ge0_le4 + bounded_le4).bounds(), (-np.inf, 8))
+    self.assertEqual((bounded_ge0_le4 + bounded_ge2).bounds(), (2, np.inf))
+    self.assertEqual((bounded_le4 + bounded_ge2).bounds(), (-np.inf, np.inf))
 
     # Subtractions
-    self.assertEqual((bounded_ge0_le4 - bounded_le4).bounds(), (-4, np.PINF))
-    self.assertEqual((- bounded_ge0_le4 + bounded_le4).bounds(), (np.NINF, 4))
-    self.assertEqual((bounded_ge0_le4 - bounded_ge2).bounds(), (np.NINF, 2))
-    self.assertEqual((- bounded_ge0_le4 + bounded_ge2).bounds(), (-2, np.PINF))
-    self.assertEqual((bounded_le4 - bounded_ge2).bounds(), (np.NINF, 2))
-    self.assertEqual((- bounded_le4 + bounded_ge2).bounds(), (-2, np.PINF))
+    self.assertEqual((bounded_ge0_le4 - bounded_le4).bounds(), (-4, np.inf))
+    self.assertEqual((- bounded_ge0_le4 + bounded_le4).bounds(), (-np.inf, 4))
+    self.assertEqual((bounded_ge0_le4 - bounded_ge2).bounds(), (-np.inf, 2))
+    self.assertEqual((- bounded_ge0_le4 + bounded_ge2).bounds(), (-2, np.inf))
+    self.assertEqual((bounded_le4 - bounded_ge2).bounds(), (-np.inf, 2))
+    self.assertEqual((- bounded_le4 + bounded_ge2).bounds(), (-2, np.inf))
 
     # Multiplications
-    self.assertEqual((2 * a - 3).bounds(), (-1, np.PINF))
-    self.assertEqual((-2 * a - 3).bounds(), (np.NINF, -5))
-    self.assertEqual((3 * a * b * b + 5 * a - 7).bounds(), (1, np.PINF))
-    self.assertEqual((3 * a * b * b - 5 * a - 7).bounds(), (np.NINF, np.PINF))
-    self.assertEqual((a + b - a * b + a * b * a).bounds(), (np.NINF, np.PINF))
-    self.assertEqual((a + 2 * b - a).bounds(), (2, np.PINF))
-    self.assertEqual((a + 2 * b - a).bounds(), (2, np.PINF))
+    self.assertEqual((2 * a - 3).bounds(), (-1, np.inf))
+    self.assertEqual((-2 * a - 3).bounds(), (-np.inf, -5))
+    self.assertEqual((3 * a * b * b + 5 * a - 7).bounds(), (1, np.inf))
+    self.assertEqual((3 * a * b * b - 5 * a - 7).bounds(), (-np.inf, np.inf))
+    self.assertEqual((a + b - a * b + a * b * a).bounds(), (-np.inf, np.inf))
+    self.assertEqual((a + 2 * b - a).bounds(), (2, np.inf))
+    self.assertEqual((a + 2 * b - a).bounds(), (2, np.inf))
 
     # mod
     self.assertEqual(((b + 1) % 2).bounds(), (0, 1))
     self.assertEqual(((b + 1) % -2).bounds(), (-1, 0))
     self.assertEqual(((b - 4) % 2).bounds(), (0, 1))
-    self.assertEqual(((b + 1) % a).bounds(), (0, np.PINF))
-    self.assertEqual((11 % (a + 1)).bounds(), (0, np.PINF))
-    self.assertEqual((-11 % (a + 1)).bounds(), (0, np.PINF))
-    self.assertEqual((b % (a - 2)).bounds(), (np.NINF, np.PINF))
+    self.assertEqual(((b + 1) % a).bounds(), (0, np.inf))
+    self.assertEqual((11 % (a + 1)).bounds(), (0, np.inf))
+    self.assertEqual((-11 % (a + 1)).bounds(), (0, np.inf))
+    self.assertEqual((b % (a - 2)).bounds(), (-np.inf, np.inf))
 
     # floordiv
-    self.assertEqual(((a + 4) // 2).bounds(), (2, np.PINF))
-    self.assertEqual(((a + 4) // -2).bounds(), (np.NINF, -3))
-    self.assertEqual(((a + 5) // 2).bounds(), (3, np.PINF))
-    self.assertEqual(((a + 5) // -2).bounds(), (np.NINF, -3))
+    self.assertEqual(((a + 4) // 2).bounds(), (2, np.inf))
+    self.assertEqual(((a + 4) // -2).bounds(), (-np.inf, -3))
+    self.assertEqual(((a + 5) // 2).bounds(), (3, np.inf))
+    self.assertEqual(((a + 5) // -2).bounds(), (-np.inf, -3))
     self.assertEqual((11 // (a + 1)).bounds(), (0, 5))
     self.assertEqual((-11 // (a + 1)).bounds(), (-6, -1))
     self.assertEqual((-11 // (- a)).bounds(), (0, 11))  # finite negative dividend, infinite divisor
-    self.assertEqual(((b + 1) // (a + 1)).bounds(), (0, np.PINF))
-    self.assertEqual((-b // (a + 1)).bounds(), (np.NINF, -1))
+    self.assertEqual(((b + 1) // (a + 1)).bounds(), (0, np.inf))
+    self.assertEqual((-b // (a + 1)).bounds(), (-np.inf, -1))
 
     # Generate test cases for floordiv and mod: (a + N) // +-2, (N - a) // +-2
     # and then evaluate them for a = 1, 5, 10000
@@ -301,14 +301,14 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
     # Bounds involving mod and floordiv
     self.assertEqual((5 - a % 5).bounds(), (1, 5))
     self.assertEqual((-5 - a % (-5)).bounds(), (-5, -1))
-    self.assertEqual((a - 5 % a).bounds(), (1, np.PINF))
-    self.assertEqual((a - 5 % a).bounds(), (1, np.PINF))
-    self.assertEqual((3 * (a + b) - 5 % (3 * (a + b))).bounds(), (1, np.PINF))
-    self.assertEqual((- a + (b - 5) % a).bounds(), (np.NINF, -1))
+    self.assertEqual((a - 5 % a).bounds(), (1, np.inf))
+    self.assertEqual((a - 5 % a).bounds(), (1, np.inf))
+    self.assertEqual((3 * (a + b) - 5 % (3 * (a + b))).bounds(), (1, np.inf))
+    self.assertEqual((- a + (b - 5) % a).bounds(), (-np.inf, -1))
 
     # non_negative
-    self.assertEqual(core.non_negative_dim(a).bounds(), (1, np.PINF))
-    self.assertEqual(core.non_negative_dim(a - 5).bounds(), (0, np.PINF))
+    self.assertEqual(core.non_negative_dim(a).bounds(), (1, np.inf))
+    self.assertEqual(core.non_negative_dim(a - 5).bounds(), (0, np.inf))
     self.assertEqual(core.non_negative_dim(15 - a).bounds(), (0, 14))
     self.assertEqual((core.non_negative_dim(15 - a) // 3).bounds(), (0, 4))
 

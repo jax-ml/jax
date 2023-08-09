@@ -255,7 +255,7 @@ def _comparator_builder(op_type, is_max_k):
 
 
 def _get_init_val_literal(op_type, is_max_k):
-  return np.array(np.NINF if is_max_k else np.Inf, dtype=op_type)
+  return np.array(-np.inf if is_max_k else np.inf, dtype=op_type)
 
 def _approx_top_k_tpu_translation(ctx, avals_in, avals_out, operand, *, k,
                                   reduction_dimension, recall_target, is_max_k,

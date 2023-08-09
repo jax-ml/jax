@@ -1208,10 +1208,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       # should also consider the gap between it and zero. Note that this code
       # relies on the singular values being in descending order.
       def compute_absolute_gap(s, m, n):
-        forward_appendant = np.Inf if m == n else 0
+        forward_appendant = np.inf if m == n else 0
         forward_diff = jnp.diff(s, axis=-1, append=forward_appendant)
         backward_diff = jnp.diff(
-            s[..., ::-1], axis=-1, append=np.Inf)[..., ::-1]
+            s[..., ::-1], axis=-1, append=np.inf)[..., ::-1]
         absolute_gap = jnp.minimum(jnp.abs(forward_diff),
                                    jnp.abs(backward_diff))
         return absolute_gap
