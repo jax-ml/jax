@@ -1905,16 +1905,61 @@ mlir.register_lowering(
 
 mlir.register_lowering(svd_p, _svd_tpu_lowering_rule)
 
+
 def _tridiagonal_solve_gpu_lowering(lowering, ctx, dl, d, du, b, *, m, n, ldb, t):
-  return [lowering(dl, d, du, b, m=m, n=n, ldb=ldb,
-                   t=dtypes.canonicalize_dtype(t))]
+  _, _, _, b_aval = ctx.avals_in
+  b_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, b_aval.shape)
+  return [lowering(
+      dl, d, du, b, m=m, n=n, ldb=ldb, t=dtypes.canonicalize_dtype(t),
+      b_shape_vals=b_shape_vals)]
+
+
+def _tridiagonal_solve_transpose_rule(cotangent, dl, d, du, b, *, m, n, ldb, t):
+  del m, n, ldb, t
+  # Tridiagonal solve is nonlinear in the tridiagonal arguments and linear
+  # otherwise.
+  assert not (ad.is_undefined_primal(dl) or ad.is_undefined_primal(d) or
+              ad.is_undefined_primal(du)) and ad.is_undefined_primal(b)
+  if type(cotangent) is ad_util.Zero:
+    cotangent_b = ad_util.Zero(b.aval)
+  else:
+    cotangent_b = tridiagonal_solve(dl, d, du, cotangent)
+  return [None, None, None, cotangent_b]
+
+
+def _tridiagonal_solve_batching_rule(
+    batched_args, batch_dims, *, m, n, ldb, t):
+  del m, n, ldb, t
+  dl, d, du, b = batched_args
+  bdl, bd, bdu, bb = batch_dims
+  if (bdl is batching.not_mapped and
+      bd is batching.not_mapped and
+      bdu is batching.not_mapped):
+
+    b = batching.moveaxis(b, bb, -2)
+    b_flat = b.reshape(b.shape[:-3]  + (b.shape[-3], b.shape[-2] * b.shape[-1]))
+    bdim_out = b.ndim - 2
+    out_flat = tridiagonal_solve(dl, d, du, b_flat)
+    return out_flat.reshape(b.shape), bdim_out
+  else:
+    size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
+                if i is not None)
+    dl = batching.bdim_at_front(dl, bdl, size)
+    d = batching.bdim_at_front(d, bd, size)
+    du = batching.bdim_at_front(du, bdu, size)
+    b = batching.bdim_at_front(b, bb, size)
+    return tridiagonal_solve(dl, d, du, b), 0
+
 
 tridiagonal_solve_p = Primitive('tridiagonal_solve')
 tridiagonal_solve_p.multiple_results = False
 tridiagonal_solve_p.def_impl(
     functools.partial(dispatch.apply_primitive, tridiagonal_solve_p))
 tridiagonal_solve_p.def_abstract_eval(lambda dl, d, du, b, *, m, n, ldb, t: b)
+ad.primitive_transposes[tridiagonal_solve_p] = _tridiagonal_solve_transpose_rule
+batching.primitive_batchers[tridiagonal_solve_p] = _tridiagonal_solve_batching_rule
 # TODO(tomhennigan): Consider AD rules using lax.custom_linear_solve?
+
 
 mlir.register_lowering(
     tridiagonal_solve_p,
@@ -1928,11 +1973,25 @@ mlir.register_lowering(
 
 def _tridiagonal_solve_jax(dl, d, du, b, **kw):
   """Pure JAX implementation of `tridiagonal_solve`."""
-  prepend_zero = lambda x: jnp.append(jnp.zeros([1], dtype=x.dtype), x[:-1])
+  def prepend_zero(x):
+    return jnp.append(
+        jnp.zeros((1,) + x.shape[1:], dtype=x.dtype),
+        x[:-1], axis=0)
   fwd1 = lambda tu_, x: x[1] / (x[0] - x[2] * tu_)
-  fwd2 = lambda b_, x: (x[0] - x[3] * b_) / (x[1] - x[3] * x[2])
-  bwd1 = lambda x_, x: x[0] - x[1] * x_
+
+  def fwd2(b_, x):
+    return (x[0] - x[3][jnp.newaxis, ...] * b_) / (
+        x[1] - x[3] * x[2])[jnp.newaxis, ...]
+
+  bwd1 = lambda x_, x: x[0] - x[1][jnp.newaxis, ...] * x_
   double = lambda f, args: (f(*args), f(*args))
+
+  # Move relevant dimensions to the front for the scan.
+  dl = jnp.moveaxis(dl, -1, 0)
+  d = jnp.moveaxis(d, -1, 0)
+  du = jnp.moveaxis(du, -1, 0)
+  b = jnp.moveaxis(b, -1, 0)
+  b = jnp.moveaxis(b, -1, 0)
 
   # Forward pass.
   _, tu_ = lax.scan(lambda tu_, x: double(fwd1, (tu_, x)),
@@ -1941,7 +2000,7 @@ def _tridiagonal_solve_jax(dl, d, du, b, **kw):
                     unroll=32)
 
   _, b_ = lax.scan(lambda b_, x: double(fwd2, (b_, x)),
-                   b[0] / d[0],
+                   b[0] / d[0:1],
                    (b, d, prepend_zero(tu_), dl),
                    unroll=32)
 
@@ -1951,7 +2010,10 @@ def _tridiagonal_solve_jax(dl, d, du, b, **kw):
                    (b_[::-1], tu_[::-1]),
                    unroll=32)
 
-  return x_[::-1]
+  result = x_[::-1]
+  result = jnp.moveaxis(result, 0, -1)
+  result = jnp.moveaxis(result, 0, -1)
+  return result
 
 
 mlir.register_lowering(tridiagonal_solve_p, mlir.lower_fun(
@@ -1967,31 +2029,30 @@ def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array) -> Array:
     A . X = B
 
   Args:
-    dl: The lower diagonal of A: ``dl[i] := A[i, i-1]`` for i in ``[0,m)``.
+
+    dl: A batch of vectors with shape ``[..., m]``.
+      The lower diagonal of A: ``dl[i] := A[i, i-1]`` for i in ``[0,m)``.
       Note that ``dl[0] = 0``.
-    d: The middle diagnoal of A: ``d[i]  := A[i, i]`` for i in ``[0,m)``.
-    du: The upper diagonal of A: ``du[i] := A[i, i+1]`` for i in ``[0,m)``.
+    d: A batch of vectors with shape ``[..., m]``.
+      The middle diagnoal of A: ``d[i]  := A[i, i]`` for i in ``[0,m)``.
+    du: A batch of vectors with shape ``[..., m]``.
+      The upper diagonal of A: ``du[i] := A[i, i+1]`` for i in ``[0,m)``.
       Note that ``dl[m - 1] = 0``.
     b: Right hand side matrix.
 
   Returns:
     Solution ``X`` of tridiagonal system.
   """
-  if dl.ndim != 1 or d.ndim != 1 or du.ndim != 1:
-    raise ValueError('dl, d and du must be vectors')
-
   if dl.shape != d.shape or d.shape != du.shape:
     raise ValueError(
         f'dl={dl.shape}, d={d.shape} and du={du.shape} must all be `[m]`')
 
-  if b.ndim != 2:
-    raise ValueError(f'b={b.shape} must be a matrix')
-
-  m, = dl.shape
+  m = dl.shape[-1]
   if m < 3:
     raise ValueError(f'm ({m}) must be >= 3')
 
-  ldb, n = b.shape
+  ldb = b.shape[-2]
+  n = b.shape[-1]
   if ldb < max(1, m):
     raise ValueError(f'Leading dimension of b={ldb} must be ≥ max(1, {m})')
 

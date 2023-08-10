@@ -15,6 +15,7 @@
 cusparse wrappers for performing sparse matrix computations in JAX
 """
 
+import math
 from functools import partial
 
 import jaxlib.mlir.ir as ir
@@ -23,7 +24,7 @@ import numpy as np
 
 from jaxlib import xla_client
 
-from .hlo_helpers import custom_call
+from .hlo_helpers import custom_call, mk_result_types_and_shapes
 
 try:
   from .cuda import _sparse as _cusparse  # pytype: disable=import-error
@@ -338,26 +339,37 @@ cuda_coo_matmat = partial(_coo_matmat_hlo, "cu", _cusparse)
 rocm_coo_matmat = partial(_coo_matmat_hlo, "hip", _hipsparse)
 
 
-def _gtsv2_hlo(platform, gpu_sparse, dl, d, du, B, *, m, n, ldb, t):
+def _gtsv2_hlo(
+    platform, gpu_sparse, dl, d, du, B, *, m, n, ldb, t, b_shape_vals=None):
   """Calls `cusparse<t>gtsv2(dl, d, du, B, m, n, ldb)`."""
+  assert len(b_shape_vals) >= 2
+  batch_dim_vals = b_shape_vals[:-2]
+  batch_size = math.prod(batch_dim_vals)
+  num_bd = len(b_shape_vals) - 2
   f32 = (t == np.float32)
   if f32:
     buffer_size = gpu_sparse.gtsv2_f32_buffer_size(m, n, ldb)
   else:
     buffer_size = gpu_sparse.gtsv2_f64_buffer_size(m, n, ldb)
+
+  b_layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  d_layout = (num_bd,) + tuple(range(num_bd - 1, -1, -1))
+  b_type = ir.RankedTensorType(B.type)
+
+  shape_type_pairs = [
+      (batch_dim_vals + (ldb, n), b_type.element_type),
+      ((buffer_size,), ir.IntegerType.get_signless(8))
+  ]
+  result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
   out = custom_call(
       f"{platform}sparse_gtsv2_" + ("f32" if f32 else "f64"),
-      [
-          ir.RankedTensorType.get(
-              [ldb, n], ir.F32Type.get() if f32 else ir.F64Type.get()),
-          ir.RankedTensorType.get([buffer_size],
-                                  ir.IntegerType.get_signless(8)),
-      ],
+      result_types,
       [dl, d, du, B],
-      backend_config=gpu_sparse.build_gtsv2_descriptor(m, n, ldb),
-      operand_layouts=[[0]] * 3 + [[1, 0]],
-      result_layouts=[[1, 0], [0]],
-      operand_output_aliases={3: 0})
+      backend_config=gpu_sparse.build_gtsv2_descriptor(batch_size, m, n, ldb),
+      operand_layouts=[d_layout] * 3 + [b_layout],
+      result_layouts=[b_layout, [0]],
+      operand_output_aliases={3: 0},
+      result_shapes=result_shapes)
   return out[0]
 
 cuda_gtsv2 = partial(_gtsv2_hlo, "cu", _cusparse)

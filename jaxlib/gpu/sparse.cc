@@ -548,8 +548,8 @@ std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
 
 #endif  // if JAX_GPU_HAVE_SPARSE
 
-py::bytes BuildGtsv2Descriptor(int m, int n, int ldb) {
-  return PackDescriptor(Gtsv2Descriptor{m, n, ldb});
+py::bytes BuildGtsv2Descriptor(int b, int m, int n, int ldb) {
+  return PackDescriptor(Gtsv2Descriptor{b, m, n, ldb});
 }
 
 template <typename F>

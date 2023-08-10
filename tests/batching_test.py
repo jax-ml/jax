@@ -641,6 +641,33 @@ class BatchingTest(jtu.JaxTestCase):
       [lax.linalg.triangular_solve(a[:, i], b[..., 0]) for i in range(10)])
     self.assertAllClose(ans, expected, atol=1e-5, rtol=1e-5)
 
+  def testLaxLinalgTridiagonalSolve(self):
+    dl = self.rng().randn(4, 10).astype(np.float32)
+    d = self.rng().randn(4, 10).astype(np.float32) + 1.
+    du = self.rng().randn(4, 10).astype(np.float32)
+    b = self.rng().randn(4, 5, 10).astype(np.float32)
+
+    ans = vmap(lax.linalg.tridiagonal_solve, in_axes=(1, 1, 1, 2))(dl, d, du, b)
+    expected = np.stack(
+        [lax.linalg.tridiagonal_solve(
+            dl[:, i], d[:, i], du[:, i], b[..., i]) for i in range(10)])
+    self.assertAllClose(ans, expected, atol=1e-5, rtol=1e-5)
+
+    ans = vmap(lax.linalg.tridiagonal_solve, in_axes=(None, None, None, 2))(
+        dl[:, 0], d[:, 0], du[:, 0], b)
+    expected = np.stack(
+        [lax.linalg.tridiagonal_solve(
+            dl[:, 0], d[:, 0], du[:, 0], b[..., i]) for i in range(10)])
+    self.assertAllClose(ans, expected)
+
+    ans = vmap(lax.linalg.tridiagonal_solve, in_axes=(1, 1, 1, None))(
+        dl, d, du, b[..., 0])
+    expected = np.stack(
+        [lax.linalg.tridiagonal_solve(
+            dl[:, i], d[:, i], du[:, i], b[..., 0]) for i in range(10)])
+    self.assertAllClose(ans, expected, atol=1e-5, rtol=1e-5)
+
+
   @parameterized.named_parameters(
       {"testcase_name": "_shape={}_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums,

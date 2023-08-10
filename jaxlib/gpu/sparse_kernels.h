@@ -140,7 +140,7 @@ void CooMatmat(gpuStream_t stream, void** buffers, const char* opaque,
 #endif  // JAX_GPU_HAVE_SPARSE
 
 struct Gtsv2Descriptor {
-  int m, n, ldb;
+  int batch, m, n, ldb;
 };
 
 void gtsv2_f32(gpuStream_t stream, void** buffers, const char* opaque,

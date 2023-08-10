@@ -557,16 +557,17 @@ static absl::Status gtsv2(F computeGtsv2, gpuStream_t stream, void** buffers,
   auto s = UnpackDescriptor<Gtsv2Descriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const Gtsv2Descriptor& descriptor = **s;
+  int batch = descriptor.batch;
   int m = descriptor.m;
   int n = descriptor.n;
   int ldb = descriptor.ldb;
 
-  const T* dl = (const T*)(buffers[0]);
-  const T* d = (const T*)(buffers[1]);
-  const T* du = (const T*)(buffers[2]);
-  const T* B = (T*)(buffers[3]);
-  T* X = (T*)(buffers[4]);
-  void* buffer = buffers[5];
+  T* dl = static_cast<T*>(buffers[0]);
+  T* d = static_cast<T*>(buffers[1]);
+  T* du = static_cast<T*>(buffers[2]);
+  T* B = static_cast<T*>(buffers[3]);
+  T* X = static_cast<T*>(buffers[4]);
+  void* buffer = static_cast<void *>(buffers[5]);
 
   // The solution X is written in place to B. We need to therefore copy the
   // contents of B into the output buffer X and pass that into the kernel as B.
@@ -575,13 +576,18 @@ static absl::Status gtsv2(F computeGtsv2, gpuStream_t stream, void** buffers,
   // and X might alias, but today we know they will not.
   // TODO(b/182906199): Update the comment here once copy insertion is WAI.
   if (X != B) {
-    size_t B_bytes = ldb * n * sizeof(T);
+    size_t B_bytes = ldb * n * sizeof(T) * batch;
     JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
         gpuMemcpyAsync(X, B, B_bytes, gpuMemcpyDeviceToDevice, stream)));
   }
-
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      computeGtsv2(handle.get(), m, n, dl, d, du, /*B=*/X, ldb, buffer)));
+  for (int i = 0; i < batch; ++i) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(computeGtsv2(
+        handle.get(), m, n, dl, d, du, X, ldb, buffer)));
+    dl += m;
+    d += m;
+    du += m;
+    X += m * n;
+  }
   return absl::OkStatus();
 }
 
