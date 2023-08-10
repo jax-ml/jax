@@ -26,6 +26,13 @@ Remember to align the itemized text with the first line of an item within a list
   * `jax.jaxpr_util` has been removed from the public JAX namespace.
   * `JAX_USE_PJRT_C_API_ON_TPU` no longer has an effect (i.e. it always defaults to true).
 
+* Deprecations:
+  * Several `jax.numpy` APIs have been deprecated following
+    [NumPy NEP-52](https://numpy.org/neps/nep-0052-python-api-cleanup.html):
+    * `jax.numpy.NINF` has been deprecated. Use `-jax.numpy.inf` instead.
+    * `jax.numpy.PZERO` has been deprecated. Use `0.0` instead.
+    * `jax.numpy.NZERO` has been deprecated. Use `-0.0` instead.
+
 * Internal deprecations:
   * The internal utilities `jax.core.is_opaque_dtype` and `jax.core.has_opaque_dtype`
     have been removed. Opaque dtypes have been renamed to Extended dtypes; use
