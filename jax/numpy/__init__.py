@@ -462,6 +462,9 @@ if typing.TYPE_CHECKING:
   cumproduct = cumprod
   product = prod
   sometrue = any
+  NINF = -inf
+  NZERO = -0.0
+  PZERO = 0.0
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
