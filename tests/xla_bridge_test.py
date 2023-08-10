@@ -24,6 +24,7 @@ from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.interpreters import xla
 
+from jax._src import config as jax_config
 from jax._src.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
@@ -56,6 +57,46 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertEqual(
         compile_options.executable_build_options.fdo_profile, "test_profile"
     )
+
+  def test_autofdo_profile(self):
+    # --jax_xla_profile_version takes precedence.
+    jax_flag_profile = 1
+    another_profile = 2
+    with jax_config.jax_xla_profile_version(jax_flag_profile):
+      with mock.patch.object(xb, "get_latest_profile_version",
+                             side_effect=lambda: another_profile):
+        self.assertEqual(
+            xb.get_compile_options(
+                num_replicas=3, num_partitions=4
+            ).profile_version,
+            jax_flag_profile,
+        )
+
+    # Use whatever non-zero value the function get_latest_profile_version
+    # returns if --jax_xla_profile_version is not set.
+    profile_version = 1
+    with mock.patch.object(xb, "get_latest_profile_version",
+                           side_effect=lambda: profile_version):
+      self.assertEqual(
+          xb.get_compile_options(
+              num_replicas=3, num_partitions=4
+          ).profile_version,
+          profile_version,
+      )
+
+    # If the function returns 0, something is wrong, so expect that we set
+    # profile_version to -1 instead to ensure that no attempt is made to
+    # retrieve the latest profile later.
+    error_return = 0
+    no_profile_dont_retrieve = -1
+    with mock.patch.object(xb, "get_latest_profile_version",
+                           side_effect=lambda: error_return):
+      self.assertEqual(
+          xb.get_compile_options(
+              num_replicas=3, num_partitions=4
+          ).profile_version,
+          no_profile_dont_retrieve,
+      )
 
   def test_parameter_replication_default(self):
     c = xc.XlaBuilder("test")
