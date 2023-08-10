@@ -1241,9 +1241,9 @@ class CustomPartitionerTest(jtu.JaxTestCase):
       raise unittest.SkipTest('custom partitioning not implemented in PJRT C API')
 
   @jtu.skip_on_devices('cpu')  # Collectives don't seem to work on CPU.
-  @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_custom_partitioner(self):
     self.skip_if_custom_partitioning_not_supported()
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
 
     def partition(precision, mesh, arg_shapes, result_shape):
       arg_shardings = jax.tree_map(lambda s: s.sharding, arg_shapes)
@@ -1282,12 +1282,14 @@ class CustomPartitionerTest(jtu.JaxTestCase):
         infer_sharding_from_operands=infer_sharding_from_operands,
         partition=partition)
 
-    pjit_f = pjit(f, in_shardings=(P('x'), P('y')), out_shardings=P('x'))
+    s1 = NamedSharding(mesh, P('x'))
+    s2 = NamedSharding(mesh, P('y'))
+    jit_f = jax.jit(f, in_shardings=(s1, s2), out_shardings=s1)
     x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
     y = np.asarray(np.random.randint(0, 20, (16, 32)), dtype=np.float32)
     result1 = jax.jit(f)(x, y)
     result2 = f(x, y)
-    result0 = pjit_f(x, y)
+    result0 = jit_f(x, y)
     self.assertArraysEqual(result0, result1)
     self.assertArraysEqual(result1, result2)
 

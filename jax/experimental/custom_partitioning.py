@@ -470,24 +470,26 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
                                        infer_sharding_from_operands,
                                        decode_shardings,
                                        static_args):
-  mesh = mesh_lib.thread_resources.env.physical_mesh
   axis_context = ctx.module_context.axis_context
 
   if isinstance(axis_context, sharding_impls.ShardingContext):
     devices = axis_context.device_assignment
+    mesh = axis_context.mesh if axis_context.mesh is not None else None
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     devices = list(axis_context.mesh.devices.flat)
+    mesh = axis_context.mesh
   else:
     devices = None
+    mesh = None
 
   if not devices or len(devices) == 1:
     return mlir.lower_fun(
         core.jaxpr_as_fun(call), multiple_results=True)(ctx, *values)
 
-  def to_mesh_pspec_sharding(hlo_sharding: Optional[xc.HloSharding]):
+  def _decode_sharding(hlo_sharding: Optional[xc.HloSharding]):
     if hlo_sharding is None:
       return hlo_sharding
-    if mesh.empty or not decode_shardings:
+    if mesh is None or mesh.empty or not decode_shardings:
       assert devices is not None
       return _op_sharding_to_pos_sharding(hlo_sharding, devices)
     pspec = sharding_impls.parse_flatten_op_sharding(
@@ -495,7 +497,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
     return jax.sharding.NamedSharding(mesh, pspec)
 
   sharding_callback_info = _ShardingCallbackInfo(propagate_user_sharding,
-      partition, to_mesh_pspec_sharding, in_tree, out_tree,
+      partition, _decode_sharding, in_tree, out_tree,
       infer_sharding_from_operands, ctx.module_context, mesh, static_args)
   key = str(id(sharding_callback_info))
   _sharding_callbacks[key] = sharding_callback_info

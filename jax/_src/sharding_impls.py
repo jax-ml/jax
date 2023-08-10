@@ -1163,6 +1163,8 @@ class ShardingContext:
   This context also uses the GSPMD partitioner.
   """
   device_assignment: Sequence[xc.Device]
+  # Optional mesh for custom_partitioning.
+  mesh: Optional[mesh_lib.Mesh] = None
 
   # Similar to SPMDContext as ShardingContext also uses the GSPMD partitioner.
   @property

@@ -1801,6 +1801,16 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                "Argument mapping: %s.",
                fun_name, global_in_avals, in_shardings)
 
+  jaxpr_shardings = list(dispatch.jaxpr_shardings(jaxpr))
+  mesh = None
+  for s in it.chain(in_shardings, out_shardings, jaxpr_shardings):
+    if isinstance(s, sharding_impls.NamedSharding):
+      mesh = s.mesh
+      break
+    elif (hasattr(s, "_original_sharding") and
+          isinstance(s._original_sharding, sharding_impls.NamedSharding)):
+      mesh = s._original_sharding.mesh
+      break
   # Look at the number of replcas present in the jaxpr. In
   # lower_sharding_computation, nreps > 1 during `jit(pmap)` cases. This is
   # handled here so as to deprecate the lower_xla_callable codepath when
@@ -1817,7 +1827,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
     in_mlir_shardings = map(_to_logical_sharding, global_in_avals, in_shardings)
     out_mlir_shardings = map(_to_logical_sharding, global_out_avals, out_shardings)
     replicated_args = [False] * len(global_in_avals)
-    axis_ctx = sharding_impls.ShardingContext(device_assignment)
+    axis_ctx = sharding_impls.ShardingContext(device_assignment, mesh)
     num_partitions = len(device_assignment)
   else:
     # This path is triggered for `jit(pmap)` cases.
