@@ -336,10 +336,10 @@ def convert(fun_jax: Callable,
           "for all platforms without native_serialization.")
 
     if (not isinstance(native_serialization_platforms, (list, tuple)) or
-        not all(p in ["tpu", "cpu", "gpu"] for p in native_serialization_platforms)):
+        not all(p in ["cpu", "cuda", "rocm", "tpu"] for p in native_serialization_platforms)):
       raise ValueError(
           "native_serialization_platforms must be a sequence "
-          "containing a subset of {'cpu', 'gpu', 'tpu'}. "
+          "containing a subset of {'cpu', 'cuda', 'rocm', 'tpu'}. "
           f"Got: {native_serialization_platforms}")
     native_serialization_platforms = tuple(native_serialization_platforms)
     if len(native_serialization_platforms) > 1:
