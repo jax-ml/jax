@@ -856,7 +856,7 @@ def j1_large(x: ArrayLike) -> Array:
     p = p * jnp.cos(xn) - w * q * jnp.sin(xn)
     return p * SQ2OPI / jnp.sqrt(x)
 
-def bessel_j1(z: ArrayLike) -> Array:
+def j1(z: ArrayLike) -> Array:
     """
     Bessel function of the first kind of order one and a real argument 
     - using the implementation from CEPHES, translated to Jax, to match scipy to machine precision.
@@ -907,7 +907,7 @@ def j0_large(x: ArrayLike) -> Array:
     p = p * jnp.cos(xn) - w * q * jnp.sin(xn)
     return p * SQ2OPI / jnp.sqrt(x)
 
-def bessel_j0(z: ArrayLike) -> Array:
+def j0(z: ArrayLike) -> Array:
     """
     Bessel function of the first kind of order zero and a real argument 
     - using the implementation from CEPHES, translated to Jax, to match scipy to machine precision.

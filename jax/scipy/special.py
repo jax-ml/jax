@@ -18,8 +18,8 @@
 from jax._src.scipy.special import (
   betainc as betainc,
   betaln as betaln,
-  bessel_j0 as bessel_j0,
-  bessel_j1 as bessel_j1,
+  j0 as j0,
+  j1 as j1,
   bessel_jn as bessel_jn,
   digamma as digamma,
   entr as entr,
