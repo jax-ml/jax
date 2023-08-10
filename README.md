@@ -391,6 +391,8 @@ installed as the `jaxlib` package. Use the following instructions to install a
 binary package with `pip` or `conda`, or to [build JAX from
 source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
+There is also [containers](#containers).
+
 We support installing or building `jaxlib` on Linux (Ubuntu 20.04 or later) and
 macOS (10.12 or later) platforms. There is also *experimental* native Windows
 support.
@@ -582,6 +584,12 @@ See the `conda-forge`
 [jaxlib](https://github.com/conda-forge/jaxlib-feedstock#installing-jaxlib) and
 [jax](https://github.com/conda-forge/jax-feedstock#installing-jax) repositories
 for more details.
+
+### Containers
+
+[JAX Toolbox](https://github.com/NVIDIA/JAX-Toolbox) has bleeding edge
+GPU containers: nightly containers and models/frameworks
+specific containers.
 
 ### Building JAX from source
 See [Building JAX from
