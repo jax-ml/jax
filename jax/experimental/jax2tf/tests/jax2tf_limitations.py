@@ -501,6 +501,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             "Errors when lhs_dtype != rhs_dtype for non-native serialization on CPU and GPU",
             devices=["cpu", "gpu", "tpu"],
             enabled=(harness.dtype != harness.params["rhs_dtype"]),
+            skip_tf_run=True,
             skip_comparison=True),
         # TODO(necula): look into this, but this is only for non-native serialization
         Jax2TfLimitation(
