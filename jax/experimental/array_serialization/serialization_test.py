@@ -29,6 +29,7 @@ from jax._src import array
 from jax.sharding import NamedSharding, GSPMDSharding
 from jax.sharding import PartitionSpec as P
 from jax.experimental.array_serialization import serialization
+import jax.numpy as jnp
 import numpy as np
 import tensorstore as ts
 
@@ -94,6 +95,36 @@ class CheckpointTest(jtu.JaxTestCase):
     # We load entire array in memory here.
     self.assertGreater(peak, 30_000_000)
     tm.stop()
+
+  def test_serialize_int4(self):
+    global_mesh = jtu.create_global_mesh((2, 4), ('x', 'y'))
+    inp_shape = (2_048, 4_096)
+    pspec = P('x', 'y')
+    num = math.prod(inp_shape)
+    sharding = NamedSharding(global_mesh, pspec)
+    src = jax.numpy.arange(num, dtype=jnp.int4).reshape(inp_shape)  # 8e9
+    inp = array.make_array_from_callback(
+        inp_shape, sharding, lambda idx: src[idx]
+    )
+    ckpt_dir = pathlib.Path(self.create_tempdir('memprof').full_path)
+    tspec = serialization.get_tensorstore_spec(str(ckpt_dir))
+
+    tspec['dtype'] = 'int4'
+    manager = serialization.GlobalAsyncCheckpointManager()
+    manager.serialize(
+        [inp],
+        [tspec],
+        on_commit_callback=partial(
+            self._on_commit_callback, ckpt_dir, ckpt_dir
+        ),
+    )
+    manager.wait_until_finished()
+
+    tspec['dtype'] = 'int4'
+    deserialize = serialization.async_deserialize(sharding, tspec, inp_shape)
+    arr = asyncio.run(deserialize).block_until_ready()
+
+    self.assertEqual(arr.dtype, jnp.int4)
 
   def test_checkpointing_with_path_variant(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))

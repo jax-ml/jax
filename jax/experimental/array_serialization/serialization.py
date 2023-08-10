@@ -63,6 +63,10 @@ def _get_metadata(arr):
   if arr.dtype == jnp.bfloat16:
     # Tensorstore uses 'bfloat16', not '<V2'.
     dtype = 'bfloat16'
+  elif arr.dtype == jnp.int4:
+    # Tensorstore currently doesn't support int4. As a temporary solution, int4
+    # weights are stored as int8.
+    dtype = np.dtype(jnp.int8).str
   else:
     dtype = np.dtype(arr.dtype).str
   local_shape = arr.addressable_data(0).shape
@@ -154,6 +158,15 @@ async def async_serialize(
   # a 'cast' driver).
   if not _spec_has_metadata(tensorstore_spec):
     tensorstore_spec['metadata'] = _get_metadata(arr_inp)
+
+  # Tensorstore currently doesn't support int4. As a temporary solution, int4
+  # weights are stored as int8.
+  if (
+      type(tensorstore_spec) is dict
+      and tensorstore_spec.get('dtype', '') == 'int4'
+  ):
+    logging.info('Serializing %s as int8', tensorstore_spec)
+    tensorstore_spec['dtype'] = 'int8'
 
   if jax.process_index() == 0:
     open_future = ts.open(
@@ -248,6 +261,17 @@ async def async_deserialize(
     context=TS_CONTEXT,
     assume_metadata: bool = False,
 ):
+  # Tensorstore currently doesn't support int4. As a temporary solution, int4
+  # weights are stored as int8.
+  is_int4 = False
+  if (
+      type(tensorstore_spec) is dict
+      and tensorstore_spec.get('dtype', '') == 'int4'
+  ):
+    is_int4 = True
+    logging.info('Deserializing %s as int8', tensorstore_spec)
+    tensorstore_spec['dtype'] = 'int8'
+
   t = await ts.open(
       tensorstore_spec,
       open=True,
@@ -270,6 +294,9 @@ async def async_deserialize(
     out = np.zeros(new_shard_shape, dtype=t.dtype.numpy_dtype)
     await ts.array(out)[ts.d[:].translate_to[requested_domain.origin]][
         restricted_domain].write(t[restricted_domain])
+    # Explicitly cast since t.dtype.numpy_dtype is not the original dtype
+    if is_int4:
+      out = out.astype(jnp.int4)
     if dtype is not None:
       # Cast while reloading on process to avoid 2 copies on device if the
       # casting is done on device.
