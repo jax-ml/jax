@@ -437,6 +437,12 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                                  preferred_element_type=jax.numpy.float32)
     jax.jacrev(f)(x)  # don't crash!
 
+  def testExpm1GradSmallValues(self):
+    x = np.float32(-25)
+    expected = lax.exp(x)
+    actual = jax.grad(lax.expm1)(x)
+    self.assertAllClose(expected, actual, atol=0)
+
   @jtu.sample_product(
     shape=[(), (2, 3)],
     dtype=float_dtypes,
