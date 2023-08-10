@@ -115,7 +115,9 @@ def _custom_partitioning_propagate_user_sharding(user_sharding, shape,
               for s, sharding in zip(user_shapes, user_shardings)
           ]
       )
-  result_sharding = info.propagate_user_sharding(*info.static_args, user_shape)
+  result_sharding = info.propagate_user_sharding(
+      *info.static_args, info.mesh, user_shape
+  )
   result_shardings = _flatten_sharding(
       info.out_tree, result_sharding, user_shapes)
   return _pack_result_sharding(shape, result_shardings)
@@ -138,14 +140,16 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
   else:
     result_shapes = (result_shape,)
     result_shardings = (result_sharding,)
-  lower_fn, result_sharding, arg_shardings = info.partition(
-      *info.static_args, info.unflatten_arg_shapes(arg_shapes, arg_shardings),
+  mesh, lower_fn, result_sharding, arg_shardings = info.partition(
+      *info.static_args,
+      info.mesh,
+      info.unflatten_arg_shapes(arg_shapes, arg_shardings),
       info.out_tree.unflatten(
-        [
-            _to_jax_sharded_shape(s, info.to_mesh_pspec_sharding(sharding))
-            for s, sharding in zip(result_shapes, result_shardings)
-        ]
-    )
+          [
+              _to_jax_sharded_shape(s, info.to_mesh_pspec_sharding(sharding))
+              for s, sharding in zip(result_shapes, result_shardings)
+          ]
+      ),
   )
   module_context = info.module_context
 
@@ -160,20 +164,22 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
       _to_jax_shape(sharding.tile(s))
       for sharding, s in zip(result_shardings, result_shapes)
   ]
-  closed_jaxpr = jax.make_jaxpr(
-      lower_fn, axis_env=list(info.mesh.shape.items()))(*tiled_args)
+  closed_jaxpr = jax.make_jaxpr(lower_fn, axis_env=list(mesh.shape.items()))(
+      *tiled_args
+  )
   if closed_jaxpr.out_avals != tiled_results:
     raise ValueError(
         "Mismatch in result shapes. %s vs %s"
         % (repr(closed_jaxpr.out_avals), repr(tiled_results))
     )
-  axis_context = sharding_impls.SPMDAxisContext(info.mesh)
+  axis_context = sharding_impls.SPMDAxisContext(mesh)
   built = mlir.build_xla_computation_helper(
       closed_jaxpr,
       name="tmp_xla_computation",
       platform=module_context.platform,
       backend_or_name=module_context.backend_or_name,
-      axis_context=axis_context.extend_manual(frozenset(info.mesh.axis_names)))
+      axis_context=axis_context.extend_manual(frozenset(mesh.axis_names)),
+  )
   result_sharding = _pack_result_sharding(result_shape, result_shardings)
   return built, arg_shardings, result_sharding
 
@@ -188,6 +194,7 @@ def _custom_partitioning_infer_sharding_from_operands(arg_shapes, arg_shardings,
     result_shapes = (result_shape,)
   result_sharding = info.infer_sharding_from_operands(
       *info.static_args,
+      info.mesh,
       info.unflatten_arg_shapes(arg_shapes, arg_shardings),
       info.out_tree.unflatten([_to_jax_shape(s) for s in result_shapes]),
   )
@@ -244,20 +251,20 @@ class custom_partitioning:
     def f(*args):
       return ...
 
-    def propagate_user_sharding(user_shape):
+    def propagate_user_sharding(mesh, user_shape):
       '''Update the sharding of the op from a user's shape.sharding.'''
       user_sharding = jax.tree_map(lambda x: x.sharding, user_shape)
 
-    def partition(arg_shapes, result_shape):
+    def partition(mesh, arg_shapes, result_shape):
       def lower_fn(*args):
         ... builds computation on per-device shapes ...
       result_shardings = jax.tree_map(lambda x: x.sharding, result_shape)
       arg_shardings = jax.tree_map(lambda x: x.sharding, arg_shapes)
       # result_sharding and arg_shardings may optionally be modified and the
       # partitioner will insert collectives to reshape.
-      return lower_fn, result_sharding, arg_shardings
+      return mesh, lower_fn, result_sharding, arg_shardings
 
-    def infer_sharding_from_operands(arg_shapes, shape):
+    def infer_sharding_from_operands(mesh, arg_shapes, shape):
       '''Compute the result sharding from the sharding of the operands.'''
       arg_shardings = jax.tree_map(lambda x: x.sharding, arg_shapes)
 
@@ -270,9 +277,10 @@ class custom_partitioning:
     and returns a suggestion for a new `NamedSharding`. The default
     implementation is just to return the suggested sharding.
   * ``partition``: Callable which takes the SPMD suggested partition shapes and
-    partition specs and returns a per-shard lowering function and the final
+    partition specs and returns the mesh, a per-shard lowering function, and the final
     input and output sharding specs (the SPMD partitioner will repartition the
-    inputs to match).
+    inputs to match). The mesh is returned to allow configuring axis_names for
+    collectives when no mesh is provided.
   * ``infer_sharding_from_operands``: Callable which computes an output ``NamedSharding``
     from the ``NamedSharding`` chosen for each argument.
   * ``decode_shardings``: When set to True, convert input ``GSPMDSharding``s to
@@ -315,14 +323,14 @@ class custom_partitioning:
           names = tuple(sharding.spec[:max_shared_dims]) + tuple(None for _ in range(rank - max_shared_dims))
           return NamedSharding(sharding.mesh, P(*names))
 
-      def partition(arg_shapes, result_shape):
+      def partition(mesh, arg_shapes, result_shape):
           result_shardings = jax.tree_map(lambda x: x.sharding, result_shape)
           arg_shardings = jax.tree_map(lambda x: x.sharding, arg_shapes)
-          return fft, \
+          return mesh, fft, \
               supported_sharding(arg_shardings[0], arg_shapes[0]), \
               (supported_sharding(arg_shardings[0], arg_shapes[0]),)
 
-      def infer_sharding_from_operands(arg_shapes, result_shape):
+      def infer_sharding_from_operands(mesh, arg_shapes, result_shape):
           arg_shardings = jax.tree_map(lambda x: x.sharding, arg_shapes)
           return supported_sharding(arg_shardings[0], arg_shapes[0])
 
