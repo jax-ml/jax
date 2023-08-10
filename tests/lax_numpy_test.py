@@ -3834,8 +3834,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testUnpackbits(self, shape, dtype, axis, bitorder, count):
     rng = jtu.rand_int(self.rng(), 0, 256)
     args_maker = lambda: [rng(shape, dtype)]
-    jnp_op = partial(jnp.unpackbits, axis=axis, bitorder=bitorder)
-    np_op = partial(np.unpackbits, axis=axis, bitorder=bitorder)
+    jnp_op = partial(jnp.unpackbits, axis=axis, bitorder=bitorder, count=count)
+    np_op = partial(np.unpackbits, axis=axis, bitorder=bitorder, count=count)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
