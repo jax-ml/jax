@@ -109,7 +109,7 @@ class CompatTest(bctu.CompatTestBase):
         cpu_schur_lapack_gees.data_2023_07_16,
         cpu_svd_lapack_gesdd.data_2023_06_19,
         cpu_triangular_solve_blas_trsm.data_2023_07_16,
-        tf_call_tf_function.data_2023_06_02,  # This is tested in back_compat_tf_test.py
+        tf_call_tf_function.data_2023_07_29,  # This is tested in back_compat_tf_test.py
         tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17,
         tpu_Sharding.data_2023_03_16, tpu_ApproxTopK.data_2023_04_17,
         tpu_ApproxTopK.data_2023_05_16,
