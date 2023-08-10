@@ -892,6 +892,14 @@ include_full_tracebacks_in_locations = config.define_bool_state(
     ),
 )
 
+use_original_compilation_cache_key_generation = config.define_bool_state(
+    name='jax_use_original_compilation_cache_key_generation',
+    default=True,
+    help="If true, use the original cache-key generation algorithm. This is "
+         "a transient flag; once the new cache-key generation algorithm is "
+         "deployed, this flag and the original cache-key generation algorithm "
+         "will be removed.")
+
 config.define_enum_state(
     name='jax_default_dtype_bits',
     enum_values=['32', '64'],

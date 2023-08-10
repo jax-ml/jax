@@ -470,7 +470,9 @@ def compile_or_get_cached(
                            host_callbacks)
 
   cache_key = compilation_cache.get_cache_key(
-      computation, devices, compile_options, backend)
+      computation, devices, compile_options, backend,
+      jax_config.config.jax_use_original_compilation_cache_key_generation,
+  )
 
   executable, compile_time_retrieved = _cache_read(
       module_name, cache_key, compile_options, backend)
