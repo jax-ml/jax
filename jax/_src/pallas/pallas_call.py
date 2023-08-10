@@ -166,8 +166,6 @@ def _pallas_call_jvp_rule(primals, tangents, *, jaxpr, name, which_linear,
   jvp_which_linear = which_linear + (True,) * len(tangents)
   jvp_inshapes = (*in_shapes, *in_shapes)
   jvp_outshapes = (*out_shapes, *out_shapes)
-  if input_output_aliases:
-    raise NotImplementedError("`input_output_aliases` jvp not supported.")
   # `pallas_call` takes in inputs and returns outputs but its jaxpr *does not*.
   # `pallas_call` takes in a stateful jaxpr, meaning the jaxpr accepts input
   # `Ref`s that are read from followed by output `Ref`s that are written to.
