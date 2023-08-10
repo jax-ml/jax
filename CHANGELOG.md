@@ -9,6 +9,11 @@ Remember to align the itemized text with the first line of an item within a list
 ## jax 0.4.15
 
 * Changes
+  * Added {class}`jax.numpy.ufunc`, as well as {func}`jax.numpy.frompyfunc`, which can convert
+    any scalar-valued function into a {func}`numpy.ufunc`-like object, with methods such as
+    {meth}`~jax.numpy.ufunc.outer`, {meth}`~jax.numpy.ufunc.reduce`,
+    {meth}`~jax.numpy.ufunc.accumulate`, {meth}`~jax.numpy.ufunc.at`, and
+    {meth}`~jax.numpy.ufunc.reduceat` ({jax-issue}`#17054`).
   * When not running under IPython: when an exception is raised, JAX now filters out the
     entirety of its internal frames from tracebacks. (Without the "unfiltered stack trace"
     that previously appeared.) This should produce much friendlier-looking tracebacks. See

@@ -178,6 +178,7 @@ namespace; they are listed below.
     fromfile
     fromfunction
     fromiter
+    frompyfunc
     fromstring
     from_dlpack
     full
@@ -388,6 +389,7 @@ namespace; they are listed below.
     triu_indices_from
     true_divide
     trunc
+    ufunc
     uint
     uint16
     uint32
