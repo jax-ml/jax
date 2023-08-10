@@ -717,8 +717,7 @@ def shard_device_array(x, devices, indices, sharding):
       as_slice_indices(x, idx) for idx in indices)
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   aval = api_util.shaped_abstractify(x)
-  out = pxla.batched_device_put(aval, sharding, shards, devices)
-  return out
+  return pxla.batched_device_put(aval, sharding, shards, devices)
 
 def _hashable_index(idx):
   return tree_util.tree_map(
