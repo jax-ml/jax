@@ -1277,8 +1277,6 @@ def apply_layout_op(ctx: RewriteContext, op: ir.OpView):
         continue
       def_op = v.owner
       assert isinstance(def_op, (ir.OpView, ir.Operation)), def_op
-      if len(def_op.results) != 1:
-        raise NotImplementedError("multiple results")
       res_idx = ir.OpResult(v).result_number
       arr_attr = ir.ArrayAttr(def_op.attributes["out_layout"])
       lo = parse_layout(arr_attr[res_idx], vty)
