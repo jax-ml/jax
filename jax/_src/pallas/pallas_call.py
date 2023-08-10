@@ -156,8 +156,6 @@ def _pallas_call_jvp_rule(primals, tangents, *, jaxpr, name, which_linear,
   if input_output_aliases:
     raise NotImplementedError("JVP with aliasing not supported.")
   nonzero_tangents = [not isinstance(t, ad_util.Zero) for t in tangents]
-  tangents = [ad.instantiate_zeros(t) if inst else t
-              for t, inst in zip(tangents, nonzero_tangents)]
   tangents = [t for t in tangents if type(t) is not ad_util.Zero]
   nonzero_tangents_with_outputs = nonzero_tangents + [True] * len(out_shapes)
   closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, ())
