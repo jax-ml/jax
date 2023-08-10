@@ -29,6 +29,7 @@ from jax._src import array
 from jax.sharding import NamedSharding, GSPMDSharding
 from jax.sharding import PartitionSpec as P
 from jax.experimental.array_serialization import serialization
+import jax.numpy as jnp
 import numpy as np
 import tensorstore as ts
 
@@ -94,6 +95,50 @@ class CheckpointTest(jtu.JaxTestCase):
     # We load entire array in memory here.
     self.assertGreater(peak, 30_000_000)
     tm.stop()
+
+  def test_serialize_int4(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    inp_shape = (8, 2)
+    pspec = P('x', 'y')
+    num = math.prod(inp_shape)
+
+    # Array with int4 type
+    global_input_data1 = np.arange(num, dtype=jnp.int4).reshape(inp_shape)
+    a1 = array.make_array_from_callback(
+        inp_shape,
+        NamedSharding(global_mesh, pspec),
+        lambda idx: global_input_data1[idx],
+    )
+    ckpt_dir = pathlib.Path(self.create_tempdir('int4_serialize').full_path)
+    ckpt_path1 = pathlib.Path(
+        self.create_tempdir(f'{ckpt_dir}/first').full_path
+    )
+
+    ckpt_paths = [str(ckpt_path1)]
+    manager = serialization.GlobalAsyncCheckpointManager()
+    manager.serialize_with_paths(
+        [a1],
+        ckpt_paths,
+        on_commit_callback=partial(
+            self._on_commit_callback, ckpt_dir, ckpt_dir
+        ),
+    )
+    manager.wait_until_finished()
+
+    (m1,) = manager.deserialize_with_paths(
+        [NamedSharding(global_mesh, pspec)], ckpt_paths, dtypes=[jnp.int4],
+    )
+    self.assertIsInstance(m1, array.ArrayImpl)
+    self.assertArraysEqual(
+        np.asarray(m1.addressable_shards[0].data),
+        np.array([[0], [2]], dtype=jnp.int4),
+    )
+    self.assertArraysEqual(
+        np.asarray(m1.addressable_shards[1].data),
+        np.array([[1], [3]], dtype=jnp.int4),
+    )
+    self.assertEqual(m1.addressable_shards[0].data.shape, (2, 1))
+    self.assertEqual(m1.dtype, jnp.int4)
 
   def test_checkpointing_with_path_variant(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
