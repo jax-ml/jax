@@ -627,11 +627,18 @@ def _device_put_impl(
     device: Device | Sharding | None = None,
     src: Device | Sharding | None = None):
   from jax._src import array
+  if not isinstance(device, (Device, Sharding, type(None))):
+    raise TypeError("device_put 'device' argument must be a Device or Sharding, "
+                    f"but got type {type(device)} with value {device}.")
+  if not isinstance(src, (Device, Sharding, type(None))):
+    raise TypeError("device_put 'src' argument must be a Device or Sharding, "
+                    f"but got type {type(src)} with value {src}.")
   try:
     aval = xla.abstractify(x)
   except TypeError as err:
     raise TypeError(
-        f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
+        f"device_put argument '{x}' of type {type(x)} is not a valid JAX type"
+    ) from err
 
   if isinstance(device, Sharding):
     s = device

@@ -2487,6 +2487,7 @@ def _infer_src_sharding(src, x):
   return x.sharding if isinstance(x, array.ArrayImpl) else None
 
 
+@api_boundary
 def device_put(
     x,
     device: None | xc.Device | Sharding | Any = None,
