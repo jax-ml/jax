@@ -83,7 +83,7 @@ class CompatTensoflowTest(bctu.CompatTestBase):
       func: Callable,
       data: bctu.CompatTestData,
       polymorphic_shapes: Optional[Sequence[str]] = None,
-      allow_additional_custom_call_targets: Sequence[str] = (),
+      allow_unstable_custom_call_targets: Sequence[str] = (),
   ):
     # We serialize as a tf.Graph
     assert len(data.inputs) == 1  # We only support a single input now

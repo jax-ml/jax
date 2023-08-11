@@ -90,7 +90,7 @@ class CompatTest(bctu.CompatTestBase):
         dummy_data,
         platform=self.default_jax_backend(),
         custom_call_targets=["missing"])
-    with self.assertRaisesRegex(AssertionError, "Lists differ"):
+    with self.assertRaisesRegex(AssertionError, "Element counts were not equal"):
       self.run_one_test(jnp.sin, platform_dummy_data)
 
   def test_custom_call_coverage(self):
@@ -117,6 +117,7 @@ class CompatTest(bctu.CompatTestBase):
         tpu_stablehlo_dynamic_reduce_window.data_variadic_2023_06_17,
         stablehlo_dynamic_rng_bit_generator.data_2023_06_17,
         stablehlo_dynamic_top_k.data_2023_07_16,
+        stablehlo_dynamic_top_k.data_2023_08_11,  # with shape_assertion
     ]
     # Some of the above are nested structures.
     covering_testdatas = itertools.chain(
@@ -128,8 +129,6 @@ class CompatTest(bctu.CompatTestBase):
 
     covered_targets = covered_targets.union({
       "tpu_custom_call",  # tested separately
-      # TODO(necula): add tests for shape_assertion
-      "shape_assertion",
     })
     not_covered = targets_to_cover.difference(covered_targets)
     self.assertEmpty(not_covered,
@@ -143,8 +142,9 @@ class CompatTest(bctu.CompatTestBase):
 
     # An old lowering, with ducc_fft. We keep it for 6 months.
     data = self.load_testdata(cpu_ducc_fft.data_2023_03_17)
-    # We have changed the lowering for fft, do not compare with current.
-    self.run_one_test(func, data, compare_with_current=False)
+    # We have changed the lowering for fft since we saved this data.
+    self.run_one_test(func, data,
+                      expect_current_custom_calls=["dynamic_ducc_fft"])
 
     # A newer lowering, with dynamic_ducc_fft.
     data = self.load_testdata(cpu_ducc_fft.data_2023_06_14)
@@ -617,8 +617,8 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(
         func, data,
         polymorphic_shapes=("b, ...",),
-        # TODO(necula): now also includes shape_assertion
-        compare_with_current=False)
+        # Recent serializations also include shape_assertion, tested with dynamic_top_k
+        expect_current_custom_calls=["stablehlo.dynamic_reduce_window", "shape_assertion"])
 
   def test_tpu_stablehlo_dynamic_reduce_window_variadic(self):
     # stablehlo.dynamic_reduce_window is used temporarily on TPU for a
@@ -640,8 +640,8 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(
         func, data,
         polymorphic_shapes=("b, ...", "b, ..."),
-        # TODO(necula): now also includes shape_assertion
-        compare_with_current=False)
+        # Recent serializations also include shape_assertion, tested with dynamic_top_k
+        expect_current_custom_calls=["stablehlo.dynamic_reduce_window", "shape_assertion"])
 
   def test_stablehlo_dynamic_rbg_bit_generator(self):
     # stablehlo.dynamic_rbg_bit_generator is used temporarily for a
@@ -672,9 +672,10 @@ class CompatTest(bctu.CompatTestBase):
     try:
       jax.config.update("jax_default_prng_impl", "unsafe_rbg")
 
-      self.run_one_test(func, data, polymorphic_shapes=(None, "b0, b1"),
-                        # TODO(necula): now also includes shape_assertion
-                        compare_with_current=False)
+      self.run_one_test(
+        func, data, polymorphic_shapes=(None, "b0, b1"),
+        # Recent serializations also include shape_assertion, tested with dynamic_top_k
+        expect_current_custom_calls=["stablehlo.dynamic_rng_bit_generator", "shape_assertion"])
     finally:
       jax.config.update("jax_default_prng_impl", prev_default_prng_impl)
 
@@ -700,8 +701,14 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data,
                       polymorphic_shapes=("_, b",),
                       check_results=check_top_k_results,
-                      # TODO(necula): now also includes shape_assertion
-                      compare_with_current=False)
+                      # Recent serializations also include shape_assertion
+                      expect_current_custom_calls=["stablehlo.dynamic_top_k", "shape_assertion"])
+
+    # Now a test with serialization version 7, including shape_assertion
+    data_2 = self.load_testdata(stablehlo_dynamic_top_k.data_2023_08_11)
+    self.run_one_test(func, data_2,
+                      polymorphic_shapes=("_, b",),
+                      check_results=check_top_k_results)
 
 
 if __name__ == "__main__":

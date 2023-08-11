@@ -163,9 +163,9 @@ class CompatTestBase(jtu.JaxTestCase):
                    polymorphic_shapes: Optional[Sequence[str]] = None,
                    rtol: Optional[float] = None,
                    atol: Optional[float] = None,
-                   allow_additional_custom_call_targets: Sequence[str] = (),
+                   allow_unstable_custom_call_targets: Sequence[str] = (),
                    check_results: Optional[Callable[..., None]] = None,
-                   compare_with_current: bool = True):
+                   expect_current_custom_calls: Optional[Sequence[str]] = None):
     """Run one compatibility test.
 
     Args:
@@ -178,14 +178,12 @@ class CompatTestBase(jtu.JaxTestCase):
       check_results: invoked with the results obtained from running the
         serialized code, and those stored in the test data, and the kwargs rtol
         and atol.
-      allow_additional_custom_call_targets: additional custom call targets to allow.
-      compare_with_current: whether to compare the current behavior for
-        `func` with the one stored in `data`. If `True` (default) uses the
-        current version of JAX and XLA to lower and serialize `func` and check
-        its results compared to the stored ones; it also dumps the current
-        test data. If `False`, no current serialization are comparisons are
-        done, tests only the saved serialization. Use this option for a test
-        data for which we have changed the serialization.
+      allow_unstable_custom_call_targets: additional custom call targets to allow.
+      expect_current_custom_calls: if `None` checks that the current serialization
+        has the same custom calls as the saved one. This is the default, and
+        will fail when the serialization changes. Otherwise, when checking old
+        serializations you can specify what custom calls are expected in the
+        current serialization.
     """
     if not isinstance(data, CompatTestData):
       raise ValueError(f"Expecting data: CompatTestData but got {data}. "
@@ -204,10 +202,10 @@ class CompatTestBase(jtu.JaxTestCase):
     serialized, module_str, module_version = self.serialize(
       func, data,
       polymorphic_shapes=polymorphic_shapes,
-      allow_additional_custom_call_targets=allow_additional_custom_call_targets)
+      allow_unstable_custom_call_targets=allow_unstable_custom_call_targets)
 
     custom_call_re = r"stablehlo.custom_call\s*@([^\(]+)\("
-    custom_call_targets = sorted(
+    current_custom_call_targets = sorted(
         list(set(re.findall(custom_call_re, module_str))))
 
     np.set_printoptions(threshold=sys.maxsize, floatmode="unique")
@@ -217,7 +215,7 @@ class CompatTestBase(jtu.JaxTestCase):
 data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     testdata_version={CURRENT_TESTDATA_VERSION},
     platform={repr(self.default_jax_backend())},
-    custom_call_targets={repr(custom_call_targets)},
+    custom_call_targets={repr(current_custom_call_targets)},
     serialized_date={repr(datetime.date.today())},
     inputs={repr(data.inputs)},
     expected_outputs={repr(res_run_current)},
@@ -258,25 +256,26 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     else:
       self.assertAllClose(res_run_serialized, data.expected_outputs,
                           rtol=rtol, atol=atol)
-    if compare_with_current:
-      self.assertListEqual(custom_call_targets, data.custom_call_targets)
+    if expect_current_custom_calls is None:
+      expect_current_custom_calls = data.custom_call_targets
+    self.assertItemsEqual(expect_current_custom_calls, current_custom_call_targets)
 
   def run_current(self, func: Callable, data: CompatTestData):
     """Lowers and runs the test function at the current JAX version."""
     return jax.jit(func)(*data.inputs)
 
   def serialize(self,
-      func: Callable, data: CompatTestData, *,
-      polymorphic_shapes: Optional[Sequence[str]] = None,
-      allow_additional_custom_call_targets: Sequence[str] = ()
-  ) -> tuple[bytes, str, int]:
+                func: Callable, data: CompatTestData, *,
+                polymorphic_shapes: Optional[Sequence[str]] = None,
+                allow_unstable_custom_call_targets: Sequence[str] = ()
+                ) -> tuple[bytes, str, int]:
     """Serializes the test function.
 
     Args:
       func: the function to serialize
       polymorphic_shapes: the polymorphic_shapes to use for serialization
-      allow_additional_custom_call_targets: whether to allow additional
-        custom call targets besides the standard ones.
+      allow_unstable_custom_call_targets: whether to allow additional
+        custom call targets besides those known as stable.
 
     Returns: a tuple with the (a) serialization, (b) the module contents as
       a string (for debugging), and (c) the module serialization version.
@@ -288,7 +287,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       lowering_platform=self.default_jax_backend(),
       disabled_checks=tuple(
         jax_export.DisabledSafetyCheck.custom_call(target)
-        for target in allow_additional_custom_call_targets)
+        for target in allow_unstable_custom_call_targets)
     )(*args_specs)
 
     module_str = str(exported.mlir_module())
