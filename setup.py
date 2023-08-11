@@ -85,8 +85,11 @@ setup(
 
         # Cloud TPU VM jaxlib can be installed via:
         # $ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-        'tpu': [f'jaxlib=={_current_jaxlib_version}',
-                f'libtpu-nightly=={_libtpu_version}'],
+        'tpu': [
+          f'jaxlib=={_current_jaxlib_version}',
+          f'libtpu-nightly=={_libtpu_version}',
+          'requests',  # necessary for jax.distributed.initialize
+        ],
 
         # $ pip install jax[australis]
         'australis': ['protobuf>=3.13,<4'],
