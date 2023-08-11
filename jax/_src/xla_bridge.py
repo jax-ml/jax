@@ -40,6 +40,7 @@ from jax._src import distributed
 from jax._src import config as jax_config
 from jax._src.config import bool_env, config
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax._src import traceback_util
 from jax._src import util
 
@@ -483,6 +484,9 @@ def register_plugin(
             ' plugin.'
         )
       xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
+    if xla_extension_version >= 182:
+      if not xla_client.pjrt_plugin_initialized(plugin_name):
+        xla_client.initialize_pjrt_plugin(plugin_name)
 
     if distributed.global_state.client is None:
       return xla_client.make_c_api_client(plugin_name, options, None)
