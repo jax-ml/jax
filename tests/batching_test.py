@@ -411,6 +411,38 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
     assert len(np.unique(ans)) == 10 * 3 * 2
 
+  def testSearchsorted(self):
+    rng = self.rng()
+    sorted_arr = np.linspace(0, 1, 12).reshape(3, 4)
+    query = rng.rand(3, 4)
+    query2 = rng.rand(2, 3, 4)
+
+    ind1 = vmap(partial(lax.searchsorted, dimension=0))(sorted_arr, query)
+    ind2 = lax.searchsorted(sorted_arr, query, batch_dims=1, dimension=1)
+    self.assertAllClose(ind1, ind2)
+
+    ind1 = vmap(partial(lax.searchsorted, dimension=0), in_axes=(0, None))(sorted_arr, query)
+    ind2 = lax.searchsorted(sorted_arr, query, dimension=1)
+    self.assertAllClose(ind1, ind2)
+
+    ind1 = vmap(partial(lax.searchsorted, dimension=1), in_axes=(None, 0))(sorted_arr, query)
+    ind2 = lax.searchsorted(sorted_arr, query, dimension=1).transpose(1, 0, 2)
+    self.assertAllClose(ind1, ind2)
+
+    ind1 = vmap(partial(lax.searchsorted, dimension=1, batch_dims=1), in_axes=(None, 0))(sorted_arr, query2)
+    ind2 = lax.searchsorted(sorted_arr, query2.transpose(1, 2, 0), dimension=1, batch_dims=1).transpose(2, 0, 1)
+    self.assertAllClose(ind1, ind2)
+
+    sorted_arr = np.linspace(0, 1, 24).reshape(3, 2, 4)
+
+    ind1 = vmap(partial(lax.searchsorted, dimension=1, batch_dims=1), in_axes=(1, None))(sorted_arr, query)
+    ind2 = lax.searchsorted(sorted_arr, query, batch_dims=1, dimension=2).transpose(1, 0, 2)
+    self.assertAllClose(ind1, ind2)
+
+    ind1 = vmap(partial(lax.searchsorted, dimension=1, batch_dims=1), in_axes=(1, 0))(sorted_arr, query2)
+    ind2 = lax.searchsorted(sorted_arr.transpose(1, 0, 2), query2, batch_dims=2, dimension=2)
+    self.assertAllClose(ind1, ind2)
+
   def testSort(self):
     v = np.arange(12)[::-1].reshape(3, 4)
 

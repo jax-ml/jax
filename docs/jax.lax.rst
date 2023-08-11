@@ -127,6 +127,7 @@ Operators
     scatter_max
     scatter_min
     scatter_mul
+    searchsorted
     select
     shift_left
     shift_right_arithmetic

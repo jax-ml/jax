@@ -53,8 +53,7 @@ from jax._src import dtypes
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
 from jax._src.core import ShapedArray, ConcreteArray
-from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
-                              _sort_le_comparator, PrecisionLike)
+from jax._src.lax.lax import _array_copy, PrecisionLike
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_client
 from jax._src.numpy import reductions
@@ -4918,70 +4917,24 @@ def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True) -> A
   return c
 
 
-@partial(vectorize, excluded={0, 2, 3})
-def _searchsorted_via_scan(sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
-  op = _sort_le_comparator if side == 'left' else _sort_lt_comparator
-  def body_fun(_, state):
-    low, high = state
-    mid = (low + high) // 2
-    go_left = op(query, sorted_arr[mid])
-    return (where(go_left, low, mid), where(go_left, mid, high))
-  n_levels = int(np.ceil(np.log2(len(sorted_arr) + 1)))
-  init = (dtype(0), dtype(len(sorted_arr)))
-  return lax.fori_loop(0, n_levels, body_fun, init)[1]
-
-
-def _searchsorted_via_sort(sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
-  working_dtype = int32 if sorted_arr.size + query.size < np.iinfo(np.int32).max else int64
-  def _rank(x):
-    idx = lax.iota(working_dtype, len(x))
-    return zeros_like(idx).at[argsort(x)].set(idx)
-  query_flat = query.ravel()
-  if side == 'left':
-    index = _rank(lax.concatenate([query_flat, sorted_arr], 0))[:query.size]
-  else:
-    index = _rank(lax.concatenate([sorted_arr, query_flat], 0))[sorted_arr.size:]
-  return lax.reshape(lax.sub(index, _rank(query_flat)), np.shape(query)).astype(dtype)
-
-
-def _searchsorted_via_compare_all(sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
-  op = _sort_lt_comparator if side == 'left' else _sort_le_comparator
-  comparisons = jax.vmap(op, in_axes=(0, None))(sorted_arr, query)
-  return comparisons.sum(dtype=dtype, axis=0)
-
-
 @util._wraps(np.searchsorted, skip_params=['sorter'],
   extra_params=_dedent("""
     method : str
-        One of 'scan' (default), 'sort' or 'compare_all'. Controls the method used by the
+        One of 'default', 'scan', 'sort' or 'compare_all'. Controls the method used by the
         implementation: 'scan' tends to be more performant on CPU (particularly when ``a`` is
         very large), 'sort' is often more performant on accelerator backends like GPU and TPU
         (particularly when ``v`` is very large), and 'compare_all' can be most performant
-        when ``a`` is very small."""))
-@partial(jit, static_argnames=('side', 'sorter', 'method'))
+        when ``a`` is very small. 'default' leaves the method up to the implementation."""))
 def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
-                 sorter: None = None, *, method: str = 'scan') -> Array:
+                 sorter: None = None, *, method: str = 'default') -> Array:
   util.check_arraylike("searchsorted", a, v)
-  if side not in ['left', 'right']:
-    raise ValueError(f"{side!r} is an invalid value for keyword 'side'. "
-                     "Expected one of ['left', 'right'].")
-  if method not in ['scan', 'sort', 'compare_all']:
-    raise ValueError(f"{method!r} is an invalid value for keyword 'method'. "
-                     "Expected one of ['sort', 'scan', 'compare_all'].")
+  a, v = util.promote_dtypes(a, v)
+  if ndim(a) != 1:
+    raise ValueError("searchsorted: array a must have dimension 1.")
   if sorter is not None:
     raise NotImplementedError("sorter is not implemented")
-  if ndim(a) != 1:
-    raise ValueError("a should be 1-dimensional")
-  a, v = util.promote_dtypes(a, v)
-  dtype = int32 if len(a) <= np.iinfo(np.int32).max else int64
-  if len(a) == 0:
-    return zeros_like(v, dtype=dtype)
-  impl = {
-      'scan': _searchsorted_via_scan,
-      'sort': _searchsorted_via_sort,
-      'compare_all': _searchsorted_via_compare_all,
-  }[method]
-  return impl(asarray(a), asarray(v), side, dtype)
+  return lax.searchsorted(a, v, side=side, method=method)
+
 
 @util._wraps(np.digitize)
 @partial(jit, static_argnames=('right',))

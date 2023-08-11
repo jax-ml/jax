@@ -361,6 +361,10 @@ from jax._src.lax.other import (
   conv_general_dilated_local as conv_general_dilated_local,
   conv_general_dilated_patches as conv_general_dilated_patches
 )
+from jax._src.lax.search import (
+  searchsorted as searchsorted,
+  searchsorted_p as searchsorted_p,
+)
 from jax._src.lax.ann import (
   approx_max_k as approx_max_k,
   approx_min_k as approx_min_k,

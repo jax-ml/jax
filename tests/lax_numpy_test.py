@@ -2413,21 +2413,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testSearchsortedDtype(self):
     # Test that for large arrays, int64 indices are used. We test this
     # via abstract evaluation to avoid allocating a large array in tests.
-    a_int32 = core.ShapedArray((np.iinfo(np.int32).max,), np.float32)
-    a_int64 = core.ShapedArray((np.iinfo(np.int32).max + 1,), np.float32)
-    v = core.ShapedArray((), np.float32)
+    a_int32 = jax.ShapeDtypeStruct((np.iinfo(np.int32).max - 1,), np.float32)
+    a_int64 = jax.ShapeDtypeStruct((np.iinfo(np.int32).max,), np.float32)
+    v = jax.ShapeDtypeStruct((), np.float32)
 
     out_int32 = jax.eval_shape(jnp.searchsorted, a_int32, v)
     self.assertEqual(out_int32.dtype, np.int32)
 
-    if config.x64_enabled:
-      out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
-      self.assertEqual(out_int64.dtype, np.int64)
-    else:
-      with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype int64"):
-        with jtu.ignore_warning(category=DeprecationWarning,
-                                message="NumPy will stop allowing conversion.*"):
-          out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
+    out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
+    self.assertEqual(out_int64.dtype, dtypes.canonicalize_dtype(np.int64))
 
   @jtu.sample_product(
     dtype=inexact_dtypes,
