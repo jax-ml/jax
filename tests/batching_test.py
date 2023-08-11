@@ -15,6 +15,7 @@
 from contextlib import contextmanager
 from functools import partial
 import itertools as it
+import unittest
 from typing import Any, Optional, Callable, Union, TypeVar
 
 import numpy as np
@@ -29,6 +30,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax import lax
 from jax._src.lax import parallel
+from jax._src.lib import version as jaxlib_version
 from jax import random
 from jax import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
 from jax import vmap
@@ -641,6 +643,8 @@ class BatchingTest(jtu.JaxTestCase):
       [lax.linalg.triangular_solve(a[:, i], b[..., 0]) for i in range(10)])
     self.assertAllClose(ans, expected, atol=1e-5, rtol=1e-5)
 
+  @unittest.skipIf(jaxlib_version < (0, 4, 15),
+                   "Test requires jaxlib 0.4.15")
   def testLaxLinalgTridiagonalSolve(self):
     dl = self.rng().randn(4, 10).astype(np.float32)
     d = self.rng().randn(4, 10).astype(np.float32) + 1.
