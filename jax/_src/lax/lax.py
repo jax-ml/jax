@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import builtins
 from collections.abc import Sequence
 import enum
@@ -947,7 +949,8 @@ def select_n(which: ArrayLike, *cases: ArrayLike) -> Array:
   return select_n_p.bind(which, *cases)
 
 
-def transpose(operand: ArrayLike, permutation: Sequence[int]) -> Array:
+def transpose(operand: ArrayLike,
+              permutation: Sequence[int] | np.ndarray) -> Array:
   """Wraps XLA's `Transpose
   <https://www.tensorflow.org/xla/operation_semantics#transpose>`_
   operator.

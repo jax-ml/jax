@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Callable
 
 import scipy.linalg
@@ -50,7 +52,8 @@ will be printed if the error in the array output is estimated to be large.
 """
 
 @_wraps(scipy.linalg.funm, lax_description=_FUNM_LAX_DESCRIPTION)
-def funm(A: ArrayLike, func: Callable[[Array], Array], disp: bool = True) -> tuple[Array, Array]:
+def funm(A: ArrayLike, func: Callable[[Array], Array],
+         disp: bool = True) -> Array | tuple[Array, Array]:
   A = jnp.asarray(A)
   if A.ndim != 2 or A.shape[0] != A.shape[1]:
     raise ValueError('expected square array_like input')
