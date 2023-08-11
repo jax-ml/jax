@@ -1249,8 +1249,8 @@ class CustomPartitionerTest(jtu.JaxTestCase):
       arg_shardings = jax.tree_map(lambda s: s.sharding, arg_shapes)
       result_sharding = result_shape[0].sharding
       self.assertEqual(arg_shardings[0], result_sharding)
-      self.assertEqual(P('x'), result_sharding.spec)
-      self.assertEqual(P('y'), arg_shardings[1].spec)
+      self.assertEqual(P('x', None), result_sharding.spec)
+      self.assertEqual(P('y', None), arg_shardings[1].spec)
 
       def lower_fn(x, y):
         axis_name = arg_shardings[1].spec[0][0]

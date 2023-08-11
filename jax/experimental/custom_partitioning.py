@@ -58,10 +58,15 @@ class _ShardingCallbackInfo:
     self.mesh = mesh
     self.static_args = static_args
 
+  def unflatten_arg_shape(self, s, sharding):
+    return _to_jax_sharded_shape(
+        s, self.to_mesh_pspec_sharding(sharding, len(s.dimensions()))
+    )
+
   def unflatten_arg_shapes(self, arg_shapes, arg_shardings):
     return self.in_tree.unflatten(
         [
-            _to_jax_sharded_shape(s, self.to_mesh_pspec_sharding(sharding))
+            self.unflatten_arg_shape(s, sharding)
             for s, sharding in zip(arg_shapes, arg_shardings)
         ]
     )
@@ -110,11 +115,11 @@ def _custom_partitioning_propagate_user_sharding(user_sharding, shape,
     user_shapes = (shape,)
     user_shardings = (user_sharding,)
   user_shape = info.out_tree.unflatten(
-          [
-              _to_jax_sharded_shape(s, info.to_mesh_pspec_sharding(sharding))
-              for s, sharding in zip(user_shapes, user_shardings)
-          ]
-      )
+      [
+          info.unflatten_arg_shape(s, sharding)
+          for s, sharding in zip(user_shapes, user_shardings)
+      ]
+  )
   result_sharding = info.propagate_user_sharding(
       *info.static_args, info.mesh, user_shape
   )
@@ -146,7 +151,7 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
       info.unflatten_arg_shapes(arg_shapes, arg_shardings),
       info.out_tree.unflatten(
           [
-              _to_jax_sharded_shape(s, info.to_mesh_pspec_sharding(sharding))
+              info.unflatten_arg_shape(s, sharding)
               for s, sharding in zip(result_shapes, result_shardings)
           ]
       ),
@@ -484,7 +489,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
     return mlir.lower_fun(
         core.jaxpr_as_fun(call), multiple_results=True)(ctx, *values)
 
-  def to_mesh_pspec_sharding(hlo_sharding: Optional[xc.HloSharding]):
+  def to_mesh_pspec_sharding(hlo_sharding: Optional[xc.HloSharding], ndim):
     if hlo_sharding is None:
       return hlo_sharding
     if mesh.empty or not decode_shardings:
@@ -492,6 +497,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       return _op_sharding_to_pos_sharding(hlo_sharding, devices)
     pspec = sharding_impls.parse_flatten_op_sharding(
         hlo_sharding, mesh)[0].get_partition_spec()
+    pspec = jax.sharding.PartitionSpec(*pspec, *((None,) * (ndim - len(pspec))))
     return jax.sharding.NamedSharding(mesh, pspec)
 
   sharding_callback_info = _ShardingCallbackInfo(propagate_user_sharding,
