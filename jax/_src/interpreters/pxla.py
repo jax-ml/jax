@@ -2723,7 +2723,9 @@ class MeshExecutable(stages.XlaExecutable):
     out_shardings = _out_shardings_for_trivial(
         jaxpr, consts, in_shardings, da_object)
     indices = _get_input_indices(global_out_avals, out_shardings, da_object)
-    local_device_assignment = da_object.addressable_device_list
+    # TODO(yashkatariya): Make local_device_assignment directly usable in the
+    # downstream code without tuple conversion.
+    local_device_assignment = tuple(da_object.addressable_device_list)
     handle_ins = InputsHandler(local_device_assignment, out_shardings, indices)
     handle_outs = global_avals_to_results_handler(
           global_out_avals, out_shardings, committed,
