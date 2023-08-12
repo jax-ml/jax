@@ -814,12 +814,14 @@ We list here a history of the serialization version numbers:
     for some specialized use cases. Used in JAX from May 3rd, 2023
     (cl/529106145).
   * Version 6 adds support for the `disabled_checks` attribute. This version
-    mandates a non-empty `platforms` attribute.
-    Used in JAX since June 13th, 2023 (JAX 0.4.13).
+    mandates a non-empty `platforms` attribute. Supported by XlaCallModule
+    since June 7th, 2023 and available in JAX since
+    June 13th, 2023 (JAX 0.4.13).
   * Version 7 adds support for `stablehlo.shape_assertion` operations and
     for `shape_assertions` specified in `disabled_checks`.
-    See [Errors in presence of shape polymorphism](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism).
-    Available in JAX serialization since July 20th, 2023 (JAX 0.4.14).
+    See [Errors in presence of shape polymorphism](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism). Supported by XlaCallModule
+    since July 12th, 2023 (cl/547482522) and
+    available in JAX serialization since July 20th, 2023 (JAX 0.4.14).
   * Version 8 adds support for the `jax.uses_shape_polymorphism` module
     attribute and enables the shape refinement pass only when the
     attribute is present. Supported by XlaCallModule since July 21st, 2023

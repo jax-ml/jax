@@ -21,6 +21,8 @@ Remember to align the itemized text with the first line of an item within a list
     This behavior can be changed by setting `JAX_TRACEBACK_FILTERING=remove_frames` (for two
     separate unfiltered/filtered tracebacks, which was the old behavior) or
     `JAX_TRACEBACK_FILTERING=off` (for one unfiltered traceback).
+  * jax2tf default serialization version is now 7, which introduces new shape
+    [safety assertions](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism).
 
 * Breaking changes:
   * jax2tf now uses native serialization by default. See

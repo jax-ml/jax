@@ -699,7 +699,9 @@ class CompatTest(bctu.CompatTestBase):
 
     self.run_one_test(func, data,
                       polymorphic_shapes=("_, b",),
-                      check_results=check_top_k_results)
+                      check_results=check_top_k_results,
+                      # TODO(necula): now also includes shape_assertion
+                      compare_with_current=False)
 
 
 if __name__ == "__main__":

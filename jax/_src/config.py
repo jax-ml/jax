@@ -688,8 +688,8 @@ jax_serialization_version = config.define_int_state(
     # Note: bump the default serialization version at least one month after
     # we update XlaCallModule to support the new version, so that serialized
     # modules are forward compatible with deployed versions of XlaCallModule.
-    # Version 6 of XlaCallModule is supported since June 7th, 2023.
-    default=int_env('JAX_SERIALIZATION_VERSION', 6),
+    # Version 7 of XlaCallModule is supported since July 12th, 2023.
+    default=int_env('JAX_SERIALIZATION_VERSION', 7),
     help=(
         'The version number to use for native serialization. This must be '
         'within the range of versions supported by the tf.XlaCallModule '
