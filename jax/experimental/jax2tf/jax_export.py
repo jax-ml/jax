@@ -732,7 +732,6 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     # ApproxTopK on TPU
     "ApproxTopK",
     "tf.call_tf_function",  # From jax2tf.call_tf(func, call_tf_graph=True)
-    "tpu_custom_call",  # Pallas/TPU kernels
     # TODO(burmako): maintain backwards compatibility for these, until they
     # are upstreamed to StableHLO.
     # See https://github.com/openxla/stablehlo/issues/8.
@@ -740,6 +739,8 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "stablehlo.dynamic_rng_bit_generator",
     "stablehlo.dynamic_top_k",
     "shape_assertion",  # Used by shape_poly to evaluate assertions
+    "triton_kernel_call",  # Pallas/Triton kernels
+    "tpu_custom_call",  # Pallas/Mosaic kernels
 }
 
 

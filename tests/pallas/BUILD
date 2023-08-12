@@ -47,7 +47,44 @@ jax_test(
     shard_count = 4,
     deps = [
         "//third_party/py/jax:pallas_gpu",
+        "//third_party/py/jax/experimental/jax2tf:jax_export",
     ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_test(
+    name = "pallas_triton_back_compat_test",
+    srcs = [
+        "pallas_triton_back_compat_test.py",
+    ],
+    disable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    # disable_configs = [
+    #     "gpu",
+    #     "gpu_a100",
+    #     "gpu_p100",
+    # ],
+    enable_configs = [
+        "gpu_x32",
+        "gpu_a100_x32",
+    ],
+    shard_count = 4,
+    deps = [
+        "//third_party/py/jax:pallas_gpu",
+        "//third_party/py/jax/experimental/jax2tf/tests:back_compat_test_util",
+        "//third_party/py/jax/tests/pallas/back_compat_testdata",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+py_library(
+    name = "back_compat_testdata",
+    srcs = glob(["back_compat_testdata/*.py"]),
+    srcs_version = "PY3",
+    deps = [
+        "//third_party/py/numpy",
+        "//third_party/py/typing_extensions",
+    ],
 )
 
 py_test(

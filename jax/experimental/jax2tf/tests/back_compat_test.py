@@ -129,7 +129,7 @@ class CompatTest(bctu.CompatTestBase):
       covered_targets = covered_targets.union(data.custom_call_targets)
 
     covered_targets = covered_targets.union({
-      "tpu_custom_call",  # tested separately
+      "tpu_custom_call",  "triton_kernel_call",  # tested separately
     })
     not_covered = targets_to_cover.difference(covered_targets)
     self.assertEmpty(not_covered,
