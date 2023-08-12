@@ -413,6 +413,11 @@ from jax._src.numpy.ufuncs import (
     true_divide as true_divide,
 )
 
+from jax._src.numpy.ufunc_api import (
+    frompyfunc as frompyfunc,
+    ufunc as ufunc,
+)
+
 from jax._src.numpy.vectorize import vectorize as vectorize
 
 # Dynamically register numpy-style methods on JAX arrays.

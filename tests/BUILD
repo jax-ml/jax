@@ -379,6 +379,11 @@ jax_test(
 )
 
 jax_test(
+    name = "lax_numpy_ufuncs_test",
+    srcs = ["lax_numpy_ufuncs_test.py"],
+)
+
+jax_test(
     name = "lax_numpy_vectorize_test",
     srcs = ["lax_numpy_vectorize_test.py"],
 )
