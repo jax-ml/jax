@@ -83,32 +83,37 @@ map, unsafe_map = util.safe_map, map
 
 @debug_callback_p.def_impl
 def debug_callback_impl(*args, callback: Callable[..., Any],
-                        effect: DebugEffect):
-  del effect
+                        effect: DebugEffect, vectorized: bool):
+  del effect, vectorized
   return callback(*args)
 
 @debug_callback_p.def_effectful_abstract_eval
 def debug_callback_abstract_eval(*flat_avals, callback: Callable[..., Any],
-                                 effect: DebugEffect):
-  del flat_avals, callback
+                                 effect: DebugEffect, vectorized: bool):
+  del flat_avals, callback, vectorized
   return [], {effect}
 
-def debug_callback_batching_rule(args, dims, **params):
+def debug_callback_batching_rule(args, dims, *, vectorized: bool, **params):
   """Unrolls the debug callback across the mapped axis."""
-  axis_size = next(x.shape[i] for x, i in zip(args, dims)
-                   if i is not None)
-  # TODO(sharadmv): implement in terms of rolled loop unstead of
-  # unrolled.
-  def get_arg_at_dim(i, dim, arg):
-    if dim is batching.not_mapped:
-      # Broadcast unmapped argument
-      return arg
-    return lax.index_in_dim(arg, i, axis=dim, keepdims=False)
-  outs = []
-  for i in range(axis_size):
-    args_idx = map(functools.partial(get_arg_at_dim, i), dims, args)
-    outs.append(debug_callback_p.bind(*args_idx, **params))
-  outs = [jnp.stack(xs) for xs in zip(*outs)]
+  if vectorized:
+    new_args = [arg if dim is batching.not_mapped else
+                batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
+    outs = debug_callback_p.bind(*new_args, vectorized=vectorized, **params)
+  else:
+    axis_size = next(x.shape[i] for x, i in zip(args, dims)
+                     if i is not None)
+    # TODO(sharadmv): implement in terms of rolled loop unstead of
+    # unrolled.
+    def get_arg_at_dim(i, dim, arg):
+      if dim is batching.not_mapped:
+        # Broadcast unmapped argument
+        return arg
+      return lax.index_in_dim(arg, i, axis=dim, keepdims=False)
+    outs = []
+    for i in range(axis_size):
+      args_idx = map(functools.partial(get_arg_at_dim, i), dims, args)
+      outs.append(debug_callback_p.bind(*args_idx, vectorized=vectorized, **params))
+    outs = [jnp.stack(xs) for xs in zip(*outs)]
   return outs, (0,) * len(outs)
 batching.primitive_batchers[debug_callback_p] = debug_callback_batching_rule
 
@@ -117,8 +122,8 @@ def debug_callback_jvp_rule(primals, tangents, **params):
 ad.primitive_jvps[debug_callback_p] = debug_callback_jvp_rule
 
 def debug_callback_transpose_rule(*flat_args, callback: Callable[..., Any],
-    effect: DebugEffect):
-  del flat_args, callback, effect
+    effect: DebugEffect, vectorized: bool):
+  del flat_args, callback, effect, vectorized
   raise ValueError("Transpose doesn't support debugging callbacks.")
 ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 
@@ -200,8 +205,8 @@ def _debug_callback_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 pe.partial_eval_jaxpr_custom_rules[debug_callback_p] = (
     _debug_callback_partial_eval_custom)
 
-def debug_callback(callback: Callable[..., Any], *args: Any,
-                   ordered: bool = False, **kwargs: Any) -> None:
+def debug_callback(callback: Callable[..., Any], *args: Any, ordered: bool = False,
+                   vectorized: bool = False, **kwargs: Any) -> None:
   """Calls a stageable Python callback.
 
   For more explanation, see `External Callbacks`_.
@@ -224,6 +229,11 @@ def debug_callback(callback: Callable[..., Any], *args: Any,
     ordered: A keyword only argument used to indicate whether or not the
       staged out computation will enforce ordering of this callback w.r.t.
       other ordered callbacks.
+    vectorized: A boolean indicating whether the or not ``callback`` is vectorized,
+      meaning it can handle arrays with additional leading dimensions. If ``vectorized``
+      is ``True``, then when the callback is mapped via ``jax.vmap``, it will be called
+      directly on inputs with leading batch dimensions instead of executing ``callback``
+      on each mapped input individually. Defaults to ``False``.
     **kwargs: The keyword arguments to the callback.
 
   Returns:
@@ -242,7 +252,8 @@ def debug_callback(callback: Callable[..., Any], *args: Any,
     args, kwargs = tree_util.tree_unflatten(in_tree, flat_args)
     callback(*args, **kwargs)
     return []
-  debug_callback_p.bind(*flat_args, callback=_flat_callback, effect=effect)
+  debug_callback_p.bind(*flat_args, callback=_flat_callback, effect=effect,
+                        vectorized=vectorized)
 
 class _DebugPrintFormatChecker(string.Formatter):
 
@@ -263,7 +274,8 @@ formatter = _DebugPrintFormatChecker()
 def _format_print_callback(fmt: str, *args, **kwargs):
   sys.stdout.write(fmt.format(*args, **kwargs) + "\n")
 
-def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
+def debug_print(fmt: str, *args, ordered: bool = False, vectorized: bool = False,
+                **kwargs) -> None:
   """Prints values and works in staged out JAX functions.
 
   Note: This function does *not* work with f-strings because the formatting is
@@ -276,13 +288,16 @@ def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
     ordered: A keyword only argument used to indicate whether or not the
       staged out computation will enforce ordering of this ``jax.debug.print``
       w.r.t. other ordered ``jax.debug.print`` calls.
+    vectorized: A keyword only argument specifying behavior under ``jax.vmap``. If
+      ``False`` then each batch element will be printed separately. If ``True`` then the
+      whole batch will be printed at once, with leading batch dimension.
     **kwargs: Additional keyword arguments to be formatted.
   """
   # Check that we provide the correct arguments to be formatted
   formatter.format(fmt, *args, **kwargs)
 
   debug_callback(functools.partial(_format_print_callback, fmt), *args,
-                 **kwargs, ordered=ordered)
+                 **kwargs, ordered=ordered, vectorized=vectorized)
 
 
 # Sharding visualization

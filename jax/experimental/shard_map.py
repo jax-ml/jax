@@ -740,8 +740,8 @@ eager_rules: dict[core.Primitive, Callable] = {}
 
 # TODO(mattjj): working around an apparent XLA or PjRt bug, remove eventually
 def _debug_callback_eager_rule(mesh, *args, callback: Callable[..., Any],
-                               effect: debugging.DebugEffect):
-  del effect
+                               effect: debugging.DebugEffect, vectorized: bool):
+  del effect, vectorized
   with core.eval_context():
     all_blocks = zip(*map(list, args))
   for (idx, device), blocks in zip(np.ndenumerate(mesh.devices), all_blocks):

@@ -231,6 +231,15 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "hello: 0\nhello: 1\n")
 
+  def test_debug_print_batching_vectorized(self):
+    @jax.vmap
+    def f(x):
+      debug_print('hello: {}', x, vectorized=True)
+    with jtu.capture_stdout() as output:
+      f(jnp.arange(2))
+      jax.effects_barrier()
+    self.assertEqual(output(), "hello: [0 1]\n")
+
   def test_debug_print_batching_with_diff_axes(self):
     @functools.partial(jax.vmap, in_axes=(0, 1))
     def f(x, y):

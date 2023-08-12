@@ -153,7 +153,8 @@ debug_lock = threading.Lock()
 
 def breakpoint(*, backend: str | None = None, filter_frames: bool = True,
                num_frames: int | None = None, ordered: bool = False,
-               token = None, **kwargs):  # pylint: disable=redefined-builtin
+               token = None, vectorized: bool = False,
+               **kwargs):  # pylint: disable=redefined-builtin
   """Enters a breakpoint at a point in a program.
 
   Args:
@@ -176,6 +177,11 @@ def breakpoint(*, backend: str | None = None, filter_frames: bool = True,
       This is returned unchanged, and should be passed back to the computation.
       If the return value is unused in the later computation, then the whole computation
       will be pruned and this breakpoint will not be run.
+    vectorized: A boolean indicating how the breakpoint should behave under
+      ``jax.vmap``. If ``False``, then the breakpoint will trigger separately for each
+      element of the batch. If ``True`` then the breakpoint will trigger once for the
+      whole batch, and any inspected values will be provided with leading batch
+      dimension.
 
   Returns:
     If `token` is passed, then its value is returned unchanged. Otherwise, returns
@@ -215,10 +221,12 @@ def breakpoint(*, backend: str | None = None, filter_frames: bool = True,
       debugger(frames, thread_id, **kwargs)
 
   if token is None:
-    debugging.debug_callback(_breakpoint_callback, *flat_args, ordered=ordered)
+    debugging.debug_callback(_breakpoint_callback, *flat_args, ordered=ordered,
+                             vectorized=vectorized)
   else:
     def _breakpoint_callback_wrapper(x, *flat_args):
       _breakpoint_callback(*flat_args)
       return x
     token, flat_args = jax.lax.stop_gradient((token, flat_args))
-    return jax.pure_callback(_breakpoint_callback_wrapper, token, token, *flat_args)
+    return jax.pure_callback(_breakpoint_callback_wrapper, token, token, *flat_args,
+                             vectorized=vectorized)
