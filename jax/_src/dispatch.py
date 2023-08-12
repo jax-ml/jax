@@ -474,13 +474,24 @@ def compile_or_get_cached(
       jax_config.config.jax_use_original_compilation_cache_key_generation,
   )
 
-  executable, compile_time_retrieved = _cache_read(
+  cache_retrieval_start = time.monotonic()
+  retrieved_executable, retrieved_compile_time = _cache_read(
       module_name, cache_key, compile_options, backend)
-  if executable is not None:
-    # TODO(b/289098047): Will instrument a metric which uses the 'compile_time'
-    # to measure the savings due to the cache hit.
+  cache_retrieval_time = time.monotonic() - cache_retrieval_start
+
+  if retrieved_executable is not None:
+    assert retrieved_compile_time is not None
     logger.info("Persistent compilation cache hit for '%s'", module_name)
-    return executable
+    record_event_duration_secs(
+        "/jax/compilation_cache/cache_retrieval_time_sec", cache_retrieval_time)
+    # TODO(b/293308239) Instrument a metric for new cache savings once the
+    # enabling flag is added.
+    # TODO(b/293308239) Remove the metric for original cache savings after the
+    # new compilation cache key implementation is fully rolled out.
+    record_event_duration_secs(
+        "/jax/compilation_cache/original_compile_time_saved_sec",
+        retrieved_compile_time - cache_retrieval_time)
+    return retrieved_executable
   else:
     start_time = time.monotonic()
     executable = backend_compile(backend, computation,

@@ -16,6 +16,7 @@ from functools import partial
 import math
 import os
 import tempfile
+from collections import Counter
 from unittest import mock
 from unittest import SkipTest
 import warnings
@@ -27,6 +28,7 @@ from jax import jit
 from jax import lax
 from jax import pmap
 from jax._src import compilation_cache as cc
+from jax._src import monitoring
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.config import persistent_cache_min_compile_time_secs
@@ -264,6 +266,42 @@ class CompilationCacheTest(jtu.JaxTestCase):
         files_in_cache = len(os.listdir(tmpdir))
         self.assertEqual(files_in_cache, 1)
 
+  def test_cache_saving_metric(self):
+    with tempfile.TemporaryDirectory() as tmpdir, persistent_cache_min_compile_time_secs(
+        2):
+      cc.initialize_cache(tmpdir)
+
+      durations = Counter()  # Map metric name to time duration.
+      def append_metric_duration(metric, duration):
+        durations[metric] += duration
+
+      monitoring.register_event_duration_secs_listener(append_metric_duration)
+
+      # Mock time to create a short compilation time, no cache saved, no cache
+      # hit, no metric recorded.
+      with mock.patch("time.monotonic", side_effect=np.arange(0, 1, 0.1)):
+        jit(lambda x: x + 1)(1)
+
+      jit(lambda x: x + 1)(1)
+      self.assertNotIn(
+          "/jax/compilation_cache/cache_retrieval_time_sec", durations)
+      self.assertNotIn(
+          "/jax/compilation_cache/original_compile_time_saved_sec", durations)
+
+      # Mock time to create a long compilation time, metrics increamented with a
+      # cache hit.
+      with mock.patch("time.monotonic", side_effect=np.arange(0, 100, 10)):
+        jit(lambda x: x + 2)(1)
+
+      jit(lambda x: x + 2)(1)
+      self.assertGreater(
+          durations["/jax/compilation_cache/cache_retrieval_time_sec"], 0)
+      self.assertGreater(
+          durations["/jax/compilation_cache/original_compile_time_saved_sec"],
+          0)
+
+      # Unregister the listener added in this test case.
+      monitoring._unregister_event_duration_listener_by_index(-1)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
