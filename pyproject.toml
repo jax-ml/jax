@@ -70,6 +70,7 @@ filterwarnings = [
     # https://github.com/openxla/xla/commit/fb9dc3db0999bf14c78d95cb7c3aa6815221ddc7)
     "ignore:ml_dtypes.float8_e4m3b11 is deprecated.",
     "ignore:JAX_USE_PJRT_C_API_ON_TPU=false will no longer be supported.*:UserWarning",
+    "ignore:np.find_common_type is deprecated.*:DeprecationWarning",
 ]
 doctest_optionflags = [
     "NUMBER",
