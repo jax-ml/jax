@@ -280,7 +280,7 @@ def jit(
     ... def selu(x, alpha=1.67, lmbda=1.05):
     ...   return lmbda * jax.numpy.where(x > 0, x, alpha * jax.numpy.exp(x) - alpha)
     >>>
-    >>> key = jax.random.PRNGKey(0)
+    >>> key = jax.random.key(0)
     >>> x = jax.random.normal(key, (10,))
     >>> print(selu(x))  # doctest: +SKIP
     [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
