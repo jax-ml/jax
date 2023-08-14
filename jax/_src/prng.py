@@ -362,8 +362,8 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   # to remove stackables altogether? This may be the only application.
 
   def __repr__(self):
-    return (f'{self.__class__.__name__}[{self.impl.tag}]'
-            f' {{ {self._base_array} }}')
+    return (f'Array({self.shape}, dtype={self.dtype.name}) overlaying:\n'
+            f'{self._base_array}')
 
   def pprint(self):
     pp_keys = pp.text('shape = ') + pp.text(str(self.shape))
