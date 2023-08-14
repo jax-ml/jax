@@ -1,31 +1,6 @@
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
-
-# To update XLA to a new revision,
-# a) update URL and strip_prefix to the new git commit hash
-# b) get the sha256 hash of the commit by running:
-#    curl -L https://github.com/openxla/xla/archive/<git hash>.tar.gz | sha256sum
-#    and update the sha256 with the result.
-http_archive(
-    name = "xla",
-    sha256 = "45b1d9b0a25130b5805184278e0e3342ed95b7638c1a1fc6fd663188e6784401",
-    strip_prefix = "xla-9f26b9390f5a5c565a13925731de749be8a760be",
-    urls = [
-        "https://github.com/openxla/xla/archive/9f26b9390f5a5c565a13925731de749be8a760be.tar.gz",
-    ],
-)
-
-# For development, one often wants to make changes to the TF repository as well
-# as the JAX repository. You can override the pinned repository above with a
-# local checkout by either:
-# a) overriding the TF repository on the build.py command line by passing a flag
-#    like:
-#    python build/build.py --bazel_options=--override_repository=xla=/path/to/xla
-#    or
-# b) by commenting out the http_archive above and uncommenting the following:
-# local_repository(
-#    name = "xla",
-#    path = "/path/to/xla",
-# )
+# The XLA commit is determined by third_party/xla/workspace.bzl.
+load("//third_party/xla:workspace.bzl", jax_xla_workspace = "repo")
+jax_xla_workspace()
 
 load("//third_party/ducc:workspace.bzl", ducc = "repo")
 ducc()
