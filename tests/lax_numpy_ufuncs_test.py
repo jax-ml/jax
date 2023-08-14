@@ -131,7 +131,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jtu.sample_product(
       SCALAR_FUNCS,
       [{'shape': shape, 'axis': axis}
-       for shape in broadcast_compatible_shapes
+       for shape in nonscalar_shapes
        for axis in [None, *range(-len(shape), len(shape))]],
       dtype=jtu.dtypes.floating,
   )
@@ -150,7 +150,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jtu.sample_product(
       SCALAR_FUNCS,
       [{'shape': shape, 'axis': axis}
-       for shape in broadcast_compatible_shapes
+       for shape in nonscalar_shapes
        for axis in range(-len(shape), len(shape))],
       dtype=jtu.dtypes.floating,
   )
@@ -191,7 +191,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
   @jtu.sample_product(
       SCALAR_FUNCS,
       [{'shape': shape, 'axis': axis}
-       for shape in broadcast_compatible_shapes
+       for shape in nonscalar_shapes
        for axis in [*range(-len(shape), len(shape))]],
       idx_shape=[(0,), (3,), (5,)],
       dtype=jtu.dtypes.floating,
