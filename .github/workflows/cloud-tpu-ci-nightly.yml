@@ -17,6 +17,9 @@ jobs:
     name: "TPU test (${{ matrix.jaxlib-version }}, ${{ matrix.tpu-type }})"
     runs-on: ["self-hosted", "tpu", "${{ matrix.tpu-type }}"]
     timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash -ex {0}
     steps:
       # https://opensource.google/documentation/reference/github/services#actions
       # mandates using a specific commit for non-Google actions. We use
@@ -49,6 +52,7 @@ jobs:
           python3 -c 'import sys; print("python version:", sys.version)'
           python3 -c 'import jax; print("jax version:", jax.__version__)'
           python3 -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
+          strings $HOME/.local/lib/python3.10/site-packages/libtpu/libtpu.so | grep 'Built on'
           python3 -c 'import jax; print("libtpu version:",
             jax.lib.xla_bridge.get_backend().platform_version)'
       - name: Run tests
