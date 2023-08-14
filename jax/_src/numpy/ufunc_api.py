@@ -38,13 +38,37 @@ class ufunc:
   This is a class for LAX-backed implementations of numpy ufuncs.
   """
   def __init__(self, func, /, nin, nout, *, name=None, nargs=None, identity=None):
-    # TODO(jakevdp): validate the signature of func via eval_shape.
+    # We want ufunc instances to work properly when marked as static,
+    # and for this reason it's important that their properties not be
+    # mutated. We prevent this by storing them in a dunder attribute,
+    # and accessing them via read-only properties.
     self.__name__ = name or func.__name__
-    self._call = vectorize(func)
-    self.nin = operator.index(nin)
-    self.nout = operator.index(nout)
-    self.nargs = nargs or self.nin
-    self.identity = identity
+    self.__static_props = {
+      'func': func,
+      'call': vectorize(func),
+      'nin': operator.index(nin),
+      'nout': operator.index(nout),
+      'nargs': operator.index(nargs or nin),
+      'identity': identity
+    }
+
+  _func = property(lambda self: self.__static_props['func'])
+  _call = property(lambda self: self.__static_props['call'])
+  nin = property(lambda self: self.__static_props['nin'])
+  nout = property(lambda self: self.__static_props['nout'])
+  nargs = property(lambda self: self.__static_props['nargs'])
+  identity = property(lambda self: self.__static_props['identity'])
+
+  def __hash__(self):
+    # Do not include _call, because it is computed from _func.
+    return hash((self._func, self.__name__, self.identity,
+                 self.nin, self.nout, self.nargs))
+
+  def __eq__(self, other):
+    # Do not include _call, because it is computed from _func.
+    return isinstance(other, ufunc) and (
+      (self._func, self.__name__, self.identity, self.nin, self.nout, self.nargs) ==
+      (other._func, other.__name__, other.identity, other.nin, other.nout, other.nargs))
 
   def __repr__(self):
     return f"<jnp.ufunc '{self.__name__}'>"
@@ -57,6 +81,7 @@ class ufunc:
     return self._call(*args, **kwargs)
 
   @_wraps(np.ufunc.reduce, module="numpy.ufunc")
+  @partial(jax.jit, static_argnames=['self', 'axis', 'dtype', 'out', 'keepdims'])
   def reduce(self, a, axis=0, dtype=None, out=None, keepdims=False, initial=None, where=None):
     if self.nin != 2:
       raise ValueError("reduce only supported for binary ufuncs")
@@ -120,6 +145,7 @@ class ufunc:
     return result
 
   @_wraps(np.ufunc.accumulate, module="numpy.ufunc")
+  @partial(jax.jit, static_argnames=['self', 'axis', 'dtype'])
   def accumulate(self, a, axis=0, dtype=None, out=None):
     if self.nin != 2:
       raise ValueError("accumulate only supported for binary ufuncs")
@@ -150,6 +176,7 @@ class ufunc:
     return _moveaxis(result, 0, axis)
 
   @_wraps(np.ufunc.accumulate, module="numpy.ufunc")
+  @partial(jax.jit, static_argnums=[0], static_argnames=['inplace'])
   def at(self, a, indices, b=None, /, *, inplace=True):
     if inplace:
       raise NotImplementedError(_AT_INPLACE_WARNING)
@@ -184,6 +211,7 @@ class ufunc:
     return carry[1]
 
   @_wraps(np.ufunc.reduceat, module="numpy.ufunc")
+  @partial(jax.jit, static_argnames=['self', 'axis', 'dtype'])
   def reduceat(self, a, indices, axis=0, dtype=None, out=None):
     if self.nin != 2:
       raise ValueError("reduceat only supported for binary ufuncs")
@@ -220,6 +248,7 @@ class ufunc:
     return jax.lax.fori_loop(0, a.shape[axis], loop_body, out)
 
   @_wraps(np.ufunc.outer, module="numpy.ufunc")
+  @partial(jax.jit, static_argnums=[0])
   def outer(self, A, B, /, **kwargs):
     if self.nin != 2:
       raise ValueError("outer only supported for binary ufuncs")
