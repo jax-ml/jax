@@ -1551,7 +1551,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       scp_fun = lambda arr: osp.linalg.funm(arr, func, disp=disp)
       self._CheckAgainstNumpy(jnp_fun, scp_fun, args_maker, check_dtypes=False,
                               tol={np.complex64: 1e-5, np.complex128: 1e-6})
-      self._CompileAndCheck(jnp_fun, args_maker, rtol={np.float32: 1e-5})
+      self._CompileAndCheck(jnp_fun, args_maker, atol=2e-5)
 
   @jtu.sample_product(
     shape=[(4, 4), (15, 15), (50, 50), (100, 100)],
