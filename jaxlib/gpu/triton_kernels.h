@@ -8,10 +8,8 @@
 #include <variant>
 #include <vector>
 
-#include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/triton.pb.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/service/custom_call_status.h"
@@ -100,8 +98,6 @@ class AutotunedKernelCall {
   // (input buffer idx, output buffer idx, size)
   std::vector<std::tuple<size_t, size_t, size_t>> input_output_aliases_;
 };
-
-absl::StatusOr<std::string> ZlibUncompress(absl::string_view compressed);
 
 }  // namespace jax::JAX_GPU_NAMESPACE
 

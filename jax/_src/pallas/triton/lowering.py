@@ -1687,12 +1687,12 @@ def pallas_call_lowering(
   if triton_params is None:
     triton_params = {}
   serialized_metadata = triton_params.get("serialized_metadata", b"")
-
+  kernel_call_proto = kernel_call.to_proto(name, serialized_metadata)
   return hlo_helpers.custom_call(
       call_target_name=name,
       out_types=out_types,
       operands=in_nodes,
-      backend_config=zlib.compress(kernel_call.to_proto(serialized_metadata)),
+      backend_config=zlib.compress(kernel_call_proto),
       operand_layouts=triton_lib.avals_to_layouts(ctx.avals_in),
       result_layouts=triton_lib.avals_to_layouts(ctx.avals_out),
       operand_output_aliases=dict(input_output_aliases),

@@ -1,7 +1,5 @@
 #include "jaxlib/gpu/triton_kernels.h"
 
-#include <zlib.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -23,6 +21,7 @@
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/triton.pb.h"
+#include "jaxlib/gpu/triton_utils.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/stream_executor/gpu/asm_compiler.h"
@@ -517,27 +516,6 @@ void TritonKernelCall(CUstream stream, void** buffers, const char* opaque,
     absl::string_view msg = result.message();
     XlaCustomCallStatusSetFailure(status, msg.data(), msg.length());
   }
-}
-
-absl::StatusOr<std::string> ZlibUncompress(absl::string_view compressed) {
-  std::string data;
-  uLongf dest_len = 5 * compressed.size();
-  while (true) {
-    data.resize(dest_len);
-    int ret = uncompress(reinterpret_cast<Bytef*>(data.data()), &dest_len,
-                         reinterpret_cast<const Bytef*>(compressed.data()),
-                         compressed.size());
-    if (ret == Z_OK) {
-      // `uncompress` overwrites `dest_len` with the uncompressed size.
-      data.resize(dest_len);
-      break;
-    } else if (ret == Z_BUF_ERROR) {
-      dest_len *= 2;  // The string buffer wasn't large enough.
-    } else {
-      return absl::InvalidArgumentError("Failed to uncompress opaque data.");
-    }
-  }
-  return data;
 }
 
 }  // namespace jax::JAX_GPU_NAMESPACE
