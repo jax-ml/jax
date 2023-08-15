@@ -1356,6 +1356,14 @@ threefry_prng_impl = PRNGImpl(
     fold_in=threefry_fold_in,
     tag='fry')
 
+threefry_partitionable_prng_impl = PRNGImpl(
+    key_shape=(2,),
+    seed=threefry_seed,
+    split=_threefry_split_foldlike,
+    random_bits=_threefry_random_bits_partitionable,
+    fold_in=threefry_fold_in,
+    tag='fry_partitionable')
+
 
 # -- RngBitGenerator PRNG implementation
 

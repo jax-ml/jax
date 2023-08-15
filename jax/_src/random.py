@@ -98,6 +98,7 @@ def _random_bits(key: prng.PRNGKeyArray, bit_width, shape) -> Array:
 
 PRNG_IMPLS = {
     'threefry2x32': prng.threefry_prng_impl,
+    'threefry2x32_partitionable': prng.threefry_partitionable_prng_impl,
     'rbg': prng.rbg_prng_impl,
     'unsafe_rbg': prng.unsafe_rbg_prng_impl,
 }

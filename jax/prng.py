@@ -21,6 +21,7 @@ from jax._src.prng import (
   threefry2x32_p as threefry2x32_p,
   threefry_2x32 as threefry_2x32,
   threefry_prng_impl as threefry_prng_impl,
+  threefry_partitionable_prng_impl as threefry_partitionable_prng_impl,
   rbg_prng_impl as rbg_prng_impl,
   unsafe_rbg_prng_impl as unsafe_rbg_prng_impl,
 )
