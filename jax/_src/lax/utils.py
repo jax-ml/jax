@@ -23,7 +23,6 @@ from typing import Callable
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
-from jax._src.interpreters import xla
 from jax._src.util import safe_zip
 from jax._src.lib import xla_client
 
@@ -36,7 +35,7 @@ _input_dtype: Callable = lambda *args, **_: dtypes.canonicalize_dtype(args[0].dt
 def _argnum_weak_type(*argnums):
   return lambda *args, **_: all(args[i].weak_type for i in argnums)
 
-def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
+def standard_primitive(shape_rule, dtype_rule, name,
                        weak_type_rule=None, named_shape_rule=None):
   weak_type_rule = weak_type_rule or _standard_weak_type_rule
   named_shape_rule = named_shape_rule or standard_named_shape_rule
@@ -45,8 +44,6 @@ def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
   prim.def_abstract_eval(
       partial(standard_abstract_eval, prim, shape_rule, dtype_rule,
               weak_type_rule, named_shape_rule))
-  if translation_rule is not None:
-    xla.register_translation(prim, translation_rule)
   return prim
 
 def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,

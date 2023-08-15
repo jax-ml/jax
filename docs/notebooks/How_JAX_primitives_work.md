@@ -354,23 +354,23 @@ for most of them. However, XLA includes a `CustomCall` operation that can be use
 ```{code-cell} ipython3
 :id: FYQWSSjKJaWP
 
-from jax._src.lib import xla_client
-@trace("multiply_add_xla_translation")
-def multiply_add_xla_translation(ctx, avals_in, avals_out, xc, yc, zc):
+from jax._src.lib.mlir.dialects import hlo
+@trace("multiply_add_lowering")
+def multiply_add_lowering(ctx, xc, yc, zc):
   """The compilation to XLA of the primitive.
 
-  Given an XlaBuilder and XlaOps for each argument, return the XlaOp for the
-  result of the function.
+  Given an mlir.ir.Value for each argument, return the mlir.ir.Values for
+  the results of the function.
 
   Does not need to be a JAX-traceable function.
   """
-  return [xla_client.ops.Add(xla_client.ops.Mul(xc, yc), zc)]
+  return [hlo.AddOp(hlo.MulOp(xc, yc), zc).result]
 
-# Now we register the XLA compilation rule with JAX
+# Now we register the lowering rule with JAX
 # For GPU see the [Custom operations for GPUs](https://jax.readthedocs.io/en/latest/Custom_Operation_for_GPUs.html)
 # TODO: TPU?
-from jax.interpreters import xla
-xla.register_translation(multiply_add_p, multiply_add_xla_translation, platform='cpu')
+from jax.interpreters import mlir
+mlir.register_lowering(multiply_add_p, multiply_add_lowering, platform='cpu')
 ```
 
 +++ {"id": "K98LX-VaJkFu"}
