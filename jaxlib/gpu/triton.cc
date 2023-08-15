@@ -114,9 +114,6 @@ PYBIND11_MODULE(_triton, m) {
         return py::bytes(proto.SerializeAsString());
       });
 
-  m.def("get_custom_call",
-        [] { return EncapsulateFunction(&TritonKernelCall); });
-
   m.def("get_compute_capability", [](int device) -> absl::StatusOr<int> {
     int major, minor;
     CUDA_RETURN_IF_ERROR(cuInit(device));
