@@ -40,6 +40,7 @@ from jax.experimental.shard_map import shard_map
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 import jax.numpy as jnp
+from jax._src import compiler
 from jax._src import xla_bridge
 
 import numpy as np
@@ -108,7 +109,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       device_assignment = np.arange(num_partitions * num_replicas)
       device_assignment = np.reshape(device_assignment, (-1, num_partitions))
       use_spmd_partitioning = num_partitions > 1
-      compile_options = xla_bridge.get_compile_options(
+      compile_options = compiler.get_compile_options(
           num_replicas=num_replicas,
           num_partitions=num_partitions,
           device_assignment=device_assignment,

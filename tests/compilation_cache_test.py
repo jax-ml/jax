@@ -28,6 +28,7 @@ from jax import jit
 from jax import lax
 from jax import pmap
 from jax._src import compilation_cache as cc
+from jax._src import compiler
 from jax._src import monitoring
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -78,7 +79,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
       cc.initialize_cache(tmpdir)
       computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
       devices = np.array([[jax.local_devices()[0]]])
-      compile_options = xla_bridge.get_compile_options(
+      compile_options = compiler.get_compile_options(
           num_replicas=1, num_partitions=1
       )
       backend = xla_bridge.get_backend()
@@ -93,7 +94,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
       cc.initialize_cache(tmpdir)
       computation1 = str(jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir())
       computation2 = str(jax.jit(lambda x, y: x * y).lower(2, 2).compiler_ir())
-      compile_options = xla_bridge.get_compile_options(
+      compile_options = compiler.get_compile_options(
           num_replicas=1, num_partitions=1
       )
       backend = xla_bridge.get_backend()
@@ -117,7 +118,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
           .compiler_ir()
       )
       devices = np.array([[jax.local_devices()[0]]])
-      compile_options = xla_bridge.get_compile_options(
+      compile_options = compiler.get_compile_options(
           num_replicas=1, num_partitions=1
       )
       backend = xla_bridge.get_backend()

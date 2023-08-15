@@ -16,7 +16,10 @@
 from jax._src.xla_bridge import (
   default_backend as default_backend,
   get_backend as get_backend,
-  get_compile_options as get_compile_options,
   xla_client as xla_client,
   _backends as _backends,
+)
+
+from jax._src.compiler import (
+  get_compile_options as get_compile_options,
 )

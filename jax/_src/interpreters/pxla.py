@@ -34,6 +34,7 @@ from jax.errors import JAXTypeError
 
 from jax._src import api_util
 from jax._src import core
+from jax._src import compiler
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
@@ -903,7 +904,7 @@ class UnloadedPmapExecutable:
     num_partitions = 1
     device_assignment: np.ndarray = np.array(devices).reshape(
         (replicas.num_global_replicas, num_partitions))
-    compile_options = xb.get_compile_options(
+    compile_options = compiler.get_compile_options(
         num_replicas=replicas.num_global_replicas,
         num_partitions=num_partitions,
         device_assignment=device_assignment,
@@ -953,7 +954,7 @@ class UnloadedPmapExecutable:
     with dispatch.log_elapsed_time(
         "Finished XLA compilation of {fun_name} in {elapsed_time} sec",
         fun_name=pci.name, event=dispatch.BACKEND_COMPILE_EVENT):
-      compiled = dispatch.compile_or_get_cached(
+      compiled = compiler.compile_or_get_cached(
           pci.backend, hlo, device_assignment, compile_options,
           host_callbacks)
 
@@ -2482,7 +2483,7 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
   fdo_profile = (None if compiler_options is None else
                  compiler_options.pop("fdo_profile", None))
 
-  compile_options = xb.get_compile_options(
+  compile_options = compiler.get_compile_options(
       num_replicas=num_replicas,
       num_partitions=num_partitions,
       device_assignment=xla_device_assignment,
@@ -2508,7 +2509,7 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
   with dispatch.log_elapsed_time(
       "Finished XLA compilation of {fun_name} in {elapsed_time} sec",
       fun_name=name, event=dispatch.BACKEND_COMPILE_EVENT):
-    xla_executable = dispatch.compile_or_get_cached(
+    xla_executable = compiler.compile_or_get_cached(
         backend, computation, dev, compile_options, host_callbacks)
   return xla_executable, compile_options
 

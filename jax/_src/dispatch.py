@@ -24,22 +24,15 @@ import itertools
 import time
 from typing import Any, Callable, NamedTuple
 import logging
-import os
-import re
 import threading
-import warnings
 
 import numpy as np
 
 from jax._src import basearray
-from jax._src import compilation_cache
-from jax._src import config as jax_config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import api_util
-from jax._src import path
-from jax._src import profiler
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
@@ -50,7 +43,6 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
-from jax._src.lib.mlir import ir
 from jax._src.lib import xla_client as xc
 from jax._src.monitoring import record_event_duration_secs
 from jax._src.partition_spec import PartitionSpec
@@ -63,13 +55,6 @@ from jax._src.sharding_impls import (
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
 JAXPR_TO_MLIR_MODULE_EVENT = "/jax/core/compile/jaxpr_to_mlir_module_duration"
 BACKEND_COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
-
-_DUMP_IR_TO = jax_config.DEFINE_string(
-    'jax_dump_ir_to', os.getenv('JAX_DUMP_IR_TO', ''),
-    help="Path to which the IR that is emitted by JAX as input to the "
-         "compiler should be dumped as text files. Optional. If omitted, JAX "
-         "will not dump IR.")
-
 
 traceback_util.register_exclusion(__file__)
 
@@ -403,162 +388,6 @@ def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
       raise FloatingPointError(f"invalid value (nan) encountered in {name}")
     if config.jax_debug_infs and np.any(np.isinf(np.asarray(buf))):
       raise FloatingPointError(f"invalid value (inf) encountered in {name}")
-
-
-@profiler.annotate_function
-def backend_compile(
-    backend: Backend,
-    module: ir.Module,
-    options: xc.CompileOptions,
-    host_callbacks: Sequence[Any],
-) -> xc.LoadedExecutable:
-  # Convert ir.Module to a string representation, unless the
-  # back-end expliclity flags the ability to handle a module directly
-  # (avoiding the overhead of back and forth conversions)
-  if getattr(backend, "needs_str_ir", True):
-    built_c = mlir.module_to_bytecode(module)
-  else:
-    built_c = module
-
-  # we use a separate function call to ensure that XLA compilation appears
-  # separately in Python profiling results
-  if host_callbacks:
-    return backend.compile(built_c, compile_options=options,
-                           host_callbacks=host_callbacks)
-  # Some backends don't have `host_callbacks` option yet
-  # TODO(sharadmv): remove this fallback when all backends allow `compile`
-  # to take in `host_callbacks`
-  return backend.compile(built_c, compile_options=options)
-
-
-_ir_dump_counter = itertools.count()
-
-def _make_string_safe_for_filename(s: str) -> str:
-  return re.sub(r'[^\w.)( -]', '', s)
-
-def _dump_ir_to_file(name: str, ir: str):
-  id = next(_ir_dump_counter)
-  name = f"jax_ir{id}_{_make_string_safe_for_filename(name)}.mlir"
-  name = path.Path(_DUMP_IR_TO.value) / name
-  name.write_text(ir)
-
-
-def compile_or_get_cached(
-    backend: Backend,
-    computation: ir.Module,
-    devices: np.ndarray,
-    compile_options: xc.CompileOptions,
-    host_callbacks: Sequence[Any],
-) -> xc.LoadedExecutable:
-  sym_name = computation.operation.attributes['sym_name']
-  module_name = ir.StringAttr(sym_name).value
-
-  if _DUMP_IR_TO.value:
-    _dump_ir_to_file(module_name, mlir.module_to_string(computation))
-
-  # Persistent compilation cache only implemented on TPU and GPU.
-  # TODO(skye): add warning when initializing cache on unsupported default platform
-  supported_platforms = ["tpu", "gpu"]
-  # (b/233850967) CPU caching can be enabled if XLA Runtime is enabled.
-  if "--xla_cpu_use_xla_runtime=true" in os.environ.get("XLA_FLAGS", ""):
-    supported_platforms.append("cpu")
-  use_compilation_cache = (compilation_cache.is_initialized() and
-                           backend.platform in supported_platforms)
-
-  if not use_compilation_cache:
-    return backend_compile(backend, computation, compile_options,
-                           host_callbacks)
-
-  cache_key = compilation_cache.get_cache_key(
-      computation, devices, compile_options, backend,
-      jax_config.config.jax_use_original_compilation_cache_key_generation,
-  )
-
-  cache_retrieval_start = time.monotonic()
-  retrieved_executable, retrieved_compile_time = _cache_read(
-      module_name, cache_key, compile_options, backend)
-  cache_retrieval_time = time.monotonic() - cache_retrieval_start
-
-  if retrieved_executable is not None:
-    assert retrieved_compile_time is not None
-    logger.info("Persistent compilation cache hit for '%s'", module_name)
-    record_event_duration_secs(
-        "/jax/compilation_cache/cache_retrieval_time_sec", cache_retrieval_time)
-    # TODO(b/293308239) Instrument a metric for new cache savings once the
-    # enabling flag is added.
-    # TODO(b/293308239) Remove the metric for original cache savings after the
-    # new compilation cache key implementation is fully rolled out.
-    record_event_duration_secs(
-        "/jax/compilation_cache/original_compile_time_saved_sec",
-        retrieved_compile_time - cache_retrieval_time)
-    return retrieved_executable
-  else:
-    start_time = time.monotonic()
-    executable = backend_compile(backend, computation,
-                                compile_options, host_callbacks)
-    compile_time = time.monotonic() - start_time
-    _cache_write(cache_key, compile_time, module_name, backend, executable,
-                 host_callbacks)
-    return executable
-
-
-def _cache_read(
-    module_name: str, cache_key: str, compile_options: xc.CompileOptions,
-    backend: Backend
-) -> tuple[xc.LoadedExecutable | None, int | None]:
-  """Looks up the `computation` and it's compilation time in the persistent
-  compilation cache repository.
-  """
-  try:
-    return compilation_cache.get_executable_and_time(
-        cache_key, compile_options, backend)
-  except Exception as ex:
-    if config.jax_raise_persistent_cache_errors:
-      raise
-    warnings.warn(
-        f"Error reading persistent compilation cache entry for "
-        f"'{module_name}': {type(ex).__name__}: {ex}")
-    return None, None
-
-
-def _cache_write(cache_key: str,
-                 compile_time_secs: float,
-                 module_name: str,
-                 backend: Backend, executable: xc.LoadedExecutable,
-                 host_callbacks: Sequence[Any]) -> None:
-  """Writes the `serialized_computation` and its compilation time to the
-  persistent compilation cache repository.
-  """
-  if host_callbacks:
-    logger.info(
-        "Not writing persistent cache entry for '%s' because it uses host "
-        "callbacks (e.g. from jax.debug.print or breakpoint)", module_name)
-    return
-
-  min_compile_time = config.jax_persistent_cache_min_compile_time_secs
-  if min_compile_time:
-    if compile_time_secs < min_compile_time:
-      logger.info(
-          "Not writing persistent cache entry for '%s' because it took < %.2f "
-          "seconds to compile (%.2fs)", module_name, min_compile_time,
-          compile_time_secs)
-      return
-    else:
-      logger.info(
-          "'%s' took at least %.2f seconds to compile (%.2fs), writing "
-          "persistent cache entry", module_name, min_compile_time,
-          compile_time_secs)
-
-  try:
-    compilation_cache.put_executable_and_time(
-        cache_key, module_name, executable, backend, int(compile_time_secs))
-  except Exception as ex:
-    if config.jax_raise_persistent_cache_errors:
-      raise
-    warnings.warn(
-        f"Error writing persistent compilation cache entry for "
-        f"'{module_name}': {type(ex).__name__}: {ex}")
-
 
 # TODO(yashkatariya): Generalize is_compatible_aval (maybe renamed) and use that
 # to check if shardings are compatible with the input.

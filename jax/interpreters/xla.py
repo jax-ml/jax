@@ -35,9 +35,12 @@ from jax._src.core import (
 )
 
 # TODO(phawkins): update users.
+from jax._src.compiler import (
+  backend_compile as backend_compile,
+)
+
 from jax._src.dispatch import (
   apply_primitive as apply_primitive,
-  backend_compile as backend_compile,
 )
 
 from jax._src.sharding_impls import (

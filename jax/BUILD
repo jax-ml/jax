@@ -190,6 +190,7 @@ py_library_providing_imports_info(
         ":basearray",
         ":cloud_tpu_init",
         ":compilation_cache_internal",
+        ":compiler",
         ":config",
         ":core",
         ":custom_api_util",
@@ -318,6 +319,20 @@ pytype_strict_library(
 pytype_strict_library(
     name = "logging_config",
     srcs = ["_src/logging_config.py"],
+)
+
+pytype_strict_library(
+    name = "compiler",
+    srcs = ["_src/compiler.py"],
+    deps = [
+        ":compilation_cache_internal",
+        ":config",
+        ":monitoring",
+        ":path",
+        ":profiler",
+        ":traceback_util",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -727,7 +742,7 @@ pytype_strict_library(
         ":traceback_util",
         ":util",
         "//jax/_src/lib",
-    ] + py_deps("numpy"),
+    ],
 )
 
 # Public JAX libraries below this point.

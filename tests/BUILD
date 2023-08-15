@@ -911,6 +911,7 @@ py_test(
     data = ["testdata/example_pjrt_plugin_config.json"],
     deps = [
         "//jax",
+        "//jax:compiler",
         "//jax:test_util",
     ] + py_deps("absl/logging"),
 )
@@ -928,13 +929,19 @@ py_test(
 jax_test(
     name = "compilation_cache_test",
     srcs = ["compilation_cache_test.py"],
-    deps = ["//jax:compilation_cache_internal"],
+    deps = [
+        "//jax:compilation_cache_internal",
+        "//jax:compiler",
+    ],
 )
 
 jax_test(
     name = "cache_key_test",
     srcs = ["cache_key_test.py"],
-    deps = ["//jax:cache_key"],
+    deps = [
+        "//jax:cache_key",
+        "//jax:compiler",
+    ],
 )
 
 jax_test(

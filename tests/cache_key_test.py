@@ -24,6 +24,7 @@ import jax
 from jax import config
 from jax import lax
 from jax._src import cache_key
+from jax._src import compiler
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.config import compilation_cache_include_metadata_in_key
@@ -38,7 +39,7 @@ FLAGS = config.FLAGS
 class CacheKeyTest(jtu.JaxTestCase):
 
   def test_compile_options(self):
-    compile_options_not_filled = xla_bridge.get_compile_options(
+    compile_options_not_filled = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
     compile_options_filled = self.filled_compile_options()
@@ -55,7 +56,7 @@ class CacheKeyTest(jtu.JaxTestCase):
     self.assertNotEqual(filled_hash1, not_filled_hash3)
 
   def test_executable_build_options(self):
-    compile_options_not_filled = xla_bridge.get_compile_options(
+    compile_options_not_filled = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
     compile_options_filled = self.filled_compile_options()
@@ -75,7 +76,7 @@ class CacheKeyTest(jtu.JaxTestCase):
     self.assertNotEqual(filled_hash1, not_filled_hash3)
 
   def test_debug_options(self):
-    compile_options = xla_bridge.get_compile_options(
+    compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
     hash1 = self.get_hashed_value(
@@ -141,7 +142,7 @@ class CacheKeyTest(jtu.JaxTestCase):
   def test_same_key(self):
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
     devices = np.array([[jax.local_devices()[0]]])
-    compile_options = xla_bridge.get_compile_options(
+    compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
     backend = xla_bridge.get_backend()
@@ -153,7 +154,7 @@ class CacheKeyTest(jtu.JaxTestCase):
   def test_different_key(self):
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
     devices = np.array([[jax.local_devices()[0]]])
-    compile_options_not_filled = xla_bridge.get_compile_options(
+    compile_options_not_filled = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
     compile_options_filled = self.filled_compile_options()
@@ -169,7 +170,7 @@ class CacheKeyTest(jtu.JaxTestCase):
     computation1 = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
     computation2 = jax.jit(lambda x, y: x * y).lower(2, 2).compiler_ir()
     devices = np.array([[jax.local_devices()[0]]])
-    compile_options = xla_bridge.get_compile_options(
+    compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
     backend = xla_bridge.get_backend()
@@ -186,7 +187,7 @@ class CacheKeyTest(jtu.JaxTestCase):
     computation1 = jax.jit(f).lower(1, 1).compiler_ir()
     computation2 = jax.jit(g).lower(2, 3).compiler_ir()
     devices = np.array([[jax.local_devices()[0]]])
-    compile_options = xla_bridge.get_compile_options(
+    compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
     backend = xla_bridge.get_backend()
@@ -201,7 +202,7 @@ class CacheKeyTest(jtu.JaxTestCase):
 
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
     devices = np.array([[jax.local_devices()[0]]])
-    compile_options = xla_bridge.get_compile_options(
+    compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
     )
     backend = xla_bridge.get_backend()

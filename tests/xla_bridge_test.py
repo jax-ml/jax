@@ -19,6 +19,7 @@ import warnings
 
 from absl import logging
 from absl.testing import absltest
+from jax._src import compiler
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
@@ -35,7 +36,7 @@ mock = absltest.mock
 class XlaBridgeTest(jtu.JaxTestCase):
 
   def test_set_device_assignment_no_partition(self):
-    compile_options = xb.get_compile_options(
+    compile_options = compiler.get_compile_options(
         num_replicas=4, num_partitions=1, device_assignment=[0, 1, 2, 3])
     expected_device_assignment = ("Computations: 1 Replicas: 4\nComputation 0: "
                                   "0 1 2 3 \n")
@@ -43,7 +44,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
                      expected_device_assignment)
 
   def test_set_device_assignment_with_partition(self):
-    compile_options = xb.get_compile_options(
+    compile_options = compiler.get_compile_options(
         num_replicas=2, num_partitions=2, device_assignment=[[0, 1], [2, 3]])
     expected_device_assignment = ("Computations: 2 Replicas: 2\nComputation 0: "
                                   "0 2 \nComputation 1: 1 3 \n")
@@ -51,7 +52,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
                      expected_device_assignment)
 
   def test_set_fdo_profile(self):
-    compile_options = xb.get_compile_options(
+    compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1, fdo_profile=b"test_profile"
     )
     self.assertEqual(
@@ -63,10 +64,10 @@ class XlaBridgeTest(jtu.JaxTestCase):
     jax_flag_profile = 1
     another_profile = 2
     with jax_config.jax_xla_profile_version(jax_flag_profile):
-      with mock.patch.object(xb, "get_latest_profile_version",
+      with mock.patch.object(compiler, "get_latest_profile_version",
                              side_effect=lambda: another_profile):
         self.assertEqual(
-            xb.get_compile_options(
+            compiler.get_compile_options(
                 num_replicas=3, num_partitions=4
             ).profile_version,
             jax_flag_profile,
@@ -75,10 +76,10 @@ class XlaBridgeTest(jtu.JaxTestCase):
     # Use whatever non-zero value the function get_latest_profile_version
     # returns if --jax_xla_profile_version is not set.
     profile_version = 1
-    with mock.patch.object(xb, "get_latest_profile_version",
+    with mock.patch.object(compiler, "get_latest_profile_version",
                            side_effect=lambda: profile_version):
       self.assertEqual(
-          xb.get_compile_options(
+          compiler.get_compile_options(
               num_replicas=3, num_partitions=4
           ).profile_version,
           profile_version,
@@ -89,10 +90,10 @@ class XlaBridgeTest(jtu.JaxTestCase):
     # retrieve the latest profile later.
     error_return = 0
     no_profile_dont_retrieve = -1
-    with mock.patch.object(xb, "get_latest_profile_version",
+    with mock.patch.object(compiler, "get_latest_profile_version",
                            side_effect=lambda: error_return):
       self.assertEqual(
-          xb.get_compile_options(
+          compiler.get_compile_options(
               num_replicas=3, num_partitions=4
           ).profile_version,
           no_profile_dont_retrieve,

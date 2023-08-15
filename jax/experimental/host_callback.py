@@ -517,6 +517,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src import ad_checkpoint
+from jax._src import compiler
 from jax._src import dispatch
 from jax._src import pretty_printer as pp
 from jax._src import sharding_impls
@@ -2014,7 +2015,7 @@ def _initialize_outfeed_receiver(
       _callback_handler_data.receiver = outfeed_receiver_module.start(
           _callback_input_received, tuple(clients_with_outfeed),
           max_callback_queue_size_bytes,
-          xb.get_compile_options(1, 1).executable_build_options)  # type:ignore
+          compiler.get_compile_options(1, 1).executable_build_options)  # type:ignore
 
     def exit_handler():
       # Prevent logging usage during compilation, gives errors under pytest
