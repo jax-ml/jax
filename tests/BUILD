@@ -782,7 +782,7 @@ jax_test(
 jax_test(
     name = "sparse_test",
     srcs = ["sparse_test.py"],
-    args = ["--jax_bcoo_cusparse_lowering=true"],
+    args = ["--jax_bcoo_cusparse_lowering=false"],  # Cusparse lowerings fail in CUDA 12
     backend_tags = {
         "cpu": [
             "nomsan",  # Times out
@@ -817,7 +817,7 @@ jax_test(
 jax_test(
     name = "sparsify_test",
     srcs = ["sparsify_test.py"],
-    args = ["--jax_bcoo_cusparse_lowering=true"],
+    args = ["--jax_bcoo_cusparse_lowering=false"],  # Cusparse lowerings fail in CUDA 12
     backend_tags = {
         "cpu": [
             "noasan",  # Times out under asan
