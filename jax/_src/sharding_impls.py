@@ -166,24 +166,6 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
   return out
 
 
-# This is an optimization to get the memory kinds associated with the local
-# devices. This is because in McJAX, checking if the memory kind input by user
-# is correct requires doing `local_devices()[0].memory(inp)` which is expensive
-# because calculating the local devices is expensive. So cache on xc.Client and
-# find all the memories associated only once since the client does not change.
-@functools.lru_cache
-def _mem_kinds(client: xc.Client) -> set[str]:
-  return set(m.kind for m in client.local_devices()[0].addressable_memories())
-
-def _check_mem_kind(device: xc.Device, mk):
-  mem_kinds = _mem_kinds(device.client)
-  if mk not in mem_kinds:
-    raise ValueError(
-        f'Could not find memory addressable by device {device.device_kind}.'
-        f' Device {device.device_kind} can address the following memory kinds:'
-        f' {mem_kinds}. Got memory kind: {mk}')
-
-
 @use_cpp_class(xc.NamedSharding)
 class NamedSharding(XLACompatibleSharding):
   r"""A :class:`NamedSharding` expresses sharding using named axes.
@@ -237,10 +219,6 @@ class NamedSharding(XLACompatibleSharding):
     self._preprocess()
 
   def _preprocess(self):
-    if self.memory_kind is not None:
-      # Will error if memory_kind does not exist on the device.
-      _check_mem_kind(self.mesh.devices.flat[0], self.memory_kind)
-
     # This split exists because you can pass `_parsed_pspec` that has been
     # modified from the original. For example: Adding extra dimension to
     # axis_resources for vmap handlers. In such cases you need to preserve the
@@ -584,9 +562,6 @@ def _op_sharding_to_pos_sharding(
   ids = np.array(
       [DeviceIdSet(name, i) for i in op_sharding.tile_assignment_devices()]
   )
-  if memory_kind is not None:
-    # Will error if memory_kind does not exist on the device.
-    _check_mem_kind(device_assignment[0], memory_kind)
   p = PositionalSharding._remake(tuple(device_assignment), ids,
                                  memory_kind=memory_kind)
   p = p.reshape(op_sharding.tile_assignment_dimensions())
@@ -612,12 +587,10 @@ class PositionalSharding(XLACompatibleSharding):
     name = self._devices[0].platform.upper()
     self._ids = np.array([DeviceIdSet(name, i) for i in range(devices.size)],
                          dtype='object').reshape(devices.shape)
-    if self._memory_kind is not None:
-      # Will error if memory_kind does not exist on the device.
-      _check_mem_kind(self._devices[0], self._memory_kind)
-    if xla_extension_version >= 177:
-      self._memory_kind = xc.canonicalize_memory_kind(
-          self._memory_kind, self._devices[0])
+    if xla_extension_version >= 182:
+      self._internal_device_list = xc.DeviceList(self._devices)
+      self._memory_kind = xc.check_and_canonicalize_memory_kind(
+          self._memory_kind, self._internal_device_list)
 
   @property
   def shape(self):
@@ -768,10 +741,13 @@ class GSPMDSharding(XLACompatibleSharding):
       self._hlo_sharding = op_sharding
     self._memory_kind = memory_kind
 
-  def _preprocess(self):
-    if self._memory_kind is not None:
-      # Will error if memory_kind does not exist on the device.
-      _check_mem_kind(self._devices[0], self._memory_kind)
+  if xla_extension_version < 182:
+    def _preprocess(self):
+      # Preprocessing is no longer necessary, but the method must exist for a
+      # previous release of jaxlib that calls back this method from C++>
+      # TODO(yashkatariya): Remove this method once jaxlib with
+      # xla_extension_version >= 182 is released.
+      pass
 
   def __reduce__(self):
     return (type(self), (self._devices, self._hlo_sharding.to_proto()),

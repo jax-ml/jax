@@ -1905,6 +1905,18 @@ else:
           tuple(d for d in self._device_assignment
               if d.process_index == d.client.process_index()))
 
+    @cached_property
+    def memory_kinds(self) -> tuple[str, ...]:
+      # Keep this method unimplemented as it will not be called if
+      # xla_extension_version is low.
+      raise NotImplementedError("memory_kinds is not supported")
+
+    @cached_property
+    def default_memory_kind(self) -> Optional[str]:
+      # Keep this method unimplemented as it will not be called if
+      # xla_extension_version is low.
+      raise NotImplementedError("default_memory_kind is not supported")
+
 
 @lru_cache(maxsize=2048)
 def _create_da_object(  # pytype: disable=invalid-annotation

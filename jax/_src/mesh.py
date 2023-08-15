@@ -256,6 +256,10 @@ class Mesh(contextlib.ContextDecorator):
     return tuple(self.devices.flat)
 
   @functools.cached_property
+  def _internal_device_list(self):
+    return xc.DeviceList(self._flat_devices_tuple)
+
+  @functools.cached_property
   def _flat_devices_set(self):
     return set(self.devices.flat)
 
