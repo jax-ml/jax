@@ -127,6 +127,10 @@ class PallasTest(parameterized.TestCase):
   def setUp(self):
     if jtu.device_under_test() != "gpu":
       self.skipTest("Only works on GPU")
+    try:
+      import triton  # noqa: F401
+    except ImportError:
+      self.skipTest("Triton is not installed. Skipping PallasTest.")
     super().setUp()
     if compile_jaxpr:
       compile_jaxpr.cache_clear()
