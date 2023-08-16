@@ -2794,7 +2794,7 @@ class MeshExecutable(stages.XlaExecutable):
       return outs, fastpath_data
 
     return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [],
-                        tree_util.default_registry)  # type: ignore
+                        tree_util.default_registry)
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,
