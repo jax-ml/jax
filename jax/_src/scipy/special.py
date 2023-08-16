@@ -27,7 +27,6 @@ from jax import lax
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import dtypes
-from jax._src.interpreters import ad
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact
 from jax._src.numpy.util import _wraps
@@ -67,9 +66,6 @@ The JAX version only accepts real-valued inputs.""")
 def digamma(x: ArrayLike) -> Array:
   x, = promote_args_inexact("digamma", x)
   return lax.digamma(x)
-ad.defjvp(
-    lax.digamma_p,
-    lambda g, x: lax.mul(g, polygamma(1, x)))  # type: ignore[has-type]
 
 
 @_wraps(osp_special.gammainc, module='scipy.special', update_doc=False)
@@ -285,17 +281,7 @@ def zeta(x: ArrayLike, q: Optional[ArrayLike] = None) -> Array:
 def polygamma(n: ArrayLike, x: ArrayLike) -> Array:
   assert jnp.issubdtype(lax.dtype(n), jnp.integer)
   n_arr, x_arr = promote_args_inexact("polygamma", n, x)
-  shape = lax.broadcast_shapes(n_arr.shape, x_arr.shape)
-  return _polygamma(jnp.broadcast_to(n_arr, shape), jnp.broadcast_to(x_arr, shape))
-
-
-@custom_derivatives.custom_jvp
-def _polygamma(n: ArrayLike, x: ArrayLike) -> Array:
-  dtype = lax.dtype(n).type
-  n_plus = n + dtype(1)
-  sign = dtype(1) - (n_plus % dtype(2)) * dtype(2)
-  return jnp.where(n == 0, digamma(x), sign * jnp.exp(gammaln(n_plus)) * zeta(n_plus, x))
-_polygamma.defjvps(None, lambda g, ans, n, x: lax.mul(g, _polygamma(n + 1, x)))
+  return lax.polygamma(n_arr, x_arr)
 
 
 # Normal distributions
