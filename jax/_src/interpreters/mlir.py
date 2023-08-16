@@ -1163,9 +1163,16 @@ def wrap_with_memory_kind(
                    api_version=1)
   mka = get_compute_type(memory_kind)
   dict_attr = {"_xla_compute_type": ir.StringAttr.get(mka)}
-  if is_input and mka == 'host':
+  if is_input and mka == "host":
     dict_attr.update({"_xla_buffer_placement": ir.StringAttr.get("arg")})
   op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
+  op.attributes["output_operand_aliases"] = ir.ArrayAttr.get(
+      [
+          hlo.OutputOperandAlias.get(
+              output_tuple_indices=[], operand_index=0, operand_tuple_indices=[]
+          )
+      ]
+  )
   return op.result
 
 
