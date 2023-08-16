@@ -49,6 +49,10 @@ def digamma(x: ArrayLike) -> Array:
   r"""Elementwise digamma: :math:`\psi(x)`."""
   return digamma_p.bind(x)
 
+def polygamma(m: ArrayLike, x: ArrayLike) -> Array:
+  r"""Elementwise polygamma: :math:`\psi^{(m)}(x)`."""
+  return polygamma_p.bind(m, x)
+
 def igamma(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete gamma function."""
   return igamma_p.bind(a, x)
@@ -110,6 +114,12 @@ def igammac_gradx(g, a, x):
 
 def igammac_grada(g, a, x):
   return -igamma_grada(g, a, x)
+
+def polygamma_gradm(g, m, x):
+  raise ValueError("polygamma gradient with respect to m is not supported")
+
+def polygamma_gradx(g, m, x):
+  return g * polygamma(add(m, _const(m, 1)), x)
 
 # The below is directly ported from tensorflow/compiler/xla/client/lib/math.cc
 # We try to follow the corresponding functions as closely as possible, so that
@@ -615,6 +625,11 @@ mlir.register_lowering(lgamma_p, partial(_nary_lower_hlo, chlo.LgammaOp))
 
 digamma_p = standard_unop(_float, 'digamma')
 mlir.register_lowering(digamma_p, partial(_nary_lower_hlo, chlo.DigammaOp))
+ad.defjvp(digamma_p, lambda g, x: mul(g, polygamma(_const(x, 1), x)))
+
+polygamma_p = standard_naryop([_float, _float], 'polygamma')
+mlir.register_lowering(polygamma_p, partial(_nary_lower_hlo, chlo.PolygammaOp))
+ad.defjvp(polygamma_p, polygamma_gradm, polygamma_gradx)
 
 igamma_p = standard_naryop([_float, _float], 'igamma')
 mlir.register_lowering(igamma_p, mlir.lower_fun(_up_and_broadcast(igamma_impl),

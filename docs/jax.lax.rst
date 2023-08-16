@@ -111,6 +111,7 @@ Operators
     neg
     nextafter
     pad
+    polygamma
     pow
     real
     reciprocal

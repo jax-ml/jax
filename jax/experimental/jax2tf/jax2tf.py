@@ -1432,6 +1432,7 @@ tf_not_yet_impl = [
     "clz",
     "igamma_grad_a",
     "random_gamma_grad",
+    "polygamma",
     "reduce_xor",
     "schur",
     "closed_call",
