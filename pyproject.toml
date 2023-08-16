@@ -11,6 +11,7 @@ no_implicit_optional = true
 module = [
     "absl.*",
     "colorama.*",
+    "importlib_metadata.*",
     "IPython.*",
     "numpy.*",
     "opt_einsum.*",
