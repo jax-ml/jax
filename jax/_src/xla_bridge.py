@@ -79,6 +79,19 @@ _ROCM_VISIBLE_DEVICES = jax_config.DEFINE_string(
     'jax_rocm_visible_devices', 'all',
     'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
+CUDA_ALLOCATOR_KIND = jax_config.DEFINE_string(
+    'jax_cuda_allocator_kind', os.getenv('XLA_PYTHON_CLIENT_ALLOCATOR', '').lower(),
+    'Specifies the kind of allocator to use.')
+CUDA_MEMORY_FRACTION = jax_config.DEFINE_float(
+    "memory_fraction",
+    os.getenv("XLA_PYTHON_CLIENT_MEM_FRACTION", ""),
+    "Specifies the fraction of memory to allocate.",
+)
+CUDA_PREALLOCATE = jax_config.DEFINE_bool(
+    "preallocate",
+    os.getenv("XLA_PYTHON_CLIENT_PREALLOCATE", ""),
+    "Specifies whether to preallocate memory.",
+)
 
 
 # Backends
