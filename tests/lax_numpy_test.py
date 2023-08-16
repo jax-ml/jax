@@ -487,9 +487,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   )
   @jax.default_matmul_precision("float32")
   def testDot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
-    if jtu.device_under_test() == "tpu" and {lhs_dtype, rhs_dtype} == {np.float16, np.int32}:
-      # TODO(b/291629749): fix & re-enable this test
-      raise SkipTest("dot_general(f16, i32) on TPU has poor precision")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     tol = {np.float16: 1e-2, np.float32: 2e-5, np.float64: 1e-14,
