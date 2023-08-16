@@ -12,6 +12,7 @@
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/triton.pb.h"
 #include "jaxlib/gpu/triton_kernels.h"
+#include "jaxlib/gpu/triton_utils.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
 #include "pybind11_abseil/status_casters.h"  // IWYU pragma: keep
@@ -80,9 +81,11 @@ PYBIND11_MODULE(_triton, m) {
   py::class_<KernelCall>(m, "TritonKernelCall")
       .def(py::init<Kernel, uint32_t, uint32_t, uint32_t,
                     std::vector<KernelCall::Parameter>>())
-      .def("to_proto", [](const KernelCall& kernel_call, std::string metadata) {
+      .def("to_proto", [](const KernelCall& kernel_call, std::string name,
+                          std::string metadata) {
         jax_triton::TritonAnyKernelCall proto;
         *proto.mutable_kernel_call() = kernel_call.ToProto();
+        proto.set_name(std::move(name));
         proto.set_metadata(std::move(metadata));
         return py::bytes(proto.SerializeAsString());
       });
@@ -102,13 +105,14 @@ PYBIND11_MODULE(_triton, m) {
             std::move(name), std::move(configs),
             std::move(input_output_aliases));
       }))
-      .def("to_proto",
-           [](const AutotunedKernelCall& kernel_call, std::string metadata) {
-             jax_triton::TritonAnyKernelCall proto;
-             *proto.mutable_autotuned_kernel_call() = kernel_call.ToProto();
-             proto.set_metadata(std::move(metadata));
-             return py::bytes(proto.SerializeAsString());
-           });
+      .def("to_proto", [](const AutotunedKernelCall& kernel_call,
+                          std::string name, std::string metadata) {
+        jax_triton::TritonAnyKernelCall proto;
+        *proto.mutable_autotuned_kernel_call() = kernel_call.ToProto();
+        proto.set_name(std::move(name));
+        proto.set_metadata(std::move(metadata));
+        return py::bytes(proto.SerializeAsString());
+      });
 
   m.def("get_custom_call",
         [] { return EncapsulateFunction(&TritonKernelCall); });
@@ -123,16 +127,12 @@ PYBIND11_MODULE(_triton, m) {
     return major * 10 + minor;
   });
 
-  m.def(
-      "get_serialized_metadata",
-      [](absl::string_view opaque) -> absl::StatusOr<py::bytes> {
-        JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
-        jax_triton::TritonAnyKernelCall proto;
-        if (!proto.ParseFromString(serialized)) {
-          return absl::InvalidArgumentError("Failed to parse serialized data.");
-        }
-        return py::bytes(proto.metadata());
-      });
+  m.def("get_serialized_metadata",
+        [](absl::string_view opaque) -> absl::StatusOr<py::bytes> {
+          JAX_ASSIGN_OR_RETURN(std::string metadata,
+                               GetTritonKernelCallSerializedMetadata(opaque));
+          return py::bytes(metadata);
+        });
 }
 
 }  // namespace jax::JAX_GPU_NAMESPACE

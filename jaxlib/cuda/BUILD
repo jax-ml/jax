@@ -390,6 +390,7 @@ cc_library(
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
+        ":triton_utils",
         "//jaxlib/gpu:triton_cc_proto",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/stream_executor/cuda:cudart_stub",
@@ -403,6 +404,20 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+    ],
+)
+
+cc_library(
+    name = "triton_utils",
+    srcs = ["//jaxlib/gpu:triton_utils.cc"],
+    hdrs = ["//jaxlib/gpu:triton_utils.h"],
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":cuda_vendor",
+        "//jaxlib/gpu:triton_cc_proto",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@zlib",
     ],
 )
@@ -426,6 +441,7 @@ pybind_extension(
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
         ":triton_kernels",
+        ":triton_utils",
         "//jaxlib:kernel_pybind11_helpers",
         "//jaxlib/gpu:triton_cc_proto",
         "@com_google_absl//absl/status:statusor",
