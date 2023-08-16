@@ -1449,6 +1449,7 @@ tf_not_yet_impl = [
     "global_array_to_host_local_array",
     "host_local_array_to_global_array",
     "call_exported",
+    "zeta",
     # Not high priority?
     "after_all",
     "all_to_all",

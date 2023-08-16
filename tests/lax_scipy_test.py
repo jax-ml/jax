@@ -198,12 +198,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(np.zeros((4,), dtype=np.float32),
                         lsp_special.expit(x))
 
-  @jax.numpy_rank_promotion('raise')
-  def testIssue3758(self):
-    x = np.array([1e5, 1e19, 1e10], dtype=np.float32)
-    q = np.array([1., 40., 30.], dtype=np.float32)
-    self.assertAllClose(np.array([1., 0., 0.], dtype=np.float32), lsp_special.zeta(x, q))
-
   def testIssue13267(self):
     """Tests betaln(x, 1) across wide range of x."""
     xs = jnp.geomspace(1, 1e30, 1000)

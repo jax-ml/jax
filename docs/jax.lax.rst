@@ -146,6 +146,7 @@ Operators
     tie_in
     top_k
     transpose
+    zeta
 
 .. _lax-control-flow:
 

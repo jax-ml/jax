@@ -65,6 +65,10 @@ def random_gamma_grad(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise derivative of samples from `Gamma(a, 1)`."""
   return random_gamma_grad_p.bind(a, x)
 
+def zeta(x: ArrayLike, q: ArrayLike) -> Array:
+  r"""Elementwise Hurwitz zeta function: :math:`\zeta(x, q)`"""
+  return zeta_p.bind(x, q)
+
 def bessel_i0e(x: ArrayLike) -> Array:
   r"""Exponentially scaled modified Bessel function of order 0:
   :math:`\mathrm{i0e}(x) = e^{-|x|} \mathrm{i0}(x)`
@@ -638,6 +642,9 @@ random_gamma_grad_p = standard_naryop([_float, _float], 'random_gamma_grad')
 mlir.register_lowering(random_gamma_grad_p,
                        mlir.lower_fun(_up_and_broadcast(random_gamma_grad_impl),
                                       multiple_results=False))
+
+zeta_p = standard_naryop([_float, _float], 'zeta')
+mlir.register_lowering(zeta_p, partial(_nary_lower_hlo, chlo.ZetaOp))
 
 bessel_i0e_p = standard_unop(_float, 'bessel_i0e')
 mlir.register_lowering(bessel_i0e_p,
