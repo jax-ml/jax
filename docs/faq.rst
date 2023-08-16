@@ -128,8 +128,7 @@ Sometimes it isn't obvious how to rewrite your code to avoid Python loops
 because your code makes use of many arrays with different shapes. The
 recommended solution in this case is to make use of functions like
 :func:`jax.numpy.where` to do your computation on padded arrays with fixed
-shape. The JAX team is exploring a "masking" transformation to make such code
-easier to write.
+shape.
 
 If your functions are slow to compile for another reason, please open an issue
 on GitHub.
