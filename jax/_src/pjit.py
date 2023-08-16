@@ -255,11 +255,11 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
     fastpath_data = _get_fastpath_data(executable, out_tree, args_flat, out_flat)
     return outs, fastpath_data
 
-  cpp_pjit_f = xc._xla.pjit(  # type: ignore
-    getattr(fun, "__name__", "<unnamed function>"),  # type: ignore
-    fun, cache_miss, static_argnums, static_argnames,  # type: ignore
-    donate_argnums, tree_util.default_registry,  # type: ignore
-    _get_cpp_global_cache(pjit_has_explicit_sharding))  # type: ignore
+  cpp_pjit_f = xc._xla.pjit(
+    getattr(fun, "__name__", "<unnamed function>"),
+    fun, cache_miss, static_argnums, static_argnames,
+    donate_argnums, tree_util.default_registry,
+    _get_cpp_global_cache(pjit_has_explicit_sharding))
 
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
   cpp_pjitted_f._fun = fun

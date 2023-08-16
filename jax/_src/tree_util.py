@@ -38,8 +38,6 @@ U = TypeVar("U", bound=type[Any])
 Leaf = Any
 PyTreeDef = pytree.PyTreeDef
 
-# TODO(phawkins): make this unconditional when jaxlib 0.4.14 is the minimum.
-default_registry: pytree.PyTreeRegistry | None
 default_registry = pytree.default_registry()
 # Set __module__ and __name__, which allow this registry to be pickled by
 # reference.
