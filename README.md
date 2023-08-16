@@ -388,10 +388,10 @@ Some standouts:
 
 JAX is written in pure Python, but it depends on XLA, which needs to be
 installed as the `jaxlib` package. Use the following instructions to install a
-binary package with `pip` or `conda`, or to [build JAX from
+binary package with `pip` or `conda`, to use a
+[Docker containers](#docker-containers-nvidia-gpu), or to [build JAX from
 source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
-There is also [containers](#containers).
 
 We support installing or building `jaxlib` on Linux (Ubuntu 20.04 or later) and
 macOS (10.12 or later) platforms. There is also *experimental* native Windows
@@ -526,6 +526,13 @@ sudo ln -s /path/to/cuda /usr/local/cuda-X.X
 Please let us know on [the issue tracker](https://github.com/google/jax/issues)
 if you run into any errors or problems with the prebuilt wheels.
 
+### Docker containers: NVIDIA GPU
+
+NVIDIA provides the [JAX
+Toolbox](https://github.com/NVIDIA/JAX-Toolbox) containers, which are
+bleeding edge containers containing nightly releases of jax and some
+models/frameworks.
+
 ### pip installation: Google Cloud TPU
 
 JAX provides pre-built wheels for
@@ -584,12 +591,6 @@ See the `conda-forge`
 [jaxlib](https://github.com/conda-forge/jaxlib-feedstock#installing-jaxlib) and
 [jax](https://github.com/conda-forge/jax-feedstock#installing-jax) repositories
 for more details.
-
-### Containers
-
-[JAX Toolbox](https://github.com/NVIDIA/JAX-Toolbox) has bleeding edge
-GPU containers: nightly containers and models/frameworks
-specific containers.
 
 ### Building JAX from source
 See [Building JAX from
