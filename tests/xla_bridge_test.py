@@ -36,6 +36,24 @@ mock = absltest.mock
 
 class XlaBridgeTest(jtu.JaxTestCase):
 
+  def test_serialization(self):
+    c1 = compiler.get_compile_options(
+        num_replicas=2,
+        num_partitions=3,
+        # env_options_overrides={"1": "1", "2": "2"},
+    )
+    # c2 = compiler.get_compile_options(
+    #     num_replicas=2,
+    #     num_partitions=3,
+    #     env_options_overrides={"2": "2", "1": "1"},  # order changed
+    # )
+    c1str = c1.SerializeAsString()
+
+    # Idempotence.
+    self.assertEqual(c1str, c1.SerializeAsString())
+    # Map order does not matter.
+    # self.assertEqual(c1str, c2.SerializeAsString())
+
   def test_set_device_assignment_no_partition(self):
     compile_options = compiler.get_compile_options(
         num_replicas=4, num_partitions=1, device_assignment=[0, 1, 2, 3])
