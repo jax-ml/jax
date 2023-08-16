@@ -22,7 +22,6 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
-from jax import dtypes
 from jax import lax
 import jax.numpy as jnp
 import jax._src.test_util as jtu
@@ -357,8 +356,7 @@ class EinsumTest(jtu.JaxTestCase):
     f1 = partial(jnp.einsum, pattern)
     jaxpr = jax.make_jaxpr(f1)(x, y)
     self.assertLen(jaxpr.eqns, 1)
-    self.assertEqual(jaxpr.eqns[0].params['preferred_element_type'],
-                     dtypes.result_type(x, y))
+    self.assertIsNone(jaxpr.eqns[0].params['preferred_element_type'])
 
     f2 = partial(jnp.einsum, pattern, preferred_element_type='float32')
     jaxpr = jax.make_jaxpr(f2)(x, y)
@@ -371,27 +369,6 @@ class EinsumTest(jtu.JaxTestCase):
     out = jnp.einsum('baa->ba', x)
     expected = np.einsum('baa->ba', x)
     self.assertAllClose(out, expected, check_dtypes=False)
-
-  @jtu.sample_product(
-      lhs_dtype=jtu.dtypes.numeric,
-      rhs_dtype=jtu.dtypes.numeric,
-  )
-  @jax.numpy_dtype_promotion('standard')
-  def test_einsum_mixed_precision(self, lhs_dtype, rhs_dtype):
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng((10,), lhs_dtype), rng((10,), rhs_dtype)]
-    f_jax = partial(jnp.einsum, 'a,a->a')
-    jaxpr = jax.make_jaxpr(f_jax)(*args_maker())
-    self.assertIn(
-      [eqn.primitive for eqn in jaxpr.eqns],
-      [
-        [lax.dot_general_p],
-        [lax.dot_general_p, lax.convert_element_type_p],
-      ])
-
-    # Check result and expected dtype for all combinations
-    f_np = jtu.promote_like_jnp(partial(np.einsum, 'a,a->a'))
-    self._CheckAgainstNumpy(f_np, f_jax, args_maker, check_dtypes=True)
 
 
 if __name__ == '__main__':

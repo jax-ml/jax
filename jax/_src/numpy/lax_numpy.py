@@ -3312,16 +3312,8 @@ def _einsum(
     preferred_element_type,
     _dot_general=lax.dot_general,
 ):
-  operands = list(map(asarray, operands))
-  if preferred_element_type is None:
-    preferred_element_type, output_weak_type = dtypes.result_type(*operands, return_weak_type_flag=True)
-  else:
-    dtypes.check_user_dtype_supported(preferred_element_type, "einsum")
-    output_weak_type = False
-
+  operands = list(util.promote_dtypes(*operands))
   def sum(x, axes):
-    if dtypes.result_type(x, preferred_element_type) != x.dtype:
-      x = x.astype(preferred_element_type)
     return lax.reduce(x, np.array(0, x.dtype),
                       lax.add if x.dtype != bool_ else lax.bitwise_or, axes)
 
@@ -3452,7 +3444,7 @@ def _einsum(
       operand = lax.transpose(operand, perm)
     operands.append(operand)  # used in next iteration
 
-  return lax_internal._convert_element_type(operands[0], preferred_element_type, output_weak_type)
+  return operands[0]
 
 
 @util._wraps(np.inner, lax_description=_PRECISION_DOC)
