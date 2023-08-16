@@ -1868,9 +1868,10 @@ def _cpp_pmap(
 
     return out, fastpath_data
 
+  # TODO(jakevdp): remove ignore[arg-type] below once default_registry is always defined
   cpp_mapped_f = pmap_lib.pmap(  # type: ignore
       fun, cache_miss, static_broadcasted_tuple, pxla.shard_arg,
-      pytree_registry=tree_util.default_registry)
+      pytree_registry=tree_util.default_registry)  # type: ignore[arg-type]
   _pmap_cache_clears.add(cpp_mapped_f)
 
   pmap_f = wraps(fun)(cpp_mapped_f)
