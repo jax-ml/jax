@@ -868,18 +868,11 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     self.assertAllClose(100., res_primals, check_dtypes=False)
     self.assertAllClose(4., res_tangents, check_dtypes=False)
     hcb.barrier_wait()
-    if FLAGS.jax_host_callback_ad_transforms:
-      assertMultiLineStrippedEqual(self, """
-          transforms: ['jvp'] what: a * 2
-          ( 10.00 0.20 )
-          transforms: ['jvp'] what: y * 3
-          ( 30.00 0.60 )""", testing_stream.output)
-    else:
-      assertMultiLineStrippedEqual(self, """
-          what: a * 2
-          10.00
-          what: y * 3
-          30.00""", testing_stream.output)
+    assertMultiLineStrippedEqual(self, """
+        what: a * 2
+        10.00
+        what: y * 3
+        30.00""", testing_stream.output)
 
   def test_tap_grad_primal_unused(self):
     # The output of id_print is not needed for backwards pass
@@ -894,43 +887,20 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     hcb.barrier_wait()
 
     treedef = tree_util.tree_structure(arg)
-    if FLAGS.jax_host_callback_ad_transforms:
-      assertMultiLineStrippedEqual(
-          self, f"""
-        {{ lambda ; a:f32[]. let
-            b:f32[] = mul a 3.00
-            c:f32[] = outside_call[
-              arg_treedef={treedef}
-              callback=...
-              device_index=0
-              identity=True
-              transforms=()
-            ] b
-            _:f32[] = mul 2.00 c
-            d:f32[] = mul 2.00 1.00
-            e:f32[] = outside_call[
-              arg_treedef={treedef}
-              callback=...
-              identity=True
-              transforms=(('jvp',), ('transpose',))
-            ] d
-            f:f32[] = mul e 3.00
-          in (f,) }}""", jaxpr)
-    else:
-      assertMultiLineStrippedEqual(
-          self, f"""
-        {{ lambda ; a:f32[]. let
-            b:f32[] = mul a 3.00
-            c:f32[] = outside_call[
-              arg_treedef={treedef}
-              callback=...
-              device_index=0
-              identity=True
-            ] b
-            _:f32[] = mul 2.00 c
-            d:f32[] = mul 2.00 1.00
-            e:f32[] = mul d 3.00
-          in (e,) }}""", jaxpr)
+    assertMultiLineStrippedEqual(
+        self, f"""
+      {{ lambda ; a:f32[]. let
+          b:f32[] = mul a 3.00
+          c:f32[] = outside_call[
+            arg_treedef={treedef}
+            callback=...
+            device_index=0
+            identity=True
+          ] b
+          _:f32[] = mul 2.00 c
+          d:f32[] = mul 2.00 1.00
+          e:f32[] = mul d 3.00
+        in (e,) }}""", jaxpr)
     assertMultiLineStrippedEqual(self, "", testing_stream.output)
     testing_stream.reset()
 
@@ -938,16 +908,9 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     hcb.barrier_wait()
 
     self.assertAllClose(6., res_grad, check_dtypes=False)
-    if FLAGS.jax_host_callback_ad_transforms:
-      assertMultiLineStrippedEqual(self, """
-          what: x * 3
-          15.00
-          transforms: ['jvp', 'transpose'] what: x * 3
-          2.00""", testing_stream.output)
-    else:
-      assertMultiLineStrippedEqual(self, """
-          what: x * 3
-          15.00""", testing_stream.output)
+    assertMultiLineStrippedEqual(self, """
+        what: x * 3
+        15.00""", testing_stream.output)
 
   def test_tap_grad_simple(self):
     def func(x):
@@ -960,22 +923,11 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     res_grad = grad_func(jnp.float32(5.))
     self.assertAllClose(2. * 5. * 6., res_grad, check_dtypes=False)
     hcb.barrier_wait()
-    if FLAGS.jax_host_callback_ad_transforms:
-      assertMultiLineStrippedEqual(self, """
-          what: x * 2
-          10.00
-          what: y * 3
-          30.00
-          transforms: ['jvp', 'transpose'] what: y * 3
-          5.00
-          transforms: ['jvp', 'transpose'] what: x * 2
-          15.00""", testing_stream.output)
-    else:
-      assertMultiLineStrippedEqual(self, """
-          what: x * 2
-          10.00
-          what: y * 3
-          30.00""", testing_stream.output)
+    assertMultiLineStrippedEqual(self, """
+        what: x * 2
+        10.00
+        what: y * 3
+        30.00""", testing_stream.output)
 
   def test_tap_grad_grad(self):
     def func(x):
@@ -992,20 +944,9 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
     self.assertAllClose(12., res_grad, check_dtypes=False)
     hcb.barrier_wait()
-    if FLAGS.jax_host_callback_ad_transforms:
-      assertMultiLineStrippedEqual(self, """
-          what: x * 2
-          10.00
-          transforms: ['jvp', 'transpose'] what: x * 2
-          15.00
-          transforms: ['jvp', 'transpose', 'jvp', 'transpose'] what: x * 2
-          2.00
-          transforms: ['jvp', 'transpose'] what: x * 2
-          3.00""", testing_stream.output)
-    else:
-      assertMultiLineStrippedEqual(self, """
-          what: x * 2
-          10.00""", testing_stream.output)
+    assertMultiLineStrippedEqual(self, """
+        what: x * 2
+        10.00""", testing_stream.output)
 
   def test_tap_grad_pytree(self):
     def func(x):
@@ -1020,16 +961,9 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     res_grad = grad_func(x)
     self.assertAllClose(14., res_grad, check_dtypes=False)
     hcb.barrier_wait()
-    if FLAGS.jax_host_callback_ad_transforms:
-      assertMultiLineStrippedEqual(self, """
-          what: pair
-          ( 10.00 15.00 )
-          transforms: ['jvp', 'transpose'] what: pair
-          ( 0.00 0.00 )""", testing_stream.output)
-    else:
-      assertMultiLineStrippedEqual(self, """
-          what: pair
-          ( 10.00 15.00 )""", testing_stream.output)
+    assertMultiLineStrippedEqual(self, """
+        what: pair
+        ( 10.00 15.00 )""", testing_stream.output)
 
   def test_tap_jvp_float0(self):
     def f(x, yint):
@@ -1049,16 +983,9 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     res_grad = grad_func(jnp.float32(5.), jnp.int32(2))
     self.assertAllClose(2., res_grad, check_dtypes=False)
     hcb.barrier_wait()
-    if FLAGS.jax_host_callback_ad_transforms:
-      assertMultiLineStrippedEqual(self, """
-          what: pair
-          ( 5.00 2 )
-          transforms: ['jvp', 'transpose'] what: pair
-          ( 2.00 False )""", testing_stream.output)
-    else:
-      assertMultiLineStrippedEqual(self, """
-          what: pair
-          ( 5.00 2 )""", testing_stream.output)
+    assertMultiLineStrippedEqual(self, """
+        what: pair
+        ( 5.00 2 )""", testing_stream.output)
 
   def test_tap_grad_float0_result(self):
     # https://github.com/google/jax/issues/7340
@@ -1079,14 +1006,8 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     self.assertAllClose(np.array([3., 3.], dtype=np.float32), g[0])
     self.assertEqual(dtypes.float0, g[1].dtype)
     hcb.barrier_wait()
-    if FLAGS.jax_host_callback_ad_transforms:
-      assertMultiLineStrippedEqual(self, """
-          ( [0.70 0.80] [11 12 13] )
-          transforms: ['jvp', 'transpose']
-          ( [0.00 0.00] [False False False] )""", testing_stream.output)
-    else:
-      assertMultiLineStrippedEqual(self, """
-          ( [0.70 0.80] [11 12 13] )""", testing_stream.output)
+    assertMultiLineStrippedEqual(self, """
+        ( [0.70 0.80] [11 12 13] )""", testing_stream.output)
 
   def test_tap_higher_order_grad_float0_result(self):
     # https://github.com/google/jax/issues/7340
@@ -1121,14 +1042,8 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     f_jax_vjp1, args_vjp1 = wrap_vjp(f_jax, (x,), res)
     res_vjp1 = f_jax_vjp1(*args_vjp1)
     hcb.barrier_wait()
-    if FLAGS.jax_host_callback_ad_transforms:
-      assertMultiLineStrippedEqual(self, """
-          ( [0.70 0.80] [11 12 13] )
-          transforms: ['jvp', 'transpose']
-          ( [0.00 0.00] [False False False] )""", testing_stream.output)
-    else:
-      assertMultiLineStrippedEqual(self, """
-          ( [0.70 0.80] [11 12 13] )""", testing_stream.output)
+    assertMultiLineStrippedEqual(self, """
+        ( [0.70 0.80] [11 12 13] )""", testing_stream.output)
     testing_stream.reset()
 
     # 2nd order
@@ -1251,64 +1166,8 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         transforms: [('batch', {'batch_dims': (0,)})] where: 3
         [2 2 2 3 4]""", testing_stream.output)
 
-  def test_tap_transforms_old_doc(self):
-    if not FLAGS.jax_host_callback_ad_transforms:
-      raise unittest.SkipTest("disabled for new behavior")
-
-    # Examples from the documentation
-    def power3(x):
-      y = x * x
-      # Print both 'x' and 'x^2'. Must pack as a tuple.
-      _, y = hcb.id_print((x, y), what="x,x^2", output_stream=testing_stream)
-      return y * x
-
-    print(f"impl = {power3(3.)}")
-    hcb.barrier_wait()
-    expected = """
-       what: x,x^2
-      ( 3. 9. )"""
-    self.assertMultiLineStrippedEqual(expected, testing_stream.output)
-    testing_stream.reset()
-
-    print(f"vmap = {jax.vmap(power3)(np.arange(3.))}")
-    hcb.barrier_wait()
-    expected = """
-      transforms: [('batch', {'batch_dims': (0, 0)})] what: x,x^2
-      ( [0. 1. 2.] [0. 1. 4.] )"""
-    self.assertMultiLineStrippedEqual(expected, testing_stream.output)
-    testing_stream.reset()
-
-    print(f"jvp = {jax.jvp(power3, (3.,), (0.1,))}")
-    hcb.barrier_wait()
-    expected = """
-      transforms: ['jvp'] what: x,x^2
-      ( ( 3. 9. ) ( 0.1 0.6 ) )"""
-    self.assertMultiLineStrippedEqual(expected, testing_stream.output)
-    testing_stream.reset()
-
-    print(f"grad = {jax.grad(power3)(3.)}")
-    hcb.barrier_wait()
-    expected = """
-      what: x,x^2
-      ( 3. 9. )
-      transforms: ['jvp', 'transpose'] what: x,x^2
-      ( 0. 3. )"""
-    self.assertMultiLineStrippedEqual(expected, testing_stream.output)
-    testing_stream.reset()
-
-    print(f"vmap o grad {jax.vmap(jax.grad(power3))(np.array([2., 3.]))}")
-    hcb.barrier_wait()
-    expected = """
-      transforms: [('batch', {'batch_dims': (0, 0)})] what: x,x^2
-      ( [2. 3.] [4. 9.] )
-      transforms: ['jvp', 'transpose', ('batch', {'batch_dims': (None, 0)})] what: x,x^2
-      ( 0. [2. 3.] )"""
-    self.assertMultiLineStrippedEqual(expected, testing_stream.output)
-
   def test_tap_transforms_doc(self):
     # Examples from the documentation
-    if FLAGS.jax_host_callback_ad_transforms:
-      raise unittest.SkipTest("disabled for old behavior")
     def power3(x):
       y = x * x
       # Print both 'x' and 'x^2'. Must pack as a tuple.
@@ -1577,24 +1436,13 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     self.assertAllClose(expected_res, res, check_dtypes=False)
     # Assertion text is for 2 devices (also works for 1 device)
     # Device 0 will get to execute jax.jvp(jax.vmap(...)) for matrix[0, :, :]
-    if FLAGS.jax_host_callback_ad_transforms:
-      assertMultiDeviceOutputEqual(self, """
-        device: cpu:0 transforms: [('batch', {'batch_dims': (0,)}), 'jvp'] what: x * 2
-        ( [[ 0.00  2.00  4.00]
-           [20.00 22.00 24.00]] [[0.20 0.20 0.20]
-           [0.20 0.20 0.20]] )
-        device: cpu:1 transforms: [('batch', {'batch_dims': (0,)}), 'jvp'] what: x * 2
-        ( [[200.00 202.00 204.00]
-           [220.00 222.00 224.00]] [[0.20 0.20 0.20]
-           [0.20 0.20 0.20]] )""")
-    else:
-      assertMultiDeviceOutputEqual(self, """
-        device: cpu:0 transforms: [('batch', {'batch_dims': (0,)})] what: x * 2
-        [[ 0.00  2.00  4.00]
-         [20.00 22.00 24.00]]
-        device: cpu:1 transforms: [('batch', {'batch_dims': (0,)})] what: x * 2
-        [[200.00 202.00 204.00]
-         [220.00 222.00 224.00]]""")
+    assertMultiDeviceOutputEqual(self, """
+      device: cpu:0 transforms: [('batch', {'batch_dims': (0,)})] what: x * 2
+      [[ 0.00  2.00  4.00]
+        [20.00 22.00 24.00]]
+      device: cpu:1 transforms: [('batch', {'batch_dims': (0,)})] what: x * 2
+      [[200.00 202.00 204.00]
+        [220.00 222.00 224.00]]""")
 
   def test_tap_vmap_pmap(self):
     # A matrix M[ijk] = i * 100 + j * 10 * k
@@ -1976,30 +1824,13 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     hcb.barrier_wait()
 
     if use_remat == "none":
-      if use_result:
-        if FLAGS.jax_host_callback_ad_transforms:
-          expected = """
-            2.
-            transforms: ['jvp', 'transpose']
-            3."""
-        else:
-          # GOOD: whether or not we use_result, in absence of
-          # jax_host_callback_ad_transforms we get the same callback.
-          expected = "2."
-      else:
-        expected = "2."
+      # GOOD: whether or not we use_result, we get the same callback.
+      expected = "2."
     else:  # use_remat
       if use_result:
-        if FLAGS.jax_host_callback_ad_transforms:
-          expected = """
-            2.
-            2.
-            transforms: ['jvp', 'transpose']
-            3."""
-        else:
-          expected = """
-            2.
-            2."""
+        expected = """
+          2.
+          2."""
       else:
         if use_remat == "old":
           # TODO: we should see two callbacks

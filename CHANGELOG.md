@@ -32,6 +32,8 @@ Remember to align the itemized text with the first line of an item within a list
     `True`.
   * `jax.jaxpr_util` has been removed from the public JAX namespace.
   * `JAX_USE_PJRT_C_API_ON_TPU` no longer has an effect (i.e. it always defaults to true).
+  * The backwards compatibility flag `--jax_host_callback_ad_transforms`
+    introduced in December 2021, has been removed.
 
 * Deprecations:
   * Several `jax.numpy` APIs have been deprecated following
