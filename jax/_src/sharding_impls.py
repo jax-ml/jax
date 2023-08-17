@@ -433,12 +433,20 @@ class PmapSharding(XLACompatibleSharding):
       return False
     if id(self) == id(other):
       return True
-    return (self.sharding_spec == other.sharding_spec and
-            np.array_equal(self.devices, other.devices))
+    if xla_extension_version >= 185:
+      return (self.sharding_spec == other.sharding_spec and
+              self.devices.shape == other.devices.shape and
+              self._internal_device_list == other._internal_device_list)  # type: ignore
+    else:
+      return (self.sharding_spec == other.sharding_spec and
+              np.array_equal(self.devices, other.devices))
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash((tuple(self.devices.flat), self.sharding_spec))
+      if xla_extension_version >= 185:
+        self._hash = hash((self._internal_device_list, self.sharding_spec))  # type: ignore
+      else:
+        self._hash = hash((tuple(self.devices.flat), self.sharding_spec))
     return self._hash
 
   def __str__(self):
@@ -629,14 +637,22 @@ class PositionalSharding(XLACompatibleSharding):
     self = cls.__new__(cls)
     self._devices = devices
     self._ids = ids
-    self._memory_kind = memory_kind
+    if xla_extension_version >= 182:
+      self._internal_device_list = xc.DeviceList(self._devices)
+      self._memory_kind = xc.check_and_canonicalize_memory_kind(
+          memory_kind, self._internal_device_list)
+    else:
+      self._memory_kind = memory_kind
     return self
 
   # Hashable
 
   def __hash__(self) -> int:
     if not hasattr(self, '_hash'):
-      self._hash = hash((self._devices, self.memory_kind))
+      if xla_extension_version >= 182:
+        self._hash = hash((self._internal_device_list, self.memory_kind))
+      else:
+        self._hash = hash((self._devices, self.memory_kind))
     return self._hash
 
   def __eq__(self, other) -> bool:
@@ -649,7 +665,12 @@ class PositionalSharding(XLACompatibleSharding):
     if (id(self._devices) == id(other._devices) and mem_kind_equal and
         all_ids_equal):
       return True
-    return self._devices == other._devices and mem_kind_equal and all_ids_equal
+    if xla_extension_version >= 182:
+      return (mem_kind_equal and all_ids_equal and
+              self._internal_device_list == other._internal_device_list)
+    else:
+      return (self._devices == other._devices and mem_kind_equal and
+              all_ids_equal)
 
   # Sharding interface
 
@@ -762,14 +783,23 @@ class GSPMDSharding(XLACompatibleSharding):
       return False
     if id(self) == id(other):
       return True
-    return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
-            and self._devices == other._devices and
-            self.memory_kind == other.memory_kind)
+    if xla_extension_version >= 185:
+      return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
+              and self.memory_kind == other.memory_kind
+              and self._internal_device_list == other._internal_device_list)  # type: ignore
+    else:
+      return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
+              and self._devices == other._devices and
+              self.memory_kind == other.memory_kind)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash((self._devices, self._hlo_sharding_hash,
-                         self.memory_kind))
+      if xla_extension_version >= 185:
+        self._hash = hash((self._internal_device_list, self._hlo_sharding_hash,  # type: ignore
+                          self.memory_kind))
+      else:
+        self._hash = hash((self._devices, self._hlo_sharding_hash,
+                          self.memory_kind))
     return self._hash
 
   def __repr__(self):

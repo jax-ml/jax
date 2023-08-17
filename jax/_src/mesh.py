@@ -29,6 +29,8 @@ from jax._src import config as jax_config
 from jax._src import xla_bridge as xb
 from jax._src import util
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
+
 
 MeshAxisName = Any
 ResourceAxisName = Hashable
@@ -162,13 +164,22 @@ class Mesh(contextlib.ContextDecorator):
     # can be expensive.
     if id(self) == id(other):
       return True
-    return (self.axis_names == other.axis_names and
-            np.array_equal(self.devices, other.devices))
+    if xla_extension_version >= 185:
+      return (self.axis_names == other.axis_names and
+              self.devices.shape == other.devices.shape and
+              self._internal_device_list == other._internal_device_list)
+    else:
+      return (self.axis_names == other.axis_names and
+              np.array_equal(self.devices, other.devices))
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash(
-          (self.axis_names, tuple(self.devices.flat), self.devices.shape))
+      if xla_extension_version >= 185:
+        self._hash = hash(
+            (self.axis_names, self._internal_device_list, self.devices.shape))
+      else:
+        self._hash = hash(
+            (self.axis_names, tuple(self.devices.flat), self.devices.shape))
     return self._hash
 
   def __setattr__(self, name, value):
