@@ -498,14 +498,32 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             skip_comparison=True),
         # TODO(necula): look into this, but this is only for non-native serialization
         Jax2TfLimitation(
-            "Errors when lhs_dtype != rhs_dtype for non-native serialization on CPU and GPU",
+            "Errors when lhs_dtype != rhs_dtype for non-native serialization with 64-bit types",
             devices=["cpu", "gpu", "tpu"],
-            enabled=(harness.dtype != harness.params["rhs_dtype"]),
-            skip_tf_run=True,
+            enabled=(harness.dtype != harness.params["rhs_dtype"] and
+                     (harness.dtype in [np.int64, np.uint64, np.float64] or
+                      harness.params["rhs_dtype"] in [np.int64, np.uint64, np.float64])),
             skip_comparison=True),
+      # TODO(necula): look into this, but this is only for non-native serialization and enable_xla=False
+      Jax2TfLimitation(
+        "Errors for non-native serialization with enable_xla=False for certain input dtype combinations",
+        devices=["cpu", "tpu"],
+        enabled=(not harness.params["enable_xla"] and
+                 (harness.dtype in [np.int16, np.uint32, np.uint16] or
+                  harness.params["rhs_dtype"] in [np.int16, np.uint32, np.uint16] or
+                  # Some combinations end up being widened to a larger type that is not
+                  # supported
+                  (harness.dtype, harness.params["rhs_dtype"]) in [
+                    (np.float16, jnp.bfloat16),
+                    (np.int32, np.float16),
+                    (np.int8, np.float16),
+                    (np.int8, np.uint8),
+                  ])),
+        skip_comparison=True,
+        skip_tf_run=True),
         # TODO(necula): look into this, but this is only for non-native serialization
         Jax2TfLimitation(
-            "Crash when lhs_dtype != rhs_dtype for non-native serialization on TPU",
+            "Crash when lhs_dtype != rhs_dtype for non-native serialization on TPU for complex numbers",
             devices=["tpu"],
             enabled=(harness.dtype != harness.params["rhs_dtype"] and
                      (harness.dtype in [np.complex64, np.complex128] or

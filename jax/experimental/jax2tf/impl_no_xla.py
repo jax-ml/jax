@@ -369,6 +369,9 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
   del precision
   del preferred_element_type
 
+  lhs, rhs, convert_result = jax2tf._dot_general_convert_to_common_dtype(
+    lhs, _in_avals[0], rhs, _in_avals[1], _out_aval)
+
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_ndim, rhs_ndim = len(lhs.shape), len(rhs.shape)
 
@@ -415,7 +418,7 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
     if len(squeeze_idxs) != 0:
       assert all([result.shape[i] == 1 for i in squeeze_idxs])
       result = tf.squeeze(result, squeeze_idxs)
-    return result
+    return convert_result(result)
 
   new_id = iter(string.ascii_letters)
   lhs_axis_ids = [next(new_id) for _ in lhs.shape]
@@ -445,7 +448,7 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
   assert lhs.dtype == rhs.dtype
   spec = "{},{}->{}".format("".join(lhs_axis_ids), "".join(rhs_axis_ids),
                             "".join(out_axis_ids))
-  return tf.linalg.einsum(spec, lhs, rhs)
+  return convert_result(tf.linalg.einsum(spec, lhs, rhs))
 
 
 tf_impl_no_xla[lax.dot_general_p] = _dot_general

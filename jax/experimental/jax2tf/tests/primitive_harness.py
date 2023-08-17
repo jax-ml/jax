@@ -2791,7 +2791,8 @@ def _make_dot_general_harness(name,
                               rhs_dtype=np.float32,
                               precision=None,
                               dimension_numbers=(((1,), (0,)), ((), ())),
-                              preferred_element_type=None):
+                              preferred_element_type=None,
+                              enable_xla=True):
   suffix = ""
   if precision is not None:
     suffix += f"_{precision=}"
@@ -2800,7 +2801,7 @@ def _make_dot_general_harness(name,
 
   define(
       lax.dot_general_p,
-      f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, lhs_dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, rhs_dtype)}_dimensionnumbers={dimension_numbers}{suffix}"
+      f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, lhs_dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, rhs_dtype)}_dimensionnumbers={dimension_numbers}{suffix}_enable_xla={enable_xla}"
       .replace(" ", ""),
       lax.dot_general,
       [
@@ -2817,6 +2818,7 @@ def _make_dot_general_harness(name,
       dimension_numbers=dimension_numbers,
       precision=precision,
       preferred_element_type=preferred_element_type,
+      enable_xla=enable_xla,
       jax_unimplemented=[
           Limitation("preferred_element_type must match dtype for floating point",
                      devices="gpu",
@@ -2921,19 +2923,22 @@ for lhs_shape in [(4, 3)]:
           preferred_element_type=preferred_element_type)
 
     # Validate lhs_dtype different than rhs_dtype
-    for lhs_dtype, rhs_dtype in itertools.product(jtu.dtypes.all_integer +
-                                                  jtu.dtypes.all_unsigned +
-                                                  jtu.dtypes.all_inexact,
-                                                  repeat=2):
-      if lhs_dtype == rhs_dtype:
-        continue
-      _make_dot_general_harness(
-          "different_dtypes",
-          lhs_dtype=lhs_dtype,
-          rhs_dtype=rhs_dtype,
-          lhs_shape=lhs_shape,
-          rhs_shape=rhs_shape,
-          dimension_numbers=(((len(lhs_shape) - 1,), (0,)), ((), ())))
+    all_types = (jtu.dtypes.all_integer + jtu.dtypes.all_unsigned + jtu.dtypes.all_inexact)
+    for i_lhs in range(len(all_types)):
+      for i_rhs in range(len(all_types)):
+        if i_rhs <= i_lhs: continue
+        lhs_dtype = all_types[i_lhs]
+        rhs_dtype = all_types[i_rhs]
+
+        for enable_xla in [True, False]:
+          _make_dot_general_harness(
+              "different_dtypes",
+              lhs_dtype=lhs_dtype,
+              rhs_dtype=rhs_dtype,
+              lhs_shape=lhs_shape,
+              rhs_shape=rhs_shape,
+              dimension_numbers=(((len(lhs_shape) - 1,), (0,)), ((), ())),
+              enable_xla=enable_xla)
 
 
 def _make_concatenate_harness(name,
