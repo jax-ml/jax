@@ -87,7 +87,7 @@ class DisabledSafetyCheck:
   def shape_assertions(cls) -> "DisabledSafetyCheck":
     """Allows invocations with shapes that do not meet the constraints.
 
-    Has effect on serialization (to supress the generation of the assertions)
+    Has effect on serialization (to suppress the generation of the assertions)
     and also on deserialization (to suppress the checking of the assertions).
     """
     return DisabledSafetyCheck("shape_assertions")
