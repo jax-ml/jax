@@ -203,6 +203,16 @@ jax.scipy.stats.betabinom
    logpmf
    pmf
 
+jax.scipy.stats.binom
+~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.binom
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpmf
+   pmf
+
 jax.scipy.stats.cauchy
 ~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.cauchy
@@ -306,6 +316,15 @@ jax.scipy.stats.logistic
    ppf
    sf
 
+jax.scipy.stats.multinomial
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.multinomial
+.. autosummary::
+  :toctree: _autosummary
+
+   logpmf
+   pmf
+
 jax.scipy.stats.multivariate_normal
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.multivariate_normal
@@ -314,6 +333,16 @@ jax.scipy.stats.multivariate_normal
 
    logpdf
    pdf
+
+jax.scipy.stats.nbinom
+~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.nbinom
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpmf
+   pmf
 
 jax.scipy.stats.norm
 ~~~~~~~~~~~~~~~~~~~~
