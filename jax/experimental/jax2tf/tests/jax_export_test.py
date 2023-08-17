@@ -25,12 +25,12 @@ from jax import numpy as jnp
 from jax import tree_util
 from jax.config import config
 from jax.experimental.jax2tf import jax_export
-from jax.lib import xla_client as xc
 
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
+from jax._src.lib import version as jaxlib_version
 
 from jax._src.lib.mlir.dialects import hlo
 
@@ -489,7 +489,7 @@ class JaxExportTest(jtu.JaxTestCase):
   # call_exported error reporting.
   @jtu.parameterized_filterable(
     #one_containing="7, 2, 36",
-    testcase_name=lambda kw: kw["shape"],
+    testcase_name=lambda kw: kw["shape"],  # assume "shape" is unique
     kwargs=[
       dict(shape=(8, 2, 9),  # a = 2, b = 3, c = 4
            poly_spec="(a + 2*b, a, a + b + c)"),
@@ -519,7 +519,7 @@ class JaxExportTest(jtu.JaxTestCase):
              "Found inconsistency between dimension size args[0].shape[0] (= 8) and the specification 'a + 2*b' (= 10). "
              "Using the following polymorphic shapes specifications: args[0].shape = (a + 2*b, a, a + b). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
-             "'b' = 4 from specification 'a + b' for dimension args[0].shape[2] (= N/A), . "
+             "'b' = 4 from specification 'a + b' for dimension args[0].shape[2] (= 6), . "
              "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
            )),
       dict(shape=(7, 2, 36),  # a = 2, b = 3, c = 6 - cannot solve c
@@ -537,6 +537,8 @@ class JaxExportTest(jtu.JaxTestCase):
     def f_jax(x):  # x: f32[a + 2*b, a, a + b + c]
       return 0.
 
+    if shape == (8, 2, 6) and jaxlib_version <= (0, 4, 14):
+      raise unittest.SkipTest("Test requires jaxlib >= 0.4.14")
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     with contextlib.ExitStack() as stack:
       if expect_error is not None:
