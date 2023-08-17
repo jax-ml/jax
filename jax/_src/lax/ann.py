@@ -325,12 +325,8 @@ def _approx_top_k_lowering(ctx, operand, *, k,
                    dimension=reduction_dimension)
 
   init_arg = hlo.ConstantOp(ir.DenseElementsAttr.get(np.int32(-1))).result
-  # Can't write bf16 literals, so we write a f64 literal and convert it.
-  init_val_literal = _get_init_val_literal(np.float64, is_max_k)
-  init_val_array = np.array(init_val_literal, dtype=np.float64).reshape(())
-  init_val = mlir.ir_constant(init_val_array)
-  init_val = hlo.ConvertOp(ir.RankedTensorType.get([],
-    mlir.dtype_to_ir_type(ctx.avals_in[0].dtype)), init_val).result
+  init_val_array = _get_init_val_literal(ctx.avals_in[0].dtype, is_max_k)
+  init_val = mlir.ir_constant(init_val_array.reshape(()))
 
   backend_config = {
     "top_k" : mlir.i64_attr(k),

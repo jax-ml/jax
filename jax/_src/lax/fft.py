@@ -146,8 +146,7 @@ def _fft_lowering_cpu(ctx, x, *, fft_type, fft_lengths):
       assert np.issubdtype(dtype, np.complexfloating), dtype
       out_dtype = dtype
 
-    zero = mlir.ir_constant(np.array(0, dtype=out_dtype),
-                            canonicalize_types=False)
+    zero = mlir.ir_constant(np.array(0, dtype=out_dtype))
     return [
         mlir.broadcast_in_dim(ctx, zero, out_aval, broadcast_dimensions=[])]
 
@@ -172,7 +171,7 @@ def _fft_lowering_cpu(ctx, x, *, fft_type, fft_lengths):
   size_fft_length_prod = np.prod(fft_lengths) if fft_lengths else 1
   size_fft_lengths, = mlir.eval_dynamic_shape_as_vals(ctx, (size_fft_length_prod,))
   size_fft_lengths = hlo.ConvertOp(double_type, size_fft_lengths)
-  one = mlir.ir_constant(np.float64(1.), canonicalize_types=False)
+  one = mlir.ir_constant(np.float64(1.))
   scale = one if forward else hlo.DivOp(one, size_fft_lengths)
   scale = hlo.ReshapeOp(
       mlir.ir.RankedTensorType.get((1,), mlir.ir.F64Type.get()),

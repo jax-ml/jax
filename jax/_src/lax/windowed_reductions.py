@@ -668,8 +668,7 @@ def _select_and_gather_add_lowering(
   assert nbits <= max_bits
   double_word_reduction = nbits * 2 <= max_bits
 
-  const = lambda dtype, x: mlir.ir_constant(np.array(x, dtype=dtype),
-                                            canonicalize_types=False)
+  const = lambda dtype, x: mlir.ir_constant(np.array(x, dtype=dtype))
 
   def _broadcast_scalar_const(x, aval_out):
     return mlir.broadcast_in_dim(ctx, const(aval_out.dtype, x),

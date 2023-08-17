@@ -202,7 +202,7 @@ def aval_to_ir_type(aval: core.AbstractValue) -> ir.Type:
 # Constants
 
 class ConstantHandler(Protocol):
-  def __call__(self, val: Any, canonicalize_types: bool) -> Sequence[ir.Value]:
+  def __call__(self, val: Any) -> Sequence[ir.Value]:
     """Builds an IR representation for a constant `val`.
 
     A JAX value is represented by zero or more IR values."""
@@ -215,8 +215,7 @@ def register_constant_handler(type_: type, handler_fun: ConstantHandler):
 def get_constant_handler(type_: type) -> ConstantHandler:
   return _constant_handlers[type_]
 
-def ir_constants(val: Any,
-                 canonicalize_types: bool = True) -> Sequence[ir.Value]:
+def ir_constants(val: Any) -> Sequence[ir.Value]:
   """Translate a Python `val` to an IR constant, canonicalizing its dtype.
 
   Args:
@@ -228,26 +227,23 @@ def ir_constants(val: Any,
   for t in type(val).__mro__:
     handler = _constant_handlers.get(t)
     if handler:
-      out = handler(val, canonicalize_types)
+      out = handler(val)
       assert all(isinstance(v, ir.Value) for v in out), (type(val), out)
       return out
   if hasattr(val, '__jax_array__'):
-    return ir_constants(val.__jax_array__(), canonicalize_types)
+    return ir_constants(val.__jax_array__())
   raise TypeError(f"No constant handler for type: {type(val)}")
 
-def ir_constant(val: Any, canonicalize_types: bool = True) -> ir.Value:
+def ir_constant(val: Any) -> ir.Value:
   """Convenience wrapper around ir_constants for singleton values."""
-  values = ir_constants(val, canonicalize_types=canonicalize_types)
+  values = ir_constants(val)
   if len(values) != 1:
     raise TypeError(f"ir_constant called on {val} which corresponds to "
                     f"multiple IR values {values}")
   return values[0]
 
 
-def _numpy_array_constant(x: np.ndarray, canonicalize_types
-                         ) -> Sequence[ir.Value]:
-  if canonicalize_types:
-    x = np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
+def _numpy_array_constant(x: np.ndarray) -> Sequence[ir.Value]:
   element_type = dtype_to_ir_type(x.dtype)
   shape = x.shape
   if x.dtype == np.bool_:
@@ -263,8 +259,7 @@ def _masked_array_constant_handler(*args, **kwargs):
 
 register_constant_handler(np.ma.MaskedArray, _masked_array_constant_handler)
 
-def _ndarray_constant_handler(val: np.ndarray, canonicalize_types
-                             ) -> Sequence[ir.Value]:
+def _ndarray_constant_handler(val: np.ndarray) -> Sequence[ir.Value]:
   """Constant handler for ndarray literals, handling zero-size strides.
 
   In most cases this function calls _numpy_array_constant(val) except it has
@@ -282,24 +277,20 @@ def _ndarray_constant_handler(val: np.ndarray, canonicalize_types
     staged into the XLA Computation.
   """
   if dtypes.result_type(val) == dtypes.float0:
-    return _numpy_array_constant(np.zeros(val.shape, dtype=np.bool_),
-                                 canonicalize_types=False)
+    return _numpy_array_constant(np.zeros(val.shape, dtype=np.bool_))
   elif np.any(np.equal(0, val.strides)) and val.size > 0:
     zero_stride_axes, = np.where(np.equal(0, val.strides))
     other_axes, = np.where(np.not_equal(0, val.strides))
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None) # type: ignore
                               for ax in range(val.ndim))]  # type: ignore
-    if canonicalize_types:
-      collapsed_val = np.asarray(
-          collapsed_val, dtypes.canonicalize_dtype(collapsed_val.dtype))
     out = hlo.BroadcastInDimOp(
         ir.RankedTensorType.get(
             val.shape, dtype_to_ir_type(collapsed_val.dtype)),
-        _numpy_array_constant(collapsed_val, canonicalize_types=False)[0],
+        _numpy_array_constant(collapsed_val)[0],
         dense_int_elements(other_axes)).result
     return (out,)
   else:
-    return _numpy_array_constant(val, canonicalize_types)
+    return _numpy_array_constant(val)
 
 register_constant_handler(np.ndarray, _ndarray_constant_handler)
 
@@ -310,13 +301,13 @@ for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
                      np.bool_, np.longlong, dtypes.bfloat16]:
   register_constant_handler(_scalar_type, _ndarray_constant_handler)  # type: ignore
 
-def _python_scalar_handler(dtype, val, canonicalize_dtypes):
-  return _numpy_array_constant(np.array(val, dtype), canonicalize_dtypes)
+def _python_scalar_handler(dtype, val):
+  return _numpy_array_constant(np.array(val, dtype))
 
 for ptype, dtype in dtypes.python_scalar_dtypes.items():
   register_constant_handler(ptype, partial(_python_scalar_handler, dtype))
 
-def _token_constant_handler(val, canonicalize_types):
+def _token_constant_handler(val):
   return [hlo.CreateTokenOp().result]
 register_constant_handler(core.Token, _token_constant_handler)
 
@@ -1110,9 +1101,10 @@ def lower_jaxpr_to_fun(
       else:
         args.append(arg)
     callee_name_stack = ctx.name_stack.extend(util.wrap_name(name, api_name))
-    out_vals, tokens_out = jaxpr_subcomp(ctx.replace(name_stack=callee_name_stack),
-                                         jaxpr.jaxpr, tokens_in, map(ir_constants, jaxpr.consts),
-                                         *args, dim_var_values=dim_var_values)
+    consts = [ir_constants(xla.canonicalize_dtype(x)) for x in jaxpr.consts]
+    out_vals, tokens_out = jaxpr_subcomp(
+        ctx.replace(name_stack=callee_name_stack), jaxpr.jaxpr, tokens_in,
+        consts, *args, dim_var_values=dim_var_values)
     outs = []
     if create_tokens:
       for _ in range(num_output_tokens):
@@ -1229,7 +1221,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   assert ctx.platform != "gpu"
   def read(v: core.Atom) -> Sequence[ir.Value]:
     if type(v) is core.Literal:
-      return ir_constants(v.val, canonicalize_types=True)
+      return ir_constants(xla.canonicalize_dtype(v.val))
     else:
       assert isinstance(v, core.Var)
       return env[v]
@@ -1329,11 +1321,15 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     core.clean_up_dead_vars(eqn, env, last_used)
   return map(read, jaxpr.outvars), tokens
 
+
 def _ir_consts(consts):
   unique_consts = {id(const): const for const in consts}
   ir_consts = {
-      id_: ir_constants(const) for id_, const in unique_consts.items()}
+      id_: ir_constants(xla.canonicalize_dtype(const))
+      for id_, const in unique_consts.items()
+  }
   return [ir_consts[id(const)] for const in consts]
+
 
 def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   """Converts a traceable JAX function `fun` into a lowering rule.
@@ -1606,7 +1602,7 @@ def iota(ctx: LoweringRuleContext, aval_out, *, dimension: int):
 
 def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
-  zero = ir_constant(np.array(value, aval.dtype))
+  zero = ir_constant(np.array(value, dtypes.canonicalize_dtype(aval.dtype)))
   return broadcast_in_dim(ctx, zero, aval, broadcast_dimensions=())
 
 def zeros_like_lowering(ctx, x):
@@ -2083,8 +2079,7 @@ def emit_python_callback(
       backend.get_emit_python_callback_descriptor(_wrapped_callback,
                                                   operand_shapes,
                                                   result_shapes))
-  descriptor_operand = ir_constant(
-      callback_descriptor, canonicalize_types=False)
+  descriptor_operand = ir_constant(callback_descriptor)
   callback_operands = [descriptor_operand, *operands]
   if operand_mlir_layouts is not None:
     operand_mlir_layouts = [_layout_to_mlir_layout([]), *operand_mlir_layouts]

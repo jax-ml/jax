@@ -494,7 +494,7 @@ def _call_tf_lowering(
         captured_inputs.append(inp)
 
   captured_ops = tuple(
-      mlir.ir_constant(np.asarray(inp), canonicalize_types=False)
+      mlir.ir_constant(np.asarray(inp))
       for inp in captured_inputs
   )
 

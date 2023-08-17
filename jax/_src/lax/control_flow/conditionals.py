@@ -850,10 +850,10 @@ def _cond_lowering(ctx, index, *args, branches, linear):
     with ir.InsertionPoint(branch):
       sub_ctx = ctx.module_context.replace(
           name_stack=name_stack.extend(f'branch_{i}_fun'))
+      consts = [mlir.ir_constants(xla.canonicalize_dtype(x)) for x in jaxpr.consts]
       out_vals, tokens_out = mlir.jaxpr_subcomp(
           sub_ctx, jaxpr.jaxpr, tokens_in,
-          map(mlir.ir_constants, jaxpr.consts),
-          *map(mlir.wrap_singleton_ir_values, args),
+          consts, *map(mlir.wrap_singleton_ir_values, args),
           dim_var_values=ctx.dim_var_values)
       out_tokens = [tokens_out.get(eff) for eff in ordered_effects]
       out_vals = [*out_tokens, *out_vals]

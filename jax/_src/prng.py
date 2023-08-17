@@ -630,9 +630,9 @@ def key_array_shard_arg_handler(x: PRNGKeyArrayImpl, devices, indices, sharding)
 pxla.shard_arg_handlers[PRNGKeyArrayImpl] = key_array_shard_arg_handler
 
 
-def key_array_constant_handler(x, canonicalize_dtypes):
+def key_array_constant_handler(x):
   arr = x.unsafe_raw_array()
-  return mlir.get_constant_handler(type(arr))(arr, canonicalize_dtypes)
+  return mlir.get_constant_handler(type(arr))(arr)
 mlir.register_constant_handler(PRNGKeyArrayImpl, key_array_constant_handler)
 
 
@@ -1178,8 +1178,7 @@ def iota_2x32_shape_lowering(ctx, *, shape):
 
   def _mul(x: core.DimSize, y: ir.Value) -> ir.Value:
     if core.is_constant_dim(x):
-      x_const = mlir.ir_constant(np.array(x, np.dtype('uint64')),
-                                 canonicalize_types=False)
+      x_const = mlir.ir_constant(np.array(x, np.dtype('uint64')))
     else:
       x_const, = mlir.eval_dynamic_shape(ctx, (x,))
       x_const = hlo.ConvertOp(
@@ -1195,8 +1194,7 @@ def iota_2x32_shape_lowering(ctx, *, shape):
   iotas = [mlir.iota(ctx, aval_u64, dimension=dimension)
            for dimension in range(len(shape))]
   counts = bcast_iotas_to_reshaped_iota(_add, _mul, shape, iotas)
-  shift = mlir.ir_constant(np.array(32, np.dtype('uint64')),
-                           canonicalize_types=False)
+  shift = mlir.ir_constant(np.array(32, np.dtype('uint64')))
   shift = mlir.broadcast_in_dim(ctx, shift, aval_u64,
                                 broadcast_dimensions=[])
   counts_shifted = mlir.hlo.ShiftRightLogicalOp(counts, shift).result

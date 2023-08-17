@@ -677,9 +677,8 @@ api_util._shaped_abstractify_handlers[ArrayImpl] = op.attrgetter('aval')
 basearray.Array.register(ArrayImpl)
 
 
-def _array_mlir_constant_handler(val, canonicalize_types=True):
-  return mlir.ir_constants(val._value,
-                           canonicalize_types=canonicalize_types)
+def _array_mlir_constant_handler(val):
+  return mlir.ir_constants(val._value)
 mlir.register_constant_handler(ArrayImpl, _array_mlir_constant_handler)
 
 

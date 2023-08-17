@@ -45,6 +45,7 @@ from jax._src.errors import JAXTypeError
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import xla
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.partial_eval import (
   trace_to_subjaxpr_dynamic, DynamicJaxprTracer,
@@ -1335,7 +1336,7 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   #       them!
   vectorized_jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(f, local_avals)
   _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
-  const_nodes = map(mlir.ir_constants, consts)
+  const_nodes = [mlir.ir_constants(xla.canonicalize_dtype(x)) for x in consts]
 
   local_mesh_shape = mesh.local_mesh.shape
   tiled_ins = (
@@ -1418,7 +1419,7 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
     if aval_axes else [node]
     for node, aval, aval_axes in zip(global_in_nodes, global_in_avals, mesh_in_axes)
   ]
-  const_nodes = map(mlir.ir_constants, consts)
+  const_nodes = [mlir.ir_constants(xla.canonicalize_dtype(x)) for x in consts]
 
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
@@ -1469,7 +1470,7 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
   #       them!
   global_in_avals = ctx.avals_in
   vectorized_jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
-  const_nodes = map(mlir.ir_constants, consts)
+  const_nodes = [mlir.ir_constants(xla.canonicalize_dtype(x)) for x in consts]
 
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
