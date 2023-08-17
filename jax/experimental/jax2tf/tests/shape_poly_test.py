@@ -1074,7 +1074,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
              "Found inconsistency between dimension size args[0].shape[0] (= 8) and the specification 'a + 2*b' (= 10). "
              "Using the following polymorphic shapes specifications: args[0].shape = (a + 2*b, a, a + b). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
-             "'b' = 4 from specification 'a + b' for dimension args[0].shape[2] (= N/A), . "
+             "'b' = 4 from specification 'a + b' for dimension args[0].shape[2] (= 6), . "
              "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
            )),
       dict(shape=(7, 2, 36),  # a = 2, b = 3, c = 6 - cannot solve c
@@ -1092,6 +1092,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     def f_jax(x):  # x: f32[a + 2*b, a, a + b + c]
       return 0.
 
+    if shape == (8, 2, 6) and jaxlib_version <= (0, 4, 14):
+      raise unittest.SkipTest("Test requires jaxlib >= 0.4.14")
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     with contextlib.ExitStack() as stack:
       if expect_error is not None:

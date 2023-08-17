@@ -55,6 +55,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src.lax import lax
+from jax._src.lib import version as jaxlib_version
 from jax._src.interpreters import mlir
 from jax._src.numpy import lax_numpy
 from jax._src import tree_util
@@ -1269,9 +1270,12 @@ class ShapeConstraint:
     See shape_assertion.
     """
     # There is currenly a limitation in the shape assertion checker that
-    # it supports at most 4 error_message_inputs. We try to stay within the
+    # it supports at most 32 error_message_inputs. We try to stay within the
     # limit, reusing a format specifier if possible.
-    # TODO(necula): remove this limit
+    if jaxlib_version <= (0, 4, 14):
+      max_error_message_inputs = 4
+    else:
+      max_error_message_inputs = 32
     format_specifiers: dict[DimSize, str] = {}
     error_message_inputs: list[Any] = []
     error_message_strings: list[str] = []
@@ -1283,7 +1287,7 @@ class ShapeConstraint:
       if cached_spec is not None:
         error_message_strings.append(cached_spec)
         continue
-      if len(error_message_inputs) >= 4:
+      if len(error_message_inputs) >= max_error_message_inputs:
         error_message_strings.append("N/A")
         continue
       spec = "{" + str(len(error_message_inputs)) + "}"
