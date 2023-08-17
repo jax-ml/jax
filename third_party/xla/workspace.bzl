@@ -20,8 +20,8 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 #    curl -L https://github.com/openxla/xla/archive/<git hash>.tar.gz | sha256sum
 #    and update XLA_SHA256 with the result.
 
-XLA_COMMIT = "28e756940622ba628dcd11b3a4dcbb1206d8f1f7"
-XLA_SHA256 = "94c39e926ce49874a5a5e99a7dadfd7f991eca2eb3af0eda2ce72e427aec674e"
+XLA_COMMIT = "4ca5589bff25a944a556c9dba1b228638e8f7c19"
+XLA_SHA256 = "311b6e58a10544c03c64fab89da92b6e3beb6021b71aa45d357ee48b7c8ef0fd"
 
 def repo():
     http_archive(
