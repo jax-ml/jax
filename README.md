@@ -389,7 +389,7 @@ Some standouts:
 JAX is written in pure Python, but it depends on XLA, which needs to be
 installed as the `jaxlib` package. Use the following instructions to install a
 binary package with `pip` or `conda`, to use a
-[Docker containers](#docker-containers-nvidia-gpu), or to [build JAX from
+[Docker container](#docker-containers-nvidia-gpu), or to [build JAX from
 source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
 
