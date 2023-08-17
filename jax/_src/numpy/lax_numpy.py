@@ -203,7 +203,6 @@ finfo = dtypes.finfo
 
 dtype = np.dtype
 can_cast = dtypes.can_cast
-issubsctype = dtypes.issubsctype
 promote_types = dtypes.promote_types
 
 ComplexWarning = NumpyComplexWarning

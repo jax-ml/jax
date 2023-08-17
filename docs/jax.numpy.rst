@@ -232,7 +232,6 @@ namespace; they are listed below.
     isrealobj
     isscalar
     issubdtype
-    issubsctype
     iterable
     ix_
     kaiser
