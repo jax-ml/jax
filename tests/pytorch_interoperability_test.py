@@ -21,6 +21,7 @@ from jax import config
 import jax.dlpack
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 import jax.numpy as jnp
 from jax._src import test_util as jtu
 
@@ -83,13 +84,37 @@ class DLPackTest(jtu.JaxTestCase):
     else:
       self.assertAllClose(np, y.cpu().numpy())
 
+  @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
+  def testJaxArrayToTorch(self, shape, dtype):
+    if xla_extension_version < 186:
+      self.SkipTest("Need xla_extension_version >= 186")
+
+    if not config.x64_enabled and dtype in [
+        jnp.int64,
+        jnp.float64,
+        jnp.complex128,
+    ]:
+      self.skipTest("x64 types are disabled by jax_enable_x64")
+    rng = jtu.rand_default(self.rng())
+    np = rng(shape, dtype)
+    # Test across all devices
+    for device in jax.local_devices():
+      x = jax.device_put(np, device)
+      y = torch.utils.dlpack.from_dlpack(x)
+      if dtype == jnp.bfloat16:
+        # .numpy() doesn't work on Torch bfloat16 tensors.
+        self.assertAllClose(
+            np, y.cpu().view(torch.int16).numpy().view(jnp.bfloat16)
+        )
+      else:
+        self.assertAllClose(np, y.cpu().numpy())
+
   def testTorchToJaxInt64(self):
     # See https://github.com/google/jax/issues/11895
     x = jax.dlpack.from_dlpack(
         torch.utils.dlpack.to_dlpack(torch.ones((2, 3), dtype=torch.int64)))
     dtype_expected = jnp.int64 if config.x64_enabled else jnp.int32
     self.assertEqual(x.dtype, dtype_expected)
-
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
   def testTorchToJax(self, shape, dtype):

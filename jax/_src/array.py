@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import enum
 import math
 import operator as op
 import numpy as np
@@ -48,6 +49,13 @@ Shape = tuple[int, ...]
 Device = xc.Device
 Index = tuple[slice, ...]
 PRNGKeyArrayImpl = Any  # TODO(jakevdp): fix cycles and import this.
+
+
+# Mirror of dlpack.h enum
+class DLDeviceType(enum.IntEnum):
+  kDLCPU = 1
+  kDLCUDA = 2
+  kDLROCM = 10
 
 
 class Shard:
@@ -362,9 +370,40 @@ class ArrayImpl(basearray.Array):
   def __array__(self, dtype=None, context=None):
     return np.asarray(self._value, dtype=dtype)
 
-  def __dlpack__(self):
+  def __dlpack__(self, stream: int | None = None):
+    if len(self._arrays) != 1:
+      raise ValueError("__dlpack__ only supported for unsharded arrays.")
     from jax._src.dlpack import to_dlpack  # pylint: disable=g-import-not-at-top
-    return to_dlpack(self)
+    return to_dlpack(self, stream=stream)
+
+  def __dlpack_device__(self) -> tuple[DLDeviceType, int]:
+    if len(self._arrays) != 1:
+      raise ValueError("__dlpack__ only supported for unsharded arrays.")
+
+    if self.platform() == "cpu":
+      return DLDeviceType.kDLCPU, 0
+
+    elif self.platform() == "gpu":
+      platform_version = self.device().client.platform_version
+      if "cuda" in platform_version:
+        dl_device_type = DLDeviceType.kDLCUDA
+      elif "rocm" in platform_version:
+        dl_device_type = DLDeviceType.kDLROCM
+      else:
+        raise ValueError("Unknown GPU platform for __dlpack__: "
+                         f"{platform_version}")
+
+      local_hardware_id = self.device().local_hardware_id
+      if local_hardware_id is None:
+        raise ValueError("Couldn't get local_hardware_id for __dlpack__")
+
+      return dl_device_type, local_hardware_id
+
+    else:
+      raise ValueError(
+          "__dlpack__ device only supported for CPU and GPU, got platform: "
+          f"{self.platform()}"
+      )
 
   def __reduce__(self):
     fun, args, arr_state = self._value.__reduce__()  # type: ignore

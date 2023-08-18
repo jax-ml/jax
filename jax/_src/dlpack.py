@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from jax import numpy as jnp
 from jax._src import array
-from jax._src.typing import Array
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
+from jax._src.typing import Array
 
 
 SUPPORTED_DTYPES = frozenset({
@@ -25,7 +28,8 @@ SUPPORTED_DTYPES = frozenset({
     jnp.float64, jnp.complex64, jnp.complex128})
 
 
-def to_dlpack(x: Array, take_ownership: bool = False):
+def to_dlpack(x: Array, take_ownership: bool = False,
+              stream: int | None = None):
   """Returns a DLPack tensor that encapsulates a ``DeviceArray`` `x`.
 
   Takes ownership of the contents of ``x``; leaves `x` in an invalid/deleted
@@ -38,13 +42,25 @@ def to_dlpack(x: Array, take_ownership: bool = False):
       it were deleted. If ``False``, JAX retains ownership of the buffer; it is
       undefined behavior if the DLPack consumer writes to a buffer that JAX
       owns.
+    stream: optional platform-dependent stream to wait on until the buffer is
+      ready. This corresponds to the `stream` argument to __dlpack__ documented
+      in https://dmlc.github.io/dlpack/latest/python_spec.html.
   """
   if not isinstance(x, array.ArrayImpl):
     raise TypeError("Argument to to_dlpack must be a jax.Array, "
                     f"got {type(x)}")
   assert len(x.devices()) == 1
-  return xla_client._xla.buffer_to_dlpack_managed_tensor(
-      x.addressable_data(0), take_ownership=take_ownership)  # type: ignore
+  if xla_extension_version >= 186:
+    return xla_client._xla.buffer_to_dlpack_managed_tensor(
+        x.addressable_data(0), take_ownership=take_ownership, stream=stream
+    )  # type: ignore
+  else:
+    if stream is not None:
+      raise ValueError(
+          "passing `stream` argument to to_dlpack requires jaxlib >= 0.4.15")
+    return xla_client._xla.buffer_to_dlpack_managed_tensor(
+        x.addressable_data(0), take_ownership=take_ownership)  # type: ignore
+
 
 
 def from_dlpack(dlpack):
