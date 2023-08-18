@@ -15,7 +15,15 @@
 # This file is included as part of both jax and jaxlib. It is also
 # eval()-ed by setup.py, so it should not have any dependencies.
 
+import os
+import datetime
+
 __version__ = "0.4.15"
+
+if os.environ.get('JAX_NIGHTLY'):
+  datestring = datetime.datetime.now().strftime('%Y%m%d')
+  __version__ = f'{__version__}.dev{datestring}'
+
 _minimum_jaxlib_version = "0.4.14"
 
 def _version_as_tuple(version_str):
