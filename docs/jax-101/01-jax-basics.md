@@ -45,7 +45,7 @@ print(x)
 
 So far, everything is just like NumPy. A big appeal of JAX is that you don't need to learn a new API. Many common NumPy programs would run just as well in JAX if you substitute `np` for `jnp`. However, there are some important differences which we touch on at the end of this section.
 
-You can notice the first difference if you check the type of `x`. It is a variable of type `DeviceArray`, which is the way JAX represents arrays.
+You can notice the first difference if you check the type of `x`. It is a variable of type `Array`, which is the way JAX represents arrays.
 
 ```{code-cell} ipython3
 :id: 3fLtgPUAn7mi

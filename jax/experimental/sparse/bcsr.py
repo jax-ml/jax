@@ -848,7 +848,7 @@ class BCSR(JAXSparse):
   @classmethod
   def fromdense(cls, mat, *, nse=None, index_dtype=np.int32, n_dense=0,
                 n_batch=0):
-    """Create a BCSR array from a (dense) :class:`DeviceArray`."""
+    """Create a BCSR array from a (dense) :class:`Array`."""
     return bcsr_fromdense(mat, nse=nse, index_dtype=index_dtype,
                           n_dense=n_dense, n_batch=n_batch)
 

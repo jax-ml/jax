@@ -649,9 +649,8 @@ def make_array_from_single_device_arrays(
 ) -> ArrayImpl:
   r"""Returns a ``jax.Array`` from a sequence of ``jax.Array``\s on a single device.
 
-  ``jax.Array`` on a single device is analogous to a ``DeviceArray``. You can use
-  this function if you have already ``jax.device_put`` the value on a single
-  device and want to create a global Array. The smaller ``jax.Array``\s should be
+  You can use this function if you have already ``jax.device_put`` the value on
+  a single device and want to create a global Array. The smaller ``jax.Array``\s should be
   addressable and belong to the current process.
 
   Args:
@@ -702,8 +701,7 @@ def make_array_from_single_device_arrays(
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     return aval.dtype._rules.make_sharded_array(aval, sharding, arrays, committed=True)
-  # TODO(phawkins): ideally the cast() could be checked. Revisit this after
-  # removing DeviceArray.
+  # TODO(phawkins): ideally the cast() could be checked.
   return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),
                    committed=True)
 

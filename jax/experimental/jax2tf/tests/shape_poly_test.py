@@ -226,7 +226,7 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
     self.assertFalse(core.definitely_equal_one_of_dim(1, [2, b]))
     self.assertFalse(core.definitely_equal_one_of_dim(3, []))
 
-    self.assertTrue(core.definitely_equal(1, jnp.add(0, 1)))  # A DeviceArray
+    self.assertTrue(core.definitely_equal(1, jnp.add(0, 1)))  # An Array
     self.assertFalse(core.definitely_equal(1, "a"))
 
   def test_poly_bounds(self):

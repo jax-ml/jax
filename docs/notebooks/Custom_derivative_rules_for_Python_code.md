@@ -1036,9 +1036,9 @@ jax.grad(foo)(3.)
 > <ipython-input-113-b19a2dc1abf7>(12)debug_bwd()
 -> return g
 (Pdb) p x
-DeviceArray(9., dtype=float32)
+Array(9., dtype=float32)
 (Pdb) p g
-DeviceArray(-0.91113025, dtype=float32)
+Array(-0.91113025, dtype=float32)
 (Pdb) q
 ```
 

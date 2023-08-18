@@ -3196,7 +3196,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testIssue121(self):
     assert not np.isscalar(jnp.array(3))
 
-  def testArrayOutputsDeviceArrays(self):
+  def testArrayOutputsArrays(self):
     assert type(jnp.array([])) is array.ArrayImpl
     assert type(jnp.array(np.array([]))) is array.ArrayImpl
 
@@ -3206,10 +3206,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     assert type(jnp.array(NDArrayLike())) is array.ArrayImpl
 
     # NOTE(mattjj): disabled b/c __array__ must produce ndarrays
-    # class DeviceArrayLike:
+    # class ArrayLike:
     #     def __array__(self, dtype=None):
     #         return jnp.array([], dtype=dtype)
-    # assert  xla.type_is_device_array(jnp.array(DeviceArrayLike()))
+    # assert  xla.type_is_device_array(jnp.array(ArrayLike()))
 
   def testArrayMethod(self):
     class arraylike:

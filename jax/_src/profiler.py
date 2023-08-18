@@ -321,7 +321,7 @@ def device_memory_profile(backend: Optional[str] = None) -> bytes:
   """Captures a JAX device memory profile as ``pprof``-format protocol buffer.
 
   A device memory profile is a snapshot of the state of memory, that describes the JAX
-  :class:`jax.DeviceArray` and executable objects present in memory and their
+  :class:`~jax.Array` and executable objects present in memory and their
   allocation sites.
 
   For more information how to use the device memory profiler, see

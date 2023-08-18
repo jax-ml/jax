@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""GlobalDeviceArray serialization and deserialization."""
+"""Array serialization and deserialization."""
 
 import abc
 import asyncio
@@ -482,7 +482,7 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
   """Responsible for serializing GDAs via TensorStore."""
 
   def serialize(self, arrays, tensorstore_specs, *, on_commit_callback):
-    """Serializes GlobalDeviceArrays or Arrays via TensorStore asynchronously.
+    """Serializes Arrays or Arrays via TensorStore asynchronously.
 
     TensorStore writes to a storage layer in 2 steps:
     *  Reading/copying from the source after which the source can be modified.
@@ -494,7 +494,7 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
     finish in a separate thread allowing other computation to proceed.
 
     Args:
-      arrays: GlobalDeviceArrays or Arrays that should be serialized.
+      arrays: Arrays or Arrays that should be serialized.
       tensorstore_specs: TensorStore specs that are used to serialize GDAs or
         Arrays.
       on_commit_callback: This callback will be executed after all processes

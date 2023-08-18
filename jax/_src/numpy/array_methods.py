@@ -47,7 +47,7 @@ zip, unsafe_zip = safe_zip, zip
 
 ### add method and operator overloads to arraylike classes
 
-# We add operator overloads to DeviceArray and ShapedArray. These method and
+# We add operator overloads to Array and ShapedArray. These method and
 # operator overloads mainly just forward calls to the corresponding lax_numpy
 # functions, which can themselves handle instances from any of these classes.
 
@@ -240,7 +240,7 @@ def _view(arr: Array, dtype: DTypeLike = None, type: None = None) -> Array:
 
 
 def _notimplemented_flat(self):
-  raise NotImplementedError("JAX DeviceArrays do not implement the arr.flat property: "
+  raise NotImplementedError("JAX Arrays do not implement the arr.flat property: "
                             "consider arr.flatten() instead.")
 
 _accepted_binop_types = (int, float, complex, np.generic, np.ndarray, Array)
@@ -308,8 +308,8 @@ def _multi_slice(arr: ArrayLike,
                  removed_dims: tuple[tuple[int, ...]]) -> list[Array]:
   """Extracts multiple slices from `arr`.
 
-  This is used to shard DeviceArray arguments to pmap. It's implemented as a
-  DeviceArray method here to avoid circular imports.
+  This is used to shard Array arguments to pmap. It's implemented as a
+  Array method here to avoid circular imports.
   """
   results: list[Array] = []
   for starts, limits, removed in zip(start_indices, limit_indices, removed_dims):
@@ -746,7 +746,7 @@ def _set_tracer_aval_forwarding(tracer, exclude=()):
       setattr(tracer, prop_name, _forward_property_to_aval(prop_name))
 
 def _set_array_base_attributes(device_array, include=None, exclude=None):
-  # Forward operators, methods, and properties on DeviceArray to lax_numpy
+  # Forward operators, methods, and properties on Array to lax_numpy
   # functions (with no Tracers involved; this forwarding is direct)
   def maybe_setattr(attr_name, target):
     if exclude is not None and attr_name in exclude:

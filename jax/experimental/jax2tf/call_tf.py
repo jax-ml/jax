@@ -57,7 +57,7 @@ TfConcreteFunction = Any
 TfVal = jax2tf_internal.TfVal
 
 # The platforms for which to use DLPack to avoid copying (only works on GPU
-# and CPU at the moment, and only for DeviceArray). For CPU we don't need
+# and CPU at the moment, and only for Array). For CPU we don't need
 # DLPack, if we are careful.
 _DLPACK_PLATFORMS = ("gpu",)
 
@@ -335,7 +335,7 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
         arg_jax.dtype in dlpack.SUPPORTED_DTYPES):
       arg_dlpack = jax.dlpack.to_dlpack(arg_jax, take_ownership=False)
       return tf.experimental.dlpack.from_dlpack(arg_dlpack)
-    # The following avoids copies to the host on CPU, always for DeviceArray
+    # The following avoids copies to the host on CPU, always for Array
     # and even for ndarray if they are sufficiently aligned.
     # TODO(necula): on TPU this copies to the host!
     return tf.constant(np.asarray(arg_jax))
