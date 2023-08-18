@@ -507,7 +507,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       # TODO(necula): look into this, but this is only for non-native serialization and enable_xla=False
       Jax2TfLimitation(
         "Errors for non-native serialization with enable_xla=False for certain input dtype combinations",
-        devices=["cpu", "tpu"],
+        devices=["cpu", "gpu", "tpu"],
         enabled=(not harness.params["enable_xla"] and
                  (harness.dtype in [np.int16, np.uint32, np.uint16] or
                   harness.params["rhs_dtype"] in [np.int16, np.uint32, np.uint16] or
