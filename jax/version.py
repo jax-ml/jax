@@ -18,11 +18,13 @@
 import os
 import datetime
 
-__version__ = "0.4.15"
+_version = "0.4.15"
 
-if os.environ.get('JAX_NIGHTLY'):
+if os.environ.get('JAX_RELEASE') or os.environ.get('JAXLIB_RELEASE'):
+  __version__ = _version
+else:
   datestring = datetime.datetime.now().strftime('%Y%m%d')
-  __version__ = f'{__version__}.dev{datestring}'
+  __version__ = f'{_version}.dev{datestring}'
 
 _minimum_jaxlib_version = "0.4.14"
 
