@@ -21,6 +21,7 @@ import scipy.special as osp_special
 
 import jax.numpy as jnp
 from jax import jit
+from jax import jvp
 from jax import vmap
 from jax import lax
 
@@ -248,9 +249,22 @@ _BERNOULLI_COEFS = [
 ]
 
 
+@custom_derivatives.custom_jvp
 @_wraps(osp_special.zeta, module='scipy.special')
 def zeta(x: ArrayLike, q: Optional[ArrayLike] = None) -> Array:
-  assert q is not None, "Riemann zeta function is not implemented yet."
+  if q is None:
+    raise NotImplementedError(
+      "Riemann zeta function not implemented; pass q != None to compute the Hurwitz Zeta function.")
+  x, q = promote_args_inexact("zeta", x, q)
+  return lax.zeta(x, q)
+
+
+# There is no general closed-form derivative for the zeta function, so we compute
+# derivatives via a series expansion
+def _zeta_series_expansion(x: ArrayLike, q: Optional[ArrayLike] = None) -> Array:
+  if q is None:
+    raise NotImplementedError(
+      "Riemann zeta function not implemented; pass q != None to compute the Hurwitz Zeta function.")
   # Reference: Johansson, Fredrik.
   # "Rigorous high-precision computation of the Hurwitz zeta function and its derivatives."
   # Numerical Algorithms 69.2 (2015): 253-270.
@@ -275,6 +289,8 @@ def zeta(x: ArrayLike, q: Optional[ArrayLike] = None) -> Array:
   T1 = T1 / coefs
   T = T0 * (dtype(0.5) + T1.sum(-1))
   return S + I + T
+
+zeta.defjvp(partial(jvp, _zeta_series_expansion))  # type: ignore[arg-type]
 
 
 @_wraps(osp_special.polygamma, module='scipy.special', update_doc=False)

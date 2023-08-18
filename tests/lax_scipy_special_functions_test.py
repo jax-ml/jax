@@ -127,9 +127,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record(
         "xlog1py", 2, float_dtypes, jtu.rand_default, True
     ),
-    # TODO: enable gradient test for zeta by restricting the domain of
-    # of inputs to some reasonable intervals
-    op_record("zeta", 2, float_dtypes, jtu.rand_positive, False),
+    op_record("zeta", 2, float_dtypes, jtu.rand_positive, True),
     # TODO: float64 produces aborts on gpu, potentially related to use of jnp.piecewise
     op_record(
         "expi", 1, [np.float32],
