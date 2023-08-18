@@ -15,6 +15,7 @@
 # This module is largely a wrapper around `jaxlib` that performs version
 # checking on import.
 
+import datetime
 import gc
 import pathlib
 import re
@@ -46,25 +47,36 @@ def check_jaxlib_version(jax_version: str, jaxlib_version: str,
   # PEP440 allows a number of non-numeric suffixes, which we allow also.
   # We currently do not allow an epoch.
   version_regex = re.compile(r"[0-9]+(?:\.[0-9]+)*")
-  def _parse_version(v: str) -> tuple[int, ...]:
+  date_regex = r'(\d{4})(\d{2})(\d{2})'
+  def _parse_version(v: str) -> tuple[tuple[int, ...], Optional[datetime.date]]:
     m = version_regex.match(v)
     if m is None:
       raise ValueError(f"Unable to parse jaxlib version '{v}'")
-    return tuple(int(x) for x in m.group(0).split('.'))
+    ver = tuple(int(x) for x in m.group(0).split('.'))
 
-  _jax_version = _parse_version(jax_version)
-  _minimum_jaxlib_version = _parse_version(minimum_jaxlib_version)
-  _jaxlib_version = _parse_version(jaxlib_version)
+    m = re.search(r'dev' + date_regex, v)
+    if m is None:
+      return ver, None
+    year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    date = datetime.date(year, month, day)
+    return ver, date
+
+  _jax_version, jax_date = _parse_version(jax_version)
+  _minimum_jaxlib_version, _ = _parse_version(minimum_jaxlib_version)
+  _jaxlib_version, jaxlib_date = _parse_version(jaxlib_version)
 
   if _jaxlib_version < _minimum_jaxlib_version:
     msg = (f'jaxlib is version {jaxlib_version}, but this version '
            f'of jax requires version >= {minimum_jaxlib_version}.')
     raise RuntimeError(msg)
 
+  msg = (f'jaxlib version {jaxlib_version} is newer than and '
+         f'incompatible with jax version {jax_version}. Please '
+         'update your jax and/or jaxlib packages.')
   if _jaxlib_version > _jax_version:
-    msg = (f'jaxlib version {jaxlib_version} is newer than and '
-           f'incompatible with jax version {jax_version}. Please '
-           'update your jax and/or jaxlib packages.')
+    raise RuntimeError(msg)
+
+  if jaxlib_date is not None and jax_date is not None and jaxlib_date > jax_date:
     raise RuntimeError(msg)
 
   return _jaxlib_version

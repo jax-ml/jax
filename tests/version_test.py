@@ -24,20 +24,31 @@ class JaxVersionTest(unittest.TestCase):
   def testVersions(self):
     check_jaxlib_version(jax_version="1.2.3", jaxlib_version="1.2.3",
                          minimum_jaxlib_version="1.2.3")
+
     check_jaxlib_version(jax_version="1.2.3.4", jaxlib_version="1.2.3",
                          minimum_jaxlib_version="1.2.3")
+
     check_jaxlib_version(jax_version="2.5.dev234", jaxlib_version="1.2.3",
                          minimum_jaxlib_version="1.2.3")
+
     with self.assertRaisesRegex(RuntimeError, ".*jax requires version >=.*"):
       check_jaxlib_version(jax_version="1.2.3", jaxlib_version="1.0",
                            minimum_jaxlib_version="1.2.3")
+
     with self.assertRaisesRegex(RuntimeError, ".*jax requires version >=.*"):
       check_jaxlib_version(jax_version="1.2.3", jaxlib_version="1.0",
                            minimum_jaxlib_version="1.0.1")
+
     with self.assertRaisesRegex(RuntimeError,
                                 ".incompatible with jax version.*"):
       check_jaxlib_version(jax_version="1.2.3", jaxlib_version="1.2.4",
                            minimum_jaxlib_version="1.0.5")
+
+    with self.assertRaisesRegex(RuntimeError,
+                                ".incompatible with jax version.*"):
+      check_jaxlib_version(jax_version="0.4.14.dev20230818",
+                           jaxlib_version="0.4.14.dev20230819",
+                           minimum_jaxlib_version="0.4.14")
 
 
 if __name__ == "__main__":
