@@ -39,10 +39,36 @@ from jax._src.scipy.linalg import (
   solve_triangular as solve_triangular,
   svd as svd,
   toeplitz as toeplitz,
-  tril as tril,
-  triu as triu,
 )
 
 from jax._src.third_party.scipy.linalg import (
   funm as funm,
 )
+
+# Deprecations
+from jax._src.scipy.linalg import (
+  tril as _deprecated_tril,
+  triu as _deprecated_triu,
+)
+
+_deprecations = {
+    # Added August 18, 2023:
+    "tril": (
+        "jax.scipy.linalg.tril is deprecated. Use jax.numpy.tril instead.",
+        _deprecated_tril,
+    ),
+    "triu": (
+        "jax.scipy.linalg.triu is deprecated. Use jax.numpy.triu instead.",
+        _deprecated_triu,
+    ),
+}
+
+import typing
+if typing.TYPE_CHECKING:
+  tril = _deprecated_tril
+  triu = _deprecated_triu
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing
