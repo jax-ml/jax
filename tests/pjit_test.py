@@ -1396,6 +1396,51 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(Exception, 'Mismatch in result shapes.'):
       pjit_f(x).block_until_ready()
 
+  @jtu.with_mesh([('x', 4)])
+  def test_custom_partitioner_jit_annotated_function(self):
+    """Test correct lowering of function with a @jax.jit annotated callee.
+
+    Annotating a callee with @jax.jit results in a module with a HLO CallOp.
+    This test is makes sure that the custom partitioner lowering supports
+    CallOps.
+    """
+
+    self.skip_if_custom_partitioning_not_supported()
+
+    @custom_partitioning
+    def f(x):
+      return x
+
+    def partition(mesh, arg_shapes, result_shape):
+      def lower_fn(x):
+        @jax.jit
+        def g(y):
+          return y
+
+        return g(x)
+
+      x_shard = arg_shapes[0].sharding
+      return (
+          mesh,
+          lower_fn,
+          NamedSharding(x_shard.mesh, P('x')),
+          (NamedSharding(x_shard.mesh, P('x')),),
+      )
+
+    def infer_sharding_from_operands(mesh, arg_shapes, result_shape):
+      x_shard = arg_shapes[0].sharding
+      return NamedSharding(x_shard.mesh, P('x'))
+
+    f.def_partition(
+        infer_sharding_from_operands=infer_sharding_from_operands,
+        partition=partition,
+    )
+
+    jit_f = jax.jit(f)
+    x = np.asarray(np.random.randint(0, 20, (32,)), dtype=np.float32)
+    pjit_f = pjit(jit_f, in_shardings=(P('x')), out_shardings=P('x'))
+    self.assertArraysEqual(x, pjit_f(x))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class AutoShardingPjitTest(jtu.JaxTestCase):
