@@ -55,6 +55,17 @@ def relu(x: Array) -> Array:
 
   Args:
     x : input array
+
+  Returns:
+    An array.
+
+  Example:
+    >>> jax.nn.relu(jax.numpy.array([-2., -1., -0.5, 0, 0.5, 1., 2.]))
+    Array([0. , 0. , 0. , 0. , 0.5, 1. , 2. ], dtype=float32)
+
+  See also:
+    :func:`relu6`
+
   """
   return jnp.maximum(x, 0)
 # For behavior at 0, see https://openreview.net/forum?id=urrcVI-_jRm
@@ -99,20 +110,35 @@ def sigmoid(x: Array) -> Array:
 
   Args:
     x : input array
+
+  Returns:
+    An array.
+
+  See also:
+    :func:`log_sigmoid`
+
   """
   return lax.logistic(x)
 
 @jax.jit
 def silu(x: Array) -> Array:
-  r"""SiLU activation function.
+  r"""SiLU (a.k.a. swish) activation function.
 
   Computes the element-wise function:
 
   .. math::
     \mathrm{silu}(x) = x \cdot \mathrm{sigmoid}(x) = \frac{x}{1 + e^{-x}}
 
+  :func:`swish` and :func:`silu` are both aliases for the same function.
+
   Args:
     x : input array
+
+  Returns:
+    An array.
+
+  See also:
+    :func:`sigmoid`
   """
   return x * sigmoid(x)
 
@@ -129,6 +155,12 @@ def log_sigmoid(x: Array) -> Array:
 
   Args:
     x : input array
+
+  Returns:
+    An array.
+
+  See also:
+    :func:`sigmoid`
   """
   return -softplus(-x)
 
@@ -147,6 +179,12 @@ def elu(x: Array, alpha: Array = 1.0) -> Array:
   Args:
     x : input array
     alpha : scalar or array of alpha values (default: 1.0)
+
+  Returns:
+    An array.
+
+  See also:
+    :func:`selu`
   """
   safe_x = jnp.where(x > 0, 0., x)
   return jnp.where(x > 0, x, alpha * jnp.expm1(safe_x))
@@ -168,6 +206,12 @@ def leaky_relu(x: Array, negative_slope: Array = 1e-2) -> Array:
   Args:
     x : input array
     negative_slope : array or scalar specifying the negative slope (default: 0.01)
+
+  Returns:
+    An array.
+
+  See also:
+    :func:`relu`
   """
   return jnp.where(x >= 0, x, negative_slope * x)
 
@@ -186,6 +230,9 @@ def hard_tanh(x: Array) -> Array:
 
   Args:
     x : input array
+
+  Returns:
+    An array.
   """
   return jnp.where(x > 1, 1, jnp.where(x < -1, -1, x))
 
@@ -208,6 +255,9 @@ def celu(x: Array, alpha: Array = 1.0) -> Array:
   Args:
     x : input array
     alpha : array or scalar (default: 1.0)
+
+  Returns:
+    An array.
   """
   return jnp.maximum(x, 0.0) + alpha * jnp.expm1(jnp.minimum(x, 0.0) / alpha)
 
@@ -232,6 +282,12 @@ def selu(x: Array) -> Array:
 
   Args:
     x : input array
+
+  Returns:
+    An array.
+
+  See also:
+    :func:`elu`
   """
   alpha = 1.6732632423543772848170429916717
   scale = 1.0507009873554804934193349852946
@@ -275,11 +331,27 @@ def gelu(x: Array, approximate: bool = True) -> Array:
 
 @partial(jax.jit, static_argnames=("axis",))
 def glu(x: Array, axis: int = -1) -> Array:
-  """Gated linear unit activation function.
+  r"""Gated linear unit activation function.
+
+  Computes the function:
+
+  .. math::
+    \mathrm{glu}(x) =  x\left[\ldots, 0:\frac{n}{2}, \ldots\right] \cdot
+      \mathrm{sigmoid} \left( x\left[\ldots, \frac{n}{2}:n, \ldots\right]
+        \right)
+
+  where the array is split into two along ``axis``. The size of the ``axis``
+  dimension must be divisible by two.
 
   Args:
     x : input array
     axis: the axis along which the split should be computed (default: -1)
+
+  Returns:
+    An array.
+
+  See also:
+    :func:`sigmoid`
   """
   size = x.shape[axis]
   assert size % 2 == 0, "axis size must be divisible by 2"
@@ -312,6 +384,12 @@ def log_softmax(x: Array,
     where: Elements to include in the :code:`log_softmax`.
     initial: The minimum value used to shift the input array. Must be present
       when :code:`where` is not None.
+
+  Returns:
+    An array.
+
+  See also:
+    :func:`softmax`
   """
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   shifted = x - lax.stop_gradient(x_max)
@@ -345,6 +423,12 @@ def softmax(x: Array,
     where: Elements to include in the :code:`softmax`.
     initial: The minimum value used to shift the input array. Must be present
       when :code:`where` is not None.
+
+  Returns:
+    An array.
+
+  See also:
+    :func:`log_softmax`
   """
   if jax.config.jax_softmax_custom_jvp:
     return _softmax(x, axis, where, initial)
@@ -484,9 +568,14 @@ def relu6(x: Array) -> Array:
   .. math::
     \nabla \mathrm{relu}(6) = 0
 
-
   Args:
     x : input array
+
+  Returns:
+    An array.
+
+  See also:
+    :func:`relu`
   """
   return jnp.minimum(jnp.maximum(x, 0), 6.)
 relu6.defjvps(lambda g, ans, x:
@@ -503,20 +592,35 @@ def hard_sigmoid(x: Array) -> Array:
 
   Args:
     x : input array
+
+  Returns:
+    An array.
+
+  See also:
+    :func:`relu6`
   """
   return relu6(x + 3.) / 6.
 
 @jax.jit
 def hard_silu(x: Array) -> Array:
-  r"""Hard SiLU activation function
+  r"""Hard SiLU (swish) activation function
 
   Computes the element-wise function
 
   .. math::
     \mathrm{hard\_silu}(x) = x \cdot \mathrm{hard\_sigmoid}(x)
 
+  Both :func:`hard_silu` and :func:`hard_swish` are aliases for the same
+  function.
+
   Args:
     x : input array
+
+  Returns:
+    An array.
+
+  See also:
+    :func:`hard_sigmoid`
   """
   return x * hard_sigmoid(x)
 
