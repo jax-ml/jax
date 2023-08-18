@@ -95,14 +95,6 @@ For a deeper dive into JAX:
 - See the [full list of
 notebooks](https://github.com/google/jax/tree/main/docs/notebooks).
 
-You can also take a look at [the mini-libraries in
-`jax.example_libraries`](https://github.com/google/jax/tree/main/jax/example_libraries/README.md),
-like [`stax` for building neural
-networks](https://github.com/google/jax/tree/main/jax/example_libraries/README.md#neural-net-building-with-stax)
-and [`optimizers` for first-order stochastic
-optimization](https://github.com/google/jax/tree/main/jax/example_libraries/README.md#first-order-optimization),
-or the [examples](https://github.com/google/jax/tree/main/examples).
-
 ## Transformations
 
 At its core, JAX is an extensible system for transforming numerical functions.
