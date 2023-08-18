@@ -13,12 +13,12 @@
 # limitations under the License.
 
 # A ShardingSpec describes at a high level how a logical array is sharded across
-# devices (each ShardedDeviceArray has a ShardingSpec, and ShardingSpecs also
-# describe how to shard inputs to a parallel computation). spec_to_indices()
-# encodes exactly how a given ShardingSpec is translated to device buffers, i.e.
-# how the sharded array is "laid out" across devices. Given a sequence of
-# devices, we shard the data across the devices in row-major order, with
-# replication treated as an extra inner dimension.
+# devices (each array sharded with a `PmapSharding` has a ShardingSpec, and
+# ShardingSpecs also describe how to shard inputs to a parallel computation).
+# spec_to_indices() encodes exactly how a given ShardingSpec is translated to
+# device buffers, i.e. how the sharded array is "laid out" across devices. Given
+# a sequence of devices, we shard the data across the devices in row-major
+# order, with replication treated as an extra inner dimension.
 #
 # For example, given the logical data array [1, 2, 3, 4], if we were to
 # partition this array 4 ways with a replication factor of 2, for a total of 8
@@ -233,8 +233,8 @@ def spec_to_indices(shape: Sequence[int],
   """Returns numpy-style indices corresponding to a sharding spec.
 
   Each index describes a shard of the array. The order of the indices is the
-  same as the device_buffers of a ShardedDeviceArray (i.e. the data is laid out
-  row-major).
+  same as the device_buffers of a Array sharded using PmapSharding (i.e. the
+  data is laid out row-major).
 
   Args:
     shape: The shape of the logical array being sharded.

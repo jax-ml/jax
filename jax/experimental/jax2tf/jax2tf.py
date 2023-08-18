@@ -1814,11 +1814,11 @@ def _not(x):
   Numpy and JAX support bitwise not for booleans by applying a logical not!
   This means that applying bitwise_not yields an unexpected result:
     jnp.bitwise_not(jnp.array([True, False]))
-    >> DeviceArray([False,  True], dtype=bool)
+    >> Array([False,  True], dtype=bool)
 
   if you assume that booleans are simply casted to integers.
     jnp.bitwise_not(jnp.array([True, False]).astype(np.int32)).astype(bool)
-    >> DeviceArray([True,  True], dtype=bool)
+    >> Array([True,  True], dtype=bool)
   """
   if x.dtype == tf.bool:
     return tf.logical_not(x)

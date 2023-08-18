@@ -98,7 +98,7 @@ class CloudpickleTest(jtu.JaxTestCase):
 
 class PickleTest(jtu.JaxTestCase):
 
-  def testPickleOfDeviceArray(self):
+  def testPickleOfArray(self):
     x = jnp.arange(10.0)
     s = pickle.dumps(x)
     y = pickle.loads(s)
@@ -106,7 +106,7 @@ class PickleTest(jtu.JaxTestCase):
     self.assertIsInstance(y, type(x))
     self.assertEqual(x.aval, y.aval)
 
-  def testPickleOfDeviceArrayWeakType(self):
+  def testPickleOfArrayWeakType(self):
     x = jnp.array(4.0)
     self.assertEqual(x.aval.weak_type, True)
     s = pickle.dumps(x)

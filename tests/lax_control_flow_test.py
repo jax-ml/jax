@@ -2567,7 +2567,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       # TODO(mattjj): make the numpy.ndarray test pass w/ remat
       raise unittest.SkipTest("new-remat-of-scan doesn't convert numpy.ndarray")
 
-    x = rng.randn(32, 2, 32).astype('float32')  # numpy.ndarray, not DeviceArray
+    x = rng.randn(32, 2, 32).astype('float32')  # numpy.ndarray, not Array
     _, vjp_fun = jax.vjp(cumprod, x)
     *_, ext_res = vjp_fun.args[0].args[0]
     self.assertIsInstance(ext_res, jax.Array)

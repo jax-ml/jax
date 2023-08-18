@@ -987,7 +987,7 @@ FloatingPointError                        Traceback (most recent call last)
     104         if np.any(np.isnan(py_val)):
 --> 105           raise FloatingPointError("invalid value")
     106         else:
-    107           return DeviceArray(device_buffer, *result_shape)
+    107           return Array(device_buffer, *result_shape)
 
 FloatingPointError: invalid value
 ```
@@ -1142,7 +1142,7 @@ Many such cases are discussed in detail in the sections above; here we list seve
   array([254, 255,   0,   1], dtype=uint8)
 
   >>> jnp.arange(254.0, 258.0).astype('uint8')
-  DeviceArray([254, 255, 255, 255], dtype=uint8)
+  Array([254, 255, 255, 255], dtype=uint8)
   ```
   This sort of mismatch would typically arise when casting extreme values from floating to integer types or vice versa.
 

@@ -65,7 +65,7 @@ class IndexedAxisSize:
   replace = dataclasses.replace
 
 # Jumble(aval=a:3 => f32[[3 1 4].a],
-#        data=DeviceArray([0., 1., 2., 0., 0., 1., 2., 3.], dtype=float32))
+#        data=Array([0., 1., 2., 0., 0., 1., 2., 3.], dtype=float32))
 @dataclasses.dataclass(frozen=True)
 class Jumble:
   aval: JumbleTy

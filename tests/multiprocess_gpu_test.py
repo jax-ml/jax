@@ -320,8 +320,6 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     self.assertEqual(y[0], jax.device_count())
     print(y)
 
-  # TODO(sudhakarsingh27): To change/omit test in favor of using `Array`
-  # since `GlobalDeviceArray` is going to be deprecated in the future
   def test_pjit_gda_multi_input_multi_output(self):
     jax.distributed.initialize()
     global_mesh = jtu.create_global_mesh((8, 2), ("x", "y"))
@@ -370,8 +368,6 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
         np.testing.assert_array_equal(np.asarray(s.data),
                                       global_input_data[s.index])
 
-  # TODO(sudhakarsingh27): To change/omit test in favor of using `Array`
-  # since `GlobalDeviceArray` is going to be deprecated in the future
   def test_pjit_gda_non_contiguous_mesh(self):
     jax.distributed.initialize()
     devices = self.sorted_devices()
@@ -428,8 +424,6 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
         np.testing.assert_array_equal(np.asarray(s.data),
                                       global_input_data[expected_index])
 
-  # TODO(sudhakarsingh27): To change/omit test in favor of using `Array`
-  # since `GlobalDeviceArray` is going to be deprecated in the future
   def test_pjit_gda_non_contiguous_mesh_2d(self):
     jax.distributed.initialize()
     global_mesh = self.create_2d_non_contiguous_mesh()
@@ -504,8 +498,6 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
       # Fully replicated values + GDA allows a non-contiguous mesh.
       out1, out2 = f(global_input_data, gda2)
 
-  # TODO(sudhakarsingh27): To change/omit test in favor of using `Array`
-  # since `GlobalDeviceArray` is going to be deprecated in the future
   def test_pjit_gda_non_contiguous_mesh_2d_aot(self):
     jax.distributed.initialize()
     global_mesh = self.create_2d_non_contiguous_mesh()
@@ -531,8 +523,6 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
       self.assertEqual(out1.shape, (8, 2))
       self.assertEqual(out2.shape, (8, 2))
 
-  # TODO(sudhakarsingh27): To change/omit test in favor of using `Array`
-  # since `GlobalDeviceArray` is going to be deprecated in the future
   def test_pjit_gda_eval_shape(self):
     jax.distributed.initialize()
 

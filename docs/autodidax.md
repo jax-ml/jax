@@ -1822,15 +1822,15 @@ print(ys)
 One piece missing is device memory persistence for arrays. That is, we've
 defined `handle_result` to transfer results back to CPU memory as NumPy
 arrays, but it's often preferable to avoid transferring results just to
-transfer them back for the next operation. We can do that by introducing a
-`DeviceArray` class, which can wrap XLA buffers and otherwise duck-type
+transfer them back for the next operation. We can do that by introducing an
+`Array` class, which can wrap XLA buffers and otherwise duck-type
 `numpy.ndarray`s:
 
 ```{code-cell}
 def handle_result(aval: ShapedArray, buf):  # noqa: F811
-  return DeviceArray(aval, buf)
+  return Array(aval, buf)
 
-class DeviceArray:
+class Array:
   buf: Any
   aval: ShapedArray
 
@@ -1853,9 +1853,9 @@ class DeviceArray:
   _rmul = staticmethod(mul)
   _gt = staticmethod(greater)
   _lt = staticmethod(less)
-input_handlers[DeviceArray] = lambda x: x.buf
+input_handlers[Array] = lambda x: x.buf
 
-jax_types.add(DeviceArray)
+jax_types.add(Array)
 ```
 
 ```{code-cell}

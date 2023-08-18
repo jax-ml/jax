@@ -2505,7 +2505,7 @@ class BCOO(JAXSparse):
   @classmethod
   def fromdense(cls, mat: Array, *, nse: int | None = None, index_dtype: DTypeLike = np.int32,
                 n_dense: int = 0, n_batch: int = 0) -> BCOO:
-    """Create a BCOO array from a (dense) :class:`DeviceArray`."""
+    """Create a BCOO array from a (dense) :class:`~jax.Array`."""
     return bcoo_fromdense(
       mat, nse=nse, index_dtype=index_dtype, n_dense=n_dense, n_batch=n_batch)
 

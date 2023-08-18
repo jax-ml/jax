@@ -2669,7 +2669,7 @@ class APITest(jtu.JaxTestCase):
     error_text = "float0s do not support any operations by design"
 
     with self.assertRaisesRegex(TypeError, error_text):
-      # dispatch via DeviceArray
+      # dispatch via Array
       _ = float0_array + jnp.zeros(())
 
     with self.assertRaisesRegex(TypeError, error_text):

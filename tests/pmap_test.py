@@ -842,7 +842,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertNotIsInstance(z, np.ndarray)
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
-    # test that we can pass in a regular DeviceArray
+    # test that we can pass in a regular Array
     y = f(device_put(x))
     self.assertIsInstance(y, array.ArrayImpl)
     self.assertAllClose(y, 2 * x, check_dtypes=False)

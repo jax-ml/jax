@@ -189,7 +189,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf = tf.function(lambda x: x + x)
     self.assertEqual(f_tf(jnp.ones([])).numpy(), 2.)
 
-    # Test with ShardedDeviceArray.
+    # Test with a PmapSharding-sharded Array.
     n = jax.local_device_count()
     mk_sharded = lambda f: jax.pmap(lambda x: x)(f([n]))
     f_tf = tf.function(lambda x: x)
