@@ -351,7 +351,6 @@ def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
   return np.issubdtype(a, b)
 
 can_cast = np.can_cast
-issubsctype = np.issubsctype
 
 JAXType = Union[type, DType]
 

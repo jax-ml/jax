@@ -15,6 +15,8 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
+import numpy as _numpy
+
 from jax.numpy import fft as fft
 from jax.numpy import linalg as linalg
 
@@ -157,7 +159,6 @@ from jax._src.numpy.lax_numpy import (
     isrealobj as isrealobj,
     isscalar as isscalar,
     issubdtype as issubdtype,
-    issubsctype as issubsctype,
     iterable as iterable,
     ix_ as ix_,
     kaiser as kaiser,
@@ -459,6 +460,11 @@ _deprecations = {
         "jax.numpy.PZERO is deprecated. Use 0.0 instead.",
         0.0,
     ),
+    # Added Aug 17, 2023:
+    "issubsctype": (
+        "jax.numpy.issubsctype is deprecated. In most cases, jax.numpy.issubdtype can be used instead.",
+        _numpy.core.numerictypes.issubsctype,
+    )
 }
 
 import typing
@@ -470,8 +476,10 @@ if typing.TYPE_CHECKING:
   NINF = -inf
   NZERO = -0.0
   PZERO = 0.0
+  issubsctype = _numpy.core.numerictypes.issubsctype
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
+del _numpy
