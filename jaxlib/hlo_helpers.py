@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A small libary of helpers for use in jaxlib to build MLIR operations."""
+"""A small library of helpers for use in jaxlib to build MLIR operations."""
 
 from collections.abc import Sequence
 from functools import partial
