@@ -5029,9 +5029,15 @@ def _piecewise(x: Array, condlist: Array, consts: dict[int, ArrayLike],
                funcs: frozenset[tuple[int, Callable[..., Array]]],
                *args, **kw) -> Array:
   funcdict = dict(funcs)
+
+  # To lower to switch, all functions must return the same dtype. We find the common
+  # dtype here using standard type promotion.
+  func_outputs = [jax.eval_shape(func, x, *args, **kw) for func in funcdict.values()]
+  dtype = result_type(*func_outputs, *consts.values())
+
   funclist = [consts.get(i, funcdict.get(i)) for i in range(len(condlist) + 1)]
   indices = argmax(reductions.cumsum(concatenate([zeros_like(condlist[:1]), condlist], 0), 0), 0)
-  dtype = _dtype(x)
+
   def _call(f):
     return lambda x: f(x, *args, **kw).astype(dtype)
   def _const(v):

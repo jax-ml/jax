@@ -1213,6 +1213,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # This is a higher-order function, so the cache miss check will fail.
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, check_cache_misses=False)
 
+  def testPiecewiseOutputType(self):
+    # Regression test for https://github.com/google/jax/discussions/17178
+    x = jnp.arange(10, dtype=int)
+    expected = jnp.where(x < 5, jnp.sin(x), jnp.cos(x))
+    actual = jnp.piecewise(x, [x < 5, x >= 5], [jnp.sin, jnp.cos])
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
   def testPiecewiseRecompile(self):
     def g(x):
       g.num_traces += 1
@@ -1221,7 +1228,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = jnp.arange(10.0)
     for i in range(5):
       jnp.piecewise(x, [x < 0], [g, 0.])
-    self.assertEqual(g.num_traces, 1)
+    # Traced once to find dtype; once for compilation.
+    self.assertEqual(g.num_traces, 2)
 
   @jtu.sample_product(
     [dict(shape=shape, perm=perm)
