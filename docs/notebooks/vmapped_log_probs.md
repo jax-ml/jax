@@ -210,7 +210,7 @@ def normal_sample(key, shape):
 
 normal_sample = jax.jit(normal_sample, static_argnums=(1,))
 
-key = random.PRNGKey(10003)
+key = random.key(10003)
 
 beta_loc = jnp.zeros(num_features, jnp.float32)
 beta_log_scale = jnp.zeros(num_features, jnp.float32)
