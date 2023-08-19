@@ -9,6 +9,12 @@ Remember to align the itemized text with the first line of an item within a list
 ## jax 0.4.15
 
 * Changes
+  * Added additional rotation functions:
+    {meth}`jax.scipy.spatial.transform.Rotation.align_vectors`
+    {meth}`jax.scipy.spatial.transform.Rotation.create_group`
+    {meth}`jax.scipy.spatial.transform.Rotation.random`
+    {meth}`jax.scipy.spatial.transform.Rotation.reduce`
+  * Got {meth}`jax.scipy.spatial.transform.Rotation.from_euler` working for a single rotation axis
   * Added {class}`jax.numpy.ufunc`, as well as {func}`jax.numpy.frompyfunc`, which can convert
     any scalar-valued function into a {func}`numpy.ufunc`-like object, with methods such as
     {meth}`~jax.numpy.ufunc.outer`, {meth}`~jax.numpy.ufunc.reduce`,

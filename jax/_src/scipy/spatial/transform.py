@@ -21,6 +21,7 @@ import scipy.spatial.transform
 import jax
 import jax.numpy as jnp
 from jax._src.numpy.util import _wraps
+from scipy.constants import golden
 
 
 @_wraps(scipy.spatial.transform.Rotation)
@@ -28,6 +29,62 @@ class Rotation(typing.NamedTuple):
   """Rotation in 3 dimensions."""
 
   quat: jax.Array
+
+  @classmethod
+  def align_vectors(cls, a: jax.Array, b: jax.Array, weights: typing.Optional[jax.Array] = None, return_sensitivity: bool = False):
+    """Estimate a rotation to optimally align two sets of vectors."""
+    a = jnp.asarray(a)
+    if a.ndim < 2 or a.shape[-1] != 3:
+      raise ValueError("Expected input `a` to have shape (..., 3), "
+                       "got {}".format(a.shape))
+    b = jnp.asarray(b)
+    if b.ndim < 2 or b.shape[-1] != 3:
+      raise ValueError("Expected input `b` to have shape (..., 3), "
+                       "got {}.".format(b.shape))
+    if weights is None:
+      weights = jnp.ones(b.shape[-2], dtype=b.dtype)
+    else:
+      weights = jnp.asarray(weights, dtype=b.dtype)
+      # if jnp.any(weights < 0):  # this causes a concretization error...
+      #   raise ValueError("`weights` may not contain negative values")
+    matrix, rssd, sensitivity = _align_vectors(a, b, weights)
+    if return_sensitivity:
+      return cls.from_matrix(matrix), rssd, sensitivity
+    else:
+      return cls.from_matrix(matrix), rssd
+
+  @classmethod
+  def create_group(cls, group: str, axis: str = 'Z', dtype=float):
+    """Create a 3D rotation group."""
+    if not isinstance(group, str):
+      raise ValueError("`group` argument must be a string")
+    permitted_axes = ['x', 'y', 'z', 'X', 'Y', 'Z']
+    if axis not in permitted_axes:
+      raise ValueError("`axis` must be one of " + ", ".join(permitted_axes))
+    if group in ['I', 'O', 'T']:
+      symbol = group
+      order = 1
+    elif group[:1] in ['C', 'D'] and group[1:].isdigit():
+      symbol = group[:1]
+      order = int(group[1:])
+    else:
+      raise ValueError("`group` must be one of 'I', 'O', 'T', 'Dn', 'Cn'")
+    axis_index = _elementary_basis_index(axis.lower())
+    if order < 1:
+      raise ValueError("Group order must be positive")
+    if symbol == 'I':
+      quat = _create_icosahedral_group()
+    elif symbol == 'O':
+      quat = _create_octahedral_group()
+    elif symbol == 'T':
+      quat = _create_tetrahedral_group()
+    elif symbol == 'D':
+      quat = _create_dicyclic_group(order, axis=axis_index)
+    elif symbol == 'C':
+      quat = _create_cyclic_group(order, axis=axis_index)
+    else:
+      assert False
+    return cls.from_quat(quat)
 
   @classmethod
   def concatenate(cls, rotations: typing.Sequence):
@@ -50,8 +107,11 @@ class Rotation(typing.NamedTuple):
       raise ValueError("Expected consecutive axes to be different, "
                        "got {}".format(seq))
     angles = jnp.atleast_1d(angles)
+    if len(seq) == 1 and angles.ndim == 1:
+      angles = angles[:, jnp.newaxis]
     axes = jnp.array([_elementary_basis_index(x) for x in seq.lower()])
-    return cls(_elementary_quat_compose(angles, axes, intrinsic, degrees))
+    quat = _elementary_quat_compose(angles, axes, intrinsic, degrees)
+    return cls(quat)
 
   @classmethod
   def from_matrix(cls, matrix: jax.Array):
@@ -81,10 +141,10 @@ class Rotation(typing.NamedTuple):
     return cls(quat)
 
   @classmethod
-  def random(cls, random_key: jax.Array, num: typing.Optional[int] = None):
+  def random(cls, random_key: jax.Array, num: typing.Optional[int] = None, dtype=float):
     """Generate uniformly distributed rotations."""
-    # Need to implement scipy.stats.special_ortho_group for this to work...
-    raise NotImplementedError
+    quat = _random_quaternion(random_key=random_key, num=num, dtype=dtype)
+    return cls(quat)
 
   def __getitem__(self, indexer):
     """Extract rotation(s) at given index(es) from object."""
@@ -110,7 +170,7 @@ class Rotation(typing.NamedTuple):
   def as_euler(self, seq: str, degrees: bool = False):
     """Represent as Euler angles."""
     if len(seq) != 3:
-      raise ValueError(f"Expected 3 axes, got {seq}.")
+      raise ValueError("Expected 3 axes, got {}.".format(seq))
     intrinsic = (re.match(r'^[XYZ]{1,3}$', seq) is not None)
     extrinsic = (re.match(r'^[xyz]{1,3}$', seq) is not None)
     if not (intrinsic or extrinsic):
@@ -160,6 +220,22 @@ class Rotation(typing.NamedTuple):
     K = jnp.dot(weights[jnp.newaxis, :] * self.quat.T, self.quat)
     _, v = jnp.linalg.eigh(K)
     return Rotation(v[:, -1])
+
+  def reduce(self, left=None, right=None, return_indices=False):
+    """Reduce this rotation with the provided rotation groups."""
+    p = self.as_quat()
+    l = (Rotation.identity(dtype=p.dtype) if left is None else left).as_quat()
+    r = (Rotation.identity(dtype=p.dtype) if right is None else right).as_quat()
+    q, left_best, right_best = _reduce(p, l, r)
+    reduced = Rotation(jnp.atleast_2d(q))
+    if return_indices:
+      if left is None:
+        left_best = None
+      if right is None:
+        right_best = None
+      return reduced, left_best, right_best
+    else:
+      return reduced
 
   @property
   def single(self) -> bool:
@@ -214,6 +290,24 @@ class Slerp(typing.NamedTuple):
     if single_time:
       return result[0]
     return result
+
+
+@functools.partial(jnp.vectorize, signature='(m,n),(m,n),(m)->(n,n),(),(n,n)')
+def _align_vectors(a: jax.Array, b: jax.Array, weights: jax.Array) -> typing.Tuple[jax.Array, jax.Array, jax.Array]:
+  B = jnp.einsum('ji,jk->ik', weights[:, jnp.newaxis] * a, b)
+  u, s, vh = jnp.linalg.svd(B)
+  is_neg_det = jnp.linalg.det(u @ vh) < 0
+  s = s.at[-1].set(jnp.where(is_neg_det, -s[-1], s[-1]))
+  u = u.at[:, -1].set(jnp.where(is_neg_det, -u[:, -1], u[:, -1]))
+  C = jnp.dot(u, vh)
+  # if s[1] + s[2] < 1e-16 * s[0]:
+  #   warnings.warn("Optimal rotation is not uniquely or poorly defined for the given sets of vectors.")
+  rssd = jnp.sqrt(jnp.maximum(jnp.sum(weights * jnp.sum(b*b + a*a, axis=1)) - 2 * jnp.sum(s), 0.))
+  zeta = (s[0] + s[1]) * (s[1] + s[2]) * (s[2] + s[0])
+  kappa = s[0] * s[1] + s[1] * s[2] + s[2] * s[0]
+  # with jnp.errstate(divide='ignore', invalid='ignore'):
+  sensitivity = jnp.mean(weights) / zeta * (kappa * jnp.eye(3, dtype=B.dtype) + jnp.dot(B, B.T))
+  return C, rssd, sensitivity
 
 
 @functools.partial(jnp.vectorize, signature='(m,m),(m),()->(m)')
@@ -301,6 +395,108 @@ def _compute_euler_from_quat(quat: jax.Array, axes: jax.Array, extrinsic: bool, 
   return jnp.where(degrees, jnp.rad2deg(angles), angles)
 
 
+def _create_cyclic_group(n: int, axis: int = 2) -> jax.Array:
+  thetas = jnp.linspace(0, 2 * jnp.pi, n, endpoint=False)
+  rv = jnp.vstack([thetas, jnp.zeros(n), jnp.zeros(n)]).T
+  return _from_rotvec(jnp.roll(rv, axis, axis=1), False)
+
+
+def _create_dicyclic_group(n: int, axis: int = 2) -> jax.Array:
+  g1 = _as_rotvec(_create_cyclic_group(n, axis), False)
+  thetas = jnp.linspace(0, jnp.pi, n, endpoint=False)
+  rv = jnp.pi * jnp.vstack([jnp.zeros(n), jnp.cos(thetas), jnp.sin(thetas)]).T
+  g2 = jnp.roll(rv, axis, axis=1)
+  return _from_rotvec(jnp.concatenate((g1, g2)), False)
+
+
+def _create_icosahedral_group() -> jax.Array:
+  g1 = _create_tetrahedral_group()
+  a = 0.5
+  b = 0.5 / golden
+  c = golden / 2
+  g2 = jnp.array([[+a, +b, +c, 0],
+                  [+a, +b, -c, 0],
+                  [+a, +c, 0, +b],
+                  [+a, +c, 0, -b],
+                  [+a, -b, +c, 0],
+                  [+a, -b, -c, 0],
+                  [+a, -c, 0, +b],
+                  [+a, -c, 0, -b],
+                  [+a, 0, +b, +c],
+                  [+a, 0, +b, -c],
+                  [+a, 0, -b, +c],
+                  [+a, 0, -b, -c],
+                  [+b, +a, 0, +c],
+                  [+b, +a, 0, -c],
+                  [+b, +c, +a, 0],
+                  [+b, +c, -a, 0],
+                  [+b, -a, 0, +c],
+                  [+b, -a, 0, -c],
+                  [+b, -c, +a, 0],
+                  [+b, -c, -a, 0],
+                  [+b, 0, +c, +a],
+                  [+b, 0, +c, -a],
+                  [+b, 0, -c, +a],
+                  [+b, 0, -c, -a],
+                  [+c, +a, +b, 0],
+                  [+c, +a, -b, 0],
+                  [+c, +b, 0, +a],
+                  [+c, +b, 0, -a],
+                  [+c, -a, +b, 0],
+                  [+c, -a, -b, 0],
+                  [+c, -b, 0, +a],
+                  [+c, -b, 0, -a],
+                  [+c, 0, +a, +b],
+                  [+c, 0, +a, -b],
+                  [+c, 0, -a, +b],
+                  [+c, 0, -a, -b],
+                  [0, +a, +c, +b],
+                  [0, +a, +c, -b],
+                  [0, +a, -c, +b],
+                  [0, +a, -c, -b],
+                  [0, +b, +a, +c],
+                  [0, +b, +a, -c],
+                  [0, +b, -a, +c],
+                  [0, +b, -a, -c],
+                  [0, +c, +b, +a],
+                  [0, +c, +b, -a],
+                  [0, +c, -b, +a],
+                  [0, +c, -b, -a]])
+  return jnp.concatenate((g1, g2))
+
+
+def _create_octahedral_group() -> jax.Array:
+  g1 = _create_tetrahedral_group()
+  c = jnp.sqrt(2) / 2
+  g2 = jnp.array([[+c, 0, 0, +c],
+                  [0, +c, 0, +c],
+                  [0, 0, +c, +c],
+                  [0, 0, -c, +c],
+                  [0, -c, 0, +c],
+                  [-c, 0, 0, +c],
+                  [0, +c, +c, 0],
+                  [0, -c, +c, 0],
+                  [+c, 0, +c, 0],
+                  [-c, 0, +c, 0],
+                  [+c, +c, 0, 0],
+                  [-c, +c, 0, 0]])
+  return jnp.concatenate((g1, g2))
+
+
+def _create_tetrahedral_group() -> jax.Array:
+  g1 = jnp.eye(4)
+  c = 0.5
+  g2 = jnp.array([[c, -c, -c, +c],
+                  [c, -c, +c, +c],
+                  [c, +c, -c, +c],
+                  [c, +c, +c, +c],
+                  [c, -c, -c, -c],
+                  [c, -c, +c, -c],
+                  [c, +c, -c, -c],
+                  [c, +c, +c, -c]])
+  return jnp.concatenate((g1, g2))
+
+
 def _elementary_basis_index(axis: str) -> int:
   if axis == 'x':
     return 0
@@ -308,7 +504,7 @@ def _elementary_basis_index(axis: str) -> int:
     return 1
   elif axis == 'z':
     return 2
-  raise ValueError(f"Expected axis to be from ['x', 'y', 'z'], got {axis}")
+  raise ValueError("Expected axis to be from ['x', 'y', 'z'], got {}".format(axis))
 
 
 @functools.partial(jnp.vectorize, signature=('(m),(m),(),()->(n)'))
@@ -381,6 +577,49 @@ def _make_elementary_quat(axis: int, angle: jax.Array) -> jax.Array:
 @functools.partial(jnp.vectorize, signature='(n)->(n)')
 def _normalize_quaternion(quat: jax.Array) -> jax.Array:
   return quat / _vector_norm(quat)
+
+
+@functools.partial(jax.jit, static_argnames=['num', 'dtype'])
+def _random_quaternion(random_key: jax.Array, num: typing.Optional[int], dtype):
+  if num is None:
+    sample = jax.random.normal(key=random_key, shape=(4,), dtype=dtype)
+  else:
+    sample = jax.random.normal(key=random_key, shape=(num, 4), dtype=dtype)
+  return _normalize_quaternion(sample)
+
+
+@functools.partial(jnp.vectorize, signature='(n),(n),(n)->(n),(),()')
+def _reduce(p: jax.Array, l: jax.Array, r: jax.Array):
+  e = jnp.zeros((3, 3, 3), dtype=p.dtype)
+  e = e.at[[0, 1, 2], [1, 2, 0], [2, 0, 1]].set(1)
+  e = e.at[[0, 2, 1], [2, 1, 0], [1, 0, 2]].set(-1)
+  ps, pv = _split_quaternion(p)
+  ls, lv = _split_quaternion(l)
+  rs, rv = _split_quaternion(r)
+  qs = jnp.abs(jnp.einsum('i,j,k', ls, ps, rs) -
+               jnp.einsum('i,jx,kx', ls, pv, rv) -
+               jnp.einsum('ix,j,kx', lv, ps, rv) -
+               jnp.einsum('ix,jx,k', lv, pv, rs) -
+               jnp.einsum('xyz,ix,jy,kz', e, lv, pv, rv))
+  qs = jnp.reshape(jnp.moveaxis(qs, 1, 0), (qs.shape[1], -1))
+  max_ind = jnp.argmax(jnp.reshape(qs, (len(qs), -1)), axis=1)
+  left_best = max_ind // len(rv)
+  right_best = max_ind % len(rv)
+  if l.ndim > 1:
+    l = l[left_best]
+  if r.ndim > 1:
+    r = r[right_best]
+  reduced = _compose_quat(l, _compose_quat(p, r))
+  if p.ndim == 1:
+    reduced = p
+    left_best = left_best[0]
+    right_best = right_best[0]
+  return reduced, left_best, right_best
+
+
+def _split_quaternion(q):
+  q = jnp.atleast_2d(q)
+  return q[:, -1], q[:, :-1]
 
 
 @functools.partial(jnp.vectorize, signature='(n)->()')
