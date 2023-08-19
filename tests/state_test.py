@@ -872,7 +872,8 @@ if CAN_USE_HYPOTHESIS:
     @hp.settings(deadline=None, print_blob=True,
                  max_examples=config.FLAGS.jax_num_generated_cases)
     def test_set_vmap(self, set_vmap_param: SetVmapParams):
-
+      if jtu.device_under_test() == "gpu":
+        self.skipTest("Scatter is nondeterministic on GPU")
       indexed_dims = set_vmap_param.vmap_index_param.index_param.indexed_dims
 
       def f(ref, val, *non_slice_idx):
