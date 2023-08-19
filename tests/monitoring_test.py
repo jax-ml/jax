@@ -118,5 +118,27 @@ class MonitoringTest(absltest.TestCase):
     self.assertNotEqual(original_duration_listeners,
                         jax_src_monitoring.get_event_duration_listeners())
 
+  def test_unregister_exist_event_callback_success(self):
+    original_event_listeners = jax_src_monitoring.get_event_listeners()
+    callback = lambda event: None
+    self.assertNotIn(callback, original_event_listeners)
+    monitoring.register_event_listener(callback)
+    self.assertIn(callback, jax_src_monitoring.get_event_listeners())
+    # Verify that original listeners list is not modified by register function.
+    self.assertNotEqual(original_event_listeners,
+                        jax_src_monitoring.get_event_listeners())
+
+    jax_src_monitoring._unregister_event_listener_by_callback(callback)
+
+    self.assertEqual(original_event_listeners,
+                     jax_src_monitoring.get_event_listeners())
+
+  def test_unregister_not_exist_event_callback_fail(self):
+    callback = lambda event: None
+    self.assertNotIn(callback, jax_src_monitoring.get_event_listeners())
+
+    with self.assertRaises(AssertionError):
+      jax_src_monitoring._unregister_event_listener_by_callback(callback)
+
 if __name__ == "__main__":
   absltest.main()
