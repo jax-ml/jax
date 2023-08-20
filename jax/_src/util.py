@@ -586,6 +586,7 @@ else:
     return decorator
 
 
+NumpyComplexWarning: type[RuntimeWarning]
 try:
   # numpy 1.25.0 or newer
   NumpyComplexWarning = np.exceptions.ComplexWarning
