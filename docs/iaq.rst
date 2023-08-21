@@ -6,7 +6,7 @@ JAX Infrequently Asked Questions (IAQ)
 
 This document represents a collection of *infrequently asked questions (IAQ)*. Contributions welcome!
 
-How to apply `jax.device_put` on an `jax.Array`` that has different values per host into a 'data' mesh axis?
+How to apply ``jax.device_put`` on a ``jax.Array` that has different values per host into a 'data' mesh axis?
 ------------------------------------------------------------------------------------------------------------
 
 Here's an example from :meth:`jax.Array` (Line 647 <https://github.com/google/jax/blob/main/jax/_src/array.py#647>`_):
