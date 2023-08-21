@@ -100,6 +100,24 @@ class XlaBridgeTest(jtu.JaxTestCase):
           no_profile_dont_retrieve,
       )
 
+  def test_serialization(self):
+    c1 = compiler.get_compile_options(
+        num_replicas=2,
+        num_partitions=3,
+        env_options_overrides={"1": "1", "2": "2"},
+    )
+    # c2 = compiler.get_compile_options(
+    #     num_replicas=2,
+    #     num_partitions=3,
+    #     # env_options_overrides={"2": "2", "1": "1"},  # order changed
+    # )
+    c1str = c1.SerializeAsString()
+
+    # Idempotence.
+    self.assertEqual(c1str, c1.SerializeAsString())
+    # Map order does not matter.
+    # self.assertEqual(c1str, c2.SerializeAsString())
+
   def test_parameter_replication_default(self):
     c = xc.XlaBuilder("test")
     _ = xla.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()))
