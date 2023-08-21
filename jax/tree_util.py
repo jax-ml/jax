@@ -66,6 +66,7 @@ from jax._src.tree_util import (
   DictKey as DictKey,
   GetAttrKey as GetAttrKey,
   FlattenedIndexKey as FlattenedIndexKey,
+  register_static as register_static,
   # TODO(ivyzheng): Remove these old APIs after June 10 2023.
   register_keypaths,
   AttributeKeyPathEntry,

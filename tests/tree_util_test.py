@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import collections
+import dataclasses
 import functools
 import pickle
 import re
@@ -128,6 +129,36 @@ class FlatCache:
       data, meta = tree_util.tree_flatten(tree_util.tree_unflatten(meta, data))
     return FlatCache(None, leaves=data, treedef=meta)
 
+
+@tree_util.register_static
+class StaticInt(int):
+  pass
+
+
+@tree_util.register_static
+class StaticTuple(tuple):
+  pass
+
+
+@tree_util.register_static
+class StaticDict(dict):
+  pass
+
+
+@tree_util.register_static
+@dataclasses.dataclass
+class BlackBox:
+  """Stores a value but pretends to be equal to every other black box."""
+
+  value: int
+
+  def __hash__(self):
+    return 0
+
+  def __eq__(self, other):
+    return isinstance(other, BlackBox)
+
+
 TREES = (
     (None,),
     ((None,),),
@@ -141,6 +172,9 @@ TREES = (
     ([AnObject2(3, None, [4, "foo"])],),
     (Special(2, 3.),),
     ({"a": 1, "b": 2},),
+    (StaticInt(1),),
+    (StaticTuple((2, 3)),),
+    (StaticDict(foo=4, bar=5),),
     (collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)]),),
     (collections.defaultdict(dict,
                              [("foo", 34), ("baz", 101), ("something", -42)]),),
@@ -148,6 +182,7 @@ TREES = (
     (FlatCache(None),),
     (FlatCache(1),),
     (FlatCache({"a": [1, 2]}),),
+    (BlackBox(value=2),),
 )
 
 
@@ -165,6 +200,9 @@ TREE_STRINGS = (
     "PyTreeDef([CustomNode(AnObject2[[4, 'foo']], [*, None])])",
     "PyTreeDef(CustomNode(Special[None], [*, *]))",
     "PyTreeDef({'a': *, 'b': *})",
+    "PyTreeDef(CustomNode(StaticInt[1], []))",
+    "PyTreeDef(CustomNode(StaticTuple[(2, 3)], []))",
+    "PyTreeDef(CustomNode(StaticDict[{'foo': 4, 'bar': 5}], []))",
 )
 
 # pytest expects "tree_util_test.ATuple"
@@ -199,6 +237,10 @@ TREES_WITH_KEYPATH = (
     (collections.defaultdict(dict,
                              [("foo", 34), ("baz", 101), ("something", -42)]),),
     (ANamedTupleSubclass(foo="hello", bar=3.5),),
+    (StaticInt(1),),
+    (StaticTuple((2, 3)),),
+    (StaticDict(foo=4, bar=5),),
+    (BlackBox(value=2),),
 )
 
 
@@ -590,6 +632,66 @@ class TreeTest(jtu.JaxTestCase):
   def testNamedTupleRegisteredWithoutKeysIsntTreatedAsLeaf(self):
     leaves, _ = tree_util.tree_flatten_with_path(ATuple2(1, 'hi'))
     self.assertLen(leaves, 1)
+
+
+class StaticTest(parameterized.TestCase):
+
+  @parameterized.parameters(
+      (StaticInt(2),),
+      (StaticTuple((2, None)),),
+      (StaticDict(foo=2),),
+  )
+  def test_trace_just_once_with_same_static(self, y):
+    num_called = 0
+
+    @jax.jit
+    def fn(x: int, static_y: StaticInt):
+      nonlocal num_called
+      num_called += 1
+      unstatic_y = type(static_y).__base__(static_y)
+      [y] = tree_util.tree_leaves(unstatic_y)
+      return x + y
+
+    fn(1, y)
+    fn(3, y)
+    self.assertEqual(num_called, 1)
+
+  def test_name(self):
+    self.assertEqual(StaticInt.__name__, "StaticInt")
+    self.assertEqual(BlackBox.__name__, "BlackBox")
+
+  @parameterized.parameters(
+      (StaticInt(2), StaticInt(4)),
+      (StaticTuple((2, None)), StaticTuple((4, None))),
+      (StaticDict(foo=2), StaticDict(foo=4)),
+  )
+  def test_trace_twice_with_different_static(self, y1, y2):
+    num_called = 0
+
+    @jax.jit
+    def fn(x: int, static_y: StaticInt):
+      nonlocal num_called
+      num_called += 1
+      unstatic_y = type(static_y).__base__(static_y)
+      [y] = tree_util.tree_leaves(unstatic_y)
+      return x + y
+
+    fn(1, y1)
+    fn(3, y2)
+    self.assertEqual(num_called, 2)
+
+  def test_trace_just_once_if_static_looks_constant(self):
+    num_called = 0
+
+    @jax.jit
+    def fn(x: int, static_y: BlackBox):
+      nonlocal num_called
+      num_called += 1
+      return x + static_y.value
+
+    self.assertEqual(fn(1, BlackBox(2)), 3)
+    self.assertEqual(fn(3, BlackBox(1)), 5)
+    self.assertEqual(num_called, 1)
 
 
 class RavelUtilTest(jtu.JaxTestCase):

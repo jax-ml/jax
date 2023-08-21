@@ -21,7 +21,7 @@ import functools
 from functools import partial
 import operator as op
 import textwrap
-from typing import Any, Callable, NamedTuple, TypeVar, Union, overload
+from typing import Any, Callable, NamedTuple, Type, TypeVar, Union, overload
 import warnings
 
 from jax._src import traceback_util
@@ -34,6 +34,7 @@ traceback_util.register_exclusion(__file__)
 
 T = TypeVar("T")
 U = TypeVar("U", bound=type[Any])
+H = TypeVar("H", bound=Hashable)
 
 Leaf = Any
 PyTreeDef = pytree.PyTreeDef
@@ -113,7 +114,6 @@ def treedef_tuple(treedefs: Iterable[PyTreeDef]) -> PyTreeDef:
     return pytree.tuple(default_registry, list(treedefs))  # type: ignore
   else:
     return pytree.tuple(list(treedefs))  # type: ignore
-
 
 
 def treedef_children(treedef: PyTreeDef) -> list[PyTreeDef]:
@@ -757,6 +757,30 @@ def register_pytree_with_keys_class(cls: U) -> U:
   return cls
 
 
+def register_static(cls: Type[H]) -> Type[H]:
+  """Registers `cls` as a pytree with no leaves.
+
+  Instances are treated as static by `jax.jit`, `jax.pmap`, etc. This can be an
+  alternative to labeling inputs as static using `jax.jit`'s `static_argnums`
+  and `static_argnames` kwargs, `jax.pmap`'s `static_broadcasted_argnums`, etc.
+
+  `cls` must be hashable, as defined in
+  https://docs.python.org/3/glossary.html#term-hashable.
+
+  `register_static` can be applied to subclasses of builtin hashable classes
+  such as `str`, like this:
+  ```
+  @tree_util.register_static
+  class StaticStr(str):
+    pass
+  ```
+  """
+  flatten = lambda obj: ((), obj)
+  unflatten = lambda obj, empty_iter_children: obj
+  register_pytree_with_keys(cls, flatten, unflatten)
+  return cls
+
+
 def tree_flatten_with_path(
     tree: Any, is_leaf: Callable[[Any], bool] | None = None
 ) -> tuple[list[tuple[KeyPath, Any]], PyTreeDef]:
@@ -864,7 +888,6 @@ def _child_keys(pytree: Any) -> KeyPath:
   else:
     num_children = len(treedef_children(tree_structure(pytree)))
     return tuple(FlattenedIndexKey(i) for i in range(num_children))
-
 
 
 def _prefix_error(
