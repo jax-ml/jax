@@ -116,7 +116,8 @@ class Sharding:
     """Is this sharding fully addressable?
 
     A sharding is fully addressable if the current process can address all of
-    the devices named in the :class:`Sharding`.
+    the devices named in the :class:`Sharding`. ``is_fully_addressable`` is
+    equivalent to "is_local" in multi-process JAX.
     """
     # The pytype disable is because pytype can't recognize a cached property.
     return len(self.device_set) == len(self.addressable_devices)  # type: ignore

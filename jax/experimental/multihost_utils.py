@@ -133,17 +133,15 @@ def process_allgather(in_tree: Any, tiled: bool = False) -> Any:
       hosts.
     tiled: Whether to stack or concat the output. Defaults to False i.e. stack
       into a new positional axis at index 0.
-      This does not affect GDA inputs as the GDA output will always be
-      concatenated.
-      Scalar inputs will always be stacked.
 
   Returns:
-    Pytress of arrays where the data is gathered from all hosts.
-      * If the input is a GDA, then the data is fully replicated.
-      * If the input is non-GDA, then the output shape is dependent on the
-        `tiled` argument. If its False, then the output will be stacked else
-        concatenated.
-      * If the input is non-GDA and scalar, then the output will be stacked.
+    Pytrees of numpy arrays.
+      * If the input is a non-fully addressable jax.Array, then the data is
+        fully replicated.
+      * If the input is numpy array or fully addressable jax.Array, then the
+        output shape is dependent on the `tiled` argument.
+        If its False, then the output will be stacked else concatenated.
+      * If the input is a scalar, then the output will be stacked.
   """
 
   def _pjit(inp):
