@@ -130,6 +130,32 @@ cc_library(
 )
 
 cc_library(
+    name = "gpu_plugin",
+    srcs = ["gpu_plugin.cc"],
+    hdrs = ["gpu_plugin.h"],
+    copts = [
+        "-fexceptions",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+	"@xla//xla/pjrt/c:pjrt_c_api_hdrs",
+        "@xla//xla/pjrt/c:pjrt_c_api_gpu_internal",
+    ],
+    alwayslink = 1,
+)
+cc_binary(
+    name = "gpu_plugin.so",
+    linkshared = True,
+    linkstatic = True,
+    linkopts = [
+        "-Wl,--version-script,/home/jieying/jax/jaxlib/version_script.lds",
+        "-Wl,--no-undefined",
+    ],
+    deps = [
+	":gpu_plugin",
+    ],
+)
+cc_library(
     name = "handle_pool",
     hdrs = ["handle_pool.h"],
     copts = [
