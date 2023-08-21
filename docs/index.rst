@@ -85,6 +85,7 @@ installation options, see the `Install Guide`_ in the project README.
    notebooks/thinking_in_jax
    notebooks/Common_Gotchas_in_JAX
    faq
+   iaq
 
 .. toctree::
    :hidden:
