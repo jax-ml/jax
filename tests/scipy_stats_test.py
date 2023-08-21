@@ -694,6 +694,23 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(3)
+  def testNormLogSf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.norm.logsf
+    lax_fun = lsp_stats.norm.logsf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      # clipping to ensure that scale is not too low
+      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
   def testNormSf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
     scipy_fun = osp_stats.norm.sf
@@ -709,6 +726,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-6)
       self._CompileAndCheck(lax_fun, args_maker)
+
+  def testNormSfNearZero(self):
+    # Regression test for https://github.com/google/jax/issues/17199
+    value = np.array(10, np.float32)
+    self.assertAllClose(osp_stats.norm.sf(value).astype('float32'),
+                        lsp_stats.norm.sf(value),
+                        atol=0, rtol=1E-5)
 
   @genNamedParametersNArgs(3)
   def testNormPpf(self, shapes, dtypes):
