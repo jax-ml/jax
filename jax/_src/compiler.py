@@ -59,6 +59,11 @@ CompileOptions = xc.CompileOptions
 
 logger = logging.getLogger(__name__)
 
+# This variable captures whether a process has ever used cache. It will be set
+# to true only once, regardless of how many times compile_or_get_cached() or
+# compilation_cache.reset_cache() is called.
+_cache_used: bool = False
+
 
 # Will be monkeypatched with the function that gets the XLA-AutoFDO profile
 # version. The default (-1) takes care of errors.
@@ -250,6 +255,13 @@ def compile_or_get_cached(
   if not use_compilation_cache:
     return backend_compile(backend, computation, compile_options,
                            host_callbacks)
+
+  # TODO(b/293308239) Instrument a metric to track the adoption of the new cache
+  # key implementation once the enabling flag is added.
+  global _cache_used
+  if not _cache_used:
+    _cache_used = True
+    monitoring.record_event('/jax/compilation_cache/tasks_using_original_cache')
 
   cache_key = compilation_cache.get_cache_key(
       computation, devices, compile_options, backend,

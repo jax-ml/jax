@@ -45,6 +45,19 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 FAKE_COMPILE_TIME = 10
+_counts = Counter()  # Map event name to count
+
+
+def setUpModule():
+  monitoring.register_event_listener(increment_event_count)
+
+
+def tearDownModule():
+  monitoring._unregister_event_listener_by_callback(increment_event_count)
+
+
+def increment_event_count(event):
+  _counts[event] += 1
 
 
 @jtu.with_config(
@@ -303,6 +316,21 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
       # Unregister the listener added in this test case.
       monitoring._unregister_event_duration_listener_by_index(-1)
+
+  def test_task_using_original_cache_metric(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      cc.initialize_cache(tmpdir)
+
+      jit(lambda x: x + 1)(1)
+      self.assertEqual(
+          _counts["/jax/compilation_cache/tasks_using_original_cache"], 1)
+
+      # Verify that the count is incremented only once per task.
+      cc.reset_cache()
+      cc.initialize_cache(tmpdir)
+      jit(lambda x: x + 3)(3)
+      self.assertEqual(
+          _counts["/jax/compilation_cache/tasks_using_original_cache"], 1)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
