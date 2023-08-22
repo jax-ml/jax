@@ -4,4 +4,4 @@
 // extern "C" {
 // PJRT_PLUGIN_EXPORTED const PJRT_Api* GetPjrtApi();
 // }
-const PJRT_Api* GetPjrtApi() { return pjrt::gpu_plugin::GetGpuPjrtApi(); }
+extern "C" const PJRT_Api* GetPjrtApi() { return pjrt::gpu_plugin::GetGpuPjrtApi(); }
