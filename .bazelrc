@@ -40,7 +40,6 @@ build --copt=-DMLIR_PYTHON_PACKAGE_PREFIX=jaxlib.mlir.
 # Later Bazel flag values override earlier values; if CUDA/ROCM/TPU are enabled,
 # these values are overridden.
 build --@xla//xla/python:enable_gpu=false
-build --@xla//xla/python:enable_tpu=false
 
 ###########################################################################
 
@@ -116,9 +115,6 @@ build:macos --config=posix
 
 # Suppress all warning messages.
 build:short_logs --output_filter=DONT_MATCH_ANYTHING
-
-build:tpu --@xla//xla/python:enable_tpu=true
-build:tpu --define=with_tpu_support=true
 
 #########################################################################
 # RBE config options below.

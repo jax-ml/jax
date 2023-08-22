@@ -225,7 +225,7 @@ def write_bazelrc(*, python_bin_path, remote_build,
                   cpu, cuda_compute_capabilities,
                   rocm_amdgpu_targets, bazel_options, target_cpu_features,
                   wheel_cpu, enable_mkl_dnn, enable_cuda, enable_nccl,
-                  enable_tpu, enable_rocm):
+                  enable_rocm):
   tf_cuda_paths = []
 
   with open("../.jax_configure.bazelrc", "w") as f:
@@ -286,8 +286,6 @@ def write_bazelrc(*, python_bin_path, remote_build,
       f.write("build --config=cuda\n")
       if not enable_nccl:
         f.write("build --config=nonccl\n")
-    if enable_tpu:
-      f.write("build --config=tpu\n")
     if enable_rocm:
       f.write("build --config=rocm\n")
       if not enable_nccl:
@@ -369,10 +367,6 @@ def main():
       parser,
       "enable_cuda",
       help_str="Should we build with CUDA enabled? Requires CUDA and CuDNN.")
-  add_boolean_argument(
-      parser,
-      "enable_tpu",
-      help_str="Should we build with Cloud TPU VM support enabled?")
   add_boolean_argument(
       parser,
       "enable_rocm",
@@ -508,8 +502,6 @@ def main():
       print(f"CUDNN version: {args.cudnn_version}")
     print("NCCL enabled: {}".format("yes" if args.enable_nccl else "no"))
 
-  print("TPU enabled: {}".format("yes" if args.enable_tpu else "no"))
-
   print("ROCm enabled: {}".format("yes" if args.enable_rocm else "no"))
   if args.enable_rocm:
     if rocm_toolkit_path:
@@ -533,7 +525,6 @@ def main():
       enable_mkl_dnn=args.enable_mkl_dnn,
       enable_cuda=args.enable_cuda,
       enable_nccl=args.enable_nccl,
-      enable_tpu=args.enable_tpu,
       enable_rocm=args.enable_rocm,
   )
 
