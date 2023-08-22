@@ -20,7 +20,7 @@ import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps, promote_args_inexact
 from jax._src.typing import Array, ArrayLike
-from jax.scipy.special import gammainc
+from jax.scipy.special import gammainc, gammaincc
 
 
 @_wraps(osp_stats.chi2.logpdf, update_doc=False)
@@ -67,5 +67,21 @@ def logcdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
 
 @_wraps(osp_stats.chi2.sf, update_doc=False)
 def sf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  cdf_result = cdf(x, df, loc, scale)
-  return lax.sub(_lax_const(cdf_result, 1), cdf_result)
+  x, df, loc, scale = promote_args_inexact("chi2.sf", x, df, loc, scale)
+  two = _lax_const(scale, 2)
+  return gammaincc(
+    lax.div(df, two),
+    lax.clamp(
+      _lax_const(x, 0),
+      lax.div(
+        lax.sub(x, loc),
+        lax.mul(scale, two),
+      ),
+      _lax_const(x, jnp.inf),
+    ),
+  )
+
+
+@_wraps(osp_stats.chi2.logsf, update_doc=False)
+def logsf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  return lax.log(sf(x, df, loc, scale))

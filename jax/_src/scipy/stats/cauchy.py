@@ -53,9 +53,14 @@ def logcdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
 
 @_wraps(osp_stats.cauchy.sf, update_doc=False)
 def sf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  x, = promote_args_inexact("cauchy.sf", x)
-  cdf_result = cdf(x, loc, scale)
-  return lax.sub(_lax_const(cdf_result, 1), cdf_result)
+  x, loc, scale = promote_args_inexact("cauchy.sf", x, loc, scale)
+  return cdf(-x, -loc, scale)
+
+
+@_wraps(osp_stats.cauchy.logsf, update_doc=False)
+def logsf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  x, loc, scale = promote_args_inexact("cauchy.logsf", x, loc, scale)
+  return logcdf(-x, -loc, scale)
 
 
 @_wraps(osp_stats.cauchy.isf, update_doc=False)

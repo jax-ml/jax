@@ -257,6 +257,22 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker,
                             rtol={np.float32: 2e-3, np.float64: 1e-4})
 
+  @genNamedParametersNArgs(5)
+  def testBetaLogSf(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.beta.logsf
+    lax_fun = lsp_stats.beta.logsf
+
+    def args_maker():
+      x, a, b, loc, scale = map(rng, shapes, dtypes)
+      return [x, a, b, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker,
+                            rtol={np.float32: 2e-3, np.float64: 1e-4})
+
   def testBetaLogPdfZero(self):
     # Regression test for https://github.com/google/jax/issues/7645
     a = b = 1.
@@ -279,13 +295,49 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4)
-      self._CompileAndCheck(lax_fun, args_maker)
+      self._CompileAndCheck(lax_fun, args_maker, tol={np.float64: 1E-14})
 
   @genNamedParametersNArgs(3)
   def testCauchyLogCdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
     scipy_fun = osp_stats.cauchy.logcdf
     lax_fun = lsp_stats.cauchy.logcdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      # clipping to ensure that scale is not too low
+      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-4)
+      self._CompileAndCheck(lax_fun, args_maker, rtol={np.float64: 1e-14},
+                            atol={np.float64: 1e-14})
+
+  @genNamedParametersNArgs(3)
+  def testCauchyCdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.cauchy.cdf
+    lax_fun = lsp_stats.cauchy.cdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      # clipping to ensure that scale is not too low
+      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-4)
+      self._CompileAndCheck(lax_fun, args_maker, rtol={np.float64: 1e-14},
+                            atol={np.float64: 1e-14})
+
+  @genNamedParametersNArgs(3)
+  def testCauchyLogSf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.cauchy.logsf
+    lax_fun = lsp_stats.cauchy.logsf
 
     def args_maker():
       x, loc, scale = map(rng, shapes, dtypes)
@@ -314,7 +366,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4)
-      self._CompileAndCheck(lax_fun, args_maker)
+      self._CompileAndCheck(lax_fun, args_maker, rtol={np.float64: 1e-14},
+                            atol={np.float64: 1e-14})
 
   @genNamedParametersNArgs(3)
   def testCauchyIsf(self, shapes, dtypes):
@@ -450,6 +503,21 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
   @genNamedParametersNArgs(4)
   def testGammaLogSf(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.gamma.logsf
+    lax_fun = lsp_stats.gamma.logsf
+
+    def args_maker():
+      x, a, loc, scale = map(rng, shapes, dtypes)
+      return [x, a, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(4)
+  def testGammaSf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
     scipy_fun = osp_stats.gamma.sf
     lax_fun = lsp_stats.gamma.sf
@@ -961,10 +1029,40 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(4)
+  def testChi2Cdf(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.chi2.cdf
+    lax_fun = lsp_stats.chi2.cdf
+
+    def args_maker():
+      x, df, loc, scale = map(rng, shapes, dtypes)
+      return [x, df, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(4)
   def testChi2Sf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
     scipy_fun = osp_stats.chi2.sf
     lax_fun = lsp_stats.chi2.sf
+
+    def args_maker():
+      x, df, loc, scale = map(rng, shapes, dtypes)
+      return [x, df, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(4)
+  def testChi2LogSf(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.chi2.logsf
+    lax_fun = lsp_stats.chi2.logsf
 
     def args_maker():
       x, df, loc, scale = map(rng, shapes, dtypes)

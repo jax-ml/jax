@@ -192,6 +192,7 @@ jax.scipy.stats.beta
    cdf
    logcdf
    sf
+   logsf
 
 jax.scipy.stats.betabinom
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -225,6 +226,7 @@ jax.scipy.stats.cauchy
    cdf
    logcdf
    sf
+   logsf
    isf
    ppf
 
@@ -240,6 +242,7 @@ jax.scipy.stats.chi2
    cdf
    logcdf
    sf
+   logsf
 
 
 jax.scipy.stats.dirichlet
@@ -272,6 +275,7 @@ jax.scipy.stats.gamma
    cdf
    logcdf
    sf
+   logsf
 
 jax.scipy.stats.gennorm
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -350,12 +354,13 @@ jax.scipy.stats.norm
 .. autosummary::
   :toctree: _autosummary
 
-   cdf
-   logcdf
    logpdf
    pdf
+   cdf
+   logcdf
    ppf
    sf
+   logsf
    isf
 
 jax.scipy.stats.pareto
