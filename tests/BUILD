@@ -1050,6 +1050,9 @@ jax_test(
 jax_test(
     name = "python_callback_test",
     srcs = ["python_callback_test.py"],
+    disable_configs = [
+        "tpu_se",  # Host callback does not work on stream executor.
+    ],
     deps = [
         "//jax:experimental",
     ],
