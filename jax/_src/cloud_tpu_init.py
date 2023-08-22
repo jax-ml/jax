@@ -76,3 +76,6 @@ def cloud_tpu_init() -> None:
         "JAX_USE_PJRT_C_API_ON_TPU no longer has an effect (the new TPU "
         "runtime is always enabled now). Unset the environment variable "
         "to disable this warning.")
+
+  # Remove when minimum jaxlib version is >= 0.4.15
+  os.environ['JAX_USE_PJRT_C_API_ON_TPU'] = "true"
