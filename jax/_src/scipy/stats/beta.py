@@ -59,12 +59,26 @@ def cdf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
 
 @_wraps(osp_stats.beta.logcdf, update_doc=False)
 def logcdf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
-        loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+           loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.log(cdf(x, a, b, loc, scale))
 
 
 @_wraps(osp_stats.beta.sf, update_doc=False)
 def sf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
-        loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  cdf_result = cdf(x, a, b, loc, scale)
-  return lax.sub(_lax_const(cdf_result, 1), cdf_result)
+       loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  x, a, b, loc, scale = promote_args_inexact("beta.sf", x, a, b, loc, scale)
+  return betainc(
+    b,
+    a,
+    1 - lax.clamp(
+      _lax_const(x, 0),
+      lax.div(lax.sub(x, loc), scale),
+      _lax_const(x, 1),
+    )
+  )
+
+
+@_wraps(osp_stats.beta.logsf, update_doc=False)
+def logsf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
+          loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  return lax.log(sf(x, a, b, loc, scale))
