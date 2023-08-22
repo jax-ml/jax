@@ -1868,7 +1868,6 @@ def vstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   else:
     arrs = [atleast_2d(m) for m in tup]
   return concatenate(arrs, axis=0, dtype=dtype)
-row_stack = vstack
 
 
 @util._wraps(np.hstack)

@@ -340,7 +340,6 @@ namespace; they are listed below.
     rot90
     round
     round_
-    row_stack
     s_
     save
     savez
