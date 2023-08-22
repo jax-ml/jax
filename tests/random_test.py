@@ -553,6 +553,29 @@ class PrngTest(jtu.JaxTestCase):
     def f(seed): return make_key(seed)
     jax.vjp(f, 1)  # doesn't crash
 
+  def test_legacy_prng_key_flag(self):
+    raw_key = jnp.zeros(2, dtype='uint32')
+    invalid_key = jnp.zeros(1, dtype='float32')
+    msg = "Legacy uint32 key array passed as key to jax.random function."
+
+    with jax.legacy_prng_key('allow'):
+      # TODO(jakevdp): remove when enable_custom_prng no longer issues warnings
+      with jax.enable_custom_prng(False):
+        with self.assertNoWarnings():
+          random.uniform(raw_key)
+
+    with jax.legacy_prng_key('warn'):
+      with self.assertWarnsRegex(UserWarning, msg):
+        random.uniform(raw_key)
+
+    with jax.legacy_prng_key('error'):
+      with self.assertRaisesRegex(ValueError, msg):
+        random.uniform(raw_key)
+
+      # Invalid key error should take precedence.
+      with self.assertRaisesRegex(TypeError, "JAX encountered invalid PRNG key data"):
+        random.uniform(invalid_key)
+
 
 class ThreefryPrngTest(jtu.JaxTestCase):
   @parameterized.parameters([{'make_key': ctor} for ctor in [

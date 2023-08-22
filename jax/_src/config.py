@@ -794,6 +794,13 @@ distributed_debug = config.define_bool_state(
           'computations. Logging is performed with `logging` at WARNING '
           'level.'))
 
+legacy_prng_key = config.define_enum_state(
+    name='jax_legacy_prng_key',
+    enum_values=['allow', 'warn', 'error'],
+    default='allow',
+    help=('Specify the behavior when raw PRNG keys are passed to '
+          'jax.random APIs.')
+)
 
 enable_custom_prng = config.define_bool_state(
     name='jax_enable_custom_prng',
