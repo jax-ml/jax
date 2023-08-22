@@ -57,10 +57,16 @@ def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return jnp.asarray(special.ndtri(q) * scale + loc, float)
 
 
+@_wraps(osp_stats.norm.logsf, update_doc=False)
+def logsf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  x, loc, scale = promote_args_inexact("norm.logsf", x, loc, scale)
+  return logcdf(-x, -loc, scale)
+
+
 @_wraps(osp_stats.norm.sf, update_doc=False)
 def sf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  cdf_result = cdf(x, loc, scale)
-  return lax.sub(_lax_const(cdf_result, 1), cdf_result)
+  x, loc, scale = promote_args_inexact("norm.sf", x, loc, scale)
+  return cdf(-x, -loc, scale)
 
 
 @_wraps(osp_stats.norm.isf, update_doc=False)
