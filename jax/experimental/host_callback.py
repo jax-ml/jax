@@ -1229,7 +1229,7 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
   assert identity or len(results) == len(flat_results_aval), (
       f"got {len(results)} but expected {len(flat_results_aval)}. "
       f"identity = {identity}")
-  return results + [next_token, next_itoken]
+  return list(results) + [next_token, next_itoken]
 
 mlir.register_lowering(outside_call_p, _outside_call_lowering, platform="cpu")
 

@@ -1956,14 +1956,40 @@ class HostCallbackCallTest(jtu.JaxTestCase):
     arg = np.arange(24, dtype=np.int32).reshape((2, 3, 4))
     self.assertAllClose(2 * (arg + 1) + 3 * arg, fun(arg))
 
-  def test_call_empty_arg(self):
-    """Call with empty array."""
+  def test_call_no_arg(self):
+    """Call with no arguments."""
     result = np.ones((2,), dtype=np.float32)
-    def f_outside(_):
+    def f_outside(in_tuple):
+      assert len(in_tuple) == 0
       return result
     def fun(x):
       return x + hcb.call(f_outside, (),
                           result_shape=jax.ShapeDtypeStruct(result.shape, result.dtype))
+    self.assertAllClose(2. + result, fun(2.))
+
+  def test_call_empty_arg(self):
+    """Call with empty array."""
+    result = np.full((2,), 3., dtype=np.float32)
+    def f_outside(x0):  # x0: f32[2, 0]
+      return result
+    x0 = np.ones((2, 0), dtype=np.float32)
+    def fun(x):
+      return x + hcb.call(f_outside, x0,
+                          result_shape=jax.ShapeDtypeStruct(result.shape, result.dtype))
+    self.assertAllClose(2. + result, fun(2.))
+
+  def test_call_empty_arg_inside_pytree(self):
+    """Call taking tuple with an empty array and a non-empty one."""
+    x0 = np.ones((2, 0), dtype=np.float32)
+    x1 = np.full((2,), 3., dtype=np.float32)
+    result = x1
+    def f_outside(in_tuple):  # x0: f32[2, 0]  x1: f32[2]
+      return in_tuple[1]
+
+    def fun(x):
+      res = hcb.call(f_outside, (x0, x1),
+                     result_shape=jax.ShapeDtypeStruct(result.shape, result.dtype))
+      return x + res
     self.assertAllClose(2. + result, fun(2.))
 
   def test_call_empty_result(self):

@@ -145,7 +145,6 @@ class PythonCallbackTest(jtu.JaxTestCase):
     out = f(0.)
     self.assertEqual(out, 1.)
 
-
   def test_callback_with_wrong_number_of_args(self):
 
     @jax.jit
@@ -246,27 +245,69 @@ class PythonCallbackTest(jtu.JaxTestCase):
           (3,), x.dtype), core.ShapedArray((3,), x.dtype)), x, y, z)
 
     x, y = f(jnp.ones(3), jnp.arange(3.), jnp.arange(3.) + 1.)
+    jax.effects_barrier()
     np.testing.assert_allclose(x, np.ones(3))
     np.testing.assert_allclose(y, np.array([1., 3., 5]))
 
-  def test_send_recv_zero_dim_arrays(self):
-
-    def _callback(x):
-      return x
+  def test_send_zero_dim_arrays(self):
+    result = np.full((2,), 42.0, dtype=np.float32)
+    x = np.zeros((2, 0), np.float32)
+    def _callback(x):  # x: f32[2, 0]
+      return result
 
     @jax.jit
     def f(x):
-      return callback(_callback, core.ShapedArray((0,), np.float32), x)
+      return callback(
+          _callback, core.ShapedArray(result.shape, result.dtype), x)
+    jax.effects_barrier()
+    self.assertAllClose(f(x), result)
 
-    if jax.default_backend() == "tpu":
-      with self.assertRaisesRegex(
-          NotImplementedError,
-          "Callbacks with zero-dimensional values not supported on TPU."):
-        f(jnp.zeros(0, jnp.float32))
-        jax.effects_barrier()
-    else:
-      np.testing.assert_allclose(
-          f(jnp.zeros(0, jnp.float32)), np.zeros(0, np.float32))
+  def test_send_zero_dim_and_non_zero_dim_arrays(self):
+    x = np.zeros((2, 0), np.float32)
+    y = np.full((2,), 42.0, dtype=np.float32)
+    result = y
+    def _callback(x, y):  # x: f32[2, 0]  y: f32[2]
+      return y
+
+    @jax.jit
+    def f(x, y):
+      return callback(
+          _callback, core.ShapedArray(result.shape, result.dtype), x, y)
+    jax.effects_barrier()
+    self.assertAllClose(f(x, y), result)
+
+  def test_recv_zero_dim_arrays(self):
+    result = np.full((2, 0), 42.0, dtype=np.float32)
+    x = np.zeros((2,), np.float32)
+    def _callback(_):  # f32[2] -> f32[2, 0]
+      return result
+
+    @jax.jit
+    def f(x):
+      return callback(
+          _callback, core.ShapedArray(result.shape, result.dtype), x)
+    jax.effects_barrier()
+    self.assertAllClose(f(x), result)
+
+  def test_recv_zero_dim_and_non_zero_dim_arrays(self):
+    x = np.full((2,), 42., dtype=np.float32)
+    result0 = np.ones((2, 0), dtype=np.float32)
+    result1 = x
+    result2 = np.ones((3, 0), dtype=np.int32)
+    result3 = np.concatenate([x, x]) + 1.
+    def _callback(x):  # x: f32[2] -> (f32[2, 0], f32[2], f32[3, 0], f32[4])
+      return (result0, x, result2, np.concatenate([x, x]) + 1.)
+
+    @jax.jit
+    def f(x):
+      return callback(
+          _callback, (core.ShapedArray(result0.shape, result0.dtype),
+                      core.ShapedArray(result1.shape, result1.dtype),
+                      core.ShapedArray(result2.shape, result2.dtype),
+                      core.ShapedArray(result3.shape, result3.dtype)), x)
+    res = f(x)
+    jax.effects_barrier()
+    self.assertAllClose(res, (result0, result1, result2, result3))
 
   def test_callback_with_pytree_arguments_and_return_values(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':

@@ -1892,6 +1892,9 @@ def _dtype_to_xla_type_string(dtype: np.dtype) -> str:
     raise NotImplementedError(dtype)
   return _dtype_to_xla_type_string_map[dtype]
 
+def is_empty_shape(s: core.Shape) -> bool:
+  return any(d == 0 for d in s)
+
 def send_to_host(channel: int, token: hlo.TokenType, operand: Any,
                  aval: core.ShapedArray, name: str, *,
                  sharding: xc.OpSharding | None = None) -> ir.Value:
@@ -1939,13 +1942,13 @@ def _emit_tpu_python_callback(
     callback,
     token: Any | None,
     operands: Sequence[ir.Value],
-    operand_avals: list[core.ShapedArray],
-    operand_shapes: list[xc.Shape],
-    result_avals: list[core.ShapedArray],
-    result_shapes: list[xc.Shape],
+    operand_avals: Sequence[core.ShapedArray],
+    operand_shapes: Sequence[xc.Shape],
+    result_avals: Sequence[core.ShapedArray],
+    result_shapes: Sequence[xc.Shape],
     *,
     sharding: xc.OpSharding | None = None
-) -> tuple[list[ir.Value], Any, Any]:
+) -> tuple[Sequence[ir.Value], Any, Any]:
   token = token or hlo.CreateTokenOp().result
   _wrapped_callback = callback
 
@@ -1969,9 +1972,6 @@ def _emit_tpu_python_callback(
     send_channels.append(send_channel)
   else:
     for operand, operand_aval in zip(operands, operand_avals):
-      if any(s == 0 for s in operand_aval.shape):
-        raise NotImplementedError(
-            "Callbacks with zero-dimensional values not supported on TPU.")
       channel = ctx.module_context.new_channel()
       token = send_to_host(channel, token, operand, operand_aval,
                            callback.__name__, sharding=sharding)
@@ -1980,9 +1980,6 @@ def _emit_tpu_python_callback(
   recv_channels = []
   outputs = []
   for result_aval in result_avals:
-    if any(s == 0 for s in result_aval.shape):
-      raise NotImplementedError(
-          "Callbacks with zero-dimensional values not supported on TPU.")
     channel = ctx.module_context.new_channel()
     assert isinstance(result_aval, core.ShapedArray)
     token, out = receive_from_host(channel, token, result_aval,
@@ -2010,12 +2007,12 @@ def _aval_to_default_layouts(aval):
 
 def emit_python_callback(
     ctx: LoweringRuleContext, callback, token: Any | None,
-    operands: Sequence[ir.Value], operand_avals: list[core.ShapedArray],
-    result_avals: list[core.ShapedArray],
+    operands: Sequence[ir.Value], operand_avals: Sequence[core.ShapedArray],
+    result_avals: Sequence[core.ShapedArray],
     has_side_effect: bool, *, sharding: xc.OpSharding | None = None,
     operand_layouts: Sequence[Sequence[int] | None] | None = None,
     result_layouts: Sequence[Sequence[int] | None] | None = None,
-    ) -> tuple[list[ir.Value], Any, Any]:
+    ) -> tuple[Sequence[ir.Value], Any, Any]:
   """Emits MLIR that calls back to a provided Python function."""
   platform = ctx.module_context.platform
   if platform not in {"cpu", "cuda", "rocm", "tpu"}:
@@ -2052,12 +2049,36 @@ def emit_python_callback(
         raise RuntimeError(
             f"Incorrect output dtype for return value {i}: "
             "Expected: {}, Actual: {}".format(out_aval.dtype, out_val.dtype))
-    return out_vals
+    if platform == "tpu":
+      # On TPU we cannot receive empty arrays. So, we return from the wrapped
+      # callback only the non-empty results, and we will create empty constants
+      # in the receiving computation.
+      # TODO(b/238239458): fix TPU Recv to work with empty arrays.
+      non_empty_out_vals = tuple([
+          out_val
+          for out_val, result_aval in zip(out_vals, result_avals)
+          if not is_empty_shape(result_aval.shape)])
+      return non_empty_out_vals
+    else:
+      return out_vals
 
   if platform == "tpu":
-    return _emit_tpu_python_callback(backend, ctx, _wrapped_callback,  token,
-        operands, operand_avals, operand_shapes, result_avals, result_shapes,
+    non_empty_result_avals, non_empty_result_shapes = util.unzip2([
+        (aval, shape)
+        for aval, shape in zip(result_avals, result_shapes)
+        if not is_empty_shape(aval.shape)])
+    non_empty_outputs, token, keepalive = _emit_tpu_python_callback(
+        backend, ctx, _wrapped_callback,  token,
+        operands, operand_avals, operand_shapes,
+        non_empty_result_avals, non_empty_result_shapes,
         sharding=sharding)
+    non_empty_outputs_iter = iter(non_empty_outputs)
+    outputs = [
+        ir_constant(np.zeros(result_aval.shape, dtype=result_aval.dtype))
+        if is_empty_shape(result_aval.shape) else next(non_empty_outputs_iter)
+        for result_aval in result_avals]
+    return outputs, token, keepalive
+
   result_types = util.flatten([aval_to_ir_types(aval) for aval in result_avals])
   if token:
 
