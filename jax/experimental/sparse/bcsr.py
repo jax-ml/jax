@@ -193,13 +193,13 @@ def bcsr_fromdense(mat: ArrayLike, *, nse: int | None = None, n_batch: int = 0,
   Returns:
     mat_bcsr: BCSR representation of the matrix.
   """
-  mat = jnp.asarray(mat)
+  mat_array = jnp.asarray(mat)
   if nse is None:
-    nse = _count_stored_elements(mat, n_batch, n_dense)
+    nse = _count_stored_elements(mat_array, n_batch, n_dense)
   nse_int: int = core.concrete_or_error(operator.index, nse, _TRACED_NSE_ERROR)
-  return BCSR(_bcsr_fromdense(mat, nse=nse_int, n_batch=n_batch, n_dense=n_dense,
-                              index_dtype=index_dtype),
-              shape=mat.shape)
+  return BCSR(_bcsr_fromdense(mat_array, nse=nse_int, n_batch=n_batch,
+                              n_dense=n_dense, index_dtype=index_dtype),
+              shape=mat_array.shape)
 
 
 def _bcsr_fromdense(mat: ArrayLike, *, nse: int, n_batch: int = 0, n_dense: int = 0,

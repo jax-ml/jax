@@ -177,7 +177,10 @@ py_library_providing_imports_info(
     ],
     lib_rule = pytype_library,
     pytype_srcs = glob(
-        ["_src/**/*.pyi"],
+        [
+            "numpy/*.pyi",
+            "_src/**/*.pyi",
+        ],
         exclude = [
             "_src/basearray.pyi",
         ],

@@ -54,11 +54,11 @@ will be printed if the error in the array output is estimated to be large.
 @_wraps(scipy.linalg.funm, lax_description=_FUNM_LAX_DESCRIPTION)
 def funm(A: ArrayLike, func: Callable[[Array], Array],
          disp: bool = True) -> Array | tuple[Array, Array]:
-  A = jnp.asarray(A)
-  if A.ndim != 2 or A.shape[0] != A.shape[1]:
+  A_arr = jnp.asarray(A)
+  if A_arr.ndim != 2 or A_arr.shape[0] != A_arr.shape[1]:
     raise ValueError('expected square array_like input')
 
-  T, Z = schur(A)
+  T, Z = schur(A_arr)
   T, Z = rsf2csf(T, Z)
 
   F = jnp.diag(func(jnp.diag(T)))

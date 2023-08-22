@@ -626,8 +626,8 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   if series_order > 30:
     raise ValueError("series_order must be <= 30.")
 
-  x = jnp.asarray(x)
-  dtype = lax.dtype(x)
+  x_arr = jnp.asarray(x)
+  dtype = lax.dtype(x_arr)
 
   if dtype == jnp.float64:
     lower_segment: np.ndarray = _LOGNDTR_FLOAT64_LOWER
@@ -653,12 +653,13 @@ def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   #   regardless of whether dy is finite. Note that the minimum is a NOP if
   #   the branch is chosen.
   return jnp.where(
-      lax.gt(x, upper_segment),
-      -_ndtr(-x),  # log(1-x) ~= -x, x << 1
-      jnp.where(lax.gt(x, lower_segment),
-                       lax.log(_ndtr(lax.max(x, lower_segment))),
-                       _log_ndtr_lower(lax.min(x, lower_segment),
+      lax.gt(x_arr, upper_segment),
+      -_ndtr(-x_arr),  # log(1-x) ~= -x, x << 1
+      jnp.where(lax.gt(x_arr, lower_segment),
+                       lax.log(_ndtr(lax.max(x_arr, lower_segment))),
+                       _log_ndtr_lower(lax.min(x_arr, lower_segment),
                                        series_order)))
+
 def _log_ndtr_jvp(series_order, primals, tangents):
   (x,), (t,) = primals, tangents
   ans = log_ndtr(x, series_order=series_order)

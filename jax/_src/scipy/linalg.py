@@ -442,7 +442,7 @@ def expm(A: ArrayLike, *, upper_triangular: bool = False, max_squarings: int = 1
       partial(expm, upper_triangular=upper_triangular, max_squarings=max_squarings),
       signature="(n,n)->(n,n)")(A)
 
-  P, Q, n_squarings = _calc_P_Q(A)
+  P, Q, n_squarings = _calc_P_Q(jnp.asarray(A))
 
   def _nan(args):
     A, *_ = args
@@ -458,8 +458,7 @@ def expm(A: ArrayLike, *, upper_triangular: bool = False, max_squarings: int = 1
   return R
 
 @jit
-def _calc_P_Q(A: ArrayLike) -> tuple[Array, Array, Array]:
-  A = jnp.asarray(A)
+def _calc_P_Q(A: Array) -> tuple[Array, Array, Array]:
   if A.ndim != 2 or A.shape[0] != A.shape[1]:
     raise ValueError('expected A to be a square matrix')
   A_L1 = jnp.linalg.norm(A,1)
@@ -592,19 +591,19 @@ def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
 @partial(jit, static_argnames=('method', 'compute_expm'))
 def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
                  compute_expm: bool = True) -> Union[Array, tuple[Array, Array]]:
-  A = jnp.asarray(A)
-  E = jnp.asarray(E)
-  if A.ndim != 2 or A.shape[0] != A.shape[1]:
+  A_arr = jnp.asarray(A)
+  E_arr = jnp.asarray(E)
+  if A_arr.ndim != 2 or A_arr.shape[0] != A_arr.shape[1]:
     raise ValueError('expected A to be a square matrix')
-  if E.ndim != 2 or E.shape[0] != E.shape[1]:
+  if E_arr.ndim != 2 or E_arr.shape[0] != E_arr.shape[1]:
     raise ValueError('expected E to be a square matrix')
-  if A.shape != E.shape:
+  if A_arr.shape != E_arr.shape:
     raise ValueError('expected A and E to be the same shape')
   if method is None:
     method = 'SPS'
   if method == 'SPS':
     bound_fun = partial(expm, upper_triangular=False, max_squarings=16)
-    expm_A, expm_frechet_AE = jvp(bound_fun, (A,), (E,))
+    expm_A, expm_frechet_AE = jvp(bound_fun, (A_arr,), (E_arr,))
   else:
     raise ValueError('only method=\'SPS\' is supported')
   if compute_expm:
@@ -847,29 +846,29 @@ def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: Optio
 
   .. _QDWH: https://epubs.siam.org/doi/abs/10.1137/090774999
   """
-  a = jnp.asarray(a)
-  if a.ndim != 2:
+  arr = jnp.asarray(a)
+  if arr.ndim != 2:
     raise ValueError("The input `a` must be a 2-D array.")
 
   if side not in ["right", "left"]:
     raise ValueError("The argument `side` must be either 'right' or 'left'.")
 
-  m, n = a.shape
+  m, n = arr.shape
   if method == "qdwh":
     # TODO(phawkins): return info also if the user opts in?
     if m >= n and side == "right":
-      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+      unitary, posdef, _, _ = qdwh.qdwh(arr, is_hermitian=False, eps=eps)
     elif m < n and side == "left":
-      a = a.T.conj()
-      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+      arr = arr.T.conj()
+      unitary, posdef, _, _ = qdwh.qdwh(arr, is_hermitian=False, eps=eps)
       posdef = posdef.T.conj()
       unitary = unitary.T.conj()
     else:
       raise NotImplementedError("method='qdwh' only supports mxn matrices "
                                 "where m < n where side='right' and m >= n "
-                                f"side='left', got {a.shape} with {side=}")
+                                f"side='left', got {arr.shape} with {side=}")
   elif method == "svd":
-    u_svd, s_svd, vh_svd = lax_linalg.svd(a, full_matrices=False)
+    u_svd, s_svd, vh_svd = lax_linalg.svd(arr, full_matrices=False)
     s_svd = s_svd.astype(u_svd.dtype)
     unitary = u_svd @ vh_svd
     if side == "right":
@@ -939,22 +938,22 @@ def sqrtm(A: ArrayLike, blocksize: int = 1) -> Array:
 def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> tuple[Array, Array]:
   del check_finite  # unused
 
-  T = jnp.asarray(T)
-  Z = jnp.asarray(Z)
+  T_arr = jnp.asarray(T)
+  Z_arr = jnp.asarray(Z)
 
-  if T.ndim != 2 or T.shape[0] != T.shape[1]:
+  if T_arr.ndim != 2 or T_arr.shape[0] != T_arr.shape[1]:
     raise ValueError("Input 'T' must be square.")
-  if Z.ndim != 2 or Z.shape[0] != Z.shape[1]:
+  if Z_arr.ndim != 2 or Z_arr.shape[0] != Z_arr.shape[1]:
     raise ValueError("Input 'Z' must be square.")
-  if T.shape[0] != Z.shape[0]:
-    raise ValueError(f"Input array shapes must match: Z: {Z.shape} vs. T: {T.shape}")
+  if T_arr.shape[0] != Z_arr.shape[0]:
+    raise ValueError(f"Input array shapes must match: Z: {Z_arr.shape} vs. T: {T_arr.shape}")
 
-  T, Z = promote_dtypes_complex(T, Z)
-  eps = jnp.finfo(T.dtype).eps
-  N = T.shape[0]
+  T_arr, Z_arr = promote_dtypes_complex(T_arr, Z_arr)
+  eps = jnp.finfo(T_arr.dtype).eps
+  N = T_arr.shape[0]
 
   if N == 1:
-    return T, Z
+    return T_arr, Z_arr
 
   def _update_T_Z(m, T, Z):
     mu = jnp.linalg.eigvals(lax.dynamic_slice(T, (m-1, m-1), (2, 2))) - T[m, m]
@@ -993,7 +992,7 @@ def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> tuple[Arra
     T = T.at[m, m-1].set(0.0)
     return T, Z
 
-  return lax.fori_loop(1, N, _rsf2scf_iter, (T, Z))
+  return lax.fori_loop(1, N, _rsf2scf_iter, (T_arr, Z_arr))
 
 @overload
 def hessenberg(a: ArrayLike, *, calc_q: Literal[False], overwrite_a: bool = False,
@@ -1034,17 +1033,18 @@ def toeplitz(c: ArrayLike, r: Optional[ArrayLike] = None) -> Array:
   else:
     check_arraylike("toeplitz", c, r)
 
-  c = jnp.asarray(c).flatten()
-  r = jnp.asarray(r).flatten()
+  c_arr = jnp.asarray(c).flatten()
+  r_arr = jnp.asarray(r).flatten()
 
-  ncols, = c.shape
-  nrows, = r.shape
+  ncols, = c_arr.shape
+  nrows, = r_arr.shape
 
   if ncols == 0 or nrows == 0:
-    return jnp.empty((ncols, nrows), dtype=jnp.promote_types(c.dtype, r.dtype))
+    return jnp.empty((ncols, nrows),
+                     dtype=jnp.promote_types(c_arr.dtype, r_arr.dtype))
 
   nelems = ncols + nrows - 1
-  elems = jnp.concatenate((c[::-1], r[1:]))
+  elems = jnp.concatenate((c_arr[::-1], r_arr[1:]))
   patches = lax.conv_general_dilated_patches(
       elems.reshape((1, nelems, 1)),
       (nrows,), (1,), 'VALID', dimension_numbers=('NTC', 'IOT', 'NTC'),

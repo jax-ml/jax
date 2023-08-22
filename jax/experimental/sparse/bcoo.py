@@ -385,12 +385,12 @@ def bcoo_extract(sparr: BCOO, arr: ArrayLike, *, assume_unique: bool | None = No
   """
   if not isinstance(sparr, BCOO):
     raise ValueError(f"First argument to bcoo_extract should be a BCOO array. Got {type(sparr)=}")
-  arr = jnp.asarray(arr)
-  if arr.shape != sparr.shape:
-    raise ValueError(f"shape mismatch: {sparr.shape=} {arr.shape=}")
+  a = jnp.asarray(arr)
+  if a.shape != sparr.shape:
+    raise ValueError(f"shape mismatch: {sparr.shape=} {a.shape=}")
   if assume_unique is None:
     assume_unique = sparr.unique_indices
-  data = _bcoo_extract(sparr.indices, arr, assume_unique=assume_unique)
+  data = _bcoo_extract(sparr.indices, a, assume_unique=assume_unique)
   return BCOO((data, sparr.indices), **sparr._info._asdict())
 
 
