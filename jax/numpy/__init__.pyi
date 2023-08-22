@@ -12,7 +12,6 @@ absolute: Any
 add: Callable[[ArrayLike, ArrayLike], Array]
 all: Any
 allclose: Any
-alltrue: Any
 amax: Any
 amin: Any
 angle: Any
