@@ -51,7 +51,6 @@ from jax._src.util import split_list
 from jax._src.util import weakref_lru_cache
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
-from jax.lib import xla_client as xc
 import jax.numpy as jnp
 from jax_triton import triton_lib
 from jax_triton.triton_lib import compile_ttir_to_ptx_inplace
@@ -1681,10 +1680,6 @@ def pallas_call_lowering(
       for shape in out_shapes
   ]
 
-  xc.register_custom_call_target(
-      name, triton_kernel_call_lib.get_custom_call(), platform="CUDA"
-  )
-
   if triton_params is None:
     triton_params = {}
   serialized_metadata = triton_params.get("serialized_metadata", b"")
@@ -1693,7 +1688,7 @@ def pallas_call_lowering(
   else:
     kernel_call_proto = kernel_call.to_proto(serialized_metadata)
   return hlo_helpers.custom_call(
-      call_target_name=name,
+      call_target_name="triton_kernel_call",
       out_types=out_types,
       operands=in_nodes,
       backend_config=zlib.compress(kernel_call_proto),
