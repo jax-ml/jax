@@ -45,6 +45,7 @@ from jax._src import config as jax_config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
+from jax._src import monitoring
 from jax._src.interpreters import pxla
 from jax._src.config import (bool_env, config,
                              raise_persistent_cache_errors,
@@ -1263,3 +1264,12 @@ def parameterized_filterable(*,
     return parameterized.named_parameters([kw])
   else:
     return parameterized.named_parameters(*kwargs_with_testcase_name)
+
+@contextmanager
+def register_event_duration_listener(callback):
+  """Manages registering/unregistering an event duration listener callback."""
+  try:
+    monitoring.register_event_duration_secs_listener(callback)
+    yield
+  finally:
+    monitoring._unregister_event_duration_listener_by_callback(callback)

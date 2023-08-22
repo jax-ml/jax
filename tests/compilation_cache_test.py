@@ -289,33 +289,30 @@ class CompilationCacheTest(jtu.JaxTestCase):
       def append_metric_duration(metric, duration):
         durations[metric] += duration
 
-      monitoring.register_event_duration_secs_listener(append_metric_duration)
+      with jtu.register_event_duration_listener(append_metric_duration):
 
-      # Mock time to create a short compilation time, no cache saved, no cache
-      # hit, no metric recorded.
-      with mock.patch("time.monotonic", side_effect=np.arange(0, 1, 0.1)):
+        # Mock time to create a short compilation time, no cache saved, no cache
+        # hit, no metric recorded.
+        with mock.patch("time.monotonic", side_effect=np.arange(0, 1, 0.1)):
+          jit(lambda x: x + 1)(1)
+
         jit(lambda x: x + 1)(1)
+        self.assertNotIn(
+            "/jax/compilation_cache/cache_retrieval_time_sec", durations)
+        self.assertNotIn(
+            "/jax/compilation_cache/original_compile_time_saved_sec", durations)
 
-      jit(lambda x: x + 1)(1)
-      self.assertNotIn(
-          "/jax/compilation_cache/cache_retrieval_time_sec", durations)
-      self.assertNotIn(
-          "/jax/compilation_cache/original_compile_time_saved_sec", durations)
+        # Mock time to create a long compilation time, metrics incremented with
+        # a cache hit.
+        with mock.patch("time.monotonic", side_effect=np.arange(0, 100, 10)):
+          jit(lambda x: x + 2)(1)
 
-      # Mock time to create a long compilation time, metrics increamented with a
-      # cache hit.
-      with mock.patch("time.monotonic", side_effect=np.arange(0, 100, 10)):
         jit(lambda x: x + 2)(1)
-
-      jit(lambda x: x + 2)(1)
-      self.assertGreater(
-          durations["/jax/compilation_cache/cache_retrieval_time_sec"], 0)
-      self.assertGreater(
-          durations["/jax/compilation_cache/original_compile_time_saved_sec"],
-          0)
-
-      # Unregister the listener added in this test case.
-      monitoring._unregister_event_duration_listener_by_index(-1)
+        self.assertGreater(
+            durations["/jax/compilation_cache/cache_retrieval_time_sec"], 0)
+        self.assertGreater(
+            durations["/jax/compilation_cache/original_compile_time_saved_sec"],
+            0)
 
   def test_task_using_original_cache_metric(self):
     with tempfile.TemporaryDirectory() as tmpdir:
