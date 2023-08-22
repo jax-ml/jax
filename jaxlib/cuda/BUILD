@@ -34,6 +34,7 @@ cc_library(
         "//jaxlib/gpu:vendor.h",
     ],
     defines = ["JAX_GPU_CUDA=1"],
+    visibility = ["//visibility:public"],
     deps = [
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cudnn_header",
@@ -411,6 +412,7 @@ cc_library(
     name = "triton_utils",
     srcs = ["//jaxlib/gpu:triton_utils.cc"],
     hdrs = ["//jaxlib/gpu:triton_utils.h"],
+    visibility = ["//visibility:public"],
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
