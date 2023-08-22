@@ -199,8 +199,6 @@ nb_execution_excludepatterns = [
     'notebooks/neural_network_with_tfds_data.*',
     # Slow notebook
     'notebooks/Neural_Network_and_Data_Loading.*',
-    # Strange error apparently due to asynchronous cell execution
-    'notebooks/thinking_in_jax.*',
     # Has extra requirements: networkx, pandas, pytorch, tensorflow, etc.
     'jep/9407-type-promotion.*',
     # TODO(jakevdp): enable execution on the following if possible:
