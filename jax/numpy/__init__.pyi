@@ -318,7 +318,7 @@ roots: Any
 rot90: Any
 round: Any
 round_: Any
-row_stack: Any
+row_stack: Any  # TODO(jakevdp): remove this
 s_: Any
 save: Any
 savez: Any

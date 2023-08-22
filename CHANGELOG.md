@@ -41,6 +41,8 @@ Remember to align the itemized text with the first line of an item within a list
     * `jax.numpy.NINF` has been deprecated. Use `-jax.numpy.inf` instead.
     * `jax.numpy.PZERO` has been deprecated. Use `0.0` instead.
     * `jax.numpy.NZERO` has been deprecated. Use `-0.0` instead.
+    * `jax.numpy.issubsctype(x, t)` has been deprecated. Use `jax.numpy.issubdtype(x.dtype, t)`.
+    * `jax.numpy.row_stack` has been deprecated. Use `jax.numpy.vstack` instead.
   * `jax.scipy.linalg.tril` and `jax.scipy.linalg.triu` have been deprecated,
     following SciPy. Use `jax.numpy.tril` and `jax.numpy.triu` instead.
 

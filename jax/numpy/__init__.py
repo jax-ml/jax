@@ -206,7 +206,6 @@ from jax._src.numpy.lax_numpy import (
     rot90 as rot90,
     round as round,
     round_ as round_,
-    row_stack as row_stack,
     save as save,
     savez as savez,
     searchsorted as searchsorted,
@@ -464,7 +463,12 @@ _deprecations = {
     "issubsctype": (
         "jax.numpy.issubsctype is deprecated. In most cases, jax.numpy.issubdtype can be used instead.",
         _numpy.core.numerictypes.issubsctype,
-    )
+    ),
+    # Added Aug 22, 2023
+    "row_stack": (
+        "jax.numpy.row_stack is deprecated. Use jax.numpy.vstack instead.",
+        vstack,
+    ),
 }
 
 import typing
@@ -472,6 +476,7 @@ if typing.TYPE_CHECKING:
   alltrue = all
   cumproduct = cumprod
   product = prod
+  row_stack = vstack
   sometrue = any
   NINF = -inf
   NZERO = -0.0
