@@ -1436,6 +1436,8 @@ _register_rule("math.absi")(
 )
 _register_rule("math.exp")(
     functools.partial(_elementwise_op_rule, math_dialect.ExpOp))
+_register_rule("math.exp2")(
+    functools.partial(_elementwise_op_rule, math_dialect.Exp2Op))
 _register_rule("math.cos")(
     functools.partial(_elementwise_op_rule, math_dialect.CosOp))
 _register_rule("math.sin")(

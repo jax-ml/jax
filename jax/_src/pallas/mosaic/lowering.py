@@ -940,6 +940,15 @@ def _exp_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.exp_p] = _exp_lowering_rule
 
 
+def _pow_lowering_rule(ctx: LoweringRuleContext, x, y):
+  if not isinstance(x, ir.Value) and x == 2.:
+    return math.Exp2Op(y).result
+  raise NotImplementedError("Only support for 2^x")
+
+
+lowering_rules[lax.pow_p] = _pow_lowering_rule
+
+
 def _exp2_lowering_rule(ctx: LoweringRuleContext, x):
   # exp2 in JAX lowers to exp(ln2 * x), not to pow2. We match that behavior
   # here.
