@@ -54,6 +54,7 @@ from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.sharding_impls import (
     NamedSharding, XLACompatibleSharding, GSPMDSharding,
     XLADeviceAssignment, SingleDeviceSharding, PmapSharding,
@@ -1887,14 +1888,17 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding,
   out_aval, = ctx.avals_out
   axis_ctx = ctx.module_context.axis_context
   # axis_ctx and manual_axes is *only used with xmap* and xmap only works with
-  # NamedSharding. So convert the GSPMDSharding to NamedSharding
-  # and then convert it back with the added special axes.
+  # NamedSharding. So update the NamedSharding to have the manual axes.
   if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
     mesh = resource_env.physical_mesh
     parsed_pspec = parse_flatten_op_sharding(sharding._hlo_sharding, mesh)[0]
-    mps = NamedSharding._from_parsed_pspec(mesh, parsed_pspec)
-    sharding = GSPMDSharding(
-        mps._device_assignment, mps._to_xla_hlo_sharding(aval.ndim, axis_ctx=axis_ctx))
+    if xla_extension_version >= 188:
+      sharding = NamedSharding._from_parsed_pspec(
+          mesh, parsed_pspec, _manual_axes=axis_ctx.manual_axes)
+    else:
+      mps = NamedSharding._from_parsed_pspec(mesh, parsed_pspec)
+      sharding = GSPMDSharding(
+          mps._device_assignment, mps._to_xla_hlo_sharding(aval.ndim, axis_ctx=axis_ctx))
   return [
       mlir.wrap_with_sharding_op(ctx,
           x_node, out_aval,

@@ -206,16 +206,20 @@ class NamedSharding(XLACompatibleSharding):
   spec: PartitionSpec
   _memory_kind: str | None
   _parsed_pspec: ParsedPartitionSpec
+  _manual_axes: frozenset[MeshAxisName]
+  if xla_extension_version < 188:
+    _manual_axes = frozenset()
 
   @use_cpp_method()
   def __init__(
       self, mesh: mesh_lib.Mesh, spec: PartitionSpec, *,
-      memory_kind: str | None = None, _parsed_pspec = None):
-
+      memory_kind: str | None = None, _parsed_pspec=None,
+      _manual_axes=frozenset()):
     self.mesh = mesh
     self.spec = spec
     self._memory_kind = memory_kind
     self._parsed_pspec = _parsed_pspec
+    self._manual_axes = _manual_axes
     self._preprocess()
 
   def _preprocess(self):
@@ -240,7 +244,8 @@ class NamedSharding(XLACompatibleSharding):
 
   def __reduce__(self):
     return (type(self), (self.mesh, self.spec),
-            {'memory_kind': self.memory_kind})
+            {'memory_kind': self.memory_kind,
+             '_manual_axes': self._manual_axes})
 
   if xla_extension_version >= 178:
     @property
@@ -249,7 +254,8 @@ class NamedSharding(XLACompatibleSharding):
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash((self.mesh, self.memory_kind, self._parsed_pspec))
+      self._hash = hash(
+          (self.mesh, self.memory_kind, self._parsed_pspec, self._manual_axes))
     return self._hash
 
   def __eq__(self, other):
@@ -257,12 +263,11 @@ class NamedSharding(XLACompatibleSharding):
       return False
     if id(self) == id(other):
       return True
-    parsed_pspec_equal = self._parsed_pspec == other._parsed_pspec
-    mem_kind_equal = self.memory_kind == other.memory_kind
-    if (id(self.mesh) == id(other.mesh) and mem_kind_equal and
-        parsed_pspec_equal):
-      return True
-    return self.mesh == other.mesh and mem_kind_equal and parsed_pspec_equal
+    if (self._parsed_pspec != other._parsed_pspec
+        or self.memory_kind != other.memory_kind
+        or self._manual_axes != other._manual_axes):
+      return False
+    return id(self.mesh) == id(other.mesh) or self.mesh == other.mesh
 
   def is_compatible_aval(self, aval_shape: Shape):
     assert self._parsed_pspec is not None
@@ -275,9 +280,16 @@ class NamedSharding(XLACompatibleSharding):
           f"{len(aval_shape)}.{extra_msg}")
 
   @classmethod
-  def _from_parsed_pspec(cls, mesh, parsed_pspec, *, memory_kind=None):
-    return cls(mesh, parsed_pspec.get_partition_spec(),
-                memory_kind=memory_kind, _parsed_pspec=parsed_pspec)
+  def _from_parsed_pspec(
+      cls, mesh, parsed_pspec, *, memory_kind=None, _manual_axes=frozenset()
+  ):
+    if xla_extension_version >= 188:
+      return cls(mesh, parsed_pspec.get_partition_spec(),
+                 memory_kind=memory_kind, _parsed_pspec=parsed_pspec,
+                 _manual_axes=_manual_axes)
+    else:
+      return cls(mesh, parsed_pspec.get_partition_spec(),
+                 memory_kind=memory_kind, _parsed_pspec=parsed_pspec)
 
   @property
   def device_set(self) -> set[Device]:
@@ -313,7 +325,7 @@ class NamedSharding(XLACompatibleSharding):
   def with_memory_kind(self, kind: str) -> NamedSharding:
     return NamedSharding(self.mesh, self.spec, memory_kind=kind)
 
-  def _get_sharding_spec(self, num_dimensions, axis_ctx):
+  def _get_sharding_spec(self, num_dimensions, manual_axes):
     assert self._parsed_pspec is not None
     array_mapping = get_array_mapping(self._parsed_pspec)
     # TODO(yashkatariya): Move away from sharding spec in NamedSharding
@@ -322,22 +334,30 @@ class NamedSharding(XLACompatibleSharding):
         self.mesh.shape, self.mesh.axis_names)(num_dimensions, array_mapping)
     # Used in `with_sharding_constraint`.
     special_axes = {}
-    # Manual axes is only used with xmap.
-    if axis_ctx is not None and isinstance(axis_ctx, SPMDAxisContext):
+    if manual_axes:
       axis_names = self.mesh.axis_names
-      # Ignore type because mypy doesn't recognize the `hasattr` check above.
-      for manual_axis in axis_ctx.manual_axes:  # type: ignore
+      for manual_axis in manual_axes:
         special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
     return sharding_spec, special_axes
 
-  @functools.lru_cache(maxsize=4096)
-  def _to_xla_hlo_sharding(
-      self, num_dimensions: int,
-      axis_ctx: SPMDAxisContext | ShardingContext | None = None
-  ) -> xc.HloSharding:
-    sharding_spec, special_axes = self._get_sharding_spec(
-        num_dimensions, axis_ctx)
-    return sharding_spec.sharding_proto(special_axes=special_axes)
+  if xla_extension_version >= 188:
+    @functools.lru_cache(maxsize=4096)
+    def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
+      sharding_spec, special_axes = self._get_sharding_spec(
+          num_dimensions, self._manual_axes)
+      return sharding_spec.sharding_proto(special_axes=special_axes)
+  else:
+    @functools.lru_cache(maxsize=4096)
+    def _to_xla_hlo_sharding(
+        self, num_dimensions: int,
+        axis_ctx: SPMDAxisContext | ShardingContext | None = None
+    ) -> xc.HloSharding:
+      manual_axes = None
+      if axis_ctx is not None and isinstance(axis_ctx, SPMDAxisContext):
+        manual_axes = axis_ctx.manual_axes  # type: ignore
+      sharding_spec, special_axes = self._get_sharding_spec(
+          num_dimensions, manual_axes)
+      return sharding_spec.sharding_proto(special_axes=special_axes)
 
 
 @functools.lru_cache
