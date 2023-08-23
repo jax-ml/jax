@@ -16,6 +16,7 @@
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
 from jax._src.scipy.special import (
+  bernoulli as bernoulli,
   betainc as betainc,
   betaln as betaln,
   bessel_jn as bessel_jn,
