@@ -205,6 +205,7 @@ def TPU_RepeatOp : TPU_Op<"repeat", [Pure]> {
   let assemblyFormat = [{ $source `,` $dimension `x` $times attr-dict `:` type($source) `->` type($output) }];
 }
 
+// Integer unpacks are always signed at the moment.
 def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
   let arguments = (ins
     AnyVector:$source,
@@ -214,6 +215,7 @@ def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
   let assemblyFormat = [{ $source `,` $index attr-dict `:` type($source) `->` type($output) }];
 }
 
+// Integer packs are always signed at the moment.
 def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure]> {
   let arguments = (ins Variadic<AnyVector>:$sources);
   let results = (outs AnyVector:$output);
