@@ -1,15 +1,22 @@
 import numpy as _np
 from jax.numpy import fft, linalg
 from typing import Any, Callable, Dict, Tuple, Type, Union
+from jax._src.lax.lax import PrecisionLike
 from jax._src.typing import Array, ArrayLike
 from jax._src.numpy.index_tricks import _Mgrid, _Ogrid, CClass as _CClass, RClass as _RClass
 from jax._src.numpy.reductions import CumulativeReduction as _CumulativeReduction
 from jax._src.numpy.ufunc_api import ufunc as ufunc
 
+class _UnaryUfunc:
+  def __call__(self, x: ArrayLike, /) -> Array: ...
+
+class _BinaryUfunc:
+  def __call__(self, x1: ArrayLike, x2: ArrayLike, /) -> Array: ...
+
 ComplexWarning: Any
-abs: Any
-absolute: Any
-add: Callable[[ArrayLike, ArrayLike], Array]
+abs: _UnaryUfunc
+absolute: _UnaryUfunc
+add: _BinaryUfunc
 all: Any
 allclose: Any
 amax: Any
@@ -20,13 +27,13 @@ append: Any
 apply_along_axis: Any
 apply_over_axes: Any
 arange: Any
-arccos: Callable[[ArrayLike], Array]
-arccosh: Any
-arcsin: Callable[[ArrayLike], Array]
-arcsinh: Callable[[ArrayLike], Array]
-arctan: Callable[[ArrayLike], Array]
-arctan2: Callable[[ArrayLike, ArrayLike], Array]
-arctanh: Callable[[ArrayLike], Array]
+arccos: _UnaryUfunc
+arccosh: _UnaryUfunc
+arcsin: _UnaryUfunc
+arcsinh: _UnaryUfunc
+arctan: _UnaryUfunc
+arctan2: _BinaryUfunc
+arctanh: _UnaryUfunc
 argmax: Any
 argmin: Any
 argpartition: Any
@@ -47,10 +54,10 @@ average: Any
 bartlett: Any
 bfloat16: Any
 bincount: Any
-bitwise_and: Callable[[ArrayLike, ArrayLike], Array]
-bitwise_not: Callable[[ArrayLike], Array]
-bitwise_or: Callable[[ArrayLike, ArrayLike], Array]
-bitwise_xor: Callable[[ArrayLike, ArrayLike], Array]
+bitwise_and: _BinaryUfunc
+bitwise_not: _UnaryUfunc
+bitwise_or: _BinaryUfunc
+bitwise_xor: _BinaryUfunc
 blackman: Any
 block: Any
 bool_: Any
@@ -59,9 +66,9 @@ broadcast_shapes: Any
 broadcast_to: Any
 c_: _CClass
 can_cast: Any
-cbrt: Callable[[ArrayLike], Array]
+cbrt: _UnaryUfunc
 cdouble: Any
-ceil: Callable[[ArrayLike], Array]
+ceil: _UnaryUfunc
 character: Any
 choose: Any
 clip: Any
@@ -72,23 +79,23 @@ complex_: Any
 complexfloating: Any
 compress: Any
 concatenate: Any
-conj: Any
-conjugate: Any
+conj: _UnaryUfunc
+conjugate: _UnaryUfunc
 convolve: Any
 copy: Any
-copysign: Any
+copysign: _BinaryUfunc
 corrcoef: Any
 correlate: Any
-cos: Callable[[ArrayLike], Array]
-cosh: Callable[[ArrayLike], Array]
+cos: _UnaryUfunc
+cosh: _UnaryUfunc
 count_nonzero: Any
 cov: Any
 cross: Any
 csingle: Any
 cumprod: _CumulativeReduction
 cumsum: _CumulativeReduction
-deg2rad: Any
-degrees: Any
+deg2rad: _UnaryUfunc
+degrees: _UnaryUfunc
 delete: Any
 diag: Any
 diag_indices: Any
@@ -97,8 +104,8 @@ diagflat: Any
 diagonal: Any
 diff: Any
 digitize: Any
-divide: Any
-divmod: Any
+divide: _BinaryUfunc
+def divmod(x: ArrayLike, y: ArrayLike, /) -> tuple[Array, Array]: ...
 dot: Any
 double: Any
 dsplit: Any
@@ -110,15 +117,15 @@ einsum: Any
 einsum_path: Any
 empty: Any
 empty_like: Any
-equal: Callable[[ArrayLike, ArrayLike], Array]
+equal: _BinaryUfunc
 euler_gamma: Any
-exp: Callable[[ArrayLike], Array]
-exp2: Any
+exp: _UnaryUfunc
+exp2: _UnaryUfunc
 expand_dims: Any
-expm1: Callable[[ArrayLike], Array]
+expm1: _UnaryUfunc
 extract: Any
 eye: Any
-fabs: Callable[[ArrayLike], Array]
+fabs: _UnaryUfunc
 finfo: Any
 fix: Any
 flatnonzero: Any
@@ -135,14 +142,14 @@ float8_e4m3fnuz: Any
 float8_e5m2: Any
 float8_e5m2fnuz: Any
 float_: Any
-float_power: Callable[[ArrayLike, ArrayLike], Array]
+float_power: _BinaryUfunc
 floating: Any
-floor: Callable[[ArrayLike], Array]
-floor_divide: Any
-fmax: Any
-fmin: Any
-fmod: Any
-frexp: Any
+floor: _UnaryUfunc
+floor_divide: _BinaryUfunc
+fmax: _BinaryUfunc
+fmin: _BinaryUfunc
+fmod: _BinaryUfunc
+def frexp(x: ArrayLike, /) -> tuple[Array, Array]: ...
 from_dlpack: Any
 frombuffer: Any
 fromfile: Any
@@ -152,23 +159,23 @@ def frompyfunc(func, /, nin, nout, *, identity = ...) -> ufunc: ...
 fromstring: Any
 full: Any
 full_like: Any
-gcd: Any
+gcd: _BinaryUfunc
 generic: Any
 geomspace: Any
 get_printoptions: Any
 gradient: Any
-greater: Callable[[ArrayLike, ArrayLike], Array]
-greater_equal: Callable[[ArrayLike, ArrayLike], Array]
+greater: _BinaryUfunc
+greater_equal: _BinaryUfunc
 hamming: Any
 hanning: Any
-heaviside: Any
+heaviside: _BinaryUfunc
 histogram: Any
 histogram2d: Any
 histogram_bin_edges: Any
 histogramdd: Any
 hsplit: Any
 hstack: Any
-hypot: Any
+hypot: _BinaryUfunc
 i0: Any
 identity: Any
 iinfo: Any
@@ -189,16 +196,16 @@ int_: Any
 integer: Any
 interp: Any
 intersect1d: Any
-invert: Callable[[ArrayLike], Array]
+invert: _UnaryUfunc
 isclose: Any
 iscomplex: Any
 iscomplexobj: Any
-isfinite: Any
+isfinite: _UnaryUfunc
 isin: Any
-isinf: Any
-isnan: Any
-isneginf: Callable[[ArrayLike], Array]
-isposinf: Callable[[ArrayLike], Array]
+isinf: _UnaryUfunc
+isnan: _UnaryUfunc
+isneginf: _UnaryUfunc
+isposinf: _UnaryUfunc
 isreal: Any
 isrealobj: Any
 isscalar: Any
@@ -208,40 +215,42 @@ iterable: Any
 ix_: Any
 kaiser: Any
 kron: Any
-lcm: Any
-ldexp: Any
-left_shift: Callable[[ArrayLike, ArrayLike], Array]
-less: Callable[[ArrayLike, ArrayLike], Array]
-less_equal: Callable[[ArrayLike, ArrayLike], Array]
+lcm: _BinaryUfunc
+ldexp: _BinaryUfunc
+left_shift: _BinaryUfunc
+less: _BinaryUfunc
+less_equal: _BinaryUfunc
 lexsort: Any
 linspace: Any
 load: Any
-log: Callable[[ArrayLike], Array]
-log10: Any
-log1p: Callable[[ArrayLike], Array]
-log2: Any
-logaddexp: Any
-logaddexp2: Any
-logical_and: Callable[[ArrayLike, ArrayLike], Array]
-logical_not: Callable[[ArrayLike], Array]
-logical_or: Callable[[ArrayLike, ArrayLike], Array]
-logical_xor: Callable[[ArrayLike, ArrayLike], Array]
+log: _UnaryUfunc
+log10: _UnaryUfunc
+log1p: _UnaryUfunc
+log2: _UnaryUfunc
+logaddexp: _BinaryUfunc
+logaddexp2: _BinaryUfunc
+logical_and: _BinaryUfunc
+logical_not: _UnaryUfunc
+logical_or: _BinaryUfunc
+logical_xor: _BinaryUfunc
 logspace: Any
 mask_indices: Any
-matmul: Any
+def matmul(
+    a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None
+) -> Array: ...
 matrix_transpose: Any
 max: Any
-maximum: Callable[[ArrayLike, ArrayLike], Array]
+maximum: _BinaryUfunc
 mean: Any
 median: Any
 meshgrid: Any
 mgrid: _Mgrid
 min: Any
-minimum: Callable[[ArrayLike, ArrayLike], Array]
-mod: Any
-modf: Any
+minimum: _BinaryUfunc
+mod: _BinaryUfunc
+def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]: ...
 moveaxis: Any
-multiply: Callable[[ArrayLike, ArrayLike], Array]
+multiply: _BinaryUfunc
 nan: Any
 nan_to_num: Any
 nanargmax: Any
@@ -260,11 +269,11 @@ nansum: Any
 nanvar: Any
 ndarray = Array
 ndim: Any
-negative: Callable[[ArrayLike], Array]
+negative: _UnaryUfunc
 newaxis: Any
-nextafter: Callable[[ArrayLike, ArrayLike], Array]
+nextafter: _BinaryUfunc
 nonzero: Any
-not_equal: Callable[[ArrayLike, ArrayLike], Array]
+not_equal: _BinaryUfunc
 number: Any
 object_: Any
 ogrid: _Ogrid
@@ -287,8 +296,8 @@ polyint: Any
 polymul: Any
 polysub: Any
 polyval: Any
-positive: Callable[[ArrayLike], Array]
-power: Any
+positive: _UnaryUfunc
+power: _BinaryUfunc
 printoptions: Any
 prod: Any
 product: Any
@@ -297,20 +306,20 @@ ptp: Any
 put: Any
 quantile: Any
 r_: _RClass
-rad2deg: Any
-radians: Any
+rad2deg: _UnaryUfunc
+radians: _UnaryUfunc
 ravel: Any
 ravel_multi_index: Any
 real: Any
-reciprocal: Any
+reciprocal: _UnaryUfunc
 register_jax_array_methods: Any
-remainder: Any
+remainder: _BinaryUfunc
 repeat: Any
 reshape: Any
 resize: Any
 result_type: Any
-right_shift: Any
-rint: Any
+right_shift: _BinaryUfunc
+rint: _UnaryUfunc
 roll: Any
 rollaxis: Any
 roots: Any
@@ -327,29 +336,29 @@ set_printoptions: Any
 setdiff1d: Any
 setxor1d: Any
 shape: Any
-sign: Any
-signbit: Any
+sign: _UnaryUfunc
+signbit: _UnaryUfunc
 signedinteger: Any
-sin: Callable[[ArrayLike], Array]
+sin: _UnaryUfunc
 sinc: Any
 single: Any
-sinh: Callable[[ArrayLike], Array]
+sinh: _UnaryUfunc
 size: Any
 sort: Any
 sort_complex: Any
 split: Any
-sqrt: Callable[[ArrayLike], Array]
-square: Any
+sqrt: _UnaryUfunc
+square: _UnaryUfunc
 squeeze: Any
 stack: Any
 std: Any
-subtract: Callable[[ArrayLike, ArrayLike], Array]
+subtract: _BinaryUfunc
 sum: Any
 swapaxes: Any
 take: Any
 take_along_axis: Any
-tan: Callable[[ArrayLike], Array]
-tanh: Callable[[ArrayLike], Array]
+tan: _UnaryUfunc
+tanh: _UnaryUfunc
 tensordot: Any
 tile: Any
 trace: Any
@@ -363,8 +372,8 @@ trim_zeros: Any
 triu: Any
 triu_indices: Any
 triu_indices_from: Any
-true_divide: Any
-trunc: Any
+true_divide: _BinaryUfunc
+trunc: _UnaryUfunc
 typing: Any
 uint: Any
 uint16: Any
