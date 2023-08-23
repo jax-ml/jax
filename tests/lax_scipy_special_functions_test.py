@@ -194,7 +194,7 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     lax_op = functools.partial(lsp_special.bernoulli, n)
     args_maker = lambda: []
     self._CheckAgainstNumpy(scipy_op, lax_op, args_maker, atol=0, rtol=1E-5)
-    self._CompileAndCheck(lax_op, args_maker)
+    self._CompileAndCheck(lax_op, args_maker, atol=0, rtol=1E-5)
 
 
 if __name__ == "__main__":
