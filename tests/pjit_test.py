@@ -1757,7 +1757,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
                 in_shardings=NamedSharding(global_mesh, P('x')))
       err_msg = re.compile(
           "Sharding passed to pjit does not match the sharding on the "
-          r"respective arg.*arg shape.*\(8, 2\)", re.M | re.S)
+          r"respective arg.*arg shape.*\[8,2\]", re.M | re.S)
       with self.assertRaisesRegex(ValueError, err_msg):
         f(input_array)
 

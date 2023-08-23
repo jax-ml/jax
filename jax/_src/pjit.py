@@ -1099,7 +1099,8 @@ def _resolve_in_shardings(
           raise ValueError(
               'Memory kinds passed to jax.jit does not match memory kind on the'
               f' respective arg. Got pjit memory kind: {pjit_in_s.memory_kind}, '  # type: ignore
-              f'arg memory kind: {arg_s.memory_kind} for arg shape: {arg.shape}')  # type: ignore
+              f'arg memory kind: {arg_s.memory_kind} for '  # type: ignore
+              f'arg shape: {shaped_abstractify(arg).str_short()}')
         if (committed and
             not isinstance(arg_s, PmapSharding) and
             not op_shardings.are_op_shardings_equal(
@@ -1109,8 +1110,8 @@ def _resolve_in_shardings(
           raise ValueError('Sharding passed to pjit does not match the sharding '
                            'on the respective arg. '
                            f'Got pjit sharding: {op},\n'
-                           f'arg sharding: {arg_s} for arg shape: {arg.shape}, '
-                           f'arg value: {arg}')
+                           f'arg sharding: {arg_s} for '
+                           f'arg shape: {shaped_abstractify(arg).str_short()}')
       resolved_in_shardings.append(pjit_in_s)
 
   return tuple(resolved_in_shardings)
