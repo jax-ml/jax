@@ -1553,6 +1553,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: list[core.JaxprEqn],
 
     def unreachable_thunk():
       assert False, "Should not be reached"
+    unreachable_thunk.reset_stores = lambda: None
 
     eqns.append(
         eqn.replace(

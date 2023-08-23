@@ -1960,6 +1960,7 @@ class DynamicJaxprTrace(core.Trace):
 
     @_memoize
     def jvp_jaxpr_thunk(*in_zeros):
+      for store in jvp.stores: store and store.reset()
       nz_tangent_avals, zero_avals = partition_list(in_zeros, in_avals)
       jvp_, out_zeros = _jvp_jaxpr_zeros(jvp, in_zeros, tuple(zero_avals))
       in_avals_ = (*in_avals, *nz_tangent_avals)
@@ -1991,8 +1992,10 @@ class DynamicJaxprTrace(core.Trace):
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
 
     main_ = ref(self.main)
+
     @_memoize
     def fwd_jaxpr_from_zeros(*zeros):
+      for store in fwd.stores: store and store.reset()
       fwd_ = _interleave_fun(fwd, zeros)
       return trace_to_subjaxpr_dynamic(fwd_, main_(), in_avals)[::2]
 
@@ -2033,9 +2036,12 @@ class DynamicJaxprTrace(core.Trace):
 
     main_ = ref(self.main)
     # the following thunk evaluates to a pair: transpose_jaxpr, transpose_consts
-    transpose_jaxpr_thunk = _memoize(
-        lambda: trace_to_subjaxpr_dynamic(
-            transpose_flat, main_(), in_avals_t)[::2])
+    @_memoize
+    def transpose_jaxpr_thunk():
+      for store in transpose_flat.stores: store.reset()
+      jaxpr, _, consts = trace_to_subjaxpr_dynamic(transpose_flat, main_(),
+                                                   in_avals_t)
+      return jaxpr, consts
 
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
     invars = map(self.getvar, tracers)
