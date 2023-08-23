@@ -190,16 +190,16 @@ if hasattr(xla_client, "make_gpu_client"):
       priority=200,
       fail_quietly=True,
   )
-  register_backend_factory(
-      "rocm",
-      partial(
-          make_gpu_client,
-          platform_name="rocm",
-          visible_devices_flag=_ROCM_VISIBLE_DEVICES,
-      ),
-      priority=200,
-      fail_quietly=True,
-  )
+register_backend_factory(
+    "rocm",
+    partial(
+        make_gpu_client,
+        platform_name="rocm",
+        visible_devices_flag=_ROCM_VISIBLE_DEVICES,
+    ),
+    priority=200,
+    fail_quietly=True,
+)
 
 
 if hasattr(xla_client, "make_tpu_client"):
