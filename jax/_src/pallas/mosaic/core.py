@@ -41,6 +41,7 @@ split_list = util.split_list
 
 
 class TPUMemorySpace(enum.Enum):
+  ANY = "any"
   VMEM = "vmem"
   SMEM = "smem"
   CMEM = "cmem"
