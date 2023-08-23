@@ -538,6 +538,11 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       # self.assertEqual(result, 0.0)
       self.assertAllClose(result, np.nan)
 
+  def testPowIntPowerAtZero(self):
+    # https://github.com/google/jax/issues/14397
+    ans = jax.grad(jax.jit(lambda x, n: x ** n))(0., 0)
+    self.assertAllClose(ans, 1., check_dtypes=False)
+
   @jtu.sample_product(
     [dict(arg_shape=arg_shape, pred_shape=pred_shape)
       for arg_shape in [(), (3,), (2, 3)]

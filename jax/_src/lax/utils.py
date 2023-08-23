@@ -18,7 +18,6 @@
 
 from functools import partial
 import operator
-from typing import Callable
 
 from jax._src import core
 from jax._src import dispatch
@@ -30,7 +29,8 @@ import numpy as np
 
 xops = xla_client.ops
 
-_input_dtype: Callable = lambda *args, **_: dtypes.canonicalize_dtype(args[0].dtype, allow_extended_dtype=True)
+def _input_dtype(x, *_, **__):
+  return dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True)
 
 def _argnum_weak_type(*argnums):
   return lambda *args, **_: all(args[i].weak_type for i in argnums)

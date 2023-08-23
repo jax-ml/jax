@@ -32,7 +32,7 @@ from jax._src.typing import Array, ArrayLike
 from jax._src.numpy.util import (
    check_arraylike, promote_args, promote_args_inexact,
    promote_args_numeric, promote_dtypes_inexact, promote_dtypes_numeric,
-   promote_shapes, _where, _wraps)
+   promote_shapes, _where, _wraps, check_no_float0s)
 
 _lax_const = lax._const
 
@@ -305,16 +305,60 @@ def _float_divmod(x1: ArrayLike, x2: ArrayLike) -> tuple[Array, Array]:
   return lax.round(div), mod
 
 
+@_wraps(np.power, module='numpy')
+def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  check_arraylike("power", x1, x2)
+  check_no_float0s("power", x1, x2)
+
+  # We apply special cases, both for algorithmic and autodiff reasons:
+  #  1. for *concrete* integer scalar powers (and arbitrary bases), we use
+  #     unrolled binary exponentiation specialized on the exponent, which is
+  #     more precise for e.g. x ** 2 when x is a float (algorithmic reason!);
+  #  2. for integer bases and integer powers, use unrolled binary exponentiation
+  #     where the number of steps is determined by a max bit width of 64
+  #     (algorithmic reason!);
+  #  3. for integer powers and float/complex bases, we apply the lax primitive
+  #     without any promotion of input types because in this case we want the
+  #     function to be differentiable wrt its first argument at 0;
+  #  3. for other cases, perform jnp dtype promotion on the arguments then apply
+  #     lax.pow.
+
+  # Case 1: concrete integer scalar powers:
+  if isinstance(core.get_aval(x2), core.ConcreteArray):
+    try:
+      x2 = operator.index(x2)  # type: ignore[arg-type]
+    except TypeError:
+      pass
+    else:
+      x1, = promote_dtypes_numeric(x1)
+      return lax.integer_pow(x1, x2)
+
+  # Handle cases #2 and #3 under a jit:
+  return _power(x1, x2)
+
 @partial(jit, inline=True)
 def _power(x1: ArrayLike, x2: ArrayLike) -> Array:
-  x1, x2 = promote_args_numeric("power", x1, x2)
-  dtype = dtypes.dtype(x1)
-  if not dtypes.issubdtype(dtype, np.integer):
+  x1, x2 = promote_shapes("power", x1, x2)  # not dtypes
+
+  # Case 2: bool/integer result
+  x1_, x2_ = promote_args_numeric("power", x1, x2)
+  if (dtypes.issubdtype(dtypes.dtype(x1_), np.integer) or
+      dtypes.issubdtype(dtypes.dtype(x1_), np.bool_)):
+    assert np.iinfo(dtypes.dtype(x1_)).bits <= 64  # _pow_int_int assumes <=64bit
+    return _pow_int_int(x1_, x2_)
+
+  # Case 3: float/complex base with integer power (special autodiff behavior)
+  d1, d2 = dtypes.dtype(x1), dtypes.dtype(x2)
+  if dtypes.issubdtype(d1, np.inexact) and dtypes.issubdtype(d2, np.integer):
     return lax.pow(x1, x2)
 
-  # Integer power => use binary exponentiation.
 
-  # TODO(phawkins): add integer pow support to XLA.
+  # Case 4: do promotion first
+  return lax.pow(x1_, x2_)
+
+# TODO(phawkins): add integer pow support to XLA.
+def _pow_int_int(x1, x2):
+  # Integer power => use binary exponentiation.
   bits = 6  # Anything more would overflow for any x1 > 1
   zero = _constant_like(x2, 0)
   one = _constant_like(x2, 1)
@@ -325,24 +369,6 @@ def _power(x1: ArrayLike, x2: ArrayLike) -> Array:
     x1 = lax.mul(x1, x1)
     x2 = lax.shift_right_logical(x2, one)
   return acc
-
-
-@_wraps(np.power, module='numpy')
-def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
-  check_arraylike("power", x1, x2)
-  # Special case for concrete integer scalars: use binary exponentiation.
-  # Using lax.pow may be imprecise for floating-point values; the goal of this
-  # code path is to make sure we end up with a precise output for the common
-  # pattern ``x ** 2`` or similar.
-  if isinstance(core.get_aval(x2), core.ConcreteArray):
-    try:
-      x2 = operator.index(x2)  # type: ignore[arg-type]
-    except TypeError:
-      pass
-    else:
-      x1, = promote_dtypes_numeric(x1)
-      return lax.integer_pow(x1, x2)
-  return _power(x1, x2)
 
 
 @custom_jvp
