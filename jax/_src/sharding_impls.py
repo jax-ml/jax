@@ -451,7 +451,8 @@ class PmapSharding(XLACompatibleSharding):
     self.sharding_spec = sharding_spec
 
   def __reduce__(self):
-    return type(self), (self.devices, self.sharding_spec)
+    return (type(self), (self.devices, self.sharding_spec),
+            {'memory_kind': self.memory_kind})
 
   def __eq__(self, other):
     if not isinstance(other, PmapSharding):
@@ -539,8 +540,14 @@ class PmapSharding(XLACompatibleSharding):
     return tuple(self.devices.flat)
 
   @property
-  def memory_kind(self):
-    return None
+  def memory_kind(self) -> str | None:
+    if xla_extension_version >= 182:
+      try:
+        return self._internal_device_list.default_memory_kind  # type: ignore
+      except:
+        return None
+    else:
+      return None
 
   def with_memory_kind(self, kind: str):
     return NotImplementedError("pmap does not support memories.")
