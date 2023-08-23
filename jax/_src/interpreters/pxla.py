@@ -1925,6 +1925,17 @@ def _create_da_object(  # pytype: disable=invalid-annotation
   return _DeviceAssignment(device_assignment)
 
 
+def jaxpr_has_dp_with_transfer_mem_kind(jaxpr: core.Jaxpr) -> bool:
+  for eqn in jaxpr.eqns:
+    if (eqn.primitive is dispatch.device_put_p and
+        isinstance(eqn.params['device'], sharding_impls.TransferToMemoryKind)):
+      return True
+  for subjaxpr in core.subjaxprs(jaxpr):
+    if jaxpr_has_dp_with_transfer_mem_kind(subjaxpr):
+      return True
+  return False
+
+
 @profiler.annotate_function
 def lower_sharding_computation(
     fun_or_jaxpr: lu.WrappedFun | core.ClosedJaxpr,
@@ -1983,7 +1994,8 @@ def lower_sharding_computation(
       len(device_assignment) > 1 or
       any(not is_unspecified(i) for i in in_shardings) or
       any(not is_unspecified(js) for js, _ in jaxpr_sharding) or
-      any(not is_unspecified(o) for o in out_shardings))
+      any(not is_unspecified(o) for o in out_shardings) or
+      jaxpr_has_dp_with_transfer_mem_kind(jaxpr))
 
   gs = sharding_impls.GSPMDSharding.get_replicated(device_assignment)
   in_shardings = tuple(gs if is_unspecified(i) else i for i in in_shardings)

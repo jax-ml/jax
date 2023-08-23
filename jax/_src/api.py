@@ -66,7 +66,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import PmapSharding
+from jax._src.sharding_impls import PmapSharding, TransferToMemoryKind
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src.util import unzip2, safe_map, safe_zip, wrap_name, wraps
@@ -2489,8 +2489,8 @@ def _infer_src_sharding(src, x):
 
 def device_put(
     x,
-    device: None | xc.Device | Sharding | Any = None,
-    *, src: None | xc.Device | Sharding | Any = None):
+    device: None | xc.Device | Sharding | Any | TransferToMemoryKind = None,
+    *, src: None | xc.Device | Sharding | Any | TransferToMemoryKind = None):
   """Transfers ``x`` to ``device``.
 
   Args:
@@ -2514,8 +2514,10 @@ def device_put(
   blocking the calling Python thread until any transfers are completed.
   """
   with config_explicit_device_put_scope():
-    if ((device is None or isinstance(device, (xc.Device, Sharding))) and
-        (src is None or isinstance(src, (xc.Device, Sharding)))):
+    if ((device is None or
+         isinstance(device, (xc.Device, Sharding, TransferToMemoryKind))) and
+        (src is None or
+         isinstance(src, (xc.Device, Sharding, TransferToMemoryKind)))):
       return tree_map(
           lambda y: dispatch.device_put_p.bind(
               y, device=device, src=_infer_src_sharding(src, y)), x)
@@ -2524,8 +2526,8 @@ def device_put(
     device_flat = flatten_axes("device_put device", treedef, device)
     src_flat = flatten_axes("device_put source", treedef, src)
     out_flat = [
-        dispatch.device_put_p.bind(y, device=d, src=_infer_src_sharding(s, y))
-        for y, d, s in zip(x_flat, device_flat, src_flat)
+        dispatch.device_put_p.bind(xf, device=d, src=_infer_src_sharding(s, xf))
+        for xf, d, s in zip(x_flat, device_flat, src_flat)
     ]
     return tree_unflatten(treedef, out_flat)
 

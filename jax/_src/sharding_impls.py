@@ -58,6 +58,11 @@ _ENABLE_MEMORY_KIND = jax_config.DEFINE_bool(
           "and annotate Shardings with it."))
 
 
+@dataclasses.dataclass(frozen=True)
+class TransferToMemoryKind:
+  memory_kind: str
+
+
 # Shardings that inherit from XLACompatibleSharding should implement the
 # `_device_assignment` property and `_to_xla_hlo_sharding` method.
 @use_cpp_class(xc.XLACompatibleSharding)

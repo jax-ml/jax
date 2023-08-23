@@ -49,7 +49,7 @@ from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding, NamedSharding, XLACompatibleSharding,
-    UNSPECIFIED, GSPMDSharding)
+    UNSPECIFIED, GSPMDSharding, TransferToMemoryKind)
 
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
@@ -467,6 +467,14 @@ def _device_put_impl(
     device: Device | Sharding | None = None,
     src: Device | Sharding | None = None):
   from jax._src import array
+
+  if (isinstance(device, TransferToMemoryKind) or
+      isinstance(src, TransferToMemoryKind)):
+    raise ValueError(
+        "TransferToMemoryKind argument to jax.device_put can only be used"
+        " inside jax.jit. If you are using device_put outside jax.jit, then"
+        " please provide a concrete Sharding with memory_kind.")
+
   try:
     aval = xla.abstractify(x)
   except TypeError as err:
@@ -521,12 +529,14 @@ ad.deflinear2(device_put_p, device_put_transpose_rule)
 batching.defvectorized(device_put_p)
 
 def _device_put_lowering(ctx, x, *, device, src):
-  if isinstance(device, XLACompatibleSharding) and device.memory_kind is not None:
+  if (isinstance(device, (XLACompatibleSharding, TransferToMemoryKind)) and
+      device.memory_kind is not None):
     aval, = ctx.avals_in
     out_aval, = ctx.avals_out
     x = mlir.wrap_with_memory_kind(x, device.memory_kind, out_aval)
-    x = mlir.wrap_with_sharding_op(
-        ctx, x, out_aval, device._to_xla_hlo_sharding(aval.ndim).to_proto())
+    if isinstance(device, XLACompatibleSharding):
+      x = mlir.wrap_with_sharding_op(
+          ctx, x, out_aval, device._to_xla_hlo_sharding(aval.ndim).to_proto())
     return [x]
   return [x]
 mlir.register_lowering(device_put_p, _device_put_lowering)
