@@ -120,6 +120,7 @@ jax.scipy.special
 .. autosummary::
   :toctree: _autosummary
 
+   bernoulli
    betainc
    betaln
    digamma

@@ -185,6 +185,17 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
                       atol=jtu.if_device_under_test("tpu", .1, 1e-3),
                       rtol=.1, eps=1e-3)
 
+  @jtu.sample_product(
+      n=[0, 1, 2, 3, 10, 50]
+  )
+  def testScipySpecialFunBernoulli(self, n):
+    dtype = jax.numpy.zeros(0).dtype  # default float dtype.
+    scipy_op = lambda: osp_special.bernoulli(n).astype(dtype)
+    lax_op = functools.partial(lsp_special.bernoulli, n)
+    args_maker = lambda: []
+    self._CheckAgainstNumpy(scipy_op, lax_op, args_maker, atol=0, rtol=1E-5)
+    self._CompileAndCheck(lax_op, args_maker)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
