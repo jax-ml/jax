@@ -15,19 +15,19 @@
 import os
 import platform
 import time
+import unittest
 import warnings
 
 from absl import logging
 from absl.testing import absltest
 from jax._src import compiler
+from jax._src import config as jax_config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.config import config
+from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
-from jax._src.interpreters import xla
-
-from jax._src import config as jax_config
-from jax._src.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
@@ -99,6 +99,27 @@ class XlaBridgeTest(jtu.JaxTestCase):
           ).profile_version,
           no_profile_dont_retrieve,
       )
+
+  @unittest.skipIf(
+      xla_extension_version < 189, "Test requires jaxlib 0.4.15 or newer"
+  )
+  def test_deterministic_serialization(self):
+    c1 = compiler.get_compile_options(
+        num_replicas=2,
+        num_partitions=3,
+        env_options_overrides={"1": "1", "2": "2"},
+    )
+    c2 = compiler.get_compile_options(
+        num_replicas=2,
+        num_partitions=3,
+        env_options_overrides={"2": "2", "1": "1"},  # order changed
+    )
+    c1str = c1.SerializeAsString()
+
+    # Idempotence.
+    self.assertEqual(c1str, c1.SerializeAsString())
+    # Map order does not matter.
+    self.assertEqual(c1str, c2.SerializeAsString())
 
   def test_parameter_replication_default(self):
     c = xc.XlaBuilder("test")
