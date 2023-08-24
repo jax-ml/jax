@@ -189,6 +189,7 @@ async def async_serialize(
         commit_future.append(write_future.commit)
         await write_future.copy
       else:
+        logging.info(f'Writing file: {tensorstore_spec} at {time.time()}')
         await write_future.commit
 
   if isinstance(arr_inp, array.ArrayImpl):
