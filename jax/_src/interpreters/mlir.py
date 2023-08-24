@@ -1907,7 +1907,6 @@ def send_to_host(channel: int, token: hlo.TokenType, operand: Any,
   send_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
       dict(
           _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
-          _xla_host_transfer_original_type=ir.StringAttr.get(dtype_str),
           _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
   if sharding is not None:
     set_sharding(send_op, sharding)
@@ -1927,7 +1926,6 @@ def receive_from_host(channel: int, token: hlo.TokenType,
   recv_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
       dict(
           _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
-          _xla_host_transfer_original_type=ir.StringAttr.get(dtype_str),
           _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
   if sharding is not None:
     set_sharding(recv_op, sharding)
