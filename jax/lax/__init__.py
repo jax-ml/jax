@@ -377,17 +377,3 @@ from jax.lax import linalg as linalg
 from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
-
-from math import prod as _prod
-
-_deprecations = {
-    # Added May 23, 2023:
-    "prod": (
-        "jax.lax.prod is deprecated. Use math.prod instead.",
-        _prod,
-    ),
-}
-
-from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr, _prod

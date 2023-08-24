@@ -46,6 +46,8 @@ Remember to align the itemized text with the first line of an item within a list
     * `jax.numpy.in1d` has been deprecated. Use `jax.numpy.isin` instead.
   * `jax.scipy.linalg.tril` and `jax.scipy.linalg.triu` have been deprecated,
     following SciPy. Use `jax.numpy.tril` and `jax.numpy.triu` instead.
+  * `jax.lax.prod` has been removed after being deprecated in JAX v0.4.11.
+    Use the built-in `math.prod` instead.
 
 * Internal deprecations:
   * The internal utilities `jax.core.is_opaque_dtype` and `jax.core.has_opaque_dtype`
