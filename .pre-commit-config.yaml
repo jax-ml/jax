@@ -9,7 +9,7 @@
 
 repos:
 - repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v4.3.0
+  rev: v4.4.0
   hooks:
   - id: end-of-file-fixer
     # only include python files
@@ -22,12 +22,12 @@ repos:
     files: \.py$
 
 - repo: https://github.com/pycqa/flake8
-  rev: '6.0.0'
+  rev: '6.1.0'
   hooks:
   - id: flake8
 
 - repo: https://github.com/pre-commit/mirrors-mypy
-  rev: 'v1.5.0'
+  rev: 'v1.5.1'
   hooks:
   - id: mypy
     files: (jax/|tests/typing_test\.py)
