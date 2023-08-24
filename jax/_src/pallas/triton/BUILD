@@ -13,12 +13,14 @@
 # limitations under the License.
 
 # Package for Triton-specific Pallas extensions
+
 load(
     "//jaxlib:jax.bzl",
     "py_deps",
     "py_library_providing_imports_info",
     "pytype_strict_library",
 )
+load("@rules_python//python:defs.bzl", "py_library")
 
 package(
     default_applicable_licenses = [],

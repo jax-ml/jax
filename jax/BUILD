@@ -29,6 +29,7 @@ load(
     "pytype_library",
     "pytype_strict_library",
 )
+load("@rules_python//python:defs.bzl", "py_library")
 
 package(
     default_applicable_licenses = [],

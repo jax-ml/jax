@@ -14,6 +14,7 @@
 
 # NVIDIA CUDA kernels
 
+load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "cuda_library",

@@ -13,11 +13,13 @@
 # limitations under the License.
 
 # Package for Mosaic-specific Pallas extensions
+
 load(
     "//jaxlib:jax.bzl",
     "py_deps",
     "py_library_providing_imports_info",
 )
+load("@rules_python//python:defs.bzl", "py_library")
 
 package(
     default_applicable_licenses = [],

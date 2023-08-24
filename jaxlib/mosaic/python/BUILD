@@ -13,8 +13,10 @@
 # limitations under the License.
 
 # Mosaic Python bindings
+
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
 load("//jaxlib:jax.bzl", "py_deps")
+load("@rules_python//python:defs.bzl", "py_library")
 
 gentbl_filegroup(
     name = "tpu_python_gen_raw",
