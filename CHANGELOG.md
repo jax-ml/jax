@@ -14,6 +14,7 @@ Remember to align the itemized text with the first line of an item within a list
     {meth}`~jax.numpy.ufunc.outer`, {meth}`~jax.numpy.ufunc.reduce`,
     {meth}`~jax.numpy.ufunc.accumulate`, {meth}`~jax.numpy.ufunc.at`, and
     {meth}`~jax.numpy.ufunc.reduceat` ({jax-issue}`#17054`).
+  * Added {func}`jax.scipy.integrate.trapezoid`.
   * When not running under IPython: when an exception is raised, JAX now filters out the
     entirety of its internal frames from tracebacks. (Without the "unfiltered stack trace"
     that previously appeared.) This should produce much friendlier-looking tracebacks. See
@@ -44,6 +45,7 @@ Remember to align the itemized text with the first line of an item within a list
     * `jax.numpy.issubsctype(x, t)` has been deprecated. Use `jax.numpy.issubdtype(x.dtype, t)`.
     * `jax.numpy.row_stack` has been deprecated. Use `jax.numpy.vstack` instead.
     * `jax.numpy.in1d` has been deprecated. Use `jax.numpy.isin` instead.
+    * `jax.numpy.trapz` has been deprecated. Use `jax.scipy.integrate.trapezoid` instead.
   * `jax.scipy.linalg.tril` and `jax.scipy.linalg.triu` have been deprecated,
     following SciPy. Use `jax.numpy.tril` and `jax.numpy.triu` instead.
   * `jax.lax.prod` has been removed after being deprecated in JAX v0.4.11.
