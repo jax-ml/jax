@@ -56,8 +56,6 @@ namespace JAX_GPU_NAMESPACE {
 
 namespace {
 
-// Converts a NumPy dtype to a BlasType.
-
 int SizeOfBlasType(BlasType type) {
   switch (type) {
     case BlasType::F32:

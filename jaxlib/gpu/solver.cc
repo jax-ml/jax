@@ -19,23 +19,24 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "pybind11/numpy.h"
-#include "pybind11/pybind11.h"
-#include "pybind11/stl.h"
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/pair.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/solver_kernels.h"
 #include "jaxlib/gpu/vendor.h"
-#include "jaxlib/kernel_pybind11_helpers.h"
+#include "jaxlib/kernel_nanobind_helpers.h"
+#include "tsl/python/lib/core/numpy.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 namespace {
-namespace py = pybind11;
+
+namespace nb = nanobind;
 
 // Converts a NumPy dtype to a Type.
-SolverType DtypeToSolverType(const py::dtype& np_type) {
+SolverType DtypeToSolverType(const dtype& np_type) {
   static auto* types =
       new absl::flat_hash_map<std::pair<char, int>, SolverType>({
           {{'f', 4}, SolverType::F32},
@@ -45,8 +46,9 @@ SolverType DtypeToSolverType(const py::dtype& np_type) {
       });
   auto it = types->find({np_type.kind(), np_type.itemsize()});
   if (it == types->end()) {
+    nb::str repr = nb::repr(np_type);
     throw std::invalid_argument(
-        absl::StrFormat("Unsupported dtype %s", py::repr(np_type)));
+        absl::StrFormat("Unsupported dtype %s", repr.c_str()));
   }
   return it->second;
 }
@@ -54,8 +56,8 @@ SolverType DtypeToSolverType(const py::dtype& np_type) {
 // getrf: LU decomposition
 
 // Returns the workspace size and a descriptor for a getrf operation.
-std::pair<int, py::bytes> BuildGetrfDescriptor(const py::dtype& dtype, int b,
-                                               int m, int n) {
+std::pair<int, nb::bytes> BuildGetrfDescriptor(const dtype& dtype, int b, int m,
+                                               int n) {
   SolverType type = DtypeToSolverType(dtype);
   auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
@@ -93,8 +95,8 @@ std::pair<int, py::bytes> BuildGetrfDescriptor(const py::dtype& dtype, int b,
 // geqrf: QR decomposition
 
 // Returns the workspace size and a descriptor for a geqrf operation.
-std::pair<int, py::bytes> BuildGeqrfDescriptor(const py::dtype& dtype, int b,
-                                               int m, int n) {
+std::pair<int, nb::bytes> BuildGeqrfDescriptor(const dtype& dtype, int b, int m,
+                                               int n) {
   SolverType type = DtypeToSolverType(dtype);
   auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
@@ -134,7 +136,7 @@ std::pair<int, py::bytes> BuildGeqrfDescriptor(const py::dtype& dtype, int b,
 // csrlsvqr: Linear system solve via Sparse QR
 
 // Returns a descriptor for a csrlsvqr operation.
-py::bytes BuildCsrlsvqrDescriptor(const py::dtype& dtype, int n, int nnzA,
+nb::bytes BuildCsrlsvqrDescriptor(const dtype& dtype, int n, int nnzA,
                                   int reorder, double tol) {
   SolverType type = DtypeToSolverType(dtype);
   return PackDescriptor(CsrlsvqrDescriptor{type, n, nnzA, reorder, tol});
@@ -145,8 +147,8 @@ py::bytes BuildCsrlsvqrDescriptor(const py::dtype& dtype, int n, int nnzA,
 // orgqr/ungqr: apply elementary Householder transformations
 
 // Returns the workspace size and a descriptor for a geqrf operation.
-std::pair<int, py::bytes> BuildOrgqrDescriptor(const py::dtype& dtype, int b,
-                                               int m, int n, int k) {
+std::pair<int, nb::bytes> BuildOrgqrDescriptor(const dtype& dtype, int b, int m,
+                                               int n, int k) {
   SolverType type = DtypeToSolverType(dtype);
   auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
@@ -188,8 +190,8 @@ std::pair<int, py::bytes> BuildOrgqrDescriptor(const py::dtype& dtype, int b,
 // Symmetric (Hermitian) eigendecomposition, QR algorithm: syevd/heevd
 
 // Returns the workspace size and a descriptor for a syevd operation.
-std::pair<int, py::bytes> BuildSyevdDescriptor(const py::dtype& dtype,
-                                               bool lower, int b, int n) {
+std::pair<int, nb::bytes> BuildSyevdDescriptor(const dtype& dtype, bool lower,
+                                               int b, int n) {
   SolverType type = DtypeToSolverType(dtype);
   auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
@@ -227,8 +229,8 @@ std::pair<int, py::bytes> BuildSyevdDescriptor(const py::dtype& dtype,
 // Supports batches of matrices up to size 32.
 
 // Returns the workspace size and a descriptor for a syevj_batched operation.
-std::pair<int, py::bytes> BuildSyevjDescriptor(const py::dtype& dtype,
-                                               bool lower, int batch, int n) {
+std::pair<int, nb::bytes> BuildSyevjDescriptor(const dtype& dtype, bool lower,
+                                               int batch, int n) {
   SolverType type = DtypeToSolverType(dtype);
   auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
@@ -294,8 +296,8 @@ std::pair<int, py::bytes> BuildSyevjDescriptor(const py::dtype& dtype,
 // Singular value decomposition using QR algorithm: gesvd
 
 // Returns the workspace size and a descriptor for a gesvd operation.
-std::pair<int, py::bytes> BuildGesvdDescriptor(const py::dtype& dtype, int b,
-                                               int m, int n, bool compute_uv,
+std::pair<int, nb::bytes> BuildGesvdDescriptor(const dtype& dtype, int b, int m,
+                                               int n, bool compute_uv,
                                                bool full_matrices) {
   SolverType type = DtypeToSolverType(dtype);
   auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
@@ -339,9 +341,9 @@ std::pair<int, py::bytes> BuildGesvdDescriptor(const py::dtype& dtype, int b,
 // Singular value decomposition using Jacobi algorithm: gesvdj
 
 // Returns the workspace size and a descriptor for a gesvdj operation.
-std::pair<int, py::bytes> BuildGesvdjDescriptor(const py::dtype& dtype,
-                                                int batch, int m, int n,
-                                                bool compute_uv, int econ) {
+std::pair<int, nb::bytes> BuildGesvdjDescriptor(const dtype& dtype, int batch,
+                                                int m, int n, bool compute_uv,
+                                                int econ) {
   SolverType type = DtypeToSolverType(dtype);
   auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
@@ -423,8 +425,8 @@ std::pair<int, py::bytes> BuildGesvdjDescriptor(const py::dtype& dtype,
 #endif  // JAX_GPU_CUDA
 
 // Returns the workspace size and a descriptor for a geqrf operation.
-std::pair<int, py::bytes> BuildSytrdDescriptor(const py::dtype& dtype,
-                                               bool lower, int b, int n) {
+std::pair<int, nb::bytes> BuildSytrdDescriptor(const dtype& dtype, bool lower,
+                                               int b, int n) {
   SolverType type = DtypeToSolverType(dtype);
   auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
@@ -457,8 +459,8 @@ std::pair<int, py::bytes> BuildSytrdDescriptor(const py::dtype& dtype,
   return {lwork, PackDescriptor(SytrdDescriptor{type, uplo, b, n, n, lwork})};
 }
 
-py::dict Registrations() {
-  py::dict dict;
+nb::dict Registrations() {
+  nb::dict dict;
   dict[JAX_GPU_PREFIX "solver_getrf"] = EncapsulateFunction(Getrf);
   dict[JAX_GPU_PREFIX "solver_geqrf"] = EncapsulateFunction(Geqrf);
   dict[JAX_GPU_PREFIX "solver_orgqr"] = EncapsulateFunction(Orgqr);
@@ -474,7 +476,8 @@ py::dict Registrations() {
   return dict;
 }
 
-PYBIND11_MODULE(_solver, m) {
+NB_MODULE(_solver, m) {
+  tsl::ImportNumpy();
   m.def("registrations", &Registrations);
   m.def("build_getrf_descriptor", &BuildGetrfDescriptor);
   m.def("build_geqrf_descriptor", &BuildGeqrfDescriptor);

@@ -15,11 +15,11 @@ limitations under the License.
 
 #include <Python.h>
 
-#include "pybind11/pybind11.h"
+#include "nanobind/nanobind.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/inlined_vector.h"
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
 namespace {
 
@@ -32,12 +32,12 @@ PyObject* SafeMap(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
     return nullptr;
   }
   PyObject* fn = args[0];
-  absl::InlinedVector<py::object, 4> iterators;
+  absl::InlinedVector<nb::object, 4> iterators;
   iterators.reserve(nargs - 1);
   for (Py_ssize_t i = 1; i < nargs; ++i) {
     PyObject* it = PyObject_GetIter(args[i]);
     if (!it) return nullptr;
-    iterators.push_back(py::reinterpret_steal<py::object>(it));
+    iterators.push_back(nb::steal<nb::object>(it));
   }
 
   // Try to use a length hint to estimate how large a list to allocate.
@@ -49,7 +49,7 @@ PyObject* SafeMap(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
     length_hint = 2;
   }
 
-  py::list list(length_hint);
+  nb::list list = nb::steal<nb::list>(PyList_New(length_hint));
   int n = 0;  // Current true size of the list
 
   // The arguments we will pass to fn. We allocate space for one more argument
@@ -100,7 +100,7 @@ PyObject* SafeMap(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
       return list.release().ptr();
     }
 
-    py::object out = py::reinterpret_steal<py::object>(PyObject_Vectorcall(
+    nb::object out = nb::steal<nb::object>(PyObject_Vectorcall(
         fn, &values[1], (nargs - 1) | PY_VECTORCALL_ARGUMENTS_OFFSET,
         /*kwnames=*/nullptr));
     if (PyErr_Occurred()) {
@@ -135,12 +135,12 @@ PyObject* SafeZip(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
     PyErr_SetString(PyExc_TypeError, "safe_zip requires at least 1 argument");
     return nullptr;
   }
-  absl::InlinedVector<py::object, 4> iterators;
+  absl::InlinedVector<nb::object, 4> iterators;
   iterators.reserve(nargs);
   for (Py_ssize_t i = 0; i < nargs; ++i) {
     PyObject* it = PyObject_GetIter(args[i]);
     if (!it) return nullptr;
-    iterators.push_back(py::reinterpret_steal<py::object>(it));
+    iterators.push_back(nb::steal<nb::object>(it));
   }
 
   // Try to use a length hint to estimate how large a list to allocate.
@@ -152,22 +152,21 @@ PyObject* SafeZip(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
     length_hint = 2;
   }
 
-  py::list list(length_hint);
+  nb::list list = nb::steal<nb::list>(PyList_New(length_hint));
   int n = 0;  // Current true size of the list
 
   while (true) {
-    py::object tuple;
-    py::object v =
-        py::reinterpret_steal<py::object>(PyIter_Next(iterators[0].ptr()));
+    nb::object tuple;
+    nb::object v = nb::steal<nb::object>(PyIter_Next(iterators[0].ptr()));
     if (PyErr_Occurred()) return nullptr;
 
     if (v.ptr()) {
-      tuple = py::reinterpret_steal<py::object>(PyTuple_New(nargs));
+      tuple = nb::steal<nb::object>(PyTuple_New(nargs));
       if (!tuple.ptr()) return nullptr;
 
       PyTuple_SET_ITEM(tuple.ptr(), 0, v.release().ptr());
       for (size_t i = 1; i < iterators.size(); ++i) {
-        v = py::reinterpret_steal<py::object>(PyIter_Next(iterators[i].ptr()));
+        v = nb::steal<nb::object>(PyIter_Next(iterators[i].ptr()));
         if (PyErr_Occurred()) return nullptr;
         if (!v.ptr()) {
           PyErr_Format(PyExc_ValueError,
@@ -181,7 +180,7 @@ PyObject* SafeZip(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
       // No more elements should be left. Checks the other iterators are
       // exhausted.
       for (size_t i = 1; i < iterators.size(); ++i) {
-        v = py::reinterpret_steal<py::object>(PyIter_Next(iterators[i].ptr()));
+        v = nb::steal<nb::object>(PyIter_Next(iterators[i].ptr()));
         if (PyErr_Occurred()) return nullptr;
         if (v.ptr()) {
           PyErr_Format(PyExc_ValueError,
@@ -206,7 +205,7 @@ PyObject* SafeZip(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
       if (PyList_Append(list.ptr(), tuple.ptr()) < 0) {
         return nullptr;
       }
-      tuple = py::object();
+      tuple = nb::object();
     }
     ++n;
   }
@@ -220,11 +219,10 @@ PyMethodDef safe_zip_def = {
 
 }  // namespace
 
-
-PYBIND11_MODULE(utils, m) {
-  py::object module_name = m.attr("__name__");
-  m.attr("safe_map") = py::reinterpret_steal<py::object>(
+NB_MODULE(utils, m) {
+  nb::object module_name = m.attr("__name__");
+  m.attr("safe_map") = nb::steal<nb::object>(
       PyCFunction_NewEx(&safe_map_def, /*self=*/nullptr, module_name.ptr()));
-  m.attr("safe_zip") = py::reinterpret_steal<py::object>(
+  m.attr("safe_zip") = nb::steal<nb::object>(
       PyCFunction_NewEx(&safe_zip_def, /*self=*/nullptr, module_name.ptr()));
 }

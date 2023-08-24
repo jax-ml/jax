@@ -15,25 +15,25 @@ limitations under the License.
 
 #include <complex>
 
-#include "pybind11/pybind11.h"
+#include "nanobind/nanobind.h"
 #include "jaxlib/cpu/lapack_kernels.h"
-#include "jaxlib/kernel_pybind11_helpers.h"
+#include "jaxlib/kernel_nanobind_helpers.h"
 
 namespace jax {
 namespace {
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
 void GetLapackKernelsFromScipy() {
   static bool initialized = false;  // Protected by GIL
   if (initialized) return;
-  py::module cython_blas = py::module::import("scipy.linalg.cython_blas");
+  nb::module_ cython_blas = nb::module_::import_("scipy.linalg.cython_blas");
   // Technically this is a Cython-internal API. However, it seems highly likely
   // it will remain stable because Cython itself needs API stability for
   // cross-package imports to work in the first place.
-  py::dict blas_capi = cython_blas.attr("__pyx_capi__");
+  nb::dict blas_capi = cython_blas.attr("__pyx_capi__");
   auto blas_ptr = [&](const char* name) {
-    return py::capsule(blas_capi[name]).get_pointer();
+    return nb::cast<nb::capsule>(blas_capi[name]).data();
   };
   Trsm<float>::fn = reinterpret_cast<Trsm<float>::FnType*>(blas_ptr("strsm"));
   Trsm<double>::fn = reinterpret_cast<Trsm<double>::FnType*>(blas_ptr("dtrsm"));
@@ -42,10 +42,11 @@ void GetLapackKernelsFromScipy() {
   Trsm<std::complex<double>>::fn =
       reinterpret_cast<Trsm<std::complex<double>>::FnType*>(blas_ptr("ztrsm"));
 
-  py::module cython_lapack = py::module::import("scipy.linalg.cython_lapack");
-  py::dict lapack_capi = cython_lapack.attr("__pyx_capi__");
+  nb::module_ cython_lapack =
+      nb::module_::import_("scipy.linalg.cython_lapack");
+  nb::dict lapack_capi = cython_lapack.attr("__pyx_capi__");
   auto lapack_ptr = [&](const char* name) {
-    return py::capsule(lapack_capi[name]).get_pointer();
+    return nb::cast<nb::capsule>(lapack_capi[name]).data();
   };
   Getrf<float>::fn =
       reinterpret_cast<Getrf<float>::FnType*>(lapack_ptr("sgetrf"));
@@ -151,8 +152,8 @@ void GetLapackKernelsFromScipy() {
   initialized = true;
 }
 
-py::dict Registrations() {
-  py::dict dict;
+nb::dict Registrations() {
+  nb::dict dict;
   dict["blas_strsm"] = EncapsulateFunction(Trsm<float>::Kernel);
   dict["blas_dtrsm"] = EncapsulateFunction(Trsm<double>::Kernel);
   dict["blas_ctrsm"] = EncapsulateFunction(Trsm<std::complex<float>>::Kernel);
@@ -224,7 +225,7 @@ py::dict Registrations() {
   return dict;
 }
 
-PYBIND11_MODULE(_lapack, m) {
+NB_MODULE(_lapack, m) {
   // Populates the LAPACK kernels from scipy on first call.
   m.def("initialize", GetLapackKernelsFromScipy);
 

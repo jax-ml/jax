@@ -13,14 +13,30 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_KERNEL_PYBIND11_HELPERS_H_
-#define JAXLIB_KERNEL_PYBIND11_HELPERS_H_
+#ifndef JAXLIB_KERNEL_NANOBIND_HELPERS_H_
+#define JAXLIB_KERNEL_NANOBIND_HELPERS_H_
 
-#include "pybind11/pybind11.h"
+#include <string>
+
+#include "nanobind/nanobind.h"
 #include "absl/base/casts.h"
 #include "jaxlib/kernel_helpers.h"
+#include "tsl/python/lib/core/numpy.h"  // NOLINT
 
 namespace jax {
+
+// Caution: to use this type you must call tsl::ImportNumpy() in your module
+// initialization function. Otherwise PyArray_DescrCheck will be nullptr.
+class dtype : public nanobind::object {
+ public:
+  NB_OBJECT_DEFAULT(dtype, object, "dtype", PyArray_DescrCheck);  // NOLINT
+
+  ssize_t itemsize() const { return nanobind::cast<ssize_t>(attr("itemsize")); }
+
+  /// Single-character code for dtype's kind.
+  /// For example, floating point types are 'f' and integral types are 'i'.
+  char kind() const { return nanobind::cast<char>(attr("kind")); }
+};
 
 // Descriptor objects are opaque host-side objects used to pass data from JAX
 // to the custom kernel launched by XLA. Currently simply treat host-side
@@ -28,19 +44,20 @@ namespace jax {
 // portability is needed, we could switch to using a representation such as
 // protocol buffers or flatbuffers.
 
-// Packs a descriptor object into a pybind11::bytes structure.
+// Packs a descriptor object into a nanobind::bytes structure.
 // UnpackDescriptor() is available in kernel_helpers.h.
 template <typename T>
-pybind11::bytes PackDescriptor(const T& descriptor) {
-  return pybind11::bytes(PackDescriptorAsString(descriptor));
+nanobind::bytes PackDescriptor(const T& descriptor) {
+  std::string s = PackDescriptorAsString(descriptor);
+  return nanobind::bytes(s.data(), s.size());
 }
 
 template <typename T>
-pybind11::capsule EncapsulateFunction(T* fn) {
-  return pybind11::capsule(absl::bit_cast<void*>(fn),
+nanobind::capsule EncapsulateFunction(T* fn) {
+  return nanobind::capsule(absl::bit_cast<void*>(fn),
                            "xla._CUSTOM_CALL_TARGET");
 }
 
 }  // namespace jax
 
-#endif  // JAXLIB_KERNEL_PYBIND11_HELPERS_H_
+#endif  // JAXLIB_KERNEL_NANOBIND_HELPERS_H_

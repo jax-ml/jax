@@ -101,8 +101,22 @@ exports_files([
 ])
 
 cc_library(
-    name = "kernel_pybind11_helpers",
-    hdrs = ["kernel_pybind11_helpers.h"],
+    name = "absl_status_casters",
+    hdrs = ["absl_status_casters.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
+    name = "kernel_nanobind_helpers",
+    hdrs = ["kernel_nanobind_helpers.h"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
@@ -110,8 +124,9 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":kernel_helpers",
+        "@tsl//tsl/python/lib/core:numpy",
         "@com_google_absl//absl/base",
-        "@pybind11",
+        "@nanobind",
     ],
 )
 
@@ -163,7 +178,7 @@ pybind_extension(
         "@xla//third_party/python_runtime:headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:inlined_vector",
-        "@pybind11",
+        "@nanobind",
     ],
 )
 

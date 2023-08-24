@@ -92,12 +92,13 @@ pybind_extension(
     deps = [
         ":hip_vendor",
         ":hipblas_kernels",
-        "//jaxlib:kernel_pybind11_helpers",
+        "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings:str_format",
         "@local_config_rocm//rocm:hipblas",
         "@local_config_rocm//rocm:rocm_headers",
-        "@pybind11",
+        "@nanobind",
+        "@tsl//tsl/python/lib/core:numpy",
     ],
 )
 
@@ -132,12 +133,13 @@ pybind_extension(
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
         ":hipsolver_kernels",
-        "//jaxlib:kernel_pybind11_helpers",
+        "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings:str_format",
         "@local_config_rocm//rocm:hipsolver",
         "@local_config_rocm//rocm:rocm_headers",
-        "@pybind11",
+        "@nanobind",
+        "@tsl//tsl/python/lib/core:numpy",
     ],
 )
 
@@ -172,7 +174,7 @@ pybind_extension(
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
         ":hipsparse_kernels",
-        "//jaxlib:kernel_pybind11_helpers",
+        "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -184,7 +186,8 @@ pybind_extension(
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:hipsparse",
         "@local_config_rocm//rocm:rocm_headers",
-        "@pybind11",
+        "@nanobind",
+        "@tsl//tsl/python/lib/core:numpy",
     ],
 )
 
@@ -229,9 +232,9 @@ pybind_extension(
         ":hip_lu_pivot_kernels",
         ":hip_lu_pivot_kernels_impl",
         ":hip_vendor",
-        "//jaxlib:kernel_pybind11_helpers",
+        "//jaxlib:kernel_nanobind_helpers",
         "@local_config_rocm//rocm:rocm_headers",
-        "@pybind11",
+        "@nanobind",
     ],
 )
 
@@ -275,9 +278,9 @@ pybind_extension(
         ":hip_gpu_kernel_helpers",
         ":hip_prng_kernels",
         ":hip_vendor",
-        "//jaxlib:kernel_pybind11_helpers",
+        "//jaxlib:kernel_nanobind_helpers",
         "@local_config_rocm//rocm:rocm_headers",
-        "@pybind11",
+        "@nanobind",
     ],
 )
 

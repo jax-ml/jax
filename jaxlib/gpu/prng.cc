@@ -13,29 +13,30 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "pybind11/pybind11.h"
-#include "jaxlib/gpu/gpu_kernel_helpers.h"
+#include "nanobind/nanobind.h"
 #include "jaxlib/gpu/prng_kernels.h"
-#include "jaxlib/kernel_pybind11_helpers.h"
+#include "jaxlib/kernel_nanobind_helpers.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 namespace {
 
+namespace nb = nanobind;
+
 std::string BuildThreeFry2x32Descriptor(std::int64_t n) {
   return PackDescriptorAsString(ThreeFry2x32Descriptor{n});
 }
-pybind11::dict Registrations() {
-  pybind11::dict dict;
+nb::dict Registrations() {
+  nb::dict dict;
   dict[JAX_GPU_PREFIX "_threefry2x32"] = EncapsulateFunction(ThreeFry2x32);
   return dict;
 }
 
-PYBIND11_MODULE(_prng, m) {
+NB_MODULE(_prng, m) {
   m.def("registrations", &Registrations);
   m.def("threefry2x32_descriptor", [](std::int64_t n) {
     std::string result = BuildThreeFry2x32Descriptor(n);
-    return pybind11::bytes(result);
+    return nb::bytes(result.data(), result.size());
   });
 }
 
