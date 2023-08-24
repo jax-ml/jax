@@ -568,7 +568,7 @@ class PolyHarness(Harness):
     def log_message(extra: str):
       return f"[{tst._testMethodName}]: {extra}"
 
-    # Check that we have overriden the jax.config flags
+    # Check that we have overridden the jax.config flags
     for fname, fvalue in self.override_jax_config_flags.items():
       tst.assertEqual(getattr(jax.config, fname), fvalue, (
           f"Flag {fname} current value {getattr(jax.config, fname)} != {fvalue}"))
