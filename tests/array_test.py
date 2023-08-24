@@ -186,12 +186,13 @@ class JaxArrayTest(jtu.JaxTestCase):
 
   def test_multi_device_array_usage_after_delete(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    input_shape = (8, 2)
-    arr, _ = create_array(
-        input_shape, jax.sharding.NamedSharding(global_mesh, P('x', 'y')))
+    shape = (8, 2)
+    arr = jax.device_put(np.arange(math.prod(shape), dtype=np.int32),
+                         jax.sharding.NamedSharding(global_mesh, P('x')))
     arr.delete()
 
-    with self.assertRaisesRegex(RuntimeError, 'Array has been deleted.'):
+    with self.assertRaisesRegex(
+        RuntimeError, r'Array has been deleted with shape=int32\[16\].'):
       _ = arr + 1
 
   def test_device_put(self):

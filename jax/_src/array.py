@@ -530,9 +530,7 @@ class ArrayImpl(basearray.Array):
   def _check_if_deleted(self):
     if self.is_deleted():
       raise RuntimeError(
-          f"Array has been deleted with shape={self.shape} and"
-          f" type={self.dtype}."
-      )
+          f"Array has been deleted with shape={self.aval.str_short()}.")
 
   @use_cpp_method()
   def block_until_ready(self):
