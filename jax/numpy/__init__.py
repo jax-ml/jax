@@ -313,7 +313,7 @@ from jax._src.numpy.reductions import (
 )
 
 from jax._src.numpy.setops import (
-    in1d as in1d,
+    in1d as _deprecated_in1d,
     intersect1d as intersect1d,
     isin as isin,
     setdiff1d as setdiff1d,
@@ -469,6 +469,11 @@ _deprecations = {
         "jax.numpy.row_stack is deprecated. Use jax.numpy.vstack instead.",
         vstack,
     ),
+    # Added Aug 23, 2023
+    "in1d": (
+        "jax.numpy.in1d is deprecated. Use jax.numpy.isin instead.",
+        _deprecated_in1d,
+    ),
 }
 
 import typing
@@ -482,9 +487,12 @@ if typing.TYPE_CHECKING:
   NZERO = -0.0
   PZERO = 0.0
   issubsctype = _numpy.core.numerictypes.issubsctype
+  in1d = _deprecated_in1d
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
 del _numpy
+
+del _deprecated_in1d
