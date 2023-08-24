@@ -12,22 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Modules for JAX extensions.
+# Note: import <name> as <name> is required for names to be exported.
+# See PEP 484 & https://github.com/google/jax/issues/7570
 
-The :mod:`jax.extend` package provides modules for access to JAX
-internal machinery. See
-`JEP #15856 <https://jax.readthedocs.io/en/latest/jep/15856-jex.html>`_.
-
-API policy
-----------
-
-Unlike the
-`public API <https://jax.readthedocs.io/en/latest/api_compatibility.html>`_,
-this package offers **no compatibility guarantee** across releases.
-Breaking changes will be announced via the
-`JAX project changelog <https://jax.readthedocs.io/en/latest/changelog.html>`_.
-"""
-
-from jax.extend import (
-    random as random,
+from jax._src.prng import (
+  PRNGImpl as PRNGImpl,
+  seed_with_impl as seed_with_impl,
+  threefry2x32_p as threefry2x32_p,
+  threefry_2x32 as threefry_2x32,
+  threefry_prng_impl as threefry_prng_impl,
+  rbg_prng_impl as rbg_prng_impl,
+  unsafe_rbg_prng_impl as unsafe_rbg_prng_impl,
 )

@@ -110,6 +110,12 @@ jax_test(
 )
 
 jax_test(
+    name = "extend_test",
+    srcs = ["extend_test.py"],
+    deps = ["//jax:extend"],
+)
+
+jax_test(
     name = "fft_test",
     srcs = ["fft_test.py"],
     backend_tags = {

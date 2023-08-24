@@ -17,6 +17,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load(
     "//jaxlib:jax.bzl",
+    "jax_extend_internal_users",
     "jax_extra_deps",
     "jax_internal_packages",
     "jax_test_util_visibility",
@@ -61,6 +62,15 @@ package_group(
     packages = [
         "//...",
     ] + jax_internal_packages,
+)
+
+package_group(
+    name = "jax_extend_users",
+    packages = [
+        # Intentionally avoid jax dependencies on jax.extend.
+        # See https://jax.readthedocs.io/en/latest/jep/15856-jex.html
+        "//third_party/py/jax/tests/...",
+    ] + jax_extend_internal_users,
 )
 
 package_group(
@@ -870,6 +880,13 @@ pytype_library(
     deps = [
         ":xla_bridge",
     ],
+)
+
+pytype_library(
+    name = "extend",
+    srcs = glob(["extend/**/*.py"]),
+    visibility = [":jax_extend_users"],
+    deps = [":jax"],
 )
 
 pytype_library(
