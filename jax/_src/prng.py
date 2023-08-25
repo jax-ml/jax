@@ -611,8 +611,7 @@ xla.canonicalize_dtype_handlers[PRNGKeyArrayImpl] = lambda x: x
 
 
 def key_array_shard_arg_handler(x: PRNGKeyArrayImpl, devices, indices, sharding):
-  # TODO(frostig): Remove the need for `core.get_aval`.
-  aval = core.get_aval(x)
+  aval = x.aval
   key_shape = aval.dtype.impl.key_shape
   arr = x.unsafe_raw_array()
 
