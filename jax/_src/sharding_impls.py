@@ -22,7 +22,6 @@ import enum
 import functools
 import itertools
 import math
-import os
 from typing import Any, NamedTuple, Union, cast, Optional
 
 from jax._src import mesh as mesh_lib
@@ -31,7 +30,6 @@ from jax._src.op_shardings import (
     op_sharding_to_indices)
 from jax._src import sharding
 from jax._src import sharding_specs
-from jax._src import config as jax_config
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge
@@ -47,15 +45,6 @@ Shape = tuple[int, ...]
 Device = xc.Device
 Index = tuple[slice, ...]
 XLADeviceAssignment = tuple[Device, ...]
-
-
-# TODO(yashkatariya): Remove this flag after the host runtime is linked by
-# default and works on cloud TPU.
-_ENABLE_MEMORY_KIND = jax_config.DEFINE_bool(
-    'jax_enable_memory_kind',
-    bool(os.getenv('JAX_ENABLE_MEMORY_KIND', '')),
-    help=("If True, will allow fetching memory kinds available on executable "
-          "and annotate Shardings with it."))
 
 
 @dataclasses.dataclass(frozen=True)

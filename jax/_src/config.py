@@ -29,6 +29,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import transfer_guard_lib
 from jax._src.lib import xla_client
 from jax._src import logging_config
+from jax._src.lib import xla_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -496,6 +497,7 @@ class Config:
             self.jax_default_device,
             self.jax_threefry_partitionable,
             self.jax_softmax_custom_jvp,
+            self.jax_enable_memories,
             # Technically this affects jaxpr->MHLO lowering, not tracing.
             self.jax_hlo_source_file_canonicalization_regex)
 
@@ -771,6 +773,22 @@ pmap_shmap_merge = config.define_bool_state(
     upgrade=True,
     help='If True, pmap and shard_map API will be merged.')
 
+def _update_jax_memories_global(val):
+  if xla_extension_version >= 190:
+    lib.jax_jit.global_state().enable_memories = val
+
+def _update_jax_memories_thread_local(val):
+  if xla_extension_version >= 190:
+    lib.jax_jit.thread_local_state().enable_memories = val
+
+enable_memories = config.define_bool_state(
+    'jax_enable_memories',
+    default=False,
+    upgrade=True,
+    update_global_hook=_update_jax_memories_global,
+    update_thread_local_hook=_update_jax_memories_thread_local,
+    help=("If True, will allow fetching memory kinds available on executable "
+          "and annotate Shardings with it."))
 
 spmd_mode = config.define_enum_state(
     name='jax_spmd_mode',

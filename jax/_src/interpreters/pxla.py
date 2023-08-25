@@ -2331,7 +2331,7 @@ def get_gspmd_shardings_from_executable(
 ) -> Sequence[sharding_impls.XLACompatibleSharding]:
   from jax._src import pjit
 
-  if sharding_impls._ENABLE_MEMORY_KIND.value:
+  if config.jax_enable_memories:
     try:
       omk = xla_executable.get_output_memory_kinds()[0]
     except:
