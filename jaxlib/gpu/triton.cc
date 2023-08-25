@@ -134,10 +134,11 @@ NB_MODULE(_triton, m) {
 
   m.def("get_serialized_metadata",
         ValueOrThrowWrapper(
-            [](std::string_view opaque) -> absl::StatusOr<nb::bytes> {
+            [](nb::bytes opaque) -> absl::StatusOr<nb::bytes> {
               JAX_ASSIGN_OR_RETURN(
                   std::string metadata,
-                  GetTritonKernelCallSerializedMetadata(opaque));
+                  GetTritonKernelCallSerializedMetadata(
+                      absl::string_view(opaque.c_str(), opaque.size())));
               return nb::bytes(metadata.c_str(), metadata.size());
             }));
 }
