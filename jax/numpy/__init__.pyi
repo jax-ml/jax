@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import numpy as _np
 from jax.numpy import fft, linalg
 from typing import Any, Callable, Dict, Tuple, Type, Union
-from jax._src.typing import Array, ArrayLike
+from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.numpy.index_tricks import _Mgrid, _Ogrid, CClass as _CClass, RClass as _RClass
 from jax._src.numpy.reductions import CumulativeReduction as _CumulativeReduction
 from jax._src.numpy.ufunc_api import ufunc as ufunc
@@ -39,7 +41,9 @@ array_equiv: Any
 array_repr: Any
 array_split: Any
 array_str: Any
-asarray: Any
+def asarray(
+    a: Any, dtype: DTypeLike | None = ..., order: str | None = ...
+) -> Array: ...
 atleast_1d: Any
 atleast_2d: Any
 atleast_3d: Any
