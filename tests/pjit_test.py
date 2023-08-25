@@ -1987,14 +1987,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
     a = jnp.arange(16).reshape((8, 2))
     f = pjit(lambda x: x)
 
-    out = f(a)
-    cache_info1 = pjit_lib._pjit_lower_cached.cache_info()
-
-    _ = f(out)
-    cache_info2 = pjit_lib._pjit_lower_cached.cache_info()
-
-    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
-    self.assertEqual(cache_info2.misses, cache_info1.misses)
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      out = f(a)
+      _ = f(out)
+    self.assertEqual(count[0], 1)
 
   def test_pjit_different_device_recompilation(self):
     if jax.device_count() < 2:

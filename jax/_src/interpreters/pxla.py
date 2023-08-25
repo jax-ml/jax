@@ -2016,22 +2016,6 @@ def lower_sharding_computation(
           "To fix this error, run your `jitted` computation inside "
           "`with jax.spmd_mode('allow_all'):` context manager.")
 
-  has_outfeed = core.jaxpr_uses_outfeed(jaxpr)
-  kept_outputs = [True] * len(global_out_avals)
-
-  # Computations that only produce constants and/or only rearrange their inputs,
-  # which are often produced from partial evaluation, don't need compilation,
-  # and don't need to evaluate their arguments.
-  if (not always_lower and not (jaxpr.effects or has_outfeed) and
-      (not jaxpr.eqns and all(kept_outputs) or not jaxpr.outvars) and
-      all(is_unspecified(o) for o in out_shardings)):
-    return MeshComputation(
-        str(name_stack), None, True, donated_invars, jaxpr=jaxpr,
-        consts=closed_jaxpr.consts, global_in_avals=global_in_avals,
-        global_out_avals=global_out_avals, in_shardings=in_shardings,
-        backend=backend, da_object=da_object,
-        committed=committed, kept_var_idx=kept_var_idx, keepalive=None)
-
   # 2. Build up the HLO
   semantic_in_shardings = SemanticallyEqualShardings(in_shardings)  # type: ignore
   semantic_out_shardings = SemanticallyEqualShardings(out_shardings)
@@ -2049,7 +2033,6 @@ def lower_sharding_computation(
   return MeshComputation(
       str(name_stack),
       module,
-      False,
       donated_invars,
       global_in_avals=global_in_avals,
       global_out_avals=global_out_avals,
@@ -2223,7 +2206,6 @@ def lower_mesh_computation(
   return MeshComputation(
       str(name_stack),
       lowering_result.module,
-      False,
       donated_invars,
       global_in_avals=global_in_avals,
       global_out_avals=global_out_avals,
@@ -2248,10 +2230,9 @@ class MeshComputation(stages.XlaLowering):
   _executable: MeshExecutable | None
 
   def __init__(self, name: str, hlo: ir.Module | None,
-               is_trivial: bool, donated_invars: Sequence[bool], **compile_args):
+               donated_invars: Sequence[bool], **compile_args):
     self._name = name
     self._hlo = hlo
-    self.is_trivial = is_trivial
     self._donated_invars = donated_invars
     self.compile_args = compile_args
     self._executable = None
@@ -2259,24 +2240,13 @@ class MeshComputation(stages.XlaLowering):
   # -- stages.XlaLowering overrides
 
   def stablehlo(self) -> ir.Module:
-    if self.is_trivial:
-      raise ValueError("A trivial computation has no HLO")
     return self._hlo
 
-  def compile(
-      self,
-      compiler_options=None,
-  ) -> MeshExecutable:
+  def compile(self, compiler_options=None) -> MeshExecutable:
     if self._executable is None or compiler_options is not None:
-      if self.is_trivial:
-        executable = MeshExecutable.from_trivial_jaxpr(
-            **self.compile_args)
-      else:
-        executable = UnloadedMeshExecutable.from_hlo(
-            self._name,
-            self._hlo,
-            **self.compile_args,
-            compiler_options=compiler_options)
+      executable = UnloadedMeshExecutable.from_hlo(
+          self._name, self._hlo, **self.compile_args,
+          compiler_options=compiler_options)
       if compiler_options is None:
         self._executable = executable
       return executable
@@ -2735,32 +2705,6 @@ class MeshExecutable(stages.XlaExecutable):
       self._unsafe_call = self.build_unsafe_call()
     return self._unsafe_call
 
-  @staticmethod
-  def from_trivial_jaxpr(jaxpr, consts, global_in_avals, global_out_avals,
-                         in_shardings, backend, da_object,
-                         committed, kept_var_idx, keepalive) -> MeshExecutable:
-    assert keepalive is None
-    if hasattr(backend, "compile_replicated"):
-      return _compile_replicated_mesh_executable_from_trivial_jaxpr(
-          jaxpr, consts, global_in_avals, global_out_avals, in_shardings,
-          backend, da_object, committed, kept_var_idx, 1)
-
-    out_shardings = _out_shardings_for_trivial(
-        jaxpr, consts, in_shardings, da_object)
-    indices = _get_input_indices(global_out_avals, out_shardings, da_object)
-    # TODO(yashkatariya): Make local_device_assignment directly usable in the
-    # downstream code without tuple conversion.
-    local_device_assignment = tuple(da_object.addressable_device_list)
-    handle_ins = InputsHandler(local_device_assignment, out_shardings, indices)
-    handle_outs = global_avals_to_results_handler(
-          global_out_avals, out_shardings, committed,
-          [False] * len(global_out_avals))
-    unsafe_call = partial(_execute_trivial, jaxpr, consts, handle_ins,
-                          handle_outs, kept_var_idx)
-    return MeshExecutable(None, lambda: unsafe_call, global_in_avals,
-                          in_shardings, out_shardings, False, kept_var_idx,
-                          None)
-
   # -- stages.XlaExecutable overrides
 
   def xla_extension_executable(self):
@@ -2853,47 +2797,6 @@ def _get_metadata_jit_pmap(local_devices, num_in_shardings, num_out_shardings):
   return in_shardings, out_shardings, committed, tuple(local_devices)
 
 
-def _out_shardings_for_trivial(
-    jaxpr: core.Jaxpr, consts: Sequence[Any],
-    in_shardings: Sequence[sharding_impls.XLACompatibleSharding],
-    device_assignment: Sequence[xc.Device],
-  ) -> list[sharding_impls.XLACompatibleSharding]:
-  # For each jaxpr output, compute a Sharding by:
-  #   * if the output is a forwarded input, get the corresponding in_sharding;
-  #   * if the output is a constant Array, get its .sharding attribute;
-  #   * otherwise, the output is a literal or numpy.ndarray constant, so give it
-  #     a replicated sharding
-  from jax._src import array
-
-  if len(device_assignment) > 1:
-    rep = sharding_impls.GSPMDSharding.get_replicated(device_assignment)
-    in_shardings = tuple(
-        i._original_sharding if hasattr(i, '_original_sharding') else i
-        for i in in_shardings)
-  else:
-    dev, = device_assignment
-    rep = sharding_impls.SingleDeviceSharding(dev)
-    in_shardings = (sharding_impls.SingleDeviceSharding(dev),) * len(in_shardings)
-
-  shardings: dict[core.Var, sharding_impls.XLACompatibleSharding] = {}
-  for constvar, constval in zip(jaxpr.constvars, consts):
-    if isinstance(constval, array.ArrayImpl):
-      shardings[constvar] = constval.sharding
-  map(shardings.setdefault, jaxpr.invars, in_shardings)
-  return [rep if isinstance(x, core.Literal) else shardings.get(x, rep)
-          for x in jaxpr.outvars]
-
-
-def _execute_trivial(jaxpr, consts, in_handler, out_handler, kept_var_idx, *args):
-  env: dict[core.Var, Any]  = {}
-  pruned_args = (x for i, x in enumerate(args) if i in kept_var_idx)
-  map(env.setdefault, jaxpr.invars, pruned_args)
-  map(env.setdefault, jaxpr.constvars, consts)
-  outs = [xla.canonicalize_dtype(v.val) if type(v) is core.Literal else env[v]
-          for v in jaxpr.outvars]
-  return out_handler(in_handler(outs))
-
-
 @weakref_lru_cache
 def _compile_replicated_mesh_executable_from_hlo(
     computation, name, global_in_avals, global_out_avals, semantics_in_shardings,
@@ -2924,28 +2827,6 @@ def _compile_replicated_mesh_executable_from_hlo(
   return MeshExecutable(xla_executable, lambda: unsafe_call, global_in_avals,
                         in_shardings, out_shardings, auto_spmd_lowering,
                         kept_var_idx, jaxpr_debug_info, None)
-
-
-def _compile_replicated_mesh_executable_from_trivial_jaxpr(
-    jaxpr, consts, global_in_avals, global_out_avals, in_shardings, backend,
-    da_object, committed, kept_var_idx, pmap_nreps):
-  out_shardings = _out_shardings_for_trivial(
-      jaxpr, consts, in_shardings, da_object)
-
-  input_indices = _get_input_indices(global_in_avals, in_shardings, da_object)  # type: ignore
-  handle_outs = global_avals_to_results_handler(
-      global_out_avals, out_shardings, committed,
-      [False] * len(global_out_avals))
-  # Use the standard out_handler.
-  unsafe_call = backend.compile_replicated(
-      is_trivial=True, jaxpr=jaxpr, consts=consts,
-      device_assignment=da_object, in_avals=global_in_avals,
-      in_indices=input_indices, in_shardings=in_shardings,
-      kept_var_idx=kept_var_idx, out_handler=handle_outs,
-      out_shardings=out_shardings, pmap_nreps=pmap_nreps)
-  return MeshExecutable(None, lambda: unsafe_call, global_in_avals,
-                        in_shardings, out_shardings, False, kept_var_idx,
-                        None)
 
 
 @lru_cache

@@ -2995,8 +2995,8 @@ def shard_foo_array_handler(x, devices, indices, sharding):
   return pxla.batched_device_put(
       aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device])
 
-def foo_array_constant_handler(x, c):
-  return array._array_mlir_constant_handler(x.data, c)
+def foo_array_constant_handler(x):
+  return array._array_mlir_constant_handler(x.data)
 
 def make_lowering(*, shape):
   return jnp.zeros((*shape, 2), 'uint32')
