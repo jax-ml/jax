@@ -33,6 +33,7 @@ from jax import sharding
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
+from jax._src import effects
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client
@@ -112,9 +113,13 @@ class DisabledSafetyCheck:
   def __hash__(self) -> int:
     return hash(self._impl)
 
-
+# See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions
+# for a description of the different versions.
 minimum_supported_serialization_version = 6
-maximum_supported_serialization_version = 8
+maximum_supported_serialization_version = 9
+
+_VERSION_START_SUPPORT_SHAPE_ASSERTIONS = 7
+_VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS = 9
 
 Sharding = Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]
 
@@ -140,6 +145,11 @@ class Exported:
     lowering_platforms: a tuple containing at least one of 'tpu', 'cpu',
         'cuda', 'rocm'. See below for the calling convention for when
         there are multiple lowering platforms.
+    ordered_effects: the ordered effects present in the serialized module.
+        This is present from serialization version 9. See below for the
+        calling convention in presence of ordered effects.
+    unordered_effects: the unordered effects present in the serialized module.
+        This is present from serialization version 9.
     mlir_module_serialized: the serialized lowered VHLO module.
     serialization_version: a version number for the serialized module.
         See more versioning details at https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions.
@@ -160,19 +170,20 @@ class Exported:
         for each primal output. It returns a tuple with the cotangents
         corresponding to the flattened primal inputs.
 
-  Calling convention for the exported module:
+  Calling convention for the exported module (for latest supported version):
 
   The `mlir_module` has a `main` function that takes an optional first
   platform index argument if the module supports multiple platforms
-  (`len(lowering_platforms) > 1`), followed by the kept array arguments
-  (corresponding to `module_kept_var_idx` and `in_avals`).
-  The platform index is a i32 scalar encoding the index of the current
+  (`len(lowering_platforms) > 1`), followed by the token arguments corresponding
+  to the ordered effects, followed by the kept array
+  arguments (corresponding to `module_kept_var_idx` and `in_avals`).
+  The platform index is a i32 or i64 scalar encoding the index of the current
   compilation platform into the `lowering_platforms` sequence.
 
   Inner functions use a different calling convention: an optional
-  platform index argument, optional dimension variable arguments specified
-  using scalar tensors of type i32 or i64,
-  followed by optional token arguments (in presence of side effects),
+  platform index argument, optional dimension variable arguments
+  (scalar tensors of type i32 or i64),
+  followed by optional token arguments (in presence of ordered effects),
   followed by the regular array arguments.
   The dimension arguments correspond to the dimension variables appearing in
   the `args_avals`, in sorted order of their names.
@@ -180,10 +191,11 @@ class Exported:
   Consider the lowering of a function with one array argument of type "f32[w,
   2 * h]", where "w" and "h" are two dimension variables.
   Assume that we use multi-platform lowering, and we have
-  ordered effects. The `main` function will be as follows:
+  one ordered effect. The `main` function will be as follows:
 
       func public main(
             platform_index: i32 {jax.global_constant="_platform_index"},
+            token_in: token,
             arg: f32[?, ?]) {
          arg_w = hlo.get_dimension_size(arg, 0)
          dim1 = hlo.get_dimension_size(arg, 1)
@@ -195,12 +207,11 @@ class Exported:
                                                         arg_w,
                                                         token_in,
                                                         arg)
-         return res
+         return token_out, res
       }
 
   The actual computation is in `_wrapped_jax_export_main`, taking also
-  the values of `h` and `w` and the token. Proper exporting of
-  functions with side-effects and tokens is still work-in-progress.
+  the values of `h` and `w` dimension variables.
 
   The signature of the `_wrapped_jax_export_main` is:
 
@@ -209,9 +220,17 @@ class Exported:
           arg_h: i32 {jax.global_constant="h"},
           arg_w: i32 {jax.global_constant="w"},
           arg_token: stablehlo.token {jax.token=True},
-          arg: f32[?, ?])
+          arg: f32[?, ?]) -> (stablehlo.token, ...)
 
-  Starting with serialization version 9, function arguments that contain
+  Prior to serialization version 9 the calling convention for effects is
+  different: the `main` function does not take or return a token. Instead
+  the function creates dummy tokens of type `i1[0]` and passes them to the
+  `_wrapped_jax_export_main`. The `_wrapped_jax_export_main`
+  takes dummy tokens of type `i1[0]` and will create internally real
+  tokens to pass to the inner functions. The inner functions use real
+  tokens (both before and after serialization version 9)
+
+  Also starting with serialization version 9, function arguments that contain
   the platform index or the dimension variable values have a
   `jax.global_constant` string attribute whose value is the name of the
   global constant, either `_platform_index` or a dimension variable name.
@@ -255,6 +274,8 @@ class Exported:
   in_shardings: tuple[Sharding, ...]
   out_shardings: tuple[Sharding, ...]
   lowering_platforms: tuple[str, ...]
+  ordered_effects: tuple[effects.Effect, ...]
+  unordered_effects: tuple[effects.Effect, ...]
   disabled_checks: Sequence[DisabledSafetyCheck]
 
   mlir_module_serialized: bytes
@@ -379,6 +400,9 @@ def poly_specs(
   return args_tree.unflatten(args_specs_flat)
 
 
+def _keep_main_tokens(serialization_version: int) -> bool:
+  return serialization_version >= _VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS
+
 def export(fun_jax: Callable,
            *,
            # TODO(necula): remove this kwarg
@@ -441,14 +465,16 @@ def export(fun_jax: Callable,
     # Do not include shape assertions if the version is < 7.
     enable_shape_assertions = (
         DisabledSafetyCheck.shape_assertions() not in disabled_checks and
-        version >= 7)  # type: ignore
+        version >= _VERSION_START_SUPPORT_SHAPE_ASSERTIONS)  # type: ignore
     try:
       prev_enable_shape_assertions = shape_poly.thread_local_state.enable_shape_assertions
       shape_poly.thread_local_state.enable_shape_assertions = enable_shape_assertions
+      replace_tokens_with_dummy = not _keep_main_tokens(version)
       lowered = wrapped_fun_jax.lower(
           *args_specs, **kwargs_specs,
           _experimental_lowering_parameters=mlir.LoweringParameters(
             platforms=actual_lowering_platforms,
+            replace_tokens_with_dummy=replace_tokens_with_dummy,
           ))
 
       lowering = lowered._lowering  # type: ignore
@@ -467,7 +493,8 @@ def export(fun_jax: Callable,
         mlir_module = _wrap_main_func(
             mlir_module, args_avals_flat, args_kwargs_tree=lowered.in_tree,
             has_platform_index_argument=shape_poly_state.has_platform_index_argument,
-            module_kept_var_idx=module_kept_var_idx)
+            module_kept_var_idx=module_kept_var_idx,
+            serialization_version=version)
     finally:
       shape_poly.thread_local_state.enable_shape_assertions = prev_enable_shape_assertions
 
@@ -501,6 +528,11 @@ def export(fun_jax: Callable,
                   allow_non_replicated_sharding=allow_non_replicated_sharding,
                   disabled_checks=disabled_checks)
 
+    ordered_effects = tuple(lowering.compile_args["ordered_effects"])
+    unordered_effects = tuple(lowering.compile_args["unordered_effects"])
+    if version < _VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+      ordered_effects = unordered_effects = ()
+
     return Exported(
         fun_name=fun_name,
         in_tree=lowered.in_tree,
@@ -510,6 +542,8 @@ def export(fun_jax: Callable,
         in_shardings=lowering.compile_args["in_shardings"],
         out_shardings=lowering.compile_args["out_shardings"],
         lowering_platforms=actual_lowering_platforms,
+        ordered_effects=ordered_effects,
+        unordered_effects=unordered_effects,
         disabled_checks=tuple(disabled_checks),
         mlir_module_serialized=mlir_module_serialized,
         module_kept_var_idx=module_kept_var_idx,
@@ -553,7 +587,8 @@ def _wrap_main_func(
     *,
     args_kwargs_tree: tree_util.PyTreeDef,
     has_platform_index_argument: bool,
-    module_kept_var_idx: tuple[int, ...]
+    module_kept_var_idx: tuple[int, ...],
+    serialization_version: int
 ) -> ir.Module:
   """Wraps the lowered module with a new "main" handling dimension arguments.
 
@@ -570,6 +605,7 @@ def _wrap_main_func(
       index argument
     module_kept_var_idx: a sorted tuple of integers with the indices of arguments
       in `args_avals_flat` that are kept as `module` arguments.
+    serialization_version: the target serialization version
 
   Returns the wrapped module, without dimension and token arguments.
   """
@@ -584,7 +620,10 @@ def _wrap_main_func(
     symbol_table.set_symbol_name(orig_main, "_wrapped_jax_export_main")
     orig_main_name = ir.StringAttr(symbol_table.insert(orig_main)).value
 
-    def is_token(attrs):
+    def is_token(typ, attrs):
+      if typ == mlir.token_type()[0]:
+        return True
+      # TODO(b/302258959): in older versions we cannot use the token type
       try:
         return ir.BoolAttr(ir.DictAttr(attrs)["jax.token"]).value
       except KeyError:
@@ -595,33 +634,58 @@ def _wrap_main_func(
     # The order of args: platform_index_arg, dim args, token args, array args.
     nr_platform_index_args = 1 if has_platform_index_argument else 0
     nr_dim_args = len(dim_vars)
-    nr_token_args = sum(1 for attrs in arg_attrs if is_token(attrs))
-    nr_array_args = len(orig_input_types) - nr_platform_index_args - nr_dim_args - nr_token_args
+    token_arg_idxs = [i for i, (typ, attrs) in enumerate(zip(orig_input_types,
+                                                             arg_attrs))
+                      if is_token(typ, attrs)]
+    nr_token_args = len(token_arg_idxs)
+    if nr_token_args > 0:
+      assert min(token_arg_idxs) == nr_platform_index_args + nr_dim_args
+      assert token_arg_idxs == list(
+        range(nr_platform_index_args + nr_dim_args,
+              nr_platform_index_args + nr_dim_args + nr_token_args))
+    nr_array_args = (len(orig_input_types) - nr_platform_index_args
+                     - nr_dim_args - nr_token_args)
     assert nr_array_args >= 0
-    assert not any(is_token(attrs) for attrs in arg_attrs[-nr_array_args:])
+
     (platform_input_types, dim_var_input_types,
      token_input_types, array_input_types) = util.split_list(
       orig_input_types, [nr_platform_index_args, nr_dim_args, nr_token_args])
-    new_main_input_types = platform_input_types + array_input_types
+
+    # The order of results: tokens, array results
     orig_output_types = orig_main.type.results
     result_attrs = list(ir.ArrayAttr(orig_main.result_attrs))
-    nr_token_results = sum(1 for attrs in result_attrs if is_token(attrs))
+    token_result_idxs = [i for i, (typ, attrs) in enumerate(zip(orig_output_types,
+                                                                result_attrs))
+                         if is_token(typ, attrs)]
+    nr_token_results = len(token_result_idxs)
+    assert token_result_idxs == list(range(0, nr_token_results))
     nr_array_results = len(orig_output_types) - nr_token_results
     assert nr_array_results >= 0
-    assert not any(
-        is_token(attrs) for attrs in result_attrs[-nr_array_results:])
-    new_main_output_types = orig_output_types[-nr_array_results:]
+    if _keep_main_tokens(serialization_version):
+      new_main_arg_indices = (tuple(range(0, nr_platform_index_args)) +
+                              tuple(range(nr_platform_index_args + nr_dim_args,
+                                          len(orig_input_types))))
+      new_main_result_indices = tuple(range(0, len(orig_output_types)))
+    else:
+      new_main_arg_indices = (
+        tuple(range(0, nr_platform_index_args)) +
+        tuple(range(nr_platform_index_args + nr_dim_args + nr_token_args,
+                    len(orig_input_types))))
+      new_main_result_indices = tuple(range(nr_token_results, len(orig_output_types)))
+    new_main_input_types = [orig_input_types[idx] for idx in new_main_arg_indices]
+    new_main_output_types = [orig_output_types[idx] for idx in new_main_result_indices]
     new_main_ftype = ir.FunctionType.get(new_main_input_types, new_main_output_types)
     new_main_op = func_dialect.FuncOp(
         "main", new_main_ftype, ip=ir.InsertionPoint.at_block_begin(wrapped_module.body))
     new_main_op.attributes["sym_visibility"] = ir.StringAttr.get("public")
     try:
-      new_main_op.arg_attrs = ir.ArrayAttr.get(arg_attrs[0:nr_platform_index_args] + arg_attrs[-nr_array_args:])
+      new_main_op.arg_attrs = ir.ArrayAttr.get(
+        [arg_attrs[idx] for idx in new_main_arg_indices])
     except KeyError:
       pass  # TODO: better detection if orig_main.arg_attrs does not exist
     try:
       new_main_op.result_attrs = ir.ArrayAttr.get(
-          result_attrs[-nr_array_results:])
+          [result_attrs[idx] for idx in new_main_result_indices])
     except KeyError:
       pass
     symbol_table.insert(new_main_op)
@@ -642,7 +706,7 @@ def _wrap_main_func(
         avals_in=args_avals_flat, avals_out=None,
         tokens_in=mlir.TokenSet(), tokens_out=None)
       # We compute dim_values from the array arguments.
-      new_main_op_array_args = new_main_op.arguments[nr_platform_index_args:]
+      new_main_op_array_args = new_main_op.arguments[-nr_array_args:]
       if shape_poly.all_dim_vars(args_avals_flat):
         # TODO(necula): handle module_kept_var_idx in presence of shape
         # polymorphism. For now we ensured upstream that we keep all variables.
@@ -664,19 +728,26 @@ def _wrap_main_func(
         else:
           orig_main_args.append(arg)
       # Then the token arguments
-      orig_main_args.extend(list(mlir.dummy_token()) * nr_token_args)
+      if _keep_main_tokens(serialization_version):
+        orig_main_args.extend(
+          new_main_op.arguments[nr_platform_index_args: nr_platform_index_args + nr_token_args])
+      else:
+        orig_main_args.extend(list(mlir.dummy_token()) * nr_token_args)
       # Then the array arguments. We insert a ConvertOp as the only use of
       # an input argument. This helps the downstream shape refinement because
       # it will set the type of input arguments to static shapes, and this
       # can invalidate the module if the argument is used as the result of a
       # function, or if it appears as the input to a custom_call with
       # output_operand_alias attribute. See b/287386268.
-      for a in new_main_op_array_args:
-        orig_main_args.append(hlo.ConvertOp(a.type, a).result)
+      for arg, arg_type in zip(new_main_op_array_args, array_input_types):
+        if arg.type != arg_type:
+          orig_main_args.append(hlo.ConvertOp(arg_type, arg).result)
+        else:
+          orig_main_args.append(arg)
       call = func_dialect.CallOp(orig_output_types,
                                  ir.FlatSymbolRefAttr.get(orig_main_name),
                                  orig_main_args)
-      func_dialect.ReturnOp(call.results[-nr_array_results:])
+      func_dialect.ReturnOp([call.results[idx] for idx in new_main_result_indices])
     symbol_table.set_symbol_name(new_main_op, "main")
 
   return wrapped_module
@@ -715,8 +786,6 @@ def _check_lowering(lowering) -> None:
       # custom calls. The CallTfEffect is an exception, but we want to allow
       # that one.
       ("unordered_effects", lambda v: True, "N/A"),
-      # ordered_effects are allowed and we ensure that the calling convention is
-      # unmodified by passing dummy tokens in the main function wrapper.
       ("ordered_effects", lambda v: True, "N/A"),
       # used for TPU jax.debug, send/recv. Not supported yet.
       ("host_callbacks", lambda v: not v, "empty"),
@@ -1012,8 +1081,10 @@ call_exported_p = core.Primitive("call_exported")
 call_exported_p.multiple_results = True
 
 @util.cache()
-def _call_exported_abstract_eval(*in_avals: core.AbstractValue,
-                                 exported: Exported) -> tuple[core.AbstractValue, ...]:
+def _call_exported_abstract_eval(
+    *in_avals: core.AbstractValue,
+    exported: Exported
+    ) -> tuple[tuple[core.AbstractValue, ...], set[effects.Effect]]:
   exported_dim_vars = shape_poly.all_dim_vars(exported.in_avals)
   assert len(in_avals) == len(exported.in_avals)  # since the pytrees have the same structure
   # Check that the expected shapes match the actual ones
@@ -1060,15 +1131,16 @@ def _call_exported_abstract_eval(*in_avals: core.AbstractValue,
   shape_constraints.check_statically(synthetic_eval)
   exported_dim_values = [synthetic_eval.evaluate(solution[var])
                          for var in exported_dim_vars]
-  return tuple(
+  out_avals = tuple(
       core.ShapedArray(core.evaluate_shape(out_aval.shape, exported_dim_vars,
                                            *exported_dim_values),
                        dtype=out_aval.dtype, weak_type=out_aval.weak_type,
                        named_shape=out_aval.named_shape)
       for out_aval in exported.out_avals)
+  return out_avals, set(exported.ordered_effects + exported.unordered_effects)
 
 
-call_exported_p.def_abstract_eval(_call_exported_abstract_eval)
+call_exported_p.def_effectful_abstract_eval(_call_exported_abstract_eval)
 
 def _call_exported_impl(*args, exported: Exported):
   return dispatch.apply_primitive(call_exported_p, *args, exported=exported)
@@ -1104,11 +1176,8 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   fn = mlir.merge_mlir_modules(ctx.module_context.module,
                                f"call_exported_{exported.fun_name}",
                                submodule)
-  kept_args = [
-      convert_shape(a, a_aval, exported_in_aval)
-      for i, (a, a_aval, exported_in_aval) in enumerate(zip(args, ctx.avals_in, exported.in_avals))
-      if i in exported.module_kept_var_idx]
 
+  submodule_args = []
   # All the platforms for the current lowering must be among the platforms
   # for which the callee was lowered.
   if ctx.module_context.lowering_parameters.is_multi_platform:
@@ -1152,18 +1221,36 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
       callee_platform_idx = hlo.ConvertOp(callee_type.inputs[0],
                                           callee_platform_idx)
 
-    kept_args = [callee_platform_idx] + kept_args
+    submodule_args.append(callee_platform_idx)
   else:
     assert len(lowering_platforms) == 1
 
+  if _keep_main_tokens(exported.serialization_version):
+    ordered_effects = exported.ordered_effects
+  else:
+    ordered_effects = ()
+  for eff in ordered_effects:
+    token_in = ctx.tokens_in.get(eff)[0]
+    submodule_args.append(token_in)
+  kept_args = [
+      convert_shape(a, a_aval, exported_in_aval)
+      for i, (a, a_aval, exported_in_aval) in enumerate(zip(args, ctx.avals_in, exported.in_avals))
+      if i in exported.module_kept_var_idx]
+  submodule_args = submodule_args + kept_args
+
   call = func_dialect.CallOp(callee_type.results,
                              ir.FlatSymbolRefAttr.get(fn),
-                             kept_args)
+                             submodule_args)
+  if ordered_effects:
+    tokens_out = {eff: (call.results[effect_idx],)
+                  for effect_idx, eff in enumerate(ordered_effects)}
+    ctx.set_tokens_out(mlir.TokenSet(tokens_out))
   # The ctx.avals_out already contain the abstract values refined by
   # _call_exported_abstract_eval.
   results = tuple(
       convert_shape(out, out_aval, refined_out_aval)
-      for out, out_aval, refined_out_aval in zip(call.results, exported.out_avals, ctx.avals_out))
+      for out, out_aval, refined_out_aval in zip(call.results[len(ordered_effects):],
+                                                 exported.out_avals, ctx.avals_out))
   # Apply out_shardings
   results = tuple(
     wrap_with_sharding(ctx, exported, x, x_aval, x_sharding)
