@@ -302,6 +302,7 @@ INITIALIZER_RECS = [
 ]
 
 
+@jtu.with_config(jax_legacy_prng_key="allow")
 class NNInitializersTest(jtu.JaxTestCase):
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(

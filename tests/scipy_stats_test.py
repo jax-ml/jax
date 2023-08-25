@@ -1383,6 +1383,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     shape=[(15,), (3, 15), (1, 12)],
     dtype=jtu.dtypes.floating,
   )
+  @jax.legacy_prng_key('allow')
   def testKdeResampleShape(self, shape, dtype):
     def resample(key, dataset, weights, *, shape):
       kde = lsp_stats.gaussian_kde(dataset, weights=jax.numpy.abs(weights))
@@ -1411,6 +1412,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     shape=[(15,), (1, 12)],
     dtype=jtu.dtypes.floating,
   )
+  @jax.legacy_prng_key('allow')
   def testKdeResample1d(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     dataset = rng(shape, dtype)

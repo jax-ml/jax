@@ -65,6 +65,7 @@ from jax._src import test_util as jtu
 config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_legacy_prng_key='allow')
 class CompatTest(bctu.CompatTestBase):
   def test_dummy(self):
     # Tests the testing mechanism. Let this test run on all platforms

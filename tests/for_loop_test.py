@@ -131,6 +131,7 @@ class ForLoopTest(jtu.JaxTestCase):
         x, jnp.array([[0., 1.], [2., 5.], [4., 9.], [6., 13.]]))
 
   @_for_loop_impls
+  @jax.legacy_prng_key('allow')
   def test_for_loop_can_implement_cumsum(self, for_impl):
     def cumsum(x):
       def body(i, refs):
@@ -383,6 +384,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
                     rtol=7e-3, atol=1e-2)
 
   @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
+  @jax.legacy_prng_key('allow')
   def test_grad_of_triple_nested_for_loop(self):
 
     func = lambda x: jnp.sin(x) + 1.

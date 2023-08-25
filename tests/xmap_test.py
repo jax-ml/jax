@@ -237,6 +237,7 @@ def schedules(sizes: dict[str, int]
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
+@jtu.with_config(jax_legacy_prng_key="allow")
 class XMapTestCase(jtu.BufferDonationTestCase):
   pass
 
@@ -1622,6 +1623,7 @@ class PDotTests(XMapTestCase):
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
+@jtu.with_config(jax_legacy_prng_key="allow")
 class XMapErrorTest(jtu.JaxTestCase):
 
   @jtu.with_mesh([('x', 2)])
@@ -1870,6 +1872,7 @@ class XMapErrorTest(jtu.JaxTestCase):
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
+@jtu.with_config(jax_legacy_prng_key="allow")
 class NamedAutodiffTests(jtu.JaxTestCase):
 
   def testVjpReduceAxes(self):
