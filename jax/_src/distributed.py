@@ -77,7 +77,7 @@ class State:
             coordinator_address, num_processes)
       else:
         self.service = xla_extension.get_distributed_runtime_service(
-            coordinator_address, num_processes, config.jax_coordination_service)
+            coordinator_address, num_processes, True)
 
     self.num_processes = num_processes
 
@@ -89,7 +89,7 @@ class State:
           coordinator_address, process_id, init_timeout=initialization_timeout)
     else:
       self.client = xla_extension.get_distributed_runtime_client(
-          coordinator_address, process_id, config.jax_coordination_service,
+          coordinator_address, process_id, True,
           init_timeout=initialization_timeout)
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
