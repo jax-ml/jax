@@ -27,6 +27,7 @@ if TYPE_CHECKING:
   from jax.scipy import stats as stats
   from jax.scipy import fft as fft
   from jax.scipy import cluster as cluster
+  from jax.scipy import integrate as integrate
 else:
   import jax._src.lazy_loader as _lazy
   __getattr__, __dir__, __all__ = _lazy.attach(__name__, [
@@ -39,6 +40,7 @@ else:
     "stats",
     "fft",
     "cluster",
+    "integrate",
   ])
   del _lazy
 

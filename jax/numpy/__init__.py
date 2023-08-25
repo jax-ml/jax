@@ -226,7 +226,7 @@ from jax._src.numpy.lax_numpy import (
     tensordot as tensordot,
     tile as tile,
     trace as trace,
-    trapz as trapz,
+    trapz as _deprecated_trapz,
     transpose as transpose,
     tri as tri,
     tril as tril,
@@ -474,6 +474,11 @@ _deprecations = {
         "jax.numpy.in1d is deprecated. Use jax.numpy.isin instead.",
         _deprecated_in1d,
     ),
+    # Added Aug 24, 2023
+    "trapz": (
+        "jax.numpy.trapz is deprecated. Use jax.scipy.integrate.trapezoid instead.",
+        _deprecated_trapz,
+    ),
 }
 
 import typing
@@ -488,6 +493,7 @@ if typing.TYPE_CHECKING:
   PZERO = 0.0
   issubsctype = _numpy.core.numerictypes.issubsctype
   in1d = _deprecated_in1d
+  trapz = _deprecated_trapz
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
@@ -496,3 +502,4 @@ del typing
 del _numpy
 
 del _deprecated_in1d
+del _deprecated_trapz
