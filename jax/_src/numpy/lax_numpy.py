@@ -1041,8 +1041,8 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
 @util._wraps(np.interp,
   lax_description=_dedent("""
     In addition to constant interpolation supported by NumPy, jnp.interp also
-    supports left='extrapolate' and right='extrpolate' to indicate linear
-    extrpolation instead."""))
+    supports left='extrapolate' and right='extrapolate' to indicate linear
+    extrapolation instead."""))
 def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
            left: ArrayLike | str | None = None,
            right: ArrayLike | str | None = None,
