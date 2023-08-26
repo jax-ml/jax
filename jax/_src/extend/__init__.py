@@ -11,20 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-# Note: import <name> as <name> is required for names to be exported.
-# See PEP 484 & https://github.com/google/jax/issues/7570
-
-from jax._src.prng import (
-  PRNGImpl as PRNGImpl,
-  seed_with_impl as seed_with_impl,
-  threefry2x32_p as threefry2x32_p,
-  threefry_2x32 as threefry_2x32,
-  threefry_prng_impl as threefry_prng_impl,
-  rbg_prng_impl as rbg_prng_impl,
-  unsafe_rbg_prng_impl as unsafe_rbg_prng_impl,
-)
-
-from jax._src.extend.random import (
-  wrap_key_data as wrap_key_data,
-)
