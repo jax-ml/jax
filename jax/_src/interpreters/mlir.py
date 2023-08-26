@@ -774,9 +774,16 @@ def _set_up_aliases(avals_in, avals_out, donated_args, arg_memory_kinds,
   avals_in = map(strip_metadata, avals_in)
   avals_out = map(strip_metadata, avals_out)
 
-  if arg_memory_kinds is None:
+  # Both arg and result memory kinds need to be specified to donate based on
+  # the memory kind. For jit's where out_shardings is not specified, we don't
+  # know the memory kind so don't condition the logic based on the memory kind.
+  # TODO(yashkatariya): Note that this logic should be in C++ where we make
+  # donation decisions are made after SPMD propagation passes and memory
+  # placement passes so that we have all the information.
+  if (arg_memory_kinds is None or result_memory_kinds is None or
+      any(a is None for a in arg_memory_kinds) or
+      any(r is None for r in result_memory_kinds)):
     arg_memory_kinds = [None] * len(avals_in)
-  if result_memory_kinds is None:
     result_memory_kinds = [None] * len(avals_out)
 
   donations = collections.defaultdict(collections.deque)
