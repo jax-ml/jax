@@ -600,7 +600,10 @@ def qr(a: ArrayLike, mode: str = "reduced") -> Union[Array, tuple[Array, Array]]
   return q, r
 
 
-@_wraps(np.linalg.solve)
+@_wraps(np.linalg.solve, lax_description="""
+Also see the `Lineax <https://github.com/google/lineax>`_ library, which is a
+JAX library that offers a detailed API for linear solvers and linear operators.
+""")
 @jit
 def solve(a: ArrayLike, b: ArrayLike) -> Array:
   check_arraylike("jnp.linalg.solve", a, b)
