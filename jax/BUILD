@@ -496,6 +496,7 @@ pytype_strict_library(
         exclude = [
             "experimental/pallas/gpu.py",
             "experimental/pallas/tpu.py",
+            "experimental/pallas/ops/tpu/*.py",
         ],
     ),
     visibility = [
@@ -518,6 +519,19 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic",
         "//jax/_src/pallas/mosaic:core",
         "//jax/_src/pallas/mosaic:primitives",
+    ],
+)
+
+pytype_strict_library(
+    name = "pallas_tpu_ops",
+    srcs = glob(["experimental/pallas/ops/tpu/*.py"]),
+    visibility = [
+        ":pallas_tpu_users",
+    ],
+    deps = [
+        ":jax",
+        ":pallas",
+        ":pallas_tpu",
     ],
 )
 
