@@ -1438,10 +1438,10 @@ class FusedAttentionTest(PallasTest):
     if use_fwd:
       @jax.jit
       def impl(q, k, v):
-        v, _ = jax.vjp(functools.partial(attention.mha, causal=causal), q, k, v)
+        v, _ = jax.vjp(functools.partial(attention.mha, causal=causal, block_q=block_q), q, k, v)
         return v
     else:
-      impl = functools.partial(attention.mha, causal=causal)
+      impl = functools.partial(attention.mha, causal=causal, block_q=block_q)
     o = impl(q, k, v)
     o_ref = attention.mha_reference(q, k, v, causal=causal)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
