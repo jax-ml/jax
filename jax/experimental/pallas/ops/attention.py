@@ -77,7 +77,7 @@ def mha_forward_kernel(
     acc = acc + pl.dot(p.astype(v.dtype), v)
     return acc, m_curr, l_curr
   if causal:
-    upper_bound = lax.div(block_q * start_q, block_k) + 1
+    upper_bound = pl.cdiv(block_q * (start_q + 1), block_k)
   else:
     upper_bound = pl.cdiv(seq_len, block_k)  # type: ignore
   acc, m_i, l_i = lax.fori_loop(0, upper_bound, body,

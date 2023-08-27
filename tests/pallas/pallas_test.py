@@ -1413,13 +1413,15 @@ class FusedAttentionTest(PallasTest):
   @parameterized.named_parameters(*[
       (f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{causal=}_{use_fwd=}",
        batch_size, seq_len, num_heads, head_dim, causal, use_fwd)
-      for batch_size, seq_len, num_heads, head_dim, causal, use_fwd in [
-          (1, 384, 1, 64, False, False),
-          (2, 384, 2, 64, False, False),
-          (1, 384, 1, 64, True, False),
-          (2, 384, 2, 64, True, False),
-          (1, 384, 8, 64, True, True),
-          (2, 384, 8, 64, True, True),
+      for batch_size, seq_len, num_heads, head_dim, causal, use_fwd, block_q in [
+          (1, 384, 1, 64, False, False, 128),
+          (2, 384, 2, 64, False, False, 128),
+          (1, 384, 1, 64, True, False, 128),
+          (2, 384, 2, 64, True, False, 128),
+          (1, 384, 8, 64, True, True, 128),
+          (2, 384, 8, 64, True, True, 128),
+          (2, 384, 8, 64, True, True, 128),
+          (1, 384, 8, 64, True, True, 256),
       ]
   ])
   def test_fused_attention_fwd(self, batch_size, seq_len, num_heads, head_dim,
