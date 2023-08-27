@@ -153,6 +153,7 @@ py_library_providing_imports_info(
         [
             "*.py",
             "_src/debugger/**/*.py",
+            "_src/extend/**/*.py",
             "_src/image/**/*.py",
             "_src/lax/**/*.py",
             "_src/nn/**/*.py",
