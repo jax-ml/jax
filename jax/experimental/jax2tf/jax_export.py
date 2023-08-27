@@ -26,6 +26,8 @@ from typing import Any, Callable, Optional, Union
 
 from absl import logging
 
+import numpy as np
+
 import jax
 from jax import config
 from jax import sharding
@@ -135,7 +137,9 @@ class Exported:
         specified in `module_kept_var_idx`. If `None` then it is equivalent
         to unspecified shardings.
     out_shardings: the flattened output shardings, as long as `in_avals`.
-    lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'
+    lowering_platforms: a tuple containing at least one of 'tpu', 'cpu',
+        'cuda', 'rocm'. See below for the calling convention for when
+        there are multiple lowering platforms.
     mlir_module_serialized: the serialized lowered VHLO module.
     serialization_version: a version number for the serialized module.
         See more versioning details at https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions.
@@ -154,6 +158,67 @@ class Exported:
         starting with the primal arguments and followed by a cotangent argument
         for each primal output. It returns a tuple with the cotangents
         corresponding to the flattened primal inputs.
+
+  Calling convention for the exported module:
+
+  The `mlir_module` has a `main` function that takes an optional first
+  platform index argument if the module supports multiple platforms
+  (`len(lowering_platforms) > 1`), followed by the kept array arguments
+  (corresponding to `module_kept_var_idx` and `in_avals`).
+  The platform index is a i32 scalar encoding the index of the current
+  compilation platform into the `lowering_platforms` sequence.
+
+  Inner functions use a different calling convention: an optional
+  platform index argument, optional dimension variable arguments specified
+  using scalar tensors of type i32 or i64,
+  followed by optional token arguments (in presence of side effects),
+  followed by the regular array arguments.
+  The dimension arguments correspond to the dimension variables appearing in
+  the `args_avals`, in sorted order of their names.
+
+  Consider the lowering of a function with one array argument of type "f32[w,
+  2 * h]", where "w" and "h" are two dimension variables.
+  Assume that we use multi-platform lowering, and we have
+  ordered effects. The `main` function will be as follows:
+
+      func public main(platform_index: i32, arg: f32[?, ?]) {
+         arg_w = hlo.get_dimension_size(arg, 0)
+         dim1 = hlo.get_dimension_size(arg, 1)
+         arg_h = hlo.floordiv(dim1, 2)
+         call _check_shape_assertions(arg)  # See below
+         token = new_token()
+         token_out, res = call _wrapped_jax_export_main(platform_index, arg_h, arg_w, token_in, arg)
+         return res
+      }
+
+  The actual computation is in `_wrapped_jax_export_main`, taking also
+  the values of `h` and `w` and the token. Proper exporting of
+  functions with side-effects and tokens is still work-in-progress.
+
+  Note that `main` contains a call to `_check_shape_assertions.
+  JAX tracing assumes that `arg.shape[1]` is even, and that both `w` and `h`
+  have values >= 1. We must check these constraints when we invoke the
+  module. We use a special custom call `@shape_assertion` that takes
+  a boolean first operand, a string `error_message` attribute that may contain
+  format specifiers `{0}`, `{1}`, ..., and a variadic number of integer
+  scalar operands corresponding to the format specifiers.
+
+       func private _check_shape_assertions(arg: f32[?, ?]) {
+         # Check that w is >= 1
+         arg_w = hlo.get_dimension_size(arg, 0)
+         custom_call @shape_assertion(arg_w >= 1, arg_w,
+            error_message="Dimension variable 'w' must have integer value >= 1. Found {0}")
+         # Check that dim1 is even
+         dim1 = hlo.get_dimension_size(arg, 1)
+         custom_call @shape_assertion(dim1 % 2 == 0, dim1,
+            error_message="Dimension variable 'h' must have integer value >= 1. Found non-zero remainder {0}")
+         # Check that h >= 1
+         arg_h = hlo.floordiv(dim1, 2)
+         custom_call @shape_assertion(arg_h >= 1, arg_h,
+            error_message=""Dimension variable 'h' must have integer value >= 1. Found {0}")
+
+  If we `call_exported` with this module we perform these checks
+  statically (in `call_exported_abstract_eval`).
   """
   fun_name: str
   in_tree: tree_util.PyTreeDef
@@ -163,7 +228,8 @@ class Exported:
 
   in_shardings: Optional[tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]]
   out_shardings: Optional[tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]]
-  lowering_platform: str
+  lowering_platform: str  # For backwards compatibility
+  lowering_platforms: tuple[str, ...]
   disabled_checks: Sequence[DisabledSafetyCheck]
 
   mlir_module_serialized: bytes
@@ -291,6 +357,7 @@ def poly_specs(
 def export(fun_jax: Callable,
            *,
            lowering_platform: Optional[str] = None,
+           lowering_platforms: Optional[Sequence[str]] = None,
            disabled_checks: Sequence[DisabledSafetyCheck] = (),
            ) -> Callable[..., Exported]:
   """Exports native serialization for a JAX function.
@@ -299,6 +366,13 @@ def export(fun_jax: Callable,
     fun_jax: the function to lower and serialize.
     lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'. If None, then use
         the default JAX backend.
+    lowering_platforms: DO NOT USE (NOT YET FUNCTIONAL).
+        Optional sequence containing a subset of 'tpu', 'cpu',
+        'cuda', 'rocm'. If more than one platform is specified, then
+        the lowered code takes an argument specifying the platform.
+        If None, then use the default JAX backend.
+        The calling convention for multiple platforms is explained in the
+        `jax_export.Exported` docstring.
     disabled_checks: the safety checks to disable. See docstring
         of `DisabledSafetyCheck`.
 
@@ -333,7 +407,11 @@ def export(fun_jax: Callable,
       wrapped_fun_jax = fun_jax  # type: ignore
       allow_non_replicated_sharding = True
 
-    lowering_platform_str = lowering_platform or default_lowering_platform()
+    nonlocal lowering_platforms
+    if lowering_platforms is not None:
+      lowering_platforms = tuple(lowering_platforms)
+    else:
+      lowering_platforms = (lowering_platform or default_lowering_platform(),)
 
     # Do not include shape assertions if the version is < 7.
     enable_shape_assertions = (
@@ -344,7 +422,7 @@ def export(fun_jax: Callable,
       shape_poly.thread_local_state.enable_shape_assertions = enable_shape_assertions
       lowered = wrapped_fun_jax.lower(
           *args_specs, **kwargs_specs,
-          _experimental_lowering_platform=lowering_platform_str)
+          _experimental_lowering_platform=lowering_platforms)
 
       lowering = lowered._lowering  # type: ignore
       _check_lowering(lowering)
@@ -362,7 +440,8 @@ def export(fun_jax: Callable,
         # All arguments are kept if we have dimension variables.
         assert len(module_kept_var_idx) == len(args_avals_flat)
         mlir_module = _wrap_main_func(
-            mlir_module, args_avals_flat, args_kwargs_tree=lowered.in_tree
+            mlir_module, args_avals_flat, args_kwargs_tree=lowered.in_tree,
+            has_platform_index_argument=shape_poly_state.has_platform_index_argument
         )
     finally:
       shape_poly.thread_local_state.enable_shape_assertions = prev_enable_shape_assertions
@@ -370,7 +449,7 @@ def export(fun_jax: Callable,
     with mlir_module.context:
       mlir_module_attrs = mlir_module.operation.attributes
       mlir_module_attrs["jax.uses_shape_polymorphism"] = (
-      mlir.ir.BoolAttr.get(shape_poly_state.uses_dim_vars))
+          mlir.ir.BoolAttr.get(shape_poly_state.uses_dim_vars))
 
     mlir_module_serialized = _serialize_module(mlir_module)
 
@@ -387,7 +466,7 @@ def export(fun_jax: Callable,
     if logging.vlog_is_on(3):
       mlir_module_text = mlir.module_to_string(mlir_module)
       logmsg = (f"version={version} "
-                f"lowering_platform={lowering_platform_str} "
+                f"lowering_platforms={lowering_platforms} "
                 f"disabled_checks={disabled_checks}")
       logging.info("Lowered JAX module: %s\n", logmsg)
       for l in mlir_module_text.splitlines():
@@ -405,7 +484,8 @@ def export(fun_jax: Callable,
         out_avals=tuple(out_avals_flat),
         in_shardings=lowering.compile_args["in_shardings"],
         out_shardings=lowering.compile_args["out_shardings"],
-        lowering_platform=lowering_platform_str,
+        lowering_platform=lowering_platforms[0],  # TODO: remove
+        lowering_platforms=lowering_platforms,
         disabled_checks=tuple(disabled_checks),
         mlir_module_serialized=mlir_module_serialized,
         module_kept_var_idx=module_kept_var_idx,
@@ -448,73 +528,21 @@ def _wrap_main_func(
     args_avals_flat: Sequence[core.ShapedArray],
     *,
     args_kwargs_tree: tree_util.PyTreeDef,
+    has_platform_index_argument: bool,
 ) -> ir.Module:
-  """Wraps the lowered module with a new "main".
+  """Wraps the lowered module with a new "main" handling dimension arguments.
 
-  JAX lowering in presence of shape polymorphism produces a `module` that
-  takes one or more dimension arguments, specified using 0-dimensional tensors
-  of type i32 or i64, followed by the regular array arguments.
-  The dimension arguments correspond to the dimension variables appearing in
-  the `args_avals`, in sorted order.
-
-  Consider the lowering of a function with one array argument of type "f32[w,
-  2 * h]", where "w" and "h" are two dimension variables. The `module` will
-  also contain two dimension arguments, corresponding to "h" and "w"
-  respectively:
-
-      func public main(arg_h: i32, arg_w: i32, arg: f32[?, ?]) {
-        ...
-      }
-
-      we rename "main" to "_wrapped_jax_export_main" and add a new "main":
-
-      func public main(arg: f32[?, ?]) {
-         arg_w = hlo.get_dimension_size(arg, 0)
-         dim1 = hlo.get_dimension_size(arg, 1)
-         arg_h = hlo.floordiv(dim1, 2)
-         call _check_shape_assertions(arg)  # See below
-         res = call _wrapped_jax_export_main(arg_h, arg_w, arg)
-         return res
-      }
-
-  In addition, this function also removes token arguments/results from the main
-  function by providing dummy values. This ensures that the main function's
-  calling convention is as expected.
-
-  Note that the lowering contains a call to `_check_shape_assertions.
-  JAX tracing assumes that `arg.shape[1]` is even, and that both `w` and `h`
-  have values >= 1. We must check these constraints when we invoke the
-  module. We use a special custom call `@shape_assertion` that takes
-  a boolean first operand, a string `error_message` attribute that may contain
-  format specifiers `{0}`, `{1}`, ..., and a variadic number of integer
-  scalar operands corresponding to the format specifiers.
-
-       func private _check_shape_assertions(arg: f32[?, ?]) {
-         # Check that w is >= 1
-         arg_w = hlo.get_dimension_size(arg, 0)
-         custom_call @shape_assertion(arg_w >= 1, arg_w,
-            error_message="Dimension variable 'w' must have integer value >= 1. Found {0}")
-         # Check that dim1 is even
-         dim1 = hlo.get_dimension_size(arg, 1)
-         custom_call @shape_assertion(dim1 % 2 == 0, dim1,
-            error_message="Dimension variable 'h' must have integer value >= 1. Found non-zero remainder {0}")
-         # Check that h >= 1
-         arg_h = hlo.floordiv(dim1, 2)
-         custom_call @shape_assertion(arg_h >= 1, arg_h,
-            error_message=""Dimension variable 'h' must have integer value >= 1. Found {0}")
-
-  If we `call_exported` with this module we perform these checks
-  statically (in `call_exported_abstract_eval`).
+  See calling convention documentation for `jax_export.Exported`.
 
   Args:
-    module: the HLO module as obtained from lowering. May have a number of
-      dimension arguments, followed by the kept array arguments.
+    module: the HLO module as obtained from lowering. See the calling convention
+      for inner functions in `jax_export.Exported`.
     args_avals_flat: the avals for all the arguments of the lowered function,
       which correspond to the array arguments of the `module`.
     args_kwargs_tree: the PyTreeDef corresponding to `(args, kwargs)`, for error
       messages.
 
-  Returns the wrapped module.
+  Returns the wrapped module, without dimension and token arguments.
   """
   dim_vars = shape_poly.all_dim_vars(args_avals_flat)
   context = mlir.make_ir_context()
@@ -535,13 +563,17 @@ def _wrap_main_func(
 
     orig_input_types = orig_main.type.inputs
     arg_attrs = list(ir.ArrayAttr(orig_main.arg_attrs))
+    # The order of args: platform_index_arg, dim args, token args, array args.
+    nr_platform_index_args = 1 if has_platform_index_argument else 0
+    nr_dim_args = len(dim_vars)
     nr_token_args = sum(1 for attrs in arg_attrs if is_token(attrs))
-    nr_array_args = len(orig_input_types) - len(dim_vars) - nr_token_args
+    nr_array_args = len(orig_input_types) - nr_platform_index_args - nr_dim_args - nr_token_args
     assert nr_array_args >= 0
     assert not any(is_token(attrs) for attrs in arg_attrs[-nr_array_args:])
-    # The order of args: dim args, token args, array args.
-    new_main_input_types = orig_input_types[- nr_array_args:]
-    dim_var_input_types = orig_input_types[:len(dim_vars)]
+    (platform_input_types, dim_var_input_types,
+     token_input_types, array_input_types) = util.split_list(
+      orig_input_types, [nr_platform_index_args, nr_dim_args, nr_token_args])
+    new_main_input_types = platform_input_types + array_input_types
     orig_output_types = orig_main.type.results
     result_attrs = list(ir.ArrayAttr(orig_main.result_attrs))
     nr_token_results = sum(1 for attrs in result_attrs if is_token(attrs))
@@ -555,7 +587,7 @@ def _wrap_main_func(
         "main", new_main_ftype, ip=ir.InsertionPoint.at_block_begin(wrapped_module.body))
     new_main_op.attributes["sym_visibility"] = ir.StringAttr.get("public")
     try:
-      new_main_op.arg_attrs = ir.ArrayAttr.get(arg_attrs[-nr_array_args:])
+      new_main_op.arg_attrs = ir.ArrayAttr.get(arg_attrs[0:nr_platform_index_args] + arg_attrs[-nr_array_args:])
     except KeyError:
       pass  # TODO: better detection if orig_main.arg_attrs does not exist
     try:
@@ -574,18 +606,21 @@ def _wrap_main_func(
         module_context=module_context, primitive=None,
         avals_in=args_avals_flat, avals_out=None,
         tokens_in=mlir.TokenSet(), tokens_out=None)
+      new_main_op_array_args = new_main_op.arguments[nr_platform_index_args:]
       dim_values = mlir.lower_fun(
           functools.partial(shape_poly.compute_dim_vars_from_arg_shapes,
                             args_avals_flat, args_kwargs_tree=args_kwargs_tree),
-          multiple_results=True)(ctx, *new_main_op.arguments)
+          multiple_results=True)(ctx, *new_main_op_array_args)
       # The arguments to pass to the call to orig_main
       orig_main_args: list[ir.Value] = []
-      # The first arguments are the dimension variable
-      for dim_arg, dim_arg_type in zip(util.flatten(dim_values), dim_var_input_types):
-        if dim_arg.type != dim_arg_type:
-          orig_main_args.append(hlo.ConvertOp(dim_arg_type, dim_arg).result)
+      # The platform index and the dimension variables
+      for arg, arg_type in zip(
+          list(new_main_op.arguments[0:nr_platform_index_args]) + util.flatten(dim_values),
+          platform_input_types + dim_var_input_types):
+        if arg.type != arg_type:
+          orig_main_args.append(hlo.ConvertOp(arg_type, arg).result)
         else:
-          orig_main_args.append(dim_arg)
+          orig_main_args.append(arg)
       # Then the token arguments
       orig_main_args.extend(list(mlir.dummy_token()) * nr_token_args)
       # Then the array arguments. We insert a ConvertOp as the only use of
@@ -594,7 +629,7 @@ def _wrap_main_func(
       # can invalidate the module if the argument is used as the result of a
       # function, or if it appears as the input to a custom_call with
       # output_operand_alias attribute. See b/287386268.
-      for a in new_main_op.arguments:
+      for a in new_main_op_array_args:
         orig_main_args.append(hlo.ConvertOp(a.type, a).result)
       call = func_dialect.CallOp(orig_output_types,
                                  ir.FlatSymbolRefAttr.get(orig_main_name),
@@ -955,12 +990,14 @@ call_exported_p.def_impl(_call_exported_impl)
 def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                             platform: str,
                             exported: Exported):
-  if (platform != exported.lowering_platform and
+  # TODO: implement true multi-platform lowering for call_exported
+  if (platform not in exported.lowering_platforms and
       DisabledSafetyCheck.platform() not in exported.disabled_checks):
     raise ValueError(
         f"The exported function '{exported.fun_name}' was lowered for "
-        f"platform '{exported.lowering_platform}' but it is used "
+        f"platforms '{exported.lowering_platforms}' but it is used "
         f"on '{platform}'.")
+
   if exported.uses_shape_polymorphism:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
 
@@ -976,7 +1013,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     else:
       return x
 
-  callee_result_types = symtab["main"].type.results
+  callee_type = symtab["main"].type
   # TODO: maybe cache multiple calls
   fn = mlir.merge_mlir_modules(ctx.module_context.module,
                                f"call_exported_{exported.fun_name}",
@@ -985,7 +1022,16 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
       convert_shape(a, a_aval, exported_in_aval)
       for i, (a, a_aval, exported_in_aval) in enumerate(zip(args, ctx.avals_in, exported.in_avals))
       if i in exported.module_kept_var_idx]
-  call = func_dialect.CallOp(callee_result_types,
+  if len(exported.lowering_platforms) > 1:
+    # The exported module takes a platform index argument
+    # TODO: implement proper handling of the platform_index when we are
+    # in a multi-platform lowering context.
+    platform_index = exported.lowering_platforms.index(platform)
+    arg_width = callee_type.inputs[0].element_type.width
+    assert arg_width in [32, 64]
+    platform_index = np.int32(platform_index) if arg_width == 32 else np.int64(platform_index)  # type: ignore
+    kept_args = [mlir.ir_constant(platform_index)] + kept_args
+  call = func_dialect.CallOp(callee_type.results,
                              ir.FlatSymbolRefAttr.get(fn),
                              kept_args)
   # The ctx.avals_out already contain the abstract values refined by

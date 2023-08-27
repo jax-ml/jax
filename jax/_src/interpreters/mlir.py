@@ -390,19 +390,37 @@ AxisContext = Union[
 ]
 
 class ShapePolyLoweringState:
+  # The current lowering platforms, a non-empty tuple containing some of
+  # 'cpu', 'cuda', 'rocm', 'tpu'.
+  # TODO: this state should be in ModuleContext, but since for now
+  # multi-platform lowering is implemented only for jax_export, like shape
+  # polymorphism, we keep it here.
+  lowering_platforms: tuple[str, ...]
   # The names of the dimension variables, sorted by name. This is the order in
   # which they are passed to the IR functions that need them. This is only
   # used for native serialization with polymorphic shapes when
   # --jax_dynamic_shapes is off.
-  dim_vars: Sequence[str]
+  # TODO: for multi-platform lowering we prepend to the regular dimension
+  # variables a fake dimension variable "platform_index_". This is a
+  # temporary abuse, taking advantage that for platform index we need the
+  # same lowering strategy as for dimension variables: add it as argument to
+  # inner functions, and pass the values along at the call sites.
+  dim_vars: tuple[str, ...]
   # Whether the module uses dimension variables, either in its inputs or
   # from an inner call to a polymorphic Exported.
   uses_dim_vars: bool
 
-  def __init__(self, dim_vars: Sequence[str]):
-    self.dim_vars = dim_vars
+  def __init__(self, dim_vars: tuple[str, ...],
+               lowering_platforms: tuple[str, ...]):
+    self.lowering_platforms = lowering_platforms
     self.uses_dim_vars = (len(dim_vars) > 0)
+    if len(lowering_platforms) > 1:
+      dim_vars = ("platform_index_",) + tuple(dim_vars)
+    self.dim_vars = dim_vars
 
+  @property
+  def has_platform_index_argument(self):
+    return len(self.lowering_platforms) > 1
 
 @dataclasses.dataclass
 class ModuleContext:
@@ -472,7 +490,8 @@ class ModuleContext:
                                         if cached_call_jaxpr_lowerings is None
                                         else cached_call_jaxpr_lowerings)
     self.override_lowering_rules = override_lowering_rules
-    self.shape_poly_state = shape_poly_state or ShapePolyLoweringState(())
+    self.shape_poly_state = shape_poly_state or ShapePolyLoweringState((),
+                                                                       (platform,))
 
   @property
   def backend(self) -> xb.XlaBackend:
@@ -646,7 +665,7 @@ def lower_jaxpr_to_module(
     jaxpr: core.ClosedJaxpr,
     ordered_effects: list[core.Effect],
     backend_or_name: str | xb.XlaBackend | None,
-    platform: str,
+    platform: str | tuple[str, ...],
     axis_context: AxisContext,
     name_stack: source_info_util.NameStack,
     donated_args: Sequence[bool],
@@ -665,6 +684,15 @@ def lower_jaxpr_to_module(
   Handles the quirks of the argument/return value passing conventions of the
   runtime.
   """
+  # TODO(necula): for now we receive the tuple of lowering platforms through
+  #  the `platform` arg. For now we lower only for the first specified platform
+  # TODO(necula): change to "platforms" here and elsewhere.
+  if isinstance(platform, str):
+    platforms = (platform,)
+  else:
+    platforms = tuple(platform)  # type: ignore
+    platform = platform[0]
+
   platform = xb.canonicalize_platform(platform)
   if not xb.is_known_platform(platform):
     raise ValueError(f"Unknown platform {platform}")
@@ -719,7 +747,8 @@ def lower_jaxpr_to_module(
   ctx = ModuleContext(backend_or_name, platform, axis_context, name_stack,
                       keepalives, channel_iter, host_callbacks,
                       override_lowering_rules=override_lowering_rules,
-                      shape_poly_state=ShapePolyLoweringState(dim_vars))
+                      shape_poly_state=ShapePolyLoweringState(dim_vars,
+                                                              platforms))
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
