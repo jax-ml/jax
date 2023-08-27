@@ -1411,8 +1411,8 @@ class PallasPrimitivesTest(PallasTest):
 class FusedAttentionTest(PallasTest):
 
   @parameterized.named_parameters(*[
-      (f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{causal=}_{use_fwd=}",
-       batch_size, seq_len, num_heads, head_dim, causal, use_fwd)
+      (f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{causal=}_{use_fwd=}_{kwargs=}",
+       batch_size, seq_len, num_heads, head_dim, causal, use_fwd, kwargs)
       for batch_size, seq_len, num_heads, head_dim, causal, use_fwd, kwargs in [
           (1, 384, 1, 64, False, False, {}),
           (2, 384, 2, 64, False, False, {}),
@@ -1420,9 +1420,8 @@ class FusedAttentionTest(PallasTest):
           (2, 384, 2, 64, True, False, {}),
           (1, 384, 8, 64, True, True, {}),
           (2, 384, 8, 64, True, True, {}),
-          (2, 384, 8, 64, True, True, {}),
           # regression test: https://github.com/google/jax/pull/17314
-          (1, 384, 8, 64, True, True, {'block_q'=256, 'block_k'=128}),
+          (1, 384, 8, 64, True, True, {'block_q': 128, 'block_k': 64}),
       ]
   ])
   def test_fused_attention_fwd(self, batch_size, seq_len, num_heads, head_dim,
