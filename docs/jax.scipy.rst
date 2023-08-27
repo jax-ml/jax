@@ -14,6 +14,16 @@ jax.scipy.fft
    idct
    idctn
 
+jax.scipy.integrate
+-------------------
+
+.. automodule:: jax.scipy.integrate
+
+.. autosummary::
+  :toctree: _autosummary
+
+   trapezoid
+
 jax.scipy.linalg
 ----------------
 

@@ -1140,6 +1140,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     with self.assertRaises(NotImplementedError):
       jax.jacrev(f)(x)
 
+  def testPowShapeMismatch(self):
+    # Regression test for https://github.com/google/jax/issues/17294
+    x = lax.iota('float32', 4)
+    y = 2
+    actual = jax.jacrev(jax.jit(jax.lax.pow))(x, y)  # no error
+    expected = jax.numpy.diag(y * x ** (y - 1))
+    self.assertArraysEqual(actual, expected)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

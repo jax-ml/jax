@@ -145,7 +145,40 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
 
     self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
-    self._CompileAndCheck(jnp_fun, args_maker, check_cache_misses=False)  # TODO(jakevdp): why the cache misses?
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+      SCALAR_FUNCS,
+      [{'shape': shape, 'axis': axis}
+       for shape in nonscalar_shapes
+       for axis in [None, *range(-len(shape), len(shape))]],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_reduce_where(self, func, nin, nout, identity, shape, axis, dtype):
+    if (nin, nout) != (2, 1):
+      self.skipTest(f"reduce requires (nin, nout)=(2, 1); got {(nin, nout)=}")
+
+    # Need initial if identity is None
+    initial = 1 if identity is None else None
+
+    def jnp_fun(arr, where):
+      return jnp.frompyfunc(func, nin, nout, identity=identity).reduce(
+          arr, where=where, axis=axis, initial=initial)
+
+    @cast_outputs
+    def np_fun(arr, where):
+      # Workaround for https://github.com/numpy/numpy/issues/24530
+      # TODO(jakevdp): remove this when possible.
+      initial_workaround = identity if initial is None else initial
+      return np.frompyfunc(func, nin=nin, nout=nout, identity=identity).reduce(
+          arr, where=where, axis=axis, initial=initial_workaround)
+
+    rng = jtu.rand_default(self.rng())
+    rng_where = jtu.rand_bool(self.rng())
+    args_maker = lambda: [rng(shape, dtype), rng_where(shape, bool)]
+
+    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
       SCALAR_FUNCS,

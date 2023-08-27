@@ -661,15 +661,15 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_trivial_computations(self):
     x = jnp.array([1, 2, 3])
     y = self.jit(lambda x: x)(x)
-    self.assertEqual(x.unsafe_buffer_pointer(), y.unsafe_buffer_pointer())
+    self.assertNotEqual(x.unsafe_buffer_pointer(), y.unsafe_buffer_pointer())
 
     z1, z2 = self.jit(lambda x: (x, x))(x)
-    self.assertEqual(z1.unsafe_buffer_pointer(), z2.unsafe_buffer_pointer())
+    self.assertNotEqual(z1.unsafe_buffer_pointer(), z2.unsafe_buffer_pointer())
 
     x1, x2 = jnp.array([1, 2]), jnp.array([2, 3])
     z1, z2, z3 = self.jit(lambda x, y: (y, 1, x))(x1, x2)
-    self.assertEqual(z1.unsafe_buffer_pointer(), x2.unsafe_buffer_pointer())
-    self.assertEqual(z3.unsafe_buffer_pointer(), x1.unsafe_buffer_pointer())
+    self.assertNotEqual(z1.unsafe_buffer_pointer(), x2.unsafe_buffer_pointer())
+    self.assertNotEqual(z3.unsafe_buffer_pointer(), x1.unsafe_buffer_pointer())
     self.assertEqual(z2, 1)
 
   def test_trivial_computations_with_tokens(self):
@@ -1176,7 +1176,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertLen(compiled._executable.in_avals, 2)
     # Also works with jax.jit
     jitted_f = self.jit(lambda x, y: x, keep_unused=True)
-    with jtu.count_device_put() as count:
+    with jtu.count_pjit_cpp_cache_miss() as count:
       _ = jitted_f(1, 2)
     self.assertEqual(count[0], 1)
 
@@ -3273,15 +3273,15 @@ class APITest(jtu.JaxTestCase):
   def test_trivial_computations(self):
     x = jnp.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
-    self.assertEqual(x.unsafe_buffer_pointer(), y.unsafe_buffer_pointer())
+    self.assertNotEqual(x.unsafe_buffer_pointer(), y.unsafe_buffer_pointer())
 
     z1, z2 = api.jit(lambda x: (x, x))(x)
-    self.assertEqual(z1.unsafe_buffer_pointer(), z2.unsafe_buffer_pointer())
+    self.assertNotEqual(z1.unsafe_buffer_pointer(), z2.unsafe_buffer_pointer())
 
     x1, x2 = jnp.array([1, 2]), jnp.array([2, 3])
     z1, z2, z3 = api.jit(lambda x, y: (y, 1, x))(x1, x2)
-    self.assertEqual(z1.unsafe_buffer_pointer(), x2.unsafe_buffer_pointer())
-    self.assertEqual(z3.unsafe_buffer_pointer(), x1.unsafe_buffer_pointer())
+    self.assertNotEqual(z1.unsafe_buffer_pointer(), x2.unsafe_buffer_pointer())
+    self.assertNotEqual(z3.unsafe_buffer_pointer(), x1.unsafe_buffer_pointer())
     self.assertEqual(z2, 1)
 
   def test_nested_jit_hoisting(self):
@@ -5455,19 +5455,19 @@ class RematTest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/9661
     identity = jax.checkpoint(jax.jit(lambda x: 2 * x))
     _, f_vjp = jax.vjp(identity, 1.)
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_pjit_cpp_cache_miss() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
-    self.assertEqual(count[0], 1)  # fwd execute_trivial, backward_pass on bwd
+    self.assertEqual(count[0], 2)  # fwd execute_trivial, backward_pass on bwd
 
   def test_vjp_caching_static_argnums(self):
     identity = jax.remat(lambda x, y: jax.jit(lambda x: 2 * x if y else x)(x),
                          static_argnums=(1,))
     _, f_vjp = jax.vjp(identity, 1., True)
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_pjit_cpp_cache_miss() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
-    self.assertEqual(count[0], 1)  # fwd execute_trivial, backward_pass on bwd
+    self.assertEqual(count[0], 2)  # fwd execute_trivial, backward_pass on bwd
 
   def test_fwd_caching(self):
     # see above test also

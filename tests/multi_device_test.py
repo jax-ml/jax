@@ -116,7 +116,8 @@ class MultiDeviceTest(jtu.JaxTestCase):
     z1, z2 = jax.jit(lambda x: (x, x))(x_uncommitted)
     self.assert_uncommitted_to_device(z1, devices[0])
     self.assert_uncommitted_to_device(z2, devices[0])
-    self.assertEqual(z1.unsafe_buffer_pointer(), z2.unsafe_buffer_pointer())
+    # trivial computation does not exist in JAX anymore.
+    self.assertNotEqual(z1.unsafe_buffer_pointer(), z2.unsafe_buffer_pointer())
 
     x2_uncommitted = jnp.array([2, 3])
     z1, z2, z3 = jax.jit(lambda x, y: (y, 1, x))(x_uncommitted, x2_uncommitted)

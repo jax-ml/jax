@@ -3119,14 +3119,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     _ptr = lambda x: x.unsafe_buffer_pointer()
 
     self.assertEqual(_ptr(x), _ptr(x_view))
-    self.assertEqual(_ptr(x), _ptr(x_view_jit))
+    self.assertNotEqual(_ptr(x), _ptr(x_view_jit))
     self.assertNotEqual(_ptr(x), _ptr(x_copy))
     self.assertNotEqual(_ptr(x), _ptr(x_copy_jit))
 
     x.delete()
 
     self.assertTrue(x_view.is_deleted())
-    self.assertTrue(x_view_jit.is_deleted())
+    self.assertFalse(x_view_jit.is_deleted())
 
     self.assertFalse(x_copy.is_deleted())
     self.assertFalse(x_copy_jit.is_deleted())

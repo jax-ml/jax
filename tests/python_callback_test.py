@@ -863,7 +863,6 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     np.testing.assert_allclose(g(x), x)
 
   def test_can_shard_pure_callback_maximally(self):
-
     mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
 
     spec = jax.sharding.PartitionSpec('x')
@@ -880,6 +879,36 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     jax.block_until_ready(out)
     np.testing.assert_allclose(
         out, np.arange(jax.local_device_count()) * 2
+    )
+
+  def test_can_shard_pure_callback_maximally_with_sharding(self):
+    mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
+
+    spec = jax.sharding.PartitionSpec('x')
+    sharding = jax.sharding.NamedSharding(mesh, spec)
+
+    def func(x):
+      return x + np.arange(x.shape[0], dtype=x.dtype)
+
+    callback_device = jax.devices()[-1]
+    callback_device_index = sharding._device_assignment.index(callback_device)
+
+    def f(x):
+      sharding = jax.sharding.SingleDeviceSharding(callback_device)
+      return jax.pure_callback(func, x, x, sharding=sharding)
+
+    f_jit = jax.jit(f, in_shardings=sharding, out_shardings=sharding)
+
+    inp = jnp.arange(float(jax.local_device_count()))
+    out = f_jit(inp)
+    jax.block_until_ready(out)
+    np.testing.assert_allclose(
+        out, np.arange(jax.local_device_count()) * 2
+    )
+
+    self.assertIn(
+        f'{{maximal device={callback_device_index}}}',
+        str(f_jit.lower(inp).compiler_ir(dialect='stablehlo')),
     )
 
   def test_can_shard_pure_callback_manually(self):
@@ -1034,7 +1063,6 @@ class IOPythonCallbackTest(jtu.JaxTestCase):
       f(2., 3.)
 
   def test_can_use_io_callback_in_pjit(self):
-
     _mut = 0
     def _cb(x):
       nonlocal _mut
@@ -1052,6 +1080,36 @@ class IOPythonCallbackTest(jtu.JaxTestCase):
       f(jnp.arange(mesh.size))
       jax.effects_barrier()
     self.assertEqual(_mut, jnp.arange(mesh.size).sum())
+
+  def test_can_use_io_callback_in_pjit_with_sharding(self):
+    mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
+    spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
+
+    _mut = 0
+    def _cb(x):
+      nonlocal _mut
+      _mut = x.sum()
+
+    callback_device = jax.devices()[-1]
+    callback_device_index = spec._device_assignment.index(callback_device)
+
+    def f(x):
+      sharding = jax.sharding.SingleDeviceSharding(callback_device)
+      io_callback(_cb, None, x, sharding=sharding)
+      return x
+
+    out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+    f = pjit.pjit(f, in_shardings=spec, out_shardings=out_spec)
+    inp = jnp.arange(mesh.size)
+    with mesh:
+      f(inp)
+      jax.effects_barrier()
+    self.assertEqual(_mut, jnp.arange(mesh.size).sum())
+
+    self.assertIn(
+        f'{{maximal device={callback_device_index}}}',
+        str(f.lower(inp).compiler_ir(dialect='stablehlo')),
+    )
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
