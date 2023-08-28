@@ -668,7 +668,7 @@ class PositionalSharding(XLACompatibleSharding):
   def transpose(self, *axes) -> PositionalSharding:
     """
     Transposes this `PositionalSharding` along given axes and returns it as another object.
-    
+
     Args:
       *axes: Axes permutation for the transpose operation.
 
@@ -679,6 +679,16 @@ class PositionalSharding(XLACompatibleSharding):
   T = property(transpose)
 
   def replicate(self, axis=None, keepdims=True) -> PositionalSharding:
+    """
+    Returns a new PositionalSharding instance with replicated data.
+
+    Args:
+      axis: Axis along which replication is performed.
+      keepdims: Whether to keep dimensions or not.
+
+    Returns:
+      PositionalSharding: A new PositionalSharding instance with replicated data.
+    """
     new_ids = self._ids.sum(axis=axis, keepdims=keepdims)  # union
     return self._remake(self._devices, new_ids)
 
@@ -686,6 +696,17 @@ class PositionalSharding(XLACompatibleSharding):
   def _remake(
       cls, devices: tuple[xc.Device, ...], ids: np.ndarray,
       *, memory_kind: str | None = None) -> PositionalSharding:
+    """
+    Creates a new PositionalSharding instance based on devices and ids.
+
+    Args:
+      devices (tuple[xc.Device, ...]): Devices for the new sharding instance.
+      ids (np.ndarray): New sharding IDs.
+      memory_kind (str | None, optional): The memory kind to associate with the sharding.
+
+    Returns:
+      PositionalSharding: A new PositionalSharding instance.
+    """
     self = cls.__new__(cls)
     self._devices = devices
     self._ids = ids
