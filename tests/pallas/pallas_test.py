@@ -1421,7 +1421,7 @@ class FusedAttentionTest(PallasTest):
           (1, 384, 8, 64, True, True, {}),
           (2, 384, 8, 64, True, True, {}),
           # regression test: https://github.com/google/jax/pull/17314
-          (1, 384, 8, 64, True, True, {'block_q': 128, 'block_k': 64}),
+          (1, 384, 8, 64, True, False, {'block_q': 128, 'block_k': 64}),
       ]
   ])
   def test_fused_attention_fwd(self, batch_size, seq_len, num_heads, head_dim,

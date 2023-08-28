@@ -92,6 +92,75 @@ def mha_forward_kernel(
   acc = acc.astype(o_ref.dtype)
   pl.store(o_ref, (pl.dslice(start_q * block_q, block_q), pl.dslice(None)), acc)
 
+def _mha_forward_kernel(
+    q_ref, k_ref, v_ref,  # Input arrays
+    o_ref, # Output
+    *residual_refs, # Residual outputs
+    sm_scale: float, causal: bool,
+    block_q: int, block_d: int, block_k: int):
+  seq_len = q_ref.shape[0]
+  start_q = pl.program_id(0)
+
+  # acc is the buffer where we accumulate the output on sram.
+  # m_i and l_i (see FlashAttention paper) are updated during the k,v loop.
+  m_i = jnp.zeros(block_q, dtype=jnp.float32) - float('inf')
+  l_i = jnp.zeros(block_q, dtype=jnp.float32)
+  # acc is the buffer where we accumulate the output on sram.
+  acc = jnp.zeros((block_q, block_d), dtype=jnp.float32)
+
+  # Load q: it will stay in L1 throughout. Indices form a matrix because we
+  # read, compute, and write all in 2d chunks. 1 element ~= 1 CUDA thread index.
+  # q tile has shape [block_q, block_d], block_d == head_dim.
+  q = pl.load(q_ref, (pl.dslice(start_q * block_q, block_q), pl.dslice(None)))
+  # In FlashAttention algorithm 1 there are 2 loops: slow over tiles of kv (size
+  # (Bc == block_k here), and fast over blocks of q (size Br == block_q here).
+  # Here we only loop over blocks of kv to process entire seq_len, the loop over
+  # blocks of q is carried out by the grid.
+  def body(start_k, carry):
+    acc, m_prev, l_prev = carry
+
+    k = pl.load(k_ref, (pl.dslice(start_k * block_k, block_k), slice(None)))
+    qk = jnp.zeros([block_q, block_k], dtype=jnp.float32)
+    qk += pl.dot(q, k.T)   # [block_q, block_k]
+    if sm_scale != 1.:
+      qk *= sm_scale # [block_q, block_k]
+
+    if causal:
+      span_q = start_q * block_q + jnp.arange(block_q)
+      span_k = start_k * block_k + jnp.arange(block_k)
+      qk = jnp.where(span_q[:, None] >= span_k[None, :], qk, float('-inf'))
+    # Bring closer to XLA:GPU numerics.
+    qk = qk.astype(q_ref.dtype)
+    qk = qk.astype(jnp.float32)
+    m_curr = jnp.maximum(jnp.max(qk, axis=1), m_prev)
+    alpha = jnp.exp(m_prev - m_curr)
+    p = jnp.exp(qk - m_curr[:, None])
+    l_curr = jnp.sum(p, axis=1) + alpha * l_prev
+
+    acc *= alpha[:, None]
+    p = p.astype(jnp.float16)
+
+    v = pl.load(v_ref, (pl.dslice(start_k * block_k, block_k), pl.dslice(block_d)))
+    acc = acc + pl.dot(p.astype(v.dtype), v)
+    return acc, m_curr, l_curr
+  if causal:
+    # Ceildiv (`pl.cdiv` and `//` do not work due to type of start_q)
+    upper_bound = lax.div(block_q * (start_q + 1) + block_k - 1, block_k)
+  else:
+    upper_bound = pl.cdiv(seq_len, block_k)  # type: ignore
+  acc, m_i, l_i = lax.fori_loop(0, upper_bound, body,
+                                (acc, m_i, l_i))
+
+  acc = acc / l_i[:, None]
+
+  if residual_refs:
+    l_ref, m_ref = residual_refs
+    pl.store(l_ref, (pl.ds(start_q * block_q, block_q),), l_i)
+    pl.store(m_ref, (pl.ds(start_q * block_q, block_q),), m_i)
+  # Write output to dram.
+  acc = acc.astype(o_ref.dtype)
+  pl.store(o_ref, (pl.dslice(start_q * block_q, block_q), pl.dslice(None)), acc)
+
 @functools.partial(jax.custom_vjp, nondiff_argnums=[3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
 @functools.partial(jax.jit, static_argnames=["sm_scale", "causal", "block_q", "block_k",
                                              "backward_pass_impl",
