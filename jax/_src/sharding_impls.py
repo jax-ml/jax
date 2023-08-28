@@ -603,9 +603,19 @@ class PositionalSharding(XLACompatibleSharding):
   _devices: tuple[xc.Device, ...]
   _memory_kind: str | None
   _ids: np.ndarray  # dtype DeviceIdSet
+  """
+  Sharding strategy that arranges data based on device positions.
+  """
 
   def __init__(self, devices: Sequence[xc.Device] | np.ndarray,
                *, memory_kind: str | None = None):
+    """
+    Initializes the PositionalSharding instance.
+
+    Args:
+      devices (Sequence[xc.Device] | np.ndarray): List of devices to shard data across.
+      memory_kind (str | None, optional): The memory kind to associate with the sharding.
+    """
     if not isinstance(devices, np.ndarray):
       devices = np.array(devices, dtype='object')
     if not devices.size:
@@ -623,13 +633,16 @@ class PositionalSharding(XLACompatibleSharding):
 
   @property
   def shape(self):
+    """Returns the shape of the sharded data."""
     return self._ids.shape
 
   @property
   def ndim(self):
+    """Returns the number of Dimensions of the Sharded Data"""
     return self._ids.ndim
 
   def __repr__(self) -> str:
+    """Returns a string representation of the PositionalSharding instance."""
     cls_name = self.__class__.__name__
     ids = self._ids.copy()
     platform_name = self._devices[0].platform.upper()
@@ -641,9 +654,27 @@ class PositionalSharding(XLACompatibleSharding):
     return f'{cls_name}({body}{mem})'
 
   def reshape(self, *shape) -> PositionalSharding:
+    """
+    Returns a new PositionalSharding instance with a reshaped data layout.
+
+    Args:
+      *shape: New shape dimensions.
+
+    Returns:
+      PositionalSharding: A new PositionalSharding instance.
+    """
     return self._remake(self._devices, self._ids.reshape(*shape))
 
   def transpose(self, *axes) -> PositionalSharding:
+    """
+    Transposes this `PositionalSharding` along given axes and returns it as another object.
+    
+    Args:
+      *axes: Axes permutation for the transpose operation.
+
+    Returns:
+      PositionalSharding: A new PositionalSharding instance with transposed data.
+    """
     return self._remake(self._devices, self._ids.transpose(*axes))
   T = property(transpose)
 
