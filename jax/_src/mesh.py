@@ -89,6 +89,10 @@ class ResourceEnv(NamedTuple):
   def __repr__(self):
     return f"ResourceEnv({self.physical_mesh!r}, {self.loops!r})"
 
+
+_mesh_object_dict = {}  # type: ignore
+
+
 class Mesh(contextlib.ContextDecorator):
   """Declare the hardware resources available in the scope of this manager.
 
@@ -143,19 +147,41 @@ class Mesh(contextlib.ContextDecorator):
   devices: np.ndarray
   axis_names: tuple[MeshAxisName, ...]
 
-  def __init__(self, devices: np.ndarray | Sequence[xc.Device],
-               axis_names: str | Sequence[MeshAxisName]):
+  def __new__(cls, devices: np.ndarray | Sequence[xc.Device],
+              axis_names: str | Sequence[MeshAxisName]):
     if not isinstance(devices, np.ndarray):
       devices = np.array(devices)
     if isinstance(axis_names, str):
       axis_names = (axis_names,)
+    axis_names = tuple(axis_names)
     assert devices.ndim == len(axis_names)
-    # TODO: Make sure that devices are unique? At least with the quick and
-    #       dirty check that the array size is not larger than the number of
-    #       available devices?
+
+    flat_devices = tuple(devices.flat)
+
+    # TODO(yashkatariya): Make Mock Devices hashable and them remove this
+    # workaround
+    _use_cache = True
+    try:
+      hash(flat_devices[0])
+    except:
+      _use_cache = False
+
+    if _use_cache:
+      key = (axis_names, devices.shape, flat_devices)
+      val = _mesh_object_dict.get(key, None)
+      if val is not None:
+        return val
+
+    self = super(Mesh, cls).__new__(cls)
     self.devices = devices.copy()
     self.devices.flags.writeable = False
-    self.axis_names = tuple(axis_names)
+    self.axis_names = axis_names
+    if _use_cache:
+      _mesh_object_dict[key] = self
+    return self
+
+  def __reduce__(self):
+    return (type(self), (self.devices, self.axis_names))
 
   def __eq__(self, other):
     if not isinstance(other, Mesh):

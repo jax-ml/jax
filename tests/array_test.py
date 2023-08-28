@@ -1109,6 +1109,14 @@ class ShardingTest(jtu.JaxTestCase):
         r"For scalars the PartitionSpec should be P()"):
       s.is_compatible_aval(shape)
 
+  def test_mesh_caching_during_construction(self):
+    if jax.device_count() < 2:
+      raise unittest.SkipTest("Requires >=2 devices")
+    mesh1 = jax.sharding.Mesh(jax.devices(), 'x')
+    mesh2 = jax.sharding.Mesh(jax.devices(), 'x')
+
+    self.assertIs(mesh1, mesh2)
+
 
 class RngShardingTest(jtu.JaxTestCase):
   # tests that the PRNGs are automatically sharded as expected
