@@ -85,6 +85,8 @@ suppress_warnings = [
     'ref.citation',  # Many duplicated citations in numpy/scipy docstrings.
     'ref.footnote',  # Many unreferenced footnotes in numpy/scipy docstrings
     'myst.header',
+    # TODO(jakevdp): remove this suppression once issue is fixed.
+    'misc.highlighting_failure', # https://github.com/ipython/ipython/issues/14142
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -199,8 +201,6 @@ nb_execution_excludepatterns = [
     'notebooks/neural_network_with_tfds_data.*',
     # Slow notebook
     'notebooks/Neural_Network_and_Data_Loading.*',
-    # Strange error apparently due to asynchronous cell execution
-    'notebooks/thinking_in_jax.*',
     # Has extra requirements: networkx, pandas, pytorch, tensorflow, etc.
     'jep/9407-type-promotion.*',
     # TODO(jakevdp): enable execution on the following if possible:
