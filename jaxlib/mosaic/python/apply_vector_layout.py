@@ -184,7 +184,8 @@ class VectorLayout:
     # Tiling should neatly divide the target shape, so that every vector
     # register ends up having the same structure.
     # Also, every tile should occupy a fixed number of sublanes.
-    assert self.tiling[0] * self.tiling[1] % self.packing * TARGET_SHAPE[1] == 0
+    assert ((self.tiling[0] * self.tiling[1]) % (self.packing * TARGET_SHAPE[1])
+            == 0)
     # Offsets should not exceed the tile size. The data always starts within the
     # first tile of a vreg.
     assert all(0 <= (o or 0) < t for o, t in zip(self.offsets, self.tiling))
