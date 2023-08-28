@@ -98,11 +98,15 @@ def bench_torch(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, cau
     k = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
     v = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
     if mode == "triton":
-        # Currently broken: `RuntimeError: CUDA error: an illegal memory access was encountered`
+        """
+        Triton implementation broken in dep of jax-triton: 
+        `RuntimeError: CUDA error: an illegal memory access was encountered`
+        """
+        # from triton.ops import attention as triton_attention
+        # Use a jitted function from triton nightly 28/08/23 as defined below.
         fn = lambda: triton_attention(q, k, v, causal, 1.0)
     elif mode == "flash_attn":
         from flash_attn import flash_attn_func
-        # Currently broken: `RuntimeError: CUDA error: an illegal memory access was encountered`
         fn = lambda: flash_attn_func(q, k, v, causal=causal)
     else:
         raise ValueError("Invalid JAX benchmark mode")
@@ -146,6 +150,13 @@ def benchmark(causal=True):
     plt.xlabel('Sequence Length')
     plt.legend()
     plt.show()
+
+if __name__ == '__main__':
+    benchmark()
+
+"""
+Appendix
+"""
 
 @triton.jit
 def _fwd_kernel(
@@ -285,5 +296,3 @@ class _attention(torch.autograd.Function):
 
 triton_attention = _attention.apply
 
-if __name__ == '__main__':
-    benchmark()
