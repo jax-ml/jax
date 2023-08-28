@@ -22,6 +22,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax._src import test_util as jtu
+from jax._src.numpy.ufunc_api import get_if_single_primitive
 
 from jax import config
 config.parse_flags_with_absl()
@@ -53,6 +54,19 @@ SCALAR_FUNCS = [
   {'func': scalar_div, 'nin': 2, 'nout': 1, 'identity': None},
   {'func': scalar_mul, 'nin': 2, 'nout': 1, 'identity': 1},
   {'func': scalar_sub, 'nin': 2, 'nout': 1, 'identity': None},
+]
+
+FASTPATH_FUNCS = [
+  {'func': jnp.add, 'nin': 2, 'nout': 1, 'identity': 0,
+   'reducer': jax.lax.reduce_sum_p, 'accumulator': jax.lax.cumsum_p},
+  {'func': jnp.multiply, 'nin': 2, 'nout': 1, 'identity': 1,
+   'reducer': jax.lax.reduce_prod_p, 'accumulator': jax.lax.cumprod_p},
+]
+
+NON_FASTPATH_FUNCS = [
+  {'func': lambda a, b: jnp.add(a, a), 'nin': 2, 'nout': 1, 'identity': 0},
+  {'func': lambda a, b: jnp.multiply(b, a), 'nin': 2, 'nout': 1, 'identity': 1},
+  {'func': jax.jit(lambda a, b: jax.jit(jnp.multiply)(b, a)), 'nin': 2, 'nout': 1, 'identity': 1},
 ]
 
 broadcast_compatible_shapes = [(), (1,), (3,), (1, 3), (4, 1), (4, 3)]
@@ -181,6 +195,44 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
+      FASTPATH_FUNCS,
+      [{'shape': shape, 'axis': axis}
+       for shape in nonscalar_shapes
+       for axis in range(-len(shape), len(shape))],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_reduce_fastpath(self, func, nin, nout, identity, shape, axis, dtype, reducer, accumulator):
+    del accumulator  # unused
+    if (nin, nout) != (2, 1):
+      self.skipTest(f"reduce requires (nin, nout)=(2, 1); got {(nin, nout)=}")
+    rng = jtu.rand_default(self.rng())
+    args = (rng(shape, dtype),)
+    jnp_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).reduce, axis=axis)
+    self.assertEqual(get_if_single_primitive(jnp_fun, *args), reducer)
+
+  @jtu.sample_product(
+      NON_FASTPATH_FUNCS,
+      [{'shape': shape, 'axis': axis}
+       for shape in nonscalar_shapes
+       for axis in range(-len(shape), len(shape))],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_non_fastpath(self, func, nin, nout, identity, shape, axis, dtype):
+    if (nin, nout) != (2, 1):
+      self.skipTest(f"reduce requires (nin, nout)=(2, 1); got {(nin, nout)=}")
+    rng = jtu.rand_default(self.rng())
+    args = (rng(shape, dtype),)
+
+    _ = func(0, 0)  # function should not error.
+
+    reduce_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).reduce, axis=axis)
+    self.assertIsNone(get_if_single_primitive(reduce_fun, *args))
+
+    accum_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).accumulate, axis=axis)
+    self.assertIsNone(get_if_single_primitive(accum_fun, *args))
+
+
+  @jtu.sample_product(
       SCALAR_FUNCS,
       [{'shape': shape, 'axis': axis}
        for shape in nonscalar_shapes
@@ -198,6 +250,22 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+      FASTPATH_FUNCS,
+      [{'shape': shape, 'axis': axis}
+       for shape in nonscalar_shapes
+       for axis in range(-len(shape), len(shape))],
+      dtype=jtu.dtypes.floating,
+  )
+  def test_accumulate_fastpath(self, func, nin, nout, identity, shape, axis, dtype, reducer, accumulator):
+    del reducer  # unused
+    if (nin, nout) != (2, 1):
+      self.skipTest(f"reduce requires (nin, nout)=(2, 1); got {(nin, nout)=}")
+    rng = jtu.rand_default(self.rng())
+    args = (rng(shape, dtype),)
+    jnp_fun = partial(jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity).accumulate, axis=axis)
+    self.assertEqual(get_if_single_primitive(jnp_fun, *args), accumulator)
 
   @jtu.sample_product(
       SCALAR_FUNCS,
