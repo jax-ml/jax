@@ -570,6 +570,7 @@ class ShardMapTest(jtu.JaxTestCase):
     jax.eval_shape(jax.grad(lambda x: jax.remat(f)(x).sum().astype('float32')),
                    xs)
 
+  @jax.legacy_prng_key('allow')
   def test_prngkeyarray_eager(self):
     # https://github.com/google/jax/issues/15398
     mesh = jtu.create_global_mesh((4,), ('x',))

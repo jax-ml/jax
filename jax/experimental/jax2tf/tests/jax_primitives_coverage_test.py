@@ -40,6 +40,7 @@ config.parse_flags_with_absl()
 from jax.experimental.jax2tf.tests import primitive_harness
 
 
+@jtu.with_config(jax_legacy_prng_key='allow')
 class JaxPrimitiveTest(jtu.JaxTestCase):
 
   # This test runs for all primitive harnesses. For each primitive "xxx" the

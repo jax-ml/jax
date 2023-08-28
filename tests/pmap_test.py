@@ -131,6 +131,7 @@ def create_input_array_for_pmap(input_shape, in_axes=0, input_data=None,
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
+@jtu.with_config(jax_legacy_prng_key="allow")
 class PythonPmapTest(jtu.JaxTestCase):
 
   @property

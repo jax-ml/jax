@@ -154,7 +154,8 @@ def ComputeTfValueAndGrad(tf_f: Callable, tf_args: Sequence,
 
 
 @jtu.with_config(jax_numpy_rank_promotion="allow",
-                 jax_numpy_dtype_promotion='standard')
+                 jax_numpy_dtype_promotion='standard',
+                 jax_legacy_prng_key="allow")
 class JaxToTfTestCase(jtu.JaxTestCase):
   # We want most tests to use the maximum available version, from the locally
   # installed tfxla module and jax_export.

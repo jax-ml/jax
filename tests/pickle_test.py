@@ -122,8 +122,9 @@ class PickleTest(jtu.JaxTestCase):
       s  = pickle.dumps(k1)
       k2 = pickle.loads(s)
       self.assertEqual(k1.dtype, k2.dtype)
-      self.assertArraysEqual(jax.random.key_data(k1),
-                             jax.random.key_data(k2))
+      with jax.legacy_prng_key('allow'):
+        self.assertArraysEqual(jax.random.key_data(k1),
+                              jax.random.key_data(k2))
 
   @parameterized.parameters(
       (jax.sharding.PartitionSpec(),),

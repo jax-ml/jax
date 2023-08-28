@@ -2754,9 +2754,10 @@ class SparseRandomTest(sptu.SparseTestCase):
   )
   def test_random_bcoo(self, shape, dtype, indices_dtype, n_batch, n_dense):
     key = jax.random.PRNGKey(1701)
-    mat = sparse.random_bcoo(
-        key, shape=shape, dtype=dtype, indices_dtype=indices_dtype,
-        n_batch=n_batch, n_dense=n_dense)
+    with jax.legacy_prng_key('allow'):
+      mat = sparse.random_bcoo(
+          key, shape=shape, dtype=dtype, indices_dtype=indices_dtype,
+          n_batch=n_batch, n_dense=n_dense)
 
     mat_dense = mat.todense()
     self.assertEqual(mat_dense.shape, shape)
