@@ -4233,9 +4233,9 @@ def _top_k_lower(ctx, operand, k):
   out_values_aval, out_indices_aval, = ctx.avals_out
   return mlir.custom_call(
       "stablehlo.dynamic_top_k",
-      [mlir.aval_to_ir_type(out_values_aval),
+      result_types=[mlir.aval_to_ir_type(out_values_aval),
        mlir.aval_to_ir_type(out_indices_aval)],
-      [operand, k_value]).results
+      operands=[operand, k_value]).results
 
 mlir.register_lowering(top_k_p, _top_k_lower)
 ad.primitive_jvps[top_k_p] = _top_k_jvp
@@ -4499,9 +4499,9 @@ def _rng_bit_generator_lowering(
       mlir.eval_dynamic_shape(ctx, out_vals_aval.shape))
     out_key, out_vals = mlir.custom_call(
         "stablehlo.dynamic_rng_bit_generator",
-        [key.type,
-         mlir.aval_to_ir_type(core.ShapedArray(shape, rbg_dtype))],
-        [key, output_shape],
+        result_types=[key.type,
+                      mlir.aval_to_ir_type(core.ShapedArray(shape, rbg_dtype))],
+        operands=[key, output_shape],
         extra_attributes=dict(rng_algorithm=algorithm_attr)).results
   else:
     out_key, out_vals = hlo.RngBitGeneratorOp(

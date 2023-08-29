@@ -644,8 +644,8 @@ def _eigh_jacobi_lowering_rule(ctx, operand, lower, sort_eigenvalues):
     result_shapes = None
   op = mlir.custom_call(
       "Eigh",
-      result_types,
-      [operand],
+      result_types=result_types,
+      operands=[operand],
       backend_config=backend_config,
       api_version=1,
       result_shapes=result_shapes,
@@ -1301,8 +1301,8 @@ def _lu_tpu_lowering_rule(ctx, operand):
     result_shapes = None
   op = mlir.custom_call(
     "LuDecomposition",
-    result_types,
-    [operand],
+    result_types=result_types,
+    operands=[operand],
     result_shapes=result_shapes)
   return op.results
 
@@ -1436,8 +1436,8 @@ def _geqrf_lowering_rule(ctx, operand):
     result_shapes = None
   op = mlir.custom_call(
       "Qr",
-      result_types,
-      [operand],
+      result_types=result_types,
+      operands=[operand],
       api_version=1,
       result_shapes=result_shapes
   )
@@ -1561,8 +1561,8 @@ def _householder_product_lowering_rule(ctx, a, taus):
     result_shapes = None
   op = mlir.custom_call(
       "ProductOfElementaryHouseholderReflectors",
-      [mlir.aval_to_ir_type(aval_out)],
-      [a, taus],
+      result_types=[mlir.aval_to_ir_type(aval_out)],
+      operands=[a, taus],
       api_version=1,
       result_shapes=result_shapes)
   return [op.result]

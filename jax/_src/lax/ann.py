@@ -347,8 +347,8 @@ def _approx_top_k_lowering(ctx, operand, *, k,
 
   out = mlir.custom_call(
       "ApproxTopK",
-      [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-      [operand, iota, init_val, init_arg],
+      result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
+      operands=[operand, iota, init_val, init_arg],
       called_computations=[comparator.name.value],
       backend_config=backend_config,
       result_shapes=result_shapes)

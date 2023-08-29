@@ -830,8 +830,8 @@ def _shape_assertion_lowering_rule(ctx: mlir.LoweringRuleContext,
                                    error_message: str):
   op = mlir.custom_call(
     "shape_assertion",
-    [],  # No results
-    [assert_what, *error_message_inputs],
+    result_types=[],  # No results
+    operands=[assert_what, *error_message_inputs],
     has_side_effect=True,
     extra_attributes=dict(error_message=mlir.ir.StringAttr.get(error_message))
   )
