@@ -137,6 +137,30 @@ class DLPackTest(jtu.JaxTestCase):
     z = jax.jit(lambda x: x + 1)(y)
     self.assertAllClose(x_np + dtype(1), z)
 
+  @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
+  def testTorchToJaxArray(self, shape, dtype):
+    if xla_extension_version < 191:
+      self.skipTest("Need xla_extension_version >= 191")
+
+    if not config.x64_enabled and dtype in [jnp.int64, jnp.float64,
+                                            jnp.complex128]:
+      self.skipTest("x64 types are disabled by jax_enable_x64")
+
+    rng = jtu.rand_default(self.rng())
+    x_np = rng(shape, dtype)
+    if dtype == jnp.bfloat16:
+      x = torch.tensor(x_np.view(jnp.int16)).view(torch.bfloat16)
+    else:
+      x = torch.tensor(x_np)
+    x = x.cuda() if jtu.device_under_test() == "gpu" else x
+    x = x.contiguous()
+    y = jax.dlpack.from_dlpack(x)
+    self.assertAllClose(x_np, y)
+
+    # Verify the resulting value can be passed to a jit computation.
+    z = jax.jit(lambda x: x + 1)(y)
+    self.assertAllClose(x_np + dtype(1), z)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
