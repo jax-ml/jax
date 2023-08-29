@@ -58,6 +58,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.15
 
+* Changes:
+  * Sparse CSR matrix multiplications via the experimental jax sparse APIs
+    no longer uses a deterministic algorithm on NVIDIA GPUs. This change was
+    made to improve compatibility with CUDA 12.2.1.
+
 ## jax 0.4.14 (July 27, 2023)
 
 * Changes
