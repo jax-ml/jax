@@ -18,6 +18,7 @@
 from jax._src.lax.lax import (
   DotDimensionNumbers as DotDimensionNumbers,
   Precision as Precision,
+  PrecisionLike as PrecisionLike,
   RandomAlgorithm as RandomAlgorithm,
   RoundingMethod as RoundingMethod,
   abs as abs,
