@@ -28,7 +28,7 @@ from jax.sharding import Mesh
 from jax._src import test_util
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class MockTpuDevice:
   """Mock TPU device for testing."""
   id: int

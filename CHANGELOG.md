@@ -24,6 +24,9 @@ Remember to align the itemized text with the first line of an item within a list
     `JAX_TRACEBACK_FILTERING=off` (for one unfiltered traceback).
   * jax2tf default serialization version is now 7, which introduces new shape
     [safety assertions](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism).
+  * Devices passed to `jax.sharding.Mesh` should be hashable. This specifically
+    applies to mock devices or user created devices. `jax.devices()` are
+    already hashable.
 
 * Breaking changes:
   * jax2tf now uses native serialization by default. See
