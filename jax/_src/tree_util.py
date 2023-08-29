@@ -22,7 +22,6 @@ from functools import partial
 import operator as op
 import textwrap
 from typing import Any, Callable, NamedTuple, Type, TypeVar, Union, overload
-import warnings
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
@@ -541,8 +540,6 @@ def _equality_errors(path, t1, t2, is_leaf):
     yield from _equality_errors((*path, k), c1, c2, is_leaf)
 
 
-# TODO(ivyzheng): Remove old APIs when all users migrated.
-
 class _DeprecatedKeyPathEntry(NamedTuple):
   key: Any
 
@@ -560,13 +557,6 @@ class AttributeKeyPathEntry(_DeprecatedKeyPathEntry):
     return f'.{self.key}'
   def __str__(self):
     return self.pprint()
-
-class FlattenedKeyPathEntry(_DeprecatedKeyPathEntry):  # fallback
-  def pprint(self) -> str:
-    return f'[<flat index {self.key}>]'
-  def __str__(self):
-    return self.pprint()
-
 
 @dataclass(frozen=True)
 class SequenceKey():
@@ -623,15 +613,6 @@ def register_keypaths(
 
   Only works if the type was already registered with ``register_pytree_node``.
   """
-  warnings.warn(
-      (
-          "jax.tree_util.register_keypaths is deprecated, and will be removed"
-          " in a future release. Please use `register_pytree_with_keys()`"
-          " instead."
-      ),
-      category=FutureWarning,
-      stacklevel=2,
-  )
   _register_keypaths(ty, handler)
 
 
