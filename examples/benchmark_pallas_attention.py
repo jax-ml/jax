@@ -55,104 +55,6 @@ BATCH, SEQ_LEN = 8, 2048
 SEQ_LENS = [128, 256, 512, 1024, 2048, 4096]
 NUM_RUNS = 10
 
-def benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, causal=True, mode="jax"):
-    block_qk_grid = [(64, 32), (128, 32), (128, 64)]
-    k1, k2, k3 = random.split(random.PRNGKey(0), 3)
-    q = random.normal(k1, (batch, seq_len, heads, d_model), dtype=jnp.float16)
-    k = random.normal(k2, (batch, seq_len, heads, d_model), dtype=jnp.float16)
-    v = random.normal(k3, (batch, seq_len, heads, d_model), dtype=jnp.float16)
-
-    functools.partial(attention.mha, causal=causal)
-
-    min_ms = float("inf")
-
-    # Perform a grid search and choose the best timing
-    for block_q, block_k in block_qk_grid:
-        if mode == "pallas":
-            impl = functools.partial(
-                attention.mha, causal=causal, block_q=block_q, block_k=block_k, num_warps=4)
-        elif mode == "jax":
-            if seq_len >= 4096: # Handle OOM
-                return None
-            impl = attention.mha_reference
-        else:
-            raise ValueError("Invalid JAX benchmark mode")
-
-        # Warm up
-        impl(q, k, v).block_until_ready()
-        impl(q, k, v).block_until_ready()
-
-        t1 = time.time()
-        for _ in range(NUM_RUNS):
-            impl(q, k, v).block_until_ready()
-        estimate_ms = 1000 * (time.time() - t1) / NUM_RUNS
-        min_ms = min(estimate_ms, min_ms)
-        print(f"{mode} (seq_len={seq_len}, block_q={block_q}, block_k={block_k}): {estimate_ms} ms")
-    return min_ms
-
-# Mode is one of {"triton", "flash_attn"}
-def bench_torch(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, causal=True, mode="triton"):
-    import torch
-    dtype = torch.float16
-    q = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
-    k = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
-    v = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
-    if mode == "triton":
-        """
-        Triton implementation broken in dep of jax-triton: 
-        `RuntimeError: CUDA error: an illegal memory access was encountered`
-        """
-        # from triton.ops import attention as triton_attention
-        # Use a jitted function from triton nightly 28/08/23 as defined below.
-        fn = lambda: triton_attention(q, k, v, causal, 1.0)
-    elif mode == "flash_attn":
-        from flash_attn import flash_attn_func
-        fn = lambda: flash_attn_func(q, k, v, causal=causal)
-    else:
-        raise ValueError("Invalid JAX benchmark mode")
-
-    # Warmup
-    fn()
-    fn()
-    torch.cuda.synchronize()
-    t1 = time.time()
-    num_runs = 100
-    for _ in range(num_runs):
-        fn()
-    torch.cuda.synchronize()
-    estimate_ms = 1000 * (time.time() - t1) / num_runs
-    return estimate_ms
-
-def benchmark(causal=True):
-    y_pallas, y_jax, y_triton, y_flash_attn = [], [], [], []
-
-    for s in SEQ_LENS:
-        y_pallas.append(benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal, mode="pallas"))
-        y_jax.append(benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal, mode="jax"))
-        y_triton.append(bench_torch(batch=BATCH, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal, mode="triton"))
-        y_flash_attn.append(bench_torch(batch=BATCH, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal, mode="flash_attn"))
-
-    for name, y_vals in [
-        ("pallas", y_pallas),
-        ("jax", y_jax), 
-        ("triton", y_triton),
-        ("flash_attn", y_flash_attn)
-    ]:
-
-        plt.plot(SEQ_LENS, y_vals, label=name)
-        for a, b in zip(SEQ_LENS, y_vals): 
-            if b is not None:
-                plt.text(a, b, str(round(b, 2)))
-    # plt.plot(SEQ_LENS, y_jax_triton, label='jax+triton')
-    # plt.plot(SEQ_LENS, y_trit, label='triton')
-    plt.title(f'Fused Attention ({"Causal" if causal else "Non-Causal"})')
-    plt.ylabel('time (ms)')
-    plt.xlabel('Sequence Length')
-    plt.legend()
-    plt.show()
-
-if __name__ == '__main__':
-    benchmark()
 
 """
 Appendix
@@ -295,4 +197,104 @@ class _attention(torch.autograd.Function):
         return o
 
 triton_attention = _attention.apply
+
+def benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, causal=True, mode="jax"):
+    block_qk_grid = [(64, 32), (128, 32), (128, 64)]
+    k1, k2, k3 = random.split(random.PRNGKey(0), 3)
+    q = random.normal(k1, (batch, seq_len, heads, d_model), dtype=jnp.float16)
+    k = random.normal(k2, (batch, seq_len, heads, d_model), dtype=jnp.float16)
+    v = random.normal(k3, (batch, seq_len, heads, d_model), dtype=jnp.float16)
+
+    functools.partial(attention.mha, causal=causal)
+
+    min_ms = float("inf")
+
+    # Perform a grid search and choose the best timing
+    for block_q, block_k in block_qk_grid:
+        if mode == "pallas":
+            impl = functools.partial(
+                attention.mha, causal=causal, block_q=block_q, block_k=block_k, num_warps=4)
+        elif mode == "jax":
+            if seq_len >= 4096: # Handle OOM
+                return None
+            impl = attention.mha_reference
+        else:
+            raise ValueError("Invalid JAX benchmark mode")
+
+        # Warm up
+        impl(q, k, v).block_until_ready()
+        impl(q, k, v).block_until_ready()
+
+        t1 = time.time()
+        for _ in range(NUM_RUNS):
+            impl(q, k, v).block_until_ready()
+        estimate_ms = 1000 * (time.time() - t1) / NUM_RUNS
+        min_ms = min(estimate_ms, min_ms)
+        print(f"{mode} (seq_len={seq_len}, block_q={block_q}, block_k={block_k}): {estimate_ms} ms")
+    return min_ms
+
+# Mode is one of {"triton", "flash_attn"}
+def bench_torch(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, causal=True, mode="triton"):
+    import torch
+    dtype = torch.float16
+    q = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
+    k = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
+    v = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
+    if mode == "triton":
+        """
+        Triton implementation broken in dep of jax-triton: 
+        `RuntimeError: CUDA error: an illegal memory access was encountered`
+        """
+        # from triton.ops import attention as triton_attention
+        # Use a jitted function from triton nightly 28/08/23 as defined below.
+        fn = lambda: triton_attention(q, k, v, causal, 1.0)
+    elif mode == "flash_attn":
+        from flash_attn import flash_attn_func
+        fn = lambda: flash_attn_func(q, k, v, causal=causal)
+    else:
+        raise ValueError("Invalid JAX benchmark mode")
+
+    # Warmup
+    fn()
+    fn()
+    torch.cuda.synchronize()
+    t1 = time.time()
+    num_runs = 100
+    for _ in range(num_runs):
+        fn()
+    torch.cuda.synchronize()
+    estimate_ms = 1000 * (time.time() - t1) / num_runs
+    return estimate_ms
+
+def benchmark(causal=True):
+    y_pallas, y_jax, y_triton, y_flash_attn = [], [], [], []
+
+    for s in SEQ_LENS:
+        y_pallas.append(benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal, mode="pallas"))
+        y_jax.append(benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal, mode="jax"))
+        y_triton.append(bench_torch(batch=BATCH, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal, mode="triton"))
+        y_flash_attn.append(bench_torch(batch=BATCH, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal, mode="flash_attn"))
+
+    for name, y_vals in [
+        ("pallas", y_pallas),
+        ("jax", y_jax), 
+        ("triton", y_triton),
+        ("flash_attn", y_flash_attn)
+    ]:
+
+        plt.plot(SEQ_LENS, y_vals, label=name)
+        for a, b in zip(SEQ_LENS, y_vals): 
+            if b is not None:
+                plt.text(a, b, str(round(b, 2)))
+    # plt.plot(SEQ_LENS, y_jax_triton, label='jax+triton')
+    # plt.plot(SEQ_LENS, y_trit, label='triton')
+    plt.title(f'Fused Attention ({"Causal" if causal else "Non-Causal"})')
+    plt.ylabel('time (ms)')
+    plt.xlabel('Sequence Length')
+    plt.legend()
+    plt.show()
+
+if __name__ == '__main__':
+    benchmark()
+
 
