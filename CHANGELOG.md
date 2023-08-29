@@ -54,10 +54,13 @@ Remember to align the itemized text with the first line of an item within a list
   * `jax.lax.prod` has been removed after being deprecated in JAX v0.4.11.
     Use the built-in `math.prod` instead.
 
-* Internal deprecations:
+* Internal deprecations/removals:
   * The internal utilities `jax.core.is_opaque_dtype` and `jax.core.has_opaque_dtype`
     have been removed. Opaque dtypes have been renamed to Extended dtypes; use
     `jnp.issubdtype(dtype, jax.dtypes.extended)` instead (available since jax v0.4.14).
+  * The utility `jax.interpreters.xla.register_collective_primitive` has been
+    removed. This utility did nothing useful in recent JAX releases and calls
+    to it can be safely removed.
 
 ## jaxlib 0.4.15
 

@@ -20,7 +20,6 @@ from jax._src.interpreters.xla import (
   canonicalize_dtype as canonicalize_dtype,
   canonicalize_dtype_handlers as canonicalize_dtype_handlers,
   pytype_aval_mappings as pytype_aval_mappings,
-  register_collective_primitive as register_collective_primitive,
   register_translation as register_translation,
   translations as translations,
   xla_destructure as xla_destructure,
