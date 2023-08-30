@@ -17,6 +17,7 @@ from absl.testing import absltest
 import jax
 import jax.extend as jex
 
+from jax._src import linear_util
 from jax._src import prng
 from jax._src import test_util as jtu
 
@@ -34,6 +35,15 @@ class ExtendTest(jtu.JaxTestCase):
     self.assertIs(jex.random.threefry_prng_impl, prng.threefry_prng_impl)
     self.assertIs(jex.random.rbg_prng_impl, prng.rbg_prng_impl)
     self.assertIs(jex.random.unsafe_rbg_prng_impl, prng.unsafe_rbg_prng_impl)
+
+    # Assume these are tested elsewhere, only check equivalence
+    self.assertIs(jex.linear_util.StoreException, linear_util.StoreException)
+    self.assertIs(jex.linear_util.WrappedFun, linear_util.WrappedFun)
+    self.assertIs(jex.linear_util.cache, linear_util.cache)
+    self.assertIs(jex.linear_util.merge_linear_aux, linear_util.merge_linear_aux)
+    self.assertIs(jex.linear_util.transformation, linear_util.transformation)
+    self.assertIs(jex.linear_util.transformation_with_aux, linear_util.transformation_with_aux)
+    self.assertIs(jex.linear_util.wrap_init, linear_util.wrap_init)
 
 
 class RandomTest(jtu.JaxTestCase):

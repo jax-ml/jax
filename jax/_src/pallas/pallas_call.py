@@ -22,7 +22,6 @@ from typing import Any, Callable, Dict, Sequence, Tuple
 
 import jax
 from jax import api_util
-from jax import linear_util as lu
 from jax import tree_util
 from jax import lax
 from jax.interpreters import ad
@@ -31,6 +30,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax._src import ad_util
 from jax._src import core as jax_core
+from jax._src import linear_util as lu
 from jax._src.state import discharge as state_discharge
 from jax._src.util import (
     split_list, safe_map, safe_zip, weakref_lru_cache,

@@ -235,6 +235,7 @@ class WrappedFun:
 @curry
 def transformation(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
   """Adds one more transformation to a WrappedFun.
+
   Args:
     gen: the transformation generator function
     fun: a WrappedFun on which to apply the transformation
