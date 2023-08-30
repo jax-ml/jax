@@ -276,8 +276,8 @@ def benchmark(causal=True):
         y_flash_attn.append(bench_torch(batch=BATCH, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal, mode="flash_attn"))
 
     for name, y_vals in [
-        ("pallas", y_pallas),
         ("jax", y_jax), 
+        ("pallas", y_pallas),
         ("triton", y_triton),
         ("flash_attn", y_flash_attn)
     ]:
@@ -291,6 +291,7 @@ def benchmark(causal=True):
     plt.title(f'Fused Attention ({"Causal" if causal else "Non-Causal"})')
     plt.ylabel('time (ms)')
     plt.xlabel('Sequence Length')
+    plt.yscale("log")
     plt.legend()
     plt.show()
 
