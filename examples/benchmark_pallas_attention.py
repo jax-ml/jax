@@ -73,6 +73,7 @@ def _fwd_kernel(
     BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
     IS_CAUSAL: tl.constexpr,
+    DELAYED_ONLINE_SOFTMAX: tl.constexpr,
 ):
     start_m = tl.program_id(0)
     off_hz = tl.program_id(1)
@@ -131,18 +132,35 @@ def _fwd_kernel(
         m_i_new = tl.maximum(m_i, tl.max(qk, 1))
         alpha = tl.math.exp2(m_i - m_i_new)
         p = tl.math.exp2(qk - m_i_new[:, None])
-        # -- scale and update acc --
-        acc_scale = l_i * 0 + alpha  # workaround some compiler bug
-        acc *= acc_scale[:, None]
-        acc += tl.dot(p.to(V.dtype.element_ty), v, allow_tf32=True)
-        # -- update m_i and l_i --
-        l_i = l_i * alpha + tl.sum(p, 1)
-        m_i = m_i_new
+
+        if DELAYED_ONLINE_SOFTMAX:
+            # -- scale and update acc --
+            acc_scale = l_i * 0 + alpha  # workaround some compiler bug
+            acc *= acc_scale[:, None]
+            acc += tl.dot(p.to(V.dtype.element_ty), v, allow_tf32=True)
+            # -- update m_i and l_i --
+            l_i = l_i * alpha + tl.sum(p, 1)
+            m_i = m_i_new
+        else:
+            l_i = l_i * alpha
+            l_i_new = l_i + tl.sum(p, 1)
+            l_rcp = 1. / l_i_new
+            p *= l_rcp[:, None]
+            # -- scale and update acc --
+            acc *= (l_i * l_rcp)[:, None] 
+            acc += tl.dot(p.to(V.dtype.element_ty), v, allow_tf32=True)
+            # -- update m_i and l_i --
+            l_i = l_i_new
+            m_i = m_i_new
+
         # update pointers
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
         V_block_ptr = tl.advance(V_block_ptr, (BLOCK_N, 0))
+
+    if DELAYED_ONLINE_SOFTMAX:
+        acc = acc / l_i[:, None]
+
     # write back l and m
-    acc = acc / l_i[:, None]
     l_ptrs = L + off_hz * N_CTX + offs_m
     tl.store(l_ptrs, m_i + tl.math.log2(l_i))
     # write back O
@@ -185,6 +203,7 @@ class _attention(torch.autograd.Function):
             q.shape[0], q.shape[1], q.shape[2],
             BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_DMODEL=Lk,
             IS_CAUSAL=causal,
+            DELAYED_ONLINE_SOFTMAX=False,
             num_warps=num_warps,
             num_stages=4)
 
@@ -266,6 +285,10 @@ def bench_torch(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, cau
     estimate_ms = 1000 * (time.time() - t1) / num_runs
     return estimate_ms
 
+# TODO: implement this
+def test_allclose():
+    pass
+
 def benchmark(causal=True):
     y_pallas, y_jax, y_triton, y_flash_attn = [], [], [], []
 
@@ -296,6 +319,7 @@ def benchmark(causal=True):
     plt.show()
 
 if __name__ == '__main__':
+    test_allclose()
     benchmark()
 
 
