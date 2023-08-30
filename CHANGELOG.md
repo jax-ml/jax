@@ -8,6 +8,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.16
 
+* Internal deprecations/removals:
+  * The internal submodule `jax.prng` is now deprecated. Its contents are available at
+    {mod}`jax.extend.random`.
+
 ## jaxlib 0.4.16
 
 ## jax 0.4.15 (Aug 30 2023)
