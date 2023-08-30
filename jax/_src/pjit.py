@@ -977,6 +977,7 @@ def pjit_check_aval_sharding(
   for aval, s, name in zip(flat_avals, shardings, new_names):
     if is_unspecified_or_auto(s):
       continue
+    s = getattr(s, '_original_sharding', s)
     name_str = f' with pytree key path {name}' if name else ''
     shape = aval.shape
     try:

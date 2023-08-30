@@ -389,18 +389,6 @@ def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
     if config.jax_debug_infs and np.any(np.isinf(np.asarray(buf))):
       raise FloatingPointError(f"invalid value (inf) encountered in {name}")
 
-# TODO(yashkatariya): Generalize is_compatible_aval (maybe renamed) and use that
-# to check if shardings are compatible with the input.
-def _check_sharding(aval: core.AbstractValue, s: Sharding):
-  from jax._src import pjit
-
-  if isinstance(s, XLACompatibleSharding) and not isinstance(s, PmapSharding):
-    pjit.pjit_check_aval_sharding(
-        (s,), (aval,), None, "device_put args", allow_uneven_sharding=False)
-
-  assert isinstance(aval, core.ShapedArray), aval
-  s.shard_shape(aval.shape)  # should raise an Error if incompatible
-
 
 def _put_x(x, s: Sharding, aval: core.AbstractValue, committed: bool):
   result_handler = pxla.global_aval_to_result_handler(aval, s, committed, False)
@@ -483,7 +471,6 @@ def _device_put_impl(
 
   if isinstance(device, Sharding):
     s = device
-    _check_sharding(aval, s)
     if getattr(x, 'sharding', None) == s:
       return x
     if (not s.is_fully_addressable and  # type: ignore
