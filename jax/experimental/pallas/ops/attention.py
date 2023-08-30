@@ -26,7 +26,6 @@ import numpy as np
 
 DEFAULT_MASK_VALUE = -0.7 * float(np.finfo(np.dtype("float32")).max)
 
-
 DELAYED_SOFTMAX_NORMALIZE = True
 
 def mha_forward_kernel(

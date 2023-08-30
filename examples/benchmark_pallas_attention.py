@@ -235,11 +235,11 @@ def benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, c
     for block_q, block_k in block_qk_grid:
         if mode == "pallas":
             impl = functools.partial(
-                attention.mha, causal=causal, block_q=block_q, block_k=block_k, num_warps=4)
+                attention.mha, causal=causal, block_q=block_q, block_k=block_k, num_warps=4, segment_ids=None)
         elif mode == "jax":
             if seq_len >= 2048: # Handle OOM
                 return None
-            impl = attention.mha_reference
+            impl = functools.partial(attention.mha_reference, segment_ids=None)
         else:
             raise ValueError("Invalid JAX benchmark mode")
 
