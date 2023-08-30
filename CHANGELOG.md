@@ -53,6 +53,10 @@ Remember to align the itemized text with the first line of an item within a list
     following SciPy. Use `jax.numpy.tril` and `jax.numpy.triu` instead.
   * `jax.lax.prod` has been removed after being deprecated in JAX v0.4.11.
     Use the built-in `math.prod` instead.
+  * A number of exports from `jax.interpreters.xla` related to defining
+    HLO lowering rules for custom JAX primitives have been deprecated. Custom
+    primitives should be defined using the StableHLO lowering utilities in
+    `jax.interpreters.mlir` instead.
 
 * Internal deprecations/removals:
   * The internal utilities `jax.core.is_opaque_dtype` and `jax.core.has_opaque_dtype`
