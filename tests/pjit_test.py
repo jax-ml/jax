@@ -3644,6 +3644,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertTupleEqual(out2.sharding._device_assignment,
                           s.mesh._flat_devices_tuple)
 
+  def test_vmap_spmd_axis_name_error(self):
+    s = SingleDeviceSharding(jax.devices()[0])
+
+    def f(inp):
+      return with_sharding_constraint(inp, s)
+
+    arr = jax.device_put(np.arange(8), s)
+    with self.assertRaisesRegex(
+        ValueError,
+        'If you are using xmap or spmd_axis_name parameter of jax.vmap, please'
+        ' make sure to run your jitted function inside the mesh context'
+        ' manager.*SingleDeviceSharding'):
+      jax.jit(jax.vmap(f, spmd_axis_name='x'))(arr)
+
 
 class TempSharding(Sharding):
 
