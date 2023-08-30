@@ -1487,6 +1487,7 @@ if CAN_USE_HYPOTHESIS:
 
   class RunStateHypothesisTest(jtu.JaxTestCase):
 
+    @jax.legacy_prng_key('allow')
     @hp.given(hps.data())
     @hp.settings(deadline=None, print_blob=True,
                  max_examples=config.FLAGS.jax_num_generated_cases)
@@ -1511,6 +1512,7 @@ if CAN_USE_HYPOTHESIS:
       self.assertAllClose(y, y_ref)
       self.assertAllClose(y_t, y_ref_t)
 
+    @jax.legacy_prng_key('allow')
     @hp.given(hps.data())
     @hp.settings(deadline=None, print_blob=True,
                  max_examples=config.FLAGS.jax_num_generated_cases)
@@ -1536,6 +1538,7 @@ if CAN_USE_HYPOTHESIS:
       t = random.normal(k2, x.shape)
       self.assertAllClose(impl_lin(t), ref_lin(t), atol=1e-2, rtol=1e-2)
 
+    @jax.legacy_prng_key('allow')
     @hp.given(hps.data())
     @hp.settings(deadline=None, print_blob=True,
                  max_examples=config.FLAGS.jax_num_generated_cases)

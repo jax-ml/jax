@@ -1496,6 +1496,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = jax.vmap(jax.grad(g))(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @jax.legacy_prng_key('allow')
   def testIssue1263(self):
     def f(rng, x):
       cond = random.bernoulli(rng)
@@ -2218,6 +2219,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jax.linearize(func, 1.)  # Linearization works
 
+  @jax.legacy_prng_key('allow')
   def testIssue1316(self):
     def f(carry, _):
       c, key = carry

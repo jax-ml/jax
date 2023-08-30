@@ -14,6 +14,7 @@
 
 from absl.testing import absltest
 
+import jax
 import jax.extend as jex
 
 from jax._src import prng
@@ -21,6 +22,7 @@ from jax._src import test_util as jtu
 
 from jax import config
 config.parse_flags_with_absl()
+
 
 class ExtendTest(jtu.JaxTestCase):
   def test_symbols(self):
@@ -32,6 +34,34 @@ class ExtendTest(jtu.JaxTestCase):
     self.assertIs(jex.random.threefry_prng_impl, prng.threefry_prng_impl)
     self.assertIs(jex.random.rbg_prng_impl, prng.rbg_prng_impl)
     self.assertIs(jex.random.unsafe_rbg_prng_impl, prng.unsafe_rbg_prng_impl)
+
+
+class RandomTest(jtu.JaxTestCase):
+  def test_wrap_key_default(self):
+    key1 = jax.random.key(17)
+    data = jax.random.key_data(key1)
+    key2 = jex.random.wrap_key_data(data)
+    self.assertEqual(key1.dtype, key2.dtype)
+    self.assertArraysEqual(jax.random.key_data(key1),
+                           jax.random.key_data(key2))
+
+    impl = config.jax_default_prng_impl
+    key3 = jex.random.wrap_key_data(data, impl=impl)
+    self.assertEqual(key1.dtype, key3.dtype)
+    self.assertArraysEqual(jax.random.key_data(key1),
+                           jax.random.key_data(key3))
+
+  def test_wrap_key_explicit(self):
+    key1 = jax.random.key(17, impl='rbg')
+    data = jax.random.key_data(key1)
+    key2 = jex.random.wrap_key_data(data, impl='rbg')
+    self.assertEqual(key1.dtype, key2.dtype)
+    self.assertArraysEqual(jax.random.key_data(key1),
+                           jax.random.key_data(key2))
+
+    key3 = jex.random.wrap_key_data(data, impl='unsafe_rbg')
+    self.assertNotEqual(key1.dtype, key3.dtype)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -16,6 +16,8 @@ List of Available Functions
   :toctree: _autosummary
 
     PRNGKey
+    key
+    key_data
     ball
     bernoulli
     beta

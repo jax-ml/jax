@@ -1868,7 +1868,7 @@ def _cpp_pmap(
 
     return out, fastpath_data
 
-  cpp_mapped_f = pmap_lib.pmap(  # type: ignore
+  cpp_mapped_f = pmap_lib.pmap(
       fun, cache_miss, static_broadcasted_tuple, pxla.shard_arg,
       pytree_registry=tree_util.default_registry)
   _pmap_cache_clears.add(cpp_mapped_f)

@@ -1470,7 +1470,16 @@ def _pjit_batcher_for_sharding(
     assert isinstance(s, GSPMDSharding)
     if isinstance(getattr(s, '_original_sharding', None), NamedSharding):
       mesh = s._original_sharding.mesh  # type: ignore
-    assert mesh is not None and not mesh.empty
+    if mesh is None or mesh.empty:
+      s_type = (f', got: {repr(s._original_sharding)}'
+                if hasattr(s, '_original_sharding') else '')
+      raise ValueError(
+          'If you are using xmap or spmd_axis_name parameter of jax.vmap,'
+          ' please make sure to run your jitted function inside the mesh'
+          ' context manager. Only `jax.lax.with_sharding_constraint` with'
+          ' `jax.sharding.NamedSharding` as an input can be transformed with'
+          ' spmd_axis_name batching rules outside of an explicit mesh context'
+          f' manager scope{s_type}')
     parsed_pspec = parse_flatten_op_sharding(s._hlo_sharding, mesh)[0]  # type: ignore
     parsed_pspec = parsed_pspec.insert_axis_partitions(dim, val)
     mps = NamedSharding._from_parsed_pspec(mesh, parsed_pspec)

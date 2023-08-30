@@ -820,7 +820,10 @@ def with_config(**kwds):
   """Test case decorator for subclasses of JaxTestCase"""
   def decorator(cls):
     assert inspect.isclass(cls) and issubclass(cls, JaxTestCase), "@with_config can only wrap JaxTestCase class definitions."
-    cls._default_config = {**JaxTestCase._default_config, **kwds}
+    cls._default_config = {}
+    for b in cls.__bases__:
+      cls._default_config.update(b._default_config)
+    cls._default_config.update(kwds)
     return cls
   return decorator
 
@@ -847,6 +850,7 @@ class JaxTestCase(parameterized.TestCase):
     'jax_numpy_dtype_promotion': 'strict',
     'jax_numpy_rank_promotion': 'raise',
     'jax_traceback_filtering': 'off',
+    'jax_legacy_prng_key': 'error',
   }
 
   _compilation_cache_exit_stack: Optional[ExitStack] = None

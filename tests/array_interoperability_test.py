@@ -21,6 +21,7 @@ from jax import config
 import jax.dlpack
 import jax.numpy as jnp
 from jax._src import test_util as jtu
+from jax._src.lib import xla_extension_version
 
 import numpy as np
 
@@ -86,6 +87,30 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertRaisesRegex(RuntimeError,
                            "DLPack tensor may be consumed at most once",
                            lambda: jax.dlpack.from_dlpack(dlpack))
+
+  @jtu.sample_product(
+    shape=all_shapes,
+    dtype=dlpack_dtypes,
+    gpu=[False, True],
+  )
+  def testJaxArrayRoundTrip(self, shape, dtype, gpu):
+    if xla_extension_version < 191:
+      self.skipTest("Need xla_extension_version >= 191")
+
+    rng = jtu.rand_default(self.rng())
+    np = rng(shape, dtype)
+    if gpu and jax.default_backend() == "cpu":
+      raise unittest.SkipTest("Skipping GPU test case on CPU")
+    device = jax.devices("gpu" if gpu else "cpu")[0]
+    x = jax.device_put(np, device)
+    y = jax.dlpack.from_dlpack(x)
+    self.assertEqual(y.device(), device)
+    self.assertAllClose(np.astype(x.dtype), y)
+    # Test we can create multiple arrays
+    z = jax.dlpack.from_dlpack(x)
+    self.assertEqual(z.device(), device)
+    self.assertAllClose(np.astype(x.dtype), z)
+
 
   @jtu.sample_product(
     shape=all_shapes,

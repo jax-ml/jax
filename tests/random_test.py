@@ -204,6 +204,7 @@ _RANDOM_VALUES_CASES = [
 
 KEY_CTORS = [random.key, random.PRNGKey]
 
+@jtu.with_config(jax_legacy_prng_key='allow')
 class PrngTest(jtu.JaxTestCase):
 
   def check_key_has_impl(self, key, impl):
@@ -588,6 +589,7 @@ class ThreefryPrngTest(jtu.JaxTestCase):
       make_key(jax.device_put(42))  # doesn't crash
 
 
+@jtu.with_config(jax_legacy_prng_key='allow')
 class LaxRandomTest(jtu.JaxTestCase):
 
   def _CheckCollisions(self, samples, nbits):

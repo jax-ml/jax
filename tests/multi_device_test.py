@@ -138,6 +138,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
                                                 jax.device_put(x_uncommitted, devices[3])),
                                     devices[4])
 
+  @jax.legacy_prng_key('allow')
   def test_computation_follows_data_prng(self):
     _, device, *_ = self.get_devices()
     rng = jax.device_put(jax.random.PRNGKey(0), device)

@@ -21,15 +21,51 @@ np.ufunc.at(). Instead, you can pass inplace=False and capture the result; e.g.
 """
 from functools import partial
 import operator
+from typing import Any, Callable, Optional
 
 import jax
 from jax._src.lax import lax as lax_internal
+from jax._src.numpy import reductions
 from jax._src.numpy.lax_numpy import _eliminate_deprecated_list_indexing, append, take
 from jax._src.numpy.reductions import _moveaxis
 from jax._src.numpy.util import _wraps, check_arraylike, _broadcast_to, _where
 from jax._src.numpy.vectorize import vectorize
 from jax._src.util import canonicalize_axis
 import numpy as np
+
+
+def get_if_single_primitive(fun: Callable[..., Any], *args: Any) -> Optional[jax.core.Primitive]:
+  """
+  If fun(*args) lowers to a single primitive with inputs and outputs matching
+  function inputs and outputs, return that primitive. Otherwise return None.
+  """
+  try:
+    jaxpr = jax.make_jaxpr(fun)(*args)
+  except:
+    return None
+  while len(jaxpr.eqns) == 1:
+    eqn = jaxpr.eqns[0]
+    if (eqn.invars, eqn.outvars) != (jaxpr.jaxpr.invars, jaxpr.jaxpr.outvars):
+      return None
+    elif (eqn.primitive == jax._src.pjit.pjit_p and
+          all(jax._src.pjit.is_unspecified(sharding) for sharding in
+              (*eqn.params['in_shardings'], *eqn.params['out_shardings']))):
+      jaxpr = jaxpr.eqns[0].params['jaxpr']
+    else:
+      return jaxpr.eqns[0].primitive
+  return None
+
+
+_primitive_reducers = {
+  lax_internal.add_p: reductions.sum,
+  lax_internal.mul_p: reductions.prod,
+}
+
+
+_primitive_accumulators = {
+  lax_internal.add_p: reductions.cumsum,
+  lax_internal.mul_p: reductions.cumprod,
+}
 
 
 class ufunc:
@@ -99,7 +135,9 @@ class ufunc:
                          "so to use a where mask one has to specify 'initial'.")
       if lax_internal._dtype(where) != bool:
         raise ValueError(f"where argument must have dtype=bool; got dtype={lax_internal._dtype(where)}")
-    return self._reduce_via_scan(a, axis=axis, dtype=dtype, keepdims=keepdims, initial=initial, where=where)
+    primitive = get_if_single_primitive(self._call, *(self.nin * [lax_internal._one(a)]))
+    reducer = _primitive_reducers.get(primitive, self._reduce_via_scan)
+    return reducer(a, axis=axis, dtype=dtype, keepdims=keepdims, initial=initial, where=where)
 
   def _reduce_via_scan(self, arr, axis=0, dtype=None, keepdims=False, initial=None, where=None):
     assert self.nin == 2 and self.nout == 1
@@ -167,7 +205,9 @@ class ufunc:
       raise ValueError("accumulate only supported for functions returning a single value")
     if out is not None:
       raise NotImplementedError(f"out argument of {self.__name__}.accumulate()")
-    return self._accumulate_via_scan(a, axis=axis, dtype=dtype)
+    primitive = get_if_single_primitive(self._call, *(self.nin * [lax_internal._one(a)]))
+    accumulator = _primitive_accumulators.get(primitive, self._accumulate_via_scan)
+    return accumulator(a, axis=axis, dtype=dtype)
 
   def _accumulate_via_scan(self, arr, axis=0, dtype=None):
     assert self.nin == 2 and self.nout == 1
