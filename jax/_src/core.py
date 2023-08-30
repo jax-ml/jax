@@ -1084,8 +1084,7 @@ def _why_alive_container_info(container, obj_id) -> str:
 
 
 @contextmanager
-def new_main(trace_type: type[Trace],
-             dynamic: bool = False,
+def new_main(trace_type: type[Trace], dynamic: bool = False,
              **payload) -> Generator[MainTrace, None, None]:
   # See comments in https://github.com/google/jax/pull/3370
   stack = thread_local_state.trace_state.trace_stack
@@ -1110,6 +1109,20 @@ def new_main(trace_type: type[Trace],
     if t() is not None:
       leaked_tracers = maybe_find_leaked_tracers(t())
       if leaked_tracers: raise leaked_tracer_error("trace", t(), leaked_tracers)
+
+@contextmanager
+def new_dynamic(level: int) -> Generator[None, None, None]:
+  stack = thread_local_state.trace_state.trace_stack
+  prev_dynamic, stack.dynamic = stack.dynamic, stack.stack[level]
+  _update_thread_local_jit_state(stack.dynamic)
+  try:
+    yield
+  finally:
+    stack.dynamic = prev_dynamic
+    _update_thread_local_jit_state(stack.dynamic)
+
+def dynamic_level() -> int:
+  return thread_local_state.trace_state.trace_stack.dynamic.level
 
 @contextmanager
 def new_base_main(trace_type: type[Trace],
