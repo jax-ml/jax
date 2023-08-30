@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.15
+## jax 0.4.16
+
+## jaxlib 0.4.16
+
+## jax 0.4.15 (Aug 30 2023)
 
 * Changes
   * Added {class}`jax.numpy.ufunc`, as well as {func}`jax.numpy.frompyfunc`, which can convert
@@ -66,7 +70,7 @@ Remember to align the itemized text with the first line of an item within a list
     removed. This utility did nothing useful in recent JAX releases and calls
     to it can be safely removed.
 
-## jaxlib 0.4.15
+## jaxlib 0.4.15 (Aug 30 2023)
 
 * Changes:
   * Sparse CSR matrix multiplications via the experimental jax sparse APIs
