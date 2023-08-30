@@ -53,8 +53,8 @@ D_HEAD = 64
 N_HEADS = DIM // D_HEAD
 BATCH, SEQ_LEN = 8, 2048
 SEQ_LENS = [128, 256, 512, 1024, 2048, 4096]
-NUM_RUNS = 10
-
+NUM_RUNS = 30
+DELAYED_ONLINE_SOFTMAX = True
 
 """
 Appendix
@@ -203,7 +203,7 @@ class _attention(torch.autograd.Function):
             q.shape[0], q.shape[1], q.shape[2],
             BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_DMODEL=Lk,
             IS_CAUSAL=causal,
-            DELAYED_ONLINE_SOFTMAX=False,
+            DELAYED_ONLINE_SOFTMAX=DELAYED_ONLINE_SOFTMAX,
             num_warps=num_warps,
             num_stages=4)
 
@@ -278,11 +278,10 @@ def bench_torch(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, cau
     fn()
     torch.cuda.synchronize()
     t1 = time.time()
-    num_runs = 100
-    for _ in range(num_runs):
+    for _ in range(NUM_RUNS):
         fn()
     torch.cuda.synchronize()
-    estimate_ms = 1000 * (time.time() - t1) / num_runs
+    estimate_ms = 1000 * (time.time() - t1) / NUM_RUNS
     return estimate_ms
 
 # TODO: implement this
