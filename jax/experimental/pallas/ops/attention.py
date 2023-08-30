@@ -23,8 +23,7 @@ from jax import lax
 
 from jax.experimental import pallas as pl
 
-# Currently slower on Pallas but faster on Triton
-DELAYED_ONLINE_SOFTMAX = True
+DELAYED_SOFTMAX_NORMALIZE = True
 
 def mha_forward_kernel(
     q_ref, k_ref, v_ref,  # Input arrays
@@ -70,7 +69,7 @@ def mha_forward_kernel(
     alpha = jnp.exp(m_prev - m_curr)
     p = jnp.exp(qk - m_curr[:, None])
 
-    if DELAYED_ONLINE_SOFTMAX:
+    if DELAYED_SOFTMAX_NORMALIZE:
       l_curr = jnp.sum(p, axis=1) + alpha * l_prev
 
       # `0 * l_prev` is to handle weird compiler perf bug in Triton
@@ -95,7 +94,7 @@ def mha_forward_kernel(
     upper_bound = pl.cdiv(seq_len, block_k)  # type: ignore
   acc, m_i, l_i = lax.fori_loop(0, upper_bound, body,
                                 (acc, m_i, l_i))
-  if DELAYED_ONLINE_SOFTMAX:
+  if DELAYED_SOFTMAX_NORMALIZE:
     acc = acc / l_i[:, None]
 
   if residual_refs:

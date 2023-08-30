@@ -35,6 +35,7 @@ https://tridao.me/publications/flash2/flash2.pdf
 
 import functools
 import time
+import math
 
 import matplotlib.pyplot as plt
 import triton 
@@ -52,9 +53,11 @@ DIM = 2048
 D_HEAD = 64
 N_HEADS = DIM // D_HEAD
 BATCH, SEQ_LEN = 8, 2048
-SEQ_LENS = [128, 256, 512, 1024, 2048, 4096, 8192]
+SEQ_LENS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
 NUM_RUNS = 30
-DELAYED_ONLINE_SOFTMAX = True
+BETWEEN_RUN_SLEEP_TIME_MS = 200
+
+DELAYED_SOFTMAX_NORMALIZE = True
 
 """
 Appendix
@@ -73,7 +76,7 @@ def _fwd_kernel(
     BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
     IS_CAUSAL: tl.constexpr,
-    DELAYED_ONLINE_SOFTMAX: tl.constexpr,
+    DELAYED_SOFTMAX_NORMALIZE: tl.constexpr,
 ):
     start_m = tl.program_id(0)
     off_hz = tl.program_id(1)
@@ -133,7 +136,7 @@ def _fwd_kernel(
         alpha = tl.math.exp2(m_i - m_i_new)
         p = tl.math.exp2(qk - m_i_new[:, None])
 
-        if DELAYED_ONLINE_SOFTMAX:
+        if DELAYED_SOFTMAX_NORMALIZE:
             # -- scale and update acc --
             acc_scale = l_i * 0 + alpha  # workaround some compiler bug
             acc *= acc_scale[:, None]
@@ -157,7 +160,7 @@ def _fwd_kernel(
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
         V_block_ptr = tl.advance(V_block_ptr, (BLOCK_N, 0))
 
-    if DELAYED_ONLINE_SOFTMAX:
+    if DELAYED_SOFTMAX_NORMALIZE:
         acc = acc / l_i[:, None]
 
     # write back l and m
@@ -203,7 +206,7 @@ class _attention(torch.autograd.Function):
             q.shape[0], q.shape[1], q.shape[2],
             BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_DMODEL=Lk,
             IS_CAUSAL=causal,
-            DELAYED_ONLINE_SOFTMAX=DELAYED_ONLINE_SOFTMAX,
+            DELAYED_SOFTMAX_NORMALIZE=DELAYED_SOFTMAX_NORMALIZE,
             num_warps=num_warps,
             num_stages=4)
 
@@ -218,7 +221,7 @@ class _attention(torch.autograd.Function):
 triton_attention = _attention.apply
 
 def benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, causal=True, mode="jax"):
-    block_qk_grid = [(64, 32), (128, 32), (128, 64)]
+    block_qk_grid = [(64, 32), (128, 32), (64, 64), (128, 64)]
     k1, k2, k3 = random.split(random.PRNGKey(0), 3)
     q = random.normal(k1, (batch, seq_len, heads, d_model), dtype=jnp.float16)
     k = random.normal(k2, (batch, seq_len, heads, d_model), dtype=jnp.float16)
@@ -234,7 +237,7 @@ def benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, c
             impl = functools.partial(
                 attention.mha, causal=causal, block_q=block_q, block_k=block_k, num_warps=4)
         elif mode == "jax":
-            if seq_len >= 4096: # Handle OOM
+            if seq_len >= 2048: # Handle OOM
                 return None
             impl = attention.mha_reference
         else:
@@ -256,9 +259,6 @@ def benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, c
 def bench_torch(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, causal=True, mode="triton"):
     import torch
     dtype = torch.float16
-    q = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
-    k = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
-    v = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
     if mode == "triton":
         """
         Triton implementation broken in dep of jax-triton: 
@@ -267,9 +267,15 @@ def bench_torch(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, cau
         # from triton.ops import attention as triton_attention
         # Use a jitted function from triton nightly 28/08/23 as defined below.
         fn = lambda: triton_attention(q, k, v, causal, 1.0)
+        q = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
+        k = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
+        v = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
     elif mode == "flash_attn":
         from flash_attn import flash_attn_func
         fn = lambda: flash_attn_func(q, k, v, causal=causal)
+        q = torch.randn((batch, seq_len, heads, d_model), dtype=dtype, device="cuda", requires_grad=True)
+        k = torch.randn((batch, seq_len, heads, d_model), dtype=dtype, device="cuda", requires_grad=True)
+        v = torch.randn((batch, seq_len, heads, d_model), dtype=dtype, device="cuda", requires_grad=True)
     else:
         raise ValueError("Invalid JAX benchmark mode")
 
@@ -280,7 +286,7 @@ def bench_torch(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, cau
     t1 = time.time()
     for _ in range(NUM_RUNS):
         fn()
-    torch.cuda.synchronize()
+        torch.cuda.synchronize()
     estimate_ms = 1000 * (time.time() - t1) / NUM_RUNS
     return estimate_ms
 
@@ -289,30 +295,41 @@ def test_allclose():
     pass
 
 def benchmark(causal=True):
-    y_pallas, y_jax, y_triton, y_flash_attn = [], [], [], []
+    configs = [
+        {'name': name, 'timings': [], 'tokens': tokens } 
+        for name in ["jax", "pallas", "triton", "flash_attn"] 
+        for tokens in [32768]
+    ]
+    bench_fns = {
+        'jax': functools.partial(benchmark_jax, mode="jax"),
+        'pallas': functools.partial(benchmark_jax, mode="pallas"),
+        'flash_attn': functools.partial(bench_torch, mode="flash_attn"),
+        'triton': functools.partial(bench_torch, mode="triton"),
+    }
+    fig, ax = plt.subplots()
+    ax.ticklabel_format(useOffset=False)
 
     for s in SEQ_LENS:
-        y_pallas.append(benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal, mode="pallas"))
-        y_jax.append(benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal, mode="jax"))
-        y_triton.append(bench_torch(batch=BATCH, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal, mode="triton"))
-        y_flash_attn.append(bench_torch(batch=BATCH, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal, mode="flash_attn"))
+        for config in configs:
+            config['timings'].append(
+                bench_fns[config['name']](
+                    batch=config['tokens'] // s, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal)
+            )
+            time.sleep(BETWEEN_RUN_SLEEP_TIME_MS / 1000)
 
-    for name, y_vals in [
-        ("jax", y_jax), 
-        ("pallas", y_pallas),
-        ("triton", y_triton),
-        ("flash_attn", y_flash_attn)
-    ]:
-
-        plt.plot(SEQ_LENS, y_vals, label=name)
-        for a, b in zip(SEQ_LENS, y_vals): 
+    for config in configs:
+        ax.plot(SEQ_LENS, config['timings'], label=config['name'] + '_' + str(config['tokens'] // 1000) + 'K_tokens' )
+        for seq_len, b in zip(SEQ_LENS, config['timings']): 
             if b is not None:
-                plt.text(a, b, str(round(b, 2)))
-    # plt.plot(SEQ_LENS, y_jax_triton, label='jax+triton')
-    # plt.plot(SEQ_LENS, y_trit, label='triton')
+                b_height = b * 1.05 if (config['name'] == "triton")\
+                    else b * 0.95 if (config['name'] == "flash_attn")\
+                    else b
+                tflops = (4 * seq_len ** 2 * D_HEAD * N_HEADS * config['tokens'] / seq_len) / (b * 10 ** 9)
+                plt.text(seq_len, b_height, f'Time={round(b, 2)}ms,TFLOPs={round(tflops, 2)}')
     plt.title(f'Fused Attention ({"Causal" if causal else "Non-Causal"})')
     plt.ylabel('time (ms)')
     plt.xlabel('Sequence Length')
+    ax.set_xticks(SEQ_LENS, SEQ_LENS)
     plt.yscale("log")
     plt.legend()
     plt.show()
