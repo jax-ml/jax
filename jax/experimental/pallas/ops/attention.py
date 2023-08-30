@@ -73,7 +73,7 @@ def mha_forward_kernel(
     if DELAYED_ONLINE_SOFTMAX:
       l_curr = jnp.sum(p, axis=1) + alpha * l_prev
 
-      # Adding 0 * l_prev is due to a weird compiler bug in Triton
+      # `0 * l_prev` is to handle weird compiler perf bug in Triton
       acc *= (0 * l_prev + alpha)[:, None]
       p = p.astype(jnp.float16)
     else:
