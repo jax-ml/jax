@@ -75,12 +75,13 @@ def mha_forward_kernel(
     )
     qk = jnp.zeros([block_q, block_k], dtype=jnp.float32)
     qk += pl.dot(q, k.T)   # [block_q, block_k]
-    if sm_scale != 1.:
-      qk *= sm_scale # [block_q, block_k]
 
     # Bring closer to XLA:GPU numerics.
     qk = qk.astype(q_ref.dtype)
     qk = qk.astype(jnp.float32)
+    qk_scale = sm_scale * 1.44269504089
+    if qk_scale != 1.:
+      qk *= qk_scale # [block_q, block_k]
 
     if causal or segment_ids_ref is not None:
       mask = None
@@ -96,15 +97,14 @@ def mha_forward_kernel(
       # Apply mask to qk.
       qk = jnp.where(mask, qk, DEFAULT_MASK_VALUE)
     m_curr = jnp.maximum(jnp.max(qk, axis=1), m_prev)
-    alpha = jnp.exp(m_prev - m_curr)
-    p = jnp.exp(qk - m_curr[:, None])
+    alpha = jnp.exp2(m_prev - m_curr)
+    p = jnp.exp2(qk - m_curr[:, None])
 
     if DELAYED_SOFTMAX_NORMALIZE:
       l_curr = jnp.sum(p, axis=1) + alpha * l_prev
 
       # `0 * l_prev` is to handle weird compiler perf bug in Triton
       acc *= (0 * l_prev + alpha)[:, None]
-      p = p.astype(jnp.float16)
     else:
       l_prev *= alpha
       l_curr = jnp.sum(p, axis=1) + l_prev
@@ -112,9 +112,9 @@ def mha_forward_kernel(
       l_rcp = 1. / l_curr
       p = p * l_rcp[:, None]
       acc *= (l_prev * l_rcp)[:, None]
-      p = p.astype(jnp.float16)
 
     v = pl.load(v_ref, (pl.dslice(start_k * block_k, block_k), pl.dslice(block_d)))
+    p = p.astype(jnp.float16)
     acc = acc + pl.dot(p.astype(v.dtype), v)
     return acc, m_curr, l_curr
   if causal:
@@ -400,8 +400,10 @@ def mha_backward_kernel(
       qk = pl.dot(q, k.T)
       qk = qk.astype(q_ref.dtype)
       qk = qk.astype(jnp.float32)
-      if sm_scale != 1.0:
-        qk *= sm_scale
+
+      qk_scale = sm_scale * 1.44269504089
+      if qk_scale != 1.0:
+        qk *= qk_scale
 
       q_segment_ids = (
           None
@@ -425,7 +427,7 @@ def mha_backward_kernel(
         qk = jnp.where(mask, qk, DEFAULT_MASK_VALUE)
 
       m = pl.load(m_ref, (pl.ds(start_q * block_q, block_q),))
-      p = jnp.exp(qk - m[:, None])
+      p = jnp.exp2(qk - m[:, None])
       do = pl.load(do_scaled_ref, (pl.ds(start_q * block_q, block_q), slice(None)))
       dv = dv + pl.dot(p.astype(do.dtype).T, do)
       di = pl.load(delta_ref, (pl.ds(start_q * block_q, block_q),))
