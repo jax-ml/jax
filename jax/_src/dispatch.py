@@ -231,7 +231,7 @@ def sharded_lowering(
   # apply it to all out_avals.
   return pxla.lower_sharding_computation(
       fun, 'jit', name, in_shardings_unspec, UNSPECIFIED, donated_invars,
-      in_avals, keep_unused=keep_unused, inline=inline, always_lower=False,
+      in_avals, keep_unused=keep_unused, inline=inline,
       devices_from_context=None, lowering_platform=lowering_platform)
 
 

@@ -1948,7 +1948,6 @@ def lower_sharding_computation(
     *,
     keep_unused: bool,
     inline: bool,
-    always_lower: bool,
     devices_from_context: Sequence[xc.Device] | None = None,
     lowering_platform: str | None,
     override_lowering_rules: None | (
