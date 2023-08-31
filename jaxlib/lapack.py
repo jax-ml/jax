@@ -34,10 +34,6 @@ from .cpu import _lapack
 for _name, _value in _lapack.registrations().items():
   xla_client.register_custom_call_target(_name, _value, platform="cpu")
 
-# Function that lazily initializes the LAPACK kernels in the runtime on first
-# use.
-_initialize = _lapack.initialize
-
 
 # TODO(phawkins): it would be nice to avoid duplicating code for each type.
 
@@ -47,7 +43,7 @@ def trsm_hlo(dtype, alpha, a, b,
              left_side=False, lower=False, trans_a=False,
              conj_a=False, diag=False, *,
              b_shape_vals: tuple[DimensionSize, ...]):
-  _initialize()
+  _lapack.initialize()
   b_type = ir.RankedTensorType(b.type)
 
   m, n = b_shape_vals[-2:]
@@ -92,7 +88,7 @@ def trsm_hlo(dtype, alpha, a, b,
 
 def getrf_hlo(dtype, a: ir.Value, *,
               a_shape_vals: tuple[DimensionSize, ...]):
-  _initialize()
+  _lapack.initialize()
   a_type = ir.RankedTensorType(a.type)
   assert len(a_shape_vals) >= 2
   batch_dims_vals = a_shape_vals[:-2]
@@ -143,7 +139,7 @@ def getrf_hlo(dtype, a: ir.Value, *,
 
 def geqrf_hlo(dtype, a: ir.Value, *,
               a_shape_vals: tuple[DimensionSize, ...]):
-  _initialize()
+  _lapack.initialize()
   a_type = ir.RankedTensorType(a.type)
   assert len(a_shape_vals) >= 2
   m, n = a_shape_vals[-2:]
@@ -203,7 +199,7 @@ def geqrf_hlo(dtype, a: ir.Value, *,
 def orgqr_hlo(dtype, a: ir.Value, tau, *,
               a_shape_vals: tuple[DimensionSize, ...],
               tau_shape_vals: tuple[DimensionSize, ...]):
-  _initialize()
+  _lapack.initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
   dims_vals = a_shape_vals
@@ -268,7 +264,7 @@ def orgqr_hlo(dtype, a: ir.Value, tau, *,
 
 def potrf_hlo(dtype, a: ir.Value, *, lower=False,
               a_shape_vals: tuple[DimensionSize, ...]):
-  _initialize()
+  _lapack.initialize()
   a_type = ir.RankedTensorType(a.type)
   n = a_shape_vals[-1]
   if dtype == np.float32:
@@ -312,7 +308,7 @@ def potrf_hlo(dtype, a: ir.Value, *, lower=False,
 
 def gesdd_hlo(dtype, a: ir.Value, *, full_matrices=True, compute_uv=True,
               a_shape_vals: tuple[DimensionSize, ...]):
-  _initialize()
+  _lapack.initialize()
   a_type = ir.RankedTensorType(a.type)
   assert len(a_shape_vals) >= 2
   m, n = a_shape_vals[-2:]
@@ -402,7 +398,7 @@ def gesdd_hlo(dtype, a: ir.Value, *, full_matrices=True, compute_uv=True,
 def syevd_hlo(dtype, a: ir.Value,
               a_shape_vals: tuple[DimensionSize, ...],
               lower=False):
-  _initialize()
+  _lapack.initialize()
   a_type = ir.RankedTensorType(a.type)
   assert len(a_shape_vals) >= 2
   m, n = a_shape_vals[-2:]
@@ -484,7 +480,7 @@ def geev_hlo(dtype, input, *,
              input_shape_vals: tuple[DimensionSize, ...],  # input.shape as ir.Values
              jobvl=True, jobvr=True):
   # input_shape_vals are used for when input has dynamic shapes.
-  _initialize()
+  _lapack.initialize()
   input_shape = ir.RankedTensorType(input.type).shape
   assert len(input_shape) >= 2
   n = input_shape_vals[-1]
@@ -572,7 +568,7 @@ def geev_hlo(dtype, input, *,
 
 def gees_hlo(dtype, a, *, jobvs=True, sort=False, select=None,
              a_shape_vals: tuple[DimensionSize, ...]):
-  _initialize()
+  _lapack.initialize()
   a_type = ir.RankedTensorType(a.type)
   etype = a_type.element_type
   assert len(a_shape_vals) >= 2
@@ -653,7 +649,7 @@ def gees_hlo(dtype, a, *, jobvs=True, sort=False, select=None,
 
 # gehrd: Reduction of a non-symmetric square matrix to upper Hessenberg form.
 def gehrd_hlo(dtype, a):
-  _initialize()
+  _lapack.initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
   assert len(dims) >= 2
@@ -706,7 +702,7 @@ def gehrd_hlo(dtype, a):
 
 # sytrd: Reduction of a symmetric (Hermitian) matrix to tridiagonal form.
 def sytrd_hlo(dtype, a, *, lower):
-  _initialize()
+  _lapack.initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
   assert len(dims) >= 2
