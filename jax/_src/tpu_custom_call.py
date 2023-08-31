@@ -76,8 +76,6 @@ class CustomCallBackendConfig:
   has_communication: bool
   collective_id: int | None
   device_type: str | None
-  kernel_name: str | None
-  kernel_regeneration_metadata: bytes | None
 
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
@@ -97,14 +95,6 @@ class CustomCallBackendConfig:
     if self.collective_id is not None:
       config.write(b', "collective_id": ')
       config.write(str(self.collective_id).encode("ascii"))
-    if self.kernel_name is not None:
-      config.write(b', "kernel_name": "')
-      config.write(self.kernel_name.encode("ascii"))
-      config.write(b'"')
-    if self.kernel_regeneration_metadata is not None:
-      config.write(b', "kernel_regeneration_metadata": "')
-      config.write(base64.b64encode(self.kernel_regeneration_metadata))
-      config.write(b'"')
     config.write(b"}")
     if self.device_type is not None:
       config.write(b', "device_type": ')
@@ -133,6 +123,8 @@ def _tpu_custom_call_lowering(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,  # pylint: disable=missing-function-docstring
     config: CustomCallBackendConfig,
+    kernel_name: str | None,
+    kernel_regeneration_metadata: bytes | None,
     out_avals: Any,
 ) -> ...:
   i32_type = ir.IntegerType.get_signless(32)
@@ -173,6 +165,16 @@ def _tpu_custom_call_lowering(
       result_layouts=_avals_to_layouts(ctx.avals_out),
       output_operand_aliases=None,
   )
+
+  # Add kernel_name and kernel_regeneration_metadata as attributes to the
+  # custom call op. This is because we do not want to pollute the backend_config
+  # with this information.
+  if kernel_name is not None:
+    call.attributes["kernel_name"] = ir.StringAttr.get(kernel_name)
+  if kernel_regeneration_metadata is not None:
+    call.attributes["kernel_regeneration_metadata"] = ir.StringAttr.get(
+        base64.b64encode(kernel_regeneration_metadata)
+    )
   if multiple_results:
     results = [stablehlo.GetTupleElementOp(call, mlir.i32_attr(i)).result
                for i in range(len(out_avals))]
@@ -364,13 +366,13 @@ def _lowered_as_tpu_kernel(
         has_communication,
         collective_id,
         device_type,
-        kernel_name,
-        kernel_regeneration_metadata,
     )
     result = tpu_custom_call_p.bind(
         *args,
         *constants,
         config=config,
+        kernel_name=kernel_name,
+        kernel_regeneration_metadata=kernel_regeneration_metadata,
         out_avals=out_avals,
     )
     return result[0] if unpack else result
