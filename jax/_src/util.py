@@ -588,7 +588,7 @@ else:
 
 try:
   # numpy 1.25.0 or newer
-  NumpyComplexWarning = np.exceptions.ComplexWarning
+  NumpyComplexWarning: type[Warning] = np.exceptions.ComplexWarning
 except AttributeError:
   # legacy numpy
   NumpyComplexWarning = np.ComplexWarning
