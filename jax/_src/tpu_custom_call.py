@@ -38,6 +38,12 @@ from jaxlib.mlir.dialects import stablehlo
 from jaxlib.mlir.passmanager import PassManager
 import numpy as np
 
+config.define_bool_state(
+    name="use_cpp_apply_vector_layout",
+    default=False,
+    help="Use C++ implementation of apply vector layout pass (still a WIP)",
+)
+
 # TODO(sharadmv): remove when minimum jaxlib version is bumped to >= 0.4.14.
 if tpu_mosaic is None:
   raise ImportError("Cannot use Mosaic without a jaxlib >= 0.4.14.")
@@ -240,9 +246,17 @@ def _lower_tpu_kernel(
       module.operation.verify()
       dump_mlir(module, "after infer vector layout pass")
 
-      apply_vector_layout.apply(module, hardware_generation)
+      if config.use_cpp_apply_vector_layout:
+        pipeline = [
+            "func.func(tpu-apply-vector-layout)",
+        ]
+        pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
+        pipeline.run(module.operation)
+      else:
+        apply_vector_layout.apply(module, hardware_generation)
       module.operation.verify()
       dump_mlir(module, "after apply vector layout pass")
+
 
       PassManager.parse("builtin.module(canonicalize)").run(module.operation)
       dump_mlir(module, "after final canonicalize pass")
