@@ -6299,7 +6299,7 @@ class DCETest(jtu.JaxTestCase):
     def cumprod(xs):
       def body(c, x):
         return c * x, c
-      c, ys = jax.lax.scan(body, jnp.float32(1.), xs)
+      c, ys = jax.lax.scan(body, jnp.float32(1.), api.device_put(xs))
       return c, ys
     jaxpr = api.make_jaxpr(cumprod)(jnp.arange(1., 5., dtype='float32')).jaxpr
 
@@ -6307,11 +6307,11 @@ class DCETest(jtu.JaxTestCase):
     self.assert_dce_result(
         jaxpr,   used_outputs=[True, False],
         expected_used_inputs=[True],
-        expected_num_eqns=2)
+        expected_num_eqns=3)
     self.assert_dce_result(
         jaxpr,   used_outputs=[False, True],
         expected_used_inputs=[True],
-        expected_num_eqns=2)
+        expected_num_eqns=3)
 
     # If we don't use either output, the scan is eliminated.
     self.assert_dce_result(
