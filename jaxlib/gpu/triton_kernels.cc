@@ -184,8 +184,9 @@ class ModuleImage {
         device));
 
     if (shared_mem_bytes_ > shared_optin) {
-      return absl::InvalidArgumentError(
-          "Shared memory requested exceeds device resources.");
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Shared memory requested (%d b) exceeds device resources (%d b).",
+          shared_mem_bytes_, shared_optin));
     }
 
     if (shared_optin > kMaxStaticSharedMemBytes) {
