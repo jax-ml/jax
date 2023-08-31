@@ -2106,6 +2106,27 @@ def _vector_load_rule(  # pylint: disable=missing-function-docstring
     load_map = ir.Attribute.parse(f"affine_map<({batch_ixs}i, j) -> (0, j)>")
     padding = arith.ConstantOp(
         ty.element_type, get_constant(ty.element_type, 0))
+
+  # If the memref is sliced memref, we need to find the root memref and
+  # acumulate the indices offsets in intermediate slicings. Here we assume all
+  # the indices are static.
+  # TODO(b/297512230): support slice with dynamic indices.
+  base_memref = op.base
+  base_indices = [0] * len(indices)
+  if isinstance(base_memref.owner, ir.Operation) and isinstance(
+      base_memref.owner.opview, tpu.EraseLayoutOp
+  ):
+    def_op = base_memref.owner.operands[0].owner
+    while isinstance(def_op, ir.Operation) and isinstance(
+        def_op.opview, tpu.MemRefSliceOp
+    ):
+      base_indices = [
+          i + get_int_const(v, "tpu.memref_slice index")
+          for i, v in zip(base_indices, def_op.opview.base_idx)
+      ]
+      base_memref = def_op.opview.mem_ref
+      def_op = base_memref.owner
+
   # In the future it might be useful to place the data at an arbitrary
   # aligned offset, but for now we assume that no padding tiles precede the
   # first tile.
@@ -2132,21 +2153,24 @@ def _vector_load_rule(  # pylint: disable=missing-function-docstring
     assert indices[-1] + TARGET_SHAPE.lanes <= memref_ty.shape[-1]
     bounds = layout_out.tile_data_bounds(
         ty.shape, tile_ixs, allow_replicated=TargetTuple(True, False))
+    indices = [i + j for i, j in zip(base_indices, indices)]
     indices_vs = list(map(ix_cst, indices))
     if bounds.mask_varies_along(SUBLANES):
       assert s is not REPLICATED  # Replicated loads should never go OOB
       tile = tpu.LoadOp(
-          target_ty, op.base, indices_vs, bounds.get_sublane_mask())
+          target_ty, base_memref, indices_vs, bounds.get_sublane_mask()
+      )
     else:
       if load_map is not None:
         if layout_out.bitwidth != 32:
           raise NotImplementedError
         tile = vector.TransferReadOp(
-            target_ty, op.base, indices_vs, load_map, padding)
+            target_ty, base_memref, indices_vs, load_map, padding
+        )
       else:
         sublane_mask = ir.DenseBoolArrayAttr.get(
             [True] * TARGET_SHAPE.sublanes)
-        tile = tpu.LoadOp(target_ty, op.base, indices_vs, sublane_mask)
+        tile = tpu.LoadOp(target_ty, base_memref, indices_vs, sublane_mask)
     tiles[tile_ixs] = tile
   return ctx.replace(op, assemble(ty, layout_out, tiles))
 
