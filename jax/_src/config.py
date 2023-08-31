@@ -498,6 +498,7 @@ class Config:
             self.jax_threefry_partitionable,
             self.jax_softmax_custom_jvp,
             self.jax_enable_memories,
+            self.jax_disable_jit,
             # Technically this affects jaxpr->MHLO lowering, not tracing.
             self.jax_hlo_source_file_canonicalization_regex)
 

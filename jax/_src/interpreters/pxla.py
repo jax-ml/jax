@@ -2751,6 +2751,33 @@ class MeshExecutable(stages.XlaExecutable):
     return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [],
                         tree_util.default_registry)
 
+  def create_cpp_call_for_apply_primitive(self, out_tree):
+    # unsafe_call can be different than ExecuteReplicated for pathways.
+    if not (isinstance(self.unsafe_call, ExecuteReplicated) and
+            not self.unsafe_call.has_unordered_effects and
+            not self.unsafe_call.has_host_callbacks):
+      return None
+
+    def apply_primitive_cache_miss(*args):
+      out_flat = self.unsafe_call(*args)
+      outs = tree_util.tree_unflatten(out_tree, out_flat)
+      use_fastpath = (all(isinstance(x, xc.ArrayImpl) for x in out_flat))
+
+      if use_fastpath:
+        out_avals = [o.aval for o in out_flat]
+        out_committed = [o._committed for o in out_flat]
+        kept_var_bitvec = [i in self._kept_var_idx
+                           for i in range(len(args))]
+        fastpath_data = MeshExecutableFastpathData(
+            self.xla_executable, out_tree, self._in_shardings,
+            self._out_shardings, out_avals, out_committed, kept_var_bitvec)
+      else:
+        fastpath_data = None
+      return outs, fastpath_data
+
+    return xc._xla.pjit(self.unsafe_call.name, None, apply_primitive_cache_miss,
+                        [], [], [], tree_util.default_registry)
+
 
 def check_arg_avals_for_call(ref_avals, arg_avals,
                              jaxpr_debug_info: core.JaxprDebugInfo | None = None):

@@ -33,6 +33,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import api_util
+from jax._src import tree_util
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
@@ -44,6 +45,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.monitoring import record_event_duration_secs
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
@@ -113,8 +115,9 @@ def apply_primitive(prim, *args, **params):
 
   try:
     in_avals, in_shardings = util.unzip2([_arg_spec(a) for a in args])
+    in_tree = tree_util.tree_structure(args)
     compiled_fun = xla_primitive_callable(
-        prim, in_avals, OrigShardings(in_shardings), **params)
+        prim, in_avals, in_tree, OrigShardings(in_shardings), **params)
   except pxla.DeviceAssignmentMismatchError as e:
     fails, = e.args
     # TODO(yashkatariya): Thread through a signature_fun via every primitive
@@ -126,6 +129,56 @@ def apply_primitive(prim, *args, **params):
     raise ValueError(msg) from None
 
   return compiled_fun(*args)
+
+
+@util.cache()
+def xla_primitive_callable(
+    prim: core.Primitive, in_avals: tuple[core.AbstractValue, ...], in_tree,
+    orig_in_shardings: OrigShardings, **params,
+) -> Callable:
+  def prim_fun(*args):
+    out = prim.bind(*args, **params)
+    if prim.multiple_results:
+      return out
+    else:
+      return out,
+  donated_invars = (False,) * len(in_avals)
+  wrapped_fun = lu.wrap_init(prim_fun)
+  flat_fun, out_tree = api_util.flatten_fun_nokwargs(wrapped_fun, in_tree)
+  computation = sharded_lowering(
+      flat_fun, prim.name, donated_invars, keep_unused=False,
+      inline=True, in_avals=in_avals, in_shardings=orig_in_shardings.shardings,
+      lowering_platform=None)
+  compiled = computation.compile()
+  if xla_extension_version >= 192:
+    if config.jax_disable_jit:
+      call = compiled.unsafe_call
+    else:
+      call = compiled.create_cpp_call_for_apply_primitive(out_tree())
+      if call is None:
+        call = compiled.unsafe_call
+  else:
+    call = compiled.unsafe_call
+  if not prim.multiple_results:
+    return lambda *args, **kw: call(*args, **kw)[0]
+  else:
+    return call
+
+
+def sharded_lowering(
+    fun: lu.WrappedFun, name: str, donated_invars: Sequence[bool],
+    keep_unused: bool, inline: bool, in_avals: tuple[core.AbstractValue, ...],
+    in_shardings: Sequence[Sharding | None], lowering_platform: str | None
+) -> pxla.MeshComputation:
+  in_shardings_unspec = [UNSPECIFIED if i is None else i for i in in_shardings]
+
+  # Pass in a singleton `UNSPECIFIED` for out_shardings because we don't know
+  # the number of output avals at this stage. lower_sharding_computation will
+  # apply it to all out_avals.
+  return pxla.lower_sharding_computation(
+      fun, 'jit', name, in_shardings_unspec, UNSPECIFIED, donated_invars,
+      in_avals, keep_unused=keep_unused, inline=inline,
+      devices_from_context=None, lowering_platform=lowering_platform)
 
 
 def simple_impl(prim):
@@ -194,45 +247,6 @@ runtime_tokens: RuntimeTokenSet = RuntimeTokenSet()
 @atexit.register
 def wait_for_tokens():
   runtime_tokens.block_until_ready()
-
-
-@util.cache()
-def xla_primitive_callable(
-    prim: core.Primitive, in_avals: tuple[core.AbstractValue, ...],
-    orig_in_shardings: OrigShardings, **params,
-) -> Callable:
-  def prim_fun(*args):
-    out = prim.bind(*args, **params)
-    if prim.multiple_results:
-      return out
-    else:
-      return out,
-  donated_invars = (False,) * len(in_avals)
-  computation = sharded_lowering(
-      lu.wrap_init(prim_fun), prim.name, donated_invars, keep_unused=False,
-      inline=True, in_avals=in_avals, in_shardings=orig_in_shardings.shardings,
-      lowering_platform=None)
-  compiled = computation.compile().unsafe_call
-  if not prim.multiple_results:
-    return lambda *args, **kw: compiled(*args, **kw)[0]
-  else:
-    return compiled
-
-
-def sharded_lowering(
-    fun: lu.WrappedFun, name: str, donated_invars: Sequence[bool],
-    keep_unused: bool, inline: bool, in_avals: tuple[core.AbstractValue, ...],
-    in_shardings: Sequence[Sharding | None], lowering_platform: str | None
-) -> pxla.MeshComputation:
-  in_shardings_unspec = [UNSPECIFIED if i is None else i for i in in_shardings]
-
-  # Pass in a singleton `UNSPECIFIED` for out_shardings because we don't know
-  # the number of output avals at this stage. lower_sharding_computation will
-  # apply it to all out_avals.
-  return pxla.lower_sharding_computation(
-      fun, 'jit', name, in_shardings_unspec, UNSPECIFIED, donated_invars,
-      in_avals, keep_unused=keep_unused, inline=inline,
-      devices_from_context=None, lowering_platform=lowering_platform)
 
 
 def is_single_device_sharding(sharding: Sharding) -> bool:
