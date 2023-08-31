@@ -11,6 +11,8 @@ Remember to align the itemized text with the first line of an item within a list
 * Internal deprecations/removals:
   * The internal submodule `jax.prng` is now deprecated. Its contents are available at
     {mod}`jax.extend.random`.
+  * The internal submodule path `jax.linear_util` has been deprecated. Use
+    {mod}`jax.extend.linear_util` instead (Part of {ref}`jax-extend-jep`)
 
 ## jaxlib 0.4.16
 
@@ -73,6 +75,8 @@ Remember to align the itemized text with the first line of an item within a list
   * The utility `jax.interpreters.xla.register_collective_primitive` has been
     removed. This utility did nothing useful in recent JAX releases and calls
     to it can be safely removed.
+  * The internal submodule path `jax.linear_util` has been deprecated. Use
+    {mod}`jax.extend.linear_util` instead (Part of {ref}`jax-extend-jep`)
 
 ## jaxlib 0.4.15 (Aug 30 2023)
 
