@@ -37,7 +37,6 @@ from jax._src import xla_bridge
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src import linear_util as lu
 from jax._src import tree_util
 import jax.numpy as jnp
 
@@ -114,12 +113,9 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh, a, _ = create_inputs(P('z', ('x', 'y')), P(None, None))
     assert a.device_buffers[0].shape == (4, 2)
 
-    # NOTE(mattjj): to use out_specs=P(None, ('x', 'y')), we need to use
-    # all_gather_invariant primitive, which differs in its output replication
-    # type compared to all_gather.
     @jax.jit
     @partial(shard_map, mesh=mesh,
-             in_specs=(P('z', ('x', 'y')),), out_specs=P('z', ('x', 'y')))
+             in_specs=(P('z', ('x', 'y')),), out_specs=P(None, ('x', 'y')))
     def fwd(a):
       return lax.all_gather(a, 'z', axis=0, tiled=True)
 
@@ -563,7 +559,8 @@ class ShardMapTest(jtu.JaxTestCase):
   def test_partial_eval_custom_axis_env(self):
     mesh = Mesh(jax.devices(), ('i',))
 
-    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'),
+             check_rep=False)  # check_rep=False b/c no scan rep rule yet
     def f(_):
       _, idx = jax.lax.scan(lambda _, __: (None, jax.lax.axis_index('i')),
                             None, None, length=1)
@@ -863,251 +860,6 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertIn("%arg1: tensor<1xf32>", mhlo_str)
     self.assertIn("\"[('i',)]\"", mhlo_str)
     self.assertIn("-> (tensor<1xf32> {jax.result_info = \"[('i',)]\"})", mhlo_str)
-
-  def test_rewrite_process_call(self):
-    def f(x):
-      return core.call_p.bind(lu.wrap_init(lambda x: [2. * x]), x)[0] * x
-
-    mesh = jtu.create_global_mesh((4,), ('x',))
-    g = shard_map(f, mesh, in_specs=(P('x'),), out_specs=P('x'))
-    x = jnp.arange(4.)
-    y = jax.jit(g)(x)  # eager requires shmap to have ShardMapTrace.process_call
-    self.assertAllClose(y, 2 * x * x, check_dtypes=True)
-
-  def test_rewrite_post_process_call(self):
-    # We shouldn't hit post_process_call here because of RewriteTrace's dynamic
-    # behavior (i.e. no data dependence).
-    mesh = jtu.create_global_mesh((4,), ('x',))
-
-    @jax.jit
-    @partial(shard_map, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'))
-    def f(x):
-      return core.call_p.bind(lu.wrap_init(lambda: [2. * x]))[0] * x
-
-    x = jnp.arange(4.)
-    y = f(x)
-    self.assertAllClose(y, 2 * x * x, check_dtypes=True)
-
-  def test_rewrite_process_custom_jvp_call(self):
-    @jax.custom_jvp
-    def foo(x):
-      return 2. * x
-
-    @foo.defjvp
-    def foo_jvp(primals, tangents):
-      (x,), (x_dot,) = primals, tangents
-      return foo(x), 2. * x_dot
-
-    mesh = jtu.create_global_mesh((4,), ('x',))
-    g = shard_map(lambda x: foo(x) * x, mesh,
-                  in_specs=(P('x'),), out_specs=P('x'))
-    x = jnp.arange(4.)
-
-    y = jax.jit(g)(x)
-    self.assertAllClose(y, 2 * x * x, check_dtypes=True)
-
-    y2, y_dot = jax.jvp(jax.jit(g), (x,), (3 * x,))
-    self.assertAllClose(y2, 2 * x * x, check_dtypes=True)
-    self.assertAllClose(y_dot, 2 * 2 * 3 * x * x, check_dtypes=True)
-
-  def test_rewrite_process_custom_vjp_call(self):
-    @jax.custom_vjp
-    def foo(x):
-      return 2. * x
-
-    def foo_fwd(x):
-      return foo(x), None
-
-    def foo_bwd(_, y_bar):
-      return 2. * y_bar,
-
-    foo.defvjp(foo_fwd, foo_bwd)
-
-    mesh = jtu.create_global_mesh((4,), ('x',))
-    g = shard_map(lambda x: foo(x) * x, mesh,
-                  in_specs=(P('x'),), out_specs=P('x'))
-
-    x = jnp.arange(4.)
-    y = jax.jit(g)(x)
-    self.assertAllClose(y, 2 * x * x, check_dtypes=True)
-
-    y_, x_bar = jax.value_and_grad(lambda x: jax.jit(g)(x).sum())(x)
-    self.assertAllClose(y_, (2 * x * x).sum(), check_dtypes=True)
-    self.assertAllClose(x_bar, 2 * 2 * x, check_dtypes=True)
-
-  def test_rewrite_process_custom_vjp_call_match_more_replicated(self):
-    @jax.custom_vjp
-    def foo(x):
-      return 2. * x
-
-    def foo_fwd(x):
-      return foo(x), None
-
-    def foo_bwd(_, y_bar):
-      return jnp.ones_like(y_bar),  # diff! more replicated than primal/tangent
-
-    foo.defvjp(foo_fwd, foo_bwd)
-
-    mesh = jtu.create_global_mesh((4,), ('x',))
-    g = shard_map(lambda x: foo(x) * x, mesh,
-                  in_specs=(P('x'),), out_specs=P('x'))
-    x = jnp.arange(4.)
-
-    y = jax.jit(g)(x)
-    self.assertAllClose(y, 2 * x * x, check_dtypes=True)
-
-    y_, x_bar = jax.value_and_grad(lambda x: jax.jit(g)(x).sum())(x)
-    self.assertAllClose(y_, (2 * x * x).sum(), check_dtypes=True)
-    self.assertAllClose(x_bar, jnp.ones_like(x) + 2 * x, check_dtypes=True)
-
-  def test_rewrite_process_custom_vjp_call_match_less_replicated(self):
-    @jax.custom_vjp
-    def foo(x, y):
-      del y
-      return 2. * x
-
-    def foo_fwd(x, y):
-      return foo(x, y), y
-
-    def foo_bwd(y, _):
-      return y, None  # diff! x_bar less replicated than primal/tangent
-
-    foo.defvjp(foo_fwd, foo_bwd)
-
-    mesh = jtu.create_global_mesh((4,), ('x',))
-    g = shard_map(lambda x, y: foo(x, y) * y, mesh,
-                  in_specs=(P(), P('x')), out_specs=P('x'))
-    x = jnp.arange(4.)
-    y = jnp.arange(4 * 4.)
-
-    z = jax.jit(g)(x, y)
-    self.assertAllClose(z, 2 * jnp.tile(x, (4,)) * y, check_dtypes=False)
-
-    z_, x_bar = jax.value_and_grad(lambda x, y: jax.jit(g)(x, y).sum())(x, y)
-    self.assertAllClose(z.sum(), z_, check_dtypes=False)
-    self.assertAllClose(x_bar, jnp.arange(16).reshape(4, 4).sum(0),
-                        check_dtypes=False)
-
-  def test_rewrite_custom_vjp_call_jaxpr(self):
-    @jax.custom_vjp
-    def foo(x):
-      return 2. * x
-
-    def foo_fwd(x):
-      return foo(x), None
-
-    def foo_bwd(_, y_bar):
-      return 2. * y_bar,
-
-    foo.defvjp(foo_fwd, foo_bwd)
-
-    def foo_scan(x):
-      y, _ = jax.lax.scan(lambda x, _: (foo(x), None), x, None, length=1)
-      return y
-
-    mesh = jtu.create_global_mesh((4,), ('x',))
-    g = shard_map(lambda x: foo_scan(x) * x, mesh,
-                  in_specs=(P('x'),), out_specs=P('x'))
-
-    x = jnp.arange(4.)
-    y = jax.jit(g)(x)
-    self.assertAllClose(y, 2 * x * x, check_dtypes=True)
-
-    y_, x_bar = jax.value_and_grad(lambda x: jax.jit(g)(x).sum())(x)
-    self.assertAllClose(y_, (2 * x * x).sum(), check_dtypes=True)
-    self.assertAllClose(x_bar, 2 * 2 * x, check_dtypes=True)
-
-  def test_transpose_identity(self):
-    mesh = jtu.create_global_mesh((4,), ('x',))
-
-    @partial(shard_map, mesh=mesh, in_specs=P(), out_specs=P())
-    def f(x):
-      return x
-
-    jaxpr = jax.make_jaxpr(jax.vjp(f, 1.)[1])(1.)
-    e, = jaxpr.jaxpr.eqns
-    self.assertEmpty(e.params['jaxpr'].eqns)
-
-    jaxpr = jax.make_jaxpr(jax.vjp(jax.vjp(f, 1.)[1], 1.)[1])((1.,))
-    e, = jaxpr.jaxpr.eqns
-    self.assertEmpty(e.params['jaxpr'].eqns)
-
-    @partial(shard_map, mesh=mesh, in_specs=P(), out_specs=P())
-    def g(x):
-      return jax.jit(lambda x: x)(x)
-
-    jaxpr = jax.make_jaxpr(jax.vjp(g, 1.)[1])(1.)
-    e, = jaxpr.jaxpr.eqns
-    e1, e2 = e.params['jaxpr'].eqns
-    self.assertEmpty(e1.outvars)
-    self.assertEmpty(e2.params['jaxpr'].eqns)
-
-  def test_fanout_specs_transpose_to_psum(self):
-    mesh = jtu.create_global_mesh((4,), ('x',))
-
-    @partial(shard_map, mesh=mesh, in_specs=P(), out_specs=P('x'))
-    def f(x):
-      return x
-
-    jaxpr = jax.make_jaxpr(jax.vjp(f, jnp.arange(1.))[1])(jnp.arange(4.))
-    e, = jaxpr.jaxpr.eqns
-    e2, = e.params['jaxpr'].eqns
-    self.assertEqual(str(e2.primitive), 'psum2')
-    self.assertEqual(e2.params['axes'], ('x',))
-
-  def test_fanin_psum_transposes_to_fanout(self):
-    mesh = jtu.create_global_mesh((4,), ('x',))
-
-    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P())
-    def f(x):
-      return jax.lax.psum(x, 'x')
-
-    jaxpr = jax.make_jaxpr(jax.vjp(f, jnp.arange(4.))[1])(jnp.array([1.]))
-    e, = jaxpr.jaxpr.eqns
-    e1, = e.params['jaxpr'].eqns
-    self.assertEqual(str(e1.primitive), 'pbroadcast')
-
-  def test_psum_with_implicit_fanout_self_transposes(self):
-    mesh = jtu.create_global_mesh((4,), ('x',))
-
-    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
-    def f(x):
-      return jax.lax.psum(x, 'x')
-
-    jaxpr = jax.make_jaxpr(jax.vjp(f, jnp.arange(4.))[1])(jnp.arange(4.))
-    e, = jaxpr.jaxpr.eqns
-    e1, e2 = e.params['jaxpr'].eqns
-    self.assertEqual(str(e1.primitive), 'psum2')
-    self.assertEqual(str(e2.primitive), 'pbroadcast')
-
-  def test_rewrite_binops(self):
-    mesh = jtu.create_global_mesh((4,), ('x',))
-
-    @partial(shard_map, mesh=mesh, in_specs=(P(), P('x')), out_specs=P('x'))
-    def f(x, y):
-      return x * y
-
-    jaxpr = jax.make_jaxpr(f)(jnp.arange(1.), jnp.arange(4.))
-    e, = jaxpr.jaxpr.eqns
-    e = e.params['jaxpr'].eqns[0]
-    self.assertEqual(e.primitive.name, 'pbroadcast')
-    self.assertEqual(e.params['axes'], ('x',))
-
-  def test_rewrite_scan(self):
-    mesh = jtu.create_global_mesh((4,), ('x',))
-
-    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
-    def f(x):
-      x, _ = jax.lax.scan(lambda x, _: (jax.lax.psum(x, 'x'), None), x, None,
-                          length=2)
-      return x
-
-    jaxpr = jax.make_jaxpr(f)(jnp.arange(4.))
-    e, = jaxpr.jaxpr.eqns
-    e, = e.params['jaxpr'].eqns
-    e1, e2 = e.params['jaxpr'].eqns
-    self.assertEqual(e1.primitive.name, 'psum2')
-    self.assertEqual(e2.primitive.name, 'pbroadcast')
 
 
 class FunSpec(NamedTuple):

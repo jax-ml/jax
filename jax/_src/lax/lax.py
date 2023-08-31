@@ -4966,17 +4966,6 @@ def _empty_lower(ctx, *, dtype):
 mlir.register_lowering(empty_p, _empty_lower)
 
 
-tie_p = core.Primitive('tie')
-tie_p.def_impl(lambda x, y: y)
-tie_p.def_abstract_eval(lambda x, y: y)
-mlir.register_lowering(tie_p, lambda ctx, x, y: [y])
-ad.primitive_jvps[tie_p] = \
-    lambda primals, tangents: (tie_p.bind(*primals), tangents[-1])
-ad.primitive_transposes[tie_p] = lambda ct, x, _: [None, ct]
-pe.def_trivial_padding(tie_p)
-batching.defvectorized(tie_p)
-
-
 class BIntRules:
   @staticmethod
   def physical_element_aval(dtype) -> core.ShapedArray:

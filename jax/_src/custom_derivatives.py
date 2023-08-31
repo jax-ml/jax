@@ -853,7 +853,6 @@ def _custom_vjp_call_jaxpr_jvp(
   tangents_out = ad.custom_lin_p.bind(
       *res, *args_dot, num_res=res_tree.num_leaves, bwd=bwd,
       out_avals=avals_out, symbolic_zeros=symbolic_zeros)
-  tangents_out = map(lax.tie_p.bind, primals_out, tangents_out)
   tangents_out = map(ad.recast_to_float0, primals_out, tangents_out)
   return primals_out, tangents_out
 ad.primitive_jvps[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_jvp

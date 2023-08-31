@@ -403,7 +403,6 @@ class JVPTrace(Trace):
     tangents_out = custom_lin_p.bind(
         *res, *tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
         out_avals=avals_out, symbolic_zeros=symbolic_zeros)
-    tangents_out = map(jax._src.lax.lax.tie_p.bind, primals_out, tangents_out)
     tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
 
