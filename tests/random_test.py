@@ -1085,7 +1085,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     lam=[0.5, 3, 9, 11, 50, 500],
-    dtype=[np.int16, np.int32, np.int64],
+    dtype=jtu.dtypes.supported([np.int16, np.int32, np.int64]),
   )
   def testPoisson(self, lam, dtype):
     key = self.make_key(0)
@@ -1662,8 +1662,8 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.invgauss(mu=mean).cdf)
 
   @jtu.sample_product(
-      p= [0.2, 0.3, 0.4, 0.5 ,0.6],
-      dtype= [np.int16, np.int32, np.int64])
+      p=[0.2, 0.3, 0.4, 0.5 ,0.6],
+      dtype=jtu.dtypes.supported([np.int16, np.int32, np.int64]))
   def testGeometric(self, p, dtype):
     key = self.make_key(1)
     rand = lambda key: random.geometric(key, p, shape=(10000, ), dtype=dtype)
