@@ -51,6 +51,12 @@ config.define_bool_state(
     help="Allow hlo dialects in Mosaic",
 )
 
+config.define_bool_state(
+    name="jax_mosaic_dump_mlir",
+    default=False,
+    help="Print mlir module after each pass",
+)
+
 tpu_custom_call_p = core.Primitive("tpu_custom_call")
 tpu_custom_call_p.def_impl(
     functools.partial(xla.apply_primitive, tpu_custom_call_p))
@@ -207,6 +213,7 @@ def _lower_tpu_kernel(
       module = ir.Module.parse(
           module.operation.get_asm(binary=True, enable_debug_info=True)
       )
+      dump_mlir(module, "initial module")
 
       if config.jax_mosaic_allow_hlo:
         # Run hlo dialect conversion: hlo -> linalg -> vector.
@@ -218,8 +225,10 @@ def _lower_tpu_kernel(
         PassManager.parse(f"builtin.module({','.join(pipeline)})").run(
             module.operation
         )
+        dump_mlir(module, "after hlo conversion module")
 
       infer_memref_layout.infer_module(module, hardware_generation)
+      dump_mlir(module, "after infer memref layout pass")
 
       pipeline = [
           "canonicalize",
@@ -229,11 +238,14 @@ def _lower_tpu_kernel(
       pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
       pipeline.run(module.operation)
       module.operation.verify()
+      dump_mlir(module, "after infer vector layout pass")
 
       apply_vector_layout.apply(module, hardware_generation)
       module.operation.verify()
+      dump_mlir(module, "after apply vector layout pass")
 
       PassManager.parse("builtin.module(canonicalize)").run(module.operation)
+      dump_mlir(module, "after final canonicalize pass")
 
       for f in module.body:
         if "vector_constants" not in f.attributes:
@@ -349,3 +361,10 @@ def _lowered_as_tpu_kernel(
     )
     return result[0] if unpack else result
   return jax.jit(apply_kernel, static_argnames=["collective_id"])
+
+
+def dump_mlir(module: ir.Module, msg: str):
+  """A helper function to print mlir module with a message."""
+  if config.jax_mosaic_dump_mlir:
+    print(f"[jax_mosaic_dump_mlir] {msg}")
+    print(module)
