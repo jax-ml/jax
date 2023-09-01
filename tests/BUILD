@@ -961,7 +961,7 @@ jax_test(
 )
 
 jax_test(
-    name = "host_callback_test",
+    name = "host_callback_outfeed_test",
     srcs = ["host_callback_test.py"],
     args = ["--jax_host_callback_outfeed=true"],
     shard_count = {
@@ -975,13 +975,9 @@ jax_test(
 )
 
 jax_test(
-    name = "host_callback_custom_call_test",
+    name = "host_callback_test",
     srcs = ["host_callback_test.py"],
     args = ["--jax_host_callback_outfeed=false"],
-    disable_backends = [
-        "gpu",
-        "tpu",  # On TPU we always use outfeed
-    ],
     main = "host_callback_test.py",
     shard_count = {
         "gpu": 5,
