@@ -206,6 +206,19 @@ def TPU_RepeatOp : TPU_Op<"repeat", [Pure]> {
   let assemblyFormat = [{ $source `,` $dimension `x` $times attr-dict `:` type($source) `->` type($output) }];
 }
 
+def TPU_BroadcastInSublanesOp : TPU_Op<"broadcast_in_sublanes", [Pure]> {
+  let arguments = (ins
+    AnyVector:$source,  // All sublanes should be equal.
+    I32Attr:$lane  // Coordinates of the first element to take.
+  );
+  // Output shape should be the same, except for position dim which contains
+  // the newly inserted dimension.
+  let results = (outs AnyVector:$output);
+  let assemblyFormat = [{
+    $source `,` $lane attr-dict `:` type($source) `->` type($output)
+  }];
+}
+
 // Integer unpacks are always signed at the moment.
 def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
   let arguments = (ins

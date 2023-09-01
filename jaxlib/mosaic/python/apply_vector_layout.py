@@ -2275,11 +2275,63 @@ def _vector_shape_cast_rule(ctx: RewriteContext, op: vector.ShapeCastOp,  # pyli
       and src_ty.shape[-2] % layout_in.tiling[-2] == 0
   ):
     no_op = True
-  if not no_op:
+
+  src_vregs = disassemble(layout_in, op.source)
+  if no_op:
+    dst_vregs = src_vregs.reshape(layout_out.tile_array_shape(dst_ty.shape))
+  elif (
+      dst_ty.shape[-2:] == [src_ty.shape[-1], 1]
+      and layout_in.bitwidth == 32
+      and layout_in.implicit_dim in {None, ImplicitDim.SECOND_MINOR}
+      and layout_out.implicit_dim is None
+      and layout_in.has_native_tiling
+      and layout_in.tiling == layout_out.tiling
+      and (layout_in.offsets[0] or 0) == 0
+      and layout_in.offsets[1] == 0
+      and layout_out.offsets[0] == 0
+      # layout_out.offsets[1] can be anything, as we produce a replicated result
+  ):
+    # First, insert the new singleton lane dimension.
+    dst_vregs = np.empty(
+        layout_out.tile_array_shape((*src_ty.shape, 1)), dtype=object
+    )
+    if layout_in.implicit_dim == ImplicitDim.SECOND_MINOR:
+      # Make the sublane dimension explicit.
+      src_vregs = src_vregs.reshape(
+          *src_vregs.shape[:-1], 1, src_vregs.shape[-1]
+      )
+      dst_vregs = dst_vregs.reshape(
+          *dst_vregs.shape[:-2], 1, *dst_vregs.shape[-2:]
+      )
+    assert dst_vregs.shape[-1] == 1  # We're inserting a singleton dimension
+    for *batch_idx, row_idx, col_idx in np.ndindex(dst_vregs.shape[:-1]):
+      sublanes_in_lane, rem = divmod(TARGET_SHAPE.lanes, TARGET_SHAPE.sublanes)
+      assert rem == 0
+      if layout_in.offsets[0] is REPLICATED and row_idx != 0:
+        continue  # All vregs along that dimension are the same.
+      col_vreg = src_vregs[(
+          *batch_idx,
+          row_idx // TARGET_SHAPE.sublanes,
+          col_idx // sublanes_in_lane,
+      )]
+      # BroadcastInSublanesOp requires the sublanes to be replicated.
+      if layout_in.offsets[0] is not REPLICATED:
+        sublane = row_idx % TARGET_SHAPE.sublanes
+        indices = ir.DenseI32ArrayAttr.get([sublane] * TARGET_SHAPE.sublanes)
+        col_vreg = tpu.GatherOp(col_vreg.type, col_vreg, indices, 0).result
+      dst_vregs[(*batch_idx, row_idx, col_idx, 0)] = tpu.BroadcastInSublanesOp(
+          col_vreg.type,
+          col_vreg,
+          (col_idx % sublanes_in_lane) * TARGET_SHAPE.sublanes,
+      )
+    if layout_in.offsets[0] is REPLICATED:
+      # Broadcast the sublane vregs.
+      dst_vregs[..., 1:, :, :] = dst_vregs[..., 0:1, :, :]
+    # Now, permute the major axes of the vreg array.
+    dst_vregs = dst_vregs.reshape(layout_out.tile_array_shape(dst_ty.shape))
+  else:
     raise NotImplementedError(f"Unsupported vector.shape_cast: {op}")
-  tiles = disassemble(layout_in, op.source).reshape(
-      layout_out.tile_array_shape(dst_ty.shape))
-  return ctx.replace(op, assemble(dst_ty, layout_out, tiles))
+  return ctx.replace(op, assemble(dst_ty, layout_out, dst_vregs))
 
 
 @_register_rule("vector.contract")
