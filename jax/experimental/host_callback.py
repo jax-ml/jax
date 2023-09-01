@@ -503,7 +503,6 @@ import math
 import threading
 import traceback
 from typing import Any, Callable, Optional, cast
-import warnings
 
 from jax._src import api
 from jax._src import core
@@ -1117,8 +1116,11 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
         device_index=device_index,
         **params)
   else:
-    if device_index != 0:
-      raise ValueError("The device_index feature works only when using outfeed.")
+    # TODO(necula): It seems that on CPU, with custom call, the device_index
+    # does not work, and the callback is always run on device_index=0
+    if (device_index != 0 and ctx.module_context.platform == "cpu"):
+      raise ValueError(
+          "The device_index feature on CPU works only when using outfeed.")
   # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
   assert has_token
   current_token = args[-2]
