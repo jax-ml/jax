@@ -3098,13 +3098,13 @@ def dot(a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None) -> Array
 @partial(jit, static_argnames=('precision',), inline=True)
 def matmul(a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None) -> Array:  # pylint: disable=missing-docstring
   util.check_arraylike("matmul", a, b)
+  a, b = asarray(a), asarray(b)
   for i, x in enumerate((a, b)):
     if ndim(x) < 1:
       msg = (f"matmul input operand {i} must have ndim at least 1, "
              f"but it has ndim {ndim(x)}")
       raise ValueError(msg)
-
-  a, b = util.promote_dtypes(a, b)
+  out_dtype, out_weak_type = dtypes.result_type(a, b, return_weak_type_flag=True)
 
   a_is_mat, b_is_mat = (ndim(a) > 1), (ndim(b) > 1)
   a_batch_dims: tuple[int | None, ...] = shape(a)[:-2] if a_is_mat else ()
@@ -3153,8 +3153,9 @@ def matmul(a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None) -> Ar
   b = lax.squeeze(b, tuple(b_squeeze))
   out = lax.dot_general(
     a, b, (((ndim(a) - 1,), (ndim(b) - 1 - b_is_mat,)), (a_batch, b_batch)),
-    precision=precision)
-  return lax.transpose(out, perm)
+    precision=precision, preferred_element_type=out_dtype)
+  result = lax.transpose(out, perm)
+  return lax_internal._convert_element_type(result, out_dtype, out_weak_type)
 
 
 @util._wraps(np.vdot, lax_description=_PRECISION_DOC)
@@ -3173,10 +3174,11 @@ def tensordot(a: ArrayLike, b: ArrayLike,
               axes: int | Sequence[int] | Sequence[Sequence[int]] = 2,
               *, precision: PrecisionLike = None) -> Array:
   util.check_arraylike("tensordot", a, b)
+  a, b = asarray(a), asarray(b)
   a_ndim = ndim(a)
   b_ndim = ndim(b)
 
-  a, b = util.promote_dtypes(a, b)
+  out_dtype, out_weak_type = dtypes.result_type(a, b, return_weak_type_flag=True)
   if type(axes) is int:
     if axes > min(a_ndim, b_ndim):
       msg = "Number of tensordot axes (axes {}) exceeds input ranks ({} and {})"
@@ -3201,8 +3203,9 @@ def tensordot(a: ArrayLike, b: ArrayLike,
     msg = ("tensordot axes argument must be an int, a pair of ints, or a pair "
            "of lists/tuples of ints.")
     raise TypeError(msg)
-  return lax.dot_general(a, b, (contracting_dims, ((), ())),
-                         precision=precision)
+  result = lax.dot_general(a, b, (contracting_dims, ((), ())),
+                           precision=precision, preferred_element_type=out_dtype)
+  return lax_internal._convert_element_type(result, out_dtype, out_weak_type)
 
 
 _EINSUM_DOC = _PRECISION_DOC + """\
