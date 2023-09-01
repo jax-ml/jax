@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import hashlib
 import io
 import logging
@@ -21,9 +22,10 @@ import sys
 import numpy as np
 
 from jax._src.config import config
-from jax._src.lib import xla_client
-from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import version as jaxlib_version
+from jax._src.lib import version_str as jaxlib_version_str
+from jax._src.lib import xla_extension_version as xla_extension_version
+from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager as pm
 
@@ -82,25 +84,29 @@ def get(module: ir.Module,
   Typical return value example:
    '14ac577cdb2ef6d986078b4054cc9893a9a14a16dbb0d8f37b89167c1f1aacdf'
   """
-  entries = []
+  entries = [
+      ("computation", lambda hash_obj: _hash_computation(hash_obj, module)),
+      ("devices", lambda hash_obj: _hash_devices(hash_obj, devices)),
+      ("jax_lib version",
+       lambda hash_obj: hash_obj.update(
+           bytes(jaxlib_version_str.encode("utf-8")))),
+      ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
+      ("XLA flags",
+       lambda hash_obj: _hash_xla_flags(hash_obj, get_flag_prefixes())),
+      ("compression",
+       lambda hash_obj: _hash_string(hash_obj, compression_algorithm)),
+  ]
   if produce_original_cache_key:
-    entries = [
-        ("computation", lambda hash_obj: _hash_computation(hash_obj, module)),
-        ("devices", lambda hash_obj: _hash_devices(hash_obj, devices)),
+    entries.append(
         ("compile_options",
          lambda hash_obj: _hash_compile_options(hash_obj, compile_options)),
-        ("jax_lib version",
-         lambda hash_obj: hash_obj.update(
-             bytes(jaxlib_version_str.encode("utf-8")))),
-        ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
-        ("XLA flags",
-         lambda hash_obj: _hash_xla_flags(hash_obj, get_flag_prefixes())),
-        ("compression",
-         lambda hash_obj: _hash_string(hash_obj, compression_algorithm)),
-    ]
+    )
   else:
-    assert False, ("cache_key.get: new cache-key generation algorithm "
-                   "not supported as yet.")
+    entries.append(
+        ("compile_options",
+         lambda hash_obj: _hash_serialized_compile_options(
+             hash_obj, compile_options)),
+    )
 
   hash_obj = hashlib.sha256()
   for name, hashfn in entries:
@@ -159,6 +165,42 @@ def _hash_computation(hash_obj, module):
 def _hash_devices(hash_obj, devices: np.ndarray) -> None:
   for device in devices.flat:
     _hash_string(hash_obj, device.device_kind)
+
+
+def _hash_serialized_compile_options(hash_obj, compile_options_obj):
+  assert (
+      xla_extension_version >= 193
+  ), "new cache key generation requires jaxlib 0.4.15 or newer"
+
+  # Do not mess with the original CompileOptions object since it is passed to
+  # the compiler. Create a deep copy for the purpose of cache key generation.
+  compile_options_copy = copy.deepcopy(compile_options_obj)
+
+  # Certain debug options do not affect the compile result and thus, should not
+  # be part of the cache key as their inclusion will result in unnecessary cache
+  # misses. Clear them here by setting bool values to False, ints to 0, and
+  # strings to empty. The exact values used to clear are not relevant as long
+  # as the same values are used everytime for each field.
+  debug_options = compile_options_copy.executable_build_options.debug_options
+  debug_options.xla_force_host_platform_device_count = 0
+  debug_options.xla_dump_to = ""
+  debug_options.xla_dump_hlo_module_re = ""
+  debug_options.xla_dump_hlo_pass_re = ""
+  debug_options.xla_dump_hlo_as_text = False
+  debug_options.xla_dump_hlo_as_proto = False
+  debug_options.xla_dump_hlo_as_dot = False
+  debug_options.xla_dump_hlo_as_url = False
+  debug_options.xla_dump_hlo_as_html = False
+  debug_options.xla_dump_fusion_visualization = False
+  debug_options.xla_dump_hlo_snapshots = False
+  debug_options.xla_dump_max_hlo_modules = False
+  debug_options.xla_dump_module_metadata = False
+  debug_options.xla_dump_compress_protos = False
+  debug_options.xla_dump_hlo_as_long_text = False
+  debug_options.xla_dump_disable_metadata = False
+  debug_options.xla_dump_hlo_pipeline_re = ""
+
+  return hash_obj.update(compile_options_copy.SerializeAsString())
 
 
 def _hash_compile_options(hash_obj, compile_options_obj):
