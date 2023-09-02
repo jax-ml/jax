@@ -52,8 +52,6 @@ zip = safe_zip
 
 logger = logging.getLogger(__name__)
 
-allowed_effects: effects.EffectTypeSet = effects.remat_allowed_effects
-
 ### Policies
 
 def everything_saveable(*_, **__) -> bool:
@@ -483,11 +481,11 @@ def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   return out_primals, out_tangents
 ad.primitive_jvps[remat_p] = remat_jvp
 
-allowed_effects.add_type(lax_internal.InOutFeedEffect)
+effects.remat_allowed_effects.add_type(lax_internal.InOutFeedEffect)
 
 def remat_partial_eval(trace, *tracers, jaxpr, **params):
   assert not jaxpr.constvars
-  disallowed_effects = allowed_effects.filter_not_in(jaxpr.effects)
+  disallowed_effects = effects.remat_allowed_effects.filter_not_in(jaxpr.effects)
   if disallowed_effects:
     raise NotImplementedError(
         'Effects not supported in partial-eval of `checkpoint`/`remat`: '

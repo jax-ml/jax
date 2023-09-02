@@ -14,6 +14,7 @@
 
 import functools
 import textwrap
+import time
 import unittest
 
 from absl.testing import absltest
@@ -966,24 +967,76 @@ class IOCallbackTest(jtu.JaxTestCase):
         "Effects not supported in partial-eval of `checkpoint`"):
       f(2., 3.)
 
-  def test_can_use_io_callback_in_pjit(self):
-    _mut = 0
+  @parameterized.named_parameters(
+    dict(testcase_name=f"ordered_{ordered}",
+         ordered=ordered)
+    for ordered in [True, False]
+  )
+  def test_can_use_io_callback_in_pjit(self, *, ordered: bool = True):
+    _collected = []
     def _cb(x):
-      nonlocal _mut
-      _mut = x.sum()
+      nonlocal _collected
+      _collected.append(x.sum())
 
     def f(x):
-      io_callback(_cb, None, x)
+      io_callback(_cb, None, x, ordered=ordered)
+      io_callback(_cb, None, x + 1, ordered=ordered)
       return x
 
-    mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(np.array(devices), ['dev'])
     spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
     out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
     f = pjit.pjit(f, in_shardings=spec, out_shardings=out_spec)
+    expected = []
     with mesh:
-      f(jnp.arange(mesh.size))
-      jax.effects_barrier()
-    self.assertEqual(_mut, jnp.arange(mesh.size).sum())
+      x = jnp.arange(mesh.size)
+      f(x)
+      expected.extend([x.sum(), (x + 1).sum()])
+      f(x + 5)
+      expected.extend([(x + 5).sum(), (x + 6).sum()])
+
+    jax.effects_barrier()
+    if ordered:
+      self.assertAllClose(_collected, expected)
+    else:
+      self.assertEqual(len(_collected), len(expected))
+      for v in expected:
+        self.assertIn(v, _collected)
+
+  def test_sequence_pjit_io_callback_ordered(self):
+    # A sequence of calls to pjit(io_callback(ordered=True)) with each
+    # call on a different device.
+    _collected = []
+    def _cb(x):
+      nonlocal _collected
+      # Sleep different amounts of time, to test the ordering.
+      time.sleep([0.02, 0.04][len(_collected) % 2])
+      _collected.append(x)
+
+    def f_base(x):
+      io_callback(_cb, None, x, ordered=True)
+      io_callback(_cb, None, x + 1, ordered=True)
+
+    nr_runs = 8
+    devices = jax.devices()[:2]
+    expected = []
+    for i in range(nr_runs):
+      devices_for_run = [devices[i % len(devices)]]
+      mesh = jax.sharding.Mesh(np.array(devices_for_run), ['dev'])
+      spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
+      out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+      f = pjit.pjit(f_base, in_shardings=spec, out_shardings=out_spec)
+      with mesh:
+        x = jax.device_put(np.arange(mesh.size) + 10 * i, spec)
+        f(x)
+        expected.extend([x, x + 1])
+        f(x + 5)
+        expected.extend([x + 5, x + 6])
+        expected.extend([])
+
+    jax.effects_barrier()
+    self.assertEqual(_collected, expected)
 
   def test_can_use_io_callback_in_pjit_with_sharding(self):
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])

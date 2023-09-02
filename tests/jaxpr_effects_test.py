@@ -559,11 +559,11 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     def f(x):
       effect_p.bind(effect=foo_effect)
       return x + 1.
-    self.assertNotIn(foo_effect, dispatch.runtime_tokens.tokens)
+    self.assertNotIn(foo_effect, dispatch.runtime_tokens.current_tokens)
     f(2.)
-    prev_token = dispatch.runtime_tokens.tokens[foo_effect]
+    prev_token = dispatch.runtime_tokens.current_tokens[foo_effect]
     f(2.)
-    curr_token = dispatch.runtime_tokens.tokens[foo_effect]
+    curr_token = dispatch.runtime_tokens.current_tokens[foo_effect]
     self.assertIsNot(prev_token, curr_token)
 
   def test_can_lower_multiple_effects(self):
@@ -576,25 +576,23 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     def g(x):
       effect_p.bind(effect=foo_effect)
       return x + 1.
-    self.assertNotIn(foo_effect, dispatch.runtime_tokens.tokens)
-    self.assertNotIn(foo2_effect, dispatch.runtime_tokens.tokens)
-    f(2.).block_until_ready()
-    foo_token = dispatch.runtime_tokens.tokens[foo_effect][0]
-    foo2_token = dispatch.runtime_tokens.tokens[foo2_effect][0]
+    self.assertNotIn(foo_effect, dispatch.runtime_tokens.current_tokens)
+    self.assertNotIn(foo2_effect, dispatch.runtime_tokens.current_tokens)
     f(2.)
-    self.assertIsNot(foo_token, dispatch.runtime_tokens.tokens[foo_effect][0])
-    self.assertIsNot(foo2_token, dispatch.runtime_tokens.tokens[foo2_effect][0])
-    foo_token = dispatch.runtime_tokens.tokens[foo_effect][0]
-    foo2_token = dispatch.runtime_tokens.tokens[foo2_effect][0]
+    foo_token = dispatch.runtime_tokens.current_tokens[foo_effect]
+    foo2_token = dispatch.runtime_tokens.current_tokens[foo2_effect]
+    f(2.)
+    self.assertIsNot(foo_token, dispatch.runtime_tokens.current_tokens[foo_effect])
+    self.assertIsNot(foo2_token, dispatch.runtime_tokens.current_tokens[foo2_effect])
+    foo_token = dispatch.runtime_tokens.current_tokens[foo_effect]
+    foo2_token = dispatch.runtime_tokens.current_tokens[foo2_effect]
     g(2.)
-    self.assertIsNot(foo_token, dispatch.runtime_tokens.tokens[foo_effect][0])
-    self.assertIs(foo2_token, dispatch.runtime_tokens.tokens[foo2_effect][0])
+    self.assertIsNot(foo_token, dispatch.runtime_tokens.current_tokens[foo_effect])
+    self.assertIs(foo2_token, dispatch.runtime_tokens.current_tokens[foo2_effect])
 
 class EffectOrderingTest(jtu.JaxTestCase):
 
   def test_can_execute_python_callback(self):
-    # TODO(sharadmv): enable this test on GPU and TPU when backends are
-    # supported
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
 
@@ -614,10 +612,7 @@ class EffectOrderingTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertListEqual(log, [2., 3.])
 
-  @jtu.skip_on_devices("tpu")
   def test_ordered_effect_remains_ordered_across_multiple_devices(self):
-    # TODO(sharadmv): enable this test on GPU and TPU when backends are
-    # supported
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
 
@@ -651,13 +646,12 @@ class EffectOrderingTest(jtu.JaxTestCase):
     expected_log = [x_, y_, x_, y_, x_, y_]
     self.assertListEqual(log, expected_log)
 
-  @jtu.skip_on_devices("tpu")
   def test_different_threads_get_different_tokens(self):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
     tokens = []
     def _noop(_):
-      tokens.append(dispatch.runtime_tokens.tokens[log_effect][0])
+      tokens.append(dispatch.runtime_tokens.current_tokens[log_effect])
       return ()
 
     @functools.partial(jax.jit, device=jax.devices()[0])
