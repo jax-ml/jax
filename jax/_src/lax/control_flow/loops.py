@@ -97,15 +97,15 @@ def _promote_weak_typed_inputs(in_vals, in_avals, out_avals):
 
 Carry = TypeVar('Carry')
 X = TypeVar('X')
-Y = TypeVar('Y')
+Any = TypeVar('Any')
 
 @api_boundary
-def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
+def scan(f: Callable[[Carry, X], Tuple[Carry, Any]],
          init: Carry,
          xs: X,
          length: Optional[int] = None,
          reverse: bool = False,
-         unroll: int = 1) -> tuple[Carry, Y]:
+         unroll: int = 1) -> Tuple[Carry, Any]:
   """Scan a function over leading array axes while carrying along state.
 
   The `Haskell-like type signature`_ in brief is
