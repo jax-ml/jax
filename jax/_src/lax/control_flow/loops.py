@@ -55,6 +55,7 @@ from jax._src.traceback_util import api_boundary
 from jax._src.util import (partition_list, safe_map, safe_zip, split_list,
                            unzip2, weakref_lru_cache, merge_lists)
 import numpy as np
+from typing import Any, Callable, Optional, Tuple
 
 from jax._src.lax.control_flow.common import (
     _abstractify, _avals_short, _check_tree_and_avals, _initial_style_jaxpr,
