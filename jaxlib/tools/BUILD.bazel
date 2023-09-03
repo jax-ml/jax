@@ -30,7 +30,6 @@ py_binary(
         "//jaxlib",
         "//jaxlib:README.md",
         "//jaxlib:setup.py",
-        "//jaxlib:setup.cfg",
         "@xla//xla/python:xla_client",
     ] + if_windows([
         "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi.dll",
