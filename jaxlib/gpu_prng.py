@@ -87,12 +87,12 @@ def _threefry2x32_lowering(prng, platform, keys, data,
 
   return custom_call(
       f"{platform}_threefry2x32",
-      [typ, typ],
-      operands,
+      result_types=[typ, typ],
+      operands=operands,
       backend_config=opaque,
       operand_layouts=operand_layouts,
       result_layouts=[layout] * 2,
-      result_shapes=result_shapes)
+      result_shapes=result_shapes).results
 
 
 cuda_threefry2x32 = partial(_threefry2x32_lowering, _cuda_prng, "cu")

@@ -85,8 +85,8 @@ def dynamic_ducc_fft_hlo(
   layout = tuple(range(ndims - 1, -1, -1))
   return custom_call(
       "dynamic_ducc_fft",
-      [result_type],
-      [descriptor, input, input_shape, strides_in, strides_out, scale],
+      result_types=[result_type],
+      operands=[descriptor, input, input_shape, strides_in, strides_out, scale],
       operand_layouts=[[0], layout, [0], [0], [0], [0]],
       result_layouts=[layout],
-      result_shapes=[result_shape])
+      result_shapes=[result_shape]).results

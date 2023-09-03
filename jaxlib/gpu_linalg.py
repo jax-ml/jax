@@ -59,11 +59,11 @@ def _lu_pivots_to_permutation_hlo(platform, gpu_linalg, pivots, *, permutation_s
   permutations_type = ir.RankedTensorType.get(permutations_dims, i32_type)
   return custom_call(
       f"{platform}_lu_pivots_to_permutation",
-      [permutations_type],
-      [pivots],
+      result_types=[permutations_type],
+      operands=[pivots],
       backend_config=opaque,
       operand_layouts=[pivots_layout],
-      result_layouts=[permutations_layout])
+      result_layouts=[permutations_layout]).results
 
 cuda_lu_pivots_to_permutation = partial(_lu_pivots_to_permutation_hlo, "cu",
                                         _cuda_linalg)
