@@ -315,7 +315,7 @@ def is_zero(a):
 def benchmark(causal=True):
     configs = [
         {'name': name, 'timings': [0.0 for _ in range(len(SEQ_LENS))], 'tokens': tokens } 
-        for name in ["pallas", "triton", "flash_attn", "jax"] #, "triton", "flash_attn"] #, "triton", "flash_attn"]#["jax", "pallas", "triton", "flash_attn"] 
+        for name in ["pallas", "triton", "flash_attn", "jax"] 
         for tokens in [32768]
     ]
 
