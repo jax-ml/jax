@@ -18,7 +18,7 @@
 import os
 import datetime
 
-_version = "0.4.15"
+_version = "0.4.16"
 
 if os.environ.get('JAX_RELEASE') or os.environ.get('JAXLIB_RELEASE'):
   __version__ = _version

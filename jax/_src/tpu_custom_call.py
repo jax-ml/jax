@@ -38,6 +38,12 @@ from jaxlib.mlir.dialects import stablehlo
 from jaxlib.mlir.passmanager import PassManager
 import numpy as np
 
+config.define_bool_state(
+    name="use_cpp_apply_vector_layout",
+    default=False,
+    help="Use C++ implementation of apply vector layout pass (still a WIP)",
+)
+
 # TODO(sharadmv): remove when minimum jaxlib version is bumped to >= 0.4.14.
 if tpu_mosaic is None:
   raise ImportError("Cannot use Mosaic without a jaxlib >= 0.4.14.")
@@ -49,6 +55,12 @@ config.define_bool_state(
     name="jax_mosaic_allow_hlo",
     default=False,
     help="Allow hlo dialects in Mosaic",
+)
+
+config.define_bool_state(
+    name="jax_mosaic_dump_mlir",
+    default=False,
+    help="Print mlir module after each pass",
 )
 
 tpu_custom_call_p = core.Primitive("tpu_custom_call")
@@ -64,8 +76,6 @@ class CustomCallBackendConfig:
   has_communication: bool
   collective_id: int | None
   device_type: str | None
-  kernel_name: str | None
-  kernel_regeneration_metadata: bytes | None
 
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
@@ -85,14 +95,6 @@ class CustomCallBackendConfig:
     if self.collective_id is not None:
       config.write(b', "collective_id": ')
       config.write(str(self.collective_id).encode("ascii"))
-    if self.kernel_name is not None:
-      config.write(b', "kernel_name": "')
-      config.write(self.kernel_name.encode("ascii"))
-      config.write(b'"')
-    if self.kernel_regeneration_metadata is not None:
-      config.write(b', "kernel_regeneration_metadata": "')
-      config.write(base64.b64encode(self.kernel_regeneration_metadata))
-      config.write(b'"')
     config.write(b"}")
     if self.device_type is not None:
       config.write(b', "device_type": ')
@@ -121,6 +123,8 @@ def _tpu_custom_call_lowering(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,  # pylint: disable=missing-function-docstring
     config: CustomCallBackendConfig,
+    kernel_name: str | None,
+    kernel_regeneration_metadata: bytes | None,
     out_avals: Any,
 ) -> ...:
   i32_type = ir.IntegerType.get_signless(32)
@@ -161,6 +165,16 @@ def _tpu_custom_call_lowering(
       result_layouts=_avals_to_layouts(ctx.avals_out),
       output_operand_aliases=None,
   )
+
+  # Add kernel_name and kernel_regeneration_metadata as attributes to the
+  # custom call op. This is because we do not want to pollute the backend_config
+  # with this information.
+  if kernel_name is not None:
+    call.attributes["kernel_name"] = ir.StringAttr.get(kernel_name)
+  if kernel_regeneration_metadata is not None:
+    call.attributes["kernel_regeneration_metadata"] = ir.StringAttr.get(
+        base64.b64encode(kernel_regeneration_metadata)
+    )
   if multiple_results:
     results = [stablehlo.GetTupleElementOp(call, mlir.i32_attr(i)).result
                for i in range(len(out_avals))]
@@ -207,6 +221,7 @@ def _lower_tpu_kernel(
       module = ir.Module.parse(
           module.operation.get_asm(binary=True, enable_debug_info=True)
       )
+      dump_mlir(module, "initial module")
 
       if config.jax_mosaic_allow_hlo:
         # Run hlo dialect conversion: hlo -> linalg -> vector.
@@ -218,8 +233,10 @@ def _lower_tpu_kernel(
         PassManager.parse(f"builtin.module({','.join(pipeline)})").run(
             module.operation
         )
+        dump_mlir(module, "after hlo conversion module")
 
       infer_memref_layout.infer_module(module, hardware_generation)
+      dump_mlir(module, "after infer memref layout pass")
 
       pipeline = [
           "canonicalize",
@@ -229,11 +246,22 @@ def _lower_tpu_kernel(
       pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
       pipeline.run(module.operation)
       module.operation.verify()
+      dump_mlir(module, "after infer vector layout pass")
 
-      apply_vector_layout.apply(module, hardware_generation)
+      if config.use_cpp_apply_vector_layout:
+        pipeline = [
+            "func.func(tpu-apply-vector-layout)",
+        ]
+        pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
+        pipeline.run(module.operation)
+      else:
+        apply_vector_layout.apply(module, hardware_generation)
       module.operation.verify()
+      dump_mlir(module, "after apply vector layout pass")
+
 
       PassManager.parse("builtin.module(canonicalize)").run(module.operation)
+      dump_mlir(module, "after final canonicalize pass")
 
       for f in module.body:
         if "vector_constants" not in f.attributes:
@@ -281,12 +309,9 @@ def as_tpu_kernel(
   # We use jax.jit to make sure we hit the fast compilation cache.
   some_tpu = jax.devices(backend)[0]
   device_kind = some_tpu.device_kind
-  if device_kind.endswith(" pod"):
-    device_kind = device_kind[:-len(" pod")]
-  if device_kind.endswith(" lite"):
-    device_kind = device_kind[:-len(" lite")]
-  assert device_kind[:-1] == "TPU v", device_kind
-  hardware_generation = int(device_kind[-1])
+  if not device_kind.startswith("TPU v"):
+    raise ValueError(f"Unrecognized TPU device kind: {device_kind}.")
+  hardware_generation = int(device_kind[len("TPU v")])
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
@@ -341,14 +366,21 @@ def _lowered_as_tpu_kernel(
         has_communication,
         collective_id,
         device_type,
-        kernel_name,
-        kernel_regeneration_metadata,
     )
     result = tpu_custom_call_p.bind(
         *args,
         *constants,
         config=config,
+        kernel_name=kernel_name,
+        kernel_regeneration_metadata=kernel_regeneration_metadata,
         out_avals=out_avals,
     )
     return result[0] if unpack else result
   return jax.jit(apply_kernel, static_argnames=["collective_id"])
+
+
+def dump_mlir(module: ir.Module, msg: str):
+  """A helper function to print mlir module with a message."""
+  if config.jax_mosaic_dump_mlir:
+    print(f"[jax_mosaic_dump_mlir] {msg}")
+    print(module)

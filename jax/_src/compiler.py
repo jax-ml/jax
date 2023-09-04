@@ -257,11 +257,13 @@ def compile_or_get_cached(
                            host_callbacks)
 
   # TODO(b/293308239) Instrument a metric to track the adoption of the new cache
-  # key implementation once the enabling flag is added.
+  # key implementation after it is enabled.
   global _cache_used
   if not _cache_used:
     _cache_used = True
     monitoring.record_event('/jax/compilation_cache/tasks_using_original_cache')
+
+  monitoring.record_event('/jax/compilation_cache/compile_requests_use_cache')
 
   cache_key = compilation_cache.get_cache_key(
       computation, devices, compile_options, backend,
@@ -276,15 +278,20 @@ def compile_or_get_cached(
   if retrieved_executable is not None:
     assert retrieved_compile_time is not None
     logger.info("Persistent compilation cache hit for '%s'", module_name)
+
+    # TODO(b/293308239) Instrument metrics for new cache savings and cache hit
+    # rate after it is enabled.
+    if jax_config.config.jax_use_original_compilation_cache_key_generation:
+      # TODO(b/293308239) Remove metrics for the original cache after the new
+      # compilation cache key implementation is fully rolled out.
+      monitoring.record_event('/jax/compilation_cache/cache_hits_original')
+      monitoring.record_event_duration_secs(
+          "/jax/compilation_cache/original_compile_time_saved_sec",
+          retrieved_compile_time - cache_retrieval_time)
+
     monitoring.record_event_duration_secs(
         "/jax/compilation_cache/cache_retrieval_time_sec", cache_retrieval_time)
-    # TODO(b/293308239) Instrument a metric for new cache savings once the
-    # enabling flag is added.
-    # TODO(b/293308239) Remove the metric for original cache savings after the
-    # new compilation cache key implementation is fully rolled out.
-    monitoring.record_event_duration_secs(
-        "/jax/compilation_cache/original_compile_time_saved_sec",
-        retrieved_compile_time - cache_retrieval_time)
+
     return retrieved_executable
   else:
     start_time = time.monotonic()
@@ -342,6 +349,7 @@ def _cache_write(cache_key: str,
           "'%s' took at least %.2f seconds to compile (%.2fs), writing "
           "persistent cache entry", module_name, min_compile_time,
           compile_time_secs)
+      monitoring.record_event('/jax/compilation_cache/cache_misses')
 
   try:
     compilation_cache.put_executable_and_time(

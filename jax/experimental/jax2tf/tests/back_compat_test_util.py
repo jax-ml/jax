@@ -321,6 +321,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         in_shardings=(pxla.UNSPECIFIED,) * len(in_avals),
         out_shardings=(pxla.UNSPECIFIED,) * len(out_avals),
         lowering_platform=data.platform,
+        lowering_platforms=(data.platform,),
         disabled_checks=(),
         mlir_module_serialized=data.mlir_module_serialized,
         serialization_version=data.xla_call_module_version,

@@ -48,6 +48,7 @@ Then create a pull request that adds a file named
   12049: Type Annotation Roadmap for JAX <12049-type-annotations>
   14273: `shard_map` (`shmap`) for simple per-device code <14273-shard-map>
   15856: `jax.extend`, an extensions module <15856-jex>
+  17111: Efficient transposition of `shard_map` (and other maps) <17111-shmap-transpose>
 
 
 Several early JEPs were converted in hindsight from other documentation,

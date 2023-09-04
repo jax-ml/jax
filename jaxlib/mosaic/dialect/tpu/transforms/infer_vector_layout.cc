@@ -915,6 +915,16 @@ class VectorLayoutInferer {
           setLayout(op, layout, layout);
           return success();
         }
+        // Insert a singleton lane dimension. The old lane dimension ends up
+        // in the sublane dimension. Other axes can be reshaped arbitrarily.
+        if (src_ty.getElementTypeBitWidth() == kNativeBitwidth &&
+            src_shape.back() == res_shape[res_shape.size() - 2] &&
+            res_shape.back() == 1) {
+          setLayout(op, layout,
+                    VectorLayout(kNativeBitwidth, {0, std::nullopt},
+                                 default_tiling_, ImplicitDim::kNone));
+          return success();
+        }
       } else if (res_ty.getRank() == 1) {
         bool all_one = true;
         for (int64_t s : src_ty.getShape().drop_back(2)) {
@@ -949,13 +959,20 @@ class VectorLayoutInferer {
       TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == kNativeBitwidth,
                    "only 32-bit shape casts supported");
       // Insert a singleton innermost dim.
-      if (layout.implicit_dim() == ImplicitDim::kMinor &&
-          res_ty.getRank() == src_ty.getRank() + 1 &&
+      if (res_ty.getRank() == src_ty.getRank() + 1 &&
           src_ty.getDimSize(src_rank - 1) == res_ty.getDimSize(res_rank - 2) &&
           res_ty.getDimSize(res_rank - 1) == 1) {
-        setLayout(op, layout,
-                  VectorLayout(kNativeBitwidth, layout.offsets(),
-                               default_tiling_, ImplicitDim::kNone));
+        if (layout.implicit_dim() == ImplicitDim::kMinor) {
+          setLayout(op, layout,
+                    VectorLayout(kNativeBitwidth, layout.offsets(),
+                                 default_tiling_, ImplicitDim::kNone));
+        } else {
+          TPU_CHECK_OP(layout.implicit_dim() == ImplicitDim::kSecondMinor,
+                       "unexpected implicit dim value");
+          setLayout(op, layout,
+                    VectorLayout(kNativeBitwidth, {0, std::nullopt},
+                                 default_tiling_, ImplicitDim::kNone));
+        }
         return success();
       }
     }

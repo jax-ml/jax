@@ -97,7 +97,6 @@ symlink_files(
 exports_files([
     "README.md",
     "setup.py",
-    "setup.cfg",
 ])
 
 cc_library(

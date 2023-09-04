@@ -196,7 +196,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     exp_f = jax_export.export(jnp.sin, lowering_platform=platform)(a)
     if xb.canonicalize_platform(jtu.device_under_test()) == platform:
-      raise unittest.SkipTest("")
+      raise unittest.SkipTest("Uninteresting scenario")
 
     with self.assertRaisesRegex(
         ValueError, "The exported function .* was lowered for platform"):
@@ -546,6 +546,54 @@ class JaxExportTest(jtu.JaxTestCase):
       exp = jax_export.export(f_jax)(
           jax_export.poly_spec(x.shape, x.dtype, poly_spec))
       jax_export.call_exported(exp)(x)
+
+  def test_multi_platform(self):
+    if jtu.device_under_test() == "gpu":
+      # The export is not applicable to GPU
+      raise unittest.SkipTest("Not intended for running on GPU")
+    x = np.arange(5, dtype=np.float32)
+    # TODO: use a function with different behavior for different platforms
+    exp = jax_export.export(jnp.sin,
+                            lowering_platforms=('cpu', 'tpu'))(x)
+    self.assertEqual(exp.lowering_platforms, ('cpu', 'tpu'))
+    res = jax_export.call_exported(exp)(x)
+    self.assertAllClose(res, np.sin(x))
+
+  def test_multi_platform_nested(self):
+    if jtu.device_under_test() == "tpu":
+      # The outer export is not applicable to TPU
+      raise unittest.SkipTest("Not intended for running on TPU")
+    x = np.arange(5, dtype=np.float32)
+    # TODO: use a function with different behavior for different platforms
+    exp = jax_export.export(jnp.sin,
+                            lowering_platforms=('cpu', 'tpu', 'cuda'))(x)
+    self.assertEqual(exp.lowering_platforms, ('cpu', 'tpu', 'cuda'))
+
+    # Now serialize the call to the exported using a different sequence of
+    # lowering platforms, but included in the lowering platforms for the
+    # nested exported.
+    # TODO: improve this test once we implement true multi-platform lowering
+    exp2 = jax_export.export(jax_export.call_exported(exp),
+                             lowering_platforms=('cpu', 'cuda'))(x)
+    res2 = jax_export.call_exported(exp2)(x)
+    self.assertAllClose(res2, np.sin(x))
+
+  def test_multi_platform_and_poly(self):
+    if jtu.device_under_test() == "gpu":
+      # The export is not applicable to GPU
+      raise unittest.SkipTest("Not intended for running on GPU")
+    # TODO: use a function with different behavior for different platforms
+    exp = jax_export.export(lambda x: jnp.reshape(jnp.sin(x), (-1,)),
+                            lowering_platforms=('cpu', 'tpu'))(
+        jax_export.poly_spec((5, 6), np.float32, "b1, b2")
+    )
+    x = np.arange(12, dtype=np.float32).reshape((3, 4))
+    res = jax_export.call_exported(exp)(x)
+    self.assertAllClose(res, np.sin(x).reshape((-1,)))
+    # Now serialize the call to the exported
+    exp2 = jax_export.export(jax_export.call_exported(exp))(x)
+    res2 = jax_export.call_exported(exp2)(x)
+    self.assertAllClose(res2, np.sin(x).reshape((-1,)))
 
 
 if __name__ == "__main__":

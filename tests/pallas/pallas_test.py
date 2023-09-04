@@ -24,8 +24,8 @@ from absl.testing import parameterized
 
 import jax
 from jax import lax
-from jax import linear_util as lu
 from jax import random
+from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import state
 from jax._src.lax.control_flow.for_loop import for_loop

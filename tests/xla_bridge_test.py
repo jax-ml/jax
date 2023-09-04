@@ -28,6 +28,7 @@ from jax._src.config import config
 from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
+
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 

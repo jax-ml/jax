@@ -181,7 +181,7 @@ def curry(f):
   >>> curry(f)(2, 3, 4, 5)()
   26
   """
-  return partial(partial, f)
+  return wraps(f)(partial(partial, f))
 
 def toposort(end_nodes):
   if not end_nodes: return []
@@ -588,7 +588,7 @@ else:
 
 try:
   # numpy 1.25.0 or newer
-  NumpyComplexWarning = np.exceptions.ComplexWarning
+  NumpyComplexWarning: type[Warning] = np.exceptions.ComplexWarning
 except AttributeError:
   # legacy numpy
   NumpyComplexWarning = np.ComplexWarning

@@ -12,28 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Sequence
 import functools
 import textwrap
-from typing import Any, Callable
 import unittest
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
+from jax import config
 from jax import lax
-from jax import tree_util
 from jax._src import core
-from jax._src import debugging
 from jax._src import dispatch
-from jax._src import effects
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax import config
 from jax.experimental import maps
 from jax.experimental import pjit
-from jax.interpreters import mlir
 from jax.experimental.maps import xmap
 from jax.experimental.shard_map import shard_map
 from jax.experimental import io_callback
@@ -41,13 +36,11 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 import numpy as np
 
-
 config.parse_flags_with_absl()
 
 
 def _format_multiline(text):
   return textwrap.dedent(text).lstrip()
-
 
 prev_xla_flags = None
 
@@ -62,70 +55,19 @@ def setUpModule():
 def tearDownModule():
   prev_xla_flags()
 
-
-callback_p = core.Primitive("callback")
-callback_p.multiple_results = True
-
 map, unsafe_map = util.safe_map, map
 
-
-@callback_p.def_impl
-def callback_impl(*args, callback: Callable[..., Any], result_avals,
-                  effect: debugging.DebugEffect):
-  del result_avals, effect
-  return callback(*args)
-
-
-@callback_p.def_effectful_abstract_eval
-def callback_abstract_eval(*flat_avals, callback: Callable[..., Any],
-                           effect: debugging.DebugEffect,
-                           result_avals: Sequence[core.ShapedArray]):
-  del flat_avals, callback
-  return result_avals, {effect}
-
-
-def callback(f, result_shape, *args, ordered: bool = False, **kwargs):
-  flat_result_shapes, out_tree = tree_util.tree_flatten(result_shape)
-  flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
-  flat_result_avals = [
-      core.ShapedArray(s.shape, s.dtype) for s in flat_result_shapes
-  ]
-  effect = (
-      debugging.ordered_debug_effect if ordered else debugging.debug_effect)
-  flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
-  def _flat_callback(*flat_args):
-    args, kwargs = tree_util.tree_unflatten(in_tree, flat_args)
-    return tree_util.tree_leaves(f(*args, **kwargs))
-  out_flat = callback_p.bind(
-      *flat_args,
-      callback=_flat_callback,
-      effect=effect,
-      result_avals=flat_result_avals)
-  return tree_util.tree_unflatten(out_tree, out_flat)
-
-
-def callback_lowering(ctx, *args, effect, callback, **params):
-
-  def _callback(*flat_args):
-    return tuple(
-        callback_p.impl(*flat_args, effect=effect, callback=callback, **params))
-
-  if effects.ordered_effects.contains(effect):
-    token = ctx.tokens_in.get(effect)[0]
-    result, token, keepalive = mlir.emit_python_callback(
-        ctx, _callback, token, list(args), ctx.avals_in, ctx.avals_out, True)
-    ctx.set_tokens_out(mlir.TokenSet({effect: (token,)}))
-  else:
-    result, token, keepalive = mlir.emit_python_callback(
-        ctx, _callback, None, list(args), ctx.avals_in, ctx.avals_out, True)
-  ctx.module_context.add_keepalive(keepalive)
-  return result
-
-
-mlir.register_lowering(callback_p, callback_lowering, platform="cpu")
-mlir.register_lowering(callback_p, callback_lowering, platform="gpu")
-mlir.register_lowering(callback_p, callback_lowering, platform="tpu")
-
+# Some test methods take a kwarg
+# callback=[io_callback(ordered=True) | io_callback(ordered=False) | pure_callback]
+io_callback_ordered = functools.partial(io_callback, ordered=True)
+io_calback_unordered = functools.partial(io_callback, ordered=False)
+with_pure_and_io_callbacks = parameterized.named_parameters(
+  dict(testcase_name=flavor,
+       callback=dict(io_unordered=io_calback_unordered,
+                     io_ordered=io_callback_ordered,
+                     pure=jax.pure_callback)[flavor])
+  for flavor in ("io_unordered", "io_ordered", "pure")
+)
 
 class PythonCallbackTest(jtu.JaxTestCase):
 
@@ -138,7 +80,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     super().tearDown()
     dispatch.runtime_tokens.clear()
 
-  def test_callback_with_scalar_values(self):
+  @with_pure_and_io_callbacks
+  def test_callback_with_scalar_values(self, *, callback):
     @jax.jit
     def f(x):
       return callback(lambda x: x + np.float32(1.),
@@ -147,7 +90,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     out = f(0.)
     self.assertEqual(out, 1.)
 
-  def test_callback_with_wrong_number_of_args(self):
+  @with_pure_and_io_callbacks
+  def test_callback_with_wrong_number_of_args(self, *, callback):
 
     @jax.jit
     def f():
@@ -159,28 +103,31 @@ class PythonCallbackTest(jtu.JaxTestCase):
       f()
       jax.effects_barrier()
 
-  def test_callback_with_wrong_number_of_returned_values(self):
+  @with_pure_and_io_callbacks
+  def test_callback_with_wrong_number_of_returned_values(self, *, callback):
 
     @jax.jit
-    def f():
-      # Calling a function with a return value that expects no return values
-      return callback(lambda: np.ones(4, np.float32), ())
+    def f(x):
+      # Calling a function with two return values that expects one return value
+      return callback(lambda x: (x, np.ones(4, np.float32)), x, x)
 
     with self.assertRaises(RuntimeError):
-      f()
+      f(2.)
       jax.effects_barrier()
 
     @jax.jit
     def g():
-      # Calling a function with a return value that expects no return values
-      return callback(lambda: None, (core.ShapedArray(
+      # Specifically for io_callback, calling a function with a return value
+      # that expects no return values
+      return io_callback(lambda: None, (core.ShapedArray(
           (1,), np.float32), core.ShapedArray((2,), np.float32)))
 
     with self.assertRaises(RuntimeError):
       g()
       jax.effects_barrier()
 
-  def test_callback_with_wrong_shape_outputs(self):
+  @with_pure_and_io_callbacks
+  def test_callback_with_wrong_shape_outputs(self, *, callback):
 
     @jax.jit
     def f():
@@ -192,7 +139,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
       f()
       jax.effects_barrier()
 
-  def test_callback_with_wrong_dtype_outputs(self):
+  @with_pure_and_io_callbacks
+  def test_callback_with_wrong_dtype_outputs(self, *, callback):
 
     def _cb():
       return np.array([1], np.float64)
@@ -206,7 +154,22 @@ class PythonCallbackTest(jtu.JaxTestCase):
       f()
       jax.effects_barrier()
 
-  def test_callback_with_single_return_value(self):
+  @with_pure_and_io_callbacks
+  def test_callback_with_wrongly_specified_64_bit_dtype(self, *, callback):
+    if config.jax_enable_x64:
+      raise unittest.SkipTest("Test only needed when 64-bit mode disabled.")
+
+    @jax.jit
+    def f():
+      return callback(lambda: np.float64(1.),
+                      core.ShapedArray((), np.float64))
+
+    with self.assertRaises(ValueError):
+      f()
+      jax.effects_barrier()
+
+  @with_pure_and_io_callbacks
+  def test_callback_with_single_return_value(self, *, callback):
 
     @jax.jit
     def f():
@@ -217,7 +180,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     np.testing.assert_allclose(out, np.ones(4, np.float32))
 
-  def test_callback_with_multiple_return_values(self):
+  @with_pure_and_io_callbacks
+  def test_callback_with_multiple_return_values(self, *, callback):
 
     @jax.jit
     def f():
@@ -230,7 +194,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     np.testing.assert_allclose(x, np.ones(4, np.float32))
     np.testing.assert_allclose(y, np.ones(5, np.int32))
 
-  def test_callback_with_multiple_arguments_and_return_values(self):
+  @with_pure_and_io_callbacks
+  def test_callback_with_multiple_arguments_and_return_values(self, *, callback):
 
     def _callback(x, y, z):
       return (x, y + z)
@@ -245,7 +210,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     np.testing.assert_allclose(x, np.ones(3))
     np.testing.assert_allclose(y, np.array([1., 3., 5]))
 
-  def test_send_zero_dim_arrays(self):
+  @with_pure_and_io_callbacks
+  def test_send_zero_dim_arrays(self, *, callback):
     result = np.full((2,), 42.0, dtype=np.float32)
     x = np.zeros((2, 0), np.float32)
     def _callback(x):  # x: f32[2, 0]
@@ -258,7 +224,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertAllClose(f(x), result)
 
-  def test_send_zero_dim_and_non_zero_dim_arrays(self):
+  @with_pure_and_io_callbacks
+  def test_send_zero_dim_and_non_zero_dim_arrays(self, *, callback):
     x = np.zeros((2, 0), np.float32)
     y = np.full((2,), 42.0, dtype=np.float32)
     result = y
@@ -272,7 +239,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertAllClose(f(x, y), result)
 
-  def test_recv_zero_dim_arrays(self):
+  @with_pure_and_io_callbacks
+  def test_recv_zero_dim_arrays(self, *, callback):
     result = np.full((2, 0), 42.0, dtype=np.float32)
     x = np.zeros((2,), np.float32)
     def _callback(_):  # f32[2] -> f32[2, 0]
@@ -285,7 +253,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertAllClose(f(x), result)
 
-  def test_recv_zero_dim_and_non_zero_dim_arrays(self):
+  @with_pure_and_io_callbacks
+  def test_recv_zero_dim_and_non_zero_dim_arrays(self, *, callback):
     x = np.full((2,), 42., dtype=np.float32)
     result0 = np.ones((2, 0), dtype=np.float32)
     result1 = x
@@ -305,7 +274,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertAllClose(res, (result0, result1, result2, result3))
 
-  def test_callback_with_pytree_arguments_and_return_values(self):
+  @with_pure_and_io_callbacks
+  def test_callback_with_pytree_arguments_and_return_values(self, *, callback):
 
     def _callback(x):
       return dict(y=[x])
@@ -319,7 +289,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertEqual(out, dict(y=[2.]))
 
-  def test_callback_inside_of_while_loop_of_scalars(self):
+  @with_pure_and_io_callbacks
+  def test_callback_inside_of_while_loop_of_scalars(self, *, callback):
 
     def _callback(x):
       return (x + 1.).astype(x.dtype)
@@ -336,7 +307,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertEqual(out, 10.)
 
-  def test_callback_inside_of_while_loop(self):
+  @with_pure_and_io_callbacks
+  def test_callback_inside_of_while_loop(self, *, callback):
 
     def _callback(x):
       return (x + 1.).astype(x.dtype)
@@ -356,7 +328,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     np.testing.assert_allclose(out, jnp.arange(10., 15.))
 
-  def test_callback_inside_of_cond_of_scalars(self):
+  @with_pure_and_io_callbacks
+  def test_callback_inside_of_cond_of_scalars(self, *, callback):
 
     def _callback1(x):
       return (x + 1.).astype(x.dtype)
@@ -382,7 +355,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertEqual(out, 0.)
 
-  def test_callback_inside_of_cond(self):
+  @with_pure_and_io_callbacks
+  def test_callback_inside_of_cond(self, *, callback):
 
     def _callback1(x):
       return x + 1.
@@ -408,7 +382,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     np.testing.assert_allclose(out, jnp.zeros(2))
 
-  def test_callback_inside_of_scan_of_scalars(self):
+  @with_pure_and_io_callbacks
+  def test_callback_inside_of_scan_of_scalars(self, *, callback):
 
     def _callback(x):
       return (x + 1.).astype(x.dtype)
@@ -426,7 +401,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertEqual(out, 10.)
 
-  def test_callback_inside_of_scan(self):
+  @with_pure_and_io_callbacks
+  def test_callback_inside_of_scan(self, *, callback):
 
     def _callback(x):
       return x + 1.
@@ -444,7 +420,10 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jax.effects_barrier()
     np.testing.assert_allclose(out, jnp.arange(2.) + 10.)
 
-  def test_callback_inside_of_pmap_of_scalars(self):
+  @with_pure_and_io_callbacks
+  def test_callback_inside_of_pmap_of_scalars(self, *, callback):
+    if callback is io_callback_ordered:
+      self.skipTest("N/A")
 
     def _callback(x):
       return (x + 1.).astype(x.dtype)
@@ -458,7 +437,10 @@ class PythonCallbackTest(jtu.JaxTestCase):
     np.testing.assert_allclose(
         out, np.arange(jax.local_device_count(), dtype=np.float32) + 1.)
 
-  def test_callback_inside_of_pmap(self):
+  @with_pure_and_io_callbacks
+  def test_callback_inside_of_pmap(self, *, callback):
+    if callback is io_callback_ordered:
+      self.skipTest("N/A")
 
     def _callback(x):
       return x + 1.
@@ -475,7 +457,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
         out,
         np.arange(2 * jax.local_device_count()).reshape([-1, 2]) + 1.)
 
-class PurePythonCallbackTest(jtu.JaxTestCase):
+class PureCallbackTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
@@ -496,13 +478,6 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
       return jax.pure_callback(cb, x, x)
     f(jnp.array(2.))
 
-  def test_simple_pure_callback(self):
-
-    @jax.jit
-    def f(x):
-      return jax.pure_callback(lambda x: (x * 2.).astype(x.dtype), x, x)
-    self.assertEqual(f(2.), 4.)
-
   def test_can_dce_pure_callback(self):
 
     if jax.default_backend() == "tpu":
@@ -520,77 +495,6 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
       return x * 2.
     _ = f(2.)
     self.assertEmpty(log)
-
-  def test_callback_with_wrong_number_of_args(self):
-
-    @jax.jit
-    def f():
-      # Calling a function that expects `x` with no arguments
-      return jax.pure_callback(lambda x: np.ones(4, np.float32),
-                               core.ShapedArray((4,), np.float32))
-
-    with self.assertRaises(RuntimeError):
-      f()
-      jax.effects_barrier()
-
-  def test_callback_with_wrong_number_of_returned_values(self):
-
-    @jax.jit
-    def f(x):
-      # Calling a function with two return values that expects one return value
-      return jax.pure_callback(lambda x: (x, np.ones(4, np.float32)), x, x)
-
-    with self.assertRaises(RuntimeError):
-      f(2.)
-      jax.effects_barrier()
-
-    @jax.jit
-    def g():
-      return jax.pure_callback(lambda: (), (
-        core.ShapedArray((1,), np.float32), core.ShapedArray((2,), np.float32)))
-
-    with self.assertRaises(RuntimeError):
-      g()
-      jax.effects_barrier()
-
-  def test_callback_with_wrong_shape_outputs(self):
-
-    @jax.jit
-    def f():
-      # Calling a function expected a (1,) shaped return value but getting ()
-      return jax.pure_callback(lambda: np.float32(1.),
-                               core.ShapedArray((1,), np.float32))
-
-    with self.assertRaises(RuntimeError):
-      f()
-      jax.effects_barrier()
-
-  def test_callback_with_wrong_dtype_outputs(self):
-
-    def _cb():
-      return np.array([1], np.float64)
-
-    @jax.jit
-    def f():
-      # Calling a function expected a f32 return value but getting f64
-      return callback(_cb, core.ShapedArray((1,), np.float32))
-
-    with self.assertRaises(RuntimeError):
-      f()
-      jax.effects_barrier()
-
-  def test_callback_with_wrongly_specified_64_bit_dtype(self):
-    if config.jax_enable_x64:
-      raise unittest.SkipTest("Test only needed when 64-bit mode disabled.")
-
-    @jax.jit
-    def f():
-      return jax.pure_callback(lambda: np.float64(1.),
-                               core.ShapedArray((), np.float64))
-
-    with self.assertRaises(ValueError):
-      f()
-      jax.effects_barrier()
 
   def test_can_vmap_pure_callback(self):
 
@@ -934,7 +838,7 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     )
 
 
-class IOPythonCallbackTest(jtu.JaxTestCase):
+class IOCallbackTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()

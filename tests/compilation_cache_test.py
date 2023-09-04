@@ -34,6 +34,7 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.config import persistent_cache_min_compile_time_secs
 from jax._src.config import raise_persistent_cache_errors
+from jax._src.config import use_original_compilation_cache_key_generation
 from jax._src.lib import xla_client
 from jax.experimental.maps import xmap
 from jax.experimental.pjit import pjit
@@ -328,6 +329,52 @@ class CompilationCacheTest(jtu.JaxTestCase):
       jit(lambda x: x + 3)(3)
       self.assertEqual(
           _counts["/jax/compilation_cache/tasks_using_original_cache"], 1)
+
+  def test_compile_requests_use_cache_metric(self):
+    previous_counts = Counter(_counts)
+    with tempfile.TemporaryDirectory() as tmpdir:
+      cc.initialize_cache(tmpdir)
+
+      jit(lambda x: x + 1)(1)
+      jit(lambda x: x + 2)(1)
+      jit(lambda x: x + 1)(1)
+
+    self.assertEqual(
+        _counts["/jax/compilation_cache/compile_requests_use_cache"]
+        - previous_counts["/jax/compilation_cache/compile_requests_use_cache"],
+        3)
+
+  def test_cache_misses_metric(self):
+    previous_counts = Counter(_counts)
+    with tempfile.TemporaryDirectory() as tmpdir, persistent_cache_min_compile_time_secs(
+        2):
+      cc.initialize_cache(tmpdir)
+
+      # Mock time to create a long compilation time and make cache misses.
+      with mock.patch("time.monotonic", side_effect=np.arange(0, 100, 10)):
+        jit(lambda x: x + 1)(1)
+        jit(lambda x: x + 2)(1)
+
+    self.assertEqual(
+        _counts["/jax/compilation_cache/cache_misses"]
+        - previous_counts["/jax/compilation_cache/cache_misses"],
+        2)
+
+  def test_cache_hits_original_metric(self):
+    previous_counts = Counter(_counts)
+    with tempfile.TemporaryDirectory() as tmpdir, persistent_cache_min_compile_time_secs(
+        2), use_original_compilation_cache_key_generation(True):
+      cc.initialize_cache(tmpdir)
+
+      # Mock time to create a long compilation time, cache saved.
+      with mock.patch("time.monotonic", side_effect=np.arange(0, 100, 10)):
+        jit(lambda x: x + 1)(1)
+      jit(lambda x: x + 1)(1)
+
+    self.assertEqual(
+        _counts["/jax/compilation_cache/cache_hits_original"]
+        - previous_counts["/jax/compilation_cache/cache_hits_original"],
+        1)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -6,7 +6,17 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.15
+## jax 0.4.16
+
+* Internal deprecations/removals:
+  * The internal submodule `jax.prng` is now deprecated. Its contents are available at
+    {mod}`jax.extend.random`.
+  * The internal submodule path `jax.linear_util` has been deprecated. Use
+    {mod}`jax.extend.linear_util` instead (Part of {ref}`jax-extend-jep`)
+
+## jaxlib 0.4.16
+
+## jax 0.4.15 (Aug 30 2023)
 
 * Changes
   * Added {class}`jax.numpy.ufunc`, as well as {func}`jax.numpy.frompyfunc`, which can convert
@@ -65,8 +75,10 @@ Remember to align the itemized text with the first line of an item within a list
   * The utility `jax.interpreters.xla.register_collective_primitive` has been
     removed. This utility did nothing useful in recent JAX releases and calls
     to it can be safely removed.
+  * The internal submodule path `jax.linear_util` has been deprecated. Use
+    {mod}`jax.extend.linear_util` instead (Part of {ref}`jax-extend-jep`)
 
-## jaxlib 0.4.15
+## jaxlib 0.4.15 (Aug 30 2023)
 
 * Changes:
   * Sparse CSR matrix multiplications via the experimental jax sparse APIs

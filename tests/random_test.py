@@ -32,7 +32,6 @@ import jax
 from jax import grad
 from jax import lax
 from jax import numpy as jnp
-from jax import prng
 from jax import random
 from jax import tree_util
 from jax._src import core
@@ -66,9 +65,9 @@ def _maybe_unwrap(key):
   return unwrap(key) if jnp.issubdtype(key, dtypes.prng_key) else key
 
 
-PRNG_IMPLS = [('threefry2x32', prng.threefry_prng_impl),
-              ('rbg', prng.rbg_prng_impl),
-              ('unsafe_rbg', prng.unsafe_rbg_prng_impl)]
+PRNG_IMPLS = [('threefry2x32', prng_internal.threefry_prng_impl),
+              ('rbg', prng_internal.rbg_prng_impl),
+              ('unsafe_rbg', prng_internal.unsafe_rbg_prng_impl)]
 
 
 class OnX64(enum.Enum):
@@ -222,24 +221,24 @@ class PrngTest(jtu.JaxTestCase):
       return tuple(hex(x.copy()).rstrip("L") for x in result)
 
     expected = ("0x6b200159", "0x99ba4efe")
-    result = prng.threefry_2x32(np.uint32([0, 0]), np.uint32([0, 0]))
+    result = prng_internal.threefry_2x32(np.uint32([0, 0]), np.uint32([0, 0]))
 
     self.assertEqual(expected, result_to_hex(result))
 
     expected = ("0x1cb996fc", "0xbb002be7")
     u32_max = np.iinfo(np.uint32).max
-    result = prng.threefry_2x32(np.uint32([u32_max, u32_max]), np.uint32([u32_max, u32_max]))
+    result = prng_internal.threefry_2x32(np.uint32([u32_max, u32_max]), np.uint32([u32_max, u32_max]))
     self.assertEqual(expected, result_to_hex(result))
 
     expected = ("0xc4923a9c", "0x483df7a0")
-    result = prng.threefry_2x32(
+    result = prng_internal.threefry_2x32(
         np.uint32([0x13198a2e, 0x03707344]),
         np.uint32([0x243f6a88, 0x85a308d3]))
     self.assertEqual(expected, result_to_hex(result))
 
   def testThreefry2x32Large(self):
     n = 10000000
-    result = prng.threefry_2x32(
+    result = prng_internal.threefry_2x32(
       (np.uint32(0x13198a2e), np.uint32(0x03707344)),
       jnp.concatenate([
         jnp.full((n,), 0x243f6a88, jnp.uint32),
@@ -251,7 +250,7 @@ class PrngTest(jtu.JaxTestCase):
   def testThreefry2x32Empty(self):
     # Regression test for an op-by-op crash for empty arrays in CUDA mode.
     with jax.disable_jit():
-      result = prng.threefry_2x32(
+      result = prng_internal.threefry_2x32(
         (np.uint32(0x13198a2e), np.uint32(0x03707344)),
         jnp.ones((10, 0,), jnp.uint32))
     np.testing.assert_equal(result, np.zeros((10, 0,), dtype=np.uint32))
@@ -260,7 +259,7 @@ class PrngTest(jtu.JaxTestCase):
     def fail(*args, **kwargs): assert False
     apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
     try:
-      _ = prng.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
+      _ = prng_internal.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
     finally:
       xla.apply_primitive = apply_primitive
 
@@ -524,17 +523,17 @@ class PrngTest(jtu.JaxTestCase):
   @skipIf(not config.jax_enable_custom_prng, 'relies on typed key upgrade flag')
   def test_explicit_threefry2x32_key(self):
     self.check_key_has_impl(random.threefry2x32_key(42),
-                            prng.threefry_prng_impl)
+                            prng_internal.threefry_prng_impl)
 
   @skipIf(not config.jax_enable_custom_prng, 'relies on typed key upgrade flag')
   def test_explicit_rbg_key(self):
     self.check_key_has_impl(random.rbg_key(42),
-                            prng.rbg_prng_impl)
+                            prng_internal.rbg_prng_impl)
 
   @skipIf(not config.jax_enable_custom_prng, 'relies on typed key upgrade flag')
   def test_explicit_unsafe_rbg_key(self):
     self.check_key_has_impl(random.unsafe_rbg_key(42),
-                            prng.unsafe_rbg_prng_impl)
+                            prng_internal.unsafe_rbg_prng_impl)
 
   @parameterized.parameters([{'make_key': ctor, 'name': name, 'impl': impl}
                              for ctor in KEY_CTORS
@@ -1086,7 +1085,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     lam=[0.5, 3, 9, 11, 50, 500],
-    dtype=[np.int16, np.int32, np.int64],
+    dtype=jtu.dtypes.supported([np.int16, np.int32, np.int64]),
   )
   def testPoisson(self, lam, dtype):
     key = self.make_key(0)
@@ -1663,8 +1662,8 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.invgauss(mu=mean).cdf)
 
   @jtu.sample_product(
-      p= [0.2, 0.3, 0.4, 0.5 ,0.6],
-      dtype= [np.int16, np.int32, np.int64])
+      p=[0.2, 0.3, 0.4, 0.5 ,0.6],
+      dtype=jtu.dtypes.supported([np.int16, np.int32, np.int64]))
   def testGeometric(self, p, dtype):
     key = self.make_key(1)
     rand = lambda key: random.geometric(key, p, shape=(10000, ), dtype=dtype)
@@ -1809,7 +1808,7 @@ class KeyArrayTest(jtu.JaxTestCase):
   # -- prng primitives
 
   def test_random_wrap_vmap(self):
-    f = partial(prng_internal.random_wrap, impl=prng.threefry_prng_impl)
+    f = partial(prng_internal.random_wrap, impl=prng_internal.threefry_prng_impl)
     base_arr = jnp.arange(6, dtype=jnp.uint32).reshape(3, 2)
     keys = jax.vmap(f, in_axes=0)(base_arr)
     self.assertIsInstance(keys, random.KeyArray)
@@ -2144,7 +2143,7 @@ def _double_threefry_fold_in(key, data):
   return jnp.vstack([threefry_fold_in(key[0], data),
                      threefry_fold_in(key[1], data)])
 
-double_threefry_prng_impl = prng.PRNGImpl(
+double_threefry_prng_impl = prng_internal.PRNGImpl(
     key_shape=(2, 2),
     seed=_double_threefry_seed,
     split=_double_threefry_split,
@@ -2155,7 +2154,7 @@ double_threefry_prng_impl = prng.PRNGImpl(
 @jtu.with_config(jax_default_prng_impl='threefry2x32')
 class LaxRandomWithCustomPRNGTest(LaxRandomTest):
   def make_key(self, seed):
-    return prng.seed_with_impl(double_threefry_prng_impl, seed)
+    return prng_internal.seed_with_impl(double_threefry_prng_impl, seed)
 
   def test_split_shape(self):
     key = self.make_key(73)

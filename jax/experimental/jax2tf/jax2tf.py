@@ -1465,6 +1465,8 @@ tf_not_yet_impl = [
     "pmin",
     "ppermute",
     "psum",
+    "psum2",
+    "pbroadcast",
     "pmax",
     "pgather",
     "reduce_scatter",
@@ -3448,6 +3450,9 @@ def _reduce_precision(x, *, exponent_bits, mantissa_bits):
                                 mantissa_bits=mantissa_bits)
 
 tf_impl[lax.reduce_precision_p] = _reduce_precision
+
+tf_impl[lax_internal.tie_p] = lambda x, y: y
+
 
 def _register_checkpoint_pytrees():
   """Registers TF custom container types as pytrees."""

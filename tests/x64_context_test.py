@@ -112,6 +112,8 @@ class X64ContextTests(jtu.JaxTestCase):
       self.assertEqual(x32.result(), jnp.int32)
 
   @jax.legacy_prng_key('allow')
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype float64  is not available")
   def test_jit_cache(self):
     if jtu.device_under_test() == "tpu":
       self.skipTest("64-bit random not available on TPU")
