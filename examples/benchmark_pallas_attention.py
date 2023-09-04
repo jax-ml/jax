@@ -44,6 +44,7 @@ from triton import cdiv
 import torch
 
 from jax import random
+import random as pyrand
 import jax
 import jax.numpy as jnp
 from jax.experimental.pallas.ops import attention
@@ -54,10 +55,15 @@ D_HEAD = 64
 N_HEADS = DIM // D_HEAD
 BATCH, SEQ_LEN = 8, 2048
 SEQ_LENS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
-NUM_RUNS = 30
+
+TOTAL_RUNS = 150
+NUM_OUTER_RUNS = 5 # For randomization of benchmark order
+NUM_INNER_RUNS = (TOTAL_RUNS + NUM_OUTER_RUNS - 1) // NUM_OUTER_RUNS
+
 BETWEEN_RUN_SLEEP_TIME_MS = 200
 
 DELAYED_SOFTMAX_NORMALIZE = True
+SEPARATE_ON_GRAPH = True
 
 """
 Appendix
@@ -138,8 +144,7 @@ def _fwd_kernel(
 
         if DELAYED_SOFTMAX_NORMALIZE:
             # -- scale and update acc --
-            acc_scale = l_i * 0 + alpha  # workaround some compiler bug
-            acc *= acc_scale[:, None]
+            acc *= alpha[:, None]
             acc += tl.dot(p.to(V.dtype.element_ty), v, allow_tf32=True)
             # -- update m_i and l_i --
             l_i = l_i * alpha + tl.sum(p, 1)
@@ -195,7 +200,7 @@ class _attention(torch.autograd.Function):
         grid = (cdiv(q.shape[2], BLOCK_M), q.shape[0] * q.shape[1], 1)
         L = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         num_warps = 4 if Lk <= 64 else 8
-        _fwd_kernel[grid](
+        compiled = _fwd_kernel[grid](
             q, k, v, sm_scale,
             L,
             o,
@@ -209,6 +214,11 @@ class _attention(torch.autograd.Function):
             DELAYED_SOFTMAX_NORMALIZE=DELAYED_SOFTMAX_NORMALIZE,
             num_warps=num_warps,
             num_stages=4)
+        
+        from triton.compiler import compiler as tc 
+        # print("IR", compiled.asm['ttir'])
+        # print("TTGIR", compiled.asm['ttgir'])
+        # print("IR", compiled.asm['ptx'])
 
         ctx.save_for_backward(q, k, v, o, L)
         ctx.grid = grid
@@ -220,14 +230,17 @@ class _attention(torch.autograd.Function):
 
 triton_attention = _attention.apply
 
-def benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, causal=True, mode="jax"):
-    block_qk_grid = [(64, 32), (128, 32), (64, 64), (128, 64)]
+def benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, causal=True, mode="jax", swap_seq_axis=False):
+    block_qk_grid = [(128, 64)] #[(64, 32), (128, 32), (64, 64)if mode == "pallas" else [(None, None)] 
     k1, k2, k3 = random.split(random.PRNGKey(0), 3)
-    q = random.normal(k1, (batch, seq_len, heads, d_model), dtype=jnp.float16)
-    k = random.normal(k2, (batch, seq_len, heads, d_model), dtype=jnp.float16)
-    v = random.normal(k3, (batch, seq_len, heads, d_model), dtype=jnp.float16)
+    if swap_seq_axis:
+        shape = (batch, heads, seq_len, d_model)
+    else:
+        shape =  (batch, seq_len, heads, d_model)
+    q = random.normal(k1, shape, dtype=jnp.float16)
+    k = random.normal(k2, shape, dtype=jnp.float16)
+    v = random.normal(k3, shape, dtype=jnp.float16)
 
-    functools.partial(attention.mha, causal=causal)
 
     min_ms = float("inf")
 
@@ -235,7 +248,7 @@ def benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, c
     for block_q, block_k in block_qk_grid:
         if mode == "pallas":
             impl = functools.partial(
-                attention.mha, causal=causal, block_q=block_q, block_k=block_k, num_warps=4, segment_ids=None)
+                attention.mha, causal=causal, block_q=block_q, block_k=block_k, num_warps=4, segment_ids=None, debug=False, swap_seq_axis=swap_seq_axis)
         elif mode == "jax":
             if seq_len >= 2048: # Handle OOM
                 return None
@@ -248,9 +261,9 @@ def benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, c
         impl(q, k, v).block_until_ready()
 
         t1 = time.time()
-        for _ in range(NUM_RUNS):
+        for _ in range(NUM_INNER_RUNS):
             impl(q, k, v).block_until_ready()
-        estimate_ms = 1000 * (time.time() - t1) / NUM_RUNS
+        estimate_ms = 1000 * (time.time() - t1) / NUM_INNER_RUNS
         min_ms = min(estimate_ms, min_ms)
         print(f"{mode} (seq_len={seq_len}, block_q={block_q}, block_k={block_k}): {estimate_ms} ms")
     return min_ms
@@ -267,65 +280,91 @@ def bench_torch(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, cau
         # from triton.ops import attention as triton_attention
         # Use a jitted function from triton nightly 28/08/23 as defined below.
         fn = lambda: triton_attention(q, k, v, causal, 1.0)
-        q = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
-        k = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
-        v = torch.randn((batch, heads, seq_len, d_model), dtype=dtype, device="cuda", requires_grad=True)
+        shape = (batch, heads, seq_len, d_model)
     elif mode == "flash_attn":
         from flash_attn import flash_attn_func
         fn = lambda: flash_attn_func(q, k, v, causal=causal)
-        q = torch.randn((batch, seq_len, heads, d_model), dtype=dtype, device="cuda", requires_grad=True)
-        k = torch.randn((batch, seq_len, heads, d_model), dtype=dtype, device="cuda", requires_grad=True)
-        v = torch.randn((batch, seq_len, heads, d_model), dtype=dtype, device="cuda", requires_grad=True)
+        shape =  (batch, seq_len, heads, d_model)
     else:
         raise ValueError("Invalid JAX benchmark mode")
+    q = torch.randn(shape, dtype=dtype, device="cuda", requires_grad=True)
+    k = torch.randn(shape, dtype=dtype, device="cuda", requires_grad=True)
+    v = torch.randn(shape, dtype=dtype, device="cuda", requires_grad=True)
 
     # Warmup
     fn()
     fn()
     torch.cuda.synchronize()
     t1 = time.time()
-    for _ in range(NUM_RUNS):
+    for _ in range(NUM_INNER_RUNS):
         fn()
         torch.cuda.synchronize()
-    estimate_ms = 1000 * (time.time() - t1) / NUM_RUNS
+    estimate_ms = 1000 * (time.time() - t1) / NUM_INNER_RUNS
     return estimate_ms
 
 # TODO: implement this
 def test_allclose():
     pass
 
+def tflops_from_ms(timing, seq_len, tokens):
+    return (4 * seq_len ** 2 * D_HEAD * N_HEADS * tokens / seq_len) / (timing * 10 ** 9)
+
+def is_zero(a):
+    return math.isclose(a, 0.0, abs_tol=0.00001)
+
 def benchmark(causal=True):
     configs = [
-        {'name': name, 'timings': [], 'tokens': tokens } 
-        for name in ["jax", "pallas", "triton", "flash_attn"] 
+        {'name': name, 'timings': [0.0 for _ in range(len(SEQ_LENS))], 'tokens': tokens } 
+        for name in ["pallas", "triton", "flash_attn", "jax"] #, "triton", "flash_attn"] #, "triton", "flash_attn"]#["jax", "pallas", "triton", "flash_attn"] 
         for tokens in [32768]
     ]
+
     bench_fns = {
         'jax': functools.partial(benchmark_jax, mode="jax"),
         'pallas': functools.partial(benchmark_jax, mode="pallas"),
+        # 'pallas_swap': functools.partial(benchmark_jax, mode="pallas", swap_seq_axis=True),
         'flash_attn': functools.partial(bench_torch, mode="flash_attn"),
         'triton': functools.partial(bench_torch, mode="triton"),
     }
     fig, ax = plt.subplots()
     ax.ticklabel_format(useOffset=False)
 
-    for s in SEQ_LENS:
-        for config in configs:
-            config['timings'].append(
-                bench_fns[config['name']](
-                    batch=config['tokens'] // s, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal)
-            )
-            time.sleep(BETWEEN_RUN_SLEEP_TIME_MS / 1000)
+    for _ in range(NUM_OUTER_RUNS):
+        shuffled = configs[:] 
+        pyrand.shuffle(shuffled)
+        print("ORDERING", [cfg['name'] for cfg in shuffled])
+        for config in shuffled:
+            for s_idx, s in enumerate(SEQ_LENS):
+            # Randomize order of configs as the order been shown to matter (esp for small runs) 
+                res = bench_fns[config['name']](
+                        batch=config['tokens'] // s, heads=N_HEADS, seq_len=s, d_model=D_HEAD, causal=causal)
+                if res is not None and config['timings'][s_idx] is not None:
+                    config['timings'][s_idx] += res
 
+                time.sleep(BETWEEN_RUN_SLEEP_TIME_MS / 1000)
+
+    # preprocess
     for config in configs:
+        config['timings'] = [None if is_zero(t) else t / NUM_OUTER_RUNS for t in config['timings']]
+
+    len_configs = float(len(configs))
+    min_timings = [min([config['timings'][pos] for config in configs if config['timings'][pos] is not None]) for pos in range(len(SEQ_LENS))]
+
+    configs.sort(key=lambda c: ([t for t in c['timings'] if t is not None] or [float.max])[-1], reverse=True)
+    
+    for config_idx, config in enumerate(configs):
+        config_pos = (float(len_configs - config_idx) - len_configs / 2) / len_configs
         ax.plot(SEQ_LENS, config['timings'], label=config['name'] + '_' + str(config['tokens'] // 1000) + 'K_tokens' )
-        for seq_len, b in zip(SEQ_LENS, config['timings']): 
-            if b is not None:
-                b_height = b * 1.05 if (config['name'] == "triton")\
-                    else b * 0.95 if (config['name'] == "flash_attn")\
-                    else b
-                tflops = (4 * seq_len ** 2 * D_HEAD * N_HEADS * config['tokens'] / seq_len) / (b * 10 ** 9)
-                plt.text(seq_len, b_height, f'Time={round(b, 2)}ms,TFLOPs={round(tflops, 2)}')
+        for seq_len, timing, min_timing in zip(SEQ_LENS, config['timings'], min_timings): 
+            if timing is not None:
+                if SEPARATE_ON_GRAPH:
+                    timing_height = timing * (1. + 0.1 * config_pos)
+                else:
+                    timing_height = timing
+                tflops = tflops_from_ms(timing, seq_len, config['tokens'])
+                max_tflops = tflops_from_ms(min_timing, seq_len, config['tokens'])
+                percentage_of_max = tflops / max_tflops
+                plt.text(seq_len, timing_height, f"{config['name']}: TFLOPs={round(tflops, 1)} ({round(percentage_of_max * 100, 2)}% max) - {round(timing, 1)}ms")
     plt.title(f'Fused Attention ({"Causal" if causal else "Non-Causal"})')
     plt.ylabel('time (ms)')
     plt.xlabel('Sequence Length')
