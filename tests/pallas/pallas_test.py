@@ -1415,7 +1415,7 @@ class FusedAttentionTest(PallasTest):
           (
               (
                   f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{causal=}"
-                  f"_{use_fwd=}_{use_segment_ids=}"
+                  f"_{use_fwd=}_{use_segment_ids=}_{kwargs=}"
               ),
               batch_size,
               seq_len,
@@ -1424,6 +1424,7 @@ class FusedAttentionTest(PallasTest):
               causal,
               use_fwd,
               use_segment_ids,
+              kwargs,
           )
           for (
               batch_size,
@@ -1433,15 +1434,18 @@ class FusedAttentionTest(PallasTest):
               causal,
               use_fwd,
               use_segment_ids,
+              kwargs,
           ) in [
-              (1, 384, 1, 64, False, False, True),
-              (1, 384, 1, 64, False, False, False),
-              (2, 384, 2, 64, False, False, True),
-              (1, 384, 1, 64, True, False, True),
-              (2, 384, 2, 64, True, False, True),
-              (1, 384, 8, 64, True, True, True),
-              (1, 384, 8, 64, True, True, False),
-              (2, 384, 8, 64, True, True, True),
+              (1, 384, 1, 64, False, False, True, {}),
+              (1, 384, 1, 64, False, False, False, {}),
+              (2, 384, 2, 64, False, False, True, {}),
+              (1, 384, 1, 64, True, False, True, {}),
+              (2, 384, 2, 64, True, False, True, {}),
+              (1, 384, 8, 64, True, True, True, {}),
+              (1, 384, 8, 64, True, True, False, {}),
+              (2, 384, 8, 64, True, True, True, {}),
+              # regression test: https://github.com/google/jax/pull/17314
+              (1, 384, 8, 64, True, False, False, {'block_q': 128, 'block_k': 64}),
           ]
       ]
   )
@@ -1454,6 +1458,7 @@ class FusedAttentionTest(PallasTest):
       causal,
       use_fwd,
       use_segment_ids,
+      kwargs,
   ):
     if plgpu.get_compute_capability(0) < 80:
       raise unittest.SkipTest(
@@ -1482,7 +1487,7 @@ class FusedAttentionTest(PallasTest):
       def impl(q, k, v):
         v, _ = jax.vjp(
             functools.partial(
-                attention.mha, causal=causal, segment_ids=segment_ids
+                attention.mha, causal=causal, segment_ids=segment_ids, **kwargs
             ),
             q,
             k,
@@ -1492,7 +1497,7 @@ class FusedAttentionTest(PallasTest):
 
     else:
       impl = functools.partial(
-          attention.mha, causal=causal, segment_ids=segment_ids
+          attention.mha, causal=causal, segment_ids=segment_ids, **kwargs
       )
     o = impl(q, k, v)
     o_ref = attention.mha_reference(q, k, v, segment_ids, causal=causal)
