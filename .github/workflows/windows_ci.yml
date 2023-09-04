@@ -25,11 +25,11 @@ jobs:
         with:
           access_token: ${{ github.token }}
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           path: jax
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           repository: openxla/xla
           path: xla
