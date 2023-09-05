@@ -90,6 +90,41 @@ class PythonCallbackTest(jtu.JaxTestCase):
     out = f(0.)
     self.assertEqual(out, 1.)
 
+  @parameterized.named_parameters(
+    dict(testcase_name=f"{flavor}_{dtype}",
+         dtype=dtype,
+         callback=dict(io_unordered=io_calback_unordered,
+                       io_ordered=io_callback_ordered,
+                       pure=jax.pure_callback)[flavor])
+    for flavor in ("io_unordered", "io_ordered", "pure")
+    for dtype in jtu.dtypes.all
+  )
+  def test_callback_works_with_all_types(self, *, callback, dtype):
+    def host_func(x):
+      if dtype == np.bool_:
+        return ~ x
+      else:
+        return x + x
+    _received = None
+    def _cb(x):
+      nonlocal _received
+      _received = x
+      return host_func(x)
+
+    if dtype == np.bool_:
+      x = np.array([True, False, True, True], dtype=np.bool_)
+    else:
+      x = np.arange(4, dtype=dtype)
+    @jax.jit
+    def f(x):
+      return callback(_cb,
+                      core.ShapedArray(x.shape, x.dtype), x)
+
+    out = f(x)
+    self.assertAllClose(out, host_func(x))
+    jax.effects_barrier()
+    self.assertAllClose(_received, x)
+
   @with_pure_and_io_callbacks
   def test_callback_with_wrong_number_of_args(self, *, callback):
 

@@ -1935,9 +1935,6 @@ def send_to_host(channel: int, token: hlo.TokenType, operand: Any,
   channel_handle = hlo.ChannelHandle.get(channel, SEND_TO_HOST_TYPE)
   send_op = hlo.SendOp([operand], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
-  dtype_str = _dtype_to_xla_type_string(aval.dtype)
-  if dtype_str in {"f64", "s64", "u64", "c64", "c128"}:
-    raise NotImplementedError("64-bit types not supported.")
   send_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
       dict(
           _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
@@ -1954,9 +1951,6 @@ def receive_from_host(channel: int, token: hlo.TokenType,
   recv_op = hlo.RecvOp([aval_to_ir_type(out_aval),
                         hlo.TokenType.get()], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
-  dtype_str = _dtype_to_xla_type_string(out_aval.dtype)
-  if dtype_str in {"f64", "s64", "u64", "c64", "c128"}:
-    raise NotImplementedError("64-bit types not supported.")
   recv_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
       dict(
           _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
