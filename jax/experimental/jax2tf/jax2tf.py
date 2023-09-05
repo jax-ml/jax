@@ -36,9 +36,9 @@ from jax import numpy as jnp
 from jax import tree_util
 from jax import sharding
 from jax.experimental import maps
-from jax.experimental.jax2tf import shape_poly
+from jax.experimental.export import shape_poly
+from jax.experimental.export import export
 from jax.experimental.jax2tf import impl_no_xla
-from jax.experimental.jax2tf import jax_export
 from jax.interpreters import xla
 
 from jax._src import ad_checkpoint
@@ -86,7 +86,7 @@ NameStack = source_info_util.NameStack
 PolyShape = shape_poly.PolyShape
 DType = Any
 
-DisabledSafetyCheck = jax_export.DisabledSafetyCheck
+DisabledSafetyCheck = export.DisabledSafetyCheck
 
 # A temporary internal flag, to enable the wrapping of jax.jit functions
 # with tf.function(jit_compile=True). See #7389. This change has triggered a
@@ -370,14 +370,14 @@ def convert(fun_jax: Callable,
       _, a_jax_dtype = _tfval_to_tensor_jax_dtype(a)
       return tf_arg_shape, a_jax_dtype
 
-    args_specs = jax_export.poly_specs(args_tf,
-                                       polymorphic_shapes=polymorphic_shapes,
-                                       get_shape_and_dtype=shape_and_dtype_tf)
+    args_specs = export.poly_specs(args_tf,
+                                   polymorphic_shapes=polymorphic_shapes,
+                                   get_shape_and_dtype=shape_and_dtype_tf)
     # The polymorphic_shapes argument refers to positional arguments only.
     # We assume None for the kwargs.
-    kwargs_specs = jax_export.poly_specs(kwargs_tf,
-                                         polymorphic_shapes=None,
-                                         get_shape_and_dtype=shape_and_dtype_tf)
+    kwargs_specs = export.poly_specs(kwargs_tf,
+                                     polymorphic_shapes=None,
+                                     get_shape_and_dtype=shape_and_dtype_tf)
     combined_args_tf = (args_tf, kwargs_tf)
     args_flat_tf: Sequence[TfVal]
     args_flat_tf, args_kwargs_tree = tree_util.tree_flatten(combined_args_tf)
@@ -503,7 +503,7 @@ class NativeSerializationImpl(SerializationImpl):
       _thread_local_state.call_tf_concrete_function_list = _prev_func_list
 
     self._restore_context = _restore_context
-    self.exported = jax_export.export(
+    self.exported = export.export(
         self.fun_jax,
         lowering_platform=self.lowering_platform,
         disabled_checks=self.native_serialization_disabled_checks
@@ -669,7 +669,7 @@ def eval_polymorphic_shape(fun_jax: Callable,
   (c, a)
   """
   def do_eval_polymorphic_shape(*args_specs) -> Any:
-    args_poly_specs = jax_export.poly_specs(
+    args_poly_specs = export.poly_specs(
         args_specs, polymorphic_shapes=polymorphic_shapes)
     res_poly_spec = jax.eval_shape(fun_jax, *args_poly_specs)
     # TODO(necula): For now we export the polymorphic shapes using `str`.
@@ -803,7 +803,7 @@ def _interpret_fun_jax(
 
 
 def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
-                        exported: jax_export.Exported,
+                        exported: export.Exported,
                         ) -> Sequence[TfVal]:
   """Runs the `exported` as an XlaCallModule TF op.
 

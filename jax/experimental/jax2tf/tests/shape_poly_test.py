@@ -31,8 +31,8 @@ import re
 
 import jax
 from jax.experimental import jax2tf
-from jax.experimental.jax2tf import shape_poly
-from jax.experimental.jax2tf import jax_export
+from jax.experimental.export import export
+from jax.experimental.export import shape_poly
 from jax.experimental import pjit
 from jax import lax
 import jax.numpy as jnp
@@ -70,7 +70,6 @@ expect_error_associative_scan = (
                                          jtu.device_under_test() == "tpu") else
     (NotImplementedError,
      "associative scan over axis of non-constant size"))
-
 
 
 class DimExprTest(tf_test_util.JaxToTfTestCase):
@@ -585,7 +584,7 @@ class PolyHarness(Harness):
         len(polymorphic_shapes), len(args),
         f"polymorphic_shapes {polymorphic_shapes} of length "
         f"{len(polymorphic_shapes)} must match number of arguments {len(args)}")
-      args_specs = jax_export.poly_specs(args, polymorphic_shapes)
+      args_specs = export.poly_specs(args, polymorphic_shapes)
       input_signature = [
         tf.TensorSpec(
             [d if isinstance(d, int) else None for d in a.shape],

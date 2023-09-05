@@ -1,4 +1,4 @@
-# Copyright 2018 The JAX Authors.
+# Copyright 2023 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,44 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_python//python:defs.bzl", "py_library")
+# JAX-export provides APIs for exporting StableHLO for serialization purposes.
+
 load(
     "//jaxlib:jax.bzl",
-    "jax2tf_deps",
-    "jax_visibility",
     "py_deps",
 )
+load("@rules_python//python:defs.bzl", "py_library")
 
 licenses(["notice"])
 
+# Please add new users to :australis_users.
 package(
     default_applicable_licenses = [],
     default_visibility = ["//visibility:private"],
 )
 
 py_library(
-    name = "jax2tf",
-    srcs = ["__init__.py"],
-    srcs_version = "PY3",
-    visibility = ["//visibility:public"],
-    deps = [":jax2tf_internal"],
-)
-
-py_library(
-    name = "jax2tf_internal",
+    name = "export",
     srcs = [
-        "call_tf.py",
-        "impl_no_xla.py",
-        "jax2tf.py",
-        "jax_export.py",  # TODO(necula): remove stub
-        "shape_poly.py",  # TODO(necula): remove stub
+        "export.py",
+        "shape_poly.py",
     ],
     srcs_version = "PY3",
     # TODO: b/255503696: enable pytype
     tags = ["pytype_unchecked_annotations"],
-    visibility = jax_visibility("jax2tf_internal"),
+    visibility = ["//visibility:public"],
     deps = [
         "//jax",
-        "//jax/experimental/export",
-    ] + py_deps("numpy") + py_deps("tensorflow_core") + jax2tf_deps,
+    ] + py_deps("numpy"),
 )
