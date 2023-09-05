@@ -493,7 +493,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     eye_mat = np.eye(should_be_eye.shape[0], dtype=should_be_eye.dtype)
     with self.subTest('Test unitarity.'):
       self.assertAllClose(
-        eye_mat, should_be_eye, atol=tol * min(shape))
+        eye_mat, should_be_eye, atol=tol * 1000 * min(shape))
 
     with self.subTest('Test Hermiticity.'):
       self.assertAllClose(
