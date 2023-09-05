@@ -2350,8 +2350,8 @@ def _vector_contract_rule(ctx: RewriteContext, op: vector.ContractionOp,  # pyli
   indexing_maps = op.attributes["indexing_maps"]
   if (indexing_maps != matmul_indexing_maps
       and indexing_maps != matmul_indexing_maps_transposed):
-    raise NotImplementedError("non-matmul indexing_maps")
-  rhs_transposed = indexing_maps == matmul_indexing_maps_transposed
+    raise NotImplementedError("non-matmul or unsupported indexing_maps")
+  transpose_rhs = indexing_maps == matmul_indexing_maps_transposed
   matmul_iterator_types = ir.ArrayAttr.get([
       ir.Attribute.parse("#vector.iterator_type<parallel>"),
       ir.Attribute.parse("#vector.iterator_type<parallel>"),
@@ -2359,10 +2359,37 @@ def _vector_contract_rule(ctx: RewriteContext, op: vector.ContractionOp,  # pyli
   ])
   if op.attributes["iterator_types"] != matmul_iterator_types:
     raise NotImplementedError("non-matmul iterator_types")
-  if any(tuple(0 if o is REPLICATED else o for o in l.offsets) != (0, 0)
+  transpose_lhs = False  # TODO(apaszke): Support that in the affine maps.
+  return _matmul_rule(
+      ctx, op, transpose_lhs, transpose_rhs, *layout_in, layout_out
+  )
+
+
+@_register_rule("tpu.matmul")
+def _tpu_matmul_rule(ctx: RewriteContext, op: tpu.MatmulOp,
+                     layout_in: Sequence[Layout], layout_out: VectorLayout):
+  _matmul_rule(
+      ctx, op, op.transpose_lhs.value, op.transpose_rhs.value,
+      *layout_in, layout_out,
+  )
+
+
+def _matmul_rule(
+    ctx: RewriteContext,
+    op,
+    transpose_lhs: bool,
+    transpose_rhs: bool,
+    layout_lhs: VectorLayout,
+    layout_rhs: VectorLayout,
+    layout_acc: VectorLayout,
+    layout_out: VectorLayout,
+):
+  if transpose_lhs:
+    raise NotImplementedError("transposed lhs not supported yet")
+  layout_in = (layout_lhs, layout_rhs, layout_acc)
+  if any(tuple((o or 0) for o in l.offsets) != (0, 0)
          for l in (*layout_in, layout_out)):
     raise NotImplementedError("unaligned layout in matmul")
-  layout_lhs, layout_rhs, layout_acc = layout_in
   if any(l.implicit_dim is not None for l in layout_in):
     raise NotImplementedError("Unsupported matmul operand layout")
   if not all(l.has_native_tiling for l in layout_in):
@@ -2374,8 +2401,6 @@ def _vector_contract_rule(ctx: RewriteContext, op: vector.ContractionOp,  # pyli
     raise NotImplementedError("non-32-bit matmul result")
   if lhs_type.shape[0] % layout_lhs.tiling[0] != 0:
     raise NotImplementedError("layout matmul lhs")
-  if rhs_type.shape == [128, 128]:
-    return  # No unrolling necessary.
   if rhs_type.shape[0] % 128 != 0 or rhs_type.shape[1] % 128 != 0:
     raise NotImplementedError("matmul rhs requires padding")
   layout_attr = op.attributes["out_layout"]
@@ -2392,7 +2417,7 @@ def _vector_contract_rule(ctx: RewriteContext, op: vector.ContractionOp,  # pyli
   rhs_tile_ty = ir.VectorType.get((128, 128), rhs_type.element_type)
   rhs_vregs = disassemble(layout_rhs, op.rhs)
   rhs_vregs_per_tile = 16 // layout_rhs.packing
-  if rhs_transposed:
+  if transpose_rhs:
     nj, nk = cdiv(tuple(rhs_type.shape), (128, 128))
     rhs_tiles = rhs_vregs.reshape((nj, rhs_vregs_per_tile, nk, 1)).transpose(
         2, 0, 1, 3)
@@ -2401,6 +2426,9 @@ def _vector_contract_rule(ctx: RewriteContext, op: vector.ContractionOp,  # pyli
     rhs_tiles = rhs_vregs.reshape((nk, rhs_vregs_per_tile, nj, 1)).transpose(
         0, 2, 1, 3)
 
+  precision = None
+  if "precision" in op.attributes:
+    precision = op.attributes["precision"]
   for j, k in np.ndindex((nj, nk)):
     rhs_tile = rhs_tiles[k, j]
     assert rhs_tile.shape == (rhs_vregs_per_tile, 1)
@@ -2408,11 +2436,12 @@ def _vector_contract_rule(ctx: RewriteContext, op: vector.ContractionOp,  # pyli
     rhs_rolled_tile.attributes["out_layout"] = layout_attr
     acc_col = tpu.RollVectorsOp(acc_col_ty, acc_tiles[:, j])
     acc_col.attributes["out_layout"] = layout_attr
-    new_acc_col = vector.ContractionOp(
+    new_acc_col = tpu.MatmulOp(
         acc_col_ty, lhs_cols[k], rhs_rolled_tile, acc_col,
-        op.attributes["indexing_maps"], op.attributes["iterator_types"])
-    if "precision" in op.attributes:
-      new_acc_col.attributes["precision"] = op.attributes["precision"]
+        transpose_lhs=transpose_lhs,
+        transpose_rhs=transpose_rhs,
+        precision=precision,
+    )
     new_acc_tiles = tpu.UnrollVectorsOp([v.type for v in acc_tiles[:, j]],
                                         new_acc_col)
     new_acc_tiles.attributes["in_layout"] = layout_attr

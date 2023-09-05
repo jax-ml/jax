@@ -262,6 +262,24 @@ def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure]> {
   }];
 }
 
+// TODO(apaszke): Add a verifier for this op
+// TODO(apaszke): Think hard about precision
+def TPU_MatmulOp : TPU_Op<"matmul", [Pure]> {
+  let arguments = (ins
+    AnyVector:$lhs,
+    AnyVector:$rhs,
+    AnyVector:$acc,
+    DefaultValuedAttr<BoolAttr, "false">:$transpose_lhs,
+    DefaultValuedAttr<BoolAttr, "false">:$transpose_rhs,
+    OptionalAttr<TPU_ContractPrecisionEnum>:$precision
+  );
+  let results = (outs AnyVector:$result);
+  let assemblyFormat = [{
+    $lhs `,` $rhs `,` $acc attr-dict `:` type($lhs) `,` type($rhs) `,` type($acc) `->` type($result)
+  }];
+  let hasCanonicalizer = 1;
+}
+
 def TPU_BitcastOp : TPU_Op<"bitcast", [Pure]> {
   let arguments = (ins AnyVector:$input);
   let results = (outs AnyVector:$output);

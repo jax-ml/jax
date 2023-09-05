@@ -16,9 +16,11 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LogicalResult.h"
+#include "mlir/include/mlir/IR/IRMapping.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 
 namespace mlir {
@@ -78,6 +80,39 @@ LogicalResult ReinterpretCastOp::verify() {
   return success(
       source_type.getMemorySpace() &&  // Require memory space annotations.
       source_type.getMemorySpace() == target_type.getMemorySpace());
+}
+
+// a + matmul(l, r, 0) == matmul(l, r, a)
+template <typename AddOp>
+class CanonicalizeAddOfMatmul : public OpRewritePattern<AddOp> {
+  using OpRewritePattern<AddOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(AddOp op, PatternRewriter &rewriter) const {
+    auto try_canonicalize = [&](Value maybe_matmul, Value maybe_acc) {
+      auto matmul = dyn_cast_if_present<MatmulOp>(maybe_matmul.getDefiningOp());
+      if (!matmul) {
+        return failure();
+      }
+      if (auto const_acc = matmul.getAcc().getDefiningOp<arith::ConstantOp>();
+          const_acc &&
+          const_acc.getValue() == rewriter.getZeroAttr(const_acc.getType())) {
+        IRMapping remap;
+        remap.map(matmul.getAcc(), maybe_acc);
+        Operation *new_matmul = rewriter.clone(*matmul, remap);
+        rewriter.replaceOp(op, new_matmul->getResult(0));
+        return success();
+      }
+      return failure();
+    };
+    return success(succeeded(try_canonicalize(op.getLhs(), op.getRhs())) ||
+                   succeeded(try_canonicalize(op.getLhs(), op.getRhs())));
+  }
+};
+
+void MatmulOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
+                                           MLIRContext *context) {
+  patterns.add<CanonicalizeAddOfMatmul<arith::AddFOp>,
+               CanonicalizeAddOfMatmul<arith::AddIOp>>(context);
 }
 
 }  // namespace tpu

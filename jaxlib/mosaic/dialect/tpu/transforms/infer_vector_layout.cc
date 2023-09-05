@@ -212,6 +212,10 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::MatmulOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<tpu::StoreOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -552,6 +556,10 @@ class VectorLayoutInferer {
     return success();
   }
 
+  LogicalResult infer(tpu::MatmulOp op) {
+    return inferMatmul(op);
+  }
+
   LogicalResult infer(tpu::StoreOp op) {
     auto store_ty = op.getValueToStore().getType();
     int8_t bitwidth = store_ty.getElementTypeBitWidth();
@@ -696,41 +704,7 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(op.getIndexingMaps() == matmul_indexing_maps ||
                      op.getIndexingMaps() == matmul_indexing_maps_transposed,
                  "Not a matmul");
-    auto get_unpadded_layout = [&](Value v) -> std::optional<VectorLayout> {
-      auto pad = getLayout(v);
-      if (!pad.has_value() || pad->implicit_dim() != ImplicitDim::kNone) {
-        return std::nullopt;
-      }
-      auto vty = cast<VectorType>(v.getType());
-      auto tiling = nativeTiling(vty.getElementTypeBitWidth());
-      auto shape = vty.getShape().take_back(2);
-      if (pad->offsets()[0].value_or(0) != 0 ||
-          pad->offsets()[1].value_or(0) != 0 || shape[0] % tiling[0] != 0 ||
-          shape[1] % tiling[1] != 0) {
-        return std::nullopt;
-      }
-      // Override tiling to match the native one.
-      return VectorLayout(pad->bitwidth(), pad->offsets(), tiling,
-                          ImplicitDim::kNone);
-    };
-    auto res_ty = dyn_cast<VectorType>(op.getType());
-    TPU_CHECK_OP(res_ty, "only vector results supported");
-    TPU_CHECK_OP(res_ty.getElementTypeBitWidth() == kNativeBitwidth,
-                 "only 32-bit matmul results supported");
-    std::array<Layout, 3> in_layout;
-    CHECK_EQ(op->getNumOperands(), 3);
-    for (int i = 0; i < 3; ++i) {
-      if (auto layout = get_unpadded_layout(op.getOperand(i))) {
-        in_layout[i] = *layout;
-      } else {
-        op.emitOpError("padded operands");
-        return failure();
-      }
-    }
-    setLayout(op, in_layout,
-              VectorLayout(kNativeBitwidth, {0, 0}, default_tiling_,
-                           ImplicitDim::kNone));
-    return success();
+    return inferMatmul(op);
   }
 
   LogicalResult infer(vector::LoadOp op) {
@@ -1166,6 +1140,44 @@ class VectorLayoutInferer {
       }
     }
     setLayout(op, final_in_layouts, final_out_layout);
+    return success();
+  }
+
+  LogicalResult inferMatmul(Operation* op) {
+    auto get_unpadded_layout = [&](Value v) -> std::optional<VectorLayout> {
+      auto pad = getLayout(v);
+      if (!pad.has_value() || pad->implicit_dim() != ImplicitDim::kNone) {
+        return std::nullopt;
+      }
+      auto vty = cast<VectorType>(v.getType());
+      auto tiling = nativeTiling(vty.getElementTypeBitWidth());
+      auto shape = vty.getShape().take_back(2);
+      if (pad->offsets()[0].value_or(0) != 0 ||
+          pad->offsets()[1].value_or(0) != 0 || shape[0] % tiling[0] != 0 ||
+          shape[1] % tiling[1] != 0) {
+        return std::nullopt;
+      }
+      // Override tiling to match the native one.
+      return VectorLayout(pad->bitwidth(), pad->offsets(), tiling,
+                          ImplicitDim::kNone);
+    };
+    auto res_ty = dyn_cast<VectorType>(op->getResult(0).getType());
+    TPU_CHECK_OP(res_ty, "only vector results supported");
+    TPU_CHECK_OP(res_ty.getElementTypeBitWidth() == kNativeBitwidth,
+                 "only 32-bit matmul results supported");
+    std::array<Layout, 3> in_layout;
+    CHECK_EQ(op->getNumOperands(), 3);
+    for (int i = 0; i < 3; ++i) {
+      if (auto layout = get_unpadded_layout(op->getOperand(i))) {
+        in_layout[i] = *layout;
+      } else {
+        op->emitOpError("padded operands");
+        return failure();
+      }
+    }
+    setLayout(op, in_layout,
+              VectorLayout(kNativeBitwidth, {0, 0}, default_tiling_,
+                           ImplicitDim::kNone));
     return success();
   }
 
