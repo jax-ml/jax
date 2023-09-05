@@ -31,7 +31,7 @@ class dtype : public nanobind::object {
  public:
   NB_OBJECT_DEFAULT(dtype, object, "dtype", PyArray_DescrCheck);  // NOLINT
 
-  ssize_t itemsize() const { return nanobind::cast<ssize_t>(attr("itemsize")); }
+  int itemsize() const { return nanobind::cast<int>(attr("itemsize")); }
 
   /// Single-character code for dtype's kind.
   /// For example, floating point types are 'f' and integral types are 'i'.
