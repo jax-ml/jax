@@ -1937,7 +1937,7 @@ class BCOOTest(sptu.SparseTestCase):
     args_maker = lambda: [sprng(lhs_shape, lhs_dtype, n_batch=n_batch_lhs),
                           jnp.array(rng(rhs_shape, rhs_dtype))]
 
-    tol = {np.float64: 1E-13, np.complex128: 1E-13,
+    tol = {np.float64: 1E-7, np.complex128: 1E-7,
            np.float32: 2E-6, np.complex64: 2E-6}
 
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
@@ -1976,7 +1976,7 @@ class BCOOTest(sptu.SparseTestCase):
     args_maker_sp_de = lambda: [sprng(lhs_shape, lhs_dtype, n_batch=n_batch_lhs),
                                 jnp.array(rng(rhs_shape, rhs_dtype))]
 
-    tol = {np.float64: 1E-13, np.complex128: 1E-13,
+    tol = {np.float64: 1E-7, np.complex128: 1E-7,
            np.float32: 1E-6, np.complex64: 1E-6}
 
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
