@@ -19,7 +19,7 @@ licenses(["notice"])
 package(
     default_applicable_licenses = [],
     default_visibility = [
-        "//third_party/py/jax/experimental/jax2tf/tests:__subpackages__",
+        "//third_party/py/jax/tests:__subpackages__",
     ],
 )
 

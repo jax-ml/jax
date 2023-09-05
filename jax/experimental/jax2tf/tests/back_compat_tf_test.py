@@ -34,6 +34,8 @@ from jax._src.lib import xla_extension
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests.back_compat_testdata import tf_call_tf_function
 import jax.numpy as jnp
+from tests import back_compat_test_util as bctu  # type: ignore
+
 import tensorflow as tf
 
 

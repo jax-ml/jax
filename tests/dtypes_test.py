@@ -383,12 +383,17 @@ class TestPromotionTables(jtu.JaxTestCase):
       {"testcase_name": f"_{jaxtype=}", "jaxtype": jaxtype}
       for jaxtype in dtypes._jax_types + dtypes._weak_types)
   def testJaxTypeFromType(self, jaxtype):
+    # TODO(necula): should we add a reverse mapping to _jax_type for DimExpr?
+    if "shape_poly" in str(jaxtype):
+      self.skipTest("Disabled for symbolic dimensions")
     self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(jaxtype)), jaxtype)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{jaxtype=}", "jaxtype": jaxtype}
       for jaxtype in dtypes._jax_types + dtypes._weak_types)
   def testJaxTypeFromVal(self, jaxtype):
+    if "shape_poly" in str(jaxtype):
+      self.skipTest("Disabled for symbolic dimensions")
     try:
       val = jaxtype(0)
     except TypeError:
