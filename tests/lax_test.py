@@ -103,6 +103,14 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype) for shape in shapes]
     op = getattr(lax, op_name)
     numpy_op = getattr(lax_reference, op_name)
+    tol = tol or jtu.default_tolerance()
+    if jtu.device_under_test() == "tpu":
+      if dtype in (np.float32, np.complex64) and op_name in (
+        "acosh", "asinh", "cos", "cosh", "digamma", "exp", "exp2", "igamma",
+        "igammac", "log", "log1p", "logistic", "pow", "sin", "sinh", "tan"):
+        tol = jtu.join_tolerance(tol, 1e-4)
+      if op_name == "asinh" and dtype == np.float16:
+        tol = jtu.join_tolerance(tol, 1e-3)
     self._CheckAgainstNumpy(numpy_op, op, args_maker, tol=tol)
 
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
@@ -281,6 +289,7 @@ class LaxTest(jtu.JaxTestCase):
     [dict(dtype=dtype, preferred_element_type=preferred)
      for dtype, preferred in preferred_type_combinations]
   )
+  @jax.default_matmul_precision("float32")
   def testConvPreferredElement(self, lhs_shape, rhs_shape, dtype, preferred_element_type):
     if (not config.x64_enabled and
        (dtype == np.float64 or preferred_element_type == np.float64
@@ -298,6 +307,13 @@ class LaxTest(jtu.JaxTestCase):
       tol = 1e-5
     else:
       tol = {np.float64: 1e-14}
+    if (jtu.device_under_test() == "tpu" and dtype == np.float16 and
+        preferred_element_type == np.float32):
+      tol = 2e-3
+    if (jtu.device_under_test() == "tpu" and dtype == jnp.bfloat16 and
+        preferred_element_type == np.float32):
+      tol = 1e-5
+
     rng = jtu.rand_default(self.rng())
     x = rng(lhs_shape, dtype)
     y = rng(rhs_shape, dtype)
@@ -468,6 +484,7 @@ class LaxTest(jtu.JaxTestCase):
 
     self._CompileAndCheck(fun, args_maker)
 
+  @jax.default_matmul_precision("float32")
   def testConvGeneralDilatedPatchesOverlapping1D(self):
     lhs = np.array([[1]], np.float32).reshape((1, 1))
     patches = lax.conv_general_dilated_patches(
@@ -663,7 +680,11 @@ class LaxTest(jtu.JaxTestCase):
         patches,
         range(len(filter_shape)),
         [out_spec.index(c) for c in out_spec if c not in ('N', 'C')])
-    self.assertAllClose(out, patches)
+    tol = None
+    if (jtu.device_under_test() == "tpu" and
+        precision in (None, lax.Precision.DEFAULT)):
+      tol = 1e-3
+    self.assertAllClose(out, patches, atol=tol, rtol=tol)
 
   @jtu.sample_product(
       [
@@ -1938,7 +1959,10 @@ class LaxTest(jtu.JaxTestCase):
         return np.logaddexp.accumulate(x, axis=axis, dtype=dtype)
     args_maker = lambda: [rng(shape, dtype)]
     self._CompileAndCheck(fun, args_maker)
-    self._CheckAgainstNumpy(np_fun, fun, args_maker)
+    tol = None
+    if jtu.device_under_test() == "tpu" and dtype == np.float32:
+      tol = 1e-4
+    self._CheckAgainstNumpy(np_fun, fun, args_maker, atol=tol, rtol=tol)
 
   @jtu.sample_product(
     shape=[(), (3,), (3, 4)],

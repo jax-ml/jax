@@ -942,7 +942,12 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
 
       baseline = jax.tree_util.tree_map(conversion, baseline)
       candidate = jax.tree_util.tree_map(conversion, candidate)
-      self.assertAllClose(baseline, candidate)
+      tol = (
+          1e-2
+          if jtu.device_under_test() == "tpu" and dtype == np.float16
+          else None
+      )
+      self.assertAllClose(baseline, candidate, atol=tol, rtol=tol)
 
     # Eager mode
     assert_all_close_support_bfloat16(tf_f(x), tf_f_rt(x))

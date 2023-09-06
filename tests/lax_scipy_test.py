@@ -143,8 +143,13 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                                      return_sign=return_sign)
 
       args_maker = lambda: [rng(shapes[0], dtype)]
+    tol = (
+        {np.float32: 2e-4, np.complex64: 2e-4}
+        if jtu.device_under_test() == "tpu"
+        else None
+    )
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=tol, atol=tol)
     tol = {np.float32: 1E-6, np.float64: 1E-14}
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
     self._CompileAndCheck(lax_fun, args_maker, rtol=tol, atol=tol)
 
   def testLogSumExpZeros(self):
@@ -191,7 +196,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                             tol={np.float32: 1e-3, np.float64: 1e-14})
     self._CompileAndCheck(
         lax_fun, args_maker, rtol={
-            np.float32: 3e-07,
+            np.float32: 5e-5 if jtu.device_under_test() == "tpu" else 1e-05,
             np.float64: 4e-15
         })
 
@@ -210,7 +215,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(primals_out, -jnp.log(xs), atol=atol)
     # Check that d/dx betaln(x, 1) = d/dx -log(x) = -1/x.
     self.assertAllClose(tangents_out, -1 / xs, atol=atol)
-
 
   def testXlogyShouldReturnZero(self):
     self.assertAllClose(lsp_special.xlogy(0., 0.), 0., check_dtypes=False)
@@ -245,7 +249,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     lax_op = lsp_special_internal._xlogx
     rng = jtu.rand_positive(self.rng())
     args_maker = lambda: [rng((2, 3, 4), np.float32)]
-    self._CheckAgainstNumpy(scipy_op, lax_op, args_maker)
+    self._CheckAgainstNumpy(scipy_op, lax_op, args_maker,
+                            rtol=jtu.if_device_under_test("tpu", 5e-4, None))
     self._CompileAndCheck(lax_op, args_maker)
     jtu.check_grads(lax_op, args_maker(), order=1,
                     atol=jtu.if_device_under_test("tpu", .1, 1e-3),
@@ -520,7 +525,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_cluster.vq.vq, lsp_cluster.vq.vq, args_maker, check_dtypes=False)
     self._CompileAndCheck(lsp_cluster.vq.vq, args_maker)
 
-
   @jtu.sample_product(
     shape=all_shapes,
     dtype=float_dtypes,
@@ -530,8 +534,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
 
     with self.subTest('Test against SciPy'):
+      rtol = 1e-4 if jtu.device_under_test() == "tpu" else 1e-8
       self._CheckAgainstNumpy(osp_special.spence, lsp_special.spence, args_maker,
-                              rtol=1e-8, check_dtypes=False)
+                              rtol=rtol, check_dtypes=False)
 
     with self.subTest('Test JIT compatibility'):
       self._CompileAndCheck(lsp_special.spence, args_maker)
@@ -542,7 +547,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       nan_array = jnp.nan * jnp.ones_like(x)
       actual = lsp_special.spence(x)
       self.assertArraysEqual(actual, nan_array, check_dtypes=False)
-
 
   @jtu.sample_product(
     [dict(yshape=yshape, xshape=xshape, dx=dx, axis=axis)

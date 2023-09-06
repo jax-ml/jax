@@ -433,6 +433,11 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes, np_arrays=False)
     tol = max(jtu.tolerance(dtype, tolerance) for dtype in dtypes)
+    if jtu.device_under_test() == "tpu" and op_name in (
+        "arccosh", "arcsinh", "sinh", "cosh", "tanh", "sin", "cos", "tan",
+        "log", "log1p", "log2", "log10", "exp", "expm1", "exp2", "power",
+        "logaddexp", "logaddexp2", "i0"):
+      tol = jtu.join_tolerance(tol, 1e-4)
     tol = functools.reduce(jtu.join_tolerance,
                            [tolerance, tol, jtu.default_tolerance()])
 

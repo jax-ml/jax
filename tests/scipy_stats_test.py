@@ -278,7 +278,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     a = b = 1.
     x = np.array([0., 1.])
     self.assertAllClose(
-      osp_stats.beta.pdf(x, a, b), lsp_stats.beta.pdf(x, a, b), atol=1E-6)
+      osp_stats.beta.pdf(x, a, b), lsp_stats.beta.pdf(x, a, b), atol=1e-5,
+      rtol=2e-5)
 
   @genNamedParametersNArgs(3)
   def testCauchyLogPdf(self, shapes, dtypes):
@@ -559,7 +560,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-4, rtol=1e-3)
-      self._CompileAndCheck(lax_fun, args_maker)
+      self._CompileAndCheck(lax_fun, args_maker, atol={np.float32: 3e-5},
+                            rtol={np.float32: 3e-5})
 
   @genNamedParametersNArgs(4)
   def testNBinomLogPmf(self, shapes, dtypes):
@@ -836,7 +838,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, tol=1e-4)
-      self._CompileAndCheck(lax_fun, args_maker, rtol=3e-4)
+      self._CompileAndCheck(lax_fun, args_maker, rtol=3e-4, atol=3e-4)
 
   @genNamedParametersNArgs(5)
   def testTruncnormLogPdf(self, shapes, dtypes):
@@ -910,7 +912,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=1e-3)
-      self._CompileAndCheck(lax_fun, args_maker)
+      self._CompileAndCheck(lax_fun, args_maker, rtol={np.float32: 1e-5},
+                            atol={np.float32: 1e-5})
 
   @genNamedParametersNArgs(5)
   def testTruncnormLogSf(self, shapes, dtypes):

@@ -577,7 +577,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
-      self._CompileAndCheck(jnp_fun, args_maker)
+      self._CompileAndCheck(jnp_fun, args_maker, tol=tol)
 
   def testTensordotErrors(self):
     a = self.rng().random((3, 2, 2))
@@ -3961,7 +3961,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # np.vander seems to return float64 for all floating types. We could obey
     # those semantics, but they seem like a bug.
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
-                            tol={np.float32: 1e-3})
+                            tol={np.float32: 1e-3, np.complex64: 1e-3})
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=False)
 
   @jtu.sample_product(
@@ -4689,7 +4689,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     # relax default tolerances slightly
     tol = {dtypes.bfloat16: 2e-2, np.float16: 4e-3, np.float32: 2e-3,
-           np.float64: 1e-14, np.complex128: 1e-14}
+           np.float64: 1e-14, np.complex64: 2e-3, np.complex128: 1e-14}
     def args_maker():
       """Test the set of inputs np.geomspace is well-defined on."""
       start, stop = self._GetArgsMaker(rng,

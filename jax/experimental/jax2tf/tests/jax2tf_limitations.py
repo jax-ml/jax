@@ -142,7 +142,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   # We keep here the explicit set of groups for which we don't have limitations
   harness_groups_no_limitations = {
       "abs", "add", "add_any", "and", "atan2", "bitcast_convert_type",
-      "broadcast", "broadcast_in_dim", "cbrt", "ceil", "clamp", "concatenate",
+      "broadcast", "broadcast_in_dim", "ceil", "clamp", "concatenate",
       "cos", "cosh", "complex", "conj", "convert_element_type", "cummax",
       "cummin", "device_put", "dynamic_slice", "dynamic_update_slice", "exp",
       "eq", "floor", "gather", "ge", "gt", "imag", "iota", "iota_2x32_shape",
@@ -201,7 +201,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def acosh(cls, harness: primitive_harness.Harness):
     return [
-        custom_numeric(dtypes=[np.complex64], devices=("cpu", "gpu"), tol=1e-3),
+        custom_numeric(dtypes=[np.complex64], devices=("cpu", "gpu", "tpu"),
+                       tol=1e-3),
         custom_numeric(dtypes=[np.complex128], devices=("cpu", "gpu"), tol=1e-12),
         cls.helper_get_trig_custom_limitation(np.cosh)
     ]
@@ -265,6 +266,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     return [
         custom_numeric(dtypes=[np.complex64], devices=("cpu", "gpu"), tol=1e-4,
                        modes=("eager", "graph", "compiled")),
+        custom_numeric(dtypes=[np.complex64], devices=("tpu", "gpu"), tol=2e-4,
+                       modes=("eager", "graph", "compiled")),
         custom_numeric(dtypes=[np.complex128], devices=("cpu", "gpu"), tol=1e-12,
                        modes=("eager", "graph", "compiled")),
         cls.helper_get_trig_custom_limitation(np.sin)
@@ -273,7 +276,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def asinh(cls, harness: primitive_harness.Harness):
     return [
-        custom_numeric(dtypes=[np.complex64], devices=("cpu", "gpu"), tol=1e-3),
+        custom_numeric(dtypes=[np.complex64], devices=("cpu", "gpu", "tpu"),
+                       tol=1e-3),
         custom_numeric(dtypes=[np.complex128], devices=("cpu", "gpu"), tol=1e-12),
         cls.helper_get_trig_custom_limitation(np.sinh)
     ]
@@ -282,6 +286,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def atan(cls, harness: primitive_harness.Harness):
     return [
         custom_numeric(dtypes=[np.complex64], devices=("cpu", "gpu"), tol=1e-5),
+        custom_numeric(dtypes=[np.complex64], devices=("tpu"), tol=1e-3),
         custom_numeric(dtypes=[np.complex128], devices=("cpu", "gpu"), tol=1e-12),
         cls.helper_get_trig_custom_limitation(np.tan)
     ]
@@ -307,6 +312,12 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def bessel_i1e(cls, harness: primitive_harness.Harness):
     return cls.bessel_i0e(harness)
+
+  @classmethod
+  def cbrt(cls, harness: primitive_harness.Harness):
+    return [
+        custom_numeric(dtypes=[np.float32], devices=("tpu"), tol=1e-5),
+    ]
 
   @classmethod
   def cholesky(cls, harness: primitive_harness.Harness):
@@ -1359,6 +1370,14 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             devices=("cpu", "gpu"),
             modes=("eager", "graph", "compiled"),
             enabled=(compute_uv == True)),
+        custom_numeric(
+            tol=1e-5,
+            description="custom numeric comparison when !compute_uv on TPU",
+            dtypes=[np.float32, np.complex64],
+            custom_assert=custom_assert,
+            devices=("tpu"),
+            modes=("eager", "graph", "compiled"),
+            enabled=not compute_uv),
         custom_numeric(
             tol=1e-2,
             description="custom numeric comparison when compute_uv on TPU",

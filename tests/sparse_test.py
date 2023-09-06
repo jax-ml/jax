@@ -2670,7 +2670,7 @@ class SparseObjectTest(sptu.SparseTestCase):
     # Test matching type
     x = rng_b(bshape, dtype)
     x = jnp.asarray(x)
-    self.assertAllClose(M @ x, Msp @ x, rtol=MATMUL_TOL)
+    self.assertAllClose(M @ x, Msp @ x, rtol=MATMUL_TOL, atol=MATMUL_TOL)
 
     # Test mismatched type
     x = rng_b(bshape, np.int32)

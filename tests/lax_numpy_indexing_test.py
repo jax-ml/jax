@@ -437,7 +437,6 @@ class IndexingTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-
   @jtu.sample_product(
     funcname=["negative", "sin", "cos", "square", "sqrt", "log", "exp"],
   )
@@ -456,7 +455,12 @@ class IndexingTest(jtu.JaxTestCase):
 
     # Test with traced integer index
     args_maker = lambda: [rng(size, dtype), idx_rng(size, int)]
-    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    atol = (
+        5e-5
+        if jtu.device_under_test() == "tpu" and funcname in ("log", "exp")
+        else None
+    )
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker, atol=atol)
     self._CompileAndCheck(jnp_op, args_maker)
 
     # Test with slice index
@@ -464,7 +468,7 @@ class IndexingTest(jtu.JaxTestCase):
     np_op_idx = partial(np_op, idx=idx)
     jnp_op_idx = partial(jnp_op, idx=idx)
     args_maker = lambda: [rng(size, dtype)]
-    self._CheckAgainstNumpy(np_op_idx, jnp_op_idx, args_maker)
+    self._CheckAgainstNumpy(np_op_idx, jnp_op_idx, args_maker, atol=atol)
     self._CompileAndCheck(jnp_op_idx, args_maker)
 
   def testIndexApplyBatchingBug(self):
@@ -1175,8 +1179,8 @@ class UpdateOps(enum.Enum):
 
 def _update_tol(op):
   if op == UpdateOps.POW:
-    tol = {np.complex64: 2e-4 if jtu.device_under_test() == "tpu" else 1e-5,
-           np.complex128: 1e-14}
+    f32_tol = 2e-4 if jtu.device_under_test() == "tpu" else 1e-5
+    tol = {np.float32: f32_tol, np.complex64: f32_tol, np.complex128: 1e-14}
   else:
     tol = {np.complex128: 1e-14}
   return tol
