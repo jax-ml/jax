@@ -54,13 +54,19 @@ from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.util import unzip2
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
-    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, device_under_test, tolerance)
+    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, tolerance)
 from jax._src import xla_bridge
 
 
 # This submodule includes private test utilities that are not exported to
 # jax.test_util. Functionality appearing here is for internal use only, and
 # may be changed or removed at any time and without any deprecation cycle.
+
+_TEST_DUT = jax_config.DEFINE_string(
+    'jax_test_dut', '',
+    help=
+    'Describes the device under test in case special consideration is required.'
+)
 
 _NUM_GENERATED_CASES = jax_config.DEFINE_integer(
   'jax_num_generated_cases',
@@ -258,6 +264,11 @@ def assert_num_jit_and_pmap_compilations(times):
   if count[0] != times:
     raise AssertionError(f"Expected exactly {times} XLA compilations, "
                          f"but executed {count[0]}")
+
+
+def device_under_test():
+  return _TEST_DUT.value or xla_bridge.get_backend().platform
+
 
 def if_device_under_test(device_type: Union[str, Sequence[str]],
                          if_true, if_false):
