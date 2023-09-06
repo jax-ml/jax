@@ -166,27 +166,26 @@ class XlaBridgeTest(jtu.JaxTestCase):
 
   def test_register_plugin(self):
     with self.assertLogs(level="WARNING") as log_output:
-      if platform.system() == "Windows":
-        os.environ['PJRT_NAMES_AND_LIBRARY_PATHS'] = "name1;path1,name2;path2,name3"
-      else:
-        os.environ['PJRT_NAMES_AND_LIBRARY_PATHS'] = "name1:path1,name2:path2,name3"
-      xb.register_pjrt_plugin_factories_from_env()
+      with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
+        if platform.system() == "Windows":
+          os.environ["PJRT_NAMES_AND_LIBRARY_PATHS"] = (
+              "name1;path1,name2;path2,name3"
+          )
+        else:
+          os.environ["PJRT_NAMES_AND_LIBRARY_PATHS"] = (
+              "name1:path1,name2:path2,name3"
+          )
+        xb.register_pjrt_plugin_factories_from_env()
     registration = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
-      with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
+      if xla_extension_version < 183:
+        registration.factory()
+      else:
         with mock.patch.object(
-            xc, "pjrt_plugin_loaded", autospec=True
-        ) as mock_plugin_loaded:
-          if xla_extension_version < 183:
+            xc, "pjrt_plugin_initialized", autospec=True, return_vale=True
+        ):
+          with mock.patch.object(xc, "initialize_pjrt_plugin", autospec=True):
             registration.factory()
-          else:
-            with mock.patch.object(
-                xc, "pjrt_plugin_initialized", autospec=True, return_vale=True
-            ):
-              with mock.patch.object(
-                  xc, "initialize_pjrt_plugin", autospec=True
-              ):
-                registration.factory()
 
     self.assertRegex(
         log_output[1][0],
@@ -197,7 +196,6 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertIn("name2", xb._backend_factories)
     self.assertEqual(registration.priority, 400)
     self.assertTrue(registration.experimental)
-    mock_plugin_loaded.assert_called_once_with("name1")
     mock_make.assert_called_once_with("name1", None, None)
 
   def test_register_plugin_with_config(self):
@@ -209,28 +207,22 @@ class XlaBridgeTest(jtu.JaxTestCase):
         if platform.system() == "Windows"
         else f"name1:{test_json_file_path}"
     )
-    xb.register_pjrt_plugin_factories_from_env()
+    with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
+      xb.register_pjrt_plugin_factories_from_env()
     registration = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
-      with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
+      if xla_extension_version < 183:
+        registration.factory()
+      else:
         with mock.patch.object(
-            xc, "pjrt_plugin_loaded", autospec=True
-        ) as mock_plugin_loaded:
-          if xla_extension_version < 183:
+            xc, "pjrt_plugin_initialized", autospec=True, return_vale=True
+        ):
+          with mock.patch.object(xc, "initialize_pjrt_plugin", autospec=True):
             registration.factory()
-          else:
-            with mock.patch.object(
-                xc, "pjrt_plugin_initialized", autospec=True, return_vale=True
-            ):
-              with mock.patch.object(
-                  xc, "initialize_pjrt_plugin", autospec=True
-              ):
-                registration.factory()
 
     self.assertIn("name1", xb._backend_factories)
     self.assertEqual(registration.priority, 400)
     self.assertTrue(registration.experimental)
-    mock_plugin_loaded.assert_called_once_with("name1")
     mock_make.assert_called_once_with(
         "name1",
         {

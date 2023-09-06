@@ -135,6 +135,8 @@ _default_backend: Optional[xla_client.Client] = None
 _backends : dict[str, xla_client.Client] = {}
 _backends_errors : dict[str, str] = {}
 _backend_lock = threading.Lock()
+_plugins_registered: bool = False
+_plugin_lock = threading.Lock()
 
 # The set of known non-experimental plugins.
 #
@@ -339,7 +341,7 @@ def register_plugin(
     priority: int = 400,
     library_path: Optional[str] = None,
     options: Optional[Mapping[str, Union[str, int, list[int], float]]] = None,
-) -> None:
+) -> Any:
   """Registers a backend factory for the PJRT plugin.
 
   Args:
@@ -351,15 +353,6 @@ def register_plugin(
     options: Optional. It is used when creating a PJRT plugin client.
   """
   def factory():
-    # Plugin may already be statically linked in some configurations, or we
-    # could be creating a client twice.
-    if not xla_client.pjrt_plugin_loaded(plugin_name):
-      if library_path is None:
-        raise ValueError(
-            'The library path is None when trying to dynamically load the'
-            ' plugin.'
-        )
-      xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
     if xla_extension_version >= 183:
       if not xla_client.pjrt_plugin_initialized(plugin_name):
         xla_client.initialize_pjrt_plugin(plugin_name)
@@ -383,6 +376,12 @@ def register_plugin(
   experimental = plugin_name not in _nonexperimental_plugins
   register_backend_factory(plugin_name, factory, priority=priority,
                            fail_quietly=False, experimental=experimental)
+  if library_path is not None:
+    if xla_extension_version >= 198:
+      return xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
+    else:
+      xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
+  return None
 
 
 def register_pjrt_plugin_factories_from_env() -> None:
@@ -413,13 +412,6 @@ def register_pjrt_plugin_factories_from_env() -> None:
     )
     register_plugin(plugin_name, library_path=library_path, options=options)
 
-
-# Plugins in the namespace package `jax_plugins` will be imported.
-discover_pjrt_plugins()
-# Registers plugins names and paths set in env var PJRT_NAMES_AND_LIBRARY_PATHS,
-# in the format of 'name1:path1,name2:path2' ('name1;path1,name2;path2' for
-# windows).
-register_pjrt_plugin_factories_from_env()
 
 _platform_aliases = {
   "cuda": "gpu",
@@ -475,6 +467,20 @@ def backends() -> dict[str, xla_client.Client]:
   global _backends
   global _backends_errors
   global _default_backend
+  global _plugins_registered
+
+  # Needs a separate lock because register_backend_factory (called from
+  # register_plugin) requries to hold _backend_lock.
+  with _plugin_lock:
+    if not _plugins_registered:
+      # Plugins in the namespace package `jax_plugins` or have an entry-point
+      # under the `jax_plugins` group will be imported.
+      discover_pjrt_plugins()
+      # Registers plugins names and paths set in env var
+      # PJRT_NAMES_AND_LIBRARY_PATHS, in the format of 'name1:path1,name2:path2'
+      # ('name1;path1,name2;path2' for windows).
+      register_pjrt_plugin_factories_from_env()
+      _plugins_registered = True
 
   with _backend_lock:
     if _backends:

@@ -48,6 +48,11 @@ parser.add_argument(
   "--editable",
   action="store_true",
   help="Create an 'editable' jaxlib build instead of a wheel.")
+parser.add_argument(
+    "--include_gpu_plugin_extension",
+    default=False,
+    help="Whether to include gpu plugin extension.",
+)
 args = parser.parse_args()
 
 r = runfiles.Create()
@@ -147,7 +152,7 @@ plat-name={tag}
 """)
 
 
-def prepare_wheel(sources_path, *, cpu):
+def prepare_wheel(sources_path, *, cpu, include_gpu_plugin_extension):
   """Assembles a source tree for the wheel in `sources_path`."""
   jaxlib_dir = os.path.join(sources_path, "jaxlib")
   os.makedirs(jaxlib_dir)
@@ -160,6 +165,8 @@ def prepare_wheel(sources_path, *, cpu):
   write_setup_cfg(sources_path, cpu)
   copy_to_jaxlib("__main__/jaxlib/init.py", dst_filename="__init__.py")
   copy_to_jaxlib(f"__main__/jaxlib/cpu_feature_guard.{pyext}")
+  if include_gpu_plugin_extension:
+    copy_to_jaxlib(f"__main__/jaxlib/cuda_plugin_extension.{pyext}")
   copy_to_jaxlib(f"__main__/jaxlib/utils.{pyext}")
   copy_to_jaxlib("__main__/jaxlib/lapack.py")
   copy_to_jaxlib("__main__/jaxlib/hlo_helpers.py")
@@ -283,7 +290,11 @@ if sources_path is None:
 
 try:
   os.makedirs(args.output_path, exist_ok=True)
-  prepare_wheel(sources_path, cpu=args.cpu)
+  prepare_wheel(
+      sources_path,
+      cpu=args.cpu,
+      include_gpu_plugin_extension=args.include_gpu_plugin_extension,
+  )
   package_name = "jaxlib"
   if args.editable:
     build_utils.build_editable(sources_path, args.output_path, package_name)
