@@ -39,7 +39,7 @@ from jax._src.lib.mlir.dialects import hlo
 import jax._src.xla_bridge
 from jax import config
 from jax.experimental import jax2tf
-from jax.experimental.jax2tf import jax_export
+from jax.experimental.export import export
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.experimental.maps import xmap
 from jax.experimental.shard_map import shard_map
@@ -1522,7 +1522,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         stack.enter_context(mesh)
       # Run the JAX native version, to check it works, and to fill caches.
       _ = func_to_convert(*args)
-      exported = jax_export.export(
+      exported = export.export(
           func_to_convert,
           lowering_platform='tpu'
       )(*(core.ShapedArray(a.shape, a.dtype) for a in args))

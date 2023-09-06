@@ -1173,6 +1173,18 @@ py_test(
     ],
 )
 
+jax_test(
+    name = "export_test",
+    srcs = ["export_test.py"],
+    enable_configs = [
+        "tpu_df_2x2",
+    ],
+    tags = [],
+    deps = [
+        "//jax/experimental/export",
+    ],
+)
+
 exports_files(
     [
         "api_test.py",
