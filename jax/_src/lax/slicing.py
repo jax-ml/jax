@@ -26,6 +26,7 @@ import jax
 
 from jax._src import ad_util
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import util
@@ -1150,6 +1151,21 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
 slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice')
 ad.deflinear2(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
+
+# Override the standard impl to defer to dynamic_slice whenever possible.
+# This lets us reuse the same program for many applications of slicing for as
+# long as they have the same output shape. Note that this only applies in
+# op-by-op mode and inside larger computations we still lower to static slices.
+@slice_p.def_impl
+def _slice_impl(x, start_indices, limit_indices, strides):
+  if strides is not None:
+    return dispatch.apply_primitive(
+      slice_p, x, start_indices=start_indices,
+      limit_indices=limit_indices, strides=strides)
+  slice_sizes = tuple(np.array(limit_indices) - np.array(start_indices))
+  return dispatch.apply_primitive(dynamic_slice_p, x, *start_indices,
+                                  slice_sizes=slice_sizes)
+
 
 def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   strides = strides or [1] * len(start_indices)
