@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_python//python:defs.bzl", "py_test")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
 load(
     "//jaxlib:jax.bzl",
     "jax_generate_backend_suites",
@@ -1182,6 +1182,44 @@ jax_test(
     tags = [],
     deps = [
         "//jax/experimental/export",
+    ],
+)
+
+py_library(
+    name = "export_back_compat_test_util",
+    srcs = [
+        "export_back_compat_test_util.py",
+    ],
+    srcs_version = "PY3",
+    tags = ["pytype_unchecked_annotations"],
+    visibility = [
+        "//third_party/py/jax/experimental/jax2tf:__subpackages__",
+        "//third_party/py/jax_triton/google/pallas_tpu:__subpackages__",
+    ],
+    deps = [
+        "//jax/experimental/export",
+    ],
+)
+
+jax_test(
+    name = "export_back_compat_test",
+    srcs = ["export_back_compat_test.py"],
+    disable_configs = [
+        "cpu_no_jax_array",
+        "cpu_no_jit_pjit_api_merge",
+        "tpu_tfrt_pf_1x1",
+        "tpu_tfrt_df_1x1",  # TODO(b/247561208): GetCompilerIr not supported
+        "tpu_tfrt_pf_1x1_compilation_cache",
+    ],
+    enable_configs = [
+        "tpu",
+        "cpu",
+        "gpu",
+    ],
+    tags = [],
+    deps = [
+        "//jax/tests:export_back_compat_test_util",
+        "//jax/tests/export_back_compat_testdata",
     ],
 )
 

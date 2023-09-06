@@ -18,11 +18,13 @@ licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//third_party/py/jax/experimental/jax2tf:__subpackages__"],
+    default_visibility = [
+        "//third_party/py/jax/tests:__subpackages__",
+    ],
 )
 
 py_library(
-    name = "back_compat_testdata",
+    name = "export_back_compat_testdata",
     srcs = glob(["*.py"]),
     srcs_version = "PY3",
     deps = [

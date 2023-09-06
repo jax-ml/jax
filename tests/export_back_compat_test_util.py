@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Utilities for testing backwards compatibility of custom calls.
+"""Utilities for testing backwards compatibility of exporting custom calls.
 
 Since we have to guarantee 6 months of backward compatibility for the
 JAX serialized format, we need to guarantee that custom calls continue to
@@ -34,7 +34,7 @@ Write the JAX function `func` that exercises the custom call `foo_call` you
 want, then pick some inputs, and then add this to the new test to get started.
 
   import dataclasses
-  from jax.experimental.jax2tf.tests import back_compat_test_util as bctu
+  from jax.tests import export_back_compat_test_util as bctu
 
   def test_foo_call(self):
     def func(...): ...
@@ -51,7 +51,7 @@ you will see printed in the logs.
 Name the literal `data_YYYYY_MM_DD` to include the date of serializaton
 (for readability only). Then add to this file:
 
-  from jax.experimental.jax2tf.tests.back_compat_testdata import foo_call
+  from jax.tests.export_back_compat_testdata import foo_call
 
 then update `test_custom_call_coverage`, and then update your `test_foo_call`:
 
@@ -211,7 +211,7 @@ class CompatTestBase(jtu.JaxTestCase):
     np.set_printoptions(threshold=sys.maxsize, floatmode="unique")
     # Print the current test data to simplify updating the test.
     updated_testdata = f"""
-# Pasted from the test output (see back_compat_test_util.py module docstring)
+# Pasted from the test output (see export_back_compat_test_util.py module docstring)
 data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     testdata_version={CURRENT_TESTDATA_VERSION},
     platform={repr(self.default_jax_backend())},
@@ -228,7 +228,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     # Replace the word that should not appear.
     updated_testdata = re.sub(r"google.", "googlex", updated_testdata)
     output_dir = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR",
-                           "/tmp/back_compat_testdata")
+                           "/tmp/export_back_compat_testdata")
     if not os.path.exists(output_dir):
       os.makedirs(output_dir)
     output_file = os.path.join(output_dir, f"{self._testMethodName}.py")

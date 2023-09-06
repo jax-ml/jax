@@ -11,10 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for backwards compatibility of custom calls involving TensorFlow.
+"""Tests for backwards compatibility of exporting custom calls involving TF.
 
-See the back_compat_test_util module docstring for how to setup and update
-these tests.
+See the export_back_compat_test_util module docstring for how to setup and
+update these tests.
 """
 
 import base64
@@ -29,9 +29,10 @@ from jax import config
 from jax._src import test_util as jtu
 from jax._src.lib import xla_extension
 from jax.experimental import jax2tf
-from jax.experimental.jax2tf.tests import back_compat_test_util as bctu
-from jax.experimental.jax2tf.tests.back_compat_testdata import tf_call_tf_function
+from jax.experimental.jax2tf.tests.export_back_compat_testdata import tf_call_tf_function
 import jax.numpy as jnp
+from tests import export_back_compat_test_util as bctu  # type: ignore
+
 import tensorflow as tf
 
 
