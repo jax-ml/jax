@@ -1556,7 +1556,15 @@ def _abs(x: TfVal) -> TfVal:
 
 
 tf_impl[lax.abs_p] = _abs
-tf_impl[lax.pow_p] = tf.math.pow
+
+
+def _pow(x: TfVal, y: TfVal, *, _in_avals, _out_aval) -> TfVal:
+  x = tf.dtypes.cast(x, _to_tf_dtype(_out_aval.dtype))
+  y = tf.dtypes.cast(y, _to_tf_dtype(_out_aval.dtype))
+  return tf.math.pow(x, y)
+
+
+tf_impl_with_avals[lax.pow_p] = _pow
 
 
 def _integer_pow(x, *, y: int, _in_avals: Sequence[core.ShapedArray],
