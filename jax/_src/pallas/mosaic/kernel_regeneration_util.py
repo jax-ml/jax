@@ -14,11 +14,10 @@
 
 """Helpers to encode and decode Mosaic kernel regeneration metadata."""
 
-# mypy: ignore-errors
 import base64
 import json
 from typing import Any
-from mlir import ir
+from jaxlib.mlir import ir
 
 
 def encode_kernel_regeneration_metadata(
