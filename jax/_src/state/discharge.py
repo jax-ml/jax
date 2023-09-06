@@ -467,7 +467,7 @@ def _run_state_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
 pe.custom_partial_eval_rules[run_state_p] = _run_state_partial_eval
 
 def _run_state_partial_eval_custom(
-    saveable: Callable[..., bool],
+    saveable: Callable[..., pe.RematCases_],
     in_unknowns: Sequence[bool],
     in_inst: Sequence[bool],
     eqn: core.JaxprEqn):

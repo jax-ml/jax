@@ -19,3 +19,8 @@ from jax._src.ad_checkpoint import (
   print_saved_residuals,
   remat,
 )
+from jax._src.interpreters.partial_eval import (
+  Recompute,
+  Saveable,
+  Offloadable,
+)
