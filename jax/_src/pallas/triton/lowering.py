@@ -628,6 +628,31 @@ def _neg_lowering_rule(ctx: TritonLoweringRuleContext, a):
 triton_lowering_rules[lax.neg_p] = _neg_lowering_rule
 
 
+def _shift_left_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
+  return a.__lshift__(b, _builder=ctx.builder)
+
+
+triton_lowering_rules[lax.shift_left_p] = _shift_left_lowering_rule
+
+
+def _shift_right_arithmetic_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
+  return tl.semantic.ashr(a, b, builder=ctx.builder)
+
+
+triton_lowering_rules[lax.shift_right_arithmetic_p] = (
+    _shift_right_arithmetic_lowering_rule
+)
+
+
+def _shift_right_logical_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
+  return tl.semantic.lshr(a, b, builder=ctx.builder)
+
+
+triton_lowering_rules[lax.shift_right_logical_p] = (
+    _shift_right_logical_lowering_rule
+)
+
+
 def _broadcast_in_dim_lowering_rule(
     ctx: TritonLoweringRuleContext, a, *, broadcast_dimensions, shape
 ):
