@@ -4216,11 +4216,19 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
       assert np.shape(ind) == ()  # checked above
       start_indices.append(ind)
       slice_sizes.append(1)
-  # We must be careful with dtypes because dynamic_slice requires all
-  # start indices to have matching types.
-  if len(start_indices) > 1:
-    start_indices = util.promote_dtypes(*start_indices)
-  arr = lax.dynamic_slice(arr, start_indices=start_indices, slice_sizes=slice_sizes)
+  # Try to use static slicing when possible.
+  if all(isinstance(i, (int, np.integer)) and i >= 0 for i in start_indices):
+    int_start_indices = [int(i) for i in start_indices]  # type: ignore
+    int_limit_indices = [i + s for i, s in zip(int_start_indices, slice_sizes)]
+    arr = lax.slice(
+        arr, start_indices=int_start_indices, limit_indices=int_limit_indices)
+  else:
+    # We must be careful with dtypes because dynamic_slice requires all
+    # start indices to have matching types.
+    if len(start_indices) > 1:
+      start_indices = util.promote_dtypes(*start_indices)
+    arr = lax.dynamic_slice(
+        arr, start_indices=start_indices, slice_sizes=slice_sizes)
   if int_indices:
     arr = lax.squeeze(arr, tuple(int_indices))
   return arr
