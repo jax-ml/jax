@@ -354,7 +354,7 @@ class ArrayImpl(basearray.Array):
     else:
       return f"{prefix}{self.shape}, {dtype_str}"
 
-  @functools.cached_property
+  @property
   def is_fully_addressable(self) -> bool:
     """Is this Array fully addressable?
 

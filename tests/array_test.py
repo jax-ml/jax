@@ -31,7 +31,8 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
-from jax._src.sharding_impls import _op_sharding_to_pos_sharding
+from jax._src.sharding_impls import (_op_sharding_to_pos_sharding,
+                                     pmap_sharding_devices_indices_map)
 from jax.experimental.pjit import pjit
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
@@ -846,13 +847,13 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertIsInstance(out.sharding, jax.sharding.PmapSharding)
     # Populate the device_indices_map cache.
     _ = out.sharding.devices_indices_map(shape)
-    cache_info1 = jax.sharding.PmapSharding.devices_indices_map.cache_info()
+    cache_info1 = pmap_sharding_devices_indices_map.cache_info()
 
     inp_data2 = np.arange(num_elements, num_elements + num_elements).reshape(shape)
     out2 = jax.pmap(lambda x: x)(inp_data2)
     # Populate the device_indices_map cache.
     _ = out2.sharding.devices_indices_map(shape)
-    cache_info2 = jax.sharding.PmapSharding.devices_indices_map.cache_info()
+    cache_info2 = pmap_sharding_devices_indices_map.cache_info()
 
     self.assertGreater(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)

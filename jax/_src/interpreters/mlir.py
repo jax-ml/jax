@@ -580,7 +580,7 @@ def sharded_aval(aval: core.AbstractValue,
     return aval
   if not isinstance(aval, (core.ShapedArray, core.DShapedArray)):
     raise NotImplementedError
-  return aval.update(sharding.shard_shape(aval.shape))
+  return aval.update(sharding.shard_shape(aval.shape))  # type: ignore
 
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,

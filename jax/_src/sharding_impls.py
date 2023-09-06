@@ -52,6 +52,38 @@ class TransferToMemoryKind:
   memory_kind: str
 
 
+@functools.lru_cache(maxsize=4096)
+def common_devices_indices_map(s, global_shape: Shape) -> Mapping[Device, Index]:
+  hlo_sharding = s._to_xla_hlo_sharding(len(global_shape))
+  gspmd_sharding = GSPMDSharding(s._device_assignment, hlo_sharding)
+  return gspmd_sharding.devices_indices_map(global_shape)
+
+
+@functools.lru_cache(maxsize=4096)
+def _common_shard_shape(self, global_shape: Shape) -> Shape:
+  hlo_sharding = self._to_xla_hlo_sharding(len(global_shape))
+  if is_op_sharding_replicated(hlo_sharding):
+    return global_shape
+  partitions, _ = get_num_ways_dim_sharded(hlo_sharding)
+  assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
+  out = []
+  for dim, (s, p) in enumerate(safe_zip(global_shape, partitions)):
+    try:
+      quotient, remainder = divmod(s, p)
+    except TypeError:
+      # TODO Figure out how to partition dynamic shapes
+      raise NotImplementedError
+    if remainder != 0:
+      raise ValueError(
+          f"Sharding {self} implies that array axis {dim} is partitioned "
+          f"{p} times, but the dimension size is {s} "
+          f"(full shape: {global_shape}, "
+          f"per-dimension tiling factors: {partitions} should evenly divide "
+          "the shape)")
+    out.append(quotient)
+  return tuple(out)
+
+
 # Shardings that inherit from XLACompatibleSharding should implement the
 # `_device_assignment` property and `_to_xla_hlo_sharding` method.
 @use_cpp_class(xc.XLACompatibleSharding)
@@ -74,40 +106,16 @@ class XLACompatibleSharding(sharding.Sharding):
   #############################################################################
   # Default implementations below that all subclasses will inherit.
 
-  @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
-    hlo_sharding = self._to_xla_hlo_sharding(len(global_shape))
-    gspmd_sharding = GSPMDSharding(self._device_assignment, hlo_sharding)
-    return gspmd_sharding.devices_indices_map(global_shape)
+    return common_devices_indices_map(self, global_shape)
 
   @functools.cached_property
   def _addressable_device_assignment(self) -> XLADeviceAssignment:
     return tuple(d for d in self._device_assignment
                  if d.process_index == d.client.process_index())
 
-  @functools.lru_cache(maxsize=4096)
   def shard_shape(self, global_shape: Shape) -> Shape:
-    hlo_sharding = self._to_xla_hlo_sharding(len(global_shape))
-    if is_op_sharding_replicated(hlo_sharding):
-      return global_shape
-    partitions, _ = get_num_ways_dim_sharded(hlo_sharding)
-    assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
-    out = []
-    for dim, (s, p) in enumerate(safe_zip(global_shape, partitions)):
-      try:
-        quotient, remainder = divmod(s, p)
-      except TypeError:
-        # TODO Figure out how to partition dynamic shapes
-        raise NotImplementedError
-      if remainder != 0:
-        raise ValueError(
-            f"Sharding {self} implies that array axis {dim} is partitioned "
-            f"{p} times, but the dimension size is {s} "
-            f"(full shape: {global_shape}, "
-            f"per-dimension tiling factors: {partitions} should evenly divide "
-            "the shape)")
-      out.append(quotient)
-    return tuple(out)
+    return _common_shard_shape(self, global_shape)
 
   def is_equivalent_to(self: XLACompatibleSharding,  # type: ignore
                        other: XLACompatibleSharding, ndim: int) -> bool:
@@ -158,6 +166,14 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
     index_to_replica[h_index] += 1
     out[device] = replica_id
   return out
+
+
+@functools.lru_cache(maxsize=4096)
+def named_sharding_to_xla_hlo_sharding(
+    self, num_dimensions: int) -> xc.HloSharding:
+  sharding_spec, special_axes = self._get_sharding_spec(
+      num_dimensions, self._manual_axes)
+  return sharding_spec.sharding_proto(special_axes=special_axes)
 
 
 @use_cpp_class(xc.NamedSharding)
@@ -335,14 +351,10 @@ class NamedSharding(XLACompatibleSharding):
     return sharding_spec, special_axes
 
   if xla_extension_version >= 188:
-    @functools.lru_cache(maxsize=4096)
     def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
-      sharding_spec, special_axes = self._get_sharding_spec(
-          num_dimensions, self._manual_axes)
-      return sharding_spec.sharding_proto(special_axes=special_axes)
+      return named_sharding_to_xla_hlo_sharding(self, num_dimensions)
   else:
-    @functools.lru_cache(maxsize=4096)
-    def _to_xla_hlo_sharding(
+    def _to_xla_hlo_sharding(  # type: ignore
         self, num_dimensions: int,
         axis_ctx: SPMDAxisContext | ShardingContext | None = None
     ) -> xc.HloSharding:
@@ -424,6 +436,18 @@ class SingleDeviceSharding(XLACompatibleSharding):
   @property
   def is_fully_replicated(self) -> bool:
     return True
+
+  @property
+  def is_fully_addressable(self) -> bool:
+    return True
+
+
+@functools.lru_cache(maxsize=4096)
+def pmap_sharding_devices_indices_map(
+    self, global_shape: Shape) -> Mapping[Device, Index]:
+  self.shard_shape(global_shape)  # raises a good error message
+  indices = sharding_specs.spec_to_indices(global_shape, self.sharding_spec)
+  return dict(safe_zip(self.devices.flat, indices))  # type: ignore[arg-type]
 
 
 @use_cpp_class(xc.PmapSharding)
@@ -518,11 +542,8 @@ class PmapSharding(XLACompatibleSharding):
   def device_set(self) -> set[Device]:
     return set(self.devices.flat)
 
-  @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
-    self.shard_shape(global_shape)  # raises a good error message
-    indices = sharding_specs.spec_to_indices(global_shape, self.sharding_spec)
-    return dict(safe_zip(self.devices.flat, indices))  # type: ignore[arg-type]
+    return pmap_sharding_devices_indices_map(self, global_shape)
 
   @functools.cached_property
   def _device_assignment(self) -> XLADeviceAssignment:
@@ -551,7 +572,13 @@ class PmapSharding(XLACompatibleSharding):
         return False
     return True
 
-  @functools.lru_cache(maxsize=4096)
+  @functools.cached_property
+  def is_fully_addressable(self) -> bool:
+    if xla_extension_version >= 188:
+      return self._internal_device_list.is_fully_addressable  # type: ignore
+    else:
+      return len(self.device_set) == len(self.addressable_devices)  # type: ignore
+
   def shard_shape(self, global_shape: Shape) -> Shape:
     sharded_dim = None
     sharded_dim_size = None
@@ -597,6 +624,28 @@ def _op_sharding_to_pos_sharding(
   if op_sharding.replicate_on_last_tile_dim():
     p = p.replicate(-1, keepdims=False)
   return p
+
+
+@functools.lru_cache(maxsize=4096)
+def _positional_sharding_to_xla_hlo_sharding(
+    self, num_dimensions: int) -> xc.HloSharding:
+  if self.shape == (1,) * self.ndim:
+    return get_replicated_hlo_sharding()
+
+  pbuf = xc.OpSharding()
+  shape = self.shape[self.ndim - num_dimensions:]  # 'rank promotion' of val
+  set_size, = {len(device_set) for device_set in self._ids.flat}
+  pbuf.type = xc.OpSharding.Type.OTHER
+  if set_size > 1:
+    pbuf.last_tile_dims = [xc.OpSharding.Type.REPLICATED]
+    pbuf.tile_assignment_dimensions = (*shape, set_size)
+  else:
+    pbuf.tile_assignment_dimensions = shape
+  pbuf.tile_assignment_devices = [i for ids in self._ids.flat for i in ids]
+  product_of_dims = math.prod(pbuf.tile_assignment_dimensions)
+  num_devices = len(pbuf.tile_assignment_devices)
+  assert product_of_dims == num_devices, (product_of_dims, num_devices)
+  return xc.HloSharding.from_proto(pbuf)
 
 
 class PositionalSharding(XLACompatibleSharding):
@@ -716,25 +765,15 @@ class PositionalSharding(XLACompatibleSharding):
   def _device_assignment(self) -> XLADeviceAssignment:
     return self._devices
 
-  @functools.lru_cache(maxsize=4096)
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
-    if self.shape == (1,) * self.ndim:
-      return get_replicated_hlo_sharding()
+    return _positional_sharding_to_xla_hlo_sharding(self, num_dimensions)
 
-    pbuf = xc.OpSharding()
-    shape = self.shape[self.ndim - num_dimensions:]  # 'rank promotion' of val
-    set_size, = {len(device_set) for device_set in self._ids.flat}
-    pbuf.type = xc.OpSharding.Type.OTHER
-    if set_size > 1:
-      pbuf.last_tile_dims = [xc.OpSharding.Type.REPLICATED]
-      pbuf.tile_assignment_dimensions = (*shape, set_size)
+  @functools.cached_property
+  def is_fully_addressable(self) -> bool:
+    if xla_extension_version >= 188:
+      return self._internal_device_list.is_fully_addressable
     else:
-      pbuf.tile_assignment_dimensions = shape
-    pbuf.tile_assignment_devices = [i for ids in self._ids.flat for i in ids]
-    product_of_dims = math.prod(pbuf.tile_assignment_dimensions)
-    num_devices = len(pbuf.tile_assignment_devices)
-    assert product_of_dims == num_devices, (product_of_dims, num_devices)
-    return xc.HloSharding.from_proto(pbuf)
+      return len(self.device_set) == len(self.addressable_devices)  # type: ignore
 
 
 class DeviceIdSet:
@@ -764,6 +803,15 @@ class DeviceIdSet:
   def __eq__(self, other) -> bool:
     return (isinstance(other, DeviceIdSet) and self._name == other._name and
             self._ids == other._ids)
+
+
+@functools.lru_cache(maxsize=4096)
+def gspmd_sharding_devices_indices_map(
+    self, global_shape: Shape) -> Mapping[Device, Index]:
+  self.shard_shape(global_shape)  # raises a good error message
+  indices = op_sharding_to_indices(self._hlo_sharding, global_shape,
+                                    len(self._devices))
+  return dict(safe_zip(self._devices, indices))
 
 
 @use_cpp_class(xc.GSPMDSharding)
@@ -846,12 +894,8 @@ class GSPMDSharding(XLACompatibleSharding):
   def with_memory_kind(self, kind: str) -> GSPMDSharding:
     return GSPMDSharding(self._devices, self._hlo_sharding, memory_kind=kind)
 
-  @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
-    self.shard_shape(global_shape)  # raises a good error message
-    indices = op_sharding_to_indices(self._hlo_sharding, global_shape,
-                                     len(self._devices))
-    return dict(safe_zip(self._devices, indices))
+    return gspmd_sharding_devices_indices_map(self, global_shape)
 
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
@@ -863,6 +907,13 @@ class GSPMDSharding(XLACompatibleSharding):
   @functools.cached_property
   def is_fully_replicated(self) -> bool:
     return is_op_sharding_replicated(self._hlo_sharding)
+
+  @functools.cached_property
+  def is_fully_addressable(self) -> bool:
+    if xla_extension_version >= 188:
+      return self._internal_device_list.is_fully_addressable  # type: ignore
+    else:
+      return len(self.device_set) == len(self.addressable_devices)  # type: ignore
 
   @classmethod
   def get_replicated(cls, device_assignment, *, memory_kind: str | None = None):
