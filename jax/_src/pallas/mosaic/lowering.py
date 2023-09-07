@@ -515,7 +515,7 @@ def _load_lowering_rule(
   load_aval = aval_out.update(shape=tuple(load_shape))
   if is_smem_load:
     if ctx.avals_out[0].shape:
-      raise ValueError("Can only load scalars from SMEM:")
+      raise ValueError("Can only load scalars from SMEM")
     return memref.LoadOp(ref, mlir_indices).result
   else:
     load_val = vector.LoadOp(aval_to_ir_type(load_aval), ref, mlir_indices).result
@@ -536,6 +536,8 @@ def _masked_swap_lowering_rule(
   del params
   if masked:
     raise NotImplementedError
+  ref_type = ir.MemRefType(ref.type)
+  is_smem_store = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
   ref_block_shape, *_ = ctx.block_shapes
   ref_aval, val_aval, *_ = ctx.avals_in
   (aval_out,) = ctx.avals_out
@@ -565,6 +567,12 @@ def _masked_swap_lowering_rule(
       for b in ref_block_shape
   ]
   assert len(mlir_indices) == len(ref_block_shape)
+  if is_smem_store:
+    if val_aval.shape:
+      raise ValueError("Can only store scalars to SMEM")
+    result = memref.LoadOp(ref, mlir_indices).result
+    memref.StoreOp(val, ref, mlir_indices)
+    return result
   mem_slice_shape = list(aval_out.shape)
   for i, a in enumerate(idx_aval.indices):
     if not isinstance(a, primitives.Slice):
