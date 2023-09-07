@@ -12,15 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
+import os
 from setuptools import setup
 from setuptools.dist import Distribution
-import os
 
 __version__ = None
 project_name = 'jaxlib'
 
-with open('jaxlib/version.py') as f:
-  exec(f.read(), globals())
+def load_version_module(pkg_path):
+  spec = importlib.util.spec_from_file_location(
+    'version', os.path.join(pkg_path, 'version.py'),
+  )
+  module = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(module)
+  return module
+_version_module = load_version_module(project_name)
+__version__ = _version_module._get_version_for_build()
+_cmdclass = _version_module._get_cmdclass(project_name)
 
 with open('README.md') as f:
   _long_description = f.read()
@@ -43,6 +52,7 @@ class BinaryDistribution(Distribution):
 setup(
     name=project_name,
     version=__version__,
+    cmdclass=_cmdclass,
     description='XLA library for JAX',
     long_description=_long_description,
     long_description_content_type='text/markdown',
