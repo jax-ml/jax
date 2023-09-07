@@ -37,7 +37,8 @@ module = [
     "pytest.*",
     "zstandard.*",
     "jax.experimental.jax2tf.tests.flax_models",
-    "jax.experimental.jax2tf.tests.back_compat_testdata"
+    "jax.experimental.jax2tf.tests.back_compat_testdata",
+    "setuptools.*",
 ]
 ignore_missing_imports = true
 

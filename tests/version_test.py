@@ -12,14 +12,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
 import unittest
 
 from absl.testing import absltest
 
+import jax
 from jax._src.lib import check_jaxlib_version
+from jax._src import test_util as jtu
 
 
 class JaxVersionTest(unittest.TestCase):
+
+  def testBuildVersion(self):
+    base_version = jax.version._version
+
+    if jax.version._release_version is not None:
+      version = jax.version._get_version_for_build()
+      self.assertEqual(version, jax.version._release_version)
+    else:
+      with jtu.set_env(JAX_RELEASE=None, JAXLIB_RELEASE=None,
+                       JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None):
+        version = jax.version._get_version_for_build()
+        # TODO(jakevdp): confirm that this includes a date string & commit hash?
+        self.assertTrue(version.startswith(f"{base_version}.dev"))
+
+      with jtu.set_env(JAX_RELEASE=None, JAXLIB_RELEASE=None,
+                       JAX_NIGHTLY="1", JAXLIB_NIGHTLY=None):
+        version = jax.version._get_version_for_build()
+        datestring = datetime.date.today().strftime("%Y%m%d")
+        self.assertEqual(version, f"{base_version}.dev{datestring}")
+
+      with jtu.set_env(JAX_RELEASE=None, JAXLIB_RELEASE=None,
+                       JAX_NIGHTLY=None, JAXLIB_NIGHTLY="1"):
+        version = jax.version._get_version_for_build()
+        datestring = datetime.date.today().strftime("%Y%m%d")
+        self.assertEqual(version, f"{base_version}.dev{datestring}")
+
+      with jtu.set_env(JAX_RELEASE="1", JAXLIB_RELEASE=None,
+                       JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None):
+        version = jax.version._get_version_for_build()
+        self.assertEqual(version, base_version)
+
+      with jtu.set_env(JAX_RELEASE=None, JAXLIB_RELEASE="1",
+                       JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None):
+        version = jax.version._get_version_for_build()
+        self.assertEqual(version, base_version)
 
   def testVersions(self):
     check_jaxlib_version(jax_version="1.2.3", jaxlib_version="1.2.3",
