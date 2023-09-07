@@ -659,6 +659,18 @@ class VectorLayoutInferer {
       TPU_CHECK_OP(res_ty.getRank() >= 2, "result rank below 2D unsupported");
       auto some_layout = getLayout(op.getSource());
       TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
+      // We want to force the layout to be (8, 128) instead of (1, 128) if we
+      // are broadcasting sublane dim from 1 to at least 8.
+      if (some_layout->bitwidth() == kNativeBitwidth &&
+          some_layout->implicit_dim() == ImplicitDim::kNone &&
+          some_layout->tiling()[0] == 1 &&
+          some_layout->tiling()[1] == default_tiling_[1] &&
+          src_ty.getDimSize(src_ty.getRank() - 2) == 1 &&
+          res_ty.getDimSize(res_ty.getRank() - 2) >= 8) {
+        *some_layout = VectorLayout(
+            some_layout->bitwidth(), {std::nullopt, some_layout->offsets()[1]},
+            default_tiling_, some_layout->implicit_dim());
+      }
       auto &layout = *some_layout;
       if (layout.implicit_dim() == ImplicitDim::kSecondMinor &&
           src_ty.getDimSize(src_ty.getRank() - 2) == 1) {
