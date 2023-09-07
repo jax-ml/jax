@@ -78,8 +78,8 @@ cc_library(
     deps = [
         ":ducc_fft_flatbuffers_cc",
         "@xla//xla/service:custom_call_status",
+        "@com_github_google_flatbuffers//:flatbuffers",
         "@ducc",
-        "@flatbuffers//:runtime_cc",
     ],
 )
 
@@ -96,7 +96,7 @@ pybind_extension(
         ":ducc_fft_flatbuffers_cc",
         ":ducc_fft_kernels",
         "//jaxlib:kernel_nanobind_helpers",
-        "@flatbuffers//:runtime_cc",
+        "@com_github_google_flatbuffers//:flatbuffers",
         "@nanobind",
     ],
 )
