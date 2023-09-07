@@ -3658,6 +3658,47 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ' manager.*SingleDeviceSharding'):
       jax.jit(jax.vmap(f, spmd_axis_name='x'))(arr)
 
+  @parameterized.named_parameters(
+      ('donate_0', 0),
+      ('donate_1', 1),
+      ('donate_0_1', (0, 1)),
+  )
+  def test_donation_success_with_no_out_sharding(self, argnum):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    s1 = NamedSharding(mesh, P('x', 'y'))
+    s2 = NamedSharding(mesh, P('x'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr1 = jax.device_put(np_inp, s1)
+    arr2 = jax.device_put(np_inp, s2)
+
+    @partial(jax.jit, donate_argnums=argnum)
+    def f(x, y):
+      return x * 2, y * 2
+
+    lowered_text = f.lower(arr1, arr2).as_text('hlo')
+
+    if isinstance(argnum, tuple):
+      for a in argnum:
+        self.assertRegex(lowered_text, f'input_output_alias=.*{a}.*')
+    else:
+      self.assertRegex(lowered_text, f'input_output_alias=.*{argnum}.*')
+
+  def test_donation_input_output_mismatch(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    s1 = NamedSharding(mesh, P('x', 'y'))
+    s2 = NamedSharding(mesh, P('x'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr1 = jax.device_put(np_inp, s1)
+    arr2 = jax.device_put(np_inp, s2)
+
+    @partial(jax.jit, donate_argnums=1)
+    def f(x, y):
+      return x + y, y
+
+    lowered_text = f.lower(arr1, arr2).as_text('hlo')
+    self.assertIn('input_output_alias={ {0}: (1, {}, may-alias) }',
+                  lowered_text)
+
 
 class TempSharding(Sharding):
 

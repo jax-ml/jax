@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import enum
 from contextlib import contextmanager
+import collections
 from collections import namedtuple
 from collections.abc import Sequence, Iterable
 import dataclasses
@@ -1936,6 +1937,27 @@ def jaxpr_has_dp_with_transfer_mem_kind(jaxpr: core.Jaxpr) -> bool:
   return False
 
 
+def _set_up_out_shardings(global_in_avals, global_out_avals, donated_invars,
+                          in_shardings, out_shardings):
+  # To match-up in-avals to out-avals we only care about the number of
+  # bytes, so we strip off unrelated aval metadata (eg. the named shape)
+  strip_metadata = lambda a: a.strip_named_shape().strip_weak_type()
+  global_in_avals = map(strip_metadata, global_in_avals)
+  global_out_avals = map(strip_metadata, global_out_avals)
+
+  donations = collections.defaultdict(collections.deque)
+  for aval, donated, s in safe_zip(global_in_avals, donated_invars, in_shardings):
+    if donated:
+      donations[aval].append(s)
+
+  new_out_shardings = list(out_shardings)
+  for i, aval in enumerate(global_out_avals):
+    if donations.get(aval, ()):
+      in_s = donations[aval].popleft()
+      new_out_shardings[i] = in_s
+  return tuple(new_out_shardings)
+
+
 @profiler.annotate_function
 def lower_sharding_computation(
     fun_or_jaxpr: lu.WrappedFun | core.ClosedJaxpr,
@@ -1998,6 +2020,11 @@ def lower_sharding_computation(
 
   gs = sharding_impls.GSPMDSharding.get_replicated(device_assignment)
   in_shardings = tuple(gs if is_unspecified(i) else i for i in in_shardings)
+
+  if all(is_unspecified(o) for o in out_shardings):
+    out_shardings = _set_up_out_shardings(
+        global_in_avals, global_out_avals, donated_invars, in_shardings,
+        out_shardings)
 
   da_object = _create_da_object(tuple(device_assignment))
 
