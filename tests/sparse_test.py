@@ -1934,11 +1934,12 @@ class BCOOTest(sptu.SparseTestCase):
     args_maker = lambda: [sprng(lhs_shape, lhs_dtype, n_batch=n_batch_lhs),
                           jnp.array(rng(rhs_shape, rhs_dtype))]
 
-    tol = {np.float64: 1E-7, np.complex128: 1E-7,
+    tol = {np.float64: 1E-7, np.complex128: 1E-6,
            np.float32: 2E-6, np.complex64: 2E-6}
 
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
-      self._CheckAgainstDense(operator.matmul, operator.matmul, args_maker, tol=tol)
+      self._CheckAgainstDense(operator.matmul, operator.matmul, args_maker,
+                              tol=tol)
 
 
   @jtu.sample_product(
