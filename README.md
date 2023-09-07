@@ -595,10 +595,13 @@ networks in JAX. If you want a fully featured library for neural network
 training with examples and how-to guides, try
 [Flax](https://github.com/google/flax).
 
+Google X maintains the neural network library
+[Equinox](https://github.com/patrick-kidger/equinox). This is used as the
+foundation for several other libraries in the JAX ecosystem.
+
 In addition, DeepMind has open-sourced an [ecosystem of libraries around
 JAX](https://deepmind.com/blog/article/using-jax-to-accelerate-our-research)
-including [Haiku](https://github.com/deepmind/dm-haiku) for neural network
-modules, [Optax](https://github.com/deepmind/optax) for gradient processing and
+including [Optax](https://github.com/deepmind/optax) for gradient processing and
 optimization, [RLax](https://github.com/deepmind/rlax) for RL algorithms, and
 [chex](https://github.com/deepmind/chex) for reliable code and testing. (Watch
 the NeurIPS 2020 JAX Ecosystem at DeepMind talk
