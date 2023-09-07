@@ -280,6 +280,17 @@ def TPU_MatmulOp : TPU_Op<"matmul", [Pure]> {
   let hasCanonicalizer = 1;
 }
 
+def TPU_ConcatenateOp : TPU_Op<"concatenate", [Pure]> {
+  let arguments = (ins
+    Variadic<AnyVector>:$sources,
+    I32Attr:$dimension
+  );
+  let results = (outs AnyVector:$output);
+  let assemblyFormat = [{
+    $sources `in` $dimension attr-dict `:` type($sources) `->` type($output)
+  }];
+}
+
 def TPU_BitcastOp : TPU_Op<"bitcast", [Pure]> {
   let arguments = (ins AnyVector:$input);
   let results = (outs AnyVector:$output);

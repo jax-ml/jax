@@ -208,6 +208,10 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::ConcatenateOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<tpu::LoadOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -541,6 +545,19 @@ class VectorLayoutInferer {
     return success();
   }
 
+  LogicalResult infer(tpu::ConcatenateOp op) {
+    TPU_CHECK_OP(op.getDimension() - op.getType().getRank() < -2,
+                 "Concatenation is not supported along the last two axes");
+    TPU_CHECK_OP(!op.getSources().empty(),
+                 "Need at least one vector to concatenate");
+    // Fix all the layouts to the layout of the first operand.
+    // This might not be the best strategy, but it works.
+    SmallVector<Layout> in_layouts(op.getNumOperands(),
+                                   getLayout(op.getSources().front()));
+    setLayout(op, in_layouts, in_layouts.back());
+    return success();
+  }
+
   LogicalResult infer(tpu::LoadOp op) {
     auto res_ty = op.getResult().getType();
     int8_t bitwidth = res_ty.getElementTypeBitWidth();
@@ -789,17 +806,23 @@ class VectorLayoutInferer {
 
   LogicalResult infer(vector::ExtractStridedSliceOp op) {
     auto input_layout = getLayout(op.getVector());
+    TPU_CHECK_OP(input_layout, "missing vector layout");
+    TPU_CHECK_OP(input_layout->implicit_dim() == ImplicitDim::kNone,
+                 "only 2D layouts supported");
+    TPU_CHECK_OP(op.getType().getElementTypeBitWidth() == 32,
+                 "Only 32-bit types supported");
     auto offsets = op.getOffsets().getValue();
     auto sizes = op.getSizes().getValue();
     auto strides = op.getStrides().getValue();
-    for (auto offset_attr : offsets) {
+    for (auto offset_attr : offsets.take_back(2)) {
       int off = offset_attr.cast<IntegerAttr>().getInt();
       TPU_CHECK_OP(off == 0, "Only zero-offset slices supported.");
     }
     sizes = sizes.take_back(2);
-    TPU_CHECK_OP((sizes[0].cast<IntegerAttr>().getInt() % 8 == 0) &&
-                     (sizes[1].cast<IntegerAttr>().getInt() % 128 == 0),
-                 "Only lane and sublane aligned slices allowed.");
+    TPU_CHECK_OP(
+        (sizes[0].cast<IntegerAttr>().getInt() % target_shape_[0] == 0) &&
+            (sizes[1].cast<IntegerAttr>().getInt() % target_shape_[1] == 0),
+        "Only lane and sublane aligned slices allowed.");
     for (auto stride : strides) {
       TPU_CHECK_OP(stride.cast<IntegerAttr>().getInt() == 1,
                    "Only trivial strides supported.");

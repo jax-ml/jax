@@ -1735,6 +1735,27 @@ def _scf_yield_rule(  # pylint: disable=missing-function-docstring
   return ctx.set_operands(op.operation, unrolled)
 
 
+@_register_rule("tpu.concatenate")
+def _tpu_concatenate_rule(
+    ctx: RewriteContext,
+    op: tpu.ConcatenateOp,
+    layout_in: Sequence[VectorLayout],
+    layout_out: VectorLayout
+):
+  if any(l != layout_out for l in layout_in):
+    raise NotImplementedError("Inconsistent layouts")
+  layout = layout_out
+  if not layout.has_natural_topology:
+    raise NotImplementedError
+  res_ty = ir.VectorType(op.result.type)
+  dimension = ir.IntegerAttr(op.dimension).value
+  if dimension - res_ty.rank >= -2:
+    raise NotImplementedError("Concatenation along the last two dimensions")
+  tiles = [disassemble(layout, x) for x in op.operands]
+  res_tiles = np.concatenate(tiles, axis=dimension)
+  ctx.replace(op, assemble(res_ty, layout, res_tiles))
+
+
 @_register_rule("tpu.load")
 def _tpu_load_rule(
     ctx: RewriteContext,
@@ -1942,9 +1963,8 @@ def _vector_extract_strided_slice_rule(
     layout_out: VectorLayout,
 ):
   """Applies a vector layout to an ExtractStridedSliceOp."""
-  assert len(op.operands) == 1
-  operand = op.operands[0]
-  if layout_in.implicit_dim is not None or not layout_in.has_natural_topology:
+  operand = op.vector
+  if not layout_in.has_natural_topology:
     raise NotImplementedError("Unsupported input layout")
   if layout_out != layout_in:
     raise NotImplementedError("Unsupported output layout")
@@ -1962,7 +1982,7 @@ def _vector_extract_strided_slice_rule(
   offsets = [
       ir.IntegerAttr(x).value for x in ir.ArrayAttr(op.attributes["offsets"])
   ]
-  for offset in offsets:
+  for offset in offsets[-2:]:
     if offset != 0:
       raise NotImplementedError("Only tile-aligned slices supported")
 
