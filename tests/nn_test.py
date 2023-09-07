@@ -298,6 +298,7 @@ INITIALIZER_RECS = [
     initializer_record("lecun_normal", nn.initializers.lecun_normal, jtu.dtypes.inexact),
     initializer_record("lecun_uniform", nn.initializers.lecun_uniform, jtu.dtypes.inexact),
     initializer_record("orthogonal", nn.initializers.orthogonal, jtu.dtypes.floating, 2, 2),
+    initializer_record("truncated_normal", nn.initializers.truncated_normal, jtu.dtypes.floating, 1),
     initializer_record("delta_orthogonal", nn.initializers.delta_orthogonal, jtu.dtypes.floating, 4, 4)
 ]
 
