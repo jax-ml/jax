@@ -90,7 +90,12 @@ void TiledLayoutAttr::print(AsmPrinter &printer) const {
   for (const xla::Tile &tile : getTiles()) {
     printer << tile.ToString();
   }
-  printer << '>';
+  printer << ",[" << getBaseShape().front();
+  for (int i = 1; i < getBaseShape().size(); ++i) {
+    printer << ',';
+    printer << getBaseShape()[i];
+  }
+  printer << "]>";
 }
 
 Attribute TiledLayoutAttr::parse(AsmParser &parser, Type type) {
@@ -119,10 +124,28 @@ Attribute TiledLayoutAttr::parse(AsmParser &parser, Type type) {
       tile.add_dimensions(size);
     }
   }
+  llvm::SmallVector<int64_t, 2> base_shape;
+  int64_t dim;
+  if (succeeded(parser.parseComma()) &&
+      succeeded(parser.parseOptionalLSquare())) {
+    bool first = true;
+    while (!succeeded(parser.parseOptionalRSquare())) {
+      if (!first) {
+        if (failed(parser.parseComma())) {
+          return {};
+        }
+      }
+      first = false;
+      if (failed(parser.parseInteger(dim))) {
+        return {};
+      }
+      base_shape.push_back(dim);
+    }
+  }
   if (failed(parser.parseGreater())) {
     return {};
   }
-  return get(parser.getContext(), rank, tiles);
+  return get(parser.getContext(), rank, tiles, base_shape);
 }
 
 AffineMap TiledLayoutAttr::getAffineMap() const {

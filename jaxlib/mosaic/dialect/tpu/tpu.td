@@ -105,7 +105,8 @@ def TPU_TiledLayoutAttr
   let description = [{TODO}];
   let parameters = (ins
     "int64_t":$rank,
-    ArrayRefParameter<"::xla::Tile", "">:$tiles
+    ArrayRefParameter<"::xla::Tile", "">:$tiles,
+    ArrayRefParameter<"int64_t", "">:$base_shape
   );
 
   let hasCustomAssemblyFormat = 1;

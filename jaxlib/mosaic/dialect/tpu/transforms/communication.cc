@@ -106,7 +106,8 @@ struct LogicalToPhysicalDeviceIdPass
     if (func.getName() == "main") {
       auto device_assignment_type = MemRefType::get(
           {total_devices}, IntegerType::get(func.getContext(), 32),
-          TiledLayoutAttr::get(func.getContext(), 1, {xla::Tile({128})}),
+          TiledLayoutAttr::get(func.getContext(), 1, {xla::Tile({128})},
+                               {total_devices}),
           MemorySpaceAttr::get(func.getContext(), MemorySpace::smem));
       func.insertArgument(func.getNumArguments(), device_assignment_type,
                           nullptr, UnknownLoc::get(func.getContext()));
