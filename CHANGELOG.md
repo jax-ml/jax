@@ -16,6 +16,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.16
 
+* Bug fixes:
+  * Fixed a crash on Windows due to a fatal LLVM error related to out-of-order
+    sections and IMAGE_REL_AMD64_ADDR32NB relocations
+    (https://github.com/openxla/xla/commit/cb732a921f0c4184995cbed82394931011d12bd4).
+
 ## jax 0.4.15 (Aug 30 2023)
 
 * Changes
