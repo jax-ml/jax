@@ -244,6 +244,10 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::RegionOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<vector::BroadcastOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -619,6 +623,16 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(op->getNumOperands() == 0, "expected no operands");
     TPU_CHECK_OP(op->getNumResults() == 0, "results unsupported");
     return inferBlock(*op.getBody(), match_yield);
+  }
+
+  LogicalResult infer(tpu::RegionOp op) {
+    static LogicalResult (*match_region)(Operation *) = [](Operation *op) {
+      TPU_CHECK_OP(isa<tpu::YieldOp>(op), "expected yield terminator");
+      return success();
+    };
+    TPU_CHECK_OP(op->getNumOperands() == 0, "expected no operands");
+    TPU_CHECK_OP(op->getNumResults() == 0, "results unsupported");
+    return inferBlock((*op).getRegion(0).getBlocks().front(), match_region);
   }
 
   LogicalResult infer(tpu::IotaOp op) {

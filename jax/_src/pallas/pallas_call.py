@@ -24,18 +24,19 @@ import jax
 from jax import api_util
 from jax import tree_util
 from jax import lax
+from jax._src import state
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax._src import ad_util
 from jax._src import core as jax_core
+from jax._src.state import primitives as sp
 from jax._src import linear_util as lu
 from jax._src.state import discharge as state_discharge
 from jax._src.util import (
     split_list, safe_map, safe_zip, weakref_lru_cache,
-    tuple_insert, partition_list)
-from jax._src.lax.control_flow import for_loop
+    tuple_insert, partition_list, merge_lists)
 import jax.numpy as jnp
 import numpy as np
 
@@ -299,6 +300,29 @@ def _pallas_call_batching_rule(args, dims, *,
   return out, (0,) * len(out)
 batching.primitive_batchers[pallas_call_p] = _pallas_call_batching_rule
 
+def _hoist_consts_to_refs(jaxpr: jax_core.Jaxpr) -> jax_core.Jaxpr:
+  all_const_avals = [var.aval for var in jaxpr.constvars]
+  is_const_ref = [isinstance(var.aval, state.AbstractRef) for var in
+                  jaxpr.constvars]
+  const_avals, const_ref_avals = partition_list(is_const_ref, all_const_avals)
+  const_avals = map(state.AbstractRef, const_avals)
+  merged_const_avals = merge_lists(is_const_ref, const_avals, const_ref_avals)
+  arg_avals = list(var.aval for var in jaxpr.invars)
+  in_avals = [*merged_const_avals, *arg_avals]
+  num_consts = len(merged_const_avals)
+
+  def _hoist(*consts_args):
+    all_consts, args = split_list(consts_args, [num_consts])
+    consts, const_refs = partition_list(is_const_ref, all_consts)
+    # We immediately read the const values out of the `Ref`s.
+    consts = map(lambda x: sp.ref_get(x, ()), consts)
+    all_consts = merge_lists(is_const_ref, consts, const_refs)
+    return jax_core.eval_jaxpr(jaxpr, all_consts, *args)
+  hoisted_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+      lu.wrap_init(_hoist), in_avals)
+  assert not consts, "All consts should have been converted to refs"
+  return hoisted_jaxpr
+
 @weakref_lru_cache
 def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
                               primitive_name: str | None = None):
@@ -307,7 +331,7 @@ def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
   debug = pe.debug_info(fun, in_tree, out_tree_thunk, False,
                         primitive_name or "<unknown>")
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals, debug)
-  jaxpr = for_loop._hoist_consts_to_refs(jaxpr)
+  jaxpr = _hoist_consts_to_refs(jaxpr)
   return jaxpr, consts, out_tree_thunk()
 
 def _extract_function_name(f: Callable, name: str | None) -> str:

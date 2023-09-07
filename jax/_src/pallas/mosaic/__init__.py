@@ -22,9 +22,11 @@ from jax._src.pallas.mosaic.kernel_regeneration_util import encode_kernel_regene
 from jax._src.pallas.mosaic.kernel_regeneration_util import extract_kernel_regeneration_metadata
 from jax._src.pallas.mosaic.primitives import repeat
 from jax._src.pallas.mosaic.primitives import trace
+from jax._src.pallas.mosaic.primitives import run_scoped
+from jax._src.pallas.mosaic.primitives import VMEM
 
-
-VMEM = TPUMemorySpace.VMEM
 SMEM = TPUMemorySpace.SMEM
 CMEM = TPUMemorySpace.CMEM
+
+
 del pallas_call_registration

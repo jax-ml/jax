@@ -2057,6 +2057,19 @@ def _tpu_trace_rule(ctx: RewriteContext, op: tpu.TraceOp,  # pylint: disable=mis
   apply_layout_block(ctx, block)
 
 
+@_register_rule("tpu.region")
+def _tpu_region_rule(ctx: RewriteContext, op: tpu.TraceOp,  # pylint: disable=missing-function-docstring
+                     layout_in: Layout, layout_out: Layout):
+  if op.operands or op.results:
+    raise NotImplementedError("tpu.region_block with inputs or outputs")
+  assert layout_out is None
+  assert layout_in is None
+  # We don't modify the op, but we do rewrite the branch bodies.
+  (region,) = op.regions
+  (block,) = region.blocks
+  apply_layout_block(ctx, block)
+
+
 @_register_rule("tpu.iota")
 def _tpu_iota_rule(ctx: RewriteContext, op: tpu.IotaOp,  # pylint: disable=missing-function-docstring
                    layout_in: None, layout_out: VectorLayout):

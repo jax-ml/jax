@@ -420,6 +420,12 @@ def TPU_WaitDMAOp : TPU_Op<"wait_dma"> {
   );
 }
 
+def TPU_RegionOp : TPU_Op<"region", [RecursiveMemoryEffects, SingleBlockImplicitTerminator<"tpu::YieldOp">]> {
+  let arguments = (ins);
+  let results = (outs Variadic<AnyType>:$results);
+  let regions = (region AnyRegion:$region);
+}
+
 def TPU_TraceOp : TPU_Op<"trace", [RecursiveMemoryEffects, SingleBlockImplicitTerminator<"tpu::YieldOp">]> {
   let arguments = (ins StrAttr:$message, I32Attr:$level);
   let results = (outs Variadic<AnyType>:$results);

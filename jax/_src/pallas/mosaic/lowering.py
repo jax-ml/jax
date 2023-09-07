@@ -1400,3 +1400,30 @@ def _trace_stop_lowering_rule(ctx: LoweringRuleContext):
 
 
 lowering_rules[tpu_primitives.trace_stop_p] = _trace_stop_lowering_rule
+
+
+def _alloc_type(type: tpu_primitives.Type):
+  if isinstance(type, tpu_primitives.VMEM):
+    aval = type.get_aval()
+    vmem = ir.Attribute.parse("#tpu.memory_space<vmem>")
+    out_type = ir.MemRefType.get(
+        aval.shape, mlir.dtype_to_ir_type(aval.dtype), memory_space=vmem)
+    return memref.AllocaOp(out_type, [], []).result
+  raise NotImplementedError(f"Cannot allocate {type}.")
+
+
+def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr,
+                              types):
+  region = tpu.RegionOp()
+  jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+  with ir.InsertionPoint(region.body):
+    args = [_alloc_type(type) for type in types]
+    ctx = ctx.lowering_context.replace(
+        block_shapes=(*ctx.block_shapes, *(t.get_block_shape() for t in types))
+    )
+    jaxpr_subcomp(ctx, jaxpr, *consts, *args)
+    tpu.YieldOp([])
+  return []
+
+
+lowering_rules[tpu_primitives.run_scoped_p] = _run_scoped_lowering_rule
