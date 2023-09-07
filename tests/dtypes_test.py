@@ -610,6 +610,35 @@ class TestPromotionTables(jtu.JaxTestCase):
     else:
       self.assertEndsWith(rep, f"dtype={val.dtype.name})")
 
+  @jtu.sample_product(
+      lhs_dtype=jtu.dtypes.all + [bool, int, float, complex],
+      rhs_dtype=jtu.dtypes.all,
+      numpy_dtype_promotion=['strict', 'standard']
+  )
+  def testSafeToCast(self, lhs_dtype, rhs_dtype, numpy_dtype_promotion):
+    with jax.numpy_dtype_promotion(numpy_dtype_promotion):
+      # First the special cases which are always safe:
+      always_safe = (
+        (lhs_dtype == rhs_dtype) or
+        (dtypes.issubdtype(rhs_dtype, np.integer) and rhs_dtype in {bool, int}) or
+        (dtypes.issubdtype(rhs_dtype, np.floating) and rhs_dtype in {bool, int, float}) or
+        (dtypes.issubdtype(rhs_dtype, np.complexfloating) and rhs_dtype in {bool, int, float, complex})
+      )
+      if always_safe:
+        self.assertTrue(dtypes.safe_to_cast(lhs_dtype, rhs_dtype))
+
+      try:
+        result_dtype = dtypes.result_type(lhs_dtype, rhs_dtype)
+      except dtypes.TypePromotionError:
+        result_dtype = None
+
+      if result_dtype is None and lhs_dtype != rhs_dtype:
+        with self.assertRaises(dtypes.TypePromotionError):
+          dtypes.safe_to_cast(lhs_dtype, rhs_dtype)
+      else:
+        self.assertEqual(dtypes.result_type(rhs_dtype) == result_dtype,
+                         dtypes.safe_to_cast(lhs_dtype, rhs_dtype))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
