@@ -59,6 +59,14 @@ class TPUMemorySpace(enum.Enum):
     return MemoryRef(shape, dtype, self)
 
 
+class SemaphoreType(enum.Enum):
+  REGULAR = "regular"
+  DMA = "dma"
+  BARRIER = "barrier"
+
+  def get_aval(self) -> AbstractSemaphore:
+    return AbstractSemaphore(self)
+
 class AbstractMemoryRef(state.AbstractRef):
   __slots__ = ["inner_aval", "memory_space"]
 
@@ -91,15 +99,22 @@ jax_core.raise_to_shaped_mappings[AbstractMemoryRef] = _ref_raise_to_shaped
 
 
 @dataclasses.dataclass(frozen=True)
+class AbstractSemaphore(jax_core.AbstractValue):
+  sem_type: SemaphoreType
+
+jax_core.raise_to_shaped_mappings[AbstractSemaphore] = lambda aval, _: aval
+
+
+@dataclasses.dataclass(frozen=True)
 class MemoryRef:
   """Like jax.ShapeDtypeStruct but with memory spaces."""
   shape: tuple[int, ...]
   dtype: jnp.dtype
   memory_space: TPUMemorySpace = TPUMemorySpace.ANY
 
-  def get_aval(self):
-    return AbstractMemoryRef(jax_core.ShapedArray(self.shape, self.dtype),
-                             self.memory_space)
+  def get_aval(self) -> AbstractMemoryRef:
+    return AbstractMemoryRef(
+        jax_core.ShapedArray(self.shape, self.dtype), self.memory_space)
 
 
 @dataclasses.dataclass(init=False, unsafe_hash=True)

@@ -1399,6 +1399,14 @@ def _alloc_value(aval: jax_core.AbstractValue) -> ir.Value:
     out_type = ir.MemRefType.get(
         aval.shape, mlir.dtype_to_ir_type(aval.dtype), memory_space=memspace)
     return memref.AllocaOp(out_type, [], []).result
+  elif isinstance(aval, tpu_core.AbstractSemaphore):
+    if aval.sem_type is tpu_core.SemaphoreType.DMA:
+      sem_type = ir.Type.parse("!tpu.dma_semaphore")
+      return tpu.AllocaSemaphoreOp(sem_type).result
+    elif aval.sem_type is tpu_core.SemaphoreType.REGULAR:
+      sem_type = ir.Type.parse("!tpu.semaphore")
+      return tpu.AllocaSemaphoreOp(sem_type).result
+    raise ValueError(f"Cannot allocate {aval.sem_type}.")
   raise NotImplementedError(f"Cannot allocate {type(aval)}.")
 
 
@@ -1419,3 +1427,23 @@ def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr):
 
 
 lowering_rules[tpu_primitives.run_scoped_p] = _run_scoped_lowering_rule
+
+def _semaphore_signal_lowering_rule(ctx: LoweringRuleContext, semaphore,
+                                    value, *args, has_device_id: bool):
+  device_id = None
+  assert semaphore.type == ir.Type.parse("!tpu.semaphore")
+  if has_device_id:
+    (device_id,) = args
+  return tpu.SemaphoreSignalOp(semaphore, value, device_id=device_id).results
+lowering_rules[tpu_primitives.semaphore_signal_p] = (
+    _semaphore_signal_lowering_rule)
+
+
+def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, semaphore,
+                                  value):
+  sem_aval = ctx.avals_in[0]
+  assert isinstance(sem_aval, tpu_core.AbstractSemaphore)
+  assert sem_aval.sem_type is tpu_core.SemaphoreType.REGULAR
+  assert ctx.avals_in[1].dtype == jnp.dtype('int32')
+  return tpu.SemaphoreWaitOp(semaphore, value).results
+lowering_rules[tpu_primitives.semaphore_wait_p] = _semaphore_wait_lowering_rule
