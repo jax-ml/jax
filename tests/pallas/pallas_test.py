@@ -29,7 +29,7 @@ from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import state
 from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.pallas.pallas_call import _initial_style_open_jaxpr
+from jax._src.pallas.pallas_call import _trace_to_jaxpr
 from jax.config import config
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
@@ -134,7 +134,7 @@ class PallasTest(parameterized.TestCase):
     super().setUp()
     if compile_jaxpr:
       compile_jaxpr.cache_clear()
-    _initial_style_open_jaxpr.cache_clear()
+    _trace_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
@@ -639,7 +639,8 @@ class PallasCallTest(PallasTest):
     def f(x):
       return add_one(add_one(x))
 
-    self.assertEqual(f(0.), 2.)
+    x = jnp.array(0., dtype=jnp.float32)
+    self.assertEqual(f(x), 2.)
     self.assertEqual(trace_count, 1)
 
   def test_pallas_compilation_cache(self):
@@ -657,7 +658,8 @@ class PallasCallTest(PallasTest):
     def f(x):
       return add_one(add_one(x))
 
-    self.assertEqual(f(0.), 2.)
+    x = jnp.array(0., dtype=jnp.float32)
+    self.assertEqual(f(x), 2.)
     num_misses = compile_jaxpr.cache_info().misses
     self.assertEqual(num_misses, 1)
 

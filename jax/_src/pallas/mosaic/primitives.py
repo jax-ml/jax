@@ -16,19 +16,20 @@
 from __future__ import annotations
 
 import contextlib
-import dataclasses
 from typing import Callable
 
 from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import effects
 from jax._src import linear_util as lu
-from jax._src import state
 from jax._src import tree_util
+from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 import jax.numpy as jnp
 
+map, unsafe_map = util.safe_map, map
+zip, unsafe_zip = util.safe_zip, zip
 
 repeat_p = jax_core.Primitive('repeat')
 
@@ -74,27 +75,6 @@ def trace(message: str, level: int = 10):
   trace_stop_p.bind()
 
 
-class Type:
-
-  def get_aval(self) -> jax_core.AbstractValue:
-    raise NotImplementedError()
-
-  def get_block_shape(self) -> tuple[int, ...] | None:
-    raise NotImplementedError()
-
-
-@dataclasses.dataclass(frozen=True)
-class VMEM(Type):
-  shape: tuple[int, ...]
-  dtype: jnp.dtype
-
-  def get_aval(self) -> jax_core.AbstractValue:
-    return state.AbstractRef(jax_core.ShapedArray(self.shape, self.dtype))
-
-  def get_block_shape(self) -> tuple[int, ...] | None:
-    return self.shape
-
-
 run_scoped_p = jax_core.Primitive('run_scoped')
 run_scoped_p.multiple_results = True
 
@@ -102,13 +82,13 @@ run_scoped_p.multiple_results = True
 def run_scoped(f: Callable[..., None], *types, **kw_types) -> None:
   flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
   flat_fun, _ = api_util.flatten_fun(lu.wrap_init(f), in_tree)
-  avals = [type.get_aval() for type in flat_types]
+  avals = map(lambda t: t.get_aval(), flat_types)
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, avals)
-  run_scoped_p.bind(*consts, jaxpr=jaxpr, types=tuple(flat_types))
+  run_scoped_p.bind(*consts, jaxpr=jaxpr)
 
 
 @run_scoped_p.def_effectful_abstract_eval
-def _run_scoped_abstract_eval(*args, jaxpr, types):
+def _run_scoped_abstract_eval(*args, jaxpr):
   # jaxpr will have effects for its inputs (Refs that are allocated) and for
   # constvars (closed over Refs). The effects for the allocated Refs are local
   # to the jaxpr and shouldn't propagate out.

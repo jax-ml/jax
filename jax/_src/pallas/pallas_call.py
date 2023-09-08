@@ -50,6 +50,8 @@ BlockSpec = pallas_core.BlockSpec
 GridSpec = pallas_core.GridSpec
 BlockMapping = pallas_core.BlockMapping
 GridMapping = pallas_core.GridMapping
+NoBlockSpec = pallas_core.NoBlockSpec
+no_block_spec = pallas_core.no_block_spec
 
 pallas_call_p = jax_core.Primitive('pallas_call')
 pallas_call_p.multiple_results = True
@@ -224,7 +226,8 @@ def _batch_block_mapping(grid: Tuple[int, ...], aval: jax_core.ShapedArray,
     new_block_shape = tuple_insert(shape, dim, pallas_core.mapped)
   jaxpr = jax_core.ClosedJaxpr(block_mapping_jaxpr, consts)
   if block_mapping is None:
-    return BlockMapping(block_shape=new_block_shape, index_map_jaxpr=jaxpr)
+    return BlockMapping(block_shape=new_block_shape, index_map_jaxpr=jaxpr,
+                        memory_space=None)
   return block_mapping.replace(block_shape=new_block_shape,
                                index_map_jaxpr=jaxpr)
 
@@ -324,40 +327,44 @@ def _hoist_consts_to_refs(jaxpr: jax_core.Jaxpr) -> jax_core.Jaxpr:
   return hoisted_jaxpr
 
 @weakref_lru_cache
-def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
-                              primitive_name: str | None = None):
+def _trace_to_jaxpr(fun: Callable, grid_spec, flat_in_avals,
+                    flat_out_avals, in_tree, out_tree):
+  avals, grid_mapping = grid_spec.get_grid_mapping(flat_in_avals, in_tree,
+                                                   flat_out_avals, out_tree)
+  jaxpr_flat_avals, jaxpr_in_tree = tree_util.tree_flatten(avals)
   wrapped_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(fun), in_tree)
-  debug = pe.debug_info(fun, in_tree, out_tree_thunk, False,
-                        primitive_name or "<unknown>")
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals, debug)
+      lu.wrap_init(fun), jaxpr_in_tree)
+  debug = pe.debug_info(fun, jaxpr_in_tree, out_tree_thunk, False, "pallas_call")
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, jaxpr_flat_avals,
+                                               debug)
   jaxpr = _hoist_consts_to_refs(jaxpr)
-  return jaxpr, consts, out_tree_thunk()
+  return grid_mapping, jaxpr, consts, out_tree_thunk()
 
 def _extract_function_name(f: Callable, name: str | None) -> str:
   if name is None:
     name = f.__name__ if hasattr(f, "__name__") and f.__name__ else "func"
   return name
 
+
 def pallas_call(
-    f: Callable[..., None], out_shape: Any, *,
+    f: Callable[..., None],
+    out_shape: Any,
+    *,
     grid_spec: GridSpec | None = None,
     debug: bool = False,
     grid: Grid | None = None,
-    in_specs: Sequence[BlockSpec | None] | None = None,
-    out_specs: BlockSpec | Sequence[BlockSpec | None] | None = None,
+    in_specs: Sequence[BlockSpec | NoBlockSpec] | NoBlockSpec = no_block_spec,
+    out_specs: BlockSpec | NoBlockSpec
+    | Sequence[BlockSpec | NoBlockSpec] = no_block_spec,
     input_output_aliases: Dict[int, int] = {},
     interpret: bool = False,
     name: str | None = None,
-    **compiler_params: Any):
+    **compiler_params: Any,
+):
+  name = _extract_function_name(f, name)
   if grid_spec is None:
     grid_spec = GridSpec(grid, in_specs, out_specs)
-  name = _extract_function_name(f, name)
-  singleton = False
-  if not isinstance(out_shape, (tuple, list)):
-    out_shape = (out_shape,)
-    singleton = True
-  if not isinstance(out_shape, tuple):
+  if isinstance(out_shape, list):
     out_shape = tuple(out_shape)
   flat_out_shapes, out_tree = tree_util.tree_flatten(out_shape)
   flat_out_shapes = [jax.ShapeDtypeStruct(x.shape, x.dtype)
@@ -365,14 +372,13 @@ def pallas_call(
   @jax.jit
   def wrapped(*args):
     flat_args, in_tree = tree_util.tree_flatten(args)
-    flat_avals = [jax_core.raise_to_shaped(jax_core.get_aval(a))
-                  for a in flat_args]
-    avals, grid_mapping = grid_spec.get_grid_mapping(flat_avals, in_tree,
-                                                     flat_out_shapes, out_tree)
-    jaxpr_flat_avals, jaxpr_in_tree = tree_util.tree_flatten(avals)
-    jaxpr, consts, _ = _initial_style_open_jaxpr(f, jaxpr_in_tree,
-                                                 tuple(jaxpr_flat_avals),
-                                                 primitive_name="pallas_call")
+    flat_in_avals = tuple(jax_core.raise_to_shaped(jax_core.get_aval(a))
+                          for a in flat_args)
+    flat_out_avals = tuple(jax_core.ShapedArray(v.shape, v.dtype)
+                           for v in flat_out_shapes)
+    grid_mapping, jaxpr, consts, _ = _trace_to_jaxpr(
+        f, grid_spec, flat_in_avals, flat_out_avals, in_tree,
+        out_tree)
     which_linear = (False,) * len(flat_args)
     out_flat = pallas_call_p.bind(
         *consts, *flat_args, jaxpr=jaxpr, name=name, which_linear=which_linear,
@@ -384,7 +390,5 @@ def pallas_call(
         input_output_aliases=tuple(input_output_aliases.items()),
         **compiler_params)
     out = tree_util.tree_unflatten(out_tree, out_flat)
-    if singleton:
-      return out[0]
     return out
   return wrapped

@@ -695,6 +695,7 @@ def _flash_attention_bwd_dkv(
   def qo_index_map(batch_index, _, head_index, q_seq_index):
     return (batch_index, head_index, q_seq_index, 0)
   qo_spec = pl.BlockSpec(qo_index_map, (1, 1, block_q_major, head_dim))
+  assert qo_spec.block_shape is not None
   assert q.ndim == len(qo_spec.block_shape)
   do_spec = qo_spec
   assert do.ndim == len(qo_spec.block_shape)
@@ -703,16 +704,19 @@ def _flash_attention_bwd_dkv(
     del q_seq_index
     return (batch_index, head_index, kv_seq_index, 0)
   kv_spec = pl.BlockSpec(kv_index_map, (1, 1, block_k_major, head_dim))
+  assert kv_spec.block_shape is not None
   assert k.ndim == len(kv_spec.block_shape)
   assert v.ndim == len(kv_spec.block_shape)
 
   def lm_index_map(batch_index, _, head_index, q_seq_index):
     return (batch_index, head_index, q_seq_index, 0)
   lm_spec = pl.BlockSpec(lm_index_map, (1, 1, block_q_major, MIN_BLOCK_SIZE))
+  assert lm_spec.block_shape is not None
   assert l.ndim == len(lm_spec.block_shape)
   assert m.ndim == len(lm_spec.block_shape)
 
   di_spec = pl.BlockSpec(qo_index_map, (1, 1, block_q_major, MIN_BLOCK_SIZE))
+  assert di_spec.block_shape is not None
   assert di.ndim == len(di_spec.block_shape)
 
   in_specs = [
@@ -882,6 +886,7 @@ def _flash_attention_bwd_dq(
     return (batch_index, head_index, kv_seq_index, 0)
 
   kv_spec = pl.BlockSpec(kv_index_map, (1, 1, block_k_major, head_dim))
+  assert kv_spec.block_shape is not None
   assert k.ndim == len(kv_spec.block_shape)
   assert v.ndim == len(kv_spec.block_shape)
 
@@ -890,10 +895,12 @@ def _flash_attention_bwd_dq(
     return (batch_index, head_index, q_seq_index, 0)
 
   lm_spec = pl.BlockSpec(lm_index_map, (1, 1, block_q_major, MIN_BLOCK_SIZE))
+  assert lm_spec.block_shape is not None
   assert l.ndim == len(lm_spec.block_shape)
   assert m.ndim == len(lm_spec.block_shape)
 
   di_spec = pl.BlockSpec(qo_index_map, (1, 1, block_q_major, MIN_BLOCK_SIZE))
+  assert di_spec.block_shape is not None
   assert di.ndim == len(di_spec.block_shape)
 
   in_specs = [

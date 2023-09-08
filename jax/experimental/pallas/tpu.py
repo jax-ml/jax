@@ -15,9 +15,10 @@
 """Contains Mosaic specific Pallas functions."""
 from jax._src.pallas.mosaic import PrefetchScalarGridSpec
 from jax._src.pallas.mosaic import TPUMemorySpace
+from jax._src.pallas.mosaic import ANY
 from jax._src.pallas.mosaic import CMEM
-from jax._src.pallas.mosaic import VMEM
 from jax._src.pallas.mosaic import SMEM
+from jax._src.pallas.mosaic import VMEM
 from jax._src.pallas.mosaic import encode_kernel_regeneration_metadata
 from jax._src.pallas.mosaic import extract_kernel_regeneration_metadata
 from jax._src.pallas.mosaic import repeat

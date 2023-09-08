@@ -70,12 +70,24 @@ class Mapped:
 mapped = Mapped()
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(init=False, unsafe_hash=True)
 class BlockSpec:
-  index_map: Callable[..., Any]
-  block_shape: tuple[int | None, ...]
+  index_map: Callable[..., Any] | None
+  block_shape: tuple[int | None, ...] | None
+  memory_space: Any
+
+  def __init__(self, index_map: Callable[..., Any] | None = None,
+               block_shape: tuple[int | None, ...] | None = None,
+               memory_space: Any = None):
+    self.index_map = index_map
+    if block_shape is not None and not isinstance(block_shape, tuple):
+      block_shape = tuple(block_shape)
+    self.block_shape = block_shape
+    self.memory_space = memory_space
 
   def compute_index(self, *args):
+    assert self.index_map is not None
+    assert self.block_shape is not None
     out = self.index_map(*args)
     if not isinstance(out, tuple):
       out = (out,)
@@ -86,6 +98,7 @@ class BlockSpec:
 class BlockMapping:
   block_shape: tuple[Mapped | int, ...]
   index_map_jaxpr: jax_core.ClosedJaxpr
+  memory_space: Any
 
   def compute_start_indices(self, loop_idx, *args):
     discharged_jaxpr, discharged_consts = state_discharge.discharge_state(
@@ -123,107 +136,131 @@ def _preprocess_grid(grid: Grid | int | None) -> Grid:
 
 def _convert_block_spec_to_block_mapping(
     in_avals: list[jax_core.ShapedArray], block_spec: BlockSpec | None,
+    aval: jax_core.ShapedArray,
     ) -> BlockSpec | None:
-  if block_spec is _no_block_spec:
+  if block_spec is no_block_spec:
     return None
+  if block_spec.index_map is None:
+    compute_index = lambda *args: (0,) * len(aval.shape)
+    block_shape = aval.shape
+  else:
+    compute_index = block_spec.compute_index
+    block_shape = block_spec.block_shape
   block_shape = tuple(
-      mapped if s is None else s for s in block_spec.block_shape)
+      mapped if s is None else s for s in block_shape)
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(block_spec.compute_index), in_avals)
-  return BlockMapping(block_shape, jax_core.ClosedJaxpr(jaxpr, consts))
+      lu.wrap_init(compute_index), in_avals)
+  return BlockMapping(block_shape, jax_core.ClosedJaxpr(jaxpr, consts),
+                      block_spec.memory_space)
 
 
-def _compute_shape_from_block_spec(block_spec: BlockSpec | None,
-                                   arg_shape: tuple[int, ...]
-                                   ) -> tuple[int, ...]:
-  if block_spec is _no_block_spec:
-    return arg_shape
-  return tuple(s for s in block_spec.block_shape if s is not None)
+def _tile_ref(ref: jax_core.AbstractRef, block_shape: tuple[int, ...] | None
+             ) -> jax_core.AbstractRef:
+  if block_shape is None:
+    return ref
+  shape = tuple(s for s in block_shape if s is not None)
+  return state.shaped_array_ref(shape, ref.dtype)
 
 
 def _get_ref_avals(grid, in_avals, in_specs, out_avals, out_specs):
+  in_ref_avals = map(state.AbstractRef, in_avals)
+  out_ref_avals = map(state.AbstractRef, out_avals)
   if grid is None:
     in_specs = [None] * len(in_avals)
     out_specs = [None] * len(out_avals)
-    in_ref_avals = [state.shaped_array_ref(arg.shape, arg.dtype)
-                    for arg in in_avals]
-    out_ref_avals = [state.shaped_array_ref(arg.shape, arg.dtype)
-                     for arg in out_avals]
-  else:
-    in_ref_avals = [
-        state.shaped_array_ref(
-            _compute_shape_from_block_spec(
-                block_spec, arg.shape), arg.dtype)
-        for block_spec, arg in zip(in_specs, in_avals)]
-    out_ref_avals = [
-        state.shaped_array_ref(
-            _compute_shape_from_block_spec(
-                block_spec, arg.shape), arg.dtype)
-        for block_spec, arg in zip(out_specs, out_avals)]
-  return in_specs, in_ref_avals, out_specs, out_ref_avals
+  tiled_in_ref_avals = [
+      aval if in_spec is no_block_spec
+      else _tile_ref(aval, in_spec.block_shape)
+      for aval, in_spec in zip(in_ref_avals, in_specs)
+  ]
+  tiled_out_ref_avals = [
+      aval if out_spec is no_block_spec
+      else _tile_ref(aval, out_spec.block_shape)
+      for aval, out_spec in zip(out_ref_avals, out_specs)
+  ]
+  return in_specs, tiled_in_ref_avals, out_specs, tiled_out_ref_avals
 
+class NoBlockSpec:
+  pass
+no_block_spec = NoBlockSpec()
 
-_no_block_spec = object()
-
-@dataclasses.dataclass(init=False)
+@dataclasses.dataclass(init=False, unsafe_hash=True)
 class GridSpec:
   grid: Grid
-  in_specs: Sequence[BlockSpec | None] | None
-  out_specs: tuple[BlockSpec | None, ...] | None
+  in_specs: tuple[BlockSpec | NoBlockSpec, ...]
+  out_specs: tuple[BlockSpec | NoBlockSpec, ...]
+  in_specs_tree: Any
+  out_specs_tree: Any
 
   def __init__(
       self,
       grid: Grid | None = None,
-      in_specs: Sequence[BlockSpec | None] | None = None,
-      out_specs: BlockSpec | Sequence[BlockSpec | None] | None = None,
+      in_specs: BlockSpec
+      | Sequence[BlockSpec | NoBlockSpec]
+      | NoBlockSpec = no_block_spec,
+      out_specs: BlockSpec
+      | Sequence[BlockSpec | NoBlockSpec]
+      | NoBlockSpec = no_block_spec,
   ):
-    if grid is None:
-      if in_specs is not None:
-        raise ValueError("Cannot specify `in_specs` with a `None` grid.")
-      if out_specs is not None:
-        raise ValueError("Cannot specify `out_specs` with a `None` grid.")
-    self.grid = _preprocess_grid(grid)
-    self.in_specs = in_specs
-    if out_specs is not None and not isinstance(out_specs, (tuple, list)):
-      out_specs = (out_specs,)
-    if out_specs is not None and not isinstance(out_specs, tuple):
+    # Be more lenient for in/out_specs
+    if isinstance(in_specs, list):
+      in_specs = tuple(in_specs)
+    if isinstance(out_specs, list):
       out_specs = tuple(out_specs)
-    self.out_specs = out_specs
+
+    self.grid = _preprocess_grid(grid)
+    if in_specs is not no_block_spec:
+      flat_in_specs, self.in_specs_tree = tree_util.tree_flatten(in_specs)
+      self.in_specs = tuple(flat_in_specs)
+    else:
+      self.in_specs = in_specs
+      self.in_specs_tree = None
+    if out_specs is not no_block_spec:
+      flat_out_specs, self.out_specs_tree = tree_util.tree_flatten(out_specs)
+      self.out_specs = tuple(flat_out_specs)
+    else:
+      self.out_specs = out_specs
+      self.out_specs_tree = None
+
+  def _get_in_out_specs(self, in_avals, in_tree, out_avals, out_tree):
+    if self.in_specs is no_block_spec:
+      flat_in_specs = [no_block_spec] * len(in_avals)
+    else:
+      flat_in_specs = self.in_specs
+      if self.in_specs_tree != in_tree:
+        raise ValueError(
+            "Pytree specs for arguments and `in_specs` must match: "
+            f"{in_tree} vs. {self.in_specs_tree}")
+    if self.out_specs is no_block_spec:
+      flat_out_specs = [no_block_spec] * len(out_avals)
+    else:
+      flat_out_specs = self.out_specs
+      if self.out_specs_tree != out_tree:
+        raise ValueError(
+            "Pytree specs for `out_shape` and `out_specs` must match: "
+            f"{out_tree} vs. {self.out_specs_tree}")
+    return flat_in_specs, flat_out_specs
 
   def get_grid_mapping(
       self, in_avals, in_tree, out_avals, out_tree
   ) -> tuple[tuple[jax_core.AbstractValue, ...], GridMapping]:
-    if self.in_specs is not None:
-      in_specs = self.in_specs
-      in_spec_tree = tree_util.tree_structure(tuple(in_specs))
-      if in_spec_tree != in_tree:
-        raise ValueError(
-            "Pytree specs for arguments and `in_specs` must match: "
-            f"{in_tree} vs. {in_spec_tree}")
-    else:
-      in_specs = [_no_block_spec] * len(in_avals)
-    if self.out_specs is not None:
-      out_specs = self.out_specs
-      out_spec_tree = tree_util.tree_structure(out_specs)
-      if out_spec_tree != out_tree:
-        raise ValueError(
-            "Pytree specs for `out_shape` and `out_specs` must match: "
-            f"{out_tree} vs. {out_spec_tree}")
-    else:
-      out_specs = [_no_block_spec] * len(out_avals)
-    flat_in_specs = tree_util.tree_leaves(in_specs)
-    flat_out_specs = tree_util.tree_leaves(out_specs)
+    flat_in_specs, flat_out_specs = self._get_in_out_specs(
+        in_avals, in_tree, out_avals, out_tree)
     in_specs, in_ref_avals, out_specs, out_ref_avals = _get_ref_avals(
         self.grid, in_avals, flat_in_specs, out_avals,
         flat_out_specs)
     grid_avals = [jax_core.ShapedArray((), jnp.dtype("int32"))] * len(self.grid)
     in_block_mappings = map(
-        partial(_convert_block_spec_to_block_mapping, grid_avals), in_specs)
+        partial(_convert_block_spec_to_block_mapping, grid_avals), in_specs,
+        in_ref_avals)
     out_block_mappings = map(
-        partial(_convert_block_spec_to_block_mapping, grid_avals), out_specs)
+        partial(_convert_block_spec_to_block_mapping, grid_avals), out_specs,
+        out_ref_avals)
     grid_mapping = GridMapping(
         self.grid, (*in_block_mappings, *out_block_mappings), (),
         num_index_operands=0)
     jaxpr_in_avals = tree_util.tree_unflatten(in_tree, in_ref_avals)
     jaxpr_out_avals = tree_util.tree_unflatten(out_tree, out_ref_avals)
+    if not isinstance(jaxpr_out_avals, (tuple, list)):
+      jaxpr_out_avals = (jaxpr_out_avals,)
     return (*jaxpr_in_avals, *jaxpr_out_avals), grid_mapping

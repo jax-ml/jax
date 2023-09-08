@@ -61,13 +61,11 @@ def pallas_call_tpu_lowering_rule(
     if mosaic_params is None:
       mosaic_params = {}
     dimension_semantics = mosaic_params.get("dimension_semantics", None)
-    memory_spaces = mosaic_params.get("memory_spaces", None)
     kernel_regeneration_metadata = mosaic_params.get(
         "kernel_regeneration_metadata"
     )
     mosaic_module = lowering.lower_jaxpr_to_module(
-        mlir_ctx, grid_mapping, jaxpr, dimension_semantics=dimension_semantics,
-        memory_spaces=memory_spaces)
+        mlir_ctx, grid_mapping, jaxpr, dimension_semantics=dimension_semantics)
     if debug:
       print(mosaic_module)
   out_avals = [jax_core.ShapedArray(s.shape, s.dtype) for s in out_shapes]

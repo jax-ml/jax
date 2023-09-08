@@ -143,20 +143,17 @@ def lower_jaxpr_to_module(
     grid_mapping: core.GridMapping,
     jaxpr: jax_core.Jaxpr,
     dimension_semantics: tuple[str | None, ...] | None,
-    memory_spaces: tuple[TPUMemorySpace | None, ...] | None
 ) -> ir.Module:
   m = ir.Module.create()
   sym_tab = ir.SymbolTable(m.operation)
-  if all(bm is None for bm in grid_mapping.block_mappings):
+  if not grid_mapping.grid:
     # Trivial grid-map, we don't need to populate the transform functions.
     func_op = lower_jaxpr_to_func(ctx, jaxpr, grid_mapping=grid_mapping,
-                                  memory_spaces=memory_spaces,
                                   name="main")
     m.body.append(func_op)
     sym_tab.insert(func_op)
     return m
   func_op = lower_jaxpr_to_func(ctx, jaxpr, grid_mapping=grid_mapping,
-                                memory_spaces=memory_spaces,
                                 name="main")
   m.body.append(func_op)
   sym_tab.insert(func_op)
@@ -256,10 +253,11 @@ def lower_jaxpr_to_func(
     ctx: ir.Context,
     jaxpr: jax_core.Jaxpr,
     *,
-    memory_spaces: Sequence[tpu_core.TPUMemorySpace | None] | None,
     grid_mapping: core.GridMapping | None,
     name: str,
 ) -> func.FuncOp:
+  memory_spaces = [None if bm is None else bm.memory_space
+                   for bm in grid_mapping.block_mappings]
   if grid_mapping:
     arg_types = map(
         aval_to_ir_type,
@@ -277,22 +275,15 @@ def lower_jaxpr_to_func(
     )
     return (aval_to_ir_type(aval, shape=shape, memory_space=memory_space),
             block_mapping.block_shape)
-  if memory_spaces is None:
-    memory_spaces = [None] * len(jaxpr.invars)
-  if len(memory_spaces) != len(jaxpr.invars):
-    raise ValueError("Must have as many memory spaces as inputs and outputs.")
   if grid_mapping is None:
     block_mappings = [None] * len(jaxpr.invars)
   else:
     scalar_prefetch = grid_mapping.num_index_operands
     block_mappings = grid_mapping.block_mappings
     block_mappings = [*[None] * scalar_prefetch, *block_mappings]
-    for memory_space in memory_spaces[:scalar_prefetch]:
-      if memory_space is not None and memory_space != SMEM:
-        raise ValueError("Cannot specify non-SMEM memory space for "
-                         "scalar prefetch inputs.")
-    memory_spaces = memory_spaces[scalar_prefetch:]
     memory_spaces = [*[SMEM] * scalar_prefetch, *memory_spaces]
+  assert len(memory_spaces) == len(jaxpr.invars), (
+      "Must have as many memory spaces as inputs and outputs.")
   invar_arg_types, block_shapes = unzip2(
       map(_get_arg_type, [invar.aval for invar in jaxpr.invars], block_mappings,
           memory_spaces)
@@ -1402,24 +1393,25 @@ def _trace_stop_lowering_rule(ctx: LoweringRuleContext):
 lowering_rules[tpu_primitives.trace_stop_p] = _trace_stop_lowering_rule
 
 
-def _alloc_type(type: tpu_primitives.Type):
-  if isinstance(type, tpu_primitives.VMEM):
-    aval = type.get_aval()
-    vmem = ir.Attribute.parse("#tpu.memory_space<vmem>")
+def _alloc_value(aval: jax_core.AbstractValue) -> ir.Value:
+  if isinstance(aval, tpu_core.AbstractMemoryRef):
+    memspace = ir.Attribute.parse(f"#tpu.memory_space<{aval.memory_space}>")
     out_type = ir.MemRefType.get(
-        aval.shape, mlir.dtype_to_ir_type(aval.dtype), memory_space=vmem)
+        aval.shape, mlir.dtype_to_ir_type(aval.dtype), memory_space=memspace)
     return memref.AllocaOp(out_type, [], []).result
-  raise NotImplementedError(f"Cannot allocate {type}.")
+  raise NotImplementedError(f"Cannot allocate {type(aval)}.")
 
 
-def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr,
-                              types):
+def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr):
   region = tpu.RegionOp()
+  in_avals = [v.aval for v in jaxpr.invars]
   jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   with ir.InsertionPoint(region.body):
-    args = [_alloc_type(type) for type in types]
+    args = map(_alloc_value, in_avals)
+    block_shapes = tuple(a.shape if isinstance(a, state.AbstractRef) else None
+                         for a in in_avals)
     ctx = ctx.lowering_context.replace(
-        block_shapes=(*ctx.block_shapes, *(t.get_block_shape() for t in types))
+        block_shapes=(*ctx.block_shapes, *block_shapes)
     )
     jaxpr_subcomp(ctx, jaxpr, *consts, *args)
     tpu.YieldOp([])
