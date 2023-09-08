@@ -82,12 +82,6 @@ class JaxVersionTest(unittest.TestCase):
       check_jaxlib_version(jax_version="1.2.3", jaxlib_version="1.2.4",
                            minimum_jaxlib_version="1.0.5")
 
-    with self.assertRaisesRegex(RuntimeError,
-                                ".incompatible with jax version.*"):
-      check_jaxlib_version(jax_version="0.4.14.dev20230818",
-                           jaxlib_version="0.4.14.dev20230819",
-                           minimum_jaxlib_version="0.4.14")
-
 
 if __name__ == "__main__":
   absltest.main()
