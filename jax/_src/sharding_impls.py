@@ -654,6 +654,20 @@ class PositionalSharding(XLACompatibleSharding):
   _ids: np.ndarray  # dtype DeviceIdSet
   """
   Sharding strategy that arranges data based on device positions.
+
+  Example:
+    ```python
+    devices = [xc.Device("GPU", 0), xc.Device("GPU", 1)]
+    sharding = PositionalSharding(devices)
+    print(sharding.shape)  # Output: (2,)
+    print(sharding.ndim)   # Output: 1
+    ```
+
+    Initialize a PositionalSharding instance with two GPU devices:
+        ```python
+        devices = [xc.Device("GPU", 0), xc.Device("GPU", 1)]
+        sharding = PositionalSharding(devices)
+        ```
   """
 
   def __init__(self, devices: Sequence[xc.Device] | np.ndarray,
@@ -664,6 +678,13 @@ class PositionalSharding(XLACompatibleSharding):
     Args:
       devices (Sequence[xc.Device] | np.ndarray): List of devices to shard data across.
       memory_kind (str | None, optional): The memory kind to associate with the sharding.
+
+    Example:
+      Initialize PositionalSharding with a list of devices and a memory kind:
+        ```python
+          devices = [xc.Device("GPU", 0), xc.Device("GPU", 1)]
+          sharding = PositionalSharding(devices, memory_kind="HBM")
+        ```
     """
     if not isinstance(devices, np.ndarray):
       devices = np.array(devices, dtype='object')
@@ -682,16 +703,40 @@ class PositionalSharding(XLACompatibleSharding):
 
   @property
   def shape(self):
-    """Returns the shape of the sharded data."""
+    """
+        Returns the shape of the sharded data.
+
+        Example:
+            Get the shape of a PositionalSharding instance:
+            ```python
+            shape = sharding.shape
+            ```
+        """
     return self._ids.shape
 
   @property
   def ndim(self):
-    """Returns the number of Dimensions of the Sharded Data"""
+    """
+        Returns the number of dimensions of the sharded data.
+
+        Example:
+            Get the number of dimensions of a PositionalSharding instance:
+            ```python
+            dimensions = sharding.ndim
+            ```
+    """
     return self._ids.ndim
 
   def __repr__(self) -> str:
-    """Returns a string representation of the PositionalSharding instance."""
+    """
+        Returns a string representation of the PositionalSharding instance.
+
+        Example:
+            Get a string representation of a PositionalSharding instance:
+            ```python
+            sharding_str = repr(sharding)
+            ```
+    """
     cls_name = self.__class__.__name__
     ids = self._ids.copy()
     platform_name = self._devices[0].platform.upper()
@@ -704,40 +749,55 @@ class PositionalSharding(XLACompatibleSharding):
 
   def reshape(self, *shape) -> PositionalSharding:
     """
-    Returns a new PositionalSharding instance with a reshaped data layout.
+        Returns a new PositionalSharding instance with a reshaped data layout.
 
-    Args:
-      *shape: New shape dimensions.
+        Args:
+            *shape: New shape dimensions.
 
-    Returns:
-      PositionalSharding: A new PositionalSharding instance.
-    """
+        Example:
+            Reshape a PositionalSharding instance:
+            ```python
+            new_sharding = sharding.reshape(2, 1)
+            ```
+        Returns:
+            PositionalSharding: A new PositionalSharding instance.
+        """
     return self._remake(self._devices, self._ids.reshape(*shape))
 
   def transpose(self, *axes) -> PositionalSharding:
     """
-    Transposes this `PositionalSharding` along given axes and returns it as another object.
+        Returns a new PositionalSharding instance with transposed data layout.
 
-    Args:
-      *axes: Axes permutation for the transpose operation.
+        Args:
+            *axes: Axes permutation for the transpose operation.
 
-    Returns:
-      PositionalSharding: A new PositionalSharding instance with transposed data.
-    """
+        Example:
+            Transpose a PositionalSharding instance:
+            ```python
+            transposed_sharding = sharding.transpose(1, 0)
+            ```
+        Returns:
+            PositionalSharding: A new PositionalSharding instance with transposed data.
+        """
     return self._remake(self._devices, self._ids.transpose(*axes))
   T = property(transpose)
 
   def replicate(self, axis=None, keepdims=True) -> PositionalSharding:
     """
-    Returns a new PositionalSharding instance with replicated data.
+        Returns a new PositionalSharding instance with replicated data.
 
-    Args:
-      axis: Axis along which replication is performed.
-      keepdims: Whether to keep dimensions or not.
+        Args:
+            axis: Axis along which replication is performed.
+            keepdims: Whether to keep dimensions or not.
 
-    Returns:
-      PositionalSharding: A new PositionalSharding instance with replicated data.
-    """
+        Example:
+            Replicate a PositionalSharding instance:
+            ```python
+            replicated_sharding = sharding.replicate(axis=0, keepdims=True)
+            ```
+        Returns:
+            PositionalSharding: A new PositionalSharding instance with replicated data.
+        """
     new_ids = self._ids.sum(axis=axis, keepdims=keepdims)  # union
     return self._remake(self._devices, new_ids)
 
@@ -746,16 +806,21 @@ class PositionalSharding(XLACompatibleSharding):
       cls, devices: tuple[xc.Device, ...], ids: np.ndarray,
       *, memory_kind: str | None = None) -> PositionalSharding:
     """
-    Creates a new PositionalSharding instance based on devices and ids.
+        Creates a new PositionalSharding instance based on devices and ids.
 
-    Args:
-      devices (tuple[xc.Device, ...]): Devices for the new sharding instance.
-      ids (np.ndarray): New sharding IDs.
-      memory_kind (str | None, optional): The memory kind to associate with the sharding.
+        Args:
+            devices (tuple[xc.Device, ...]): Devices for the new sharding instance.
+            ids (np.ndarray): New sharding IDs.
+            memory_kind (str | None, optional): The memory kind to associate with the sharding.
 
-    Returns:
-      PositionalSharding: A new PositionalSharding instance.
-    """
+        Example:
+            Create a new PositionalSharding instance:
+            ```python
+            new_sharding = cls._remake(devices, ids, memory_kind="HBM")
+            ```
+        Returns:
+            PositionalSharding: A new PositionalSharding instance.
+        """
     self = cls.__new__(cls)
     self._devices = devices
     self._ids = ids
@@ -770,6 +835,15 @@ class PositionalSharding(XLACompatibleSharding):
   # Hashable
 
   def __hash__(self) -> int:
+    """
+        Calculates and returns the hash value of the PositionalSharding instance.
+
+        Example:
+            Calculate the hash value of a PositionalSharding instance:
+            ```python
+            sharding_hash = hash(sharding)
+            ```
+        """
     if not hasattr(self, '_hash'):
       if xla_extension_version >= 182:
         self._hash = hash((self._internal_device_list, self.memory_kind))
@@ -778,6 +852,21 @@ class PositionalSharding(XLACompatibleSharding):
     return self._hash
 
   def __eq__(self, other) -> bool:
+    """
+      Checks if two PositionalSharding instances are equal.
+
+      Args:
+          other: Another PositionalSharding instance to compare to.
+
+      Example:
+          Check if two PositionalSharding instances are equal:
+          ```python
+          are_equal = sharding1 == sharding2
+          ```
+
+      Returns:
+          bool: True if the sharding instances are equal, False otherwise.
+      """
     if not isinstance(other, PositionalSharding):
       return False
     if id(self) == id(other):
@@ -798,30 +887,130 @@ class PositionalSharding(XLACompatibleSharding):
 
   @functools.cached_property
   def device_set(self) -> set[xc.Device]:
+    """
+      Returns a set of devices used in the sharding.
+
+      Example:
+          Get the set of devices used in the sharding:
+          ```python
+          devices = sharding.device_set
+          ```
+
+      Returns:
+          set[xc.Device]: A set of devices.
+      """
     return set(self._devices)
 
   @property
   def memory_kind(self) -> str | None:
+    """
+      Returns the memory kind associated with the sharding.
+
+      Example:
+          Get the memory kind associated with the sharding:
+          ```python
+          mem_kind = sharding.memory_kind
+          if mem_kind:
+              print(f"Memory Kind: {mem_kind}")
+          else:
+              print("Memory Kind not specified.")
+          ```
+
+      Returns:
+          str | None: The memory kind associated with the sharding, or None if not specified.
+      """
     return self._memory_kind
 
   def with_memory_kind(self, kind: str) -> PositionalSharding:
+    """
+      Returns a new PositionalSharding instance with a specified memory kind.
+
+      Args:
+          kind (str): The memory kind to associate with the sharding.
+
+      Example:
+          Create a new PositionalSharding instance with a specific memory kind:
+          ```python
+          sharding_with_mem_kind = sharding.with_memory_kind("HBM")
+          ```
+
+      Returns:
+          PositionalSharding: A new PositionalSharding instance with the specified memory kind.
+      """
     return PositionalSharding(self._devices, memory_kind=kind)
 
   @functools.cached_property
   def is_fully_replicated(self) -> bool:
+    """
+      Checks if the sharding represents fully replicated data.
+
+      Example:
+          Check if the data is fully replicated:
+          ```python
+          if sharding.is_fully_replicated:
+              print("Data is fully replicated.")
+          else:
+              print("Data is not fully replicated.")
+          ```
+
+      Returns:
+          bool: True if the sharding represents fully replicated data, False otherwise.
+      """
     return self.shape == (1,) * self.ndim
 
   # XLACompatibleSharding interface
 
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
+    """
+      Returns the device assignment for the sharding.
+
+      Example:
+          Get the device assignment for the sharding:
+          ```python
+          device_assignment = sharding._device_assignment
+          ```
+
+      Returns:
+          XLADeviceAssignment: The device assignment for the sharding.
+      """
     return self._devices
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
+    """
+      Converts the sharding to an XLA-compatible HloSharding instance.
+
+      Args:
+          num_dimensions (int): The number of dimensions.
+
+      Example:
+          Convert the sharding to an XLA-compatible HloSharding instance:
+          ```python
+          hlo_sharding = sharding._to_xla_hlo_sharding(2)
+          ```
+
+      Returns:
+          xc.HloSharding: An XLA-compatible HloSharding instance.
+      """
     return _positional_sharding_to_xla_hlo_sharding(self, num_dimensions)
 
   @functools.cached_property
   def is_fully_addressable(self) -> bool:
+    """
+      Checks if the sharding is fully addressable.
+
+      Example:
+          Check if the sharding is fully addressable:
+          ```python
+          if sharding.is_fully_addressable:
+              print("Sharding is fully addressable.")
+          else:
+              print("Sharding is not fully addressable.")
+          ```
+
+      Returns:
+          bool: True if the sharding is fully addressable, False otherwise.
+      """
     if xla_extension_version >= 188:
       return self._internal_device_list.is_fully_addressable
     else:
