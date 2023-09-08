@@ -4890,6 +4890,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         ones_1d, ones_1d)
 
   @jtu.sample_product(
+      funcname=['matmul', 'dot', 'vdot', 'tensordot']
+  )
+  def testPreferredElementType(self, funcname):
+    func = getattr(jnp, funcname)
+    kwargs = dict(axes=0) if funcname == 'tensordot' else {}
+
+    ones_i32 = np.ones(2, dtype='int32')
+    ones_f32 = np.ones(2, dtype='float32')
+
+    with jax.numpy_dtype_promotion('strict'):
+      jtu.assert_dot_preferred_element_type('int32', func, ones_i32, ones_i32, **kwargs)
+      jtu.assert_dot_preferred_element_type('float32', func, ones_f32, ones_f32, **kwargs)
+      jtu.assert_dot_preferred_element_type('bfloat16', func, ones_f32, ones_f32, **kwargs,
+                                            preferred_element_type='bfloat16')
+    with jax.numpy_dtype_promotion('standard'):
+      jtu.assert_dot_preferred_element_type('float32', func, ones_i32, ones_f32, **kwargs)
+
+  @jtu.sample_product(
     [dict(shape=shape, varargs=varargs, axis=axis)
         for shape in [(10,), (10, 15), (10, 15, 20)]
         for _num_axes in range(len(shape))
