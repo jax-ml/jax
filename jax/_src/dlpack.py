@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import enum
+from typing import Any
 
 from jax import numpy as jnp
 from jax._src import array
@@ -38,7 +39,7 @@ class DLDeviceType(enum.IntEnum):
 
 
 def to_dlpack(x: Array, take_ownership: bool = False,
-              stream: int | None = None):
+              stream: int | Any | None = None):
   """Returns a DLPack tensor that encapsulates a :class:`~jax.Array` ``x``.
 
   Takes ownership of the contents of ``x``; leaves ``x`` in an invalid/deleted
@@ -108,7 +109,7 @@ def from_dlpack(external_array):
         stream = None
       else:
         raise
-    dlpack = external_array.__dlpack__(stream)
+    dlpack = external_array.__dlpack__(stream=stream)
 
     return jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
         dlpack, device, stream))
