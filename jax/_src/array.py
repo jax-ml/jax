@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import enum
 import math
 import operator as op
 import numpy as np
@@ -371,13 +372,13 @@ class ArrayImpl(basearray.Array):
   def __array__(self, dtype=None, context=None):
     return np.asarray(self._value, dtype=dtype)
 
-  def __dlpack__(self, stream: int | None = None):
+  def __dlpack__(self, *, stream: int | Any | None = None):
     if len(self._arrays) != 1:
       raise ValueError("__dlpack__ only supported for unsharded arrays.")
     from jax._src.dlpack import to_dlpack  # pylint: disable=g-import-not-at-top
     return to_dlpack(self, stream=stream)
 
-  def __dlpack_device__(self) -> tuple[int, int]:
+  def __dlpack_device__(self) -> tuple[enum.Enum, int]:
     if len(self._arrays) != 1:
       raise ValueError("__dlpack__ only supported for unsharded arrays.")
 
