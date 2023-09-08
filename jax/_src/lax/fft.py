@@ -31,6 +31,7 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import xla_client
 from jax._src.lib import ducc_fft
 from jax._src.lib import version as jaxlib_version
+from jax._src.lib import xla_extension_version
 from jax._src.numpy.util import promote_dtypes_complex, promote_dtypes_inexact
 
 __all__ = [
@@ -249,4 +250,8 @@ fft_p.def_abstract_eval(fft_abstract_eval)
 mlir.register_lowering(fft_p, _fft_lowering)
 ad.deflinear2(fft_p, _fft_transpose_rule)
 batching.primitive_batchers[fft_p] = _fft_batching_rule
-mlir.register_lowering(fft_p, _fft_lowering_cpu, platform='cpu')
+
+# TODO(phawkins): when jaxlib 0.4.16 is the minimum, use XLA's FFT lowering
+# always on CPU. At that point, we can also delete the DUCC FFT kernel from JAX.
+if xla_extension_version < 194:
+  mlir.register_lowering(fft_p, _fft_lowering_cpu, platform='cpu')
