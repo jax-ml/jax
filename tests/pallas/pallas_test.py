@@ -163,8 +163,8 @@ class PallasCallTest(PallasTest):
   def test_add_vector_block_spec(self):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((8,), jnp.int32),
-        in_specs=(pl.BlockSpec(lambda i: i, (1,)),),
-        out_specs=(pl.BlockSpec(lambda i: i, (1,)),),
+        in_specs=[pl.BlockSpec(lambda i: i, (1,))],
+        out_specs=pl.BlockSpec(lambda i: i, (1,)),
         grid=8, debug=False)
     def add_one(x_ref, o_ref):
       o_ref[0] = x_ref[0] + 1
@@ -174,8 +174,8 @@ class PallasCallTest(PallasTest):
   def test_add_matrix_block_spec(self):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((8, 8), jnp.int32),
-        in_specs=(pl.BlockSpec(lambda i, j: (i, j), (2, 2)),),
-        out_specs=(pl.BlockSpec(lambda i, j: (i, j), (2, 2)),),
+        in_specs=[pl.BlockSpec(lambda i, j: (i, j), (2, 2))],
+        out_specs=pl.BlockSpec(lambda i, j: (i, j), (2, 2)),
         grid=(4, 4))
     def add_one(x_ref, o_ref):
       o_ref[:, :] = x_ref[:, :] + 1
@@ -1203,7 +1203,6 @@ class PallasCallAutodifferentiationTest(PallasTest):
           pl.BlockSpec(lambda _: (0, 0), (None, 4)),
           pl.BlockSpec(lambda _: (1, 0), (None, 4)),
         ],
-        out_specs=None,
         debug=False, grid=1)
     def add_vectors(x_ref, y_ref, o_ref):
       o_ref[:] = x_ref[:] + y_ref[:]
