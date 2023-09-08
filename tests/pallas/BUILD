@@ -31,6 +31,11 @@ jax_test(
     srcs = [
         "pallas_test.py",
     ],
+    config_tags_overrides = {
+        "gpu_x32": {
+            "ondemand": False,  # Include in presubmit.
+        },
+    },
     disable_backends = [
         "cpu",
         "tpu",
