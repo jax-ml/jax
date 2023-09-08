@@ -711,4 +711,6 @@ def safe_to_cast(input_dtype_or_value: Any,
   output_dtype = dtype(output_dtype_or_value, canonicalize=True)
   if input_dtype == output_dtype:
     return True
-  return result_type(input_dtype_or_value, output_dtype_or_value) == output_dtype
+  # We deliberately use output_dtype rather than output_dtype_or_value here:
+  # this effectively treats the output dtype as always strongly-typed.
+  return result_type(input_dtype_or_value, output_dtype) == output_dtype
