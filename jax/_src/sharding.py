@@ -85,7 +85,18 @@ class Sharding:
     """Is this sharding fully replicated?
 
     A sharding is fully replicated if each device has a complete copy of the
-    entire data."""
+    entire data.
+    """
+    raise NotImplementedError('Subclasses should implement this method.')
+
+  @property
+  def is_fully_addressable(self) -> bool:
+    """Is this sharding fully addressable?
+
+    A sharding is fully addressable if the current process can address all of
+    the devices named in the :class:`Sharding`. ``is_fully_addressable`` is
+    equivalent to "is_local" in multi-process JAX.
+    """
     raise NotImplementedError('Subclasses should implement this method.')
 
   @property
@@ -110,17 +121,6 @@ class Sharding:
       return self.device_set
     return {d for d in self.device_set
             if d.process_index == d.client.process_index()}
-
-  @functools.cached_property
-  def is_fully_addressable(self) -> bool:
-    """Is this sharding fully addressable?
-
-    A sharding is fully addressable if the current process can address all of
-    the devices named in the :class:`Sharding`. ``is_fully_addressable`` is
-    equivalent to "is_local" in multi-process JAX.
-    """
-    # The pytype disable is because pytype can't recognize a cached property.
-    return len(self.device_set) == len(self.addressable_devices)  # type: ignore
 
   def addressable_devices_indices_map(
       self, global_shape: Shape) -> Mapping[Device, Index | None]:

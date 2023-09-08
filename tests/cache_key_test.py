@@ -18,6 +18,8 @@ import random
 import sys
 import unittest
 
+import numpy as np
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -29,7 +31,7 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.config import compilation_cache_include_metadata_in_key
 from jax._src.lib import xla_client
-import numpy as np
+from jax._src.lib import xla_extension_version
 
 
 config.parse_flags_with_absl()
@@ -95,6 +97,39 @@ class CacheKeyTest(jtu.JaxTestCase):
         cache_key._hash_debug_options, new_debug_options
     )
     self.assertNotEqual(hash1, hash3)
+
+  @unittest.skipIf(
+      xla_extension_version < 193, "Test requires jaxlib 0.4.15 or newer"
+  )
+  def test_serialized_compile_options(self):
+    compile_options = compiler.get_compile_options(
+        num_replicas=1, num_partitions=1
+    )
+    hash1 = self.get_hashed_value(
+        cache_key._hash_serialized_compile_options, compile_options
+    )
+    debug_options = compile_options.executable_build_options.debug_options
+    debug_options.xla_force_host_platform_device_count = 2
+    debug_options.xla_dump_to = "foo"
+    debug_options.xla_dump_hlo_module_re = "bar"
+    debug_options.xla_dump_hlo_pass_re = "baz"
+    debug_options.xla_dump_hlo_as_text = True
+    debug_options.xla_dump_hlo_as_proto = True
+    debug_options.xla_dump_hlo_as_dot = True
+    debug_options.xla_dump_hlo_as_url = True
+    debug_options.xla_dump_hlo_as_html = True
+    debug_options.xla_dump_fusion_visualization = True
+    debug_options.xla_dump_hlo_snapshots = True
+    debug_options.xla_dump_max_hlo_modules = True
+    debug_options.xla_dump_module_metadata = True
+    debug_options.xla_dump_compress_protos = True
+    debug_options.xla_dump_hlo_as_long_text = True
+    debug_options.xla_dump_disable_metadata = True
+    debug_options.xla_dump_hlo_pipeline_re = "xyzzy"
+    hash2 = self.get_hashed_value(
+        cache_key._hash_serialized_compile_options, compile_options
+    )
+    self.assertEqual(hash1, hash2)
 
   def test_hash_platform(self):
     hash1 = self.get_hashed_value(

@@ -25,3 +25,15 @@ class TraceOp:
   @property
   def body(self):
     return self.regions[0].blocks[0]
+
+
+class RegionOp:
+  """An extension to the automatically generated RegionOp bindings."""
+
+  def __init__(self, *, loc=None, ip=None):
+    super().__init__([], loc=loc, ip=ip)
+    self.regions[0].blocks.append()  # Append the block.
+
+  @property
+  def body(self):
+    return self.regions[0].blocks[0]

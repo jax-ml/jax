@@ -108,6 +108,7 @@ class JetTest(jtu.JaxTestCase):
     self.check_jet(jnp.dot, primals, series_in)
 
   @jtu.skip_on_devices("tpu")
+  @jax.legacy_prng_key('allow')
   def test_conv(self):
     order = 3
     input_shape = (1, 5, 5, 1)

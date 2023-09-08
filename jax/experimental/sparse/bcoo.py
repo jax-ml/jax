@@ -723,7 +723,8 @@ def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers,
       idx_right = (*idx_batch, *idx_right)
     batch_dims = list(range(len(lhs_contracting_b) + bool(lhs_contracting_s)))
     prod = lax.dot_general(lhs_data, rhs.at[idx_right].get(mode='fill', fill_value=0),
-                           (([], []), (batch_dims, batch_dims)))
+                           (([], []), (batch_dims, batch_dims)),
+                           preferred_element_type=preferred_element_type)
     if idx_out:
       return out_array.at[idx_out].add(prod)
     else:

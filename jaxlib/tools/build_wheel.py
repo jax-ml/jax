@@ -154,7 +154,30 @@ def verify_mac_libraries_dont_reference_chkstack():
       "means that it isn't compatible with older MacOS versions.")
 
 
-def prepare_wheel(sources_path):
+def platform_tag(cpu):
+  platform_name, cpu_name = {
+    ("Linux", "x86_64"): ("manylinux2014", "x86_64"),
+    ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
+    ("Linux", "ppc64le"): ("manylinux2014", "ppc64le"),
+    ("Darwin", "x86_64"): ("macosx_10_14", "x86_64"),
+    ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
+    ("Windows", "AMD64"): ("win", "amd64"),
+  }[(platform.system(), cpu)]
+  return f"{platform_name}_{cpu_name}"
+
+
+def write_setup_cfg(sources_path, cpu):
+  tag = platform_tag(cpu)
+  with open(os.path.join(sources_path, "setup.cfg"), "w") as f:
+    f.write(f"""[metadata]
+license_files = LICENSE.txt
+
+[bdist_wheel]
+plat-name={tag}
+""")
+
+
+def prepare_wheel(sources_path, *, cpu):
   """Assembles a source tree for the wheel in `sources_path`."""
   jaxlib_dir = os.path.join(sources_path, "jaxlib")
   os.makedirs(jaxlib_dir)
@@ -164,7 +187,7 @@ def prepare_wheel(sources_path):
   copy_file("__main__/jaxlib/tools/LICENSE.txt", dst_dir=sources_path)
   copy_file("__main__/jaxlib/README.md", dst_dir=sources_path)
   copy_file("__main__/jaxlib/setup.py", dst_dir=sources_path)
-  copy_file("__main__/jaxlib/setup.cfg", dst_dir=sources_path)
+  write_setup_cfg(sources_path, cpu)
   copy_to_jaxlib("__main__/jaxlib/init.py", dst_filename="__init__.py")
   copy_to_jaxlib(f"__main__/jaxlib/cpu_feature_guard.{pyext}")
   copy_to_jaxlib(f"__main__/jaxlib/utils.{pyext}")
@@ -281,23 +304,10 @@ def prepare_wheel(sources_path):
   patch_copy_xla_extension_stubs(jaxlib_dir)
 
 
-def build_wheel(sources_path, output_path, cpu):
+def build_wheel(sources_path, output_path):
   """Builds a wheel in `output_path` using the source tree in `sources_path`."""
-  platform_name, cpu_name = {
-    ("Linux", "x86_64"): ("manylinux2014", "x86_64"),
-    ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
-    ("Linux", "ppc64le"): ("manylinux2014", "ppc64le"),
-    ("Darwin", "x86_64"): ("macosx_10_14", "x86_64"),
-    ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
-    ("Windows", "AMD64"): ("win", "amd64"),
-  }[(platform.system(), cpu)]
-  python_tag_arg = (f"-C=--build-option=--python-tag=cp{sys.version_info.major}"
-                    f"{sys.version_info.minor}")
-  platform_tag_arg = f"-C=--build-option=--plat-name={platform_name}_{cpu_name}"
-  subprocess.run(
-    [sys.executable, "-m", "build", "-n", "-w",
-     python_tag_arg, platform_tag_arg],
-    check=True, cwd=sources_path)
+  subprocess.run([sys.executable, "-m", "build", "-n", "-w"],
+                 check=True, cwd=sources_path)
   for wheel in glob.glob(os.path.join(sources_path, "dist", "*.whl")):
     output_file = os.path.join(output_path, os.path.basename(wheel))
     sys.stderr.write(f"Output wheel: {output_file}\n\n")
@@ -323,11 +333,11 @@ if sources_path is None:
 
 try:
   os.makedirs(args.output_path, exist_ok=True)
-  prepare_wheel(sources_path)
+  prepare_wheel(sources_path, cpu=args.cpu)
   if args.editable:
     build_editable(sources_path, args.output_path)
   else:
-    build_wheel(sources_path, args.output_path, args.cpu)
+    build_wheel(sources_path, args.output_path)
 finally:
   if tmpdir:
     tmpdir.cleanup()

@@ -66,7 +66,8 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import PmapSharding, TransferToMemoryKind
+from jax._src.sharding_impls import (PmapSharding, TransferToMemoryKind,
+                                     XLACompatibleSharding)
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src.util import unzip2, safe_map, safe_zip, wrap_name, wraps
@@ -1868,7 +1869,7 @@ def _cpp_pmap(
 
     return out, fastpath_data
 
-  cpp_mapped_f = pmap_lib.pmap(  # type: ignore
+  cpp_mapped_f = pmap_lib.pmap(
       fun, cache_miss, static_broadcasted_tuple, pxla.shard_arg,
       pytree_registry=tree_util.default_registry)
   _pmap_cache_clears.add(cpp_mapped_f)
@@ -2487,6 +2488,17 @@ def _infer_src_sharding(src, x):
   return x.sharding if isinstance(x, array.ArrayImpl) else None
 
 
+# TODO(yashkatariya): Generalize is_compatible_aval (maybe renamed) and use that
+# to check if shardings are compatible with the input.
+def _check_sharding(x, s):
+  if isinstance(s, Sharding):
+    aval = shaped_abstractify(x)
+    if isinstance(s, XLACompatibleSharding) and not isinstance(s, PmapSharding):
+      pjit.pjit_check_aval_sharding(
+          (s,), (aval,), None, "device_put args", allow_uneven_sharding=False)
+    s.shard_shape(aval.shape)  # should raise an Error if incompatible
+
+
 def device_put(
     x,
     device: None | xc.Device | Sharding | Any | TransferToMemoryKind = None,
@@ -2518,6 +2530,7 @@ def device_put(
          isinstance(device, (xc.Device, Sharding, TransferToMemoryKind))) and
         (src is None or
          isinstance(src, (xc.Device, Sharding, TransferToMemoryKind)))):
+      tree_map(partial(_check_sharding, s=device), x)
       return tree_map(
           lambda y: dispatch.device_put_p.bind(
               y, device=device, src=_infer_src_sharding(src, y)), x)
@@ -2525,6 +2538,7 @@ def device_put(
     x_flat, treedef = tree_flatten(x)
     device_flat = flatten_axes("device_put device", treedef, device)
     src_flat = flatten_axes("device_put source", treedef, src)
+    tree_map(_check_sharding, x_flat, device_flat)
     out_flat = [
         dispatch.device_put_p.bind(xf, device=d, src=_infer_src_sharding(s, xf))
         for xf, d, s in zip(x_flat, device_flat, src_flat)

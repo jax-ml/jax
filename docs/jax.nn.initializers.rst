@@ -31,6 +31,7 @@ key used when generating random numbers to initialize the array.
     normal
     ones
     orthogonal
+    truncated_normal
     uniform
     variance_scaling
     zeros

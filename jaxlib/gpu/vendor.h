@@ -226,7 +226,12 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUSPARSE_SPMV_COO_ALG CUSPARSE_SPMV_COO_ALG2
 #define GPUSPARSE_SPMV_CSR_ALG CUSPARSE_SPMV_CSR_ALG2
 #define GPUSPARSE_SPMM_COO_ALG CUSPARSE_SPMM_COO_ALG2
-#define GPUSPARSE_SPMM_CSR_ALG CUSPARSE_SPMM_CSR_ALG3
+// In general Cusparse does not support a fully general deterministic CSR SpMM
+// algorithm.
+// In CUDA versions before 12.2.1, we used ALG3, which is deterministic, but
+// does not cover all cases and silently fell back to other algorithms for cases
+// it did not cover. CUDA 12.2.1 removed the fallback behavior.
+#define GPUSPARSE_SPMM_CSR_ALG CUSPARSE_SPMM_ALG_DEFAULT
 #else
 #define GPUSPARSE_SPMV_COO_ALG CUSPARSE_MV_ALG_DEFAULT
 #define GPUSPARSE_SPMV_CSR_ALG CUSPARSE_MV_ALG_DEFAULT

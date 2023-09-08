@@ -266,14 +266,10 @@ _translations: dict[core.Primitive, TranslationRule] = {}
 _backend_specific_translations: dict[str, dict[core.Primitive, TranslationRule]]
 _backend_specific_translations = defaultdict(dict)
 
-_collective_primitives: set[core.Primitive] = set()
 initial_style_primitives: set[core.Primitive] = set()
 
 def register_initial_style_primitive(prim: core.Primitive):
   initial_style_primitives.add(prim)
-
-def register_collective_primitive(prim: core.Primitive):
-  _collective_primitives.add(prim)
 
 def register_translation(prim: core.Primitive, rule: TranslationRule, *,
                          platform: Optional[str] = None) -> None:

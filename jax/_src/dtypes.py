@@ -677,3 +677,38 @@ def check_user_dtype_supported(dtype, fun_name=None):
     fun_name = f"requested in {fun_name}" if fun_name else ""
     truncated_dtype = canonicalize_dtype(dtype).name
     warnings.warn(msg.format(dtype, fun_name, truncated_dtype), stacklevel=3)
+
+def safe_to_cast(input_dtype_or_value: Any,
+                 output_dtype_or_value: Any) -> bool:
+  """Check if a dtype/value is safe to cast to another dtype/value
+
+  Args:
+    input_dtype_or_value: a dtype or value (to be passed to result_type)
+      representing the source dtype.
+    output_dtype_or_value: a dtype or value (to be passed to result_type)
+      representing the target dtype.
+
+  Returns:
+    boolean representing whether the values are safe to cast according to
+    default type promotion semantics.
+
+  Raises:
+    TypePromotionError: if the inputs have differing types and no type promotion
+    path under the current jax_numpy_dtype_promotion setting.
+
+  Examples:
+
+    >>> safe_to_cast('int32', 'float64')
+    True
+    >>> safe_to_cast('float64', 'int32')
+    False
+    >>> safe_to_cast('float32', 'complex64')
+    True
+    >>> safe_to_cast('complex64', 'float64')
+    False
+  """
+  input_dtype = dtype(input_dtype_or_value, canonicalize=True)
+  output_dtype = dtype(output_dtype_or_value, canonicalize=True)
+  if input_dtype == output_dtype:
+    return True
+  return result_type(input_dtype_or_value, output_dtype_or_value) == output_dtype

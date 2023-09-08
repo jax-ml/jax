@@ -862,6 +862,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       f(1.)
 
+  @jax.legacy_prng_key('allow')
   def test_omnistaging(self):
     # See https://github.com/google/jax/issues/5206
 
@@ -4165,7 +4166,7 @@ class APITest(jtu.JaxTestCase):
 
     f = lambda x: jnp.square(x).mean()
     jf = jax.jit(f)
-    x = jax.random.uniform(jax.random.PRNGKey(0), shape=(8, 4))
+    x = jax.random.uniform(jax.random.key(0), shape=(8, 4))
 
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
       for _ in range(5):
@@ -4235,8 +4236,8 @@ class APITest(jtu.JaxTestCase):
     def f(x, y):
       return x.sum() * y.sum()
 
-    x = jax.random.normal(jax.random.PRNGKey(0), (16, 16))
-    y = jax.random.normal(jax.random.PRNGKey(1), (16, 16))
+    x = jax.random.normal(jax.random.key(0), (16, 16))
+    y = jax.random.normal(jax.random.key(1), (16, 16))
     g = jax.grad(f, argnums=-1)
     g(x, y)  # doesn't crash
 
@@ -4788,7 +4789,7 @@ class RematTest(jtu.JaxTestCase):
   def test_remat_symbolic_zeros(self, remat):
     # code from https://github.com/google/jax/issues/1907
 
-    key = jax.random.PRNGKey(0)
+    key = jax.random.key(0)
     key, split = jax.random.split(key)
     n = 5
 
@@ -7120,8 +7121,8 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     # check these don't crash
     jax.vmap(lambda seed: sample((2,3), 1., seed))(
-        jax.random.split(jax.random.PRNGKey(1), 10))
-    jax.jvp(lambda x: sample((2, 3), x, jax.random.PRNGKey(1)),
+        jax.random.split(jax.random.key(1), 10))
+    jax.jvp(lambda x: sample((2, 3), x, jax.random.key(1)),
             (1.,), (1.,))
 
   def test_fun_with_nested_calls_2(self):
@@ -7164,7 +7165,7 @@ class CustomJVPTest(jtu.JaxTestCase):
         return sample, partial_alpha * dalpha
       return f(alpha)
 
-    api.vmap(sample)(jax.random.split(jax.random.PRNGKey(1), 3))  # don't crash
+    api.vmap(sample)(jax.random.split(jax.random.key(1), 3))  # don't crash
 
   def test_closure_with_vmap2(self):
     # https://github.com/google/jax/issues/8783
@@ -7354,7 +7355,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     scalar_box = 1.0
     displacement = periodic_general(scalar_box)
 
-    key = jax.random.PRNGKey(0)
+    key = jax.random.key(0)
     R = jax.random.uniform(key, (N, 2))
 
     def energy_fn(box):
@@ -7425,7 +7426,7 @@ class CustomJVPTest(jtu.JaxTestCase):
   def test_vmap_inside_defjvp(self):
     # https://github.com/google/jax/issues/3201
     seed = 47
-    key = jax.random.PRNGKey(seed)
+    key = jax.random.key(seed)
     mat = jax.random.normal(key, (2, 3))
 
     @jax.custom_jvp
@@ -8674,7 +8675,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       y, _ = jax.lax.scan(f_, x, jnp.arange(3))
       return y
 
-    key = jax.random.PRNGKey(0)
+    key = jax.random.key(0)
     key1, key2 = jax.random.split(key, 2)
     x_batch = jax.random.normal(key1, (3, 2))
     covector_batch = jax.random.normal(key2, (3, 2))

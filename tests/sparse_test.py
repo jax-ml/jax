@@ -18,7 +18,6 @@ from functools import partial
 import itertools
 import math
 import operator
-import platform
 import random
 import unittest
 from typing import NamedTuple
@@ -196,7 +195,6 @@ def _is_required_cuda_version_satisfied(cuda_version):
     return int(version.split()[-1]) >= cuda_version
 
 
-@unittest.skipIf(platform.system() == "Windows", "Test crashes on Windows")
 class cuSparseTest(sptu.SparseTestCase):
   def gpu_dense_conversion_warning_context(self, dtype):
     if jtu.device_under_test() == "gpu" and np.issubdtype(dtype, np.integer):
@@ -775,7 +773,6 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysAllClose(actual, expected)
 
 
-@unittest.skipIf(platform.system() == "Windows", "Test crashes on Windows")
 class BCOOTest(sptu.SparseTestCase):
 
   def gpu_matmul_warning_context(self, msg):
@@ -1937,11 +1934,12 @@ class BCOOTest(sptu.SparseTestCase):
     args_maker = lambda: [sprng(lhs_shape, lhs_dtype, n_batch=n_batch_lhs),
                           jnp.array(rng(rhs_shape, rhs_dtype))]
 
-    tol = {np.float64: 1E-13, np.complex128: 1E-13,
+    tol = {np.float64: 1E-7, np.complex128: 1E-6,
            np.float32: 2E-6, np.complex64: 2E-6}
 
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
-      self._CheckAgainstDense(operator.matmul, operator.matmul, args_maker, tol=tol)
+      self._CheckAgainstDense(operator.matmul, operator.matmul, args_maker,
+                              tol=tol)
 
 
   @jtu.sample_product(
@@ -1976,7 +1974,7 @@ class BCOOTest(sptu.SparseTestCase):
     args_maker_sp_de = lambda: [sprng(lhs_shape, lhs_dtype, n_batch=n_batch_lhs),
                                 jnp.array(rng(rhs_shape, rhs_dtype))]
 
-    tol = {np.float64: 1E-13, np.complex128: 1E-13,
+    tol = {np.float64: 1E-7, np.complex128: 1E-7,
            np.float32: 1E-6, np.complex64: 1E-6}
 
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
@@ -2196,7 +2194,6 @@ class BCOOTest(sptu.SparseTestCase):
 
 
 # TODO(tianjianlu): Unify the testing for BCOOTest and BCSRTest.
-@unittest.skipIf(platform.system() == "Windows", "Test crashes on Windows")
 class BCSRTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
@@ -2670,7 +2667,7 @@ class SparseObjectTest(sptu.SparseTestCase):
     # Test matching type
     x = rng_b(bshape, dtype)
     x = jnp.asarray(x)
-    self.assertAllClose(M @ x, Msp @ x, rtol=MATMUL_TOL)
+    self.assertAllClose(M @ x, Msp @ x, rtol=MATMUL_TOL, atol=MATMUL_TOL)
 
     # Test mismatched type
     x = rng_b(bshape, np.int32)
@@ -2754,9 +2751,10 @@ class SparseRandomTest(sptu.SparseTestCase):
   )
   def test_random_bcoo(self, shape, dtype, indices_dtype, n_batch, n_dense):
     key = jax.random.PRNGKey(1701)
-    mat = sparse.random_bcoo(
-        key, shape=shape, dtype=dtype, indices_dtype=indices_dtype,
-        n_batch=n_batch, n_dense=n_dense)
+    with jax.legacy_prng_key('allow'):
+      mat = sparse.random_bcoo(
+          key, shape=shape, dtype=dtype, indices_dtype=indices_dtype,
+          n_batch=n_batch, n_dense=n_dense)
 
     mat_dense = mat.todense()
     self.assertEqual(mat_dense.shape, shape)

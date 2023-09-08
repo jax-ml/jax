@@ -31,6 +31,7 @@ from jax._src.interpreters.mlir import (
   aval_to_ir_type as aval_to_ir_type,
   aval_to_ir_types as aval_to_ir_types,
   core_call_lowering as core_call_lowering,
+  custom_call as custom_call,
   dense_bool_elements as dense_bool_elements,
   dense_int_elements as dense_int_elements,
   dtype_to_ir_type as dtype_to_ir_type,

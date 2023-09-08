@@ -628,6 +628,31 @@ def _neg_lowering_rule(ctx: TritonLoweringRuleContext, a):
 triton_lowering_rules[lax.neg_p] = _neg_lowering_rule
 
 
+def _shift_left_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
+  return a.__lshift__(b, _builder=ctx.builder)
+
+
+triton_lowering_rules[lax.shift_left_p] = _shift_left_lowering_rule
+
+
+def _shift_right_arithmetic_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
+  return tl.semantic.ashr(a, b, builder=ctx.builder)
+
+
+triton_lowering_rules[lax.shift_right_arithmetic_p] = (
+    _shift_right_arithmetic_lowering_rule
+)
+
+
+def _shift_right_logical_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
+  return tl.semantic.lshr(a, b, builder=ctx.builder)
+
+
+triton_lowering_rules[lax.shift_right_logical_p] = (
+    _shift_right_logical_lowering_rule
+)
+
+
 def _broadcast_in_dim_lowering_rule(
     ctx: TritonLoweringRuleContext, a, *, broadcast_dimensions, shape
 ):
@@ -1689,13 +1714,13 @@ def pallas_call_lowering(
     kernel_call_proto = kernel_call.to_proto(serialized_metadata)
   return hlo_helpers.custom_call(
       call_target_name="triton_kernel_call",
-      out_types=out_types,
+      result_types=out_types,
       operands=in_nodes,
       backend_config=zlib.compress(kernel_call_proto),
       operand_layouts=triton_lib.avals_to_layouts(ctx.avals_in),
       result_layouts=triton_lib.avals_to_layouts(ctx.avals_out),
       operand_output_aliases=dict(input_output_aliases),
-  )
+  ).results
 
 
 mlir.register_lowering(pallas_call_p, pallas_call_lowering, platform="cuda")

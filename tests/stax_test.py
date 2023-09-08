@@ -48,7 +48,8 @@ def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
 
 
 # stax makes use of implicit rank promotion, so we allow it in the tests.
-@jtu.with_config(jax_numpy_rank_promotion="allow")
+@jtu.with_config(jax_numpy_rank_promotion="allow",
+                 jax_legacy_prng_key="allow")
 class StaxTest(jtu.JaxTestCase):
 
   @jtu.sample_product(shape=[(2, 3), (5,)])

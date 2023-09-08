@@ -24,12 +24,12 @@ from absl.testing import parameterized
 
 import jax
 from jax import lax
-from jax import linear_util as lu
 from jax import random
+from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import state
 from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.pallas.pallas_call import _initial_style_open_jaxpr
+from jax._src.pallas.pallas_call import _trace_to_jaxpr
 from jax.config import config
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
@@ -134,7 +134,7 @@ class PallasTest(parameterized.TestCase):
     super().setUp()
     if compile_jaxpr:
       compile_jaxpr.cache_clear()
-    _initial_style_open_jaxpr.cache_clear()
+    _trace_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
@@ -639,7 +639,8 @@ class PallasCallTest(PallasTest):
     def f(x):
       return add_one(add_one(x))
 
-    self.assertEqual(f(0.), 2.)
+    x = jnp.array(0., dtype=jnp.float32)
+    self.assertEqual(f(x), 2.)
     self.assertEqual(trace_count, 1)
 
   def test_pallas_compilation_cache(self):
@@ -657,7 +658,8 @@ class PallasCallTest(PallasTest):
     def f(x):
       return add_one(add_one(x))
 
-    self.assertEqual(f(0.), 2.)
+    x = jnp.array(0., dtype=jnp.float32)
+    self.assertEqual(f(x), 2.)
     num_misses = compile_jaxpr.cache_info().misses
     self.assertEqual(num_misses, 1)
 
@@ -1410,68 +1412,158 @@ class PallasPrimitivesTest(PallasTest):
 
 class FusedAttentionTest(PallasTest):
 
-  @parameterized.named_parameters(*[
-      (f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{causal=}_{use_fwd=}",
-       batch_size, seq_len, num_heads, head_dim, causal, use_fwd)
-      for batch_size, seq_len, num_heads, head_dim, causal, use_fwd in [
-          (1, 384, 1, 64, False, False),
-          (2, 384, 2, 64, False, False),
-          (1, 384, 1, 64, True, False),
-          (2, 384, 2, 64, True, False),
-          (1, 384, 8, 64, True, True),
-          (2, 384, 8, 64, True, True),
+  @parameterized.named_parameters(
+      *[
+          (
+              (
+                  f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{causal=}"
+                  f"_{use_fwd=}_{use_segment_ids=}_{kwargs=}"
+              ),
+              batch_size,
+              seq_len,
+              num_heads,
+              head_dim,
+              causal,
+              use_fwd,
+              use_segment_ids,
+              kwargs,
+          )
+          for (
+              batch_size,
+              seq_len,
+              num_heads,
+              head_dim,
+              causal,
+              use_fwd,
+              use_segment_ids,
+              kwargs,
+          ) in [
+              (1, 384, 1, 64, False, False, True, {}),
+              (1, 384, 1, 64, False, False, False, {}),
+              (2, 384, 2, 64, False, False, True, {}),
+              (1, 384, 1, 64, True, False, True, {}),
+              (2, 384, 2, 64, True, False, True, {}),
+              (1, 384, 8, 64, True, True, True, {}),
+              (1, 384, 8, 64, True, True, False, {}),
+              (2, 384, 8, 64, True, True, True, {}),
+              # regression test: https://github.com/google/jax/pull/17314
+              (1, 384, 8, 64, True, False, False, {'block_q': 128, 'block_k': 64}),
+          ]
       ]
-  ])
-  def test_fused_attention_fwd(self, batch_size, seq_len, num_heads, head_dim,
-                               causal, use_fwd):
+  )
+  def test_fused_attention_fwd(
+      self,
+      batch_size,
+      seq_len,
+      num_heads,
+      head_dim,
+      causal,
+      use_fwd,
+      use_segment_ids,
+      kwargs,
+  ):
     if plgpu.get_compute_capability(0) < 80:
       raise unittest.SkipTest(
           "Fused attention only works on GPUs with capability >= sm80")
 
     k1, k2, k3 = random.split(random.PRNGKey(0), 3)
-    q = random.normal(k1, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16)
-    k = random.normal(k2, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16)
-    v = random.normal(k3, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16)
+    q = random.normal(
+        k1, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
+    )
+    k = random.normal(
+        k2, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
+    )
+    v = random.normal(
+        k3, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
+    )
+    if use_segment_ids:
+      segment_ids_1 = jnp.zeros((batch_size, seq_len // 2), dtype=jnp.int32)
+      segment_ids_2 = jnp.ones((batch_size, seq_len // 2), dtype=jnp.int32)
+      segment_ids = jnp.concatenate((segment_ids_1, segment_ids_2), axis=-1)
+    else:
+      segment_ids = None
 
     if use_fwd:
+
       @jax.jit
       def impl(q, k, v):
-        v, _ = jax.vjp(functools.partial(attention.mha, causal=causal), q, k, v)
+        v, _ = jax.vjp(
+            functools.partial(
+                attention.mha, causal=causal, segment_ids=segment_ids, **kwargs
+            ),
+            q,
+            k,
+            v,
+        )
         return v
+
     else:
-      impl = functools.partial(attention.mha, causal=causal)
+      impl = functools.partial(
+          attention.mha, causal=causal, segment_ids=segment_ids, **kwargs
+      )
     o = impl(q, k, v)
-    o_ref = attention.mha_reference(q, k, v, causal=causal)
+    o_ref = attention.mha_reference(q, k, v, segment_ids, causal=causal)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
 
-  @parameterized.named_parameters(*[
-      (f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{causal=}",
-       batch_size, seq_len, num_heads, head_dim, causal)
-      for batch_size, seq_len, num_heads, head_dim, causal in [
-          (1, 384, 1, 32, False),
-          (2, 384, 2, 32, False),
-          # TODO(b/283035396): (1, 384, 1, 32, True),
-          # TODO(b/283035396): (2, 384, 2, 32, True),
+  @parameterized.named_parameters(
+      *[
+          (
+              (
+                  f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{causal=}_"
+                  f"{use_segment_ids=}"
+              ),
+              batch_size,
+              seq_len,
+              num_heads,
+              head_dim,
+              causal,
+              use_segment_ids,
+          )
+          for (
+              batch_size,
+              seq_len,
+              num_heads,
+              head_dim,
+              causal,
+              use_segment_ids,
+          ) in [
+              (1, 384, 1, 32, False, True),
+              (1, 384, 1, 32, False, False),
+              (2, 384, 2, 32, False, True),
+              (2, 384, 2, 32, False, False),
+              # TODO(b/283035396): (1, 384, 1, 32, True, True),
+              # TODO(b/283035396): (2, 384, 2, 32, True, True),
+          ]
       ]
-  ])
-  def test_fused_attention_bwd(self, batch_size, seq_len, num_heads, head_dim,
-                               causal):
+  )
+  def test_fused_attention_bwd(
+      self, batch_size, seq_len, num_heads, head_dim, causal, use_segment_ids
+  ):
     if plgpu.get_compute_capability(0) < 80:
       raise unittest.SkipTest(
           "Fused attention only works on GPUs with capability >= sm80")
     k1, k2, k3 = random.split(random.PRNGKey(0), 3)
-    q = random.normal(k1, (batch_size, seq_len, num_heads, head_dim),
-                      dtype=jnp.float16)
-    k = random.normal(k2, (batch_size, seq_len, num_heads, head_dim),
-                      dtype=jnp.float16)
-    v = random.normal(k3, (batch_size, seq_len, num_heads, head_dim),
-                      dtype=jnp.float16)
+    q = random.normal(
+        k1, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
+    )
+    k = random.normal(
+        k2, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
+    )
+    v = random.normal(
+        k3, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
+    )
+    if use_segment_ids:
+      segment_ids_1 = jnp.zeros((batch_size, seq_len // 2), dtype=jnp.int32)
+      segment_ids_2 = jnp.ones((batch_size, seq_len // 2), dtype=jnp.int32)
+      segment_ids = jnp.concatenate((segment_ids_1, segment_ids_2), axis=-1)
+    else:
+      segment_ids = None
 
     def f(q, k, v):
-      return attention.mha(q, k, v, causal=causal).sum()
+      return attention.mha(q, k, v, segment_ids, causal=causal).sum()
 
     def f_ref(q, k, v):
-      return attention.mha_reference(q, k, v, causal=causal).sum()
+      return attention.mha_reference(q, k, v, segment_ids, causal=causal).sum()
 
     dq, dk, dv = jax.grad(f, argnums=(0, 1, 2))(q, k, v)
     dq_ref, dk_ref, dv_ref = jax.grad(f_ref, argnums=(0, 1, 2))(q, k, v)

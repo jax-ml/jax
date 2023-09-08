@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager, ExitStack
@@ -54,13 +55,19 @@ from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.util import unzip2
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
-    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, device_under_test, tolerance)
+    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, tolerance)
 from jax._src import xla_bridge
 
 
 # This submodule includes private test utilities that are not exported to
 # jax.test_util. Functionality appearing here is for internal use only, and
 # may be changed or removed at any time and without any deprecation cycle.
+
+_TEST_DUT = jax_config.DEFINE_string(
+    'jax_test_dut', '',
+    help=
+    'Describes the device under test in case special consideration is required.'
+)
 
 _NUM_GENERATED_CASES = jax_config.DEFINE_integer(
   'jax_num_generated_cases',
@@ -258,6 +265,11 @@ def assert_num_jit_and_pmap_compilations(times):
   if count[0] != times:
     raise AssertionError(f"Expected exactly {times} XLA compilations, "
                          f"but executed {count[0]}")
+
+
+def device_under_test():
+  return _TEST_DUT.value or xla_bridge.get_backend().platform
+
 
 def if_device_under_test(device_type: Union[str, Sequence[str]],
                          if_true, if_false):
@@ -820,7 +832,10 @@ def with_config(**kwds):
   """Test case decorator for subclasses of JaxTestCase"""
   def decorator(cls):
     assert inspect.isclass(cls) and issubclass(cls, JaxTestCase), "@with_config can only wrap JaxTestCase class definitions."
-    cls._default_config = {**JaxTestCase._default_config, **kwds}
+    cls._default_config = {}
+    for b in cls.__bases__:
+      cls._default_config.update(b._default_config)
+    cls._default_config.update(kwds)
     return cls
   return decorator
 
@@ -847,6 +862,7 @@ class JaxTestCase(parameterized.TestCase):
     'jax_numpy_dtype_promotion': 'strict',
     'jax_numpy_rank_promotion': 'raise',
     'jax_traceback_filtering': 'off',
+    'jax_legacy_prng_key': 'error',
   }
 
   _compilation_cache_exit_stack: Optional[ExitStack] = None
@@ -1273,3 +1289,33 @@ def register_event_duration_listener(callback):
     yield
   finally:
     monitoring._unregister_event_duration_listener_by_callback(callback)
+
+
+@contextmanager
+def set_env(**kwargs):
+  """Context manager to temporarily set/unset one or more environment variables.
+
+  Example:
+
+    >>> import os
+    >>> os.environ['my_var'] = 'original'
+
+    >>> with set_env(my_var=None, other_var='some_value'):
+    ...   print("my_var is set:", 'my_var' in os.environ)
+    ...   print("other_var =", os.environ['other_var'])
+    ...
+    my_var is set: False
+    other_var = some_value
+
+    >>> os.environ['my_var']
+    'original'
+    >>> 'other_var' in os.environ
+    False
+  """
+  original = {key: os.environ.pop(key, None) for key in kwargs}
+  os.environ.update({k: v for k, v in kwargs.items() if v is not None})
+  try:
+    yield
+  finally:
+    _ = [os.environ.pop(key, None) for key in kwargs]
+    os.environ.update({k: v for k, v in original.items() if v is not None})

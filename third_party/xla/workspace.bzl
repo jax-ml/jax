@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 
 # To update XLA to a new revision,
 # a) update XLA_COMMIT to the new git commit hash
@@ -20,17 +20,15 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 #    curl -L https://github.com/openxla/xla/archive/<git hash>.tar.gz | sha256sum
 #    and update XLA_SHA256 with the result.
 
-XLA_COMMIT = "1c22df67539a85904b4f686bcbe69efd518a5698"
-XLA_SHA256 = "688cfb2f1437962bee7b433d70ecd2d5211869ae43a57efff3be5c1f56da314d"
+XLA_COMMIT = "cb2f349863479be68e73052b0e03500c0470f40d"
+XLA_SHA256 = "d92d413fb8a98bda0ab4f404e3e701bf102062f4b7dd3b67a74c2681d0909a88"
 
 def repo():
-    http_archive(
+    tf_http_archive(
         name = "xla",
         sha256 = XLA_SHA256,
         strip_prefix = "xla-{commit}".format(commit = XLA_COMMIT),
-        urls = [
-            "https://github.com/openxla/xla/archive/{commit}.tar.gz".format(commit = XLA_COMMIT),
-        ],
+        urls = tf_mirror_urls("https://github.com/openxla/xla/archive/{commit}.tar.gz".format(commit = XLA_COMMIT)),
     )
 
     # For development, one often wants to make changes to the TF repository as well

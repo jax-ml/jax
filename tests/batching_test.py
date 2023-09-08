@@ -403,6 +403,7 @@ class BatchingTest(jtu.JaxTestCase):
     expected[np.arange(10), idx] = y
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @jax.legacy_prng_key('allow')
   def testRandom(self):
     seeds = vmap(random.PRNGKey)(np.arange(10))
     ans = vmap(partial(random.normal, shape=(3, 2)))(seeds)
@@ -948,6 +949,7 @@ class BatchingTest(jtu.JaxTestCase):
 
     _ = hessian(f)(R)  # don't crash on UnshapedArray
 
+  @jax.legacy_prng_key('allow')
   def testIssue489(self):
     # https://github.com/google/jax/issues/489
     def f(key):

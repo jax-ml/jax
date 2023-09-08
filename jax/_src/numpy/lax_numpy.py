@@ -3073,38 +3073,55 @@ def apply_over_axes(func: Callable[[ArrayLike, int], Array], a: ArrayLike,
 
 @util._wraps(np.dot, lax_description=_PRECISION_DOC)
 @partial(jit, static_argnames=('precision',), inline=True)
-def dot(a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None) -> Array:  # pylint: disable=missing-docstring
+def dot(a: ArrayLike, b: ArrayLike, *,
+        precision: PrecisionLike = None,
+        preferred_element_type: DTypeLike | None = None) -> Array:
   util.check_arraylike("dot", a, b)
+  dtypes.check_user_dtype_supported(preferred_element_type, "dot")
   a, b = asarray(a), asarray(b)
-  output_dtype, output_weak_type = dtypes.result_type(a, b, return_weak_type_flag=True)
+  if preferred_element_type is None:
+    preferred_element_type, output_weak_type = dtypes.result_type(a, b, return_weak_type_flag=True)
+  else:
+    output_weak_type = False
 
   batch_dims = ((), ())
   a_ndim, b_ndim = ndim(a), ndim(b)
   if a_ndim == 0 or b_ndim == 0:
     # TODO(jakevdp): lower this case to dot_general as well?
     # Currently, doing so causes issues in remat tests due to #16805
-    result = lax.mul(a.astype(output_dtype), b.astype(output_dtype))
+    if preferred_element_type is not None:
+      a = a.astype(preferred_element_type)
+      b = b.astype(preferred_element_type)
+    result = lax.mul(a, b)
   else:
     if b_ndim == 1:
       contract_dims = ((a_ndim - 1,), (0,))
     else:
       contract_dims = ((a_ndim - 1,), (b_ndim - 2,))
     result = lax.dot_general(a, b, dimension_numbers=(contract_dims, batch_dims),
-                             precision=precision, preferred_element_type=output_dtype)
-  return lax_internal._convert_element_type(result, output_dtype, output_weak_type)
+                             precision=precision, preferred_element_type=preferred_element_type)
+  return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
 @util._wraps(np.matmul, module='numpy', lax_description=_PRECISION_DOC)
 @partial(jit, static_argnames=('precision',), inline=True)
-def matmul(a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None) -> Array:  # pylint: disable=missing-docstring
+def matmul(a: ArrayLike, b: ArrayLike, *,
+           precision: PrecisionLike = None,
+           preferred_element_type: DTypeLike | None = None,
+           ) -> Array:
+  """Matrix Multiply."""
   util.check_arraylike("matmul", a, b)
+  dtypes.check_user_dtype_supported(preferred_element_type, "matmul")
+  a, b = asarray(a), asarray(b)
   for i, x in enumerate((a, b)):
     if ndim(x) < 1:
       msg = (f"matmul input operand {i} must have ndim at least 1, "
              f"but it has ndim {ndim(x)}")
       raise ValueError(msg)
-
-  a, b = util.promote_dtypes(a, b)
+  if preferred_element_type is None:
+    preferred_element_type, output_weak_type = dtypes.result_type(a, b, return_weak_type_flag=True)
+  else:
+    output_weak_type = False
 
   a_is_mat, b_is_mat = (ndim(a) > 1), (ndim(b) > 1)
   a_batch_dims: tuple[int | None, ...] = shape(a)[:-2] if a_is_mat else ()
@@ -3153,30 +3170,41 @@ def matmul(a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None) -> Ar
   b = lax.squeeze(b, tuple(b_squeeze))
   out = lax.dot_general(
     a, b, (((ndim(a) - 1,), (ndim(b) - 1 - b_is_mat,)), (a_batch, b_batch)),
-    precision=precision)
-  return lax.transpose(out, perm)
+    precision=precision, preferred_element_type=preferred_element_type)
+  result = lax.transpose(out, perm)
+  return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
 @util._wraps(np.vdot, lax_description=_PRECISION_DOC)
-@partial(jit, static_argnames=('precision',), inline=True)
+@partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def vdot(
-    a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None
+    a: ArrayLike, b: ArrayLike, *,
+    precision: PrecisionLike = None,
+    preferred_element_type: DTypeLike | None = None,
 ) -> Array:
   util.check_arraylike("vdot", a, b)
   if issubdtype(_dtype(a), complexfloating):
     a = ufuncs.conj(a)
-  return dot(ravel(a), ravel(b), precision=precision)
+  return dot(ravel(a), ravel(b), precision=precision,
+             preferred_element_type=preferred_element_type)
 
 
 @util._wraps(np.tensordot, lax_description=_PRECISION_DOC)
 def tensordot(a: ArrayLike, b: ArrayLike,
               axes: int | Sequence[int] | Sequence[Sequence[int]] = 2,
-              *, precision: PrecisionLike = None) -> Array:
+              *, precision: PrecisionLike = None,
+              preferred_element_type: DTypeLike | None = None) -> Array:
   util.check_arraylike("tensordot", a, b)
+  dtypes.check_user_dtype_supported(preferred_element_type, "tensordot")
+  a, b = asarray(a), asarray(b)
   a_ndim = ndim(a)
   b_ndim = ndim(b)
 
-  a, b = util.promote_dtypes(a, b)
+  if preferred_element_type is None:
+    preferred_element_type, output_weak_type = dtypes.result_type(a, b, return_weak_type_flag=True)
+  else:
+    output_weak_type = False
+
   if type(axes) is int:
     if axes > min(a_ndim, b_ndim):
       msg = "Number of tensordot axes (axes {}) exceeds input ranks ({} and {})"
@@ -3201,8 +3229,9 @@ def tensordot(a: ArrayLike, b: ArrayLike,
     msg = ("tensordot axes argument must be an int, a pair of ints, or a pair "
            "of lists/tuples of ints.")
     raise TypeError(msg)
-  return lax.dot_general(a, b, (contracting_dims, ((), ())),
-                         precision=precision)
+  result = lax.dot_general(a, b, (contracting_dims, ((), ())),
+                           precision=precision, preferred_element_type=preferred_element_type)
+  return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
 _EINSUM_DOC = _PRECISION_DOC + """\
@@ -3310,11 +3339,11 @@ def _einsum(
     preferred_element_type,
     _dot_general=lax.dot_general,
 ):
+  dtypes.check_user_dtype_supported(preferred_element_type, "einsum")
   operands = list(map(asarray, operands))
   if preferred_element_type is None:
     preferred_element_type, output_weak_type = dtypes.result_type(*operands, return_weak_type_flag=True)
   else:
-    dtypes.check_user_dtype_supported(preferred_element_type, "einsum")
     output_weak_type = False
 
   def sum(x, axes):
@@ -4213,11 +4242,19 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
       assert np.shape(ind) == ()  # checked above
       start_indices.append(ind)
       slice_sizes.append(1)
-  # We must be careful with dtypes because dynamic_slice requires all
-  # start indices to have matching types.
-  if len(start_indices) > 1:
-    start_indices = util.promote_dtypes(*start_indices)
-  arr = lax.dynamic_slice(arr, start_indices=start_indices, slice_sizes=slice_sizes)
+  # Try to use static slicing when possible.
+  if all(isinstance(i, (int, np.integer)) and i >= 0 for i in start_indices):
+    int_start_indices = [int(i) for i in start_indices]  # type: ignore
+    int_limit_indices = [i + s for i, s in zip(int_start_indices, slice_sizes)]
+    arr = lax.slice(
+        arr, start_indices=int_start_indices, limit_indices=int_limit_indices)
+  else:
+    # We must be careful with dtypes because dynamic_slice requires all
+    # start indices to have matching types.
+    if len(start_indices) > 1:
+      start_indices = util.promote_dtypes(*start_indices)
+    arr = lax.dynamic_slice(
+        arr, start_indices=start_indices, slice_sizes=slice_sizes)
   if int_indices:
     arr = lax.squeeze(arr, tuple(int_indices))
   return arr

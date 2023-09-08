@@ -206,6 +206,19 @@ def TPU_RepeatOp : TPU_Op<"repeat", [Pure]> {
   let assemblyFormat = [{ $source `,` $dimension `x` $times attr-dict `:` type($source) `->` type($output) }];
 }
 
+def TPU_BroadcastInSublanesOp : TPU_Op<"broadcast_in_sublanes", [Pure]> {
+  let arguments = (ins
+    AnyVector:$source,  // All sublanes should be equal.
+    I32Attr:$lane  // Coordinates of the first element to take.
+  );
+  // Output shape should be the same, except for position dim which contains
+  // the newly inserted dimension.
+  let results = (outs AnyVector:$output);
+  let assemblyFormat = [{
+    $source `,` $lane attr-dict `:` type($source) `->` type($output)
+  }];
+}
+
 // Integer unpacks are always signed at the moment.
 def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
   let arguments = (ins
@@ -246,6 +259,35 @@ def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure]> {
   let assemblyFormat = [{
     $source `[` $indices `]` `in` $dimension attr-dict
     `:` type($source) `,` type($indices) `->` type($output)
+  }];
+}
+
+// TODO(apaszke): Add a verifier for this op
+// TODO(apaszke): Think hard about precision
+def TPU_MatmulOp : TPU_Op<"matmul", [Pure]> {
+  let arguments = (ins
+    AnyVector:$lhs,
+    AnyVector:$rhs,
+    AnyVector:$acc,
+    DefaultValuedAttr<BoolAttr, "false">:$transpose_lhs,
+    DefaultValuedAttr<BoolAttr, "false">:$transpose_rhs,
+    OptionalAttr<TPU_ContractPrecisionEnum>:$precision
+  );
+  let results = (outs AnyVector:$result);
+  let assemblyFormat = [{
+    $lhs `,` $rhs `,` $acc attr-dict `:` type($lhs) `,` type($rhs) `,` type($acc) `->` type($result)
+  }];
+  let hasCanonicalizer = 1;
+}
+
+def TPU_ConcatenateOp : TPU_Op<"concatenate", [Pure]> {
+  let arguments = (ins
+    Variadic<AnyVector>:$sources,
+    I32Attr:$dimension
+  );
+  let results = (outs AnyVector:$output);
+  let assemblyFormat = [{
+    $sources `in` $dimension attr-dict `:` type($sources) `->` type($output)
   }];
 }
 
@@ -378,6 +420,12 @@ def TPU_WaitDMAOp : TPU_Op<"wait_dma"> {
   );
 }
 
+def TPU_RegionOp : TPU_Op<"region", [RecursiveMemoryEffects, SingleBlockImplicitTerminator<"tpu::YieldOp">]> {
+  let arguments = (ins);
+  let results = (outs Variadic<AnyType>:$results);
+  let regions = (region AnyRegion:$region);
+}
+
 def TPU_TraceOp : TPU_Op<"trace", [RecursiveMemoryEffects, SingleBlockImplicitTerminator<"tpu::YieldOp">]> {
   let arguments = (ins StrAttr:$message, I32Attr:$level);
   let results = (outs Variadic<AnyType>:$results);
@@ -420,6 +468,23 @@ def InferVectorLayoutPass : Pass<"tpu-infer-vector-layout", "::mlir::func::FuncO
   ];
   let constructor = "::mlir::tpu::createInferVectorLayoutPass()";
   let options = [
+    Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
+    Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
+  ];
+}
+
+def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncOp"> {
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+    "::mlir::vector::VectorDialect",
+    "::mlir::tpu::TPUDialect",
+  ];
+  let constructor = "::mlir::tpu::createApplyVectorLayoutPass(-1)";
+  let options = [
+    // If hardware_generation is not set, the default value of -1 will crash on
+    // runOnOperation.
+    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
     Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
     Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
   ];

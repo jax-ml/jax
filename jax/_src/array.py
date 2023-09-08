@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-import enum
 import math
 import operator as op
 import numpy as np
@@ -49,14 +48,6 @@ Shape = tuple[int, ...]
 Device = xc.Device
 Index = tuple[slice, ...]
 PRNGKeyArrayImpl = Any  # TODO(jakevdp): fix cycles and import this.
-
-
-# Mirror of dlpack.h enum
-class DLDeviceType(enum.IntEnum):
-  kDLCPU = 1
-  kDLCUDA = 2
-  kDLROCM = 10
-
 
 class Shard:
   """A single data shard of an Array.
@@ -363,7 +354,7 @@ class ArrayImpl(basearray.Array):
     else:
       return f"{prefix}{self.shape}, {dtype_str}"
 
-  @functools.cached_property
+  @property
   def is_fully_addressable(self) -> bool:
     """Is this Array fully addressable?
 
@@ -386,9 +377,11 @@ class ArrayImpl(basearray.Array):
     from jax._src.dlpack import to_dlpack  # pylint: disable=g-import-not-at-top
     return to_dlpack(self, stream=stream)
 
-  def __dlpack_device__(self) -> tuple[DLDeviceType, int]:
+  def __dlpack_device__(self) -> tuple[int, int]:
     if len(self._arrays) != 1:
       raise ValueError("__dlpack__ only supported for unsharded arrays.")
+
+    from jax._src.dlpack import DLDeviceType  # pylint: disable=g-import-not-at-top
 
     if self.platform() == "cpu":
       return DLDeviceType.kDLCPU, 0

@@ -17,6 +17,7 @@
 # mypy: ignore-errors
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import func
+from jaxlib.mlir.dialects import memref
 import numpy as np
 
 from . import tpu
@@ -134,6 +135,80 @@ def infer_memref(
   )
 
 
+def infer_block(block: ir.Block, hardware_generation: int):
+  ops = list(block.operations)
+  if not ops:
+    return
+  ops_next = [*ops[1:], None]
+  assert len(ops) == len(ops_next)
+  for op, op_next in zip(ops, ops_next):
+    if isinstance(op, memref.AllocaOp):
+      arg = op.result
+      memref_ty = op.result.type
+      new_memref_ty = infer_memref(memref_ty, hardware_generation)
+      op.result.set_type(new_memref_ty)
+      if memref_ty != new_memref_ty:
+        if op_next is None:
+          ip = ir.InsertionPoint.at_block_end(block)
+        else:
+          ip = ir.InsertionPoint(op_next)
+        with ip:
+          erase_op = tpu.EraseLayoutOp(
+                ir.MemRefType.get(
+                    new_memref_ty.shape,
+                    memref_ty.element_type,
+                    None,
+                    new_memref_ty.memory_space),
+            arg,
+        )
+        tpu.private_replace_all_uses_except(arg, erase_op.result, erase_op)
+    else:
+      infer_op(op, hardware_generation)
+
+
+def infer_op(op: ir.Operation, hardware_generation: int):
+  for region in op.regions:
+    for block in region.blocks:
+      infer_block(block, hardware_generation)
+
+
+def infer_func(f: func.FuncOp, hardware_generation: int):
+  if len(f.body.blocks) != 1:
+    raise ValueError("Functions should only have a single block")
+  (entry,) = f.body.blocks
+  new_arg_types = []
+  with ir.InsertionPoint.at_block_begin(entry):
+    for arg in entry.arguments:
+      try:
+        memref_ty = ir.MemRefType(arg.type)
+      except ValueError:
+        new_arg_types.append(arg.type)
+        continue
+      new_memref_ty = infer_memref(memref_ty, hardware_generation)
+      arg.set_type(new_memref_ty)
+      new_arg_types.append(new_memref_ty)
+      if memref_ty != new_memref_ty:
+        # Some standard MLIR ops have static checks that seems unreasonable,
+        # and we know they hold in the way they are used in Mosaic. Still,
+        # verification with layouts likes to fail, because it can't statically
+        # prove the properties.
+        erase_op = tpu.EraseLayoutOp(
+            ir.MemRefType.get(
+                new_memref_ty.shape,
+                memref_ty.element_type,
+                None,
+                new_memref_ty.memory_space,
+            ),
+            arg,
+        )
+        tpu.private_replace_all_uses_except(arg, erase_op.result, erase_op)
+    f.attributes["function_type"] = ir.TypeAttr.get(
+        ir.FunctionType.get(new_arg_types, f.type.results)
+    )
+    for op in entry.operations:
+      infer_op(op, hardware_generation)
+
+
 def infer_module(module: ir.Module, hardware_generation: int):
   """Infers the layout and memory space attributes of function memref arguments.
 
@@ -147,33 +222,4 @@ def infer_module(module: ir.Module, hardware_generation: int):
   # TODO(apaszke): Do layout assignment for scoped allocations too.
   for f in module.body:
     assert isinstance(f, func.FuncOp)
-    if len(f.body.blocks) != 1:
-      raise ValueError("Functions should only have a single block")
-    (entry,) = f.body.blocks
-    new_arg_types = []
-    with ir.InsertionPoint.at_block_begin(entry):
-      for arg in entry.arguments:
-        try:
-          memref = ir.MemRefType(arg.type)
-        except ValueError:
-          new_arg_types.append(arg.type)
-          continue
-        new_memref = infer_memref(memref, hardware_generation)
-        arg.set_type(new_memref)
-        new_arg_types.append(new_memref)
-        if memref != new_memref:
-          # Some standard MLIR ops have static checks that seems unreasonable,
-          # and we know they hold in the way they are used in Mosaic. Still,
-          # verification with layouts likes to fail, because it can't statically
-          # prove the properties.
-          erase_op = tpu.EraseLayoutOp(
-              ir.MemRefType.get(
-                  new_memref.shape, memref.element_type,
-                  None, new_memref.memory_space
-              ),
-              arg,
-          )
-          tpu.private_replace_all_uses_except(arg, erase_op.result, erase_op)
-      f.attributes["function_type"] = ir.TypeAttr.get(
-          ir.FunctionType.get(new_arg_types, f.type.results)
-      )
+    infer_func(f, hardware_generation)

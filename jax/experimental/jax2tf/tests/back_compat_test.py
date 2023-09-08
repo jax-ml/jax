@@ -28,7 +28,7 @@ import numpy as np
 import jax
 from jax import config
 from jax import lax
-from jax.experimental.jax2tf import jax_export
+from jax.experimental.export import export
 from jax.experimental.jax2tf.tests import back_compat_test_util as bctu
 
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_ducc_fft
@@ -65,6 +65,7 @@ from jax._src import test_util as jtu
 config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_legacy_prng_key='allow')
 class CompatTest(bctu.CompatTestBase):
   def test_dummy(self):
     # Tests the testing mechanism. Let this test run on all platforms
@@ -95,7 +96,7 @@ class CompatTest(bctu.CompatTestBase):
 
   def test_custom_call_coverage(self):
     """Tests that the back compat tests cover all the targets declared stable."""
-    targets_to_cover = set(jax_export._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
+    targets_to_cover = set(export._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
     # Add here all the testdatas that should cover the targets guaranteed
     # stable
     covering_testdatas = [

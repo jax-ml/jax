@@ -6,7 +6,22 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.15
+## jax 0.4.16
+
+* Internal deprecations/removals:
+  * The internal submodule `jax.prng` is now deprecated. Its contents are available at
+    {mod}`jax.extend.random`.
+  * The internal submodule path `jax.linear_util` has been deprecated. Use
+    {mod}`jax.extend.linear_util` instead (Part of {ref}`jax-extend-jep`)
+
+## jaxlib 0.4.16
+
+* Bug fixes:
+  * Fixed a crash on Windows due to a fatal LLVM error related to out-of-order
+    sections and IMAGE_REL_AMD64_ADDR32NB relocations
+    (https://github.com/openxla/xla/commit/cb732a921f0c4184995cbed82394931011d12bd4).
+
+## jax 0.4.15 (Aug 30 2023)
 
 * Changes
   * Added {class}`jax.numpy.ufunc`, as well as {func}`jax.numpy.frompyfunc`, which can convert
@@ -24,6 +39,9 @@ Remember to align the itemized text with the first line of an item within a list
     `JAX_TRACEBACK_FILTERING=off` (for one unfiltered traceback).
   * jax2tf default serialization version is now 7, which introduces new shape
     [safety assertions](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism).
+  * Devices passed to `jax.sharding.Mesh` should be hashable. This specifically
+    applies to mock devices or user created devices. `jax.devices()` are
+    already hashable.
 
 * Breaking changes:
   * jax2tf now uses native serialization by default. See
@@ -50,13 +68,27 @@ Remember to align the itemized text with the first line of an item within a list
     following SciPy. Use `jax.numpy.tril` and `jax.numpy.triu` instead.
   * `jax.lax.prod` has been removed after being deprecated in JAX v0.4.11.
     Use the built-in `math.prod` instead.
+  * A number of exports from `jax.interpreters.xla` related to defining
+    HLO lowering rules for custom JAX primitives have been deprecated. Custom
+    primitives should be defined using the StableHLO lowering utilities in
+    `jax.interpreters.mlir` instead.
 
-* Internal deprecations:
+* Internal deprecations/removals:
   * The internal utilities `jax.core.is_opaque_dtype` and `jax.core.has_opaque_dtype`
     have been removed. Opaque dtypes have been renamed to Extended dtypes; use
     `jnp.issubdtype(dtype, jax.dtypes.extended)` instead (available since jax v0.4.14).
+  * The utility `jax.interpreters.xla.register_collective_primitive` has been
+    removed. This utility did nothing useful in recent JAX releases and calls
+    to it can be safely removed.
+  * The internal submodule path `jax.linear_util` has been deprecated. Use
+    {mod}`jax.extend.linear_util` instead (Part of {ref}`jax-extend-jep`)
 
-## jaxlib 0.4.15
+## jaxlib 0.4.15 (Aug 30 2023)
+
+* Changes:
+  * Sparse CSR matrix multiplications via the experimental jax sparse APIs
+    no longer uses a deterministic algorithm on NVIDIA GPUs. This change was
+    made to improve compatibility with CUDA 12.2.1.
 
 ## jax 0.4.14 (July 27, 2023)
 

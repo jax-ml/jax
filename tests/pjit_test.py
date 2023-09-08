@@ -2226,18 +2226,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out1 = f(arr)
     self.assertIsInstance(out1.sharding, NamedSharding)
     out1.sharding.devices_indices_map(shape)
-    cache_info1 = NamedSharding.devices_indices_map.cache_info()
+    cache_info1 = sharding_impls.common_devices_indices_map.cache_info()
 
     out2 = f(out1)
     self.assertIsInstance(out2.sharding, NamedSharding)
     out2.sharding.devices_indices_map(shape)
-    cache_info2 = NamedSharding.devices_indices_map.cache_info()
+    cache_info2 = sharding_impls.common_devices_indices_map.cache_info()
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
 
     out3 = f(out2)
     self.assertIsInstance(out3.sharding, NamedSharding)
     out3.sharding.devices_indices_map(shape)
-    cache_info3 = NamedSharding.devices_indices_map.cache_info()
+    cache_info3 = sharding_impls.common_devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
 
   @jax.enable_custom_prng()
@@ -3644,6 +3644,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertTupleEqual(out2.sharding._device_assignment,
                           s.mesh._flat_devices_tuple)
 
+  def test_vmap_spmd_axis_name_error(self):
+    s = SingleDeviceSharding(jax.devices()[0])
+
+    def f(inp):
+      return with_sharding_constraint(inp, s)
+
+    arr = jax.device_put(np.arange(8), s)
+    with self.assertRaisesRegex(
+        ValueError,
+        'If you are using xmap or spmd_axis_name parameter of jax.vmap, please'
+        ' make sure to run your jitted function inside the mesh context'
+        ' manager.*SingleDeviceSharding'):
+      jax.jit(jax.vmap(f, spmd_axis_name='x'))(arr)
+
 
 class TempSharding(Sharding):
 
@@ -4221,19 +4235,19 @@ class UtilTest(jtu.JaxTestCase):
 
     ops = GSPMDSharding(devices, op1)
     ops.devices_indices_map(shape)
-    cache_info1 = GSPMDSharding.devices_indices_map.cache_info()
+    cache_info1 = sharding_impls.gspmd_sharding_devices_indices_map.cache_info()
 
     ops.devices_indices_map(shape)
-    cache_info2 = GSPMDSharding.devices_indices_map.cache_info()
+    cache_info2 = sharding_impls.gspmd_sharding_devices_indices_map.cache_info()
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
 
     ops = GSPMDSharding(devices, op2)
     ops.devices_indices_map(shape)
-    cache_info3 = GSPMDSharding.devices_indices_map.cache_info()
+    cache_info3 = sharding_impls.gspmd_sharding_devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
 
     ops.devices_indices_map(shape)
-    cache_info4 = GSPMDSharding.devices_indices_map.cache_info()
+    cache_info4 = sharding_impls.gspmd_sharding_devices_indices_map.cache_info()
     self.assertEqual(cache_info4.hits, cache_info3.hits + 1)
 
   def test_op_sharding_semantically_replicated(self):
@@ -4358,11 +4372,11 @@ class UtilTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     mps1 = NamedSharding(mesh, P('x', 'y'))
     op1 = mps1._to_xla_hlo_sharding(ndim)
-    cache_info1 = NamedSharding._to_xla_hlo_sharding.cache_info()
+    cache_info1 = sharding_impls.named_sharding_to_xla_hlo_sharding.cache_info()
 
     mps2 = NamedSharding(mesh, P('x', 'y'))
     op2 = mps2._to_xla_hlo_sharding(ndim)
-    cache_info2 = NamedSharding._to_xla_hlo_sharding.cache_info()
+    cache_info2 = sharding_impls.named_sharding_to_xla_hlo_sharding.cache_info()
 
     self.assertEqual(id(op1), id(op2))
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)

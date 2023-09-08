@@ -16,9 +16,7 @@ from functools import partial
 import operator
 
 from jax._src import api
-from jax._src import config as jax_config
 from jax._src import dtypes as _dtypes
-from jax._src import xla_bridge
 from jax._src.config import config
 from jax._src.tree_util import tree_map, tree_reduce
 
@@ -30,12 +28,6 @@ import numpy as np
 # and may be changed or removed at any time and without any deprecation cycle.
 __all__ = ['check_grads', 'check_jvp', 'check_vjp']
 
-
-_TEST_DUT = jax_config.DEFINE_string(
-    'jax_test_dut', '',
-    help=
-    'Describes the device under test in case special consideration is required.'
-)
 
 EPS = 1e-4
 
@@ -76,12 +68,7 @@ _default_tolerance = {
 }
 
 def default_tolerance():
-  if device_under_test() != "tpu":
-    return _default_tolerance
-  tol = _default_tolerance.copy()
-  tol[np.dtype(np.float32)] = 1e-3
-  tol[np.dtype(np.complex64)] = 1e-3
-  return tol
+  return _default_tolerance
 
 
 default_gradient_tolerance = {
@@ -298,7 +285,3 @@ def check_grads(f, args, order,
         _check_grads(f_vjp, args, order - 1, rev_msg)
 
   _check_grads(f, args, order)
-
-
-def device_under_test():
-  return _TEST_DUT.value or xla_bridge.get_backend().platform

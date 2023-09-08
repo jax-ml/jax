@@ -17,14 +17,19 @@
 from jax._src.pallas.mosaic import core
 from jax._src.pallas.mosaic import pallas_call_registration
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec
+from jax._src.pallas.mosaic.core import SemaphoreType
 from jax._src.pallas.mosaic.core import TPUMemorySpace
 from jax._src.pallas.mosaic.kernel_regeneration_util import encode_kernel_regeneration_metadata
 from jax._src.pallas.mosaic.kernel_regeneration_util import extract_kernel_regeneration_metadata
 from jax._src.pallas.mosaic.primitives import repeat
+from jax._src.pallas.mosaic.primitives import run_scoped
+from jax._src.pallas.mosaic.primitives import semaphore_signal
+from jax._src.pallas.mosaic.primitives import semaphore_wait
 from jax._src.pallas.mosaic.primitives import trace
 
-
-VMEM = TPUMemorySpace.VMEM
-SMEM = TPUMemorySpace.SMEM
+ANY = TPUMemorySpace.ANY
 CMEM = TPUMemorySpace.CMEM
+SMEM = TPUMemorySpace.SMEM
+VMEM = TPUMemorySpace.VMEM
+
 del pallas_call_registration

@@ -22,7 +22,6 @@ from functools import partial
 import operator as op
 import textwrap
 from typing import Any, Callable, NamedTuple, Type, TypeVar, Union, overload
-import warnings
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
@@ -65,10 +64,7 @@ def tree_flatten(tree: Any,
     A pair where the first element is a list of leaf values and the second
     element is a treedef representing the structure of the flattened tree.
   """
-  if default_registry:
-    return default_registry.flatten(tree, is_leaf)
-  else:
-    return pytree.flatten(tree, is_leaf)  # type: ignore
+  return default_registry.flatten(tree, is_leaf)
 
 
 def tree_unflatten(treedef: PyTreeDef, leaves: Iterable[Leaf]) -> Any:
@@ -92,28 +88,19 @@ def tree_leaves(tree: Any,
                 is_leaf: Callable[[Any], bool] | None = None
                 ) -> list[Leaf]:
   """Gets the leaves of a pytree."""
-  if default_registry:
-    return default_registry.flatten(tree, is_leaf)[0]
-  else:
-    return pytree.flatten(tree, is_leaf)[0]  # type: ignore
+  return default_registry.flatten(tree, is_leaf)[0]
 
 
 def tree_structure(tree: Any,
                    is_leaf: None | (Callable[[Any],
                                               bool]) = None) -> PyTreeDef:
   """Gets the treedef for a pytree."""
-  if default_registry:
-    return default_registry.flatten(tree, is_leaf)[1]
-  else:
-    return pytree.flatten(tree, is_leaf)[1]  # type: ignore
+  return default_registry.flatten(tree, is_leaf)[1]
 
 
 def treedef_tuple(treedefs: Iterable[PyTreeDef]) -> PyTreeDef:
   """Makes a tuple treedef from an iterable of child treedefs."""
-  if default_registry:
-    return pytree.tuple(default_registry, list(treedefs))  # type: ignore
-  else:
-    return pytree.tuple(list(treedefs))  # type: ignore
+  return pytree.tuple(default_registry, list(treedefs))  # type: ignore
 
 
 def treedef_children(treedef: PyTreeDef) -> list[PyTreeDef]:
@@ -147,10 +134,7 @@ def all_leaves(iterable: Iterable[Any],
     A boolean indicating if all elements in the input are leaves.
   """
   if is_leaf is None:
-    if default_registry:
-      return pytree.all_leaves(default_registry, iterable)  # type: ignore
-    else:
-      return pytree.all_leaves(iterable)  # type: ignore
+    return pytree.all_leaves(default_registry, iterable)
   else:
     lst = list(iterable)
     return lst == tree_leaves(lst, is_leaf)
@@ -177,10 +161,7 @@ def register_pytree_node(nodetype: type[T],
       unflattened children. The function should return an instance of
       ``nodetype``.
   """
-  if default_registry:
-    default_registry.register_node(nodetype, flatten_func, unflatten_func)
-  else:
-    pytree.register_node(nodetype, flatten_func, unflatten_func)  # type: ignore
+  default_registry.register_node(nodetype, flatten_func, unflatten_func)
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
 
 
@@ -559,8 +540,6 @@ def _equality_errors(path, t1, t2, is_leaf):
     yield from _equality_errors((*path, k), c1, c2, is_leaf)
 
 
-# TODO(ivyzheng): Remove old APIs when all users migrated.
-
 class _DeprecatedKeyPathEntry(NamedTuple):
   key: Any
 
@@ -578,13 +557,6 @@ class AttributeKeyPathEntry(_DeprecatedKeyPathEntry):
     return f'.{self.key}'
   def __str__(self):
     return self.pprint()
-
-class FlattenedKeyPathEntry(_DeprecatedKeyPathEntry):  # fallback
-  def pprint(self) -> str:
-    return f'[<flat index {self.key}>]'
-  def __str__(self):
-    return self.pprint()
-
 
 @dataclass(frozen=True)
 class SequenceKey():
@@ -641,15 +613,6 @@ def register_keypaths(
 
   Only works if the type was already registered with ``register_pytree_node``.
   """
-  warnings.warn(
-      (
-          "jax.tree_util.register_keypaths is deprecated, and will be removed"
-          " in a future release. Please use `register_pytree_with_keys()`"
-          " instead."
-      ),
-      category=FutureWarning,
-      stacklevel=2,
-  )
   _register_keypaths(ty, handler)
 
 

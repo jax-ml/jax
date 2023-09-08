@@ -337,7 +337,7 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
       lowering = _pjit_lower(
           params['jaxpr'], in_shardings, params['out_shardings'],
           params['resource_env'], params['donated_invars'], params['name'],
-          params['keep_unused'], params['inline'], always_lower=True,
+          params['keep_unused'], params['inline'],
           lowering_platform=_experimental_lowering_platform,
           override_lowering_rules=_experimental_override_lowering_rules)
     except pxla.DeviceAssignmentMismatchError as e:
@@ -977,6 +977,7 @@ def pjit_check_aval_sharding(
   for aval, s, name in zip(flat_avals, shardings, new_names):
     if is_unspecified_or_auto(s):
       continue
+    s = getattr(s, '_original_sharding', s)
     name_str = f' with pytree key path {name}' if name else ''
     shape = aval.shape
     try:
@@ -1129,7 +1130,7 @@ def _pjit_call_impl_python(
   compiled = _pjit_lower(
       jaxpr, in_shardings, out_shardings, resource_env,
       donated_invars, name, keep_unused, inline,
-      always_lower=False, lowering_platform=None).compile()
+      lowering_platform=None).compile()
   _most_recent_pjit_call_executable.weak_key_dict[jaxpr] = compiled
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.jax_enable_checks:
@@ -1270,7 +1271,6 @@ def _pjit_lower_cached(
     name: str,
     keep_unused: bool,
     inline: bool,
-    always_lower: bool,
     *,
     lowering_platform: Optional[str],
     override_lowering_rules: Optional[
@@ -1302,7 +1302,7 @@ def _pjit_lower_cached(
     return pxla.lower_sharding_computation(
         jaxpr, api_name, name, in_shardings, out_shardings,
         tuple(donated_invars), tuple(jaxpr.in_avals),
-        keep_unused=keep_unused, inline=inline, always_lower=always_lower,
+        keep_unused=keep_unused, inline=inline,
         devices_from_context=(
             None if mesh is None or mesh.empty else list(mesh.devices.flat)),
         lowering_platform=lowering_platform,
@@ -1470,7 +1470,16 @@ def _pjit_batcher_for_sharding(
     assert isinstance(s, GSPMDSharding)
     if isinstance(getattr(s, '_original_sharding', None), NamedSharding):
       mesh = s._original_sharding.mesh  # type: ignore
-    assert mesh is not None and not mesh.empty
+    if mesh is None or mesh.empty:
+      s_type = (f', got: {repr(s._original_sharding)}'
+                if hasattr(s, '_original_sharding') else '')
+      raise ValueError(
+          'If you are using xmap or spmd_axis_name parameter of jax.vmap,'
+          ' please make sure to run your jitted function inside the mesh'
+          ' context manager. Only `jax.lax.with_sharding_constraint` with'
+          ' `jax.sharding.NamedSharding` as an input can be transformed with'
+          ' spmd_axis_name batching rules outside of an explicit mesh context'
+          f' manager scope{s_type}')
     parsed_pspec = parse_flatten_op_sharding(s._hlo_sharding, mesh)[0]  # type: ignore
     parsed_pspec = parsed_pspec.insert_axis_partitions(dim, val)
     mps = NamedSharding._from_parsed_pspec(mesh, parsed_pspec)

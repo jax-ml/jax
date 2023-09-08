@@ -21,7 +21,7 @@ The tests in this file refer to the test data in ./back_compat_testdata.
 There is one test for each version of a custom call target, e.g.,
 `test_ducc_fft` tests the FFT custom calls on CPU.
 Only custom call targets tested here should be listed in
-jax_export._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE. All other custom
+export._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE. All other custom
 call targets will result in an error when encountered during serialization.
 
 Once we stop using a custom call target in JAX, you can remove it from the
@@ -78,7 +78,7 @@ from numpy import array, float32
 
 import jax
 from jax import tree_util
-from jax.experimental.jax2tf import jax_export
+from jax.experimental.export import export
 
 from jax.experimental import pjit
 
@@ -281,12 +281,12 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       a string (for debugging), and (c) the module serialization version.
     """
     # Use the native exporter, to make sure we get the proper serialization.
-    args_specs = jax_export.poly_specs(data.inputs, polymorphic_shapes)
-    exported = jax_export.export(
+    args_specs = export.poly_specs(data.inputs, polymorphic_shapes)
+    exported = export.export(
       jax.jit(func),
       lowering_platform=self.default_jax_backend(),
       disabled_checks=tuple(
-        jax_export.DisabledSafetyCheck.custom_call(target)
+        export.DisabledSafetyCheck.custom_call(target)
         for target in allow_unstable_custom_call_targets)
     )(*args_specs)
 
@@ -297,13 +297,13 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
 
   def run_serialized(self, data: CompatTestData,
                      polymorphic_shapes: Optional[Sequence[str]] = None):
-    args_specs = jax_export.poly_specs(data.inputs, polymorphic_shapes)
+    args_specs = export.poly_specs(data.inputs, polymorphic_shapes)
     def ndarray_to_aval(a: np.ndarray) -> core.ShapedArray:
       return core.ShapedArray(a.shape, a.dtype)
     in_avals_tree = tree_util.tree_map(ndarray_to_aval, args_specs)
     # TODO: we ought to ensure that out_avals are polymorphic if need be. We
     # could either save the in/out_avals (but we need to first implement that
-    # support in jax_export), or we can just re-use them from the current
+    # support in export), or we can just re-use them from the current
     # exported.
     out_avals_tree = tree_util.tree_map(ndarray_to_aval, data.expected_outputs)
     # in_tree must be for (args, kwargs)
@@ -312,7 +312,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     def _get_vjp(_):
       assert False  # We do not have and do not need VJP
 
-    exported = jax_export.Exported(
+    exported = export.Exported(
         fun_name="run_serialized",
         in_tree=in_tree,
         in_avals=tuple(in_avals),
@@ -321,6 +321,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         in_shardings=(pxla.UNSPECIFIED,) * len(in_avals),
         out_shardings=(pxla.UNSPECIFIED,) * len(out_avals),
         lowering_platform=data.platform,
+        lowering_platforms=(data.platform,),
         disabled_checks=(),
         mlir_module_serialized=data.mlir_module_serialized,
         serialization_version=data.xla_call_module_version,
@@ -330,4 +331,4 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       _get_vjp=_get_vjp)
 
       # We use pjit in case there are shardings in the exported module.
-    return pjit.pjit(jax_export.call_exported(exported))(*data.inputs)
+    return pjit.pjit(export.call_exported(exported))(*data.inputs)

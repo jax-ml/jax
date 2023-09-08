@@ -18,6 +18,7 @@ import functools
 from functools import partial
 import itertools
 import operator
+from typing import NamedTuple
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -432,6 +433,11 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes, np_arrays=False)
     tol = max(jtu.tolerance(dtype, tolerance) for dtype in dtypes)
+    if jtu.device_under_test() == "tpu" and op_name in (
+        "arccosh", "arcsinh", "sinh", "cosh", "tanh", "sin", "cos", "tan",
+        "log", "log1p", "log2", "log10", "exp", "expm1", "exp2", "power",
+        "logaddexp", "logaddexp2", "i0"):
+      tol = jtu.join_tolerance(tol, 1e-4)
     tol = functools.reduce(jtu.join_tolerance,
                            [tolerance, tol, jtu.default_tolerance()])
 
@@ -597,6 +603,20 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CompileAndCheck(op, args_maker)
       self._CheckAgainstNumpy(np_op, op, args_maker)
+
+  def testDeferToNamedTuple(self):
+    class MyArray(NamedTuple):
+      arr: jax.Array
+      def __mul__(self, other):
+        return MyArray(self.arr * other)
+      def __rmul__(self, other):
+        return MyArray(other * self.arr)
+    a = MyArray(jnp.ones(4))
+    b = jnp.ones(4)
+    self.assertIsInstance(a * b, MyArray)
+    self.assertIsInstance(jax.jit(operator.mul)(a, b), MyArray)
+    self.assertIsInstance(b * a, MyArray)
+    self.assertIsInstance(jax.jit(operator.mul)(b, a), MyArray)
 
 
 if __name__ == "__main__":

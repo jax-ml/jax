@@ -610,7 +610,7 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
       return lax.scan(body, x, jnp.arange(8., dtype='float32'))[0]
     jaxpr = jax.make_jaxpr(f)(jnp.float32(2))
     self.assertEqual(str(jaxpr.eqns[1].source_info.name_stack), 'jvp(foo)')
-    self.assertEqual(str(jaxpr.eqns[3].source_info.name_stack),
+    self.assertEqual(str(jaxpr.eqns[2].source_info.name_stack),
         'transpose(jvp(foo))')
     self.assertEqual(str(
       jaxpr.eqns[1].params['jaxpr'].eqns[0].source_info.name_stack),
@@ -632,7 +632,7 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
       return lax.scan(body, x, jnp.arange(8.))[0]
     jaxpr = jax.make_jaxpr(f)(jnp.arange(2.))
     self.assertEqual(str(jaxpr.eqns[1].source_info.name_stack), 'vmap(jvp(foo))')
-    self.assertEqual(str(jaxpr.eqns[3].source_info.name_stack),
+    self.assertEqual(str(jaxpr.eqns[2].source_info.name_stack),
         'vmap(transpose(jvp(foo)))')
     self.assertEqual(str(
       jaxpr.eqns[1].params['jaxpr'].eqns[0].source_info.name_stack),

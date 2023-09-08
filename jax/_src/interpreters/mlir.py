@@ -390,19 +390,37 @@ AxisContext = Union[
 ]
 
 class ShapePolyLoweringState:
+  # The current lowering platforms, a non-empty tuple containing some of
+  # 'cpu', 'cuda', 'rocm', 'tpu'.
+  # TODO: this state should be in ModuleContext, but since for now
+  # multi-platform lowering is implemented only for jax_export, like shape
+  # polymorphism, we keep it here.
+  lowering_platforms: tuple[str, ...]
   # The names of the dimension variables, sorted by name. This is the order in
   # which they are passed to the IR functions that need them. This is only
   # used for native serialization with polymorphic shapes when
   # --jax_dynamic_shapes is off.
-  dim_vars: Sequence[str]
+  # TODO: for multi-platform lowering we prepend to the regular dimension
+  # variables a fake dimension variable "platform_index_". This is a
+  # temporary abuse, taking advantage that for platform index we need the
+  # same lowering strategy as for dimension variables: add it as argument to
+  # inner functions, and pass the values along at the call sites.
+  dim_vars: tuple[str, ...]
   # Whether the module uses dimension variables, either in its inputs or
   # from an inner call to a polymorphic Exported.
   uses_dim_vars: bool
 
-  def __init__(self, dim_vars: Sequence[str]):
-    self.dim_vars = dim_vars
+  def __init__(self, dim_vars: tuple[str, ...],
+               lowering_platforms: tuple[str, ...]):
+    self.lowering_platforms = lowering_platforms
     self.uses_dim_vars = (len(dim_vars) > 0)
+    if len(lowering_platforms) > 1:
+      dim_vars = ("platform_index_",) + tuple(dim_vars)
+    self.dim_vars = dim_vars
 
+  @property
+  def has_platform_index_argument(self):
+    return len(self.lowering_platforms) > 1
 
 @dataclasses.dataclass
 class ModuleContext:
@@ -472,7 +490,8 @@ class ModuleContext:
                                         if cached_call_jaxpr_lowerings is None
                                         else cached_call_jaxpr_lowerings)
     self.override_lowering_rules = override_lowering_rules
-    self.shape_poly_state = shape_poly_state or ShapePolyLoweringState(())
+    self.shape_poly_state = shape_poly_state or ShapePolyLoweringState((),
+                                                                       (platform,))
 
   @property
   def backend(self) -> xb.XlaBackend:
@@ -561,7 +580,7 @@ def sharded_aval(aval: core.AbstractValue,
     return aval
   if not isinstance(aval, (core.ShapedArray, core.DShapedArray)):
     raise NotImplementedError
-  return aval.update(sharding.shard_shape(aval.shape))
+  return aval.update(sharding.shard_shape(aval.shape))  # type: ignore
 
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,
@@ -646,7 +665,7 @@ def lower_jaxpr_to_module(
     jaxpr: core.ClosedJaxpr,
     ordered_effects: list[core.Effect],
     backend_or_name: str | xb.XlaBackend | None,
-    platform: str,
+    platform: str | tuple[str, ...],
     axis_context: AxisContext,
     name_stack: source_info_util.NameStack,
     donated_args: Sequence[bool],
@@ -665,6 +684,15 @@ def lower_jaxpr_to_module(
   Handles the quirks of the argument/return value passing conventions of the
   runtime.
   """
+  # TODO(necula): for now we receive the tuple of lowering platforms through
+  #  the `platform` arg. For now we lower only for the first specified platform
+  # TODO(necula): change to "platforms" here and elsewhere.
+  if isinstance(platform, str):
+    platforms = (platform,)
+  else:
+    platforms = tuple(platform)  # type: ignore
+    platform = platform[0]
+
   platform = xb.canonicalize_platform(platform)
   if not xb.is_known_platform(platform):
     raise ValueError(f"Unknown platform {platform}")
@@ -719,7 +747,8 @@ def lower_jaxpr_to_module(
   ctx = ModuleContext(backend_or_name, platform, axis_context, name_stack,
                       keepalives, channel_iter, host_callbacks,
                       override_lowering_rules=override_lowering_rules,
-                      shape_poly_state=ShapePolyLoweringState(dim_vars))
+                      shape_poly_state=ShapePolyLoweringState(dim_vars,
+                                                              platforms))
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
@@ -1157,9 +1186,8 @@ def wrap_with_memory_kind(
     result_type = x.type
   else:
     result_type = aval_to_ir_type(aval_out)
-  op = custom_call("annotate_device_placement", [result_type], [x],
-                   has_side_effect=False,
-                   api_version=1)
+  op = custom_call("annotate_device_placement", result_types=[result_type],
+                   operands=[x], api_version=1)
   mka = get_compute_type(memory_kind)
   dict_attr = {"_xla_compute_type": ir.StringAttr.get(mka)}
   if is_input and mka == 'host':
@@ -1698,9 +1726,8 @@ def _wrap_with_spmd_op(name: str,
   else:
     result_shapes = [eval_dynamic_shape_as_tensor(ctx, out_shape)]
 
-  op = custom_call(name, [result_type], [x],
+  op = custom_call(name, result_types=[result_type], operands=[x],
                    backend_config=backend_config,
-                   has_side_effect=False,
                    api_version=1,
                    result_shapes=result_shapes)
   set_sharding(op, sharding_proto)
@@ -1908,9 +1935,6 @@ def send_to_host(channel: int, token: hlo.TokenType, operand: Any,
   channel_handle = hlo.ChannelHandle.get(channel, SEND_TO_HOST_TYPE)
   send_op = hlo.SendOp([operand], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
-  dtype_str = _dtype_to_xla_type_string(aval.dtype)
-  if dtype_str in {"f64", "s64", "u64", "c64", "c128"}:
-    raise NotImplementedError("64-bit types not supported.")
   send_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
       dict(
           _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
@@ -1927,9 +1951,6 @@ def receive_from_host(channel: int, token: hlo.TokenType,
   recv_op = hlo.RecvOp([aval_to_ir_type(out_aval),
                         hlo.TokenType.get()], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
-  dtype_str = _dtype_to_xla_type_string(out_aval.dtype)
-  if dtype_str in {"f64", "s64", "u64", "c64", "c128"}:
-    raise NotImplementedError("64-bit types not supported.")
   recv_op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
       dict(
           _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
@@ -2153,27 +2174,42 @@ def build_xla_computation_helper(
 
 def custom_call(
     call_target_name: str,
-    out_types: Sequence[ir.Type],
-    operands: Sequence[ir.Value],
     *,
-    backend_config: str | dict[str, ir.Attribute] = "",
+    result_types: Sequence[ir.Type],
+    operands: Sequence[ir.Value],
+    backend_config: str | bytes | dict[str, ir.Attribute] = "",
     has_side_effect: bool = False,
     result_shapes: Sequence[ir.Value] | None = None,
     called_computations: Sequence[str] = (),
     api_version: int = 2,
-    extra_attributes: dict[str, ir.Attribute] = {},
+    operand_output_aliases: dict[int, int] | None = None,
+    operand_layouts: Sequence[Sequence[int]] | None = None,
+    result_layouts: Sequence[Sequence[int]] | None = None,
+    extra_attributes: dict[str, ir.Attribute] | None = None,
 ) -> ir.Operation:
-  """Wraps a hlo.CustomCall.
+  """Helper function for building an hlo.CustomCall.
 
   Args:
+    call_target_name: the name of the custom call target
+    result_types: the MLIR types of the results of the custom call
+    operands: the MLIR IR values that are arguments to the custom call
+    backend_config: an opaque string passed to the custom call kernel
+    has_side_effect: if True, marks the custom call as effectful
     result_shapes: tensors that represent the result shapes, to be used when
       the results have dynamic shapes. If not-None, its length must match the
       number of the results.
     called_computations: the list of function names called by the custom call.
+    api_version: the ABI contract version of the custom call
+    operand_output_aliases: a dict mapping operand numbers to outputs they alias
+    operand_layouts: a sequence of layouts (dimension orders) for each operand
+    result_layouts: a sequence of layouts (dimension orders) for each result
+    extra_attributes: additional IR attributes to apply to the custom_call.
   """
+  operands = list(operands)
+
   if backend_config is None:
     backend_config_attr = ir.StringAttr.get("")
-  elif isinstance(backend_config, str):
+  elif isinstance(backend_config, (str, bytes)):
     backend_config_attr = ir.StringAttr.get(backend_config)
   elif isinstance(backend_config, dict):
     # TODO(necula): it seems that the CustomCallOp constructor requires that
@@ -2193,10 +2229,24 @@ def custom_call(
       has_side_effect=ir.BoolAttr.get(has_side_effect),
       backend_config=backend_config_attr,
       api_version=i32_attr(api_version),
-      called_computations=ir.ArrayAttr.get([
-        ir.FlatSymbolRefAttr.get(name) for name in called_computations]),
+      called_computations=ir.ArrayAttr.get(
+          [ir.FlatSymbolRefAttr.get(name) for name in called_computations]
+      ),
   )
-  attributes.update(extra_attributes)
+  if operand_output_aliases is not None:
+    attributes["output_operand_aliases"] = ir.ArrayAttr.get([
+      hlo.OutputOperandAlias.get(
+          # if len(result_types) == 1 then the aliasing refers implicitly to
+          # the only output.
+          output_tuple_indices=[output_idx] if len(result_types) > 1 else [],
+          operand_index=input_idx,
+          operand_tuple_indices=[],
+      )
+      for input_idx, output_idx in (operand_output_aliases.items() or ())
+    ])
+
+  if extra_attributes is not None:
+    attributes.update(extra_attributes)
 
   if result_shapes is not None:
     # We add the result_shapes at the end of the operands, and must pass
@@ -2205,9 +2255,29 @@ def custom_call(
     attributes["indices_of_shape_operands"] = ir.DenseIntElementsAttr.get(
         np.asarray(list(range(len(operands), len(operands) + len(result_shapes))),
                    dtype=np.int64))
+    if operand_layouts is not None:
+      assert len(operand_layouts) == len(operands), (operand_layouts, operands)
+      operand_layouts = list(operand_layouts) + [(0,)] * len(result_shapes)
     operands = list(operands) + list(result_shapes)
 
-  op = hlo.CustomCallOp.build_generic(results=out_types, operands=operands, attributes=attributes)
+  if operand_layouts is not None:
+    attributes["operand_layouts"] = ir.ArrayAttr.get([
+        ir.DenseIntElementsAttr.get(
+            np.atleast_1d(np.asarray(l, dtype=np.int64)),
+            type=ir.IndexType.get()) for l in operand_layouts
+    ])
+  if result_layouts is not None:
+    assert result_layouts is not None
+    assert len(result_layouts) == len(result_types), (
+        result_layouts, result_types)
+    attributes["result_layouts"] = ir.ArrayAttr.get([
+        ir.DenseIntElementsAttr.get(
+            np.atleast_1d(np.asarray(l, dtype=np.int64)),
+            type=ir.IndexType.get()) for l in result_layouts
+    ])
+
+  op = hlo.CustomCallOp.build_generic(results=result_types, operands=operands,
+                                      attributes=attributes)
   if isinstance(backend_config, dict):
     backend_config_attr = ir.DictAttr.get(backend_config)
     op.operation.attributes["mhlo.backend_config"] = backend_config_attr
@@ -2251,8 +2321,8 @@ def reduce_window(
 
     rw = custom_call(
       "stablehlo.dynamic_reduce_window",
-      list(map(aval_to_ir_type, out_avals)),
-      [
+      result_types=list(map(aval_to_ir_type, out_avals)),
+      operands=[
         *operands, *init_values,
         eval_dynamic_shape_as_tensor(ctx, window_dimensions),
         eval_dynamic_shape_as_tensor(ctx, window_strides),

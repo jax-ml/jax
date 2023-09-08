@@ -4233,9 +4233,9 @@ def _top_k_lower(ctx, operand, k):
   out_values_aval, out_indices_aval, = ctx.avals_out
   return mlir.custom_call(
       "stablehlo.dynamic_top_k",
-      [mlir.aval_to_ir_type(out_values_aval),
+      result_types=[mlir.aval_to_ir_type(out_values_aval),
        mlir.aval_to_ir_type(out_indices_aval)],
-      [operand, k_value]).results
+      operands=[operand, k_value]).results
 
 mlir.register_lowering(top_k_p, _top_k_lower)
 ad.primitive_jvps[top_k_p] = _top_k_jvp
@@ -4499,9 +4499,9 @@ def _rng_bit_generator_lowering(
       mlir.eval_dynamic_shape(ctx, out_vals_aval.shape))
     out_key, out_vals = mlir.custom_call(
         "stablehlo.dynamic_rng_bit_generator",
-        [key.type,
-         mlir.aval_to_ir_type(core.ShapedArray(shape, rbg_dtype))],
-        [key, output_shape],
+        result_types=[key.type,
+                      mlir.aval_to_ir_type(core.ShapedArray(shape, rbg_dtype))],
+        operands=[key, output_shape],
         extra_attributes=dict(rng_algorithm=algorithm_attr)).results
   else:
     out_key, out_vals = hlo.RngBitGeneratorOp(
@@ -4964,6 +4964,17 @@ def _empty_lower(ctx, *, dtype):
   phys_aval = core.physical_aval(core.ShapedArray((), dtype))
   return mlir.ir_constants(np.zeros(phys_aval.shape, phys_aval.dtype))
 mlir.register_lowering(empty_p, _empty_lower)
+
+
+tie_p = core.Primitive('tie')
+tie_p.def_impl(lambda x, y: y)
+tie_p.def_abstract_eval(lambda x, y: y)
+mlir.register_lowering(tie_p, lambda ctx, x, y: [y])
+ad.primitive_jvps[tie_p] = \
+    lambda primals, tangents: (tie_p.bind(*primals), tangents[-1])
+ad.primitive_transposes[tie_p] = lambda ct, x, _: [None, ct]
+pe.def_trivial_padding(tie_p)
+batching.defvectorized(tie_p)
 
 
 class BIntRules:

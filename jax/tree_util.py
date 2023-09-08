@@ -67,8 +67,36 @@ from jax._src.tree_util import (
   GetAttrKey as GetAttrKey,
   FlattenedIndexKey as FlattenedIndexKey,
   register_static as register_static,
-  # TODO(ivyzheng): Remove these old APIs after June 10 2023.
-  register_keypaths,
-  AttributeKeyPathEntry,
-  GetitemKeyPathEntry,
+  register_keypaths as _deprecated_register_keypaths,
+  AttributeKeyPathEntry as _DeprecatedAttributeKeyPathEntry,
+  GetitemKeyPathEntry as _DeprecatedGetitemKeyPathEntry,
 )
+
+
+_deprecations = {
+    # Added August 29, 2023; emitted warning since March 10, 2023
+    "register_keypaths": (
+        "jax.tree_util.register_keypaths is deprecated. Use register_pytree_with_keys instead",
+        _deprecated_register_keypaths,
+    ),
+    # Added August 29, 2023:
+    "AttributeKeyPathEntry": (
+        "jax.tree_util.AttributeKeyPathEntry is deprecated. Use `SequenceKey` or `DictKey` instead.",
+        _DeprecatedAttributeKeyPathEntry,
+    ),
+    "GetitemKeyPathEntry": (
+        "jax.scipy.linalg.triu is deprecated. Use `SequenceKey` or `DictKey` instead.",
+        _DeprecatedGetitemKeyPathEntry,
+    ),
+}
+
+import typing
+if typing.TYPE_CHECKING:
+  register_keypaths = _deprecated_register_keypaths
+  AttributeKeyPathEntry = _DeprecatedAttributeKeyPathEntry
+  GetitemKeyPathEntry = _DeprecatedGetitemKeyPathEntry
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing

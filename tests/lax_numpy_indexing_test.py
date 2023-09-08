@@ -437,7 +437,6 @@ class IndexingTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-
   @jtu.sample_product(
     funcname=["negative", "sin", "cos", "square", "sqrt", "log", "exp"],
   )
@@ -456,7 +455,12 @@ class IndexingTest(jtu.JaxTestCase):
 
     # Test with traced integer index
     args_maker = lambda: [rng(size, dtype), idx_rng(size, int)]
-    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    atol = (
+        5e-5
+        if jtu.device_under_test() == "tpu" and funcname in ("log", "exp")
+        else None
+    )
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker, atol=atol)
     self._CompileAndCheck(jnp_op, args_maker)
 
     # Test with slice index
@@ -464,7 +468,7 @@ class IndexingTest(jtu.JaxTestCase):
     np_op_idx = partial(np_op, idx=idx)
     jnp_op_idx = partial(jnp_op, idx=idx)
     args_maker = lambda: [rng(size, dtype)]
-    self._CheckAgainstNumpy(np_op_idx, jnp_op_idx, args_maker)
+    self._CheckAgainstNumpy(np_op_idx, jnp_op_idx, args_maker, atol=atol)
     self._CompileAndCheck(jnp_op_idx, args_maker)
 
   def testIndexApplyBatchingBug(self):
@@ -881,28 +885,34 @@ class IndexingTest(jtu.JaxTestCase):
 
   def testSimpleIndexingUsesSlice(self):
     jaxpr = jax.make_jaxpr(lambda x: x[:2, :2])(jnp.ones((3, 4)))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 7)
-    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.dynamic_slice_p)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.slice_p)
 
     jaxpr = jax.make_jaxpr(lambda x: x[0, :2, 1])(jnp.ones((3, 4, 5)))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 11)
-    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 2)
+    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.slice_p)
     self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
 
     jaxpr = jax.make_jaxpr(lambda x: x[0, 0])(jnp.ones((3, 4, 5)))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 11)
-    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 2)
+    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.slice_p)
     self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
 
     jaxpr = jax.make_jaxpr(lambda x: x[:, 1])(jnp.ones((3, 4, 5)))
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 11)
-    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 2)
+    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.slice_p)
     self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
 
     # Simple reverses lower to lax.rev_p
     jaxpr = jax.make_jaxpr(lambda x: x[:, ::-1])(jnp.ones((3, 4)))
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
     self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
+
+    # Non-static indices produce a dynamic slice
+    jaxpr = jax.make_jaxpr(lambda x, i: x[i])(jnp.ones((4,)), 2)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 6)
+    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
 
   def testTrivialGatherIsntGenerated(self):
     # https://github.com/google/jax/issues/1621
@@ -1175,8 +1185,8 @@ class UpdateOps(enum.Enum):
 
 def _update_tol(op):
   if op == UpdateOps.POW:
-    tol = {np.complex64: 2e-4 if jtu.device_under_test() == "tpu" else 1e-5,
-           np.complex128: 1e-14}
+    f32_tol = 2e-4 if jtu.device_under_test() == "tpu" else 1e-5
+    tol = {np.float32: f32_tol, np.complex64: f32_tol, np.complex128: 1e-14}
   else:
     tol = {np.complex128: 1e-14}
   return tol

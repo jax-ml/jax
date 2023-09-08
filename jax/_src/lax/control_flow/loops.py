@@ -722,16 +722,18 @@ def _scan_transpose(reduce_axes, cts, *args, reverse, length, num_consts,
   assert not any(ad.is_undefined_primal(r) for r in eres)
 
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
   ct_carry, ct_ys = split_list(cts, [num_carry])
   ct_carry = _map(ad.instantiate_zeros_aval, carry_avals, ct_carry)
-  ct_ys = _map(ad.instantiate_zeros_aval, ys_avals, ct_ys)
+  ct_ys_is_zeros = [type(ct_y) is ad.Zero for ct_y in ct_ys]
+  ct_ys = [x for x in ct_ys if type(x) is not ad.Zero]
+
   ct_consts = _map(ad_util.zeros_like_aval, jaxpr.in_avals[num_ires:num_consts])
 
   #       jaxpr :: [ires, T d] -> [T c] -> [T a, eres] -> ([T c], [T b])
   # jaxpr_trans :: [ires] -> [CT d, CT c] -> [CT b, eres] -> ([CT d, CT c], [CT a])
   jaxpr_trans = _transpose_scan_jaxpr(
-      num_ires, num_consts - num_ires, num_eres, jaxpr, reduce_axes)
+      num_ires, num_consts - num_ires, num_eres, jaxpr, reduce_axes,
+      ct_ys_is_zeros)
   linear_trans = ([False] * num_ires +
                   [True] * (len(ct_consts) + len(ct_carry) + len(ct_ys)) +
                   [False] * num_eres)
@@ -744,31 +746,46 @@ def _scan_transpose(reduce_axes, cts, *args, reverse, length, num_consts,
   ct_consts, ct_init, ct_xs = split_list(outs, [num_consts - num_ires, num_carry])
   return [None] * num_ires + ct_consts + ct_init + ct_xs + [None] * num_eres
 
+
 # transpose_scan_jaxpr :: ([res1, c, a, res2] -> b)
 #                         -> ([res1, CT c, CT b, res2] -> [CT c, CT a])
-def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr, reduce_axes):
+def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr, reduce_axes,
+    ct_ys_is_zeros):
   num_a = len(jaxpr.in_avals) - num_res1 - num_c - num_res2
   # TODO: allow input cotangent avals to be batched relative to jaxpr.in_avals
   # if an axis isn't reduced
   res1_avals, c_avals, a_avals, res2_avals = split_list(
       jaxpr.in_avals, [num_res1, num_c, num_a])
-  num_b = len(jaxpr.out_avals)
-  b_avals = list(jaxpr.out_avals)
+
+  num_ys = len(ct_ys_is_zeros)
+  num_b = len(jaxpr.out_avals) - num_ys
+  # TODO: Also propagate ad.Zero through b_carry_avals until fixed point.
+  b_carry_avals, b_ys_avals = split_list(list(jaxpr.out_avals), [num_b])
+  b_ys_avals_stripped = [
+      aval for aval, is_zero in zip(b_ys_avals, ct_ys_is_zeros) if not is_zero
+  ]
 
   @lu.wrap_init
   def transposed(*res1_cbar_bbar_res2):
-    res1, c_bar, b_bar, res2 = split_list(
-        res1_cbar_bbar_res2, [num_res1, num_c, num_b])
+    res1, c_bar, b_bar, ys_bar_stripped, res2 = split_list(
+        res1_cbar_bbar_res2,
+        [num_res1, num_c, num_b, len(b_ys_avals_stripped)])
+    ys_bar_stripped_iter = iter(ys_bar_stripped)
+    ys_bar = [
+        ad.Zero(aval) if is_zero else next(ys_bar_stripped_iter)
+        for aval, is_zero in zip(b_ys_avals, ct_ys_is_zeros)
+    ]
     primals = (res1 + [ad.UndefinedPrimal(aval) for aval in c_avals] +
                [ad.UndefinedPrimal(aval) for aval in a_avals] + res2)
-    cbar_abar = ad.backward_pass(jaxpr.jaxpr, reduce_axes, False, jaxpr.consts,
-                                 primals, b_bar)
+    cbar_abar = ad.backward_pass(
+        jaxpr.jaxpr, reduce_axes, False, jaxpr.consts, primals, b_bar + ys_bar)
     _, new_c_bar, a_bar, _ = split_list(cbar_abar, [num_res1, num_c, num_a])
     a_bar = _map(ad.instantiate_zeros_aval, a_avals, a_bar)
     c_bar = _map(ad.instantiate_zeros_aval, c_avals,
                 _map(ad.add_tangents, c_bar, new_c_bar))
     return c_bar + a_bar
-  return _make_closed_jaxpr(transposed, res1_avals + c_avals + b_avals + res2_avals)
+  return _make_closed_jaxpr(transposed,
+      res1_avals + c_avals + b_carry_avals + b_ys_avals_stripped + res2_avals)
 
 
 def _scan_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,

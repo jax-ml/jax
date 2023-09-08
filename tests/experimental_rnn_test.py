@@ -25,6 +25,7 @@ from jax._src.config import config
 config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_legacy_prng_key='allow')
 class RnnTest(jtu.JaxTestCase):
 
   @jtu.sample_product(

@@ -1543,7 +1543,8 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     if (device_index != 0 and
         not FLAGS.jax_host_callback_outfeed and
         jtu.device_under_test() == "cpu"):
-      raise SkipTest("device_index works only with outfeed")
+      # See comment in host_callback.py.
+      raise SkipTest("device_index works only with outfeed on CPU")
 
     devices = np.array(local_devices())
     nr_devices = len(devices)

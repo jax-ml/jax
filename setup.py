@@ -13,25 +13,34 @@
 # limitations under the License.
 
 from distutils import spawn
-import subprocess
+import importlib
 import os
+import subprocess
 import sys
 
 from setuptools import setup, find_packages
 
-_current_jaxlib_version = '0.4.14'
+project_name = 'jax'
+
+_current_jaxlib_version = '0.4.15'
 # The following should be updated with each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.4.14'
+_latest_jaxlib_version_on_pypi = '0.4.15'
 _available_cuda11_cudnn_versions = ['86']
 _default_cuda11_cudnn_version = '86'
 _default_cuda12_cudnn_version = '89'
-_libtpu_version = '0.1.dev20230727'
+_libtpu_version = '0.1.dev20230830'
 
-_dct = {}
-with open('jax/version.py', encoding='utf-8') as f:
-  exec(f.read(), _dct)
-__version__ = _dct['__version__']
-_minimum_jaxlib_version = _dct['_minimum_jaxlib_version']
+def load_version_module(pkg_path):
+  spec = importlib.util.spec_from_file_location(
+    'version', os.path.join(pkg_path, 'version.py'))
+  module = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(module)
+  return module
+
+_version_module = load_version_module(project_name)
+__version__ = _version_module._get_version_for_build()
+_cmdclass = _version_module._get_cmdclass(project_name)
+_minimum_jaxlib_version = _version_module._minimum_jaxlib_version
 
 with open('README.md', encoding='utf-8') as f:
   _long_description = f.read()
@@ -52,8 +61,9 @@ generate_proto("jax/experimental/australis/executable.proto")
 generate_proto("jax/experimental/australis/petri.proto")
 
 setup(
-    name='jax',
+    name=project_name,
     version=__version__,
+    cmdclass=_cmdclass,
     description='Differentiate, compile, and transform Numpy code.',
     long_description=_long_description,
     long_description_content_type='text/markdown',
