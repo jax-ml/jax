@@ -817,8 +817,7 @@ def _create_sharding_with_device_backend(device, backend):
     out = SingleDeviceSharding(device)
   elif backend is not None:
     assert device is None
-    out = SingleDeviceSharding(
-        xb.get_backend(backend).get_default_device_assignment(1)[0])
+    out = SingleDeviceSharding(xb.get_backend(backend).local_devices()[0])
   return out
 
 
