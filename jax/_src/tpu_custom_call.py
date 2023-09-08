@@ -250,7 +250,10 @@ def _lower_tpu_kernel(
 
       if config.use_cpp_apply_vector_layout:
         pipeline = [
-            "func.func(tpu-apply-vector-layout)",
+            (
+                "func.func(tpu-apply-vector-layout{sublane-count=8"
+                f" lane-count=128 hardware-generation={hardware_generation}}})"
+            ),
         ]
         pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
         pipeline.run(module.operation)
