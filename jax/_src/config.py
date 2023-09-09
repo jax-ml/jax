@@ -975,6 +975,24 @@ use_original_compilation_cache_key_generation = define_bool_state(
          "deployed, this flag and the original cache-key generation algorithm "
          "will be removed.")
 
+enable_compilation_cache = define_bool_state(
+    name='jax_enable_compilation_cache',
+    default=True,
+    help=('If set to False, the compilation cache will be disabled regardless '
+          'of whether initialize_cache() was called. If set to True, the '
+          'path could be set to a default value or via a call to '
+          'initialize_cache().'),
+)
+
+compilation_cache_dir = define_string_state(
+    name='jax_compilation_cache_dir',
+    default=None,
+    help=('Path for the cache. '
+          'Precedence: '
+          '1. A call to compilation_cache.initialize_cache(). '
+          '2. The value of this flag set in the command line or by default.'),
+)
+
 default_dtype_bits = define_enum_state(
     name='jax_default_dtype_bits',
     enum_values=['32', '64'],

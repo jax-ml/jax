@@ -940,6 +940,7 @@ class JaxTestCase(parameterized.TestCase):
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       cls._compilation_cache_exit_stack = ExitStack()
       stack = cls._compilation_cache_exit_stack
+      stack.enter_context(config.enable_compilation_cache(True))
       stack.enter_context(config.raise_persistent_cache_errors(True))
       stack.enter_context(config.persistent_cache_min_compile_time_secs(0))
 
