@@ -86,11 +86,9 @@ def get(module: ir.Module,
   """
   entries = [
       ("computation", lambda hash_obj: _hash_computation(hash_obj, module)),
-      ("devices", lambda hash_obj: _hash_devices(hash_obj, devices)),
       ("jax_lib version",
        lambda hash_obj: hash_obj.update(
            bytes(jaxlib_version_str.encode("utf-8")))),
-      ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
       ("XLA flags",
        lambda hash_obj: _hash_xla_flags(hash_obj, get_flag_prefixes())),
       ("compression",
@@ -101,11 +99,23 @@ def get(module: ir.Module,
         ("compile_options",
          lambda hash_obj: _hash_compile_options(hash_obj, compile_options)),
     )
+    entries.append(
+        ("devices", lambda hash_obj: _hash_devices(hash_obj, devices)))
+    entries.append(
+        ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
+    )
   else:
+    assert (
+        xla_extension_version >= 193
+    ), "new cache key generation requires jaxlib 0.4.15 or newer"
     entries.append(
         ("compile_options",
          lambda hash_obj: _hash_serialized_compile_options(
              hash_obj, compile_options)),
+    )
+    entries.append(
+        ("accelerator_config",
+         lambda hash_obj: _hash_accelerator_config(hash_obj, devices)),
     )
 
   hash_obj = hashlib.sha256()
@@ -167,11 +177,16 @@ def _hash_devices(hash_obj, devices: np.ndarray) -> None:
     _hash_string(hash_obj, device.device_kind)
 
 
-def _hash_serialized_compile_options(hash_obj, compile_options_obj):
-  assert (
-      xla_extension_version >= 193
-  ), "new cache key generation requires jaxlib 0.4.15 or newer"
+def _hash_accelerator_config(hash_obj, accelerators: np.ndarray):
+  accelerator_devices = []
+  for accelerator in accelerators.flat:
+    accelerator_devices.append(accelerator)
+  hash_obj.update(
+      xla_client.get_topology_for_devices(accelerator_devices).serialize()
+  )
 
+
+def _hash_serialized_compile_options(hash_obj, compile_options_obj):
   # Do not mess with the original CompileOptions object since it is passed to
   # the compiler. Create a deep copy for the purpose of cache key generation.
   compile_options_copy = copy.deepcopy(compile_options_obj)

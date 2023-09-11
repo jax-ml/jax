@@ -131,6 +131,27 @@ class CacheKeyTest(jtu.JaxTestCase):
     )
     self.assertEqual(hash1, hash2)
 
+  @unittest.skipIf(
+      xla_extension_version < 193, "Test requires jaxlib 0.4.15 or newer"
+  )
+  @jtu.skip_on_devices("cpu")
+  def test_hash_accelerator_devices(self):
+    if jtu.is_se_tpu():
+      raise unittest.SkipTest("StreamExecutor not supported.")
+    if xla_bridge.using_pjrt_c_api():
+      # TODO(b/290248051): expose PjRtTopologyDesc in PjRt C API.
+      raise unittest.SkipTest("PjRt C API not yet supported.")
+
+    devices = np.array([[jax.local_devices()[0]]])
+
+    dev_hash1 = self.get_hashed_value(cache_key._hash_devices, devices)
+    dev_hash2 = self.get_hashed_value(cache_key._hash_devices, devices)
+    self.assertEqual(dev_hash1, dev_hash2)
+
+    acc_hash1 = self.get_hashed_value(cache_key._hash_accelerator_config, devices)
+    acc_hash2 = self.get_hashed_value(cache_key._hash_accelerator_config, devices)
+    self.assertEqual(acc_hash1, acc_hash2)
+
   def test_hash_platform(self):
     hash1 = self.get_hashed_value(
         cache_key._hash_platform, xla_bridge.get_backend()

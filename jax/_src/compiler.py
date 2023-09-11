@@ -265,10 +265,16 @@ def compile_or_get_cached(
 
   monitoring.record_event('/jax/compilation_cache/compile_requests_use_cache')
 
-  cache_key = compilation_cache.get_cache_key(
-      computation, devices, compile_options, backend,
-      jax_config.config.jax_use_original_compilation_cache_key_generation,
-  )
+  try:
+    cache_key = compilation_cache.get_cache_key(
+        computation, devices, compile_options, backend,
+        jax_config.config.jax_use_original_compilation_cache_key_generation,
+    )
+  except xc._xla.XlaRuntimeError as ex:
+    logger.error("compile_or_get_cached: unable to generate cache key, "
+                 "skipping the cache: %s", ex)
+    return backend_compile(backend, computation, compile_options,
+                           host_callbacks)
 
   cache_retrieval_start = time.monotonic()
   retrieved_executable, retrieved_compile_time = _cache_read(
