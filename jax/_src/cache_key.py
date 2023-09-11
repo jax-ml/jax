@@ -197,6 +197,7 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj):
   # strings to empty. The exact values used to clear are not relevant as long
   # as the same values are used everytime for each field.
   debug_options = compile_options_copy.executable_build_options.debug_options
+  # LINT.IfChange(debug_options)
   debug_options.xla_force_host_platform_device_count = 0
   debug_options.xla_dump_to = ""
   debug_options.xla_dump_hlo_module_re = ""
@@ -214,6 +215,7 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj):
   debug_options.xla_dump_hlo_as_long_text = False
   debug_options.xla_dump_disable_metadata = False
   debug_options.xla_dump_hlo_pipeline_re = ""
+  # LINT.ThenChange(:xla_flags)
 
   return hash_obj.update(compile_options_copy.SerializeAsString())
 
@@ -315,6 +317,7 @@ def _hash_platform(hash_obj, backend):
 
 
 def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
+  # LINT.IfChange(xla_flags)
   xla_flags_to_exclude_from_cache_key = [
       "--xla_dump_compress_protos",
       "--xla_dump_module_metadata",
@@ -327,6 +330,9 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
       "--xla_dump_hlo_as_url",
       "--xla_dump_hlo_as_proto",
       "--xla_dump_hlo_as_text",
+      "--xla_dump_hlo_as_long_text",
+      "--xla_dump_hlo_as_html",
+      "--xla_dump_hlo_as_dot",
       "--xla_dump_to",
       "--xla_force_host_platform_device_count",
       "--xla_dump_disable_metadata",
@@ -334,6 +340,7 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
       "--xla_tpu_sdc_checker_streamz_metric",
       "--xla_tpu_sdc_checker_enable_sdc_event_callbacks",
   ]
+  # LINT.ThenChange(:debug_options)
 
   xla_flags = []
 
