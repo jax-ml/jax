@@ -676,6 +676,7 @@ def lower_jaxpr_to_module(
     result_names: Sequence[str | None] | None = None,
     num_replicas: int = 1,
     num_partitions: int = 1,
+    all_default_mem_kind: bool = True,
     override_lowering_rules: None | (
         tuple[tuple[core.Primitive, LoweringRule]]) = None,
 ) -> LoweringResult:
@@ -701,10 +702,14 @@ def lower_jaxpr_to_module(
               map(sharded_aval, jaxpr.in_avals, arg_shardings))
   out_avals = (jaxpr.out_avals if result_shardings is None else
                map(sharded_aval, jaxpr.out_avals, result_shardings))
-  arg_memory_kinds = (map(_get_mem_kind, arg_shardings)
-                      if arg_shardings is not None else None)
-  result_memory_kinds = (map(_get_mem_kind, result_shardings)
-                         if result_shardings is not None else None)
+  if all_default_mem_kind:
+    arg_memory_kinds = None
+    result_memory_kinds = None
+  else:
+    arg_memory_kinds = (map(_get_mem_kind, arg_shardings)
+                        if arg_shardings is not None else None)
+    result_memory_kinds = (map(_get_mem_kind, result_shardings)
+                          if result_shardings is not None else None)
 
   if platform in _platforms_with_donation:
     input_output_aliases, donated_args = _set_up_aliases(

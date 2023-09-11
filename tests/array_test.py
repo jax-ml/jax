@@ -868,7 +868,7 @@ class ShardingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         r"Sharding NamedSharding\(mesh=Mesh\('replica': 1, 'data': 1, 'mdl': 2\), "
-        r"spec=PartitionSpec\(None, \('mdl',\), None, None\)\) is only "
+        r"spec=PartitionSpec\(None, \('mdl',\), None, None\).*\) is only "
         "valid for values of rank at least 4, but was applied to a value of rank 2"):
       new_mps.is_compatible_aval(shape)
 
@@ -884,15 +884,16 @@ class ShardingTest(jtu.JaxTestCase):
     op.tile_assignment_devices = [0, 1, 2, 3, 4, 5, 6, 7]
     op.replicate_on_last_tile_dim = True
     s = jax.sharding.GSPMDSharding(jax.devices(), op)
-    self.assertEqual(
-        repr(s),
+    # memory kind also appears in the repr but only for TPU.
+    self.assertIn(
         'GSPMDSharding({devices=[4,1,2]0,1,2,3,4,5,6,7 '
-        'last_tile_dim_replicate})')
+        'last_tile_dim_replicate}', repr(s))
 
     op2 = xc.OpSharding()
     op2.type = xc.OpSharding.Type.REPLICATED
     s2 = jax.sharding.GSPMDSharding(jax.devices(), op2)
-    self.assertEqual(repr(s2), 'GSPMDSharding({replicated})')
+    # memory kind also appears in the repr but only for TPU.
+    self.assertIn('GSPMDSharding({replicated}', repr(s2))
 
   @parameterized.named_parameters(
       ("mesh_x_y",              P("x", "y"),   (4, 2), (),   False),

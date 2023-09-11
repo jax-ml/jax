@@ -66,7 +66,8 @@ from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding_impls import (
     ArrayMapping, ArrayMappingOrAutoOrUnspecified,
     AUTO, UnspecifiedValue, UNSPECIFIED,
-    get_array_mapping as _get_array_mapping, is_auto, is_unspecified
+    get_array_mapping as _get_array_mapping, is_auto, is_unspecified,
+    is_unspecified_or_auto
 )
 from jax._src.util import (safe_map, safe_zip, partition_list,
                            wrap_name, tuple_delete, distributed_debug_log,
@@ -1783,7 +1784,8 @@ def _raise_warnings_or_errors_for_jit_of_pmap(
 def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             semantic_in_shardings, semantic_out_shardings,
                             da_object, lowering_platform,
-                            donated_invars, name_stack, override_lowering_rules):
+                            donated_invars, name_stack, all_default_mem_kind,
+                            override_lowering_rules):
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = semantic_in_shardings.shardings
   out_shardings = semantic_out_shardings.shardings
@@ -1855,6 +1857,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
         num_replicas=nreps,
         num_partitions=num_partitions,
+        all_default_mem_kind=all_default_mem_kind,
         override_lowering_rules=override_lowering_rules)
   tuple_args = dispatch.should_tuple_args(len(global_in_avals), backend.platform)
   unordered_effects = list(
@@ -1925,15 +1928,27 @@ def _create_da_object(  # pytype: disable=invalid-annotation
   return _DeviceAssignment(device_assignment)
 
 
-def jaxpr_has_dp_with_transfer_mem_kind(jaxpr: core.Jaxpr) -> bool:
+def jaxpr_transfer_mem_kinds(
+    jaxpr: core.Jaxpr) -> Iterator[sharding_impls.TransferToMemoryKind]:
   for eqn in jaxpr.eqns:
     if (eqn.primitive is dispatch.device_put_p and
         isinstance(eqn.params['device'], sharding_impls.TransferToMemoryKind)):
-      return True
+      yield eqn.params['device']
   for subjaxpr in core.subjaxprs(jaxpr):
-    if jaxpr_has_dp_with_transfer_mem_kind(subjaxpr):
-      return True
-  return False
+    yield from jaxpr_transfer_mem_kinds(subjaxpr)
+
+
+def are_all_shardings_default_mem_kind(da_object, shardings):
+  try:
+    default_mem_kind = da_object.default_memory_kind
+  except:
+    return True
+  for i in shardings:
+    if is_unspecified_or_auto(i):
+      continue
+    if i.memory_kind != default_mem_kind:
+      return False
+  return True
 
 
 @profiler.annotate_function
@@ -1988,18 +2003,25 @@ def lower_sharding_computation(
                 for js, source_info in jaxpr_sharding]),
       devices_from_context)
 
+  transfer_mem_kind_in_jaxpr = list(jaxpr_transfer_mem_kinds(jaxpr))
+
   committed = bool(
       devices_from_context or
       len(device_assignment) > 1 or
       any(not is_unspecified(i) for i in in_shardings) or
       any(not is_unspecified(js) for js, _ in jaxpr_sharding) or
       any(not is_unspecified(o) for o in out_shardings) or
-      jaxpr_has_dp_with_transfer_mem_kind(jaxpr))
+      transfer_mem_kind_in_jaxpr)
 
   gs = sharding_impls.GSPMDSharding.get_replicated(device_assignment)
   in_shardings = tuple(gs if is_unspecified(i) else i for i in in_shardings)
 
   da_object = _create_da_object(tuple(device_assignment))
+
+  all_default_mem_kind = are_all_shardings_default_mem_kind(
+      da_object,
+      it.chain(in_shardings, out_shardings, [js for js, _ in jaxpr_sharding],  # type: ignore
+               transfer_mem_kind_in_jaxpr))
 
   if not da_object.is_fully_addressable:  # type: ignore
     if inline and config.jax_spmd_mode != 'allow_all':
@@ -2022,7 +2044,7 @@ def lower_sharding_computation(
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, api_name, fun_name, backend, semantic_in_shardings,
        semantic_out_shardings, da_object, lowering_platform,
-       donated_invars, name_stack, override_lowering_rules)
+       donated_invars, name_stack, all_default_mem_kind, override_lowering_rules)
 
   # backend and device_assignment is passed through to MeshExecutable because
   # if keep_unused=False and all in_shardings are pruned, then there is no way
@@ -2050,7 +2072,8 @@ def lower_sharding_computation(
       committed=committed,
       pmap_nreps=nreps,
       jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info,
-      shape_poly_state=shape_poly_state)
+      shape_poly_state=shape_poly_state,
+      all_default_mem_kind=all_default_mem_kind)
 
 
 def _to_logical_sharding(
@@ -2295,18 +2318,25 @@ def _get_input_indices(
 
 
 def get_gspmd_shardings_from_executable(
-    xla_executable, device_assignment: Sequence[xc.Device],
-    num_out_avals: int
+    xla_executable,
+    device_assignment: Sequence[xc.Device],
+    num_out_avals: int,
+    num_ordered_effects: int,
+    all_default_mem_kind: bool,
 ) -> Sequence[sharding_impls.XLACompatibleSharding]:
   from jax._src import pjit
 
-  if config.jax_enable_memories:
+  if all_default_mem_kind:
+    omk = [None] * num_out_avals
+  else:
     try:
       omk = xla_executable.get_output_memory_kinds()[0]
+      if num_ordered_effects > 0:
+        omk = omk[num_ordered_effects:]
     except:
       omk = [None] * num_out_avals
-  else:
-    omk = [None] * num_out_avals
+
+  assert len(omk) == num_out_avals, (len(omk), num_out_avals)
 
   # When the device assignment only has 1 device, SPMD partitioner will not run.
   # Hence the op shardings will not be set on the `hlo_module`. In that case,
@@ -2560,7 +2590,8 @@ class UnloadedMeshExecutable:
                pmap_nreps: int = 1,
                jaxpr_debug_info: core.JaxprDebugInfo | None = None,
                shape_poly_state: mlir.ShapePolyLoweringState | None = None,
-               compiler_options=None
+               all_default_mem_kind: bool = True,
+               compiler_options=None,
   ) -> MeshExecutable:
     if shape_poly_state is not None and shape_poly_state.uses_dim_vars:
       hlo = mlir.refine_polymorphic_shapes(hlo)
@@ -2616,7 +2647,8 @@ class UnloadedMeshExecutable:
       # without tuple conversion.
       device_assignment = tuple(da)
       out_shardings_xla = get_gspmd_shardings_from_executable(  # type: ignore
-          xla_executable, device_assignment, len(global_out_avals))  # type: ignore
+          xla_executable, device_assignment, len(global_out_avals),
+          len(ordered_effects), all_default_mem_kind)  # type: ignore
       orig_out_shardings = out_shardings
       out_shardings, are_out_shardings_from_xla = [], []  # type: ignore
       for xla_s, orig, aval in safe_zip(out_shardings_xla, orig_out_shardings,

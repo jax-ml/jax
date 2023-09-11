@@ -10278,7 +10278,7 @@ class OverrideLoweringTest(jtu.JaxTestCase):
         jax.jit(f)
         .lower(jax.ShapeDtypeStruct((2, 4), dtype=jnp.bfloat16),
                _experimental_override_lowering_rules=rules).as_text())
-    self.assertNotIn("stablehlo.custom_call", lowered_ir)
+    self.assertNotIn("stablehlo.custom_call @Sharding", lowered_ir)
 
 
 if __name__ == '__main__':

@@ -1226,7 +1226,7 @@ class PJitTest(jtu.BufferDonationTestCase):
           ValueError,
           r"One of with_sharding_constraint.*Sharding "
           r"NamedSharding\(mesh=Mesh\('replica': 1, 'data': 1, 'mdl': 2\), "
-          r"spec=PartitionSpec\(None, \('mdl',\), None, None\)\) is only "
+          r"spec=PartitionSpec\(None, \('mdl',\), None, None\).*\) is only "
           "valid for values of rank at least 4, but was applied to a value of rank 1"):
         pjit_f(jnp.array([1, 2, 3]))
 
@@ -3657,6 +3657,19 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ' make sure to run your jitted function inside the mesh context'
         ' manager.*SingleDeviceSharding'):
       jax.jit(jax.vmap(f, spmd_axis_name='x'))(arr)
+
+  @jtu.skip_on_devices("tpu")
+  def test_device_put_memory_kind_not_tpu(self):
+    @jax.jit
+    def f(x):
+      y = x * 2
+      return jax.device_put(y, sharding_impls.TransferToMemoryKind('unpinned_host'))
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        'Passing memory_kind to device_put via Shardings is not supported on'
+        ' platform.*'):
+      f(jnp.arange(8))
 
 
 class TempSharding(Sharding):

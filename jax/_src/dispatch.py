@@ -529,7 +529,7 @@ def device_put_transpose_rule(ct, _, device, src):
 ad.deflinear2(device_put_p, device_put_transpose_rule)
 batching.defvectorized(device_put_p)
 
-def _device_put_lowering(ctx, x, *, device, src):
+def _tpu_device_put_lowering(ctx, x, *, device, src):
   if (isinstance(device, (XLACompatibleSharding, TransferToMemoryKind)) and
       device.memory_kind is not None):
     aval, = ctx.avals_in
@@ -540,4 +540,14 @@ def _device_put_lowering(ctx, x, *, device, src):
           ctx, x, out_aval, device._to_xla_hlo_sharding(aval.ndim).to_proto())
     return [x]
   return [x]
-mlir.register_lowering(device_put_p, _device_put_lowering)
+mlir.register_lowering(device_put_p, _tpu_device_put_lowering, platform='tpu')
+
+
+def _common_device_put_lowering(ctx, x, *, device, src):
+  if (isinstance(device, (XLACompatibleSharding, TransferToMemoryKind)) and
+      device.memory_kind is not None):
+    raise NotImplementedError(
+        "Passing memory_kind to device_put via Shardings is not supported on"
+        f" platform {ctx.module_context.platform}")
+  return [x]
+mlir.register_lowering(device_put_p, _common_device_put_lowering)
