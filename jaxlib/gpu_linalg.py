@@ -19,6 +19,7 @@ import operator
 import jaxlib.mlir.ir as ir
 
 from .hlo_helpers import custom_call
+from .gpu_common_utils import GpuLibNotLinkedError
 
 from jaxlib import xla_client
 
@@ -49,6 +50,9 @@ def _lu_pivots_to_permutation_hlo(platform, gpu_linalg, pivots, *, permutation_s
 
   batch_size = _prod(dims[:-1])
   pivot_size = dims[-1]
+
+  if not gpu_linalg:
+    raise GpuLibNotLinkedError()
 
   opaque = gpu_linalg.lu_pivots_to_permutation_descriptor(
       batch_size, pivot_size, permutation_size)

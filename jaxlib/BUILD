@@ -34,6 +34,7 @@ py_library_providing_imports_info(
     name = "jaxlib",
     srcs = [
         "ducc_fft.py",
+        "gpu_common_utils.py",
         "gpu_linalg.py",
         "gpu_prng.py",
         "gpu_rnn.py",

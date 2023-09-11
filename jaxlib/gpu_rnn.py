@@ -18,6 +18,7 @@ import jaxlib.mlir.dialects.stablehlo as hlo
 import numpy as np
 
 from jaxlib import xla_client
+from .gpu_common_utils import GpuLibNotLinkedError
 
 try:
   from .cuda import _rnn  # pytype: disable=import-error
@@ -58,8 +59,9 @@ def cudnn_rnn_lowering(ctx, input, h_0, c_0, weights, seq_lengths, *,
   reserve_space_shape = ctx.avals_out[3].shape
   reserve_space_type = ir.RankedTensorType.get(reserve_space_shape,
                                                ir.F32Type.get())
-  if _rnn is None:
-    raise RuntimeError("cuda couldn't be imported")
+  if not _rnn:
+    raise GpuLibNotLinkedError()
+
   opaque = _rnn.build_rnn_descriptor(input_size, hidden_size, num_layers,
                                      batch_size, max_seq_length, dropout,
                                      bidirectional, workspace_shape[0],

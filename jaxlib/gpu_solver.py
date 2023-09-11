@@ -21,6 +21,8 @@ import jaxlib.mlir.dialects.stablehlo as hlo
 
 import numpy as np
 
+from .gpu_common_utils import GpuLibNotLinkedError
+
 from jaxlib import xla_client
 
 from .hlo_helpers import (
@@ -71,6 +73,9 @@ def _getrf_hlo(platform, gpu_blas, gpu_solver, dtype, a):
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
   batch = math.prod(batch_dims)
+
+  if not gpu_blas:
+    raise GpuLibNotLinkedError()
 
   if batch > 1 and m == n and m // batch <= 128:
     lwork, opaque = gpu_blas.build_getrf_batched_descriptor(
@@ -156,6 +161,9 @@ def _geqrf_batched_hlo(platform, gpu_blas, dtype, a):
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
   batch = math.prod(batch_dims)
+
+  if not gpu_blas:
+    raise GpuLibNotLinkedError()
 
   lwork, opaque = gpu_blas.build_geqrf_batched_descriptor(
       np.dtype(dtype), batch, m, n)

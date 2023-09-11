@@ -24,6 +24,7 @@ import jaxlib.mlir.ir as ir
 from jaxlib import xla_client
 
 from .hlo_helpers import custom_call
+from .gpu_common_utils import GpuLibNotLinkedError
 
 try:
   from .cuda import _prng as _cuda_prng  # pytype: disable=import-error
@@ -41,7 +42,6 @@ except ImportError:
 
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
-
 def _threefry2x32_lowering(prng, platform, keys, data,
                            length: Optional[Union[int, ir.Value]] = None,
                            output_shape: Optional[ir.Value] = None):
@@ -50,6 +50,8 @@ def _threefry2x32_lowering(prng, platform, keys, data,
   In presence of dynamic shapes, `length` is an `ir.Value` and `output_shape`
   is a 1D tensor describing the shape of the two outputs.
   """
+  if not prng:
+    raise GpuLibNotLinkedError()
   assert len(keys) == 2, keys
   assert len(data) == 2, data
   assert (ir.RankedTensorType(keys[0].type).element_type ==
