@@ -1978,6 +1978,14 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, fun, args_maker)
     self._CompileAndCheck(fun, args_maker)
 
+  def testReducePrecisionGrad(self):
+    info = dtypes.finfo(jnp.dtype('bfloat16'))
+    y, f_vjp = jax.vjp(lambda x: lax.reduce_precision(x, info.nexp, info.nmant), jnp.pi)
+    y2 = f_vjp(jnp.pi)
+    y3 = lax.reduce_precision(jnp.pi, info.nexp, info.nmant)
+    self.assertArraysEqual(y, y2)
+    self.assertArraysEqual(y, y3)
+
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
      for shape in [(5,), (5, 7)] for axis in [-1, len(shape) - 1]],
