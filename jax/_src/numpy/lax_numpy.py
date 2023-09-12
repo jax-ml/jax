@@ -3072,7 +3072,7 @@ def apply_over_axes(func: Callable[[ArrayLike, int], Array], a: ArrayLike,
 
 
 @util._wraps(np.dot, lax_description=_PRECISION_DOC)
-@partial(jit, static_argnames=('precision',), inline=True)
+@partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def dot(a: ArrayLike, b: ArrayLike, *,
         precision: PrecisionLike = None,
         preferred_element_type: DTypeLike | None = None) -> Array:
@@ -3104,7 +3104,7 @@ def dot(a: ArrayLike, b: ArrayLike, *,
 
 
 @util._wraps(np.matmul, module='numpy', lax_description=_PRECISION_DOC)
-@partial(jit, static_argnames=('precision',), inline=True)
+@partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def matmul(a: ArrayLike, b: ArrayLike, *,
            precision: PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None,
