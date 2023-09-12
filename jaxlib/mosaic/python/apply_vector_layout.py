@@ -2418,8 +2418,15 @@ def _vector_store_rule(  # pylint: disable=missing-function-docstring
   if to_store_layout.implicit_dim == ImplicitDim.MINOR:
     raise NotImplementedError
   is_1d = to_store_layout.implicit_dim is not None
-  if to_store_layout.tiling != get_memref_tiling(op.base):
-    raise NotImplementedError
+  memref_tiling = get_memref_tiling(op.base)
+  if to_store_layout.tiling != memref_tiling:
+    # Now we can handle the case when tiling is (1, TARGET_SHAPE.lanes).
+    # TODO(b/295393167): need to support strided store for bitwidth < 32.
+    if to_store_layout.bitwidth != 32 or to_store_layout.tiling != (
+        1,
+        TARGET_SHAPE.lanes,
+    ):
+      raise NotImplementedError
   base_indices = [get_int_const(v, "vector.store index") for v in op.indices]
   tiles = disassemble(to_store_layout, op.valueToStore)
   if is_1d:
@@ -2432,8 +2439,15 @@ def _vector_store_rule(  # pylint: disable=missing-function-docstring
   check(lane_offset is not REPLICATED and sublane_offset is not REPLICATED,
         "replicated layout disallowed in vector store")
   stored_shape = to_store_layout.implicit_shape(tuple(ty.shape))
+  sublane_stride = 1
+  # The stride of store should be the number of sublanes in memref tile when
+  # store a single sublane.
+  if to_store_layout.bitwidth == 32 and to_store_layout.tiling == (
+      1,
+      TARGET_SHAPE.lanes,
+  ):
+    sublane_stride = memref_tiling[0]
   vreg_slice = to_store_layout.vreg_slice
-  can_use_vector_store = to_store_layout.has_natural_topology
   for ixs, tile in np.ndenumerate(tiles):
     bounds = to_store_layout.tile_data_bounds(stored_shape, ixs)
     *batch_ixs, six, lix = ixs
@@ -2470,13 +2484,26 @@ def _vector_store_rule(  # pylint: disable=missing-function-docstring
               tile.type, arith.OrIOp(masked_data, masked_tile))
         else:
           updated = arith.SelectOp(mask, tile, data)
-        tpu.StoreOp(updated, op.base, indices, sublane_mask)
+        tpu.StoreOp(
+            updated,
+            op.base,
+            indices,
+            sublane_mask,
+            sublane_stride=sublane_stride,
+        )
       else:
-        tpu.StoreOp(tile, op.base, indices, sublane_mask, mask=mask)
-    elif bounds.mask_varies_along(SUBLANES) or not can_use_vector_store:
-      tpu.StoreOp(tile, op.base, indices, sublane_mask)
+        tpu.StoreOp(
+            tile,
+            op.base,
+            indices,
+            sublane_mask,
+            mask=mask,
+            sublane_stride=sublane_stride,
+        )
     else:
-      vector.StoreOp(tile, op.base, indices)
+      tpu.StoreOp(
+          tile, op.base, indices, sublane_mask, sublane_stride=sublane_stride
+      )
   return ctx.erase(op)
 
 
