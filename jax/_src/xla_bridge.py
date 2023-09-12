@@ -157,10 +157,9 @@ def register_backend_factory(name: str, factory: BackendFactory, *,
     factory, priority, fail_quietly, experimental)
 
 
-register_backend_factory('cpu',
-                         partial(xla_client.make_cpu_client, use_tfrt=True),
-                         priority=0,
-                         fail_quietly=False)
+register_backend_factory(
+    "cpu", xla_client.make_cpu_client, priority=0, fail_quietly=False
+)
 
 
 def make_gpu_client(
