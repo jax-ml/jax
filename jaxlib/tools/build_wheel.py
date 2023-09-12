@@ -198,6 +198,7 @@ def prepare_wheel(sources_path, *, cpu):
   copy_to_jaxlib("__main__/jaxlib/gpu_linalg.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_rnn.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_triton.py")
+  copy_to_jaxlib("__main__/jaxlib/gpu_common_utils.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_solver.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_sparse.py")
   copy_to_jaxlib("__main__/jaxlib/tpu_mosaic.py")
