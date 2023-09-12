@@ -815,9 +815,19 @@ class VectorLayoutInferer {
         offsets[0] = tile_indices[0] % tiling[0];
       }
       offsets[1] = tile_indices[1] % target_shape_[1];
-      // We can use replicated loads if we're only loading a single sublane.
       std::array<int64_t, 2> layout_tiling{tiling[0], tiling[1]};
-      if (num_sublanes == 1 && bitwidth == 32 && tiling == target_shape_) {
+      if (num_sublanes == 1 && bitwidth == 32 &&
+          tiling[1] == target_shape_[1] &&
+          tile_res_shape[1] > target_shape_[1]) {
+        // We can strided load sublanes if we're loading a single sublane for
+        // multiple times. Enabling this helps load one entire row from memref
+        // more efficiently.
+        setLayout(op, in_layout,
+                  VectorLayout(bitwidth, offsets, {1, layout_tiling[1]},
+                               ImplicitDim::kNone));
+      } else if (num_sublanes == 1 && bitwidth == 32 &&
+                 tiling == target_shape_) {
+        // We can use replicated loads if we're only loading a single sublane.
         setLayout(op, in_layout,
                   VectorLayout(bitwidth, {std::nullopt, offsets[1]},
                                layout_tiling, ImplicitDim::kNone));
