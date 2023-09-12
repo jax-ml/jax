@@ -23,6 +23,9 @@ limitations under the License.
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/include/mlir/IR/BuiltinTypes.h"
+#include "mlir/include/mlir/IR/Value.h"
+#include "mlir/include/mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_enums.h.inc"
 #include "xla/layout.h"
@@ -56,6 +59,10 @@ std::unique_ptr<OperationPass<func::FuncOp>>
 createLogicalToPhysicalDeviceIdPass(int64_t total_devices);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createLinalgVectorizationPass();
+
+// Changes the memory space of the value and propagates it through the program.
+LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
+                                    MemorySpace memory_space);
 
 // In Mosaic, we often strip tiled layouts from memrefs, for compatibility with
 // vector ops. This functions inverts the layout erasure applied to the value.
