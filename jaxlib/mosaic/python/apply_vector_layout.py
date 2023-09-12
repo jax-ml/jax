@@ -1635,10 +1635,12 @@ _register_rule("arith.divsi")(
     functools.partial(_elementwise_op_rule, arith.DivSIOp))
 _register_rule("arith.remsi")(
     functools.partial(_elementwise_op_rule, arith.RemSIOp))
-_register_rule("arith.maxf")(
-    functools.partial(_elementwise_op_rule, arith.MaxFOp))
-_register_rule("arith.minf")(
-    functools.partial(_elementwise_op_rule, arith.MinFOp))
+_register_rule("arith.maximumf")(
+    functools.partial(_elementwise_op_rule, arith.MaximumFOp)
+)
+_register_rule("arith.minimumf")(
+    functools.partial(_elementwise_op_rule, arith.MinimumFOp)
+)
 _register_rule("arith.select")(
     functools.partial(_elementwise_op_rule, arith.SelectOp))
 _register_rule("arith.index_cast")(
@@ -2833,7 +2835,7 @@ def _vector_multi_reduction_rule(  # pylint: disable=missing-function-docstring
         layout_out.tile_array_shape(res_type.shape), dtype=object)
     if op.attributes["kind"] == ir.Attribute.parse("#vector.kind<maxf>"):
       tpu_kind = ir.Attribute.parse("#tpu.reduction_kind<max>")
-      pointwise = arith.MaxFOp
+      pointwise = arith.MaximumFOp
     elif op.attributes["kind"] == ir.Attribute.parse("#vector.kind<add>"):
       tpu_kind = ir.Attribute.parse("#tpu.reduction_kind<sum>")
       pointwise = arith.AddFOp

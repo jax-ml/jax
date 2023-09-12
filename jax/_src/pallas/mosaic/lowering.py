@@ -919,7 +919,7 @@ def _max_lowering_rule(ctx: LoweringRuleContext, x, y):
   elif jnp.issubdtype(aval_out.dtype, jnp.unsignedinteger):
     return arith.MaxUIOp(x, y).result
   elif jnp.issubdtype(aval_out.dtype, jnp.floating):
-    return arith.MaxFOp(x, y).result
+    return arith.MaximumFOp(x, y).result
   raise NotImplementedError(aval_out.dtype)
 
 
