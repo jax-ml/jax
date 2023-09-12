@@ -17,6 +17,10 @@ import os as _os
 _os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
 del _os
 
+# Import version first, because other submodules may reference it.
+from jax.version import __version__ as __version__
+from jax.version import __version_info__ as __version_info__
+
 # Set Cloud TPU env vars if necessary before transitively loading C++ backend
 from jax._src.cloud_tpu_init import cloud_tpu_init as _cloud_tpu_init
 try:
@@ -133,9 +137,6 @@ from jax._src.array import (
     make_array_from_single_device_arrays as make_array_from_single_device_arrays,
     make_array_from_callback as make_array_from_callback,
 )
-
-from jax.version import __version__ as __version__
-from jax.version import __version_info__ as __version_info__
 
 from jax._src.tree_util import (
   tree_map as tree_map,
