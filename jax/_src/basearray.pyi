@@ -26,11 +26,19 @@ Traceback = Any
 
 
 class Array(abc.ABC):
-  dtype: np.dtype
-  ndim: int
-  size: int
-  itemsize: int
   aval: Any
+
+  @property
+  def dtype(self) -> np.dtype: ...
+
+  @property
+  def ndim(self) -> int: ...
+
+  @property
+  def size(self) -> int: ...
+
+  @property
+  def itemsize(self) -> int: ...
 
   @property
   def shape(self) -> tuple[int, ...]: ...
@@ -46,8 +54,7 @@ class Array(abc.ABC):
     raise TypeError("jax.numpy.ndarray() should not be instantiated explicitly."
                     " Use jax.numpy.array, or jax.numpy.zeros instead.")
 
-  def __getitem__(self, key, indices_are_sorted=False,
-                  unique_indices=False) -> Array: ...
+  def __getitem__(self, key) -> Array: ...
   def __setitem__(self, key, value) -> None: ...
   def __len__(self) -> int: ...
   def __iter__(self) -> Any: ...

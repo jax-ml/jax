@@ -337,6 +337,9 @@ def _chunk_iter(x, size):
     if tail:
       yield lax.dynamic_slice_in_dim(x, num_chunks * size, tail)
 
+def _getitem(self, item):
+  return lax_numpy._rewriting_take(self, item)
+
 # Syntactic sugar for scatter operations.
 class _IndexUpdateHelper:
   # Note: this docstring will appear as the docstring for the `at` property.
@@ -596,7 +599,7 @@ class _IndexUpdateRef:
                                    unique_indices=unique_indices, mode=mode)
 
 _array_operators = {
-  "getitem": lax_numpy._rewriting_take,
+  "getitem": _getitem,
   "setitem": _unimplemented_setitem,
   "copy": _copy,
   "deepcopy": _deepcopy,
