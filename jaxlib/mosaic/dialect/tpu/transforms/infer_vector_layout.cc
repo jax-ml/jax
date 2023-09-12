@@ -1053,7 +1053,7 @@ class VectorLayoutInferer {
       const int64_t num_sublanes = tile_store_shape[0];
       // For now, we focus on tilings that span full sublanes.
       TPU_CHECK_OP(tiling[1] == target_shape_[1],
-                   "Unsupported tiling for 2d load");
+                   "Unsupported tiling for 2d store");
       // We can store starting from any row if the source has few columns,
       // because the tiling structure degenerates to regular layout there.
       // There is also no extra need for alignment if we store a single sublane.
@@ -1065,8 +1065,18 @@ class VectorLayoutInferer {
         offsets[0] = tile_indices[0] % tiling[0];
       }
       offsets[1] = tile_indices[1] % target_shape_[1];
-      store_layout = VectorLayout(store_ty.getElementTypeBitWidth(), offsets,
-                                  {tiling[0], tiling[1]}, ImplicitDim::kNone);
+      if (num_sublanes == 1 && bitwidth == 32 &&
+          tiling[1] == target_shape_[1] &&
+          tile_store_shape[1] > target_shape_[1]) {
+        // We can strided store sublanes if we're storing a single sublane for
+        // multiple times. Enabling this helps store one entire row to memref
+        // more efficiently.
+        store_layout = VectorLayout(store_ty.getElementTypeBitWidth(), offsets,
+                                    {1, tiling[1]}, ImplicitDim::kNone);
+      } else {
+        store_layout = VectorLayout(store_ty.getElementTypeBitWidth(), offsets,
+                                    {tiling[0], tiling[1]}, ImplicitDim::kNone);
+      }
     }
     SmallVector<Layout, 5> in_layout{store_layout};
     in_layout.insert(in_layout.end(), op.getIndices().size() + 1, kNoLayout);
