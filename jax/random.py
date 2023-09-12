@@ -130,22 +130,8 @@ For more about jax_threefry_partitionable, see
 https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html#generating-random-numbers
 """
 
-from jax._src.prng import PRNGKeyArray as _PRNGKeyArray
-# TODO(frostig): remove this typechecking workaround. Our move away
-# from PRNGKeyArray as a pytree led to Python typechecker breakages in
-# several downstream annotations (e.g. annotations in jax-dependent
-# libraries that are violated by their callers). It may be that the
-# pytree registration decorator invalidated the checks. This will be
-# easier to handle after we always enable_custom_prng.
-import typing
-if typing.TYPE_CHECKING:
-  PRNGKeyArray = typing.Any
-  KeyArray = typing.Any
-else:
-  # TODO(frostig): replace with KeyArray from jax._src.random once we
-  # always enable_custom_prng
-  PRNGKeyArray = _PRNGKeyArray
-  KeyArray = PRNGKeyArray
+from jax._src.prng import PRNGKeyArray as PRNGKeyArray
+KeyArray = PRNGKeyArray
 
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/google/jax/issues/7570
