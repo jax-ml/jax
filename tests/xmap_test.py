@@ -459,7 +459,7 @@ class XMapTest(XMapTestCase):
       self.assertAllClose(f_mapped(x, x), expected)
 
   @jtu.with_and_without_mesh
-  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
+  @jtu.run_on_devices("gpu", "tpu")  # In/out aliasing not supported on CPU.
   def testBufferDonation(self, mesh, axis_resources):
     shard = lambda x: x
     if axis_resources:
@@ -476,7 +476,7 @@ class XMapTest(XMapTestCase):
     self.assertNotDeleted(y)
     self.assertDeleted(x)
 
-  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
+  @jtu.run_on_devices("gpu", "tpu")  # In/out aliasing not supported on CPU.
   @jtu.with_mesh([('x', 2)])
   @jtu.ignore_warning(category=UserWarning,  # SPMD test generates warning.
                       message="Some donated buffers were not usable*")

@@ -62,8 +62,8 @@ all_shapes = nonempty_array_shapes + empty_array_shapes
 class DLPackTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
-    if jtu.device_under_test() == "tpu":
-      self.skipTest("DLPack not supported on TPU")
+    if jtu.device_under_test() not in ["cpu", "gpu"]:
+      self.skipTest(f"DLPack not supported on {jtu.device_under_test()}")
 
   @jtu.sample_product(
     shape=all_shapes,

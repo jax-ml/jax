@@ -327,19 +327,39 @@ def _get_device_tags():
     device_tags = {device_under_test()}
   return device_tags
 
-def skip_on_devices(*disabled_devices):
-  """A decorator for test methods to skip the test on certain devices."""
+
+def _device_filter(predicate):
   def skip(test_method):
     @functools.wraps(test_method)
     def test_method_wrapper(self, *args, **kwargs):
       device_tags = _get_device_tags()
-      if device_tags & set(disabled_devices):
+      if not predicate(device_tags):
         test_name = getattr(test_method, '__name__', '[unknown test]')
         raise unittest.SkipTest(
           f"{test_name} not supported on device with tags {device_tags}.")
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
+
+def skip_on_devices(*disabled_devices):
+  """A decorator for test methods to skip the test on certain devices."""
+  def predicate(device_tags):
+    return not(device_tags & set(disabled_devices))
+  return _device_filter(predicate)
+
+def run_on_devices(*enabled_devices):
+  """A decorator for test methods to run the test only on certain devices."""
+  def predicate(device_tags):
+    return device_tags & set(enabled_devices)
+  return _device_filter(predicate)
+
+def device_supports_buffer_donation():
+  """A decorator for test methods to run the test only on devices that support
+  buffer donation."""
+  def predicate(device_tags):
+    return device_tags & set(mlir._platforms_with_donation)
+  return _device_filter(predicate)
+
 
 def set_host_platform_device_count(nr_devices: int):
   """Returns a closure that undoes the operation."""

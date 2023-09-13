@@ -305,6 +305,7 @@ class PJitTest(jtu.BufferDonationTestCase):
                         check_dtypes=False)
 
   @jtu.with_mesh([('x', 2)])
+  @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   def testBufferDonation(self):
     @partial(pjit, in_shardings=P('x'), out_shardings=P('x'), donate_argnums=0)
     def f(x, y):
@@ -318,6 +319,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertNotDeleted(y)
     self.assertDeleted(x)
 
+  @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   def testBufferDonationWithNames(self):
     mesh = jtu.create_global_mesh((2,), ('x'))
     s = NamedSharding(mesh, P('x'))
@@ -333,6 +335,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertNotDeleted(x)
     self.assertDeleted(y)
 
+  @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   def testBufferDonationWithKwargs(self):
     mesh = jtu.create_global_mesh((2,), ('x'))
     s = NamedSharding(mesh, P('x'))
@@ -351,6 +354,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(y)
     self.assertDeleted(z)
 
+  @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   def testBufferDonationWithPyTreeKwargs(self):
     mesh = jtu.create_global_mesh((2,), ('x'))
     s = NamedSharding(mesh, P('x'))
@@ -2045,9 +2049,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # Explicitly put on the ordering of devices which does not match the mesh
     # ordering to make sure we reorder them in the constructor and the output
     # is correct.
+    local_devices = jax.local_devices()[:8] # Take 8 local devices
     di_map = s.devices_indices_map(shape)
-    bufs = [jax.device_put(inp_data[di_map[d]], d)
-            for d in jax.local_devices()]
+    bufs = [jax.device_put(inp_data[di_map[d]], d) for d in local_devices]
     arr = array.ArrayImpl(core.ShapedArray(shape, np.float32), s, bufs, committed=True)
 
     f = pjit(lambda x: x, out_shardings=s)
@@ -2793,7 +2797,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertLen(final_out.sharding.device_set, 1)
     self.assertArraysEqual(final_out, inp * 6)
 
-  @jtu.skip_on_devices("gpu", "cpu")
+  @jtu.run_on_devices("tpu")
   def test_pjit_with_backend_arg(self):
     def _check(out, expected_device, expected_out):
       self.assertEqual(out.device(), expected_device)

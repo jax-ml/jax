@@ -43,7 +43,7 @@ with contextlib.suppress(ImportError):
 
 class JaxAotTest(jtu.JaxTestCase):
 
-  @jtu.skip_on_devices('cpu', 'gpu')
+  @jtu.run_on_devices('tpu')
   def test_pickle_pjit_lower(self):
     if jtu.is_se_tpu():
       raise unittest.SkipTest('StreamExecutor not supported.')

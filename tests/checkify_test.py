@@ -520,7 +520,8 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       # binary func
       return x / y
 
-    mesh = jax.sharding.Mesh(np.array(jax.devices()), ["dev"])
+    devices = jax.local_devices()[:8] # Taking up to 8 devices
+    mesh = jax.sharding.Mesh(np.array(devices), ["dev"])
     ps = NamedSharding(mesh, jax.sharding.PartitionSpec("dev"))
     inp = np.arange(8)
     x = array.make_array_from_callback(inp.shape, ps, lambda idx: inp[idx])
@@ -1311,7 +1312,7 @@ class LowerableChecksTest(jtu.JaxTestCase):
     config.update("jax_experimental_unsafe_xla_runtime_errors", self.prev)
     super().tearDown()
 
-  @jtu.skip_on_devices("tpu")
+  @jtu.run_on_devices("cpu", "gpu")
   def test_jit(self):
     @jax.jit
     def f(x):
