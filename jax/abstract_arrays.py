@@ -15,10 +15,6 @@
 # TODO(phawkins): fix users of these aliases and delete this file.
 
 from jax._src.abstract_arrays import array_types as _deprecated_array_types
-from jax._src.core import (
-  ShapedArray as _deprecated_ShapedArray,
-  raise_to_shaped as _deprecated_raise_to_shaped,
-)
 
 _deprecations = {
   # Added 06 June 2023
@@ -26,21 +22,11 @@ _deprecations = {
     "jax.abstract_arrays.array_types is deprecated.",
     _deprecated_array_types,
   ),
-  "ShapedArray": (
-    "jax.abstract_arrays.ShapedArray is deprecated. Use jax.core.ShapedArray.",
-    _deprecated_ShapedArray,
-  ),
-  "raise_to_shaped": (
-    "jax.abstract_arrays.raise_to_shaped is deprecated. Use jax.core.raise_to_shaped.",
-    _deprecated_raise_to_shaped,
-  ),
 }
 
 import typing
 if typing.TYPE_CHECKING:
   from jax._src.abstract_arrays import array_types as array_types
-  from jax._src.core import ShapedArray as ShapedArray
-  from jax._src.core import raise_to_shaped as raise_to_shaped
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
