@@ -1479,26 +1479,22 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree):
       memory_space=dst_ref.type.memory_space)
   src = tpu.MemRefSliceOp(src_ref_ty, src_ref, src_starts).result
   dst = tpu.MemRefSliceOp(dst_ref_ty, dst_ref, dst_starts).result
-  if device_id is None:
-    assert src_sem is None
-    return tpu.EnqueueDMAOp(source=src, target=dst, target_semaphore=sem,
-                            source_semaphore=None,
-                            device_id=None).results
-  raise NotImplementedError
+  return tpu.EnqueueDMAOp(source=src, target=dst, target_semaphore=sem,
+                          source_semaphore=src_sem,
+                          device_id=device_id).results
 lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 
 
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree):
-  (src_ref, src_idx, dst_ref, dst_idx, sem, src_sem, device_id) = (
-      tree_util.tree_unflatten(tree, args)
-  )
-  dst_starts, dst_sizes = _indexer_to_start_size(dst_idx)
+  sem, ref, idx = tree_util.tree_unflatten(tree, args)
+  starts, sizes = _indexer_to_start_size(idx)
   ref_ty = ir.MemRefType.get(
-      tuple(dst_sizes), mlir.dtype_to_ir_type(ctx.avals_in[0].dtype),
-      memory_space=dst_ref.type.memory_space)
-  dst = tpu.MemRefSliceOp(ref_ty, dst_ref, dst_starts).result
-  if device_id is None:
-    assert src_sem is None
-    return tpu.WaitDMAOp(sem, dst).results
-  raise NotImplementedError
+      tuple(sizes), mlir.dtype_to_ir_type(ctx.avals_in[1].dtype),
+      memory_space=ref.type.memory_space)
+  ref_slc = tpu.MemRefSliceOp(ref_ty, ref, starts).result
+  return tpu.WaitDMAOp(sem, ref_slc).results
 lowering_rules[tpu_primitives.dma_wait_p] = _dma_wait_lowering_rule
+
+def _device_id_lowering_rule(ctx: LoweringRuleContext):
+  return tpu.DeviceIdOp().result
+lowering_rules[tpu_primitives.device_id_p] = _device_id_lowering_rule

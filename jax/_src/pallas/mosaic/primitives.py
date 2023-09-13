@@ -167,16 +167,33 @@ def _dma_start_abstract_eval(*args, tree):
   del args, tree
   return []
 
-def dma_start(src_ref, src_indices, dst_ref, dst_indices, sem,
-              src_sem=None, device_id=None) -> DMAFuture:
+def dma_start(src_ref, src_indices, dst_ref, dst_indices, sem) -> DMAFuture:
   src_indexer = indexing.NDIndexer.from_indices_shape(src_indices,
                                                       src_ref.shape)
   dst_indexer = indexing.NDIndexer.from_indices_shape(dst_indices,
                                                       dst_ref.shape)
-  args = (src_ref, src_indexer, dst_ref, dst_indexer, sem, src_sem, device_id)
+  args = (src_ref, src_indexer, dst_ref, dst_indexer, sem, None, None)
   flat_args, tree = tree_util.tree_flatten(args)
   dma_start_p.bind(*flat_args, tree=tree)
-  return DMAFuture(flat_args, tree)
+  wait_args, tree = tree_util.tree_flatten((sem, dst_ref, dst_indexer))
+  return DMAFuture(wait_args, tree)
+
+
+def remote_dma_start(src_ref, src_indices, dst_ref, dst_indices, src_sem,
+                     dst_sem, device_id) -> tuple[DMAFuture, DMAFuture]:
+  src_indexer = indexing.NDIndexer.from_indices_shape(src_indices,
+                                                      src_ref.shape)
+  dst_indexer = indexing.NDIndexer.from_indices_shape(dst_indices,
+                                                      dst_ref.shape)
+  args = (src_ref, src_indexer, dst_ref, dst_indexer, dst_sem, src_sem,
+          device_id)
+  flat_args, tree = tree_util.tree_flatten(args)
+  dma_start_p.bind(*flat_args, tree=tree)
+  recv_wait_args = (dst_sem, dst_ref, dst_indexer)
+  recv_args, recv_tree = tree_util.tree_flatten(recv_wait_args)
+  send_wait_args = (src_sem, src_ref, src_indexer)
+  send_args, send_tree = tree_util.tree_flatten(send_wait_args)
+  return DMAFuture(send_args, send_tree), DMAFuture(recv_args, recv_tree)
 
 
 dma_wait_p = jax_core.Primitive('dma_wait')
@@ -186,3 +203,11 @@ dma_wait_p.multiple_results = True
 def _dma_wait_abstract_eval(*args, tree):
   del args, tree
   return []
+
+device_id_p = jax_core.Primitive('device_id')
+
+@device_id_p.def_abstract_eval
+def _device_id_abstract_eval():
+  return jax_core.ShapedArray((), jnp.dtype("int32"))
+
+device_id = device_id_p.bind
