@@ -22,6 +22,9 @@ Remember to align the itemized text with the first line of an item within a list
     {mod}`jax.extend.random`.
   * The internal submodule path `jax.linear_util` has been deprecated. Use
     {mod}`jax.extend.linear_util` instead (Part of {ref}`jax-extend-jep`)
+  * `jax.random.PRNGKeyArray` and `jax.random.KeyArray` are deprecated.  Use {class}`jax.Array`
+    for type annotations, and `jax.dtypes.issubdtype(arr, jax.dtypes.prng_key)`` for runtime
+    detection of typed prng keys.
 
 ## jaxlib 0.4.16
 
