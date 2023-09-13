@@ -321,14 +321,14 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
       jit(lambda x: x + 1)(1)
       self.assertEqual(
-          _counts["/jax/compilation_cache/tasks_using_original_cache"], 1)
+          _counts['/jax/compilation_cache/tasks_using_cache'], 1)
 
       # Verify that the count is incremented only once per task.
       cc.reset_cache()
       cc.initialize_cache(tmpdir)
       jit(lambda x: x + 3)(3)
       self.assertEqual(
-          _counts["/jax/compilation_cache/tasks_using_original_cache"], 1)
+          _counts['/jax/compilation_cache/tasks_using_cache'], 1)
 
   def test_compile_requests_use_cache_metric(self):
     previous_counts = Counter(_counts)

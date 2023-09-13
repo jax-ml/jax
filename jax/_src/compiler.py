@@ -294,7 +294,7 @@ def compile_or_get_cached(
   global _cache_used
   if not _cache_used:
     _cache_used = True
-    monitoring.record_event('/jax/compilation_cache/tasks_using_original_cache')
+    monitoring.record_event('/jax/compilation_cache/tasks_using_cache')
 
   monitoring.record_event('/jax/compilation_cache/compile_requests_use_cache')
 
