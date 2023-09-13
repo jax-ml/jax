@@ -39,5 +39,27 @@ py_binary(
     ]) + if_rocm([
         "//jaxlib/rocm:rocm_gpu_support",
     ]),
-    deps = ["@bazel_tools//tools/python/runfiles"],
+    deps = [
+      "//jax/tools:build_utils",
+      "@bazel_tools//tools/python/runfiles"
+    ],
+)
+
+py_binary(
+    name = "build_gpu_plugin_wheel",
+    srcs = ["build_gpu_plugin_wheel.py"],
+    data = [
+        "LICENSE.txt",
+        "@xla//xla/pjrt/c:pjrt_c_api_gpu_plugin.so",
+    ] + if_cuda([
+        "//jaxlib/cuda:cuda_gpu_support",
+        "//plugins/cuda:pyproject.toml",
+        "//plugins/cuda:setup.py",
+        "//plugins/cuda:__init__.py",
+        "@local_config_cuda//cuda:cuda-nvvm",
+    ]),
+    deps = [
+      "//jax/tools:build_utils",
+      "@bazel_tools//tools/python/runfiles"
+    ],
 )
