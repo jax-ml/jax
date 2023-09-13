@@ -432,7 +432,7 @@ NVIDIA has dropped support for Kepler GPUs in its software.
 You must first install the NVIDIA driver. We
 recommend installing the newest driver available from NVIDIA, but the driver
 must be version >= 525.60.13 for CUDA 12 and >= 450.80.02 for CUDA 11 on Linux.
-If you need to use an newer CUDA toolkit with an older driver, for example
+If you need to use a newer CUDA toolkit with an older driver, for example
 on a cluster where you cannot update the NVIDIA driver easily, you may be
 able to use the
 [CUDA forward compatibility packages](https://docs.nvidia.com/deploy/cuda-compatibility/)
@@ -463,7 +463,7 @@ combinations of operating system and architecture are possible, but require
 
 You should use an NVIDIA driver version that is at least as new as your
 [CUDA toolkit's corresponding driver version](https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html#cuda-major-component-versions__table-cuda-toolkit-driver-versions).
-If you need to use an newer CUDA toolkit with an older driver, for example
+If you need to use a newer CUDA toolkit with an older driver, for example
 on a cluster where you cannot update the NVIDIA driver easily, you may be
 able to use the
 [CUDA forward compatibility packages](https://docs.nvidia.com/deploy/cuda-compatibility/)
