@@ -429,23 +429,6 @@ del register_jax_array_methods
 # Deprecations
 
 _deprecations = {
-    # Added June 2, 2023:
-    "alltrue": (
-        "jax.numpy.alltrue is deprecated. Use jax.numpy.all",
-        all,
-    ),
-    "cumproduct": (
-        "jax.numpy.cumproduct is deprecated. Use jax.numpy.cumprod",
-        cumprod,
-    ),
-    "product": (
-        "jax.numpy.product is deprecated. Use jax.numpy.prod",
-        prod,
-    ),
-    "sometrue": (
-        "jax.numpy.sometrue is deprecated. Use jax.numpy.any",
-        any,
-    ),
     # Added August 10, 2023:
     "NINF": (
         "jax.numpy.NINF is deprecated. Use -jax.numpy.inf instead.",
@@ -483,11 +466,7 @@ _deprecations = {
 
 import typing
 if typing.TYPE_CHECKING:
-  alltrue = all
-  cumproduct = cumprod
-  product = prod
   row_stack = vstack
-  sometrue = any
   NINF = -inf
   NZERO = -0.0
   PZERO = 0.0

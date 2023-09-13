@@ -8,6 +8,13 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.16
 
+* Deprecations
+  * The following deprecated {mod}`jax.numpy` functions have been removed after
+    a three-month deprecation period:
+    * `jax.numpy.alltrue`: use `jax.numpy.all`.
+    * `jax.numpy.sometrue`: use `jax.numpy.any`.
+    * `jax.numpy.product`: use `jax.numpy.prod`.
+    * `jax.numpy.cumproduct`: use `jax.numpy.cumprod`.
 * Internal deprecations/removals:
   * The internal submodule `jax.prng` is now deprecated. Its contents are available at
     {mod}`jax.extend.random`.
