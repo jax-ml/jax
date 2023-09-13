@@ -19,6 +19,7 @@ from functools import partial, reduce
 import math
 import operator as op
 from typing import Any, Callable, NamedTuple
+import warnings
 
 import numpy as np
 
@@ -141,9 +142,6 @@ class PRNGKeyArrayMeta(abc.ABCMeta):
 class PRNGKeyArray(jax.Array, metaclass=PRNGKeyArrayMeta):
   """An array whose elements are PRNG keys"""
 
-  @abc.abstractmethod  # TODO(frostig): rename
-  def unsafe_raw_array(self) -> PRNGKeyArray: ...
-
   @abc.abstractmethod
   def unsafe_buffer_pointer(self) -> int: ...
 
@@ -255,15 +253,6 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
     self.impl = impl
     self._base_array = key_data
 
-  # TODO(frostig): rename to unsafe_base_array, or just offer base_array attr?
-  def unsafe_raw_array(self):
-    """Access the raw numerical array that carries underlying key data.
-
-    Returns:
-      A uint32 JAX array whose leading dimensions are ``self.shape``.
-    """
-    return self._base_array
-
   def block_until_ready(self):
     _ = self._base_array.block_until_ready()
     return self
@@ -301,6 +290,13 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   is_deleted = property(op.attrgetter('_base_array.is_deleted'))  # type: ignore[assignment]
   on_device_size_in_bytes = property(op.attrgetter('_base_array.on_device_size_in_bytes'))  # type: ignore[assignment]
   unsafe_buffer_pointer = property(op.attrgetter('_base_array.unsafe_buffer_pointer'))  # type: ignore[assignment]
+
+  def unsafe_raw_array(self):
+    # deprecated on 13 Sept 2023
+    raise warnings.warn(
+        'The `unsafe_raw_array` method of PRNG key arrays is deprecated. '
+        'Use `jax.random.key_data` instead.', DeprecationWarning, stacklevel=2)
+    return self._base_array
 
   def addressable_data(self, index: int) -> PRNGKeyArrayImpl:
     return PRNGKeyArrayImpl(self.impl, self._base_array.addressable_data(index))
@@ -472,7 +468,7 @@ class KeyTyRules:
 
   @staticmethod
   def physical_const(val) -> Array:
-    return val.unsafe_raw_array()
+    return val._base_array
 
   @staticmethod
   def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
@@ -624,7 +620,7 @@ xla.canonicalize_dtype_handlers[PRNGKeyArrayImpl] = lambda x: x
 def key_array_shard_arg_handler(x: PRNGKeyArrayImpl, devices, indices, sharding):
   aval = x.aval
   key_shape = aval.dtype.impl.key_shape
-  arr = x.unsafe_raw_array()
+  arr = x._base_array
 
   # TODO(yashkatariya,frostig): This assumes that the last dimensions are not
   # sharded. This is only true when enable_custom_prng is True.
@@ -641,7 +637,7 @@ pxla.shard_arg_handlers[PRNGKeyArrayImpl] = key_array_shard_arg_handler
 
 
 def key_array_constant_handler(x):
-  arr = x.unsafe_raw_array()
+  arr = x._base_array
   return mlir.get_constant_handler(type(arr))(arr)
 mlir.register_constant_handler(PRNGKeyArrayImpl, key_array_constant_handler)
 
@@ -740,7 +736,7 @@ def random_split_abstract_eval(keys_aval, *, shape):
 @random_split_p.def_impl
 def random_split_impl(keys, *, shape):
   base_arr = random_split_impl_base(
-      keys.impl, keys.unsafe_raw_array(), keys.ndim, shape=shape)
+      keys.impl, keys._base_array, keys.ndim, shape=shape)
   return PRNGKeyArrayImpl(keys.impl, base_arr)
 
 def random_split_impl_base(impl, base_arr, keys_ndim, *, shape):
@@ -777,7 +773,7 @@ def random_fold_in_abstract_eval(keys_aval, msgs_aval):
 @random_fold_in_p.def_impl
 def random_fold_in_impl(keys, msgs):
   base_arr = random_fold_in_impl_base(
-      keys.impl, keys.unsafe_raw_array(), msgs, keys.shape)
+      keys.impl, keys._base_array, msgs, keys.shape)
   return PRNGKeyArrayImpl(keys.impl, base_arr)
 
 def random_fold_in_impl_base(impl, base_arr, msgs, keys_shape):
@@ -826,7 +822,7 @@ def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
 
 @random_bits_p.def_impl
 def random_bits_impl(keys, *, bit_width, shape):
-  return random_bits_impl_base(keys.impl, keys.unsafe_raw_array(), keys.ndim,
+  return random_bits_impl_base(keys.impl, keys._base_array, keys.ndim,
                                bit_width=bit_width, shape=shape)
 
 def random_bits_impl_base(impl, base_arr, keys_ndim, *, bit_width, shape):
@@ -912,7 +908,7 @@ def random_unwrap_abstract_eval(keys_aval):
 
 @random_unwrap_p.def_impl
 def random_unwrap_impl(keys):
-  return keys.unsafe_raw_array()
+  return keys._base_array
 
 def random_unwrap_lowering(ctx, keys):
   return [keys]

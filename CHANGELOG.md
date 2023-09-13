@@ -17,6 +17,7 @@ Remember to align the itemized text with the first line of an item within a list
     * `jax.numpy.sometrue`: use `jax.numpy.any`.
     * `jax.numpy.product`: use `jax.numpy.prod`.
     * `jax.numpy.cumproduct`: use `jax.numpy.cumprod`.
+
 * Internal deprecations/removals:
   * The internal submodule `jax.prng` is now deprecated. Its contents are available at
     {mod}`jax.extend.random`.
@@ -25,6 +26,8 @@ Remember to align the itemized text with the first line of an item within a list
   * `jax.random.PRNGKeyArray` and `jax.random.KeyArray` are deprecated.  Use {class}`jax.Array`
     for type annotations, and `jax.dtypes.issubdtype(arr, jax.dtypes.prng_key)`` for runtime
     detection of typed prng keys.
+  * The method `PRNGKeyArray.unsafe_raw_array` is deprecated. Use
+    {func}`jax.random.key_data` instead.
 
 ## jaxlib 0.4.16
 

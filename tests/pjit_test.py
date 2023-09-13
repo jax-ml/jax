@@ -1210,7 +1210,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       out = f(seeds)
       self.assertTrue(jax.dtypes.issubdtype(out.dtype, jax.dtypes.prng_key))
       self.assertEqual(out.shape, input_shape)
-      out.unsafe_raw_array()  # doesn't crash
+      jax.random.key_data(out)  # doesn't crash
 
   def test_with_sharding_constraint_is_compatible_error(self):
     mesh = jtu.create_global_mesh((1, 1, 2), ('replica', 'data', 'mdl'))
@@ -1843,7 +1843,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = make_keys(seeds)
     self.assertTrue(jax.dtypes.issubdtype(out.dtype, jax.dtypes.prng_key))
     self.assertEqual(out.shape, input_shape)
-    out.unsafe_raw_array()  # doesn't crash
+    jax.random.key_data(out)  # doesn't crash
 
   def test_globally_sharded_key_array_8x4_multi_device_with_out_sharding(self):
     input_shape = (8, 4)
@@ -1860,7 +1860,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = make_keys(seeds)
     self.assertTrue(jax.dtypes.issubdtype(out.dtype, jax.dtypes.prng_key))
     self.assertEqual(out.shape, input_shape)
-    out.unsafe_raw_array()  # doesn't crash
+    jax.random.key_data(out)  # doesn't crash
 
   def test_globally_sharded_key_array_8x4_multi_device(self):
     input_shape = (8, 4)
@@ -1877,7 +1877,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = make_keys(seeds)
     self.assertTrue(jax.dtypes.issubdtype(out.dtype, jax.dtypes.prng_key))
     self.assertEqual(out.shape, input_shape)
-    out.unsafe_raw_array()  # doesn't crash
+    jax.random.key_data(out)  # doesn't crash
 
   def test_array_device_assignment_mismatch_out_shardings(self):
     input_shape = (8, 2)

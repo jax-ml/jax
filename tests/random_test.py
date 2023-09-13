@@ -55,7 +55,7 @@ uint_dtypes = jtu.dtypes.all_unsigned
 def _prng_key_as_array(key):
   # TODO(frostig): remove some day when we deprecate "raw" key arrays
   if jnp.issubdtype(key.dtype, dtypes.prng_key):
-    return key.unsafe_raw_array()
+    return random.key_data(key)
   else:
     return key
 
@@ -1788,7 +1788,7 @@ class KeyArrayTest(jtu.JaxTestCase):
 
   def test_key_dtype_attributes(self):
     key = self.make_keys()
-    key_raw = key.unsafe_raw_array()
+    key_raw = random.key_data(key)
 
     self.assertStartsWith(key.dtype.name, "key")
     self.assertEqual(key.size * key.dtype.itemsize,
@@ -2251,8 +2251,8 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
     vmapped_keys = vmap(random.split)(mapped_keys)
     self.assertEqual(vmapped_keys.shape, (3, 2))
     for fk, vk in zip(forloop_keys, vmapped_keys):
-      self.assertArraysEqual(fk.unsafe_raw_array(),
-                             vk.unsafe_raw_array())
+      self.assertArraysEqual(random.key_data(fk),
+                             random.key_data(vk))
 
   def test_cannot_add(self):
     key = self.make_key(73)
@@ -2379,16 +2379,17 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(out_key.shape, out_like_key.shape)
 
   def check_against_reference(self, key_func, arr_func, *key_args):
-    out_arr = arr_func(*tree_util.tree_map(lambda x: x.unsafe_raw_array(), key_args))
+    out_arr = arr_func(*tree_util.tree_map(lambda x: random.key_data(x),
+                                           key_args))
     self.assertIsInstance(out_arr, jax.Array)
 
     out_key = key_func(*key_args)
     self.assertIsInstance(out_key, jax_random.PRNGKeyArray)
-    self.assertArraysEqual(out_key.unsafe_raw_array(), out_arr)
+    self.assertArraysEqual(random.key_data(out_key), out_arr)
 
     out_key = jax.jit(key_func)(*key_args)
     self.assertIsInstance(out_key, jax_random.PRNGKeyArray)
-    self.assertArraysEqual(out_key.unsafe_raw_array(), out_arr)
+    self.assertArraysEqual(random.key_data(out_key), out_arr)
 
   @parameterized.parameters([
     [(2, 3), 'shape', (2, 3)],
