@@ -21,7 +21,7 @@ from jax import config
 import jax.dlpack
 import jax.numpy as jnp
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version
+from jax._src.lib import xla_extension, xla_extension_version
 
 import numpy as np
 
@@ -69,14 +69,14 @@ class DLPackTest(jtu.JaxTestCase):
     shape=all_shapes,
     dtype=dlpack_dtypes,
     take_ownership=[False, True],
-    gpu=[False, True],
+    test_device=["cpu", "gpu"],
   )
-  def testJaxRoundTrip(self, shape, dtype, take_ownership, gpu):
+  def testJaxRoundTrip(self, shape, dtype, take_ownership, test_device):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
-    if gpu and jax.default_backend() == "cpu":
-      raise unittest.SkipTest("Skipping GPU test case on CPU")
-    device = jax.devices("gpu" if gpu else "cpu")[0]
+    if test_device != "cpu" and test_device != jax.default_backend():
+      raise unittest.SkipTest("Skipping a test case due to unavailable backend")
+    device = jax.devices(test_device)[0]
     x = jax.device_put(np, device)
     dlpack = jax.dlpack.to_dlpack(x, take_ownership=take_ownership)
     self.assertEqual(take_ownership, x.is_deleted())
@@ -180,13 +180,26 @@ class DLPackTest(jtu.JaxTestCase):
     dtype=numpy_dtypes,
   )
   @unittest.skipIf(numpy_version < (1, 23, 0), "Requires numpy 1.23 or newer")
-  @jtu.skip_on_devices("gpu") #NumPy only accepts cpu DLPacks
+  @jtu.skip_on_devices("gpu", "xpu") #NumPy only accepts cpu DLPacks
   def testJaxToNumpy(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     x_jax = jnp.array(rng(shape, dtype))
     x_np = np.from_dlpack(x_jax)
     self.assertAllClose(x_np, x_jax)
 
+
+  @jtu.sample_product(
+    take_ownership=[True, False]
+  )
+  def testJaxRoundTripXpu(self, take_ownership):
+    rng = jtu.rand_default(self.rng())
+    np = rng((3, 4), jnp.float32)
+    if jax.default_backend() != "xpu":
+      raise unittest.SkipTest("Skipping a test case due to unavailable XPU backend")
+    x = jax.device_put(np, jax.devices("xpu")[0])
+    self.assertRaisesRegex(xla_extension.XlaRuntimeError,
+                           "UNIMPLEMENTED: PJRT C API does not support",
+                           lambda: jax.dlpack.to_dlpack(x, take_ownership=take_ownership))
 
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
