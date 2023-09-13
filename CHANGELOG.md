@@ -9,8 +9,10 @@ Remember to align the itemized text with the first line of an item within a list
 ## jax 0.4.16
 
 * Deprecations
-  * The following deprecated {mod}`jax.numpy` functions have been removed after
-    a three-month deprecation period:
+  * The following previously-deprecated functions have been removed after a
+    three-month deprecation period:
+    * `jax.abstract_arrays.ShapedArray`: use `jax.core.ShapedArray`.
+    * `jax.abstract_arrays.raise_to_shaped`: use `jax.core.raise_to_shaped`.
     * `jax.numpy.alltrue`: use `jax.numpy.all`.
     * `jax.numpy.sometrue`: use `jax.numpy.any`.
     * `jax.numpy.product`: use `jax.numpy.prod`.
