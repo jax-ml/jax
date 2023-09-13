@@ -1733,7 +1733,7 @@ class KeyArrayTest(jtu.JaxTestCase):
 
   def test_construction(self):
     key = random.key(42)
-    self.assertIsInstance(key, random.PRNGKeyArray)
+    self.assertIsInstance(key, jax_random.PRNGKeyArray)
 
   def test_issubdtype(self):
     key = random.key(42)
@@ -1743,7 +1743,7 @@ class KeyArrayTest(jtu.JaxTestCase):
   @skipIf(not config.jax_enable_custom_prng, 'relies on typed key upgrade flag')
   def test_construction_upgrade_flag(self):
     key = random.PRNGKey(42)
-    self.assertIsInstance(key, random.PRNGKeyArray)
+    self.assertIsInstance(key, jax_random.PRNGKeyArray)
 
   def make_keys(self, *shape, seed=28):
     seeds = seed + jnp.arange(math.prod(shape), dtype=jnp.uint32)
@@ -1797,13 +1797,13 @@ class KeyArrayTest(jtu.JaxTestCase):
   def test_isinstance(self):
     @jax.jit
     def f(k):
-      self.assertIsInstance(k, random.KeyArray)
+      self.assertIsInstance(k, jax_random.PRNGKeyArray)
       return k
 
     k1 = self.make_keys()
     k2 = f(k1)
-    self.assertIsInstance(k1, random.KeyArray)
-    self.assertIsInstance(k2, random.KeyArray)
+    self.assertIsInstance(k1, jax_random.PRNGKeyArray)
+    self.assertIsInstance(k2, jax_random.PRNGKeyArray)
 
   def test_cpp_dispatch_normal(self):
     # Ensure we stay on the C++ dispatch path when calling a jitted
@@ -1868,10 +1868,10 @@ class KeyArrayTest(jtu.JaxTestCase):
     f = partial(prng_internal.random_wrap, impl=prng_internal.threefry_prng_impl)
     base_arr = jnp.arange(6, dtype=jnp.uint32).reshape(3, 2)
     keys = jax.vmap(f, in_axes=0)(base_arr)
-    self.assertIsInstance(keys, random.KeyArray)
+    self.assertIsInstance(keys, jax_random.PRNGKeyArray)
     self.assertEqual(keys.shape, (3,))
     keys = jax.vmap(f, in_axes=1)(base_arr.T)
-    self.assertIsInstance(keys, random.KeyArray)
+    self.assertIsInstance(keys, jax_random.PRNGKeyArray)
     self.assertEqual(keys.shape, (3,))
 
   @jtu.sample_product(use_internal=[False, True])
@@ -1968,20 +1968,20 @@ class KeyArrayTest(jtu.JaxTestCase):
     ks = self.make_keys(3, 4)
     f = lambda ks: jax.lax.scan(lambda _, k: (None, k.T), None, ks)
     _, out = jax.jit(f)(ks)  # doesn't crash
-    self.assertIsInstance(out, random.KeyArray)
+    self.assertIsInstance(out, jax_random.PRNGKeyArray)
     self.assertEqual(out.shape, (3, 4))
 
   def test_slice(self):
     ks = self.make_keys(3, 4)
     ys = jax.jit(lambda x: lax.slice_in_dim(x, 1, 3))(ks)
-    self.assertIsInstance(ys, random.KeyArray)
+    self.assertIsInstance(ys, jax_random.PRNGKeyArray)
     self.assertEqual(ys.shape, (2, 4))
 
   def test_dynamic_slice(self):
     ks = self.make_keys(3, 4)
     index = np.int16(1)  # non-default int type to catch type errors.
     ys = jax.jit(partial(lax.dynamic_slice_in_dim, slice_size=2))(ks, index)
-    self.assertIsInstance(ys, random.KeyArray)
+    self.assertIsInstance(ys, jax_random.PRNGKeyArray)
     self.assertEqual(ys.shape, (2, 4))
 
   def test_dynamic_update_slice(self):
@@ -1989,51 +1989,51 @@ class KeyArrayTest(jtu.JaxTestCase):
     k = self.make_keys(1, 4)
     index = np.int16(1)  # non-default int type to catch type errors.
     ys = jax.jit(partial(lax.dynamic_update_slice_in_dim, axis=0))(ks, k, index)
-    self.assertIsInstance(ys, random.KeyArray)
+    self.assertIsInstance(ys, jax_random.PRNGKeyArray)
     self.assertEqual(ys.shape, (3, 4))
 
   def test_transpose(self):
     ks = self.make_keys(3, 4)
     ys = jax.jit(lambda x: x.T)(ks)
-    self.assertIsInstance(ys, random.KeyArray)
+    self.assertIsInstance(ys, jax_random.PRNGKeyArray)
     self.assertEqual(ys.shape, (4, 3))
 
   def test_gather(self):
     ks = self.make_keys(3, 4)
     ys = jax.jit(lambda x: x[1])(ks)
-    self.assertIsInstance(ys, random.KeyArray)
+    self.assertIsInstance(ys, jax_random.PRNGKeyArray)
     self.assertEqual(ys.shape, (4,))
 
     ks = self.make_keys(3, 4, 5)
 
     ys = jax.jit(lambda x: x[1])(ks)
-    self.assertIsInstance(ys, random.KeyArray)
+    self.assertIsInstance(ys, jax_random.PRNGKeyArray)
     self.assertEqual(ys.shape, (4, 5))
 
     ys = jax.jit(lambda x: x[1, 2:4])(ks)
-    self.assertIsInstance(ys, random.KeyArray)
+    self.assertIsInstance(ys, jax_random.PRNGKeyArray)
     self.assertEqual(ys.shape, (2, 5))
 
     ys = jax.jit(lambda x: x[1, 2:4, 3])(ks)
-    self.assertIsInstance(ys, random.KeyArray)
+    self.assertIsInstance(ys, jax_random.PRNGKeyArray)
     self.assertEqual(ys.shape, (2,))
 
     ys = jax.jit(lambda x: x[:, 2:4, 3:4])(ks)
-    self.assertIsInstance(ys, random.KeyArray)
+    self.assertIsInstance(ys, jax_random.PRNGKeyArray)
     self.assertEqual(ys.shape, (3, 2, 1))
 
   def test_select(self):
     ks = self.make_keys(3, 2)
     cs = jnp.array([True, False, False, True, False, True]).reshape(3, 2)
     ys = jax.jit(lax.select)(cs, ks, ks)
-    self.assertIsInstance(ys, random.KeyArray)
+    self.assertIsInstance(ys, jax_random.PRNGKeyArray)
     self.assertEqual(ys.shape, (3, 2))
 
   def test_select_scalar_cond(self):
     # regression test for https://github.com/google/jax/issues/16422
     ks = self.make_keys(3)
     ys = lax.select(True, ks, ks)
-    self.assertIsInstance(ys, random.KeyArray)
+    self.assertIsInstance(ys, jax_random.PRNGKeyArray)
     self.assertEqual(ys.shape, (3,))
 
   def test_vmap_of_cond(self):
@@ -2106,7 +2106,7 @@ class KeyArrayTest(jtu.JaxTestCase):
     custom_result = jax.grad(f)(0.0, key)
 
     self.assertAllClose(default_result, custom_result)
-    self.assertIsInstance(key_dot, random.PRNGKeyArray)
+    self.assertIsInstance(key_dot, jax_random.PRNGKeyArray)
     self.assertArraysEqual(random.key_data(key_dot), np.uint32(0))
 
   def test_key_array_indexing_0d(self):
@@ -2373,7 +2373,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
   def check_shape(self, func, *args):
     like = lambda keys: jnp.ones(keys.shape)
     out_key = func(*args)
-    self.assertIsInstance(out_key, random.KeyArray)
+    self.assertIsInstance(out_key, jax_random.PRNGKeyArray)
     out_like_key = func(*tree_util.tree_map(like, args))
     self.assertIsInstance(out_like_key, jax.Array)
     self.assertEqual(out_key.shape, out_like_key.shape)
@@ -2383,11 +2383,11 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(out_arr, jax.Array)
 
     out_key = key_func(*key_args)
-    self.assertIsInstance(out_key, random.KeyArray)
+    self.assertIsInstance(out_key, jax_random.PRNGKeyArray)
     self.assertArraysEqual(out_key.unsafe_raw_array(), out_arr)
 
     out_key = jax.jit(key_func)(*key_args)
-    self.assertIsInstance(out_key, random.KeyArray)
+    self.assertIsInstance(out_key, jax_random.PRNGKeyArray)
     self.assertArraysEqual(out_key.unsafe_raw_array(), out_arr)
 
   @parameterized.parameters([

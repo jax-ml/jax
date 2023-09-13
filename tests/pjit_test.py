@@ -1208,7 +1208,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       f = pjit(make_keys, in_shardings=P(None), out_shardings=P(None))
 
       out = f(seeds)
-      self.assertIsInstance(out, jax.random.KeyArray)
+      self.assertTrue(jax.dtypes.issubdtype(out.dtype, jax.dtypes.prng_key))
       self.assertEqual(out.shape, input_shape)
       out.unsafe_raw_array()  # doesn't crash
 
@@ -1841,7 +1841,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return make_key(seeds)
 
     out = make_keys(seeds)
-    self.assertIsInstance(out, jax.random.KeyArray)
+    self.assertTrue(jax.dtypes.issubdtype(out.dtype, jax.dtypes.prng_key))
     self.assertEqual(out.shape, input_shape)
     out.unsafe_raw_array()  # doesn't crash
 
@@ -1858,7 +1858,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return make_key(seeds)
 
     out = make_keys(seeds)
-    self.assertIsInstance(out, jax.random.KeyArray)
+    self.assertTrue(jax.dtypes.issubdtype(out.dtype, jax.dtypes.prng_key))
     self.assertEqual(out.shape, input_shape)
     out.unsafe_raw_array()  # doesn't crash
 
@@ -1875,7 +1875,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return make_key(seeds)
 
     out = make_keys(seeds)
-    self.assertIsInstance(out, jax.random.KeyArray)
+    self.assertTrue(jax.dtypes.issubdtype(out.dtype, jax.dtypes.prng_key))
     self.assertEqual(out.shape, input_shape)
     out.unsafe_raw_array()  # doesn't crash
 
@@ -2247,17 +2247,17 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     x = jax.random.split(jax.random.PRNGKey(0), len(jax.devices()))
     y = jax.device_put(x, s)
-    self.assertIsInstance(y, jax.random.KeyArray)
+    self.assertTrue(jax.dtypes.issubdtype(y.dtype, jax.dtypes.prng_key))
     self.assertEqual(y.sharding, s)
 
     s1 = SingleDeviceSharding(jax.devices()[1])
     z = jax.device_put(x, s1)
-    self.assertIsInstance(z, jax.random.KeyArray)
+    self.assertTrue(jax.dtypes.issubdtype(z.dtype, jax.dtypes.prng_key))
     self.assertEqual(z.sharding, s1)
 
     out_p = jax.pmap(lambda x: x)(np.arange(jax.device_count()))
     a = jax.device_put(x, out_p.sharding)
-    self.assertIsInstance(a, jax.random.KeyArray)
+    self.assertTrue(jax.dtypes.issubdtype(a.dtype, jax.dtypes.prng_key))
     self.assertEqual(a.sharding, out_p.sharding)
 
     op = xc.OpSharding()
@@ -2266,7 +2266,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     op.tile_assignment_devices = [0, 1, 2, 3, 4, 5, 6, 7]
     gs = GSPMDSharding(tuple(mesh.devices.flat), op)
     b = jax.device_put(x, gs)
-    self.assertIsInstance(b, jax.random.KeyArray)
+    self.assertTrue(jax.dtypes.issubdtype(b.dtype, jax.dtypes.prng_key))
     self.assertEqual(b.sharding, gs)
 
   def test_device_put_on_different_sharding(self):

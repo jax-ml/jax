@@ -1475,10 +1475,9 @@ def custom_numeric(
 
 def custom_random_keys_output():
   def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
-    # TODO(frostig): Don't need this conditional once we always
-    # enable_custom_prng. We can even assert the isinstance instead.
+    # Here we handle both new-style and old-style keys; see JEP 9263
     def unwrap_keys(keys):
-      if isinstance(keys, jax.random.KeyArray):
+      if jax.dtypes.issubdtype(keys.dtype, jax.dtypes.prng_key):
         return jax._src.prng.random_unwrap(keys)
       else:
         return keys

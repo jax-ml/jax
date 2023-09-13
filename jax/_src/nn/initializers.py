@@ -23,6 +23,7 @@ from typing import Any, Literal, Protocol, Union
 
 import numpy as np
 
+import jax
 import jax.numpy as jnp
 from jax import lax
 from jax import random
@@ -32,7 +33,7 @@ from jax._src.util import set_module
 
 export = set_module('jax.nn.initializers')
 
-KeyArray = random.KeyArray
+KeyArray = jax.Array
 Array = Any
 # TODO: Import or define these to match
 # https://github.com/numpy/numpy/blob/main/numpy/typing/_dtype_like.py.
