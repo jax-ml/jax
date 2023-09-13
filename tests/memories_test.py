@@ -995,6 +995,9 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     # self.assertDeleted(x)
 
   def test_remat_jaxpr_offloadable(self):
+    mesh = jtu.create_global_mesh((2,), ("x",))
+    inp = jax.device_put(np.arange(16.), NamedSharding(mesh, P("x")))
+
     def policy(prim, *avals, **params):
       return Offloadable(src="tpu_hbm", dst="unpinned_host")
 
@@ -1003,9 +1006,9 @@ class MemoriesTest(jtu.BufferDonationTestCase):
       x = jnp.sin(x)
       x = jnp.sin(x)
       x = jnp.sin(x)
-      return x
+      return jnp.sum(x)
 
-    fwd_jaxpr, bwd_jaxpr = jtu.fwd_bwd_jaxprs(f, jnp.ones((3)))
+    fwd_jaxpr, bwd_jaxpr = jtu.fwd_bwd_jaxprs(f, inp)
 
     self.assertLen(fwd_jaxpr.out_avals, 4) # 1 output, 3 offloaded residuals
     fwd_mem_kind_count = str(fwd_jaxpr).count(
@@ -1018,6 +1021,9 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     self.assertEqual(bwd_mem_kind_count, 3)
 
   def test_remat_scan_jaxpr_offloadable(self):
+    mesh = jtu.create_global_mesh((2,), ("x",))
+    inp = jax.device_put(np.arange(16.), NamedSharding(mesh, P("x")))
+
     def policy(prim, *avals, **params):
       return Offloadable(src="tpu_hbm", dst="unpinned_host")
 
@@ -1030,7 +1036,7 @@ class MemoriesTest(jtu.BufferDonationTestCase):
         return y, None
       return jax.lax.scan(g, x, None, length=1)[0]
 
-    fwd_jaxpr, bwd_jaxpr = jtu.fwd_bwd_jaxprs(f, jnp.ones((3)))
+    fwd_jaxpr, bwd_jaxpr = jtu.fwd_bwd_jaxprs(f, inp)
 
     self.assertLen(fwd_jaxpr.out_avals, 4) # 1 output, 3 offloaded residuals
     fwd_mem_kind_count = str(fwd_jaxpr).count(
