@@ -699,11 +699,19 @@ class TiledRectangularVRegBounds(VRegDataBounds):
   def get_vector_mask(self, generation: int) -> ir.Value:
     """See base class."""
     i1 = ir.IntegerType.get_signless(1)
-    if self.mask_varies_along(SUBELEMENTS) and generation >= 4:
-      # I'm pretty sure this works for all bitwidths, but it's untested.
-      if self.layout.packing != 2:
-        raise NotImplementedError
-      mask_vreg_ty = ir.VectorType.get((*TARGET_SHAPE, 2), i1)
+    # I'm pretty sure this works for all bitwidths, but it's untested.
+    if self.mask_varies_along(SUBELEMENTS):
+      if self.layout.packing > 2:
+        raise NotImplementedError  # TODO(b/300082350): Generalize this
+      # For older TPUs, we virtualize masking, but only for simple cases.
+      if generation < 4:
+        if self.num_tiles > 1:
+          raise NotImplementedError
+        mask_vreg_ty = ir.VectorType.get(TARGET_SHAPE, i1)
+      else:
+        mask_vreg_ty = ir.VectorType.get(
+            (*TARGET_SHAPE, self.layout.packing), i1
+        )
     else:
       mask_vreg_ty = ir.VectorType.get(TARGET_SHAPE, i1)
     if self.complete:

@@ -37,16 +37,14 @@ def _tiling_factor(
     hardware_generation: An integer indicating the target TPU generation.
     bitwidth: The bitwidth of the element type of the operand.
   """
-  if num_128s == 1 and hardware_generation >= 4 and bitwidth == 32:
-    return 1
-  elif num_128s <= 2 and (
-      bitwidth == 32 or (hardware_generation >= 4 and bitwidth == 16)
-  ):
-    return 2
-  elif num_128s <= 4:
-    return 4
-  else:
-    return 8
+  assert bitwidth.bit_count() == 1 and (4 <= bitwidth <= 32)
+  packing = 32 // bitwidth
+  min_tiling = (1 + (hardware_generation < 4)) * packing
+  max_tiling = 8
+  tiling = min_tiling
+  while tiling < min(num_128s, max_tiling):
+    tiling *= 2
+  return tiling
 
 
 def infer_memref(
