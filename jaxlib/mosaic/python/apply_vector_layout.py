@@ -1214,7 +1214,7 @@ def relayout(
       and dst.implicit_dim is None
       and src.bitwidth == 32
       and src.offsets == (0, 0)
-      and dst.offsets == (REPLICATED, 0)
+      and (dst.offsets == (REPLICATED, 0) or dst.offsets == (0, 0))
       and src.tiling == (1, 128)
       and dst.tiling == (8, 128)
       and src_tiles.shape[-2] == 1
