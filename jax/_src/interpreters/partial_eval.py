@@ -1121,7 +1121,7 @@ def partial_eval_jaxpr_custom(
     in_inst: bool | Sequence[bool],
     ensure_out_unknowns: bool | Sequence[bool],
     ensure_out_inst: bool | Sequence[bool],
-    saveable: Callable[..., bool],
+    saveable: Callable[..., RematCases_],
   ) -> tuple[Jaxpr, Jaxpr, list[bool], list[bool], int]:
   if type(in_inst) is bool:
     in_inst = (in_inst,) * len(jaxpr.invars)
@@ -1145,7 +1145,7 @@ def partial_eval_jaxpr_stateful(
     in_inst: bool | Sequence[bool],
     ensure_out_unknowns: bool | Sequence[bool],
     ensure_out_inst: bool | Sequence[bool],
-    saveable: Callable[..., bool],
+    saveable: Callable[..., RematCases_],
   ) -> tuple[Jaxpr, Jaxpr, list[bool], list[bool], int, int]:
   if type(in_inst) is bool:
     in_inst = (in_inst,) * len(jaxpr.invars)
@@ -1167,7 +1167,7 @@ def _partial_eval_jaxpr_custom_cached(
     in_inst: tuple[bool, ...],
     ensure_out_unknowns: tuple[bool, ...],
     ensure_out_inst: tuple[bool, ...],
-    saveable: Callable[..., bool],
+    saveable: Callable[..., RematCases_],
   ) -> tuple[Jaxpr, Jaxpr, list[bool], list[bool], int, int]:
   env: dict[Var, tuple[bool, bool]] = {}
   residuals: OrderedSet[Var] = OrderedSet()
@@ -1187,6 +1187,7 @@ def _partial_eval_jaxpr_custom_cached(
       residuals.add(x)
     return x
 
+  newvar = core.gensym(suffix='_offload')
   known_eqns, staged_eqns = [], []
   map(write, in_unknowns, in_inst, jaxpr.invars)
   map(partial(write, False, True), jaxpr.constvars)
@@ -1209,10 +1210,30 @@ def _partial_eval_jaxpr_custom_cached(
     else:
       known_eqns.append(eqn)
       # If it's an effectful primitive, we always to run and avoid staging it.
-      if eqn.effects or saveable(
-          eqn.primitive, *[x.aval for x in eqn.invars], **eqn.params):
+      policy = ensure_enum(saveable(
+          eqn.primitive, *[x.aval for x in eqn.invars], **eqn.params))
+      if eqn.effects or isinstance(policy, SaveableType):
         map(partial(write, False, False), eqn.outvars)
+      elif isinstance(policy, Offloadable):
+        from jax._src.dispatch import device_put_p, TransferToMemoryKind  # type: ignore
+        resvars = [newvar(v.aval) for v in eqn.outvars]
+        offload_eqn = core.JaxprEqn(
+            eqn.outvars, resvars, device_put_p,
+            dict(device=TransferToMemoryKind(policy.dst), src=None),
+            set(), source_info_util.new_source_info())
+        known_eqns.append(offload_eqn)
+        # resvars are known and available in the backward jaxpr.
+        map(partial(write, False, True), resvars)
+        residuals.update(resvars)
+        reload_eqn = core.JaxprEqn(
+            resvars, eqn.outvars, device_put_p,  # type: ignore
+            dict(device=TransferToMemoryKind(policy.src), src=None),
+            set(), source_info_util.new_source_info())
+        staged_eqns.append(reload_eqn)
+        # outvars are known and available in the backward jaxpr.
+        map(partial(write, False, True), eqn.outvars)
       else:
+        assert isinstance(policy, RecomputeType)
         inputs = map(ensure_instantiated, inst_in, eqn.invars)
         staged_eqns.append(eqn.replace(invars=inputs))
         map(partial(write, False, True), eqn.outvars)
@@ -1249,6 +1270,27 @@ def _partial_eval_jaxpr_custom_cached(
   return (jaxpr_known, jaxpr_staged, out_unknowns, out_inst, len(residuals),
           len(non_input_res_refs))
 
+
+MemoryKind = str
+
+class RecomputeType: pass
+Recompute = RecomputeType()
+
+class SaveableType: pass
+Saveable = SaveableType()
+
+class Offloadable(NamedTuple):
+  src: MemoryKind
+  dst: MemoryKind
+
+RematCases = Union[RecomputeType, SaveableType, Offloadable]
+RematCases_ = Union[RematCases, bool]
+
+def ensure_enum(case: bool | RematCases) -> RematCases:
+  if isinstance(case, bool):
+    return Saveable if case else Recompute
+  return case
+
 # A primitive rule for policy-driven partial evaluation returns a 5-tuple
 # with the components representing, respectively:
 #  * the JaxprEqn for the 'known' side (or None if there is no known component),
@@ -1262,12 +1304,12 @@ def _partial_eval_jaxpr_custom_cached(
 PartialEvalCustomResult = tuple[Optional[JaxprEqn], Optional[JaxprEqn],
                                 Sequence[bool], Sequence[bool], list[Var]]
 PartialEvalCustomRule = Callable[
-    [Callable[..., bool], Sequence[bool], Sequence[bool], JaxprEqn],
+    [Callable[..., RematCases_], Sequence[bool], Sequence[bool], JaxprEqn],
     PartialEvalCustomResult]
 partial_eval_jaxpr_custom_rules: dict[Primitive, PartialEvalCustomRule] = {}
 
 def partial_eval_jaxpr_custom_rule_not_implemented(
-    name: str, saveable: Callable[..., bool], unks_in: Sequence[bool],
+    name: str, saveable: Callable[..., RematCases_], unks_in: Sequence[bool],
     inst_in: Sequence[bool], eqn: JaxprEqn) -> PartialEvalCustomResult:
   msg = (f'custom-policy remat rule not implemented for {name}, '
          'open a feature request at https://github.com/google/jax/issues!')
@@ -1287,7 +1329,7 @@ def trivial_ctx(_): yield
 
 def call_partial_eval_custom_rule(
     jaxpr_param_name: str, params_updater: ParamsUpdater,
-    saveable: Callable[..., bool], unks_in: list[bool], inst_in: list[bool],
+    saveable: Callable[..., RematCases_], unks_in: list[bool], inst_in: list[bool],
     eqn: JaxprEqn, *, res_aval: ResAvalUpdater = _default_res_aval_updater,
     ctx: Callable[[core.ParamDict], AbstractContextManager[None]] = trivial_ctx,
   ) -> tuple[JaxprEqn, JaxprEqn, Sequence[bool], Sequence[bool], list[Var]]:
@@ -1319,7 +1361,7 @@ def call_partial_eval_custom_rule(
 
 def closed_call_partial_eval_custom_rule(
     jaxpr_param_name: str, params_updater: ParamsUpdater,
-    saveable: Callable[..., bool], unks_in: list[bool], inst_in: list[bool],
+    saveable: Callable[..., RematCases_], unks_in: list[bool], inst_in: list[bool],
     eqn: JaxprEqn, *, res_aval: ResAvalUpdater = _default_res_aval_updater,
   ) -> tuple[JaxprEqn, JaxprEqn, Sequence[bool], Sequence[bool], list[Var]]:
   # TODO(sharadmv,mattjj): dedup this rule with call_partial_eval_custom_rule.

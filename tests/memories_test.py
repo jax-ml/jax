@@ -22,6 +22,7 @@ import jax
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
+from jax.ad_checkpoint import Offloadable, remat
 from jax._src.sharding_impls import (NamedSharding, PositionalSharding,
                                      SingleDeviceSharding, GSPMDSharding,
                                      TransferToMemoryKind,
@@ -972,6 +973,54 @@ class MemoriesTest(jtu.JaxTestCase):
 
     lowered_text = f.lower(x).as_text("hlo")
     self.assertIn("input_output_alias", lowered_text)
+
+  def test_remat_jaxpr_offloadable(self):
+    def policy(prim, *avals, **params):
+      return Offloadable(src="tpu_hbm", dst="unpinned_host")
+
+    @functools.partial(remat, policy=policy)
+    def f(x):
+      x = jnp.sin(x)
+      x = jnp.sin(x)
+      x = jnp.sin(x)
+      return x
+
+    fwd_jaxpr, bwd_jaxpr = jtu.fwd_bwd_jaxprs(f, jnp.ones((3)))
+
+    self.assertLen(fwd_jaxpr.out_avals, 4) # 1 output, 3 offloaded residuals
+    fwd_mem_kind_count = str(fwd_jaxpr).count(
+        "TransferToMemoryKind(memory_kind='unpinned_host')")
+    self.assertEqual(fwd_mem_kind_count, 3)
+
+    self.assertLen(bwd_jaxpr.in_avals, 4) # 3 offloaded residuals, 1 input
+    bwd_mem_kind_count = str(bwd_jaxpr).count(
+        "TransferToMemoryKind(memory_kind='tpu_hbm')")
+    self.assertEqual(bwd_mem_kind_count, 3)
+
+  def test_remat_scan_jaxpr_offloadable(self):
+    def policy(prim, *avals, **params):
+      return Offloadable(src="tpu_hbm", dst="unpinned_host")
+
+    @functools.partial(remat, policy=policy)
+    def f(x):
+      def g(y, _):
+        y = jnp.sin(y)
+        y = jnp.sin(y)
+        y = jnp.sin(y)
+        return y, None
+      return jax.lax.scan(g, x, None, length=1)[0]
+
+    fwd_jaxpr, bwd_jaxpr = jtu.fwd_bwd_jaxprs(f, jnp.ones((3)))
+
+    self.assertLen(fwd_jaxpr.out_avals, 4) # 1 output, 3 offloaded residuals
+    fwd_mem_kind_count = str(fwd_jaxpr).count(
+        "TransferToMemoryKind(memory_kind='unpinned_host')")
+    self.assertEqual(fwd_mem_kind_count, 3)
+
+    self.assertLen(bwd_jaxpr.in_avals, 4) # 3 offloaded residuals, 1 input
+    bwd_mem_kind_count = str(bwd_jaxpr).count(
+        "TransferToMemoryKind(memory_kind='tpu_hbm')")
+    self.assertEqual(bwd_mem_kind_count, 3)
 
 
 if __name__ == "__main__":

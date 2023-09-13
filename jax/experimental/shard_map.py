@@ -1414,7 +1414,7 @@ core.axis_substitution_rules[shard_map_p] = _shard_map_axis_subst
 # Remat
 
 def _partial_eval_jaxpr_custom_rule(
-    saveable: Callable[..., bool], unks_in: Sequence[bool],
+    saveable: Callable[..., pe.RematCases_], unks_in: Sequence[bool],
     inst_in: Sequence[bool], eqn: core.JaxprEqn
 ) -> tuple[core.JaxprEqn, core.JaxprEqn, Sequence[bool], Sequence[bool],
            list[core.Var]]:
