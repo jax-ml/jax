@@ -16,6 +16,12 @@ Remember to align the itemized text with the first line of an item within a list
     * `random.rbg_key(seed)` becomes `random.PRNGKey(seed, impl='rbg')`
     * `random.unsafe_rbg_key(seed)` becomes `random.PRNGKey(seed, impl='unsafe_rbg')`
 * Changes:
+  * Added additional rotation functions:
+    {meth}`jax.scipy.spatial.transform.Rotation.align_vectors`
+    {meth}`jax.scipy.spatial.transform.Rotation.create_group`
+    {meth}`jax.scipy.spatial.transform.Rotation.random`
+    {meth}`jax.scipy.spatial.transform.Rotation.reduce`
+  * Got {meth}`jax.scipy.spatial.transform.Rotation.from_euler` working for a single rotation axis
   * CUDA: JAX now verifies that the CUDA libraries it finds are at least as new
     as the CUDA libraries that JAX was built against. If older libraries are
     found, JAX raises an exception since that is preferable to mysterious
