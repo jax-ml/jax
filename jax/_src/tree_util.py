@@ -44,6 +44,22 @@ default_registry = pytree.default_registry()
 default_registry.__module__ = __name__
 default_registry.__name__ = "default_registry"
 
+# A special, internal pytree registry that includes everything in
+# `default_registry`, plus internal Python-defined types that we want
+# to teach the fast dispatch path ("C++ dispatch") how to flatten and
+# unflatten. A key example is PRNG key arrays, which are currently a
+# Python-defined class (in `jax._src.prng`). These ought to be a leaf
+# node everywhere in the system (e.g. in Jaxpr), but we want to unpack
+# and repack them across the fast dispatch boundary. If we were to
+# skip registering such types here, the fast dispatch path would not
+# know how to handle them as arguments. It would instead always
+# indicate a "cache miss" and dispatch on the slow path.
+dispatch_registry = pytree.PyTreeRegistry(
+    enable_none=True, enable_tuple=True, enable_namedtuple=True,
+    enable_list=True, enable_dict=True)
+dispatch_registry.__module__ = __name__
+dispatch_registry.__name__ = "dispatch_registry"
+
 def tree_flatten(tree: Any,
                  is_leaf: Callable[[Any], bool] | None = None
                  ) -> tuple[list[Leaf], PyTreeDef]:
@@ -162,6 +178,7 @@ def register_pytree_node(nodetype: type[T],
       ``nodetype``.
   """
   default_registry.register_node(nodetype, flatten_func, unflatten_func)
+  dispatch_registry.register_node(nodetype, flatten_func, unflatten_func)
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
 
 

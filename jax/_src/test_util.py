@@ -47,6 +47,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src import monitoring
+from jax._src import stages
 from jax._src.interpreters import pxla
 from jax._src.config import (bool_env, config,
                              raise_persistent_cache_errors,
@@ -238,6 +239,22 @@ def count_pjit_cpp_cache_miss():
     yield count
   finally:
     pjit_lib._pjit_lower = original_pjit_lower
+
+
+@contextmanager
+def count_aot_jit_cpp_cache_miss():
+  original_call = stages.Compiled.call
+  count = [0]
+
+  def compiled_call_count(*args, **kwargs):
+    count[0] += 1
+    return original_call(*args, **kwargs)
+
+  stages.Compiled.call = compiled_call_count
+  try:
+    yield count
+  finally:
+    stages.Compiled.call = original_call
 
 
 @contextmanager

@@ -2707,6 +2707,14 @@ class MeshExecutableFastpathData(NamedTuple):
   kept_var_bitvec: Iterable[bool]
 
 
+def reflatten_outputs_for_dispatch(out_tree, out_flat):
+  # We arrive at dispatch having flattened according to the default
+  # pytree registry, but we want to re-flatten according to our
+  # dispatch-specific registry.
+  out_unflat = tree_util.tree_unflatten(out_tree, out_flat)
+  return tree_util.dispatch_registry.flatten(out_unflat, None)
+
+
 class MeshExecutable(stages.XlaExecutable):
   __slots__ = [
       "xla_executable", "_unsafe_call", "build_unsafe_call", "in_avals",
@@ -2766,6 +2774,8 @@ class MeshExecutable(stages.XlaExecutable):
     def aot_cache_miss(*args, **kwargs):
       params = stages.CompiledCallParams(self, no_kwargs, in_tree, out_tree)
       outs, out_flat, args_flat = stages.Compiled.call(params, *args, **kwargs)
+      out_flat, out_tree_dispatch = reflatten_outputs_for_dispatch(
+          out_tree, out_flat)
       use_fastpath = (all(isinstance(x, xc.ArrayImpl) for x in out_flat))
 
       if use_fastpath:
@@ -2774,14 +2784,14 @@ class MeshExecutable(stages.XlaExecutable):
         kept_var_bitvec = [i in self._kept_var_idx
                            for i in range(len(args_flat))]
         fastpath_data = MeshExecutableFastpathData(
-            self.xla_executable, out_tree, self._in_shardings,
+            self.xla_executable, out_tree_dispatch, self._in_shardings,
             self._out_shardings, out_avals, out_committed, kept_var_bitvec)
       else:
         fastpath_data = None
       return outs, fastpath_data
 
     return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [],
-                        tree_util.default_registry)
+                        tree_util.dispatch_registry)
 
   def create_cpp_call_for_apply_primitive(self, out_tree):
     # unsafe_call can be different than ExecuteReplicated for pathways.
@@ -2793,6 +2803,8 @@ class MeshExecutable(stages.XlaExecutable):
     def apply_primitive_cache_miss(*args):
       out_flat = self.unsafe_call(*args)
       outs = tree_util.tree_unflatten(out_tree, out_flat)
+      out_flat, out_tree_dispatch = reflatten_outputs_for_dispatch(
+          out_tree, out_flat)
       use_fastpath = (all(isinstance(x, xc.ArrayImpl) for x in out_flat))
 
       if use_fastpath:
@@ -2801,14 +2813,14 @@ class MeshExecutable(stages.XlaExecutable):
         kept_var_bitvec = [i in self._kept_var_idx
                            for i in range(len(args))]
         fastpath_data = MeshExecutableFastpathData(
-            self.xla_executable, out_tree, self._in_shardings,
+            self.xla_executable, out_tree_dispatch, self._in_shardings,
             self._out_shardings, out_avals, out_committed, kept_var_bitvec)
       else:
         fastpath_data = None
       return outs, fastpath_data
 
     return xc._xla.pjit(self.unsafe_call.name, None, apply_primitive_cache_miss,
-                        [], [], [], tree_util.default_registry)
+                        [], [], [], tree_util.dispatch_registry)
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,

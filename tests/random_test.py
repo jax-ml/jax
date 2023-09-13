@@ -1805,6 +1805,63 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(k1, random.KeyArray)
     self.assertIsInstance(k2, random.KeyArray)
 
+  def test_cpp_dispatch_normal(self):
+    # Ensure we stay on the C++ dispatch path when calling a jitted
+    # function with a key array as an argument.
+
+    @jax.jit
+    def f(key):
+      return jax.random.normal(key)
+
+    key = self.make_keys()
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      f(key).block_until_ready()
+      f(key).block_until_ready()
+
+    self.assertEqual(count[0], 1)
+
+  def test_cpp_dispatch_split(self):
+    # Ensure we stay on the C++ dispatch path when calling a jitted
+    # function with a key arrays as inputs and as outputs.
+
+    @jax.jit
+    def f(key):
+      return jax.random.split(key)
+
+    key = self.make_keys()
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      f(key).block_until_ready()
+      f(key).block_until_ready()
+
+    self.assertEqual(count[0], 1)
+
+  def test_cpp_dispatch_aot_normal(self):
+    # Ensure we stay on the C++ dispatch path when calling an
+    # AOT-compiled function with a key array as an argument.
+
+    key = self.make_keys()
+    f = jax.jit(lambda key: jax.random.normal(key)).lower(key).compile()
+
+    with jtu.count_aot_jit_cpp_cache_miss() as count:
+      f(key).block_until_ready()
+      f(key).block_until_ready()
+
+    self.assertEqual(count[0], 1)
+
+  def test_cpp_dispatch_aot_split(self):
+    # Ensure we stay on the C++ dispatch path when calling an
+    # AOT-compiled function with a key arrays as inputs and as
+    # outputs.
+
+    key = self.make_keys()
+    f = jax.jit(lambda key: jax.random.split(key)).lower(key).compile()
+
+    with jtu.count_aot_jit_cpp_cache_miss() as count:
+      f(key).block_until_ready()
+      f(key).block_until_ready()
+
+    self.assertEqual(count[0], 1)
+
   # -- prng primitives
 
   def test_random_wrap_vmap(self):

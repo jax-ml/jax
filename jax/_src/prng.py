@@ -36,6 +36,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src import sharding_specs
+from jax._src import tree_util as tree_util_internal
 from jax._src import typing
 from jax._src.api import jit, vmap
 from jax._src.config import config
@@ -399,6 +400,16 @@ _set_array_base_attributes(PRNGKeyArrayImpl, include=[
 basearray.Array.register(PRNGKeyArrayImpl)
 
 ad_util.jaxval_zeros_likers[PRNGKeyArrayImpl] = jnp.zeros_like  # type: ignore[has-type]
+
+def prngkeyarrayimpl_flatten(x):
+  return (x._base_array,), x.impl
+
+def prngkeyarrayimpl_unflatten(impl, children):
+  base_array, = children
+  return PRNGKeyArrayImpl(impl, base_array)
+
+tree_util_internal.dispatch_registry.register_node(
+    PRNGKeyArrayImpl, prngkeyarrayimpl_flatten, prngkeyarrayimpl_unflatten)
 
 
 # TODO(frostig): remove, rerouting callers directly to random_seed

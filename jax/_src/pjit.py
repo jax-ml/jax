@@ -192,6 +192,8 @@ def _python_pjit(fun: Callable, infer_params_fn):
 
 
 def _get_fastpath_data(executable, out_tree, args_flat, out_flat):
+  out_flat, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
+
   use_fastpath = (
       executable is not None and
       isinstance(executable, pxla.MeshExecutable) and
@@ -259,7 +261,7 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
   cpp_pjit_f = xc._xla.pjit(
     getattr(fun, "__name__", "<unnamed function>"),
     fun, cache_miss, static_argnums, static_argnames,
-    donate_argnums, tree_util.default_registry,
+    donate_argnums, tree_util.dispatch_registry,
     _get_cpp_global_cache(pjit_has_explicit_sharding))
 
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
@@ -1210,7 +1212,7 @@ def _pjit_call_impl(*args, jaxpr,
   has_explicit_sharding = _pjit_explicit_sharding(
       in_shardings, out_shardings, None, None)
   return xc._xla.pjit(name, f, call_impl_cache_miss, [], [], donated_argnums,
-                      tree_util.default_registry,
+                      tree_util.dispatch_registry,
                       _get_cpp_global_cache(has_explicit_sharding))(*args)
 
 pjit_p.def_impl(_pjit_call_impl)
