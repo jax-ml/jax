@@ -911,6 +911,7 @@ class UnloadedPmapExecutable:
         device_assignment=device_assignment,
         use_spmd_partitioning=False,
         env_options_overrides=compiler_options,
+        detailed_logging=compiler.use_detailed_logging(hlo)
     )
     compile_options.parameter_is_tupled_arguments = tuple_args
 
@@ -2502,6 +2503,7 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
       use_auto_spmd_partitioning=auto_spmd_lowering,
       env_options_overrides=compiler_options,
       fdo_profile=fdo_profile,
+      detailed_logging=compiler.use_detailed_logging(computation)
   )
 
   opts = compile_options.executable_build_options
