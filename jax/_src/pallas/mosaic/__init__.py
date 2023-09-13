@@ -21,6 +21,7 @@ from jax._src.pallas.mosaic.core import SemaphoreType
 from jax._src.pallas.mosaic.core import TPUMemorySpace
 from jax._src.pallas.mosaic.kernel_regeneration_util import encode_kernel_regeneration_metadata
 from jax._src.pallas.mosaic.kernel_regeneration_util import extract_kernel_regeneration_metadata
+from jax._src.pallas.mosaic.primitives import dma_start
 from jax._src.pallas.mosaic.primitives import repeat
 from jax._src.pallas.mosaic.primitives import run_scoped
 from jax._src.pallas.mosaic.primitives import semaphore_signal

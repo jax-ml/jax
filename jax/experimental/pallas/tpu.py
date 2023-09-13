@@ -20,6 +20,7 @@ from jax._src.pallas.mosaic import SMEM
 from jax._src.pallas.mosaic import SemaphoreType
 from jax._src.pallas.mosaic import TPUMemorySpace
 from jax._src.pallas.mosaic import VMEM
+from jax._src.pallas.mosaic import dma_start
 from jax._src.pallas.mosaic import encode_kernel_regeneration_metadata
 from jax._src.pallas.mosaic import extract_kernel_regeneration_metadata
 from jax._src.pallas.mosaic import repeat

@@ -473,7 +473,7 @@ def _load_lowering_rule(
   idx, *_ = tree_util.tree_unflatten(args_tree, args)
   idx_aval, *_ = tree_util.tree_unflatten(args_tree, ctx.avals_in[1:])
   indices = idx.indices
-  if not ref_block_shape:
+  if not is_smem_load and not ref_block_shape:
     raise NotImplementedError(
         "Indexing into a ()-shaped Ref not yet supported on TPU.")
   if any(
@@ -1447,3 +1447,58 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, semaphore,
   assert ctx.avals_in[1].dtype == jnp.dtype('int32')
   return tpu.SemaphoreWaitOp(semaphore, value).results
 lowering_rules[tpu_primitives.semaphore_wait_p] = _semaphore_wait_lowering_rule
+
+def _indexer_to_start_size(indexer: NDIndexer):
+  starts = [
+      i.start if isinstance(i, primitives.Slice) else i
+      for i in indexer.indices
+  ]
+  if any(jnp.shape(i) for i in starts):
+    raise ValueError(f"Can only use integer and slice indexing: {starts}")
+  starts = map(
+      partial(_ensure_mlir_value, aval=jax_core.ShapedArray((), jnp.int32)),
+      starts,
+  )
+  sizes = [
+      s.size if isinstance(s, primitives.Slice) else 1 for s in indexer.indices
+  ]
+  return starts, sizes
+
+def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree):
+  (src_ref, src_idx, dst_ref, dst_idx, sem, src_sem, device_id) = (
+      tree_util.tree_unflatten(tree, args)
+  )
+  src_starts, src_sizes = _indexer_to_start_size(src_idx)
+  dst_starts, dst_sizes = _indexer_to_start_size(dst_idx)
+  assert src_sizes == dst_sizes
+  src_ref_ty = ir.MemRefType.get(
+      tuple(src_sizes), mlir.dtype_to_ir_type(ctx.avals_in[0].dtype),
+      memory_space=src_ref.type.memory_space)
+  dst_ref_ty = ir.MemRefType.get(
+      tuple(src_sizes), mlir.dtype_to_ir_type(ctx.avals_in[0].dtype),
+      memory_space=dst_ref.type.memory_space)
+  src = tpu.MemRefSliceOp(src_ref_ty, src_ref, src_starts).result
+  dst = tpu.MemRefSliceOp(dst_ref_ty, dst_ref, dst_starts).result
+  if device_id is None:
+    assert src_sem is None
+    return tpu.EnqueueDMAOp(source=src, target=dst, target_semaphore=sem,
+                            source_semaphore=None,
+                            device_id=None).results
+  raise NotImplementedError
+lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
+
+
+def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree):
+  (src_ref, src_idx, dst_ref, dst_idx, sem, src_sem, device_id) = (
+      tree_util.tree_unflatten(tree, args)
+  )
+  dst_starts, dst_sizes = _indexer_to_start_size(dst_idx)
+  ref_ty = ir.MemRefType.get(
+      tuple(dst_sizes), mlir.dtype_to_ir_type(ctx.avals_in[0].dtype),
+      memory_space=dst_ref.type.memory_space)
+  dst = tpu.MemRefSliceOp(ref_ty, dst_ref, dst_starts).result
+  if device_id is None:
+    assert src_sem is None
+    return tpu.WaitDMAOp(sem, dst).results
+  raise NotImplementedError
+lowering_rules[tpu_primitives.dma_wait_p] = _dma_wait_lowering_rule

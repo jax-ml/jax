@@ -406,13 +406,13 @@ def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal"> {
   }];
 }
 
-def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma"> {
+def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [SameVariadicOperandSize]> {
   let arguments = (ins
     AnyMemRef:$source,
-    TPU_DMASemaphoreType:$source_semaphore,
+    Optional<TPU_DMASemaphoreType>:$source_semaphore, // For remote DMAs
     AnyMemRef:$target,
     TPU_DMASemaphoreType:$target_semaphore,
-    Optional<I32>:$device_id
+    Optional<I32>:$device_id // For remote DMAs
   );
 }
 
