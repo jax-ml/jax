@@ -54,9 +54,18 @@ from jax.experimental.jax2tf.tests import tf_test_util
 
 prev_xla_flags = None
 
+topology = None
 
 def setUpModule():
-  global prev_xla_flags
+  global prev_xla_flags, topology
+  if jtu.device_under_test() == "tpu":
+    resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='')
+    tf.config.experimental_connect_to_cluster(resolver)
+    # Do TPU init at beginning since it will wipe out all HBMs.
+    topology = tf.tpu.experimental.initialize_tpu_system(resolver)
+  else:
+    topology = None
+
   prev_xla_flags = os.getenv("XLA_FLAGS")
   flags_str = prev_xla_flags or ""
   # Don't override user-specified device count, or other XLA flags.
@@ -89,13 +98,6 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       raise unittest.SkipTest("Test requires at least 2 local devices")
     self.devices = np.array(jax.devices()[:2])  # use 2 devices
 
-    if jtu.device_under_test() == "tpu":
-      resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='')
-      tf.config.experimental_connect_to_cluster(resolver)
-      # Do TPU init at beginning since it will wipe out all HBMs.
-      self.topology = tf.tpu.experimental.initialize_tpu_system(resolver)
-    else:
-      self.topology = None
   def log_jax_hlo(self, f_jax, args: Sequence[Any], *,
                   num_replicas=1, num_partitions=2):
     """Log the HLO generated from JAX before and after optimizations"""
@@ -125,7 +127,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
                         num_replicas=1):
     self.assertEqual(jtu.device_under_test(), "tpu")
     return tf.tpu.experimental.DeviceAssignment.build(
-        self.topology, computation_shape=computation_shape,
+        topology, computation_shape=computation_shape,
         num_replicas=num_replicas)
 
   def tf_hlo(self, f_tf, args_tf: Sequence[Any]) -> str:
@@ -138,10 +140,13 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     tf_hlo_generator = f_tf_fun.experimental_get_compiler_ir(*args_tf)
     tf_hlo = tf_hlo_generator(stage="hlo", device_name=device_name)
     logging.info("[%s] got TF HLO %s", self._testMethodName, tf_hlo)
-    tf_optimized_hlo = tf_hlo_generator(stage="optimized_hlo",
-                                        device_name=device_name)
-    logging.info("[%s] got TF optimized HLO for %s: %s", self._testMethodName,
-                 device_name, tf_optimized_hlo)
+    # TODO(necula): TensorFlow doesn't support getting the optimized_hlo on TFRT
+    # TPU devices. But it doesn't seem like we're using it anyway.
+    #
+    # tf_optimized_hlo = tf_hlo_generator(stage="optimized_hlo",
+    #                                     device_name=device_name)
+    # logging.info("[%s] got TF optimized HLO for %s: %s", self._testMethodName,
+    #             device_name, tf_optimized_hlo)
     # Before we check, we drop the metadata= at the end of tf_hlo
     return re.sub(r'metadata=.*', '', tf_hlo)
 
