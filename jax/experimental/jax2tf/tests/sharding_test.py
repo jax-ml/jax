@@ -343,7 +343,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
         y = pjit.pjit(lambda y: y, in_shardings=constraint_sharding,
                       out_shardings=constraint_sharding)(y)
       else:
-        y = pjit.with_sharding_constraint(y, constraint_sharding)
+        y = jax.lax.with_sharding_constraint(y, constraint_sharding)
       return jnp.concatenate([y, y], axis=1)  # res: f32[10, 80]
 
     shape = (10, 20)
@@ -453,7 +453,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       elif kind == "jit":
         res = jax.jit(lambda x: x * 2.)(x)
       elif kind == "sharding_constraint":
-        res = pjit.with_sharding_constraint(x * 2., shardings_map[in_shardings])
+        res = jax.lax.with_sharding_constraint(x * 2., shardings_map[in_shardings])
       else:
         assert False
       return res

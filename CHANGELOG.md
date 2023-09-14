@@ -18,7 +18,7 @@ Remember to align the itemized text with the first line of an item within a list
     * `jax.numpy.product`: use `jax.numpy.prod`.
     * `jax.numpy.cumproduct`: use `jax.numpy.cumprod`.
 
-* Internal deprecations/removals:
+* Deprecations/removals:
   * The internal submodule `jax.prng` is now deprecated. Its contents are available at
     {mod}`jax.extend.random`.
   * The internal submodule path `jax.linear_util` has been deprecated. Use
@@ -28,6 +28,8 @@ Remember to align the itemized text with the first line of an item within a list
     detection of typed prng keys.
   * The method `PRNGKeyArray.unsafe_raw_array` is deprecated. Use
     {func}`jax.random.key_data` instead.
+  * `jax.experimental.pjit.with_sharding_constraint` is deprecated. Use
+    `jax.lax.with_sharding_constraint` instead.
 
 ## jaxlib 0.4.16
 

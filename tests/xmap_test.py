@@ -38,7 +38,7 @@ from jax._src.core import NamedShape
 from jax.experimental import maps
 from jax._src import array
 from jax._src.sharding_impls import NamedSharding
-from jax.experimental.pjit import pjit, with_sharding_constraint
+from jax.experimental.pjit import pjit
 from jax.sharding import PartitionSpec as P
 from jax.experimental.maps import xmap, serial_loop, SerialLoop
 from jax.errors import JAXTypeError
@@ -901,7 +901,7 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testNestedConstraint(self):
     # TODO(b/219691408): Using P('y') instead of P() causes an XLA crash!
-    fimpl = lambda x: with_sharding_constraint(jnp.sin(x), P()) + x
+    fimpl = lambda x: jax.lax.with_sharding_constraint(jnp.sin(x), P()) + x
     f = xmap(fimpl, in_axes=['i', ...], out_axes=['i', ...], axis_resources={'i': 'x'})
     h = pjit(lambda x: f(x * x) + x, in_shardings=P('y'), out_shardings=None)
     x = jnp.arange(20, dtype=jnp.float32).reshape(4, 5)
