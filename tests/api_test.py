@@ -1078,7 +1078,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_jit_lower_compile_sharding_computation(self):
     s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
-    def f(x): return pjit.with_sharding_constraint(x, s)
+    def f(x): return jax.lax.with_sharding_constraint(x, s)
     out = self.jit(f).lower(1.).compile()(4.)
     self.assertAllClose(out, 4.)
 
