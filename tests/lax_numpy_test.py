@@ -2378,7 +2378,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     vshape=[(), (5,), (5, 5)],
     side=['left', 'right'],
     dtype=number_dtypes,
-    method=['sort', 'scan', 'compare_all'],
+    method=['sort', 'scan', 'scan_unrolled', 'compare_all'],
   )
   def testSearchsorted(self, ashape, vshape, side, dtype, method):
     rng = jtu.rand_default(self.rng())

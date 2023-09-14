@@ -4961,17 +4961,19 @@ def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True) -> A
   return c
 
 
-@partial(vectorize, excluded={0, 2, 3})
-def _searchsorted_via_scan(sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
+@partial(vectorize, excluded={0, 1, 3, 4})
+def _searchsorted_via_scan(unrolled: bool, sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
   op = _sort_le_comparator if side == 'left' else _sort_lt_comparator
-  def body_fun(_, state):
+  def body_fun(state, _):
     low, high = state
     mid = (low + high) // 2
     go_left = op(query, sorted_arr[mid])
-    return (where(go_left, low, mid), where(go_left, mid, high))
+    return (where(go_left, low, mid), where(go_left, mid, high)), ()
   n_levels = int(np.ceil(np.log2(len(sorted_arr) + 1)))
   init = (dtype(0), dtype(len(sorted_arr)))
-  return lax.fori_loop(0, n_levels, body_fun, init)[1]
+  carry, _ = lax.scan(body_fun, init, (), length=n_levels,
+                      unroll=n_levels if unrolled else 1)
+  return carry[1]
 
 
 def _searchsorted_via_sort(sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
@@ -4996,9 +4998,10 @@ def _searchsorted_via_compare_all(sorted_arr: Array, query: Array, side: str, dt
 @util._wraps(np.searchsorted, skip_params=['sorter'],
   extra_params=_dedent("""
     method : str
-        One of 'scan' (default), 'sort' or 'compare_all'. Controls the method used by the
+        One of 'scan' (default), 'scan_unrolled', 'sort' or 'compare_all'. Controls the method used by the
         implementation: 'scan' tends to be more performant on CPU (particularly when ``a`` is
-        very large), 'sort' is often more performant on accelerator backends like GPU and TPU
+        very large), 'scan_unrolled' is more performant on GPU at the expense of additional compile time,
+        'sort' is often more performant on accelerator backends like GPU and TPU
         (particularly when ``v`` is very large), and 'compare_all' can be most performant
         when ``a`` is very small."""))
 @partial(jit, static_argnames=('side', 'sorter', 'method'))
@@ -5008,9 +5011,10 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   if side not in ['left', 'right']:
     raise ValueError(f"{side!r} is an invalid value for keyword 'side'. "
                      "Expected one of ['left', 'right'].")
-  if method not in ['scan', 'sort', 'compare_all']:
-    raise ValueError(f"{method!r} is an invalid value for keyword 'method'. "
-                     "Expected one of ['sort', 'scan', 'compare_all'].")
+  if method not in ['scan', 'scan_unrolled', 'sort', 'compare_all']:
+    raise ValueError(
+        f"{method!r} is an invalid value for keyword 'method'. "
+        "Expected one of ['sort', 'scan', 'scan_unrolled', 'compare_all'].")
   if sorter is not None:
     raise NotImplementedError("sorter is not implemented")
   if ndim(a) != 1:
@@ -5020,11 +5024,12 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   if len(a) == 0:
     return zeros_like(v, dtype=dtype)
   impl = {
-      'scan': _searchsorted_via_scan,
+      'scan': partial(_searchsorted_via_scan, False),
+      'scan_unrolled': partial(_searchsorted_via_scan, True),
       'sort': _searchsorted_via_sort,
       'compare_all': _searchsorted_via_compare_all,
   }[method]
-  return impl(asarray(a), asarray(v), side, dtype)
+  return impl(asarray(a), asarray(v), side, dtype)  # type: ignore
 
 @util._wraps(np.digitize)
 @partial(jit, static_argnames=('right',))
