@@ -1047,6 +1047,7 @@ jax_test(
         "gpu",
         "cpu",
     ],
+    tags = ["multiaccelerator"],
 )
 
 jax_test(
@@ -1061,6 +1062,7 @@ jax_test(
 jax_test(
     name = "python_callback_test",
     srcs = ["python_callback_test.py"],
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
     ],

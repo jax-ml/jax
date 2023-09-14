@@ -1453,8 +1453,6 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
   )
   def test_pjit_arr_auto_sharding_array(self, mesh_shape, global_input_shape,
                                         mesh_axis_names):
-    if xla_bridge.get_backend().runtime_type == 'stream_executor':
-      raise unittest.SkipTest('AutoSharding is not supported on stream_executor yet.')
     global_mesh = jtu.create_global_mesh(mesh_shape, mesh_axis_names)
     input_data = np.arange(
         math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
@@ -1471,8 +1469,6 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out._value, input_data)
 
   def test_xla_arr_sharding_mismatch(self):
-    if xla_bridge.get_backend().runtime_type == 'stream_executor':
-      raise unittest.SkipTest('AutoSharding is not supported on stream_executor yet.')
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (4, 2)
     input_data = np.arange(
@@ -1496,8 +1492,6 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
         compiled(arr)
 
   def test_gda_auto_shardings_len(self):
-    if xla_bridge.get_backend().runtime_type == 'stream_executor':
-      raise unittest.SkipTest('AutoSharding is not supported on stream_executor yet.')
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (4, 2)
     input_data = np.arange(
@@ -1518,8 +1512,6 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
   )
   def test_jit_arr_partial_auto_sharding_array(
       self, mesh_shape, mesh_axis_names, pspec):
-    if xla_bridge.get_backend().runtime_type == 'stream_executor':
-      raise unittest.SkipTest('AutoSharding is not supported on stream_executor yet.')
     mesh = jtu.create_global_mesh(mesh_shape, mesh_axis_names)
     global_input_shape = (8, 4)
     input_data = np.arange(
@@ -1555,9 +1547,6 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
   @unittest.skip('The error is not raised yet. Enable this back once we raise '
                  'the error in pjit again.')
   def test_pjit_array_error(self):
-    if xla_bridge.get_backend().runtime_type == 'stream_executor':
-      raise unittest.SkipTest('AutoSharding is not supported on stream_executor yet.')
-
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     input_data = np.arange(
