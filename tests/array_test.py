@@ -313,11 +313,11 @@ class JaxArrayTest(jtu.JaxTestCase):
   def test_wrong_num_arrays(self):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    devices = jax.local_devices()[:8] # Taking up to 8 devices
     s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
     inp_data = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     di_map = s.devices_indices_map(shape)
-    bufs = [jax.device_put(inp_data[di_map[d]], d)
-            for d in jax.local_devices()]
+    bufs = [jax.device_put(inp_data[di_map[d]], d) for d in devices]
     with self.assertRaisesRegex(
         ValueError,
         r'Expected 8 per-device arrays \(this is how many devices are addressable '
@@ -910,8 +910,9 @@ class ShardingTest(jtu.JaxTestCase):
 
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     mps = jax.sharding.NamedSharding(mesh, pspec)
+    devices = jax.local_devices()[:8] # Taking up to 8 devices
 
-    devices_sharding = jax.sharding.PositionalSharding(jax.devices())
+    devices_sharding = jax.sharding.PositionalSharding(devices)
     devices_sharding = devices_sharding.reshape(shape).replicate(axes)
     if transpose:
       devices_sharding = devices_sharding.T

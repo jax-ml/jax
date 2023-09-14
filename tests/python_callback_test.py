@@ -25,6 +25,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
+from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax.experimental import maps
 from jax.experimental import pjit
@@ -69,6 +70,13 @@ with_pure_and_io_callbacks = parameterized.named_parameters(
 )
 
 class PythonCallbackTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if jtu.device_under_test() not in ["cpu", "gpu", "tpu"]:
+      self.skipTest(f"Host callback not supported on {jtu.device_under_test()}")
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
 
   def tearDown(self):
     super().tearDown()
@@ -488,6 +496,13 @@ class PythonCallbackTest(jtu.JaxTestCase):
 
 class PureCallbackTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    super().setUp()
+    if jtu.device_under_test() not in ["cpu", "gpu", "tpu"]:
+      self.skipTest(f"Host callback not supported on {jtu.device_under_test()}")
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
   def tearDown(self):
     super().tearDown()
     dispatch.runtime_tokens.clear()
@@ -863,6 +878,13 @@ class PureCallbackTest(jtu.JaxTestCase):
 
 
 class IOCallbackTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+    if jtu.device_under_test() not in ["cpu", "gpu", "tpu"]:
+      self.skipTest(f"Host callback not supported on {jtu.device_under_test()}")
 
   def tearDown(self):
     super().tearDown()

@@ -158,7 +158,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(c.device_buffers[0].shape, (2, 8))
 
   def test_collective_permute(self):
-    devices = np.array(jax.devices())
+    devices = np.array(jax.devices()[:8]) # Take up to 8 devices
     mesh = Mesh(devices, axis_names=('x'))
     a = jax.device_put(
         jnp.arange(8 * 8).reshape((8, 8)),
@@ -176,7 +176,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(c[1, :], a[0, :])
 
   def test_all_to_all(self):
-    devices = np.array(jax.devices())
+    devices = np.array(jax.devices()[:8]) # Take up to 8 devices
     mesh = Mesh(devices, axis_names=('x'))
     a = jax.device_put(
         jnp.arange(8 * 8).reshape((8, 8)),
@@ -416,7 +416,7 @@ class ShardMapTest(jtu.JaxTestCase):
     y_dot_expected = jnp.sin(jnp.arange(8.)) * (jnp.cos(x) * x).sum()
     self.assertAllClose(y_dot, y_dot_expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu")
+  @jtu.run_on_devices('gpu', 'tpu')
   def test_axis_index(self):
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
 
@@ -522,6 +522,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertIn('out_names', e.params)
     self.assertEqual(e.params['out_names'], ({0: ('x', 'y',)},))
 
+  @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   def test_debug_print_jit(self):
     mesh = Mesh(jax.devices(), ('i',))
 
@@ -745,6 +746,7 @@ class ShardMapTest(jtu.JaxTestCase):
     # error!
     jax.jit(g)(x)  # doesn't crash
 
+  @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   def test_key_array_with_replicated_last_tile_dim(self):
     # See https://github.com/google/jax/issues/16137
 

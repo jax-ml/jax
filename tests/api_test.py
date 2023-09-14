@@ -420,6 +420,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       ("argnums", "donate_argnums", 0),
       ("argnames", "donate_argnames", 'x'),
   )
+  @jtu.device_supports_buffer_donation()
   def test_jit_donate_invalidates_input(self, argnum_type, argnum_val):
     # We can't just use `lambda x: x` because JAX simplifies this away to an
     # empty XLA computation.
@@ -433,6 +434,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       ("donate_argnums", "donate_argnums", (2, 3)),
       ("donate_argnames", "donate_argnames", ('c', 'd')),
   )
+  @jtu.device_supports_buffer_donation()
   def test_jit_donate_static_argnums(self, argnum_type, argnum_val):
     jit_fun = self.jit(
         lambda a, b, c, d: ((a + b + c), (a + b + d)),
@@ -447,6 +449,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(c)
     self.assertDeleted(d)
 
+  @jtu.device_supports_buffer_donation()
   def test_jit_donate_argnames_kwargs_static_argnums(self):
     jit_fun = self.jit(
         lambda a, b, c, d, e: ((a + b + c), (a + b + d), (a + b + e)),
@@ -468,6 +471,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       ("argnums", "donate_argnums", 0),
       ("argnames", "donate_argnames", 'x'),
   )
+  @jtu.device_supports_buffer_donation()
   def test_jit_donate_weak_type(self, argnum_type, argnum_val):
     # input has weak-type, output does not have weak-type
     move = self.jit(lambda x: x.astype(int), **{argnum_type: argnum_val})
@@ -495,6 +499,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     # Gives: RuntimeError: Invalid argument: CopyToHostAsync() called on invalid buffer.
     print(x_copy)  # doesn't crash
 
+  @jtu.device_supports_buffer_donation()
   def test_specify_donate_argnums_and_argnames(self):
     @partial(jax.jit, donate_argnums=0, donate_argnames=('inp2', 'inp3'))
     def f(inp1, inp2, inp3):
@@ -512,6 +517,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_resolve_argnums_signature_fail(self):
     api_util.resolve_argnums(int, None, None, None, None)  # doesn't crash
 
+  @jtu.device_supports_buffer_donation()
   def test_donate_argnames_with_args(self):
     @partial(jax.jit, donate_argnames='inp1')
     def f(inp1):
@@ -521,6 +527,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     f(x)
     self.assertDeleted(x)
 
+  @jtu.device_supports_buffer_donation()
   def test_donate_argnums_with_kwargs(self):
     @partial(jax.jit, donate_argnums=0)
     def f(inp1):
@@ -10074,6 +10081,7 @@ class CustomApiTest(jtu.JaxTestCase):
 
 class BufferDonationTest(jtu.BufferDonationTestCase):
 
+  @jtu.device_supports_buffer_donation()
   def test_pmap_donate_argnums_invalidates_input(self):
     move = api.pmap(lambda x: x + x - x, donate_argnums=0)
     n = jax.local_device_count()
@@ -10082,6 +10090,7 @@ class BufferDonationTest(jtu.BufferDonationTestCase):
     self.assertDeleted(x)
     np.testing.assert_allclose(y, [1.] * n)
 
+  @jtu.device_supports_buffer_donation()
   def test_pmap_nested_donate_ignored(self):
     pmap_fun = jit(lambda x: api.pmap(lambda y: y ** 2, donate_argnums=0)(x))
     a = api.pmap(lambda x: x)(jnp.array([1]))
@@ -10194,7 +10203,7 @@ class BackendsTest(jtu.JaxTestCase):
   @unittest.skipIf(not sys.executable, "test requires sys.executable")
   @unittest.skipIf(platform.system() == "Darwin",
                    "Warning doesn't apply on Mac")
-  @jtu.skip_on_devices("gpu", "tpu")
+  @jtu.run_on_devices("cpu")
   def test_cpu_warning_suppression(self):
     warning_expected = (
       "import jax; "
