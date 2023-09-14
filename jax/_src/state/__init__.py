@@ -14,4 +14,5 @@
 """Module for state."""
 from jax._src.state.types import (AbstractRef, ReadEffect, WriteEffect,
                                   AccumEffect, StateEffect, RefEffect,
-                                  get_ref_state_effects, shaped_array_ref)
+                                  get_ref_state_effects, shaped_array_ref,
+                                  RefView)

@@ -327,7 +327,7 @@ def _hoist_consts_to_refs(jaxpr: jax_core.Jaxpr) -> jax_core.Jaxpr:
   return hoisted_jaxpr
 
 @weakref_lru_cache
-def _trace_to_jaxpr(fun: Callable, grid_spec, flat_in_avals,
+def _trace_to_jaxpr(fun: Callable, grid_spec: GridSpec, flat_in_avals,
                     flat_out_avals, in_tree, out_tree):
   avals, grid_mapping = grid_spec.get_grid_mapping(flat_in_avals, in_tree,
                                                    flat_out_avals, out_tree)

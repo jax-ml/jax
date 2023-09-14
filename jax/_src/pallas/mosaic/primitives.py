@@ -24,6 +24,7 @@ from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import effects
 from jax._src import linear_util as lu
+from jax._src import state
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
@@ -203,6 +204,23 @@ dma_wait_p.multiple_results = True
 def _dma_wait_abstract_eval(*args, tree):
   del args, tree
   return []
+
+def _get_ref_and_indexer(ref):
+  if isinstance(ref, state.RefView):
+    return ref.ref, ref.indexer
+  return ref, (slice(None),) * len(ref.shape)
+
+def async_copy(src_ref, dst_ref, sem):
+  """Issues a DMA copying from src_ref to dst_ref."""
+  src_ref, src_indices = _get_ref_and_indexer(src_ref)
+  dst_ref, dst_indices = _get_ref_and_indexer(dst_ref)
+  return dma_start(src_ref, src_indices, dst_ref, dst_indices, sem)
+
+def async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id):
+  src_ref, src_indices = _get_ref_and_indexer(src_ref)
+  dst_ref, dst_indices = _get_ref_and_indexer(dst_ref)
+  return remote_dma_start(src_ref, src_indices, dst_ref, dst_indices, send_sem,
+                          recv_sem, device_id)
 
 device_id_p = jax_core.Primitive('device_id')
 

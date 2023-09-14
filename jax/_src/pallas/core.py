@@ -153,9 +153,8 @@ def _convert_block_spec_to_block_mapping(
   return BlockMapping(block_shape, jax_core.ClosedJaxpr(jaxpr, consts),
                       block_spec.memory_space)
 
-
-def _tile_ref(ref: jax_core.AbstractRef, block_shape: tuple[int, ...] | None
-             ) -> jax_core.AbstractRef:
+def _tile_ref(ref: state.AbstractRef, block_shape: tuple[int, ...] | None
+             ) -> state.AbstractRef:
   if block_shape is None:
     return ref
   shape = tuple(s for s in block_shape if s is not None)

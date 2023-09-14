@@ -1475,7 +1475,7 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree):
       tuple(src_sizes), mlir.dtype_to_ir_type(ctx.avals_in[0].dtype),
       memory_space=src_ref.type.memory_space)
   dst_ref_ty = ir.MemRefType.get(
-      tuple(src_sizes), mlir.dtype_to_ir_type(ctx.avals_in[0].dtype),
+      tuple(dst_sizes), mlir.dtype_to_ir_type(ctx.avals_in[0].dtype),
       memory_space=dst_ref.type.memory_space)
   src = tpu.MemRefSliceOp(src_ref_ty, src_ref, src_starts).result
   dst = tpu.MemRefSliceOp(dst_ref_ty, dst_ref, dst_starts).result
