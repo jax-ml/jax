@@ -17,17 +17,17 @@ import hashlib
 import io
 import logging
 import os
+import struct
 import sys
-
-import numpy as np
 
 from jax._src.config import config
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib import version_str as jaxlib_version_str
-from jax._src.lib import xla_extension_version as xla_extension_version
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version as xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager as pm
+import numpy as np
 
 if jaxlib_version < (0, 4, 14):
   import jaxlib.mlir.jax as mlir_jax  # pytype: disable=import-error
@@ -259,6 +259,8 @@ def _hash_compile_options(hash_obj, compile_options_obj):
       _hash_bool(hash_obj, kv[1])
     elif isinstance(kv[1], int):
       _hash_int(hash_obj, kv[1])
+    elif isinstance(kv[1], float):
+      _hash_float(hash_obj, kv[1])
     else:
       raise RuntimeError("Invalid type: %s" % repr(type(kv[1])))
 
@@ -366,6 +368,10 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
 
 def _hash_int(hash_obj, int_var):
   hash_obj.update(int_var.to_bytes(8, byteorder="big"))
+
+
+def _hash_float(hash_obj, float_var):
+  hash_obj.update(struct.pack("d", float_var))
 
 
 def _hash_signed_int(hash_obj, int_var):

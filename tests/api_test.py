@@ -60,6 +60,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -1286,15 +1287,22 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIn("jax.result_info = \"['a']\"", mhlo_str)
     self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
 
+  @unittest.skipIf(
+      xla_extension_version < 194, "Test requires xla_extension_version >= 194"
+  )
   def test_jit_lower_compile_with_compiler_options(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
     f_jit = self.jit(f)
     lowered = f_jit.lower(1.)
-    lowered.compile(            # doesn't crash
-        compiler_options={"xla_embed_ir_in_executable": True,
-                          "xla_dump_max_hlo_modules": 200})
+    lowered.compile(  # doesn't crash
+        compiler_options={
+            "xla_embed_ir_in_executable": True,
+            "xla_dump_max_hlo_modules": 200,
+            "xla_gpu_auto_spmd_partitioning_memory_budget_ratio": 0.5,
+        }
+    )
 
   def test_jit_lower_compile_with_compiler_options_invalid(self):
     def f(x):
