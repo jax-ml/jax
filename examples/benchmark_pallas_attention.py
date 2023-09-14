@@ -54,7 +54,7 @@ DIM = 2048
 D_HEAD = 64
 N_HEADS = DIM // D_HEAD
 BATCH, SEQ_LEN = 8, 2048
-SEQ_LENS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
+SEQ_LENS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384] # [4096, 8192, 16384] #
 
 TOTAL_RUNS = 150
 NUM_OUTER_RUNS = 5 # For randomization of benchmark order
@@ -231,7 +231,7 @@ class _attention(torch.autograd.Function):
 triton_attention = _attention.apply
 
 def benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, causal=True, mode="jax", swap_seq_axis=False):
-    block_qk_grid = [(128, 64)] #[(64, 32), (128, 32), (64, 64)if mode == "pallas" else [(None, None)] 
+    block_qk_grid = [(128, 64)] #[(64, 32), (128, 32), (64, 64)] if mode == "pallas" else [(None, None)] 
     k1, k2, k3 = random.split(random.PRNGKey(0), 3)
     if swap_seq_axis:
         shape = (batch, heads, seq_len, d_model)
@@ -248,7 +248,9 @@ def benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, c
     for block_q, block_k in block_qk_grid:
         if mode == "pallas":
             impl = functools.partial(
-                attention.mha, causal=causal, block_q=block_q, block_k=block_k, num_warps=4, segment_ids=None, debug=False, swap_seq_axis=swap_seq_axis)
+                attention.mha, 
+                causal=causal, block_q=block_q, block_k=block_k, num_warps=4, 
+                segment_ids=None, debug=False, swap_seq_axis=swap_seq_axis)
         elif mode == "jax":
             if seq_len >= 2048: # Handle OOM
                 return None
@@ -262,7 +264,8 @@ def benchmark_jax(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, c
 
         t1 = time.time()
         for _ in range(NUM_INNER_RUNS):
-            impl(q, k, v).block_until_ready()
+            res = impl(q, k, v)
+        res.block_until_ready()
         estimate_ms = 1000 * (time.time() - t1) / NUM_INNER_RUNS
         min_ms = min(estimate_ms, min_ms)
         print(f"{mode} (seq_len={seq_len}, block_q={block_q}, block_k={block_k}): {estimate_ms} ms")
@@ -298,7 +301,7 @@ def bench_torch(batch=BATCH, heads=N_HEADS, seq_len=SEQ_LEN, d_model=D_HEAD, cau
     t1 = time.time()
     for _ in range(NUM_INNER_RUNS):
         fn()
-        torch.cuda.synchronize()
+    torch.cuda.synchronize()
     estimate_ms = 1000 * (time.time() - t1) / NUM_INNER_RUNS
     return estimate_ms
 
@@ -315,14 +318,14 @@ def is_zero(a):
 def benchmark(causal=True):
     configs = [
         {'name': name, 'timings': [0.0 for _ in range(len(SEQ_LENS))], 'tokens': tokens } 
-        for name in ["pallas", "triton", "flash_attn", "jax"] 
+        for name in ["pallas", "triton"] #, "flash_attn"] #, "jax"] 
         for tokens in [32768]
     ]
 
     bench_fns = {
         'jax': functools.partial(benchmark_jax, mode="jax"),
         'pallas': functools.partial(benchmark_jax, mode="pallas"),
-        # 'pallas_swap': functools.partial(benchmark_jax, mode="pallas", swap_seq_axis=True),
+        'pallas_swap': functools.partial(benchmark_jax, mode="pallas", swap_seq_axis=True),
         'flash_attn': functools.partial(bench_torch, mode="flash_attn"),
         'triton': functools.partial(bench_torch, mode="triton"),
     }
@@ -348,9 +351,11 @@ def benchmark(causal=True):
         config['timings'] = [None if is_zero(t) else t / NUM_OUTER_RUNS for t in config['timings']]
 
     len_configs = float(len(configs))
-    min_timings = [min([config['timings'][pos] for config in configs if config['timings'][pos] is not None]) for pos in range(len(SEQ_LENS))]
+    min_timings = [min([config['timings'][pos] 
+        for config in configs if config['timings'][pos] is not None]) 
+        for pos in range(len(SEQ_LENS))]
 
-    configs.sort(key=lambda c: ([t for t in c['timings'] if t is not None] or [float.max])[-1], reverse=True)
+    configs.sort(key=lambda c: ([t for t in c['timings'] if t is not None] or [10. ** 9])[-1], reverse=True)
     
     for config_idx, config in enumerate(configs):
         config_pos = (float(len_configs - config_idx) - len_configs / 2) / len_configs
@@ -364,7 +369,8 @@ def benchmark(causal=True):
                 tflops = tflops_from_ms(timing, seq_len, config['tokens'])
                 max_tflops = tflops_from_ms(min_timing, seq_len, config['tokens'])
                 percentage_of_max = tflops / max_tflops
-                plt.text(seq_len, timing_height, f"{config['name']}: TFLOPs={round(tflops, 1)} ({round(percentage_of_max * 100, 2)}% max) - {round(timing, 1)}ms")
+                plt.text(seq_len, timing_height, f"{config['name']}: TFLOPs={round(tflops, 1)} \
+({round(percentage_of_max * 100, 2)}% max) - {round(timing, 1)}ms")
     plt.title(f'Fused Attention ({"Causal" if causal else "Non-Causal"})')
     plt.ylabel('time (ms)')
     plt.xlabel('Sequence Length')

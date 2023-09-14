@@ -27,6 +27,9 @@ import numpy as np
 DEFAULT_MASK_VALUE = -0.7 * float(np.finfo(np.dtype("float32")).max)
 
 DELAYED_SOFTMAX_NORMALIZE = True
+USE_UNMASKED_LOOP_BODY = False
+ALLOW_QK_FP16_ACC = False
+ALLOW_PV_FP16_ACC = True
 
 def mha_forward_kernel(
     q_ref,
@@ -44,17 +47,21 @@ def mha_forward_kernel(
   seq_len = q_ref.shape[0]
   start_q = pl.program_id(0)
 
+  pv_acc_dtype = o_ref.dtype if ALLOW_PV_FP16_ACC else jnp.float32
+  qk_acc_dtype = q_ref.dtype if ALLOW_QK_FP16_ACC else jnp.float32
+
   # acc is the buffer where we accumulate the output on sram.
   # m_i and l_i (see FlashAttention paper) are updated during the k,v loop.
   m_i = jnp.zeros(block_q, dtype=jnp.float32) - float('inf')
   l_i = jnp.zeros(block_q, dtype=jnp.float32)
   # acc is the buffer where we accumulate the output on sram.
-  acc = jnp.zeros((block_q, block_d), dtype=jnp.float32)
+  acc = jnp.zeros((block_q, block_d), pv_acc_dtype)
 
   # Load q: it will stay in L1 throughout. Indices form a matrix because we
   # read, compute, and write all in 2d chunks. 1 element ~= 1 CUDA thread index.
   # q tile has shape [block_q, block_d], block_d == head_dim.
   q = pl.load(q_ref, (pl.dslice(start_q * block_q, block_q), pl.dslice(None)))
+  stability_factor = jnp.log2(seq_len) if DELAYED_SOFTMAX_NORMALIZE else 0.
   q_scale = sm_scale * 1.44269504089
   if q_scale != 1.:
     q *= q_scale
@@ -68,34 +75,37 @@ def mha_forward_kernel(
   # (Bc == block_k here), and fast over blocks of q (size Br == block_q here).
   # Here we only loop over blocks of kv to process entire seq_len, the loop over
   # blocks of q is carried out by the grid.
-  def body(start_k, carry):
+  def body(start_k, carry, masked):
     acc, m_prev, l_prev = carry
 
     k = pl.load(k_ref, (pl.dslice(start_k * block_k, block_k), slice(None)))
     v = pl.load(v_ref, (pl.dslice(start_k * block_k, block_k), slice(None)))
-    kv_segment_ids = (
-        None
-        if segment_ids_ref is None
-        else pl.load(segment_ids_ref, (pl.dslice(start_k * block_k, block_k),))
-    )
-    qk = pl.dot(q, k.T)   # [block_q, block_k]
-    # Bring closer to XLA:GPU numerics.
-    qk = qk.astype(q_ref.dtype)
-    qk = qk.astype(jnp.float32)
-
-    if causal or segment_ids_ref is not None:
-      mask = None
-      if segment_ids_ref is not None:
-        mask = segment_mask(q_segment_ids, kv_segment_ids)
-      if causal:
-        span_q = start_q * block_q + jnp.arange(block_q)
-        span_k = start_k * block_k + jnp.arange(block_k)
-        causal_mask = span_q[:, None] >= span_k[None, :]
-        mask = (
-            causal_mask if mask is None else jnp.logical_and(mask, causal_mask)
-        )
-      # Apply mask to qk.
-      qk = jnp.where(mask, qk, DEFAULT_MASK_VALUE)
+    if masked:
+      kv_segment_ids = (
+          None
+          if segment_ids_ref is None
+          else pl.load(segment_ids_ref, (pl.dslice(start_k * block_k, block_k),))
+      )
+      qk = pl.dot(q, k.T, out_dtype=qk_acc_dtype).astype(q_ref.dtype)   # [block_q, block_k]
+      # Bring closer to XLA:GPU numerics.
+      qk = qk.astype(jnp.float32)
+      if causal or segment_ids_ref is not None:
+        mask = None
+        if segment_ids_ref is not None:
+          mask = segment_mask(q_segment_ids, kv_segment_ids)
+        if causal:
+          span_q = start_q * block_q + jnp.arange(block_q)
+          span_k = start_k * block_k + jnp.arange(block_k)
+          causal_mask = span_q[:, None] >= span_k[None, :]
+          mask = (
+              causal_mask if mask is None else jnp.logical_and(mask, causal_mask)
+          )
+        # Apply mask to qk.
+        qk = jnp.where(mask, qk, DEFAULT_MASK_VALUE)
+    else:
+      qk = pl.dot(q, k.T, out_dtype=qk_acc_dtype).astype(q_ref.dtype)   # [block_q, block_k]
+      # Bring closer to XLA:GPU numerics.
+      qk = qk.astype(jnp.float32)
     m_curr = jnp.maximum(jnp.max(qk, axis=1), m_prev)
     alpha = jnp.exp2(m_prev - m_curr)
     p = jnp.exp2(qk - m_curr[:, None])
@@ -103,25 +113,31 @@ def mha_forward_kernel(
     if DELAYED_SOFTMAX_NORMALIZE:
       l_curr = jnp.sum(p, axis=1) + alpha * l_prev
 
-      acc *= (0 * l_prev + alpha)[:, None]
+      acc = (acc * alpha[:, None]).astype(acc.dtype)
     else:
       l_prev *= alpha
       l_curr = jnp.sum(p, axis=1) + l_prev
 
       l_rcp = 1. / l_curr
       p = p * l_rcp[:, None]
-      acc *= (l_prev * l_rcp)[:, None]
+
+      acc = (acc * (l_prev * l_rcp)[:, None]).astype(acc.dtype)
 
     p = p.astype(jnp.float16)
-    acc = acc + pl.dot(p.astype(v.dtype), v)
+    acc += pl.dot(p.astype(v.dtype), v, out_dtype=acc.dtype)
     return acc, m_curr, l_curr
   if causal:
     # Ceildiv (`pl.cdiv` and `//` do not work due to type of start_q)
     upper_bound = lax.div(block_q * (start_q + 1) + block_k - 1, block_k)
+    causal_lower_bound = lax.div(block_q * start_q, block_k) if USE_UNMASKED_LOOP_BODY else upper_bound
   else:
     upper_bound = pl.cdiv(seq_len, block_k)  # type: ignore
-  acc, m_i, l_i = lax.fori_loop(0, upper_bound, body,
+    causal_lower_bound = upper_bound
+  must_mask = segment_ids_ref is not None
+  acc, m_i, l_i = lax.fori_loop(causal_lower_bound, upper_bound, functools.partial(body, masked=causal or must_mask),
                                 (acc, m_i, l_i))
+  acc, m_i, l_i = lax.fori_loop(0, causal_lower_bound, functools.partial(body, masked=must_mask),
+                                  (acc, m_i, l_i))
   if DELAYED_SOFTMAX_NORMALIZE:
     acc = acc / l_i[:, None]
 

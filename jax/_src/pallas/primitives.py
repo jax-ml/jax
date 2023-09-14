@@ -398,7 +398,7 @@ def store(x_ref, idx, val, *, mask=None, eviction_policy="") -> None:
   _ = swap(x_ref, idx, val, mask=mask, eviction_policy=eviction_policy)
 
 def dot(a, b, trans_a: bool = False, trans_b: bool = False,
-        allow_tf32: bool | None = None, precision=None):
+        allow_tf32: bool | None = None, precision=None, out_dtype=None):
   lhs_contract_dim = 0 if trans_a else 1
   rhs_contract_dim = 0 if not trans_b else 1
   if allow_tf32 is not None:
@@ -408,4 +408,4 @@ def dot(a, b, trans_a: bool = False, trans_b: bool = False,
   return jax.lax.dot_general(
       a, b, dimension_numbers=(((lhs_contract_dim,), (rhs_contract_dim,)), ((), ())),
       precision=precision,
-      preferred_element_type=None).astype(jnp.float32)
+      preferred_element_type=out_dtype).astype(out_dtype or jnp.float32)
