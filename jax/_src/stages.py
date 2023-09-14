@@ -54,7 +54,7 @@ xla_extension = xc._xla
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
-CompilerOptions = dict[str, Union[str, bool]]
+CompilerOptions = dict[str, Union[bool, int, float, str]]
 
 
 # -- Internal protocols
