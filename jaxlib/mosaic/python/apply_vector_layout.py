@@ -1665,6 +1665,9 @@ _register_rule("arith.shli")(
     functools.partial(_elementwise_op_rule, arith.ShLIOp))
 _register_rule("arith.shrui")(
     functools.partial(_elementwise_op_rule, arith.ShRUIOp))
+_register_rule("math.absf")(
+    functools.partial(_elementwise_op_rule, math_dialect.AbsFOp)
+)
 _register_rule("math.absi")(
     functools.partial(_elementwise_op_rule, math_dialect.AbsIOp)
 )
