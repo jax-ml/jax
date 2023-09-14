@@ -2104,7 +2104,7 @@ def zeros_like(a: ArrayLike | DuckTypedArray,
                dtype: DTypeLike | None = None,
                shape: Any = None) -> Array:
   if not (hasattr(a, 'dtype') and hasattr(a, 'shape')):  # support duck typing
-    util.check_arraylike("ones_like", a)
+    util.check_arraylike("zeros_like", a)
   dtypes.check_user_dtype_supported(dtype, "zeros_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
@@ -2130,7 +2130,7 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
                dtype: DTypeLike | None = None,
                shape: Any = None) -> Array:
   if not (hasattr(prototype, 'dtype') and hasattr(prototype, 'shape')):  # support duck typing
-    util.check_arraylike("ones_like", prototype)
+    util.check_arraylike("empty_like", prototype)
   dtypes.check_user_dtype_supported(dtype, "empty_like")
   return zeros_like(prototype, dtype=dtype, shape=shape)
 
