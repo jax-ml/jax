@@ -4890,7 +4890,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         ones_1d, ones_1d)
 
   @jtu.sample_product(
-      funcname=['matmul', 'dot', 'vdot', 'tensordot']
+      funcname=['inner', 'matmul', 'dot', 'vdot', 'tensordot']
   )
   def testPreferredElementType(self, funcname):
     func = getattr(jnp, funcname)
