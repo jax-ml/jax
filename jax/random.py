@@ -187,7 +187,10 @@ from jax._src.random import (
 
 
 # Deprecations
-from jax._src.prng import PRNGKeyArray as _PRNGKeyArray
+from jax._src.prng import (
+  PRNGKeyArray as _PRNGKeyArray,
+  check_key_reuse as check_key_reuse,
+)
 
 _deprecations = {
     # Added September 13, 2023:
