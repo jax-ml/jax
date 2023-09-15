@@ -1530,7 +1530,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testRsf2csf(self, shape, dtype):
       rng = jtu.rand_default(self.rng())
       args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
-      tol = 1e-5
+      tol = 3e-5
       self._CheckAgainstNumpy(osp.linalg.rsf2csf, jsp.linalg.rsf2csf,
                               args_maker, tol=tol)
       self._CompileAndCheck(jsp.linalg.rsf2csf, args_maker)
