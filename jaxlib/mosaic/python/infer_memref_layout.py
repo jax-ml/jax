@@ -89,9 +89,7 @@ def infer_memref(
         if bitwidth.bit_count() != 1 or bitwidth > 32:
           raise NotImplementedError(f"Unsupported bitwidth: {bitwidth}")
         trailing_tiles = f"(128)({32 // bitwidth},1)"
-      layout = ir.Attribute.parse(
-          f"#tpu.tiled<{memref.rank},({tile}){trailing_tiles}>"
-      )
+      layout = ir.Attribute.parse(f"#tpu.tiled<({tile}){trailing_tiles},[1]>")
     else:
       leading_tile = _tiling_factor(
           memref.shape[-2], hardware_generation, bitwidth
@@ -102,8 +100,18 @@ def infer_memref(
         if bitwidth.bit_count() != 1 or bitwidth > 32:
           raise NotImplementedError(f"Unsupported bitwidth: {bitwidth}")
         trailing_tiles = f"({32 // bitwidth},1)"
+      tile_strides = [1] * memref.rank
+      stride = 1
+      for i in range(memref.rank - 1, -1, -1):
+        tile_strides[i] = stride
+        if i == memref.rank - 1:
+          stride *= (memref.shape[i] + 127) // 128
+        elif i == memref.rank - 2:
+          stride *= (memref.shape[i] + leading_tile - 1) // leading_tile
+        else:
+          stride *= memref.shape[i]
       layout = ir.Attribute.parse(
-          f"#tpu.tiled<{memref.rank},({leading_tile},128){trailing_tiles}>"
+          f"#tpu.tiled<({leading_tile},128){trailing_tiles},{tile_strides}>"
       )
   elif tpu.private_is_tiled_layout(memref.layout):
     layout = memref.layout
