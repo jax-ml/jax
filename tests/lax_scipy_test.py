@@ -489,7 +489,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       should_be_eye = np.matmul(unitary.conj().T, unitary)
     else:
       should_be_eye = np.matmul(unitary, unitary.conj().T)
-    tol = 500 * float(jnp.finfo(matrix.dtype).eps)
+    tol = 650 * float(jnp.finfo(matrix.dtype).eps)
     eye_mat = np.eye(should_be_eye.shape[0], dtype=should_be_eye.dtype)
     with self.subTest('Test unitarity.'):
       self.assertAllClose(

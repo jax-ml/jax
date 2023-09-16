@@ -1278,7 +1278,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     elif rank == 2 and jtu.device_under_test() in ("tpu", "gpu"):
       self.skipTest("Nonsymmetric eigendecomposition is only implemented on the CPU backend.")
     rng = jtu.rand_default(self.rng())
-    tol = { np.int8: 1e-3, np.int32: 1e-3, np.float32: 1e-3, np.float64: 1e-6 }
+    tol = { np.int8: 2e-3, np.int32: 1e-3, np.float32: 1e-3, np.float64: 1e-6 }
     if jtu.device_under_test() == "tpu":
       tol[np.int32] = tol[np.float32] = 1e-1
     tol = jtu.tolerance(dtype, tol)

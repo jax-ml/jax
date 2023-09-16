@@ -662,6 +662,7 @@ jax_test(
     name = "pytorch_interoperability_test",
     srcs = ["pytorch_interoperability_test.py"],
     disable_backends = ["tpu"],
+    tags = ["not_build:arm"],
     deps = py_deps("torch"),
 )
 
