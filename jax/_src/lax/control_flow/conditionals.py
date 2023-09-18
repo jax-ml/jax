@@ -55,7 +55,6 @@ from jax._src.lax.control_flow.common import (
     _make_closed_jaxpr,
     _prune_zeros,
     _typecheck_param,
-    allowed_effects,
     )
 
 map, unsafe_map = safe_map, map
@@ -144,7 +143,7 @@ def switch(index, branches: Sequence[Callable], *operands,
                           out_trees[0], jaxprs[0].out_avals,
                           out_tree, jaxpr.out_avals)
   joined_effects = core.join_effects(*(jaxpr.effects for jaxpr in jaxprs))
-  disallowed_effects = allowed_effects.filter_not_in(joined_effects)
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `switch`: {disallowed_effects}')
@@ -253,7 +252,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
                         out_tree, true_jaxpr.out_avals,
                         false_out_tree, false_jaxpr.out_avals)
   joined_effects = core.join_effects(true_jaxpr.effects, false_jaxpr.effects)
-  disallowed_effects = allowed_effects.filter_not_in(joined_effects)
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
@@ -325,7 +324,7 @@ def _join_cond_effects(branches: Sequence[core.Jaxpr]) -> effects.Effects:
 
 def _cond_abstract_eval(*avals, branches, **_):
   joined_effects = _join_cond_effects(branches)
-  disallowed_effects = allowed_effects.filter_not_in(joined_effects)
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
@@ -765,7 +764,7 @@ def _cond_typecheck(bind_time, *in_atoms, branches, linear):
   jaxpr0_in_avals_str = _avals_short(jaxpr0.in_avals)
   jaxpr0_out_avals_str = _avals_short(jaxpr0.out_avals)
   joined_effects = _join_cond_effects(branches)
-  disallowed_effects = allowed_effects.filter_not_in(joined_effects)
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')

@@ -11,10 +11,50 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""JAX effects.
+
+JAX uses effects to describe computations that may have side-effects. Effects
+are associated with JAX primitive instances and Jaxprs.
+
+A primitive instance with an effect will be protected from dead-code elimination
+even if its result is unused.
+
+A special class of effects are the **ordered** effects
+(members of `effects.ordered_effects`).
+The lowering of a computation with ordered effects will have one additional
+input and one additional output for each ordered effect. These appear before
+the regular inputs/outputs, and are of type `i1[0]`. These tokens
+are threaded through the instructions with ordered effects to ensure that the
+compiler will not eliminate, replicate, or reordered the corresponding
+instructions.
+
+To ensure the ordering across multiple computations we maintain a
+per-thread set of the tokens returned by the last dispatched computation. There
+is one token per ordered effect, and it may be sharded over the devices
+used by the last dispatched computation. Upon dispatching a
+new computation with ordered effects we take the current token, we shard it
+on the devices for the computation to be dispatched and we pass it as an input.
+Then we update the current token to refer to the token output of
+the dispatched computation.
+
+When we have ordered effects, we also use the current token to implement
+`jax.barrier` which waits until the current tokens are ready.
+
+The implementation of `jax.barrier` for unordered effects is a bit different,
+because for these effects we do not thread tokens in and out of dispatched
+computation. Instead, we use a `RuntimeToken`, which is an object returned when
+dispatching a computation and on which we can block until is ready. We store
+for each thread the `RuntimeToken` returned by the last dispatched computation.
+
+For more details, see the design note:
+https://jax.readthedocs.io/en/latest/jep/10657-sequencing-effects.html.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import Any
+
 
 class Effect:
   """A generic side-effect."""
@@ -66,6 +106,14 @@ class EffectTypeSet:
 
 no_effects: Effects = set()
 ordered_effects: EffectTypeSet = EffectTypeSet()
+
+# By default, ordered effects are not allowed in multi-device computations,
+# because we cannot ensure a total order. Optionally, an effect can be
+# declared as shardable, which means that effects will appear in program order
+# but for a given program point we may see several side effects on the
+# participating devices, and there is no guarantee of their relative ordering.
+shardable_ordered_effects: EffectTypeSet = EffectTypeSet()
+
 lowerable_effects: EffectTypeSet = EffectTypeSet()
 control_flow_allowed_effects: EffectTypeSet = EffectTypeSet()
 custom_derivatives_allowed_effects: EffectTypeSet = EffectTypeSet()

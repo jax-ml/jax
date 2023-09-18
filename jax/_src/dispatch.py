@@ -28,6 +28,7 @@ import threading
 
 import numpy as np
 
+import jax
 from jax._src import basearray
 from jax._src import core
 from jax._src import dtypes
@@ -187,57 +188,48 @@ def simple_impl(prim):
 RuntimeToken = Any
 
 class RuntimeTokenSet(threading.local):
-  tokens: dict[core.Effect, tuple[RuntimeToken, Device]]
-  output_tokens: dict[Device, RuntimeToken]
+  """See docstring for effect.py module for the calling convention for tokens."""
+
+  # For each ordered effect, the token returned by the last dispatched
+  # computation, sharded over the devices in that computation.
+  current_tokens: dict[core.Effect, jax.Array]
+
+  # For each device, the runtime token returned by the last dispatched
+  # computation on that device.
   output_runtime_tokens: dict[Device, RuntimeToken]
 
   def __init__(self):
-    self.tokens = {}
-    # TODO(sharadmv): remove redundant output token dictionary when minimum
-    # jaxlib version is bumped to 0.3.16.
-    self.output_tokens = {}
+    self.current_tokens = {}
     self.output_runtime_tokens = {}
 
-  def get_token(self, eff: core.Effect, device: Device) -> RuntimeToken:
-    s = SingleDeviceSharding(device)
-    if eff not in self.tokens:
-      inp = np.zeros(0, np.bool_)
-      indices = tuple(
-          s.addressable_devices_indices_map(inp.shape).values())
-      out = pxla.shard_args([device], [indices], [s], [inp])
-      self.tokens[eff] = out, device
-    elif self.tokens[eff][1] != device:
-      (old_token,), _ = self.tokens[eff]
-      indices = tuple(
-          s.addressable_devices_indices_map((0,)).values())
-      out = pxla.shard_args([device], [indices], [s], [old_token])
-      self.tokens[eff] = out, device
-    return self.tokens[eff][0]
+  def get_token_input(self, eff: core.Effect,
+                      devices: list[Device]) -> jax.Array:
+    tok = self.current_tokens.get(eff, np.zeros(0, np.bool_))
+    s = NamedSharding(pxla.Mesh(devices, axis_names=["dev"]),
+                      PartitionSpec([]))
+    s = jax.sharding.GSPMDSharding.get_replicated(devices)
+    indices = tuple(
+        s.addressable_devices_indices_map(tok.shape).values())
+    sharded_tok = pxla.shard_args(devices, [indices], [s], [tok])[0]
+    self.current_tokens[eff] = sharded_tok
+    return sharded_tok
 
-  def update_token(self, eff: core.Effect, token: RuntimeToken):
-    self.tokens[eff] = token, self.tokens[eff][1]
-
-  def set_output_token(self, device: Device, token: RuntimeToken):
-    # We're free to clobber the previous output token because on each
-    # device we have a total ordering of computations. Only the token
-    # from the latest computation matters. If this weren't the case
-    # we'd need to store a set of output tokens.
-    self.output_tokens[device] = token
+  def set_token_result(self, eff: core.Effect, token: jax.Array):
+    self.current_tokens[eff] = token
 
   def set_output_runtime_token(self, device: Device, token: RuntimeToken):
-    # TODO(sharadmv): remove this method when minimum jaxlib version is bumped
+    # We're free to clobber the previous output token because on each
+    # device we have a total ordering of computations. Only the token
+    # from the latest computation matters.
     self.output_runtime_tokens[device] = token
 
   def clear(self):
-    self.tokens = {}
-    self.output_tokens = {}
+    self.current_tokens = {}
     self.output_runtime_tokens = {}
 
   def block_until_ready(self):
-    for token, _ in self.tokens.values():
-      token[0].block_until_ready()
-    for token in self.output_tokens.values():
-      token[0].block_until_ready()
+    for token in self.current_tokens.values():
+      token.block_until_ready()
     for token in self.output_runtime_tokens.values():
       token.block_until_ready()
     self.clear()

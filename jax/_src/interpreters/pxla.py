@@ -1109,38 +1109,27 @@ class ExecuteReplicated:
     self.has_unordered_effects = bool(unordered_effects)
     self.ordered_effects = ordered_effects
     self._local_devices = self.xla_executable.local_devices()
-    if ordered_effects:
-      assert len(self._local_devices) == 1
     self.keepalive = keepalive
     self.has_host_callbacks = has_host_callbacks
     self.kept_var_idx = kept_var_idx
 
   def _add_tokens_to_inputs(self, input_bufs):
     if self.ordered_effects:
-      device, = self._local_devices
-      tokens = [list(dispatch.runtime_tokens.get_token(eff, device))
-                for eff in self.ordered_effects]
+      tokens = [
+        dispatch.runtime_tokens.get_token_input(eff, self._local_devices)
+        for eff in self.ordered_effects]
       input_bufs = [*tokens, *input_bufs]
     return input_bufs
 
   def _handle_token_bufs(self, token_bufs, sharded_token):
+    # token_bufs: Sequence[Sequence[tokenArray]], for each effect the returned
+    # token buffer (as a singleton list).
+    # sharded_token: ShardedToken, containing the RuntimeTokens for each device
     for i, device in enumerate(self._local_devices):
       dispatch.runtime_tokens.set_output_runtime_token(
           device, sharded_token.get_token(i))
     for eff, token_buf in zip(self.ordered_effects, token_bufs):
-      dispatch.runtime_tokens.update_token(eff, token_buf)
-
-  def _call_with_tokens(self, input_bufs):
-    input_bufs = self._add_tokens_to_inputs(input_bufs)
-    out_bufs, sharded_token = (
-        self.xla_executable.execute_sharded_on_local_devices_with_tokens(
-            input_bufs
-        )
-    )
-    num_output_tokens = len(self.ordered_effects)
-    token_bufs, out_bufs = util.split_list(out_bufs, [num_output_tokens])
-    self._handle_token_bufs(token_bufs, sharded_token)
-    return out_bufs
+      dispatch.runtime_tokens.set_token_result(eff, token_buf[0])
 
   @profiler.annotate_function
   def __call__(self, *args):
@@ -1152,10 +1141,10 @@ class ExecuteReplicated:
       results = self.xla_executable.execute_sharded(
           input_bufs, with_tokens=True
       )
-      self._handle_token_bufs(
-          results.disassemble_prefix_into_single_device_arrays(
-              len(self.ordered_effects)),
-          results.consume_token())
+      result_token_bufs = results.disassemble_prefix_into_single_device_arrays(
+          len(self.ordered_effects))
+      sharded_runtime_token = results.consume_token()
+      self._handle_token_bufs(result_token_bufs, sharded_runtime_token)
     else:
       results = self.xla_executable.execute_sharded(input_bufs)
     if dispatch.needs_check_special():
@@ -1833,9 +1822,13 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
   module_name = f"{api_name}_{fun_name}"
 
   if len(device_assignment) > 1:
-    if any(effects.ordered_effects.contains(eff) for eff
-           in closed_jaxpr.effects):
-      raise ValueError("Ordered effects are not supported for more than 1 device.")
+    unsupported_effects = effects.ordered_effects.filter_in(closed_jaxpr.effects)
+    unsupported_effects = effects.shardable_ordered_effects.filter_not_in(
+        unsupported_effects)
+    if len(unsupported_effects) > 0:
+      raise ValueError(
+        "The following ordered effects are not supported for "
+        f"more than 1 device: {unsupported_effects}")
   ordered_effects = list(effects.ordered_effects.filter_in(closed_jaxpr.effects))
 
   with dispatch.log_elapsed_time(

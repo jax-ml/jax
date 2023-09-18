@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import functools
+import logging
 import textwrap
+import time
 import unittest
 
 from absl.testing import absltest
@@ -27,11 +29,11 @@ from jax._src import test_util as jtu
 from jax._src import util
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
+from jax.experimental import io_callback
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax.experimental.maps import xmap
 from jax.experimental.shard_map import shard_map
-from jax.experimental import io_callback
 import jax.numpy as jnp
 from jax.sharding import Mesh
 import numpy as np
@@ -1007,54 +1009,118 @@ class IOCallbackTest(jtu.JaxTestCase):
         "Effects not supported in partial-eval of `checkpoint`"):
       f(2., 3.)
 
-  def test_can_use_io_callback_in_pjit(self):
-    _mut = 0
+  @parameterized.named_parameters(
+      dict(
+          testcase_name=f'{ordered=}_{with_sharding=}',
+          ordered=ordered,
+          with_sharding=with_sharding,
+      )
+      for ordered in [True, False]
+      for with_sharding in [True, False]
+  )
+  def test_can_use_io_callback_in_pjit(
+      self, *, ordered: bool, with_sharding: bool
+  ):
+    devices = jax.devices()
+    mesh = jax.sharding.Mesh(np.array(devices), ['dev'])
+
+    _collected: list[int] = []
     def _cb(x):
-      nonlocal _mut
-      _mut = x.sum()
+      nonlocal _collected
+      _collected.append(int(x.sum()))
+
+    io_callback_kwargs = dict(ordered=ordered)
+    callback_device = devices[0]
+    if with_sharding:
+      callback_device = devices[-1]
+      io_callback_kwargs['sharding'] = jax.sharding.SingleDeviceSharding(
+          callback_device
+      )
 
     def f(x):
-      io_callback(_cb, None, x)
+      io_callback(_cb, None, x, **io_callback_kwargs)
+      io_callback(_cb, None, x + 1, **io_callback_kwargs)
       return x
 
-    mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
-    spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
+    in_spec = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec('dev')
+    )
     out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-    f = pjit.pjit(f, in_shardings=spec, out_shardings=out_spec)
+    f = pjit.pjit(f, in_shardings=in_spec, out_shardings=out_spec)
+    expected = []
     with mesh:
-      f(jnp.arange(mesh.size))
-      jax.effects_barrier()
-    self.assertEqual(_mut, jnp.arange(mesh.size).sum())
+      x = jnp.arange(mesh.size)
+      f(x)
+      expected.extend([int(x.sum()), int((x + 1).sum())])
+      f(x + 5)
+      expected.extend([int((x + 5).sum()), int((x + 6).sum())])
 
-  def test_can_use_io_callback_in_pjit_with_sharding(self):
-    mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
-    spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
+    jax.effects_barrier()
+    if ordered:
+      self.assertAllClose(_collected, expected)
+    else:
+      self.assertEqual(len(_collected), len(expected))
+      for v in expected:
+        self.assertIn(v, _collected)
 
-    _mut = 0
-    def _cb(x):
-      nonlocal _mut
-      _mut = x.sum()
-
-    callback_device = jax.devices()[-1]
-    callback_device_index = spec._device_assignment.index(callback_device)
-
-    def f(x):
-      sharding = jax.sharding.SingleDeviceSharding(callback_device)
-      io_callback(_cb, None, x, sharding=sharding)
-      return x
-
-    out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-    f = pjit.pjit(f, in_shardings=spec, out_shardings=out_spec)
-    inp = jnp.arange(mesh.size)
-    with mesh:
-      f(inp)
-      jax.effects_barrier()
-    self.assertEqual(_mut, jnp.arange(mesh.size).sum())
-
+    callback_device_index = in_spec._device_assignment.index(callback_device)
     self.assertIn(
         f'{{maximal device={callback_device_index}}}',
-        str(f.lower(inp).compiler_ir(dialect='stablehlo')),
+        str(f.lower(x).compiler_ir(dialect='stablehlo')),
     )
+
+  def test_sequence_pjit_io_callback_ordered(self):
+    # A sequence of pairs of calls to pjit(io_callback(ordered=True)) with each
+    # pair on a different device assignment.
+    _collected: list[int] = []
+    def _cb(i, x):
+      nonlocal _collected
+      # Sleep different amounts of time, to test the ordering.
+      time.sleep([0.02, 0.03, 0.04][len(_collected) % 3])
+      logging.info('Collected iteration %s: %s', i, x)
+      _collected.append(int(x.sum()))
+
+    def f_base(i, x):
+      io_callback(_cb, None, i, x, ordered=True)
+      io_callback(_cb, None, i, x + 1, ordered=True)
+
+    nr_iterations = 8
+    # TODO(zce): If I pin to 1 device below (jax.devices()[:1]) then this test
+    # flakes. It also flakes when pinned to 2 devices. It seems that repeatedly
+    # dispatching to the same device triggers the problem.
+    devices = jax.devices()
+    expected = []  # The expected value for _collected
+    for i in range(nr_iterations):
+      if len(devices) > 1:
+        devices_for_iteration = [
+            devices[i % len(devices)],
+            devices[(i + 1) % len(devices)],
+        ]
+      else:
+        devices_for_iteration = devices
+      logging.info(
+          'Running iteration %d on devices %s', i, devices_for_iteration
+      )
+      mesh = jax.sharding.Mesh(np.array(devices_for_iteration), ['dev'])
+      in_spec = (
+          jax.sharding.NamedSharding(mesh, None),
+          jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev')),
+      )
+      out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+      f = pjit.pjit(f_base, in_shardings=in_spec, out_shardings=out_spec)
+      with mesh:
+        x = jax.device_put(
+            np.arange(len(devices_for_iteration), dtype=np.int32) + 10 * i,
+            in_spec[1],
+        )
+        f(i, x)
+        expected.extend([int(x.sum()), int((x + 1).sum())])
+        f(i, x + 5)
+        expected.extend([int((x + 5).sum()), int((x + 6).sum())])
+
+    jax.effects_barrier()
+    self.assertEqual(_collected, expected)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

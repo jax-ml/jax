@@ -359,6 +359,7 @@ effects.lowerable_effects.add_type(OrderedIOEffect)
 effects.control_flow_allowed_effects.add_type(IOEffect)
 effects.control_flow_allowed_effects.add_type(OrderedIOEffect)
 effects.ordered_effects.add_type(OrderedIOEffect)
+effects.shardable_ordered_effects.add_type(OrderedIOEffect)
 
 
 def io_callback_impl(

@@ -25,7 +25,6 @@ from jax._src.lax.control_flow.solves import (custom_linear_solve, custom_root,
                                               _custom_linear_solve_impl,
                                               linear_solve_p)
 
-from jax._src.lax.control_flow.common import allowed_effects
 # Private utilities used elsewhere in JAX
 # TODO(sharadmv): lift them into a more common place
 from jax._src.lax.control_flow.common import (_initial_style_open_jaxpr,

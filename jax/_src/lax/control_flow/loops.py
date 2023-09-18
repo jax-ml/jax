@@ -58,7 +58,7 @@ import numpy as np
 
 from jax._src.lax.control_flow.common import (
     _abstractify, _avals_short, _check_tree_and_avals, _initial_style_jaxpr,
-    _make_closed_jaxpr, _prune_zeros, _typecheck_param, allowed_effects)
+    _make_closed_jaxpr, _prune_zeros, _typecheck_param)
 
 _map = safe_map
 zip = safe_zip
@@ -258,7 +258,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   in_flat, jaxpr, consts, out_tree, out_tree_children = rest
 
   _check_scan_carry_type(f, init, out_tree_children[0], carry_avals_out)
-  disallowed_effects = allowed_effects.filter_not_in(jaxpr.effects)
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(jaxpr.effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `scan`: {disallowed_effects}')
@@ -1235,8 +1235,8 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   _check_tree_and_avals("body_fun output and input",
                         body_tree, body_jaxpr.out_avals,
                         in_tree_children[0], init_avals)
-  effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
-  disallowed_effects = allowed_effects.filter_not_in(effects)
+  joined_effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `while`: {disallowed_effects}')
@@ -1268,7 +1268,7 @@ def _while_loop_abstract_eval(*avals, cond_jaxpr, body_jaxpr, body_nconsts,
   del avals
   joined_effects = _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts,
                                        cond_nconsts)
-  disallowed_effects = allowed_effects.filter_not_in(joined_effects)
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `while`: {disallowed_effects}')
@@ -1698,7 +1698,7 @@ def _while_typecheck(_, *in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
   # TODO(frostig,mattjj): check cond_jaxpr, body_jaxpr types
   joined_effects = _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts,
                                        cond_nconsts)
-  disallowed_effects = allowed_effects.filter_not_in(joined_effects)
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `while`: {disallowed_effects}')
