@@ -37,6 +37,7 @@ class RnnTest(jtu.JaxTestCase):
       bidirectional=[True, False],
   )
   @jtu.run_on_devices("cuda")
+  @jax.default_matmul_precision("float32")
   def test_lstm(self, batch_size: int, seq_len: int, input_size: int,
                 hidden_size: int, num_layers: int, bidirectional: bool):
     if lib.version < (0, 4, 7):
