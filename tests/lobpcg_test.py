@@ -368,10 +368,10 @@ class LobpcgTest(jtu.JaxTestCase):
 class F32LobpcgTest(LobpcgTest):
 
   def setUp(self):
-    super().setUp()
     # TODO(phawkins): investigate this failure
     if jtu.device_under_test() == "gpu":
       raise unittest.SkipTest("Test is failing on CUDA gpus")
+    super().setUp()
 
   def testLobpcgValidatesArguments(self):
     A, _ = _concrete_generators(np.float32)['id'](100, 10)
@@ -408,10 +408,10 @@ class F32LobpcgTest(LobpcgTest):
 class F64LobpcgTest(LobpcgTest):
 
   def setUp(self):
-    super().setUp()
     # TODO(phawkins): investigate this failure
     if jtu.device_under_test() == "gpu":
       raise unittest.SkipTest("Test is failing on CUDA gpus")
+    super().setUp()
 
   @parameterized.named_parameters(_make_concrete_cases(f64=True))
   @jtu.skip_on_devices("tpu", "iree", "gpu")
