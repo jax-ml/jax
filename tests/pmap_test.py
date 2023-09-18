@@ -40,6 +40,7 @@ from jax._src.lax import parallel
 from jax._src import api as src_api
 from jax import random
 from jax._src import core
+from jax._src.lib import xla_extension_version
 from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
 from jax._src import config as jax_config
@@ -1021,8 +1022,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     (('Gather', lax.all_gather), ('ReduceScatter', lax.psum_scatter))
   ))
   def testGradOf(self, prim, tiled, use_axis_index_groups):
-    if jtu.device_under_test() == "gpu":
-      raise SkipTest("XLA:GPU with ReduceScatter deadlocks")  # b/264516146
+    if xla_extension_version < 196:
+      raise SkipTest("Test requires xla_extension_version >=196")
     axis_index_groups = None
     devices = jax.devices()
 
