@@ -516,10 +516,9 @@ pytype_strict_library(
         ":pallas_tpu_users",
     ],
     deps = [
-        ":pallas",
+        ":pallas",  # buildcleaner: keep
+        ":tpu_custom_call",
         "//jax/_src/pallas/mosaic",
-        "//jax/_src/pallas/mosaic:core",
-        "//jax/_src/pallas/mosaic:primitives",
     ],
 )
 

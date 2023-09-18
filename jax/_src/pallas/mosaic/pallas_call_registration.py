@@ -76,6 +76,7 @@ def pallas_call_tpu_lowering_rule(
           backend=ctx.module_context.backend,
           kernel_name=name,
           kernel_regeneration_metadata=kernel_regeneration_metadata,
+          cost_estimate=mosaic_params.get('cost_estimate', None),
       ),
       multiple_results=True,
   )(ctx, *in_nodes)
