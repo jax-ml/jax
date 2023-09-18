@@ -35,4 +35,3 @@
   threefry_prng_impl
   rbg_prng_impl
   unsafe_rbg_prng_impl
-  wrap_key_data
