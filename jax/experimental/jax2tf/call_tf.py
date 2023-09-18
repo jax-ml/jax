@@ -395,6 +395,7 @@ effects.control_flow_allowed_effects.add_type(CallTfOrderedEffect)
 effects.remat_allowed_effects.add_type(CallTfOrderedEffect)
 effects.custom_derivatives_allowed_effects.add_type(CallTfOrderedEffect)
 effects.ordered_effects.add_type(CallTfOrderedEffect)
+effects.shardable_ordered_effects.add_type(CallTfOrderedEffect)
 
 
 def _call_tf_abstract_eval(
