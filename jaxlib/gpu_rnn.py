@@ -33,7 +33,8 @@ if _rnn:
 
 def cudnn_rnn_lowering(ctx, input, h_0, c_0, weights, seq_lengths, *,
                        input_size: int, hidden_size: int, num_layers: int,
-                       dropout: bool, bidirectional: bool):
+                       dropout: bool, bidirectional: bool,
+                       cudnn_allow_tf32: bool):
   """CuDnn RNN."""
   out_dtype = ctx.avals_out[0].dtype
   if out_dtype == np.float32:
@@ -53,7 +54,7 @@ def cudnn_rnn_lowering(ctx, input, h_0, c_0, weights, seq_lengths, *,
   # workspace_shape = ctx.avals_out[3].shape
   workspace_size, _ = compute_rnn_workspace_reserve_space_sizes(
       input_size, hidden_size, num_layers, batch_size, max_seq_length,
-      dropout, bidirectional)
+      dropout, bidirectional, cudnn_allow_tf32)
   workspace_shape = (workspace_size,)
   workspace_type = ir.RankedTensorType.get(workspace_shape, ir.F32Type.get())
   reserve_space_shape = ctx.avals_out[3].shape
@@ -64,7 +65,8 @@ def cudnn_rnn_lowering(ctx, input, h_0, c_0, weights, seq_lengths, *,
 
   opaque = _rnn.build_rnn_descriptor(input_size, hidden_size, num_layers,
                                      batch_size, max_seq_length, dropout,
-                                     bidirectional, workspace_shape[0],
+                                     bidirectional, cudnn_allow_tf32,
+                                     workspace_shape[0],
                                      reserve_space_shape[0])
 
   i32_type = ir.IntegerType.get_signless(32)
@@ -90,13 +92,13 @@ def _hlo_zeros_f32(shape):
 def cudnn_rnn_bwd_lowering(ctx, dy, dhn, dcn, x, h0, c0, w, y,
                            reserve_space, seq_lengths, *, input_size: int,
                            hidden_size: int, num_layers: int, dropout: bool,
-                           bidirectional: bool):
+                           bidirectional: bool, cudnn_allow_tf32: bool):
   """CuDnn RNN Backward pass."""
   batch_size = ctx.avals_in[3].shape[0]
   max_seq_length = ctx.avals_in[3].shape[1]
   workspace_size, _ = compute_rnn_workspace_reserve_space_sizes(
       input_size, hidden_size, num_layers, batch_size, max_seq_length,
-      dropout, bidirectional)
+      dropout, bidirectional, cudnn_allow_tf32)
   workspace_shape = (workspace_size,)
   workspace_type = ir.RankedTensorType.get(workspace_shape, ir.F32Type.get())
   reserve_space_shape = ctx.avals_in[8].shape
@@ -105,7 +107,8 @@ def cudnn_rnn_bwd_lowering(ctx, dy, dhn, dcn, x, h0, c0, w, y,
     raise RuntimeError("cuda couldn't be imported")
   opaque = _rnn.build_rnn_descriptor(input_size, hidden_size, num_layers,
                                      batch_size, max_seq_length, dropout,
-                                     bidirectional, workspace_shape[0],
+                                     bidirectional, cudnn_allow_tf32,
+                                     workspace_shape[0],
                                      reserve_space_shape[0])
 
   i32_type = ir.IntegerType.get_signless(32)

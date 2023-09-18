@@ -76,8 +76,9 @@ class RnnTest(jtu.JaxTestCase):
         input_size=input_size,
         hidden_size=hidden_size,
         num_layers=num_layers,
-        dropout=False,
-        bidirectional=bidirectional)
+        dropout=0.0,
+        bidirectional=bidirectional,
+        precision=None)
       seq_length_mask = jnp.tile(jnp.arange(seq_len, dtype=jnp.int32)[None],
           [batch_size, 1]) < seq_lengths[:, None]
       loss = jnp.sum(jnp.where(seq_length_mask[..., None], y, 0.))
@@ -104,7 +105,7 @@ class RnnTest(jtu.JaxTestCase):
           input_size=input_size,
           hidden_size=hidden_size,
           num_layers=num_layers,
-          dropout=False,
+          dropout=0.0,
           bidirectional=bidirectional)
       seq_length_mask = jnp.tile(jnp.arange(seq_len, dtype=jnp.int32)[None],
           [batch_size, 1]) < seq_lengths[:, None]

@@ -28,11 +28,12 @@ namespace nb = nanobind;
 
 nb::bytes BuildRnnDescriptor(int input_size, int hidden_size, int num_layers,
                              int batch_size, int max_seq_length, float dropout,
-                             bool bidirectional, int workspace_size,
-                             int reserve_space_size) {
+                             bool bidirectional, bool cudnn_allow_tf32,
+			     int workspace_size, int reserve_space_size) {
   return PackDescriptor(RnnDescriptor{
       input_size, hidden_size, num_layers, batch_size, max_seq_length, dropout,
-      bidirectional, workspace_size, reserve_space_size});
+      bidirectional, cudnn_allow_tf32, workspace_size, reserve_space_size
+  });
 }
 
 nb::dict Registrations() {
