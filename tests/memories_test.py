@@ -716,7 +716,7 @@ class MemoriesTest(jtu.BufferDonationTestCase):
         "unpinned_host")
 
   def test_device_put_resharding(self):
-    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("x", "y"), memory_kind="unpinned_host")
     s_hbm = s_host.with_memory_kind("tpu_hbm")
     np_inp = np.arange(16).reshape(8, 2)
