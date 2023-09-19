@@ -598,6 +598,36 @@ def escaped_tracer_error(tracer, detail=None):
   return UnexpectedTracerError(msg)
 
 
+def check_scalar_conversion(arr: Array):
+  if arr.size != 1:
+    raise TypeError("Only length-1 arrays can be converted to Python scalars.")
+  if arr.shape != ():
+    # Added 2023 September 18.
+    warnings.warn("Conversion of an array with ndim > 0 to a scalar is deprecated, "
+                  "and will error in future.", DeprecationWarning, stacklevel=3)
+
+
+def check_integer_conversion(arr: Array):
+  if not (arr.shape == () and dtypes.issubdtype(arr.dtype, np.integer)):
+    raise TypeError("Only integer scalar arrays can be converted to a scalar index.")
+
+
+def check_bool_conversion(arr: Array, warn_on_empty=False):
+  if arr.size == 0:
+    if warn_on_empty:
+      warnings.warn(
+        "The truth value of an empty array is ambiguous. Returning False. In the future this "
+        "will result in an error. Use `array.size > 0` to check that an array is not empty.",
+        DeprecationWarning, stacklevel=3)
+    else:
+      raise ValueError("The truth value of an empty array is ambiguous. Use "
+                       "`array.size > 0` to check that an array is not empty.")
+  if arr.size > 1:
+    raise ValueError("The truth value of an array with more than one element is "
+                      "ambiguous. Use a.any() or a.all()")
+
+
+
 class Tracer(typing.Array):
   __array_priority__ = 1000
   __slots__ = ['_trace', '_line_info']
@@ -614,9 +644,6 @@ class Tracer(typing.Array):
     raise ConcretizationTypeError(self,
       f"The __dlpack__() method was called on {self._error_repr()}."
       f"{self._origin_msg()}")
-
-  def __index__(self):
-    raise TracerIntegerConversionError(self)
 
   def tolist(self):
     raise ConcretizationTypeError(self,
@@ -670,12 +697,33 @@ class Tracer(typing.Array):
   def get_referent(self) -> Any:
     return self  # Override for object equivalence checking
 
-  def __bool__(self): return self.aval._bool(self)
-  def __int__(self): return self.aval._int(self)
-  def __hex__(self): return self.aval._hex(self)
-  def __oct__(self): return self.aval._oct(self)
-  def __float__(self): return self.aval._float(self)
-  def __complex__(self): return self.aval._complex(self)
+  def __bool__(self):
+    check_bool_conversion(self)
+    return self.aval._bool(self)
+
+  def __int__(self):
+    check_scalar_conversion(self)
+    return self.aval._int(self)
+
+  def __float__(self):
+    check_scalar_conversion(self)
+    return self.aval._float(self)
+
+  def __complex__(self):
+    check_scalar_conversion(self)
+    return self.aval._complex(self)
+
+  def __hex__(self):
+    check_integer_conversion(self)
+    return self.aval._hex(self)
+
+  def __oct__(self):
+    check_integer_conversion(self)
+    return self.aval._oct(self)
+
+  def __index__(self):
+    check_integer_conversion(self)
+    raise self.aval._index(self)
 
   # raises a useful error on attempts to pickle a Tracer.
   def __reduce__(self):
@@ -1394,6 +1442,9 @@ def concretization_function_error(fun, suggest_astype=False):
   if fun is bool:
     def error(self, arg):
       raise TracerBoolConversionError(arg)
+  elif fun in (hex, oct, operator.index):
+    def error(self, arg):
+      raise TracerIntegerConversionError(arg)
   else:
     def error(self, arg):
       raise ConcretizationTypeError(arg, fname_context)
@@ -1495,12 +1546,13 @@ class UnshapedArray(AbstractValue):
     return '{}({}{})'.format(self.__class__.__name__, self.str_short(),
                              ", weak_type=True" if self.weak_type else "")
 
-  _bool = _nonzero = concretization_function_error(bool)
-  _float   = concretization_function_error(float, True)
+  _bool    = concretization_function_error(bool)
   _int     = concretization_function_error(int, True)
+  _float   = concretization_function_error(float, True)
   _complex = concretization_function_error(complex, True)
   _hex     = concretization_function_error(hex)
   _oct     = concretization_function_error(oct)
+  _index   = concretization_function_error(operator.index)
 
   def at_least_vspace(self) -> AbstractValue:
     return UnshapedArray(primal_dtype_to_tangent_dtype(self.dtype),
@@ -1659,13 +1711,14 @@ class ConcreteArray(ShapedArray):
     dt_str =  _short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
     return f'{self.val}, dtype={dt_str}'
 
-  _bool = _nonzero = partialmethod(_forward_to_value, bool)
-  _int             = partialmethod(_forward_to_value, int)
-  _hex             = partialmethod(_forward_to_value, hex)
-  _oct             = partialmethod(_forward_to_value, oct)
+  _bool    = partialmethod(_forward_to_value, bool)
+  _int     = partialmethod(_forward_to_value, int)
+  _hex     = partialmethod(_forward_to_value, hex)
+  _oct     = partialmethod(_forward_to_value, oct)
+  _index   = partialmethod(_forward_to_value, operator.index)
 
-  _float           = concretization_function_error(float, True)
-  _complex         = concretization_function_error(complex, True)
+  _float   = concretization_function_error(float, True)
+  _complex = concretization_function_error(complex, True)
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
   # TODO(frostig,mattjj): determines that all extended dtypes have
