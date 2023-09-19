@@ -18,6 +18,7 @@ List of Available Functions
     PRNGKey
     key
     key_data
+    wrap_key_data
     ball
     bernoulli
     beta

@@ -183,6 +183,7 @@ from jax._src.random import (
   unsafe_rbg_key as unsafe_rbg_key,
   wald as wald,
   weibull_min as weibull_min,
+  wrap_key_data as wrap_key_data,
 )
 
 

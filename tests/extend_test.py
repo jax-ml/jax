@@ -14,7 +14,6 @@
 
 from absl.testing import absltest
 
-import jax
 import jax.extend as jex
 
 from jax._src import linear_util
@@ -44,33 +43,6 @@ class ExtendTest(jtu.JaxTestCase):
     self.assertIs(jex.linear_util.transformation, linear_util.transformation)
     self.assertIs(jex.linear_util.transformation_with_aux, linear_util.transformation_with_aux)
     self.assertIs(jex.linear_util.wrap_init, linear_util.wrap_init)
-
-
-class RandomTest(jtu.JaxTestCase):
-  def test_wrap_key_default(self):
-    key1 = jax.random.key(17)
-    data = jax.random.key_data(key1)
-    key2 = jex.random.wrap_key_data(data)
-    self.assertEqual(key1.dtype, key2.dtype)
-    self.assertArraysEqual(jax.random.key_data(key1),
-                           jax.random.key_data(key2))
-
-    impl = config.jax_default_prng_impl
-    key3 = jex.random.wrap_key_data(data, impl=impl)
-    self.assertEqual(key1.dtype, key3.dtype)
-    self.assertArraysEqual(jax.random.key_data(key1),
-                           jax.random.key_data(key3))
-
-  def test_wrap_key_explicit(self):
-    key1 = jax.random.key(17, impl='rbg')
-    data = jax.random.key_data(key1)
-    key2 = jex.random.wrap_key_data(data, impl='rbg')
-    self.assertEqual(key1.dtype, key2.dtype)
-    self.assertArraysEqual(jax.random.key_data(key1),
-                           jax.random.key_data(key2))
-
-    key3 = jex.random.wrap_key_data(data, impl='unsafe_rbg')
-    self.assertNotEqual(key1.dtype, key3.dtype)
 
 
 if __name__ == "__main__":

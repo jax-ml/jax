@@ -24,7 +24,3 @@ from jax._src.prng import (
   rbg_prng_impl as rbg_prng_impl,
   unsafe_rbg_prng_impl as unsafe_rbg_prng_impl,
 )
-
-from jax._src.extend.random import (
-  wrap_key_data as wrap_key_data,
-)

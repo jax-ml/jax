@@ -2169,6 +2169,31 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(key, key.block_until_ready())
     self.assertIsNone(key.copy_to_host_async())
 
+  def test_wrap_key_default(self):
+    key1 = jax.random.key(17)
+    data = jax.random.key_data(key1)
+    key2 = jax.random.wrap_key_data(data)
+    self.assertEqual(key1.dtype, key2.dtype)
+    self.assertArraysEqual(jax.random.key_data(key1),
+                           jax.random.key_data(key2))
+
+    impl = config.jax_default_prng_impl
+    key3 = jax.random.wrap_key_data(data, impl=impl)
+    self.assertEqual(key1.dtype, key3.dtype)
+    self.assertArraysEqual(jax.random.key_data(key1),
+                           jax.random.key_data(key3))
+
+  def test_wrap_key_explicit(self):
+    key1 = jax.random.key(17, impl='rbg')
+    data = jax.random.key_data(key1)
+    key2 = jax.random.wrap_key_data(data, impl='rbg')
+    self.assertEqual(key1.dtype, key2.dtype)
+    self.assertArraysEqual(jax.random.key_data(key1),
+                           jax.random.key_data(key2))
+
+    key3 = jax.random.wrap_key_data(data, impl='unsafe_rbg')
+    self.assertNotEqual(key1.dtype, key3.dtype)
+
   # TODO(frostig,mattjj): more polymorphic primitives tests
 
 
