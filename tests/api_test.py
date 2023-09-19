@@ -66,7 +66,8 @@ from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
 import jax.custom_derivatives
 import jax.custom_transpose
-from jax.errors import UnexpectedTracerError
+from jax.errors import (UnexpectedTracerError, TracerIntegerConversionError,
+                        ConcretizationTypeError, TracerBoolConversionError)
 from jax.experimental import pjit
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -4405,6 +4406,50 @@ class APITest(jtu.JaxTestCase):
     p, t = jax.jvp(jax.numpy.asarray, (1.,), (2.,))
     _check_instance(self, p)
     _check_instance(self, t)
+
+  def test_scalar_conversion_errors(self):
+    array_int = jnp.arange(10, dtype=int)
+    scalar_float = jnp.float32(0)
+    scalar_int = jnp.int32(0)
+    array1_float = jnp.arange(1, dtype='float32')
+
+    assertIntError = partial(self.assertRaisesRegex, TypeError,
+                             "Only integer scalar arrays can be converted to a scalar index.")
+    for func in [operator.index, hex, oct]:
+      assertIntError(func, array_int)
+      assertIntError(func, scalar_float)
+      assertIntError(jax.jit(func), array_int)
+      assertIntError(jax.jit(func), scalar_float)
+      self.assertRaises(TracerIntegerConversionError, jax.jit(func), scalar_int)
+      _ = func(scalar_int)  # no error
+
+    assertScalarError = partial(self.assertRaisesRegex, TypeError,
+                                "Only length-1 arrays can be converted to Python scalars.")
+    for func in [int, float, complex]:
+      assertScalarError(func, array_int)
+      assertScalarError(jax.jit(func), array_int)
+      self.assertRaises(ConcretizationTypeError, jax.jit(func), scalar_int)
+      _ = func(scalar_int)  # no error
+      # TODO(jakevdp): remove this ignore warning when possible
+      with jtu.ignore_warning(category=DeprecationWarning):
+        self.assertRaises(ConcretizationTypeError, jax.jit(func), array1_float)
+        _ = func(array1_float)  # no error
+
+    # TODO(jakevdp): add these tests once these deprecated operations error.
+    # empty_int = jnp.arange(0, dtype='int32')
+    # assertEmptyBoolError = partial(
+    #     self.assertRaisesRegex, ValueError,
+    #     "The truth value of an empty array is ambiguous.")
+    # assertEmptyBoolError(bool, empty_int)
+    # assertEmptyBoolError(jax.jit(bool), empty_int)
+
+    assertBoolError = partial(
+        self.assertRaisesRegex, ValueError,
+        "The truth value of an array with more than one element is ambiguous.")
+    assertBoolError(bool, array_int)
+    assertBoolError(jax.jit(bool), array_int)
+    self.assertRaises(TracerBoolConversionError, jax.jit(bool), scalar_int)
+    _ = bool(scalar_int)  # no error
 
 
 class RematTest(jtu.JaxTestCase):

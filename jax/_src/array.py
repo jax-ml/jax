@@ -256,29 +256,33 @@ class ArrayImpl(basearray.Array):
       raise TypeError("len() of unsized object") from err  # same as numpy error
 
   def __bool__(self):
-    return bool(self._value)
-
-  def __nonzero__(self):
+    # deprecated 2023 September 18.
+    # TODO(jakevdp) change to warn_on_empty=False
+    core.check_bool_conversion(self, warn_on_empty=True)
     return bool(self._value)
 
   def __float__(self):
+    core.check_scalar_conversion(self)
     return self._value.__float__()
 
   def __int__(self):
+    core.check_scalar_conversion(self)
     return self._value.__int__()
 
   def __complex__(self):
+    core.check_scalar_conversion(self)
     return self._value.__complex__()
 
   def __hex__(self):
-    assert self.ndim == 0, 'hex only works on scalar values'
+    core.check_integer_conversion(self)
     return hex(self._value)  # type: ignore
 
   def __oct__(self):
-    assert self.ndim == 0, 'oct only works on scalar values'
+    core.check_integer_conversion(self)
     return oct(self._value)  # type: ignore
 
   def __index__(self):
+    core.check_integer_conversion(self)
     return op.index(self._value)
 
   def tobytes(self, order="C"):
