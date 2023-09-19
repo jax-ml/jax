@@ -320,6 +320,22 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(5., tape.gradient(v, x))
     self.assertAllClose(4., tape.gradient(v, y))
 
+  def test_higher_order_gradients(self):
+    f = lambda x: x ** 3
+    f_tf = jax2tf.convert(f)
+    x = tf.Variable(4.0, dtype=tf.float32)  # Create a Tensorflow variable initialized to 4.0
+    with tf.GradientTape() as t2:
+      with tf.GradientTape() as t1:
+        y = f_tf(x)
+
+      # Compute the gradient inside the outer `t2` context manager
+      # which means the gradient computation is differentiable as well.
+      dy_dx = t1.gradient(y, x)
+    d2y_dx2 = t2.gradient(dy_dx, x)
+
+    self.assertAllClose(np.float32(48.), dy_dx.numpy())
+    self.assertAllClose(np.float32(24.), d2y_dx2.numpy())
+
   @jtu.sample_product(with_function=[False, True])
   def test_gradients_pytree(self, with_function=False):
     def f(xy: tuple[float, float]) -> dict[str, float]:

@@ -401,14 +401,14 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     # Annotation count for the primal input and the grad output
     count_in_P = self.GEQ(2) if in_shardings == "P" else 0
     if config.jax2tf_default_native_serialization:
-      # With native serialization even unspecified in_shardings turn into replicated
+      # With native serialization even unspecified shardings turn into replicated
       count_in_replicated = self.GEQ(2) if in_shardings in [None, "missing"] else 0
     else:
       count_in_replicated = self.GEQ(2) if in_shardings is None else 0
     # Annotation count for the contangent input
     count_out_P = self.GEQ(1) if out_shardings == "P" else 0
     if config.jax2tf_default_native_serialization:
-      # With native serialization even unspecified in_shardings turn into replicated
+      # With native serialization even unspecified shardings turn into replicated
       count_out_replicated = self.GEQ(1) if out_shardings in [None, "missing"] else 0
     else:
       count_out_replicated = self.GEQ(1) if out_shardings is None else 0
