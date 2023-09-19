@@ -16,6 +16,7 @@ from absl.testing import absltest
 
 import jax.extend as jex
 
+from jax._src import abstract_arrays
 from jax._src import linear_util
 from jax._src import prng
 from jax._src import test_util as jtu
@@ -36,6 +37,7 @@ class ExtendTest(jtu.JaxTestCase):
     self.assertIs(jex.random.unsafe_rbg_prng_impl, prng.unsafe_rbg_prng_impl)
 
     # Assume these are tested elsewhere, only check equivalence
+    self.assertIs(jex.core.array_types, abstract_arrays.array_types)
     self.assertIs(jex.linear_util.StoreException, linear_util.StoreException)
     self.assertIs(jex.linear_util.WrappedFun, linear_util.WrappedFun)
     self.assertIs(jex.linear_util.cache, linear_util.cache)
