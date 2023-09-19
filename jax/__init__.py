@@ -150,7 +150,6 @@ from jax._src.tree_util import (
 
 # These submodules are separate because they are in an import cycle with
 # jax and rely on the names imported above.
-from jax import abstract_arrays as _deprecated_abstract_arrays
 from jax import custom_derivatives as custom_derivatives
 from jax import custom_batching as custom_batching
 from jax import custom_transpose as custom_transpose
@@ -182,11 +181,6 @@ import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 _deprecations = {
-  # Added 06 June 2023
-  "abstract_arrays": (
-    "jax.abstract_arrays is deprecated. Refer to jax.core.",
-    _deprecated_abstract_arrays
-  ),
   # Added July 2022
   "treedef_is_leaf": (
     "jax.treedef_is_leaf is deprecated: use jax.tree_util.treedef_is_leaf.",
@@ -221,7 +215,6 @@ _deprecations = {
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  from jax import abstract_arrays as abstract_arrays
   from jax import linear_util as linear_util
   from jax._src.tree_util import treedef_is_leaf as treedef_is_leaf
   from jax._src.tree_util import tree_flatten as tree_flatten
