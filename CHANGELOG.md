@@ -8,6 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 # jax 0.4.17
 
+* Deprecations
+  * Removed the deprecated module `jax.abstract_arrays` and all its contents.
+
 # jaxlib 0.4.17
 
 ## jax 0.4.16 (Sept 18, 2023)
