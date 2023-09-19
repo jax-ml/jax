@@ -33,6 +33,7 @@ jobs:
       - name: Build wheels
         env:
           BAZEL_VC: "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise\\VC"
+          JAXLIB_RELEASE: true
         run: |
           python -m pip install -r build/test-requirements.txt
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
@@ -48,7 +49,6 @@ jobs:
         env:
           JAX_ENABLE_CHECKS: true
           JAX_SKIP_SLOW_TESTS: true
-          JAXLIB_RELEASE: true
           PY_COLORS: 1
         run: |
           python -m pip install -e ${{ github.workspace }}
