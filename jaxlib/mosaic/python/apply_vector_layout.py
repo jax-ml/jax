@@ -1970,7 +1970,7 @@ def _scf_yield_rule(  # pylint: disable=missing-function-docstring
       tiles = disassemble(layout, operand)
       unrolled.extend(list(tiles.flat))
 
-  # Replace old oprands with unrolled operands.
+  # Replace old operands with unrolled operands.
   return ctx.set_operands(op.operation, unrolled)
 
 
@@ -2267,8 +2267,8 @@ def _vector_broadcast_rule(ctx: RewriteContext, op: vector.BroadcastOp,  # pylin
     offsets_out = layout_out.offsets
 
     expand_rank = dst_ty.rank - src_ty.rank
-    src_shape_paddded = [-1] * expand_rank + src_ty.shape
-    dim_eq = [i == o for i, o in zip(src_shape_paddded, dst_ty.shape)]
+    src_shape_padded = [-1] * expand_rank + src_ty.shape
+    dim_eq = [i == o for i, o in zip(src_shape_padded, dst_ty.shape)]
 
     no_op = False
     if implicit_dim is None:

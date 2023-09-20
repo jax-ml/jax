@@ -569,7 +569,7 @@ class VectorLayoutInferer {
     // We expect the result is already a native-sized vreg.
     TPU_CHECK_OP(bitwidth == 32 && res_ty.getShape()[0] == target_shape_[0] &&
                      res_ty.getShape()[1] == target_shape_[1],
-                 "Only 32-bit loads suppored");
+                 "Only 32-bit loads supported");
     SmallVector<Layout, 4> in_layout(op->getNumOperands(), kNoLayout);
     auto out_layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
                                    ImplicitDim::kNone);
@@ -589,7 +589,7 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(bitwidth == 32 &&
                      store_ty.getShape()[0] == target_shape_[0] &&
                      store_ty.getShape()[1] == target_shape_[1],
-                 "Only 32-bit stores suppored");
+                 "Only 32-bit stores supported");
     auto store_layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
                                      ImplicitDim::kNone);
     SmallVector<Layout, 5> in_layout{store_layout};
