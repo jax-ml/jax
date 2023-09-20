@@ -82,7 +82,7 @@ def get(module: ir.Module,
       (New one not implemented as yet.)
 
   Typical return value example:
-   '14ac577cdb2ef6d986078b4054cc9893a9a14a16dbb0d8f37b89167c1f1aacdf'
+   'jit__psum-14ac577cdb2ef6d986078b4054cc9893a9a14a16dbb0d8f37b89167c1f1aacdf'
   """
   entries = [
       ("computation", lambda hash_obj: _hash_computation(hash_obj, module)),
@@ -122,7 +122,9 @@ def get(module: ir.Module,
   for name, hashfn in entries:
     hashfn(hash_obj)
     _log_cache_key_hash(hash_obj, name, hashfn)
-  return hash_obj.digest().hex()
+  sym_name = module.operation.attributes['sym_name']
+  module_name = ir.StringAttr(sym_name).value
+  return module_name + "-" + hash_obj.digest().hex()
 
 
 def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
