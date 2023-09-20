@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as _np
-from jax.numpy import fft, linalg
+from jax.numpy import fft as fft, linalg as linalg
 from typing import Any, Callable, Dict, Tuple, Type, Union
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.numpy.index_tricks import _Mgrid, _Ogrid, CClass as _CClass, RClass as _RClass
