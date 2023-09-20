@@ -60,6 +60,7 @@ def relu(x: Array) -> Array:
     An array.
 
   Example:
+    >>> import jax
     >>> jax.nn.relu(jax.numpy.array([-2., -1., -0.5, 0, 0.5, 1., 2.]))
     Array([0. , 0. , 0. , 0. , 0.5, 1. , 2. ], dtype=float32)
 
@@ -524,6 +525,7 @@ def one_hot(x: Array, num_classes: int, *,
   Each index in the input ``x`` is encoded as a vector of zeros of length
   ``num_classes`` with the element at ``index`` set to one::
 
+    >>> import jax
     >>> jax.nn.one_hot(jnp.array([0, 1, 2]), 3)
     Array([[1., 0., 0.],
            [0., 1., 0.],
@@ -531,6 +533,7 @@ def one_hot(x: Array, num_classes: int, *,
 
   Indices outside the range [0, num_classes) will be encoded as zeros::
 
+    >>> import jax
     >>> jax.nn.one_hot(jnp.array([-1, 3]), 3)
     Array([[0., 0., 0.],
            [0., 0., 0.]], dtype=float32)
