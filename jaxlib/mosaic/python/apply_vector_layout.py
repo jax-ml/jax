@@ -1687,6 +1687,9 @@ _register_rule("math.tanh")(
     functools.partial(_elementwise_op_rule, math_dialect.TanhOp))
 _register_rule("math.log")(
     functools.partial(_elementwise_op_rule, math_dialect.LogOp))
+_register_rule("math.log1p")(
+    functools.partial(_elementwise_op_rule, math_dialect.Log1pOp)
+)
 
 
 def _ext_op_rule(  # pylint: disable=missing-function-docstring

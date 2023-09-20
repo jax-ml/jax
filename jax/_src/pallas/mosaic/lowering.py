@@ -1085,6 +1085,13 @@ def _log_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.log_p] = _log_lowering_rule
 
 
+def _log1p_lowering_rule(ctx: LoweringRuleContext, x):
+  return math.Log1pOp(x).result
+
+
+lowering_rules[lax.log1p_p] = _log1p_lowering_rule
+
+
 _cmpi_lowering_types = {
     lax.eq_p: 0,
     lax.ne_p: 1,
