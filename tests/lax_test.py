@@ -2871,7 +2871,7 @@ class LazyConstantTest(jtu.JaxTestCase):
     if op_name == "bitwise_not":
       raise unittest.SkipTest("https://github.com/google/jax/issues/12066")
     # Find a valid dtype for the function.
-    for dtype in [np.float_, np.int_, np.complex_, np.bool_]:
+    for dtype in [float, int, complex, bool]:
       dtype = dtypes.canonicalize_dtype(dtype)
       if dtype in rec_dtypes:
         py_val = dtype.type(1).item()
