@@ -1199,6 +1199,7 @@ exports_files(
         "array_test.py",
         "cache_key_test.py",
         "compilation_cache_test.py",
+        "memories_test.py",
         "pmap_test.py",
         "pjit_test.py",
         "python_callback_test.py",
