@@ -1974,6 +1974,21 @@ def _scf_yield_rule(  # pylint: disable=missing-function-docstring
   return ctx.set_operands(op.operation, unrolled)
 
 
+@_register_rule("scf.for")
+def _scf_for_rule(  # pylint: disable=missing-function-docstring
+    ctx: RewriteContext,
+    op: scf.ForOp,
+    layout_in: Union[Layout, tuple[Layout, ...]],
+    layout_out: Union[Layout, tuple[Layout, ...]],
+):
+  # TODO(b/286175570) Support inputs and outputs in scf.for.
+  assert layout_in and len(layout_in) == 3
+  if any(layout_in) or layout_out:
+    raise NotImplementedError("Support inputs and outputs in scf.for")
+  (loop_body,) = op.region.blocks
+  apply_layout_block(ctx, loop_body)
+
+
 @_register_rule("tpu.concatenate")
 def _tpu_concatenate_rule(
     ctx: RewriteContext,

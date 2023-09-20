@@ -208,6 +208,10 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<scf::ForOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<tpu::ConcatenateOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -577,6 +581,26 @@ class VectorLayoutInferer {
     setInLayout(then_yield, result_layout);
     setInLayout(else_yield, result_layout);
     setOutLayout(op, result_layout);
+    return success();
+  }
+
+  LogicalResult infer(scf::ForOp op) {
+    static LogicalResult (*match_yield)(Operation *) = [](Operation *op) {
+      TPU_CHECK_OP(isa<scf::YieldOp>(op), "expected yield terminator");
+      return success();
+    };
+    // TODO(b/286175570) Support inputs and outputs in scf.for.
+    if (op.getNumRegionIterArgs() > 0 || op->getNumResults() > 0) {
+      NYI("support inputs and outputs in scf.for");
+    }
+    TPU_CHECK_OP(op.getNumOperands() == 3, "expected 3 operands in scf.for");
+    TPU_CHECK_OP(op.getRegion().hasOneBlock(),
+                 "expected one block in scf.for loop body.");
+    if (inferBlock(op.getRegion().getBlocks().front(), match_yield).failed()) {
+      return failure();
+    }
+    setInLayout(op, {/*lower_bound*/ kNoLayout, /*upper_bound*/ kNoLayout,
+                     /*step*/ kNoLayout});
     return success();
   }
 
