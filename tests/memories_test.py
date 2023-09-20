@@ -20,6 +20,8 @@ from absl.testing import parameterized
 import unittest
 import jax
 from jax._src import test_util as jtu
+from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 from jax.ad_checkpoint import Offloadable, remat
@@ -714,6 +716,30 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     self.assertEqual(
         out_host1.addressable_shards[0].data.sharding.memory_kind,
         "unpinned_host")
+
+  def test_device_put_on_different_device_with_the_same_memory_kind(self):
+    if xla_extension_version < 195:
+      raise unittest.SkipTest("Test requires xla_extension_version >=195")
+    if len(jax.devices()) < 2:
+      raise unittest.SkipTest("Test requires >=2 devices.")
+    np_inp = np.arange(16).reshape(8, 2)
+
+    s_hbm_dev_0 = SingleDeviceSharding(jax.devices()[0], memory_kind="tpu_hbm")
+    s_hbm_dev_1 = SingleDeviceSharding(jax.devices()[1], memory_kind="tpu_hbm")
+    inp_hbm_dev0 = jax.device_put(np_inp, s_hbm_dev_0)
+    out_hbm_dev_1 = jax.device_put(inp_hbm_dev0, s_hbm_dev_1)
+    self._check_device_put_addressable_shards(
+        out_hbm_dev_1, np_inp, s_hbm_dev_1, "tpu_hbm")
+
+    inp_host_dev0 = jax.device_put(
+        np_inp, s_hbm_dev_0.with_memory_kind("unpinned_host"))
+    s_host_dev_1 = s_hbm_dev_1.with_memory_kind("unpinned_host")
+    with self.assertRaisesRegex(
+        xla_extension.XlaRuntimeError,
+        "INVALID_ARGUMENT: PjRtBuffer's memory kind does not match sharding's "
+        "memory kind. Got PjRtBuffer's memory kind: tpu_hbm vs shardings's "
+        "memory kind: unpinned_host"):
+      jax.device_put(inp_host_dev0, s_host_dev_1)
 
   def test_device_put_resharding(self):
     mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
