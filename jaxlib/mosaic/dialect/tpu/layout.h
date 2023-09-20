@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <numeric>
 #include <optional>
 #include <ostream>
@@ -58,6 +59,12 @@ struct VRegDataBounds {
   virtual bool maskVariesAlong(Direction direction,
                                std::array<int64_t, 2> target_shape) const = 0;
 
+  bool isComplete(const std::array<int64_t, 2> target_shape) const {
+    return maskVariesAlong(Direction::kSublanes, target_shape) ||
+           maskVariesAlong(Direction::kLanes, target_shape) ||
+           maskVariesAlong(Direction::kSubelements, target_shape);
+  }
+
   // Constructs a vector mask value that is true iff the entry contains useful
   // data.
   //
@@ -67,7 +74,7 @@ struct VRegDataBounds {
   // Args:
   //   generation: The target TPU generation.
   virtual FailureOr<TypedValue<VectorType>> getVectorMask(
-      OpBuilder &builder, int generation,
+      OpBuilder &builder, Location loc, int generation,
       std::array<int64_t, 2> target_shape) const = 0;
 
   // Constructs a DenseBoolArrayAttr containing a sublane mask for the vreg.
@@ -101,7 +108,7 @@ class RectangularVregBounds : public VRegDataBounds {
 
   // See base class.
   FailureOr<TypedValue<VectorType>> getVectorMask(
-      OpBuilder &builder, int generation,
+      OpBuilder &builder, Location loc, int generation,
       std::array<int64_t, 2> target_shape) const override;
 
   // See base class.
@@ -192,6 +199,33 @@ class VectorLayout {
   // - shape: The shape of the full vector this layout applies to.
   llvm::SmallVector<int64_t> tileArrayShape(
       ArrayRef<int64_t> shape, std::array<int64_t, 2> target_shape) const;
+
+  // Returns the bounds of the given tile that hold useful data.
+  //
+  // Arguments:
+  //   full_shape: The shape of the full vector this layout applies to.
+  //   ixs: The indices into an array of tiles representing the full vector
+  //     (see tile_array_shape for bounds) selecting the tile for which the
+  //     bounds are queried.
+  //   allow_replicated: If False, no offset is allowed to be replicated. If
+  //     True, offsets are allowed to be replicated, but the bounds will span
+  //     the full dimension of the tile (i.e. potentially multiple repeats of
+  //     the actual data).
+  //
+  // Returns:
+  //   A TargetTuple of slices, indicating the span of useful data within the
+  //   tile selected by idx.
+  std::unique_ptr<VRegDataBounds> tileDataBounds(
+      MLIRContext *mlir_ctxt, ArrayRef<int64_t> full_shape,
+      ArrayRef<int64_t> idxs, std::array<int64_t, 2> target_shape,
+      std::array<bool, 2> allow_replicated) const;
+  std::unique_ptr<VRegDataBounds> tileDataBounds(
+      MLIRContext *mlir_ctxt, ArrayRef<int64_t> full_shape,
+      ArrayRef<int64_t> idxs, std::array<int64_t, 2> target_shape,
+      bool allow_replicated = false) const {
+    return tileDataBounds(mlir_ctxt, full_shape, idxs, target_shape,
+                          {allow_replicated, allow_replicated});
+  }
 
   // True if every vector register has a layout without jumps.
   //

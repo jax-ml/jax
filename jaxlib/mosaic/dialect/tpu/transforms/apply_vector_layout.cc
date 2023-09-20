@@ -18,9 +18,11 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Traits.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -43,6 +45,7 @@
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/array.h"
+#include "xla/layout.h"
 #include "xla/util.h"
 
 // TODO(tlongeri): Prefer returning failure over CHECKs. In particular, be more
@@ -73,6 +76,88 @@ RollVectorsOp assemble(RewriteContext &ctx, VectorType vty,
 FailureOr<xla::Array<Value>> disassemble(RewriteContext &ctx,
                                          const VectorLayout &layout, Value val);
 namespace {
+
+FailureOr<TypedAttr> getZeroIntOrFloatAttr(Type ty) {
+  if (isa<FloatType>(ty)) {
+    return TypedAttr(FloatAttr::get(ty, 0));
+  }
+  if (isa<IntegerType>(ty)) {
+    return TypedAttr(IntegerAttr::get(ty, 0));
+  }
+  return emitError(UnknownLoc::get(ty.getContext()), "Not implemented: ") << ty;
+}
+
+FailureOr<int64_t> getIntConst(Value v) {
+  if (auto constant_op = v.getDefiningOp<arith::ConstantOp>()) {
+    if (auto integer_attr = dyn_cast<IntegerAttr>(constant_op.getValue())) {
+      return integer_attr.getValue().getSExtValue();
+    }
+  }
+  return emitError(v.getLoc(), "Expected an integer constant");
+}
+
+FailureOr<SmallVector<int64_t>> getIntConstsFromOperandRange(
+    OperandRange vals) {
+  SmallVector<int64_t> res(vals.size());
+  for (int i = 0; i < vals.size(); ++i) {
+    FAILUREOR_ASSIGN_OR_RETURN(res[i], getIntConst(vals[i]));
+  }
+  return res;
+}
+
+// Returns the first-level tiling of a (packed and tiled) memref value.
+FailureOr<std::array<int64_t, 2>> getMemRefTiling(
+    TypedValue<MemRefType> value, const std::array<int64_t, 2> target_shape) {
+  if (auto erase_layout_op =
+          dyn_cast_if_present<EraseLayoutOp>(value.getDefiningOp())) {
+    value = erase_layout_op.getOperand();
+  }
+  const MemRefType memref_ty = value.getType();
+  const auto mem_layout = dyn_cast<TiledLayoutAttr>(memref_ty.getLayout());
+  if (mem_layout == nullptr) {
+    return emitError(value.getLoc(), "Expected a tiled memref");
+  }
+  FAILUREOR_ASSIGN_OR_RETURN(int8_t bitwidth,
+                             getTypeBitwidth(memref_ty.getElementType()));
+  const int packing = 32 / bitwidth;
+  const ArrayRef<xla::Tile> tiles = mem_layout.getTiles();
+  const xla::Tile &first_tile = tiles.front();
+  if (first_tile.dimensions().size() == 1) {
+    const int64_t tile_size = first_tile.dimension(0);
+    if (tile_size % (target_shape[1] * packing) != 0) {
+      return emitError(value.getLoc(), "Not implemented");
+    }
+    if (bitwidth == 32) {
+      if (tiles.size() > 1) {
+        return emitError(value.getLoc(), "Not implemented");
+      }
+    } else if (bitwidth < 32) {
+      if (tiles.drop_front() !=
+          ArrayRef<xla::Tile>{xla::Tile({target_shape[1]}),
+                              xla::Tile({packing, 1})}) {
+        return emitError(value.getLoc(), "Not implemented");
+      }
+    }
+    return std::array<int64_t, 2>{1, tile_size};
+  }
+  if (first_tile.dimensions().size() == 2) {
+    if (bitwidth == 32) {
+      if (tiles.size() > 1) {
+        return emitError(value.getLoc(), "Not implemented");
+      }
+      return std::array<int64_t, 2>{first_tile.dimension(0),
+                                    first_tile.dimension(1)};
+    }
+    if (bitwidth < 32) {
+      if (tiles.size() != 2 || tiles[1] != xla::Tile({packing, 1})) {
+        return emitError(value.getLoc(), "Not implemented");
+      }
+      return std::array<int64_t, 2>{first_tile.dimension(0),
+                                    first_tile.dimension(1)};
+    }
+  }
+  return emitError(value.getLoc(), "Not implemented");
+}
 
 FailureOr<VectorType> getNativeVregType(
     Type elem_ty, const std::array<int64_t, 2> target_shape) {
@@ -431,6 +516,288 @@ LogicalResult arith_trunci_rule(RewriteContext &ctx, Operation &op,
                             *layouts_out.front());
 }
 
+LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
+                               const ArrayRef<Layout> layouts_in,
+                               const ArrayRef<Layout> layouts_out) {
+  CHECK_EQ(layouts_out.size(), 1);
+  MLIRContext *const mlir_ctx = op.getContext();
+  if (llvm::any_of(layouts_in,
+                   [&](const Layout &l) { return l.has_value(); })) {
+    return op.emitOpError("Expected null input layouts");
+  }
+  if (!layouts_out.front().has_value()) {
+    return op.emitOpError("Expected non-null output layout");
+  }
+  const VectorLayout &layout_out = *layouts_out.front();
+  auto load_op = cast<vector::LoadOp>(op);
+  const auto memref_ty = cast<MemRefType>(load_op.getBase().getType());
+  const auto vty = cast<VectorType>(load_op.getResult().getType());
+  FAILUREOR_ASSIGN_OR_RETURN(
+      VectorType target_ty,
+      getNativeVregType(vty.getElementType(), ctx.target_shape));
+  if (layout_out.implicit_dim() == VectorLayout::ImplicitDim::kMinor) {
+    return op.emitOpError("Not implemented");
+  }
+  const bool is_1d =
+      layout_out.implicit_dim() != VectorLayout::ImplicitDim::kNone;
+  using Tiling = std::array<int64_t, 2>;  // To avoid comma in macro
+  FAILUREOR_ASSIGN_OR_RETURN(
+      Tiling memref_tiling,
+      getMemRefTiling(load_op.getBase(), ctx.target_shape));
+  if (layout_out.tiling() != memref_tiling) {
+    return op.emitOpError("Not implemented");
+  }
+  // TODO(apaszke): Check that loads are from vmem!
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const SmallVector<int64_t> indices,
+      getIntConstsFromOperandRange(load_op.getIndices()));
+  if (llvm::any_of(
+          llvm::zip_equal(indices, vty.getShape(), memref_ty.getShape()),
+          [](auto tup) {
+            auto [idx, n, extent] = tup;
+            return idx + n > extent;
+          })) {
+    return op.emitOpError("Reading out of bounds");
+  }
+  const SmallVector<int64_t> implicit_shape =
+      layout_out.implicitShape(vty.getShape());
+  const auto ss = implicit_shape[implicit_shape.size() - 2];
+  const LayoutOffsets offsets = layout_out.offsets();
+  AffineMap load_map;
+  arith::ConstantOp padding;
+  if (offsets[1] == std::nullopt) {
+    return op.emitOpError("Load replicated along lanes is unsupported");
+  }
+  if (offsets[0] == std::nullopt) {
+    if (ss != 1) {
+      return op.emitOpError(
+          "Sublane-replicated load with size > 1 is unsupported");
+    }
+    if (!layout_out.hasNativeTiling(ctx.target_shape)) {
+      return op.emitOpError("Not implemented");
+    }
+    // affine_map<(..., j) -> (0, j)
+    load_map =
+        AffineMap::get(memref_ty.getRank(), 0,
+                       {getAffineConstantExpr(0, mlir_ctx),
+                        getAffineDimExpr(memref_ty.getRank() - 1, mlir_ctx)},
+                       mlir_ctx);
+    FAILUREOR_ASSIGN_OR_RETURN(const TypedAttr zero_attr,
+                               getZeroIntOrFloatAttr(vty.getElementType()));
+    padding = ctx.builder.create<arith::ConstantOp>(
+        load_op.getLoc(), vty.getElementType(), zero_attr);
+  }
+  xla::Array<Value> tiles(
+      layout_out.tileArrayShape(vty.getShape(), ctx.target_shape));
+  const std::array<int64_t, 2> vreg_slice =
+      layout_out.vregSlice(ctx.target_shape);
+  const int64_t num_dims = indices.size();
+  const int64_t num_batch_dims = num_dims - (is_1d ? 1 : 2);
+  const absl::Status status =
+      tiles.EachStatus([&](absl::Span<const int64_t> tile_idxs, Value * /*v*/) {
+        CHECK_EQ(num_dims, tile_idxs.size());
+        SmallVector<int64_t> idxs(tile_idxs.size());
+        for (int64_t i = 0; i < num_batch_dims; ++i) {
+          idxs[i] = tile_idxs[i] + indices[i];
+        }
+        const int64_t base_l = indices[num_dims - 1];
+        const int64_t lidx = tile_idxs[num_dims - 1];
+        idxs[num_dims - 1] = base_l + lidx * vreg_slice[1] - *offsets[1];
+        if (!is_1d) {
+          const int64_t base_s = indices[num_dims - 2];
+          const int64_t sidx = tile_idxs[num_dims - 2];
+          idxs[num_dims - 2] =
+              base_s + sidx * vreg_slice[0] - offsets[0].value_or(0);
+        }
+        CHECK(tile_idxs[num_dims - 1] + ctx.target_shape[1] <=
+              memref_ty.getShape()[num_dims - 1]);
+        std::unique_ptr<VRegDataBounds> bounds = layout_out.tileDataBounds(
+            mlir_ctx, vty.getShape(), toArrayRef(tile_idxs), ctx.target_shape,
+            /*allow_replicated =*/{true, false});
+        SmallVector<Value> idxs_vs(idxs.size());
+        for (int64_t i = 0; i < idxs.size(); ++i) {
+          idxs_vs[i] = IdxConst(idxs[i], ctx.builder, load_op->getLoc());
+        }
+        Operation *tile;
+        if (bounds->maskVariesAlong(Direction::kSublanes, ctx.target_shape)) {
+          CHECK(offsets[0].has_value());
+          tile = ctx.builder.create<tpu::LoadOp>(
+              load_op.getLoc(), target_ty, load_op.getBase(), idxs_vs,
+              bounds->getSublaneMask(mlir_ctx, ctx.target_shape), nullptr);
+        } else {
+          if (load_map) {
+            CHECK(padding);
+            if (layout_out.bitwidth() != 32) {
+              load_op.emitOpError("Not implemented");
+              return absl::UnimplementedError("");
+            }
+            tile = ctx.builder.create<vector::TransferReadOp>(
+                load_op.getLoc(), target_ty, load_op.getBase(), idxs_vs,
+                load_map, padding, nullptr, nullptr);
+          } else {
+            const SmallVector<bool> sublane_mask(ctx.target_shape[0], true);
+            const auto sublane_mask_attr =
+                DenseBoolArrayAttr::get(mlir_ctx, sublane_mask);
+            tile = ctx.builder.create<tpu::LoadOp>(load_op.getLoc(), target_ty,
+                                                   load_op.getBase(), idxs_vs,
+                                                   sublane_mask_attr, nullptr);
+          }
+        }
+        tiles(tile_idxs) = tile->getResult(0);
+        return absl::OkStatus();
+      });
+  if (!status.ok()) {
+    return failure();
+  }
+  load_op->replaceAllUsesWith(assemble(ctx, vty, layout_out, std::move(tiles)));
+  load_op->erase();
+  return success();
+}
+
+LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
+                                const ArrayRef<Layout> layouts_in,
+                                const ArrayRef<Layout> layouts_out) {
+  CHECK_EQ(layouts_out.size(), 0);
+  MLIRContext *const mlir_ctx = op.getContext();
+  if (!layouts_in.front().has_value() ||
+      llvm::any_of(layouts_in.drop_front(),
+                   [&](const Layout &l) { return l.has_value(); })) {
+    return op.emitOpError(
+        "Expected null input layouts for vector.store indices");
+  }
+  vector::StoreOp store_op = cast<vector::StoreOp>(op);
+  const VectorType ty = store_op.getValueToStore().getType();
+  const VectorLayout &to_store_layout = *layouts_in.front();
+  if (to_store_layout.implicit_dim() == VectorLayout::ImplicitDim::kMinor) {
+    return op.emitOpError("Not implemented");
+  }
+  const bool is_1d =
+      to_store_layout.implicit_dim() != VectorLayout::ImplicitDim::kNone;
+  if (to_store_layout.tiling() !=
+      getMemRefTiling(store_op.getBase(), ctx.target_shape)) {
+    return op.emitOpError("Not implemented");
+  }
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const SmallVector<int64_t> base_indices,
+      getIntConstsFromOperandRange(store_op.getIndices()));
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> tiles,
+      disassemble(ctx, to_store_layout, store_op.getValueToStore()));
+  const int64_t ndims = base_indices.size();
+  const int64_t nbatchdims = is_1d ? ndims - 1 : ndims - 2;
+  const int64_t base_s = is_1d ? 0 : base_indices[ndims - 2];
+  const int64_t base_l = base_indices[ndims - 1];
+  if (is_1d) {
+    tiles.Reshape(
+        to_store_layout.implicitShape(toArrayRef(tiles.dimensions())));
+  }
+  const LayoutOffset sublane_offset = to_store_layout.offsets()[0];
+  const LayoutOffset lane_offset = to_store_layout.offsets()[1];
+  if (!sublane_offset.has_value() || !lane_offset.has_value()) {
+    return store_op.emitOpError(
+        "Not implemented: Replicated layout disallowed in vector store");
+  }
+  const SmallVector<int64_t> stored_shape =
+      to_store_layout.implicitShape(ty.getShape());
+  const std::array<int64_t, 2> vreg_slice =
+      to_store_layout.vregSlice(ctx.target_shape);
+  const bool can_use_vector_store =
+      to_store_layout.hasNaturalTopology(ctx.target_shape);
+  const absl::Status status =
+      tiles.EachStatus([&](const absl::Span<const int64_t> idx,
+                           const Value tile) -> absl::Status {
+        const std::unique_ptr<VRegDataBounds> bounds =
+            to_store_layout.tileDataBounds(mlir_ctx, stored_shape,
+                                           toArrayRef(idx), ctx.target_shape);
+        const int64_t sidx = *(idx.end() - 2);
+        const int64_t lidx = *(idx.end() - 1);
+        SmallVector<Value> indices(ndims);
+        auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1,
+                                       ctx.builder, store_op->getLoc());
+        for (int64_t i = 0; i < nbatchdims; ++i) {
+          indices[i] = boundIdxConst(idx[i] + base_indices[i]);
+        }
+        if (!is_1d) {
+          *(indices.end() - 2) =
+              boundIdxConst(base_s + sidx * vreg_slice[0] - *sublane_offset);
+        }
+        *(indices.end() - 1) =
+            boundIdxConst(base_l + lidx * vreg_slice[1] - *lane_offset);
+        const DenseBoolArrayAttr sublane_mask =
+            bounds->getSublaneMask(store_op->getContext(), ctx.target_shape);
+        const bool masks_subelements =
+            bounds->maskVariesAlong(Direction::kSubelements, ctx.target_shape);
+        if (bounds->maskVariesAlong(Direction::kLanes, ctx.target_shape) ||
+            masks_subelements) {
+          auto failure_or_mask =
+              bounds->getVectorMask(ctx.builder, store_op.getLoc(),
+                                    ctx.hardware_generation, ctx.target_shape);
+          if (failed(failure_or_mask)) {
+            return absl::UnimplementedError("Failed to get vector mask");
+          }
+          TypedValue<VectorType> mask = failure_or_mask.value();
+          // Vmem stores don't support masking below 32-bit granularity, so we
+          // need to load and blend explicitly if needed.
+          if (masks_subelements) {
+            auto data = ctx.builder.create<tpu::LoadOp>(
+                store_op->getLoc(), tile.getType(), store_op.getBase(), indices,
+                sublane_mask, /*sublane_stride=*/nullptr);
+            const bool mask_is_a_bitmask =
+                cast<IntegerType>(mask.getType().getElementType()).getWidth() ==
+                32;
+            Value updated;
+            if (mask_is_a_bitmask) {
+              auto ones = ctx.builder.create<arith::ConstantOp>(
+                  store_op->getLoc(), mask.getType(),
+                  DenseElementsAttr::get(
+                      mask.getType(),
+                      ctx.builder.getIntegerAttr(ctx.builder.getI32Type(),
+                                                 APInt(32, 0xFFFFFFFF))));
+              auto masked_tile = ctx.builder.create<arith::AndIOp>(
+                  store_op.getLoc(), mask,
+                  ctx.builder.create<tpu::BitcastOp>(store_op.getLoc(),
+                                                     mask.getType(), tile));
+              auto mask_neg = ctx.builder.create<arith::XOrIOp>(
+                  store_op.getLoc(), ones, mask);
+              auto masked_data = ctx.builder.create<arith::AndIOp>(
+                  store_op.getLoc(), mask_neg,
+                  ctx.builder.create<tpu::BitcastOp>(store_op.getLoc(),
+                                                     mask.getType(), data));
+              updated = ctx.builder.create<tpu::BitcastOp>(
+                  store_op.getLoc(), tile.getType(),
+                  ctx.builder.create<arith::OrIOp>(store_op.getLoc(),
+                                                   masked_data, masked_tile));
+            } else {
+              updated = ctx.builder.create<arith::SelectOp>(store_op->getLoc(),
+                                                            mask, tile, data);
+            }
+            ctx.builder.create<tpu::StoreOp>(
+                store_op.getLoc(), updated, store_op.getBase(), indices,
+                sublane_mask, /*mask=*/nullptr, /*sublane_stride=*/nullptr);
+          } else {
+            ctx.builder.create<tpu::StoreOp>(
+                store_op->getLoc(), tile, store_op.getBase(), indices,
+                sublane_mask, /*mask=*/mask, /*sublane_stride=*/nullptr);
+          }
+        } else if (bounds->maskVariesAlong(Direction::kSublanes,
+                                           ctx.target_shape) ||
+                   !can_use_vector_store) {
+          ctx.builder.create<tpu::StoreOp>(
+              store_op.getLoc(), tile, store_op.getBase(), indices,
+              sublane_mask, /*mask=*/nullptr, /*sublane_stride=*/nullptr);
+        } else {
+          ctx.builder.create<vector::StoreOp>(store_op.getLoc(), tile,
+                                              store_op.getBase(), indices);
+        }
+        return absl::OkStatus();
+      });
+  if (!status.ok()) {
+    return failure();
+  }
+  store_op->erase();
+  return success();
+}
+
 template <typename Op, std::size_t NumOperands>
 std::pair<StringRef, rule_type> rules_elementwise_op_entry() {
   return {
@@ -481,7 +848,8 @@ const llvm::StringMap<rule_type> &rules() {
       rules_elementwise_op_entry<math::PowFOp, 1>(),
       rules_elementwise_op_entry<math::RsqrtOp, 1>(),
       rules_elementwise_op_entry<math::TanhOp, 1>(),
-  };
+      {vector::LoadOp::getOperationName(), vector_load_rule},
+      {vector::StoreOp::getOperationName(), vector_store_rule}};
   return *rules;
 }
 }  // namespace
@@ -773,8 +1141,8 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
             src_tile.getLoc(), src_tile, /*amount=*/i, /*dimension=*/0);
         const TypedValue<VectorType> mask =
             bounds
-                .getVectorMask(ctx.builder, ctx.hardware_generation,
-                               ctx.target_shape)
+                .getVectorMask(ctx.builder, src_tile.getLoc(),
+                               ctx.hardware_generation, ctx.target_shape)
                 .value();
         *tile = ctx.builder.create<arith::SelectOp>(mask.getLoc(), mask,
                                                     src_tile, *tile);
@@ -844,8 +1212,8 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
               {0, 0}, {ctx.target_shape[0] / 2, ctx.target_shape[1]});
           const Value vreg_select_mask =
               vreg_half_bound
-                  .getVectorMask(ctx.builder, ctx.hardware_generation,
-                                 ctx.target_shape)
+                  .getVectorMask(ctx.builder, v.getLoc(),
+                                 ctx.hardware_generation, ctx.target_shape)
                   .value();
           *tile = ctx.builder.create<arith::SelectOp>(
               v.getLoc(), vreg_select_mask, tile_to_merge_1, tile_to_merge_2);
