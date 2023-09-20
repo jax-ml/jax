@@ -2007,7 +2007,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testTrapz(self, yshape, xshape, dtype, dx, axis):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(yshape, dtype), rng(xshape, dtype) if xshape is not None else None]
-    np_fun = partial(np.trapz, dx=dx, axis=axis)
+    # TODO(jakevdp): numpy.trapz is removed in numpy 2.0
+    np_fun = jtu.ignore_warning(category=DeprecationWarning)(
+      partial(np.trapz, dx=dx, axis=axis))
     jnp_fun = partial(jnp.trapz, dx=dx, axis=axis)
     tol = jtu.tolerance(dtype, {np.float16: 2e-3, np.float64: 1e-12,
                                 dtypes.bfloat16: 4e-2})
