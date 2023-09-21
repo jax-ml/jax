@@ -339,15 +339,15 @@ def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
       # Avoid implicitly casting list elements below to a dtype.
       if isinstance(b, np.dtype):
         return a == b
-      return b in [np.floating, np.inexact, np.number]
+      return b in [np.floating, np.inexact, np.number, np.generic]
     if a == _int4_dtype:
       if isinstance(b, np.dtype):
         return a == b
-      return b in [np.signedinteger, np.integer, np.number]
+      return b in [np.signedinteger, np.integer, np.number, np.generic]
     if a == _uint4_dtype:
       if isinstance(b, np.dtype):
         return a == b
-      return b in [np.unsignedinteger, np.integer, np.number]
+      return b in [np.unsignedinteger, np.integer, np.number, np.generic]
   return np.issubdtype(a, b)
 
 can_cast = np.can_cast

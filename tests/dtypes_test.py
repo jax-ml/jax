@@ -297,7 +297,29 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertTrue(dtypes.issubdtype(dt, np.floating))
       self.assertTrue(dtypes.issubdtype(dt, np.inexact))
       self.assertTrue(dtypes.issubdtype(dt, np.number))
+      self.assertTrue(dtypes.issubdtype(dt, np.generic))
+      self.assertFalse(dtypes.issubdtype(dt, object))
       self.assertFalse(dtypes.issubdtype(dt, np.float64))
+      self.assertFalse(dtypes.issubdtype(np.generic, dt))
+
+  @parameterized.product(dtype=int4_dtypes)
+  def testIsSubdtypeInt4(self, dtype):
+    if dtype == 'int4':
+      int_category = np.signedinteger
+    elif dtype == 'uint4':
+      int_category = np.unsignedinteger
+    else:
+      raise ValueError("Unexpected dtype: {dtype}")
+    for dt in [dtype, np.dtype(dtype), str(np.dtype(dtype))]:
+      self.assertTrue(dtypes.issubdtype(dt, dt))
+      self.assertTrue(dtypes.issubdtype(dt, np.dtype(dtype)))
+      self.assertTrue(dtypes.issubdtype(dt, str(np.dtype(dtype))))
+      self.assertTrue(dtypes.issubdtype(dt, int_category))
+      self.assertTrue(dtypes.issubdtype(dt, np.integer))
+      self.assertTrue(dtypes.issubdtype(dt, np.number))
+      self.assertTrue(dtypes.issubdtype(dt, np.generic))
+      self.assertFalse(dtypes.issubdtype(dt, object))
+      self.assertFalse(dtypes.issubdtype(dt, np.int64))
       self.assertFalse(dtypes.issubdtype(np.generic, dt))
 
   def testArrayCasts(self):
