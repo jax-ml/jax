@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <functional>
@@ -41,8 +42,11 @@
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
+#include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/transforms/infer_memref_layout.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/array.h"
 #include "xla/layout.h"
@@ -157,6 +161,64 @@ FailureOr<std::array<int64_t, 2>> getMemRefTiling(
     }
   }
   return emitError(value.getLoc(), "Not implemented");
+}
+
+// Hoist a vector constant as an additional argument of the function.
+FailureOr<BlockArgument> appendConstant(RewriteContext &ctx,
+                                        DenseElementsAttr value) {
+  MLIRContext *mlir_ctx = ctx.func.getContext();
+  Block &entry_block = ctx.func.getBody().front();
+  auto value_ty = cast<VectorType>(value.getType());
+  if (value_ty.getElementType().getIntOrFloatBitWidth() != 32) {
+    return ctx.func.emitOpError("Only 32-bit constants supported");
+  }
+  if (ctx.func->getAttr("scratch_operands")) {
+    return ctx.func.emitOpError(
+        "Not implemented: function has scratch_operands");
+  }
+  FAILUREOR_ASSIGN_OR_RETURN(
+      MemRefType arg_type,
+      inferMemref(
+          MemRefType::get(value_ty.getShape(), value_ty.getElementType()),
+          ctx.hardware_generation));
+  const BlockArgument argument = entry_block.insertArgument(
+      entry_block.getNumArguments() - 1, arg_type, ctx.builder.getUnknownLoc());
+  const FunctionType func_ty = ctx.func.getFunctionType();
+  // Adjust the function type.
+  SmallVector<Type> new_arg_tys(func_ty.getInputs());
+  new_arg_tys.insert(new_arg_tys.begin() + (new_arg_tys.size() - 1), arg_type);
+  const auto new_func_ty =
+      FunctionType::get(mlir_ctx, new_arg_tys, func_ty.getResults());
+  ctx.func.setFunctionType(new_func_ty);
+  // Adjust the constants attribute.
+  if (auto prev_cst = ctx.func->getAttrOfType<ArrayAttr>("vector_constants")) {
+    SmallVector<Attribute> vector_constants(prev_cst.getValue());
+    vector_constants.push_back(value);
+    ctx.func->setAttr("vector_constants",
+                      ArrayAttr::get(ctx.func.getContext(), vector_constants));
+  }
+  // Adjust window params for the extra operand.
+  if (auto window_params =
+          ctx.func->getAttrOfType<ArrayAttr>("window_params")) {
+    const auto iteration_bounds =
+        ctx.func->getAttrOfType<DenseI64ArrayAttr>("iteration_bounds");
+    CHECK(iteration_bounds);
+    const int64_t iteration_rank = iteration_bounds.getSize();
+    const SmallVector<AffineExpr> zeros(
+        iteration_rank, getAffineConstantExpr(0, ctx.func.getContext()));
+    const auto transform_indices =
+        AffineMap::get(iteration_rank, 0, zeros, ctx.func.getContext());
+    const auto new_param = DictionaryAttr::get(
+        ctx.func.getContext(),
+        NamedAttribute(
+            StringAttr::get(ctx.func.getContext(), "transform_indices"),
+            AffineMapAttr::get(transform_indices)));
+    SmallVector<Attribute> window_params_values(window_params.getValue());
+    window_params_values.push_back(new_param);
+    ctx.func->setAttr("window_params", ArrayAttr::get(ctx.func.getContext(),
+                                                      window_params_values));
+  }
+  return argument;
 }
 
 FailureOr<VectorType> getNativeVregType(
@@ -667,6 +729,59 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
+LogicalResult arith_constant_rule(RewriteContext &ctx, Operation &op,
+                                  const ArrayRef<Layout> layouts_in,
+                                  const ArrayRef<Layout> layouts_out) {
+  CHECK_EQ(layouts_in.size(), 0);
+  CHECK_EQ(layouts_out.size(), 1);
+  auto constant_op = cast<arith::ConstantOp>(op);
+  auto vty = dyn_cast<VectorType>(op.getResult(0).getType());
+  if (vty) {
+    if (!layouts_out.front().has_value()) {
+      return op.emitOpError(
+          "Expected non-null output layout for vector constant");
+    }
+    const VectorLayout &layout_out = *layouts_out.front();
+    DenseElementsAttr value = cast<DenseElementsAttr>(constant_op.getValue());
+    FAILUREOR_ASSIGN_OR_RETURN(
+        const VectorType target_vty,
+        getNativeVregType(vty.getElementType(), ctx.target_shape));
+    if (value.isSplat()) {
+      if (layout_out.offsets() != LayoutOffsets{std::nullopt, std::nullopt}) {
+        return op.emitOpError("Non-replicated splat constants");
+      }
+      auto new_value =
+          DenseElementsAttr::get(target_vty, value.getSplatValue<Attribute>());
+      const auto tile = ctx.builder.create<arith::ConstantOp>(
+          op.getLoc(), target_vty, new_value);
+      const xla::Array<Value> tiles(
+          layout_out.tileArrayShape(vty.getShape(), ctx.target_shape),
+          tile->getResult(0));
+      op.replaceAllUsesWith(assemble(ctx, vty, layout_out, std::move(tiles)));
+      op.erase();
+      return success();
+    }
+    // !value.isSplat()
+    if (getTypeBitwidth<true>(vty.getElementType()) != 32) {
+      return op.emitOpError("Only 32-bit non-splat constants are supported");
+    }
+    FAILUREOR_ASSIGN_OR_RETURN(const BlockArgument ref,
+                               appendConstant(ctx, value));
+    auto load_op = ctx.builder.create<vector::LoadOp>(
+        op.getLoc(), vty, ref,
+        SmallVector<Value>(vty.getRank(),
+                           IdxConst(0, ctx.builder, op.getLoc())));
+    op.replaceAllUsesWith(ArrayRef<Value>{load_op.getResult()});
+    op.erase();
+    const SmallVector<Layout> vector_load_in_layouts(vty.getRank() + 1);
+    return vector_load_rule(ctx, *load_op, vector_load_in_layouts,
+                            {VectorLayout(/*bitwidth=*/32, /*offsets=*/{0, 0},
+                                          /*tiling=*/ctx.target_shape)});
+  }
+  return op.emitOpError("Unsupported arith.const type: ")
+         << op.getResult(0).getType();
+}
+
 LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
                                 const ArrayRef<Layout> layouts_in,
                                 const ArrayRef<Layout> layouts_out) {
@@ -829,6 +944,7 @@ std::pair<StringRef, rule_type> rules_elementwise_op_entry() {
 
 const llvm::StringMap<rule_type> &rules() {
   static auto rules = new llvm::StringMap<rule_type>{
+      {arith::ConstantOp::getOperationName(), arith_constant_rule},
       rules_elementwise_op_entry<arith::AddFOp, 2>(),
       rules_elementwise_op_entry<arith::AddIOp, 2>(),
       {arith::CmpFOp::getOperationName(), arith_cmpf_rule},
