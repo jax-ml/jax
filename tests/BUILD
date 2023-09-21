@@ -172,7 +172,11 @@ jax_test(
     name = "xmap_test",
     srcs = ["xmap_test.py"],
     backend_tags = {
-        "tpu": ["noasan"],  # Times out.
+        "tpu": [
+            "noasan",  # Times out.
+            "nomsan",  # Times out.
+            "notsan",  # Times out.
+        ],
     },
     shard_count = {
         "cpu": 10,
