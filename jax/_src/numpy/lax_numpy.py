@@ -2729,7 +2729,7 @@ def trace(a: ArrayLike, offset: int = 0, axis1: int = 0, axis2: int = 1,
   if dtype is None:
     dtype = _dtype(a)
     if issubdtype(dtype, integer):
-      default_int = dtypes.canonicalize_dtype(np.int_)
+      default_int = dtypes.canonicalize_dtype(int)
       if iinfo(dtype).bits < iinfo(default_int).bits:
         dtype = default_int
 
