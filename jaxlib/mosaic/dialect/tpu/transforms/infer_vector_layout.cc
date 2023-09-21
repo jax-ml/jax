@@ -509,6 +509,7 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(op->getNumOperands() == 1, "expected one operand");
     setInLayout(op, {kNoLayout});
     if (inferBlock(*op.thenBlock(), match_yield).failed()) {
+      op.emitOpError("failed to infer layout for then branch");
       return failure();
     }
     auto then_yield = op.thenBlock()->getTerminator();
@@ -529,6 +530,7 @@ class VectorLayoutInferer {
 
     if (auto else_block = op.elseBlock()) {
       if (inferBlock(*else_block, match_yield).failed()) {
+        op.emitOpError("failed to infer layout for else branch");
         return failure();
       }
     }
@@ -541,8 +543,37 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(else_yield->getOperandTypes() == op->getResultTypes(),
                  "scf if results and else branch yield operands do not match");
 
-    // Use the in_layout of the yield op in the then branch as the in_layout of
-    // the yield op in the else branch and the if op.
+    // Check each layout of the yield in else branch and override the
+    // result_layout if else branch's yield layout is less general. For example,
+    // if we yield offset (*, *) in then branch and offset (*, 0) in else
+    // branch, the result offset should be (*, 0).
+    for (int i = 0; i < else_yield->getNumOperands(); ++i) {
+      const auto &operand = else_yield->getOperand(i);
+      if (!isa<VectorType>(operand.getType())) {
+        continue;
+      }
+      auto layout = getLayout(operand);
+      CHECK(result_layout[i].has_value() && layout.has_value());
+      auto shape = dyn_cast<VectorType>(operand.getType()).getShape();
+      if (result_layout[i].value().generalizes(layout.value(), shape,
+                                               target_shape_)) {
+        result_layout[i] = layout;
+      } else if (layout.value().generalizes(result_layout[i].value(), shape,
+                                            target_shape_)) {
+        // No change.
+      } else {
+        // TODO(jevinjiang): ideally we can try to find a compatible layout
+        // which can be generalized from both then and else branch when then
+        // yield layout and else yield layout can not generalize each other. For
+        // example, if then yields offset (*, 0) and else yields offset (0, *),
+        // the compatible offset could be (0, 0). But it is too complex to
+        // handle for now. We can add the support when there is a use case.
+        op.emitOpError(
+            "failed to find a compatible layout for then and else branch");
+        return failure();
+      }
+    }
+
     setInLayout(then_yield, result_layout);
     setInLayout(else_yield, result_layout);
     setOutLayout(op, result_layout);
