@@ -1449,7 +1449,7 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
       ctx, fn_name, call_jaxpr, effects, arg_names=arg_names,
       result_names=result_names).name.value
   tokens = [tokens_in.get(eff) for eff in effects]
-  args = tuple([*dim_var_values, *tokens, *args])
+  args = (*dim_var_values, *tokens, *args)
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(symbol_name),
                              flatten_lowering_ir_args(args))
@@ -2086,10 +2086,10 @@ def emit_python_callback(
       # callback only the non-empty results, and we will create empty constants
       # in the receiving computation.
       # TODO(b/238239458): fix TPU Recv to work with empty arrays.
-      non_empty_out_vals = tuple([
+      non_empty_out_vals = tuple(
           out_val
           for out_val, result_aval in zip(out_vals, result_avals)
-          if not is_empty_shape(result_aval.shape)])
+          if not is_empty_shape(result_aval.shape))
       return non_empty_out_vals
     else:
       return out_vals

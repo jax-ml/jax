@@ -825,10 +825,10 @@ def _scan_sparse(spenv, *spvalues, jaxpr, num_consts, num_carry, **params):
   # params['linear'] has one entry per arg; expand it to match the sparsified args.
   const_linear, carry_linear, xs_linear = split_list(
     params.pop('linear'), [num_consts, num_carry])
-  sp_linear = tuple([
+  sp_linear = (
     *_duplicate_for_sparse_spvalues(const_spvalues, const_linear),
     *_duplicate_for_sparse_spvalues(carry_spvalues, carry_linear),
-    *_duplicate_for_sparse_spvalues(xs_spvalues, xs_linear)])
+    *_duplicate_for_sparse_spvalues(xs_spvalues, xs_linear))
 
   out = lax.scan_p.bind(*consts, *carry, *xs, jaxpr=sp_jaxpr, linear=sp_linear,
                         num_consts=len(consts), num_carry=len(carry), **params)

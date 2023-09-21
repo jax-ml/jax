@@ -395,9 +395,8 @@ def _convert_flat_indexing_to_indexer(ref_aval, non_slice_idx,
   )
   splatted_idx, splatted_idx_avals = unzip2(splatted_idx_idx_avals)
   if non_slice_idx:
-    (int_indexer_shape,) = set([idx_aval.shape for idx_aval
-                                in splatted_idx_avals
-                                if not isinstance(idx_aval, primitives.Slice)])
+    (int_indexer_shape,) = {idx_aval.shape for idx_aval in splatted_idx_avals
+                            if not isinstance(idx_aval, primitives.Slice)}
   else:
     int_indexer_shape = ()
   nd_indexer = NDIndexer(splatted_idx, ref_aval.shape, int_indexer_shape)

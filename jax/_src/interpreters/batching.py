@@ -132,7 +132,7 @@ class RaggedAxis:
       if self.stacked_axis < ax and ax <= dst:
         return ax - 1
       return ax
-    new_axes = tuple([(move_axis(ax), sizes) for ax, sizes in self.ragged_axes])
+    new_axes = tuple((move_axis(ax), sizes) for ax, sizes in self.ragged_axes)
     return RaggedAxis(dst, new_axes)
 
 def transpose_ragged_axes(dim: RaggedAxis, perm: tuple[int, ...]) -> RaggedAxis:
@@ -726,8 +726,8 @@ def resolve_ragged_axes(vals, dims):
   idxs = {lengths_idx.val for d in dims if isinstance(d, RaggedAxis)
           for (_, lengths_idx) in d.ragged_axes}
   dims = [RaggedAxis(d.stacked_axis,
-                     tuple([(ragged_axis, vals[lengths_idx.val])
-                            for ragged_axis, lengths_idx in d.ragged_axes]))
+                     tuple((ragged_axis, vals[lengths_idx.val])
+                           for ragged_axis, lengths_idx in d.ragged_axes))
           if isinstance(d, RaggedAxis) else d for d in dims]
   vals = [x for i, x in enumerate(vals) if i not in idxs]
   return vals, dims
@@ -741,8 +741,8 @@ def resolve_ragged_axes_against_inputs_outputs(in_vals, out_vals, dims):
       return out_vals[idx.val]
 
   dims = [RaggedAxis(d.stacked_axis,
-                     tuple([(ragged_axis, fetch(lengths_idx))
-                            for ragged_axis, lengths_idx in d.ragged_axes]))
+                     tuple((ragged_axis, fetch(lengths_idx))
+                           for ragged_axis, lengths_idx in d.ragged_axes))
           if isinstance(d, RaggedAxis) else d for d in dims]
   return dims
 

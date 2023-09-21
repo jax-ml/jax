@@ -1154,7 +1154,7 @@ def shift_axes_forward(operand,
                        inverse: bool = False,
                        forward: bool = True):
   """Shifts the tuple of axes to the front of an array"""
-  other_axes = tuple([i for i in range(len(operand.shape)) if i not in axes])
+  other_axes = tuple(i for i in range(len(operand.shape)) if i not in axes)
   fwd_order = axes + other_axes if forward else other_axes + axes
   order = fwd_order if not inverse else _invert_permutation(fwd_order)
   return tf.transpose(operand, order)
