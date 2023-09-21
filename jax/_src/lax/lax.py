@@ -2858,7 +2858,7 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
         "shape; got operand of shape {}, target broadcast shape {}, "
         "broadcast_dimensions {} ")
     raise TypeError(msg.format(
-        tuple([core.replace_tracer_for_error_message(d) for d in operand.shape]),
+        tuple(core.replace_tracer_for_error_message(d) for d in operand.shape),
         shape, broadcast_dimensions))
   if (len(broadcast_dimensions) != len(set(broadcast_dimensions)) or
       tuple(broadcast_dimensions) != tuple(sorted(broadcast_dimensions))):

@@ -673,7 +673,7 @@ def _bcoo_rdot_general(lhs: Array, rhs_data: Array, rhs_indices: Array, *,
                              preferred_element_type=preferred_element_type)
   n_contract, n_batch = (len(d[0]) for d in dimension_numbers)
   n_swap = len(rhs_spinfo.shape) - n_contract
-  permutation = tuple([*range(n_batch), *range(n_swap, result.ndim), *range(n_batch, n_swap)])
+  permutation = (*range(n_batch), *range(n_swap, result.ndim), *range(n_batch, n_swap))
   return lax.transpose(result, permutation)
 
 def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers,

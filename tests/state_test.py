@@ -418,7 +418,7 @@ class StatePrimitivesTest(jtu.JaxTestCase):
     int_ = (jnp.dtype('int64') if jax.config.jax_enable_x64 else
             jnp.dtype('int32'))
     axis_size = 7
-    out_shape = tuple([d for d, b in zip(ref_shape, indexed_dims) if not b])
+    out_shape = tuple(d for d, b in zip(ref_shape, indexed_dims) if not b)
     if any(indexed_dims):
       out_shape = (*idx_shape, *out_shape)
 
@@ -439,7 +439,7 @@ class StatePrimitivesTest(jtu.JaxTestCase):
 
     def f(x_ref, *idxs):
       idxs_ = iter(idxs)
-      indexer = tuple([next(idxs_) if b else slice(None) for b in indexed_dims])
+      indexer = tuple(next(idxs_) if b else slice(None) for b in indexed_dims)
       return op(x_ref, indexer)
 
     rng = self.rng()

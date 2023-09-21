@@ -648,7 +648,7 @@ def trace_to_subjaxpr_nounits_dyn(
   id_map = {id(c.recipe.val): i for i, c in enumerate(in_consts_full)  # type: ignore
             if c is not None}
   fwds: list[int | None] = [id_map.get(id(c)) for c in res]
-  res = tuple([c for c, fwd in zip(res, fwds) if fwd is None])
+  res = tuple(c for c, fwd in zip(res, fwds) if fwd is None)
 
   del main, in_consts, trace, in_consts_iter, in_knowns_iter, in_consts_full, \
       in_tracers, in_args, ans, out_tracers, out_avals

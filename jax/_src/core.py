@@ -2917,7 +2917,7 @@ def _check_call(ctx_factory, prim, in_atoms, params):
   env: dict[Var, Atom] = {}
   def substitute(aval: AbstractValue):
     if isinstance(aval, DShapedArray):
-      aval = aval.update(shape=tuple([env.get(d, d) for d in aval.shape]))  # type: ignore
+      aval = aval.update(shape=tuple(env.get(d, d) for d in aval.shape))  # type: ignore
     return aval
   for v, x in zip(call_jaxpr.invars, in_atoms):
     if not typecompat(substitute(v.aval), x.aval):
