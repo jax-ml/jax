@@ -450,6 +450,17 @@ def TPU_YieldOp : TPU_Op<"yield", [Pure, ReturnLike, Terminator]> {
   let assemblyFormat = [{ attr-dict ($results^ `:` type($results))? }];
 }
 
+// Expands the granularity of mask to subelements.
+def TPU_MaskCastOp : TPU_Op<"mask_cast", [Pure]> {
+  let arguments = (ins AnyVector:$input);
+  let results = (outs AnyVector:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+
 def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mlir::func::FuncOp"> {
   let dependentDialects = [
     "::mlir::func::FuncDialect",
