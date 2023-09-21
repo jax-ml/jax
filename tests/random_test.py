@@ -62,7 +62,7 @@ def _prng_key_as_array(key):
 def _maybe_unwrap(key):
   # TODO(frostig): remove some day when we deprecate "raw" key arrays
   unwrap = prng_internal.random_unwrap
-  return unwrap(key) if jnp.issubdtype(key, dtypes.prng_key) else key
+  return unwrap(key) if jnp.issubdtype(key.dtype, dtypes.prng_key) else key
 
 
 PRNG_IMPLS = [('threefry2x32', prng_internal.threefry_prng_impl),
@@ -1742,6 +1742,8 @@ class KeyArrayTest(jtu.JaxTestCase):
     key = random.key(42)
     self.assertTrue(jnp.issubdtype(key.dtype, dtypes.prng_key))
     self.assertFalse(jnp.issubdtype(key.dtype, np.integer))
+    with self.assertRaisesRegex(TypeError, "Cannot interpret"):
+      jnp.issubdtype(key, dtypes.prng_key)
 
   @skipIf(not config.jax_enable_custom_prng, 'relies on typed key upgrade flag')
   def test_construction_upgrade_flag(self):
