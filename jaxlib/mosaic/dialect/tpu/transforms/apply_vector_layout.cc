@@ -1041,8 +1041,36 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
     }
   }
 
-  // TODO(b/265133506): Generalize retiling to general 16-bit types (might need
-  // to use a different unpacking op).
+  // Handle retiling from (1, 128) to (8, 128) for 32-bit data.
+  if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+      dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+      src.bitwidth() == 32 && src.offsets() == LayoutOffsets{0, 0} &&
+      (dst.offsets() == LayoutOffsets{std::nullopt, 0} ||
+       dst.offsets() == LayoutOffsets{0, 0}) &&
+      src.tiling() == std::array<int64_t, 2>{1, 128} &&
+      dst.tiling() == std::array<int64_t, 2>{8, 128} &&
+      *(src_tiles.dimensions().end() - 2) == 1) {
+    xla::Array<Value> src_tiles_retiled(
+        dst.tileArrayShape(vty.getShape(), ctx.target_shape));
+    src_tiles_retiled.Each([&](const absl::Span<const int64_t> idx,
+                               Value *const new_src_tile) {
+      const int64_t dst_col = idx.back();
+      const int64_t src_col = dst_col / 8;
+      const int64_t slane_idx = dst_col % 8;
+      const DenseI32ArrayAttr gather_indices =
+          ctx.builder.getDenseI32ArrayAttr(SmallVector<int32_t>(8, slane_idx));
+      SmallVector<int64_t> src_idx(toArrayRef(idx));
+      src_idx.back() = src_col;
+      Value src_tile = src_tiles(src_idx);
+      *new_src_tile = ctx.builder.create<tpu::GatherOp>(
+          v.getLoc(), src_tile.getType(), src_tile, gather_indices,
+          /*dimension=*/0);
+    });
+    src = dst;
+    src_tiles = std::move(src_tiles_retiled);
+  }
+  // TODO(b/265133506): Generalize retiling to general 16-bit types (might
+  // need to use a different unpacking op).
   VectorType vreg_f32 =
       VectorType::get(ctx.target_shape, ctx.builder.getF32Type());
   // (8,128) -> (16,128) tiling change for packed 16-bit types.
