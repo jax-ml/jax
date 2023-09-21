@@ -436,12 +436,10 @@ def export(fun_jax: Callable,
       shape_poly_state = lowering.compile_args["shape_poly_state"]
       if (not all(core.is_constant_shape(a.shape) for a in args_avals_flat)
           or lowering.compile_args.get("ordered_effects", [])):
-        # All arguments are kept if we have dimension variables.
-        assert len(module_kept_var_idx) == len(args_avals_flat)
         mlir_module = _wrap_main_func(
             mlir_module, args_avals_flat, args_kwargs_tree=lowered.in_tree,
-            has_platform_index_argument=shape_poly_state.has_platform_index_argument
-        )
+            has_platform_index_argument=shape_poly_state.has_platform_index_argument,
+            module_kept_var_idx=module_kept_var_idx)
     finally:
       shape_poly.thread_local_state.enable_shape_assertions = prev_enable_shape_assertions
 
@@ -528,6 +526,7 @@ def _wrap_main_func(
     *,
     args_kwargs_tree: tree_util.PyTreeDef,
     has_platform_index_argument: bool,
+    module_kept_var_idx: tuple[int, ...]
 ) -> ir.Module:
   """Wraps the lowered module with a new "main" handling dimension arguments.
 
@@ -540,6 +539,10 @@ def _wrap_main_func(
       which correspond to the array arguments of the `module`.
     args_kwargs_tree: the PyTreeDef corresponding to `(args, kwargs)`, for error
       messages.
+    has_platform_index_argument: whether the `module` has a first platform
+      index argument
+    module_kept_var_idx: a sorted tuple of integers with the indices of arguments
+      in `args_avals_flat` that are kept as `module` arguments.
 
   Returns the wrapped module, without dimension and token arguments.
   """
@@ -605,11 +608,18 @@ def _wrap_main_func(
         module_context=module_context, primitive=None,
         avals_in=args_avals_flat, avals_out=None,
         tokens_in=mlir.TokenSet(), tokens_out=None)
+      # We compute dim_values from the array arguments.
       new_main_op_array_args = new_main_op.arguments[nr_platform_index_args:]
-      dim_values = mlir.lower_fun(
-          functools.partial(shape_poly.compute_dim_vars_from_arg_shapes,
-                            args_avals_flat, args_kwargs_tree=args_kwargs_tree),
-          multiple_results=True)(ctx, *new_main_op_array_args)
+      if shape_poly.all_dim_vars(args_avals_flat):
+        # TODO(necula): handle module_kept_var_idx in presence of shape
+        # polymorphism. For now we ensured upstream that we keep all variables.
+        assert len(set(module_kept_var_idx)) == len(args_avals_flat)
+        dim_values = mlir.lower_fun(
+            functools.partial(shape_poly.compute_dim_vars_from_arg_shapes,
+                              args_avals_flat, args_kwargs_tree=args_kwargs_tree),
+            multiple_results=True)(ctx, *new_main_op_array_args)
+      else:
+        dim_values = ()
       # The arguments to pass to the call to orig_main
       orig_main_args: list[ir.Value] = []
       # The platform index and the dimension variables

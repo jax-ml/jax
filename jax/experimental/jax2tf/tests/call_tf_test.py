@@ -1582,6 +1582,24 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     )
     _, restored_model = tf_test_util.SaveAndLoadFunction(f_tf, input_args=[x])
 
+  @jtu.parameterized_filterable(
+    kwargs=[dict(poly=poly) for poly in [True, False]]
+  )
+  def test_call_tf_ordered_dead_inputs(self, *, poly: bool):
+    def f_jax(x1, x_dead, x3):
+      return (x1, jax2tf.call_tf(lambda x: tf.math.sin(x), ordered=True,
+                                 call_tf_graph=True)(x3))
+    if poly:
+      polymorphic_shapes = ["b", None, None]
+    else:
+      polymorphic_shapes = None
+    f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes)
+    x1 = np.arange(3, dtype=np.float32)
+    x_dead = np.arange(4, dtype=np.float32)
+    x3 = np.arange(5, dtype=np.float32)
+    self.assertAllClose(f_jax(x1, x_dead, x3),
+                        f_tf(x1, x_dead, x3))
+
   @parameterized.named_parameters([
     dict(testcase_name=f"{ordered=}", ordered=ordered)
     for ordered in [True, False]
