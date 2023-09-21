@@ -195,8 +195,8 @@ def _check_default_impl_with_no_custom_prng(impl, name):
   default_name = config.jax_default_prng_impl
   if not config.jax_enable_custom_prng and default_impl is not impl:
     raise RuntimeError('jax_enable_custom_prng must be enabled in order '
-                       f'to seed an RNG with an implementation "f{name}" '
-                       f'differing from the default "f{default_name}".')
+                       f'to seed an RNG with an implementation "{name}" '
+                       f'differing from the default "{default_name}".')
 
 def threefry2x32_key(seed: int) -> KeyArray:
   """Creates a threefry2x32 PRNG key from an integer seed."""
