@@ -327,13 +327,15 @@ def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
   This is like :func:`numpy.issubdtype`, but can handle dtype extensions such as
   :obj:`jax.dtypes.bfloat16`.
   """
+  # Handle extended types & canonicalizes all concrete types to np.dtype instances.
   if isinstance(a, ExtendedDType):
     return _issubclass(a.type, b)
-  elif _issubclass(b, extended):
-    return False
-  # Canonicalizes all concrete types to np.dtype instances
   a = a if _is_typeclass(a) else np.dtype(a)
+
+  if _issubclass(b, extended):
+    return False
   b = b if _is_typeclass(b) else np.dtype(b)
+
   if isinstance(a, np.dtype):
     if a in _custom_float_dtypes:
       # Avoid implicitly casting list elements below to a dtype.
@@ -584,6 +586,8 @@ def dtype(x: Any, *, canonicalize: bool = False) -> DType:
     dt = python_scalar_dtypes[x]
   elif type(x) in python_scalar_dtypes:
     dt = python_scalar_dtypes[type(x)]
+  elif _issubclass(x, np.generic):
+    return np.dtype(x)
   elif issubdtype(getattr(x, 'dtype', None), extended):
     dt = x.dtype
   else:

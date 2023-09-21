@@ -84,8 +84,8 @@ Remember to align the itemized text with the first line of an item within a list
   * The internal submodule path `jax.linear_util` has been deprecated. Use
     {mod}`jax.extend.linear_util` instead (Part of {ref}`jax-extend-jep`)
   * `jax.random.PRNGKeyArray` and `jax.random.KeyArray` are deprecated.  Use {class}`jax.Array`
-    for type annotations, and `jax.dtypes.issubdtype(arr, jax.dtypes.prng_key)` for runtime
-    detection of typed prng keys.
+    for type annotations, and `jax.dtypes.issubdtype(arr.dtype, jax.dtypes.prng_key)` for
+    runtime detection of typed prng keys.
   * The method `PRNGKeyArray.unsafe_raw_array` is deprecated. Use
     {func}`jax.random.key_data` instead.
   * `jax.experimental.pjit.with_sharding_constraint` is deprecated. Use
