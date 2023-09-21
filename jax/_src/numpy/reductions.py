@@ -514,7 +514,7 @@ def count_nonzero(a: ArrayLike, axis: Axis = None,
                   keepdims: bool = False) -> Array:
   check_arraylike("count_nonzero", a)
   return sum(lax.ne(a, _lax_const(a, 0)), axis=axis,
-             dtype=dtypes.canonicalize_dtype(np.int_), keepdims=keepdims)
+             dtype=dtypes.canonicalize_dtype(int), keepdims=keepdims)
 
 
 def _nan_reduction(a: ArrayLike, name: str, jnp_reduction: Callable[..., Array],

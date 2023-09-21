@@ -3683,7 +3683,7 @@ def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr,
     raise NotImplementedError  # loop and stack
 
 def _reduce_jvp(reducer, init_values, primals, tangents, axes):
-  input_shape = np.array(primals[0].shape, dtype=np.int_)
+  input_shape = np.array(primals[0].shape, dtype=int)
 
   n = np.prod(input_shape[list(axes)])
   non_axes = np.delete(np.arange(len(input_shape)), axes)
