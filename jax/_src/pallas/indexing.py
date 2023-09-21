@@ -127,7 +127,7 @@ class NDIndexer:
   @classmethod
   def from_indices_shape(cls, indices, shape) -> NDIndexer:
     if len(indices) > len(shape):
-      raise ValueError("`indices` must be the no longer than `shape`.")
+      raise ValueError("`indices` must not be longer than `shape`.")
     # Pad out indices with slice(None)
     indices = [*indices, *[slice(None)] * (len(shape) - len(indices))]
     # Convert all `slice`s to `Slice`s
