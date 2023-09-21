@@ -10,6 +10,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 * Deprecations
   * Removed the deprecated module `jax.abstract_arrays` and all its contents.
+  * Named key constructors in {mod}`jax.random` are deprecated. Pass the `impl` argument
+    to {func}`jax.random.PRNGKey` or {func}`jax.random.key` instead:
+    * `random.threefry2x32_key(seed)` becomes `random.PRNGKey(seed, impl='threefry2x32')`
+    * `random.rbg_key(seed)` becomes `random.PRNGKey(seed, impl='rbg')`
+    * `random.unsafe_rbg_key(seed)` becomes `random.PRNGKey(seed, impl='unsafe_rbg')`
 
 # jaxlib 0.4.17
 

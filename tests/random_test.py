@@ -522,18 +522,21 @@ class PrngTest(jtu.JaxTestCase):
 
   @skipIf(not config.jax_enable_custom_prng, 'relies on typed key upgrade flag')
   def test_explicit_threefry2x32_key(self):
-    self.check_key_has_impl(random.threefry2x32_key(42),
-                            prng_internal.threefry_prng_impl)
+    with self.assertWarnsRegex(DeprecationWarning, "jax.random.threefry2x32_key"):
+      self.check_key_has_impl(random.threefry2x32_key(42),
+                              prng_internal.threefry_prng_impl)
 
   @skipIf(not config.jax_enable_custom_prng, 'relies on typed key upgrade flag')
   def test_explicit_rbg_key(self):
-    self.check_key_has_impl(random.rbg_key(42),
-                            prng_internal.rbg_prng_impl)
+    with self.assertWarnsRegex(DeprecationWarning, "jax.random.rbg_key"):
+      self.check_key_has_impl(random.rbg_key(42),
+                              prng_internal.rbg_prng_impl)
 
   @skipIf(not config.jax_enable_custom_prng, 'relies on typed key upgrade flag')
   def test_explicit_unsafe_rbg_key(self):
-    self.check_key_has_impl(random.unsafe_rbg_key(42),
-                            prng_internal.unsafe_rbg_prng_impl)
+    with self.assertWarnsRegex(DeprecationWarning, "jax.random.unsafe_rbg_key"):
+      self.check_key_has_impl(random.unsafe_rbg_key(42),
+                              prng_internal.unsafe_rbg_prng_impl)
 
   @parameterized.parameters([{'make_key': ctor, 'name': name, 'impl': impl}
                              for ctor in KEY_CTORS
@@ -579,7 +582,7 @@ class PrngTest(jtu.JaxTestCase):
 
 class ThreefryPrngTest(jtu.JaxTestCase):
   @parameterized.parameters([{'make_key': ctor} for ctor in [
-      random.threefry2x32_key,
+      jax_random.threefry2x32_key,
       partial(random.PRNGKey, impl='threefry2x32'),
       partial(random.key, impl='threefry2x32')]])
   def test_seed_no_implicit_transfers(self, make_key):
@@ -640,7 +643,7 @@ class LaxRandomTest(jtu.JaxTestCase):
             f'{expected_freq}\n{actual_freq}')
 
   def make_key(self, seed):
-    return random.threefry2x32_key(seed)
+    return random.PRNGKey(seed, impl='threefry2x32')
 
   @jtu.sample_product(
     num=(None, 6, (6,), (2, 3), (2, 3, 4)),
@@ -2296,7 +2299,7 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
 @jtu.with_config(jax_default_prng_impl='rbg')
 class LaxRandomWithRBGPRNGTest(LaxRandomTest):
   def make_key(self, seed):
-    return random.rbg_key(seed)
+    return random.PRNGKey(seed, impl='rbg')
 
   def test_split_shape(self):
     key = self.make_key(73)
@@ -2372,7 +2375,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
 @jtu.with_config(jax_default_prng_impl='unsafe_rbg')
 class LaxRandomWithUnsafeRBGPRNGTest(LaxRandomWithRBGPRNGTest):
   def make_key(self, seed):
-    return random.unsafe_rbg_key(seed)
+    return random.PRNGKey(seed, impl="unsafe_rbg")
 
 
 def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
