@@ -289,7 +289,7 @@ def load(*args: Any, **kwargs: Any) -> Array:
       out = out.view(bfloat16)
     try:
       out = asarray(out)
-    except TypeError:  # Unsupported dtype
+    except (TypeError, AssertionError):  # Unsupported dtype
       pass
   return out
 
@@ -2017,6 +2017,12 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   # array([1, 2, 3])
   weak_type = dtype is None and dtypes.is_weakly_typed(object)
 
+  # Use device_put to avoid a copy for ndarray inputs.
+  if (not copy and isinstance(object, np.ndarray) and
+      (dtype is None or dtype == object.dtype) and (ndmin <= object.ndim)):
+    # Keep the output uncommitted.
+    return jax.device_put(object)
+
   # For Python scalar literals, call coerce_to_array to catch any overflow
   # errors. We don't use dtypes.is_python_scalar because we don't want this
   # triggering for traced values. We do this here because it matters whether or
@@ -2027,8 +2033,8 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
 
   if hasattr(object, '__jax_array__'):
     object = object.__jax_array__()
-  object = tree_map(lambda leaf: leaf.__jax_array__() if hasattr(leaf, "__jax_array__") else leaf,
-                    object)
+  object = tree_map(lambda leaf: leaf.__jax_array__()
+                    if hasattr(leaf, "__jax_array__") else leaf, object)
   leaves = tree_leaves(object)
   if dtype is None:
     # Use lattice_result_type rather than result_type to avoid canonicalization.
@@ -2070,7 +2076,8 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
 
     raise TypeError(f"Unexpected input type for array: {type(object)}")
 
-  out_array: Array = lax_internal._convert_element_type(out, dtype, weak_type=weak_type)
+  out_array: Array = lax_internal._convert_element_type(
+      out, dtype, weak_type=weak_type)
   if ndmin > ndim(out_array):
     out_array = lax.expand_dims(out_array, range(ndmin - ndim(out_array)))
   return out_array

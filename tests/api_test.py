@@ -4451,6 +4451,12 @@ class APITest(jtu.JaxTestCase):
     self.assertRaises(TracerBoolConversionError, jax.jit(bool), scalar_int)
     _ = bool(scalar_int)  # no error
 
+  @jtu.run_on_devices('cpu')
+  def test_asarray_no_copy_np(self):
+    x = np.random.uniform(0, 1, (1000, 2000)).astype("float32")
+    out = jnp.asarray(x)
+    self.assertTrue(np.shares_memory(out, x))
+
 
 class RematTest(jtu.JaxTestCase):
 
