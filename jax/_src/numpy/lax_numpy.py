@@ -1866,6 +1866,8 @@ def vstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(atleast_2d)(tup)
   else:
+    # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+    util.check_arraylike("vstack", *tup, emit_warning=True)
     arrs = [atleast_2d(m) for m in tup]
   return concatenate(arrs, axis=0, dtype=dtype)
 
@@ -1877,6 +1879,8 @@ def hstack(tup: np.ndarray | Array | Sequence[ArrayLike],
     arrs = jax.vmap(atleast_1d)(tup)
     arr0_ndim = arrs.ndim - 1
   else:
+    # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+    util.check_arraylike("hstack", *tup, emit_warning=True)
     arrs = [atleast_1d(m) for m in tup]
     arr0_ndim = arrs[0].ndim
   return concatenate(arrs, axis=0 if arr0_ndim == 1 else 1, dtype=dtype)
@@ -1888,6 +1892,8 @@ def dstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(atleast_3d)(tup)
   else:
+    # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+    util.check_arraylike("dstack", *tup, emit_warning=True)
     arrs = [atleast_3d(m) for m in tup]
   return concatenate(arrs, axis=2, dtype=dtype)
 
@@ -1897,6 +1903,8 @@ def column_stack(tup: np.ndarray | Array | Sequence[ArrayLike]) -> Array:
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(lambda x: atleast_2d(x).T)(tup) if tup.ndim < 3 else tup
   else:
+    # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+    util.check_arraylike("column_stack", *tup, emit_warning=True)
     arrs = [atleast_2d(arr).T if arr.ndim < 2 else arr for arr in map(asarray, tup)]
   return concatenate(arrs, 1)
 
@@ -1957,6 +1965,8 @@ def block(arrays: ArrayLike | list[ArrayLike]) -> Array:
 @util._wraps(np.atleast_1d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
 def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
+  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+  util.check_arraylike("atleast_1d", *arys, emit_warning=True)
   if len(arys) == 1:
     arr = asarray(arys[0])
     return arr if ndim(arr) >= 1 else reshape(arr, -1)
@@ -1967,6 +1977,8 @@ def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
 @util._wraps(np.atleast_2d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
 def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
+  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+  util.check_arraylike("atleast_2d", *arys, emit_warning=True)
   if len(arys) == 1:
     arr = asarray(arys[0])
     if ndim(arr) >= 2:
@@ -1982,6 +1994,8 @@ def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
 @util._wraps(np.atleast_3d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
 def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
+  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+  util.check_arraylike("atleast_3d", *arys, emit_warning=True)
   if len(arys) == 1:
     arr = asarray(arys[0])
     if ndim(arr) == 0:
@@ -3050,6 +3064,8 @@ def insert(arr: ArrayLike, obj: ArrayLike | slice, values: ArrayLike,
 def apply_along_axis(
     func1d: Callable, axis: int, arr: ArrayLike, *args, **kwargs
 ) -> Array:
+  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+  util.check_arraylike("apply_along_axis", arr, emit_warning=True)
   num_dims = ndim(arr)
   axis = _canonicalize_axis(axis, num_dims)
   func = lambda arr: func1d(arr, *args, **kwargs)
@@ -3063,6 +3079,8 @@ def apply_along_axis(
 @util._wraps(np.apply_over_axes)
 def apply_over_axes(func: Callable[[ArrayLike, int], Array], a: ArrayLike,
                     axes: Sequence[int]) -> Array:
+  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+  util.check_arraylike("apply_over_axes", a, emit_warning=True)
   a_arr = asarray(a)
   for axis in axes:
     b = func(a_arr, axis)
@@ -3495,6 +3513,8 @@ def inner(
     a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None,
     preferred_element_type: DType | None = None,
 ) -> Array:
+  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+  util.check_arraylike("inner", a, b, emit_warning=True)
   if ndim(a) == 0 or ndim(b) == 0:
     a = asarray(a, dtype=preferred_element_type)
     b = asarray(b, dtype=preferred_element_type)
@@ -3508,6 +3528,8 @@ def inner(
 def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.outer is not supported.")
+  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+  util.check_arraylike("outer", a, b, emit_warning=True)
   a, b = util.promote_dtypes(a, b)
   return ravel(a)[:, None] * ravel(b)[None, :]
 
@@ -3515,6 +3537,8 @@ def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
 @partial(jit, static_argnames=('axisa', 'axisb', 'axisc', 'axis'))
 def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
           axis: int | None = None):
+  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+  util.check_arraylike("cross", a, b, emit_warning=True)
   if axis is not None:
     axisa = axis
     axisb = axis
@@ -3541,6 +3565,8 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
 @util._wraps(np.kron)
 @jit
 def kron(a: ArrayLike, b: ArrayLike) -> Array:
+  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+  util.check_arraylike("kron", a, b, emit_warning=True)
   a, b = util.promote_dtypes(a, b)
   if ndim(a) < ndim(b):
     a = expand_dims(a, range(ndim(b) - ndim(a)))
@@ -3736,18 +3762,21 @@ def sort_complex(a: ArrayLike) -> Array:
 
 @util._wraps(np.lexsort)
 @partial(jit, static_argnames=('axis',))
-def lexsort(keys: Sequence[ArrayLike], axis: int = -1) -> Array:
-  keys_arrays = tuple(asarray(k) for k in keys)
-  if len(keys_arrays) == 0:
+def lexsort(keys: Union[Array, np.ndarray, Sequence[ArrayLike]], axis: int = -1) -> Array:
+  key_tuple = tuple(keys)
+  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
+  util.check_arraylike("lexsort", *key_tuple, emit_warning=True)
+  key_arrays = tuple(asarray(k) for k in key_tuple)
+  if len(key_arrays) == 0:
     raise TypeError("need sequence of keys with len > 0 in lexsort")
-  if len({shape(key) for key in keys_arrays}) > 1:
+  if len({shape(key) for key in key_arrays}) > 1:
     raise ValueError("all keys need to be the same shape")
-  if ndim(keys_arrays[0]) == 0:
+  if ndim(key_arrays[0]) == 0:
     return array(0, dtype=dtypes.canonicalize_dtype(int_))
-  axis = _canonicalize_axis(axis, ndim(keys_arrays[0]))
-  use_64bit_index = keys_arrays[0].shape[axis] >= (1 << 31)
-  iota = lax.broadcasted_iota(int64 if use_64bit_index else int_, shape(keys_arrays[0]), axis)
-  return lax.sort((*keys_arrays[::-1], iota), dimension=axis, num_keys=len(keys))[-1]
+  axis = _canonicalize_axis(axis, ndim(key_arrays[0]))
+  use_64bit_index = key_arrays[0].shape[axis] >= (1 << 31)
+  iota = lax.broadcasted_iota(int64 if use_64bit_index else int_, shape(key_arrays[0]), axis)
+  return lax.sort((*key_arrays[::-1], iota), dimension=axis, num_keys=len(key_arrays))[-1]
 
 
 _ARGSORT_DOC = """
