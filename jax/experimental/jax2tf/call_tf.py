@@ -424,7 +424,7 @@ def _call_tf_abstract_eval(
 
   # In the case that the tf.function has no return value
   if len(concrete_function_flat_tf.outputs) == 0:
-    return tuple(), effects
+    return (), effects
 
   if output_avals is not None:
     return output_avals, effects
@@ -636,7 +636,7 @@ def emit_tf_embedded_graph_custom_call(
       "has_token_input_output": ir.BoolAttr.get(ordered),
       "called_index": mlir.i64_attr(called_index),
   }
-  result_avals = ctx.avals_out if ctx.avals_out is not None else tuple()
+  result_avals = ctx.avals_out if ctx.avals_out is not None else ()
 
   operands = list(operands)
   result_types = list(

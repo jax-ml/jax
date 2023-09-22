@@ -1209,7 +1209,7 @@ def _outside_call_run_callback(
         return name, dict(logical_shapes=5)
       else:
         assert not params, f"{name}, {params}"
-        return name, dict()
+        return name, {}
 
     return tuple(_unpack_transform(*t) for t in transforms)
 
@@ -1715,8 +1715,8 @@ class _CallbackHandlerData:
     # because we may have cached compilations that embed consumer ids, and we
     # do not want the id reused for other shapes.
     # Used only for the outfeed mechanism.
-    self.callback_registry = dict()
-    self.callback_registry_by_id = dict()
+    self.callback_registry = {}
+    self.callback_registry_by_id = {}
     # For now we keep here the keep_alives for the emit_python_callback. This is
     # a leak. We ought to attach these to the executable.
     self.keep_alives = []

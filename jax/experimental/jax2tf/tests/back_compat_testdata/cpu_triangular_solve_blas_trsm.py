@@ -17,7 +17,7 @@
 import datetime
 from numpy import array, float32, complex64
 
-data_2023_07_16 = dict()
+data_2023_07_16 = {}
 # Pasted from the test output (see back_compat_test_util.py module docstring)
 data_2023_07_16["f32"] = dict(
     testdata_version=1,
