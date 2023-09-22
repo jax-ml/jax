@@ -1,5 +1,6 @@
 #include "jaxlib/mosaic/dialect/tpu/transforms/infer_memref_layout.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 
@@ -12,6 +13,7 @@
 #include "mlir/IR/Location.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "absl/log/check.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/layout.h"
@@ -26,17 +28,17 @@ namespace mlir::tpu {
 //   bitwidth: The bitwidth of the element type of the operand.
 int getTilingFactor(const int num_128s, const int hardware_generation,
                     const int8_t bitwidth) {
-  if (num_128s == 1 && hardware_generation >= 4 && bitwidth == 32) {
-    return 1;
+  CHECK(llvm::isPowerOf2_32(bitwidth));
+  CHECK_LE(4, bitwidth);
+  CHECK_LE(bitwidth, 32);
+  const int packing = 32 / bitwidth;
+  const int min_tiling = (1 + (hardware_generation < 4)) * packing;
+  const int max_tiling = 8;
+  int tiling = min_tiling;
+  while (tiling < std::min(num_128s, max_tiling)) {
+    tiling *= 2;
   }
-  if (num_128s <= 2 &&
-      (bitwidth == 32 || (hardware_generation >= 4 && bitwidth == 16))) {
-    return 2;
-  }
-  if (num_128s <= 4) {
-    return 4;
-  }
-  return 8;
+  return tiling;
 }
 
 FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref,
