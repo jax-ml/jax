@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_python//python:defs.bzl", "py_test")
 load(
     "//jaxlib:jax.bzl",
     "jax_generate_backend_suites",
@@ -21,6 +20,7 @@ load(
     "py_deps",
     "pytype_test",
 )
+load("@rules_python//python:defs.bzl", "py_test")
 
 licenses(["notice"])
 
@@ -1207,6 +1207,7 @@ exports_files(
         "pmap_test.py",
         "pjit_test.py",
         "python_callback_test.py",
+        "shard_map_test.py",
         "transfer_guard_test.py",
     ],
     visibility = jax_test_file_visibility,
