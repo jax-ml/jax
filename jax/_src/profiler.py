@@ -104,7 +104,7 @@ def start_trace(log_dir, create_perfetto_link: bool = False,
       Perfetto trace viewer UI (https://ui.perfetto.dev). The file will also be
       generated if ``create_perfetto_link`` is true. This could be useful if you
       want to generate a Perfetto-compatible trace without blocking the
-      processs.
+      process.
   """
   with _profile_state.lock:
     if _profile_state.profile_session is not None:
@@ -228,7 +228,7 @@ def trace(log_dir, create_perfetto_link=False, create_perfetto_trace=False):
       Perfetto trace viewer UI (https://ui.perfetto.dev). The file will also be
       generated if ``create_perfetto_link`` is true. This could be useful if you
       want to generate a Perfetto-compatible trace without blocking the
-      processs.
+      process.
   """
   start_trace(log_dir, create_perfetto_link, create_perfetto_trace)
   try:

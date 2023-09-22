@@ -406,7 +406,7 @@ class BatchTrace(Trace):
     else:
       axis_size = None  # can't be inferred from data
     if self.axis_name is core.no_axis_name:
-      assert axis_size is not None  # must be inferrable from data
+      assert axis_size is not None  # must be inferable from data
       return core.AxisEnvFrame(self.axis_name, axis_size, self.main)
     frame = core.axis_frame(self.axis_name, self.main)
     assert axis_size is None or axis_size == frame.size, (axis_size, frame.size)
@@ -1063,7 +1063,7 @@ def _mask_one_ragged_axis(
   ragged_axis, segment_lengths = axis_spec.ragged_axes[0]
   value = ident(operand.dtype)
   positions = jax.lax.broadcasted_iota('int32', operand.shape, ragged_axis)
-  # TODO(mattjj, axch) cant get ._data, need to convert it
+  # TODO(mattjj, axch) can't get ._data, need to convert it
   # lengths = jax.lax.convert_element_type(segment_lengths._data, 'int32')
   lengths = jax.lax.convert_element_type(segment_lengths, 'int32')
   limits = jax.lax.broadcast_in_dim(

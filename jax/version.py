@@ -90,7 +90,7 @@ def _write_version(fname: str) -> None:
   new_version_string = f"_release_version: str = {release_version!r}"
   fhandle = pathlib.Path(fname)
   contents = fhandle.read_text()
-  # Expect two occurrances: one above, and one here.
+  # Expect two occurrences: one above, and one here.
   if contents.count(old_version_string) != 2:
     raise RuntimeError(f"Build: could not find {old_version_string!r} in {fname}")
   contents = contents.replace(old_version_string, new_version_string)

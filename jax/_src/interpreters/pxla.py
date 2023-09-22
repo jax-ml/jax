@@ -2856,7 +2856,7 @@ def _get_metadata_jit_pmap(local_devices, num_in_shardings, num_out_shardings):
   in_shardings = [gs] * num_in_shardings
   out_shardings = [gs] * num_out_shardings
   # jit(pmap) will generate Arrays with multi-device sharding.
-  # It is unsupported for these shardings to be uncommited, so force
+  # It is unsupported for these shardings to be uncommitted, so force
   # the outputs to be committed.
   committed = True
   return in_shardings, out_shardings, committed, tuple(local_devices)

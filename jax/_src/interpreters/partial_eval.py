@@ -1058,7 +1058,7 @@ def partial_eval_jaxpr_nounits(
   In the above example, the output of jaxpr_known named `d` is a _residual_
   output, and corresponds to the input named `a` in jaxpr_unknown. In general,
   jaxpr_known will produce extra outputs (at the end of its output list)
-  corresponding to intermeidate values of the original jaxpr which must be
+  corresponding to intermediate values of the original jaxpr which must be
   passed to jaxpr_unknown (as leading inputs).
   """
   instantiate = tuple(instantiate) if isinstance(instantiate, list) else instantiate
@@ -2411,7 +2411,7 @@ def _add_implicit_outputs(jaxpr: Jaxpr) -> tuple[Jaxpr, OutputType]:
   invars = [*jaxpr.constvars, *jaxpr.invars]
   expl_outvars = jaxpr.outvars
 
-  # First do a pass to collect implicit outputs, meaning variables which occurr
+  # First do a pass to collect implicit outputs, meaning variables which occur
   # in explicit_outvars types but not in invars or to the left in outvars.
   seen: set[Var] = set(invars)
   impl_outvars = [seen.add(d) or d for x in expl_outvars if type(x) is Var and  # type: ignore

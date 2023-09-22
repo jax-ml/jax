@@ -148,7 +148,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       # TODO(b/264596006): custom calls are not registered properly with TF in OSS
       if (config.jax2tf_default_native_serialization and
           "does not work with custom calls" in str(e)):
-        logging.warning("Supressing error %s", e)
+        logging.warning("Suppressing error %s", e)
         raise unittest.SkipTest("b/264596006: custom calls in native serialization fail in TF")
       else:
         raise e

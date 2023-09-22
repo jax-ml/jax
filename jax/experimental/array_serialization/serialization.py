@@ -287,7 +287,7 @@ async def async_deserialize(
       # transfer instead of loading data. In the future, if memory pressure
       # becomes a problem, we can instead instrument  bytelimiter to
       # keep track of all in-flight tensors and only block_until_ready, if byte
-      # limiter hits the limit to get reduced memory usage, without loosing
+      # limiter hits the limit to get reduced memory usage, without losing
       # performance in common use cases.
       await byte_limiter.release_bytes(requested_bytes)
     return result

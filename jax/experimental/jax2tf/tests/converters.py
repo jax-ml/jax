@@ -96,7 +96,7 @@ ALL_CONVERTERS = [
     Converter(name='jax2tfjs', convert_fn=jax2tfjs, compare_numerics=False),
     # Convert JAX to TFLIte.
     Converter(name='jax2tflite', convert_fn=jax2tflite),
-    # Convert JAX to TFLIte with suppor for Flex ops.
+    # Convert JAX to TFLIte with support for Flex ops.
     Converter(
         name='jax2tflite+flex',
         convert_fn=functools.partial(jax2tflite, use_flex_ops=True))

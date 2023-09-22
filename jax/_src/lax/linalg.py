@@ -2038,7 +2038,7 @@ def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array) -> Array:
       The lower diagonal of A: ``dl[i] := A[i, i-1]`` for i in ``[0,m)``.
       Note that ``dl[0] = 0``.
     d: A batch of vectors with shape ``[..., m]``.
-      The middle diagnoal of A: ``d[i]  := A[i, i]`` for i in ``[0,m)``.
+      The middle diagonal of A: ``d[i]  := A[i, i]`` for i in ``[0,m)``.
     du: A batch of vectors with shape ``[..., m]``.
       The upper diagonal of A: ``du[i] := A[i, i+1]`` for i in ``[0,m)``.
       Note that ``dl[m - 1] = 0``.

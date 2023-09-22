@@ -166,7 +166,7 @@ Inputs to JAX functions and methods should be typed as permissively as is reason
 
 - `ArrayLike` would be a union of anything that can be implicitly converted into an array: for example, jax arrays, numpy arrays, JAX tracers, and python or numpy scalars
 - `DTypeLike` would be a union of anything that can be implicitly converted into a dtype: for example, numpy dtypes, numpy dtype objects, jax dtype objects, strings, and built-in types.
-- `ShapeLike` would be a union of anything that could be converted into a shape: for example, sequences of integer or integer-like objecs.
+- `ShapeLike` would be a union of anything that could be converted into a shape: for example, sequences of integer or integer-like objects.
 - etc.
   
 Note that these will in general be simpler than the equivalent protocols used in {mod}`numpy.typing`. For example, in the case of `DTypeLike`, JAX does not support structured dtypes, so JAX can use a simpler implementation. Similarly, in `ArrayLike`, JAX generally does not support list or tuple inputs in place of arrays, so the type definition will be simpler than the NumPy analog.
@@ -177,7 +177,7 @@ Conversely, outputs of functions and methods should be typed as strictly as poss
 
 - `Array` or `NDArray` (see below) for type annotation purposes is effectively equivalent to `Union[Tracer, jnp.ndarray]` and should be used to annotate array outputs.
 - `DType` is an alias of `np.dtype`, perhaps with the ability to also represent key types and other generalizations used within JAX.
-- `Shape` is essentially `Tuple[int, ...]`, perhaps with some additional flexibilty to account for dynamic shapes.
+- `Shape` is essentially `Tuple[int, ...]`, perhaps with some additional flexibility to account for dynamic shapes.
 - `NamedShape` is an extension of `Shape` that allows for named shapes as used internall in JAX.
 - etc.
 
@@ -283,7 +283,7 @@ Finally, we could opt for full unification via restructuring of the class hierar
 Here `jnp.ndarray` could be an alias for `jax.Array`.
 This final approach is in some senses the most pure, but it is somewhat forced from an OOP design standpoint (`Tracer` *is an* `Array`?).
 
-##### Option 4: Parial unification via class hierarchy
+##### Option 4: Partial unification via class hierarchy
 We could make the class hierarchy more sensible by making `Tracer` and the class for
 on-device arrays inherit from a common base class. So, for example:
 

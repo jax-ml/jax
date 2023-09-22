@@ -457,7 +457,7 @@ Again, the connections added here are precisely the promotion semantics implemen
 
 ### How to handle `uint64`?
 
-The approached to mixed signed/unsigned integer promotion leaves out one type: `uint64`. Following the pattern above, the output of a mixed-integer opertion involving `uint64` should result in `int128`, but this is not a standard available dtype.
+The approached to mixed signed/unsigned integer promotion leaves out one type: `uint64`. Following the pattern above, the output of a mixed-integer operation involving `uint64` should result in `int128`, but this is not a standard available dtype.
 
 Numpy's choice here is to promote to `float64`:
 
@@ -796,7 +796,7 @@ display.HTML(table.to_html())
 
 ### Tensorflow Type Promotion
 
-Tensorflow avoids defining implicit type promotion, except for Python scalars in limited cases. The table is asymmetric because in `tf.add(x, y)`, the type of `y` must be coercable to the type of `x`.
+Tensorflow avoids defining implicit type promotion, except for Python scalars in limited cases. The table is asymmetric because in `tf.add(x, y)`, the type of `y` must be coercible to the type of `x`.
 
 ```{code-cell}
 :cellView: form

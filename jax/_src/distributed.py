@@ -165,7 +165,7 @@ def initialize(coordinator_address: Optional[str] = None,
 
   Example:
 
-  Suppose there are two GPU processs, and process 0 is the designated coordinator
+  Suppose there are two GPU processes, and process 0 is the designated coordinator
   with address ``10.0.0.1:1234``. To initialize the GPU cluster, run the
   following commands before anything else.
 

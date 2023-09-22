@@ -304,7 +304,7 @@ treated as dynamic. Here's how it might look::
     ...                                CustomClass._tree_unflatten)
 
 This is certainly more involved, but it solves all the issues associated with the simpler
-apporaches used above::
+approaches used above::
 
     >>> c = CustomClass(2, True)
     >>> print(c.calc(3))
@@ -442,7 +442,7 @@ When run with a GPU in Colab_, we see:
 - JAX takes 193 ms to compile the function
 - JAX takes 485 µs per evaluation on the GPU
 
-In this case, we see that once the data is transfered and the function is
+In this case, we see that once the data is transferred and the function is
 compiled, JAX on the GPU is about 30x faster for repeated evaluations.
 
 Is this a fair comparison? Maybe. The performance that ultimately matters is for

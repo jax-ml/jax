@@ -322,7 +322,7 @@ class ShardMapTest(jtu.JaxTestCase):
   def test_outer_jit_detects_shard_map_mesh(self):
     mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))
     f = shard_map(lambda x: x.reshape(1, *x.shape), mesh, P(), P('x'))
-    _ = jax.jit(f)(jnp.array(2.0))  # doesnt crash
+    _ = jax.jit(f)(jnp.array(2.0))  # doesn't crash
 
   def test_vmap_basic(self):
     mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))

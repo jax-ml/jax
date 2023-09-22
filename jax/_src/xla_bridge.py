@@ -216,7 +216,7 @@ def _get_pjrt_plugin_names_and_library_paths(
   """Gets the names and library paths of PJRT plugins to load from env var.
 
   Args:
-    plugins_from_env: plugin name and pathes from env var. It is in the format
+    plugins_from_env: plugin name and paths from env var. It is in the format
       of 'name1:path1,name2:path2' ('name1;path1,name2;path2' for windows).
 
   Returns:

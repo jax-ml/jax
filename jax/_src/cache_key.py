@@ -197,7 +197,7 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj):
   # be part of the cache key as their inclusion will result in unnecessary cache
   # misses. Clear them here by setting bool values to False, ints to 0, and
   # strings to empty. The exact values used to clear are not relevant as long
-  # as the same values are used everytime for each field.
+  # as the same values are used every time for each field.
   debug_options = compile_options_copy.executable_build_options.debug_options
   # LINT.IfChange(debug_options)
   debug_options.xla_force_host_platform_device_count = 0

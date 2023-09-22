@@ -573,7 +573,7 @@ def _raise_if_using_outfeed_with_pjrt_c_api(backend: xb.XlaBackend):
         "https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html"
         " for alternatives. Please file a feature request at "
         "https://github.com/google/jax/issues if none of the alternatives are "
-        "sufficent.")
+        "sufficient.")
 
 
 xops = xla_client._xla.ops

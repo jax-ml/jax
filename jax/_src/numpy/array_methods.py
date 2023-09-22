@@ -55,7 +55,7 @@ zip, unsafe_zip = safe_zip, zip
 def _astype(arr: ArrayLike, dtype: DTypeLike) -> Array:
   """Copy the array and cast to a specified dtype.
 
-  This is implemeted via :func:`jax.lax.convert_element_type`, which may
+  This is implemented via :func:`jax.lax.convert_element_type`, which may
   have slightly different behavior than :meth:`numpy.ndarray.astype` in
   some cases. In particular, the details of float-to-int and int-to-float
   casts are implementation dependent.
@@ -346,7 +346,7 @@ class _IndexUpdateHelper:
   """Helper property for index update functionality.
 
   The ``at`` property provides a functionally pure equivalent of in-place
-  array modificatons.
+  array modifications.
 
   In particular:
 
