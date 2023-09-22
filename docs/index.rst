@@ -50,31 +50,6 @@ JAX is Autograd_ and XLA_, brought together for high-performance numerical compu
       :class-card: developer-docs
 
 
-Installation
-------------
-.. tab-set::
-
-    .. tab-item:: CPU
-
-       .. code-block:: bash
-
-          pip install "jax[cpu]"
-
-    .. tab-item:: GPU (CUDA)
-
-       .. code-block:: bash
-
-          pip install "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-
-    .. tab-item:: TPU (Google Cloud)
-
-       .. code-block:: bash
-
-          pip install "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-
-For more information about supported accelerators and platforms, and for other
-installation options, see the `Install Guide`_ in the project README.
-
 .. toctree::
    :hidden:
    :maxdepth: 1
@@ -116,4 +91,3 @@ installation options, see the `Install Guide`_ in the project README.
 
 .. _Autograd: https://github.com/hips/autograd
 .. _XLA: https://www.tensorflow.org/xla
-.. _Install Guide: https://github.com/google/jax#installation
