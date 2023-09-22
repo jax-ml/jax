@@ -325,20 +325,33 @@ def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
   """Returns True if first argument is a typecode lower/equal in type hierarchy.
 
   This is like :func:`numpy.issubdtype`, but can handle dtype extensions such as
-  :obj:`jax.dtypes.bfloat16`.
+  :obj:`jax.dtypes.bfloat16` and `jax.dtypes.prng_key`.
   """
-  # Handle extended types & canonicalizes all concrete types to np.dtype instances.
-  if isinstance(a, ExtendedDType):
-    return _issubclass(a.type, b)
-  a = a if _is_typeclass(a) else np.dtype(a)
+  # Main departures from np.issubdtype are:
+  # - "extended" dtypes (like prng key types) are not normal numpy dtypes, so we
+  #   need to handle them specifically. However, their scalar types do conform to
+  #   the numpy scalar type hierarchy.
+  # - custom dtypes (like bfloat16, int4, etc.) are normal numpy dtypes, but they
+  #   don't conform to the standard numpy type hierarchy (e.g. the bfloat16 scalar
+  #   type is not a subclass of np.floating) so we must also handle these specially.
 
-  if _issubclass(b, extended):
+  # First we handle extended dtypes (like prng key types)
+  if isinstance(a, ExtendedDType):
+    if isinstance(b, ExtendedDType):
+      return a == b
+    else:
+      a = a.type
+  elif isinstance(b, ExtendedDType):
     return False
-  b = b if _is_typeclass(b) else np.dtype(b)
+
+  # Now do special handling of custom float and int types. To do this, we first
+  # convert scalar types to dtypes in order to recognize custom floats & ints.
+  # We cannot use issubclass(a, np.generic) because scalar types would satisfy this.
+  a = a if _is_typeclass(a) or _issubclass(a, extended) else np.dtype(a)
+  b = b if _is_typeclass(b) or _issubclass(b, extended) else np.dtype(b)
 
   if isinstance(a, np.dtype):
     if a in _custom_float_dtypes:
-      # Avoid implicitly casting list elements below to a dtype.
       if isinstance(b, np.dtype):
         return a == b
       return b in [np.floating, np.inexact, np.number, np.generic]
@@ -350,6 +363,8 @@ def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
       if isinstance(b, np.dtype):
         return a == b
       return b in [np.unsignedinteger, np.integer, np.number, np.generic]
+
+  # Otherwise, fall back to numpy.issubdtype
   return np.issubdtype(a, b)
 
 can_cast = np.can_cast

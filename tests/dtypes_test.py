@@ -288,6 +288,16 @@ class DtypesTest(jtu.JaxTestCase):
           self.assertEqual(dtypes.issubdtype(t, category),
                            np.issubdtype(np.dtype(t).type, category))
 
+  def testIsSubdtypeExtended(self):
+    self.assertTrue(dtypes.issubdtype(dtypes.extended, dtypes.extended))
+    self.assertTrue(dtypes.issubdtype(dtypes.extended, np.generic))
+    self.assertFalse(dtypes.issubdtype(dtypes.extended, np.number))
+
+    self.assertTrue(jnp.issubdtype(dtypes.prng_key, dtypes.prng_key))
+    self.assertTrue(jnp.issubdtype(dtypes.prng_key, dtypes.extended))
+    self.assertTrue(jnp.issubdtype(dtypes.prng_key, np.generic))
+    self.assertFalse(dtypes.issubdtype(dtypes.prng_key, np.number))
+
   @parameterized.product(dtype=custom_float_dtypes)
   def testIsSubdtypeCustomFloats(self, dtype):
     for dt in [dtype, np.dtype(dtype), str(np.dtype(dtype))]:

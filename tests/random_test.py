@@ -1740,8 +1740,14 @@ class KeyArrayTest(jtu.JaxTestCase):
 
   def test_issubdtype(self):
     key = random.key(42)
+
+    self.assertTrue(jnp.issubdtype(key.dtype, key.dtype))
     self.assertTrue(jnp.issubdtype(key.dtype, dtypes.prng_key))
+    self.assertTrue(jnp.issubdtype(key.dtype, dtypes.extended))
+    self.assertTrue(jnp.issubdtype(key.dtype, np.generic))
+
     self.assertFalse(jnp.issubdtype(key.dtype, np.integer))
+    self.assertFalse(jnp.issubdtype(key.dtype, np.number))
     with self.assertRaisesRegex(TypeError, "Cannot interpret"):
       jnp.issubdtype(key, dtypes.prng_key)
 
