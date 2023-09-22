@@ -587,7 +587,9 @@ class PallasCallTest(PallasTest):
       out_dtype = jnp.int32
     def make_x(key):
       if jnp.issubdtype(dtype, jnp.integer):
-        return random.shuffle(key, jnp.arange(m * n, dtype=dtype)).reshape(m, n)
+        return random.permutation(
+          key, jnp.arange(m * n, dtype=dtype), independent=True
+        ).reshape(m, n)
       else:
         return random.normal(key, (m, n), dtype=dtype)
     out_shape = jax.ShapeDtypeStruct(
