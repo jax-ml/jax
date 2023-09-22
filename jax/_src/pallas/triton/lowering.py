@@ -1211,6 +1211,7 @@ def _remat_lowering_rule(ctx: TritonLoweringRuleContext, *args, jaxpr, **_):
 
 
 triton_lowering_rules[ad_checkpoint.remat_p] = _remat_lowering_rule
+triton_lowering_rules[ad_util.stop_gradient_p] = lambda _, x: x
 
 
 def _is_read_only(ref_effects) -> bool:
