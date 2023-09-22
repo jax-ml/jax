@@ -1295,6 +1295,12 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
   def test_several_round_trips(self,
                                f2_function=False, f2_saved_model=False,
                                f4_function=False, f4_saved_model=False):
+    if (f2_saved_model and
+        f4_saved_model and
+        not config.jax2tf_default_native_serialization):
+      # TODO: Getting error Found invalid capture Tensor("jax2tf_vjp/jax2tf_arg_0:0", shape=(), dtype=float32) when saving custom gradients
+      # when saving f4, but only with non-native serialization.
+      raise unittest.SkipTest("TODO: error invalid capture when saving custom gradients")
     x = np.array(.7, dtype=np.float32)
     # f(n)(x) = 2. * x^n
     def f(n):

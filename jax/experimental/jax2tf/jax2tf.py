@@ -409,7 +409,10 @@ def convert(fun_jax: Callable,
           outs_tf, outs_avals, outs_tree = impl.run_fun_tf(args_flat_tf)
           return (tuple(outs_tf),
                   _make_custom_gradient_fn_tf(
+                      fun_jax,
                       impl=impl,
+                      with_gradient=with_gradient,
+                      args_specs=args_specs, kwargs_specs=kwargs_specs,
                       args_tf=args_flat_tf,
                       outs_avals=outs_avals,
                       outs_tf=outs_tf))
@@ -466,18 +469,9 @@ class SerializationImpl:
     """
     raise NotImplementedError
 
-  def run_vjp_fun_tf(self,
-                     vjp_args_flat_tf: Sequence[TfVal],
-                     outs_avals: Sequence[core.AbstractValue]) -> Sequence[TfVal]:
-    """Runs the VJP function as a TF function.
-
-    Args:
-      vjp_args_flat_tf: the flattened sequence of tf.Tensor, including the
-          primal arguments followed by the output cotangents.
-      outs_avals: the flattened primal outputs avals
-
-    Returns: the flattened sequence of input cotangents.
-    """
+  def get_vjp_fun(self) -> tuple[Callable,
+                                 Sequence[core.AbstractValue]]:
+    """Returns the VJP function, and the VJP in_avals."""
     raise NotImplementedError
 
 
@@ -486,6 +480,9 @@ class NativeSerializationImpl(SerializationImpl):
                args_specs, kwargs_specs,
                native_serialization_platforms: Sequence[str],
                native_serialization_disabled_checks: Sequence[DisabledSafetyCheck]):
+    self.convert_kwargs = dict(native_serialization=True,
+                               native_serialization_platforms=native_serialization_platforms,
+                               native_serialization_disabled_checks=native_serialization_disabled_checks)
     self.fun_jax = fun_jax
     self.args_specs = args_specs
     self.kwargs_specs = kwargs_specs
@@ -518,22 +515,23 @@ class NativeSerializationImpl(SerializationImpl):
     results = _run_exported_as_tf(args_flat_tf, self.exported)
     return results, tuple(self.exported.out_avals), self.exported.out_tree
 
-  def run_vjp_fun_tf(self,
-                     vjp_args_flat_tf: Sequence[TfVal],
-                     outs_avals: Sequence[core.AbstractValue]) -> Sequence[TfVal]:
-    del outs_avals
-    exported_vjp = self.exported.vjp()
-    vjp_args_flat_tf = tuple(tf.identity(arg, f"jax2tf_arg_{arg_idx}")
-                             for arg_idx, arg in enumerate(vjp_args_flat_tf))
-    in_cts_flat = _run_exported_as_tf(vjp_args_flat_tf, exported_vjp)
-    return tuple(tf.identity(arg, "jax2tf_out") for arg in in_cts_flat)
-
+  def get_vjp_fun(self) -> tuple[Callable,
+                                 Sequence[core.AbstractValue]]:
+    return export._get_vjp_fun(self.fun_jax,
+        in_tree=self.exported.in_tree,
+        module_kept_var_idx=self.exported.module_kept_var_idx,
+        in_avals=self.exported.in_avals,
+        in_shardings=self.exported.in_shardings,
+        out_avals=self.exported.out_avals,
+        out_shardings=self.exported.out_shardings,
+        apply_jit=True)
 
 class GraphSerializationImpl(SerializationImpl):
   def __init__(self, fun_jax, *,
                args_specs, kwargs_specs,
                args_flat_tf: Sequence[TfVal],
                enable_xla: bool):
+    self.convert_kwargs = dict(native_serialization=False)
     self.fun_jax = fun_jax
     self.args_specs = args_specs
     self.kwargs_specs = kwargs_specs
@@ -559,7 +557,6 @@ class GraphSerializationImpl(SerializationImpl):
     _thread_local_state.include_xla_op_metadata = False
     _thread_local_state.tf_outer_name_scope = tf.get_current_name_scope()
     assert not _thread_local_state.shape_env, f"Unexpected shape environment {_thread_local_state.shape_env}"
-
     args_specs_flat, self.in_tree = tree_util.tree_flatten(
         (self.args_specs, self.kwargs_specs))
     self.args_avals_flat = tuple(
@@ -572,42 +569,34 @@ class GraphSerializationImpl(SerializationImpl):
 
     _thread_local_state.shape_env = zip(dim_vars, dim_values)
 
-    fun_flat_jax, out_tree_thunk = flatten_fun_jax(self.fun_jax, self.in_tree)
-    # out_tree_thunk will be ready after we call run_fun_tf below.
-    self.fun_flat_jax = fun_flat_jax
-    self.out_tree_thunk = out_tree_thunk
-
   def after_conversion(self):
     self._restore_context()
 
   def run_fun_tf(self,
       args_flat_tf: Sequence[TfVal]
       ) -> tuple[Sequence[TfVal], Sequence[core.ShapedArray], tree_util.PyTreeDef]:
-
-    outs_tf, outs_avals = _interpret_fun_jax(
-        self.fun_flat_jax,
+    fun_flat_jax, out_tree_thunk = flatten_fun_jax(self.fun_jax, self.in_tree)
+    # out_tree_thunk will be ready after we _interpret_fun_jax below
+    outs_tf, self.outs_avals = _interpret_fun_jax(
+        fun_flat_jax,
         args_flat_tf, self.args_avals_flat,
         self.name_stack,
         fresh_constant_cache=True)
-    return outs_tf, outs_avals, self.out_tree_thunk()
+    return outs_tf, self.outs_avals, out_tree_thunk()
 
-  def run_vjp_fun_tf(self,
-      vjp_args_flat_tf: Sequence[TfVal],
-      outs_avals: Sequence[core.AbstractValue]) -> Sequence[TfVal]:
-    def fun_vjp_jax(*args_and_out_cts_flat_jax):
-      # Takes a flat list of primals and output cotangents
-      args_flat_jax, out_cts_flat_jax = util.split_list(args_and_out_cts_flat_jax, [len(self.args_avals_flat)])
-      _, pullback_jax = jax.vjp(self.fun_flat_jax, *args_flat_jax)
-      return pullback_jax(out_cts_flat_jax)
-
-    vjp_in_avals = tuple(self.args_avals_flat) + tuple(outs_avals)
-    vjp_polymorphic_shapes = tuple(str(a.shape)  # Note: may be _DimExpr, not just DimVar
-                                   for a in vjp_in_avals)  # type: ignore
-    return convert(
-        fun_vjp_jax,
-        with_gradient=False,
-        polymorphic_shapes=vjp_polymorphic_shapes,
-        native_serialization=False)(*vjp_args_flat_tf)
+  def get_vjp_fun(self) -> tuple[Callable,
+                                 Sequence[core.AbstractValue]]:
+    # We reuse the code for native serialization to get the VJP functions,
+    # except we use unspecified shardings, and we do not apply a jit on the
+    # VJP. This matches the older behavior of jax2tf for graph serialization.
+    return export._get_vjp_fun(self.fun_jax,
+      in_tree=self.in_tree,
+      module_kept_var_idx=tuple(range(len(self.args_avals_flat))),
+      in_avals=self.args_avals_flat,
+      in_shardings=(sharding_impls.UNSPECIFIED,) * len(self.args_avals_flat),
+      out_avals=self.outs_avals,
+      out_shardings=(sharding_impls.UNSPECIFIED,) * len(self.outs_avals),
+      apply_jit=False)
 
 
 def dtype_of_val(val: TfVal) -> DType:
@@ -728,8 +717,11 @@ def preprocess_arg_tf(arg_idx: int,
   return arg_tf
 
 
-def _make_custom_gradient_fn_tf(*,
+def _make_custom_gradient_fn_tf(fun_jax,
+                                *,
                                 impl: SerializationImpl,
+                                with_gradient: bool,
+                                args_specs, kwargs_specs,
                                 args_tf: Sequence[TfVal],
                                 outs_avals: Sequence[core.ShapedArray],
                                 outs_tf: Sequence[TfVal]):
@@ -737,6 +729,8 @@ def _make_custom_gradient_fn_tf(*,
 
   Args:
     impl: the serialization implementation details
+    with_gradient: whether to include a tf.custom_gradient
+    args_specs, kwargs_specs: the jax.ShapeDtypeArrays for the args and kwargs
     args_tf: the flattened TF arguments of the primal function
     outs_avals: the flattened output JAX abstract values of the primal function
     outs_tf: the flattened TF outputs of the primal function
@@ -765,7 +759,17 @@ def _make_custom_gradient_fn_tf(*,
 
       out_cts_fixed_flat_tf = tuple(map(fix_out_ct, out_cts_flat_tf, outs_avals, outs_tf))
       vjp_args_flat_tf = tuple(args_tf) + out_cts_fixed_flat_tf
-      in_cts_flat = impl.run_vjp_fun_tf(vjp_args_flat_tf, outs_avals)
+
+      fun_vjp_jax, vjp_in_avals = impl.get_vjp_fun()
+
+      vjp_polymorphic_shapes = tuple(
+        str(a.shape)  # Note: may be _DimExpr, not just DimVar
+        for a in vjp_in_avals)  # type: ignore
+      in_cts_flat = convert(
+        fun_vjp_jax,
+        with_gradient=with_gradient,
+        polymorphic_shapes=vjp_polymorphic_shapes,
+        **impl.convert_kwargs)(*vjp_args_flat_tf)
 
     # We do not need to fix the in_cts because the TF gradient machinery
     # will adjust the unconnected gradients and those for integer types.

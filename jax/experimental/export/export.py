@@ -33,15 +33,15 @@ from jax import sharding
 
 from jax._src import core
 from jax._src import dispatch
-from jax._src import pjit
-from jax._src import sharding_impls
-from jax._src import source_info_util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src import pjit
+from jax._src import sharding_impls
+from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
@@ -821,35 +821,40 @@ def _check_module(mod: ir.Module, *,
     raise ValueError(msg)
 
 
-def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
-  # Export the VJP of `primal_fun_jax`. See documentation for Exported.vjp
-
+def _get_vjp_fun(primal_fun: Callable, *,
+                 in_tree: tree_util.PyTreeDef,
+                 in_avals: Sequence[core.AbstractValue],
+                 out_avals: Sequence[core.AbstractValue],
+                 module_kept_var_idx: tuple[int, ...],
+                 in_shardings,
+                 out_shardings,
+                 apply_jit: bool
+                 ) -> tuple[Callable, Sequence[core.AbstractValue]]:
   # Since jax.vjp does not handle kwargs, it is easier to do all the work
   # here with flattened functions.
   def fun_vjp_jax(*args_and_out_cts_flat_jax):
     # Takes a flat list of primals and output cotangents
     def flattened_primal_fun_jax(*args_flat):
-      args, kwargs = primal.in_tree.unflatten(args_flat)
-      res = primal_fun_jax(*args, **kwargs)
-      res_flat, res_tree = tree_util.tree_flatten(res)
-      assert res_tree == primal.out_tree
+      args, kwargs = in_tree.unflatten(args_flat)
+      res = primal_fun(*args, **kwargs)
+      res_flat, _ = tree_util.tree_flatten(res)
       return res_flat
 
     args_flat_jax, out_cts_flat_jax = util.split_list(args_and_out_cts_flat_jax,
-                                                      [len(primal.in_avals)])
+                                                      [len(in_avals)])
     _, pullback_jax = jax.vjp(flattened_primal_fun_jax, *args_flat_jax)
     return pullback_jax(out_cts_flat_jax)
 
   vjp_in_avals = list(
-      itertools.chain(primal.in_avals,
-                      map(lambda a: a.at_least_vspace(), primal.out_avals)))
+      itertools.chain(in_avals,
+                      map(lambda a: a.at_least_vspace(), out_avals)))
 
   # Expand in_shardings to all in_avals even not kept ones.
-  all_in_shardings = [sharding_impls.UNSPECIFIED] * len(primal.in_avals)
-  for idx, in_s in zip(sorted(primal.module_kept_var_idx),
-                       primal.in_shardings):  # type: ignore
+  all_in_shardings = [sharding_impls.UNSPECIFIED] * len(in_avals)
+  for idx, in_s in zip(sorted(module_kept_var_idx),
+                       in_shardings):  # type: ignore
     all_in_shardings[idx] = in_s  # type: ignore
-  all_shardings = all_in_shardings + list(primal.out_shardings)  # type: ignore
+  all_shardings = all_in_shardings + list(out_shardings)  # type: ignore
   # Cannot mix unspecified and specified shardings. Make the unspecified
   # ones replicated.
   specified_shardings = [
@@ -871,14 +876,29 @@ def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
           for s in all_shardings]
 
     vjp_in_shardings = tuple(all_shardings)
-    vjp_out_shardings = tuple(all_shardings[:len(primal.in_avals)])
+    vjp_out_shardings = tuple(all_shardings[:len(in_avals)])
     if all(sharding_impls.is_unspecified(s) for s in vjp_out_shardings):
       vjp_out_shardings = sharding_impls.UNSPECIFIED
 
-  fun_vjp_jax = pjit.pjit(fun_vjp_jax,
-                          in_shardings=vjp_in_shardings,
-                          out_shardings=vjp_out_shardings)
+  if apply_jit:
+    return pjit.pjit(fun_vjp_jax,
+                     in_shardings=vjp_in_shardings,
+                     out_shardings=vjp_out_shardings), vjp_in_avals
+  else:
+    assert vjp_in_shardings == sharding_impls.UNSPECIFIED
+    assert vjp_out_shardings == sharding_impls.UNSPECIFIED
+    return fun_vjp_jax, vjp_in_avals
 
+def _export_native_vjp(primal_fun, primal: Exported) -> Exported:
+  # Export the VJP of `primal_fun_jax`. See documentation for Exported.vjp
+  fun_vjp_jax, vjp_in_avals = _get_vjp_fun(primal_fun,
+                                           in_tree=primal.in_tree,
+                                           module_kept_var_idx=primal.module_kept_var_idx,
+                                           in_avals=primal.in_avals,
+                                           in_shardings=primal.in_shardings,
+                                           out_avals=primal.out_avals,
+                                           out_shardings=primal.out_shardings,
+                                           apply_jit=True)
   return export(fun_vjp_jax,
                 lowering_platform=primal.lowering_platform,
                 disabled_checks=primal.disabled_checks)(*vjp_in_avals)

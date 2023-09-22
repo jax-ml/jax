@@ -249,6 +249,19 @@ class JaxExportTest(jtu.JaxTestCase):
     f1 = export.call_exported(exp_f)
     self.assertAllClose(jax.grad(f)(x), jax.grad(f1)(x))
 
+  def test_higher_order_grad(self):
+    f = lambda x: x ** 3
+    x = np.float32(4.)
+    exp_f = export.export(f)(x)
+
+    f1 = export.call_exported(exp_f)
+    self.assertAllClose(jax.grad(f)(x),
+                        jax.grad(f1)(x))
+    self.assertAllClose(jax.grad(jax.grad(f))(x),
+                        jax.grad(jax.grad(f1))(x))
+    self.assertAllClose(jax.grad(jax.grad(jax.grad(f)))(x),
+                        jax.grad(jax.grad(jax.grad(f1)))(x))
+
   def test_pytree_vjp(self):
     def f(a_b_pair, *, a, b):
       return (dict(res=a_b_pair, a=2. * a, b=3. * b),
