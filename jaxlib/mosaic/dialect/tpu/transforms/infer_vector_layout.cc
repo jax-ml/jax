@@ -691,7 +691,11 @@ class VectorLayoutInferer {
       TPU_CHECK_OP(some_src_ty.getIntOrFloatBitWidth() == kNativeBitwidth,
                    "Only 32-bit broadcasts supported");
       if (res_ty.getRank() == 1) {
-        NYI("scalar-1d broadcast");
+        // We use a full vreg tile, because only then its layout can be changed
+        // for free.
+        setLayout(op, kNoLayout,
+                  VectorLayout(kNativeBitwidth, {std::nullopt, std::nullopt},
+                               default_tiling_, ImplicitDim::kSecondMinor));
       } else {  // rank >= 2  // NOLINT(readability-else-after-return)
         setLayout(op, kNoLayout,
                   VectorLayout(kNativeBitwidth, {std::nullopt, std::nullopt},
