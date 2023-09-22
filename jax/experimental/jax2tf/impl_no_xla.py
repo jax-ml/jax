@@ -83,7 +83,7 @@ def _transpose_with_shape(x: TfVal, x_shape: core.Shape, permutation) -> tuple[T
 
 def _transpose_for_tf_conv(lhs, lhs_shape: core.Shape,
                            rhs, rhs_shape: core.Shape, dimension_numbers):
-  """Tranposes lhs and rhs to respectively NHWC and HWIO so they can be passed to TF functions.
+  """Transposes lhs and rhs to respectively NHWC and HWIO so they can be passed to TF functions.
 
   The shapes passed in and returned may contain polynomials, and thus may
   be different than lhs.shape and rhs.shape.
@@ -91,7 +91,7 @@ def _transpose_for_tf_conv(lhs, lhs_shape: core.Shape,
   # TODO(marcvanzee): Add tests for this ops for shape polymorphism.
   lhs_perm, rhs_perm, _ = dimension_numbers
 
-  # TODO(marcvanzee): Consider merging tranposes if we want to optimize.
+  # TODO(marcvanzee): Consider merging transposes if we want to optimize.
   # For `lhs_perm` / `output_perm`, perm (0, 1, 2, 3) corresponds to "NCHW".
   lhs, lhs_shape = _transpose_with_shape(lhs, lhs_shape, lhs_perm)  # lhs --> "NCHW"
   if len(lhs_perm) == 3:
@@ -234,7 +234,7 @@ def _validate_conv_features(
   elif [is_depthwise, is_atrous, is_transpose].count(True) > 1:
     raise _conv_error(
         f"Can only do one of depthwise ({is_depthwise}), atrous ({is_atrous}) "
-        f"and tranposed convolutions ({is_transpose})")
+        f"and transposed convolutions ({is_transpose})")
 
   # We can implement batch grouping when there is a need for it.
   if batch_group_count != 1:
@@ -290,7 +290,7 @@ def _conv_general_dilated(
   else:
     padding_type = pads_to_padtype(
       lhs_shape[1:3], rhs_dilated_shape, window_strides, padding)
-    # We only manually pad if we aren't using a tranposed convolutions.
+    # We only manually pad if we aren't using a transposed convolutions.
     if padding_type == "EXPLICIT":
       lhs, lhs_shape, padding = _check_pad_spatial_dims(lhs, lhs_shape, padding)
       padding_type = padding
@@ -716,7 +716,7 @@ def _reduce_window(*args, jaxpr, consts, window_dimensions,
   }[computation_name]
   result = reduce_fn(result, init_value)
 
-  # The outut is expected to be wrapped in a tuple, and since we don't use
+  # The output is expected to be wrapped in a tuple, and since we don't use
   # variadic reductions, this tuple always contains a single element.
   return (result,)
 
@@ -933,7 +933,7 @@ def _pre_gather_with_batch_dims(args: GatherArgs):
     #   also need to re-work the output reshaping
     raise ValueError("only len(collapsed_slice_dims) == 0 is supported")
 
-  # NOTE: This supports higher dimensions than listed (the highest dimenison
+  # NOTE: This supports higher dimensions than listed (the highest dimension
   # in the tests is 3D so it is limited to that, but the implementation is
   # designed to handle higher dimensions (N-Dimensional)).
   if len(args.batch_dims) not in [1, 2, 3]:
@@ -1209,8 +1209,8 @@ def convert_scatter_jax_to_tf(update_op, unsorted_segment_op=None):
     Wrapper around the scatter function.
     The underlying tf ops `tf.tensor_scatter_nd_update` and
     `tf.math.unsorted_segment_*` index from the front dimensions.
-    `tf.math.unsorted_segment_*` indexs to a depth 1 from the front.
-    `tf.tensor_scatter_nd_update` indexs from the front dimensions onwards,
+    `tf.math.unsorted_segment_*` indexes to a depth 1 from the front.
+    `tf.tensor_scatter_nd_update` indexes from the front dimensions onwards,
     with no ability to skip a dimension. This function shifts the axes to be
     indexed to the front then calls a front-specific implementation, then
     inverse-shifts the output.

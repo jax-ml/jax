@@ -512,7 +512,7 @@ class PolyHarness(Harness):
     """Args:
 
       group_name, name: The name for the harness. See `Harness.__init__`.
-      fun: the function to be converted, possbily after partial application to
+      fun: the function to be converted, possibly after partial application to
         static arguments from `arg_descriptors`. See `Harness.__init__`.
       arg_descriptors: The argument descriptors. See `Harness.__init__`. May
         be missing, in which case `skip_jax_run` should be `True` and

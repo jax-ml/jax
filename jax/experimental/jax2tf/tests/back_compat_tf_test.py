@@ -50,7 +50,7 @@ def serialize_directory(directory_path):
 
 
 def deserialize_directory(serialized_string, output_directory):
-  """Deserialize the string to the diretory."""
+  """Deserialize the string to the directory."""
   # Convert the base64-encoded string back to binary data
   tar_data = base64.b64decode(serialized_string)
 
@@ -71,7 +71,7 @@ class CompatTensoflowTest(bctu.CompatTestBase):
     # Here we use tf.saved_model and provide  string serialize/deserialize methods
     # for the whole directory.
     @tf.function(autograph=False, jit_compile=True)
-    def tf_func(the_input):  # Use recognizeable names for input and result
+    def tf_func(the_input):  # Use recognizable names for input and result
       res = jax2tf.convert(func, native_serialization=True)(the_input)
       return tf.identity(res, name="the_result")
 

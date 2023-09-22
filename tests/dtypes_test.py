@@ -648,7 +648,6 @@ class TestPromotionTables(jtu.JaxTestCase):
       numpy_dtype_promotion=['strict', 'standard']
   )
   def testSafeToCast(self, input_dtype, output_dtype, numpy_dtype_promotion):
-    print(input_dtype, output_dtype)
     with jax.numpy_dtype_promotion(numpy_dtype_promotion):
       # First the special cases which are always safe:
       always_safe = (

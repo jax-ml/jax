@@ -151,7 +151,7 @@ and to avoid warnings and outright errors.
 
 You can serialize JAX program into a TensorFlow SavedModel, for use
 with tooling that understands SavedModel. Both in native and non-native
-serialization you can count on 6 months of backwards compatiblity (you
+serialization you can count on 6 months of backwards compatibility (you
 can load a function serialized today with tooling that will be built
 up to 6 months in the future), and 3 weeks of limited forwards compatibility
 (you can load a function serialized today with tooling that was built
@@ -1165,7 +1165,7 @@ There is work underway to enable more tools to consume StableHLO.
 
 Applies to native serialization only.
 
-When you use native serialization, JAX will record the plaform for
+When you use native serialization, JAX will record the platform for
 which the module was serialized, and you will get an error if you
 try to execute the `XlaCallModule` TensorFlow op on another platform.
 
@@ -1180,7 +1180,7 @@ The current platform CPU is not among the platforms required by the module [CUDA
 ```
 
 where `CPU` is the TensorFlow platform where the op is being executed
-and `CUDA` is the plaform for which the module was serialized by JAX.
+and `CUDA` is the platform for which the module was serialized by JAX.
 This probably means that JAX and TensorFlow may see different devices
 as the default device (JAX defaults to GPU and TensorFlow to CPU
 in the example error above).

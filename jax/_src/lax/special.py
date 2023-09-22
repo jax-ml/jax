@@ -605,7 +605,7 @@ def bessel_i0e_impl(x):
   elif x.dtype == np.float32:
     return _i0e_impl32(x)
   else:
-    # Have to upcast f16 because the magic Cephes coefficents don't have enough
+    # Have to upcast f16 because the magic Cephes coefficients don't have enough
     # precision for it.
     x_dtype = x.dtype
     x = x.astype(np.float32)

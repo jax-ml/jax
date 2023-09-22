@@ -1198,7 +1198,7 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
   Args:
     fun: a Python callable specifying a linear function. It should
       take two arguments: one of "residual" inputs (type ``r``),
-      i.e. inputs in which the function is not necessarly linear, and
+      i.e. inputs in which the function is not necessarily linear, and
       one of "linear" inputs (type ``a``).  It should return output
       whose components are linear in the linear input (type ``b``).
     fun_transpose: a Python callable specifying a structurally linear

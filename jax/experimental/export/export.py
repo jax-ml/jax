@@ -991,7 +991,7 @@ def _call_exported_abstract_eval(*in_avals: core.AbstractValue,
   # We discharge all the constraints statically. This results in much simpler
   # composability (because we do not have to worry about the constraints of the
   # Exported called recursively; we only need to worry about entry-point
-  # constraints). This also makes sense from a composibility point of view,
+  # constraints). This also makes sense from a composability point of view,
   # because we get the same errors if we invoke the exported module, or if we
   # trace the exported function. Consider for example, an exported module with
   # signature `f32[a, a] -> f32[a]`. If we invoke the module with an argument

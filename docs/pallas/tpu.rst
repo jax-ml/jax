@@ -86,7 +86,7 @@ with compute.
 What's more, compared to GPUs, TPUs are actually highly sequential machines.
 That's why, the grid is generally not processed in parallel, but sequentially,
 in lexicographic order (though see the `Multicore TPU configurations`_ section
-for exceptions). This unlocks some interesting capabilites:
+for exceptions). This unlocks some interesting capabilities:
 
 * When two (lexicographically) consecutive grid indices use the same slice of
   an input, the HBM transfer in the second iteration is skipped, as the data is

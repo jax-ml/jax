@@ -112,7 +112,7 @@ We run the kernel function once for each element, a style of single-program mult
 A 2D grid
 </center>
 
-When we provide a `grid` to `pallas_call`, the kernel is executed as many times as `prod(grid)`. Each of these invokations is referred to as a "program", To access which program (i.e. which element of the grid) the kernel is currently executing, we use `program_id(axis=...)`. For example, for invokation `(1, 2)`, `program_id(axis=0)` returns `1` and `program_id(axis=1)` returns `2`.
+When we provide a `grid` to `pallas_call`, the kernel is executed as many times as `prod(grid)`. Each of these invocations is referred to as a "program", To access which program (i.e. which element of the grid) the kernel is currently executing, we use `program_id(axis=...)`. For example, for invocation `(1, 2)`, `program_id(axis=0)` returns `1` and `program_id(axis=1)` returns `2`.
 
 Here's an example kernel that uses a `grid` and `program_id`.
 

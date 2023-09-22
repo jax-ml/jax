@@ -82,7 +82,7 @@ class ClusterEnv:
     """Returns address and port used by JAX to bootstrap.
 
     Process id 0 will open a tcp socket at "hostname:port" where
-    all the proccesses will connect to initialize the distributed JAX service.
+    all the processes will connect to initialize the distributed JAX service.
     The selected port needs to be free.
     :func:`get_coordinator_address` needs to return the same hostname and port on all the processes.
 

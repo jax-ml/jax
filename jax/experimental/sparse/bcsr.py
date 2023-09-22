@@ -787,7 +787,7 @@ class BCSR(JAXSparse):
     return repr_
 
   def transpose(self, *args, **kwargs):
-    raise NotImplementedError("Tranpose is not implemented.")
+    raise NotImplementedError("Transpose is not implemented.")
 
   def tree_flatten(self):
     return (self.data, self.indices, self.indptr), self._info._asdict()

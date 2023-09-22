@@ -719,7 +719,7 @@ def transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: list[bool]) -> core.Jaxpr:
 
 def _for_transpose(in_cts, *args, jaxpr, nsteps, reverse, which_linear, unroll):
   # if any in_ct is nonzero, we definitely want it in args_ (and the
-  # corresponding x in args could be an undefined primal, but doesnt have to be)
+  # corresponding x in args could be an undefined primal, but doesn't have to be)
   # for non-res stuff:
   #   getting and setting => (nonzero ct, UndefinedPrimal arg)
   #   just setting =>        (nonzero ct, not UndefinedPrimal, dummy value)

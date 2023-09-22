@@ -3286,7 +3286,7 @@ mlir.register_lowering(pad_p, _pad_lower)
 # For N > 1, we can match up the output array axis with the second axis of the
 # input. But for N = 1, it is not clear how axes match up: all we know from the
 # JAXpr is that we are reshaping from (1, 1) to (1,).
-# In constrast, squeeze[ dimensions=(0,) ] is unambiguous.
+# In contrast, squeeze[ dimensions=(0,) ] is unambiguous.
 
 
 def _squeeze_dtype_rule(operand, *, dimensions):

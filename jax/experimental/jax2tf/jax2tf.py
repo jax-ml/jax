@@ -1723,7 +1723,7 @@ def _minmax(x: TfVal, y: TfVal, *, is_min: bool,
 
 def _minmax_scalar(x: TfVal, y: TfVal, *, is_min: bool) -> TfVal:
   # For reducers we will need min/max for scalars only. In that case we
-  # can construct the AbstractValues outselves, even in the presence of
+  # can construct the AbstractValues ourselves, even in the presence of
   # shape polymorphism.
   assert len(x.shape) == 0 and len(y.shape) == 0, f"x: {x.shape}, y: {y.shape}"
   aval = core.ShapedArray((), _to_jax_dtype(x.dtype))

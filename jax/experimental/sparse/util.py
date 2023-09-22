@@ -49,7 +49,7 @@ class SparseInfo(NamedTuple):
 
 #--------------------------------------------------------------------
 # utilities
-# TODO: possibly make these primitives, targeting cusparse rountines
+# TODO: possibly make these primitives, targeting cusparse routines
 #       csr2coo/coo2csr/SPDDMM
 
 def nfold_vmap(fun, N, *, broadcasted=True, in_axes=0):

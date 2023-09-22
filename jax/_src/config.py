@@ -801,7 +801,7 @@ spmd_mode = config.define_enum_state(
           "    to execute on non-fully addressable `jax.Array`s\n"
           "* allow_all: `jnp`, normal math (like `a + b`, etc), `pjit`, "
           "    `jax.jit` and all other operations are allowed to "
-          "    execute on non-fully addresable `jax.Array`s."))
+          "    execute on non-fully addressable `jax.Array`s."))
 
 
 distributed_debug = config.define_bool_state(

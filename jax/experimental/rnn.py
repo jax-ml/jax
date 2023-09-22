@@ -17,7 +17,7 @@
 
 This module provides experimental support to CUDNN-backed LSTM.
 
-Currrently, the only supported RNN flavor is LSTM with double-bias. We use
+Currently, the only supported RNN flavor is LSTM with double-bias. We use
 notations and variable names similar to
 https://pytorch.org/docs/stable/generated/torch.nn.LSTM.html#torch.nn.LSTM
 

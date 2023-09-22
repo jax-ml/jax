@@ -1840,7 +1840,7 @@ def with_sharding_constraint(x, shardings):
   of how to use this function, see `Distributed arrays and automatic parallelization`_.
 
   Args:
-    x: PyTree of jax.Arrays which will have their shardings constrainted
+    x: PyTree of jax.Arrays which will have their shardings constrained
     shardings: PyTree of sharding specifications. Valid values are the same as for
       the ``in_shardings`` argument of :func:`jax.experimental.pjit`.
   Returns:
