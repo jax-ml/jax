@@ -58,6 +58,42 @@ If you need a new random number, you can use :meth:`jax.random.split` to generat
     >>> random.uniform(subkey)
     Array(0.10536897, dtype=float32)
 
+.. note::
+
+   Typed key arrays, with element types such as ``key<fry>`` above,
+   were introduced in JAX v0.4.16. Before then, keys were
+   conventionally represented in ``uint32`` arrays, whose final
+   dimension represented the key's bit-level representation.
+
+   Both forms of key array can still be created and used with the
+   :mod:`jax.random` module. New-style typed key arrays are made with
+   :py:func:`jax.random.key`. Legacy ``uint32`` key arrays are made
+   with :py:func:`jax.random.PRNGKey`.
+
+   To convert between the two, use :py:func:`jax.random.key_data` and
+   :py:func:`jax.random.wrap_key_data`. The legacy key format may be
+   needed when interfacing with systems outside of JAX (e.g. exporting
+   arrays to a serializable format), or when passing keys to JAX-based
+   libraries that assume the legacy format.
+
+   Otherwise, typed keys are recommended. Caveats of legacy keys
+   relative to typed ones include:
+
+   * They have an extra trailing dimension.
+
+   * They have a numeric dtype (``uint32``), allowing for operations
+     that are typically not meant to be carried out over keys, such as
+     integer arithmetic.
+
+   * They do not carry information about the RNG implementation. When
+     legacy keys are passed to :mod:`jax.random` functions, a global
+     configuration setting determines the RNG implementation (see
+     "Advanced RNG configuration" below).
+
+   To learn more about this upgrade, and the design of key types, see
+   `JEP 9263
+   <https://jax.readthedocs.io/en/latest/jep/9263-typed-keys.html>`_.
+
 Advanced
 --------
 
