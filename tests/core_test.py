@@ -196,6 +196,16 @@ class CoreTest(jtu.JaxTestCase):
     nodes_equal = tree_map(operator.eq, tree, tree2)
     assert tree_reduce(operator.and_, nodes_equal)
 
+  @jtu.sample_product(
+      dtype=[*jtu.dtypes.all, object, [('i', 'i4'), ('f', 'f4')]]
+  )
+  def test_is_valid_jaxtype(self, dtype):
+    arr = np.zeros(10, dtype=dtype)
+    if dtype in jtu.dtypes.all:
+      self.assertTrue(core.valid_jaxtype(arr))
+    else:
+      self.assertFalse(core.valid_jaxtype(arr))
+
   @parameterized.named_parameters(
       (str(i), *spec) for i, spec in enumerate(test_specs))
   def test_jit(self, f, args):

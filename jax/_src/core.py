@@ -1671,10 +1671,10 @@ class ConcreteArray(ShapedArray):
     super().__init__(
         np.shape(val), dtype,
         weak_type=dtypes.is_weakly_typed(val) if weak_type is None else weak_type)
+    dtypes.check_valid_dtype(self.dtype)
     # Note: canonicalized self.dtype doesn't necessarily match self.val
     assert self.dtype == dtypes.canonicalize_dtype(np.result_type(val)), (val, dtype)
     self.val = val
-    assert self.dtype != np.dtype('O'), val
 
   def update(self, dtype=None, val=None, weak_type=None):
     dtype = self.dtype if dtype is None else dtype
