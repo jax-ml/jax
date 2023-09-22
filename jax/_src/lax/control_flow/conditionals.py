@@ -247,6 +247,9 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     raise ValueError("Cannot pass `Ref`s into `cond`.")
   true_jaxpr, false_jaxpr = jaxprs
   out_tree, false_out_tree = out_trees
+  if any(isinstance(out_aval, AbstractRef) for out_aval in
+         true_jaxpr.out_avals + false_jaxpr.out_avals):
+    raise ValueError("Cannot return `Ref`s from `cond`.")
 
   _check_tree_and_avals("true_fun and false_fun output",
                         out_tree, true_jaxpr.out_avals,
