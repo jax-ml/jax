@@ -2958,8 +2958,12 @@ class APITest(jtu.JaxTestCase):
                   lambda: jnp.arange(1.0).astype(int))
 
   def test_error_for_invalid_dtype(self):
-    with self.assertRaisesRegex(TypeError, ".*not a valid JAX array type.*"):
-      lax.add(jnp.array(7), np.array("hello"))
+    with jax.enable_checks(False):
+      with self.assertRaisesRegex(TypeError, ".*not a valid JAX array type.*"):
+        lax.add(jnp.array(7), np.array("hello"))
+    with jax.enable_checks(True):
+      with self.assertRaises(AssertionError):
+        lax.add(jnp.array(7), np.array("hello"))
 
   def test_vmap_preserves_docstr(self):
     def superfun(a):
@@ -3212,6 +3216,11 @@ class APITest(jtu.JaxTestCase):
         "positional arguments to be passed by the caller, but got only 0 "
         "positional arguments.",
         lambda: partial(df, x=0.)(y=1.))
+
+  def test_grad_object_array_error(self):
+    x = np.array([1, 2, 3], dtype=object)
+    with self.assertRaisesRegex(TypeError, ".*is not a valid JAX type"):
+      jax.grad(lambda x: x)(x)
 
   def test_jit_compilation_time_logging(self):
     @api.jit
