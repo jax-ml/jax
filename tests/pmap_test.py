@@ -355,6 +355,14 @@ class PythonPmapTest(jtu.JaxTestCase):
         lambda: lowered.compile(
             compiler_options={"xla_embed_ir_in_executable": "invalid_value"}))
 
+  def test_pmap_replicated_copy(self):
+    # https://github.com/google/jax/issues/17690
+    inp = jnp.arange(jax.device_count())
+    x = jax.pmap(lambda x: x, in_axes=0, out_axes=None)(inp)
+    out = jnp.copy(x)
+    self.assertIsInstance(out.sharding, jax.sharding.SingleDeviceSharding)
+    self.assertArraysEqual(out, inp[0])
+
   def test_jit_lower_compile_with_compiler_options_multiple(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
