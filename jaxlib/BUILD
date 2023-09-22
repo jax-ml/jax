@@ -17,7 +17,6 @@
 load("//jaxlib:symlink_files.bzl", "symlink_files")
 load(
     "//jaxlib:jax.bzl",
-    "if_cuda_is_configured",
     "if_windows",
     "py_library_providing_imports_info",
     "pybind_extension",
@@ -69,9 +68,7 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:sparse_tensor_dialect",
         "//jaxlib/mlir:stablehlo_dialect",
         "//jaxlib/mosaic",
-    ] + if_cuda_is_configured([
-        ":cuda_plugin_extension",
-    ]),
+    ],
 )
 
 symlink_files(
@@ -190,14 +187,19 @@ pybind_extension(
     srcs = ["cuda_plugin_extension.cc"],
     module_name = "cuda_plugin_extension",
     deps = [
+        "@nanobind",
+        "//jaxlib:kernel_nanobind_helpers",
         "@xla//third_party/python_runtime:headers",
         "@xla//xla:status",
         "@xla//xla:util",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu_extension_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_helpers",
+        # TODO(jieying): move to jaxlib after py_client_gpu is separated from py_client
+        "@xla//xla/python:py_client_gpu",
         "@xla//xla/python:status_casters",
-        "@nanobind",
+        "@tsl//tsl/cuda:cublas",
+        "@tsl//tsl/cuda:cudart",
     ],
 )
 

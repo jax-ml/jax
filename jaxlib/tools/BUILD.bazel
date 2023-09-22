@@ -35,6 +35,7 @@ py_binary(
         "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi.dll",
     ]) + if_cuda([
         "//jaxlib/cuda:cuda_gpu_support",
+        "//jaxlib:cuda_plugin_extension",
         "@local_config_cuda//cuda:cuda-nvvm",
     ]) + if_rocm([
         "//jaxlib/rocm:rocm_gpu_support",
