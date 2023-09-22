@@ -127,7 +127,8 @@ class MemoriesTest(jtu.BufferDonationTestCase):
       with self.assertRaisesRegex(
           ValueError,
           "Could not find memory addressable by device TPU.*Device TPU.*"
-          " can address the following memory kinds: tpu_hbm, unpinned_host.*",
+          " can address the following memory kinds: "
+          "(tpu_hbm, unpinned_host|unpinned_host, tpu_hbm).*",
       ):
         SingleDeviceSharding(jax.devices()[0], memory_kind="host")
     else:
