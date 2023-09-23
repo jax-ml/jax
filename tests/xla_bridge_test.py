@@ -288,18 +288,18 @@ class GetBackendTest(jtu.JaxTestCase):
 
   def _save_backend_state(self):
     self._orig_backends = xb._backends
-    self._orig_backends_errors = xb._backends_errors
+    self._orig_backend_errors = xb._backend_errors
     self._orig_default_backend = xb._default_backend
 
   def _reset_backend_state(self):
     xb._backends = {}
-    xb._backends_errors = {}
+    xb._backend_errors = {}
     xb._default_backend = None
     xb.get_backend.cache_clear()
 
   def _restore_backend_state(self):
     xb._backends = self._orig_backends
-    xb._backends_errors = self._orig_backends_errors
+    xb._backend_errors = self._orig_backend_errors
     xb._default_backend = self._orig_default_backend
     xb.get_backend.cache_clear()
 
