@@ -75,7 +75,7 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref,
         }
         tiles.append({xla::Tile({128}), xla::Tile({32 / bitwidth, 1})});
       }
-      return TiledLayoutAttr::get(memref.getContext(), /*rank=*/1, tiles);
+      return TiledLayoutAttr::get(memref.getContext(), tiles, {1});
     }
     // memref.getRank() > 1
     const ArrayRef<int64_t> shape = memref.getShape();
@@ -91,7 +91,21 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref,
       }
       tiles.push_back(xla::Tile({32 / bitwidth, 1}));
     }
-    return TiledLayoutAttr::get(memref.getContext(), memref.getRank(), tiles);
+    SmallVector<int64_t> tile_strides;
+    tile_strides.reserve(memref.getRank());
+    int64_t stride = 1;
+    for (int i = memref.getRank() - 1; i > 0; --i) {
+      tile_strides[i] = stride;
+      if (i == memref.getRank() - 1) {
+        stride *= (memref.getShape()[i] + 127) / 128;
+      } else if (i == memref.getRank() - 2) {
+        stride *=
+            (memref.getShape()[i] + leading_tile_rows - 1) / leading_tile_rows;
+      } else {
+        stride *= memref.getShape()[i];
+      }
+    }
+    return TiledLayoutAttr::get(memref.getContext(), tiles, tile_strides);
   }
   return emitError(UnknownLoc::get(memref.getContext()),
                    "Unrecognized layout annotation");

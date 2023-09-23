@@ -104,8 +104,8 @@ def TPU_TiledLayoutAttr
              [DeclareAttrInterfaceMethods<MemRefLayoutAttrInterface>]> {
   let description = [{TODO}];
   let parameters = (ins
-    "int64_t":$rank,
-    ArrayRefParameter<"::xla::Tile", "">:$tiles
+    ArrayRefParameter<"::xla::Tile", "">:$tiles,
+    ArrayRefParameter<"int64_t", "">:$tile_strides
   );
 
   let hasCustomAssemblyFormat = 1;

@@ -85,20 +85,21 @@ Attribute VectorLayoutAttr::parse(AsmParser &parser, Type type) {
 
 void TiledLayoutAttr::print(AsmPrinter &printer) const {
   printer << '<';
-  printer << getRank();
-  printer << ',';
   for (const xla::Tile &tile : getTiles()) {
     printer << tile.ToString();
   }
-  printer << '>';
+  printer << ",[";
+  for (int i = 0; i < getTileStrides().size(); ++i) {
+    if (i > 0) {
+      printer << ',';
+    }
+    printer << getTileStrides()[i];
+  }
+  printer << "]>";
 }
 
 Attribute TiledLayoutAttr::parse(AsmParser &parser, Type type) {
   if (failed(parser.parseLess())) {
-    return {};
-  }
-  int64_t rank;
-  if (parser.parseInteger(rank) || parser.parseComma()) {
     return {};
   }
   llvm::SmallVector<xla::Tile, 2> tiles;
@@ -119,14 +120,37 @@ Attribute TiledLayoutAttr::parse(AsmParser &parser, Type type) {
       tile.add_dimensions(size);
     }
   }
+  llvm::SmallVector<int64_t, 2> tile_strides;
+  int64_t stride;
+  if (failed(parser.parseComma())) {
+    return {};
+  }
+  if (succeeded(parser.parseOptionalLSquare())) {
+    bool first = true;
+    while (!succeeded(parser.parseOptionalRSquare())) {
+      if (!first) {
+        if (failed(parser.parseComma())) {
+          return {};
+        }
+      }
+      first = false;
+      if (failed(parser.parseInteger(stride))) {
+        return {};
+      }
+      tile_strides.push_back(stride);
+    }
+  } else {
+    return {};
+  }
   if (failed(parser.parseGreater())) {
     return {};
   }
-  return get(parser.getContext(), rank, tiles);
+  return get(parser.getContext(), tiles, tile_strides);
 }
 
 AffineMap TiledLayoutAttr::getAffineMap() const {
-  AffineMap map = AffineMap::getMultiDimIdentityMap(getRank(), getContext());
+  AffineMap map =
+      AffineMap::getMultiDimIdentityMap(getTileStrides().size(), getContext());
   SmallVector<AffineExpr, 8> exprs;
   for (const xla::Tile &tile : getTiles()) {
     exprs.clear();
