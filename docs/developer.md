@@ -1,3 +1,4 @@
+(building-from-source)=
 # Building from source
 
 First, obtain the JAX source code:
