@@ -1481,13 +1481,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     def scipy_mode_wrapper(a, axis=0, nan_policy='propagate', keepdims=None):
       """Wrapper to manage the shape discrepancies between scipy and jax"""
-      if scipy_version < (1, 9, 0) and a.size == 0 and keepdims == True:
-        if axis == None:
-          output_shape = tuple(1 for _ in a.shape)
+      if scipy_version < (1, 11, 0) and a.size == 0:
+        if keepdims:
+          if axis == None:
+            output_shape = tuple(1 for _ in a.shape)
+          else:
+            output_shape = tuple(1 if i == axis else s for i, s in enumerate(a.shape))
         else:
-          output_shape = tuple(1 if i == axis else s for i, s in enumerate(a.shape))
-        return (np.full(output_shape, np.nan, dtype=dtypes.canonicalize_dtype(jax.numpy.float_)),
-                np.full(output_shape, np.nan, dtype=dtypes.canonicalize_dtype(jax.numpy.float_)))
+          if axis == None:
+            output_shape = ()
+          else:
+            output_shape = np.delete(np.array(a.shape, dtype=np.int64), axis)
+        t = dtypes.canonicalize_dtype(jax.numpy.float_)
+        return (np.full(output_shape, np.nan, dtype=t),
+                np.zeros(output_shape, dtype=t))
 
       if scipy_version < (1, 9, 0):
         result = osp_stats.mode(a, axis=axis, nan_policy=nan_policy)

@@ -15,6 +15,10 @@ Remember to align the itemized text with the first line of an item within a list
     * `random.threefry2x32_key(seed)` becomes `random.PRNGKey(seed, impl='threefry2x32')`
     * `random.rbg_key(seed)` becomes `random.PRNGKey(seed, impl='rbg')`
     * `random.unsafe_rbg_key(seed)` becomes `random.PRNGKey(seed, impl='unsafe_rbg')`
+* Changes:
+  * {func}`jax.scipy.stats.mode` now returns a 0 count if the mode is taken
+    across a size-0 axis, matching the behavior of `scipy.stats.mode` in SciPy
+    1.11.
 
 # jaxlib 0.4.17
 
