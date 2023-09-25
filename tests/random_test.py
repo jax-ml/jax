@@ -2180,6 +2180,14 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(key, key.block_until_ready())
     self.assertIsNone(key.copy_to_host_async())
 
+  def test_wrap_key_round_trip(self):
+    key = jax.random.key(8675309)
+    data = jax.random.key_data(key)
+    key_copy = jax.random.wrap_key_data(data, impl=key.dtype.impl)
+    self.assertArraysEqual(jax.random.key_data(key),
+                           jax.random.key_data(key_copy))
+    self.assertEqual(key.dtype, key_copy.dtype)
+
   def test_wrap_key_default(self):
     key1 = jax.random.key(17)
     data = jax.random.key_data(key1)

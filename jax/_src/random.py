@@ -11,8 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from functools import partial
 import math
 from operator import index
@@ -109,13 +110,13 @@ def _random_bits(key: prng.PRNGKeyArray, bit_width, shape) -> Array:
   return prng.random_bits(key, bit_width=bit_width, shape=shape)
 
 
-PRNG_IMPLS = {
+PRNG_IMPLS: dict[Hashable, prng.PRNGImpl] = {
     'threefry2x32': prng.threefry_prng_impl,
     'rbg': prng.rbg_prng_impl,
     'unsafe_rbg': prng.unsafe_rbg_prng_impl,
 }
 
-def default_prng_impl():
+def default_prng_impl() -> prng.PRNGImpl:
   """Get the default PRNG implementation.
 
   The default implementation is determined by ``config.jax_default_prng_impl``,
@@ -129,9 +130,11 @@ def default_prng_impl():
 
 ### key operations
 
-def resolve_prng_impl(impl_spec: Optional[str]):
+def resolve_prng_impl(impl_spec: Optional[str | Hashable]) -> prng.PRNGImpl:
   if impl_spec is None:
     return default_prng_impl()
+  if isinstance(impl_spec, prng.PRNGImpl):
+    return impl_spec
   if impl_spec in PRNG_IMPLS:
     return PRNG_IMPLS[impl_spec]
 
@@ -279,7 +282,7 @@ def key_data(keys: KeyArray) -> Array:
   keys, _ = _check_prng_key(keys)
   return _key_data(keys)
 
-def wrap_key_data(key_bits_array: Array, *, impl: Optional[str] = None):
+def wrap_key_data(key_bits_array: Array, *, impl: Optional[str | Hashable] = None):
   """Wrap an array of key data bits into a PRNG key array.
 
   Args:
