@@ -1118,7 +1118,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertIsInstance(f.as_text(), (str, type(None)))
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
-  @jtu.skip_on_xla_cpu_mlir
   def testLowerCostAnalysis(self):
     @partial(pjit,
              in_shardings=P(('x', 'y'),),
@@ -1132,7 +1131,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     f.cost_analysis()  # doesn't raise
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
-  @jtu.skip_on_xla_cpu_mlir
   def testLowerCompileCostAnalysis(self):
     @partial(pjit,
              in_shardings=P(('x', 'y'),),
@@ -1146,7 +1144,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     f.cost_analysis()  # doesn't raise
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
-  @jtu.skip_on_xla_cpu_mlir
   def testLowerCompileMemoryAnalysis(self):
     @partial(pjit,
              in_shardings=P(('x', 'y'),),
