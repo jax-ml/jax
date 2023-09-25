@@ -666,6 +666,7 @@ pytype_strict_library(
         ":core",
         ":effects",
         ":pretty_printer",
+        ":typing",
         ":util",
     ],
 )

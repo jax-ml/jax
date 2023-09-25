@@ -33,12 +33,12 @@ from jax._src.core import raise_to_shaped, Trace, Tracer, AxisName
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_unflatten, tree_flatten,
                                 register_pytree_node)
+from jax._src.typing import Array
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
                            curry, memoize, weakref_lru_cache)
 
 
-Array = Any
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
@@ -116,7 +116,7 @@ class RaggedAxis:
   # For each axis, we store its index and the corresponding segment lengths.
   # For example, the jumble i:(Fin 3) => f32[lens1.i, 7, lens2.i]
   # would be represented with ragged_axes = [(1, lens1), (3, lens2)]
-  ragged_axes: tuple[tuple[int, Array], ...]
+  ragged_axes: tuple[tuple[int, Any], ...]
 
   @property
   def size(self):
@@ -148,8 +148,10 @@ def _sorted_ragged_axis(stacked_axis, ragged_axes):
   return RaggedAxis(stacked_axis, tuple(sorted(ragged_axes, key=lambda p: p[0])))
 
 def make_batch_axis(
-    ndim: int, stacked_axis: int, ragged_axes: list[tuple[int, Array]]
-  ) -> int | RaggedAxis:
+    ndim: int,
+    stacked_axis: int,
+    ragged_axes: list[tuple[int, Array | core.Var]],
+) -> int | RaggedAxis:
   if ragged_axes:
     canonical = [(canonicalize_axis(ax, ndim), sz) for ax, sz in ragged_axes]
     return _sorted_ragged_axis(canonicalize_axis(stacked_axis, ndim), canonical)
