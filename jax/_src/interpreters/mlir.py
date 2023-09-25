@@ -952,6 +952,7 @@ def lower_jaxpr_to_fun(
       aval = core.ShapedArray((), np.dtype(np.bool_))
     return aval_to_ir_types(aval)
 
+  # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
   dim_var_avals = [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars
   dim_var_types = map(aval_to_types, dim_var_avals)
@@ -1041,6 +1042,7 @@ def lower_jaxpr_to_fun(
       or input_output_aliases is not None
       or arg_names is not None
       or num_tokens > 0
+      or num_dim_vars > 0
   ):
     arg_attrs: list[dict[str, ir.Attribute]] = [
         {} for _ in range(len(flat_input_types))]
@@ -1070,6 +1072,18 @@ def lower_jaxpr_to_fun(
       for attrs, alias in zip(arg_attrs, aliases):
         if alias is not None:
           attrs["tf.aliasing_output"] = i32_attr(alias)
+
+    if num_dim_vars > 0:
+      if ctx.shape_poly_state.has_platform_index_argument:
+        num_platform_index_vars = 1
+      else:
+        num_platform_index_vars = 0
+      platform_arg_attrs = arg_attrs[0:num_platform_index_vars]
+      for attrs in platform_arg_attrs:
+        attrs["jax.platform_index"] = ir.BoolAttr.get(True)
+      dim_var_arg_attrs = arg_attrs[num_platform_index_vars:num_dim_vars]
+      for attrs in dim_var_arg_attrs:
+        attrs["jax.dimension_variable"] = ir.BoolAttr.get(True)
 
     if num_tokens > 0:
       token_arg_attrs = arg_attrs[num_dim_vars:num_dim_vars + num_tokens]
