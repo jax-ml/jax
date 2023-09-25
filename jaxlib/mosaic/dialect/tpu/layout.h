@@ -154,6 +154,9 @@ class VectorLayout {
   int layout_rank() const { return 1 + (implicit_dim_ == ImplicitDim::kNone); }
 
   bool operator==(const VectorLayout &other) const;
+  bool operator!=(const VectorLayout &other) const {
+    return !(*this == other);
+  }
 
   // How many tiles fit in each vector register.
   int64_t tilesPerVreg(const std::array<int64_t, 2> target_shape) const {
