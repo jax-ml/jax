@@ -136,8 +136,6 @@ class CacheKeyTest(jtu.JaxTestCase):
   )
   @jtu.skip_on_devices("cpu")
   def test_hash_accelerator_devices(self):
-    if jtu.is_se_tpu():
-      raise unittest.SkipTest("StreamExecutor not supported.")
     if xla_bridge.using_pjrt_c_api():
       # TODO(b/290248051): expose PjRtTopologyDesc in PjRt C API.
       raise unittest.SkipTest("PjRt C API not yet supported.")

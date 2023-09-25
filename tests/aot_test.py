@@ -45,9 +45,6 @@ class JaxAotTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices('tpu')
   def test_pickle_pjit_lower(self):
-    if jtu.is_se_tpu():
-      raise unittest.SkipTest('StreamExecutor not supported.')
-
     def fun(x):
       return x * x
 
