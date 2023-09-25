@@ -875,9 +875,17 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
   }
   const bool is_1d =
       to_store_layout.implicit_dim() != VectorLayout::ImplicitDim::kNone;
-  if (to_store_layout.tiling() !=
-      getMemRefTiling(store_op.getBase(), ctx.target_shape)) {
-    return op.emitOpError("Not implemented");
+  using Tiling = std::array<int64_t, 2>;
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const Tiling memref_tiling,
+      getMemRefTiling(store_op.getBase(), ctx.target_shape));
+  if (to_store_layout.tiling() != memref_tiling) {
+    // Now we can handle the case when tiling is (1, TARGET_SHAPE.lanes).
+    // TODO(b/295393167): need to support strided store for bitwidth < 32.
+    if (to_store_layout.bitwidth() != 32 ||
+        to_store_layout.tiling() != Tiling{1, ctx.target_shape[1]}) {
+      return op.emitOpError("Not implemented");
+    }
   }
   FAILUREOR_ASSIGN_OR_RETURN(
       const SmallVector<int64_t> base_indices,
@@ -901,98 +909,102 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
   }
   const SmallVector<int64_t> stored_shape =
       to_store_layout.implicitShape(ty.getShape());
+  int64_t sublane_stride = 1;
+  // The stride of store should be the number of sublanes in memref tile when
+  // store a single sublane.
+  if (to_store_layout.bitwidth() == 32 &&
+      to_store_layout.tiling() == Tiling{1, ctx.target_shape[1]}) {
+    sublane_stride = memref_tiling[0];
+  }
   const std::array<int64_t, 2> vreg_slice =
       to_store_layout.vregSlice(ctx.target_shape);
-  const bool can_use_vector_store =
-      to_store_layout.hasNaturalTopology(ctx.target_shape);
-  const absl::Status status =
-      tiles.EachStatus([&](const absl::Span<const int64_t> idx,
-                           const Value tile) -> absl::Status {
-        const std::unique_ptr<VRegDataBounds> bounds =
-            to_store_layout.tileDataBounds(mlir_ctx, stored_shape,
-                                           toArrayRef(idx), ctx.target_shape);
-        const int64_t sidx = *(idx.end() - 2);
-        const int64_t lidx = *(idx.end() - 1);
-        SmallVector<Value> indices(ndims);
-        auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1,
-                                       ctx.builder, store_op->getLoc());
-        for (int64_t i = 0; i < nbatchdims; ++i) {
-          indices[i] = boundIdxConst(idx[i] + base_indices[i]);
-        }
-        if (!is_1d) {
-          *(indices.end() - 2) =
-              boundIdxConst(base_s + sidx * vreg_slice[0] - *sublane_offset);
-        }
-        *(indices.end() - 1) =
-            boundIdxConst(base_l + lidx * vreg_slice[1] - *lane_offset);
-        const DenseBoolArrayAttr sublane_mask =
-            bounds->getSublaneMask(store_op->getContext(), ctx.target_shape);
-        const bool masks_subelements =
-            bounds->maskVariesAlong(Direction::kSubelements, ctx.target_shape);
-        if (bounds->maskVariesAlong(Direction::kLanes, ctx.target_shape) ||
-            masks_subelements) {
-          auto failure_or_mask =
-              bounds->getVectorMask(ctx.builder, store_op.getLoc(),
-                                    ctx.hardware_generation, ctx.target_shape);
-          if (failed(failure_or_mask)) {
-            return absl::UnimplementedError("Failed to get vector mask");
-          }
-          TypedValue<VectorType> mask = failure_or_mask.value();
-          // Vmem stores don't support masking below 32-bit granularity, so we
-          // need to load and blend explicitly if needed.
-          if (masks_subelements) {
-            auto data = ctx.builder.create<tpu::LoadOp>(
-                store_op->getLoc(), tile.getType(), store_op.getBase(), indices,
-                sublane_mask, /*sublane_stride=*/nullptr);
-            const bool mask_is_a_bitmask =
-                cast<IntegerType>(mask.getType().getElementType()).getWidth() ==
-                32;
-            Value updated;
-            if (mask_is_a_bitmask) {
-              auto ones = ctx.builder.create<arith::ConstantOp>(
-                  store_op->getLoc(), mask.getType(),
-                  DenseElementsAttr::get(
-                      mask.getType(),
-                      ctx.builder.getIntegerAttr(ctx.builder.getI32Type(),
-                                                 APInt(32, 0xFFFFFFFF))));
-              auto masked_tile = ctx.builder.create<arith::AndIOp>(
-                  store_op.getLoc(), mask,
-                  ctx.builder.create<tpu::BitcastOp>(store_op.getLoc(),
-                                                     mask.getType(), tile));
-              auto mask_neg = ctx.builder.create<arith::XOrIOp>(
-                  store_op.getLoc(), ones, mask);
-              auto masked_data = ctx.builder.create<arith::AndIOp>(
-                  store_op.getLoc(), mask_neg,
-                  ctx.builder.create<tpu::BitcastOp>(store_op.getLoc(),
-                                                     mask.getType(), data));
-              updated = ctx.builder.create<tpu::BitcastOp>(
-                  store_op.getLoc(), tile.getType(),
-                  ctx.builder.create<arith::OrIOp>(store_op.getLoc(),
-                                                   masked_data, masked_tile));
-            } else {
-              updated = ctx.builder.create<arith::SelectOp>(store_op->getLoc(),
-                                                            mask, tile, data);
-            }
-            ctx.builder.create<tpu::StoreOp>(
-                store_op.getLoc(), updated, store_op.getBase(), indices,
-                sublane_mask, /*mask=*/nullptr, /*sublane_stride=*/nullptr);
-          } else {
-            ctx.builder.create<tpu::StoreOp>(
-                store_op->getLoc(), tile, store_op.getBase(), indices,
-                sublane_mask, /*mask=*/mask, /*sublane_stride=*/nullptr);
-          }
-        } else if (bounds->maskVariesAlong(Direction::kSublanes,
-                                           ctx.target_shape) ||
-                   !can_use_vector_store) {
-          ctx.builder.create<tpu::StoreOp>(
-              store_op.getLoc(), tile, store_op.getBase(), indices,
-              sublane_mask, /*mask=*/nullptr, /*sublane_stride=*/nullptr);
+  const absl::Status status = tiles.EachStatus([&](const absl::Span<
+                                                       const int64_t>
+                                                       idx,
+                                                   const Value tile)
+                                                   -> absl::Status {
+    const std::unique_ptr<VRegDataBounds> bounds =
+        to_store_layout.tileDataBounds(mlir_ctx, stored_shape, toArrayRef(idx),
+                                       ctx.target_shape);
+    const int64_t sidx = *(idx.end() - 2);
+    const int64_t lidx = *(idx.end() - 1);
+    SmallVector<Value> indices(ndims);
+    auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1, ctx.builder,
+                                   store_op->getLoc());
+    for (int64_t i = 0; i < nbatchdims; ++i) {
+      indices[i] = boundIdxConst(idx[i] + base_indices[i]);
+    }
+    if (!is_1d) {
+      *(indices.end() - 2) =
+          boundIdxConst(base_s + sidx * vreg_slice[0] - *sublane_offset);
+    }
+    *(indices.end() - 1) =
+        boundIdxConst(base_l + lidx * vreg_slice[1] - *lane_offset);
+    const DenseBoolArrayAttr sublane_mask =
+        bounds->getSublaneMask(store_op->getContext(), ctx.target_shape);
+    const bool masks_subelements =
+        bounds->maskVariesAlong(Direction::kSubelements, ctx.target_shape);
+    if (bounds->maskVariesAlong(Direction::kLanes, ctx.target_shape) ||
+        masks_subelements) {
+      auto failure_or_mask =
+          bounds->getVectorMask(ctx.builder, store_op.getLoc(),
+                                ctx.hardware_generation, ctx.target_shape);
+      if (failed(failure_or_mask)) {
+        return absl::UnimplementedError("Failed to get vector mask");
+      }
+      TypedValue<VectorType> mask = failure_or_mask.value();
+      // Vmem stores don't support masking below 32-bit granularity, so we
+      // need to load and blend explicitly if needed.
+      if (masks_subelements) {
+        auto data = ctx.builder.create<tpu::LoadOp>(
+            store_op->getLoc(), tile.getType(), store_op.getBase(), indices,
+            sublane_mask, /*sublane_stride=*/nullptr);
+        const bool mask_is_a_bitmask =
+            cast<IntegerType>(mask.getType().getElementType()).getWidth() == 32;
+        Value updated;
+        if (mask_is_a_bitmask) {
+          auto ones = ctx.builder.create<arith::ConstantOp>(
+              store_op->getLoc(), mask.getType(),
+              DenseElementsAttr::get(
+                  mask.getType(),
+                  ctx.builder.getIntegerAttr(ctx.builder.getI32Type(),
+                                             APInt(32, 0xFFFFFFFF))));
+          auto masked_tile = ctx.builder.create<arith::AndIOp>(
+              store_op.getLoc(), mask,
+              ctx.builder.create<tpu::BitcastOp>(store_op.getLoc(),
+                                                 mask.getType(), tile));
+          auto mask_neg =
+              ctx.builder.create<arith::XOrIOp>(store_op.getLoc(), ones, mask);
+          auto masked_data = ctx.builder.create<arith::AndIOp>(
+              store_op.getLoc(), mask_neg,
+              ctx.builder.create<tpu::BitcastOp>(store_op.getLoc(),
+                                                 mask.getType(), data));
+          updated = ctx.builder.create<tpu::BitcastOp>(
+              store_op.getLoc(), tile.getType(),
+              ctx.builder.create<arith::OrIOp>(store_op.getLoc(), masked_data,
+                                               masked_tile));
         } else {
-          ctx.builder.create<vector::StoreOp>(store_op.getLoc(), tile,
-                                              store_op.getBase(), indices);
+          updated = ctx.builder.create<arith::SelectOp>(store_op->getLoc(),
+                                                        mask, tile, data);
         }
-        return absl::OkStatus();
-      });
+        ctx.builder.create<tpu::StoreOp>(
+            store_op.getLoc(), updated, store_op.getBase(), indices,
+            sublane_mask, /*mask=*/nullptr,
+            /*sublane_stride=*/ctx.builder.getI32IntegerAttr(sublane_stride));
+      } else {
+        ctx.builder.create<tpu::StoreOp>(
+            store_op->getLoc(), tile, store_op.getBase(), indices, sublane_mask,
+            /*mask=*/mask,
+            /*sublane_stride=*/ctx.builder.getI32IntegerAttr(sublane_stride));
+      }
+    } else {
+      ctx.builder.create<tpu::StoreOp>(
+          store_op.getLoc(), tile, store_op.getBase(), indices, sublane_mask,
+          /*mask=*/nullptr,
+          /*sublane_stride=*/ctx.builder.getI32IntegerAttr(sublane_stride));
+    }
+    return absl::OkStatus();
+  });
   if (!status.ok()) {
     return failure();
   }
