@@ -24,6 +24,7 @@ from functools import partial, lru_cache, cached_property
 import itertools as it
 import logging
 import math
+import threading
 from typing import (Any, Callable, NamedTuple, Iterator, Optional, Union, cast, TypeVar)
 import warnings
 
@@ -1630,6 +1631,16 @@ def _get_default_device() -> xc.Device:
   return config.jax_default_device or xb.local_devices()[0]
 
 
+class _thread_local_decorator(threading.local):
+
+  def __init__(self, fn):
+    self.fn = fn
+
+  def __call__(self, *args, **kwargs):
+    return self.fn(*args, **kwargs)
+
+
+@_thread_local_decorator
 def _get_and_check_device_assignment(
     shardings: Iterable[ShardingInfo],
     devices: Sequence[xc.Device] | None,

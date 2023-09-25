@@ -447,13 +447,13 @@ def _mcjax_reshard(x, target_sharding):
       x._arrays,
   )
 
-  _orig_get_and_check_device_assignment = pxla._get_and_check_device_assignment
-  pxla._get_and_check_device_assignment = partial(
+  _orig_get_and_check_device_assignment = pxla._get_and_check_device_assignment.fn
+  pxla._get_and_check_device_assignment.fn = partial(
       _override_get_device_assignment, target_sharding)
   try:
     return api.jit(_identity_fn, out_shardings=target_sharding)(new_x)
   finally:
-    pxla._get_and_check_device_assignment = _orig_get_and_check_device_assignment
+    pxla._get_and_check_device_assignment.fn = _orig_get_and_check_device_assignment
 
 
 def _device_put_impl(
