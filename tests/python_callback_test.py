@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import collections
 import functools
 import logging
 import textwrap
@@ -1120,6 +1121,36 @@ class IOCallbackTest(jtu.JaxTestCase):
 
     jax.effects_barrier()
     self.assertEqual(_collected, expected)
+
+  def test_can_shard_io_callback_manually(self):
+
+    mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
+
+    spec = jax.sharding.PartitionSpec('x')
+    sharding = jax.sharding.NamedSharding(mesh, spec)
+
+    _collected = collections.defaultdict(list)
+
+    def func(shard_id, x):
+      nonlocal _collected
+      _collected[shard_id.item()].append(x)
+
+    def f(shard_ids, x):
+      io_callback(func, None, shard_ids, x, ordered=True)
+      io_callback(func, None, shard_ids, x + 1, ordered=True)
+    f = shard_map(f, mesh=mesh, in_specs=spec, out_specs=None)
+
+    shard_ids = jnp.arange(mesh.devices.size)
+    inp = jnp.arange(2 * jax.local_device_count())
+    jax.jit(f, in_shardings=sharding, out_shardings=None)(shard_ids, inp)
+    jax.effects_barrier()
+
+    self.assertLen(_collected, mesh.devices.size)
+    # Verify the partial ordering: no specified order across shards, but strict
+    # ordering between the two calls in each shard.
+    for shard in _collected.values():
+      self.assertLen(shard, 2)
+      np.testing.assert_array_equal(shard[0] + 1, shard[1])
 
 
 if __name__ == "__main__":

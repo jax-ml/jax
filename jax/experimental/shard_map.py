@@ -585,11 +585,12 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
   )
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   with core.extend_axis_env_nd(tuple(mesh.shape.items())):
-    out_nodes_, _ = mlir._call_lowering(
+    out_nodes_, tokens_out = mlir._call_lowering(
         "shmap_body", (), jaxpr, None, sub_ctx, in_avals_, out_avals_,
-        mlir.TokenSet(), *in_nodes_, dim_var_values=ctx.dim_var_values,
+        ctx.tokens_in, *in_nodes_, dim_var_values=ctx.dim_var_values,
         arg_names=map(_pspec_mhlo_attrs, in_names, in_avals_),
         result_names=map(_pspec_mhlo_attrs, out_names, out_avals_))
+  ctx.set_tokens_out(tokens_out)
   return map(partial(_xla_unshard, ctx, mesh, auto), out_names, out_avals_,
              ctx.avals_out, out_nodes_)
 mlir.register_lowering(shard_map_p, _shard_map_lowering)
@@ -1042,6 +1043,12 @@ register_norewrite(debugging.debug_callback_p)
 def _pure_callback_rule(mesh, *_, result_avals, **__):
   return [set()] * len(result_avals)
 register_norewrite(callback.pure_callback_p)
+
+
+@register_check(callback.io_callback_p)
+def _io_callback_rule(mesh, *_, result_avals, **__):
+  return [set()] * len(result_avals)
+register_norewrite(callback.io_callback_p)
 
 
 @register_check(dispatch.device_put_p)

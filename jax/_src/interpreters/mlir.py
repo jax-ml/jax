@@ -590,7 +590,8 @@ def eval_dynamic_shape(ctx: LoweringRuleContext,
   else:
     ctx = ctx.replace(
         primitive="eval_dynamic_shape",
-        avals_in=[core.dim_value_aval()] * len(ctx.module_context.shape_poly_state.dim_vars))
+        avals_in=[core.dim_value_aval()] * len(ctx.module_context.shape_poly_state.dim_vars),
+        tokens_out=None)
 
     res = lower_fun(
         partial(core.evaluate_shape, shape, ctx.module_context.shape_poly_state.dim_vars),
