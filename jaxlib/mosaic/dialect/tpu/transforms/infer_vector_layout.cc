@@ -1248,7 +1248,10 @@ class VectorLayoutInferer {
   }
 
   LogicalResult inferMatmul(Operation* op) {
-    auto get_unpadded_layout = [&](Value v) -> std::optional<VectorLayout> {
+    auto get_unpadded_layout =
+        [&](Value v, std::optional<int64_t> major_multiple = std::nullopt,
+            std::optional<int64_t> minor_multiple =
+                std::nullopt) -> std::optional<VectorLayout> {
       auto pad = getLayout(v);
       if (!pad.has_value() || pad->implicit_dim() != ImplicitDim::kNone) {
         return std::nullopt;
@@ -1257,8 +1260,9 @@ class VectorLayoutInferer {
       auto tiling = nativeTiling(vty.getElementTypeBitWidth());
       auto shape = vty.getShape().take_back(2);
       if (pad->offsets()[0].value_or(0) != 0 ||
-          pad->offsets()[1].value_or(0) != 0 || shape[0] % tiling[0] != 0 ||
-          shape[1] % tiling[1] != 0) {
+          pad->offsets()[1].value_or(0) != 0 ||
+          shape[0] % major_multiple.value_or(tiling[0]) != 0 ||
+          shape[1] % minor_multiple.value_or(tiling[1]) != 0) {
         return std::nullopt;
       }
       // Override tiling to match the native one.
@@ -1271,11 +1275,12 @@ class VectorLayoutInferer {
                  "only 32-bit matmul results supported");
     std::array<Layout, 3> in_layout;
     CHECK_EQ(op->getNumOperands(), 3);
-    for (int i = 0; i < 3; ++i) {
-      if (auto layout = get_unpadded_layout(op->getOperand(i))) {
-        in_layout[i] = *layout;
-      } else {
-        op->emitOpError("padded operands");
+    in_layout[0] = get_unpadded_layout(op->getOperand(0), std::nullopt, 1);
+    in_layout[1] = get_unpadded_layout(op->getOperand(1), 128, 1);
+    in_layout[2] = get_unpadded_layout(op->getOperand(2), std::nullopt, 1);
+    for (Layout &l : in_layout) {
+      if (!l.has_value()) {
+        op->emitOpError("unsupported operand shapes or layouts");
         return failure();
       }
     }

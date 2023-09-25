@@ -115,6 +115,19 @@ void MatmulOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                CanonicalizeAddOfMatmul<arith::AddIOp>>(context);
 }
 
+LogicalResult MaskCastOp::verify() {
+  auto input_ty = getInput().getType();
+  auto output_ty = getResult().getType();
+  return success(input_ty.getElementType() == output_ty.getElementType() &&
+                 output_ty.getRank() == 3 &&
+                 (input_ty.getRank() == 2 ||
+                  (input_ty.getRank() == 3 &&
+                   input_ty.getDimSize(2) < output_ty.getDimSize(2))) &&
+                 input_ty.getShape().take_front(2) ==
+                     output_ty.getShape().take_front(2));
+  return success();
+}
+
 }  // namespace tpu
 }  // namespace mlir
 
