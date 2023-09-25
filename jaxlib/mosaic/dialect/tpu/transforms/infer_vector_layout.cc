@@ -883,17 +883,11 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(op.getType().getElementTypeBitWidth() == 32,
                  "Only 32-bit types supported");
     auto offsets = op.getOffsets().getValue();
-    auto sizes = op.getSizes().getValue();
     auto strides = op.getStrides().getValue();
     for (auto offset_attr : offsets.take_back(2)) {
       int off = offset_attr.cast<IntegerAttr>().getInt();
       TPU_CHECK_OP(off == 0, "Only zero-offset slices supported.");
     }
-    sizes = sizes.take_back(2);
-    TPU_CHECK_OP(
-        (sizes[0].cast<IntegerAttr>().getInt() % target_shape_[0] == 0) &&
-            (sizes[1].cast<IntegerAttr>().getInt() % target_shape_[1] == 0),
-        "Only lane and sublane aligned slices allowed.");
     for (auto stride : strides) {
       TPU_CHECK_OP(stride.cast<IntegerAttr>().getInt() == 1,
                    "Only trivial strides supported.");

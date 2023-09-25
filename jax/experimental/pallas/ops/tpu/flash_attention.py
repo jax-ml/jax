@@ -368,26 +368,26 @@ def _flash_attention_kernel_single_batch(
       l_next = jnp.sum(p, axis=1)[:, None] + l_corr  # Shape [block_q, 128]
 
       head_dim_repeats, rem = divmod(head_dim, MIN_BLOCK_SIZE)
+      l_broadcast = lambda l: pltpu.repeat(l, head_dim_repeats, 1)
       if rem:
-        raise NotImplementedError(
-            f"{head_dim=} should be a multiple of {MIN_BLOCK_SIZE}"
-        )
+        if head_dim_repeats == 0:
+          l_broadcast = lambda l: l[:, :head_dim]
+        else:
+          raise NotImplementedError(
+              f"{head_dim=} should be a multiple of {MIN_BLOCK_SIZE} if larger"
+          )
       l_scratch_ref[batch_idx] = l_next
       m_scratch_ref[batch_idx] = m_next
 
       l_next_inv_safe = jnp.where(l_next == 0.0, 1.0, 1.0 / l_next)
-      acc_scratch_ref[batch_idx] *= pltpu.repeat(
-          l_corr * l_next_inv_safe, head_dim_repeats, 1
-      )
+      acc_scratch_ref[batch_idx] *= l_broadcast(l_corr * l_next_inv_safe)
       v = pl.load(
           v_tile_ref, (*batch_idx, pl.dslice(start_k, block_k), slice(None))
       )
       o_curr = jax.lax.dot(
           p.astype(v.dtype), v, preferred_element_type=jnp.float32
       )
-      acc_scratch_ref[batch_idx] += o_curr * pltpu.repeat(
-          l_next_inv_safe, head_dim_repeats, 1
-      )
+      acc_scratch_ref[batch_idx] += o_curr * l_broadcast(l_next_inv_safe)
 
   @pl.when(kv_seq_idx == (kv_seq_len // block_k_major) - 1)
   def store_output():
