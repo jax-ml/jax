@@ -112,6 +112,7 @@ import jaxlib.hlo_helpers as hlo_helpers  # pytype: disable=import-error
 # Only for the internal usage of the JAX developers, we expose a version
 # number that can be used to perform changes without breaking the main
 # branch on the Jax github.
+# Defined in tensorflow/compiler/xla/python/xla_client.py.
 xla_extension_version: int = getattr(xla_client, '_version', 0)
 
 import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error

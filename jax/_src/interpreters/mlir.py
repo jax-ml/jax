@@ -43,6 +43,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -763,9 +764,11 @@ def lower_jaxpr_to_module(
     attrs["sym_name"] = ir.StringAttr.get(module_name)
     attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
     attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
+    replace_tokens_with_dummy = (xla_extension_version < 199)
     lower_jaxpr_to_fun(
-        ctx, "main", jaxpr, ordered_effects, public=True, create_tokens=True,
-        replace_tokens_with_dummy=True,
+        ctx, "main", jaxpr, ordered_effects, public=True,
+        create_tokens=replace_tokens_with_dummy,
+        replace_tokens_with_dummy=replace_tokens_with_dummy,
         num_output_tokens=0,
         replicated_args=replicated_args,
         arg_shardings=arg_op_shardings,
@@ -776,6 +779,8 @@ def lower_jaxpr_to_module(
         arg_memory_kinds=arg_memory_kinds,
         result_memory_kinds=result_memory_kinds)
 
+  import logging
+  logging.info("Lowered module: %s", module_to_string(ctx.module))
   try:
     if not ctx.module.operation.verify():
       module_string = module_to_string(ctx.module)
@@ -963,6 +968,10 @@ def lower_jaxpr_to_fun(
   output_types = map(aval_to_types, jaxpr.out_avals)
   num_tokens = len(effects)
 
+  if xla_extension_version >= 199:
+    # TODO(necula): remove these parameters when we bump the minimum version
+    assert not create_tokens
+    assert not replace_tokens_with_dummy
   if create_tokens:
     # If we create the tokens they won't be inputs to the MLIR function.
     token_types = [dummy_token_type() for _ in effects]
