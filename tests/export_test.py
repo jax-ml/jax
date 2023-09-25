@@ -297,7 +297,6 @@ class JaxExportTest(jtu.JaxTestCase):
                         export.call_exported(exp_f2)(a))
 
   @jtu.parameterized_filterable(
-    #one_containing="",
     kwargs=[
       dict(v=v)
       for v in range(export.minimum_supported_serialization_version - 1,
@@ -319,6 +318,11 @@ class JaxExportTest(jtu.JaxTestCase):
                        "shape_assertion" in module_str)
       self.assertIn("jax.uses_shape_polymorphism = true",
                     module_str)
+      dim_vars = re.findall(
+        r"(%arg\d):\s*tensor<i..>\s*{jax.dimension_variable = true}",
+        module_str)
+      self.assertEqual(["%arg0", "%arg1"], dim_vars,
+                       f"Found {dim_vars} in {module_str}")
       x = np.arange(30, dtype=np.float32).reshape((5, 6))
       res = export.call_exported(exp)(x)
       self.assertAllClose(res, np.sin(x))
@@ -501,7 +505,6 @@ class JaxExportTest(jtu.JaxTestCase):
   # This test exists also in shape_poly_test.py. Here we test the
   # call_exported error reporting.
   @jtu.parameterized_filterable(
-    #one_containing="7, 2, 36",
     testcase_name=lambda kw: kw["shape"],  # assume "shape" is unique
     kwargs=[
       dict(shape=(8, 2, 9),  # a = 2, b = 3, c = 4
@@ -569,6 +572,12 @@ class JaxExportTest(jtu.JaxTestCase):
     exp = export.export(jnp.sin,
                             lowering_platforms=('cpu', 'tpu'))(x)
     self.assertEqual(exp.lowering_platforms, ('cpu', 'tpu'))
+    module_str = str(exp.mlir_module())
+    platform_index = re.findall(
+      r"(%arg\d):\s*tensor<i..>\s*{jax.platform_index = true}",
+      module_str)
+    self.assertEqual(["%arg0"], platform_index,
+                     f"Found {platform_index} in {module_str}")
     res = export.call_exported(exp)(x)
     self.assertAllClose(res, np.sin(x))
 
