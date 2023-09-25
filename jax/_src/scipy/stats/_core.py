@@ -73,7 +73,8 @@ def mode(a: ArrayLike, axis: Optional[int] = 0, nan_policy: str = "propagate", k
   def _mode_helper(x: jax.Array) -> tuple[jax.Array, jax.Array]:
     """Helper function to return mode and count of a given array."""
     if x.size == 0:
-      return jnp.array(jnp.nan, dtype=dtypes.canonicalize_dtype(jnp.float_)), jnp.array(jnp.nan, dtype=dtypes.canonicalize_dtype(jnp.float_))
+      return (jnp.array(jnp.nan, dtype=dtypes.canonicalize_dtype(jnp.float_)),
+              jnp.array(0, dtype=dtypes.canonicalize_dtype(jnp.float_)))
     else:
       vals, counts = jnp.unique(x, return_counts=True, size=x.size)
       return vals[jnp.argmax(counts)], counts.max()
