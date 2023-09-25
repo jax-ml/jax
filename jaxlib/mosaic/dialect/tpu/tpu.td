@@ -471,6 +471,19 @@ def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mli
   let options = [Option<"total_devices", "total-devices", "int", "", "">];
 }
 
+def InferMemRefLayoutPass : Pass<"tpu-infer-memref-layout", "::mlir::func::FuncOp"> {
+  let dependentDialects = [
+    "::mlir::func::FuncDialect",
+    "::mlir::memref::MemRefDialect",
+  ];
+  let constructor = "::mlir::tpu::createInferMemRefLayoutPass(-1)";
+  let options = [
+    // If hardware_generation is not set, the default value of -1 will crash on
+    // runOnOperation.
+    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
+  ];
+}
+
 def InferVectorLayoutPass : Pass<"tpu-infer-vector-layout", "::mlir::func::FuncOp"> {
   let dependentDialects = [
     "::mlir::arith::ArithDialect",

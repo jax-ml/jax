@@ -17,8 +17,10 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/include/mlir/IR/IRMapping.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
@@ -49,10 +51,19 @@ LogicalResult UnrollVectorsOp::canonicalize(UnrollVectorsOp op,
 LogicalResult MemRefSliceOp::verify() {
   auto source_type = getMemRefType(getMemRef());
   auto target_type = getType();
+  auto target_layout = target_type.getLayout();
+  auto target_memory_space = target_type.getMemorySpace();
   // TODO(apaszke): Check that the result has a smaller shape.
   // TODO(apaszke): Check that strides are equivalent.
-  return success(source_type.getMemorySpace() == target_type.getMemorySpace() &&
-                 source_type.getLayout() == target_type.getLayout());
+  // Source and target attributes may be different before propagation is done by
+  // the canonicalizer, so we allow this when attributes are "unset" in the
+  // target type. Note that MemRefType does not allow a null layout so we treat
+  // the default identity affine map as an "unset" value instead.
+  return success(
+      (target_memory_space == nullptr ||
+       target_memory_space == source_type.getMemorySpace()) &&
+      ((isa<AffineMapAttr>(target_layout) && target_layout.isIdentity()) ||
+       target_type.getLayout() == source_type.getLayout()));
 }
 
 LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
