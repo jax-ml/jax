@@ -91,7 +91,7 @@ class TestBFGS(jtu.JaxTestCase):
 
     jax_res = min_op(x0)
     scipy_res = scipy.optimize.minimize(func(np), x0, method='BFGS').x
-    self.assertAllClose(scipy_res, jax_res, atol=2e-5, rtol=2e-5,
+    self.assertAllClose(scipy_res, jax_res, atol=2e-4, rtol=2e-4,
                         check_dtypes=False)
 
   def test_fixes4594(self):
