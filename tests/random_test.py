@@ -520,24 +520,6 @@ class PrngTest(jtu.JaxTestCase):
       self.check_key_has_impl(k1, impl)
       self.check_key_has_impl(k2, impl)
 
-  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key upgrade flag')
-  def test_explicit_threefry2x32_key(self):
-    with self.assertWarnsRegex(DeprecationWarning, "jax.random.threefry2x32_key"):
-      self.check_key_has_impl(random.threefry2x32_key(42),
-                              prng_internal.threefry_prng_impl)
-
-  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key upgrade flag')
-  def test_explicit_rbg_key(self):
-    with self.assertWarnsRegex(DeprecationWarning, "jax.random.rbg_key"):
-      self.check_key_has_impl(random.rbg_key(42),
-                              prng_internal.rbg_prng_impl)
-
-  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key upgrade flag')
-  def test_explicit_unsafe_rbg_key(self):
-    with self.assertWarnsRegex(DeprecationWarning, "jax.random.unsafe_rbg_key"):
-      self.check_key_has_impl(random.unsafe_rbg_key(42),
-                              prng_internal.unsafe_rbg_prng_impl)
-
   @parameterized.parameters([{'make_key': ctor, 'name': name, 'impl': impl}
                              for ctor in KEY_CTORS
                              for name, impl in PRNG_IMPLS])
