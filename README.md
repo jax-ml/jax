@@ -385,7 +385,7 @@ Some standouts:
 | CPU        | yes          | yes (build from source) | yes          | yes            | yes            | yes                 |
 | NVIDIA GPU | yes          | yes (build from source) | no           | n/a            | no             | experimental        |
 | Google TPU | yes          | n/a                     | n/a          | n/a            | n/a            | n/a                 |
-| AMD GPU    | experimental (build from source) | no                      | no           | n/a            | no             | no                  |
+| AMD GPU    | experimental | no                      | no           | n/a            | no             | no                  |
 | Apple GPU  | n/a          | no                      | experimental | experimental   | n/a            | n/a                 |
 
 
@@ -396,11 +396,11 @@ Some standouts:
 | CPU        | `pip install -U jax[cpu]`                                                                                       |
 | NVIDIA GPU | `pip install -U "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html`        |
 | Google TPU | `pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html`                 |
-| AMD GPU    | [Build from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus). |
+| AMD GPU    | Use [Docker](https://hub.docker.com/r/rocm/jax) or [build from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus). |
 | Apple GPU  | Follow [Apple's instructions](https://developer.apple.com/metal/jax/).                                          |
 
 See [the documentation](https://jax.readthedocs.io/en/latest/installation.html)
-for information on alternative installation strategies. These includes compiling
+for information on alternative installation strategies. These include compiling
 from source, installing with Docker, using other versions of CUDA, a
 community-supported conda build, and answers to some frequently-asked questions.
 
