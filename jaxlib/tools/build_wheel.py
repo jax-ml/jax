@@ -50,7 +50,9 @@ parser.add_argument(
   help="Create an 'editable' jaxlib build instead of a wheel.")
 parser.add_argument(
     "--include_gpu_plugin_extension",
-    default=False,
+    # args.include_gpu_plugin_extension is True when
+    # --include_gpu_plugin_extension is in the command
+    action="store_true",
     help="Whether to include gpu plugin extension.",
 )
 args = parser.parse_args()

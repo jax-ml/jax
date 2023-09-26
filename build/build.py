@@ -565,8 +565,9 @@ def main():
     ["run", "--verbose_failures=true"] +
     ["//jaxlib/tools:build_wheel", "--",
     f"--output_path={output_path}",
-    f"--cpu={wheel_cpu}",
-    f"--include_gpu_plugin_extension={args.build_gpu_plugin}"])
+    f"--cpu={wheel_cpu}"])
+  if args.build_gpu_plugin:
+    command.append("--include_gpu_plugin_extension")
   if args.editable:
     command += ["--editable"]
   print(" ".join(command))
