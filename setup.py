@@ -123,14 +123,14 @@ setup(
 
         'cuda12_pip': [
           f"jaxlib=={_current_jaxlib_version}+cuda12.cudnn{_default_cuda12_cudnn_version}",
-          "nvidia-cublas-cu12",
-          "nvidia-cuda-cupti-cu12",
-          "nvidia-cuda-nvcc-cu12",
-          "nvidia-cuda-runtime-cu12",
+          "nvidia-cublas-cu12>=12.2.5.6",
+          "nvidia-cuda-cupti-cu12>=12.2.142",
+          "nvidia-cuda-nvcc-cu12>=12.2.140",
+          "nvidia-cuda-runtime-cu12>=12.2.140",
           "nvidia-cudnn-cu12>=8.9",
-          "nvidia-cufft-cu12",
-          "nvidia-cusolver-cu12",
-          "nvidia-cusparse-cu12",
+          "nvidia-cufft-cu12>=11.0.8.103",
+          "nvidia-cusolver-cu12>=11.5.2",
+          "nvidia-cusparse-cu12>=12.1.2.141",
         ],
 
         # Target that does not depend on the CUDA pip wheels, for those who want
