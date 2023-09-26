@@ -302,24 +302,6 @@ def _issubclass(a: Any, b: Any) -> bool:
   except TypeError:
     return False
 
-_type_classes = {
-    np.generic,
-    np.number,
-    np.flexible,
-    np.character,
-    np.integer,
-    np.signedinteger,
-    np.unsignedinteger,
-    np.inexact,
-    np.floating,
-    np.complexfloating,
-}
-
-def _is_typeclass(a: Any) -> bool:
-  try:
-    return a in _type_classes
-  except TypeError:
-    return False
 
 def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
   """Returns True if first argument is a typecode lower/equal in type hierarchy.
@@ -335,37 +317,34 @@ def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
   #   don't conform to the standard numpy type hierarchy (e.g. the bfloat16 scalar
   #   type is not a subclass of np.floating) so we must also handle these specially.
 
-  # First we handle extended dtypes (like prng key types)
+  # First handle extended dtypes. This is important for performance because
+  # isinstance(x, extended) is called frequently within JAX internals.
+  if _issubclass(b, extended):
+    if isinstance(a, ExtendedDType):
+      return _issubclass(a.type, b)
+    if _issubclass(a, np.generic):
+      return _issubclass(a, b)
+    return _issubclass(np.dtype(a).type, b)
+  if isinstance(b, ExtendedDType):
+    return isinstance(a, ExtendedDType) and a == b
   if isinstance(a, ExtendedDType):
-    if isinstance(b, ExtendedDType):
-      return a == b
-    else:
-      a = a.type
-  elif isinstance(b, ExtendedDType):
-    return False
+    a = a.type
 
-  # Now do special handling of custom float and int types. To do this, we first
-  # convert scalar types to dtypes in order to recognize custom floats & ints.
-  # We cannot use issubclass(a, np.generic) because scalar types would satisfy this.
-  a = a if _is_typeclass(a) or _issubclass(a, extended) else np.dtype(a)
-  b = b if _is_typeclass(b) or _issubclass(b, extended) else np.dtype(b)
+  # For all others, normalize inputs to scalar types.
+  a_sctype = a if _issubclass(a, np.generic) else np.dtype(a).type
+  b_sctype = b if _issubclass(b, np.generic) else np.dtype(b).type
 
-  if isinstance(a, np.dtype):
-    if a in _custom_float_dtypes:
-      if isinstance(b, np.dtype):
-        return a == b
-      return b in [np.floating, np.inexact, np.number, np.generic]
-    if a == _int4_dtype:
-      if isinstance(b, np.dtype):
-        return a == b
-      return b in [np.signedinteger, np.integer, np.number, np.generic]
-    if a == _uint4_dtype:
-      if isinstance(b, np.dtype):
-        return a == b
-      return b in [np.unsignedinteger, np.integer, np.number, np.generic]
+  # Now do special handling of custom float and int types, as they don't conform
+  # to the normal scalar type hierarchy.
+  if a_sctype in _custom_float_scalar_types:
+    return b_sctype in {a_sctype, np.floating, np.inexact, np.number, np.generic}
+  if a_sctype == int4:
+    return b_sctype in {a_sctype, np.signedinteger, np.integer, np.number, np.generic}
+  if a_sctype == uint4:
+    return b_sctype in {a_sctype, np.unsignedinteger, np.integer, np.number, np.generic}
 
   # Otherwise, fall back to numpy.issubdtype
-  return np.issubdtype(a, b)
+  return np.issubdtype(a_sctype, b_sctype)
 
 can_cast = np.can_cast
 
