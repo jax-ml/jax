@@ -38,8 +38,8 @@ import warnings
 from jax._src import distributed
 from jax._src import config as jax_config
 from jax._src.config import config
-import jax._src.lib
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
 from jax._src import traceback_util
 from jax._src import util
@@ -581,7 +581,7 @@ def _suggest_missing_backends():
   ]
   if ("cuda" not in _backends and
       any(os.path.exists(d) for d in nvidia_gpu_devices)):
-    if jax._src.lib.gpu_solver is not None:
+    if hasattr(xla_extension, "GpuAllocatorConfig"):
       err = _backend_errors["cuda"]
       logger.warning(f"CUDA backend failed to initialize: {err} (Set "
                      "TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)")
