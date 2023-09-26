@@ -581,7 +581,7 @@ def _suggest_missing_backends():
   ]
   if ("cuda" not in _backends and
       any(os.path.exists(d) for d in nvidia_gpu_devices)):
-    if hasattr(xla_extension, "GpuAllocatorConfig"):
+    if hasattr(xla_extension, "GpuAllocatorConfig") and "cuda" in _backend_errors:
       err = _backend_errors["cuda"]
       logger.warning(f"CUDA backend failed to initialize: {err} (Set "
                      "TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)")

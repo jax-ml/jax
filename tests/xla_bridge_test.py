@@ -392,10 +392,12 @@ class GetBackendTest(jtu.JaxTestCase):
 
     with self.assertLogs("jax._src.xla_bridge", level="WARNING") as logs:
       _ = xb.get_backend()
-    self.assertEqual(logs.output, [
+    self.assertIn(
       "WARNING:jax._src.xla_bridge:Platform 'platform_A' is experimental and "
-      "not all JAX functionality may be correctly supported!"
-    ])
+      "not all JAX functionality may be correctly supported!",
+      logs.output
+    )
+
 
 
 if __name__ == "__main__":
