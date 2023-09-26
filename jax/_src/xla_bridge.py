@@ -38,7 +38,6 @@ import warnings
 from jax._src import distributed
 from jax._src import config as jax_config
 from jax._src.config import config
-import jax._src.lib
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
