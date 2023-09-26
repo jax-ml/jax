@@ -19,9 +19,11 @@ limitations under the License.
 #include <utility>
 
 #include "nanobind/nanobind.h"
+#include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_gpu_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
+#include "xla/python/py_client_gpu.h"
 #include "xla/python/status_casters.h"
 #include "xla/status.h"
 #include "xla/util.h"
@@ -63,6 +65,13 @@ Status RegisterCustomCallTarget(const PJRT_Api* c_api, nb::str fn_name,
       c_api);
   return OkStatus();
 }
+
+nb::dict Registrations() {
+  nb::dict dict;
+  dict["xla_python_gpu_callback"] =
+      jax::EncapsulateFunction(xla::XlaPythonGpuCallback);
+  return dict;
+}
 }  // namespace
 
 NB_MODULE(cuda_plugin_extension, m) {
@@ -72,5 +81,6 @@ NB_MODULE(cuda_plugin_extension, m) {
     xla::ThrowIfError(RegisterCustomCallTarget(
         static_cast<const PJRT_Api*>(c_api.data()), fn_name, std::move(fn)));
   });
+  m.def("registrations", &Registrations);
 }
 }  // namespace xla

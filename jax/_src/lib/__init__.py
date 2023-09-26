@@ -83,7 +83,7 @@ import jaxlib.cpu_feature_guard as cpu_feature_guard
 cpu_feature_guard.check_cpu_features()
 
 try:
-  import jaxlib.cuda_plugin_extension as cuda_plugin_extension
+  import jaxlib.cuda_plugin_extension as cuda_plugin_extension  # pytype: disable=import-error
 except ModuleNotFoundError:
   cuda_plugin_extension = None
 import jaxlib.utils as utils
