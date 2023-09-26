@@ -84,7 +84,7 @@ cpu_feature_guard.check_cpu_features()
 
 try:
   import jaxlib.cuda_plugin_extension as cuda_plugin_extension
-except ImportError:
+except ModuleNotFoundError:
   cuda_plugin_extension = None
 import jaxlib.utils as utils
 import jaxlib.xla_client as xla_client
