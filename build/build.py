@@ -574,15 +574,14 @@ def main():
   shell(command)
 
   if args.build_gpu_plugin:
-    build_plugin_command = (
-        " ".join(command)
-        .replace(
-            "//jaxlib/tools:build_wheel",
-            "//jaxlib/tools:build_gpu_plugin_wheel",
-        )
-        .split(" ")
-    )
-    build_plugin_command += [f"--cuda_version={args.gpu_plugin_cuda_version}"]
+    build_plugin_command = ([bazel_path] + args.bazel_startup_options +
+      ["run", "--verbose_failures=true"] +
+      ["//jaxlib/tools:build_gpu_plugin_wheel", "--",
+      f"--output_path={output_path}",
+      f"--cpu={wheel_cpu}",
+      f"--cuda_version={args.gpu_plugin_cuda_version}"])
+    if args.editable:
+      command.append("--editable")
     print(" ".join(build_plugin_command))
     shell(build_plugin_command)
 
