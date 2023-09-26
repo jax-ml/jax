@@ -13,7 +13,7 @@ source](developer.md#building-from-source).
 | CPU        | [yes](#cpu)         | [yes (build from source)](developer.md#building-from-source) | [yes](#cpu)          | [yes](#cpu)            | [yes](#cpu)            | [yes](#cpu)                 |
 | NVIDIA GPU | [yes](#nvidia-gpu)               | [yes (build from source)](developer.md#building-from-source) | no           | n/a            | no             | [experimental](#nvidia-gpu)        |
 | Google TPU | [yes](#google-tpu)  | n/a                     | n/a          | n/a            | n/a            | n/a                 |
-| AMD GPU    | [experimental (build from source)](developer.md#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus) | no                      | no           | n/a                 | no             | no                  |
+| AMD GPU    | [experimental](#amd-gpu) | no                      | no           | n/a                 | no             | no                  |
 | Apple GPU  | n/a                 | no                      | [experimental](#apple-gpu) | [experimental](#apple-gpu)   | n/a            | n/a                 |
 
 
@@ -193,6 +193,13 @@ There are several caveats with the Metal plugin:
 * the Metal plugin currently requires very specific versions of `jax` and
   `jaxlib`. This restriction will be relaxed over time as the plugin API
   matures.
+
+## AMD GPU
+
+JAX has experimental ROCM support. There are two ways to install JAX:
+
+* use [AMD's docker container](https://hub.docker.com/r/rocm/jax), or
+* [build from source](developer.md#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus).
 
 ## Conda
 
