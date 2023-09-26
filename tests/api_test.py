@@ -28,7 +28,6 @@ import itertools as it
 import operator
 import operator as op
 import os
-import platform
 import re
 import subprocess
 import sys
@@ -10270,25 +10269,16 @@ class NamedCallTest(jtu.JaxTestCase):
 class BackendsTest(jtu.JaxTestCase):
 
   @unittest.skipIf(not sys.executable, "test requires sys.executable")
-  @unittest.skipIf(platform.system() == "Darwin",
-                   "Warning doesn't apply on Mac")
   @jtu.run_on_devices("cpu")
-  def test_cpu_warning_suppression(self):
-    warning_expected = (
-      "import jax; "
-      "jax.numpy.arange(10)")
+  def test_no_backend_warning_on_cpu_if_platform_specified(self):
     warning_not_expected = (
       "import jax; "
       "jax.config.update('jax_platform_name', 'cpu'); "
       "jax.numpy.arange(10)")
 
-    result = subprocess.run([sys.executable, '-c', warning_expected],
-                            check=True, capture_output=True)
-    assert "No GPU/TPU found" in result.stderr.decode()
-
     result = subprocess.run([sys.executable, '-c', warning_not_expected],
                             check=True, capture_output=True)
-    assert "No GPU/TPU found" not in result.stderr.decode()
+    assert "may be present" not in result.stderr.decode()
 
 
 class CleanupTest(jtu.JaxTestCase):
