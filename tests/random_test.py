@@ -1787,6 +1787,12 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(key.size * key.dtype.itemsize,
                      key_raw.size * key_raw.dtype.itemsize)
 
+  def test_key_attributes(self):
+    key = self.make_keys()
+    self.assertEqual(key.itemsize, key.dtype.itemsize)
+    self.assertEqual(key.size, math.prod(key.shape))
+    self.assertEqual(key.ndim, len(key.shape))
+
   def test_isinstance(self):
     @jax.jit
     def f(k):

@@ -169,6 +169,10 @@ class PRNGKeyArray(jax.Array, metaclass=PRNGKeyArrayMeta):
 
   @property
   @abc.abstractmethod
+  def itemsize(self): ...
+
+  @property
+  @abc.abstractmethod
   def sharding(self): ...
 
   @property
@@ -279,6 +283,10 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   @property
   def dtype(self):
     return KeyTy(self.impl)
+
+  @property
+  def itemsize(self):
+    return self.dtype.itemsize
 
   _device = property(op.attrgetter('_base_array._device'))
   _committed = property(op.attrgetter('_base_array._committed'))
