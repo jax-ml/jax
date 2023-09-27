@@ -927,6 +927,22 @@ lowering_rules[lax.max_p] = _max_lowering_rule
 skip_mlir_conversions.add(lax.max_p)
 
 
+def _min_lowering_rule(ctx: LoweringRuleContext, x, y):
+  x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
+  (aval_out,) = ctx.avals_out
+  if jnp.issubdtype(aval_out.dtype, jnp.signedinteger):
+    return arith.MinSIOp(x, y).result
+  elif jnp.issubdtype(aval_out.dtype, jnp.unsignedinteger):
+    return arith.MinUIOp(x, y).result
+  elif jnp.issubdtype(aval_out.dtype, jnp.floating):
+    return arith.MinimumFOp(x, y).result
+  raise NotImplementedError(aval_out.dtype)
+
+
+lowering_rules[lax.min_p] = _min_lowering_rule
+skip_mlir_conversions.add(lax.min_p)
+
+
 def _sub_lowering_rule(ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   (aval_out,) = ctx.avals_out

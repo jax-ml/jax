@@ -1646,8 +1646,14 @@ _register_rule("arith.remsi")(
 _register_rule("arith.maximumf")(
     functools.partial(_elementwise_op_rule, arith.MaximumFOp)
 )
+_register_rule("arith.maxsi")(
+    functools.partial(_elementwise_op_rule, arith.MaxSIOp)
+)
 _register_rule("arith.minimumf")(
     functools.partial(_elementwise_op_rule, arith.MinimumFOp)
+)
+_register_rule("arith.minsi")(
+    functools.partial(_elementwise_op_rule, arith.MinSIOp)
 )
 _register_rule("arith.select")(
     functools.partial(_elementwise_op_rule, arith.SelectOp))
