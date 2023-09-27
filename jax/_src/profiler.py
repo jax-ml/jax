@@ -204,6 +204,22 @@ def stop_trace():
     _profile_state.log_dir = None
 
 
+def stop_and_get_fdo_profile() -> bytes:
+  """Stops the currently-running profiler trace and export fdo_profile.
+
+  Raises a RuntimeError if a trace hasn't been started.
+  """
+  with _profile_state.lock:
+    if _profile_state.profile_session is None:
+      raise RuntimeError("No profile started")
+    fdo_profile = _profile_state.profile_session.stop_and_get_fdo_profile()
+    _profile_state.profile_session = None
+    _profile_state.create_perfetto_link = False
+    _profile_state.create_perfetto_trace = False
+    _profile_state.log_dir = None
+    return fdo_profile
+
+
 @contextmanager
 def trace(log_dir, create_perfetto_link=False, create_perfetto_trace=False):
   """Context manager to take a profiler trace.
@@ -314,7 +330,6 @@ def annotate_function(func: Callable, name: Optional[str] = None,
       return func(*args, **kwargs)
     return wrapper
   return wrapper
-
 
 
 def device_memory_profile(backend: Optional[str] = None) -> bytes:
