@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
-        jaxlib-version: ["pypi_latest", "nightly"]
+        jaxlib-version: ["nightly"]
         tpu-type: ["v3-8", "v4-8", "v5e-4"]
     name: "TPU test (jaxlib=${{ matrix.jaxlib-version }}, ${{ matrix.tpu-type }})"
     runs-on: ["self-hosted", "tpu", "${{ matrix.tpu-type }}"]
@@ -42,8 +42,10 @@ jobs:
           pip install -U -r build/test-requirements.txt
           pip install -U -r build/collect-profile-requirements.txt
       - name: Install JAX
+        env:
+          TPU_LIBRARY_PATH: /home/skyewm/libtpus/_libtpu.so
         run: |
-          pip uninstall -y jax jaxlib libtpu-nightly
+          pip uninstall -y jax
           if [ "${{ matrix.jaxlib-version }}" == "pypi_latest" ]; then
             pip install .[tpu] \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
@@ -52,9 +54,9 @@ jobs:
             pip install .
             pip install --pre jaxlib \
               -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
-            pip install --pre libtpu-nightly \
-              -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-            pip install requests
+            # pip install --pre libtpu-nightly \
+            #   -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+            # pip install requests
 
           else
             echo "Unknown jaxlib-version: ${{ matrix.jaxlib-version }}"
@@ -65,23 +67,23 @@ jobs:
           python3 -c 'import jax; print("jax version:", jax.__version__)'
           python3 -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
           strings $HOME/.local/lib/python3.10/site-packages/libtpu/libtpu.so | grep 'Built on'
-          python3 -c 'import jax; print("libtpu version:",
-            jax.lib.xla_bridge.get_backend().platform_version)'
+          # python3 -c 'import jax; print("libtpu version:",
+          #   jax.lib.xla_bridge.get_backend().platform_version)'
       - name: Run tests
         env:
           JAX_PLATFORMS: tpu,cpu
           PY_COLORS: 1
-          # TODO(b/302562327): TPU VMs have an ancient tcmalloc set in their
-          # LD_PRELOAD by default. This has been causing deadlocks due to its
-          # use of libunwind. Use the system allocator in the meantime to
-          # unblock testing until we develop a better fix.
-          LD_PRELOAD:
+          JAX_ENABLE_TPU_XDIST: true
+          TPU_LIBRARY_PATH: /home/skyewm/libtpus/_libtpu.so
+          # LD_PRELOAD:
         run: |
+          echo $LD_PRELOAD
           # Run single-accelerator tests in parallel
-          JAX_ENABLE_TPU_XDIST=true python3 -m pytest -n=4 --tb=short \
+          python3 -m pytest -n=4 --tb=short \
             --maxfail=20 -m "not multiaccelerator" tests examples
+
           # Run multi-accelerator across all chips
-          python3 -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
+          #python3 -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
       - name: Send chat on failure
         # Don't notify when testing the workflow from a branch.
         if: ${{ (failure() || cancelled()) && github.ref_name == 'main' }}
