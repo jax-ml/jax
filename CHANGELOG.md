@@ -16,18 +16,24 @@ Remember to align the itemized text with the first line of an item within a list
     * `random.rbg_key(seed)` becomes `random.PRNGKey(seed, impl='rbg')`
     * `random.unsafe_rbg_key(seed)` becomes `random.PRNGKey(seed, impl='unsafe_rbg')`
 * Changes:
-  * {func}`jax.scipy.stats.mode` now returns a 0 count if the mode is taken
-    across a size-0 axis, matching the behavior of `scipy.stats.mode` in SciPy
-    1.11.
+  * CUDA: JAX now verifies that the CUDA libraries it finds are at least as new
+    as the CUDA libraries that JAX was built against. If older libraries are
+    found, JAX raises an exception since that is preferable to mysterious
+    failures and crashes.
   * Removed the "No GPU/TPU" found warning. Instead warn if, on Linux, an
     NVIDIA GPU or a Google TPU are found but not used and `--jax_platforms` was
     not specified.
+  * {func}`jax.scipy.stats.mode` now returns a 0 count if the mode is taken
+    across a size-0 axis, matching the behavior of `scipy.stats.mode` in SciPy
+    1.11.
 
 # jaxlib 0.4.17
 
 * Changes:
   * Python 3.12 wheels were added in this release.
-  * The CUDA 12 wheels now require CUDA 12.2.
+  * The CUDA 12 wheels now require CUDA 12.2 or newer and cuDNN 8.9.4 or newer.
+  * This is likely the last release of jaxlib that supports CUDA 11. We intend
+    to drop CUDA 11 support in the next release.
 
 * Bug fixes:
   * Fixed log spam from ABSL when the JAX CPU backend was initialized.
