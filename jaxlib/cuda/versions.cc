@@ -20,6 +20,8 @@ limitations under the License.
 namespace jax::cuda {
 namespace {
 
+namespace nb = nanobind;
+
 int CudaRuntimeGetVersion() {
   int version;
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(cudaRuntimeGetVersion(&version)));
@@ -51,6 +53,10 @@ int CusolverGetVersion() {
 }
 
 NB_MODULE(_versions, m) {
+  // Nanobind's leak checking sometimes returns false positives for this file.
+  // The problem appears related to forming a closure of a nanobind function.
+  nb::set_leak_warnings(false);
+
   // Build versions, i.e., what version of the headers was JAX compiled against?
   m.def("cuda_runtime_build_version", []() { return CUDART_VERSION; });
   m.def("cudnn_build_version", []() { return CUDNN_VERSION; });
