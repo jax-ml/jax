@@ -822,20 +822,19 @@ We list here a history of the serialization version numbers:
   * Version 7 adds support for `stablehlo.shape_assertion` operations and
     for `shape_assertions` specified in `disabled_checks`.
     See [Errors in presence of shape polymorphism](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism). Supported by XlaCallModule
-    since July 12th, 2023 (cl/547482522) and
-    available in JAX serialization since July 20th, 2023 (JAX 0.4.14).
+    since July 12th, 2023 (cl/547482522),
+    available in JAX serialization since July 20th, 2023 (JAX 0.4.14),
+    and the default since August 12th, 2023 (JAX 0.4.15).
   * Version 8 adds support for the `jax.uses_shape_polymorphism` module
     attribute and enables the shape refinement pass only when the
     attribute is present. Supported by XlaCallModule since July 21st, 2023
-    (cl/549973693) and available in JAX since July 26th, 2023 (JAX 0.4.14).
+    (cl/549973693), available in JAX since July 26th, 2023 (JAX 0.4.14),
+    and the default since October 21st, 2023 (JAX 0.4.20).
   * Version 9 adds support for effects.
-    The token arguments and results use the type `bool[0]` and have a
-    `jax.token` attribute. In this serialization version
-    we also tag the platform index and the dimension variables arguments
-    with `jax.global_constant` attributes.
-    See the docstring for `export.export` for the precise calling convention.
-
-    Available in JAX since November 1, 2023 (JAX 0.4.20).
+    See the docstring for `export.Exported` for the precise calling convention.
+    In this serialization version we also tag the platform index and the
+    dimension variables arguments with `jax.global_constant` attributes.
+    Available in JAX since October 20th, 2023 (JAX 0.4.20).
 
 ## Known issues
 
