@@ -28,20 +28,10 @@ import stat
 import subprocess
 import sys
 import textwrap
-import urllib
+import urllib.request
+import logging
 
-# pylint: disable=g-import-not-at-top
-if hasattr(urllib, "urlretrieve"):
-  urlretrieve = urllib.urlretrieve
-else:
-  import urllib.request
-  urlretrieve = urllib.request.urlretrieve
-
-if hasattr(shutil, "which"):
-  which = shutil.which
-else:
-  from distutils.spawn import find_executable as which
-# pylint: enable=g-import-not-at-top
+logger = logging.getLogger(__name__)
 
 
 def is_windows():
@@ -50,10 +40,14 @@ def is_windows():
 
 def shell(cmd):
   try:
+    logger.info("shell(): %s", cmd)
     output = subprocess.check_output(cmd)
   except subprocess.CalledProcessError as e:
+    logger.info("subprocess raised: %s", e)
     if e.output: print(e.output)
     raise
+  except Exception as e:
+    logger.info("subprocess raised: %s", e)
   return output.decode("UTF-8").strip()
 
 
@@ -153,8 +147,9 @@ def download_and_verify_bazel():
           package.file, "#" * progress_chars,
           "." * (num_chars - progress_chars), int(progress * 100.0)))
 
-    tmp_path, _ = urlretrieve(uri, None,
-                              progress if sys.stdout.isatty() else None)
+    tmp_path, _ = urllib.request.urlretrieve(
+      uri, None, progress if sys.stdout.isatty() else None
+    )
     sys.stdout.write("\n")
 
     # Verify that the downloaded Bazel binary has the expected SHA256.
@@ -185,7 +180,7 @@ def get_bazel_paths(bazel_path_flag):
   can be None. The resulting iterator is lazy and potentially has a side
   effects."""
   yield bazel_path_flag
-  yield which("bazel")
+  yield shutil.which("bazel")
   yield download_and_verify_bazel()
 
 
@@ -211,7 +206,7 @@ def get_bazel_path(bazel_path_flag):
 def get_bazel_version(bazel_path):
   try:
     version_output = shell([bazel_path, "--version"])
-  except subprocess.CalledProcessError:
+  except (subprocess.CalledProcessError, OSError):
     return None
   match = re.search(r"bazel *([0-9\\.]+)", version_output)
   if match is None:
@@ -344,6 +339,11 @@ def main():
   cwd = os.getcwd()
   parser = argparse.ArgumentParser(
       description="Builds jaxlib from source.", epilog=EPILOG)
+  add_boolean_argument(
+      parser,
+      "verbose",
+      default=False,
+      help_str="Should we produce verbose debugging output?")
   parser.add_argument(
       "--bazel_path",
       help="Path to the Bazel binary to use. The default is to find bazel via "
@@ -464,6 +464,10 @@ def main():
       help_str="If true, writes a .bazelrc file but does not build jaxlib.")
   args = parser.parse_args()
 
+  logging.basicConfig()
+  if args.verbose:
+    logger.setLevel(logging.DEBUG)
+
   if is_windows() and args.enable_cuda:
     if args.cuda_version is None:
       parser.error("--cuda_version is needed for Windows CUDA build.")
@@ -504,6 +508,7 @@ def main():
   print(f"NumPy version: {numpy_version}")
   check_package_is_installed(python_bin_path, "wheel")
   check_package_is_installed(python_bin_path, "build")
+  check_package_is_installed(python_bin_path, "setuptools")
 
   print("MKL-DNN enabled: {}".format("yes" if args.enable_mkl_dnn else "no"))
   print(f"Target CPU: {wheel_cpu}")
