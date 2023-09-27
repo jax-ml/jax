@@ -9,3 +9,4 @@ portpicker
 pytest-xdist
 wheel
 rich
+setuptools
