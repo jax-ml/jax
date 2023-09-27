@@ -1275,7 +1275,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testPoly(self, a_shape, dtype, rank):
     if dtype in (np.float16, jnp.bfloat16, np.int16):
       self.skipTest(f"{dtype} gets promoted to {np.float16}, which is not supported.")
-    elif rank == 2 and jtu.test_device_matches(["tpu", "gpu"]):
+    elif rank == 2 and not jtu.test_device_matches(["cpu"]):
       self.skipTest("Nonsymmetric eigendecomposition is only implemented on the CPU backend.")
     rng = jtu.rand_default(self.rng())
     tol = { np.int8: 2e-3, np.int32: 1e-3, np.float32: 1e-3, np.float64: 1e-6 }
@@ -1914,7 +1914,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     xshape=one_dim_array_shapes,
     yshape=one_dim_array_shapes,
   )
-  @jtu.skip_on_devices("gpu", "tpu", "rocm")  # backends don't support all dtypes.
+  @jtu.skip_on_devices("cuda", "tpu", "rocm")  # backends don't support all dtypes.
   def testConvolutionsPreferredElementType(self, xshape, yshape, dtype, mode, op):
     jnp_op = getattr(jnp, op)
     np_op = getattr(np, op)

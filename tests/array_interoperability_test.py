@@ -74,7 +74,7 @@ class DLPackTest(jtu.JaxTestCase):
   def testJaxRoundTrip(self, shape, dtype, take_ownership, gpu):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
-    if gpu and jax.default_backend() == "cpu":
+    if gpu and jax.test_device_matches(["cpu"]):
       raise unittest.SkipTest("Skipping GPU test case on CPU")
     device = jax.devices("gpu" if gpu else "cpu")[0]
     x = jax.device_put(np, device)
@@ -180,7 +180,7 @@ class DLPackTest(jtu.JaxTestCase):
     dtype=numpy_dtypes,
   )
   @unittest.skipIf(numpy_version < (1, 23, 0), "Requires numpy 1.23 or newer")
-  @jtu.skip_on_devices("gpu") #NumPy only accepts cpu DLPacks
+  @jtu.run_on_devices("cpu") # NumPy only accepts cpu DLPacks
   def testJaxToNumpy(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     x_jax = jnp.array(rng(shape, dtype))
@@ -192,7 +192,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if not jtu.test_device_matches(["gpu"]):
+    if not jtu.test_device_matches(["cuda"]):
       self.skipTest("__cuda_array_interface__ is only supported on GPU")
 
   @jtu.sample_product(

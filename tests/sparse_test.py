@@ -1958,7 +1958,7 @@ class BCOOTest(sptu.SparseTestCase):
   @jax.default_matmul_precision("float32")
   @jtu.ignore_warning(category=sparse.CuSparseEfficiencyWarning)
   def test_bcoo_matmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
-    if (jtu.test_device_matches(["gpu"]) and
+    if (jtu.test_device_matches(["cuda"]) and
         _is_required_cuda_version_satisfied(12000)):
       raise unittest.SkipTest("Triggers a bug in cuda-12 b/287344632")
 
@@ -2777,8 +2777,7 @@ class SparseSolverTest(sptu.SparseTestCase):
     reorder=[0, 1, 2, 3],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
-  @jtu.run_on_devices("cpu", "gpu")
-  @jtu.skip_on_devices("rocm")  # test n gpu requires cusolver
+  @jtu.run_on_devices("cpu", "cuda")
   def test_sparse_qr_linear_solver(self, size, reorder, dtype):
     if jtu.test_device_matches(["cuda"]) and not GPU_LOWERING_ENABLED:
       raise unittest.SkipTest('test requires cusparse/cusolver')
@@ -2805,8 +2804,7 @@ class SparseSolverTest(sptu.SparseTestCase):
     size=[10, 20, 50],
     dtype=jtu.dtypes.floating,
   )
-  @jtu.run_on_devices("cpu", "gpu")
-  @jtu.skip_on_devices("rocm")  # test requires cusolver
+  @jtu.run_on_devices("cpu", "cuda")
   def test_sparse_qr_linear_solver_grads(self, size, dtype):
     if jtu.test_device_matches(["cuda"]) and not GPU_LOWERING_ENABLED:
       raise unittest.SkipTest('test requires cusparse/cusolver')

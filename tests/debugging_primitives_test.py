@@ -98,10 +98,8 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
+  @jtu.device_supports_buffer_donation()
   def test_can_stage_out_debug_print_with_donate_argnums(self):
-    if jax.default_backend() not in {"gpu", "tpu"}:
-      raise unittest.SkipTest("Donate argnums not supported.")
-
     def f(x, y):
       debug_print('x: {x}', x=x)
       return x + y
@@ -120,10 +118,8 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
+  @jtu.device_supports_buffer_donation()
   def test_can_stage_out_ordered_print_with_donate_argnums(self):
-    if jax.default_backend() not in {"gpu", "tpu"}:
-      raise unittest.SkipTest("Donate argnums not supported.")
-
     def f(x, y):
       debug_print('x: {x}', x=x, ordered=True)
       return x + y
@@ -133,10 +129,8 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
+  @jtu.device_supports_buffer_donation()
   def test_can_stage_out_prints_with_donate_argnums(self):
-    if jax.default_backend() not in {"gpu", "tpu"}:
-      raise unittest.SkipTest("Donate argnums not supported.")
-
     def f(x, y):
       debug_print('x: {x}', x=x, ordered=True)
       debug_print('x: {x}', x=x)
