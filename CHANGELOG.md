@@ -19,8 +19,18 @@ Remember to align the itemized text with the first line of an item within a list
   * {func}`jax.scipy.stats.mode` now returns a 0 count if the mode is taken
     across a size-0 axis, matching the behavior of `scipy.stats.mode` in SciPy
     1.11.
+  * Removed the "No GPU/TPU" found warning. Instead warn if, on Linux, an
+    NVIDIA GPU or a Google TPU are found but not used and `--jax_platforms` was
+    not specified.
 
 # jaxlib 0.4.17
+
+* Changes:
+  * Python 3.12 wheels were added in this release.
+  * The CUDA 12 wheels now require CUDA 12.2.
+
+* Bug fixes:
+  * Fixed log spam from ABSL when the JAX CPU backend was initialized.
 
 ## jax 0.4.16 (Sept 18, 2023)
 
