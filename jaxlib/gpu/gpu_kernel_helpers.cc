@@ -18,6 +18,7 @@ limitations under the License.
 #include "absl/base/optimization.h"
 #include "absl/log/check.h"
 #include "absl/memory/memory.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 
@@ -31,8 +32,15 @@ std::string ErrorString(gpuError_t error) { return gpuGetErrorString(error); }
 
 std::string ErrorString(CUresult error) {
   const char* str;
-  CHECK_EQ(cuGetErrorName(error, &str), CUDA_SUCCESS);
-  return str;
+
+  CUresult result = cuGetErrorName(error, &str);
+  if (result == CUDA_SUCCESS) {
+    return str;
+  }
+  return absl::StrFormat(
+      "Unknown CUDA error %d; cuGetErrorName failed. This probably means that "
+      "JAX was unable to load the CUDA libraries.",
+      error);
 }
 
 std::string ErrorString(gpusparseStatus_t status) {
@@ -94,6 +102,59 @@ std::string ErrorString(gpublasStatus_t status) {
       return "cuBlas license error";
     default:
       return "Unknown cuBlas error";
+  }
+}
+
+std::string ErrorString(CUptiResult error) {
+  const char* str;
+  CUptiResult result = cuptiGetErrorMessage(error, &str);
+  if (result == CUPTI_SUCCESS) {
+    return str;
+  }
+  return absl::StrFormat(
+      "Unknown CUPTI error %d. This probably means that JAX was unable to load "
+      "cupti.",
+      error);
+}
+
+std::string ErrorString(cufftResult status) {
+  switch (status) {
+    case CUFFT_SUCCESS:
+      return "cuFFT success";
+    case CUFFT_INVALID_PLAN:
+      return "cuFFT invalid plan";
+    case CUFFT_ALLOC_FAILED:
+      return "cuFFT allocation failed";
+    case CUFFT_INVALID_TYPE:
+      return "cuFFT invalid type";
+    case CUFFT_INVALID_VALUE:
+      return "cuFFT invalid value";
+    case CUFFT_INTERNAL_ERROR:
+      return "cuFFT internal error";
+    case CUFFT_EXEC_FAILED:
+      return "cuFFT execution failed";
+    case CUFFT_SETUP_FAILED:
+      return "cuFFT setup failed";
+    case CUFFT_INVALID_SIZE:
+      return "cuFFT invalid size";
+    case CUFFT_UNALIGNED_DATA:
+      return "cuFFT unaligned data";
+    case CUFFT_INCOMPLETE_PARAMETER_LIST:
+      return "cuFFT incomplete parameter list";
+    case CUFFT_INVALID_DEVICE:
+      return "cuFFT invalid device";
+    case CUFFT_PARSE_ERROR:
+      return "cuFFT parse error";
+    case CUFFT_NO_WORKSPACE:
+      return "cuFFT no workspace";
+    case CUFFT_NOT_IMPLEMENTED:
+      return "cuFFT not implemented";
+    case CUFFT_LICENSE_ERROR:
+      return "cuFFT license error";
+    case CUFFT_NOT_SUPPORTED:
+      return "cuFFT not supported";
+    default:
+      return "Unknown cuFFT error";
   }
 }
 
@@ -231,6 +292,20 @@ absl::Status AsStatus(gpublasStatus_t status, const char* file,
 absl::Status AsStatus(CUresult error, const char* file, std::int64_t line,
                       const char* expr) {
   if (ABSL_PREDICT_FALSE(error != CUDA_SUCCESS))
+    return absl::InternalError(ErrorString(error, file, line, expr));
+  return absl::OkStatus();
+}
+
+absl::Status AsStatus(CUptiResult error, const char* file, std::int64_t line,
+                      const char* expr) {
+  if (ABSL_PREDICT_FALSE(error != CUPTI_SUCCESS))
+    return absl::InternalError(ErrorString(error, file, line, expr));
+  return absl::OkStatus();
+}
+
+absl::Status AsStatus(cufftResult error, const char* file, std::int64_t line,
+                      const char* expr) {
+  if (ABSL_PREDICT_FALSE(error != CUFFT_SUCCESS))
     return absl::InternalError(ErrorString(error, file, line, expr));
   return absl::OkStatus();
 }

@@ -200,6 +200,7 @@ def prepare_wheel(sources_path, *, cpu, include_gpu_plugin_extension):
     build_utils.copy_file(f"__main__/jaxlib/cuda/_prng.{pyext}", dst_dir=cuda_dir, runfiles=r)
     build_utils.copy_file(f"__main__/jaxlib/cuda/_rnn.{pyext}", dst_dir=cuda_dir, runfiles=r)
     build_utils.copy_file(f"__main__/jaxlib/cuda/_triton.{pyext}", dst_dir=cuda_dir, runfiles=r)
+    build_utils.copy_file(f"__main__/jaxlib/cuda/_versions.{pyext}", dst_dir=cuda_dir, runfiles=r)
   rocm_dir = os.path.join(jaxlib_dir, "rocm")
   if exists(f"__main__/jaxlib/rocm/_solver.{pyext}"):
     os.makedirs(rocm_dir)

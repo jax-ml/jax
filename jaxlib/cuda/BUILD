@@ -56,6 +56,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":cuda_vendor",
+        "@tsl//tsl/cuda:cupti",
         "@tsl//tsl/cuda:cusolver",
         "@tsl//tsl/cuda:cusparse",
         "@com_google_absl//absl/base:core_headers",
@@ -456,6 +457,44 @@ pybind_extension(
     ],
 )
 
+pybind_extension(
+    name = "_versions",
+    srcs = ["versions.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    linkopts = select({
+        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
+            "-Wl,-rpath,$$ORIGIN/../../nvidia/cuda_cupti/lib",
+            "-Wl,-rpath,$$ORIGIN/../../nvidia/cuda_runtime/lib",
+            "-Wl,-rpath,$$ORIGIN/../../nvidia/cublas/lib",
+            "-Wl,-rpath,$$ORIGIN/../../nvidia/cufft/lib",
+            "-Wl,-rpath,$$ORIGIN/../../nvidia/cudnn/lib",
+            "-Wl,-rpath,$$ORIGIN/../../nvidia/cusolver/lib",
+            "-Wl,-rpath,$$ORIGIN/../../nvidia/cusparse/lib",
+        ],
+        "//conditions:default": [],
+    }),
+    module_name = "_versions",
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":cuda_vendor",
+        "//jaxlib:absl_status_casters",
+        "//jaxlib:kernel_nanobind_helpers",
+        "@tsl//tsl/cuda:cublas",
+        "@tsl//tsl/cuda:cudart",
+        "@tsl//tsl/cuda:cudnn",
+        "@tsl//tsl/cuda:cufft",
+        "@tsl//tsl/cuda:cupti",
+        "@tsl//tsl/cuda:cusolver",
+        "@tsl//tsl/cuda:cusparse",
+        "@com_google_absl//absl/status:statusor",
+        "@nanobind",
+    ],
+)
+
 py_library(
     name = "cuda_gpu_support",
     deps = [
@@ -466,6 +505,7 @@ py_library(
         ":_solver",
         ":_sparse",
         ":_triton",
+        ":_versions",
     ],
 )
 

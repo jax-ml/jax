@@ -38,6 +38,7 @@ import warnings
 from jax._src import distributed
 from jax._src import config as jax_config
 from jax._src.config import config
+from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
@@ -167,6 +168,41 @@ register_backend_factory(
 )
 
 
+def _check_cuda_versions():
+  # TODO(phawkins): remove the test for None cuda_versions after jaxlib 0.4.17
+  # is the minimum.
+  if cuda_versions is None:
+    return
+
+  def _version_check(name, get_version, get_build_version):
+    build_version = get_build_version()
+    try:
+      version = get_version()
+    except Exception as e:
+      raise RuntimeError(f"Unable to load {name}.") from e
+    if build_version > version:
+      raise RuntimeError(
+          f"Found {name} version {version}, but JAX was built against version "
+          f"{build_version}, which is newer. The copy of {name} that is "
+          "installed must be at least as new as the version against which JAX "
+          "was built."
+      )
+
+  _version_check("CUDA", cuda_versions.cuda_runtime_get_version,
+                 cuda_versions.cuda_runtime_build_version)
+  _version_check("cuDNN", cuda_versions.cudnn_get_version,
+                 cuda_versions.cudnn_build_version)
+  _version_check("cuFFT", cuda_versions.cufft_get_version,
+                 cuda_versions.cufft_build_version)
+  _version_check("cuSOLVER", cuda_versions.cusolver_get_version,
+                 cuda_versions.cusolver_build_version)
+  _version_check("cuPTI", cuda_versions.cupti_get_version,
+                 cuda_versions.cupti_build_version)
+  # TODO(phawkins): ideally we'd check cublas and cusparse here also, but their
+  # "get version" APIs require initializing those libraries, which we don't want
+  # to do here.
+
+
 def make_gpu_client(
     *, platform_name: str, visible_devices_flag: jax_config.FlagHolder[str]
 ) -> xla_client.Client:
@@ -174,6 +210,9 @@ def make_gpu_client(
   allowed_devices = None
   if visible_devices != "all":
     allowed_devices = {int(x) for x in visible_devices.split(",")}
+
+  if platform_name == "cuda":
+    _check_cuda_versions()
 
   return xla_client.make_gpu_client(
       distributed_client=distributed.global_state.client,

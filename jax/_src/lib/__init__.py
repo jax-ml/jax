@@ -102,6 +102,11 @@ def _xla_gc_callback(*args):
   xla_client._xla.collect_garbage()
 gc.callbacks.append(_xla_gc_callback)
 
+try:
+  import jaxlib.cuda._versions as cuda_versions  # pytype: disable=import-error
+except ImportError:
+  cuda_versions = None
+
 import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error
 import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error
 import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error
