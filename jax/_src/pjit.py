@@ -1294,6 +1294,8 @@ def _pjit_lower_cached(
   # For `pjit(xmap)` cases, it needs to take the `lower_mesh_computation` path
   # because `xmap` only supports SPMDAxisContext right now.
   if dispatch.jaxpr_has_primitive(jaxpr.jaxpr, 'xmap'):
+    mesh = mesh_lib.thread_resources.env.physical_mesh
+    api_name = 'pjit'
     return pxla.lower_mesh_computation(
       jaxpr, api_name, name, mesh,
       in_shardings, out_shardings, donated_invars,
