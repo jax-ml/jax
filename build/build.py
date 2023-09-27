@@ -48,6 +48,7 @@ def shell(cmd):
     raise
   except Exception as e:
     logger.info("subprocess raised: %s", e)
+    raise
   return output.decode("UTF-8").strip()
 
 
