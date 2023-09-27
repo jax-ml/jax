@@ -758,6 +758,15 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self.assertEqual(0.0, jnp.std(x))
     self.assertEqual(0.0, jnp.std(x, where=True))
 
+  @jtu.sample_product(
+      dtype=[np.dtype(np.float16), np.dtype(dtypes.bfloat16)],
+  )
+  def test_f16_mean(self, dtype):
+    x = np.full(100_000, 1E-5, dtype=dtype)
+    expected = np.mean(x.astype('float64')).astype(dtype)
+    actual = jnp.mean(x)
+    self.assertAllClose(expected, actual, atol=0)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
