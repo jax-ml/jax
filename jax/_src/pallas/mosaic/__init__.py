@@ -21,6 +21,7 @@ from jax._src.pallas.mosaic.core import SemaphoreType
 from jax._src.pallas.mosaic.core import TPUMemorySpace
 from jax._src.pallas.mosaic.kernel_regeneration_util import encode_kernel_regeneration_metadata
 from jax._src.pallas.mosaic.kernel_regeneration_util import extract_kernel_regeneration_metadata
+from jax._src.pallas.mosaic.lowering import LoweringException
 from jax._src.pallas.mosaic.primitives import async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy
 from jax._src.pallas.mosaic.primitives import device_id

@@ -35,6 +35,7 @@ py_library_providing_imports_info(
     deps = [
         ":core",
         ":kernel_regeneration_util",
+        ":lowering",
         ":pallas_call_registration",
         ":primitives",
     ],
