@@ -1,3 +1,15 @@
+# Cloud TPU CI
+#
+# This job currently runs once per day. We use self-hosted TPU runners, so we'd
+# have to add more runners to run on every commit.
+#
+# This job's build matrix runs over several TPU architectures using both the
+# latest released jaxlib on PyPi ("pypi_latest") and the latest nightly
+# jaxlib.("nightly"). It also installs a matching libtpu, either the one pinned
+# to the release for "pypi_latest", or the latest nightly.for "nightly". It
+# always locally installs jax from github head (already checked out by the
+# Github Actions environment).
+
 name: CI - Cloud TPU (nightly)
 on:
   schedule:
@@ -12,9 +24,9 @@ jobs:
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
-        jaxlib-version: ["latest", "nightly"]
-        tpu-type: ["v3-8", "v4-8", "nightly"]
-    name: "TPU test (${{ matrix.jaxlib-version }}, ${{ matrix.tpu-type }})"
+        jaxlib-version: ["pypi_latest", "nightly"]
+        tpu-type: ["v3-8", "v4-8", "v5e-4"]
+    name: "TPU test (jaxlib=${{ matrix.jaxlib-version }}, ${{ matrix.tpu-type }})"
     runs-on: ["self-hosted", "tpu", "${{ matrix.tpu-type }}"]
     timeout-minutes: 60
     defaults:
@@ -32,7 +44,7 @@ jobs:
       - name: Install JAX
         run: |
           pip uninstall -y jax jaxlib libtpu-nightly
-          if [ "${{ matrix.jaxlib-version }}" == "latest" ]; then
+          if [ "${{ matrix.jaxlib-version }}" == "pypi_latest" ]; then
             pip install .[tpu] \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
