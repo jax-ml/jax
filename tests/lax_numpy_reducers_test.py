@@ -706,7 +706,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, rtol=tol)
 
   @unittest.skipIf(not config.jax_enable_x64, "test requires X64")
-  @unittest.skipIf(jtu.device_under_test() != 'cpu', "test is for CPU float64 precision")
+  @jtu.run_on_devices("cpu")  # test is for CPU float64 precision
   def testPercentilePrecision(self):
     # Regression test for https://github.com/google/jax/issues/8513
     x = jnp.float64([1, 2, 3, 4, 7, 10])

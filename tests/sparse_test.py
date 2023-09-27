@@ -197,12 +197,12 @@ def _is_required_cuda_version_satisfied(cuda_version):
 
 class cuSparseTest(sptu.SparseTestCase):
   def gpu_dense_conversion_warning_context(self, dtype):
-    if jtu.device_under_test() == "gpu" and np.issubdtype(dtype, np.integer):
+    if jtu.test_device_matches(["gpu"]) and np.issubdtype(dtype, np.integer):
       return self.assertWarns(sparse.CuSparseEfficiencyWarning)
     return contextlib.nullcontext()
 
   def gpu_matmul_dtype_warning_context(self, dtype):
-    if jtu.device_under_test() == "gpu" and dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
+    if jtu.test_device_matches(["gpu"]) and dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
       return self.assertWarns(sparse.CuSparseEfficiencyWarning)
     return contextlib.nullcontext()
 
@@ -499,7 +499,7 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(mat.todense(), mat_resorted.todense())
 
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
-  @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
+  @jtu.run_on_devices("gpu")
   def test_coo_sorted_indices_gpu_lowerings(self):
     dtype = jnp.float32
 
@@ -561,7 +561,7 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(matmat_expected, matmat_unsorted)
     self.assertArraysEqual(matmat_expected, matmat_unsorted_fallback)
 
-  @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
+  @jtu.run_on_devices("gpu")
   def test_gpu_translation_rule(self):
     version = xla_bridge.get_backend().platform_version
     if version.split()[0] != "rocm":
@@ -1065,8 +1065,6 @@ class BCOOTest(sptu.SparseTestCase):
     self._CheckBatchingSparse(dense_fun, sparse_fun, args_maker, atol=tol, rtol=tol,
                               bdims=self._random_bdims(props.n_batch, len(props.rhs_shape)))
 
-  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
-  @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape,
           lhs_contracting=lhs_contracting, rhs_contracting=rhs_contracting)
@@ -1085,6 +1083,8 @@ class BCOOTest(sptu.SparseTestCase):
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jax.default_matmul_precision("float32")
+  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
+  @jtu.run_on_devices("gpu")
   def test_bcoo_dot_general_cusparse(
     self, lhs_shape, rhs_shape, dtype, lhs_contracting, rhs_contracting):
     rng = jtu.rand_small(self.rng())
@@ -1108,8 +1108,6 @@ class BCOOTest(sptu.SparseTestCase):
     self._CompileAndCheck(f_sparse, args_maker)
     self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
 
-  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
-  @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
   @jtu.sample_product(
     [dict(n_batch=n_batch, lhs_shape=lhs_shape, rhs_shape=rhs_shape,
           lhs_contracting=lhs_contracting, rhs_contracting=rhs_contracting)
@@ -1125,6 +1123,8 @@ class BCOOTest(sptu.SparseTestCase):
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jax.default_matmul_precision("float32")
+  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
+  @jtu.run_on_devices("gpu")
   def test_bcoo_batched_matmat_cusparse(
     self, n_batch, lhs_shape, rhs_shape, dtype, lhs_contracting,
     rhs_contracting):
@@ -1152,8 +1152,6 @@ class BCOOTest(sptu.SparseTestCase):
     # self._CompileAndCheck(f_sparse, args_maker)
     self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
 
-  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
-  @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
   @jtu.sample_product(
     [dict(n_batch=n_batch, lhs_shape=lhs_shape, rhs_shape=rhs_shape,
           lhs_contracting=lhs_contracting, rhs_contracting=rhs_contracting)
@@ -1164,6 +1162,8 @@ class BCOOTest(sptu.SparseTestCase):
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
+  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
+  @jtu.run_on_devices("gpu")
   def test_bcoo_batched_matmat_default_lowering(
     self, n_batch, lhs_shape, rhs_shape, dtype, lhs_contracting,
     rhs_contracting):
@@ -1188,7 +1188,7 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertArraysEqual(matmat_expected, matmat_default_lowering_fallback)
 
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
-  @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
+  @jtu.run_on_devices("gpu")
   def test_bcoo_dot_general_oob_and_unsorted_indices_cusparse(self):
     """Tests bcoo dot general with out-of-bound and unsorted indices."""
 
@@ -1958,7 +1958,7 @@ class BCOOTest(sptu.SparseTestCase):
   @jax.default_matmul_precision("float32")
   @jtu.ignore_warning(category=sparse.CuSparseEfficiencyWarning)
   def test_bcoo_matmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
-    if (jtu.device_under_test() == "gpu" and
+    if (jtu.test_device_matches(["gpu"]) and
         _is_required_cuda_version_satisfied(12000)):
       raise unittest.SkipTest("Triggers a bug in cuda-12 b/287344632")
 
@@ -2422,7 +2422,7 @@ class SparseGradTest(sptu.SparseTestCase):
       self.assertAllClose(grad_sp.data, sparse_bcoo._bcoo_extract(grad_sp.indices, grad_de))
 
     with self.subTest("wrt dense"):
-      rtol = 0.01 if jtu.device_under_test() == 'tpu' else None
+      rtol = 0.01 if jtu.test_device_matches(['tpu']) else None
       self.assertAllClose(jac_dense(f, argnums=1, has_aux=has_aux)(X, y),
                           jac_sparse(f, argnums=1, has_aux=has_aux)(Xsp, y), rtol=rtol)
 
@@ -2777,11 +2777,11 @@ class SparseSolverTest(sptu.SparseTestCase):
     reorder=[0, 1, 2, 3],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
-  @unittest.skipIf(jtu.device_under_test() == "tpu", "test requires CPU or GPU")
-  @unittest.skipIf(jtu.device_under_test() == "cuda" and not GPU_LOWERING_ENABLED,
-                   "test requires cusparse/cusolver")
-  @jtu.skip_on_devices("rocm", "test n gpu requires cusolver")
+  @jtu.run_on_devices("cpu", "gpu")
+  @jtu.skip_on_devices("rocm")  # test n gpu requires cusolver
   def test_sparse_qr_linear_solver(self, size, reorder, dtype):
+    if jtu.test_device_matches(["cuda"]) and not GPU_LOWERING_ENABLED:
+      raise unittest.SkipTest('test requires cusparse/cusolver')
     rng = rand_sparse(self.rng())
     a = rng((size, size), dtype)
     nse = (a != 0).sum()
@@ -2805,11 +2805,11 @@ class SparseSolverTest(sptu.SparseTestCase):
     size=[10, 20, 50],
     dtype=jtu.dtypes.floating,
   )
-  @unittest.skipIf(jtu.device_under_test() == "tpu", "test requires CPU or GPU")
-  @unittest.skipIf(jtu.device_under_test() == "cuda" and not GPU_LOWERING_ENABLED,
-                   "test requires cusparse/cusolver")
-  @jtu.skip_on_devices("rocm", "test requires cusolver")
+  @jtu.run_on_devices("cpu", "gpu")
+  @jtu.skip_on_devices("rocm")  # test requires cusolver
   def test_sparse_qr_linear_solver_grads(self, size, dtype):
+    if jtu.test_device_matches(["cuda"]) and not GPU_LOWERING_ENABLED:
+      raise unittest.SkipTest('test requires cusparse/cusolver')
     rng = rand_sparse(self.rng())
     a = rng((size, size), dtype)
     nse = (a != 0).sum()

@@ -1552,7 +1552,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(jnp.sin, native_serialization=True,
                           native_serialization_platforms=('tpu',))
     x = np.float32(.5)
-    if jtu.device_under_test() == "tpu":
+    if jtu.test_device_matches(["tpu"]):
       self.assertAllClose(jnp.sin(x), f_tf(x))
     else:
       # We can construct the tf.Graph
@@ -1603,7 +1603,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     logging.info("Found graph_def: %s", graph_def)
     self.assertLen(re.findall(r'op:\s*"XlaCallModule"', str(graph_def)), 2)
 
-    if jtu.device_under_test() != "tpu":
+    if not jtu.test_device_matches(["tpu"]):
       with self.assertRaisesRegex(
           tf.errors.NotFoundError,
           r"The current platform .* is not among the platforms required by the module: \[TPU\]"):
@@ -1629,7 +1629,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_tuple_args(self):
     # On TPU if we have more than 2000 arguments, we pass them as a tuple.
     # This is a compiler option, and should have no effect on lowering.
-    if jtu.device_under_test() != "tpu":
+    if not jtu.test_device_matches(["tpu"]):
       raise unittest.SkipTest("Test enabled on TPU only")
     def f_jax(*many_args):
       acc = 0.

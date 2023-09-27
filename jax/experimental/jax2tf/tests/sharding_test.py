@@ -58,7 +58,7 @@ topology = None
 
 def setUpModule():
   global prev_xla_flags, topology
-  if jtu.device_under_test() == "tpu":
+  if jtu.test_device_matches(["tpu"]):
     resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='')
     tf.config.experimental_connect_to_cluster(resolver)
     # Do TPU init at beginning since it will wipe out all HBMs.
@@ -91,7 +91,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
   """
   def setUp(self):
     super().setUp()
-    if jtu.device_under_test() == "gpu":
+    if jtu.test_device_matches(["gpu"]):
       raise unittest.SkipTest("Sharding HLO tests not useful for GPU")
 
     if len(jax.devices()) < 2:
@@ -106,7 +106,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     logging.info("[%s] got JAX HLO %s", self._testMethodName, jax_hlo)
 
     # We only dump JAX optimized code on the TPU
-    if jtu.device_under_test() == "tpu":
+    if jtu.test_device_matches(["tpu"]):
       backend = xla_bridge.get_backend()
       device_assignment = np.arange(num_partitions * num_replicas)
       device_assignment = np.reshape(device_assignment, (-1, num_partitions))
@@ -214,7 +214,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     @tf.function(autograph=False, jit_compile=True)
     def f_tf(x):
       f_converted = jax2tf.convert(f_jax)
-      if jtu.device_under_test() == "tpu":
+      if jtu.test_device_matches(["tpu"]):
         return tf.compat.v1.tpu.rewrite(
             f_converted, [tf.convert_to_tensor(x)],
             device_assignment=self.device_assignment(
@@ -299,7 +299,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     @tf.function(autograph=False, jit_compile=True)
     def f_tf(x):
       f_converted = jax2tf.convert(f_jax)
-      if jtu.device_under_test() == "tpu":
+      if jtu.test_device_matches(["tpu"]):
         return tf.compat.v1.tpu.rewrite(
             f_converted, [tf.convert_to_tensor(x)],
             device_assignment=self.device_assignment(
@@ -539,7 +539,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     def f_tf(a, b):
       # xmap works only with native serialization
       f_converted = jax2tf.convert(f_jax, native_serialization=True)
-      if jtu.device_under_test() == "tpu":
+      if jtu.test_device_matches(["tpu"]):
         res = tf.compat.v1.tpu.rewrite(
             f_converted, [tf.convert_to_tensor(a), tf.convert_to_tensor(b)],
             device_assignment=self.device_assignment(
@@ -579,7 +579,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     @tf.function(autograph=False, jit_compile=True)
     def f_tf(a, b):
       f_converted = jax2tf.convert(f_jax, native_serialization=True)
-      if jtu.device_under_test() == "tpu":
+      if jtu.test_device_matches(["tpu"]):
         res = tf.compat.v1.tpu.rewrite(
             f_converted, [tf.convert_to_tensor(a), tf.convert_to_tensor(b)],
             device_assignment=self.device_assignment(
@@ -633,7 +633,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
   @jtu.ignore_warning(category=UserWarning,
                       message="all_to_all .* are only implemented properly for TPUs and GPUs .*")
   def test_shmap_all_to_all(self):
-    if jtu.device_under_test() == "cpu":
+    if jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("TODO(b/268295912): ShardingRemover crash")
 
     mesh = Mesh(self.devices, axis_names=('x'))
@@ -649,7 +649,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     @tf.function(autograph=False, jit_compile=True)
     def f_tf(a):
       f_converted = jax2tf.convert(f_jax, native_serialization=True)
-      if jtu.device_under_test() == "tpu":
+      if jtu.test_device_matches(["tpu"]):
         return tf.compat.v1.tpu.rewrite(
             f_converted, [tf.convert_to_tensor(a)],
             device_assignment=self.device_assignment(
@@ -710,7 +710,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       for poly in (None, "2*b1,_", "_,b2", "2*b1,b2")
     ])
   def test_shmap_collective_permute(self, poly=None):
-    if jtu.device_under_test() == "cpu":
+    if jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("TODO(b/268295912): ShardingRemover crash")
     mesh = Mesh(self.devices, axis_names=('x'))
     a = np.arange(4 * 4, dtype=np.float32).reshape((4, 4))
@@ -728,7 +728,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     def f_tf(a):
       f_converted = jax2tf.convert(f_jax, native_serialization=True,
                                    polymorphic_shapes=poly)
-      if jtu.device_under_test() == "tpu":
+      if jtu.test_device_matches(["tpu"]):
         res = tf.compat.v1.tpu.rewrite(
             f_converted, [tf.convert_to_tensor(a)],
             device_assignment=self.device_assignment(

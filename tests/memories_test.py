@@ -60,7 +60,7 @@ def _create_inputs(shape, pspec, mem_kind=None):
 class MemoriesTest(jtu.BufferDonationTestCase):
 
   def setUp(self):
-    if jtu.device_under_test() in ("cpu", "gpu"):
+    if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Memories do not work on CPU and GPU backends yet.")
     super().setUp()
 

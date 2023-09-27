@@ -41,11 +41,11 @@ class NNFunctionsTest(jtu.JaxTestCase):
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), order=4,
-                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
   def testSoftplusGradZero(self):
     check_grads(nn.softplus, (0.,), order=1,
-                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
   def testSoftplusGradInf(self):
     self.assertAllClose(
@@ -53,25 +53,25 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   def testSoftplusGradNegInf(self):
     check_grads(nn.softplus, (-float('inf'),), order=1,
-                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
   def testSoftplusGradNan(self):
     check_grads(nn.softplus, (float('nan'),), order=1,
-                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
   @parameterized.parameters([int, float] + jtu.dtypes.floating + jtu.dtypes.integer)
   def testSoftplusZero(self, dtype):
     self.assertEqual(jnp.log(dtype(2)), nn.softplus(dtype(0)))
 
   def testReluGrad(self):
-    rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
+    rtol = 1e-2 if jtu.test_device_matches(["tpu"]) else None
     check_grads(nn.relu, (1.,), order=3, rtol=rtol)
     check_grads(nn.relu, (-1.,), order=3, rtol=rtol)
     jaxpr = jax.make_jaxpr(jax.grad(nn.relu))(0.)
     self.assertGreaterEqual(len(jaxpr.jaxpr.eqns), 2)
 
   def testRelu6Grad(self):
-    rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
+    rtol = 1e-2 if jtu.test_device_matches(["tpu"]) else None
     check_grads(nn.relu6, (1.,), order=3, rtol=rtol)
     check_grads(nn.relu6, (-1.,), order=3, rtol=rtol)
     self.assertAllClose(jax.grad(nn.relu6)(0.), 0., check_dtypes=False)

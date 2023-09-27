@@ -397,7 +397,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   )
   def testArgMinMax(self, np_op, jnp_op, rng_factory, shape, dtype, axis, keepdims):
     rng = rng_factory(self.rng())
-    if dtype == np.complex128 and jtu.device_under_test() == "gpu":
+    if dtype == np.complex128 and jtu.test_device_matches(["gpu"]):
       raise unittest.SkipTest("complex128 reductions not supported on GPU")
     if "nan" in np_op.__name__ and dtype == jnp.bfloat16:
       raise unittest.SkipTest("NumPy doesn't correctly handle bfloat16 arrays")
@@ -1275,11 +1275,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testPoly(self, a_shape, dtype, rank):
     if dtype in (np.float16, jnp.bfloat16, np.int16):
       self.skipTest(f"{dtype} gets promoted to {np.float16}, which is not supported.")
-    elif rank == 2 and jtu.device_under_test() in ("tpu", "gpu"):
+    elif rank == 2 and jtu.test_device_matches(["tpu", "gpu"]):
       self.skipTest("Nonsymmetric eigendecomposition is only implemented on the CPU backend.")
     rng = jtu.rand_default(self.rng())
     tol = { np.int8: 2e-3, np.int32: 1e-3, np.float32: 1e-3, np.float64: 1e-6 }
-    if jtu.device_under_test() == "tpu":
+    if jtu.test_device_matches(["tpu"]):
       tol[np.int32] = tol[np.float32] = 1e-1
     tol = jtu.tolerance(dtype, tol)
     args_maker = lambda: [rng(a_shape * rank, dtype)]
@@ -1898,7 +1898,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_op = getattr(np, op)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
-    precision = lax.Precision.HIGHEST if jtu.device_under_test() == "tpu" else None
+    precision = lax.Precision.HIGHEST if jtu.test_device_matches(["tpu"]) else None
     jnp_fun = partial(jnp_op, mode=mode, precision=precision)
     def np_fun(x, y):
       return np_op(x, y, mode=mode).astype(dtypes.to_inexact_dtype(dtype))
@@ -1920,7 +1920,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_op = getattr(np, op)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
-    precision = lax.Precision.HIGHEST if jtu.device_under_test() == "tpu" else None
+    precision = lax.Precision.HIGHEST if jtu.test_device_matches(["tpu"]) else None
     jnp_fun = partial(jnp_op, mode=mode, precision=precision,
                       preferred_element_type=dtype)
     def np_fun(x, y):
@@ -3537,7 +3537,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     dtype=(*all_dtypes, None) if config.x64_enabled else all_dtypes,
   )
   def testView(self, shape, a_dtype, dtype):
-    if jtu.device_under_test() == 'tpu':
+    if jtu.test_device_matches(["tpu"]):
       if jnp.dtype(a_dtype).itemsize in [1, 2] or jnp.dtype(dtype).itemsize in [1, 2]:
         self.skipTest("arr.view() not supported on TPU for 8- or 16-bit types.")
     # It is possible to fill bool arrays with arbitrary bits (not just 0/1
@@ -3561,7 +3561,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if np.dtype(a_dtype).itemsize == np.dtype(dtype).itemsize
   ])
   def testViewScalar(self, a_dtype, dtype):
-    if jtu.device_under_test() == 'tpu':
+    if jtu.test_device_matches(["tpu"]):
       if jnp.dtype(a_dtype).itemsize in [1, 2] or jnp.dtype(dtype).itemsize in [1, 2]:
         self.skipTest("arr.view() not supported on TPU for 8- or 16-bit types.")
     rng = jtu.rand_fullrange(self.rng())
@@ -4012,7 +4012,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     sparse=[True, False],
   )
   def testIndices(self, dimensions, dtype, sparse):
-    if jtu.device_under_test() == "tpu" and dtype in (np.int16, np.uint16):
+    if jtu.test_device_matches(["tpu"]) and dtype in (np.int16, np.uint16):
       raise unittest.SkipTest("Compilation failure on TPU ")
     def args_maker(): return []
     np_fun = partial(np.indices, dimensions=dimensions,
@@ -4315,7 +4315,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
               jnp.finfo(dtype).max, np.sqrt(jnp.finfo(dtype).max),
               np.sqrt(jnp.finfo(dtype).max) * 2.):
       if (op in ("sin", "cos", "tan") and
-          jtu.device_under_test() == "tpu"):
+          jtu.test_device_matches(["tpu"])):
         continue  # TODO(b/132196789): fix and reenable.
       x = dtype(x)
       expected = np_op(x)
@@ -4644,7 +4644,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testLogspace(self, start_shape, stop_shape, num,
                    endpoint, base, dtype):
     if (dtype in int_dtypes and
-        jtu.device_under_test() in ("gpu", "tpu") and
+        jtu.test_device_matches(["gpu", "tpu"]) and
         not config.x64_enabled):
       raise unittest.SkipTest("GPUx32 truncated exponentiation"
                               " doesn't exactly match other platforms.")
@@ -5041,7 +5041,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     rng = jtu.rand_some_nan(self.rng())
     args_maker = lambda: tuple(rng(shape, dtype) for shape, dtype in zip(shapes, dtypes))
-    if jtu.device_under_test() == 'tpu':
+    if jtu.test_device_matches(["tpu"]):
       tol = {np.complex64: 1e-3, np.complex128: 1e-10}
     else:
       tol = {np.complex64: 1e-5, np.complex128: 1e-14}
@@ -5067,7 +5067,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     rng = jtu.rand_some_nan(self.rng())
     args_maker = lambda: tuple(rng(shape, dtype) for shape, dtype in zip(shapes, dtypes))
-    if jtu.device_under_test() == 'tpu':
+    if jtu.test_device_matches(["tpu"]):
       tol = {np.complex64: 1e-3, np.complex128: 1e-10}
     else:
       tol = {np.complex64: 1e-5, np.complex128: 1e-14}
@@ -5224,7 +5224,7 @@ class NumpyGradTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     tol = jtu.join_tolerance(tol, {np.float32: 1e-1, np.float64: 1e-3,
                                    np.complex64: 1e-1, np.complex128: 1e-3})
-    if jtu.device_under_test() == 'tpu' and op == jnp.arctanh:
+    if jtu.test_device_matches(["tpu"]) and op == jnp.arctanh:
       tol = jtu.join_tolerance(tol, {np.float32: 2e-1})
 
     args = tuple(rng(shape, dtype) for shape in shapes)
@@ -5290,7 +5290,7 @@ class NumpyGradTests(jtu.JaxTestCase):
   def testGradLogaddexpComplex(self, shapes, dtype):
     rng = jtu.rand_default(self.rng())
     args = tuple(jnp.array(rng(shape, dtype)) for shape in shapes)
-    if jtu.device_under_test() == "tpu":
+    if jtu.test_device_matches(["tpu"]):
       tol = 5e-2
     else:
       tol = 3e-2
@@ -5305,7 +5305,7 @@ class NumpyGradTests(jtu.JaxTestCase):
   def testGradLogaddexp2Complex(self, shapes, dtype):
     rng = jtu.rand_default(self.rng())
     args = tuple(jnp.array(rng(shape, dtype)) for shape in shapes)
-    if jtu.device_under_test() == "tpu":
+    if jtu.test_device_matches(["tpu"]):
       tol = 5e-2
     else:
       tol = 3e-2

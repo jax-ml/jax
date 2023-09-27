@@ -62,7 +62,7 @@ all_shapes = nonempty_array_shapes + empty_array_shapes
 class DLPackTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
-    if jtu.device_under_test() not in ["cpu", "gpu"]:
+    if jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest(f"DLPack not supported on {jtu.device_under_test()}")
 
   @jtu.sample_product(
@@ -120,16 +120,16 @@ class DLPackTest(jtu.JaxTestCase):
   def testTensorFlowToJax(self, shape, dtype):
     if not config.x64_enabled and dtype in [jnp.int64, jnp.uint64, jnp.float64]:
       raise self.skipTest("x64 types are disabled by jax_enable_x64")
-    if (jtu.device_under_test() == "gpu" and
+    if (jtu.test_device_matches(["gpu"]) and
         not tf.config.list_physical_devices("GPU")):
       raise self.skipTest("TensorFlow not configured with GPU support")
 
-    if jtu.device_under_test() == "gpu" and dtype == jnp.int32:
+    if jtu.test_device_matches(["gpu"]) and dtype == jnp.int32:
       raise self.skipTest("TensorFlow does not place int32 tensors on GPU")
 
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
-    with tf.device("/GPU:0" if jtu.device_under_test() == "gpu" else "/CPU:0"):
+    with tf.device("/GPU:0" if jtu.test_device_matches(["gpu"]) else "/CPU:0"):
       x = tf.identity(tf.constant(np))
     dlpack = tf.experimental.dlpack.to_dlpack(x)
     y = jax.dlpack.from_dlpack(dlpack)
@@ -144,7 +144,7 @@ class DLPackTest(jtu.JaxTestCase):
     if not config.x64_enabled and dtype in [jnp.int64, jnp.uint64,
                                               jnp.float64]:
       self.skipTest("x64 types are disabled by jax_enable_x64")
-    if (jtu.device_under_test() == "gpu" and
+    if (jtu.test_device_matches(["gpu"]) and
         not tf.config.list_physical_devices("GPU")):
       raise self.skipTest("TensorFlow not configured with GPU support")
     rng = jtu.rand_default(self.rng())
@@ -192,7 +192,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jtu.device_under_test() != "gpu":
+    if not jtu.test_device_matches(["gpu"]):
       self.skipTest("__cuda_array_interface__ is only supported on GPU")
 
   @jtu.sample_product(

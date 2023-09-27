@@ -369,7 +369,7 @@ class F32LobpcgTest(LobpcgTest):
 
   def setUp(self):
     # TODO(phawkins): investigate this failure
-    if jtu.device_under_test() == "gpu":
+    if jtu.test_device_matches(["gpu"]):
       raise unittest.SkipTest("Test is failing on CUDA gpus")
     super().setUp()
 
@@ -409,7 +409,7 @@ class F64LobpcgTest(LobpcgTest):
 
   def setUp(self):
     # TODO(phawkins): investigate this failure
-    if jtu.device_under_test() == "gpu":
+    if jtu.test_device_matches(["gpu"]):
       raise unittest.SkipTest("Test is failing on CUDA gpus")
     super().setUp()
 

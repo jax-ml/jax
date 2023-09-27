@@ -696,7 +696,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     shape=[(), (10), (2, 3)],
   )
   def test_buffer_protocol(self, dtype, shape):
-    if jtu.device_under_test() != "cpu":
+    if not jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("Buffer protocol only works on CPU")
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
@@ -717,7 +717,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertEqual(x_bytes, y_bytes)
 
   def test_buffer_protocol_deletion(self):
-    if jtu.device_under_test() != "cpu":
+    if not jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("Buffer protocol only works on CPU")
     rng = jtu.rand_default(self.rng())
     x = rng((3, 4), np.float32)

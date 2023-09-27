@@ -99,7 +99,7 @@ class ProfilerTest(unittest.TestCase):
       # Sanity check that serialized proto contains host, device, and
       # Python traces without deserializing.
       self.assertIn(b"/host:CPU", proto)
-      if jtu.device_under_test() == "tpu":
+      if jtu.test_device_matches(["tpu"]):
         self.assertIn(b"/device:TPU", proto)
       self.assertIn(b"pxla.py", proto)
 
@@ -132,7 +132,7 @@ class ProfilerTest(unittest.TestCase):
       # Sanity check that serialized proto contains host and device traces
       # without deserializing.
       self.assertIn(b"/host:CPU", proto)
-      if jtu.device_under_test() == "tpu":
+      if jtu.test_device_matches(["tpu"]):
         self.assertIn(b"/device:TPU", proto)
 
   def testTraceAnnotation(self):

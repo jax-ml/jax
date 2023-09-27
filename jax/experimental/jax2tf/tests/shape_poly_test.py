@@ -66,10 +66,9 @@ _f32 = np.float32
 _i32 = np.int32
 
 expect_error_associative_scan = (
-    (None, None) if (not config.jax2tf_default_native_serialization or
-                                         jtu.device_under_test() == "tpu") else
-    (NotImplementedError,
-     "associative scan over axis of non-constant size"))
+    NotImplementedError,
+    "associative scan over axis of non-constant size",
+)
 
 
 class DimExprTest(tf_test_util.JaxToTfTestCase):
@@ -1584,7 +1583,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     ).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
     # In graph serialization graph mode we also catch it (except on TPU, where
     # the behavior is as for jit_compile=1)
-    if jtu.device_under_test() == "tpu":
+    if jtu.test_device_matches(["tpu"]):
       self.assertEqual(jnp.array([1.], dtype=np.float32), f1_tf(x0))
     else:
       with self.assertRaisesRegex(
@@ -1639,7 +1638,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                        native_serialization=False),
         autograph=False,
     ).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
-    if jtu.device_under_test() == "tpu":
+    if jtu.test_device_matches(["tpu"]):
       self.assertEqual(1. + jnp.sum(x45), f2_tf(x45))
     else:
       with self.assertRaisesRegex(
@@ -3065,6 +3064,12 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       #one_containing="",
   )
   def test_harness(self, harness: PolyHarness):
+    if harness.expect_error == expect_error_associative_scan and (
+        not config.jax2tf_default_native_serialization
+        or jtu.test_device_matches(["tpu"])
+    ):
+      harness.expect_error = (None, None)
+
     # Exclude some harnesses that are known to fail for native serialization
     # FOR NATIVE SERIALIZATION
     if config.jax2tf_default_native_serialization:
@@ -3084,14 +3089,14 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
         raise unittest.SkipTest("native serialization with shape polymorphism not implemented for custom calls; b/261671778")
 
-      if harness.group_name == "schur" and jtu.device_under_test() != "cpu":
+      if harness.group_name == "schur" and not jtu.test_device_matches(["cpu"]):
         raise unittest.SkipTest("schur decomposition is only implemented on CPU.")
 
       if "fft_fft_type" in harness.fullname:
         if "nr_fft_lengths_2" in harness.fullname:
           raise unittest.SkipTest("native serialization with shape polymorphism not implemented for fft with non-constant fft_lengths on GPU and TPU")
 
-      if harness.group_name == "vmap_eigh" and jtu.device_under_test() == "gpu":
+      if harness.group_name == "vmap_eigh" and jtu.test_device_matches(["gpu"]):
         # For eigh on GPU with shape polymorphism under native serialization,
         # we use a different lowering for small matrices. See README.md.
         shape = harness.original_harness.params["shape"]
@@ -3103,7 +3108,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         raise unittest.SkipTest(
             "native lowering with shape polymorphism requires additional StableHLO feature support")
 
-      if (jtu.device_under_test() in ["cpu", "gpu"] and
+      if (jtu.test_device_matches(["cpu", "gpu"]) and
           harness.fullname in [
               "cumsum_reduce_axis_poly", "cumprod_reduce_axis_poly",
               "cummin_reduce_axis_poly", "cummax_reduce_axis_poly",
@@ -3120,7 +3125,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     # FOR GRAPH SERIALIZATION
     if not config.jax2tf_default_native_serialization:
       if ("random_gamma_threefry_non_partitionable" in harness.fullname and
-          jtu.device_under_test() == "cpu"):
+          jtu.test_device_matches(["cpu"])):
         harness.tol = 1e-6
 
       if harness.group_name == "vmap_cumsum":
@@ -3170,7 +3175,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       # https://github.com/openxla/stablehlo/issues/1268
       raise unittest.SkipTest("Need more dynamism for DynamicConvOp")
 
-    if harness.group_name == "eig" and jtu.device_under_test() != "cpu":
+    if harness.group_name == "eig" and not jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("JAX implements eig only on CPU.")
 
     prev_jax_config_flags = {

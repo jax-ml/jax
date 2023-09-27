@@ -136,7 +136,7 @@ class JaxJitTest(jtu.JaxTestCase):
       self.assertEqual(jnp.asarray(bool_value).dtype, res.dtype)
 
     # Complex
-    if not (config.x64_enabled and jtu.device_under_test() == "tpu"):
+    if not (config.x64_enabled and jtu.test_device_matches(["tpu"])):
       # No TPU support for complex128.
       res = np.asarray(_cpp_device_put(1 + 1j, device))
       self.assertEqual(res, 1 + 1j)
@@ -191,7 +191,7 @@ class JaxJitTest(jtu.JaxTestCase):
       self.assertEqual(signature.shape, ())
       self.assertTrue(signature.weak_type)
     # Complex
-    if not (jax_enable_x64 and jtu.device_under_test() == "tpu"):
+    if not (jax_enable_x64 and jtu.test_device_matches(["tpu"])):
       # No TPU support for complex128.
       signature = jaxlib.jax_jit._ArgSignatureOfValue(1 + 1j, jax_enable_x64)
       self.assertEqual(signature.dtype, jax.device_put(1 + 1j).dtype)

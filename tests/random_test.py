@@ -930,7 +930,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     samples = random.beta(key, a, b, shape=(100,), dtype=dtype)
 
     # With such small parameters, all samples should be exactly zero or one.
-    tol = 5E-2 if jtu.device_under_test() == "tpu" else 1E-3
+    tol = 5E-2 if jtu.test_device_matches(["tpu"]) else 1E-3
 
     zeros = samples[samples < 0.5]
     self.assertAllClose(zeros, jnp.zeros_like(zeros), atol=tol)
@@ -1055,7 +1055,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       pdf = scipy.stats.gamma.pdf(z, alpha)
     expected_grad = -cdf_dot / pdf
 
-    rtol = 2e-2 if jtu.device_under_test() == "tpu" else 7e-4
+    rtol = 2e-2 if jtu.test_device_matches(["tpu"]) else 7e-4
     self.assertAllClose(actual_grad, expected_grad, check_dtypes=True,
                         rtol=rtol)
 

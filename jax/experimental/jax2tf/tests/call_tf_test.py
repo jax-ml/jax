@@ -350,7 +350,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
 
   @_parameterized_jit
   def test_with_multiple_capture(self, with_jit=True):
-    if jtu.device_under_test() == "gpu":
+    if jtu.test_device_matches(["gpu"]):
       raise unittest.SkipTest("Test fails on GPU")
     v2 = tf.Variable(2., dtype=np.float32)
     v3 = tf.Variable(3., dtype=np.float32)
@@ -944,7 +944,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
       candidate = jax.tree_util.tree_map(conversion, candidate)
       tol = (
           1e-2
-          if jtu.device_under_test() == "tpu" and dtype == np.float16
+          if jtu.test_device_matches(["tpu"]) and dtype == np.float16
           else None
       )
       self.assertAllClose(baseline, candidate, atol=tol, rtol=tol)

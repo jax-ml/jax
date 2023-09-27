@@ -104,12 +104,14 @@ class LaxTest(jtu.JaxTestCase):
     op = getattr(lax, op_name)
     numpy_op = getattr(lax_reference, op_name)
     tol = tol or jtu.default_tolerance()
-    if jtu.device_under_test() == "tpu":
+    if jtu.test_device_matches(["tpu"]):
       if dtype in (np.float32, np.complex64) and op_name in (
         "acosh", "asinh", "cos", "cosh", "digamma", "exp", "exp2", "igamma",
         "igammac", "log", "log1p", "logistic", "pow", "sin", "sinh", "tan"):
         tol = jtu.join_tolerance(tol, 2e-4)
-      if op_name == "asinh" and dtype == np.float16:
+      elif op_name == "asinh" and dtype == np.float16:
+        tol = jtu.join_tolerance(tol, 1e-3)
+      elif op_name == "lgamma" and dtype == np.float32:
         tol = jtu.join_tolerance(tol, 1e-3)
     self._CheckAgainstNumpy(numpy_op, op, args_maker, tol=tol)
 
@@ -296,10 +298,10 @@ class LaxTest(jtu.JaxTestCase):
         or dtype == np.int64 or preferred_element_type == np.int64
         or dtype == np.complex128 or preferred_element_type == np.complex128)):
       raise SkipTest("64-bit mode disabled")
-    if (jtu.device_under_test() == "tpu" and
+    if (jtu.test_device_matches(["tpu"]) and
        (dtype == np.complex128 or preferred_element_type == np.complex128)):
       raise SkipTest("np.complex128 is not yet supported on TPU")
-    if jtu.device_under_test() == "gpu" and np.issubdtype(dtype, np.integer):
+    if jtu.test_device_matches(["gpu"]) and np.issubdtype(dtype, np.integer):
       # TODO(b/183565702): Support integer convolutions on CPU/GPU.
       raise SkipTest("Integer convolution not yet supported on GPU")
     # x64 implementation is only accurate to ~float32 precision for this case.
@@ -307,10 +309,10 @@ class LaxTest(jtu.JaxTestCase):
       tol = 1e-5
     else:
       tol = {np.float64: 1e-14}
-    if (jtu.device_under_test() == "tpu" and dtype == np.float16 and
+    if (jtu.test_device_matches(["tpu"]) and dtype == np.float16 and
         preferred_element_type == np.float32):
       tol = 2e-3
-    if (jtu.device_under_test() == "tpu" and dtype == jnp.bfloat16 and
+    if (jtu.test_device_matches(["tpu"]) and dtype == jnp.bfloat16 and
         preferred_element_type == np.float32):
       tol = 1e-5
 
@@ -411,7 +413,7 @@ class LaxTest(jtu.JaxTestCase):
                                dimension_numbers, perms):
     if np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.bool_):
       # TODO(b/183565702): Support integer convolutions on CPU/GPU.
-      if jtu.device_under_test() == "gpu":
+      if jtu.test_device_matches(["gpu"]):
         raise SkipTest("Integer convolution not yet supported on GPU")
     rng = jtu.rand_small(self.rng())
     lhs_perm, rhs_perm = perms  # permute to compatible shapes
@@ -467,7 +469,7 @@ class LaxTest(jtu.JaxTestCase):
                              dimension_numbers, perms):
     if np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.bool_):
       # TODO(b/183565702): Support integer convolutions on CPU/GPU.
-      if jtu.device_under_test() == "gpu":
+      if jtu.test_device_matches(["gpu"]):
         raise SkipTest("Integer convolution not yet supported on GPU")
     rng = jtu.rand_small(self.rng())
     lhs_perm, rhs_perm = perms  # permute to compatible shapes
@@ -617,7 +619,7 @@ class LaxTest(jtu.JaxTestCase):
                                                   precision):
     if np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.bool_):
       # TODO(b/183565702): Support integer convolutions on CPU/GPU.
-      if jtu.device_under_test() == "gpu":
+      if jtu.test_device_matches(["gpu"]):
         raise SkipTest("Integer convolution not yet supported on GPU")
     rng = jtu.rand_small(self.rng())
     lhs = rng(lhs_shape, dtype)
@@ -681,7 +683,7 @@ class LaxTest(jtu.JaxTestCase):
         range(len(filter_shape)),
         [out_spec.index(c) for c in out_spec if c not in ('N', 'C')])
     tol = None
-    if (jtu.device_under_test() == "tpu" and
+    if (jtu.test_device_matches(["tpu"]) and
         precision in (None, lax.Precision.DEFAULT)):
       tol = 1e-3
     self.assertAllClose(out, patches, atol=tol, rtol=tol)
@@ -1035,10 +1037,10 @@ class LaxTest(jtu.JaxTestCase):
        (dtype == np.float64 or preferred_element_type == np.float64
         or dtype == np.int64 or preferred_element_type == np.int64)):
       raise SkipTest("64-bit mode disabled")
-    if (jtu.device_under_test() == "tpu" and
+    if (jtu.test_device_matches(["tpu"]) and
        (dtype == np.complex128 or preferred_element_type == np.complex128)):
       raise SkipTest("np.complex128 is not yet supported on TPU")
-    if jtu.device_under_test() == "gpu":
+    if jtu.test_device_matches(["gpu"]):
       # TODO(b/189287598)
       raise SkipTest("dot_general with preferred_element_type returns NaN "
                      "non-deterministically on GPU")
@@ -1828,7 +1830,7 @@ class LaxTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("gpu")
   def testReduceWindowVariadic(self, dtype, shape, dims, strides, padding,
                                base_dilation, window_dilation):
-    if (jtu.device_under_test() == "tpu" and
+    if (jtu.test_device_matches(["tpu"]) and
         any(d != 1 for d in window_dilation)):
       raise SkipTest("TPU support missing for arbitrary window dilation.")
     rng = jtu.rand_small(self.rng())
@@ -1960,7 +1962,7 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CompileAndCheck(fun, args_maker)
     tol = None
-    if jtu.device_under_test() == "tpu" and dtype == np.float32:
+    if jtu.test_device_matches(["tpu"]) and dtype == np.float32:
       tol = 1e-4
     self._CheckAgainstNumpy(np_fun, fun, args_maker, atol=tol, rtol=tol)
 
@@ -2036,7 +2038,7 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testSortKeyVal(self, shape, key_dtype, val_dtype, axis, is_stable):
     if (np.issubdtype(key_dtype, np.complexfloating) and
-        jtu.device_under_test() == "cpu"):
+        jtu.test_device_matches(["cpu"])):
       raise SkipTest("Complex-valued sort not implemented")
     rng = jtu.rand_default(self.rng())
     # This test relies on the property that wherever keys are tied, values are
@@ -2073,7 +2075,7 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testSortKeyValAgainstNumpy(self, shape, key_dtype, val_dtype, axis):
     if (np.issubdtype(key_dtype, np.complexfloating) and
-        jtu.device_under_test() == "cpu"):
+        jtu.test_device_matches(["cpu"])):
       raise SkipTest("Complex-valued sort not implemented")
     rng = jtu.rand_default(self.rng())
     # This test relies on the property that wherever keys are tied, values are

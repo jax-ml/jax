@@ -860,7 +860,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
   @genNamedParametersNArgs(5)
   def testTruncnormPdf(self, shapes, dtypes):
-    if jtu.device_under_test() == "cpu":
+    if jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("TODO(b/282695039): test fails at LLVM head")
     rng = jtu.rand_default(self.rng())
     scipy_fun = osp_stats.truncnorm.pdf
@@ -1297,7 +1297,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       rng(inshape, dtype), rng(outshape, dtype), rng(inshape[-1:], dtype)]
     self._CheckAgainstNumpy(
         scipy_fun, lax_fun, args_maker, tol={
-            np.float32: 2e-2 if jtu.device_under_test() == "tpu" else 1e-3,
+            np.float32: 2e-2 if jtu.test_device_matches(["tpu"]) else 1e-3,
             np.float64: 3e-14
         })
     self._CompileAndCheck(

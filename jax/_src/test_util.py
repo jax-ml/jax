@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Iterable, Sequence
 from contextlib import contextmanager, ExitStack
 import inspect
 import io
@@ -24,7 +24,7 @@ import re
 import os
 import tempfile
 import textwrap
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional
 import unittest
 import warnings
 import zlib
@@ -287,16 +287,6 @@ def assert_num_jit_and_pmap_compilations(times):
 def device_under_test():
   return _TEST_DUT.value or xla_bridge.get_backend().platform
 
-
-def if_device_under_test(device_type: Union[str, Sequence[str]],
-                         if_true, if_false):
-  """Chooses `if_true` of `if_false` based on device_under_test."""
-  if device_under_test() in ([device_type] if isinstance(device_type, str)
-                             else device_type):
-    return if_true
-  else:
-    return if_false
-
 def supported_dtypes():
   if device_under_test() == "tpu":
     types = {np.bool_, np.int8, np.int16, np.int32, np.uint8, np.uint16,
@@ -336,13 +326,25 @@ def _get_device_tags():
     device_tags = {device_under_test()}
   return device_tags
 
+def test_device_matches(device_types: Iterable[str]) -> bool:
+  assert not isinstance(
+      device_types, str
+  ), 'device_types should be a list of strings'
+  tags = _get_device_tags()
+  for device_type in device_types:
+    assert isinstance(device_type, str), device_type
+    if device_type in tags:
+      return True
+  return False
+
+test_device_matches.__test__ = False  # This isn't a test case, pytest.
 
 def _device_filter(predicate):
   def skip(test_method):
     @functools.wraps(test_method)
     def test_method_wrapper(self, *args, **kwargs):
       device_tags = _get_device_tags()
-      if not predicate(device_tags):
+      if not predicate():
         test_name = getattr(test_method, '__name__', '[unknown test]')
         raise unittest.SkipTest(
           f"{test_name} not supported on device with tags {device_tags}.")
@@ -352,22 +354,18 @@ def _device_filter(predicate):
 
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
-  def predicate(device_tags):
-    return not(device_tags & set(disabled_devices))
-  return _device_filter(predicate)
+  return _device_filter(lambda: not test_device_matches(disabled_devices))
 
 def run_on_devices(*enabled_devices):
   """A decorator for test methods to run the test only on certain devices."""
-  def predicate(device_tags):
-    return device_tags & set(enabled_devices)
-  return _device_filter(predicate)
+  return _device_filter(lambda: test_device_matches(enabled_devices))
 
 def device_supports_buffer_donation():
   """A decorator for test methods to run the test only on devices that support
   buffer donation."""
-  def predicate(device_tags):
-    return device_tags & set(mlir._platforms_with_donation)
-  return _device_filter(predicate)
+  return _device_filter(
+      lambda: test_device_matches(mlir._platforms_with_donation)
+  )
 
 
 def set_host_platform_device_count(nr_devices: int):

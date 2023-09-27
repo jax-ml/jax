@@ -182,7 +182,7 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
       assert list(nondiff_argnums) == sorted(set(nondiff_argnums))
       diff_args = [x for i, x in enumerate(args) if i not in nondiff_argnums]
       jtu.check_grads(partial_lax_op, diff_args, order=1,
-                      atol=jtu.if_device_under_test("tpu", .1, 1e-3),
+                      atol=.1 if jtu.test_device_matches(["tpu"]) else 1e-3,
                       rtol=.1, eps=1e-3)
 
   @jtu.sample_product(

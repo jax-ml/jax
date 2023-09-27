@@ -58,7 +58,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jtu.device_under_test() not in ["cpu", "gpu", "tpu"]:
+    if not jtu.test_device_matches(["cpu", "gpu", "tpu"]):
       self.skipTest(f"Host callback not supported on {jtu.device_under_test()}")
 
   def test_debugger_eof(self):

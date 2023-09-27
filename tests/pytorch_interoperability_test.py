@@ -50,12 +50,12 @@ all_shapes = nonempty_array_shapes + empty_array_shapes
 class DLPackTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
-    if jtu.device_under_test() == "tpu":
-      self.skipTest("DLPack not supported on TPU")
+    if not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("DLPack only supported on CPU and GPU")
 
   def testTorchToJaxFailure(self):
     x = torch.arange(6).reshape((2, 3))
-    x = x.cuda() if jtu.device_under_test() == "gpu" else x
+    x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
     y = torch.utils.dlpack.to_dlpack(x[:, :2])
 
     backend = xla_bridge.get_backend()
@@ -128,7 +128,7 @@ class DLPackTest(jtu.JaxTestCase):
       x = torch.tensor(x_np.view(jnp.int16)).view(torch.bfloat16)
     else:
       x = torch.tensor(x_np)
-    x = x.cuda() if jtu.device_under_test() == "gpu" else x
+    x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
     x = x.contiguous()
     y = jax.dlpack.from_dlpack(torch.utils.dlpack.to_dlpack(x))
     self.assertAllClose(x_np, y)
@@ -152,7 +152,7 @@ class DLPackTest(jtu.JaxTestCase):
       x = torch.tensor(x_np.view(jnp.int16)).view(torch.bfloat16)
     else:
       x = torch.tensor(x_np)
-    x = x.cuda() if jtu.device_under_test() == "gpu" else x
+    x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
     x = x.contiguous()
     y = jax.dlpack.from_dlpack(x)
     self.assertAllClose(x_np, y)

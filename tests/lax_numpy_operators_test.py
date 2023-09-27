@@ -433,7 +433,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes, np_arrays=False)
     tol = max(jtu.tolerance(dtype, tolerance) for dtype in dtypes)
-    if jtu.device_under_test() == "tpu" and op_name in (
+    if jtu.test_device_matches(["tpu"]) and op_name in (
         "arccosh", "arcsinh", "sinh", "cosh", "tanh", "sin", "cos", "tan",
         "log", "log1p", "log2", "log10", "exp", "expm1", "exp2", "power",
         "logaddexp", "logaddexp2", "i0"):

@@ -457,7 +457,7 @@ class IndexingTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(size, dtype), idx_rng(size, int)]
     atol = (
         5e-5
-        if jtu.device_under_test() == "tpu" and funcname in ("log", "exp")
+        if jtu.test_device_matches(["tpu"]) and funcname in ("log", "exp")
         else None
     )
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker, atol=atol)
@@ -1185,7 +1185,7 @@ class UpdateOps(enum.Enum):
 
 def _update_tol(op):
   if op == UpdateOps.POW:
-    f32_tol = 2e-4 if jtu.device_under_test() == "tpu" else 1e-5
+    f32_tol = 2e-4 if jtu.test_device_matches(["tpu"]) else 1e-5
     tol = {np.float32: f32_tol, np.complex64: f32_tol, np.complex128: 1e-14}
   else:
     tol = {np.complex128: 1e-14}

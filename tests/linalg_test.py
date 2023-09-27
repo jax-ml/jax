@@ -688,7 +688,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   )
   @jax.default_matmul_precision("float32")
   def testQr(self, shape, dtype, full_matrices):
-    if (jtu.device_under_test() == "gpu" and
+    if (jtu.test_device_matches(["gpu"]) and
         _is_required_cuda_version_satisfied(12000)):
       self.skipTest("Triggers a bug in cuda-12 b/287345077")
     rng = jtu.rand_default(self.rng())
@@ -751,7 +751,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Regression test for https://github.com/google/jax/issues/10530
     rng = jtu.rand_default(self.rng())
     arr = rng(shape, dtype)
-    if jtu.device_under_test() == 'cpu':
+    if jtu.test_device_matches(['cpu']):
       err, msg = NotImplementedError, "Unsupported dtype float16"
     else:
       err, msg = ValueError, r"Unsupported dtype dtype\('float16'\)"
@@ -1287,7 +1287,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     dtype=int_types + float_types + complex_types
   )
   def testExpm(self, n, batch_size, dtype):
-    if (jtu.device_under_test() == "gpu" and
+    if (jtu.test_device_matches(["gpu"]) and
         _is_required_cuda_version_satisfied(12000)):
       self.skipTest("Triggers a bug in cuda-12 b/287345077")
 
@@ -1624,7 +1624,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     int_types_excl_i8 = set(int_types) - {np.int8}
     if ((rdtype in int_types_excl_i8 or cdtype in int_types_excl_i8)
-        and jtu.device_under_test() == "gpu"):
+        and jtu.test_device_matches(["gpu"])):
       self.skipTest("Integer (except int8) toeplitz is not supported on GPU yet.")
 
     rng = jtu.rand_default(self.rng())
@@ -1645,7 +1645,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     int_types_excl_i8 = set(int_types) - {np.int8}
     if (dtype in int_types_excl_i8
-        and jtu.device_under_test() == "gpu"):
+        and jtu.test_device_matches(["gpu"])):
       self.skipTest("Integer (except int8) toeplitz is not supported on GPU yet.")
 
     rng = jtu.rand_default(self.rng())

@@ -125,7 +125,7 @@ class PallasTest(parameterized.TestCase):
   INTERPRET = False
 
   def setUp(self):
-    if jtu.device_under_test() != "gpu":
+    if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Only works on GPU")
     try:
       import triton  # noqa: F401

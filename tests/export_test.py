@@ -564,7 +564,7 @@ class JaxExportTest(jtu.JaxTestCase):
       export.call_exported(exp)(x)
 
   def test_multi_platform(self):
-    if jtu.device_under_test() == "gpu":
+    if jtu.test_device_matches(["gpu"]):
       # The export is not applicable to GPU
       raise unittest.SkipTest("Not intended for running on GPU")
     x = np.arange(5, dtype=np.float32)
@@ -582,7 +582,7 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertAllClose(res, np.sin(x))
 
   def test_multi_platform_nested(self):
-    if jtu.device_under_test() == "tpu":
+    if jtu.test_device_matches(["tpu"]):
       # The outer export is not applicable to TPU
       raise unittest.SkipTest("Not intended for running on TPU")
     x = np.arange(5, dtype=np.float32)
@@ -601,7 +601,7 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertAllClose(res2, np.sin(x))
 
   def test_multi_platform_and_poly(self):
-    if jtu.device_under_test() == "gpu":
+    if jtu.test_device_matches(["gpu"]):
       # The export is not applicable to GPU
       raise unittest.SkipTest("Not intended for running on GPU")
     # TODO: use a function with different behavior for different platforms

@@ -112,7 +112,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLogSumExp(self, shapes, dtype, axis,
                     keepdims, return_sign, use_b):
-    if jtu.device_under_test() != "cpu":
+    if not jtu.test_device_matches(["cpu"]):
       rng = jtu.rand_some_inf_and_nan(self.rng())
     else:
       rng = jtu.rand_default(self.rng())
@@ -145,7 +145,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       args_maker = lambda: [rng(shapes[0], dtype)]
     tol = (
         {np.float32: 2e-4, np.complex64: 2e-4}
-        if jtu.device_under_test() == "tpu"
+        if jtu.test_device_matches(["tpu"])
         else None
     )
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=tol, atol=tol)
@@ -196,7 +196,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                             tol={np.float32: 1e-3, np.float64: 1e-14})
     self._CompileAndCheck(
         lax_fun, args_maker, rtol={
-            np.float32: 5e-5 if jtu.device_under_test() == "tpu" else 1e-05,
+            np.float32: 5e-5 if jtu.test_device_matches(["tpu"]) else 1e-05,
             np.float64: 4e-15
         })
 
@@ -211,7 +211,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     primals_out, tangents_out = jax.jvp(lsp_special.betaln, primals=[xs, 1.0], tangents=[jnp.ones_like(xs), 0.0])
     # Check that betaln(x, 1) = -log(x).
     # Betaln is still not perfect for small values, hence the atol (but it's close)
-    atol = jtu.if_device_under_test("tpu", 1e-3, 1e-5)
+    atol = 1e-3 if jtu.test_device_matches(["tpu"]) else 1e-5
     self.assertAllClose(primals_out, -jnp.log(xs), atol=atol)
     # Check that d/dx betaln(x, 1) = d/dx -log(x) = -1/x.
     self.assertAllClose(tangents_out, -1 / xs, atol=atol)
@@ -249,11 +249,12 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     lax_op = lsp_special_internal._xlogx
     rng = jtu.rand_positive(self.rng())
     args_maker = lambda: [rng((2, 3, 4), np.float32)]
-    self._CheckAgainstNumpy(scipy_op, lax_op, args_maker,
-                            rtol=jtu.if_device_under_test("tpu", 5e-4, None))
+    self._CheckAgainstNumpy(
+        scipy_op, lax_op, args_maker,
+        rtol=5e-4 if jtu.test_device_matches(["tpu"]) else None)
     self._CompileAndCheck(lax_op, args_maker)
     jtu.check_grads(lax_op, args_maker(), order=1,
-                    atol=jtu.if_device_under_test("tpu", .1, 1e-3),
+                    atol=.1 if jtu.test_device_matches(["tpu"]) else 1e-3,
                     rtol=.1, eps=1e-3)
 
   def testGradOfEntrAtZero(self):
@@ -466,7 +467,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self, n_zero_sv, degeneracy, geometric_spectrum, max_sv, shape, method,
       side, nonzero_condition_number, dtype, seed):
     """ Tests jax.scipy.linalg.polar."""
-    if jtu.device_under_test() != "cpu":
+    if not jtu.test_device_matches(["cpu"]):
       if jnp.dtype(dtype).name in ("bfloat16", "float16"):
         raise unittest.SkipTest("Skip half precision off CPU.")
 
@@ -534,7 +535,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
 
     with self.subTest('Test against SciPy'):
-      rtol = 1e-4 if jtu.device_under_test() == "tpu" else 1e-8
+      rtol = 1e-4 if jtu.test_device_matches(["tpu"]) else 1e-8
       self._CheckAgainstNumpy(osp_special.spence, lsp_special.spence, args_maker,
                               rtol=rtol, check_dtypes=False)
 

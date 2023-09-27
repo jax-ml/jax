@@ -1298,8 +1298,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       {"testcase_name": f"_{name}", "cond": cond}
       for cond, name in COND_IMPLS)
   def testCondGrad4(self, cond):
-    if cond is cond_with_new_checkpoint and 'tpu' in jtu.device_under_test():
-      raise unittest.SkipTest("tpu bug")  # TODO(parkers): tpu bug ehibited here
+    if cond is cond_with_new_checkpoint and jtu.test_device_matches(['tpu']):
+      raise unittest.SkipTest("tpu bug")  # TODO(parkers): tpu bug exhibited here
     def fun_ref(x, y):
       if x < 3:
         return 2. * jnp.sin(y)
@@ -1684,7 +1684,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False, rtol=rtol, atol=atol)
 
     rtol = 5e-3 if scan is not scan_with_new_checkpoint2 else 5e-2
-    atol = 5e-2 if "tpu" in jtu.device_under_test() else 1e-3
+    atol = 5e-2 if jtu.test_device_matches(["tpu"]) else 1e-3
     jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["rev"],
                     atol=atol, rtol=rtol)
 

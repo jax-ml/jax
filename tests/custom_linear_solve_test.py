@@ -240,7 +240,7 @@ class CustomLinearSolveTest(jtu.JaxTestCase):
     a = rng.randn(2, 2)
     b = rng.randn(2)
 
-    tol = {np.float32: 1E-3 if jtu.device_under_test() == "tpu" else 2E-4,
+    tol = {np.float32: 1E-3 if jtu.test_device_matches(["tpu"]) else 2E-4,
            np.float64: 1E-12}
     expected = jnp.linalg.solve(np.asarray(posify(a)), b)
     actual = positive_definite_solve(posify(a), b)

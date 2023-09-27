@@ -52,7 +52,7 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
     jnp_fn = lambda q, v: jsp_Rotation.from_quat(q).apply(v, inverse=inverse)
     # TODO(chrisflesher): re-enable this after accounting for sign degeneracy
     # np_fn = lambda q, v: osp_Rotation.from_quat(q).apply(v, inverse=inverse).astype(dtype)  # HACK
-    tol = 5e-2 if jtu.device_under_test() == 'tpu' else 1e-4
+    tol = 5e-2 if jtu.test_device_matches(['tpu']) else 1e-4
     # self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=True, tol=tol)
     self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
 

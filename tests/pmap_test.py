@@ -1973,7 +1973,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testArgAllReduce(self, shape, dtype, axis, collective, bulk_op):
     if jax.device_count() < shape[axis]:
       raise SkipTest(f"test requires at least {shape[axis]} devices")
-    if (jtu.device_under_test() == 'cpu' and
+    if (jtu.test_device_matches(['cpu']) and
         np.issubdtype(dtype, np.floating) and
         len(shape) > 1):
       raise SkipTest("skipped on cpu due to strange failures")  # TODO(mattjj)
