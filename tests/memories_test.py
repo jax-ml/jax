@@ -20,7 +20,6 @@ from absl.testing import parameterized
 import unittest
 import jax
 from jax._src import test_util as jtu
-from jax._src import xla_bridge as xb
 from jax._src.lib import xla_extension_version
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
@@ -719,12 +718,8 @@ class MemoriesTest(jtu.BufferDonationTestCase):
         "unpinned_host")
 
   def test_device_put_on_different_device_with_the_same_memory_kind(self):
-    if xla_extension_version < 196:
-      raise unittest.SkipTest("Test requires xla_extension_version >= 196")
-    # TODO(yueshengys): Remove the PJRT C API skip after CopyToMemorySpace is
-    # supported in PJRT C API.
-    if xb.using_pjrt_c_api():
-      raise unittest.SkipTest("CopyToMemorySpace is not supported in PJRT C API.")
+    if xla_extension_version < 199:
+      raise unittest.SkipTest("Test requires xla_extension_version >= 199")
     if len(jax.devices()) < 2:
       raise unittest.SkipTest("Test requires >=2 devices.")
 
