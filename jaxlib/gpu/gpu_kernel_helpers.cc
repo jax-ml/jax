@@ -106,11 +106,13 @@ std::string ErrorString(gpublasStatus_t status) {
 }
 
 std::string ErrorString(CUptiResult error) {
+#if CUPTI_API_VERSION >= 20
   const char* str;
   CUptiResult result = cuptiGetErrorMessage(error, &str);
   if (result == CUPTI_SUCCESS) {
     return str;
   }
+#endif  // CUPTI_API_VERSION >= 20
   return absl::StrFormat(
       "Unknown CUPTI error %d. This probably means that JAX was unable to load "
       "cupti.",
