@@ -570,7 +570,7 @@ class JaxExportTest(jtu.JaxTestCase):
     x = np.arange(5, dtype=np.float32)
     # TODO: use a function with different behavior for different platforms
     exp = export.export(jnp.sin,
-                            lowering_platforms=('cpu', 'tpu'))(x)
+                        lowering_platforms=('cpu', 'tpu'))(x)
     self.assertEqual(exp.lowering_platforms, ('cpu', 'tpu'))
     module_str = str(exp.mlir_module())
     platform_index = re.findall(

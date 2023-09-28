@@ -325,10 +325,8 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
 
   @api_boundary
   def lower(*args, **kwargs):
-    _experimental_lowering_platform = kwargs.pop(
-        '_experimental_lowering_platform', None)
-    _experimental_override_lowering_rules = kwargs.pop(
-        '_experimental_override_lowering_rules', None)
+    lowering_parameters = kwargs.pop(
+        '_experimental_lowering_parameters', mlir.LoweringParameters())
     (args_flat, flat_global_in_avals, params, in_tree, out_tree,
      donated_invars) = infer_params_fn(*args, **kwargs)
     resource_env = params['resource_env']
@@ -340,8 +338,7 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
           params['jaxpr'], in_shardings, params['out_shardings'],
           params['resource_env'], params['donated_invars'], params['name'],
           params['keep_unused'], params['inline'],
-          lowering_platform=_experimental_lowering_platform,
-          override_lowering_rules=_experimental_override_lowering_rules)
+          lowering_parameters=lowering_parameters)
     except pxla.DeviceAssignmentMismatchError as e:
       fails, = e.args
       api_name = 'jit' if params['resource_env'] is None else 'pjit'
@@ -1131,7 +1128,7 @@ def _pjit_call_impl_python(
   compiled = _pjit_lower(
       jaxpr, in_shardings, out_shardings, resource_env,
       donated_invars, name, keep_unused, inline,
-      lowering_platform=None).compile()
+      lowering_parameters=mlir.LoweringParameters()).compile()
   _most_recent_pjit_call_executable.weak_key_dict[jaxpr] = compiled
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.jax_enable_checks:
@@ -1273,9 +1270,7 @@ def _pjit_lower_cached(
     keep_unused: bool,
     inline: bool,
     *,
-    lowering_platform: Optional[str],
-    override_lowering_rules: Optional[
-        tuple[tuple[core.Primitive, mlir.LoweringRule]]] = None):
+    lowering_parameters: mlir.LoweringParameters):
   in_shardings: tuple[PjitShardingMinusUnspecified, ...] = cast(
       tuple[PjitShardingMinusUnspecified, ...], sdat_in_shardings.shardings)
   out_shardings: tuple[PjitSharding, ...] = sdat_out_shardings.shardings
@@ -1298,7 +1293,7 @@ def _pjit_lower_cached(
       jaxpr, api_name, name, mesh,
       in_shardings, out_shardings, donated_invars,
       True, jaxpr.in_avals, tiling_method=None,
-      lowering_platform=lowering_platform)
+      lowering_parameters=lowering_parameters)
   else:
     return pxla.lower_sharding_computation(
         jaxpr, api_name, name, in_shardings, out_shardings,
@@ -1306,8 +1301,7 @@ def _pjit_lower_cached(
         keep_unused=keep_unused, inline=inline,
         devices_from_context=(
             None if mesh is None or mesh.empty else list(mesh.devices.flat)),
-        lowering_platform=lowering_platform,
-        override_lowering_rules=override_lowering_rules,
+        lowering_parameters=lowering_parameters,
 )
 
 

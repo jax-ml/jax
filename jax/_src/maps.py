@@ -605,8 +605,8 @@ def xmap(fun: Callable,
 
   @decorate_serial
   def lower(*args, **kwargs):
-    _experimental_lowering_platform = kwargs.pop(
-        '_experimental_lowering_platform', None)
+    lowering_parameters = kwargs.pop(
+        '_experimental_lowering_platform', mlir.LoweringParameters())
     fun_flat, args_flat, params, in_tree, out_tree = infer_params(*args)
     avals_flat = [shaped_abstractify(arg) for arg in args_flat]
     computation = make_xmap_callable(
@@ -614,7 +614,7 @@ def xmap(fun: Callable,
         params['donated_invars'], params['global_axis_sizes'], params['axis_resources'],
         params['resource_env'], params['backend'], params['spmd_in_axes'],
         params['spmd_out_axes_thunk'],
-        _experimental_lowering_platform, *avals_flat)
+        lowering_parameters, *avals_flat)
 
     in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     in_avals = in_tree.unflatten(avals_flat)
@@ -633,7 +633,7 @@ def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, donated_
       fun, name, in_axes, out_axes_thunk, donated_invars, global_axis_sizes,
       axis_resources, resource_env, backend,
       spmd_in_axes, spmd_out_axes_thunk,
-      None, *in_avals).compile().unsafe_call
+      mlir.LoweringParameters(), *in_avals).compile().unsafe_call
   distributed_debug_log(("Running xmapped function", name),
                         ("python function", fun.f),
                         ("mesh", resource_env.physical_mesh),
@@ -646,7 +646,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
                        in_axes, out_axes_thunk, donated_invars,
                        global_axis_sizes, axis_resources, resource_env, backend,
                        spmd_in_axes, spmd_out_axes_thunk,
-                       lowering_platform: Optional[str],
+                       lowering_parameters: mlir.LoweringParameters,
                        *in_avals):
   plan = EvaluationPlan.from_axis_resources(
       axis_resources, resource_env, global_axis_sizes)
@@ -700,11 +700,11 @@ def make_xmap_callable(fun: lu.WrappedFun,
         in_shardings, out_shardings, donated_invars,
         use_spmd_lowering, in_avals,
         tiling_method=tiling_method,
-        lowering_platform=lowering_platform)
+        lowering_parameters=lowering_parameters)
   else:
     return dispatch.sharded_lowering(
         f, name, donated_invars, True, False, in_avals, (None,) * len(in_avals),
-        lowering_platform=lowering_platform)
+        lowering_parameters=lowering_parameters)
 
 
 class EvaluationPlan(NamedTuple):

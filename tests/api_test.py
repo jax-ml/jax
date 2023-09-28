@@ -10347,7 +10347,8 @@ class OverrideLoweringTest(jtu.JaxTestCase):
     lowered_ir = (
         jax.jit(f)
         .lower(jax.ShapeDtypeStruct((2, 4), dtype=jnp.bfloat16),
-               _experimental_override_lowering_rules=rules).as_text())
+               _experimental_lowering_parameters=mlir.LoweringParameters(
+                 override_lowering_rules=rules)).as_text())
     self.assertNotIn("stablehlo.custom_call @Sharding", lowered_ir)
 
 
