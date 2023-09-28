@@ -20,14 +20,12 @@ during program execution, the registered listeners will be invoked.
 A typical listener callback is to send an event to a metrics collector for
 aggregation/exporting.
 """
-from typing import Callable, Mapping, Protocol, Union
+from typing import Callable, Protocol, Union
 
 
 class EventListenerWithMetadata(Protocol):
 
-  def __call__(
-      self, event: str, **kwargs: Mapping[str, Union[str, int]]
-  ) -> None:
+  def __call__(self, event: str, **kwargs: Union[str, int]) -> None:
     ...
 
 
@@ -36,13 +34,13 @@ _event_listeners: list[Callable[[str], None]] = []
 _event_duration_secs_listeners: list[Callable[[str, float], None]] = []
 
 
-def record_event(event: str, **kwargs: Mapping[str, Union[str, int]]) -> None:
+def record_event(event: str, **kwargs: Union[str, int]) -> None:
   """Record an event."""
-  for callback in _event_listeners:
-    if not kwargs:
+  if not kwargs:
+    for callback in _event_listeners:
       callback(event)
-  for callback in _event_listeners_with_metadata:
-    if kwargs:
+  else:
+    for callback in _event_listeners_with_metadata:
       callback(event, **kwargs)
 
 
