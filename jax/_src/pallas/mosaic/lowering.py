@@ -1056,6 +1056,13 @@ def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.rsqrt_p] = _rsqrt_lowering_rule
 
 
+def _sqrt_lowering_rule(ctx: LoweringRuleContext, x):
+  return math.SqrtOp(x).result
+
+
+lowering_rules[lax.sqrt_p] = _sqrt_lowering_rule
+
+
 def _exp_lowering_rule(ctx: LoweringRuleContext, x):
   return math.ExpOp(x).result
 

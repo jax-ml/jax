@@ -1719,6 +1719,9 @@ _register_rule("math.powf")(
     functools.partial(_elementwise_op_rule, math_dialect.PowFOp))
 _register_rule("math.rsqrt")(
     functools.partial(_elementwise_op_rule, math_dialect.RsqrtOp))
+_register_rule("math.sqrt")(
+    functools.partial(_elementwise_op_rule, math_dialect.SqrtOp)
+)
 _register_rule("math.tanh")(
     functools.partial(_elementwise_op_rule, math_dialect.TanhOp))
 _register_rule("math.log")(
