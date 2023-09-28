@@ -9112,6 +9112,48 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     g(1.)  # doesn't crash
 
+  # This test also demonstrates how we can register both a custom_jvp and a custom_vjp
+  # for the same operation.
+  @parameterized.parameters(False, True)
+  def test_jvp_of_custom_vjp(self, test_grad):
+    @jax.custom_jvp
+    def g(x, y):
+      return x + y + 20
+
+    @g.defjvp
+    def g_jvp(primals, tangents):
+      x, y = primals
+      tx, ty = tangents
+      return x + y + 30, tx + ty + 40
+
+    @jax.custom_vjp
+    def f(x, y):
+      return x + y
+
+    def f_fwd(x, y):
+      return g(x, y), x + y + 50
+
+    def f_bwd(res, ct):
+      if test_grad:
+        # Test that we can do vjps
+        self.assertEqual(res, 53.)
+        return ct + 60, ct + 70
+      else:
+        # Test that we don't touch this if we don't need to
+        assert False
+
+    f.defvjp(f_fwd, f_bwd, enable_jvp=True)
+
+    # Can run `f` without autodiff
+    self.assertEqual(f(1., 2.), 3.)
+    # Performs jvp of `f_fwd` (`f` is unused)
+    p, t = jax.jvp(f, (1., 2.), (3., 4.))
+    self.assertEqual(p, 33.)
+    self.assertEqual(t, 47.)
+    if test_grad:
+      grad = jax.grad(f)(1., 2.)
+      self.assertEqual(grad, 61.)
+
 
 def transpose_unary(f, x_example):
   def transposed(y):

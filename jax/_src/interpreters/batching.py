@@ -548,7 +548,7 @@ class BatchTrace(Trace):
     return vals, todo
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, *, out_trees,
-                              symbolic_zeros):  # pytype: disable=signature-mismatch
+                              symbolic_zeros, enable_jvp):  # pytype: disable=signature-mismatch
     in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
     axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims)
                   if d is not not_mapped}
@@ -559,7 +559,7 @@ class BatchTrace(Trace):
                                out_dims2, in_dims, self.main.trace_type,
                                self.spmd_axis_name)
     out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees,
-                         symbolic_zeros=symbolic_zeros)
+                         symbolic_zeros=symbolic_zeros, enable_jvp=enable_jvp)
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
       _, res_tree = out_trees()
