@@ -45,7 +45,7 @@ These functions are responsible for launching RMS normalization kernels with the
 
 ```cpp
 namespace gpu_ops {
-    
+
 void rms_forward_affine_mixed_dtypes(cudaStream_t stream, void **buffers,
                                      const char *opaque,
                                      std::size_t opaque_len);
@@ -190,7 +190,6 @@ from functools import reduce
 
 from jax.interpreters import mlir
 from jax.interpreters.mlir import ir
-from jaxlib.hlo_helpers import custom_call
 
 
 # Register functions defined in gpu_ops as custom call target for GPUs
@@ -234,7 +233,7 @@ def _rms_norm_fwd_cuda_lowering(ctx, x, weight, eps):
         element_type_to_descriptor_type_mapping(w_type.element_type),
         0,  # unused
     )
-    out = custom_call(
+    return mlir.custom_call(
         b"rms_forward_affine_mixed_dtype",
         out_types=[
             ir.RankedTensorType.get(x_shape, w_type.element_type),
@@ -244,8 +243,7 @@ def _rms_norm_fwd_cuda_lowering(ctx, x, weight, eps):
         backend_config=opaque,
         operand_layouts=default_layouts(x_shape, w_shape),
         result_layouts=default_layouts(x_shape, (n1,)),
-    )
-    return out
+    ).results
 
 
 mlir.register_lowering(
@@ -275,7 +273,7 @@ def _rms_norm_bwd_cuda_lowering(ctx, grad_output, invvar, x, weight, eps):
         element_type_to_descriptor_type_mapping(w_type.element_type),
         part_grad_shape[0],
     )
-    out = custom_call(
+    return mlir.custom_call(
         b"rms_backward_affine",
         out_types=[
             ir.RankedTensorType.get(x_shape, x_type.element_type),
@@ -286,8 +284,7 @@ def _rms_norm_bwd_cuda_lowering(ctx, grad_output, invvar, x, weight, eps):
         backend_config=opaque,
         operand_layouts=default_layouts(x_shape, (n1,), x_shape, w_shape),
         result_layouts=default_layouts(x_shape, w_shape, part_grad_shape),
-    )
-    return out
+    ).results
 
 
 mlir.register_lowering(
@@ -345,8 +342,6 @@ See [How JAX primitives work](https://jax.readthedocs.io/en/latest/notebooks/How
 from functools import reduce
 from operator import mul
 
-from jax.abstract_arrays import ShapedArray
-
 
 def _rms_norm_fwd_abstract(x, weight, eps):
     w_dtype = dtypes.canonicalize_dtype(weight.dtype)
@@ -356,8 +351,8 @@ def _rms_norm_fwd_abstract(x, weight, eps):
     n2 = reduce(mul, weight.shape)
     n1 = reduce(mul, x.shape) // n2
     return (
-        ShapedArray(x.shape, w_dtype, named_shape=x.named_shape),  # output
-        ShapedArray((n1,), iv_dtype, named_shape=x.named_shape),  # invvar
+        core.ShapedArray(x.shape, w_dtype, named_shape=x.named_shape),  # output
+        core.ShapedArray((n1,), iv_dtype, named_shape=x.named_shape),  # invvar
     )
 
 
@@ -382,13 +377,13 @@ def _rms_norm_bwd_abstract(grad_output, invvar, x, weight, eps):
         weight_named_shape if weight.named_shape else x.named_shape
     )
     return (
-        ShapedArray(
+        core.ShapedArray(
             x.shape, x_dtype, named_shape=x.named_shape
         ),  # grad input
-        ShapedArray(
+        core.ShapedArray(
             weight.shape, w_dtype, named_shape=weight_named_shape
         ),  # grad weight
-        ShapedArray(
+        core.ShapedArray(
             part_grad_shape, iv_dtype, named_shape=weight_named_shape
         ),  # part grad
     )
@@ -613,7 +608,8 @@ HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,512
 ENTRY %main.17_spmd (param: bf16[4,512,512], param.1: bf16[512,512]) -> bf16[4,512,512] {
   %param = bf16[4,512,512]{2,1,0} parameter(0), sharding={devices=[8,1,1]0,1,2,3,4,5,6,7}, metadata={op_name="pjit(<unnamed wrapped function>)/jit(main)/xmap(rms_norm)/squeeze[dimensions=(0,)]" source_file="/tmp/ipykernel_25235/3123505662.py" source_line=13}
   %param.1 = bf16[512,512]{1,0} parameter(1), sharding={replicated}, metadata={op_name="pjit(<unnamed wrapped function>)/jit(main)/xmap(rms_norm)/full_to_shard[axes=OrderedDict() mesh=Mesh(device_ids=array([0, 1, 2, 3, 4, 5, 6, 7]), axis_names=(\'x\',)) manual_axes=(\'x\',)]" source_file="/tmp/ipykernel_25235/3123505662.py" source_line=13}
-  %custom-call.0 = (bf16[4,512,512]{2,1,0}, f32[4]{0}) custom-call(bf16[4,512,512]{2,1,0} %param, bf16[512,512]{1,0} %param.1), custom_call_target="rms_forward_affine_mixed_dtype", operand_layout_constraints={bf16[4,512,512]{2,1,0}, bf16[512,512]{1,0}}, api_version=API_VERSION_STATUS_RETURNING, metadata={op_name="pjit(<unnamed wrapped function>)/jit(main)/xmap(rms_norm)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}, backend_config="\004\000\000\000\000\000\004\000\361h\343\210\265\370\344>\000\000\000\000\000\000\000\000\000\000\000\000\027\177\000\000"
+  %custom-call.0 = (bf16[4,512,512]{2,1,0}, f32[4]{0})
+  custom-call(bf16[4,512,512]{2,1,0} %param, bf16[512,512]{1,0} %param.1), custom_call_target="rms_forward_affine_mixed_dtype", operand_layout_constraints={bf16[4,512,512]{2,1,0}, bf16[512,512]{1,0}}, api_version=API_VERSION_STATUS_RETURNING, metadata={op_name="pjit(<unnamed wrapped function>)/jit(main)/xmap(rms_norm)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}, backend_config="\004\000\000\000\000\000\004\000\361h\343\210\265\370\344>\000\000\000\000\000\000\000\000\000\000\000\000\027\177\000\000"
   ROOT %get-tuple-element = bf16[4,512,512]{2,1,0} get-tuple-element((bf16[4,512,512]{2,1,0}, f32[4]{0}) %custom-call.0), index=0, metadata={op_name="pjit(<unnamed wrapped function>)/jit(main)/xmap(rms_norm)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
 }
 ```
@@ -675,7 +671,7 @@ We can inspect the generated jaxpr, which is the JAX internal representation, to
 
 ```python
 with mesh:
-    
+
     print(jax.make_jaxpr(pjitted)(x, weight))
 ```
 ```python
@@ -782,10 +778,10 @@ weight_named_shape = (
 )
 ...
 return (
-    ShapedArray(
+    core.ShapedArray(
         x.shape, x_dtype, named_shape=x.named_shape
     ),  # grad input
-    ShapedArray(
+    core.ShapedArray(
         weight.shape, w_dtype, named_shape=weight_named_shape
     ),  # grad weight
     ....
@@ -804,14 +800,12 @@ import jax
 import jax.numpy as jnp
 from build import gpu_ops
 from jax import core, dtypes
-from jax.abstract_arrays import ShapedArray
 from jax.experimental.maps import xmap
 from jax.experimental.pjit import pjit
 from jax.interpreters import mlir, xla
 from jax.interpreters.mlir import ir
 from jax.lib import xla_client
 from jax.sharding import Mesh, PartitionSpec
-from jaxlib.hlo_helpers import custom_call
 
 
 # Create _rms_norm_fwd_p for forward operation.
@@ -885,7 +879,7 @@ def _rms_norm_fwd_cuda_lowering(ctx, x, weight, eps):
         element_type_to_descriptor_type_mapping(w_type.element_type),
         0,  # unused
     )
-    out = custom_call(
+    return mlir.custom_call(
         b"rms_forward_affine_mixed_dtype",
         out_types=[
             ir.RankedTensorType.get(x_shape, w_type.element_type),
@@ -895,8 +889,7 @@ def _rms_norm_fwd_cuda_lowering(ctx, x, weight, eps):
         backend_config=opaque,
         operand_layouts=default_layouts(x_shape, w_shape),
         result_layouts=default_layouts(x_shape, (n1,)),
-    )
-    return out
+    ).results
 
 
 mlir.register_lowering(
@@ -926,7 +919,7 @@ def _rms_norm_bwd_cuda_lowering(ctx, grad_output, invvar, x, weight, eps):
         element_type_to_descriptor_type_mapping(w_type.element_type),
         part_grad_shape[0],
     )
-    out = custom_call(
+    return mlir.custom_call(
         b"rms_backward_affine",
         out_types=[
             ir.RankedTensorType.get(x_shape, x_type.element_type),
@@ -937,8 +930,7 @@ def _rms_norm_bwd_cuda_lowering(ctx, grad_output, invvar, x, weight, eps):
         backend_config=opaque,
         operand_layouts=default_layouts(x_shape, (n1,), x_shape, w_shape),
         result_layouts=default_layouts(x_shape, w_shape, part_grad_shape),
-    )
-    return out
+    ).results
 
 
 mlir.register_lowering(
@@ -961,8 +953,8 @@ def _rms_norm_fwd_abstract(x, weight, eps):
     n2 = reduce(mul, weight.shape)
     n1 = reduce(mul, x.shape) // n2
     return (
-        ShapedArray(x.shape, w_dtype, named_shape=x.named_shape),  # output
-        ShapedArray((n1,), iv_dtype, named_shape=x.named_shape),  # invvar
+        core.ShapedArray(x.shape, w_dtype, named_shape=x.named_shape),  # output
+        core.ShapedArray((n1,), iv_dtype, named_shape=x.named_shape),  # invvar
     )
 
 
@@ -987,13 +979,13 @@ def _rms_norm_bwd_abstract(grad_output, invvar, x, weight, eps):
         weight_named_shape if weight.named_shape else grad_output.named_shape
     )
     return (
-        ShapedArray(
+        core.ShapedArray(
             x.shape, x_dtype, named_shape=x.named_shape
         ),  # grad input
-        ShapedArray(
+        core.ShapedArray(
             weight.shape, w_dtype, named_shape=weight_named_shape
         ),  # grad weight
-        ShapedArray(
+        core.ShapedArray(
             part_grad_shape, iv_dtype, named_shape=weight_named_shape
         ),  # part grad
     )
