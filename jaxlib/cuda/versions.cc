@@ -22,6 +22,10 @@ namespace {
 
 namespace nb = nanobind;
 
+#if CUDA_VERSION < 11080
+#error "JAX requires CUDA 11.8 or newer."
+#endif  // CUDA_VERSION < 11080
+
 int CudaRuntimeGetVersion() {
   int version;
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(cudaRuntimeGetVersion(&version)));
