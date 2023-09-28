@@ -625,6 +625,18 @@ LogicalResult arith_trunci_rule(RewriteContext &ctx, Operation &op,
                             *layouts_out.front());
 }
 
+LogicalResult func_return_rule(RewriteContext &ctx, Operation &op,
+                               const ArrayRef<Layout> layouts_in,
+                               const ArrayRef<Layout> layouts_out) {
+  CHECK(layouts_out.empty());
+  for (const Layout &layout_in : layouts_in) {
+    if (layout_in.has_value()) {
+      return op.emitOpError("Vector-typed return values are not supported");
+    }
+  }
+  return success();
+}
+
 LogicalResult tpu_load_rule(RewriteContext &ctx, Operation &op,
                             const ArrayRef<Layout> layouts_in,
                             const ArrayRef<Layout> layouts_out) {
@@ -1581,6 +1593,7 @@ const llvm::StringMap<rule_type> &rules() {
       rules_elementwise_op_entry<math::PowFOp, 1>(),
       rules_elementwise_op_entry<math::RsqrtOp, 1>(),
       rules_elementwise_op_entry<math::TanhOp, 1>(),
+      {func::ReturnOp::getOperationName(), func_return_rule},
       {tpu::IotaOp::getOperationName(), tpu_iota_rule},
       {tpu::GatherOp::getOperationName(), tpu_gather_rule},
       {tpu::LoadOp::getOperationName(), tpu_load_rule},
