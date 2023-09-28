@@ -742,6 +742,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     assert x() is not None  # x is still around
     g()                     # g still runs
     del g                   # no more references to x
+    gc.collect()            # garbage collect the executable.
     assert x() is None      # x is gone
 
   def test_jit_of_nonweakreferenceable_function(self):
