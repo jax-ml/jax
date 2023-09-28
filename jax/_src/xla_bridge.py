@@ -460,7 +460,10 @@ def register_plugin(
                            fail_quietly=False, experimental=experimental)
   if library_path is not None:
     if xla_extension_version >= 198:
-      return xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
+      c_api = xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)  # type: ignore
+      if xla_extension_version >= 203:
+        xla_client.profiler.register_plugin_profiler(c_api)
+      return c_api
     else:
       xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
   return None

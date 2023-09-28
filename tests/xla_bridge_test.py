@@ -175,7 +175,13 @@ class XlaBridgeTest(jtu.JaxTestCase):
           os.environ["PJRT_NAMES_AND_LIBRARY_PATHS"] = (
               "name1:path1,name2:path2,name3"
           )
-        xb.register_pjrt_plugin_factories_from_env()
+        if xla_extension_version < 203:
+          xb.register_pjrt_plugin_factories_from_env()
+        else:
+          with mock.patch.object(
+              xc.profiler, "register_plugin_profiler", autospec=True
+          ):
+            xb.register_pjrt_plugin_factories_from_env()
     registration = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
       if xla_extension_version < 183:
@@ -208,7 +214,13 @@ class XlaBridgeTest(jtu.JaxTestCase):
         else f"name1:{test_json_file_path}"
     )
     with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
-      xb.register_pjrt_plugin_factories_from_env()
+      if xla_extension_version < 203:
+        xb.register_pjrt_plugin_factories_from_env()
+      else:
+        with mock.patch.object(
+            xc.profiler, "register_plugin_profiler", autospec=True
+        ):
+          xb.register_pjrt_plugin_factories_from_env()
     registration = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
       if xla_extension_version < 183:
