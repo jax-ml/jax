@@ -607,18 +607,29 @@ bool VectorLayout::generalizes(
     }
   }
   if (implicit_dim_ != other.implicit_dim_) {
-    // Don't fail yet!
-    // If the second-minor dimension is of size 1, then it does not matter
-    // whether we have a second minor implicit dim or not.
+    // Don't fail yet! implicit_dim might not matter for some shapes.
     if (shape.data() == nullptr) {
       return false;
     }
-    const llvm::SmallVector<int64_t> implicit_shape = implicitShape(shape);
-    if (!(implicit_shape[implicit_shape.size() - 2] == 1 &&
-          ((implicit_dim_ == ImplicitDim::kSecondMinor &&
-            other.implicit_dim_ == ImplicitDim::kNone) ||
-           (other.implicit_dim_ == ImplicitDim::kSecondMinor &&
-            implicit_dim_ == ImplicitDim::kNone)))) {
+    // If the second-minor dimension is of size 1, then it does not matter
+    // whether we have a second minor implicit dim or not.
+    bool ok = false;
+    if (((implicit_dim_ == ImplicitDim::kSecondMinor &&
+          other.implicit_dim_ == ImplicitDim::kNone) ||
+         (other.implicit_dim_ == ImplicitDim::kSecondMinor &&
+          implicit_dim_ == ImplicitDim::kNone)) &&
+        shape[shape.size() - 2] == 1) {
+      ok =  true;
+    }
+    // If sufficiently many trailing dimensions are of size 1, then it does not
+    // matter if we use implicit dims to insert more.
+    int max_rank = std::max(layout_rank(), other.layout_rank());
+    CHECK_GE(max_rank, 1);
+    CHECK_LE(max_rank, 2);
+    if (*(shape.end() - 1) == 1 && (max_rank == 1 || *(shape.end() - 2) == 1)) {
+      ok = true;
+    }
+    if (!ok) {
       return false;
     }
   }
