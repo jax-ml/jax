@@ -21,29 +21,29 @@ XLA. There are also a handful of related casting utilities.
 
 from collections.abc import Mapping
 import dataclasses
-from functools import partial, lru_cache
+from functools import lru_cache, partial
 import glob
 import importlib
 import json
 import logging
 import os
 import pathlib
-import platform as py_platform
 import pkgutil
+import platform as py_platform
 import sys
 import threading
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional, Tuple, Union
 import warnings
 
-from jax._src import distributed
 from jax._src import config as jax_config
+from jax._src import distributed
+from jax._src import traceback_util
+from jax._src import util
 from jax._src.config import config
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
-from jax._src import traceback_util
-from jax._src import util
 
 logger = logging.getLogger(__name__)
 
@@ -427,7 +427,9 @@ def register_plugin(
                            fail_quietly=False, experimental=experimental)
   if library_path is not None:
     if xla_extension_version >= 198:
-      return xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
+      c_api = xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
+      xla_client.profiler.register_plugin_profiler(c_api)
+      return c_api
     else:
       xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
   return None
