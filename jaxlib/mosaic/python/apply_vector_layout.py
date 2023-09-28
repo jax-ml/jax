@@ -1272,6 +1272,36 @@ def relayout(
     src = new_src
     src_tiles = src_tiles_retiled
 
+ # (8, 128) -> (32, 128) for int8. Useful for preparing data for matmuls.
+  if (
+      src.implicit_dim is None
+      and dst.implicit_dim is None
+      and ir.IntegerType.get_signless(8) == vty.element_type
+      and src.offsets == dst.offsets
+      and src.tiling == (8, 128)
+      and dst.tiling == (32, 128)
+  ):
+    new_src = VectorLayout(src.bitwidth, src.offsets, dst.tiling, None)
+    src_tiles_retiled = np.empty(
+        new_src.tile_array_shape(vty.shape), dtype=object)
+    for (*batch_idx, dst_row, dst_col) in np.ndindex(src_tiles_retiled.shape):
+      src_vregs = []
+      for i in range(4):
+        src_row = min(dst_row * 4 + i, src_tiles.shape[-2] - 1)
+        src_vregs.append(src_tiles[(*batch_idx, src_row, dst_col // 4)])
+
+      vreg_part = dst_col % 4
+      vreg_i32 = ir.VectorType.get(TARGET_SHAPE, i32())
+      parts = [
+          tpu.UnpackSubelementsOp(vreg_i32, src_vreg, vreg_part)
+          for src_vreg in src_vregs
+      ]
+      src_tiles_retiled[(*batch_idx, dst_row, dst_col)] = tpu.PackSubelementsOp(
+          src_vregs[0].type, parts
+      )
+    src = new_src
+    src_tiles = src_tiles_retiled
+
   if is_supported_reduced_sublanes_retile(src, dst):
     src_tiles = retile_to_reduced_sublanes(
         value_shape=vty.shape,
