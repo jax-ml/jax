@@ -1120,8 +1120,9 @@ jax_test(
     shard_count = {
         "cpu": 30,
         "gpu": 10,
-        "tpu": 10,
+        "tpu": 30,
     },
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:tree_util",
     ],

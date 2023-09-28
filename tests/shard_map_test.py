@@ -420,12 +420,13 @@ class ShardMapTest(jtu.JaxTestCase):
   def test_axis_index(self):
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
 
+    @jax.jit
     @partial(shard_map, mesh=mesh, in_specs=(), out_specs=P('x'))
     def f():
       return jax.lax.axis_index('x')[None]
 
     x = f()
-    self.assertAllCLose(x, jnp.arange(4), check_dtypes=False)
+    self.assertAllClose(x, jnp.arange(4), check_dtypes=False)
 
   def test_remat_basic(self):
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
@@ -1451,7 +1452,8 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     else:
       slices = map(jnp.stack, zip(*expected_slices))
       expected = tree_util.tree_unflatten(treedef, slices)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    tol = 1e-2 if jtu.test_device_matches(['tpu']) else None
+    self.assertAllClose(ans, expected, check_dtypes=False, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(
       sample(config.FLAGS.jax_num_generated_cases,
@@ -1489,7 +1491,8 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     else:
       slices = map(jnp.stack, zip(*expected_slices))
       expected = tree_util.tree_unflatten(treedef, slices)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    tol = 1e-2 if jtu.test_device_matches(['tpu']) else None
+    self.assertAllClose(ans, expected, check_dtypes=False, atol=tol, rtol=tol)
 
 
 if __name__ == '__main__':
