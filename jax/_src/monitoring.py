@@ -20,15 +20,31 @@ during program execution, the registered listeners will be invoked.
 A typical listener callback is to send an event to a metrics collector for
 aggregation/exporting.
 """
-from typing import Callable
+from typing import Callable, Mapping, Protocol, Union
 
+
+class EventListenerWithMetadata(Protocol):
+
+  def __call__(
+      self, event: str, **kwargs: Mapping[str, Union[str, int]]
+  ) -> None:
+    ...
+
+
+_event_listeners_with_metadata: list[EventListenerWithMetadata] = []
 _event_listeners: list[Callable[[str], None]] = []
 _event_duration_secs_listeners: list[Callable[[str, float], None]] = []
 
-def record_event(event: str) -> None:
+
+def record_event(event: str, **kwargs: Mapping[str, Union[str, int]]) -> None:
   """Record an event."""
   for callback in _event_listeners:
-    callback(event)
+    if not kwargs:
+      callback(event)
+  for callback in _event_listeners_with_metadata:
+    if kwargs:
+      callback(event, **kwargs)
+
 
 def record_event_duration_secs(event: str, duration: float) -> None:
   """Record an event duration in seconds (float)."""
@@ -38,6 +54,15 @@ def record_event_duration_secs(event: str, duration: float) -> None:
 def register_event_listener(callback: Callable[[str], None]) -> None:
   """Register a callback to be invoked during record_event()."""
   _event_listeners.append(callback)
+
+
+# TODO(b/301446522): Merge this function with register_event_listener.
+def register_event_listener_with_kwargs(
+    callback: EventListenerWithMetadata,
+) -> None:
+  """Register a callback to be invoked during record_event()."""
+  _event_listeners_with_metadata.append(callback)
+
 
 def register_event_duration_secs_listener(
     callback : Callable[[str, float], None]) -> None:
