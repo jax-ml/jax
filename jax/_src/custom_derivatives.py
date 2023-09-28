@@ -498,6 +498,7 @@ class custom_vjp(Generic[ReturnValue]):
     self.fwd: Callable[..., tuple[ReturnValue, Any]] | None = None
     self.bwd: Callable[..., tuple[Any, ...]] | None = None
     self.symbolic_zeros = False
+    self.enable_jvp = False
 
   __getattr__ = custom_api_util.forward_attr
 
@@ -505,6 +506,7 @@ class custom_vjp(Generic[ReturnValue]):
              fwd: Callable[..., tuple[ReturnValue, Any]],
              bwd: Callable[..., tuple[Any, ...]],
              symbolic_zeros: bool = False,
+             enable_jvp: bool = False,
              ) -> None:
     """Define a custom VJP rule for the function represented by this instance.
 
@@ -561,6 +563,24 @@ class custom_vjp(Generic[ReturnValue]):
           objects that are given as input leaves to the ``fwd`` rule.
 
         Default ``False``.
+      enable_jvp: boolean. Specifies whether to support forward-mode autodifferentiation
+        (jvp) of this operation.
+
+        * If ``False`` (the default) then forward-mode autodifferentiation is disabled.
+
+        * If ``True``, then `jax.jvp` of ``fwd`` is used. (With the additional
+          residuals discarded.)
+
+        If you would like to provide both a custom JVP and a custom VJP, then you can
+        do so by using ``enable_jvp=True``, and placing a :func:``~jax.custom_jvp``
+        within.
+
+        Note that ``fwd`` must support forward-mode autodifferentiation, even if only
+        reverse-mode autodifferentiation is used in the final program. This is the
+        reason for ``enable_jvp=False``. Two common examples of this are
+        (a) if wrapping a callback to some non-JAX program, or (b) the ``fwd`` rule
+        recursively calls the ``custom_vjp``-wrapped original function (in which case
+        an infinite loop is created).
 
     Returns:
       None.
@@ -583,6 +603,7 @@ class custom_vjp(Generic[ReturnValue]):
     self.fwd = fwd
     self.bwd = bwd
     self.symbolic_zeros = symbolic_zeros
+    self.enable_jvp = enable_jvp
 
   @traceback_util.api_boundary
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
@@ -619,7 +640,8 @@ class custom_vjp(Generic[ReturnValue]):
       flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees).call_wrapped
       out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd,
                                         *args_flat, out_trees=out_trees,
-                                        symbolic_zeros=self.symbolic_zeros)
+                                        symbolic_zeros=self.symbolic_zeros,
+                                        enable_jvp=self.enable_jvp)
       _, (out_tree, _) = lu.merge_linear_aux(out_type, out_trees)
       return tree_unflatten(out_tree, out_flat)
 
@@ -758,7 +780,7 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
 class CustomVJPCallPrimitive(core.CallPrimitive):
   initial_style: core.Primitive
 
-  def bind(self, fun, fwd, bwd, *args, out_trees, symbolic_zeros):
+  def bind(self, fun, fwd, bwd, *args, out_trees, symbolic_zeros, enable_jvp):
     args = map(core.full_lower, args)
     top_trace = core.find_top_trace(args)
     fun, env_trace_todo1 = process_env_traces(
@@ -769,7 +791,8 @@ class CustomVJPCallPrimitive(core.CallPrimitive):
     bwd_ = lambda *args: bwd(*args)
     outs = top_trace.process_custom_vjp_call(self, fun, fwd, bwd_, tracers,
                                              out_trees=out_trees,
-                                             symbolic_zeros=symbolic_zeros)
+                                             symbolic_zeros=symbolic_zeros,
+                                             enable_jvp=enable_jvp)
     fst, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
     if fst:
       return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
@@ -835,7 +858,8 @@ mlir.register_lowering(custom_vjp_call_jaxpr_p, mlir.lower_fun(
 def _custom_vjp_call_jaxpr_jvp(
     primals, tangents, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[..., tuple[core.Jaxpr, Sequence[Any]]],
-    num_consts: int, bwd: Callable, out_trees: Callable, symbolic_zeros: bool):
+    num_consts: int, bwd: Callable, out_trees: Callable, symbolic_zeros: bool,
+    enable_jvp: bool):
   _, args = split_list(primals, [num_consts])
   consts_dot, args_dot = split_list(tangents, [num_consts])
   if any(type(t) is not Zero for t in consts_dot):
@@ -843,16 +867,24 @@ def _custom_vjp_call_jaxpr_jvp(
   zeros = [type(t) is not Zero for t in args_dot]
   fwd_jaxpr, fwd_consts = fwd_jaxpr_thunk(*zeros)  # consts can be tracers!
   _, res_tree = out_trees()
-  res_and_primals_out = core.eval_jaxpr(fwd_jaxpr, fwd_consts, *args)
-  res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
-  avals_out = [raise_to_shaped(core.get_aval(x)) for x in primals_out]
+  if enable_jvp:
+    fwd_fun = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(fwd_jaxpr, fwd_consts)))
+    res_and_primals_out, t_res_and_primals_out = ad.jvp(fwd_fun).call_wrapped(args, args_dot)
+    res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
+    _, jvp_tangents_out = split_list(t_res_and_primals_out, [res_tree.num_leaves])
+    primals_out = ad.nontransposable(*primals_out, name="jvp-of-custom_vjp")
+  else:
+    res_and_primals_out = core.eval_jaxpr(fwd_jaxpr, fwd_consts, *args)
+    res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
+    jvp_tangents_out = primals_out  # dummy values with the correct aval
   args_dot = map(ad.instantiate_zeros, args_dot)
   # Cast float0 to zeros with the primal dtype because custom vjp rules don't
   # currently handle float0s
   args_dot = map(ad.replace_float0s, args, args_dot)
   tangents_out = ad.custom_lin_p.bind(
-      *res, *args_dot, num_res=res_tree.num_leaves, bwd=bwd,
-      out_avals=avals_out, symbolic_zeros=symbolic_zeros)
+      *res, *jvp_tangents_out, *args_dot, num_outs=len(jvp_tangents_out),
+      num_res=res_tree.num_leaves, bwd=bwd, symbolic_zeros=symbolic_zeros,
+      enable_jvp=enable_jvp)
   tangents_out = map(lax.tie_p.bind, primals_out, tangents_out)
   tangents_out = map(ad.recast_to_float0, primals_out, tangents_out)
   return primals_out, tangents_out
@@ -862,7 +894,8 @@ def _custom_vjp_call_jaxpr_vmap(
     spmd_axis_name, axis_size, axis_name, main_type, args, in_dims, *,
     fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[..., tuple[core.Jaxpr, Sequence[Any]]],
-    num_consts: int, bwd: Callable, out_trees: Callable, symbolic_zeros: bool):
+    num_consts: int, bwd: Callable, out_trees: Callable, symbolic_zeros: bool,
+    enable_jvp: bool):
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
 
@@ -892,7 +925,8 @@ def _custom_vjp_call_jaxpr_vmap(
   batched_outs = custom_vjp_call_jaxpr_p.bind(
       *args, fun_jaxpr=batched_fun_jaxpr,
       fwd_jaxpr_thunk=batched_fwd_jaxpr_thunk, bwd=batched_bwd,
-      num_consts=num_consts, out_trees=out_trees, symbolic_zeros=symbolic_zeros)
+      num_consts=num_consts, out_trees=out_trees, symbolic_zeros=symbolic_zeros,
+      enable_jvp=enable_jvp)
   out_dims = out_dims2[0] if out_dims2 else out_dims1
   return batched_outs, out_dims
 batching.spmd_axis_primitive_batchers[custom_vjp_call_jaxpr_p] = \
@@ -902,8 +936,26 @@ batching.axis_primitive_batchers[custom_vjp_call_jaxpr_p] = partial(
 
 xla.register_initial_style_primitive(custom_vjp_call_jaxpr_p)
 
-batching.primitive_batchers[ad.custom_lin_p] = ad.raise_custom_vjp_error_on_jvp
-mlir.register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp)
+def _nontransposable_batch(inputs, batch_axes, *, name):
+  return ad.nontransposable(*inputs, name="vmap-of-" + name), batch_axes
+
+batching.primitive_batchers[ad.nontransposable_p] = _nontransposable_batch
+mlir.register_lowering(ad.nontransposable_p, mlir.lower_fun(ad.nontransposable_impl))
+
+def _custom_lin_batch(inputs, batch_axes, *, num_res, num_outs, bwd, symbolic_zeros,
+                      enable_jvp):
+  if enable_jvp:
+    del bwd, symbolic_zeros, enable_jvp
+    _, jvp_tangent_outs, _ = split_list(inputs, [num_res, num_outs])
+    jvp_tangent_outs = ad.nontransposable(*jvp_tangent_outs,
+                                          name="vmap-of-jvp-of-custom_vjp")
+    _, batch_outs, _ = split_list(batch_axes, [num_res, num_outs])
+    return tuple(jvp_tangent_outs), tuple(batch_outs)
+  else:
+    ad.raise_custom_vjp_error_on_jvp()
+
+batching.primitive_batchers[ad.custom_lin_p] = _custom_lin_batch
+mlir.register_lowering(ad.custom_lin_p, mlir.lower_fun(ad.custom_lin_impl))
 
 
 def custom_gradient(fun):

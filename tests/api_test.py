@@ -9116,6 +9116,218 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     g(1.)  # doesn't crash
 
+  # This test also demonstrates how we can register both a custom_jvp and a custom_vjp
+  # for the same operation.
+  @parameterized.parameters(False, True)
+  def test_jvp_of_custom_vjp_with_enable_jvp(self, test_grad):
+    """Checks that jvp(custom_vjp) works."""
+
+    @jax.custom_jvp
+    def g(x, y):
+      return x + y + 20
+
+    @g.defjvp
+    def g_jvp(primals, tangents):
+      x, y = primals
+      tx, ty = tangents
+      return x + y + 30, tx + ty + 40
+
+    @jax.custom_vjp
+    def f(x, y):
+      return x + y
+
+    def f_fwd(x, y):
+      return g(x, y), x + y + 50
+
+    def f_bwd(res, ct):
+      if test_grad:
+        # Test that we can do vjps
+        self.assertEqual(res, 53.)
+        return ct + 60, ct + 70
+      else:
+        # Test that we don't touch this if we don't need to
+        assert False
+
+    f.defvjp(f_fwd, f_bwd, enable_jvp=True)
+
+    # Can run `f` without autodiff
+    self.assertEqual(f(1., 2.), 3.)
+    # Performs jvp of `f_fwd` (`f` is unused)
+    p, t = jax.jvp(f, (1., 2.), (3., 4.))
+    self.assertEqual(p, 33.)
+    self.assertEqual(t, 47.)
+    if test_grad:
+      grad = jax.grad(f)(1., 2.)
+      self.assertEqual(grad, 61.)
+
+  def test_jvp_of_jvp_of_custom_vjp_with_enable_jvp(self):
+    """A jvp(custom_vjp) will produce a custom_lin. Here we check that jvp(custom_lin)
+    works.
+    """
+
+    @jax.custom_vjp
+    def f(x, y):
+      return x * y
+
+    def f_fwd(x, y):
+      return 2 * x * y, None
+
+    def f_bwd(res, ct):
+      assert False
+
+    f.defvjp(f_fwd, f_bwd, enable_jvp=True)
+
+    def jvp_primal(x, y):
+      p, t = jax.jvp(f, (x, y), (3., 4.))
+      return p, t
+
+    def jvp_tangent(dx, dy):
+      p, t = jax.jvp(f, (1., 2.), (dx, dy))
+      return p, t
+
+    # jvp-of-primal(jvp(custom_vjp))
+    (p, t), (t2, tt) = jax.jvp(jvp_primal, (1., 2.), (5., 6.))
+    self.assertEqual(p, 4.)
+    self.assertEqual(t, 20.)
+    self.assertEqual(t2, 32.)
+    self.assertEqual(tt, 76.)
+
+    # jvp-of-tangent(jvp(custom_vjp))
+    (p, t), (t2, tt) = jax.jvp(jvp_tangent, (3., 4.), (5., 6.))
+    self.assertEqual(p, 4.)
+    self.assertEqual(t, 20.)
+    self.assertEqual(t2, 0.)
+    self.assertEqual(tt, 32.)
+
+    # custom_vjp defines a custom transpose.
+    # jvp(custom_vjp) removes that.
+    # So for safety we shouldn't be able to transpose afterwards.
+    with self.assertRaisesRegex(TypeError,
+                                "Cannot transpose tangent-of-jvp-of-custom_vjp"):
+      jax.grad(lambda a, b: jvp_primal(a, b)[0])(1., 2.)
+    with self.assertRaisesRegex(TypeError, "Cannot transpose jvp-of-jvp-of-custom_vjp"):
+      jax.grad(lambda a, b: jvp_primal(a, b)[1])(1., 2.)
+    with self.assertRaisesRegex(TypeError, "Cannot transpose jvp-of-jvp-of-custom_vjp"):
+      jax.grad(lambda a, b: jvp_tangent(a, b)[1])(1., 2.)
+    # No test for this one: the output primal is unaffected by perturbations in the
+    # tangent, so this is just a zero.
+    #   jax.grad(lambda a, b: jvp_tangent(a, b)[0])(1., 2.)
+
+  def test_vmap_of_jvp_of_custom_vjp_with_enable_jvp(self):
+    def f_impl(pred, x, y):
+      return jnp.where(pred, x + y, x * y)
+
+    def f_fwd(pred, x, y):
+      return f_impl(pred, x, y), None
+
+    def f_bwd(res, ct):
+      assert False
+
+    f = jax.custom_vjp(f_impl)
+    f.defvjp(f_fwd, f_bwd, enable_jvp=True)
+
+    @partial(jax.vmap, in_axes=(0, None, 1))
+    def jvp_primal(pred, x, y):
+      (y,) = y
+      p, t = jax.jvp(partial(f, pred), (x, y), (3., 4.))
+      return p, t
+
+    @partial(jax.vmap, in_axes=(0, None, 1))
+    def jvp_tangent(pred, dx, dy):
+      (dy,) = dy
+      p, t = jax.jvp(partial(f, pred), (1., 2.), (dx, dy))
+      return p, t
+
+    p, t = jvp_primal(jnp.array([True, False]), 3., jnp.array([[4., 5.]]))
+    true_p = jnp.array([7., 15.])
+    true_t = jnp.array([7., 27.])
+    self.assertArraysAllClose(p, true_p)
+    self.assertArraysAllClose(t, true_t)
+
+    p, t = jvp_tangent(jnp.array([True, False]), 3., jnp.array([[4., 5.]]))
+    true_p = jnp.array([3., 2.])
+    true_t = jnp.array([7., 11.])
+    self.assertArraysAllClose(p, true_p)
+    self.assertArraysAllClose(t, true_t)
+
+  @parameterized.parameters(False, True)
+  def test_mixed_dtype_jvp_of_custom_vjp_with_enable_jvp(self, test_grad):
+    def f_impl(floats, ints, bools):
+      with jax.numpy_dtype_promotion("standard"):
+        return jnp.where(bools, ints, floats)
+
+    def f_fwd(floats, ints, bools):
+      out = f_impl(floats, ints, bools)
+      return out, (floats, ints, bools)
+
+    def f_bwd(res, ct):
+      floats, ints, bools = res
+      if test_grad:
+        self.assertArraysEqual(floats, floats_ref)
+        self.assertArraysEqual(ints, ints_ref)
+        self.assertArraysEqual(bools, bools_ref)
+        return ct, None, None
+      else:
+        assert False
+
+    f = jax.custom_vjp(f_impl)
+    f.defvjp(f_fwd, f_bwd, enable_jvp=True)
+
+    floats_ref = jnp.array([1., 2.], dtype=jnp.bfloat16)
+    ints_ref = jnp.array([3, 4])
+    bools_ref = jnp.array([False, True])
+    units = np.zeros((2,), dtype=jax.dtypes.float0)
+
+    p, t = jax.jvp(f, (floats_ref, ints_ref, bools_ref), (floats_ref, units, units))
+    true_p = jnp.array([1., 4.], dtype=jnp.bfloat16)
+    true_t = jnp.array([1., 0.], dtype=jnp.bfloat16)
+    self.assertArraysEqual(p, true_p)
+    self.assertArraysEqual(t, true_t)
+
+    p, t = jax.jvp(lambda f_ref: f(f_ref, ints_ref, bools_ref),
+                   (floats_ref,), (floats_ref,))
+    self.assertArraysEqual(p, true_p)
+    self.assertArraysEqual(t, true_t)
+    if test_grad:
+      grad_f1 = jax.grad(lambda *a: jnp.sum(f(*a)))
+      grad_f2 = jax.grad(lambda a: jnp.sum(f(*a)), allow_int=True)
+
+      grads = grad_f1(floats_ref, ints_ref, bools_ref)
+      true_grads = jnp.array([1., 1.], dtype=jnp.bfloat16)
+      self.assertArraysEqual(grads, true_grads)
+
+      floats_grad, ints_grad, bools_grad = grad_f2((floats_ref, ints_ref, bools_ref))
+      self.assertArraysEqual(floats_grad, grads)
+      self.assertArraysEqual(ints_grad, units)
+      self.assertArraysEqual(bools_grad, units)
+
+  # This test is designed to hit the JVP rule for `custom_vjp_call_jaxpr_p`
+  def test_pe_of_custom_vjp_with_enable_jvp(self):
+    @jax.custom_jvp
+    def f(x, y):
+      assert False
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, y = primals
+      tx, ty = tangents
+      return x + y, g(tx, ty)
+
+    @jax.custom_vjp
+    def g(tx, ty):
+      return tx + ty
+
+    def g_fwd(tx, ty):
+      return tx + ty, None
+
+    def g_bwd(res, ct):
+      assert False
+
+    g.defvjp(g_fwd, g_bwd, enable_jvp=True)
+
+    _, lin_fn = jax.linearize(f, 1., 2.)
+    jax.jvp(lin_fn, (1., 2.), (1., 2.))
+
 
 def transpose_unary(f, x_example):
   def transposed(y):

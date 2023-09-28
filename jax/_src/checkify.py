@@ -986,7 +986,7 @@ def lift_jvp(num_errs, num_consts, jvp_jaxpr_thunk):
 
 def custom_vjp_call_jaxpr_rule(in_err, enabled_errors, *in_vals, fun_jaxpr,
                                fwd_jaxpr_thunk, num_consts, bwd, out_trees,
-                               symbolic_zeros):
+                               symbolic_zeros, enable_jvp):
   err_vals, err_tree = jtu.tree_flatten(in_err)
   num_errs = err_tree.num_leaves
   checkified_fun = lu.wrap_init(
@@ -1008,7 +1008,7 @@ def custom_vjp_call_jaxpr_rule(in_err, enabled_errors, *in_vals, fun_jaxpr,
   checkified_fwd, fwd_out_tree = flatten_fun_output(checkified_fwd)
   all_outs = custom_derivatives.custom_vjp_call_p.bind(
       checkified_fun, checkified_fwd, bwd_, *err_vals, *in_vals, out_trees=out_trees,
-      symbolic_zeros=symbolic_zeros)
+      symbolic_zeros=symbolic_zeros, enable_jvp=enable_jvp)
   fst, out_metadata = lu.merge_linear_aux(fun_metadata, fwd_out_tree)
   if fst:
     err_and_out_tree, _ = out_metadata

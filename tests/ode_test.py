@@ -216,7 +216,7 @@ class ODETest(jtu.JaxTestCase):
     def f(k):
       return odeint(lambda x, t: k*x, 1.,  jnp.linspace(0, 1., 50)).sum()
 
-    with self.assertRaisesRegex(TypeError, "can't apply forward-mode.*"):
+    with self.assertRaisesRegex(NotImplementedError, "vmap-of-jvp-of-custom_vjp"):
       jax.jacfwd(f)(3.)
 
   @jtu.skip_on_devices("tpu", "gpu")

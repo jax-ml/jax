@@ -495,7 +495,7 @@ class JaxprTrace(Trace['JaxprTracer']):
       return out_tracers
 
   def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, out_trees,
-                              symbolic_zeros):
+                              symbolic_zeros, enable_jvp):
     # TODO(mattjj): after old remat is deleted, make this method trivial.
     # Because we instantiate all tracers, in_knowns is all False.
     tracers = map(self.instantiate_const_abstracted, tracers)
@@ -503,7 +503,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     f = trace_to_subjaxpr_nounits(f, self.main, True)
     f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns), tuple(in_avals))
     out_flat = prim.bind(f, fwd, bwd, out_trees=out_trees,
-                         symbolic_zeros=symbolic_zeros)
+                         symbolic_zeros=symbolic_zeros, enable_jvp=enable_jvp)
     out_knowns, out_avals, jaxpr, env = aux()
     out_consts, res = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
     res_tracers = map(self.new_instantiated_const, res)
@@ -533,7 +533,8 @@ class JaxprTrace(Trace['JaxprTracer']):
                               fwd_jaxpr_thunk=fwd_jaxpr_thunk,
                               num_consts=len(res) + len(env),
                               bwd=bwd, out_trees=out_trees,
-                              symbolic_zeros=symbolic_zeros),
+                              symbolic_zeros=symbolic_zeros,
+                              enable_jvp=enable_jvp),
                          jaxpr.effects, source)
     for t in out_tracers: t.recipe = eqn
     return merge_lists(out_knowns, out_tracers, out_consts)
@@ -2112,7 +2113,7 @@ class DynamicJaxprTrace(core.Trace):
     assert False  # unreachable
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
-                              symbolic_zeros):
+                              symbolic_zeros, enable_jvp):
     in_avals = [t.aval for t in tracers]
     with core.new_sublevel():
       fun_jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, self.main, in_avals)
@@ -2135,7 +2136,8 @@ class DynamicJaxprTrace(core.Trace):
                              fwd_jaxpr_thunk=fwd_jaxpr_from_zeros,
                              num_consts=len(consts),
                              bwd=bwd, out_trees=out_trees,
-                             symbolic_zeros=symbolic_zeros),
+                             symbolic_zeros=symbolic_zeros,
+                             enable_jvp=enable_jvp),
                         fun_jaxpr.effects,
                         source_info_util.current())
     self.frame.add_eqn(eqn)

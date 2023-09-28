@@ -390,21 +390,36 @@ class JVPTrace(Trace):
   def post_process_custom_jvp_call(self, out_tracers, _):
     raise CustomJVPException()
 
-  def process_custom_vjp_call(self, _, __, fwd, bwd, tracers, out_trees,
-                              symbolic_zeros):
+  def process_custom_vjp_call(self, _, fun, fwd, bwd, tracers, out_trees,
+                              symbolic_zeros: bool,
+                              enable_jvp: bool):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
-    fwd_in = [(core.full_lower(p), type(t) is not Zero)
-              for p, t in zip(primals_in, tangents_in)]
-    fwd_in = [x for pair in fwd_in for x in pair]   # flatten
-    res_and_primals_out = fwd.call_wrapped(*fwd_in)
-    _, res_tree = out_trees()
-    res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
-    avals_out = [raise_to_shaped(core.get_aval(x)) for x in primals_out]
+    primals_in = tuple(core.full_lower(p) for p in primals_in)
+    nonzero_tangent = tuple(type(t) is not Zero for t in tangents_in)
+    tangents_in = tuple(t if type(t) is Zero else core.full_lower(t)
+                        for t in tangents_in)
+
+    if enable_jvp:
+      jvp_fwd = jvp_subtrace(fwd_on_primals(fwd, nonzero_tangent))
+      res_and_primals_out, t_res_and_primals_out = (
+                               jvp_fwd.call_wrapped(self.main, primals_in, tangents_in))
+      _, res_tree = out_trees()
+      res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
+      _, jvp_tangents_out = split_list(t_res_and_primals_out, [res_tree.num_leaves])
+      primals_out = nontransposable(*primals_out, name="jvp-of-custom_vjp")
+    else:
+      fwd_in = [x for pair in zip(primals_in, nonzero_tangent) for x in pair]  # flatten
+      res_and_primals_out = fwd.call_wrapped(*fwd_in)
+      _, res_tree = out_trees()
+      res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
+      jvp_tangents_out = primals_out  # dummy values with the correct aval
+
     # TODO(frostig,mattjj): avoid instantiating zeros when we don't have to!
-    tangents_in = map(instantiate_zeros, tangents_in)
+    tangents_in = tuple(map(instantiate_zeros, tangents_in))
     tangents_out = custom_lin_p.bind(
-        *res, *tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
-        out_avals=avals_out, symbolic_zeros=symbolic_zeros)
+        *res, *jvp_tangents_out, *tangents_in, num_res=res_tree.num_leaves,
+        num_outs=len(jvp_tangents_out), bwd=bwd, symbolic_zeros=symbolic_zeros,
+        enable_jvp=enable_jvp)
     tangents_out = map(jax._src.lax.lax.tie_p.bind, primals_out, tangents_out)
     tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
@@ -454,6 +469,12 @@ class JVPTrace(Trace):
       return zeros_like_jaxval(yt), yt
     else:
       raise TypeError((xt, yt))
+
+@lu.transformation
+def fwd_on_primals(nonzero_tangent, *primals_in):
+  fwd_in = [x for pair in zip(primals_in, nonzero_tangent) for x in pair]  # flatten
+  out = yield fwd_in, {}
+  yield out
 
 
 class JVPTracer(Tracer):
@@ -744,26 +765,99 @@ def _interleave(xs, ys):
   assert len(xs) == len(ys)
   return [e for pair in zip(xs, ys) for l in pair for e in l]
 
+def nontransposable_impl(*xs, name):
+  return xs
+
+def _nontransposable_jvp(primals, tangents, *, name):
+  primal_outs = nontransposable(*primals, name=name)
+  tangent_outs = nontransposable(*tangents, name="tangent-of-" + name)
+  return primal_outs, tangent_outs
+
+def _nontransposable_transpose(cts, *x, name):
+  del cts, x
+  raise TypeError(f"Cannot transpose {name}")
+
+nontransposable_p: core.Primitive = core.Primitive('nontransposable')
+nontransposable_p.multiple_results = True
+nontransposable_p.def_impl(nontransposable_impl)
+nontransposable_p.def_abstract_eval(nontransposable_impl)
+primitive_jvps[nontransposable_p] = _nontransposable_jvp
+primitive_transposes[nontransposable_p] = _nontransposable_transpose
+
+def nontransposable(*xs, name: str):
+  """Identity function, except that it cannot be transposed.
+
+  Used after a jvp-of-custom_vjp: the custom_vjp is declaring custom transpose
+  behaviour, but after a JVP then we have lost that. This guard ensures that we don't
+  accidentally transpose something that should have had custom behaviour.
+  """
+  return nontransposable_p.bind(*xs, name=name)
 
 custom_lin_p: core.Primitive = core.Primitive('custom_lin')
-custom_lin_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)
 custom_lin_p.multiple_results = True
 
-def raise_custom_vjp_error_on_jvp(*_, **__):
+def raise_custom_vjp_error_on_jvp():
   raise TypeError("can't apply forward-mode autodiff (jvp) to a custom_vjp "
-                  "function.")
-custom_lin_p.def_impl(raise_custom_vjp_error_on_jvp)
+                  "function, unless `enable_jvp=True`. "
+                  "For example:\n"
+                  "```\n"
+                  "@jax.custom_vjp\n"
+                  "def f(...):\n"
+                  "    ...\n"
+                  "\n"
+                  "def f_fwd(...):\n"
+                  "    ...\n"
+                  "\n"
+                  "def f_bwd(...):\n"
+                  "    ...\n"
+                  "\n"
+                  "f.defvjp(f_fwd, f_bwd, enable_jvp=True)\n"
+                  "```")
 
-def _custom_lin_transpose(cts_out, *invals, num_res, bwd, out_avals,
-                          symbolic_zeros):
-  res, _ = split_list(invals, [num_res])
+def custom_lin_impl(*inputs, num_res, num_outs, bwd, symbolic_zeros, enable_jvp):
+  if enable_jvp:
+    _, jvp_tangent_outs, _ = split_list(inputs, [num_res, num_outs])
+    return jvp_tangent_outs
+  else:
+    raise_custom_vjp_error_on_jvp()
+
+def _custom_lin_abstract_eval(*inputs, num_res, num_outs, **_):
+  _, jvp_tangent_outs, _ = split_list(inputs, [num_res, num_outs])
+  out_avals = [raise_to_shaped(x) for x in jvp_tangent_outs]
+  return out_avals
+
+custom_lin_p.def_impl(custom_lin_impl)
+custom_lin_p.def_abstract_eval(_custom_lin_abstract_eval)
+
+def _custom_lin_jvp(primals, tangents, *, num_res, num_outs, bwd, symbolic_zeros,
+                    enable_jvp):
+  if enable_jvp:
+    outs = custom_lin_p.bind(*primals, num_res=num_res, num_outs=num_outs, bwd=bwd,
+                             symbolic_zeros=symbolic_zeros, enable_jvp=enable_jvp)
+    # Identity function on the tangents, but we don't allow transposing them afterwards.
+    _, tang_outs, _ = split_list(tangents, [num_res, num_outs])
+    tang_outs = nontransposable(*tang_outs, name="jvp-of-jvp-of-custom_vjp")
+    assert len(outs) == len(tang_outs)
+    return outs, tang_outs
+  else:
+    raise_custom_vjp_error_on_jvp()
+
+def _custom_lin_transpose(cts_out, *invals, num_res, num_outs, bwd, symbolic_zeros,
+                          enable_jvp):
+  del enable_jvp
+  res, jvp_tangent_outs, _ = split_list(invals, [num_res, num_outs])
   if symbolic_zeros:
     cts_out = map(replace_internal_symbolic_zeros, cts_out)
   else:
+    out_avals = [x.aval if type(x) is UndefinedPrimal else core.get_aval(x)
+                 for x in jvp_tangent_outs]
+    out_avals = [raise_to_shaped(x) for x in out_avals]
     cts_out = map(instantiate_zeros_aval, out_avals, cts_out)
   cts_in = bwd(*res, *cts_out)
   cts_in = map(replace_rule_output_symbolic_zeros, cts_in)
-  return [None] * num_res + list(cts_in)
+  return [None] * (num_res + num_outs) + list(cts_in)
+
+primitive_jvps[custom_lin_p] = _custom_lin_jvp
 primitive_transposes[custom_lin_p] = _custom_lin_transpose
 
 
