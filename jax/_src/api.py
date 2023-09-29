@@ -582,7 +582,8 @@ def xla_computation(fun: Callable,
               wrap_name(fun_name, "xla_computation")),
           donated_args=donated_invars,
           arg_shardings=None,
-          result_shardings=None)
+          result_shardings=None,
+          lowering_parameters=mlir.LoweringParameters())
       built = xc._xla.mlir.mlir_module_to_xla_computation(
           mlir.module_to_string(lowering_result.module),
           use_tuple_args=tuple_args,
@@ -1904,8 +1905,8 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
     Returns:
       A ``Lowered`` instance representing the post-map lowering.
     """
-    _experimental_lowering_platform = kwargs.pop(
-        '_experimental_lowering_platform', None)
+    lowering_parameters = kwargs.pop(
+        '_experimental_lowering_parameters', mlir.LoweringParameters())
     p = _prepare_pmap(
         fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
         devices, backend, axis_size, args, kwargs)
@@ -1920,7 +1921,7 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
         donated_invars=p.donated_invars,
         is_explicit_global_axis_size=p.is_explicit_global_axis_size,
         avals=abstract_args,
-        lowering_platform=_experimental_lowering_platform)
+        lowering_parameters=lowering_parameters)
     return stages.Lowered.from_flat_info(
         computation, p.in_tree, abstract_args, donate_tuple, p.out_tree())
 

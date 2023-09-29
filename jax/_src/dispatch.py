@@ -149,7 +149,7 @@ def xla_primitive_callable(
   computation = sharded_lowering(
       flat_fun, prim.name, donated_invars, keep_unused=False,
       inline=True, in_avals=in_avals, in_shardings=orig_in_shardings.shardings,
-      lowering_platform=None)
+      lowering_parameters=mlir.LoweringParameters())
   compiled = computation.compile()
   if xla_extension_version >= 192:
     if config.jax_disable_jit:
@@ -169,7 +169,8 @@ def xla_primitive_callable(
 def sharded_lowering(
     fun: lu.WrappedFun, name: str, donated_invars: Sequence[bool],
     keep_unused: bool, inline: bool, in_avals: tuple[core.AbstractValue, ...],
-    in_shardings: Sequence[Sharding | None], lowering_platform: str | None
+    in_shardings: Sequence[Sharding | None],
+    lowering_parameters: mlir.LoweringParameters
 ) -> pxla.MeshComputation:
   in_shardings_unspec = [UNSPECIFIED if i is None else i for i in in_shardings]
 
@@ -179,7 +180,8 @@ def sharded_lowering(
   return pxla.lower_sharding_computation(
       fun, 'jit', name, in_shardings_unspec, UNSPECIFIED, donated_invars,
       in_avals, keep_unused=keep_unused, inline=inline,
-      devices_from_context=None, lowering_platform=lowering_platform)
+      devices_from_context=None,
+      lowering_parameters=lowering_parameters)
 
 
 def simple_impl(prim):

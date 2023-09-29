@@ -421,7 +421,9 @@ def export(fun_jax: Callable,
       shape_poly.thread_local_state.enable_shape_assertions = enable_shape_assertions
       lowered = wrapped_fun_jax.lower(
           *args_specs, **kwargs_specs,
-          _experimental_lowering_platform=lowering_platforms)
+          _experimental_lowering_parameters=mlir.LoweringParameters(
+            platforms=lowering_platforms,
+          ))
 
       lowering = lowered._lowering  # type: ignore
       _check_lowering(lowering)
@@ -601,9 +603,12 @@ def _wrap_main_func(
     entry_block = new_main_op.add_entry_block()
     with ir.InsertionPoint(entry_block):
       module_context = mlir.ModuleContext(
-          "cpu", "cpu", sharding_impls.ShardingContext([]),
-          source_info_util.new_name_stack(),
-          [], itertools.count(1), [], module=wrapped_module, context=context)
+          backend_or_name="cpu", platform="cpu",
+          axis_context=sharding_impls.ShardingContext([]),
+          name_stack=source_info_util.new_name_stack(),
+          keepalives=[], channel_iterator=itertools.count(1),
+          host_callbacks=[], module=wrapped_module, context=context,
+          lowering_parameters=mlir.LoweringParameters())
       ctx = mlir.LoweringRuleContext(
         module_context=module_context, primitive=None,
         avals_in=args_avals_flat, avals_out=None,

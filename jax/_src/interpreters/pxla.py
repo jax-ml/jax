@@ -560,7 +560,8 @@ def parallel_callable(fun: lu.WrappedFun,
   pmap_computation = lower_parallel_callable(
       fun, backend_name, axis_name, axis_size, global_axis_size, devices, name,
       in_axes, out_axes_thunk, donated_invars,
-      is_explicit_global_axis_size, avals, lowering_platform=None)
+      is_explicit_global_axis_size, avals,
+      lowering_parameters=mlir.LoweringParameters())
   pmap_executable = pmap_computation.compile()
   return WeakRefList([pmap_executable.unsafe_call, pmap_executable.fingerprint])
 
@@ -661,7 +662,7 @@ def lower_parallel_callable(
     is_explicit_global_axis_size: bool,
     avals: Sequence[core.AbstractValue],
     *,
-    lowering_platform: str | None):
+    lowering_parameters: mlir.LoweringParameters):
   # Determine global_axis_size for use in AxisEnv.
   # TODO(mattjj,skyewm): revive this check (inner_pmap always False now)
   # if xb.process_count() > 1 and global_axis_size is None and inner_pmap:
@@ -755,18 +756,19 @@ def lower_parallel_callable(
       lowering_result = mlir.lower_jaxpr_to_module(
           module_name,
           closed_jaxpr,
-          ordered_effects,
-          backend,
-          lowering_platform or backend.platform,
-          sharding_impls.ReplicaAxisContext(axis_env),
-          name_stack,
-          donated_invars,
+          ordered_effects=ordered_effects,
+          backend_or_name=backend,
+          platform=lowering_parameters.override_platform or backend.platform,
+          axis_context=sharding_impls.ReplicaAxisContext(axis_env),
+          name_stack=name_stack,
+          donated_args=donated_invars,
           replicated_args=replicated_args,
           arg_shardings=None,
           result_shardings=None,
           arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
           result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
-          num_replicas=replicas.num_global_replicas)
+          num_replicas=replicas.num_global_replicas,
+          lowering_parameters=lowering_parameters)
   return PmapComputation(lowering_result.module, pci=pci, replicas=replicas,
                          shards=shards, tuple_args=tuple_args,
                          unordered_effects=unordered_effects,
@@ -1784,9 +1786,9 @@ def _raise_warnings_or_errors_for_jit_of_pmap(
 @weakref_lru_cache
 def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             semantic_in_shardings, semantic_out_shardings,
-                            da_object, lowering_platform,
+                            da_object,
                             donated_invars, name_stack, all_default_mem_kind,
-                            override_lowering_rules):
+                            lowering_parameters: mlir.LoweringParameters):
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = semantic_in_shardings.shardings
   out_shardings = semantic_out_shardings.shardings
@@ -1848,13 +1850,13 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
-        ordered_effects,
-        backend,
+        ordered_effects=ordered_effects,
+        backend_or_name=backend,
         # Optionally, override the lowering platform
-        lowering_platform or backend.platform,
-        axis_ctx,
-        name_stack,
-        donated_invars,
+        platform=lowering_parameters.override_platform or backend.platform,
+        axis_context=axis_ctx,
+        name_stack=name_stack,
+        donated_args=donated_invars,
         replicated_args=replicated_args,
         arg_shardings=in_mlir_shardings,
         result_shardings=out_mlir_shardings,
@@ -1863,7 +1865,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         num_replicas=nreps,
         num_partitions=num_partitions,
         all_default_mem_kind=all_default_mem_kind,
-        override_lowering_rules=override_lowering_rules)
+        lowering_parameters=lowering_parameters)
   tuple_args = dispatch.should_tuple_args(len(global_in_avals), backend.platform)
   unordered_effects = list(
       effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
@@ -1969,9 +1971,7 @@ def lower_sharding_computation(
     keep_unused: bool,
     inline: bool,
     devices_from_context: Sequence[xc.Device] | None = None,
-    lowering_platform: str | None,
-    override_lowering_rules: None | (
-        tuple[tuple[core.Primitive, mlir.LoweringRule]]) = None,
+    lowering_parameters: mlir.LoweringParameters,
 ) -> MeshComputation:
   """Lowers a computation to XLA. It can take arbitrary shardings as input.
 
@@ -2048,8 +2048,9 @@ def lower_sharding_computation(
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, api_name, fun_name, backend, semantic_in_shardings,
-       semantic_out_shardings, da_object, lowering_platform,
-       donated_invars, name_stack, all_default_mem_kind, override_lowering_rules)
+       semantic_out_shardings, da_object,
+       donated_invars, name_stack, all_default_mem_kind,
+       lowering_parameters=lowering_parameters)
 
   # backend and device_assignment is passed through to MeshExecutable because
   # if keep_unused=False and all in_shardings are pruned, then there is no way
@@ -2108,7 +2109,7 @@ def lower_mesh_computation(
     spmd_lowering: bool,
     global_in_avals: Sequence[core.ShapedArray],
     tiling_method: TilingMethod | None,
-    lowering_platform: str | None) -> MeshComputation:
+    lowering_parameters: mlir.LoweringParameters) -> MeshComputation:
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
   name_stack = source_info_util.new_name_stack(wrap_name(fun_name, api_name))
@@ -2216,19 +2217,20 @@ def lower_mesh_computation(
       lowering_result = mlir.lower_jaxpr_to_module(
           module_name,
           closed_jaxpr,
-          ordered_effects,
-          backend,
-          lowering_platform or backend.platform,
-          axis_ctx,
-          name_stack,
-          donated_invars,
+          ordered_effects=ordered_effects,
+          backend_or_name=backend,
+          platform=lowering_parameters.platforms or backend.platform,
+          axis_context=axis_ctx,
+          name_stack=name_stack,
+          donated_args=donated_invars,
           replicated_args=replicated_args,
           arg_shardings=in_partitions,
           result_shardings=out_partitions,
           arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
           result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
           num_replicas=num_replicas,
-          num_partitions=num_partitions)
+          num_partitions=num_partitions,
+          lowering_parameters=lowering_parameters)
 
   return MeshComputation(
       str(name_stack),
