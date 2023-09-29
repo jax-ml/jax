@@ -304,7 +304,7 @@ def _swap_abstract_eval(ref_aval, val_aval, *all_avals, args_tree,
   if ref_aval.dtype != val_aval.dtype:
     raise ValueError("Invalid dtype for `swap`. "
                      f"Ref dtype: {ref_aval.dtype}. "
-                     f"Value shape: {val_aval.dtype}. ")
+                     f"Value dtype: {val_aval.dtype}. ")
   return (jax_core.ShapedArray(expected_output_shape, ref_aval.dtype),
           {state.WriteEffect(0)})
 swap_p.def_effectful_abstract_eval(_swap_abstract_eval)
