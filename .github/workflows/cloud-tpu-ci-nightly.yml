@@ -71,6 +71,11 @@ jobs:
         env:
           JAX_PLATFORMS: tpu,cpu
           PY_COLORS: 1
+          # TODO(b/302562327): TPU VMs have an ancient tcmalloc set in their
+          # LD_PRELOAD by default. This has been causing deadlocks due to its
+          # use of libunwind. Use the system allocator in the meantime to
+          # unblock testing until we develop a better fix.
+          LD_PRELOAD:
         run: |
           # Run single-accelerator tests in parallel
           JAX_ENABLE_TPU_XDIST=true python3 -m pytest -n=4 --tb=short \
