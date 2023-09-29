@@ -1072,6 +1072,55 @@ class MemoriesTest(jtu.BufferDonationTestCase):
         "TransferToMemoryKind(memory_kind='tpu_hbm')")
     self.assertEqual(bwd_mem_kind_count, 3)
 
+  def test_host_offload_in_custom_vjp(self):
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x)
+
+    def f_fwd(x):
+      y = x * 2
+      z = jax.device_put(y, TransferToMemoryKind('unpinned_host'))
+      return y, (x, z)
+
+    def f_bwd(res, tx):
+      x, z = res
+      y = x * 2
+      z2 = jax.device_put(y, TransferToMemoryKind('unpinned_host'))
+      return ((z == z2).astype(jnp.float32),)
+
+    f.defvjp(f_fwd, f_bwd)
+    g = jax.jit(jax.grad(lambda x: f(x).sum()))
+
+    x = jnp.ones(3) * 4
+    all_true = jnp.ones(3)
+    self.assertArraysEqual(g(x), all_true)
+
+  def test_host_offload_in_custom_vjp_sharded(self):
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    s = NamedSharding(mesh, P('x'))
+
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x)
+
+    def f_fwd(x):
+      y = x * 2
+      z = jax.device_put(y, s.with_memory_kind('unpinned_host'))
+      return y, (x, z)
+
+    def f_bwd(res, tx):
+      x, z = res
+      y = x * 2
+      z2 = jax.device_put(y, s.with_memory_kind('unpinned_host'))
+      return ((z == z2).astype(jnp.float32),)
+
+    f.defvjp(f_fwd, f_bwd)
+    g = jax.jit(jax.grad(lambda x: f(x).sum()))
+
+    x = jax.device_put(jnp.ones(4) * 4, s)
+    all_true = jnp.ones(4)
+    self.assertArraysEqual(g(x), all_true)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
