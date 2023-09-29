@@ -14,12 +14,16 @@
 
 """Utilities for the building JAX related python packages."""
 
+from __future__ import annotations
+
 import os
+import pathlib
 import platform
 import shutil
 import sys
 import subprocess
 import glob
+from typing import Sequence
 
 
 def is_windows() -> bool:
@@ -27,20 +31,22 @@ def is_windows() -> bool:
 
 
 def copy_file(
-    src_file: str,
-    dst_dir: str,
-    dst_filename=None,
-    from_runfiles=True,
-    runfiles=None,
+    src_files: str | Sequence[str],
+    dst_dir: pathlib.Path,
+    dst_filename = None,
+    runfiles = None,
 ) -> None:
-  if from_runfiles:
+  dst_dir.mkdir(parents=True, exist_ok=True)
+  if isinstance(src_files, str):
+    src_files = [src_files]
+  for src_file in src_files:
     src_file = runfiles.Rlocation(src_file)
-  src_filename = os.path.basename(src_file)
-  dst_file = os.path.join(dst_dir, dst_filename or src_filename)
-  if is_windows():
-    shutil.copyfile(src_file, dst_file)
-  else:
-    shutil.copy(src_file, dst_file)
+    src_filename = os.path.basename(src_file)
+    dst_file = os.path.join(dst_dir, dst_filename or src_filename)
+    if is_windows():
+      shutil.copyfile(src_file, dst_file)
+    else:
+      shutil.copy(src_file, dst_file)
 
 
 def platform_tag(cpu: str) -> str:
