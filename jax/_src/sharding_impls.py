@@ -656,18 +656,16 @@ class PositionalSharding(XLACompatibleSharding):
   making it suitable for parallel processing on different hardware platforms.
 
   Example:
-  ```python
-  devices = [xc.Device("GPU", 0), xc.Device("GPU", 1)]
-  sharding = PositionalSharding(devices)
-  print(sharding.shape)  # Output: (2,)
-  print(sharding.ndim)   # Output: 1
-  ```
+  >>> devices = [xc.Device("GPU", 0), xc.Device("GPU", 1)]
+  >>> sharding = PositionalSharding(devices)
+  >>> print(sharding.shape)  # Output: (2,)
+  >>> print(sharding.ndim)   # Output: 1
 
   Initialize a PositionalSharding instance with two GPU devices:
-  ```python
-  devices = [xc.Device("GPU", 0), xc.Device("GPU", 1)]
-  sharding = PositionalSharding(devices)
-  ```
+  
+  >>> devices = [xc.Device("GPU", 0), xc.Device("GPU", 1)]
+  >>> sharding = PositionalSharding(devices)
+  
   """
   _devices: tuple[xc.Device, ...]
   _memory_kind: str | None
@@ -718,9 +716,9 @@ class PositionalSharding(XLACompatibleSharding):
 
     Example:
       Reshape a PositionalSharding instance:
-        ```python
-        new_sharding = sharding.reshape(2, 1)
-        ```
+      
+      >>> new_sharding = sharding.reshape(2, 1)
+      
     Returns:
       PositionalSharding: A new PositionalSharding instance.
     """
@@ -739,9 +737,9 @@ class PositionalSharding(XLACompatibleSharding):
 
     Example:
       Transpose a PositionalSharding instance, swapping the first and second dimensions:
-      ```python
-      transposed_sharding = sharding.transpose(1, 0)
-      ```
+    
+      >>> transposed_sharding = sharding.transpose(1, 0)
+      
 
     Returns:
       PositionalSharding: A new PositionalSharding instance with the transposed data layout.
@@ -766,9 +764,9 @@ class PositionalSharding(XLACompatibleSharding):
 
     Example:
       Replicate a PositionalSharding instance along the first axis while keeping dimensions:
-      ```python
-      replicated_sharding = sharding.replicate(axis=0, keepdims=True)
-      ```
+      
+      >>> replicated_sharding = sharding.replicate(axis=0, keepdims=True)
+      
 
     Returns:
       PositionalSharding: A new PositionalSharding instance with the data replicated along the specified axis and dimensionality adjustments based on the 'keepdims' parameter.
@@ -843,9 +841,9 @@ class PositionalSharding(XLACompatibleSharding):
     Example:
       Create a new PositionalSharding instance with a specific memory kind,
       such as "HBM" (High-Bandwidth Memory):
-      ```python
-      sharding_with_mem_kind = sharding.with_memory_kind("HBM")
-      ```
+      
+      >>> sharding_with_mem_kind = sharding.with_memory_kind("HBM")
+      
 
     Returns:
       PositionalSharding: A new PositionalSharding instance with the specified memory kind.
@@ -874,9 +872,9 @@ class PositionalSharding(XLACompatibleSharding):
 
     Example:
       Convert the sharding to an XLA-compatible HloSharding instance:
-      ```python
-      hlo_sharding = sharding._to_xla_hlo_sharding(2)
-      ```
+      
+      >>> hlo_sharding = sharding._to_xla_hlo_sharding(2)
+      
 
     Returns:
       xc.HloSharding: An XLA-compatible HloSharding instance.
