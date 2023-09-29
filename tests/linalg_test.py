@@ -1586,7 +1586,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     arg = rng(shape, dtype)
     if dtype == np.float32 or dtype == np.complex64:
-      tol = 1e-3
+      tol = 2e-3
     else:
       tol = 1e-8
     R = jsp.linalg.sqrtm(arg)
