@@ -65,7 +65,7 @@ class DLPackTest(jtu.JaxTestCase):
                  r'striding are supported')
     with self.assertRaisesRegex(RuntimeError, regex_str):
       xla_client._xla.dlpack_managed_tensor_to_buffer(
-          y, client)
+          y, client, client)
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
   def testJaxToTorch(self, shape, dtype):
