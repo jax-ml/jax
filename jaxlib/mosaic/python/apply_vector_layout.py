@@ -1981,8 +1981,7 @@ def _scf_if_rule(  # pylint: disable=missing-function-docstring
       rolled_op = assemble(result.type, layout, tiles)
       rolled_results.append(rolled_op.result)
 
-  tpu.private_replace_all_uses_with(op, rolled_results)
-  ctx.erase(op)
+  ctx.replace(op, rolled_results)
 
 
 @_register_rule("scf.yield")
