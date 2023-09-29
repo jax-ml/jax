@@ -298,13 +298,14 @@ def _swap_abstract_eval(ref_aval, val_aval, *all_avals, args_tree,
   expected_output_shape = idx_aval.get_indexer_shape()
   if expected_output_shape != val_aval.shape:
     raise ValueError("Invalid shape for `swap`. "
-                     f"Ref shape: {ref_aval.shape}. "
-                     f"Value shape: {val_aval.shape}. "
-                     f"Indices: {idx_aval}. ")
+                     f"Expected shape based on index ({idx_aval}): {expected_output_shape}. "
+                     f"Provided value shape: {val_aval.shape}. "
+                     "Ensure the shape of the value array matches the expected output shape based on the indices.")
   if ref_aval.dtype != val_aval.dtype:
     raise ValueError("Invalid dtype for `swap`. "
-                     f"Ref dtype: {ref_aval.dtype}. "
-                     f"Value shape: {val_aval.dtype}. ")
+                     f"Reference data type: {ref_aval.dtype}. "
+                     f"Provided value data type: {val_aval.dtype}. "
+                     "Ensure the data types of the reference and value arrays are the same.")
   return (jax_core.ShapedArray(expected_output_shape, ref_aval.dtype),
           {state.WriteEffect(0)})
 swap_p.def_effectful_abstract_eval(_swap_abstract_eval)

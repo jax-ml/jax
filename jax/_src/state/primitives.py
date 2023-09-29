@@ -217,13 +217,14 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
         ref_aval.shape, idx_shapes, indexed_dims)
     if expected_output_shape != val_aval.shape:
       raise ValueError("Invalid shape for `swap`. "
-                       f"Ref shape: {ref_aval.shape}. "
-                       f"Value shape: {val_aval.shape}. "
-                       f"Indices: {idx}. ")
+                       f"Expected shape: {expected_output_shape}. "
+                       f"Provided value shape: {val_aval.shape}. "
+                       "Ensure the shape of the value array matches the expected output shape.")
     if ref_aval.dtype != val_aval.dtype:
       raise ValueError("Invalid dtype for `swap`. "
-                       f"Ref dtype: {ref_aval.dtype}. "
-                       f"Value shape: {val_aval.dtype}. ")
+                       f"Reference data type: {ref_aval.dtype}. "
+                       f"Provided value data type: {val_aval.dtype}. "
+                       "Ensure the data types of the reference and value arrays are the same.")
     out_aval = core.ShapedArray(expected_output_shape, ref_aval.dtype)
   else:
     if idx:
