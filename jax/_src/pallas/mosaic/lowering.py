@@ -811,7 +811,7 @@ def _convert_element_type_lowering_rule(
     else:
       return arith.TruncFOp(out_type, x).result
   elif old_dtype == jnp.bool_ and jnp.issubdtype(new_dtype, jnp.integer):
-    return arith.ExtSIOp(out_type, x).result
+    return arith.ExtUIOp(out_type, x).result
   elif jnp.issubdtype(old_dtype, jnp.signedinteger) and jnp.issubdtype(
       new_dtype, jnp.floating
   ):
