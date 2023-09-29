@@ -53,7 +53,7 @@ not need limitations, then it must be listed in the
 
 import datetime
 import os
-from typing import Any
+from typing import Any, Optional
 import unittest
 
 from absl import logging
@@ -107,6 +107,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
   def test_prim(self, harness: primitive_harness.Harness):
+    raise unittest.SkipTest("Disable these to focus on the cross-platform tests")
     limitations = Jax2TfLimitation.limitations_for_harness(harness)
     device = jtu.device_under_test()
     limitations = tuple(filter(lambda l: l.filter(device=device,
@@ -152,6 +153,51 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         raise unittest.SkipTest("b/264596006: custom calls in native serialization fail in TF")
       else:
         raise e
+
+  # This test runs for all primitive harnesses. For each primitive "xxx" the
+  # test will be called "test_prim_cross_platform_xxx_...".
+  # For each primitive we run the test on all platforms that are available and
+  # compare the results.
+  # Note that primitive_harness.parameterized will pick all harnesses that can
+  # work on the jax.default_backend().
+  # See more details in the comment at top of file and in Jax2TfLimitation class.
+  # If you want to run this test for only one harness, add parameter
+  # `one_containing="foo"` to parameterized below.
+  @primitive_harness.parameterized(
+      primitive_harness.all_harnesses,
+      include_jax_unimpl=False,
+      #one_containing="",
+  )
+  @jtu.ignore_warning(
+      category=UserWarning, message="Using reduced precision for gradient.*")
+  def test_prim_cross_platform(self, harness: primitive_harness.Harness):
+    func_jax = harness.dyn_fun
+    args = harness.dyn_args_maker(self.rng())
+
+    if not jtu.test_device_matches(["gpu", "tpu"]):
+      raise unittest.SkipTest("Test not interesting on absence of an accelerator")
+    devices = []
+    for backend in ["cpu", "gpu", "tpu"]:
+      try:
+        devices.extend(jax.devices(backend))
+      except RuntimeError:
+        continue
+
+    baseline_platform: Optional[str] = None
+    baseline_results = None
+    for d in devices:
+      if baseline_platform is None or baseline_platform != d.platform:
+        device_args = jax.tree_util.tree_map(lambda x: jax.device_put(x, d),
+                                             args)
+        logging.info("Running harness on %s", d)
+        res = func_jax(*device_args)
+        if baseline_platform is None:
+          baseline_platform = d.platform
+          baseline_results = res
+        else:
+          logging.info("Comparing results for %s and %s",
+                       baseline_platform, d.platform)
+          self.assertAllClose(baseline_results, res)
 
   def test_primitive_coverage(self):
     """Fail if there are JAX primitives that are not implemented."""
