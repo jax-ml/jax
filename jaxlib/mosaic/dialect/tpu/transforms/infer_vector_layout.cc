@@ -615,14 +615,25 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(tpu::ConcatenateOp op) {
-    TPU_CHECK_OP(op.getDimension() - op.getType().getRank() < -2,
-                 "Concatenation is not supported along the last two axes");
     TPU_CHECK_OP(!op.getSources().empty(),
                  "Need at least one vector to concatenate");
-    // Fix all the layouts to the layout of the first operand.
-    // This might not be the best strategy, but it works.
-    SmallVector<Layout> in_layouts(op.getNumOperands(),
-                                   getLayout(op.getSources().front()));
+    auto res_rank = op.getType().getRank();
+    auto dimension = op.getDimension();
+    TPU_CHECK_OP(0 <= dimension && dimension < res_rank,
+                 "Expect a valid concatenate dimension");
+    if (res_rank == 1) {
+      NYI("Support concatenation with 1D vectors");
+    }
+    auto res_ty = op.getResult().getType();
+    int8_t bitwidth = res_ty.getElementTypeBitWidth();
+    if (bitwidth != 32) {
+      NYI("Support concatenation with non 32-bit data");
+    }
+    auto layout = (dimension >= res_rank - 2)
+                      ? VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
+                                     ImplicitDim::kNone)
+                      : getLayout(op.getSources().front());
+    SmallVector<Layout> in_layouts(op->getNumOperands(), layout);
     setLayout(op, in_layouts, in_layouts.back());
     return success();
   }
