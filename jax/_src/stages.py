@@ -256,6 +256,14 @@ class XlaExecutable(Executable):
         if not (type(msg) is str and msg.startswith("UNIMPLEMENTED")):
           raise
 
+    if (
+        xla_ext_exe is None
+        and hasattr(self, "unsafe_call")
+        and hasattr(self.unsafe_call, "compiled")
+        and hasattr(self.unsafe_call.compiled, "cost_analysis")
+    ):
+      return [self.unsafe_call.compiled.cost_analysis()]
+
     raise NotImplementedError(
         f"cost analysis unsupported on current XLA backend: {type(xla_ext_exe)}"
     )
