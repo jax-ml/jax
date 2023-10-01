@@ -656,15 +656,15 @@ class PositionalSharding(XLACompatibleSharding):
   making it suitable for parallel processing on different hardware platforms.
 
   Example:
-  >>> devices = [xc.Device("GPU", 0), xc.Device("GPU", 1)]
-  >>> sharding = PositionalSharding(devices)
-  >>> print(sharding.shape)  # Output: (2,)
-  >>> print(sharding.ndim)   # Output: 1
+    >>> devices = [xc.Device("GPU", 0), xc.Device("GPU", 1)]
+    >>> sharding = PositionalSharding(devices)
+    >>> print(sharding.shape)  # Output: (2,)
+    >>> print(sharding.ndim)   # Output: 1
 
   Initialize a PositionalSharding instance with two GPU devices:
   
-  >>> devices = [xc.Device("GPU", 0), xc.Device("GPU", 1)]
-  >>> sharding = PositionalSharding(devices)
+    >>> devices = [xc.Device("GPU", 0), xc.Device("GPU", 1)]
+    >>> sharding = PositionalSharding(devices)
   
   """
   _devices: tuple[xc.Device, ...]
@@ -714,13 +714,12 @@ class PositionalSharding(XLACompatibleSharding):
     Args:
       *shape: New shape dimensions.
 
-    Example:
-      Reshape a PositionalSharding instance:
-      
-      >>> new_sharding = sharding.reshape(2, 1)
-      
     Returns:
       PositionalSharding: A new PositionalSharding instance.
+
+    Example:
+      Reshape a PositionalSharding instance:
+        >>> new_sharding = sharding.reshape(2, 1)
     """
     return self._remake(self._devices, self._ids.reshape(*shape))
 
@@ -737,9 +736,7 @@ class PositionalSharding(XLACompatibleSharding):
 
     Example:
       Transpose a PositionalSharding instance, swapping the first and second dimensions:
-    
-      >>> transposed_sharding = sharding.transpose(1, 0)
-      
+        >>> transposed_sharding = sharding.transpose(1, 0)
 
     Returns:
       PositionalSharding: A new PositionalSharding instance with the transposed data layout.
@@ -764,10 +761,8 @@ class PositionalSharding(XLACompatibleSharding):
 
     Example:
       Replicate a PositionalSharding instance along the first axis while keeping dimensions:
+        >>> replicated_sharding = sharding.replicate(axis=0, keepdims=True)
       
-      >>> replicated_sharding = sharding.replicate(axis=0, keepdims=True)
-      
-
     Returns:
       PositionalSharding: A new PositionalSharding instance with the data replicated along the specified axis and dimensionality adjustments based on the 'keepdims' parameter.
     """
@@ -863,21 +858,6 @@ class PositionalSharding(XLACompatibleSharding):
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     """
     Converts the sharding strategy for a multidimensional array into an XLA-compatible HloSharding instance.
-
-    This  takes the sharding strategy used for partitioning a multidimensional array and translates it into
-    a format that is compatible with XLA.
-
-    Args:
-      num_dimensions (int): The number of dimensions.
-
-    Example:
-      Convert the sharding to an XLA-compatible HloSharding instance:
-      
-      >>> hlo_sharding = sharding._to_xla_hlo_sharding(2)
-      
-
-    Returns:
-      xc.HloSharding: An XLA-compatible HloSharding instance.
     """
     return _positional_sharding_to_xla_hlo_sharding(self, num_dimensions)
 
