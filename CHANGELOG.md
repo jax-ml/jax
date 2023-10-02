@@ -26,6 +26,9 @@ Remember to align the itemized text with the first line of an item within a list
   * {func}`jax.scipy.stats.mode` now returns a 0 count if the mode is taken
     across a size-0 axis, matching the behavior of `scipy.stats.mode` in SciPy
     1.11.
+  * Most `jax.numpy` functions and attributes now have fully-defined type stubs.
+    Previously many of these were treated as `Any` by static type checkers like
+    `mypy` and `pytype`.
 
 # jaxlib 0.4.17
 
