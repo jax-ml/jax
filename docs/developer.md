@@ -178,6 +178,8 @@ sets up symbolic links from site-packages into the repository.
 
 ## Running the tests
 
+First, install the dependencies by running `pip install -r build/test-requirements.txt`.
+
 There are two supported mechanisms for running the JAX tests, either using Bazel
 or using pytest.
 
@@ -230,9 +232,10 @@ bazel test //tests:gpu_tests //tests:backend_independent_tests --test_env=XLA_PY
 ### Using `pytest`
 
 To run all the JAX tests using `pytest`, we recommend using `pytest-xdist`,
-which can run tests in parallel. First, install `pytest-xdist` and
-`pytest-benchmark` by running `pip install -r build/test-requirements.txt`.
-Then, from the repository root directory run:
+which can run tests in parallel. It is installed as a part of
+`pip install -r build/test-requirements.txt` command.
+
+From the repository root directory run:
 
 ```
 pytest -n auto tests
