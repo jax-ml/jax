@@ -16,6 +16,8 @@ Remember to align the itemized text with the first line of an item within a list
     * `random.rbg_key(seed)` becomes `random.PRNGKey(seed, impl='rbg')`
     * `random.unsafe_rbg_key(seed)` becomes `random.PRNGKey(seed, impl='unsafe_rbg')`
 * Changes:
+  * Added {class}`jax.scipy.interpolate.PPoly` and
+    {class}`jax.scipy.interpolate.CubicHermiteSpline`
   * CUDA: JAX now verifies that the CUDA libraries it finds are at least as new
     as the CUDA libraries that JAX was built against. If older libraries are
     found, JAX raises an exception since that is preferable to mysterious

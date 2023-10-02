@@ -16,19 +16,60 @@ from absl.testing import absltest
 
 import operator
 from functools import reduce
-import numpy as np
+import numpy as onp
 
-from jax._src import test_util as jtu
 import scipy.interpolate as sp_interp
+import jax
+import jax.numpy as jnp
 import jax.scipy.interpolate as jsp_interp
+from jax._src import test_util as jtu
 
-from jax import config
+jax.config.parse_flags_with_absl()
 
-config.parse_flags_with_absl()
+NUM_SAMPLES = 2
 
 
 class LaxBackedScipyInterpolateTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.interpolate implementations"""
+
+  @jtu.sample_product(
+    num_intervals=(11,),
+    num_dims=(1, 2),
+    num_samples=(1, NUM_SAMPLES),
+    dtype=jtu.dtypes.floating,
+    extrapolate=(True,),
+    axis=(0,),
+    nu=(0,),
+  )
+  def testCubicHermiteSpline(self, num_intervals, num_dims, num_samples, dtype, extrapolate, axis, nu):
+    rng = jtu.rand_default(self.rng())
+    x = onp.linspace(-10., 10., num_intervals + 1, dtype=dtype)
+    sp_fn = lambda y, dydx, xp: sp_interp.CubicHermiteSpline(x, y, dydx, axis, extrapolate)(xp, nu)
+    jsp_fn = lambda y, dydx, xp: jsp_interp.CubicHermiteSpline(x, y, dydx, axis, extrapolate)(xp, nu)
+    args_maker = lambda: (rng((num_intervals + 1, num_dims), dtype),
+                          rng((num_intervals + 1, num_dims), dtype),
+                          rng(num_samples, dtype))
+    self._CheckAgainstNumpy(sp_fn, jsp_fn, args_maker, check_dtypes=False, tol=1e-4)
+    self._CompileAndCheck(jsp_fn, args_maker, rtol={onp.float64: 1e-14})
+
+  @jtu.sample_product(
+    order=(1, 2, 3),
+    num_intervals=(11,),
+    num_samples=(1, NUM_SAMPLES),
+    dtype=jtu.dtypes.floating,
+    extrapolate=(True,),
+    axis=(0,),
+    nu=(0,),
+  )
+  def testPPoly(self, order, num_intervals, num_samples, dtype, extrapolate, axis, nu):
+    rng = jtu.rand_default(self.rng())
+    x = onp.linspace(-10., 10., num_intervals + 1, dtype=dtype)
+    sp_fn = lambda c, xp: sp_interp.PPoly(c, x, extrapolate, axis)(xp, nu)
+    jsp_fn = lambda c, xp: jsp_interp.PPoly(c, jnp.array(x), extrapolate, axis)(xp, nu)
+    args_maker = lambda: (rng((order, num_intervals), dtype),
+                          rng(num_samples, dtype))
+    self._CheckAgainstNumpy(sp_fn, jsp_fn, args_maker, check_dtypes=False, tol=1e-4)
+    self._CompileAndCheck(jsp_fn, args_maker, rtol={onp.float64: 1e-14})
 
   @jtu.sample_product(
     spaces=(((0., 10., 10),), ((-15., 20., 12), (3., 4., 24))),
@@ -42,24 +83,24 @@ class LaxBackedScipyInterpolateTests(jtu.JaxTestCase):
         *init_args[:2], method, False, *init_args[2:])(*call_args)
 
     def args_maker():
-      points = tuple(map(lambda x: np.linspace(*x), spaces))
-      values = rng(reduce(operator.add, tuple(map(np.shape, points))), float)
-      fill_value = np.nan
+      points = tuple(map(lambda x: onp.linspace(*x), spaces))
+      values = rng(reduce(operator.add, tuple(map(onp.shape, points))), float)
+      fill_value = onp.nan
 
       init_args = (points, values, fill_value)
       n_validation_points = 50
       valid_points = tuple(
           map(
-              lambda x: np.linspace(x[0] - 0.2 * (x[1] - x[0]), x[1] + 0.2 *
-                                    (x[1] - x[0]), n_validation_points),
+              lambda x: onp.linspace(x[0] - 0.2 * (x[1] - x[0]), x[1] + 0.2 *
+                                     (x[1] - x[0]), n_validation_points),
               spaces))
-      valid_points = np.squeeze(np.stack(valid_points, axis=1))
+      valid_points = onp.squeeze(onp.stack(valid_points, axis=1))
       call_args = (valid_points,)
       return init_args, call_args
 
     self._CheckAgainstNumpy(
         scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=1e-4)
-    self._CompileAndCheck(lax_fun, args_maker, rtol={np.float64: 1e-14})
+    self._CompileAndCheck(lax_fun, args_maker, rtol={onp.float64: 1e-14})
 
 
 if __name__ == "__main__":
