@@ -32,10 +32,10 @@ from jax._src.lib import tpu_mosaic
 from jax._src.lib import xla_client
 from jax.interpreters import mlir
 from jax.interpreters import xla
-from jaxlib.mlir import ir
-from jaxlib.mlir.dialects import mhlo
-from jaxlib.mlir.dialects import stablehlo
-from jaxlib.mlir.passmanager import PassManager
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import stablehlo
+from jax._src.lib.mlir.passmanager import PassManager
 import numpy as np
 
 config.define_bool_state(

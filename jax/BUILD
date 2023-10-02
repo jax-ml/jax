@@ -16,7 +16,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load(
-    "//jaxlib:jax.bzl",
+    "//jax/_src/lib:jax.bzl",
     "jax_extend_internal_users",
     "jax_extra_deps",
     "jax_internal_packages",
@@ -712,10 +712,10 @@ pytype_strict_library(
         "//jax/_src/lib",
     ] + select({
         ":enable_jaxlib_build": [
-            "//jaxlib/mlir:ir",
-            "//jaxlib/mlir:mhlo_dialect",
-            "//jaxlib/mlir:pass_manager",
-            "//jaxlib/mlir:stablehlo_dialect",
+            "//jax/_src/lib/mlir:ir",
+            "//jax/_src/lib/mlir:mhlo_dialect",
+            "//jax/_src/lib/mlir:pass_manager",
+            "//jax/_src/lib/mlir:stablehlo_dialect",
         ],
         "//conditions:default": [],
     }) + py_deps("numpy") + py_deps("absl/flags"),

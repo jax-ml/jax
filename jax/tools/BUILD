@@ -13,7 +13,7 @@
 # limitations under the License.
 
 load(
-    "//jaxlib:jax.bzl",
+    "//jax/_src/lib:jax.bzl",
     "py_deps",
     "pytype_strict_library",
 )

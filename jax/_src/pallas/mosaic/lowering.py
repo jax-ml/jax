@@ -33,13 +33,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import for_loop
-from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import arith
-from jax._src.lib.mlir.dialects import func
-from jax._src.lib.mlir.dialects import math
-from jax._src.lib.mlir.dialects import memref
-from jax._src.lib.mlir.dialects import scf
-from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core
 from jax._src.pallas import indexing
 from jax._src.pallas import primitives
@@ -54,6 +47,15 @@ from jax._src.util import split_list
 from jax._src.util import unzip2
 from jax.experimental.mosaic.dialects import tpu
 import jax.numpy as jnp
+
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import func
+from jax._src.lib.mlir.dialects import math
+from jax._src.lib.mlir.dialects import memref
+from jax._src.lib.mlir.dialects import scf
+from jax._src.lib.mlir.dialects import vector
+
 import numpy as np
 
 # TODO(sharadmv): enable type checking

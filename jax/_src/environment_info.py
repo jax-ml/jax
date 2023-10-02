@@ -44,7 +44,7 @@ def print_environment_info(return_string: bool = False) -> Union[None, str]:
   info = textwrap.dedent(
       f"""\
   jax:    {version.__version__}
-  jaxlib: {lib.version_str}
+  jaxlib: {lib.jaxlib_version_str}
   numpy:  {np.__version__}
   python: {python_version}
   jax.devices ({xla_bridge.device_count()} total, {xla_bridge.local_device_count()} local): {devices_short}

@@ -30,7 +30,7 @@ from jax._src.interpreters import mlir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import xla_client
 from jax._src.lib import ducc_fft
-from jax._src.lib import version as jaxlib_version
+from jax._src.lib import jaxlib_version
 from jax._src.numpy.util import promote_dtypes_complex, promote_dtypes_inexact
 
 __all__ = [

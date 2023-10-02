@@ -21,8 +21,8 @@ import struct
 import sys
 
 from jax._src.config import config
-from jax._src.lib import version as jaxlib_version
-from jax._src.lib import version_str as jaxlib_version_str
+from jax._src.lib import jaxlib_version
+from jax._src.lib import jaxlib_version_str
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version as xla_extension_version
 from jax._src.lib.mlir import ir

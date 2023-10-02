@@ -43,7 +43,7 @@ from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
-from jax._src.lib import version as jaxlib_version
+from jax._src.lib import jaxlib_version
 from jax._src.lib import xla_client
 import numpy as np
 

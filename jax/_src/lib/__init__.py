@@ -21,22 +21,15 @@ import pathlib
 import re
 from typing import Optional
 
-try:
-  import jaxlib as jaxlib
-except ModuleNotFoundError as err:
-  raise ModuleNotFoundError(
-    'jax requires jaxlib to be installed. See '
-    'https://github.com/google/jax#installation for installation instructions.'
-    ) from err
-
+#try:
+from jax._src.lib import version
+# except ModuleNotFoundError as err:
+#   raise ModuleNotFoundError(
+#     'jax requires jaxlib to be installed. See '
+#     'https://github.com/google/jax#installation for installation instructions.'
+#     ) from err
 import jax.version
 from jax.version import _minimum_jaxlib_version as _minimum_jaxlib_version_str
-try:
-  import jaxlib.version
-except Exception as err:
-  # jaxlib is too old to have version number.
-  msg = f'This version of jax requires jaxlib version >= {_minimum_jaxlib_version_str}.'
-  raise ImportError(msg) from err
 
 
 # Checks the jaxlib version before importing anything else from jaxlib.
@@ -70,27 +63,27 @@ def check_jaxlib_version(jax_version: str, jaxlib_version: str,
   return _jaxlib_version
 
 
-version_str = jaxlib.version.__version__
-version = check_jaxlib_version(
+jaxlib_version_str = version.__version__
+jaxlib_version = check_jaxlib_version(
   jax_version=jax.version.__version__,
-  jaxlib_version=jaxlib.version.__version__,
+  jaxlib_version=version.__version__,
   minimum_jaxlib_version=jax.version._minimum_jaxlib_version)
 
 # Before importing any C compiled modules from jaxlib, first import the CPU
 # feature guard module to verify that jaxlib was compiled in a way that only
 # uses instructions that are present on this machine.
-import jaxlib.cpu_feature_guard as cpu_feature_guard
+import jax._src.lib.cpu_feature_guard as cpu_feature_guard
 cpu_feature_guard.check_cpu_features()
 
 try:
-  import jaxlib.cuda_plugin_extension as cuda_plugin_extension  # pytype: disable=import-error
+  import jax._src.lib.cuda_plugin_extension as cuda_plugin_extension  # pytype: disable=import-error
 except ModuleNotFoundError:
   cuda_plugin_extension = None
-import jaxlib.utils as utils
-import jaxlib.xla_client as xla_client
-import jaxlib.lapack as lapack
+import jax._src.lib.utils as utils
+import jax._src.lib.xla_client as xla_client
+import jax._src.lib.lapack as lapack
 
-import jaxlib.ducc_fft as ducc_fft
+import jax._src.lib.ducc_fft as ducc_fft
 
 xla_extension = xla_client._xla
 pytree = xla_client._xla.pytree
@@ -103,15 +96,15 @@ def _xla_gc_callback(*args):
 gc.callbacks.append(_xla_gc_callback)
 
 try:
-  import jaxlib.cuda._versions as cuda_versions  # pytype: disable=import-error
+  import jax._src.lib.cuda._versions as cuda_versions  # pytype: disable=import-error
 except ImportError:
   cuda_versions = None
 
-import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error
-import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error
-import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error
-import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error
-import jaxlib.hlo_helpers as hlo_helpers  # pytype: disable=import-error
+import jax._src.lib.gpu_solver as gpu_solver  # pytype: disable=import-error
+import jax._src.lib.gpu_sparse as gpu_sparse  # pytype: disable=import-error
+import jax._src.lib.gpu_prng as gpu_prng  # pytype: disable=import-error
+import jax._src.lib.gpu_linalg as gpu_linalg  # pytype: disable=import-error
+import jax._src.lib.hlo_helpers as hlo_helpers  # pytype: disable=import-error
 
 # Jaxlib code is split between the Jax and the Tensorflow repositories.
 # Only for the internal usage of the JAX developers, we expose a version
@@ -119,11 +112,11 @@ import jaxlib.hlo_helpers as hlo_helpers  # pytype: disable=import-error
 # branch on the Jax github.
 xla_extension_version: int = getattr(xla_client, '_version', 0)
 
-import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error
-import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error
+import jax._src.lib.gpu_rnn as gpu_rnn  # pytype: disable=import-error
+import jax._src.lib.gpu_triton as gpu_triton # pytype: disable=import-error
 
-if version >= (0, 4, 14):
-  import jaxlib.tpu_mosaic as tpu_mosaic # pytype: disable=import-error
+if jaxlib_version >= (0, 4, 14):
+  import jax._src.lib.tpu_mosaic as tpu_mosaic # pytype: disable=import-error
 else:
   # Jaxlib doesn't contain Mosaic bindings
   tpu_mosaic = None  # type: ignore
@@ -134,7 +127,7 @@ mlir_api_version = xla_client.mlir_api_version
 # TODO(rocm): check if we need the same for rocm.
 
 def _cuda_path() -> Optional[str]:
-  _jaxlib_path = pathlib.Path(jaxlib.__file__).parent
+  _jaxlib_path = pathlib.Path(jax.version.__file__).parent
   # If the pip package nvidia-cuda-nvcc-cu11 is installed, it should have
   # both of the things XLA looks for in the cuda path, namely bin/ptxas and
   # nvvm/libdevice/libdevice.10.bc

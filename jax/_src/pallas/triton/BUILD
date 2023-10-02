@@ -15,7 +15,7 @@
 # Package for Triton-specific Pallas extensions
 
 load(
-    "//jaxlib:jax.bzl",
+    "//jax/_src/lib:jax.bzl",
     "py_deps",
     "py_library_providing_imports_info",
     "pytype_strict_library",

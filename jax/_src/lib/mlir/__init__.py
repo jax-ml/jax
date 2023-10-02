@@ -14,5 +14,5 @@
 
 # flake8: noqa: F401
 
-import jaxlib.mlir.ir as ir
-import jaxlib.mlir.passmanager as passmanager
+import jax._src.lib.mlir.ir as ir
+import jax._src.lib.mlir.passmanager as passmanager

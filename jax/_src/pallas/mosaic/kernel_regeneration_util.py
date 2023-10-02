@@ -17,7 +17,7 @@
 import base64
 import json
 from typing import Any
-from jaxlib.mlir import ir
+from jax._src.lib.mlir import ir
 
 
 def encode_kernel_regeneration_metadata(

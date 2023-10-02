@@ -14,7 +14,7 @@
 
 load("@rules_python//python:defs.bzl", "py_test")
 load(
-    "//jaxlib:jax.bzl",
+    "//jax/_src/lib:jax.bzl",
     "jax_test",
     "py_deps",
 )

@@ -75,7 +75,7 @@ class JaxVersionTest(unittest.TestCase):
 
   def testVersionValidity(self):
     self.assertValidVersion(jax.__version__)
-    self.assertValidVersion(jax._src.lib.version_str)
+    self.assertValidVersion(jax._src.lib.jaxlib_version_str)
 
   @patch_jax_version("1.2.3", "1.2.3.dev4567")
   def testVersionInRelease(self):

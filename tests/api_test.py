@@ -10315,7 +10315,7 @@ class EnvironmentInfoTest(jtu.JaxTestCase):
       self.assertIsNone(result)
       result = stdout()
     assert f"jax:    {jax.__version__}" in result
-    assert f"jaxlib: {lib.version_str}" in result
+    assert f"jaxlib: {lib.jaxlib_version_str}" in result
     assert f"numpy:  {np.__version__}" in result
 
 class AutodidaxTest(jtu.JaxTestCase):

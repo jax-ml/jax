@@ -30,7 +30,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax import lax
 from jax._src.lax import parallel
-from jax._src.lib import version as jaxlib_version
+from jax._src.lib import jaxlib_version
 from jax import random
 from jax import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
 from jax import vmap

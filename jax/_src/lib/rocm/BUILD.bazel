@@ -1,0 +1,298 @@
+# Copyright 2018 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# AMD HIP kernels
+
+load(
+    "//jax/_src/lib:jax.bzl",
+    "if_rocm_is_configured",
+    "pybind_extension",
+    "rocm_library",
+)
+
+licenses(["notice"])
+
+package(default_visibility = ["//:__subpackages__"])
+
+cc_library(
+    name = "hip_vendor",
+    hdrs = [
+        "//jax/_src/lib/gpu:vendor.h",
+    ],
+    defines = ["JAX_GPU_HIP=1"],
+    deps = [
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+)
+
+cc_library(
+    name = "hip_gpu_kernel_helpers",
+    srcs = if_rocm_is_configured(["//jax/_src/lib/gpu:gpu_kernel_helpers.cc"]),
+    hdrs = if_rocm_is_configured(["//jax/_src/lib/gpu:gpu_kernel_helpers.h"]),
+    copts = [
+        "-fexceptions",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        ":hip_vendor",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+    ] + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
+)
+
+cc_library(
+    name = "hipblas_kernels",
+    srcs = ["//jax/_src/lib/gpu:blas_kernels.cc"],
+    hdrs = ["//jax/_src/lib/gpu:blas_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jax/_src/lib:handle_pool",
+        "//jax/_src/lib:kernel_helpers",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:hipblas",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/service:custom_call_status",
+    ],
+)
+
+pybind_extension(
+    name = "_blas",
+    srcs = ["//jax/_src/lib/gpu:blas.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_blas",
+    deps = [
+        ":hip_vendor",
+        ":hipblas_kernels",
+        "//jax/_src/lib:kernel_nanobind_helpers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings:str_format",
+        "@local_config_rocm//rocm:hipblas",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@nanobind",
+        "@tsl//tsl/python/lib/core:numpy",
+    ],
+)
+
+cc_library(
+    name = "hipsolver_kernels",
+    srcs = ["//jax/_src/lib/gpu:solver_kernels.cc"],
+    hdrs = ["//jax/_src/lib/gpu:solver_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jax/_src/lib:handle_pool",
+        "//jax/_src/lib:kernel_helpers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:hipsolver",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/service:custom_call_status",
+    ],
+)
+
+pybind_extension(
+    name = "_solver",
+    srcs = ["//jax/_src/lib/gpu:solver.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_solver",
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        ":hipsolver_kernels",
+        "//jax/_src/lib:kernel_nanobind_helpers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings:str_format",
+        "@local_config_rocm//rocm:hipsolver",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@nanobind",
+        "@tsl//tsl/python/lib/core:numpy",
+    ],
+)
+
+cc_library(
+    name = "hipsparse_kernels",
+    srcs = ["//jax/_src/lib/gpu:sparse_kernels.cc"],
+    hdrs = ["//jax/_src/lib/gpu:sparse_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jax/_src/lib:handle_pool",
+        "//jax/_src/lib:kernel_helpers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:hipsparse",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/service:custom_call_status",
+    ],
+)
+
+pybind_extension(
+    name = "_sparse",
+    srcs = ["//jax/_src/lib/gpu:sparse.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_sparse",
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        ":hipsparse_kernels",
+        "//jax/_src/lib:kernel_nanobind_helpers",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:hipsparse",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@nanobind",
+        "@tsl//tsl/python/lib/core:numpy",
+    ],
+)
+
+cc_library(
+    name = "hip_lu_pivot_kernels",
+    srcs = ["//jax/_src/lib/gpu:lu_pivot_kernels.cc"],
+    hdrs = ["//jax/_src/lib/gpu:lu_pivot_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_lu_pivot_kernels_impl",
+        ":hip_vendor",
+        "//jax/_src/lib:kernel_helpers",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/service:custom_call_status",
+    ],
+)
+
+rocm_library(
+    name = "hip_lu_pivot_kernels_impl",
+    srcs = ["//jax/_src/lib/gpu:lu_pivot_kernels.cu.cc"],
+    hdrs = ["//jax/_src/lib/gpu:lu_pivot_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jax/_src/lib:kernel_helpers",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/service:custom_call_status",
+    ],
+)
+
+pybind_extension(
+    name = "_linalg",
+    srcs = ["//jax/_src/lib/gpu:linalg.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_linalg",
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_lu_pivot_kernels",
+        ":hip_lu_pivot_kernels_impl",
+        ":hip_vendor",
+        "//jax/_src/lib:kernel_nanobind_helpers",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@nanobind",
+    ],
+)
+
+cc_library(
+    name = "hip_prng_kernels",
+    srcs = ["//jax/_src/lib/gpu:prng_kernels.cc"],
+    hdrs = ["//jax/_src/lib/gpu:prng_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_prng_kernels_impl",
+        ":hip_vendor",
+        "//jax/_src/lib:kernel_helpers",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/service:custom_call_status",
+    ],
+)
+
+rocm_library(
+    name = "hip_prng_kernels_impl",
+    srcs = ["//jax/_src/lib/gpu:prng_kernels.cu.cc"],
+    hdrs = ["//jax/_src/lib/gpu:prng_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jax/_src/lib:kernel_helpers",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/service:custom_call_status",
+    ],
+)
+
+pybind_extension(
+    name = "_prng",
+    srcs = ["//jax/_src/lib/gpu:prng.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_prng",
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_prng_kernels",
+        ":hip_vendor",
+        "//jax/_src/lib:kernel_nanobind_helpers",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@nanobind",
+    ],
+)
+
+py_library(
+    name = "rocm_gpu_support",
+    deps = [
+        ":_blas",
+        ":_linalg",
+        ":_prng",
+        ":_solver",
+        ":_sparse",
+    ],
+)

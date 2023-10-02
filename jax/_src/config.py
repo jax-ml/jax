@@ -29,6 +29,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import transfer_guard_lib
 from jax._src.lib import xla_client
 from jax._src import logging_config
+from jax._src.lib import jaxlib_version
 from jax._src.lib import xla_extension_version
 
 logger = logging.getLogger(__name__)
@@ -1093,7 +1094,7 @@ config.define_bool_state(
 # TODO(parkers): Remove if there are no complaints.
 config.define_bool_state(
     name='jax_remat_opt_barrier',
-    default=(lib.version >= (0, 3, 6)),
+    default=(jaxlib_version >= (0, 3, 6)),
     help=('Enables using optimization-barrier op for lowering remat.'))
 
 # TODO(sharadmv,mattjj): set default to True, then remove

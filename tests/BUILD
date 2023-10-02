@@ -13,7 +13,7 @@
 # limitations under the License.
 
 load(
-    "//jaxlib:jax.bzl",
+    "//jax/_src/lib:jax.bzl",
     "jax_generate_backend_suites",
     "jax_test",
     "jax_test_file_visibility",
