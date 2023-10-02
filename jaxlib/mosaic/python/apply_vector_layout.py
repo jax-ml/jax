@@ -2653,8 +2653,8 @@ def _vector_shape_cast_rule(ctx: RewriteContext, op: vector.ShapeCastOp,  # pyli
       layout_in.implicit_dim is None
       and layout_out.implicit_dim is None
       and layout_in.offsets == layout_out.offsets == (0, 0)
-      and layout_in.has_native_tiling
       and layout_in.tiling == layout_out.tiling
+      and layout_in.tiling[-1] == TARGET_SHAPE.lanes
       and dst_ty.shape[-1] == src_ty.shape[-1]
       and dst_ty.shape[-2] % layout_in.tiling[-2] == 0
       and src_ty.shape[-2] % layout_in.tiling[-2] == 0

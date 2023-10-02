@@ -972,6 +972,16 @@ class VectorLayoutInferer {
         setLayout(op, layout, layout);
         return success();
       }
+      // Sublane (un)tiling
+      if (res_rank >= 2 && layout.offsets() == LayoutOffsets{0, 0} &&
+          layout.tiling()[1] == target_shape_[1] &&
+          src_ty.getDimSize(src_ty.getRank() - 1) ==
+              res_shape[res_shape.size() - 1] &&
+          src_ty.getDimSize(src_ty.getRank() - 2) % layout.tiling()[0] == 0 &&
+          res_shape[res_shape.size() - 2] % layout.tiling()[0] == 0) {
+        setLayout(op, layout, layout);
+        return success();
+      }
       unsigned bitwidth = src_ty.getElementTypeBitWidth();
       auto native_tiling = nativeTiling(bitwidth);
       if (layout.tiling() != native_tiling) {
@@ -989,16 +999,6 @@ class VectorLayoutInferer {
           setLayout(op, layout,
                     VectorLayout(bitwidth, layout.offsets(), layout.tiling(),
                                  ImplicitDim::kSecondMinor));
-          return success();
-        }
-        // Sublane (un)tiling
-        if (src_ty.getElementTypeBitWidth() == kNativeBitwidth &&
-            src_ty.getDimSize(src_ty.getRank() - 1) ==
-                res_shape[res_shape.size() - 1] &&
-            layout.offsets() == LayoutOffsets{0, 0} &&
-            src_ty.getDimSize(src_ty.getRank() - 2) % target_shape_[0] == 0 &&
-            res_shape[res_shape.size() - 2] % target_shape_[0] == 0) {
-          setLayout(op, layout, layout);
           return success();
         }
         // Insert a singleton lane dimension. The old lane dimension ends up
