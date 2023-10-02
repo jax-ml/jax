@@ -2531,7 +2531,8 @@ def device_put(
          isinstance(device, (xc.Device, Sharding, TransferToMemoryKind))) and
         (src is None or
          isinstance(src, (xc.Device, Sharding, TransferToMemoryKind)))):
-      tree_map(partial(_check_sharding, s=device), x)
+      for leaf in tree_leaves(x):
+        _check_sharding(leaf, s=device)
       return tree_map(
           lambda y: dispatch.device_put_p.bind(
               y, device=device, src=_infer_src_sharding(src, y)), x)
@@ -2539,7 +2540,8 @@ def device_put(
     x_flat, treedef = tree_flatten(x)
     device_flat = flatten_axes("device_put device", treedef, device)
     src_flat = flatten_axes("device_put source", treedef, src)
-    tree_map(_check_sharding, x_flat, device_flat)
+    for x_leaf, device_leaf in zip(x_flat, device_flat):
+      _check_sharding(x_leaf, device_leaf)
     out_flat = [
         dispatch.device_put_p.bind(xf, device=d, src=_infer_src_sharding(s, xf))
         for xf, d, s in zip(x_flat, device_flat, src_flat)

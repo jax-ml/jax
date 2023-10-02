@@ -1820,6 +1820,18 @@ class APITest(jtu.JaxTestCase):
     ):
       jax.device_put((x, y, z), device=(s1, s2))
 
+  def test_device_put_custom_type_not_accepting_none_leaves(self):
+
+    class CustomNode(list):
+      pass
+
+    def unflatten(unused_aux_data, children):
+      self.assertIsNotNone(children[0])
+      return CustomNode(children)
+
+    tree_util.register_pytree_node(CustomNode, lambda x: (x, None), unflatten)
+    jax.device_put(CustomNode([0.1]))
+
   def test_vmap_inconsistent_sizes_constructs_proper_error_message(self):
     def f(x1, x2, g):
       return g(x1, x2)
