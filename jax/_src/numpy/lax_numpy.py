@@ -731,7 +731,7 @@ def ediff1d(ary: ArrayLike, to_end: ArrayLike | None = None,
 @util._wraps(np.gradient, skip_params=['edge_order'])
 @partial(jit, static_argnames=('axis', 'edge_order'))
 def gradient(f: ArrayLike, *varargs: ArrayLike,
-             axis: int | tuple[int, ...] | None = None,
+             axis: int | Sequence[int] | None = None,
              edge_order: int | None = None) -> Array | list[Array]:
   if edge_order is not None:
     raise NotImplementedError("The 'edge_order' argument to jnp.gradient is not supported.")
@@ -749,13 +749,9 @@ def gradient(f: ArrayLike, *varargs: ArrayLike,
   if axis is None:
     axis_tuple = tuple(range(a.ndim))
   else:
-    if isinstance(axis, int):
-      axis = (axis,)
-    elif not isinstance(axis, tuple) and not isinstance(axis, list):
-      raise ValueError("Give `axis` either as int or iterable")
-    elif len(axis) == 0:
-      return []
-    axis_tuple = tuple(_canonicalize_axis(i, a.ndim) for i in axis)
+    axis_tuple = tuple(_canonicalize_axis(i, a.ndim) for i in _ensure_index_tuple(axis))
+  if len(axis_tuple) == 0:
+    return []
 
   if min([s for i, s in enumerate(a.shape) if i in axis_tuple]) < 2:
     raise ValueError("Shape of array too small to calculate "
@@ -802,7 +798,7 @@ def ravel(a: ArrayLike, order: str = "C") -> Array:
 
 
 @util._wraps(np.ravel_multi_index)
-def ravel_multi_index(multi_index: tuple[ArrayLike, ...], dims: tuple[int, ...],
+def ravel_multi_index(multi_index: Sequence[ArrayLike], dims: Sequence[int],
                       mode: str = 'raise', order: str = 'C') -> Array:
   assert len(multi_index) == len(dims), f"len(multi_index)={len(multi_index)} != len(dims)={len(dims)}"
   dims = tuple(core.concrete_or_error(operator.index, d, "in `dims` argument of ravel_multi_index().") for d in dims)
@@ -885,7 +881,7 @@ def resize(a: ArrayLike, new_shape: Shape) -> Array:
   return reshape(arr, new_shape)
 
 @util._wraps(np.squeeze, lax_description=_ARRAY_VIEW_DOC)
-def squeeze(a: ArrayLike, axis: int | tuple[int, ...] | None = None) -> Array:
+def squeeze(a: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
   util.check_arraylike("squeeze", a)
   return _squeeze(asarray(a), _ensure_index_tuple(axis) if axis is not None else None)
 
@@ -1166,10 +1162,10 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
   return zeros(length, _dtype(weights)).at[clip(x, 0)].add(weights)
 
 @overload
-def broadcast_shapes(*shapes: tuple[int, ...]) -> tuple[int, ...]: ...
+def broadcast_shapes(*shapes: Sequence[int]) -> tuple[int, ...]: ...
 
 @overload
-def broadcast_shapes(*shapes: tuple[int | core.Tracer, ...]
+def broadcast_shapes(*shapes: Sequence[int | core.Tracer]
                      ) -> tuple[int | core.Tracer, ...]: ...
 
 @util._wraps(getattr(np, "broadcast_shapes", None))
