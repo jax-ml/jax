@@ -1859,6 +1859,40 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
     src = new_src;
     src_tiles = std::move(src_tiles_retiled);
   }
+
+  // (8,128) -> (32,128) tiling change for packed 8-bit integers.
+  if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+      dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+      vty.getElementType() == ctx.builder.getI8Type() &&
+      src.offsets() == dst.offsets() &&
+      src.tiling() == std::array<int64_t, 2>{8, 128} &&
+      dst.tiling() == std::array<int64_t, 2>{32, 128}) {
+    const VectorLayout new_src(src.bitwidth(), src.offsets(), dst.tiling());
+    xla::Array<Value> src_tiles_retiled(
+        new_src.tileArrayShape(vty.getShape(), ctx.target_shape));
+    VectorType vreg_i32 =
+        getNativeVregType(ctx.builder.getI32Type(), ctx.target_shape).value();
+    src_tiles_retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
+      const int vreg_part = idx.back() % 4;
+      std::array<Value, 4> parts;
+      SmallVector<int64_t> src_idx(idx.begin(), idx.end());
+      src_idx[src_idx.size() - 2] *= 4;
+      src_idx[src_idx.size() - 1] /= 4;
+      for (int i = 0; i < 4; ++i) {
+        if (src_idx[src_idx.size() - 2] <
+            src_tiles.dim(src_tiles.num_dimensions() - 2) - 1) {
+          ++src_idx[src_idx.size() - 2];
+        }
+        parts[i] = ctx.builder.create<tpu::UnpackSubelementsOp>(
+            v.getLoc(), vreg_i32, src_tiles(src_idx), vreg_part);
+      }
+      *tile = ctx.builder.create<tpu::PackSubelementsOp>(
+          v.getLoc(), src_tiles.begin()->getType(), parts);
+    });
+    src = new_src;
+    src_tiles = std::move(src_tiles_retiled);
+  }
+
   // (16, 128) -> (8, 128) tiling change for packed 16-bit types
   if (src.implicit_dim() != VectorLayout::ImplicitDim::kNone &&
       dst.implicit_dim() != VectorLayout::ImplicitDim::kNone &&
