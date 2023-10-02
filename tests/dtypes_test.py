@@ -576,6 +576,7 @@ class TestPromotionTables(jtu.JaxTestCase):
         x + y
 
   @jax.numpy_dtype_promotion('standard')
+  @jtu.run_on_devices("tpu")
   def testInt4PromotionError(self):
     for dtype in int4_dtypes:
       x = jnp.array(1, dtype=dtype)
@@ -622,6 +623,8 @@ class TestPromotionTables(jtu.JaxTestCase):
     for weak_type in [True, False]
   )
   def testArrayRepr(self, dtype, weak_type):
+    if dtype in int4_dtypes and not jtu.test_device_matches(["tpu"]):
+      self.skipTest("XLA support for int4 is incomplete.")
     val = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     rep = repr(val)
     self.assertStartsWith(rep, 'Array(')
