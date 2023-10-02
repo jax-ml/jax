@@ -232,6 +232,21 @@ jax_test(
 )
 
 jax_test(
+    name = "mock_gpu_test",
+    srcs = ["mock_gpu_test.py"],
+    disable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    tags = [
+        "config-cuda-only",
+    ],
+    deps = [
+        "//jax:experimental",
+    ],
+)
+
+jax_test(
     name = "array_test",
     srcs = ["array_test.py"],
     tags = ["multiaccelerator"],

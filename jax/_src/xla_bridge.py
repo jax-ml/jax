@@ -84,6 +84,18 @@ _ROCM_VISIBLE_DEVICES = jax_config.DEFINE_string(
     'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
 
+_USE_MOCK_GPU_CLIENT = jax_config.DEFINE_bool(
+    name="use_mock_gpu_client",
+    default=False,
+    help="If True, use a mock GPU client instead of a real one.",
+)
+
+_MOCK_NUM_GPUS = jax_config.DEFINE_integer(
+    name="mock_num_gpus",
+    default=1,
+    help="Mock GPU client number of gpus.",
+)
+
 
 # Backends
 
@@ -221,12 +233,28 @@ def make_gpu_client(
   if platform_name == "cuda":
     _check_cuda_versions()
 
+  if xla_extension_version <= 199:
+    return xla_client.make_gpu_client(
+        distributed_client=distributed.global_state.client,
+        node_id=distributed.global_state.process_id,
+        num_nodes=distributed.global_state.num_processes,
+        platform_name=platform_name,
+        allowed_devices=allowed_devices,
+    )
+  use_mock_gpu_client = _USE_MOCK_GPU_CLIENT.value
+  num_nodes = (
+      _MOCK_NUM_GPUS.value
+      if use_mock_gpu_client
+      else distributed.global_state.num_processes
+  )
+
   return xla_client.make_gpu_client(
       distributed_client=distributed.global_state.client,
       node_id=distributed.global_state.process_id,
-      num_nodes=distributed.global_state.num_processes,
+      num_nodes=num_nodes,
       platform_name=platform_name,
       allowed_devices=allowed_devices,
+      mock=use_mock_gpu_client,  # type: ignore[call-arg]
   )
 
 
