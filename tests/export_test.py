@@ -16,7 +16,7 @@ import functools
 import logging
 import math
 import re
-from typing import Optional
+from typing import Optional, Sequence
 import unittest
 
 from absl.testing import absltest
@@ -37,6 +37,43 @@ from jax._src.lib.mlir.dialects import hlo
 import numpy as np
 
 config.parse_flags_with_absl()
+
+# A primitive for testing multi-platform lowering. Takes one argument and
+# adds a different value to it: cpu=2., tpu=3., cuda=.4, rocm=5.
+_testing_multi_platform_p = core.Primitive("testing_multi_platform")
+_testing_multi_platform_to_add = dict(cpu=2., tpu=3., cuda=4., rocm=5.)
+
+@_testing_multi_platform_p.def_abstract_eval
+def _testing_multi_platform_abstract_eval(xaval: core.AbstractValue):
+  assert xaval.dtype == np.float32  # type: ignore
+  return xaval
+
+def _testing_multi_platform_lowering(ctx: mlir.LoweringRuleContext,
+                                     x: mlir.Value,
+                                     *,
+                                     platform: str) -> Sequence[mlir.Value]:
+  to_add = _testing_multi_platform_to_add[platform]
+  to_add_value = mlir.broadcast_in_dim(ctx,
+                                       mlir.ir_constant(np.float32(to_add)),
+                                       ctx.avals_in[0],
+                                       broadcast_dimensions=())
+  return mlir.hlo.AddOp(x, to_add_value).results
+
+# Register a default rule for cuda, to test the default-platform rule selection.
+mlir.register_lowering(_testing_multi_platform_p,
+                       functools.partial(_testing_multi_platform_lowering,
+                                         platform="cuda"))
+for platform in ["cpu", "tpu", "rocm"]:
+  mlir.register_lowering(_testing_multi_platform_p,
+                         functools.partial(_testing_multi_platform_lowering,
+                                           platform=platform),
+                         platform=platform)
+
+def _testing_multi_platform_func(x):
+  return _testing_multi_platform_p.bind(x)
+
+def _testing_multi_platform_fun_expected(x):
+  return x + _testing_multi_platform_to_add[xb.canonicalize_platform(jtu.device_under_test())]
 
 
 class JaxExportTest(jtu.JaxTestCase):
@@ -568,54 +605,50 @@ class JaxExportTest(jtu.JaxTestCase):
       # The export is not applicable to GPU
       raise unittest.SkipTest("Not intended for running on GPU")
     x = np.arange(5, dtype=np.float32)
-    # TODO: use a function with different behavior for different platforms
-    exp = export.export(jnp.sin,
+    exp = export.export(_testing_multi_platform_func,
                         lowering_platforms=('cpu', 'tpu'))(x)
     self.assertEqual(exp.lowering_platforms, ('cpu', 'tpu'))
     module_str = str(exp.mlir_module())
-    platform_index = re.findall(
-      r"(%arg\d):\s*tensor<i..>\s*{jax.platform_index = true}",
-      module_str)
-    self.assertEqual(["%arg0"], platform_index,
-                     f"Found {platform_index} in {module_str}")
+    expected_main_re = (
+      r"@main\("
+      r"%arg0: tensor<i..> {jax.platform_index = true}.*, "
+      r"%arg1: tensor<5xf32>.* ->")
+    self.assertRegex(module_str, expected_main_re)
     res = export.call_exported(exp)(x)
-    self.assertAllClose(res, np.sin(x))
+    self.assertAllClose(res, _testing_multi_platform_fun_expected(x))
 
   def test_multi_platform_nested(self):
     if jtu.test_device_matches(["tpu"]):
       # The outer export is not applicable to TPU
       raise unittest.SkipTest("Not intended for running on TPU")
     x = np.arange(5, dtype=np.float32)
-    # TODO: use a function with different behavior for different platforms
-    exp = export.export(jnp.sin,
-                            lowering_platforms=('cpu', 'tpu', 'cuda'))(x)
+    exp = export.export(_testing_multi_platform_func,
+                        lowering_platforms=('cpu', 'tpu', 'cuda'))(x)
     self.assertEqual(exp.lowering_platforms, ('cpu', 'tpu', 'cuda'))
 
     # Now serialize the call to the exported using a different sequence of
     # lowering platforms, but included in the lowering platforms for the
     # nested exported.
-    # TODO: improve this test once we implement true multi-platform lowering
     exp2 = export.export(export.call_exported(exp),
-                             lowering_platforms=('cpu', 'cuda'))(x)
+                         lowering_platforms=('cpu', 'cuda'))(x)
     res2 = export.call_exported(exp2)(x)
-    self.assertAllClose(res2, np.sin(x))
+    self.assertAllClose(res2, _testing_multi_platform_fun_expected(x))
 
   def test_multi_platform_and_poly(self):
     if jtu.test_device_matches(["gpu"]):
       # The export is not applicable to GPU
       raise unittest.SkipTest("Not intended for running on GPU")
-    # TODO: use a function with different behavior for different platforms
-    exp = export.export(lambda x: jnp.reshape(jnp.sin(x), (-1,)),
-                            lowering_platforms=('cpu', 'tpu'))(
+    exp = export.export(lambda x: jnp.reshape(_testing_multi_platform_func(x), (-1,)),
+                        lowering_platforms=('cpu', 'tpu'))(
         export.poly_spec((5, 6), np.float32, "b1, b2")
     )
     x = np.arange(12, dtype=np.float32).reshape((3, 4))
     res = export.call_exported(exp)(x)
-    self.assertAllClose(res, np.sin(x).reshape((-1,)))
+    self.assertAllClose(res, _testing_multi_platform_fun_expected(x).reshape((-1,)))
     # Now serialize the call to the exported
     exp2 = export.export(export.call_exported(exp))(x)
     res2 = export.call_exported(exp2)(x)
-    self.assertAllClose(res2, np.sin(x).reshape((-1,)))
+    self.assertAllClose(res2, _testing_multi_platform_fun_expected(x).reshape((-1,)))
 
 
 if __name__ == "__main__":

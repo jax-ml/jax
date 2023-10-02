@@ -2219,7 +2219,7 @@ def lower_mesh_computation(
           closed_jaxpr,
           ordered_effects=ordered_effects,
           backend_or_name=backend,
-          platform=lowering_parameters.platforms or backend.platform,
+          platform=lowering_parameters.override_platform or backend.platform,
           axis_context=axis_ctx,
           name_stack=name_stack,
           donated_args=donated_invars,
