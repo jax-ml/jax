@@ -20,8 +20,8 @@ load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 #    curl -L https://github.com/openxla/xla/archive/<git hash>.tar.gz | sha256sum
 #    and update XLA_SHA256 with the result.
 
-XLA_COMMIT = "7a19856d74569fd1f765cd03bdee84e3b1fdc579"
-XLA_SHA256 = "2b632f8adb63674ce2b8b48a84729a35226af8cce68431a7804fec8ca6eac61b"
+XLA_COMMIT = "7a32bc798bfd881ccf8fef4a0e5284240f233808"
+XLA_SHA256 = "ff75887de4107928e5c2688323c1162795fd211ab4e4fed77d3d505447bf9403"
 
 def repo():
     tf_http_archive(
