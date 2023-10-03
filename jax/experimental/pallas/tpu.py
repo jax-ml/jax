@@ -20,6 +20,7 @@ from jax._src.pallas.mosaic import SMEM
 from jax._src.pallas.mosaic import SemaphoreType
 from jax._src.pallas.mosaic import TPUMemorySpace
 from jax._src.pallas.mosaic import VMEM
+from jax._src.pallas.mosaic import DeviceIdType
 from jax._src.pallas.mosaic import async_copy
 from jax._src.pallas.mosaic import async_remote_copy
 from jax._src.pallas.mosaic import device_id

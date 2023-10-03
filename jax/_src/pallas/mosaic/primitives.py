@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import enum
 from typing import Any, Callable
 
 import jax
@@ -107,21 +108,30 @@ def _run_scoped_abstract_eval(*args, jaxpr):
   return [], nonlocal_effects
 
 
+class DeviceIdType(enum.Enum):
+  MESH = "mesh"
+  LOGICAL = "logical"
+
+
 semaphore_signal_p = jax_core.Primitive('semaphore_signal')
 semaphore_signal_p.multiple_results = True
 
 def semaphore_signal(sem, inc: int | jax.Array = 1,
-                     *, device_id: int | jax.Array | None = None):
+                     *, device_id: int | jax.Array | None = None,
+                     device_id_type: DeviceIdType = DeviceIdType.MESH):
   inc = jnp.asarray(inc, dtype=jnp.int32)
   args = [sem, inc]
   has_device_id = device_id is not None
   if has_device_id:
     args = [*args, device_id]
-  semaphore_signal_p.bind(*args, has_device_id=has_device_id)
+  semaphore_signal_p.bind(*args, has_device_id=has_device_id,
+                          device_id_type=device_id_type)
 
 @semaphore_signal_p.def_abstract_eval
 def _semaphore_signal_abstract_eval(sem_aval: tpu_core.AbstractSemaphore, value,
-                                    *args, has_device_id: bool):
+                                    *args, has_device_id: bool,
+                                    device_id_type: DeviceIdType):
+  del device_id_type
   if not isinstance(sem_aval, tpu_core.AbstractSemaphore):
     raise ValueError(f"Cannot signal on a non-semaphore value: {sem_aval}")
   if sem_aval.sem_type is not tpu_core.SemaphoreType.REGULAR:
@@ -156,16 +166,18 @@ def _semaphore_wait_abstract_eval(sem_aval: tpu_core.AbstractSemaphore, value):
 class DMAFuture:
   flat_args: Any
   tree: Any
+  device_id_type: DeviceIdType | None
 
   def wait(self):
-    dma_wait_p.bind(*self.flat_args, tree=self.tree)
+    dma_wait_p.bind(*self.flat_args, tree=self.tree,
+                    device_id_type=self.device_id_type)
 
 dma_start_p = jax_core.Primitive('dma_start')
 dma_start_p.multiple_results = True
 
 @dma_start_p.def_abstract_eval
-def _dma_start_abstract_eval(*args, tree):
-  del args, tree
+def _dma_start_abstract_eval(*args, tree, device_id_type):
+  del args, tree, device_id_type
   return []
 
 def dma_start(src_ref, src_indices, dst_ref, dst_indices, sem) -> DMAFuture:
@@ -175,13 +187,14 @@ def dma_start(src_ref, src_indices, dst_ref, dst_indices, sem) -> DMAFuture:
                                                       dst_ref.shape)
   args = (src_ref, src_indexer, dst_ref, dst_indexer, sem, None, None)
   flat_args, tree = tree_util.tree_flatten(args)
-  dma_start_p.bind(*flat_args, tree=tree)
+  dma_start_p.bind(*flat_args, tree=tree, device_id_type=None)
   wait_args, tree = tree_util.tree_flatten((sem, dst_ref, dst_indexer))
-  return DMAFuture(wait_args, tree)
-
+  return DMAFuture(wait_args, tree, None)
 
 def remote_dma_start(src_ref, src_indices, dst_ref, dst_indices, src_sem,
-                     dst_sem, device_id) -> tuple[DMAFuture, DMAFuture]:
+                     dst_sem, device_id,
+                     device_id_type: DeviceIdType) -> tuple[DMAFuture,
+                                                            DMAFuture]:
   src_indexer = indexing.NDIndexer.from_indices_shape(src_indices,
                                                       src_ref.shape)
   dst_indexer = indexing.NDIndexer.from_indices_shape(dst_indices,
@@ -189,20 +202,21 @@ def remote_dma_start(src_ref, src_indices, dst_ref, dst_indices, src_sem,
   args = (src_ref, src_indexer, dst_ref, dst_indexer, dst_sem, src_sem,
           device_id)
   flat_args, tree = tree_util.tree_flatten(args)
-  dma_start_p.bind(*flat_args, tree=tree)
+  dma_start_p.bind(*flat_args, tree=tree, device_id_type=device_id_type)
   recv_wait_args = (dst_sem, dst_ref, dst_indexer)
   recv_args, recv_tree = tree_util.tree_flatten(recv_wait_args)
   send_wait_args = (src_sem, src_ref, src_indexer)
   send_args, send_tree = tree_util.tree_flatten(send_wait_args)
-  return DMAFuture(send_args, send_tree), DMAFuture(recv_args, recv_tree)
+  return (DMAFuture(send_args, send_tree, device_id_type),
+          DMAFuture(recv_args, recv_tree, device_id_type))
 
 
 dma_wait_p = jax_core.Primitive('dma_wait')
 dma_wait_p.multiple_results = True
 
 @dma_wait_p.def_abstract_eval
-def _dma_wait_abstract_eval(*args, tree):
-  del args, tree
+def _dma_wait_abstract_eval(*args, tree, device_id_type):
+  del args, tree, device_id_type
   return []
 
 def _get_ref_and_indexer(ref):
@@ -216,11 +230,12 @@ def async_copy(src_ref, dst_ref, sem):
   dst_ref, dst_indices = _get_ref_and_indexer(dst_ref)
   return dma_start(src_ref, src_indices, dst_ref, dst_indices, sem)
 
-def async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id):
+def async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
+                      device_id_type: DeviceIdType = DeviceIdType.MESH):
   src_ref, src_indices = _get_ref_and_indexer(src_ref)
   dst_ref, dst_indices = _get_ref_and_indexer(dst_ref)
   return remote_dma_start(src_ref, src_indices, dst_ref, dst_indices, send_sem,
-                          recv_sem, device_id)
+                          recv_sem, device_id, device_id_type=device_id_type)
 
 device_id_p = jax_core.Primitive('device_id')
 

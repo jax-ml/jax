@@ -399,7 +399,7 @@ def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal"> {
   let arguments = (ins
     TPU_SemaphoreType:$semaphore,
     I32:$amount,
-    Optional<I32>:$device_id
+    Optional<I32>:$device_id // For remote DMAs
   );
   let assemblyFormat = [{
     $semaphore `,` $amount (`,` $device_id^)? attr-dict
