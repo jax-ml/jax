@@ -28,6 +28,7 @@ import numpy as np
 config.parse_flags_with_absl()
 
 
+@jtu.run_on_devices('gpu')
 class MockGPUTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -44,10 +45,7 @@ class MockGPUTest(jtu.JaxTestCase):
       return
     num_shards = 16
     jax.config.update('mock_num_gpus', num_shards)
-    mesh_shape = (num_shards,)
-    axis_names = ('x',)
-    mesh_devices = np.array(jax.devices()).reshape(mesh_shape)
-    mesh = jax.sharding.Mesh(mesh_devices, axis_names)
+    mesh = jtu.create_global_mesh((num_shards,), ('x',))
     @partial(
         jax.jit,
         in_shardings=NamedSharding(mesh, P('x',)),
