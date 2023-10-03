@@ -18,7 +18,8 @@
 ## What is JAX?
 
 JAX is [Autograd](https://github.com/hips/autograd) and [XLA](https://www.tensorflow.org/xla),
-brought together for high-performance machine learning research.
+brought together for high-performance numerical computing, including
+large-scale machine learning research.
 
 With its updated version of [Autograd](https://github.com/hips/autograd),
 JAX can automatically differentiate native
