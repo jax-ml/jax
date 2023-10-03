@@ -85,6 +85,7 @@ namespace; they are listed below.
     bartlett
     bincount
     bitwise_and
+    bitwise_count
     bitwise_not
     bitwise_or
     bitwise_xor

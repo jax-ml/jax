@@ -8,6 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 # jax 0.4.17
 
+* New features
+  * Added new {func}`jax.numpy.bitwise_count` function, matching the API of the simlar
+    function recently added to NumPy.
 * Deprecations
   * Removed the deprecated module `jax.abstract_arrays` and all its contents.
   * Named key constructors in {mod}`jax.random` are deprecated. Pass the `impl` argument
