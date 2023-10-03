@@ -85,7 +85,7 @@ _deprecations = {
         _DeprecatedAttributeKeyPathEntry,
     ),
     "GetitemKeyPathEntry": (
-        "jax.scipy.linalg.triu is deprecated. Use `SequenceKey` or `DictKey` instead.",
+        "jax.tree_util.GetitemKeyPathEntry is deprecated. Use `SequenceKey` or `DictKey` instead.",
         _DeprecatedGetitemKeyPathEntry,
     ),
 }
