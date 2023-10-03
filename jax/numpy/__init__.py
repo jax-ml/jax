@@ -334,6 +334,7 @@ from jax._src.numpy.ufuncs import (
     arctan2 as arctan2,
     arctanh as arctanh,
     bitwise_and as bitwise_and,
+    bitwise_count as bitwise_count,
     bitwise_not as bitwise_not,
     bitwise_or as bitwise_or,
     bitwise_xor as bitwise_xor,

@@ -298,6 +298,10 @@ JAX_BITWISE_OP_RECORDS = [
     op_record("bitwise_xor", 2, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_fullrange, []),
 ]
+if hasattr(np, "bitwise_count"):
+  # Numpy versions after 1.26
+  JAX_BITWISE_OP_RECORDS.append(
+    op_record("bitwise_count", 1, int_dtypes, all_shapes, jtu.rand_fullrange, []))
 
 JAX_OPERATOR_OVERLOADS = [
     op_record("__add__", 2, number_dtypes, all_shapes, jtu.rand_default, []),
@@ -569,6 +573,21 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(jtu.promote_like_jnp(np_op), jnp_op, args_maker)
       self._CompileAndCheck(jnp_op, args_maker)
+
+  @jtu.sample_product(
+    shape=array_shapes,
+    dtype=int_dtypes,
+  )
+  def testBitwiseCount(self, shape, dtype):
+    # np.bitwise_count added after numpy 1.26, but
+    # np_scalar.bit_count() is available before that.
+    np_fun = getattr(
+      np, "bitwise_count",
+      np.vectorize(lambda x: np.ravel(x)[0].bit_count(), otypes=['uint8']))
+    rng = jtu.rand_fullrange(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp.bitwise_count, args_maker)
+    self._CompileAndCheck(jnp.bitwise_count, args_maker)
 
   @jtu.sample_product(
     [dict(dtypes=dtypes, shapes=shapes)

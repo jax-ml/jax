@@ -5413,7 +5413,7 @@ _available_numpy_dtypes: list[str] = [dtype.__name__ for dtype in jtu.dtypes.all
                                       if dtype != dtypes.bfloat16]
 
 # TODO(jakevdp): implement missing ufuncs
-UNIMPLEMENTED_UFUNCS = {'spacing', 'bitwise_count'}
+UNIMPLEMENTED_UFUNCS = {'spacing'}
 
 
 def _all_numpy_ufuncs() -> Iterator[str]:
