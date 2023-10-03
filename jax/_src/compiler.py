@@ -38,6 +38,7 @@ from jax._src import traceback_util
 from jax._src.config import config
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 
 
 _DISABLE_MOST_OPTIMIZATIONS = jax_config.DEFINE_bool(
@@ -210,7 +211,11 @@ def get_compile_options(
       logger.error("get_compile_options XLA-AutoFDO profile: " +
                    "XLA-AutoFDO profile version is 0; this should not happen")
 
-  debug_options.xla_detailed_logging_and_dumping = detailed_logging
+  if xla_extension_version >= 201:
+    debug_options.xla_detailed_logging = detailed_logging
+  else:
+    debug_options.xla_detailed_logging_and_dumping = detailed_logging
+
   return compile_options
 
 
