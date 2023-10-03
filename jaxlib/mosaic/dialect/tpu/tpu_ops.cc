@@ -15,8 +15,9 @@ limitations under the License.
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LogicalResult.h"
@@ -71,6 +72,96 @@ LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
   auto slice = rewriter.create<MemRefSliceOp>(op.getLoc(), new_result_type,
                                               layout_ref, op.getBaseIdx());
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), slice);
+  return success();
+}
+
+LogicalResult MemRefSqueezeOp::verify() {
+  auto source_type = getMemRefType(getInput());
+  auto target_type = getType();
+  if (source_type.getMemorySpace() != target_type.getMemorySpace()) {
+    emitOpError("Memory spaces do not match.");
+    return failure();
+  }
+  if (source_type.getElementTypeBitWidth() !=
+      target_type.getElementTypeBitWidth()) {
+    this->emitOpError("Element bitwidths do not match in memref_squeeze.");
+    return failure();
+  }
+  auto source_shape = source_type.getShape();
+  auto target_shape = target_type.getShape();
+  int source_index = source_shape.size() - 1;
+  int target_index = target_shape.size() - 1;
+  auto error_msg = llvm::formatv(
+      "Target shape is not valid. "
+      "Source type: {0}. Target type: {1}.",
+      source_type, target_type);
+  while (source_index >= 0 || target_index >= 0) {
+    int target_dim = target_index < 0 ? -1 : target_shape[target_index];
+    if (source_index < 0) {
+       // We have run out of source shape but target shape still remains.
+       emitOpError(error_msg);
+       return failure();
+    }
+    int source_dim = source_shape[source_index];
+    if (source_dim == target_dim) {
+       source_index--;
+       target_index--;
+    } else {
+       // Only the source dim can be 1 here.
+       if (source_dim != 1) {
+         this->emitOpError(error_msg);
+         return failure();
+       }
+       source_index--;
+    }
+  }
+  return success();
+}
+
+LogicalResult MemRefSqueezeOp::canonicalize(MemRefSqueezeOp op,
+                                            PatternRewriter &rewriter) {
+  auto source_type = getMemRefType(op.getInput());
+  auto target_type = op.getType();
+  auto erase_layout = op.getInput().getDefiningOp<tpu::EraseLayoutOp>();
+  if (!erase_layout) {
+    return failure();
+  }
+  // Push layout erasure through squeezing. It is important we see the layout
+  // for lowering and don't make it hard for other ops to query it.
+  auto layout_ref = erase_layout.getOperand();
+  MemRefType layout_ty = layout_ref.getType();
+  auto source_shape = source_type.getShape();
+  auto target_shape = target_type.getShape();
+  int source_index = source_shape.size() - 1;
+  int target_index = target_shape.size() - 1;
+  auto old_layout = dyn_cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
+  auto target_strides = old_layout.getTileStrides();
+  llvm::SmallVector<int64_t> tile_strides(target_strides.begin(),
+                                          target_strides.end());
+  // We want to remove all strides that correspond to squeezed dimensions and
+  // update the corresponding output layout.
+  while (source_index >= 0 || target_index >= 0) {
+    int target_dim = target_index < 0 ? -1 : target_shape[target_index];
+    int source_dim = source_shape[source_index];
+    if (source_dim == target_dim) {
+       source_index--;
+       target_index--;
+    } else {
+       // Source index must be 1 here (otherwise verification will have failed).
+       // We are safe to mutate the strides vector here because we are looping
+       // backwards.
+       tile_strides.erase(tile_strides.begin() + source_index);
+       source_index--;
+    }
+  }
+  auto new_layout = tpu::TiledLayoutAttr::get(
+      source_type.getContext(), old_layout.getTiles(), tile_strides);
+  auto new_result_type = MemRefType::get(op.getResult().getType().getShape(),
+                                         layout_ty.getElementType(), new_layout,
+                                         layout_ty.getMemorySpace());
+  auto squeeze = rewriter.create<MemRefSqueezeOp>(op.getLoc(), new_result_type,
+                                                  layout_ref);
+  rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), squeeze);
   return success();
 }
 

@@ -351,6 +351,16 @@ def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure]> {
   let hasCanonicalizeMethod = 1;
 }
 
+def TPU_MemRefSqueezeOp : TPU_Op<"memref_squeeze", [Pure]> {
+  let arguments = (ins AnyMemRef:$input);
+  let results = (outs AnyMemRef:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($result)
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
+}
+
 def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure]> {
   let arguments = (ins AnyMemRef:$input);
   let results = (outs AnyMemRef:$result);
