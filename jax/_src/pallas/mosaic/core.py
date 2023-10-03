@@ -126,7 +126,6 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
   in_specs_tree: Any
   out_specs_tree: Any
 
-
   def __init__(
       self,
       num_scalar_prefetch: int,
@@ -160,12 +159,18 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
         state.shaped_array_ref(aval.shape, aval.dtype)
         for aval in flat_scalar_avals]
     grid_avals = [jax_core.ShapedArray((), jnp.dtype("int32"))] * len(self.grid)
+    # Create args, kwargs pytree def
+    index_map_in_tree = tree_util.tree_structure(
+        ((*grid_avals, *scalar_avals), {})
+    )
     in_block_mappings = map(
         partial(_convert_block_spec_to_block_mapping,
-                (*grid_avals, *scalar_ref_avals)), in_specs, in_ref_avals)
+                (*grid_avals, *scalar_ref_avals),
+                in_tree=index_map_in_tree), in_specs, in_ref_avals)
     out_block_mappings = map(
         partial(_convert_block_spec_to_block_mapping,
-                (*grid_avals, *scalar_ref_avals)), out_specs, out_ref_avals)
+                (*grid_avals, *scalar_ref_avals),
+                in_tree=index_map_in_tree), out_specs, out_ref_avals)
     grid_mapping = GridMapping(
         grid=self.grid,
         block_mappings=(*in_block_mappings, *out_block_mappings),
