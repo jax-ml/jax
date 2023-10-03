@@ -23,13 +23,12 @@ from jax._src import core
 from jax._src import effects
 from jax._src import pretty_printer as pp
 from jax._src.util import safe_map, safe_zip
+from jax._src.typing import Array
 
 ## JAX utilities
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
-
-Array = Any
 
 _ref_effect_color = pp.Color.GREEN
 

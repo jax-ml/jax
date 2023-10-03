@@ -39,6 +39,7 @@ from jax._src.state import discharge as state_discharge
 from jax._src.state import primitives as state_primitives
 from jax._src.state import utils as state_utils
 from jax._src.state import types as state_types
+from jax._src.typing import Array
 from jax._src.util import (partition_list, merge_lists, safe_map, safe_zip,
                            split_list, split_dict)
 from jax._src.lax.control_flow import loops
@@ -53,7 +54,6 @@ zip, unsafe_zip = safe_zip, zip
 S = TypeVar('S')
 T = TypeVar('T')
 class Ref(Generic[T]): pass
-Array = Any
 
 ref_set = state_primitives.ref_set
 ref_get = state_primitives.ref_get

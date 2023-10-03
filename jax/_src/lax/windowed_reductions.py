@@ -14,7 +14,7 @@
 
 from collections.abc import Sequence
 from functools import partial
-from typing import Any, Callable, Optional, Union
+from typing import Callable, Optional, Union
 import warnings
 
 import numpy as np
@@ -36,11 +36,10 @@ from jax._src.lax import slicing
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.ufuncs import logaddexp
+from jax._src.typing import Array
 
 map = util.safe_map
 zip = util.safe_zip
-
-Array = Any
 
 
 def reduce_window(operand, init_value, computation: Callable,

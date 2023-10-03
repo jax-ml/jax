@@ -70,7 +70,6 @@ Todos::
 """
 
 from functools import partial
-from typing import Any
 
 import numpy as np
 
@@ -88,9 +87,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import hlo
-
-
-Array = Any
+from jax._src.typing import Array
 
 
 def approx_max_k(operand: Array,

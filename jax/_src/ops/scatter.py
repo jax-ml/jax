@@ -16,7 +16,7 @@
 
 from collections.abc import Sequence
 import sys
-from typing import Any, Callable, Optional, Union
+from typing import Callable, Optional, Union
 import warnings
 
 import numpy as np
@@ -31,9 +31,9 @@ from jax._src.lax import lax as lax_internal
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import reductions
 from jax._src.numpy.util import check_arraylike, promote_dtypes
+from jax._src.typing import Array, ArrayLike
 
 
-Array = Any
 if sys.version_info >= (3, 10):
     from types import EllipsisType
     SingleIndex = Union[None, int, slice, Sequence[int], Array, EllipsisType]
@@ -154,8 +154,8 @@ def _get_identity(op, dtype):
 
 
 def _segment_update(name: str,
-                    data: Array,
-                    segment_ids: Array,
+                    data: ArrayLike,
+                    segment_ids: ArrayLike,
                     scatter_op: Callable,
                     num_segments: Optional[int] = None,
                     indices_are_sorted: bool = False,
@@ -195,8 +195,8 @@ def _segment_update(name: str,
   return reducer(out, axis=0).astype(dtype)
 
 
-def segment_sum(data: Array,
-                segment_ids: Array,
+def segment_sum(data: ArrayLike,
+                segment_ids: ArrayLike,
                 num_segments: Optional[int] = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
@@ -250,8 +250,8 @@ def segment_sum(data: Array,
       indices_are_sorted, unique_indices, bucket_size, reductions.sum, mode=mode)
 
 
-def segment_prod(data: Array,
-                 segment_ids: Array,
+def segment_prod(data: ArrayLike,
+                 segment_ids: ArrayLike,
                  num_segments: Optional[int] = None,
                  indices_are_sorted: bool = False,
                  unique_indices: bool = False,
@@ -306,8 +306,8 @@ def segment_prod(data: Array,
       indices_are_sorted, unique_indices, bucket_size, reductions.prod, mode=mode)
 
 
-def segment_max(data: Array,
-                segment_ids: Array,
+def segment_max(data: ArrayLike,
+                segment_ids: ArrayLike,
                 num_segments: Optional[int] = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
@@ -361,8 +361,8 @@ def segment_max(data: Array,
       indices_are_sorted, unique_indices, bucket_size, reductions.max, mode=mode)
 
 
-def segment_min(data: Array,
-                segment_ids: Array,
+def segment_min(data: ArrayLike,
+                segment_ids: ArrayLike,
                 num_segments: Optional[int] = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,

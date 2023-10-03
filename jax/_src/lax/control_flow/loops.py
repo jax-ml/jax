@@ -52,6 +52,7 @@ from jax._src import state
 from jax._src.state import discharge as state_discharge
 from jax._src.numpy.ufuncs import logaddexp
 from jax._src.traceback_util import api_boundary
+from jax._src.typing import Array
 from jax._src.util import (partition_list, safe_map, safe_zip, split_list,
                            unzip2, weakref_lru_cache, merge_lists)
 import numpy as np
@@ -64,7 +65,6 @@ _map = safe_map
 zip = safe_zip
 
 T = TypeVar('T')
-Array = Any
 BooleanNumeric = Any  # A bool, or a Boolean array.
 
 ### Helper functions
