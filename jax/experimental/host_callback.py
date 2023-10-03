@@ -145,7 +145,7 @@ You can use the :func:`barrier_wait` function for that purpose::
      accumulator.append(arg)
 
 
-   def device_fun(c):
+   def device_fun(x):
      id_tap(host_log, x)
      id_tap(host_log, 2. * x)
 
