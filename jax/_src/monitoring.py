@@ -20,7 +20,7 @@ during program execution, the registered listeners will be invoked.
 A typical listener callback is to send an event to a metrics collector for
 aggregation/exporting.
 """
-from typing import Callable, Protocol, Union
+from typing import Protocol, Union
 
 
 class EventListenerWithMetadata(Protocol):
@@ -29,60 +29,66 @@ class EventListenerWithMetadata(Protocol):
     ...
 
 
-_event_listeners_with_metadata: list[EventListenerWithMetadata] = []
-_event_listeners: list[Callable[[str], None]] = []
-_event_duration_secs_listeners: list[Callable[[str, float], None]] = []
+class EventDurationListenerWithMetadata(Protocol):
+
+  def __call__(self, event: str, duration_secs: float,
+               **kwargs: Union[str, int]) -> None:
+    ...
+
+
+_event_listeners: list[EventListenerWithMetadata] = []
+_event_duration_secs_listeners: list[EventDurationListenerWithMetadata] = []
 
 
 def record_event(event: str, **kwargs: Union[str, int]) -> None:
-  """Record an event."""
-  if not kwargs:
-    for callback in _event_listeners:
-      callback(event)
-  else:
-    for callback in _event_listeners_with_metadata:
-      callback(event, **kwargs)
+  """Record an event.
+
+  If **kwargs are specified, all of the named arguments have to be passed in the
+  same order across all invocations of this method for the same event.
+  """
+  for callback in _event_listeners:
+    callback(event, **kwargs)
 
 
-def record_event_duration_secs(event: str, duration: float) -> None:
-  """Record an event duration in seconds (float)."""
+def record_event_duration_secs(event: str, duration: float,
+                               **kwargs: Union[str, int]) -> None:
+  """Record an event duration in seconds (float).
+
+  If **kwargs are specified, all of the named arguments have to be passed in the
+  same order across all invocations of this method for the same event.
+  """
   for callback in _event_duration_secs_listeners:
-    callback(event, duration)
+    callback(event, duration, **kwargs)
 
-def register_event_listener(callback: Callable[[str], None]) -> None:
+
+def register_event_listener(
+    callback: EventListenerWithMetadata,
+) -> None:
   """Register a callback to be invoked during record_event()."""
   _event_listeners.append(callback)
 
 
-# TODO(b/301446522): Merge this function with register_event_listener.
-def register_event_listener_with_kwargs(
-    callback: EventListenerWithMetadata,
-) -> None:
-  """Register a callback to be invoked during record_event()."""
-  _event_listeners_with_metadata.append(callback)
-
-
 def register_event_duration_secs_listener(
-    callback : Callable[[str, float], None]) -> None:
+    callback : EventDurationListenerWithMetadata) -> None:
   """Register a callback to be invoked during record_event_duration_secs()."""
   _event_duration_secs_listeners.append(callback)
 
-def get_event_duration_listeners() -> list[Callable[[str, float], None]]:
+def get_event_duration_listeners() -> list[EventDurationListenerWithMetadata]:
   """Get event duration listeners."""
   return list(_event_duration_secs_listeners)
 
-def get_event_listeners() -> list[Callable[[str], None]]:
+def get_event_listeners() -> list[EventListenerWithMetadata]:
   """Get event listeners."""
   return list(_event_listeners)
 
-def _clear_event_listeners():
+def clear_event_listeners():
   """Clear event listeners."""
   global _event_listeners, _event_duration_secs_listeners
   _event_listeners = []
   _event_duration_secs_listeners = []
 
 def _unregister_event_duration_listener_by_callback(
-    callback: Callable[[str, float], None]) -> None:
+    callback: EventDurationListenerWithMetadata) -> None:
   """Unregister an event duration listener by callback.
 
   This function is supposed to be called for testing only.
@@ -100,7 +106,7 @@ def _unregister_event_duration_listener_by_index(index: int) -> None:
   del _event_duration_secs_listeners[index]
 
 def _unregister_event_listener_by_callback(
-    callback: Callable[[str], None]) -> None:
+    callback: EventListenerWithMetadata) -> None:
   """Unregister an event listener by callback.
 
   This function is supposed to be called for testing only.

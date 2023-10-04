@@ -25,6 +25,6 @@ from jax._src.monitoring import (
     record_event_duration_secs as record_event_duration_secs,
     record_event as record_event,
     register_event_duration_secs_listener as register_event_duration_secs_listener,
-    register_event_listener_with_kwargs as register_event_listener_with_kwargs,
     register_event_listener as register_event_listener,
+    clear_event_listeners as clear_event_listeners,
 )

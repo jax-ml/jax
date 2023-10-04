@@ -23,6 +23,10 @@ from jax._src import monitoring as jax_src_monitoring
 
 class MonitoringTest(absltest.TestCase):
 
+  def tearDown(self):
+    monitoring.clear_event_listeners()
+    super().tearDown()
+
   def test_record_event(self):
     events = []
     counters  = {}  # Map event names to frequency.
