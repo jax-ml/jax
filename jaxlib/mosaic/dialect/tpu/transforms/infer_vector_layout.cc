@@ -1293,9 +1293,16 @@ class VectorLayoutInferer {
                  "only 32-bit matmul results supported");
     std::array<Layout, 3> in_layout;
     CHECK_EQ(op->getNumOperands(), 3);
-    in_layout[0] = get_unpadded_layout(op->getOperand(0), std::nullopt, 1);
+    std::optional<int64_t> lhs_major_multiple;
+    // We don't restrict the first lhs axis when the data is not packed.
+    if (cast<VectorType>(op->getOperand(0).getType())
+            .getElementTypeBitWidth() == kNativeBitwidth) {
+      lhs_major_multiple = 1;
+    }
+    in_layout[0] =
+        get_unpadded_layout(op->getOperand(0), lhs_major_multiple, 1);
     in_layout[1] = get_unpadded_layout(op->getOperand(1), 128, 1);
-    in_layout[2] = get_unpadded_layout(op->getOperand(2), std::nullopt, 1);
+    in_layout[2] = get_unpadded_layout(op->getOperand(2), 1, 1);
     for (Layout &l : in_layout) {
       if (!l.has_value()) {
         op->emitOpError("unsupported operand shapes or layouts");

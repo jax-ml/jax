@@ -2785,10 +2785,10 @@ def _matmul_rule(
   if type_bitwidth(acc_type.element_type) != 32:
     raise NotImplementedError("non-32-bit matmul result")
   # The code below puts no constraints on the second dimension of both lhs and
-  # rhs. However, leading axis of lhs needs to be a multiple of native tiling,
-  # while leading axis of rhs needs to be a multiple of 128 (no matter the
-  # transpose mode).
-  if lhs_type.shape[0] % layout_lhs.tiling[0] != 0:
+  # rhs. However, leading axis of lhs needs to be a multiple of native tiling
+  # for packed types, while leading axis of rhs needs to be a multiple of 128
+  # (no matter the type and transpose mode).
+  if layout_lhs.packing != 1 and lhs_type.shape[0] % layout_lhs.tiling[0] != 0:
     raise NotImplementedError("Unsupported LHS shape")
   if rhs_type.shape[0] % 128 != 0:
     raise NotImplementedError("Unsupported RHS shape")
