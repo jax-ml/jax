@@ -15,6 +15,7 @@
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -1750,6 +1751,324 @@ FailureOr<xla::Array<Value>> disassemble(RewriteContext &ctx,
   return op->emitOpError("unimplemented: ") << val;
 }
 
+// Assembles a destination tile using partial data from rotated vregs using a
+// divide-and-conquer strategy.
+//
+// Arguments:
+//   rotated_row_vregs: A row of rotated vregs, from which destination tile(s)
+//     is/are to be selected to assemble a new vreg.
+//   src_layout: The source layout.
+//   start_src_col: The first rotated vreg in the row of rotated vregs to
+//     process.
+//   end_src_col: The last rotated vreg in the row of rotated vreg to process.
+//   first_dst_tile_sublane_offset: Sublane offset where the first dst tile to
+//   be
+//     selected starts.
+//   dst_layout: Destination layout, based on which retiling is being performed.
+//   hw_generation: The generation of a target hardware.
+//
+// Returns:
+//   A new vreg assembled from dst tiles stored in given rotated vregs.
+Value selectTilesFromRotatedRowVregs(
+    RewriteContext &ctx, const ArrayRef<Value> &rotated_row_vregs,
+    const int64_t start_src_col, const int64_t end_src_col,
+    const int64_t first_dst_tile_sublane_offset,
+    const VectorLayout &dst_layout) {
+  CHECK_LE(start_src_col, end_src_col);
+  if (start_src_col == end_src_col) {
+    return rotated_row_vregs[start_src_col];
+  }
+  const int64_t mid_src_col = start_src_col + (end_src_col - start_src_col) / 2;
+
+  Value left_partial_vreg = selectTilesFromRotatedRowVregs(
+      ctx, rotated_row_vregs, start_src_col, mid_src_col,
+      first_dst_tile_sublane_offset, dst_layout);
+
+  const int64_t left_tiles_count = mid_src_col - start_src_col + 1;
+  const int64_t right_first_dst_tile_sublane_offset =
+      (first_dst_tile_sublane_offset +
+       left_tiles_count * dst_layout.sublanesPerTile(ctx.target_shape)) %
+      ctx.target_shape[0];
+
+  Value right_partial_vreg = selectTilesFromRotatedRowVregs(
+      ctx, rotated_row_vregs, mid_src_col + 1, end_src_col,
+      right_first_dst_tile_sublane_offset, dst_layout);
+
+  const IntegerType i1 = ctx.builder.getI1Type();
+  const auto mask_vreg_ty =
+      dst_layout.packing() == 2
+          ? VectorType::get(
+                ArrayRef<int64_t>{ctx.target_shape[0], ctx.target_shape[1], 2},
+                i1)
+          : VectorType::get(ctx.target_shape, i1);
+
+  auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1, ctx.builder,
+                                 left_partial_vreg.getLoc());
+  if (first_dst_tile_sublane_offset < right_first_dst_tile_sublane_offset) {
+    // The useful data sublanes in left vregs do not wrap around in vreg.
+    // For e.g. consider (2,128) destination tiling and we are trying to merge
+    // two vregs as follows:
+    //
+    //   vreg 0:        vreg 1:
+    //   x x x x x     dst_tile_2
+    //   x x x x x     dst_tile_3
+    //   dst_tile_4    x x x x x
+    //   dst_tile_5    x x x x x
+    //   dst_tile_6    x x x x x
+    //   dst_tile_7    x x x x x
+    //   x x x x x     dst_tile_0
+    //   x x x x x     dst_tile_1
+    //
+    // In the above case, the data we want to select from vreg 1 wraps around,
+    // whereas vreg 0 useful data is contiguous. It is easier to create '1' mask
+    // for vreg 0.
+    auto sublanes_mask = ctx.builder.create<tpu::CreateMaskOp>(
+        left_partial_vreg.getLoc(), mask_vreg_ty,
+        ArrayRef<Value>{boundIdxConst(first_dst_tile_sublane_offset),
+                        boundIdxConst(0)},
+        ArrayRef<Value>{boundIdxConst(right_first_dst_tile_sublane_offset),
+                        boundIdxConst(ctx.target_shape[1])});
+    return ctx.builder.create<arith::SelectOp>(left_partial_vreg.getLoc(),
+                                               sublanes_mask, left_partial_vreg,
+                                               right_partial_vreg);
+  }
+
+  auto sublanes_mask = ctx.builder.create<tpu::CreateMaskOp>(
+      left_partial_vreg.getLoc(), mask_vreg_ty,
+      ArrayRef<Value>{boundIdxConst(right_first_dst_tile_sublane_offset),
+                      boundIdxConst(0)},
+      ArrayRef<Value>{boundIdxConst(first_dst_tile_sublane_offset),
+                      boundIdxConst(ctx.target_shape[1])});
+  return ctx.builder.create<arith::SelectOp>(left_partial_vreg.getLoc(),
+                                             sublanes_mask, right_partial_vreg,
+                                             left_partial_vreg);
+}
+
+// Retiles across vregs to match the destination layout when the sublane tiling
+// dimension is reduced.
+//
+// Arguments:
+//   value_shape: The shape of the value which needs to be retiled in vregs.
+//   src: The source layout.
+//   src_vreg_array: An array of vregs storing source tiles.
+//   dst_layout: The destination layout, with reduced sublane dimension, based
+//   on
+//     which the retiling will be performed.
+//   hw_generation: The generation of a target hardware.
+//
+// Returns:
+//   A new array of vregs that store tiles based on the destination layout.
+xla::Array<Value> retileToReducedSublanes(
+    RewriteContext &ctx, const ArrayRef<int64_t> value_shape,
+    const VectorLayout &src_layout, const xla::Array<Value> &src_vreg_array,
+    const VectorLayout &dst_layout) {
+  const int64_t dst_tiling_sublane = dst_layout.tiling()[0];
+  CHECK_LT(0, dst_tiling_sublane);
+  CHECK_LT(dst_tiling_sublane, src_layout.tiling()[0]);
+  CHECK(llvm::isPowerOf2_64(dst_tiling_sublane));
+
+  xla::Array<Value> dst_vreg_array(
+      dst_layout.tileArrayShape(value_shape, ctx.target_shape));
+
+  // We need to rotate each src tile in each src vreg once so that that they can
+  // be merged to form new vregs. If a src vreg contains more than one src tile,
+  // it will be rotated once per src tile. Consider (8,512) tensor stored with
+  // layout (8,128) in a vreg array of shape (1, 4). Each src vreg
+  // contains one src tile in this case. Given, the destination layout is
+  // (2,128), each src tile is divided into 4 destination tiles as shown below:
+  //
+  //   src_vreg_0_0:     src_vreg_0_1:    src_vreg_0_2:   src_vreg_0_3:
+  // dst_tile_0_0_0    dst_tile_0_0_1   dst_tile_0_0_2  dst_tile_0_0_3
+  // dst_tile_1_0_0    dst_tile_1_0_1   dst_tile_1_0_2  dst_tile_1_0_3
+  // dst_tile_2_0_0    dst_tile_2_0_1   dst_tile_2_0_2  dst_tile_2_0_3
+  // dst_tile_3_0_0    dst_tile_3_0_1   dst_tile_3_0_2  dst_tile_3_0_3
+  //
+  // In this example, each src tile in the src vreg is rotated by
+  // col *  sublanes_per_tile to produce the following rotated src vregs:
+  //
+  // rot_src_vreg_0_0: rot_src_vreg_0_1: rot_src_vreg_0_2: rot_src_vreg_0_3:
+  //     dst_tile_0_0_0    dst_tile_3_0_1    dst_tile_2_0_2    dst_tile_1_0_3
+  //     dst_tile_1_0_0    dst_tile_0_0_1    dst_tile_3_0_2    dst_tile_2_0_3
+  //     dst_tile_2_0_0    dst_tile_1_0_1    dst_tile_0_0_2    dst_tile_3_0_3
+  //     dst_tile_3_0_0    dst_tile_2_0_1    dst_tile_1_0_2    dst_tile_0_0_3
+
+  // If there were 2 src tiles in the src vreg, we would have rotated each src
+  // vreg twice, producing 2 rotated src vreg per src vreg. The rotation amount
+  // is calculated from the src and the dest tiling.
+
+  const int64_t src_tiles_per_vreg = src_layout.tilesPerVreg(ctx.target_shape);
+  const int64_t dst_tiles_per_vreg = dst_layout.tilesPerVreg(ctx.target_shape);
+  const int64_t src_sublanes_per_tile =
+      src_layout.sublanesPerTile(ctx.target_shape);
+  const int64_t dst_sublanes_per_tile =
+      dst_layout.sublanesPerTile(ctx.target_shape);
+  // Each vreg may store more than one src tile. We may have to rotate a vreg,
+  // once for every src tile in the vreg.
+  SmallVector<int64_t> rotated_src_vreg_array_shape(
+      toArrayRef(src_vreg_array.dimensions()));
+  rotated_src_vreg_array_shape.back() *= src_tiles_per_vreg;
+  xla::Array<Value> rotated_src_vreg_array(rotated_src_vreg_array_shape);
+
+  rotated_src_vreg_array.Each([&](const absl::Span<const int64_t> rotated_idx,
+                                  Value *const rotated_src_vreg) {
+    const int64_t idx = rotated_idx.back();
+    const int64_t tile_idx = idx % dst_tiles_per_vreg;
+    const int64_t dst_sublane = tile_idx * dst_sublanes_per_tile;
+    auto [src_col, src_tile_offset] = std::div(idx, src_tiles_per_vreg);
+    SmallVector<int64_t> src_vreg_idx(toArrayRef(rotated_idx));
+    src_vreg_idx.back() = src_col;
+    Value src_vreg = src_vreg_array(src_vreg_idx);
+    const int64_t src_sublane = src_tile_offset * src_sublanes_per_tile;
+    int64_t rotate_amt = dst_sublane - src_sublane;
+    if (rotate_amt == 0) {
+      *rotated_src_vreg = src_vreg;
+      return;
+    }
+    if (rotate_amt < 0) {
+      rotate_amt += ctx.target_shape[0];
+    }
+    *rotated_src_vreg = ctx.builder.create<tpu::RotateOp>(
+        src_vreg.getLoc(), src_vreg, rotate_amt, /*dimension=*/0);
+  });
+  // Assemble output vregs using tiles from rotated vregs using select.
+  // Given, above example, destination vregs are then assembled as follows:
+  //  dst_vreg_0_0:
+  // dst_tile_0_0_0
+  // dst_tile_0_0_1
+  // dst_tile_0_0_2
+  // dst_tile_0_0_3
+
+  //  dst_vreg_1_0: (Notice dst tiles are not in correct offset!)
+  // dst_tile_1_0_3
+  // dst_tile_1_0_0
+  // dst_tile_1_0_1
+  // dst_tile_1_0_2
+
+  //  dst_vreg_2_0: (Notice dst tiles are not in correct offset!)
+  // dst_tile_2_0_2
+  // dst_tile_2_0_3
+  // dst_tile_2_0_0
+  // dst_tile_2_0_1
+
+  //  dst_vreg_3_0: (Notice dst tiles are not in correct offset!)
+  // dst_tile_3_0_1
+  // dst_tile_3_0_2
+  // dst_tile_3_0_3
+  // dst_tile_3_0_0
+
+  // Each destination vreg is assembled from destination tiles in multiple
+  // rotated src vregs. In the above example, if we wanted each destination tile
+  // to be in correct sublane offset in a rotated vreg, say rot_src_vreg_0_1,
+  // before assembling the destination tiles, we would have had to rotate
+  // src_vreg_0_1 four times, creating 4 rotated vregs (instead of 1) for each
+  // src vreg. In the above example, we instead rotated a src vreg src_vreg_0_1
+  // only once to obtain rot_src_vreg_0_1 where the dst_tile_0_0_1 is in correct
+  // final sublane offset, i.e. 2. But notice the sublane offset of
+  // dst_tile_1_0_1 in the same rotated vreg. Its correct final destination
+  // sublane offset is 2, but in rot_src_vreg_0_1, its offset is 4. Its sublane
+  // offset is off by 2. We need to correct these sublane offsets in the final
+  // assembled dst vregs. A single rotation of each assembled dst vreg is needed
+  // to correct such sublane offsets. This strategy reduces the number of
+  // sublane rotations required. See comments below.
+  const int64_t tile_sublane_change_factor =
+      src_layout.tiling()[0] / dst_layout.tiling()[0];
+
+  dst_vreg_array.Each([&](absl::Span<const int64_t> idx,
+                          Value *const dst_vreg) {
+    const int64_t row = *(idx.end() - 2);
+    const int64_t col = *(idx.end() - 1);
+    auto [rotated_vreg_row, first_dst_tile_offset] =
+        std::div(row, tile_sublane_change_factor);
+    const int64_t first_dst_tile_sublane_offset =
+        first_dst_tile_offset * dst_sublanes_per_tile;
+    const int64_t src_vreg_array_col_start = col * dst_tiles_per_vreg;
+    const int64_t src_vreg_array_col_end =
+        std::min((col + 1) * dst_tiles_per_vreg,
+                 rotated_src_vreg_array.dimensions().back()) -
+        1;
+
+    // TODO(tlongeri): Find a better way to slice that doesn't involve so
+    // copying so many index vectors and hopefully is more concise. Probably
+    // by expanding xla::Array (maybe could just expose calculate_index?).
+    SmallVector<int64_t> rotated_row_starts(toArrayRef(idx));
+    *(rotated_row_starts.end() - 2) = rotated_vreg_row;
+    *(rotated_row_starts.end() - 1) = 0;
+    SmallVector<int64_t> rotated_row_ends(idx.size());
+    for (size_t i = 0; i + 1 < rotated_row_ends.size(); ++i) {
+      rotated_row_ends[i] = rotated_row_starts[i] + 1;
+    }
+    *(rotated_row_ends.end() - 1) = rotated_src_vreg_array.dimensions().back();
+    const xla::Array<Value> rotated_row_slice =
+        rotated_src_vreg_array.Slice(rotated_row_starts, rotated_row_ends);
+    const Value dst_tile = selectTilesFromRotatedRowVregs(
+        ctx, /*rotated_row_vregs=*/
+        ArrayRef(rotated_row_slice.begin(), rotated_row_slice.end()),
+        src_vreg_array_col_start, src_vreg_array_col_end,
+        first_dst_tile_sublane_offset, dst_layout);
+    if (first_dst_tile_sublane_offset == 0) {
+      // No need to rotate. First dst tile is already at offset 0, which means
+      // rest of the dst tiles are also at correct sublane offset.
+      *dst_vreg = dst_tile;
+    } else {
+      // Fix the destination tile sublane offset by rotating assembled dest vreg
+      // once (See comments above). The dst vregs are fixed as follows:
+      // No rotation needed.
+      // dst_tile_0_0_0
+      // dst_tile_0_0_1
+      // dst_tile_0_0_2
+      // dst_tile_0_0_3
+
+      // Rotated by -1 * (sublanes_per_tile=2) * (row=1):
+      // dst_tile_1_0_0
+      // dst_tile_1_0_1
+      // dst_tile_1_0_2
+      // dst_tile_1_0_3
+
+      // Rotated by -1 * (sublanes_per_tile=2) * (row=2):
+      // dst_tile_2_0_0
+      // dst_tile_2_0_1
+      // dst_tile_2_0_2
+      // dst_tile_2_0_3
+
+      // Rotated by -1 * (sublanes_per_tile=2) * (row=3):
+      // dst_tile_3_0_0
+      // dst_tile_3_0_1
+      // dst_tile_3_0_2
+      // dst_tile_3_0_3
+      *dst_vreg = ctx.builder.create<tpu::RotateOp>(
+          dst_tile.getLoc(), dst_tile,
+          ctx.target_shape[0] - first_dst_tile_sublane_offset, /*dimension=*/0);
+    }
+  });
+  return dst_vreg_array;
+}
+
+// Returns true iff the layout changes involve reduced sublanes per tile.
+//
+// Arguments:
+//  src: The existing layout.
+//  dst: The new layout based on which the retiling is to be carried out.
+bool isSupportedReducedSublanesRetile(RewriteContext &ctx,
+                                      const VectorLayout &src,
+                                      const VectorLayout &dst) {
+  return src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+         dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+         llvm::all_of(llvm::zip_equal(src.offsets(), dst.offsets()),
+                      [](auto tup) {
+                        auto [lhs, rhs] = tup;
+                        return lhs.value_or(0) == rhs.value_or(0);
+                      })
+         // TODO (kumudbhandari): We have not tested any tile size where
+         // tile[-1] != TARGET_SHAPE.lanes. It should work but needs to be
+         // tested.
+         && src.tiling()[1] == ctx.target_shape[1] &&
+         dst.tiling()[1] == ctx.target_shape[1] &&
+         dst.tiling()[0] < src.tiling()[0] &&
+         src.bitwidth() == dst.bitwidth() &&
+         llvm::isPowerOf2_64(src.tiling()[0]) &&
+         llvm::isPowerOf2_64(dst.tiling()[0]);
+}
+
 // Changes the layout of a vector value.
 //
 // Arguments:
@@ -1893,150 +2212,10 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
     src_tiles = std::move(src_tiles_retiled);
   }
 
-  // (16, 128) -> (8, 128) tiling change for packed 16-bit types
-  if (src.implicit_dim() != VectorLayout::ImplicitDim::kNone &&
-      dst.implicit_dim() != VectorLayout::ImplicitDim::kNone &&
-      vty.getElementType() == ctx.builder.getBF16Type() &&
-      src.tiling() == std::array<int64_t, 2>{16, 128} &&
-      dst.tiling() == std::array<int64_t, 2>{8, 128}) {
-    const VectorLayout new_src(src.bitwidth(), src.offsets(), dst.tiling());
-    xla::Array<Value> src_tiles_retiled(
-        new_src.tileArrayShape(vty.getShape(), ctx.target_shape));
-    src_tiles_retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
-      SmallVector<int64_t> src_idx(idx.begin(), idx.end());
-      src_idx[src_idx.size() - 2] /= 2;
-      src_idx[src_idx.size() - 1] *= 2;
-      Value src_row1 = src_tiles(src_idx);
-      if (src_idx[src_idx.size() - 1] + 1 <
-          src_tiles.dim(src_tiles.num_dimensions() - 1)) {
-        ++src_idx[src_idx.size() - 1];
-      }
-      Value src_row2 = src_tiles(src_idx);
-      const int vreg_part = idx[idx.size() - 1] % 2;
-      auto half_row1 = ctx.builder.create<tpu::UnpackSubelementsOp>(
-          v.getLoc(), vreg_f32, src_row1, vreg_part);
-      auto half_row2 = ctx.builder.create<tpu::UnpackSubelementsOp>(
-          v.getLoc(), vreg_f32, src_row2, vreg_part);
-      *tile = ctx.builder.create<tpu::PackSubelementsOp>(
-          v.getLoc(), src_row1.getType(), ValueRange{half_row1, half_row2});
-    });
-    src = new_src;
-    src_tiles = std::move(src_tiles_retiled);
-  }
-  // Handle retiling from (8, 128) to (1, 128) for 32 bits data.
-  if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      getTypeBitwidth(vty.getElementType()) == 32 &&
-      (!src.offsets()[0].has_value() || *src.offsets()[0] == 0) &&
-      (!src.offsets()[1].has_value() || *src.offsets()[1] == 0) &&
-      dst.offsets() == LayoutOffsets{0, 0} &&
-      src.tiling() == std::array<int64_t, 2>{8, 128} &&
-      dst.tiling() == std::array<int64_t, 2>{1, 128}) {
-    const VectorLayout new_src(src.bitwidth(), dst.offsets(), dst.tiling());
-    xla::Array<Value> src_tiles_retiled(
-        new_src.tileArrayShape(vty.getShape(), ctx.target_shape));
-    src_tiles_retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
-      const int64_t dst_row = *(idx.end() - 2);
-      const int64_t dst_col = *(idx.end() - 1);
-      const int64_t src_row = dst_row / 8;
-      const int64_t src_col_0 = dst_col * 8;
-      const int64_t src_tile_vreg_count =
-          src_col_0 + 8 <= src_tiles.dimensions().back()
-              ? 8
-              : src_tiles.dimensions().back() % 8;
-      SmallVector<int64_t> src_idx(idx.begin(), idx.end());
-      *(src_idx.end() - 2) = src_row;
-      *(src_idx.end() - 1) = src_col_0;
-      *tile = src_tiles(src_idx);
-      for (int64_t i = 1; i < src_tile_vreg_count; ++i) {
-        const RectangularVregBounds bounds({i, 0},
-                                           {i + 1, ctx.target_shape[1]});
-
-        *(src_idx.end() - 1) = src_col_0 + i;
-        Value src_tile = src_tiles(src_idx);
-        src_tile = ctx.builder.create<tpu::RotateOp>(
-            src_tile.getLoc(), src_tile, /*amount=*/i, /*dimension=*/0);
-        const TypedValue<VectorType> mask =
-            bounds
-                .getVectorMask(ctx.builder, src_tile.getLoc(),
-                               ctx.hardware_generation, ctx.target_shape)
-                .value();
-        *tile = ctx.builder.create<arith::SelectOp>(mask.getLoc(), mask,
-                                                    src_tile, *tile);
-      }
-    });
-    src = new_src;
-    src_tiles = std::move(src_tiles_retiled);
-  }
-  // TODO(kumudbhandari): Generalize the logic below to handle retiling from
-  // (8, 128) to (x, 128) where x=1, 2 or 4.
-  if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      src.offsets() == dst.offsets() && src.bitwidth() != 16 &&
-      src.tiling() == std::array<int64_t, 2>{8, 128} &&
-      dst.tiling() == std::array<int64_t, 2>{4, 128}) {
-    const VectorLayout retiled_src_layout(src.bitwidth(), src.offsets(),
-                                          dst.tiling());
-    xla::Array<Value> retiled_src_tiles(
-        retiled_src_layout.tileArrayShape(vty.getShape(), ctx.target_shape));
-
-    // Consider a value of type and shape: f32(8, 256). Retiling from (8,128)
-    // to (4,128): vreg (tile) array shape (1, 2), with original (8,128)
-    // tiling:
-    //   vreg_0_0: slice:[0:7, 0:127] vreg_0_1: slice:[0:7, 128:255]
-
-    // vreg (tile) array shape: (2, 1), with (4,128) retiling:
-    //   vreg_0_0: slice: [0:3, 0:127], slice: [0:3, 128:255]
-    //   vreg_1_0: slice:[4:7, 0:127], slice: [4:7, 128:255]
-    const int64_t nd = retiled_src_tiles.num_dimensions();
-    retiled_src_tiles.Each(
-        [&](absl::Span<const int64_t> retiled_idx, Value *tile) {
-          SmallVector<int64_t> src_tile_idx(toArrayRef(retiled_idx));
-
-          // The first src tile, half of which forms the first half of the
-          // retiled tile(retiled_row_idx, retiled_col_idx).
-          src_tile_idx[nd - 2] /= 2;
-          src_tile_idx[nd - 1] *= 2;
-          const Value src_tile_1 = src_tiles(src_tile_idx);
-
-          // The second src tile, half of which forms the second half of the
-          // retiled tile(retiled_row_idx, retiled_col_idx).
-          if (src_tile_idx[nd - 1] + 1 < src_tiles.dim(nd - 1)) {
-            // TODO(tlongeri): is this just when the second tile is invalid? Can
-            // we just set src_tile_2 to nullptr and not merge it in this
-            // situation?
-            ++src_tile_idx[nd - 1];
-          }
-          const Value src_tile_2 = src_tiles(src_tile_idx);
-
-          // Each (retiled_row_idx)th tile is formed from 2 top or 2 bottom half
-          // sublanes of the original tile.
-          // We need to rotate sublanes of one of the two tiles to push either a
-          // top half to the bottom or vice-versa.
-          const Value tile_to_merge_1 =
-              retiled_idx[nd - 2] % 2 == 0
-                  ? src_tile_1
-                  : ctx.builder.create<tpu::RotateOp>(
-                        v.getLoc(), src_tile_1, /*amount=*/4, /*dimension=*/0);
-          const Value tile_to_merge_2 =
-              retiled_idx[nd - 2] % 2 != 0
-                  ? src_tile_2
-                  : ctx.builder.create<tpu::RotateOp>(
-                        v.getLoc(), src_tile_2, /*amount=*/4, /*dimension=*/0);
-          // Create a mask to select first half from tile 1 and second half of
-          // data from tile 2 to be merged.
-          const RectangularVregBounds vreg_half_bound(
-              {0, 0}, {ctx.target_shape[0] / 2, ctx.target_shape[1]});
-          const Value vreg_select_mask =
-              vreg_half_bound
-                  .getVectorMask(ctx.builder, v.getLoc(),
-                                 ctx.hardware_generation, ctx.target_shape)
-                  .value();
-          *tile = ctx.builder.create<arith::SelectOp>(
-              v.getLoc(), vreg_select_mask, tile_to_merge_1, tile_to_merge_2);
-        });
-    src = retiled_src_layout;
-    src_tiles = std::move(retiled_src_tiles);
+  if (isSupportedReducedSublanesRetile(ctx, src, dst)) {
+    src_tiles =
+        retileToReducedSublanes(ctx, vty.getShape(), src, src_tiles, dst);
+    src = dst;
   }
 
   // Fix up the offsets, assuming everything else matches between src and dst.
