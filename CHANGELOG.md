@@ -10,6 +10,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 # jaxlib 0.4.18
 
+* Changes
+  * CUDA jaxlibs now depend on the user to install a compatible NCCL version.
+    If using the recommended `cuda12_pip` installation, NCCL should be installed
+    automatically.
+
 # jax 0.4.17 (Oct 3, 2023)
 
 * New features
@@ -42,8 +47,6 @@ Remember to align the itemized text with the first line of an item within a list
 * Changes:
   * Python 3.12 wheels were added in this release.
   * The CUDA 12 wheels now require CUDA 12.2 or newer and cuDNN 8.9.4 or newer.
-  * This is likely the last release of jaxlib that supports CUDA 11. We intend
-    to drop CUDA 11 support in the next release.
 
 * Bug fixes:
   * Fixed log spam from ABSL when the JAX CPU backend was initialized.

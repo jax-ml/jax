@@ -119,6 +119,7 @@ setup(
           "nvidia-cufft-cu11>=10.9",
           "nvidia-cusolver-cu11>=11.4",
           "nvidia-cusparse-cu11>=11.7",
+          "nvidia-nccl-cu11>=2.18.3",
         ],
 
         'cuda12_pip': [
@@ -131,6 +132,7 @@ setup(
           "nvidia-cufft-cu12>=11.0.8.103",
           "nvidia-cusolver-cu12>=11.5.2",
           "nvidia-cusparse-cu12>=12.1.2.141",
+          "nvidia-nccl-cu12>=2.18.3",
         ],
 
         # Target that does not depend on the CUDA pip wheels, for those who want
