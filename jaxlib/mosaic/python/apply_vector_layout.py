@@ -1626,13 +1626,14 @@ def _arith_constant_rule(ctx: RewriteContext, op: arith.ConstantOp,  # pylint: d
         )
       ref = ctx.append_constant(value)
       load_op = vector.LoadOp(vty, ref, [ix_cst(0)] * vty.rank)
-      ctx.replace_all_uses_with(op, load_op.result)
-      return _vector_load_rule(
-          ctx,
-          load_op,
-          [None] * (vty.rank + 1),
-          VectorLayout(32, (0, 0), TARGET_SHAPE, None),
-      )
+      ctx.replace(op, load_op)
+      with ir.InsertionPoint(load_op), load_op.location:
+        return _vector_load_rule(
+            ctx,
+            load_op,
+            [None] * (vty.rank + 1),
+            VectorLayout(32, (0, 0), TARGET_SHAPE, None),
+        )
   raise NotImplementedError(f"Unsupported arith.const type: {ty}")
 
 
