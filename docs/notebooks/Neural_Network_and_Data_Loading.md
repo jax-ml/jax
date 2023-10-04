@@ -189,17 +189,12 @@ JAX is laser-focused on program transformations and accelerator-backed NumPy, so
 :id: 94PjXZ8y3dVF
 
 import numpy as np
+from jax.tree_util import tree_map
 from torch.utils import data
 from torchvision.datasets import MNIST
 
 def numpy_collate(batch):
-  if isinstance(batch[0], np.ndarray):
-    return np.stack(batch)
-  elif isinstance(batch[0], (tuple,list)):
-    transposed = zip(*batch)
-    return [numpy_collate(samples) for samples in transposed]
-  else:
-    return np.array(batch)
+  return tree_map(np.asarray, data.default_collate(batch))
 
 class NumpyLoader(data.DataLoader):
   def __init__(self, dataset, batch_size=1,
