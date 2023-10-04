@@ -1169,7 +1169,7 @@ def _gamma_one(key: KeyArray, alpha, log_space) -> Array:
   _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, zero, one, _lax_const(alpha, 2)))
   if log_space:
     log_samples = lax.neg(exponential(subkey, (), dtype=dtype))
-    log_boost = lax.select(boost_mask, zero, lax.mul(log_samples, lax.div(one, alpha_orig)))
+    log_boost = lax.select(boost_mask | (log_samples == 0), zero, lax.mul(log_samples, lax.div(one, alpha_orig)))
     return lax.add(lax.add(lax.log(d), lax.log(V)), log_boost)
   else:
     samples = 1 - uniform(subkey, (), dtype=dtype)

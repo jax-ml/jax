@@ -451,6 +451,20 @@ class PrngTest(jtu.JaxTestCase):
       self.assertArraysEqual(f2, s2)
       self.assertArraysEqual(f3, s3)
 
+  @skipIf(config.jax_threefry_partitionable, 'changed random bit values')
+  def test_loggamma_nan_corner_case(self):
+    # regression test for https://github.com/google/jax/issues/17922
+    # This particular key previously led to NaN output.
+    # If the underlying implementation ever changes, this test will no longer
+    # exercise this corner case, so we compare to a particular output value
+    # rather than just checking for lack of NaNs.
+    expected = jnp.float32(-4.595436)
+    key = random.wrap_key_data(
+      jnp.array([3200590325, 713258242], dtype='uint32'))
+    actual = random.loggamma(key, 0.0, dtype='float32')
+    rtol = 1E-4 if jtu.test_device_matches(["tpu"]) else 1E-6
+    self.assertAllClose(expected, actual, rtol=rtol)
+
   @parameterized.parameters([params
       for d in [
           {"seed": 0, "typ": int, "jit": True, "key": [0, 0]},
