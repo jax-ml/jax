@@ -253,6 +253,7 @@ def _lower_tpu_kernel(
         dump_mlir(module, "after hlo conversion module")
 
       infer_memref_layout.infer_module(module, hardware_generation)
+      module.operation.verify()
       dump_mlir(module, "after infer memref layout pass")
 
       pipeline = [
