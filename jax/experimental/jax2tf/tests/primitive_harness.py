@@ -2668,31 +2668,25 @@ for dtype in (np.float32, np.float64):
     define(
         "random_gamma",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        jax.jit(jax_random.gamma),
-        [np.array([42, 43], dtype=np.uint32),
-         RandArg(shape, dtype)],
+        jax.jit(lambda x: jax_random.gamma(jax.random.key(42), x)),
+        [RandArg(shape, dtype)],
         dtype=dtype)
 
-for key_i, key in enumerate([
-    np.array([0, 0], dtype=np.uint32),
-    np.array([42, 43], dtype=np.uint32),
-    np.array([0xFFFFFFFF, 0], dtype=np.uint32),
-    np.array([0, 0xFFFFFFFF], dtype=np.uint32),
-    np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)
-]):
+
+
+def wrap_and_split():
+  key = jax.random.key(42)
   if jax.config.jax_enable_custom_prng:
-    def wrap_and_split(key):
-      key = prng.random_wrap(key, impl=jax.random.default_prng_impl())
-      result = jax.random.split(key, 2)
-      return prng.random_unwrap(result)
-  else:
-    def wrap_and_split(key):
-      return jax.random.split(key, 2)
-  define(
-      "random_split",
-      f"i={key_i}",
-      jax.jit(wrap_and_split), [key],
-      dtype=key.dtype)
+    key = prng.random_wrap(key, impl=jax.random.default_prng_impl())
+  result = jax.random.split(key, 2)
+  return prng.random_unwrap(result)
+
+define(
+    "random_split",
+    "",
+    jax.jit(wrap_and_split),
+    [],
+    dtype=np.uint32)
 
 # A few library functions from jax.random
 for dtype in jtu.dtypes.all_floating:
@@ -2701,8 +2695,9 @@ for dtype in jtu.dtypes.all_floating:
       define(
           "random_categorical",
           f"shape={jtu.format_shape_dtype_string(shape, dtype)}_{axis=}",
-          jax.random.categorical,
-          [np.array([42, 43], dtype=np.uint32), RandArg(shape, dtype),
+          lambda x, axis: jax.random.categorical(
+            jax.random.key(42), x, axis),
+          [RandArg(shape, dtype),
            StaticArg(axis)],
           dtype=dtype,
           axis=axis)
@@ -2712,9 +2707,9 @@ for dtype in jtu.dtypes.all_floating:
     define(
         "random_uniform",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        jax.random.uniform,
-        [np.array([42, 43], dtype=np.uint32),
-         StaticArg(shape), StaticArg(dtype)],
+        lambda shape, dtype: jax.random.uniform(
+          jax.random.key(42), shape, dtype),
+        [StaticArg(shape), StaticArg(dtype)],
         dtype=dtype)
 
 for dtype in jtu.dtypes.all_integer:
@@ -2725,9 +2720,9 @@ for dtype in jtu.dtypes.all_integer:
     define(
         "random_randint",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        jax.random.randint,
-        [np.array([42, 43], dtype=np.uint32),
-         StaticArg(shape),
+        lambda shape, minval, maxval, dtype: jax.random.randint(
+          jax.random.key(42), shape, minval, maxval, dtype),
+        [StaticArg(shape),
          StaticArg(-5),  # minval
          StaticArg(maxval),
          StaticArg(dtype)],
