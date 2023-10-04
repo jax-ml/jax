@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Hashable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from functools import partial, reduce
 import math
 import operator as op
@@ -95,6 +95,7 @@ class PRNGImpl(NamedTuple):
   split: Callable
   random_bits: Callable
   fold_in: Callable
+  name: str = '<unnamed>'
   tag: str = '?'
 
   def __hash__(self) -> int:
@@ -104,10 +105,19 @@ class PRNGImpl(NamedTuple):
     return self.tag
 
   def pprint(self):
-    return (pp.text(f"{self.__class__.__name__} [{self.tag}]:") +
+    ty = self.__class__.__name__
+    return (pp.text(f"{ty} [{self.tag}] {{{self.name}}}:") +
             pp.nest(2, pp.group(pp.brk() + pp.join(pp.brk(), [
               pp.text(f"{k} = {v}") for k, v in self._asdict().items()
             ]))))
+
+
+prngs = {}
+
+def register_prng(impl: PRNGImpl):
+  if impl.name in prngs:
+    raise ValueError(f'PRNG with name {impl.name} already registered: {impl}')
+  prngs[impl.name] = impl
 
 
 # -- PRNG key arrays
@@ -248,6 +258,7 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   ``random_bits``, ``fold_in``).
   """
 
+  # TODO(frostig,vanderplas): hide impl attribute
   impl: PRNGImpl
   _base_array: typing.Array
 
@@ -593,7 +604,8 @@ class KeyTyRules:
 
 
 class KeyTy(dtypes.ExtendedDType):
-  impl: Hashable  # prng.PRNGImpl. TODO(mattjj,frostig): protocol really
+  # TODO(frostig,vanderplas): hide impl attribute
+  impl: PRNGImpl  # TODO(mattjj,frostig): protocol really
   _rules = KeyTyRules
   type = dtypes.prng_key
 
@@ -1366,7 +1378,10 @@ threefry_prng_impl = PRNGImpl(
     split=threefry_split,
     random_bits=threefry_random_bits,
     fold_in=threefry_fold_in,
+    name='threefry2x32',
     tag='fry')
+
+register_prng(threefry_prng_impl)
 
 
 # -- RngBitGenerator PRNG implementation
@@ -1411,7 +1426,11 @@ rbg_prng_impl = PRNGImpl(
     split=_rbg_split,
     random_bits=_rbg_random_bits,
     fold_in=_rbg_fold_in,
+    name='rbg',
     tag='rbg')
+
+register_prng(rbg_prng_impl)
+
 
 def _unsafe_rbg_split(key: typing.Array, shape: Shape) -> typing.Array:
   # treat 10 iterations of random bits as a 'hash function'
@@ -1431,4 +1450,7 @@ unsafe_rbg_prng_impl = PRNGImpl(
     split=_unsafe_rbg_split,
     random_bits=_rbg_random_bits,
     fold_in=_unsafe_rbg_fold_in,
+    name='unsafe_rbg',
     tag='urbg')
+
+register_prng(unsafe_rbg_prng_impl)

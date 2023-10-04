@@ -41,9 +41,8 @@ from jax._src import prng as prng_internal
 from jax import config
 config.parse_flags_with_absl()
 
-PRNG_IMPLS = [('threefry2x32', prng_internal.threefry_prng_impl),
-              ('rbg', prng_internal.rbg_prng_impl),
-              ('unsafe_rbg', prng_internal.unsafe_rbg_prng_impl)]
+
+PRNG_IMPLS = list(prng_internal.prngs.items())
 
 
 class OnX64(enum.Enum):
@@ -188,6 +187,14 @@ class PrngTest(jtu.JaxTestCase):
     else:
       self.assertEqual(key.dtype, jnp.dtype('uint32'))
       self.assertEqual(key.shape, impl.key_shape)
+
+  def test_config_prngs_registered(self):
+    # TODO(frostig): pull these string values somehow from the
+    # jax_default_prng_impl config enum state definition directly,
+    # rather than copying manually here?
+    self.assertIn('threefry2x32', prng_internal.prngs)
+    self.assertIn('rbg',          prng_internal.prngs)
+    self.assertIn('unsafe_rbg',   prng_internal.prngs)
 
   def testThreefry2x32(self):
     # We test the hash by comparing to known values provided in the test code of
@@ -1030,6 +1037,8 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(key, key.block_until_ready())
     self.assertIsNone(key.copy_to_host_async())
 
+  # -- key construction and un/wrapping with impls
+
   def test_wrap_key_default(self):
     key1 = jax.random.key(17)
     data = jax.random.key_data(key1)
@@ -1054,6 +1063,37 @@ class KeyArrayTest(jtu.JaxTestCase):
 
     key3 = jax.random.wrap_key_data(data, impl='unsafe_rbg')
     self.assertNotEqual(key1.dtype, key3.dtype)
+
+  @jtu.sample_product(prng_name=[name for name, _ in PRNG_IMPLS])
+  def test_key_make_like_other_key(self, prng_name):
+    # start by specifying the implementation by string name, then
+    # round trip via whatever `key_impl` outputs
+    k1 = jax.random.key(42, impl=prng_name)
+    impl = jax.random.key_impl(k1)
+    k2 = jax.random.key(42, impl=impl)
+    self.assertArraysEqual(k1, k2)
+    self.assertEqual(k1.dtype, k2.dtype)
+
+  @jtu.sample_product(prng_name=[name for name, _ in PRNG_IMPLS])
+  def test_key_wrap_like_other_key(self, prng_name):
+    # start by specifying the implementation by string name, then
+    # round trip via whatever `key_impl` outputs
+    k1 = jax.random.key(42, impl=prng_name)
+    data = jax.random.key_data(k1)
+    impl = jax.random.key_impl(k1)
+    k2 = jax.random.wrap_key_data(data, impl=impl)
+    self.assertArraysEqual(k1, k2)
+    self.assertEqual(k1.dtype, k2.dtype)
+
+  def test_key_impl_from_string_error(self):
+    with self.assertRaisesRegex(ValueError, 'unrecognized PRNG implementation'):
+      jax.random.key(42, impl='unlikely name')
+
+  def test_key_impl_from_object_error(self):
+    class A: pass
+
+    with self.assertRaisesRegex(TypeError, 'unrecognized type .* PRNG'):
+      jax.random.key(42, impl=A())
 
   # TODO(frostig,mattjj): more polymorphic primitives tests
 
