@@ -1049,8 +1049,8 @@ def _scan_pp_rule(eqn, context, settings):
     del printed_params['reverse']
   return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
 
-def _scan_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
-                         num_carry, linear, unroll, reverse, length):
+def _scan_state_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
+                               num_carry, linear, unroll, reverse, length):
   jaxpr, consts = jaxpr.jaxpr, jaxpr.consts
   if consts: raise NotImplementedError
   consts, carry, xs = split_list(args, [num_consts, num_carry])
@@ -1129,7 +1129,7 @@ core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
 pe.padding_rules[scan_p] = _scan_padding_rule
 pe.dce_rules[scan_p] = _scan_dce_rule
-state_discharge.register_discharge_rule(scan_p)(_scan_discharge_rule)
+state_discharge.register_discharge_rule(scan_p)(_scan_state_discharge_rule)
 # TODO(mattjj,frostig): un-comment this pp rule
 # core.pp_eqn_rules[scan_p] = _scan_pp_rule
 
