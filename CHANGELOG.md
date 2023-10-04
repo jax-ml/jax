@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-# jax 0.4.17
+# jax 0.4.18
+
+# jaxlib 0.4.18
+
+# jax 0.4.17 (Oct 3, 2023)
 
 * New features
   * Added new {func}`jax.numpy.bitwise_count` function, matching the API of the simlar
@@ -33,7 +37,7 @@ Remember to align the itemized text with the first line of an item within a list
     Previously many of these were treated as `Any` by static type checkers like
     `mypy` and `pytype`.
 
-# jaxlib 0.4.17
+# jaxlib 0.4.17 (Oct 3, 2023)
 
 * Changes:
   * Python 3.12 wheels were added in this release.
