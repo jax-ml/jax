@@ -1228,6 +1228,15 @@ class VectorLayoutInferer {
             out_layout = *new_out;
             in_layouts.push_back(some_layout);
           } else {
+            // When we detect a layout conflict we cannot reconcile, we remove
+            // any replication bits that might have been present in out_layout,
+            // since there is no guarantee that the conflicting inputs could
+            // even become replicated.
+            out_layout =
+                VectorLayout(out_layout->bitwidth(),
+                             {out_layout->offsets()[0].value_or(0),
+                              out_layout->offsets()[1].value_or(0)},
+                             out_layout->tiling(), out_layout->implicit_dim());
             in_layouts.push_back(std::nullopt);
           }
         }
