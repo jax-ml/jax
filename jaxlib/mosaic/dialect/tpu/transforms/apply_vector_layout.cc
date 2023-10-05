@@ -1891,6 +1891,164 @@ LogicalResult vector_extract_strided_slice_rule(
   return success();
 }
 
+LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
+                                     const ArrayRef<Layout> layouts_in,
+                                     const ArrayRef<Layout> layouts_out) {
+  CHECK_EQ(layouts_in.size(), 1);
+  CHECK_EQ(layouts_out.size(), 1);
+  if (!layouts_in.front().has_value()) {
+    return op.emitOpError("Expected non-null input layout");
+  }
+  if (!layouts_out.front().has_value()) {
+    return op.emitOpError("Expected non-null output layout");
+  }
+  const VectorLayout &layout_in = *layouts_in.front();
+  const VectorLayout &layout_out = *layouts_out.front();
+  auto shape_cast_op = cast<vector::ShapeCastOp>(op);
+  const VectorType src_ty = shape_cast_op.getSourceVectorType();
+  const ArrayRef<int64_t> src_shape = src_ty.getShape();
+  const VectorType dst_ty = shape_cast_op.getResultVectorType();
+  const ArrayRef<int64_t> dst_shape = dst_ty.getShape();
+  const int layout_rank = layout_in.layout_rank();
+  bool no_op = false;
+  // TODO(tlongeri): It looks like this could probably be simplified by using
+  // VectorLayout::implicitShape()
+  if (layout_in == layout_out && src_ty.getShape().take_back(layout_rank) ==
+                                     dst_ty.getShape().take_back(layout_rank)) {
+    no_op = true;
+  } else if (layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+             layout_out.implicit_dim() ==
+                 VectorLayout::ImplicitDim::kSecondMinor &&
+             layout_in.hasNativeTiling(ctx.target_shape) &&
+             layout_in.tiling() == layout_out.tiling() &&
+             layout_in.offsets() == layout_out.offsets() &&
+             *(src_shape.end() - 1) == *(dst_shape.end() - 1) &&
+             *(src_shape.end() - 2) == 1) {
+    no_op = true;
+  } else if (layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+             layout_out.implicit_dim() == VectorLayout::ImplicitDim::kMinor &&
+             layout_in.hasNaturalTopology(ctx.target_shape) &&
+             layout_in.tiling() == layout_out.tiling() &&
+             layout_in.offsets() == layout_out.offsets() &&
+             src_shape ==
+                 ArrayRef<int64_t>(layout_out.implicitShape(dst_shape))) {
+    no_op = true;
+  } else if (layout_in.implicit_dim() == VectorLayout::ImplicitDim::kMinor &&
+             layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+             layout_out.hasNaturalTopology(ctx.target_shape) &&
+             layout_in.tiling() == layout_out.tiling() &&
+             layout_in.offsets() == layout_out.offsets() &&
+             dst_shape ==
+                 ArrayRef<int64_t>(layout_in.implicitShape(src_shape))) {
+    no_op = true;
+  } else if (  // Fold or unfold sublane dim, but keeping a whole number of
+               // vregs.
+      layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+      layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+      layout_in.offsets() == layout_out.offsets() &&
+      layout_in.offsets() == LayoutOffsets{0, 0} &&
+      layout_in.tiling() == layout_out.tiling() &&
+      layout_in.tiling()[1] == ctx.target_shape[1] &&
+      *(dst_shape.end() - 1) == *(src_shape.end() - 1) &&
+      *(dst_shape.end() - 2) % layout_in.tiling()[0] == 0 &&
+      *(src_shape.end() - 2) % layout_in.tiling()[0] == 0) {
+    no_op = true;
+  }
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> src_vregs,
+      disassemble(ctx, layout_in, shape_cast_op.getSource()));
+  auto getDstVregs = [&]() -> FailureOr<xla::Array<Value>> {
+    if (no_op) {
+      xla::Array<Value> dst_vregs_local = src_vregs;
+      dst_vregs_local.Reshape(
+          layout_out.tileArrayShape(dst_shape, ctx.target_shape));
+      return dst_vregs_local;
+    } else if (dst_shape.take_back(2) ==
+                   ArrayRef<int64_t>{src_shape.back(), 1} &&
+               layout_in.bitwidth() == 32 &&
+               (layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone ||
+                layout_in.implicit_dim() ==
+                    VectorLayout::ImplicitDim::kSecondMinor) &&
+               layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+               layout_in.hasNativeTiling(ctx.target_shape) &&
+               layout_in.tiling() == layout_out.tiling() &&
+               layout_in.offsets()[0].value_or(0) == 0 &&
+               layout_in.offsets()[1] == 0 && layout_out.offsets()[0] == 0
+               // layout_out.offsets[1] can be anything, as we produce a
+               // replicated result
+    ) {
+      // First, insert the new singleton lane dimension.
+      llvm::SmallVector<int64_t> s(src_shape);
+      s.push_back(1);
+      xla::Array<Value> dst_vregs_local(
+          layout_out.tileArrayShape(s, ctx.target_shape));
+      if (layout_in.implicit_dim() == VectorLayout::ImplicitDim::kSecondMinor) {
+        // Make the sublane dimension explicit.
+        SmallVector<int64_t> new_src_vregs_shape(
+            toArrayRef(src_vregs.dimensions()));
+        new_src_vregs_shape.insert(new_src_vregs_shape.end() - 1, 1);
+        src_vregs.Reshape(new_src_vregs_shape);
+        SmallVector<int64_t> new_dst_vregs_shape(
+            toArrayRef(dst_vregs_local.dimensions()));
+        new_dst_vregs_shape.insert(new_dst_vregs_shape.end() - 2, 1);
+        dst_vregs_local.Reshape(new_dst_vregs_shape);
+      }
+      CHECK_EQ(dst_vregs_local.dimensions().back(),
+               1);  // We're inserting a singleton dimension
+      dst_vregs_local.Each(
+          [&](const absl::Span<const int64_t> dst_idx, Value *const dst_vreg) {
+            const int64_t col_idx = *(dst_idx.end() - 2);
+            const int64_t row_idx = *(dst_idx.end() - 3);
+            auto [sublanes_in_lane, rem] =
+                std::div(ctx.target_shape[1], ctx.target_shape[0]);
+            CHECK_EQ(rem, 0);
+            if (!layout_in.offsets()[0].has_value() && row_idx != 0) {
+              return;  // All vregs along that dimension are the same.
+            }
+            SmallVector<int64_t> src_idx(toArrayRef(dst_idx));
+            src_idx.pop_back();
+            *(src_idx.end() - 2) /= ctx.target_shape[0];
+            *(src_idx.end() - 1) /= sublanes_in_lane;
+            Value col_vreg = src_vregs(src_idx);
+            // BroadcastInSublanesOp requires the sublanes to be replicated.
+            if (layout_in.offsets()[0].has_value()) {
+              const int32_t sublane = row_idx % ctx.target_shape[0];
+              col_vreg = ctx.builder.create<tpu::GatherOp>(
+                  shape_cast_op.getLoc(), col_vreg.getType(), col_vreg,
+                  /*indices=*/
+                  SmallVector<int32_t>(ctx.target_shape[0], sublane),
+                  /*dimension=*/0);
+            }
+            *dst_vreg = ctx.builder.create<BroadcastInSublanesOp>(
+                shape_cast_op.getLoc(), col_vreg.getType(), col_vreg,
+                /*lane=*/(col_idx % sublanes_in_lane) * ctx.target_shape[0]);
+          });
+      if (!layout_in.offsets()[0].has_value()) {
+        // Broadcast the sublane vregs.
+        // TODO(tlongeri): This could be done more efficiently
+        dst_vregs_local.Each([&](const absl::Span<const int64_t> dst_idx,
+                                 Value *const dst_vreg) {
+          SmallVector<int64_t> first_row_idx(toArrayRef(dst_idx));
+          *(first_row_idx.end() - 3) = 0;
+          *dst_vreg = dst_vregs_local(first_row_idx);
+        });
+      }
+      // Now, permute the major axes of the vreg array.
+      dst_vregs_local.Reshape(
+          layout_out.tileArrayShape(dst_shape, ctx.target_shape));
+      return dst_vregs_local;
+    } else {
+      return shape_cast_op.emitOpError(
+                 "Not implemented: Unsupported vector.shape_cast: ")
+             << *shape_cast_op;
+    }
+  };
+  FAILUREOR_ASSIGN_OR_RETURN(const xla::Array<Value> dst_vregs, getDstVregs());
+  shape_cast_op->replaceAllUsesWith(
+      assemble(ctx, dst_ty, layout_out, dst_vregs));
+  shape_cast_op->erase();
+  return success();
+}
 LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
                                 const ArrayRef<Layout> layouts_in,
                                 const ArrayRef<Layout> layouts_out) {
@@ -2113,6 +2271,7 @@ const llvm::StringMap<rule_type> &rules() {
       {vector::LoadOp::getOperationName(), vector_load_rule},
       {vector::ExtractStridedSliceOp::getOperationName(),
        vector_extract_strided_slice_rule},
+      {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
       {vector::StoreOp::getOperationName(), vector_store_rule}};
   return *rules;
 }
