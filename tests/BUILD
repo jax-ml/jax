@@ -834,7 +834,40 @@ jax_test(
     backend_variant_args = {
         "cpu": ["--jax_num_generated_cases=40"],
         "cpu_x32": ["--jax_num_generated_cases=40"],
-        "cpu_no_jax_array": ["--jax_num_generated_cases=40"],
+        "gpu": ["--jax_num_generated_cases=40"],
+    },
+    shard_count = {
+        "cpu": 50,
+        "gpu": 50,
+        "tpu": 50,
+        "iree": 10,
+    },
+    tags = [
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],  # Test times out under asan/msan/tsan.
+    deps = [
+        "//jax:experimental_sparse",
+        "//jax:sparse_test_util",
+    ] + py_deps("scipy"),
+)
+
+jax_test(
+    name = "sparse_bcoo_bcsr_test",
+    srcs = ["sparse_bcoo_bcsr_test.py"],
+    args = ["--jax_bcoo_cusparse_lowering=true"],
+    backend_tags = {
+        "cpu": [
+            "nomsan",  # Times out
+            "notsan",  # Times out
+        ],
+        "tpu": ["optonly"],
+    },
+    # Use fewer cases to prevent timeouts.
+    backend_variant_args = {
+        "cpu": ["--jax_num_generated_cases=40"],
+        "cpu_x32": ["--jax_num_generated_cases=40"],
         "gpu": ["--jax_num_generated_cases=40"],
     },
     shard_count = {
