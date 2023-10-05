@@ -2837,9 +2837,15 @@ def _matmul_rule(
     lhs_cols[-1] = tpu.RollVectorsOp(lhs_col_ty, lhs_masked_tiles)
   else:
     mask_last_lane_contraction_tile = None
-  lhs_layout_attr = ir.ArrayAttr.get([ir.StringAttr.get(print_layout(layout_lhs))])
-  rhs_layout_attr = ir.ArrayAttr.get([ir.StringAttr.get(print_layout(layout_rhs))])
-  acc_layout_attr = ir.ArrayAttr.get([ir.StringAttr.get(print_layout(layout_acc))])
+  lhs_layout_attr = ir.ArrayAttr.get(
+      [ir.Attribute.parse(print_layout(layout_lhs))]
+  )
+  rhs_layout_attr = ir.ArrayAttr.get(
+      [ir.Attribute.parse(print_layout(layout_rhs))]
+  )
+  acc_layout_attr = ir.ArrayAttr.get(
+      [ir.Attribute.parse(print_layout(layout_acc))]
+  )
   for col in lhs_cols:
     col.attributes["out_layout"] = lhs_layout_attr
   rhs_tile_ty = ir.VectorType.get((128, 128), rhs_type.element_type)
@@ -3062,7 +3068,7 @@ def _vector_transpose_rule(  # pylint: disable=missing-function-docstring
     ]
     src_tile = assemble(tile_ty_in, layout_in, src_tile_vregs)
     dst_tile = vector.TransposeOp(tile_ty_out, src_tile, minor_perm)
-    dst_tile.attributes["out_layout"] = ir.StringAttr.get(
+    dst_tile.attributes["out_layout"] = ir.Attribute.parse(
         print_layout(layout_out)
     )
     dst_tile_vregs = tpu.UnrollVectorsOp(
@@ -3162,7 +3168,7 @@ def assemble(ty: ir.Type, layout: VectorLayout,
       vals.shape, layout.tile_array_shape(ty.shape))
   op = tpu.RollVectorsOp(ty, list(vals.flat))
   op.attributes["out_layout"] = ir.ArrayAttr.get(
-      [ir.StringAttr.get(print_layout(layout))]
+      [ir.Attribute.parse(print_layout(layout))]
   )
   return op
 
