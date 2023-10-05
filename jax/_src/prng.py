@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import abc
+import contextlib
 from collections.abc import Hashable, Iterator, Sequence
 from functools import partial, reduce
 import math
@@ -803,6 +804,29 @@ def random_fold_in_lowering(ctx, keys, msgs):
 mlir.register_lowering(random_fold_in_p, random_fold_in_lowering)
 
 
+_USED_KEYS = set()
+def _check_keys(keys):
+  if keys.dtype != 'uint32':
+    raise ValueError(f"expected keys of type uint32; got {keys.dtype=}")
+  if keys.shape[-1] != 2:
+    raise ValueError(f"expected keys with trailing dimension of 2; got {keys.shape=}")
+  for key in keys.reshape(-1, 2):
+    tuple_key = tuple(map(int, key))
+    if tuple_key in _USED_KEYS:
+      raise ValueError(f"Detected repeated use of key {key}")
+    _USED_KEYS.add(tuple_key)
+_KEY_REUSE_CHECKING = False
+
+@contextlib.contextmanager
+def check_key_reuse(computation_id="default"):
+  global _KEY_REUSE_CHECKING
+  _KEY_REUSE_CHECKING = True
+  try:
+    yield
+  finally:
+    _KEY_REUSE_CHECKING = False
+
+
 def random_bits(keys, bit_width, shape):
   shape = core.as_named_shape(shape)
   for name, size in shape.named_items:
@@ -1292,6 +1316,9 @@ def threefry_random_bits(key: typing.Array, bit_width, shape):
     raise TypeError("threefry_random_bits got invalid prng key.")
   if bit_width not in (8, 16, 32, 64):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
+  
+  if _KEY_REUSE_CHECKING:
+    jax.debug.callback(_check_keys, key)
 
   if config.jax_threefry_partitionable:
     return _threefry_random_bits_partitionable(key, bit_width, shape)
