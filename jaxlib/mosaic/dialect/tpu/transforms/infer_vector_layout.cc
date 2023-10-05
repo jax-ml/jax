@@ -745,14 +745,16 @@ class VectorLayoutInferer {
             default_tiling_, some_layout->implicit_dim());
       }
       auto &layout = *some_layout;
-      if (layout.implicit_dim() == ImplicitDim::kSecondMinor &&
-          src_ty.getDimSize(src_ty.getRank() - 2) == 1) {
-        // Treat the layout as a 2D layout if possible.
-        layout = VectorLayout(layout.bitwidth(), layout.offsets(),
-                              layout.tiling(), ImplicitDim::kNone);
+      if (layout.implicit_dim() != ImplicitDim::kNone) {
+        VectorLayout layout_2d(layout.bitwidth(), layout.offsets(),
+                               layout.tiling(), ImplicitDim::kNone);
+        if (layout_2d.equivalentTo(layout, src_ty.getShape(), target_shape_)) {
+          layout = layout_2d;
+        } else {
+          op.emitOpError() << "Only 2D layouts supported";
+          return failure();
+        }
       }
-      TPU_CHECK_OP(layout.implicit_dim() == ImplicitDim::kNone,
-                   "expected 2D layout");
       auto src_tiled_shape = src_ty.getShape().take_back(2);
       auto dst_tiled_shape = res_ty.getShape().take_back(2);
       LayoutOffsets offsets = layout.offsets();

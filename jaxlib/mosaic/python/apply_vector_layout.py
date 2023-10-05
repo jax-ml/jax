@@ -319,15 +319,25 @@ class VectorLayout:
       if s != o and s is not REPLICATED:
         return False
     if self.implicit_dim != other.implicit_dim:
-      # Don't fail yet!
+      # Don't fail yet! implicit_dim might not matter for some shapes.
+      if shape is None:
+        return False
       # If the second-minor dimension is of size 1, then it does not matter
       # whether we have a second minor implicit dim or not.
       second_minor = ImplicitDim.SECOND_MINOR
-      if not (
-          shape is not None
-          and self.implicit_shape(shape)[-2] == 1
-          and {self.implicit_dim, other.implicit_dim} == {second_minor, None}
+      ok = False
+      if (
+          {self.implicit_dim, other.implicit_dim} == {second_minor, None}
+          and shape[-2] == 1
       ):
+        ok = True
+      # If sufficiently many trailing dimensions are of size 1, then it does not
+      # matter if we use implicit dims to insert more.
+      max_rank = max(self.layout_rank, other.layout_rank)
+      assert 1 <= max_rank <= 2
+      if shape[-1] == 1 and (max_rank == 1 or shape[-2] == 1):
+        ok = True
+      if not ok:
         return False
     if self.tiling != other.tiling:
       # Don't fail yet!
