@@ -704,10 +704,28 @@ jax_test(
             "notsan",  # Times out
         ],
     },
-    # Use fewer cases to prevent timeouts.
-    backend_variant_args = {
-        "cpu": ["--jax_num_generated_cases=40"],
-        "cpu_x32": ["--jax_num_generated_cases=40"],
+    shard_count = {
+        "cpu": 30,
+        "gpu": 30,
+        "tpu": 40,
+        "iree": 30,
+    },
+    tags = ["noasan"],  # Times out
+)
+
+jax_test(
+    name = "random_lax_test",
+    srcs = ["random_lax_test.py"],
+    backend_tags = {
+        "cpu": [
+            "notsan",  # Times out
+            "nomsan",  # Times out
+        ],
+        "tpu": [
+            "optonly",
+            "nomsan",  # Times out
+            "notsan",  # Times out
+        ],
     },
     shard_count = {
         "cpu": 30,
