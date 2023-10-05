@@ -1016,6 +1016,9 @@ def _transpose_lowering(ctx: TritonLoweringRuleContext, a, *, permutation):
 triton_lowering_rules[lax.transpose_p] = _transpose_lowering
 
 
+_TF32_PRECISIONS = (lax.Precision.HIGH, lax.Precision.DEFAULT)
+
+
 def _dot_general_lowering(
     ctx: TritonLoweringRuleContext,
     a,
@@ -1035,9 +1038,12 @@ def _dot_general_lowering(
     a = tl.trans(a, _builder=ctx.builder)
   if trans_b:
     b = tl.trans(b, _builder=ctx.builder)
-  allow_tf32 = (
-      precision == lax.Precision.HIGH or precision == lax.Precision.DEFAULT
-  )
+
+  if precision is None:
+    allow_tf32 = True
+  else:
+    prec_a, prec_b = precision
+    allow_tf32 = prec_a in _TF32_PRECISIONS or prec_b in _TF32_PRECISIONS
   return tl.dot(a, b, _builder=ctx.builder, allow_tf32=allow_tf32)
 
 
