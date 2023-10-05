@@ -55,7 +55,7 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref,
       return emitError(UnknownLoc::get(memref.getContext()),
                        "Non-identity affine layout");
     }
-    if (!memref.isIntOrFloat()) {
+    if (!memref.getElementType().isIntOrFloat()) {
       return emitError(UnknownLoc::get(memref.getContext()),
                        "Invalid element type for memref");
     }
@@ -91,10 +91,9 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref,
       }
       tiles.push_back(xla::Tile({32 / bitwidth, 1}));
     }
-    SmallVector<int64_t> tile_strides;
-    tile_strides.reserve(memref.getRank());
+    SmallVector<int64_t> tile_strides(memref.getRank());
     int64_t stride = 1;
-    for (int i = memref.getRank() - 1; i > 0; --i) {
+    for (int i = memref.getRank() - 1; i >= 0; --i) {
       tile_strides[i] = stride;
       if (i == memref.getRank() - 1) {
         stride *= (memref.getShape()[i] + 127) / 128;

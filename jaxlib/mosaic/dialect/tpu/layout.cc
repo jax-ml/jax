@@ -276,9 +276,13 @@ class TiledRectangularVregBounds : public VRegDataBounds {
           return VectorType::get(target_shape, i1);
         }());
     if (isComplete(target_shape)) {
-      builder.create<arith::ConstantOp>(
-          loc, mask_vreg_ty,
-          DenseElementsAttr::get(mask_vreg_ty, builder.getBoolAttr(true)));
+      return cast<TypedValue<VectorType>>(
+          builder
+              .create<arith::ConstantOp>(
+                  loc, mask_vreg_ty,
+                  DenseElementsAttr::get(mask_vreg_ty,
+                                         builder.getBoolAttr(true)))
+              .getResult());
     }
     Value mask = nullptr;
     CHECK_GE(num_tiles_, 0);
@@ -488,7 +492,7 @@ llvm::SmallVector<int64_t> VectorLayout::tileArrayShape(
       tiles_shape.pop_back();
       break;
     case ImplicitDim::kSecondMinor:
-      tiles_shape.erase(tiles_shape.end() - 1);
+      tiles_shape.erase(tiles_shape.end() - 2);
       break;
   }
   return tiles_shape;

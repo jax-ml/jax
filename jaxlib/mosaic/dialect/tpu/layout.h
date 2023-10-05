@@ -60,9 +60,9 @@ struct VRegDataBounds {
                                std::array<int64_t, 2> target_shape) const = 0;
 
   bool isComplete(const std::array<int64_t, 2> target_shape) const {
-    return maskVariesAlong(Direction::kSublanes, target_shape) ||
-           maskVariesAlong(Direction::kLanes, target_shape) ||
-           maskVariesAlong(Direction::kSubelements, target_shape);
+    return !maskVariesAlong(Direction::kSublanes, target_shape) &&
+           !maskVariesAlong(Direction::kLanes, target_shape) &&
+           !maskVariesAlong(Direction::kSubelements, target_shape);
   }
 
   // Constructs a vector mask value that is true iff the entry contains useful
