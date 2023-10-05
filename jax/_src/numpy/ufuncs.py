@@ -201,7 +201,7 @@ def arccosh(x: ArrayLike, /) -> Array:
 @jit
 def bitwise_count(x: ArrayLike, /) -> Array:
   # Following numpy we take the absolute value and return uint8.
-  return lax.population_count(lax.abs(x)).astype('uint8')
+  return lax.population_count(abs(x)).astype('uint8')
 
 @_wraps(np.right_shift, module='numpy')
 @partial(jit, inline=True)
