@@ -1710,6 +1710,7 @@ _complex = {np.complexfloating}
 _complex_elem_types = {np.float32, np.float64}
 _int = {np.integer}
 _bool = {np.bool_}
+_signedint = {np.signedinteger}
 
 _num = _int | _float | _complex
 _any = _int | _float | _complex | _bool
@@ -1944,7 +1945,7 @@ def _conj_transpose_rule(t, x, *, input_dtype):
 ad.primitive_jvps[conj_p] = partial(ad.linear_jvp, conj_p)
 ad.primitive_transposes[conj_p] = _conj_transpose_rule
 
-abs_p = unop(_complex_basetype, _num, 'abs')
+abs_p = unop(_complex_basetype, _signedint | _float | _complex, 'abs')
 mlir.register_lowering(abs_p, partial(_nary_lower_hlo, hlo.AbsOp))
 
 def _abs_jvp_rule(g, ans, x):
