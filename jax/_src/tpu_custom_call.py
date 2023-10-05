@@ -39,9 +39,12 @@ from jaxlib.mlir.passmanager import PassManager
 import numpy as np
 
 config.define_bool_state(
-    name="use_cpp_apply_vector_layout",
+    name="mosaic_use_cpp_passes",
     default=False,
-    help="Use C++ implementation of apply vector layout pass (still a WIP)",
+    help=(
+        "Use C++ implementation for apply-vector-layout and infer-memref-layout"
+        " passes (still a WIP)"
+    ),
 )
 
 # TODO(sharadmv): remove when minimum jaxlib version is bumped to >= 0.4.14.
@@ -252,8 +255,17 @@ def _lower_tpu_kernel(
         )
         dump_mlir(module, "after hlo conversion module")
 
-      infer_memref_layout.infer_module(module, hardware_generation)
-      module.operation.verify()
+      if config.mosaic_use_cpp_passes:
+        pipeline = [
+            (
+                f"func.func(tpu-infer-memref-layout{{hardware-generation={hardware_generation}}})"
+            ),
+        ]
+        pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
+        pipeline.run(module.operation)
+      else:
+        infer_memref_layout.infer_module(module, hardware_generation)
+        module.operation.verify()
       dump_mlir(module, "after infer memref layout pass")
 
       pipeline = [
@@ -266,7 +278,7 @@ def _lower_tpu_kernel(
       module.operation.verify()
       dump_mlir(module, "after infer vector layout pass")
 
-      if config.use_cpp_apply_vector_layout:
+      if config.mosaic_use_cpp_passes:
         pipeline = [
             (
                 "func.func(tpu-apply-vector-layout{sublane-count=8"
