@@ -45,19 +45,6 @@ complex_dtypes = jtu.dtypes.complex
 int_dtypes = jtu.dtypes.all_integer
 uint_dtypes = jtu.dtypes.all_unsigned
 
-
-def _prng_key_as_array(key):
-  # TODO(frostig): remove some day when we deprecate "raw" key arrays
-  if jnp.issubdtype(key.dtype, dtypes.prng_key):
-    return random.key_data(key)
-  else:
-    return key
-
-def _maybe_unwrap(key):
-  # TODO(frostig): remove some day when we deprecate "raw" key arrays
-  unwrap = prng_internal.random_unwrap
-  return unwrap(key) if jnp.issubdtype(key.dtype, dtypes.prng_key) else key
-
 KEY_CTORS = [random.key, random.PRNGKey]
 
 @jtu.with_config(jax_legacy_prng_key='allow')
@@ -829,13 +816,13 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def testFoldIn(self):
     key = self.make_key(0)
-    keys = [_prng_key_as_array(random.fold_in(key, i)) for i in range(10)]
+    keys = [random.key_data(random.fold_in(key, i)) for i in range(10)]
     assert np.unique(keys, axis=0).shape[0] == 10
 
   def testFoldInBig(self):
     key = self.make_key(0)
     seeds = [2 ** 32 - 2, 2 ** 32 - 1]
-    keys = [_prng_key_as_array(random.fold_in(key, seed)) for seed in seeds]
+    keys = [random.key_data(random.fold_in(key, seed)) for seed in seeds]
     assert np.unique(keys, axis=0).shape[0] == 2
 
   def testStaticShapeErrors(self):
@@ -1010,7 +997,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.skipTest("Expected failure: Python int too large.")
     type_ = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type_]
     args_maker = lambda: [type_(seed)]
-    f = lambda s: _maybe_unwrap(self.make_key(s))
+    f = lambda s: random.key_data(self.make_key(s))
     self._CompileAndCheck(f, args_maker)
 
   def test_prng_errors(self):
@@ -1315,8 +1302,8 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     vmapped_keys = vmap(lambda _: random.split(key))(jnp.zeros(3,))
     self.assertEqual(vmapped_keys.shape, (3, 2, *key.shape))
     for vk in vmapped_keys:
-      self.assertArraysEqual(_prng_key_as_array(vk),
-                             _prng_key_as_array(single_split_key))
+      self.assertArraysEqual(random.key_data(vk),
+                             random.key_data(single_split_key))
 
   def test_vmap_split_mapped_key(self):
     key = self.make_key(73)
@@ -1325,8 +1312,8 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     vmapped_keys = vmap(random.split)(mapped_keys)
     self.assertEqual(vmapped_keys.shape, (3, 2, *key.shape))
     for fk, vk in zip(forloop_keys, vmapped_keys):
-      self.assertArraysEqual(_prng_key_as_array(fk),
-                             _prng_key_as_array(vk))
+      self.assertArraysEqual(random.key_data(fk),
+                             random.key_data(vk))
 
   def test_vmap_random_bits(self):
     rand_fun = lambda key: random.randint(key, (), 0, 100)
