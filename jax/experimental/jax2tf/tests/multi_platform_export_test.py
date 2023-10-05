@@ -36,11 +36,6 @@ _known_failures = make_disjunction_regexp(
     "cumlogsumexp_",
     "cumsum_",
     "cumprod_",
-    "random_randint_",
-    "random_uniform_",
-    "random_categorical_",
-    "random_split_",
-    "random_gamma_",
 )
 
 # TODO(necula): Failures to be investigated (on TPU).
@@ -69,7 +64,8 @@ _known_failures_gpu = make_disjunction_regexp(
 # Some primitive lowering rules need the GPU backend to be able to create
 # CUDA lowering.
 _skip_cuda_lowering_unless_have_gpus = make_disjunction_regexp(
-    "svd_", "lu_", "eigh_", "qr_", "custom_linear_", "tridiagonal_solve_"
+    "svd_", "lu_", "eigh_", "qr_", "custom_linear_", "tridiagonal_solve_",
+    "random_",
 )
 
 
@@ -100,7 +96,7 @@ class PrimitiveTest(jtu.JaxTestCase):
   @primitive_harness.parameterized(
       primitive_harness.all_harnesses,
       include_jax_unimpl=False,
-      # one_containing="",
+      #one_containing="",
   )
   def test_prim(self, harness: primitive_harness.Harness):
     if (
