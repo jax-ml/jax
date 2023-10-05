@@ -23,6 +23,7 @@ from jax._src.interpreters.mlir import (
   ModuleContext as ModuleContext,
   RECV_FROM_HOST_TYPE as RECV_FROM_HOST_TYPE,
   SEND_TO_HOST_TYPE as SEND_TO_HOST_TYPE,
+  ShapePolyLoweringState as ShapePolyLoweringState,
   Token as Token,
   TokenSet as TokenSet,
   Value as Value,
