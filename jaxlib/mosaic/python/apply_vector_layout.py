@@ -1554,7 +1554,7 @@ def apply_layout_op(ctx: RewriteContext, op: ir.OpView):
       lo = parse_layout(arr_attr[res_idx], vty)
       if lo is None:
         raise ValueError("vector result should have a defined layout")
-      if lo.generalizes(li):
+      if lo.generalizes(li, vty.shape):
         continue
       with ir.InsertionPoint(op), op.location:
         new_v = relayout(
@@ -3218,7 +3218,7 @@ def disassemble(layout: VectorLayout, val: ir.Value) -> np.ndarray:
   arr_attr = ir.ArrayAttr(op.attributes["out_layout"])
   def_layout = parse_layout(arr_attr[res_idx], vty)
   assert type(def_layout) is type(layout)
-  assert def_layout.generalizes(layout)
+  assert def_layout.generalizes(layout, vty.shape)
   def_layout_shape = def_layout.tile_array_shape(vty.shape)
   if isinstance(op.opview, tpu.RollVectorsOp):
     tile_vals = op.operands
