@@ -61,6 +61,14 @@ Value = Any  # = ir.Value
 # mypy implicitly sets this variable to true when type checking.
 MYPY = False
 
+_INCLUDE_FULL_TRACEBACKS_IN_LOCATIONS = config.define_bool_state(
+    name='jax_include_full_tracebacks_in_locations',
+    default=False,
+    help=(
+        'Include full Python tracebacks in MLIR locations in IR emitted by JAX.'
+    ),
+)
+
 lowerable_effects: effects_lib.EffectTypeSet = effects_lib.lowerable_effects
 
 
@@ -348,7 +356,7 @@ def _source_info_to_location(
     name_stack: source_info_util.NameStack) -> ir.Location:
   eqn_str = (f'{str(source_info.name_stack)}/'
              f'{core.str_eqn_compact(primitive.name, params)}')
-  if config.jax_include_full_tracebacks_in_locations:
+  if _INCLUDE_FULL_TRACEBACKS_IN_LOCATIONS.value:
     if source_info.traceback is None:
       loc = ir.Location.unknown()
     else:

@@ -32,9 +32,6 @@ from jax._src import compiler
 from jax._src import monitoring
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
-from jax._src.config import persistent_cache_min_compile_time_secs
-from jax._src.config import raise_persistent_cache_errors
-from jax._src.config import use_original_compilation_cache_key_generation
 from jax._src.lib import xla_client
 from jax.experimental.maps import xmap
 from jax.experimental.pjit import pjit
@@ -228,7 +225,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
       cc.initialize_cache(tmpdir)
       f = jit(lambda x: x * x)
 
-      with raise_persistent_cache_errors(False), mock.patch.object(
+      with compiler._RAISE_PERSISTENT_CACHE_ERRORS(False), mock.patch.object(
           cc._cache.__class__, "put"
       ) as mock_put, warnings.catch_warnings(record=True) as w:
         mock_put.side_effect = RuntimeError("test error")
@@ -247,9 +244,11 @@ class CompilationCacheTest(jtu.JaxTestCase):
       cc.initialize_cache(tmpdir)
       f = jit(lambda x: x * x)
 
-      with raise_persistent_cache_errors(False), mock.patch.object(
-          cc._cache.__class__, "get"
-      ) as mock_get, warnings.catch_warnings(record=True) as w:
+      with (
+          compiler._RAISE_PERSISTENT_CACHE_ERRORS(False),
+          mock.patch.object(cc._cache.__class__, "get") as mock_get,
+          warnings.catch_warnings(record=True) as w,
+      ):
         mock_get.side_effect = RuntimeError("test error")
         self.assertEqual(f(2), 4)
         if len(w) > 1:
@@ -264,8 +263,9 @@ class CompilationCacheTest(jtu.JaxTestCase):
         )
 
   def test_min_compile_time(self):
-    with tempfile.TemporaryDirectory() as tmpdir, persistent_cache_min_compile_time_secs(
-        2
+    with (
+        tempfile.TemporaryDirectory() as tmpdir,
+        compiler._PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS(2),
     ):
       cc.initialize_cache(tmpdir)
 
@@ -282,8 +282,10 @@ class CompilationCacheTest(jtu.JaxTestCase):
         self.assertEqual(files_in_cache, 1)
 
   def test_cache_saving_metric(self):
-    with tempfile.TemporaryDirectory() as tmpdir, persistent_cache_min_compile_time_secs(
-        2):
+    with (
+        tempfile.TemporaryDirectory() as tmpdir,
+        compiler._PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS(2),
+    ):
       cc.initialize_cache(tmpdir)
 
       durations = Counter()  # Map metric name to time duration.
@@ -346,8 +348,10 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def test_cache_misses_metric(self):
     previous_counts = Counter(_counts)
-    with tempfile.TemporaryDirectory() as tmpdir, persistent_cache_min_compile_time_secs(
-        2):
+    with (
+        tempfile.TemporaryDirectory() as tmpdir,
+        compiler._PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS(2),
+    ):
       cc.initialize_cache(tmpdir)
 
       # Mock time to create a long compilation time and make cache misses.
@@ -362,8 +366,11 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def test_cache_hits_original_metric(self):
     previous_counts = Counter(_counts)
-    with tempfile.TemporaryDirectory() as tmpdir, persistent_cache_min_compile_time_secs(
-        2), use_original_compilation_cache_key_generation(True):
+    with (
+        tempfile.TemporaryDirectory() as tmpdir,
+        compiler._PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS(2),
+        compiler._USE_ORIGINAL_COMPILATION_CACHE_KEY_GENERATION(True),
+    ):
       cc.initialize_cache(tmpdir)
 
       # Mock time to create a long compilation time, cache saved.

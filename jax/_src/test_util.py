@@ -42,6 +42,7 @@ from jax._src.interpreters import mlir
 from jax.tree_util import tree_map, tree_all, tree_flatten, tree_unflatten
 from jax._src import api
 from jax._src import pjit as pjit_lib
+from jax._src import compiler
 from jax._src import config as jax_config
 from jax._src import core
 from jax._src import dispatch
@@ -49,9 +50,7 @@ from jax._src import dtypes as _dtypes
 from jax._src import monitoring
 from jax._src import stages
 from jax._src.interpreters import pxla
-from jax._src.config import (bool_env, config,
-                             raise_persistent_cache_errors,
-                             persistent_cache_min_compile_time_secs)
+from jax._src.config import bool_env, config
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.util import unzip2
 from jax._src.public_test_util import (  # noqa: F401
@@ -913,15 +912,14 @@ class JaxTestCase(parameterized.TestCase):
   @classmethod
   def setUpClass(cls):
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
-      cls._compilation_cache_exit_stack = ExitStack()
-      stack = cls._compilation_cache_exit_stack
-      stack.enter_context(raise_persistent_cache_errors(True))
-      stack.enter_context(persistent_cache_min_compile_time_secs(0))
-
+      stack = ExitStack()
+      stack.enter_context(compiler._RAISE_PERSISTENT_CACHE_ERRORS(True))
+      stack.enter_context(compiler._PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS(0))
       tmp_dir = stack.enter_context(tempfile.TemporaryDirectory())
       compilation_cache.initialize_cache(tmp_dir)
       stack.callback(lambda: compilation_cache.reset_cache()
                      if compilation_cache.is_initialized() else None)
+      cls._compilation_cache_exit_stack = stack
 
   @classmethod
   def tearDownClass(cls):

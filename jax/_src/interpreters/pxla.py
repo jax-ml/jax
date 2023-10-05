@@ -101,6 +101,12 @@ MeshAxisName = sharding_impls.MeshAxisName
 MeshDimAssignment = Union[ShardedAxis, Replicated]
 ShardingSpec = sharding_specs.ShardingSpec
 
+# TODO(sharadmv,mattjj): set default to True, then remove
+_EAGER_PMAP = config.define_bool_state(
+    name='jax_eager_pmap',
+    default=True,
+    upgrade=True,
+    help='Enable eager-mode pmap when jax_disable_jit is activated.')
 
 ### util
 
@@ -279,7 +285,7 @@ def xla_pmap_impl_lazy(
     donated_invars: Sequence[bool],
     is_explicit_global_axis_size: bool,
 ) -> Callable:
-  if (config.jax_disable_jit and config.jax_eager_pmap and
+  if (config.jax_disable_jit and _EAGER_PMAP.value and
       not is_explicit_global_axis_size and not any(d for d in donated_invars)):
     def _emap_apply_fn(*args):
       return _emap_impl(fun, *args, backend=backend, axis_name=axis_name,

@@ -45,6 +45,13 @@ else:
     raise ValueError("JAX requires ml_dtypes version 0.2.0 or newer; "
                      f"installed version is {ml_dtypes.__version__}.")
 
+_DEFAULT_DTYPE_BITS = config.define_enum_state(
+    name='jax_default_dtype_bits',
+    enum_values=['32', '64'],
+    default='64',
+    help=('Specify bit width of default dtypes, either 32-bit or 64-bit. '
+          'This is a temporary flag that will be used during the process '
+          'of deprecating the ``jax_enable_x64`` flag.'))
 
 class extended(np.generic):
   """Scalar class for extended dtypes.
@@ -140,10 +147,10 @@ _int4_dtypes = [
 
 # Default types.
 bool_: type = np.bool_
-int_: type = np.int32 if config.jax_default_dtype_bits == '32' else np.int64
-uint: type = np.uint32 if config.jax_default_dtype_bits == '32' else np.uint64
-float_: type = np.float32 if config.jax_default_dtype_bits == '32' else np.float64
-complex_: type = np.complex64 if config.jax_default_dtype_bits == '32' else np.complex128
+int_: type = np.int32 if _DEFAULT_DTYPE_BITS.value == '32' else np.int64
+uint: type = np.uint32 if _DEFAULT_DTYPE_BITS.value == '32' else np.uint64
+float_: type = np.float32 if _DEFAULT_DTYPE_BITS.value == '32' else np.float64
+complex_: type = np.complex64 if _DEFAULT_DTYPE_BITS.value == '32' else np.complex128
 _default_types: dict[str, type] = {'b': bool_, 'i': int_, 'u': uint, 'f': float_, 'c': complex_}
 
 # Trivial vectorspace datatype needed for tangent values of int/bool primals

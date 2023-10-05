@@ -62,6 +62,16 @@ Payload = list[Union[np.ndarray, Array]]
 PyTreeDef = jtu.PyTreeDef
 Out = TypeVar('Out')
 
+_XLA_RUNTIME_ERRORS = config.define_bool_state(
+    name='jax_experimental_unsafe_xla_runtime_errors',
+    default=False,
+    help=('Enable XLA runtime errors for jax.experimental.checkify.checks '
+          'on CPU and GPU. These errors are async, might get lost and are not '
+          'very readable. But, they crash the computation and enable you '
+          'to write jittable checks without needing to checkify. Does not '
+          'work under pmap/pjit.')
+)
+
 ## Utils
 
 def popattr(obj, attrname):
@@ -511,7 +521,7 @@ def check_lowering_rule(ctx, *args, err_tree, debug):
   if debug:
     # NOOP (check will only trigger when discharged)
     return []
-  if not config.jax_experimental_unsafe_xla_runtime_errors:
+  if not _XLA_RUNTIME_ERRORS.value:
     raise functionalization_error
 
   out_op, _, keep_alive = mlir.emit_python_callback(

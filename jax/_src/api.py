@@ -28,9 +28,8 @@ from functools import partial
 import inspect
 import math
 import typing
-from typing import (Any, Callable, Literal,
-                    NamedTuple, Optional, TypeVar, Union,
-                    overload, cast)
+from typing import (Any, Callable, Literal, NamedTuple, TypeVar, overload,
+                    cast)
 import weakref
 
 import numpy as np
@@ -55,7 +54,7 @@ from jax._src import pjit
 from jax._src import xla_bridge as xb
 from jax._src.core import eval_jaxpr
 from jax._src.api_util import (
-    flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
+    flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
     argnums_partial, argnums_partial_except, flatten_axes, donation_vector,
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
     shaped_abstractify, _ensure_str_tuple, apply_flat_fun_nokwargs,
@@ -108,6 +107,13 @@ U = TypeVar("U")
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
+
+
+_PMAM_SHMAP_MERGE = config.define_bool_state(
+    name='jax_pmap_shmap_merge',
+    default=False,
+    upgrade=True,
+    help='If True, pmap and shard_map API will be merged.')
 
 
 def _nan_check_posthook(fun, args, kwargs, output):
@@ -1579,7 +1585,7 @@ def pmap(
 
   # TODO(yashkatariya): Move this out after shard_map is out of experimental and
   # in _src
-  if config.jax_pmap_shmap_merge:
+  if _PMAM_SHMAP_MERGE.value:
     from jax.experimental.shard_map import pmap
     return pmap(fun, axis_name, in_axes=in_axes, out_axes=out_axes,
                 static_broadcasted_argnums=static_broadcasted_argnums,

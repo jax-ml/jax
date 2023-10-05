@@ -63,6 +63,31 @@ _COMPILER_DETAILED_LOGGING_MIN_OPS = jax_config.DEFINE_integer(
     ),
 )
 
+_RAISE_PERSISTENT_CACHE_ERRORS = config.define_bool_state(
+    name='jax_raise_persistent_cache_errors',
+    default=False,
+    help=('If true, exceptions raised when reading or writing to the '
+          'persistent compilation cache will be allowed through, halting '
+          'program execution if not manually caught. If false, exceptions are '
+          'caught and raised as warnings, allowing program execution to '
+          'continue. Defaults to false so cache bugs or intermittent issues '
+          'are non-fatal.'))
+
+_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS = config.define_float_state(
+    name='jax_persistent_cache_min_compile_time_secs',
+    default=1,
+    help=('The minimum compile time of a computation to be written to the '
+          'persistent compilation cache. This threshold can be raised to '
+          'decrease the number of entries written to the cache.'))
+
+_USE_ORIGINAL_COMPILATION_CACHE_KEY_GENERATION = config.define_bool_state(
+    name='jax_use_original_compilation_cache_key_generation',
+    default=True,
+    help="If true, use the original cache-key generation algorithm. This is "
+         "a transient flag; once the new cache-key generation algorithm is "
+         "deployed, this flag and the original cache-key generation algorithm "
+         "will be removed.")
+
 
 traceback_util.register_exclusion(__file__)
 
@@ -306,7 +331,7 @@ def compile_or_get_cached(
   try:
     cache_key = compilation_cache.get_cache_key(
         computation, devices, compile_options, backend,
-        jax_config.config.jax_use_original_compilation_cache_key_generation,
+        _USE_ORIGINAL_COMPILATION_CACHE_KEY_GENERATION.value,
     )
   except xc._xla.XlaRuntimeError as ex:
     logger.error("compile_or_get_cached: unable to generate cache key, "
@@ -325,7 +350,7 @@ def compile_or_get_cached(
 
     # TODO(b/293308239) Instrument metrics for new cache savings and cache hit
     # rate after it is enabled.
-    if jax_config.config.jax_use_original_compilation_cache_key_generation:
+    if _USE_ORIGINAL_COMPILATION_CACHE_KEY_GENERATION.value:
       # TODO(b/293308239) Remove metrics for the original cache after the new
       # compilation cache key implementation is fully rolled out.
       monitoring.record_event('/jax/compilation_cache/cache_hits_original')
@@ -358,7 +383,7 @@ def _cache_read(
     return compilation_cache.get_executable_and_time(
         cache_key, compile_options, backend)
   except Exception as ex:
-    if config.jax_raise_persistent_cache_errors:
+    if _RAISE_PERSISTENT_CACHE_ERRORS.value:
       raise
     warnings.warn(
         f"Error reading persistent compilation cache entry for "
@@ -380,8 +405,7 @@ def _cache_write(cache_key: str,
         "callbacks (e.g. from jax.debug.print or breakpoint)", module_name)
     return
 
-  min_compile_time = config.jax_persistent_cache_min_compile_time_secs
-  if min_compile_time:
+  if min_compile_time := _PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS.value:
     if compile_time_secs < min_compile_time:
       logger.debug(
           "Not writing persistent cache entry for '%s' because it took < %.2f "
@@ -399,7 +423,7 @@ def _cache_write(cache_key: str,
     compilation_cache.put_executable_and_time(
         cache_key, module_name, executable, backend, int(compile_time_secs))
   except Exception as ex:
-    if config.jax_raise_persistent_cache_errors:
+    if _RAISE_PERSISTENT_CACHE_ERRORS.value:
       raise
     warnings.warn(
         f"Error writing persistent compilation cache entry for "

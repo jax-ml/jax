@@ -19,10 +19,20 @@ are used internally in GPU translation rules of higher-level primitives.
 
 from jax import core
 from jax._src import dispatch
+from jax._src.config import config
 from jax._src.interpreters import mlir
 from jax._src.lib import gpu_sparse
+
 import numpy as np
 
+
+# This flag is for internal use.
+# TODO(tianjianlu): Removes once we always enable cusparse lowering.
+# TODO(b/262050896): Set to true after bug is fixed
+_BCOO_CUSPARSE_LOWERING = config.define_bool_state(
+    name='jax_bcoo_cusparse_lowering',
+    default=False,
+    help='Enables lowering BCOO ops to cuSparse.')
 
 SUPPORTED_DATA_DTYPES = [np.float32, np.float64, np.complex64, np.complex128]
 SUPPORTED_INDEX_DTYPES = [np.int32]

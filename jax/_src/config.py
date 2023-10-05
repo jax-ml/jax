@@ -22,7 +22,7 @@ import logging
 import os
 import sys
 import threading
-from typing import Any, Callable, Generic, NamedTuple, Optional, TypeVar
+from typing import Any, Callable, Generic, NamedTuple, NoReturn, Optional, TypeVar
 
 from jax._src import lib
 from jax._src.lib import jax_jit
@@ -528,6 +528,12 @@ class _StateContextManager(Generic[_T]):
     val = _thread_local_state.__dict__.get(self._name, unset)
     return val if val is not unset else config._read(self._name)
 
+  def __bool__(self) -> NoReturn:
+    raise TypeError(
+        "bool() not supported for instances of type '{0}' "
+        "(did you mean to use '{0}.value' instead?)".format(
+            type(self).__name__))
+
   @contextlib.contextmanager
   def __call__(self, new_val: Any = no_default):
     if new_val is no_default:
@@ -767,23 +773,10 @@ log_compiles = config.define_bool_state(
           'option is set, the log level is WARNING; otherwise the level is '
           'DEBUG.'))
 
-log_checkpoint_residuals = config.define_bool_state(
-    name='jax_log_checkpoint_residuals',
-    default=False,
-    help=('Log a message every time jax.checkpoint (aka jax.remat) is '
-          'partially evaluated (e.g. for autodiff), printing what residuals '
-          'are saved.'))
-
 parallel_functions_output_gda = config.define_bool_state(
     name='jax_parallel_functions_output_gda',
     default=False,
     help='If True, pjit will output GDAs.')
-
-pmap_shmap_merge = config.define_bool_state(
-    name='jax_pmap_shmap_merge',
-    default=False,
-    upgrade=True,
-    help='If True, pmap and shard_map API will be merged.')
 
 def _update_jax_memories_global(val):
   if xla_extension_version >= 190:
@@ -859,7 +852,6 @@ threefry_partitionable = config.define_bool_state(
     update_thread_local_hook=lambda val: update_thread_local_jit_state(
         threefry_partitionable=val))
 
-
 softmax_custom_jvp = config.define_bool_state(
     name='jax_softmax_custom_jvp',
     default=False,
@@ -872,42 +864,12 @@ softmax_custom_jvp = config.define_bool_state(
     update_thread_local_hook=lambda val: update_thread_local_jit_state(
         softmax_custom_jvp=val))
 
-
 enable_custom_vjp_by_custom_transpose = config.define_bool_state(
     name='jax_enable_custom_vjp_by_custom_transpose',
     default=False,
     upgrade=True,
     help=('Enables an internal upgrade that implements `jax.custom_vjp` by '
           'reduction to `jax.custom_jvp` and `jax.custom_transpose`.'))
-
-raise_persistent_cache_errors = config.define_bool_state(
-    name='jax_raise_persistent_cache_errors',
-    default=False,
-    help=('If true, exceptions raised when reading or writing to the '
-          'persistent compilation cache will be allowed through, halting '
-          'program execution if not manually caught. If false, exceptions are '
-          'caught and raised as warnings, allowing program execution to '
-          'continue. Defaults to false so cache bugs or intermittent issues '
-          'are non-fatal.'))
-
-persistent_cache_min_compile_time_secs = config.define_float_state(
-    name='jax_persistent_cache_min_compile_time_secs',
-    default=1,
-    help=('The minimum compile time of a computation to be written to the '
-          'persistent compilation cache. This threshold can be raised to '
-          'decrease the number of entries written to the cache.'))
-
-compilation_cache_include_metadata_in_key = config.define_bool_state(
-    name='jax_compilation_cache_include_metadata_in_key',
-    default=False,
-    help=(
-        'Include metadata, such as file names and line numbers, in the'
-        ' compilation cache key. If false, the cache will still get hits even'
-        ' if functions or files are moved, etc. However, it means that'
-        ' executables loaded from the cache may have stale metadata, which'
-        ' may show up in, e.g., profiles.'
-    ),
-)
 
 hlo_source_file_canonicalization_regex = config.define_string_state(
     name='jax_hlo_source_file_canonicalization_regex',
@@ -918,30 +880,6 @@ hlo_source_file_canonicalization_regex = config.define_string_state(
           'This can be used to avoid spurious cache misses when using the '
           'persistent compilation cache, which includes HLO metadata in the '
           'cache key.'))
-
-include_full_tracebacks_in_locations = config.define_bool_state(
-    name='jax_include_full_tracebacks_in_locations',
-    default=False,
-    help=(
-        'Include full Python tracebacks in MLIR locations in IR emitted by JAX.'
-    ),
-)
-
-use_original_compilation_cache_key_generation = config.define_bool_state(
-    name='jax_use_original_compilation_cache_key_generation',
-    default=True,
-    help="If true, use the original cache-key generation algorithm. This is "
-         "a transient flag; once the new cache-key generation algorithm is "
-         "deployed, this flag and the original cache-key generation algorithm "
-         "will be removed.")
-
-config.define_enum_state(
-    name='jax_default_dtype_bits',
-    enum_values=['32', '64'],
-    default='64',
-    help=('Specify bit width of default dtypes, either 32-bit or 64-bit. '
-          'This is a temporary flag that will be used during the process '
-          'of deprecating the ``jax_enable_x64`` flag.'))
 
 numpy_dtype_promotion = config.define_enum_state(
     name='jax_numpy_dtype_promotion',
@@ -1062,32 +1000,6 @@ default_matmul_precision = config.define_enum_state(
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(default_matmul_precision=val))
 
-traceback_filtering = config.define_enum_state(
-    name = 'jax_traceback_filtering',
-    enum_values=["off", "tracebackhide", "remove_frames", "quiet_remove_frames",
-                 "auto"],
-    default="auto",
-    help="Controls how JAX filters internal frames out of tracebacks.\n\n"
-         "Valid values are:\n"
-         " * \"off\": disables traceback filtering.\n"
-         " * \"auto\": use \"tracebackhide\" if running under a sufficiently"
-         " new IPython, or \"remove_frames\" otherwise.\n"
-         " * \"tracebackhide\": adds \"__tracebackhide__\" annotations to"
-         " hidden stack frames, which some traceback printers support.\n"
-         " * \"remove_frames\": removes hidden frames from tracebacks, and adds"
-         " the unfiltered traceback as a __cause__ of the exception.\n"
-         " * \"quiet_remove_frames\": removes hidden frames from tracebacks, and adds"
-         " a brief message (to the __cause__ of the exception) describing that this has"
-         " happened.\n")
-
-# This flag is for internal use.
-# TODO(tianjianlu): Removes once we always enable cusparse lowering.
-# TODO(b/262050896): Set to true after bug is fixed
-bcoo_cusparse_lowering = config.define_bool_state(
-    name='jax_bcoo_cusparse_lowering',
-    default=False,
-    help=('Enables lowering BCOO ops to cuSparse.'))
-
 # TODO(mattjj): remove this flag when we ensure we only succeed at trace-staging
 # if the intended backend can handle lowering the result
 config.define_bool_state(
@@ -1099,30 +1011,6 @@ config.define_bool_state(
       _update_global_jit_state(dynamic_shapes=val),
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(dynamic_shapes=val))
-
-# This flag is temporary during rollout of the remat barrier.
-# TODO(parkers): Remove if there are no complaints.
-config.define_bool_state(
-    name='jax_remat_opt_barrier',
-    default=(lib.version >= (0, 3, 6)),
-    help=('Enables using optimization-barrier op for lowering remat.'))
-
-# TODO(sharadmv,mattjj): set default to True, then remove
-config.define_bool_state(
-    name='jax_eager_pmap',
-    default=True,
-    upgrade=True,
-    help='Enable eager-mode pmap when jax_disable_jit is activated.')
-
-config.define_bool_state(
-    name='jax_experimental_unsafe_xla_runtime_errors',
-    default=False,
-    help=('Enable XLA runtime errors for jax.experimental.checkify.checks '
-          'on CPU and GPU. These errors are async, might get lost and are not '
-          'very readable. But, they crash the computation and enable you '
-          'to write jittable checks without needing to checkify. Does not '
-          'work under pmap/pjit.')
-)
 
 jax_xla_profile_version = config.define_int_state(
     name='jax_xla_profile_version',

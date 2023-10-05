@@ -25,10 +25,10 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
-from jax import config
 from jax import lax
 from jax import tree_util
 from jax.experimental.sparse._base import JAXSparse
+from jax.experimental.sparse import _lowerings
 from jax.experimental.sparse import bcoo
 from jax.experimental.sparse.util import (
     nfold_vmap, _count_stored_elements,
@@ -623,7 +623,7 @@ def _bcsr_dot_general_gpu_lowering(
     ctx, lhs_data, lhs_indices, lhs_indptr, rhs, *, dimension_numbers,
     preferred_element_type, lhs_spinfo: SparseInfo):
 
-  if not config.jax_bcoo_cusparse_lowering:
+  if not _lowerings._BCOO_CUSPARSE_LOWERING.value:
     return _bcsr_dot_general_default_lowering(
       ctx, lhs_data, lhs_indices, lhs_indptr, rhs,
       dimension_numbers=dimension_numbers,

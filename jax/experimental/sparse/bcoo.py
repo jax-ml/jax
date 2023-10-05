@@ -20,7 +20,7 @@ import functools
 from functools import partial
 import math
 import operator
-from typing import Any, NamedTuple, Optional, Protocol, Union
+from typing import Any, NamedTuple, Protocol
 import warnings
 
 import numpy as np
@@ -29,7 +29,7 @@ import jax
 from jax import lax
 from jax import tree_util
 from jax import vmap
-from jax import config
+from jax.experimental.sparse import _lowerings
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import (
   nfold_vmap, _count_stored_elements,
@@ -49,9 +49,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.lax import (
   _const, ranges_like, remaining, _dot_general_batch_dim_nums, DotDimensionNumbers)
 from jax._src.lax.slicing import GatherDimensionNumbers, GatherScatterMode
-from jax._src.lib.mlir import ir
 from jax._src.lib import gpu_sparse
-from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.setops import _unique
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import canonicalize_axis
@@ -784,7 +782,7 @@ def _bcoo_dot_general_fallback(data, indices, spinfo):
 def _bcoo_dot_general_gpu_impl(lhs_data, lhs_indices, rhs, *,
                                dimension_numbers, preferred_element_type,
                                lhs_spinfo):
-  if not config.jax_bcoo_cusparse_lowering:
+  if not _lowerings._BCOO_CUSPARSE_LOWERING.value:
     return _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs,
         dimension_numbers=dimension_numbers,
         preferred_element_type=preferred_element_type,

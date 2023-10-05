@@ -33,6 +33,17 @@ if jaxlib_version < (0, 4, 14):
   import jaxlib.mlir.jax as mlir_jax  # pytype: disable=import-error
   assert mlir_jax is not None  # Imported for side effects only.
 
+_COMPILATION_CACHE_INCLUDE_METADATA_IN_KEY = config.define_bool_state(
+    name='jax_compilation_cache_include_metadata_in_key',
+    default=False,
+    help=(
+        'Include metadata, such as file names and line numbers, in the'
+        ' compilation cache key. If false, the cache will still get hits even'
+        ' if functions or files are moved, etc. However, it means that'
+        ' executables loaded from the cache may have stale metadata, which'
+        ' may show up in, e.g., profiles.'
+    ),
+)
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +178,7 @@ def _canonicalize_ir(m_original: ir.Module) -> bytes:
 
 
 def _hash_computation(hash_obj, module):
-  if config.jax_compilation_cache_include_metadata_in_key:
+  if _COMPILATION_CACHE_INCLUDE_METADATA_IN_KEY.value:
     canonical_ir = _serialize_ir(module)
   else:
     canonical_ir = _canonicalize_ir(module)

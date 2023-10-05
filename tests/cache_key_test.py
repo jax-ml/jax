@@ -29,7 +29,6 @@ from jax._src import cache_key
 from jax._src import compiler
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
-from jax._src.config import compilation_cache_include_metadata_in_key
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version
 
@@ -245,7 +244,7 @@ class CacheKeyTest(jtu.JaxTestCase):
         num_replicas=1, num_partitions=1
     )
     backend = xla_bridge.get_backend()
-    with compilation_cache_include_metadata_in_key(include_metadata):
+    with cache_key._COMPILATION_CACHE_INCLUDE_METADATA_IN_KEY(include_metadata):
       key1 = cache_key.get(computation1, devices, compile_options, backend)
       key2 = cache_key.get(computation2, devices, compile_options, backend)
     self.assertEqual(include_metadata, key1 != key2)
