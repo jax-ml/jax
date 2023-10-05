@@ -1666,6 +1666,11 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
     const VectorLayout::ImplicitDim implicit_dim = layout_in.implicit_dim();
     const LayoutOffsets offsets_in = layout_in.offsets();
     const LayoutOffsets offsets_out = layout_out.offsets();
+    if (layout_in.tiling() != layout_out.tiling()) {
+      return op.emitOpError(
+          "Not implemented: Changing tiling mid-broadcast");
+    }
+    auto tiling = layout_in.tiling();
 
     const int64_t expand_rank = dst_ty.getRank() - src_ty.getRank();
     SmallVector<int64_t> src_shape_padded(expand_rank, -1);
@@ -1732,7 +1737,19 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
         *tile = src_tiles(src_idx);
       });
     } else if (implicit_dim == VectorLayout::ImplicitDim::kNone) {
+      if (layout_in.bitwidth() != 32) {
+        return op.emitOpError(
+            "Not implemented: Only 32-bit broadcast supported");
+      }
+      if (tiling[1] != ctx.target_shape[1]) {
+        return op.emitOpError("Not implemented: unsupported tiling");
+      }
+      int64_t num_tiles = layout_in.tilesPerVreg(ctx.target_shape);
       if (*(dim_eq.end() - 1)) {  // Sublane broadcast
+        if (num_tiles != 1) {
+          return op.emitOpError(
+              "Not implemented: Only native tiling supported");
+        }
         CHECK_EQ(*(src_tiles.dimensions().end() - 2), 1);
         CHECK(offsets_in[0].has_value());
         const int64_t offset = *offsets_in[0];
@@ -1767,6 +1784,18 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
             broadcast_op.getLoc(), idx_ty,
             DenseElementsAttr::get(idx_ty,
                                    ctx.builder.getI32IntegerAttr(offset)));
+        int64_t sublanes_per_tile = layout_in.sublanesPerTile(ctx.target_shape);
+        DenseI32ArrayAttr sublane_pattern;
+        if (num_tiles != 1) {
+          SmallVector<int32_t> pattern;
+          pattern.reserve(ctx.target_shape[0]);
+          for (int32_t t = 0; t < num_tiles; ++t) {
+            for (int32_t i = 0; i < sublanes_per_tile; ++i) {
+              pattern.push_back(i);
+            }
+          }
+          sublane_pattern = ctx.builder.getDenseI32ArrayAttr(pattern);
+        }
         src_tiles.Each([&](const absl::Span<const int64_t> src_idx,
                            Value *const src_tile) {
           SmallVector<int64_t> dst_starts(dst_tiles_shape.size());
@@ -1780,11 +1809,15 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
               dst_limits[i] = dst_starts[i] + 1;
             }
           }
-          auto dynamic_gather_op = ctx.builder.create<tpu::DynamicGatherOp>(
+          Value res_vreg = ctx.builder.create<tpu::DynamicGatherOp>(
               broadcast_op.getLoc(), src_tile->getType(), *src_tile, idx_const,
-              /*dimension =*/1);
-          updateSlice<Value>(dst_tiles, dynamic_gather_op, dst_starts,
-                             dst_limits);
+              /*dimension=*/1);
+          if (num_tiles != 1) {
+            res_vreg = ctx.builder.create<tpu::GatherOp>(
+                broadcast_op.getLoc(), res_vreg.getType(), res_vreg,
+                sublane_pattern, 0);
+          }
+          updateSlice<Value>(dst_tiles, res_vreg, dst_starts, dst_limits);
         });
       } else {
         return op.emitOpError("Not implemented");

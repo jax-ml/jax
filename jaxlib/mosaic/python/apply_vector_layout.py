@@ -2328,6 +2328,8 @@ def _vector_broadcast_rule(ctx: RewriteContext, op: vector.BroadcastOp,  # pylin
     if layout_in.implicit_dim != layout_out.implicit_dim:
       raise NotImplementedError("Changing implicit dims mid-broadcast")
     implicit_dim = layout_in.implicit_dim
+    if (tiling := layout_in.tiling) != layout_out.tiling:
+      raise NotImplementedError("Changing tiling mid-broadcast")
     offsets_in = layout_in.offsets
     offsets_out = layout_out.offsets
 
@@ -2369,7 +2371,14 @@ def _vector_broadcast_rule(ctx: RewriteContext, op: vector.BroadcastOp,  # pylin
         src_idx = tuple(i if eq else 0 for i, eq in zip(dst_idx, dim_eq))
         dst_tiles[dst_idx] = src_tiles[src_idx]
     elif implicit_dim is None:
+      if layout_in.bitwidth != 32:
+        raise NotImplementedError("Only 32-bit broadcast supported")
+      if tiling[1] != TARGET_SHAPE.lanes:
+        raise NotImplementedError(f"Unsupported tiling: {tiling}")
+      num_tiles = layout_in.tiles_per_vreg
       if dim_eq[-1]:  # Sublane broadcast
+        if num_tiles != 1:
+          raise NotImplementedError("Only native tiling supported")
         assert src_tiles.shape[-2] == 1
         offset = layout_in.offsets[-2]
         assert offset is not REPLICATED
@@ -2394,13 +2403,21 @@ def _vector_broadcast_rule(ctx: RewriteContext, op: vector.BroadcastOp,  # pylin
                 idx_ty, ir.IntegerAttr.get(i32(), offset)
             ),
         )
+        sublane_pattern = None
+        if num_tiles != 1:
+          sublane_pattern = ir.DenseI32ArrayAttr.get(
+              list(range(layout_in.sublanes_per_tile)) * num_tiles
+          )
         for src_idx, tile in np.ndenumerate(src_tiles):
           src_idx_pad = (everything,) * expand_rank + src_idx
           dst_idx = tuple(
               i if eq else everything
               for i, eq in zip(src_idx_pad, dim_eq, strict=True)
           )
-          dst_tiles[dst_idx] = tpu.DynamicGatherOp(tile.type, tile, idx, 1)
+          res_vreg = tpu.DynamicGatherOp(tile.type, tile, idx, 1)
+          if num_tiles != 1:
+            res_vreg = tpu.GatherOp(tile.type, res_vreg, sublane_pattern, 0)
+          dst_tiles[dst_idx] = res_vreg
       else:
         raise NotImplementedError
     else:
