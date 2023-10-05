@@ -36,6 +36,7 @@
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Region.h"
+#include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
@@ -44,6 +45,7 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
@@ -112,30 +114,59 @@ xla::Array<Value> repeat(const xla::Array<Value> &src, const int repeats,
   return res;
 }
 
-// xla::array::UpdateSlice has no overload that takes a single value, so we have
-// this instead.
+template <typename T>
+ArrayRef<T> XlaArrayToFlatArrayRef(xla::Array<T> xla_array) {
+  return ArrayRef<T>(xla_array.data(), xla_array.num_elements());
+}
+
+template <typename T, typename Range>
+xla::Array<T> XlaArrayFromShapeAndValues(ArrayRef<int64_t> sizes, Range vals) {
+  // TODO(tlongeri): is there no way to avoid default initialization in the
+  // constructor?
+  xla::Array<T> arr(sizes);
+  arr.SetValues(vals);
+  return arr;
+}
+
+bool incrementSliceIndex(const MutableArrayRef<int64_t> idx,
+                         const absl::Span<const int64_t> starts,
+                         const absl::Span<const int64_t> limits) {
+  const int64_t nd = idx.size();
+  CHECK_EQ(nd, starts.size());
+  CHECK_EQ(nd, limits.size());
+  for (int64_t i = nd - 1; i >= 0; --i) {
+    ++idx[i];
+    if (idx[i] < limits[i]) {
+      return true;
+    }
+    idx[i] = starts[i];
+  }
+  return false;
+}
+
+// An alternative to xla::Array::UpdateSlice that takes a single value
 template <typename T>
 void updateSlice(xla::Array<T> &arr, const T &value,
                  const absl::Span<const int64_t> starts,
                  const absl::Span<const int64_t> limits) {
-  const int64_t nd = arr.dimensions().size();
-  CHECK_EQ(nd, starts.size());
-  CHECK_EQ(nd, limits.size());
   SmallVector<int64_t> idx(toArrayRef(starts));
-  auto next_index = [&]() {
-    for (int64_t i = nd - 1; i >= 0; --i) {
-      ++idx[i];
-      if (idx[i] < limits[i]) {
-        return true;
-      }
-      idx[i] = starts[i];
-    }
-    return false;
-  };
-
   do {
     arr(idx) = value;
-  } while (next_index());
+  } while (incrementSliceIndex(idx, starts, limits));
+}
+
+// An alternative to xla::Array::UpdateSlice that takes a range of data
+template <typename T, typename Range>
+void updateSliceFromRange(xla::Array<T> &arr, Range data,
+                          const absl::Span<const int64_t> starts,
+                          const absl::Span<const int64_t> limits) {
+  SmallVector<int64_t> idx(toArrayRef(starts));
+  auto data_it = data.begin();
+  do {
+    arr(idx) = *data_it;
+    ++data_it;
+  } while (incrementSliceIndex(idx, starts, limits));
+  CHECK(data_it == data.end());
 }
 
 FailureOr<TypedAttr> getZeroIntOrFloatAttr(Type ty) {
@@ -871,6 +902,233 @@ LogicalResult tpu_load_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
+LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
+                               const bool transpose_lhs,
+                               const bool transpose_rhs,
+                               const VectorLayout &layout_lhs,
+                               const VectorLayout &layout_rhs,
+                               const VectorLayout &layout_acc,
+                               const VectorLayout &layout_out) {
+  if (transpose_lhs) {
+    return op.emitOpError("Not implemented: Transposed LHS");
+  }
+  const std::array<std::reference_wrapper<const VectorLayout>, 3> layouts_in = {
+      layout_lhs, layout_rhs, layout_acc};
+  const std::array<std::reference_wrapper<const VectorLayout>, 4> all_layouts =
+      {layout_lhs, layout_rhs, layout_acc, layout_out};
+  for (const VectorLayout &layout : all_layouts) {
+    for (const LayoutOffset offset : layout.offsets()) {
+      if (offset.value_or(0) != 0) {
+        return op.emitOpError("Not implemented: Unaligned layout in matmul");
+      }
+    }
+  }
+  TypedValue<VectorType> lhs, rhs, acc, res;
+  if (auto tpu_matmul_op = dyn_cast<tpu::MatmulOp>(op)) {
+    lhs = tpu_matmul_op.getLhs();
+    rhs = tpu_matmul_op.getRhs();
+    acc = tpu_matmul_op.getAcc();
+    res = tpu_matmul_op.getResult();
+  } else if (auto vector_contraction_op = dyn_cast<vector::ContractionOp>(op)) {
+    lhs = vector_contraction_op.getLhs();
+    rhs = vector_contraction_op.getRhs();
+    acc = cast<TypedValue<VectorType>>(vector_contraction_op.getAcc());
+    res = cast<TypedValue<VectorType>>(vector_contraction_op.getResult());
+  } else {
+    LOG(FATAL) << "Unexpected op type";
+  }
+
+  for (const VectorLayout &layout : layouts_in) {
+    if (layout.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
+      return op.emitOpError(
+          "Not implemented: Unsupported matmul operand layout");
+    }
+    if (!layout.hasNativeTiling(ctx.target_shape)) {
+      return op.emitOpError(
+          "Not implemented: Unsupported matmul operand tiling");
+    }
+  }
+  if (acc.getType().getElementType().getIntOrFloatBitWidth() != 32) {
+    return op.emitOpError("Not implemented: Non-32-bit matmul result");
+  }
+  const ArrayRef<int64_t> lhs_shape = lhs.getType().getShape();
+  const ArrayRef<int64_t> rhs_shape = rhs.getType().getShape();
+  // TODO(tlongeri): This should be part of the tpu::MatmulOp verifier
+  CHECK_EQ(lhs_shape.size(), 2);
+  CHECK_EQ(rhs_shape.size(), 2);
+  // The code below puts no constraints on the second dimension of both lhs and
+  // rhs. However, leading axis of lhs needs to be a multiple of native tiling
+  // for packed types, while leading axis of rhs needs to be a multiple of 128
+  // (no matter the type and transpose mode).
+  if (layout_lhs.packing() != 1 && lhs_shape[0] % layout_lhs.tiling()[0] != 0) {
+    return op.emitOpError("Not implemented: Unsupported LHS shape");
+  }
+  if (rhs_shape[0] % 128 != 0) {
+    return op.emitOpError("Not implemented: Unsupported RHS shape");
+  }
+  const int64_t padded_lhs_rows =
+      llvm::alignTo(lhs_shape[0], layout_lhs.tiling()[0]);
+  const auto lhs_col_ty =
+      VectorType::get({padded_lhs_rows, 128}, lhs.getType().getElementType());
+  if (llvm::alignTo(lhs_shape[0], layout_acc.tiling()[0]) != padded_lhs_rows) {
+    return op.emitOpError(
+        "Not implemented: Matmul acc requires less padding than lhs");
+  }
+  const auto acc_col_ty =
+      VectorType::get({padded_lhs_rows, 128}, acc.getType().getElementType());
+  FAILUREOR_ASSIGN_OR_RETURN(xla::Array<Value> lhs_vregs,
+                             disassemble(ctx, layout_lhs, lhs));
+  FAILUREOR_ASSIGN_OR_RETURN(xla::Array<Value> acc_vregs,
+                             disassemble(ctx, layout_acc, acc));
+  CHECK_EQ(padded_lhs_rows, lhs_vregs.dim(0) * layout_lhs.tiling()[0]);
+  CHECK_EQ(padded_lhs_rows, acc_vregs.dim(0) * layout_acc.tiling()[0]);
+  SmallVector<tpu::RollVectorsOp> lhs_cols(lhs_vregs.dim(1));
+
+  TypedValue<VectorType> contraction_lane_mask;
+  auto maskLastLaneContractionVreg = [&](TypedValue<VectorType> zeros,
+                                         TypedValue<VectorType> vreg) {
+    CHECK(contraction_lane_mask != nullptr);
+    TypedValue<VectorType> mask = contraction_lane_mask;
+    if (vreg.getType().getShape() != mask.getType().getShape()) {
+      mask = ctx.builder.create<tpu::MaskCastOp>(
+          op.getLoc(),
+          VectorType::get(vreg.getType().getShape(), ctx.builder.getI1Type()),
+          mask);
+    }
+    return ctx.builder.create<arith::SelectOp>(op.getLoc(), mask, vreg, zeros);
+  };
+  if (const int64_t contraction_rem = lhs_shape[1] % 128) {
+    FAILUREOR_ASSIGN_OR_RETURN(
+        const VectorType i32_vreg,
+        getNativeVregType(ctx.builder.getI32Type(), ctx.target_shape));
+    contraction_lane_mask = cast<TypedValue<VectorType>>(
+        ctx.builder
+            .create<arith::CmpIOp>(
+                op.getLoc(), arith::CmpIPredicate::slt,
+                ctx.builder.create<tpu::IotaOp>(
+                    op.getLoc(), i32_vreg,
+                    /*dimension=*/ctx.builder.getI32IntegerAttr(1)),
+                ctx.builder.create<arith::ConstantOp>(
+                    op.getLoc(), i32_vreg,
+                    ctx.builder.getI32IntegerAttr(contraction_rem)))
+            .getResult());
+    const VectorType lhs_vreg_type =
+        cast<VectorType>(lhs_vregs.begin()->getType());
+    FAILUREOR_ASSIGN_OR_RETURN(
+        const Attribute zero_attr,
+        getZeroIntOrFloatAttr(lhs_vreg_type.getElementType()));
+    auto lhs_zeros = cast<TypedValue<VectorType>>(
+        ctx.builder
+            .create<arith::ConstantOp>(
+                op.getLoc(), DenseElementsAttr::get(lhs_vreg_type, zero_attr))
+            .getResult());
+    for (int64_t i = 0; i < lhs_vregs.dim(0); ++i) {
+      Value &vreg = lhs_vregs({i, lhs_vregs.dim(1) - 1});
+      vreg = maskLastLaneContractionVreg(lhs_zeros,
+                                         cast<TypedValue<VectorType>>(vreg));
+    }
+  }
+  const ArrayAttr lhs_layout_attr = ctx.builder.getArrayAttr(
+      {ctx.builder.getAttr<VectorLayoutAttr>(layout_lhs)});
+  const ArrayAttr rhs_layout_attr = ctx.builder.getArrayAttr(
+      {ctx.builder.getAttr<VectorLayoutAttr>(layout_rhs)});
+  const ArrayAttr acc_layout_attr = ctx.builder.getArrayAttr(
+      {ctx.builder.getAttr<VectorLayoutAttr>(layout_acc)});
+  for (int64_t i = 0; i < lhs_vregs.dim(1); ++i) {
+    const xla::Array<Value> col_vregs =
+        lhs_vregs.Slice({0, i}, {lhs_vregs.dim(0), i + 1});
+    lhs_cols[i] = ctx.builder.create<tpu::RollVectorsOp>(
+        op.getLoc(), lhs_col_ty, XlaArrayToFlatArrayRef(col_vregs));
+    lhs_cols[i]->setAttr("out_layout", lhs_layout_attr);
+  }
+  // Here, "tile" is used as in the context of the MXU, a 128x128 operand to a
+  // matmul computation (NOT as in the context of tiled layouts).
+  const auto rhs_tile_ty =
+      VectorType::get({128, 128}, rhs.getType().getElementType());
+  FAILUREOR_ASSIGN_OR_RETURN(xla::Array<Value> rhs_vregs,
+                             disassemble(ctx, layout_rhs, rhs));
+  const int64_t rhs_vregs_per_tile = 16 / layout_rhs.packing();
+  int64_t nj, nk;
+  if (transpose_rhs) {
+    nj = llvm::divideCeil(rhs_shape[0], 128);
+    nk = llvm::divideCeil(rhs_shape[1], 128);
+    rhs_vregs.Reshape({nj, rhs_vregs_per_tile, nk});
+    rhs_vregs.TransposeDimensions({2, 0, 1});
+  } else {
+    nj = llvm::divideCeil(rhs_shape[1], 128);
+    nk = llvm::divideCeil(rhs_shape[0], 128);
+    rhs_vregs.Reshape({nk, rhs_vregs_per_tile, nj});
+    rhs_vregs.TransposeDimensions({0, 2, 1});
+  }
+  const tpu::ContractPrecisionAttr precision_attr =  // May be null
+      op.getAttrOfType<tpu::ContractPrecisionAttr>("precision");
+  const auto rhs_vreg_type = cast<VectorType>(rhs_vregs.begin()->getType());
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const Attribute zero_attr,
+      getZeroIntOrFloatAttr(rhs_vreg_type.getElementType()));
+  auto rhs_zeros = cast<TypedValue<VectorType>>(
+      ctx.builder
+          .create<arith::ConstantOp>(
+              op.getLoc(), DenseElementsAttr::get(rhs_vreg_type, zero_attr))
+          .getResult());
+  for (int64_t j = 0; j < nj; ++j) {
+    for (int64_t k = 0; k < nk; ++k) {
+      // TODO(tlongeri): there should be a way to slice without copying
+      xla::Array<Value> rhs_tile =
+          rhs_vregs.Slice({k, j, 0}, {k + 1, j + 1, rhs_vregs_per_tile});
+      if (contraction_lane_mask != nullptr && k == nk - 1) {
+        rhs_tile.Each(
+            [&](const absl::Span<const int64_t> idx, Value *const vreg) {
+              *vreg = maskLastLaneContractionVreg(
+                  rhs_zeros, cast<TypedValue<VectorType>>(*vreg));
+            });
+      }
+      auto rhs_rolled_tile = ctx.builder.create<tpu::RollVectorsOp>(
+          op.getLoc(), rhs_tile_ty, XlaArrayToFlatArrayRef(rhs_tile));
+      rhs_rolled_tile->setAttr("out_layout", rhs_layout_attr);
+      const xla::Array<Value> acc_col_vregs =
+          acc_vregs.Slice({0, j}, {acc_vregs.dim(0), j + 1});
+      auto acc_col = ctx.builder.create<tpu::RollVectorsOp>(
+          op.getLoc(), acc_col_ty, XlaArrayToFlatArrayRef(acc_col_vregs));
+      acc_col->setAttr("out_layout", acc_layout_attr);
+      auto new_acc_col = ctx.builder.create<tpu::MatmulOp>(
+          op.getLoc(), acc_col_ty, lhs_cols[k], rhs_rolled_tile, acc_col,
+          transpose_lhs, transpose_rhs, precision_attr);
+      new_acc_col->setAttr("out_layout", acc_layout_attr);
+      auto new_acc_vregs = ctx.builder.create<tpu::UnrollVectorsOp>(
+          op.getLoc(),
+          TypeRange(ValueRange(XlaArrayToFlatArrayRef(acc_col_vregs))),
+          new_acc_col);
+      new_acc_vregs->setAttr("in_layout", acc_layout_attr);
+      updateSliceFromRange(acc_vregs, new_acc_vregs->getResults(), {0, j},
+                           {acc_vregs.dim(0), j + 1});
+    }
+  }
+  op.replaceAllUsesWith(
+      assemble(ctx, res.getType(), layout_out, acc_vregs).getOperation());
+  op.erase();
+  return success();
+}
+
+LogicalResult tpu_matmul_rule(RewriteContext &ctx, Operation &op,
+                              const ArrayRef<Layout> layouts_in,
+                              const ArrayRef<Layout> layouts_out) {
+  CHECK_EQ(layouts_in.size(), 3);
+  CHECK_EQ(layouts_out.size(), 1);
+  for (const Layout &layout : layouts_in) {
+    if (!layout.has_value()) {
+      return op.emitOpError("Expected non-null input layouts");
+    }
+  }
+  if (!layouts_out.front().has_value()) {
+    return op.emitOpError("Expected non-null output layout");
+  }
+  auto matmul_op = cast<tpu::MatmulOp>(op);
+  return matmul_rule_impl(ctx, *matmul_op, matmul_op.getTransposeLhs(),
+                          matmul_op.getTransposeRhs(), *layouts_in[0],
+                          *layouts_in[1], *layouts_in[2], *layouts_out[0]);
+}
+
 LogicalResult tpu_store_rule(RewriteContext &ctx, Operation &op,
                              const ArrayRef<Layout> layouts_in,
                              const ArrayRef<Layout> layouts_out) {
@@ -1517,6 +1775,58 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
   }
 }
 
+LogicalResult vector_contract_rule(RewriteContext &ctx, Operation &op,
+                                   const ArrayRef<Layout> layouts_in,
+                                   const ArrayRef<Layout> layouts_out) {
+  CHECK_EQ(layouts_in.size(), 3);
+  CHECK_EQ(layouts_out.size(), 1);
+  for (const Layout &layout : layouts_in) {
+    if (!layout.has_value()) {
+      return op.emitOpError("Expected non-null input layouts");
+    }
+  }
+  if (!layouts_out.front().has_value()) {
+    return op.emitOpError("Expected non-null output layout");
+  }
+  auto vector_contract_op = cast<vector::ContractionOp>(op);
+  // TODO(tlongeri): There is some unnecessary uniquing happening but not sure
+  // if it can be avoided without sacrificing readability rather severely.
+  auto getMapAttr = [&](const unsigned first, const unsigned second) {
+    return AffineMapAttr::get(
+        AffineMap::get(3, 0,
+                       {getAffineDimExpr(first, ctx.builder.getContext()),
+                        getAffineDimExpr(second, ctx.builder.getContext())},
+                       ctx.builder.getContext()));
+  };
+  const ArrayAttr matmul_indexing_maps = ctx.builder.getArrayAttr(
+      {getMapAttr(0, 2), getMapAttr(2, 1), getMapAttr(0, 1)});
+  const ArrayAttr matmul_indexing_maps_transposed = ctx.builder.getArrayAttr(
+      {getMapAttr(0, 2), getMapAttr(1, 2), getMapAttr(0, 1)});
+  const auto indexing_maps = vector_contract_op->getAttr("indexing_maps");
+  if (indexing_maps != matmul_indexing_maps &&
+      indexing_maps != matmul_indexing_maps_transposed) {
+    return vector_contract_op->emitOpError(
+        "Non-matmul or unsupported indexing_maps");
+  }
+  const bool transpose_rhs = indexing_maps == matmul_indexing_maps_transposed;
+  const ArrayAttr matmul_iterator_types =
+      ctx.builder.getArrayAttr({ctx.builder.getAttr<vector::IteratorTypeAttr>(
+                                    vector::IteratorType::parallel),
+                                ctx.builder.getAttr<vector::IteratorTypeAttr>(
+                                    vector::IteratorType::parallel),
+                                ctx.builder.getAttr<vector::IteratorTypeAttr>(
+                                    vector::IteratorType::reduction)});
+  if (vector_contract_op->getAttr("iterator_types") != matmul_iterator_types) {
+    return vector_contract_op->emitOpError(
+        "Not implemented: Non-matmul iterator_types");
+  }
+  const bool transpose_lhs =
+      false;  // TODO(apaszke): Support that in the affine maps
+  return matmul_rule_impl(ctx, *vector_contract_op, transpose_lhs,
+                          transpose_rhs, *layouts_in[0], *layouts_in[1],
+                          *layouts_in[2], *layouts_out[0]);
+}
+
 LogicalResult vector_extract_strided_slice_rule(
     RewriteContext &ctx, Operation &op, const ArrayRef<Layout> layouts_in,
     const ArrayRef<Layout> layouts_out) {
@@ -1794,10 +2104,12 @@ const llvm::StringMap<rule_type> &rules() {
       {tpu::IotaOp::getOperationName(), tpu_iota_rule},
       {tpu::GatherOp::getOperationName(), tpu_gather_rule},
       {tpu::LoadOp::getOperationName(), tpu_load_rule},
+      {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
       {tpu::RepeatOp::getOperationName(), tpu_repeat_rule},
       {tpu::StoreOp::getOperationName(), tpu_store_rule},
       {tpu::TraceOp::getOperationName(), tpu_trace_rule},
       {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
+      {vector::ContractionOp::getOperationName(), vector_contract_rule},
       {vector::LoadOp::getOperationName(), vector_load_rule},
       {vector::ExtractStridedSliceOp::getOperationName(),
        vector_extract_strided_slice_rule},
@@ -1806,19 +2118,6 @@ const llvm::StringMap<rule_type> &rules() {
 }
 }  // namespace
 
-template <typename T>
-ArrayRef<T> XlaArrayToFlatArrayRef(xla::Array<T> xla_array) {
-  return ArrayRef<T>(xla_array.data(), xla_array.num_elements());
-}
-
-template <typename T, typename Range>
-xla::Array<T> XlaArrayFromShapeAndValues(ArrayRef<int64_t> sizes, Range vals) {
-  // TODO(tlongeri): is there no way to avoid default initialization in the
-  // constructor?
-  xla::Array<T> arr(sizes);
-  arr.SetValues(vals);
-  return arr;
-}
 RollVectorsOp assemble(RewriteContext &ctx, VectorType vty,
                        const VectorLayout &layout,
                        const xla::Array<Value> vals) {
