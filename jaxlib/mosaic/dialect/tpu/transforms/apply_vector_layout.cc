@@ -94,6 +94,41 @@ void moveAllRegions(Operation &src, Operation &dst) {
     dst_region.takeBody(src_region);
   }
 }
+// Masks all values outside of bounds.
+//
+// Arguments:
+//   value: A rank 2 MLIR vector to be masked.
+//   bounds: A TargetTuple of slices specifying a rectangular subregion of value
+//     that should be preserved during masking.
+//   neutral: A scalar attribute specifying the value that will be inserted
+//     for all values outside of specified bounds.
+//
+// Returns:
+//   An MLIR value of the same type as the value argument, with all entries
+//   outside of bounds replaced by neutral.
+FailureOr<Value> maskOOB(RewriteContext &ctx, TypedValue<VectorType> value,
+                         const VRegDataBounds &bounds,
+                         const TypedAttr neutral) {
+  CHECK(llvm::equal(value.getType().getShape(), ctx.target_shape));
+  if (bounds.isComplete(ctx.target_shape)) {
+    return value;
+  }
+  FAILUREOR_ASSIGN_OR_RETURN(
+      TypedValue<VectorType> mask,
+      bounds.getVectorMask(ctx.builder, value.getLoc(), ctx.hardware_generation,
+                           ctx.target_shape));
+  if (cast<IntegerType>(mask.getType().getElementType()).getWidth() != 1) {
+    return emitError(value.getLoc(),
+                     "Not implemented: Unsupported mask bitwidth");
+  }
+  auto neutral_vec_ty = VectorType::get(ctx.target_shape, neutral.getType());
+  auto neutral_vec = ctx.builder.create<arith::ConstantOp>(
+      value.getLoc(), neutral_vec_ty,
+      DenseElementsAttr::get(neutral_vec_ty, neutral));
+  return ctx.builder
+      .create<arith::SelectOp>(value.getLoc(), mask, value, neutral_vec)
+      .getResult();
+}
 
 // Models Numpy's np.repeat, repeating each element `repeats` times along the
 // specified axis. For example, if `src` is [1, 2], `axis` is 0 and `repeats` is
@@ -1891,6 +1926,211 @@ LogicalResult vector_extract_strided_slice_rule(
   return success();
 }
 
+LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
+                                          const ArrayRef<Layout> layouts_in,
+                                          const ArrayRef<Layout> layouts_out) {
+  CHECK_EQ(layouts_in.size(), 2);
+  CHECK_EQ(layouts_out.size(), 1);
+  for (const Layout &layout : layouts_in) {
+    if (!layout.has_value()) {
+      return op.emitOpError("Expected non-null input layout");
+    }
+  }
+  const VectorLayout &src_layout = *layouts_in[0];
+  const VectorLayout &acc_layout = *layouts_in[1];
+  const VectorLayout &layout_out = *layouts_out[0];
+  auto multi_reduction_op = cast<vector::MultiDimReductionOp>(op);
+  const ArrayAttr dims = multi_reduction_op.getReductionDims();
+  if (dims.size() != 1) {
+    return multi_reduction_op.emitOpError(
+        "Not implemented: Only 1D reductions supported");
+  }
+  const int64_t dim =
+      cast<IntegerAttr>(*dims.begin()).getValue().getSExtValue();
+  const VectorType src_ty = multi_reduction_op.getSourceVectorType();
+  const auto res_ty = dyn_cast<VectorType>(multi_reduction_op.getDestType());
+  if (res_ty == nullptr) {
+    return multi_reduction_op.emitOpError(
+        "Not implemented: Can only reduce into vectors");
+  }
+  if (!layouts_out.front().has_value()) {
+    // Shouldn't be empty since result is a vector
+    return op.emitOpError("Expected non-null output layout");
+  }
+
+  // Make sure that the accumulator is a splat of the neutral value
+  if (acc_layout.offsets() != LayoutOffsets{std::nullopt, std::nullopt}) {
+    return multi_reduction_op.emitOpError(
+        "Not implemented: Only replicated accumulator supported");
+  }
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const xla::Array<Value> acc_vregs,
+      disassemble(ctx, acc_layout, multi_reduction_op.getAcc()));
+  const Value acc_vreg = *acc_vregs.begin();
+  auto acc_def =
+      dyn_cast_if_present<arith::ConstantOp>(acc_vreg.getDefiningOp());
+  if (acc_def == nullptr) {
+    return multi_reduction_op.emitOpError(
+        "Not implemented: Only constant accumulator supported");
+  }
+  if (!src_ty.getElementType().isF32()) {
+    return multi_reduction_op.emitOpError(
+               "Not implemented: Only FP32 reductions supported, but got ")
+           << src_ty;
+  }
+  // Element types of source, dest, acc match (by multi_dim reduction's
+  // definition), so we expect an f32 constant
+  const auto acc_def_value = dyn_cast<DenseFPElementsAttr>(acc_def.getValue());
+  if (acc_def_value == nullptr || !acc_def_value.isSplat()) {
+    return multi_reduction_op.emitOpError("Expected a splat constant");
+  }
+  CHECK(acc_def_value.getElementType().isF32());
+  const auto val = acc_def_value.getSplatValue<float>();
+  FloatAttr neutral;
+  switch (multi_reduction_op.getKind()) {
+    case vector::CombiningKind::ADD:
+      neutral = ctx.builder.getF32FloatAttr(0);
+      break;
+    case vector::CombiningKind::MAXF: {
+      neutral = ctx.builder.getFloatAttr(
+          ctx.builder.getF32Type(),
+          APFloat::getInf(APFloat::IEEEsingle(), /*Negative=*/true));
+    } break;
+    default:
+      return multi_reduction_op.emitOpError(
+          "Not implemented: unsupported kind");
+  }
+  if (val != neutral.getValueAsDouble()) {
+    return multi_reduction_op.emitOpError("Only neutral accumulator supported");
+  }
+
+  if (src_layout.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+      src_layout.hasNaturalTopology(ctx.target_shape)) {
+    auto [sublane_offset, lane_offset] = src_layout.offsets();
+    if (dim < 0) {
+      return multi_reduction_op.emitOpError(
+          "Negative reduction dimension unsupported");
+    }
+    int64_t vdim;
+    Direction reduce_over;
+    std::array<bool, 2> allow_replicated;
+    if (dim < src_ty.getRank() - 2) {
+      return multi_reduction_op.emitOpError(
+          "Not implemented: Reductions over non-layout dims");
+    } else if (dim == src_ty.getRank() - 2) {
+      reduce_over = Direction::kSublanes;
+      allow_replicated = {false, true};
+      vdim = 0;
+      if (!sublane_offset.has_value()) {
+        // TODO(apaszke): Note that it is just scaling!
+        return multi_reduction_op.emitOpError(
+            "Not implemented: Reductions over replicated axes");
+      }
+      if (layout_out != VectorLayout(32, {std::nullopt, lane_offset},
+                                     ctx.target_shape,
+                                     VectorLayout::ImplicitDim::kSecondMinor)) {
+        return multi_reduction_op.emitOpError(
+            "Not implemented: Unexpected destination layout");
+      }
+    } else if (dim == src_ty.getRank() - 1) {
+      reduce_over = Direction::kLanes;
+      allow_replicated = {true, false};
+      vdim = 1;
+      if (!lane_offset.has_value()) {
+        // TODO(apaszke): Note that it is just scaling!
+        return multi_reduction_op.emitOpError(
+            "Not implemented: Reductions over replicated axes");
+      }
+      if (layout_out != VectorLayout(32, {sublane_offset, std::nullopt},
+                                     ctx.target_shape,
+                                     VectorLayout::ImplicitDim::kMinor)) {
+        return multi_reduction_op.emitOpError(
+                   "Not implemented: Unexpected destination layout: ")
+               << layout_out;
+      }
+    } else {
+      // Never should reach, this should be checked by MLIR verifier
+      LOG(FATAL) << "Invalid reduction dimension: " << dim;
+    }
+    FAILUREOR_ASSIGN_OR_RETURN(
+        xla::Array<Value> src_vregs,
+        disassemble(ctx, src_layout, multi_reduction_op.getSource()));
+    xla::Array<Value> result_vregs(
+        layout_out.tileArrayShape(res_ty.getShape(), ctx.target_shape));
+    tpu::ReductionKind tpu_kind;
+    switch (multi_reduction_op.getKind()) {
+      case vector::CombiningKind::ADD:
+        tpu_kind = tpu::ReductionKind::SUM;
+        break;
+      case vector::CombiningKind::MAXF:
+        tpu_kind = tpu::ReductionKind::MAX;
+        break;
+      default:
+        LOG(FATAL) << "Unreachable";
+    }
+    const ArrayRef<int64_t> src_shape = src_ty.getShape();
+    absl::Status status = src_vregs.EachStatus(
+        [&](const absl::Span<const int64_t> idx, Value *const src_vreg) {
+          const std::unique_ptr<VRegDataBounds> data_bounds =
+              src_layout.tileDataBounds(ctx.builder.getContext(), src_shape,
+                                        toArrayRef(idx), ctx.target_shape,
+                                        allow_replicated);
+          // TODO(tlongeri): Maybe assemble/disassemble should take
+          // TypedValue<VectorType> and we could save casts here and elsewhere
+          FailureOr<Value> failure_or_vreg =
+              maskOOB(ctx, cast<TypedValue<VectorType>>(*src_vreg),
+                      *data_bounds, neutral);
+          if (failed(failure_or_vreg)) {
+            return absl::UnknownError("");
+          }
+          Value vreg = failure_or_vreg.value();
+          const int64_t lix = *(idx.end() - 1);
+          const int64_t six = *(idx.end() - 2);
+          SmallVector<int64_t> outer(toArrayRef(idx));
+          int64_t reduced_ix, last_reduced_ix;
+          if (reduce_over == Direction::kLanes) {
+            outer.erase(outer.end() - 1);
+            reduced_ix = lix;
+            last_reduced_ix = *(src_vregs.dimensions().end() - 1) - 1;
+          } else {
+            CHECK(reduce_over == Direction::kSublanes);
+            outer.erase(outer.end() - 2);
+            reduced_ix = six;
+            last_reduced_ix = *(src_vregs.dimensions().end() - 2) - 1;
+          }
+          Value new_acc;
+          if (reduced_ix == 0) {
+            new_acc = vreg;
+          } else {
+            switch (tpu_kind) {
+              case tpu::ReductionKind::SUM:
+                new_acc = ctx.builder.create<arith::AddFOp>(
+                    vreg.getLoc(), result_vregs(outer), vreg);
+                break;
+              case tpu::ReductionKind::MAX:
+                new_acc = ctx.builder.create<arith::MaximumFOp>(
+                    vreg.getLoc(), result_vregs(outer), vreg);
+                break;
+            }
+          }
+          if (reduced_ix == last_reduced_ix) {
+            new_acc = ctx.builder.create<tpu::AllReduceOp>(
+                new_acc.getLoc(), new_acc, vdim, tpu_kind);
+          }
+          result_vregs(outer) = new_acc;
+          return absl::OkStatus();
+        });
+    if (!status.ok()) {
+      return failure();
+    }
+    multi_reduction_op->replaceAllUsesWith(
+        assemble(ctx, res_ty, layout_out, result_vregs));
+    multi_reduction_op->erase();
+    return success();
+  }
+  return multi_reduction_op->emitOpError("Unsupported layout: ") << src_layout;
+}
+
 LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
                                      const ArrayRef<Layout> layouts_in,
                                      const ArrayRef<Layout> layouts_out) {
@@ -2269,6 +2509,8 @@ const llvm::StringMap<rule_type> &rules() {
       {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
       {vector::ContractionOp::getOperationName(), vector_contract_rule},
       {vector::LoadOp::getOperationName(), vector_load_rule},
+      {vector::MultiDimReductionOp::getOperationName(),
+       vector_multi_reduction_rule},
       {vector::ExtractStridedSliceOp::getOperationName(),
        vector_extract_strided_slice_rule},
       {vector::ShapeCastOp::getOperationName(), vector_shape_cast_rule},
