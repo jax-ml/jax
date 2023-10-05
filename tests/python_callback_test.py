@@ -30,6 +30,7 @@ from jax._src import test_util as jtu
 from jax._src import util
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax.experimental import io_callback
 from jax.experimental import maps
 from jax.experimental import pjit
@@ -771,6 +772,27 @@ class PureCallbackTest(jtu.JaxTestCase):
     np.testing.assert_allclose(
         out,
         np.arange(2 * jax.local_device_count()).reshape([-1, 2]) + 1.)
+
+  @unittest.skipIf(xla_extension_version < 202, "Test requires jaxlib 0.4.18")
+  def test_callback_with_immediate_executable_destruction(self):
+
+    def loop_body(i, x):
+      del i
+      return jax.pure_callback(lambda y: y + np.ones(4, np.float32),
+                               x, x)
+
+    class AClass:
+      def f(self, ys):
+        return lax.fori_loop(0, 10, loop_body, jnp.ones(4, np.float32))
+
+    num_devices = jax.local_device_count()
+    c = AClass()
+    out = jax.pmap(c.f)(np.ones((num_devices,), np.float32))
+    # c.f is an ephemeral bound method object, and it will be destroyed
+    # immediately. This test verifies that the execution itself keeps the
+    # callback alive.
+    np.testing.assert_allclose(out, np.full((num_devices, 4), 11, np.float32))
+
 
   def test_callback_inside_xmap(self):
 

@@ -43,6 +43,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -528,9 +529,17 @@ class ModuleContext:
   def new_channel(self) -> int:
     return next(self.channel_iterator)
 
+  # Adds an IFRT host callback object to the context. A reference to these
+  # callbacks will be provided to IFRT during compilation so it can do things
+  # like serialize them and keep them alive.
   def add_host_callback(self, host_callback: Any) -> None:
     self.host_callbacks.append(host_callback)
 
+  # Keeps a value alive as long as the Python executable is alive.
+  # TODO(phawkins): this feature is problematic, because you almost certainly
+  # want to keep alive values as long as the underlying runtime executable is
+  # still alive/executing. The Python executable object may have a shorter
+  # lifetime, so it's highly likely any caller of this method is buggy.
   def add_keepalive(self, keepalive: Any) -> None:
     self.keepalives.append(keepalive)
 
@@ -2177,7 +2186,7 @@ def _emit_tpu_python_callback(
     result_shapes: Sequence[xc.Shape],
     *,
     sharding: xc.OpSharding | None = None
-) -> tuple[Sequence[ir.Value], Any, Any]:
+) -> tuple[Sequence[ir.Value], Any]:
   token = token or hlo.CreateTokenOp().result
   _wrapped_callback = callback
 
@@ -2215,11 +2224,11 @@ def _emit_tpu_python_callback(
                                    callback.__name__, sharding=sharding)
     outputs.append(out)
     recv_channels.append(channel)
-  opaque = backend.make_python_callback_from_host_send_and_recv(
+  ifrt_callback = backend.make_python_callback_from_host_send_and_recv(
       _wrapped_callback, operand_shapes, result_shapes, send_channels,
       recv_channels, pickle_util.dumps)  # type: ignore  # pylint: disable=missing-parameter
-  ctx.module_context.add_host_callback(opaque)
-  return outputs, token, opaque
+  ctx.module_context.add_host_callback(ifrt_callback)
+  return outputs, token
 
 def _layout_to_mlir_layout(minor_to_major: Sequence[int] | None):
   if minor_to_major is None:
@@ -2296,7 +2305,7 @@ def emit_python_callback(
         (aval, shape)
         for aval, shape in zip(result_avals, result_shapes)
         if not is_empty_shape(aval.shape)])
-    non_empty_outputs, token, keepalive = _emit_tpu_python_callback(
+    non_empty_outputs, token = _emit_tpu_python_callback(
         backend, ctx, _wrapped_callback,  token,
         operands, operand_avals, operand_shapes,
         non_empty_result_avals, non_empty_result_shapes,
@@ -2306,7 +2315,7 @@ def emit_python_callback(
         ir_constant(np.zeros(result_aval.shape, dtype=result_aval.dtype))
         if is_empty_shape(result_aval.shape) else next(non_empty_outputs_iter)
         for result_aval in result_avals]
-    return outputs, token, keepalive
+    return outputs, token, None
 
   result_types = util.flatten([aval_to_ir_types(aval) for aval in result_avals])
   if token:
@@ -2325,10 +2334,14 @@ def emit_python_callback(
     result_types = [token_type()[0], *result_types]
     operand_mlir_layouts = [_layout_to_mlir_layout(None), *operand_mlir_layouts]
     result_mlir_layouts = [_layout_to_mlir_layout(None), *result_mlir_layouts]
-  callback_descriptor, keepalive = (
+  callback_descriptor, ifrt_callback = (
       backend.get_emit_python_callback_descriptor(_wrapped_callback,
                                                   operand_shapes,
                                                   result_shapes))
+  if xla_extension_version >= 202:
+    ctx.module_context.add_host_callback(ifrt_callback)
+  else:
+    ctx.module_context.add_keepalive(ifrt_callback)
   descriptor_operand = ir_constant(callback_descriptor)
   callback_operands = [descriptor_operand, *operands]
   if operand_mlir_layouts is not None:
@@ -2358,7 +2371,7 @@ def emit_python_callback(
   ]
   if token:
     token, *results = results
-  return results, token, keepalive
+  return results, token, ifrt_callback
 
 def build_xla_computation_helper(
     closed_jaxpr: core.ClosedJaxpr, *, name: str, platform: str,

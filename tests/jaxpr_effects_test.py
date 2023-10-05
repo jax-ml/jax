@@ -123,13 +123,12 @@ def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out
   if effects.ordered_effects.contains(effect):
     token_in = ctx.tokens_in.get(effect)[0]
 
-  out_op, token_out, keep_alive = mlir.emit_python_callback(
+  out_op, token_out, _ = mlir.emit_python_callback(
       ctx, callback, token_in, list(args), list(ctx.avals_in),
       list(ctx.avals_out), True)
   if token_out:
     ctx.set_tokens_out(ctx.tokens_in.update_tokens(mlir.TokenSet({effect:
       token_out})))
-  ctx.module_context.add_keepalive(keep_alive)
   return out_op
 
 mlir.register_lowering(callback_p, callback_effect_lowering)
