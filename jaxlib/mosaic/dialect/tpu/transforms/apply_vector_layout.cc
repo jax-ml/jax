@@ -50,6 +50,8 @@
 #include "absl/types/span.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/include/mlir/IR/Builders.h"
+#include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/infer_memref_layout.h"
@@ -75,17 +77,19 @@ namespace mlir::tpu {
 
 struct RewriteContext {
   func::FuncOp func;
-  OpBuilder &builder;
   // TODO(tlongeri): target_shape should be determined from hardware_generation
   const int hardware_generation;
   const std::array<int64_t, 2> target_shape;
+
+  MLIRContext *getMLIRContext() { return func.getContext(); }
 };
 
 LogicalResult applyLayoutBlock(RewriteContext &ctx, Block &block);
-RollVectorsOp assemble(RewriteContext &ctx, VectorType vty,
+RollVectorsOp assemble(RewriteContext &ctx, OpBuilder &builder, VectorType vty,
                        const VectorLayout &layout,
                        const xla::Array<Value> &vals);
 FailureOr<xla::Array<Value>> disassemble(RewriteContext &ctx,
+                                         OpBuilder &builder,
                                          const VectorLayout &layout, Value val);
 namespace {
 
@@ -107,7 +111,8 @@ void moveAllRegions(Operation &src, Operation &dst) {
 // Returns:
 //   An MLIR value of the same type as the value argument, with all entries
 //   outside of bounds replaced by neutral.
-FailureOr<Value> maskOOB(RewriteContext &ctx, TypedValue<VectorType> value,
+FailureOr<Value> maskOOB(RewriteContext &ctx, OpBuilder &builder,
+                         TypedValue<VectorType> value,
                          const VRegDataBounds &bounds,
                          const TypedAttr neutral) {
   CHECK(llvm::equal(value.getType().getShape(), ctx.target_shape));
@@ -116,17 +121,17 @@ FailureOr<Value> maskOOB(RewriteContext &ctx, TypedValue<VectorType> value,
   }
   FAILUREOR_ASSIGN_OR_RETURN(
       TypedValue<VectorType> mask,
-      bounds.getVectorMask(ctx.builder, value.getLoc(), ctx.hardware_generation,
+      bounds.getVectorMask(builder, value.getLoc(), ctx.hardware_generation,
                            ctx.target_shape));
   if (cast<IntegerType>(mask.getType().getElementType()).getWidth() != 1) {
     return emitError(value.getLoc(),
                      "Not implemented: Unsupported mask bitwidth");
   }
   auto neutral_vec_ty = VectorType::get(ctx.target_shape, neutral.getType());
-  auto neutral_vec = ctx.builder.create<arith::ConstantOp>(
+  auto neutral_vec = builder.create<arith::ConstantOp>(
       value.getLoc(), neutral_vec_ty,
       DenseElementsAttr::get(neutral_vec_ty, neutral));
-  return ctx.builder
+  return builder
       .create<arith::SelectOp>(value.getLoc(), mask, value, neutral_vec)
       .getResult();
 }
@@ -305,8 +310,9 @@ FailureOr<BlockArgument> appendConstant(RewriteContext &ctx,
       inferMemref(
           MemRefType::get(value_ty.getShape(), value_ty.getElementType()),
           ctx.hardware_generation));
-  const BlockArgument argument = entry_block.insertArgument(
-      entry_block.getNumArguments() - 1, arg_type, ctx.builder.getUnknownLoc());
+  const BlockArgument argument =
+      entry_block.insertArgument(entry_block.getNumArguments() - 1, arg_type,
+                                 UnknownLoc::get(ctx.getMLIRContext()));
   const FunctionType func_ty = ctx.func.getFunctionType();
   // Adjust the function type.
   SmallVector<Type> new_arg_tys(func_ty.getInputs());
@@ -433,11 +439,13 @@ FailureOr<SmallVector<Layout>> getInLayout(Operation &op) {
 LogicalResult elementwise_op_rule(
     RewriteContext &ctx, Operation &op, const ArrayRef<Layout> layouts_in,
     const ArrayRef<Layout> layouts_out,
-    std::function<FailureOr<Operation *>(RewriteContext &, ArrayRef<Value>)>
+    std::function<FailureOr<Operation *>(RewriteContext &, OpBuilder &,
+                                         ArrayRef<Value>)>
         factory) {
   CHECK_EQ(layouts_in.size(), op.getNumOperands());
   CHECK_GT(layouts_in.size(), 0);
   CHECK_EQ(layouts_out.size(), 1);
+  OpBuilder builder(&op);
   if (!(layouts_out.front().has_value() &&
         llvm::all_of(layouts_in,
                      [&](const Layout &l) { return l.has_value(); }))) {
@@ -456,7 +464,7 @@ LogicalResult elementwise_op_rule(
   for (unsigned i = 0; i < num_operands; ++i) {
     FAILUREOR_ASSIGN_OR_RETURN(
         xla::Array<Value> tile_array,
-        disassemble(ctx, *layouts_in[i], op.getOperand(i)));
+        disassemble(ctx, builder, *layouts_in[i], op.getOperand(i)));
     in_tile_arrays.emplace_back(std::move(tile_array));
   }
 
@@ -486,7 +494,8 @@ LogicalResult elementwise_op_rule(
           }
           operands[i] = in_tile_arrays[i](operand_idx);
         }
-        FailureOr<Operation *> failure_or_tile_op = factory(ctx, operands);
+        FailureOr<Operation *> failure_or_tile_op =
+            factory(ctx, builder, operands);
         if (failed(failure_or_tile_op)) {
           return absl::InvalidArgumentError("");
         }
@@ -500,7 +509,7 @@ LogicalResult elementwise_op_rule(
     return failure();
   }
   op.replaceAllUsesWith(
-      assemble(ctx, vty, layout_out, std::move(out_tile_array)));
+      assemble(ctx, builder, vty, layout_out, std::move(out_tile_array)));
   op.erase();
   return success();
 }
@@ -513,18 +522,18 @@ template <std::size_t... I>
 LogicalResult elementwise_op_rule_unpacked_impl(
     RewriteContext &ctx, Operation &op, const ArrayRef<Layout> layout_in,
     const ArrayRef<Layout> layout_out,
-    std::function<FailureOr<Operation *>(RewriteContext &ctx,
-                                         Wrapper<Value, I>...)>
+    std::function<FailureOr<Operation *>(
+        RewriteContext &ctx, OpBuilder &builder, Wrapper<Value, I>...)>
         factory,
     std::index_sequence<I...>) {
   return elementwise_op_rule(
       ctx, op, layout_in, layout_out,
-      [&](RewriteContext &ctx,
+      [&](RewriteContext &ctx, OpBuilder &builder,
           ArrayRef<Value> operands) -> FailureOr<Operation *> {
         if (operands.size() != sizeof...(I)) {
           return failure();
         }
-        return factory(ctx, operands[I]...);
+        return factory(ctx, builder, operands[I]...);
       });
 }
 
@@ -551,9 +560,9 @@ LogicalResult arith_cmpf_rule(RewriteContext &ctx, Operation &op,
   auto cmpf_op = cast<arith::CmpFOp>(op);
   return elementwise_op_rule_unpacked<2>(
       ctx, op, layouts_in, layouts_out,
-      [&](RewriteContext &ctx, const Value lhs,
+      [&](RewriteContext &ctx, OpBuilder &builder, const Value lhs,
           const Value rhs) -> FailureOr<Operation *> {
-        return ctx.builder
+        return builder
             .create<arith::CmpFOp>(cmpf_op.getLoc(), cmpf_op.getPredicateAttr(),
                                    lhs, rhs)
             .getOperation();
@@ -566,9 +575,9 @@ LogicalResult arith_cmpi_rule(RewriteContext &ctx, Operation &op,
   auto cmpi_op = cast<arith::CmpIOp>(op);
   return elementwise_op_rule_unpacked<2>(
       ctx, op, layouts_in, layouts_out,
-      [&](RewriteContext &ctx, const Value lhs,
+      [&](RewriteContext &ctx, OpBuilder &builder, const Value lhs,
           const Value rhs) -> FailureOr<Operation *> {
-        return ctx.builder
+        return builder
             .create<arith::CmpIOp>(cmpi_op.getLoc(), cmpi_op.getPredicateAttr(),
                                    lhs, rhs)
             .getOperation();
@@ -583,10 +592,11 @@ LogicalResult arith_extui_rule(RewriteContext &ctx, Operation &op,
       cast<VectorType>(extui_op.getResult().getType()).getElementType();
   return elementwise_op_rule_unpacked<1>(
       ctx, op, layouts_in, layouts_out,
-      [&](RewriteContext &ctx, const Value x) -> FailureOr<Operation *> {
+      [&](RewriteContext &ctx, OpBuilder &builder,
+          const Value x) -> FailureOr<Operation *> {
         const VectorType x_ty = cast<VectorType>(x.getType());
         const VectorType out_ty = VectorType::get(x_ty.getShape(), elem_ty);
-        return ctx.builder.create<arith::ExtUIOp>(extui_op.getLoc(), out_ty, x)
+        return builder.create<arith::ExtUIOp>(extui_op.getLoc(), out_ty, x)
             .getOperation();
       });
 }
@@ -595,12 +605,13 @@ template <typename OpTy>
 LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
                                const VectorLayout &layout_in,
                                const VectorLayout &layout_out) {
+  ImplicitLocOpBuilder builder(op.getLoc(), op.getOperation());
   auto result_ty = cast<VectorType>(op.getResult().getType());
   if (layout_out.bitwidth() != 32) {
     return op.emitOpError("Only extensions to 32-bit supported");
   }
   FAILUREOR_ASSIGN_OR_RETURN(const xla::Array<Value> input_vregs,
-                             disassemble(ctx, layout_in, op.getIn()));
+                             disassemble(ctx, builder, layout_in, op.getIn()));
   xla::Array<Value> output_vregs(
       layout_out.tileArrayShape(result_ty.getShape(), ctx.target_shape));
   FAILUREOR_ASSIGN_OR_RETURN(
@@ -620,8 +631,8 @@ LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
         SmallVector<int64_t> input_vreg_idxs(toArrayRef(idxs));
         input_vreg_idxs.back() /= packing;
         const int64_t vreg_part = idxs.back() % packing;
-        *v = ctx.builder.create<UnpackSubelementsOp>(
-            op.getLoc(), res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
+        *v = builder.create<UnpackSubelementsOp>(
+            res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
       });
     } break;
     case VectorLayout::ImplicitDim::kMinor:
@@ -635,13 +646,13 @@ LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
       if (layout_in.offsets()[0] >= ctx.target_shape[0]) {
         return op.emitOpError("Not implemented");
       }
-      auto unpack_subelements_op = ctx.builder.create<UnpackSubelementsOp>(
-          op.getLoc(), res_vreg_ty, *input_vregs.begin(), 0);
+      auto unpack_subelements_op = builder.create<UnpackSubelementsOp>(
+          res_vreg_ty, *input_vregs.begin(), 0);
       output_vregs.Fill(unpack_subelements_op.getResult());
     }
   }
   op.replaceAllUsesWith(
-      assemble(ctx, result_ty, layout_out, std::move(output_vregs))
+      assemble(ctx, builder, result_ty, layout_out, std::move(output_vregs))
           .getResult());
   op.erase();
   return success();
@@ -678,9 +689,10 @@ template <typename OpTy>
 LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
                                  const VectorLayout &layout_in,
                                  const VectorLayout &layout_out) {
+  ImplicitLocOpBuilder builder(op.getLoc(), op.getOperation());
   auto result_ty = cast<VectorType>(op.getResult().getType());
   FAILUREOR_ASSIGN_OR_RETURN(const xla::Array<Value> input_vregs,
-                             disassemble(ctx, layout_in, op.getIn()));
+                             disassemble(ctx, builder, layout_in, op.getIn()));
   xla::Array<Value> output_vregs(
       layout_out.tileArrayShape(result_ty.getShape(), ctx.target_shape));
   if (layout_in.bitwidth() != 32) {
@@ -707,8 +719,7 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
             ++idxs_local.back();
           }
         }
-        *v = ctx.builder.create<PackSubelementsOp>(op.getLoc(), res_vreg_ty,
-                                                   parts);
+        *v = builder.create<PackSubelementsOp>(res_vreg_ty, parts);
       });
 
     } else if (layout_out.bitwidth() == 16 &&
@@ -730,14 +741,14 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
           idxs_local[idxs.size() - 2] += 1;
           second = input_vregs(idxs_local);
         }
-        *v = ctx.builder.create<PackSubelementsOp>(
-            op.getLoc(), res_vreg_ty, ArrayRef<Value>{first, second});
+        *v = builder.create<PackSubelementsOp>(res_vreg_ty,
+                                               ArrayRef<Value>{first, second});
       });
     } else {
       return op.emitOpError("Not implemented");
     }
     op.replaceAllUsesWith(
-        assemble(ctx, result_ty, layout_out, std::move(output_vregs))
+        assemble(ctx, builder, result_ty, layout_out, std::move(output_vregs))
             .getResult());
     op.erase();
     return success();
@@ -792,6 +803,7 @@ LogicalResult scf_if_rule(RewriteContext &ctx, Operation &op,
                           const ArrayRef<Layout> layouts_out) {
   CHECK_EQ(layouts_in.size(), 1);
   CHECK(!layouts_in.front().has_value());
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
   scf::IfOp if_op = cast<scf::IfOp>(op);
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> then_yield_in_layouts,
                              getInLayout(*if_op.thenYield()));
@@ -838,9 +850,8 @@ LogicalResult scf_if_rule(RewriteContext &ctx, Operation &op,
 
   // Move true and false regions to the new if op whose result has same type and
   // layout as yield operand's.
-  auto new_op = ctx.builder.create<scf::IfOp>(
-      if_op.getLoc(), TypeRange(if_op.thenYield().getResults()),
-      if_op.getCondition(),
+  auto new_op = builder.create<scf::IfOp>(
+      TypeRange(if_op.thenYield().getResults()), if_op.getCondition(),
       /*withElseRegion =*/true);
   moveAllRegions(*if_op, *new_op);
 
@@ -860,7 +871,7 @@ LogicalResult scf_if_rule(RewriteContext &ctx, Operation &op,
           llvm::make_range(new_op.getResults().begin() + index,
                            new_op.getResults().begin() + index + num_vectors));
       index += num_vectors;
-      RollVectorsOp rolled_op = assemble(ctx, vty, *layout, tiles);
+      RollVectorsOp rolled_op = assemble(ctx, builder, vty, *layout, tiles);
       rolled_results.push_back(rolled_op);
     } else {
       CHECK(!layout.has_value());
@@ -876,6 +887,7 @@ LogicalResult scf_if_rule(RewriteContext &ctx, Operation &op,
 LogicalResult scf_yield_rule(RewriteContext &ctx, Operation &op,
                              const ArrayRef<Layout> layouts_in,
                              const ArrayRef<Layout> layouts_out) {
+  OpBuilder builder(&op);
   auto yield_op = cast<scf::YieldOp>(op);
   CHECK_EQ(layouts_in.size(), yield_op.getNumOperands());
   CHECK_EQ(layouts_out.size(), 0);
@@ -889,7 +901,7 @@ LogicalResult scf_yield_rule(RewriteContext &ctx, Operation &op,
       // When the operand has vector type, disassemble the operand.
       CHECK(layout.has_value());
       FAILUREOR_ASSIGN_OR_RETURN(const xla::Array<Value> tiles,
-                                 disassemble(ctx, *layout, operand));
+                                 disassemble(ctx, builder, *layout, operand));
       unrolled.append(tiles.begin(), tiles.end());
     } else {
       CHECK(!layout.has_value());
@@ -933,8 +945,11 @@ LogicalResult tpu_load_rule(RewriteContext &ctx, Operation &op,
            << ctx.target_shape[1];
   }
 
-  const RollVectorsOp roll_vectors_op = assemble(
-      ctx, load_op.getResult().getType(), layout_out, {{load_op.getResult()}});
+  OpBuilder builder(op.getContext());
+  builder.setInsertionPointAfter(&op);
+  const RollVectorsOp roll_vectors_op =
+      assemble(ctx, builder, load_op.getResult().getType(), layout_out,
+               {{load_op.getResult()}});
   load_op->replaceUsesWithIf(roll_vectors_op, [&](OpOperand &operand) {
     return operand.getOwner() != roll_vectors_op;
   });
@@ -962,6 +977,7 @@ LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
       }
     }
   }
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
   TypedValue<VectorType> lhs, rhs, acc, res;
   if (auto tpu_matmul_op = dyn_cast<tpu::MatmulOp>(op)) {
     lhs = tpu_matmul_op.getLhs();
@@ -1016,9 +1032,9 @@ LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
   const auto acc_col_ty =
       VectorType::get({padded_lhs_rows, 128}, acc.getType().getElementType());
   FAILUREOR_ASSIGN_OR_RETURN(xla::Array<Value> lhs_vregs,
-                             disassemble(ctx, layout_lhs, lhs));
+                             disassemble(ctx, builder, layout_lhs, lhs));
   FAILUREOR_ASSIGN_OR_RETURN(xla::Array<Value> acc_vregs,
-                             disassemble(ctx, layout_acc, acc));
+                             disassemble(ctx, builder, layout_acc, acc));
   CHECK_EQ(padded_lhs_rows, lhs_vregs.dim(0) * layout_lhs.tiling()[0]);
   CHECK_EQ(padded_lhs_rows, acc_vregs.dim(0) * layout_acc.tiling()[0]);
   SmallVector<tpu::RollVectorsOp> lhs_cols(lhs_vregs.dim(1));
@@ -1029,27 +1045,25 @@ LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
     CHECK(contraction_lane_mask != nullptr);
     TypedValue<VectorType> mask = contraction_lane_mask;
     if (vreg.getType().getShape() != mask.getType().getShape()) {
-      mask = ctx.builder.create<tpu::MaskCastOp>(
-          op.getLoc(),
-          VectorType::get(vreg.getType().getShape(), ctx.builder.getI1Type()),
+      mask = builder.create<tpu::MaskCastOp>(
+          VectorType::get(vreg.getType().getShape(), builder.getI1Type()),
           mask);
     }
-    return ctx.builder.create<arith::SelectOp>(op.getLoc(), mask, vreg, zeros);
+    return builder.create<arith::SelectOp>(mask, vreg, zeros);
   };
   if (const int64_t contraction_rem = lhs_shape[1] % 128) {
     FAILUREOR_ASSIGN_OR_RETURN(
         const VectorType i32_vreg,
-        getNativeVregType(ctx.builder.getI32Type(), ctx.target_shape));
+        getNativeVregType(builder.getI32Type(), ctx.target_shape));
     contraction_lane_mask = cast<TypedValue<VectorType>>(
-        ctx.builder
+        builder
             .create<arith::CmpIOp>(
-                op.getLoc(), arith::CmpIPredicate::slt,
-                ctx.builder.create<tpu::IotaOp>(
-                    op.getLoc(), i32_vreg,
-                    /*dimension=*/ctx.builder.getI32IntegerAttr(1)),
-                ctx.builder.create<arith::ConstantOp>(
-                    op.getLoc(), i32_vreg,
-                    ctx.builder.getI32IntegerAttr(contraction_rem)))
+                arith::CmpIPredicate::slt,
+                builder.create<tpu::IotaOp>(
+                    i32_vreg,
+                    /*dimension=*/builder.getI32IntegerAttr(1)),
+                builder.create<arith::ConstantOp>(
+                    i32_vreg, builder.getI32IntegerAttr(contraction_rem)))
             .getResult());
     const VectorType lhs_vreg_type =
         cast<VectorType>(lhs_vregs.begin()->getType());
@@ -1057,7 +1071,7 @@ LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
         const Attribute zero_attr,
         getZeroIntOrFloatAttr(lhs_vreg_type.getElementType()));
     auto lhs_zeros = cast<TypedValue<VectorType>>(
-        ctx.builder
+        builder
             .create<arith::ConstantOp>(
                 op.getLoc(), DenseElementsAttr::get(lhs_vreg_type, zero_attr))
             .getResult());
@@ -1067,16 +1081,16 @@ LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
                                          cast<TypedValue<VectorType>>(vreg));
     }
   }
-  const ArrayAttr lhs_layout_attr = ctx.builder.getArrayAttr(
-      {ctx.builder.getAttr<VectorLayoutAttr>(layout_lhs)});
-  const ArrayAttr rhs_layout_attr = ctx.builder.getArrayAttr(
-      {ctx.builder.getAttr<VectorLayoutAttr>(layout_rhs)});
-  const ArrayAttr acc_layout_attr = ctx.builder.getArrayAttr(
-      {ctx.builder.getAttr<VectorLayoutAttr>(layout_acc)});
+  const ArrayAttr lhs_layout_attr =
+      builder.getArrayAttr({builder.getAttr<VectorLayoutAttr>(layout_lhs)});
+  const ArrayAttr rhs_layout_attr =
+      builder.getArrayAttr({builder.getAttr<VectorLayoutAttr>(layout_rhs)});
+  const ArrayAttr acc_layout_attr =
+      builder.getArrayAttr({builder.getAttr<VectorLayoutAttr>(layout_acc)});
   for (int64_t i = 0; i < lhs_vregs.dim(1); ++i) {
     const xla::Array<Value> col_vregs =
         lhs_vregs.Slice({0, i}, {lhs_vregs.dim(0), i + 1});
-    lhs_cols[i] = ctx.builder.create<tpu::RollVectorsOp>(
+    lhs_cols[i] = builder.create<tpu::RollVectorsOp>(
         op.getLoc(), lhs_col_ty, XlaArrayToFlatArrayRef(col_vregs));
     lhs_cols[i]->setAttr("out_layout", lhs_layout_attr);
   }
@@ -1085,7 +1099,7 @@ LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
   const auto rhs_tile_ty =
       VectorType::get({128, 128}, rhs.getType().getElementType());
   FAILUREOR_ASSIGN_OR_RETURN(xla::Array<Value> rhs_vregs,
-                             disassemble(ctx, layout_rhs, rhs));
+                             disassemble(ctx, builder, layout_rhs, rhs));
   const int64_t rhs_vregs_per_tile = 16 / layout_rhs.packing();
   int64_t nj, nk;
   if (transpose_rhs) {
@@ -1106,7 +1120,7 @@ LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
       const Attribute zero_attr,
       getZeroIntOrFloatAttr(rhs_vreg_type.getElementType()));
   auto rhs_zeros = cast<TypedValue<VectorType>>(
-      ctx.builder
+      builder
           .create<arith::ConstantOp>(
               op.getLoc(), DenseElementsAttr::get(rhs_vreg_type, zero_attr))
           .getResult());
@@ -1122,19 +1136,19 @@ LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
                   rhs_zeros, cast<TypedValue<VectorType>>(*vreg));
             });
       }
-      auto rhs_rolled_tile = ctx.builder.create<tpu::RollVectorsOp>(
+      auto rhs_rolled_tile = builder.create<tpu::RollVectorsOp>(
           op.getLoc(), rhs_tile_ty, XlaArrayToFlatArrayRef(rhs_tile));
       rhs_rolled_tile->setAttr("out_layout", rhs_layout_attr);
       const xla::Array<Value> acc_col_vregs =
           acc_vregs.Slice({0, j}, {acc_vregs.dim(0), j + 1});
-      auto acc_col = ctx.builder.create<tpu::RollVectorsOp>(
+      auto acc_col = builder.create<tpu::RollVectorsOp>(
           op.getLoc(), acc_col_ty, XlaArrayToFlatArrayRef(acc_col_vregs));
       acc_col->setAttr("out_layout", acc_layout_attr);
-      auto new_acc_col = ctx.builder.create<tpu::MatmulOp>(
+      auto new_acc_col = builder.create<tpu::MatmulOp>(
           op.getLoc(), acc_col_ty, lhs_cols[k], rhs_rolled_tile, acc_col,
           transpose_lhs, transpose_rhs, precision_attr);
       new_acc_col->setAttr("out_layout", acc_layout_attr);
-      auto new_acc_vregs = ctx.builder.create<tpu::UnrollVectorsOp>(
+      auto new_acc_vregs = builder.create<tpu::UnrollVectorsOp>(
           op.getLoc(),
           TypeRange(ValueRange(XlaArrayToFlatArrayRef(acc_col_vregs))),
           new_acc_col);
@@ -1144,7 +1158,8 @@ LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
     }
   }
   op.replaceAllUsesWith(
-      assemble(ctx, res.getType(), layout_out, acc_vregs).getOperation());
+      assemble(ctx, builder, res.getType(), layout_out, acc_vregs)
+          .getOperation());
   op.erase();
   return success();
 }
@@ -1179,6 +1194,7 @@ LogicalResult tpu_store_rule(RewriteContext &ctx, Operation &op,
   if (!layouts_in.front().has_value()) {
     return op.emitOpError("Expected non-null layout for tpu.store base");
   }
+  OpBuilder builder(&op);
   const VectorLayout &to_store_layout = *layouts_in.front();
   // We expect the value to store is already a native-sized vreg.
   if (to_store_layout.bitwidth() != 32) {
@@ -1197,7 +1213,7 @@ LogicalResult tpu_store_rule(RewriteContext &ctx, Operation &op,
   }
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> tiles,
-      disassemble(ctx, to_store_layout, store_op.getValueToStore()));
+      disassemble(ctx, builder, to_store_layout, store_op.getValueToStore()));
   CHECK((tiles.dimensions() == xla::DimensionVector{1, 1}));
   store_op.getValueToStoreMutable().assign(tiles({0, 0}));
   return success();
@@ -1229,6 +1245,7 @@ LogicalResult tpu_iota_rule(RewriteContext &ctx, Operation &op,
     return op.emitOpError("Expected non-null output layout");
   }
   const VectorLayout &layout_out = *layouts_out.front();
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
   tpu::IotaOp iota_op = cast<tpu::IotaOp>(op);
   VectorType vty = iota_op.getResult().getType();
   if (const auto int_ty = dyn_cast<IntegerType>(vty.getElementType());
@@ -1253,24 +1270,24 @@ LogicalResult tpu_iota_rule(RewriteContext &ctx, Operation &op,
     }
     const int64_t num_tiles = tile_array_shape[tile_array_shape.size() - 1];
     SmallVector<Value> tiles(num_tiles);
-    auto vreg_iota = ctx.builder.create<tpu::IotaOp>(
-        op.getLoc(), native_vreg_ty,
-        /*dimension =*/ctx.builder.getI32IntegerAttr(1));
+    auto vreg_iota = builder.create<tpu::IotaOp>(
+        native_vreg_ty,
+        /*dimension =*/builder.getI32IntegerAttr(1));
     for (int64_t i = 0; i < num_tiles; ++i) {
-      auto offset = ctx.builder.create<arith::ConstantOp>(
-          op.getLoc(), native_vreg_ty,
+      auto offset = builder.create<arith::ConstantOp>(
+          native_vreg_ty,
           DenseElementsAttr::get(
               native_vreg_ty,
               IntegerAttr::get(vty.getElementType(),
                                i * *(native_vreg_ty.getShape().end() - 1))));
-      tiles[i] =
-          ctx.builder.create<arith::AddIOp>(op.getLoc(), vreg_iota, offset);
+      tiles[i] = builder.create<arith::AddIOp>(vreg_iota, offset);
     }
     xla::Array<Value> broadcasted_tiles(tile_array_shape);
     broadcasted_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
       *v = tiles[*(idxs.end() - 1)];
     });
-    op.replaceAllUsesWith(assemble(ctx, vty, layout_out, broadcasted_tiles));
+    op.replaceAllUsesWith(
+        assemble(ctx, builder, vty, layout_out, broadcasted_tiles));
     op.erase();
     return success();
   }
@@ -1280,24 +1297,24 @@ LogicalResult tpu_iota_rule(RewriteContext &ctx, Operation &op,
     }
     const int64_t num_tiles = tile_array_shape[tile_array_shape.size() - 2];
     SmallVector<Value> tiles(num_tiles);
-    auto vreg_iota = ctx.builder.create<tpu::IotaOp>(
-        op.getLoc(), native_vreg_ty,
-        /*dimension =*/ctx.builder.getI32IntegerAttr(0));
+    auto vreg_iota = builder.create<tpu::IotaOp>(
+        native_vreg_ty,
+        /*dimension =*/builder.getI32IntegerAttr(0));
     for (int64_t i = 0; i < num_tiles; ++i) {
-      auto offset = ctx.builder.create<arith::ConstantOp>(
-          op.getLoc(), native_vreg_ty,
+      auto offset = builder.create<arith::ConstantOp>(
+          native_vreg_ty,
           DenseElementsAttr::get(
               native_vreg_ty,
               IntegerAttr::get(vty.getElementType(),
                                i * *(native_vreg_ty.getShape().end() - 2))));
-      tiles[i] =
-          ctx.builder.create<arith::AddIOp>(op.getLoc(), vreg_iota, offset);
+      tiles[i] = builder.create<arith::AddIOp>(vreg_iota, offset);
     }
     xla::Array<Value> broadcasted_tiles(tile_array_shape);
     broadcasted_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
       *v = tiles[*(idxs.end() - 2)];
     });
-    op.replaceAllUsesWith(assemble(ctx, vty, layout_out, broadcasted_tiles));
+    op.replaceAllUsesWith(
+        assemble(ctx, builder, vty, layout_out, broadcasted_tiles));
     op.erase();
     return success();
   }
@@ -1325,6 +1342,7 @@ LogicalResult tpu_gather_rule(RewriteContext &ctx, Operation &op,
       })) {
     return op.emitOpError("Not implemented: Only 2D layouts supported");
   }
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
   auto gather_op = cast<tpu::GatherOp>(op);
   const VectorType vty = gather_op.getResult().getType();
   const uint32_t dimension = gather_op.getDimension();
@@ -1333,7 +1351,7 @@ LogicalResult tpu_gather_rule(RewriteContext &ctx, Operation &op,
   }
   FAILUREOR_ASSIGN_OR_RETURN(
       const xla::Array<Value> in_tiles,
-      disassemble(ctx, layout_in, gather_op.getSource()));
+      disassemble(ctx, builder, layout_in, gather_op.getSource()));
   const int64_t width = ctx.target_shape[2 - (vty.getRank() - dimension)];
   const ArrayRef<int32_t> indices(gather_op.getIndices());
   auto [num_sections, rem] = std::div(indices.size(), width);
@@ -1363,7 +1381,7 @@ LogicalResult tpu_gather_rule(RewriteContext &ctx, Operation &op,
   if (dimension == vty.getRank() - 1) {
     // TODO(b/265133497): Remove the broadcast once 2nd minor works.
     const auto dyn_ix_ty =
-        VectorType::get(ctx.target_shape, ctx.builder.getI32Type());
+        VectorType::get(ctx.target_shape, builder.getI32Type());
     // Broadcast indices to target_shape
     SmallVector<int32_t> dyn_ix_val;
     for (int64_t i = 0; i < ctx.target_shape[0]; ++i) {  // Broadcast
@@ -1372,29 +1390,29 @@ LogicalResult tpu_gather_rule(RewriteContext &ctx, Operation &op,
     FAILUREOR_ASSIGN_OR_RETURN(
         const BlockArgument dyn_ix_ref,
         appendConstant(ctx, DenseIntElementsAttr::get(dyn_ix_ty, dyn_ix_val)));
-    auto all_sublanes = ctx.builder.getAttr<DenseBoolArrayAttr>(
+    auto all_sublanes = builder.getAttr<DenseBoolArrayAttr>(
         SmallVector<bool>(ctx.target_shape[1], true));
-    auto dyn_ix = ctx.builder.create<tpu::LoadOp>(
-        op.getLoc(), dyn_ix_ty, dyn_ix_ref,
-        SmallVector<Value>(2, IdxConst(0, ctx.builder, op.getLoc())),
+    auto dyn_ix = builder.create<tpu::LoadOp>(
+        dyn_ix_ty, dyn_ix_ref,
+        SmallVector<Value>(2, IdxConst(0, builder, op.getLoc())),
         /*sublane_mask=*/all_sublanes, /*sublane_stride=*/nullptr);
     out_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
       const Value in_tile = in_tiles(idxs);
-      *v = ctx.builder.create<tpu::DynamicGatherOp>(
-          op.getLoc(), in_tile.getType(), in_tile, dyn_ix, 1);
+      *v = builder.create<tpu::DynamicGatherOp>(in_tile.getType(), in_tile,
+                                                dyn_ix, 1);
     });
   } else {
     CHECK_EQ(dimension, vty.getRank() - 2);
     const auto segment_indices_attr =
-        ctx.builder.getAttr<DenseI32ArrayAttr>(segment_indices);
+        builder.getAttr<DenseI32ArrayAttr>(segment_indices);
     out_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
       const Value in_tile = in_tiles(idxs);
-      *v = ctx.builder.create<tpu::GatherOp>(op.getLoc(), in_tile.getType(),
-                                             in_tile, segment_indices_attr, 0);
+      *v = builder.create<tpu::GatherOp>(in_tile.getType(), in_tile,
+                                         segment_indices_attr, 0);
     });
   }
   gather_op.replaceAllUsesWith(
-      assemble(ctx, vty, layout_out, out_tiles).getOperation());
+      assemble(ctx, builder, vty, layout_out, out_tiles).getOperation());
   gather_op.erase();
   return success();
 }
@@ -1422,6 +1440,7 @@ LogicalResult tpu_repeat_rule(RewriteContext &ctx, Operation &op,
       layout_in.offsets() != LayoutOffsets{0, 0}) {
     return op.emitOpError("Not implemented: Non-trivial layouts unsupported");
   }
+  OpBuilder builder(&op);
   tpu::RepeatOp repeat_op = cast<tpu::RepeatOp>(op);
   VectorType src_ty = repeat_op.getSource().getType();
   const uint32_t dim = repeat_op.getDimension();
@@ -1434,10 +1453,10 @@ LogicalResult tpu_repeat_rule(RewriteContext &ctx, Operation &op,
   }
   FAILUREOR_ASSIGN_OR_RETURN(
       const xla::Array<Value> &in_vregs,
-      disassemble(ctx, layout_in, repeat_op.getSource()));
+      disassemble(ctx, builder, layout_in, repeat_op.getSource()));
   xla::Array<Value> out_vregs = repeat(in_vregs, repeat_op.getTimes(), dim);
-  repeat_op->replaceAllUsesWith(
-      assemble(ctx, repeat_op.getResult().getType(), layout_out, out_vregs));
+  repeat_op->replaceAllUsesWith(assemble(
+      ctx, builder, repeat_op.getResult().getType(), layout_out, out_vregs));
   repeat_op->erase();
   return success();
 }
@@ -1455,6 +1474,7 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
     return op.emitOpError("Expected non-null output layout");
   }
   const VectorLayout &layout_out = *layouts_out.front();
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
   auto load_op = cast<vector::LoadOp>(op);
   const auto memref_ty = cast<MemRefType>(load_op.getBase().getType());
   const auto vty = cast<VectorType>(load_op.getResult().getType());
@@ -1521,8 +1541,8 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
                        mlir_ctx);
     FAILUREOR_ASSIGN_OR_RETURN(const TypedAttr zero_attr,
                                getZeroIntOrFloatAttr(vty.getElementType()));
-    padding = ctx.builder.create<arith::ConstantOp>(
-        load_op.getLoc(), vty.getElementType(), zero_attr);
+    padding =
+        builder.create<arith::ConstantOp>(vty.getElementType(), zero_attr);
   }
   xla::Array<Value> tiles(
       layout_out.tileArrayShape(vty.getShape(), ctx.target_shape));
@@ -1553,15 +1573,15 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
             /*allow_replicated =*/{true, false});
         SmallVector<Value> idxs_vs(idxs.size());
         for (int64_t i = 0; i < idxs.size(); ++i) {
-          idxs_vs[i] = IdxConst(idxs[i], ctx.builder, load_op->getLoc());
+          idxs_vs[i] = IdxConst(idxs[i], builder, load_op->getLoc());
         }
         Operation *tile;
         if (bounds->maskVariesAlong(Direction::kSublanes, ctx.target_shape)) {
           CHECK(offsets[0].has_value());
-          tile = ctx.builder.create<tpu::LoadOp>(
-              load_op.getLoc(), target_ty, load_op.getBase(), idxs_vs,
+          tile = builder.create<tpu::LoadOp>(
+              target_ty, load_op.getBase(), idxs_vs,
               bounds->getSublaneMask(mlir_ctx, ctx.target_shape),
-              ctx.builder.getI32IntegerAttr(sublane_stride));
+              builder.getI32IntegerAttr(sublane_stride));
         } else {
           if (load_map) {
             CHECK(padding);
@@ -1569,17 +1589,16 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
               load_op.emitOpError("Not implemented");
               return absl::UnimplementedError("");
             }
-            tile = ctx.builder.create<vector::TransferReadOp>(
-                load_op.getLoc(), target_ty, load_op.getBase(), idxs_vs,
-                load_map, padding, nullptr, nullptr);
+            tile = builder.create<vector::TransferReadOp>(
+                target_ty, load_op.getBase(), idxs_vs, load_map, padding,
+                nullptr, nullptr);
           } else {
             const SmallVector<bool> sublane_mask(ctx.target_shape[0], true);
             const auto sublane_mask_attr =
                 DenseBoolArrayAttr::get(mlir_ctx, sublane_mask);
-            tile = ctx.builder.create<tpu::LoadOp>(
-                load_op.getLoc(), target_ty, load_op.getBase(), idxs_vs,
-                sublane_mask_attr,
-                ctx.builder.getI32IntegerAttr(sublane_stride));
+            tile = builder.create<tpu::LoadOp>(
+                target_ty, load_op.getBase(), idxs_vs, sublane_mask_attr,
+                builder.getI32IntegerAttr(sublane_stride));
           }
         }
         tiles(tile_idxs) = tile->getResult(0);
@@ -1588,7 +1607,8 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
   if (!status.ok()) {
     return failure();
   }
-  load_op->replaceAllUsesWith(assemble(ctx, vty, layout_out, std::move(tiles)));
+  load_op->replaceAllUsesWith(
+      assemble(ctx, builder, vty, layout_out, std::move(tiles)));
   load_op->erase();
   return success();
 }
@@ -1598,6 +1618,7 @@ LogicalResult arith_constant_rule(RewriteContext &ctx, Operation &op,
                                   const ArrayRef<Layout> layouts_out) {
   CHECK_EQ(layouts_in.size(), 0);
   CHECK_EQ(layouts_out.size(), 1);
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
   auto constant_op = cast<arith::ConstantOp>(op);
   auto vty = dyn_cast<VectorType>(op.getResult(0).getType());
   if (vty) {
@@ -1616,12 +1637,13 @@ LogicalResult arith_constant_rule(RewriteContext &ctx, Operation &op,
       }
       auto new_value =
           DenseElementsAttr::get(target_vty, value.getSplatValue<Attribute>());
-      const auto tile = ctx.builder.create<arith::ConstantOp>(
-          op.getLoc(), target_vty, new_value);
+      const auto tile =
+          builder.create<arith::ConstantOp>(target_vty, new_value);
       const xla::Array<Value> tiles(
           layout_out.tileArrayShape(vty.getShape(), ctx.target_shape),
           tile->getResult(0));
-      op.replaceAllUsesWith(assemble(ctx, vty, layout_out, std::move(tiles)));
+      op.replaceAllUsesWith(
+          assemble(ctx, builder, vty, layout_out, std::move(tiles)));
       op.erase();
       return success();
     }
@@ -1631,10 +1653,9 @@ LogicalResult arith_constant_rule(RewriteContext &ctx, Operation &op,
     }
     FAILUREOR_ASSIGN_OR_RETURN(const BlockArgument ref,
                                appendConstant(ctx, value));
-    auto load_op = ctx.builder.create<vector::LoadOp>(
-        op.getLoc(), vty, ref,
-        SmallVector<Value>(vty.getRank(),
-                           IdxConst(0, ctx.builder, op.getLoc())));
+    auto load_op = builder.create<vector::LoadOp>(
+        vty, ref,
+        SmallVector<Value>(vty.getRank(), IdxConst(0, builder, op.getLoc())));
     op.replaceAllUsesWith(ArrayRef<Value>{load_op.getResult()});
     op.erase();
     const SmallVector<Layout> vector_load_in_layouts(vty.getRank() + 1);
@@ -1656,6 +1677,7 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
   }
   const Layout &maybe_layout_in = layouts_in.front();
   const VectorLayout &layout_out = *layouts_out.front();
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
   vector::BroadcastOp broadcast_op = cast<vector::BroadcastOp>(op);
   const VectorType dst_ty = broadcast_op.getResult().getType();
   const SmallVector<int64_t> dst_tiles_shape =
@@ -1725,7 +1747,7 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
 
     FAILUREOR_ASSIGN_OR_RETURN(
         xla::Array<Value> src_tiles,
-        disassemble(ctx, layout_in, broadcast_op.getSource()));
+        disassemble(ctx, builder, layout_in, broadcast_op.getSource()));
     xla::Array<Value> dst_tiles(dst_tiles_shape);
     if (no_op) {
       SmallVector<int64_t> reshape_dims(expand_rank, 1);
@@ -1757,7 +1779,7 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
         CHECK_EQ(*(src_tiles.dimensions().end() - 2), 1);
         CHECK(offsets_in[0].has_value());
         const int64_t offset = *offsets_in[0];
-        const DenseI32ArrayAttr indices = ctx.builder.getDenseI32ArrayAttr(
+        const DenseI32ArrayAttr indices = builder.getDenseI32ArrayAttr(
             SmallVector<int32_t>(ctx.target_shape[0], offset));
         src_tiles.Each([&](const absl::Span<const int64_t> src_idx,
                            Value *const src_tile) {
@@ -1773,9 +1795,8 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
             }
           }
           updateSlice<Value>(dst_tiles,
-                             ctx.builder.create<tpu::GatherOp>(
-                                 broadcast_op.getLoc(), src_tile->getType(),
-                                 *src_tile, indices, 0),
+                             builder.create<tpu::GatherOp>(
+                                 src_tile->getType(), *src_tile, indices, 0),
                              dst_starts, dst_limits);
         });
       } else if (*(dim_eq.end() - 2)) {  // Lane broadcast
@@ -1783,11 +1804,11 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
         CHECK(offsets_in[1].has_value());
         const int64_t offset = *offsets_in[1];
         const auto idx_ty =
-            VectorType::get(ctx.target_shape, ctx.builder.getI32Type());
-        auto idx_const = ctx.builder.create<arith::ConstantOp>(
+            VectorType::get(ctx.target_shape, builder.getI32Type());
+        auto idx_const = builder.create<arith::ConstantOp>(
             broadcast_op.getLoc(), idx_ty,
             DenseElementsAttr::get(idx_ty,
-                                   ctx.builder.getI32IntegerAttr(offset)));
+                                   builder.getI32IntegerAttr(offset)));
         int64_t sublanes_per_tile = layout_in.sublanesPerTile(ctx.target_shape);
         DenseI32ArrayAttr sublane_pattern;
         if (num_tiles != 1) {
@@ -1798,7 +1819,7 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
               pattern.push_back(i);
             }
           }
-          sublane_pattern = ctx.builder.getDenseI32ArrayAttr(pattern);
+          sublane_pattern = builder.getDenseI32ArrayAttr(pattern);
         }
         src_tiles.Each([&](const absl::Span<const int64_t> src_idx,
                            Value *const src_tile) {
@@ -1813,11 +1834,11 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
               dst_limits[i] = dst_starts[i] + 1;
             }
           }
-          Value res_vreg = ctx.builder.create<tpu::DynamicGatherOp>(
+          Value res_vreg = builder.create<tpu::DynamicGatherOp>(
               broadcast_op.getLoc(), src_tile->getType(), *src_tile, idx_const,
               /*dimension=*/1);
           if (num_tiles != 1) {
-            res_vreg = ctx.builder.create<tpu::GatherOp>(
+            res_vreg = builder.create<tpu::GatherOp>(
                 broadcast_op.getLoc(), res_vreg.getType(), res_vreg,
                 sublane_pattern, 0);
           }
@@ -1830,18 +1851,18 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
       return op.emitOpError("Not implemented");
     }
     broadcast_op.replaceAllUsesWith(
-        assemble(ctx, dst_ty, layout_out, dst_tiles).getOperation());
+        assemble(ctx, builder, dst_ty, layout_out, dst_tiles).getOperation());
     broadcast_op.erase();
     return success();
   } else {
     FAILUREOR_ASSIGN_OR_RETURN(
         const VectorType native_vreg_ty,
         getNativeVregType(broadcast_op.getSourceType(), ctx.target_shape));
-    auto tile = ctx.builder.create<vector::BroadcastOp>(
-        broadcast_op.getLoc(), native_vreg_ty, broadcast_op.getSource());
+    auto tile = builder.create<vector::BroadcastOp>(native_vreg_ty,
+                                                    broadcast_op.getSource());
     const xla::Array<Value> dst_tiles(dst_tiles_shape, tile);
     broadcast_op.replaceAllUsesWith(
-        assemble(ctx, dst_ty, layout_out, dst_tiles).getOperation());
+        assemble(ctx, builder, dst_ty, layout_out, dst_tiles).getOperation());
     broadcast_op.erase();
     return success();
   }
@@ -1860,19 +1881,20 @@ LogicalResult vector_contract_rule(RewriteContext &ctx, Operation &op,
   if (!layouts_out.front().has_value()) {
     return op.emitOpError("Expected non-null output layout");
   }
+  MLIRContext *const mlir_ctx = ctx.getMLIRContext();
+  Builder builder(mlir_ctx);
   auto vector_contract_op = cast<vector::ContractionOp>(op);
   // TODO(tlongeri): There is some unnecessary uniquing happening but not sure
   // if it can be avoided without sacrificing readability rather severely.
   auto getMapAttr = [&](const unsigned first, const unsigned second) {
-    return AffineMapAttr::get(
-        AffineMap::get(3, 0,
-                       {getAffineDimExpr(first, ctx.builder.getContext()),
-                        getAffineDimExpr(second, ctx.builder.getContext())},
-                       ctx.builder.getContext()));
+    return AffineMapAttr::get(AffineMap::get(
+        3, 0,
+        {getAffineDimExpr(first, mlir_ctx), getAffineDimExpr(second, mlir_ctx)},
+        mlir_ctx));
   };
-  const ArrayAttr matmul_indexing_maps = ctx.builder.getArrayAttr(
+  const ArrayAttr matmul_indexing_maps = builder.getArrayAttr(
       {getMapAttr(0, 2), getMapAttr(2, 1), getMapAttr(0, 1)});
-  const ArrayAttr matmul_indexing_maps_transposed = ctx.builder.getArrayAttr(
+  const ArrayAttr matmul_indexing_maps_transposed = builder.getArrayAttr(
       {getMapAttr(0, 2), getMapAttr(1, 2), getMapAttr(0, 1)});
   const auto indexing_maps = vector_contract_op->getAttr("indexing_maps");
   if (indexing_maps != matmul_indexing_maps &&
@@ -1882,12 +1904,12 @@ LogicalResult vector_contract_rule(RewriteContext &ctx, Operation &op,
   }
   const bool transpose_rhs = indexing_maps == matmul_indexing_maps_transposed;
   const ArrayAttr matmul_iterator_types =
-      ctx.builder.getArrayAttr({ctx.builder.getAttr<vector::IteratorTypeAttr>(
-                                    vector::IteratorType::parallel),
-                                ctx.builder.getAttr<vector::IteratorTypeAttr>(
-                                    vector::IteratorType::parallel),
-                                ctx.builder.getAttr<vector::IteratorTypeAttr>(
-                                    vector::IteratorType::reduction)});
+      builder.getArrayAttr({builder.getAttr<vector::IteratorTypeAttr>(
+                                vector::IteratorType::parallel),
+                            builder.getAttr<vector::IteratorTypeAttr>(
+                                vector::IteratorType::parallel),
+                            builder.getAttr<vector::IteratorTypeAttr>(
+                                vector::IteratorType::reduction)});
   if (vector_contract_op->getAttr("iterator_types") != matmul_iterator_types) {
     return vector_contract_op->emitOpError(
         "Not implemented: Non-matmul iterator_types");
@@ -1918,6 +1940,7 @@ LogicalResult vector_extract_strided_slice_rule(
   if (layout_out != layout_in) {
     return op.emitOpError("Not implemented: Unsupported output layout");
   }
+  OpBuilder builder(&op);
   vector::ExtractStridedSliceOp extract_strided_slice_op =
       cast<vector::ExtractStridedSliceOp>(op);
   const ArrayRef<int64_t> tiled_dims =
@@ -1951,14 +1974,14 @@ LogicalResult vector_extract_strided_slice_rule(
       I64ArrayToSmallVector(extract_strided_slice_op.getSizes());
   const SmallVector<int64_t> slice_tiled_shape =
       layout_in.tileArrayShape(slice_sizes, ctx.target_shape);
-  FAILUREOR_ASSIGN_OR_RETURN(
-      const xla::Array<Value> input_tiles,
-      disassemble(ctx, layout_in, extract_strided_slice_op.getVector()));
+  FAILUREOR_ASSIGN_OR_RETURN(const xla::Array<Value> input_tiles,
+                             disassemble(ctx, builder, layout_in,
+                                         extract_strided_slice_op.getVector()));
   const xla::Array<Value> dst_tiles =
       input_tiles.Slice(offsets, slice_tiled_shape);
   const VectorType dst_ty = extract_strided_slice_op.getResult().getType();
   extract_strided_slice_op.replaceAllUsesWith(
-      assemble(ctx, dst_ty, layout_out, dst_tiles).getOperation());
+      assemble(ctx, builder, dst_ty, layout_out, dst_tiles).getOperation());
   extract_strided_slice_op.erase();
   return success();
 }
@@ -1976,6 +1999,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   const VectorLayout &src_layout = *layouts_in[0];
   const VectorLayout &acc_layout = *layouts_in[1];
   const VectorLayout &layout_out = *layouts_out[0];
+  OpBuilder builder(&op);
   auto multi_reduction_op = cast<vector::MultiDimReductionOp>(op);
   const ArrayAttr dims = multi_reduction_op.getReductionDims();
   if (dims.size() != 1) {
@@ -2002,7 +2026,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   }
   FAILUREOR_ASSIGN_OR_RETURN(
       const xla::Array<Value> acc_vregs,
-      disassemble(ctx, acc_layout, multi_reduction_op.getAcc()));
+      disassemble(ctx, builder, acc_layout, multi_reduction_op.getAcc()));
   const Value acc_vreg = *acc_vregs.begin();
   auto acc_def =
       dyn_cast_if_present<arith::ConstantOp>(acc_vreg.getDefiningOp());
@@ -2026,11 +2050,11 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   FloatAttr neutral;
   switch (multi_reduction_op.getKind()) {
     case vector::CombiningKind::ADD:
-      neutral = ctx.builder.getF32FloatAttr(0);
+      neutral = builder.getF32FloatAttr(0);
       break;
     case vector::CombiningKind::MAXF: {
-      neutral = ctx.builder.getFloatAttr(
-          ctx.builder.getF32Type(),
+      neutral = builder.getFloatAttr(
+          builder.getF32Type(),
           APFloat::getInf(APFloat::IEEEsingle(), /*Negative=*/true));
     } break;
     default:
@@ -2091,7 +2115,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     }
     FAILUREOR_ASSIGN_OR_RETURN(
         xla::Array<Value> src_vregs,
-        disassemble(ctx, src_layout, multi_reduction_op.getSource()));
+        disassemble(ctx, builder, src_layout, multi_reduction_op.getSource()));
     xla::Array<Value> result_vregs(
         layout_out.tileArrayShape(res_ty.getShape(), ctx.target_shape));
     tpu::ReductionKind tpu_kind;
@@ -2109,13 +2133,13 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     absl::Status status = src_vregs.EachStatus(
         [&](const absl::Span<const int64_t> idx, Value *const src_vreg) {
           const std::unique_ptr<VRegDataBounds> data_bounds =
-              src_layout.tileDataBounds(ctx.builder.getContext(), src_shape,
+              src_layout.tileDataBounds(builder.getContext(), src_shape,
                                         toArrayRef(idx), ctx.target_shape,
                                         allow_replicated);
           // TODO(tlongeri): Maybe assemble/disassemble should take
           // TypedValue<VectorType> and we could save casts here and elsewhere
           FailureOr<Value> failure_or_vreg =
-              maskOOB(ctx, cast<TypedValue<VectorType>>(*src_vreg),
+              maskOOB(ctx, builder, cast<TypedValue<VectorType>>(*src_vreg),
                       *data_bounds, neutral);
           if (failed(failure_or_vreg)) {
             return absl::UnknownError("");
@@ -2141,18 +2165,18 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
           } else {
             switch (tpu_kind) {
               case tpu::ReductionKind::SUM:
-                new_acc = ctx.builder.create<arith::AddFOp>(
+                new_acc = builder.create<arith::AddFOp>(
                     vreg.getLoc(), result_vregs(outer), vreg);
                 break;
               case tpu::ReductionKind::MAX:
-                new_acc = ctx.builder.create<arith::MaximumFOp>(
+                new_acc = builder.create<arith::MaximumFOp>(
                     vreg.getLoc(), result_vregs(outer), vreg);
                 break;
             }
           }
           if (reduced_ix == last_reduced_ix) {
-            new_acc = ctx.builder.create<tpu::AllReduceOp>(
-                new_acc.getLoc(), new_acc, vdim, tpu_kind);
+            new_acc = builder.create<tpu::AllReduceOp>(new_acc.getLoc(),
+                                                       new_acc, vdim, tpu_kind);
           }
           result_vregs(outer) = new_acc;
           return absl::OkStatus();
@@ -2161,7 +2185,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
       return failure();
     }
     multi_reduction_op->replaceAllUsesWith(
-        assemble(ctx, res_ty, layout_out, result_vregs));
+        assemble(ctx, builder, res_ty, layout_out, result_vregs));
     multi_reduction_op->erase();
     return success();
   }
@@ -2181,6 +2205,7 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
   }
   const VectorLayout &layout_in = *layouts_in.front();
   const VectorLayout &layout_out = *layouts_out.front();
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
   auto shape_cast_op = cast<vector::ShapeCastOp>(op);
   const VectorType src_ty = shape_cast_op.getSourceVectorType();
   const ArrayRef<int64_t> src_shape = src_ty.getShape();
@@ -2233,7 +2258,7 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
   }
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> src_vregs,
-      disassemble(ctx, layout_in, shape_cast_op.getSource()));
+      disassemble(ctx, builder, layout_in, shape_cast_op.getSource()));
   auto getDstVregs = [&]() -> FailureOr<xla::Array<Value>> {
     if (no_op) {
       xla::Array<Value> dst_vregs_local = src_vregs;
@@ -2290,14 +2315,14 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
             // BroadcastInSublanesOp requires the sublanes to be replicated.
             if (layout_in.offsets()[0].has_value()) {
               const int32_t sublane = row_idx % ctx.target_shape[0];
-              col_vreg = ctx.builder.create<tpu::GatherOp>(
-                  shape_cast_op.getLoc(), col_vreg.getType(), col_vreg,
+              col_vreg = builder.create<tpu::GatherOp>(
+                  col_vreg.getType(), col_vreg,
                   /*indices=*/
                   SmallVector<int32_t>(ctx.target_shape[0], sublane),
                   /*dimension=*/0);
             }
-            *dst_vreg = ctx.builder.create<BroadcastInSublanesOp>(
-                shape_cast_op.getLoc(), col_vreg.getType(), col_vreg,
+            *dst_vreg = builder.create<BroadcastInSublanesOp>(
+                col_vreg.getType(), col_vreg,
                 /*lane=*/(col_idx % sublanes_in_lane) * ctx.target_shape[0]);
           });
       if (!layout_in.offsets()[0].has_value()) {
@@ -2322,7 +2347,7 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
   };
   FAILUREOR_ASSIGN_OR_RETURN(const xla::Array<Value> dst_vregs, getDstVregs());
   shape_cast_op->replaceAllUsesWith(
-      assemble(ctx, dst_ty, layout_out, dst_vregs));
+      assemble(ctx, builder, dst_ty, layout_out, dst_vregs));
   shape_cast_op->erase();
   return success();
 }
@@ -2337,6 +2362,7 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
     return op.emitOpError(
         "Expected null input layouts for vector.store indices");
   }
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
   vector::StoreOp store_op = cast<vector::StoreOp>(op);
   const VectorType ty = store_op.getValueToStore().getType();
   const VectorLayout &to_store_layout = *layouts_in.front();
@@ -2362,7 +2388,7 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
       getIntConstsFromOperandRange(store_op.getIndices()));
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> tiles,
-      disassemble(ctx, to_store_layout, store_op.getValueToStore()));
+      disassemble(ctx, builder, to_store_layout, store_op.getValueToStore()));
   const int64_t ndims = base_indices.size();
   const int64_t nbatchdims = is_1d ? ndims - 1 : ndims - 2;
   const int64_t base_s = is_1d ? 0 : base_indices[ndims - 2];
@@ -2388,93 +2414,87 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
   }
   const std::array<int64_t, 2> vreg_slice =
       to_store_layout.vregSlice(ctx.target_shape);
-  const absl::Status status = tiles.EachStatus([&](const absl::Span<
-                                                       const int64_t>
-                                                       idx,
-                                                   const Value tile)
-                                                   -> absl::Status {
-    const std::unique_ptr<VRegDataBounds> bounds =
-        to_store_layout.tileDataBounds(mlir_ctx, stored_shape, toArrayRef(idx),
-                                       ctx.target_shape);
-    const int64_t sidx = *(idx.end() - 2);
-    const int64_t lidx = *(idx.end() - 1);
-    SmallVector<Value> indices(ndims);
-    auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1, ctx.builder,
-                                   store_op->getLoc());
-    for (int64_t i = 0; i < nbatchdims; ++i) {
-      indices[i] = boundIdxConst(idx[i] + base_indices[i]);
-    }
-    if (!is_1d) {
-      *(indices.end() - 2) =
-          boundIdxConst(base_s + sidx * vreg_slice[0] - *sublane_offset);
-    }
-    *(indices.end() - 1) =
-        boundIdxConst(base_l + lidx * vreg_slice[1] - *lane_offset);
-    const DenseBoolArrayAttr sublane_mask =
-        bounds->getSublaneMask(store_op->getContext(), ctx.target_shape);
-    const bool masks_subelements =
-        bounds->maskVariesAlong(Direction::kSubelements, ctx.target_shape);
-    if (bounds->maskVariesAlong(Direction::kLanes, ctx.target_shape) ||
-        masks_subelements) {
-      auto failure_or_mask =
-          bounds->getVectorMask(ctx.builder, store_op.getLoc(),
-                                ctx.hardware_generation, ctx.target_shape);
-      if (failed(failure_or_mask)) {
-        return absl::UnimplementedError("Failed to get vector mask");
-      }
-      TypedValue<VectorType> mask = failure_or_mask.value();
-      // Vmem stores don't support masking below 32-bit granularity, so we
-      // need to load and blend explicitly if needed.
-      if (masks_subelements) {
-        auto data = ctx.builder.create<tpu::LoadOp>(
-            store_op->getLoc(), tile.getType(), store_op.getBase(), indices,
-            sublane_mask, /*sublane_stride=*/nullptr);
-        const bool mask_is_a_bitmask =
-            cast<IntegerType>(mask.getType().getElementType()).getWidth() == 32;
-        Value updated;
-        if (mask_is_a_bitmask) {
-          auto ones = ctx.builder.create<arith::ConstantOp>(
-              store_op->getLoc(), mask.getType(),
-              DenseElementsAttr::get(
-                  mask.getType(),
-                  ctx.builder.getIntegerAttr(ctx.builder.getI32Type(),
-                                             APInt(32, 0xFFFFFFFF))));
-          auto masked_tile = ctx.builder.create<arith::AndIOp>(
-              store_op.getLoc(), mask,
-              ctx.builder.create<tpu::BitcastOp>(store_op.getLoc(),
-                                                 mask.getType(), tile));
-          auto mask_neg =
-              ctx.builder.create<arith::XOrIOp>(store_op.getLoc(), ones, mask);
-          auto masked_data = ctx.builder.create<arith::AndIOp>(
-              store_op.getLoc(), mask_neg,
-              ctx.builder.create<tpu::BitcastOp>(store_op.getLoc(),
-                                                 mask.getType(), data));
-          updated = ctx.builder.create<tpu::BitcastOp>(
-              store_op.getLoc(), tile.getType(),
-              ctx.builder.create<arith::OrIOp>(store_op.getLoc(), masked_data,
-                                               masked_tile));
-        } else {
-          updated = ctx.builder.create<arith::SelectOp>(store_op->getLoc(),
-                                                        mask, tile, data);
+  const absl::Status status =
+      tiles.EachStatus([&](const absl::Span<const int64_t> idx,
+                           const Value tile) -> absl::Status {
+        const std::unique_ptr<VRegDataBounds> bounds =
+            to_store_layout.tileDataBounds(mlir_ctx, stored_shape,
+                                           toArrayRef(idx), ctx.target_shape);
+        const int64_t sidx = *(idx.end() - 2);
+        const int64_t lidx = *(idx.end() - 1);
+        SmallVector<Value> indices(ndims);
+        auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1, builder,
+                                       store_op->getLoc());
+        for (int64_t i = 0; i < nbatchdims; ++i) {
+          indices[i] = boundIdxConst(idx[i] + base_indices[i]);
         }
-        ctx.builder.create<tpu::StoreOp>(
-            store_op.getLoc(), updated, store_op.getBase(), indices,
-            sublane_mask, /*mask=*/nullptr,
-            /*sublane_stride=*/ctx.builder.getI32IntegerAttr(sublane_stride));
-      } else {
-        ctx.builder.create<tpu::StoreOp>(
-            store_op->getLoc(), tile, store_op.getBase(), indices, sublane_mask,
-            /*mask=*/mask,
-            /*sublane_stride=*/ctx.builder.getI32IntegerAttr(sublane_stride));
-      }
-    } else {
-      ctx.builder.create<tpu::StoreOp>(
-          store_op.getLoc(), tile, store_op.getBase(), indices, sublane_mask,
-          /*mask=*/nullptr,
-          /*sublane_stride=*/ctx.builder.getI32IntegerAttr(sublane_stride));
-    }
-    return absl::OkStatus();
-  });
+        if (!is_1d) {
+          *(indices.end() - 2) =
+              boundIdxConst(base_s + sidx * vreg_slice[0] - *sublane_offset);
+        }
+        *(indices.end() - 1) =
+            boundIdxConst(base_l + lidx * vreg_slice[1] - *lane_offset);
+        const DenseBoolArrayAttr sublane_mask =
+            bounds->getSublaneMask(store_op->getContext(), ctx.target_shape);
+        const bool masks_subelements =
+            bounds->maskVariesAlong(Direction::kSubelements, ctx.target_shape);
+        if (bounds->maskVariesAlong(Direction::kLanes, ctx.target_shape) ||
+            masks_subelements) {
+          auto failure_or_mask =
+              bounds->getVectorMask(builder, store_op.getLoc(),
+                                    ctx.hardware_generation, ctx.target_shape);
+          if (failed(failure_or_mask)) {
+            return absl::UnimplementedError("Failed to get vector mask");
+          }
+          TypedValue<VectorType> mask = failure_or_mask.value();
+          // Vmem stores don't support masking below 32-bit granularity, so we
+          // need to load and blend explicitly if needed.
+          if (masks_subelements) {
+            auto data = builder.create<tpu::LoadOp>(
+                tile.getType(), store_op.getBase(), indices, sublane_mask,
+                /*sublane_stride=*/nullptr);
+            const bool mask_is_a_bitmask =
+                cast<IntegerType>(mask.getType().getElementType()).getWidth() ==
+                32;
+            Value updated;
+            if (mask_is_a_bitmask) {
+              auto ones = builder.create<arith::ConstantOp>(
+                  mask.getType(),
+                  DenseElementsAttr::get(
+                      mask.getType(),
+                      builder.getIntegerAttr(builder.getI32Type(),
+                                             APInt(32, 0xFFFFFFFF))));
+              auto masked_tile = builder.create<arith::AndIOp>(
+                  store_op.getLoc(), mask,
+                  builder.create<tpu::BitcastOp>(mask.getType(), tile));
+              auto mask_neg = builder.create<arith::XOrIOp>(ones, mask);
+              auto masked_data = builder.create<arith::AndIOp>(
+                  mask_neg,
+                  builder.create<tpu::BitcastOp>(mask.getType(), data));
+              updated = builder.create<tpu::BitcastOp>(
+                  tile.getType(),
+                  builder.create<arith::OrIOp>(masked_data, masked_tile));
+            } else {
+              updated = builder.create<arith::SelectOp>(mask, tile, data);
+            }
+            builder.create<tpu::StoreOp>(
+                updated, store_op.getBase(), indices, sublane_mask,
+                /*mask=*/nullptr,
+                /*sublane_stride=*/builder.getI32IntegerAttr(sublane_stride));
+          } else {
+            builder.create<tpu::StoreOp>(
+                tile, store_op.getBase(), indices, sublane_mask,
+                /*mask=*/mask,
+                /*sublane_stride=*/builder.getI32IntegerAttr(sublane_stride));
+          }
+        } else {
+          builder.create<tpu::StoreOp>(
+              tile, store_op.getBase(), indices, sublane_mask,
+              /*mask=*/nullptr,
+              /*sublane_stride=*/builder.getI32IntegerAttr(sublane_stride));
+        }
+        return absl::OkStatus();
+      });
   if (!status.ok()) {
     return failure();
   }
@@ -2490,9 +2510,9 @@ std::pair<StringRef, rule_type> rules_elementwise_op_entry() {
          const ArrayRef<Layout> layouts_out) -> LogicalResult {
         return elementwise_op_rule_unpacked<NumOperands>(
             ctx, op, layouts_in, layouts_out,
-            [&](RewriteContext &ctx,
+            [&](RewriteContext &ctx, OpBuilder &builder,
                 auto... operands) -> FailureOr<Operation *> {
-              return ctx.builder.create<Op>(op.getLoc(), operands...)
+              return builder.create<Op>(op.getLoc(), operands...)
                   .getOperation();
             });
       }};
@@ -2556,7 +2576,7 @@ const llvm::StringMap<rule_type> &rules() {
 }
 }  // namespace
 
-RollVectorsOp assemble(RewriteContext &ctx, VectorType vty,
+RollVectorsOp assemble(RewriteContext &ctx, OpBuilder &builder, VectorType vty,
                        const VectorLayout &layout,
                        const xla::Array<Value> &vals) {
   CHECK(vals.dimensions() ==
@@ -2564,10 +2584,9 @@ RollVectorsOp assemble(RewriteContext &ctx, VectorType vty,
   CHECK_GT(vals.num_elements(), 0);
   Location loc = vals.begin()->getLoc();
   auto op =
-      ctx.builder.create<RollVectorsOp>(loc, vty, XlaArrayToFlatArrayRef(vals));
-  op->setAttr("out_layout",
-              ctx.builder.getAttr<ArrayAttr>(ArrayRef<Attribute>{
-                  ctx.builder.getAttr<VectorLayoutAttr>(layout)}));
+      builder.create<RollVectorsOp>(loc, vty, XlaArrayToFlatArrayRef(vals));
+  op->setAttr("out_layout", builder.getAttr<ArrayAttr>(ArrayRef<Attribute>{
+                                builder.getAttr<VectorLayoutAttr>(layout)}));
   return op;
 }
 
@@ -2581,6 +2600,7 @@ RollVectorsOp assemble(RewriteContext &ctx, VectorType vty,
 // Returns:
 //   An ndarray of MLIR values representing the tiling of val given by layout.
 FailureOr<xla::Array<Value>> disassemble(RewriteContext &ctx,
+                                         OpBuilder &builder,
                                          const VectorLayout &layout,
                                          const Value val) {
   const auto vty = cast<VectorType>(val.getType());
@@ -2607,7 +2627,7 @@ FailureOr<xla::Array<Value>> disassemble(RewriteContext &ctx,
         VectorType vreg_ty,
         getNativeVregType(vty.getElementType(), ctx.target_shape));
     // TODO(tlongeri): nicer way of doing ValueTypeRange?
-    Operation *const u = ctx.builder.create<UnrollVectorsOp>(
+    Operation *const u = builder.create<UnrollVectorsOp>(
         val.getLoc(), SmallVector<Type>(num_vectors, vreg_ty), val);
     return XlaArrayFromShapeAndValues<Value>(layout_shape, u->getResults());
   }
@@ -2633,10 +2653,11 @@ FailureOr<xla::Array<Value>> disassemble(RewriteContext &ctx,
 // Returns:
 //   A new vreg assembled from dst tiles stored in given rotated vregs.
 Value selectTilesFromRotatedRowVregs(
-    RewriteContext &ctx, const ArrayRef<Value> &rotated_row_vregs,
-    const int64_t start_src_col, const int64_t end_src_col,
-    const int64_t first_dst_tile_sublane_offset,
+    RewriteContext &ctx, OpBuilder &builder,
+    const ArrayRef<Value> &rotated_row_vregs, const int64_t start_src_col,
+    const int64_t end_src_col, const int64_t first_dst_tile_sublane_offset,
     const VectorLayout &dst_layout) {
+  CHECK_LE(start_src_col, end_src_col);
   CHECK_LE(start_src_col, end_src_col);
   if (start_src_col == end_src_col) {
     return rotated_row_vregs[start_src_col];
@@ -2644,7 +2665,7 @@ Value selectTilesFromRotatedRowVregs(
   const int64_t mid_src_col = start_src_col + (end_src_col - start_src_col) / 2;
 
   Value left_partial_vreg = selectTilesFromRotatedRowVregs(
-      ctx, rotated_row_vregs, start_src_col, mid_src_col,
+      ctx, builder, rotated_row_vregs, start_src_col, mid_src_col,
       first_dst_tile_sublane_offset, dst_layout);
 
   const int64_t left_tiles_count = mid_src_col - start_src_col + 1;
@@ -2654,10 +2675,10 @@ Value selectTilesFromRotatedRowVregs(
       ctx.target_shape[0];
 
   Value right_partial_vreg = selectTilesFromRotatedRowVregs(
-      ctx, rotated_row_vregs, mid_src_col + 1, end_src_col,
+      ctx, builder, rotated_row_vregs, mid_src_col + 1, end_src_col,
       right_first_dst_tile_sublane_offset, dst_layout);
 
-  const IntegerType i1 = ctx.builder.getI1Type();
+  const IntegerType i1 = builder.getI1Type();
   const auto mask_vreg_ty =
       dst_layout.packing() == 2
           ? VectorType::get(
@@ -2665,7 +2686,7 @@ Value selectTilesFromRotatedRowVregs(
                 i1)
           : VectorType::get(ctx.target_shape, i1);
 
-  auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1, ctx.builder,
+  auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1, builder,
                                  left_partial_vreg.getLoc());
   if (first_dst_tile_sublane_offset < right_first_dst_tile_sublane_offset) {
     // The useful data sublanes in left vregs do not wrap around in vreg.
@@ -2685,26 +2706,26 @@ Value selectTilesFromRotatedRowVregs(
     // In the above case, the data we want to select from vreg 1 wraps around,
     // whereas vreg 0 useful data is contiguous. It is easier to create '1' mask
     // for vreg 0.
-    auto sublanes_mask = ctx.builder.create<tpu::CreateMaskOp>(
+    auto sublanes_mask = builder.create<tpu::CreateMaskOp>(
         left_partial_vreg.getLoc(), mask_vreg_ty,
         ArrayRef<Value>{boundIdxConst(first_dst_tile_sublane_offset),
                         boundIdxConst(0)},
         ArrayRef<Value>{boundIdxConst(right_first_dst_tile_sublane_offset),
                         boundIdxConst(ctx.target_shape[1])});
-    return ctx.builder.create<arith::SelectOp>(left_partial_vreg.getLoc(),
-                                               sublanes_mask, left_partial_vreg,
-                                               right_partial_vreg);
+    return builder.create<arith::SelectOp>(left_partial_vreg.getLoc(),
+                                           sublanes_mask, left_partial_vreg,
+                                           right_partial_vreg);
   }
 
-  auto sublanes_mask = ctx.builder.create<tpu::CreateMaskOp>(
+  auto sublanes_mask = builder.create<tpu::CreateMaskOp>(
       left_partial_vreg.getLoc(), mask_vreg_ty,
       ArrayRef<Value>{boundIdxConst(right_first_dst_tile_sublane_offset),
                       boundIdxConst(0)},
       ArrayRef<Value>{boundIdxConst(first_dst_tile_sublane_offset),
                       boundIdxConst(ctx.target_shape[1])});
-  return ctx.builder.create<arith::SelectOp>(left_partial_vreg.getLoc(),
-                                             sublanes_mask, right_partial_vreg,
-                                             left_partial_vreg);
+  return builder.create<arith::SelectOp>(left_partial_vreg.getLoc(),
+                                         sublanes_mask, right_partial_vreg,
+                                         left_partial_vreg);
 }
 
 // Retiles across vregs to match the destination layout when the sublane tiling
@@ -2722,9 +2743,9 @@ Value selectTilesFromRotatedRowVregs(
 // Returns:
 //   A new array of vregs that store tiles based on the destination layout.
 xla::Array<Value> retileToReducedSublanes(
-    RewriteContext &ctx, const ArrayRef<int64_t> value_shape,
-    const VectorLayout &src_layout, const xla::Array<Value> &src_vreg_array,
-    const VectorLayout &dst_layout) {
+    RewriteContext &ctx, OpBuilder &builder,
+    const ArrayRef<int64_t> value_shape, const VectorLayout &src_layout,
+    const xla::Array<Value> &src_vreg_array, const VectorLayout &dst_layout) {
   const int64_t dst_tiling_sublane = dst_layout.tiling()[0];
   CHECK_LT(0, dst_tiling_sublane);
   CHECK_LT(dst_tiling_sublane, src_layout.tiling()[0]);
@@ -2790,7 +2811,7 @@ xla::Array<Value> retileToReducedSublanes(
     if (rotate_amt < 0) {
       rotate_amt += ctx.target_shape[0];
     }
-    *rotated_src_vreg = ctx.builder.create<tpu::RotateOp>(
+    *rotated_src_vreg = builder.create<tpu::RotateOp>(
         src_vreg.getLoc(), src_vreg, rotate_amt, /*dimension=*/0);
   });
   // Assemble output vregs using tiles from rotated vregs using select.
@@ -2864,7 +2885,7 @@ xla::Array<Value> retileToReducedSublanes(
     const xla::Array<Value> rotated_row_slice =
         rotated_src_vreg_array.Slice(rotated_row_starts, rotated_row_ends);
     const Value dst_tile = selectTilesFromRotatedRowVregs(
-        ctx, /*rotated_row_vregs=*/
+        ctx, builder, /*rotated_row_vregs=*/
         ArrayRef(rotated_row_slice.begin(), rotated_row_slice.end()),
         src_vreg_array_col_start, src_vreg_array_col_end,
         first_dst_tile_sublane_offset, dst_layout);
@@ -2898,7 +2919,7 @@ xla::Array<Value> retileToReducedSublanes(
       // dst_tile_3_0_1
       // dst_tile_3_0_2
       // dst_tile_3_0_3
-      *dst_vreg = ctx.builder.create<tpu::RotateOp>(
+      *dst_vreg = builder.create<tpu::RotateOp>(
           dst_tile.getLoc(), dst_tile,
           ctx.target_shape[0] - first_dst_tile_sublane_offset, /*dimension=*/0);
     }
@@ -2942,8 +2963,8 @@ bool isSupportedReducedSublanesRetile(RewriteContext &ctx,
 // Returns:
 //   A new MLIR vector value, laid out as requested by dst.
 // TODO(apaszke): Test this function properly
-FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
-                          const VectorLayout &dst) {
+FailureOr<Value> relayout(RewriteContext &ctx, OpBuilder &builder, Value v,
+                          VectorLayout src, const VectorLayout &dst) {
   const int8_t bitwidth = src.bitwidth();
   if (bitwidth != dst.bitwidth()) {
     return emitError(v.getLoc(), "Can't change bitwidth during a relayout");
@@ -2951,11 +2972,11 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
   const int packing = src.packing();
   VectorType vty = cast<VectorType>(v.getType());
   FAILUREOR_ASSIGN_OR_RETURN(xla::Array<Value> src_tiles,
-                             disassemble(ctx, src, v));
+                             disassemble(ctx, builder, src, v));
   SmallVector<int64_t> dst_tiles_shape =
       dst.tileArrayShape(vty.getShape(), ctx.target_shape);
   if (src.generalizes(dst, vty.getShape(), ctx.target_shape)) {
-    return assemble(ctx, vty, dst, std::move(src_tiles)).getResult();
+    return assemble(ctx, builder, vty, dst, std::move(src_tiles)).getResult();
   }
   if (!src.offsets()[0].has_value() && !src.offsets()[1].has_value() &&
       src.tilesPerVreg(ctx.target_shape) == 1) {
@@ -2966,7 +2987,7 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
     xla::Array<Value> dst_tiles(
         /*sizes=*/dst.tileArrayShape(vty.getShape(), ctx.target_shape),
         /*value=*/src_tiles.data()[0]);
-    return assemble(ctx, vty, dst, std::move(dst_tiles)).getResult();
+    return assemble(ctx, builder, vty, dst, std::move(dst_tiles)).getResult();
   }
   // Try to reconcile differences in implicit dim.
   if (src.implicit_dim() != dst.implicit_dim()) {
@@ -2989,31 +3010,30 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
       *(src_tiles.dimensions().end() - 2) == 1) {
     xla::Array<Value> src_tiles_retiled(
         dst.tileArrayShape(vty.getShape(), ctx.target_shape));
-    src_tiles_retiled.Each([&](const absl::Span<const int64_t> idx,
-                               Value *const new_src_tile) {
-      const int64_t dst_col = idx.back();
-      const int64_t src_col = dst_col / 8;
-      const int64_t slane_idx = dst_col % 8;
-      const DenseI32ArrayAttr gather_indices =
-          ctx.builder.getDenseI32ArrayAttr(SmallVector<int32_t>(8, slane_idx));
-      SmallVector<int64_t> src_idx(toArrayRef(idx));
-      src_idx.back() = src_col;
-      Value src_tile = src_tiles(src_idx);
-      *new_src_tile = ctx.builder.create<tpu::GatherOp>(
-          v.getLoc(), src_tile.getType(), src_tile, gather_indices,
-          /*dimension=*/0);
-    });
+    src_tiles_retiled.Each(
+        [&](const absl::Span<const int64_t> idx, Value *const new_src_tile) {
+          const int64_t dst_col = idx.back();
+          const int64_t src_col = dst_col / 8;
+          const int64_t slane_idx = dst_col % 8;
+          const DenseI32ArrayAttr gather_indices =
+              builder.getDenseI32ArrayAttr(SmallVector<int32_t>(8, slane_idx));
+          SmallVector<int64_t> src_idx(toArrayRef(idx));
+          src_idx.back() = src_col;
+          Value src_tile = src_tiles(src_idx);
+          *new_src_tile = builder.create<tpu::GatherOp>(
+              v.getLoc(), src_tile.getType(), src_tile, gather_indices,
+              /*dimension=*/0);
+        });
     src = dst;
     src_tiles = std::move(src_tiles_retiled);
   }
   // TODO(b/265133506): Generalize retiling to general 16-bit types (might
   // need to use a different unpacking op).
-  VectorType vreg_f32 =
-      VectorType::get(ctx.target_shape, ctx.builder.getF32Type());
+  VectorType vreg_f32 = VectorType::get(ctx.target_shape, builder.getF32Type());
   // (8,128) -> (16,128) tiling change for packed 16-bit types.
   if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
       dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      vty.getElementType() == ctx.builder.getBF16Type() &&
+      vty.getElementType() == builder.getBF16Type() &&
       src.offsets() == dst.offsets() &&
       src.tiling() == std::array<int64_t, 2>{8, 128} &&
       dst.tiling() == std::array<int64_t, 2>{16, 128}) {
@@ -3031,11 +3051,11 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
       }
       Value src_row2 = src_tiles(src_idx);
       const int vreg_part = idx[idx.size() - 1] % 2;
-      auto half_row1 = ctx.builder.create<tpu::UnpackSubelementsOp>(
+      auto half_row1 = builder.create<tpu::UnpackSubelementsOp>(
           v.getLoc(), vreg_f32, src_row1, vreg_part);
-      auto half_row2 = ctx.builder.create<tpu::UnpackSubelementsOp>(
+      auto half_row2 = builder.create<tpu::UnpackSubelementsOp>(
           v.getLoc(), vreg_f32, src_row2, vreg_part);
-      *tile = ctx.builder.create<tpu::PackSubelementsOp>(
+      *tile = builder.create<tpu::PackSubelementsOp>(
           v.getLoc(), src_row1.getType(), ValueRange{half_row1, half_row2});
     });
     src = new_src;
@@ -3045,7 +3065,7 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
   // (8,128) -> (32,128) tiling change for packed 8-bit integers.
   if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
       dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      vty.getElementType() == ctx.builder.getI8Type() &&
+      vty.getElementType() == builder.getI8Type() &&
       src.offsets() == dst.offsets() &&
       src.tiling() == std::array<int64_t, 2>{8, 128} &&
       dst.tiling() == std::array<int64_t, 2>{32, 128}) {
@@ -3053,7 +3073,7 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
     xla::Array<Value> src_tiles_retiled(
         new_src.tileArrayShape(vty.getShape(), ctx.target_shape));
     VectorType vreg_i32 =
-        getNativeVregType(ctx.builder.getI32Type(), ctx.target_shape).value();
+        getNativeVregType(builder.getI32Type(), ctx.target_shape).value();
     src_tiles_retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
       const int vreg_part = idx.back() % 4;
       std::array<Value, 4> parts;
@@ -3061,14 +3081,14 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
       src_idx[src_idx.size() - 2] *= 4;
       src_idx[src_idx.size() - 1] /= 4;
       for (int i = 0; i < 4; ++i) {
-        parts[i] = ctx.builder.create<tpu::UnpackSubelementsOp>(
+        parts[i] = builder.create<tpu::UnpackSubelementsOp>(
             v.getLoc(), vreg_i32, src_tiles(src_idx), vreg_part);
         if (src_idx[src_idx.size() - 2] <
             src_tiles.dim(src_tiles.num_dimensions() - 2) - 1) {
           ++src_idx[src_idx.size() - 2];
         }
       }
-      *tile = ctx.builder.create<tpu::PackSubelementsOp>(
+      *tile = builder.create<tpu::PackSubelementsOp>(
           v.getLoc(), src_tiles.begin()->getType(), parts);
     });
     src = new_src;
@@ -3076,8 +3096,8 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
   }
 
   if (isSupportedReducedSublanesRetile(ctx, src, dst)) {
-    src_tiles =
-        retileToReducedSublanes(ctx, vty.getShape(), src, src_tiles, dst);
+    src_tiles = retileToReducedSublanes(ctx, builder, vty.getShape(), src,
+                                        src_tiles, dst);
     src = dst;
   }
 
@@ -3114,7 +3134,7 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
           sublane_diff += ctx.target_shape[0];
         }
         src_tiles.Each([&](absl::Span<const int64_t> idx, Value tile) {
-          dst_tiles(idx) = ctx.builder
+          dst_tiles(idx) = builder
                                .create<tpu::RotateOp>(v.getLoc(), tile,
                                                       /*amount=*/sublane_diff,
                                                       /*dimension=*/0)
@@ -3127,23 +3147,23 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
         const int subelem_diff = dst_subelem - src_subelem;
         const int shift_bits = bitwidth * std::abs(subelem_diff);
         VectorType bits_vreg_ty =
-            VectorType::get(ctx.target_shape, ctx.builder.getI32Type());
-        auto shift_vreg = ctx.builder.create<arith::ConstantOp>(
+            VectorType::get(ctx.target_shape, builder.getI32Type());
+        auto shift_vreg = builder.create<arith::ConstantOp>(
             v.getLoc(), bits_vreg_ty,
             DenseElementsAttr::get(bits_vreg_ty, shift_bits));
         dst_tiles.Each([&](absl::Span<const int64_t> /*idx*/, Value *tile) {
-          auto bit_tile = ctx.builder.create<tpu::BitcastOp>(
-              v.getLoc(), bits_vreg_ty, *tile);
+          auto bit_tile =
+              builder.create<tpu::BitcastOp>(v.getLoc(), bits_vreg_ty, *tile);
           Operation *shift_tile;
           if (subelem_diff > 0) {
-            shift_tile = ctx.builder.create<arith::ShLIOp>(v.getLoc(), bit_tile,
-                                                           shift_vreg);
+            shift_tile =
+                builder.create<arith::ShLIOp>(v.getLoc(), bit_tile, shift_vreg);
           } else {  // subelem_diff < 0
             CHECK_LT(subelem_diff, 0);
-            shift_tile = ctx.builder.create<arith::ShRUIOp>(
-                v.getLoc(), bit_tile, shift_vreg);
+            shift_tile = builder.create<arith::ShRUIOp>(v.getLoc(), bit_tile,
+                                                        shift_vreg);
           }
-          *tile = ctx.builder
+          *tile = builder
                       .create<tpu::BitcastOp>(v.getLoc(), tile->getType(),
                                               shift_tile->getResult(0))
                       .getResult();
@@ -3176,16 +3196,15 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
       std::optional<tpu::CreateMaskOp> maybe_create_mask;
       if (src_tiles.dimensions()[src_tiles.num_dimensions() - 1] > 1) {
         auto boundIdxConst =
-            std::bind(IdxConst, std::placeholders::_1, ctx.builder, v.getLoc());
-        maybe_create_mask = ctx.builder.create<tpu::CreateMaskOp>(
-            v.getLoc(),
-            VectorType::get(ctx.target_shape, ctx.builder.getI1Type()),
+            std::bind(IdxConst, std::placeholders::_1, builder, v.getLoc());
+        maybe_create_mask = builder.create<tpu::CreateMaskOp>(
+            v.getLoc(), VectorType::get(ctx.target_shape, builder.getI1Type()),
             ValueRange{boundIdxConst(0), boundIdxConst(0)},
             ValueRange{boundIdxConst(ctx.target_shape[0]),
                        boundIdxConst(col_diff)});
       }
       src_tiles.Each([&](absl::Span<const int64_t> idx, Value tile) {
-        Value rot_tile = ctx.builder
+        Value rot_tile = builder
                              .create<tpu::RotateOp>(v.getLoc(), tile,
                                                     /*amount=*/sublane_diff,
                                                     /*dimension=*/1)
@@ -3194,13 +3213,13 @@ FailureOr<Value> relayout(RewriteContext &ctx, Value v, VectorLayout src,
           SmallVector<int64_t> prev_idx(idx.begin(), idx.end());
           --prev_idx[idx.size() - 1];
           Value prev_rot_tile = dst_tiles(prev_idx);
-          rot_tile = ctx.builder.create<arith::SelectOp>(
+          rot_tile = builder.create<arith::SelectOp>(
               v.getLoc(), maybe_create_mask->getResult(), prev_rot_tile, tile);
         }
         dst_tiles(idx) = rot_tile;
       });
     }
-    return assemble(ctx, vty, dst, std::move(dst_tiles)).getResult();
+    return assemble(ctx, builder, vty, dst, std::move(dst_tiles)).getResult();
   }
   // TODO(apaszke): Implement general relayout
   return emitError(v.getLoc(), "unsupported layout change for ")
@@ -3270,12 +3289,10 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
       if (lo->generalizes(*li, vty.getShape(), ctx.target_shape)) {
         continue;
       }
-      const OpBuilder::InsertPoint ip = ctx.builder.saveInsertionPoint();
-      ctx.builder.setInsertionPoint(&op);
+      OpBuilder builder(&op);
       FAILUREOR_ASSIGN_OR_RETURN(Value new_v,
-                                 relayout(ctx, operand, /*src=*/*lo,
+                                 relayout(ctx, builder, operand, /*src=*/*lo,
                                           /*dst=*/*li));
-      ctx.builder.restoreInsertionPoint(ip);
       op.setOperand(idx, new_v);
     }
   }
@@ -3297,11 +3314,8 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
   }
   if (auto rule_it = rules().find(op.getName().getStringRef());
       rule_it != rules().end()) {
-    const OpBuilder::InsertPoint ip = ctx.builder.saveInsertionPoint();
-    ctx.builder.setInsertionPointAfter(&op);
     const rule_type &rule = rule_it->getValue();
     LogicalResult res = rule(ctx, op, layout_in, layout_out);
-    ctx.builder.restoreInsertionPoint(ip);
     return res;
   }
   return op.emitError("Unsupported operation: ") << op.getName();
@@ -3347,9 +3361,7 @@ struct ApplyVectorLayoutPass
       return;
     }
     func::FuncOp func = getOperation();
-    OpBuilder builder(func->getContext());
-    RewriteContext ctx{
-        func, builder, hardware_generation, {sublane_count, lane_count}};
+    RewriteContext ctx{func, hardware_generation, {sublane_count, lane_count}};
     if (failed(applyLayoutFunc(ctx, func))) {
       signalPassFailure();
       return;
