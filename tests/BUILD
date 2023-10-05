@@ -1171,9 +1171,9 @@ jax_test(
     name = "shard_map_test",
     srcs = ["shard_map_test.py"],
     shard_count = {
-        "cpu": 30,
+        "cpu": 50,
         "gpu": 10,
-        "tpu": 40,
+        "tpu": 50,
     },
     tags = ["multiaccelerator"],
     deps = [
