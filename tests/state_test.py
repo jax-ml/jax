@@ -1288,6 +1288,23 @@ class RunStateTest(jtu.JaxTestCase):
     self.assertEqual(x, 2 + 2 * 3 * 2)
     self.assertEqual(y, 2 * 3 * 2)
 
+  def test_nontrivial_run_state_jit(self):
+    def f(refs):
+      x_ref, y_ref = refs
+
+      @jax.jit
+      def g():
+        x = x_ref[...] * y_ref[...]
+        y_ref[...] = x * 2
+        x_ref[...] = y_ref[...] + x_ref[...]
+        # x + x * y * 2, x * y * 2
+
+      g()
+
+    x, y = run_state(f)((2, 3))
+    self.assertEqual(x, 2 + 2 * 3 * 2)
+    self.assertEqual(y, 2 * 3 * 2)
+
   def test_simple_run_state_with_multiple_refs(self):
     out1, out2 = run_state(lambda _: None)((1, 2))
     self.assertEqual(out1, 1)

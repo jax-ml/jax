@@ -251,7 +251,8 @@ def _closed_call_discharge_rule(
   ref_vals_iter = iter(ref_vals)
   new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
                      else None for aval in in_avals)
-  assert next(ref_vals_iter, None) is None
+  sentinel = object()
+  assert next(ref_vals_iter, sentinel) is sentinel
   return new_invals, out_vals
 
 # # `run_state`
