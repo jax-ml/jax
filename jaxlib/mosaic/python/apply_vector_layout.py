@@ -2158,6 +2158,10 @@ def _tpu_iota_rule(ctx: RewriteContext, op: tpu.IotaOp,  # pylint: disable=missi
   ty = ir.VectorType(op.result.type)
   vreg = native_vreg_ty(ty.element_type)
   assert ir.IntegerType.isinstance(ty.element_type)
+  if layout_out.bitwidth != 32:
+    raise NotImplementedError("Only 32-bit iota supported")
+  if not layout_out.has_native_tiling:
+    raise NotImplementedError("Only native tilings supported")
   if layout_out.implicit_dim is not None:
     raise NotImplementedError("Only 2D layouts supported")
   tile_array_shape = layout_out.tile_array_shape(ty.shape)

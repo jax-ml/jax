@@ -1266,6 +1266,9 @@ LogicalResult tpu_iota_rule(RewriteContext &ctx, Operation &op,
       int_ty == nullptr || int_ty.getWidth() != 32) {
     return iota_op.emitOpError("Not implemented: Only 32-bit Iota supported");
   }
+  if (!layout_out.hasNativeTiling(ctx.target_shape)) {
+    return iota_op.emitOpError("Not implemented: Only native tiling supported");
+  }
   FAILUREOR_ASSIGN_OR_RETURN(
       const auto native_vreg_ty,
       getNativeVregType(vty.getElementType(), ctx.target_shape));
