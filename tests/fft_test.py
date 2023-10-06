@@ -102,26 +102,30 @@ class FftTest(jtu.JaxTestCase):
                         lax.fft(x, "fft", fft_lengths=(10,)))
 
   def testLaxFftErrors(self):
-    with self.assertRaises(
-      ValueError,
-      msg="FFT input shape (14, 15) must have at least as many input "
-          "dimensions as fft_lengths (4, 5, 6)"):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"FFT input shape \(14, 15\) must have at least as many input "
+        r"dimensions as fft_lengths \(4, 5, 6\)"):
       lax.fft(np.ones((14, 15)), fft_type="fft", fft_lengths=(4, 5, 6))
-    with self.assertRaises(
-      ValueError,
-      msg="FFT input shape (14, 15) minor dimensions must be equal to "
-          "fft_lengths (17,)"):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"FFT input shape \(14, 15\) minor dimensions must be equal to "
+        r"fft_lengths \(17,\)"):
       lax.fft(np.ones((14, 15)), fft_type="fft", fft_lengths=(17,))
-    with self.assertRaises(
-      ValueError,
-      msg="RFFT input shape (14, 15) minor dimensions must be equal to "
-          "fft_lengths (14, 15,)"):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"RFFT input shape \(2, 14, 15\) minor dimensions must be equal to "
+        r"fft_lengths \(14, 12\)"):
       lax.fft(np.ones((2, 14, 15)), fft_type="rfft", fft_lengths=(14, 12))
-    with self.assertRaises(
-      ValueError,
-      msg="IRFFT input shape (14, 15) minor dimensions must be equal to "
-          "all except the last fft_length, got fft_lengths=(14, 15,)"):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"IRFFT input shape \(2, 14, 15\) minor dimensions must be equal to "
+        r"all except the last fft_length, got fft_lengths=\(13, 15\)"):
       lax.fft(np.ones((2, 14, 15)), fft_type="irfft", fft_lengths=(13, 15))
+    with self.assertRaisesRegex(
+        ValueError, "RFFT input must be float32 or float64, got bfloat16"):
+      lax.fft(np.ones((14, 15), jnp.bfloat16), fft_type="rfft",
+              fft_lengths=(5, 6))
 
   @parameterized.parameters((np.float32,), (np.float64,))
   def testLaxIrfftDoesNotMutateInputs(self, dtype):
