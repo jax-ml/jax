@@ -13,12 +13,18 @@
 # limitations under the License.
 """Tests for multi-platform and cross-platform JAX export."""
 
+import math
 import re
-from typing import Literal
+from typing import Callable, Sequence
 
 from absl import logging
 from absl.testing import absltest
+
+import numpy as np
+
 import jax
+from jax import lax
+from jax._src import pjit
 from jax._src import test_util as jtu
 from jax.experimental.export import export
 # TODO(necula): Move the primitive harness out of jax2tf so that we can move
@@ -45,7 +51,6 @@ _skip_cuda_lowering_unless_have_gpus = make_disjunction_regexp(
     "svd_", "lu_", "eigh_", "qr_", "custom_linear_", "tridiagonal_solve_",
     "random_",
 )
-
 
 class PrimitiveTest(jtu.JaxTestCase):
 
@@ -88,8 +93,21 @@ class PrimitiveTest(jtu.JaxTestCase):
     for l in harness.jax_unimplemented:
       if l.filter(dtype=harness.dtype):
         unimplemented_platforms = unimplemented_platforms.union(l.devices)
+    if (_skip_cuda_lowering_unless_have_gpus.search(harness.fullname)
+        and all(d.platform != "gpu" for d in self.devices)):
+      unimplemented_platforms.add("gpu")
+
     logging.info("Harness is not implemented on %s", unimplemented_platforms)
 
+    self.export_and_compare_to_native(
+      func_jax, *args,
+      unimplemented_platforms=unimplemented_platforms)
+
+  def export_and_compare_to_native(
+      self, func_jax: Callable,
+      *args: jax.Array,
+      unimplemented_platforms: set[str] = set(),
+      skip_run_on_platforms: set[str] = set()):
     devices = [
         d
         for d in self.__class__.devices
@@ -99,14 +117,9 @@ class PrimitiveTest(jtu.JaxTestCase):
     # lowering_platforms uses "cuda" instead of "gpu"
     lowering_platforms: list[str] = [
         p if p != "gpu" else "cuda"
-        for p in {"cpu", "gpu", "tpu"} - unimplemented_platforms
+        for p in ("cpu", "gpu", "tpu")
+        if p not in unimplemented_platforms
     ]
-    if (
-        "cuda" in lowering_platforms
-        and _skip_cuda_lowering_unless_have_gpus.search(harness.fullname)
-        and all(d.platform != "gpu" for d in devices)
-    ):
-      lowering_platforms.remove("cuda")
 
     if len(lowering_platforms) <= 1:
       self.skipTest(
@@ -117,6 +130,9 @@ class PrimitiveTest(jtu.JaxTestCase):
     exp = export.export(func_jax, lowering_platforms=lowering_platforms)(*args)
 
     for device in devices:
+      if device.platform in skip_run_on_platforms:
+        logging.info("Skipping running on %s", device)
+        continue
       device_args = jax.tree_util.tree_map(
           lambda x: jax.device_put(x, device), args
       )
@@ -126,6 +142,32 @@ class PrimitiveTest(jtu.JaxTestCase):
       exported_res = export.call_exported(exp)(*device_args)
       self.assertAllClose(native_res, exported_res)
       # TODO(necula): Check HLO equivalence for the ultimate test.
+
+  def test_psum_scatter(self):
+    f = jax.jit(jax.pmap(lambda x: lax.psum_scatter(x, 'i'),
+                         axis_name='i',
+                         devices=jax.devices()[:1]))
+
+    shape = (1, 1, 8)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    self.export_and_compare_to_native(f, x)
+
+  # The lowering rule for all_gather has special cases for bool.
+  @jtu.parameterized_filterable(
+    kwargs=[
+      dict(dtype=dtype)
+      for dtype in [np.bool_, np.float32]],
+  )
+  def test_all_gather(self, *, dtype):
+    f = jax.jit(jax.pmap(lambda x: lax.all_gather(x, 'i'),
+                         axis_name='i',
+                         devices=jax.devices()[:1]))
+
+    shape = (1, 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    if dtype == np.bool_:
+      x = (x % 2).astype(np.bool_)
+    self.export_and_compare_to_native(f, x)
 
 
 if __name__ == "__main__":
