@@ -13,7 +13,9 @@ Remember to align the itemized text with the first line of an item within a list
 * Changes
   * CUDA jaxlibs now depend on the user to install a compatible NCCL version.
     If using the recommended `cuda12_pip` installation, NCCL should be installed
-    automatically.
+    automatically. Currently, NCCL 2.16 or newer is required.
+  * We now provide Linux aarch64 wheels, both with and without NVIDIA GPU
+    support.
 
 # jax 0.4.17 (Oct 3, 2023)
 

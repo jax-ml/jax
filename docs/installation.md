@@ -55,13 +55,6 @@ not being installed alongside `jax`, although `jax` may successfully install
 
 ## NVIDIA GPU
 
-### pip installation: GPU (CUDA, installed via pip, easier)
-
-There are two ways to install JAX with NVIDIA GPU support: using CUDA and CUDNN
-installed from pip wheels, and using a self-installed CUDA/CUDNN. We 
-strongly recommend installing CUDA and CUDNN using the pip wheels, since it is
-much easier!
-
 JAX supports NVIDIA GPUs that have SM version 5.2 (Maxwell) or newer.
 Note that Kepler-series GPUs are no longer supported by JAX since
 NVIDIA has dropped support for Kepler GPUs in its software.
@@ -75,6 +68,12 @@ able to use the
 [CUDA forward compatibility packages](https://docs.nvidia.com/deploy/cuda-compatibility/)
 that NVIDIA provides for this purpose.
 
+### pip installation: GPU (CUDA, installed via pip, easier)
+
+There are two ways to install JAX with NVIDIA GPU support: using CUDA and CUDNN
+installed from pip wheels, and using a self-installed CUDA/CUDNN. We
+strongly recommend installing CUDA and CUDNN using the pip wheels, since it is
+much easier!
 
 ```bash
 pip install --upgrade pip
@@ -114,18 +113,16 @@ able to use the
 that NVIDIA provides for this purpose.
 
 JAX currently ships two CUDA wheel variants:
-* CUDA 12.2 and CuDNN 8.9.4.
-* CUDA 11.8 and CuDNN 8.6.
+* CUDA 12.2, cuDNN 8.9, NCCL 2.16
+* CUDA 11.8, cuDNN 8.6, NCCL 2.16
 
-You may use a JAX wheel provided the major version of your CUDA
-installation matches, and the minor versions are the same or newer.
+You may use a JAX wheel provided the major version of your CUDA, cuDNN, and NCCL
+installations match, and the minor versions are the same or newer.
 JAX checks the versions of your libraries, and will report an error if they are
 not sufficiently new.
 
-Your CUDA installation must also be new enough to support your GPU. If you have
-an Ada Lovelace (e.g., RTX 4080) or Hopper (e.g., H100) GPU,
-you must use CUDA 11.8 or newer.
-
+NCCL is an optional dependency, required only if you are performing multi-GPU
+computations.
 
 To install, run
 
@@ -150,14 +147,9 @@ You can find your CUDA version with the command:
 nvcc --version
 ```
 
-Some GPU functionality expects the CUDA installation to be at
-`/usr/local/cuda-X.X`, where X.X should be replaced with the CUDA version number
-(e.g. `cuda-11.8`). If CUDA is installed elsewhere on your system, you can either
-create a symlink:
-
-```bash
-sudo ln -s /path/to/cuda /usr/local/cuda-X.X
-```
+JAX uses `LD_LIBRARY_PATH` to find CUDA libraries and `PATH` to find binaries
+(`ptxas`, `nvlink`). Please make sure that these paths point to the correct CUDA
+installation.
 
 Please let us know on [the issue tracker](https://github.com/google/jax/issues)
 if you run into any errors or problems with the prebuilt wheels.
