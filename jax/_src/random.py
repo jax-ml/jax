@@ -16,7 +16,8 @@ from collections.abc import Sequence
 from functools import partial
 import math
 from operator import index
-from typing import Optional, Union
+import typing
+from typing import Hashable, Optional, Union
 import warnings
 
 import numpy as np
@@ -52,7 +53,9 @@ DTypeLikeUInt = DTypeLike
 DTypeLikeFloat = DTypeLike
 Shape = Sequence[int]
 
-# TODO(frostig): simplify once we always enable_custom_prng
+PRNGImpl = prng.PRNGImpl
+
+# TODO(frostig,vanderplas): remove after deprecation window
 KeyArray = Union[Array, prng.PRNGKeyArray]
 PRNGKeyArray = prng.PRNGKeyArray
 
@@ -109,35 +112,64 @@ def _random_bits(key: prng.PRNGKeyArray, bit_width, shape) -> Array:
   return prng.random_bits(key, bit_width=bit_width, shape=shape)
 
 
-PRNG_IMPLS = {
-    'threefry2x32': prng.threefry_prng_impl,
-    'rbg': prng.rbg_prng_impl,
-    'unsafe_rbg': prng.unsafe_rbg_prng_impl,
-}
-
+# TODO(frostig,vanderplas): remove from public API altogether, or at
+# least change to return after asserting presence in `prng.prngs`
 def default_prng_impl():
   """Get the default PRNG implementation.
 
   The default implementation is determined by ``config.jax_default_prng_impl``,
-  which specifies it by name. This function returns the corresponding
-  ``jax.prng.PRNGImpl`` instance.
+  which specifies it by name.
   """
   impl_name = config.jax_default_prng_impl
-  assert impl_name in PRNG_IMPLS, impl_name
-  return PRNG_IMPLS[impl_name]
+  assert impl_name in prng.prngs, impl_name
+  return prng.prngs[impl_name]
 
 
 ### key operations
 
-def resolve_prng_impl(impl_spec: Optional[str]):
+# Wrapper around prng.PRNGImpl meant to hide its attributes from the
+# public API.
+# TODO(frostig,vanderplas): consider hiding all the attributes of
+# PRNGImpl and directly returning it.
+class PRNGSpec:
+  """Specifies a PRNG key implementation."""
+
+  __slots__ = ['_impl']
+  _impl: PRNGImpl
+
+  def __init__(self, impl):
+    self._impl = impl
+
+  def __str__(self)  -> str: return str(self._impl)
+  def __hash__(self) -> int: return hash(self._impl)
+
+  def __eq__(self, other) -> bool:
+    return self._impl == other._impl
+
+
+def resolve_prng_impl(
+    impl_spec: Optional[Union[str, PRNGSpec, PRNGImpl]]) -> PRNGImpl:
   if impl_spec is None:
     return default_prng_impl()
-  if impl_spec in PRNG_IMPLS:
-    return PRNG_IMPLS[impl_spec]
+  if type(impl_spec) is PRNGImpl:
+    # TODO(frostig,vanderplas): remove this case once we remove
+    # default_prng_impl (and thus PRNGImpl) from the public API and
+    # PRNGImpl from jex. We won't need to handle these then, and we
+    # can remove them from the input type annotation above as well.
+    return impl_spec
+  if type(impl_spec) is PRNGSpec:
+    return impl_spec._impl
+  if type(impl_spec) is str:
+    if impl_spec in prng.prngs:
+      return prng.prngs[impl_spec]
 
-  keys_fmt = ', '.join(f'"{s}"' for s in PRNG_IMPLS.keys())
-  raise ValueError(f'unrecognized PRNG implementation "{impl_spec}". '
-                   f'Did you mean one of: {keys_fmt}?')
+    keys_fmt = ', '.join(f'"{s}"' for s in prng.prngs.keys())
+    raise ValueError(f'unrecognized PRNG implementation "{impl_spec}". '
+                     f'Did you mean one of: {keys_fmt}?')
+
+  t = type(impl_spec)
+  raise TypeError(f'unrecognized type {t} for specifying PRNG implementation.')
+
 
 def _key(ctor_name: str, seed: Union[int, Array], impl_spec: Optional[str]
          ) -> PRNGKeyArray:
@@ -189,6 +221,7 @@ def PRNGKey(seed: Union[int, Array], *,
   """
   return _return_prng_keys(True, _key('PRNGKey', seed, impl))
 
+
 # TODO(frostig): remove once we always enable_custom_prng
 def _check_default_impl_with_no_custom_prng(impl, name):
   default_impl = default_prng_impl()
@@ -219,6 +252,7 @@ def unsafe_rbg_key(seed: int) -> KeyArray:
   key = prng.seed_with_impl(impl, seed)
   return _return_prng_keys(True, key)
 
+
 def _fold_in(key: KeyArray, data: IntegerArray) -> KeyArray:
   # Alternative to fold_in() to use within random samplers.
   # TODO(frostig): remove and use fold_in() once we always enable_custom_prng
@@ -245,6 +279,7 @@ def fold_in(key: KeyArray, data: IntegerArray) -> KeyArray:
   key, wrapped = _check_prng_key(key)
   return _return_prng_keys(wrapped, _fold_in(key, data))
 
+
 def _split(key: KeyArray, num: Union[int, tuple[int, ...]] = 2) -> KeyArray:
   # Alternative to split() to use within random samplers.
   # TODO(frostig): remove and use split(); we no longer need to wait
@@ -270,6 +305,17 @@ def split(key: KeyArray, num: Union[int, tuple[int, ...]] = 2) -> KeyArray:
   key, wrapped = _check_prng_key(key)
   return _return_prng_keys(wrapped, _split(key, num))
 
+
+def _key_impl(keys: KeyArray) -> PRNGImpl:
+  assert jnp.issubdtype(keys.dtype, dtypes.prng_key)
+  keys_dtype = typing.cast(prng.KeyTy, keys.dtype)
+  return keys_dtype.impl
+
+def key_impl(keys: KeyArray) -> Hashable:
+  keys, _ = _check_prng_key(keys)
+  return PRNGSpec(_key_impl(keys))
+
+
 def _key_data(keys: KeyArray) -> Array:
   assert jnp.issubdtype(keys.dtype, dtypes.prng_key)
   return prng.random_unwrap(keys)
@@ -278,6 +324,7 @@ def key_data(keys: KeyArray) -> Array:
   """Recover the bits of key data underlying a PRNG key array."""
   keys, _ = _check_prng_key(keys)
   return _key_data(keys)
+
 
 def wrap_key_data(key_bits_array: Array, *, impl: Optional[str] = None):
   """Wrap an array of key data bits into a PRNG key array.

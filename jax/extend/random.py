@@ -16,6 +16,9 @@
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
 from jax._src.prng import (
+  # TODO(frostig,vanderplas): expose a define_prng_impl instead of the
+  # PRNGImpl constructor, to leave some room for us to register or check input,
+  # or to change what output type we return.
   PRNGImpl as PRNGImpl,
   seed_with_impl as seed_with_impl,
   threefry2x32_p as threefry2x32_p,
