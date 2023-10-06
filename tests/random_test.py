@@ -41,13 +41,6 @@ from jax._src import prng as prng_internal
 from jax import config
 config.parse_flags_with_absl()
 
-def _prng_key_as_array(key):
-  # TODO(frostig): remove some day when we deprecate "raw" key arrays
-  if jnp.issubdtype(key.dtype, dtypes.prng_key):
-    return random.key_data(key)
-  else:
-    return key
-
 PRNG_IMPLS = [('threefry2x32', prng_internal.threefry_prng_impl),
               ('rbg', prng_internal.rbg_prng_impl),
               ('unsafe_rbg', prng_internal.unsafe_rbg_prng_impl)]
@@ -388,14 +381,14 @@ class PrngTest(jtu.JaxTestCase):
                   [6, 3, 4]], dtype='int32'))
 
     self.assertAllClose(
-        _prng_key_as_array(random.split(k, 4)),
+        random.key_data(random.split(k, 4)),
         np.array([[2285895361, 1501764800],
                   [1518642379, 4090693311],
                   [ 433833334, 4221794875],
                   [ 839183663, 3740430601]], dtype='uint32'))
 
     self.assertAllClose(
-        _prng_key_as_array(random.fold_in(k, 4)),
+        random.key_data(random.fold_in(k, 4)),
         np.array([2285895361,  433833334], dtype='uint32'))
 
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
@@ -413,8 +406,8 @@ class PrngTest(jtu.JaxTestCase):
       key = make_key(72)
       f1, f2, f3 = (random.fold_in(key, i) for i in range(3))
       s1, s2, s3 = random.split(key, 3)
-      f1, f2, f3 = map(_prng_key_as_array, [f1, f2, f3])
-      s1, s2, s3 = map(_prng_key_as_array, [s1, s2, s3])
+      f1, f2, f3 = map(random.key_data, [f1, f2, f3])
+      s1, s2, s3 = map(random.key_data, [s1, s2, s3])
       self.assertArraysEqual(f1, s1)
       self.assertArraysEqual(f2, s2)
       self.assertArraysEqual(f3, s3)
@@ -428,8 +421,8 @@ class PrngTest(jtu.JaxTestCase):
       f1, f2, f3 = vmap(lambda k, _: random.fold_in(k, lax.axis_index('batch')),
                         in_axes=(None, 0), axis_name='batch')(key, jnp.ones(3))
       s1, s2, s3 = random.split(key, 3)
-      f1, f2, f3 = map(_prng_key_as_array, [f1, f2, f3])
-      s1, s2, s3 = map(_prng_key_as_array, [s1, s2, s3])
+      f1, f2, f3 = map(random.key_data, [f1, f2, f3])
+      s1, s2, s3 = map(random.key_data, [s1, s2, s3])
       self.assertArraysEqual(f1, s1)
       self.assertArraysEqual(f2, s2)
       self.assertArraysEqual(f3, s3)
@@ -478,9 +471,9 @@ class PrngTest(jtu.JaxTestCase):
   def test_prng_seeds_and_keys(self, seed, typ, jit, key, make_key):
     seed = typ(seed)
     if jit:
-      maker = lambda k: _prng_key_as_array(jax.jit(make_key)(k))
+      maker = lambda k: random.key_data(jax.jit(make_key)(k))
     else:
-      maker = lambda k: _prng_key_as_array(make_key(k))
+      maker = lambda k: random.key_data(make_key(k))
     if (jit and typ is int and not config.x64_enabled and
         (seed < np.iinfo('int32').min or seed > np.iinfo('int32').max)):
       # We expect an error to be raised.
