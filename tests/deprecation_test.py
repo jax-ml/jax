@@ -28,7 +28,7 @@ class DeprecationTest(absltest.TestCase):
     with self.assertWarns(DeprecationWarning, msg="Please use x"):
       self.assertEqual(m.y, 101)
 
-    with self.assertRaises(AttributeError, msg="Please do not use z"):
+    with self.assertRaisesRegex(AttributeError, "Please do not use z"):
       _ = m.z
 
     with self.assertRaisesRegex(AttributeError,

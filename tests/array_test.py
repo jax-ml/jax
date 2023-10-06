@@ -695,19 +695,16 @@ class JaxArrayTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.all,
     shape=[(), (10), (2, 3)],
   )
+  @jtu.run_on_devices("cpu")
   def test_buffer_protocol(self, dtype, shape):
-    if not jtu.test_device_matches(["cpu"]):
-      raise unittest.SkipTest("Buffer protocol only works on CPU")
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
     y = jax.device_put(x)
     if dtype == jax.dtypes.bfloat16:
-      with self.assertRaises(
+      with self.assertRaisesRegex(
           BufferError,
-          msg=(
-              'Buffers of type BF16 are not supported by the Python buffer'
-              ' protocol.'
-          ),
+          'Buffers of type BF16 are not supported by the Python buffer '
+          'protocol.'
       ):
         memoryview(y)
       return
@@ -716,9 +713,8 @@ class JaxArrayTest(jtu.JaxTestCase):
     y_bytes = memoryview(y).tobytes()
     self.assertEqual(x_bytes, y_bytes)
 
+  @jtu.run_on_devices("cpu")
   def test_buffer_protocol_deletion(self):
-    if not jtu.test_device_matches(["cpu"]):
-      raise unittest.SkipTest("Buffer protocol only works on CPU")
     rng = jtu.rand_default(self.rng())
     x = rng((3, 4), np.float32)
     y = jax.device_put(x)
