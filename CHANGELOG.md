@@ -26,6 +26,9 @@ Remember to align the itemized text with the first line of an item within a list
       `standard_primitive`, `standard_unop`, `unop`, and `unop_dtype_rule` are
       internal utilities, now deprecated without replacement.
 
+* Bug fixes
+  * Fixed Cloud TPU regression where compilation would OOM due to smem.
+
 # jax 0.4.17 (Oct 3, 2023)
 
 * New features
