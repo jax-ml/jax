@@ -1205,6 +1205,37 @@ class StateControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(jax.jit(f)(0, 1, 5, zs), (35, 11))
     self.assertAllClose(jax.jit(f)(1, 1, 2, zs), (21, 11))
 
+  def test_scan_with_state_in_body_nested(self):
+    @run_state
+    def g(refs):
+      a_ref, x_ref, w_ref, y_ref, zs_ref = refs
+
+      def f(x, w, y, zs):
+        @run_state
+        def loop(refs):
+          x_ref, w_ref = refs
+          def body(y, z):
+            x_ref[...] += y
+            w_ref[...] += z
+            a_ref[...] += z
+            return y + 1, ()
+          lax.scan(body, y, zs)
+        a_ref[...] += 1
+        out = loop((x, w))
+        a_ref[...] += 1
+        return out
+
+      x, w = f(x_ref[...], w_ref[...], y_ref[...], zs_ref[...])
+      x_ref[...] = x
+      w_ref[...] = w
+
+    zs = jnp.arange(5)
+    jaxpr = jax.make_jaxpr(g)((1, 0, 1, 5, zs)).jaxpr
+    self.assertEmpty(jaxpr.effects)
+    self.assertAllClose(jax.jit(g)((1, 0, 1, 5, zs))[:3], (13, 35, 11))
+    self.assertAllClose(jax.jit(g)((1, 1, 1, 2, zs))[:3], (13, 21, 11))
+
+
 class GeneralRefTest(jtu.JaxTestCase):
 
   def test_unshaped_ref(self):
