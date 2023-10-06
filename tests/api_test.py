@@ -7290,8 +7290,8 @@ class CustomJVPTest(jtu.JaxTestCase):
     primals = (2., 3)
     tangents = (np.ones(()), np.zeros((), float0),)
     expected_tangents = (2., np.zeros((), float0))
-    self.assertArraysEqual(api.jvp(f, primals, tangents),
-                           (primals, expected_tangents))
+    self.assertAllClose(api.jvp(f, primals, tangents),
+                        (primals, expected_tangents))
 
   def test_float0_initial_style(self):
     @jax.custom_jvp
@@ -7309,8 +7309,8 @@ class CustomJVPTest(jtu.JaxTestCase):
     primals = (2., 3)
     tangents = (np.ones(()), np.zeros((), float0),)
     expected_tangents = (2., np.zeros((), float0))
-    self.assertArraysEqual(api.jvp(foo, primals, tangents),
-                           (primals, expected_tangents))
+    self.assertAllClose(api.jvp(foo, primals, tangents),
+                        (primals, expected_tangents))
 
   def test_remat(self):
     @jax.custom_jvp
