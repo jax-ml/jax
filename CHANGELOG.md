@@ -15,6 +15,15 @@ Remember to align the itemized text with the first line of an item within a list
     If using the recommended `cuda12_pip` installation, NCCL should be installed
     automatically.
 
+* Deprecations
+  * A number of internal utilities and inadvertent exports in {mod}`jax.lax` have
+    been deprecated, and will be removed in a future release.
+    * `jax.lax.dtypes`: use `jax.dtypes` instead.
+    * `jax.lax.itertools`: use `itertools` instead.
+    * `naryop`, `naryop_dtype_rule`, `standard_abstract_eval`, `standard_naryop`,
+      `standard_primitive`, `standard_unop`, `unop`, and `unop_dtype_rule` are
+      internal utilities, now deprecated without replacement.
+
 # jax 0.4.17 (Oct 3, 2023)
 
 * New features
