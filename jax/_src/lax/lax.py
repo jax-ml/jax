@@ -2775,7 +2775,8 @@ def precision_attr(precision: PrecisionType) -> ir.ArrayAttr:
 
 
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
-                       precision, preferred_element_type: Optional[np.dtype]):
+                       precision, preferred_element_type: Optional[np.dtype],
+                       platform: str = "default"):
   del preferred_element_type  # Implied by the output aval
   lhs_aval, rhs_aval = ctx.avals_in
   lhs_dtype, rhs_dtype = lhs_aval.dtype, rhs_aval.dtype
@@ -2788,7 +2789,7 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
   # fail on codegen for different accepted cases. To handle those cases, we
   # insert ConvertOps on the input, in a platform-dependent way.
   if lhs_dtype != rhs_dtype:
-    if ctx.module_context.platform == "tpu":
+    if platform == "tpu":
       handled = lambda dt: (dtypes.issubdtype(dt, np.floating) or
                             dtypes.issubdtype(dt, np.integer))
       if not (handled(lhs_dtype) and handled(rhs_dtype)):
@@ -2805,7 +2806,7 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       lhs_dtype = rhs_dtype = aval_out.dtype
 
   # TODO(b/195364460): Work around slow XLA/CPU implementation of float16 matmul
-  if ctx.module_context.platform == "cpu":
+  if platform == "cpu":
     if lhs_dtype == np.float16:
       lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
                              core.ShapedArray(lhs_aval.shape, np.float32))
@@ -2830,6 +2831,11 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
   ]
 
 mlir.register_lowering(dot_general_p, _dot_general_lower)
+
+for platform in ["cpu", "tpu"]:
+  mlir.register_lowering(dot_general_p,
+                         partial(_dot_general_lower, platform=platform),
+                         platform=platform)
 
 
 def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):

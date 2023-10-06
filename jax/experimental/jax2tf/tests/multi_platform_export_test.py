@@ -39,8 +39,8 @@ _known_failures = make_disjunction_regexp(
 
 # TODO(necula): Failures to be investigated (on GPU).
 _known_failures_gpu = make_disjunction_regexp(
-    "dot_general_",
-    # Failures due to failure to export custom call targets for GPU
+    # Failures due to failure to export custom call targets for GPU, these
+    # targets do not have backwards compatibility tests.
     "custom_linear_solve_",
     "lu_",
     "svd_",
