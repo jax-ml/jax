@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
 from functools import partial
 import math
 from unittest import SkipTest
@@ -45,7 +44,6 @@ complex_dtypes = jtu.dtypes.complex
 int_dtypes = jtu.dtypes.all_integer
 uint_dtypes = jtu.dtypes.all_unsigned
 
-KEY_CTORS = [random.key, random.PRNGKey]
 
 @jtu.with_config(jax_legacy_prng_key='allow')
 class LaxRandomTest(jtu.JaxTestCase):
@@ -1165,14 +1163,6 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.lognorm(s=sigma).cdf)
-
-  @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
-  def test_copy(self, make_key):
-    key = make_key(8459302)
-    self.assertArraysEqual(key, key.copy())
-    self.assertArraysEqual(key, copy.copy(key))
-    self.assertArraysEqual(key, copy.deepcopy(key))
-    self.assertArraysEqual(key, jax.jit(lambda k: k.copy())(key))
 
 
 threefry_seed = prng_internal.threefry_seed
