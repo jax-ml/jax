@@ -581,7 +581,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     shape=array_shapes,
-    dtype=int_dtypes,
+    dtype=int_dtypes + unsigned_dtypes,
   )
   def testBitwiseCount(self, shape, dtype):
     # np.bitwise_count added after numpy 1.26, but
