@@ -355,11 +355,21 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     auto &layout = *some_layout;
     if (layout.implicit_dim() == ImplicitDim::kNone) {
-      // TODO(apaszke): Support at least (16,128) here.
-      auto src_layout = VectorLayout(16, layout.offsets(), default_tiling_,
-                                     ImplicitDim::kNone);
-      auto dst_layout = VectorLayout(32, layout.offsets(), default_tiling_,
-                                     ImplicitDim::kNone);
+      Layout src_layout;
+      Layout dst_layout;
+      // All layouts that subdivide the rows of the default tiling evenly
+      // can be handled uniformly with the default case, by preserving the
+      // tiling through the op.
+      // TODO(apaszke): Support (16,128) too.
+      if (default_tiling_[0] % layout.tiling()[0] == 0 &&
+          default_tiling_[1] == layout.tiling()[1]) {
+        src_layout = layout;
+      } else {
+        src_layout = VectorLayout(16, layout.offsets(), default_tiling_,
+                                  ImplicitDim::kNone);
+      }
+      dst_layout = VectorLayout(32, layout.offsets(), src_layout->tiling(),
+                                ImplicitDim::kNone);
       setLayout(op, src_layout, dst_layout);
       return success();
     }

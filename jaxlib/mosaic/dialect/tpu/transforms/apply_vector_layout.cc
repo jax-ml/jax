@@ -622,8 +622,12 @@ LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
   }
   switch (layout_in.implicit_dim()) {
     case VectorLayout::ImplicitDim::kNone: {
-      if (layout_in.tiling() != ctx.target_shape ||
-          layout_out.tiling() != ctx.target_shape) {
+      if (layout_in.tiling() != layout_out.tiling()) {
+        return op.emitOpError("Changing tiling during extension");
+      }
+      auto tiling = layout_in.tiling();
+      if (ctx.target_shape[0] % tiling[0] != 0 ||
+          ctx.target_shape[1] != tiling[1]) {
         return op.emitOpError("Not implemented: tiling not supported");
       }
       const int packing = layout_in.packing();
@@ -3042,6 +3046,42 @@ FailureOr<Value> relayout(RewriteContext &ctx, OpBuilder &builder, Value v,
               v.getLoc(), src_tile.getType(), src_tile, gather_indices,
               /*dimension=*/0);
         });
+    src = dst;
+    src_tiles = std::move(src_tiles_retiled);
+  }
+  // Handle retiling from (2, 128) to (8, 128) for 32-bit data.
+  if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+      dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+      src.bitwidth() == 32 && src.offsets() == LayoutOffsets{0, 0} &&
+      dst.offsets() == LayoutOffsets{0, 0} &&
+      src.tiling() == std::array<int64_t, 2>{2, 128} &&
+      dst.tiling() == std::array<int64_t, 2>{8, 128} &&
+      *(src_tiles.dimensions().end() - 2) <= 2) {
+    xla::Array<Value> src_tiles_retiled(
+        dst.tileArrayShape(vty.getShape(), ctx.target_shape));
+    src_tiles_retiled.Each([&](const absl::Span<const int64_t> idx,
+                               Value *const new_src_tile) {
+      const int64_t dst_col = idx.back();
+      const int64_t src_col = dst_col / 4;
+      const int64_t start_slane_idx = 2 * (dst_col % 4);
+      SmallVector<int64_t> src_idx(toArrayRef(idx));
+      src_idx.back() = src_col;
+      Value src_tile = src_tiles(src_idx);
+      if (start_slane_idx) {
+        SmallVector<int32_t> slane_idxs;
+        slane_idxs.reserve(8);
+        for (int i = 0; i < 8; ++i) {
+          slane_idxs.push_back(start_slane_idx + (i % 2));
+        }
+        const DenseI32ArrayAttr gather_indices =
+            builder.getDenseI32ArrayAttr(slane_idxs);
+        *new_src_tile = builder.create<tpu::GatherOp>(
+            v.getLoc(), src_tile.getType(), src_tile, gather_indices,
+            /*dimension=*/0);
+      } else {
+        *new_src_tile = src_tile;
+      }
+    });
     src = dst;
     src_tiles = std::move(src_tiles_retiled);
   }

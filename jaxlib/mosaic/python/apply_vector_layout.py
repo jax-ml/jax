@@ -1253,6 +1253,39 @@ def relayout(
     src = dst
     src_tiles = src_tiles_retiled
 
+  # Handle retiling from (2, 128) to (8, 128) for 32-bit data.
+  if (
+      src.implicit_dim is None
+      and dst.implicit_dim is None
+      and src.bitwidth == 32
+      and src.offsets == (0, 0)
+      and dst.offsets == (0, 0)
+      and src.tiling == (2, 128)
+      and dst.tiling == (8, 128)
+      and src_tiles.shape[-2] == 1
+  ):
+    src_tiles_retiled = np.empty(
+        dst.tile_array_shape(vty.shape), dtype=object
+    )
+    for *batch_idx, dst_col in np.ndindex(
+        src_tiles_retiled.shape[:-2] + src_tiles_retiled.shape[-1:]
+    ):
+      src_col = dst_col // 4
+      start_slane_idx = 2 * (dst_col % 4)
+      src_tile = src_tiles[(*batch_idx, 0, src_col)]
+      if start_slane_idx:
+        gather_indices = ir.DenseI32ArrayAttr.get(
+            [start_slane_idx, start_slane_idx + 1] * 4
+        )
+        dst_tile = tpu.GatherOp(
+            src_tile.type, src_tile, gather_indices, 0
+        )
+      else:
+        dst_tile = src_tile
+      src_tiles_retiled[(*batch_idx, slice(None), dst_col)] = dst_tile
+    src = dst
+    src_tiles = src_tiles_retiled
+
   # TODO(apaszke): Generalize retiling to general 16-bit types (might need to
   # use a different unpacking op).
   # (8,128) -> (16,128) tiling change for packed 16-bit types.
@@ -1765,9 +1798,12 @@ def _ext_op_rule(  # pylint: disable=missing-function-docstring
     output_vregs[:] = tpu.UnpackSubelementsOp(
         res_vreg_ty, input_vregs.item(), 0
     )
-  elif layout_in.implicit_dim is None:
-    if layout_in.tiling != TARGET_SHAPE or layout_out.tiling != TARGET_SHAPE:
-      raise NotImplementedError(f"Only {TARGET_SHAPE} tiling supported")
+  else:
+    if layout_in.tiling != layout_out.tiling:
+      raise NotImplementedError("Change of tiling during the cast")
+    tiling = layout_in.tiling
+    if TARGET_SHAPE[0] % tiling[0] != 0 or TARGET_SHAPE[1] != tiling[1]:
+      raise NotImplementedError
     packing = layout_in.packing
     for idx in np.ndindex(output_vregs.shape):
       input_vreg_idx = (*idx[:-1], idx[-1] // packing)
@@ -1775,8 +1811,6 @@ def _ext_op_rule(  # pylint: disable=missing-function-docstring
       output_vregs[idx] = tpu.UnpackSubelementsOp(
           res_vreg_ty, input_vregs[input_vreg_idx], vreg_part
       )
-  else:
-    raise NotImplementedError("Unrecognized layout")
   return ctx.replace(op, assemble(result_ty, layout_out, output_vregs))
 
 
