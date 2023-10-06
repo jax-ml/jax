@@ -402,7 +402,9 @@ class ShapePolyLoweringState:
   # inner functions, and pass the values along at the call sites.
   dim_vars: tuple[str, ...]
   # Whether the module uses dimension variables, either in its inputs or
-  # from an inner call to a polymorphic Exported.
+  # from an inner call to Exported modules that uses dimension variables.
+  # This includes the case when the called Exported module uses a platform
+  # index argument.
   uses_dim_vars: bool
 
   # If the first dimension variable is a platform index argument
@@ -411,12 +413,12 @@ class ShapePolyLoweringState:
   def __init__(self,
                dim_vars: tuple[str, ...],
                lowering_platforms: tuple[str, ...] | None):
-    self.uses_dim_vars = (len(dim_vars) > 0)
     if lowering_platforms is not None and len(lowering_platforms) > 1:
       dim_vars = ("platform_index_",) + tuple(dim_vars)
       self.has_platform_index_argument = True
     else:
       self.has_platform_index_argument = False
+    self.uses_dim_vars = (len(dim_vars) > 0)
     self.dim_vars = dim_vars
 
 @dataclasses.dataclass(frozen=True)

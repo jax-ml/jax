@@ -614,6 +614,10 @@ class JaxExportTest(jtu.JaxTestCase):
       r"%arg0: tensor<i..> {jax.platform_index = true}.*, "
       r"%arg1: tensor<5xf32>.* ->")
     self.assertRegex(module_str, expected_main_re)
+
+    self.assertIn("jax.uses_shape_polymorphism = true",
+                  module_str)
+
     res = export.call_exported(exp)(x)
     self.assertAllClose(res, _testing_multi_platform_fun_expected(x))
 
@@ -631,6 +635,20 @@ class JaxExportTest(jtu.JaxTestCase):
     # nested exported.
     exp2 = export.export(export.call_exported(exp),
                          lowering_platforms=('cpu', 'cuda'))(x)
+    res2 = export.call_exported(exp2)(x)
+    self.assertAllClose(res2, _testing_multi_platform_fun_expected(x))
+
+  def test_multi_platform_nested_inside_single_platform_export(self):
+    x = np.arange(5, dtype=np.float32)
+    exp = export.export(_testing_multi_platform_func,
+                        lowering_platforms=('cpu', 'tpu', 'cuda'))(x)
+    self.assertEqual(exp.lowering_platforms, ('cpu', 'tpu', 'cuda'))
+
+    # Now serialize the call for the current platform.
+    exp2 = export.export(export.call_exported(exp))(x)
+    module_str = str(exp2.mlir_module())
+    self.assertIn("jax.uses_shape_polymorphism = true",
+                  module_str)
     res2 = export.call_exported(exp2)(x)
     self.assertAllClose(res2, _testing_multi_platform_fun_expected(x))
 

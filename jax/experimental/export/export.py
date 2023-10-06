@@ -147,8 +147,9 @@ class Exported:
         because they are not used. Same length as `in_shardings`.
     uses_shape_polymorphism: whether the `mlir_module_serialized` uses shape
         polymorphism. This may be because `in_avals` contains dimension
-        variables, but also from inner calls of shape-polymorphic
-        Exported modules.
+        variables, or due to inner calls of Exported modules that have
+        dimension variables or platform index arguments. Such modules need
+        shape refinement before XLA compilation.
     disabled_checks: a list of descriptors of safety checks that have been
         disabled at export time. See docstring for `DisabledSafetyCheck`.
     _get_vjp: an optional function that takes the current exported function and

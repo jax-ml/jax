@@ -32,24 +32,10 @@ def make_disjunction_regexp(*parts: str) -> re.Pattern[str]:
 
 # TODO(necula): Failures to be investigated (on multiple platforms)
 _known_failures = make_disjunction_regexp(
-    "conv_general_dilated_",
-    "cumlogsumexp_",
     "cumsum_",
     "cumprod_",
 )
 
-# TODO(necula): Failures to be investigated (on TPU).
-_known_failures_tpu = make_disjunction_regexp(
-    "cholesky_",
-    "custom_linear_",
-    "eigh_",
-    "fft_",
-    "qr_",
-    "lu_",
-    "svd_",
-    "tridiagonal_solve_",
-    "triangular_solve_",
-)
 
 # TODO(necula): Failures to be investigated (on GPU).
 _known_failures_gpu = make_disjunction_regexp(
@@ -101,10 +87,6 @@ class PrimitiveTest(jtu.JaxTestCase):
   def test_prim(self, harness: primitive_harness.Harness):
     if (
         _known_failures.search(harness.fullname)
-        or (
-            jtu.device_under_test() == "tpu"
-            and _known_failures_tpu.search(harness.fullname)
-        )
         or (
             jtu.device_under_test() == "gpu"
             and _known_failures_gpu.search(harness.fullname)
