@@ -424,9 +424,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testArgMinMaxEmpty(self, name, np_op, jnp_op):
     name = name[3:] if name.startswith("nan") else name
     msg = f"attempt to get {name} of an empty sequence"
-    with self.assertRaises(ValueError, msg=msg):
+    with self.assertRaisesRegex(ValueError, msg):
       jnp_op(np.array([]))
-    with self.assertRaises(ValueError, msg=msg):
+    with self.assertRaisesRegex(ValueError, msg):
       jnp_op(np.zeros((2, 0)), axis=1)
     np_fun = jtu.with_jax_dtype_defaults(partial(np_op, axis=0))
     jnp_fun = partial(jnp_op, axis=0)
