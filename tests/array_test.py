@@ -423,7 +423,8 @@ class JaxArrayTest(jtu.JaxTestCase):
     x = jnp.array([[1., 0., 0.], [0., 2., 3.]])
     y = jax.pmap(jnp.sin)(x)
     self.assertArraysEqual([a.device() for a in y],
-                           y.sharding._device_assignment)
+                           y.sharding._device_assignment,
+                           allow_object_dtype=True)
 
     sin_x = iter(np.sin(x))
     for i, j in zip(iter(y), sin_x):
@@ -783,7 +784,8 @@ class ShardingTest(jtu.JaxTestCase):
     device_assignment = mp_sharding._device_assignment
 
     self.assertEqual(di_map[mesh.devices.flat[0]], (slice(0, 4), slice(0, 1)))
-    self.assertArraysEqual(device_assignment, list(mesh.devices.flat))
+    self.assertArraysEqual(device_assignment, list(mesh.devices.flat),
+                           allow_object_dtype=True)
     self.assertTrue(hlo_sharding.is_tiled())
     self.assertListEqual(hlo_sharding.tile_assignment_dimensions(), [2, 4])
     self.assertListEqual(hlo_sharding.tile_assignment_devices(),

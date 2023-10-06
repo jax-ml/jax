@@ -184,7 +184,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp.save(f, arr)
       f.seek(0)
       arr_out = jnp.load(f, allow_pickle=allow_pickle)
-    self.assertArraysEqual(arr, arr_out)
+    self.assertArraysEqual(arr, arr_out, allow_object_dtype=True)
 
   def testArrayEqualExamples(self):
     # examples from the array_equal() docstring.
