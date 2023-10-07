@@ -539,7 +539,22 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   def testPowIntPowerAtZero(self):
     # https://github.com/google/jax/issues/14397
     ans = jax.grad(jax.jit(lambda x, n: x ** n))(0., 0)
-    self.assertAllClose(ans, 1., check_dtypes=False)
+    self.assertAllClose(ans, 0., check_dtypes=False)
+
+  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
+  def testPowIntPowerAtZero2(self):
+    # https://github.com/google/jax/issues/17995
+    a = lambda z: jax.numpy.sum(z**jax.numpy.arange(0, 2, dtype=int))
+    b = lambda z: jax.numpy.sum(z**jax.numpy.arange(0, 2, dtype=float))
+    c = lambda z: 1 + z
+    d = lambda z: z ** 0 + z
+    e = lambda z: z ** 0. + z
+
+    self.assertAllClose(jax.grad(a)(3.14), 1., check_dtypes=False)
+    self.assertAllClose(jax.grad(b)(3.14), 1., check_dtypes=False)
+    self.assertAllClose(jax.grad(c)(3.14), 1., check_dtypes=False)
+    self.assertAllClose(jax.grad(d)(3.14), 1., check_dtypes=False)
+    self.assertAllClose(jax.grad(e)(3.14), 1., check_dtypes=False)
 
   @jtu.sample_product(
     [dict(arg_shape=arg_shape, pred_shape=pred_shape)
