@@ -6,9 +6,13 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-# jax 0.4.18
+# jax 0.4.19
 
-# jaxlib 0.4.18
+# jaxlib 0.4.19
+
+# jax 0.4.18 (Oct 6, 2023)
+
+# jaxlib 0.4.18 (Oct 6, 2023)
 
 * Changes
   * CUDA jaxlibs now depend on the user to install a compatible NCCL version.
