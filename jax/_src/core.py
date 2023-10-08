@@ -542,7 +542,7 @@ class Trace(Generic[TracerType]):
     raise NotImplementedError(msg)
 
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers,
-                              out_trees, symbolic_zeros):
+                              out_trees, symbolic_zeros, enable_jvp):
     msg = (f"{type(self)} must override process_custom_vjp_call "
            "to handle custom_vjp primitives")
     raise NotImplementedError(msg)

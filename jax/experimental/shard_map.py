@@ -759,7 +759,7 @@ class ShardMapTrace(core.Trace):
         "a feature request at https://github.com/google/jax/issues !")
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
-                              symbolic_zeros):
+                              symbolic_zeros, enable_jvp):
     raise NotImplementedError(
         "Eager evaluation of a `custom_vjp` inside a `shard_map` isn't yet "
         "supported. "
@@ -1118,7 +1118,7 @@ def _custom_jvp_call_check(mesh, *in_rep, call_jaxpr, jvp_jaxpr_thunk,
 @register_rewrite(custom_derivatives.custom_vjp_call_jaxpr_p)
 def _custom_vjp_call_jaxpr_rewrite(
     mesh, in_rep, *args, fun_jaxpr, fwd_jaxpr_thunk, bwd, num_consts, out_trees,
-    symbolic_zeros):
+    symbolic_zeros, enable_jvp):
   if symbolic_zeros:
     msg = "Please open an issue at https://github.com/google/jax/issues !"
     raise NotImplementedError(msg)
@@ -1138,7 +1138,8 @@ def _custom_vjp_call_jaxpr_rewrite(
 
   outs = custom_derivatives.custom_vjp_call_jaxpr_p.bind(
       *args, fun_jaxpr=fun_jaxpr_, fwd_jaxpr_thunk=fwd_jaxpr_thunk_, bwd=bwd_,
-      num_consts=num_consts, out_trees=out_trees, symbolic_zeros=symbolic_zeros)
+      num_consts=num_consts, out_trees=out_trees, symbolic_zeros=symbolic_zeros,
+      enable_jvp=enable_jvp)
   out_rep = out_rep2[0] if out_rep2 else out_rep
   return outs, out_rep
 
@@ -1668,7 +1669,7 @@ class RewriteTrace(core.Trace):
     assert False  # unreachable
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
-                              symbolic_zeros):
+                              symbolic_zeros, enable_jvp):
     if symbolic_zeros:
       msg = "Please open an issue at https://github.com/google/jax/issues !"
       raise NotImplementedError(msg)
@@ -1679,7 +1680,7 @@ class RewriteTrace(core.Trace):
     bwd = _rewrite_bwd(bwd, self.mesh, out_reps2, in_reps)
     with core.new_dynamic(self.dyna):
       out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees,
-                          symbolic_zeros=symbolic_zeros)
+                          symbolic_zeros=symbolic_zeros, enable_jvp=enable_jvp)
     fst, out_reps = lu.merge_linear_aux(out_reps1, out_reps2)
     if not fst:
       _, res_tree = out_trees()

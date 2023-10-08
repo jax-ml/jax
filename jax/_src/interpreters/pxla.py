@@ -465,11 +465,11 @@ class MapTrace(core.Trace):
     return self.process_primitive(fake_primitive, tracers, {})
 
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers,
-                              out_trees, symbolic_zeros):
+                              out_trees, symbolic_zeros, enable_jvp):
     bind = HashableFunction(
         lambda *args, **kwargs: primitive.bind(
             fun, fwd, bwd, *args, out_trees=out_trees,
-            symbolic_zeros=symbolic_zeros, **kwargs),
+            symbolic_zeros=symbolic_zeros, enable_jvp=enable_jvp, **kwargs),
         (primitive, fun, fwd, bwd))
     fake_primitive = FakePrimitive(multiple_results=True, bind=bind)
     return self.process_primitive(fake_primitive, tracers, {})
