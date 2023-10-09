@@ -4351,6 +4351,14 @@ class APITest(jtu.JaxTestCase):
 
     jax.make_jaxpr(Foo(1))(3)  # don't crash
 
+  def test_make_jaxpr_name(self):
+    def foo(x, y, z):
+      return x + y + z
+    jfoo = jax.make_jaxpr(foo)
+    self.assertEqual(jfoo.__name__, f"make_jaxpr({foo.__name__})")
+    self.assertEqual(jfoo.__qualname__, f"make_jaxpr({foo.__qualname__})")
+    self.assertEqual(jfoo.__module__, "jax")
+
   def test_inner_jit_function_retracing(self):
     # https://github.com/google/jax/issues/7155
     inner_count = outer_count = 0
