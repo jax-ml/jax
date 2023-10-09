@@ -30,32 +30,31 @@ import numpy as np
 
 from jax._src import lib
 from jax._src import compilation_cache
-from jax._src import config as jax_config
+from jax._src import config as config
 from jax._src import monitoring
 from jax._src import path
 from jax._src import profiler
 from jax._src import traceback_util
-from jax._src.config import config
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 
 
-_DISABLE_MOST_OPTIMIZATIONS = jax_config.DEFINE_bool(
+_DISABLE_MOST_OPTIMIZATIONS = config.DEFINE_bool(
     'jax_disable_most_optimizations',
-    jax_config.bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
+    config.bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
     'Try not to do much optimization work. This can be useful if the cost of '
     'optimization is greater than that of running a less-optimized program.')
 
-_DUMP_IR_TO = jax_config.DEFINE_string(
+_DUMP_IR_TO = config.DEFINE_string(
     'jax_dump_ir_to', os.getenv('JAX_DUMP_IR_TO', ''),
     help="Path to which the IR that is emitted by JAX as input to the "
          "compiler should be dumped as text files. Optional. If omitted, JAX "
          "will not dump IR.")
 
-_COMPILER_DETAILED_LOGGING_MIN_OPS = jax_config.DEFINE_integer(
+_COMPILER_DETAILED_LOGGING_MIN_OPS = config.DEFINE_integer(
     "jax_compiler_detailed_logging_min_ops",
-    jax_config.int_env("JAX_COMPILER_DETAILED_LOGGING_MIN_OPS", 10),
+    config.int_env("JAX_COMPILER_DETAILED_LOGGING_MIN_OPS", 10),
     help=(
         'How big should a module be in MLIR operations before JAX enables '
         'detailed compiler logging? The intent of this flag is to suppress '
@@ -192,7 +191,7 @@ def get_compile_options(
   #    If the function returns 0, set -1; this is an error.
   # -1 indicates that no attempt should be made to retrieve the latest profile
   # later on.
-  jax_xla_profile_version = config.jax_xla_profile_version
+  jax_xla_profile_version = config.jax_xla_profile_version.value
   if jax_xla_profile_version > 0:
     compile_options.profile_version = jax_xla_profile_version
     logger.debug("get_compile_options XLA-AutoFDO profile: " +
@@ -306,7 +305,7 @@ def compile_or_get_cached(
   try:
     cache_key = compilation_cache.get_cache_key(
         computation, devices, compile_options, backend,
-        jax_config.config.jax_use_original_compilation_cache_key_generation,
+        config.config.jax_use_original_compilation_cache_key_generation,
     )
   except xc._xla.XlaRuntimeError as ex:
     logger.error("compile_or_get_cached: unable to generate cache key, "
@@ -325,7 +324,7 @@ def compile_or_get_cached(
 
     # TODO(b/293308239) Instrument metrics for new cache savings and cache hit
     # rate after it is enabled.
-    if jax_config.config.jax_use_original_compilation_cache_key_generation:
+    if config.config.jax_use_original_compilation_cache_key_generation:
       # TODO(b/293308239) Remove metrics for the original cache after the new
       # compilation cache key implementation is fully rolled out.
       monitoring.record_event('/jax/compilation_cache/cache_hits_original')
@@ -358,7 +357,7 @@ def _cache_read(
     return compilation_cache.get_executable_and_time(
         cache_key, compile_options, backend)
   except Exception as ex:
-    if config.jax_raise_persistent_cache_errors:
+    if config.raise_persistent_cache_errors.value:
       raise
     warnings.warn(
         f"Error reading persistent compilation cache entry for "
@@ -380,7 +379,7 @@ def _cache_write(cache_key: str,
         "callbacks (e.g. from jax.debug.print or breakpoint)", module_name)
     return
 
-  min_compile_time = config.jax_persistent_cache_min_compile_time_secs
+  min_compile_time = config.persistent_cache_min_compile_time_secs.value
   if min_compile_time:
     if compile_time_secs < min_compile_time:
       logger.debug(
@@ -399,7 +398,7 @@ def _cache_write(cache_key: str,
     compilation_cache.put_executable_and_time(
         cache_key, module_name, executable, backend, int(compile_time_secs))
   except Exception as ex:
-    if config.jax_raise_persistent_cache_errors:
+    if config.raise_persistent_cache_errors.value:
       raise
     warnings.warn(
         f"Error writing persistent compilation cache entry for "

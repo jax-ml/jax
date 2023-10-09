@@ -68,11 +68,12 @@ import operator
 from typing import Any, Callable, NamedTuple
 import weakref
 
-from jax._src.tree_util import tree_map
-from jax._src.config import config
+from jax._src import config
 from jax._src import core
 from jax._src import traceback_util
+from jax._src.tree_util import tree_map
 from jax._src.util import curry
+
 
 traceback_util.register_exclusion(__file__)
 
@@ -333,13 +334,13 @@ def cache(call: Callable):
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, {})
-    if config.jax_check_tracer_leaks:
+    if config.check_tracer_leaks.value:
       key = (_copy_main_traces(fun.transforms), fun.params, fun.in_type, args,
-             config.x64_enabled, config.jax_default_device,
-             config._trace_context())
+             config.enable_x64.value, config.default_device.value,
+             config.config._trace_context())
     else:
-      key = (fun.transforms, fun.params, fun.in_type, args, config.x64_enabled,
-             config.jax_default_device, config._trace_context())
+      key = (fun.transforms, fun.params, fun.in_type, args, config.enable_x64.value,
+             config.default_device.value, config.config._trace_context())
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result

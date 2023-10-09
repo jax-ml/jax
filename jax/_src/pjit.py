@@ -25,6 +25,7 @@ import warnings
 
 import numpy as np
 
+from jax._src import config
 from jax._src import core
 from jax._src import stages
 from jax._src import dispatch
@@ -46,7 +47,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
 from jax._src.interpreters import xla
 
-from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -182,7 +182,7 @@ def _python_pjit(fun: Callable, infer_params_fn):
   @wraps(fun)
   @api_boundary
   def wrapped(*args, **kwargs):
-    if config.jax_disable_jit:
+    if config.disable_jit.value:
       return fun(*args, **kwargs)
     return _python_pjit_helper(fun, infer_params_fn, *args, **kwargs)[0]
 
@@ -275,7 +275,7 @@ def pre_infer_params(fun, in_shardings, out_shardings,
                      donate_argnums, donate_argnames,
                      static_argnums, static_argnames, device,
                      backend, abstracted_axes):
-  if abstracted_axes and not config.jax_dynamic_shapes:
+  if abstracted_axes and not config.dynamic_shapes.value:
     raise ValueError("abstracted_axes must be used with --jax_dynamic_shapes")
 
   check_callable(fun)
@@ -432,7 +432,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
     dyn_kwargs = {}
   del kwargs
 
-  if (donate_argnums or donate_argnames) and not config.jax_debug_nans:
+  if (donate_argnums or donate_argnames) and not config.debug_nans.value:
     donated_invars = donation_vector(
         donate_argnums, donate_argnames, dyn_args, dyn_kwargs)
   else:
@@ -462,7 +462,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
   assert in_shardings is not None or all(i is not None for i in in_shardings)
   assert out_shardings is not None or all(o is not None for o in out_shardings)
 
-  if config.jax_dynamic_shapes:
+  if config.dynamic_shapes.value:
     in_type = pe.infer_lambda_input_type(axes_specs, explicit_args)
     in_avals = tuple(a for a, e in in_type if e)
   else:
@@ -490,7 +490,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
 
   assert len(explicit_args) == len(canonicalized_in_shardings_flat)
 
-  if config.jax_dynamic_shapes:
+  if config.dynamic_shapes.value:
     implicit_args = _extract_implicit_args(in_type, explicit_args)
   else:
     implicit_args = []
@@ -892,7 +892,7 @@ def _process_in_axis_resources(in_shardings_thunk, in_avals, in_tree,
           "pjit in_shardings", in_tree, orig_in_shardings,
           tupled_args=True)
 
-  if not config.jax_dynamic_shapes:
+  if not config.dynamic_shapes.value:
     pjit_check_aval_sharding(in_shardings_flat, in_avals,
                              None if debug_info is None else debug_info.arg_names,
                              "pjit arguments", allow_uneven_sharding=False)
@@ -909,14 +909,14 @@ def _create_pjit_jaxpr(fun, in_type, debug_info, out_paths):
       "Finished tracing + transforming {fun_name} for pjit in {elapsed_time} sec",
       fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
     pe_debug = debug_info and pe.debug_info_final(fun, debug_info.traced_for)
-    if config.jax_dynamic_shapes:
+    if config.dynamic_shapes.value:
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic2(
           lu.annotate(fun, in_type), debug_info=pe_debug)
     else:
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(
           fun, in_type, debug_info=pe_debug)
 
-  if not config.jax_dynamic_shapes:
+  if not config.dynamic_shapes.value:
     jaxpr = jaxpr_debug_info(jaxpr, debug_info, out_paths())
 
   if any(isinstance(c, core.Tracer) for c in consts):
@@ -944,7 +944,7 @@ def _check_and_canonicalize_out_shardings(
         "pjit out_shardings", out_tree(), orig_out_shardings,
         tupled_args=False)
 
-  if not config.jax_dynamic_shapes:
+  if not config.dynamic_shapes.value:
     pjit_check_aval_sharding(
         out_shardings_flat, out_type,
         None if debug_info is None else debug_info.result_paths,
@@ -1132,10 +1132,10 @@ def _pjit_call_impl_python(
       lowering_parameters=mlir.LoweringParameters()).compile()
   _most_recent_pjit_call_executable.weak_key_dict[jaxpr] = compiled
   # This check is expensive so only do it if enable_checks is on.
-  if compiled._auto_spmd_lowering and config.jax_enable_checks:
+  if compiled._auto_spmd_lowering and config.enable_checks.value:
     pxla.check_gda_or_array_xla_sharding_match(args, compiled._in_shardings,
                                                jaxpr.jaxpr.debug_info)
-  if config.jax_distributed_debug:
+  if config.distributed_debug.value:
     # Defensively only perform fingerprint logic if debug logging is enabled
     # NOTE(skyewm): I didn't benchmark this
     fingerprint = None
@@ -1151,7 +1151,7 @@ def _pjit_call_impl_python(
   try:
     return compiled.unsafe_call(*args), compiled
   except FloatingPointError:
-    assert config.jax_debug_nans or config.jax_debug_infs  # compiled_fun can only raise in this case
+    assert config.debug_nans.value or config.debug_infs.value  # compiled_fun can only raise in this case
 
     _ = core.jaxpr_as_fun(jaxpr)(*args)  # may raise, not return
 
@@ -1159,7 +1159,7 @@ def _pjit_call_impl_python(
     # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
     msg = ("An invalid value was encountered in the output of the "
            f"`jit`-decorated function {name}. Because "
-           "config.jax_debug_nans and/or config.jax_debug_infs is set, the "
+           "jax_config.debug_nans.value and/or config.jax_debug_infs is set, the "
            "de-optimized function (i.e., the function as if the `jit` "
            "decorator were removed) was called in an attempt to get a more "
            "precise error message. However, the de-optimized function did not "
@@ -1313,7 +1313,7 @@ def pjit_staging_rule(trace, *args, **params):
     jaxpr = params['jaxpr']
     return core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *args,
                            propagate_source_info=False)
-  elif config.jax_dynamic_shapes:
+  elif config.dynamic_shapes.value:
     source_info = source_info_util.current()
     out_tracers = []
     for aval in _out_type(params['jaxpr']):

@@ -27,13 +27,13 @@ from jax._src import abstract_arrays
 from jax._src import api
 from jax._src import api_util
 from jax._src import basearray
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import profiler
 from jax._src import tree_util
 from jax._src import xla_bridge
-from jax._src.config import config
 from jax._src.lib import xla_client as xc
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -172,7 +172,7 @@ class ArrayImpl(basearray.Array):
     # input buffers are already arranged properly. This usually happens when
     # Array's are created as output of a JAX transformation
     # (like pjit, xmap, etc).
-    if not _skip_checks or config.jax_enable_checks:
+    if not _skip_checks or config.enable_checks.value:
       self._check_and_rearrange()
 
   def _check_and_rearrange(self):

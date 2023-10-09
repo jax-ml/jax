@@ -19,7 +19,7 @@ import os
 from typing import Any, Optional, Union
 
 from jax._src import clusters
-from jax._src.config import config
+from jax._src import config
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
 
@@ -63,8 +63,8 @@ class State:
     if local_device_ids:
       visible_devices = ','.join(str(x) for x in local_device_ids) # type: ignore[union-attr]
       logger.info('JAX distributed initialized with visible devices: %s', visible_devices)
-      config.update("jax_cuda_visible_devices", visible_devices)
-      config.update("jax_rocm_visible_devices", visible_devices)
+      config.config.update("jax_cuda_visible_devices", visible_devices)
+      config.config.update("jax_rocm_visible_devices", visible_devices)
 
     self.process_id = process_id
 

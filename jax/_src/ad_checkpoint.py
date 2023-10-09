@@ -23,6 +23,7 @@ import numpy as np
 
 from jax._src import ad_util
 from jax._src import api
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import linear_util as lu
@@ -31,7 +32,6 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.api_util import flatten_fun, shaped_abstractify
-from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -529,7 +529,7 @@ def remat_partial_eval(trace, *tracers, jaxpr, **params):
     res_invars, _ = partition_list(staged_unk, jaxpr_unknown.invars[num_res:])
     res_outvars = jaxpr_known.outvars[len(jaxpr_known.outvars) - num_res:]
     body_res = _saved_residuals(jaxpr_known.replace(outvars=res_outvars), None)
-    logger.log(logging.WARNING if config.jax_log_checkpoint_residuals
+    logger.log(logging.WARNING if config.log_checkpoint_residuals.value
                else logging.DEBUG,
                'remat-decorated function ' +
                'saving inputs with shapes:\n' * bool(res_invars) +
@@ -659,7 +659,7 @@ def remat_lowering(*args, jaxpr: core.Jaxpr, prevent_cse: bool,
   assert not jaxpr.constvars
 
   if differentiated and prevent_cse:
-    if config.jax_remat_opt_barrier:
+    if config.remat_opt_barrier.value:
       translation_rule = _remat_translation_using_opt_barrier
     elif is_gpu_platform:
       translation_rule = _remat_translation_using_while

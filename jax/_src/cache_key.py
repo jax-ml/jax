@@ -20,7 +20,7 @@ import os
 import struct
 import sys
 
-from jax._src.config import config
+from jax._src import config
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import xla_client
@@ -167,7 +167,7 @@ def _canonicalize_ir(m_original: ir.Module) -> bytes:
 
 
 def _hash_computation(hash_obj, module):
-  if config.jax_compilation_cache_include_metadata_in_key:
+  if config.compilation_cache_include_metadata_in_key.value:
     canonical_ir = _serialize_ir(module)
   else:
     canonical_ir = _canonicalize_ir(module)

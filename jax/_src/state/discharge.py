@@ -24,11 +24,11 @@ import numpy as np
 
 from jax._src import api_util
 from jax._src import ad_util
+from jax._src import config
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import tree_util
-from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -262,7 +262,7 @@ run_state_p.multiple_results = True
 
 def _run_state_bind(*args: Any, jaxpr: core.Jaxpr,
                     which_linear: tuple[bool, ...]):
-  if config.jax_enable_checks:
+  if config.enable_checks.value:
     core.check_jaxpr(jaxpr)
     assert len(jaxpr.invars) == len(args)
     assert len(which_linear) == len(args)

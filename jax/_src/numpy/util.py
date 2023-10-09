@@ -20,10 +20,10 @@ from typing import Any, Callable, NamedTuple, Optional, TypeVar
 
 import warnings
 
-from jax._src import dtypes
 from jax._src import api
+from jax._src import config
 from jax._src import core
-from jax._src.config import config
+from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.util import safe_zip, safe_map
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike, Shape
@@ -161,7 +161,7 @@ def _wraps(
     try:
       mod = module or fun.__module__
     except AttributeError:
-      if config.jax_enable_checks:
+      if config.enable_checks.value:
         raise ValueError(f"function {fun} defines no __module__; pass module keyword to _wraps.")
     else:
       name = f"{mod}.{name}"
@@ -206,7 +206,7 @@ def _wraps(
         if kept_sections:
           docstr += "\n" + "\n\n".join(kept_sections) + "\n"
       except:
-        if config.jax_enable_checks:
+        if config.enable_checks.value:
           raise
         docstr = fun.__doc__
 
@@ -229,7 +229,7 @@ def promote_shapes(fun_name: str, *args: ArrayLike) -> list[Array]:
     return [lax.asarray(arg) for arg in args]
   else:
     shapes = [np.shape(arg) for arg in args]
-    if config.jax_dynamic_shapes:
+    if config.dynamic_shapes.value:
       # With dynamic shapes we don't support singleton-dimension broadcasting;
       # we instead broadcast out to the full shape as a temporary workaround.
       # TODO(mattjj): revise this workaround
@@ -242,7 +242,7 @@ def promote_shapes(fun_name: str, *args: ArrayLike) -> list[Array]:
       if len(nonscalar_ranks) < 2:
         return [lax.asarray(arg) for arg in args]  # rely on lax scalar promotion
       else:
-        if config.jax_numpy_rank_promotion != "allow":
+        if config.numpy_rank_promotion.value != "allow":
           _rank_promotion_warning_or_error(fun_name, shapes)
         result_rank = len(lax.broadcast_shapes(*shapes))
         return [_broadcast_to(arg, (1,) * (result_rank - len(shp)) + shp)
@@ -250,13 +250,13 @@ def promote_shapes(fun_name: str, *args: ArrayLike) -> list[Array]:
 
 
 def _rank_promotion_warning_or_error(fun_name: str, shapes: Sequence[Shape]):
-  if config.jax_numpy_rank_promotion == "warn":
+  if config.numpy_rank_promotion.value == "warn":
     msg = ("Following NumPy automatic rank promotion for {} on shapes {}. "
            "Set the jax_numpy_rank_promotion config option to 'allow' to "
            "disable this warning; for more information, see "
            "https://jax.readthedocs.io/en/latest/rank_promotion_warning.html.")
     warnings.warn(msg.format(fun_name, ' '.join(map(str, shapes))))
-  elif config.jax_numpy_rank_promotion == "raise":
+  elif config.numpy_rank_promotion.value == "raise":
     msg = ("Operands could not be broadcast together for {} on shapes {} "
            "and with the config option jax_numpy_rank_promotion='raise'. "
            "For more information, see "

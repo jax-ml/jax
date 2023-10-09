@@ -22,7 +22,7 @@ import logging
 import os
 import sys
 import threading
-from typing import Any, Callable, Generic, NamedTuple, Optional, TypeVar
+from typing import Any, Callable, Generic, NamedTuple, NoReturn, Optional, TypeVar
 
 from jax._src import lib
 from jax._src.lib import jax_jit
@@ -74,6 +74,12 @@ class FlagHolder(Generic[_T]):
   def __init__(self, flags: NameSpace, name: str):
     self._flags = flags
     self._name = name
+
+  def __bool__(self) -> NoReturn:
+    raise TypeError(
+        "bool() not supported for instances of type '{0}' "
+        "(did you mean to use '{0}.value' instead?)".format(
+            type(self).__name__))
 
   @property
   def value(self) -> _T:
@@ -523,6 +529,12 @@ class _StateContextManager(Generic[_T]):
     self._validate_new_val_hook = validate_new_val_hook
     self._default_value = default_value
 
+  def __bool__(self) -> NoReturn:
+    raise TypeError(
+        "bool() not supported for instances of type '{0}' "
+        "(did you mean to use '{0}.value' instead?)".format(
+            type(self).__name__))
+
   @property
   def value(self) -> _T:
     val = _thread_local_state.__dict__.get(self._name, unset)
@@ -935,7 +947,7 @@ use_original_compilation_cache_key_generation = config.define_bool_state(
          "deployed, this flag and the original cache-key generation algorithm "
          "will be removed.")
 
-config.define_enum_state(
+default_dtype_bits = config.define_enum_state(
     name='jax_default_dtype_bits',
     enum_values=['32', '64'],
     default='64',
@@ -1090,7 +1102,7 @@ bcoo_cusparse_lowering = config.define_bool_state(
 
 # TODO(mattjj): remove this flag when we ensure we only succeed at trace-staging
 # if the intended backend can handle lowering the result
-config.define_bool_state(
+dynamic_shapes = config.define_bool_state(
     name='jax_dynamic_shapes',
     default=bool(os.getenv('JAX_DYNAMIC_SHAPES', '')),
     help=('Enables experimental features for staging out computations with '
@@ -1102,19 +1114,19 @@ config.define_bool_state(
 
 # This flag is temporary during rollout of the remat barrier.
 # TODO(parkers): Remove if there are no complaints.
-config.define_bool_state(
+remat_opt_barrier = config.define_bool_state(
     name='jax_remat_opt_barrier',
     default=(lib.version >= (0, 3, 6)),
     help=('Enables using optimization-barrier op for lowering remat.'))
 
 # TODO(sharadmv,mattjj): set default to True, then remove
-config.define_bool_state(
+eager_pmap = config.define_bool_state(
     name='jax_eager_pmap',
     default=True,
     upgrade=True,
     help='Enable eager-mode pmap when jax_disable_jit is activated.')
 
-config.define_bool_state(
+xla_runtime_errors = config.define_bool_state(
     name='jax_experimental_unsafe_xla_runtime_errors',
     default=False,
     help=('Enable XLA runtime errors for jax.experimental.checkify.checks '

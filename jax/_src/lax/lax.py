@@ -36,6 +36,7 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import array
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -45,7 +46,6 @@ from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.abstract_arrays import array_types
-from jax._src.config import config
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
                            raise_to_shaped, abstract_token, canonicalize_shape)
 from jax._src.interpreters import ad
@@ -93,7 +93,7 @@ def _validate_shapes(shapes: Sequence[Shape]):
       raise TypeError(msg)
 
   assert shapes
-  if config.jax_dynamic_shapes:
+  if config.dynamic_shapes.value:
     # pass dynamic shapes through unchecked
     return
   else:
@@ -182,7 +182,7 @@ def _extract_tracers_dyn_shape(
     shape: Sequence[Union[int, core.Tracer]]
   ) -> tuple[list[core.Tracer], list[Optional[int]]]:
   # Given a sequence representing a shape, pull out Tracers, replacing with None
-  if config.jax_dynamic_shapes:
+  if config.dynamic_shapes.value:
     # We must gate this behavior under a flag because otherwise the errors
     # raised are different (and have worse source provenance information).
     dyn_shape = [d for d in shape if isinstance(d, core.Tracer)]
@@ -794,7 +794,7 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   """
   if np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and isinstance(operand, Array):
     return type_cast(Array, operand)
-  if config.jax_dynamic_shapes:
+  if config.dynamic_shapes.value:
     # We must gate this behavior under a flag because otherwise the errors
     # raised are different (and have worse source provenance information).
     dyn_shape, static_shape = _extract_tracers_dyn_shape(shape)
@@ -1649,7 +1649,7 @@ def _unbroadcast(aval, x):
     return _reduce_sum(x, list(range(len(x_shape))))
   else:
     dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape)) if not core.definitely_equal(a, b)]
-    if config.jax_enable_checks: assert all(aval.shape[i] == 1 for i in dims)
+    if config.enable_checks.value: assert all(aval.shape[i] == 1 for i in dims)
     return reshape(_reduce_sum(x, dims), aval.shape)
 
 def _maybe_broadcast(target_shape, x):
@@ -3358,7 +3358,7 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions):
     msg = 'reshape new_sizes must all be positive, got {}.'
     raise TypeError(msg.format(new_sizes))
   # TODO(necula): re-enable this check
-  if (not config.jax_dynamic_shapes and
+  if (not config.dynamic_shapes.value and
       not math.prod(np.shape(operand)) == math.prod(new_sizes)):
     msg = 'reshape total size must be unchanged, got new_sizes {} for shape {}.'
     raise TypeError(msg.format(new_sizes, np.shape(operand)))
@@ -4850,7 +4850,7 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
   # bool(obj) for an ndarray raises an error, so we check len
   if not len(obj):  # pylint: disable=g-explicit-length-test
     return
-  if (config.jax_dynamic_shapes and isinstance(obj, (tuple, list)) and
+  if (config.dynamic_shapes.value and isinstance(obj, (tuple, list)) and
       any(isinstance(d, (core.Tracer, core.DArray)) for d in obj)):
     return  # TODO(mattjj): handle more checks in the dynamic shape case
   obj_arr = np.array(obj)
@@ -4913,17 +4913,17 @@ def canonicalize_precision(precision: PrecisionLike) -> Optional[tuple[Precision
   value to apply to both operands, or as a sequence of two values.
   """
   if precision is None:
-    if config.jax_default_matmul_precision is None:
+    if config.default_matmul_precision.value is None:
       return None
     try:
       return type_cast(
           tuple[PrecisionType, PrecisionType],
-          (Precision(config.jax_default_matmul_precision),
-           Precision(config.jax_default_matmul_precision)))
+          (Precision(config.default_matmul_precision.value),
+           Precision(config.default_matmul_precision.value)))
     except TypeError:
       raise ValueError(
           "jax_default_matmul_precision flag must be set to None or a value in "
-          f"{list(Precision._strings)}, but got {config.jax_default_matmul_precision}"
+          f"{list(Precision._strings)}, but got {config.default_matmul_precision.value}"
       ) from None
   elif isinstance(precision, str) and precision in Precision._strings:
     return type_cast(tuple[PrecisionType, PrecisionType],

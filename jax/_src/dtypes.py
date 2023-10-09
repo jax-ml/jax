@@ -30,7 +30,7 @@ import warnings
 import ml_dtypes
 import numpy as np
 
-from jax._src.config import config
+from jax._src import config
 from jax._src.typing import DType, DTypeLike
 
 from jax._src import traceback_util
@@ -59,7 +59,6 @@ class extended(np.generic):
     >>> jnp.issubdtype(key.dtype, dtypes.extended)
     True
   """
-  pass
 
 
 class prng_key(extended):
@@ -75,7 +74,6 @@ class prng_key(extended):
     >>> jnp.issubdtype(key.dtype, dtypes.prng_key)
     True
   """
-  pass
 
 
 class ExtendedDType(metaclass=abc.ABCMeta):
@@ -139,12 +137,28 @@ _int4_dtypes = [
 ]
 
 # Default types.
-bool_: type = np.bool_
-int_: type = np.int32 if config.jax_default_dtype_bits == '32' else np.int64
-uint: type = np.uint32 if config.jax_default_dtype_bits == '32' else np.uint64
-float_: type = np.float32 if config.jax_default_dtype_bits == '32' else np.float64
-complex_: type = np.complex64 if config.jax_default_dtype_bits == '32' else np.complex128
-_default_types: dict[str, type] = {'b': bool_, 'i': int_, 'u': uint, 'f': float_, 'c': complex_}
+bool_ = np.bool_
+int_: type[Any]
+uint: type[Any]
+float_: type[Any]
+complex_: type[Any]
+if config.default_dtype_bits.value == '32':
+  int_ = np.int32
+  uint = np.uint32
+  float_ = np.float32
+  complex_ = np.complex64
+else:
+  int_ = np.int64
+  uint = np.uint64
+  float_ = np.float64
+  complex_ = np.complex128
+_default_types: dict[str, type[Any]] = {
+    'b': bool_,
+    'i': int_,
+    'u': uint,
+    'f': float_,
+    'c': complex_,
+}
 
 # Trivial vectorspace datatype needed for tangent values of int/bool primals
 float0: np.dtype = np.dtype([('float0', np.void, 0)])
@@ -219,7 +233,7 @@ def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False, allow_opa
       "allow_opaque_dtype argument is deprecated; use allow_extended_dtype.",
       DeprecationWarning)
     allow_extended_dtype = allow_opaque_dtype
-  return _canonicalize_dtype(config.x64_enabled, allow_extended_dtype, dtype)  # type: ignore[bad-return-type]
+  return _canonicalize_dtype(config.enable_x64.value, allow_extended_dtype, dtype)  # type: ignore[bad-return-type]
 
 # Default dtypes corresponding to Python scalars.
 python_scalar_dtypes : dict[type, DType] = {
@@ -507,7 +521,7 @@ def _least_upper_bound(jax_numpy_dtype_promotion: str, *nodes: JAXType) -> JAXTy
   if len(LUB) == 1:
     return LUB.pop()
   elif len(LUB) == 0:
-    if config.jax_numpy_dtype_promotion == 'strict':
+    if config.numpy_dtype_promotion.value == 'strict':
       msg = (
         f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
         "promotion path when jax_numpy_dtype_promotion=strict. Try explicitly casting "
@@ -553,7 +567,7 @@ def promote_types(a: DTypeLike, b: DTypeLike) -> DType:
   # object identity, not object equality, due to the behavior of np.dtype.__eq__
   a_tp = cast(JAXType, a if any(a is t for t in _weak_types) else np.dtype(a))
   b_tp = cast(JAXType, b if any(b is t for t in _weak_types) else np.dtype(b))
-  return np.dtype(_least_upper_bound(config.jax_numpy_dtype_promotion, a_tp, b_tp))
+  return np.dtype(_least_upper_bound(config.numpy_dtype_promotion.value, a_tp, b_tp))
 
 def is_weakly_typed(x: Any) -> bool:
   try:
@@ -604,17 +618,17 @@ def _lattice_result_type(*args: Any) -> tuple[DType, bool]:
     # Trivial promotion case. This allows extended dtypes through.
     out_dtype = dtypes[0]
     out_weak_type = False
-  elif all(weak_types) and config.jax_numpy_dtype_promotion != 'strict':
+  elif all(weak_types) and config.numpy_dtype_promotion.value != 'strict':
     # If all inputs are weakly typed, we compute the bound of the strongly-typed
     # counterparts and apply the weak type at the end. This avoids returning the
     # incorrect result with non-canonical weak types (e.g. weak int16).
     # TODO(jakevdp): explore removing this special case.
-    result_type = _least_upper_bound(config.jax_numpy_dtype_promotion,
+    result_type = _least_upper_bound(config.numpy_dtype_promotion.value,
                                      *{_jax_type(dtype, False) for dtype in dtypes})
     out_dtype = dtype(result_type)
     out_weak_type = True
   else:
-    result_type = _least_upper_bound(config.jax_numpy_dtype_promotion,
+    result_type = _least_upper_bound(config.numpy_dtype_promotion.value,
                                      *{_jax_type(d, w) for d, w in zip(dtypes, weak_types)})
     out_dtype = dtype(result_type)
     out_weak_type = any(result_type is t for t in _weak_types)

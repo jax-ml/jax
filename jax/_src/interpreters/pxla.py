@@ -34,8 +34,9 @@ import jax
 from jax.errors import JAXTypeError
 
 from jax._src import api_util
-from jax._src import core
 from jax._src import compiler
+from jax._src import config
+from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
@@ -51,7 +52,6 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
-from jax._src.config import config
 from jax._src.core import DShapedArray
 from jax._src.core import ShapedArray
 from jax._src.interpreters import ad
@@ -279,7 +279,7 @@ def xla_pmap_impl_lazy(
     donated_invars: Sequence[bool],
     is_explicit_global_axis_size: bool,
 ) -> Callable:
-  if (config.jax_disable_jit and config.jax_eager_pmap and
+  if (config.disable_jit.value and config.eager_pmap.value and
       not is_explicit_global_axis_size and not any(d for d in donated_invars)):
     def _emap_apply_fn(*args):
       return _emap_impl(fun, *args, backend=backend, axis_name=axis_name,
@@ -296,7 +296,7 @@ def xla_pmap_impl_lazy(
       is_explicit_global_axis_size, *abstract_args)
 
   # Don't re-abstractify args unless logging is enabled for performance.
-  if config.jax_distributed_debug:
+  if config.distributed_debug.value:
     distributed_debug_log(("Running pmapped function", name),
                           ("python function", fun.f),
                           ("devices", devices),
@@ -433,7 +433,7 @@ class MapTrace(core.Trace):
   def process_map(self, map_primitive, fun, tracers, params):
     if params['devices'] is not None:
       raise ValueError("Nested pmap with explicit devices argument.")
-    if not config.jax_disable_jit:
+    if not config.disable_jit.value:
       bind = HashableFunction(
           lambda *args, **kwargs: map_primitive.bind(fun, *args, **kwargs),
           (map_primitive, fun))
@@ -728,7 +728,7 @@ def lower_parallel_callable(
       f"`axis_size` (or remove the `devices` argument). Got nested_replicas="
       f"{replicas.jaxpr_replicas}")
 
-  log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
+  log_priority = logging.WARNING if config.log_compiles.value else logging.DEBUG
   if logger.isEnabledFor(log_priority):
     logger.log(log_priority,
                "Compiling %s (%d) for %d devices with args %s. (num_replicas=%d)",
@@ -1630,7 +1630,7 @@ ShardingInfo = tuple[
 
 
 def _get_default_device() -> xc.Device:
-  return config.jax_default_device or xb.local_devices()[0]
+  return config.default_device.value or xb.local_devices()[0]
 
 
 class _thread_local_decorator(threading.local):
@@ -1798,7 +1798,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
   # code without tuple conversion.
   device_assignment = tuple(da_object)
 
-  log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
+  log_priority = logging.WARNING if config.log_compiles.value else logging.DEBUG
   if logger.isEnabledFor(log_priority):
     logger.log(log_priority,
                "Compiling %s for with global shapes and types %s. "
@@ -2029,7 +2029,7 @@ def lower_sharding_computation(
                transfer_mem_kind_in_jaxpr))
 
   if not da_object.is_fully_addressable:  # type: ignore
-    if inline and config.jax_spmd_mode != 'allow_all':
+    if inline and config.spmd_mode.value != 'allow_all':
       raise RuntimeError(
           "Running operations on `Array`s that are not fully addressable by this "
           "process (i.e. `Array`s with data sharded across multiple devices and "
@@ -2116,7 +2116,7 @@ def lower_mesh_computation(
 
   global_axis_sizes = mesh.shape
 
-  log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
+  log_priority = logging.WARNING if config.log_compiles.value else logging.DEBUG
   if logger.isEnabledFor(log_priority):
     logger.log(log_priority,
                "Compiling %s for %s mesh with global shapes and types %s. "

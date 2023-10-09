@@ -27,6 +27,7 @@ from jax import lax
 
 from jax._src import api
 from jax._src import linear_util as lu
+from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import effects
@@ -37,7 +38,6 @@ from jax._src import traceback_util
 from jax._src import tree_util as jtu
 from jax._src.ad_util import SymbolicZero
 from jax._src.api_util import flatten_fun
-from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -511,7 +511,7 @@ def check_lowering_rule(ctx, *args, err_tree, debug):
   if debug:
     # NOOP (check will only trigger when discharged)
     return []
-  if not config.jax_experimental_unsafe_xla_runtime_errors:
+  if not config.xla_runtime_errors.value:
     raise functionalization_error
 
   out_op, _, _ = mlir.emit_python_callback(

@@ -35,9 +35,8 @@ import threading
 from typing import Any, Callable, Optional, Union
 import warnings
 
+from jax._src import config
 from jax._src import distributed
-from jax._src import config as jax_config
-from jax._src.config import config
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
@@ -63,34 +62,34 @@ XlaBackend = xla_client.Client
 
 
 # TODO(phawkins): Remove jax_xla_backend.
-_XLA_BACKEND = jax_config.DEFINE_string(
+_XLA_BACKEND = config.DEFINE_string(
     'jax_xla_backend', '',
     'Deprecated, please use --jax_platforms instead.')
-BACKEND_TARGET = jax_config.DEFINE_string(
+BACKEND_TARGET = config.DEFINE_string(
     'jax_backend_target',
     os.getenv('JAX_BACKEND_TARGET', '').lower(),
     'Either "local" or "rpc:address" to connect to a remote service target.')
 # TODO(skye): warn when this is used once we test out --jax_platforms a bit
-_PLATFORM_NAME = jax_config.DEFINE_string(
+_PLATFORM_NAME = config.DEFINE_string(
     'jax_platform_name',
     os.getenv('JAX_PLATFORM_NAME', '').lower(),
     'Deprecated, please use --jax_platforms instead.')
-CUDA_VISIBLE_DEVICES = jax_config.DEFINE_string(
+CUDA_VISIBLE_DEVICES = config.DEFINE_string(
     'jax_cuda_visible_devices', 'all',
     'Restricts the set of CUDA devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
-_ROCM_VISIBLE_DEVICES = jax_config.DEFINE_string(
+_ROCM_VISIBLE_DEVICES = config.DEFINE_string(
     'jax_rocm_visible_devices', 'all',
     'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
 
-_USE_MOCK_GPU_CLIENT = jax_config.DEFINE_bool(
+_USE_MOCK_GPU_CLIENT = config.DEFINE_bool(
     name="use_mock_gpu_client",
     default=False,
     help="If True, use a mock GPU client instead of a real one.",
 )
 
-_MOCK_NUM_GPUS = jax_config.DEFINE_integer(
+_MOCK_NUM_GPUS = config.DEFINE_integer(
     name="mock_num_gpus",
     default=1,
     help="Mock GPU client number of gpus.",
@@ -223,7 +222,7 @@ def _check_cuda_versions():
 
 
 def make_gpu_client(
-    *, platform_name: str, visible_devices_flag: jax_config.FlagHolder[str]
+    *, platform_name: str, visible_devices_flag: config.FlagHolder[str]
 ) -> xla_client.Client:
   visible_devices = visible_devices_flag.value
   allowed_devices = None
@@ -564,11 +563,10 @@ def backends() -> dict[str, xla_client.Client]:
   with _backend_lock:
     if _backends:
       return _backends
-    if config.jax_platforms:
-      jax_platforms = config.jax_platforms.split(",")
+    if jax_platforms := config.jax_platforms.value:
       platforms = []
       # Allow platform aliases in the list of platforms.
-      for platform in jax_platforms:
+      for platform in jax_platforms.split(","):
         platforms.extend(expand_platform_alias(platform))
       priorities = range(len(platforms), 0, -1)
       # If the user specified a list of platforms explicitly, always fail
@@ -597,14 +595,14 @@ def backends() -> dict[str, xla_client.Client]:
           _backend_errors[platform] = str(err)
           logger.info(err_msg)
         else:
-          if config.jax_platforms:
+          if config.jax_platforms.value:
             err_msg += " (set JAX_PLATFORMS='' to automatically choose an available backend)"
           else:
             err_msg += " (you may need to uninstall the failing plugin package, or set JAX_PLATFORMS=cpu to skip this backend.)"
           raise RuntimeError(err_msg)
 
     assert _default_backend is not None
-    if not config.jax_platforms:
+    if not config.jax_platforms.value:
       _suggest_missing_backends()
     return _backends
 
