@@ -78,7 +78,8 @@ setup(
         "numpy>=1.23.2; python_version>='3.11'",
         "numpy>=1.26.0; python_version>='3.12'",
         'opt_einsum',
-        'scipy>=1.7',
+        'scipy>=1.9',
+        "scipy>=1.11.1; python_version>='3.12'",
         # Required by xla_bridge.discover_pjrt_plugins for forwards compat with
         # Python versions < 3.10. Can be dropped when 3.10 is the minimum
         # required Python version.
