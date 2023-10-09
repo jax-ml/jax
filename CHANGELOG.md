@@ -8,6 +8,17 @@ Remember to align the itemized text with the first line of an item within a list
 
 # jax 0.4.19
 
+* Changes
+  * JAX now requires SciPy 1.9 or newer.
+
+* Bug fixes
+  * Only process 0 in a multicontroller distributed JAX program will write
+    persistent compilation cache entries. This fixes write contention if the
+    cache is placed on a network filesystem such as GCS.
+  * The version check for cusolver and cufft no longer considers the patch
+    versions when determining if the installed version of these libraries is at
+    least as new as the versions against which JAX was built.
+
 # jaxlib 0.4.19
 
 # jax 0.4.18 (Oct 6, 2023)
