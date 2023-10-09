@@ -63,7 +63,7 @@ from jax import config
 config.parse_flags_with_absl()
 
 prev_xla_flags = None
-
+prev_spmd_lowering_flag = None
 
 def setUpModule():
   global prev_xla_flags
@@ -75,7 +75,7 @@ def setUpModule():
                                " --xla_force_host_platform_device_count=8")
   # Clear any cached backends so new CPU backend will pick up the env var.
   xla_bridge.get_backend.cache_clear()
-  jtu.set_spmd_lowering_flag(True)
+  config.update('experimental_xmap_spmd_lowering', True)
 
 def tearDownModule():
   if prev_xla_flags is None:
@@ -83,8 +83,7 @@ def tearDownModule():
   else:
     os.environ["XLA_FLAGS"] = prev_xla_flags
   xla_bridge.get_backend.cache_clear()
-
-  jtu.restore_spmd_lowering_flag()
+  jtu.set_spmd_lowering_flag(prev_spmd_lowering_flag)
 
 
 def create_array(global_shape, global_mesh, mesh_axes, global_data=None,

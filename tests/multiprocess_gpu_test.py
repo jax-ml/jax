@@ -29,6 +29,7 @@ import jax
 from jax import config
 from jax._src import core
 from jax._src import distributed
+from jax._src import maps
 import jax.numpy as jnp
 from jax._src import test_util as jtu
 from jax._src import util
@@ -258,13 +259,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    self.xmap_spmd_lowering_enabled = jax.config.experimental_xmap_spmd_lowering
-    jax.config.update("experimental_xmap_spmd_lowering", True)
-
-  def tearDown(self):
-    jax.config.update("experimental_xmap_spmd_lowering",
-                      self.xmap_spmd_lowering_enabled)
-    super().tearDown()
+    self.enter_context(maps.xmap_spmd_lowering(True))
 
   def test_gpu_multi_node_initialize_and_psum(self):
 

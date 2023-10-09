@@ -41,6 +41,7 @@ from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 import jax.numpy as jnp
 from jax._src import compiler
+from jax._src import maps
 from jax._src import xla_bridge
 
 import numpy as np
@@ -74,7 +75,6 @@ def setUpModule():
                                " --xla_force_host_platform_device_count=8")
   # Clear any cached backends so new CPU backend will pick up the env var.
   xla_bridge.get_backend.cache_clear()
-  jtu.set_spmd_lowering_flag(True)
 
 
 def tearDownModule():
@@ -83,17 +83,21 @@ def tearDownModule():
   else:
     os.environ["XLA_FLAGS"] = prev_xla_flags
   xla_bridge.get_backend.cache_clear()
-  jtu.restore_spmd_lowering_flag()
 
 
 class ShardingTest(tf_test_util.JaxToTfTestCase):
   """Tests that inspect the HLO for the sharding annotations.
   """
+
+  @classmethod
+  def setUpClass(cls):
+    super().setUpClass()
+    cls.enter_context(maps.xmap_spmd_lowering(True))
+
   def setUp(self):
     super().setUp()
     if jtu.test_device_matches(["gpu"]):
       raise unittest.SkipTest("Sharding HLO tests not useful for GPU")
-
     if len(jax.devices()) < 2:
       raise unittest.SkipTest("Test requires at least 2 local devices")
     self.devices = np.array(jax.devices()[:2])  # use 2 devices

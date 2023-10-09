@@ -26,13 +26,13 @@ from jax import config
 from jax import lax
 from jax._src import core
 from jax._src import dispatch
+from jax._src import maps
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version
 from jax.experimental import io_callback
-from jax.experimental import maps
 from jax.experimental import pjit
 from jax.experimental.maps import xmap
 from jax.experimental.shard_map import shard_map
@@ -632,9 +632,10 @@ class PureCallbackTest(jtu.JaxTestCase):
     if not hasattr(xla_client.OpSharding.Type, 'MANUAL'):
       raise unittest.SkipTest('Manual partitioning needed for pure_callback')
 
-    jtu.set_spmd_lowering_flag(True)
-    jtu.set_spmd_manual_lowering_flag(True)
-    try:
+    with (
+        maps.xmap_spmd_lowering_manual(True),
+        maps.xmap_spmd_lowering_manual(True)
+    ):
       mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
 
       spec = jax.sharding.PartitionSpec('x')
@@ -658,9 +659,6 @@ class PureCallbackTest(jtu.JaxTestCase):
         np.testing.assert_allclose(
             out, np.sin(np.arange(jax.local_device_count()))
         )
-    finally:
-      jtu.restore_spmd_manual_lowering_flag()
-      jtu.restore_spmd_lowering_flag()
 
   def test_cant_take_grad_of_pure_callback(self):
 
