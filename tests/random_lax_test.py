@@ -1018,7 +1018,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = self.make_key(1701)
     shape = (10,)
     if np.iinfo(dtype).bits < np.iinfo(dtypes.canonicalize_dtype(int)).bits:
-      expected = random.randint(key, shape, min, max, dtype)
+      expected = random.randint(key, shape, min, max + 1, dtype)
       self.assertArraysEqual(expected, random.randint(key, shape, min - 12345, max + 12345, dtype))
     else:
       self.assertRaises(OverflowError, random.randint, key, shape, min - 12345, max + 12345, dtype)
