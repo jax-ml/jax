@@ -1223,8 +1223,11 @@ def relayout(
 
   # Try to reconcile differences in implicit dim.
   if src.implicit_dim != dst.implicit_dim:
-    if dst.implicit_dim is None and vty.shape[src.implicit_dim] == 1:
-      src = VectorLayout(src.bitwidth, src.offsets, src.tiling, None)
+    candidate = VectorLayout(
+        src.bitwidth, src.offsets, src.tiling, dst.implicit_dim
+    )
+    if candidate.equivalent_to(src, vty.shape):
+      src = candidate
 
   # Handle retiling from (1, 128) to (8, 128) for 32-bit data.
   if (
@@ -1315,7 +1318,7 @@ def relayout(
     src = new_src
     src_tiles = src_tiles_retiled
 
- # (8, 128) -> (32, 128) for int8. Useful for preparing data for matmuls.
+  # (8, 128) -> (32, 128) for int8. Useful for preparing data for matmuls.
   if (
       src.implicit_dim is None
       and dst.implicit_dim is None
@@ -1357,6 +1360,7 @@ def relayout(
 
   # Fix up the offsets, assuming everything else matches between src and dst.
   if src.tiling == dst.tiling and src.implicit_dim == dst.implicit_dim:
+    tiling = src.tiling
     # TODO(apaszke): Changing an offset might add or remove one vreg.
     if dst_tiles_shape != src_tiles.shape:
       raise NotImplementedError("Offsets changing the vreg array shape")
@@ -1420,8 +1424,10 @@ def relayout(
         raise NotImplementedError("Both columns and rows are shifted")
       if col_diff < 0:
         raise NotImplementedError("Shifts to the left")
-      if bitwidth != 32:
-        raise NotImplementedError("Only 32-bit column shifts supported")
+      if bitwidth != 32 or tiling != TARGET_SHAPE:
+        raise NotImplementedError(
+            "Only 32-bit column shifts for native layouts supported"
+        )
       sublane_diff = col_diff
       sublane_diff_attr = ir.IntegerAttr.get(
           ir.IntegerType.get_signed(32), sublane_diff

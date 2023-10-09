@@ -3013,11 +3013,10 @@ FailureOr<Value> relayout(RewriteContext &ctx, OpBuilder &builder, Value v,
   }
   // Try to reconcile differences in implicit dim.
   if (src.implicit_dim() != dst.implicit_dim()) {
-    const ArrayRef<int64_t> shape = vty.getShape();
-    if (dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-        shape[shape.size() - xla::to_underlying(src.implicit_dim())] == 1) {
-      src = VectorLayout(src.bitwidth(), src.offsets(), src.tiling(),
-                         VectorLayout::ImplicitDim::kNone);
+    VectorLayout candidate(src.bitwidth(), src.offsets(), src.tiling(),
+                           dst.implicit_dim());
+    if (candidate.equivalentTo(src, vty.getShape(), ctx.target_shape)) {
+      src = candidate;
     }
   }
 
@@ -3162,6 +3161,7 @@ FailureOr<Value> relayout(RewriteContext &ctx, OpBuilder &builder, Value v,
   // Fix up the offsets, assuming everything else matches between src and dst.
   if (src.tiling() == dst.tiling() &&
       src.implicit_dim() == dst.implicit_dim()) {
+    const auto &tiling = src.tiling();
     // TODO(apaszke): Changing an offset might add or remove one vreg.
     if (dst_tiles_shape != src_tiles.dimensions()) {
       return emitError(v.getLoc(), "Offsets changing the vreg array shape");
@@ -3245,9 +3245,10 @@ FailureOr<Value> relayout(RewriteContext &ctx, OpBuilder &builder, Value v,
       if (col_diff < 0) {
         return emitError(v.getLoc(), "Not implemented: Shifts to the left");
       }
-      if (bitwidth != 32) {
-        return emitError(
-            v.getLoc(), "Not implemented: Only 32-bit column shifts supported");
+      if (bitwidth != 32 || tiling != ctx.target_shape) {
+        return emitError(v.getLoc(),
+                         "Not implemented: Only 32-bit column shifts for "
+                         "native layouts supported");
       }
       const int64_t sublane_diff = col_diff;
       CHECK_GE(src_tiles.num_dimensions(), 1);
