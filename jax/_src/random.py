@@ -26,13 +26,12 @@ import jax.numpy as jnp
 from jax import lax
 from jax.numpy.linalg import cholesky, svd, eigh
 
-from jax._src import config as config_lib
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import prng
 from jax._src import xla_bridge
 from jax._src.api import jit, vmap
-from jax._src.config import config
 from jax._src.core import NamedShape
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -77,17 +76,17 @@ def _check_prng_key(key) -> tuple[prng.PRNGKeyArray, bool]:
   elif _arraylike(key):
     # Call random_wrap here to surface errors for invalid keys.
     wrapped_key = prng.random_wrap(key, impl=default_prng_impl())
-    if config.jax_legacy_prng_key == 'error':
+    if config.legacy_prng_key.value == 'error':
       raise ValueError(
         'Legacy uint32 key array passed as key to jax.random function. '
         'Please create keys using jax.random.key(). If use of a raw key array '
         'was intended, set jax_legacy_prng_key="allow".')
-    elif config.jax_legacy_prng_key == 'warn':
+    elif config.legacy_prng_key.value == 'warn':
       warnings.warn(
         'Legacy uint32 key array passed as key to jax.random function. '
         'Please create keys using jax.random.key(). If use of a raw key array '
         'was intended, set jax_legacy_prng_key="allow".', stacklevel=2)
-    elif config.jax_enable_custom_prng:
+    elif config.enable_custom_prng.value:
       # TODO(jakevdp): possibly remove this warning condition.
       warnings.warn(
           'Raw arrays as random keys to jax.random functions are deprecated. '
@@ -101,7 +100,7 @@ def _check_prng_key(key) -> tuple[prng.PRNGKeyArray, bool]:
 def _return_prng_keys(was_wrapped, key):
   # TODO(frostig): remove once we always enable_custom_prng
   assert jnp.issubdtype(key.dtype, dtypes.prng_key)
-  if config.jax_enable_custom_prng:
+  if config.enable_custom_prng.value:
     return key
   else:
     return prng.random_unwrap(key) if was_wrapped else key
@@ -120,7 +119,7 @@ def default_prng_impl():
   The default implementation is determined by ``config.jax_default_prng_impl``,
   which specifies it by name.
   """
-  impl_name = config.jax_default_prng_impl
+  impl_name = config.default_prng_impl.value
   assert impl_name in prng.prngs, impl_name
   return prng.prngs[impl_name]
 
@@ -225,8 +224,8 @@ def PRNGKey(seed: Union[int, Array], *,
 # TODO(frostig): remove once we always enable_custom_prng
 def _check_default_impl_with_no_custom_prng(impl, name):
   default_impl = default_prng_impl()
-  default_name = config.jax_default_prng_impl
-  if not config.jax_enable_custom_prng and default_impl is not impl:
+  default_name = config.default_prng_impl.value
+  if not config.enable_custom_prng.value and default_impl is not impl:
     raise RuntimeError('jax_enable_custom_prng must be enabled in order '
                        f'to seed an RNG with an implementation "{name}" '
                        f'differing from the default "{default_name}".')
@@ -829,7 +828,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:
   else: # 'cholesky'
     factor = cholesky(cov)
   normal_samples = normal(key, shape + mean.shape[-1:], dtype)
-  with config_lib.numpy_rank_promotion('allow'):
+  with config.numpy_rank_promotion('allow'):
     result = mean + jnp.einsum('...ij,...j->...i', factor, normal_samples)
   return result
 

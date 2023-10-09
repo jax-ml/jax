@@ -36,9 +36,8 @@ from weakref import ref
 import numpy as np
 
 from jax._src import dtypes
-from jax._src import config as jax_config
+from jax._src import config
 from jax._src import effects
-from jax._src.config import config
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
@@ -60,9 +59,9 @@ zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
 
 
-_TRACER_ERROR_NUM_TRACEBACK_FRAMES = jax_config.DEFINE_integer(
+_TRACER_ERROR_NUM_TRACEBACK_FRAMES = config.DEFINE_integer(
     'jax_tracer_error_num_traceback_frames',
-    jax_config.int_env('JAX_TRACER_ERROR_NUM_TRACEBACK_FRAMES', 5),
+    config.int_env('JAX_TRACER_ERROR_NUM_TRACEBACK_FRAMES', 5),
     help='Set the number of stack frames in JAX tracer error messages.'
 )
 
@@ -269,7 +268,7 @@ class JaxprEqn(NamedTuple):
 # TODO(mattjj): call typecheck rules here, so we don't form bad eqns
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None):
   source_info = source_info or source_info_util.new_source_info()
-  if config.jax_enable_checks:
+  if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
   return JaxprEqn(invars, outvars, primitive, params, effects, source_info)
@@ -381,7 +380,7 @@ class Primitive:
     return f'{self.name}'
 
   def bind(self, *args, **params):
-    assert (not config.jax_enable_checks or
+    assert (not config.enable_checks.value or
             all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args)), args
     return self.bind_with_trace(find_top_trace(args), args, params)
 
@@ -438,7 +437,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True):
     return v.val if isinstance(v, Literal) else env[v]
 
   def write(v: Var, val: Any) -> None:
-    if config.jax_enable_checks and not config.jax_dynamic_shapes:
+    if config.enable_checks.value and not config.dynamic_shapes.value:
       assert typecheck(v.aval, val), (v.aval, val)
     env[v] = val
 
@@ -739,7 +738,7 @@ class Tracer(typing.Array):
 
   def __getattr__(self, name):
     # if the aval property raises an AttributeError, gets caught here
-    assert not config.jax_enable_checks or name != "aval"
+    assert not config.enable_checks.value or name != "aval"
 
     try:
       attr = getattr(self.aval, name)
@@ -989,7 +988,7 @@ def _update_thread_local_jit_state(dynamic):
   # TODO(mattjj): add a test that verifies that JIT-ted functions are not kept
   # alive by the JIT cache, particularly for nested JIT-ted functions.
   copy = MainTrace(dynamic.level, dynamic.trace_type, **dynamic.payload)
-  jax_config.update_thread_local_jit_state(dynamic_trace_state=copy)
+  config.update_thread_local_jit_state(dynamic_trace_state=copy)
 
 
 # The global state of the tracer is accessed by a thread-local object.
@@ -1015,7 +1014,7 @@ def _initialize_jax_jit_thread_local_state():
   if tls.extra_jit_context is None:
     dynamic = thread_local_state.trace_state.trace_stack.dynamic
     copy = MainTrace(dynamic.level, dynamic.trace_type, **dynamic.payload)
-    jax_config.update_thread_local_jit_state(dynamic_trace_state=copy)
+    config.update_thread_local_jit_state(dynamic_trace_state=copy)
 
 
 jax_jit.set_thread_local_state_initialization_callback(
@@ -1151,7 +1150,7 @@ def new_main(trace_type: type[Trace], dynamic: bool = False,
       stack.dynamic = prev_dynamic
       _update_thread_local_jit_state(stack.dynamic)
 
-  if config.jax_check_tracer_leaks:
+  if config.check_tracer_leaks.value:
     t = ref(main)
     del main
     if t() is not None:
@@ -1188,7 +1187,7 @@ def new_base_main(trace_type: type[Trace],
     stack.stack[0] = prev_base
     _update_thread_local_jit_state(stack.dynamic)
 
-  if config.jax_check_tracer_leaks:
+  if config.check_tracer_leaks.value:
     t = ref(main)
     del main
     if t() is not None:
@@ -1268,7 +1267,7 @@ def new_sublevel() -> Generator[None, None, None]:
   finally:
     thread_local_state.trace_state.substack.pop()
 
-  if config.jax_check_tracer_leaks:
+  if config.check_tracer_leaks.value:
     t = ref(sublevel)
     del sublevel
     if t() is not None:
@@ -2026,9 +2025,9 @@ def _canonicalize_dimension(dim: DimSize) -> DimSize:
     return operator.index(dim)
   except TypeError as e:
     type_error = e
-  if isinstance(dim, Tracer) and config.jax_dynamic_shapes:
+  if isinstance(dim, Tracer) and config.dynamic_shapes.value:
     return dim
-  elif (config.jax_dynamic_shapes and isinstance(dim, DArray) and
+  elif (config.dynamic_shapes.value and isinstance(dim, DArray) and
         type(dim._aval.dtype) is bint and not dim._aval.shape):
     return dim
   elif is_dim(dim):
@@ -2230,7 +2229,7 @@ class CallPrimitive(Primitive):
     new_params = dict(params)
     jaxpr = new_params.pop('call_jaxpr')
     subfun = lu.hashable_partial(lu.wrap_init(eval_jaxpr), jaxpr, ())
-    if config.jax_dynamic_shapes:
+    if config.dynamic_shapes.value:
       subfun = lu.annotate(subfun, _jaxpr_type_to_callable_annotation(jaxpr))
     return [subfun], new_params
 
@@ -2458,14 +2457,14 @@ def extend_axis_env(axis_name: AxisName, size: int, tag: Any):
   frame = AxisEnvFrame(axis_name, size, tag)
   ts = thread_local_state.trace_state
   ts.axis_env.append(frame)
-  jax_config.update_thread_local_jit_state(
+  config.update_thread_local_jit_state(
       axis_env_state=tuple(f for f in ts.axis_env
                            if f.name is not no_axis_name))
   try:
     yield
   finally:
     ts.axis_env.pop()
-    jax_config.update_thread_local_jit_state(
+    config.update_thread_local_jit_state(
         axis_env_state=tuple(f for f in ts.axis_env
                              if f.name is not no_axis_name))
 
@@ -2474,14 +2473,14 @@ def extend_axis_env_nd(axes: Iterable[tuple[AxisName, int]], tag: Any = None):
   frames = [AxisEnvFrame(axis_name, size, tag) for axis_name, size in axes]
   ts = thread_local_state.trace_state
   ts.axis_env.extend(frames)
-  jax_config.update_thread_local_jit_state(
+  config.update_thread_local_jit_state(
       axis_env_state=tuple(f for f in ts.axis_env
                            if f.name is not no_axis_name))
   try:
     yield
   finally:
     for _ in frames: ts.axis_env.pop()
-    jax_config.update_thread_local_jit_state(
+    config.update_thread_local_jit_state(
         axis_env_state=tuple(f for f in ts.axis_env
                              if f.name is not no_axis_name))
 
@@ -2493,12 +2492,12 @@ def stash_axis_env():
   # be raised.
   ts = thread_local_state.trace_state
   prev_axis_env, ts.axis_env = ts.axis_env, []
-  jax_config.update_thread_local_jit_state(axis_env_state=())
+  config.update_thread_local_jit_state(axis_env_state=())
   try:
     yield
   finally:
     ts.axis_env = prev_axis_env
-    jax_config.update_thread_local_jit_state(
+    config.update_thread_local_jit_state(
         axis_env_state=tuple(f for f in ts.axis_env
                              if f.name is not no_axis_name))
 

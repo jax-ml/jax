@@ -29,6 +29,7 @@ from typing import Any, Callable, NamedTuple, Optional, Protocol, Union
 import warnings
 
 from jax._src import ad_util
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects as effects_lib
@@ -38,7 +39,6 @@ from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src.config import config
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
@@ -316,9 +316,8 @@ register_constant_handler(core.Token, _token_constant_handler)
 
 def get_canonical_source_file(frame: source_info_util.Frame) -> str:
   source_file = frame.file_name
-  if config.jax_hlo_source_file_canonicalization_regex:
-    source_file = re.sub(config.jax_hlo_source_file_canonicalization_regex,
-                         '', source_file)
+  if pattern := config.hlo_source_file_canonicalization_regex.value:
+    source_file = re.sub(pattern, '', source_file)
   return source_file
 
 def _traceback_to_location(tb: xc.Traceback) -> ir.Location:
@@ -349,7 +348,7 @@ def _source_info_to_location(
     name_stack: source_info_util.NameStack) -> ir.Location:
   eqn_str = (f'{str(source_info.name_stack)}/'
              f'{core.str_eqn_compact(primitive.name, params)}')
-  if config.jax_include_full_tracebacks_in_locations:
+  if config.include_full_tracebacks_in_locations.value:
     if source_info.traceback is None:
       loc = ir.Location.unknown()
     else:
@@ -622,7 +621,7 @@ def sharded_aval(aval: core.AbstractValue,
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,
                        shape: core.Shape) -> tuple[int | Value, ...]:
-  if config.jax_dynamic_shapes:
+  if config.dynamic_shapes.value:
     return tuple(ctx.axis_size_env.get(d, d) for d in shape)  # type: ignore
   else:
     ctx = ctx.replace(
@@ -774,7 +773,7 @@ def lower_jaxpr_to_module(
   host_callbacks: list[Any] = []
 
   dim_vars: Sequence[str]
-  if not config.jax_dynamic_shapes:
+  if not config.dynamic_shapes.value:
     # Find the dimension variables
     all_dim_poly = [d for aval in jaxpr.in_avals if hasattr(aval, "shape")
                     for d in aval.shape if not core.is_constant_dim(d)]
@@ -1418,7 +1417,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
           module_context=eqn_ctx, primitive=eqn.primitive, avals_in=avals_in,
           avals_out=map(aval, eqn.outvars), tokens_in=tokens_in,
           tokens_out=None, dim_var_values=dim_var_values)
-      if config.jax_dynamic_shapes:
+      if config.dynamic_shapes.value:
         axis_size_env = {d: read(d)[0]
                          for a in avals_in if type(a) is core.DShapedArray
                          for d in a.shape if type(d) is core.Var}
@@ -1589,7 +1588,7 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
     wrapped_fun = lu.wrap_init(f, params)
 
-    if config.jax_dynamic_shapes:
+    if config.dynamic_shapes.value:
       # We might be applying this function to arguments with dynamic shapes,
       # i.e. there might be Vars in the shape tuples of ctx.avals_in. In that
       # case, we need to form a jaxpr with leading binders for those axis size

@@ -16,8 +16,8 @@ from functools import partial
 import operator
 
 from jax._src import api
+from jax._src import config
 from jax._src import dtypes as _dtypes
-from jax._src.config import config
 from jax._src.tree_util import tree_map, tree_reduce
 
 import numpy as np
@@ -130,7 +130,7 @@ def check_close(xs, ys, atol=None, rtol=None, err_msg=''):
 
 def _check_dtypes_match(xs, ys):
   def _assert_dtypes_match(x, y):
-    if config.x64_enabled:
+    if config.enable_x64.value:
       assert _dtype(x) == _dtype(y)
     else:
       assert (_dtypes.canonicalize_dtype(_dtype(x)) ==

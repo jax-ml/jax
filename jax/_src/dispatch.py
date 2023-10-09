@@ -30,6 +30,7 @@ import numpy as np
 
 import jax
 from jax._src import basearray
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
@@ -39,7 +40,6 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -160,7 +160,7 @@ def xla_primitive_callable(
       lowering_parameters=mlir.LoweringParameters())
   compiled = computation.compile()
   if xla_extension_version >= 192:
-    if config.jax_disable_jit:
+    if config.disable_jit.value:
       call = compiled.unsafe_call
     else:
       call = compiled.create_cpp_call_for_apply_primitive(out_tree())
@@ -262,7 +262,7 @@ def log_elapsed_time(fmt: str, fun_name: str, event: str | None = None):
   if _on_exit:
     yield
   else:
-    log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
+    log_priority = logging.WARNING if config.log_compiles.value else logging.DEBUG
     start_time = time.time()
     yield
     elapsed_time = time.time() - start_time
@@ -395,7 +395,7 @@ def _initial_style_primitive_replicas(params: dict[str, Any]) -> int:
              default=1)
 
 def needs_check_special() -> bool:
-  return config.jax_debug_infs or config.jax_debug_nans
+  return config.debug_infs.value or config.debug_nans.value
 
 def check_special(name: str, bufs: Sequence[basearray.Array]) -> None:
   if needs_check_special():
@@ -404,9 +404,9 @@ def check_special(name: str, bufs: Sequence[basearray.Array]) -> None:
 
 def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
   if dtypes.issubdtype(dtype, np.inexact):
-    if config.jax_debug_nans and np.any(np.isnan(np.asarray(buf))):
+    if config.debug_nans.value and np.any(np.isnan(np.asarray(buf))):
       raise FloatingPointError(f"invalid value (nan) encountered in {name}")
-    if config.jax_debug_infs and np.any(np.isinf(np.asarray(buf))):
+    if config.debug_infs.value and np.any(np.isinf(np.asarray(buf))):
       raise FloatingPointError(f"invalid value (inf) encountered in {name}")
 
 

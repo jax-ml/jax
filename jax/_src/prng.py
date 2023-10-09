@@ -31,7 +31,7 @@ from jax import tree_util
 from jax._src import ad_util
 from jax._src import api
 from jax._src import basearray
-from jax._src import config as config_lib
+from jax._src import config as config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -40,7 +40,6 @@ from jax._src import sharding_specs
 from jax._src import tree_util as tree_util_internal
 from jax._src import typing
 from jax._src.api import jit, vmap
-from jax._src.config import config
 from jax._src.dtypes import float0
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -969,7 +968,7 @@ def _threefry_seed(seed: typing.Array) -> typing.Array:
   convert = lambda k: lax.reshape(lax.convert_element_type(k, np.uint32), [1])
   k1 = convert(
       lax.shift_right_logical(seed, lax_internal._const(seed, 32)))
-  with config_lib.numpy_dtype_promotion('standard'):
+  with config.numpy_dtype_promotion('standard'):
     # TODO(jakevdp): in X64 mode, this can generate 64-bit computations for 32-bit
     # inputs. We should avoid this.
     k2 = convert(jnp.bitwise_and(seed, np.uint32(0xFFFFFFFF)))
@@ -1270,7 +1269,7 @@ def threefry_split(key: typing.Array, shape: Shape) -> typing.Array:
 
 @partial(jit, static_argnums=(1,))
 def _threefry_split(key, shape) -> typing.Array:
-  if config.jax_threefry_partitionable:
+  if config.threefry_partitionable.value:
     return _threefry_split_foldlike(key, shape)  # type: ignore
   else:
     return _threefry_split_original(key, shape)  # type: ignore
@@ -1305,7 +1304,7 @@ def threefry_random_bits(key: typing.Array, bit_width, shape):
   if bit_width not in (8, 16, 32, 64):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
 
-  if config.jax_threefry_partitionable:
+  if config.threefry_partitionable.value:
     return _threefry_random_bits_partitionable(key, bit_width, shape)
   else:
     return _threefry_random_bits_original(key, bit_width, shape)
@@ -1398,7 +1397,7 @@ def _rbg_seed(seed: typing.Array) -> typing.Array:
   return jnp.concatenate([halfkey, halfkey])
 
 def _rbg_split(key: typing.Array, shape: Shape) -> typing.Array:
-  if config.jax_threefry_partitionable:
+  if config.threefry_partitionable.value:
     _threefry_split = _threefry_split_foldlike
   else:
     _threefry_split = _threefry_split_original

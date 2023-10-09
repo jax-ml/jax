@@ -55,6 +55,7 @@ import numpy as np
 
 import jax
 from jax import lax
+from jax._src import config
 from jax._src import core
 from jax._src.custom_derivatives import lift_jvp
 from jax._src import linear_util as lu
@@ -67,7 +68,6 @@ from jax._src.lib import pytree
 from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten, tree_map, tree_unflatten
 from jax.util import safe_map, safe_zip, split_list
-from jax._src.config import config
 from jax._src.lax.control_flow import _check_tree_and_avals
 from jax._src.numpy import lax_numpy
 from jax.experimental import sparse
@@ -614,7 +614,7 @@ def _add_sparse(spenv, *spvalues):
       raise NotImplementedError("Addition between sparse matrices of different shapes.")
     if X.indices_ref == Y.indices_ref:
       out_data = lax.add(spenv.data(X), spenv.data(Y))
-      if config.jax_enable_checks:
+      if config.enable_checks.value:
         assert X.indices_sorted == Y.indices_sorted
         assert X.unique_indices == Y.unique_indices
       out_spvalue = spenv.sparse(X.shape, out_data, indices_ref=X.indices_ref,
@@ -657,7 +657,7 @@ def _mul_sparse(spenv, *spvalues):
   X, Y = spvalues
   if X.is_sparse() and Y.is_sparse():
     if X.indices_ref == Y.indices_ref and X.unique_indices:
-      if config.jax_enable_checks:
+      if config.enable_checks.value:
         assert X.indices_sorted == Y.indices_sorted
         assert X.unique_indices == Y.unique_indices
       out_data = lax.mul(spenv.data(X), spenv.data(Y))

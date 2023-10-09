@@ -26,13 +26,13 @@ from weakref import ref
 
 import numpy as np
 
-from jax._src import linear_util as lu
-from jax._src.config import config
 from jax._src import ad_util
 from jax._src import api_util
+from jax._src import config
 from jax._src import core
-from jax._src import effects
 from jax._src import dtypes
+from jax._src import effects
+from jax._src import linear_util as lu
 from jax._src import profiler
 from jax._src import source_info_util
 from jax._src.api_util import (flattened_fun_in_tree, flatten_fun_nokwargs,
@@ -106,7 +106,7 @@ class PartialVal(tuple):
   """
   def __new__(cls, xs: tuple[AbstractValue | None, core.Value]):
     pv, const = xs
-    if config.jax_enable_checks:
+    if config.enable_checks.value:
       # type checks
       assert isinstance(pv, (AbstractValue, type(None))), xs
       assert (const is None or isinstance(const, core.Tracer) or
@@ -255,7 +255,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     # which were unknown to the first call (corresponding to in_avals).
 
     # Wrap f to perform the partial evaluation and plumb out aux data.
-    if not config.jax_dynamic_shapes:
+    if not config.dynamic_shapes.value:
       f_ = trace_to_subjaxpr_nounits_fwd(f, self.main, False)
       f_, aux = partial_eval_wrapper_nounits(f_, tuple(in_knowns),
                                              tuple(in_avals))
@@ -275,7 +275,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     out_consts, non_fwd_res_ = split_list(out, [sum(out_knowns)])
 
     # Form the complete list of residuals by forwarding some inputs.
-    if config.jax_dynamic_shapes:
+    if config.dynamic_shapes.value:
       # With dynamic shapes, we may need to forward implicit arguments.
       in_consts_, in_knowns_ = iter(in_consts), iter(in_knowns)
       in_consts_full = [None] * len(f.in_type)
@@ -303,7 +303,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     staged_params = update_params(staged_params, map(op.not_, in_knowns),
                                   num_new_args)
     # The outputs of the staged-out call are Tracers with the new eqn as recipe.
-    if config.jax_dynamic_shapes:
+    if config.dynamic_shapes.value:
       # With dynamic shapes, we may need to substitute Tracers into avals.
       out_tracers = []
       for aval, _ in out_type:
@@ -958,21 +958,21 @@ def tracers_to_jaxpr(
   jaxpr_effects = make_jaxpr_effects(const_vars, invars, outvars, eqns)
   jaxpr = Jaxpr(const_vars, invars,  # type: ignore[list-item,arg-type]
                 outvars, eqns, jaxpr_effects)
-  config.jax_enable_checks and core.check_jaxpr(jaxpr)
+  config.enable_checks.value and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!
   return jaxpr, const_vals, env_vals
 
 @weakref_lru_cache
 def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   """Moves the constvars to the start of invars."""
-  config.jax_enable_checks and core.check_jaxpr(jaxpr)
+  config.enable_checks.value and core.check_jaxpr(jaxpr)
   dbg = jaxpr.debug_info and jaxpr.debug_info._replace(
       arg_names=(None,) * len(jaxpr.constvars) + jaxpr.debug_info.arg_names)
   lifted_jaxpr = Jaxpr(constvars=(),
                        invars=jaxpr.constvars + jaxpr.invars,
                        outvars=jaxpr.outvars, eqns=jaxpr.eqns,
                        effects=jaxpr.effects, debug_info=dbg)
-  config.jax_enable_checks and core.check_jaxpr(lifted_jaxpr)
+  config.enable_checks.value and core.check_jaxpr(lifted_jaxpr)
   return lifted_jaxpr
 
 @weakref_lru_cache
@@ -980,24 +980,24 @@ def convert_invars_to_constvars(jaxpr: Jaxpr, n: int) -> Jaxpr:
   """Move n invars to constvars. Like an inverse of convert_constvars_Jaxpr."""
   if any(isinstance(eff, effects.JaxprInputEffect) for eff in jaxpr.effects):
     raise NotImplementedError
-  config.jax_enable_checks and core.check_jaxpr(jaxpr)
+  config.enable_checks.value and core.check_jaxpr(jaxpr)
   constvars, invars = split_list(jaxpr.invars, [n])
   dbg = jaxpr.debug_info and jaxpr.debug_info._replace(
       arg_names=jaxpr.debug_info.arg_names[n:])
   lifted_jaxpr = jaxpr.replace(constvars=tuple(constvars), invars=invars,
                                debug_info=dbg)
-  config.jax_enable_checks and core.check_jaxpr(lifted_jaxpr)
+  config.enable_checks.value and core.check_jaxpr(lifted_jaxpr)
   return lifted_jaxpr
 
 def convert_envvars_to_constvars(jaxpr: Jaxpr, num_env_vars: int) -> Jaxpr:
   if any(isinstance(eff, effects.JaxprInputEffect) for eff in jaxpr.effects):
     raise NotImplementedError
-  config.jax_enable_checks and core.check_jaxpr(jaxpr)
+  config.enable_checks.value and core.check_jaxpr(jaxpr)
   env_vars, invars = split_list(jaxpr.invars, [num_env_vars])
   converted_jaxpr = Jaxpr(constvars=jaxpr.constvars + env_vars,
                           invars=invars, outvars=jaxpr.outvars, eqns=jaxpr.eqns,
                           effects=jaxpr.effects)
-  config.jax_enable_checks and core.check_jaxpr(converted_jaxpr)
+  config.enable_checks.value and core.check_jaxpr(converted_jaxpr)
   return converted_jaxpr
 
 
@@ -1090,7 +1090,7 @@ def _partial_eval_jaxpr_nounits(jaxpr, in_unknowns, instantiate):
 
   # check jaxpr_known and jaxpr_unknown in isolation
   # TODO(mattjj): enable weak type checking here
-  if config.jax_enable_checks:
+  if config.enable_checks.value:
     core.check_jaxpr(jaxpr_known)
     core.check_jaxpr(jaxpr_unknown)
   # check jaxpr_known has input type corresponding to known inputs of jaxpr
@@ -1256,7 +1256,7 @@ def _partial_eval_jaxpr_custom_cached(
                                      known_outvars, known_eqns)
   jaxpr_known = Jaxpr(jaxpr.constvars, ins_known_and_ref_res, known_outvars,
                       known_eqns, known_effects)
-  config.jax_enable_checks and core.check_jaxpr(jaxpr_known)
+  config.enable_checks.value and core.check_jaxpr(jaxpr_known)
 
   _, ins_staged = partition_list(in_inst, jaxpr.invars)
   _, outs_staged = partition_list(out_inst, jaxpr.outvars)
@@ -1265,7 +1265,7 @@ def _partial_eval_jaxpr_custom_cached(
                                       outs_staged, staged_eqns)
   jaxpr_staged = Jaxpr(jaxpr.constvars, staged_invars,
                        outs_staged, staged_eqns, staged_effects)
-  config.jax_enable_checks and core.check_jaxpr(jaxpr_staged)
+  config.enable_checks.value and core.check_jaxpr(jaxpr_staged)
 
   return (jaxpr_known, jaxpr_staged, out_unknowns, out_inst, len(residuals),
           len(non_input_res_refs))
@@ -1486,7 +1486,7 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
       tuple(v for v, b in zip(jaxpr.debug_info.arg_names, used_inputs) if b),
       tuple(v for v, b in zip(jaxpr.debug_info.result_paths, used_outputs) if b))
   new_jaxpr = Jaxpr(jaxpr.constvars, invars, outvars, eqns, jaxpr_effects, dbg)
-  config.jax_enable_checks and core.check_jaxpr(new_jaxpr)
+  config.enable_checks.value and core.check_jaxpr(new_jaxpr)
 
   return new_jaxpr, used_inputs
 
@@ -1702,7 +1702,7 @@ class JaxprStackFrame:
     jaxpr, constvals = _const_folding_and_forwarding(jaxpr, constvals)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
     jaxpr, out_type = _add_implicit_outputs(jaxpr)
-    config.jax_enable_checks and core.check_jaxpr(jaxpr)
+    config.enable_checks.value and core.check_jaxpr(jaxpr)
     return jaxpr, out_type, constvals
 
   def newvar(self, aval):
@@ -2226,7 +2226,7 @@ def trace_to_subjaxpr_dynamic(
     out_tracers = map(trace.full_raise, ans)
     jaxpr, consts = frame.to_jaxpr(out_tracers)
     del fun, main, trace, frame, in_tracers, out_tracers, ans
-  config.jax_enable_checks and core.check_jaxpr(jaxpr)
+  config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts
 
 
@@ -2432,7 +2432,7 @@ def _add_implicit_outputs(jaxpr: Jaxpr) -> tuple[Jaxpr, OutputType]:
 
   new_jaxpr = Jaxpr(jaxpr.constvars, jaxpr.invars, outvars, jaxpr.eqns,
                     jaxpr.effects, jaxpr.debug_info)
-  config.jax_enable_checks and core.check_jaxpr(jaxpr)
+  config.enable_checks.value and core.check_jaxpr(jaxpr)
   return new_jaxpr, out_type
 
 

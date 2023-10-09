@@ -23,9 +23,9 @@ import weakref
 
 import numpy as np
 
+from jax._src import config
 from jax._src.lib import xla_client as xc
 from jax._src.lib import utils as jaxlib_utils
-from jax._src.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -257,10 +257,10 @@ def cache(max_size=4096):
 
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
-      if config.jax_check_tracer_leaks:
+      if config.check_tracer_leaks.value:
         return f(*args, **kwargs)
       else:
-        return cached(config._trace_context(), *args, **kwargs)
+        return cached(config.config._trace_context(), *args, **kwargs)
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
@@ -278,7 +278,7 @@ def weakref_lru_cache(call: Callable, maxsize=2048):
   behave similar to `functools.lru_cache`.
   """
   global _weakref_lru_caches
-  cached_call = xc.weakref_lru_cache(config._trace_context, call, maxsize)
+  cached_call = xc.weakref_lru_cache(config.config._trace_context, call, maxsize)
   _weakref_lru_caches.add(cached_call)
   return cached_call
 
@@ -464,7 +464,7 @@ def distributed_debug_log(*pairs):
     pairs: A sequence of label/value pairs to log. The first pair is treated as
     a heading for subsequent pairs.
   """
-  if config.jax_distributed_debug:
+  if config.distributed_debug.value:
     lines = ["\nDISTRIBUTED_DEBUG_BEGIN"]
     try:
       lines.append(f"{pairs[0][0]}: {pairs[0][1]}")
