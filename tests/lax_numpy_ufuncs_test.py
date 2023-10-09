@@ -289,6 +289,19 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def test_at_broadcasting(self):
+    # Regression test for https://github.com/google/jax/issues/18004
+    args_maker = lambda: [np.ones((5, 3)), np.array([0, 4, 2]),
+                          np.arange(9.0).reshape(3, 3)]
+    def np_fun(x, idx, y):
+      x_copy = np.copy(x)
+      np.add.at(x_copy, idx, y)
+      return x_copy
+    jnp_fun = partial(jnp.frompyfunc(jnp.add, nin=2, nout=1, identity=0).at, inplace=False)
+
+    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   @jtu.sample_product(
       SCALAR_FUNCS,
       [{'shape': shape, 'axis': axis}
