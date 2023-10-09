@@ -399,7 +399,7 @@ def scatter_add(
       update in `updates` should be applied.
     updates: the updates that should be scattered onto `operand`.
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
-      how dimensions of `operand`, `start_indices`, `updates` and the output
+      how dimensions of `operand`, `scatter_indices`, `updates` and the output
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
