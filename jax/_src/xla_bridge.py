@@ -211,9 +211,13 @@ def _check_cuda_versions():
       scale_for_comparison=100,
   )
   _version_check("cuFFT", cuda_versions.cufft_get_version,
-                 cuda_versions.cufft_build_version)
+                 cuda_versions.cufft_build_version,
+                 # Ignore patch versions.
+                 scale_for_comparison=100)
   _version_check("cuSOLVER", cuda_versions.cusolver_get_version,
-                 cuda_versions.cusolver_build_version)
+                 cuda_versions.cusolver_build_version,
+                 # Ignore patch versions.
+                 scale_for_comparison=100)
   _version_check("cuPTI", cuda_versions.cupti_get_version,
                  cuda_versions.cupti_build_version)
   # TODO(phawkins): ideally we'd check cublas and cusparse here also, but their
