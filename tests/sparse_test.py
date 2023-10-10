@@ -737,7 +737,7 @@ class SparseObjectTest(sptu.SparseTestCase):
     M = sparse.empty((2, 4), sparse_format=sparse_format)
     self.assertIsInstance(M, cls)
     buffers, tree = tree_util.tree_flatten(M)
-    self.assertTrue(all([isinstance(buffer, jax.Array) for buffer in buffers]))
+    self.assertTrue(all(isinstance(buffer, jax.Array) for buffer in buffers))
     M_out = tree_util.tree_unflatten(tree, buffers)
     self.assertEqual(M.dtype, M_out.dtype)
     self.assertEqual(M.shape, M_out.shape)

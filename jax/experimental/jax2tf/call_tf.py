@@ -430,7 +430,7 @@ def _call_tf_abstract_eval(
     return output_avals, effects
 
   def is_fully_known_shape(s):
-    return s.rank is not None and all([d is not None for d in s])
+    return s.rank is not None and all(d is not None for d in s)
 
   if all(is_fully_known_shape(s)
         for s in concrete_function_flat_tf.output_shapes):

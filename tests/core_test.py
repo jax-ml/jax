@@ -366,7 +366,7 @@ class CoreTest(jtu.JaxTestCase):
     b = newsym(core.ShapedArray((), np.dtype('int32')))
     c = newsym(core.ShapedArray((), np.dtype('int32')))
     for ordering in it.permutations([a, b, c]):
-      assert sorted(list(ordering)) == [a, b, c]
+      assert sorted(ordering) == [a, b, c]
 
   def test_var_compared_by_identity(self):
     a1 = core.gensym()(core.ShapedArray((), np.dtype('int32')))

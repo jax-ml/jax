@@ -272,8 +272,8 @@ def _conv_general_dilated(
   in_channels = lhs_shape[-1]
   *rhs_spatial_shapes, _, rhs_out_channel = rhs_shape
 
-  is_transpose = any([d != 1 for d in lhs_dilation])
-  is_atrous = any([d != 1 for d in rhs_dilation])
+  is_transpose = any(d != 1 for d in lhs_dilation)
+  is_atrous = any(d != 1 for d in rhs_dilation)
   is_depthwise = in_channels == feature_group_count and feature_group_count > 1
   _validate_conv_features(is_transpose, is_atrous, is_depthwise,
                           feature_group_count, batch_group_count,
@@ -416,7 +416,7 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
       squeeze_idxs.append(len(rhs.shape) - 1)
     result = tf.linalg.matmul(lhs, rhs)
     if len(squeeze_idxs) != 0:
-      assert all([result.shape[i] == 1 for i in squeeze_idxs])
+      assert all(result.shape[i] == 1 for i in squeeze_idxs)
       result = tf.squeeze(result, squeeze_idxs)
     return convert_result(result)
 

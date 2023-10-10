@@ -42,8 +42,7 @@ except ImportError:
   tf = None
 
 
-dlpack_dtypes = sorted(list(jax.dlpack.SUPPORTED_DTYPES),
-                       key=lambda x: x.__name__)
+dlpack_dtypes = sorted(jax.dlpack.SUPPORTED_DTYPES, key=lambda x: x.__name__)
 
 numpy_dtypes = sorted(
     [dt for dt in jax.dlpack.SUPPORTED_DTYPES if dt != jnp.bfloat16],
