@@ -2480,7 +2480,11 @@ def make_jaxpr(fun: Callable,
       return closed_jaxpr, tree_unflatten(out_tree(), out_shapes_flat)
     return closed_jaxpr
 
-  make_jaxpr_f.__name__ = f"make_jaxpr({make_jaxpr.__name__})"
+  make_jaxpr_f.__module__ = "jax"
+  if hasattr(fun, "__qualname__"):
+    make_jaxpr_f.__qualname__ = f"make_jaxpr({fun.__qualname__})"
+  if hasattr(fun, "__name__"):
+    make_jaxpr_f.__name__ = f"make_jaxpr({fun.__name__})"
   return make_jaxpr_f
 
 def _infer_src_sharding(src, x):
