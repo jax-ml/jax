@@ -65,26 +65,22 @@ class Slice:
   def tree_flatten(self):
     # If `start` is statically known, we treat it as static information
     if isinstance(self.start, int):
-      return (), (True, self.start, self.size)
-    return (self.start,), (False, self.size)
+      return (), (self.start, self.size)
+    return (self.start,), (self.size,)
 
   @classmethod
-  def tree_unflatten(cls, data, xs):
-    is_static = data[0]
-    if is_static:
-      del xs
-      start, size = data[1:]
-      return Slice(start, size)
-    start, = xs
-    size = data[1]
-    return Slice(start, size)
+  def tree_unflatten(cls, aux_data, children) -> Slice:
+    return cls(*children, *aux_data)
 
   @classmethod
   def from_slice(cls, slc: slice, size: int) -> Slice:
+    if slc.step not in (1, None):
+      raise ValueError(f"`slc` must have a step of 1 (found: {slc.step})")
+
     start, stop = slc.start, slc.stop
     start = 0 if start is None else start
     stop = size if stop is None else stop
-    return Slice(start, stop - start)
+    return cls(start, stop - start)
 
 
 def dslice(start: int |  jax.Array | None, size: int | None = None
