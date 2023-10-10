@@ -2691,7 +2691,7 @@ FailureOr<xla::Array<Value>> disassemble(RewriteContext &ctx,
                              getOutLayout(*op));
   const Layout def_layout = def_layouts[res_idx];
   CHECK(def_layout.has_value());
-  CHECK(def_layout->equivalentTo(layout, std::nullopt, ctx.target_shape));
+  CHECK(def_layout->generalizes(layout, vty.getShape(), ctx.target_shape));
   SmallVector<int64_t> layout_shape =
       layout.tileArrayShape(vty.getShape(), ctx.target_shape);
   if (auto roll_vectors_op = dyn_cast<RollVectorsOp>(op)) {
