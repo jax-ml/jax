@@ -68,18 +68,16 @@ class DLPackTest(jtu.JaxTestCase):
   @jtu.sample_product(
     shape=all_shapes,
     dtype=dlpack_dtypes,
-    take_ownership=[False, True],
     gpu=[False, True],
   )
-  def testJaxRoundTrip(self, shape, dtype, take_ownership, gpu):
+  def testJaxRoundTrip(self, shape, dtype, gpu):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
     if gpu and jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("Skipping GPU test case on CPU")
     device = jax.devices("gpu" if gpu else "cpu")[0]
     x = jax.device_put(np, device)
-    dlpack = jax.dlpack.to_dlpack(x, take_ownership=take_ownership)
-    self.assertEqual(take_ownership, x.is_deleted())
+    dlpack = jax.dlpack.to_dlpack(x)
     y = jax.dlpack.from_dlpack(dlpack)
     self.assertEqual(y.device(), device)
     self.assertAllClose(np.astype(x.dtype), y)
