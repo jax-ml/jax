@@ -11,3 +11,4 @@ List of Members
   :toctree: _autosummary
 
     ArrayLike
+    DTypeLike

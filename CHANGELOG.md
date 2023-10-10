@@ -8,6 +8,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 # jax 0.4.19
 
+* New Features
+  * Added {obj}`jax.typing.DTypeLike`, which can be used to annotate objects that
+    are convertible to JAX dtypes.
+
 * Changes
   * JAX now requires SciPy 1.9 or newer.
 
