@@ -67,7 +67,8 @@ _no_operand_sentinel = object()
 
 @api_boundary
 def switch(index, branches: Sequence[Callable], *operands,
-           operand=_no_operand_sentinel):
+           operand=_no_operand_sentinel,
+           double_where=True):
   """Apply exactly one of ``branches`` given by ``index``.
 
   If ``index`` is out of bounds, it is clamped to within bounds.
@@ -154,12 +155,13 @@ def switch(index, branches: Sequence[Callable], *operands,
 
   linear = (False,) * (len(consts) + len(ops))
   out = cond_p.bind(
-      index, *consts, *ops, branches=tuple(jaxprs), linear=linear)
+      index, *consts, *ops, branches=tuple(jaxprs), linear=linear,
+      double_where=double_where)
   return tree_unflatten(out_trees[0], out)
 
 
 def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
-          operand=_no_operand_sentinel, linear=None):
+          operand=_no_operand_sentinel, linear=None, double_where=True):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   Wraps XLA's `Conditional
@@ -271,7 +273,8 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   linear = [False] * len(consts) + linear_ops
   out = cond_p.bind(
       index, *consts, *ops,
-      branches=(false_jaxpr, true_jaxpr), linear=tuple(linear))
+      branches=(false_jaxpr, true_jaxpr), linear=tuple(linear),
+      double_where=double_where)
   return tree_unflatten(out_tree, out)
 
 @api_boundary
@@ -334,6 +337,7 @@ def _cond_abstract_eval(*avals, branches, **_):
   return map(raise_to_shaped, branches[0].out_avals), joined_effects
 
 def _bcast_select(pred, on_true, on_false):
+  assert np.shape(on_true) == np.shape(on_false)
   if np.ndim(pred) != np.ndim(on_true):
     idx = list(range(np.ndim(pred)))
     pred = lax.broadcast_in_dim(pred, np.shape(on_true), idx)
@@ -346,7 +350,7 @@ def _bcast_select_n(pred, *cases):
   return lax.select_n(pred, *cases)
 
 def _cond_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
-                        dims, branches, linear):
+                        dims, branches, linear, double_where):
   index, *ops = args
   index_dim, *op_dims = dims
   # TODO(sharadmv): clean this up by adding a specific blocklist
@@ -360,55 +364,51 @@ def _cond_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
     raise NotImplementedError(
         "IO effect not supported in vmap-of-cond.")
 
+  ops_bat = [d is not batching.not_mapped for d in op_dims]
+  ops = [batching.moveaxis(x, d, 0) if b else x
+          for b, x, d in zip(ops_bat, ops, op_dims)]
+  del op_dims, dims  # invalidated
+
+  out_bat = [True] * len(branches[0].out_avals) # all need bdim for final select
+  branches_batched = [batching.batch_jaxpr(jaxpr, axis_size, ops_bat, out_bat,
+                                           axis_name, spmd_axis_name, main_type)[0]
+                      for jaxpr in branches]
 
   if index_dim is not batching.not_mapped:
-    # Convert to a lax.select. While we could get away with not broadcasting
-    # some operands yet, because all outputs must be broadcast together anyway
-    # for the select we broadcast the input operands for simplicity and leave
-    # optimizations to XLA.
-    # TODO(mattjj,frostig): assumes branches are side-effect-free, revise!
-    index, *ops = (
-        batching.bdim_at_front(x, d, axis_size) for x, d in zip(args, dims))
+    # Convert to a lax.select.
 
-    in_batched  = [True] * len(branches[0].in_avals)
-    out_batched = [True] * len(branches[0].out_avals)
-
-    branches_batched = [
-        batching.batch_jaxpr(
-            jaxpr, axis_size, in_batched, out_batched, axis_name, spmd_axis_name,
-            main_type)[0]
-        for jaxpr in branches]
+    if double_where:
+      # Perform a select on the inputs for safety of reverse-mode autodiff; see
+      # https://github.com/google/jax/issues/1052
+      # First we broadcast all inputs and update the jaxprs accordingly, then
+      # the selects follow below.
+      del branches_batched
+      ops = [x if b else batching.bdim_at_front(x, None, axis_size)
+             for x, b in zip(ops, ops_bat)]
+      ops_bat = [True] * len(branches[0].in_avals)
+      branches_batched = [batching.batch_jaxpr(
+          jaxpr, axis_size, ops_bat, out_bat, axis_name, spmd_axis_name,
+          main_type)[0] for jaxpr in branches]
 
     branch_outs = []
     for i, jaxpr in enumerate(branches_batched):
-      # Perform a select on the inputs for safety of reverse-mode autodiff; see
-      # https://github.com/google/jax/issues/1052
-      predicate = lax.eq(index, lax._const(index, i))
-      ops_ = [_bcast_select(predicate, x, lax.stop_gradient(x)) for x in ops]
+      if double_where:
+        predicate = lax.eq(index, lax._const(index, i))
+        ops_ = [_bcast_select(predicate, x, lax.stop_gradient(x)) for x in ops]
+      else:
+        ops_ = ops
       branch_outs.append(core.jaxpr_as_fun(jaxpr)(*ops_))
     out = [_bcast_select_n(index, *outs) for outs in zip(*branch_outs)]
-    return out, [0 if b else None for b in out_batched]
+    return out, [0 if b else None for b in out_bat]
   else:
-    ops_bat = [d is not batching.not_mapped for d in op_dims]
-    ops = [batching.moveaxis(x, d, 0) if b else x
-           for b, x, d in zip(ops_bat, ops, op_dims)]
-
-    branches_out_bat = [
-        batching.batch_jaxpr(jaxpr, axis_size, ops_bat, False, axis_name,
-                             spmd_axis_name, main_type)[1]
-        for jaxpr in branches]
-    out_bat = [any(bat) for bat in zip(*branches_out_bat)]
-    branches_batched = tuple(
-        batching.batch_jaxpr(jaxpr, axis_size, ops_bat, out_bat, axis_name,
-                             spmd_axis_name, main_type)[0]
-        for jaxpr in branches)
 
     out_dims = [0 if b else batching.not_mapped for b in out_bat]
     out = cond_p.bind(
-        index, *ops, branches=branches_batched, linear=linear)
+        index, *ops, branches=tuple(branches_batched), linear=linear,
+        double_where=double_where)
     return out, out_dims
 
-def _cond_jvp(primals, tangents, branches, linear):
+def _cond_jvp(primals, tangents, branches, linear, double_where):
   nonzeros = [type(t) is not ad_util.Zero for t in tangents]
 
   index_nz, *ops_nz = nonzeros
@@ -428,14 +428,15 @@ def _cond_jvp(primals, tangents, branches, linear):
   ops_lin = tuple(linear)
   linear_jvp = ops_lin + (True,) * len(ops_dot)
   out = cond_p.bind(
-      index, *ops, *ops_dot, branches=branches_jvp, linear=linear_jvp)
+      index, *ops, *ops_dot, branches=branches_jvp, linear=linear_jvp,
+      double_where=double_where)
   out_primals, out_tangents = split_list(out, [len(out_nz)])
   out_tangents_iter = iter(out_tangents)
   out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_value(p)
                   for p, nz in zip(out_primals, out_nz)]
   return out_primals, out_tangents
 
-def _cond_partial_eval(trace, *tracers, branches, linear):
+def _cond_partial_eval(trace, *tracers, branches, linear, double_where):
   in_unknowns = [t.pval[0] is not None for t in tracers]
   index_uk, *ops_uk = in_unknowns
   if any(isinstance(eff, RefEffect) for branch in branches for eff in
@@ -446,7 +447,7 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
   if index_uk:
     # When the branch index is unknown, we stage out the whole cond.
     # TODO(mattjj): remove this path when old remat is removed
-    params = dict(branches=branches, linear=linear)
+    params = dict(branches=branches, linear=linear, double_where=double_where)
     return trace.default_process_primitive(cond_p, tracers, params)
 
   branches_out_uks = []
@@ -478,7 +479,8 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
   in_consts = [t.pval.get_known() for t in tracers if t.pval.is_known()]
   linear_known = [l for l, uk in zip(linear, ops_uk) if not uk]
   out_consts_res = cond_p.bind(*in_consts, branches=branches_known,
-                               linear=tuple(linear_known))
+                               linear=tuple(linear_known),
+                               double_where=double_where)
   out_consts, res = split_list(out_consts_res, [len(out_consts_res) - num_res])
 
   index_tracer = trace.instantiate_const(tracers[0])
@@ -489,7 +491,8 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
                  for aval in branches_unknown[0].out_avals]
   linear_unknown = ([False] * num_res +
                     [l for l, uk in zip(linear, in_unknowns[1:]) if uk])
-  params = dict(branches=branches_unknown, linear=tuple(linear_unknown))
+  params = dict(branches=branches_unknown, linear=tuple(linear_unknown),
+                double_where=double_where)
   name_stack = source_info_util.current_name_stack()[len(trace.name_stack):]
   source = source_info_util.current().replace(name_stack=name_stack)
   eqn = pe.new_eqn_recipe(
@@ -559,7 +562,8 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   ins_known, _ = partition_list(unks_in, eqn.invars)  # includes index invar
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
   linear_known = [l for l, uk in zip(eqn.params['linear'], ops_uk) if not uk]
-  params_known = dict(branches=branches_known, linear=tuple(linear_known))
+  params_known = dict(branches=branches_known, linear=tuple(linear_known),
+                      double_where=eqn.params['double_where'])
   effects_known = _join_cond_effects(branches_known)
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*out_binders_known, *res_binders], cond_p, params_known,
@@ -568,7 +572,8 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # Build the staged eqn.
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   linear_staged = [False] * len(res_binders) + list(eqn.params['linear'])
-  params_staged = dict(branches=branches_staged, linear=tuple(linear_staged))
+  params_staged = dict(branches=branches_staged, linear=tuple(linear_staged),
+                       double_where=eqn.params['double_where'])
   effects_staged = _join_cond_effects(branches_staged)
   eqn_staged = pe.new_jaxpr_eqn(
       [eqn.invars[0], *res_binders, *eqn.invars[1:]], out_binders_staged,
@@ -709,7 +714,7 @@ def _transpose_cond_jaxpr(jaxpr, num_res, reduce_axes):
 
   return _make_closed_jaxpr(transposed, res_avals + jaxpr.out_avals)
 
-def _cond_transpose(reduce_axes, cts, *args, branches, linear):
+def _cond_transpose(reduce_axes, cts, *args, branches, linear, double_where):
   del linear  # could use for error checking, but see #14026
   index, *ops = args
   linear = [type(x) is ad.UndefinedPrimal for x in ops]
@@ -732,7 +737,8 @@ def _cond_transpose(reduce_axes, cts, *args, branches, linear):
   linear_trans = (False,) * num_res + (True,) * len(cts)
 
   out = cond_p.bind(
-      index, *res, *cts, branches=branches_trans, linear=linear_trans)
+      index, *res, *cts, branches=branches_trans, linear=linear_trans,
+      double_where=double_where)
   assert all(map(core.typecheck, lin_in_avals, out))
 
   out_iter = iter(out)
@@ -746,7 +752,8 @@ def _cond_axis_substitution(params, subst, traverse):
   branches = tuple(core.subst_axis_names_jaxpr(jaxpr, subst) for jaxpr in params['branches'])
   return dict(params, branches=branches)
 
-def _cond_typecheck(bind_time, *in_atoms, branches, linear):
+def _cond_typecheck(bind_time, *in_atoms, branches, linear, double_where):
+  del double_where
   if not bind_time:
     _, *in_atoms = in_atoms
   avals = [x.aval for x in in_atoms]
@@ -805,14 +812,16 @@ def _cond_typecheck(bind_time, *in_atoms, branches, linear):
       f'called with operands of type {_avals_short(op_avals)}')
   return jaxpr0.out_avals, joined_effects
 
-def cond_bind(*args, branches, linear):
+def cond_bind(*args, branches, linear, double_where):
   if config.jax_enable_checks:
     avals = map(core.get_aval, args)
     in_atoms = [core.Var(0, '', a) for a in avals]  # dummies
-    _cond_typecheck(True, *in_atoms, branches=branches, linear=linear)
+    _cond_typecheck(True, *in_atoms, branches=branches, linear=linear,
+                    double_where=double_where)
     for jaxpr in branches:
       core.check_jaxpr(jaxpr.jaxpr)
-  return core.AxisPrimitive.bind(cond_p, *args, branches=branches, linear=linear)
+  return core.AxisPrimitive.bind(cond_p, *args, branches=branches,
+                                 linear=linear, double_where=double_where)
 
 cond_p = core.AxisPrimitive('cond')
 cond_p.multiple_results = True
@@ -830,8 +839,8 @@ core.axis_substitution_rules[cond_p] = _cond_axis_substitution
 pe.partial_eval_jaxpr_custom_rules[cond_p] = _cond_partial_eval_custom
 pe.dce_rules[cond_p] = _cond_dce_rule
 
-def _cond_lowering(ctx, index, *args, branches, linear):
-  del linear  # Unused.
+def _cond_lowering(ctx, index, *args, branches, linear, double_where):
+  del linear, double_where  # Unused.
   joined_effects = core.join_effects(*(branch.effects for branch in branches))
   ordered_effects = list(effects.ordered_effects.filter_in(joined_effects))
   num_tokens = len(ordered_effects)
@@ -869,11 +878,13 @@ def _cond_lowering(ctx, index, *args, branches, linear):
 mlir.register_lowering(cond_p, _cond_lowering)
 
 @register_discharge_rule(cond_p)
-def _cond_state_discharge_rule(in_avals, out_avals, *args, branches, linear):
+def _cond_state_discharge_rule(in_avals, out_avals, *args, branches, linear,
+                               double_where):
   discharged_branches = tuple(
       core.ClosedJaxpr(discharge_state(branch.jaxpr, ())[0], ())
       for branch in branches)
-  out_vals = cond_p.bind(*args, branches=discharged_branches, linear=linear)
+  out_vals = cond_p.bind(*args, branches=discharged_branches, linear=linear,
+                         double_where=double_where)
   out_vals, out_ref_vals = util.split_list(
       out_vals, [len(out_avals)])
   ref_val_iter = iter(out_ref_vals)
@@ -882,3 +893,9 @@ def _cond_state_discharge_rule(in_avals, out_avals, *args, branches, linear):
     new_invals.append(
         next(ref_val_iter) if isinstance(aval, AbstractRef) else None)
   return new_invals, out_vals
+
+def _pp_cond(eqn, ctx, settings):
+  printed_params = dict(eqn.params)
+  del printed_params['double_where']
+  return core._pp_eqn(eqn.replace(params=printed_params), ctx, settings)
+core.pp_eqn_rules[cond_p] = _pp_cond

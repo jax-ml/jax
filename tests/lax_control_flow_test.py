@@ -2719,6 +2719,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(expected2, expected3)
     self.assertAllClose(expected3, actual)
 
+  def test_cond_broadcasting_regression(self):
+    def f(b, xs):
+      def _inner(b, x):
+        return jax.lax.switch(b, [lambda y: y, lambda y: y], x,
+                              double_where=False)
+      return jax.vmap(_inner, in_axes=(None, 0))(b, xs)
+
+    jax.make_jaxpr(jax.vmap(f, in_axes=(0, None))
+                   )(jnp.arange(7) % 2, jnp.arange(4))  # don't crash!
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

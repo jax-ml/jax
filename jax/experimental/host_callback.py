@@ -1439,7 +1439,8 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: list[core.JaxprEqn],
                 body_jaxpr=_rewrite_closed_jaxpr(body_jaxpr, True, True),
                 cond_jaxpr=_rewrite_closed_jaxpr(cond_jaxpr, True, False))))
   elif eqn.primitive is lax.cond_p:
-    branches, linear = util.split_dict(eqn.params, ["branches", "linear"])
+    branches, linear, double_where = util.split_dict(
+        eqn.params, ["branches", "linear", "double_where"])
     index, *operands = eqn.invars
     new_invars = [index, *operands, input_token_var, input_itoken_var]
     eqns.append(
@@ -1450,7 +1451,8 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: list[core.JaxprEqn],
                 branches=tuple(
                     _rewrite_closed_jaxpr(jaxpr, True, True)
                     for jaxpr in branches),
-                linear=(*linear, False, False))))
+                linear=(*linear, False, False),
+                double_where=double_where)))
   elif eqn.primitive is lax.scan_p:
     num_consts, num_carry, carry_jaxpr, linear, _, _, _ = util.split_dict(
         eqn.params,

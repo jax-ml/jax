@@ -2924,8 +2924,8 @@ tf_impl_with_avals[lax.scatter_add_p] = _scatter
 
 
 def _cond(index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr],
-          linear: Sequence[bool]) -> Sequence[TfVal]:
-  del linear
+          linear: Sequence[bool], double_where: bool) -> Sequence[TfVal]:
+  del linear, double_where
   # tf.cond needs lambdas with no arguments.
   branches_tf = [
       partial(_interpret_jaxpr, jaxpr, *operands,
