@@ -10,8 +10,8 @@ source](developer.md#building-from-source).
 
 |            | Linux x86_64 | Linux aarch64           | Mac x86_64   | Mac ARM        | Windows x86_64 | Windows WSL2 x86_64 |
 |------------|--------------|-------------------------|--------------|----------------|----------------|---------------------|
-| CPU        | [yes](#cpu)         | [yes (build from source)](developer.md#building-from-source) | [yes](#cpu)          | [yes](#cpu)            | [yes](#cpu)            | [yes](#cpu)                 |
-| NVIDIA GPU | [yes](#nvidia-gpu)               | [yes (build from source)](developer.md#building-from-source) | no           | n/a            | no             | [experimental](#nvidia-gpu)        |
+| CPU        | [yes](#cpu)         | [yes](#cpu) | [yes](#cpu)          | [yes](#cpu)            | [yes](#cpu)            | [yes](#cpu)                 |
+| NVIDIA GPU | [yes](#nvidia-gpu)               | [yes](#nvidia-gpu) | no           | n/a            | no             | [experimental](#nvidia-gpu)        |
 | Google TPU | [yes](#google-tpu)  | n/a                     | n/a          | n/a            | n/a            | n/a                 |
 | AMD GPU    | [experimental](#amd-gpu) | no                      | no           | n/a                 | no             | no                  |
 | Apple GPU  | n/a                 | no                      | [experimental](#apple-gpu) | [experimental](#apple-gpu)   | n/a            | n/a                 |
@@ -73,7 +73,8 @@ that NVIDIA provides for this purpose.
 There are two ways to install JAX with NVIDIA GPU support: using CUDA and CUDNN
 installed from pip wheels, and using a self-installed CUDA/CUDNN. We
 strongly recommend installing CUDA and CUDNN using the pip wheels, since it is
-much easier!
+much easier! This method is only supported on x86_64, because NVIDIA has not
+released aarch64 CUDA pip packages.
 
 ```bash
 pip install --upgrade pip
