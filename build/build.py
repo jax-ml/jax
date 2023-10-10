@@ -73,9 +73,13 @@ def check_python_version(python_version):
     print("ERROR: JAX requires Python 3.9 or newer, found ", python_version)
     sys.exit(-1)
 
-def check_package_is_installed(python_bin_path, package):
+def check_package_is_installed(python_bin_path, python_version, package):
+  args = [python_bin_path]
+  if python_version >= (3, 11):
+    args.append("-P")  # Don't include the current directory.
+  args += ["-c", f"import {package}"]
   try:
-    shell([python_bin_path, "-c", f"import {package}"])
+    shell(args)
   except:
    print(f"ERROR: jaxlib build requires package '{package}' to be installed.")
    sys.exit(-1)
@@ -507,9 +511,9 @@ def main():
 
   numpy_version = check_numpy_version(python_bin_path)
   print(f"NumPy version: {numpy_version}")
-  check_package_is_installed(python_bin_path, "wheel")
-  check_package_is_installed(python_bin_path, "build")
-  check_package_is_installed(python_bin_path, "setuptools")
+  check_package_is_installed(python_bin_path, python_version, "wheel")
+  check_package_is_installed(python_bin_path, python_version, "build")
+  check_package_is_installed(python_bin_path, python_version, "setuptools")
 
   print("MKL-DNN enabled: {}".format("yes" if args.enable_mkl_dnn else "no"))
   print(f"Target CPU: {wheel_cpu}")
