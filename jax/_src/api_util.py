@@ -570,6 +570,7 @@ def _shaped_abstractify_slow(x):
   named_shape = getattr(x, 'named_shape', {})
   if hasattr(x, 'dtype'):
     dtype = dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True)
+    dtypes.check_valid_dtype(dtype)
   else:
     raise TypeError(
         f"Cannot interpret value of type {type(x)} as an abstract array; it "

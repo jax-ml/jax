@@ -4488,6 +4488,23 @@ class APITest(jtu.JaxTestCase):
     if (x_ptr & 15) != 0:
       self.assertTrue(np.shares_memory(out, x))
 
+  def test_abstractify_dtype_validation(self):
+    class Foo:
+      def __init__(self):
+        self.shape = (1, 2)
+        self.dtype = np.dtype('S1')
+
+    with self.assertRaisesRegex(
+        TypeError, "Dtype |S1 is not a valid JAX array type"):
+      api_util.shaped_abstractify(Foo())
+
+    with self.assertRaisesRegex(
+        TypeError, "Dtype <U1 is not a valid JAX array type"):
+      api_util.shaped_abstractify(np.array(['a', 'b', 'c']))
+
+    with self.assertRaisesRegex(
+        TypeError, "Argument 'abc' of type <class 'str'> is not a valid JAX type"):
+      api_util.shaped_abstractify('abc')
 
 class RematTest(jtu.JaxTestCase):
 
