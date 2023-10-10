@@ -82,12 +82,16 @@ class AtomicOpType(enum.Enum):
 
 atomic_rmw_p = jax_core.Primitive("atomic_rmw")
 
-def _atomic_rmw_discharge_rule(in_avals, out_avals, ref, val, *args, args_tree,
-                               masked, atomic_type: AtomicOpType):
-  if masked: raise NotImplementedError
-  ref_aval, val_aval, *in_avals = in_avals
-  idx_aval, *_ = tree_util.tree_unflatten(args_tree, in_avals)
-  idx, *_ = tree_util.tree_unflatten(args_tree, args)
+
+def _atomic_rmw_discharge_rule(
+    in_avals, out_avals, *args_flat, args_tree, atomic_type: AtomicOpType
+):
+  del out_avals  # Unused.
+  ref, idx, val, mask = args_tree.unflatten(args_flat)
+
+  if mask is not None:
+    raise NotImplementedError
+
   if atomic_type == AtomicOpType.ADD:
     monoid = lambda x, y: x + y
   elif atomic_type == AtomicOpType.MAX:
@@ -97,7 +101,7 @@ def _atomic_rmw_discharge_rule(in_avals, out_avals, ref, val, *args, args_tree,
   else:
     raise NotImplementedError(atomic_type)
 
-  if all(isinstance(s, Slice) or s.shape == () for s in idx.indices):
+  if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
     indices = idx.indices
     scalar_dims = [not isinstance(s, Slice) and s.shape == () for s in indices]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
@@ -114,30 +118,37 @@ def _atomic_rmw_discharge_rule(in_avals, out_avals, ref, val, *args, args_tree,
     x_new = ref.at[idx.indices].set(monoid(out, val))
   else:
     raise NotImplementedError
-  return (x_new,) + (None,) * (len(in_avals) + 1), out
+  return (x_new,) + (None,) * (len(in_avals) - 1), out
+
+
 state_discharge.register_discharge_rule(atomic_rmw_p)(_atomic_rmw_discharge_rule)
 
-def _atomic_abstract_eval(ref_aval, val_aval, *all_avals,
-                          args_tree, atomic_type: AtomicOpType,
-                          **_: Any):
-  if ref_aval.dtype == jnp.dtype("float16") and atomic_type != AtomicOpType.ADD:
+
+def _atomic_abstract_eval(*avals_flat, args_tree, atomic_type: AtomicOpType):
+  ref, _, _, _ = args_tree.unflatten(avals_flat)
+  if ref.dtype == jnp.dtype("float16") and atomic_type != AtomicOpType.ADD:
     raise ValueError(f"`atomic_{atomic_type.value}` does not support f16.")
-  if ref_aval.dtype in {jnp.dtype("bool"), jnp.dtype("int8"),
-                        jnp.dtype("int16"), jnp.bfloat16}:
-    raise ValueError(f"`atomic_{atomic_type.value}` does not support {ref_aval.dtype}.")
-  return _swap_abstract_eval(ref_aval, val_aval, *all_avals,
-                             args_tree=args_tree)
+  if ref.dtype in {
+      jnp.dtype("bool"),
+      jnp.dtype("int8"),
+      jnp.dtype("int16"),
+      jnp.bfloat16,
+  }:
+    raise ValueError(
+        f"`atomic_{atomic_type.value}` does not support {ref.dtype}."
+    )
+  return _swap_abstract_eval(*avals_flat, args_tree=args_tree)
+
+
 atomic_rmw_p.def_effectful_abstract_eval(_atomic_abstract_eval)
 
 def atomic_rmw(x_ref, idx, val, *, mask: Any | None = None,
                atomic_type: AtomicOpType):
   idx = NDIndexer.from_indices_shape(idx, x_ref.shape)
-  args = (idx,)
-  if mask is not None:
-    args = (*args, mask)
-  flat_args, args_tree = tree_util.tree_flatten(args)
-  return atomic_rmw_p.bind(x_ref, val, *flat_args, args_tree=args_tree,
-                           atomic_type=atomic_type, masked=mask is not None)
+  args_flat, args_tree = tree_util.tree_flatten((x_ref, idx, val, mask))
+  return atomic_rmw_p.bind(
+      *args_flat, args_tree=args_tree, atomic_type=atomic_type
+  )
 
 atomic_xchg = functools.partial(atomic_rmw, atomic_type=AtomicOpType.XCHG)
 atomic_add = functools.partial(atomic_rmw, atomic_type=AtomicOpType.ADD)
@@ -152,11 +163,11 @@ atomic_cas_p = jax_core.Primitive("atomic_cas")
 def _atomic_cas_abstract_eval(ref_aval, cmp_aval, val_aval):
   if cmp_aval.dtype != val_aval.dtype:
     raise ValueError("Dtypes in cmp/val need to match")
-  if ref_aval.shape != ():
+  if ref_aval.shape:
     raise ValueError("Ref must be scalar.")
-  if cmp_aval.shape != ():
+  if cmp_aval.shape:
     raise ValueError("Cmp must be scalar.")
-  if val_aval.shape != ():
+  if val_aval.shape:
     raise ValueError("Val must be scalar.")
   if cmp_aval.shape != val_aval.shape:
     raise ValueError("Dtypes in cmp/val need to match")
@@ -202,11 +213,15 @@ multiple_of_p.def_abstract_eval(_multiple_of_abstract_eval)
 
 load_p = jax_core.Primitive('masked_load')
 
-def _load_abstract_eval(ref_aval, *all_avals, args_tree,
-                        **params: Any):
-  idx_aval, *_ = tree_util.tree_unflatten(args_tree, all_avals)
-  return (jax_core.ShapedArray(idx_aval.get_indexer_shape(), ref_aval.dtype),
-          {state.ReadEffect(0)})
+
+def _load_abstract_eval(*avals_flat, args_tree, **_):
+  ref, idx, _, _ = args_tree.unflatten(avals_flat)
+  return (
+      jax_core.ShapedArray(idx.get_indexer_shape(), ref.dtype),
+      {state.ReadEffect(0)},
+  )
+
+
 load_p.def_effectful_abstract_eval(_load_abstract_eval)
 
 def _pp_dslice(dim: int, slice: Slice, context):
@@ -241,8 +256,7 @@ def _pp_idx(ref_aval, idx: NDIndexer, context):
 def _load_pp_rule(eqn, context, settings):
   # Pretty prints `a = load x i` as `x[i] <- a`
   y, = eqn.outvars
-  x, *args = eqn.invars
-  idx, *masked_other = tree_util.tree_unflatten(eqn.params["args_tree"], args)
+  x, idx, _, _ = eqn.params["args_tree"].unflatten(eqn.invars)
   idx = _pp_idx(eqn.invars[0].aval, idx, context)
   lhs = jax_core.pp_vars([y], context, print_shapes=settings.print_shapes)
   return pp.concat([lhs, pp.text(' <- '), state_primitives.pp_ref(pp.concat([
@@ -250,29 +264,33 @@ def _load_pp_rule(eqn, context, settings):
     ]))])
 jax_core.pp_eqn_rules[load_p] = _load_pp_rule
 
-def _load_jvp(primals, tangents, *, args_tree, masked, **params: Any):
-  ref_primal, *rest_primals = primals
-  ref_tangent, *rest_tangents = tangents
-  idx_primal, *masked_other_primals = tree_util.tree_unflatten(args_tree, rest_primals)
-  flat_idx_primals = tree_util.tree_leaves(idx_primal)
-  _, *masked_other_tangents = tree_util.tree_unflatten(args_tree, rest_tangents)
-  tangent_args = flat_idx_primals
-  if masked:
-    tangent_args = [*tangent_args, masked_other_primals[0]]
-    if len(masked_other_tangents) == 2:
-      _, other_tangent = masked_other_tangents
-      other_tangent = ad_util.instantiate(other_tangent)
-      tangent_args = [*tangent_args, other_tangent]
+
+def _load_jvp(primals, tangents, args_tree, **params):
+  ref_primal, idx, mask, other_primal = args_tree.unflatten(primals)
+  ref_tangent, _, _, other_tangent = args_tree.unflatten(tangents)
+  if other_tangent is not None:
+    other_tangent = ad_util.instantiate(other_tangent)
   return (
-      load_p.bind(ref_primal, *rest_primals, args_tree=args_tree, masked=masked, **params),
-      load_p.bind(ref_tangent, *tangent_args, args_tree=args_tree,
-                  masked=masked, **params))
+      load_p.bind(
+          *tree_util.flatten(ref_primal, idx, mask, other_primal),
+          args_tree=args_tree,
+          **params,
+      ),
+      load_p.bind(
+          *tree_util.flatten(ref_tangent, idx, mask, other_tangent),
+          args_tree=args_tree,
+          **params,
+      ),
+  )
+
+
 ad.primitive_jvps[load_p] = _load_jvp
 
-def _load_discharge_rule(in_avals, out_avals, ref, *args, args_tree,
-                         masked, eviction_policy, cache_modifier, is_volatile):
-  idx, *masked_other = tree_util.tree_unflatten(args_tree, args)
-  if all(isinstance(s, Slice) or not s.shape for s in idx.indices):
+
+def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
+  del out_avals  # Unused.
+  ref, idx, mask, other = args_tree.unflatten(args_flat)
+  if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
     indices = idx.indices
     scalar_dims = [not isinstance(s, Slice) and s.shape == () for s in indices]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
@@ -284,29 +302,35 @@ def _load_discharge_rule(in_avals, out_avals, ref, *args, args_tree,
     out = ref[idx.indices]
   else:
     raise NotImplementedError
-  if masked and len(masked_other) == 2:
-    mask, other = masked_other
+  if mask is not None and other is not None:
     out = jnp.where(mask, out, other)
   return (None,) * len(in_avals), out
+
+
 state_discharge.register_discharge_rule(load_p)(_load_discharge_rule)
 
 swap_p = jax_core.Primitive('masked_swap')
 
-def _swap_abstract_eval(ref_aval, val_aval, *all_avals, args_tree,
-                        **_: Any):
-  idx_aval, *_ = tree_util.tree_unflatten(args_tree, all_avals)
-  expected_output_shape = idx_aval.get_indexer_shape()
-  if expected_output_shape != val_aval.shape:
-    raise ValueError("Invalid shape for `swap`. "
-                     f"Ref shape: {ref_aval.shape}. "
-                     f"Value shape: {val_aval.shape}. "
-                     f"Indices: {idx_aval}. ")
-  if ref_aval.dtype != val_aval.dtype:
-    raise ValueError("Invalid dtype for `swap`. "
-                     f"Ref dtype: {ref_aval.dtype}. "
-                     f"Value dtype: {val_aval.dtype}. ")
-  return (jax_core.ShapedArray(expected_output_shape, ref_aval.dtype),
-          {state.WriteEffect(0)})
+
+def _swap_abstract_eval(*avals_flat, args_tree, **_):
+  ref, idx, val, _ = args_tree.unflatten(avals_flat)
+  expected_output_shape = idx.get_indexer_shape()
+  if expected_output_shape != val.shape:
+    raise ValueError(
+        f"Invalid shape for `swap`. Ref shape: {ref.shape}. "
+        f"Value shape: {val.shape}. Indices: {idx}. "
+    )
+  if ref.dtype != val.dtype:
+    raise ValueError(
+        f"Invalid dtype for `swap`. Ref dtype: {ref.dtype}. "
+        f"Value dtype: {val.dtype}. "
+    )
+  return (
+      jax_core.ShapedArray(expected_output_shape, ref.dtype),
+      {state.WriteEffect(0)},
+  )
+
+
 swap_p.def_effectful_abstract_eval(_swap_abstract_eval)
 
 def _swap_pp_rule(eqn, context, settings):
@@ -314,8 +338,7 @@ def _swap_pp_rule(eqn, context, settings):
   # or:
   # Pretty prints `_ = swap x v i` as `x[i] <- v`
   y, = eqn.outvars
-  x, val, *args = eqn.invars
-  idx, *masked_other = tree_util.tree_unflatten(eqn.params["args_tree"], args)
+  x, idx, val, _ = eqn.params["args_tree"].unflatten(eqn.invars)
   idx = _pp_idx(eqn.invars[0].aval, idx, context)
   x_i = pp.concat([pp.text(jax_core.pp_var(x, context)),
                    pp.text('['), idx, pp.text(']')])
@@ -328,30 +351,32 @@ def _swap_pp_rule(eqn, context, settings):
                     pp.text(', '), pp.text(jax_core.pp_var(val, context))])
 jax_core.pp_eqn_rules[swap_p] = _swap_pp_rule
 
-def _swap_jvp(primals, tangents, *, args_tree, masked, **params: Any):
-  ref_primal, val_primal, *rest_primals = primals
-  ref_tangent, val_tangent, *rest_tangents = tangents
+
+def _swap_jvp(primals, tangents, *, args_tree, **params):
+  ref_primal, idx, val_primal, mask = args_tree.unflatten(primals)
+  ref_tangent, _, val_tangent, _ = args_tree.unflatten(tangents)
   val_tangent = ad_util.instantiate(val_tangent)
-  idx_primal, *masked_other_primals = tree_util.tree_unflatten(args_tree, rest_primals)
-  flat_idx_primals = tree_util.tree_leaves(idx_primal)
-  _, *masked_other_tangents = tree_util.tree_unflatten(args_tree, rest_tangents)
-  tangent_args = flat_idx_primals
-  if masked:
-    tangent_args = [*tangent_args, masked_other_primals[0]]
-    if len(masked_other_tangents) == 2:
-      _, other_tangent = masked_other_tangents
-      other_tangent = ad_util.instantiate(other_tangent)
-      tangent_args = [*tangent_args, other_tangent]
   return (
-      swap_p.bind(ref_primal, val_primal, *rest_primals, args_tree=args_tree, masked=masked, **params),
-      swap_p.bind(ref_tangent, val_tangent, *tangent_args, args_tree=args_tree,
-                  masked=masked, **params))
+      swap_p.bind(
+          *tree_util.flatten(ref_primal, idx, val_primal, mask),
+          args_tree=args_tree,
+          **params,
+      ),
+      swap_p.bind(
+          *tree_util.flatten(ref_tangent, idx, val_tangent, mask),
+          args_tree=args_tree,
+          **params,
+      ),
+  )
+
+
 ad.primitive_jvps[swap_p] = _swap_jvp
 
-def _swap_discharge_rule(in_avals, out_avals, ref, val, *args, args_tree,
-                         masked, eviction_policy):
-  idx, *_ = tree_util.tree_unflatten(args_tree, args)
-  if all(isinstance(s, Slice) or s.shape == () for s in idx.indices):
+
+def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
+  del out_avals  # Unused.
+  ref, idx, val, _ = args_tree.unflatten(args_flat)
+  if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
     indices = idx.indices
     scalar_dims = [not isinstance(s, Slice) and s.shape == () for s in indices]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
@@ -368,31 +393,29 @@ def _swap_discharge_rule(in_avals, out_avals, ref, val, *args, args_tree,
   else:
     raise NotImplementedError
   return (x_new,) + (None,) * (len(in_avals) - 1), out
+
+
 state_discharge.register_discharge_rule(swap_p)(_swap_discharge_rule)
 
 
 def load(x_ref, idx, *, mask=None, other=None, cache_modifier="",
          eviction_policy="", volatile=False):
   idx = NDIndexer.from_indices_shape(idx, x_ref.shape)
-  args = (idx,)
-  if mask is not None:
-    args = (*args, mask)
-  if other is not None:
-    assert mask is not None
-    args = (*args, other)
-  flat_args, args_tree = tree_util.tree_flatten(args)
-  return load_p.bind(x_ref, *flat_args, masked=mask is not None, cache_modifier=cache_modifier,
-                     eviction_policy=eviction_policy, is_volatile=volatile,
-                     args_tree=args_tree)
+  args_flat, args_tree = tree_util.tree_flatten((x_ref, idx, mask, other))
+  return load_p.bind(
+      *args_flat,
+      args_tree=args_tree,
+      cache_modifier=cache_modifier,
+      eviction_policy=eviction_policy,
+      is_volatile=volatile,
+  )
 
 def swap(x_ref, idx, val, *, mask=None, eviction_policy="") -> Any:
   idx = NDIndexer.from_indices_shape(idx, x_ref.shape)
-  args = (idx,)
-  if mask is not None:
-    args = (*args, mask)
-  flat_args, args_tree = tree_util.tree_flatten(args)
-  return swap_p.bind(x_ref, val, *flat_args, masked=mask is not None,
-                     eviction_policy=eviction_policy, args_tree=args_tree)
+  args_flat, args_tree = tree_util.tree_flatten((x_ref, idx, val, mask))
+  return swap_p.bind(
+      *args_flat, args_tree=args_tree, eviction_policy=eviction_policy
+  )
 
 def store(x_ref, idx, val, *, mask=None, eviction_policy="") -> None:
   _ = swap(x_ref, idx, val, mask=mask, eviction_policy=eviction_policy)

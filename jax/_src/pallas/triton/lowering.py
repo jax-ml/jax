@@ -319,26 +319,17 @@ _ATOMIC_OP_MAPPING = {
 
 def _atomic_lowering_rule(
     ctx: TritonLoweringRuleContext,
-    ptr,
-    value,
-    *args,
+    *args_flat,
     args_tree,
-    masked: bool,
-    atomic_type: primitives.AtomicOpType
+    atomic_type: primitives.AtomicOpType,
 ):
-  ref_block_info, *_ = ctx.block_infos
-  idx, *mask_rest = tree_util.tree_unflatten(args_tree, args)
-  avals_in = ctx.avals_in
+  ptr, idx, value, mask = args_tree.unflatten(args_flat)
   ptr = _compute_pointers_from_indices(
-      ptr, ref_block_info, idx, avals_in[0].shape, ctx.builder
+      ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape, ctx.builder
   )
-  mask = None
-  if masked:
-    assert len(mask_rest) == 1
-    (mask,) = mask_rest
-  if atomic_type not in _ATOMIC_OP_MAPPING:
+  op = _ATOMIC_OP_MAPPING.get(atomic_type)
+  if op is None:
     raise NotImplementedError(atomic_type)
-  op = _ATOMIC_OP_MAPPING[atomic_type]
   return op(ptr, value, mask=mask, _builder=ctx.builder)
 
 
@@ -879,30 +870,19 @@ triton_lowering_rules[sp.get_p] = _get_lowering_rule
 
 def _masked_load_lowering_rule(
     ctx: TritonLoweringRuleContext,
-    ptr,
-    *args,
+    *args_flat,
     args_tree,
-    masked,
     eviction_policy,
     cache_modifier,
-    is_volatile
+    is_volatile,
 ):
-  ref_block_info, *_ = ctx.block_infos
-  idx, *mask_other = tree_util.tree_unflatten(args_tree, args)
-  avals_in = ctx.avals_in
+  ptr, idx, mask, other = args_tree.unflatten(args_flat)
   if not isinstance(ptr.type, tl.pointer_type):
-    assert len(avals_in) == 1
+    assert len(ctx.avals_in) == 1
     return ptr
   ptr = _compute_pointers_from_indices(
-      ptr, ref_block_info, idx, avals_in[0].shape, ctx.builder
+      ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape, ctx.builder
   )
-  mask, other = None, None
-  if masked:
-    assert 0 < len(mask_other) <= 2
-    if len(mask_other) == 2:
-      mask, other = mask_other
-    elif len(mask_other) == 1:
-      (mask,) = mask_other
   return tl.load(
       ptr,
       mask=mask,
@@ -948,14 +928,9 @@ triton_lowering_rules[sp.swap_p] = _swap_lowering_rule
 
 
 def _masked_swap_lowering_rule(
-    ctx: TritonLoweringRuleContext,
-    ptr,
-    value,
-    *args,
-    args_tree,
-    masked,
-    eviction_policy
+    ctx: TritonLoweringRuleContext, *args_flat, args_tree, eviction_policy
 ):
+  ptr, idx, value, mask = args_tree.unflatten(args_flat)
   ptr_type = (
       ptr.type.element_ty.element_ty
       if ptr.type.is_block()
@@ -963,18 +938,16 @@ def _masked_swap_lowering_rule(
   )
   value_type = value.type.element_ty if value.type.is_block() else value.type
   assert ptr_type == value_type, (ptr_type, value_type)
-  ref_block_info, *_ = ctx.block_infos
-  idx, *mask_other = tree_util.tree_unflatten(args_tree, args)
-  avals_in = ctx.avals_in
-  idx_avals, *_ = tree_util.tree_unflatten(args_tree, avals_in[2:])
   ptr = _compute_pointers_from_indices(
-      ptr, ref_block_info, idx, avals_in[0].shape, ctx.builder
+      ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape, ctx.builder
   )
-  mask = None
-  if masked:
-    assert len(mask_other) == 1
-    (mask,) = mask_other
-  return tl.store(ptr, value, mask=mask, _builder=ctx.builder)
+  return tl.store(
+      ptr,
+      value,
+      mask=mask,
+      eviction_policy=eviction_policy,
+      _builder=ctx.builder,
+  )
 
 
 triton_lowering_rules[primitives.swap_p] = _masked_swap_lowering_rule

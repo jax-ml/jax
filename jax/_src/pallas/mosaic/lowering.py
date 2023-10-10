@@ -485,11 +485,10 @@ def _get_lowering_rule(
   ref_aval, *non_slice_idx_avals = ctx.avals_in
   nd_indexer, nd_indexer_avals = _convert_flat_indexing_to_indexer(
       ref_aval, non_slice_idx, non_slice_idx_avals, indexed_dims)
-  flat_args, tree = tree_util.tree_flatten((nd_indexer,))
-  flat_avals = tree_util.tree_leaves((nd_indexer_avals,))
-  ctx = ctx.replace(avals_in=(ref_aval, *flat_avals))
-  return _load_lowering_rule(ctx, ref, *flat_args, args_tree=tree,
-                             masked=False)
+  args_flat, args_tree = tree_util.tree_flatten((ref, nd_indexer, None, None))
+  avals_flat = tree_util.tree_leaves((ref_aval, nd_indexer_avals, None, None))
+  ctx = ctx.replace(avals_in=avals_flat)
+  return _load_lowering_rule(ctx, *args_flat, args_tree=args_tree)
 
 
 lowering_rules[state_primitives.get_p] = _get_lowering_rule
@@ -507,11 +506,12 @@ def _swap_lowering_rule(
   ref_aval, val_aval, *non_slice_idx_avals = ctx.avals_in
   nd_indexer, nd_indexer_avals = _convert_flat_indexing_to_indexer(
       ref_aval, non_slice_idx, non_slice_idx_avals, indexed_dims)
-  flat_args, tree = tree_util.tree_flatten((nd_indexer,))
-  flat_avals = tree_util.tree_leaves((nd_indexer_avals,))
-  ctx = ctx.replace(avals_in=(ref_aval, val_aval, *flat_avals))
-  return _masked_swap_lowering_rule(ctx, ref, val, *flat_args, args_tree=tree,
-                                    masked=False)
+  args_flat, args_tree = tree_util.tree_flatten((ref, nd_indexer, val, None))
+  avals_flat = tree_util.tree_leaves(
+      (ref_aval, nd_indexer_avals, val_aval, None)
+  )
+  ctx = ctx.replace(avals_in=avals_flat)
+  return _masked_swap_lowering_rule(ctx, *args_flat, args_tree=args_tree)
 
 lowering_rules[state_primitives.swap_p] = _swap_lowering_rule
 skip_mlir_conversions.add(state_primitives.swap_p)
@@ -525,30 +525,28 @@ def _make_index(s):
   return arith.IndexCastOp(ir.IndexType.get(), s).result
 
 
-def _load_lowering_rule(
-    ctx: LoweringRuleContext, ref, *args, args_tree, masked, **params
-):
+def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
+  ref, idx, mask, _ = args_tree.unflatten(args_flat)
+  _, idx_aval, _, _ = args_tree.unflatten(ctx.avals_in)
+
+  if mask is not None:
+    raise NotImplementedError
+
   ref_type = ir.MemRefType(ref.type)
   is_smem_load = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
-  del params
-  if masked:
-    raise NotImplementedError
   ref_aval, *_ = ctx.avals_in
   (aval_out,) = ctx.avals_out
   ref_block_shape, *_ = ctx.block_shapes
-  idx, *_ = tree_util.tree_unflatten(args_tree, args)
-  idx_aval, *_ = tree_util.tree_unflatten(args_tree, ctx.avals_in[1:])
-  indices = idx.indices
   if not is_smem_load and not ref_block_shape:
     raise NotImplementedError(
         "Indexing into a ()-shaped Ref not yet supported on TPU.")
   if any(
-      not isinstance(a, primitives.Slice) and a.shape != ()
+      (not isinstance(a, primitives.Slice) and a.shape)
       for a in idx_aval.indices
   ):
     raise ValueError("Cannot do int indexing on TPU")
   starts = tuple(
-      i.start if isinstance(i, primitives.Slice) else i for i in indices
+      i.start if isinstance(i, primitives.Slice) else i for i in idx.indices
   )
   mlir_indices = [
       s if isinstance(s, primitives.Slice) else _make_index(s) for s in starts
@@ -588,23 +586,23 @@ skip_mlir_conversions.add(primitives.load_p)
 
 
 def _masked_swap_lowering_rule(
-    ctx: LoweringRuleContext, ref, val, *args, args_tree, masked, **params
+    ctx: LoweringRuleContext, *args_flat, args_tree, **_
 ):
-  del params
-  if masked:
+  ref, idx, val, mask = args_tree.unflatten(args_flat)
+  _, idx_aval, _, _ = args_tree.unflatten(ctx.avals_in)
+
+  if mask is not None:
     raise NotImplementedError
+
   ref_type = ir.MemRefType(ref.type)
   is_smem_store = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
   ref_block_shape, *_ = ctx.block_shapes
-  ref_aval, val_aval, *_ = ctx.avals_in
+  _, val_aval, *_ = ctx.avals_in
   (aval_out,) = ctx.avals_out
   if not isinstance(val, ir.Value):
     val = ir_constant(val, mlir_type=mlir.dtype_to_ir_type(val_aval.dtype))
-  idx, *_ = tree_util.tree_unflatten(args_tree, args)
-  idx_aval, *_ = tree_util.tree_unflatten(args_tree, ctx.avals_in[2:])
-  indices = idx.indices
   if any(
-      not isinstance(a, primitives.Slice) and a.shape != ()
+      (not isinstance(a, primitives.Slice) and a.shape)
       for a in idx_aval.indices
   ):
     raise ValueError("Cannot do int indexing on TPU")
@@ -612,7 +610,7 @@ def _masked_swap_lowering_rule(
     raise NotImplementedError(
         "Indexing into a ()-shaped Ref not yet supported on TPU.")
   starts = tuple(
-      i.start if isinstance(i, primitives.Slice) else i for i in indices
+      i.start if isinstance(i, primitives.Slice) else i for i in idx.indices
   )
   mlir_indices = [
       s if isinstance(s, primitives.Slice) else _make_index(s) for s in starts
@@ -660,7 +658,7 @@ skip_mlir_conversions.add(primitives.swap_p)
 
 
 def _multiple_of_lowering_rule(ctx: LoweringRuleContext, val, *, values):
-  del values
+  del ctx, values
   return val
 
 
