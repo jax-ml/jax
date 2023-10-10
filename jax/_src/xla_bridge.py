@@ -37,6 +37,7 @@ import warnings
 
 from jax._src import config
 from jax._src import distributed
+from jax._src.cloud_tpu_init import maybe_import_libtpu
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
@@ -98,6 +99,19 @@ _MOCK_NUM_GPUS = config.DEFINE_integer(
 
 # Backends
 
+
+def _get_tpu_library_path() -> Optional[str]:
+  path_from_env = os.getenv("TPU_LIBRARY_PATH")
+  if path_from_env is not None:
+    return path_from_env
+
+  libtpu_module = maybe_import_libtpu()
+  if libtpu_module is not None:
+    return libtpu_module.get_library_path()
+
+  return None
+
+
 def tpu_client_timer_callback(timer_secs: float) -> Optional[xla_client.Client]:
   def _log_warning():
     warnings.warn(
@@ -111,7 +125,10 @@ def tpu_client_timer_callback(timer_secs: float) -> Optional[xla_client.Client]:
   t.start()
 
   try:
-    client = xla_client.make_tpu_client()
+    if xla_extension_version >= 205:
+      client = xla_client.make_tpu_client(_get_tpu_library_path())  # type: ignore
+    else:
+      client = xla_client.make_tpu_client()  # type: ignore
   finally:
     t.cancel()
 

@@ -58,9 +58,7 @@ def cloud_tpu_init() -> None:
   # if the following hold: a) libtpu is installed b) JAX_FORCE_TPU_INIT is set
   # Exit early if we're not running on Cloud TPU.
   libtpu_module = maybe_import_libtpu()
-  if libtpu_module is not None:
-    libtpu_module.configure_library_path()
-  elif not jax_force_tpu_init():
+  if libtpu_module is None and not jax_force_tpu_init():
     return
 
   running_in_cloud_tpu_vm = True
