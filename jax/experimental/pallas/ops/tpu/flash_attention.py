@@ -671,6 +671,8 @@ def _flash_attention_impl(
       pl.BlockSpec(ab_index_map, (block_b, 1, block_q, block_k_major))
       if ab is not None else None)
 
+  q_segment_ids_spec = kv_segment_ids_spec = None
+  q_segment_ids = kv_segment_ids = None
   if segment_ids is not None:
 
     def q_segment_ids_index_map(batch_index, head_index, q_seq_index, _):
@@ -714,9 +716,6 @@ def _flash_attention_impl(
             2,
         ),
     )
-  else:
-    q_segment_ids_spec = kv_segment_ids_spec = None
-    q_segment_ids = kv_segment_ids = None
 
   in_specs = [
       pl.BlockSpec(q_index_map, (block_b, 1, block_q, head_dim)),
@@ -988,6 +987,8 @@ def _flash_attention_bwd_dkv(
       else None
   )
 
+  q_segment_ids_spec = kv_segment_ids_spec = None
+  q_segment_ids = kv_segment_ids = None
   if segment_ids is not None:
 
     def q_segment_ids_index_map(
@@ -1033,9 +1034,6 @@ def _flash_attention_bwd_dkv(
             2,
         ),
     )
-  else:
-    q_segment_ids_spec = kv_segment_ids_spec = None
-    q_segment_ids = kv_segment_ids = None
 
   in_specs = [
       qo_spec,
@@ -1334,6 +1332,8 @@ def _flash_attention_bwd_dq(
       else None
   )
 
+  q_segment_ids_spec = kv_segment_ids_spec = None
+  q_segment_ids = kv_segment_ids = None
   if segment_ids is not None:
 
     def q_segment_ids_index_map(batch_index, head_index, q_seq_index, _):
@@ -1381,9 +1381,6 @@ def _flash_attention_bwd_dq(
             2,
         ),
     )
-  else:
-    q_segment_ids_spec = kv_segment_ids_spec = None
-    q_segment_ids = kv_segment_ids = None
 
   in_specs = [
       qo_spec,
