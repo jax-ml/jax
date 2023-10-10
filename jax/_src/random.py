@@ -754,7 +754,7 @@ def multivariate_normal(key: KeyArray,
                         mean: RealArray,
                         cov: RealArray,
                         shape: Optional[Shape] = None,
-                        dtype: DTypeLikeFloat = None,
+                        dtype: Optional[DTypeLikeFloat] = None,
                         method: str = 'cholesky') -> Array:
   r"""Sample multivariate normal random values with given mean and covariance.
 

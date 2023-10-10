@@ -47,10 +47,15 @@ class SupportsDType(Protocol):
 # DTypeLike is meant to annotate inputs to np.dtype that return
 # a valid JAX dtype. It's different than numpy.typing.DTypeLike
 # because JAX doesn't support objects or structured dtypes.
-# It does not include JAX dtype extensions such as KeyType and others.
-# For now, we use Any to allow scalar types like np.int32 & jnp.int32.
-# TODO(jakevdp) specify these more strictly.
-DTypeLike = Union[Any, str, np.dtype, SupportsDType]
+# Unlike np.typing.DTypeLike, we exclude None, and instead require
+# explicit annotations when None is acceptable.
+# TODO(jakevdp): consider whether to add ExtendedDtype to the union.
+DTypeLike = Union[
+  str,            # like 'float32', 'int32'
+  type[Any],      # like np.float32, np.int32, float, int
+  np.dtype,       # like np.dtype('float32'), np.dtype('int32')
+  SupportsDType,  # like jnp.float32, jnp.int32
+]
 
 # Shapes are tuples of dimension sizes, which are normally integers. We allow
 # modules to extend the set of dimension sizes to contain other types, e.g.,

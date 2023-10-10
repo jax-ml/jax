@@ -2058,7 +2058,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
       dtype = dtypes._lattice_result_type(*leaves)[0]
 
   if not weak_type:
-    dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)
+    dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)  # type: ignore[assignment]
 
   out: ArrayLike
 
@@ -2106,7 +2106,7 @@ def _convert_to_array_if_dtype_fails(x: ArrayLike) -> ArrayLike:
 def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "asarray")
   if dtype is not None:
-    dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)
+    dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)  # type: ignore[assignment]
   return array(a, dtype=dtype, copy=False, order=order)  # type: ignore
 
 
@@ -2702,7 +2702,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
 
 
 @util._wraps(np.tri)
-def tri(N: int, M: int | None = None, k: int = 0, dtype: DTypeLike = None) -> Array:
+def tri(N: int, M: int | None = None, k: int = 0, dtype: Optional[DTypeLike] = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "tri")
   M = M if M is not None else N
   dtype = dtype or float32

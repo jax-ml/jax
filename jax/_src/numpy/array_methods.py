@@ -150,7 +150,7 @@ def _reshape(a: Array, *args: Any, order: str = "C") -> Array:
     raise ValueError(f"Unexpected value for 'order' argument: {order}.")
 
 
-def _view(arr: Array, dtype: DTypeLike = None, type: None = None) -> Array:
+def _view(arr: Array, dtype: Optional[DTypeLike] = None, type: None = None) -> Array:
   """Return a bitwise copy of the array, viewed as a new dtype.
 
   This is fuller-featured wrapper around :func:`jax.lax.bitcast_convert_type`.
