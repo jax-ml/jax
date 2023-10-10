@@ -4134,7 +4134,7 @@ def take_along_axis(
     lst[axis_int] = val
     return tuple(lst)
 
-  use_64bit_index = any([not core.is_constant_dim(d) or d >= (1 << 31) for d in a.shape])
+  use_64bit_index = any(not core.is_constant_dim(d) or d >= (1 << 31) for d in a.shape)
   index_dtype = dtype(int64 if use_64bit_index else int32)
   indices = lax.convert_element_type(indices, index_dtype)
 
@@ -4468,7 +4468,7 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
   collapsed_slice_dims: Sequence[int] = []
   start_index_map: Sequence[int] = []
 
-  use_64bit_index = any([not core.is_constant_dim(d) or d >= (1 << 31) for d in x_shape])
+  use_64bit_index = any(not core.is_constant_dim(d) or d >= (1 << 31) for d in x_shape)
   index_dtype = int64 if use_64bit_index else int32
 
   # Gather indices.

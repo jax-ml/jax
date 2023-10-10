@@ -62,7 +62,7 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
     jax_unimpl = [l for l in harness.jax_unimplemented
                   if l.filter(device=jtu.device_under_test(),
                               dtype=harness.dtype)]
-    if any([lim.skip_run for lim in jax_unimpl]):
+    if any(lim.skip_run for lim in jax_unimpl):
       logging.info(
           "Skipping run with expected JAX limitations: %s in harness %s",
           [u.description for u in jax_unimpl], harness.fullname)

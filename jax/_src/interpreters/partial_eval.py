@@ -785,7 +785,7 @@ def trace_to_subjaxpr_nounits(
     main: core.MainTrace,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
-  assert all([isinstance(pv, PartialVal) for pv in in_pvals]), in_pvals
+  assert all(isinstance(pv, PartialVal) for pv in in_pvals), in_pvals
   out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
       main, instantiate, in_pvals)
   out_pvals = [t.pval for t in out_tracers]
@@ -820,7 +820,7 @@ def trace_to_subjaxpr_nounits_fwd(
     main: core.MainTrace,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
-  assert all([isinstance(pv, PartialVal) for pv in in_pvals]), in_pvals
+  assert all(isinstance(pv, PartialVal) for pv in in_pvals), in_pvals
   out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
       main, instantiate, in_pvals)
   out_pvals = [t.pval for t in out_tracers]
@@ -2608,7 +2608,7 @@ def call_padding_rule(prim, in_avals, out_avals, *args, call_jaxpr, **params):
 @lu.transformation
 def trace_to_subjaxpr(main: core.MainTrace, instantiate: bool | Sequence[bool],
                       pvals: Sequence[PartialVal]):
-  assert all([isinstance(pv, PartialVal) for pv in pvals]), pvals
+  assert all(isinstance(pv, PartialVal) for pv in pvals), pvals
   trace = main.with_cur_sublevel()
   in_tracers = map(trace.new_arg, pvals)
   ans = yield in_tracers, {}

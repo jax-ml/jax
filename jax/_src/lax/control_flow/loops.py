@@ -1451,7 +1451,7 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   cond_jaxpr_known, _, cond_uk, _ = pe.partial_eval_jaxpr_nounits(  # type: ignore
       cond_jaxpr, cond_consts_uk + carry_uk, instantiate=False)
 
-  if cond_uk[0] or all([not uk for uk in unknowns]) or all(unknowns):
+  if cond_uk[0] or all(not uk for uk in unknowns) or all(unknowns):
     # If conditional is unknown, or all inputs are known, or all are unknown,
     # just do the default processing.
     return trace.default_process_primitive(while_p, tracers, params)
