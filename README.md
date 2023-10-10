@@ -381,13 +381,13 @@ Some standouts:
 
 ### Supported platforms
 
-|            | Linux x86_64 | Linux aarch64           | Mac x86_64   | Mac ARM        | Windows x86_64 | Windows WSL2 x86_64 |
-|------------|--------------|-------------------------|--------------|----------------|----------------|---------------------|
-| CPU        | yes          | yes (build from source) | yes          | yes            | yes            | yes                 |
-| NVIDIA GPU | yes          | yes (build from source) | no           | n/a            | no             | experimental        |
-| Google TPU | yes          | n/a                     | n/a          | n/a            | n/a            | n/a                 |
-| AMD GPU    | experimental | no                      | no           | n/a            | no             | no                  |
-| Apple GPU  | n/a          | no                      | experimental | experimental   | n/a            | n/a                 |
+|            | Linux x86_64 | Linux aarch64 | Mac x86_64   | Mac ARM      | Windows x86_64 | Windows WSL2 x86_64 |
+|------------|--------------|---------------|--------------|--------------|----------------|---------------------|
+| CPU        | yes          | yes           | yes          | yes          | yes            | yes                 |
+| NVIDIA GPU | yes          | yes           | no           | n/a          | no             | experimental        |
+| Google TPU | yes          | n/a           | n/a          | n/a          | n/a            | n/a                 |
+| AMD GPU    | experimental | no            | no           | n/a          | no             | no                  |
+| Apple GPU  | n/a          | no            | experimental | experimental | n/a            | n/a                 |
 
 
 ### Instructions
@@ -395,7 +395,7 @@ Some standouts:
 | Hardware   | Instructions                                                                                                    |
 |------------|-----------------------------------------------------------------------------------------------------------------|
 | CPU        | `pip install -U "jax[cpu]"`                                                                                       |
-| NVIDIA GPU | `pip install -U "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html`        |
+| NVIDIA GPU on x86_64 | `pip install -U "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html`        |
 | Google TPU | `pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html`                 |
 | AMD GPU    | Use [Docker](https://hub.docker.com/r/rocm/jax) or [build from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus). |
 | Apple GPU  | Follow [Apple's instructions](https://developer.apple.com/metal/jax/).                                          |
