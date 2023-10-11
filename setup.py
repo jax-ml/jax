@@ -136,6 +136,15 @@ setup(
           "nvidia-cusolver-cu12>=11.5.2",
           "nvidia-cusparse-cu12>=12.1.2.141",
           "nvidia-nccl-cu12>=2.18.3",
+
+          # nvjitlink is not a direct dependency of JAX, but it is a transitive
+          # dependency via, for example, cuSOLVER. NVIDIA's cuSOLVER packages
+          # do not have a version constraint on their dependencies, so the
+          # package doesn't get upgraded even though not doing that can cause
+          # problems (https://github.com/google/jax/issues/18027#issuecomment-1756305196)
+          # Until NVIDIA add version constraints, add an version constraint
+          # here.
+          "nvidia-nvjitlink=cu12>=12.2",
         ],
 
         # Target that does not depend on the CUDA pip wheels, for those who want
