@@ -835,5 +835,17 @@ def safe_zip(state):
     jax.util.safe_zip(*args)
 
 
+@google_benchmark.register
+def bench_make_array_from_callback_fully_replicated_sharding(state):
+  mesh = jax.sharding.Mesh(
+      np.array(jax.devices()[:8]).reshape((4, 2)), ('x', 'y'))
+  shape = (8, 2)
+  np_arr = np.arange(16).reshape(shape)
+  s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+
+  while state:
+    jax.make_array_from_callback(shape, s, np_arr.__getitem__)
+
+
 if __name__ == "__main__":
   google_benchmark.main()

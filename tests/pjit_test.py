@@ -3464,6 +3464,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     arr2 = jax.device_put(np_inp, ns2)
     arr3 = jax.device_put(np_inp, ns)
 
+    _addressable_devices_indices_map.cache_clear()
+
     cache_info1 = _addressable_devices_indices_map.cache_info()
     out = pjit(lambda x, y, z: x + y + z)(arr1, arr2, arr3)
     cache_info2 = _addressable_devices_indices_map.cache_info()
@@ -3676,6 +3678,10 @@ class TempSharding(Sharding):
 
   def shard_shape(self, global_shape):
     return global_shape
+
+  @property
+  def is_fully_replicated(self):
+    return True
 
 
 def spec_regex(s):

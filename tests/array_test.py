@@ -388,12 +388,13 @@ class JaxArrayTest(jtu.JaxTestCase):
       ("mesh_none_y", P(None, "y"), (8, 2)),
       ("mesh_none_x", P(None, "x"), (8, 1)),
       ("mesh_xy", P(("x", "y")), (1, 4)),
+      ("mesh_replicated", P(()), (8, 4)),
   )
   def test_shard_shape_mismatch_with_buffer_shape(self, pspec, expected_shard_shape):
     shape = (8, 4)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     mps = jax.sharding.NamedSharding(mesh, pspec)
-    inp_data = np.arange(math.prod(shape)).reshape(shape)
+    inp_data = np.arange(5)
 
     str_expected_shard_shape = str(expected_shard_shape).replace(
         r"(", r"\(").replace(r")", r"\)")

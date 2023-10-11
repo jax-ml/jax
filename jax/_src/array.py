@@ -638,18 +638,42 @@ def make_array_from_callback(
     >>> arr.addressable_data(0).shape
     (4, 2)
   """
-  device_to_index_map = sharding.devices_indices_map(shape)
-  # Use addressable_devices here instead of `_addressable_device_assignment`
-  # because `_addressable_device_assignment` is only available on
-  # `XLACompatibleSharding` and this function is supposed to work for every
-  # `Sharding`.
-  arrays = [
-      api.device_put(data_callback(device_to_index_map[device]), device)
-      for device in sharding.addressable_devices
-  ]
-  aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
+  has_device_assignment = False
+  if sharding.is_fully_replicated:
+    if isinstance(sharding, XLACompatibleSharding):
+      devices = list(sharding._addressable_device_assignment)
+      has_device_assignment = True
+    else:
+      devices = list(sharding.addressable_devices)
+    per_device_values = [data_callback((slice(None),) * len(shape))] * len(devices)
+  else:
+    device_to_index_map = sharding.addressable_devices_indices_map(shape)
+    devices = list(device_to_index_map.keys())
+    per_device_values = [data_callback(device_to_index_map[device])
+                         for device in devices]
+
+  first_value = xla.canonicalize_dtype(per_device_values[0])
+  aval = core.ShapedArray(shape, first_value.dtype, weak_type=False)
+
+  # TODO(yashkatariya): Look into taking this path for non-fully replicated
+  # shardings too.
+  if (sharding.is_fully_replicated and has_device_assignment and
+      not dtypes.issubdtype(aval.dtype, dtypes.extended)):
+    # Do this check outside because `batched_device_put` won't do these checks
+    # like ArrayImpl. This is a fast path for fully replicated arrays with
+    # xla compatible sharding.
+    if shape != first_value.shape:
+      raise ValueError(
+            f"Expected shard shape {shape} doesn't match the single device "
+            f"array shape {first_value.shape}. Shape of Array is "
+            f"{aval.str_short()} with sharding {sharding}")
+    return pxla.batched_device_put(
+        aval, sharding, per_device_values, devices, committed=True)
+
+  arrays = api.device_put(per_device_values, devices)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
-    return aval.dtype._rules.make_sharded_array(aval, sharding, arrays, committed=True)
+    return aval.dtype._rules.make_sharded_array(aval, sharding, arrays,
+                                                committed=True)
   return ArrayImpl(aval, sharding, arrays, committed=True)
 
 
