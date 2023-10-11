@@ -28,9 +28,9 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax import config
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
+from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -43,7 +43,7 @@ import jax.numpy as jnp
 
 from jax.experimental.shard_map import shard_map
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -589,7 +589,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.random.randint(key[0], shape=(1, 16), minval=0, maxval=16,
                                 dtype=jnp.int32)
 
-    pspec = P('x') if config.jax_enable_custom_prng else P('x', None)
+    pspec = P('x') if config.enable_custom_prng.value else P('x', None)
     g = shard_map(f, mesh, in_specs=(pspec,), out_specs=pspec)
     _ = g(sharded_rng)  # don't crash!
 

@@ -22,9 +22,9 @@ from typing import Any, Callable, Optional, TypeVar
 
 import jax
 import weakref
+from jax._src import config
 from jax._src import core
 from jax._src import linear_util as lu
-from jax import config  # type: ignore[no-redef]
 from jax._src.core import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            tree_map, tree_flatten_with_path, keystr)
@@ -214,7 +214,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     else:
       length, = unique_lengths
 
-  if config.jax_disable_jit:
+  if config.disable_jit.value:
     if length == 0:
       raise ValueError("zero-length scan is not supported in disable_jit() mode because the output type is unknown.")
     carry = init
@@ -859,7 +859,7 @@ def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
       used_carry_out = _map(operator.or_, used_carry_out, used_carry_in)
   else:
     assert False, "Fixpoint not reached"
-  if config.jax_enable_checks: core.check_jaxpr(jaxpr.jaxpr)
+  if config.enable_checks.value: core.check_jaxpr(jaxpr.jaxpr)
 
   new_linear = [l for l, u in zip(eqn.params['linear'], used_inputs) if u]
   new_params = dict(eqn.params, num_consts=sum(used_consts),
@@ -1105,7 +1105,7 @@ def _scan_state_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
   return new_invals, [*carry_out, *ys_out]
 
 def scan_bind(*args, **params):
-  if config.jax_enable_checks:
+  if config.enable_checks.value:
     avals = _map(core.get_aval, args)
     in_atoms = [core.Var(0, '', a) for a in avals]  # dummies
     _scan_typecheck(True, *in_atoms, **params)
@@ -1190,7 +1190,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   """
   if not (callable(body_fun) and callable(cond_fun)):
     raise TypeError("lax.while_loop: body_fun and cond_fun arguments should be callable.")
-  if config.jax_disable_jit:
+  if config.disable_jit.value:
     try:
       val = init_val
       while cond_fun(val):
@@ -1931,7 +1931,7 @@ def fori_loop(lower, upper, body_fun, init_val):
     use_scan = False
 
   if use_scan:
-    if config.jax_disable_jit and upper_ == lower_:
+    if config.disable_jit.value and upper_ == lower_:
       # non-jit implementation of scan does not support length=0
       return init_val
 

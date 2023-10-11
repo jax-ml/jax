@@ -30,6 +30,7 @@ import concurrent.futures
 import jax
 import jax.numpy as jnp
 from jax._src import core
+from jax._src import config
 from jax._src import test_util as jtu
 from jax import dtypes
 from jax import stages
@@ -59,8 +60,7 @@ from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2, safe_zip
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 prev_xla_flags = None
 
@@ -955,7 +955,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 2)])
   def testWithCustomPRNGKey(self):
-    if not config.jax_enable_custom_prng:
+    if not config.enable_custom_prng.value:
       raise unittest.SkipTest("test requires jax_enable_custom_prng")
     key = prng.seed_with_impl(prng.rbg_prng_impl, 87)
     # Make sure this doesn't crash

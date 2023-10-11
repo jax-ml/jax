@@ -22,7 +22,7 @@ from typing import Any, Callable, Union
 import numpy as np
 
 import jax
-from jax import config
+from jax._src import config
 from jax._src import core
 from jax._src import source_info_util
 from jax._src import linear_util as lu
@@ -318,7 +318,7 @@ class BatchTracer(Tracer):
 
   def __init__(self, trace, val, batch_dim: NotMapped | int | RaggedAxis,
                source_info: source_info_util.SourceInfo | None = None):
-    if config.jax_enable_checks:
+    if config.enable_checks.value:
       assert type(batch_dim) in (NotMapped, int, RaggedAxis)
       if type(batch_dim) is int:
         aval = raise_to_shaped(core.get_aval(val))
@@ -416,7 +416,7 @@ class BatchTrace(Trace):
     return frame
 
   def process_primitive(self, primitive, tracers, params):
-    if config.jax_dynamic_shapes:
+    if config.dynamic_shapes.value:
       primitive.abstract_eval(*(t.aval for t in tracers), **params)
     vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
     is_axis_primitive = primitive in axis_primitive_batchers

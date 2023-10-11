@@ -47,6 +47,7 @@ from jax import lax
 from jax.tree_util import tree_leaves, tree_flatten, tree_map
 
 from jax._src import api_util
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -56,7 +57,6 @@ from jax._src.core import ShapedArray, ConcreteArray
 from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
                               _sort_le_comparator, PrecisionLike)
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_client
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
@@ -2321,7 +2321,7 @@ def identity(n: DimSize, dtype: DTypeLike | None = None) -> Array:
 def arange(start: DimSize, stop: Optional[DimSize] = None,
            step: DimSize | None = None, dtype: DTypeLike | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "arange")
-  if not jax.config.jax_dynamic_shapes:
+  if not config.dynamic_shapes.value:
     util.check_arraylike("arange", start)
     if stop is None and step is None:
       start = core.concrete_or_error(None, start, "It arose in the jnp.arange argument 'stop'")
@@ -3459,7 +3459,7 @@ def _einsum(
 
       # NOTE(mattjj): this can fail non-deterministically in python3, maybe
       # due to opt_einsum
-      assert jax.config.jax_dynamic_shapes or all(
+      assert config.dynamic_shapes.value or all(
         name in lhs_names and name in rhs_names and
         lhs.shape[lhs_names.index(name)] == rhs.shape[rhs_names.index(name)]
         for name in contracted_names), (
@@ -4309,7 +4309,7 @@ def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
     return result
 
   # TODO(mattjj,dougalm): expand dynamic shape indexing support
-  if jax.config.jax_dynamic_shapes and arr.ndim > 0:
+  if config.dynamic_shapes.value and arr.ndim > 0:
     try: aval = core.get_aval(idx)
     except: pass
     else:

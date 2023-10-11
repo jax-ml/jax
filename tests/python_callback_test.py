@@ -22,8 +22,8 @@ import unittest
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
-from jax import config
 from jax import lax
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import test_util as jtu
@@ -40,7 +40,7 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 import numpy as np
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 def _format_multiline(text):
@@ -197,7 +197,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
 
   @with_pure_and_io_callbacks
   def test_callback_with_wrongly_specified_64_bit_dtype(self, *, callback):
-    if config.jax_enable_x64:
+    if config.enable_x64.value:
       raise unittest.SkipTest("Test only needed when 64-bit mode disabled.")
 
     @jax.jit

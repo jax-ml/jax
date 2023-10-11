@@ -24,8 +24,8 @@ import jax
 from jax import random
 from jax import lax
 from jax._src import core
+from jax._src import config
 from jax._src import linear_util as lu
-from jax import config
 from jax._src.interpreters import partial_eval as pe
 from jax._src import test_util as jtu
 from jax._src.util import tuple_insert
@@ -48,7 +48,7 @@ from jax._src.state.primitives import (get_p, swap_p, addupdate_p,
 from jax._src.state.types import (shaped_array_ref, ReadEffect, WriteEffect,
                                   AccumEffect, AbstractRef)
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 class StatePrimitivesTest(jtu.JaxTestCase):
 
@@ -413,9 +413,9 @@ class StatePrimitivesTest(jtu.JaxTestCase):
   def test_vmap(self, ref_shape, ref_bdim, idx_shape, indexed_dims,
                     idx_bdims, out_bdim, op):
 
-    float_ = (jnp.dtype('float64') if jax.config.jax_enable_x64 else
+    float_ = (jnp.dtype('float64') if config.enable_x64.value else
               jnp.dtype('float32'))
-    int_ = (jnp.dtype('int64') if jax.config.jax_enable_x64 else
+    int_ = (jnp.dtype('int64') if config.enable_x64.value else
             jnp.dtype('int32'))
     axis_size = 7
     out_shape = tuple(d for d, b in zip(ref_shape, indexed_dims) if not b)

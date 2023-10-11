@@ -29,6 +29,7 @@ from jax import grad
 from jax import lax
 from jax import numpy as jnp
 from jax import random
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -36,8 +37,7 @@ from jax import vmap
 
 from jax._src import prng as prng_internal
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 float_dtypes = jtu.dtypes.all_floating
 complex_dtypes = jtu.dtypes.complex
@@ -63,7 +63,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     fail_prob = 0.003 if samples.dtype == jnp.bfloat16 else 0.01
     # TODO(frostig): This reads enable_custom_prng as a proxy for
     # whether RBG keys may be involved, but that's no longer exact.
-    if config.jax_enable_custom_prng and samples.dtype == jnp.bfloat16:
+    if config.enable_custom_prng.value and samples.dtype == jnp.bfloat16:
       return
     self.assertGreater(scipy.stats.kstest(samples, cdf).pvalue, fail_prob)
 
@@ -382,7 +382,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     dtype=[np.float64],  # NOTE: KS test fails with float32
   )
   def testBeta(self, a, b, dtype):
-    if not config.x64_enabled:
+    if not config.enable_x64.value:
       raise SkipTest("skip test except on X64")
     key = self.make_key(0)
     rand = lambda key, a, b: random.beta(key, a, b, (10000,), dtype)
@@ -824,7 +824,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     assert np.unique(keys, axis=0).shape[0] == 2
 
   def testStaticShapeErrors(self):
-    if config.jax_disable_jit:
+    if config.disable_jit.value:
       raise SkipTest("test only relevant when jit enabled")
 
     @jax.jit
@@ -991,7 +991,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def test_prng_jit_invariance(self, seed, type_):
     if type_ == "int" and seed == (1 << 64) - 1:
       self.skipTest("Expected failure: Python int too large.")
-    if not config.x64_enabled and seed > np.iinfo(np.int32).max:
+    if not config.enable_x64.value and seed > np.iinfo(np.int32).max:
       self.skipTest("Expected failure: Python int too large.")
     type_ = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type_]
     args_maker = lambda: [type_(seed)]

@@ -20,9 +20,9 @@ from functools import partial
 from typing import Any, Callable, Optional, Union
 
 import jax
+from jax._src import config
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
-from jax import config
 from jax.tree_util import (tree_flatten, tree_unflatten,
                            register_pytree_node, Partial)
 from jax._src import core
@@ -200,7 +200,7 @@ def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack,
       ct = jax.lax.psum(ct, axis_name=axes_to_reduce)
     ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
     # TODO(mattjj): add back these checks for dynamic shapes
-    # if config.jax_enable_checks:
+    # if config.enable_checks.value:
     #   ct_aval = core.get_aval(ct_env[v])
     #   joined_aval = core.lattice_join(v.aval, ct_aval).strip_weak_type().strip_named_shape()
     #   assert v.aval.strip_weak_type().strip_named_shape() == joined_aval, (prim, v.aval, ct_aval)
@@ -458,7 +458,7 @@ class JVPTracer(Tracer):
   __slots__ = ['primal', 'tangent']
 
   def __init__(self, trace, primal, tangent):
-    if config.jax_enable_checks:
+    if config.enable_checks.value:
       _primal_tangent_shapes_match(primal, tangent)
     self._trace = trace
     self.primal = primal
@@ -624,7 +624,7 @@ def call_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
   if update_params:
     params = update_params(params, map(is_undefined_primal, args),
                            [type(x) is not Zero for x in ct])
-  if config.jax_dynamic_shapes:
+  if config.dynamic_shapes.value:
     # TODO(mattjj,dougalm): handle consts, for now assume just args
     which_lin = [is_undefined_primal(x) for x in args]
     res_invars, _ = partition_list(which_lin, call_jaxpr.invars)

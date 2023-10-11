@@ -17,13 +17,14 @@ import os
 from absl import flags
 from absl.testing import absltest
 from absl.testing import parameterized
+import jax
+from jax._src import config
 from jax._src import test_util as jtu
-from jax import config
 
 from jax.experimental.jax2tf.examples import saved_model_main
 from jax.experimental.jax2tf.tests import tf_test_util
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 FLAGS = flags.FLAGS
 
 
@@ -48,8 +49,8 @@ class SavedModelMainTest(tf_test_util.JaxToTfTestCase):
                                model="mnist_flax",
                                serving_batch_size=-1):
     if (serving_batch_size == -1 and
-        config.jax2tf_default_native_serialization and
-        not config.jax_dynamic_shapes):
+        config.jax2tf_default_native_serialization.value and
+        not config.dynamic_shapes.value):
       self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
     FLAGS.model = model
     FLAGS.model_classifier_layer = True

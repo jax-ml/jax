@@ -63,8 +63,8 @@ from absl.testing import parameterized
 import jax
 from jax import dtypes
 from jax import numpy as jnp
+from jax._src import config
 from jax._src import test_util as jtu
-from jax import config
 from jax.experimental import jax2tf
 from jax.interpreters import mlir
 from jax._src.interpreters import xla
@@ -72,7 +72,7 @@ from jax._src.interpreters import xla
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 # Import after parsing flags
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -114,7 +114,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     func_jax = harness.dyn_fun
     args = harness.dyn_args_maker(self.rng())
     enable_xla = harness.params.get("enable_xla", True)
-    if config.jax2tf_default_native_serialization and not enable_xla:
+    if config.jax2tf_default_native_serialization.value and not enable_xla:
       raise unittest.SkipTest("native_serialization not supported with enable_xla=False")
 
     if ("eigh" == harness.group_name and
@@ -122,7 +122,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         device == "tpu"):
       raise unittest.SkipTest("b/264716764: error on tf.cast from c64 to f32")
 
-    if (config.jax2tf_default_native_serialization and
+    if (config.jax2tf_default_native_serialization.value and
         device == "gpu" and
         "lu" in harness.fullname):
       raise unittest.SkipTest("b/269388847: lu failures on GPU")
@@ -130,7 +130,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     def skipCustomCallTest(target: str):
       raise unittest.SkipTest(
           f"TODO(b/272239584): custom call target not guaranteed stable: {target}")
-    if config.jax2tf_default_native_serialization:
+    if config.jax2tf_default_native_serialization.value:
       if device == "gpu":
         if "custom_linear_solve_" in harness.fullname:
           skipCustomCallTest("cusolver_geqrf, cublas_geqrf_batched")
@@ -146,7 +146,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                                enable_xla=enable_xla)
     except Exception as e:
       # TODO(b/264596006): custom calls are not registered properly with TF in OSS
-      if (config.jax2tf_default_native_serialization and
+      if (config.jax2tf_default_native_serialization.value and
           "does not work with custom calls" in str(e)):
         logging.warning("Suppressing error %s", e)
         raise unittest.SkipTest("b/264596006: custom calls in native serialization fail in TF")
@@ -257,7 +257,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     # The CPU has more supported types, and harnesses
     self.assertEqual("cpu", jtu.device_under_test())
     self.assertTrue(
-        config.x64_enabled,
+        config.enable_x64.value,
         "Documentation generation must be run with JAX_ENABLE_X64=1")
 
     with open(
@@ -299,7 +299,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     y = np.int32(3)
     self.ConvertAndCompare(jnp.floor_divide, x, y)
     expected = jnp.floor_divide(x, y)
-    if not config.jax2tf_default_native_serialization:
+    if not config.jax2tf_default_native_serialization.value:
       # With native serialization TF1 seems to want to run the converted code
       # on the CPU even when the default backend is the TPU.
       # Try it with TF 1 as well (#5831)

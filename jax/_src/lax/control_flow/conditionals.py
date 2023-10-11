@@ -22,9 +22,9 @@ import itertools
 import operator
 from typing import Callable
 
-from jax import config
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -129,7 +129,7 @@ def switch(index, branches: Sequence[Callable], *operands,
   hi = np.array(len(branches) - 1, np.int32)
   index = lax.clamp(lo, index, hi)
 
-  if (config.jax_disable_jit and
+  if (config.disable_jit.value and
       isinstance(core.get_aval(index), ConcreteArray)):
     return branches[int(index)](*operands)
 
@@ -226,7 +226,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
       msg = ("Pred type must be either boolean or number, got {}.")
       raise TypeError(msg.format(pred_dtype))
 
-  if config.jax_disable_jit and isinstance(core.get_aval(pred), ConcreteArray):
+  if config.disable_jit.value and isinstance(core.get_aval(pred), ConcreteArray):
     if pred:
       return true_fun(*operands)
     else:
@@ -806,7 +806,7 @@ def _cond_typecheck(bind_time, *in_atoms, branches, linear):
   return jaxpr0.out_avals, joined_effects
 
 def cond_bind(*args, branches, linear):
-  if config.jax_enable_checks:
+  if config.enable_checks.value:
     avals = map(core.get_aval, args)
     in_atoms = [core.Var(0, '', a) for a in avals]  # dummies
     _cond_typecheck(True, *in_atoms, branches=branches, linear=linear)

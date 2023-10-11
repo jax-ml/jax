@@ -37,6 +37,7 @@ from typing import Any, NamedTuple, Protocol, Union
 import jax
 
 from jax._src import core
+from jax._src import config
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
@@ -488,7 +489,7 @@ class Compiled(Stage):
     # which might conflict here.
     params = args[0]
     args = args[1:]
-    if jax.config.jax_dynamic_shapes:
+    if config.dynamic_shapes.value:
       raise NotImplementedError
     if params.no_kwargs and kwargs:
       kws = ', '.join(kwargs.keys())

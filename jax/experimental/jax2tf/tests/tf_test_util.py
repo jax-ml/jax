@@ -29,9 +29,9 @@ from jax import numpy as jnp
 from jax._src import test_util as jtu
 from jax import tree_util
 
-from jax import config
 from jax.experimental import jax2tf
 from jax.experimental.export import export
+from jax._src import config
 from jax._src import xla_bridge
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -177,16 +177,14 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     # We run the tests using the maximum version supported, even though
     # the default serialization version may be held back for a while to
     # ensure compatibility
-    version = config.jax_serialization_version
-    self.addCleanup(functools.partial(config.update,
-                                      "jax_serialization_version", version))
+    version = config.jax_serialization_version.value
     if self.use_max_serialization_version:
       # Use the largest supported by both export and tfxla.call_module
       version = min(export.maximum_supported_serialization_version,
                     tfxla.call_module_maximum_supported_version())
       self.assertGreaterEqual(version,
                               export.minimum_supported_serialization_version)
-      config.update("jax_serialization_version", version)
+      self.enter_context(config.jax_serialization_version(version))
     logging.info(
       "Using JAX serialization version %s (export.max_version %s, tf.XlaCallModule max version %s)",
       version,
@@ -203,7 +201,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     def to_numpy_dtype(dt):
       return dt if isinstance(dt, np.dtype) else dt.as_numpy_dtype
 
-    if not config.x64_enabled and canonicalize_dtypes:
+    if not config.enable_x64.value and canonicalize_dtypes:
       self.assertEqual(
           dtypes.canonicalize_dtype(to_numpy_dtype(jtu._dtype(x))),
           dtypes.canonicalize_dtype(to_numpy_dtype(jtu._dtype(y))))
@@ -410,7 +408,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     # graph. We count the number of characters in the textual representation
     # of the constant.
     f_tf_graph = tf.function(tf_fun, autograph=False).get_concrete_function(*args).graph.as_graph_def()
-    if config.jax2tf_default_native_serialization:
+    if config.jax2tf_default_native_serialization.value:
       # This way of finding constants may be brittle, if the constant representation
       # contains >. It seems tobe hex-encoded, so this may be safe.
       large_consts = [m for m in re.findall(r"dense<([^>]+)>", str(f_tf_graph)) if len(m) >= at_least]

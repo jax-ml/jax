@@ -29,7 +29,6 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax import config
 from jax import custom_derivatives
 from jax import random
 from jax import numpy as jnp
@@ -45,6 +44,7 @@ from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -322,7 +322,7 @@ def convert(fun_jax: Callable,
     if not enable_xla:
       native_serialization = False
     else:
-      native_serialization = config.jax2tf_default_native_serialization
+      native_serialization = config.jax2tf_default_native_serialization.value
 
   if native_serialization and not enable_xla:
     raise ValueError(
@@ -1180,7 +1180,7 @@ class TensorFlowTracer(core.Tracer):
     if isinstance(val, (tf.Tensor, tf.Variable)):
       val_shape = val.shape
 
-      if config.jax_enable_checks:
+      if config.enable_checks.value:
         assert len(phys_aval.shape) == len(val_shape), f"_aval.shape={phys_aval.shape} different rank than {val_shape=}"
         # To compare types, we must handle float0 in JAX and x64 in TF
         if phys_aval.dtype == dtypes.float0:
@@ -1335,7 +1335,7 @@ class TensorFlowTrace(core.Trace):
 
     # Check that the impl rule returned a value of expected shape and dtype
     # TODO: adapt this to match polymorphic shapes
-    if config.jax_enable_checks:
+    if config.enable_checks.value:
       if primitive.multiple_results:
         for o, expected_aval in zip(out, out_aval):  # type: ignore
           assert o.aval.strip_weak_type() == expected_aval.strip_weak_type(), (
@@ -2538,7 +2538,7 @@ tf_impl_with_avals[lax.reduce_p] = _reduce
 def _cumred(lax_reduce_fn: Callable,
             lax_reduce_window_fn: Callable,
             extra_name_stack: str):
-  if config.jax2tf_associative_scan_reductions:
+  if config.jax2tf_associative_scan_reductions.value:
     return _convert_jax_impl(partial(lax_control_flow.associative_scan,
                                      lax_reduce_fn),
                              multiple_results=False,

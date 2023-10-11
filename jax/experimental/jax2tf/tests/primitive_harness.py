@@ -48,12 +48,12 @@ from absl import testing
 import numpy as np
 
 import jax
-from jax import config
 from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
 
 from jax._src import ad_util
+from jax._src import config
 from jax._src import dispatch
 from jax._src import prng
 from jax._src import test_util as jtu
@@ -67,7 +67,7 @@ from jax._src import random as jax_random
 # then the test file has to import jtu first (to define the flags) which is not
 # desired if the test file is outside of this project (we don't want a
 # dependency on jtu outside of jax repo).
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 Rng = Any  # A random number generator
@@ -2676,7 +2676,7 @@ for dtype in (np.float32, np.float64):
 
 def wrap_and_split():
   key = jax.random.key(42)
-  if jax.config.jax_enable_custom_prng:
+  if config.enable_custom_prng.value:
     key = prng.random_wrap(key, impl=jax.random.default_prng_impl())
   result = jax.random.split(key, 2)
   return prng.random_unwrap(result)
@@ -3314,7 +3314,7 @@ for padding, lhs_dilation, rhs_dilation in [
         rhs_dilation=rhs_dilation)
 
 key_types = [((4,), np.uint32)]
-if config.jax_enable_x64:
+if config.enable_x64.value:
   key_types.append(((2,), np.uint64))
 
 for algorithm in [lax.RandomAlgorithm.RNG_THREE_FRY,

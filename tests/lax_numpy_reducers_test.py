@@ -26,12 +26,12 @@ import numpy as np
 import jax
 from jax import numpy as jnp
 
+from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.util import NumpyComplexWarning
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 numpy_version = jtu.numpy_version()
@@ -705,7 +705,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=tol)
 
-  @unittest.skipIf(not config.jax_enable_x64, "test requires X64")
+  @unittest.skipIf(not config.enable_x64.value, "test requires X64")
   @jtu.run_on_devices("cpu")  # test is for CPU float64 precision
   def testPercentilePrecision(self):
     # Regression test for https://github.com/google/jax/issues/8513

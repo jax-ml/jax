@@ -24,6 +24,7 @@ import jax
 import jax.numpy as jnp
 from jax import custom_jvp
 from jax import lax
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import util
@@ -446,7 +447,7 @@ def softmax(x: ArrayLike,
   See also:
     :func:`log_softmax`
   """
-  if jax.config.jax_softmax_custom_jvp:
+  if config.softmax_custom_jvp.value:
     # mypy is confused by the `functools.partial` application in the definition
     # of `_softmax` and incorrectly concludes that `_softmax` returns
     # `ReturnValue` -- the unsubstituted type parameter of `custom_jvp`.

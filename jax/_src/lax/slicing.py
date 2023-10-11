@@ -25,6 +25,7 @@ import numpy as np
 import jax
 
 from jax._src import ad_util
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -156,7 +157,7 @@ def dynamic_slice(
     - :func:`jax.lax.dynamic_index_in_dim`
   """
   start_indices = _dynamic_slice_indices(operand, start_indices)
-  if jax.config.jax_dynamic_shapes:
+  if config.dynamic_shapes.value:
     dynamic_sizes, static_sizes = lax._extract_tracers_dyn_shape(slice_sizes)
   else:
     dynamic_sizes = []
@@ -1090,7 +1091,7 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
     msg = ("slice start_indices must be greater than or equal to zero, "
            "got start_indices of {}.")
     raise TypeError(msg.format(start_indices))
-  if not jax.config.jax_dynamic_shapes:
+  if not config.dynamic_shapes.value:
     if not all(map(operator.ge, limit_indices, start_indices)):
       msg = ("slice limit_indices must be greater than or equal to start_indices,"
             " got start_indices {} and limit_indices {}.")

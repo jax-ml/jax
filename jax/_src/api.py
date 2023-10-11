@@ -28,9 +28,8 @@ from functools import partial
 import inspect
 import math
 import typing
-from typing import (Any, Callable, Literal,
-                    NamedTuple, Optional, TypeVar, Union,
-                    overload, cast)
+from typing import (Any, Callable, Literal, NamedTuple, TypeVar, overload,
+                    cast)
 import weakref
 
 import numpy as np
@@ -42,6 +41,7 @@ from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
     tree_leaves, Partial, PyTreeDef, all_leaves, keystr, broadcast_prefix,
     prefix_errors, generate_key_paths)
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import effects
@@ -53,7 +53,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import pjit
 from jax._src import xla_bridge as xb
-from jax._src.core import eval_jaxpr
+from jax._src.core import eval_jaxpr, ShapedArray
 from jax._src.api_util import (
     flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
     argnums_partial, argnums_partial_except, flatten_axes, donation_vector,
@@ -73,23 +73,12 @@ from jax._src import tree_util
 from jax._src.util import unzip2, safe_map, safe_zip, wrap_name, wraps
 from jax._src import util
 
-
-from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import mlir
-from jax._src.interpreters import xla
-
-from jax._src.config import (
-    config,
-    disable_jit as _disable_jit,
-    debug_nans as config_debug_nans,
-    debug_infs as config_debug_infs,
-    _thread_local_state as config_thread_local_state,
-    explicit_device_put_scope as config_explicit_device_put_scope,
-    explicit_device_get_scope as config_explicit_device_get_scope)
-from jax._src.core import ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
+from jax._src.interpreters import xla
 
 
 traceback_util.register_exclusion(__file__)
@@ -121,27 +110,28 @@ def _nan_check_posthook(fun, args, kwargs, output):
     dispatch.check_special(pjit.pjit_p.name, buffers)
   except FloatingPointError:
     # compiled_fun can only raise in this case
-    assert config.jax_debug_nans or config.jax_debug_infs
+    assert config.debug_nans.value or config.debug_infs.value
     print("Invalid nan value encountered in the output of a C++-jit/pmap "
           "function. Calling the de-optimized version.")
     fun._cache_miss(*args, **kwargs)[0]  # probably won't return
 
 def _update_debug_special_global(_):
-  if config._read("jax_debug_nans") or config._read("jax_debug_infs"):
+  if (config.config._read("jax_debug_nans") or
+      config.config._read("jax_debug_infs")):
     jax_jit.global_state().post_hook = _nan_check_posthook
   else:
     jax_jit.global_state().post_hook = None
 
 def _update_debug_special_thread_local(_):
-  if (getattr(config_thread_local_state, "jax_debug_nans", False) or
-      getattr(config_thread_local_state, "jax_debug_infs", False)):
+  if (getattr(config._thread_local_state, "jax_debug_nans", False) or
+      getattr(config._thread_local_state, "jax_debug_infs", False)):
     jax_jit.thread_local_state().post_hook = _nan_check_posthook
   else:
     jax_jit.thread_local_state().post_hook = None
 
-config_debug_nans._add_hooks(_update_debug_special_global,
+config.debug_nans._add_hooks(_update_debug_special_global,
                              _update_debug_special_thread_local)
-config_debug_infs._add_hooks(_update_debug_special_global,
+config.debug_infs._add_hooks(_update_debug_special_global,
                              _update_debug_special_thread_local)
 
 
@@ -376,7 +366,7 @@ def disable_jit(disable: bool = True):
   Value of y is [2 4 6]
   [5 7 9]
   """
-  with _disable_jit(disable):
+  with config.disable_jit(disable):
     yield
 
 
@@ -1579,7 +1569,7 @@ def pmap(
 
   # TODO(yashkatariya): Move this out after shard_map is out of experimental and
   # in _src
-  if config.jax_pmap_shmap_merge:
+  if config.pmap_shmap_merge.value:
     from jax.experimental.shard_map import pmap
     return pmap(fun, axis_name, in_axes=in_axes, out_axes=out_axes,
                 static_broadcasted_argnums=static_broadcasted_argnums,
@@ -1670,7 +1660,7 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
     dyn_args, dyn_in_axes = args, in_axes
   args, in_tree = tree_flatten((dyn_args, kwargs))
 
-  if donate_tuple and not config.jax_debug_nans:
+  if donate_tuple and not config.debug_nans.value:
     donated_invars = donation_vector(donate_tuple, (), dyn_args, kwargs)
   else:
     donated_invars = (False,) * len(args)
@@ -2530,7 +2520,7 @@ def device_put(
   This function is always asynchronous, i.e. returns immediately without
   blocking the calling Python thread until any transfers are completed.
   """
-  with config_explicit_device_put_scope():
+  with config.explicit_device_put_scope():
     if ((device is None or
          isinstance(device, (xc.Device, Sharding, TransferToMemoryKind))) and
         (src is None or
@@ -2624,7 +2614,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
     return pxla.batched_device_put(stacked_aval, sharding, xs, list(devices))
 
 
-  with config_explicit_device_put_scope():
+  with config.explicit_device_put_scope():
     return tree_map(_device_put_sharded, *shards)
 
 
@@ -2674,7 +2664,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
     assert len(xla.aval_to_xla_shapes(aval)) == 1
     return pxla.batched_device_put(aval, sharding, [buf] * len(devices), devices)
 
-  with config_explicit_device_put_scope():
+  with config.explicit_device_put_scope():
     return tree_map(_device_put_replicated, x)
 
 
@@ -2720,7 +2710,7 @@ def device_get(x: Any):
     - device_put_sharded
     - device_put_replicated
   """
-  with config_explicit_device_get_scope():
+  with config.explicit_device_get_scope():
     for y in tree_leaves(x):
       try:
         y.copy_to_host_async()

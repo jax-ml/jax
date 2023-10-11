@@ -30,6 +30,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import random
 from jax import tree_util
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -39,8 +40,7 @@ from jax.interpreters import xla
 from jax._src import random as jax_random
 from jax._src import prng as prng_internal
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 PRNG_IMPLS = list(prng_internal.prngs.items())
@@ -247,7 +247,7 @@ class PrngTest(jtu.JaxTestCase):
     finally:
       xla.apply_primitive = apply_primitive
 
-  @skipIf(config.jax_threefry_partitionable, 'changed random bit values')
+  @skipIf(config.threefry_partitionable.value, 'changed random bit values')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def testRngRandomBits(self, make_key):
     # Test specific outputs to ensure consistent random values between JAX versions.
@@ -280,7 +280,7 @@ class PrngTest(jtu.JaxTestCase):
 
     with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
       bits64 = random_bits(key, 64, (3,))
-    if config.x64_enabled:
+    if config.enable_x64.value:
       expected64 = np.array([3982329540505020460, 16822122385914693683,
                              7882654074788531506], dtype=np.uint64)
     else:
@@ -315,11 +315,11 @@ class PrngTest(jtu.JaxTestCase):
 
       with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
         bits64 = random_bits(key, 64, (3,))
-      expected_dtype = np.dtype('uint64' if config.x64_enabled else 'uint32')
+      expected_dtype = np.dtype('uint64' if config.enable_x64.value else 'uint32')
       self.assertEqual(bits64.shape, (3,))
       self.assertEqual(bits64.dtype, expected_dtype)
 
-  @skipIf(config.jax_threefry_partitionable, 'changed random bit values')
+  @skipIf(config.threefry_partitionable.value, 'changed random bit values')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def testRngRandomBitsViewProperty(self, make_key):
     # TODO: add 64-bit if it ever supports this property.
@@ -338,7 +338,7 @@ class PrngTest(jtu.JaxTestCase):
 
 
   @jtu.sample_product(case=_RANDOM_VALUES_CASES, make_key=KEY_CTORS)
-  @skipIf(config.jax_threefry_partitionable, 'changed random bit values')
+  @skipIf(config.threefry_partitionable.value, 'changed random bit values')
   @jtu.skip_on_devices("tpu")  # TPU precision causes issues.
   def testRandomDistributionValues(self, case, make_key):
     """
@@ -355,9 +355,9 @@ class PrngTest(jtu.JaxTestCase):
     * Considering adding a flag that reverts the new behavior, made
       available for a deprecation window's amount of time.
     """
-    if config.x64_enabled and case.on_x64 == OnX64.SKIP:
+    if config.enable_x64.value:
       self.skipTest("test produces different values when jax_enable_x64=True")
-    if not config.x64_enabled and case.on_x64 == OnX64.ONLY:
+    if not config.enable_x64.value:
       self.skipTest("test only valid when jax_enable_x64=True")
     with jax.default_prng_impl(case.prng_impl):
       func = getattr(random, case.name)
@@ -368,7 +368,7 @@ class PrngTest(jtu.JaxTestCase):
         actual = func(key, **case.params, shape=case.shape)
       self.assertAllClose(actual, case.expected, atol=case.atol, rtol=case.rtol)
 
-  @skipIf(config.jax_threefry_partitionable, 'changed random bit values')
+  @skipIf(config.threefry_partitionable.value, 'changed random bit values')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def testPRNGValues(self, make_key):
     # Test to ensure consistent random values between JAX versions
@@ -376,7 +376,7 @@ class PrngTest(jtu.JaxTestCase):
 
     self.assertEqual(random.randint(k, (3, 3), 0, 8).dtype,
                      dtypes.canonicalize_dtype(jnp.int_))
-    if config.x64_enabled:
+    if config.enable_x64.value:
         self.assertAllClose(
             random.randint(k, (3, 3), 0, 8, dtype='int64'),
             np.array([[7, 2, 6],
@@ -407,7 +407,7 @@ class PrngTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       random.bits(make_key(0), (3, 4), np.dtype('float16'))
 
-  @skipIf(not config.jax_threefry_partitionable, 'enable after upgrade')
+  @skipIf(not config.threefry_partitionable.value, 'enable after upgrade')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def test_threefry_split_fold_in_symmetry(self, make_key):
     with jax.default_prng_impl('threefry2x32'):
@@ -420,7 +420,7 @@ class PrngTest(jtu.JaxTestCase):
       self.assertArraysEqual(f2, s2)
       self.assertArraysEqual(f3, s3)
 
-  @skipIf(not config.jax_threefry_partitionable, 'enable after upgrade')
+  @skipIf(not config.threefry_partitionable.value, 'enable after upgrade')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def test_threefry_split_vmapped_fold_in_symmetry(self, make_key):
     # See https://github.com/google/jax/issues/7708
@@ -435,7 +435,7 @@ class PrngTest(jtu.JaxTestCase):
       self.assertArraysEqual(f2, s2)
       self.assertArraysEqual(f3, s3)
 
-  @skipIf(config.jax_threefry_partitionable, 'changed random bit values')
+  @skipIf(config.threefry_partitionable.value, 'changed random bit values')
   def test_loggamma_nan_corner_case(self):
     # regression test for https://github.com/google/jax/issues/17922
     # This particular key previously led to NaN output.
@@ -459,20 +459,20 @@ class PrngTest(jtu.JaxTestCase):
           {"seed": 2, "typ": np.uint32, "jit": False, "key": [0, 2]},
           {"seed": 3, "typ": np.int64, "jit": True, "key": [0, 3]},
           {"seed": 3, "typ": np.int64, "jit": False, "key": [0, 3]},
-          {"seed": -1, "typ": int, "jit": True, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
-          {"seed": -1, "typ": int, "jit": False, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
+          {"seed": -1, "typ": int, "jit": True, "key": [4294967295, 4294967295] if config.enable_x64.value else [0, 4294967295]},
+          {"seed": -1, "typ": int, "jit": False, "key": [4294967295, 4294967295] if config.enable_x64.value else [0, 4294967295]},
           {"seed": -2, "typ": np.int32, "jit": True, "key": [0, 4294967294]},
           {"seed": -2, "typ": np.int32, "jit": False, "key": [0, 4294967294]},
-          {"seed": -3, "typ": np.int64, "jit": True, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
-          {"seed": -3, "typ": np.int64, "jit": False, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
+          {"seed": -3, "typ": np.int64, "jit": True, "key": [4294967295, 4294967293] if config.enable_x64.value else [0, 4294967293]},
+          {"seed": -3, "typ": np.int64, "jit": False, "key": [4294967295, 4294967293] if config.enable_x64.value else [0, 4294967293]},
           {"seed": np.iinfo(np.int32).max + 100, "typ": int, "jit": True, "key": [0, 2147483747]},
           {"seed": np.iinfo(np.int32).max + 100, "typ": int, "jit": False, "key": [0, 2147483747]},
           {"seed": np.iinfo(np.int32).max + 101, "typ": np.uint32, "jit": True, "key": [0, 2147483748]},
           {"seed": np.iinfo(np.int32).max + 101, "typ": np.uint32, "jit": False, "key": [0, 2147483748]},
-          {"seed": np.iinfo(np.int32).min - 100, "typ": int, "jit": True, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
-          {"seed": np.iinfo(np.int32).min - 100, "typ": int, "jit": False, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
-          {"seed": np.iinfo(np.int32).min - 101, "typ": np.int64, "jit": True, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
-          {"seed": np.iinfo(np.int32).min - 101, "typ": np.int64, "jit": False, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
+          {"seed": np.iinfo(np.int32).min - 100, "typ": int, "jit": True, "key": [4294967295, 2147483548] if config.enable_x64.value else [0, 2147483548]},
+          {"seed": np.iinfo(np.int32).min - 100, "typ": int, "jit": False, "key": [4294967295, 2147483548] if config.enable_x64.value else [0, 2147483548]},
+          {"seed": np.iinfo(np.int32).min - 101, "typ": np.int64, "jit": True, "key": [4294967295, 2147483547] if config.enable_x64.value else [0, 2147483547]},
+          {"seed": np.iinfo(np.int32).min - 101, "typ": np.int64, "jit": False, "key": [4294967295, 2147483547] if config.enable_x64.value else [0, 2147483547]},
       ]
       for params in [dict(**d, make_key=ctor) for ctor in KEY_CTORS]
   ])
@@ -482,7 +482,7 @@ class PrngTest(jtu.JaxTestCase):
       maker = lambda k: random.key_data(jax.jit(make_key)(k))
     else:
       maker = lambda k: random.key_data(make_key(k))
-    if (jit and typ is int and not config.x64_enabled and
+    if (jit and typ is int and not config.enable_x64.value and
         (seed < np.iinfo('int32').min or seed > np.iinfo('int32').max)):
       # We expect an error to be raised.
       # NOTE: we check 'if jit' because some people rely on builtin int seeds
@@ -607,7 +607,7 @@ class KeyArrayTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "Cannot interpret"):
       jnp.issubdtype(key, dtypes.prng_key)
 
-  @skipIf(not config.jax_enable_custom_prng, 'relies on typed key upgrade flag')
+  @skipIf(not config.enable_custom_prng.value, 'relies on typed key upgrade flag')
   def test_construction_upgrade_flag(self):
     key = random.PRNGKey(42)
     self.assertIsInstance(key, jax_random.PRNGKeyArray)
@@ -1059,7 +1059,7 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(jax.random.key_data(key1),
                            jax.random.key_data(key2))
 
-    impl = config.jax_default_prng_impl
+    impl = config.default_prng_impl.value
     key3 = jax.random.wrap_key_data(data, impl=impl)
     self.assertEqual(key1.dtype, key3.dtype)
     self.assertArraysEqual(jax.random.key_data(key1),

@@ -30,8 +30,8 @@ import unittest
 from absl.testing import absltest
 
 import jax
+from jax._src import config
 from jax._src import test_util as jtu
-from jax import config
 from jax import lax
 from jax.experimental import jax2tf
 from jax.experimental import pjit
@@ -47,7 +47,7 @@ import numpy as np
 
 import tensorflow as tf  # type: ignore[import]
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 # Must come after initializing the flags
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -225,7 +225,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
     # Annotation count for the input
     count_in_P = 1 if in_shardings == "P" else 0
-    if config.jax2tf_default_native_serialization:
+    if config.jax2tf_default_native_serialization.value:
       # With native serialization even unspecified in_shardings turn into replicated
       count_in_replicated = 1 if in_shardings in [None, "missing"] else 0
     else:
@@ -400,14 +400,14 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
     # Annotation count for the primal input and the grad output
     count_in_P = self.GEQ(2) if in_shardings == "P" else 0
-    if config.jax2tf_default_native_serialization:
+    if config.jax2tf_default_native_serialization.value:
       # With native serialization even unspecified shardings turn into replicated
       count_in_replicated = self.GEQ(2) if in_shardings in [None, "missing"] else 0
     else:
       count_in_replicated = self.GEQ(2) if in_shardings is None else 0
     # Annotation count for the contangent input
     count_out_P = self.GEQ(1) if out_shardings == "P" else 0
-    if config.jax2tf_default_native_serialization:
+    if config.jax2tf_default_native_serialization.value:
       # With native serialization even unspecified shardings turn into replicated
       count_out_replicated = self.GEQ(1) if out_shardings in [None, "missing"] else 0
     else:
@@ -479,7 +479,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
                    "nested_pjit_sharded", "nested_pjit_replicated")
   ])
   def test_pjit_eager_error(self, func="pjit_sharded"):
-    if config.jax2tf_default_native_serialization:
+    if config.jax2tf_default_native_serialization.value:
       raise unittest.SkipTest("There is no error in eager mode for native serialization")
 
     # Define some test functions
