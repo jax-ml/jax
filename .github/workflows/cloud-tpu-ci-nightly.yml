@@ -27,6 +27,8 @@ jobs:
         jaxlib-version: ["pypi_latest", "nightly"]
         tpu-type: ["v3-8", "v4-8", "v5e-4"]
     name: "TPU test (jaxlib=${{ matrix.jaxlib-version }}, ${{ matrix.tpu-type }})"
+    env:
+      DATE_12_WEEKS_AGO: $(python3 -c "import datetime; print(datetime.date.today() - datetime.timedelta(weeks=12))")
     runs-on: ["self-hosted", "tpu", "${{ matrix.tpu-type }}"]
     timeout-minutes: 60
     defaults:
@@ -53,6 +55,8 @@ jobs:
             pip install --pre jaxlib \
               -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
             pip install --pre libtpu-nightly \
+              -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+            pip install --pre libtpu-0.1.dev${{ env.DATE_12_WEEKS_AGO }}-py3-none-any.whl \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
             pip install requests
 
