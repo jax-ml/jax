@@ -35,6 +35,12 @@ repos:
     additional_dependencies: [types-requests==2.31.0, jaxlib==0.4.16, ml_dtypes==0.2.0, numpy==1.26.0, scipy==1.11.2]
     args: [--config=pyproject.toml]
 
+- repo: https://github.com/RobertCraigie/pyright-python
+  rev: v1.1.331
+  hooks:
+  - id: pyright
+    additional_dependencies: [types-requests==2.31.0, jaxlib==0.4.16, ml_dtypes==0.2.0, numpy==1.26.0, scipy==1.11.2]
+
 - repo: https://github.com/mwouts/jupytext
   rev: v1.14.7
   hooks:
