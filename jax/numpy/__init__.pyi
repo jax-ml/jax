@@ -8,7 +8,8 @@ from jax._src import dtypes as _dtypes
 from jax._src.lax.lax import PrecisionLike
 from jax._src.lax.slicing import GatherScatterMode
 from jax._src.numpy.index_tricks import _Mgrid, _Ogrid, CClass as _CClass, RClass as _RClass
-from jax._src.typing import Array, ArrayLike, DType, DTypeLike, DimSize, DuckTypedArray, Shape
+from jax._src.typing import (
+    Array, ArrayLike, DType, DTypeLike, DimSize, DuckTypedArray, ScalarType, Shape)
 from jax.numpy import fft as fft, linalg as linalg
 import numpy as _np
 
@@ -129,7 +130,7 @@ def average(a: ArrayLike, axis: _Axis = ..., weights: Optional[ArrayLike] = ...,
             returned: bool = False, keepdims: bool = False) -> Union[Array, tuple[Array, Array]]: ...
 
 def bartlett(M: int) -> Array: ...
-bfloat16: Any
+bfloat16: ScalarType
 def bincount(x: ArrayLike, weights: Optional[ArrayLike] = ...,
              minlength: int = ..., *, length: Optional[int] = ...) -> Array: ...
 def bitwise_and(x: ArrayLike, y: ArrayLike, /) -> Array: ...
@@ -139,7 +140,7 @@ def bitwise_or(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def bitwise_xor(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def blackman(M: int) -> Array: ...
 def block(arrays: Union[ArrayLike, Sequence[ArrayLike], Sequence[Sequence[ArrayLike]]]) -> Array: ...
-bool_: Any
+bool_: ScalarType
 def broadcast_arrays(*args: ArrayLike) -> list[Array]: ...
 
 @overload
@@ -163,9 +164,9 @@ def clip(a: ArrayLike, a_min: Optional[ArrayLike] = ...,
 def column_stack(
     tup: Union[_np.ndarray, Array, Sequence[ArrayLike]]
 ) -> Array: ...
-complex128: Any
-complex64: Any
-complex_: Any
+complex128: ScalarType
+complex64: ScalarType
+complex_: ScalarType
 complexfloating = _np.complexfloating
 def compress(condition: ArrayLike, a: ArrayLike, axis: Optional[int] = ...,
              out: None = ...) -> Array: ...
@@ -310,15 +311,15 @@ def flip(
 
 def fliplr(m: ArrayLike) -> Array: ...
 def flipud(m: ArrayLike) -> Array: ...
-float16: Any
-float32: Any
-float64: Any
-float8_e4m3b11fnuz: Any
-float8_e4m3fn: Any
-float8_e4m3fnuz: Any
-float8_e5m2: Any
-float8_e5m2fnuz: Any
-float_: Any
+float16: ScalarType
+float32: ScalarType
+float64: ScalarType
+float8_e4m3b11fnuz: ScalarType
+float8_e4m3fn: ScalarType
+float8_e4m3fnuz: ScalarType
+float8_e5m2: ScalarType
+float8_e5m2fnuz: ScalarType
+float_: ScalarType
 def float_power(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 floating = _np.floating
 def floor(x: ArrayLike, /) -> Array: ...
@@ -418,12 +419,12 @@ def inner(
     preferred_element_type: Optional[DTypeLike] = ...) -> Array: ...
 def insert(arr: ArrayLike, obj: Union[ArrayLike, slice], values: ArrayLike,
            axis: Optional[int] = ...) -> Array: ...
-int16: Any
-int32: Any
-int4: Any
-int64: Any
-int8: Any
-int_: Any
+int16: ScalarType
+int32: ScalarType
+int4: ScalarType
+int64: ScalarType
+int8: ScalarType
+int_: ScalarType
 integer = _np.integer
 def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
            left: Union[ArrayLike, str, None] = ...,
@@ -778,12 +779,12 @@ def triu_indices(
 def triu_indices_from(arr: ArrayLike, k: int = ...) -> tuple[Array, Array]: ...
 def true_divide(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def trunc(x: ArrayLike, /) -> Array: ...
-uint: Any
-uint16: Any
-uint32: Any
-uint4: Any
-uint64: Any
-uint8: Any
+uint: ScalarType
+uint16: ScalarType
+uint32: ScalarType
+uint4: ScalarType
+uint64: ScalarType
+uint8: ScalarType
 def union1d(
     ar1: ArrayLike,
     ar2: ArrayLike,

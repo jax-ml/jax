@@ -77,3 +77,38 @@ class DuckTypedArray(Protocol):
 # JAX array (i.e. not including future non-standard array types like KeyArray and BInt).
 # It's different than np.typing.ArrayLike in that it doesn't accept arbitrary sequences,
 # nor does it accept string data.
+
+class ScalarType(Protocol):
+  """Protocol for annotating jax.numpy scalar types
+
+  jax.numpy scalar types are analogs of numpy scalar
+  types, and include :class:`jax.numpy.int32`,
+  :class:`jax.numpy.float32`, etc.
+
+  Example::
+
+    import jax
+    import jax.numpy as jnp
+
+    typ: ScalarType = jnp.float32
+
+    # These objects are convertible to numpy dtypes
+    # ... either explicitly:
+    dt: np.dtype = np.dtype(typ)
+
+    # ... or implicitly
+    arr: jax.Array = jnp.arange(10, dtype=typ)
+
+    # They are callable, returning a jax.Array
+    out: jax.Array = typ(1)
+
+    # They are hashable
+    typedict: dict[ScalarType, np.dtype] = {
+      jnp.float32: np.dtype('float32'),
+      jnp.int32: np.dtype('int32')
+    }
+  """
+  @property
+  def dtype(self) -> DType: ...
+  def __call__(self, x: Any) -> Array: ...
+  def __hash__(self) -> int: ...
