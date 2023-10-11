@@ -761,7 +761,7 @@ def as_slice_indices(arr: Any, idx: Index) -> tuple[
   """Returns start_indices, limit_indices, removed_dims"""
   start_indices = [0] * arr.ndim
   limit_indices = list(arr.shape)
-  removed_dims = []
+  removed_dims: list[int] = []
 
   tuple_idx = idx if isinstance(idx, tuple) else (idx,)
   for dim, sub_idx in enumerate(tuple_idx):
