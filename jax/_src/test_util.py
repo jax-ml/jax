@@ -304,7 +304,7 @@ def is_device_rocm():
   return xla_bridge.get_backend().platform_version.startswith('rocm')
 
 def is_device_cuda():
-  return xla_bridge.get_backend().platform_version.startswith('cuda')
+  return 'cuda' in xla_bridge.get_backend().platform_version
 
 def is_cloud_tpu():
   return 'libtpu' in xla_bridge.get_backend().platform_version
