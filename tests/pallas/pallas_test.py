@@ -139,6 +139,7 @@ class PallasTest(parameterized.TestCase):
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
 
+
 class PallasCallTest(PallasTest):
 
   def test_add_one(self):
@@ -225,7 +226,6 @@ class PallasCallTest(PallasTest):
         np.testing.assert_allclose(out[:oi], jnp.zeros_like(out[:oi]))
         np.testing.assert_allclose(out[oi], x[ii])
         np.testing.assert_allclose(out[oi + 1:], jnp.zeros_like(out[oi + 1:]))
-
 
   @parameterized.parameters(*[
     ((), (2,), ()),
@@ -713,8 +713,31 @@ class PallasCallTest(PallasTest):
     np.testing.assert_allclose(lock, 0)
     np.testing.assert_allclose(count, num_threads)
 
+  def test_custom_jvp_call(self):
+    @functools.partial(jax.custom_jvp, nondiff_argnums=(1,))
+    def softmax(x, axis=-1):
+      unnormalized = jnp.exp(x - jnp.max(x, axis, keepdims=True))
+      return unnormalized / jnp.sum(unnormalized, axis, keepdims=True)
+
+    @softmax.defjvp
+    def softmax_jvp(axis, primals, tangents):
+      (x,), (x_dot,) = primals, tangents
+      y = softmax(x, axis)
+      return y, y * (x_dot - (y * x_dot).sum(axis, keepdims=True))
+
+    m, n = 16, 32
+    x = random.normal(random.PRNGKey(0), (m, n))
+
+    @functools.partial(self.pallas_call, out_shape=x, grid=1)
+    def softmax_kernel(x_ref, y_ref):
+      y_ref[:] = softmax(x_ref[:])
+
+    np.testing.assert_allclose(softmax_kernel(x), jax.nn.softmax(x), atol=1e-7)
+
+
 class PallasCallInterpreterTest(PallasCallTest):
   INTERPRET = True
+
 
 class PallasControlFlowTest(PallasTest):
 
