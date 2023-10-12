@@ -43,17 +43,16 @@ from jax import numpy as jnp
 from jax import tree_util
 from jax.test_util import check_grads
 
+from jax._src import array
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, _wraps
 from jax._src.util import safe_zip, NumpyComplexWarning
-from jax._src import array
 
-from jax import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 numpy_version = jtu.numpy_version()
 
@@ -2333,7 +2332,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testFrexp(self, shape, dtype, rng_factory):
     # integer types are converted to float64 in numpy's implementation
     if (dtype not in [jnp.bfloat16, np.float16, np.float32]
-        and not config.x64_enabled):
+        and not config.enable_x64.value):
       self.skipTest("Only run float64 testcase when float64 is enabled.")
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
@@ -2405,7 +2404,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     out_int32 = jax.eval_shape(jnp.searchsorted, a_int32, v)
     self.assertEqual(out_int32.dtype, np.int32)
 
-    if config.x64_enabled:
+    if config.enable_x64.value:
       out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
       self.assertEqual(out_int64.dtype, np.int64)
     else:
@@ -3160,7 +3159,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp.array(val)
 
     # explicit uint64 should work
-    if config.x64_enabled:
+    if config.enable_x64.value:
       self.assertEqual(np.uint64(val), jnp.array(val, dtype='uint64'))
 
   def testArrayFromList(self):
@@ -3534,7 +3533,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # Final dimension must be a multiple of 16 to ensure compatibilty of all dtype pairs.
     shape=[(0,), (32,), (2, 16)],
     a_dtype=all_dtypes,
-    dtype=(*all_dtypes, None) if config.x64_enabled else all_dtypes,
+    dtype=(*all_dtypes, None) if config.enable_x64.value else all_dtypes,
   )
   def testView(self, shape, a_dtype, dtype):
     if jtu.test_device_matches(["tpu"]):
@@ -4645,7 +4644,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                    endpoint, base, dtype):
     if (dtype in int_dtypes and
         jtu.test_device_matches(["gpu", "tpu"]) and
-        not config.x64_enabled):
+        not config.enable_x64.value):
       raise unittest.SkipTest("GPUx32 truncated exponentiation"
                               " doesn't exactly match other platforms.")
     rng = jtu.rand_default(self.rng())
@@ -4724,29 +4723,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             check_dtypes=False, atol=tol, rtol=tol)
 
   def testDisableNumpyRankPromotionBroadcasting(self):
-    try:
-      prev_flag = config._read('jax_numpy_rank_promotion')
-      FLAGS.jax_numpy_rank_promotion = "allow"
+    with jax.numpy_rank_promotion('allow'):
       jnp.ones(2) + jnp.ones((1, 2))  # works just fine
-    finally:
-      FLAGS.jax_numpy_rank_promotion = prev_flag
 
-    try:
-      prev_flag = config._read('jax_numpy_rank_promotion')
-      FLAGS.jax_numpy_rank_promotion = "raise"
+    with jax.numpy_rank_promotion('raise'):
       self.assertRaises(ValueError, lambda: jnp.ones(2) + jnp.ones((1, 2)))
       jnp.ones(2) + 3  # don't want to raise for scalars
-    finally:
-      FLAGS.jax_numpy_rank_promotion = prev_flag
 
-    try:
-      prev_flag = config._read('jax_numpy_rank_promotion')
-      FLAGS.jax_numpy_rank_promotion = "warn"
+    with jax.numpy_rank_promotion('warn'):
       self.assertWarnsRegex(UserWarning, "Following NumPy automatic rank promotion for add on "
                             r"shapes \(2,\) \(1, 2\).*", lambda: jnp.ones(2) + jnp.ones((1, 2)))
       jnp.ones(2) + 3  # don't want to warn for scalars
-    finally:
-      FLAGS.jax_numpy_rank_promotion = prev_flag
 
   @unittest.skip("Test fails on CI, perhaps due to JIT caching")
   def testDisableNumpyRankPromotionBroadcastingDecorator(self):
@@ -5077,7 +5064,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp.logaddexp2, args_maker, rtol=tol, atol=tol)
 
   def testDefaultDtypes(self):
-    precision = config.jax_default_dtype_bits
+    precision = config.default_dtype_bits.value
     assert precision in ['32', '64']
     self.assertEqual(jnp.bool_, np.bool_)
     self.assertEqual(jnp.int_, np.int32 if precision == '32' else np.int64)

@@ -28,17 +28,17 @@ from absl.testing import absltest
 
 import jax
 from jax import ad_checkpoint
-from jax._src import core
 from jax import config
 from jax import dtypes
-from jax.experimental import host_callback as hcb
-from jax.sharding import PartitionSpec as P
-from jax.experimental import pjit
 from jax import lax
 from jax import numpy as jnp
-from jax._src import test_util as jtu
 from jax import tree_util
+from jax.experimental import host_callback as hcb
+from jax.experimental import pjit
+from jax.sharding import PartitionSpec as P
+from jax._src import core
 from jax._src import xla_bridge
+from jax._src import test_util as jtu
 from jax._src.lib import xla_client
 
 xops = xla_client.ops
@@ -46,7 +46,6 @@ xops = xla_client.ops
 import numpy as np
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 class _TestingOutputStream:
@@ -333,7 +332,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       ( 6.00 9.00 )""")
 
   def test_tap_eval_exception(self):
-    if not FLAGS.jax_host_callback_outfeed:
+    if not hcb._HOST_CALLBACK_OUTFEED.value:
       raise SkipTest("TODO: implement error handling for customcall")
     # Simulate a tap error
     def tap_err(*args, **kwargs):
@@ -818,7 +817,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     self.assertEqual(100, count)
 
   def test_tap_jit_tap_exception(self):
-    if not FLAGS.jax_host_callback_outfeed:
+    if not hcb._HOST_CALLBACK_OUTFEED.value:
       raise SkipTest("TODO: implement error handling for customcall")
     # Simulate a tap error
     def tap_err(*args, **kwargs):
@@ -1541,7 +1540,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
   @jtu.sample_product(device_index=[0, 1])
   def test_tap_pjit(self, device_index=0):
     if (device_index != 0 and
-        not FLAGS.jax_host_callback_outfeed and
+        not hcb._HOST_CALLBACK_OUTFEED.value and
         jtu.test_device_matches(["cpu"])):
       # See comment in host_callback.py.
       raise SkipTest("device_index works only with outfeed on CPU")

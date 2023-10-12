@@ -25,7 +25,6 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
-from jax import config
 from jax import lax
 from jax import tree_util
 from jax.experimental.sparse._base import JAXSparse
@@ -37,6 +36,7 @@ from jax.experimental.sparse.util import (
 from jax.util import split_list, safe_zip
 
 from jax._src import api_util
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src.lax.lax import DotDimensionNumbers, _dot_general_batch_dim_nums
@@ -623,7 +623,7 @@ def _bcsr_dot_general_gpu_lowering(
     ctx, lhs_data, lhs_indices, lhs_indptr, rhs, *, dimension_numbers,
     preferred_element_type, lhs_spinfo: SparseInfo):
 
-  if not config.jax_bcoo_cusparse_lowering:
+  if not config.bcoo_cusparse_lowering.value:
     return _bcsr_dot_general_default_lowering(
       ctx, lhs_data, lhs_indices, lhs_indptr, rhs,
       dimension_numbers=dimension_numbers,

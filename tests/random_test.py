@@ -40,7 +40,7 @@ from jax.interpreters import xla
 from jax._src import random as jax_random
 from jax._src import prng as prng_internal
 
-jax.config.parse_flags_with_absl()
+config.parse_flags_with_absl()
 
 
 PRNG_IMPLS = list(prng_internal.prngs.items())

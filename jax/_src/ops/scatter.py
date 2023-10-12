@@ -21,9 +21,9 @@ import warnings
 
 import numpy as np
 
-from jax import config
 from jax import lax
 
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import util
@@ -91,11 +91,12 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
 
   if not dtypes.safe_to_cast(y, x):
     # TODO(jakevdp): change this to an error after the deprecation period.
-    warnings.warn("scatter inputs have incompatible types: cannot safely cast "
-                  f"value from dtype={lax.dtype(y)} to dtype={lax.dtype(x)} "
-                  f"with jax_numpy_dtype_promotion={config.jax_numpy_dtype_promotion!r}. "
-                  "In future JAX releases this will result in an error.",
-                  FutureWarning)
+    warnings.warn(
+      "scatter inputs have incompatible types: cannot safely cast value "
+      f"from dtype={lax.dtype(y)} to dtype={lax.dtype(x)} with "
+      f"jax_numpy_dtype_promotion={config.numpy_dtype_promotion.value!r}. "
+      "In future JAX releases this will result in an error.",
+      FutureWarning)
 
   idx = jnp._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = jnp._index_to_gather(jnp.shape(x), idx,

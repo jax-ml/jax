@@ -116,8 +116,7 @@ def _nan_check_posthook(fun, args, kwargs, output):
     fun._cache_miss(*args, **kwargs)[0]  # probably won't return
 
 def _update_debug_special_global(_):
-  if (config.config._read("jax_debug_nans") or
-      config.config._read("jax_debug_infs")):
+  if config._read("jax_debug_nans") or config._read("jax_debug_infs"):
     jax_jit.global_state().post_hook = _nan_check_posthook
   else:
     jax_jit.global_state().post_hook = None

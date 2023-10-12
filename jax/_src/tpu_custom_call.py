@@ -38,7 +38,7 @@ from jaxlib.mlir.dialects import stablehlo
 from jaxlib.mlir.passmanager import PassManager
 import numpy as np
 
-mosaic_use_cpp_passes = config.config.define_bool_state(
+_MOSAIC_USE_CPP_PASSES = config.define_bool_state(
     name="mosaic_use_cpp_passes",
     default=False,
     help=(
@@ -54,13 +54,13 @@ tpu = tpu_mosaic.tpu
 apply_vector_layout = tpu_mosaic.apply_vector_layout
 infer_memref_layout = tpu_mosaic.infer_memref_layout
 
-mosaic_allow_hlo = config.config.define_bool_state(
+_MOSAIC_ALLOW_HLO = config.define_bool_state(
     name="jax_mosaic_allow_hlo",
     default=False,
     help="Allow hlo dialects in Mosaic",
 )
 
-mosaic_dump_mlir = config.config.define_bool_state(
+_MOSAIC_DUMP_MLIR = config.define_bool_state(
     name="jax_mosaic_dump_mlir",
     default=False,
     help="Print mlir module after each pass",
@@ -243,7 +243,7 @@ def _lower_tpu_kernel(
       )
       dump_mlir(module, "initial module")
 
-      if mosaic_allow_hlo.value:
+      if _MOSAIC_ALLOW_HLO.value:
         # Run hlo dialect conversion: hlo -> linalg -> vector.
         pipeline = [
             "hlo-legalize-to-arithmetic",
@@ -255,7 +255,7 @@ def _lower_tpu_kernel(
         )
         dump_mlir(module, "after hlo conversion module")
 
-      if mosaic_use_cpp_passes.value:
+      if _MOSAIC_USE_CPP_PASSES.value:
         pipeline = [
             (
                 f"func.func(tpu-infer-memref-layout{{hardware-generation={hardware_generation}}})"
@@ -278,7 +278,7 @@ def _lower_tpu_kernel(
       module.operation.verify()
       dump_mlir(module, "after infer vector layout pass")
 
-      if mosaic_use_cpp_passes.value:
+      if _MOSAIC_USE_CPP_PASSES.value:
         pipeline = [
             (
                 "func.func(tpu-apply-vector-layout{sublane-count=8"
@@ -418,6 +418,6 @@ def _lowered_as_tpu_kernel(
 
 def dump_mlir(module: ir.Module, msg: str):
   """A helper function to print mlir module with a message."""
-  if mosaic_dump_mlir.value:
+  if _MOSAIC_DUMP_MLIR.value:
     print(f"[jax_mosaic_dump_mlir] {msg}")
     print(module)

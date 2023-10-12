@@ -19,20 +19,20 @@ import warnings
 from absl.testing import absltest
 import jax
 import jax.numpy as jnp
-from jax._src import core
 from jax import lax
-from jax._src import effects
-from jax._src import linear_util as lu
-from jax import config
 from jax.experimental import maps
 from jax.experimental import pjit
-from jax._src.interpreters import ad
-from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import mlir
 from jax._src import ad_checkpoint
 from jax._src import dispatch
+from jax._src import config
+from jax._src import core
+from jax._src import effects
+from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import util
+from jax._src.interpreters import ad
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -297,8 +297,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    self.old_x64 = config.jax_enable_x64
-    config.update('jax_enable_x64', False)
+    self.enter_context(config.enable_x64(False))
     self._old_lowering = mlir._lowerings[effect_p]
     def _effect_lowering(ctx, *, effect):
       if effects.ordered_effects.contains(effect):
@@ -315,7 +314,6 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
   def tearDown(self):
     super().tearDown()
     dispatch.runtime_tokens.clear()
-    config.update('jax_enable_x64', self.old_x64)
     mlir.register_lowering(effect_p, self._old_lowering)
 
   def test_can_lower_lowerable_effect(self):

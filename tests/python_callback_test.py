@@ -26,13 +26,13 @@ from jax import lax
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
+from jax._src import maps
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version
 from jax.experimental import io_callback
-from jax.experimental import maps
 from jax.experimental import pjit
 from jax.experimental.maps import xmap
 from jax.experimental.shard_map import shard_map
@@ -40,7 +40,7 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 import numpy as np
 
-jax.config.parse_flags_with_absl()
+config.parse_flags_with_absl()
 
 
 def _format_multiline(text):
@@ -632,8 +632,10 @@ class PureCallbackTest(jtu.JaxTestCase):
     if not hasattr(xla_client.OpSharding.Type, 'MANUAL'):
       raise unittest.SkipTest('Manual partitioning needed for pure_callback')
 
-    jtu.set_spmd_lowering_flag(True)
-    jtu.set_spmd_manual_lowering_flag(True)
+    spmd_lowering = maps._SPMD_LOWERING.value
+    spmd_manual_lowering = maps._SPMD_LOWERING_MANUAL.value
+    config.update('experimental_xmap_spmd_lowering', True)
+    config.update('experimental_xmap_spmd_lowering_manual', True)
     try:
       mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
 
@@ -659,8 +661,11 @@ class PureCallbackTest(jtu.JaxTestCase):
             out, np.sin(np.arange(jax.local_device_count()))
         )
     finally:
-      jtu.restore_spmd_manual_lowering_flag()
-      jtu.restore_spmd_lowering_flag()
+      config.update('experimental_xmap_spmd_lowering', spmd_lowering)
+      config.update(
+        'experimental_xmap_spmd_lowering_manual',
+        spmd_manual_lowering,
+      )
 
   def test_cant_take_grad_of_pure_callback(self):
 

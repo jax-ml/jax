@@ -34,7 +34,7 @@ from jax import random
 import jax
 import jax.numpy as jnp
 
-jax.config.parse_flags_with_absl()
+config.parse_flags_with_absl()
 
 
 class NNFunctionsTest(jtu.JaxTestCase):

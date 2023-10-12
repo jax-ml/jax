@@ -24,16 +24,13 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax._src import dtypes
 from jax import numpy as jnp
-
+from jax._src import config
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
 
-from jax._src.config import config
 config.parse_flags_with_absl()
-
-FLAGS = config.FLAGS
 
 bool_dtypes = [np.dtype('bool')]
 
@@ -102,7 +99,7 @@ class DtypesTest(jtu.JaxTestCase):
         True: _EXPECTED_CANONICALIZE_X64,
         False: _EXPECTED_CANONICALIZE_X32,
     }
-    for in_dtype, expected_dtype in expected[config.x64_enabled].items():
+    for in_dtype, expected_dtype in expected[config.enable_x64.value].items():
       self.assertEqual(dtypes.canonicalize_dtype(in_dtype), expected_dtype)
 
   @parameterized.named_parameters(
@@ -371,7 +368,7 @@ class DtypesTest(jtu.JaxTestCase):
       dtypes.dtype(None)
 
   def testDefaultDtypes(self):
-    precision = config.jax_default_dtype_bits
+    precision = config.default_dtype_bits.value
     assert precision in ['32', '64']
     self.assertEqual(dtypes.bool_, np.bool_)
     self.assertEqual(dtypes.int_, np.int32 if precision == '32' else np.int64)
@@ -450,7 +447,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     # Note: * here refers to weakly-typed values
     typecodes = \
         ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*']
-    if config.x64_enabled:
+    if config.enable_x64.value:
       expected = [
         ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*'],
         ['u1','u1','u2','u4','u8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','u1','f*','c*'],

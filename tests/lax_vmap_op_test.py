@@ -29,8 +29,6 @@ from jax._src import util
 from jax import config
 config.parse_flags_with_absl()
 
-FLAGS = config.FLAGS
-
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 

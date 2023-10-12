@@ -21,15 +21,15 @@ import numpy as np
 
 import jax
 from jax import lax
-import jax._src.test_util as jtu
-from jax._src.lib import xla_extension
-from jax import config
 from jax.experimental import checkify
 from jax.experimental import pjit
 from jax.sharding import NamedSharding
 from jax._src import array
+from jax._src import config
 from jax._src import core
+from jax._src import test_util as jtu
 from jax._src.checkify import JaxRuntimeError, FailedCheckError, ErrorEffect, OOBError
+from jax._src.lib import xla_extension
 import jax.numpy as jnp
 
 config.parse_flags_with_absl()
@@ -1305,12 +1305,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
 class LowerableChecksTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
-    self.prev = config.jax_experimental_unsafe_xla_runtime_errors
-    config.update("jax_experimental_unsafe_xla_runtime_errors", True)
-
-  def tearDown(self):
-    config.update("jax_experimental_unsafe_xla_runtime_errors", self.prev)
-    super().tearDown()
+    self.enter_context(config.xla_runtime_errors(True))
 
   @jtu.run_on_devices("cpu", "gpu")
   def test_jit(self):

@@ -29,10 +29,11 @@ import jax
 from jax import config
 from jax._src import core
 from jax._src import distributed
-import jax.numpy as jnp
+from jax._src import maps
 from jax._src import test_util as jtu
 from jax._src import util
 from jax.experimental import pjit
+import jax.numpy as jnp
 
 try:
   import portpicker
@@ -258,7 +259,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    self.xmap_spmd_lowering_enabled = jax.config.experimental_xmap_spmd_lowering
+    self.xmap_spmd_lowering_enabled = maps._SPMD_LOWERING.value
     jax.config.update("experimental_xmap_spmd_lowering", True)
 
   def tearDown(self):

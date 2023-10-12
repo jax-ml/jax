@@ -28,9 +28,9 @@ from absl import logging
 import numpy as np
 
 import jax
-from jax import config
 from jax import sharding
 
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src.interpreters import mlir
@@ -387,7 +387,7 @@ def export(fun_jax: Callable,
       exported = jax_export.export(f_jax)(*args, **kwargs)
   """
   fun_name = getattr(fun_jax, "__name__", "unknown")
-  version = config.jax_serialization_version
+  version = config.jax_serialization_version.value
   if (version < minimum_supported_serialization_version or
       version > maximum_supported_serialization_version):
     raise ValueError(

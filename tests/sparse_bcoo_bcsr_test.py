@@ -41,7 +41,6 @@ from jax.util import split_list
 import numpy as np
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 COMPATIBLE_SHAPE_PAIRS = [
     [(), ()],

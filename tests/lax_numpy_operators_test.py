@@ -31,12 +31,11 @@ import jax.ops
 from jax import lax
 from jax import numpy as jnp
 
+from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 
-from jax import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
@@ -612,7 +611,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
                  np.issubdtype(shift_dtype, np.signedinteger)
     has_32 = any(np.iinfo(d).bits == 32 for d in dtypes)
     promoting_to_64 = has_32 and signed_mix
-    if promoting_to_64 and not config.x64_enabled:
+    if promoting_to_64 and not config.enable_x64.value:
       self.skipTest("np.right_shift/left_shift promoting to int64"
                     "differs from jnp in 32 bit mode.")
 
