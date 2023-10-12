@@ -34,21 +34,21 @@ from jax.test_util import check_grads
 from jax import tree_util
 import jax.util
 
-from jax.interpreters import xla
-from jax._src.interpreters import mlir
 from jax.interpreters import batching
+from jax.interpreters import xla
 from jax._src import array
+from jax._src import config
 from jax._src import dtypes
-from jax._src.interpreters import pxla
-from jax._src import test_util as jtu
 from jax._src import lax_reference
+from jax._src import test_util as jtu
+from jax._src.interpreters import mlir
+from jax._src.interpreters import pxla
+from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
-from jax._src.internal_test_util import lax_test_util
 from jax._src.util import NumpyComplexWarning
 
-from jax import config
 config.parse_flags_with_absl()
 
 
@@ -96,7 +96,7 @@ class LaxTest(jtu.JaxTestCase):
         dtype=rec.dtypes)
       for rec in lax_test_util.lax_ops()))
   def testOpAgainstNumpy(self, op_name, rng_factory, shapes, dtype, tol):
-    if (not config.x64_enabled and op_name == "nextafter"
+    if (not config.enable_x64.value and op_name == "nextafter"
         and dtype == np.float64):
       raise SkipTest("64-bit mode disabled")
     rng = rng_factory(self.rng())
@@ -293,7 +293,7 @@ class LaxTest(jtu.JaxTestCase):
   )
   @jax.default_matmul_precision("float32")
   def testConvPreferredElement(self, lhs_shape, rhs_shape, dtype, preferred_element_type):
-    if (not config.x64_enabled and
+    if (not config.enable_x64.value and
        (dtype == np.float64 or preferred_element_type == np.float64
         or dtype == np.int64 or preferred_element_type == np.int64
         or dtype == np.complex128 or preferred_element_type == np.complex128)):
@@ -1033,7 +1033,7 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testDotPreferredElement(self, lhs_shape, rhs_shape, dtype,
                               preferred_element_type):
-    if (not config.x64_enabled and
+    if (not config.enable_x64.value and
        (dtype == np.float64 or preferred_element_type == np.float64
         or dtype == np.int64 or preferred_element_type == np.int64)):
       raise SkipTest("64-bit mode disabled")
@@ -1682,7 +1682,7 @@ class LaxTest(jtu.JaxTestCase):
       ],
   )
   def testReduce(self, op, reference_op, init_val, shape, dtype, dims, primitive):
-    if not config.x64_enabled and dtype in (np.float64, np.int64, np.uint64):
+    if not config.enable_x64.value and dtype in (np.float64, np.int64, np.uint64):
       raise SkipTest("x64 mode is disabled.")
     def reference_fun(operand):
       if hasattr(reference_op, "reduce"):
@@ -2622,7 +2622,7 @@ class LaxTest(jtu.JaxTestCase):
   def testRngBitGenerator(self):
     # This test covers the original behavior of lax.rng_bit_generator, which
     # required x64=True, and only checks shapes and jit invariance.
-    if not config.x64_enabled:
+    if not config.enable_x64.value:
       raise SkipTest("RngBitGenerator requires 64bit key")
 
     key = np.array((1, 2)).astype(np.uint64)

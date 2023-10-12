@@ -48,7 +48,7 @@ from jax._src.state.primitives import (get_p, swap_p, addupdate_p,
 from jax._src.state.types import (shaped_array_ref, ReadEffect, WriteEffect,
                                   AccumEffect, AbstractRef)
 
-jax.config.parse_flags_with_absl()
+config.parse_flags_with_absl()
 
 class StatePrimitivesTest(jtu.JaxTestCase):
 
@@ -831,7 +831,7 @@ if CAN_USE_HYPOTHESIS:
 
     @hp.given(get_vmap_params())
     @hp.settings(deadline=None, print_blob=True,
-        max_examples=config.FLAGS.jax_num_generated_cases)
+        max_examples=jtu._NUM_GENERATED_CASES.value)
     def test_get_vmap(self, get_vmap_param: GetVmapParams):
 
       indexed_dims = get_vmap_param.vmap_index_param.index_param.indexed_dims
@@ -870,7 +870,7 @@ if CAN_USE_HYPOTHESIS:
 
     @hp.given(set_vmap_params())
     @hp.settings(deadline=None, print_blob=True,
-                 max_examples=config.FLAGS.jax_num_generated_cases)
+                 max_examples=jtu._NUM_GENERATED_CASES.value)
     def test_set_vmap(self, set_vmap_param: SetVmapParams):
       if jtu.test_device_matches(["gpu"]):
         self.skipTest("Scatter is nondeterministic on GPU")
@@ -915,7 +915,7 @@ if CAN_USE_HYPOTHESIS:
 
     @hp.given(set_vmap_params())
     @hp.settings(deadline=None, print_blob=True,
-                 max_examples=config.FLAGS.jax_num_generated_cases)
+                 max_examples=jtu._NUM_GENERATED_CASES.value)
     def test_addupdate_vmap(self, set_vmap_param: SetVmapParams):
 
       indexed_dims = set_vmap_param.vmap_index_param.index_param.indexed_dims
@@ -1538,7 +1538,7 @@ if CAN_USE_HYPOTHESIS:
     @jax.legacy_prng_key('allow')
     @hp.given(hps.data())
     @hp.settings(deadline=None, print_blob=True,
-                 max_examples=config.FLAGS.jax_num_generated_cases)
+                 max_examples=jtu._NUM_GENERATED_CASES.value)
     def test_jvp(self, data):
 
       spec = data.draw(func_spec())
@@ -1563,7 +1563,7 @@ if CAN_USE_HYPOTHESIS:
     @jax.legacy_prng_key('allow')
     @hp.given(hps.data())
     @hp.settings(deadline=None, print_blob=True,
-                 max_examples=config.FLAGS.jax_num_generated_cases)
+                 max_examples=jtu._NUM_GENERATED_CASES.value)
     def test_linearize(self, data):
 
       spec = data.draw(func_spec())
@@ -1589,7 +1589,7 @@ if CAN_USE_HYPOTHESIS:
     @jax.legacy_prng_key('allow')
     @hp.given(hps.data())
     @hp.settings(deadline=None, print_blob=True,
-                 max_examples=config.FLAGS.jax_num_generated_cases)
+                 max_examples=jtu._NUM_GENERATED_CASES.value)
     def test_vjp(self, data):
 
       spec = data.draw(func_spec())

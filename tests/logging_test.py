@@ -28,7 +28,7 @@ import jax._src.test_util as jtu
 # parsing to work correctly with bazel (otherwise we could avoid importing
 # absltest/absl logging altogether).
 from absl.testing import absltest
-jax.config.parse_flags_with_absl()
+config.parse_flags_with_absl()
 
 
 @contextlib.contextmanager

@@ -32,30 +32,28 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
-import jax.numpy as jnp
-from jax._src import test_util as jtu
-from jax import tree_util
-from jax import lax
-from jax._src.lax import parallel
-from jax._src import api as src_api
-from jax import random
-from jax._src import core
-from jax._src.lib import xla_extension_version
 from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
-from jax._src import config as jax_config
+from jax import lax
+from jax import random
+from jax import tree_util
+from jax.ad_checkpoint import checkpoint as new_checkpoint
+import jax.numpy as jnp
+from jax._src import api as src_api
+from jax._src import array
+from jax._src import core
+from jax._src import config
 from jax._src import sharding_impls
 from jax._src import sharding_specs
+from jax._src import test_util as jtu
 from jax._src import xla_bridge
-from jax._src.lib import xla_extension
-from jax._src.util import safe_map, safe_zip
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax._src import array
-from jax._src.sharding_impls import PmapSharding
-from jax.ad_checkpoint import checkpoint as new_checkpoint
+from jax._src.lax import parallel
+from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
+from jax._src.util import safe_map, safe_zip
 
-from jax import config
 config.parse_flags_with_absl()
 
 prev_xla_flags = None
@@ -125,7 +123,7 @@ def create_input_array_for_pmap(input_shape, in_axes=0, input_data=None,
   if devices is None:
     devices = jax.devices()
 
-  pmap_sharding = PmapSharding(np.array(devices), sharding_spec)
+  pmap_sharding = jax.sharding.PmapSharding(np.array(devices), sharding_spec)
 
   return array.make_array_from_callback(
       input_shape, pmap_sharding, lambda idx: input_data[idx]), input_data
@@ -188,7 +186,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     # the default order of pmap for single-host jobs.
     device_order = jax.devices()
     pmap_sharding = pmap(lambda x: x)(np.arange(jax.device_count())).sharding
-    if jax.config.jax_pmap_shmap_merge:
+    if config.pmap_shmap_merge.value:
       self.assertListEqual(device_order, pmap_sharding._device_assignment)
     else:
       self.assertListEqual(device_order, pmap_sharding.devices.tolist())
@@ -1283,7 +1281,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = np.repeat(3, device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    if not config.jax_disable_jit:
+    if not config.disable_jit.value:
       f = self.pmap(lambda x: (x, 3))
       x = np.arange(device_count)
       with jtu.assert_num_jit_and_pmap_compilations(1):
@@ -1307,7 +1305,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     # Test that 'ans' was properly replicated across devices.
     ans_devices = ans.sharding._device_assignment
     # TODO(mattjj,sharadmv): fix physical layout with eager pmap, remove 'if'
-    if not config.jax_disable_jit:
+    if not config.disable_jit.value:
       self.assertEqual(ans_devices, tuple(devices))
 
   def testPmapConstantError(self):
@@ -1371,7 +1369,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertTrue(ans.sharding == expected_sharded.sharding)
 
   def testNestedPmapConstantError(self):
-    if config.jax_disable_jit:
+    if config.disable_jit.value:
       raise SkipTest("error test doesn't apply with disable_jit")
     f = self.pmap(self.pmap(lambda x: 3))
     shape = (2, jax.device_count() // 2 + 1, 3)
@@ -1837,7 +1835,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testJitOfPmapWarningMessage(self):
     device_count = jax.device_count()
 
-    if device_count == 1 or config.jax_disable_jit:
+    if device_count == 1 or config.disable_jit.value:
       raise SkipTest("test requires at least two devices")
 
     def foo(x): return x
@@ -1853,7 +1851,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testJitOfPmapOutputSharding(self):
     device_count = jax.device_count()
 
-    if device_count == 1 or config.jax_disable_jit:
+    if device_count == 1 or config.disable_jit.value:
       raise SkipTest("test requires at least two devices")
 
     @jax.jit
@@ -1872,7 +1870,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testJitOfPmapLowerHasReplicaAttributes(self):
     device_count = jax.device_count()
 
-    if device_count == 1 or config.jax_disable_jit:
+    if device_count == 1 or config.disable_jit.value:
       raise SkipTest("test requires at least two devices")
 
     @jax.jit
@@ -2037,7 +2035,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def test_grad_of_pmap_compilation_caching(self, axis_size):
     if len(jax.local_devices()) < axis_size:
       raise SkipTest("too few devices for test")
-    if config.jax_disable_jit:
+    if config.disable_jit.value:
       raise SkipTest("caching doesn't apply with jit disabled")
 
     @jax.pmap
@@ -2059,7 +2057,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual(count[0], 0)  # cache hits on fwd and bwd
 
   def testSizeOverflow(self):
-    if config.jax_disable_jit:
+    if config.disable_jit.value:
       # TODO(sharadmv, mattjj): investigate and fix this issue
       raise SkipTest("OOMs in eager mode")
     x = jnp.arange(1)
@@ -2171,7 +2169,7 @@ class CppPmapTest(PythonPmapTest):
 
   @property
   def pmap(self):
-    if jax.config.jax_pmap_shmap_merge:
+    if config.pmap_shmap_merge.value:
       return src_api.pmap
     return src_api._cpp_pmap
 
@@ -2206,7 +2204,7 @@ class CppPmapTest(PythonPmapTest):
     pmaped_f(inputs)
     self.assertEqual(pmaped_f._cache_size, 1)
 
-    jax_config.update_thread_local_jit_state()
+    config.update_thread_local_jit_state()
 
     pmaped_f(inputs)
     self.assertEqual(pmaped_f._cache_size, 1)
@@ -2511,7 +2509,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
       f(jnp.ones(jax.device_count() + 1))
 
   def testBadAxisSizeErrorNested(self):
-    if config.jax_disable_jit:
+    if config.disable_jit.value:
       raise SkipTest("error doesn't apply when jit is disabled")
     f = pmap(pmap(lambda x: lax.psum(x, ('i', 'j')),
                   axis_name='j'),
@@ -2526,7 +2524,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
   def testNestedPmaps(self):
     if jax.device_count() % 2 != 0:
       raise SkipTest
-    if config.jax_disable_jit:
+    if config.disable_jit.value:
       raise SkipTest("disable_jit requires num devices to equal axis size")
 
     # Devices specified in outer pmap are OK
@@ -2545,7 +2543,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
   def testNestedPmapsBools(self):
     if jax.device_count() % 2 != 0:
       raise SkipTest
-    if config.jax_disable_jit:
+    if config.disable_jit.value:
       raise SkipTest("disable_jit requires num devices to equal axis size")
 
     # Devices specified in outer pmap are OK
@@ -3150,7 +3148,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
     self.assertArraysEqual(w, jnp.cos(jnp.sin(x) ** 2))
 
   def test_same_out_sharding_id(self):
-    if config.jax_disable_jit:
+    if config.disable_jit.value:
       self.skipTest('Skip this under eager pmap mode.')
     shape = (jax.device_count(), 2)
     arr, inp_data = create_input_array_for_pmap(shape)
@@ -3215,8 +3213,8 @@ class EagerPmapMixin:
 
   def setUp(self):
     super().setUp()
-    self.eager_pmap_enabled = config.jax_eager_pmap
-    self.jit_disabled = config.jax_disable_jit
+    self.eager_pmap_enabled = config.eager_pmap.value
+    self.jit_disabled = config.disable_jit.value
     config.update('jax_disable_jit', True)
     config.update('jax_eager_pmap', True)
 

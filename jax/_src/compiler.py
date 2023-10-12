@@ -305,7 +305,7 @@ def compile_or_get_cached(
   try:
     cache_key = compilation_cache.get_cache_key(
         computation, devices, compile_options, backend,
-        config.config.jax_use_original_compilation_cache_key_generation,
+        config.use_original_compilation_cache_key_generation.value,
     )
   except xc._xla.XlaRuntimeError as ex:
     logger.error("compile_or_get_cached: unable to generate cache key, "
@@ -324,7 +324,7 @@ def compile_or_get_cached(
 
     # TODO(b/293308239) Instrument metrics for new cache savings and cache hit
     # rate after it is enabled.
-    if config.config.jax_use_original_compilation_cache_key_generation:
+    if config.use_original_compilation_cache_key_generation.value:
       # TODO(b/293308239) Remove metrics for the original cache after the new
       # compilation cache key implementation is fully rolled out.
       monitoring.record_event('/jax/compilation_cache/cache_hits_original')

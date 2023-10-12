@@ -28,9 +28,9 @@ from absl import logging
 import numpy as np
 
 import jax
-from jax import config
 from jax import sharding
 
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src.interpreters import mlir
@@ -116,6 +116,8 @@ class DisabledSafetyCheck:
 minimum_supported_serialization_version = 6
 maximum_supported_serialization_version = 8
 
+Sharding = Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]
+
 @dataclasses.dataclass(frozen=True)
 class Exported:
   """A JAX function lowered to StableHLO.
@@ -133,9 +135,8 @@ class Exported:
         expressions in the shapes, with dimension variables among those in
         `in_avals.
     in_shardings: the flattened input shardings. Only for the inputs that are
-        specified in `module_kept_var_idx`. If `None` then it is equivalent
-        to unspecified shardings.
-    out_shardings: the flattened output shardings, as long as `in_avals`.
+        specified in `module_kept_var_idx`.
+    out_shardings: the flattened output shardings, as long as `out_avals`.
     lowering_platforms: a tuple containing at least one of 'tpu', 'cpu',
         'cuda', 'rocm'. See below for the calling convention for when
         there are multiple lowering platforms.
@@ -226,8 +227,8 @@ class Exported:
   out_tree: tree_util.PyTreeDef
   out_avals: tuple[core.AbstractValue, ...]
 
-  in_shardings: Optional[tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]]
-  out_shardings: Optional[tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]]
+  in_shardings: tuple[Sharding, ...]
+  out_shardings: tuple[Sharding, ...]
   lowering_platform: str  # For backwards compatibility
   lowering_platforms: tuple[str, ...]
   disabled_checks: Sequence[DisabledSafetyCheck]
@@ -386,7 +387,7 @@ def export(fun_jax: Callable,
       exported = jax_export.export(f_jax)(*args, **kwargs)
   """
   fun_name = getattr(fun_jax, "__name__", "unknown")
-  version = config.jax_serialization_version
+  version = config.jax_serialization_version.value
   if (version < minimum_supported_serialization_version or
       version > maximum_supported_serialization_version):
     raise ValueError(
@@ -826,14 +827,64 @@ def _check_module(mod: ir.Module, *,
            "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-lowering-supports-only-select-custom-calls")
     raise ValueError(msg)
 
+def expand_in_shardings(in_shardings: tuple[Sharding, ...],
+                        module_kept_var_idx: Sequence[int],
+                        nr_inputs: int) -> tuple[Sharding, ...]:
+  """Expands in_shardings with unspecified shardings for inputs not kept.
+
+  Assumes in_shardings corresponds to module_kept_var_idx.
+  """
+  assert len(in_shardings) == len(module_kept_var_idx)
+  assert nr_inputs >= len(module_kept_var_idx)
+  all_in_shardings: list[Sharding] = [sharding_impls.UNSPECIFIED] * nr_inputs
+  for idx, in_s in zip(sorted(module_kept_var_idx), in_shardings):
+    all_in_shardings[idx] = in_s
+  return tuple(all_in_shardings)
+
+# TODO(yashkatariya, necula): remove this function once we relax the checks
+# in the jit front-end.
+def canonical_shardings(
+    in_shardings: Sequence[Sharding],
+    out_shardings: Sequence[Sharding]
+    ) -> tuple[Union[pxla.UnspecifiedValue,
+                     Sequence[sharding.XLACompatibleSharding]],
+               Union[pxla.UnspecifiedValue,
+                     Sequence[sharding.XLACompatibleSharding]]]:
+  """Prepares canonical in_ and out_shardings for a jit invocation.
+
+  The pjit front-end is picky about what in- and out-shardings it accepts,
+  e.g., if all are unspecified then the whole sharding should be the
+  sharding_impls.UNSPECIFIED object, otherwise the unspecified shardings are
+  replaced with the replicated sharding.
+  """
+  # Prepare a replicated sharding, search in both the input and output shardings
+  specified_shardings = [
+      s for s in itertools.chain(in_shardings, out_shardings)
+      if not sharding_impls.is_unspecified(s)]
+  if specified_shardings:
+    in_s = specified_shardings[0]  # pjit will enforce that all have same devices
+    assert isinstance(in_s, sharding.XLACompatibleSharding)
+    replicated_s = sharding.GSPMDSharding.get_replicated(in_s._device_assignment)
+  else:
+    replicated_s = None
+
+  def canonicalize(
+    ss: Sequence[Sharding]) -> Union[pxla.UnspecifiedValue,
+                                     Sequence[sharding.XLACompatibleSharding]]:
+    if all(sharding_impls.is_unspecified(s) for s in ss):
+      return sharding_impls.UNSPECIFIED
+    return tuple(
+        s if not sharding_impls.is_unspecified(s) else replicated_s
+        for s in ss)
+  return (canonicalize(in_shardings), canonicalize(out_shardings))
 
 def _get_vjp_fun(primal_fun: Callable, *,
                  in_tree: tree_util.PyTreeDef,
                  in_avals: Sequence[core.AbstractValue],
                  out_avals: Sequence[core.AbstractValue],
                  module_kept_var_idx: tuple[int, ...],
-                 in_shardings,
-                 out_shardings,
+                 in_shardings: tuple[Sharding, ...],
+                 out_shardings: tuple[Sharding, ...],
                  apply_jit: bool
                  ) -> tuple[Callable, Sequence[core.AbstractValue]]:
   # Since jax.vjp does not handle kwargs, it is easier to do all the work
@@ -855,36 +906,11 @@ def _get_vjp_fun(primal_fun: Callable, *,
       itertools.chain(in_avals,
                       map(lambda a: a.at_least_vspace(), out_avals)))
 
-  # Expand in_shardings to all in_avals even not kept ones.
-  all_in_shardings = [sharding_impls.UNSPECIFIED] * len(in_avals)
-  for idx, in_s in zip(sorted(module_kept_var_idx),
-                       in_shardings):  # type: ignore
-    all_in_shardings[idx] = in_s  # type: ignore
-  all_shardings = all_in_shardings + list(out_shardings)  # type: ignore
-  # Cannot mix unspecified and specified shardings. Make the unspecified
-  # ones replicated.
-  specified_shardings = [
-      s for s in all_shardings if not sharding_impls.is_unspecified(s)]
-
-  vjp_in_shardings: Any  # The primal inputs followed by output cotangents
-  vjp_out_shardings: Any  # The primal output cotangents
-  if 0 == len(specified_shardings):
-    vjp_in_shardings = sharding_impls.UNSPECIFIED
-    vjp_out_shardings = sharding_impls.UNSPECIFIED
-  else:
-    if len(specified_shardings) < len(all_shardings):
-      # There are some specified, but not all; pjit front-end does not liwk
-      in_s = specified_shardings[0]  # pjit will enforce that all have same devices
-      assert isinstance(in_s, sharding.XLACompatibleSharding)
-      replicated_s = sharding.GSPMDSharding.get_replicated(in_s._device_assignment)
-      all_shardings = [
-          s if not sharding_impls.is_unspecified(s) else replicated_s
-          for s in all_shardings]
-
-    vjp_in_shardings = tuple(all_shardings)
-    vjp_out_shardings = tuple(all_shardings[:len(in_avals)])
-    if all(sharding_impls.is_unspecified(s) for s in vjp_out_shardings):
-      vjp_out_shardings = sharding_impls.UNSPECIFIED
+  all_in_shardings = expand_in_shardings(in_shardings,
+                                         module_kept_var_idx, len(in_avals))
+  vjp_in_shardings, vjp_out_shardings = canonical_shardings(
+    tuple(itertools.chain(all_in_shardings, out_shardings)),
+    all_in_shardings)
 
   if apply_jit:
     return pjit.pjit(fun_vjp_jax,
@@ -1037,6 +1063,13 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   if exported.uses_shape_polymorphism:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
 
+  # Apply in_shardings
+  all_in_shardings = expand_in_shardings(exported.in_shardings,
+                                         exported.module_kept_var_idx,
+                                         len(args))
+  args = tuple(
+    wrap_with_sharding(ctx, exported, x, x_aval, x_sharding)
+    for x, x_aval, x_sharding in zip(args, ctx.avals_in, all_in_shardings))
   submodule = ir.Module.parse(exported.mlir_module())
   symtab = ir.SymbolTable(submodule.operation)
   # The called function may have been exported with polymorphic shapes and called
@@ -1072,12 +1105,44 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                              kept_args)
   # The ctx.avals_out already contain the abstract values refined by
   # _call_exported_abstract_eval.
-  return tuple(
+  results = tuple(
       convert_shape(out, out_aval, refined_out_aval)
       for out, out_aval, refined_out_aval in zip(call.results, exported.out_avals, ctx.avals_out))
+  # Apply out_shardings
+  results = tuple(
+    wrap_with_sharding(ctx, exported, x, x_aval, x_sharding)
+    for x, x_aval, x_sharding in zip(results, ctx.avals_out, exported.out_shardings)
+  )
+  return results
 
 
 for _p in ("cpu", "tpu", "cuda", "rocm"):
   mlir.register_lowering(call_exported_p,
                          functools.partial(_call_exported_lowering, platform=_p),
                          platform=_p)
+
+def wrap_with_sharding(ctx: mlir.LoweringRuleContext,
+                       exported: Exported,
+                       x: ir.Value,
+                       x_aval: core.AbstractValue,
+                       x_sharding: Sharding) -> ir.Value:
+  if sharding_impls.is_unspecified(x_sharding):
+    return x
+  axis_context = ctx.module_context.axis_context
+  if isinstance(axis_context, sharding_impls.ShardingContext):
+    ctx_device_assignment = axis_context.device_assignment
+  elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
+    ctx_device_assignment = list(axis_context.mesh.devices.flat)
+  else:
+    raise NotImplementedError(type(axis_context))
+  assert isinstance(x_sharding, sharding_impls.XLACompatibleSharding)
+  sharding_device_assignment = x_sharding._device_assignment
+  if len(ctx_device_assignment) != len(sharding_device_assignment):
+    raise NotImplementedError(
+      f"Exported module {exported.fun_name} was lowered for "
+      f"{len(sharding_device_assignment)} devices and is called in a context with "
+      f"{len(ctx_device_assignment)} devices"
+    )
+  return mlir.wrap_with_sharding_op(
+    ctx, x, x_aval,
+    x_sharding._to_xla_hlo_sharding(x_aval.ndim).to_proto())

@@ -11,21 +11,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import contextlib
 import functools
 import logging
 import math
 import re
-from typing import Optional, Sequence
+from typing import Sequence
 import unittest
 
 from absl.testing import absltest
 import jax
 from jax import numpy as jnp
 from jax import tree_util
-from jax.config import config
 from jax.experimental.export import export
+from jax.experimental import pjit
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec as P
 
+from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
@@ -37,6 +42,17 @@ from jax._src.lib.mlir.dialects import hlo
 import numpy as np
 
 config.parse_flags_with_absl()
+
+prev_xla_flags = None
+def setUpModule():
+  global prev_xla_flags
+  # This will control the CPU devices. On TPU we always have 2 devices
+  prev_xla_flags = jtu.set_host_platform_device_count(2)
+
+# Reset to previous configuration in case other test modules will be run.
+def tearDownModule():
+  prev_xla_flags()
+
 
 # A primitive for testing multi-platform lowering. Takes one argument and
 # adds a different value to it: cpu=2., tpu=3., cuda=.4, rocm=5.
@@ -72,28 +88,39 @@ for platform in ["cpu", "tpu", "rocm"]:
 def _testing_multi_platform_func(x):
   return _testing_multi_platform_p.bind(x)
 
-def _testing_multi_platform_fun_expected(x):
-  return x + _testing_multi_platform_to_add[xb.canonicalize_platform(jtu.device_under_test())]
-
+def _testing_multi_platform_fun_expected(x,
+                                         platform: str | None = None):
+  return x + _testing_multi_platform_to_add[
+    xb.canonicalize_platform(platform or jtu.device_under_test())
+  ]
 
 class JaxExportTest(jtu.JaxTestCase):
 
   def override_serialization_version(self, version_override: int):
-      version = config.jax_serialization_version
+      version = config.jax_serialization_version.value
       if version != version_override:
-        self.addCleanup(functools.partial(config.update,
-                                          "jax_serialization_version",
-                                          version_override))
-        config.update("jax_serialization_version", version_override)
+        self.enter_context(config.jax_serialization_version(version_override))
       logging.info(
         "Using JAX serialization version %s",
-        config.jax_serialization_version)
+        config.jax_serialization_version.value)
+
+  @classmethod
+  def setUpClass(cls):
+    # Find the available platforms
+    cls.platforms = []
+    for backend in ["cpu", "gpu", "tpu"]:
+      try:
+        jax.devices(backend)
+      except RuntimeError:
+        continue
+      cls.platforms.append(backend)
+    super(JaxExportTest, cls).setUpClass()
 
   def setUp(self):
     super().setUp()
     # Run tests with the maximum supported version by default
     self.override_serialization_version(
-      export.maximum_supported_serialization_version)
+        export.maximum_supported_serialization_version)
 
   def test_basic_export_only(self):
     def my_fun(x):
@@ -351,7 +378,7 @@ class JaxExportTest(jtu.JaxTestCase):
         export.poly_spec((3, 4), np.float32, "w, h"))
       # Peek at the module
       module_str = exp.mlir_module()
-      self.assertEqual(config.jax_serialization_version >= 7,
+      self.assertEqual(config.jax_serialization_version.value >= 7,
                        "shape_assertion" in module_str)
       self.assertIn("jax.uses_shape_polymorphism = true",
                     module_str)
@@ -586,7 +613,7 @@ class JaxExportTest(jtu.JaxTestCase):
            )),
   ])
   def test_shape_constraints_errors(self, *,
-      shape, poly_spec: str, expect_error: Optional[str] = None):
+      shape, poly_spec: str, expect_error: str | None = None):
     def f_jax(x):  # x: f32[a + 2*b, a, a + b + c]
       return 0.
 
@@ -600,49 +627,170 @@ class JaxExportTest(jtu.JaxTestCase):
           export.poly_spec(x.shape, x.dtype, poly_spec))
       export.call_exported(exp)(x)
 
+  def test_with_sharding(self):
+    nr_devices = 2
+    if len(jax.devices()) < nr_devices:
+      self.skipTest("Need at least 2 devices")
+    export_devices = jax.devices()[0:nr_devices]
+    export_mesh = Mesh(export_devices, axis_names=("x",))
+    a = np.arange(16 * 4, dtype=np.float32).reshape((16, 4))
+    @functools.partial(
+        jax.jit,
+        in_shardings=(jax.sharding.NamedSharding(export_mesh, P("x", None),),),
+        out_shardings=jax.sharding.NamedSharding(export_mesh, P(None, "x")))
+    def f_jax(b):  # b: f32[16 // DEVICES, 4]
+      return b * 2.
+
+    res_native = f_jax(a)
+    exp = export.export(f_jax)(a)
+
+    run_devices = export_devices[::-1]  # We can use other devices
+    run_mesh = Mesh(run_devices, "y")
+    a_device = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P()))
+
+    expected_re = re.compile(
+      # The top-level input it replicated
+      r"func.func .* @main\(%arg0: tensor<16x4xf32> {mhlo.sharding = \"{replicated}\"}\).*"
+      # We apply the in_shardings for f_jax
+      r".*custom_call @Sharding\(%arg0\) {mhlo.sharding = \"{devices=\[2,1\]<=\[2\]}\"}.*"
+      r"%1 = .*call @call_exported_f_jax.*"
+      # We apply the out_shardings for f_jax
+      r".*custom_call @Sharding\(%1\) {mhlo.sharding = \"{devices=\[1,2\]<=\[2\]}\"}.*",
+      re.DOTALL)
+    hlo = jax.jit(export.call_exported(exp)).lower(a_device).as_text()
+    self.assertRegex(hlo, expected_re)
+
+    res_exported = export.call_exported(exp)(a_device)
+    self.assertAllClose(res_native, res_exported)
+
+    # Test error reporting
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Exported module .* was lowered for 2 devices and is called in a context with 1 device"):
+      _ = export.call_exported(exp)(a)
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Exported module .* was lowered for 2 devices and is called in a context with 1 device"):
+      mesh1 = Mesh(jax.devices()[0:1], axis_names=("x",))
+      _ = jax.jit(
+        export.call_exported(exp),
+        in_shardings=(jax.sharding.NamedSharding(mesh1, P("x", None)),)
+      )(a)
+
+  @jtu.parameterized_filterable(
+    kwargs=[
+      dict(testcase_name=f"_in_shardings={in_shardings}_out_shardings={out_shardings}",
+           in_shardings=in_shardings, out_shardings=out_shardings)
+      for in_shardings in ("missing", None, "P")
+      for out_shardings in ("missing", None, "P")
+  ])
+  def test_grad_with_sharding(self, in_shardings="P", out_shardings=None):
+    if len(jax.devices()) < 2:
+      self.skipTest("Test requires at least 2 devices")
+    x_shape = (10, 20)
+    x = np.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
+    def f_jax(x):  # x: f32[10,20] -> f32[20,10]
+      return jnp.sin(x.T)
+
+    pjit_kwargs = {}
+    if in_shardings != "missing":
+      pjit_kwargs["in_shardings"] = (P(None, "x") if in_shardings == "P" else None)
+    if out_shardings != "missing":
+      pjit_kwargs["out_shardings"] = (P("x", None) if out_shardings == "P" else None)
+    f_jax = pjit.pjit(f_jax, **pjit_kwargs)
+
+    with Mesh(jax.devices()[:2], "x"):
+      exp = export.export(f_jax)(x)
+      exp_vjp = exp.vjp()
+
+    vjp_module_str = str(exp_vjp.mlir_module())
+
+    if in_shardings == "P":
+      primal_in_sharding = "{devices=[1,2]<=[2]}"
+    else:
+      primal_in_sharding = "{replicated}"
+    if out_shardings == "P":
+      primal_out_sharding = "{devices=[2,1]<=[2]}"
+    else:
+      primal_out_sharding = "{replicated}"
+
+    main = re.search(
+      r"func.func public @main\(%arg0: tensor<10x20xf32> {mhlo.sharding = \"([^\"]+)\""
+      r".*%arg1: tensor<20x10xf32> {mhlo.sharding = \"([^\"]+)\""
+      # result
+      r".* -> \(tensor<10x20xf32>.*mhlo.sharding = \"([^\"]+)\"",
+      vjp_module_str)
+    self.assertEqual(
+      main.groups(),
+      (primal_in_sharding, primal_out_sharding, primal_in_sharding))
+
+    # Custom calls for the primal input shape
+    primal_in_calls = re.findall(
+      r"custom_call @Sharding.* {mhlo.sharding = \"(.+)\"} : .*tensor<10x20xf32>",
+      vjp_module_str)
+    self.assertTrue(
+      all(s == primal_in_sharding for s in primal_in_calls),
+      primal_in_calls
+    )
+
+    # Custom calls for the primal output shape
+    primal_out_calls = re.findall(
+      r"custom_call @Sharding.* {mhlo.sharding = \"(.+)\"} : .*tensor<20x10xf32>",
+      vjp_module_str)
+    self.assertTrue(
+      all(s == primal_out_sharding for s in primal_out_calls),
+      primal_in_calls
+    )
+
   def test_multi_platform(self):
-    if jtu.test_device_matches(["gpu"]):
-      # The export is not applicable to GPU
-      raise unittest.SkipTest("Not intended for running on GPU")
-    x = np.arange(5, dtype=np.float32)
+    x = np.arange(8, dtype=np.float32)
     exp = export.export(_testing_multi_platform_func,
-                        lowering_platforms=('cpu', 'tpu'))(x)
-    self.assertEqual(exp.lowering_platforms, ('cpu', 'tpu'))
+                        lowering_platforms=("cpu", "tpu", "cuda"))(x)
+    self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda"))
     module_str = str(exp.mlir_module())
     expected_main_re = (
       r"@main\("
       r"%arg0: tensor<i..> {jax.platform_index = true}.*, "
-      r"%arg1: tensor<5xf32>.* ->")
+      r"%arg1: tensor<8xf32>.* ->")
     self.assertRegex(module_str, expected_main_re)
 
     self.assertIn("jax.uses_shape_polymorphism = true",
                   module_str)
 
-    res = export.call_exported(exp)(x)
-    self.assertAllClose(res, _testing_multi_platform_fun_expected(x))
+    # Call with argument placed on different plaforms
+    for platform in self.__class__.platforms:
+      x_device = jax.device_put(x, jax.devices(platform)[0])
+      res_exp = export.call_exported(exp)(x_device)
+      self.assertAllClose(
+        res_exp,
+        _testing_multi_platform_fun_expected(x, platform=platform))
 
   def test_multi_platform_nested(self):
-    if jtu.test_device_matches(["tpu"]):
-      # The outer export is not applicable to TPU
-      raise unittest.SkipTest("Not intended for running on TPU")
     x = np.arange(5, dtype=np.float32)
     exp = export.export(_testing_multi_platform_func,
-                        lowering_platforms=('cpu', 'tpu', 'cuda'))(x)
-    self.assertEqual(exp.lowering_platforms, ('cpu', 'tpu', 'cuda'))
+                        lowering_platforms=("cpu", "tpu", "cuda"))(x)
+    self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda"))
 
     # Now serialize the call to the exported using a different sequence of
     # lowering platforms, but included in the lowering platforms for the
     # nested exported.
     exp2 = export.export(export.call_exported(exp),
-                         lowering_platforms=('cpu', 'cuda'))(x)
-    res2 = export.call_exported(exp2)(x)
-    self.assertAllClose(res2, _testing_multi_platform_fun_expected(x))
+                         lowering_platforms=("cpu", "cuda"))(x)
+    # Call with argument placed on different plaforms
+    for platform in self.__class__.platforms:
+      if platform == "tpu": continue
+      x_device = jax.device_put(x, jax.devices(platform)[0])
+      res_exp = export.call_exported(exp2)(x_device)
+      self.assertAllClose(
+        res_exp,
+        _testing_multi_platform_fun_expected(x, platform=platform))
 
   def test_multi_platform_nested_inside_single_platform_export(self):
     x = np.arange(5, dtype=np.float32)
     exp = export.export(_testing_multi_platform_func,
-                        lowering_platforms=('cpu', 'tpu', 'cuda'))(x)
-    self.assertEqual(exp.lowering_platforms, ('cpu', 'tpu', 'cuda'))
+                        lowering_platforms=("cpu", "tpu", "cuda"))(x)
+    self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda"))
 
     # Now serialize the call for the current platform.
     exp2 = export.export(export.call_exported(exp))(x)
@@ -657,7 +805,7 @@ class JaxExportTest(jtu.JaxTestCase):
       # The export is not applicable to GPU
       raise unittest.SkipTest("Not intended for running on GPU")
     exp = export.export(lambda x: jnp.reshape(_testing_multi_platform_func(x), (-1,)),
-                        lowering_platforms=('cpu', 'tpu'))(
+                        lowering_platforms=("cpu", "tpu"))(
         export.poly_spec((5, 6), np.float32, "b1, b2")
     )
     x = np.arange(12, dtype=np.float32).reshape((3, 4))
@@ -667,6 +815,31 @@ class JaxExportTest(jtu.JaxTestCase):
     exp2 = export.export(export.call_exported(exp))(x)
     res2 = export.call_exported(exp2)(x)
     self.assertAllClose(res2, _testing_multi_platform_fun_expected(x).reshape((-1,)))
+
+  def test_multi_platform_and_sharding(self):
+    export_devices = jax.devices()[0:2]
+    export_mesh = Mesh(export_devices, axis_names=("x",))
+    a = np.arange(16 * 4, dtype=np.float32).reshape((16, 4))
+    @functools.partial(
+        jax.jit,
+        in_shardings=(jax.sharding.NamedSharding(export_mesh, P("x", None),),),
+        out_shardings=jax.sharding.NamedSharding(export_mesh, P(None, "x")))
+    def f_jax(b):  # b: f32[16 // DEVICES, 4]
+      return b * 2.
+
+    res_native = f_jax(a)
+    exp = export.export(f_jax,
+                        lowering_platforms=("cpu", "tpu", "cuda"))(a)
+
+    # Call with argument placed on different plaforms
+    for platform in self.__class__.platforms:
+      run_devices = jax.devices(platform)[0:len(export_devices)]
+      if len(run_devices) != len(export_devices):
+        continue
+      run_mesh = Mesh(run_devices, ("x",))
+      a_device = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, None))
+      res_exp = export.call_exported(exp)(a_device)
+      self.assertArraysAllClose(res_native, res_exp)
 
 
 if __name__ == "__main__":

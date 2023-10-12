@@ -1184,7 +1184,10 @@ def lower_jaxpr_to_fun(
     dim_var_values, _, _ = util.split_list(flat_args, [num_dim_vars, num_tokens])
     # A lowering context just for function body entry/exit code.
     entry_lowering_ctx = LoweringRuleContext(
-        ctx, None, [], None, TokenSet.create([]), None, None, dim_var_values)
+        module_context=ctx, primitive=None,
+        avals_in=[], avals_out=None,
+        tokens_in=TokenSet.create([]), tokens_out=None,
+        axis_size_env=None, dim_var_values=dim_var_values)
     if not use_sharding_annotations and ir_arg_shardings is not None:
       flat_args = [
           a if s is None else wrap_with_sharding_op(entry_lowering_ctx, a, a_aval, s)
@@ -1414,7 +1417,8 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       tokens_in = tokens.subset(effects)
       avals_in = map(aval, eqn.invars)
       rule_ctx = LoweringRuleContext(
-          module_context=eqn_ctx, primitive=eqn.primitive, avals_in=avals_in,
+          module_context=eqn_ctx, primitive=eqn.primitive,
+          avals_in=avals_in,
           avals_out=map(aval, eqn.outvars), tokens_in=tokens_in,
           tokens_out=None, dim_var_values=dim_var_values)
       if config.dynamic_shapes.value:
@@ -1973,12 +1977,14 @@ def cache_lowering(f):
   The lowering will be emitted out-of-line in a separate function, together with
   a call to that function. If the same primitive is called with the same shapes
   and parameters, a new call to the original function will be added, without
-  emitting a new function.
+  emitting a new function. We allow for different lowering for the same
+  primitive for different platforms in the same module.
   """
   @functools.wraps(f)
   def cached_lowering(ctx, *args, **params):
     assert ctx.primitive is not None
-    key = (ctx.primitive, tuple(ctx.avals_in), tuple(ctx.avals_out),
+    key = (f, ctx.primitive,
+           tuple(ctx.avals_in), tuple(ctx.avals_out),
            tuple(params.items()))
     try:
       func = ctx.module_context.cached_primitive_lowerings.get(key)
@@ -2503,7 +2509,8 @@ def custom_call(
 
 
 def reduce_window(
-    ctx: LoweringRuleContext, *,
+    ctx: LoweringRuleContext,
+    *,
     # Base name to be used for the reducer function
     reducer_name: str,
     # Compute the reducer body given the reducer.

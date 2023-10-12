@@ -25,6 +25,13 @@ Remember to align the itemized text with the first line of an item within a list
 
 # jaxlib 0.4.19
 
+* Changes
+  * jaxlib will now always prefer pip-installed NVIDIA CUDA libraries
+    (nvidia-... packages) over any other CUDA installation if they are
+    installed, including installations named in `LD_LIBRARY_PATH`. If this
+    causes problems and the intent is to use a system-installed CUDA, the fix is
+    to remove the pip installed CUDA library packages.
+
 # jax 0.4.18 (Oct 6, 2023)
 
 # jaxlib 0.4.18 (Oct 6, 2023)

@@ -19,7 +19,6 @@ import contextlib
 import math
 import os
 import re
-from typing import Callable, Optional
 import unittest
 
 from absl import logging
@@ -31,20 +30,17 @@ from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
 from jax import sharding
+from jax._src import config
 from jax._src import core
 from jax._src import source_info_util
 from jax._src import test_util as jtu
-from jax._src.lib import xla_client
-from jax._src.lib.mlir.dialects import hlo
-import jax._src.xla_bridge
-from jax import config
+from jax._src import xla_bridge as xb
 from jax.experimental import jax2tf
 from jax.experimental.export import export
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.experimental.maps import xmap
 from jax.experimental.shard_map import shard_map
 from jax.experimental import pjit
-from jax.interpreters import mlir
 from jax.sharding import PartitionSpec as P
 
 import numpy as np
@@ -233,7 +229,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     with_function=[True, False],
   )
   def test_converts_64bit(self, dtype=np.int64, with_function=False):
-    if not config.jax_enable_x64:
+    if not config.enable_x64.value:
       self.skipTest("requires x64 mode")
     big_const = np.full((5,), 2 ** 33, dtype=dtype)
     self.ConvertAndCompare(jnp.sin, big_const)
@@ -249,7 +245,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_64bit_behavior_enable_x64_readme(self):
     # Tests some of the examples from the README
-    if not config.jax_enable_x64:
+    if not config.enable_x64.value:
       self.skipTest("requires x64 mode")
 
     # JAX and TF have different default float types if JAX_ENABLE_X64=1
@@ -266,7 +262,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_64bit_behavior_not_enable_x64_readme(self):
     # Tests some of the examples from the README
-    if config.jax_enable_x64:
+    if config.enable_x64.value:
       self.skipTest("requires not x64 mode")
 
     # JAX and TF have same default float types if JAX_ENABLE_X64=0
@@ -817,7 +813,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     arg = np.array(3.)
     f_tf = jax2tf.convert(jax.grad(remat_f))
     f_tf_hlo = self.TfToHlo(f_tf, arg)
-    if jax.config.jax_remat_opt_barrier:
+    if config.remat_opt_barrier.value:
       self.assertRegex(f_tf_hlo, r"opt-barrier")
     else:
       self.assertRegex(f_tf_hlo,
@@ -849,7 +845,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f_jax)
     # for native serialization the HLO we get from TF is constant-folded, so this
     # test fails.
-    if not config.jax2tf_default_native_serialization:
+    if not config.jax2tf_default_native_serialization.value:
       self.assertIn("sine(", self.TfToHlo(f_tf))
 
   def test_convert_of_nested_independent_jit(self):
@@ -954,7 +950,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
       out = jax2tf.convert(caller_jax, with_gradient=False)(2.)
       return out
-    if config.jax2tf_default_native_serialization:
+    if config.jax2tf_default_native_serialization.value:
       self.assertIn("my_test_function_jax/mul", self.TfToHlo(run_tf))
     else:
       graph_def = str(tf.function(run_tf, autograph=False).get_concrete_function().graph.as_graph_def())
@@ -984,7 +980,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_shared_constants(self):
     # Check that the constants are shared properly in converted functions
     # See https://github.com/google/jax/issues/7992.
-    if config.jax2tf_default_native_serialization:
+    if config.jax2tf_default_native_serialization.value:
       raise unittest.SkipTest("shared constants tests not interesting for native serialization")
     const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
     def f(x):
@@ -996,7 +992,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_shared_constants_under_cond(self):
     # Check that the constants are shared properly in converted functions
     # See https://github.com/google/jax/issues/7992.
-    if config.jax2tf_default_native_serialization:
+    if config.jax2tf_default_native_serialization.value:
       raise unittest.SkipTest("shared constants tests not interesting for native serialization")
     const_size = 512
     const = np.random.uniform(size=const_size).astype(np.float32)  # A shared constant
@@ -1012,7 +1008,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_shared_constants_under_scan(self):
     # See https://github.com/google/jax/issues/7992.
-    if config.jax2tf_default_native_serialization:
+    if config.jax2tf_default_native_serialization.value:
       raise unittest.SkipTest("shared constants tests not interesting for native serialization")
     const_size = 512
     const = np.random.uniform(size=const_size).astype(np.float32)  # A shared constant
@@ -1031,7 +1027,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_shared_constants_under_jit(self):
     # We do not share constants under jit.
-    if config.jax2tf_default_native_serialization:
+    if config.jax2tf_default_native_serialization.value:
       raise unittest.SkipTest("shared constants tests not interesting for native serialization")
     const = np.random.uniform(size=(16, 16)).astype(np.float32)  # A shared constant
     @jax.jit
@@ -1047,7 +1043,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     # randint has the property that the TF lowering of the randbits_p
     # primitive generates constants that did not exist in the Jaxpr. As such
     # it has created new errors related to the sharing of the constants.
-    if config.jax2tf_default_native_serialization:
+    if config.jax2tf_default_native_serialization.value:
       raise unittest.SkipTest("shared constants tests not interesting for native serialization")
 
     key = jax.random.PRNGKey(42)
@@ -1296,7 +1292,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     jax_comp = jax.xla_computation(f_while)(x)
-    backend = jax._src.xla_bridge.get_backend()
+    backend = xb.get_backend()
     modules = backend.compile(jax_comp).hlo_modules()
     jax_opt_hlo = modules[0].to_string()
     print(f"JAX OPT HLO = {jax_opt_hlo}")
@@ -1342,7 +1338,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         self.fail(f"{op.name} does not start with {scope_name}.")
 
   def test_name_scope_polymorphic(self):
-    if config.jax2tf_default_native_serialization and not config.jax_dynamic_shapes:
+    if (config.jax2tf_default_native_serialization.value and
+        not config.dynamic_shapes.value):
       self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
 
     def func_jax(x, y):

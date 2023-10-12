@@ -26,7 +26,6 @@ from jax._src.numpy.ufunc_api import get_if_single_primitive
 
 from jax import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 def scalar_add(x, y):

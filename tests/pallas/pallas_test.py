@@ -25,12 +25,12 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax import random
+from jax._src import config
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import state
 from jax._src.lax.control_flow.for_loop import for_loop
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
-from jax.config import config
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
@@ -139,6 +139,7 @@ class PallasTest(parameterized.TestCase):
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
 
+
 class PallasCallTest(PallasTest):
 
   def test_add_one(self):
@@ -213,8 +214,9 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct((4, 2, 2), jnp.float32),
         grid=1)
     def copyitem(x_ref, in_idx_ref, out_idx_ref, o_ref):
-      mask = (jnp.arange(o_ref.shape[0]) == out_idx_ref[()])[:, None, None]
-      o_ref[...] = jnp.where(mask, x_ref[in_idx_ref[()]], 0)
+      mask = (jnp.arange(o_ref.shape[0]) == out_idx_ref[()])
+      o_ref[...] = jnp.where(jax.lax.broadcast_in_dim(mask, (4, 2, 2), (0,)),
+                             x_ref[in_idx_ref[()]], 0)
 
     x = jnp.arange(7 * 2 * 2.).reshape(7, 2, 2)
     for ii in range(7):
@@ -224,7 +226,6 @@ class PallasCallTest(PallasTest):
         np.testing.assert_allclose(out[:oi], jnp.zeros_like(out[:oi]))
         np.testing.assert_allclose(out[oi], x[ii])
         np.testing.assert_allclose(out[oi + 1:], jnp.zeros_like(out[oi + 1:]))
-
 
   @parameterized.parameters(*[
     ((), (2,), ()),
@@ -712,8 +713,31 @@ class PallasCallTest(PallasTest):
     np.testing.assert_allclose(lock, 0)
     np.testing.assert_allclose(count, num_threads)
 
+  def test_custom_jvp_call(self):
+    @functools.partial(jax.custom_jvp, nondiff_argnums=(1,))
+    def softmax(x, axis=-1):
+      unnormalized = jnp.exp(x - jnp.max(x, axis, keepdims=True))
+      return unnormalized / jnp.sum(unnormalized, axis, keepdims=True)
+
+    @softmax.defjvp
+    def softmax_jvp(axis, primals, tangents):
+      (x,), (x_dot,) = primals, tangents
+      y = softmax(x, axis)
+      return y, y * (x_dot - (y * x_dot).sum(axis, keepdims=True))
+
+    m, n = 16, 32
+    x = random.normal(random.PRNGKey(0), (m, n))
+
+    @functools.partial(self.pallas_call, out_shape=x, grid=1)
+    def softmax_kernel(x_ref, y_ref):
+      y_ref[:] = softmax(x_ref[:])
+
+    np.testing.assert_allclose(softmax_kernel(x), jax.nn.softmax(x), atol=1e-7)
+
+
 class PallasCallInterpreterTest(PallasCallTest):
   INTERPRET = True
+
 
 class PallasControlFlowTest(PallasTest):
 
@@ -727,9 +751,7 @@ class PallasControlFlowTest(PallasTest):
     # fori_loop handles i64 index variables, i.e. error: 'scf.for' op  along
     # control flow edge from Region #0 to Region #0: source type #0
     # 'tensor<4xf64>' should match input type #0 'tensor<4xf32>'
-    orig_val = jax.config.jax_enable_x64
-    jax.config.update("jax_enable_x64", True)
-    try:
+    with config.enable_x64(True):
       @functools.partial(self.pallas_call,
                          out_shape=jax.ShapeDtypeStruct((4,), jnp.float64),
                          grid=1,
@@ -744,8 +766,6 @@ class PallasControlFlowTest(PallasTest):
 
       np.testing.assert_allclose(np.arange(1, 5.) * 3,
                                  f(jnp.arange(1, 5., dtype=jnp.float64)))
-    finally:
-      jax.config.update("jax_enable_x64", orig_val)
 
   def test_cond_simple(self):
     arg = jnp.float32(0.)

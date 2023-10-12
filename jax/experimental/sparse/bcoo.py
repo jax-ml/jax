@@ -29,7 +29,6 @@ import jax
 from jax import lax
 from jax import tree_util
 from jax import vmap
-from jax import config
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import (
   nfold_vmap, _count_stored_elements,
@@ -41,6 +40,7 @@ from jax._src.interpreters import mlir
 import jax.numpy as jnp
 from jax.util import safe_zip, unzip2, split_list
 from jax._src import api_util
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src.interpreters import ad
@@ -784,7 +784,7 @@ def _bcoo_dot_general_fallback(data, indices, spinfo):
 def _bcoo_dot_general_gpu_impl(lhs_data, lhs_indices, rhs, *,
                                dimension_numbers, preferred_element_type,
                                lhs_spinfo):
-  if not config.jax_bcoo_cusparse_lowering:
+  if not config.bcoo_cusparse_lowering.value:
     return _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs,
         dimension_numbers=dimension_numbers,
         preferred_element_type=preferred_element_type,

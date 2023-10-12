@@ -789,44 +789,37 @@ def _dot_general_lowering_rule(
     return vector.ShapeCastOp(out_type, red).result
 
   if lhs_dims == (1,):
-    lhs_dim_attr = ir.Attribute.parse("affine_map<(i, j, k) -> (i, k)>")
+    transpose_lhs = False
   elif lhs_dims == (0,):
-    lhs_dim_attr = ir.Attribute.parse("affine_map<(i, j, k) -> (k, i)>")
+    transpose_lhs = True
+  else:
+    raise NotImplementedError
   if rhs_dims == (0,):
-    rhs_dim_attr = ir.Attribute.parse("affine_map<(i, j, k) -> (k, j)>")
+    transpose_rhs = False
   elif rhs_dims == (1,):
-    rhs_dim_attr = ir.Attribute.parse("affine_map<(i, j, k) -> (j, k)>")
-  out_tile = arith.ConstantOp(
-      out_type, ir.DenseElementsAttr.get_splat(out_type, val)
-  )
-  op = vector.ContractionOp(
-      out_type,
-      x,
-      y,
-      out_tile,
-      indexing_maps=ir.ArrayAttr.get([
-          lhs_dim_attr,
-          rhs_dim_attr,
-          ir.Attribute.parse("affine_map<(i, j, k) -> (i, j)>"),
-      ]),
-      iterator_types=ir.ArrayAttr.get([
-          ir.Attribute.parse("#vector.iterator_type<parallel>"),
-          ir.Attribute.parse("#vector.iterator_type<parallel>"),
-          ir.Attribute.parse("#vector.iterator_type<reduction>"),
-      ]),
-  )
+    transpose_rhs = True
+  else:
+    raise NotImplementedError
   if precision is not None:
     if precision[0] != precision[1]:
       raise NotImplementedError("Per-operand dot precision unsupported")
     precision = precision[0]
   if precision is None or precision == lax.Precision.DEFAULT:
-    pass  # That's the default in Mosaic.
+    precision_attr = None  # That's the default in Mosaic.
   elif precision == lax.Precision.HIGHEST:
-    op.attributes["precision"] = ir.Attribute.parse(
+    precision_attr = ir.Attribute.parse(
         "#tpu.contract_precision<fp32>"
     )
   else:
     raise NotImplementedError(f"Unsupported dot precision: {precision}")
+  out_tile = arith.ConstantOp(
+      out_type, ir.DenseElementsAttr.get_splat(out_type, val)
+  )
+  op = tpu.MatmulOp(
+      out_type, x, y, out_tile,
+      transpose_lhs=transpose_lhs, transpose_rhs=transpose_rhs,
+      precision=precision_attr
+  )
   return op.result
 
 

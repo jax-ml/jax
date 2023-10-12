@@ -26,6 +26,7 @@ import numpy as np
 from jax import lax
 from jax import numpy as jnp
 
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import effects
@@ -40,7 +41,6 @@ from jax._src.api_util import (flatten_fun_nokwargs, flatten_axes,
                                _ensure_index_tuple, donation_vector,
                                shaped_abstractify, check_callable)
 from jax._src.array import ArrayImpl
-from jax._src.config import config
 from jax._src.errors import JAXTypeError
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -670,8 +670,8 @@ def make_xmap_callable(fun: lu.WrappedFun,
                                  name=name),
                         source_info_util.new_source_info(), resource_env, {})
   jaxpr = plan.subst_axes_with_resources(jaxpr)
-  use_spmd_lowering = config.experimental_xmap_spmd_lowering
-  ensure_fixed_sharding = config.experimental_xmap_ensure_fixed_sharding
+  use_spmd_lowering = _SPMD_LOWERING.value
+  ensure_fixed_sharding = _ENSURE_FIXED_SHARDING.value
   if use_spmd_lowering and ensure_fixed_sharding:
     jaxpr = _fix_inferred_spmd_sharding(jaxpr, resource_env)
 
@@ -686,7 +686,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
     mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
     mesh = resource_env.physical_mesh
     tiling_method: pxla.TilingMethod
-    if config.experimental_xmap_spmd_lowering_manual:
+    if _SPMD_LOWERING_MANUAL.value:
       manual_mesh_axes = frozenset(it.chain.from_iterable(plan.physical_axis_resources.values()))
       tiling_method = pxla.TileManual(manual_mesh_axes)
     else:
@@ -1284,7 +1284,7 @@ batching.BatchTrace.post_process_xmap = _batch_trace_post_process_xmap
 
 def _xmap_lowering_rule(ctx, *args, **kwargs):
   if isinstance(ctx.module_context.axis_context, sharding_impls.SPMDAxisContext):
-    if config.experimental_xmap_spmd_lowering_manual:
+    if _SPMD_LOWERING_MANUAL.value:
       return _xmap_lowering_rule_spmd_manual(ctx, *args, **kwargs)
     else:
       return _xmap_lowering_rule_spmd(ctx, *args, **kwargs)
@@ -1404,7 +1404,7 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
       for dim, dim_extra_axis in enumerate(extra):
         if dim_extra_axis is None: continue
         assert dim_extra_axis not in axes
-        assert not config.jax_enable_checks or all(v != dim for v in axes.values())
+        assert not config.enable_checks.value or all(v != dim for v in axes.values())
         axes[dim_extra_axis] = dim
   add_spmd_axes(mesh_in_axes, spmd_in_axes)
   add_spmd_axes(mesh_out_axes, spmd_out_axes)
@@ -1839,38 +1839,34 @@ def _clear_compilation_cache(_):
 
 def _ensure_spmd_and(f):
   def update(v):
-    if v and not config.experimental_xmap_spmd_lowering:
+    if v and not _SPMD_LOWERING.value:
       raise RuntimeError("This flag requires enabling the experimental_xmap_spmd_lowering flag")
     return f(v)
   return update
 
 
-try:
-  config.define_bool_state(
-      name="experimental_xmap_spmd_lowering",
-      default=False,
-      help=("When set, multi-device xmap computations will be compiled through "
-            "the XLA SPMD partitioner instead of explicit cross-replica collectives. "
-            "Not supported on CPU!"),
-      update_global_hook=_clear_compilation_cache,
-      update_thread_local_hook=_thread_local_flag_unsupported)
-  config.define_bool_state(
-      name="experimental_xmap_spmd_lowering_manual",
-      default=False,
-      help=("When set, multi-device xmap computations will be compiled using "
-            "the MANUAL partitioning feature of the XLA SPMD partitioner instead of "
-            "sharding constraints on vectorized code. "
-            "Requires experimental_xmap_spmd_lowering!"),
-      update_global_hook=_ensure_spmd_and(_clear_compilation_cache),
-      update_thread_local_hook=_thread_local_flag_unsupported)
-  config.define_bool_state(
-      name="experimental_xmap_ensure_fixed_sharding",
-      default=False,
-      help=("When set and `experimental_xmap_spmd_lowering` is enabled, the lowering will "
-            "try to limit the flexibility of the automated SPMD partitioner heuristics "
-            "by emitting additional sharding annotations for program intermediates."),
-      update_global_hook=_ensure_spmd_and(_clear_compilation_cache),
-      update_thread_local_hook=_thread_local_flag_unsupported)
-except Exception:
-  raise ImportError("jax.experimental.maps has to be imported before JAX flags "
-                    "are parsed")
+_SPMD_LOWERING = config.define_bool_state(
+    name="experimental_xmap_spmd_lowering",
+    default=False,
+    help=("When set, multi-device xmap computations will be compiled through "
+          "the XLA SPMD partitioner instead of explicit cross-replica collectives. "
+          "Not supported on CPU!"),
+    update_global_hook=_clear_compilation_cache,
+    update_thread_local_hook=_thread_local_flag_unsupported)
+_SPMD_LOWERING_MANUAL = config.define_bool_state(
+    name="experimental_xmap_spmd_lowering_manual",
+    default=False,
+    help=("When set, multi-device xmap computations will be compiled using "
+          "the MANUAL partitioning feature of the XLA SPMD partitioner instead of "
+          "sharding constraints on vectorized code. "
+          "Requires experimental_xmap_spmd_lowering!"),
+    update_global_hook=_ensure_spmd_and(_clear_compilation_cache),
+    update_thread_local_hook=_thread_local_flag_unsupported)
+_ENSURE_FIXED_SHARDING = config.define_bool_state(
+    name="experimental_xmap_ensure_fixed_sharding",
+    default=False,
+    help=("When set and `experimental_xmap_spmd_lowering` is enabled, the lowering will "
+          "try to limit the flexibility of the automated SPMD partitioner heuristics "
+          "by emitting additional sharding annotations for program intermediates."),
+    update_global_hook=_ensure_spmd_and(_clear_compilation_cache),
+    update_thread_local_hook=_thread_local_flag_unsupported)

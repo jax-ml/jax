@@ -46,7 +46,6 @@ import numpy as np
 import scipy.sparse
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 all_dtypes = jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex
 

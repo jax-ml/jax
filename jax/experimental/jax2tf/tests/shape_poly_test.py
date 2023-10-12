@@ -38,6 +38,7 @@ from jax import lax
 import jax.numpy as jnp
 from jax import random
 from jax import tree_util
+from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import util
@@ -50,9 +51,6 @@ import numpy as np
 from jax.experimental.jax2tf.tests import tf_test_util
 
 import tensorflow as tf  # type: ignore[import]
-
-from jax import config
-from jax._src.config import numpy_dtype_promotion
 
 config.parse_flags_with_absl()
 
@@ -723,7 +721,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      expected_output_signature=(
                          # for native serialization we cannot refine the inferred shape of the
                          # output if the input is more specific than polymorphic_shapes.
-                         tf.TensorSpec([2, 3]) if not config.jax2tf_default_native_serialization
+                         tf.TensorSpec([2, 3]) if not config.jax2tf_default_native_serialization.value
                          else tf.TensorSpec([2, None])))
 
     check_shape_poly(self,
@@ -1300,7 +1298,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     # for native serialization we cannot refine the inferred shape of the
     # output if the input is more specific than polymorphic_shapes.
-    if config.jax2tf_default_native_serialization:
+    if config.jax2tf_default_native_serialization.value:
       self.assertEqual((None, None, None, None), tuple(tf_grad.output_shapes[0]))
       self.assertEqual((None, None, None, None), tuple(tf_grad.output_shapes[1]))
     else:
@@ -1424,9 +1422,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
   def test_prng(self):
     # The PRNG implementation uses opaque types, test shape polymorphism
-    try:
-      prev_custom_prng = config.jax_enable_custom_prng
-      config.update("jax_enable_custom_prng", True)
+    with config.enable_custom_prng(True):
 
       def f_jax(x):  # x: f32[b1, b2]
         key = random.PRNGKey(123)  #  key: key<fry>[]
@@ -1452,8 +1448,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       check_shape_poly(self, f_jax,
                        arg_descriptors=[RandArg((3, 4), _f32)],
                        polymorphic_shapes=["b1, b2"])
-    finally:
-      config.update("jax_enable_custom_prng", prev_custom_prng)
 
   def test_saved_model(self):
     f_jax = jnp.sin
@@ -1788,7 +1782,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         # should be a symbolic dimension
         self.assertTrue(isinstance(res, int) or hasattr(res, "dimension_as_value"))
 
-      if config.jax_enable_x64:
+      if config.enable_x64.value:
         # Outside jax2tf, x.shape[0] is a Python (64-bit) integer and for most
         # operations here JAX is not involved at all because the other operand
         # is a Python or NumPy constant. So the result will be 64-bits. But under
@@ -1833,7 +1827,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         self.assertTrue(d1.aval.weak_type), d1
       return d0 + np.array(5., dtype=np.float32) + d1 + x[0]
 
-    with numpy_dtype_promotion("strict"):
+    with config.numpy_dtype_promotion("strict"):
       # strict type promotion is sensitive to weak_types
       check_shape_poly(self,
                        f_jax,
@@ -2236,7 +2230,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   polymorphic_shapes=[poly],
                   # In non-native serialization, we cannot check exact match,
                   # we ought to check the invariants of the result.
-                  check_result=config.jax2tf_default_native_serialization)
+                  check_result=config.jax2tf_default_native_serialization.value)
       for dtype in [np.float32, np.float64, np.complex64, np.complex128]
       for poly in ["b, ...", "b, w, w"]
       for left in ([True, False] if dtype == np.float32 else [True])
@@ -2523,7 +2517,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
           lambda x, full_matrices: lax.linalg.qr(x, full_matrices=full_matrices),
           arg_descriptors=[RandArg(shape, dtype), StaticArg(full_matrices)],
           polymorphic_shapes=[poly],
-          tol=(None if config.jax2tf_default_native_serialization else 1e-5))
+          tol=(None if config.jax2tf_default_native_serialization.value else 1e-5))
       for dtype in [np.float32, np.float64, np.complex64, np.complex128]
       # m and n must be static for now
       for shape, poly, full_matrices in [
@@ -2793,7 +2787,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   polymorphic_shapes=[poly],
                   # In non-native serialization, we cannot check exact match,
                   # we ought to check the invariants of the result.
-                  check_result=config.jax2tf_default_native_serialization)
+                  check_result=config.jax2tf_default_native_serialization.value)
       for dtype in [np.float32, np.float64, np.complex64, np.complex128]
       for compute_schur_vectors in [True, False]
       for (shape, poly) in [
@@ -2914,7 +2908,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   polymorphic_shapes=[a_poly, b_poly],
                   # In non-native serialization, we cannot check exact match,
                   # we ought to check the invariants of the result.
-                  check_result=config.jax2tf_default_native_serialization)
+                  check_result=config.jax2tf_default_native_serialization.value)
       for dtype in [np.float32, np.float64, np.complex64, np.complex128]
       for (left_side, a_shape, b_shape, a_poly, b_poly) in [
           (True, (3, 4, 4), (3, 4, 5), "b, ...", "b, ..."),
@@ -3065,14 +3059,14 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   )
   def test_harness(self, harness: PolyHarness):
     if harness.expect_error == expect_error_associative_scan and (
-        not config.jax2tf_default_native_serialization
+        not config.jax2tf_default_native_serialization.value
         or jtu.test_device_matches(["tpu"])
     ):
       harness.expect_error = (None, None)
 
     # Exclude some harnesses that are known to fail for native serialization
     # FOR NATIVE SERIALIZATION
-    if config.jax2tf_default_native_serialization:
+    if config.jax2tf_default_native_serialization.value:
       if not harness.enable_xla:
         raise unittest.SkipTest("disabled for native_serialization and enable_xla=False")
 
@@ -3123,7 +3117,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
             "native serialization with shape polymorphism not implemented for window_reductions on CPU and GPU")
 
     # FOR GRAPH SERIALIZATION
-    if not config.jax2tf_default_native_serialization:
+    if not config.jax2tf_default_native_serialization.value:
       if ("random_gamma_threefry_non_partitionable" in harness.fullname and
           jtu.test_device_matches(["cpu"])):
         harness.tol = 1e-6

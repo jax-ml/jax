@@ -20,9 +20,9 @@ from typing import Any, Callable, Optional, Union
 import jax
 from jax import lax
 from jax import numpy as jnp
-from jax import config
-from jax._src import test_util as jtu
+from jax._src import config
 from jax._src import dtypes
+from jax._src import test_util as jtu
 from jax.experimental.jax2tf.tests import primitive_harness
 import numpy as np
 
@@ -114,7 +114,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     """Checks if this limitation is enabled for dtype and device and mode."""
     native_serialization_mask = (
         Jax2TfLimitation.FOR_NATIVE
-        if config.jax2tf_default_native_serialization
+        if config.jax2tf_default_native_serialization.value
         else Jax2TfLimitation.FOR_NON_NATIVE)
     return ((mode is None or mode in self.modes) and
             (self.native_serialization & native_serialization_mask) and

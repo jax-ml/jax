@@ -67,8 +67,7 @@ from jax._src import random as jax_random
 # then the test file has to import jtu first (to define the flags) which is not
 # desired if the test file is outside of this project (we don't want a
 # dependency on jtu outside of jax repo).
-jax.config.parse_flags_with_absl()
-FLAGS = config.FLAGS
+config.parse_flags_with_absl()
 
 Rng = Any  # A random number generator
 DType = Any

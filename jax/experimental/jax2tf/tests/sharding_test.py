@@ -30,8 +30,11 @@ import unittest
 from absl.testing import absltest
 
 import jax
+from jax._src import compiler
 from jax._src import config
+from jax._src import maps
 from jax._src import test_util as jtu
+from jax._src import xla_bridge
 from jax import lax
 from jax.experimental import jax2tf
 from jax.experimental import pjit
@@ -40,19 +43,18 @@ from jax.experimental.shard_map import shard_map
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 import jax.numpy as jnp
-from jax._src import compiler
-from jax._src import xla_bridge
 
 import numpy as np
 
 import tensorflow as tf  # type: ignore[import]
 
-jax.config.parse_flags_with_absl()
+config.parse_flags_with_absl()
 
 # Must come after initializing the flags
 from jax.experimental.jax2tf.tests import tf_test_util
 
 prev_xla_flags = None
+prev_spmd_lowering_flag = None
 
 topology = None
 
@@ -74,7 +76,9 @@ def setUpModule():
                                " --xla_force_host_platform_device_count=8")
   # Clear any cached backends so new CPU backend will pick up the env var.
   xla_bridge.get_backend.cache_clear()
-  jtu.set_spmd_lowering_flag(True)
+  global prev_spmd_lowering_flag
+  prev_spmd_lowering_flag = maps._SPMD_LOWERING.value
+  config.update('experimental_xmap_spmd_lowering', True)
 
 
 def tearDownModule():
@@ -83,7 +87,7 @@ def tearDownModule():
   else:
     os.environ["XLA_FLAGS"] = prev_xla_flags
   xla_bridge.get_backend.cache_clear()
-  jtu.restore_spmd_lowering_flag()
+  config.update('experimental_xmap_spmd_lowering', prev_spmd_lowering_flag)
 
 
 class ShardingTest(tf_test_util.JaxToTfTestCase):

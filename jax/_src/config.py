@@ -598,6 +598,16 @@ class NameSpace:
 
 
 config = Config()
+
+_read = config._read
+update = config.update
+define_bool_state = config.define_bool_state
+define_enum_state = config.define_enum_state
+define_int_state = config.define_int_state
+define_float_state = config.define_float_state
+define_string_state = config.define_string_state
+parse_flags_with_absl = config.parse_flags_with_absl
+
 flags = config
 FLAGS = flags.FLAGS
 
