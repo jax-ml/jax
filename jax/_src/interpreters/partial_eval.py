@@ -834,6 +834,37 @@ def trace_to_subjaxpr_nounits_fwd(
   del out_tracers
   yield jaxpr, (fwds, out_pvals, pruned_consts, env)
 
+# The below variant implements two optimizations:
+#  1. residuals that are also primal inputs are indicated in aux data rather
+#     than passed as outputs;
+#  2. residuals that are also primal outputs are indicated in aux data rather
+#     than passed as redundant outputs.
+@lu.transformation
+def trace_to_subjaxpr_nounits_fwd2(
+    main: core.MainTrace,
+    instantiate: bool | Sequence[bool],
+    in_pvals: Sequence[PartialVal]):
+  assert all(isinstance(pv, PartialVal) for pv in in_pvals), in_pvals
+  out_tracers, jaxpr, consts, env = yield from _trace_to_subjaxpr_nounits(
+      main, instantiate, in_pvals)
+  out_pvals = [t.pval for t in out_tracers]
+
+  # Which consts (aka residuals) are just forwarded inputs? Check obj id.
+  in_consts  = [pval.get_known()    for pval in  in_pvals if     pval.is_known()]
+  id_map = {id(c): i for i, c in enumerate(in_consts)}
+  input_fwds: list[int | None] = [id_map.get(id(c)) for c in consts]
+
+  # Which consts (aka residuals) are already primal outputs? Check obj id.
+  out_consts = [pval.get_known()    for pval in out_pvals if    pval.is_known()]
+  id_map = {id(c): i for i, c in enumerate(out_consts)}
+  output_fwds: list[int | None] = [id_map.get(id(c)) for c in consts]
+
+  pruned_consts = [c for c, f1, f2 in zip(consts, input_fwds, output_fwds)
+                   if f1 is None and f2 is None]
+
+  del out_tracers
+  yield jaxpr, (input_fwds, output_fwds, out_pvals, pruned_consts, env)
+
 
 FreeVar = namedtuple('FreeVar', ['val'])
 ConstVar = namedtuple('ConstVar', ['val'])
@@ -1359,48 +1390,72 @@ def call_partial_eval_custom_rule(
               if type(x) is Var and not inst]
   return eqn_known, eqn_staged, unks_out, inst_out, new_inst + residuals
 
+# TODO(mattjj): unify with ParamsUpdater (this one takes an extra int)
+ParamsUpdater2 = Callable[[Sequence[bool], Sequence[bool], Sequence[bool],
+                           Sequence[bool], int, int, dict, dict],
+                          tuple[dict, dict]]
+
 def closed_call_partial_eval_custom_rule(
-    jaxpr_param_name: str, params_updater: ParamsUpdater,
+    jaxpr_param_name: str, params_updater: ParamsUpdater2,
     saveable: Callable[..., RematCases_], unks_in: list[bool], inst_in: list[bool],
     eqn: JaxprEqn, *, res_aval: ResAvalUpdater = _default_res_aval_updater,
   ) -> tuple[JaxprEqn, JaxprEqn, Sequence[bool], Sequence[bool], list[Var]]:
   # TODO(sharadmv,mattjj): dedup this rule with call_partial_eval_custom_rule.
   closed_jaxpr = eqn.params[jaxpr_param_name]
-  jaxpr_known_, jaxpr_staged_, unks_out, inst_out, num_res_out, num_res_ref = \
+  jaxpr_known_, jaxpr_staged_, unks_out, inst_out, num_res_val, num_res_ref = \
       partial_eval_jaxpr_stateful(closed_jaxpr.jaxpr, unks_in, inst_in,
                                   False, False, saveable)
-  num_res = num_res_ref + num_res_out
+  num_res = num_res_ref + num_res_val
+
+  # Compute which residual value outputs are also *undropped* primal outputs.
+  num_out_primals = len(jaxpr_known_.outvars) - num_res_val
+  out_vars, res_vars = split_list(jaxpr_known_.outvars, [num_out_primals])
+  out_binders_known, _ = partition_list(unks_out, eqn.outvars)
+  idx_map = {id(v): i for i, (v, b) in enumerate(zip(out_vars, out_binders_known))
+             if type(b) is not DropVar}
+  out_fwd = [idx_map.get(id(v)) for v in res_vars]
+
+  # Prune jaxpr_known_ outputs by removing forwards.
+  jaxpr_known_ = prune_jaxpr_outputs(
+      jaxpr_known_, [True] * num_out_primals + [f is None for f in out_fwd])
+
   # Forming these fresh ClosedJaxprs defeats caching, but caller handles caching
   jaxpr_known = core.ClosedJaxpr(jaxpr_known_, closed_jaxpr.consts)
   jaxpr_staged = core.ClosedJaxpr(jaxpr_staged_, closed_jaxpr.consts)
+
   ins_known, _ = partition_list(unks_in, eqn.invars)
-  out_binders_known, _ = partition_list(unks_out, eqn.outvars)
   _, ins_staged = partition_list(inst_in, eqn.invars)
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   newvar = core.gensym([jaxpr_known.jaxpr, jaxpr_staged.jaxpr])
   params_known = {**eqn.params, jaxpr_param_name: jaxpr_known}
   params_staged = {**eqn.params, jaxpr_param_name: jaxpr_staged}
   params_known, params_staged = params_updater(
-      unks_in, inst_in, map(op.not_, unks_out), inst_out, num_res, params_known,
-      params_staged)
-  residuals, ref_residuals = split_list(
-      [newvar(res_aval(params_known, v)) for v
-       in jaxpr_staged.in_avals[:num_res]], [num_res_out])
-  eqn_known = new_jaxpr_eqn([*ins_known, *ref_residuals],
-                            [*out_binders_known, *residuals],
+      unks_in, inst_in, map(op.not_, unks_out), inst_out,
+      sum(f is None for f in out_fwd), num_res, params_known, params_staged)
+  res_val_binders, res_ref_binders = split_list(
+      [newvar(res_aval(params_known, v))
+       for v in jaxpr_staged.in_avals[:num_res]], [num_res_val])
+  res_val_binders = [v for v, f in zip(res_val_binders, out_fwd) if f is None]
+  res_val_binders_ = iter(res_val_binders)
+  res_val_vars = [out_binders_known[f] if f is not None
+                  else next(res_val_binders_) for f in out_fwd]
+  sentinel = object()
+  assert next(res_val_binders_, sentinel) is sentinel
+  eqn_known = new_jaxpr_eqn([*ins_known, *res_ref_binders],
+                            [*out_binders_known, *res_val_binders],
                             eqn.primitive, params_known, jaxpr_known.effects,
                             eqn.source_info)
-  eqn_staged = new_jaxpr_eqn([*residuals, *ref_residuals, *ins_staged],
+  eqn_staged = new_jaxpr_eqn([*res_val_vars, *res_ref_binders, *ins_staged],
                              out_binders_staged,
                              eqn.primitive, params_staged, jaxpr_staged.effects,
                              eqn.source_info)
   assert len(eqn_staged.invars) == len(jaxpr_staged.in_avals)
-  assert len(ins_known) + len(ref_residuals) == len(jaxpr_known.jaxpr.invars)
-  assert len(ins_staged) + len(ref_residuals) + len(residuals) == len(jaxpr_staged.jaxpr.invars)
-  assert len(out_binders_known) + len(residuals) == len(jaxpr_known.jaxpr.outvars)
+  assert len(ins_known) + len(res_ref_binders) == len(jaxpr_known.jaxpr.invars)
+  assert len(ins_staged) + len(res_ref_binders) + len(res_val_vars) == len(jaxpr_staged.jaxpr.invars)
+  assert len(out_binders_known) + len(res_val_binders) == len(jaxpr_known.jaxpr.outvars)
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is Var and not inst]
-  new_vars = [*new_inst, *residuals, *ref_residuals]
+  new_vars = [*new_inst, *res_val_vars, *res_ref_binders]
   return eqn_known, eqn_staged, unks_out, inst_out, new_vars
 
 partial_eval_jaxpr_custom_rules[core.call_p] = \
@@ -1408,7 +1463,7 @@ partial_eval_jaxpr_custom_rules[core.call_p] = \
             lambda _, __, ___, ____, _____, x, y: (x, y))
 partial_eval_jaxpr_custom_rules[core.closed_call_p] = \
     partial(closed_call_partial_eval_custom_rule, 'call_jaxpr',
-            lambda _, __, ___, ____, _____, x, y: (x, y))
+            lambda _, __, ___, ____, _____, ______, x, y: (x, y))
 
 
 def _jaxpr_forwarding(jaxpr: Jaxpr) -> list[int | None]:
@@ -1425,6 +1480,33 @@ def _jaxpr_forwarding(jaxpr: Jaxpr) -> list[int | None]:
   idxs: dict[Var, int] = {v: i for i, v in enumerate(jaxpr.invars)}
   return [None if type(v) is Literal else idxs.get(fwds.get(v))  # type: ignore
           for v in jaxpr.outvars]
+
+
+def prune_jaxpr_outputs(jaxpr: Jaxpr, used_outputs: Sequence[bool]) -> Jaxpr:
+  return _prune_jaxpr_outputs_cached(jaxpr, tuple(used_outputs))
+
+def _prune_jaxpr_outputs(jaxpr: Jaxpr, used_outputs: tuple[bool, ...]) -> Jaxpr:
+  outvars = [v for v, b in zip(jaxpr.outvars, used_outputs) if b]
+  dbg = jaxpr.debug_info and core.JaxprDebugInfo(
+      jaxpr.debug_info.traced_for, jaxpr.debug_info.func_src_info,
+      jaxpr.debug_info.arg_names,
+      tuple(v for v, b in zip(jaxpr.debug_info.result_paths, used_outputs) if b))
+  new_jaxpr = jaxpr.replace(outvars=outvars, debug_info=dbg)
+  config.enable_checks.value and core.check_jaxpr(new_jaxpr)
+  return new_jaxpr
+_prune_jaxpr_outputs_cached = weakref_lru_cache(_prune_jaxpr_outputs)
+
+def prune_closed_jaxpr_outputs(
+    jaxpr: ClosedJaxpr, used_outputs: Sequence[bool]
+) -> ClosedJaxpr:
+  return _prune_closed_jaxpr_outputs(jaxpr, tuple(used_outputs))
+
+@weakref_lru_cache
+def _prune_closed_jaxpr_outputs(
+    jaxpr: ClosedJaxpr, used_outputs: tuple[bool, ...]
+) -> ClosedJaxpr:
+  return ClosedJaxpr(_prune_jaxpr_outputs(jaxpr.jaxpr, used_outputs),
+                     jaxpr.consts)
 
 
 def dce_jaxpr(jaxpr: Jaxpr, used_outputs: Sequence[bool],

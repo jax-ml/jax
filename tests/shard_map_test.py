@@ -27,6 +27,7 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
+import jax.ad_checkpoint
 from jax import lax
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
@@ -1135,6 +1136,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     jtu.check_grads(f, (q, k, v), order=1, modes=['rev'], rtol=1e-2)
 
+
   def test_axis_env_extension_regression(self):
     def foo(x):
       i = jax.lax.axis_index('x')
@@ -1146,6 +1148,51 @@ class ShardMapTest(jtu.JaxTestCase):
                        out_specs=P('x'), check_rep=False)(x)
 
     jax.jit(jax.grad(lambda x: bar(x).sum()))(jnp.arange(8.))  # doesn't crash
+
+  @parameterized.parameters(it.product([True, False], repeat=2))
+  def test_res_forwarding_optimization(self, jit, remat):
+    mesh = jtu.create_global_mesh((4,), ('i',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def f(x):
+      return jax.lax.exp(x)
+    if jit:
+      f = jax.jit(f)
+    if remat:
+      policy = jax.ad_checkpoint.checkpoint_policies.everything_saveable
+      f = jax.remat(f, policy=policy)
+    g = lambda x: f(x).sum()
+
+    x = jnp.arange(16.)
+    jaxpr_ = jax.make_jaxpr(jax.grad(g))(x)
+    jaxpr, _ = pe.dce_jaxpr(jaxpr_.jaxpr, [True] * len(jaxpr_.out_avals))
+    e1, _, e2 = jaxpr.eqns
+    self.assertLen(e1.outvars, 1)  # only primal output
+    self.assertLen(e2.invars, 2)   # res and cotangent inputs
+    self.assertEqual(sum([e1.outvars[0] is v for v in e2.invars]), 1)
+
+  @parameterized.parameters(it.product([True, False], repeat=2))
+  def test_res_forwarding_optimization_complex(self, jit, remat):
+    # like the above test, but a different function `f`
+    mesh = jtu.create_global_mesh((4,), ('i',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def f(x):
+      return jax.lax.exp(x.sum()) + x, jax.lax.exp(x)
+    if jit:
+      f = jax.jit(f)
+    if remat:
+      policy = jax.ad_checkpoint.checkpoint_policies.everything_saveable
+      f = jax.remat(f, policy=policy)
+    g = lambda x: sum(f(x)).sum()
+
+    x = jnp.arange(16.)
+    jaxpr_ = jax.make_jaxpr(jax.grad(g))(x)
+    jaxpr, _ = pe.dce_jaxpr(jaxpr_.jaxpr, [True] * len(jaxpr_.out_avals))
+    e1, _, e2 = jaxpr.eqns
+    self.assertLen(e1.outvars, 2)  # one primal and one res output
+    self.assertLen(e2.invars, 4)   # two res and two cotangent inputs
+    self.assertEqual(sum([e1.outvars[-1] is v for v in e2.invars]), 1)
 
 
 class FunSpec(NamedTuple):
