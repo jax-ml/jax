@@ -17,14 +17,14 @@ import os
 from absl import flags
 from absl.testing import absltest
 from absl.testing import parameterized
-import jax
+
 from jax._src import config
 from jax._src import test_util as jtu
 
 from jax.experimental.jax2tf.examples import saved_model_main
 from jax.experimental.jax2tf.tests import tf_test_util
 
-jax.config.parse_flags_with_absl()
+config.parse_flags_with_absl()
 FLAGS = flags.FLAGS
 
 

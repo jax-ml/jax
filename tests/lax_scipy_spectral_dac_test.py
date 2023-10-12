@@ -23,7 +23,6 @@ from absl.testing import absltest
 
 from jax import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 linear_sizes = [16, 97, 128]

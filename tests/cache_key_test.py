@@ -35,7 +35,6 @@ from jax._src.lib import xla_extension_version
 
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 class CacheKeyTest(jtu.JaxTestCase):

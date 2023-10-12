@@ -25,12 +25,12 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax import random
+from jax._src import config
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import state
 from jax._src.lax.control_flow.for_loop import for_loop
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
-from jax.config import config
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
@@ -751,9 +751,7 @@ class PallasControlFlowTest(PallasTest):
     # fori_loop handles i64 index variables, i.e. error: 'scf.for' op  along
     # control flow edge from Region #0 to Region #0: source type #0
     # 'tensor<4xf64>' should match input type #0 'tensor<4xf32>'
-    orig_val = jax.config.jax_enable_x64
-    jax.config.update("jax_enable_x64", True)
-    try:
+    with config.enable_x64(True):
       @functools.partial(self.pallas_call,
                          out_shape=jax.ShapeDtypeStruct((4,), jnp.float64),
                          grid=1,
@@ -768,8 +766,6 @@ class PallasControlFlowTest(PallasTest):
 
       np.testing.assert_allclose(np.arange(1, 5.) * 3,
                                  f(jnp.arange(1, 5., dtype=jnp.float64)))
-    finally:
-      jax.config.update("jax_enable_x64", orig_val)
 
   def test_cond_simple(self):
     arg = jnp.float32(0.)

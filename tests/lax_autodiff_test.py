@@ -33,7 +33,6 @@ from jax.test_util import check_grads
 
 from jax import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 compatible_shapes = [[(3,)],

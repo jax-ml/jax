@@ -23,9 +23,9 @@ from absl.testing import absltest
 import jax
 from jax import numpy as jnp
 from jax import tree_util
-from jax.config import config
 from jax.experimental.export import export
 
+from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
@@ -79,21 +79,18 @@ def _testing_multi_platform_fun_expected(x):
 class JaxExportTest(jtu.JaxTestCase):
 
   def override_serialization_version(self, version_override: int):
-      version = config.jax_serialization_version
+      version = config.jax_serialization_version.value
       if version != version_override:
-        self.addCleanup(functools.partial(config.update,
-                                          "jax_serialization_version",
-                                          version_override))
-        config.update("jax_serialization_version", version_override)
+        self.enter_context(config.jax_serialization_version(version_override))
       logging.info(
         "Using JAX serialization version %s",
-        config.jax_serialization_version)
+        config.jax_serialization_version.value)
 
   def setUp(self):
     super().setUp()
     # Run tests with the maximum supported version by default
     self.override_serialization_version(
-      export.maximum_supported_serialization_version)
+        export.maximum_supported_serialization_version)
 
   def test_basic_export_only(self):
     def my_fun(x):
@@ -351,7 +348,7 @@ class JaxExportTest(jtu.JaxTestCase):
         export.poly_spec((3, 4), np.float32, "w, h"))
       # Peek at the module
       module_str = exp.mlir_module()
-      self.assertEqual(config.jax_serialization_version >= 7,
+      self.assertEqual(config.jax_serialization_version.value >= 7,
                        "shape_assertion" in module_str)
       self.assertIn("jax.uses_shape_polymorphism = true",
                     module_str)

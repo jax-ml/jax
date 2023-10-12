@@ -31,8 +31,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.util import NumpyComplexWarning
 
-jax.config.parse_flags_with_absl()
-FLAGS = config.FLAGS
+config.parse_flags_with_absl()
 
 numpy_version = jtu.numpy_version()
 

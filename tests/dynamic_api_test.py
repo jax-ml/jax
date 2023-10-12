@@ -32,7 +32,6 @@ from jax._src import core
 from jax._src import test_util as jtu
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
