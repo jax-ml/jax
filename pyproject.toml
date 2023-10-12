@@ -39,6 +39,8 @@ module = [
     "jax.experimental.jax2tf.tests.flax_models",
     "jax.experimental.jax2tf.tests.back_compat_testdata",
     "setuptools.*",
+    "jaxopt.*",
+    "importlib_metadata.*"
 ]
 ignore_missing_imports = true
 
