@@ -293,8 +293,6 @@ def compile_or_get_cached(
     return backend_compile(backend, computation, compile_options,
                            host_callbacks)
 
-  # TODO(b/293308239) Instrument a metric to track the adoption of the new cache
-  # key implementation after it is enabled.
   global _cache_used
   if not _cache_used:
     _cache_used = True
@@ -322,14 +320,17 @@ def compile_or_get_cached(
     assert retrieved_compile_time is not None
     logger.info("Persistent compilation cache hit for '%s'", module_name)
 
-    # TODO(b/293308239) Instrument metrics for new cache savings and cache hit
-    # rate after it is enabled.
     if config.use_original_compilation_cache_key_generation.value:
       # TODO(b/293308239) Remove metrics for the original cache after the new
       # compilation cache key implementation is fully rolled out.
       monitoring.record_event('/jax/compilation_cache/cache_hits_original')
       monitoring.record_event_duration_secs(
           "/jax/compilation_cache/original_compile_time_saved_sec",
+          retrieved_compile_time - cache_retrieval_time)
+    else:
+      monitoring.record_event('/jax/compilation_cache/cache_hits')
+      monitoring.record_event_duration_secs(
+          '/jax/compilation_cache/compile_time_saved_sec',
           retrieved_compile_time - cache_retrieval_time)
 
     monitoring.record_event_duration_secs(
