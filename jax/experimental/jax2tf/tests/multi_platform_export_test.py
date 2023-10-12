@@ -29,14 +29,6 @@ from jax.experimental.jax2tf.tests import primitive_harness
 def make_disjunction_regexp(*parts: str) -> re.Pattern[str]:
   return re.compile("(" + "|".join(parts) + ")")
 
-
-# TODO(necula): Failures to be investigated (on multiple platforms)
-_known_failures = make_disjunction_regexp(
-    "cumsum_",
-    "cumprod_",
-)
-
-
 # TODO(necula): Failures to be investigated (on GPU).
 _known_failures_gpu = make_disjunction_regexp(
     # Failures due to failure to export custom call targets for GPU, these
@@ -85,13 +77,8 @@ class PrimitiveTest(jtu.JaxTestCase):
       #one_containing="",
   )
   def test_prim(self, harness: primitive_harness.Harness):
-    if (
-        _known_failures.search(harness.fullname)
-        or (
-            jtu.device_under_test() == "gpu"
-            and _known_failures_gpu.search(harness.fullname)
-        )
-    ):
+    if (jtu.device_under_test() == "gpu"
+        and _known_failures_gpu.search(harness.fullname)):
       self.skipTest("failure to be investigated")
 
     func_jax = harness.dyn_fun
@@ -108,13 +95,7 @@ class PrimitiveTest(jtu.JaxTestCase):
         for d in self.__class__.devices
         if d.platform not in unimplemented_platforms
     ]
-    logging.info(
-        "Using devices %s",
-        [
-            (str(d), d.platform, d.device_kind, d.client.platform)
-            for d in devices
-        ],
-    )
+    logging.info("Using devices %s", [str(d) for d in devices])
     # lowering_platforms uses "cuda" instead of "gpu"
     lowering_platforms: list[str] = [
         p if p != "gpu" else "cuda"
