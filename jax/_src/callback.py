@@ -234,6 +234,7 @@ def pure_callback(
       may behave in unexpected ways, particularly under transformation.
     result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype`` attributes,
       whose structure matches the expected output of the callback function at runtime.
+      :class:`jax.ShapeDtypeStruct` is often used to define leaf values.
     *args: arguments to be passed to the callback function
     sharding: optional sharding that specifies the device from which the callback should
       be invoked.
@@ -480,6 +481,7 @@ def io_callback(
       more efficient execution.
     result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype`` attributes,
       whose structure matches the expected output of the callback function at runtime.
+      :class:`jax.ShapeDtypeStruct` is often used to define leaf values.
     *args: arguments to be passed to the callback function
     sharding: optional sharding that specifies the device from which the callback should
       be invoked.
