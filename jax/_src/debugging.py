@@ -40,8 +40,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import (GSPMDSharding, NamedSharding,
-                                     parse_flatten_op_sharding)
+from jax._src.sharding_impls import NamedSharding, parse_flatten_op_sharding
 
 # pytype: disable=import-error
 try:
@@ -336,7 +335,8 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
   # partitioner calls back with the `HloSharding.
   def _hlo_sharding_callback(hlo_sharding: xc.HloSharding):
     if mesh.empty:
-      return callback(GSPMDSharding(devices, hlo_sharding))
+      return callback(
+          sharding_impls._op_sharding_to_pos_sharding(hlo_sharding, devices))
     pspec = parse_flatten_op_sharding(hlo_sharding, mesh)[0].get_partition_spec()
     return callback(NamedSharding(mesh, pspec))
 

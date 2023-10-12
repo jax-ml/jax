@@ -1113,6 +1113,39 @@ class InspectShardingTest(jtu.JaxTestCase):
     f(np.arange(8, dtype=jnp.float32))
     self.assertTrue(is_called)
 
+  def test_inspect_sharding_3d_input_pos_sharding(self):
+    def _cb(sd):
+      self.assertIsInstance(sd, jax.sharding.PositionalSharding)
+      self.assertLen(sd.device_set, 2)
+
+    def f_(x):
+      debugging.inspect_array_sharding(x, callback=_cb)
+      return jnp.square(x)
+
+    f = jax.jit(f_)
+    mesh = jtu.create_global_mesh((2,), ('x'))
+    s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
+    arr = jax.device_put(np.arange(8).reshape(2, 2, 2), s)
+
+    f(arr)
+
+  def test_inspect_sharding_3d_input_named_sharding(self):
+    def _cb(sd):
+      self.assertIsInstance(sd, jax.sharding.NamedSharding)
+      self.assertLen(sd.device_set, 2)
+
+    def f_(x):
+      debugging.inspect_array_sharding(x, callback=_cb)
+      return jnp.square(x)
+
+    f = pjit.pjit(f_)
+    mesh = jtu.create_global_mesh((2,), ('x'))
+    s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
+    arr = jax.device_put(np.arange(8).reshape(2, 2, 2), s)
+
+    with mesh:
+      f(arr)
+
 
 if not rich:
   del VisualizeShardingTest
