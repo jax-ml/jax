@@ -860,7 +860,7 @@ def _todense_sparse_rule(spenv, spvalue, *, tree):
 sparse_rules_bcoo[sparse.todense_p] = _todense_sparse_rule
 sparse_rules_bcsr[sparse.todense_p] = _todense_sparse_rule
 
-def _custom_jvp_sparse_rule(spenv, *spvalues, **params):
+def _custom_jvp_call_sparse_rule(spenv, *spvalues, **params):
   call_jaxpr = params.pop('call_jaxpr')
   jvp_jaxpr_thunk = params.pop('jvp_jaxpr_thunk')
   num_consts = params.pop('num_consts')
@@ -875,9 +875,14 @@ def _custom_jvp_sparse_rule(spenv, *spvalues, **params):
   outvals = jax.custom_derivatives.custom_jvp_call_p.bind(fun, jvp, *invals, **params)
   return arrays_to_spvalues(spenv, outvals)
 
-sparse_rules_bcoo[jax.custom_derivatives.custom_jvp_call_p] = _custom_jvp_sparse_rule
-sparse_rules_bcsr[jax.custom_derivatives.custom_jvp_call_p] = _custom_jvp_sparse_rule
+sparse_rules_bcoo[jax.custom_derivatives.custom_jvp_call_p] = _custom_jvp_call_sparse_rule
+sparse_rules_bcsr[jax.custom_derivatives.custom_jvp_call_p] = _custom_jvp_call_sparse_rule
 
+def _custom_vjp_call_jaxpr_sparse_rule(spenv, *spvalues, fun_jaxpr, **params):
+  return eval_sparse(fun_jaxpr.jaxpr, fun_jaxpr.consts, spvalues, spenv)
+
+sparse_rules_bcoo[jax.custom_derivatives.custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_sparse_rule
+sparse_rules_bcsr[jax.custom_derivatives.custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_sparse_rule
 
 # ------------------------------------------------------------------------------
 # BCOO methods derived from sparsify
