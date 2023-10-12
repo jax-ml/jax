@@ -37,7 +37,7 @@ from jax import vmap
 
 from jax._src import prng as prng_internal
 
-jax.config.parse_flags_with_absl()
+config.parse_flags_with_absl()
 
 float_dtypes = jtu.dtypes.all_floating
 complex_dtypes = jtu.dtypes.complex

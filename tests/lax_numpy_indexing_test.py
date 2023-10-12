@@ -30,13 +30,13 @@ from jax import lax
 from jax import numpy as jnp
 from jax import ops
 
+from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import util
-from jax._src.util import NumpyComplexWarning
 from jax._src.lax import lax as lax_internal
+from jax._src.util import NumpyComplexWarning
 
-from jax import config
 config.parse_flags_with_absl()
 
 # We disable the whitespace continuation check in this file because otherwise it
@@ -60,7 +60,7 @@ class IndexSpec(typing.NamedTuple):
 
 def check_grads(f, args, order, atol=None, rtol=None, eps=None):
   # TODO(mattjj,dougalm): add higher-order check
-  default_tol = 1e-6 if config.x64_enabled else 1e-2
+  default_tol = 1e-6 if config.enable_x64.value else 1e-2
   atol = atol or default_tol
   rtol = rtol or default_tol
   eps = eps or default_tol

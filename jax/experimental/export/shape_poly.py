@@ -48,9 +48,9 @@ import numpy as np
 import opt_einsum
 
 import jax
-from jax import config
 from jax.interpreters import xla
 
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
@@ -651,7 +651,7 @@ class _DimExpr():
           raise InconclusiveDimensionOperation("")
         remainder = 0
 
-      if config.jax_enable_checks:
+      if config.enable_checks.value:
         assert self == divisor * quotient + remainder
       return quotient, remainder
     except InconclusiveDimensionOperation:

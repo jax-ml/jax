@@ -72,7 +72,7 @@ from jax._src.interpreters import xla
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
-jax.config.parse_flags_with_absl()
+config.parse_flags_with_absl()
 
 # Import after parsing flags
 from jax.experimental.jax2tf.tests import tf_test_util

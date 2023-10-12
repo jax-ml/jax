@@ -17,14 +17,14 @@ import inspect
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
-from jax._src import core
-from jax._src import api_util
-from jax._src.interpreters import pxla
 from jax import dtypes
-from jax._src import lib as jaxlib
 from jax import numpy as jnp
+from jax._src import api_util
+from jax._src import config
+from jax._src import core
+from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
-from jax import config
+from jax._src.interpreters import pxla
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -136,7 +136,7 @@ class JaxJitTest(jtu.JaxTestCase):
       self.assertEqual(jnp.asarray(bool_value).dtype, res.dtype)
 
     # Complex
-    if not (config.x64_enabled and jtu.test_device_matches(["tpu"])):
+    if not (config.enable_x64.value and jtu.test_device_matches(["tpu"])):
       # No TPU support for complex128.
       res = np.asarray(_cpp_device_put(1 + 1j, device))
       self.assertEqual(res, 1 + 1j)
@@ -145,7 +145,7 @@ class JaxJitTest(jtu.JaxTestCase):
 
   def test_arg_signature_of_value(self):
     """Tests the C++ code-path."""
-    jax_enable_x64 = config.x64_enabled
+    jax_enable_x64 = config.enable_x64.value
 
     # 1. Numpy scalar types
     for dtype in jtu.supported_dtypes():

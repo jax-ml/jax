@@ -20,17 +20,16 @@ import warnings
 
 from absl import logging
 from absl.testing import absltest
+
 from jax._src import compiler
-from jax._src import config as jax_config
+from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.config import config
 from jax._src.interpreters import xla
-from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
+from jax._src.lib import xla_client as xc
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 mock = absltest.mock
 
@@ -65,7 +64,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
     # --jax_xla_profile_version takes precedence.
     jax_flag_profile = 1
     another_profile = 2
-    with jax_config.jax_xla_profile_version(jax_flag_profile):
+    with config.jax_xla_profile_version(jax_flag_profile):
       with mock.patch.object(compiler, "get_latest_profile_version",
                              side_effect=lambda: another_profile):
         self.assertEqual(
@@ -283,10 +282,10 @@ class GetBackendTest(jtu.JaxTestCase):
                                 fail_quietly=False, experimental=experimental)
 
   def setUp(self):
+    super().setUp()
     self._orig_factories = xb._backend_factories
     xb._backend_factories = {}
-    self._orig_jax_platforms = config._read("jax_platforms")
-    config.FLAGS.jax_platforms = ""
+    self.enter_context(config.jax_platforms(""))
     self._save_backend_state()
     self._reset_backend_state()
 
@@ -294,8 +293,8 @@ class GetBackendTest(jtu.JaxTestCase):
     self._register_factory("cpu", 0)
 
   def tearDown(self):
+    super().tearDown()
     xb._backend_factories = self._orig_factories
-    config.FLAGS.jax_platforms = self._orig_jax_platforms
     self._restore_backend_state()
 
   def _save_backend_state(self):
@@ -380,10 +379,7 @@ class GetBackendTest(jtu.JaxTestCase):
     self._register_factory("platform_A", 20, assert_used_at_most_once=True)
     self._register_factory("platform_B", 10, assert_used_at_most_once=True)
 
-    orig_jax_platforms = config._read("jax_platforms")
-    try:
-      config.FLAGS.jax_platforms = "cpu,platform_A"
-
+    with config.jax_platforms("cpu,platform_A"):
       backend = xb.get_backend()
       self.assertEqual(backend.platform, "cpu")
       # Only specified backends initialized.
@@ -394,10 +390,6 @@ class GetBackendTest(jtu.JaxTestCase):
 
       with self.assertRaisesRegex(RuntimeError, "Unknown backend platform_B"):
         backend = xb.get_backend("platform_B")
-
-    finally:
-      config.FLAGS.jax_platforms = orig_jax_platforms
-
 
   def test_experimental_warning(self):
     self._register_factory("platform_A", 20, experimental=True)

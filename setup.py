@@ -144,7 +144,7 @@ setup(
           # problems (https://github.com/google/jax/issues/18027#issuecomment-1756305196)
           # Until NVIDIA add version constraints, add an version constraint
           # here.
-          "nvidia-nvjitlink=cu12>=12.2",
+          "nvidia-nvjitlink-cu12>=12.2",
         ],
 
         # Target that does not depend on the CUDA pip wheels, for those who want

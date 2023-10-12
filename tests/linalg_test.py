@@ -29,13 +29,12 @@ from jax import jit, grad, jvp, vmap
 from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
-from jax._src.numpy.util import promote_dtypes_inexact
+from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
+from jax._src.numpy.util import promote_dtypes_inexact
 
-from jax import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 scipy_version = tuple(map(int, scipy.version.version.split('.')[:3]))
 
@@ -1619,7 +1618,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testToeplitzConstrcution(self, rshape, rdtype, cshape, cdtype):
     if ((rdtype in [np.float64, np.complex128]
          or cdtype in [np.float64, np.complex128])
-        and not config.x64_enabled):
+        and not config.enable_x64.value):
       self.skipTest("Only run float64 testcase when float64 is enabled.")
 
     int_types_excl_i8 = set(int_types) - {np.int8}
@@ -1640,7 +1639,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("rocm")
   def testToeplitzSymmetricConstruction(self, shape, dtype):
     if (dtype in [np.float64, np.complex128]
-        and not config.x64_enabled):
+        and not config.enable_x64.value):
       self.skipTest("Only run float64 testcase when float64 is enabled.")
 
     int_types_excl_i8 = set(int_types) - {np.int8}

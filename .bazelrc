@@ -72,6 +72,20 @@ build:cuda --@xla//xla/python:enable_gpu=true
 build:cuda --@xla//xla/python:jax_cuda_pip_rpaths=true
 build:cuda --define=xla_python_enable_gpu=true
 
+# Force the linker to set RPATH, not RUNPATH. When resolving dynamic libraries,
+# ld.so prefers in order: RPATH, LD_LIBRARY_PATH, RUNPATH. JAX sets RPATH to
+# point to the $ORIGIN-relative location of the pip-installed NVIDIA CUDA
+# packages.
+# This has pros and cons:
+# * pro: we'll ignore other CUDA installations, which has frequently confused
+#   users in the past. By setting RPATH, we'll always use the NVIDIA pip
+#   packages if they are installed.
+# * con: the user cannot override the CUDA installation location
+#   via LD_LIBRARY_PATH, if the nvidia-... pip packages are installed. This is
+#   acceptable, because the workaround is "remove the nvidia-..." pip packages.
+# The list of CUDA pip packages that JAX depends on are present in setup.py.
+build:cuda --linkopt=-Wl,--disable-new-dtags
+
 build:rocm --crosstool_top=@local_config_rocm//crosstool:toolchain
 build:rocm --define=using_rocm=true --define=using_rocm_hipcc=true
 build:rocm --@xla//xla/python:enable_gpu=true

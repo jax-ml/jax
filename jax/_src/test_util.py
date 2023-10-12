@@ -42,16 +42,13 @@ from jax._src.interpreters import mlir
 from jax.tree_util import tree_map, tree_all, tree_flatten, tree_unflatten
 from jax._src import api
 from jax._src import pjit as pjit_lib
-from jax._src import config as jax_config
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src import monitoring
 from jax._src import stages
 from jax._src.interpreters import pxla
-from jax._src.config import (bool_env, config,
-                             raise_persistent_cache_errors,
-                             persistent_cache_min_compile_time_secs)
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.util import unzip2
 from jax._src.public_test_util import (  # noqa: F401
@@ -64,18 +61,18 @@ from jax._src import xla_bridge
 # jax.test_util. Functionality appearing here is for internal use only, and
 # may be changed or removed at any time and without any deprecation cycle.
 
-_TEST_DUT = jax_config.DEFINE_string(
+_TEST_DUT = config.DEFINE_string(
     'jax_test_dut', '',
     help=
     'Describes the device under test in case special consideration is required.'
 )
 
-_NUM_GENERATED_CASES = jax_config.DEFINE_integer(
+_NUM_GENERATED_CASES = config.DEFINE_integer(
   'jax_num_generated_cases',
   int(os.getenv('JAX_NUM_GENERATED_CASES', '10')),
   help='Number of generated cases to test')
 
-_MAX_CASES_SAMPLING_RETRIES = jax_config.DEFINE_integer(
+_MAX_CASES_SAMPLING_RETRIES = config.DEFINE_integer(
   'max_cases_sampling_retries',
   int(os.getenv('JAX_MAX_CASES_SAMPLING_RETRIES', '100')),
   'Number of times a failed test sample should be retried. '
@@ -83,25 +80,25 @@ _MAX_CASES_SAMPLING_RETRIES = jax_config.DEFINE_integer(
   'sampling process is terminated.'
 )
 
-_SKIP_SLOW_TESTS = jax_config.DEFINE_bool(
+_SKIP_SLOW_TESTS = config.DEFINE_bool(
     'jax_skip_slow_tests',
-    bool_env('JAX_SKIP_SLOW_TESTS', False),
+    config.bool_env('JAX_SKIP_SLOW_TESTS', False),
     help='Skip tests marked as slow (> 5 sec).'
 )
 
-_TEST_TARGETS = jax_config.DEFINE_string(
+_TEST_TARGETS = config.DEFINE_string(
   'test_targets', os.getenv('JAX_TEST_TARGETS', ''),
   'Regular expression specifying which tests to run, called via re.search on '
   'the test name. If empty or unspecified, run all tests.'
 )
-_EXCLUDE_TEST_TARGETS = jax_config.DEFINE_string(
+_EXCLUDE_TEST_TARGETS = config.DEFINE_string(
   'exclude_test_targets', os.getenv('JAX_EXCLUDE_TEST_TARGETS', ''),
   'Regular expression specifying which tests NOT to run, called via re.search '
   'on the test name. If empty or unspecified, run all tests.'
 )
-TEST_WITH_PERSISTENT_COMPILATION_CACHE = jax_config.DEFINE_bool(
+TEST_WITH_PERSISTENT_COMPILATION_CACHE = config.DEFINE_bool(
     'jax_test_with_persistent_compilation_cache',
-    bool_env('JAX_TEST_WITH_PERSISTENT_COMPILATION_CACHE', False),
+    config.bool_env('JAX_TEST_WITH_PERSISTENT_COMPILATION_CACHE', False),
     help='If enabled, the persistent compilation cache will be enabled for all '
     'test cases. This can be used to increase compilation cache coverage.')
 
@@ -299,7 +296,7 @@ def supported_dtypes():
              np.uint8, np.uint16, np.uint32, np.uint64,
              _dtypes.bfloat16, np.float16, np.float32, np.float64,
              np.complex64, np.complex128}
-  if not config.x64_enabled:
+  if not config.enable_x64.value:
     types -= {np.uint64, np.int64, np.float64, np.complex128}
   return types
 
@@ -532,7 +529,7 @@ def rand_fullrange(rng, standardize_nans=False):
       # leads to overflows in this case; sample from signed ints instead.
       if dtype == np.uint64:
         vals = vals.astype(np.int64)
-      elif dtype == np.uint32 and not config.x64_enabled:
+      elif dtype == np.uint32 and not config.enable_x64.value:
         vals = vals.astype(np.int32)
     vals = vals.reshape(shape)
     # Non-standard NaNs cause errors in numpy equality assertions.
@@ -915,8 +912,8 @@ class JaxTestCase(parameterized.TestCase):
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       cls._compilation_cache_exit_stack = ExitStack()
       stack = cls._compilation_cache_exit_stack
-      stack.enter_context(raise_persistent_cache_errors(True))
-      stack.enter_context(persistent_cache_min_compile_time_secs(0))
+      stack.enter_context(config.raise_persistent_cache_errors(True))
+      stack.enter_context(config.persistent_cache_min_compile_time_secs(0))
 
       tmp_dir = stack.enter_context(tempfile.TemporaryDirectory())
       compilation_cache.initialize_cache(tmp_dir)
@@ -963,7 +960,7 @@ class JaxTestCase(parameterized.TestCase):
       self.assertDtypesMatch(x, y)
 
   def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
-    if not config.x64_enabled and canonicalize_dtypes:
+    if not config.enable_x64.value and canonicalize_dtypes:
       self.assertEqual(_dtypes.canonicalize_dtype(_dtype(x), allow_extended_dtype=True),
                        _dtypes.canonicalize_dtype(_dtype(y), allow_extended_dtype=True))
     else:
@@ -1132,26 +1129,6 @@ def with_and_without_mesh(f):
       ('', (), ()),
       ('Mesh', (('x', 2),), (('i', 'x'),))
     ))(with_mesh_from_kwargs(f))
-
-old_spmd_lowering_flag = None
-def set_spmd_lowering_flag(val: bool):
-  global old_spmd_lowering_flag
-  old_spmd_lowering_flag = config.experimental_xmap_spmd_lowering
-  config.update('experimental_xmap_spmd_lowering', val)
-
-def restore_spmd_lowering_flag():
-  if old_spmd_lowering_flag is None: return
-  config.update('experimental_xmap_spmd_lowering', old_spmd_lowering_flag)
-
-old_spmd_manual_lowering_flag = None
-def set_spmd_manual_lowering_flag(val: bool):
-  global old_spmd_manual_lowering_flag
-  old_spmd_manual_lowering_flag = config.experimental_xmap_spmd_lowering_manual
-  config.update('experimental_xmap_spmd_lowering_manual', val)
-
-def restore_spmd_manual_lowering_flag():
-  if old_spmd_manual_lowering_flag is None: return
-  config.update('experimental_xmap_spmd_lowering_manual', old_spmd_manual_lowering_flag)
 
 def create_global_mesh(mesh_shape, axis_names):
   size = math.prod(mesh_shape)

@@ -33,24 +33,24 @@ import jax.scipy as jscipy
 from jax._src import test_util as jtu
 from jax import vmap
 from jax import lax
-from jax._src import core
-from jax._src.core import NamedShape
-from jax.experimental import maps
-from jax._src import array
-from jax._src.sharding_impls import NamedSharding
-from jax.experimental.pjit import pjit
-from jax.sharding import PartitionSpec as P
-from jax.experimental.maps import xmap, serial_loop, SerialLoop
+from jax.ad_checkpoint import checkpoint
 from jax.errors import JAXTypeError
-from jax._src.nn import initializers as nn_initializers
+from jax.experimental.maps import xmap, serial_loop, SerialLoop
+from jax.experimental.pjit import pjit
+from jax.interpreters import batching
+from jax.sharding import PartitionSpec as P
+from jax._src import array
+from jax._src import core
+from jax._src import maps
 from jax._src import xla_bridge
-from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
-from jax._src.util import unzip2
+from jax._src.core import NamedShape
 from jax._src.lax import parallel as lax_parallel
 from jax._src.lax.parallel import pgather
-from jax.interpreters import batching
-from jax.ad_checkpoint import checkpoint
+from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
+from jax._src.nn import initializers as nn_initializers
+from jax._src.sharding_impls import NamedSharding
+from jax._src.util import unzip2
 
 from jax import config
 config.parse_flags_with_absl()
@@ -246,10 +246,11 @@ class XMapTestCase(jtu.BufferDonationTestCase):
 class SPMDTestMixin:
   def setUp(self):
     super().setUp()
-    jtu.set_spmd_lowering_flag(True)
+    self.spmd_lowering = maps._SPMD_LOWERING.value
+    config.update('experimental_xmap_spmd_lowering', True)
 
   def tearDown(self):
-    jtu.restore_spmd_lowering_flag()
+    config.update('experimental_xmap_spmd_lowering', self.spmd_lowering)
 
 
 class ManualSPMDTestMixin:
@@ -257,12 +258,14 @@ class ManualSPMDTestMixin:
     if not hasattr(xla_client.OpSharding.Type, "MANUAL"):
       raise SkipTest
     super().setUp()
-    jtu.set_spmd_lowering_flag(True)
-    jtu.set_spmd_manual_lowering_flag(True)
+    self.spmd_lowering = maps._SPMD_LOWERING.value
+    self.spmd_manual_lowering = maps._SPMD_LOWERING_MANUAL.value
+    config.update('experimental_xmap_spmd_lowering', True)
+    config.update('experimental_xmap_spmd_lowering_manual', True)
 
   def tearDown(self):
-    jtu.restore_spmd_manual_lowering_flag()
-    jtu.restore_spmd_lowering_flag()
+    config.update('experimental_xmap_spmd_lowering', self.spmd_lowering)
+    config.update('experimental_xmap_spmd_lowering_manual', self.spmd_manual_lowering)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
@@ -433,7 +436,7 @@ class XMapTest(XMapTestCase):
     m_size = math.prod([2] + [2] * (len(mesh) - 2))
     self.assertListEqual(y_op_sharding.tile_assignment_dimensions(),
                          [2, 1, 1, m_size])
-    if config.experimental_xmap_spmd_lowering:
+    if maps._SPMD_LOWERING.value:
       hlo = f.lower(x).compiler_ir(dialect="hlo").as_hlo_text()
       # Make sure that there are non-partial sharding specs in the HLO
       if xla_extension_version >= 180:
@@ -746,7 +749,7 @@ class XMapTest(XMapTestCase):
              axis_resources={'i': 'x'})
     x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
     hlo = f.lower(x).as_text(dialect='stablehlo')
-    if config.experimental_xmap_spmd_lowering:
+    if maps._SPMD_LOWERING.value:
       self.assertIn("mhlo.num_partitions = 2", hlo)
       self.assertIn("mhlo.num_replicas = 1", hlo)
     else:
@@ -1201,7 +1204,7 @@ class NewPrimitiveTest(XMapTestCase):
 
   @jtu.with_and_without_mesh
   def testGather(self, mesh, axis_resources):
-    if axis_resources and not config.experimental_xmap_spmd_lowering:
+    if axis_resources and not maps._SPMD_LOWERING.value:
       raise SkipTest("pgather over mesh axes without SPMD lowering not implemented")
     x = jnp.arange(12, dtype=np.float32).reshape((4, 3))
     y = jnp.arange(35).reshape((5, 7)) % 3

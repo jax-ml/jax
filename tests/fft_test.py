@@ -23,11 +23,11 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax import numpy as jnp
+from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.numpy.util import promote_dtypes_complex
 
-from jax import config
 config.parse_flags_with_absl()
 
 FFT_NORMS = [None, "ortho", "forward", "backward"]
@@ -129,7 +129,7 @@ class FftTest(jtu.JaxTestCase):
 
   @parameterized.parameters((np.float32,), (np.float64,))
   def testLaxIrfftDoesNotMutateInputs(self, dtype):
-    if dtype == np.float64 and not config.x64_enabled:
+    if dtype == np.float64 and not config.enable_x64.value:
       raise self.skipTest("float64 requires jax_enable_x64=true")
     x = (1 + 1j) * jnp.array([[1.0, 2.0], [3.0, 4.0]],
                              dtype=dtypes.to_complex_dtype(dtype))
@@ -162,7 +162,7 @@ class FftTest(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker)
     # Test gradient for differentiable types.
-    if (config.x64_enabled and
+    if (config.enable_x64.value and
         dtype in (float_dtypes if real and not inverse else inexact_dtypes)):
       # TODO(skye): can we be more precise?
       tol = 0.15

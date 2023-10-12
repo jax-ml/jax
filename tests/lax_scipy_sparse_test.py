@@ -31,7 +31,7 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 
-jax.config.parse_flags_with_absl()
+config.parse_flags_with_absl()
 
 
 float_types = jtu.dtypes.floating

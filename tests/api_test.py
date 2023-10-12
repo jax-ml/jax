@@ -40,14 +40,13 @@ import weakref
 from absl import logging
 from absl.testing import absltest, parameterized
 import jax
-from jax import config
 from jax import custom_derivatives as custom_derivatives_public
 from jax import device_put, float0, grad, hessian, jacfwd, jacrev, jit
 from jax import lax
 from jax import tree_util
 from jax._src import api, api_util, dtypes, lib
 from jax._src import array
-from jax._src import config as config_internal
+from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import linear_util as lu
@@ -76,7 +75,6 @@ from jax.sharding import PartitionSpec as P
 import numpy as np
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 def _check_instance(self, x):
@@ -233,7 +231,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     assert len(side) == 2  # but should still cache
 
     f(one, two, z=np.zeros(3))  # doesn't crash
-    if config.x64_enabled:
+    if config.enable_x64.value:
       # In the above call, three is of a new type (int64), thus it should
       # trigger a new compilation.
       assert len(side) == 3
@@ -879,7 +877,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     # TODO(frostig): remove `wrap` once we always enable_custom_prng
     def wrap(arr):
       arr = np.array(arr, dtype=np.uint32)
-      if config.jax_enable_custom_prng:
+      if config.enable_custom_prng.value:
         return prng.random_wrap(arr, impl=jax.random.default_prng_impl())
       else:
         return arr
@@ -1057,7 +1055,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     compiled = lowered.compile()
     self.assertAllClose(compiled(1.), 2.)
     self.assertEqual(lowered.in_avals, compiled.in_avals)
-    expected_dtype = np.float64 if config.x64_enabled else np.float32
+    expected_dtype = np.float64 if config.enable_x64.value else np.float32
     for obj in [lowered, compiled]:
       self.assertEqual(
           obj.in_avals,
@@ -2913,7 +2911,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_dtype_warning(self):
     # cf. issue #1230
-    if config.x64_enabled:
+    if config.enable_x64.value:
       raise unittest.SkipTest("test only applies when x64 is disabled")
 
     def check_warning(warn, nowarn):
@@ -4029,25 +4027,15 @@ class APITest(jtu.JaxTestCase):
   def test_dot_precision_flag(self):
     x = jnp.zeros((2, 2))
 
-    prev_val = config._read("jax_default_matmul_precision")
-    try:
-      config.FLAGS.jax_default_matmul_precision = "tensorfloat32"
+    with config.default_matmul_precision("tensorfloat32"):
       jnp.dot(x, x)  # doesn't crash
       jaxpr = jax.make_jaxpr(jnp.dot)(x, x)
-    finally:
-      config.FLAGS.jax_default_matmul_precision = prev_val
     self.assertIn('Precision.HIGH', str(jaxpr))
-    self.assertEqual(prev_val, config._read("jax_default_matmul_precision"))
 
-    prev_val = config._read("jax_default_matmul_precision")
-    try:
-      config.update('jax_default_matmul_precision','tensorfloat32')
+    with config.default_matmul_precision("tensorfloat32"):
       jnp.dot(x, x)  # doesn't crash
       jaxpr = jax.make_jaxpr(jnp.dot)(x, x)
-    finally:
-      config.update('jax_default_matmul_precision', prev_val)
     self.assertIn('Precision.HIGH', str(jaxpr))
-    self.assertEqual(prev_val, config._read("jax_default_matmul_precision"))
 
   def test_dot_precision_forces_retrace(self):
     num_traces = 0
@@ -4067,7 +4055,7 @@ class APITest(jtu.JaxTestCase):
 
     for f in [f_jit, f_cond]:
       # Use _read() to read the flag value rather than threadlocal value.
-      precision = config._read('jax_default_matmul_precision')
+      precision = config._read("jax_default_matmul_precision")
       try:
         num_traces = 0
         x = jnp.zeros((2, 2))
@@ -4078,7 +4066,7 @@ class APITest(jtu.JaxTestCase):
         with jax.default_matmul_precision("tensorfloat32"):
           f(x)
           self.assertEqual(num_traces, 2)
-          FLAGS.jax_default_matmul_precision = "float32"
+          config.update("jax_default_matmul_precision", "float32")
           f(x)
           self.assertGreaterEqual(num_traces, 2)
         nt = num_traces
@@ -4087,7 +4075,7 @@ class APITest(jtu.JaxTestCase):
         f(x)
         self.assertEqual(num_traces, nt + 1)
       finally:
-        FLAGS.jax_default_matmul_precision = precision
+        config.update("jax_default_matmul_precision", precision)
 
   def test_backward_pass_ref_dropping(self):
     refs = []
@@ -4239,9 +4227,9 @@ class APITest(jtu.JaxTestCase):
 
     for f in [f_jit, f_cond]:
       # Use _read() to read the flag value rather than threadlocal value.
-      allow_promotion = config._read('jax_numpy_rank_promotion')
+      allow_promotion = config._read("jax_numpy_rank_promotion")
       try:
-        FLAGS.jax_numpy_rank_promotion = "allow"
+        config.update("jax_numpy_rank_promotion", "allow")
         num_traces = 0
         @jax.jit
         def f(x):
@@ -4256,7 +4244,7 @@ class APITest(jtu.JaxTestCase):
         with jax.numpy_rank_promotion("warn"):
           f(x)
           self.assertEqual(num_traces, 2)
-          FLAGS.jax_numpy_rank_promotion = "raise"
+          config.update("jax_numpy_rank_promotion", "raise")
           f(x)
           self.assertGreaterEqual(num_traces, 2)
         nt = num_traces
@@ -4265,7 +4253,7 @@ class APITest(jtu.JaxTestCase):
         f(x)
         self.assertEqual(num_traces, nt + 1)
       finally:
-        FLAGS.jax_numpy_rank_promotion = allow_promotion
+        config.update("jax_numpy_rank_promotion", allow_promotion)
 
   def test_grad_negative_argnums(self):
     def f(x, y):
@@ -4409,7 +4397,7 @@ class APITest(jtu.JaxTestCase):
 
     inp = jnp.arange(8)
 
-    with config_internal.log_compiles(True):
+    with config.log_compiles(True):
       with self.assertLogs(level='WARNING') as cm:
         add(inp)
         jax.clear_caches()
@@ -6217,7 +6205,7 @@ class JaxprTest(jtu.JaxTestCase):
   def test_elide_trivial_convert_element_types(self):
     # since we apply convert_element_type to a numpy.ndarray, the primitive is
     # still bound and thus would appear in the jaxpr if we didn't clean it up
-    if config.x64_enabled:
+    if config.enable_x64.value:
       x = np.arange(3, dtype='float64')
     else:
       x = np.arange(3, dtype='float32')
@@ -7464,7 +7452,7 @@ class CustomJVPTest(jtu.JaxTestCase):
 
   def test_custom_jvp_implicit_broadcasting(self):
     # https://github.com/google/jax/issues/6357
-    if config.x64_enabled:
+    if config.enable_x64.value:
       raise unittest.SkipTest("test only applies when x64 is disabled")
 
     @jax.custom_jvp

@@ -29,6 +29,7 @@ jobs:
     name: "TPU test (jaxlib=${{ matrix.jaxlib-version }}, ${{ matrix.tpu-type }})"
     env:
       DATE_12_WEEKS_AGO: $(python3 -c "import datetime; print(datetime.date.today() - datetime.timedelta(weeks=12))")
+      ENABLE_PJRT_COMPATIBILITY: false
     runs-on: ["self-hosted", "tpu", "${{ matrix.tpu-type }}"]
     timeout-minutes: 60
     defaults:
@@ -59,6 +60,8 @@ jobs:
             pip install requests
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly+oldest_supported_libtpu" ]; then
+          env:
+            ENABLE_PJRT_COMPATIBILITY: true
             pip install .
             pip install --pre jaxlib \
               -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html

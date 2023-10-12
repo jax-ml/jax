@@ -28,6 +28,7 @@ from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import core as jax_core
+from jax._src import custom_derivatives
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import state
@@ -1183,6 +1184,9 @@ def _closed_call_lowering_rule(
 
 
 triton_lowering_rules[jax_core.closed_call_p] = _closed_call_lowering_rule
+triton_lowering_rules[custom_derivatives.custom_jvp_call_p] = (
+    _closed_call_lowering_rule
+)
 
 
 def _remat_lowering_rule(ctx: TritonLoweringRuleContext, *args, jaxpr, **_):
