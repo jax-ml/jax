@@ -740,7 +740,9 @@ def _get_lowering_rule(
   ptr = _compute_pointers_from_indices(
       ptr, ref_block_info, idx, avals_in[0].shape, ctx.builder
   )
-  return tl.load(ptr, _builder=ctx.builder)
+  val = tl.load(ptr, _builder=ctx.builder)
+  # `tl.load` of a `*int1` returns a tensor with type `int8`, so fix the type.
+  return val.to(ptr.dtype.element_ty, _builder=ctx.builder)
 
 
 triton_lowering_rules[sp.get_p] = _get_lowering_rule
@@ -761,7 +763,7 @@ def _masked_load_lowering_rule(
   ptr = _compute_pointers_from_indices(
       ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape, ctx.builder
   )
-  return tl.load(
+  val = tl.load(
       ptr,
       mask=mask,
       other=other,
@@ -770,6 +772,8 @@ def _masked_load_lowering_rule(
       eviction_policy=eviction_policy,
       _builder=ctx.builder,
   )
+  # `tl.load` of a `*int1` returns a tensor with type `int8`, so fix the type.
+  return val.to(ptr.dtype.element_ty, _builder=ctx.builder)
 
 
 triton_lowering_rules[primitives.load_p] = _masked_load_lowering_rule
@@ -819,13 +823,16 @@ def _masked_swap_lowering_rule(
   ptr = _compute_pointers_from_indices(
       ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape, ctx.builder
   )
-  return tl.store(
+  other = None if mask is None else value
+  old_value = tl.load(ptr, mask=mask, other=other, _builder=ctx.builder)
+  tl.store(
       ptr,
       value,
       mask=mask,
       eviction_policy=eviction_policy,
       _builder=ctx.builder,
   )
+  return old_value
 
 
 triton_lowering_rules[primitives.swap_p] = _masked_swap_lowering_rule

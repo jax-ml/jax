@@ -436,6 +436,47 @@ class PallasCallTest(PallasTest):
     x = random.normal(key, (m, n))
     np.testing.assert_allclose(load(x), x + 1., atol=1e-5, rtol=1e-5)
 
+  def test_swap(self):
+    m, n = 16, 32
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((m, n), jnp.float32),) * 2,
+        grid=1,
+        input_output_aliases={0: 0, 1: 1},
+    )
+    def swap(_, _2, x_ref, y_ref):
+      x = x_ref[:]
+      y = pl.swap(y_ref, (slice(None),), x)
+      x_ref[:] = y
+
+    x = random.normal(random.PRNGKey(0), (m, n))
+    y = random.normal(random.PRNGKey(1), (m, n))
+    out = swap(x, y)
+    np.testing.assert_array_equal(out[0], y)
+    np.testing.assert_array_equal(out[1], x)
+
+  def test_masked_swap(self):
+    m, n = 16, 32
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((m, n), jnp.float32),) * 2,
+        grid=1,
+        input_output_aliases={0: 0, 1: 1},
+    )
+    def masked_swap(_, _2, mask_ref, x_ref, y_ref):
+      x = x_ref[:]
+      y = pl.swap(y_ref, (slice(None),), x, mask=mask_ref[:])
+      x_ref[:] = y
+
+    x = random.normal(random.PRNGKey(0), (m, n))
+    y = random.normal(random.PRNGKey(1), (m, n))
+    mask = random.bernoulli(random.PRNGKey(2), shape=(m, n))
+    out = masked_swap(x, y, mask)
+    np.testing.assert_array_equal(out[0], jnp.where(mask, y, x))
+    np.testing.assert_array_equal(out[1], jnp.where(mask, x, y))
+
   def test_unused_ref(self):
     m, n = 16, 32
     @functools.partial(

@@ -375,20 +375,30 @@ ad.primitive_jvps[swap_p] = _swap_jvp
 
 def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   del out_avals  # Unused.
-  ref, idx, val, _ = args_tree.unflatten(args_flat)
+  ref, idx, val, mask = args_tree.unflatten(args_flat)
   if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
     indices = idx.indices
-    scalar_dims = [not isinstance(s, Slice) and s.shape == () for s in indices]
+    scalar_dims = [
+        i
+        for i, s in enumerate(indices)
+        if not isinstance(s, Slice) and not s.shape
+    ]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
     slice_sizes = tuple(s.size if isinstance(s, Slice) else 1 for s in indices)
-    val_indexer = tuple(None if scalar else slice(None) for scalar in scalar_dims)
-    val = val[val_indexer]
+    out = lax.dynamic_slice(ref, slice_starts, slice_sizes=slice_sizes)
+    out = jnp.squeeze(out, scalar_dims)
+    if mask is not None:
+      out_ = out
+      out = jnp.where(mask, out, val)
+      val = jnp.where(mask, val, out_)
+    val = jnp.expand_dims(val, scalar_dims)
     x_new = lax.dynamic_update_slice(ref, val, start_indices=slice_starts)
-    out_ones = lax.dynamic_slice(ref, slice_starts, slice_sizes=slice_sizes)
-    out_indexer = tuple(0 if scalar else slice(None) for scalar in scalar_dims)
-    out = out_ones[out_indexer]
   elif all(not isinstance(s, Slice) for s in idx.indices):
     out = ref[idx.indices]
+    if mask is not None:
+      out_ = out
+      out = jnp.where(mask, out, val)
+      val = jnp.where(mask, val, out_)
     x_new = ref.at[idx.indices].set(val)
   else:
     raise NotImplementedError
