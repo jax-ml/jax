@@ -342,9 +342,9 @@ def convert(fun_jax: Callable,
           "containing a subset of {'cpu', 'cuda', 'rocm', 'tpu'}. "
           f"Got: {native_serialization_platforms}")
     native_serialization_platforms = tuple(native_serialization_platforms)
-    if len(native_serialization_platforms) > 1:
-      raise NotImplementedError(
-          "native_serialization_platforms is not yet implemented for multiple platforms")
+    # if len(native_serialization_platforms) > 1:
+    #   raise NotImplementedError(
+    #       "native_serialization_platforms is not yet implemented for multiple platforms")
 
   api.check_callable(fun_jax)
 
@@ -488,7 +488,7 @@ class NativeSerializationImpl(SerializationImpl):
     self.kwargs_specs = kwargs_specs
     self.native_serialization_disabled_checks = native_serialization_disabled_checks
     if native_serialization_platforms:
-      self.lowering_platform: Optional[str] = native_serialization_platforms[0]
+      self.lowering_platform = native_serialization_platforms
     else:
       self.lowering_platform = None
 
@@ -502,7 +502,7 @@ class NativeSerializationImpl(SerializationImpl):
     self._restore_context = _restore_context
     self.exported = export.export(
         self.fun_jax,
-        lowering_platform=self.lowering_platform,
+        lowering_platforms=self.lowering_platform,
         disabled_checks=self.native_serialization_disabled_checks
     )(*self.args_specs, **self.kwargs_specs)
 
@@ -850,7 +850,8 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
       ] if _thread_local_state.call_tf_concrete_function_list is not None else [],
   )
 
-  call_module_attrs["platforms"] = (exported.lowering_platform.upper(),)
+  logging.info(f"lowering_platforms: {exported.lowering_platforms}")
+  call_module_attrs["platforms"] = tuple(p.upper() for p in exported.lowering_platforms)
   if version >= 6:
     call_module_attrs["disabled_checks"] = tuple(
         str(dc)

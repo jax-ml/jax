@@ -58,7 +58,7 @@ class DisabledSafetyCheck:
 
   Most of these checks are performed on serialization, but some are deferred to
   deserialization. The list of disabled checks is attached to the serialization,
-  e.g., as a sequence of string attributes to `jax_export.Exported` or of
+  e.g., as a sequence of string attributes to `export.Exported` or of
   `tf.XlaCallModuleOp`.
 
   You can disable more deserialization safety checks by passing
@@ -346,7 +346,7 @@ def poly_specs(
     e, *_ = tree_util.prefix_errors(
         polymorphic_shapes_, args,
         is_leaf=lambda x: x is None)
-    raise e("jax_export polymorphic_shapes") from None
+    raise e("export polymorphic_shapes") from None
 
   # Now add in the polymorphic shapes
   args_specs_flat = tuple(
@@ -373,7 +373,7 @@ def export(fun_jax: Callable,
         the lowered code takes an argument specifying the platform.
         If None, then use the default JAX backend.
         The calling convention for multiple platforms is explained in the
-        `jax_export.Exported` docstring.
+        `export.Exported` docstring.
     disabled_checks: the safety checks to disable. See docstring
         of `DisabledSafetyCheck`.
 
@@ -384,7 +384,7 @@ def export(fun_jax: Callable,
   Usage:
 
       def f_jax(*args, **kwargs): ...
-      exported = jax_export.export(f_jax)(*args, **kwargs)
+      exported = export.export(f_jax)(*args, **kwargs)
   """
   fun_name = getattr(fun_jax, "__name__", "unknown")
   version = config.jax_serialization_version.value
@@ -534,11 +534,11 @@ def _wrap_main_func(
 ) -> ir.Module:
   """Wraps the lowered module with a new "main" handling dimension arguments.
 
-  See calling convention documentation for `jax_export.Exported`.
+  See calling convention documentation for `export.Exported`.
 
   Args:
     module: the HLO module as obtained from lowering. See the calling convention
-      for inner functions in `jax_export.Exported`.
+      for inner functions in `export.Exported`.
     args_avals_flat: the avals for all the arguments of the lowered function,
       which correspond to the array arguments of the `module`.
     args_kwargs_tree: the PyTreeDef corresponding to `(args, kwargs)`, for error

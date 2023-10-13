@@ -669,7 +669,13 @@ def emit_tf_embedded_graph_custom_call(
 
 
 def add_to_call_tf_concrete_function_list(concrete_tf_fn: Any, call_tf_concrete_function_list: list[Any]) -> int:
+  logging.info("call_tf_concrete_function_list: %s", call_tf_concrete_function_list)
+  logging.info("concrete_tf_fn: %s", concrete_tf_fn)
   func_name = concrete_tf_fn.function_def.signature.name
+  # Perhaps we added it already
+  for i, fun in enumerate(call_tf_concrete_function_list):
+    if fun is concrete_tf_fn:
+      return i
   assert func_name not in [f.function_def.signature.name for f in call_tf_concrete_function_list]
   called_index = len(call_tf_concrete_function_list)
   call_tf_concrete_function_list.append(concrete_tf_fn)
