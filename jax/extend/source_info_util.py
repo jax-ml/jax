@@ -18,6 +18,7 @@
 from jax._src.source_info_util import (
   NameStack as NameStack,
   SourceInfo as SourceInfo,
+  current as current,
   current_name_stack as current_name_stack,
   extend_name_stack as extend_name_stack,
   new_name_stack as new_name_stack,
