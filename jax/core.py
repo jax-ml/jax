@@ -227,7 +227,7 @@ _deprecations = {
         _src_core.safe_zip,
     ),
     "source_info_util": (
-        "jax.core.source_info_util is deprecated. jax._src.source_info_util is a non-public API.",
+        "jax.core.source_info_util is deprecated. Use jax.extend.source_info_util.",
         _src_core.source_info_util,
     ),
     "total_ordering": (
