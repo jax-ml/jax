@@ -1052,7 +1052,9 @@ def _reduction_lowering(body, ctx: TritonLoweringRuleContext, args, axes):
   combine_args = [
       tl.core.tensor(block.arg(i), ty) for i, ty in enumerate(param_types)
   ]
-  results = lower_jaxpr_to_triton_ir(ctx, combine_jaxpr, None, *combine_args)
+  results = lower_jaxpr_to_triton_ir(
+      ctx.context, combine_jaxpr, None, *combine_args
+  )
   handles = [r.handle for r in results]
   builder.create_reduce_ret(*handles)
   builder.restore_insertion_point(old_ip)
