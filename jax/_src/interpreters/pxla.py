@@ -1352,7 +1352,6 @@ def _hlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs):
   else:
     raise TypeError(aval)
 
-
 def _extend_axis_env(env: sharding_impls.AxisEnv, name, size: int):
   return sharding_impls.AxisEnv(env.nreps, env.names + (name,),
                                 env.sizes + (size,))
