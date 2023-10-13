@@ -225,7 +225,7 @@ def write_bazelrc(*, python_bin_path, remote_build,
                   cpu, cuda_compute_capabilities,
                   rocm_amdgpu_targets, bazel_options, target_cpu_features,
                   wheel_cpu, enable_mkl_dnn, enable_cuda, enable_nccl,
-                  enable_tpu, enable_rocm, build_gpu_plugin):
+                  enable_tpu, enable_rocm):
   tf_cuda_paths = []
 
   with open("../.jax_configure.bazelrc", "w") as f:
@@ -292,10 +292,6 @@ def write_bazelrc(*, python_bin_path, remote_build,
       f.write("build --config=rocm\n")
       if not enable_nccl:
         f.write("build --config=nonccl\n")
-    if build_gpu_plugin:
-      f.write(textwrap.dedent("""\
-        build --noincompatible_remove_legacy_whole_archive
-        """))
 
 BANNER = r"""
      _   _  __  __
@@ -563,7 +559,6 @@ def main():
       enable_nccl=args.enable_nccl,
       enable_tpu=args.enable_tpu,
       enable_rocm=args.enable_rocm,
-      build_gpu_plugin=args.build_gpu_plugin,
   )
 
   if args.configure_only:
