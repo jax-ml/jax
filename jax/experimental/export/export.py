@@ -1029,7 +1029,10 @@ def _export_native_vjp(primal_fun, primal: Exported) -> Exported:
 ### Importing
 
 def call_exported(exported: Exported) -> Callable[..., jax.Array]:
-
+  if not isinstance(exported, Exported):
+    raise ValueError(
+      "The exported argument must be an export.Exported. "
+      f"Found {exported}.")
   @jax.custom_vjp
   def f_flat(*args_flat):
     return call_exported_p.bind(*args_flat, exported=exported)
