@@ -27,6 +27,7 @@ import jax
 import jax.numpy as jnp
 import jax.profiler
 from jax import config
+from jax._src.lib import xla_extension_version
 import jax._src.test_util as jtu
 
 try:
@@ -102,6 +103,19 @@ class ProfilerTest(unittest.TestCase):
       if jtu.test_device_matches(["tpu"]):
         self.assertIn(b"/device:TPU", proto)
       self.assertIn(b"pxla.py", proto)
+
+  def testProfilerGetFDOProfile(self):
+    if xla_extension_version < 206:
+      return
+    # Tests stop_and_get_fod_profile could run.
+    try:
+      jax.profiler.start_trace("test")
+      jax.pmap(lambda x: jax.lax.psum(x + 1, "i"), axis_name="i")(
+          jnp.ones(jax.local_device_count())
+      )
+    finally:
+      fdo_profile = jax._src.profiler.stop_and_get_fdo_profile()
+    self.assertEqual(fdo_profile, b"")
 
   def testProgrammaticProfilingErrors(self):
     with self.assertRaisesRegex(RuntimeError, "No profile started"):
