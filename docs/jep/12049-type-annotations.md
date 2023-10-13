@@ -178,7 +178,7 @@ Conversely, outputs of functions and methods should be typed as strictly as poss
 - `Array` or `NDArray` (see below) for type annotation purposes is effectively equivalent to `Union[Tracer, jnp.ndarray]` and should be used to annotate array outputs.
 - `DType` is an alias of `np.dtype`, perhaps with the ability to also represent key types and other generalizations used within JAX.
 - `Shape` is essentially `Tuple[int, ...]`, perhaps with some additional flexibility to account for dynamic shapes.
-- `NamedShape` is an extension of `Shape` that allows for named shapes as used internall in JAX.
+- `NamedShape` is an extension of `Shape` that allows for named shapes as used internally in JAX.
 - etc.
 
 We will also explore whether the current implementation of `jax.numpy.ndarray` can be dropped in favor of making `ndarray` an alias of `Array` or similar.
