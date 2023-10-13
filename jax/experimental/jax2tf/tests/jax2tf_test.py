@@ -15,10 +15,13 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 import collections
+from collections.abc import Sequence
 import contextlib
+import functools
 import math
 import os
 import re
+from typing import Optional
 import unittest
 
 from absl import logging
@@ -35,6 +38,7 @@ from jax._src import core
 from jax._src import source_info_util
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.interpreters import mlir
 from jax.experimental import jax2tf
 from jax.experimental.export import export
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -53,6 +57,30 @@ config.parse_flags_with_absl()
 
 
 class Jax2TfTest(tf_test_util.JaxToTfTestCase):
+
+  @classmethod
+  def setUpClass(cls):
+    # Pick one device from each available platform
+    cls.jax_platforms = []
+    for backend in ["cpu", "gpu", "tpu"]:
+      try:
+        devices = jax.devices(backend)
+      except RuntimeError:
+        devices = []
+      if devices:
+        cls.jax_platforms.append(devices[0].platform)
+
+    # One TF device of each device_type
+    cls.tf_devices = []
+    for tf_device in (tf.config.list_logical_devices("TPU") +
+                      tf.config.list_logical_devices("GPU") +
+                      tf.config.list_logical_devices()):
+      if tf_device.device_type == "TPU_SYSTEM":
+        continue  # A virtual device
+      if all(tf_device.device_type != d.device_type for d in cls.tf_devices):
+        cls.tf_devices.append(tf_device)
+
+    super(Jax2TfTest, cls).setUpClass()
 
   def test_empty(self):
     f_jax = lambda x, y: x
@@ -1537,7 +1565,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       _ = func_to_convert(*args)
       exported = export.export(
           func_to_convert,
-          lowering_platform='tpu'
+          lowering_platforms=("tpu",)
       )(*(core.ShapedArray(a.shape, a.dtype) for a in args))
 
     if transform1 == "shard_map":
@@ -1660,6 +1688,68 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
     f_tf_nested = jax2tf.convert(f_jax_nested, native_serialization=True)
     self.assertAllClose(res, f_tf_nested(inputs))
+
+  def test_multi_platform(self):
+    if config.enable_x64.value:
+      self.skipTest("TODO: enable when we can handle i64 platform_index_argument")
+    # Checks that we dispatch from TF to the proper JAX platform lowering.
+
+    # A primitive for testing multi-platform lowering. Takes one argument and
+    # adds a different value to it: cpu=2., tpu=3., cuda=.4, rocm=5.
+    _testing_multi_platform_p = core.Primitive("testing_multi_platform")
+    _testing_multi_platform_to_add = dict(cpu=2., tpu=3., cuda=4., rocm=5.)
+
+    @_testing_multi_platform_p.def_abstract_eval
+    def _testing_multi_platform_abstract_eval(xaval: core.AbstractValue):
+      assert xaval.dtype == np.float32  # type: ignore
+      return xaval
+
+    @_testing_multi_platform_p.def_impl
+    def _testing_multi_platform_impl(x: jax.Array) -> jax.Array:
+      to_add = _testing_multi_platform_to_add[platform]
+      return x + to_add
+
+    def _testing_multi_platform_lowering(ctx: mlir.LoweringRuleContext,
+                                         x: mlir.Value,
+                                         *,
+                                         platform: str) -> Sequence[mlir.Value]:
+      to_add = _testing_multi_platform_to_add[platform]
+      to_add_value = mlir.broadcast_in_dim(ctx,
+                                           mlir.ir_constant(
+                                             np.float32(to_add)),
+                                           ctx.avals_in[0],
+                                           broadcast_dimensions=())
+      return mlir.hlo.AddOp(x, to_add_value).results
+
+    # Register a default rule for cuda, to test the default-platform rule selection.
+    mlir.register_lowering(_testing_multi_platform_p,
+                           functools.partial(_testing_multi_platform_lowering,
+                                             platform="cuda"))
+    for platform in ["cpu", "tpu", "rocm"]:
+      mlir.register_lowering(_testing_multi_platform_p,
+                             functools.partial(
+                               _testing_multi_platform_lowering,
+                               platform=platform),
+                             platform=platform)
+
+    def f_jax(x):
+      return _testing_multi_platform_p.bind(x)
+
+    x = np.float32(.42)
+    f_tf = jax2tf.convert(
+      f_jax,
+      native_serialization=True,
+      native_serialization_platforms=("cpu", "cuda", "tpu"))
+    for tf_device in self.__class__.tf_devices:
+      with tf.device(tf_device):
+        res = f_tf(x)
+      logging.info(f"tf_device = {tf_device} and device_type = {tf_device.device_type}")
+      tf_device_jax_platform = dict(
+        CPU="cpu", GPU="cuda", TPU="tpu"
+      )[tf_device.device_type]
+      self.assertAllClose(
+        res,
+        x + _testing_multi_platform_to_add[tf_device_jax_platform])
 
 
 @jtu.with_config(jax_enable_custom_prng=True)

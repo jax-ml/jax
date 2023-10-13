@@ -234,7 +234,7 @@ def convert(fun_jax: Callable,
             with_gradient: bool = True,
             enable_xla: bool = True,
             native_serialization: Union[bool, _DefaultNativeSerialization] = DEFAULT_NATIVE_SERIALIZATION,
-            native_serialization_platforms: Sequence[str] = (),
+            native_serialization_platforms: Optional[Sequence[str]] = None,
             native_serialization_disabled_checks: Sequence[DisabledSafetyCheck] = (),
             ) -> Callable:
   """Allows calling a JAX function from a TensorFlow program.
@@ -307,7 +307,7 @@ def convert(fun_jax: Callable,
       `native_serialization`, specify the platform(s)
       for which to lower the code. Must be a tuple of
       strings, including a subset of: 'cpu', 'cuda', 'rocm', 'tpu'.
-      The default (empty tuple), specifies the JAX default
+      The default (`None``), specifies the JAX default
       backend on the machine where the lowering is done.
     native_serialization_disabled_checks: In conjunction with
       `native_serialization`, disable the specified safety checks.
@@ -342,9 +342,6 @@ def convert(fun_jax: Callable,
           "containing a subset of {'cpu', 'cuda', 'rocm', 'tpu'}. "
           f"Got: {native_serialization_platforms}")
     native_serialization_platforms = tuple(native_serialization_platforms)
-    if len(native_serialization_platforms) > 1:
-      raise NotImplementedError(
-          "native_serialization_platforms is not yet implemented for multiple platforms")
 
   api.check_callable(fun_jax)
 
@@ -478,7 +475,7 @@ class SerializationImpl:
 class NativeSerializationImpl(SerializationImpl):
   def __init__(self, fun_jax, *,
                args_specs, kwargs_specs,
-               native_serialization_platforms: Sequence[str],
+               native_serialization_platforms: Optional[Sequence[str]],
                native_serialization_disabled_checks: Sequence[DisabledSafetyCheck]):
     self.convert_kwargs = dict(native_serialization=True,
                                native_serialization_platforms=native_serialization_platforms,
@@ -487,10 +484,7 @@ class NativeSerializationImpl(SerializationImpl):
     self.args_specs = args_specs
     self.kwargs_specs = kwargs_specs
     self.native_serialization_disabled_checks = native_serialization_disabled_checks
-    if native_serialization_platforms:
-      self.lowering_platform: Optional[str] = native_serialization_platforms[0]
-    else:
-      self.lowering_platform = None
+    self.native_serialization_platforms = native_serialization_platforms
 
   def before_conversion(self):
     _prev_func_list = _thread_local_state.call_tf_concrete_function_list
@@ -502,7 +496,7 @@ class NativeSerializationImpl(SerializationImpl):
     self._restore_context = _restore_context
     self.exported = export.export(
         self.fun_jax,
-        lowering_platform=self.lowering_platform,
+        lowering_platforms=self.native_serialization_platforms,
         disabled_checks=self.native_serialization_disabled_checks
     )(*self.args_specs, **self.kwargs_specs)
 
@@ -850,7 +844,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
       ] if _thread_local_state.call_tf_concrete_function_list is not None else [],
   )
 
-  call_module_attrs["platforms"] = (exported.lowering_platform.upper(),)
+  call_module_attrs["platforms"] = tuple(p.upper() for p in exported.lowering_platforms)
   if version >= 6:
     call_module_attrs["disabled_checks"] = tuple(
         str(dc)
