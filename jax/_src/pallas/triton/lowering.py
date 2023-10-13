@@ -337,13 +337,6 @@ def _atomic_lowering_rule(
 triton_lowering_rules[primitives.atomic_rmw_p] = _atomic_lowering_rule
 
 
-def _atomic_cas_lowering_rule(ctx: TritonLoweringRuleContext, ptr, cmp, val):
-  return tl.atomic_cas(ptr, cmp, val, _builder=ctx.builder)
-
-
-triton_lowering_rules[primitives.atomic_cas_p] = _atomic_cas_lowering_rule
-
-
 def _max_contiguous_lowering_rule(ctx: TritonLoweringRuleContext, x, *, values):
   values = [tl.constexpr(v) for v in values]
   return tl.max_contiguous(x, values, _builder=ctx.builder)
@@ -362,11 +355,68 @@ def _multiple_of_lowering_rule(ctx: TritonLoweringRuleContext, x, *, values):
 triton_lowering_rules[primitives.multiple_of_p] = _multiple_of_lowering_rule
 
 
-def _abs_lowering_rule(ctx: TritonLoweringRuleContext, x):
-  return tl.abs(x, _builder=ctx.builder)
+_TRITON_FN_MAPPING = {
+    # Unary ops.
+    lax.neg_p: tl.semantic.minus,
+    lax.abs_p: tl.abs,
+    lax.ceil_p: tl.math.ceil,
+    lax.floor_p: tl.math.floor,
+    lax.exp_p: tl.exp,
+    lax.exp2_p: tl.math.exp2,
+    lax.expm1_p: tl.math.expm1,
+    lax.log_p: tl.log,
+    lax.log1p_p: tl.math.log1p,
+    lax.sqrt_p: tl.sqrt,
+    lax.cbrt_p: tl.math.cbrt,
+    lax.rsqrt_p: tl.math.rsqrt,
+    lax.sin_p: tl.sin,
+    lax.cos_p: tl.cos,
+    lax.tan_p: tl.math.tan,
+    lax.asin_p: tl.math.asin,
+    lax.acos_p: tl.math.acos,
+    lax.atan_p: tl.math.atan,
+    lax.atan2_p: tl.math.atan2,
+    lax.sinh_p: tl.math.sinh,
+    lax.cosh_p: tl.math.cosh,
+    lax.tanh_p: tl.math.tanh,
+    lax.asinh_p: tl.math.asinh,
+    lax.acosh_p: tl.math.acosh,
+    lax.atanh_p: tl.math.atanh,
+    lax.not_p: tl.semantic.invert,
+    lax.population_count_p: tl.math.popc,
+    lax.clz_p: tl.math.clz,
+    # Binary ops.
+    lax.add_p: tl.semantic.add,
+    lax.sub_p: tl.semantic.sub,
+    lax.mul_p: tl.semantic.mul,
+    lax.pow_p: tl.math.pow,
+    lax.rem_p: tl.semantic.mod,
+    lax.and_p: tl.semantic.and_,
+    lax.or_p: tl.semantic.or_,
+    lax.xor_p: tl.semantic.xor_,
+    lax.eq_p: tl.semantic.equal,
+    lax.ne_p: tl.semantic.not_equal,
+    lax.gt_p: tl.semantic.greater_than,
+    lax.ge_p: tl.semantic.greater_equal,
+    lax.lt_p: tl.semantic.less_than,
+    lax.le_p: tl.semantic.less_equal,
+    lax.shift_left_p: tl.semantic.shl,
+    lax.shift_right_arithmetic_p: tl.semantic.ashr,
+    lax.shift_right_logical_p: tl.semantic.lshr,
+    lax.nextafter_p: tl.math.nextafter,
+    ad_util.add_any_p: tl.semantic.add,
+    # Other ops.
+    primitives.atomic_cas_p: tl.atomic_cas,
+}
 
 
-triton_lowering_rules[lax.abs_p] = _abs_lowering_rule
+for primitive, fn in _TRITON_FN_MAPPING.items():
+  if tl.core.is_builtin(fn):
+    rule = lambda ctx, *args, fn=fn: fn(*args, _builder=ctx.builder)
+  else:
+    rule = lambda ctx, *args, fn=fn: fn(*args, ctx.builder)
+
+  triton_lowering_rules[primitive] = rule
 
 
 def _clamp_lowering_rule(ctx: TritonLoweringRuleContext, min, operand, max):
@@ -374,27 +424,6 @@ def _clamp_lowering_rule(ctx: TritonLoweringRuleContext, min, operand, max):
 
 
 triton_lowering_rules[lax.clamp_p] = _clamp_lowering_rule
-
-
-def _exp_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.exp(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.exp_p] = _exp_lowering_rule
-
-
-def _log_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.log(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.log_p] = _log_lowering_rule
-
-
-def _log1p_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.math.log1p(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.log1p_p] = _log1p_lowering_rule
 
 
 def _logistic_lowering_rule(ctx: TritonLoweringRuleContext, a):
@@ -406,27 +435,6 @@ def _logistic_lowering_rule(ctx: TritonLoweringRuleContext, a):
 
 
 triton_lowering_rules[lax.logistic_p] = _logistic_lowering_rule
-
-
-def _sin_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.sin(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.sin_p] = _sin_lowering_rule
-
-
-def _cos_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.cos(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.cos_p] = _cos_lowering_rule
-
-
-def _mul_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__mul__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.mul_p] = _mul_lowering_rule
 
 
 def _div_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
@@ -449,14 +457,6 @@ def _iota_lowering_rule(
 triton_lowering_rules[lax.iota_p] = _iota_lowering_rule
 
 
-def _add_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__add__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.add_p] = _add_lowering_rule
-triton_lowering_rules[ad_util.add_any_p] = _add_lowering_rule
-
-
 def _integer_pow_lowering_rule(ctx: TritonLoweringRuleContext, a, *, y):
   if y == 2:
     return a.__mul__(a, _builder=ctx.builder)
@@ -470,20 +470,6 @@ def _integer_pow_lowering_rule(ctx: TritonLoweringRuleContext, a, *, y):
 
 
 triton_lowering_rules[lax.integer_pow_p] = _integer_pow_lowering_rule
-
-
-def _pow_lowering_rule(ctx: TritonLoweringRuleContext, a, y):
-  return tl.math.pow(a, y, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.pow_p] = _pow_lowering_rule
-
-
-def _tanh_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.math.tanh(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.tanh_p] = _tanh_lowering_rule
 
 
 def _min_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
@@ -529,119 +515,11 @@ def max_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
 triton_lowering_rules[lax.max_p] = max_lowering_rule
 
 
-def ge_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__ge__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.ge_p] = ge_lowering_rule
-
-
-def eq_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__eq__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[jax.lax.eq_p] = eq_lowering_rule
-
-
-def ne_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__ne__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[jax.lax.ne_p] = ne_lowering_rule
-
-def bitwise_and_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__and__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[jax.lax.and_p] = bitwise_and_lowering_rule
-
-
-def bitwise_or_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__or__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[jax.lax.or_p] = bitwise_or_lowering_rule
-
-
 def select_n_lowering_rule(ctx: TritonLoweringRuleContext, pred, a, b):
   return tl.semantic.where(pred, b, a, ctx.builder)
 
 
 triton_lowering_rules[lax.select_n_p] = select_n_lowering_rule
-
-
-def _rem_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__mod__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.rem_p] = _rem_lowering_rule
-
-
-def _sub_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__sub__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.sub_p] = _sub_lowering_rule
-
-
-def _lt_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__lt__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.lt_p] = _lt_lowering_rule
-
-
-def _gt_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__gt__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.gt_p] = _gt_lowering_rule
-
-
-def _sqrt_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.sqrt(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.sqrt_p] = _sqrt_lowering_rule
-
-
-def _rsqrt_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.math.rsqrt(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.rsqrt_p] = _rsqrt_lowering_rule
-
-
-def _neg_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return a.__neg__(_builder=ctx.builder)
-
-
-triton_lowering_rules[lax.neg_p] = _neg_lowering_rule
-
-
-def _shift_left_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__lshift__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.shift_left_p] = _shift_left_lowering_rule
-
-
-def _shift_right_arithmetic_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return tl.semantic.ashr(a, b, builder=ctx.builder)
-
-
-triton_lowering_rules[lax.shift_right_arithmetic_p] = (
-    _shift_right_arithmetic_lowering_rule
-)
-
-
-def _shift_right_logical_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return tl.semantic.lshr(a, b, builder=ctx.builder)
-
-
-triton_lowering_rules[lax.shift_right_logical_p] = (
-    _shift_right_logical_lowering_rule
-)
 
 
 def _broadcast_in_dim_lowering_rule(
