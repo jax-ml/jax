@@ -77,7 +77,7 @@ def setUpModule():
   # Clear any cached backends so new CPU backend will pick up the env var.
   xla_bridge.get_backend.cache_clear()
   global prev_spmd_lowering_flag
-  prev_spmd_lowering_flag = maps._SPMD_LOWERING.value
+  prev_spmd_lowering_flag = maps.SPMD_LOWERING.value
   config.update('experimental_xmap_spmd_lowering', True)
 
 

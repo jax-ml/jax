@@ -259,7 +259,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    self.xmap_spmd_lowering_enabled = maps._SPMD_LOWERING.value
+    self.xmap_spmd_lowering_enabled = maps.SPMD_LOWERING.value
     jax.config.update("experimental_xmap_spmd_lowering", True)
 
   def tearDown(self):

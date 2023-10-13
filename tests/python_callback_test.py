@@ -632,8 +632,8 @@ class PureCallbackTest(jtu.JaxTestCase):
     if not hasattr(xla_client.OpSharding.Type, 'MANUAL'):
       raise unittest.SkipTest('Manual partitioning needed for pure_callback')
 
-    spmd_lowering = maps._SPMD_LOWERING.value
-    spmd_manual_lowering = maps._SPMD_LOWERING_MANUAL.value
+    spmd_lowering = maps.SPMD_LOWERING.value
+    spmd_manual_lowering = maps.SPMD_LOWERING_MANUAL.value
     config.update('experimental_xmap_spmd_lowering', True)
     config.update('experimental_xmap_spmd_lowering_manual', True)
     try:
