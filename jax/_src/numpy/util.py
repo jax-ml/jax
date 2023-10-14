@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import partial
@@ -26,7 +27,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.util import safe_zip, safe_map
-from jax._src.typing import Array, ArrayLike, DType, DTypeLike, Shape
+from jax._src.typing import Array, ArrayLike, DimSize, DType, DTypeLike, Shape
 
 import numpy as np
 
@@ -387,12 +388,13 @@ def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
   return [_broadcast_to(arg, result_shape) for arg in args]
 
 
-def _broadcast_to(arr: ArrayLike, shape: Shape) -> Array:
+def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape) -> Array:
   check_arraylike("broadcast_to", arr)
   arr = arr if isinstance(arr, Array) else lax.asarray(arr)
   if not isinstance(shape, tuple) and np.ndim(shape) == 0:
     shape = (shape,)
-  shape = core.canonicalize_shape(shape)  # check that shape is concrete
+  # check that shape is concrete
+  shape = core.canonicalize_shape(shape)  # type: ignore[arg-type]
   arr_shape = np.shape(arr)
   if core.definitely_equal_shape(arr_shape, shape):
     return arr
