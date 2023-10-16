@@ -637,6 +637,9 @@ jax_test(
         "tpu": 30,
     },
     tags = ["multiaccelerator"],
+    deps = [
+        "//jax:internal_test_util",
+    ],
 )
 
 jax_test(
