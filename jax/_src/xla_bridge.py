@@ -107,6 +107,10 @@ def _get_tpu_library_path() -> Optional[str]:
 
   libtpu_module = maybe_import_libtpu()
   if libtpu_module is not None:
+    # TODO(b/305803029): temporarily calls configure_library_path because the
+    # tpu_tracer still depends on it. The tpu_tracer dependenecy on it will be
+    # removed in the next two weeks.
+    libtpu_module.configure_library_path()
     return libtpu_module.get_library_path()
 
   return None
