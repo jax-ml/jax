@@ -80,6 +80,42 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @genNamedParametersNArgs(2)
+  def testWrappedCauchyPdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    rng_uniform = jtu.rand_uniform(self.rng(), low=1e-3, high=1 - 1e-3)
+    scipy_fun = osp_stats.wrapcauchy.pdf
+    lax_fun = lsp_stats.wrapcauchy.pdf
+
+    def args_maker():
+      x = rng(shapes[0], dtypes[0])
+      c = rng_uniform(shapes[1], dtypes[1])
+      return [x, c]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol={np.float32: 1e-4})
+      self._CompileAndCheck(lax_fun, args_maker, tol={np.float32: 1e-5,
+                                                      np.float64: 1e-11})
+
+  @genNamedParametersNArgs(2)
+  def testWrappedCauchyLogPdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    rng_uniform = jtu.rand_uniform(self.rng(), low=1e-3, high=1 - 1e-3)
+    scipy_fun = osp_stats.wrapcauchy.logpdf
+    lax_fun = lsp_stats.wrapcauchy.logpdf
+
+    def args_maker():
+      x = rng(shapes[0], dtypes[0])
+      c = rng_uniform(shapes[1], dtypes[1])
+      return [x, c]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol={np.float32: 1e-4})
+      self._CompileAndCheck(lax_fun, args_maker, tol={np.float32: 1e-5,
+                                                      np.float64: 1e-13})
+
   @genNamedParametersNArgs(3)
   def testPoissonLogPmf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
