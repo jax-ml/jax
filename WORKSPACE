@@ -2,9 +2,6 @@
 load("//third_party/xla:workspace.bzl", jax_xla_workspace = "repo")
 jax_xla_workspace()
 
-load("//third_party/ducc:workspace.bzl", ducc = "repo")
-ducc()
-
 load("@xla//:workspace4.bzl", "xla_workspace4")
 xla_workspace4()
 

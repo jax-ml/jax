@@ -79,7 +79,7 @@ cc_library(
         ":ducc_fft_flatbuffers_cc",
         "@xla//xla/service:custom_call_status",
         "@com_github_google_flatbuffers//:flatbuffers",
-        "@ducc",
+        "@ducc//:fft",
     ],
 )
 
