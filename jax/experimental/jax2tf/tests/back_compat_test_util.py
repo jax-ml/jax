@@ -284,7 +284,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     args_specs = export.poly_specs(data.inputs, polymorphic_shapes)
     exported = export.export(
       jax.jit(func),
-      lowering_platform=self.default_jax_backend(),
+      lowering_platforms=(self.default_jax_backend(),),
       disabled_checks=tuple(
         export.DisabledSafetyCheck.custom_call(target)
         for target in allow_unstable_custom_call_targets)
@@ -320,7 +320,6 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         out_avals=tuple(out_avals),
         in_shardings=(pxla.UNSPECIFIED,) * len(in_avals),
         out_shardings=(pxla.UNSPECIFIED,) * len(out_avals),
-        lowering_platform=data.platform,
         lowering_platforms=(data.platform,),
         disabled_checks=(),
         mlir_module_serialized=data.mlir_module_serialized,

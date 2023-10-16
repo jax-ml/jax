@@ -127,7 +127,8 @@ class JaxExportTest(jtu.JaxTestCase):
       return jnp.sin(x)
     exp = export.export(my_fun)(jax.ShapeDtypeStruct((4,), dtype=np.float32))
     self.assertEqual("my_fun", exp.fun_name)
-    self.assertEqual(export.default_lowering_platform(), exp.lowering_platform)
+    self.assertEqual((export.default_lowering_platform(),),
+                     exp.lowering_platforms)
     self.assertEqual(tree_util.tree_flatten(((1,), {}))[1], exp.in_tree)
     self.assertEqual((core.ShapedArray((4,), dtype=np.float32),), exp.in_avals)
     self.assertEqual((core.ShapedArray((4,), dtype=np.float32),), exp.out_avals)
@@ -138,10 +139,10 @@ class JaxExportTest(jtu.JaxTestCase):
     def f(a_b_pair, *, a, b):
       return (dict(res=a_b_pair, a=a, b=b), jnp.sin(a), jnp.cos(b))
 
-    exp = export.export(f, lowering_platform="cpu")((a, b), a=a, b=b)
+    exp = export.export(f, lowering_platforms=("cpu",))((a, b), a=a, b=b)
     a_aval = core.ShapedArray(a.shape, a.dtype)
     b_aval = core.ShapedArray(b.shape, b.dtype)
-    self.assertEqual(exp.lowering_platform, "cpu")
+    self.assertEqual(exp.lowering_platforms, ("cpu",))
     args = ((a, b),)
     kwargs = dict(a=a, b=b)
     self.assertEqual(exp.in_tree, tree_util.tree_flatten((args, kwargs))[1])
@@ -258,7 +259,7 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_error_wrong_platform(self, platform):
     a = np.arange(4, dtype=np.float32)
 
-    exp_f = export.export(jnp.sin, lowering_platform=platform)(a)
+    exp_f = export.export(jnp.sin, lowering_platforms=(platform,))(a)
     if xb.canonicalize_platform(jtu.device_under_test()) == platform:
       raise unittest.SkipTest("Uninteresting scenario")
 
@@ -268,7 +269,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     # Now try with the platform check disabled
     exp_f_no_platform_check = export.export(
-      jnp.sin, lowering_platform=platform,
+      jnp.sin, lowering_platforms=(platform,),
       disabled_checks=[export.DisabledSafetyCheck.platform()])(a)
     res = export.call_exported(exp_f_no_platform_check)(a)
     self.assertAllClose(res, jnp.sin(a))
