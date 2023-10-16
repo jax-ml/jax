@@ -144,6 +144,22 @@ def _eval_index_map(
   )
 
 
+def _convert_dtype(dtype: jnp.dtype) -> tl.dtype:
+  if dtype == jnp.float32:
+    return tl.float32
+  elif dtype == jnp.float64:
+    return tl.float64
+  elif dtype == jnp.float16:
+    return tl.float16
+  elif dtype == jnp.bfloat16:
+    return tl.bfloat16
+  elif dtype == jnp.int32:
+    return tl.int32
+  elif dtype == jnp.int64:
+    return tl.int64
+  raise ValueError(f"Unhandled dtype: {dtype}")
+
+
 triton_lowering_rules = {}
 
 
@@ -473,21 +489,7 @@ def _convert_element_type_lowering_rule(
 ):
   if new_dtype == ctx.avals_in[0].dtype:
     return a
-  if new_dtype == jnp.float32:
-    new_dtype = tl.float32
-  elif new_dtype == jnp.float64:
-    new_dtype = tl.float64
-  elif new_dtype == jnp.float16:
-    new_dtype = tl.float16
-  elif new_dtype == jnp.bfloat16:
-    new_dtype = tl.bfloat16
-  elif new_dtype == jnp.int32:
-    new_dtype = tl.int32
-  elif new_dtype == jnp.int64:
-    new_dtype = tl.int64
-  else:
-    raise ValueError(f"Unhandled dtype: {new_dtype}")
-  return tl.semantic.cast(a, new_dtype, ctx.builder)
+  return tl.semantic.cast(a, _convert_dtype(new_dtype), ctx.builder)
 
 
 triton_lowering_rules[lax.convert_element_type_p] = (
@@ -868,15 +870,13 @@ def _dot_general_lowering(
     precision,
     preferred_element_type
 ):
-  contract_dims, batch_dims = dimension_numbers
+  del preferred_element_type  # Unused.
+  ((a_contract_dim,), (b_contract_dim,)), batch_dims = dimension_numbers
   assert batch_dims == ((), ())
-  (a_contract_dim,) = contract_dims[0]
-  (b_contract_dim,) = contract_dims[1]
-  trans_a = a_contract_dim == 0
-  trans_b = b_contract_dim == 1
-  if trans_a:
+
+  if a_contract_dim == 0:
     a = tl.trans(a, _builder=ctx.builder)
-  if trans_b:
+  if b_contract_dim == 1:
     b = tl.trans(b, _builder=ctx.builder)
 
   if precision is None:
@@ -884,7 +884,18 @@ def _dot_general_lowering(
   else:
     prec_a, prec_b = precision
     allow_tf32 = prec_a in _TF32_PRECISIONS or prec_b in _TF32_PRECISIONS
-  return tl.dot(a, b, _builder=ctx.builder, allow_tf32=allow_tf32)
+
+  out_dtype = acc_dtype = _convert_dtype(ctx.avals_out[0].dtype)
+  if acc_dtype not in (tl.int32, tl.float16):
+    acc_dtype = tl.float32
+
+  return tl.dot(
+      a,
+      b,
+      allow_tf32=allow_tf32,
+      out_dtype=acc_dtype,
+      _builder=ctx.builder,
+  ).to(out_dtype, _builder=ctx.builder)
 
 
 triton_lowering_rules[lax.dot_general_p] = _dot_general_lowering

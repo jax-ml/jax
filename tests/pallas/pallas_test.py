@@ -86,7 +86,7 @@ def matmul(x, y, *, bm, bn, gm, bk, interpret, debug=False):
           jax.lax.broadcast_in_dim(idx_k, (bk, bn), (0,)),
           jax.lax.broadcast_in_dim(idx_n, (bk, bn), (1,)))
       x_block, y_block = x_ref[x_idx], y_ref[y_idx]
-      out = jnp.dot(x_block, y_block)
+      out = pl.dot(x_block, y_block)
       acc_ref[:, :] += out
     acc = for_loop(k // bk, body, acc).astype(o_ref.dtype)
     o_idx = (
@@ -115,7 +115,7 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
     def body(i, acc_ref):
       x_block = pl.load(x_ref, (slice(None), pl.ds(i * bk, bk)))
       y_block = pl.load(y_ref, (pl.ds(i * bk, bk), slice(None)))
-      acc_ref[:, :] += jnp.dot(x_block, y_block)
+      acc_ref[:, :] += pl.dot(x_block, y_block)
     acc = for_loop(k // bk, body, acc).astype(o_ref.dtype)
     o_ref[:, :] = acc
   return matmul_kernel(x, y)
