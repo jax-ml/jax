@@ -106,7 +106,7 @@ class ProfilerTest(unittest.TestCase):
 
   def testProfilerGetFDOProfile(self):
     if xla_extension_version < 206:
-      return
+      raise unittest.SkipTest("API version < 206")
     # Tests stop_and_get_fod_profile could run.
     try:
       jax.profiler.start_trace("test")
@@ -115,7 +115,8 @@ class ProfilerTest(unittest.TestCase):
       )
     finally:
       fdo_profile = jax._src.profiler.stop_and_get_fdo_profile()
-    self.assertEqual(fdo_profile, b"")
+    if jtu.test_device_matches(["gpu"]) and jtu.is_device_cuda():
+      self.assertIn(b"copy", fdo_profile)
 
   def testProgrammaticProfilingErrors(self):
     with self.assertRaisesRegex(RuntimeError, "No profile started"):
