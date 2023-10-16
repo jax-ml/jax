@@ -1101,7 +1101,9 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
                            flat_results_aval=(),
                            **params):
   """MLIR Lowering for `CustomCall`-based HCB."""
-  platform = ctx.module_context.platform
+  if len(ctx.module_context.platforms) > 1:
+    raise NotImplementedError("multi-platform lowering for host_callback")
+  platform = ctx.module_context.platforms[0]
   use_outfeed = _use_outfeed(platform)
   if use_outfeed:
     # Fall back to XLA path if we are using the outfeed
@@ -1118,7 +1120,7 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
   else:
     # TODO(necula): It seems that on CPU, with custom call, the device_index
     # does not work, and the callback is always run on device_index=0
-    if (device_index != 0 and ctx.module_context.platform == "cpu"):
+    if (device_index != 0 and "cpu" in ctx.module_context.platforms):
       raise ValueError(
           "The device_index feature on CPU works only when using outfeed.")
   # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
