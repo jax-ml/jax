@@ -72,6 +72,12 @@ build:cuda --@xla//xla/python:enable_gpu=true
 build:cuda --@xla//xla/python:jax_cuda_pip_rpaths=true
 build:cuda --define=xla_python_enable_gpu=true
 
+# Later Bazel flag values override earlier values.
+# TODO(jieying): remove enable_gpu and xla_python_enable_gpu from build:cuda
+# after the pluin is released.
+build:cuda_plugin --@xla//xla/python:enable_gpu=false
+build:cuda_plugin --define=xla_python_enable_gpu=false
+
 # Force the linker to set RPATH, not RUNPATH. When resolving dynamic libraries,
 # ld.so prefers in order: RPATH, LD_LIBRARY_PATH, RUNPATH. JAX sets RPATH to
 # point to the $ORIGIN-relative location of the pip-installed NVIDIA CUDA
