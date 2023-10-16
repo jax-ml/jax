@@ -562,44 +562,37 @@ triton_lowering_rules[lax.squeeze_p] = _squeeze_lowering_rule
 def _reshape_lowering_rule(
     ctx: TritonLoweringRuleContext, a, *, new_sizes, dimensions
 ):
-  del new_sizes, dimensions
-  # Short-circuit to avoid unneeded reshape.
-  dst_shp = ctx.avals_out[0].shape
-  if tuple(s.value for s in a.shape) == dst_shp:
-    return a
-  if not a.type.is_block():
-    if dst_shp:
-      return tl.broadcast_to(a, [tl.constexpr(s) for s in dst_shp],
-                             _builder=ctx.builder)
-    return a
-  # Expand-dims or reduce-sum to handle singleton dims.
-  if ([s.value for s in a.shape if s.value != 1] ==
-      [s for s in dst_shp if s != 1]):
-    # Eliminate one difference and recurse.
-    for i in range(max(len(a.shape), len(dst_shp))):
-      if (i < len(a.shape) and i < len(dst_shp) and
-          a.shape[i].value == dst_shp[i]):
-        continue
-      # Use expand_dims to add a singleton dim.
-      if i < len(dst_shp) and dst_shp[i] == 1:
-        return _reshape_lowering_rule(
-            ctx, tl.semantic.expand_dims(a, i, builder=ctx.builder),
-            new_sizes=None, dimensions=None)
-      # Use a reduction to eliminate singleton dim.
-      if a.shape[i].value == 1:
-        reduce_ctx = ctx.replace(
-            avals_in=[ctx.avals_in[0].update(
-                shape=tuple(d.value for d in a.shape))],
-            avals_out=[ctx.avals_in[0].update(
-                shape=tuple(d.value for di, d in enumerate(a.shape)
-                            if di != i))])
-        return _reshape_lowering_rule(
-            ctx,
-            _reduce_lowering(jnp.add, reduce_ctx, a, axes=(i,)),
-            new_sizes=None, dimensions=None)
+  del new_sizes  # Unused.
+  if dimensions is not None:
+    return ValueError("`dimensions` is not supported.")
 
-  shape = [tl.constexpr(s) for s in dst_shp]
-  return tl.reshape(a, shape, _builder=ctx.builder)
+  dst_shape = map(tl.constexpr, ctx.avals_out[0].shape)
+  if not a.type.is_block():
+    assert all(dim_size.value == 1 for dim_size in dst_shape)
+    return tl.broadcast_to(a, dst_shape, _builder=ctx.builder)
+
+  # Expand-dims or reduce-sum to handle singleton dims as `tl.reshape` is not
+  # currently implemented.
+  i = 0
+  while a.shape != dst_shape:
+    dim_size = a.shape[i].value if i < len(a.shape) else None
+    dst_dim_size = dst_shape[i].value if i < len(dst_shape) else None
+    if dim_size == dst_dim_size:
+      i += 1
+    elif dst_dim_size == 1:
+      a = tl.expand_dims(a, axis=i, _builder=ctx.builder)
+      i += 1
+    elif dim_size == 1:
+      in_shape = tuple(d.value for d in a.shape)
+      out_shape = tuple(d.value for di, d in enumerate(a.shape) if di != i)
+      reduce_ctx = ctx.replace(
+          avals_in=[ctx.avals_in[0].update(shape=in_shape)],
+          avals_out=[ctx.avals_in[0].update(shape=out_shape)],
+      )
+      a = _reduce_lowering(jnp.add, reduce_ctx, a, axes=(i,))
+    else:  # We expect this to fail.
+      return tl.reshape(a, dst_shape, _builder=ctx.builder)
+  return a
 
 
 triton_lowering_rules[jax.lax.reshape_p] = _reshape_lowering_rule
