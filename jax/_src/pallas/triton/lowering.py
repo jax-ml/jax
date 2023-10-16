@@ -337,24 +337,6 @@ def _atomic_lowering_rule(
 triton_lowering_rules[primitives.atomic_rmw_p] = _atomic_lowering_rule
 
 
-def _max_contiguous_lowering_rule(ctx: TritonLoweringRuleContext, x, *, values):
-  values = [tl.constexpr(v) for v in values]
-  return tl.max_contiguous(x, values, _builder=ctx.builder)
-
-
-triton_lowering_rules[primitives.max_contiguous_p] = (
-    _max_contiguous_lowering_rule
-)
-
-
-def _multiple_of_lowering_rule(ctx: TritonLoweringRuleContext, x, *, values):
-  values = [tl.constexpr(v) for v in values]
-  return tl.multiple_of(x, values, _builder=ctx.builder)
-
-
-triton_lowering_rules[primitives.multiple_of_p] = _multiple_of_lowering_rule
-
-
 _TRITON_FN_MAPPING = {
     # Unary ops.
     lax.neg_p: tl.semantic.minus,
@@ -407,12 +389,18 @@ _TRITON_FN_MAPPING = {
     ad_util.add_any_p: tl.semantic.add,
     # Other ops.
     primitives.atomic_cas_p: tl.atomic_cas,
+    primitives.max_contiguous_p: tl.max_contiguous,
+    primitives.multiple_of_p: tl.multiple_of,
 }
 
 
 for primitive, fn in _TRITON_FN_MAPPING.items():
   if tl.core.is_builtin(fn):
-    rule = lambda ctx, *args, fn=fn: fn(*args, _builder=ctx.builder)
+
+    def rule(ctx, *args, fn=fn, **kwargs):
+      kwargs = tree_util.tree_map(tl.constexpr, kwargs)
+      return fn(*args, **kwargs, _builder=ctx.builder)
+
   else:
     rule = lambda ctx, *args, fn=fn: fn(*args, ctx.builder)
 
