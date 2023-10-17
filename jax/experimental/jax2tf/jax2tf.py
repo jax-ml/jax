@@ -307,7 +307,7 @@ def convert(fun_jax: Callable,
       `native_serialization`, specify the platform(s)
       for which to lower the code. Must be a tuple of
       strings, including a subset of: 'cpu', 'cuda', 'rocm', 'tpu'.
-      The default (`None``), specifies the JAX default
+      The default (`None`), specifies the JAX default
       backend on the machine where the lowering is done.
     native_serialization_disabled_checks: In conjunction with
       `native_serialization`, disable the specified safety checks.
@@ -327,6 +327,12 @@ def convert(fun_jax: Callable,
   if native_serialization and not enable_xla:
     raise ValueError(
         "native_serialization is not supported with enable_xla=False")
+
+  # TODO(necula): an early API allowed native_serialization_platforms
+  # as empty tuple to denote unspecified platforms
+  if (isinstance(native_serialization_platforms, (list, tuple)) and
+      not native_serialization_platforms):
+    native_serialization_platforms = None
 
   if native_serialization_platforms:
     if not native_serialization:
