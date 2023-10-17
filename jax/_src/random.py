@@ -53,7 +53,10 @@ DTypeLikeFloat = DTypeLike
 Shape = Sequence[int]
 
 PRNGImpl = prng.PRNGImpl
-KeyArray = Array
+
+# TODO(frostig,vanderplas): remove after deprecation window
+KeyArray = Union[Array, prng.PRNGKeyArray]
+PRNGKeyArray = prng.PRNGKeyArray
 
 UINT_DTYPES = prng.UINT_DTYPES
 
@@ -66,8 +69,9 @@ def _isnan(x: ArrayLike) -> Array:
   return lax.ne(x, x)
 
 
-def _check_prng_key(key) -> tuple[KeyArray, bool]:
-  if isinstance(key, Array) and dtypes.issubdtype(key.dtype, dtypes.prng_key):
+def _check_prng_key(key) -> tuple[prng.PRNGKeyArray, bool]:
+  # TODO(frostig): remove once we always enable_custom_prng
+  if isinstance(key, prng.PRNGKeyArray):
     return key, False
   elif _arraylike(key):
     # Call random_wrap here to surface errors for invalid keys.
@@ -102,7 +106,7 @@ def _return_prng_keys(was_wrapped, key):
     return prng.random_unwrap(key) if was_wrapped else key
 
 
-def _random_bits(key: KeyArray, bit_width, shape) -> Array:
+def _random_bits(key: prng.PRNGKeyArray, bit_width, shape) -> Array:
   assert jnp.issubdtype(key.dtype, dtypes.prng_key)
   return prng.random_bits(key, bit_width=bit_width, shape=shape)
 
@@ -166,18 +170,20 @@ def resolve_prng_impl(
   raise TypeError(f'unrecognized type {t} for specifying PRNG implementation.')
 
 
-def _key(ctor_name: str, seed: Union[int, Array], impl_spec: Optional[str] ) -> KeyArray:
+def _key(ctor_name: str, seed: Union[int, Array], impl_spec: Optional[str]
+         ) -> PRNGKeyArray:
   impl = resolve_prng_impl(impl_spec)
   if hasattr(seed, 'dtype') and jnp.issubdtype(seed.dtype, dtypes.prng_key):
     raise TypeError(
-        f"{ctor_name} accepts a scalar seed, but was given a PRNG key.")
+        f"{ctor_name} accepts a scalar seed, but was given a PRNGKeyArray.")
   if np.ndim(seed):
     raise TypeError(
         f"{ctor_name} accepts a scalar seed, but was given an array of "
         f"shape {np.shape(seed)} != (). Use jax.vmap for batching")
   return prng.seed_with_impl(impl, seed)
 
-def key(seed: Union[int, Array], *, impl: Optional[str] = None) -> KeyArray:
+def key(seed: Union[int, Array], *,
+        impl: Optional[str] = None) -> PRNGKeyArray:
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
   The result is a scalar array with a key that indicates the default PRNG
@@ -195,7 +201,8 @@ def key(seed: Union[int, Array], *, impl: Optional[str] = None) -> KeyArray:
   """
   return _key('key', seed, impl)
 
-def PRNGKey(seed: Union[int, Array], *, impl: Optional[str] = None) -> KeyArray:
+def PRNGKey(seed: Union[int, Array], *,
+            impl: Optional[str] = None) -> KeyArray:
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
   The resulting key carries the default PRNG implementation, as
