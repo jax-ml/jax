@@ -505,6 +505,7 @@ pytype_strict_library(
     ],
     deps = [
         ":jax",
+        ":source_info_util",
         "//jax/_src/pallas",
     ] + py_deps("numpy"),
 )
