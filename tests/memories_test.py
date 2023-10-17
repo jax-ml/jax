@@ -20,6 +20,7 @@ from absl.testing import parameterized
 import unittest
 import jax
 from jax._src import test_util as jtu
+from jax._src import xla_bridge as xb
 from jax._src.lib import xla_extension_version
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
@@ -477,6 +478,8 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     self._check_mem_kind(executable_mem[1], out2.sharding, "tpu_hbm")
 
   def test_jit_single_device_multi_output_host_mem(self):
+    if xb.using_pjrt_c_api():
+      raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
     inp = jnp.arange(16).reshape(8, 2)
 
     @jax.jit
@@ -836,6 +839,8 @@ class MemoriesTest(jtu.BufferDonationTestCase):
         out_host, py_inp, s_host, "unpinned_host", index=False)
 
   def test_trivial_computation(self):
+    if xb.using_pjrt_c_api():
+      raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
     mesh = jtu.create_global_mesh((2, 1), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
 
@@ -854,6 +859,8 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     self.assertEqual(out.sharding, s_host)
 
   def test_no_donation_across_memory_kinds(self):
+    if xb.using_pjrt_c_api():
+      raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
     mesh = jtu.create_global_mesh((2, 1), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
     s_hbm = NamedSharding(mesh, P("x"))
@@ -1001,6 +1008,8 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     self.assertDeleted(x)
 
   def test_single_mem_kind_donation_host(self):
+    if xb.using_pjrt_c_api():
+      raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
     mesh = jtu.create_global_mesh((2,), "x")
 
     @functools.partial(jax.jit, donate_argnums=0)
@@ -1073,6 +1082,8 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     self.assertEqual(bwd_mem_kind_count, 3)
 
   def test_host_offload_in_custom_vjp(self):
+    if xb.using_pjrt_c_api():
+      raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
     @jax.custom_vjp
     def f(x):
       return jnp.sin(x)
