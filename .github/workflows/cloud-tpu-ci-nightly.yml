@@ -24,9 +24,12 @@ jobs:
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
-        jaxlib-version: ["pypi_latest", "nightly"]
+        jaxlib-version: ["pypi_latest", "nightly", "nightly+oldest_supported_libtpu"]
         tpu-type: ["v3-8", "v4-8", "v5e-4"]
     name: "TPU test (jaxlib=${{ matrix.jaxlib-version }}, ${{ matrix.tpu-type }})"
+    env:
+      LIBTPU_VERSION_DATE: 20230908
+      ENABLE_PJRT_COMPATIBILITY: ${{ matrix.jaxlib-version == 'nightly+oldest_supported_libtpu' }}
     runs-on: ["self-hosted", "tpu", "${{ matrix.tpu-type }}"]
     timeout-minutes: 60
     defaults:
@@ -56,6 +59,14 @@ jobs:
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
             pip install requests
 
+          elif [ "${{ matrix.jaxlib-version }}" == "nightly+oldest_supported_libtpu" ]; then
+            pip install .
+            pip install --pre jaxlib \
+              -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
+            pip install --pre libtpu-0.1.dev${{ env.LIBTPU_VERSION_DATE }}-py3-none-any.whl \
+              -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+            pip install requests
+
           else
             echo "Unknown jaxlib-version: ${{ matrix.jaxlib-version }}"
             exit 1
@@ -79,7 +90,7 @@ jobs:
           python3 -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
       - name: Send chat on failure
         # Don't notify when testing the workflow from a branch.
-        if: ${{ (failure() || cancelled()) && github.ref_name == 'main' }}
+        if: ${{ (failure() || cancelled()) && github.ref_name == 'main' && matrix.jaxlib-version != 'nightly+oldest_supported_libtpu' }}
         run: |
             curl --location --request POST '${{ secrets.BUILD_CHAT_WEBHOOK }}' \
             --header 'Content-Type: application/json' \
