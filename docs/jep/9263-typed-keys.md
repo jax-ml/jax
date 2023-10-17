@@ -330,7 +330,7 @@ True
 True
 ```
 And in addition to `key.dtype._rules` as outlined for extended dtypes in
-general, PRNG dtypes define `key.dtype.impl`, which contains the metadata
+general, PRNG dtypes define `key.dtype._impl`, which contains the metadata
 that defines the PRNG implementation. The PRNG implementation is currently
 defined by the non-public `jax._src.prng.PRNGImpl` class. For now, `PRNGImpl`
 isn't meant to be a public API, but we might revisit this soon to allow for

@@ -308,7 +308,7 @@ def split(key: KeyArray, num: Union[int, tuple[int, ...]] = 2) -> KeyArray:
 def _key_impl(keys: KeyArray) -> PRNGImpl:
   assert jnp.issubdtype(keys.dtype, dtypes.prng_key)
   keys_dtype = typing.cast(prng.KeyTy, keys.dtype)
-  return keys_dtype.impl
+  return keys_dtype._impl
 
 def key_impl(keys: KeyArray) -> Hashable:
   keys, _ = _check_prng_key(keys)
@@ -1501,7 +1501,8 @@ def poisson(key: KeyArray,
   dtypes.check_user_dtype_supported(dtype)
   # TODO(frostig): generalize underlying poisson implementation and
   # remove this check
-  key_impl = key.dtype.impl  # type: ignore[union-attr]
+  keys_dtype = typing.cast(prng.KeyTy, key.dtype)
+  key_impl = keys_dtype._impl
   if key_impl is not prng.threefry_prng_impl:
     raise NotImplementedError(
         '`poisson` is only implemented for the threefry2x32 RNG, '
