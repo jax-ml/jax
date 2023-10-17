@@ -42,7 +42,9 @@ class Frame(NamedTuple):
 
 
 _exclude_paths: list[str] = [
-    os.path.dirname(jax.version.__file__),
+    # Attach the separator to make sure that .../jax does not end up matching
+    # .../jax_triton and other packages that might have a jax prefix.
+    os.path.dirname(jax.version.__file__) + os.sep,
     # Also exclude stdlib as user frames. In a non-standard Python runtime,
     # the following two may be different.
     sysconfig.get_path('stdlib'),
@@ -51,6 +53,14 @@ _exclude_paths: list[str] = [
 
 def register_exclusion(path: str):
   _exclude_paths.append(path)
+
+
+# Explicit inclusions take priority over exclude paths.
+_include_paths: list[str] = []
+
+def register_inclusion(path: str):
+  _include_paths.append(path)
+
 
 class Scope(NamedTuple):
   name: str
@@ -128,7 +138,8 @@ def new_source_info() -> SourceInfo:
 def is_user_filename(filename: str) -> bool:
   """Heuristic that guesses the identity of the user's code in a stack trace."""
   return (filename.endswith("_test.py") or
-          not any(filename.startswith(p) for p in _exclude_paths))
+          not any(filename.startswith(p) for p in _exclude_paths) or
+          any(filename.startswith(p) for p in _include_paths))
 
 if hasattr(xla_client.Traceback, "code_addr2location"):
   # Python 3.11+

@@ -144,6 +144,22 @@ def _eval_index_map(
   )
 
 
+def _convert_dtype(dtype: jnp.dtype) -> tl.dtype:
+  if dtype == jnp.float32:
+    return tl.float32
+  elif dtype == jnp.float64:
+    return tl.float64
+  elif dtype == jnp.float16:
+    return tl.float16
+  elif dtype == jnp.bfloat16:
+    return tl.bfloat16
+  elif dtype == jnp.int32:
+    return tl.int32
+  elif dtype == jnp.int64:
+    return tl.int64
+  raise ValueError(f"Unhandled dtype: {dtype}")
+
+
 triton_lowering_rules = {}
 
 
@@ -337,64 +353,85 @@ def _atomic_lowering_rule(
 triton_lowering_rules[primitives.atomic_rmw_p] = _atomic_lowering_rule
 
 
-def _atomic_cas_lowering_rule(ctx: TritonLoweringRuleContext, ptr, cmp, val):
-  return tl.atomic_cas(ptr, cmp, val, _builder=ctx.builder)
+_TRITON_FN_MAPPING = {
+    # Unary ops.
+    lax.neg_p: tl.semantic.minus,
+    lax.abs_p: tl.abs,
+    lax.ceil_p: tl.math.ceil,
+    lax.floor_p: tl.math.floor,
+    lax.exp_p: tl.exp,
+    lax.exp2_p: tl.math.exp2,
+    lax.expm1_p: tl.math.expm1,
+    lax.log_p: tl.log,
+    lax.log1p_p: tl.math.log1p,
+    lax.sqrt_p: tl.sqrt,
+    lax.cbrt_p: tl.math.cbrt,
+    lax.rsqrt_p: tl.math.rsqrt,
+    lax.sin_p: tl.sin,
+    lax.cos_p: tl.cos,
+    lax.tan_p: tl.math.tan,
+    lax.asin_p: tl.math.asin,
+    lax.acos_p: tl.math.acos,
+    lax.atan_p: tl.math.atan,
+    lax.atan2_p: tl.math.atan2,
+    lax.sinh_p: tl.math.sinh,
+    lax.cosh_p: tl.math.cosh,
+    lax.tanh_p: tl.math.tanh,
+    lax.asinh_p: tl.math.asinh,
+    lax.acosh_p: tl.math.acosh,
+    lax.atanh_p: tl.math.atanh,
+    lax.not_p: tl.semantic.invert,
+    lax.population_count_p: tl.math.popc,
+    lax.clz_p: tl.math.clz,
+    # Binary ops.
+    lax.add_p: tl.semantic.add,
+    lax.sub_p: tl.semantic.sub,
+    lax.mul_p: tl.semantic.mul,
+    lax.pow_p: tl.math.pow,
+    lax.rem_p: tl.semantic.mod,
+    lax.and_p: tl.semantic.and_,
+    lax.or_p: tl.semantic.or_,
+    lax.xor_p: tl.semantic.xor_,
+    lax.eq_p: tl.semantic.equal,
+    lax.ne_p: tl.semantic.not_equal,
+    lax.gt_p: tl.semantic.greater_than,
+    lax.ge_p: tl.semantic.greater_equal,
+    lax.lt_p: tl.semantic.less_than,
+    lax.le_p: tl.semantic.less_equal,
+    lax.max_p: tl.math.max,
+    lax.min_p: tl.math.min,
+    lax.shift_left_p: tl.semantic.shl,
+    lax.shift_right_arithmetic_p: tl.semantic.ashr,
+    lax.shift_right_logical_p: tl.semantic.lshr,
+    lax.nextafter_p: tl.math.nextafter,
+    ad_util.add_any_p: tl.semantic.add,
+    # Other ops.
+    indexing.broadcast_to_p: tl.broadcast_to,
+    primitives.atomic_cas_p: tl.atomic_cas,
+    primitives.max_contiguous_p: tl.max_contiguous,
+    primitives.multiple_of_p: tl.multiple_of,
+}
 
 
-triton_lowering_rules[primitives.atomic_cas_p] = _atomic_cas_lowering_rule
+for primitive, fn in _TRITON_FN_MAPPING.items():
+  if tl.core.is_builtin(fn):
 
+    def rule(ctx, *args, fn=fn, **kwargs):
+      kwargs = tree_util.tree_map(tl.constexpr, kwargs)
+      return fn(*args, **kwargs, _builder=ctx.builder)
 
-def _max_contiguous_lowering_rule(ctx: TritonLoweringRuleContext, x, *, values):
-  values = [tl.constexpr(v) for v in values]
-  return tl.max_contiguous(x, values, _builder=ctx.builder)
+  else:
+    rule = lambda ctx, *args, fn=fn: fn(*args, ctx.builder)
 
-
-triton_lowering_rules[primitives.max_contiguous_p] = (
-    _max_contiguous_lowering_rule
-)
-
-
-def _multiple_of_lowering_rule(ctx: TritonLoweringRuleContext, x, *, values):
-  values = [tl.constexpr(v) for v in values]
-  return tl.multiple_of(x, values, _builder=ctx.builder)
-
-
-triton_lowering_rules[primitives.multiple_of_p] = _multiple_of_lowering_rule
-
-
-def _abs_lowering_rule(ctx: TritonLoweringRuleContext, x):
-  return tl.abs(x, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.abs_p] = _abs_lowering_rule
+  triton_lowering_rules[primitive] = rule
 
 
 def _clamp_lowering_rule(ctx: TritonLoweringRuleContext, min, operand, max):
-  return _min_lowering_rule(ctx, max_lowering_rule(ctx, min, operand), max)
+  operand = tl.math.max(operand, min, _builder=ctx.builder)
+  return tl.math.min(operand, max, _builder=ctx.builder)
 
 
 triton_lowering_rules[lax.clamp_p] = _clamp_lowering_rule
-
-
-def _exp_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.exp(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.exp_p] = _exp_lowering_rule
-
-
-def _log_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.log(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.log_p] = _log_lowering_rule
-
-
-def _log1p_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.math.log1p(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.log1p_p] = _log1p_lowering_rule
 
 
 def _logistic_lowering_rule(ctx: TritonLoweringRuleContext, a):
@@ -408,30 +445,8 @@ def _logistic_lowering_rule(ctx: TritonLoweringRuleContext, a):
 triton_lowering_rules[lax.logistic_p] = _logistic_lowering_rule
 
 
-def _sin_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.sin(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.sin_p] = _sin_lowering_rule
-
-
-def _cos_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.cos(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.cos_p] = _cos_lowering_rule
-
-
-def _mul_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__mul__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.mul_p] = _mul_lowering_rule
-
-
 def _div_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  floating_dtypes = {tl.float16, tl.float32, tl.float64, tl.bfloat16}
-  if a.dtype in floating_dtypes and b.dtype in floating_dtypes:
+  if a.dtype.is_floating() or b.dtype.is_floating():
     return a.__truediv__(b, _builder=ctx.builder)
   return a.__floordiv__(b, _builder=ctx.builder)
 
@@ -450,14 +465,6 @@ def _iota_lowering_rule(
 triton_lowering_rules[lax.iota_p] = _iota_lowering_rule
 
 
-def _add_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__add__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.add_p] = _add_lowering_rule
-triton_lowering_rules[ad_util.add_any_p] = _add_lowering_rule
-
-
 def _integer_pow_lowering_rule(ctx: TritonLoweringRuleContext, a, *, y):
   if y == 2:
     return a.__mul__(a, _builder=ctx.builder)
@@ -473,48 +480,12 @@ def _integer_pow_lowering_rule(ctx: TritonLoweringRuleContext, a, *, y):
 triton_lowering_rules[lax.integer_pow_p] = _integer_pow_lowering_rule
 
 
-def _pow_lowering_rule(ctx: TritonLoweringRuleContext, a, y):
-  return tl.math.pow(a, y, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.pow_p] = _pow_lowering_rule
-
-
-def _tanh_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.math.tanh(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.tanh_p] = _tanh_lowering_rule
-
-
-def _min_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  pred = a.__lt__(b, _builder=ctx.builder)
-  return tl.semantic.where(pred, a, b, ctx.builder)
-
-
-triton_lowering_rules[lax.min_p] = _min_lowering_rule
-
-
 def _convert_element_type_lowering_rule(
     ctx: TritonLoweringRuleContext, a, *, new_dtype, weak_type
 ):
   if new_dtype == ctx.avals_in[0].dtype:
     return a
-  if new_dtype == jnp.float32:
-    new_dtype = tl.float32
-  elif new_dtype == jnp.float64:
-    new_dtype = tl.float64
-  elif new_dtype == jnp.float16:
-    new_dtype = tl.float16
-  elif new_dtype == jnp.bfloat16:
-    new_dtype = tl.bfloat16
-  elif new_dtype == jnp.int32:
-    new_dtype = tl.int32
-  elif new_dtype == jnp.int64:
-    new_dtype = tl.int64
-  else:
-    raise ValueError(f"Unhandled dtype: {new_dtype}")
-  return tl.semantic.cast(a, new_dtype, ctx.builder)
+  return tl.semantic.cast(a, _convert_dtype(new_dtype), ctx.builder)
 
 
 triton_lowering_rules[lax.convert_element_type_p] = (
@@ -522,127 +493,11 @@ triton_lowering_rules[lax.convert_element_type_p] = (
 )
 
 
-def max_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  pred = a.__gt__(b, _builder=ctx.builder)
-  return tl.semantic.where(pred, a, b, ctx.builder)
-
-
-triton_lowering_rules[lax.max_p] = max_lowering_rule
-
-
-def ge_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__ge__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.ge_p] = ge_lowering_rule
-
-
-def eq_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__eq__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[jax.lax.eq_p] = eq_lowering_rule
-
-
-def ne_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__ne__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[jax.lax.ne_p] = ne_lowering_rule
-
-def bitwise_and_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__and__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[jax.lax.and_p] = bitwise_and_lowering_rule
-
-
-def bitwise_or_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__or__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[jax.lax.or_p] = bitwise_or_lowering_rule
-
-
 def select_n_lowering_rule(ctx: TritonLoweringRuleContext, pred, a, b):
   return tl.semantic.where(pred, b, a, ctx.builder)
 
 
 triton_lowering_rules[lax.select_n_p] = select_n_lowering_rule
-
-
-def _rem_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__mod__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.rem_p] = _rem_lowering_rule
-
-
-def _sub_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__sub__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.sub_p] = _sub_lowering_rule
-
-
-def _lt_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__lt__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.lt_p] = _lt_lowering_rule
-
-
-def _gt_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__gt__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.gt_p] = _gt_lowering_rule
-
-
-def _sqrt_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.sqrt(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.sqrt_p] = _sqrt_lowering_rule
-
-
-def _rsqrt_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return tl.math.rsqrt(a, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.rsqrt_p] = _rsqrt_lowering_rule
-
-
-def _neg_lowering_rule(ctx: TritonLoweringRuleContext, a):
-  return a.__neg__(_builder=ctx.builder)
-
-
-triton_lowering_rules[lax.neg_p] = _neg_lowering_rule
-
-
-def _shift_left_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return a.__lshift__(b, _builder=ctx.builder)
-
-
-triton_lowering_rules[lax.shift_left_p] = _shift_left_lowering_rule
-
-
-def _shift_right_arithmetic_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return tl.semantic.ashr(a, b, builder=ctx.builder)
-
-
-triton_lowering_rules[lax.shift_right_arithmetic_p] = (
-    _shift_right_arithmetic_lowering_rule
-)
-
-
-def _shift_right_logical_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
-  return tl.semantic.lshr(a, b, builder=ctx.builder)
-
-
-triton_lowering_rules[lax.shift_right_logical_p] = (
-    _shift_right_logical_lowering_rule
-)
 
 
 def _broadcast_in_dim_lowering_rule(
@@ -662,18 +517,6 @@ triton_lowering_rules[jax.lax.broadcast_in_dim_p] = (
 )
 
 
-def _broadcast_to_lowering_rule(
-    ctx: TritonLoweringRuleContext, a, *, shape
-):
-  shape = map(tl.constexpr, shape)
-  return tl.broadcast_to(a, shape, _builder=ctx.builder)
-
-
-triton_lowering_rules[indexing.broadcast_to_p] = (
-    _broadcast_to_lowering_rule
-)
-
-
 def _squeeze_lowering_rule(ctx: TritonLoweringRuleContext, a, *, dimensions):
   del dimensions
   return _reshape_lowering_rule(ctx, a, new_sizes=None, dimensions=None)
@@ -685,44 +528,37 @@ triton_lowering_rules[lax.squeeze_p] = _squeeze_lowering_rule
 def _reshape_lowering_rule(
     ctx: TritonLoweringRuleContext, a, *, new_sizes, dimensions
 ):
-  del new_sizes, dimensions
-  # Short-circuit to avoid unneeded reshape.
-  dst_shp = ctx.avals_out[0].shape
-  if tuple(s.value for s in a.shape) == dst_shp:
-    return a
-  if not a.type.is_block():
-    if dst_shp:
-      return tl.broadcast_to(a, [tl.constexpr(s) for s in dst_shp],
-                             _builder=ctx.builder)
-    return a
-  # Expand-dims or reduce-sum to handle singleton dims.
-  if ([s.value for s in a.shape if s.value != 1] ==
-      [s for s in dst_shp if s != 1]):
-    # Eliminate one difference and recurse.
-    for i in range(max(len(a.shape), len(dst_shp))):
-      if (i < len(a.shape) and i < len(dst_shp) and
-          a.shape[i].value == dst_shp[i]):
-        continue
-      # Use expand_dims to add a singleton dim.
-      if i < len(dst_shp) and dst_shp[i] == 1:
-        return _reshape_lowering_rule(
-            ctx, tl.semantic.expand_dims(a, i, builder=ctx.builder),
-            new_sizes=None, dimensions=None)
-      # Use a reduction to eliminate singleton dim.
-      if a.shape[i].value == 1:
-        reduce_ctx = ctx.replace(
-            avals_in=[ctx.avals_in[0].update(
-                shape=tuple(d.value for d in a.shape))],
-            avals_out=[ctx.avals_in[0].update(
-                shape=tuple(d.value for di, d in enumerate(a.shape)
-                            if di != i))])
-        return _reshape_lowering_rule(
-            ctx,
-            _reduce_lowering(jnp.add, reduce_ctx, a, axes=(i,)),
-            new_sizes=None, dimensions=None)
+  del new_sizes  # Unused.
+  if dimensions is not None:
+    return ValueError("`dimensions` is not supported.")
 
-  shape = [tl.constexpr(s) for s in dst_shp]
-  return tl.reshape(a, shape, _builder=ctx.builder)
+  dst_shape = map(tl.constexpr, ctx.avals_out[0].shape)
+  if not a.type.is_block():
+    assert all(dim_size.value == 1 for dim_size in dst_shape)
+    return tl.broadcast_to(a, dst_shape, _builder=ctx.builder)
+
+  # Expand-dims or reduce-sum to handle singleton dims as `tl.reshape` is not
+  # currently implemented.
+  i = 0
+  while a.shape != dst_shape:
+    dim_size = a.shape[i].value if i < len(a.shape) else None
+    dst_dim_size = dst_shape[i].value if i < len(dst_shape) else None
+    if dim_size == dst_dim_size:
+      i += 1
+    elif dst_dim_size == 1:
+      a = tl.expand_dims(a, axis=i, _builder=ctx.builder)
+      i += 1
+    elif dim_size == 1:
+      in_shape = tuple(d.value for d in a.shape)
+      out_shape = tuple(d.value for di, d in enumerate(a.shape) if di != i)
+      reduce_ctx = ctx.replace(
+          avals_in=[ctx.avals_in[0].update(shape=in_shape)],
+          avals_out=[ctx.avals_in[0].update(shape=out_shape)],
+      )
+      a = _reduce_lowering(jnp.add, reduce_ctx, a, axes=(i,))
+    else:  # We expect this to fail.
+      return tl.reshape(a, dst_shape, _builder=ctx.builder)
+  return a
 
 
 triton_lowering_rules[jax.lax.reshape_p] = _reshape_lowering_rule
@@ -842,28 +678,34 @@ def _pack_indices(non_slice_idx, indexed_dims):
 def _get_lowering_rule(
     ctx: TritonLoweringRuleContext, ptr, *non_slice_idx, indexed_dims
 ):
-  ref_block_info, *_ = ctx.block_infos
-  idx = _pack_indices(non_slice_idx, indexed_dims)
-  avals_in = ctx.avals_in
-  idx_avals = _pack_indices(avals_in[1:], indexed_dims)
   if not isinstance(ptr.type, tl.pointer_type):
-    assert len(avals_in) == 1
+    assert not non_slice_idx
     return ptr
+
+  ref_aval, *idx_avals = ctx.avals_in
+  idx_avals = _pack_indices(idx_avals, indexed_dims)
   if non_slice_idx:
     (int_indexer_shape,) = {
         i.shape for i in idx_avals if not isinstance(i, slice)
     }
   else:
     int_indexer_shape = ()
+
+  idx = _pack_indices(non_slice_idx, indexed_dims)
   idx = tuple(
       primitives.Slice.from_slice(slc, s) if isinstance(slc, slice) else slc
-      for s, slc in zip(avals_in[0].shape, idx)
+      for s, slc in zip(ref_aval.shape, idx)
   )
-  idx = primitives.NDIndexer(idx, avals_in[0].shape, int_indexer_shape)
-  ptr = _compute_pointers_from_indices(
-      ptr, ref_block_info, idx, avals_in[0].shape, ctx.builder
+  idx = NDIndexer(idx, ref_aval.shape, int_indexer_shape)
+  args_flat, args_tree = tree_util.tree_flatten((ptr, idx, None, None))
+  return _masked_load_lowering_rule(
+      ctx,
+      *args_flat,
+      args_tree=args_tree,
+      eviction_policy=None,
+      cache_modifier=None,
+      is_volatile=False,
   )
-  return tl.load(ptr, _builder=ctx.builder)
 
 
 triton_lowering_rules[sp.get_p] = _get_lowering_rule
@@ -884,7 +726,7 @@ def _masked_load_lowering_rule(
   ptr = _compute_pointers_from_indices(
       ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape, ctx.builder
   )
-  return tl.load(
+  val = tl.load(
       ptr,
       mask=mask,
       other=other,
@@ -893,6 +735,8 @@ def _masked_load_lowering_rule(
       eviction_policy=eviction_policy,
       _builder=ctx.builder,
   )
+  # `tl.load` of a `*int1` returns a tensor with type `int8`, so fix the type.
+  return val.to(ptr.dtype.element_ty, _builder=ctx.builder)
 
 
 triton_lowering_rules[primitives.load_p] = _masked_load_lowering_rule
@@ -901,28 +745,25 @@ triton_lowering_rules[primitives.load_p] = _masked_load_lowering_rule
 def _swap_lowering_rule(
     ctx: TritonLoweringRuleContext, ptr, value, *non_slice_idx, indexed_dims
 ):
-  ref_block_info, *_ = ctx.block_infos
-  avals_in = ctx.avals_in
-  idx = _pack_indices(non_slice_idx, indexed_dims)
-  idx_avals = _pack_indices(avals_in[2:], indexed_dims)
+  ref_aval, _, *idx_avals = ctx.avals_in
+  idx_avals = _pack_indices(idx_avals, indexed_dims)
   if non_slice_idx:
     (int_indexer_shape,) = {
         i.shape for i in idx_avals if not isinstance(i, slice)
     }
   else:
     int_indexer_shape = ()
+
+  idx = _pack_indices(non_slice_idx, indexed_dims)
   idx = tuple(
       primitives.Slice.from_slice(slc, s) if isinstance(slc, slice) else slc
-      for s, slc in zip(avals_in[0].shape, idx)
+      for s, slc in zip(ref_aval.shape, idx)
   )
-  idx = primitives.NDIndexer(idx, avals_in[0].shape, int_indexer_shape)
-  ptr = _compute_pointers_from_indices(
-      ptr, ref_block_info, idx, avals_in[0].shape, ctx.builder
+  idx = NDIndexer(idx, ref_aval.shape, int_indexer_shape)
+  args_flat, args_tree = tree_util.tree_flatten((ptr, idx, value, None))
+  return _masked_swap_lowering_rule(
+      ctx, *args_flat, args_tree=args_tree, eviction_policy=None
   )
-  mask = None
-  old_value = tl.load(ptr, mask=mask, _builder=ctx.builder)
-  tl.store(ptr, value, mask=mask, _builder=ctx.builder)
-  return old_value
 
 
 triton_lowering_rules[sp.swap_p] = _swap_lowering_rule
@@ -942,13 +783,16 @@ def _masked_swap_lowering_rule(
   ptr = _compute_pointers_from_indices(
       ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape, ctx.builder
   )
-  return tl.store(
+  other = None if mask is None else value
+  old_value = tl.load(ptr, mask=mask, other=other, _builder=ctx.builder)
+  tl.store(
       ptr,
       value,
       mask=mask,
       eviction_policy=eviction_policy,
       _builder=ctx.builder,
   )
+  return old_value
 
 
 triton_lowering_rules[primitives.swap_p] = _masked_swap_lowering_rule
@@ -1002,15 +846,13 @@ def _dot_general_lowering(
     precision,
     preferred_element_type
 ):
-  contract_dims, batch_dims = dimension_numbers
+  del preferred_element_type  # Unused.
+  ((a_contract_dim,), (b_contract_dim,)), batch_dims = dimension_numbers
   assert batch_dims == ((), ())
-  (a_contract_dim,) = contract_dims[0]
-  (b_contract_dim,) = contract_dims[1]
-  trans_a = a_contract_dim == 0
-  trans_b = b_contract_dim == 1
-  if trans_a:
+
+  if a_contract_dim == 0:
     a = tl.trans(a, _builder=ctx.builder)
-  if trans_b:
+  if b_contract_dim == 1:
     b = tl.trans(b, _builder=ctx.builder)
 
   if precision is None:
@@ -1018,7 +860,18 @@ def _dot_general_lowering(
   else:
     prec_a, prec_b = precision
     allow_tf32 = prec_a in _TF32_PRECISIONS or prec_b in _TF32_PRECISIONS
-  return tl.dot(a, b, _builder=ctx.builder, allow_tf32=allow_tf32)
+
+  out_dtype = acc_dtype = _convert_dtype(ctx.avals_out[0].dtype)
+  if acc_dtype not in (tl.int32, tl.float16):
+    acc_dtype = tl.float32
+
+  return tl.dot(
+      a,
+      b,
+      allow_tf32=allow_tf32,
+      out_dtype=acc_dtype,
+      _builder=ctx.builder,
+  ).to(out_dtype, _builder=ctx.builder)
 
 
 triton_lowering_rules[lax.dot_general_p] = _dot_general_lowering
@@ -1053,7 +906,9 @@ def _reduction_lowering(body, ctx: TritonLoweringRuleContext, args, axes):
   combine_args = [
       tl.core.tensor(block.arg(i), ty) for i, ty in enumerate(param_types)
   ]
-  results = lower_jaxpr_to_triton_ir(ctx, combine_jaxpr, None, *combine_args)
+  results = lower_jaxpr_to_triton_ir(
+      ctx.context, combine_jaxpr, None, *combine_args
+  )
   handles = [r.handle for r in results]
   builder.create_reduce_ret(*handles)
   builder.restore_insertion_point(old_ip)

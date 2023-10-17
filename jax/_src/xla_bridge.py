@@ -107,6 +107,10 @@ def _get_tpu_library_path() -> Optional[str]:
 
   libtpu_module = maybe_import_libtpu()
   if libtpu_module is not None:
+    # TODO(b/305803029): temporarily calls configure_library_path because the
+    # tpu_tracer still depends on it. The tpu_tracer dependenecy on it will be
+    # removed in the next two weeks.
+    libtpu_module.configure_library_path()
     return libtpu_module.get_library_path()
 
   return None
@@ -128,6 +132,9 @@ def tpu_client_timer_callback(timer_secs: float) -> Optional[xla_client.Client]:
     if xla_extension_version >= 205:
       client = xla_client.make_tpu_client(_get_tpu_library_path())  # type: ignore
     else:
+      libtpu_module = maybe_import_libtpu()
+      if libtpu_module is not None:
+        libtpu_module.configure_library_path()
       client = xla_client.make_tpu_client()  # type: ignore
   finally:
     t.cancel()

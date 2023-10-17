@@ -1505,9 +1505,13 @@ def lower_multi_platform(ctx: LoweringRuleContext,
    rule_args: the args of the lowering rules.
    rule_kwargs: the kwargs of the lowering rules.
   """
-  assert isinstance(ctx.module_context.lowering_parameters.platforms, tuple)
-  platforms = ctx.module_context.lowering_parameters.platforms
-  platforms_with_specific_rules = util.flatten(
+  platforms: Sequence[str]
+  if ctx.module_context.lowering_parameters.is_multi_platform:
+    assert ctx.module_context.lowering_parameters.platforms is not None
+    platforms = ctx.module_context.lowering_parameters.platforms
+  else:
+    platforms = (ctx.module_context.platform,)
+  platforms_with_specific_rules: Sequence[str] = util.flatten(
     [ps for ps, _ in rules if ps is not None])
   platforms_with_default_rule = [p for p in platforms
                                  if p not in platforms_with_specific_rules]
@@ -1517,7 +1521,7 @@ def lower_multi_platform(ctx: LoweringRuleContext,
     rule_index = len(kept_rules)
     if ps is not None:
       # Keep only rules that mention the platforms of interest
-      interesting_ps = [p for p in platforms if p in ps]
+      interesting_ps = [p for p in platforms if p in ps]  # type: ignore
       if interesting_ps:
         for p in interesting_ps:
           assert p not in platform_to_kept_rules_idx

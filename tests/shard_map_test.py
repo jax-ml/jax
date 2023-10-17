@@ -1382,7 +1382,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     return jtu.create_global_mesh(tuple(mesh_shape.values()), tuple(mesh_shape))
 
   @parameterized.named_parameters(
-      sample(jtu._NUM_GENERATED_CASES.value, sample_shmap))
+      sample(jtu.NUM_GENERATED_CASES.value, sample_shmap))
   def test_eager_against_ref(self, fun, mesh, _, in_specs, out_specs, args, ref):
     mesh = self.make_mesh(mesh)
     args = map(jnp.array, args)
@@ -1391,7 +1391,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     self.assertAllClose(expected, out, check_dtypes=False)
 
   @parameterized.named_parameters(
-      sample(jtu._NUM_GENERATED_CASES.value, sample_shmap))
+      sample(jtu.NUM_GENERATED_CASES.value, sample_shmap))
   def test_jit_against_ref(self, fun, mesh, _, in_specs, out_specs, args, ref):
     mesh = self.make_mesh(mesh)
     args = map(jnp.array, args)
@@ -1401,7 +1401,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       (name + f'_check_rep={check_rep}', *params, check_rep)
-      for (name, *params) in sample(jtu._NUM_GENERATED_CASES.value, sample_shmap)
+      for (name, *params) in sample(jtu.NUM_GENERATED_CASES.value, sample_shmap)
       for check_rep in [True, False]
   )
   @jax.default_matmul_precision("float32")
@@ -1414,7 +1414,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     jtu.check_grads(f, args, order=2, atol=1e-2, rtol=1e-2)
 
   @parameterized.named_parameters(
-      sample(jtu._NUM_GENERATED_CASES.value, sample_shmap))
+      sample(jtu.NUM_GENERATED_CASES.value, sample_shmap))
   @jax.default_matmul_precision("float32")
   def test_grads_closure(self, fun, mesh, jit, in_specs, out_specs, args, _):
     mesh = self.make_mesh(mesh)
@@ -1433,7 +1433,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     jtu.check_grads(f, (0.2, *closed_over_args), order=2, atol=1e-2, rtol=1e-2)
 
   @parameterized.named_parameters(
-      sample(jtu._NUM_GENERATED_CASES.value,
+      sample(jtu.NUM_GENERATED_CASES.value,
              partial(sample_shmap_batched, 5)))
   def test_vmap(self, bdims, fun, mesh, jit, in_specs, out_specs, args, ref):
     mesh = self.make_mesh(mesh)
@@ -1456,7 +1456,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(
-      sample(jtu._NUM_GENERATED_CASES.value,
+      sample(jtu.NUM_GENERATED_CASES.value,
              partial(sample_shmap_batched, 5)))
   def test_vmap_closure(self, bdims, fun, mesh, jit, in_specs, out_specs, args, _):
     mesh = self.make_mesh(mesh)

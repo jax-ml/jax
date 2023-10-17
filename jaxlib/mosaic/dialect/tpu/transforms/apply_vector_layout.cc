@@ -156,6 +156,29 @@ xla::Array<Value> repeat(const xla::Array<Value> &src, const int repeats,
   return res;
 }
 
+// Models Numpy's np.concatenate
+xla::Array<Value> concatenate(const ArrayRef<xla::Array<Value>> arrays,
+                              const int64_t axis) {
+  CHECK(!arrays.empty());
+  SmallVector<int64_t> dims(toArrayRef(arrays[0].dimensions()));
+  CHECK(0 <= axis && axis < dims.size());
+  for (size_t i = 1; i < arrays.size(); ++i) {
+    CHECK(arrays[i].dimensions() == arrays[0].dimensions());
+    dims[axis] += arrays[i].dim(axis);
+  }
+  xla::Array<Value> res(dims);
+  int64_t offset = 0;
+  for (xla::Array<Value> const& arr : arrays) {
+    arr.Each([&](const absl::Span<const int64_t> idx, const Value v) {
+      SmallVector<int64_t> res_idx(toArrayRef(idx));
+      res_idx[axis] += offset;
+      res(res_idx) = v;
+    });
+    offset += arr.dim(axis);
+  }
+  return res;
+}
+
 template <typename T>
 ArrayRef<T> XlaArrayToFlatArrayRef(xla::Array<T> xla_array) {
   return ArrayRef<T>(xla_array.data(), xla_array.num_elements());
@@ -1189,6 +1212,44 @@ LogicalResult tpu_trace_rule(RewriteContext &ctx, Operation &op,
   CHECK(region.hasOneBlock());
   Block &block = region.front();
   return applyLayoutBlock(ctx, block);
+}
+
+LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
+                                   const ArrayRef<Layout> layouts_in,
+                                   const ArrayRef<Layout> layouts_out) {
+  CHECK_EQ(layouts_in.size(), op.getNumOperands());
+  CHECK_EQ(layouts_out.size(), 1);
+  if (!layouts_out.front().has_value()) {
+    return op.emitOpError("Expected non-null output layout");
+  }
+  const VectorLayout &layout = *layouts_out.front();
+  for (const Layout &l : layouts_in) {
+    if (l != layout) {
+      return op.emitOpError("Not implemented: Inconsistent layouts");
+    }
+  }
+  if (!layout.hasNaturalTopology(ctx.target_shape)) {
+    return op.emitOpError("Not implemented");
+  }
+  OpBuilder builder(&op);
+  auto concatenate_op = cast<tpu::ConcatenateOp>(op);
+  const VectorType res_ty = concatenate_op.getResult().getType();
+  const uint32_t dimension = concatenate_op.getDimension();
+  if (dimension - res_ty.getRank() >= -2) {
+    return op.emitOpError(
+        "Not implemented: Concatenation along the last two dimensions");
+  }
+  SmallVector<xla::Array<Value>> tiles;
+  tiles.reserve(concatenate_op->getNumOperands());
+  for (Value operand : concatenate_op.getOperands()) {
+    FAILUREOR_ASSIGN_OR_RETURN(xla::Array<Value> t,
+                               disassemble(ctx, builder, layout, operand));
+    tiles.emplace_back(std::move(t));
+  }
+  const xla::Array<Value> res_tiles = concatenate(tiles, dimension);
+  op.replaceAllUsesWith(assemble(ctx, builder, res_ty, layout, res_tiles));
+  op.erase();
+  return success();
 }
 
 LogicalResult tpu_iota_rule(RewriteContext &ctx, Operation &op,
@@ -2632,6 +2693,7 @@ const llvm::StringMap<rule_type> &rules() {
       {scf::ForOp::getOperationName(), scf_for_rule},
       {scf::IfOp::getOperationName(), scf_if_rule},
       {scf::YieldOp::getOperationName(), scf_yield_rule},
+      {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},
       {tpu::IotaOp::getOperationName(), tpu_iota_rule},
       {tpu::GatherOp::getOperationName(), tpu_gather_rule},
       {tpu::LoadOp::getOperationName(), tpu_load_rule},

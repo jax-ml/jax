@@ -670,7 +670,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
                                  name=name),
                         source_info_util.new_source_info(), resource_env, {})
   jaxpr = plan.subst_axes_with_resources(jaxpr)
-  use_spmd_lowering = _SPMD_LOWERING.value
+  use_spmd_lowering = SPMD_LOWERING.value
   ensure_fixed_sharding = _ENSURE_FIXED_SHARDING.value
   if use_spmd_lowering and ensure_fixed_sharding:
     jaxpr = _fix_inferred_spmd_sharding(jaxpr, resource_env)
@@ -686,7 +686,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
     mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
     mesh = resource_env.physical_mesh
     tiling_method: pxla.TilingMethod
-    if _SPMD_LOWERING_MANUAL.value:
+    if SPMD_LOWERING_MANUAL.value:
       manual_mesh_axes = frozenset(it.chain.from_iterable(plan.physical_axis_resources.values()))
       tiling_method = pxla.TileManual(manual_mesh_axes)
     else:
@@ -1284,7 +1284,7 @@ batching.BatchTrace.post_process_xmap = _batch_trace_post_process_xmap
 
 def _xmap_lowering_rule(ctx, *args, **kwargs):
   if isinstance(ctx.module_context.axis_context, sharding_impls.SPMDAxisContext):
-    if _SPMD_LOWERING_MANUAL.value:
+    if SPMD_LOWERING_MANUAL.value:
       return _xmap_lowering_rule_spmd_manual(ctx, *args, **kwargs)
     else:
       return _xmap_lowering_rule_spmd(ctx, *args, **kwargs)
@@ -1839,13 +1839,13 @@ def _clear_compilation_cache(_):
 
 def _ensure_spmd_and(f):
   def update(v):
-    if v and not _SPMD_LOWERING.value:
+    if v and not SPMD_LOWERING.value:
       raise RuntimeError("This flag requires enabling the experimental_xmap_spmd_lowering flag")
     return f(v)
   return update
 
 
-_SPMD_LOWERING = config.define_bool_state(
+SPMD_LOWERING = config.define_bool_state(
     name="experimental_xmap_spmd_lowering",
     default=False,
     help=("When set, multi-device xmap computations will be compiled through "
@@ -1853,7 +1853,7 @@ _SPMD_LOWERING = config.define_bool_state(
           "Not supported on CPU!"),
     update_global_hook=_clear_compilation_cache,
     update_thread_local_hook=_thread_local_flag_unsupported)
-_SPMD_LOWERING_MANUAL = config.define_bool_state(
+SPMD_LOWERING_MANUAL = config.define_bool_state(
     name="experimental_xmap_spmd_lowering_manual",
     default=False,
     help=("When set, multi-device xmap computations will be compiled using "

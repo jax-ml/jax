@@ -477,12 +477,6 @@ def signbit(x: ArrayLike, /) -> Array:
     raise ValueError(
         "jax.numpy.signbit is not well defined for %s" % dtype)
 
-  # TPU supports BF16 but not S16 types, so as a workaround, convert BF16 to
-  # F32.
-  if dtype == dtypes.bfloat16:
-    dtype = np.dtype('float32')
-    x = lax.convert_element_type(x, dtype)
-
   info = dtypes.finfo(dtype)
   if info.bits not in _INT_DTYPES:
     raise NotImplementedError(

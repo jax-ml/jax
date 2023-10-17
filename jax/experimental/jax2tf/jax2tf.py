@@ -234,7 +234,7 @@ def convert(fun_jax: Callable,
             with_gradient: bool = True,
             enable_xla: bool = True,
             native_serialization: Union[bool, _DefaultNativeSerialization] = DEFAULT_NATIVE_SERIALIZATION,
-            native_serialization_platforms: Sequence[str] = (),
+            native_serialization_platforms: Optional[Sequence[str]] = None,
             native_serialization_disabled_checks: Sequence[DisabledSafetyCheck] = (),
             ) -> Callable:
   """Allows calling a JAX function from a TensorFlow program.
@@ -307,7 +307,7 @@ def convert(fun_jax: Callable,
       `native_serialization`, specify the platform(s)
       for which to lower the code. Must be a tuple of
       strings, including a subset of: 'cpu', 'cuda', 'rocm', 'tpu'.
-      The default (empty tuple), specifies the JAX default
+      The default (`None``), specifies the JAX default
       backend on the machine where the lowering is done.
     native_serialization_disabled_checks: In conjunction with
       `native_serialization`, disable the specified safety checks.
@@ -342,9 +342,6 @@ def convert(fun_jax: Callable,
           "containing a subset of {'cpu', 'cuda', 'rocm', 'tpu'}. "
           f"Got: {native_serialization_platforms}")
     native_serialization_platforms = tuple(native_serialization_platforms)
-    if len(native_serialization_platforms) > 1:
-      raise NotImplementedError(
-          "native_serialization_platforms is not yet implemented for multiple platforms")
 
   api.check_callable(fun_jax)
 
@@ -478,7 +475,7 @@ class SerializationImpl:
 class NativeSerializationImpl(SerializationImpl):
   def __init__(self, fun_jax, *,
                args_specs, kwargs_specs,
-               native_serialization_platforms: Sequence[str],
+               native_serialization_platforms: Optional[Sequence[str]],
                native_serialization_disabled_checks: Sequence[DisabledSafetyCheck]):
     self.convert_kwargs = dict(native_serialization=True,
                                native_serialization_platforms=native_serialization_platforms,
@@ -487,10 +484,7 @@ class NativeSerializationImpl(SerializationImpl):
     self.args_specs = args_specs
     self.kwargs_specs = kwargs_specs
     self.native_serialization_disabled_checks = native_serialization_disabled_checks
-    if native_serialization_platforms:
-      self.lowering_platform: Optional[str] = native_serialization_platforms[0]
-    else:
-      self.lowering_platform = None
+    self.native_serialization_platforms = native_serialization_platforms
 
   def before_conversion(self):
     _prev_func_list = _thread_local_state.call_tf_concrete_function_list
@@ -502,7 +496,7 @@ class NativeSerializationImpl(SerializationImpl):
     self._restore_context = _restore_context
     self.exported = export.export(
         self.fun_jax,
-        lowering_platform=self.lowering_platform,
+        lowering_platforms=self.native_serialization_platforms,
         disabled_checks=self.native_serialization_disabled_checks
     )(*self.args_specs, **self.kwargs_specs)
 
@@ -850,7 +844,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
       ] if _thread_local_state.call_tf_concrete_function_list is not None else [],
   )
 
-  call_module_attrs["platforms"] = (exported.lowering_platform.upper(),)
+  call_module_attrs["platforms"] = tuple(p.upper() for p in exported.lowering_platforms)
   if version >= 6:
     call_module_attrs["disabled_checks"] = tuple(
         str(dc)
@@ -1901,6 +1895,37 @@ tf_impl[lax.xor_p] = handle_boolean_args(tf.bitwise.bitwise_xor, argnums=(0, 1),
 tf_impl[lax.eq_p] = tf.math.equal
 tf_impl[lax.ne_p] = tf.math.not_equal
 
+
+def _total_order_adjustment(x):
+  if not dtypes.issubdtype(x.dtype.as_numpy_dtype, np.inexact):
+    return x
+  assert dtypes.issubdtype(x.dtype.as_numpy_dtype, np.floating)
+  # Switch from a floating point value to a integer value in such a way that
+  # when using the integer value to compare, we get the same result for normal
+  # values, and -nan is treated as the smallest value, and nan is treated as
+  # the largest value.
+  # If f is a float, and
+  # x = bit_cast<int32>(f);
+  # y = x < 0 ? int32_max - x : x;
+  # then y is ordered as an int32 such that finite values have the obvious
+  # order. In this scheme, -0 would be before 0, and -NaN and NaN appear at
+  # the beginning and end of the ordering.
+  nbits = dtypes.finfo(x.dtype.as_numpy_dtype).bits
+  signed_dtype = lax_internal._INT_DTYPES[nbits]
+  unsigned_dtype = lax_internal._UINT_DTYPES[nbits]
+
+  signed = tf.bitcast(x, signed_dtype)
+  sign_mask = tf.bitcast(tf.bitwise.right_shift(signed, nbits - 1), unsigned_dtype)
+  sign_magnitude_mask = tf.bitcast(tf.bitwise.right_shift(sign_mask, 1), signed_dtype)
+  return tf.bitwise.bitwise_xor(signed, sign_magnitude_mask)
+
+def _total_order_equal(x, y):
+  if dtypes.issubdtype(x.dtype.as_numpy_dtype, np.complexfloating):
+    return _total_order_equal(tf.math.real(x), tf.math.real(y)) and _total_order_equal(tf.math.imag(x), tf.math.imag(y))
+  return tf.math.equal(_total_order_adjustment(x), _total_order_adjustment(y))
+
+tf_impl[lax.eq_to_p] = _total_order_equal
+
 boolean_greater = lambda x,y: tf.logical_and(x, tf.logical_not(y)) # Only one combo: T,F -> T
 boolean_less = lambda x,y: tf.logical_and(tf.logical_not(x), y) # Only one combo: F,T -> T
 boolean_greater_or_equal = lambda x, y: tf.logical_not(boolean_less(x,y)) # All cases except F,T
@@ -1910,6 +1935,12 @@ tf_impl[lax.gt_p] = handle_boolean_args(tf.math.greater, argnums=(0, 1), boolean
 tf_impl[lax.lt_p] = handle_boolean_args(tf.math.less, argnums=(0, 1), boolean_f=boolean_less)
 tf_impl[lax.ge_p] = handle_boolean_args(tf.math.greater_equal, argnums=(0, 1), boolean_f=boolean_greater_or_equal)
 tf_impl[lax.le_p] = handle_boolean_args(tf.math.less_equal, argnums=(0, 1), boolean_f=boolean_less_or_equal)
+
+def _total_order_cond(cond, x, y):
+  return cond(_total_order_adjustment(x), _total_order_adjustment(y))
+
+tf_impl[lax.lt_to_p] = handle_boolean_args(partial(_total_order_cond, tf.math.less), argnums=(0, 1), boolean_f=boolean_less)
+tf_impl[lax.le_to_p] = handle_boolean_args(partial(_total_order_cond, tf.math.less_equal), argnums=(0, 1), boolean_f=boolean_less_or_equal)
 
 tf_impl[lax.linalg.cholesky_p] = tf.linalg.cholesky
 

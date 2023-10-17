@@ -229,7 +229,6 @@ class Exported:
 
   in_shardings: tuple[Sharding, ...]
   out_shardings: tuple[Sharding, ...]
-  lowering_platform: str  # For backwards compatibility
   lowering_platforms: tuple[str, ...]
   disabled_checks: Sequence[DisabledSafetyCheck]
 
@@ -357,6 +356,7 @@ def poly_specs(
 
 def export(fun_jax: Callable,
            *,
+           # TODO(necula): remove this kwarg
            lowering_platform: Optional[str] = None,
            lowering_platforms: Optional[Sequence[str]] = None,
            disabled_checks: Sequence[DisabledSafetyCheck] = (),
@@ -365,9 +365,9 @@ def export(fun_jax: Callable,
 
   Args:
     fun_jax: the function to lower and serialize.
-    lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'. If None, then use
-        the default JAX backend.
-    lowering_platforms: DO NOT USE (NOT YET FUNCTIONAL).
+    lowering_platform: DO NOT USE, FOR BACKWARDS COMPATIBILITY ONLY. Use
+      `lowering_platforms`.
+    lowering_platforms:
         Optional sequence containing a subset of 'tpu', 'cpu',
         'cuda', 'rocm'. If more than one platform is specified, then
         the lowered code takes an argument specifying the platform.
@@ -408,11 +408,10 @@ def export(fun_jax: Callable,
       wrapped_fun_jax = fun_jax  # type: ignore
       allow_non_replicated_sharding = True
 
-    nonlocal lowering_platforms
     if lowering_platforms is not None:
-      lowering_platforms = tuple(lowering_platforms)
+      actual_lowering_platforms = tuple(lowering_platforms)
     else:
-      lowering_platforms = (lowering_platform or default_lowering_platform(),)
+      actual_lowering_platforms = (lowering_platform or default_lowering_platform(),)
 
     # Do not include shape assertions if the version is < 7.
     enable_shape_assertions = (
@@ -424,7 +423,7 @@ def export(fun_jax: Callable,
       lowered = wrapped_fun_jax.lower(
           *args_specs, **kwargs_specs,
           _experimental_lowering_parameters=mlir.LoweringParameters(
-            platforms=lowering_platforms,
+            platforms=actual_lowering_platforms,
           ))
 
       lowering = lowered._lowering  # type: ignore
@@ -467,7 +466,7 @@ def export(fun_jax: Callable,
     if logging.vlog_is_on(3):
       mlir_module_text = mlir.module_to_string(mlir_module)
       logmsg = (f"version={version} "
-                f"lowering_platforms={lowering_platforms} "
+                f"lowering_platforms={actual_lowering_platforms} "
                 f"disabled_checks={disabled_checks}")
       logging.info("Lowered JAX module: %s\n", logmsg)
       for l in mlir_module_text.splitlines():
@@ -485,8 +484,7 @@ def export(fun_jax: Callable,
         out_avals=tuple(out_avals_flat),
         in_shardings=lowering.compile_args["in_shardings"],
         out_shardings=lowering.compile_args["out_shardings"],
-        lowering_platform=lowering_platforms[0],  # TODO: remove
-        lowering_platforms=lowering_platforms,
+        lowering_platforms=actual_lowering_platforms,
         disabled_checks=tuple(disabled_checks),
         mlir_module_serialized=mlir_module_serialized,
         module_kept_var_idx=module_kept_var_idx,
@@ -932,7 +930,7 @@ def _export_native_vjp(primal_fun, primal: Exported) -> Exported:
                                            out_shardings=primal.out_shardings,
                                            apply_jit=True)
   return export(fun_vjp_jax,
-                lowering_platform=primal.lowering_platform,
+                lowering_platforms=primal.lowering_platforms,
                 disabled_checks=primal.disabled_checks)(*vjp_in_avals)
 
 ### Importing

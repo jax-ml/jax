@@ -375,20 +375,30 @@ ad.primitive_jvps[swap_p] = _swap_jvp
 
 def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   del out_avals  # Unused.
-  ref, idx, val, _ = args_tree.unflatten(args_flat)
+  ref, idx, val, mask = args_tree.unflatten(args_flat)
   if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
     indices = idx.indices
-    scalar_dims = [not isinstance(s, Slice) and s.shape == () for s in indices]
+    scalar_dims = [
+        i
+        for i, s in enumerate(indices)
+        if not isinstance(s, Slice) and not s.shape
+    ]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
     slice_sizes = tuple(s.size if isinstance(s, Slice) else 1 for s in indices)
-    val_indexer = tuple(None if scalar else slice(None) for scalar in scalar_dims)
-    val = val[val_indexer]
+    out = lax.dynamic_slice(ref, slice_starts, slice_sizes=slice_sizes)
+    out = jnp.squeeze(out, scalar_dims)
+    if mask is not None:
+      out_ = out
+      out = jnp.where(mask, out, val)
+      val = jnp.where(mask, val, out_)
+    val = jnp.expand_dims(val, scalar_dims)
     x_new = lax.dynamic_update_slice(ref, val, start_indices=slice_starts)
-    out_ones = lax.dynamic_slice(ref, slice_starts, slice_sizes=slice_sizes)
-    out_indexer = tuple(0 if scalar else slice(None) for scalar in scalar_dims)
-    out = out_ones[out_indexer]
   elif all(not isinstance(s, Slice) for s in idx.indices):
     out = ref[idx.indices]
+    if mask is not None:
+      out_ = out
+      out = jnp.where(mask, out, val)
+      val = jnp.where(mask, val, out_)
     x_new = ref.at[idx.indices].set(val)
   else:
     raise NotImplementedError
@@ -422,6 +432,8 @@ def store(x_ref, idx, val, *, mask=None, eviction_policy="") -> None:
 
 def dot(a, b, trans_a: bool = False, trans_b: bool = False,
         allow_tf32: bool | None = None, precision=None):
+  if (a.ndim != 2) or (b.ndim != 2):
+    raise ValueError("`a` and `b` must be 2D arrays.")
   lhs_contract_dim = 0 if trans_a else 1
   rhs_contract_dim = 0 if not trans_b else 1
   if allow_tf32 is not None:
@@ -429,6 +441,9 @@ def dot(a, b, trans_a: bool = False, trans_b: bool = False,
       raise ValueError("Only one of allow_tf32 and precision can be specified")
     precision = lax.Precision.HIGH if allow_tf32 else lax.Precision.HIGHEST
   return jax.lax.dot_general(
-      a, b, dimension_numbers=(((lhs_contract_dim,), (rhs_contract_dim,)), ((), ())),
+      a,
+      b,
+      dimension_numbers=(((lhs_contract_dim,), (rhs_contract_dim,)), ((), ())),
       precision=precision,
-      preferred_element_type=None).astype(jnp.float32)
+      preferred_element_type=jnp.float32,
+  )

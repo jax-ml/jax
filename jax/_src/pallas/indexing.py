@@ -62,6 +62,10 @@ class Slice:
   start: Any
   size: int
 
+  def __post_init__(self):
+    if self.size < 0:
+      raise ValueError("`size` must not be negative.")
+
   def tree_flatten(self):
     # If `start` is statically known, we treat it as static information
     if isinstance(self.start, int):
@@ -74,12 +78,9 @@ class Slice:
 
   @classmethod
   def from_slice(cls, slc: slice, size: int) -> Slice:
-    if slc.step not in (1, None):
-      raise ValueError(f"`slc` must have a step of 1 (found: {slc.step})")
-
-    start, stop = slc.start, slc.stop
-    start = 0 if start is None else start
-    stop = size if stop is None else stop
+    start, stop, step = slc.indices(size)
+    if step != 1:
+      raise ValueError(f"slice must have a step of 1 (found: {step})")
     return cls(start, stop - start)
 
 

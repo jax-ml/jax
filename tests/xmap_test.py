@@ -246,7 +246,7 @@ class XMapTestCase(jtu.BufferDonationTestCase):
 class SPMDTestMixin:
   def setUp(self):
     super().setUp()
-    self.spmd_lowering = maps._SPMD_LOWERING.value
+    self.spmd_lowering = maps.SPMD_LOWERING.value
     config.update('experimental_xmap_spmd_lowering', True)
 
   def tearDown(self):
@@ -258,8 +258,8 @@ class ManualSPMDTestMixin:
     if not hasattr(xla_client.OpSharding.Type, "MANUAL"):
       raise SkipTest
     super().setUp()
-    self.spmd_lowering = maps._SPMD_LOWERING.value
-    self.spmd_manual_lowering = maps._SPMD_LOWERING_MANUAL.value
+    self.spmd_lowering = maps.SPMD_LOWERING.value
+    self.spmd_manual_lowering = maps.SPMD_LOWERING_MANUAL.value
     config.update('experimental_xmap_spmd_lowering', True)
     config.update('experimental_xmap_spmd_lowering_manual', True)
 
@@ -436,7 +436,7 @@ class XMapTest(XMapTestCase):
     m_size = math.prod([2] + [2] * (len(mesh) - 2))
     self.assertListEqual(y_op_sharding.tile_assignment_dimensions(),
                          [2, 1, 1, m_size])
-    if maps._SPMD_LOWERING.value:
+    if maps.SPMD_LOWERING.value:
       hlo = f.lower(x).compiler_ir(dialect="hlo").as_hlo_text()
       # Make sure that there are non-partial sharding specs in the HLO
       if xla_extension_version >= 180:
@@ -749,7 +749,7 @@ class XMapTest(XMapTestCase):
              axis_resources={'i': 'x'})
     x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
     hlo = f.lower(x).as_text(dialect='stablehlo')
-    if maps._SPMD_LOWERING.value:
+    if maps.SPMD_LOWERING.value:
       self.assertIn("mhlo.num_partitions = 2", hlo)
       self.assertIn("mhlo.num_replicas = 1", hlo)
     else:
@@ -1204,7 +1204,7 @@ class NewPrimitiveTest(XMapTestCase):
 
   @jtu.with_and_without_mesh
   def testGather(self, mesh, axis_resources):
-    if axis_resources and not maps._SPMD_LOWERING.value:
+    if axis_resources and not maps.SPMD_LOWERING.value:
       raise SkipTest("pgather over mesh axes without SPMD lowering not implemented")
     x = jnp.arange(12, dtype=np.float32).reshape((4, 3))
     y = jnp.arange(35).reshape((5, 7)) % 3

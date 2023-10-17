@@ -103,9 +103,9 @@ class IndexerTest(parameterized.TestCase):
 
   def test_ndindexer_with_slices(self):
     indices = (slice(2, 3), slice(4, 7))
-    shape = (5, 5)
+    shape = (5, 6)
     indexer = NDIndexer.from_indices_shape(indices, shape)
-    self.assertTupleEqual(indexer.get_indexer_shape(), (1, 3))
+    self.assertTupleEqual(indexer.get_indexer_shape(), (1, 2))
 
   def test_ndindexer_with_arrays(self):
     indices = (np.arange(10), np.arange(10))
@@ -133,11 +133,11 @@ class IndexerTest(parameterized.TestCase):
     indices = (0, slice(10), np.arange(5))
     shape = (2, 3, 4)
     indexer = NDIndexer.from_indices_shape(indices, shape)
-    self.assertTupleEqual(indexer.get_indexer_shape(), (5, 10))
+    self.assertTupleEqual(indexer.get_indexer_shape(), (5, 3))
 
     indices = (0, slice(4, 10), np.arange(5))
     indexer = NDIndexer.from_indices_shape(indices, shape)
-    self.assertTupleEqual(indexer.get_indexer_shape(), (5, 6))
+    self.assertTupleEqual(indexer.get_indexer_shape(), (5, 0))
 
     indices = (0, 5, np.arange(5))
     indexer = NDIndexer.from_indices_shape(indices, shape)

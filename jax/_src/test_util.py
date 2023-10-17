@@ -67,7 +67,7 @@ _TEST_DUT = config.DEFINE_string(
     'Describes the device under test in case special consideration is required.'
 )
 
-_NUM_GENERATED_CASES = config.DEFINE_integer(
+NUM_GENERATED_CASES = config.DEFINE_integer(
   'jax_num_generated_cases',
   int(os.getenv('JAX_NUM_GENERATED_CASES', '10')),
   help='Number of generated cases to test')
@@ -304,7 +304,7 @@ def is_device_rocm():
   return xla_bridge.get_backend().platform_version.startswith('rocm')
 
 def is_device_cuda():
-  return xla_bridge.get_backend().platform_version.startswith('cuda')
+  return 'cuda' in xla_bridge.get_backend().platform_version
 
 def is_cloud_tpu():
   return 'libtpu' in xla_bridge.get_backend().platform_version
@@ -762,7 +762,7 @@ def assert_dot_preferred_element_type(expected, fun, *args, **kwargs):
 
 def cases_from_gens(*gens):
   sizes = [1, 3, 10]
-  cases_per_size = int(_NUM_GENERATED_CASES.value / len(sizes)) + 1
+  cases_per_size = int(NUM_GENERATED_CASES.value / len(sizes)) + 1
   for size in sizes:
     for i in range(cases_per_size):
       yield (f'_{size}_{i}',) + tuple(gen(size) for gen in gens)
@@ -775,7 +775,7 @@ def named_cases_from_sampler(gen):
     if not isinstance(x, (list, tuple)):
       x = list(x)
     return [x[rng.randint(len(x))]]
-  while (len(seen) < _NUM_GENERATED_CASES.value and
+  while (len(seen) < NUM_GENERATED_CASES.value and
          retries < _MAX_CASES_SAMPLING_RETRIES.value):
     retries += 1
     cases = list(gen(choose_one))
@@ -804,7 +804,7 @@ def sample_product_testcases(*args, **kw):
   kw = [(k, list(v)) for k, v in kw.items()]
   n = math.prod(len(a) for a in args) * math.prod(len(v) for _, v in kw)
   testcases = []
-  for i in _choice(n, min(n, _NUM_GENERATED_CASES.value)):
+  for i in _choice(n, min(n, NUM_GENERATED_CASES.value)):
     testcase = {}
     for a in args:
       testcase.update(a[i % len(a)])

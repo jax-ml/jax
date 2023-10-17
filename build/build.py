@@ -293,9 +293,7 @@ def write_bazelrc(*, python_bin_path, remote_build,
       if not enable_nccl:
         f.write("build --config=nonccl\n")
     if build_gpu_plugin:
-      f.write(textwrap.dedent("""\
-        build --noincompatible_remove_legacy_whole_archive
-        """))
+      f.write("build --config=cuda_plugin\n")
 
 BANNER = r"""
      _   _  __  __
