@@ -390,6 +390,7 @@ pytype_strict_library(
         ":config",
         ":traceback_util",
         ":typing",
+        ":util",
     ] + py_deps("ml_dtypes") + py_deps("numpy"),
 )
 
