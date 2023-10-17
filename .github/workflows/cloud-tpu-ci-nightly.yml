@@ -28,7 +28,7 @@ jobs:
         tpu-type: ["v3-8", "v4-8", "v5e-4"]
     name: "TPU test (jaxlib=${{ matrix.jaxlib-version }}, ${{ matrix.tpu-type }})"
     env:
-      LIBTPU_VERSION_DATE: 20230908
+      LIBTPU_OLDEST_VERSION_DATE: 20230912
       ENABLE_PJRT_COMPATIBILITY: ${{ matrix.jaxlib-version == 'nightly+oldest_supported_libtpu' }}
     runs-on: ["self-hosted", "tpu", "${{ matrix.tpu-type }}"]
     timeout-minutes: 60
@@ -63,7 +63,7 @@ jobs:
             pip install .
             pip install --pre jaxlib \
               -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
-            pip install --pre libtpu-0.1.dev${{ env.LIBTPU_VERSION_DATE }}-py3-none-any.whl \
+            pip install --pre libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
             pip install requests
 
