@@ -960,7 +960,7 @@ class PJitTest(jtu.BufferDonationTestCase):
   def testWithCustomPRNGKey(self):
     if not config.enable_custom_prng.value:
       raise unittest.SkipTest("test requires jax_enable_custom_prng")
-    key = prng.seed_with_impl(prng.rbg_prng_impl, 87)
+    key = prng.random_seed(87, impl=prng.rbg_prng_impl)
     # Make sure this doesn't crash
     pjit(lambda x: x, in_shardings=None, out_shardings=None)(key)
 
@@ -1206,7 +1206,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     with mesh:
       def make_keys(seeds):
-        make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
+        make_key = partial(prng.random_seed, impl=prng.threefry_prng_impl)
         return make_key(seeds)
 
       f = pjit(make_keys, in_shardings=P(None), out_shardings=P(None))
@@ -1830,7 +1830,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     @pjit
     def make_keys(seeds):
-      make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
+      make_key = partial(prng.random_seed, impl=prng.threefry_prng_impl)
       return make_key(seeds)
 
     out = make_keys(seeds)
@@ -1847,7 +1847,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     @partial(pjit, out_shardings=NamedSharding(mesh, P('x', 'y')))
     def make_keys(seeds):
-      make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
+      make_key = partial(prng.random_seed, impl=prng.threefry_prng_impl)
       return make_key(seeds)
 
     out = make_keys(seeds)
@@ -1864,7 +1864,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     @pjit
     def make_keys(seeds):
-      make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
+      make_key = partial(prng.random_seed, impl=prng.threefry_prng_impl)
       return make_key(seeds)
 
     out = make_keys(seeds)

@@ -88,7 +88,7 @@ class PRNGImpl(NamedTuple):
 
   A PRNG implementation is adapted to an array-like object of keys
   ``K`` by the ``PRNGKeyArray`` class, which should be created via the
-  ``seed_with_impl`` function.
+  ``random_seed`` function.
   """
   key_shape: Shape
   seed: Callable
