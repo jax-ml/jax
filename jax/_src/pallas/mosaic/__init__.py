@@ -26,6 +26,8 @@ from jax._src.pallas.mosaic.primitives import DeviceIdType
 from jax._src.pallas.mosaic.primitives import async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy
 from jax._src.pallas.mosaic.primitives import device_id
+from jax._src.pallas.mosaic.primitives import make_async_copy
+from jax._src.pallas.mosaic.primitives import make_async_remote_copy
 from jax._src.pallas.mosaic.primitives import repeat
 from jax._src.pallas.mosaic.primitives import run_scoped
 from jax._src.pallas.mosaic.primitives import semaphore_signal
