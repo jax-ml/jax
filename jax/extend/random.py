@@ -20,6 +20,7 @@ from jax._src.prng import (
   # PRNGImpl constructor, to leave some room for us to register or check input,
   # or to change what output type we return.
   PRNGImpl as PRNGImpl,
+  random_seed as random_seed,
   seed_with_impl as seed_with_impl,
   threefry2x32_p as threefry2x32_p,
   threefry_2x32 as threefry_2x32,

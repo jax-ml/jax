@@ -180,7 +180,7 @@ def _key(ctor_name: str, seed: Union[int, Array], impl_spec: Optional[str]
     raise TypeError(
         f"{ctor_name} accepts a scalar seed, but was given an array of "
         f"shape {np.shape(seed)} != (). Use jax.vmap for batching")
-  return prng.seed_with_impl(impl, seed)
+  return prng.random_seed(seed, impl=impl)
 
 def key(seed: Union[int, Array], *,
         impl: Optional[str] = None) -> PRNGKeyArray:
@@ -234,21 +234,21 @@ def threefry2x32_key(seed: int) -> KeyArray:
   """Creates a threefry2x32 PRNG key from an integer seed."""
   impl = prng.threefry_prng_impl
   _check_default_impl_with_no_custom_prng(impl, 'threefry2x32')
-  key = prng.seed_with_impl(impl, seed)
+  key = prng.random_seed(seed, impl=impl)
   return _return_prng_keys(True, key)
 
 def rbg_key(seed: int) -> KeyArray:
   """Creates an RBG PRNG key from an integer seed."""
   impl = prng.rbg_prng_impl
   _check_default_impl_with_no_custom_prng(impl, 'rbg')
-  key = prng.seed_with_impl(impl, seed)
+  key = prng.random_seed(seed, impl=impl)
   return _return_prng_keys(True, key)
 
 def unsafe_rbg_key(seed: int) -> KeyArray:
   """Creates an unsafe RBG PRNG key from an integer seed."""
   impl = prng.unsafe_rbg_prng_impl
   _check_default_impl_with_no_custom_prng(impl, 'unsafe_rbg')
-  key = prng.seed_with_impl(impl, seed)
+  key = prng.random_seed(seed, impl=impl)
   return _return_prng_keys(True, key)
 
 

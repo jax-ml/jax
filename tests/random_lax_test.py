@@ -1204,7 +1204,7 @@ double_threefry_prng_impl = prng_internal.PRNGImpl(
 @jtu.with_config(jax_default_prng_impl='threefry2x32')
 class LaxRandomWithCustomPRNGTest(LaxRandomTest):
   def make_key(self, seed):
-    return prng_internal.seed_with_impl(double_threefry_prng_impl, seed)
+    return prng_internal.random_seed(seed, impl=double_threefry_prng_impl)
 
   def test_split_shape(self):
     key = self.make_key(73)
