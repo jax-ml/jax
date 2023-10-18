@@ -2093,8 +2093,24 @@ def _tpu_concatenate_rule(
     raise NotImplementedError
   res_ty = ir.VectorType(op.result.type)
   dimension = ir.IntegerAttr(op.dimension).value
-  if dimension - res_ty.rank >= -2:
-    raise NotImplementedError("Concatenation along the last two dimensions")
+
+  if dimension >= res_ty.rank - 2:
+    if (not layout.has_natural_topology) or layout.offsets != (0, 0):
+      raise NotImplementedError(
+          "Only native tiling with offset (0, 0) is supported when"
+          " concatenation along tiling dims."
+      )
+    # Check if shapes of src and res are aligned to native tiling.
+    for vty in [res_ty] + [ir.VectorType(src.type) for src in op.operands]:
+      if (
+          vty.rank < 2
+          or vty.shape[-2] % layout.tiling[-2] != 0
+          or vty.shape[-1] % layout.tiling[-1] != 0
+      ):
+        raise NotImplementedError(
+            "Only aligned shapes are supported when concatenation along tiling"
+            " dims."
+        )
   tiles = [disassemble(layout, x) for x in op.operands]
   res_tiles = np.concatenate(tiles, axis=dimension)
   ctx.replace(op, assemble(res_ty, layout, res_tiles))

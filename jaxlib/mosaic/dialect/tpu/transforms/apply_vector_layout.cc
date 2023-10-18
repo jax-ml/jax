@@ -1236,9 +1236,31 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
   const VectorType res_ty = concatenate_op.getResult().getType();
   const uint32_t dimension = concatenate_op.getDimension();
   if (dimension - res_ty.getRank() >= -2) {
-    return op.emitOpError(
-        "Not implemented: Concatenation along the last two dimensions");
+    if (!layout.hasNaturalTopology(ctx.target_shape) ||
+        layout.offsets() != LayoutOffsets{0, 0}) {
+      return op.emitOpError(
+          "Only native tiling with offset (0, 0) is supported when "
+          "concatenation along tiling dims.");
+    }
+    // Check if shapes of src and res are aligned to native tiling.
+    auto check_aligned = [&](const VectorType &vty) {
+      return vty.getRank() >= 2 &&
+             *(vty.getShape().end() - 2) % *(layout.tiling().end() - 2) == 0 &&
+             *(vty.getShape().end() - 1) % *(layout.tiling().end() - 1) == 0;
+    };
+    bool is_aligned = check_aligned(res_ty);
+    int op_idx = 0;
+    while (is_aligned && op_idx < op.getNumOperands()) {
+      auto vty = dyn_cast<VectorType>(op.getOperand(op_idx++).getType());
+      is_aligned = check_aligned(vty);
+    }
+    if (!is_aligned) {
+      return op.emitOpError(
+          "Only aligned shapes are supported when concatenation along tiling "
+          "dims");
+    }
   }
+
   SmallVector<xla::Array<Value>> tiles;
   tiles.reserve(concatenate_op->getNumOperands());
   for (Value operand : concatenate_op.getOperands()) {
