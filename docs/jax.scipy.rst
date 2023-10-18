@@ -446,3 +446,12 @@ jax.scipy.stats.vonmises
 
    logpdf
    pdf
+
+jax.scipy.stats.wrapcauchy
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.wrapcauchy
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
