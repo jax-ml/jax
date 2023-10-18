@@ -2056,15 +2056,6 @@ def _weibull_min(key, scale, concentration, shape, dtype) -> Array:
   return jnp.power(-jnp.log1p(-random_uniform), 1.0/concentration) * scale
 
 
-# TODO(frostig): remove these aliases
-
-threefry2x32_p = prng.threefry2x32_p
-
-def threefry_2x32(keypair, count):
-  warnings.warn('jax.random.threefry_2x32 has moved to jax.prng.threefry_2x32 '
-                'and will be removed from `random` module.', FutureWarning)
-  return prng.threefry_2x32(keypair, count)
-
 def orthogonal(
   key: KeyArray,
   n: int,
