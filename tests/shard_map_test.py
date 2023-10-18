@@ -1135,6 +1135,18 @@ class ShardMapTest(jtu.JaxTestCase):
 
     jtu.check_grads(f, (q, k, v), order=1, modes=['rev'], rtol=1e-2)
 
+  def test_axis_env_extension_regression(self):
+    def foo(x):
+      i = jax.lax.axis_index('x')
+      return jnp.exp(x) + i.astype('float')
+
+    @partial(jax.remat, policy=lambda *args, **kwargs: True)
+    def bar(x):
+      return shard_map(foo, mesh=Mesh(jax.devices(), ['x']), in_specs=(P('x'),),
+                       out_specs=P('x'), check_rep=False)(x)
+
+    jax.jit(jax.grad(lambda x: bar(x).sum()))(jnp.arange(8.))  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str
