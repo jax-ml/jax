@@ -142,7 +142,7 @@ if TYPE_CHECKING:
   #
   import sys
   if sys.version_info >= (3, 11):
-    from typing import assert_type
+    from typing import assert_type  # pytype: disable=not-supported-yet  # py311-upgrade
   else:
     from typing_extensions import assert_type  # pytype: disable=not-supported-yet
 
