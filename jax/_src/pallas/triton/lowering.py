@@ -1496,7 +1496,11 @@ def pallas_call_lowering(
         **compiler_params
     )
   num_warps = compiler_params.get("num_warps", 4)
-  num_stages = compiler_params.get("num_stages", 3)
+  if ctx.module_context.platform == 'rocm':
+    num_stages = compiler_params.get("num_stages", 1)
+  else:
+    num_stages = compiler_params.get("num_stages", 3)
+
   if debug:
     print(jaxpr)
     print(grid_mapping)
@@ -1509,6 +1513,9 @@ def pallas_call_lowering(
       num_stages,
       debug=debug,
   )
+  #Triton returns a tuple for ROCm. We just want file path to be passed
+  if ctx.module_context.platform == 'rocm':
+      compilation_result.ptx = compilation_result.ptx[1]
 
   if debug:
     compilation_result.lowering_result.module.dump()
@@ -1562,4 +1569,4 @@ def pallas_call_lowering(
   ).results
 
 
-mlir.register_lowering(pallas_call_p, pallas_call_lowering, platform="cuda")
+mlir.register_lowering(pallas_call_p, pallas_call_lowering, platform="gpu")

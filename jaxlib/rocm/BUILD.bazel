@@ -286,6 +286,67 @@ pybind_extension(
     ],
 )
 
+cc_library(
+    name = "triton_kernels",
+    srcs = ["//jaxlib/gpu:triton_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:triton_kernels.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        ":triton_utils",
+        "//jaxlib/gpu:triton_cc_proto",
+        "@xla//xla/service:custom_call_status",
+        "@xla//xla/stream_executor/gpu:asm_compiler",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:env",
+    ],
+)
+
+cc_library(
+    name = "triton_utils",
+    srcs = ["//jaxlib/gpu:triton_utils.cc"],
+    hdrs = ["//jaxlib/gpu:triton_utils.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jaxlib/gpu:triton_cc_proto",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@zlib",
+    ],
+)
+
+pybind_extension(
+    name = "_triton",
+    srcs = ["//jaxlib/gpu:triton.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_triton",
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        ":triton_kernels",
+        ":triton_utils",
+        "//jaxlib:absl_status_casters",
+        "//jaxlib:kernel_nanobind_helpers",
+        "//jaxlib/gpu:triton_cc_proto",
+        "@com_google_absl//absl/status:statusor",
+        "@nanobind",
+    ],
+)
 py_library(
     name = "rocm_gpu_support",
     deps = [
@@ -294,5 +355,6 @@ py_library(
         ":_prng",
         ":_solver",
         ":_sparse",
+        ":_triton",
     ],
 )

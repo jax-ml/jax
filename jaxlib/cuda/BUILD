@@ -401,6 +401,7 @@ cc_library(
         "@xla//xla/service:custom_call_status",
         "@xla//xla/stream_executor/gpu:asm_compiler",
         "@tsl//tsl/cuda:cudart",
+        "@tsl//tsl/platform:env",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",

@@ -243,6 +243,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extensi
             f"__main__/jaxlib/rocm/_linalg.{pyext}",
             f"__main__/jaxlib/rocm/_prng.{pyext}",
             f"__main__/jaxlib/rocm/_sparse.{pyext}",
+            f"__main__/jaxlib/rocm/_triton.{pyext}",
         ],
     )
 

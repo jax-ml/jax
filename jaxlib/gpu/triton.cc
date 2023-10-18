@@ -20,7 +20,7 @@
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 
-#define CUDA_RETURN_IF_ERROR(expr) JAX_RETURN_IF_ERROR(JAX_AS_STATUS(expr))
+#define GPU_RETURN_IF_ERROR(expr) JAX_RETURN_IF_ERROR(JAX_AS_STATUS(expr))
 
 namespace nb = nanobind;
 
@@ -124,11 +124,11 @@ NB_MODULE(_triton, m) {
   m.def("get_compute_capability",
         ValueOrThrowWrapper([](int device) -> absl::StatusOr<int> {
           int major, minor;
-          CUDA_RETURN_IF_ERROR(cuInit(device));
-          CUDA_RETURN_IF_ERROR(cuDeviceGetAttribute(
-              &major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device));
-          CUDA_RETURN_IF_ERROR(cuDeviceGetAttribute(
-              &minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device));
+          GPU_RETURN_IF_ERROR(gpuInit(device));
+          GPU_RETURN_IF_ERROR(gpuDeviceGetAttribute(
+              &major, GPU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device));
+          GPU_RETURN_IF_ERROR(gpuDeviceGetAttribute(
+              &minor, GPU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device));
           return major * 10 + minor;
         }));
 
