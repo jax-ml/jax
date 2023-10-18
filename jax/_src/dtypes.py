@@ -32,6 +32,7 @@ import numpy as np
 
 from jax._src import config
 from jax._src.typing import DType, DTypeLike
+from jax._src.util import set_module
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
@@ -45,7 +46,9 @@ else:
     raise ValueError("JAX requires ml_dtypes version 0.2.0 or newer; "
                      f"installed version is {ml_dtypes.__version__}.")
 
+export = set_module('jax.dtypes')
 
+@export
 class extended(np.generic):
   """Scalar class for extended dtypes.
 
@@ -61,6 +64,7 @@ class extended(np.generic):
   """
 
 
+@export
 class prng_key(extended):
   """Scalar class for PRNG Key dtypes.
 
@@ -225,6 +229,7 @@ def canonicalize_dtype(dtype: Any, allow_extended_dtype: Literal[False] = False,
 @overload
 def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False, allow_opaque_dtype: Any = None) -> Union[DType, ExtendedDType]: ...
 
+@export
 def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False, allow_opaque_dtype: Any = None) -> Union[DType, ExtendedDType]:
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
   if allow_opaque_dtype is not None:
@@ -243,6 +248,7 @@ python_scalar_dtypes : dict[type, DType] = {
   complex: np.dtype('complex128'),
 }
 
+@export
 def scalar_type_of(x: Any) -> type:
   """Return the scalar type associated with a JAX value."""
   typ = dtype(x)
@@ -645,6 +651,7 @@ def result_type(*args: Any, return_weak_type_flag: Literal[False] = False) -> DT
 @overload
 def result_type(*args: Any, return_weak_type_flag: bool = False) -> Union[DType, tuple[DType, bool]]: ...
 
+@export
 def result_type(*args: Any, return_weak_type_flag: bool = False) -> Union[DType, tuple[DType, bool]]:
   """Convenience function to apply JAX argument dtype promotion.
 
