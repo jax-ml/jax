@@ -175,9 +175,7 @@ from jax._src.random import (
   shuffle as shuffle,
   split as split,
   t as t,
-  threefry_2x32 as threefry_2x32,
   threefry2x32_key as _deprecated_threefry2x32_key,
-  threefry2x32_p as threefry2x32_p,
   triangular as triangular,
   truncated_normal as truncated_normal,
   uniform as uniform,
@@ -185,6 +183,11 @@ from jax._src.random import (
   wald as wald,
   weibull_min as weibull_min,
   wrap_key_data as wrap_key_data,
+)
+
+from jax._src.prng import (
+  threefry_2x32 as _deprecated_threefry_2x32,
+  threefry2x32_p as _deprecated_threefry2x32_p,
 )
 
 
@@ -213,12 +216,23 @@ _deprecations = {
     "unsafe_rbg_key": (
         "jax.random.unsafe_rbg_key(seed) is deprecated. "
         "Use jax.random.PRNGKey(seed, 'unsafe_rbg')", _deprecated_unsafe_rbg_key),
+    # Added October 18, 2023
+    "threefry_2x32": (  # Note: this has been raising a FutureWarning since 2021
+        "jax.random.threefry_2x32 is deprecated. Use jax.extend.random.threefry_2x32.",
+        _deprecated_threefry_2x32,
+    ),
+    "threefry2x32_p": (
+        "jax.random.threefry2x32_p is deprecated. Use jax.extend.random.threefry2x32_p.",
+        _deprecated_threefry2x32_p,
+    ),
 }
 
 import typing
 if typing.TYPE_CHECKING:
   PRNGKeyArray = typing.Any
   KeyArray = typing.Any
+  threefry_2x32 = _deprecated_threefry_2x32
+  threefry_2x32_p = _deprecated_threefry2x32_p
   threefry2x32_key = _deprecated_threefry2x32_key
   rbg_key = _deprecated_rbg_key
   unsafe_rbg_key = _deprecated_unsafe_rbg_key
