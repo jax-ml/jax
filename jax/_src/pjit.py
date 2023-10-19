@@ -70,7 +70,7 @@ from jax._src.tree_util import (
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, weakref_lru_cache,
-    merge_lists, flatten, unflatten)
+    merge_lists, flatten, unflatten, subs_list2)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -1514,9 +1514,9 @@ ad.primitive_jvps[pjit_p] = _pjit_jvp
 
 @weakref_lru_cache
 def _known_jaxpr_fwd(known_jaxpr: core.ClosedJaxpr,
-                     fwds_known: tuple[Optional[int]]) -> core.ClosedJaxpr:
+                     in_fwd: tuple[Optional[int]]) -> core.ClosedJaxpr:
   updated_jaxpr = known_jaxpr.jaxpr.replace(
-      outvars=[x for x, i in zip(known_jaxpr.jaxpr.outvars, fwds_known)
+      outvars=[x for x, i in zip(known_jaxpr.jaxpr.outvars, in_fwd)
                if i is None])
   return known_jaxpr.replace(jaxpr=updated_jaxpr)
 
@@ -1533,60 +1533,50 @@ def _pjit_partial_eval(trace, *in_tracers,
   unknown_outs = tuple(unknown_outs)
   known_outs = tuple(not uk for uk in unknown_outs)
   num_residuals = len(res_avals)
+  res_shardings = (UNSPECIFIED,) * num_residuals
 
   def keep_where(l, should_keep):
-    return tuple(x for x, keep in unsafe_zip(l, should_keep) if keep)
+    return tuple(x for x, keep in zip(l, should_keep) if keep)
 
-  residual_shardings = (UNSPECIFIED,) * num_residuals
-  # Compute the known outputs
+  # Compute which outputs are just forwarded inputs.
+  num_out_primals = len(known_jaxpr.out_avals) - num_residuals
+  in_fwd = pe._jaxpr_forwarding(known_jaxpr.jaxpr)
+
+  # Only forward primal outputs when corresponding out_sharding is UNSPECIFIED.
+  in_fwd_primal, in_fwd_res = split_list(in_fwd, [num_out_primals])
+  in_fwd = [fwd if is_unspecified(os) else None for os, fwd in
+            zip(keep_where(out_shardings, known_outs), in_fwd_primal)
+            ] + in_fwd_res
+  del in_fwd_primal, in_fwd_res
+
+  # Compute which residuals are just primal outputs.
+  out_vars, res_vars = split_list(known_jaxpr.jaxpr.outvars, [num_out_primals])
+  idx_map = {id(v): i for i, v in enumerate(out_vars)}
+  out_fwd = [None] * num_out_primals + [idx_map.get(id(v)) for v in res_vars]
+
+  # Prune jaxpr outputs and out_shardings by removing forwards.
+  keep = [f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd)]
+  known_jaxpr = pe.prune_closed_jaxpr_outputs(known_jaxpr, keep)
+  known_out_shardings = keep_where(out_shardings, known_outs) + res_shardings
+  known_out_shardings = keep_where(known_out_shardings, keep)
+  del keep, num_out_primals
+
   known_params = dict(
-      jaxpr=known_jaxpr,
-      in_shardings=keep_where(in_shardings, known_ins),
-      out_shardings=(
-          keep_where(out_shardings, known_outs) + residual_shardings),
-      resource_env=resource_env,
+      jaxpr=known_jaxpr, in_shardings=keep_where(in_shardings, known_ins),
+      out_shardings=known_out_shardings, resource_env=resource_env,
       donated_invars=keep_where(donated_invars, known_ins),
-      name=name,
-      keep_unused=keep_unused,
-      inline=inline)
-
-  fwds_known = pe._jaxpr_forwarding(known_params['jaxpr'].jaxpr)
-
-  # Only forward the outvars where the out_sharding is UNSPECIFIED.
-  known_user_out_shardings = keep_where(known_params['out_shardings'], known_outs)
-  fwds_known_user = [
-      fwd if is_unspecified(os) else None
-      for os, fwd in zip(known_user_out_shardings,
-                              fwds_known[:len(known_user_out_shardings)])]
-  fwds_known = fwds_known_user + fwds_known[len(known_user_out_shardings):]
-  del fwds_known_user
-
-  # Remove forwarded outvars and out_shardings
-  known_params['jaxpr'] = _known_jaxpr_fwd(known_params['jaxpr'], tuple(fwds_known))
-  known_out_shardings = tuple(
-      s for s, i in zip(known_params['out_shardings'], fwds_known) if i is None)
-  known_params['out_shardings'] = known_out_shardings
-  del known_out_shardings
-
+      name=name, keep_unused=keep_unused, inline=inline)
   assert len(known_params['out_shardings']) == len(known_params['jaxpr'].out_avals)
 
   # Bind known things to pjit_p.
   known_inputs = [pv.get_known() for pv in in_pvals if pv.is_known()]
   all_known_outs = pjit_p.bind(*known_inputs, **known_params)
+  all_known_outs = subs_list2(in_fwd, out_fwd, known_inputs, all_known_outs,
+                              all_known_outs)
 
-  known_outs_iter = iter(all_known_outs)
-  all_known_outs = [next(known_outs_iter)
-                    if fwd_idx is None else known_inputs[fwd_idx]
-                    for fwd_idx in fwds_known]
-  assert next(known_outs_iter, None) is None
-  del known_outs_iter, known_inputs
-
-  if num_residuals:
-    known_out_vals, residual_vals = \
-        split_list(all_known_outs, [len(all_known_outs) - num_residuals])
-  else:
-    known_out_vals, residual_vals = all_known_outs, ()
-  residual_tracers = [trace.new_instantiated_const(residual) for residual in residual_vals]
+  known_out_vals, residual_vals = \
+      split_list(all_known_outs, [len(all_known_outs) - num_residuals])
+  residual_tracers = map(trace.new_instantiated_const, residual_vals)
 
   # The convention of partial_eval_jaxpr_nounits is to place residual binders
   # at the front of the jaxpr produced, so we move them to the back since both
@@ -1597,7 +1587,7 @@ def _pjit_partial_eval(trace, *in_tracers,
   # Prepare unknown tracers
   unknown_params = dict(
       jaxpr=unknown_jaxpr,
-      in_shardings=(keep_where(in_shardings, unknown_ins) + residual_shardings),
+      in_shardings=(keep_where(in_shardings, unknown_ins) + res_shardings),
       out_shardings=keep_where(out_shardings, unknown_outs),
       resource_env=resource_env,
       donated_invars=(keep_where(donated_invars, unknown_ins) +
@@ -1626,28 +1616,25 @@ pe.custom_partial_eval_rules[pjit_p] = _pjit_partial_eval
 def _pjit_partial_eval_custom_params_updater(
     unks_in: Sequence[bool], inst_in: Sequence[bool],
     kept_outs_known: Sequence[bool], kept_outs_staged: Sequence[bool],
-    num_res: int, params_known: dict, params_staged: dict
+    num_res_out: int, num_res_in: int, params_known: dict, params_staged: dict
   ) -> tuple[dict, dict]:
   # prune inputs to jaxpr_known according to unks_in
   donated_invars_known, _ = pe.partition_list(unks_in, params_known['donated_invars'])
   in_shardings_known, _ = pe.partition_list(unks_in, params_known['in_shardings'])
-  if num_res == 0:
-    residual_shardings = []
-  else:
-    residual_shardings = [UNSPECIFIED] * num_res
   _, out_shardings_known = pe.partition_list(kept_outs_known, params_known['out_shardings'])
   new_params_known = dict(params_known,
                           in_shardings=tuple(in_shardings_known),
-                          out_shardings=(*out_shardings_known, *residual_shardings),
+                          out_shardings=(*out_shardings_known,
+                                         *[UNSPECIFIED] * num_res_out),
                           donated_invars=tuple(donated_invars_known))
   assert len(new_params_known['in_shardings']) == len(params_known['jaxpr'].in_avals)
   assert len(new_params_known['out_shardings']) == len(params_known['jaxpr'].out_avals)
 
   # added num_res new inputs to jaxpr_staged, and pruning according to inst_in
   _, donated_invars_staged = pe.partition_list(inst_in, params_staged['donated_invars'])
-  donated_invars_staged = [False] * num_res + donated_invars_staged
+  donated_invars_staged = [False] * num_res_in + donated_invars_staged
   _, in_shardings_staged = pe.partition_list(inst_in, params_staged['in_shardings'])
-  in_shardings_staged = [*residual_shardings, *in_shardings_staged]
+  in_shardings_staged = [*[UNSPECIFIED] * num_res_in, *in_shardings_staged]
 
   _, out_shardings_staged = pe.partition_list(kept_outs_staged, params_staged['out_shardings'])
 
