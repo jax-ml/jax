@@ -184,7 +184,7 @@ class PrngTest(jtu.JaxTestCase):
 
   def check_key_has_impl(self, key, impl):
     if jnp.issubdtype(key.dtype, dtypes.prng_key):
-      self.assertIs(key.impl, impl)
+      self.assertIs(key._impl, impl)
     else:
       self.assertEqual(key.dtype, jnp.dtype('uint32'))
       self.assertEqual(key.shape, impl.key_shape)
@@ -1190,7 +1190,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
 
     newshape = (2, 2)
     key_func = partial(jnp.reshape, newshape=newshape)
-    arr_func = partial(jnp.reshape, newshape=(*newshape, *key.impl.key_shape))
+    arr_func = partial(jnp.reshape, newshape=(*newshape, *key._impl.key_shape))
 
     self.check_shape(key_func, keys)
     self.check_against_reference(key_func, arr_func, keys)
@@ -1200,7 +1200,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
 
     reps = 3
     key_func = partial(jnp.tile, reps=reps)
-    arr_func = lambda x: jnp.tile(x[None], reps=(reps, *(1 for _ in key.impl.key_shape)))
+    arr_func = lambda x: jnp.tile(x[None], reps=(reps, *(1 for _ in key._impl.key_shape)))
 
     self.check_shape(key_func, key)
     self.check_against_reference(key_func, arr_func, key)
@@ -1219,7 +1219,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
 
     shape = (3,)
     key_func = partial(jnp.broadcast_to, shape=shape)
-    arr_func = partial(jnp.broadcast_to, shape=(*shape, *key.impl.key_shape))
+    arr_func = partial(jnp.broadcast_to, shape=(*shape, *key._impl.key_shape))
 
     self.check_shape(key_func, key)
     self.check_against_reference(key_func, arr_func, key)
@@ -1257,7 +1257,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     keys = random.split(key, 4).reshape(2, 2)
 
     key_func = jnp.ravel
-    arr_func = partial(jnp.reshape, newshape=(4, *key.impl.key_shape))
+    arr_func = partial(jnp.reshape, newshape=(4, *key._impl.key_shape))
 
     self.check_shape(key_func, keys)
     self.check_against_reference(key_func, arr_func, keys)

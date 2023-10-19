@@ -2651,7 +2651,7 @@ def _random_split_impl(keys: TfVal, *, shape, _in_avals, _out_aval):
 
   def impl_wrapper(keys: TfVal, *, shape):
     return prng.random_split_impl_base(
-        keys_aval.dtype.impl, keys, keys_aval.ndim, shape=shape)
+        keys_aval.dtype._impl, keys, keys_aval.ndim, shape=shape)
 
   converted_impl = _convert_jax_impl(
       impl_wrapper, multiple_results=False, with_physical_avals=True,
@@ -2667,7 +2667,7 @@ def _random_fold_in_impl(keys: TfVal, msgs: TfVal, *, _in_avals, _out_aval):
 
   def impl_wrapper(keys: TfVal, msgs: TfVal):
     return prng.random_fold_in_impl_base(
-        keys_aval.dtype.impl, keys, msgs, keys_aval.shape)
+        keys_aval.dtype._impl, keys, msgs, keys_aval.shape)
 
   converted_impl = _convert_jax_impl(
       impl_wrapper, multiple_results=False, with_physical_avals=True,
@@ -2683,7 +2683,7 @@ def _random_bits_impl(keys: TfVal, *, bit_width, shape, _in_avals, _out_aval):
 
   def impl_wrapper(keys: TfVal, **kwargs):
     return prng.random_bits_impl_base(
-        keys_aval.dtype.impl, keys, keys_aval.ndim,
+        keys_aval.dtype._impl, keys, keys_aval.ndim,
         bit_width=bit_width, shape=shape)
 
   converted_impl = _convert_jax_impl(
