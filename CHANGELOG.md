@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-# jax 0.4.19
+# jax 0.4.20
+
+# jaxlib 0.4.20
+
+# jax 0.4.19 (Oct 19, 2023)
 
 * New Features
   * Added {obj}`jax.typing.DTypeLike`, which can be used to annotate objects that
@@ -23,7 +27,7 @@ Remember to align the itemized text with the first line of an item within a list
     versions when determining if the installed version of these libraries is at
     least as new as the versions against which JAX was built.
 
-# jaxlib 0.4.19
+# jaxlib 0.4.19 (Oct 19, 2023)
 
 * Changes
   * jaxlib will now always prefer pip-installed NVIDIA CUDA libraries
