@@ -48,7 +48,7 @@ from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_unflatten,
                                 KeyPath, generate_key_paths, keystr)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
-                           as_hashable_function, weakref_lru_cache)
+                           as_hashable_function, weakref_lru_cache, subs_list)
 
 
 map, unsafe_map = safe_map, map
@@ -272,7 +272,7 @@ class JaxprTrace(Trace['JaxprTracer']):
                          *in_consts, **const_params)
     fwds, out_knowns, out_type, jaxpr, env = aux()
     # Split apart known outputs from the original call and non-fwded residuals.
-    out_consts, non_fwd_res_ = split_list(out, [sum(out_knowns)])
+    out_consts, non_fwd_res = split_list(out, [sum(out_knowns)])
 
     # Form the complete list of residuals by forwarding some inputs.
     if config.dynamic_shapes.value:
@@ -288,10 +288,7 @@ class JaxprTrace(Trace['JaxprTracer']):
                 in_consts_full[d1.val] = d2
     else:
       in_consts_full = in_consts
-    non_fwd_res = iter(non_fwd_res_)
-    res = [next(non_fwd_res) if i is None else in_consts_full[i] for i in fwds]
-    sentinel = object()
-    assert next(non_fwd_res, sentinel) is sentinel
+    res = subs_list(fwds, in_consts_full, non_fwd_res)
 
     # Create the input tracers for the staged-out (unknown-value) call.
     res_tracers = map(self.instantiate_const, map(self.new_const, res))
@@ -1436,11 +1433,7 @@ def closed_call_partial_eval_custom_rule(
       [newvar(res_aval(params_known, v))
        for v in jaxpr_staged.in_avals[:num_res]], [num_res_val])
   res_val_binders = [v for v, f in zip(res_val_binders, out_fwd) if f is None]
-  res_val_binders_ = iter(res_val_binders)
-  res_val_vars = [out_binders_known[f] if f is not None
-                  else next(res_val_binders_) for f in out_fwd]
-  sentinel = object()
-  assert next(res_val_binders_, sentinel) is sentinel
+  res_val_vars = subs_list(out_fwd, out_binders_known, res_val_binders)
   eqn_known = new_jaxpr_eqn([*ins_known, *res_ref_binders],
                             [*out_binders_known, *res_val_binders],
                             eqn.primitive, params_known, jaxpr_known.effects,

@@ -49,7 +49,7 @@ from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, fft, linalg, control_flow)
 from jax._src.util import (HashableFunction, HashablePartial, unzip2, unzip3,
                            as_hashable_function, memoize, partition_list,
-                           merge_lists, split_list)
+                           merge_lists, split_list, subs_list2)
 from jax.api_util import flatten_fun_nokwargs, shaped_abstractify
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -1284,11 +1284,7 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
   assert not jaxpr.constvars
   unk_out_names, _ = pe.partition_list(out_knowns, out_names_thunk())
   known_out_names_ = known_out_names()
-  non_fwd_res_ = iter(non_fwd_res)
-  res = [in_consts[f1] if f1 is not None else out_consts[f2] if f2 is not None
-         else next(non_fwd_res_) for f1, f2 in zip(in_fwd, out_fwd)]
-  sentinel = object()
-  assert next(non_fwd_res_, sentinel) is sentinel
+  res = subs_list2(in_fwd, out_fwd, in_consts, out_consts, non_fwd_res)
   res_names = [known_in_names[f1] if f1 is not None else
                known_out_names_[f2] if f2 is not None else
                {0: (*mesh.axis_names,)} for f1, f2 in zip(in_fwd, out_fwd)]
@@ -1315,8 +1311,8 @@ def _shard_map_partial_eval_post_process(
   unk_tracers = [t for t in tracers if not t.is_known()]
   jaxpr, res, env = pe.tracers_to_jaxpr([], unk_tracers)
   # TODO(mattjj): output forwarding optimization
-  which = [not v.aval.shape for v in jaxpr.constvars]
-  res = [jax.lax.broadcast(x, (1,)) if not v.aval.shape else x
+  which = [not getattr(v.aval, 'shape', True) for v in jaxpr.constvars]
+  res = [jax.lax.broadcast(x, (1,)) if not getattr(v.aval, 'shape', True) else x
          for x, v in zip(res, jaxpr.constvars)]
   jaxpr = _promote_scalar_residuals_jaxpr(jaxpr, which)
 
@@ -1466,12 +1462,7 @@ def _partial_eval_jaxpr_custom_rule(
   eqn_known = pe.new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
                                eqn.primitive, params_known, jaxpr_known.effects,
                                eqn.source_info)
-  residuals_ = iter(residuals)
-  full_res = [ins_known[f1] if f1 is not None else
-              out_binders_known[f2] if f2 is not None else
-              next(residuals_) for f1, f2 in zip(in_fwd, out_fwd)]
-  sentinel = object()
-  assert next(residuals_, sentinel) is sentinel
+  full_res = subs_list2(in_fwd, out_fwd, ins_known, out_binders_known, residuals)
   eqn_staged = pe.new_jaxpr_eqn([*full_res, *ins_staged], out_binders_staged,
                                 eqn.primitive, params_staged,
                                 jaxpr_staged.effects, eqn.source_info)

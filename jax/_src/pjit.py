@@ -70,7 +70,7 @@ from jax._src.tree_util import (
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, weakref_lru_cache,
-    merge_lists, flatten, unflatten)
+    merge_lists, flatten, unflatten, subs_list2)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -1571,18 +1571,12 @@ def _pjit_partial_eval(trace, *in_tracers,
   # Bind known things to pjit_p.
   known_inputs = [pv.get_known() for pv in in_pvals if pv.is_known()]
   all_known_outs = pjit_p.bind(*known_inputs, **known_params)
-
-  all_known_outs_ = iter(all_known_outs)
-  all_known_outs = [known_inputs[f1] if f1 is not None else
-                    all_known_outs[f2] if f2 is not None else
-                    next(all_known_outs_) for f1, f2 in zip(in_fwd, out_fwd)]
-  sentinel = object()
-  assert next(all_known_outs_, sentinel) is sentinel
-  del all_known_outs_, known_inputs
+  all_known_outs = subs_list2(in_fwd, out_fwd, known_inputs, all_known_outs,
+                              all_known_outs)
 
   known_out_vals, residual_vals = \
       split_list(all_known_outs, [len(all_known_outs) - num_residuals])
-  residual_tracers = [trace.new_instantiated_const(residual) for residual in residual_vals]
+  residual_tracers = map(trace.new_instantiated_const, residual_vals)
 
   # The convention of partial_eval_jaxpr_nounits is to place residual binders
   # at the front of the jaxpr produced, so we move them to the back since both
