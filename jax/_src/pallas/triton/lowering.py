@@ -59,6 +59,7 @@ from jax_triton.triton_lib import get_triton_type
 import numpy as np
 from triton._C.libtriton.triton import ir as tl_ir
 from triton.compiler import code_generator as code_gen
+from triton.compiler import compiler as tc
 import triton.language as tl
 
 # TODO(sharadmv): enable type checking
@@ -191,7 +192,8 @@ def _process_grid_to_3d_grid(builder, grid_mapping: GridMapping):
 
 
 def lower_jaxpr_to_triton_module(
-    jaxpr: jax_core.Jaxpr, in_shapes, grid_mapping: GridMapping, name: str
+    jaxpr: jax_core.Jaxpr, in_shapes, grid_mapping: GridMapping, name: str,
+    num_warps: int
 ) -> tl_ir.module:
   jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), instantiate=True)
   ir_context = tl_ir.context()
@@ -201,7 +203,11 @@ def lower_jaxpr_to_triton_module(
   # which is fine when we have multiple of the same GPU but this won't work in
   # general.
   device = 0
-  builder.arch = triton_kernel_call_lib.get_compute_capability(device)
+  builder.target = tc.CudaTargetDescriptor(
+      capability=triton_kernel_call_lib.get_compute_capability(device),
+      num_warps=num_warps,
+      enable_fp_fusion=True
+  )
   module = builder.create_module()
   in_avals = [var.aval for var in jaxpr.invars]
   triton_types = [get_triton_type(x) for x in in_avals]
@@ -1449,7 +1455,7 @@ def compile_jaxpr(
     debug: bool,
 ) -> TritonCompilationResult:
   lowering_result = lower_jaxpr_to_triton_module(
-      jaxpr, in_shapes, grid_mapping, name
+      jaxpr, in_shapes, grid_mapping, name, num_warps
   )
   device = 0
   ttir = str(lowering_result.module)
