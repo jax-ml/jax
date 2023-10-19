@@ -2748,6 +2748,18 @@ def _vector_shape_cast_rule(ctx: RewriteContext, op: vector.ShapeCastOp,  # pyli
       and src_ty.shape[-2] % layout_in.tiling[-2] == 0
   ):
     no_op = True
+  elif (
+      layout_in.implicit_dim is None
+      and layout_out.implicit_dim is None
+      and layout_out.offsets == layout_in.offsets == (0, 0)
+      and layout_in.tiling == (1, TARGET_SHAPE.lanes)
+      and layout_out.has_natural_topology
+      and dst_ty.shape[-1] != src_ty.shape[-1]
+      and dst_ty.shape[-1] == TARGET_SHAPE.lanes
+      and dst_ty.shape[-2] % layout_out.tiling[-2] == 0
+      and src_ty.shape[-1] % layout_in.tiling[-1] == 0
+  ):  # n x (m * 128) -> n x m x 128.
+    no_op = True
 
   src_vregs = disassemble(layout_in, op.source)
   if no_op:

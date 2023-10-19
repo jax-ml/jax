@@ -2261,6 +2261,7 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
   if (!layouts_out.front().has_value()) {
     return op.emitOpError("Expected non-null output layout");
   }
+  using Tiling = std::array<int64_t, 2>;
   const VectorLayout &layout_in = *layouts_in.front();
   const VectorLayout &layout_out = *layouts_out.front();
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
@@ -2312,6 +2313,17 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
       *(dst_shape.end() - 1) == *(src_shape.end() - 1) &&
       *(dst_shape.end() - 2) % layout_in.tiling()[0] == 0 &&
       *(src_shape.end() - 2) % layout_in.tiling()[0] == 0) {
+    no_op = true;
+  } else if (layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+             layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+             layout_in.offsets() == layout_out.offsets() &&
+             layout_in.offsets() == LayoutOffsets{0, 0} &&
+             layout_in.tiling() == Tiling{1, ctx.target_shape[1]} &&
+             layout_out.hasNaturalTopology(ctx.target_shape) &&
+             *(dst_shape.end() - 1) != *(src_shape.end() - 1) &&
+             *(dst_shape.end() - 1) == ctx.target_shape[1] &&
+             *(dst_shape.end() - 2) % layout_out.tiling()[0] == 0 &&
+             *(src_shape.end() - 1) % layout_in.tiling()[1] == 0) {
     no_op = true;
   }
   FAILUREOR_ASSIGN_OR_RETURN(
