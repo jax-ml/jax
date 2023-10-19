@@ -232,7 +232,7 @@ if typing.TYPE_CHECKING:
   PRNGKeyArray = typing.Any
   KeyArray = typing.Any
   threefry_2x32 = _deprecated_threefry_2x32
-  threefry_2x32_p = _deprecated_threefry2x32_p
+  threefry2x32_p = _deprecated_threefry2x32_p
   threefry2x32_key = _deprecated_threefry2x32_key
   rbg_key = _deprecated_rbg_key
   unsafe_rbg_key = _deprecated_unsafe_rbg_key
