@@ -143,7 +143,7 @@ from jax._src.random import (
   cauchy as cauchy,
   chisquare as chisquare,
   choice as choice,
-  default_prng_impl as default_prng_impl,
+  default_prng_impl as _deprecated_default_prng_impl,
   dirichlet as dirichlet,
   double_sided_maxwell as double_sided_maxwell,
   exponential as exponential,
@@ -225,12 +225,19 @@ _deprecations = {
         "jax.random.threefry2x32_p is deprecated. Use jax.extend.random.threefry2x32_p.",
         _deprecated_threefry2x32_p,
     ),
+    # Added October 19. 2023
+    "default_prng_impl": (
+        "jax.random.default_prng_impl is deprecated. Typical uses can be replaced by "
+        "jax.random.key_impl(key), jax.eval_shape(jax.random.key, 0).dtype, or similar.",
+        _deprecated_default_prng_impl,
+    ),
 }
 
 import typing
 if typing.TYPE_CHECKING:
   PRNGKeyArray = typing.Any
   KeyArray = typing.Any
+  default_prng_impl = _deprecated_default_prng_impl
   threefry_2x32 = _deprecated_threefry_2x32
   threefry2x32_p = _deprecated_threefry2x32_p
   threefry2x32_key = _deprecated_threefry2x32_key

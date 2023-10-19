@@ -38,7 +38,6 @@ to fail. A Limitation is specific to a harness.
 """
 
 from collections.abc import Iterable, Sequence
-import itertools
 import operator
 import os
 from functools import partial
@@ -2676,9 +2675,9 @@ for dtype in (np.float32, np.float64):
 def wrap_and_split():
   key = jax.random.key(42)
   if config.enable_custom_prng.value:
-    key = prng.random_wrap(key, impl=jax.random.default_prng_impl())
+    key = jax.random.wrap_key_data(key)
   result = jax.random.split(key, 2)
-  return prng.random_unwrap(result)
+  return jax.random.key_data(result)
 
 define(
     "random_split",
