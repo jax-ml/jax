@@ -810,8 +810,6 @@ We list here a history of the serialization version numbers:
     launch.
     Used in JAX from March 15, 2023 (cl/516885716). Starting with
     March 28th, 2023 we stopped using `dim_args_spec` (cl/520033493).
-    The support for this version was dropped on
-    October 17th, 2023 (cl/573858283).
   * Version 5 adds support for `call_tf_graph`. This is currently used
     for some specialized use cases. Used in JAX from May 3rd, 2023
     (cl/529106145).
