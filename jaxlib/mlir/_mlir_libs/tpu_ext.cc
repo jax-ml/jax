@@ -55,7 +55,7 @@ limitations under the License.
 namespace {
 constexpr const char LAYOUT_DEFS_MODULE[] =
     "jax.jaxlib.mosaic.python.layout_defs";
-constexpr const char IR_MODULE[] = "._mlir.ir";
+constexpr const char IR_MODULE[] = "jaxlib.mlir.ir";
 // TODO(tlongeri): Get rid of this somehow
 constexpr MlirTpuI64TargetTuple TARGET_SHAPE{8, 128};
 
@@ -260,8 +260,11 @@ py::tuple toPyTuple(MlirTpuI64TargetTuple tuple) {
 MlirTpuInsertionPoint getDefaultInsertionPoint() {
   py::object insertion_point =
       py::module_::import(IR_MODULE).attr("InsertionPoint").attr("current");
+  py::object ref_operation = insertion_point.attr("ref_operation");
   return {py::cast<MlirBlock>(insertion_point.attr("block")),
-          py::cast<MlirOperation>(insertion_point.attr("ref_operation"))};
+          ref_operation.is_none()
+              ? MlirOperation{nullptr}
+              : py::cast<MlirOperation>(insertion_point.attr("ref_operation"))};
 }
 
 // Unwraps the current default location
