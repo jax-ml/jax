@@ -33,6 +33,7 @@ Random Samplers
     ball
     bernoulli
     beta
+    binomial
     bits
     categorical
     cauchy

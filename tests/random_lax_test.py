@@ -1164,6 +1164,44 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.lognorm(s=sigma).cdf)
 
+  @jtu.sample_product(
+      n= [5, 13, 21, 53, 500],
+      p= [0.1, 0.3, 0.5, 0.7, 0.9],
+      dtype= jtu.dtypes.floating)
+  def testBinomialSample(self, n, p, dtype):
+    key = self.make_key(3)
+    rand = lambda key: random.binomial(key, n, p, shape=(12000, ), dtype=dtype)
+    crand = jax.jit(rand)
+    uncompiled_samples = rand(key)
+    compiled_samples = crand(key)
+
+    pmf = lambda x: scipy.stats.binom(n, p).pmf(x)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckChiSquared(samples.astype(int), pmf)
+      self.assertAllClose(samples.mean(), n * p, rtol=0.025, check_dtypes=False)
+      self.assertAllClose(samples.var(), n * p * (1 - p) , rtol=0.035, check_dtypes=False)
+
+  def testBinomialCornerCases(self):
+    key = self.make_key(0)
+
+    # corner case n
+    n = jnp.array([-1, 0, jnp.nan, jnp.inf])
+    samples1 = random.binomial(key, n, 0.5, shape=(4,))
+
+    # corner case p
+    p = jnp.array([jnp.nan, 0, -0.1, 1.1])
+    samples2 = random.binomial(key, 5, p, shape=(4,))
+
+    # corner case n and p
+    # expect nan or illegal will lead to nan
+    n_cc = jnp.array([jnp.inf, -1, jnp.inf])
+    p_cc = jnp.array([jnp.nan, jnp.nan, -0.1])
+    samples3 = random.binomial(key, n_cc, p_cc, shape=(3,))
+
+    self.assertArraysAllClose(samples1, jnp.array([jnp.nan, 0., jnp.nan, jnp.inf]), check_dtypes=False)
+    self.assertArraysAllClose(samples2, jnp.array([jnp.nan, 0., jnp.nan, jnp.nan]), check_dtypes=False)
+    self.assertArraysAllClose(samples3, jnp.array([jnp.nan, jnp.nan, jnp.nan]), check_dtypes=False)
 
 threefry_seed = prng_internal.threefry_seed
 threefry_split = prng_internal.threefry_split

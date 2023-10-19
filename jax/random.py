@@ -137,6 +137,7 @@ from jax._src.random import (
   PRNGKey as PRNGKey,
   ball as ball,
   bernoulli as bernoulli,
+  binomial as binomial,
   beta as beta,
   bits as bits,
   categorical as categorical,
