@@ -769,7 +769,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
   def test_multi_platform_nested(self):
     x = np.arange(5, dtype=np.float32)
-    exp = export.export(_testing_multi_platform_func,
+    exp = export.export(lambda x: _testing_multi_platform_func(jnp.sin(x)),
                         lowering_platforms=("cpu", "tpu", "cuda"))(x)
     self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda"))
 
@@ -778,6 +778,12 @@ class JaxExportTest(jtu.JaxTestCase):
     # nested exported.
     exp2 = export.export(export.call_exported(exp),
                          lowering_platforms=("cpu", "cuda"))(x)
+
+    # Ensure that we do not have multiple lowerings of the exported function
+    exp2_module_str = str(exp2.mlir_module())
+    count_sine = len(re.findall("stablehlo.sine", exp2_module_str))
+    self.assertEqual(1, count_sine)
+
     # Call with argument placed on different plaforms
     for platform in self.__class__.platforms:
       if platform == "tpu": continue
@@ -785,7 +791,7 @@ class JaxExportTest(jtu.JaxTestCase):
       res_exp = export.call_exported(exp2)(x_device)
       self.assertAllClose(
         res_exp,
-        _testing_multi_platform_fun_expected(x, platform=platform))
+        _testing_multi_platform_fun_expected(np.sin(x), platform=platform))
 
   def test_multi_platform_nested_inside_single_platform_export(self):
     x = np.arange(5, dtype=np.float32)

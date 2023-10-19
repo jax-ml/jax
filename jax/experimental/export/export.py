@@ -1048,16 +1048,7 @@ def _call_exported_impl(*args, exported: Exported):
 call_exported_p.def_impl(_call_exported_impl)
 
 def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
-                            platform: str,
                             exported: Exported):
-  # TODO: implement true multi-platform lowering for call_exported
-  if (platform not in exported.lowering_platforms and
-      DisabledSafetyCheck.platform() not in exported.disabled_checks):
-    raise ValueError(
-        f"The exported function '{exported.fun_name}' was lowered for "
-        f"platforms '{exported.lowering_platforms}' but it is used "
-        f"on '{platform}'.")
-
   if exported.uses_shape_polymorphism:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
 
@@ -1089,15 +1080,54 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
       convert_shape(a, a_aval, exported_in_aval)
       for i, (a, a_aval, exported_in_aval) in enumerate(zip(args, ctx.avals_in, exported.in_avals))
       if i in exported.module_kept_var_idx]
+
+  # All the platforms for the current lowering must be among the platforms
+  # for which the callee was lowered.
+  if ctx.module_context.lowering_parameters.is_multi_platform:
+    assert ctx.module_context.lowering_parameters.platforms is not None
+    lowering_platforms = ctx.module_context.lowering_parameters.platforms
+  else:
+    lowering_platforms = (ctx.module_context.platform,)
+
+  callee_lowering_platform_index: list[int] = []
+  for platform in lowering_platforms:
+    if platform in exported.lowering_platforms:
+      callee_lowering_platform_index.append(
+        exported.lowering_platforms.index(platform))
+    elif DisabledSafetyCheck.platform() in exported.disabled_checks:
+      callee_lowering_platform_index.append(0)
+    else:
+      raise ValueError(
+          f"The exported function '{exported.fun_name}' was lowered for "
+          f"platforms '{exported.lowering_platforms}' but it is used "
+          f"on '{lowering_platforms}'.")
+
   if len(exported.lowering_platforms) > 1:
     # The exported module takes a platform index argument
-    # TODO: implement proper handling of the platform_index when we are
-    # in a multi-platform lowering context.
-    platform_index = exported.lowering_platforms.index(platform)
-    arg_width = callee_type.inputs[0].element_type.width
-    assert arg_width in [32, 64]
-    platform_index = np.int32(platform_index) if arg_width == 32 else np.int64(platform_index)  # type: ignore
-    kept_args = [mlir.ir_constant(platform_index)] + kept_args
+    if len(lowering_platforms) > 1:
+      current_platform_idx = ctx.dim_var_values[0]
+    else:
+      current_platform_idx = mlir.ir_constant(np.int32(0))
+    # Compute the rule index based on the current platform
+    i32_type = mlir.aval_to_ir_types(core.ShapedArray((), dtype=np.int32))[0]
+    if current_platform_idx.type != i32_type:
+      current_platform_idx = hlo.ConvertOp(i32_type, current_platform_idx)
+    callee_platform_idx = hlo.CaseOp([i32_type],
+                                     index=current_platform_idx,
+                                     num_branches=len(lowering_platforms))
+    for i in range(len(lowering_platforms)):
+      branch = callee_platform_idx.regions[i].blocks.append()
+      with ir.InsertionPoint(branch):
+        hlo.ReturnOp(mlir.ir_constants(
+          np.int32(callee_lowering_platform_index[i])))
+    if callee_platform_idx.result.type != callee_type.inputs[0]:
+      callee_platform_idx = hlo.ConvertOp(callee_type.inputs[0],
+                                          callee_platform_idx)
+
+    kept_args = [callee_platform_idx] + kept_args
+  else:
+    assert len(lowering_platforms) == 1
+
   call = func_dialect.CallOp(callee_type.results,
                              ir.FlatSymbolRefAttr.get(fn),
                              kept_args)
@@ -1114,10 +1144,11 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   return results
 
 
-for _p in ("cpu", "tpu", "cuda", "rocm"):
-  mlir.register_lowering(call_exported_p,
-                         functools.partial(_call_exported_lowering, platform=_p),
-                         platform=_p)
+# for _p in ("cpu", "tpu", "cuda", "rocm"):
+#   mlir.register_lowering(call_exported_p,
+#                          functools.partial(_call_exported_lowering, platform=_p),
+#                          platform=_p)
+mlir.register_lowering(call_exported_p, _call_exported_lowering)
 
 def wrap_with_sharding(ctx: mlir.LoweringRuleContext,
                        exported: Exported,
