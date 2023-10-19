@@ -381,8 +381,6 @@ def poly_specs(
 
 def export(fun_jax: Callable,
            *,
-           # TODO(necula): remove this kwarg
-           lowering_platform: Optional[str] = None,
            lowering_platforms: Optional[Sequence[str]] = None,
            disabled_checks: Sequence[DisabledSafetyCheck] = (),
            ) -> Callable[..., Exported]:
@@ -390,8 +388,6 @@ def export(fun_jax: Callable,
 
   Args:
     fun_jax: the function to lower and serialize.
-    lowering_platform: DO NOT USE, FOR BACKWARDS COMPATIBILITY ONLY. Use
-      `lowering_platforms`.
     lowering_platforms:
         Optional sequence containing a subset of 'tpu', 'cpu',
         'cuda', 'rocm'. If more than one platform is specified, then
@@ -436,7 +432,7 @@ def export(fun_jax: Callable,
     if lowering_platforms is not None:
       actual_lowering_platforms = tuple(lowering_platforms)
     else:
-      actual_lowering_platforms = (lowering_platform or default_lowering_platform(),)
+      actual_lowering_platforms = (default_lowering_platform(),)
 
     # Do not include shape assertions if the version is < 7.
     enable_shape_assertions = (
