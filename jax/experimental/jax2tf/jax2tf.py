@@ -834,6 +834,25 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   kept_args_flat_tf = [atf for i, atf in enumerate(args_flat_tf) if i in exported.module_kept_var_idx]
 
   version = exported.serialization_version
+
+  try:
+    get_max_supported_version = tfxla.call_module_maximum_supported_version
+  except AttributeError:
+    get_max_supported_version = None
+
+  if get_max_supported_version:
+    max_supported_version = get_max_supported_version()
+  else:
+    max_supported_version = 6
+
+  if version > max_supported_version:
+    raise NotImplementedError(
+      "XlaCallModule from your TensorFlow installation supports up to "
+      f"serialization version {max_supported_version} but the serialized "
+      f"module needs version {version}. "
+      "You should upgrade TensorFlow, e.g., to tf_nightly."
+    )
+
   call_module_attrs = dict(
       version=version,
       Tout=out_types,
@@ -842,6 +861,9 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
           concrete_fn.function_def.signature.name
           for concrete_fn in _thread_local_state.call_tf_concrete_function_list
       ] if _thread_local_state.call_tf_concrete_function_list is not None else [],
+      # We always set has_token_input_output because it requires real tokens
+      # for versions less than 9 and is not used starting with version 9.
+      has_token_input_output=False
   )
 
   call_module_attrs["platforms"] = tuple(p.upper() for p in exported.lowering_platforms)

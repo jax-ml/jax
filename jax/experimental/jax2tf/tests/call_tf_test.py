@@ -1026,6 +1026,17 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     _ = tf.add(1, 1)
     super().setUp()
 
+  def override_serialization_version(self, version_override: int):
+      version = config.jax_serialization_version
+      if version != version_override:
+        self.addCleanup(partial(config.update,
+                                "jax_serialization_version",
+                                version_override))
+        config.update("jax_serialization_version", version_override)
+      logging.info(
+        "Using JAX serialization version %s",
+        config.jax_serialization_version)
+
   def test_alternate(self):
     # Alternate sin/cos with sin in TF and cos in JAX
     f_tf_inner = tf.math.sin
@@ -1525,7 +1536,11 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     )
     _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt_2, input_args=[])
 
-  def test_call_tf_graph_ordered(self):
+  @jtu.parameterized_filterable(
+    kwargs=[dict(version=version) for version in [8, 9]]
+  )
+  def test_call_tf_graph_ordered(self, *, version: int):
+    self.override_serialization_version(version)
     @tf.function
     def tf_print(x):
       tf.print(x)
@@ -1589,9 +1604,12 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     _, restored_model = tf_test_util.SaveAndLoadFunction(f_tf, input_args=[x])
 
   @jtu.parameterized_filterable(
-    kwargs=[dict(poly=poly) for poly in [True, False]]
+    kwargs=[dict(poly=poly, version=version)
+            for poly in [True, False]
+            for version in [8, 9]]
   )
-  def test_call_tf_ordered_dead_inputs(self, *, poly: bool):
+  def test_call_tf_ordered_dead_inputs(self, *, poly: bool, version: int):
+    self.override_serialization_version(version)
     def f_jax(x1, x_dead, x3):
       return (x1, jax2tf.call_tf(lambda x: tf.math.sin(x), ordered=True,
                                  call_tf_graph=True)(x3))
@@ -1606,11 +1624,14 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f_jax(x1, x_dead, x3),
                         f_tf(x1, x_dead, x3))
 
-  @parameterized.named_parameters([
-    dict(testcase_name=f"{ordered=}", ordered=ordered)
-    for ordered in [True, False]
-  ])
-  def test_call_tf_graph_polymorphic(self, ordered: bool):
+  @jtu.parameterized_filterable(
+    kwargs=[dict(ordered=ordered, version=version)
+      for ordered in [True, False]
+      for version in [8, 9]
+    ]
+  )
+  def test_call_tf_graph_polymorphic(self, ordered: bool, version: int):
+    self.override_serialization_version(version)
     @tf.function(jit_compile=True, autograph=False)
     @partial(jax2tf.convert,
       with_gradient=False,

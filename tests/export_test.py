@@ -18,7 +18,7 @@ import functools
 import logging
 import math
 import re
-from typing import Sequence
+from typing import Optional, Sequence
 import unittest
 
 from absl.testing import absltest
@@ -32,6 +32,7 @@ from jax.sharding import PartitionSpec as P
 
 from jax._src import config
 from jax._src import core
+from jax._src import effects
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
@@ -53,27 +54,85 @@ def setUpModule():
 def tearDownModule():
   prev_xla_flags()
 
+### Setup for testing lowering with effects
+class TestingOrderedEffect1(effects.Effect):
+  __str__ = lambda _: "TestingOrderedEffect1"
 
+class TestingOrderedEffect2(effects.Effect):
+  __str__ = lambda _: "TestingOrderedEffect2"
+
+class TestingUnorderedEffect1(effects.Effect):
+  __str__ = lambda _: "TestingUnorderedEffect1"
+
+_testing_effects = dict(
+  TestingOrderedEffect1=TestingOrderedEffect1(),
+  TestingOrderedEffect2=TestingOrderedEffect2(),
+  TestingUnorderedEffect1=TestingUnorderedEffect1())
+# Register the effects
+for effect in _testing_effects.values():
+  effect_class = effect.__class__
+  effects.lowerable_effects.add_type(effect_class)
+  effects.control_flow_allowed_effects.add_type(effect_class)
+  effects.remat_allowed_effects.add_type(effect_class)
+  effects.custom_derivatives_allowed_effects.add_type(effect_class)
+  if "Ordered" in str(effect_class):
+    effects.ordered_effects.add_type(effect_class)
+
+# A primitive that takes a effect_class_name kwarg with the name of the effect class
+# and just doubles its argument.
+testing_primitive_with_effect_p = core.Primitive("testing_primitive_with_effect")
+testing_primitive_with_effect_p.def_effectful_abstract_eval(
+  lambda aval, *x, effect_class_name: (aval, set([_testing_effects[effect_class_name]])))
+
+def lowering_testing_primitive_with_effect(ctx, a, *, effect_class_name: str):
+  if "Ordered" in effect_class_name:
+    token_in = ctx.tokens_in.get(_testing_effects[effect_class_name])[0]
+    ctx.set_tokens_out(mlir.TokenSet({_testing_effects[effect_class_name]: (token_in,)}))
+  return mlir.hlo.AddOp(a, a).results
+
+mlir.register_lowering(testing_primitive_with_effect_p,
+                       lowering_testing_primitive_with_effect)
+
+## Setup for multi-platform lowering
 # A primitive for testing multi-platform lowering. Takes one argument and
 # adds a different value to it: cpu=2., tpu=3., cuda=.4, rocm=5.
+# The primitive takes an event_class_name kwarg that may be None, or
+# the name of an effect class.
 _testing_multi_platform_p = core.Primitive("testing_multi_platform")
 _testing_multi_platform_to_add = dict(cpu=2., tpu=3., cuda=4., rocm=5.)
 
-@_testing_multi_platform_p.def_abstract_eval
-def _testing_multi_platform_abstract_eval(xaval: core.AbstractValue):
+def _testing_multi_platform_func(x, *,
+                                 effect_class_name: Optional[str] = None):
+  return _testing_multi_platform_p.bind(x, effect_class_name=effect_class_name)
+
+def _testing_multi_platform_fun_expected(x,
+                                         platform: str | None = None):
+  return x + _testing_multi_platform_to_add[
+    xb.canonicalize_platform(platform or jtu.device_under_test())
+  ]
+
+@_testing_multi_platform_p.def_effectful_abstract_eval
+def _testing_multi_platform_abstract_eval(xaval: core.AbstractValue,
+                                          effect_class_name: Optional[str]):
   assert xaval.dtype == np.float32  # type: ignore
-  return xaval
+  effects = set() if effect_class_name is None else set([_testing_effects[effect_class_name]])
+  return (xaval, effects)
 
 def _testing_multi_platform_lowering(ctx: mlir.LoweringRuleContext,
                                      x: mlir.Value,
                                      *,
+                                     effect_class_name: Optional[str],
                                      platform: str) -> Sequence[mlir.Value]:
   to_add = _testing_multi_platform_to_add[platform]
   to_add_value = mlir.broadcast_in_dim(ctx,
                                        mlir.ir_constant(np.float32(to_add)),
                                        ctx.avals_in[0],
                                        broadcast_dimensions=())
-  return mlir.hlo.AddOp(x, to_add_value).results
+  results = mlir.hlo.AddOp(x, to_add_value).results
+  if effect_class_name is not None and "Ordered" in effect_class_name:
+    token_in = ctx.tokens_in.get(_testing_effects[effect_class_name])[0]
+    ctx.set_tokens_out(mlir.TokenSet({_testing_effects[effect_class_name]: (token_in,)}))
+  return results
 
 # Register a default rule for cuda, to test the default-platform rule selection.
 mlir.register_lowering(_testing_multi_platform_p,
@@ -85,14 +144,6 @@ for platform in ["cpu", "tpu", "rocm"]:
                                            platform=platform),
                          platform=platform)
 
-def _testing_multi_platform_func(x):
-  return _testing_multi_platform_p.bind(x)
-
-def _testing_multi_platform_fun_expected(x,
-                                         platform: str | None = None):
-  return x + _testing_multi_platform_to_add[
-    xb.canonicalize_platform(platform or jtu.device_under_test())
-  ]
 
 class JaxExportTest(jtu.JaxTestCase):
 
@@ -862,6 +913,171 @@ class JaxExportTest(jtu.JaxTestCase):
       a_device = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, None))
       res_exp = export.call_exported(exp)(a_device)
       self.assertArraysAllClose(res_native, res_exp)
+
+  @jtu.parameterized_filterable(
+    kwargs=[
+      dict(v=v)
+      for v in range(export.minimum_supported_serialization_version,
+                     export.maximum_supported_serialization_version + 1)])
+  def test_ordered_effects_basic(self, *, v: int):
+    self.override_serialization_version(v)
+    x = np.arange(3, dtype=np.float32)
+    def f_jax(x):  # x: f32[3]
+      # Test also the calling convention for inner functions
+      def f_jax_inner(x):
+        return (
+          testing_primitive_with_effect_p.bind(x, effect_class_name="TestingOrderedEffect2") +
+          testing_primitive_with_effect_p.bind(x, effect_class_name="TestingUnorderedEffect1"))
+      return (
+        10. +
+        jax.jit(f_jax_inner)(x) +
+        testing_primitive_with_effect_p.bind(x, effect_class_name="TestingOrderedEffect1") +
+        testing_primitive_with_effect_p.bind(x, effect_class_name="TestingOrderedEffect2")
+      )
+
+    exp = export.export(f_jax)(x)
+    if exp.serialization_version >= export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+      self.assertSetEqual({"TestingOrderedEffect1", "TestingOrderedEffect2"},
+                          {str(e) for e in exp.ordered_effects})
+      self.assertEqual({"TestingUnorderedEffect1"},
+                       {str(e) for e in exp.unordered_effects})
+    else:
+      self.assertSetEqual(set(), {str(e) for e in exp.ordered_effects})
+      self.assertSetEqual(set(), {str(e) for e in exp.unordered_effects})
+    mlir_module_str = str(exp.mlir_module())
+
+    # Inner functions use stablehlo.token for all versions
+    inner_fun_expected_re = (
+      r"func.func private @f_jax_inner\("
+      r"%arg0: !stablehlo.token {jax.token = true}.*"
+      r"%arg1: tensor<3xf32>.*->.*"
+      # Results
+      r"!stablehlo.token {jax.token = true}.*"
+      r"tensor<3xf32>"
+    )
+    self.assertRegex(mlir_module_str, inner_fun_expected_re)
+
+    # The wrapped_main function takens tokens after version 9, and takes
+    # i1[0] before version 9.
+    wrapped_main_expected_re = (
+      r"@_wrapped_jax_export_main\("
+      r"%arg0: !stablehlo.token {jax.token = true}.*"
+      r"%arg1: !stablehlo.token {jax.token = true}.*->.*"
+      # Results
+      r"!stablehlo.token {jax.token = true}.*"
+      r"!stablehlo.token {jax.token = true}.*")
+    if exp.serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+      wrapped_main_expected_re = wrapped_main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
+    self.assertRegex(mlir_module_str, wrapped_main_expected_re)
+
+    if exp.serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+      # The main function does not have tokens
+      self.assertNotRegex(mlir_module_str, r"@main.*token")
+    else:
+      # The main function takes tokens and has the same type as the wrapped main
+      main_expected_re = wrapped_main_expected_re.replace("@_wrapped_jax_export_main", "@main")
+      self.assertRegex(mlir_module_str, main_expected_re)
+
+    lowered = jax.jit(export.call_exported(exp)).lower(x)
+    if exp.serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+      self.assertSetEqual(set(),
+                          {str(e) for e in lowered._lowering.compile_args["ordered_effects"]})
+      self.assertSetEqual(set(),
+                          {str(e) for e in lowered._lowering.compile_args["unordered_effects"]})
+    else:
+      self.assertSetEqual({"TestingOrderedEffect1", "TestingOrderedEffect2"},
+                          {str(e) for e in lowered._lowering.compile_args["ordered_effects"]})
+      self.assertSetEqual({"TestingUnorderedEffect1"},
+                          {str(e) for e in lowered._lowering.compile_args["unordered_effects"]})
+
+    res = export.call_exported(exp)(x)
+    self.assertAllClose(10. + 4. * 2. * x, res)
+
+  @jtu.parameterized_filterable(
+    kwargs=[
+      dict(v=v)
+      for v in range(export.minimum_supported_serialization_version,
+                     export.maximum_supported_serialization_version + 1)])
+  def test_ordered_effects_poly(self, *, v: int):
+    self.override_serialization_version(v)
+    x = np.arange(12, dtype=np.float32).reshape((3, 4))
+    def f_jax(x):  # x: f32[b1, b2]
+      return 10. + testing_primitive_with_effect_p.bind(x, effect_class_name="TestingOrderedEffect1")
+    exp = export.export(f_jax)(export.poly_spec(x.shape, x.dtype, "b2, b1"))
+    mlir_module_str = str(exp.mlir_module())
+    wrapped_main_expected_re = (
+      r"@_wrapped_jax_export_main\("
+      r"%arg0: tensor<i..> {jax.global_constant = \"b1\"}.*, "
+      r"%arg1: tensor<i..> {jax.global_constant = \"b2\"}.*, "
+      r"%arg2: !stablehlo.token {jax.token = true}.*, "
+      r"%arg3: tensor<\?x\?xf32>.*\) -> \("
+      # Results
+      r"!stablehlo.token {jax.token = true}, tensor<\?x\?xf32>.*\)")
+    if exp.serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+      wrapped_main_expected_re = wrapped_main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
+    self.assertRegex(mlir_module_str, wrapped_main_expected_re)
+
+    if exp.serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+      # The main function does not have tokens
+      self.assertNotRegex(mlir_module_str, r"@main.*token")
+    else:
+      main_expected_re = (
+        r"@main\("
+        r"%arg0: !stablehlo.token {jax.token = true}.*, "
+        r"%arg1: tensor<\?x\?xf32>.*\) -> \("
+        # Results
+        r"!stablehlo.token {jax.token = true}, tensor<\?x\?xf32>.*\)")
+      self.assertRegex(mlir_module_str, main_expected_re)
+
+    res = export.call_exported(exp)(x)
+    self.assertAllClose(10. + 2. * x, res)
+
+  @jtu.parameterized_filterable(
+    kwargs=[
+      dict(v=v)
+      for v in range(export.minimum_supported_serialization_version,
+                     export.maximum_supported_serialization_version + 1)])
+  def test_ordered_effects_multi_platform_and_poly(self, *, v: int):
+    self.override_serialization_version(v)
+    if jtu.device_under_test() == "gpu":
+      # The export is not applicable to GPU
+      raise unittest.SkipTest("Not intended for running on GPU")
+    x = np.ones((3, 4), dtype=np.float32)
+    def f_jax(x):  # x: f32[b1, b2]
+      return 10. + _testing_multi_platform_func(x,
+                                                effect_class_name="TestingOrderedEffect1")
+    exp = export.export(f_jax,
+                        lowering_platforms=("cpu", "tpu")
+                        )(export.poly_spec(x.shape, x.dtype, "b1, b2"))
+    mlir_module_str = str(exp.mlir_module())
+    wrapped_main_expected_re = (
+      r"@_wrapped_jax_export_main\("
+      r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\"}.*, "
+      r"%arg1: tensor<i..> {jax.global_constant = \"b1\"}.*, "
+      r"%arg2: tensor<i..> {jax.global_constant = \"b2\"}.*, "
+      r"%arg3: !stablehlo.token {jax.token = true}.*, "
+      r"%arg4: tensor<\?x\?xf32>.*\) -> \("
+      # Results
+      r"!stablehlo.token {jax.token = true}, tensor<\?x\?xf32>.*\)")
+    if exp.serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+      wrapped_main_expected_re = wrapped_main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
+    self.assertRegex(mlir_module_str, wrapped_main_expected_re)
+
+    if exp.serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+      # The main function does not have tokens
+      self.assertNotRegex(mlir_module_str, r"@main.*token")
+    else:
+      main_expected_re = (
+        r"@main\("
+        r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\"}.*, "
+        r"%arg1: !stablehlo.token {jax.token = true}.*, "
+        r"%arg2: tensor<\?x\?xf32>.*\) -> \("
+        # Results
+        r"!stablehlo.token {jax.token = true}, tensor<\?x\?xf32>.*\)")
+      self.assertRegex(mlir_module_str, main_expected_re)
+    res = export.call_exported(exp)(x)
+    self.assertAllClose(10. + _testing_multi_platform_fun_expected(x),
+                        res)
 
 
 if __name__ == "__main__":

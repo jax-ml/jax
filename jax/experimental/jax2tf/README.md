@@ -794,7 +794,7 @@ given version number.
 
 You can use `--jax_serialization_version` to adjust the serialization version
 to your deployed consumer. We reserve the right to remove support for
-generating or consuming old serialization versions, e.g., older than 6 months.
+generating or consuming old serialization versions older than 6 months.
 
 ## Serialization version numbers
 
@@ -828,9 +828,14 @@ We list here a history of the serialization version numbers:
     attribute and enables the shape refinement pass only when the
     attribute is present. Supported by XlaCallModule since July 21st, 2023
     (cl/549973693) and available in JAX since July 26th, 2023 (JAX 0.4.14).
-  * Version 9 (not yet in use) adds support for the `jax.global_constant`
-    attribute.
+  * Version 9 adds support for effects.
+    The token arguments and results use the type `bool[0]` and have a
+    `jax.token` attribute. In this serialization version
+    we also tag the platform index and the dimension variables arguments
+    with `jax.global_constant` attributes.
+    See the docstring for `export.export` for the precise calling convention.
 
+    Available in JAX since November 1, 2023 (JAX 0.4.20).
 
 ## Known issues
 
@@ -1720,7 +1725,7 @@ for stderr, `${SOME_DIR}` to store the dumps in the specified directory.
 ## TensorFlow versions supported
 
 The ``jax2tf.convert`` and `call_tf` require fairly recent versions of TensorFlow.
-As of today, the tests are run using `tf_nightly==2.13.0.dev20230311`.
+As of today, the tests are run using `tf_nightly==2.14.0.dev20230720`.
 
 ## Running on GPU
 

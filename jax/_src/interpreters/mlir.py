@@ -442,6 +442,18 @@ class LoweringParameters:
   # or multi-platform lowering.
   global_constant_computation: bool = False
 
+  # TODO(b/302258959): in JAX native execution we cannot lower the tokens
+  # to stablehlo.token for the top-level function, due to runtime limitations.
+  # Instead, we use dummy bool[0] arrays. This is controlled by setting
+  # replace_tokens_with_dummy to True (default). However, when exporting StableHLO
+  # we can use real tokens, because the resulting StableHLO will not be
+  # executed directly, but will be embedded as an inner function in a larger
+  # JAX or TensorFlow program. In these cases, replace_tokens_with_dummy must
+  # be set to False (for serialization versions >= 9).
+  # Once the PJRT is extended to use tokens, we can use tokens even in the
+  # native execution (and we can remove this parameter).
+  replace_tokens_with_dummy: bool = True
+
   @property
   def override_platform(self) -> str | None:
     """Overrides the lowering platform for cross-platform lowering.
@@ -814,9 +826,11 @@ def lower_jaxpr_to_module(
     attrs["sym_name"] = ir.StringAttr.get(module_name)
     attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
     attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
+    replace_tokens_with_dummy = lowering_parameters.replace_tokens_with_dummy
     lower_jaxpr_to_fun(
-        ctx, "main", jaxpr, ordered_effects, public=True, create_tokens=True,
-        replace_tokens_with_dummy=True,
+        ctx, "main", jaxpr, ordered_effects, public=True,
+        create_tokens=replace_tokens_with_dummy,
+        replace_tokens_with_dummy=replace_tokens_with_dummy,
         num_output_tokens=0,
         replicated_args=replicated_args,
         arg_shardings=arg_op_shardings,
@@ -951,6 +965,9 @@ class TokenSet:
     return TokenSet(new_tokens)
 
 def dummy_token_type() -> Sequence[ir.Type]:
+  # TODO(b/302258959): For now HLO does not allow hlo.TokenType among
+  # arguments and results, so we use bool[0] to pass tokens to the
+  # top-level function only.
   return aval_to_ir_types(core.ShapedArray((0,), np.bool_))
 
 def dummy_token() -> Sequence[ir.Value]:
@@ -988,10 +1005,11 @@ def lower_jaxpr_to_fun(
     jaxpr: the jaxpr to lower.
     effects: a sequence of `core.Effect`s corresponding to an ordering of tokens
       that will be created in or used by the lowered function.
-    create_tokens: if true, the HLO will create tokens and ignore dummy input tokens.
+    create_tokens: if true, the HLO will create tokens and ignore dummy input
+      tokens. See b/302258959.
     public: if true, the function's visibility is set to "public".
     replace_tokens_with_dummy: if true, token arguments/return values are
-      replaced with bool arrays of size [0].
+      replaced with bool arrays of size [0]. See b/302258959.
     replicated_args: if present, annotates arguments as replicated.
     arg_shardings: sharding annotations for each argument (optional).
     result_shardings: sharding annotations for each result (optional).
@@ -1023,7 +1041,7 @@ def lower_jaxpr_to_fun(
   num_tokens = len(effects)
 
   if create_tokens:
-    # If we create the tokens they won't be inputs to the MLIR function.
+    # TODO(b/302258959): Use actual tokens
     token_types = [dummy_token_type() for _ in effects]
     output_token_types = [dummy_token_type() for _ in range(num_output_tokens)]
   else:
@@ -1436,6 +1454,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
         ans = rule(rule_ctx, *rule_inputs, **eqn.params)
       else:
         ans = lower_multi_platform(rule_ctx, str(eqn), rules,
+                                   eqn.effects,
                                    *rule_inputs, **eqn.params)
 
       if effects:
@@ -1473,6 +1492,7 @@ MultiPlatformLoweringRule = tuple[Optional[Sequence[str]], Callable]
 def lower_multi_platform(ctx: LoweringRuleContext,
                          description: str,
                          rules: Sequence[MultiPlatformLoweringRule],
+                         effects: effects_lib.Effects,
                          *rule_args: ir.Value,
                          **rule_kwargs) -> ir.Value:
   """Emits single- or multi-platform code for a primitive.
@@ -1564,7 +1584,10 @@ def lower_multi_platform(ctx: LoweringRuleContext,
     branch = rule_idx_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
       hlo.ReturnOp(ir_constants(np.int32(platform_to_kept_rules_idx[p])))
-  case_op = hlo.CaseOp(util.flatten(map(aval_to_ir_types, ctx.avals_out)),
+  ordered_effects = effects_lib.ordered_effects.filter_in(effects)
+  rule_out_avals = [core.abstract_token] * len(ordered_effects) + ctx.avals_out
+  output_types = map(aval_to_ir_types, rule_out_avals)
+  case_op = hlo.CaseOp(util.flatten(output_types),
                       index=rule_idx_op,
                       num_branches=len(kept_rules))
   for i, (_, rule) in enumerate(kept_rules):
@@ -1577,9 +1600,21 @@ def lower_multi_platform(ctx: LoweringRuleContext,
       except TypeError as e:
         raise ValueError("Output of translation rule must be iterable: "
                         f"{description}, got output {output}") from e
-      hlo.ReturnOp(util.flatten(out_nodes))
+      if inner_ctx.tokens_out is not None:
+        assert len(ordered_effects) == len(inner_ctx.tokens_out)
+        out_nodes = [inner_ctx.tokens_out.get(eff)
+                     for eff in ordered_effects] + out_nodes
+      hlo.ReturnOp(util.flatten(map(wrap_singleton_ir_values, out_nodes)))
 
-  return case_op.results
+  results = case_op.results
+  if ordered_effects:
+    tokens, results = util.split_list(
+      util.unflatten(results, map(len, output_types)),
+      [len(ordered_effects)])
+    tokens_out = ctx.tokens_in.update_tokens(TokenSet(zip(ordered_effects,
+                                                          tokens)))
+    ctx.set_tokens_out(tokens_out)
+  return results
 
 def _ir_consts(consts):
   unique_consts = {id(const): const for const in consts}
