@@ -182,19 +182,44 @@ class Exported:
   Assume that we use multi-platform lowering, and we have
   ordered effects. The `main` function will be as follows:
 
-      func public main(platform_index: i32, arg: f32[?, ?]) {
+      func public main(
+            platform_index: i32 {jax.global_constant="_platform_index"},
+            arg: f32[?, ?]) {
          arg_w = hlo.get_dimension_size(arg, 0)
          dim1 = hlo.get_dimension_size(arg, 1)
          arg_h = hlo.floordiv(dim1, 2)
          call _check_shape_assertions(arg)  # See below
          token = new_token()
-         token_out, res = call _wrapped_jax_export_main(platform_index, arg_h, arg_w, token_in, arg)
+         token_out, res = call _wrapped_jax_export_main(platform_index,
+                                                        arg_h,
+                                                        arg_w,
+                                                        token_in,
+                                                        arg)
          return res
       }
 
   The actual computation is in `_wrapped_jax_export_main`, taking also
   the values of `h` and `w` and the token. Proper exporting of
   functions with side-effects and tokens is still work-in-progress.
+
+  The signature of the `_wrapped_jax_export_main` is:
+
+      func private _wrapped_jax_export_main(
+          platform_index: i32 {jax.global_constant="_platform_index"},
+          arg_h: i32 {jax.global_constant="h"},
+          arg_w: i32 {jax.global_constant="w"},
+          arg_token: stablehlo.token {jax.token=True},
+          arg: f32[?, ?])
+
+  Starting with serialization version 9, function arguments that contain
+  the platform index or the dimension variable values have a
+  `jax.global_constant` string attribute whose value is the name of the
+  global constant, either `_platform_index` or a dimension variable name.
+  The global constant name may be empty if it is not known.
+  Some global constant computations use inner functions, e.g., for
+  `floor_divide`. The arguments of such functions have a `jax.global_constant`
+  attribute for all attributes, meaning that the result of the function is
+  also a global constant.
 
   Note that `main` contains a call to `_check_shape_assertions.
   JAX tracing assumes that `arg.shape[1]` is even, and that both `w` and `h`
@@ -602,13 +627,16 @@ def _wrap_main_func(
     symbol_table.insert(new_main_op)
     entry_block = new_main_op.add_entry_block()
     with ir.InsertionPoint(entry_block):
+      # Make a context just for lowering the dimension value computations
       module_context = mlir.ModuleContext(
           backend_or_name="cpu", platform="cpu",
           axis_context=sharding_impls.ShardingContext([]),
           name_stack=source_info_util.new_name_stack(),
           keepalives=[], channel_iterator=itertools.count(1),
           host_callbacks=[], module=wrapped_module, context=context,
-          lowering_parameters=mlir.LoweringParameters())
+          lowering_parameters=mlir.LoweringParameters(
+            global_constant_computation=True
+          ))
       ctx = mlir.LoweringRuleContext(
         module_context=module_context, primitive=None,
         avals_in=args_avals_flat, avals_out=None,

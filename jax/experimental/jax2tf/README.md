@@ -828,6 +828,8 @@ We list here a history of the serialization version numbers:
     attribute and enables the shape refinement pass only when the
     attribute is present. Supported by XlaCallModule since July 21st, 2023
     (cl/549973693) and available in JAX since July 26th, 2023 (JAX 0.4.14).
+  * Version 9 (not yet in use) adds support for the `jax.global_constant`
+    attribute.
 
 
 ## Known issues

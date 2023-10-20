@@ -1283,7 +1283,10 @@ def parameterized_filterable(*,
   if one_containing is not None:
     filtered = tuple(kw for kw in kwargs_with_testcase_name
                      if one_containing in kw["testcase_name"])
-    assert filtered, f"No testcase_name contains '{one_containing}'"
+    assert filtered, (
+      f"No testcase_name contains '{one_containing}'. "
+      "The testcase_name values are\n  " +
+      "\n  ".join(kw["testcase_name"] for kw in kwargs_with_testcase_name))
     kw = filtered[0]
     kw["testcase_name"] = ""
     return parameterized.named_parameters([kw])
