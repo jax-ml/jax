@@ -16,10 +16,9 @@ from absl.testing import absltest
 import numpy as np
 import jax
 import jax.numpy as jnp
+from jax._src import config
 from jax._src import test_util as jtu
 from jax.experimental import rnn
-
-from jax._src.config import config
 
 config.parse_flags_with_absl()
 
