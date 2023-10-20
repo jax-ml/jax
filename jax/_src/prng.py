@@ -423,7 +423,7 @@ tree_util_internal.dispatch_registry.register_node(
 
 
 # TODO(frostig): remove, rerouting callers directly to random_seed
-def seed_with_impl(impl: PRNGImpl, seed: int | Array) -> PRNGKeyArrayImpl:
+def seed_with_impl(impl: PRNGImpl, seed: int | typing.ArrayLike) -> PRNGKeyArrayImpl:
   return random_seed(seed, impl=impl)
 
 
@@ -694,7 +694,7 @@ def iterated_vmap_binary_bcast(shape1, shape2, f):
   return f
 
 
-def random_seed(seeds, impl):
+def random_seed(seeds: int | typing.ArrayLike, impl: PRNGImpl) -> PRNGKeyArrayImpl:
   # Avoid overflow error in X32 mode by first converting ints to int64.
   # This breaks JIT invariance for large ints, but supports the common
   # use-case of instantiating with Python hashes in X32 mode.
