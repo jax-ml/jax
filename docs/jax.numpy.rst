@@ -156,6 +156,7 @@ namespace; they are listed below.
     extract
     eye
     fabs
+    fill_diagonal
     finfo
     fix
     flatnonzero
