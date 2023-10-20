@@ -175,8 +175,8 @@ class SingleRowVRegBounds : public VRegDataBounds {
       const std::array<int64_t, 2> target_shape) const override {
     const int64_t start_sublane =
         start_offset_ / layout_.packing() / target_shape[1];
-    const int64_t end_sublane =
-        ceilDiv(ceilDiv(stop_offset_, layout_.packing()), target_shape[1]);
+    const int64_t end_sublane = llvm::divideCeil(
+        llvm::divideCeil(stop_offset_, layout_.packing()), target_shape[1]);
 
     llvm::SmallVector<bool> sublane_mask(target_shape[0], false);
     for (int64_t i = start_sublane; i < end_sublane; ++i) {
@@ -384,7 +384,7 @@ class TiledRectangularVregBounds : public VRegDataBounds {
       const std::array<int64_t, 2> target_shape) const override {
     llvm::SmallVector<bool> mask(target_shape[0], false);
     const int64_t start = start_offsets_[0] / layout_.packing();
-    const int64_t end = ceilDiv(end_offsets_[0], layout_.packing());
+    const int64_t end = llvm::divideCeil(end_offsets_[0], layout_.packing());
     const int64_t sublanes_per_tile = layout_.sublanesPerTile(target_shape);
     const int64_t sublane_bound = num_tiles_ * sublanes_per_tile;
     for (int64_t sub = 0; sub < sublane_bound; sub += sublanes_per_tile) {
@@ -470,12 +470,12 @@ llvm::SmallVector<int64_t> VectorLayout::tileArrayImplicitShape(
     const std::array<int64_t, 2> target_shape) const {
   const std::array<int64_t, 2> vreg_slice = vregSlice(target_shape);
   llvm::SmallVector<int64_t> tiles_shape = implicitShape(shape);
-  tiles_shape[tiles_shape.size() - 2] =
-      ceilDiv(offsets_[0].value_or(0) + tiles_shape[tiles_shape.size() - 2],
-              vreg_slice[0]);
-  tiles_shape[tiles_shape.size() - 1] =
-      ceilDiv(offsets_[1].value_or(0) + tiles_shape[tiles_shape.size() - 1],
-              vreg_slice[1]);
+  tiles_shape[tiles_shape.size() - 2] = llvm::divideCeil(
+      offsets_[0].value_or(0) + tiles_shape[tiles_shape.size() - 2],
+      vreg_slice[0]);
+  tiles_shape[tiles_shape.size() - 1] = llvm::divideCeil(
+      offsets_[1].value_or(0) + tiles_shape[tiles_shape.size() - 1],
+      vreg_slice[1]);
   return tiles_shape;
 }
 
@@ -557,7 +557,7 @@ std::unique_ptr<VRegDataBounds> VectorLayout::tileDataBounds(
     const int64_t end_lanes =
         l == nl - 1 ? (lo + il - 1) % tiling_[1] + 1 : tiling_[1];
     const int64_t tiles_per_vreg = tilesPerVreg(target_shape);
-    const int64_t minormost_tiles = ceilDiv(lo + il, tiling_[1]);
+    const int64_t minormost_tiles = llvm::divideCeil(lo + il, tiling_[1]);
     const int64_t num_tiles =
         l == nl - 1 && minormost_tiles % tiles_per_vreg != 0
             ? minormost_tiles % tiles_per_vreg
