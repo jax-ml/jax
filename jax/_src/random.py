@@ -39,17 +39,12 @@ from jax._src.interpreters import mlir
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.lax_numpy import _convert_and_clip_integer
 from jax._src.numpy.util import _arraylike, check_arraylike, promote_dtypes_inexact
-from jax._src.typing import Array, ArrayLike, DTypeLike
+from jax._src.typing import Array, ArrayLike, DTypeLike, DTypeLikeInt, DTypeLikeUInt, DTypeLikeFloat
 from jax._src.util import canonicalize_axis
 
 
 RealArray = ArrayLike
 IntegerArray = ArrayLike
-# TODO: Import or define these to match
-# https://github.com/numpy/numpy/blob/main/numpy/typing/_dtype_like.py.
-DTypeLikeInt = DTypeLike
-DTypeLikeUInt = DTypeLike
-DTypeLikeFloat = DTypeLike
 Shape = Sequence[int]
 
 PRNGImpl = prng.PRNGImpl
@@ -1887,7 +1882,7 @@ def _f(key, dfnum, dfden, shape, dtype) -> Array:
 
 def rademacher(key: KeyArray,
                shape: Shape,
-               dtype: DTypeLikeInt = int) -> Array:
+               dtype: DTypeLike = int) -> Array:
   r"""Sample from a Rademacher distribution.
 
   The values are distributed according to the probability mass function:

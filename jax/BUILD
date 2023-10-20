@@ -695,12 +695,11 @@ pytype_strict_library(
     ],
 )
 
-pytype_strict_library(
+py_library_providing_imports_info(
     name = "typing",
-    srcs = [
-        "_src/typing.py",
-    ],
-    deps = [":basearray"] + py_deps("numpy"),
+    srcs = glob(["_src/typing/**/*.py"]),
+    lib_rule = pytype_strict_library,
+    deps = [":basearray"] + py_deps("numpy") + py_deps("ml_dtypes"),
 )
 
 pytype_strict_library(

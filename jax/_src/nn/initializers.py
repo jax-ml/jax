@@ -28,17 +28,13 @@ from jax import lax
 from jax import random
 from jax._src import core
 from jax._src import dtypes
-from jax._src.typing import Array, ArrayLike
+from jax._src.typing import Array, ArrayLike, DTypeLikeFloat, DTypeLikeComplex
 from jax._src.util import set_module
 
 export = set_module('jax.nn.initializers')
 
 KeyArray = Array
-# TODO: Import or define these to match
-# https://github.com/numpy/numpy/blob/main/numpy/typing/_dtype_like.py.
-DTypeLikeFloat = Any
-DTypeLikeComplex = Any
-DTypeLikeInexact = Any  # DTypeLikeFloat | DTypeLikeComplex
+DTypeLikeInexact = Union[DTypeLikeFloat, DTypeLikeComplex]
 RealNumeric = Any  # Scalar jnp array or float
 
 @export
