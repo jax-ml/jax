@@ -511,7 +511,7 @@ class PrngTest(jtu.JaxTestCase):
       for name, impl in PRNG_IMPLS])
   def test_default_prng_selection(self, make_key, name, impl):
     with jax.default_prng_impl(name):
-      self.assertIs(random.default_prng_impl(), impl)
+      self.assertIs(jax_random.default_prng_impl(), impl)
       key = make_key(42)
       self.check_key_has_impl(key, impl)
       k1, k2 = random.split(key, 2)

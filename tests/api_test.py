@@ -50,7 +50,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import linear_util as lu
-from jax._src import prng
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.ad_checkpoint import saved_residuals
@@ -878,7 +877,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def wrap(arr):
       arr = np.array(arr, dtype=np.uint32)
       if config.enable_custom_prng.value:
-        return prng.random_wrap(arr, impl=jax.random.default_prng_impl())
+        return jax.random.wrap_key_data(arr)
       else:
         return arr
 
