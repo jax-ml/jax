@@ -150,28 +150,6 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual(exp.out_tree, tree_util.tree_flatten(f(*args, **kwargs))[1])
     self.assertEqual(exp.out_avals, (a_aval, b_aval, a_aval, b_aval, a_aval, b_aval))
 
-  def test_poly_export_only(self):
-    a = np.arange(12, dtype=np.float32).reshape((3, 4))
-    def f(a, b):  # a: f32[2w,h]  b: f32[w,h]
-      return jnp.concatenate([a, b], axis=0)
-
-    exp = export.export(f)(
-        export.poly_spec(a.shape, a.dtype, "(2*w, h)"),
-        export.poly_spec(a.shape, a.dtype, "(w, h)"))
-    self.assertEqual("(2*w, h)", str(exp.in_avals[0].shape))
-    self.assertEqual("(w, h)", str(exp.in_avals[1].shape))
-    self.assertEqual("(3*w, h)", str(exp.out_avals[0].shape))
-
-  def test_poly_pytree_export_only(self):
-    a = np.arange(12, dtype=np.float32).reshape((3, 4))
-    def f(a0, a1, *, ak):
-      return jnp.concatenate([a0, a1, ak], axis=0)
-
-    a_poly_spec = export.poly_spec(a.shape, a.dtype, "(w, h)")
-    exp = export.export(f)(a_poly_spec, a_poly_spec, ak=a_poly_spec)
-    self.assertEqual("(w, h)", str(exp.in_avals[0].shape))
-    self.assertEqual("(3*w, h)", str(exp.out_avals[0].shape))
-
   def test_basic(self):
     f = jnp.sin
     x = np.arange(4, dtype=np.float32)
@@ -361,12 +339,60 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertAllClose(jnp.cos(jnp.sin(jnp.sin(a))),
                         export.call_exported(exp_f2)(a))
 
+  def test_poly_export_only(self):
+    a = np.arange(12, dtype=np.float32).reshape((3, 4))
+    def f(a, b):  # a: f32[2w,h]  b: f32[w,h]
+      return jnp.concatenate([a, b], axis=0)
+
+    exp = export.export(f)(
+        export.poly_spec(a.shape, a.dtype, "(2*w, h)"),
+        export.poly_spec(a.shape, a.dtype, "(w, h)"))
+    self.assertEqual("(2*w, h)", str(exp.in_avals[0].shape))
+    self.assertEqual("(w, h)", str(exp.in_avals[1].shape))
+    self.assertEqual("(3*w, h)", str(exp.out_avals[0].shape))
+
+    # Peek at the module
+    module_str = exp.mlir_module()
+    self.assertEqual(config.jax_serialization_version.value >= 7,
+                     "shape_assertion" in module_str)
+    self.assertIn("jax.uses_shape_polymorphism = true", module_str)
+    wrapped_main_expected_re = (
+      r"@_wrapped_jax_export_main\("
+      r"%arg0: tensor<i..> {jax.global_constant = \"h\"}.*"
+      r"%arg1: tensor<i..> {jax.global_constant = \"w\"}.*"
+      r"%arg2: tensor<\?x\?xf32>"
+    )
+    self.assertRegex(module_str, wrapped_main_expected_re)
+
+    # Look for private inner functions that are generated to compute the
+    # dimension variables and shape assertions. All those functions must
+    # have jax.global_constant attributes on all the arguments.
+    for func_name, func_args in re.findall(
+        r"func.func private @([\w]+)\((.+)\) ->",
+        module_str):
+      if func_name == "_wrapped_jax_export_main":
+        continue
+      func_args_count = len(re.findall(r"%arg\d+", func_args))
+      func_args_constant_attrs = len(re.findall(r"jax.global_constant = ",
+                                                func_args))
+      self.assertEqual(func_args_count, func_args_constant_attrs)
+
+  def test_poly_pytree_export_only(self):
+    a = np.arange(12, dtype=np.float32).reshape((3, 4))
+    def f(a0, a1, *, ak):
+      return jnp.concatenate([a0, a1, ak], axis=0)
+
+    a_poly_spec = export.poly_spec(a.shape, a.dtype, "(w, h)")
+    exp = export.export(f)(a_poly_spec, a_poly_spec, ak=a_poly_spec)
+    self.assertEqual("(w, h)", str(exp.in_avals[0].shape))
+    self.assertEqual("(3*w, h)", str(exp.out_avals[0].shape))
+
   @jtu.parameterized_filterable(
     kwargs=[
       dict(v=v)
       for v in range(export.minimum_supported_serialization_version - 1,
                      export.maximum_supported_serialization_version + 2)])
-  def test_shape_poly_basic_versions(self, v: int):
+  def test_poly_basic_versions(self, v: int):
     self.override_serialization_version(v)
     with contextlib.ExitStack() as e:
       if not (export.minimum_supported_serialization_version <= v
@@ -377,17 +403,6 @@ class JaxExportTest(jtu.JaxTestCase):
 
       exp = export.export(jnp.sin)(
         export.poly_spec((3, 4), np.float32, "w, h"))
-      # Peek at the module
-      module_str = exp.mlir_module()
-      self.assertEqual(config.jax_serialization_version.value >= 7,
-                       "shape_assertion" in module_str)
-      self.assertIn("jax.uses_shape_polymorphism = true",
-                    module_str)
-      dim_vars = re.findall(
-        r"(%arg\d):\s*tensor<i..>\s*{jax.dimension_variable = true}",
-        module_str)
-      self.assertEqual(["%arg0", "%arg1"], dim_vars,
-                       f"Found {dim_vars} in {module_str}")
       x = np.arange(30, dtype=np.float32).reshape((5, 6))
       res = export.call_exported(exp)(x)
       self.assertAllClose(res, np.sin(x))
@@ -752,7 +767,7 @@ class JaxExportTest(jtu.JaxTestCase):
     module_str = str(exp.mlir_module())
     expected_main_re = (
       r"@main\("
-      r"%arg0: tensor<i..> {jax.platform_index = true}.*, "
+      r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\"}.*, "
       r"%arg1: tensor<8xf32>.* ->")
     self.assertRegex(module_str, expected_main_re)
 

@@ -413,7 +413,7 @@ class ShapePolyLoweringState:
                dim_vars: tuple[str, ...],
                lowering_platforms: tuple[str, ...] | None):
     if lowering_platforms is not None and len(lowering_platforms) > 1:
-      dim_vars = ("platform_index_",) + tuple(dim_vars)
+      dim_vars = ("_platform_index",) + tuple(dim_vars)
       self.has_platform_index_argument = True
     else:
       self.has_platform_index_argument = False
@@ -434,6 +434,13 @@ class LoweringParameters:
   # platform specified by `ModuleContext.platform`.
   # This is used only in export and jax2tf.
   platforms: tuple[str, ...] | None = None
+
+  # Signals that the entire computation being lowered operates on global
+  # constants. This will result in adding jax.global_constant attributes
+  # to the arguments of all functions that are created, e.g., floor_divide.
+  # This is used only in export and jax2tf in presence of shape polymorphism
+  # or multi-platform lowering.
+  global_constant_computation: bool = False
 
   @property
   def override_platform(self) -> str | None:
@@ -1127,16 +1134,12 @@ def lower_jaxpr_to_fun(
           attrs["tf.aliasing_output"] = i32_attr(alias)
 
     if num_dim_vars > 0:
-      if ctx.shape_poly_state.has_platform_index_argument:
-        num_platform_index_vars = 1
-      else:
-        num_platform_index_vars = 0
-      platform_arg_attrs = arg_attrs[0:num_platform_index_vars]
-      for attrs in platform_arg_attrs:
-        attrs["jax.platform_index"] = ir.BoolAttr.get(True)
-      dim_var_arg_attrs = arg_attrs[num_platform_index_vars:num_dim_vars]
-      for attrs in dim_var_arg_attrs:
-        attrs["jax.dimension_variable"] = ir.BoolAttr.get(True)
+      for var_name, attrs in zip(ctx.shape_poly_state.dim_vars,
+                                 arg_attrs[:num_dim_vars]):
+        attrs["jax.global_constant"] = ir.StringAttr.get(var_name)
+    elif ctx.lowering_parameters.global_constant_computation:
+      for attrs in arg_attrs:
+        attrs["jax.global_constant"] = ir.StringAttr.get("")
 
     if num_tokens > 0:
       token_arg_attrs = arg_attrs[num_dim_vars:num_dim_vars + num_tokens]
