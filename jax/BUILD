@@ -529,6 +529,7 @@ pytype_strict_library(
     srcs = glob(["experimental/pallas/ops/tpu/*.py"]),
     visibility = [
         ":pallas_tpu_users",
+        "//third_party/py/maxtext:__pkg__",
     ],
     deps = [
         ":jax",
