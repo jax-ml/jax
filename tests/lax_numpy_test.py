@@ -2091,6 +2091,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @jtu.sample_product(
+    dtype=default_dtypes,
+    a_shape=[(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1), (2, 2), (1, 2), (0, 2), (2, 3), (2, 2, 2), (2, 2, 2, 2)],
+    val_shape=[(), (1,), (2,), (1, 2), (3, 2)],
+  )
+  def testFillDiagonal(self, dtype, a_shape, val_shape):
+    rng = jtu.rand_default(self.rng())
+
+    def np_fun(a, val):
+      a_copy = a.copy()
+      np.fill_diagonal(a_copy, val)
+      return a_copy
+
+    jnp_fun = partial(jnp.fill_diagonal, inplace=False)
+    args_maker = lambda : [rng(a_shape, dtype), rng(val_shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
     ndim=[0, 1, 4],
     n=[0, 1, 7],
   )
@@ -5350,6 +5368,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'einsum': ['subscripts', 'precision'],
       'einsum_path': ['subscripts'],
       'take_along_axis': ['mode'],
+      'fill_diagonal': ['inplace'],
     }
 
     mismatches = {}

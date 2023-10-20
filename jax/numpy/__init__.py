@@ -96,6 +96,7 @@ from jax._src.numpy.lax_numpy import (
     expand_dims as expand_dims,
     extract as extract,
     eye as eye,
+    fill_diagonal as fill_diagonal,
     finfo as finfo,
     fix as fix,
     flatnonzero as flatnonzero,
