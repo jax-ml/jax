@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.14.7
+    jupytext_version: 1.14.6
 kernelspec:
   display_name: Python 3
   name: python3
@@ -189,7 +189,7 @@ This update is not the gradient of any loss function.
 However, it can be **written** as the gradient of the pseudo loss function
 
 $$
-L(\theta) = [r_t + v_{\theta}(s_t) - v_{\theta}(s_{t-1})]^2
+L(\theta) = - \frac{1}{2} [r_t + v_{\theta}(s_t) - v_{\theta}(s_{t-1})]^2
 $$
 
 if the dependency of the target $r_t + v_{\theta}(s_t)$ on the parameter $\theta$ is ignored.
@@ -203,7 +203,7 @@ How can we implement this in JAX? If we write the pseudo loss naively we get:
 def td_loss(theta, s_tm1, r_t, s_t):
   v_tm1 = value_fn(theta, s_tm1)
   target = r_t + value_fn(theta, s_t)
-  return (target - v_tm1) ** 2
+  return -0.5 * ((target - v_tm1) ** 2)
 
 td_update = jax.grad(td_loss)
 delta_theta = td_update(theta, s_tm1, r_t, s_t)
@@ -218,13 +218,13 @@ But `td_update` will **not** compute a TD(0) update, because the gradient comput
 We can use `jax.lax.stop_gradient` to force JAX to ignore the dependency of the target on $\theta$:
 
 ```{code-cell} ipython3
-:id: WCeq7trKPS4V
-:outputId: 0f38d754-a871-4c47-8e3a-a961418a24cc
+:id: MKeq7trKPS4V
+:outputId: 0f27d754-a871-4c47-8e3a-a961418a24cc
 
 def td_loss(theta, s_tm1, r_t, s_t):
   v_tm1 = value_fn(theta, s_tm1)
   target = r_t + value_fn(theta, s_t)
-  return (jax.lax.stop_gradient(target) - v_tm1) ** 2
+  return -0.5 * ((jax.lax.stop_gradient(target) - v_tm1) ** 2)
 
 td_update = jax.grad(td_loss)
 delta_theta = td_update(theta, s_tm1, r_t, s_t)
@@ -232,11 +232,28 @@ delta_theta = td_update(theta, s_tm1, r_t, s_t)
 delta_theta
 ```
 
-+++ {"id": "TNF0CkwOTKpD"}
++++ {"id": "JOnjm59GG4Gq"}
 
 This will treat `target` as if it did **not** depend on the parameters $\theta$ and compute the correct update to the parameters.
 
-The `jax.lax.stop_gradient` may also be useful in other settings, for instance if you want the gradient from some loss to only affect a subset of the parameters of the neural network (because, for instance, the other parameters are trained using a different loss).
+Now, let's also calculate $\Delta \theta$ using the original TD(0) update expression, to cross-check our work. You may wish to try and implement this yourself using jax.grad and your knowledge so far. Here's our solution:
+
+```{code-cell} ipython3
+:id: WCeq7trKPS4V
+:outputId: 0f19d754-a871-4c47-8e3a-a961418a24cc
+
+s_grad = jax.grad(value_fn)(theta, s_tm1)
+delta_theta_original_calculation = (r_t + value_fn(theta, s_t) - value_fn(theta, s_tm1)) * s_grad
+
+delta_theta_original_calculation # [1.2, 2.4, -1.2], same as `delta_theta`
+```
+
++++ {"id": "TNF0CkwOTKpD"}
+
+`jax.lax.stop_gradient` may also be useful in other settings, for instance if you want the gradient from some loss to only affect a subset of the parameters of the neural network (because, for instance, the other parameters are trained using a different loss).
+
+
++++ {"id": "UMY0IyuOTKpG"}
 
 ## Straight-through estimator using `stop_gradient`
 
