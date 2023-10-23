@@ -3446,7 +3446,7 @@ FailureOr<Value> relayout(RewriteContext &ctx, OpBuilder &builder, Value v,
           --prev_idx[idx.size() - 1];
           Value prev_rot_tile = dst_tiles(prev_idx);
           rot_tile = builder.create<arith::SelectOp>(
-              v.getLoc(), maybe_create_mask->getResult(), prev_rot_tile, tile);
+              v.getLoc(), maybe_create_mask->getResult(), prev_rot_tile, rot_tile);
         }
         dst_tiles(idx) = rot_tile;
       });
