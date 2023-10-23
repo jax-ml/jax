@@ -2030,13 +2030,17 @@ LogicalResult vector_extract_strided_slice_rule(
 
   const SmallVector<int64_t> slice_sizes =
       I64ArrayToSmallVector(extract_strided_slice_op.getSizes());
-  const SmallVector<int64_t> slice_tiled_shape =
+  SmallVector<int64_t> slice_tiled_limits =
       layout_in.tileArrayShape(slice_sizes, ctx.target_shape);
+  CHECK_EQ(slice_tiled_limits.size(), offsets.size());
+  for (size_t i = 0; i < slice_tiled_limits.size(); ++i) {
+    slice_tiled_limits[i] += offsets[i];
+  }
   FAILUREOR_ASSIGN_OR_RETURN(const xla::Array<Value> input_tiles,
                              disassemble(ctx, builder, layout_in,
                                          extract_strided_slice_op.getVector()));
   const xla::Array<Value> dst_tiles =
-      input_tiles.Slice(offsets, slice_tiled_shape);
+      input_tiles.Slice(offsets, slice_tiled_limits);
   const VectorType dst_ty = extract_strided_slice_op.getResult().getType();
   extract_strided_slice_op.replaceAllUsesWith(
       assemble(ctx, builder, dst_ty, layout_out, dst_tiles).getOperation());
