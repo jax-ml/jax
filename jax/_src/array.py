@@ -71,10 +71,10 @@ class Shard:
 
   def __repr__(self):
     try:
-      return (f'Shard(device={repr(self.device)}, index={self.index}, '
+      return (f'Shard(device={self.device!r}, index={self.index}, '
               f'replica_id={self.replica_id}, data={self.data})')
     except ValueError:
-      return f'Shard(device={repr(self.device)}, data={self.data})'
+      return f'Shard(device={self.device!r}, data={self.data})'
 
   @functools.cached_property
   def index(self) -> Index:

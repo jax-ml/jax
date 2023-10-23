@@ -28,7 +28,7 @@ try:
 except Exception as exc:
   # Defensively swallow any exceptions to avoid making jax unimportable
   from warnings import warn as _warn
-  _warn(f"cloud_tpu_init failed: {repr(exc)}\n This a JAX bug; please report "
+  _warn(f"cloud_tpu_init failed: {exc!r}\n This a JAX bug; please report "
         f"an issue at https://github.com/google/jax/issues")
   del _warn
 del _cloud_tpu_init

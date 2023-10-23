@@ -361,7 +361,7 @@ class _HashableCallableShim:
     return self.fun == other
 
   def __repr__(self):
-    return f'_HashableCallableShim({repr(self.fun)})'
+    return f'_HashableCallableShim({self.fun!r})'
 
 
 class Partial(functools.partial):
@@ -565,7 +565,7 @@ class _DeprecatedKeyPathEntry(NamedTuple):
 
 class GetitemKeyPathEntry(_DeprecatedKeyPathEntry):
   def pprint(self) -> str:
-    return f'[{repr(self.key)}]'
+    return f'[{self.key!r}]'
   def __str__(self):
     return self.pprint()
 
@@ -579,13 +579,13 @@ class AttributeKeyPathEntry(_DeprecatedKeyPathEntry):
 class SequenceKey():
   idx: int
   def __str__(self):
-    return f'[{repr(self.idx)}]'
+    return f'[{self.idx!r}]'
 
 @dataclass(frozen=True)
 class DictKey():
   key: Hashable
   def __str__(self):
-    return f'[{repr(self.key)}]'
+    return f'[{self.key!r}]'
 
 @dataclass(frozen=True)
 class GetAttrKey():

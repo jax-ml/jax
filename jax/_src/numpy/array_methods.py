@@ -435,7 +435,7 @@ class _IndexUpdateHelper:
     return _IndexUpdateRef(self.array, index)
 
   def __repr__(self):
-    return f"_IndexUpdateHelper({repr(self.array)})"
+    return f"_IndexUpdateHelper({self.array!r})"
 
 
 class _IndexUpdateRef:
@@ -452,7 +452,7 @@ class _IndexUpdateRef:
     self.index = index
 
   def __repr__(self):
-    return f"_IndexUpdateRef({repr(self.array)}, {repr(self.index)})"
+    return f"_IndexUpdateRef({self.array!r}, {self.index!r})"
 
   def get(self, *, indices_are_sorted=False, unique_indices=False,
           mode=None, fill_value=None):

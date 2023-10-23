@@ -1015,7 +1015,7 @@ def _validate_default_device(val):
           repr(val), type(val))
       return
     raise ValueError('jax.default_device must be passed a Device object (e.g. '
-                     f"`jax.devices('cpu')[0]`), got: {repr(val)}")
+                     f"`jax.devices('cpu')[0]`), got: {val!r}")
 
 
 # TODO(skye): default_device only accepts devices for now. Make it work with

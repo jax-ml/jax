@@ -989,7 +989,7 @@ def pjit_check_aval_sharding(
     except ValueError as e:
       raise ValueError(
           f'One of {what_aval}{name_str} is incompatible with its sharding '
-          f'annotation {s}: {str(e)}')
+          f'annotation {s}: {e}')
     # Use the `OpSharding` proto to find out how many ways each dimension of
     # the aval is sharded. This approach will work across all
     # XLACompatibleSharding.
@@ -1467,7 +1467,7 @@ def _pjit_batcher_for_sharding(
     if isinstance(getattr(s, '_original_sharding', None), NamedSharding):
       mesh = s._original_sharding.mesh  # type: ignore
     if mesh is None or mesh.empty:
-      s_type = (f', got: {repr(s._original_sharding)}'
+      s_type = (f', got: {s._original_sharding!r}'
                 if hasattr(s, '_original_sharding') else '')
       raise ValueError(
           'If you are using xmap or spmd_axis_name parameter of jax.vmap,'

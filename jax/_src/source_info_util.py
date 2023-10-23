@@ -90,7 +90,7 @@ class NameStack:
   def wrap_name(self, name: str) -> str:
     if not self.stack:
       return name
-    return f'{str(self)}/{name}'
+    return f'{self}/{name}'
 
   def transform(self, transform_name: str) -> 'NameStack':
     return NameStack((*self.stack, Transform(transform_name)))
