@@ -475,6 +475,16 @@ jax_test(
 )
 
 jax_test(
+    name = "copying_test",
+    srcs = ["copying_test.py"],
+    shard_count = 1,
+    deps = [
+        "//jax:internal_test_util",
+    ] + py_deps("cloudpickle"),
+)
+
+
+jax_test(
     name = "lax_test",
     srcs = ["lax_test.py"],
     backend_tags = {

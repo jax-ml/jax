@@ -53,6 +53,8 @@ from jax._src.lib import jax_jit
 from jax._src import traceback_util
 from jax._src.typing import Array, DimSize, Shape
 from jax._src import typing
+from jax.version import _version
+
 traceback_util.register_exclusion(__file__)
 
 zip, unsafe_zip = safe_zip, zip
@@ -365,7 +367,9 @@ literalable_types: set[type] = set()
 Atom = Union[Var, Literal]
 
 class Primitive:
+  # used to identify primitive singletons.
   name: str
+  namespace: str
   # set for multi-output primitives.
   multiple_results: bool = False
   # set for call primitives processed in final style.
@@ -373,11 +377,27 @@ class Primitive:
   # set for map primitives processed in final style.
   map_primitive: bool = False
 
-  def __init__(self, name: str):
+  def __init__(self, name: str, namespace: str=f"jax_{_version}"):
     self.name = name
+    self.namespace = namespace
 
   def __repr__(self):
     return f'{self.name}'
+
+  def __reduce_ex__(self, __protocol) -> tuple[Any, ...]:
+    raise NotImplementedError(
+      "Seems like you're trying to pickle some internals of JAX. "
+      "Don't worry, this is supported! You'll just need to enable it "
+      "with `import jax.extend.cloudpickle_support`. "
+      "There may still be some rough edges with the implementation. If you hit "
+      "any issues, please file a bug report at "
+      "https://github.com/google/jax/issues/new?labels=bug&template=bug-report.yml")
+
+  def __deepcopy__(self, memo):
+    # Primitives are singletons, so copying is the same
+    # as returning self.
+    memo[id(self)] = self
+    return self
 
   def bind(self, *args, **params):
     assert (not config.enable_checks.value or

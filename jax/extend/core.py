@@ -16,5 +16,19 @@
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
 from jax._src.abstract_arrays import (
-  array_types as array_types
+  array_types as array_types,
+)
+
+from jax._src.core import (
+    # Methods
+    eval_jaxpr as eval_jaxpr,
+    jaxpr_as_fun as jaxpr_as_fun,
+    # Classes
+    Atom as Atom,
+    Jaxpr as Jaxpr,
+    JaxprEqn as JaxprEqn,
+    JaxprDebugInfo as JaxprDebugInfo,
+    Literal as Literal,
+    Primitive as Primitive,
+    Var as Var,
 )

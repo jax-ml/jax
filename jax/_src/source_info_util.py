@@ -21,7 +21,7 @@ import os.path
 import sysconfig
 import threading
 import types
-from typing import Optional, NamedTuple, Union
+from typing import Any, Optional, NamedTuple, Union
 
 import jax.version
 from jax._src.lib import xla_client
@@ -131,6 +131,10 @@ class SourceInfo(NamedTuple):
         self.traceback if traceback is None else traceback,
         self.name_stack if name_stack is None else name_stack
     )
+
+  def __reduce_ex__(self, __protocol) -> tuple[Any, ...]:
+    # Dropping Traceback for now as it is not easy to pickle.
+    return SourceInfo, (None, self.name_stack)
 
 def new_source_info() -> SourceInfo:
   return SourceInfo(None, NameStack())
