@@ -2442,8 +2442,8 @@ def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
     if dim_size * old_dtype.itemsize != new_dtype.itemsize:
       raise ValueError(
         f"Attempting to convert array of shape {operand.shape} "
-        f"from {str(old_dtype)} of size {old_dtype.itemsize} "
-        f"to {str(new_dtype)} of size {new_dtype.itemsize}, "
+        f"from {old_dtype} of size {old_dtype.itemsize} "
+        f"to {new_dtype} of size {new_dtype.itemsize}, "
         f"but {dim_size} * {old_dtype.itemsize} != {new_dtype.itemsize}")
     return operand.shape[:-1]
 

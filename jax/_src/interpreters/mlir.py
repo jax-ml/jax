@@ -346,7 +346,7 @@ def _source_info_to_location(
     primitive: core.Primitive, params: dict,
     source_info: source_info_util.SourceInfo,
     name_stack: source_info_util.NameStack) -> ir.Location:
-  eqn_str = (f'{str(source_info.name_stack)}/'
+  eqn_str = (f'{source_info.name_stack}/'
              f'{core.str_eqn_compact(primitive.name, params)}')
   if config.include_full_tracebacks_in_locations.value:
     if source_info.traceback is None:
