@@ -1058,7 +1058,8 @@ LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
                     i32_vreg,
                     /*dimension=*/builder.getI32IntegerAttr(1)),
                 builder.create<arith::ConstantOp>(
-                    i32_vreg, builder.getI32IntegerAttr(contraction_rem)))
+                    DenseElementsAttr::get(
+                        i32_vreg, builder.getI32IntegerAttr(contraction_rem))))
             .getResult());
     const VectorType lhs_vreg_type =
         cast<VectorType>(lhs_vregs.begin()->getType());
