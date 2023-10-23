@@ -426,10 +426,9 @@ register_jax_array_methods()
 del register_jax_array_methods
 
 try:
-  import numpy.core as _numpy_core  # pytype: disable=import-error
+  from numpy import issubsctype as _deprecated_issubsctype
 except ImportError:
-  # numpy.core moved to numpy._core in NumPy 2.0
-  import numpy._core as _numpy_core  # pytype: disable=import-error
+  _deprecated_issubsctype = None
 
 # Deprecations
 
@@ -450,7 +449,7 @@ _deprecations = {
     # Added Aug 17, 2023:
     "issubsctype": (
         "jax.numpy.issubsctype is deprecated. In most cases, jax.numpy.issubdtype can be used instead.",
-        _numpy_core.numerictypes.issubsctype,
+        _deprecated_issubsctype,
     ),
     # Added Aug 22, 2023
     "row_stack": (
@@ -475,7 +474,7 @@ if typing.TYPE_CHECKING:
   NINF = -inf
   NZERO = -0.0
   PZERO = 0.0
-  issubsctype = _numpy_core.numerictypes.issubsctype
+  issubsctype = _deprecated_issubsctype
   in1d = _deprecated_in1d
   trapz = _deprecated_trapz
 else:
@@ -483,6 +482,5 @@ else:
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
-del _numpy_core
 del _deprecated_in1d
 del _deprecated_trapz
