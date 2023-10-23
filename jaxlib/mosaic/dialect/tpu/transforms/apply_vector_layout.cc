@@ -3228,7 +3228,7 @@ FailureOr<Value> relayout(RewriteContext &ctx, OpBuilder &builder, Value v,
       dst.offsets() == LayoutOffsets{0, 0} &&
       src.tiling() == std::array<int64_t, 2>{2, 128} &&
       dst.tiling() == std::array<int64_t, 2>{8, 128} &&
-      *(src_tiles.dimensions().end() - 2) <= 2) {
+      *(src_tiles.dimensions().end() - 2) == 1) {
     xla::Array<Value> src_tiles_retiled(
         dst.tileArrayShape(vty.getShape(), ctx.target_shape));
     src_tiles_retiled.Each([&](const absl::Span<const int64_t> idx,
