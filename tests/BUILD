@@ -252,6 +252,7 @@ jax_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
+        "//jax:internal_test_util",
     ],
 )
 

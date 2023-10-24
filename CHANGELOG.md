@@ -10,6 +10,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.20
 
+* Bug fixes
+  * Fixed some type confusion between E4M3 and E5M2 float8 types.
+
 ## jax 0.4.19 (Oct 19, 2023)
 
 * New Features
