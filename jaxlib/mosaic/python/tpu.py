@@ -19,4 +19,5 @@
 
 # pylint: disable=g-bad-import-order
 from ._tpu_gen import *  # pylint: disable=wildcard-import
+from ._tpu_ops_ext import *  # pylint: disable=wildcard-import
 from jaxlib.mlir._mlir_libs._tpu_ext import *  # pylint: disable=wildcard-import

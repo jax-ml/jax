@@ -13,9 +13,14 @@
 # limitations under the License.
 
 """Extensions to automatically generated TPU dialect bindings."""
+from mlir.dialects._ods_common import _cext
+from ._tpu_gen import _Dialect
+from ._tpu_gen import TraceOp
+from ._tpu_gen import RegionOp
 
 
-class TraceOp:
+@_cext.register_operation(_Dialect, replace=True)
+class TraceOpExt(TraceOp):
   """An extension to the automatically generated TraceOp bindings."""
 
   def __init__(self, results, message, level, *, loc=None, ip=None):
@@ -27,7 +32,8 @@ class TraceOp:
     return self.regions[0].blocks[0]
 
 
-class RegionOp:
+@_cext.register_operation(_Dialect, replace=True)
+class RegionOpExt(RegionOp):
   """An extension to the automatically generated RegionOp bindings."""
 
   def __init__(self, *, loc=None, ip=None):
