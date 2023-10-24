@@ -109,7 +109,7 @@ def constant(value: ArrayLike,
 
 @export
 def uniform(scale: RealNumeric = 1e-2,
-            dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
+            dtype: DTypeLikeInexact = None) -> Initializer:
   """Builds an initializer that returns real uniformly-distributed random arrays.
 
   Args:
@@ -126,16 +126,21 @@ def uniform(scale: RealNumeric = 1e-2,
   Array([[7.298188 , 8.691938 , 8.7230015],
          [2.0818567, 1.8662417, 5.5022564]], dtype=float32)
   """
+  default_dtype = dtypes.canonicalize_dtype(float)
+  outer_dtype = dtype
+
   def init(key: KeyArray,
            shape: core.Shape,
-           dtype: DTypeLikeInexact = dtype) -> Array:
-    dtype = dtypes.canonicalize_dtype(dtype)
-    return random.uniform(key, shape, dtype) * scale
+           dtype: DTypeLikeInexact = None) -> Array:
+    inner_dtype = dtype
+    dtype = dtype or outer_dtype or default_dtype
+    scale_ = jnp.array(scale, dtype=None if inner_dtype is None and outer_dtype is None else dtype)
+    return random.uniform(key, shape, dtype) * scale_
   return init
 
 @export
 def normal(stddev: RealNumeric = 1e-2,
-           dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
+           dtype: DTypeLikeInexact = None) -> Initializer:
   """Builds an initializer that returns real normally-distributed random arrays.
 
   Args:
@@ -152,16 +157,20 @@ def normal(stddev: RealNumeric = 1e-2,
   Array([[ 3.0613258 ,  5.6129413 ,  5.6866574 ],
          [-4.063663  , -4.4520254 ,  0.63115686]], dtype=float32)
   """
+  default_dtype = dtypes.canonicalize_dtype(float)
+  outer_dtype = dtype
   def init(key: KeyArray,
            shape: core.Shape,
-           dtype: DTypeLikeInexact = dtype) -> Array:
-    dtype = dtypes.canonicalize_dtype(dtype)
-    return random.normal(key, shape, dtype) * stddev
+           dtype: DTypeLikeInexact = None) -> Array:
+    inner_dtype = dtype
+    dtype = dtype or outer_dtype or default_dtype
+    stddev_ = jnp.array(stddev, dtype=None if inner_dtype is None and outer_dtype is None else dtype)
+    return random.normal(key, shape, dtype) * stddev_
   return init
 
 @export
 def truncated_normal(stddev: RealNumeric = 1e-2,
-                     dtype: DTypeLikeInexact = jnp.float_,
+                     dtype: DTypeLikeInexact = None,
                      lower: RealNumeric = -2.0,
                      upper: RealNumeric = 2.0) -> Initializer:
   r"""Builds an initializer that returns truncated-normal random arrays.
@@ -188,12 +197,16 @@ def truncated_normal(stddev: RealNumeric = 1e-2,
   Array([[ 2.9047365,  5.2338114,  5.29852  ],
          [-3.836303 , -4.192359 ,  0.6022964]], dtype=float32)
   """
+  default_dtype = dtypes.canonicalize_dtype(float)
+  outer_dtype = dtype
 
   def init(key: KeyArray,
            shape: core.Shape,
-           dtype: DTypeLikeInexact = dtype) -> Array:
-    dtype = dtypes.canonicalize_dtype(dtype)
-    return random.truncated_normal(key, lower, upper, shape, dtype) * stddev
+           dtype: DTypeLikeInexact = None) -> Array:
+    inner_dtype = dtype
+    dtype = dtype or outer_dtype or default_dtype
+    stddev_ = jnp.array(stddev, dtype=None if inner_dtype is None and outer_dtype is None else dtype)
+    return random.truncated_normal(key, lower, upper, shape, dtype) * stddev_
   return init
 
 @export
@@ -269,7 +282,7 @@ def variance_scaling(
   in_axis: int | Sequence[int] = -2,
   out_axis: int | Sequence[int] = -1,
   batch_axis: Sequence[int] = (),
-  dtype: DTypeLikeInexact = jnp.float_
+  dtype: DTypeLikeInexact = None
 ) -> Initializer:
   r"""
   Initializer that adapts its scale to the shape of the weights tensor.
@@ -312,11 +325,13 @@ def variance_scaling(
       ignored.
     dtype: the dtype of the weights.
   """
+  default_dtype = dtypes.canonicalize_dtype(float)
+  outer_dtype = dtype
 
   def init(key: KeyArray,
            shape: core.Shape,
-           dtype: DTypeLikeInexact = dtype) -> Array:
-    dtype = dtypes.canonicalize_dtype(dtype)
+           dtype: DTypeLikeInexact = None) -> Array:
+
     named_shape = core.as_named_shape(shape)
     fan_in, fan_out = _compute_fans(named_shape, in_axis, out_axis, batch_axis)
     if mode == "fan_in": denominator = fan_in
@@ -325,7 +340,11 @@ def variance_scaling(
     else:
       raise ValueError(
         f"invalid mode for variance scaling initializer: {mode}")
-    variance = jnp.array(scale / denominator, dtype=dtype)
+
+    inner_dtype = dtype
+    dtype = dtype or outer_dtype or default_dtype
+    scale_ = jnp.array(scale, dtype=None if inner_dtype is None and outer_dtype is None else dtype)
+    variance = jnp.array(scale_ / denominator, dtype=None if inner_dtype is None and outer_dtype is None else dtype)
 
     if distribution == "truncated_normal":
       if jnp.issubdtype(dtype, jnp.floating):
@@ -575,7 +594,7 @@ kaiming_normal = he_normal
 @export
 def orthogonal(scale: RealNumeric = 1.0,
                column_axis: int = -1,
-               dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
+               dtype: DTypeLikeInexact = None) -> Initializer:
   """
   Builds an initializer that returns uniformly distributed orthogonal matrices.
 
@@ -598,10 +617,15 @@ def orthogonal(scale: RealNumeric = 1.0,
   Array([[ 3.9026976e-01,  7.2495741e-01, -5.6756169e-01],
          [ 8.8047469e-01, -4.7409311e-01, -1.3157725e-04]],            dtype=float32)
   """
+  default_dtype = dtypes.canonicalize_dtype(float)
+  outer_dtype = dtype
   def init(key: KeyArray,
            shape: core.Shape,
-           dtype: DTypeLikeInexact = dtype) -> Array:
-    dtype = dtypes.canonicalize_dtype(dtype)
+           dtype: DTypeLikeInexact = None) -> Array:
+    inner_dtype = dtype
+    dtype = dtype or outer_dtype or default_dtype
+    scale_ = jnp.array(scale, dtype=None if inner_dtype is None and outer_dtype is None else dtype)
+
     if len(shape) < 2:
       raise ValueError("orthogonal initializer requires at least a 2D shape")
     n_rows, n_cols = math.prod(shape) // shape[column_axis], shape[column_axis]
@@ -613,14 +637,14 @@ def orthogonal(scale: RealNumeric = 1.0,
     if n_rows < n_cols: Q = Q.T
     Q = jnp.reshape(Q, tuple(np.delete(shape, column_axis)) + (shape[column_axis],))
     Q = jnp.moveaxis(Q, -1, column_axis)
-    return scale * Q
+    return scale_ * Q
   return init
 
 @export
 def delta_orthogonal(
   scale: RealNumeric = 1.0,
   column_axis: int = -1,
-  dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
+  dtype: DTypeLikeInexact = None) -> Initializer:
   """
   Builds an initializer for delta orthogonal kernels.
 
@@ -653,16 +677,22 @@ def delta_orthogonal(
 
   .. _delta orthogonal initializer: https://arxiv.org/abs/1806.05393
   """
+  default_dtype = dtypes.canonicalize_dtype(float)
+  outer_dtype = dtype
   def init(key: KeyArray,
            shape: core.Shape,
-           dtype: DTypeLikeInexact = dtype) -> Array:
+           dtype: DTypeLikeInexact = None) -> Array:
+    inner_dtype = dtype
+    dtype = dtype or outer_dtype or default_dtype
+    scale_ = jnp.array(scale, dtype=None if inner_dtype is None and outer_dtype is None else dtype)
+
     dtype = dtypes.canonicalize_dtype(dtype)
     if len(shape) not in [3, 4, 5]:
       raise ValueError("Delta orthogonal initializer requires a 3D, 4D or 5D "
                        "shape.")
     if shape[-1] < shape[-2]:
       raise ValueError("`fan_in` must be less or equal than `fan_out`. ")
-    ortho_init = orthogonal(scale=scale, column_axis=column_axis, dtype=dtype)
+    ortho_init = orthogonal(scale=scale_, column_axis=column_axis, dtype=dtype)
     ortho_matrix = ortho_init(key, shape[-2:])
     W = jnp.zeros(shape, dtype=dtype)
     if len(shape) == 3:

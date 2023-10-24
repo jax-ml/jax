@@ -22,6 +22,7 @@ import unittest
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import numpy as np
 import scipy.stats
 
 from jax._src import config
@@ -402,6 +403,29 @@ class NNInitializersTest(jtu.JaxTestCase):
       "-dimensional weights tensor. Must be at least 2D."
     ):
       initializer(rng, shape)
+
+  @parameterized.parameters([
+    partial(nn.initializers.uniform, scale=np.sqrt(2)),
+    partial(nn.initializers.normal, stddev=np.sqrt(2)),
+    partial(nn.initializers.variance_scaling, scale=np.sqrt(2), mode="fan_in", distribution="uniform"),
+    partial(nn.initializers.orthogonal, scale=np.sqrt(2)),
+    partial(nn.initializers.truncated_normal, stddev=np.sqrt(2)),
+    partial(nn.initializers.delta_orthogonal, scale=np.sqrt(2)),
+  ])
+  def testInitializerPreferUserRequestedDtype(self, initializer_fn):
+    """Test that user requested dtype takes precedence."""
+    # See https://github.com/google/jax/issues/18267
+    if not config.enable_x64.value:
+      self.skipTest("requires x64 mode")
+    initializer = initializer_fn(dtype=jnp.float64)
+    params = initializer(random.PRNGKey(0), (2, 2, 2), jnp.float32)
+    # Should prefer inner dtype specified by the user
+    self.assertEqual(params.dtype, jnp.float32)
+
+    initializer = initializer_fn(dtype=jnp.float64)
+    params = initializer(random.PRNGKey(0), (2, 2, 2))
+    # Should prefer outer dtype specified by the user
+    self.assertEqual(params.dtype, jnp.float64)
 
 
 if __name__ == "__main__":
