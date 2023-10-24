@@ -718,7 +718,7 @@ def random_seed_impl(seeds, *, impl):
   return PRNGKeyArrayImpl(impl, base_arr)
 
 def random_seed_impl_base(seeds, *, impl):
-  seed = iterated_vmap_unary(seeds.ndim, impl.seed)
+  seed = iterated_vmap_unary(np.ndim(seeds), impl.seed)
   return seed(seeds)
 
 def random_seed_lowering(ctx, seeds, *, impl):
