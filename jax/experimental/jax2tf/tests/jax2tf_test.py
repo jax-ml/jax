@@ -21,7 +21,6 @@ import functools
 import math
 import os
 import re
-from typing import Optional
 import unittest
 
 from absl import logging
@@ -60,16 +59,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   @classmethod
   def setUpClass(cls):
-    # Pick one device from each available platform
-    cls.jax_platforms = []
-    for backend in ["cpu", "gpu", "tpu"]:
-      try:
-        devices = jax.devices(backend)
-      except RuntimeError:
-        devices = []
-      if devices:
-        cls.jax_platforms.append(devices[0].platform)
-
     # One TF device of each device_type
     cls.tf_devices = []
     for tf_device in (tf.config.list_logical_devices("TPU") +
@@ -1741,9 +1730,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       native_serialization=True,
       native_serialization_platforms=("cpu", "cuda", "tpu"))
     for tf_device in self.__class__.tf_devices:
+      logging.info(
+        f"Running on tf_device = {tf_device} of device_type = {tf_device.device_type}")
       with tf.device(tf_device):
         res = f_tf(x)
-      logging.info(f"tf_device = {tf_device} and device_type = {tf_device.device_type}")
       tf_device_jax_platform = dict(
         CPU="cpu", GPU="cuda", TPU="tpu"
       )[tf_device.device_type]
