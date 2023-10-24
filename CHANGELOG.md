@@ -13,6 +13,9 @@ Remember to align the itemized text with the first line of an item within a list
 * Bug fixes
   * Fixed some type confusion between E4M3 and E5M2 float8 types.
 
+* Changes
+  * Released wheels are built now with clang instead of gcc.
+
 ## jax 0.4.19 (Oct 19, 2023)
 
 * New Features
