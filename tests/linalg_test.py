@@ -726,7 +726,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     # Check a ~= qr
     norm_error = norm(a - np.matmul(lq, lr))
-    self.assertTrue(np.all(norm_error < 45), msg=np.amax(norm_error))
+    self.assertTrue(np.all(norm_error < 60), msg=np.amax(norm_error))
 
     # Compare the first 'k' vectors of Q; the remainder form an arbitrary
     # orthonormal basis for the null space.

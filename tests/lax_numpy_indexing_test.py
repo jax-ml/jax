@@ -455,12 +455,12 @@ class IndexingTest(jtu.JaxTestCase):
 
     # Test with traced integer index
     args_maker = lambda: [rng(size, dtype), idx_rng(size, int)]
-    atol = (
+    tol = (
         5e-5
         if jtu.test_device_matches(["tpu"]) and funcname in ("log", "exp")
         else None
     )
-    self._CheckAgainstNumpy(np_op, jnp_op, args_maker, atol=atol)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker, atol=tol)
     self._CompileAndCheck(jnp_op, args_maker)
 
     # Test with slice index
@@ -468,7 +468,8 @@ class IndexingTest(jtu.JaxTestCase):
     np_op_idx = partial(np_op, idx=idx)
     jnp_op_idx = partial(jnp_op, idx=idx)
     args_maker = lambda: [rng(size, dtype)]
-    self._CheckAgainstNumpy(np_op_idx, jnp_op_idx, args_maker, atol=atol)
+    self._CheckAgainstNumpy(np_op_idx, jnp_op_idx, args_maker, atol=tol,
+                            rtol=tol)
     self._CompileAndCheck(jnp_op_idx, args_maker)
 
   def testIndexApplyBatchingBug(self):

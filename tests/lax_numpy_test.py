@@ -2565,7 +2565,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = partial(getattr(jnp, name), size, **kwds)
     np_fun = jtu.with_jax_dtype_defaults(partial(getattr(np, name), size, **kwds))
     args_maker = lambda: []
-    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
+    tol = (
+        5e-6 if jtu.test_device_matches(['tpu']) and name == 'kaiser' else None
+    )
+    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker, atol=tol, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(

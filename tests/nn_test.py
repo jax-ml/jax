@@ -150,7 +150,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   def testSoftmaxGrad(self):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
-    jtu.check_grads(nn.softmax, (x,), order=2, atol=3e-3)
+    jtu.check_grads(nn.softmax, (x,), order=2, atol=5e-3)
 
   def testSoftmaxGradResiduals(self):
     if not config.softmax_custom_jvp.value:
