@@ -1787,6 +1787,7 @@ def _ext_op_rule(  # pylint: disable=missing-function-docstring
   result_ty = ir.VectorType(op.result.type)
   if layout_out.bitwidth != 32:
     raise NotImplementedError("Only extensions to 32-bit supported")
+  source_ty = ir.VectorType(op.in_.type)
   input_vregs = disassemble(layout_in, op.in_)
   output_vregs = np.empty(
       layout_out.tile_array_shape(result_ty.shape), dtype=object
@@ -1794,10 +1795,23 @@ def _ext_op_rule(  # pylint: disable=missing-function-docstring
   res_vreg_ty = native_vreg_ty(result_ty.element_type)
   if layout_in.implicit_dim != layout_out.implicit_dim:
     raise NotImplementedError("Change of layout during the cast")
+  if layout_in.offsets != layout_out.offsets:
+    raise NotImplementedError("Change of offsets during the cast")
   if layout_in.implicit_dim is not None:
     if layout_in.implicit_dim != ImplicitDim.SECOND_MINOR:
       raise NotImplementedError("Only casts of lane-oriented values supported")
-    if input_vregs.shape != (1,) or output_vregs.shape != (1,):
+    def is_one_tile(vty, layout):
+      ishape = layout.implicit_shape(vty.shape)
+      return all(
+          o + s <= t
+          for o, s, t in zip(layout.offsets, ishape[-2:], layout.tiling)
+      )
+    if (
+        input_vregs.size != 1
+        or output_vregs.size != 1
+        or not is_one_tile(source_ty, layout_in)
+        or not is_one_tile(result_ty, layout_out)
+    ):
       raise NotImplementedError
     if layout_in.offsets[0] >= TARGET_SHAPE.sublanes:
       raise NotImplementedError

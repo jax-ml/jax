@@ -582,6 +582,7 @@ LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
                                const VectorLayout &layout_out) {
   ImplicitLocOpBuilder builder(op.getLoc(), op.getOperation());
   auto result_ty = cast<VectorType>(op.getResult().getType());
+  auto source_ty = cast<VectorType>(op.getIn().getType());
   if (layout_out.bitwidth() != 32) {
     return op.emitOpError(
         "Not implemented: Only extensions to 32-bit supported");
@@ -595,6 +596,9 @@ LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
       getNativeVregType(result_ty.getElementType(), ctx.target_shape));
   if (layout_in.implicit_dim() != layout_out.implicit_dim()) {
     return op.emitOpError("Not implemented: Change of layout during the cast");
+  }
+  if (layout_in.offsets() != layout_out.offsets()) {
+    return op.emitOpError("Not implemented: Change of offsets during the cast");
   }
   switch (layout_in.implicit_dim()) {
     case VectorLayout::ImplicitDim::kNone: {
@@ -620,8 +624,18 @@ LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
       return op.emitOpError(
           "Not implemented: Only casts of lane-oriented values supported");
     case VectorLayout::ImplicitDim::kSecondMinor: {
+      auto is_one_tile = [](VectorType vty, VectorLayout layout) {
+        auto implicit_shape = layout.implicitShape(vty.getShape());
+        auto tiled_shape = ArrayRef<int64_t>(implicit_shape).take_back(2);
+        return (layout.offsets()[0].value_or(0) + tiled_shape[0] <=
+                layout.tiling()[0]) &&
+               (layout.offsets()[1].value_or(0) + tiled_shape[1] <=
+                layout.tiling()[1]);
+      };
       if (input_vregs.dimensions() != absl::Span<const int64_t>{1} ||
-          output_vregs.dimensions() != absl::Span<const int64_t>{1}) {
+          output_vregs.dimensions() != absl::Span<const int64_t>{1} ||
+          !is_one_tile(source_ty, layout_in) ||
+          !is_one_tile(result_ty, layout_out)) {
         return op.emitOpError("Not implemented");
       }
       if (layout_in.offsets()[0] >= ctx.target_shape[0]) {
