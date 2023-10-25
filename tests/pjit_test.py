@@ -1491,8 +1491,8 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
                             input_data)
       with self.assertRaisesRegex(
           ValueError,
-          r"Array\(s\) sharding does not match the input\(s\) "
-          r"sharding.*\n.*for arg x"):
+          r"Compiled object called with input sharding\(s\) does not match the "
+          r"sharding\(s\) the computation was compiled with.*\n.*for arg x"):
         compiled(arr)
 
   def test_gda_auto_shardings_len(self):
@@ -1806,7 +1806,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
       with self.assertRaisesRegex(
           ValueError,
-          r"Array\(s\) sharding does not match the input\(s\) sharding. "
+          r"Compiled object called with input sharding\(s\) does not match the "
+          r"sharding\(s\) the computation was compiled with. "
           "Here are 5 mismatches out of 6"):
         compiled(a2, a2, a2, a2, a2, a2)
 
@@ -1819,7 +1820,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
       inp2 = {'x': a2, 'y': {'y1': a2}}
       with self.assertRaisesRegex(
           ValueError,
-          r"Array\(s\) sharding does not match the input\(s\) sharding. "
+          r"Compiled object called with input sharding\(s\) does not match the "
+          r"sharding\(s\) the computation was compiled with. "
           "Here are the 2 mismatches"):
         compiled(inp2)
 
