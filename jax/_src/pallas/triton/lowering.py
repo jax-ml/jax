@@ -1503,7 +1503,9 @@ def pallas_call_lowering(
         **compiler_params
     )
   num_warps = compiler_params.get("num_warps", 4)
-  if ctx.module_context.platform == 'rocm':
+  if len(ctx.module_context.platforms) > 1:
+    raise NotImplementedError("multi-platform lowering for Pallas kernels")
+  if ctx.module_context.platforms[0] == 'rocm':
     num_stages = compiler_params.get("num_stages", 1)
   else:
     num_stages = compiler_params.get("num_stages", 3)
@@ -1521,7 +1523,7 @@ def pallas_call_lowering(
       debug=debug,
   )
   #Triton returns a tuple for ROCm. We just want file path to be passed
-  if ctx.module_context.platform == 'rocm':
+  if ctx.module_context.platforms[0] == 'rocm':
       compilation_result.ptx = compilation_result.ptx[1]
 
   if debug:

@@ -758,7 +758,7 @@ def lower_parallel_callable(
           closed_jaxpr,
           ordered_effects=ordered_effects,
           backend_or_name=backend,
-          platform=lowering_parameters.override_platform or backend.platform,
+          platforms=lowering_parameters.platforms or (backend.platform,),
           axis_context=sharding_impls.ReplicaAxisContext(axis_env),
           name_stack=name_stack,
           donated_args=donated_invars,
@@ -1362,7 +1362,7 @@ def _pmap_lowering(ctx, *in_nodes, axis_name,
                    call_jaxpr, backend=None, in_axes, out_axes,
                    donated_invars, is_explicit_global_axis_size):
   del donated_invars  # Unused.
-  mlir.check_backend_matches(backend, ctx.module_context.platform)
+  mlir.check_backend_matches(backend, ctx.module_context.platforms)
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
   if ctx.module_context.axis_env.names and devices is not None:
@@ -1835,7 +1835,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         ordered_effects=ordered_effects,
         backend_or_name=backend,
         # Optionally, override the lowering platform
-        platform=lowering_parameters.override_platform or backend.platform,
+        platforms=lowering_parameters.platforms or (backend.platform,),
         axis_context=axis_ctx,
         name_stack=name_stack,
         donated_args=donated_invars,
@@ -2201,7 +2201,7 @@ def lower_mesh_computation(
           closed_jaxpr,
           ordered_effects=ordered_effects,
           backend_or_name=backend,
-          platform=lowering_parameters.override_platform or backend.platform,
+          platforms=lowering_parameters.platforms or (backend.platform,),
           axis_context=axis_ctx,
           name_stack=name_stack,
           donated_args=donated_invars,

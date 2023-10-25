@@ -689,7 +689,7 @@ def _wrap_main_func(
     with ir.InsertionPoint(entry_block):
       # Make a context just for lowering the dimension value computations
       module_context = mlir.ModuleContext(
-          backend_or_name="cpu", platform="cpu",
+          backend_or_name="cpu", platforms=["cpu"],
           axis_context=sharding_impls.ShardingContext([]),
           name_stack=source_info_util.new_name_stack(),
           keepalives=[], channel_iterator=itertools.count(1),
@@ -1179,11 +1179,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   submodule_args = []
   # All the platforms for the current lowering must be among the platforms
   # for which the callee was lowered.
-  if ctx.module_context.lowering_parameters.is_multi_platform:
-    assert ctx.module_context.lowering_parameters.platforms is not None
-    lowering_platforms = ctx.module_context.lowering_parameters.platforms
-  else:
-    lowering_platforms = (ctx.module_context.platform,)
+  lowering_platforms = ctx.module_context.platforms
 
   callee_lowering_platform_index: list[int] = []
   for platform in lowering_platforms:

@@ -1305,7 +1305,8 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
                                 global_axis_sizes,
                                 spmd_in_axes, spmd_out_axes,
                                 axis_resources, resource_env, backend):
-  mlir.check_backend_matches(backend, ctx.module_context.platform)
+  mlir.check_backend_matches(backend, ctx.module_context.platforms)
+  del backend, donated_invars
   # The only way for any of those two assertions to be violated is when xmap
   # is using the SPMD lowering, but then this rule shouldn't even trigger.
   assert spmd_in_axes is None and spmd_out_axes is None
@@ -1381,7 +1382,8 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
                              donated_invars, global_axis_sizes, spmd_in_axes,
                              spmd_out_axes, axis_resources,
                              resource_env, backend):
-  mlir.check_backend_matches(backend, ctx.module_context.platform)
+  mlir.check_backend_matches(backend, ctx.module_context.platforms)
+  del backend, donated_invars
   plan = EvaluationPlan.from_axis_resources(
       axis_resources, resource_env, global_axis_sizes)
 
@@ -1447,9 +1449,10 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
                                     donated_invars, global_axis_sizes, spmd_in_axes,
                                     spmd_out_axes, axis_resources,
                                     resource_env, backend):
+  del donated_invars
   assert spmd_in_axes is None and spmd_out_axes is None
   # This first part (up to vtile_manual) is shared with non-MANUAL SPMD rule.
-  mlir.check_backend_matches(backend, ctx.module_context.platform)
+  mlir.check_backend_matches(backend, ctx.module_context.platforms)
   plan = EvaluationPlan.from_axis_resources(
       axis_resources, resource_env, global_axis_sizes)
   manual_mesh_axes = frozenset(it.chain.from_iterable(plan.physical_axis_resources.values()))

@@ -554,6 +554,6 @@ def _common_device_put_lowering(ctx, x, *, device, src):
       device.memory_kind is not None):
     raise NotImplementedError(
         "Passing memory_kind to device_put via Shardings is not supported on"
-        f" platform {ctx.module_context.platform}")
+        f" platforms {ctx.module_context.platforms}")
   return [x]
 mlir.register_lowering(device_put_p, _common_device_put_lowering)
