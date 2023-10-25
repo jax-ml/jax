@@ -155,6 +155,7 @@ html_theme_options = {
     'show_toc_level': 2,
     'repository_url': 'https://github.com/google/jax',
     'use_repository_button': True,     # add a "link to repository" button
+    'navigation_with_keys': False,
 }
 
 # The name of an image file (relative to this directory) to place at the top
