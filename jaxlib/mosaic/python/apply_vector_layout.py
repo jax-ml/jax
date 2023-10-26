@@ -3014,18 +3014,22 @@ def _matmul_rule(
 def _vector_multi_reduction_rule(  # pylint: disable=missing-function-docstring
     ctx: RewriteContext, op: vector.MultiDimReductionOp,
     layout_in: Sequence[Layout], layout_out: Layout):
-  dims = ir.ArrayAttr(op.attributes["reduction_dims"])
-  if len(dims) != 1:
-    raise NotImplementedError("only 1d reductions supported")
-  (dim_attr,) = dims
-  dim = ir.IntegerAttr(dim_attr).value
-  src_type = ir.VectorType(op.source.type)
   src_layout, acc_layout = layout_in
+  dst_layout = layout_out
+
+  src_type = ir.VectorType(op.source.type)
+  src_rank = src_type.rank
   try:
     res_type = ir.VectorType(op.result.type)
   except ValueError:
     raise NotImplementedError("Can only reduce into vectors") from None
-  assert layout_out is not None  # Shouldn't be None since result is a vector
+  assert dst_layout is not None  # Shouldn't be None since result is a vector
+
+  dim_attrs = ir.ArrayAttr(op.attributes["reduction_dims"])
+  dims = [ir.IntegerAttr(dim_attr).value for dim_attr in dim_attrs]
+  dims.sort()
+  if any(d < 0 for d in dims):
+    raise NotImplementedError("negative reduction dims")
 
   # Make sure that the accumulator is a splat of the neutral value
   if acc_layout.offsets != (REPLICATED, REPLICATED):
@@ -3047,70 +3051,78 @@ def _vector_multi_reduction_rule(  # pylint: disable=missing-function-docstring
   if val != neutral.value:
     raise NotImplementedError("only neutral accumulator supported")
 
-  if src_layout.implicit_dim is None and src_layout.has_natural_topology:
-    sublane_offset, lane_offset = src_layout.offsets
-    check(dim >= 0, "negative reduction dimension unsupported")
-    if dim < src_type.rank - 2:
-      raise NotImplementedError("reductions over non-layout dims")
-    elif dim == src_type.rank - 2:
-      reduce_over = SUBLANES
-      allow_replicated = TargetTuple(False, True)
-      vdim = 0
-      if sublane_offset is REPLICATED:
-        # TODO(apaszke): Note that it is just scaling!
-        raise NotImplementedError("reductions over replicated axes")
-      if layout_out != VectorLayout(
-          32, (REPLICATED, lane_offset), TARGET_SHAPE, ImplicitDim.SECOND_MINOR
-      ):
-        raise NotImplementedError(f"unexpected destination layout {layout_out}")
-    elif dim == src_type.rank - 1:
-      reduce_over = LANES
-      allow_replicated = TargetTuple(True, False)
-      vdim = 1
-      if lane_offset is REPLICATED:
-        # TODO(apaszke): Note that it is just scaling!
-        raise NotImplementedError("reductions over replicated axes")
-      if layout_out != VectorLayout(
-          32, (sublane_offset, REPLICATED), TARGET_SHAPE, ImplicitDim.MINOR
-      ):
-        raise NotImplementedError(f"unexpected destination layout {layout_out}")
-    source_tiles = disassemble(src_layout, op.source)
-    result_tiles = np.empty(
-        layout_out.tile_array_shape(res_type.shape), dtype=object)
-    if op.attributes["kind"] == ir.Attribute.parse("#vector.kind<maxf>"):
-      tpu_kind = ir.Attribute.parse("#tpu.reduction_kind<max>")
-      pointwise = arith.MaximumFOp
-    elif op.attributes["kind"] == ir.Attribute.parse("#vector.kind<add>"):
-      tpu_kind = ir.Attribute.parse("#tpu.reduction_kind<sum>")
-      pointwise = arith.AddFOp
-    else:
-      raise NotImplementedError(op.attributes["kind"])
-    src_shape = tuple(src_type.shape)
-    for ixs in np.ndindex(source_tiles.shape):
+  if src_layout.implicit_dim is None:
+    reduces = TargetTuple((src_rank - 2) in dims, (src_rank - 1) in dims)
+  elif src_layout.implicit_dim == ImplicitDim.SECOND_MINOR:
+    reduces = TargetTuple(False, (src_rank - 1) in dims)
+  else:
+    assert src_layout.implicit_dim == ImplicitDim.MINOR
+    reduces = TargetTuple((src_rank - 1) in dims, False)
+  allow_replicated = TargetTuple(not reduces.sublanes, not reduces.lanes)
+
+  if not src_layout.has_native_tiling:
+    raise NotImplementedError("unsupported input layout")
+  if src_layout.tiling != dst_layout.tiling:
+    raise NotImplementedError("tiling shouldn't change")
+  for i in range(2):
+    if reduces[i] and src_layout.offsets[i] is REPLICATED:
+      raise NotImplementedError("reductions over replicated axes")
+    # Offsets have to be equal, unless we're reducing over that dimension.
+    if src_layout.offsets[i] != dst_layout.offsets[i] and not reduces[i]:
+      raise NotImplementedError("unsupported offset change")
+  if all(reduces) or (any(reduces) and src_layout.implicit_dim is not None):
+    # This is difficult, because we'd like to make both tiling dims implicit,
+    # but there is no way to do that in VectorLayout right now.
+    # We use an equivalence between VectorLayouts when trailing dims are 1 to
+    # enable some special cases, but we should generalize this.
+    if res_type.shape[-1] != 1:
+      raise NotImplementedError(
+          "reductions over both trailing dimensions are only supported when the"
+          " reduced value has a trailing axis of size 1"
+      )
+    dst_implicit_dim = ImplicitDim.SECOND_MINOR  # Whatever works.
+  elif reduces.lanes:
+    dst_implicit_dim = ImplicitDim.MINOR
+  elif reduces.sublanes:
+    dst_implicit_dim = ImplicitDim.SECOND_MINOR
+  else:
+    dst_implicit_dim = None
+  if dst_implicit_dim != dst_layout.implicit_dim:
+    raise NotImplementedError("unsupported output implicit dim")
+
+  src_vregs = disassemble(src_layout, op.source)
+  dst_vregs = np.empty(
+      layout_out.tile_array_shape(res_type.shape), dtype=object)
+  if op.attributes["kind"] == ir.Attribute.parse("#vector.kind<maxf>"):
+    tpu_kind = ir.Attribute.parse("#tpu.reduction_kind<max>")
+    pointwise = arith.MaximumFOp
+  elif op.attributes["kind"] == ir.Attribute.parse("#vector.kind<add>"):
+    tpu_kind = ir.Attribute.parse("#tpu.reduction_kind<sum>")
+    pointwise = arith.AddFOp
+  else:
+    raise NotImplementedError(op.attributes["kind"])
+  src_shape = tuple(src_type.shape)
+  for dst_idx in np.ndindex(dst_vregs.shape):
+    # Extract a subset of source vregs that reduce into this single result vreg.
+    src_slice_list = [slice(i, i + 1) for i in dst_idx]
+    for d in dims:
+      src_slice_list.insert(d, slice(None))
+    reduced_vregs = src_vregs[tuple(src_slice_list)]
+    # Reduce the source vregs into a single one.
+    acc = None
+    for slice_idx, src_vreg in np.ndenumerate(reduced_vregs):
+      source_idx = tuple(
+          i + (s.start or 0) for i, s in zip(slice_idx, src_slice_list))
       data_bounds = src_layout.tile_data_bounds(
-          src_shape, ixs, allow_replicated=allow_replicated)
-      tile = mask_oob(
-          source_tiles[ixs], data_bounds, neutral, ctx.hardware_generation)
-      *batch_ix, six, lix = ixs
-      if reduce_over == LANES:
-        outer = (*batch_ix, six)
-        reduced_ix = lix
-        last_reduced_ix = source_tiles.shape[-1] - 1
-      else:
-        assert reduce_over == SUBLANES
-        outer = (*batch_ix, lix)
-        reduced_ix = six
-        last_reduced_ix = source_tiles.shape[-2] - 1
-      if reduced_ix == 0:
-        new_acc = tile
-      else:
-        new_acc = pointwise(result_tiles[outer], tile)
-      if reduced_ix == last_reduced_ix:
-        new_acc = tpu.AllReduceOp(
-            new_acc, ir.IntegerAttr.get(i64(), vdim), tpu_kind)
-      result_tiles[outer] = new_acc
-    return ctx.replace(op, assemble(op.result.type, layout_out, result_tiles))
-  raise NotImplementedError(f"unsupported layout: {src_layout}")
+          src_shape, source_idx, allow_replicated=allow_replicated)
+      tile = mask_oob(src_vreg, data_bounds, neutral, ctx.hardware_generation)
+      acc = tile if acc is None else pointwise(acc, tile)
+    if reduces.lanes:
+      acc = tpu.AllReduceOp(acc, ir.IntegerAttr.get(i64(), 1), tpu_kind)
+    if reduces.sublanes:
+      acc = tpu.AllReduceOp(acc, ir.IntegerAttr.get(i64(), 0), tpu_kind)
+    dst_vregs[dst_idx] = acc
+  return ctx.replace(op, assemble(op.result.type, layout_out, dst_vregs))
 
 
 @_register_rule("vector.transpose")
