@@ -18,11 +18,12 @@ import functools
 import logging
 import math
 import re
-from typing import Optional, Sequence
+from typing import Optional
 import unittest
 
 from absl.testing import absltest
 import jax
+from jax import lax
 from jax import numpy as jnp
 from jax import tree_util
 from jax.experimental.export import export
@@ -94,55 +95,31 @@ mlir.register_lowering(testing_primitive_with_effect_p,
                        lowering_testing_primitive_with_effect)
 
 ## Setup for multi-platform lowering
-# A primitive for testing multi-platform lowering. Takes one argument and
-# adds a different value to it: cpu=2., tpu=3., cuda=.4, rocm=5.
-# The primitive takes an event_class_name kwarg that may be None, or
-# the name of an effect class.
-_testing_multi_platform_p = core.Primitive("testing_multi_platform")
 _testing_multi_platform_to_add = dict(cpu=2., tpu=3., cuda=4., rocm=5.)
 
 def _testing_multi_platform_func(x, *,
                                  effect_class_name: Optional[str] = None):
-  return _testing_multi_platform_p.bind(x, effect_class_name=effect_class_name)
+  # Behaves like x + 2 * _testing_multi_platform_to_add[platform]
+  def for_platform(platform: str):
+    if effect_class_name is None:
+      return 2. * _testing_multi_platform_to_add[platform]
+    else:
+      return testing_primitive_with_effect_p.bind(
+        _testing_multi_platform_to_add[platform],
+        effect_class_name=effect_class_name)
+
+  return x + lax.platform_dependent(
+    tpu=lambda: for_platform("tpu"),
+    cuda=lambda: for_platform("cuda"),
+    rocm=lambda: for_platform("rocm"),
+    default=lambda: for_platform("cpu"),
+  )
 
 def _testing_multi_platform_fun_expected(x,
                                          platform: str | None = None):
-  return x + _testing_multi_platform_to_add[
+  return x + 2. * _testing_multi_platform_to_add[
     xb.canonicalize_platform(platform or jtu.device_under_test())
   ]
-
-@_testing_multi_platform_p.def_effectful_abstract_eval
-def _testing_multi_platform_abstract_eval(xaval: core.AbstractValue,
-                                          effect_class_name: Optional[str]):
-  assert xaval.dtype == np.float32  # type: ignore
-  effects = set() if effect_class_name is None else set([_testing_effects[effect_class_name]])
-  return (xaval, effects)
-
-def _testing_multi_platform_lowering(ctx: mlir.LoweringRuleContext,
-                                     x: mlir.Value,
-                                     *,
-                                     effect_class_name: Optional[str],
-                                     platform: str) -> Sequence[mlir.Value]:
-  to_add = _testing_multi_platform_to_add[platform]
-  to_add_value = mlir.broadcast_in_dim(ctx,
-                                       mlir.ir_constant(np.float32(to_add)),
-                                       ctx.avals_in[0],
-                                       broadcast_dimensions=())
-  results = mlir.hlo.AddOp(x, to_add_value).results
-  if effect_class_name is not None and "Ordered" in effect_class_name:
-    token_in = ctx.tokens_in.get(_testing_effects[effect_class_name])[0]
-    ctx.set_tokens_out(mlir.TokenSet({_testing_effects[effect_class_name]: (token_in,)}))
-  return results
-
-# Register a default rule for cuda, to test the default-platform rule selection.
-mlir.register_lowering(_testing_multi_platform_p,
-                       functools.partial(_testing_multi_platform_lowering,
-                                         platform="cuda"))
-for platform in ["cpu", "tpu", "rocm"]:
-  mlir.register_lowering(_testing_multi_platform_p,
-                         functools.partial(_testing_multi_platform_lowering,
-                                           platform=platform),
-                         platform=platform)
 
 
 class JaxExportTest(jtu.JaxTestCase):
@@ -813,8 +790,8 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform(self):
     x = np.arange(8, dtype=np.float32)
     exp = export.export(_testing_multi_platform_func,
-                        lowering_platforms=("cpu", "tpu", "cuda"))(x)
-    self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda"))
+                        lowering_platforms=("tpu", "cpu", "cuda"))(x)
+    self.assertEqual(exp.lowering_platforms, ("tpu", "cpu", "cuda"))
     module_str = str(exp.mlir_module())
     expected_main_re = (
       r"@main\("

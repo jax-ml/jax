@@ -1500,6 +1500,7 @@ tf_not_yet_impl = [
     "hessenberg",
     "tridiagonal",
     "eigh_jacobi",
+    "platform_index",
 ]
 
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
