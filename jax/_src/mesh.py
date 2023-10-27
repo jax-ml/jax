@@ -87,7 +87,9 @@ class ResourceEnv(NamedTuple):
     return shape
 
   def __repr__(self):
-    return f"ResourceEnv({self.physical_mesh!r}, {self.loops!r})"
+    mesh_repr = ", ".join(
+        f"'{k}': {v}" for k, v in self.physical_mesh.shape.items())
+    return f"ResourceEnv(mesh=Mesh({mesh_repr}), {self.loops!r})"
 
 
 @functools.lru_cache(maxsize=128)
