@@ -177,6 +177,24 @@ class CompilationCacheTest(jtu.JaxTestCase):
       files_in_directory = len(os.listdir(tmpdir))
       self.assertEqual(files_in_directory, 2)
 
+  def test_xla_autofdo_profile_version(self):
+    original_profile_version = config.jax_xla_profile_version.value
+    with (tempfile.TemporaryDirectory() as tmpdir,
+          config.jax_xla_profile_version(original_profile_version + 1)):
+      cc.initialize_cache(tmpdir)
+      f = jit(lambda x: x * x)
+      f(1)
+      files_in_cache_directory = os.listdir(tmpdir)
+      self.assertLen(files_in_cache_directory, 1)
+      # Clear the cache directory, then update the profile version and execute
+      # again. The in-memory caches should be invalidated and a new persistent
+      # cache entry created.
+      os.unlink(os.path.join(tmpdir, files_in_cache_directory[0]))
+      with config.jax_xla_profile_version(original_profile_version + 2):
+        f(1)
+        files_in_directory = len(os.listdir(tmpdir))
+        self.assertEqual(files_in_directory, 1)
+
   @jtu.with_mesh([("x", 2)])
   def test_pjit(self):
     with tempfile.TemporaryDirectory() as tmpdir:

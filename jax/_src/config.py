@@ -493,7 +493,8 @@ class Config:
     These values are included in the cache key for linear_util.cache.
 
     Values included in this set should also most likely be included in
-    the C++ JIT state, which is handled separately."""
+    the C++ JIT state, which is handled separately.
+    """
     tls = jax_jit.thread_local_state()
     axis_env_state = ()
     mesh_context_manager = ()
@@ -510,6 +511,7 @@ class Config:
             self.jax_softmax_custom_jvp,
             self.jax_enable_memories,
             self.jax_disable_jit,
+            self.jax_xla_profile_version,
             # Technically this affects jaxpr->MHLO lowering, not tracing.
             self.jax_hlo_source_file_canonicalization_regex)
 
@@ -640,6 +642,7 @@ class _GlobalExtraJitContext(NamedTuple):
   dynamic_shapes: bool = False
   threefry_partitionable: bool = False
   softmax_custom_jvp: bool = False
+  xla_profile_version: int = 0
 
 
 def _update_global_jit_state(**kw):
@@ -665,6 +668,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   default_matmul_precision: Optional[Any] = None
   dynamic_shapes: bool = False
   softmax_custom_jvp: bool = False
+  xla_profile_version: int = 0
 
 
 class _ThreadLocalStateCache(threading.local):
@@ -1149,9 +1153,14 @@ xla_runtime_errors = config.define_bool_state(
 jax_xla_profile_version = config.define_int_state(
     name='jax_xla_profile_version',
     default=0,
-    help=('Optional profile version for XLA compilation. This is meaningful '
-          'only when XLA is configured to support the remote compilation '
-          'profile feature.')
+    help=(
+        'Optional profile version for XLA compilation. This is meaningful '
+        'only when XLA is configured to support the remote compilation '
+        'profile feature.'),
+    update_global_hook=lambda val: _update_global_jit_state(
+        xla_profile_version=val),
+    update_thread_local_hook=lambda val: update_thread_local_jit_state(
+        xla_profile_version=val),
 )
 
 @contextlib.contextmanager
