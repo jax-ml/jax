@@ -3255,8 +3255,14 @@ def _eig(operand: TfVal, compute_left_eigenvectors: bool,
 tf_impl[lax.linalg.eig_p] = _eig
 
 
-def _eigh(operand: TfVal, lower: bool, sort_eigenvalues: bool, _in_avals,
-          _out_aval):
+def _eigh(
+    operand: TfVal,
+    lower: bool,
+    sort_eigenvalues: bool,
+    subset_by_index: tuple,
+    _in_avals,
+    _out_aval,
+):
   del sort_eigenvalues
   if operand.shape[-1] == 0:
     v, w = operand, tf.reshape(operand, _eval_shape(_in_avals[0].shape[:-1]))
@@ -3268,6 +3274,8 @@ def _eigh(operand: TfVal, lower: bool, sort_eigenvalues: bool, _in_avals,
       tf.complex64: tf.float32,
       tf.complex128: tf.float64
   }.get(operand.dtype)
+  if not (subset_by_index is None or subset_by_index == (0, operand.shape[-1])):
+    raise NotImplementedError("subset_by_index is not implemented")
   if cast_type is not None:
     w = tf.cast(w, cast_type)
   return v, w
