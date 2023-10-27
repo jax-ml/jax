@@ -4,19 +4,19 @@
 So you updated JAX and you hit a speed regression?
 You have a little bit of time and are ready to investigate this?
 Let's first make a JAX issue.
-But if you can pinpoint the commit that trigger the regression, it will really help us.
+But if you can pinpoint the commit that triggered the regression, it will really help us.
 
-This document explains how we identified the commit that cause a
-[15% preformance regression](https://github.com/google/jax/issues/17686).
+This document explains how we identified the commit that caused a
+[15% performance regression](https://github.com/google/jax/issues/17686).
 
 ## Steps
 
-This can be done easily if the repro is quick enough. This is a brute
-force method and not a bisection, but if the repro is quick enough, it
-works well. This make sure that you always test XLA and JAX commit
-that are compatible. It also limit XLA recompilation.
+This can be done easily if the reproducer is quick enough. This is a brute
+force method and not a bisection, but if the reproducer is quick enough, it
+works well. This makes sure that you always test XLA and JAX commits
+that are compatible. It also limits XLA recompilation.
 
-Here is a suggested investigation steps:
+Here is a suggested investigation strategy:
  1. You can do a brute force test of nightly containers between the 2 releases.
  2. Hourly recompilation while keeping XLA and JAX in sync.
  3. Final verification: maybe a manual check of a few commits (or a git bisect).
@@ -26,13 +26,13 @@ Here is a suggested investigation steps:
 This can be done by using [JAX-Toolbox nightly
 containers](https://github.com/NVIDIA/JAX-Toolbox).
 
-- Some days, bugs prevent the container to be build or could have temporary regression. Just discard those days.
+- Some days, bugs prevent the container from being built, or there are temporary regressions. Just discard those days.
 - So you should end up with a specific day or a few days where the regression happens.
-- To automatize this, you need 2 python scripts:
+- To automate this, you need 2 python scripts:
     - test_runner.sh: will start the containers and the test.
-    - test.sh: will install missing dependency and run the test
+    - test.sh: will install missing dependencies and run the test
 
-Here are real examples scripts used for the issue: https://github.com/google/jax/issues/17686
+Here are real example scripts used for the issue: https://github.com/google/jax/issues/17686
 - test_runner.sh:
 ```
   for m in 7 8 9; do
@@ -54,7 +54,7 @@ Here are real examples scripts used for the issue: https://github.com/google/jax
 ```
 
 Then you can grep each output to see when the regression happens:
-`grep MLUPS OUT*`. Here is the results we got:
+`grep MLUPS OUT*`. Here are the results we got:
 
 ```
 OUT-07-06:MLUPS: 587.9240990200157
@@ -121,7 +121,7 @@ OUT-09-20:MLUPS: 536.7361260076634
 ```
 
 This found that 8-24 was good, but 8-26 was bad. On 8-25 there was
-another issue that prevented us to get results. So we need to
+another issue that prevented from getting results. So we need to
 investigate hourly between 8-24 and 8-26. There was a smaller slowdown
 earlier, lets ignore it for this example. It would be only another
 hourly investigation between those dates.
@@ -129,9 +129,9 @@ hourly investigation between those dates.
 ## Hourly investigation.
 
 This does a checkout of JAX and XLA at each hour between the 2 dates,
-rebuild everything and run the test.  The scripts are structured
+rebuilds everything and runs the test.  The scripts are structured
 differently. We start the working container and keep it. Then inside
-it, we only trigger incremental XLA build except for the first
+it, we only trigger incremental XLA builds except for the first
 build. So it is much faster after the first iteration.
 
 - test_runner2.sh:
@@ -175,18 +175,18 @@ build. So it is much faster after the first iteration.
 ```
 
 Now, you can execute the grep command on the new output files to see
-between which hours the issue appeared.
+which hours the issue appeared between.
 
 ## Final verification
 
 
-With this, you need to check the JAX and XLA history between those hours. Maybe there is a few commits to test. You can use git bisect if you want to be fancy.
+With this, you need to check the JAX and XLA history between those hours. Maybe there are a few commits to test. You can use git bisect if you want to be fancy.
 
 ## Can this be improved?
 
 Yes! If it was a crash regression, being able to do a bisect would be
 useful. But it would be more complicated. If someone want to
-contribute such instruction, please submit a PR;)
+contribute such instructions, please submit a PR ;)
 
-For speed regression, a bisect can hide some informtion. We wouldn't
-see as easily that there was two regression here.
+For speed regressions, a bisect can hide some information. We wouldn't
+see as easily that there were two regressions here.
