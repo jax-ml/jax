@@ -1060,8 +1060,8 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     def policy(prim, *avals, **params):
       return Offloadable(src="tpu_hbm", dst="unpinned_host")
 
-    @functools.partial(remat, policy=policy)
     def f(x):
+      @functools.partial(remat, policy=policy)
       def g(y, _):
         y = jnp.sin(y)
         y = jnp.sin(y)
