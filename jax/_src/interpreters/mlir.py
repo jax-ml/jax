@@ -508,6 +508,14 @@ class ModuleContext:
     self.symbol_table = symbol_table or ir.SymbolTable(self.module.operation)
     self.backend_or_name = backend_or_name
     self.platforms = platforms
+    assert platforms
+    if backend_or_name is not None:
+      assert len(platforms) == 1
+      if isinstance(backend_or_name, str):
+        assert backend_or_name == platforms[0]
+      else:
+        assert backend_or_name == xb.get_backend(platforms[0])
+
     self.axis_context = axis_context
     self.name_stack = name_stack
     self.cached_primitive_lowerings = ({} if cached_primitive_lowerings is None
@@ -729,6 +737,13 @@ def lower_jaxpr_to_module(
   Handles the quirks of the argument/return value passing conventions of the
   runtime.
   """
+  assert platforms
+  if backend_or_name is not None:
+    assert len(platforms) == 1
+    if isinstance(backend_or_name, str):
+      assert backend_or_name == platforms[0]
+    else:
+      assert backend_or_name == xb.get_backend(platforms[0])  
   platforms = tuple(map(xb.canonicalize_platform, platforms))
 
   input_output_aliases = None
@@ -2420,6 +2435,13 @@ def build_xla_computation_helper(
   """Helper to generate pmap-style XLA computations for custom partitioners."""
   if closed_jaxpr.effects:
     raise NotImplementedError
+  assert platforms
+  if backend_or_name is not None:
+    assert len(platforms) == 1
+    if isinstance(backend_or_name, str):
+      assert backend_or_name == platforms[0]
+    else:
+      assert backend_or_name == xb.get_backend(platforms[0])
   lowering_result = lower_jaxpr_to_module(name, closed_jaxpr,
       backend_or_name=backend_or_name, ordered_effects=[],
       name_stack=source_info_util.NameStack(),
