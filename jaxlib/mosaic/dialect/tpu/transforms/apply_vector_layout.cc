@@ -1768,6 +1768,7 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
           "Not implemented: Changing implicit dims mid-broadcast");
     }
     const VectorLayout::ImplicitDim implicit_dim = layout_in.implicit_dim();
+    const int layout_rank = layout_in.layout_rank();
     const LayoutOffsets offsets_in = layout_in.offsets();
     const LayoutOffsets offsets_out = layout_out.offsets();
     if (layout_in.tiling() != layout_out.tiling()) {
@@ -1822,6 +1823,14 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
         }
         break;
     }
+    CHECK(layout_rank);
+    if (src_ty.getShape().take_back(layout_rank) ==
+        dst_ty.getShape().take_back(layout_rank)) {
+      if (offsets_in != offsets_out) {
+        op.emitOpError("Not implemented: Changing offsets mid-broadcast");
+      }
+      no_op = true;
+    }
 
     FAILUREOR_ASSIGN_OR_RETURN(
         xla::Array<Value> src_tiles,
@@ -1849,6 +1858,7 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
         return op.emitOpError("Not implemented: unsupported tiling");
       }
       int64_t num_tiles = layout_in.tilesPerVreg(ctx.target_shape);
+      CHECK(!(*(dim_eq.end() - 1) || !(*(dim_eq.end() - 2))));
       if (*(dim_eq.end() - 1)) {  // Sublane broadcast
         if (num_tiles != 1) {
           return op.emitOpError(

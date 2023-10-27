@@ -2402,6 +2402,7 @@ def _vector_broadcast_rule(ctx: RewriteContext, op: vector.BroadcastOp,  # pylin
     if layout_in.implicit_dim != layout_out.implicit_dim:
       raise NotImplementedError("Changing implicit dims mid-broadcast")
     implicit_dim = layout_in.implicit_dim
+    layout_rank = layout_in.layout_rank
     if (tiling := layout_in.tiling) != layout_out.tiling:
       raise NotImplementedError("Changing tiling mid-broadcast")
     offsets_in = layout_in.offsets
@@ -2436,6 +2437,11 @@ def _vector_broadcast_rule(ctx: RewriteContext, op: vector.BroadcastOp,  # pylin
           and layout_in.offsets[0] is REPLICATED
       ):
         no_op = True
+    assert layout_rank
+    if src_ty.shape[-layout_rank:] == dst_ty.shape[-layout_rank:]:
+      if offsets_in != offsets_out:
+        raise NotImplementedError("Changing offsets mid-broadcast")
+      no_op = True
 
     src_tiles = disassemble(layout_in, op.source)
     dst_tiles = np.ndarray(dst_tiles_shape, dtype=object)
@@ -2450,6 +2456,7 @@ def _vector_broadcast_rule(ctx: RewriteContext, op: vector.BroadcastOp,  # pylin
       if tiling[1] != TARGET_SHAPE.lanes:
         raise NotImplementedError(f"Unsupported tiling: {tiling}")
       num_tiles = layout_in.tiles_per_vreg
+      assert not all(dim_eq[-2:])
       if dim_eq[-1]:  # Sublane broadcast
         if num_tiles != 1:
           raise NotImplementedError("Only native tiling supported")
