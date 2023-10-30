@@ -9,7 +9,7 @@
 
 repos:
 - repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v4.4.0
+  rev: v4.5.0
   hooks:
   - id: end-of-file-fixer
     # only include python files
@@ -27,7 +27,7 @@ repos:
   - id: flake8
 
 - repo: https://github.com/pre-commit/mirrors-mypy
-  rev: 'v1.6.0'
+  rev: 'v1.6.1'
   hooks:
   - id: mypy
     files: (jax/|tests/typing_test\.py)
@@ -36,7 +36,7 @@ repos:
     args: [--config=pyproject.toml]
 
 - repo: https://github.com/mwouts/jupytext
-  rev: v1.14.7
+  rev: v1.15.2
   hooks:
   - id: jupytext
     args: [--sync]

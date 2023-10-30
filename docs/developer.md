@@ -410,7 +410,7 @@ using [jupytext](https://jupytext.readthedocs.io/) by running `jupytext --sync` 
 notebooks; for example:
 
 ```
-pip install jupytext==1.14.7
+pip install jupytext==1.15.2
 jupytext --sync docs/notebooks/quickstart.ipynb
 ```
 
