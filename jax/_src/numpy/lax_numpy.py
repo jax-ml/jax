@@ -3296,6 +3296,9 @@ _EINSUM_DOC = _PRECISION_DOC + """\
 A tuple ``precision`` does not necessarily map to multiple arguments of ``einsum()``;
 rather, the specified ``precision`` is forwarded to each ``dot_general`` call used in
 the implementation.
+
+:func:`jax.numpy.einsum` also differs from :func:`numpy.einsum` in that the ``optimize``
+keyword defaults to ``"optimal"`` rather than ``False``.
 """
 
 @overload
