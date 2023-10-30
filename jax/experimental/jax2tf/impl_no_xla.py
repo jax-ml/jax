@@ -282,7 +282,7 @@ def _conv_general_dilated(
   rhs_dilated_shape = [
       (k - 1) * r + 1 for k, r in zip(rhs_spatial_shapes, rhs_dilation)
   ]
-  output_perm = dimension_numbers[2]
+  output_perm = dimension_numbers.out_spec
 
   if is_transpose:
     padding_type = _conv_transpose_pads_to_padtype(

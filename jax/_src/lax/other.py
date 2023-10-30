@@ -88,20 +88,18 @@ def conv_general_dilated_patches(
   """
   lhs_array = jnp.asarray(lhs)
   filter_shape = tuple(filter_shape)
-  dimension_numbers = convolution.conv_dimension_numbers(
+  dnums = convolution.conv_dimension_numbers(
       lhs_array.shape, (1, 1) + filter_shape, dimension_numbers)
 
-  lhs_spec, rhs_spec, out_spec = dimension_numbers
-
   spatial_size = math.prod(filter_shape)
-  n_channels = lhs_array.shape[lhs_spec[1]]
+  n_channels = lhs_array.shape[dnums.lhs_spec[1]]
 
   # Move separate `lhs` spatial locations into separate `rhs` channels.
   rhs = jnp.eye(spatial_size, dtype=lhs_array.dtype).reshape(filter_shape * 2)
 
   rhs = rhs.reshape((spatial_size, 1) + filter_shape)
   rhs = jnp.tile(rhs, (n_channels,) + (1,) * (rhs.ndim - 1))
-  rhs = jnp.moveaxis(rhs, (0, 1), (rhs_spec[0], rhs_spec[1]))
+  rhs = jnp.moveaxis(rhs, (0, 1), (dnums.rhs_spec[0], dnums.rhs_spec[1]))
 
   out = convolution.conv_general_dilated(
       lhs=lhs_array,
@@ -218,13 +216,13 @@ def conv_general_dilated_local(
       precision=lhs_precision
   )
 
-  lhs_spec, rhs_spec, out_spec = convolution.conv_dimension_numbers(
+  dnums = convolution.conv_dimension_numbers(
       lhs_array.shape, (1, 1) + tuple(filter_shape), dimension_numbers)
 
-  lhs_c_dims, rhs_c_dims = [out_spec[1]], [rhs_spec[1]]
+  lhs_c_dims, rhs_c_dims = [dnums.out_spec[1]], [dnums.rhs_spec[1]]
 
-  lhs_b_dims = out_spec[2:]
-  rhs_b_dims = rhs_spec[2:]
+  lhs_b_dims = dnums.out_spec[2:]
+  rhs_b_dims = dnums.rhs_spec[2:]
 
   rhs_b_dims = [rhs_b_dims[i] for i in sorted(range(len(rhs_b_dims)),
                                               key=lambda k: lhs_b_dims[k])]
@@ -232,5 +230,5 @@ def conv_general_dilated_local(
 
   dn = ((lhs_c_dims, rhs_c_dims), (lhs_b_dims, rhs_b_dims))
   out = lax.dot_general(patches, rhs, dimension_numbers=dn, precision=precision)
-  out = jnp.moveaxis(out, (-2, -1), (out_spec[0], out_spec[1]))
+  out = jnp.moveaxis(out, (-2, -1), (dnums.out_spec[0], dnums.out_spec[1]))
   return out

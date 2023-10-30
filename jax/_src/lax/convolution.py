@@ -13,9 +13,10 @@
 # limitations under the License.
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from functools import partial
 import operator
-from typing import NamedTuple, Optional, Union
+from typing import Optional, Union
 
 import numpy as np
 
@@ -30,7 +31,8 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.typing import Array, DTypeLike
 
 
-class ConvDimensionNumbers(NamedTuple):
+@dataclass(frozen=True)
+class ConvDimensionNumbers:
   """Describes batch, spatial, and feature dimensions of a convolution.
 
   Args:
@@ -45,6 +47,7 @@ class ConvDimensionNumbers(NamedTuple):
   rhs_spec: Sequence[int]
   out_spec: Sequence[int]
 
+
 ConvGeneralDilatedDimensionNumbers = Union[
   None, ConvDimensionNumbers, tuple[str, str, str]]
 
@@ -53,7 +56,7 @@ def conv_general_dilated(
   padding: Union[str, Sequence[tuple[int, int]]],
   lhs_dilation: Optional[Sequence[int]] = None,
   rhs_dilation: Optional[Sequence[int]] = None,
-  dimension_numbers: ConvGeneralDilatedDimensionNumbers  = None,
+  dimension_numbers: ConvGeneralDilatedDimensionNumbers = None,
   feature_group_count: int = 1, batch_group_count: int = 1,
   precision: lax.PrecisionLike = None,
   preferred_element_type: Optional[DTypeLike] = None) -> Array:
@@ -135,11 +138,10 @@ def conv_general_dilated(
   if rhs_dilation is None:
     rhs_dilation = (1,) * (rhs.ndim - 2)
   if isinstance(padding, str):
-    lhs_perm, rhs_perm, _ = dnums
-    rhs_shape = np.take(rhs.shape, rhs_perm)[2:]  # type: ignore[index]
+    rhs_shape = np.take(rhs.shape, dnums.rhs_spec)[2:]  # type: ignore[index]
     effective_rhs_shape = [(k-1) * r + 1 for k, r in zip(rhs_shape, rhs_dilation)]
     padding = lax.padtype_to_pads(
-        np.take(lhs.shape, lhs_perm)[2:], effective_rhs_shape,  # type: ignore[index]
+        np.take(lhs.shape, dnums.lhs_spec)[2:], effective_rhs_shape,  # type: ignore[index]
         window_strides, padding)
   else:
     try:
@@ -401,7 +403,11 @@ def _conv_general_dilated_shape_rule(
     raise ValueError(
         msg.format(len(_conv_sdims(dimension_numbers.rhs_spec)), len(window_strides)))
 
-  lhs_perm, rhs_perm, out_perm = dimension_numbers
+  lhs_perm, rhs_perm, out_perm = (
+      dimension_numbers.lhs_spec,
+      dimension_numbers.rhs_spec,
+      dimension_numbers.out_spec,
+  )
   lhs_trans = lax._dilate_shape(np.take(lhs.shape, lhs_perm), lhs_dilation)
   rhs_trans = lax._dilate_shape(np.take(rhs.shape, rhs_perm), rhs_dilation)
   out_trans = conv_shape_tuple(lhs_trans, rhs_trans, window_strides, padding,
@@ -457,8 +463,16 @@ def _conv_general_dilated_transpose_lhs(
   assert batch_group_count == 1 or feature_group_count == 1
   rhs_shape = rhs.shape
   lhs_shape = lhs.aval.shape
-  lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
-  lhs_spec, rhs_spec, out_spec = dimension_numbers
+  lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, [
+      dimension_numbers.lhs_spec,
+      dimension_numbers.rhs_spec,
+      dimension_numbers.out_spec,
+  ])
+  lhs_spec, rhs_spec, out_spec = (
+      dimension_numbers.lhs_spec,
+      dimension_numbers.rhs_spec,
+      dimension_numbers.out_spec,
+  )
   t_rhs_spec = _conv_spec_transpose(rhs_spec)
   if feature_group_count > 1:
     # in addition to switching the dims in the spec, need to move the feature
@@ -497,8 +511,16 @@ def _conv_general_dilated_transpose_rhs(
     return ad.Zero(rhs.aval)
   lhs_shape = lhs.shape
   rhs_shape = rhs.aval.shape
-  lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
-  lhs_trans, rhs_trans, out_trans = map(_conv_spec_transpose, dimension_numbers)
+  lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, [
+      dimension_numbers.lhs_spec,
+      dimension_numbers.rhs_spec,
+      dimension_numbers.out_spec,
+  ])
+  lhs_trans, rhs_trans, out_trans = map(_conv_spec_transpose, [
+      dimension_numbers.lhs_spec,
+      dimension_numbers.rhs_spec,
+      dimension_numbers.out_spec,
+  ])
   assert batch_group_count == 1 or feature_group_count == 1
   if batch_group_count > 1:
     feature_group_count = batch_group_count
@@ -527,7 +549,11 @@ def _conv_general_dilated_batch_rule(
   assert batch_group_count == 1 or feature_group_count == 1
   lhs, rhs = batched_args
   lhs_bdim, rhs_bdim = batch_dims
-  lhs_spec, rhs_spec, out_spec = dimension_numbers
+  lhs_spec, rhs_spec, out_spec = (
+      dimension_numbers.lhs_spec,
+      dimension_numbers.rhs_spec,
+      dimension_numbers.out_spec,
+  )
 
   # Some of the cases that reshape into batch or feature dimensions do not work
   # with size 0 batch dimensions. The best fix would be to extend HLO to support
@@ -683,7 +709,11 @@ def _conv_general_dilated_lower(
       multiple_results=False)
     return complex_conv(ctx, lhs, rhs)
 
-  lhs_spec, rhs_spec, out_spec = dimension_numbers
+  lhs_spec, rhs_spec, out_spec = (
+      dimension_numbers.lhs_spec,
+      dimension_numbers.rhs_spec,
+      dimension_numbers.out_spec,
+  )
   dnums = hlo.ConvDimensionNumbers.get(
     input_batch_dimension=lhs_spec[0],
     input_feature_dimension=lhs_spec[1],
@@ -828,8 +858,11 @@ def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
   out_trans = tuple((lhs_trans[0], rhs_trans[0]) + tuple(out_space))
   return tuple(np.take(out_trans, np.argsort(out_perm)))
 
-def conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers
-                           ) -> ConvDimensionNumbers:
+def conv_dimension_numbers(
+    lhs_shape: tuple[int, ...],
+    rhs_shape: tuple[int, ...],
+    dimension_numbers: ConvGeneralDilatedDimensionNumbers,
+) -> ConvDimensionNumbers:
   """Converts convolution `dimension_numbers` to a `ConvDimensionNumbers`.
 
   Args:
@@ -872,7 +905,7 @@ def conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers
     raise TypeError(msg.format(type(dimension_numbers)))
 
 
-def conv_general_permutations(dimension_numbers):
+def conv_general_permutations(dimension_numbers: tuple[str, str, str]):
   """Utility for convolution dimension permutations relative to Conv HLO."""
   lhs_spec, rhs_spec, out_spec = dimension_numbers
   lhs_char, rhs_char, out_char = charpairs = ("N", "C"), ("O", "I"), ("N", "C")
