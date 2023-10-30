@@ -3522,6 +3522,25 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out2.device(), jax.devices()[0])
     self.assertArraysEqual(out2, np_inp)
 
+  def test_jit_submhlo_cached(self):
+    @jax.jit
+    def nest(x):
+      return x * 2
+
+    @jax.jit
+    def top(x):
+      y = nest(x)
+      z = nest(y)
+      a = nest(z)
+      b = nest(a)
+      return b
+
+    with jtu.count_subjaxpr_to_mhlo_conversion(fun_name='nest') as count:
+      top(jnp.arange(8))
+
+    # The count should be 1 because `nest`'s lowering to MHLO should be cached.
+    self.assertEqual(count[0], 1)
+
   def test_wsc_eager(self):
     mesh = jtu.create_global_mesh((2,), ('x',))
     np_inp = np.arange(8)
