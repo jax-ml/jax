@@ -683,6 +683,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   numpy_dtype_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
   dynamic_shapes: bool = False
+  threefry_partitionable: bool = False
   softmax_custom_jvp: bool = False
   xla_profile_version: int = 0
 
