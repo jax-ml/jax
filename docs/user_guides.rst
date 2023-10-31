@@ -14,6 +14,7 @@ or deployed codebases.
    profiling
    device_memory_profiling
    debugging/index
+   gpu_performance_tips
 
 
 .. toctree::
