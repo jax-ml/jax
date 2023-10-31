@@ -67,6 +67,7 @@ from jax._src.config import (
   numpy_rank_promotion as numpy_rank_promotion,
   jax2tf_associative_scan_reductions as jax2tf_associative_scan_reductions,
   legacy_prng_key as legacy_prng_key,
+  threefry_partitionable as threefry_partitionable,
   transfer_guard as transfer_guard,
   transfer_guard_host_to_device as transfer_guard_host_to_device,
   transfer_guard_device_to_device as transfer_guard_device_to_device,
