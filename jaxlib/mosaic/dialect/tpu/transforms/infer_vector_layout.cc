@@ -849,17 +849,24 @@ class VectorLayoutInferer {
 
     SmallVector<Layout, 4> in_layout(op->getNumOperands(), kNoLayout);
     CHECK_EQ(op->getNumOperands(), op.getIndices().size() + 1);
-    SmallVector<int64_t, 4> indices;
-    indices.reserve(rank);
-    for (Value v : op.getIndices()) {
-      auto cst_op = v.getDefiningOp<arith::ConstantOp>();
-      TPU_CHECK_OP(cst_op, "only constant indices are supported");
-      indices.push_back(cast<IntegerAttr>(cst_op.getValue()).getInt());
+    SmallVector<int64_t, 2> tile_indices;
+    for (int i = rank - 1; i >= 0; --i) {
+      auto cst_op = op.getIndices()[i].getDefiningOp<arith::ConstantOp>();
+      if (cst_op) {
+        int64_t idx = cast<IntegerAttr>(cst_op.getValue()).getInt();
+        TPU_CHECK_OP(idx + res_ty.getDimSize(i) <= src_ty.getDimSize(i),
+                     "Loading elements out of bounds");
+        if (tile_indices.size() < 2) {
+          tile_indices.push_back(idx);
+        }
+      } else {
+        TPU_CHECK_OP(
+            tile_indices.size() == 2,
+            "Dynamic indices are not supported in the last two dimensions");
+      }
     }
-    for (int64_t i = 0; i < rank; ++i) {
-      TPU_CHECK_OP(indices[i] + res_ty.getDimSize(i) <= src_ty.getDimSize(i),
-                   "Loading elements out of bounds");
-    }
+    // We pushed the indices in reverse.
+    std::reverse(tile_indices.begin(), tile_indices.end());
 
     if (rank == 0) {
       op.emitOpError("rank 0 vectors unsupported");
@@ -870,7 +877,8 @@ class VectorLayoutInferer {
       auto tile = tiling.front();
       TPU_CHECK_OP(tile % target_shape_[1] == 0,
                    "Unsupported tiling for 1D load");
-      int64_t idx = indices.front();
+      CHECK_EQ(tile_indices.size(), 1);
+      int64_t idx = tile_indices.front();
       int64_t offset = idx % kVmemAlignment32;
       // TODO(apaszke): We could generate replicated loads for short values.
       setLayout(op, in_layout,
@@ -878,8 +886,8 @@ class VectorLayoutInferer {
                              ImplicitDim::kSecondMinor));
     } else {  // rank >= 2
       TPU_CHECK_OP(tiling.size() == 2, "Expected 2D tiling in 2D+ loads");
+      CHECK_EQ(tile_indices.size(), 2);
       std::array<std::optional<int64_t>, 2> offsets;
-      const auto tile_indices = ArrayRef<int64_t>(indices).take_back(2);
       const auto tile_src_shape = src_ty.getShape().take_back(2);
       const auto tile_res_shape = res_ty.getShape().take_back(2);
       const int64_t num_sublanes = tile_res_shape[0];
@@ -1140,17 +1148,24 @@ class VectorLayoutInferer {
     }
     auto tiling = *maybe_tiling;
 
-    SmallVector<int64_t, 4> indices;
-    indices.reserve(rank);
-    for (Value v : op.getIndices()) {
-      auto cst_op = v.getDefiningOp<arith::ConstantOp>();
-      TPU_CHECK_OP(cst_op, "only constant indices are supported");
-      indices.push_back(cast<IntegerAttr>(cst_op.getValue()).getInt());
+    SmallVector<int64_t, 2> tile_indices;
+    for (int i = rank - 1; i >= 0; --i) {
+      auto cst_op = op.getIndices()[i].getDefiningOp<arith::ConstantOp>();
+      if (cst_op) {
+        int64_t idx = cast<IntegerAttr>(cst_op.getValue()).getInt();
+        TPU_CHECK_OP(idx + store_ty.getDimSize(i) <= ref_ty.getDimSize(i),
+                     "Loading elements out of bounds");
+        if (tile_indices.size() < 2) {
+          tile_indices.push_back(idx);
+        }
+      } else {
+        TPU_CHECK_OP(
+            tile_indices.size() == 2,
+            "Dynamic indices are not supported in the last two dimensions");
+      }
     }
-    for (int64_t i = 0; i < rank; ++i) {
-      TPU_CHECK_OP(indices[i] + store_ty.getDimSize(i) <= ref_ty.getDimSize(i),
-                   "storing elements out of bounds");
-    }
+    // We pushed the indices in reverse.
+    std::reverse(tile_indices.begin(), tile_indices.end());
 
     Layout store_layout;
     if (rank == 0) {
@@ -1162,14 +1177,15 @@ class VectorLayoutInferer {
       auto tile = tiling.front();
       TPU_CHECK_OP(tile % target_shape_[1] == 0,
                    "Unsupported 1D tiling for 1D store");
-      int64_t idx = indices.front();
+      CHECK_EQ(tile_indices.size(), 1);
+      int64_t idx = tile_indices.front();
       int64_t offset = idx % kVmemAlignment32;
       store_layout = VectorLayout(bitwidth, {0, offset}, {1, tile},
                                   ImplicitDim::kSecondMinor);
     } else {  // rank >= 2  // NOLINT(readability-else-after-return)
       TPU_CHECK_OP(tiling.size() == 2, "Expected 2D tiling in 2D+ store");
+      CHECK_EQ(tile_indices.size(), 2);
       std::array<std::optional<int64_t>, 2> offsets;
-      const auto tile_indices = ArrayRef<int64_t>(indices).take_back(2);
       const auto tile_ref_shape = ref_ty.getShape().take_back(2);
       const auto tile_store_shape = store_ty.getShape().take_back(2);
       const int64_t num_sublanes = tile_store_shape[0];

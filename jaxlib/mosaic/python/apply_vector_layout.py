@@ -2509,34 +2509,30 @@ def _vector_load_rule(  # pylint: disable=missing-function-docstring
   memref_ty = ir.MemRefType(op.base.type)
   ty = ir.VectorType(op.result.type)
   target_ty = native_vreg_ty(ty.element_type)
-  if layout_out.implicit_dim == ImplicitDim.MINOR:
+  if len(ty.shape) == 0:
     raise NotImplementedError
-  is_1d = layout_out.implicit_dim is not None
+  is_1d = len(ty.shape) == 1
+  expected_dim = ImplicitDim.SECOND_MINOR if is_1d else None
+  if layout_out.implicit_dim != expected_dim:
+    raise NotImplementedError
   memref_tiling = get_memref_tiling(op.base)
   if layout_out.tiling != memref_tiling:
     # Now we can handle the case when tiling is (1, TARGET_SHAPE.lanes).
     # TODO(b/295393167): need to support strided load for bitwidth < 32.
-    if layout_out.bitwidth != 32 or layout_out.tiling != (
-        1,
-        TARGET_SHAPE.lanes,
-    ):
+    lanes = TARGET_SHAPE.lanes
+    if layout_out.bitwidth != 32 or layout_out.tiling != (1, lanes):
       raise NotImplementedError
   # TODO(apaszke): Check that loads are from vmem!
-  indices = [get_int_const(v, "vector.load index") for v in op.indices]
-  for i, n, extent in zip(indices, ty.shape, memref_ty.shape):
-    if i + n > extent:
-      raise ValueError("reading out of bounds")
+  tile_indices = [
+      get_int_const(v, "vector.load index") for v in op.indices[-2:]
+  ]
   *_, ss, _ = layout_out.implicit_shape(ty.shape)
   sublane_stride = 1
   # The stride of load should be the number of sublanes in memref tile when
   # loaing a single sublane.
   if (
       layout_out.bitwidth == 32
-      and layout_out.tiling
-      == (
-          1,
-          TARGET_SHAPE.lanes,
-      )
+      and layout_out.tiling == (1, TARGET_SHAPE.lanes)
       and ss == 1
   ):
     sublane_stride = memref_tiling[0]
@@ -2558,10 +2554,13 @@ def _vector_load_rule(  # pylint: disable=missing-function-docstring
   if any((o or 0) > t for o, t in zip(offsets, tiling)):
     raise NotImplementedError
   if is_1d:
-    *base_batch, base_l = indices
+    (base_l,) = tile_indices
     base_s = 0
   else:
-    *base_batch, base_s, base_l = indices
+    base_s, base_l = tile_indices
+  base_batch = get_dim_indices(
+      op.indices[: -len(tile_indices)], ty.shape[: -len(tile_indices)]
+  )
   tiles = np.ndarray(layout_out.tile_array_shape(ty.shape), dtype=object)
   vreg_slice = layout_out.vreg_slice
   for tile_ixs in np.ndindex(tiles.shape):
@@ -2574,17 +2573,17 @@ def _vector_load_rule(  # pylint: disable=missing-function-docstring
           base_s + six * vreg_slice.sublanes - (s or 0),
           base_l + lix * vreg_slice.lanes - l,
       )
-    indices = (*(b + i for b, i in zip(base_batch, batch_ixs)), *tile)
-    assert indices[-1] + TARGET_SHAPE.lanes <= memref_ty.shape[-1]
+    indices = (
+        *(b[i] for b, i in zip(base_batch, batch_ixs)), *map(ix_cst, tile),
+    )
     bounds = layout_out.tile_data_bounds(
         ty.shape, tile_ixs, allow_replicated=TargetTuple(True, False))
-    indices_vs = list(map(ix_cst, indices))
     if bounds.mask_varies_along(SUBLANES):
       assert s is not REPLICATED  # Replicated loads should never go OOB
       tile = tpu.LoadOp(
           target_ty,
           op.base,
-          indices_vs,
+          indices,
           bounds.get_sublane_mask(),
           sublane_stride=sublane_stride,
       )
@@ -2593,7 +2592,7 @@ def _vector_load_rule(  # pylint: disable=missing-function-docstring
         if layout_out.bitwidth != 32:
           raise NotImplementedError
         tile = vector.TransferReadOp(
-            target_ty, op.base, indices_vs, load_map, padding)
+            target_ty, op.base, indices, load_map, padding)
       else:
         assert s is not REPLICATED
         sublane_mask = ir.DenseBoolArrayAttr.get(
@@ -2601,7 +2600,7 @@ def _vector_load_rule(  # pylint: disable=missing-function-docstring
         tile = tpu.LoadOp(
             target_ty,
             op.base,
-            indices_vs,
+            indices,
             sublane_mask,
             sublane_stride=sublane_stride,
         )
@@ -2617,26 +2616,30 @@ def _vector_store_rule(  # pylint: disable=missing-function-docstring
   assert all(ip is None for ip in other_layouts)
   assert layout_out is None
   ty = ir.VectorType(op.valueToStore.type)
-  if to_store_layout.implicit_dim == ImplicitDim.MINOR:
+  if len(ty.shape) == 0:
     raise NotImplementedError
-  is_1d = to_store_layout.implicit_dim is not None
+  is_1d = len(ty.shape) == 1
+  expected_dim = ImplicitDim.SECOND_MINOR if is_1d else None
+  if to_store_layout.implicit_dim != expected_dim:
+    raise NotImplementedError
   memref_tiling = get_memref_tiling(op.base)
   if to_store_layout.tiling != memref_tiling:
     # Now we can handle the case when tiling is (1, TARGET_SHAPE.lanes).
     # TODO(b/295393167): need to support strided store for bitwidth < 32.
-    if to_store_layout.bitwidth != 32 or to_store_layout.tiling != (
-        1,
-        TARGET_SHAPE.lanes,
-    ):
+    lanes = TARGET_SHAPE.lanes
+    if to_store_layout.bitwidth != 32 or to_store_layout.tiling != (1, lanes):
       raise NotImplementedError
-  base_indices = [get_int_const(v, "vector.store index") for v in op.indices]
+  tile_indices = [get_int_const(v, "vector.store index") for v in op.indices[-2:]]
   tiles = disassemble(to_store_layout, op.valueToStore)
   if is_1d:
-    *base_batch, base_l = base_indices
+    (base_l,) = tile_indices
     base_s = 0
     tiles = tiles.reshape(to_store_layout.implicit_shape(tiles.shape))
   else:
-    *base_batch, base_s, base_l = base_indices
+    base_s, base_l = tile_indices
+  base_batch = get_dim_indices(
+      op.indices[: -len(tile_indices)], ty.shape[: -len(tile_indices)]
+  )
   sublane_offset, lane_offset = to_store_layout.offsets
   check(lane_offset is not REPLICATED and sublane_offset is not REPLICATED,
         "replicated layout disallowed in vector store")
@@ -2654,13 +2657,12 @@ def _vector_store_rule(  # pylint: disable=missing-function-docstring
     bounds = to_store_layout.tile_data_bounds(stored_shape, ixs)
     *batch_ixs, six, lix = ixs
     indices = (
-        *(b + i for b, i in zip(base_batch, batch_ixs)),
-        base_s + six * vreg_slice.sublanes - sublane_offset,
-        base_l + lix * vreg_slice.lanes - lane_offset,
+        *(b[i] for b, i in zip(base_batch, batch_ixs)),
+        ix_cst(base_s + six * vreg_slice.sublanes - sublane_offset),
+        ix_cst(base_l + lix * vreg_slice.lanes - lane_offset),
     )
     if is_1d:
       indices = (*indices[:-2], indices[-1])
-    indices = list(map(ix_cst, indices))
     sublane_mask = bounds.get_sublane_mask()
     masks_subelements = bounds.mask_varies_along(SUBELEMENTS)
     if bounds.mask_varies_along(LANES) or masks_subelements:
@@ -3470,3 +3472,30 @@ def get_memref_tiling(value: ir.Value) -> tuple[int, int]:
 def _round_up(x: int, to: int):
   assert x >= 0
   return ((x + to - 1) // to) * to
+
+
+def get_dim_indices(indices, shape) -> list[list[ValueLike]]:
+  dim_indices = []
+  index = ir.IndexType.get()
+  assert len(indices) == len(shape)
+  for dim_size, idx_val in zip(shape, indices):
+    idx_const = None
+    try:
+      idx_const = get_int_const(idx_val, "")
+    except ValueError:
+      pass
+    if idx_const is not None:
+      dim_indices.append(
+          [
+              arith.ConstantOp(index, ir.IntegerAttr.get(index, idx_const + i))
+              for i in range(dim_size)
+          ]
+      )
+    else:
+      dim_indices.append([
+          arith.AddIOp(
+              idx_val, arith.ConstantOp(index, ir.IntegerAttr.get(index, i))
+          )
+          for i in range(dim_size)
+      ])
+  return dim_indices
