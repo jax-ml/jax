@@ -3060,7 +3060,7 @@ def _vector_multi_reduction_rule(  # pylint: disable=missing-function-docstring
     reduces = TargetTuple((src_rank - 1) in dims, False)
   allow_replicated = TargetTuple(not reduces.sublanes, not reduces.lanes)
 
-  if not src_layout.has_native_tiling:
+  if any(reduces) and not src_layout.has_native_tiling:
     raise NotImplementedError("unsupported input layout")
   if src_layout.tiling != dst_layout.tiling:
     raise NotImplementedError("tiling shouldn't change")
@@ -3082,11 +3082,13 @@ def _vector_multi_reduction_rule(  # pylint: disable=missing-function-docstring
       )
     dst_implicit_dim = ImplicitDim.SECOND_MINOR  # Whatever works.
   elif reduces.lanes:
+    assert src_layout.implicit_dim is None
     dst_implicit_dim = ImplicitDim.MINOR
   elif reduces.sublanes:
+    assert src_layout.implicit_dim is None
     dst_implicit_dim = ImplicitDim.SECOND_MINOR
   else:
-    dst_implicit_dim = None
+    dst_implicit_dim = src_layout.implicit_dim
   if dst_implicit_dim != dst_layout.implicit_dim:
     raise NotImplementedError("unsupported output implicit dim")
 

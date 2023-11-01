@@ -2209,7 +2209,8 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   }
   const std::array<bool, 2> allow_replicated = {!reduces[0], !reduces[1]};
 
-  if (!src_layout.hasNativeTiling(ctx.target_shape)) {
+  if ((reduces[0] || reduces[1]) &&
+      !src_layout.hasNativeTiling(ctx.target_shape)) {
     return multi_reduction_op.emitOpError(
                "Not implemented: Unsupported input layout: ")
            << src_layout;
@@ -2243,11 +2244,13 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     dst_implicit_dim =
         VectorLayout::ImplicitDim::kSecondMinor;  // Anything works.
   } else if (reduces[0]) {
+    CHECK_EQ(src_layout.implicit_dim(), VectorLayout::ImplicitDim::kNone);
     dst_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
   } else if (reduces[1]) {
+    CHECK_EQ(src_layout.implicit_dim(), VectorLayout::ImplicitDim::kNone);
     dst_implicit_dim = VectorLayout::ImplicitDim::kMinor;
   } else {
-    dst_implicit_dim = VectorLayout::ImplicitDim::kNone;
+    dst_implicit_dim = src_layout.implicit_dim();
   }
   if (dst_layout.implicit_dim() != dst_implicit_dim) {
     return multi_reduction_op.emitOpError(

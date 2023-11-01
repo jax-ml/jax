@@ -44,6 +44,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/include/mlir/IR/Attributes.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "xla/layout.h"
@@ -956,34 +957,65 @@ class VectorLayoutInferer {
     auto src_ty = op.getSourceVectorType();
     auto dst_ty = dyn_cast<VectorType>(op.getDestType());
     TPU_CHECK_OP(dst_ty, "only reductions with vector results supported");
-    TPU_CHECK_OP(src_ty.getRank() == dst_ty.getRank() + 1,
-                 "only 1D reductions supported");
-    int64_t dim = cast<IntegerAttr>(op.getReductionDims()[0]).getInt();
+    SmallVector<int64_t> dims;
+    dims.reserve(op.getReductionDims().size());
+    for (Attribute dim_attr : op.getReductionDims()) {
+      dims.push_back(cast<IntegerAttr>(dim_attr).getInt());
+    }
     int64_t src_rank = src_ty.getRank();
-    auto acc_pad = getLayout(op.getAcc());
-    TPU_CHECK_OP(is_fully_replicated(acc_pad),
+    auto acc_layout = getLayout(op.getAcc());
+    TPU_CHECK_OP(is_fully_replicated(acc_layout),
                  "only constant accumulators supported");
     TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == kNativeBitwidth,
                  "only 32-bit reductions supported");
     auto some_src_layout = getLayout(op.getSource());
     TPU_CHECK_OP(some_src_layout, "missing vector layout");
     auto &src_layout = *some_src_layout;
-    TPU_CHECK_OP(src_layout.implicit_dim() == ImplicitDim::kNone,
-                 "only 2D layouts supported");
-    if (dim == src_rank - 1) {
-      setLayout(
-          op, {src_layout, acc_pad},
-          VectorLayout(kNativeBitwidth, {src_layout.offsets()[0], std::nullopt},
-                       default_tiling_, ImplicitDim::kMinor));
-    } else if (dim == src_rank - 2) {
-      setLayout(
-          op, {src_layout, acc_pad},
-          VectorLayout(kNativeBitwidth, {std::nullopt, src_layout.offsets()[1]},
-                       default_tiling_, ImplicitDim::kSecondMinor));
-    } else {
-      // Reduction happens over the unrolled dimension --- we can keep layout.
-      setLayout(op, {src_layout, acc_pad}, src_layout);
+    std::array<bool, 2> reduces;
+    switch (src_layout.implicit_dim()) {
+      case VectorLayout::ImplicitDim::kNone:
+        reduces = {
+            std::find(dims.begin(), dims.end(), src_rank - 2) != dims.end(),
+            std::find(dims.begin(), dims.end(), src_rank - 1) != dims.end()};
+        break;
+      case VectorLayout::ImplicitDim::kSecondMinor:
+        reduces = {false, std::find(dims.begin(), dims.end(), src_rank - 1) !=
+                              dims.end()};
+        break;
+      case VectorLayout::ImplicitDim::kMinor:
+        reduces = {
+            std::find(dims.begin(), dims.end(), src_rank - 1) != dims.end(),
+            false};
+        break;
     }
+    if ((reduces[0] || reduces[1]) &&
+        !src_layout.hasNativeTiling(target_shape_)) {
+      src_layout = VectorLayout(kNativeBitwidth, src_layout.offsets(),
+                                default_tiling_, src_layout.implicit_dim());
+    }
+    LayoutOffsets out_offsets = src_layout.offsets();
+    for (int i = 0; i < out_offsets.size(); ++i) {
+      if (reduces[i]) {
+        out_offsets[i] = std::nullopt;
+      }
+    }
+    ImplicitDim out_implicit_dim = src_layout.implicit_dim();
+    if ((reduces[0] && reduces[1]) ||
+        (src_layout.implicit_dim() != ImplicitDim::kNone &&
+         (reduces[0] || reduces[1]))) {
+      TPU_CHECK_OP(
+          dst_ty.getRank() > 0 && *(dst_ty.getShape().end() - 1) == 1,
+          "Not implemented: reductions over both trailing dimensions are only "
+          "supported when the resulting value has a trailing axis of size 1");
+      out_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
+    } else if (reduces[0]) {
+      out_implicit_dim = VectorLayout::ImplicitDim::kSecondMinor;
+    } else if (reduces[1]) {
+      out_implicit_dim = VectorLayout::ImplicitDim::kMinor;
+    }
+    setLayout(op, {src_layout, acc_layout},
+              VectorLayout(src_layout.bitwidth(), out_offsets,
+                           src_layout.tiling(), out_implicit_dim));
     return success();
   }
 

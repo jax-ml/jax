@@ -774,6 +774,21 @@ llvm::hash_code hash_value(const VectorLayout& layout) {
   return llvm::hash_value(layout.as_tuple());
 }
 
+std::ostream &operator<<(std::ostream &os, VectorLayout::ImplicitDim dim) {
+  switch (dim) {
+    case VectorLayout::ImplicitDim::kNone:
+      os << "none";
+      break;
+    case VectorLayout::ImplicitDim::kMinor:
+      os << "-1";
+      break;
+    case VectorLayout::ImplicitDim::kSecondMinor:
+      os << "-2";
+      break;
+  }
+  return os;
+}
+
 std::optional<Layout> parseLayout(mlir::AsmParser& parser) {
   std::string layout_str;
   if (failed(parser.parseString(&layout_str))) {
