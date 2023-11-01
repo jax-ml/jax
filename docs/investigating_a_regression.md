@@ -166,7 +166,7 @@ build. So it is much faster after the first iteration.
   git show -q
 
   rm /opt/jax-source/dist/jax*.whl
-  build-jax.sh
+  build-jax.sh # The script is in the nightly container
 
   export PYTHONPATH=.
   export CUDA_VISIBLE_DEVICES=0 # only 1 GPU is needed
