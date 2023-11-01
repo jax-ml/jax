@@ -94,6 +94,7 @@ class CustomCallBackendConfig:
   collective_id: int | None
   device_type: str | None
   cost_estimate: CostEstimate | None
+  flags: dict[str, bool | int | float] | None
 
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
@@ -122,6 +123,27 @@ class CustomCallBackendConfig:
       config.write(
           ('"DEVICE_TYPE_' + self.device_type.upper() + '"').encode("ascii")
       )
+    if self.flags is not None:
+      config.write(b', "flag_configs": [')
+      for i, (flag, value) in enumerate(self.flags.items()):
+        config.write(b'{"flag_type": "')
+        config.write(flag.encode("ascii"))
+        config.write(b'", value: {')
+        if isinstance(value, bool):
+          config.write(b'"boolean_value": ')
+          config.write(b"true" if value else b"false")
+        elif isinstance(value, int):
+          config.write(b'"integer_value": ')
+          config.write(str(value).encode("ascii"))
+        elif isinstance(value, float):
+          config.write(b'"double_value": ')
+          config.write(str(value).encode("ascii"))
+        else:
+          raise ValueError("invalid flag value: " + str(value))
+        config.write(b"}}")
+        if i + 1 != len(self.flags):
+          config.write(b",")
+      config.write(b"]")
     config.write(b"}")
     return config.getvalue()
 
@@ -371,6 +393,7 @@ def as_tpu_kernel(
     device_type: str | None = None,
     kernel_name: str | None = None,
     kernel_regeneration_metadata: bytes | None = None,
+    flags: dict[str, bool | int | float] | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   # We use jax.jit to make sure we hit the fast compilation cache.
@@ -398,6 +421,7 @@ def as_tpu_kernel(
       kernel_name=kernel_name,
       kernel_regeneration_metadata=kernel_regeneration_metadata,
       cost_estimate=cost_estimate,
+      flags=flags,
   )
 
 
@@ -412,6 +436,7 @@ def _lowered_as_tpu_kernel(
     has_custom_barrier: bool = False,
     kernel_name: str | None = None,
     kernel_regeneration_metadata: bytes | None = None,
+    flags: dict[str, bool | int | float] | None = None,
 ):
   """Turns a low-level MLIR Mosaic kernel into a JAX-compatible function."""
   unpack = False
@@ -436,6 +461,7 @@ def _lowered_as_tpu_kernel(
         collective_id,
         device_type,
         cost_estimate,
+        flags,
     )
     result = tpu_custom_call_p.bind(
         *args,
