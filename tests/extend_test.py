@@ -31,7 +31,6 @@ class ExtendTest(jtu.JaxTestCase):
 
   def test_symbols(self):
     # Assume these are tested in random_test.py, only check equivalence
-    self.assertIs(jex.random.PRNGImpl, prng.PRNGImpl)
     self.assertIs(jex.random.seed_with_impl, prng.seed_with_impl)
     self.assertIs(jex.random.threefry2x32_p, prng.threefry2x32_p)
     self.assertIs(jex.random.threefry_2x32, prng.threefry_2x32)
@@ -61,21 +60,25 @@ class RandomTest(jtu.JaxTestCase):
     def no_rule(*args, **kwargs):
       assert False, 'unreachable'
 
-    impl = jex.random.PRNGImpl(shape, seed_rule, no_rule, no_rule, no_rule)
+    impl = jex.random.define_prng_impl(
+        key_shape=shape, seed=seed_rule, split=no_rule, fold_in=no_rule,
+        random_bits=no_rule)
     k = jax.random.key(42, impl=impl)
     self.assertEqual(k.shape, ())
-    self.assertEqual(impl, jax.random.key_impl(k)._impl)
+    self.assertEqual(impl, jax.random.key_impl(k))
 
   def test_key_wrap_with_custom_impl(self):
     def no_rule(*args, **kwargs):
       assert False, 'unreachable'
 
     shape = (4, 2, 7)
-    impl = jex.random.PRNGImpl(shape, no_rule, no_rule, no_rule, no_rule)
+    impl = jex.random.define_prng_impl(
+        key_shape=shape, seed=no_rule, split=no_rule, fold_in=no_rule,
+        random_bits=no_rule)
     data = jnp.ones((3, *shape), dtype=jnp.dtype('uint32'))
     k = jax.random.wrap_key_data(data, impl=impl)
     self.assertEqual(k.shape, (3,))
-    self.assertEqual(impl, jax.random.key_impl(k)._impl)
+    self.assertEqual(impl, jax.random.key_impl(k))
 
 
 if __name__ == "__main__":
