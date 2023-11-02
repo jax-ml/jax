@@ -338,6 +338,7 @@ from jax._src.lax.control_flow import (
   switch as switch,
   while_loop as while_loop,
   while_p as while_p,
+  platform_dependent as platform_dependent,
 )
 from jax._src.lax.fft import (
   fft as fft,

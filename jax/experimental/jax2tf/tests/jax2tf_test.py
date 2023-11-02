@@ -1683,46 +1683,16 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       self.skipTest("TODO: enable when we can handle i64 platform_index_argument")
     # Checks that we dispatch from TF to the proper JAX platform lowering.
 
-    # A primitive for testing multi-platform lowering. Takes one argument and
-    # adds a different value to it: cpu=2., tpu=3., cuda=.4, rocm=5.
-    _testing_multi_platform_p = core.Primitive("testing_multi_platform")
+    # We add a different value to it: cpu=2., tpu=3., cuda=.4, rocm=5.
     _testing_multi_platform_to_add = dict(cpu=2., tpu=3., cuda=4., rocm=5.)
 
-    @_testing_multi_platform_p.def_abstract_eval
-    def _testing_multi_platform_abstract_eval(xaval: core.AbstractValue):
-      assert xaval.dtype == np.float32  # type: ignore
-      return xaval
-
-    @_testing_multi_platform_p.def_impl
-    def _testing_multi_platform_impl(x: jax.Array) -> jax.Array:
-      to_add = _testing_multi_platform_to_add[platform]
-      return x + to_add
-
-    def _testing_multi_platform_lowering(ctx: mlir.LoweringRuleContext,
-                                         x: mlir.Value,
-                                         *,
-                                         platform: str) -> Sequence[mlir.Value]:
-      to_add = _testing_multi_platform_to_add[platform]
-      to_add_value = mlir.broadcast_in_dim(ctx,
-                                           mlir.ir_constant(
-                                             np.float32(to_add)),
-                                           ctx.avals_in[0],
-                                           broadcast_dimensions=())
-      return mlir.hlo.AddOp(x, to_add_value).results
-
-    # Register a default rule for cuda, to test the default-platform rule selection.
-    mlir.register_lowering(_testing_multi_platform_p,
-                           functools.partial(_testing_multi_platform_lowering,
-                                             platform="cuda"))
-    for platform in ["cpu", "tpu", "rocm"]:
-      mlir.register_lowering(_testing_multi_platform_p,
-                             functools.partial(
-                               _testing_multi_platform_lowering,
-                               platform=platform),
-                             platform=platform)
-
     def f_jax(x):
-      return _testing_multi_platform_p.bind(x)
+      return x + lax.platform_dependent(
+        tpu=lambda: _testing_multi_platform_to_add["tpu"],
+        cuda=lambda: _testing_multi_platform_to_add["cuda"],
+        rocm=lambda: _testing_multi_platform_to_add["rocm"],
+        default=lambda: _testing_multi_platform_to_add["cpu"]
+      )
 
     x = np.float32(.42)
     f_tf = jax2tf.convert(

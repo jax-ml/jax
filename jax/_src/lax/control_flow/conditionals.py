@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for conditional control flow primitives."""
+from __future__ import annotations
 
 import collections
 from collections.abc import Sequence
@@ -20,7 +21,7 @@ from functools import partial
 import inspect
 import itertools
 import operator
-from typing import Callable
+from typing import Any, Callable, TypeVar
 
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
@@ -882,3 +883,114 @@ def _cond_state_discharge_rule(in_avals, out_avals, *args, branches, linear):
     new_invals.append(
         next(ref_val_iter) if isinstance(aval, AbstractRef) else None)
   return new_invals, out_vals
+
+
+_T = TypeVar("_T")
+def platform_dependent(*args: Any,
+                       default: Callable[..., _T] | None = None,
+                       **per_platform: Callable[..., _T]):
+  """Stages out platform-specific code.
+
+  In JAX the actual platform on which a computation is run is determined
+  very late, e.g., based on where the data is located. When using AOT
+  lowering or serialization, the computation may be compiled and executed
+  on a different machine, or even on a platform that is not available at
+  lowering time. This means that it is not safe to write platform-dependent
+  code using Python conditionals, e.g., based on the current default
+  JAX platform. Instead, one can use ``platform_dependent``:
+
+  Usage::
+
+      def cpu_code(*args): ...
+      def tpu_code(*args): ...
+      def other_platforms_code(*args): ...
+      res = platform_dependent(*args, cpu=cpu_code, tpu=tpu_code,
+                               default=other_platforms_code)
+
+  When the staged out code is executed on a CPU, this is equivalent to
+  ``cpu_code(*args)``, on a TPU is equivalent to ``tpu_code(*args)`` and on
+  any other platform to ``other_platforms_code(*args)``.
+  Unlike a Python conditional, all alternatives are traced
+  and staged out to Jaxpr. This is similar to, and is implemented in terms of,
+  :func:`~switch`, from which it inherits the behavior
+  under transformations.
+
+  Unlike a :func:`~switch` the choice of what gets executed is made earlier:
+  in most cases during lowering when the lowering platform is known; in the
+  rare case of multi-platform lowering and serialization, the StableHLO code
+  will contain a conditional on the actual platform. This conditional is
+  resolved just in time prior to compilation when the compilation platform is
+  known. This means that the compiler actually never sees a conditional.
+
+  Args:
+    *args: JAX arrays passed to each of the branches. May be PyTrees.
+    **per_platform: branches to use for different platforms. The branches are
+      JAX callables invoked with ``*args``. The keywords are platform names,
+      e.g., 'cpu', 'tpu', 'cuda', 'rocm'.
+    default: optional default branch to use for a platform not mentioned in
+      ``per_platform``. If there is no ``default`` there will be an error when
+      the code is lowered for a platform not mentioned in ``per_platform``.
+
+  Returns:
+    The value ``per_platform[execution_platform](*args)``.
+  """
+  # Join identical branches
+  platform_branches: list[tuple[list[str], Callable]] = []
+  for pname, pbranch in per_platform.items():
+    if pname == "gpu":
+      raise ValueError("Use 'cuda' or 'rocm' for this API.")
+    for ps, b in platform_branches:
+      if b == pbranch:
+        ps.append(pname)
+        break
+    else:
+      platform_branches.append(([pname], pbranch))
+
+  platforms_lists, branches = util.unzip2(platform_branches)
+  platform_index = platform_index_p.bind(
+    platforms=tuple(tuple(ps) for ps in platforms_lists),
+    has_default=(default is not None))
+  if default is not None:
+    branches = branches + (default,)
+  # Use a switch, to get the proper transformation rules for free. Since
+  # platform index has no dependence on the input data, it won't be vectorized
+  # under vmap.
+  return switch(platform_index, branches, *args)
+
+# A primitive to compute the index of a platform into a list of platforms.
+# Args:
+#   platforms: Sequence[Sequence[str]]: a sequence of sequences of platform
+#     names. If the current lowering platform is in one of the inner sequences
+#     returns the index of that inner sequence in the outer sequence.
+#   has_default: if True, and if the lowering platform is not found in
+#     `platforms` then return `len(platforms)`. Otherwise, raise an error.
+platform_index_p = core.Primitive("platform_index")
+platform_index_p.multiple_results = False
+platform_index_p.def_impl(functools.partial(dispatch.apply_primitive,
+                                            platform_index_p))
+
+@platform_index_p.def_abstract_eval
+def _platform_index_aval(*_, **__):
+  return core.ShapedArray((), np.int32)
+
+def _platform_index_lowering(ctx: mlir.LoweringRuleContext,
+                             *,
+                             platforms: Sequence[Sequence[str]],
+                             has_default: bool):
+  def lower_constant(ctx: mlir.LoweringRuleContext, *, i: int) -> mlir.ir.Value:
+    return mlir.ir_constants(np.int32(i))
+  lowering_rules: tuple[mlir.MultiPlatformLoweringRule, ...] = tuple(
+    (ps, partial(lower_constant, i=i))
+    for i, ps in enumerate(platforms)
+  )
+  if has_default:
+    lowering_rules = lowering_rules + (
+      (None, partial(lower_constant, i=len(platforms))),
+    )
+  return mlir.lower_multi_platform(
+    ctx,
+    f"platform_index(platforms={platforms}, has_default={has_default})",
+    lowering_rules,
+    effects.no_effects)
+
+mlir.register_lowering(platform_index_p, _platform_index_lowering)
