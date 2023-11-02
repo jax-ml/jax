@@ -34,6 +34,11 @@ from jax._src.api_util import argnums_partial
 import weakref
 
 
+def _to_bytes(val):
+  if isinstance(val, str):
+    return bytes(val, 'utf8')
+  return bytes(val)
+
 def _resolve_kwargs(fun, args, kwargs):
   ba = inspect.signature(fun).bind(*args, **kwargs)
   ba.apply_defaults()
@@ -105,6 +110,7 @@ def _flatten_sharding(tree, shardings, shapes):
 
 def _custom_partitioning_propagate_user_sharding(user_sharding, shape,
                                                  backend_string):
+  backend_string = _to_bytes(backend_string)
   info = _sharding_callbacks[backend_string]
   if info.propagate_user_sharding is None:
     return user_sharding
@@ -138,6 +144,7 @@ def _to_hlo_sharding(sharding, num_dimensions):
 
 def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
                                    result_sharding, backend_string):
+  backend_string = _to_bytes(backend_string)
   info = _sharding_callbacks[backend_string]
   if result_shape.is_tuple():
     result_shapes = result_shape.tuple_shapes()
@@ -192,6 +199,7 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
 def _custom_partitioning_infer_sharding_from_operands(arg_shapes, arg_shardings,
                                                       result_shape,
                                                       backend_string):
+  backend_string = _to_bytes(backend_string)
   info = _sharding_callbacks[backend_string]
   if result_shape.is_tuple():
     result_shapes = result_shape.tuple_shapes()
@@ -503,7 +511,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
   sharding_callback_info = _ShardingCallbackInfo(propagate_user_sharding,
       partition, to_mesh_pspec_sharding, in_tree, out_tree,
       infer_sharding_from_operands, ctx.module_context, mesh, static_args)
-  key = str(id(sharding_callback_info))
+  key = _to_bytes(str(id(sharding_callback_info)))
   _sharding_callbacks[key] = sharding_callback_info
   # We need to make sure `sharding_callback_info` is still alive when the SPMD
   # partitioner runs so we keep it alive by attaching it to the executable.
