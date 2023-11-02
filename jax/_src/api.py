@@ -2835,10 +2835,10 @@ def eval_shape(fun: Callable, *args, **kwargs):
 
 
 def named_call(
-    fun: F,
+    fun: Callable[..., Any],
     *,
     name: str | None = None,
-) -> F:
+  ) -> Callable[..., Any]:
   """Adds a user specified name to a function when staging out JAX computations.
 
   When staging out computations for just-in-time compilation to XLA (or other
@@ -2866,7 +2866,6 @@ def named_call(
     name = fun.__name__
 
   return source_info_util.extend_name_stack(name)(fun)
-
 
 @contextmanager
 def named_scope(
