@@ -71,10 +71,11 @@ BACKEND_TARGET = config.DEFINE_string(
     os.getenv('JAX_BACKEND_TARGET', '').lower(),
     'Either "local" or "rpc:address" to connect to a remote service target.')
 # TODO(skye): warn when this is used once we test out --jax_platforms a bit
-_PLATFORM_NAME = config.DEFINE_string(
-    'jax_platform_name',
-    os.getenv('JAX_PLATFORM_NAME', '').lower(),
-    'Deprecated, please use --jax_platforms instead.')
+PLATFORM_NAME = config.DEFINE_string(
+    "jax_platform_name",
+    os.getenv("JAX_PLATFORM_NAME", "").lower(),
+    "Deprecated, please use --jax_platforms instead.",
+)
 CUDA_VISIBLE_DEVICES = config.DEFINE_string(
     'jax_cuda_visible_devices', 'all',
     'Restricts the set of CUDA devices that JAX will use. Either "all", or a '
@@ -754,7 +755,7 @@ def _get_backend_uncached(
   if platform is not None and not isinstance(platform, str):
     return platform
 
-  platform = (platform or _XLA_BACKEND.value or _PLATFORM_NAME.value or None)
+  platform = platform or _XLA_BACKEND.value or PLATFORM_NAME.value or None
 
   bs = backends()
   if platform is not None:
