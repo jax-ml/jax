@@ -457,6 +457,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     axisa, axisb, axisc, axis = axes
     jnp_fun = lambda a, b: jnp.cross(a, b, axisa, axisb, axisc, axis)
+    # Note: 2D inputs to jnp.cross are deprecated in numpy 2.0.
+    @jtu.ignore_warning(category=DeprecationWarning,
+                        message="Arrays of 2-dimensional vectors are deprecated.")
     def np_fun(a, b):
       a = a.astype(np.float32) if lhs_dtype == jnp.bfloat16 else a
       b = b.astype(np.float32) if rhs_dtype == jnp.bfloat16 else b
