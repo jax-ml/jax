@@ -6,9 +6,13 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.20
+## jax 0.4.21
 
-## jaxlib 0.4.20
+## jaxlib 0.4.21
+
+## jax 0.4.20 (Nov 2, 2023)
+
+## jaxlib 0.4.20 (Nov 2, 2023)
 
 * Bug fixes
   * Fixed some type confusion between E4M3 and E5M2 float8 types.

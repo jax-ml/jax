@@ -24,7 +24,7 @@ project_name = 'jax'
 
 _current_jaxlib_version = '0.4.20'
 # The following should be updated with each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.4.19'
+_latest_jaxlib_version_on_pypi = '0.4.20'
 _available_cuda11_cudnn_versions = ['86']
 _default_cuda11_cudnn_version = '86'
 _default_cuda12_cudnn_version = '89'
