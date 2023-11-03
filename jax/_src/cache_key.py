@@ -115,7 +115,7 @@ def get(module: ir.Module,
     )
     entries.append(
         ("accelerator_config",
-         lambda hash_obj: _hash_accelerator_config(hash_obj, devices)),
+         lambda hash_obj: _hash_accelerator_config(hash_obj, devices, backend)),
     )
 
   hash_obj = hashlib.sha256()
@@ -179,13 +179,22 @@ def _hash_devices(hash_obj, devices: np.ndarray) -> None:
     _hash_string(hash_obj, device.device_kind)
 
 
-def _hash_accelerator_config(hash_obj, accelerators: np.ndarray):
+def _hash_accelerator_config(hash_obj, accelerators: np.ndarray, backend):
   accelerator_devices = []
   for accelerator in accelerators.flat:
     accelerator_devices.append(accelerator)
-  hash_obj.update(
-      xla_client.get_topology_for_devices(accelerator_devices).serialize()
-  )
+  try:
+    hash_obj.update(
+        xla_client.get_topology_for_devices(accelerator_devices).serialize()
+    )
+  except xla_client._xla.XlaRuntimeError as ex:
+    # Fall back for those backends that do not support serialized
+    # PjRtTopologyDescription as yet.
+    logger.info("get (_hash_accelerator_config): unable to hash "
+                "accelerator config, falling back to hashing "
+                "devices + platform: %s (type %s)", ex, type(ex))
+    _hash_devices(hash_obj, accelerators)
+    _hash_platform(hash_obj, backend)
 
 
 def _hash_serialized_compile_options(hash_obj, compile_options_obj):
