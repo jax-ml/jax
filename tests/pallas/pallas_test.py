@@ -1388,6 +1388,44 @@ class PallasCallVmapTest(PallasTest):
     out_ref = jax.vmap(jax.vmap(sin_ref, in_axes=1), in_axes=0)(x)
     np.testing.assert_allclose(out, out_ref, atol=1e-3, rtol=1e-3)
 
+  def test_small_large_vmap(self):
+    # Catches https://github.com/google/jax/issues/18361
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
+        debug=False,
+        grid=(2,))
+    def add_one(x_ref, o_ref):
+      o_ref[()] = x_ref[()] + 1
+
+    add_one = jax.vmap(jax.vmap(add_one))
+    add_one_ref = lambda x: x + 1
+
+    x = random.randint(random.PRNGKey(0), (4, 65536, 2), 0, 10000)
+
+    out = add_one(x)
+    out_ref = add_one_ref(x)
+
+    np.testing.assert_allclose(out, out_ref)
+
+  def test_small_small_large_vmap(self):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
+        debug=False,
+        grid=(2,))
+    def add_one(x_ref, o_ref):
+      o_ref[()] = x_ref[()] + 1
+
+    add_one = jax.vmap(jax.vmap(jax.vmap(add_one)))
+    add_one_ref = lambda x: x + 1
+
+    x = random.randint(random.PRNGKey(0), (2, 2, 65536, 2), 0, 10000)
+
+    out = add_one(x)
+    out_ref = add_one_ref(x)
+
+    np.testing.assert_allclose(out, out_ref)
+
+
 class PallasCallInterpreterVmapTest(PallasCallVmapTest):
   INTERPRET = True
 
