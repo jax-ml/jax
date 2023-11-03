@@ -16,7 +16,11 @@
 
 import abc
 import numpy as np
-from typing import Union
+from typing import Any, Sequence, Union
+
+# TODO(jakevdp): fix import cycles and define these.
+Shard = Any
+Sharding = Any
 
 # Array is a type annotation for standard JAX arrays and tracers produced by
 # core functions in jax.lax and jax.numpy; it is not meant to include
@@ -46,11 +50,64 @@ class Array(abc.ABC):
 
   __slots__ = ['__weakref__']
 
-  # at property must be defined because we overwrite its docstring in
-  # lax_numpy.py
   @property
-  def at(self):
-    raise NotImplementedError("property must be defined in subclasses")
+  @abc.abstractmethod
+  def dtype(self) -> np.dtype:
+    """The data type (:class:`numpy.dtype`) of the array."""
+
+  @property
+  @abc.abstractmethod
+  def ndim(self) -> int:
+    """The number of dimensions in the array."""
+
+  @property
+  @abc.abstractmethod
+  def size(self) -> int:
+    """The total number of elements in the array."""
+
+  @property
+  @abc.abstractmethod
+  def shape(self) -> tuple[int, ...]:
+    """The shape of the array."""
+
+  # Documentation for sharding-related methods and properties defined on ArrayImpl:
+  @abc.abstractmethod
+  def addressable_data(self, index: int) -> "Array":
+    """Return an array of the addressable data at a particular index."""
+
+  @property
+  @abc.abstractmethod
+  def addressable_shards(self) -> Sequence[Shard]:
+    """List of addressable shards."""
+
+  @property
+  @abc.abstractmethod
+  def global_shards(self) -> Sequence[Shard]:
+    """List of global shards."""
+
+  @property
+  @abc.abstractmethod
+  def is_fully_addressable(self) -> bool:
+    """Is this Array fully addressable?
+
+    A jax.Array is fully addressable if the current process can address all of
+    the devices named in the :class:`Sharding`. ``is_fully_addressable`` is
+    equivalent to "is_local" in multi-process JAX.
+
+    Note that fully replicated is not equal to fully addressable i.e.
+    a jax.Array which is fully replicated can span across multiple hosts and is
+    not fully addressable.
+    """
+
+  @property
+  @abc.abstractmethod
+  def is_fully_replicated(self) -> bool:
+    """Is this Array fully replicated?"""
+
+  @property
+  @abc.abstractmethod
+  def sharding(self) -> Sharding:
+    """The sharding for the array."""
 
 
 Array.__module__ = "jax"

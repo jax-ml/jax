@@ -240,6 +240,7 @@ def _view(arr: Array, dtype: Optional[DTypeLike] = None, type: None = None) -> A
 
 
 def _notimplemented_flat(self):
+  """Not implemented: Use :meth:`~jax.Array.flatten` instead."""
   raise NotImplementedError("JAX Arrays do not implement the arr.flat property: "
                             "consider arr.flatten() instead.")
 
@@ -800,5 +801,3 @@ def register_jax_array_methods():
   _set_array_attributes(ArrayImpl)
 
   _set_array_abstract_methods(Array)
-
-  Array.at.__doc__ = _IndexUpdateHelper.__doc__
