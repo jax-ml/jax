@@ -569,7 +569,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     x = jnp.zeros((10,), jnp.float32)
 
     with self.assertRaises(RuntimeError):
-      f(x, x)
+      result = f(x, x)
+      result.block_until_ready()
 
   def test_intersecting_static_and_donate_argnames(self):
     with self.assertRaisesRegex(
