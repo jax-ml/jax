@@ -725,12 +725,7 @@ def _allreduce_abstract_eval(*args, axes, axis_index_groups):
           for arg, named_shape in zip(args, named_shapes)]
 
 def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
-  # TODO(necula): clean this up when we have module_context.platforms
-  if ctx.module_context.lowering_parameters.is_multi_platform:
-    for_tpu = ("tpu" in ctx.module_context.lowering_parameters.platforms)
-  else:
-    for_tpu = (ctx.module_context.platform == "tpu")
-  if axis_index_groups is not None and for_tpu:
+  if axis_index_groups is not None and ("tpu" in ctx.module_context.platforms):
     len_0 = len(axis_index_groups[0])
     if any(len(g) != len_0 for g in axis_index_groups):
       raise ValueError("axis_index_groups must all be the same size for TPU lowering")

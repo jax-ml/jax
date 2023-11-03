@@ -6,11 +6,18 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-# jax 0.4.20
+## jax 0.4.21
 
-# jaxlib 0.4.20
+## jaxlib 0.4.21
 
-# jax 0.4.19 (Oct 19, 2023)
+## jax 0.4.20 (Nov 2, 2023)
+
+## jaxlib 0.4.20 (Nov 2, 2023)
+
+* Bug fixes
+  * Fixed some type confusion between E4M3 and E5M2 float8 types.
+
+## jax 0.4.19 (Oct 19, 2023)
 
 * New Features
   * Added {obj}`jax.typing.DTypeLike`, which can be used to annotate objects that
@@ -28,7 +35,7 @@ Remember to align the itemized text with the first line of an item within a list
     versions when determining if the installed version of these libraries is at
     least as new as the versions against which JAX was built.
 
-# jaxlib 0.4.19 (Oct 19, 2023)
+## jaxlib 0.4.19 (Oct 19, 2023)
 
 * Changes
   * jaxlib will now always prefer pip-installed NVIDIA CUDA libraries
@@ -37,9 +44,9 @@ Remember to align the itemized text with the first line of an item within a list
     causes problems and the intent is to use a system-installed CUDA, the fix is
     to remove the pip installed CUDA library packages.
 
-# jax 0.4.18 (Oct 6, 2023)
+## jax 0.4.18 (Oct 6, 2023)
 
-# jaxlib 0.4.18 (Oct 6, 2023)
+## jaxlib 0.4.18 (Oct 6, 2023)
 
 * Changes
   * CUDA jaxlibs now depend on the user to install a compatible NCCL version.
@@ -60,7 +67,7 @@ Remember to align the itemized text with the first line of an item within a list
 * Bug fixes
   * Fixed Cloud TPU regression where compilation would OOM due to smem.
 
-# jax 0.4.17 (Oct 3, 2023)
+## jax 0.4.17 (Oct 3, 2023)
 
 * New features
   * Added new {func}`jax.numpy.bitwise_count` function, matching the API of the simlar
@@ -87,7 +94,7 @@ Remember to align the itemized text with the first line of an item within a list
     Previously many of these were treated as `Any` by static type checkers like
     `mypy` and `pytype`.
 
-# jaxlib 0.4.17 (Oct 3, 2023)
+## jaxlib 0.4.17 (Oct 3, 2023)
 
 * Changes:
   * Python 3.12 wheels were added in this release.

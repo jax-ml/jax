@@ -214,9 +214,8 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct((4, 2, 2), jnp.float32),
         grid=1)
     def copyitem(x_ref, in_idx_ref, out_idx_ref, o_ref):
-      mask = (jnp.arange(o_ref.shape[0]) == out_idx_ref[()])
-      o_ref[...] = jnp.where(jax.lax.broadcast_in_dim(mask, (4, 2, 2), (0,)),
-                             x_ref[in_idx_ref[()]], 0)
+      mask = (jnp.arange(o_ref.shape[0]) == out_idx_ref[()])[:, None, None]
+      o_ref[...] = jnp.where(mask, x_ref[in_idx_ref[()]], 0)
 
     x = jnp.arange(7 * 2 * 2.).reshape(7, 2, 2)
     for ii in range(7):

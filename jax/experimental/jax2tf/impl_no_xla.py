@@ -1090,7 +1090,7 @@ def _gather(operand, start_indices, *, dimension_numbers,
     try:
       return gather_fn(gather_args)
     except ValueError as e:
-      errors.append(f"{gather_fn}: {repr(e)}")
+      errors.append(f"{gather_fn}: {e!r}")
 
   error_msg = (f"Unsupported arguments for gather: {gather_args}, errors:\n" +
                "\n".join(errors))

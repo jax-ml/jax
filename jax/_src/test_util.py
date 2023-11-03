@@ -272,6 +272,27 @@ def count_jit_and_pmap_compiles():
   finally:
     mlir.lower_jaxpr_to_module = mlir_lower
 
+
+@contextmanager
+def count_subjaxpr_to_mhlo_conversion(fun_name: str):
+  # No need to clear any caches since we generally jit and pmap fresh callables
+  # in tests.
+
+  mlir_lower = mlir.lower_jaxpr_to_fun
+  count = [0]
+
+  def mlir_lower_and_count(ctx, name, *args, **kwargs):
+    if name == fun_name:
+      count[0] += 1
+    return mlir_lower(ctx, name, *args, **kwargs)
+
+  mlir.lower_jaxpr_to_fun = mlir_lower_and_count
+  try:
+    yield count
+  finally:
+    mlir.lower_jaxpr_to_fun = mlir_lower
+
+
 @contextmanager
 def assert_num_jit_and_pmap_compilations(times):
   with count_jit_and_pmap_compiles() as count:
@@ -1275,7 +1296,7 @@ def parameterized_filterable(*,
     for kw in kwargs:
       testcase_name = kw.get("testcase_name")
       if testcase_name is None:
-        testcase_name = "_".join(f"{k}={str(kw[k])}"  # type: ignore
+        testcase_name = "_".join(f"{k}={kw[k]}"  # type: ignore
                                  for k in sorted(kw.keys()))
       kw["testcase_name"] = sanitize_test_name(testcase_name)  # type: ignore
 

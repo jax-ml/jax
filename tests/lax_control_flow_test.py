@@ -14,6 +14,7 @@
 
 
 import collections
+import contextlib
 from functools import partial
 import itertools
 import operator
@@ -2718,6 +2719,116 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(expected1, expected2)
     self.assertAllClose(expected2, expected3)
     self.assertAllClose(expected3, actual)
+
+  def test_platform_dependent(self):
+    def f(x):
+      return lax.platform_dependent(x, cpu=jnp.sin, default=jnp.cos)
+
+    x = np.arange(3, dtype=np.float32)
+    res = f(x)
+    self.assertAllClose(
+      res,
+      np.sin(x) if jtu.device_under_test() == "cpu" else np.cos(x))
+
+  def test_platform_dependent_no_args(self):
+    def f(x):
+      return lax.platform_dependent(cpu=lambda: jnp.sin(x),
+                                    default=lambda: jnp.cos(x))
+
+    x = np.arange(3, dtype=np.float32)
+    res = f(x)
+    self.assertAllClose(
+      res,
+      np.sin(x) if jtu.device_under_test() == "cpu" else np.cos(x))
+
+  def test_platform_dependent_lowering(self):
+    def f(x):
+      return lax.platform_dependent(x, cpu=jnp.sin, default=jnp.cos)
+
+    x = np.arange(3, dtype=np.float32)
+    lowered = jax.jit(f).lower(x)
+    stablehlo = lowered.as_text()
+    self.assertIn("stablehlo.case", stablehlo)
+    self.assertIn("stablehlo.sine", stablehlo)
+    self.assertIn("stablehlo.cosine", stablehlo)
+
+    # The HLO has been canonicalized and contains only the branch we need
+    hlo = lowered.as_text("hlo")
+    if jtu.device_under_test() == "cpu":
+      self.assertIn(" sine", hlo)
+      self.assertNotIn(" cosine", hlo)
+    else:
+      self.assertNotIn(" sine", hlo)
+      self.assertIn(" cosine", hlo)
+
+  def test_platform_dependent_multiple_identical_branches(self):
+    x = np.arange(3, dtype=np.float32)
+    def f(x):
+      return lax.platform_dependent(
+        x,
+        cpu=jnp.sin,
+        tpu=jnp.sin,
+        default=lambda x: x)
+    res = f(x)
+    self.assertAllClose(
+      res,
+      np.sin(x) if jtu.device_under_test() in ["cpu", "tpu"] else x)
+    # We only lower the common branches once
+    stablehlo = jax.jit(f).lower(x).as_text()
+    sines = re.findall(r"stablehlo.sine", stablehlo)
+    self.assertEqual(1, len(sines))
+
+  def test_platform_dependent_no_default(self):
+    ctx = contextlib.ExitStack()
+    if jtu.device_under_test() != "tpu":
+      ctx.enter_context(
+        self.assertRaisesRegex(ValueError,
+                               "translation rule .* not found for platform"))
+    with ctx:
+      lax.platform_dependent(
+        3.,
+        tpu=lambda x: x + 2.)
+
+  def test_platform_dependent_batched(self):
+    def f(x):
+      return lax.platform_dependent(x, cpu=jnp.sin, default=jnp.cos)
+
+    xs = np.arange(3, dtype=np.float32)
+    self.assertAllClose(
+      jax.vmap(f)(xs),
+      np.sin(xs) if jtu.device_under_test() == "cpu" else np.cos(xs))
+    # We can still fold the un-needed branch
+    hlo = jax.jit(jax.vmap(f)).lower(xs).as_text('hlo')
+    expect_a_sine = (jtu.device_under_test() == "cpu")
+    self.assertEqual(expect_a_sine, " sine(" in hlo)
+    self.assertEqual(not expect_a_sine, " cosine(" in hlo)
+
+  def test_platform_dependent_grad(self):
+    # For a function "lax.dot(x, x)", we choose two branches with very different
+    # implementations (a dot and a scan), and therefore different residuals,
+    # so that we can verify whether the residuals are as we expect (we don't
+    # get residuals from a different platform.
+    x = np.arange(8, dtype=np.float32)
+    def f_impl_dot(x):  # x: f32[8]
+      return jnp.dot(x, x)
+    def f_impl_scan(x):
+      def scan_body(carry, x_i):
+        return (carry + x_i * x_i, None)
+      return lax.scan(scan_body, np.float32(0.), x)[0]
+
+    def f(x):
+      return jnp.sin(lax.platform_dependent(x,
+                                            cpu=f_impl_dot,
+                                            default=f_impl_scan))
+    self.assertAllClose(
+      jax.grad(f)(x),
+      jax.grad(lambda x: jnp.sin(f_impl_dot(x)))(x))
+
+    # Check that we do not have contamination of computations across platforms
+    hlo = jax.jit(jax.grad(f)).lower(x).as_text('hlo')
+    expect_a_dot = (jtu.device_under_test() == "cpu")
+    self.assertEqual(expect_a_dot, " dot(" in hlo)
+    self.assertEqual(not expect_a_dot, " while(" in hlo)
 
 
 if __name__ == '__main__':

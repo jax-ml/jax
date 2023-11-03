@@ -134,8 +134,7 @@ class CacheKeyTest(jtu.JaxTestCase):
   )
   @jtu.skip_on_devices("cpu")
   def test_hash_accelerator_devices(self):
-    if xla_bridge.using_pjrt_c_api():
-      # TODO(b/290248051): expose PjRtTopologyDesc in PjRt C API.
+    if xla_extension_version < 209 and xla_bridge.using_pjrt_c_api():
       raise unittest.SkipTest("PjRt C API not yet supported.")
 
     devices = np.array([[jax.local_devices()[0]]])
@@ -144,8 +143,10 @@ class CacheKeyTest(jtu.JaxTestCase):
     dev_hash2 = self.get_hashed_value(cache_key._hash_devices, devices)
     self.assertEqual(dev_hash1, dev_hash2)
 
-    acc_hash1 = self.get_hashed_value(cache_key._hash_accelerator_config, devices)
-    acc_hash2 = self.get_hashed_value(cache_key._hash_accelerator_config, devices)
+    acc_hash1 = self.get_hashed_value(
+        cache_key._hash_accelerator_config, devices, xla_bridge.get_backend())
+    acc_hash2 = self.get_hashed_value(
+        cache_key._hash_accelerator_config, devices, xla_bridge.get_backend())
     self.assertEqual(acc_hash1, acc_hash2)
 
   def test_hash_platform(self):
@@ -326,9 +327,13 @@ class CacheKeyTest(jtu.JaxTestCase):
     compile_options.executable_build_options.fdo_profile = b"test_profile"
     return compile_options
 
-  def get_hashed_value(self, hash_function, hash_function_input):
+  def get_hashed_value(
+      self, hash_function, hash_function_input1, hash_function_input2=None):
     hash_obj = hashlib.sha256()
-    hash_function(hash_obj, hash_function_input)
+    if hash_function_input2 is not None:
+      hash_function(hash_obj, hash_function_input1, hash_function_input2)
+    else:
+      hash_function(hash_obj, hash_function_input1)
     return hash_obj.digest().hex()
 
 

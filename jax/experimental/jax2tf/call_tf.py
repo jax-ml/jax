@@ -629,9 +629,11 @@ def emit_tf_embedded_graph_custom_call(
     raise ValueError(
         "call_tf_graph=True only support exporting by jax2tf.convert currently."
     )
+  # TODO(necula): It is dangerous to modify global state when lowering because
+  # there are a number of lowering caches that only cache the StableHLO.
+  # See call_tf_test.py:test_multi_platform_call_tf_graph.
   called_index = add_to_call_tf_concrete_function_list(
       concrete_function_flat_tf, call_tf_concrete_function_list)
-  call_target_name = "tf.call_tf_function"
   tf_backend_config = {
       "has_token_input_output": ir.BoolAttr.get(ordered),
       "called_index": mlir.i64_attr(called_index),
@@ -649,7 +651,7 @@ def emit_tf_embedded_graph_custom_call(
   custom_call = hlo.CustomCallOp(
       result_types,
       operands,
-      call_target_name=ir.StringAttr.get(call_target_name),
+      call_target_name=ir.StringAttr.get("tf.call_tf_function"),
       has_side_effect=ir.BoolAttr.get(has_side_effects),
       api_version=mlir.i32_attr(2),
       called_computations=ir.ArrayAttr.get([]),
@@ -669,8 +671,9 @@ def emit_tf_embedded_graph_custom_call(
 
 
 def add_to_call_tf_concrete_function_list(concrete_tf_fn: Any, call_tf_concrete_function_list: list[Any]) -> int:
-  func_name = concrete_tf_fn.function_def.signature.name
-  assert func_name not in [f.function_def.signature.name for f in call_tf_concrete_function_list]
-  called_index = len(call_tf_concrete_function_list)
-  call_tf_concrete_function_list.append(concrete_tf_fn)
+  try:
+    called_index = call_tf_concrete_function_list.index(concrete_tf_fn)
+  except ValueError:
+    called_index = len(call_tf_concrete_function_list)
+    call_tf_concrete_function_list.append(concrete_tf_fn)
   return called_index

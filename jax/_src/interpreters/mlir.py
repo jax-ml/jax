@@ -346,7 +346,7 @@ def _source_info_to_location(
     primitive: core.Primitive, params: dict,
     source_info: source_info_util.SourceInfo,
     name_stack: source_info_util.NameStack) -> ir.Location:
-  eqn_str = (f'{str(source_info.name_stack)}/'
+  eqn_str = (f'{source_info.name_stack}/'
              f'{core.str_eqn_compact(primitive.name, params)}')
   if config.include_full_tracebacks_in_locations.value:
     if source_info.traceback is None:
@@ -430,8 +430,7 @@ class LoweringParameters:
   # The current lowering platforms, a non-empty tuple containing some of
   # 'cpu', 'cuda', 'rocm', 'tpu'. If the tuple has multiple entries we are
   # doing multi-platform lowering, otherwise it can specify cross-platform
-  # lowering. The value None specifies default lowering platform, for the
-  # platform specified by `ModuleContext.platform`.
+  # lowering. The value None specifies the default lowering platform.
   # This is used only in export and jax2tf.
   platforms: tuple[str, ...] | None = None
 
@@ -454,23 +453,6 @@ class LoweringParameters:
   # native execution (and we can remove this parameter).
   replace_tokens_with_dummy: bool = True
 
-  @property
-  def override_platform(self) -> str | None:
-    """Overrides the lowering platform for cross-platform lowering.
-
-    One of 'cpu', 'cuda', 'rocm', 'tpu'.
-    If None, use the default JAX mechanisms to pick the lowering platform.
-    This is currently used for export and jax2tf.
-    """
-    if self.platforms is not None:
-      return self.platforms[0]
-    else:
-      return None
-
-  @property
-  def is_multi_platform(self) -> bool:
-    return self.platforms is not None and len(self.platforms) > 1
-
 
 @dataclasses.dataclass
 class ModuleContext:
@@ -480,7 +462,7 @@ class ModuleContext:
   ip: ir.InsertionPoint
   symbol_table: ir.SymbolTable
   backend_or_name: str | xb.XlaBackend | None
-  platform: str
+  platforms: Sequence[str]
   axis_context: AxisContext
   name_stack: source_info_util.NameStack
   keepalives: list[Any]
@@ -491,7 +473,6 @@ class ModuleContext:
 
   # Cached primitive lowerings.
   cached_primitive_lowerings: dict[Any, func_dialect.FuncOp]
-  cached_call_jaxpr_lowerings: dict[Any, func_dialect.FuncOp]
 
   lowering_parameters: LoweringParameters
 
@@ -503,7 +484,7 @@ class ModuleContext:
       self,
       *,
       backend_or_name: str | xb.XlaBackend | None,
-      platform: str,
+      platforms: Sequence[str],
       axis_context: AxisContext,
       name_stack: source_info_util.NameStack,
       keepalives: list[Any],
@@ -516,16 +497,14 @@ class ModuleContext:
       symbol_table: ir.SymbolTable | None = None,
       cached_primitive_lowerings: None | (dict[Any,
                                                 func_dialect.FuncOp]) = None,
-      cached_call_jaxpr_lowerings: None | (dict[Any,
-                                                 func_dialect.FuncOp]) = None,
       shape_poly_state = None):
-    assert platform is not None
+
     self.context = context or make_ir_context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
     self.ip = ip or ir.InsertionPoint(self.module.body)
     self.symbol_table = symbol_table or ir.SymbolTable(self.module.operation)
     self.backend_or_name = backend_or_name
-    self.platform = platform
+    self.platforms = platforms
     self.axis_context = axis_context
     self.name_stack = name_stack
     self.cached_primitive_lowerings = ({} if cached_primitive_lowerings is None
@@ -533,15 +512,18 @@ class ModuleContext:
     self.channel_iterator = channel_iterator
     self.keepalives = keepalives
     self.host_callbacks = host_callbacks
-    self.cached_call_jaxpr_lowerings = ({}
-                                        if cached_call_jaxpr_lowerings is None
-                                        else cached_call_jaxpr_lowerings)
-    self.shape_poly_state = shape_poly_state or ShapePolyLoweringState((),
-                                                                       (platform,))
+    self.shape_poly_state = (
+      shape_poly_state or ShapePolyLoweringState((), tuple(platforms)))
     self.lowering_parameters = lowering_parameters
 
   @property
   def backend(self) -> xb.XlaBackend:
+    # TODO(necula): clean the use of backend and backend_or_name vs. platforms
+    if len(self.platforms) > 1:
+      raise NotImplementedError(
+        "accessing .backend in multi-lowering setting. This can occur when "
+        "lowering a primitive that has not been adapted to multi-platform "
+        "lowering")
     if self.backend_or_name is None or isinstance(self.backend_or_name, str):
       return xb.get_backend(self.backend_or_name)
     return self.backend_or_name
@@ -722,7 +704,7 @@ def lower_jaxpr_to_module(
     *,
     ordered_effects: list[core.Effect],
     backend_or_name: str | xb.XlaBackend | None,
-    platform: str,
+    platforms: Sequence[str],
     axis_context: AxisContext,
     name_stack: source_info_util.NameStack,
     donated_args: Sequence[bool],
@@ -741,13 +723,7 @@ def lower_jaxpr_to_module(
   Handles the quirks of the argument/return value passing conventions of the
   runtime.
   """
-  platforms: tuple[str, ...]
-  platform = xb.canonicalize_platform(platform)
-  if lowering_parameters.is_multi_platform:
-    platforms = tuple(map(xb.canonicalize_platform,
-                          lowering_parameters.platforms))  # type: ignore
-  else:
-    platforms = (platform,)
+  platforms = tuple(map(xb.canonicalize_platform, platforms))
 
   input_output_aliases = None
   in_avals = (jaxpr.in_avals if arg_shardings is None else
@@ -809,7 +785,7 @@ def lower_jaxpr_to_module(
       if result_shardings is not None else result_shardings)
 
   ctx = ModuleContext(backend_or_name=backend_or_name,
-                      platform=platform, axis_context=axis_context,
+                      platforms=platforms, axis_context=axis_context,
                       name_stack=name_stack,
                       keepalives=keepalives,
                       channel_iterator=channel_iter,
@@ -1349,7 +1325,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   dim_var_values: the list of dimension variables values in the current
     IR function, in the order of ctx.shape_poly_state.dim_vars.
   """
-  assert ctx.platform != "gpu"
+  assert "gpu" not in ctx.platforms
   def read(v: core.Atom) -> Sequence[ir.Value]:
     if type(v) is core.Literal:
       return ir_constants(xla.canonicalize_dtype(v.val))
@@ -1393,14 +1369,15 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
                                    ctx.name_stack)
     with source_info_util.user_context(eqn.source_info.traceback), loc:
       override_rule = get_override_lowering_rule(eqn.primitive)
-      if not ctx.lowering_parameters.is_multi_platform:
+      if len(ctx.platforms) == 1:
         # Classic, single-platform lowering
         # TODO(necula): unify the code paths when multi-platform is finished
+        platform = ctx.platforms[0]
         if override_rule is not None:
           rule = override_rule
-        elif eqn.primitive in _platform_specific_lowerings[ctx.platform]:
-          rule = _platform_specific_lowerings[ctx.platform][eqn.primitive]
-        elif eqn.primitive in xla._backend_specific_translations[ctx.platform]:
+        elif eqn.primitive in _platform_specific_lowerings[platform]:
+          rule = _platform_specific_lowerings[platform][eqn.primitive]
+        elif eqn.primitive in xla._backend_specific_translations[platform]:
           rule = xla_fallback_lowering(eqn.primitive)
         elif eqn.primitive in _lowerings:
           rule = _lowerings[eqn.primitive]
@@ -1409,7 +1386,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
         else:
           raise NotImplementedError(
               f"MLIR translation rule for primitive '{eqn.primitive.name}' not "
-              f"found for platform {ctx.platform}")
+              f"found for platform {platform}")
       else:
         rules: list[MultiPlatformLoweringRule]
         # See mlir.lower_multi_platform for the `rules` format
@@ -1418,7 +1395,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
         else:
           # First the platform-specific rules
           rules = []
-          for p in ctx.lowering_parameters.platforms:  # type: ignore
+          for p in ctx.platforms:
             if eqn.primitive in _platform_specific_lowerings[p]:
               rules.append(
                   ([p], _platform_specific_lowerings[p][eqn.primitive]))
@@ -1449,7 +1426,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
         rule_ctx = rule_ctx.replace(axis_size_env=axis_size_env)
 
       rule_inputs = map(_unwrap_singleton_ir_values, in_nodes)
-      if not ctx.lowering_parameters.is_multi_platform:
+      if len(ctx.platforms) == 1:
         # Classic, single-platform lowering
         ans = rule(rule_ctx, *rule_inputs, **eqn.params)
       else:
@@ -1528,12 +1505,7 @@ def lower_multi_platform(ctx: LoweringRuleContext,
    rule_args: the args of the lowering rules.
    rule_kwargs: the kwargs of the lowering rules.
   """
-  platforms: Sequence[str]
-  if ctx.module_context.lowering_parameters.is_multi_platform:
-    assert ctx.module_context.lowering_parameters.platforms is not None
-    platforms = ctx.module_context.lowering_parameters.platforms
-  else:
-    platforms = (ctx.module_context.platform,)
+  platforms: Sequence[str] = ctx.module_context.platforms
   platforms_with_specific_rules: Sequence[str] = util.flatten(
     [ps for ps, _ in rules if ps is not None])
   platforms_with_default_rule = [p for p in platforms
@@ -1668,12 +1640,12 @@ def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects,
     # Cacheable.
     key = (fn_name, call_jaxpr.jaxpr, tuple(effects))
     try:
-      func_op = ctx.cached_call_jaxpr_lowerings[key]
+      func_op = ctx.cached_primitive_lowerings[key]
     except KeyError:
       func_op = lower_jaxpr_to_fun(
           ctx, fn_name, call_jaxpr, effects, arg_names=arg_names,
           result_names=result_names)
-      ctx.cached_call_jaxpr_lowerings[key] = func_op
+      ctx.cached_primitive_lowerings[key] = func_op
   else:
     func_op = lower_jaxpr_to_fun(
         ctx, fn_name, call_jaxpr, effects, arg_names=arg_names,
@@ -1681,11 +1653,16 @@ def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects,
   return func_op
 
 
-def check_backend_matches(inner_backend, outer_backend):
+def check_backend_matches(inner_backend: Optional[str],
+                          lowering_platforms: Sequence[str]):
   # For nested calls, the outermost call sets the backend for all inner calls;
   # it's an error if the inner call has a conflicting explicit backend spec.
   if inner_backend is None:
     return
+  outer_backend, *more_lowering_platforms = lowering_platforms
+  if more_lowering_platforms:
+    raise NotImplementedError(
+        "Multi-platform lowering when a backend= parameter is specified")
   if (inner_backend != outer_backend and
       outer_backend not in xb.expand_platform_alias(inner_backend)):
     raise ValueError(
@@ -1693,13 +1670,15 @@ def check_backend_matches(inner_backend, outer_backend):
         f"inner-jit backend specification {inner_backend}.")
 
 
-def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
+def _call_lowering(fn_name, stack_name, call_jaxpr, backend,
+                   ctx: ModuleContext, avals_in,
                    avals_out, tokens_in, *args,
                    dim_var_values: Sequence[ir.Value],
                    arg_names=None, result_names=None):
+  del stack_name, avals_in
   if isinstance(call_jaxpr, core.Jaxpr):
     call_jaxpr = core.ClosedJaxpr(call_jaxpr, ())
-  check_backend_matches(backend, ctx.platform)
+  check_backend_matches(backend, ctx.platforms)
   effects = list(tokens_in.effects())
   output_types = map(aval_to_ir_types, avals_out)
   output_types = [token_type()] * len(effects) + output_types
@@ -1717,7 +1696,8 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
   tokens_out = tokens_in.update_tokens(TokenSet(zip(effects, tokens)))
   return out_nodes, tokens_out
 
-def core_call_lowering(ctx, *args, name, backend=None, call_jaxpr):
+def core_call_lowering(ctx: LoweringRuleContext,
+                       *args, name, backend=None, call_jaxpr):
   out_nodes, tokens = _call_lowering(
       name, name, call_jaxpr, backend, ctx.module_context,
       ctx.avals_in, ctx.avals_out, ctx.tokens_in, *args,
@@ -2137,8 +2117,11 @@ def xla_fallback_lowering(prim: core.Primitive):
       raise NotImplementedError(
           f"Shape polymorphism for xla_fallback_lowering is not implemented ({ctx.primitive}); b/261682623")
 
+    if len(module_ctx.platforms) > 1:
+      raise NotImplementedError(
+        "fallback lowering not implemented for multi-platform lowering")
     xla_computation = xla.primitive_subcomputation(
-        module_ctx.platform, axis_env, prim, ctx.avals_in,
+        module_ctx.platforms[0], axis_env, prim, ctx.avals_in,
         ctx.avals_out, **params)
     xla_module = xla_computation_to_mlir_module(xla_computation)
     callee_name = merge_mlir_modules(
@@ -2301,7 +2284,9 @@ def emit_python_callback(
     result_layouts: Sequence[Sequence[int] | None] | None = None,
     ) -> tuple[Sequence[ir.Value], Any, Any]:
   """Emits MLIR that calls back to a provided Python function."""
-  platform = ctx.module_context.platform
+  if len(ctx.module_context.platforms) > 1:
+    raise NotImplementedError("multi-platform lowering for python_callback")
+  platform = ctx.module_context.platforms[0]
   if platform not in {"cpu", "cuda", "rocm", "tpu"}:
     raise ValueError(
         f"`EmitPythonCallback` not supported on {platform} backend.")
@@ -2423,7 +2408,8 @@ def emit_python_callback(
   return results, token, ifrt_callback
 
 def build_xla_computation_helper(
-    closed_jaxpr: core.ClosedJaxpr, *, name: str, platform: str,
+    closed_jaxpr: core.ClosedJaxpr, *, name: str,
+    platforms: Sequence[str],
     backend_or_name: str, axis_context: AxisContext) -> xc.XlaComputation:
   """Helper to generate pmap-style XLA computations for custom partitioners."""
   if closed_jaxpr.effects:
@@ -2432,7 +2418,7 @@ def build_xla_computation_helper(
       backend_or_name=backend_or_name, ordered_effects=[],
       name_stack=source_info_util.NameStack(),
       donated_args=[False] * len(closed_jaxpr.jaxpr.invars),
-      axis_context=axis_context, platform=platform,
+      axis_context=axis_context, platforms=platforms,
       lowering_parameters=LoweringParameters())
   return xc._xla.mlir.mlir_module_to_xla_computation(
       module_to_string(lowering_result.module), use_tuple_args=False,

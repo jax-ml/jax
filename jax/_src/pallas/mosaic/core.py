@@ -117,6 +117,15 @@ class MemoryRef:
         jax_core.ShapedArray(self.shape, self.dtype), self.memory_space)
 
 
+def _make_aval(obj: object) -> jax_core.AbstractValue:
+  if isinstance(obj, MemoryRef):
+    return obj.get_aval()
+  if isinstance(obj, SemaphoreType):
+    return obj.get_aval()
+  raise ValueError(f"No registered conversion for {type(obj)}. "
+                   "Only VMEM and SemaphoreType are supported.")
+
+
 @dataclasses.dataclass(init=False, unsafe_hash=True)
 class PrefetchScalarGridSpec(pallas_core.GridSpec):
   grid: Grid
@@ -125,6 +134,7 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
   out_specs: tuple[BlockSpec | NoBlockSpec, ...]
   in_specs_tree: Any
   out_specs_tree: Any
+  scratch_shapes: tuple[Any, ...]
 
   def __init__(
       self,
@@ -136,14 +146,19 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
       out_specs: BlockSpec
       | Sequence[BlockSpec | NoBlockSpec]
       | NoBlockSpec = no_block_spec,
+      scratch_shapes: Any | Sequence[Any] = ()
   ):
     super().__init__(grid, in_specs, out_specs)
     self.num_scalar_prefetch = num_scalar_prefetch
+    self.scratch_shapes = tuple(scratch_shapes)
 
   def get_grid_mapping(
       self, in_avals, in_tree, out_avals, out_tree
   ) -> tuple[tuple[jax_core.AbstractValue, ...], GridMapping]:
     all_avals = tree_util.tree_unflatten(in_tree, in_avals)
+    flat_scratch_shapes, scratch_tree = tree_util.tree_flatten(
+        self.scratch_shapes)
+    flat_scratch_avals = map(_make_aval, flat_scratch_shapes)
     scalar_avals, unflat_in_avals = split_list(
         all_avals, [self.num_scalar_prefetch])
     flat_scalar_avals, scalar_tree = tree_util.tree_flatten(scalar_avals)
@@ -176,12 +191,19 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
         block_mappings=(*in_block_mappings, *out_block_mappings),
         mapped_dims=(),
         num_index_operands=num_flat_scalar_prefetch,
+        num_scratch_operands=len(flat_scratch_avals)
     )
     jaxpr_scalar_ref_avals = tree_util.tree_unflatten(
         scalar_tree, scalar_ref_avals)
     jaxpr_in_ref_avals = tree_util.tree_unflatten(in_avals_tree, in_ref_avals)
-    jaxpr_in_avals = (*jaxpr_scalar_ref_avals, *jaxpr_in_ref_avals)
+    jaxpr_scratch_avals = tree_util.tree_unflatten(
+        scratch_tree, flat_scratch_avals)
+    if not isinstance(jaxpr_scratch_avals, (tuple, list)):
+      jaxpr_scratch_avals = (jaxpr_scratch_avals,)
+    jaxpr_in_avals = (*jaxpr_scalar_ref_avals,
+                      *jaxpr_in_ref_avals)
     jaxpr_out_avals = tree_util.tree_unflatten(out_tree, out_ref_avals)
     if not isinstance(jaxpr_out_avals, (tuple, list)):
       jaxpr_out_avals = (jaxpr_out_avals,)
-    return (*jaxpr_in_avals, *jaxpr_out_avals), grid_mapping
+    return (*jaxpr_in_avals, *jaxpr_out_avals,
+            *jaxpr_scratch_avals), grid_mapping

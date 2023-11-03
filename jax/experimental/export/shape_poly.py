@@ -910,7 +910,7 @@ class PolyShape(tuple):
   def __new__(cls, *dim_specs):
     for ds in dim_specs:
       if not isinstance(ds, (int, str)) and ds != ...:
-        msg = (f"Invalid polymorphic shape element: {repr(ds)}; must be a string "
+        msg = (f"Invalid polymorphic shape element: {ds!r}; must be a string "
                "representing a dimension variable, or an integer, or ...")
         raise ValueError(msg)
     return tuple.__new__(PolyShape, dim_specs)

@@ -48,7 +48,6 @@ py_library(
     name = "tpu_dialect",
     srcs = [
         "_tpu_gen.py",
-        "_tpu_ops_ext.py",
         "tpu.py",
     ],
     visibility = ["//visibility:public"],

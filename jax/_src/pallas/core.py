@@ -123,6 +123,7 @@ class GridMapping:
   block_mappings: tuple[BlockMapping | None, ...]
   mapped_dims: tuple[int, ...]
   num_index_operands: int
+  num_scratch_operands: int
 
   replace = dataclasses.replace
 
@@ -260,7 +261,7 @@ class GridSpec:
                 in_tree=grid_tree), out_specs, out_ref_avals)
     grid_mapping = GridMapping(
         self.grid, (*in_block_mappings, *out_block_mappings), (),
-        num_index_operands=0)
+        num_index_operands=0, num_scratch_operands=0)
     jaxpr_in_avals = tree_util.tree_unflatten(in_tree, in_ref_avals)
     jaxpr_out_avals = tree_util.tree_unflatten(out_tree, out_ref_avals)
     if not isinstance(jaxpr_out_avals, (tuple, list)):

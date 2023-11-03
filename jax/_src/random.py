@@ -145,8 +145,12 @@ class PRNGSpec:
     return self._impl == other._impl
 
 
-def resolve_prng_impl(
-    impl_spec: Optional[Union[str, PRNGSpec, PRNGImpl]]) -> PRNGImpl:
+# TODO(frostig,vanderplas): remove PRNGImpl from this union when it's
+# no longer in the public API because `default_prng_impl` is gone
+PRNGSpecDesc = Union[str, PRNGSpec, PRNGImpl]
+
+
+def resolve_prng_impl(impl_spec: Optional[PRNGSpecDesc]) -> PRNGImpl:
   if impl_spec is None:
     return default_prng_impl()
   if type(impl_spec) is PRNGImpl:
@@ -169,7 +173,8 @@ def resolve_prng_impl(
   raise TypeError(f'unrecognized type {t} for specifying PRNG implementation.')
 
 
-def _key(ctor_name: str, seed: int | ArrayLike, impl_spec: Optional[str] ) -> KeyArray:
+def _key(ctor_name: str, seed: int | ArrayLike,
+         impl_spec: Optional[PRNGSpecDesc]) -> KeyArray:
   impl = resolve_prng_impl(impl_spec)
   if hasattr(seed, 'dtype') and jnp.issubdtype(seed.dtype, dtypes.prng_key):
     raise TypeError(
@@ -180,7 +185,8 @@ def _key(ctor_name: str, seed: int | ArrayLike, impl_spec: Optional[str] ) -> Ke
         f"shape {np.shape(seed)} != (). Use jax.vmap for batching")
   return prng.random_seed(seed, impl=impl)
 
-def key(seed: int | ArrayLike, *, impl: Optional[str] = None) -> KeyArray:
+def key(seed: int | ArrayLike, *,
+        impl: Optional[PRNGSpecDesc] = None) -> KeyArray:
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
   The result is a scalar array with a key that indicates the default PRNG
@@ -198,7 +204,8 @@ def key(seed: int | ArrayLike, *, impl: Optional[str] = None) -> KeyArray:
   """
   return _key('key', seed, impl)
 
-def PRNGKey(seed: int | ArrayLike, *, impl: Optional[str] = None) -> KeyArray:
+def PRNGKey(seed: int | ArrayLike, *,
+            impl: Optional[PRNGSpecDesc] = None) -> KeyArray:
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
   The resulting key carries the default PRNG implementation, as
@@ -321,7 +328,8 @@ def key_data(keys: KeyArrayLike) -> Array:
   return _key_data(keys)
 
 
-def wrap_key_data(key_bits_array: Array, *, impl: Optional[str] = None):
+def wrap_key_data(key_bits_array: Array, *,
+                  impl: Optional[PRNGSpecDesc] = None):
   """Wrap an array of key data bits into a PRNG key array.
 
   Args:
@@ -426,7 +434,7 @@ def _uniform(key, shape, dtype, minval, maxval) -> Array:
   nbits, nmant = finfo.bits, finfo.nmant
 
   if nbits not in (16, 32, 64):
-    raise TypeError("uniform only accepts 16-, 32-, or 64-bit dtypes, got {dtype}.")
+    raise TypeError(f"uniform only accepts 16-, 32-, or 64-bit dtypes, got {dtype}.")
 
   rng_bits = nbits
   if nmant < 8:

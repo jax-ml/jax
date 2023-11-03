@@ -1491,8 +1491,8 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
                             input_data)
       with self.assertRaisesRegex(
           ValueError,
-          r"Array\(s\) sharding does not match the input\(s\) "
-          r"sharding.*\n.*for arg x"):
+          r"Compiled object called with input sharding\(s\) does not match the "
+          r"sharding\(s\) the computation was compiled with.*\n.*for arg x"):
         compiled(arr)
 
   def test_gda_auto_shardings_len(self):
@@ -1806,7 +1806,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
       with self.assertRaisesRegex(
           ValueError,
-          r"Array\(s\) sharding does not match the input\(s\) sharding. "
+          r"Compiled object called with input sharding\(s\) does not match the "
+          r"sharding\(s\) the computation was compiled with. "
           "Here are 5 mismatches out of 6"):
         compiled(a2, a2, a2, a2, a2, a2)
 
@@ -1819,7 +1820,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
       inp2 = {'x': a2, 'y': {'y1': a2}}
       with self.assertRaisesRegex(
           ValueError,
-          r"Array\(s\) sharding does not match the input\(s\) sharding. "
+          r"Compiled object called with input sharding\(s\) does not match the "
+          r"sharding\(s\) the computation was compiled with. "
           "Here are the 2 mismatches"):
         compiled(inp2)
 
@@ -3519,6 +3521,25 @@ class ArrayPjitTest(jtu.JaxTestCase):
         jax.device_put(np_inp, NamedSharding(mesh, P('x'))))
     self.assertEqual(out2.device(), jax.devices()[0])
     self.assertArraysEqual(out2, np_inp)
+
+  def test_jit_submhlo_cached(self):
+    @jax.jit
+    def nest(x):
+      return x * 2
+
+    @jax.jit
+    def top(x):
+      y = nest(x)
+      z = nest(y)
+      a = nest(z)
+      b = nest(a)
+      return b
+
+    with jtu.count_subjaxpr_to_mhlo_conversion(fun_name='nest') as count:
+      top(jnp.arange(8))
+
+    # The count should be 1 because `nest`'s lowering to MHLO should be cached.
+    self.assertEqual(count[0], 1)
 
   def test_wsc_eager(self):
     mesh = jtu.create_global_mesh((2,), ('x',))

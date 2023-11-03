@@ -28,7 +28,7 @@
 .. autosummary::
   :toctree: _autosummary
 
-  PRNGImpl
+  define_prng_impl
   seed_with_impl
   threefry2x32_p
   threefry_2x32

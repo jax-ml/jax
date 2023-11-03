@@ -3296,6 +3296,9 @@ _EINSUM_DOC = _PRECISION_DOC + """\
 A tuple ``precision`` does not necessarily map to multiple arguments of ``einsum()``;
 rather, the specified ``precision`` is forwarded to each ``dot_general`` call used in
 the implementation.
+
+:func:`jax.numpy.einsum` also differs from :func:`numpy.einsum` in that the ``optimize``
+keyword defaults to ``"optimal"`` rather than ``False``.
 """
 
 @overload
@@ -4154,7 +4157,7 @@ def take_along_axis(
   idx_shape = shape(indices)
   if not dtypes.issubdtype(index_dtype, integer):
     raise TypeError("take_along_axis indices must be of integer type, got "
-                    f"{str(index_dtype)}")
+                    f"{index_dtype}")
   if axis is None:
     if ndim(indices) != 1:
       msg = "take_along_axis indices must be 1D if axis=None, got shape {}"

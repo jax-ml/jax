@@ -224,21 +224,15 @@ def _canonicalize_dtype(x64_enabled: bool, allow_extended_dtype: bool, dtype: An
     return _dtype_to_32bit_dtype.get(dtype_, dtype_)
 
 @overload
-def canonicalize_dtype(dtype: Any, allow_extended_dtype: Literal[False] = False, allow_opaque_dtype: Any = None) -> DType: ...
+def canonicalize_dtype(dtype: Any, allow_extended_dtype: Literal[False] = False) -> DType: ...
 
 @overload
-def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False, allow_opaque_dtype: Any = None) -> Union[DType, ExtendedDType]: ...
+def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False) -> Union[DType, ExtendedDType]: ...
 
 @export
-def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False, allow_opaque_dtype: Any = None) -> Union[DType, ExtendedDType]:
+def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False) -> Union[DType, ExtendedDType]:
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
-  if allow_opaque_dtype is not None:
-    # TODO(jakevdp): complete the deprecation cycle (Deprecated July 24 2023).
-    warnings.warn(
-      "allow_opaque_dtype argument is deprecated; use allow_extended_dtype.",
-      DeprecationWarning)
-    allow_extended_dtype = allow_opaque_dtype
-  return _canonicalize_dtype(config.enable_x64.value, allow_extended_dtype, dtype)  # type: ignore[bad-return-type]
+  return _canonicalize_dtype(config.enable_x64.value, allow_extended_dtype, dtype)  # pytype: disable=bad-return-type
 
 # Default dtypes corresponding to Python scalars.
 python_scalar_dtypes : dict[type, DType] = {

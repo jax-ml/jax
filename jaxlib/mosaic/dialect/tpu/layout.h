@@ -326,6 +326,7 @@ std::ostream &operator<<(std::ostream &os, const Layout &v);
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const Layout &v);
 llvm::hash_code hash_value(const VectorLayout &layout);
 mlir::Diagnostic &operator<<(mlir::Diagnostic &diag, const Layout &v);
+std::ostream &operator<<(std::ostream &os, VectorLayout::ImplicitDim dim);
 
 std::optional<Layout> parseLayout(mlir::AsmParser &parser);
 

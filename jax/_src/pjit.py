@@ -989,7 +989,7 @@ def pjit_check_aval_sharding(
     except ValueError as e:
       raise ValueError(
           f'One of {what_aval}{name_str} is incompatible with its sharding '
-          f'annotation {s}: {str(e)}')
+          f'annotation {s}: {e}')
     # Use the `OpSharding` proto to find out how many ways each dimension of
     # the aval is sharded. This approach will work across all
     # XLACompatibleSharding.
@@ -1361,6 +1361,36 @@ def _pjit_abstract_eval(*args, jaxpr, out_shardings, resource_env, **_):
 pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
+def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
+                                    out_shardings, api_name):
+  mod_ctx = ctx.module_context
+  axis_ctx = ctx.module_context.axis_context
+  da = None
+  if isinstance(axis_ctx, sharding_impls.ShardingContext):
+    da = tuple(axis_ctx.device_assignment)
+  elif isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
+    da = axis_ctx.mesh._flat_devices_tuple
+  key = (pjit_p, name, jaxpr, effects, da,
+         pxla.SemanticallyEqualShardings(in_shardings),
+         pxla.SemanticallyEqualShardings(out_shardings), api_name)
+
+  func = mod_ctx.cached_primitive_lowerings.get(key, None)
+  if func is None:
+    arg_shardings = [None if is_unspecified(i) else i._to_xla_hlo_sharding(aval.ndim)
+                     for aval, i in zip(ctx.avals_in, in_shardings)]
+    result_shardings = [None if is_unspecified(o) else o._to_xla_hlo_sharding(aval.ndim)
+                        for aval, o in zip(ctx.avals_out, out_shardings)]
+    # TODO(b/228598865): inlined calls cannot have shardings set directly on the
+    # inputs or outputs because they are lost during MLIR->HLO conversion.
+    # using_sharding_annotation=False means we add an identity operation instead.
+    func = mlir.lower_jaxpr_to_fun(
+        mod_ctx, name, jaxpr, effects, arg_shardings=arg_shardings,
+        result_shardings=result_shardings, use_sharding_annotations=False,
+        api_name=api_name)
+    mod_ctx.cached_primitive_lowerings[key] = func
+  return func
+
+
 def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                    out_shardings, resource_env, donated_invars,
                    keep_unused, inline):
@@ -1369,20 +1399,10 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
   output_types = [mlir.token_type()] * len(effects) + output_types
   flat_output_types = flatten(output_types)
 
-  arg_shardings = [None if is_unspecified(i) else
-                   i._to_xla_hlo_sharding(aval.ndim)
-                   for aval, i in zip(ctx.avals_in, in_shardings)]
-  result_shardings = [None if is_unspecified(o) else
-                      o._to_xla_hlo_sharding(aval.ndim)
-                      for aval, o in zip(ctx.avals_out, out_shardings)]
+  func = _pjit_cached_lower_jaxpr_to_fun(
+      ctx, name, jaxpr, tuple(effects), in_shardings,
+      out_shardings, api_name=('jit' if resource_env is None else 'pjit'))
 
-  # TODO(b/228598865): inlined calls cannot have shardings set directly on the
-  # inputs or outputs because they are lost during MLIR->HLO conversion.
-  # using_sharding_annotation=False means we add an identity operation instead.
-  func = mlir.lower_jaxpr_to_fun(
-      ctx.module_context, name, jaxpr, effects, arg_shardings=arg_shardings,
-      result_shardings=result_shardings, use_sharding_annotations=False,
-      api_name=('jit' if resource_env is None else 'pjit'))
   tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
   args = (*ctx.dim_var_values, *tokens_in, *args)
   call = func_dialect.CallOp(flat_output_types,
@@ -1467,7 +1487,7 @@ def _pjit_batcher_for_sharding(
     if isinstance(getattr(s, '_original_sharding', None), NamedSharding):
       mesh = s._original_sharding.mesh  # type: ignore
     if mesh is None or mesh.empty:
-      s_type = (f', got: {repr(s._original_sharding)}'
+      s_type = (f', got: {s._original_sharding!r}'
                 if hasattr(s, '_original_sharding') else '')
       raise ValueError(
           'If you are using xmap or spmd_axis_name parameter of jax.vmap,'

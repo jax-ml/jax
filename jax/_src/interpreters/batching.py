@@ -61,7 +61,7 @@ class IndexedAxisSize:
   idx: core.Var
   lengths: Array | core.Var | Tracer
   def __repr__(self) -> str:
-    return f'{str(self.lengths)}.Var{id(self.idx)}'
+    return f'{self.lengths}.Var{id(self.idx)}'
   replace = dataclasses.replace
 
 # Jumble(aval=a:3 => f32[[3 1 4].a],
@@ -1101,7 +1101,7 @@ def matchaxis(axis_name, sz, src, dst, x, sum_match=False):
   try:
     _ = core.get_aval(x)
   except TypeError as e:
-    raise TypeError(f"Output from batched function {repr(x)} with type "
+    raise TypeError(f"Output from batched function {x!r} with type "
                     f"{type(x)} is not a valid JAX type") from e
   if src == dst:
     return x

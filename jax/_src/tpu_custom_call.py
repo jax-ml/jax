@@ -23,6 +23,7 @@ from collections.abc import Sequence
 import dataclasses
 import functools
 import io
+import re
 from typing import Any, Callable
 
 import jax
@@ -93,6 +94,7 @@ class CustomCallBackendConfig:
   collective_id: int | None
   device_type: str | None
   cost_estimate: CostEstimate | None
+  flags: dict[str, bool | int | float] | None
 
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
@@ -121,6 +123,27 @@ class CustomCallBackendConfig:
       config.write(
           ('"DEVICE_TYPE_' + self.device_type.upper() + '"').encode("ascii")
       )
+    if self.flags is not None:
+      config.write(b', "flag_configs": [')
+      for i, (flag, value) in enumerate(self.flags.items()):
+        config.write(b'{"flag_type": "')
+        config.write(flag.encode("ascii"))
+        config.write(b'", value: {')
+        if isinstance(value, bool):
+          config.write(b'"boolean_value": ')
+          config.write(b"true" if value else b"false")
+        elif isinstance(value, int):
+          config.write(b'"integer_value": ')
+          config.write(str(value).encode("ascii"))
+        elif isinstance(value, float):
+          config.write(b'"double_value": ')
+          config.write(str(value).encode("ascii"))
+        else:
+          raise ValueError("invalid flag value: " + str(value))
+        config.write(b"}}")
+        if i + 1 != len(self.flags):
+          config.write(b",")
+      config.write(b"]")
     config.write(b"}")
     return config.getvalue()
 
@@ -207,6 +230,43 @@ mlir.register_lowering(tpu_custom_call_p, _tpu_custom_call_lowering,
                        platform="tpu")
 
 
+_LOCATION_REGEX = re.compile(r'loc\("([a-zA-Z/]+)"\("(.*)":([0-9]+):[0-9]+\)\)')
+_BUG_PROMPT = """
+Please report a bug at: https://github.com/google/jax/issues/new?assignees=apaszke
+"""
+_OP_ERROR_PATTERN = re.compile(r"'.*' op (.+)")
+
+def _run_pass_pipeline(passes: PassManager, module: ir.Module, what: str):
+  try:
+    passes.run(module.operation)
+    module.operation.verify()
+  except ir.MLIRError as e:
+    if e.error_diagnostics:
+      d = e.error_diagnostics[0]
+      diag_msg = d.message
+      if match := re.match(_OP_ERROR_PATTERN, diag_msg):
+        diag_msg = match.group(1)
+      msg = ["Internal TPU kernel compiler error: " + diag_msg, '']
+      # TODO(apaszke): Expose MLIR Location APIs instead of parsing
+      if match := re.match(_LOCATION_REGEX, str(d.location)):
+        name_stack, file, line = match.group(1), match.group(2), match.group(3)
+        jax_func_name = name_stack[name_stack.rfind("/") + 1:]
+        msg.append("The error was caused by:")
+        msg.append(f"  `{jax_func_name}` called at {file}:{line}")
+      for note in d.notes:
+        note_msg = note.message
+        if (op := note_msg.lstrip("see current operation: ")) is not note_msg:
+          msg.append("The MLIR operation involved:")
+          msg.append("  " + op)
+      if len(e.error_diagnostics) > 1:
+        msg.append("... additional diagnostics were skipped.")
+      msg.append(_BUG_PROMPT)
+      raise RuntimeError("\n".join(msg)) from None
+    else:
+      raise RuntimeError("Unspecified internal compiler error") from e
+  dump_mlir(module, f"after {what} pass")
+
+
 def _lower_tpu_kernel(
     module: ir.Module,
     hardware_generation: int,
@@ -250,10 +310,8 @@ def _lower_tpu_kernel(
             "func.func(hlo-legalize-to-linalg)",
             "func.func(linalg-vectorization)",
         ]
-        PassManager.parse(f"builtin.module({','.join(pipeline)})").run(
-            module.operation
-        )
-        dump_mlir(module, "after hlo conversion module")
+        pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
+        _run_pass_pipeline(pipeline, module, "hlo conversion")
 
       if _MOSAIC_USE_CPP_PASSES.value:
         pipeline = [
@@ -262,11 +320,11 @@ def _lower_tpu_kernel(
             ),
         ]
         pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-        pipeline.run(module.operation)
+        _run_pass_pipeline(pipeline, module, "infer memref layout")
       else:
         infer_memref_layout.infer_module(module, hardware_generation)
         module.operation.verify()
-      dump_mlir(module, "after infer memref layout pass")
+        dump_mlir(module, "after infer memref layout pass")
 
       pipeline = [
           "canonicalize",
@@ -274,9 +332,7 @@ def _lower_tpu_kernel(
           "func.func(tpu-infer-vector-layout{sublane-count=8 lane-count=128})",
       ]
       pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-      pipeline.run(module.operation)
-      module.operation.verify()
-      dump_mlir(module, "after infer vector layout pass")
+      _run_pass_pipeline(pipeline, module, "infer vector layout")
 
       if _MOSAIC_USE_CPP_PASSES.value:
         pipeline = [
@@ -286,15 +342,14 @@ def _lower_tpu_kernel(
             ),
         ]
         pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-        pipeline.run(module.operation)
+        _run_pass_pipeline(pipeline, module, "apply vector layout")
       else:
         apply_vector_layout.apply(module, hardware_generation)
-      module.operation.verify()
-      dump_mlir(module, "after apply vector layout pass")
+        module.operation.verify()
+        dump_mlir(module, "after apply vector layout pass")
 
-
-      PassManager.parse("builtin.module(canonicalize)").run(module.operation)
-      dump_mlir(module, "after final canonicalize pass")
+      pipeline = PassManager.parse("builtin.module(canonicalize)")
+      _run_pass_pipeline(pipeline, module, "final canonicalize")
 
       for f in module.body:
         if "vector_constants" not in f.attributes:
@@ -338,6 +393,7 @@ def as_tpu_kernel(
     device_type: str | None = None,
     kernel_name: str | None = None,
     kernel_regeneration_metadata: bytes | None = None,
+    flags: dict[str, bool | int | float] | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   # We use jax.jit to make sure we hit the fast compilation cache.
@@ -365,6 +421,7 @@ def as_tpu_kernel(
       kernel_name=kernel_name,
       kernel_regeneration_metadata=kernel_regeneration_metadata,
       cost_estimate=cost_estimate,
+      flags=flags,
   )
 
 
@@ -379,6 +436,7 @@ def _lowered_as_tpu_kernel(
     has_custom_barrier: bool = False,
     kernel_name: str | None = None,
     kernel_regeneration_metadata: bytes | None = None,
+    flags: dict[str, bool | int | float] | None = None,
 ):
   """Turns a low-level MLIR Mosaic kernel into a JAX-compatible function."""
   unpack = False
@@ -403,6 +461,7 @@ def _lowered_as_tpu_kernel(
         collective_id,
         device_type,
         cost_estimate,
+        flags,
     )
     result = tpu_custom_call_p.bind(
         *args,

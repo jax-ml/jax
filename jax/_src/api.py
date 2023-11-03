@@ -565,7 +565,7 @@ def xla_computation(fun: Callable,
           core.ClosedJaxpr(jaxpr, consts),
           ordered_effects=ordered_effects,
           backend_or_name=backend,
-          platform=platform,
+          platforms=[platform],
           axis_context=sharding_impls.ReplicaAxisContext(axis_env_),
           name_stack=source_info_util.new_name_stack(
               wrap_name(fun_name, "xla_computation")),

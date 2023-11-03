@@ -49,6 +49,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import xla_extension_version
 from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, _wraps
 from jax._src.util import safe_zip, NumpyComplexWarning
 
@@ -2565,7 +2566,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = partial(getattr(jnp, name), size, **kwds)
     np_fun = jtu.with_jax_dtype_defaults(partial(getattr(np, name), size, **kwds))
     args_maker = lambda: []
-    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
+    tol = (
+        5e-6 if jtu.test_device_matches(['tpu']) and name == 'kaiser' else None
+    )
+    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker, atol=tol, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
@@ -3520,6 +3524,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng.randn(3, 4).astype("int32")]
     np_op = jtu.with_jax_dtype_defaults(lambda x: np.asarray(x).astype(None))
     jnp_op = lambda x: jnp.asarray(x).astype(None)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    self._CompileAndCheck(jnp_op, args_maker)
+
+  @unittest.skipIf(xla_extension_version < 210, 'jaxlib version too old')
+  def testAstypeInt4(self):
+    # Test converting from int4 to int8
+    x = np.array([1, -2, -3, 4, -8, 7], dtype=jnp.int4)
+    args_maker = lambda: [x]
+    np_op = lambda x: np.asarray(x).astype(jnp.int8)
+    jnp_op = lambda x: jnp.asarray(x).astype(jnp.int8)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    self._CompileAndCheck(jnp_op, args_maker)
+
+    # Test converting from int8 to int4
+    x = np.array([1, -2, -3, 4, -8, 7], dtype=jnp.int8)
+    args_maker = lambda: [x]
+    np_op = lambda x: np.asarray(x).astype(jnp.int4)
+    jnp_op = lambda x: jnp.asarray(x).astype(jnp.int4)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 

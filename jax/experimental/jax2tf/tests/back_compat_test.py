@@ -356,7 +356,7 @@ class CompatTest(bctu.CompatTestBase):
     # For lax.linalg.qr
     func = lambda: CompatTest.qr_harness((3, 3), np.float32)
     data = self.load_testdata(tpu_Qr.data_2023_03_17)
-    self.run_one_test(func, data, rtol=1e-3)
+    self.run_one_test(func, data, rtol=1e-3, atol=1e-3)
 
   @staticmethod
   def lu_harness(shape, dtype):

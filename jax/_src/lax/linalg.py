@@ -145,9 +145,16 @@ def eig(x: ArrayLike, *, compute_left_eigenvectors: bool = True,
   return eig_p.bind(x, compute_left_eigenvectors=compute_left_eigenvectors,
                     compute_right_eigenvectors=compute_right_eigenvectors)
 
+
 @_warn_on_positional_kwargs
-def eigh(x: Array, *, lower: bool = True, symmetrize_input: bool = True,
-         sort_eigenvalues: bool = True) -> tuple[Array, Array]:
+def eigh(
+    x: Array,
+    *,
+    lower: bool = True,
+    symmetrize_input: bool = True,
+    sort_eigenvalues: bool = True,
+    subset_by_index: Optional[tuple[int, int]] = None,
+) -> tuple[Array, Array]:
   r"""Eigendecomposition of a Hermitian matrix.
 
   Computes the eigenvectors and eigenvalues of a complex Hermitian or real
@@ -165,6 +172,10 @@ def eigh(x: Array, *, lower: bool = True, symmetrize_input: bool = True,
     sort_eigenvalues: If ``True``, the eigenvalues will be sorted in ascending
       order. If ``False`` the eigenvalues are returned in an
       implementation-defined order.
+     subset_by_index: Optional 2-tuple [start, end] indicating the range of
+       indices of eigenvalues to compute. For example, is ``range_select`` =
+       [n-2,n], then ``eigh`` computes the two largest eigenvalues and their
+       eigenvectors.
 
   Returns:
     A tuple ``(v, w)``.
@@ -173,12 +184,19 @@ def eigh(x: Array, *, lower: bool = True, symmetrize_input: bool = True,
     the normalized eigenvector corresponding to eigenvalue ``w[..., i]``.
 
     ``w`` is an array with the same dtype as ``x`` (or its real counterpart if
-    complex) with shape ``[..., n]`` containing the eigenvalues of ``x`` in
+    complex) with shape ``[..., d]`` containing the eigenvalues of ``x`` in
     ascending order(each repeated according to its multiplicity).
+    If ``subset_by_index`` is ``None`` then ``d`` is equal to ``n``. Otherwise
+    ``d`` is equal to ``subset_by_index[1] - subset_by_index[0]``.
   """
   if symmetrize_input:
     x = symmetrize(x)
-  v, w = eigh_p.bind(x, lower=lower, sort_eigenvalues=sort_eigenvalues)
+  v, w = eigh_p.bind(
+      x,
+      lower=lower,
+      sort_eigenvalues=sort_eigenvalues,
+      subset_by_index=subset_by_index,
+  )
   return v, w
 
 
@@ -659,12 +677,18 @@ eigh_jacobi_p.def_abstract_eval(_eigh_jacobi_abstract_eval)
 mlir.register_lowering(eigh_jacobi_p, _eigh_jacobi_lowering_rule)
 
 
-def _eigh_impl(operand, *, lower, sort_eigenvalues):
-  v, w = dispatch.apply_primitive(eigh_p, operand, lower=lower,
-                                  sort_eigenvalues=sort_eigenvalues)
+def _eigh_impl(operand, *, lower, sort_eigenvalues, subset_by_index):
+  v, w = dispatch.apply_primitive(
+      eigh_p,
+      operand,
+      lower=lower,
+      sort_eigenvalues=sort_eigenvalues,
+      subset_by_index=subset_by_index,
+  )
   return v, w
 
-def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues):
+
+def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues, subset_by_index):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
       raise ValueError(
@@ -673,19 +697,28 @@ def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues):
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
-    v = operand.update(shape=batch_dims + (n, n))
-    w = operand.update(shape=batch_dims + (n,),
-                       dtype=lax_internal._complex_basetype(operand.dtype))
+    d = (
+        n
+        if subset_by_index is None
+        else subset_by_index[1] - subset_by_index[0]
+    )
+    v = operand.update(shape=batch_dims + (n, d))
+    w = operand.update(
+        shape=batch_dims + (d,),
+        dtype=lax_internal._complex_basetype(operand.dtype),
+    )
   else:
     v, w = operand, operand
   return v, w
 
-def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
-                           sort_eigenvalues):
+
+def _eigh_cpu_gpu_lowering(
+    syevd_impl, ctx, operand, *, lower, sort_eigenvalues, subset_by_index
+):
   del sort_eigenvalues  # The CPU/GPU implementations always sort.
   operand_aval, = ctx.avals_in
   v_aval, w_aval = ctx.avals_out
-
+  n = operand_aval.shape[-1]
   batch_dims = operand_aval.shape[:-2]
 
   # The eigh implementation on CPU and GPU uses lapack helper routines to
@@ -695,6 +728,9 @@ def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
     raise NotImplementedError(
         "Shape polymorphism for for native lowering for eigh is implemented "
         f"only for the batch dimensions: {operand_aval.shape}")
+
+  if not (subset_by_index is None or subset_by_index == (0, n)):
+    raise NotImplementedError("subset_by_index not implemented for CPU and GPU")
 
   if jaxlib_version < (0, 4, 14):
     batch_size_num = math.prod(batch_dims) if batch_dims else 1
@@ -730,7 +766,8 @@ def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
       w, w_aval, _nan_like_hlo(ctx, w_aval), w_aval)
   return [v, w]
 
-def _eigh_tpu_impl(x, *, lower, sort_eigenvalues):
+
+def _eigh_tpu_impl(x, *, lower, sort_eigenvalues, subset_by_index):
   *_, m, n = x.shape
   assert m == n, (m, n)
 
@@ -740,7 +777,9 @@ def _eigh_tpu_impl(x, *, lower, sort_eigenvalues):
     raise NotImplementedError(
         "Shape polymorphism for for native lowering for eigh is implemented "
         f"only for the batch dimensions: {x.shape}")
-  if m <= termination_size:
+  if m <= termination_size and (
+      subset_by_index is None or subset_by_index == (0, n)
+  ):
     eig_vals, eig_vecs = eigh_jacobi(x, lower=lower,
                                      sort_eigenvalues=sort_eigenvalues)
     return eig_vecs, eig_vals
@@ -767,13 +806,26 @@ def _eigh_tpu_impl(x, *, lower, sort_eigenvalues):
     else:
       x = lax.select(mask, x, _T(x))
 
-    return lax_eigh.eigh(x, sort_eigenvalues=sort_eigenvalues,
-                         termination_size=termination_size)
+    return lax_eigh.eigh(
+        x,
+        sort_eigenvalues=sort_eigenvalues,
+        termination_size=termination_size,
+        subset_by_index=subset_by_index,
+    )
 
   eig_vals, eig_vecs = eigh_qdwh(x)
   return eig_vecs, eig_vals
 
-def _eigh_jvp_rule(primals, tangents, *, lower, sort_eigenvalues):
+
+def _eigh_jvp_rule(
+    primals, tangents, *, lower, sort_eigenvalues, subset_by_index
+):
+  (a,) = primals
+  n = a.shape[-1]
+  if not (subset_by_index is None or subset_by_index == (0, n)):
+    raise NotImplementedError(
+        "Derivatives not defined for partial eigen decomposition."
+    )
   # Derivative for eigh in the simplest case of distinct eigenvalues.
   # This is classic nondegenerate perurbation theory, but also see
   # https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
@@ -782,15 +834,18 @@ def _eigh_jvp_rule(primals, tangents, *, lower, sort_eigenvalues):
   # methods below or refer to degenerate perturbation theory in physics.
   # https://www.win.tue.nl/analysis/reports/rana06-33.pdf and
   # https://people.orie.cornell.edu/aslewis/publications/99-clarke.pdf
-  a, = primals
   a_dot, = tangents
 
-  v, w_real = eigh_p.bind(symmetrize(a), lower=lower,
-                          sort_eigenvalues=sort_eigenvalues)
+  v, w_real = eigh_p.bind(
+      symmetrize(a),
+      lower=lower,
+      sort_eigenvalues=sort_eigenvalues,
+      subset_by_index=subset_by_index,
+  )
 
   # for complex numbers we need eigenvalues to be full dtype of v, a:
   w = w_real.astype(a.dtype)
-  eye_n = jnp.eye(a.shape[-1], dtype=a.dtype)
+  eye_n = jnp.eye(n, dtype=a.dtype)
   # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
   Fmat = ufuncs.reciprocal(eye_n + w[..., jnp.newaxis, :] - w[..., jnp.newaxis]) - eye_n
   # eigh impl doesn't support batch dims, but future-proof the grad.
@@ -801,11 +856,20 @@ def _eigh_jvp_rule(primals, tangents, *, lower, sort_eigenvalues):
   dw = ufuncs.real(jnp.diagonal(vdag_adot_v, axis1=-2, axis2=-1))
   return (v, w_real), (dv, dw)
 
-def _eigh_batching_rule(batched_args, batch_dims, *, lower, sort_eigenvalues):
+
+def _eigh_batching_rule(
+    batched_args, batch_dims, *, lower, sort_eigenvalues, subset_by_index
+):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
-  return eigh_p.bind(x, lower=lower, sort_eigenvalues=sort_eigenvalues), (0, 0)
+  return eigh_p.bind(
+      x,
+      lower=lower,
+      sort_eigenvalues=sort_eigenvalues,
+      subset_by_index=subset_by_index,
+  ), (0, 0)
+
 
 eigh_p = Primitive('eigh')
 eigh_p.multiple_results = True

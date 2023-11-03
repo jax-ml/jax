@@ -162,6 +162,37 @@ Toolbox](https://github.com/NVIDIA/JAX-Toolbox) containers, which are
 bleeding edge containers containing nightly releases of jax and some
 models/frameworks.
 
+## Nightly installation
+
+Nightly releases reflect the state of the main repository at the time they are
+built, and may not pass the full test suite.
+
+* JAX:
+```bash
+pip install -U --pre jax -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+```
+
+* Jaxlib CPU:
+```bash
+pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
+```
+
+* Jaxlib TPU:
+```bash
+pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
+pip install -U libtpu-nightly -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+```
+
+* Jaxlib GPU (Cuda 12):
+```bash
+pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_cuda12_releases.html
+```
+
+* Jaxlib GPU (Cuda 11):
+```bash
+pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_cuda_releases.html
+```
+
 ## Google TPU
 
 ### pip installation: Google Cloud TPU
