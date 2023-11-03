@@ -561,6 +561,16 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     # y is not donated.
     self.assertFalse(args_info[1].donated)
 
+  def test_double_donation(self):
+    def add(x, y):
+      return x + y
+
+    f = jax.jit(add, donate_argnums=(0,))
+    x = jnp.zeros((10,), jnp.float32)
+
+    with self.assertRaises(RuntimeError):
+      f(x, x)
+
   def test_intersecting_static_and_donate_argnames(self):
     with self.assertRaisesRegex(
         ValueError, "static_argnames and donate_argnames cannot intersect"):
