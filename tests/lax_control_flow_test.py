@@ -2782,7 +2782,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ctx = contextlib.ExitStack()
     if jtu.device_under_test() != "tpu":
       ctx.enter_context(
-        self.assertRaisesRegex(ValueError,
+        self.assertRaisesRegex(NotImplementedError,
                                "translation rule .* not found for platform"))
     with ctx:
       lax.platform_dependent(

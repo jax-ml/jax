@@ -938,7 +938,7 @@ def platform_dependent(*args: Any,
   platform_branches: list[tuple[list[str], Callable]] = []
   for pname, pbranch in per_platform.items():
     if pname == "gpu":
-      raise ValueError("Use 'cuda' or 'rocm' for this API.")
+      raise ValueError("Use 'cuda' or 'rocm' for lax.platform_dependent.")
     for ps, b in platform_branches:
       if b == pbranch:
         ps.append(pname)
@@ -979,18 +979,17 @@ def _platform_index_lowering(ctx: mlir.LoweringRuleContext,
                              has_default: bool):
   def lower_constant(ctx: mlir.LoweringRuleContext, *, i: int) -> mlir.ir.Value:
     return mlir.ir_constants(np.int32(i))
-  lowering_rules: tuple[mlir.MultiPlatformLoweringRule, ...] = tuple(
-    (ps, partial(lower_constant, i=i))
-    for i, ps in enumerate(platforms)
-  )
-  if has_default:
-    lowering_rules = lowering_rules + (
-      (None, partial(lower_constant, i=len(platforms))),
-    )
-  return mlir.lower_multi_platform(
+  platform_rules: dict[str, mlir.LoweringRule] = {}
+  for i, ps in enumerate(platforms):
+    rule = partial(lower_constant, i=i)
+    for p in ps:
+      platform_rules[p] = rule
+
+  default_rule = (
+    partial(lower_constant, i=len(platforms)) if has_default else None)
+  return mlir.lower_per_platform(
     ctx,
     f"platform_index(platforms={platforms}, has_default={has_default})",
-    lowering_rules,
-    effects.no_effects)
+    platform_rules, default_rule, effects.no_effects)
 
 mlir.register_lowering(platform_index_p, _platform_index_lowering)
