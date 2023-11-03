@@ -626,10 +626,21 @@ def check_bool_conversion(arr: Array, warn_on_empty=False):
                       "ambiguous. Use a.any() or a.all()")
 
 
+def _aval_property(name):
+  return property(lambda self: getattr(self.aval, name))
+
 
 class Tracer(typing.Array):
   __array_priority__ = 1000
   __slots__ = ['_trace', '_line_info']
+
+  dtype = _aval_property('dtype')
+  ndim = _aval_property('ndim')
+  size = _aval_property('size')
+  shape = _aval_property('shape')
+
+  def __init__(self, trace: Trace):
+    self._trace = trace
 
   def _error_repr(self):
     if self.aval is None:
@@ -654,9 +665,6 @@ class Tracer(typing.Array):
     raise ConcretizationTypeError(self,
       f"The tobytes() method was called on {self._error_repr()}."
       f"{self._origin_msg()}")
-
-  def __init__(self, trace: Trace):
-    self._trace = trace
 
   def __iter__(self):
     return iter(self.aval._iter(self))
