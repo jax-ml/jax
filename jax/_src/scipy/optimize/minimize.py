@@ -16,10 +16,7 @@ from collections.abc import Mapping
 from typing import Any, Callable, Optional, Union
 
 import jax
-from jax._src.scipy.optimize.bfgs import minimize_bfgs
-from jax._src.scipy.optimize._lbfgs import _minimize_lbfgs
 from typing import NamedTuple
-import jax.numpy as jnp
 
 
 class OptimizeResults(NamedTuple):
@@ -60,7 +57,9 @@ def minimize(
 ) -> OptimizeResults:
   """Minimization of scalar function of one or more variables.
 
-  This API for this function matches SciPy with some minor deviations:
+  This is a scipy-like wrapper around functionality available in the
+  jaxopt_ package. The API for this function matches SciPy with some
+  minor deviations:
 
   - Gradients of ``fun`` are calculated automatically using JAX's autodiff
     support when required.
@@ -69,10 +68,6 @@ def minimize(
     implemented.
   - Optimization results may differ from SciPy due to differences in the line
     search implementation.
-
-  ``minimize`` supports :func:`~jax.jit` compilation. It does not yet support
-  differentiation or arguments in the form of multi-dimensional arrays, but
-  support for both is planned.
 
   Args:
     fun: the objective function to be minimized, ``fun(x, *args) -> float``,
@@ -93,40 +88,50 @@ def minimize(
 
   Returns:
     An :class:`OptimizeResults` object.
+
+  .. _jaxopt: https://jaxopt.github.io/
   """
+  try:
+    import jaxopt
+  except ImportError as err:
+    raise RuntimeError("jaxopt package must be installed to use jax.scipy.optimize.minimize") from err
+
+  if not isinstance(args, tuple):
+    raise TypeError(f"args {args} must be a tuple")
+
+  def fun_with_args(x):
+    return fun(x, *args)
+
   if options is None:
     options = {}
 
-  if not isinstance(args, tuple):
-    msg = "args argument to jax.scipy.optimize.minimize must be a tuple, got {}"
-    raise TypeError(msg.format(args))
+  if tol is None:
+    if (gtol := options.pop('gtol', None)) is not None:
+      tol = gtol
+    else:
+      tol = 1E-6
+  if (maxiter := options.pop('maxiter', None)) is None:
+    maxiter = 500
 
-  fun_with_args = lambda x: fun(x, *args)
+  if options:
+    raise ValueError(f"Unrecognized options: {list(options.keys())}")
 
   if method.lower() == 'bfgs':
-    results = minimize_bfgs(fun_with_args, x0, **options)
-    success = results.converged & jnp.logical_not(results.failed)
-    return OptimizeResults(x=results.x_k,
-                           success=success,
-                           status=results.status,
-                           fun=results.f_k,
-                           jac=results.g_k,
-                           hess_inv=results.H_k,
-                           nfev=results.nfev,
-                           njev=results.ngev,
-                           nit=results.k)
+    solver = jaxopt.BFGS(fun=fun_with_args, tol=tol, maxiter=maxiter, maxls=30)
+  elif method.lower() == 'l-bfgs-experimental-do-not-rely-on-this':
+    solver = jaxopt.LBFGS(fun=fun_with_args, tol=tol, maxiter=maxiter, maxls=30)
+  else:
+    raise ValueError(f"Method {method} not recognized")
 
-  if method.lower() == 'l-bfgs-experimental-do-not-rely-on-this':
-    results = _minimize_lbfgs(fun_with_args, x0, **options)
-    success = results.converged & jnp.logical_not(results.failed)
-    return OptimizeResults(x=results.x_k,
-                           success=success,
-                           status=results.status,
-                           fun=results.f_k,
-                           jac=results.g_k,
-                           hess_inv=None,
-                           nfev=results.nfev,
-                           njev=results.ngev,
-                           nit=results.k)
-
-  raise ValueError(f"Method {method} not recognized")
+  params, state = solver.run(x0)
+  return OptimizeResults(
+    x=params,
+    success=state.error <= solver.tol,
+    status=0,  # No status flag in jaxopt.
+    fun=state.value,
+    jac=state.grad,
+    hess_inv=getattr(state, 'H', None),
+    nfev=state.num_fun_eval,
+    njev=state.num_grad_eval,
+    nit=state.iter_num,
+  )

@@ -89,7 +89,8 @@ class TestBFGS(jtu.JaxTestCase):
       )
       return result.x
 
-    jax_res = min_op(x0)
+    with jax.numpy_dtype_promotion('standard'):
+      jax_res = min_op(x0)
     scipy_res = scipy.optimize.minimize(func(np), x0, method='BFGS').x
     self.assertAllClose(scipy_res, jax_res, atol=2e-4, rtol=2e-4,
                         check_dtypes=False)
@@ -130,7 +131,7 @@ class TestBFGS(jtu.JaxTestCase):
         method='BFGS',
         x0=initial_value
     ).x
-    self.assertAllClose(scipy_res, jax_res, atol=2e-5, check_dtypes=False)
+    self.assertAllClose(opt_fn(scipy_res), opt_fn(jax_res), atol=2e-5)
 
 
   def test_args_must_be_tuple(self):
@@ -164,7 +165,8 @@ class TestLBFGS(jtu.JaxTestCase):
       )
       return result.x
 
-    jax_res = min_op(x0)
+    with jax.numpy_dtype_promotion('standard'):
+      jax_res = min_op(x0)
 
     # Note that without bounds, L-BFGS-B is just L-BFGS
     with jtu.ignore_warning(category=DeprecationWarning,
@@ -200,7 +202,8 @@ class TestLBFGS(jtu.JaxTestCase):
       )
       return result.x
 
-    jax_res = min_op(jnp.zeros_like(z0))
+    with jax.numpy_dtype_promotion('standard'):
+      jax_res = min_op(jnp.zeros_like(z0))
 
     self.assertAllClose(jax_res, z0)
 
@@ -228,7 +231,8 @@ class TestLBFGS(jtu.JaxTestCase):
       )
       return result.x
 
-    jax_res = min_op(init)
+    with jax.numpy_dtype_promotion('standard'):
+      jax_res = min_op(init)
     self.assertAllClose(jax_res, expect, atol=2e-5)
 
 

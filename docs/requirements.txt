@@ -10,6 +10,9 @@ jupyter-sphinx>=0.3.2
 sphinx-design
 myst-nb
 
+# Packages used in documentation examples
+jaxopt
+
 # Packages used for CI tests.
 pytest
 pytest-xdist
