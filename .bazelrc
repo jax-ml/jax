@@ -92,6 +92,18 @@ build:cuda_plugin --define=xla_python_enable_gpu=false
 # The list of CUDA pip packages that JAX depends on are present in setup.py.
 build:cuda --linkopt=-Wl,--disable-new-dtags
 
+build:cuda_clang --@local_config_cuda//:cuda_compiler=clang
+build:cuda_clang --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-17/bin/clang"
+build:cuda_clang --action_env=TF_CUDA_CLANG="1"
+# Disable clang extention that rejects type definitions within offsetof.
+# This was added in clang-16 by https://reviews.llvm.org/D133574.
+# Can be removed once upb is updated, since a type definition is used within
+# offset of in the current version of ubp.
+# See https://github.com/protocolbuffers/upb/blob/9effcbcb27f0a665f9f345030188c0b291e32482/upb/upb.c#L183.
+build:cuda_clang --copt=-Wno-gnu-offsetof-extensions
+# Disable clang extention that rejects unknown arguments.
+build:cuda_clang --copt=-Qunused-arguments
+
 build:rocm --crosstool_top=@local_config_rocm//crosstool:toolchain
 build:rocm --define=using_rocm=true --define=using_rocm_hipcc=true
 build:rocm --@xla//xla/python:enable_gpu=true
@@ -198,6 +210,18 @@ build:rbe_cpu_linux_py311 --python_path="/usr/local/bin/python3.11"
 build:rbe_cpu_linux_py312 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda12.2-cudnn8.9_config_python3.12"
 build:rbe_cpu_linux_py312 --python_path="/usr/local/bin/python3.12"
 
+# TODO(ybaturina): remove "_clang" suffix when Kokoro release workflows are changed.
+build:rbe_cpu_linux_base_clang --config=rbe_linux
+build:rbe_cpu_linux_base_clang --config=cuda_clang
+build:rbe_cpu_linux_base_clang --host_crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_cuda//crosstool:toolchain"
+build:rbe_cpu_linux_base_clang --crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_cuda//crosstool:toolchain"
+build:rbe_cpu_linux_base_clang --extra_toolchains="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_cuda//crosstool:toolchain-linux-x86_64"
+build:rbe_cpu_linux_base_clang --extra_execution_platforms="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_platform//:platform"
+build:rbe_cpu_linux_base_clang --host_platform="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_platform//:platform"
+build:rbe_cpu_linux_base_clang --platforms="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_platform//:platform"
+build:rbe_cpu_linux_py312_clang --config=rbe_cpu_linux_base_clang --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_python3.12"
+build:rbe_cpu_linux_py312_clang --python_path="/usr/local/bin/python3.12"
+
 build:rbe_linux_cuda_base --config=rbe_linux
 build:rbe_linux_cuda_base --config=cuda
 build:rbe_linux_cuda_base --repo_env=REMOTE_GPU_TESTING=1
@@ -226,6 +250,25 @@ build:rbe_linux_cuda11.8_nvcc_py3.11 --python_path="/usr/local/bin/python3.11"
 build:rbe_linux_cuda11.8_nvcc_py3.12 --config=rbe_linux_cuda11.8_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.12"
 build:rbe_linux_cuda11.8_nvcc_py3.12 --python_path="/usr/local/bin/python3.12"
 
+# TODO(ybaturina): remove "_clang" suffix when Kokoro release workflows are changed.
+build:rbe_linux_cuda11.8_nvcc_base_clang --config=rbe_linux_cuda_base
+build:rbe_linux_cuda11.8_nvcc_base_clang --config=cuda_clang
+build:rbe_linux_cuda11.8_nvcc_base_clang --action_env=TF_CUDA_VERSION=11
+build:rbe_linux_cuda11.8_nvcc_base_clang --action_env=TF_CUDNN_VERSION=8
+build:rbe_linux_cuda11.8_nvcc_base_clang --action_env=CUDA_TOOLKIT_PATH="/usr/local/cuda-11.8"
+build:rbe_linux_cuda11.8_nvcc_base_clang --action_env=LD_LIBRARY_PATH="/usr/local/cuda:/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64:/usr/local/tensorrt/lib"
+build:rbe_linux_cuda11.8_nvcc_base_clang --host_crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_cuda//crosstool:toolchain"
+build:rbe_linux_cuda11.8_nvcc_base_clang --crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_cuda//crosstool:toolchain"
+build:rbe_linux_cuda11.8_nvcc_base_clang --extra_toolchains="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_cuda//crosstool:toolchain-linux-x86_64"
+build:rbe_linux_cuda11.8_nvcc_base_clang --extra_execution_platforms="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_platform//:platform"
+build:rbe_linux_cuda11.8_nvcc_base_clang --host_platform="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_platform//:platform"
+build:rbe_linux_cuda11.8_nvcc_base_clang --platforms="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_platform//:platform"
+build:rbe_linux_cuda11.8_nvcc_base_clang --repo_env=TF_CUDA_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_cuda"
+build:rbe_linux_cuda11.8_nvcc_base_clang --repo_env=TF_TENSORRT_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_tensorrt"
+build:rbe_linux_cuda11.8_nvcc_base_clang --repo_env=TF_NCCL_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_nccl"
+build:rbe_linux_cuda11.8_nvcc_py3.9_clang --config=rbe_linux_cuda11.8_nvcc_base_clang --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.9"
+build:rbe_linux_cuda11.8_nvcc_py3.9_clang --python_path="/usr/local/bin/python3.9"
+
 build:rbe_linux_cuda12.2_nvcc_base --config=rbe_linux_cuda_base
 build:rbe_linux_cuda12.2_nvcc_base --action_env=TF_CUDA_VERSION=12
 build:rbe_linux_cuda12.2_nvcc_base --action_env=TF_CUDNN_VERSION=8
@@ -248,6 +291,24 @@ build:rbe_linux_cuda12.2_nvcc_py3.11 --config=rbe_linux_cuda12.2_nvcc_base --rep
 build:rbe_linux_cuda12.2_nvcc_py3.11 --python_path="/usr/local/bin/python3.11"
 build:rbe_linux_cuda12.2_nvcc_py3.12 --config=rbe_linux_cuda12.2_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda12.2-cudnn8.9_config_python3.12"
 build:rbe_linux_cuda12.2_nvcc_py3.12 --python_path="/usr/local/bin/python3.12"
+
+# TODO(ybaturina): remove "_clang" suffix when Kokoro release workflows are changed.
+build:rbe_linux_cuda12.2_nvcc_base_clang --config=rbe_linux_cuda_base
+build:rbe_linux_cuda12.2_nvcc_base_clang --config=cuda_clang
+build:rbe_linux_cuda12.2_nvcc_base_clang --action_env=TF_CUDA_VERSION=12
+build:rbe_linux_cuda12.2_nvcc_base_clang --action_env=TF_CUDNN_VERSION=8
+build:rbe_linux_cuda12.2_nvcc_base_clang --action_env=CUDA_TOOLKIT_PATH="/usr/local/cuda-12"
+build:rbe_linux_cuda12.2_nvcc_base_clang --action_env=LD_LIBRARY_PATH="/usr/local/cuda:/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64:/usr/local/tensorrt/lib"
+build:rbe_linux_cuda12.2_nvcc_base_clang --host_crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_cuda//crosstool:toolchain"
+build:rbe_linux_cuda12.2_nvcc_base_clang --crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_cuda//crosstool:toolchain"
+build:rbe_linux_cuda12.2_nvcc_base_clang --extra_toolchains="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_cuda//crosstool:toolchain-linux-x86_64"
+build:rbe_linux_cuda12.2_nvcc_base_clang --extra_execution_platforms="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_platform//:platform"
+build:rbe_linux_cuda12.2_nvcc_base_clang --host_platform="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_platform//:platform"
+build:rbe_linux_cuda12.2_nvcc_base_clang --platforms="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_platform//:platform"
+build:rbe_linux_cuda12.2_nvcc_base_clang --repo_env=TF_CUDA_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_cuda"
+build:rbe_linux_cuda12.2_nvcc_base_clang --repo_env=TF_NCCL_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_nccl"
+build:rbe_linux_cuda12.2_nvcc_py3.9_clang --config=rbe_linux_cuda12.2_nvcc_base_clang --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_python3.9"
+build:rbe_linux_cuda12.2_nvcc_py3.9_clang --python_path="/usr/local/bin/python3.9"
 
 # These you may need to change for your own GCP project.
 build:tensorflow_testing_rbe --project_id=tensorflow-testing
