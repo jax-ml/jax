@@ -101,6 +101,12 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "i1e", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
+        "j0", 1, float_dtypes, jtu.rand_default, True
+    ),
+    op_record(
+        "j1", 1, float_dtypes, jtu.rand_default, True
+    ),
+    op_record(
         "logit", 1, float_dtypes,
         functools.partial(jtu.rand_uniform, low=0.05, high=0.95), True),
     op_record(

@@ -19,6 +19,8 @@ from jax._src.scipy.special import (
   bernoulli as bernoulli,
   betainc as betainc,
   betaln as betaln,
+  j0 as j0,
+  j1 as j1,
   bessel_jn as bessel_jn,
   digamma as digamma,
   entr as entr,
