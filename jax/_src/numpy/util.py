@@ -356,16 +356,33 @@ def check_no_float0s(fun_name: str, *args: Any):
 _check_no_float0s = check_no_float0s
 
 
+def check_for_prngkeys(fun_name: str, *args: Any):
+  """Check if args don't match and none of the args have typed prng dtype"""
+  arg_dtypes = [dtypes.dtype(arg) for arg in args]
+  if len(set(arg_dtypes)) < 2:
+    return  # Will be caught by extended dtype impl rules.
+  if any(dtypes.issubdtype(dt, dtypes.prng_key) for dt in arg_dtypes):
+    if len(arg_dtypes) == 1:
+      raise TypeError(
+        f"{fun_name} does not accept dtype {str(arg_dtypes[0])}.")
+    else:
+      raise TypeError(
+        f"{fun_name} does not accept dtypes {', '.join(map(str, arg_dtypes))}."
+      )
+
+
 def promote_args(fun_name: str, *args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument shape and dtype promotion."""
   check_arraylike(fun_name, *args)
   _check_no_float0s(fun_name, *args)
+  check_for_prngkeys(fun_name, *args)
   return promote_shapes(fun_name, *promote_dtypes(*args))
 
 
 def promote_args_numeric(fun_name: str, *args: ArrayLike) -> list[Array]:
   check_arraylike(fun_name, *args)
   _check_no_float0s(fun_name, *args)
+  check_for_prngkeys(fun_name, *args)
   return promote_shapes(fun_name, *promote_dtypes_numeric(*args))
 
 
@@ -375,6 +392,7 @@ def promote_args_inexact(fun_name: str, *args: ArrayLike) -> list[Array]:
   Promotes non-inexact types to an inexact type."""
   check_arraylike(fun_name, *args)
   _check_no_float0s(fun_name, *args)
+  check_for_prngkeys(fun_name, *args)
   return promote_shapes(fun_name, *promote_dtypes_inexact(*args))
 
 
