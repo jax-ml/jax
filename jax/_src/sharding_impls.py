@@ -856,9 +856,6 @@ class PositionalSharding(XLACompatibleSharding):
     return self._devices
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
-    """
-    Converts the sharding strategy for a multidimensional array into an XLA-compatible HloSharding instance.
-    """
     return _positional_sharding_to_xla_hlo_sharding(self, num_dimensions)
 
   @functools.cached_property
