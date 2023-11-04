@@ -198,6 +198,19 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_op, lax_op, args_maker, atol=0, rtol=1E-5)
     self._CompileAndCheck(lax_op, args_maker, atol=0, rtol=1E-5)
 
+  @jtu.sample_product(
+    N=[5,10,20,30],
+    k=[1,2,3,4],
+    exact=[True, False],
+    repetition=[True, False],
+  )
+  def testScipySpecialFunComb(self, N, k, exact, repetition):
+    scipy_op = lambda: osp_special.comb(N, k, exact=exact, repetition=repetition)
+    lax_op = functools.partial(lsp_special.comb, N, k, exact=exact, repetition=repetition)
+    args_maker = lambda: []
+    self._CheckAgainstNumpy(scipy_op, lax_op, args_maker, atol=0, rtol=1E-5)
+
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

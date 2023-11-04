@@ -29,6 +29,7 @@ from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import dtypes
 from jax._src.lax.lax import _const as _lax_const
+from jax._src.numpy.ufuncs import _constant_like
 from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact
 from jax._src.numpy.util import _wraps
 from jax._src.ops import special as ops_special
@@ -1719,3 +1720,47 @@ def bernoulli(n: int) -> Array:
   k = jnp.arange(2, 50, dtype=bn.dtype)  # Choose 50 because 2 ** -50 < 1E-15
   q2 = jnp.sum(k[:, None] ** -m[None, :], axis=0)
   return bn.at[4::2].set(q1 * (1 + q2))
+
+
+@_wraps(osp_special.comb, module='scipy.special')
+def comb(N: Array, k: Array, exact: bool =False, repetition: bool =False):
+  r"""The number of combinations of N things taken k at a time.
+
+  This is often expressed as "N choose k".
+
+  Args:
+    N: The number of things.
+    k: The number of elements taken.
+    exact: If `True`, the result is computed exactly and returned as an integer type.
+      Currently, vectorization is not supported for exact=True.
+    repetition: If `repetition` is True, then the number of combinations with
+      repetition is computed.
+    
+  Returns:
+    The number of combinations of N things taken k at a time.
+
+  Notes:
+  When exact=False, the result is approximately and efficiently computed using the following formula:
+
+  .. math::
+    \begin{equation}
+    \exp\left\{\ln{\Gamma(N+1)} - [\ln{\Gamma(k+1)} + \ln{\Gamma(N+1-k)}]\right\}
+    \end{equation}
+  
+  Where we use the Gamma function. 
+  """
+  if repetition:
+    return comb(N + k - 1, k, exact=exact, repetition=False)
+  
+  if exact:
+    max_divisor = lax.max(k, N - k)
+    min_divisor = lax.min(k, N - k)
+    N_factorial_over_max_factorial = np.prod(np.arange(N, max_divisor, -1))
+    return lax.div(N_factorial_over_max_factorial, np.prod(np.arange(1, min_divisor + 1)))
+
+  one = _constant_like(N, 1)
+  N_plus_1 = lax.add(N,one)
+  k_plus_1 = lax.add(k,one)
+  return lax.exp(lax.sub(gammaln(N_plus_1),lax.add(gammaln(k_plus_1), gammaln(lax.sub(N_plus_1,k)))))
+
+
