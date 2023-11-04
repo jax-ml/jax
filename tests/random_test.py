@@ -1348,9 +1348,9 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
 
   def test_errors(self):
     key = random.key(123)
-    with self.assertRaisesRegex(ValueError, "dtype=key<fry> is not a valid dtype"):
+    with self.assertRaisesRegex(TypeError, "add does not accept dtypes key<fry>, int.*"):
       jnp.add(key, 1)
-    with self.assertRaisesRegex(ValueError, "dtype=key<fry> is not a valid dtype"):
+    with self.assertRaisesRegex(TypeError, "add does not accept dtypes key<fry>, int.*"):
       key + 1
     with self.assertRaisesRegex(TypeError, "add does not accept dtype key<fry>"):
       jnp.add(key, key)

@@ -1250,7 +1250,7 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
   def test_cannot_add(self):
     key = self.make_key(73)
     self.assertRaisesRegex(
-        ValueError, r'dtype=key<.*> is not a valid dtype for JAX type promotion.',
+        TypeError, r'add does not accept dtypes key<.*>, int.*',
         lambda: key + 47)
 
   def test_grad_of_prng_key(self):
@@ -1319,7 +1319,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     if not jnp.issubdtype(key.dtype, dtypes.prng_key):
       raise SkipTest('relies on typed key arrays')
     self.assertRaisesRegex(
-        ValueError, r'dtype=key<.*> is not a valid dtype for JAX type promotion.',
+        TypeError, r'add does not accept dtypes key<.*>, int.*',
         lambda: key + 47)
 
   def test_grad_of_prng_key(self):
