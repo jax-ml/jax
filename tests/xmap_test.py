@@ -1905,7 +1905,7 @@ class NamedAutodiffTests(jtu.JaxTestCase):
                in_axes=({}, {0: 'batch'}, {0: 'batch'}),
                out_axes=({0: 'batch'}, {0: 'batch'}))(w, x, gy)
     expected = vmap(vjp_f, in_axes=(None, 0, 0), out_axes=(0, 0))(w, x, gy)
-    self.assertAllClose(out, expected, check_dtypes=True, rtol=0.005)
+    self.assertAllClose(out, expected, check_dtypes=True)
 
     # reduced
     out = xmap(vjp_f_reduced,
@@ -1913,7 +1913,7 @@ class NamedAutodiffTests(jtu.JaxTestCase):
                out_axes=({}, {0: 'batch'}))(w, x, gy)
     # the reduced VJP is also the VJP when using a positional batch axis
     expected = vjp_f(w, x, gy)
-    self.assertAllClose(out, expected, check_dtypes=True, rtol=0.005)
+    self.assertAllClose(out, expected, check_dtypes=True)
 
   def testVjpReduceAxesCollective(self):
 
@@ -1952,7 +1952,7 @@ class NamedAutodiffTests(jtu.JaxTestCase):
                in_axes=({}, {0: 'batch'}),
                out_axes=({}, {0: 'batch'}))(w, x)
     expected = jax.grad(f_positional, (0, 1))(w, x)
-    self.assertAllClose(out, expected, check_dtypes=True, rtol=0.005)
+    self.assertAllClose(out, expected, check_dtypes=True)
 
 
 if __name__ == '__main__':
