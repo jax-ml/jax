@@ -1130,17 +1130,21 @@ def select(
 
 
 @util._wraps(np.bincount, lax_description="""\
-Jax adds the optional `length` parameter which specifies the output length, and
+JAX adds the optional `length` parameter which specifies the output length, and
 defaults to ``x.max() + 1``. It must be specified for bincount to be compiled
 with non-static operands. Values larger than the specified length will be discarded.
-If `length` is specified, `minlength` will be ignored.
+If `length` is specified, `minlength` will be ignored. Another additional optional
+parameter in the JAX version is the `dtype` for the output, which defaults to that of
+`weights`. It is useful to avoid round-off errors without upcasting the `weights` array
+which can be large when such problem arises.
 
 Additionally, while ``np.bincount`` raises an error if the input array contains
 negative values, ``jax.numpy.bincount`` clips negative values to zero.
 """)
-def bincount(x: ArrayLike, weights: ArrayLike | None = None,
-             minlength: int = 0, *, length: int | None = None) -> Array:
+def bincount(x: ArrayLike, weights: ArrayLike | None = None, minlength: int = 0,
+             *, length: int | None = None, dtype: DTypeLike | None = None) -> Array:
   util.check_arraylike("bincount", x)
+  dtypes.check_user_dtype_supported(dtype, "bincount")
   if not issubdtype(_dtype(x), integer):
     raise TypeError(f"x argument to bincount must have an integer type; got {_dtype(x)}")
   if ndim(x) != 1:
@@ -1159,7 +1163,9 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     weights = np.array(1, dtype=int_)
   elif shape(x) != shape(weights):
     raise ValueError("shape of weights must match shape of x.")
-  return zeros(length, _dtype(weights)).at[clip(x, 0)].add(weights)
+  if dtype is None:
+      dtype = _dtype(weights)
+  return zeros(length, dtype).at[clip(x, 0)].add(weights)
 
 @overload
 def broadcast_shapes(*shapes: Sequence[int]) -> tuple[int, ...]: ...

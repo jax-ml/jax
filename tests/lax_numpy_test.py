@@ -4209,6 +4209,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if length is not None:
       self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jax.numpy_dtype_promotion('standard')  # type promotion during scatter
+  def testBincountDtype(self):
+    eps = 1e-5
+    x = jnp.array([0, 0], dtype=jnp.uint8)
+    w = jnp.array([1, eps], dtype=jnp.float16)
+    result_f2 = jnp.bincount(x, w).astype(jnp.float32)
+    expected_f2 = jnp.array([1], dtype=jnp.float32)
+    result_f4 = jnp.bincount(x, w, dtype=jnp.float32)
+    expected_f4 = jnp.array([1 + eps], dtype=jnp.float32)
+    self.assertAllClose(result_f2, expected_f2, atol=0.01 * eps, rtol=0)
+    self.assertAllClose(result_f4, expected_f4, atol=0.01 * eps, rtol=0)
+
   def testBincountNegative(self):
     # Test that jnp.bincount ignores negative values.
     x_rng = jtu.rand_int(self.rng(), -100, 100)
