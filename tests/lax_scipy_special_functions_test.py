@@ -28,6 +28,7 @@ from jax.scipy import special as lsp_special
 
 from jax import config
 config.parse_flags_with_absl()
+config.update("jax_enable_x64", True)
 
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
@@ -209,6 +210,8 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     lax_op = functools.partial(lsp_special.comb, N, k, exact=exact, repetition=repetition)
     args_maker = lambda: []
     self._CheckAgainstNumpy(scipy_op, lax_op, args_maker, atol=0, rtol=1E-5)
+    if exact == False:
+        self._CompileAndCheck(lax_op, args_maker, atol=0, rtol=1E-5)
 
 
 
