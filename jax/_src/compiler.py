@@ -389,19 +389,17 @@ def _cache_write(cache_key: str,
     return
 
   min_compile_time = config.persistent_cache_min_compile_time_secs.value
-  if min_compile_time:
-    if compile_time_secs < min_compile_time:
-      logger.debug(
-          "Not writing persistent cache entry for '%s' because it took < %.2f "
-          "seconds to compile (%.2fs)", module_name, min_compile_time,
-          compile_time_secs)
-      return
-    else:
-      logger.debug(
-          "'%s' took at least %.2f seconds to compile (%.2fs), writing "
-          "persistent cache entry", module_name, min_compile_time,
-          compile_time_secs)
-      monitoring.record_event('/jax/compilation_cache/cache_misses')
+  if compile_time_secs < min_compile_time:
+    logger.debug(
+        "Not writing persistent cache entry for '%s' because it took < %.2f "
+        "seconds to compile (%.2fs)", module_name, min_compile_time,
+        compile_time_secs)
+    return
+  else:
+    logger.debug(
+        "'%s' took at least %.2f seconds to compile (%.2fs), writing persistent"
+        " cache entry", module_name, min_compile_time, compile_time_secs)
+    monitoring.record_event('/jax/compilation_cache/cache_misses')
 
   try:
     compilation_cache.put_executable_and_time(

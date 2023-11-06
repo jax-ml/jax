@@ -385,11 +385,12 @@ class CompilationCacheTest(jtu.JaxTestCase):
         - previous_counts["/jax/compilation_cache/compile_requests_use_cache"],
         3)
 
-  def test_cache_misses_metric(self):
+  @parameterized.parameters(0, 2)
+  def test_cache_misses_metric(self, min_compile_time_secs):
     previous_counts = Counter(_counts)
     with (
       tempfile.TemporaryDirectory() as tmpdir,
-      config.persistent_cache_min_compile_time_secs(2),
+      config.persistent_cache_min_compile_time_secs(min_compile_time_secs),
     ):
       cc.initialize_cache(tmpdir)
 
