@@ -2322,10 +2322,14 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
 
   # a) attach a positive ID to each update in `updates`, and perform a scatter
   #    on the IDs.
-  ids_shape = np.array(updates.shape, dtype=np.int64)
-  ids_shape[dnums.update_window_dims,] = 1
+  ids_shape = list(updates.shape)
+  for update_dim in dnums.update_window_dims:
+    ids_shape[update_dim] = 1
   num_ids = math.prod(ids_shape)
-  id_dtype = np.uint32 if (num_ids + 1) < np.iinfo(np.uint32).max else np.uint64
+  if core.is_constant_dim(num_ids):
+    id_dtype = np.uint32 if (num_ids + 1) < np.iinfo(np.uint32).max else np.uint64
+  else:
+    id_dtype = np.uint64
   update_ids = lax.add(lax.reshape(lax.iota(id_dtype, num_ids), ids_shape),
                        lax._ones(updates, dtype=id_dtype))
 
