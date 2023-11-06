@@ -3573,6 +3573,7 @@ def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
 @partial(jit, static_argnames=('axisa', 'axisb', 'axisc', 'axis'))
 def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
           axis: int | None = None):
+  # TODO(jakevdp): NumPy 2.0 deprecates 2D inputs. Follow suit here.
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
   util.check_arraylike("cross", a, b, emit_warning=True)
   if axis is not None:
