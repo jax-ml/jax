@@ -28,6 +28,9 @@ except ImportError:
   from mlir.dialects._ods_common import _cext
 
 
+_cext.globals.append_dialect_search_prefix("jax.jaxlib.mosaic.python")
+
+
 @_cext.register_operation(_Dialect, replace=True)
 class TraceOp(TraceOp):
   """An extension to the automatically generated TraceOp bindings."""
