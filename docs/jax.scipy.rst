@@ -131,6 +131,7 @@ jax.scipy.special
   :toctree: _autosummary
 
    bernoulli
+   beta
    betainc
    betaln
    digamma

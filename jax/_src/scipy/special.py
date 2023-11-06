@@ -56,6 +56,12 @@ betaln = _wraps(
 )(_betaln_impl)
 
 
+@_wraps(osp_special.beta, module='scipy.special')
+def beta(x: ArrayLike, y: ArrayLike) -> Array:
+  x, y = promote_args_inexact("beta", x, y)
+  return lax.exp(betaln(x, y))
+
+
 @_wraps(osp_special.betainc, module='scipy.special')
 def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   a, b, x = promote_args_inexact("betainc", a, b, x)
