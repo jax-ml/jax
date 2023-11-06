@@ -587,16 +587,17 @@ def nanprod(a: ArrayLike, axis: Axis = None, dtype: Optional[DTypeLike] = None, 
 def nanmean(a: ArrayLike, axis: Axis = None, dtype: Optional[DTypeLike] = None, out: None = None,
             keepdims: bool = False, where: Optional[ArrayLike] = None) -> Array:
   check_arraylike("nanmean", a)
-  dtypes.check_user_dtype_supported(dtype, "nanmean")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanmean is not supported.")
   if dtypes.issubdtype(dtypes.dtype(a), np.bool_) or dtypes.issubdtype(dtypes.dtype(a), np.integer):
     return mean(a, axis, dtype, out, keepdims, where=where)
   if dtype is None:
-    dtype = dtypes.dtype(a)
+    dtype = dtypes.to_inexact_dtype(dtypes.dtype(a, canonicalize=True))
+  else:
+    dtypes.check_user_dtype_supported(dtype, "mean")
+    dtype = dtypes.canonicalize_dtype(dtype)
   nan_mask = lax_internal.bitwise_not(lax_internal._isnan(a))
-  normalizer = sum(nan_mask, axis=axis, dtype=np.int32, keepdims=keepdims, where=where)
-  normalizer = lax.convert_element_type(normalizer, dtype)
+  normalizer = sum(nan_mask, axis=axis, dtype=dtype, keepdims=keepdims, where=where)
   td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims, where=where), normalizer)
   return td
 
