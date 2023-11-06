@@ -15,6 +15,7 @@
 
 import functools
 from functools import partial
+import importlib
 import itertools
 import operator
 from typing import Optional, Union
@@ -26,12 +27,19 @@ from jaxlib import xla_client
 from .hlo_helpers import custom_call
 from .gpu_common_utils import GpuLibNotLinkedError
 
-try:
-  from .cuda import _prng as _cuda_prng  # pytype: disable=import-error
+for cuda_module_name in [".cuda", "jax_cuda12_plugin", "jax_cuda11_plugin"]:
+  try:
+    _cuda_prng = importlib.import_module(
+        f"{cuda_module_name}._prng", package="jaxlib"
+    )
+  except ImportError:
+    _cuda_prng = None
+  else:
+    break
+
+if _cuda_prng:
   for _name, _value in _cuda_prng.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
-except ImportError:
-  _cuda_prng = None
 
 try:
   from .rocm import _prng as _hip_prng  # pytype: disable=import-error

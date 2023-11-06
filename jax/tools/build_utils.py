@@ -84,3 +84,14 @@ def build_editable(
   )
   shutil.rmtree(output_path, ignore_errors=True)
   shutil.copytree(sources_path, output_path)
+
+
+def update_setup_with_cuda_version(file_dir: pathlib.Path, cuda_version: str):
+  src_file = file_dir / "setup.py"
+  with open(src_file, "r") as f:
+    content = f.read()
+  content = content.replace(
+      "cuda_version = 0  # placeholder", f"cuda_version = {cuda_version}"
+  )
+  with open(src_file, "w") as f:
+    f.write(content)

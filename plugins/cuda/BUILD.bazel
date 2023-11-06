@@ -21,6 +21,8 @@ package(
 
 exports_files([
     "__init__.py",
+    "plugin_pyproject.toml",
+    "plugin_setup.py",
     "pyproject.toml",
     "setup.py",
 ])

@@ -11,11 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import importlib
 
 from jaxlib import xla_client
 
-try:
-  from .cuda import _triton as _cuda_triton  # pytype: disable=import-error
+for cuda_module_name in [".cuda", "jax_cuda12_plugin", "jax_cuda11_plugin"]:
+  try:
+    _cuda_triton = importlib.import_module(
+        f"{cuda_module_name}._triton", package="jaxlib"
+    )
+  except ImportError:
+    _cuda_triton = None
+  else:
+    break
+
+if _cuda_triton:
   xla_client.register_custom_call_target(
       "triton_kernel_call", _cuda_triton.get_custom_call(),
       platform='CUDA')
@@ -27,8 +37,6 @@ try:
   get_compute_capability = _cuda_triton.get_compute_capability
   get_custom_call = _cuda_triton.get_custom_call
   get_serialized_metadata = _cuda_triton.get_serialized_metadata
-except ImportError:
-  _cuda_triton = None
 
 try:
   from .rocm import _triton as _hip_triton # pytype: disable=import-error

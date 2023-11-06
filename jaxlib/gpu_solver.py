@@ -14,6 +14,7 @@
 
 from collections.abc import Sequence
 from functools import partial
+import importlib
 import math
 
 import jaxlib.mlir.ir as ir
@@ -31,17 +32,32 @@ from .hlo_helpers import (
 
 try:
   from .cuda import _blas as _cublas  # pytype: disable=import-error
+except ImportError:
+  for cuda_module_name in ["jax_cuda12_plugin", "jax_cuda11_plugin"]:
+    try:
+      _cublas = importlib.import_module(f"{cuda_module_name}._blas")
+    except ImportError:
+      _cublas = None
+    else:
+      break
+
+if _cublas:
   for _name, _value in _cublas.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
-except ImportError:
-  _cublas = None
 
-try:
-  from .cuda import _solver as _cusolver  # pytype: disable=import-error
+for cuda_module_name in [".cuda", "jax_cuda12_plugin", "jax_cuda11_plugin"]:
+  try:
+    _cusolver = importlib.import_module(
+        f"{cuda_module_name}._solver", package="jaxlib"
+    )
+  except ImportError:
+    _cusolver = None
+  else:
+    break
+
+if _cusolver:
   for _name, _value in _cusolver.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
-except ImportError:
-  _cusolver = None
 
 
 try:

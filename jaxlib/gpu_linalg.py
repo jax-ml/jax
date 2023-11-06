@@ -14,6 +14,7 @@
 
 import functools
 from functools import partial
+import importlib
 import operator
 
 import jaxlib.mlir.ir as ir
@@ -23,12 +24,19 @@ from .gpu_common_utils import GpuLibNotLinkedError
 
 from jaxlib import xla_client
 
-try:
-  from .cuda import _linalg as _cuda_linalg  # pytype: disable=import-error
+for cuda_module_name in [".cuda", "jax_cuda12_plugin", "jax_cuda11_plugin"]:
+  try:
+    _cuda_linalg = importlib.import_module(
+        f"{cuda_module_name}._linalg", package="jaxlib"
+    )
+  except ImportError:
+    _cuda_linalg = None
+  else:
+    break
+
+if _cuda_linalg:
   for _name, _value in _cuda_linalg.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
-except ImportError:
-  _cuda_linalg = None
 
 try:
   from .rocm import _linalg as _hip_linalg  # pytype: disable=import-error
