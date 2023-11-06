@@ -144,12 +144,13 @@ class CompatTest(bctu.CompatTestBase):
     # An old lowering, with ducc_fft. We keep it for 6 months.
     data = self.load_testdata(cpu_ducc_fft.data_2023_03_17)
     # We have changed the lowering for fft since we saved this data.
-    self.run_one_test(func, data,
-                      expect_current_custom_calls=["dynamic_ducc_fft"])
+    # FFT no longer lowers to a custom call.
+    self.run_one_test(func, data, expect_current_custom_calls=[])
 
     # A newer lowering, with dynamic_ducc_fft.
     data = self.load_testdata(cpu_ducc_fft.data_2023_06_14)
-    self.run_one_test(func, data)
+    # FFT no longer lowers to a custom call.
+    self.run_one_test(func, data, expect_current_custom_calls=[])
 
   def cholesky_input(self, shape, dtype):
     a = jtu.rand_default(self.rng())(shape, dtype)
