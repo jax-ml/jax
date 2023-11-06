@@ -209,9 +209,9 @@ class LaxRandomTest(jtu.JaxTestCase):
     rand = lambda key: random.shuffle(key, x)
     crand = jax.jit(rand)
 
-    with self.assertWarns(FutureWarning):
+    with self.assertWarns((DeprecationWarning, FutureWarning)):
       perm1 = rand(key)
-    with self.assertWarns(FutureWarning):
+    with self.assertWarns((DeprecationWarning, FutureWarning)):
       perm2 = crand(key)
 
     self.assertAllClose(perm1, perm2)
