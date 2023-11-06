@@ -25,6 +25,8 @@ import scipy.special as osp_special
 import jax
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
+from jax import config
+config.update("jax_enable_x64", True)
 
 from jax import config
 config.parse_flags_with_absl()
