@@ -98,7 +98,7 @@ py_extension(
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "//jaxlib/mosaic:tpu_dialect_capi_headers",
-        "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
         "@pybind11",
     ],
@@ -242,6 +242,7 @@ cc_library(
         ":jax_dialects_capi",
         "//jaxlib/mosaic:tpu_dialect_capi_objects",
         "@llvm-project//mlir:CAPIArithObjects",
+        "@llvm-project//mlir:CAPIIRObjects",
         "@llvm-project//mlir:CAPIMathObjects",
         "@llvm-project//mlir:CAPIMemRefObjects",
         "@llvm-project//mlir:CAPISparseTensorObjects",
