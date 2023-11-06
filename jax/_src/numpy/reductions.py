@@ -650,9 +650,16 @@ class CumulativeReduction(Protocol):
                dtype: Optional[DTypeLike] = None, out: None = None) -> Array: ...
 
 
+# TODO(jakevdp): should we change these semantics to match those of numpy?
+CUML_REDUCTION_LAX_DESCRIPTION = """
+Unlike the numpy counterpart, when ``dtype`` is not specified the output dtype will always
+match the dtype of the input.
+"""
+
 def _make_cumulative_reduction(np_reduction: Any, reduction: Callable[..., Array],
                                fill_nan: bool = False, fill_value: ArrayLike = 0) -> CumulativeReduction:
-  @_wraps(np_reduction, skip_params=['out'])
+  @_wraps(np_reduction, skip_params=['out'],
+          lax_description=CUML_REDUCTION_LAX_DESCRIPTION)
   def cumulative_reduction(a: ArrayLike, axis: Axis = None,
                            dtype: Optional[DTypeLike] = None, out: None = None) -> Array:
     return _cumulative_reduction(a, _ensure_optional_axes(axis), dtype, out)
