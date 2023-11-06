@@ -20,6 +20,7 @@ from typing import Any, Optional, Union
 
 from jax._src import clusters
 from jax._src import config
+from jax._src import xla_bridge
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
 
@@ -40,6 +41,9 @@ class State:
                  process_id: Optional[int] = None,
                  local_device_ids: Optional[Union[int, Sequence[int]]] = None,
                  initialization_timeout: int = 300):
+    if xla_bridge.backends_are_initialized():
+      raise RuntimeError("jax.distributed.initialize() must be called before "
+                         "any JAX computations are executed.")
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS', None))
     if isinstance(local_device_ids, int):
