@@ -972,7 +972,7 @@ include_full_tracebacks_in_locations = define_bool_state(
 
 use_original_compilation_cache_key_generation = define_bool_state(
     name='jax_use_original_compilation_cache_key_generation',
-    default=True,
+    default=False,
     help="If true, use the original cache-key generation algorithm. This is "
          "a transient flag; once the new cache-key generation algorithm is "
          "deployed, this flag and the original cache-key generation algorithm "
