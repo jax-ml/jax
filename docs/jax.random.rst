@@ -60,7 +60,6 @@ Random Samplers
     rademacher
     randint
     rayleigh
-    shuffle
     t
     triangular
     truncated_normal
