@@ -582,7 +582,7 @@ def is_gpu(platform):
 def backends_are_initialized() -> bool:
   "Returns true if backends have already been initialized."
   with _backend_lock:
-    return _backends is not None
+    return len(_backends) != 0
 
 
 def backends() -> dict[str, xla_client.Client]:
