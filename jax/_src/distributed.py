@@ -41,9 +41,6 @@ class State:
                  process_id: Optional[int] = None,
                  local_device_ids: Optional[Union[int, Sequence[int]]] = None,
                  initialization_timeout: int = 300):
-    if xla_bridge.backends_are_initialized():
-      raise RuntimeError("jax.distributed.initialize() must be called before "
-                         "any JAX computations are executed.")
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS', None))
     if isinstance(local_device_ids, int):
@@ -181,6 +178,9 @@ def initialize(coordinator_address: Optional[str] = None,
 
   >>> jax.distributed.initialize(coordinator_address='10.0.0.1:1234', num_processes=2, process_id=1)  # doctest: +SKIP
   """
+  if xla_bridge.backends_are_initialized():
+    raise RuntimeError("jax.distributed.initialize() must be called before "
+                        "any JAX computations are executed.")
   global_state.initialize(coordinator_address, num_processes, process_id,
                           local_device_ids, initialization_timeout)
   atexit.register(shutdown)
