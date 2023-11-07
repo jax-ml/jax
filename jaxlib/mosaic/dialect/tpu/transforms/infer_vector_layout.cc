@@ -261,6 +261,10 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<vector::ExtractOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<vector::LoadOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -831,6 +835,20 @@ class VectorLayoutInferer {
                      op.getIndexingMaps() == matmul_indexing_maps_transposed,
                  "Not a matmul");
     return inferMatmul(op);
+  }
+
+  LogicalResult infer(vector::ExtractOp op) {
+    TPU_CHECK_OP(!op.hasDynamicPosition(), "dynamic indices not supported");
+    TPU_CHECK_OP(
+        op.getSourceVectorType().getElementTypeBitWidth() == kNativeBitwidth,
+        "Only 32-bit types supported");
+    auto layout = getLayout(op.getVector());
+    TPU_CHECK_OP(layout.has_value(), "missing vector layout");
+    setLayout(op,
+              VectorLayout(kNativeBitwidth, {0, 0}, layout->tiling(),
+                           layout->implicit_dim()),
+              kNoLayout);
+    return success();
   }
 
   LogicalResult infer(vector::LoadOp op) {

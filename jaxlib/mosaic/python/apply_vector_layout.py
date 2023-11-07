@@ -2501,6 +2501,24 @@ def _vector_broadcast_rule(ctx: RewriteContext, op: vector.BroadcastOp,  # pylin
     return ctx.replace(op, assemble(dst_ty, layout_out, dst_tiles))
 
 
+@_register_rule("vector.extract")
+def _vector_extract_rule(ctx: RewriteContext, op: vector.ExtractOp,  # pylint: disable=missing-function-docstring
+                         layout_in: Layout, layout_out: VectorLayout):
+  if layout_out is not None:
+    raise NotImplementedError("Vector results of extract unsupported")
+  if layout_in.bitwidth != 32:
+    raise NotImplementedError("Only 32-bit vector.extract supported")
+  if layout_in.offsets != (0, 0):
+    raise NotImplementedError("Unsupported layout")
+  if len(op.operands) > 1:
+    raise NotImplementedError("Dynamic indices not supported")
+  idx = ir.DenseI64ArrayAttr(op.attributes["static_position"])
+  if any(i != 0 for i in idx):
+    raise NotImplementedError("Only 0 indices supported")
+  vregs = disassemble(layout_in, op.vector)
+  ctx.replace(op, vector.ExtractOp(vregs.flat[0], [], [0, 0]))
+
+
 @_register_rule("vector.load")
 def _vector_load_rule(  # pylint: disable=missing-function-docstring
     ctx: RewriteContext, op: vector.LoadOp,

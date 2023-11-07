@@ -1986,6 +1986,48 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
   }
 }
 
+LogicalResult vector_extract_rule(RewriteContext &ctx, Operation &op,
+                                  const ArrayRef<Layout> layouts_in,
+                                  const ArrayRef<Layout> layouts_out) {
+  vector::ExtractOp extract_op = cast<vector::ExtractOp>(op);
+  if (extract_op.hasDynamicPosition()) {
+    return op.emitOpError("Not implemented: dynamic indices");
+  }
+  CHECK_EQ(layouts_in.size(), 1);
+  CHECK_EQ(layouts_out.size(), 1);
+  if (!layouts_in.front().has_value()) {
+    return op.emitOpError("Expected non-null output layout");
+  }
+  const VectorLayout &layout_in = *layouts_in.front();
+  if (layouts_out.front().has_value()) {
+    return op.emitOpError("Not implemented: Only scalar results supported");
+  }
+  if (layout_in.bitwidth() != 32) {
+    return op.emitOpError(
+        "Not implemented: Only 32-bit vector.extract supported");
+  }
+  if (layout_in.offsets() != LayoutOffsets{0, 0}) {
+    return op.emitOpError("Not implemented: Unsupported layout");
+  }
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
+  for (int64_t i : extract_op.getStaticPosition()) {
+    if (i != 0) {
+      return op.emitOpError("Not implemented: Only 0 indices supported");
+    }
+  }
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const xla::Array<Value> vregs,
+      disassemble(ctx, builder, layout_in, extract_op.getVector()));
+  CHECK_GT(vregs.num_elements(), 0);
+  extract_op.replaceAllUsesWith(
+      builder
+          .create<vector::ExtractOp>(op.getLoc(), *vregs.data(),
+                                     ArrayRef<int64_t>{0, 0})
+          .getResult());
+  extract_op.erase();
+  return success();
+}
+
 LogicalResult vector_contract_rule(RewriteContext &ctx, Operation &op,
                                    const ArrayRef<Layout> layouts_in,
                                    const ArrayRef<Layout> layouts_out) {
@@ -2867,6 +2909,7 @@ const llvm::StringMap<rule_type> &rules() {
       {tpu::TraceOp::getOperationName(), tpu_trace_rule},
       {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
       {vector::ContractionOp::getOperationName(), vector_contract_rule},
+      {vector::ExtractOp::getOperationName(), vector_extract_rule},
       {vector::LoadOp::getOperationName(), vector_load_rule},
       {vector::MultiDimReductionOp::getOperationName(),
        vector_multi_reduction_rule},
