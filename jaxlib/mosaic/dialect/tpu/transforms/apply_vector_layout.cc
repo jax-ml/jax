@@ -1888,7 +1888,7 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
         return op.emitOpError("Not implemented: unsupported tiling");
       }
       int64_t num_tiles = layout_in.tilesPerVreg(ctx.target_shape);
-      CHECK(!(*(dim_eq.end() - 1) || !(*(dim_eq.end() - 2))));
+      CHECK(!*(dim_eq.end() - 1) || !*(dim_eq.end() - 2));
       if (*(dim_eq.end() - 1)) {  // Sublane broadcast
         if (num_tiles != 1) {
           return op.emitOpError(
