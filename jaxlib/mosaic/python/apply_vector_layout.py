@@ -1847,6 +1847,20 @@ def _arith_extsi_rule(  # pylint: disable=missing-function-docstring
   return _ext_op_rule(ctx, op, layout_in, layout_out)
 
 
+@_register_rule("arith.bitcast")
+def _arith_bitcast_rule(
+    ctx: RewriteContext,
+    op: arith.BitcastOp,
+    layout_in: VectorLayout,
+    layout_out: VectorLayout,
+):
+  def factory(inp):
+    return arith.BitcastOp(
+        native_vreg_ty(ir.VectorType(op.result.type).element_type), inp
+    )
+  return _elementwise_op_rule(factory, ctx, op, layout_in, layout_out)
+
+
 def _trunc_op_rule(  # pylint: disable=missing-function-docstring
     ctx: RewriteContext, op, layout_in: VectorLayout, layout_out: VectorLayout
 ):
