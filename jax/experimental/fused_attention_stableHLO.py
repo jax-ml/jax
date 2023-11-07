@@ -123,19 +123,20 @@ def create_dot_product_attention_backend_config(batch_size,
     # bmm1Grad1: dP @ Q -> dK
     # bmm1Grad2: dP @ K -> dQ
     backend_config = {
-        "algorithm":{"algo_id":"0","math_type":"TENSOR_OP_MATH","tuning_knobs":{"17":"1","24":"0"},"is_cudnn_frontend":True,"workspace_size":"0"},
+        # "algorithm":{"algo_id":"0","math_type":"TENSOR_OP_MATH","tuning_knobs":{"17":"1","24":"0"},"is_cudnn_frontend":True,"workspace_size":"0"},
         "fmha_scale":fmha_scale,
         "dropout_rate":dropout_rate,
-        "bmm1_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["3"],"lhs_batch_dimensions":["0","2"],"rhs_batch_dimensions":["0","2"]},
-        "bmm2_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","2"]},
-        "bmm1_grad_gemm1_dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],"rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","2"]},
-        "bmm1_grad_gemm2_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","2"]},
-        "bmm2_grad_gemm1_dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],"rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","2"]},
-        "bmm2_grad_gemm2_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["3"],"lhs_batch_dimensions":["0","2"],"rhs_batch_dimensions":["0","2"]},
-        "intermediate_tensor_shape":{"element_type":element_type_to_backend_config_type_mapping(dtype),"dimensions":[str(batch_size),str(num_heads),str(seq_q),str(seq_kv)],"tuple_shapes":[],"layout":{"dim_level_types":[],"dim_unique":[],"dim_ordered":[],"minor_to_major":["3","2","1","0"],"tiles":[],"element_size_in_bits":"0","memory_space":"0","index_primitive_type":"PRIMITIVE_TYPE_INVALID","pointer_primitive_type":"PRIMITIVE_TYPE_INVALID","dynamic_shape_metadata_prefix_bytes":"0"},"is_dynamic_dimension":[False,False,False,False]},
-        "seed":"42",
-        "is_flash_attention":is_flash_attention,
-        "is_causal_mask":is_causal_mask}
+        # "bmm1_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["3"],"lhs_batch_dimensions":["0","2"],"rhs_batch_dimensions":["0","2"]},
+        # "bmm2_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","2"]},
+        # "bmm1_grad_gemm1_dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],"rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","2"]},
+        # "bmm1_grad_gemm2_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","2"]},
+        # "bmm2_grad_gemm1_dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],"rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","2"]},
+        # "bmm2_grad_gemm2_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["3"],"lhs_batch_dimensions":["0","2"],"rhs_batch_dimensions":["0","2"]},
+        # "intermediate_tensor_shape":{"element_type":element_type_to_backend_config_type_mapping(dtype),"dimensions":[str(batch_size),str(num_heads),str(seq_q),str(seq_kv)],"tuple_shapes":[],"layout":{"dim_level_types":[],"dim_unique":[],"dim_ordered":[],"minor_to_major":["3","2","1","0"],"tiles":[],"element_size_in_bits":"0","memory_space":"0","index_primitive_type":"PRIMITIVE_TYPE_INVALID","pointer_primitive_type":"PRIMITIVE_TYPE_INVALID","dynamic_shape_metadata_prefix_bytes":"0"},"is_dynamic_dimension":[False,False,False,False]},
+        # "seed":"42",
+        # "is_flash_attention":is_flash_attention,
+        # "is_causal_mask":is_causal_mask
+        }
     return backend_config
 
 def _dot_product_attention_fwd_cuda_lowering(ctx, query, key, value, scale):
@@ -151,20 +152,27 @@ def _dot_product_attention_fwd_cuda_lowering(ctx, query, key, value, scale):
 
     output_shape = (batch_size, q_seq_len, num_heads, head_dim)
     activation_shape = (batch_size, num_heads, q_seq_len, kv_seq_len)
+    scratch_shape = (0,)
+    scratch_type = ir.IntegerType.get_unsigned(8)
 
-    opaque = create_dot_product_attention_backend_config(batch_size, num_heads, q_seq_len, kv_seq_len, query_type.element_type, scale, 0, False, False)
+    # BlockArgument scale
+    # opaque = create_dot_product_attention_backend_config(batch_size, num_heads, q_seq_len, kv_seq_len, query_type.element_type, 1.0, 0, False, False)
+    opaque = ""
+    # {output, scratch, activation*}
     out = custom_call(
         b"__cudnn$fhmaSoftmax",
         result_types=[
             ir.RankedTensorType.get(output_shape, query_type.element_type),
+            ir.RankedTensorType.get(scratch_shape, scratch_type),
             ir.RankedTensorType.get(activation_shape, query_type.element_type),
         ],
         operands=[query, key, value],
         backend_config=opaque,
         operand_layouts=default_layouts(query_shape, key_shape, value_shape),
-        result_layouts=default_layouts(output_shape, activation_shape),
+        result_layouts=default_layouts(output_shape, scratch_shape, activation_shape),
     )
-    return out
+    # dropout scratch memory
+    return out.results[:1] + out.results[-1:]
 
 mlir.register_lowering(
     _dot_product_attention_fwd_p,
@@ -182,24 +190,29 @@ def _dot_product_attention_bwd_cuda_lowering(ctx, grad_output, query, key, value
     activation_type = ir.RankedTensorType(activation.type)
     activation_shape = activation_type.shape
 
-    batch_size, q_seq_len, num_heads, _ =query_shape
+    batch_size, q_seq_len, num_heads, _ = query_shape
     _, kv_seq_len, _, _ = key_shape
-
+    scratch_shape = (0,)
+    scratch_type = ir.IntegerType.get_unsigned(8)
 
     opaque = create_dot_product_attention_backend_config(batch_size, num_heads, q_seq_len, kv_seq_len, query_type.element_type, scale, 0, False, False)
+    # {dQ, dK, dV, d_S*, softmax_sum*, d_Q_accum*, scratch, dbias*}
     out = custom_call(
         b"__cudnn$fhmaSoftmaxBackward",
         result_types=[
             ir.RankedTensorType.get(query_shape, query_type.element_type), # grad query
             ir.RankedTensorType.get(key_shape, key_type.element_type), # grad key
             ir.RankedTensorType.get(value_shape, value_type.element_type), # grad value
+            ir.RankedTensorType.get(activation_shape, activation_type.element_type), # dS
+            ir.RankedTensorType.get(scratch_shape, scratch_type), # scratch
         ],
         operands=[query, key, value, activation],
         backend_config=opaque,
         operand_layouts=default_layouts(query_shape, key_shape, value_shape, activation_shape),
         result_layouts=default_layouts(query_shape, key_shape, value_shape),
     )
-    return out
+    # drop dS and scratch memory
+    return out.results[:3]
 
 mlir.register_lowering(
     _dot_product_attention_bwd_p,
