@@ -168,10 +168,10 @@ def lower_jaxpr_to_module(
   used_axis_names = jax_core.used_axis_names_jaxpr(jaxpr)
   mesh_info = None
   if used_axis_names:
-    axis_names = list(used_axis_names)
     if mesh is None:
       raise ValueError("Cannot use axis names in pallas_call without shard_map."
                        )
+    axis_names = mesh.axis_names
     # We need mesh <-> logical translation tables. Since the logical IDs are
     # just linearized versions of the mesh IDs, we create those tables.
     mesh_strides = pallas_utils.strides_from_shape(tuple(
@@ -180,7 +180,7 @@ def lower_jaxpr_to_module(
     logical_to_mesh = np.empty((mesh.size, len(axis_names)), dtype=np.int32)
     for i, idx in enumerate(np.ndindex(*mesh.device_ids.shape)):
       logical_to_mesh[i] = np.array(idx)
-    mesh_info = (logical_to_mesh, tuple(axis_names), mesh_strides)
+    mesh_info = (logical_to_mesh, axis_names, mesh_strides)
   extra_args = mesh_info[:1] if mesh_info else ()
   func_op = lower_jaxpr_to_func(ctx, jaxpr, grid_mapping=grid_mapping,
                                 name="main", mesh_info=mesh_info)
@@ -209,8 +209,11 @@ def lower_jaxpr_to_module(
       mlir_func = lower_jaxpr_to_transform_func(
           ctx,
           bm.index_map_jaxpr.jaxpr,
-          [*[None] * len(grid), *[SMEM] * num_smem_inputs],
-          name=func_name)
+          [*[None] * len(grid), *[SMEM] * grid_mapping.num_index_operands],
+          name=func_name,
+          mesh_info=mesh_info,
+          grid_mapping=grid_mapping,
+      )
       assert mlir_func.verify(), mlir_func
       block_shape = [
           1 if b is core.mapped else b for b in bm.block_shape
@@ -262,15 +265,70 @@ def lower_jaxpr_to_module(
 
 
 def lower_jaxpr_to_transform_func(
-    ctx: ir.Context, jaxpr: jax_core.Jaxpr, memspaces: Sequence[Any],
-    *, name: str) -> func.FuncOp:
+    ctx: ir.Context,
+    jaxpr: jax_core.Jaxpr,
+    memspaces: Sequence[Any],
+    *,
+    name: str,
+    mesh_info: Any,
+    grid_mapping: core.GridMapping,
+) -> func.FuncOp:
   block_shapes = [i.aval.shape for i in jaxpr.invars]
+  assert len(jaxpr.invars) == len(memspaces), (
+      f"Must have as many invars ({len(jaxpr.invars)}) as"
+      f" memspaces ({len(memspaces)})."
+  )
   arg_types = [*map(aval_to_ir_type, [invar.aval for invar in jaxpr.invars],
                     block_shapes, memspaces)]
-  lowering_context = LoweringContext(
-      ctx, None, None, block_shapes, source_info_util.NameStack(),
-      mesh_context=None)
-  body_func = functools.partial(jaxpr_subcomp, lowering_context, jaxpr)
+
+  if mesh_info is not None:
+    l_to_m, axis_names, mesh_strides = mesh_info
+    l_to_m_aval = state.AbstractRef(
+        jax_core.raise_to_shaped(jax_core.get_aval(l_to_m))
+    )
+    grid_index_types, scalar_prefetch_types = split_list(
+        arg_types,
+        [
+            len(grid_mapping.grid),
+        ],
+    )
+    arg_types = [
+        *grid_index_types,
+        _get_arg_type(l_to_m_aval, None, SMEM)[0],
+        *scalar_prefetch_types,
+    ]
+
+  if mesh_info is not None:
+
+    def body_func(*args):
+      grid_indices, scalar_prefetch = split_list(
+          args,
+          [
+              len(grid_mapping.grid),
+          ],
+      )
+      (l_to_m,), scalar_prefetch = split_list(scalar_prefetch, [1])
+      mesh_context = MeshContext(l_to_m, axis_names, mesh_strides)
+      lowering_context = LoweringContext(
+          ctx,
+          None,
+          None,
+          block_shapes,
+          source_info_util.NameStack(),
+          mesh_context=mesh_context,
+      )
+      return jaxpr_subcomp(lowering_context, jaxpr, *grid_indices, *scalar_prefetch)
+
+  else:
+    lowering_context = LoweringContext(
+        ctx,
+        None,
+        None,
+        block_shapes,
+        source_info_util.NameStack(),
+        mesh_context=None,
+    )
+    body_func = functools.partial(jaxpr_subcomp, lowering_context, jaxpr)
   body_func.__name__ = name
   body = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
   body.func_op.verify()
@@ -295,6 +353,25 @@ def lower_fun(fun: Callable, *, multiple_results: bool) -> Callable:
   return f_lowered
 
 
+def _get_arg_type(
+    aval,
+    block_mapping: core.BlockMapping | None,
+    memory_space: tpu_core.TPUMemorySpace | None,
+):
+  if isinstance(aval, tpu_core.AbstractMemoryRef):
+    assert memory_space is None
+    memory_space = aval.memory_space
+  if isinstance(aval, tpu_core.AbstractSemaphore):
+    return aval_to_ir_type(aval), None
+  if block_mapping is None:
+    return aval_to_ir_type(aval, memory_space=memory_space), aval.shape
+  shape = tuple(1 if b is core.mapped else b for b in block_mapping.block_shape)
+  return (
+      aval_to_ir_type(aval, shape=shape, memory_space=memory_space),
+      block_mapping.block_shape,
+  )
+
+
 def lower_jaxpr_to_func(
     ctx: ir.Context,
     jaxpr: jax_core.Jaxpr,
@@ -313,27 +390,14 @@ def lower_jaxpr_to_func(
   else:
     arg_types = []
 
-  def _get_arg_type(aval, block_mapping: core.BlockMapping | None,
-                    memory_space: tpu_core.TPUMemorySpace | None):
-    if isinstance(aval, tpu_core.AbstractMemoryRef):
-      assert memory_space is None
-      memory_space = aval.memory_space
-    if isinstance(aval, tpu_core.AbstractSemaphore):
-      return aval_to_ir_type(aval), None
-    if block_mapping is None:
-      return aval_to_ir_type(aval, memory_space=memory_space), aval.shape
-    shape = tuple(
-        1 if b is core.mapped else b for b in block_mapping.block_shape
-    )
-    return (aval_to_ir_type(aval, shape=shape, memory_space=memory_space),
-            block_mapping.block_shape)
-
   if mesh_info is not None:
     l_to_m, axis_names, mesh_strides = mesh_info
     l_to_m_aval = state.AbstractRef(
         jax_core.raise_to_shaped(jax_core.get_aval(l_to_m)))
     arg_types.append(_get_arg_type(l_to_m_aval, None, SMEM)[0])
 
+  scalar_prefetch = None
+  num_scratch = None
   if grid_mapping is None:
     block_mappings = [None] * len(jaxpr.invars)
   else:
@@ -351,7 +415,10 @@ def lower_jaxpr_to_func(
         *[None] * num_scratch,
     ]
   assert len(memory_spaces) == len(jaxpr.invars), (
-      "Must have as many memory spaces as inputs and outputs.")
+      f"Must have as many memory spaces as inputs ({len(jaxpr.invars)}) and"
+      f" outputs ({len(memory_spaces)})."
+      f" scalar_prefetch={scalar_prefetch} num_scratch={num_scratch}"
+  )
   invar_arg_types, block_shapes = unzip2(
       map(_get_arg_type, [invar.aval for invar in jaxpr.invars], block_mappings,
           memory_spaces)
@@ -360,14 +427,20 @@ def lower_jaxpr_to_func(
   if grid_mapping:
 
     def body_func(*args):
-      grid_indices, args = split_list(args, [len(grid_mapping.grid)])
+      grid_indices, scalar_prefetch, args = split_list(
+          args,
+          [
+              len(grid_mapping.grid),
+              grid_mapping.num_index_operands + bool(mesh_info),
+          ],
+      )
       grid_indices = [
           g
           for i, g in enumerate(grid_indices)
           if i not in grid_mapping.mapped_dims
       ]
       if mesh_info is not None:
-        (l_to_m,), args = split_list(args, [1])
+        (l_to_m,), scalar_prefetch = split_list(scalar_prefetch, [1])
         mesh_context = MeshContext(l_to_m, axis_names, mesh_strides)
       else:
         mesh_context = None
@@ -379,7 +452,7 @@ def lower_jaxpr_to_func(
           source_info_util.NameStack(),
           mesh_context=mesh_context,
       )
-      return jaxpr_subcomp(lowering_context, jaxpr, *args)
+      return jaxpr_subcomp(lowering_context, jaxpr, *scalar_prefetch, *args)
 
   else:
     lowering_context = LoweringContext(
@@ -1596,15 +1669,27 @@ def _device_id_to_logical(
     return device_id
   raise NotImplementedError(f"Unsupported device id type: {device_id_type}")
 
-def _semaphore_signal_lowering_rule(ctx: LoweringRuleContext, semaphore,
-                                    value, *args, has_device_id: bool,
-                                    device_id_type: tpu_primitives.DeviceIdType):
+
+def _semaphore_signal_lowering_rule(
+    ctx: LoweringRuleContext,
+    semaphore,
+    value,
+    *args,
+    has_device_id: bool,
+    device_id_type: tpu_primitives.DeviceIdType,
+    device_id_tree,
+):
   device_id = None
   assert semaphore.type == ir.Type.parse("!tpu.semaphore")
   if has_device_id:
-    (device_id,) = args
+    if len(args) == 1:
+      device_id = args[0]
+    else:
+      device_id = tree_util.tree_unflatten(device_id_tree, args)
     device_id = _device_id_to_logical(ctx, device_id, device_id_type)
   return tpu.SemaphoreSignalOp(semaphore, value, device_id=device_id).results
+
+
 lowering_rules[tpu_primitives.semaphore_signal_p] = (
     _semaphore_signal_lowering_rule)
 
