@@ -1453,7 +1453,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       out_nodes = tuple(map(wrap_singleton_ir_values, ans))
     except TypeError as e:
       raise ValueError("Output of translation rule must be iterable: "
-                       f"{eqn}, got output {ans}") from e
+                       f"{eqn}, got output {ans} from {rule.__name__}") from e
 
     assert all(isinstance(v, tuple) for v in out_nodes), (ans, eqn)
     assert all(isinstance(v, ir.Value) for w in out_nodes for v in w), (
