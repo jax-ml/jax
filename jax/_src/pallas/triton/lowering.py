@@ -165,28 +165,64 @@ triton_lowering_rules = {}
 
 
 def _process_grid_to_3d_grid(builder, grid_mapping: GridMapping):
-  if len(grid_mapping.grid) <= 3:
-    program_ids = [
-        tl.program_id(axis=i, _builder=builder)
-        for i in range(len(grid_mapping.grid))
-    ]
-    return grid_mapping.grid, program_ids
-  grid_prefix = grid_mapping.grid[:-2]
-  grid_suffix = grid_mapping.grid[-2:]
-  total_axis_size = np.prod(grid_prefix)
-  new_grid = (total_axis_size, *grid_suffix)
-  out_indices = [0] * len(grid_prefix)
+  launch_grid = []
+  launch_grid_to_pallas_grid = []
+
+  # Preserve grid order provided to pallas_call
+  for i, s in enumerate(grid_mapping.grid):
+    if i not in grid_mapping.mapped_dims:
+      launch_grid.append(s)
+      launch_grid_to_pallas_grid.append(i)
+
+  # For mapped dims, iterate from inner to outer. This follows the pallas_call
+  # batching rule that prepends the vmapped dimension.
+  for dim in reversed(grid_mapping.mapped_dims):
+    s = grid_mapping.grid[dim]
+    launch_grid.append(s)
+    launch_grid_to_pallas_grid.append(dim)
+
+  num_collapse = len(launch_grid[:-2])
+
+  cuda_yz_limit = 2**16 - 1
+
+  # Check Z and then Y launch dims to make sure they're within CUDA bounds
+  if (num_collapse + 1 < len(launch_grid) and
+      launch_grid[num_collapse + 1] > cuda_yz_limit):
+    num_collapse += 2
+  elif (num_collapse < len(launch_grid) and
+        launch_grid[num_collapse] > cuda_yz_limit):
+    num_collapse += 1
+
+  collapse_dims = launch_grid[:num_collapse]
+  prog_id_dims = launch_grid[num_collapse:]
+
+  if len(collapse_dims) == 0:
+    prog_ids = [None] * len(prog_id_dims)
+    for i in range(len(prog_id_dims)):
+        out_idx = launch_grid_to_pallas_grid[i]
+        prog_ids[out_idx] = tl.program_id(i, _builder=builder)
+
+    return prog_id_dims, prog_ids
+  else:
+    new_grid = [np.prod(collapse_dims), *prog_id_dims]
+
+  assert new_grid[0] < 2**31 - 1, \
+          "Cannot fix pallas kernel launch grid within CUDA limits"
+
+  out_indices = [None] * len(grid_mapping.grid)
+
   grid0 = tl.program_id(0, _builder=builder)
-  for i, s in reversed(list(enumerate(grid_prefix))):
-    grid0, out_indices[i] = (
+  for i, s in enumerate(collapse_dims):
+    out_idx = launch_grid_to_pallas_grid[i]
+    grid0, out_indices[out_idx] = (
         grid0.__floordiv__(s, _builder=builder),
         grid0.__mod__(s, _builder=builder),
     )
-  out_indices = [
-      *out_indices,
-      tl.program_id(1, _builder=builder),
-      tl.program_id(2, _builder=builder),
-  ]
+
+  for i in range(len(prog_id_dims)):
+    out_idx = launch_grid_to_pallas_grid[num_collapse + i]
+    out_indices[out_idx] = tl.program_id(i + 1, _builder=builder)
+
   assert len(out_indices) == len(grid_mapping.grid)
   return new_grid, out_indices
 
