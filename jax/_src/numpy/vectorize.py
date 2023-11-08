@@ -263,13 +263,21 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
     error_context = ("on vectorized function with excluded={!r} and "
                      "signature={!r}".format(excluded, signature))
     excluded_func, args = _apply_excluded(pyfunc, excluded, args)
-    args = tuple(map(jnp.asarray, args))
 
     if signature is not None:
       input_core_dims, output_core_dims = _parse_gufunc_signature(signature)
     else:
       input_core_dims = [()] * len(args)
       output_core_dims = None
+
+    none_args = {i for i, arg in enumerate(args) if arg is None}
+    if any(none_args):
+      if any(input_core_dims[i] != () for i in none_args):
+        raise ValueError(f"Cannot pass None at locations {none_args} with {signature=}")
+      excluded_func, args = _apply_excluded(excluded_func, none_args, args)
+      input_core_dims = [dim for i, dim in enumerate(input_core_dims) if i not in none_args]
+
+    args = tuple(map(jnp.asarray, args))
 
     broadcast_shape, dim_sizes = _parse_input_dimensions(
         args, input_core_dims, error_context)
