@@ -60,7 +60,7 @@ pip install dist/*.whl  # installs jaxlib (includes XLA)
 ```
 
 To build `jaxlib` with CUDA support, use `python build/build.py --enable_cuda`;
-to build with TPU support, use `python build/build.py --enable_tpu`.
+to build with TPU support, use `python build/build.py`.
 
 See `python build/build.py --help` for configuration options, including ways to
 specify the paths to CUDA and CUDNN, which you must have installed. Here

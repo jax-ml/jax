@@ -154,8 +154,6 @@ build:macos --config=posix
 # Suppress all warning messages.
 build:short_logs --output_filter=DONT_MATCH_ANYTHING
 
-build:tpu --define=with_tpu_support=true
-
 #########################################################################
 # RBE config options below.
 # Flag to enable remote config
