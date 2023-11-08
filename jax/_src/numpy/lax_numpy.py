@@ -423,7 +423,7 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
   if isinstance(bins, str):
     raise NotImplementedError("string values for `bins` not implemented.")
   util.check_arraylike("histogram_bin_edges", a, bins)
-  arr = ravel(a)
+  arr = asarray(a)
   dtype = dtypes.to_inexact_dtype(arr.dtype)
   if _ndim(bins) == 1:
     return asarray(bins, dtype=dtype)
@@ -448,18 +448,18 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
               density: bool | None = None) -> tuple[Array, Array]:
   if weights is None:
     util.check_arraylike("histogram", a, bins)
-    a = ravel(*util.promote_dtypes_inexact(a))
+    a, = util.promote_dtypes_inexact(a)
     weights = ones_like(a)
   else:
     util.check_arraylike("histogram", a, bins, weights)
     if shape(a) != shape(weights):
       raise ValueError("weights should have the same shape as a.")
-    a, weights = map(ravel, util.promote_dtypes_inexact(a, weights))
+    a, weights = util.promote_dtypes_inexact(a, weights)
 
   bin_edges = histogram_bin_edges(a, bins, range, weights)
   bin_idx = searchsorted(bin_edges, a, side='right')
   bin_idx = where(a == bin_edges[-1], len(bin_edges) - 1, bin_idx)
-  counts = bincount(bin_idx, weights, length=len(bin_edges))[1:]
+  counts = zeros(len(bin_edges), weights.dtype).at[bin_idx].add(weights)[1:]
   if density:
     bin_widths = diff(bin_edges)
     counts = counts / bin_widths / counts.sum()
