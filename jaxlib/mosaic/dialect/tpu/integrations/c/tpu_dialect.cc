@@ -25,12 +25,15 @@ limitations under the License.
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MemAlloc.h"
 #include "mlir-c/IR.h"
+#include "mlir-c/Support.h"
 #include "mlir/CAPI/IR.h"
 #include "mlir/CAPI/Registration.h"
 #include "mlir/CAPI/Wrap.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
@@ -38,6 +41,8 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/transforms/apply_vector_layout.h"
+#include "xla/array.h"
 
 // TODO(tlongeri): null pointer checks?
 
@@ -124,6 +129,31 @@ llvm::ArrayRef<int64_t> mlirTpuI64ArrayRefToLlvmArrayRef(
 }  // namespace
 
 extern "C" {
+
+// We do not use the names wrap/unwrap for MlirTpuValueArray because it
+// allocates memory (i.e. they have side effects)
+static inline xla::Array<mlir::Value> MlirTpuValueArrayToXlaArray(
+    MlirTpuValueArray arr) {
+  llvm::ArrayRef<int64_t> shape = mlirTpuI64ArrayRefToLlvmArrayRef(arr.shape);
+  xla::Array<mlir::Value> res(shape);
+  int64_t n = res.num_elements();
+  for (int64_t i = 0; i < n; ++i) {
+    res.data()[i] = unwrap(arr.vals[i]);
+  }
+  return res;
+}
+static inline MlirTpuValueArray MlirTpuValueArrayFromXlaArray(
+    const xla::Array<mlir::Value> &vals) {
+  int64_t nd = vals.num_dimensions();
+  int64_t *shape =
+      static_cast<int64_t *>(llvm::safe_malloc(nd * sizeof(int64_t)));
+  memcpy(shape, vals.dimensions().data(), nd * sizeof(int64_t));
+  int64_t n = vals.num_elements();
+  MlirValue *elements =
+      static_cast<MlirValue *>(llvm::safe_malloc(n * sizeof(MlirValue)));
+  memcpy(elements, vals.data(), n * sizeof(MlirValue));
+  return {{shape, static_cast<size_t>(nd)}, elements};
+}
 
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(TPU, tpu, mlir::tpu::TPUDialect);
 
@@ -300,9 +330,56 @@ MlirAttribute mlirTpuVregDataBoundsGetSublaneMask(
   return wrap(
       unwrap(data_bounds)->getSublaneMask(unwrap(ctx), unwrap(target_shape)));
 }
+
+MlirOperation mlirTpuAssemble(MlirTpuInsertionPoint insertion_point,
+                              MlirType vector_type, MlirTpuVectorLayout layout,
+                              MlirTpuValueArray vals,
+                              MlirTpuI64TargetTuple target_shape) {
+  mlir::OpBuilder builder = mlirTpuInsertionPointToOpBuilder(insertion_point);
+  // This cast will fail and assert if the caller passed a non-vector type
+  auto vty = mlir::cast<mlir::VectorType>(unwrap(vector_type));
+  return wrap(mlir::tpu::assemble(builder, vty, *unwrap(layout),
+                                  MlirTpuValueArrayToXlaArray(vals),
+                                  unwrap(target_shape))
+                  .getOperation());
 }
 
-#include "mlir/CAPI/Pass.h"  // IWYU pragma: keep
+MlirTpuValueArray mlirTpuDisassemble(MlirTpuInsertionPoint insertion_point,
+                                     MlirTpuVectorLayout layout, MlirValue val,
+                                     MlirTpuI64TargetTuple target_shape) {
+  mlir::OpBuilder builder = mlirTpuInsertionPointToOpBuilder(insertion_point);
+  mlir::FailureOr<xla::Array<mlir::Value>> failure_or_vals =
+      mlir::tpu::disassemble(builder, *unwrap(layout), unwrap(val),
+                             unwrap(target_shape));
+  if (failed(failure_or_vals)) {
+    return {{nullptr, 0}, nullptr};
+  }
+  return MlirTpuValueArrayFromXlaArray(std::move(failure_or_vals).value());
+}
+
+MlirLogicalResult mlirTpuApplyLayoutOp(int hardware_generation,
+                                       MlirOperation op,
+                                       MlirTpuI64TargetTuple target_shape) {
+  auto f = unwrap(op)->getParentOfType<mlir::func::FuncOp>();
+  CHECK(f != nullptr);
+  mlir::tpu::RewriteContext ctx{f, hardware_generation, unwrap(target_shape)};
+  return wrap(mlir::tpu::applyLayoutOp(ctx, *unwrap(op)));
+}
+
+MlirValue mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
+                          MlirTpuVectorLayout src, MlirTpuVectorLayout dst,
+                          MlirTpuI64TargetTuple target_shape) {
+  mlir::OpBuilder builder = mlirTpuInsertionPointToOpBuilder(insertion_point);
+  mlir::FailureOr<mlir::Value> failure_or_new_val = mlir::tpu::relayout(
+      builder, unwrap(val), *unwrap(src), *unwrap(dst), unwrap(target_shape));
+  if (failed(failure_or_new_val)) {
+    return {nullptr};
+  }
+  return wrap(std::move(failure_or_new_val).value());
+}
+}
+
+#include "mlir/CAPI/Pass.h"     // IWYU pragma: keep
 #include "mlir/CAPI/Support.h"  // IWYU pragma: keep
 
 extern "C" {

@@ -43,13 +43,14 @@ cc_library(
         "dialect/tpu/tpu_ops.cc",
         "dialect/tpu/util.h",
     ] + glob([
-        "dialect/tpu/transforms/*.h",
         "dialect/tpu/transforms/*.cc",
     ]),
     hdrs = [
         "dialect/tpu/layout.h",
         "dialect/tpu/tpu_dialect.h",
-    ],
+    ] + glob([
+        "dialect/tpu/transforms/*.h",
+    ]),
     # compatible with libtpu
     deps = [
         ":tpu_inc_gen",
@@ -188,8 +189,10 @@ cc_library(
         ":tpu_inc_gen",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
+        "@xla//xla:array",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
     ],

@@ -75,6 +75,12 @@ typedef struct MlirTpuI64ArrayRef {
   size_t size;
 } MlirTpuI64ArrayRef;
 
+// Shaped array of values
+typedef struct MlirTpuValueArray {
+  MlirTpuI64ArrayRef shape;  // May or may not be owned
+  MlirValue* vals;           // Size given by the shape
+} MlirTpuValueArray;
+
 typedef struct MlirTpuLayoutOffsets {
   // Use -1 for replicated
   int64_t sublane;
@@ -188,6 +194,27 @@ MlirAttribute mlirTpuVregDataBoundsGetSublaneMask(
     MlirTpuVregDataBounds data_bounds, MlirContext ctx,
     MlirTpuI64TargetTuple target_shape);
 
+// vals are copied, ownership is not stolen.
+MlirOperation mlirTpuAssemble(MlirTpuInsertionPoint insertion_point,
+                              MlirType vector_type, MlirTpuVectorLayout layout,
+                              MlirTpuValueArray vals,
+                              MlirTpuI64TargetTuple target_shape);
+
+// Returns null on failure
+// Caller owns the returned object and is responsible for calling free on shape
+// and vals
+MlirTpuValueArray mlirTpuDisassemble(MlirTpuInsertionPoint insertion_point,
+                                     MlirTpuVectorLayout layout, MlirValue val,
+                                     MlirTpuI64TargetTuple target_shape);
+
+MlirLogicalResult mlirTpuApplyLayoutOp(int hardware_generation,
+                                       MlirOperation op,
+                                       MlirTpuI64TargetTuple target_shape);
+
+// Returns null on failure
+MlirValue mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
+                          MlirTpuVectorLayout src, MlirTpuVectorLayout dst,
+                          MlirTpuI64TargetTuple target_shape);
 #ifdef __cplusplus
 }
 #endif

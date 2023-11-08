@@ -1,3 +1,5 @@
+#include "jaxlib/mosaic/dialect/tpu/transforms/apply_vector_layout.h"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -73,23 +75,7 @@ namespace mlir::tpu {
 #define GEN_PASS_DEF_APPLYVECTORLAYOUTPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 
-struct RewriteContext {
-  func::FuncOp func;
-  // TODO(tlongeri): target_shape should be determined from hardware_generation
-  const int hardware_generation;
-  const std::array<int64_t, 2> target_shape;
-
-  MLIRContext *getMLIRContext() { return func.getContext(); }
-};
-
 LogicalResult applyLayoutBlock(RewriteContext &ctx, Block &block);
-RollVectorsOp assemble(OpBuilder &builder, VectorType vty,
-                       const VectorLayout &layout,
-                       const xla::Array<Value> &vals,
-                       std::array<int64_t, 2> target_shape);
-FailureOr<xla::Array<Value>> disassemble(OpBuilder &builder,
-                                         const VectorLayout &layout, Value val,
-                                         std::array<int64_t, 2> target_shape);
 namespace {
 
 void moveAllRegions(Operation &src, Operation &dst) {
@@ -3323,15 +3309,6 @@ bool isSupportedReducedSublanesRetile(
          llvm::isPowerOf2_64(dst.tiling()[0]);
 }
 
-// Changes the layout of a vector value.
-//
-// Arguments:
-//   v: The value to relayout. Must be of type VectorType.
-//   src: The current layout of v.
-//   dst: The target layout of v.
-//
-// Returns:
-//   A new MLIR vector value, laid out as requested by dst.
 // TODO(apaszke): Test this function properly
 FailureOr<Value> relayout(OpBuilder &builder, Value v, VectorLayout src,
                           const VectorLayout &dst,
@@ -3641,18 +3618,6 @@ FailureOr<Value> relayout(OpBuilder &builder, Value v, VectorLayout src,
          << vty << ": " << src << " -> " << dst;
 }
 
-// Rewrites the operation according to its layout annotations.
-//
-// Args:
-//   ctx: The context used for rewriting.
-//   op: An MLIR operation to be rewritten.
-//
-// A valid op is expected to have a layout_in attribute unless it has no
-// operands. The layout_in attribute must fulfill the following:
-//   - All vector operands originate from an operation (not a BlockArgument)
-//   and
-//     have a valid layout (Layout1D or Layout2D)
-//   - All non-vector operands must have NoLayout.
 // TODO(apaszke): Implement a debug mode that inserts additional assertions.
 // For example, we should verify that ops that were supposed to generate
 // replicated outputs satisfy that requirement.
