@@ -1,12 +1,12 @@
 # Pallas Design
 
-In this document, we explain the initial Pallas design. This is a snapshot of some of the earlier design decisions made and Pallas's specific APIs might have changed since. 
+In this document, we explain the initial Pallas design. This is a snapshot of some of the earlier design decisions made and Pallas's specific APIs might have changed since.
 
 ## Introduction
 
 JAX is being used for a diverse set of workloads, from large scale machine learning to scientific computing. JAX’s success story is as much a success story for XLA, the primary compiler that JAX targets – XLA compiles JAX programs for accelerators and has enabled JAX to scale to the largest ML models. JAX describes logical computations in XLA’s representation, HLO. HLO describes how computations happen logically but not physically. Given a logical HLO computation, XLA decides how that computation is to be executed physically. For a wide variety of ML applications, XLA does a good job of compiling user programs but inevitably some users hit XLA's limitations. In these cases, we need to provide an “escape hatch” to allow experts to write hand-tuned kernels that outperform XLA at that point in time. Furthermore, advances in ML systems research take some time to be incorporated into XLA and users often want to run ahead with them. Over time, the compiler can incorporate the optimizations that were proven out experimentally through hand-tuned kernels.
 
-XLA does offer the `CustomCall` mechanism as an escape hatch, but it requires users to write C++ and on GPU it requires users to learn the CUDA programming model. The CUDA programming model is arguably too low-level for many machine learning GPU kernels, like matrix multiplication, and even expert users will have trouble using CUDA to implement efficient matrix multiplication or multi-headed attention. Not only this, JAX users are usually familiar with Python and NumPy-style array programming which doesn’t involve writing any C++ or thinking about GPU parallelism. All popular machine learning frameworks share this idea: manipulating (usually) arrays with high level operations like `matmul` or `convolution`. Unfortunately, this means implementing a custom operation via `CustomCall` is a big investment, involving potentially learning C++ and/or GPU programming. 
+XLA does offer the `CustomCall` mechanism as an escape hatch, but it requires users to write C++ and on GPU it requires users to learn the CUDA programming model. The CUDA programming model is arguably too low-level for many machine learning GPU kernels, like matrix multiplication, and even expert users will have trouble using CUDA to implement efficient matrix multiplication or multi-headed attention. Not only this, JAX users are usually familiar with Python and NumPy-style array programming which doesn’t involve writing any C++ or thinking about GPU parallelism. All popular machine learning frameworks share this idea: manipulating (usually) arrays with high level operations like `matmul` or `convolution`. Unfortunately, this means implementing a custom operation via `CustomCall` is a big investment, involving potentially learning C++ and/or GPU programming.
 
 [Triton](https://triton-lang.org/main/index.html), a GPU compiler built and maintained by OpenAI, has taken the ML compiler world by storm. Triton offers the best of both worlds: an array-based programming model for GPU kernels. Triton is the primary code generation route for `torch.compile` in PyTorch 2.0, via the Torch Inductor library. Triton actively hides some aspects of GPU programming in the name of a more accessible programming model that can be used from Python and to generate optimized code from a higher-level representation. While GPUs are more flexible than what Triton offers, in the ML domain, Triton seems to be expressive enough for many applications.
 
@@ -133,7 +133,7 @@ Note that while `program_id` and `num_programs` are Triton-specific terminology 
 Because we’re writing kernels, not high-level HLO programs, some JAX primitives may not be able to be represented in our underlying substrate efficiently. However, we know we can support most elementwise operations, simple dot products, and JAX control flow.
 
 While we haven’t yet mapped out exactly all the JAX primitives that we can support in Pallas kernels, we can certainly identify some that are not easy to lower or are unlikely to be useful:
-* `conv_general` - convolution usually isn’t offered as primitive in the underlying hardware. 
+* `conv_general` - convolution usually isn’t offered as primitive in the underlying hardware.
 * `gather/scatter` - the underlying compiler may not support noncontiguous memory reads and writes
 
 ### Executing Pallas kernels with `pallas_call`
@@ -146,7 +146,7 @@ The signature of `pallas_call` is as follows:
 def pallas_call(
     kernel: Callable,
     in_specs: Sequence[Spec],
-    out_specs:Sequence[Spec],
+    out_specs: Sequence[Spec],
     out_shapes: Sequence[jax.ShapeDtypeStruct],
     grid: Optional[Tuple[int, ...]] = None) -> Callable:
   ...
@@ -159,13 +159,13 @@ The (rough) semantics are for `pallas_call` are as follows:
 ```python
 def pallas_call(kernel, in_specs, out_specs, out_shapes, grid):
   def execute(*args):
-    outputs = map(empty_ref, out_shape)
+    outputs = map(empty_ref, out_shapes)
     grid_indices = map(range, grid)
     for indices in itertools.product(*grid_indices): # Could run in parallel!
       local_inputs = [in_spec.transform(arg, indices) for arg, in_spec in
-                      zip(in_specs, args)]
+                      zip(args, in_specs)]
       local_outputs = [out_spec.transform(arg, indices) for arg, out_spec  in
-                       zip(out_specs, outputs)]
+                       zip(outputs, out_specs)]
       kernel(*local_inputs, *local_outputs) # writes to outputs
   return execute
 ```
@@ -182,17 +182,17 @@ A `BlockSpec` takes an `index_map` function and a `block_shape`. Logically, it t
 class BlockSpec:
   index_map: Callable[[Tuple[Int, ...]], Tuple[Int, ...]]
   block_shape: Tuple[Optional[int], ...]
-  
+
   def transform(self, ref, *loop_indices):
     block_indices = self.transform_function(loop_indices)
     # Returns a view of `ref` starting at `block_indices` of shape self.block_shape
     ...
 ```
 
-We could also imagine other `Spec`s that are used with `pallas_call`, for example a `Spec` that corresponds to overlapping windows to, say, implement convolutions. 
+We could also imagine other `Spec`s that are used with `pallas_call`, for example a `Spec` that corresponds to overlapping windows to, say, implement convolutions.
 
 ### Immediate benefits of Pallas as a front-end
-By offering a JAX front-end for kernel writing, we can immediately reap some benefits. 
+By offering a JAX front-end for kernel writing, we can immediately reap some benefits.
 
 #### More flexible front end
 
@@ -233,7 +233,7 @@ def add_kernel(x_ref, y_ref, o_ref):
   o_ref[:] = x + y
 x, y = jnp.arange(8), jnp.arange(8, 16)
 add = pl.pallas_call(
-    add_kernel, 
+    add_kernel,
     out_shape=jax.ShapeDtypeStruct((8,), jnp.int32),
     in_specs=[
       pl.BlockSpec(lambda i:, i, (2,)),
@@ -263,7 +263,7 @@ block_shape = 256, 256, 128
 def matmul(x, y, *, block_shape, activation):
   block_m, block_n, block_k = block_shape
   fused_matmul = pl.pallas_call(
-      partial(matmul_kernel, block_k=block_k, activation=activation), 
+      partial(matmul_kernel, block_k=block_k, activation=activation),
       out_shape=jax.ShapeDtypeStruct((x.shape[0], y.shape[1],), jnp.float32),
       in_specs=[
         pl.BlockSpec(lambda i, j:, (i, 0), (block_m, x.shape[1])),
@@ -288,13 +288,13 @@ Other than that, lowering to Triton is fairly straightforward. JAX dot products 
 
 #### Lowering Pallas to Mosaic for TPU
 
-Mosaic consumes (mostly) standard dialect MLIR and emits LLO to be compiled for TPU. Pallas can be lowered to Mosaic via translating JAX primitives to mostly MLIR `vector` and `arith` dialect. The `BlockSpec`s can be converted into pipeline schedules (i.e. the `transform_func`s in Mosaic).
+Mosaic consumes (mostly) standard dialect MLIR and emits LLO to be compiled for TPU. Pallas can be lowered to Mosaic via translating JAX primitives to MLIR (mostly the `vector` and `arith` dialects). The `BlockSpec`s can be converted into pipeline schedules (i.e. the `transform_func`s in Mosaic).
 
 ### Transforming Pallas
 
 A natural question is how do JAX transformations interact with Pallas kernels? There are two main ways: transformations inside Pallas kernels and transformations outside Pallas kernels.
 
-Transformation inside Pallas kernels should actually “just work”, so long as we are able to lower the transformed code. For example, we could use `jax.grad(jnp.sin)(...)` inside of a JAX kernel because we can lower a `cos` to both Triton and Mosaic. However, we might not be able to lower a `jax.vmap(lax.dynamic_slice)` because it could turn into a gather that we cannot lower. 
+Transformation inside Pallas kernels should actually “just work”, so long as we are able to lower the transformed code. For example, we could use `jax.grad(jnp.sin)(...)` inside of a JAX kernel because we can lower a `cos` to both Triton and Mosaic. However, we might not be able to lower a `jax.vmap(lax.dynamic_slice)` because it could turn into a gather that we cannot lower.
 
 Transformations of Pallas kernels from the outer JAX programs is perhaps the more interesting case. How do we handle things like `vmap(pallas_call)` and `grad(pallas_call)`?
 
