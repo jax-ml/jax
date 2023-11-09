@@ -104,8 +104,8 @@ def TPU_TiledLayoutAttr
              [DeclareAttrInterfaceMethods<MemRefLayoutAttrInterface>]> {
   let description = [{TODO}];
   let parameters = (ins
-    "int64_t":$rank,
-    ArrayRefParameter<"::xla::Tile", "">:$tiles
+    ArrayRefParameter<"::xla::Tile", "">:$tiles,
+    ArrayRefParameter<"int64_t", "">:$tile_strides
   );
 
   let hasCustomAssemblyFormat = 1;
@@ -113,8 +113,11 @@ def TPU_TiledLayoutAttr
 
 def TPU_MemorySpace : I32EnumAttr<"MemorySpace", "Memory space", [
   I32EnumAttrCase<"kAny", 4294967295, "any">,
+  // TODO(apaszke): Rename to kXYZ in C++
   I32EnumAttrCase<"vmem", 0, "vmem">,
-  I32EnumAttrCase<"smem", 1, "smem">
+  I32EnumAttrCase<"smem", 1, "smem">,
+  I32EnumAttrCase<"kHbm", 2, "hbm">,
+  I32EnumAttrCase<"kCmem", 3, "cmem">
 ]> {
     let genSpecializedAttr = 0;
     let cppNamespace = "::mlir::tpu";
@@ -348,6 +351,16 @@ def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure]> {
   let hasCanonicalizeMethod = 1;
 }
 
+def TPU_MemRefSqueezeOp : TPU_Op<"memref_squeeze", [Pure]> {
+  let arguments = (ins AnyMemRef:$input);
+  let results = (outs AnyMemRef:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($result)
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
+}
+
 def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure]> {
   let arguments = (ins AnyMemRef:$input);
   let results = (outs AnyMemRef:$result);
@@ -396,20 +409,20 @@ def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal"> {
   let arguments = (ins
     TPU_SemaphoreType:$semaphore,
     I32:$amount,
-    Optional<I32>:$device_id
+    Optional<I32>:$device_id // For remote DMAs
   );
   let assemblyFormat = [{
     $semaphore `,` $amount (`,` $device_id^)? attr-dict
   }];
 }
 
-def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma"> {
+def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [SameVariadicOperandSize]> {
   let arguments = (ins
     AnyMemRef:$source,
-    TPU_DMASemaphoreType:$source_semaphore,
+    Optional<TPU_DMASemaphoreType>:$source_semaphore, // For remote DMAs
     AnyMemRef:$target,
     TPU_DMASemaphoreType:$target_semaphore,
-    Optional<I32>:$device_id
+    Optional<I32>:$device_id // For remote DMAs
   );
 }
 
@@ -447,6 +460,17 @@ def TPU_YieldOp : TPU_Op<"yield", [Pure, ReturnLike, Terminator]> {
   let assemblyFormat = [{ attr-dict ($results^ `:` type($results))? }];
 }
 
+// Expands the granularity of mask to subelements.
+def TPU_MaskCastOp : TPU_Op<"mask_cast", [Pure]> {
+  let arguments = (ins AnyVector:$input);
+  let results = (outs AnyVector:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+
 def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mlir::func::FuncOp"> {
   let dependentDialects = [
     "::mlir::func::FuncDialect",
@@ -455,6 +479,19 @@ def LogicalToPhysicalDeviceIdPass : Pass<"logical-to-physical-device-id", "::mli
   ];
   let constructor = "::mlir::tpu::createLogicalToPhysicalDeviceIdPass(-1)";
   let options = [Option<"total_devices", "total-devices", "int", "", "">];
+}
+
+def InferMemRefLayoutPass : Pass<"tpu-infer-memref-layout", "::mlir::func::FuncOp"> {
+  let dependentDialects = [
+    "::mlir::func::FuncDialect",
+    "::mlir::memref::MemRefDialect",
+  ];
+  let constructor = "::mlir::tpu::createInferMemRefLayoutPass(-1)";
+  let options = [
+    // If hardware_generation is not set, the default value of -1 will crash on
+    // runOnOperation.
+    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
+  ];
 }
 
 def InferVectorLayoutPass : Pass<"tpu-infer-vector-layout", "::mlir::func::FuncOp"> {

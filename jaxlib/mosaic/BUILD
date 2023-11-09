@@ -42,11 +42,15 @@ cc_library(
         "dialect/tpu/tpu_dialect.cc",
         "dialect/tpu/tpu_ops.cc",
         "dialect/tpu/util.h",
-    ] + glob(["dialect/tpu/transforms/*.cc"]),
+    ] + glob([
+        "dialect/tpu/transforms/*.cc",
+    ]),
     hdrs = [
         "dialect/tpu/layout.h",
         "dialect/tpu/tpu_dialect.h",
-    ],
+    ] + glob([
+        "dialect/tpu/transforms/*.h",
+    ]),
     # compatible with libtpu
     deps = [
         ":tpu_inc_gen",
@@ -57,6 +61,7 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:LinalgTransforms",
+        "@llvm-project//mlir:MathDialect",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SCFDialect",
@@ -182,8 +187,14 @@ cc_library(
     deps = [
         ":tpu_dialect",
         ":tpu_inc_gen",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@xla//xla:array",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
     ],
 )
 

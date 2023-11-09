@@ -16,18 +16,18 @@
 import functools
 
 import jax
-from jax import config
 import jax.numpy as jnp
 import numpy as np
 import scipy.linalg as osp_linalg
-from jax._src.lax import svd
+from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.lax import svd
 
 from absl.testing import absltest
 
 
 config.parse_flags_with_absl()
-_JAX_ENABLE_X64 = config.x64_enabled
+_JAX_ENABLE_X64 = config.enable_x64.value
 
 # Input matrix data type for SvdTest.
 _SVD_TEST_DTYPE = np.float64 if _JAX_ENABLE_X64 else np.float32

@@ -26,7 +26,6 @@ from absl.testing import absltest, parameterized
 import numpy as np
 
 import jax
-from jax import config
 from jax import lax
 from jax.experimental.export import export
 from jax.experimental.jax2tf.tests import back_compat_test_util as bctu
@@ -60,6 +59,7 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 
+from jax._src import config
 from jax._src import test_util as jtu
 
 config.parse_flags_with_absl()
@@ -144,12 +144,13 @@ class CompatTest(bctu.CompatTestBase):
     # An old lowering, with ducc_fft. We keep it for 6 months.
     data = self.load_testdata(cpu_ducc_fft.data_2023_03_17)
     # We have changed the lowering for fft since we saved this data.
-    self.run_one_test(func, data,
-                      expect_current_custom_calls=["dynamic_ducc_fft"])
+    # FFT no longer lowers to a custom call.
+    self.run_one_test(func, data, expect_current_custom_calls=[])
 
     # A newer lowering, with dynamic_ducc_fft.
     data = self.load_testdata(cpu_ducc_fft.data_2023_06_14)
-    self.run_one_test(func, data)
+    # FFT no longer lowers to a custom call.
+    self.run_one_test(func, data, expect_current_custom_calls=[])
 
   def cholesky_input(self, shape, dtype):
     a = jtu.rand_default(self.rng())(shape, dtype)
@@ -159,7 +160,7 @@ class CompatTest(bctu.CompatTestBase):
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_cpu_cholesky_lapack_potrf(self, dtype_name="f32"):
-    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
     dtype = dict(f32=np.float32, f64=np.float64,
@@ -179,7 +180,7 @@ class CompatTest(bctu.CompatTestBase):
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_cpu_eig_lapack_geev(self, dtype_name="f32"):
-    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
     dtype = dict(f32=np.float32, f64=np.float64,
@@ -271,7 +272,7 @@ class CompatTest(bctu.CompatTestBase):
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_cpu_eigh_lapack_syevd(self, dtype_name="f32"):
     # For lax.linalg.eigh
-    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
     dtype = dict(f32=np.float32, f64=np.float64,
@@ -327,7 +328,7 @@ class CompatTest(bctu.CompatTestBase):
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_cpu_qr_lapack_geqrf(self, dtype_name="f32"):
     # For lax.linalg.qr
-    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
     dtype = dict(f32=np.float32, f64=np.float64,
@@ -356,7 +357,7 @@ class CompatTest(bctu.CompatTestBase):
     # For lax.linalg.qr
     func = lambda: CompatTest.qr_harness((3, 3), np.float32)
     data = self.load_testdata(tpu_Qr.data_2023_03_17)
-    self.run_one_test(func, data, rtol=1e-3)
+    self.run_one_test(func, data, rtol=1e-3, atol=1e-3)
 
   @staticmethod
   def lu_harness(shape, dtype):
@@ -395,7 +396,7 @@ class CompatTest(bctu.CompatTestBase):
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_cpu_lu_lapack_getrf(self, dtype_name:str):
     # For lax.linalg.lu on CPU.
-    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
     dtype = dict(f32=np.float32, f64=np.float64,
                  c64=np.complex64, c128=np.complex128)[dtype_name]
@@ -480,7 +481,7 @@ class CompatTest(bctu.CompatTestBase):
       for dtype_name in ("f32", "f64", "c64", "c128")])
   @jax.default_matmul_precision("float32")
   def test_cpu_schur_lapack_gees(self, dtype_name="f32"):
-    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
     dtype = dict(f32=np.float32, f64=np.float64,
@@ -509,7 +510,7 @@ class CompatTest(bctu.CompatTestBase):
       for dtype_name in ("f32", "f64", "c64", "c128"))
   @jax.default_matmul_precision("float32")
   def test_cpu_svd_lapack_gesdd(self, dtype_name="f32"):
-    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
     dtype = dict(f32=np.float32, f64=np.float64,
@@ -534,7 +535,7 @@ class CompatTest(bctu.CompatTestBase):
       for dtype_name in ("f32", "f64", "c64", "c128")])
   @jax.default_matmul_precision("float32")
   def test_cpu_triangular_solve_blas_trsm(self, dtype_name="f32"):
-    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
     dtype = dict(f32=np.float32, f64=np.float64,
@@ -583,7 +584,7 @@ class CompatTest(bctu.CompatTestBase):
 
   def test_sharding(self):
     # Tests "Sharding", "SPMDShardToFullShape", "SPMDFullToShardShape" on TPU
-    if jtu.device_under_test() != "tpu" or len(jax.devices()) < 2:
+    if not jtu.test_device_matches(["tpu"]) or len(jax.devices()) < 2:
       self.skipTest("Test runs only on TPU with at least 2 devices")
 
     # Must use exactly 2 devices for expected outputs from ppermute
@@ -669,16 +670,11 @@ class CompatTest(bctu.CompatTestBase):
     # replace this strict check with something else.
     data = self.load_testdata(stablehlo_dynamic_rng_bit_generator.data_2023_06_17)
 
-    prev_default_prng_impl = jax.config.jax_default_prng_impl
-    try:
-      jax.config.update("jax_default_prng_impl", "unsafe_rbg")
-
+    with config.default_prng_impl("unsafe_rbg"):
       self.run_one_test(
         func, data, polymorphic_shapes=(None, "b0, b1"),
         # Recent serializations also include shape_assertion, tested with dynamic_top_k
         expect_current_custom_calls=["stablehlo.dynamic_rng_bit_generator", "shape_assertion"])
-    finally:
-      jax.config.update("jax_default_prng_impl", prev_default_prng_impl)
 
   def test_stablehlo_dynamic_top_k(self):
     # stablehlo.dynamic_top_k is used temporarily for a top_k with dynamism

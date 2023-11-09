@@ -25,12 +25,12 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax import random
+from jax._src import config
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import state
 from jax._src.lax.control_flow.for_loop import for_loop
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
-from jax.config import config
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
@@ -86,7 +86,7 @@ def matmul(x, y, *, bm, bn, gm, bk, interpret, debug=False):
           jax.lax.broadcast_in_dim(idx_k, (bk, bn), (0,)),
           jax.lax.broadcast_in_dim(idx_n, (bk, bn), (1,)))
       x_block, y_block = x_ref[x_idx], y_ref[y_idx]
-      out = jnp.dot(x_block, y_block)
+      out = pl.dot(x_block, y_block)
       acc_ref[:, :] += out
     acc = for_loop(k // bk, body, acc).astype(o_ref.dtype)
     o_idx = (
@@ -115,7 +115,7 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
     def body(i, acc_ref):
       x_block = pl.load(x_ref, (slice(None), pl.ds(i * bk, bk)))
       y_block = pl.load(y_ref, (pl.ds(i * bk, bk), slice(None)))
-      acc_ref[:, :] += jnp.dot(x_block, y_block)
+      acc_ref[:, :] += pl.dot(x_block, y_block)
     acc = for_loop(k // bk, body, acc).astype(o_ref.dtype)
     o_ref[:, :] = acc
   return matmul_kernel(x, y)
@@ -125,12 +125,15 @@ class PallasTest(parameterized.TestCase):
   INTERPRET = False
 
   def setUp(self):
-    if jtu.device_under_test() != "gpu":
-      self.skipTest("Only works on GPU")
-    try:
-      import triton  # noqa: F401
-    except ImportError:
-      self.skipTest("Triton is not installed. Skipping PallasTest.")
+    if jax.config.x64_enabled:
+      self.skipTest("Only works in 32-bit")
+    if not self.INTERPRET:
+      if not jtu.test_device_matches(["gpu"]):
+        self.skipTest("Only works on GPU")
+      try:
+        import triton  # noqa: F401
+      except ImportError:
+        self.skipTest("Triton is not installed. Skipping PallasTest.")
     super().setUp()
     if compile_jaxpr:
       compile_jaxpr.cache_clear()
@@ -138,6 +141,13 @@ class PallasTest(parameterized.TestCase):
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
+
+  def check_gpu_capability_at_least(self, capability,
+                                    device: int = 0):
+    if self.INTERPRET:
+      return True
+    return plgpu.get_compute_capability(device) >= capability
+
 
 class PallasCallTest(PallasTest):
 
@@ -163,8 +173,8 @@ class PallasCallTest(PallasTest):
   def test_add_vector_block_spec(self):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((8,), jnp.int32),
-        in_specs=(pl.BlockSpec(lambda i: i, (1,)),),
-        out_specs=(pl.BlockSpec(lambda i: i, (1,)),),
+        in_specs=[pl.BlockSpec(lambda i: i, (1,))],
+        out_specs=pl.BlockSpec(lambda i: i, (1,)),
         grid=8, debug=False)
     def add_one(x_ref, o_ref):
       o_ref[0] = x_ref[0] + 1
@@ -174,8 +184,8 @@ class PallasCallTest(PallasTest):
   def test_add_matrix_block_spec(self):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((8, 8), jnp.int32),
-        in_specs=(pl.BlockSpec(lambda i, j: (i, j), (2, 2)),),
-        out_specs=(pl.BlockSpec(lambda i, j: (i, j), (2, 2)),),
+        in_specs=[pl.BlockSpec(lambda i, j: (i, j), (2, 2))],
+        out_specs=pl.BlockSpec(lambda i, j: (i, j), (2, 2)),
         grid=(4, 4))
     def add_one(x_ref, o_ref):
       o_ref[:, :] = x_ref[:, :] + 1
@@ -225,7 +235,6 @@ class PallasCallTest(PallasTest):
         np.testing.assert_allclose(out[oi], x[ii])
         np.testing.assert_allclose(out[oi + 1:], jnp.zeros_like(out[oi + 1:]))
 
-
   @parameterized.parameters(*[
     ((), (2,), ()),
     ((1,), (2,), (0,)),
@@ -252,7 +261,8 @@ class PallasCallTest(PallasTest):
   ])
   def test_reshape(self, in_shape, out_shape):
     # TODO(sharadmv): re-enable when `reshape` works again
-    self.skipTest("Reshape not yet supported in Triton-MLIR")
+    if not self.INTERPRET:
+      self.skipTest("Reshape not yet supported in Triton-MLIR")
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
         grid=1)
@@ -303,13 +313,13 @@ class PallasCallTest(PallasTest):
       if block_size_m <= m and block_size_n <= n and block_size_k <= k
     ])
   def test_matmul(self, m, n, k, dtype, bm, bn, bk, gm):
-    if plgpu.get_compute_capability(0) < 70:
+    if not self.check_gpu_capability_at_least(70):
       raise unittest.SkipTest(
           "Matmul only works on GPUs with capability >= sm70")
-    if (plgpu.get_compute_capability(0) <= 75
+    if not self.INTERPRET and (plgpu.get_compute_capability(0) <= 75
         and (bm > 128 or bn > 128 or bk > 32)):
       raise unittest.SkipTest("Block sizes too big for sm70.")
-    k1, k2 = random.split(random.PRNGKey(0))
+    k1, k2 = random.split(random.key(0))
     x = random.normal(k1, (m, k), dtype=dtype)
     y = random.normal(k2, (k, n), dtype=dtype)
     out, expected = matmul(x, y, bm=bm, bn=bn, bk=bk, gm=gm,
@@ -330,14 +340,14 @@ class PallasCallTest(PallasTest):
       if block_size_m <= m and block_size_n <= n and block_size_k <= k
     ])
   def test_matmul_block_spec(self, m, n, k, dtype, bm, bn, bk):
-    if plgpu.get_compute_capability(0) < 70:
+    if not self.check_gpu_capability_at_least(70):
       raise unittest.SkipTest(
           "Matmul only works on GPUs with capability >= sm70")
-    if (plgpu.get_compute_capability(0) <= 75
+    if not self.INTERPRET and (plgpu.get_compute_capability(0) <= 75
         and (bm > 128 or bn > 128 or bk > 32)):
       raise unittest.SkipTest("Block sizes too big for sm70.")
 
-    k1, k2 = random.split(random.PRNGKey(0))
+    k1, k2 = random.split(random.key(0))
     x = random.normal(k1, (m, k), dtype=dtype)
     y = random.normal(k2, (k, n), dtype=dtype)
     out, expected = matmul_block_spec(x, y, bm=bm, bn=bn, bk=bk,
@@ -350,7 +360,7 @@ class PallasCallTest(PallasTest):
       for dtype in ["float32", "float16"]
   ))
   def test_dot(self, size, dtype):
-    if plgpu.get_compute_capability(0) < 70:
+    if not self.check_gpu_capability_at_least(70):
       raise unittest.SkipTest(
           "Matmul only works on GPUs with capability >= sm70")
 
@@ -363,7 +373,7 @@ class PallasCallTest(PallasTest):
       y = y_ref[:, :]
       o_ref[:, :] = pl.dot(x, y).astype(o_ref.dtype)
 
-    k1, k2 = random.split(random.PRNGKey(0))
+    k1, k2 = random.split(random.key(0))
     x = random.normal(k1, (size, size), dtype=dtype)
     y = random.normal(k2, (size, size), dtype=dtype)
     out, expected = dot(x, y), jnp.dot(x, y)
@@ -394,7 +404,7 @@ class PallasCallTest(PallasTest):
       softmax_output = numerator / denominator
       pl.store(o_ref, row_idxs, softmax_output, mask=mask)
 
-    key = random.PRNGKey(0)
+    key = random.key(0)
     x = random.normal(key, [batch_size, size], dtype=dtype)
     np.testing.assert_allclose(softmax(x), jax.nn.softmax(x, axis=-1),
         atol=1e-5, rtol=1e-5)
@@ -416,7 +426,7 @@ class PallasCallTest(PallasTest):
       x = pl.load(x_ref, (idx,), mask=mask)
       pl.store(o_ref, (idx,), x + 1., mask=mask)
 
-    key = random.PRNGKey(0)
+    key = random.key(0)
     x = random.normal(key, (size,))
     np.testing.assert_allclose(add_one(x), x + 1., atol=1e-5, rtol=1e-5)
 
@@ -431,9 +441,50 @@ class PallasCallTest(PallasTest):
       x = pl.load(x_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None, :]))
       pl.store(o_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None, :]), x + 1.)
 
-    key = random.PRNGKey(0)
+    key = random.key(0)
     x = random.normal(key, (m, n))
     np.testing.assert_allclose(load(x), x + 1., atol=1e-5, rtol=1e-5)
+
+  def test_swap(self):
+    m, n = 16, 32
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((m, n), jnp.float32),) * 2,
+        grid=1,
+        input_output_aliases={0: 0, 1: 1},
+    )
+    def swap(_, _2, x_ref, y_ref):
+      x = x_ref[:]
+      y = pl.swap(y_ref, (slice(None),), x)
+      x_ref[:] = y
+
+    x = random.normal(random.key(0), (m, n))
+    y = random.normal(random.key(1), (m, n))
+    out = swap(x, y)
+    np.testing.assert_array_equal(out[0], y)
+    np.testing.assert_array_equal(out[1], x)
+
+  def test_masked_swap(self):
+    m, n = 16, 32
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((m, n), jnp.float32),) * 2,
+        grid=1,
+        input_output_aliases={0: 0, 1: 1},
+    )
+    def masked_swap(_, _2, mask_ref, x_ref, y_ref):
+      x = x_ref[:]
+      y = pl.swap(y_ref, (slice(None),), x, mask=mask_ref[:])
+      x_ref[:] = y
+
+    x = random.normal(random.key(0), (m, n))
+    y = random.normal(random.key(1), (m, n))
+    mask = random.bernoulli(random.key(2), shape=(m, n))
+    out = masked_swap(x, y, mask)
+    np.testing.assert_array_equal(out[0], jnp.where(mask, y, x))
+    np.testing.assert_array_equal(out[1], jnp.where(mask, x, y))
 
   def test_unused_ref(self):
     m, n = 16, 32
@@ -446,7 +497,7 @@ class PallasCallTest(PallasTest):
       pl.store(o_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None, :]),
                jnp.ones_like(o_ref))
 
-    key = random.PRNGKey(0)
+    key = random.key(0)
     x = random.normal(key, (m, n))
     np.testing.assert_allclose(dummy(x), jnp.ones_like(x), atol=1e-5, rtol=1e-5)
 
@@ -464,7 +515,7 @@ class PallasCallTest(PallasTest):
     grid = (8,)
     size = 8
     dtype = "float32"
-    k1 = random.PRNGKey(0)
+    k1 = random.key(0)
     block_size = 1
     x = random.normal(k1, [size], dtype=dtype)
     kernel = functools.partial(add_inplace_kernel, block_size=block_size)
@@ -485,7 +536,7 @@ class PallasCallTest(PallasTest):
       ("min_f32", pl.atomic_min, np.array([1, 2, 3, 4], np.float32), np.min),
   ])
   def test_scalar_atomic(self, op, value, numpy_op):
-    if plgpu.get_compute_capability(0) < 70:
+    if not self.check_gpu_capability_at_least(70):
       raise unittest.SkipTest(
           "Atomic ops onl works on GPUs with capability >= sm70")
 
@@ -518,7 +569,7 @@ class PallasCallTest(PallasTest):
 
   @parameterized.parameters(*[(0,), (1,)])
   def test_array_atomic_add(self, axis):
-    if plgpu.get_compute_capability(0) < 70:
+    if not self.check_gpu_capability_at_least(70):
       raise unittest.SkipTest(
           "Atomic ops onl works on GPUs with capability >= sm70")
 
@@ -541,7 +592,7 @@ class PallasCallTest(PallasTest):
         idx = (jnp.arange(m), i)
       x = pl.load(x_ref, idx)
       pl.atomic_add(y_ref, (jnp.arange(y.shape[0]),), x)
-    x = random.normal(random.PRNGKey(0), (m, n))
+    x = random.normal(random.key(0), (m, n))
     y = jnp.zeros(out_shape.shape, out_shape.dtype)
     y = reduce(x, y)
     y_ref = np.sum(x, axis=axis)
@@ -550,7 +601,7 @@ class PallasCallTest(PallasTest):
   @parameterized.parameters(False, True)
   def test_reduce_only_dim(self, use_store):
     m = 32
-    x = random.normal(random.PRNGKey(0), (m,), dtype=jnp.float32)
+    x = random.normal(random.key(0), (m,), dtype=jnp.float32)
     out_shape = jax.ShapeDtypeStruct((), x.dtype)
     @functools.partial(
         self.pallas_call,
@@ -587,11 +638,13 @@ class PallasCallTest(PallasTest):
       out_dtype = jnp.int32
     def make_x(key):
       if jnp.issubdtype(dtype, jnp.integer):
-        return random.shuffle(key, jnp.arange(m * n, dtype=dtype)).reshape(m, n)
+        return random.permutation(
+          key, jnp.arange(m * n, dtype=dtype), independent=True
+        ).reshape(m, n)
       else:
         return random.normal(key, (m, n), dtype=dtype)
     out_shape = jax.ShapeDtypeStruct(
-        op(make_x(random.PRNGKey(0)), axis=axis).shape, out_dtype)
+        op(make_x(random.key(0)), axis=axis).shape, out_dtype)
     if isinstance(axis, int):
       grid = tuple(a for i, a in enumerate((m, n)) if i != axis)
     else:
@@ -604,7 +657,7 @@ class PallasCallTest(PallasTest):
       x = pl.load(x_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None]))
       y = op(x, axis=axis)
       pl.store(y_ref, tuple(jnp.arange(d) for d in y.shape), y)
-    for i, key in enumerate(random.split(random.PRNGKey(0), 20)):
+    for i, key in enumerate(random.split(random.key(0), 20)):
       x = make_x(key)
       y = reduce(x)
       y_ref = op(x, axis=axis)
@@ -620,7 +673,7 @@ class PallasCallTest(PallasTest):
     def slice_kernel(x_ref, y_ref):
       x = pl.load(x_ref, (pl.dslice(0, 4), pl.dslice(0, 4)))
       pl.store(y_ref, (pl.dslice(4), pl.dslice(4)), x)
-    x = random.normal(random.PRNGKey(0), (m, n))
+    x = random.normal(random.key(0), (m, n))
     y = slice_kernel(x)
     y_ref = x[:4]
     np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2)
@@ -691,8 +744,7 @@ class PallasCallTest(PallasTest):
   ])
   def test_atomic_counter(self, num_threads):
     if self.INTERPRET:
-      self.skipTest("While loop not supported in interpret mode yet.")
-
+      self.skipTest("While loop not supported in interpreter mode.")
     @functools.partial(
         self.pallas_call, out_shape=(
           jax.ShapeDtypeStruct((), jnp.int32),
@@ -710,8 +762,31 @@ class PallasCallTest(PallasTest):
     np.testing.assert_allclose(lock, 0)
     np.testing.assert_allclose(count, num_threads)
 
+  def test_custom_jvp_call(self):
+    @functools.partial(jax.custom_jvp, nondiff_argnums=(1,))
+    def softmax(x, axis=-1):
+      unnormalized = jnp.exp(x - jnp.max(x, axis, keepdims=True))
+      return unnormalized / jnp.sum(unnormalized, axis, keepdims=True)
+
+    @softmax.defjvp
+    def softmax_jvp(axis, primals, tangents):
+      (x,), (x_dot,) = primals, tangents
+      y = softmax(x, axis)
+      return y, y * (x_dot - (y * x_dot).sum(axis, keepdims=True))
+
+    m, n = 16, 32
+    x = random.normal(random.key(0), (m, n))
+
+    @functools.partial(self.pallas_call, out_shape=x, grid=1)
+    def softmax_kernel(x_ref, y_ref):
+      y_ref[:] = softmax(x_ref[:])
+
+    np.testing.assert_allclose(softmax_kernel(x), jax.nn.softmax(x), atol=1e-7)
+
+
 class PallasCallInterpreterTest(PallasCallTest):
   INTERPRET = True
+
 
 class PallasControlFlowTest(PallasTest):
 
@@ -725,9 +800,7 @@ class PallasControlFlowTest(PallasTest):
     # fori_loop handles i64 index variables, i.e. error: 'scf.for' op  along
     # control flow edge from Region #0 to Region #0: source type #0
     # 'tensor<4xf64>' should match input type #0 'tensor<4xf32>'
-    orig_val = jax.config.jax_enable_x64
-    jax.config.update("jax_enable_x64", True)
-    try:
+    with config.enable_x64(True):
       @functools.partial(self.pallas_call,
                          out_shape=jax.ShapeDtypeStruct((4,), jnp.float64),
                          grid=1,
@@ -742,8 +815,6 @@ class PallasControlFlowTest(PallasTest):
 
       np.testing.assert_allclose(np.arange(1, 5.) * 3,
                                  f(jnp.arange(1, 5., dtype=jnp.float64)))
-    finally:
-      jax.config.update("jax_enable_x64", orig_val)
 
   def test_cond_simple(self):
     arg = jnp.float32(0.)
@@ -1137,7 +1208,7 @@ class PallasCallAutodifferentiationTest(PallasTest):
       x = x_ref[()]
       o_ref[()] = impl(x)
 
-    k1, k2 = random.split(random.PRNGKey(0))
+    k1, k2 = random.split(random.key(0))
     x = random.normal(k1)
     t = random.normal(k2)
     out_primal, out_tangent = jax.jvp(pallas_impl, (x,), (t,))
@@ -1159,7 +1230,7 @@ class PallasCallAutodifferentiationTest(PallasTest):
       x = x_ref[()]
       o_ref[()] = jax.grad(impl)(x)
 
-    x = random.normal(random.PRNGKey(0))
+    x = random.normal(random.key(0))
     out_grad = pallas_impl(x)
     out_grad_ref = jax.grad(impl)(x)
     np.testing.assert_allclose(out_grad, out_grad_ref, atol=1e-5, rtol=1e-5)
@@ -1175,7 +1246,7 @@ class PallasCallAutodifferentiationTest(PallasTest):
       o_ref[jnp.arange(2)] = jnp.zeros(2)
       o_ref[2 + jnp.arange(2)] = impl(x)
 
-    k1, k2 = random.split(random.PRNGKey(0))
+    k1, k2 = random.split(random.key(0))
     x = random.normal(k1, (8,))
     t = random.normal(k2, (8,))
     out_primal, out_tangent = jax.jvp(pallas_impl, (x,), (t,))
@@ -1188,7 +1259,7 @@ class PallasCallAutodifferentiationTest(PallasTest):
 
   # TODO(sharadmv): enable this when we update Triton
   # def test_jvp_matmul(self):
-  #   k1, k2 = random.split(random.PRNGKey(0))
+  #   k1, k2 = random.split(random.key(0))
   #   x = random.normal(k1, (256, 128))
   #   y = random.normal(k2, (128, 64))
   #   bm, bn, bk, gm = 64, 128, 32, 8
@@ -1203,7 +1274,6 @@ class PallasCallAutodifferentiationTest(PallasTest):
           pl.BlockSpec(lambda _: (0, 0), (None, 4)),
           pl.BlockSpec(lambda _: (1, 0), (None, 4)),
         ],
-        out_specs=None,
         debug=False, grid=1)
     def add_vectors(x_ref, y_ref, o_ref):
       o_ref[:] = x_ref[:] + y_ref[:]
@@ -1327,6 +1397,44 @@ class PallasCallVmapTest(PallasTest):
     out_ref = jax.vmap(jax.vmap(sin_ref, in_axes=1), in_axes=0)(x)
     np.testing.assert_allclose(out, out_ref, atol=1e-3, rtol=1e-3)
 
+  def test_small_large_vmap(self):
+    # Catches https://github.com/google/jax/issues/18361
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
+        debug=False,
+        grid=(2,))
+    def add_one(x_ref, o_ref):
+      o_ref[()] = x_ref[()] + 1
+
+    add_one = jax.vmap(jax.vmap(add_one))
+    add_one_ref = lambda x: x + 1
+
+    x = random.randint(random.key(0), (4, 65536, 2), 0, 10000)
+
+    out = add_one(x)
+    out_ref = add_one_ref(x)
+
+    np.testing.assert_allclose(out, out_ref)
+
+  def test_small_small_large_vmap(self):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
+        debug=False,
+        grid=(2,))
+    def add_one(x_ref, o_ref):
+      o_ref[()] = x_ref[()] + 1
+
+    add_one = jax.vmap(jax.vmap(jax.vmap(add_one)))
+    add_one_ref = lambda x: x + 1
+
+    x = random.randint(random.key(0), (2, 2, 65536, 2), 0, 10000)
+
+    out = add_one(x)
+    out_ref = add_one_ref(x)
+
+    np.testing.assert_allclose(out, out_ref)
+
+
 class PallasCallInterpreterVmapTest(PallasCallVmapTest):
   INTERPRET = True
 
@@ -1339,8 +1447,8 @@ class PallasOpsTest(PallasTest):
     def ne(x_ref, y_ref, o_ref):
       o_ref[:] = x_ref[...] != y_ref[...]
 
-    x = jnp.ones(8)
-    y = jnp.arange(8)
+    x = jnp.ones(8, dtype=jnp.int32)
+    y = jnp.arange(8, dtype=jnp.int32)
     not_equal = ne(x, y)
     np.testing.assert_allclose(not_equal, x != y)
 
@@ -1462,11 +1570,11 @@ class FusedAttentionTest(PallasTest):
       use_segment_ids,
       kwargs,
   ):
-    if plgpu.get_compute_capability(0) < 80:
+    if not self.check_gpu_capability_at_least(80):
       raise unittest.SkipTest(
           "Fused attention only works on GPUs with capability >= sm80")
 
-    k1, k2, k3 = random.split(random.PRNGKey(0), 3)
+    k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(
         k1, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
     )
@@ -1539,10 +1647,10 @@ class FusedAttentionTest(PallasTest):
   def test_fused_attention_bwd(
       self, batch_size, seq_len, num_heads, head_dim, causal, use_segment_ids
   ):
-    if plgpu.get_compute_capability(0) < 80:
+    if not self.check_gpu_capability_at_least(80):
       raise unittest.SkipTest(
           "Fused attention only works on GPUs with capability >= sm80")
-    k1, k2, k3 = random.split(random.PRNGKey(0), 3)
+    k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(
         k1, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
     )
@@ -1572,6 +1680,9 @@ class FusedAttentionTest(PallasTest):
     np.testing.assert_allclose(dv, dv_ref, atol=0.05)
 
 
+class FusedAttentionInterpreterTest(PallasTest):
+  INTERPRET = True
+
 class FusedLayerNormTest(PallasTest):
 
   @parameterized.parameters(*[
@@ -1579,10 +1690,10 @@ class FusedLayerNormTest(PallasTest):
     (2, 384, 192),
   ])
   def test_fused_layernorm_fwd(self, batch_size, seq_len, embed_dim):
-    if plgpu.get_compute_capability(0) < 70:
+    if not self.check_gpu_capability_at_least(70):
       raise unittest.SkipTest(
           "Fused layernorm only works on GPUs with capability >= sm70")
-    k1, k2, k3 = random.split(random.PRNGKey(0), 3)
+    k1, k2, k3 = random.split(random.key(0), 3)
     x = random.normal(k1, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
     w = jax.random.normal(k2, (embed_dim,), dtype=jnp.float32)
     b = jax.random.normal(k3, (embed_dim,), dtype=jnp.float32)
@@ -1596,10 +1707,10 @@ class FusedLayerNormTest(PallasTest):
     (2, 384, 192),
   ])
   def test_fused_layernorm_bwd(self, batch_size, seq_len, embed_dim):
-    if plgpu.get_compute_capability(0) < 70:
+    if not self.check_gpu_capability_at_least(70):
       raise unittest.SkipTest(
           "Fused layernorm only works on GPUs with capability >= sm70")
-    k1, k2, k3 = random.split(random.PRNGKey(0), 3)
+    k1, k2, k3 = random.split(random.key(0), 3)
     x = random.normal(k1, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
     w = jax.random.normal(k2, (embed_dim,), dtype=jnp.float32)
     b = jax.random.normal(k3, (embed_dim,), dtype=jnp.float32)
@@ -1617,6 +1728,10 @@ class FusedLayerNormTest(PallasTest):
     np.testing.assert_allclose(db, db_ref, rtol=1e-2, atol=1e-2)
 
 
+class FusedLayerNormInterpreterTest(PallasTest):
+  INTERPRET = True
+
+
 class RmsNormTest(PallasTest):
 
   @parameterized.parameters(*[
@@ -1624,10 +1739,10 @@ class RmsNormTest(PallasTest):
     (2, 384, 192),
   ])
   def test_rms_fwd(self, batch_size, seq_len, embed_dim):
-    if plgpu.get_compute_capability(0) < 70:
+    if not self.check_gpu_capability_at_least(70):
       raise unittest.SkipTest(
           "Rms norm only works on GPUs with capability >= sm70")
-    k1, k2, k3 = random.split(random.PRNGKey(0), 3)
+    k1, k2, k3 = random.split(random.key(0), 3)
     x = random.normal(k1, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
     w = jax.random.normal(k2, (embed_dim,), dtype=jnp.float32)
     b = jax.random.normal(k3, (embed_dim,), dtype=jnp.float32)
@@ -1641,10 +1756,10 @@ class RmsNormTest(PallasTest):
     (2, 384, 192),
   ])
   def test_rms_norm_bwd(self, batch_size, seq_len, embed_dim):
-    if plgpu.get_compute_capability(0) < 70:
+    if not self.check_gpu_capability_at_least(70):
       raise unittest.SkipTest(
           "Rms norm only works on GPUs with capability >= sm70")
-    k1, k2, k3 = random.split(random.PRNGKey(0), 3)
+    k1, k2, k3 = random.split(random.key(0), 3)
     x = random.normal(k1, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
     w = jax.random.normal(k2, (embed_dim,), dtype=jnp.float32)
     b = jax.random.normal(k3, (embed_dim,), dtype=jnp.float32)
@@ -1661,6 +1776,8 @@ class RmsNormTest(PallasTest):
     np.testing.assert_allclose(dw, dw_ref, rtol=1e-2, atol=1e-2)
     np.testing.assert_allclose(db, db_ref, rtol=1e-2, atol=1e-2)
 
+class RmsNormInterpreterTest(PallasTest):
+  INTERPRET = True
 
 class SoftmaxTest(PallasTest):
 
@@ -1674,7 +1791,7 @@ class SoftmaxTest(PallasTest):
     if dtype == jnp.bfloat16:
       raise absltest.SkipTest("Disabled due to Triton lowering bug")
 
-    x = jax.random.normal(random.PRNGKey(0), shape, dtype=dtype)
+    x = jax.random.normal(random.key(0), shape, dtype=dtype)
 
     atol, rtol = {
         jnp.bfloat16: (1e-2, 1e-4),
@@ -1689,6 +1806,9 @@ class SoftmaxTest(PallasTest):
         rtol=rtol,
     )
 
+
+class SoftmaxInterpreterTest(PallasTest):
+  INTERPRET = True
 
 if __name__ == "__main__":
   absltest.main()

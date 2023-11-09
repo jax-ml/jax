@@ -19,3 +19,11 @@
 .developer-docs {
   background-color: rgba(171, 0, 182, var(--block-bg-opacity));
 }
+
+div.red-background pre {
+  background-color: rgba(244, 204, 204, var(--block-bg-opacity));
+}
+
+div.green-background pre {
+  background-color: rgba(204, 244, 204, var(--block-bg-opacity));
+}

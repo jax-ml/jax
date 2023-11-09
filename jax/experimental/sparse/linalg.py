@@ -199,7 +199,7 @@ def _lobpcg_standard_callable(
     # I tried many variants of hard and soft locking [3]. All of them seemed
     # to worsen performance relative to no locking.
     #
-    # Further, I found a more expermental convergence formula compared to what
+    # Further, I found a more experimental convergence formula compared to what
     # is suggested in the literature, loosely based on floating-point
     # expectations.
     #
@@ -451,7 +451,7 @@ def _rayleigh_ritz_orth(A, S):
 
   SAS = _mm(S.T, A(S))
 
-  # Solve the projected subsytem.
+  # Solve the projected subsystem.
   # If we could tell to eigh to stop after first k, we would.
   return _eigh_ascending(SAS)
 
@@ -544,10 +544,9 @@ def _spsolve_cpu_lowering(ctx, data, indices, indptr, b, tol, reorder):
     A = csr_matrix((data, indices, indptr), shape=(b.size, b.size))
     return (linalg.spsolve(A, b).astype(b.dtype),)
 
-  result, _, keepalive = mlir.emit_python_callback(
+  result, _, _ = mlir.emit_python_callback(
       ctx, _callback, None, args, ctx.avals_in, ctx.avals_out,
       has_side_effect=False)
-  ctx.module_context.add_keepalive(keepalive)
   return result
 
 

@@ -40,8 +40,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import (GSPMDSharding, NamedSharding,
-                                     parse_flatten_op_sharding)
+from jax._src.sharding_impls import NamedSharding, parse_flatten_op_sharding
 
 # pytype: disable=import-error
 try:
@@ -153,14 +152,13 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
             *flat_args, effect=effect, callback=callback, **params))
   if effects.ordered_effects.contains(effect):
     token = ctx.tokens_in.get(effect)[0]
-    result, token, keepalive = mlir.emit_python_callback(
+    result, token, _ = mlir.emit_python_callback(
         ctx, _callback, token, list(args), ctx.avals_in, ctx.avals_out, True)
     ctx.set_tokens_out(mlir.TokenSet({effect: (token,)}))
   else:
-    result, token, keepalive = mlir.emit_python_callback(
+    result, token, _ = mlir.emit_python_callback(
         ctx, _callback, None, list(args), ctx.avals_in, ctx.avals_out, True,
         sharding=sharding)
-  ctx.module_context.add_keepalive(keepalive)
   return result
 mlir.register_lowering(debug_callback_p, debug_callback_lowering,
                        platform="cpu")
@@ -337,7 +335,8 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
   # partitioner calls back with the `HloSharding.
   def _hlo_sharding_callback(hlo_sharding: xc.HloSharding):
     if mesh.empty:
-      return callback(GSPMDSharding(devices, hlo_sharding))
+      return callback(
+          sharding_impls._op_sharding_to_pos_sharding(hlo_sharding, devices))
     pspec = parse_flatten_op_sharding(hlo_sharding, mesh)[0].get_partition_spec()
     return callback(NamedSharding(mesh, pspec))
 
@@ -386,7 +385,7 @@ def inspect_sharding_partition(shapes, arg_shardings, result_shape,
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   trivial_comp = mlir.build_xla_computation_helper(closed_jaxpr,
-      name="tmp_xla_computation", platform=module_context.platform,
+      name="tmp_xla_computation", platforms=module_context.platforms,
       backend_or_name=module_context.backend_or_name,
       axis_context=module_context.axis_context)
   # The trivial computation built here has a dummy tuple as the result,

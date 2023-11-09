@@ -61,6 +61,10 @@ absl::Status AsStatus(gpublasStatus_t status, const char* file,
 #ifdef JAX_GPU_CUDA
 absl::Status AsStatus(CUresult error, const char* file, std::int64_t line,
                       const char* expr);
+absl::Status AsStatus(CUptiResult error, const char* file, std::int64_t line,
+                      const char* expr);
+absl::Status AsStatus(cufftResult error, const char* file, std::int64_t line,
+                      const char* expr);
 #endif
 
 // Builds an array of pointers to each array in a batch, in device memory.

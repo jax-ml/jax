@@ -181,7 +181,7 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
   built = mlir.build_xla_computation_helper(
       closed_jaxpr,
       name="tmp_xla_computation",
-      platform=module_context.platform,
+      platforms=module_context.platforms,
       backend_or_name=module_context.backend_or_name,
       axis_context=axis_context.extend_manual(frozenset(mesh.axis_names)),
   )
@@ -504,7 +504,9 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       partition, to_mesh_pspec_sharding, in_tree, out_tree,
       infer_sharding_from_operands, ctx.module_context, mesh, static_args)
   key = str(id(sharding_callback_info))
+  # TODO(parkers): Remove bytes registration when xla_extension_version > 211
   _sharding_callbacks[key] = sharding_callback_info
+  _sharding_callbacks[bytes(key, 'utf8')] = sharding_callback_info
   # We need to make sure `sharding_callback_info` is still alive when the SPMD
   # partitioner runs so we keep it alive by attaching it to the executable.
   ctx.module_context.add_keepalive(sharding_callback_info)

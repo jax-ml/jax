@@ -70,7 +70,6 @@ Todos::
 """
 
 from functools import partial
-from typing import Any
 
 import numpy as np
 
@@ -88,9 +87,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import hlo
-
-
-Array = Any
+from jax._src.typing import Array
 
 
 def approx_max_k(operand: Array,
@@ -203,7 +200,7 @@ def approx_min_k(operand: Array,
 
   In the example above, we compute ``db^2/2 - dot(qy, db^T)`` instead of
   ``qy^2 - 2 dot(qy, db^T) + db^2`` for performance reason. The former uses less
-  arithmetics and produces the same set of neighbors.
+  arithmetic and produces the same set of neighbors.
   """
   return approx_top_k_p.bind(
       operand,

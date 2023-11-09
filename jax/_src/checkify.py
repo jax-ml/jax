@@ -27,6 +27,7 @@ from jax import lax
 
 from jax._src import api
 from jax._src import linear_util as lu
+from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import effects
@@ -37,7 +38,6 @@ from jax._src import traceback_util
 from jax._src import tree_util as jtu
 from jax._src.ad_util import SymbolicZero
 from jax._src.api_util import flatten_fun
-from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -511,17 +511,16 @@ def check_lowering_rule(ctx, *args, err_tree, debug):
   if debug:
     # NOOP (check will only trigger when discharged)
     return []
-  if not config.jax_experimental_unsafe_xla_runtime_errors:
+  if not config.xla_runtime_errors.value:
     raise functionalization_error
 
-  out_op, _, keep_alive = mlir.emit_python_callback(
+  out_op, _, _ = mlir.emit_python_callback(
       ctx, callback=functools.partial(python_err, err_tree),
       token=None,
       operands=args,
       operand_avals=list(ctx.avals_in),
       result_avals=list(ctx.avals_out),
       has_side_effect=True)
-  ctx.module_context.add_keepalive(keep_alive)
   return out_op
 
 def check_lowering_rule_unsupported(*a, debug, **k):
@@ -1177,7 +1176,7 @@ def _check(pred, msg, debug, *fmt_args, **fmt_kwargs):
     if not isinstance(arg, (Array, np.ndarray)):
       raise TypeError('Formatting arguments to checkify.check need to be '
                       'PyTrees of arrays, but got '
-                      f'{repr(arg)} of type {type(arg)}.')
+                      f'{arg!r} of type {type(arg)}.')
   new_error = FailedCheckError(get_traceback(), msg, *fmt_args, **fmt_kwargs)
   error = assert_func(init_error, jnp.logical_not(pred), new_error)
   _check_error(error, debug=debug)

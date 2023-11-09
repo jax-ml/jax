@@ -16,7 +16,9 @@ from absl.testing import absltest
 
 import jax
 import jax.extend as jex
+import jax.numpy as jnp
 
+from jax._src import abstract_arrays
 from jax._src import linear_util
 from jax._src import prng
 from jax._src import test_util as jtu
@@ -26,9 +28,9 @@ config.parse_flags_with_absl()
 
 
 class ExtendTest(jtu.JaxTestCase):
+
   def test_symbols(self):
     # Assume these are tested in random_test.py, only check equivalence
-    self.assertIs(jex.random.PRNGImpl, prng.PRNGImpl)
     self.assertIs(jex.random.seed_with_impl, prng.seed_with_impl)
     self.assertIs(jex.random.threefry2x32_p, prng.threefry2x32_p)
     self.assertIs(jex.random.threefry_2x32, prng.threefry_2x32)
@@ -37,6 +39,7 @@ class ExtendTest(jtu.JaxTestCase):
     self.assertIs(jex.random.unsafe_rbg_prng_impl, prng.unsafe_rbg_prng_impl)
 
     # Assume these are tested elsewhere, only check equivalence
+    self.assertIs(jex.core.array_types, abstract_arrays.array_types)
     self.assertIs(jex.linear_util.StoreException, linear_util.StoreException)
     self.assertIs(jex.linear_util.WrappedFun, linear_util.WrappedFun)
     self.assertIs(jex.linear_util.cache, linear_util.cache)
@@ -47,30 +50,35 @@ class ExtendTest(jtu.JaxTestCase):
 
 
 class RandomTest(jtu.JaxTestCase):
-  def test_wrap_key_default(self):
-    key1 = jax.random.key(17)
-    data = jax.random.key_data(key1)
-    key2 = jex.random.wrap_key_data(data)
-    self.assertEqual(key1.dtype, key2.dtype)
-    self.assertArraysEqual(jax.random.key_data(key1),
-                           jax.random.key_data(key2))
 
-    impl = config.jax_default_prng_impl
-    key3 = jex.random.wrap_key_data(data, impl=impl)
-    self.assertEqual(key1.dtype, key3.dtype)
-    self.assertArraysEqual(jax.random.key_data(key1),
-                           jax.random.key_data(key3))
+  def test_key_make_with_custom_impl(self):
+    shape = (4, 2, 7)
 
-  def test_wrap_key_explicit(self):
-    key1 = jax.random.key(17, impl='rbg')
-    data = jax.random.key_data(key1)
-    key2 = jex.random.wrap_key_data(data, impl='rbg')
-    self.assertEqual(key1.dtype, key2.dtype)
-    self.assertArraysEqual(jax.random.key_data(key1),
-                           jax.random.key_data(key2))
+    def seed_rule(_):
+      return jnp.ones(shape, dtype=jnp.dtype('uint32'))
 
-    key3 = jex.random.wrap_key_data(data, impl='unsafe_rbg')
-    self.assertNotEqual(key1.dtype, key3.dtype)
+    def no_rule(*args, **kwargs):
+      assert False, 'unreachable'
+
+    impl = jex.random.define_prng_impl(
+        key_shape=shape, seed=seed_rule, split=no_rule, fold_in=no_rule,
+        random_bits=no_rule)
+    k = jax.random.key(42, impl=impl)
+    self.assertEqual(k.shape, ())
+    self.assertEqual(impl, jax.random.key_impl(k))
+
+  def test_key_wrap_with_custom_impl(self):
+    def no_rule(*args, **kwargs):
+      assert False, 'unreachable'
+
+    shape = (4, 2, 7)
+    impl = jex.random.define_prng_impl(
+        key_shape=shape, seed=no_rule, split=no_rule, fold_in=no_rule,
+        random_bits=no_rule)
+    data = jnp.ones((3, *shape), dtype=jnp.dtype('uint32'))
+    k = jax.random.wrap_key_data(data, impl=impl)
+    self.assertEqual(k.shape, (3,))
+    self.assertEqual(impl, jax.random.key_impl(k))
 
 
 if __name__ == "__main__":

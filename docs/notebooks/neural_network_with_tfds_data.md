@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.14.7
+    jupytext_version: 1.15.2
 kernelspec:
   display_name: Python 3
   language: python
@@ -260,5 +260,5 @@ for epoch in range(num_epochs):
 
 +++ {"id": "xC1CMcVNYwxm"}
 
-We've now used the whole of the JAX API: `grad` for derivatives, `jit` for speedups and `vmap` for auto-vectorization.
+We've now used most of the JAX API: `grad` for derivatives, `jit` for speedups and `vmap` for auto-vectorization.
 We used NumPy to specify all of our computation, and borrowed the great data loaders from `tensorflow/datasets`, and ran the whole thing on the GPU.

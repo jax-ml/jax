@@ -19,21 +19,20 @@ import warnings
 from absl.testing import absltest
 import jax
 import jax.numpy as jnp
-from jax._src import core
 from jax import lax
-from jax._src import effects
-from jax._src import linear_util as lu
-from jax import config
 from jax.experimental import maps
 from jax.experimental import pjit
-from jax._src.interpreters import ad
-from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import mlir
 from jax._src import ad_checkpoint
 from jax._src import dispatch
+from jax._src import config
+from jax._src import core
+from jax._src import effects
+from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import util
-from jax._src import xla_bridge
+from jax._src.interpreters import ad
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -124,13 +123,12 @@ def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out
   if effects.ordered_effects.contains(effect):
     token_in = ctx.tokens_in.get(effect)[0]
 
-  out_op, token_out, keep_alive = mlir.emit_python_callback(
+  out_op, token_out, _ = mlir.emit_python_callback(
       ctx, callback, token_in, list(args), list(ctx.avals_in),
       list(ctx.avals_out), True)
   if token_out:
     ctx.set_tokens_out(ctx.tokens_in.update_tokens(mlir.TokenSet({effect:
       token_out})))
-  ctx.module_context.add_keepalive(keep_alive)
   return out_op
 
 mlir.register_lowering(callback_p, callback_effect_lowering)
@@ -299,8 +297,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    self.old_x64 = config.jax_enable_x64
-    config.update('jax_enable_x64', False)
+    self.enter_context(config.enable_x64(False))
     self._old_lowering = mlir._lowerings[effect_p]
     def _effect_lowering(ctx, *, effect):
       if effects.ordered_effects.contains(effect):
@@ -317,7 +314,6 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
   def tearDown(self):
     super().tearDown()
     dispatch.runtime_tokens.clear()
-    config.update('jax_enable_x64', self.old_x64)
     mlir.register_lowering(effect_p, self._old_lowering)
 
   def test_can_lower_lowerable_effect(self):
@@ -559,11 +555,11 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     def f(x):
       effect_p.bind(effect=foo_effect)
       return x + 1.
-    self.assertNotIn(foo_effect, dispatch.runtime_tokens.tokens)
+    self.assertNotIn(foo_effect, dispatch.runtime_tokens.current_tokens)
     f(2.)
-    prev_token = dispatch.runtime_tokens.tokens[foo_effect]
+    prev_token = dispatch.runtime_tokens.current_tokens[foo_effect]
     f(2.)
-    curr_token = dispatch.runtime_tokens.tokens[foo_effect]
+    curr_token = dispatch.runtime_tokens.current_tokens[foo_effect]
     self.assertIsNot(prev_token, curr_token)
 
   def test_can_lower_multiple_effects(self):
@@ -576,28 +572,23 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     def g(x):
       effect_p.bind(effect=foo_effect)
       return x + 1.
-    self.assertNotIn(foo_effect, dispatch.runtime_tokens.tokens)
-    self.assertNotIn(foo2_effect, dispatch.runtime_tokens.tokens)
-    f(2.).block_until_ready()
-    foo_token = dispatch.runtime_tokens.tokens[foo_effect][0]
-    foo2_token = dispatch.runtime_tokens.tokens[foo2_effect][0]
+    self.assertNotIn(foo_effect, dispatch.runtime_tokens.current_tokens)
+    self.assertNotIn(foo2_effect, dispatch.runtime_tokens.current_tokens)
     f(2.)
-    self.assertIsNot(foo_token, dispatch.runtime_tokens.tokens[foo_effect][0])
-    self.assertIsNot(foo2_token, dispatch.runtime_tokens.tokens[foo2_effect][0])
-    foo_token = dispatch.runtime_tokens.tokens[foo_effect][0]
-    foo2_token = dispatch.runtime_tokens.tokens[foo2_effect][0]
+    foo_token = dispatch.runtime_tokens.current_tokens[foo_effect]
+    foo2_token = dispatch.runtime_tokens.current_tokens[foo2_effect]
+    f(2.)
+    self.assertIsNot(foo_token, dispatch.runtime_tokens.current_tokens[foo_effect])
+    self.assertIsNot(foo2_token, dispatch.runtime_tokens.current_tokens[foo2_effect])
+    foo_token = dispatch.runtime_tokens.current_tokens[foo_effect]
+    foo2_token = dispatch.runtime_tokens.current_tokens[foo2_effect]
     g(2.)
-    self.assertIsNot(foo_token, dispatch.runtime_tokens.tokens[foo_effect][0])
-    self.assertIs(foo2_token, dispatch.runtime_tokens.tokens[foo2_effect][0])
+    self.assertIsNot(foo_token, dispatch.runtime_tokens.current_tokens[foo_effect])
+    self.assertIs(foo2_token, dispatch.runtime_tokens.current_tokens[foo2_effect])
 
 class EffectOrderingTest(jtu.JaxTestCase):
 
   def test_can_execute_python_callback(self):
-    # TODO(sharadmv): enable this test on GPU and TPU when backends are
-    # supported
-    if xla_bridge.get_backend().runtime_type == 'stream_executor':
-      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
-
     log = []
     def log_value(x):
       log.append(x)
@@ -614,13 +605,9 @@ class EffectOrderingTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertListEqual(log, [2., 3.])
 
+  # TODO(b/307211483): Investigate failure
   @jtu.skip_on_devices("tpu")
   def test_ordered_effect_remains_ordered_across_multiple_devices(self):
-    # TODO(sharadmv): enable this test on GPU and TPU when backends are
-    # supported
-    if xla_bridge.get_backend().runtime_type == 'stream_executor':
-      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
-
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
 
@@ -647,22 +634,25 @@ class EffectOrderingTest(jtu.JaxTestCase):
     f(jnp.ones((500, 500)))
     g(3.)
     jax.effects_barrier()
-    x_, y_ = float(jnp.log(1.25e8)), 3.
-    expected_log = [x_, y_, x_, y_, x_, y_]
+    f_, g_ = float(jnp.log(1.25e8)), 3.
+    expected_log = [f_, g_, f_, g_, f_, g_]
     self.assertListEqual(log, expected_log)
 
-  @jtu.skip_on_devices("tpu")
   def test_different_threads_get_different_tokens(self):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
     tokens = []
     def _noop(_):
-      tokens.append(dispatch.runtime_tokens.tokens[log_effect][0])
       return ()
 
-    @functools.partial(jax.jit, device=jax.devices()[0])
     def f(x):
-      return callback_p.bind(x, callback=_noop, effect=log_effect, out_avals=[])
+      # Runs in a thread.
+      res = jax.jit(
+          lambda x: callback_p.bind(
+              x, callback=_noop, effect=log_effect, out_avals=[])
+      )(x)
+      tokens.append(dispatch.runtime_tokens.current_tokens[log_effect])
+      return res
 
     t1 = threading.Thread(target=lambda: f(2.))
     t2 = threading.Thread(target=lambda: f(3.))
@@ -704,11 +694,6 @@ class ParallelEffectsTest(jtu.JaxTestCase):
     jax.pmap(f)(jnp.arange(jax.local_device_count()))
 
   def test_can_pmap_unordered_callback(self):
-    # TODO(sharadmv): enable this test on GPU and TPU when backends are
-    # supported
-    if xla_bridge.get_backend().runtime_type == 'stream_executor':
-      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
-
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
 

@@ -56,6 +56,12 @@ betaln = _wraps(
 )(_betaln_impl)
 
 
+@_wraps(osp_special.beta, module='scipy.special')
+def beta(x: ArrayLike, y: ArrayLike) -> Array:
+  x, y = promote_args_inexact("beta", x, y)
+  return lax.exp(betaln(x, y))
+
+
 @_wraps(osp_special.betainc, module='scipy.special')
 def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   a, b, x = promote_args_inexact("betainc", a, b, x)
@@ -865,7 +871,7 @@ def _gen_derivatives(p: Array,
 
   Args:
     p: The 3D array containing the values of associated Legendre functions; the
-      dimensions are in the sequence of order (m), degree (l), and evalution
+      dimensions are in the sequence of order (m), degree (l), and evaluation
       points.
     x: A vector of type `float32` or `float64` containing the sampled points.
     is_normalized: True if the associated Legendre functions are normalized.
@@ -962,7 +968,7 @@ def _gen_associated_legendre(l_max: int,
   harmonic of degree `l` and order `m` can be written as
   `Y_l^m(θ, φ) = N_l^m * P_l^m(cos(θ)) * exp(i m φ)`, where `N_l^m` is the
   normalization factor and θ and φ are the colatitude and longitude,
-  repectively. `N_l^m` is chosen in the way that the spherical harmonics form
+  respectively. `N_l^m` is chosen in the way that the spherical harmonics form
   a set of orthonormal basis function of L^2(S^2). For the computational
   efficiency of spherical harmonics transform, the normalization factor is
   used in the computation of the ALFs. In addition, normalizing `P_l^m`
@@ -999,7 +1005,7 @@ def _gen_associated_legendre(l_max: int,
   Returns:
     The 3D array of shape `(l_max + 1, l_max + 1, len(x))` containing the values
     of the ALFs at `x`; the dimensions in the sequence of order, degree, and
-    evalution points.
+    evaluation points.
   """
   p = jnp.zeros((l_max + 1, l_max + 1, x.shape[0]), dtype=x.dtype)
 
@@ -1106,7 +1112,7 @@ def lpmn_values(m: int, n: int, z: Array, is_normalized: bool) -> Array:
   spherical harmonic of degree `l` and order `m` can be written as
   :math:`Y_l^m(\theta, \phi) = N_l^m * P_l^m(\cos \theta) * \exp(i m \phi)`,
   where :math:`N_l^m` is the normalization factor and θ and φ are the
-  colatitude and longitude, repectively. :math:`N_l^m` is chosen in the
+  colatitude and longitude, respectively. :math:`N_l^m` is chosen in the
   way that the spherical harmonics form a set of orthonormal basis function
   of :math:`L^2(S^2)`. Normalizing :math:`P_l^m` avoids overflow/underflow
   and achieves better numerical stability.
@@ -1192,7 +1198,7 @@ def sph_harm(m: Array,
   :math:`Y_n^m(\theta, \phi) = N_n^m * P_n^m(\cos \phi) * \exp(i m \theta)`,
   where :math:`N_n^m = \sqrt{\frac{\left(2n+1\right) \left(n-m\right)!}
   {4 \pi \left(n+m\right)!}}` is the normalization factor and :math:`\phi` and
-  :math:`\theta` are the colatitude and longitude, repectively. :math:`N_n^m` is
+  :math:`\theta` are the colatitude and longitude, respectively. :math:`N_n^m` is
   chosen in the way that the spherical harmonics form a set of orthonormal basis
   functions of :math:`L^2(S^2)`.
 
@@ -1600,7 +1606,7 @@ def expn_jvp(n, primals, tangents):
 @_wraps(osp_special.exp1, module="scipy.special")
 def exp1(x: ArrayLike, module='scipy.special') -> Array:
   x, = promote_args_inexact("exp1", x)
-  # Casting becuase custom_jvp generic does not work correctly with mypy.
+  # Casting because custom_jvp generic does not work correctly with mypy.
   return cast(Array, expn(1, x))
 
 

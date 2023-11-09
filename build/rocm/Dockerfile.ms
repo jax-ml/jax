@@ -2,10 +2,10 @@
 FROM rocm/dev-ubuntu-20.04:5.4-complete as rt_build
 MAINTAINER Rahul Batra<rahbatra@amd.com>
 ################################################################################
-ARG ROCM_DEB_REPO=http://repo.radeon.com/rocm/apt/5.5/
+ARG ROCM_DEB_REPO=http://repo.radeon.com/rocm/apt/5.6/
 ARG ROCM_BUILD_NAME=ubuntu
 ARG ROCM_BUILD_NUM=main
-ARG ROCM_PATH=/opt/rocm-5.5.0
+ARG ROCM_PATH=/opt/rocm-5.6.0
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG PYTHON_VERSION=3.9.0
@@ -50,6 +50,7 @@ RUN apt-get update --allow-insecure-repositories && DEBIAN_FRONTEND=noninteracti
   libxmlsec1-dev \
   libffi-dev \
   liblzma-dev \
+  hipblaslt-dev \
   wget && \
   apt-get clean && \
   rm -rf /var/lib/apt/lists/*
@@ -101,6 +102,6 @@ ENV PATH $PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH
 
 RUN pyenv install $PYTHON_VERSION
 
-RUN eval "$(pyenv init -)" && pyenv local ${PYTHON_VERSION} && pip3 install --upgrade --force-reinstall setuptools pip==22.0 && pip install numpy==1.21.0 setuptools build wheel six auditwheel scipy pytest pytest-rerunfailures matplotlib absl-py
+RUN eval "$(pyenv init -)" && pyenv local ${PYTHON_VERSION} && pip3 install --upgrade --force-reinstall setuptools pip && pip install numpy setuptools build wheel six auditwheel scipy pytest pytest-rerunfailures matplotlib absl-py
 
 

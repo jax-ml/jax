@@ -145,7 +145,7 @@ You can use the :func:`barrier_wait` function for that purpose::
      accumulator.append(arg)
 
 
-   def device_fun(c):
+   def device_fun(x):
      id_tap(host_log, x)
      id_tap(host_log, 2. * x)
 
@@ -573,7 +573,7 @@ def _raise_if_using_outfeed_with_pjrt_c_api(backend: xb.XlaBackend):
         "https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html"
         " for alternatives. Please file a feature request at "
         "https://github.com/google/jax/issues if none of the alternatives are "
-        "sufficent.")
+        "sufficient.")
 
 
 xops = xla_client._xla.ops
@@ -1101,7 +1101,9 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
                            flat_results_aval=(),
                            **params):
   """MLIR Lowering for `CustomCall`-based HCB."""
-  platform = ctx.module_context.platform
+  if len(ctx.module_context.platforms) > 1:
+    raise NotImplementedError("multi-platform lowering for host_callback")
+  platform = ctx.module_context.platforms[0]
   use_outfeed = _use_outfeed(platform)
   if use_outfeed:
     # Fall back to XLA path if we are using the outfeed
@@ -1118,7 +1120,7 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
   else:
     # TODO(necula): It seems that on CPU, with custom call, the device_index
     # does not work, and the callback is always run on device_index=0
-    if (device_index != 0 and ctx.module_context.platform == "cpu"):
+    if (device_index != 0 and "cpu" in ctx.module_context.platforms):
       raise ValueError(
           "The device_index feature on CPU works only when using outfeed.")
   # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
@@ -1209,7 +1211,7 @@ def _outside_call_run_callback(
         return name, dict(logical_shapes=5)
       else:
         assert not params, f"{name}, {params}"
-        return name, dict()
+        return name, {}
 
     return tuple(_unpack_transform(*t) for t in transforms)
 
@@ -1715,8 +1717,8 @@ class _CallbackHandlerData:
     # because we may have cached compilations that embed consumer ids, and we
     # do not want the id reused for other shapes.
     # Used only for the outfeed mechanism.
-    self.callback_registry = dict()
-    self.callback_registry_by_id = dict()
+    self.callback_registry = {}
+    self.callback_registry_by_id = {}
     # For now we keep here the keep_alives for the emit_python_callback. This is
     # a leak. We ought to attach these to the executable.
     self.keep_alives = []

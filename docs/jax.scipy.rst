@@ -131,6 +131,7 @@ jax.scipy.special
   :toctree: _autosummary
 
    bernoulli
+   beta
    betainc
    betaln
    digamma
@@ -441,6 +442,15 @@ jax.scipy.stats.gaussian_kde
 jax.scipy.stats.vonmises
 ~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.vonmises
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+
+jax.scipy.stats.wrapcauchy
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.wrapcauchy
 .. autosummary::
   :toctree: _autosummary
 

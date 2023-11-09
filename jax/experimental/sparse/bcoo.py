@@ -20,7 +20,7 @@ import functools
 from functools import partial
 import math
 import operator
-from typing import Any, NamedTuple, Optional, Protocol, Union
+from typing import Any, NamedTuple, Protocol
 import warnings
 
 import numpy as np
@@ -29,7 +29,6 @@ import jax
 from jax import lax
 from jax import tree_util
 from jax import vmap
-from jax import config
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import (
   nfold_vmap, _count_stored_elements,
@@ -41,6 +40,7 @@ from jax._src.interpreters import mlir
 import jax.numpy as jnp
 from jax.util import safe_zip, unzip2, split_list
 from jax._src import api_util
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src.interpreters import ad
@@ -262,9 +262,10 @@ def bcoo_fromdense(mat: Array, *, nse: int | None = None, n_batch: int = 0,
     mat_bcoo: BCOO representation of the matrix.
   """
   mat = jnp.asarray(mat)
-  if nse is None:
-    nse = _count_stored_elements(mat, n_batch, n_dense)
-  nse_int = core.concrete_or_error(operator.index, nse, _TRACED_NSE_ERROR)
+  nse_arr: int | Array | None = nse
+  if nse_arr is None:
+    nse_arr = _count_stored_elements(mat, n_batch, n_dense)
+  nse_int = core.concrete_or_error(operator.index, nse_arr, _TRACED_NSE_ERROR)
   return BCOO(_bcoo_fromdense(mat, nse=nse_int, n_batch=n_batch, n_dense=n_dense,
                               index_dtype=index_dtype),
               shape=mat.shape, indices_sorted=True, unique_indices=True)
@@ -673,7 +674,7 @@ def _bcoo_rdot_general(lhs: Array, rhs_data: Array, rhs_indices: Array, *,
                              preferred_element_type=preferred_element_type)
   n_contract, n_batch = (len(d[0]) for d in dimension_numbers)
   n_swap = len(rhs_spinfo.shape) - n_contract
-  permutation = tuple([*range(n_batch), *range(n_swap, result.ndim), *range(n_batch, n_swap)])
+  permutation = (*range(n_batch), *range(n_swap, result.ndim), *range(n_batch, n_swap))
   return lax.transpose(result, permutation)
 
 def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers,
@@ -784,7 +785,7 @@ def _bcoo_dot_general_fallback(data, indices, spinfo):
 def _bcoo_dot_general_gpu_impl(lhs_data, lhs_indices, rhs, *,
                                dimension_numbers, preferred_element_type,
                                lhs_spinfo):
-  if not config.jax_bcoo_cusparse_lowering:
+  if not config.bcoo_cusparse_lowering.value:
     return _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs,
         dimension_numbers=dimension_numbers,
         preferred_element_type=preferred_element_type,

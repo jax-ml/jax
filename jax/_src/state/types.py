@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import dataclasses
 import math
 from typing import Any, Generic, TypeVar, Union
 
@@ -22,13 +23,12 @@ from jax._src import core
 from jax._src import effects
 from jax._src import pretty_printer as pp
 from jax._src.util import safe_map, safe_zip
+from jax._src.typing import Array
 
 ## JAX utilities
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
-
-Array = Any
 
 _ref_effect_color = pp.Color.GREEN
 
@@ -74,6 +74,25 @@ StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
 
 Aval = TypeVar("Aval", bound=core.AbstractValue)
 
+@dataclasses.dataclass
+class RefIndexer:
+  ref: Any
+
+  def __getitem__(self, slc):
+    if not isinstance(slc, tuple):
+      slc = (slc,)
+    return RefView(self.ref, slc)
+
+@dataclasses.dataclass
+class RefView:
+  ref: Any
+  indexer: Any
+
+  @property
+  def at(self):
+    raise NotImplementedError("Can't call `.at` multiple times.")
+
+
 # We need an aval for `Ref`s so we can represent `get` and `swap` in Jaxprs.
 class AbstractRef(core.AbstractValue, Generic[Aval]):
   __slots__ = ["inner_aval"]
@@ -99,6 +118,10 @@ class AbstractRef(core.AbstractValue, Generic[Aval]):
     if not isinstance(self.inner_aval, core.UnshapedArray):
       raise ValueError(f"`Ref{{{self.inner_aval.str_short()}}} has no `dtype`.")
     return self.inner_aval.dtype
+
+  @core.aval_property
+  def at(self):
+    return RefIndexer(self)
 
   @core.aval_method
   @staticmethod

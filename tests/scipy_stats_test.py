@@ -80,6 +80,48 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @genNamedParametersNArgs(2)
+  def testWrappedCauchyPdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    rng_uniform = jtu.rand_uniform(self.rng(), low=1e-3, high=1 - 1e-3)
+    scipy_fun = osp_stats.wrapcauchy.pdf
+    lax_fun = lsp_stats.wrapcauchy.pdf
+
+    def args_maker():
+      x = rng(shapes[0], dtypes[0])
+      c = rng_uniform(shapes[1], dtypes[1])
+      return [x, c]
+
+    tol = {
+        np.float32: 1e-4 if jtu.test_device_matches(["tpu"]) else 1e-5,
+        np.float64: 1e-11,
+    }
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
+                              check_dtypes=False, tol=tol)
+      self._CompileAndCheck(lax_fun, args_maker, tol=tol)
+
+  @genNamedParametersNArgs(2)
+  def testWrappedCauchyLogPdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    rng_uniform = jtu.rand_uniform(self.rng(), low=1e-3, high=1 - 1e-3)
+    scipy_fun = osp_stats.wrapcauchy.logpdf
+    lax_fun = lsp_stats.wrapcauchy.logpdf
+
+    def args_maker():
+      x = rng(shapes[0], dtypes[0])
+      c = rng_uniform(shapes[1], dtypes[1])
+      return [x, c]
+
+    tol = {
+        np.float32: 1e-4 if jtu.test_device_matches(["tpu"]) else 1e-5,
+        np.float64: 1e-11,
+    }
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
+                              check_dtypes=False, tol=tol)
+      self._CompileAndCheck(lax_fun, args_maker, tol=tol)
+
   @genNamedParametersNArgs(3)
   def testPoissonLogPmf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
@@ -860,7 +902,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
   @genNamedParametersNArgs(5)
   def testTruncnormPdf(self, shapes, dtypes):
-    if jtu.device_under_test() == "cpu":
+    if jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("TODO(b/282695039): test fails at LLVM head")
     rng = jtu.rand_default(self.rng())
     scipy_fun = osp_stats.truncnorm.pdf
@@ -1297,7 +1339,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       rng(inshape, dtype), rng(outshape, dtype), rng(inshape[-1:], dtype)]
     self._CheckAgainstNumpy(
         scipy_fun, lax_fun, args_maker, tol={
-            np.float32: 2e-2 if jtu.device_under_test() == "tpu" else 1e-3,
+            np.float32: 2e-2 if jtu.test_device_matches(["tpu"]) else 1e-3,
             np.float64: 3e-14
         })
     self._CompileAndCheck(
@@ -1481,13 +1523,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     def scipy_mode_wrapper(a, axis=0, nan_policy='propagate', keepdims=None):
       """Wrapper to manage the shape discrepancies between scipy and jax"""
-      if scipy_version < (1, 9, 0) and a.size == 0 and keepdims == True:
-        if axis == None:
-          output_shape = tuple(1 for _ in a.shape)
+      if scipy_version < (1, 11, 0) and a.size == 0:
+        if keepdims:
+          if axis == None:
+            output_shape = tuple(1 for _ in a.shape)
+          else:
+            output_shape = tuple(1 if i == axis else s for i, s in enumerate(a.shape))
         else:
-          output_shape = tuple(1 if i == axis else s for i, s in enumerate(a.shape))
-        return (np.full(output_shape, np.nan, dtype=dtypes.canonicalize_dtype(jax.numpy.float_)),
-                np.full(output_shape, np.nan, dtype=dtypes.canonicalize_dtype(jax.numpy.float_)))
+          if axis == None:
+            output_shape = ()
+          else:
+            output_shape = np.delete(np.array(a.shape, dtype=np.int64), axis)
+        t = dtypes.canonicalize_dtype(jax.numpy.float_)
+        return (np.full(output_shape, np.nan, dtype=t),
+                np.zeros(output_shape, dtype=t))
 
       if scipy_version < (1, 9, 0):
         result = osp_stats.mode(a, axis=axis, nan_policy=nan_policy)

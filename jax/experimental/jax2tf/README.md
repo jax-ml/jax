@@ -151,7 +151,7 @@ and to avoid warnings and outright errors.
 
 You can serialize JAX program into a TensorFlow SavedModel, for use
 with tooling that understands SavedModel. Both in native and non-native
-serialization you can count on 6 months of backwards compatiblity (you
+serialization you can count on 6 months of backwards compatibility (you
 can load a function serialized today with tooling that will be built
 up to 6 months in the future), and 3 weeks of limited forwards compatibility
 (you can load a function serialized today with tooling that was built
@@ -794,7 +794,7 @@ given version number.
 
 You can use `--jax_serialization_version` to adjust the serialization version
 to your deployed consumer. We reserve the right to remove support for
-generating or consuming old serialization versions, e.g., older than 6 months.
+generating or consuming old serialization versions older than 6 months.
 
 ## Serialization version numbers
 
@@ -810,6 +810,8 @@ We list here a history of the serialization version numbers:
     launch.
     Used in JAX from March 15, 2023 (cl/516885716). Starting with
     March 28th, 2023 we stopped using `dim_args_spec` (cl/520033493).
+    The support for this version was dropped on
+    October 17th, 2023 (cl/573858283).
   * Version 5 adds support for `call_tf_graph`. This is currently used
     for some specialized use cases. Used in JAX from May 3rd, 2023
     (cl/529106145).
@@ -820,13 +822,19 @@ We list here a history of the serialization version numbers:
   * Version 7 adds support for `stablehlo.shape_assertion` operations and
     for `shape_assertions` specified in `disabled_checks`.
     See [Errors in presence of shape polymorphism](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#errors-in-presence-of-shape-polymorphism). Supported by XlaCallModule
-    since July 12th, 2023 (cl/547482522) and
-    available in JAX serialization since July 20th, 2023 (JAX 0.4.14).
+    since July 12th, 2023 (cl/547482522),
+    available in JAX serialization since July 20th, 2023 (JAX 0.4.14),
+    and the default since August 12th, 2023 (JAX 0.4.15).
   * Version 8 adds support for the `jax.uses_shape_polymorphism` module
     attribute and enables the shape refinement pass only when the
     attribute is present. Supported by XlaCallModule since July 21st, 2023
-    (cl/549973693) and available in JAX since July 26th, 2023 (JAX 0.4.14).
-
+    (cl/549973693), available in JAX since July 26th, 2023 (JAX 0.4.14),
+    and the default since October 21st, 2023 (JAX 0.4.20).
+  * Version 9 adds support for effects.
+    See the docstring for `export.Exported` for the precise calling convention.
+    In this serialization version we also tag the platform index and the
+    dimension variables arguments with `jax.global_constant` attributes.
+    Available in JAX since October 20th, 2023 (JAX 0.4.20).
 
 ## Known issues
 
@@ -1165,7 +1173,7 @@ There is work underway to enable more tools to consume StableHLO.
 
 Applies to native serialization only.
 
-When you use native serialization, JAX will record the plaform for
+When you use native serialization, JAX will record the platform for
 which the module was serialized, and you will get an error if you
 try to execute the `XlaCallModule` TensorFlow op on another platform.
 
@@ -1180,7 +1188,7 @@ The current platform CPU is not among the platforms required by the module [CUDA
 ```
 
 where `CPU` is the TensorFlow platform where the op is being executed
-and `CUDA` is the plaform for which the module was serialized by JAX.
+and `CUDA` is the platform for which the module was serialized by JAX.
 This probably means that JAX and TensorFlow may see different devices
 as the default device (JAX defaults to GPU and TensorFlow to CPU
 in the example error above).
@@ -1716,7 +1724,7 @@ for stderr, `${SOME_DIR}` to store the dumps in the specified directory.
 ## TensorFlow versions supported
 
 The ``jax2tf.convert`` and `call_tf` require fairly recent versions of TensorFlow.
-As of today, the tests are run using `tf_nightly==2.13.0.dev20230311`.
+As of today, the tests are run using `tf_nightly==2.14.0.dev20230720`.
 
 ## Running on GPU
 

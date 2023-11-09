@@ -17,6 +17,10 @@ import os as _os
 _os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
 del _os
 
+# Import version first, because other submodules may reference it.
+from jax.version import __version__ as __version__
+from jax.version import __version_info__ as __version_info__
+
 # Set Cloud TPU env vars if necessary before transitively loading C++ backend
 from jax._src.cloud_tpu_init import cloud_tpu_init as _cloud_tpu_init
 try:
@@ -24,7 +28,7 @@ try:
 except Exception as exc:
   # Defensively swallow any exceptions to avoid making jax unimportable
   from warnings import warn as _warn
-  _warn(f"cloud_tpu_init failed: {repr(exc)}\n This a JAX bug; please report "
+  _warn(f"cloud_tpu_init failed: {exc!r}\n This a JAX bug; please report "
         f"an issue at https://github.com/google/jax/issues")
   del _warn
 del _cloud_tpu_init
@@ -63,6 +67,7 @@ from jax._src.config import (
   numpy_rank_promotion as numpy_rank_promotion,
   jax2tf_associative_scan_reductions as jax2tf_associative_scan_reductions,
   legacy_prng_key as legacy_prng_key,
+  threefry_partitionable as threefry_partitionable,
   transfer_guard as transfer_guard,
   transfer_guard_host_to_device as transfer_guard_host_to_device,
   transfer_guard_device_to_device as transfer_guard_device_to_device,
@@ -134,9 +139,6 @@ from jax._src.array import (
     make_array_from_callback as make_array_from_callback,
 )
 
-from jax.version import __version__ as __version__
-from jax.version import __version_info__ as __version_info__
-
 from jax._src.tree_util import (
   tree_map as tree_map,
   treedef_is_leaf as _deprecated_treedef_is_leaf,
@@ -149,7 +151,6 @@ from jax._src.tree_util import (
 
 # These submodules are separate because they are in an import cycle with
 # jax and rely on the names imported above.
-from jax import abstract_arrays as _deprecated_abstract_arrays
 from jax import custom_derivatives as custom_derivatives
 from jax import custom_batching as custom_batching
 from jax import custom_transpose as custom_transpose
@@ -181,11 +182,6 @@ import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 _deprecations = {
-  # Added 06 June 2023
-  "abstract_arrays": (
-    "jax.abstract_arrays is deprecated. Refer to jax.core.",
-    _deprecated_abstract_arrays
-  ),
   # Added July 2022
   "treedef_is_leaf": (
     "jax.treedef_is_leaf is deprecated: use jax.tree_util.treedef_is_leaf.",
@@ -220,7 +216,6 @@ _deprecations = {
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  from jax import abstract_arrays as abstract_arrays
   from jax import linear_util as linear_util
   from jax._src.tree_util import treedef_is_leaf as treedef_is_leaf
   from jax._src.tree_util import tree_flatten as tree_flatten

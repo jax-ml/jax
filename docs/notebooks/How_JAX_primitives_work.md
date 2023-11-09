@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.14.7
+    jupytext_version: 1.15.2
 kernelspec:
   display_name: Python 3
   name: python3
@@ -453,7 +453,7 @@ def multiply_add_value_and_jvp(arg_values, arg_tangents):
   xt, yt, zt = arg_tangents
   _trace("Primal evaluation:")
   # Now we have a JAX-traceable computation of the output. 
-  # Normally, we can use the ma primtive itself to compute the primal output. 
+  # Normally, we can use the ma primitive itself to compute the primal output. 
   primal_out = multiply_add_prim(x, y, z)
   
   _trace("Tangent evaluation:")

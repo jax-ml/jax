@@ -28,7 +28,6 @@ from jax.scipy import special as lsp_special
 
 from jax import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
@@ -53,6 +52,9 @@ int_dtypes = jtu.dtypes.integer
 # don't expect numerical gradient tests to pass for inputs very close to 0.
 
 JAX_SPECIAL_FUNCTION_RECORDS = [
+    op_record(
+        "beta", 2, float_dtypes, jtu.rand_positive, False
+    ),
     op_record(
         "betaln", 2, float_dtypes, jtu.rand_positive, False
     ),
@@ -182,7 +184,7 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
       assert list(nondiff_argnums) == sorted(set(nondiff_argnums))
       diff_args = [x for i, x in enumerate(args) if i not in nondiff_argnums]
       jtu.check_grads(partial_lax_op, diff_args, order=1,
-                      atol=jtu.if_device_under_test("tpu", .1, 1e-3),
+                      atol=.1 if jtu.test_device_matches(["tpu"]) else 1e-3,
                       rtol=.1, eps=1e-3)
 
   @jtu.sample_product(

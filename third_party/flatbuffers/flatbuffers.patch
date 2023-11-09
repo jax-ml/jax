@@ -1,5 +1,5 @@
 diff --git a/BUILD.bazel b/BUILD.bazel
-index b4f015a0..366eb3fe 100644
+index b4f015a0..468dac6e 100644
 --- a/BUILD.bazel
 +++ b/BUILD.bazel
 @@ -1,5 +1,5 @@
@@ -28,11 +28,33 @@ index b4f015a0..366eb3fe 100644
  
  exports_files([
      "LICENSE",
+@@ -34,6 +34,13 @@ config_setting(
+     ],
+ )
+ 
++config_setting(
++    name = "platform_linux",
++    constraint_values = [
++        "@platforms//os:linux",
++    ],
++)
++
+ filegroup(
+     name = "distribution",
+     srcs = [
 diff --git a/src/BUILD.bazel b/src/BUILD.bazel
-index 679b10f7..9a5f16b2 100644
+index 1084e76b..73aaedba 100644
 --- a/src/BUILD.bazel
 +++ b/src/BUILD.bazel
-@@ -147,6 +147,7 @@ cc_library(
+@@ -55,6 +55,7 @@ cc_library(
+         # https://github.com/bazelbuild/bazel/issues/12023.
+         "//:platform_freebsd": ["-lm"],
+         "//:platform_openbsd": ["-lm"],
++        "//:platform_linux": ["-lm"],
+         "//conditions:default": [],
+     }),
+     strip_include_prefix = "/include",
+@@ -146,6 +147,7 @@ cc_library(
      ],
      strip_include_prefix = "/include",
      visibility = ["//:__pkg__"],

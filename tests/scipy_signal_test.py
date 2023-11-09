@@ -196,7 +196,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
         np.float32: 1e-5, np.float64: 1e-12,
         np.complex64: 1e-5, np.complex128: 1e-12
     }
-    if jtu.device_under_test() == 'tpu':
+    if jtu.test_device_matches(['tpu']):
       tol = _TPU_FFT_TOL
 
     rng = jtu.rand_default(self.rng())
@@ -241,7 +241,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
         np.float32: 1e-5, np.float64: 1e-12,
         np.complex64: 1e-5, np.complex128: 1e-12
     }
-    if jtu.device_under_test() == 'tpu':
+    if jtu.test_device_matches(['tpu']):
       tol = _TPU_FFT_TOL
 
     rng = jtu.rand_default(self.rng())
@@ -285,7 +285,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
         np.float32: 1e-5, np.float64: 1e-12,
         np.complex64: 1e-5, np.complex128: 1e-12
     }
-    if jtu.device_under_test() == 'tpu':
+    if jtu.test_device_matches(['tpu']):
       tol = _TPU_FFT_TOL
 
     rng = jtu.rand_default(self.rng())
@@ -329,7 +329,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
         np.float32: 1e-5, np.float64: 1e-12,
         np.complex64: 1e-5, np.complex128: 1e-12
     }
-    if jtu.device_under_test() == 'tpu':
+    if jtu.test_device_matches(['tpu']):
       tol = _TPU_FFT_TOL
 
     rng = jtu.rand_default(self.rng())
@@ -371,7 +371,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
         np.float32: 1e-5, np.float64: 1e-12,
         np.complex64: 1e-5, np.complex128: 1e-12
     }
-    if jtu.device_under_test() == 'tpu':
+    if jtu.test_device_matches(['tpu']):
       tol = _TPU_FFT_TOL
 
     rng = jtu.rand_default(self.rng())
@@ -411,7 +411,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
         np.float32: 1e-4, np.float64: 1e-6,
         np.complex64: 1e-4, np.complex128: 1e-6
     }
-    if jtu.device_under_test() == 'tpu':
+    if jtu.test_device_matches(['tpu']):
       tol = _TPU_FFT_TOL
 
     rng = jtu.rand_default(self.rng())

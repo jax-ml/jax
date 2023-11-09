@@ -98,7 +98,7 @@ class CustomRootTest(jtu.JaxTestCase):
 
     value, grad = jax.value_and_grad(sqrt_cubed)(5.0)
     self.assertAllClose(value, 5 ** 1.5, check_dtypes=False, rtol=1e-6)
-    rtol = 5e-6 if jtu.device_under_test() == "tpu" else 1e-7
+    rtol = 5e-6 if jtu.test_device_matches(["tpu"]) else 1e-7
     self.assertAllClose(grad, jax.grad(pow)(5.0, 1.5), check_dtypes=False,
                         rtol=rtol)
     jtu.check_grads(sqrt_cubed, (5.0,), order=2,

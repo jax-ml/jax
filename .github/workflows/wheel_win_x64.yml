@@ -13,17 +13,17 @@ jobs:
       matrix:
         os: [win-2019-16core]
         arch: [AMD64]
-        pyver: ['3.9', '3.10', '3.11']
+        pyver: ['3.9', '3.10', '3.11', '3.12']
     name: ${{ matrix.os }} ${{ matrix.pyver }} jaxlib wheel build
     runs-on: ${{ matrix.os }}
 
     steps:
       - name: Cancel Previous Runs
-        uses: styfle/cancel-workflow-action@0.11.0
+        uses: styfle/cancel-workflow-action@0.12.0
         with:
           access_token: ${{ github.token }}
 
-      - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac # ratchet:actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
 
       - uses: actions/setup-python@v4
         with:
@@ -33,10 +33,11 @@ jobs:
       - name: Build wheels
         env:
           BAZEL_VC: "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise\\VC"
+          JAXLIB_RELEASE: true
         run: |
           python -m pip install -r build/test-requirements.txt
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
-          python.exe build\build.py --bazel_options=--color=yes
+          python.exe build\build.py --bazel_options=--color=yes --verbose
 
       - uses: actions/upload-artifact@v3
         with:

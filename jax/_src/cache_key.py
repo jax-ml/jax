@@ -17,17 +17,17 @@ import hashlib
 import io
 import logging
 import os
+import struct
 import sys
 
-import numpy as np
-
-from jax._src.config import config
+from jax._src import config
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib import version_str as jaxlib_version_str
-from jax._src.lib import xla_extension_version as xla_extension_version
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version as xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager as pm
+import numpy as np
 
 if jaxlib_version < (0, 4, 14):
   import jaxlib.mlir.jax as mlir_jax  # pytype: disable=import-error
@@ -82,15 +82,13 @@ def get(module: ir.Module,
       (New one not implemented as yet.)
 
   Typical return value example:
-   '14ac577cdb2ef6d986078b4054cc9893a9a14a16dbb0d8f37b89167c1f1aacdf'
+   'jit__psum-14ac577cdb2ef6d986078b4054cc9893a9a14a16dbb0d8f37b89167c1f1aacdf'
   """
   entries = [
       ("computation", lambda hash_obj: _hash_computation(hash_obj, module)),
-      ("devices", lambda hash_obj: _hash_devices(hash_obj, devices)),
       ("jax_lib version",
        lambda hash_obj: hash_obj.update(
            bytes(jaxlib_version_str.encode("utf-8")))),
-      ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
       ("XLA flags",
        lambda hash_obj: _hash_xla_flags(hash_obj, get_flag_prefixes())),
       ("compression",
@@ -101,18 +99,32 @@ def get(module: ir.Module,
         ("compile_options",
          lambda hash_obj: _hash_compile_options(hash_obj, compile_options)),
     )
+    entries.append(
+        ("devices", lambda hash_obj: _hash_devices(hash_obj, devices)))
+    entries.append(
+        ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
+    )
   else:
+    assert (
+        xla_extension_version >= 193
+    ), "new cache key generation requires jaxlib 0.4.15 or newer"
     entries.append(
         ("compile_options",
          lambda hash_obj: _hash_serialized_compile_options(
              hash_obj, compile_options)),
+    )
+    entries.append(
+        ("accelerator_config",
+         lambda hash_obj: _hash_accelerator_config(hash_obj, devices, backend)),
     )
 
   hash_obj = hashlib.sha256()
   for name, hashfn in entries:
     hashfn(hash_obj)
     _log_cache_key_hash(hash_obj, name, hashfn)
-  return hash_obj.digest().hex()
+  sym_name = module.operation.attributes['sym_name']
+  module_name = ir.StringAttr(sym_name).value
+  return module_name + "-" + hash_obj.digest().hex()
 
 
 def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
@@ -155,7 +167,7 @@ def _canonicalize_ir(m_original: ir.Module) -> bytes:
 
 
 def _hash_computation(hash_obj, module):
-  if config.jax_compilation_cache_include_metadata_in_key:
+  if config.compilation_cache_include_metadata_in_key.value:
     canonical_ir = _serialize_ir(module)
   else:
     canonical_ir = _canonicalize_ir(module)
@@ -167,11 +179,25 @@ def _hash_devices(hash_obj, devices: np.ndarray) -> None:
     _hash_string(hash_obj, device.device_kind)
 
 
-def _hash_serialized_compile_options(hash_obj, compile_options_obj):
-  assert (
-      xla_extension_version >= 193
-  ), "new cache key generation requires jaxlib 0.4.15 or newer"
+def _hash_accelerator_config(hash_obj, accelerators: np.ndarray, backend):
+  accelerator_devices = []
+  for accelerator in accelerators.flat:
+    accelerator_devices.append(accelerator)
+  try:
+    hash_obj.update(
+        xla_client.get_topology_for_devices(accelerator_devices).serialize()
+    )
+  except xla_client._xla.XlaRuntimeError as ex:
+    # Fall back for those backends that do not support serialized
+    # PjRtTopologyDescription as yet.
+    logger.info("get (_hash_accelerator_config): unable to hash "
+                "accelerator config, falling back to hashing "
+                "devices + platform: %s (type %s)", ex, type(ex))
+    _hash_devices(hash_obj, accelerators)
+    _hash_platform(hash_obj, backend)
 
+
+def _hash_serialized_compile_options(hash_obj, compile_options_obj):
   # Do not mess with the original CompileOptions object since it is passed to
   # the compiler. Create a deep copy for the purpose of cache key generation.
   compile_options_copy = copy.deepcopy(compile_options_obj)
@@ -180,8 +206,9 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj):
   # be part of the cache key as their inclusion will result in unnecessary cache
   # misses. Clear them here by setting bool values to False, ints to 0, and
   # strings to empty. The exact values used to clear are not relevant as long
-  # as the same values are used everytime for each field.
+  # as the same values are used every time for each field.
   debug_options = compile_options_copy.executable_build_options.debug_options
+  # LINT.IfChange(debug_options)
   debug_options.xla_force_host_platform_device_count = 0
   debug_options.xla_dump_to = ""
   debug_options.xla_dump_hlo_module_re = ""
@@ -199,6 +226,7 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj):
   debug_options.xla_dump_hlo_as_long_text = False
   debug_options.xla_dump_disable_metadata = False
   debug_options.xla_dump_hlo_pipeline_re = ""
+  # LINT.ThenChange(:xla_flags)
 
   return hash_obj.update(compile_options_copy.SerializeAsString())
 
@@ -242,6 +270,8 @@ def _hash_compile_options(hash_obj, compile_options_obj):
       _hash_bool(hash_obj, kv[1])
     elif isinstance(kv[1], int):
       _hash_int(hash_obj, kv[1])
+    elif isinstance(kv[1], float):
+      _hash_float(hash_obj, kv[1])
     else:
       raise RuntimeError("Invalid type: %s" % repr(type(kv[1])))
 
@@ -300,6 +330,7 @@ def _hash_platform(hash_obj, backend):
 
 
 def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
+  # LINT.IfChange(xla_flags)
   xla_flags_to_exclude_from_cache_key = [
       "--xla_dump_compress_protos",
       "--xla_dump_module_metadata",
@@ -312,6 +343,9 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
       "--xla_dump_hlo_as_url",
       "--xla_dump_hlo_as_proto",
       "--xla_dump_hlo_as_text",
+      "--xla_dump_hlo_as_long_text",
+      "--xla_dump_hlo_as_html",
+      "--xla_dump_hlo_as_dot",
       "--xla_dump_to",
       "--xla_force_host_platform_device_count",
       "--xla_dump_disable_metadata",
@@ -319,6 +353,7 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
       "--xla_tpu_sdc_checker_streamz_metric",
       "--xla_tpu_sdc_checker_enable_sdc_event_callbacks",
   ]
+  # LINT.ThenChange(:debug_options)
 
   xla_flags = []
 
@@ -344,6 +379,10 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
 
 def _hash_int(hash_obj, int_var):
   hash_obj.update(int_var.to_bytes(8, byteorder="big"))
+
+
+def _hash_float(hash_obj, float_var):
+  hash_obj.update(struct.pack("d", float_var))
 
 
 def _hash_signed_int(hash_obj, int_var):

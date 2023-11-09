@@ -37,16 +37,14 @@ def _tiling_factor(
     hardware_generation: An integer indicating the target TPU generation.
     bitwidth: The bitwidth of the element type of the operand.
   """
-  if num_128s == 1 and hardware_generation >= 4 and bitwidth == 32:
-    return 1
-  elif num_128s <= 2 and (
-      bitwidth == 32 or (hardware_generation >= 4 and bitwidth == 16)
-  ):
-    return 2
-  elif num_128s <= 4:
-    return 4
-  else:
-    return 8
+  assert bitwidth.bit_count() == 1 and (4 <= bitwidth <= 32)
+  packing = 32 // bitwidth
+  min_tiling = (1 + (hardware_generation < 4)) * packing
+  max_tiling = 8
+  tiling = min_tiling
+  while tiling < min(num_128s, max_tiling):
+    tiling *= 2
+  return tiling
 
 
 def infer_memref(
@@ -91,9 +89,7 @@ def infer_memref(
         if bitwidth.bit_count() != 1 or bitwidth > 32:
           raise NotImplementedError(f"Unsupported bitwidth: {bitwidth}")
         trailing_tiles = f"(128)({32 // bitwidth},1)"
-      layout = ir.Attribute.parse(
-          f"#tpu.tiled<{memref.rank},({tile}){trailing_tiles}>"
-      )
+      layout = ir.Attribute.parse(f"#tpu.tiled<({tile}){trailing_tiles},[1]>")
     else:
       leading_tile = _tiling_factor(
           memref.shape[-2], hardware_generation, bitwidth
@@ -104,8 +100,18 @@ def infer_memref(
         if bitwidth.bit_count() != 1 or bitwidth > 32:
           raise NotImplementedError(f"Unsupported bitwidth: {bitwidth}")
         trailing_tiles = f"({32 // bitwidth},1)"
+      tile_strides = [None] * memref.rank
+      stride = 1
+      for i in range(memref.rank - 1, -1, -1):
+        tile_strides[i] = stride
+        if i == memref.rank - 1:
+          stride *= (memref.shape[i] + 127) // 128
+        elif i == memref.rank - 2:
+          stride *= (memref.shape[i] + leading_tile - 1) // leading_tile
+        else:
+          stride *= memref.shape[i]
       layout = ir.Attribute.parse(
-          f"#tpu.tiled<{memref.rank},({leading_tile},128){trailing_tiles}>"
+          f"#tpu.tiled<({leading_tile},128){trailing_tiles},{tile_strides}>"
       )
   elif tpu.private_is_tiled_layout(memref.layout):
     layout = memref.layout

@@ -21,7 +21,7 @@ import os
 import pathlib
 import subprocess
 
-_version = "0.4.16"
+_version = "0.4.21"
 # The following line is overwritten by build scripts in distributions &
 # releases. Do not modify this manually, or jax/jaxlib build will fail.
 _release_version: str | None = None
@@ -32,10 +32,7 @@ def _get_version_string() -> str:
   # In this case we return it directly.
   if _release_version is not None:
     return _release_version
-  try:
-    return _version_from_git_tree(_version)
-  except:
-    return _version_from_todays_date(_version)
+  return _version_from_git_tree(_version) or _version_from_todays_date(_version)
 
 
 def _version_from_todays_date(base_version: str) -> str:
@@ -43,17 +40,30 @@ def _version_from_todays_date(base_version: str) -> str:
   return f"{base_version}.dev{datestring}"
 
 
-def _version_from_git_tree(base_version: str) -> str:
-  stdout = subprocess.check_output(["git", "show", "-s", "--format=%at", "HEAD"])
-  timestamp = int(stdout.decode().strip())
-  datestring = datetime.date.fromtimestamp(timestamp).strftime("%Y%m%d")
-  assert datestring.isnumeric()
+def _version_from_git_tree(base_version: str) -> str | None:
+  try:
+    root_directory = os.path.dirname(os.path.realpath(__file__))
 
-  stdout = subprocess.check_output(["git", "describe", "--long", "--always"])
-  commit_hash = stdout.decode().strip().rsplit('-', 1)[-1]
-  assert commit_hash.isalnum()
+    # Get date string from date of most recent git commit.
+    p = subprocess.Popen(["git", "show", "-s", "--format=%at", "HEAD"],
+                         cwd=root_directory,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, _ = p.communicate()
+    timestamp = int(stdout.decode().strip())
+    datestring = datetime.date.fromtimestamp(timestamp).strftime("%Y%m%d")
+    assert datestring.isnumeric()
 
-  return f"{base_version}.dev{datestring}+{commit_hash}"
+    # Get commit hash from most recent git commit.
+    p = subprocess.Popen(["git", "describe", "--long", "--always"],
+                         cwd=root_directory,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, _ = p.communicate()
+    commit_hash = stdout.decode().strip().rsplit('-', 1)[-1]
+    assert commit_hash.isalnum()
+  except:
+    return None
+  else:
+    return f"{base_version}.dev{datestring}+{commit_hash}"
 
 
 def _get_version_for_build() -> str:
@@ -70,11 +80,7 @@ def _get_version_for_build() -> str:
     return _version_from_todays_date(_version)
   if os.environ.get('JAX_RELEASE') or os.environ.get('JAXLIB_RELEASE'):
     return _version
-  try:
-    return _version_from_git_tree(_version)
-  except:
-    # Fallback to date string if git is not available.
-    return _version_from_todays_date(_version)
+  return _version_from_git_tree(_version) or _version_from_todays_date(_version)
 
 
 def _write_version(fname: str) -> None:
@@ -84,7 +90,7 @@ def _write_version(fname: str) -> None:
   new_version_string = f"_release_version: str = {release_version!r}"
   fhandle = pathlib.Path(fname)
   contents = fhandle.read_text()
-  # Expect two occurrances: one above, and one here.
+  # Expect two occurrences: one above, and one here.
   if contents.count(old_version_string) != 2:
     raise RuntimeError(f"Build: could not find {old_version_string!r} in {fname}")
   contents = contents.replace(old_version_string, new_version_string)

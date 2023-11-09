@@ -15,16 +15,16 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
+from jax._src.extend.random import (
+  define_prng_impl as define_prng_impl,
+)
+
 from jax._src.prng import (
-  PRNGImpl as PRNGImpl,
+  random_seed as random_seed,
   seed_with_impl as seed_with_impl,
   threefry2x32_p as threefry2x32_p,
   threefry_2x32 as threefry_2x32,
   threefry_prng_impl as threefry_prng_impl,
   rbg_prng_impl as rbg_prng_impl,
   unsafe_rbg_prng_impl as unsafe_rbg_prng_impl,
-)
-
-from jax._src.extend.random import (
-  wrap_key_data as wrap_key_data,
 )

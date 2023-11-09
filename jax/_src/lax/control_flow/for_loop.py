@@ -39,6 +39,7 @@ from jax._src.state import discharge as state_discharge
 from jax._src.state import primitives as state_primitives
 from jax._src.state import utils as state_utils
 from jax._src.state import types as state_types
+from jax._src.typing import Array
 from jax._src.util import (partition_list, merge_lists, safe_map, safe_zip,
                            split_list, split_dict)
 from jax._src.lax.control_flow import loops
@@ -53,7 +54,6 @@ zip, unsafe_zip = safe_zip, zip
 S = TypeVar('S')
 T = TypeVar('T')
 class Ref(Generic[T]): pass
-Array = Any
 
 ref_set = state_primitives.ref_set
 ref_get = state_primitives.ref_get
@@ -719,7 +719,7 @@ def transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: list[bool]) -> core.Jaxpr:
 
 def _for_transpose(in_cts, *args, jaxpr, nsteps, reverse, which_linear, unroll):
   # if any in_ct is nonzero, we definitely want it in args_ (and the
-  # corresponding x in args could be an undefined primal, but doesnt have to be)
+  # corresponding x in args could be an undefined primal, but doesn't have to be)
   # for non-res stuff:
   #   getting and setting => (nonzero ct, UndefinedPrimal arg)
   #   just setting =>        (nonzero ct, not UndefinedPrimal, dummy value)

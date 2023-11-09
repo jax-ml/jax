@@ -505,7 +505,7 @@ than an `int`).
 Here are reasons we like unmapped inputs and outputs for `shmap`:
 * **Same expressiveness as `pjit`.** Anything `pjit` can do, the `shmap` escape
   hatch should be able to do too. Or else we'd have a lacking escape hatch! If
-  we didnt have unmapped outputs in `shmap` then we couldn't express the same
+  we didn't have unmapped outputs in `shmap` then we couldn't express the same
   batch-parallel loss function computations as `pjit`.
 * **Closed-over inputs.** Closed-over inputs essentially correspond to unmapped
   inputs, and...

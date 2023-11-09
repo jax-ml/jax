@@ -26,13 +26,12 @@ import numpy as np
 import jax
 from jax import numpy as jnp
 
+from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.util import NumpyComplexWarning
 
-from jax import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 numpy_version = jtu.numpy_version()
 
@@ -705,8 +704,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=tol)
 
-  @unittest.skipIf(not config.jax_enable_x64, "test requires X64")
-  @unittest.skipIf(jtu.device_under_test() != 'cpu', "test is for CPU float64 precision")
+  @unittest.skipIf(not config.enable_x64.value, "test requires X64")
+  @jtu.run_on_devices("cpu")  # test is for CPU float64 precision
   def testPercentilePrecision(self):
     # Regression test for https://github.com/google/jax/issues/8513
     x = jnp.float64([1, 2, 3, 4, 7, 10])
@@ -757,6 +756,15 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     x = jnp.ones((16, 32, 1280, 4096), dtype='int8')
     self.assertEqual(0.0, jnp.std(x))
     self.assertEqual(0.0, jnp.std(x, where=True))
+
+  @jtu.sample_product(
+      dtype=[np.dtype(np.float16), np.dtype(dtypes.bfloat16)],
+  )
+  def test_f16_mean(self, dtype):
+    x = np.full(100_000, 1E-5, dtype=dtype)
+    expected = np.mean(x.astype('float64')).astype(dtype)
+    actual = jnp.mean(x)
+    self.assertAllClose(expected, actual, atol=0)
 
 
 if __name__ == "__main__":

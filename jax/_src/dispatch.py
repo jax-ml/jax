@@ -28,7 +28,9 @@ import threading
 
 import numpy as np
 
+import jax
 from jax._src import basearray
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
@@ -38,7 +40,6 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -148,10 +149,10 @@ def xla_primitive_callable(
   computation = sharded_lowering(
       flat_fun, prim.name, donated_invars, keep_unused=False,
       inline=True, in_avals=in_avals, in_shardings=orig_in_shardings.shardings,
-      lowering_platform=None)
+      lowering_parameters=mlir.LoweringParameters())
   compiled = computation.compile()
   if xla_extension_version >= 192:
-    if config.jax_disable_jit:
+    if config.disable_jit.value:
       call = compiled.unsafe_call
     else:
       call = compiled.create_cpp_call_for_apply_primitive(out_tree())
@@ -168,7 +169,8 @@ def xla_primitive_callable(
 def sharded_lowering(
     fun: lu.WrappedFun, name: str, donated_invars: Sequence[bool],
     keep_unused: bool, inline: bool, in_avals: tuple[core.AbstractValue, ...],
-    in_shardings: Sequence[Sharding | None], lowering_platform: str | None
+    in_shardings: Sequence[Sharding | None],
+    lowering_parameters: mlir.LoweringParameters
 ) -> pxla.MeshComputation:
   in_shardings_unspec = [UNSPECIFIED if i is None else i for i in in_shardings]
 
@@ -178,7 +180,8 @@ def sharded_lowering(
   return pxla.lower_sharding_computation(
       fun, 'jit', name, in_shardings_unspec, UNSPECIFIED, donated_invars,
       in_avals, keep_unused=keep_unused, inline=inline,
-      devices_from_context=None, lowering_platform=lowering_platform)
+      devices_from_context=None,
+      lowering_parameters=lowering_parameters)
 
 
 def simple_impl(prim):
@@ -187,57 +190,48 @@ def simple_impl(prim):
 RuntimeToken = Any
 
 class RuntimeTokenSet(threading.local):
-  tokens: dict[core.Effect, tuple[RuntimeToken, Device]]
-  output_tokens: dict[Device, RuntimeToken]
+  """See docstring for effect.py module for the calling convention for tokens."""
+
+  # For each ordered effect, the token returned by the last dispatched
+  # computation, sharded over the devices in that computation.
+  current_tokens: dict[core.Effect, jax.Array]
+
+  # For each device, the runtime token returned by the last dispatched
+  # computation on that device.
   output_runtime_tokens: dict[Device, RuntimeToken]
 
   def __init__(self):
-    self.tokens = {}
-    # TODO(sharadmv): remove redundant output token dictionary when minimum
-    # jaxlib version is bumped to 0.3.16.
-    self.output_tokens = {}
+    self.current_tokens = {}
     self.output_runtime_tokens = {}
 
-  def get_token(self, eff: core.Effect, device: Device) -> RuntimeToken:
-    s = SingleDeviceSharding(device)
-    if eff not in self.tokens:
-      inp = np.zeros(0, np.bool_)
-      indices = tuple(
-          s.addressable_devices_indices_map(inp.shape).values())
-      out = pxla.shard_args([device], [indices], [s], [inp])
-      self.tokens[eff] = out, device
-    elif self.tokens[eff][1] != device:
-      (old_token,), _ = self.tokens[eff]
-      indices = tuple(
-          s.addressable_devices_indices_map((0,)).values())
-      out = pxla.shard_args([device], [indices], [s], [old_token])
-      self.tokens[eff] = out, device
-    return self.tokens[eff][0]
+  def get_token_input(self, eff: core.Effect,
+                      devices: list[Device]) -> jax.Array:
+    tok = self.current_tokens.get(eff, np.zeros(0, np.bool_))
+    s = NamedSharding(pxla.Mesh(devices, axis_names=["dev"]),
+                      PartitionSpec([]))
+    s = jax.sharding.GSPMDSharding.get_replicated(devices)
+    indices = tuple(
+        s.addressable_devices_indices_map(tok.shape).values())
+    sharded_tok = pxla.shard_args(devices, [indices], [s], [tok])[0]
+    self.current_tokens[eff] = sharded_tok
+    return sharded_tok
 
-  def update_token(self, eff: core.Effect, token: RuntimeToken):
-    self.tokens[eff] = token, self.tokens[eff][1]
-
-  def set_output_token(self, device: Device, token: RuntimeToken):
-    # We're free to clobber the previous output token because on each
-    # device we have a total ordering of computations. Only the token
-    # from the latest computation matters. If this weren't the case
-    # we'd need to store a set of output tokens.
-    self.output_tokens[device] = token
+  def set_token_result(self, eff: core.Effect, token: jax.Array):
+    self.current_tokens[eff] = token
 
   def set_output_runtime_token(self, device: Device, token: RuntimeToken):
-    # TODO(sharadmv): remove this method when minimum jaxlib version is bumped
+    # We're free to clobber the previous output token because on each
+    # device we have a total ordering of computations. Only the token
+    # from the latest computation matters.
     self.output_runtime_tokens[device] = token
 
   def clear(self):
-    self.tokens = {}
-    self.output_tokens = {}
+    self.current_tokens = {}
     self.output_runtime_tokens = {}
 
   def block_until_ready(self):
-    for token, _ in self.tokens.values():
-      token[0].block_until_ready()
-    for token in self.output_tokens.values():
-      token[0].block_until_ready()
+    for token in self.current_tokens.values():
+      token.block_until_ready()
     for token in self.output_runtime_tokens.values():
       token.block_until_ready()
     self.clear()
@@ -260,7 +254,7 @@ def log_elapsed_time(fmt: str, fun_name: str, event: str | None = None):
   if _on_exit:
     yield
   else:
-    log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
+    log_priority = logging.WARNING if config.log_compiles.value else logging.DEBUG
     start_time = time.time()
     yield
     elapsed_time = time.time() - start_time
@@ -389,7 +383,7 @@ def _initial_style_primitive_replicas(params: dict[str, Any]) -> int:
              default=1)
 
 def needs_check_special() -> bool:
-  return config.jax_debug_infs or config.jax_debug_nans
+  return config.debug_infs.value or config.debug_nans.value
 
 def check_special(name: str, bufs: Sequence[basearray.Array]) -> None:
   if needs_check_special():
@@ -398,9 +392,9 @@ def check_special(name: str, bufs: Sequence[basearray.Array]) -> None:
 
 def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
   if dtypes.issubdtype(dtype, np.inexact):
-    if config.jax_debug_nans and np.any(np.isnan(np.asarray(buf))):
+    if config.debug_nans.value and np.any(np.isnan(np.asarray(buf))):
       raise FloatingPointError(f"invalid value (nan) encountered in {name}")
-    if config.jax_debug_infs and np.any(np.isinf(np.asarray(buf))):
+    if config.debug_infs.value and np.any(np.isinf(np.asarray(buf))):
       raise FloatingPointError(f"invalid value (inf) encountered in {name}")
 
 
@@ -455,13 +449,13 @@ def _mcjax_reshard(x, target_sharding):
       x._arrays,
   )
 
-  _orig_get_and_check_device_assignment = pxla._get_and_check_device_assignment
-  pxla._get_and_check_device_assignment = partial(
+  _orig_get_and_check_device_assignment = pxla._get_and_check_device_assignment.fn
+  pxla._get_and_check_device_assignment.fn = partial(
       _override_get_device_assignment, target_sharding)
   try:
     return api.jit(_identity_fn, out_shardings=target_sharding)(new_x)
   finally:
-    pxla._get_and_check_device_assignment = _orig_get_and_check_device_assignment
+    pxla._get_and_check_device_assignment.fn = _orig_get_and_check_device_assignment
 
 
 def _device_put_impl(
@@ -529,7 +523,7 @@ def device_put_transpose_rule(ct, _, device, src):
 ad.deflinear2(device_put_p, device_put_transpose_rule)
 batching.defvectorized(device_put_p)
 
-def _device_put_lowering(ctx, x, *, device, src):
+def _tpu_device_put_lowering(ctx, x, *, device, src):
   if (isinstance(device, (XLACompatibleSharding, TransferToMemoryKind)) and
       device.memory_kind is not None):
     aval, = ctx.avals_in
@@ -540,4 +534,14 @@ def _device_put_lowering(ctx, x, *, device, src):
           ctx, x, out_aval, device._to_xla_hlo_sharding(aval.ndim).to_proto())
     return [x]
   return [x]
-mlir.register_lowering(device_put_p, _device_put_lowering)
+mlir.register_lowering(device_put_p, _tpu_device_put_lowering, platform='tpu')
+
+
+def _common_device_put_lowering(ctx, x, *, device, src):
+  if (isinstance(device, (XLACompatibleSharding, TransferToMemoryKind)) and
+      device.memory_kind is not None):
+    raise NotImplementedError(
+        "Passing memory_kind to device_put via Shardings is not supported on"
+        f" platforms {ctx.module_context.platforms}")
+  return [x]
+mlir.register_lowering(device_put_p, _common_device_put_lowering)

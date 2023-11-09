@@ -19,9 +19,9 @@ import traceback
 import types
 from typing import Any, Callable, Optional, TypeVar, cast
 
-from jax._src.config import config
-from jax._src.lib import xla_extension
+from jax._src import config
 from jax._src import util
+from jax._src.lib import xla_extension
 
 
 C = TypeVar("C", bound=Callable[..., Any])
@@ -139,7 +139,7 @@ def _ipython_supports_tracebackhide() -> bool:
   return IPython.version_info[:2] >= (7, 17)
 
 def _filtering_mode() -> str:
-  mode = config.jax_traceback_filtering
+  mode = config.traceback_filtering.value
   if mode is None or mode == "auto":
     if (_running_under_ipython() and _ipython_supports_tracebackhide()):
       mode = "tracebackhide"

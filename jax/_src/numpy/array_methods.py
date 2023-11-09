@@ -55,7 +55,7 @@ zip, unsafe_zip = safe_zip, zip
 def _astype(arr: ArrayLike, dtype: DTypeLike) -> Array:
   """Copy the array and cast to a specified dtype.
 
-  This is implemeted via :func:`jax.lax.convert_element_type`, which may
+  This is implemented via :func:`jax.lax.convert_element_type`, which may
   have slightly different behavior than :meth:`numpy.ndarray.astype` in
   some cases. In particular, the details of float-to-int and int-to-float
   casts are implementation dependent.
@@ -150,7 +150,7 @@ def _reshape(a: Array, *args: Any, order: str = "C") -> Array:
     raise ValueError(f"Unexpected value for 'order' argument: {order}.")
 
 
-def _view(arr: Array, dtype: DTypeLike = None, type: None = None) -> Array:
+def _view(arr: Array, dtype: Optional[DTypeLike] = None, type: None = None) -> Array:
   """Return a bitwise copy of the array, viewed as a new dtype.
 
   This is fuller-featured wrapper around :func:`jax.lax.bitcast_convert_type`.
@@ -240,6 +240,7 @@ def _view(arr: Array, dtype: DTypeLike = None, type: None = None) -> Array:
 
 
 def _notimplemented_flat(self):
+  """Not implemented: Use :meth:`~jax.Array.flatten` instead."""
   raise NotImplementedError("JAX Arrays do not implement the arr.flat property: "
                             "consider arr.flatten() instead.")
 
@@ -337,13 +338,16 @@ def _chunk_iter(x, size):
     if tail:
       yield lax.dynamic_slice_in_dim(x, num_chunks * size, tail)
 
+def _getitem(self, item):
+  return lax_numpy._rewriting_take(self, item)
+
 # Syntactic sugar for scatter operations.
 class _IndexUpdateHelper:
   # Note: this docstring will appear as the docstring for the `at` property.
   """Helper property for index update functionality.
 
   The ``at`` property provides a functionally pure equivalent of in-place
-  array modificatons.
+  array modifications.
 
   In particular:
 
@@ -432,7 +436,7 @@ class _IndexUpdateHelper:
     return _IndexUpdateRef(self.array, index)
 
   def __repr__(self):
-    return f"_IndexUpdateHelper({repr(self.array)})"
+    return f"_IndexUpdateHelper({self.array!r})"
 
 
 class _IndexUpdateRef:
@@ -449,7 +453,7 @@ class _IndexUpdateRef:
     self.index = index
 
   def __repr__(self):
-    return f"_IndexUpdateRef({repr(self.array)}, {repr(self.index)})"
+    return f"_IndexUpdateRef({self.array!r}, {self.index!r})"
 
   def get(self, *, indices_are_sorted=False, unique_indices=False,
           mode=None, fill_value=None):
@@ -596,7 +600,7 @@ class _IndexUpdateRef:
                                    unique_indices=unique_indices, mode=mode)
 
 _array_operators = {
-  "getitem": lax_numpy._rewriting_take,
+  "getitem": _getitem,
   "setitem": _unimplemented_setitem,
   "copy": _copy,
   "deepcopy": _deepcopy,
@@ -797,5 +801,3 @@ def register_jax_array_methods():
   _set_array_attributes(ArrayImpl)
 
   _set_array_abstract_methods(Array)
-
-  Array.at.__doc__ = _IndexUpdateHelper.__doc__

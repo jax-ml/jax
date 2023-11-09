@@ -39,7 +39,6 @@ except ImportError:
   tf = None
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 def call_tf_no_ad(tf_fun: Callable, arg, *, result_shape):

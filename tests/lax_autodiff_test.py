@@ -33,7 +33,6 @@ from jax.test_util import check_grads
 
 from jax import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 compatible_shapes = [[(3,)],
@@ -167,12 +166,8 @@ def grad_special_values_test_spec(op, values, tol=None):
   return GradSpecialValuesTestSpec(op, values, tol)
 
 LAX_GRAD_SPECIAL_VALUE_TESTS = [
-    grad_special_values_test_spec(
-      lax.sinh, [0.],
-      tol={np.float32: 1e-2} if jtu.device_under_test() == "tpu" else None),
-    grad_special_values_test_spec(
-      lax.cosh, [0.],
-      tol={np.float32: 1e-2} if jtu.device_under_test() == "tpu" else None),
+    grad_special_values_test_spec(lax.sinh, [0.]),
+    grad_special_values_test_spec(lax.cosh, [0.]),
     grad_special_values_test_spec(lax.tanh, [0., 1000.], tol=5e-3),
     grad_special_values_test_spec(lax.sin, [0., np.pi, np.pi/2., np.pi/4.]),
     grad_special_values_test_spec(lax.cos, [0., np.pi, np.pi/2., np.pi/4.]),
@@ -211,7 +206,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   ))
   def testOpGrad(self, op, rng_factory, shapes, dtype, order, tol):
     rng = rng_factory(self.rng())
-    if jtu.device_under_test() == "tpu":
+    if jtu.test_device_matches(["tpu"]):
       if op is lax.pow:
         raise SkipTest("pow grad imprecise on tpu")
       if op is lax.cos:
@@ -231,6 +226,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     for rec in LAX_GRAD_SPECIAL_VALUE_TESTS
   ))
   def testOpGradSpecialValue(self, op, special_value, tol):
+    if op in (lax.sinh, lax.cosh) and jtu.test_device_matches(["tpu"]):
+      tol = {np.float32: 1e-2}
     check_grads(op, (special_value,), 2, ["fwd", "rev"], rtol=tol, atol=tol)
 
   @jtu.sample_product(
@@ -420,7 +417,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     rhs = rng(rhs_shape, dtype)
     dot_general = partial(lax.dot_general, dimension_numbers=dimension_numbers,
                           precision=lax.Precision.HIGHEST)
-    atol = {np.float16: 5E-2} if jtu.device_under_test() == 'tpu' else None
+    atol = {np.float16: 5E-2} if jtu.test_device_matches(['tpu']) else None
     check_grads_bilinear(dot_general, (lhs, rhs), order=2,
                          modes=["fwd", "rev"], atol=atol)
     # check that precision config is preserved
@@ -541,7 +538,22 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   def testPowIntPowerAtZero(self):
     # https://github.com/google/jax/issues/14397
     ans = jax.grad(jax.jit(lambda x, n: x ** n))(0., 0)
-    self.assertAllClose(ans, 1., check_dtypes=False)
+    self.assertAllClose(ans, 0., check_dtypes=False)
+
+  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
+  def testPowIntPowerAtZero2(self):
+    # https://github.com/google/jax/issues/17995
+    a = lambda z: jax.numpy.sum(z**jax.numpy.arange(0, 2, dtype=int))
+    b = lambda z: jax.numpy.sum(z**jax.numpy.arange(0, 2, dtype=float))
+    c = lambda z: 1 + z
+    d = lambda z: z ** 0 + z
+    e = lambda z: z ** 0. + z
+
+    self.assertAllClose(jax.grad(a)(3.14), 1., check_dtypes=False)
+    self.assertAllClose(jax.grad(b)(3.14), 1., check_dtypes=False)
+    self.assertAllClose(jax.grad(c)(3.14), 1., check_dtypes=False)
+    self.assertAllClose(jax.grad(d)(3.14), 1., check_dtypes=False)
+    self.assertAllClose(jax.grad(e)(3.14), 1., check_dtypes=False)
 
   @jtu.sample_product(
     [dict(arg_shape=arg_shape, pred_shape=pred_shape)
@@ -697,7 +709,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   )
   def testReduceGrad(self, op, init_val, shape, dtype, dims, rng_factory):
     rng = rng_factory(self.rng())
-    if jtu.device_under_test() == "tpu" and op is lax.mul:
+    if jtu.test_device_matches(["tpu"]) and op is lax.mul:
       raise SkipTest("unimplemented case")
     tol = {dtypes.bfloat16: 2e-1, np.float16: 1e-1, np.float32: 1e-1,
            np.float64: 1e-3, np.complex64: 1e-1}
@@ -775,7 +787,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # test method, rather than at the parameterized test level, because it
     # depends on FLAGS for the device under test.
     # TODO(b/31565929): enable when fixed.
-    if jtu.device_under_test() == "tpu" and op is not lax.add:
+    if jtu.test_device_matches(["tpu"]) and op is not lax.add:
       if (len(shape) != 4 or dims != (1, 1, 2, 1)
           or not isinstance(padding, str)):
         raise SkipTest("Only R4 SelectAndScatter implemented on TPU")

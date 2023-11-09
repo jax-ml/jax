@@ -49,7 +49,7 @@ from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, fft, linalg, control_flow)
 from jax._src.util import (HashableFunction, HashablePartial, unzip2, unzip3,
                            as_hashable_function, memoize, partition_list,
-                           merge_lists, split_list)
+                           merge_lists, split_list, subs_list2)
 from jax.api_util import flatten_fun_nokwargs, shaped_abstractify
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -585,11 +585,12 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
   )
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   with core.extend_axis_env_nd(tuple(mesh.shape.items())):
-    out_nodes_, _ = mlir._call_lowering(
+    out_nodes_, tokens_out = mlir._call_lowering(
         "shmap_body", (), jaxpr, None, sub_ctx, in_avals_, out_avals_,
-        mlir.TokenSet(), *in_nodes_, dim_var_values=ctx.dim_var_values,
+        ctx.tokens_in, *in_nodes_, dim_var_values=ctx.dim_var_values,
         arg_names=map(_pspec_mhlo_attrs, in_names, in_avals_),
         result_names=map(_pspec_mhlo_attrs, out_names, out_avals_))
+  ctx.set_tokens_out(tokens_out)
   return map(partial(_xla_unshard, ctx, mesh, auto), out_names, out_avals_,
              ctx.avals_out, out_nodes_)
 mlir.register_lowering(shard_map_p, _shard_map_lowering)
@@ -1044,6 +1045,12 @@ def _pure_callback_rule(mesh, *_, result_avals, **__):
 register_norewrite(callback.pure_callback_p)
 
 
+@register_check(callback.io_callback_p)
+def _io_callback_rule(mesh, *_, result_avals, **__):
+  return [set()] * len(result_avals)
+register_norewrite(callback.io_callback_p)
+
+
 @register_check(dispatch.device_put_p)
 def _device_put_rule(mesh, x, **_):
   return x
@@ -1255,30 +1262,33 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
   in_knowns, in_avals, in_consts = pe.partition_pvals(in_pvals)
   unk_in_names, known_in_names = pe.partition_list(in_knowns, in_names)
   in_avals_sharded = map(partial(_shard_aval, mesh), unk_in_names, in_avals)
-  f = pe.trace_to_subjaxpr_nounits(f, trace.main, False)
+  f = pe.trace_to_subjaxpr_nounits_fwd2(f, trace.main, False)
   f = _promote_scalar_residuals(f)
   f_known, aux = pe.partial_eval_wrapper_nounits(
       f, (*in_knowns,), (*in_avals_sharded,))
 
   @as_hashable_function(closure=out_names_thunk)
   def known_out_names():
-    out_knowns, _, jaxpr, _ = aux()
+    in_fwd, out_fwd, out_knowns, _, jaxpr, _ = aux()
     _, out_known_names = pe.partition_list(out_knowns, out_names_thunk())
-    assert not any(not v.aval.shape for v in jaxpr.constvars)
-    res_names = ({0: (*mesh.axis_names,)},) * len(jaxpr.constvars)
-    return (*out_known_names, *res_names)
+    num_res = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
+    return (*out_known_names, *({0: (*mesh.axis_names,)},) * num_res)
 
   known_params = dict(mesh=mesh, in_names=(*known_in_names,),
                       out_names_thunk=known_out_names, check_rep=check_rep,
                       rewrite=rewrite, auto=auto)
   out = shard_map_p.bind(f_known, *in_consts, **known_params)
-  out_knowns, out_avals_sharded, jaxpr, env = aux()
-  out_consts, res = split_list(out, [len(out) - len(jaxpr.constvars)])
-  with core.extend_axis_env_nd(mesh.shape.items()):
-    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+  in_fwd, out_fwd, out_knowns, out_avals_sharded, jaxpr, env = aux()
+  num_res = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
+  out_consts, non_fwd_res = split_list(out, [len(out) - num_res])
+  assert not jaxpr.constvars
   unk_out_names, _ = pe.partition_list(out_knowns, out_names_thunk())
-  unk_in_names = (({0: (*mesh.axis_names,)},) * len(res) + ({},) * len(env)
-                      + (*unk_in_names,))
+  known_out_names_ = known_out_names()
+  res = subs_list2(in_fwd, out_fwd, in_consts, out_consts, non_fwd_res)
+  res_names = [known_in_names[f1] if f1 is not None else
+               known_out_names_[f2] if f2 is not None else
+               {0: (*mesh.axis_names,)} for f1, f2 in zip(in_fwd, out_fwd)]
+  unk_in_names = (*res_names,) + ({},) * len(env) + (*unk_in_names,)
   const_tracers = map(trace.new_instantiated_const, res)
   env_tracers = map(trace.full_raise, env)
   unk_arg_tracers = [t for t in tracers if not t.is_known()]
@@ -1300,7 +1310,11 @@ def _shard_map_partial_eval_post_process(
   del check_rep
   unk_tracers = [t for t in tracers if not t.is_known()]
   jaxpr, res, env = pe.tracers_to_jaxpr([], unk_tracers)
-  jaxpr, res = _promote_scalar_residuals_jaxpr(jaxpr, res)
+  # TODO(mattjj): output forwarding optimization
+  which = [not getattr(v.aval, 'shape', True) for v in jaxpr.constvars]
+  res = [jax.lax.broadcast(x, (1,)) if not getattr(v.aval, 'shape', True) else x
+         for x, v in zip(res, jaxpr.constvars)]
+  jaxpr = _promote_scalar_residuals_jaxpr(jaxpr, which)
 
   out_knowns, out_avals_, consts = pe.partition_pvals([t.pval for t in tracers])
   out = [*consts, *res]
@@ -1310,11 +1324,11 @@ def _shard_map_partial_eval_post_process(
 
   def todo(out):
     trace = main.with_cur_sublevel()
-    out_consts, res = split_list(out, [len(out) - len(jaxpr.constvars)])
-    const_tracers = map(trace.new_instantiated_const, res)
+    out_consts, res_ = split_list(out, [len(out) - len(res)])
+    const_tracers = map(trace.new_instantiated_const, res_)
     env_tracers = map(trace.full_raise, env)
 
-    staged_in_names = ({0: (*mesh.axis_names,)},) * len(res) + ({},) * len(env)
+    staged_in_names = ({0: (*mesh.axis_names,)},) * len(res_) + ({},) * len(env)
     staged_params = dict(jaxpr=jaxpr_, mesh=mesh, in_names=staged_in_names,
                          out_names=(*out_names_unknown,), check_rep=False,
                          rewrite=rewrite, auto=auto)
@@ -1332,7 +1346,7 @@ def _shard_map_partial_eval_post_process(
   def out_names_transform(out_names):
     nonlocal out_names_unknown
     out_names_unknown, out_names_known = partition_list(out_knowns, out_names)
-    return (*out_names_known,) + ({0: (*mesh.axis_names,)},) * len(jaxpr.constvars)
+    return (*out_names_known,) + ({0: (*mesh.axis_names,)},) * len(res)
   out_names_unknown: list | None = None
 
   return out, (todo, out_names_transform)
@@ -1340,21 +1354,25 @@ pe.JaxprTrace.post_process_shard_map = _shard_map_partial_eval_post_process
 
 @lu.transformation
 def _promote_scalar_residuals(*args, **kwargs):
-  jaxpr, (out_pvals, out_consts, env) = yield args, kwargs
-  jaxpr, out_consts = _promote_scalar_residuals_jaxpr(jaxpr, out_consts)
-  yield jaxpr, (out_pvals, out_consts, env)
+  jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env) = yield args, kwargs
+  which = [f1 is None and f2 is None and not v.aval.shape
+           for f1, f2, v in zip(in_fwds, out_fwds, jaxpr.constvars)]
+  jaxpr = _promote_scalar_residuals_jaxpr(jaxpr, which)
+  out_consts = [jax.lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
+                for x in out_consts]
+  yield jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env)
 
-def _promote_scalar_residuals_jaxpr(jaxpr, res):
-  which = [isinstance(v.aval, core.ShapedArray) and not v.aval.shape
-           for v in jaxpr.constvars]
-  res_ = [jax.lax.broadcast(x, (1,)) if s else x for x, s in zip(res, which)]
-
+def _promote_scalar_residuals_jaxpr(jaxpr, which):
   @lu.wrap_init
-  def fun(*args):
-    res = [_rem_singleton(x) if s else x for x, s in zip(res_, which)]
+  def fun(*res_and_args):
+    res, args = split_list(res_and_args, [len(jaxpr.constvars)])
+    res = [_rem_singleton(x) if w else x for x, w in zip(res, which)]
     return core.eval_jaxpr(jaxpr, res, *args)
-  jaxpr, _, res = pe.trace_to_jaxpr_dynamic(fun, [v.aval for v in jaxpr.invars])
-  return jaxpr, res
+  res_avals = [core.unmapped_aval(1, None, 0, v.aval) if w else v.aval
+               for v, w in zip(jaxpr.constvars, which)]
+  in_avals = [*res_avals, *[v.aval for v in jaxpr.invars]]
+  jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+  return jaxpr
 
 def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
                          check_rep, rewrite, auto):
@@ -1414,7 +1432,7 @@ core.axis_substitution_rules[shard_map_p] = _shard_map_axis_subst
 # Remat
 
 def _partial_eval_jaxpr_custom_rule(
-    saveable: Callable[..., bool], unks_in: Sequence[bool],
+    saveable: Callable[..., pe.RematCases_], unks_in: Sequence[bool],
     inst_in: Sequence[bool], eqn: core.JaxprEqn
 ) -> tuple[core.JaxprEqn, core.JaxprEqn, Sequence[bool], Sequence[bool],
            list[core.Var]]:
@@ -1422,66 +1440,84 @@ def _partial_eval_jaxpr_custom_rule(
   with core.extend_axis_env_nd(mesh.shape.items()):
     jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = \
         pe.partial_eval_jaxpr_custom(jaxpr, unks_in, inst_in, False, False, saveable)
-  jaxpr_known, jaxpr_staged = _add_reshapes(num_res, jaxpr_known, jaxpr_staged)
+  num_out_primals = len(jaxpr_known.outvars) - num_res
+  in_fwd = pe._jaxpr_forwarding(jaxpr_known)[num_out_primals:]
+  out_vars, res_vars = split_list(jaxpr_known.outvars, [num_out_primals])
+  idx_map = {id(v): i for i, v in enumerate(out_vars)}
+  out_fwd = [idx_map.get(id(v)) for v in res_vars]
+  which = [f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd)]
+  with core.extend_axis_env_nd(eqn.params['mesh'].shape.items()):
+    jaxpr_known = pe.prune_jaxpr_outputs(jaxpr_known, [True] * num_out_primals + which)
+    jaxpr_known, jaxpr_staged = _add_reshapes(which, jaxpr_known, jaxpr_staged)
   ins_known, _ = partition_list(unks_in, eqn.invars)
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
   _, ins_staged = partition_list(inst_in, eqn.invars)
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   newvar = core.gensym([jaxpr_known, jaxpr_staged])
   params_known, params_staged = _pe_custom_params(
-      unks_in, inst_in, map(op.not_, unks_out), inst_out, num_res,
+      unks_in, inst_in, map(op.not_, unks_out), inst_out, in_fwd, out_fwd, which,
       dict(eqn.params, jaxpr=jaxpr_known), dict(eqn.params, jaxpr=jaxpr_staged))
   residuals = [newvar(_unshard_aval(mesh, {0: (*mesh.axis_names,)}, var.aval))
-               for var in jaxpr_staged.invars[:num_res]]
+               for var, w in zip(jaxpr_staged.invars[:num_res], which) if w]
   eqn_known = pe.new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
                                eqn.primitive, params_known, jaxpr_known.effects,
                                eqn.source_info)
-  eqn_staged = pe.new_jaxpr_eqn([*residuals, *ins_staged], out_binders_staged,
+  full_res = subs_list2(in_fwd, out_fwd, ins_known, out_binders_known, residuals)
+  eqn_staged = pe.new_jaxpr_eqn([*full_res, *ins_staged], out_binders_staged,
                                 eqn.primitive, params_staged,
                                 jaxpr_staged.effects, eqn.source_info)
   assert len(eqn_staged.invars) == len(jaxpr_staged.invars)
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is core.Var and not inst]
+  new_inst += [out_binders_known[f] for f in {i for i in out_fwd if i is not None}]
   return eqn_known, eqn_staged, unks_out, inst_out, new_inst + residuals
 pe.partial_eval_jaxpr_custom_rules[shard_map_p] = \
     _partial_eval_jaxpr_custom_rule
 
-def _add_reshapes(num_res, jaxpr_known, jaxpr_staged):
-  if not num_res: return jaxpr_known, jaxpr_staged
+def _add_reshapes(which, jaxpr_known, jaxpr_staged):
+  # add singleton axes to residuals which are from jaxpr_known and are scalars
+  which_ = [w and not v.aval.shape
+            for w, v in zip(which, jaxpr_staged.invars[:len(which)])]
+  if not any(which_): return jaxpr_known, jaxpr_staged
   assert not jaxpr_known.constvars and not jaxpr_staged.constvars
 
   @lu.wrap_init
   def known(*args):
     out = core.eval_jaxpr(jaxpr_known, (), *args)
-    out_known, res = split_list(out, [len(out) - num_res])
-    return [*out_known, *map(_add_singleton, res)]
+    out_known, res = split_list(out, [len(out) - sum(which)])
+    res = [_add_singleton(x) if not x.shape else x for x in res]
+    return [*out_known, *res]
   avals_in = [v.aval for v in jaxpr_known.invars]
   jaxpr_known, _, () = pe.trace_to_jaxpr_dynamic(known, avals_in)
 
   @lu.wrap_init
   def staged(*args):
-    res_, ins = split_list(args, [num_res])
-    res = map(_rem_singleton, res_)
+    res_, ins = split_list(args, [len(which)])
+    res = [_rem_singleton(x) if w else x for x, w in zip(res_, which_)]
     return core.eval_jaxpr(jaxpr_staged, (), *res, *ins)
-  res_avals = [v.aval for v in jaxpr_known.outvars[-num_res:]]
-  avals_in = [*res_avals, *[v.aval for v in jaxpr_staged.invars[num_res:]]]
+  res_avals = [core.unmapped_aval(1, None, 0, v.aval) if w else v.aval
+               for w, v in zip(which_, jaxpr_staged.invars[:len(which)])]
+  avals_in = [*res_avals, *[v.aval for v in jaxpr_staged.invars[len(which):]]]
   jaxpr_staged, _, () = pe.trace_to_jaxpr_dynamic(staged, avals_in)
 
   return jaxpr_known, jaxpr_staged
 
 def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
-                      num_res, params_known, params_staged):
+                      in_fwd, out_fwd, which, params_known, params_staged):
   # prune inputs to jaxpr_known according to unks_in
   mesh = params_known['mesh']
   in_names_known, _ = partition_list(unks_in, params_known['in_names'])
   _, out_names_known = partition_list(kept_outs_known, params_known['out_names'])
-  out_names_known = out_names_known + [{0: (*mesh.axis_names,)}] * num_res
+  out_names_known = out_names_known + [{0: (*mesh.axis_names,)}] * sum(which)
   new_params_known = dict(params_known, in_names=tuple(in_names_known),
                           out_names=tuple(out_names_known))
 
   # added num_res new inputs to jaxpr_staged, pruning according to inst_in
   _, in_names_staged = partition_list(inst_in, params_staged['in_names'])
-  in_names_staged = [{0: (*mesh.axis_names,)}] * num_res + in_names_staged
+  res_names = [in_names_known[f1] if f1 is not None else
+               out_names_known[f2] if f2 is not None else
+               {0: (*mesh.axis_names,)} for f1, f2 in zip(in_fwd, out_fwd)]
+  in_names_staged = res_names + in_names_staged
   _, out_names_staged = partition_list(kept_outs_staged, params_staged['out_names'])
   new_params_staged = dict(params_staged, in_names=tuple(in_names_staged),
                            out_names=tuple(out_names_staged), check_rep=False)

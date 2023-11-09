@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.14.7
+    jupytext_version: 1.15.2
 kernelspec:
   display_name: Python 3
   language: python
@@ -83,7 +83,7 @@ image = jnp.array(misc.face().mean(-1))
 ax[0].imshow(image, cmap='binary_r')
 ax[0].set_title('original')
 
-# Create a noisy version by adding random Gausian noise
+# Create a noisy version by adding random Gaussian noise
 key = random.PRNGKey(1701)
 noisy_image = image + 50 * random.normal(key, image.shape)
 ax[1].imshow(noisy_image, cmap='binary_r')
@@ -330,7 +330,7 @@ We can use the last to, for instance, implement _transposed convolutions_:
 # N,H,W,C = img.shape
 # out = tf.nn.conv2d_transpose(img, kernel, (N,2*H,2*W,C), (1,2,2,1))
 
-# transposed conv = 180deg kernel roation plus LHS dilation
+# transposed conv = 180deg kernel rotation plus LHS dilation
 # rotate kernel 180deg:
 kernel_rot = jnp.rot90(jnp.rot90(kernel, axes=(0,1)), axes=(0,1))
 # need a custom output padding:

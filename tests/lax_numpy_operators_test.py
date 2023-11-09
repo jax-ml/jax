@@ -31,12 +31,11 @@ import jax.ops
 from jax import lax
 from jax import numpy as jnp
 
+from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 
-from jax import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
@@ -139,8 +138,11 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
               inexact=True),
     op_record("cos", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
               inexact=True),
-    op_record("tan", 1, number_dtypes, all_shapes,
+    op_record("tan", 1, inexact_dtypes + int_dtypes, all_shapes,
               partial(jtu.rand_uniform, low=-1.5, high=1.5), ["rev"],
+              inexact=True),
+    op_record("tan", 1, unsigned_dtypes, all_shapes,
+              partial(jtu.rand_uniform, low=0, high=1.5), ["rev"],
               inexact=True),
     op_record("sinh", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
               inexact=True),
@@ -231,7 +233,9 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("logaddexp2", 2, float_dtypes, all_shapes,
               jtu.rand_some_inf_and_nan, ["rev"],
               tolerance={np.float16: 1e-2, np.float64: 2e-14}, inexact=True),
-    op_record("polyval", 2, number_dtypes, nonempty_nonscalar_array_shapes,
+    op_record("polyval", 2,
+              [d for d in number_dtypes if d not in (np.int8, np.uint8)],
+              nonempty_nonscalar_array_shapes,
               jtu.rand_default, [], check_dtypes=False,
               tolerance={dtypes.bfloat16: 4e-2, np.float16: 2e-2,
                          np.float64: 1e-12}),
@@ -298,6 +302,10 @@ JAX_BITWISE_OP_RECORDS = [
     op_record("bitwise_xor", 2, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_fullrange, []),
 ]
+if hasattr(np, "bitwise_count"):
+  # Numpy versions after 1.26
+  JAX_BITWISE_OP_RECORDS.append(
+    op_record("bitwise_count", 1, int_dtypes, all_shapes, jtu.rand_fullrange, []))
 
 JAX_OPERATOR_OVERLOADS = [
     op_record("__add__", 2, number_dtypes, all_shapes, jtu.rand_default, []),
@@ -433,7 +441,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes, np_arrays=False)
     tol = max(jtu.tolerance(dtype, tolerance) for dtype in dtypes)
-    if jtu.device_under_test() == "tpu" and op_name in (
+    if jtu.test_device_matches(["tpu"]) and op_name in (
         "arccosh", "arcsinh", "sinh", "cosh", "tanh", "sin", "cos", "tan",
         "log", "log1p", "log2", "log10", "exp", "expm1", "exp2", "power",
         "logaddexp", "logaddexp2", "i0"):
@@ -571,6 +579,21 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_op, args_maker)
 
   @jtu.sample_product(
+    shape=array_shapes,
+    dtype=int_dtypes + unsigned_dtypes,
+  )
+  def testBitwiseCount(self, shape, dtype):
+    # np.bitwise_count added after numpy 1.26, but
+    # np_scalar.bit_count() is available before that.
+    np_fun = getattr(
+      np, "bitwise_count",
+      np.vectorize(lambda x: np.ravel(x)[0].bit_count(), otypes=['uint8']))
+    rng = jtu.rand_fullrange(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp.bitwise_count, args_maker)
+    self._CompileAndCheck(jnp.bitwise_count, args_maker)
+
+  @jtu.sample_product(
     [dict(dtypes=dtypes, shapes=shapes)
       for shapes in filter(
         _shapes_are_broadcast_compatible,
@@ -588,7 +611,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
                  np.issubdtype(shift_dtype, np.signedinteger)
     has_32 = any(np.iinfo(d).bits == 32 for d in dtypes)
     promoting_to_64 = has_32 and signed_mix
-    if promoting_to_64 and not config.x64_enabled:
+    if promoting_to_64 and not config.enable_x64.value:
       self.skipTest("np.right_shift/left_shift promoting to int64"
                     "differs from jnp in 32 bit mode.")
 

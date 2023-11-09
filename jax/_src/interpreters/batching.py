@@ -22,7 +22,7 @@ from typing import Any, Callable, Union
 import numpy as np
 
 import jax
-from jax import config
+from jax._src import config
 from jax._src import core
 from jax._src import source_info_util
 from jax._src import linear_util as lu
@@ -33,12 +33,12 @@ from jax._src.core import raise_to_shaped, Trace, Tracer, AxisName
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_unflatten, tree_flatten,
                                 register_pytree_node)
+from jax._src.typing import Array
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
                            curry, memoize, weakref_lru_cache)
 
 
-Array = Any
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
@@ -61,7 +61,7 @@ class IndexedAxisSize:
   idx: core.Var
   lengths: Array | core.Var | Tracer
   def __repr__(self) -> str:
-    return f'{str(self.lengths)}.Var{id(self.idx)}'
+    return f'{self.lengths}.Var{id(self.idx)}'
   replace = dataclasses.replace
 
 # Jumble(aval=a:3 => f32[[3 1 4].a],
@@ -116,7 +116,7 @@ class RaggedAxis:
   # For each axis, we store its index and the corresponding segment lengths.
   # For example, the jumble i:(Fin 3) => f32[lens1.i, 7, lens2.i]
   # would be represented with ragged_axes = [(1, lens1), (3, lens2)]
-  ragged_axes: tuple[tuple[int, Array], ...]
+  ragged_axes: tuple[tuple[int, Any], ...]
 
   @property
   def size(self):
@@ -132,7 +132,7 @@ class RaggedAxis:
       if self.stacked_axis < ax and ax <= dst:
         return ax - 1
       return ax
-    new_axes = tuple([(move_axis(ax), sizes) for ax, sizes in self.ragged_axes])
+    new_axes = tuple((move_axis(ax), sizes) for ax, sizes in self.ragged_axes)
     return RaggedAxis(dst, new_axes)
 
 def transpose_ragged_axes(dim: RaggedAxis, perm: tuple[int, ...]) -> RaggedAxis:
@@ -148,8 +148,10 @@ def _sorted_ragged_axis(stacked_axis, ragged_axes):
   return RaggedAxis(stacked_axis, tuple(sorted(ragged_axes, key=lambda p: p[0])))
 
 def make_batch_axis(
-    ndim: int, stacked_axis: int, ragged_axes: list[tuple[int, Array]]
-  ) -> int | RaggedAxis:
+    ndim: int,
+    stacked_axis: int,
+    ragged_axes: list[tuple[int, Array | core.Var]],
+) -> int | RaggedAxis:
   if ragged_axes:
     canonical = [(canonicalize_axis(ax, ndim), sz) for ax, sz in ragged_axes]
     return _sorted_ragged_axis(canonicalize_axis(stacked_axis, ndim), canonical)
@@ -316,7 +318,7 @@ class BatchTracer(Tracer):
 
   def __init__(self, trace, val, batch_dim: NotMapped | int | RaggedAxis,
                source_info: source_info_util.SourceInfo | None = None):
-    if config.jax_enable_checks:
+    if config.enable_checks.value:
       assert type(batch_dim) in (NotMapped, int, RaggedAxis)
       if type(batch_dim) is int:
         aval = raise_to_shaped(core.get_aval(val))
@@ -406,7 +408,7 @@ class BatchTrace(Trace):
     else:
       axis_size = None  # can't be inferred from data
     if self.axis_name is core.no_axis_name:
-      assert axis_size is not None  # must be inferrable from data
+      assert axis_size is not None  # must be inferable from data
       return core.AxisEnvFrame(self.axis_name, axis_size, self.main)
     frame = core.axis_frame(self.axis_name, self.main)
     assert axis_size is None or axis_size == frame.size, (axis_size, frame.size)
@@ -414,7 +416,7 @@ class BatchTrace(Trace):
     return frame
 
   def process_primitive(self, primitive, tracers, params):
-    if config.jax_dynamic_shapes:
+    if config.dynamic_shapes.value:
       primitive.abstract_eval(*(t.aval for t in tracers), **params)
     vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
     is_axis_primitive = primitive in axis_primitive_batchers
@@ -726,8 +728,8 @@ def resolve_ragged_axes(vals, dims):
   idxs = {lengths_idx.val for d in dims if isinstance(d, RaggedAxis)
           for (_, lengths_idx) in d.ragged_axes}
   dims = [RaggedAxis(d.stacked_axis,
-                     tuple([(ragged_axis, vals[lengths_idx.val])
-                            for ragged_axis, lengths_idx in d.ragged_axes]))
+                     tuple((ragged_axis, vals[lengths_idx.val])
+                           for ragged_axis, lengths_idx in d.ragged_axes))
           if isinstance(d, RaggedAxis) else d for d in dims]
   vals = [x for i, x in enumerate(vals) if i not in idxs]
   return vals, dims
@@ -741,8 +743,8 @@ def resolve_ragged_axes_against_inputs_outputs(in_vals, out_vals, dims):
       return out_vals[idx.val]
 
   dims = [RaggedAxis(d.stacked_axis,
-                     tuple([(ragged_axis, fetch(lengths_idx))
-                            for ragged_axis, lengths_idx in d.ragged_axes]))
+                     tuple((ragged_axis, fetch(lengths_idx))
+                           for ragged_axis, lengths_idx in d.ragged_axes))
           if isinstance(d, RaggedAxis) else d for d in dims]
   return dims
 
@@ -1063,7 +1065,7 @@ def _mask_one_ragged_axis(
   ragged_axis, segment_lengths = axis_spec.ragged_axes[0]
   value = ident(operand.dtype)
   positions = jax.lax.broadcasted_iota('int32', operand.shape, ragged_axis)
-  # TODO(mattjj, axch) cant get ._data, need to convert it
+  # TODO(mattjj, axch) can't get ._data, need to convert it
   # lengths = jax.lax.convert_element_type(segment_lengths._data, 'int32')
   lengths = jax.lax.convert_element_type(segment_lengths, 'int32')
   limits = jax.lax.broadcast_in_dim(
@@ -1099,7 +1101,7 @@ def matchaxis(axis_name, sz, src, dst, x, sum_match=False):
   try:
     _ = core.get_aval(x)
   except TypeError as e:
-    raise TypeError(f"Output from batched function {repr(x)} with type "
+    raise TypeError(f"Output from batched function {x!r} with type "
                     f"{type(x)} is not a valid JAX type") from e
   if src == dst:
     return x

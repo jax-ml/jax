@@ -535,7 +535,7 @@ class UnexpectedTracerError(JAXTypeError):
   JAX detects leaks when you then use the leaked value in another
   operation later on, at which point it raises an ``UnexpectedTracerError``.
   To fix this, avoid side effects: if a function computes a value needed
-  in an outer scope, return that value from the transformed function explictly.
+  in an outer scope, return that value from the transformed function explicitly.
 
   Specifically, a ``Tracer`` is JAX's internal representation of a function's
   intermediate values during transformations, e.g. within :func:`~jax.jit`,

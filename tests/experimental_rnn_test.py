@@ -16,11 +16,9 @@ from absl.testing import absltest
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax._src import lib
+from jax._src import config
 from jax._src import test_util as jtu
 from jax.experimental import rnn
-
-from jax._src.config import config
 
 config.parse_flags_with_absl()
 
@@ -36,14 +34,10 @@ class RnnTest(jtu.JaxTestCase):
       num_layers=[1, 4],
       bidirectional=[True, False],
   )
-  @jtu.skip_on_devices("cpu", "tpu", "rocm")
+  @jtu.run_on_devices("cuda")
+  @jax.default_matmul_precision("float32")
   def test_lstm(self, batch_size: int, seq_len: int, input_size: int,
                 hidden_size: int, num_layers: int, bidirectional: bool):
-    if lib.version < (0, 4, 7):
-      # TODO(sharadmv, zhangqiaorjc): remove this when minimum jaxlib version is
-      # bumped
-      self.skipTest("Need latest jaxlib for this test to pass.")
-
     # TODO(phawkins): Partially disable this on cudnn version per b/281071013
     if (batch_size == 1 and seq_len == 4 and input_size == 1 and
         hidden_size == 6 and num_layers == 4 and bidirectional == False):

@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.14.7
+    jupytext_version: 1.15.2
 kernelspec:
   display_name: Python 3
   name: python3
@@ -99,7 +99,7 @@ jax.ad_checkpoint.print_saved_residuals(f4, W1, W2, W3, x)
 
 +++ {"id": "40oy-FbmVkDc"}
 
-When playing around with these toy examples, we can get a closer look at what's going on using the `print_fwd_bwd` utility definied in this notebook:
+When playing around with these toy examples, we can get a closer look at what's going on using the `print_fwd_bwd` utility defined in this notebook:
 
 ```{code-cell}
 from jax.tree_util import tree_flatten, tree_unflatten
@@ -162,7 +162,7 @@ You might want to first (re)read [the Autodiff Cookbook Part 1](https://jax.read
 
 
 
-In both `jax.linearize` and `jax.vjp` there is flexibilty in how and when some values are computed. Different choices can trade off memory use against FLOPs. JAX provides control over these choices with `jax.checkpoint`.
+In both `jax.linearize` and `jax.vjp` there is flexibility in how and when some values are computed. Different choices can trade off memory use against FLOPs. JAX provides control over these choices with `jax.checkpoint`.
 
 One such choice is whether to perform Jacobian coefficient computations on the forward pass, as soon as the inputs are available, or on the backward pass, just before the coefficients are needed. Consider the example of `sin_vjp`:
 

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import enum
 import math
 import operator as op
 import numpy as np
@@ -26,13 +27,13 @@ from jax._src import abstract_arrays
 from jax._src import api
 from jax._src import api_util
 from jax._src import basearray
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import profiler
 from jax._src import tree_util
 from jax._src import xla_bridge
-from jax._src.config import config
 from jax._src.lib import xla_client as xc
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -70,10 +71,10 @@ class Shard:
 
   def __repr__(self):
     try:
-      return (f'Shard(device={repr(self.device)}, index={self.index}, '
+      return (f'Shard(device={self.device!r}, index={self.index}, '
               f'replica_id={self.replica_id}, data={self.data})')
     except ValueError:
-      return f'Shard(device={repr(self.device)}, data={self.data})'
+      return f'Shard(device={self.device!r}, data={self.data})'
 
   @functools.cached_property
   def index(self) -> Index:
@@ -171,7 +172,7 @@ class ArrayImpl(basearray.Array):
     # input buffers are already arranged properly. This usually happens when
     # Array's are created as output of a JAX transformation
     # (like pjit, xmap, etc).
-    if not _skip_checks or config.jax_enable_checks:
+    if not _skip_checks or config.enable_checks.value:
       self._check_and_rearrange()
 
   def _check_and_rearrange(self):
@@ -255,29 +256,33 @@ class ArrayImpl(basearray.Array):
       raise TypeError("len() of unsized object") from err  # same as numpy error
 
   def __bool__(self):
-    return bool(self._value)
-
-  def __nonzero__(self):
+    # deprecated 2023 September 18.
+    # TODO(jakevdp) change to warn_on_empty=False
+    core.check_bool_conversion(self, warn_on_empty=True)
     return bool(self._value)
 
   def __float__(self):
+    core.check_scalar_conversion(self)
     return self._value.__float__()
 
   def __int__(self):
+    core.check_scalar_conversion(self)
     return self._value.__int__()
 
   def __complex__(self):
+    core.check_scalar_conversion(self)
     return self._value.__complex__()
 
   def __hex__(self):
-    assert self.ndim == 0, 'hex only works on scalar values'
+    core.check_integer_conversion(self)
     return hex(self._value)  # type: ignore
 
   def __oct__(self):
-    assert self.ndim == 0, 'oct only works on scalar values'
+    core.check_integer_conversion(self)
     return oct(self._value)  # type: ignore
 
   def __index__(self):
+    core.check_integer_conversion(self)
     return op.index(self._value)
 
   def tobytes(self, order="C"):
@@ -371,13 +376,13 @@ class ArrayImpl(basearray.Array):
   def __array__(self, dtype=None, context=None):
     return np.asarray(self._value, dtype=dtype)
 
-  def __dlpack__(self, stream: int | None = None):
+  def __dlpack__(self, *, stream: int | Any | None = None):
     if len(self._arrays) != 1:
       raise ValueError("__dlpack__ only supported for unsharded arrays.")
     from jax._src.dlpack import to_dlpack  # pylint: disable=g-import-not-at-top
     return to_dlpack(self, stream=stream)
 
-  def __dlpack_device__(self) -> tuple[int, int]:
+  def __dlpack_device__(self) -> tuple[enum.Enum, int]:
     if len(self._arrays) != 1:
       raise ValueError("__dlpack__ only supported for unsharded arrays.")
 
@@ -633,18 +638,42 @@ def make_array_from_callback(
     >>> arr.addressable_data(0).shape
     (4, 2)
   """
-  device_to_index_map = sharding.devices_indices_map(shape)
-  # Use addressable_devices here instead of `_addressable_device_assignment`
-  # because `_addressable_device_assignment` is only available on
-  # `XLACompatibleSharding` and this function is supposed to work for every
-  # `Sharding`.
-  arrays = [
-      api.device_put(data_callback(device_to_index_map[device]), device)
-      for device in sharding.addressable_devices
-  ]
-  aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
+  has_device_assignment = False
+  if sharding.is_fully_replicated:
+    if isinstance(sharding, XLACompatibleSharding):
+      devices = list(sharding._addressable_device_assignment)
+      has_device_assignment = True
+    else:
+      devices = list(sharding.addressable_devices)
+    per_device_values = [data_callback((slice(None),) * len(shape))] * len(devices)
+  else:
+    device_to_index_map = sharding.addressable_devices_indices_map(shape)
+    devices = list(device_to_index_map.keys())
+    per_device_values = [data_callback(device_to_index_map[device])
+                         for device in devices]
+
+  first_value = xla.canonicalize_dtype(per_device_values[0])
+  aval = core.ShapedArray(shape, first_value.dtype, weak_type=False)
+
+  # TODO(yashkatariya): Look into taking this path for non-fully replicated
+  # shardings too.
+  if (sharding.is_fully_replicated and has_device_assignment and
+      not dtypes.issubdtype(aval.dtype, dtypes.extended)):
+    # Do this check outside because `batched_device_put` won't do these checks
+    # like ArrayImpl. This is a fast path for fully replicated arrays with
+    # xla compatible sharding.
+    if shape != first_value.shape:
+      raise ValueError(
+            f"Expected shard shape {shape} doesn't match the single device "
+            f"array shape {first_value.shape}. Shape of Array is "
+            f"{aval.str_short()} with sharding {sharding}")
+    return pxla.batched_device_put(
+        aval, sharding, per_device_values, devices, committed=True)
+
+  arrays = api.device_put(per_device_values, devices)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
-    return aval.dtype._rules.make_sharded_array(aval, sharding, arrays, committed=True)
+    return aval.dtype._rules.make_sharded_array(aval, sharding, arrays,
+                                                committed=True)
   return ArrayImpl(aval, sharding, arrays, committed=True)
 
 
@@ -732,7 +761,7 @@ def as_slice_indices(arr: Any, idx: Index) -> tuple[
   """Returns start_indices, limit_indices, removed_dims"""
   start_indices = [0] * arr.ndim
   limit_indices = list(arr.shape)
-  removed_dims = []
+  removed_dims: list[int] = []
 
   tuple_idx = idx if isinstance(idx, tuple) else (idx,)
   for dim, sub_idx in enumerate(tuple_idx):

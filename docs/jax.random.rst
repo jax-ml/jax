@@ -3,21 +3,33 @@
 
 .. automodule:: jax.random
 
-List of Available Functions
----------------------------
+API Reference
+-------------
 
-.. Generate the list below as follows:
+Key Creation & Manipulation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autosummary::
+  :toctree: _autosummary
+
+  PRNGKey
+  key
+  key_data
+  wrap_key_data
+  fold_in
+  split
+
+Random Samplers
+~~~~~~~~~~~~~~~
+
+.. Generate the list of callable members:
    >>> from jax import random
-   >>> fns = (x for x in sorted(dir(random)) if x != 'threefry_2x32')
-   >>> fns = (x for x in fns if callable(getattr(random, x)))
+   >>> fns = (x for x in sorted(dir(random)) if callable(getattr(random, x)))
    >>> print('\n'.join('    ' + x for x in fns))  # doctest: +SKIP
 
 .. autosummary::
   :toctree: _autosummary
 
-    PRNGKey
-    key
-    key_data
     ball
     bernoulli
     beta
@@ -30,7 +42,6 @@ List of Available Functions
     double_sided_maxwell
     exponential
     f
-    fold_in
     gamma
     generalized_normal
     geometric
@@ -49,12 +60,9 @@ List of Available Functions
     rademacher
     randint
     rayleigh
-    shuffle
-    split
     t
     triangular
     truncated_normal
     uniform
     wald
     weibull_min
-

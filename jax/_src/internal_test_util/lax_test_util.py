@@ -263,9 +263,7 @@ def lax_ops():
           float_dtypes,
           test_util.rand_positive,
           {
-              np.float32: (
-                  1e-3 if test_util.device_under_test() == "tpu" else 1e-5
-              ),
+              np.float32: 1e-5,
               np.float64: 1e-14,
           },
       ),

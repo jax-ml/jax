@@ -74,7 +74,8 @@ static absl::StatusOr<std::pair<int, int>>
 DoRnnComputeWorkspaceReserveSpaceSizes(int input_size, int hidden_size,
                                        int num_layers, int batch_size,
                                        int max_seq_length, float dropout,
-                                       bool bidirectional) {
+                                       bool bidirectional,
+				       bool cudnn_allow_tf32) {
   auto h = DnnHandlePool::Borrow(/*stream=*/nullptr);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
@@ -103,7 +104,7 @@ DoRnnComputeWorkspaceReserveSpaceSizes(int input_size, int hidden_size,
   cudnnRNNInputMode_t input_mode = CUDNN_LINEAR_INPUT;
   cudnnDataType_t data_type = CUDNN_DATA_FLOAT;
   cudnnDataType_t math_prec = CUDNN_DATA_FLOAT;
-  cudnnMathType_t math_type = CUDNN_DEFAULT_MATH;
+  cudnnMathType_t math_type = cudnn_allow_tf32? CUDNN_DEFAULT_MATH: CUDNN_FMA_MATH;
   int32_t proj_size = hidden_size;
   uint32_t aux_flags = CUDNN_RNN_PADDED_IO_ENABLED;
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnSetRNNDescriptor_v8(
@@ -145,10 +146,11 @@ DoRnnComputeWorkspaceReserveSpaceSizes(int input_size, int hidden_size,
 
 absl::StatusOr<std::pair<int, int>> RnnComputeWorkspaceReserveSpaceSizes(
     int input_size, int hidden_size, int num_layers, int batch_size,
-    int max_seq_length, float dropout, bool bidirectional) {
+    int max_seq_length, float dropout, bool bidirectional,
+    bool cudnn_allow_tf32) {
   return DoRnnComputeWorkspaceReserveSpaceSizes(
       input_size, hidden_size, num_layers, batch_size, max_seq_length, dropout,
-      bidirectional);
+      bidirectional, cudnn_allow_tf32);
 }
 
 static absl::Status DnnRNNForward_(gpuStream_t stream, void** buffers,
@@ -184,7 +186,7 @@ static absl::Status DnnRNNForward_(gpuStream_t stream, void** buffers,
   cudnnRNNInputMode_t input_mode = CUDNN_LINEAR_INPUT;
   cudnnDataType_t data_type = CUDNN_DATA_FLOAT;
   cudnnDataType_t math_prec = CUDNN_DATA_FLOAT;
-  cudnnMathType_t math_type = CUDNN_DEFAULT_MATH;
+  cudnnMathType_t math_type = d.cudnn_allow_tf32? CUDNN_DEFAULT_MATH: CUDNN_FMA_MATH;
   int32_t proj_size = d.hidden_size;
   uint32_t aux_flags = CUDNN_RNN_PADDED_IO_ENABLED;
 
@@ -306,7 +308,7 @@ static absl::Status DnnRNNBackward_(gpuStream_t stream, void** buffers,
   cudnnRNNInputMode_t input_mode = CUDNN_LINEAR_INPUT;
   cudnnDataType_t data_type = CUDNN_DATA_FLOAT;
   cudnnDataType_t math_prec = CUDNN_DATA_FLOAT;
-  cudnnMathType_t math_type = CUDNN_DEFAULT_MATH;
+  cudnnMathType_t math_type = d.cudnn_allow_tf32? CUDNN_DEFAULT_MATH: CUDNN_FMA_MATH;
   int32_t proj_size = d.hidden_size;
   uint32_t aux_flags = CUDNN_RNN_PADDED_IO_ENABLED;
 

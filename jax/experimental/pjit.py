@@ -17,11 +17,29 @@
 from jax._src.pjit import (
   pjit as pjit,
   pjit_p as pjit_p,
-  with_sharding_constraint as with_sharding_constraint,
+  with_sharding_constraint as _deprecated_with_sharding_constraint,
 )
 from jax._src.sharding_impls import (
   AUTO as AUTO,
   UNSPECIFIED as _UNSPECIFIED,
 )
 
-from jax._src.pjit import (_pjit_lower_cached, _pjit_lower)
+from jax._src.pjit import _pjit_lower_cached, _pjit_lower
+
+_deprecations = {
+    # Added September 14, 2023
+    "with_sharding_constraint": (
+        ("jax.experimental.pjit.with_sharding_constraint is deprecated."
+         " Please use jax.lax.with_sharding_constraint."),
+        _deprecated_with_sharding_constraint,
+    )
+}
+
+import typing
+if typing.TYPE_CHECKING:
+  with_sharding_constraint = _deprecated_with_sharding_constraint
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing

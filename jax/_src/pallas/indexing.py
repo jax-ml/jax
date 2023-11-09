@@ -62,29 +62,26 @@ class Slice:
   start: Any
   size: int
 
+  def __post_init__(self):
+    if self.size < 0:
+      raise ValueError("`size` must not be negative.")
+
   def tree_flatten(self):
     # If `start` is statically known, we treat it as static information
     if isinstance(self.start, int):
-      return (), (True, self.start, self.size)
-    return (self.start,), (False, self.size)
+      return (), (self.start, self.size)
+    return (self.start,), (self.size,)
 
   @classmethod
-  def tree_unflatten(cls, data, xs):
-    is_static = data[0]
-    if is_static:
-      del xs
-      start, size = data[1:]
-      return Slice(start, size)
-    start, = xs
-    size = data[1]
-    return Slice(start, size)
+  def tree_unflatten(cls, aux_data, children) -> Slice:
+    return cls(*children, *aux_data)
 
   @classmethod
   def from_slice(cls, slc: slice, size: int) -> Slice:
-    start, stop = slc.start, slc.stop
-    start = 0 if start is None else start
-    stop = size if stop is None else stop
-    return Slice(start, stop - start)
+    start, stop, step = slc.indices(size)
+    if step != 1:
+      raise ValueError(f"slice must have a step of 1 (found: {step})")
+    return cls(start, stop - start)
 
 
 def dslice(start: int |  jax.Array | None, size: int | None = None
@@ -127,7 +124,7 @@ class NDIndexer:
   @classmethod
   def from_indices_shape(cls, indices, shape) -> NDIndexer:
     if len(indices) > len(shape):
-      raise ValueError("`indices` must be the no longer than `shape`.")
+      raise ValueError("`indices` must not be longer than `shape`.")
     # Pad out indices with slice(None)
     indices = [*indices, *[slice(None)] * (len(shape) - len(indices))]
     # Convert all `slice`s to `Slice`s

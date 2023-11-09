@@ -397,7 +397,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
 
   def __repr__(self):
     mem = '' if self._memory_kind is None else f', memory_kind={self._memory_kind}'
-    return f"SingleDeviceSharding(device={repr(self._device)}{mem})"
+    return f"SingleDeviceSharding(device={self._device!r}{mem})"
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
@@ -959,7 +959,7 @@ class GSPMDSharding(XLACompatibleSharding):
 
   def __repr__(self):
     mem = '' if self._memory_kind is None else f', memory_kind={self._memory_kind}'
-    return f'GSPMDSharding({repr(self._hlo_sharding)}{mem})'
+    return f'GSPMDSharding({self._hlo_sharding!r}{mem})'
 
   def is_compatible_aval(self, aval_shape: Shape):
     num_ways_dim_sharded, _ = get_num_ways_dim_sharded(self._hlo_sharding)

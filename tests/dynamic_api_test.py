@@ -32,7 +32,6 @@ from jax._src import core
 from jax._src import test_util as jtu
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
@@ -1071,14 +1070,14 @@ class DynamicShapeAutodiffTest(jtu.JaxTestCase):
 @unittest.skip("Test does not work with jax.Array")
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
 class DynamicShapeExecutionTest(jtu.JaxTestCase):
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_jit_basic_iree(self):
     @jax.jit
     def f(i):
       return jnp.sum(jnp.ones(i, dtype='float32'))
     self.assertAllClose(f(3), jnp.array(3., dtype='float32'), check_dtypes=True)
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_jit_basic_iree_2(self):
     count = 0
 
@@ -1094,7 +1093,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     self.assertAllClose(y, 6., check_dtypes=False)
     self.assertEqual(count, 1)
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_jit_polymorphic_output_iree(self):
     # like test_jit_basic_iree, but without the jnp.sum!
     count = 0
@@ -1118,7 +1117,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     f(np.ones((5, 4), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_reshape(self):
     @partial(jax.jit, abstracted_axes=({0: 'n'},))
     def f(x):  # x: f32[n, 4]
@@ -1127,7 +1126,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     f(np.ones((5, 4), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_nested(self):
     @jax.jit
     def nested_f(x):  # f32[h, v] -> f32[h, v]
@@ -1140,7 +1139,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     f(np.ones((3, 5), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_nested_arange(self):
     def nested_f(x):  # f32[h, v] -> f32[h, v]
       # A nested call that needs to compute with shapes
@@ -1152,7 +1151,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     f(np.ones((3, 5), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', 'iree test')
+  @jtu.run_on_devices("iree")
   def test_transpose(self):
     # see also https://github.com/iree-org/iree-jax/issues/57
     @partial(jax.jit, abstracted_axes=({0: 'h', 1: 'w'},))
@@ -1162,7 +1161,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     f(np.ones((3, 5), dtype=np.float32))  # doesn't crash
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', 'iree test')
+  @jtu.run_on_devices("iree")
   def test_matmul(self):
     @partial(jax.jit, abstracted_axes=({0: 'w', 1: 'w'},))
     def f(x):  # f32[w, w] -> f32[w, w]
@@ -1171,7 +1170,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     f(np.ones((5, 5), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', 'iree test')
+  @jtu.run_on_devices("iree")
   def test_matmul_shape_error(self):
     @partial(jax.jit, abstracted_axes=({0: 'h', 1: 'w'},))
     def f(x):  # f32[h, w] -> error
@@ -1182,7 +1181,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
                                 re.escape("dot_general requires contracting dimensions to have the same shape, got")):
       f(np.ones((5, 5), dtype=np.float32))
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   @unittest.skip("TODO: investigate failure")
   def test_cond(self):
     @partial(jax.jit, abstracted_axes=({0: 'w', 1: 'w'},))
@@ -1193,7 +1192,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     f(np.ones((5, 5), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_arange(self):
     @partial(jax.jit, abstracted_axes=({0: 'w'},))
     def f(x):  # f32[w] -> f32[w]
@@ -1202,7 +1201,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     # TODO: add assertions
 
   @unittest.skip('failing w/ iree error')
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_broadcast(self):
     @partial(jax.jit, abstracted_axes=({0: 'w'},))
     def f(x):  # f32[w] -> f32[w, w]
@@ -1210,7 +1209,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     f(np.ones((5,), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_zeros(self):
     @partial(jax.jit, abstracted_axes=({0: 'w'},))
     def f(x):  # f32[w] -> f32[w]
@@ -1219,7 +1218,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     # TODO: add assertions
 
   @unittest.skip('failing w/ iree error')
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_stack(self):
     @partial(jax.jit, abstracted_axes=({0: 'w'},))
     def f(x):
@@ -1228,7 +1227,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     f(np.ones((5,), dtype=np.float32))
     # TODO: add assertions
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_jit_dependent_pair_output_iree(self):
     # Like the above 'polymorhpic output' test, but now with a `2 * n`!
     count = 0
@@ -1269,17 +1268,17 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
     expected = jnp.cumsum(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_jit_of_broadcast(self):
     x = jax.jit(jnp.ones)(3)
     self.assertAllClose(x, jnp.ones(3))
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_jit_of_broadcast2(self):
     x = jax.jit(lambda n: jnp.ones(2 * n))(3)
     self.assertAllClose(x, jnp.ones(2 * 3))
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_mlp_autodiff_dynamic_batch_iree(self):
     count = 0
 
@@ -1460,7 +1459,7 @@ class DynamicShapeExecutionTest(jtu.JaxTestCase):
       return x[0]
     f.lower(jnp.zeros((3, 4))).compiler_ir()  # doesn't crash
 
-  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  @jtu.run_on_devices("iree")
   def test_slicing_basic_execute(self):
     @partial(jax.jit, abstracted_axes=(None, 'n'))
     def f(x):

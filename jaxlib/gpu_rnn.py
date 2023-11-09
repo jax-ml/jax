@@ -12,27 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
+
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
 
 import numpy as np
 
 from jaxlib import xla_client
+from .gpu_common_utils import GpuLibNotLinkedError
 
-try:
-  from .cuda import _rnn  # pytype: disable=import-error
-  for _name, _value in _rnn.registrations().items():
-    xla_client.register_custom_call_target(_name, _value, platform='CUDA')
-except ImportError:
-  _rnn = None
+for cuda_module_name in [".cuda", "jax_cuda12_plugin", "jax_cuda11_plugin"]:
+  try:
+    _rnn = importlib.import_module(f"{cuda_module_name}._rnn", package="jaxlib")
+  except ImportError:
+    _rnn = None
+  else:
+    break
 
 if _rnn:
+  for _name, _value in _rnn.registrations().items():
+    xla_client.register_custom_call_target(_name, _value, platform='CUDA')
   compute_rnn_workspace_reserve_space_sizes = _rnn.compute_rnn_workspace_reserve_space_sizes
 
 
 def cudnn_rnn_lowering(ctx, input, h_0, c_0, weights, seq_lengths, *,
                        input_size: int, hidden_size: int, num_layers: int,
-                       dropout: bool, bidirectional: bool):
+                       dropout: bool, bidirectional: bool,
+                       cudnn_allow_tf32: bool):
   """CuDnn RNN."""
   out_dtype = ctx.avals_out[0].dtype
   if out_dtype == np.float32:
@@ -52,17 +59,19 @@ def cudnn_rnn_lowering(ctx, input, h_0, c_0, weights, seq_lengths, *,
   # workspace_shape = ctx.avals_out[3].shape
   workspace_size, _ = compute_rnn_workspace_reserve_space_sizes(
       input_size, hidden_size, num_layers, batch_size, max_seq_length,
-      dropout, bidirectional)
+      dropout, bidirectional, cudnn_allow_tf32)
   workspace_shape = (workspace_size,)
   workspace_type = ir.RankedTensorType.get(workspace_shape, ir.F32Type.get())
   reserve_space_shape = ctx.avals_out[3].shape
   reserve_space_type = ir.RankedTensorType.get(reserve_space_shape,
                                                ir.F32Type.get())
-  if _rnn is None:
-    raise RuntimeError("cuda couldn't be imported")
+  if not _rnn:
+    raise GpuLibNotLinkedError()
+
   opaque = _rnn.build_rnn_descriptor(input_size, hidden_size, num_layers,
                                      batch_size, max_seq_length, dropout,
-                                     bidirectional, workspace_shape[0],
+                                     bidirectional, cudnn_allow_tf32,
+                                     workspace_shape[0],
                                      reserve_space_shape[0])
 
   i32_type = ir.IntegerType.get_signless(32)
@@ -88,13 +97,13 @@ def _hlo_zeros_f32(shape):
 def cudnn_rnn_bwd_lowering(ctx, dy, dhn, dcn, x, h0, c0, w, y,
                            reserve_space, seq_lengths, *, input_size: int,
                            hidden_size: int, num_layers: int, dropout: bool,
-                           bidirectional: bool):
+                           bidirectional: bool, cudnn_allow_tf32: bool):
   """CuDnn RNN Backward pass."""
   batch_size = ctx.avals_in[3].shape[0]
   max_seq_length = ctx.avals_in[3].shape[1]
   workspace_size, _ = compute_rnn_workspace_reserve_space_sizes(
       input_size, hidden_size, num_layers, batch_size, max_seq_length,
-      dropout, bidirectional)
+      dropout, bidirectional, cudnn_allow_tf32)
   workspace_shape = (workspace_size,)
   workspace_type = ir.RankedTensorType.get(workspace_shape, ir.F32Type.get())
   reserve_space_shape = ctx.avals_in[8].shape
@@ -103,7 +112,8 @@ def cudnn_rnn_bwd_lowering(ctx, dy, dhn, dcn, x, h0, c0, w, y,
     raise RuntimeError("cuda couldn't be imported")
   opaque = _rnn.build_rnn_descriptor(input_size, hidden_size, num_layers,
                                      batch_size, max_seq_length, dropout,
-                                     bidirectional, workspace_shape[0],
+                                     bidirectional, cudnn_allow_tf32,
+                                     workspace_shape[0],
                                      reserve_space_shape[0])
 
   i32_type = ir.IntegerType.get_signless(32)

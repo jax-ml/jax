@@ -29,7 +29,6 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax import config
 from jax import custom_derivatives
 from jax import random
 from jax import numpy as jnp
@@ -45,6 +44,7 @@ from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -234,7 +234,7 @@ def convert(fun_jax: Callable,
             with_gradient: bool = True,
             enable_xla: bool = True,
             native_serialization: Union[bool, _DefaultNativeSerialization] = DEFAULT_NATIVE_SERIALIZATION,
-            native_serialization_platforms: Sequence[str] = (),
+            native_serialization_platforms: Optional[Sequence[str]] = None,
             native_serialization_disabled_checks: Sequence[DisabledSafetyCheck] = (),
             ) -> Callable:
   """Allows calling a JAX function from a TensorFlow program.
@@ -307,7 +307,7 @@ def convert(fun_jax: Callable,
       `native_serialization`, specify the platform(s)
       for which to lower the code. Must be a tuple of
       strings, including a subset of: 'cpu', 'cuda', 'rocm', 'tpu'.
-      The default (empty tuple), specifies the JAX default
+      The default (`None``), specifies the JAX default
       backend on the machine where the lowering is done.
     native_serialization_disabled_checks: In conjunction with
       `native_serialization`, disable the specified safety checks.
@@ -322,7 +322,7 @@ def convert(fun_jax: Callable,
     if not enable_xla:
       native_serialization = False
     else:
-      native_serialization = config.jax2tf_default_native_serialization
+      native_serialization = config.jax2tf_default_native_serialization.value
 
   if native_serialization and not enable_xla:
     raise ValueError(
@@ -342,9 +342,6 @@ def convert(fun_jax: Callable,
           "containing a subset of {'cpu', 'cuda', 'rocm', 'tpu'}. "
           f"Got: {native_serialization_platforms}")
     native_serialization_platforms = tuple(native_serialization_platforms)
-    if len(native_serialization_platforms) > 1:
-      raise NotImplementedError(
-          "native_serialization_platforms is not yet implemented for multiple platforms")
 
   api.check_callable(fun_jax)
 
@@ -409,7 +406,10 @@ def convert(fun_jax: Callable,
           outs_tf, outs_avals, outs_tree = impl.run_fun_tf(args_flat_tf)
           return (tuple(outs_tf),
                   _make_custom_gradient_fn_tf(
+                      fun_jax,
                       impl=impl,
+                      with_gradient=with_gradient,
+                      args_specs=args_specs, kwargs_specs=kwargs_specs,
                       args_tf=args_flat_tf,
                       outs_avals=outs_avals,
                       outs_tf=outs_tf))
@@ -466,34 +466,25 @@ class SerializationImpl:
     """
     raise NotImplementedError
 
-  def run_vjp_fun_tf(self,
-                     vjp_args_flat_tf: Sequence[TfVal],
-                     outs_avals: Sequence[core.AbstractValue]) -> Sequence[TfVal]:
-    """Runs the VJP function as a TF function.
-
-    Args:
-      vjp_args_flat_tf: the flattened sequence of tf.Tensor, including the
-          primal arguments followed by the output cotangents.
-      outs_avals: the flattened primal outputs avals
-
-    Returns: the flattened sequence of input cotangents.
-    """
+  def get_vjp_fun(self) -> tuple[Callable,
+                                 Sequence[core.AbstractValue]]:
+    """Returns the VJP function, and the VJP in_avals."""
     raise NotImplementedError
 
 
 class NativeSerializationImpl(SerializationImpl):
   def __init__(self, fun_jax, *,
                args_specs, kwargs_specs,
-               native_serialization_platforms: Sequence[str],
+               native_serialization_platforms: Optional[Sequence[str]],
                native_serialization_disabled_checks: Sequence[DisabledSafetyCheck]):
+    self.convert_kwargs = dict(native_serialization=True,
+                               native_serialization_platforms=native_serialization_platforms,
+                               native_serialization_disabled_checks=native_serialization_disabled_checks)
     self.fun_jax = fun_jax
     self.args_specs = args_specs
     self.kwargs_specs = kwargs_specs
     self.native_serialization_disabled_checks = native_serialization_disabled_checks
-    if native_serialization_platforms:
-      self.lowering_platform: Optional[str] = native_serialization_platforms[0]
-    else:
-      self.lowering_platform = None
+    self.native_serialization_platforms = native_serialization_platforms
 
   def before_conversion(self):
     _prev_func_list = _thread_local_state.call_tf_concrete_function_list
@@ -505,7 +496,7 @@ class NativeSerializationImpl(SerializationImpl):
     self._restore_context = _restore_context
     self.exported = export.export(
         self.fun_jax,
-        lowering_platform=self.lowering_platform,
+        lowering_platforms=self.native_serialization_platforms,
         disabled_checks=self.native_serialization_disabled_checks
     )(*self.args_specs, **self.kwargs_specs)
 
@@ -518,22 +509,23 @@ class NativeSerializationImpl(SerializationImpl):
     results = _run_exported_as_tf(args_flat_tf, self.exported)
     return results, tuple(self.exported.out_avals), self.exported.out_tree
 
-  def run_vjp_fun_tf(self,
-                     vjp_args_flat_tf: Sequence[TfVal],
-                     outs_avals: Sequence[core.AbstractValue]) -> Sequence[TfVal]:
-    del outs_avals
-    exported_vjp = self.exported.vjp()
-    vjp_args_flat_tf = tuple(tf.identity(arg, f"jax2tf_arg_{arg_idx}")
-                             for arg_idx, arg in enumerate(vjp_args_flat_tf))
-    in_cts_flat = _run_exported_as_tf(vjp_args_flat_tf, exported_vjp)
-    return tuple(tf.identity(arg, "jax2tf_out") for arg in in_cts_flat)
-
+  def get_vjp_fun(self) -> tuple[Callable,
+                                 Sequence[core.AbstractValue]]:
+    return export._get_vjp_fun(self.fun_jax,
+        in_tree=self.exported.in_tree,
+        module_kept_var_idx=self.exported.module_kept_var_idx,
+        in_avals=self.exported.in_avals,
+        in_shardings=self.exported.in_shardings,
+        out_avals=self.exported.out_avals,
+        out_shardings=self.exported.out_shardings,
+        apply_jit=True)
 
 class GraphSerializationImpl(SerializationImpl):
   def __init__(self, fun_jax, *,
                args_specs, kwargs_specs,
                args_flat_tf: Sequence[TfVal],
                enable_xla: bool):
+    self.convert_kwargs = dict(native_serialization=False)
     self.fun_jax = fun_jax
     self.args_specs = args_specs
     self.kwargs_specs = kwargs_specs
@@ -559,7 +551,6 @@ class GraphSerializationImpl(SerializationImpl):
     _thread_local_state.include_xla_op_metadata = False
     _thread_local_state.tf_outer_name_scope = tf.get_current_name_scope()
     assert not _thread_local_state.shape_env, f"Unexpected shape environment {_thread_local_state.shape_env}"
-
     args_specs_flat, self.in_tree = tree_util.tree_flatten(
         (self.args_specs, self.kwargs_specs))
     self.args_avals_flat = tuple(
@@ -572,42 +563,34 @@ class GraphSerializationImpl(SerializationImpl):
 
     _thread_local_state.shape_env = zip(dim_vars, dim_values)
 
-    fun_flat_jax, out_tree_thunk = flatten_fun_jax(self.fun_jax, self.in_tree)
-    # out_tree_thunk will be ready after we call run_fun_tf below.
-    self.fun_flat_jax = fun_flat_jax
-    self.out_tree_thunk = out_tree_thunk
-
   def after_conversion(self):
     self._restore_context()
 
   def run_fun_tf(self,
       args_flat_tf: Sequence[TfVal]
       ) -> tuple[Sequence[TfVal], Sequence[core.ShapedArray], tree_util.PyTreeDef]:
-
-    outs_tf, outs_avals = _interpret_fun_jax(
-        self.fun_flat_jax,
+    fun_flat_jax, out_tree_thunk = flatten_fun_jax(self.fun_jax, self.in_tree)
+    # out_tree_thunk will be ready after we _interpret_fun_jax below
+    outs_tf, self.outs_avals = _interpret_fun_jax(
+        fun_flat_jax,
         args_flat_tf, self.args_avals_flat,
         self.name_stack,
         fresh_constant_cache=True)
-    return outs_tf, outs_avals, self.out_tree_thunk()
+    return outs_tf, self.outs_avals, out_tree_thunk()
 
-  def run_vjp_fun_tf(self,
-      vjp_args_flat_tf: Sequence[TfVal],
-      outs_avals: Sequence[core.AbstractValue]) -> Sequence[TfVal]:
-    def fun_vjp_jax(*args_and_out_cts_flat_jax):
-      # Takes a flat list of primals and output cotangents
-      args_flat_jax, out_cts_flat_jax = util.split_list(args_and_out_cts_flat_jax, [len(self.args_avals_flat)])
-      _, pullback_jax = jax.vjp(self.fun_flat_jax, *args_flat_jax)
-      return pullback_jax(out_cts_flat_jax)
-
-    vjp_in_avals = tuple(self.args_avals_flat) + tuple(outs_avals)
-    vjp_polymorphic_shapes = tuple(str(a.shape)  # Note: may be _DimExpr, not just DimVar
-                                   for a in vjp_in_avals)  # type: ignore
-    return convert(
-        fun_vjp_jax,
-        with_gradient=False,
-        polymorphic_shapes=vjp_polymorphic_shapes,
-        native_serialization=False)(*vjp_args_flat_tf)
+  def get_vjp_fun(self) -> tuple[Callable,
+                                 Sequence[core.AbstractValue]]:
+    # We reuse the code for native serialization to get the VJP functions,
+    # except we use unspecified shardings, and we do not apply a jit on the
+    # VJP. This matches the older behavior of jax2tf for graph serialization.
+    return export._get_vjp_fun(self.fun_jax,
+      in_tree=self.in_tree,
+      module_kept_var_idx=tuple(range(len(self.args_avals_flat))),
+      in_avals=self.args_avals_flat,
+      in_shardings=(sharding_impls.UNSPECIFIED,) * len(self.args_avals_flat),
+      out_avals=self.outs_avals,
+      out_shardings=(sharding_impls.UNSPECIFIED,) * len(self.outs_avals),
+      apply_jit=False)
 
 
 def dtype_of_val(val: TfVal) -> DType:
@@ -728,8 +711,11 @@ def preprocess_arg_tf(arg_idx: int,
   return arg_tf
 
 
-def _make_custom_gradient_fn_tf(*,
+def _make_custom_gradient_fn_tf(fun_jax,
+                                *,
                                 impl: SerializationImpl,
+                                with_gradient: bool,
+                                args_specs, kwargs_specs,
                                 args_tf: Sequence[TfVal],
                                 outs_avals: Sequence[core.ShapedArray],
                                 outs_tf: Sequence[TfVal]):
@@ -737,6 +723,8 @@ def _make_custom_gradient_fn_tf(*,
 
   Args:
     impl: the serialization implementation details
+    with_gradient: whether to include a tf.custom_gradient
+    args_specs, kwargs_specs: the jax.ShapeDtypeArrays for the args and kwargs
     args_tf: the flattened TF arguments of the primal function
     outs_avals: the flattened output JAX abstract values of the primal function
     outs_tf: the flattened TF outputs of the primal function
@@ -765,7 +753,17 @@ def _make_custom_gradient_fn_tf(*,
 
       out_cts_fixed_flat_tf = tuple(map(fix_out_ct, out_cts_flat_tf, outs_avals, outs_tf))
       vjp_args_flat_tf = tuple(args_tf) + out_cts_fixed_flat_tf
-      in_cts_flat = impl.run_vjp_fun_tf(vjp_args_flat_tf, outs_avals)
+
+      fun_vjp_jax, vjp_in_avals = impl.get_vjp_fun()
+
+      vjp_polymorphic_shapes = tuple(
+        str(a.shape)  # Note: may be _DimExpr, not just DimVar
+        for a in vjp_in_avals)  # type: ignore
+      in_cts_flat = convert(
+        fun_vjp_jax,
+        with_gradient=with_gradient,
+        polymorphic_shapes=vjp_polymorphic_shapes,
+        **impl.convert_kwargs)(*vjp_args_flat_tf)
 
     # We do not need to fix the in_cts because the TF gradient machinery
     # will adjust the unconnected gradients and those for integer types.
@@ -836,6 +834,25 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   kept_args_flat_tf = [atf for i, atf in enumerate(args_flat_tf) if i in exported.module_kept_var_idx]
 
   version = exported.serialization_version
+
+  try:
+    get_max_supported_version = tfxla.call_module_maximum_supported_version
+  except AttributeError:
+    get_max_supported_version = None
+
+  if get_max_supported_version:
+    max_supported_version = get_max_supported_version()
+  else:
+    max_supported_version = 6
+
+  if version > max_supported_version:
+    raise NotImplementedError(
+      "XlaCallModule from your TensorFlow installation supports up to "
+      f"serialization version {max_supported_version} but the serialized "
+      f"module needs version {version}. "
+      "You should upgrade TensorFlow, e.g., to tf_nightly."
+    )
+
   call_module_attrs = dict(
       version=version,
       Tout=out_types,
@@ -844,9 +861,12 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
           concrete_fn.function_def.signature.name
           for concrete_fn in _thread_local_state.call_tf_concrete_function_list
       ] if _thread_local_state.call_tf_concrete_function_list is not None else [],
+      # We always set has_token_input_output because it requires real tokens
+      # for versions less than 9 and is not used starting with version 9.
+      has_token_input_output=False
   )
 
-  call_module_attrs["platforms"] = (exported.lowering_platform.upper(),)
+  call_module_attrs["platforms"] = tuple(p.upper() for p in exported.lowering_platforms)
   if version >= 6:
     call_module_attrs["disabled_checks"] = tuple(
         str(dc)
@@ -1176,7 +1196,7 @@ class TensorFlowTracer(core.Tracer):
     if isinstance(val, (tf.Tensor, tf.Variable)):
       val_shape = val.shape
 
-      if config.jax_enable_checks:
+      if config.enable_checks.value:
         assert len(phys_aval.shape) == len(val_shape), f"_aval.shape={phys_aval.shape} different rank than {val_shape=}"
         # To compare types, we must handle float0 in JAX and x64 in TF
         if phys_aval.dtype == dtypes.float0:
@@ -1331,7 +1351,7 @@ class TensorFlowTrace(core.Trace):
 
     # Check that the impl rule returned a value of expected shape and dtype
     # TODO: adapt this to match polymorphic shapes
-    if config.jax_enable_checks:
+    if config.enable_checks.value:
       if primitive.multiple_results:
         for o, expected_aval in zip(out, out_aval):  # type: ignore
           assert o.aval.strip_weak_type() == expected_aval.strip_weak_type(), (
@@ -1480,6 +1500,7 @@ tf_not_yet_impl = [
     "hessenberg",
     "tridiagonal",
     "eigh_jacobi",
+    "platform_index",
 ]
 
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
@@ -1719,7 +1740,7 @@ def _minmax(x: TfVal, y: TfVal, *, is_min: bool,
 
 def _minmax_scalar(x: TfVal, y: TfVal, *, is_min: bool) -> TfVal:
   # For reducers we will need min/max for scalars only. In that case we
-  # can construct the AbstractValues outselves, even in the presence of
+  # can construct the AbstractValues ourselves, even in the presence of
   # shape polymorphism.
   assert len(x.shape) == 0 and len(y.shape) == 0, f"x: {x.shape}, y: {y.shape}"
   aval = core.ShapedArray((), _to_jax_dtype(x.dtype))
@@ -1897,6 +1918,37 @@ tf_impl[lax.xor_p] = handle_boolean_args(tf.bitwise.bitwise_xor, argnums=(0, 1),
 tf_impl[lax.eq_p] = tf.math.equal
 tf_impl[lax.ne_p] = tf.math.not_equal
 
+
+def _total_order_adjustment(x):
+  if not dtypes.issubdtype(x.dtype.as_numpy_dtype, np.inexact):
+    return x
+  assert dtypes.issubdtype(x.dtype.as_numpy_dtype, np.floating)
+  # Switch from a floating point value to a integer value in such a way that
+  # when using the integer value to compare, we get the same result for normal
+  # values, and -nan is treated as the smallest value, and nan is treated as
+  # the largest value.
+  # If f is a float, and
+  # x = bit_cast<int32>(f);
+  # y = x < 0 ? int32_max - x : x;
+  # then y is ordered as an int32 such that finite values have the obvious
+  # order. In this scheme, -0 would be before 0, and -NaN and NaN appear at
+  # the beginning and end of the ordering.
+  nbits = dtypes.finfo(x.dtype.as_numpy_dtype).bits
+  signed_dtype = lax_internal._INT_DTYPES[nbits]
+  unsigned_dtype = lax_internal._UINT_DTYPES[nbits]
+
+  signed = tf.bitcast(x, signed_dtype)
+  sign_mask = tf.bitcast(tf.bitwise.right_shift(signed, nbits - 1), unsigned_dtype)
+  sign_magnitude_mask = tf.bitcast(tf.bitwise.right_shift(sign_mask, 1), signed_dtype)
+  return tf.bitwise.bitwise_xor(signed, sign_magnitude_mask)
+
+def _total_order_equal(x, y):
+  if dtypes.issubdtype(x.dtype.as_numpy_dtype, np.complexfloating):
+    return _total_order_equal(tf.math.real(x), tf.math.real(y)) and _total_order_equal(tf.math.imag(x), tf.math.imag(y))
+  return tf.math.equal(_total_order_adjustment(x), _total_order_adjustment(y))
+
+tf_impl[lax.eq_to_p] = _total_order_equal
+
 boolean_greater = lambda x,y: tf.logical_and(x, tf.logical_not(y)) # Only one combo: T,F -> T
 boolean_less = lambda x,y: tf.logical_and(tf.logical_not(x), y) # Only one combo: F,T -> T
 boolean_greater_or_equal = lambda x, y: tf.logical_not(boolean_less(x,y)) # All cases except F,T
@@ -1906,6 +1958,12 @@ tf_impl[lax.gt_p] = handle_boolean_args(tf.math.greater, argnums=(0, 1), boolean
 tf_impl[lax.lt_p] = handle_boolean_args(tf.math.less, argnums=(0, 1), boolean_f=boolean_less)
 tf_impl[lax.ge_p] = handle_boolean_args(tf.math.greater_equal, argnums=(0, 1), boolean_f=boolean_greater_or_equal)
 tf_impl[lax.le_p] = handle_boolean_args(tf.math.less_equal, argnums=(0, 1), boolean_f=boolean_less_or_equal)
+
+def _total_order_cond(cond, x, y):
+  return cond(_total_order_adjustment(x), _total_order_adjustment(y))
+
+tf_impl[lax.lt_to_p] = handle_boolean_args(partial(_total_order_cond, tf.math.less), argnums=(0, 1), boolean_f=boolean_less)
+tf_impl[lax.le_to_p] = handle_boolean_args(partial(_total_order_cond, tf.math.less_equal), argnums=(0, 1), boolean_f=boolean_less_or_equal)
 
 tf_impl[lax.linalg.cholesky_p] = tf.linalg.cholesky
 
@@ -2534,7 +2592,7 @@ tf_impl_with_avals[lax.reduce_p] = _reduce
 def _cumred(lax_reduce_fn: Callable,
             lax_reduce_window_fn: Callable,
             extra_name_stack: str):
-  if config.jax2tf_associative_scan_reductions:
+  if config.jax2tf_associative_scan_reductions.value:
     return _convert_jax_impl(partial(lax_control_flow.associative_scan,
                                      lax_reduce_fn),
                              multiple_results=False,
@@ -2616,7 +2674,7 @@ def _random_split_impl(keys: TfVal, *, shape, _in_avals, _out_aval):
 
   def impl_wrapper(keys: TfVal, *, shape):
     return prng.random_split_impl_base(
-        keys_aval.dtype.impl, keys, keys_aval.ndim, shape=shape)
+        keys_aval.dtype._impl, keys, keys_aval.ndim, shape=shape)
 
   converted_impl = _convert_jax_impl(
       impl_wrapper, multiple_results=False, with_physical_avals=True,
@@ -2632,7 +2690,7 @@ def _random_fold_in_impl(keys: TfVal, msgs: TfVal, *, _in_avals, _out_aval):
 
   def impl_wrapper(keys: TfVal, msgs: TfVal):
     return prng.random_fold_in_impl_base(
-        keys_aval.dtype.impl, keys, msgs, keys_aval.shape)
+        keys_aval.dtype._impl, keys, msgs, keys_aval.shape)
 
   converted_impl = _convert_jax_impl(
       impl_wrapper, multiple_results=False, with_physical_avals=True,
@@ -2648,7 +2706,7 @@ def _random_bits_impl(keys: TfVal, *, bit_width, shape, _in_avals, _out_aval):
 
   def impl_wrapper(keys: TfVal, **kwargs):
     return prng.random_bits_impl_base(
-        keys_aval.dtype.impl, keys, keys_aval.ndim,
+        keys_aval.dtype._impl, keys, keys_aval.ndim,
         bit_width=bit_width, shape=shape)
 
   converted_impl = _convert_jax_impl(
@@ -3198,8 +3256,14 @@ def _eig(operand: TfVal, compute_left_eigenvectors: bool,
 tf_impl[lax.linalg.eig_p] = _eig
 
 
-def _eigh(operand: TfVal, lower: bool, sort_eigenvalues: bool, _in_avals,
-          _out_aval):
+def _eigh(
+    operand: TfVal,
+    lower: bool,
+    sort_eigenvalues: bool,
+    subset_by_index: tuple,
+    _in_avals,
+    _out_aval,
+):
   del sort_eigenvalues
   if operand.shape[-1] == 0:
     v, w = operand, tf.reshape(operand, _eval_shape(_in_avals[0].shape[:-1]))
@@ -3211,6 +3275,8 @@ def _eigh(operand: TfVal, lower: bool, sort_eigenvalues: bool, _in_avals,
       tf.complex64: tf.float32,
       tf.complex128: tf.float64
   }.get(operand.dtype)
+  if not (subset_by_index is None or subset_by_index == (0, operand.shape[-1])):
+    raise NotImplementedError("subset_by_index is not implemented")
   if cast_type is not None:
     w = tf.cast(w, cast_type)
   return v, w

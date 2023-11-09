@@ -20,10 +20,17 @@ from jax._src.pallas.mosaic import SMEM
 from jax._src.pallas.mosaic import SemaphoreType
 from jax._src.pallas.mosaic import TPUMemorySpace
 from jax._src.pallas.mosaic import VMEM
+from jax._src.pallas.mosaic import DeviceIdType
+from jax._src.pallas.mosaic import async_copy
+from jax._src.pallas.mosaic import async_remote_copy
+from jax._src.pallas.mosaic import device_id
 from jax._src.pallas.mosaic import encode_kernel_regeneration_metadata
 from jax._src.pallas.mosaic import extract_kernel_regeneration_metadata
+from jax._src.pallas.mosaic import make_async_copy
+from jax._src.pallas.mosaic import make_async_remote_copy
 from jax._src.pallas.mosaic import repeat
 from jax._src.pallas.mosaic import run_scoped
 from jax._src.pallas.mosaic import semaphore_signal
 from jax._src.pallas.mosaic import semaphore_wait
 from jax._src.pallas.mosaic import trace
+from jax._src.tpu_custom_call import CostEstimate

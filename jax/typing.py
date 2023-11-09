@@ -21,10 +21,14 @@ The currently-available types are:
 
 - :class:`jax.Array`: annotation for any JAX array or tracer (i.e. representations of arrays
   within JAX transforms).
-- :class:`jax.typing.ArrayLike`: annotation for any value that is safe to implicitly cast to
+- :obj:`jax.typing.ArrayLike`: annotation for any value that is safe to implicitly cast to
   a JAX array; this includes :class:`jax.Array`, :class:`numpy.ndarray`, as well as Python
   builtin numeric values (e.g. :class:`int`, :class:`float`, etc.) and numpy scalar values
   (e.g. :class:`numpy.int32`, :class:`numpy.flota64`, etc.)
+- :obj:`jax.typing.DTypeLike`: annotation for any value that can be cast to a JAX-compatible
+  dtype; this includes strings (e.g. `'float32'`, `'int32'`), scalar types (e.g. `float`,
+  `np.float32`), dtypes (e.g. `np.dtype('float32')`), or objects with a dtype attribute
+  (e.g. `jnp.float32`, `jnp.int32`).
 
 We may add additional types here in future releases.
 
@@ -66,5 +70,6 @@ see `Non-array inputs NumPy vs JAX`_
 .. _Non-array inputs NumPy vs JAX: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#non-array-inputs-numpy-vs-jax
 """
 from jax._src.typing import (
-    ArrayLike as ArrayLike
+    ArrayLike as ArrayLike,
+    DTypeLike as DTypeLike,
 )

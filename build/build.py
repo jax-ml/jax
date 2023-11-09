@@ -28,20 +28,10 @@ import stat
 import subprocess
 import sys
 import textwrap
-import urllib
+import urllib.request
+import logging
 
-# pylint: disable=g-import-not-at-top
-if hasattr(urllib, "urlretrieve"):
-  urlretrieve = urllib.urlretrieve
-else:
-  import urllib.request
-  urlretrieve = urllib.request.urlretrieve
-
-if hasattr(shutil, "which"):
-  which = shutil.which
-else:
-  from distutils.spawn import find_executable as which
-# pylint: enable=g-import-not-at-top
+logger = logging.getLogger(__name__)
 
 
 def is_windows():
@@ -50,9 +40,14 @@ def is_windows():
 
 def shell(cmd):
   try:
+    logger.info("shell(): %s", cmd)
     output = subprocess.check_output(cmd)
   except subprocess.CalledProcessError as e:
+    logger.info("subprocess raised: %s", e)
     if e.output: print(e.output)
+    raise
+  except Exception as e:
+    logger.info("subprocess raised: %s", e)
     raise
   return output.decode("UTF-8").strip()
 
@@ -78,9 +73,13 @@ def check_python_version(python_version):
     print("ERROR: JAX requires Python 3.9 or newer, found ", python_version)
     sys.exit(-1)
 
-def check_package_is_installed(python_bin_path, package):
+def check_package_is_installed(python_bin_path, python_version, package):
+  args = [python_bin_path]
+  if python_version >= (3, 11):
+    args.append("-P")  # Don't include the current directory.
+  args += ["-c", f"import {package}"]
   try:
-    shell([python_bin_path, "-c", f"import {package}"])
+    shell(args)
   except:
    print(f"ERROR: jaxlib build requires package '{package}' to be installed.")
    sys.exit(-1)
@@ -153,8 +152,9 @@ def download_and_verify_bazel():
           package.file, "#" * progress_chars,
           "." * (num_chars - progress_chars), int(progress * 100.0)))
 
-    tmp_path, _ = urlretrieve(uri, None,
-                              progress if sys.stdout.isatty() else None)
+    tmp_path, _ = urllib.request.urlretrieve(
+      uri, None, progress if sys.stdout.isatty() else None
+    )
     sys.stdout.write("\n")
 
     # Verify that the downloaded Bazel binary has the expected SHA256.
@@ -185,7 +185,7 @@ def get_bazel_paths(bazel_path_flag):
   can be None. The resulting iterator is lazy and potentially has a side
   effects."""
   yield bazel_path_flag
-  yield which("bazel")
+  yield shutil.which("bazel")
   yield download_and_verify_bazel()
 
 
@@ -211,7 +211,7 @@ def get_bazel_path(bazel_path_flag):
 def get_bazel_version(bazel_path):
   try:
     version_output = shell([bazel_path, "--version"])
-  except subprocess.CalledProcessError:
+  except (subprocess.CalledProcessError, OSError):
     return None
   match = re.search(r"bazel *([0-9\\.]+)", version_output)
   if match is None:
@@ -225,7 +225,7 @@ def write_bazelrc(*, python_bin_path, remote_build,
                   cpu, cuda_compute_capabilities,
                   rocm_amdgpu_targets, bazel_options, target_cpu_features,
                   wheel_cpu, enable_mkl_dnn, enable_cuda, enable_nccl,
-                  enable_tpu, enable_rocm):
+                  enable_rocm, build_gpu_plugin):
   tf_cuda_paths = []
 
   with open("../.jax_configure.bazelrc", "w") as f:
@@ -286,12 +286,12 @@ def write_bazelrc(*, python_bin_path, remote_build,
       f.write("build --config=cuda\n")
       if not enable_nccl:
         f.write("build --config=nonccl\n")
-    if enable_tpu:
-      f.write("build --config=tpu\n")
     if enable_rocm:
       f.write("build --config=rocm\n")
       if not enable_nccl:
         f.write("build --config=nonccl\n")
+    if build_gpu_plugin:
+      f.write("build --config=cuda_plugin\n")
 
 BANNER = r"""
      _   _  __  __
@@ -340,6 +340,11 @@ def main():
   cwd = os.getcwd()
   parser = argparse.ArgumentParser(
       description="Builds jaxlib from source.", epilog=EPILOG)
+  add_boolean_argument(
+      parser,
+      "verbose",
+      default=False,
+      help_str="Should we produce verbose debugging output?")
   parser.add_argument(
       "--bazel_path",
       help="Path to the Bazel binary to use. The default is to find bazel via "
@@ -371,8 +376,18 @@ def main():
       help_str="Should we build with CUDA enabled? Requires CUDA and CuDNN.")
   add_boolean_argument(
       parser,
-      "enable_tpu",
-      help_str="Should we build with Cloud TPU VM support enabled?")
+      "build_gpu_plugin",
+      default=False,
+      help_str=(
+          "Are we building the gpu plugin in addition to jaxlib? The GPU "
+          "plugin is still experimental and is not ready for use yet."
+      ),
+  )
+  parser.add_argument(
+      "--gpu_plugin_cuda_version",
+      choices=["11", "12"],
+      default="12",
+      help="Which CUDA major version the gpu plugin is for.")
   add_boolean_argument(
       parser,
       "enable_rocm",
@@ -446,6 +461,10 @@ def main():
       help_str="If true, writes a .bazelrc file but does not build jaxlib.")
   args = parser.parse_args()
 
+  logging.basicConfig()
+  if args.verbose:
+    logger.setLevel(logging.DEBUG)
+
   if is_windows() and args.enable_cuda:
     if args.cuda_version is None:
       parser.error("--cuda_version is needed for Windows CUDA build.")
@@ -484,8 +503,9 @@ def main():
 
   numpy_version = check_numpy_version(python_bin_path)
   print(f"NumPy version: {numpy_version}")
-  check_package_is_installed(python_bin_path, "wheel")
-  check_package_is_installed(python_bin_path, "build")
+  check_package_is_installed(python_bin_path, python_version, "wheel")
+  check_package_is_installed(python_bin_path, python_version, "build")
+  check_package_is_installed(python_bin_path, python_version, "setuptools")
 
   print("MKL-DNN enabled: {}".format("yes" if args.enable_mkl_dnn else "no"))
   print(f"Target CPU: {wheel_cpu}")
@@ -507,8 +527,6 @@ def main():
     if args.cudnn_version:
       print(f"CUDNN version: {args.cudnn_version}")
     print("NCCL enabled: {}".format("yes" if args.enable_nccl else "no"))
-
-  print("TPU enabled: {}".format("yes" if args.enable_tpu else "no"))
 
   print("ROCm enabled: {}".format("yes" if args.enable_rocm else "no"))
   if args.enable_rocm:
@@ -533,8 +551,8 @@ def main():
       enable_mkl_dnn=args.enable_mkl_dnn,
       enable_cuda=args.enable_cuda,
       enable_nccl=args.enable_nccl,
-      enable_tpu=args.enable_tpu,
       enable_rocm=args.enable_rocm,
+      build_gpu_plugin=args.build_gpu_plugin,
   )
 
   if args.configure_only:
@@ -542,16 +560,41 @@ def main():
 
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
 
-
   command = ([bazel_path] + args.bazel_startup_options +
     ["run", "--verbose_failures=true"] +
     ["//jaxlib/tools:build_wheel", "--",
     f"--output_path={output_path}",
     f"--cpu={wheel_cpu}"])
+  if args.build_gpu_plugin:
+    command.append("--include_gpu_plugin_extension")
   if args.editable:
     command += ["--editable"]
   print(" ".join(command))
   shell(command)
+
+  if args.build_gpu_plugin:
+    build_cuda_kernels_command = ([bazel_path] + args.bazel_startup_options +
+      ["run", "--verbose_failures=true"] +
+      ["//jaxlib/tools:build_cuda_kernels_wheel", "--",
+      f"--output_path={output_path}",
+      f"--cpu={wheel_cpu}",
+      f"--cuda_version={args.gpu_plugin_cuda_version}"])
+    if args.editable:
+      command.append("--editable")
+    print(" ".join(build_cuda_kernels_command))
+    shell(build_cuda_kernels_command)
+
+    build_pjrt_plugin_command = ([bazel_path] + args.bazel_startup_options +
+      ["run", "--verbose_failures=true"] +
+      ["//jaxlib/tools:build_gpu_plugin_wheel", "--",
+      f"--output_path={output_path}",
+      f"--cpu={wheel_cpu}",
+      f"--cuda_version={args.gpu_plugin_cuda_version}"])
+    if args.editable:
+      command.append("--editable")
+    print(" ".join(build_pjrt_plugin_command))
+    shell(build_pjrt_plugin_command)
+
   shell([bazel_path] + args.bazel_startup_options + ["shutdown"])
 
 

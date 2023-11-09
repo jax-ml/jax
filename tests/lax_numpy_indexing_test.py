@@ -30,13 +30,13 @@ from jax import lax
 from jax import numpy as jnp
 from jax import ops
 
+from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import util
-from jax._src.util import NumpyComplexWarning
 from jax._src.lax import lax as lax_internal
+from jax._src.util import NumpyComplexWarning
 
-from jax import config
 config.parse_flags_with_absl()
 
 # We disable the whitespace continuation check in this file because otherwise it
@@ -60,7 +60,7 @@ class IndexSpec(typing.NamedTuple):
 
 def check_grads(f, args, order, atol=None, rtol=None, eps=None):
   # TODO(mattjj,dougalm): add higher-order check
-  default_tol = 1e-6 if config.x64_enabled else 1e-2
+  default_tol = 1e-6 if config.enable_x64.value else 1e-2
   atol = atol or default_tol
   rtol = rtol or default_tol
   eps = eps or default_tol
@@ -455,12 +455,12 @@ class IndexingTest(jtu.JaxTestCase):
 
     # Test with traced integer index
     args_maker = lambda: [rng(size, dtype), idx_rng(size, int)]
-    atol = (
+    tol = (
         5e-5
-        if jtu.device_under_test() == "tpu" and funcname in ("log", "exp")
+        if jtu.test_device_matches(["tpu"]) and funcname in ("log", "exp")
         else None
     )
-    self._CheckAgainstNumpy(np_op, jnp_op, args_maker, atol=atol)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker, atol=tol)
     self._CompileAndCheck(jnp_op, args_maker)
 
     # Test with slice index
@@ -468,7 +468,8 @@ class IndexingTest(jtu.JaxTestCase):
     np_op_idx = partial(np_op, idx=idx)
     jnp_op_idx = partial(jnp_op, idx=idx)
     args_maker = lambda: [rng(size, dtype)]
-    self._CheckAgainstNumpy(np_op_idx, jnp_op_idx, args_maker, atol=atol)
+    self._CheckAgainstNumpy(np_op_idx, jnp_op_idx, args_maker, atol=tol,
+                            rtol=tol)
     self._CompileAndCheck(jnp_op_idx, args_maker)
 
   def testIndexApplyBatchingBug(self):
@@ -1185,7 +1186,7 @@ class UpdateOps(enum.Enum):
 
 def _update_tol(op):
   if op == UpdateOps.POW:
-    f32_tol = 2e-4 if jtu.device_under_test() == "tpu" else 1e-5
+    f32_tol = 2e-4 if jtu.test_device_matches(["tpu"]) else 1e-5
     tol = {np.float32: f32_tol, np.complex64: f32_tol, np.complex128: 1e-14}
   else:
     tol = {np.complex128: 1e-14}

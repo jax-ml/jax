@@ -390,6 +390,7 @@ pytype_strict_library(
         ":config",
         ":traceback_util",
         ":typing",
+        ":util",
     ] + py_deps("ml_dtypes") + py_deps("numpy"),
 )
 
@@ -505,6 +506,7 @@ pytype_strict_library(
     ],
     deps = [
         ":jax",
+        ":source_info_util",
         "//jax/_src/pallas",
     ] + py_deps("numpy"),
 )
@@ -516,10 +518,9 @@ pytype_strict_library(
         ":pallas_tpu_users",
     ],
     deps = [
-        ":pallas",
+        ":pallas",  # buildcleaner: keep
+        ":tpu_custom_call",
         "//jax/_src/pallas/mosaic",
-        "//jax/_src/pallas/mosaic:core",
-        "//jax/_src/pallas/mosaic:primitives",
     ],
 )
 
@@ -667,6 +668,7 @@ pytype_strict_library(
         ":core",
         ":effects",
         ":pretty_printer",
+        ":typing",
         ":util",
     ],
 )

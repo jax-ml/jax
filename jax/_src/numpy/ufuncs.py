@@ -197,6 +197,11 @@ def arccosh(x: ArrayLike, /) -> Array:
     out = _where(real(out) < 0, lax.neg(out), out)
   return out
 
+@_wraps(getattr(np, 'bitwise_count', None), module='numpy')
+@jit
+def bitwise_count(x: ArrayLike, /) -> Array:
+  # Following numpy we take the absolute value and return uint8.
+  return lax.population_count(abs(x)).astype('uint8')
 
 @_wraps(np.right_shift, module='numpy')
 @partial(jit, inline=True)
@@ -471,12 +476,6 @@ def signbit(x: ArrayLike, /) -> Array:
   elif not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(
         "jax.numpy.signbit is not well defined for %s" % dtype)
-
-  # TPU supports BF16 but not S16 types, so as a workaround, convert BF16 to
-  # F32.
-  if dtype == dtypes.bfloat16:
-    dtype = np.dtype('float32')
-    x = lax.convert_element_type(x, dtype)
 
   info = dtypes.finfo(dtype)
   if info.bits not in _INT_DTYPES:

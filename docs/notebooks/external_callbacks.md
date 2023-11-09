@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.14.7
+    jupytext_version: 1.15.2
 kernelspec:
   display_name: Python 3
   name: python3
@@ -171,7 +171,7 @@ For an example of using `pure_callback` with `jax.custom_jvp`, see *Example: `pu
 
 +++ {"id": "LrvdAloMZbIe"}
 
-By design functions passed to `pure_callback` are treated as if they have no side-effects: one consequence of this is that if the output of the function is not used, the compiler may elliminate the callback entirely:
+By design functions passed to `pure_callback` are treated as if they have no side-effects: one consequence of this is that if the output of the function is not used, the compiler may eliminate the callback entirely:
 
 ```{code-cell}
 :id: mmFc_zawZrBq
@@ -208,7 +208,7 @@ In `f2` on the other hand, the output of the callback is unused, and so the comp
 
 In contrast to {func}`jax.pure_callback`, {func}`jax.experimental.io_callback` is explicitly meant to be used with impure functions, i.e. functions that do have side-effects.
 
-As an example, here is a callback to a global host-side numpy random generator. This is an impure operation because a side-effect of generaing a random number in numpy is that the random state is updated (Please note that this is meant as a toy example of `io_callback` and not necessarily a recommended way of generating random numbers in JAX!).
+As an example, here is a callback to a global host-side numpy random generator. This is an impure operation because a side-effect of generating a random number in numpy is that the random state is updated (Please note that this is meant as a toy example of `io_callback` and not necessarily a recommended way of generating random numbers in JAX!).
 
 ```{code-cell}
 :id: eAg5xIhrOiWV

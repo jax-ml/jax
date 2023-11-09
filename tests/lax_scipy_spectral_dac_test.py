@@ -23,7 +23,6 @@ from absl.testing import absltest
 
 from jax import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 linear_sizes = [16, 97, 128]
@@ -37,7 +36,7 @@ class LaxScipySpectralDacTest(jtu.JaxTestCase):
     termination_size=[1, 19],
   )
   def test_spectral_dac_eigh(self, linear_size, dtype, termination_size):
-    if jtu.device_under_test() != "tpu" and termination_size != 1:
+    if not jtu.test_device_matches(["tpu"]) and termination_size != 1:
       raise unittest.SkipTest(
           "Termination sizes greater than 1 only work on TPU")
 

@@ -27,6 +27,7 @@ import jax
 import jax.numpy as jnp
 import jax.profiler
 from jax import config
+from jax._src.lib import xla_extension_version
 import jax._src.test_util as jtu
 
 try:
@@ -99,9 +100,23 @@ class ProfilerTest(unittest.TestCase):
       # Sanity check that serialized proto contains host, device, and
       # Python traces without deserializing.
       self.assertIn(b"/host:CPU", proto)
-      if jtu.device_under_test() == "tpu":
+      if jtu.test_device_matches(["tpu"]):
         self.assertIn(b"/device:TPU", proto)
       self.assertIn(b"pxla.py", proto)
+
+  def testProfilerGetFDOProfile(self):
+    if xla_extension_version < 206:
+      raise unittest.SkipTest("API version < 206")
+    # Tests stop_and_get_fod_profile could run.
+    try:
+      jax.profiler.start_trace("test")
+      jax.pmap(lambda x: jax.lax.psum(x + 1, "i"), axis_name="i")(
+          jnp.ones(jax.local_device_count())
+      )
+    finally:
+      fdo_profile = jax._src.profiler.stop_and_get_fdo_profile()
+    if jtu.test_device_matches(["gpu"]) and jtu.is_device_cuda():
+      self.assertIn(b"copy", fdo_profile)
 
   def testProgrammaticProfilingErrors(self):
     with self.assertRaisesRegex(RuntimeError, "No profile started"):
@@ -132,7 +147,7 @@ class ProfilerTest(unittest.TestCase):
       # Sanity check that serialized proto contains host and device traces
       # without deserializing.
       self.assertIn(b"/host:CPU", proto)
-      if jtu.device_under_test() == "tpu":
+      if jtu.test_device_matches(["tpu"]):
         self.assertIn(b"/device:TPU", proto)
 
   def testTraceAnnotation(self):

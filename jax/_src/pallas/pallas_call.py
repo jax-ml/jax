@@ -28,6 +28,7 @@ from jax._src import state
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src import ad_util
 from jax._src import core as jax_core
@@ -327,7 +328,7 @@ def _hoist_consts_to_refs(jaxpr: jax_core.Jaxpr) -> jax_core.Jaxpr:
   return hoisted_jaxpr
 
 @weakref_lru_cache
-def _trace_to_jaxpr(fun: Callable, grid_spec, flat_in_avals,
+def _trace_to_jaxpr(fun: Callable, grid_spec: GridSpec, flat_in_avals,
                     flat_out_avals, in_tree, out_tree):
   avals, grid_mapping = grid_spec.get_grid_mapping(flat_in_avals, in_tree,
                                                    flat_out_avals, out_tree)
@@ -344,6 +345,27 @@ def _extract_function_name(f: Callable, name: str | None) -> str:
   if name is None:
     name = f.__name__ if hasattr(f, "__name__") and f.__name__ else "func"
   return name
+
+
+def _pallas_call_default_lowering(
+    ctx: mlir.LoweringRuleContext,
+    *in_nodes,
+    interpret: bool,
+    **params):
+  platforms = ctx.module_context.platforms
+  if len(platforms) > 1:
+    raise ValueError("Can only lower pallas_call on a single platform.")
+  platform = platforms[0]
+  if platform != "cpu":
+    raise ValueError(
+        f"Cannot lower pallas_call on platform: {platform}. "
+        "To use Pallas on GPU, please install Triton and JAX-Triton. "
+        "To use Pallas on TPU, please install Jaxlib TPU and libtpu.")
+  if not interpret:
+    raise ValueError("Only interpret mode is supported on CPU backend.")
+  impl = partial(_pallas_call_impl, **params, interpret=True)
+  return mlir.lower_fun(impl, multiple_results=True)(ctx, *in_nodes)
+mlir.register_lowering(pallas_call_p, _pallas_call_default_lowering)
 
 
 def pallas_call(

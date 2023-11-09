@@ -222,6 +222,8 @@ class BatchingTest(jtu.JaxTestCase):
 
       self.assertAllClose(ans[i], expected_ans, check_dtypes=False)
 
+  # Replace the default TF32 with float32 in order to make it pass on A100
+  @jax.default_matmul_precision("float32")
   def testDotGeneral(self):
     R = self.rng().randn
 

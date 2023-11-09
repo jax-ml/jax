@@ -31,6 +31,7 @@ from jax._src import array
 from jax._src import sharding
 from jax._src import sharding_impls
 from jax._src import typing
+from jax._src.lib import xla_extension as xe
 import jax.numpy as jnp
 import numpy as np
 import tensorstore as ts
@@ -44,6 +45,18 @@ _DEFAULT_DRIVER = 'file'
 _DISTRIBUTED_SYSTEM_MSG = (
     'Please initialize the distributed system via '
     '`jax.distributed.initialize()` at the start of your program.')
+
+class BarrierTimeoutException(Exception):
+  pass
+
+_BARRIER_TIMED_OUT_MSG = (
+    "Suggestions for possible fixes:\n"
+    "* Check the logs to see if one or more processes failed.\n"
+    "* Make sure the training and checkpointing endpoints are close geographically.\n"
+    "* Try setting these environment variables: "
+    "`TENSORSTORE_CURL_LOW_SPEED_TIME_SECONDS=60` "
+    "`TENSORSTORE_CURL_LOW_SPEED_LIMIT_BYTES=256` which will force a http retry\n"
+    "* Try increasing the timeout you pass to GlobalAsyncCheckpointManager.")
 
 logger = logging.getLogger(__name__)
 
@@ -287,7 +300,7 @@ async def async_deserialize(
       # transfer instead of loading data. In the future, if memory pressure
       # becomes a problem, we can instead instrument  bytelimiter to
       # keep track of all in-flight tensors and only block_until_ready, if byte
-      # limiter hits the limit to get reduced memory usage, without loosing
+      # limiter hits the limit to get reduced memory usage, without losing
       # performance in common use cases.
       await byte_limiter.release_bytes(requested_bytes)
     return result
@@ -456,6 +469,10 @@ class AsyncManager:
       # Clears self._exception so it is only raised once.
       exception = self._exception
       self._exception = None
+      if (isinstance(exception, xe.XlaRuntimeError) and
+          'DEADLINE_EXCEEDED: Barrier timed out' in str(exception)):
+        raise BarrierTimeoutException(
+            '\n'.join([str(exception), _BARRIER_TIMED_OUT_MSG]))
       raise exception  # pylint: disable=raising-bad-type
 
   def wait_until_finished(self):

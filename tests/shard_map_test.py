@@ -27,10 +27,11 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
+import jax.ad_checkpoint
 from jax import lax
-from jax import config
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
+from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -158,7 +159,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(c.device_buffers[0].shape, (2, 8))
 
   def test_collective_permute(self):
-    devices = np.array(jax.devices())
+    devices = np.array(jax.devices()[:8]) # Take up to 8 devices
     mesh = Mesh(devices, axis_names=('x'))
     a = jax.device_put(
         jnp.arange(8 * 8).reshape((8, 8)),
@@ -176,7 +177,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(c[1, :], a[0, :])
 
   def test_all_to_all(self):
-    devices = np.array(jax.devices())
+    devices = np.array(jax.devices()[:8]) # Take up to 8 devices
     mesh = Mesh(devices, axis_names=('x'))
     a = jax.device_put(
         jnp.arange(8 * 8).reshape((8, 8)),
@@ -322,7 +323,7 @@ class ShardMapTest(jtu.JaxTestCase):
   def test_outer_jit_detects_shard_map_mesh(self):
     mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))
     f = shard_map(lambda x: x.reshape(1, *x.shape), mesh, P(), P('x'))
-    _ = jax.jit(f)(jnp.array(2.0))  # doesnt crash
+    _ = jax.jit(f)(jnp.array(2.0))  # doesn't crash
 
   def test_vmap_basic(self):
     mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))
@@ -416,16 +417,17 @@ class ShardMapTest(jtu.JaxTestCase):
     y_dot_expected = jnp.sin(jnp.arange(8.)) * (jnp.cos(x) * x).sum()
     self.assertAllClose(y_dot, y_dot_expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu")
+  @jtu.run_on_devices('gpu', 'tpu')
   def test_axis_index(self):
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
 
+    @jax.jit
     @partial(shard_map, mesh=mesh, in_specs=(), out_specs=P('x'))
     def f():
       return jax.lax.axis_index('x')[None]
 
     x = f()
-    self.assertAllCLose(x, jnp.arange(4), check_dtypes=False)
+    self.assertAllClose(x, jnp.arange(4), check_dtypes=False)
 
   def test_remat_basic(self):
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
@@ -522,6 +524,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertIn('out_names', e.params)
     self.assertEqual(e.params['out_names'], ({0: ('x', 'y',)},))
 
+  @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   def test_debug_print_jit(self):
     mesh = Mesh(jax.devices(), ('i',))
 
@@ -587,7 +590,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.random.randint(key[0], shape=(1, 16), minval=0, maxval=16,
                                 dtype=jnp.int32)
 
-    pspec = P('x') if config.jax_enable_custom_prng else P('x', None)
+    pspec = P('x') if config.enable_custom_prng.value else P('x', None)
     g = shard_map(f, mesh, in_specs=(pspec,), out_specs=pspec)
     _ = g(sharded_rng)  # don't crash!
 
@@ -745,6 +748,7 @@ class ShardMapTest(jtu.JaxTestCase):
     # error!
     jax.jit(g)(x)  # doesn't crash
 
+  @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   def test_key_array_with_replicated_last_tile_dim(self):
     # See https://github.com/google/jax/issues/16137
 
@@ -1133,6 +1137,64 @@ class ShardMapTest(jtu.JaxTestCase):
     jtu.check_grads(f, (q, k, v), order=1, modes=['rev'], rtol=1e-2)
 
 
+  def test_axis_env_extension_regression(self):
+    def foo(x):
+      i = jax.lax.axis_index('x')
+      return jnp.exp(x) + i.astype('float')
+
+    @partial(jax.remat, policy=lambda *args, **kwargs: True)
+    def bar(x):
+      return shard_map(foo, mesh=Mesh(jax.devices(), ['x']), in_specs=(P('x'),),
+                       out_specs=P('x'), check_rep=False)(x)
+
+    jax.jit(jax.grad(lambda x: bar(x).sum()))(jnp.arange(8.))  # doesn't crash
+
+  @parameterized.parameters(it.product([True, False], repeat=2))
+  def test_res_forwarding_optimization(self, jit, remat):
+    mesh = jtu.create_global_mesh((4,), ('i',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def f(x):
+      return jax.lax.exp(x)
+    if jit:
+      f = jax.jit(f)
+    if remat:
+      policy = jax.ad_checkpoint.checkpoint_policies.everything_saveable
+      f = jax.remat(f, policy=policy)
+    g = lambda x: f(x).sum()
+
+    x = jnp.arange(16.)
+    jaxpr_ = jax.make_jaxpr(jax.grad(g))(x)
+    jaxpr, _ = pe.dce_jaxpr(jaxpr_.jaxpr, [True] * len(jaxpr_.out_avals))
+    e1, _, e2 = jaxpr.eqns
+    self.assertLen(e1.outvars, 1)  # only primal output
+    self.assertLen(e2.invars, 2)   # res and cotangent inputs
+    self.assertEqual(sum([e1.outvars[0] is v for v in e2.invars]), 1)
+
+  @parameterized.parameters(it.product([True, False], repeat=2))
+  def test_res_forwarding_optimization_complex(self, jit, remat):
+    # like the above test, but a different function `f`
+    mesh = jtu.create_global_mesh((4,), ('i',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def f(x):
+      return jax.lax.exp(x.sum()) + x, jax.lax.exp(x)
+    if jit:
+      f = jax.jit(f)
+    if remat:
+      policy = jax.ad_checkpoint.checkpoint_policies.everything_saveable
+      f = jax.remat(f, policy=policy)
+    g = lambda x: sum(f(x)).sum()
+
+    x = jnp.arange(16.)
+    jaxpr_ = jax.make_jaxpr(jax.grad(g))(x)
+    jaxpr, _ = pe.dce_jaxpr(jaxpr_.jaxpr, [True] * len(jaxpr_.out_avals))
+    e1, _, e2 = jaxpr.eqns
+    self.assertLen(e1.outvars, 2)  # one primal and one res output
+    self.assertLen(e2.invars, 4)   # two res and two cotangent inputs
+    self.assertEqual(sum([e1.outvars[-1] is v for v in e2.invars]), 1)
+
+
 class FunSpec(NamedTuple):
   name: str
   num_inputs: int
@@ -1379,7 +1441,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     return jtu.create_global_mesh(tuple(mesh_shape.values()), tuple(mesh_shape))
 
   @parameterized.named_parameters(
-      sample(config.FLAGS.jax_num_generated_cases, sample_shmap))
+      sample(jtu.NUM_GENERATED_CASES.value, sample_shmap))
   def test_eager_against_ref(self, fun, mesh, _, in_specs, out_specs, args, ref):
     mesh = self.make_mesh(mesh)
     args = map(jnp.array, args)
@@ -1388,7 +1450,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     self.assertAllClose(expected, out, check_dtypes=False)
 
   @parameterized.named_parameters(
-      sample(config.FLAGS.jax_num_generated_cases, sample_shmap))
+      sample(jtu.NUM_GENERATED_CASES.value, sample_shmap))
   def test_jit_against_ref(self, fun, mesh, _, in_specs, out_specs, args, ref):
     mesh = self.make_mesh(mesh)
     args = map(jnp.array, args)
@@ -1398,7 +1460,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       (name + f'_check_rep={check_rep}', *params, check_rep)
-      for (name, *params) in sample(config.FLAGS.jax_num_generated_cases, sample_shmap)
+      for (name, *params) in sample(jtu.NUM_GENERATED_CASES.value, sample_shmap)
       for check_rep in [True, False]
   )
   @jax.default_matmul_precision("float32")
@@ -1411,7 +1473,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     jtu.check_grads(f, args, order=2, atol=1e-2, rtol=1e-2)
 
   @parameterized.named_parameters(
-      sample(config.FLAGS.jax_num_generated_cases, sample_shmap))
+      sample(jtu.NUM_GENERATED_CASES.value, sample_shmap))
   @jax.default_matmul_precision("float32")
   def test_grads_closure(self, fun, mesh, jit, in_specs, out_specs, args, _):
     mesh = self.make_mesh(mesh)
@@ -1430,7 +1492,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     jtu.check_grads(f, (0.2, *closed_over_args), order=2, atol=1e-2, rtol=1e-2)
 
   @parameterized.named_parameters(
-      sample(config.FLAGS.jax_num_generated_cases,
+      sample(jtu.NUM_GENERATED_CASES.value,
              partial(sample_shmap_batched, 5)))
   def test_vmap(self, bdims, fun, mesh, jit, in_specs, out_specs, args, ref):
     mesh = self.make_mesh(mesh)
@@ -1449,10 +1511,11 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     else:
       slices = map(jnp.stack, zip(*expected_slices))
       expected = tree_util.tree_unflatten(treedef, slices)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    tol = 1e-2 if jtu.test_device_matches(['tpu']) else None
+    self.assertAllClose(ans, expected, check_dtypes=False, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(
-      sample(config.FLAGS.jax_num_generated_cases,
+      sample(jtu.NUM_GENERATED_CASES.value,
              partial(sample_shmap_batched, 5)))
   def test_vmap_closure(self, bdims, fun, mesh, jit, in_specs, out_specs, args, _):
     mesh = self.make_mesh(mesh)
@@ -1487,7 +1550,8 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     else:
       slices = map(jnp.stack, zip(*expected_slices))
       expected = tree_util.tree_unflatten(treedef, slices)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    tol = 1e-2 if jtu.test_device_matches(['tpu']) else None
+    self.assertAllClose(ans, expected, check_dtypes=False, atol=tol, rtol=tol)
 
 
 if __name__ == '__main__':

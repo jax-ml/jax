@@ -14,12 +14,15 @@
 
 from collections.abc import Sequence
 from functools import partial
+import importlib
 import math
 
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
 
 import numpy as np
+
+from .gpu_common_utils import GpuLibNotLinkedError
 
 from jaxlib import xla_client
 
@@ -29,17 +32,32 @@ from .hlo_helpers import (
 
 try:
   from .cuda import _blas as _cublas  # pytype: disable=import-error
+except ImportError:
+  for cuda_module_name in ["jax_cuda12_plugin", "jax_cuda11_plugin"]:
+    try:
+      _cublas = importlib.import_module(f"{cuda_module_name}._blas")
+    except ImportError:
+      _cublas = None
+    else:
+      break
+
+if _cublas:
   for _name, _value in _cublas.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
-except ImportError:
-  _cublas = None
 
-try:
-  from .cuda import _solver as _cusolver  # pytype: disable=import-error
+for cuda_module_name in [".cuda", "jax_cuda12_plugin", "jax_cuda11_plugin"]:
+  try:
+    _cusolver = importlib.import_module(
+        f"{cuda_module_name}._solver", package="jaxlib"
+    )
+  except ImportError:
+    _cusolver = None
+  else:
+    break
+
+if _cusolver:
   for _name, _value in _cusolver.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
-except ImportError:
-  _cusolver = None
 
 
 try:
@@ -71,6 +89,9 @@ def _getrf_hlo(platform, gpu_blas, gpu_solver, dtype, a):
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
   batch = math.prod(batch_dims)
+
+  if not gpu_blas:
+    raise GpuLibNotLinkedError()
 
   if batch > 1 and m == n and m // batch <= 128:
     lwork, opaque = gpu_blas.build_getrf_batched_descriptor(
@@ -156,6 +177,9 @@ def _geqrf_batched_hlo(platform, gpu_blas, dtype, a):
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
   batch = math.prod(batch_dims)
+
+  if not gpu_blas:
+    raise GpuLibNotLinkedError()
 
   lwork, opaque = gpu_blas.build_geqrf_batched_descriptor(
       np.dtype(dtype), batch, m, n)

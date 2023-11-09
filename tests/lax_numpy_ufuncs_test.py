@@ -26,7 +26,6 @@ from jax._src.numpy.ufunc_api import get_if_single_primitive
 
 from jax import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 def scalar_add(x, y):
@@ -285,6 +284,19 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     idx_rng = jtu.rand_int(self.rng(), low=-shape[0], high=shape[0])
     args_maker = lambda: [rng(shape, dtype), idx_rng(idx_shape, 'int32'), rng(idx_shape[1:], dtype)]
+
+    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  def test_at_broadcasting(self):
+    # Regression test for https://github.com/google/jax/issues/18004
+    args_maker = lambda: [np.ones((5, 3)), np.array([0, 4, 2]),
+                          np.arange(9.0).reshape(3, 3)]
+    def np_fun(x, idx, y):
+      x_copy = np.copy(x)
+      np.add.at(x_copy, idx, y)
+      return x_copy
+    jnp_fun = partial(jnp.frompyfunc(jnp.add, nin=2, nout=1, identity=0).at, inplace=False)
 
     self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)

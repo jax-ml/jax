@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import enum
+from typing import Any
+import warnings
 
 from jax import numpy as jnp
 from jax._src import array
@@ -38,19 +40,15 @@ class DLDeviceType(enum.IntEnum):
 
 
 def to_dlpack(x: Array, take_ownership: bool = False,
-              stream: int | None = None):
+              stream: int | Any | None = None):
   """Returns a DLPack tensor that encapsulates a :class:`~jax.Array` ``x``.
-
-  Takes ownership of the contents of ``x``; leaves ``x`` in an invalid/deleted
-  state.
 
   Args:
     x: a :class:`~jax.Array`, on either CPU or GPU.
-    take_ownership: If ``True``, JAX hands ownership of the buffer to DLPack,
-      and the consumer is free to mutate the buffer; the JAX buffer acts as if
-      it were deleted. If ``False``, JAX retains ownership of the buffer; it is
-      undefined behavior if the DLPack consumer writes to a buffer that JAX
-      owns.
+    take_ownership: Deprecated for xla_extension_version greater or equal than
+      204. It is a no-op to set take_ownership. Will be deleted in 01/2024. For
+      xla_extension_version less than 204, if ``True``, the JAX buffer acts as
+      if it were deleted.
     stream: optional platform-dependent stream to wait on until the buffer is
       ready. This corresponds to the `stream` argument to ``__dlpack__``
       documented in https://dmlc.github.io/dlpack/latest/python_spec.html.
@@ -59,7 +57,15 @@ def to_dlpack(x: Array, take_ownership: bool = False,
     raise TypeError("Argument to to_dlpack must be a jax.Array, "
                     f"got {type(x)}")
   assert len(x.devices()) == 1
-  if xla_extension_version >= 186:
+  if take_ownership:
+    warnings.warn(
+        "take_ownership in to_dlpack is deprecated and it is a no-op."
+    )
+  if xla_extension_version >= 204:
+    return xla_client._xla.buffer_to_dlpack_managed_tensor(
+        x.addressable_data(0), stream=stream
+    )  # type: ignore
+  elif xla_extension_version >= 186:
     return xla_client._xla.buffer_to_dlpack_managed_tensor(
         x.addressable_data(0), take_ownership=take_ownership, stream=stream
     )  # type: ignore
@@ -108,7 +114,7 @@ def from_dlpack(external_array):
         stream = None
       else:
         raise
-    dlpack = external_array.__dlpack__(stream)
+    dlpack = external_array.__dlpack__(stream=stream)
 
     return jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
         dlpack, device, stream))

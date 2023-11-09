@@ -319,15 +319,25 @@ class VectorLayout:
       if s != o and s is not REPLICATED:
         return False
     if self.implicit_dim != other.implicit_dim:
-      # Don't fail yet!
+      # Don't fail yet! implicit_dim might not matter for some shapes.
+      if shape is None:
+        return False
       # If the second-minor dimension is of size 1, then it does not matter
       # whether we have a second minor implicit dim or not.
       second_minor = ImplicitDim.SECOND_MINOR
-      if not (
-          shape is not None
-          and self.implicit_shape(shape)[-2] == 1
-          and {self.implicit_dim, other.implicit_dim} == {second_minor, None}
+      ok = False
+      if (
+          {self.implicit_dim, other.implicit_dim} == {second_minor, None}
+          and shape[-2] == 1
       ):
+        ok = True
+      # If sufficiently many trailing dimensions are of size 1, then it does not
+      # matter if we use implicit dims to insert more.
+      max_rank = max(self.layout_rank, other.layout_rank)
+      assert 1 <= max_rank <= 2
+      if shape[-1] == 1 and (max_rank == 1 or shape[-2] == 1):
+        ok = True
+      if not ok:
         return False
     if self.tiling != other.tiling:
       # Don't fail yet!
@@ -699,11 +709,19 @@ class TiledRectangularVRegBounds(VRegDataBounds):
   def get_vector_mask(self, generation: int) -> ir.Value:
     """See base class."""
     i1 = ir.IntegerType.get_signless(1)
-    if self.mask_varies_along(SUBELEMENTS) and generation >= 4:
-      # I'm pretty sure this works for all bitwidths, but it's untested.
-      if self.layout.packing != 2:
-        raise NotImplementedError
-      mask_vreg_ty = ir.VectorType.get((*TARGET_SHAPE, 2), i1)
+    # I'm pretty sure this works for all bitwidths, but it's untested.
+    if self.mask_varies_along(SUBELEMENTS):
+      if self.layout.packing > 2:
+        raise NotImplementedError  # TODO(b/300082350): Generalize this
+      # For older TPUs, we virtualize masking, but only for simple cases.
+      if generation < 4:
+        if self.num_tiles > 1:
+          raise NotImplementedError
+        mask_vreg_ty = ir.VectorType.get(TARGET_SHAPE, i1)
+      else:
+        mask_vreg_ty = ir.VectorType.get(
+            (*TARGET_SHAPE, self.layout.packing), i1
+        )
     else:
       mask_vreg_ty = ir.VectorType.get(TARGET_SHAPE, i1)
     if self.complete:
@@ -860,7 +878,6 @@ def select_tiles_from_rotated_row_vregs(
     end_src_col: int,
     first_dst_tile_sublane_offset: int,
     dst_layout: VectorLayout,
-    hw_generation: int,
 ) -> ValueLike:
   """Assembles a destination tile using partial data from rotated vregs using a divide-and-conquer strategy.
 
@@ -874,7 +891,6 @@ def select_tiles_from_rotated_row_vregs(
     first_dst_tile_sublane_offset: Sublane offset where the first dst tile to be
       selected starts.
     dst_layout: Destination layout, based on which retiling is being performed.
-    hw_generation: The generation of a target hardware.
 
   Returns:
     A new vreg assembled from dst tiles stored in given rotated vregs.
@@ -893,7 +909,6 @@ def select_tiles_from_rotated_row_vregs(
       mid_src_col,
       first_dst_tile_sublane_offset,
       dst_layout,
-      hw_generation,
   )
 
   left_tiles_count = mid_src_col - start_src_col + 1
@@ -908,7 +923,6 @@ def select_tiles_from_rotated_row_vregs(
       end_src_col,
       right_first_dst_tile_sublane_offset,
       dst_layout,
-      hw_generation,
   )
 
   i1 = ir.IntegerType.get_signless(1)
@@ -965,7 +979,6 @@ def retile_to_reduced_sublanes(
     src_layout: VectorLayout,
     src_vreg_array: np.ndarray,
     dst_layout: VectorLayout,
-    hw_generation: int,
 ) -> np.ndarray:
   """Retiles across vregs to match the destination layout when the sublane tiling dimension is reduced.
 
@@ -975,7 +988,6 @@ def retile_to_reduced_sublanes(
     src_vreg_array: An array of vregs storing source tiles.
     dst_layout: The destination layout, with reduced sublane dimension, based on
       which the retiling will be performed.
-    hw_generation: The generation of a target hardware.
 
   Returns:
     A new array of vregs that store tiles based on the destination layout.
@@ -1103,7 +1115,6 @@ def retile_to_reduced_sublanes(
         end_src_col=src_vreg_array_col_end,
         first_dst_tile_sublane_offset=first_dst_tile_sublane_offset,
         dst_layout=dst_layout,
-        hw_generation=hw_generation,
     )
     if first_dst_tile_sublane_offset == 0:
       # No need to rotate. First dst tile is already at offset 0, which means
@@ -1172,7 +1183,7 @@ def is_supported_reduced_sublanes_retile(
 
 # TODO(apaszke): Test this function properly
 def relayout(
-    v: ir.Value, src: VectorLayout, dst: VectorLayout, hw_generation: int
+    v: ir.Value, src: VectorLayout, dst: VectorLayout
 ) -> ValueLike:
   """Changes the layout of a vector value.
 
@@ -1180,7 +1191,6 @@ def relayout(
     v: The value to relayout.
     src: The current layout of v.
     dst: The target layout of v.
-    hw_generation: The generation of a target hardware.
 
   Returns:
     A new MLIR vector value, laid out as requested by dst.
@@ -1205,8 +1215,11 @@ def relayout(
 
   # Try to reconcile differences in implicit dim.
   if src.implicit_dim != dst.implicit_dim:
-    if dst.implicit_dim is None and vty.shape[src.implicit_dim] == 1:
-      src = VectorLayout(src.bitwidth, src.offsets, src.tiling, None)
+    candidate = VectorLayout(
+        src.bitwidth, src.offsets, src.tiling, dst.implicit_dim
+    )
+    if candidate.equivalent_to(src, vty.shape):
+      src = candidate
 
   # Handle retiling from (1, 128) to (8, 128) for 32-bit data.
   if (
@@ -1214,7 +1227,7 @@ def relayout(
       and dst.implicit_dim is None
       and src.bitwidth == 32
       and src.offsets == (0, 0)
-      and dst.offsets == (REPLICATED, 0)
+      and (dst.offsets == (REPLICATED, 0) or dst.offsets == (0, 0))
       and src.tiling == (1, 128)
       and dst.tiling == (8, 128)
       and src_tiles.shape[-2] == 1
@@ -1232,6 +1245,39 @@ def relayout(
       src_tiles_retiled[(*batch_idx, slice(None), dst_col)] = tpu.GatherOp(
           src_tile.type, src_tile, gather_indices, 0
       )
+    src = dst
+    src_tiles = src_tiles_retiled
+
+  # Handle retiling from (2, 128) to (8, 128) for 32-bit data.
+  if (
+      src.implicit_dim is None
+      and dst.implicit_dim is None
+      and src.bitwidth == 32
+      and src.offsets == (0, 0)
+      and dst.offsets == (0, 0)
+      and src.tiling == (2, 128)
+      and dst.tiling == (8, 128)
+      and src_tiles.shape[-2] == 1
+  ):
+    src_tiles_retiled = np.empty(
+        dst.tile_array_shape(vty.shape), dtype=object
+    )
+    for *batch_idx, dst_col in np.ndindex(
+        src_tiles_retiled.shape[:-2] + src_tiles_retiled.shape[-1:]
+    ):
+      src_col = dst_col // 4
+      start_slane_idx = 2 * (dst_col % 4)
+      src_tile = src_tiles[(*batch_idx, 0, src_col)]
+      if start_slane_idx:
+        gather_indices = ir.DenseI32ArrayAttr.get(
+            [start_slane_idx, start_slane_idx + 1] * 4
+        )
+        dst_tile = tpu.GatherOp(
+            src_tile.type, src_tile, gather_indices, 0
+        )
+      else:
+        dst_tile = src_tile
+      src_tiles_retiled[(*batch_idx, slice(None), dst_col)] = dst_tile
     src = dst
     src_tiles = src_tiles_retiled
 
@@ -1264,18 +1310,48 @@ def relayout(
     src = new_src
     src_tiles = src_tiles_retiled
 
+  # (8, 128) -> (32, 128) for int8. Useful for preparing data for matmuls.
+  if (
+      src.implicit_dim is None
+      and dst.implicit_dim is None
+      and ir.IntegerType.get_signless(8) == vty.element_type
+      and src.offsets == dst.offsets
+      and src.tiling == (8, 128)
+      and dst.tiling == (32, 128)
+  ):
+    new_src = VectorLayout(src.bitwidth, src.offsets, dst.tiling, None)
+    src_tiles_retiled = np.empty(
+        new_src.tile_array_shape(vty.shape), dtype=object)
+    for (*batch_idx, dst_row, dst_col) in np.ndindex(src_tiles_retiled.shape):
+      src_vregs = []
+      for i in range(4):
+        src_row = min(dst_row * 4 + i, src_tiles.shape[-2] - 1)
+        src_vregs.append(src_tiles[(*batch_idx, src_row, dst_col // 4)])
+
+      vreg_part = dst_col % 4
+      vreg_i32 = ir.VectorType.get(TARGET_SHAPE, i32())
+      parts = [
+          tpu.UnpackSubelementsOp(vreg_i32, src_vreg, vreg_part)
+          for src_vreg in src_vregs
+      ]
+      src_tiles_retiled[(*batch_idx, dst_row, dst_col)] = tpu.PackSubelementsOp(
+          src_vregs[0].type, parts
+      )
+    src = new_src
+    src_tiles = src_tiles_retiled
+
   if is_supported_reduced_sublanes_retile(src, dst):
     src_tiles = retile_to_reduced_sublanes(
         value_shape=vty.shape,
         src_layout=src,
         src_vreg_array=src_tiles,
         dst_layout=dst,
-        hw_generation=hw_generation,
     )
     src = dst
 
   # Fix up the offsets, assuming everything else matches between src and dst.
   if src.tiling == dst.tiling and src.implicit_dim == dst.implicit_dim:
+    tiling = src.tiling
     # TODO(apaszke): Changing an offset might add or remove one vreg.
     if dst_tiles_shape != src_tiles.shape:
       raise NotImplementedError("Offsets changing the vreg array shape")
@@ -1339,8 +1415,10 @@ def relayout(
         raise NotImplementedError("Both columns and rows are shifted")
       if col_diff < 0:
         raise NotImplementedError("Shifts to the left")
-      if bitwidth != 32:
-        raise NotImplementedError("Only 32-bit column shifts supported")
+      if bitwidth != 32 or tiling != TARGET_SHAPE:
+        raise NotImplementedError(
+            "Only 32-bit column shifts for native layouts supported"
+        )
       sublane_diff = col_diff
       sublane_diff_attr = ir.IntegerAttr.get(
           ir.IntegerType.get_signed(32), sublane_diff
@@ -1506,11 +1584,11 @@ def apply_layout_op(ctx: RewriteContext, op: ir.OpView):
       lo = parse_layout(arr_attr[res_idx], vty)
       if lo is None:
         raise ValueError("vector result should have a defined layout")
-      if lo.generalizes(li):
+      if lo.generalizes(li, vty.shape):
         continue
       with ir.InsertionPoint(op), op.location:
         new_v = relayout(
-            v, src=lo, dst=li, hw_generation=ctx.hardware_generation
+            v, src=lo, dst=li
         ).result
         ctx.set_operand(op, idx, new_v)
   else:
@@ -1588,13 +1666,14 @@ def _arith_constant_rule(ctx: RewriteContext, op: arith.ConstantOp,  # pylint: d
         )
       ref = ctx.append_constant(value)
       load_op = vector.LoadOp(vty, ref, [ix_cst(0)] * vty.rank)
-      ctx.replace_all_uses_with(op, load_op.result)
-      return _vector_load_rule(
-          ctx,
-          load_op,
-          [None] * (vty.rank + 1),
-          VectorLayout(32, (0, 0), TARGET_SHAPE, None),
-      )
+      ctx.replace(op, load_op)
+      with ir.InsertionPoint(load_op), load_op.location:
+        return _vector_load_rule(
+            ctx,
+            load_op,
+            [None] * (vty.rank + 1),
+            VectorLayout(32, (0, 0), TARGET_SHAPE, None),
+        )
   raise NotImplementedError(f"Unsupported arith.const type: {ty}")
 
 
@@ -1635,10 +1714,18 @@ _register_rule("arith.divsi")(
     functools.partial(_elementwise_op_rule, arith.DivSIOp))
 _register_rule("arith.remsi")(
     functools.partial(_elementwise_op_rule, arith.RemSIOp))
-_register_rule("arith.maxf")(
-    functools.partial(_elementwise_op_rule, arith.MaxFOp))
-_register_rule("arith.minf")(
-    functools.partial(_elementwise_op_rule, arith.MinFOp))
+_register_rule("arith.maximumf")(
+    functools.partial(_elementwise_op_rule, arith.MaximumFOp)
+)
+_register_rule("arith.maxsi")(
+    functools.partial(_elementwise_op_rule, arith.MaxSIOp)
+)
+_register_rule("arith.minimumf")(
+    functools.partial(_elementwise_op_rule, arith.MinimumFOp)
+)
+_register_rule("arith.minsi")(
+    functools.partial(_elementwise_op_rule, arith.MinSIOp)
+)
 _register_rule("arith.select")(
     functools.partial(_elementwise_op_rule, arith.SelectOp))
 _register_rule("arith.index_cast")(
@@ -1655,6 +1742,9 @@ _register_rule("arith.shli")(
     functools.partial(_elementwise_op_rule, arith.ShLIOp))
 _register_rule("arith.shrui")(
     functools.partial(_elementwise_op_rule, arith.ShRUIOp))
+_register_rule("math.absf")(
+    functools.partial(_elementwise_op_rule, math_dialect.AbsFOp)
+)
 _register_rule("math.absi")(
     functools.partial(_elementwise_op_rule, math_dialect.AbsIOp)
 )
@@ -1670,10 +1760,16 @@ _register_rule("math.powf")(
     functools.partial(_elementwise_op_rule, math_dialect.PowFOp))
 _register_rule("math.rsqrt")(
     functools.partial(_elementwise_op_rule, math_dialect.RsqrtOp))
+_register_rule("math.sqrt")(
+    functools.partial(_elementwise_op_rule, math_dialect.SqrtOp)
+)
 _register_rule("math.tanh")(
     functools.partial(_elementwise_op_rule, math_dialect.TanhOp))
 _register_rule("math.log")(
     functools.partial(_elementwise_op_rule, math_dialect.LogOp))
+_register_rule("math.log1p")(
+    functools.partial(_elementwise_op_rule, math_dialect.Log1pOp)
+)
 
 
 def _ext_op_rule(  # pylint: disable=missing-function-docstring
@@ -1682,6 +1778,7 @@ def _ext_op_rule(  # pylint: disable=missing-function-docstring
   result_ty = ir.VectorType(op.result.type)
   if layout_out.bitwidth != 32:
     raise NotImplementedError("Only extensions to 32-bit supported")
+  source_ty = ir.VectorType(op.in_.type)
   input_vregs = disassemble(layout_in, op.in_)
   output_vregs = np.empty(
       layout_out.tile_array_shape(result_ty.shape), dtype=object
@@ -1689,19 +1786,35 @@ def _ext_op_rule(  # pylint: disable=missing-function-docstring
   res_vreg_ty = native_vreg_ty(result_ty.element_type)
   if layout_in.implicit_dim != layout_out.implicit_dim:
     raise NotImplementedError("Change of layout during the cast")
+  if layout_in.offsets != layout_out.offsets:
+    raise NotImplementedError("Change of offsets during the cast")
   if layout_in.implicit_dim is not None:
     if layout_in.implicit_dim != ImplicitDim.SECOND_MINOR:
       raise NotImplementedError("Only casts of lane-oriented values supported")
-    if input_vregs.shape != (1,) or output_vregs.shape != (1,):
+    def is_one_tile(vty, layout):
+      ishape = layout.implicit_shape(vty.shape)
+      return all(
+          o + s <= t
+          for o, s, t in zip(layout.offsets, ishape[-2:], layout.tiling)
+      )
+    if (
+        input_vregs.size != 1
+        or output_vregs.size != 1
+        or not is_one_tile(source_ty, layout_in)
+        or not is_one_tile(result_ty, layout_out)
+    ):
       raise NotImplementedError
     if layout_in.offsets[0] >= TARGET_SHAPE.sublanes:
       raise NotImplementedError
     output_vregs[:] = tpu.UnpackSubelementsOp(
         res_vreg_ty, input_vregs.item(), 0
     )
-  elif layout_in.implicit_dim is None:
-    if layout_in.tiling != TARGET_SHAPE or layout_out.tiling != TARGET_SHAPE:
-      raise NotImplementedError(f"Only {TARGET_SHAPE} tiling supported")
+  else:
+    if layout_in.tiling != layout_out.tiling:
+      raise NotImplementedError("Change of tiling during the cast")
+    tiling = layout_in.tiling
+    if TARGET_SHAPE[0] % tiling[0] != 0 or TARGET_SHAPE[1] != tiling[1]:
+      raise NotImplementedError
     packing = layout_in.packing
     for idx in np.ndindex(output_vregs.shape):
       input_vreg_idx = (*idx[:-1], idx[-1] // packing)
@@ -1709,8 +1822,6 @@ def _ext_op_rule(  # pylint: disable=missing-function-docstring
       output_vregs[idx] = tpu.UnpackSubelementsOp(
           res_vreg_ty, input_vregs[input_vreg_idx], vreg_part
       )
-  else:
-    raise NotImplementedError("Unrecognized layout")
   return ctx.replace(op, assemble(result_ty, layout_out, output_vregs))
 
 
@@ -1734,6 +1845,20 @@ def _arith_extsi_rule(  # pylint: disable=missing-function-docstring
     layout_out: VectorLayout,
 ):
   return _ext_op_rule(ctx, op, layout_in, layout_out)
+
+
+@_register_rule("arith.bitcast")
+def _arith_bitcast_rule(
+    ctx: RewriteContext,
+    op: arith.BitcastOp,
+    layout_in: VectorLayout,
+    layout_out: VectorLayout,
+):
+  def factory(inp):
+    return arith.BitcastOp(
+        native_vreg_ty(ir.VectorType(op.result.type).element_type), inp
+    )
+  return _elementwise_op_rule(factory, ctx, op, layout_in, layout_out)
 
 
 def _trunc_op_rule(  # pylint: disable=missing-function-docstring
@@ -1954,8 +2079,23 @@ def _scf_yield_rule(  # pylint: disable=missing-function-docstring
       tiles = disassemble(layout, operand)
       unrolled.extend(list(tiles.flat))
 
-  # Replace old oprands with unrolled operands.
+  # Replace old operands with unrolled operands.
   return ctx.set_operands(op.operation, unrolled)
+
+
+@_register_rule("scf.for")
+def _scf_for_rule(  # pylint: disable=missing-function-docstring
+    ctx: RewriteContext,
+    op: scf.ForOp,
+    layout_in: Union[Layout, tuple[Layout, ...]],
+    layout_out: Union[Layout, tuple[Layout, ...]],
+):
+  # TODO(b/286175570) Support inputs and outputs in scf.for.
+  assert layout_in and len(layout_in) == 3
+  if any(layout_in) or layout_out:
+    raise NotImplementedError("Support inputs and outputs in scf.for")
+  (loop_body,) = op.region.blocks
+  apply_layout_block(ctx, loop_body)
 
 
 @_register_rule("tpu.concatenate")
@@ -1972,8 +2112,24 @@ def _tpu_concatenate_rule(
     raise NotImplementedError
   res_ty = ir.VectorType(op.result.type)
   dimension = ir.IntegerAttr(op.dimension).value
-  if dimension - res_ty.rank >= -2:
-    raise NotImplementedError("Concatenation along the last two dimensions")
+
+  if dimension >= res_ty.rank - 2:
+    if (not layout.has_natural_topology) or layout.offsets != (0, 0):
+      raise NotImplementedError(
+          "Only native tiling with offset (0, 0) is supported when"
+          " concatenation along tiling dims."
+      )
+    # Check if shapes of src and res are aligned to native tiling.
+    for vty in [res_ty] + [ir.VectorType(src.type) for src in op.operands]:
+      if (
+          vty.rank < 2
+          or vty.shape[-2] % layout.tiling[-2] != 0
+          or vty.shape[-1] % layout.tiling[-1] != 0
+      ):
+        raise NotImplementedError(
+            "Only aligned shapes are supported when concatenation along tiling"
+            " dims."
+        )
   tiles = [disassemble(layout, x) for x in op.operands]
   res_tiles = np.concatenate(tiles, axis=dimension)
   ctx.replace(op, assemble(res_ty, layout, res_tiles))
@@ -2077,6 +2233,10 @@ def _tpu_iota_rule(ctx: RewriteContext, op: tpu.IotaOp,  # pylint: disable=missi
   ty = ir.VectorType(op.result.type)
   vreg = native_vreg_ty(ty.element_type)
   assert ir.IntegerType.isinstance(ty.element_type)
+  if layout_out.bitwidth != 32:
+    raise NotImplementedError("Only 32-bit iota supported")
+  if not layout_out.has_native_tiling:
+    raise NotImplementedError("Only native tilings supported")
   if layout_out.implicit_dim is not None:
     raise NotImplementedError("Only 2D layouts supported")
   tile_array_shape = layout_out.tile_array_shape(ty.shape)
@@ -2247,12 +2407,15 @@ def _vector_broadcast_rule(ctx: RewriteContext, op: vector.BroadcastOp,  # pylin
     if layout_in.implicit_dim != layout_out.implicit_dim:
       raise NotImplementedError("Changing implicit dims mid-broadcast")
     implicit_dim = layout_in.implicit_dim
+    layout_rank = layout_in.layout_rank
+    if (tiling := layout_in.tiling) != layout_out.tiling:
+      raise NotImplementedError("Changing tiling mid-broadcast")
     offsets_in = layout_in.offsets
     offsets_out = layout_out.offsets
 
     expand_rank = dst_ty.rank - src_ty.rank
-    src_shape_paddded = [-1] * expand_rank + src_ty.shape
-    dim_eq = [i == o for i, o in zip(src_shape_paddded, dst_ty.shape)]
+    src_shape_padded = [-1] * expand_rank + src_ty.shape
+    dim_eq = [i == o for i, o in zip(src_shape_padded, dst_ty.shape)]
 
     no_op = False
     if implicit_dim is None:
@@ -2279,6 +2442,11 @@ def _vector_broadcast_rule(ctx: RewriteContext, op: vector.BroadcastOp,  # pylin
           and layout_in.offsets[0] is REPLICATED
       ):
         no_op = True
+    assert layout_rank
+    if src_ty.shape[-layout_rank:] == dst_ty.shape[-layout_rank:]:
+      if offsets_in != offsets_out:
+        raise NotImplementedError("Changing offsets mid-broadcast")
+      no_op = True
 
     src_tiles = disassemble(layout_in, op.source)
     dst_tiles = np.ndarray(dst_tiles_shape, dtype=object)
@@ -2288,7 +2456,15 @@ def _vector_broadcast_rule(ctx: RewriteContext, op: vector.BroadcastOp,  # pylin
         src_idx = tuple(i if eq else 0 for i, eq in zip(dst_idx, dim_eq))
         dst_tiles[dst_idx] = src_tiles[src_idx]
     elif implicit_dim is None:
+      if layout_in.bitwidth != 32:
+        raise NotImplementedError("Only 32-bit broadcast supported")
+      if tiling[1] != TARGET_SHAPE.lanes:
+        raise NotImplementedError(f"Unsupported tiling: {tiling}")
+      num_tiles = layout_in.tiles_per_vreg
+      assert not all(dim_eq[-2:])
       if dim_eq[-1]:  # Sublane broadcast
+        if num_tiles != 1:
+          raise NotImplementedError("Only native tiling supported")
         assert src_tiles.shape[-2] == 1
         offset = layout_in.offsets[-2]
         assert offset is not REPLICATED
@@ -2313,13 +2489,21 @@ def _vector_broadcast_rule(ctx: RewriteContext, op: vector.BroadcastOp,  # pylin
                 idx_ty, ir.IntegerAttr.get(i32(), offset)
             ),
         )
+        sublane_pattern = None
+        if num_tiles != 1:
+          sublane_pattern = ir.DenseI32ArrayAttr.get(
+              list(range(layout_in.sublanes_per_tile)) * num_tiles
+          )
         for src_idx, tile in np.ndenumerate(src_tiles):
           src_idx_pad = (everything,) * expand_rank + src_idx
           dst_idx = tuple(
               i if eq else everything
               for i, eq in zip(src_idx_pad, dim_eq, strict=True)
           )
-          dst_tiles[dst_idx] = tpu.DynamicGatherOp(tile.type, tile, idx, 1)
+          res_vreg = tpu.DynamicGatherOp(tile.type, tile, idx, 1)
+          if num_tiles != 1:
+            res_vreg = tpu.GatherOp(tile.type, res_vreg, sublane_pattern, 0)
+          dst_tiles[dst_idx] = res_vreg
       else:
         raise NotImplementedError
     else:
@@ -2331,6 +2515,24 @@ def _vector_broadcast_rule(ctx: RewriteContext, op: vector.BroadcastOp,  # pylin
     return ctx.replace(op, assemble(dst_ty, layout_out, dst_tiles))
 
 
+@_register_rule("vector.extract")
+def _vector_extract_rule(ctx: RewriteContext, op: vector.ExtractOp,  # pylint: disable=missing-function-docstring
+                         layout_in: Layout, layout_out: VectorLayout):
+  if layout_out is not None:
+    raise NotImplementedError("Vector results of extract unsupported")
+  if layout_in.bitwidth != 32:
+    raise NotImplementedError("Only 32-bit vector.extract supported")
+  if layout_in.offsets != (0, 0):
+    raise NotImplementedError("Unsupported layout")
+  if len(op.operands) > 1:
+    raise NotImplementedError("Dynamic indices not supported")
+  idx = ir.DenseI64ArrayAttr(op.attributes["static_position"])
+  if any(i != 0 for i in idx):
+    raise NotImplementedError("Only 0 indices supported")
+  vregs = disassemble(layout_in, op.vector)
+  ctx.replace(op, vector.ExtractOp(vregs.flat[0], [], [0, 0]))
+
+
 @_register_rule("vector.load")
 def _vector_load_rule(  # pylint: disable=missing-function-docstring
     ctx: RewriteContext, op: vector.LoadOp,
@@ -2339,17 +2541,33 @@ def _vector_load_rule(  # pylint: disable=missing-function-docstring
   memref_ty = ir.MemRefType(op.base.type)
   ty = ir.VectorType(op.result.type)
   target_ty = native_vreg_ty(ty.element_type)
-  if layout_out.implicit_dim == ImplicitDim.MINOR:
+  if len(ty.shape) == 0:
     raise NotImplementedError
-  is_1d = layout_out.implicit_dim is not None
-  if layout_out.tiling != get_memref_tiling(op.base):
+  is_1d = len(ty.shape) == 1
+  expected_dim = ImplicitDim.SECOND_MINOR if is_1d else None
+  if layout_out.implicit_dim != expected_dim:
     raise NotImplementedError
+  memref_tiling = get_memref_tiling(op.base)
+  if layout_out.tiling != memref_tiling:
+    # Now we can handle the case when tiling is (1, TARGET_SHAPE.lanes).
+    # TODO(b/295393167): need to support strided load for bitwidth < 32.
+    lanes = TARGET_SHAPE.lanes
+    if layout_out.bitwidth != 32 or layout_out.tiling != (1, lanes):
+      raise NotImplementedError
   # TODO(apaszke): Check that loads are from vmem!
-  indices = [get_int_const(v, "vector.load index") for v in op.indices]
-  for i, n, extent in zip(indices, ty.shape, memref_ty.shape):
-    if i + n > extent:
-      raise ValueError("reading out of bounds")
+  tile_indices = [
+      get_int_const(v, "vector.load index") for v in op.indices[-2:]
+  ]
   *_, ss, _ = layout_out.implicit_shape(ty.shape)
+  sublane_stride = 1
+  # The stride of load should be the number of sublanes in memref tile when
+  # loaing a single sublane.
+  if (
+      layout_out.bitwidth == 32
+      and layout_out.tiling == (1, TARGET_SHAPE.lanes)
+      and ss == 1
+  ):
+    sublane_stride = memref_tiling[0]
   tiling = TargetTuple(*layout_out.tiling)
   s, l = offsets = TargetTuple(*layout_out.offsets)
   check(l is not REPLICATED, "load replicated along lanes is unsupported")
@@ -2368,10 +2586,13 @@ def _vector_load_rule(  # pylint: disable=missing-function-docstring
   if any((o or 0) > t for o, t in zip(offsets, tiling)):
     raise NotImplementedError
   if is_1d:
-    *base_batch, base_l = indices
+    (base_l,) = tile_indices
     base_s = 0
   else:
-    *base_batch, base_s, base_l = indices
+    base_s, base_l = tile_indices
+  base_batch = get_dim_indices(
+      op.indices[: -len(tile_indices)], ty.shape[: -len(tile_indices)]
+  )
   tiles = np.ndarray(layout_out.tile_array_shape(ty.shape), dtype=object)
   vreg_slice = layout_out.vreg_slice
   for tile_ixs in np.ndindex(tiles.shape):
@@ -2384,25 +2605,37 @@ def _vector_load_rule(  # pylint: disable=missing-function-docstring
           base_s + six * vreg_slice.sublanes - (s or 0),
           base_l + lix * vreg_slice.lanes - l,
       )
-    indices = (*(b + i for b, i in zip(base_batch, batch_ixs)), *tile)
-    assert indices[-1] + TARGET_SHAPE.lanes <= memref_ty.shape[-1]
+    indices = (
+        *(b[i] for b, i in zip(base_batch, batch_ixs)), *map(ix_cst, tile),
+    )
     bounds = layout_out.tile_data_bounds(
         ty.shape, tile_ixs, allow_replicated=TargetTuple(True, False))
-    indices_vs = list(map(ix_cst, indices))
     if bounds.mask_varies_along(SUBLANES):
       assert s is not REPLICATED  # Replicated loads should never go OOB
       tile = tpu.LoadOp(
-          target_ty, op.base, indices_vs, bounds.get_sublane_mask())
+          target_ty,
+          op.base,
+          indices,
+          bounds.get_sublane_mask(),
+          sublane_stride=sublane_stride,
+      )
     else:
       if load_map is not None:
         if layout_out.bitwidth != 32:
           raise NotImplementedError
         tile = vector.TransferReadOp(
-            target_ty, op.base, indices_vs, load_map, padding)
+            target_ty, op.base, indices, load_map, padding)
       else:
+        assert s is not REPLICATED
         sublane_mask = ir.DenseBoolArrayAttr.get(
             [True] * TARGET_SHAPE.sublanes)
-        tile = tpu.LoadOp(target_ty, op.base, indices_vs, sublane_mask)
+        tile = tpu.LoadOp(
+            target_ty,
+            op.base,
+            indices,
+            sublane_mask,
+            sublane_stride=sublane_stride,
+        )
     tiles[tile_ixs] = tile
   return ctx.replace(op, assemble(ty, layout_out, tiles))
 
@@ -2415,36 +2648,53 @@ def _vector_store_rule(  # pylint: disable=missing-function-docstring
   assert all(ip is None for ip in other_layouts)
   assert layout_out is None
   ty = ir.VectorType(op.valueToStore.type)
-  if to_store_layout.implicit_dim == ImplicitDim.MINOR:
+  if len(ty.shape) == 0:
     raise NotImplementedError
-  is_1d = to_store_layout.implicit_dim is not None
-  if to_store_layout.tiling != get_memref_tiling(op.base):
+  is_1d = len(ty.shape) == 1
+  expected_dim = ImplicitDim.SECOND_MINOR if is_1d else None
+  if to_store_layout.implicit_dim != expected_dim:
     raise NotImplementedError
-  base_indices = [get_int_const(v, "vector.store index") for v in op.indices]
+  memref_tiling = get_memref_tiling(op.base)
+  if to_store_layout.tiling != memref_tiling:
+    # Now we can handle the case when tiling is (1, TARGET_SHAPE.lanes).
+    # TODO(b/295393167): need to support strided store for bitwidth < 32.
+    lanes = TARGET_SHAPE.lanes
+    if to_store_layout.bitwidth != 32 or to_store_layout.tiling != (1, lanes):
+      raise NotImplementedError
+  tile_indices = [get_int_const(v, "vector.store index") for v in op.indices[-2:]]
   tiles = disassemble(to_store_layout, op.valueToStore)
   if is_1d:
-    *base_batch, base_l = base_indices
+    (base_l,) = tile_indices
     base_s = 0
     tiles = tiles.reshape(to_store_layout.implicit_shape(tiles.shape))
   else:
-    *base_batch, base_s, base_l = base_indices
+    base_s, base_l = tile_indices
+  base_batch = get_dim_indices(
+      op.indices[: -len(tile_indices)], ty.shape[: -len(tile_indices)]
+  )
   sublane_offset, lane_offset = to_store_layout.offsets
   check(lane_offset is not REPLICATED and sublane_offset is not REPLICATED,
         "replicated layout disallowed in vector store")
   stored_shape = to_store_layout.implicit_shape(tuple(ty.shape))
+  sublane_stride = 1
+  # The stride of store should be the number of sublanes in memref tile when
+  # store a single sublane.
+  if to_store_layout.bitwidth == 32 and to_store_layout.tiling == (
+      1,
+      TARGET_SHAPE.lanes,
+  ):
+    sublane_stride = memref_tiling[0]
   vreg_slice = to_store_layout.vreg_slice
-  can_use_vector_store = to_store_layout.has_natural_topology
   for ixs, tile in np.ndenumerate(tiles):
     bounds = to_store_layout.tile_data_bounds(stored_shape, ixs)
     *batch_ixs, six, lix = ixs
     indices = (
-        *(b + i for b, i in zip(base_batch, batch_ixs)),
-        base_s + six * vreg_slice.sublanes - sublane_offset,
-        base_l + lix * vreg_slice.lanes - lane_offset,
+        *(b[i] for b, i in zip(base_batch, batch_ixs)),
+        ix_cst(base_s + six * vreg_slice.sublanes - sublane_offset),
+        ix_cst(base_l + lix * vreg_slice.lanes - lane_offset),
     )
     if is_1d:
       indices = (*indices[:-2], indices[-1])
-    indices = list(map(ix_cst, indices))
     sublane_mask = bounds.get_sublane_mask()
     masks_subelements = bounds.mask_varies_along(SUBELEMENTS)
     if bounds.mask_varies_along(LANES) or masks_subelements:
@@ -2470,13 +2720,26 @@ def _vector_store_rule(  # pylint: disable=missing-function-docstring
               tile.type, arith.OrIOp(masked_data, masked_tile))
         else:
           updated = arith.SelectOp(mask, tile, data)
-        tpu.StoreOp(updated, op.base, indices, sublane_mask)
+        tpu.StoreOp(
+            updated,
+            op.base,
+            indices,
+            sublane_mask,
+            sublane_stride=sublane_stride,
+        )
       else:
-        tpu.StoreOp(tile, op.base, indices, sublane_mask, mask=mask)
-    elif bounds.mask_varies_along(SUBLANES) or not can_use_vector_store:
-      tpu.StoreOp(tile, op.base, indices, sublane_mask)
+        tpu.StoreOp(
+            tile,
+            op.base,
+            indices,
+            sublane_mask,
+            mask=mask,
+            sublane_stride=sublane_stride,
+        )
     else:
-      vector.StoreOp(tile, op.base, indices)
+      tpu.StoreOp(
+          tile, op.base, indices, sublane_mask, sublane_stride=sublane_stride
+      )
   return ctx.erase(op)
 
 
@@ -2524,12 +2787,24 @@ def _vector_shape_cast_rule(ctx: RewriteContext, op: vector.ShapeCastOp,  # pyli
       layout_in.implicit_dim is None
       and layout_out.implicit_dim is None
       and layout_in.offsets == layout_out.offsets == (0, 0)
-      and layout_in.has_native_tiling
       and layout_in.tiling == layout_out.tiling
+      and layout_in.tiling[-1] == TARGET_SHAPE.lanes
       and dst_ty.shape[-1] == src_ty.shape[-1]
       and dst_ty.shape[-2] % layout_in.tiling[-2] == 0
       and src_ty.shape[-2] % layout_in.tiling[-2] == 0
   ):
+    no_op = True
+  elif (
+      layout_in.implicit_dim is None
+      and layout_out.implicit_dim is None
+      and layout_out.offsets == layout_in.offsets == (0, 0)
+      and layout_in.tiling == (1, TARGET_SHAPE.lanes)
+      and layout_out.has_natural_topology
+      and dst_ty.shape[-1] != src_ty.shape[-1]
+      and dst_ty.shape[-1] == TARGET_SHAPE.lanes
+      and dst_ty.shape[-2] % layout_out.tiling[-2] == 0
+      and src_ty.shape[-1] % layout_in.tiling[-1] == 0
+  ):  # n x (m * 128) -> n x m x 128.
     no_op = True
 
   src_vregs = disassemble(layout_in, op.source)
@@ -2655,43 +2930,105 @@ def _matmul_rule(
   acc_type = ir.VectorType(op.acc.type)
   if type_bitwidth(acc_type.element_type) != 32:
     raise NotImplementedError("non-32-bit matmul result")
-  if lhs_type.shape[0] % layout_lhs.tiling[0] != 0:
-    raise NotImplementedError("layout matmul lhs")
-  if rhs_type.shape[0] % 128 != 0 or rhs_type.shape[1] % 128 != 0:
-    raise NotImplementedError("matmul rhs requires padding")
-  layout_attr = op.attributes["out_layout"]
-  lhs_col_ty = ir.VectorType.get(
-      (lhs_type.shape[0], 128), lhs_type.element_type)
-  acc_col_ty = ir.VectorType.get(
-      (lhs_type.shape[0], 128), acc_type.element_type)
+  # The code below puts no constraints on the second dimension of both lhs and
+  # rhs. However, leading axis of lhs needs to be a multiple of native tiling
+  # for packed types, while leading axis of rhs needs to be a multiple of 128
+  # (no matter the type and transpose mode).
+  if layout_lhs.packing != 1 and lhs_type.shape[0] % layout_lhs.tiling[0] != 0:
+    raise NotImplementedError("Unsupported LHS shape")
+  if rhs_type.shape[0] % 128 != 0:
+    raise NotImplementedError("Unsupported RHS shape")
+  padded_lhs_rows = _round_up(lhs_type.shape[0], to=layout_lhs.tiling[0])
+  lhs_col_ty = ir.VectorType.get((padded_lhs_rows, 128), lhs_type.element_type)
+  if _round_up(lhs_type.shape[0], to=layout_acc.tiling[0]) != padded_lhs_rows:
+    raise NotImplementedError("matmul acc requires less padding than lhs")
+  acc_col_ty = ir.VectorType.get((padded_lhs_rows, 128), acc_type.element_type)
   lhs_tiles = disassemble(layout_lhs, op.lhs)
   acc_tiles = disassemble(layout_acc, op.acc)
+  assert padded_lhs_rows == lhs_tiles.shape[-2] * layout_lhs.tiling[-2]
+  assert padded_lhs_rows == acc_tiles.shape[-2] * layout_acc.tiling[-2]
   lhs_cols = [tpu.RollVectorsOp(lhs_col_ty, lhs_tiles[:, i])
               for i in range(lhs_tiles.shape[1])]
+  if contraction_rem := lhs_type.shape[1] % 128:
+    i32_vreg = native_vreg_ty(i32())
+    contraction_lane_mask = arith.CmpIOp(
+        arith.CmpIPredicate.slt,
+        tpu.IotaOp(i32_vreg, dimension=1),
+        arith.ConstantOp(
+            i32_vreg,
+            ir.DenseElementsAttr.get_splat(
+                i32_vreg, ir.IntegerAttr.get(i32(), contraction_rem)
+            ),
+        ),
+    ).result
+    def mask_last_lane_contraction_tile(zeros, vreg):
+      mask = contraction_lane_mask
+      if vreg.type.shape != mask.type.shape:
+        mask = tpu.MaskCastOp(
+            ir.VectorType.get(vreg.type.shape, ir.IntegerType.get_signless(1)),
+            mask,
+        )
+      return arith.SelectOp(mask, vreg, zeros)
+    lhs_vreg_type = lhs_tiles.flat[0].type
+    lhs_zeros = arith.ConstantOp(
+        lhs_vreg_type,
+        ir.DenseElementsAttr.get_splat(
+            lhs_vreg_type, get_constant(lhs_vreg_type.element_type, 0)
+        ),
+    )
+    lhs_masked_tiles = np.empty_like(lhs_tiles[:, -1])
+    for idx, vreg in np.ndenumerate(lhs_tiles[:, -1]):
+      lhs_masked_tiles[idx] = mask_last_lane_contraction_tile(lhs_zeros, vreg)
+    lhs_cols[-1] = tpu.RollVectorsOp(lhs_col_ty, lhs_masked_tiles)
+  else:
+    mask_last_lane_contraction_tile = None
+  lhs_layout_attr = ir.ArrayAttr.get(
+      [ir.Attribute.parse(print_layout(layout_lhs))]
+  )
+  rhs_layout_attr = ir.ArrayAttr.get(
+      [ir.Attribute.parse(print_layout(layout_rhs))]
+  )
+  acc_layout_attr = ir.ArrayAttr.get(
+      [ir.Attribute.parse(print_layout(layout_acc))]
+  )
   for col in lhs_cols:
-    col.attributes["out_layout"] = layout_attr
+    col.attributes["out_layout"] = lhs_layout_attr
   rhs_tile_ty = ir.VectorType.get((128, 128), rhs_type.element_type)
   rhs_vregs = disassemble(layout_rhs, op.rhs)
   rhs_vregs_per_tile = 16 // layout_rhs.packing
   if transpose_rhs:
     nj, nk = cdiv(tuple(rhs_type.shape), (128, 128))
-    rhs_tiles = rhs_vregs.reshape((nj, rhs_vregs_per_tile, nk, 1)).transpose(
-        2, 0, 1, 3)
+    rhs_full_tiles = rhs_vregs.reshape(
+        (nj, rhs_vregs_per_tile, nk, 1)
+    ).transpose(2, 0, 1, 3)
   else:
     nk, nj = cdiv(tuple(rhs_type.shape), (128, 128))
-    rhs_tiles = rhs_vregs.reshape((nk, rhs_vregs_per_tile, nj, 1)).transpose(
-        0, 2, 1, 3)
+    rhs_full_tiles = rhs_vregs.reshape(
+        (nk, rhs_vregs_per_tile, nj, 1)
+    ).transpose(0, 2, 1, 3)
 
   precision = None
   if "precision" in op.attributes:
     precision = op.attributes["precision"]
+  rhs_vreg_type = rhs_full_tiles.flat[0].type
+  rhs_zeros = arith.ConstantOp(
+      rhs_vreg_type,
+      ir.DenseElementsAttr.get_splat(
+          rhs_vreg_type, get_constant(rhs_vreg_type.element_type, 0)
+      ),
+  )
   for j, k in np.ndindex((nj, nk)):
-    rhs_tile = rhs_tiles[k, j]
+    rhs_tile = rhs_full_tiles[k, j]
     assert rhs_tile.shape == (rhs_vregs_per_tile, 1)
+    if mask_last_lane_contraction_tile is not None and k == nk - 1:
+      rhs_masked_tile = np.empty_like(rhs_tile)
+      for idx, vreg in np.ndenumerate(rhs_tile):
+        rhs_masked_tile[idx] = mask_last_lane_contraction_tile(rhs_zeros, vreg)
+      rhs_tile = rhs_masked_tile
     rhs_rolled_tile = tpu.RollVectorsOp(rhs_tile_ty, list(rhs_tile.flat))
-    rhs_rolled_tile.attributes["out_layout"] = layout_attr
+    rhs_rolled_tile.attributes["out_layout"] = rhs_layout_attr
     acc_col = tpu.RollVectorsOp(acc_col_ty, acc_tiles[:, j])
-    acc_col.attributes["out_layout"] = layout_attr
+    acc_col.attributes["out_layout"] = acc_layout_attr
     new_acc_col = tpu.MatmulOp(
         acc_col_ty, lhs_cols[k], rhs_rolled_tile, acc_col,
         transpose_lhs=transpose_lhs,
@@ -2700,7 +3037,7 @@ def _matmul_rule(
     )
     new_acc_tiles = tpu.UnrollVectorsOp([v.type for v in acc_tiles[:, j]],
                                         new_acc_col)
-    new_acc_tiles.attributes["in_layout"] = layout_attr
+    new_acc_tiles.attributes["in_layout"] = acc_layout_attr
     acc_tiles[:, j] = new_acc_tiles.results
   return ctx.replace(op, assemble(op.result.type, layout_out, acc_tiles))
 
@@ -2709,18 +3046,22 @@ def _matmul_rule(
 def _vector_multi_reduction_rule(  # pylint: disable=missing-function-docstring
     ctx: RewriteContext, op: vector.MultiDimReductionOp,
     layout_in: Sequence[Layout], layout_out: Layout):
-  dims = ir.ArrayAttr(op.attributes["reduction_dims"])
-  if len(dims) != 1:
-    raise NotImplementedError("only 1d reductions supported")
-  (dim_attr,) = dims
-  dim = ir.IntegerAttr(dim_attr).value
-  src_type = ir.VectorType(op.source.type)
   src_layout, acc_layout = layout_in
+  dst_layout = layout_out
+
+  src_type = ir.VectorType(op.source.type)
+  src_rank = src_type.rank
   try:
     res_type = ir.VectorType(op.result.type)
   except ValueError:
     raise NotImplementedError("Can only reduce into vectors") from None
-  assert layout_out is not None  # Shouldn't be None since result is a vector
+  assert dst_layout is not None  # Shouldn't be None since result is a vector
+
+  dim_attrs = ir.ArrayAttr(op.attributes["reduction_dims"])
+  dims = [ir.IntegerAttr(dim_attr).value for dim_attr in dim_attrs]
+  dims.sort()
+  if any(d < 0 for d in dims):
+    raise NotImplementedError("negative reduction dims")
 
   # Make sure that the accumulator is a splat of the neutral value
   if acc_layout.offsets != (REPLICATED, REPLICATED):
@@ -2742,70 +3083,80 @@ def _vector_multi_reduction_rule(  # pylint: disable=missing-function-docstring
   if val != neutral.value:
     raise NotImplementedError("only neutral accumulator supported")
 
-  if src_layout.implicit_dim is None and src_layout.has_natural_topology:
-    sublane_offset, lane_offset = src_layout.offsets
-    check(dim >= 0, "negative reduction dimension unsupported")
-    if dim < src_type.rank - 2:
-      raise NotImplementedError("reductions over non-layout dims")
-    elif dim == src_type.rank - 2:
-      reduce_over = SUBLANES
-      allow_replicated = TargetTuple(False, True)
-      vdim = 0
-      if sublane_offset is REPLICATED:
-        # TODO(apaszke): Note that it is just scaling!
-        raise NotImplementedError("reductions over replicated axes")
-      if layout_out != VectorLayout(
-          32, (REPLICATED, lane_offset), TARGET_SHAPE, ImplicitDim.SECOND_MINOR
-      ):
-        raise NotImplementedError(f"unexpected destination layout {layout_out}")
-    elif dim == src_type.rank - 1:
-      reduce_over = LANES
-      allow_replicated = TargetTuple(True, False)
-      vdim = 1
-      if lane_offset is REPLICATED:
-        # TODO(apaszke): Note that it is just scaling!
-        raise NotImplementedError("reductions over replicated axes")
-      if layout_out != VectorLayout(
-          32, (sublane_offset, REPLICATED), TARGET_SHAPE, ImplicitDim.MINOR
-      ):
-        raise NotImplementedError(f"unexpected destination layout {layout_out}")
-    source_tiles = disassemble(src_layout, op.source)
-    result_tiles = np.empty(
-        layout_out.tile_array_shape(res_type.shape), dtype=object)
-    if op.attributes["kind"] == ir.Attribute.parse("#vector.kind<maxf>"):
-      tpu_kind = ir.Attribute.parse("#tpu.reduction_kind<max>")
-      pointwise = arith.MaxFOp
-    elif op.attributes["kind"] == ir.Attribute.parse("#vector.kind<add>"):
-      tpu_kind = ir.Attribute.parse("#tpu.reduction_kind<sum>")
-      pointwise = arith.AddFOp
-    else:
-      raise NotImplementedError(op.attributes["kind"])
-    src_shape = tuple(src_type.shape)
-    for ixs in np.ndindex(source_tiles.shape):
+  if src_layout.implicit_dim is None:
+    reduces = TargetTuple((src_rank - 2) in dims, (src_rank - 1) in dims)
+  elif src_layout.implicit_dim == ImplicitDim.SECOND_MINOR:
+    reduces = TargetTuple(False, (src_rank - 1) in dims)
+  else:
+    assert src_layout.implicit_dim == ImplicitDim.MINOR
+    reduces = TargetTuple((src_rank - 1) in dims, False)
+  allow_replicated = TargetTuple(not reduces.sublanes, not reduces.lanes)
+
+  if any(reduces) and not src_layout.has_native_tiling:
+    raise NotImplementedError("unsupported input layout")
+  if src_layout.tiling != dst_layout.tiling:
+    raise NotImplementedError("tiling shouldn't change")
+  for i in range(2):
+    if reduces[i] and src_layout.offsets[i] is REPLICATED:
+      raise NotImplementedError("reductions over replicated axes")
+    # Offsets have to be equal, unless we're reducing over that dimension.
+    if src_layout.offsets[i] != dst_layout.offsets[i] and not reduces[i]:
+      raise NotImplementedError("unsupported offset change")
+  if all(reduces) or (any(reduces) and src_layout.implicit_dim is not None):
+    # This is difficult, because we'd like to make both tiling dims implicit,
+    # but there is no way to do that in VectorLayout right now.
+    # We use an equivalence between VectorLayouts when trailing dims are 1 to
+    # enable some special cases, but we should generalize this.
+    if res_type.shape[-1] != 1:
+      raise NotImplementedError(
+          "reductions over both trailing dimensions are only supported when the"
+          " reduced value has a trailing axis of size 1"
+      )
+    dst_implicit_dim = ImplicitDim.SECOND_MINOR  # Whatever works.
+  elif reduces.lanes:
+    assert src_layout.implicit_dim is None
+    dst_implicit_dim = ImplicitDim.MINOR
+  elif reduces.sublanes:
+    assert src_layout.implicit_dim is None
+    dst_implicit_dim = ImplicitDim.SECOND_MINOR
+  else:
+    dst_implicit_dim = src_layout.implicit_dim
+  if dst_implicit_dim != dst_layout.implicit_dim:
+    raise NotImplementedError("unsupported output implicit dim")
+
+  src_vregs = disassemble(src_layout, op.source)
+  dst_vregs = np.empty(
+      layout_out.tile_array_shape(res_type.shape), dtype=object)
+  if op.attributes["kind"] == ir.Attribute.parse("#vector.kind<maxf>"):
+    tpu_kind = ir.Attribute.parse("#tpu.reduction_kind<max>")
+    pointwise = arith.MaximumFOp
+  elif op.attributes["kind"] == ir.Attribute.parse("#vector.kind<add>"):
+    tpu_kind = ir.Attribute.parse("#tpu.reduction_kind<sum>")
+    pointwise = arith.AddFOp
+  else:
+    raise NotImplementedError(op.attributes["kind"])
+  src_shape = tuple(src_type.shape)
+  for dst_idx in np.ndindex(dst_vregs.shape):
+    # Extract a subset of source vregs that reduce into this single result vreg.
+    src_slice_list = [slice(i, i + 1) for i in dst_idx]
+    for d in dims:
+      src_slice_list.insert(d, slice(None))
+    reduced_vregs = src_vregs[tuple(src_slice_list)]
+    # Reduce the source vregs into a single one.
+    acc = None
+    for slice_idx, src_vreg in np.ndenumerate(reduced_vregs):
+      source_idx = tuple(
+          i + (s.start or 0) for i, s in zip(slice_idx, src_slice_list))
       data_bounds = src_layout.tile_data_bounds(
-          src_shape, ixs, allow_replicated=allow_replicated)
-      tile = mask_oob(
-          source_tiles[ixs], data_bounds, neutral, ctx.hardware_generation)
-      *batch_ix, six, lix = ixs
-      if reduce_over == LANES:
-        outer = (*batch_ix, six)
-        reduced_ix = lix
-        last_reduced_ix = source_tiles.shape[-1] - 1
-      else:
-        assert reduce_over == SUBLANES
-        outer = (*batch_ix, lix)
-        reduced_ix = six
-        last_reduced_ix = source_tiles.shape[-2] - 1
-      if reduced_ix == 0:
-        new_acc = tile
-      else:
-        new_acc = pointwise(result_tiles[outer], tile)
-      if reduced_ix == last_reduced_ix:
-        new_acc = tpu.AllReduceOp(
-            new_acc, ir.IntegerAttr.get(i64(), vdim), tpu_kind)
-      result_tiles[outer] = new_acc
-    return ctx.replace(op, assemble(op.result.type, layout_out, result_tiles))
-  raise NotImplementedError(f"unsupported layout: {src_layout}")
+          src_shape, source_idx, allow_replicated=allow_replicated)
+      tile = mask_oob(src_vreg, data_bounds, neutral, ctx.hardware_generation)
+      acc = tile if acc is None else pointwise(acc, tile)
+    if reduces.lanes:
+      acc = tpu.AllReduceOp(acc, ir.IntegerAttr.get(i64(), 1), tpu_kind)
+    if reduces.sublanes:
+      acc = tpu.AllReduceOp(acc, ir.IntegerAttr.get(i64(), 0), tpu_kind)
+    dst_vregs[dst_idx] = acc
+  return ctx.replace(op, assemble(op.result.type, layout_out, dst_vregs))
 
 
 @_register_rule("vector.transpose")
@@ -2876,7 +3227,7 @@ def _vector_transpose_rule(  # pylint: disable=missing-function-docstring
     ]
     src_tile = assemble(tile_ty_in, layout_in, src_tile_vregs)
     dst_tile = vector.TransposeOp(tile_ty_out, src_tile, minor_perm)
-    dst_tile.attributes["out_layout"] = ir.StringAttr.get(
+    dst_tile.attributes["out_layout"] = ir.Attribute.parse(
         print_layout(layout_out)
     )
     dst_tile_vregs = tpu.UnrollVectorsOp(
@@ -2976,7 +3327,7 @@ def assemble(ty: ir.Type, layout: VectorLayout,
       vals.shape, layout.tile_array_shape(ty.shape))
   op = tpu.RollVectorsOp(ty, list(vals.flat))
   op.attributes["out_layout"] = ir.ArrayAttr.get(
-      [ir.StringAttr.get(print_layout(layout))]
+      [ir.Attribute.parse(print_layout(layout))]
   )
   return op
 
@@ -2999,7 +3350,7 @@ def disassemble(layout: VectorLayout, val: ir.Value) -> np.ndarray:
   arr_attr = ir.ArrayAttr(op.attributes["out_layout"])
   def_layout = parse_layout(arr_attr[res_idx], vty)
   assert type(def_layout) is type(layout)
-  assert def_layout.generalizes(layout)
+  assert def_layout.generalizes(layout, vty.shape)
   def_layout_shape = def_layout.tile_array_shape(vty.shape)
   if isinstance(op.opview, tpu.RollVectorsOp):
     tile_vals = op.operands
@@ -3097,9 +3448,9 @@ def get_constant(ty: ir.Type, value: Union[int, float]) -> ir.Attribute:
   elif ty == ir.IndexType.get():
     return ir.IntegerAttr.get(ty, value)
   elif ty == ir.BF16Type.get():
-    return ir.FloatAttr.get_bf16(value)
+    return ir.FloatAttr.get(ty, value)
   elif ty == ir.F32Type.get():
-    return ir.FloatAttr.get_f32(value)
+    return ir.FloatAttr.get(ty, value)
   raise NotImplementedError(ty)
 
 
@@ -3150,3 +3501,35 @@ def get_memref_tiling(value: ir.Value) -> tuple[int, int]:
         raise NotImplementedError
       return first_tiles
   raise NotImplementedError((first_tiles, *other_tiles))
+
+
+def _round_up(x: int, to: int):
+  assert x >= 0
+  return ((x + to - 1) // to) * to
+
+
+def get_dim_indices(indices, shape) -> list[list[ValueLike]]:
+  dim_indices = []
+  index = ir.IndexType.get()
+  assert len(indices) == len(shape)
+  for dim_size, idx_val in zip(shape, indices):
+    idx_const = None
+    try:
+      idx_const = get_int_const(idx_val, "")
+    except ValueError:
+      pass
+    if idx_const is not None:
+      dim_indices.append(
+          [
+              arith.ConstantOp(index, ir.IntegerAttr.get(index, idx_const + i))
+              for i in range(dim_size)
+          ]
+      )
+    else:
+      dim_indices.append([
+          arith.AddIOp(
+              idx_val, arith.ConstantOp(index, ir.IntegerAttr.get(index, i))
+          )
+          for i in range(dim_size)
+      ])
+  return dim_indices

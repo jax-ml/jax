@@ -1,3 +1,4 @@
+(building-from-source)=
 # Building from source
 
 First, obtain the JAX source code:
@@ -59,7 +60,7 @@ pip install dist/*.whl  # installs jaxlib (includes XLA)
 ```
 
 To build `jaxlib` with CUDA support, use `python build/build.py --enable_cuda`;
-to build with TPU support, use `python build/build.py --enable_tpu`.
+to build with TPU support, use `python build/build.py`.
 
 See `python build/build.py --help` for configuration options, including ways to
 specify the paths to CUDA and CUDNN, which you must have installed. Here
@@ -136,29 +137,37 @@ To build with debug information, add the flag `--bazel_options='--copt=/Z7'`.
 ### Additional notes for building a ROCM `jaxlib` for AMD GPUs
 
 You need several ROCM/HIP libraries installed to build for ROCM. For
-example, on a Ubuntu machine with AMD's `apt` repositories available, you need
-a number of packages installed:
+example, on a Ubuntu machine with
+[AMD's `apt` repositories available](https://rocm.docs.amd.com/en/latest/deploy/linux/quick_start.html),
+you need a number of packages installed:
 
 ```
 sudo apt install miopen-hip hipfft-dev rocrand-dev hipsparse-dev hipsolver-dev \
     rccl-dev rccl hip-dev rocfft-dev roctracer-dev hipblas-dev rocm-device-libs
 ```
 
-AMD's fork of the XLA repository may include fixes
-not present in the upstream repository. To use AMD's fork, you should clone
-their repository:
-
-```
-git clone https://github.com/ROCmSoftwarePlatform/tensorflow-upstream.git
-```
-
 To build jaxlib with ROCM support, you can run the following build command,
 suitably adjusted for your paths and ROCM version.
 
 ```
-python build/build.py --enable_rocm --rocm_path=/opt/rocm-5.3.0 \
-  --bazel_options=--override_repository=xla=/path/to/xla-upstream
+python build/build.py --enable_rocm --rocm_path=/opt/rocm-5.7.0
 ```
+
+AMD's fork of the XLA repository may include fixes not present in the upstream
+XLA repository. If you experience problems with the upstream repository, you can
+try AMD's fork, by cloning their repository:
+
+```
+git clone https://github.com/ROCmSoftwarePlatform/xla.git
+```
+
+and override the XLA repository with which JAX is built:
+
+```
+python build/build.py --enable_rocm --rocm_path=/opt/rocm-5.7.0 \
+  --bazel_options=--override_repository=xla=/path/to/xla-rocm
+```
+
 
 ## Installing `jax`
 
@@ -176,6 +185,8 @@ sets up symbolic links from site-packages into the repository.
 (running-tests)=
 
 ## Running the tests
+
+First, install the dependencies by running `pip install -r build/test-requirements.txt`.
 
 There are two supported mechanisms for running the JAX tests, either using Bazel
 or using pytest.
@@ -229,9 +240,10 @@ bazel test //tests:gpu_tests //tests:backend_independent_tests --test_env=XLA_PY
 ### Using `pytest`
 
 To run all the JAX tests using `pytest`, we recommend using `pytest-xdist`,
-which can run tests in parallel. First, install `pytest-xdist` and
-`pytest-benchmark` by running `pip install -r build/test-requirements.txt`.
-Then, from the repository root directory run:
+which can run tests in parallel. It is installed as a part of
+`pip install -r build/test-requirements.txt` command.
+
+From the repository root directory run:
 
 ```
 pytest -n auto tests
@@ -398,7 +410,7 @@ using [jupytext](https://jupytext.readthedocs.io/) by running `jupytext --sync` 
 notebooks; for example:
 
 ```
-pip install jupytext==1.14.7
+pip install jupytext==1.15.2
 jupytext --sync docs/notebooks/quickstart.ipynb
 ```
 

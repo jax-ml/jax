@@ -25,7 +25,6 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
-from jax import config
 from jax import lax
 from jax import tree_util
 from jax.experimental.sparse._base import JAXSparse
@@ -37,6 +36,7 @@ from jax.experimental.sparse.util import (
 from jax.util import split_list, safe_zip
 
 from jax._src import api_util
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src.lax.lax import DotDimensionNumbers, _dot_general_batch_dim_nums
@@ -194,9 +194,10 @@ def bcsr_fromdense(mat: ArrayLike, *, nse: int | None = None, n_batch: int = 0,
     mat_bcsr: BCSR representation of the matrix.
   """
   mat_array = jnp.asarray(mat)
-  if nse is None:
-    nse = _count_stored_elements(mat_array, n_batch, n_dense)
-  nse_int: int = core.concrete_or_error(operator.index, nse, _TRACED_NSE_ERROR)
+  nse_arr: int | Array | None = nse
+  if nse_arr is None:
+    nse_arr = _count_stored_elements(mat_array, n_batch, n_dense)
+  nse_int: int = core.concrete_or_error(operator.index, nse_arr, _TRACED_NSE_ERROR)
   return BCSR(_bcsr_fromdense(mat_array, nse=nse_int, n_batch=n_batch,
                               n_dense=n_dense, index_dtype=index_dtype),
               shape=mat_array.shape)
@@ -623,7 +624,7 @@ def _bcsr_dot_general_gpu_lowering(
     ctx, lhs_data, lhs_indices, lhs_indptr, rhs, *, dimension_numbers,
     preferred_element_type, lhs_spinfo: SparseInfo):
 
-  if not config.jax_bcoo_cusparse_lowering:
+  if not config.bcoo_cusparse_lowering.value:
     return _bcsr_dot_general_default_lowering(
       ctx, lhs_data, lhs_indices, lhs_indptr, rhs,
       dimension_numbers=dimension_numbers,
@@ -787,7 +788,7 @@ class BCSR(JAXSparse):
     return repr_
 
   def transpose(self, *args, **kwargs):
-    raise NotImplementedError("Tranpose is not implemented.")
+    raise NotImplementedError("Transpose is not implemented.")
 
   def tree_flatten(self):
     return (self.data, self.indices, self.indptr), self._info._asdict()

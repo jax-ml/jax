@@ -30,27 +30,37 @@ import numpy as np
 
 from jax._src import lib
 from jax._src import compilation_cache
-from jax._src import config as jax_config
+from jax._src import config as config
 from jax._src import monitoring
 from jax._src import path
 from jax._src import profiler
 from jax._src import traceback_util
-from jax._src.config import config
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 
 
-_DISABLE_MOST_OPTIMIZATIONS = jax_config.DEFINE_bool(
+_DISABLE_MOST_OPTIMIZATIONS = config.DEFINE_bool(
     'jax_disable_most_optimizations',
-    jax_config.bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
+    config.bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
     'Try not to do much optimization work. This can be useful if the cost of '
     'optimization is greater than that of running a less-optimized program.')
 
-_DUMP_IR_TO = jax_config.DEFINE_string(
+_DUMP_IR_TO = config.DEFINE_string(
     'jax_dump_ir_to', os.getenv('JAX_DUMP_IR_TO', ''),
     help="Path to which the IR that is emitted by JAX as input to the "
          "compiler should be dumped as text files. Optional. If omitted, JAX "
          "will not dump IR.")
+
+_COMPILER_DETAILED_LOGGING_MIN_OPS = config.DEFINE_integer(
+    "jax_compiler_detailed_logging_min_ops",
+    config.int_env("JAX_COMPILER_DETAILED_LOGGING_MIN_OPS", 10),
+    help=(
+        'How big should a module be in MLIR operations before JAX enables '
+        'detailed compiler logging? The intent of this flag is to suppress '
+        'detailed logging for small/uninteresting computations.'
+    ),
+)
 
 
 traceback_util.register_exclusion(__file__)
@@ -71,6 +81,25 @@ def get_latest_profile_version() -> int:
   return -1
 
 
+def _walk_operations(op, k):
+  k -= 1
+  if k < 0:
+    return k
+  for region in op.regions:
+    for block in region:
+      for child_op in block:
+        k = _walk_operations(child_op, k)
+        if k < 0:
+          return k
+  return k
+
+
+def use_detailed_logging(module: ir.Module) -> bool:
+  """Returns 'true' if detailed logging should be enabled for 'module'."""
+  bound = _COMPILER_DETAILED_LOGGING_MIN_OPS.value
+  return _walk_operations(module.operation, bound) < 0
+
+
 def get_compile_options(
     num_replicas: int,
     num_partitions: int,
@@ -81,6 +110,7 @@ def get_compile_options(
     auto_spmd_partitioning_mesh_ids: list[int] | None = None,
     env_options_overrides: dict[str, str] | None = None,
     fdo_profile: bytes | None = None,
+    detailed_logging: bool = True,
 ) -> xc.CompileOptions:
   """Returns the compile options to use, as derived from flag values.
 
@@ -101,7 +131,9 @@ def get_compile_options(
       auto_spmd_partitioning search space.
     env_options_overrides: dict of additional options parsed by the compiler
     fdo_profile: Optional profile for feedback-directed optimization passed to
-    XLA.
+      XLA.
+    detailed_logging: Is this an "interesting" computation about which XLA
+      would be wise to log compilation information?
   """
   compile_options = xc.CompileOptions()
   compile_options.num_replicas = num_replicas
@@ -159,7 +191,7 @@ def get_compile_options(
   #    If the function returns 0, set -1; this is an error.
   # -1 indicates that no attempt should be made to retrieve the latest profile
   # later on.
-  jax_xla_profile_version = config.jax_xla_profile_version
+  jax_xla_profile_version = config.jax_xla_profile_version.value
   if jax_xla_profile_version > 0:
     compile_options.profile_version = jax_xla_profile_version
     logger.debug("get_compile_options XLA-AutoFDO profile: " +
@@ -177,6 +209,11 @@ def get_compile_options(
       compile_options.profile_version = no_profile_dont_retrieve
       logger.error("get_compile_options XLA-AutoFDO profile: " +
                    "XLA-AutoFDO profile version is 0; this should not happen")
+
+  if xla_extension_version >= 201:
+    debug_options.xla_detailed_logging = detailed_logging
+  else:
+    debug_options.xla_detailed_logging_and_dumping = detailed_logging
 
   return compile_options
 
@@ -226,7 +263,9 @@ def _make_string_safe_for_filename(s: str) -> str:
 def _dump_ir_to_file(name: str, ir: str):
   id = next(_ir_dump_counter)
   name = f"jax_ir{id}_{_make_string_safe_for_filename(name)}.mlir"
-  name = path.Path(_DUMP_IR_TO.value) / name
+  out_dir = path.Path(_DUMP_IR_TO.value)
+  out_dir.mkdir(parents=True, exist_ok=True)
+  name = out_dir / name
   name.write_text(ir)
 
 
@@ -256,19 +295,23 @@ def compile_or_get_cached(
     return backend_compile(backend, computation, compile_options,
                            host_callbacks)
 
-  # TODO(b/293308239) Instrument a metric to track the adoption of the new cache
-  # key implementation after it is enabled.
   global _cache_used
   if not _cache_used:
     _cache_used = True
-    monitoring.record_event('/jax/compilation_cache/tasks_using_original_cache')
+    monitoring.record_event('/jax/compilation_cache/tasks_using_cache')
 
   monitoring.record_event('/jax/compilation_cache/compile_requests_use_cache')
 
-  cache_key = compilation_cache.get_cache_key(
-      computation, devices, compile_options, backend,
-      jax_config.config.jax_use_original_compilation_cache_key_generation,
-  )
+  try:
+    cache_key = compilation_cache.get_cache_key(
+        computation, devices, compile_options, backend,
+        config.use_original_compilation_cache_key_generation.value,
+    )
+  except xc._xla.XlaRuntimeError as ex:
+    logger.error("compile_or_get_cached: unable to generate cache key, "
+                 "skipping the cache: %s", ex)
+    return backend_compile(backend, computation, compile_options,
+                           host_callbacks)
 
   cache_retrieval_start = time.monotonic()
   retrieved_executable, retrieved_compile_time = _cache_read(
@@ -279,14 +322,17 @@ def compile_or_get_cached(
     assert retrieved_compile_time is not None
     logger.info("Persistent compilation cache hit for '%s'", module_name)
 
-    # TODO(b/293308239) Instrument metrics for new cache savings and cache hit
-    # rate after it is enabled.
-    if jax_config.config.jax_use_original_compilation_cache_key_generation:
+    if config.use_original_compilation_cache_key_generation.value:
       # TODO(b/293308239) Remove metrics for the original cache after the new
       # compilation cache key implementation is fully rolled out.
       monitoring.record_event('/jax/compilation_cache/cache_hits_original')
       monitoring.record_event_duration_secs(
           "/jax/compilation_cache/original_compile_time_saved_sec",
+          retrieved_compile_time - cache_retrieval_time)
+    else:
+      monitoring.record_event('/jax/compilation_cache/cache_hits')
+      monitoring.record_event_duration_secs(
+          '/jax/compilation_cache/compile_time_saved_sec',
           retrieved_compile_time - cache_retrieval_time)
 
     monitoring.record_event_duration_secs(
@@ -314,7 +360,7 @@ def _cache_read(
     return compilation_cache.get_executable_and_time(
         cache_key, compile_options, backend)
   except Exception as ex:
-    if config.jax_raise_persistent_cache_errors:
+    if config.raise_persistent_cache_errors.value:
       raise
     warnings.warn(
         f"Error reading persistent compilation cache entry for "
@@ -330,32 +376,36 @@ def _cache_write(cache_key: str,
   """Writes the `serialized_computation` and its compilation time to the
   persistent compilation cache repository.
   """
+  # Only write cache entries from the first process. Otherwise we create
+  # problems with contention for writes on some filesystems, e.g., GCS.
+  if backend.process_index() != 0:
+    logger.debug("Not writing persistent cache entry since process_index != 0")
+    return
+
   if host_callbacks:
     logger.info(
         "Not writing persistent cache entry for '%s' because it uses host "
         "callbacks (e.g. from jax.debug.print or breakpoint)", module_name)
     return
 
-  min_compile_time = config.jax_persistent_cache_min_compile_time_secs
-  if min_compile_time:
-    if compile_time_secs < min_compile_time:
-      logger.debug(
-          "Not writing persistent cache entry for '%s' because it took < %.2f "
-          "seconds to compile (%.2fs)", module_name, min_compile_time,
-          compile_time_secs)
-      return
-    else:
-      logger.debug(
-          "'%s' took at least %.2f seconds to compile (%.2fs), writing "
-          "persistent cache entry", module_name, min_compile_time,
-          compile_time_secs)
-      monitoring.record_event('/jax/compilation_cache/cache_misses')
+  min_compile_time = config.persistent_cache_min_compile_time_secs.value
+  if compile_time_secs < min_compile_time:
+    logger.debug(
+        "Not writing persistent cache entry for '%s' because it took < %.2f "
+        "seconds to compile (%.2fs)", module_name, min_compile_time,
+        compile_time_secs)
+    return
+  else:
+    logger.debug(
+        "'%s' took at least %.2f seconds to compile (%.2fs), writing persistent"
+        " cache entry", module_name, min_compile_time, compile_time_secs)
+    monitoring.record_event('/jax/compilation_cache/cache_misses')
 
   try:
     compilation_cache.put_executable_and_time(
         cache_key, module_name, executable, backend, int(compile_time_secs))
   except Exception as ex:
-    if config.jax_raise_persistent_cache_errors:
+    if config.raise_persistent_cache_errors.value:
       raise
     warnings.warn(
         f"Error writing persistent compilation cache entry for "

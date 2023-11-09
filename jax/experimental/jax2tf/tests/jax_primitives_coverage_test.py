@@ -28,9 +28,10 @@ import unittest
 
 from absl.testing import absltest
 
+import jax
+from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import maps  # Needed for config flags.
-from jax import config
 
 import numpy as np
 
@@ -62,7 +63,7 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
     jax_unimpl = [l for l in harness.jax_unimplemented
                   if l.filter(device=jtu.device_under_test(),
                               dtype=harness.dtype)]
-    if any([lim.skip_run for lim in jax_unimpl]):
+    if any(lim.skip_run for lim in jax_unimpl):
       logging.info(
           "Skipping run with expected JAX limitations: %s in harness %s",
           [u.description for u in jax_unimpl], harness.fullname)
@@ -139,7 +140,7 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Set JAX_OUTPUT_LIMITATIONS_DOC=1 to enable the generation of the documentation")
     # The CPU/GPU have more supported types than TPU.
     self.assertEqual("cpu", jtu.device_under_test(), "The documentation can be generated only on CPU")
-    self.assertTrue(config.x64_enabled, "The documentation must be generated with JAX_ENABLE_X64=1")
+    self.assertTrue(config.enable_x64.value, "The documentation must be generated with JAX_ENABLE_X64=1")
 
     with open(os.path.join(os.path.dirname(__file__),
                            '../g3doc/jax_primitives_coverage.md.template')) as f:

@@ -6,22 +6,104 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.16
+## jax 0.4.21
 
-* Internal deprecations/removals:
-  * The internal submodule `jax.prng` is now deprecated. Its contents are available at
-    {mod}`jax.extend.random`.
-  * The internal submodule path `jax.linear_util` has been deprecated. Use
-    {mod}`jax.extend.linear_util` instead (Part of {ref}`jax-extend-jep`)
+## jaxlib 0.4.21
 
-## jaxlib 0.4.16
+## jax 0.4.20 (Nov 2, 2023)
+
+## jaxlib 0.4.20 (Nov 2, 2023)
+
+* Bug fixes
+  * Fixed some type confusion between E4M3 and E5M2 float8 types.
+
+## jax 0.4.19 (Oct 19, 2023)
+
+* New Features
+  * Added {obj}`jax.typing.DTypeLike`, which can be used to annotate objects that
+    are convertible to JAX dtypes.
+  * Added `jax.numpy.fill_diagonal`.
+
+* Changes
+  * JAX now requires SciPy 1.9 or newer.
+
+* Bug fixes
+  * Only process 0 in a multicontroller distributed JAX program will write
+    persistent compilation cache entries. This fixes write contention if the
+    cache is placed on a network filesystem such as GCS.
+  * The version check for cusolver and cufft no longer considers the patch
+    versions when determining if the installed version of these libraries is at
+    least as new as the versions against which JAX was built.
+
+## jaxlib 0.4.19 (Oct 19, 2023)
+
+* Changes
+  * jaxlib will now always prefer pip-installed NVIDIA CUDA libraries
+    (nvidia-... packages) over any other CUDA installation if they are
+    installed, including installations named in `LD_LIBRARY_PATH`. If this
+    causes problems and the intent is to use a system-installed CUDA, the fix is
+    to remove the pip installed CUDA library packages.
+
+## jax 0.4.18 (Oct 6, 2023)
+
+## jaxlib 0.4.18 (Oct 6, 2023)
+
+* Changes
+  * CUDA jaxlibs now depend on the user to install a compatible NCCL version.
+    If using the recommended `cuda12_pip` installation, NCCL should be installed
+    automatically. Currently, NCCL 2.16 or newer is required.
+  * We now provide Linux aarch64 wheels, both with and without NVIDIA GPU
+    support.
+
+* Deprecations
+  * A number of internal utilities and inadvertent exports in {mod}`jax.lax` have
+    been deprecated, and will be removed in a future release.
+    * `jax.lax.dtypes`: use `jax.dtypes` instead.
+    * `jax.lax.itertools`: use `itertools` instead.
+    * `naryop`, `naryop_dtype_rule`, `standard_abstract_eval`, `standard_naryop`,
+      `standard_primitive`, `standard_unop`, `unop`, and `unop_dtype_rule` are
+      internal utilities, now deprecated without replacement.
+
+* Bug fixes
+  * Fixed Cloud TPU regression where compilation would OOM due to smem.
+
+## jax 0.4.17 (Oct 3, 2023)
+
+* New features
+  * Added new {func}`jax.numpy.bitwise_count` function, matching the API of the simlar
+    function recently added to NumPy.
+* Deprecations
+  * Removed the deprecated module `jax.abstract_arrays` and all its contents.
+  * Named key constructors in {mod}`jax.random` are deprecated. Pass the `impl` argument
+    to {func}`jax.random.PRNGKey` or {func}`jax.random.key` instead:
+    * `random.threefry2x32_key(seed)` becomes `random.PRNGKey(seed, impl='threefry2x32')`
+    * `random.rbg_key(seed)` becomes `random.PRNGKey(seed, impl='rbg')`
+    * `random.unsafe_rbg_key(seed)` becomes `random.PRNGKey(seed, impl='unsafe_rbg')`
+* Changes:
+  * CUDA: JAX now verifies that the CUDA libraries it finds are at least as new
+    as the CUDA libraries that JAX was built against. If older libraries are
+    found, JAX raises an exception since that is preferable to mysterious
+    failures and crashes.
+  * Removed the "No GPU/TPU" found warning. Instead warn if, on Linux, an
+    NVIDIA GPU or a Google TPU are found but not used and `--jax_platforms` was
+    not specified.
+  * {func}`jax.scipy.stats.mode` now returns a 0 count if the mode is taken
+    across a size-0 axis, matching the behavior of `scipy.stats.mode` in SciPy
+    1.11.
+  * Most `jax.numpy` functions and attributes now have fully-defined type stubs.
+    Previously many of these were treated as `Any` by static type checkers like
+    `mypy` and `pytype`.
+
+## jaxlib 0.4.17 (Oct 3, 2023)
+
+* Changes:
+  * Python 3.12 wheels were added in this release.
+  * The CUDA 12 wheels now require CUDA 12.2 or newer and cuDNN 8.9.4 or newer.
 
 * Bug fixes:
-  * Fixed a crash on Windows due to a fatal LLVM error related to out-of-order
-    sections and IMAGE_REL_AMD64_ADDR32NB relocations
-    (https://github.com/openxla/xla/commit/cb732a921f0c4184995cbed82394931011d12bd4).
+  * Fixed log spam from ABSL when the JAX CPU backend was initialized.
 
-## jax 0.4.15 (Aug 30 2023)
+## jax 0.4.16 (Sept 18, 2023)
 
 * Changes
   * Added {class}`jax.numpy.ufunc`, as well as {func}`jax.numpy.frompyfunc`, which can convert
@@ -72,8 +154,27 @@ Remember to align the itemized text with the first line of an item within a list
     HLO lowering rules for custom JAX primitives have been deprecated. Custom
     primitives should be defined using the StableHLO lowering utilities in
     `jax.interpreters.mlir` instead.
+  * The following previously-deprecated functions have been removed after a
+    three-month deprecation period:
+    * `jax.abstract_arrays.ShapedArray`: use `jax.core.ShapedArray`.
+    * `jax.abstract_arrays.raise_to_shaped`: use `jax.core.raise_to_shaped`.
+    * `jax.numpy.alltrue`: use `jax.numpy.all`.
+    * `jax.numpy.sometrue`: use `jax.numpy.any`.
+    * `jax.numpy.product`: use `jax.numpy.prod`.
+    * `jax.numpy.cumproduct`: use `jax.numpy.cumprod`.
 
-* Internal deprecations/removals:
+* Deprecations/removals:
+  * The internal submodule `jax.prng` is now deprecated. Its contents are available at
+    {mod}`jax.extend.random`.
+  * The internal submodule path `jax.linear_util` has been deprecated. Use
+    {mod}`jax.extend.linear_util` instead (Part of {ref}`jax-extend-jep`)
+  * `jax.random.PRNGKeyArray` and `jax.random.KeyArray` are deprecated.  Use {class}`jax.Array`
+    for type annotations, and `jax.dtypes.issubdtype(arr.dtype, jax.dtypes.prng_key)` for
+    runtime detection of typed prng keys.
+  * The method `PRNGKeyArray.unsafe_raw_array` is deprecated. Use
+    {func}`jax.random.key_data` instead.
+  * `jax.experimental.pjit.with_sharding_constraint` is deprecated. Use
+    `jax.lax.with_sharding_constraint` instead.
   * The internal utilities `jax.core.is_opaque_dtype` and `jax.core.has_opaque_dtype`
     have been removed. Opaque dtypes have been renamed to Extended dtypes; use
     `jnp.issubdtype(dtype, jax.dtypes.extended)` instead (available since jax v0.4.14).
@@ -83,12 +184,17 @@ Remember to align the itemized text with the first line of an item within a list
   * The internal submodule path `jax.linear_util` has been deprecated. Use
     {mod}`jax.extend.linear_util` instead (Part of {ref}`jax-extend-jep`)
 
-## jaxlib 0.4.15 (Aug 30 2023)
+## jaxlib 0.4.16 (Sept 18, 2023)
 
 * Changes:
   * Sparse CSR matrix multiplications via the experimental jax sparse APIs
     no longer uses a deterministic algorithm on NVIDIA GPUs. This change was
     made to improve compatibility with CUDA 12.2.1.
+
+* Bug fixes:
+  * Fixed a crash on Windows due to a fatal LLVM error related to out-of-order
+    sections and IMAGE_REL_AMD64_ADDR32NB relocations
+    (https://github.com/openxla/xla/commit/cb732a921f0c4184995cbed82394931011d12bd4).
 
 ## jax 0.4.14 (July 27, 2023)
 

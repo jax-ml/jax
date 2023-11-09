@@ -24,11 +24,11 @@ import numpy as np
 
 from jax._src import api_util
 from jax._src import ad_util
+from jax._src import config
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import tree_util
-from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -174,7 +174,7 @@ def _prepend_scatter(x, idx, indexed_dims, val, *, add=False):
 
 def _indexer(idx, indexed_dims):
   idx_ = iter(idx)
-  indexer = tuple([next(idx_) if b else slice(None) for b in indexed_dims])
+  indexer = tuple(next(idx_) if b else slice(None) for b in indexed_dims)
   assert next(idx_, None) is None
   return indexer
 
@@ -251,7 +251,8 @@ def _closed_call_discharge_rule(
   ref_vals_iter = iter(ref_vals)
   new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
                      else None for aval in in_avals)
-  assert next(ref_vals_iter, None) is None
+  sentinel = object()
+  assert next(ref_vals_iter, sentinel) is sentinel
   return new_invals, out_vals
 
 # # `run_state`
@@ -261,7 +262,7 @@ run_state_p.multiple_results = True
 
 def _run_state_bind(*args: Any, jaxpr: core.Jaxpr,
                     which_linear: tuple[bool, ...]):
-  if config.jax_enable_checks:
+  if config.enable_checks.value:
     core.check_jaxpr(jaxpr)
     assert len(jaxpr.invars) == len(args)
     assert len(which_linear) == len(args)
@@ -467,7 +468,7 @@ def _run_state_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
 pe.custom_partial_eval_rules[run_state_p] = _run_state_partial_eval
 
 def _run_state_partial_eval_custom(
-    saveable: Callable[..., bool],
+    saveable: Callable[..., pe.RematCases_],
     in_unknowns: Sequence[bool],
     in_inst: Sequence[bool],
     eqn: core.JaxprEqn):
@@ -629,7 +630,7 @@ def _transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: Sequence[bool]
 def _run_state_transpose(in_cts, *args, jaxpr: core.Jaxpr,
                          which_linear: tuple[bool, ...]):
   # if any in_ct is nonzero, we definitely want it in args_ (and the
-  # corresponding x in args could be an undefined primal, but doesnt have to be)
+  # corresponding x in args could be an undefined primal, but doesn't have to be)
   # for non-res stuff:
   #   getting and setting => (nonzero ct, UndefinedPrimal arg)
   #   just setting =>        (nonzero ct, not UndefinedPrimal, dummy value)

@@ -22,16 +22,14 @@ from absl.testing import parameterized
 import jax
 import jax.numpy as jnp
 from jax import grad, jit, vmap, lax
-from jax._src import config as jax_config
+from jax._src import config
 from jax._src import core
-from jax._src import test_util as jtu
 from jax._src import source_info_util
+from jax._src import test_util as jtu
 from jax._src import traceback_util
 
 
-from jax import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 def get_exception(etype, f):
@@ -43,7 +41,7 @@ def get_exception(etype, f):
 
 def check_filtered_stack_trace(test, etype, f, frame_patterns=(),
                                filter_mode="remove_frames"):
-  with jax_config.traceback_filtering(filter_mode):
+  with config.traceback_filtering(filter_mode):
     test.assertRaises(etype, f)
     e = get_exception(etype, f)
   c = e.__cause__

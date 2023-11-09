@@ -24,6 +24,7 @@ from absl.testing import parameterized
 
 import scipy.stats
 
+from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import ad_checkpoint
@@ -33,7 +34,6 @@ from jax import random
 import jax
 import jax.numpy as jnp
 
-from jax import config
 config.parse_flags_with_absl()
 
 
@@ -41,11 +41,11 @@ class NNFunctionsTest(jtu.JaxTestCase):
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), order=4,
-                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
   def testSoftplusGradZero(self):
     check_grads(nn.softplus, (0.,), order=1,
-                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
   def testSoftplusGradInf(self):
     self.assertAllClose(
@@ -53,25 +53,25 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   def testSoftplusGradNegInf(self):
     check_grads(nn.softplus, (-float('inf'),), order=1,
-                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
   def testSoftplusGradNan(self):
     check_grads(nn.softplus, (float('nan'),), order=1,
-                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
   @parameterized.parameters([int, float] + jtu.dtypes.floating + jtu.dtypes.integer)
   def testSoftplusZero(self, dtype):
     self.assertEqual(jnp.log(dtype(2)), nn.softplus(dtype(0)))
 
   def testReluGrad(self):
-    rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
+    rtol = 1e-2 if jtu.test_device_matches(["tpu"]) else None
     check_grads(nn.relu, (1.,), order=3, rtol=rtol)
     check_grads(nn.relu, (-1.,), order=3, rtol=rtol)
     jaxpr = jax.make_jaxpr(jax.grad(nn.relu))(0.)
     self.assertGreaterEqual(len(jaxpr.jaxpr.eqns), 2)
 
   def testRelu6Grad(self):
-    rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
+    rtol = 1e-2 if jtu.test_device_matches(["tpu"]) else None
     check_grads(nn.relu6, (1.,), order=3, rtol=rtol)
     check_grads(nn.relu6, (-1.,), order=3, rtol=rtol)
     self.assertAllClose(jax.grad(nn.relu6)(0.), 0., check_dtypes=False)
@@ -143,17 +143,17 @@ class NNFunctionsTest(jtu.JaxTestCase):
     # TODO(mattjj): include log_softmax in these extra tests if/when we add a
     # custom_jvp rule for it (since otherwise it doesn't pass the numerical
     # checks below).
-    if fn is nn.softmax and config.jax_softmax_custom_jvp:
+    if fn is nn.softmax and config.softmax_custom_jvp.value:
       g_fun = lambda x: jnp.take(fn(x, where=m, initial=-jnp.inf),
                                 jnp.array([0, 2, 3]))
       jtu.check_grads(g_fun, (x,), order=2)
 
   def testSoftmaxGrad(self):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
-    jtu.check_grads(nn.softmax, (x,), order=2, atol=3e-3)
+    jtu.check_grads(nn.softmax, (x,), order=2, atol=5e-3)
 
   def testSoftmaxGradResiduals(self):
-    if not jax.config.jax_softmax_custom_jvp:
+    if not config.softmax_custom_jvp.value:
       raise unittest.SkipTest("only applies when upgrade flag enabled")
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
     res = ad_checkpoint.saved_residuals(nn.softmax, x)

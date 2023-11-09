@@ -29,6 +29,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax._src.lib import ducc_fft
 from jax._src.lib import version as jaxlib_version
 from jax._src.numpy.util import promote_dtypes_complex, promote_dtypes_inexact
@@ -82,6 +83,8 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
     raise ValueError(f"FFT input shape {x.shape} must have at least as many "
                     f"input dimensions as fft_lengths {fft_lengths}.")
   if fft_type == xla_client.FftType.RFFT:
+    if x.dtype not in (np.float32, np.float64):
+      raise ValueError(f"RFFT input must be float32 or float64, got {x.dtype}")
     if x.shape[-len(fft_lengths):] != fft_lengths:
       raise ValueError(f"RFFT input shape {x.shape} minor dimensions must "
                       f"be equal to fft_lengths {fft_lengths}")
@@ -89,6 +92,9 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
              + (fft_lengths[-1] // 2 + 1,))
     dtype = _complex_dtype(x.dtype)
   elif fft_type == xla_client.FftType.IRFFT:
+    if not np.issubdtype(x.dtype, np.complexfloating):
+      raise ValueError("IRFFT input must be complex64 or complex128, got "
+                       f"{x.dtype}")
     if x.shape[-len(fft_lengths):-1] != fft_lengths[:-1]:
       raise ValueError(f"IRFFT input shape {x.shape} minor dimensions must "
                       "be equal to all except the last fft_length, got "
@@ -96,6 +102,9 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
     shape = x.shape[:-len(fft_lengths)] + fft_lengths
     dtype = _real_dtype(x.dtype)
   else:
+    if not np.issubdtype(x.dtype, np.complexfloating):
+      raise ValueError("FFT input must be complex64 or complex128, got "
+                       f"{x.dtype}")
     if x.shape[-len(fft_lengths):] != fft_lengths:
       raise ValueError(f"FFT input shape {x.shape} minor dimensions must "
                       f"be equal to fft_lengths {fft_lengths}")
@@ -249,4 +258,8 @@ fft_p.def_abstract_eval(fft_abstract_eval)
 mlir.register_lowering(fft_p, _fft_lowering)
 ad.deflinear2(fft_p, _fft_transpose_rule)
 batching.primitive_batchers[fft_p] = _fft_batching_rule
-mlir.register_lowering(fft_p, _fft_lowering_cpu, platform='cpu')
+
+# TODO(phawkins): when jaxlib 0.4.21 is the minimum, use XLA's FFT lowering
+# always on CPU. At that point, we can also delete the DUCC FFT kernel from JAX.
+if xla_extension_version < 211:
+  mlir.register_lowering(fft_p, _fft_lowering_cpu, platform='cpu')

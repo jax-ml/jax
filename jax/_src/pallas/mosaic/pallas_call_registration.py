@@ -56,6 +56,11 @@ def pallas_call_tpu_lowering_rule(
         grid_mapping=grid_mapping, **compiler_params)
   if debug:
     print(jaxpr)
+  mesh = None
+  axis_context = ctx.module_context.axis_context
+  if axis_context is not None:
+    if isinstance(axis_context, mlir.SPMDAxisContext):
+      mesh = axis_context.mesh
   with ir.Context() as mlir_ctx, ir.Location.unknown(mlir_ctx):
     tpu.register_dialect(mlir_ctx)
     if mosaic_params is None:
@@ -64,20 +69,23 @@ def pallas_call_tpu_lowering_rule(
     kernel_regeneration_metadata = mosaic_params.get(
         "kernel_regeneration_metadata"
     )
-    mosaic_module = lowering.lower_jaxpr_to_module(
-        mlir_ctx, grid_mapping, jaxpr, dimension_semantics=dimension_semantics)
+    mosaic_module, extra_args = lowering.lower_jaxpr_to_module(
+        mlir_ctx, grid_mapping, jaxpr, dimension_semantics=dimension_semantics,
+        mesh=mesh)
     if debug:
       print(mosaic_module)
   out_avals = [jax_core.ShapedArray(s.shape, s.dtype) for s in out_shapes]
-  return mlir.lower_fun(
-      mosaic.as_tpu_kernel(
-          mosaic_module,
-          out_avals,
-          backend=ctx.module_context.backend,
-          kernel_name=name,
-          kernel_regeneration_metadata=kernel_regeneration_metadata,
-      ),
-      multiple_results=True,
-  )(ctx, *in_nodes)
+  def _lower_fun(*args):
+    return mosaic.as_tpu_kernel(
+        mosaic_module,
+        out_avals,
+        backend=ctx.module_context.backend,
+        kernel_name=name,
+        kernel_regeneration_metadata=kernel_regeneration_metadata,
+        cost_estimate=mosaic_params.get("cost_estimate", None),
+        flags=mosaic_params.get("flags", None),
+    )(*extra_args, *args)
+  return mlir.lower_fun(_lower_fun, multiple_results=True)(
+      ctx, *in_nodes)
 mlir.register_lowering(pallas_call_p, pallas_call_tpu_lowering_rule,
                        platform="tpu")

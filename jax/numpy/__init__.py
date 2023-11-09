@@ -15,8 +15,6 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
-import numpy as _numpy
-
 from jax.numpy import fft as fft
 from jax.numpy import linalg as linalg
 
@@ -96,6 +94,7 @@ from jax._src.numpy.lax_numpy import (
     expand_dims as expand_dims,
     extract as extract,
     eye as eye,
+    fill_diagonal as fill_diagonal,
     finfo as finfo,
     fix as fix,
     flatnonzero as flatnonzero,
@@ -334,6 +333,7 @@ from jax._src.numpy.ufuncs import (
     arctan2 as arctan2,
     arctanh as arctanh,
     bitwise_and as bitwise_and,
+    bitwise_count as bitwise_count,
     bitwise_not as bitwise_not,
     bitwise_or as bitwise_or,
     bitwise_xor as bitwise_xor,
@@ -425,27 +425,14 @@ from jax._src.numpy.array_methods import register_jax_array_methods
 register_jax_array_methods()
 del register_jax_array_methods
 
+try:
+  from numpy import issubsctype as _deprecated_issubsctype
+except ImportError:
+  _deprecated_issubsctype = None
 
 # Deprecations
 
 _deprecations = {
-    # Added June 2, 2023:
-    "alltrue": (
-        "jax.numpy.alltrue is deprecated. Use jax.numpy.all",
-        all,
-    ),
-    "cumproduct": (
-        "jax.numpy.cumproduct is deprecated. Use jax.numpy.cumprod",
-        cumprod,
-    ),
-    "product": (
-        "jax.numpy.product is deprecated. Use jax.numpy.prod",
-        prod,
-    ),
-    "sometrue": (
-        "jax.numpy.sometrue is deprecated. Use jax.numpy.any",
-        any,
-    ),
     # Added August 10, 2023:
     "NINF": (
         "jax.numpy.NINF is deprecated. Use -jax.numpy.inf instead.",
@@ -462,7 +449,7 @@ _deprecations = {
     # Added Aug 17, 2023:
     "issubsctype": (
         "jax.numpy.issubsctype is deprecated. In most cases, jax.numpy.issubdtype can be used instead.",
-        _numpy.core.numerictypes.issubsctype,
+        _deprecated_issubsctype,
     ),
     # Added Aug 22, 2023
     "row_stack": (
@@ -483,15 +470,11 @@ _deprecations = {
 
 import typing
 if typing.TYPE_CHECKING:
-  alltrue = all
-  cumproduct = cumprod
-  product = prod
   row_stack = vstack
-  sometrue = any
   NINF = -inf
   NZERO = -0.0
   PZERO = 0.0
-  issubsctype = _numpy.core.numerictypes.issubsctype
+  issubsctype = _deprecated_issubsctype
   in1d = _deprecated_in1d
   trapz = _deprecated_trapz
 else:
@@ -499,7 +482,5 @@ else:
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
-del _numpy
-
 del _deprecated_in1d
 del _deprecated_trapz

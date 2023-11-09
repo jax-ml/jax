@@ -30,6 +30,7 @@ from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.util import safe_zip
 from jax._src.sharding_impls import (_op_sharding_to_pos_sharding,
                                      pmap_sharding_devices_indices_map)
@@ -313,11 +314,11 @@ class JaxArrayTest(jtu.JaxTestCase):
   def test_wrong_num_arrays(self):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    devices = jax.local_devices()[:8] # Taking up to 8 devices
     s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
     inp_data = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     di_map = s.devices_indices_map(shape)
-    bufs = [jax.device_put(inp_data[di_map[d]], d)
-            for d in jax.local_devices()]
+    bufs = [jax.device_put(inp_data[di_map[d]], d) for d in devices]
     with self.assertRaisesRegex(
         ValueError,
         r'Expected 8 per-device arrays \(this is how many devices are addressable '
@@ -388,12 +389,13 @@ class JaxArrayTest(jtu.JaxTestCase):
       ("mesh_none_y", P(None, "y"), (8, 2)),
       ("mesh_none_x", P(None, "x"), (8, 1)),
       ("mesh_xy", P(("x", "y")), (1, 4)),
+      ("mesh_replicated", P(()), (8, 4)),
   )
   def test_shard_shape_mismatch_with_buffer_shape(self, pspec, expected_shard_shape):
     shape = (8, 4)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     mps = jax.sharding.NamedSharding(mesh, pspec)
-    inp_data = np.arange(math.prod(shape)).reshape(shape)
+    inp_data = np.arange(5)
 
     str_expected_shard_shape = str(expected_shard_shape).replace(
         r"(", r"\(").replace(r")", r"\)")
@@ -423,7 +425,8 @@ class JaxArrayTest(jtu.JaxTestCase):
     x = jnp.array([[1., 0., 0.], [0., 2., 3.]])
     y = jax.pmap(jnp.sin)(x)
     self.assertArraysEqual([a.device() for a in y],
-                           y.sharding._device_assignment)
+                           y.sharding._device_assignment,
+                           allow_object_dtype=True)
 
     sin_x = iter(np.sin(x))
     for i, j in zip(iter(y), sin_x):
@@ -695,19 +698,16 @@ class JaxArrayTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.all,
     shape=[(), (10), (2, 3)],
   )
+  @jtu.run_on_devices("cpu")
   def test_buffer_protocol(self, dtype, shape):
-    if jtu.device_under_test() != "cpu":
-      raise unittest.SkipTest("Buffer protocol only works on CPU")
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
     y = jax.device_put(x)
     if dtype == jax.dtypes.bfloat16:
-      with self.assertRaises(
+      with self.assertRaisesRegex(
           BufferError,
-          msg=(
-              'Buffers of type BF16 are not supported by the Python buffer'
-              ' protocol.'
-          ),
+          'Buffers of type BF16 are not supported by the Python buffer '
+          'protocol.'
       ):
         memoryview(y)
       return
@@ -716,9 +716,8 @@ class JaxArrayTest(jtu.JaxTestCase):
     y_bytes = memoryview(y).tobytes()
     self.assertEqual(x_bytes, y_bytes)
 
+  @jtu.run_on_devices("cpu")
   def test_buffer_protocol_deletion(self):
-    if jtu.device_under_test() != "cpu":
-      raise unittest.SkipTest("Buffer protocol only works on CPU")
     rng = jtu.rand_default(self.rng())
     x = rng((3, 4), np.float32)
     y = jax.device_put(x)
@@ -774,6 +773,13 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, arr_copy * 2)
     self.assertTrue(arr.is_deleted())
 
+  @parameterized.product(dtype=jtu.dtypes.all + jtu.dtypes.custom_floats)
+  @unittest.skipIf(xla_extension_version < 208, "Test requires jaxlib > 0.4.19")
+  def test_shards_have_correct_dtype(self, dtype):
+    x = jnp.ones((), dtype=dtype)
+    for shard in x.addressable_shards:
+      self.assertEqual(shard.data.dtype, dtype)
+
 
 class ShardingTest(jtu.JaxTestCase):
 
@@ -787,7 +793,8 @@ class ShardingTest(jtu.JaxTestCase):
     device_assignment = mp_sharding._device_assignment
 
     self.assertEqual(di_map[mesh.devices.flat[0]], (slice(0, 4), slice(0, 1)))
-    self.assertArraysEqual(device_assignment, list(mesh.devices.flat))
+    self.assertArraysEqual(device_assignment, list(mesh.devices.flat),
+                           allow_object_dtype=True)
     self.assertTrue(hlo_sharding.is_tiled())
     self.assertListEqual(hlo_sharding.tile_assignment_dimensions(), [2, 4])
     self.assertListEqual(hlo_sharding.tile_assignment_devices(),
@@ -868,7 +875,7 @@ class ShardingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         r"Sharding NamedSharding\(mesh=Mesh\('replica': 1, 'data': 1, 'mdl': 2\), "
-        r"spec=PartitionSpec\(None, \('mdl',\), None, None\)\) is only "
+        r"spec=PartitionSpec\(None, \('mdl',\), None, None\).*\) is only "
         "valid for values of rank at least 4, but was applied to a value of rank 2"):
       new_mps.is_compatible_aval(shape)
 
@@ -884,15 +891,16 @@ class ShardingTest(jtu.JaxTestCase):
     op.tile_assignment_devices = [0, 1, 2, 3, 4, 5, 6, 7]
     op.replicate_on_last_tile_dim = True
     s = jax.sharding.GSPMDSharding(jax.devices(), op)
-    self.assertEqual(
-        repr(s),
+    # memory kind also appears in the repr but only for TPU.
+    self.assertIn(
         'GSPMDSharding({devices=[4,1,2]0,1,2,3,4,5,6,7 '
-        'last_tile_dim_replicate})')
+        'last_tile_dim_replicate}', repr(s))
 
     op2 = xc.OpSharding()
     op2.type = xc.OpSharding.Type.REPLICATED
     s2 = jax.sharding.GSPMDSharding(jax.devices(), op2)
-    self.assertEqual(repr(s2), 'GSPMDSharding({replicated})')
+    # memory kind also appears in the repr but only for TPU.
+    self.assertIn('GSPMDSharding({replicated}', repr(s2))
 
   @parameterized.named_parameters(
       ("mesh_x_y",              P("x", "y"),   (4, 2), (),   False),
@@ -909,8 +917,9 @@ class ShardingTest(jtu.JaxTestCase):
 
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     mps = jax.sharding.NamedSharding(mesh, pspec)
+    devices = jax.local_devices()[:8] # Taking up to 8 devices
 
-    devices_sharding = jax.sharding.PositionalSharding(jax.devices())
+    devices_sharding = jax.sharding.PositionalSharding(devices)
     devices_sharding = devices_sharding.reshape(shape).replicate(axes)
     if transpose:
       devices_sharding = devices_sharding.T

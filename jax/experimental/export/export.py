@@ -28,20 +28,21 @@ from absl import logging
 import numpy as np
 
 import jax
-from jax import config
 from jax import sharding
 
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
-from jax._src import pjit
-from jax._src import sharding_impls
-from jax._src import source_info_util
+from jax._src import effects
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src import pjit
+from jax._src import sharding_impls
+from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
@@ -112,9 +113,15 @@ class DisabledSafetyCheck:
   def __hash__(self) -> int:
     return hash(self._impl)
 
-
+# See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions
+# for a description of the different versions.
 minimum_supported_serialization_version = 6
-maximum_supported_serialization_version = 8
+maximum_supported_serialization_version = 9
+
+_VERSION_START_SUPPORT_SHAPE_ASSERTIONS = 7
+_VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS = 9
+
+Sharding = Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]
 
 @dataclasses.dataclass(frozen=True)
 class Exported:
@@ -133,12 +140,16 @@ class Exported:
         expressions in the shapes, with dimension variables among those in
         `in_avals.
     in_shardings: the flattened input shardings. Only for the inputs that are
-        specified in `module_kept_var_idx`. If `None` then it is equivalent
-        to unspecified shardings.
-    out_shardings: the flattened output shardings, as long as `in_avals`.
+        specified in `module_kept_var_idx`.
+    out_shardings: the flattened output shardings, as long as `out_avals`.
     lowering_platforms: a tuple containing at least one of 'tpu', 'cpu',
         'cuda', 'rocm'. See below for the calling convention for when
         there are multiple lowering platforms.
+    ordered_effects: the ordered effects present in the serialized module.
+        This is present from serialization version 9. See below for the
+        calling convention in presence of ordered effects.
+    unordered_effects: the unordered effects present in the serialized module.
+        This is present from serialization version 9.
     mlir_module_serialized: the serialized lowered VHLO module.
     serialization_version: a version number for the serialized module.
         See more versioning details at https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions.
@@ -147,8 +158,9 @@ class Exported:
         because they are not used. Same length as `in_shardings`.
     uses_shape_polymorphism: whether the `mlir_module_serialized` uses shape
         polymorphism. This may be because `in_avals` contains dimension
-        variables, but also from inner calls of shape-polymorphic
-        Exported modules.
+        variables, or due to inner calls of Exported modules that have
+        dimension variables or platform index arguments. Such modules need
+        shape refinement before XLA compilation.
     disabled_checks: a list of descriptors of safety checks that have been
         disabled at export time. See docstring for `DisabledSafetyCheck`.
     _get_vjp: an optional function that takes the current exported function and
@@ -158,19 +170,20 @@ class Exported:
         for each primal output. It returns a tuple with the cotangents
         corresponding to the flattened primal inputs.
 
-  Calling convention for the exported module:
+  Calling convention for the exported module (for latest supported version):
 
   The `mlir_module` has a `main` function that takes an optional first
   platform index argument if the module supports multiple platforms
-  (`len(lowering_platforms) > 1`), followed by the kept array arguments
-  (corresponding to `module_kept_var_idx` and `in_avals`).
-  The platform index is a i32 scalar encoding the index of the current
+  (`len(lowering_platforms) > 1`), followed by the token arguments corresponding
+  to the ordered effects, followed by the kept array
+  arguments (corresponding to `module_kept_var_idx` and `in_avals`).
+  The platform index is a i32 or i64 scalar encoding the index of the current
   compilation platform into the `lowering_platforms` sequence.
 
   Inner functions use a different calling convention: an optional
-  platform index argument, optional dimension variable arguments specified
-  using scalar tensors of type i32 or i64,
-  followed by optional token arguments (in presence of side effects),
+  platform index argument, optional dimension variable arguments
+  (scalar tensors of type i32 or i64),
+  followed by optional token arguments (in presence of ordered effects),
   followed by the regular array arguments.
   The dimension arguments correspond to the dimension variables appearing in
   the `args_avals`, in sorted order of their names.
@@ -178,21 +191,54 @@ class Exported:
   Consider the lowering of a function with one array argument of type "f32[w,
   2 * h]", where "w" and "h" are two dimension variables.
   Assume that we use multi-platform lowering, and we have
-  ordered effects. The `main` function will be as follows:
+  one ordered effect. The `main` function will be as follows:
 
-      func public main(platform_index: i32, arg: f32[?, ?]) {
+      func public main(
+            platform_index: i32 {jax.global_constant="_platform_index"},
+            token_in: token,
+            arg: f32[?, ?]) {
          arg_w = hlo.get_dimension_size(arg, 0)
          dim1 = hlo.get_dimension_size(arg, 1)
          arg_h = hlo.floordiv(dim1, 2)
          call _check_shape_assertions(arg)  # See below
          token = new_token()
-         token_out, res = call _wrapped_jax_export_main(platform_index, arg_h, arg_w, token_in, arg)
-         return res
+         token_out, res = call _wrapped_jax_export_main(platform_index,
+                                                        arg_h,
+                                                        arg_w,
+                                                        token_in,
+                                                        arg)
+         return token_out, res
       }
 
   The actual computation is in `_wrapped_jax_export_main`, taking also
-  the values of `h` and `w` and the token. Proper exporting of
-  functions with side-effects and tokens is still work-in-progress.
+  the values of `h` and `w` dimension variables.
+
+  The signature of the `_wrapped_jax_export_main` is:
+
+      func private _wrapped_jax_export_main(
+          platform_index: i32 {jax.global_constant="_platform_index"},
+          arg_h: i32 {jax.global_constant="h"},
+          arg_w: i32 {jax.global_constant="w"},
+          arg_token: stablehlo.token {jax.token=True},
+          arg: f32[?, ?]) -> (stablehlo.token, ...)
+
+  Prior to serialization version 9 the calling convention for effects is
+  different: the `main` function does not take or return a token. Instead
+  the function creates dummy tokens of type `i1[0]` and passes them to the
+  `_wrapped_jax_export_main`. The `_wrapped_jax_export_main`
+  takes dummy tokens of type `i1[0]` and will create internally real
+  tokens to pass to the inner functions. The inner functions use real
+  tokens (both before and after serialization version 9)
+
+  Also starting with serialization version 9, function arguments that contain
+  the platform index or the dimension variable values have a
+  `jax.global_constant` string attribute whose value is the name of the
+  global constant, either `_platform_index` or a dimension variable name.
+  The global constant name may be empty if it is not known.
+  Some global constant computations use inner functions, e.g., for
+  `floor_divide`. The arguments of such functions have a `jax.global_constant`
+  attribute for all attributes, meaning that the result of the function is
+  also a global constant.
 
   Note that `main` contains a call to `_check_shape_assertions.
   JAX tracing assumes that `arg.shape[1]` is even, and that both `w` and `h`
@@ -225,10 +271,11 @@ class Exported:
   out_tree: tree_util.PyTreeDef
   out_avals: tuple[core.AbstractValue, ...]
 
-  in_shardings: Optional[tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]]
-  out_shardings: Optional[tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]]
-  lowering_platform: str  # For backwards compatibility
+  in_shardings: tuple[Sharding, ...]
+  out_shardings: tuple[Sharding, ...]
   lowering_platforms: tuple[str, ...]
+  ordered_effects: tuple[effects.Effect, ...]
+  unordered_effects: tuple[effects.Effect, ...]
   disabled_checks: Sequence[DisabledSafetyCheck]
 
   mlir_module_serialized: bytes
@@ -353,9 +400,11 @@ def poly_specs(
   return args_tree.unflatten(args_specs_flat)
 
 
+def _keep_main_tokens(serialization_version: int) -> bool:
+  return serialization_version >= _VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS
+
 def export(fun_jax: Callable,
            *,
-           lowering_platform: Optional[str] = None,
            lowering_platforms: Optional[Sequence[str]] = None,
            disabled_checks: Sequence[DisabledSafetyCheck] = (),
            ) -> Callable[..., Exported]:
@@ -363,9 +412,7 @@ def export(fun_jax: Callable,
 
   Args:
     fun_jax: the function to lower and serialize.
-    lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'. If None, then use
-        the default JAX backend.
-    lowering_platforms: DO NOT USE (NOT YET FUNCTIONAL).
+    lowering_platforms:
         Optional sequence containing a subset of 'tpu', 'cpu',
         'cuda', 'rocm'. If more than one platform is specified, then
         the lowered code takes an argument specifying the platform.
@@ -385,7 +432,7 @@ def export(fun_jax: Callable,
       exported = jax_export.export(f_jax)(*args, **kwargs)
   """
   fun_name = getattr(fun_jax, "__name__", "unknown")
-  version = config.jax_serialization_version
+  version = config.jax_serialization_version.value
   if (version < minimum_supported_serialization_version or
       version > maximum_supported_serialization_version):
     raise ValueError(
@@ -406,22 +453,25 @@ def export(fun_jax: Callable,
       wrapped_fun_jax = fun_jax  # type: ignore
       allow_non_replicated_sharding = True
 
-    nonlocal lowering_platforms
     if lowering_platforms is not None:
-      lowering_platforms = tuple(lowering_platforms)
+      actual_lowering_platforms = tuple(lowering_platforms)
     else:
-      lowering_platforms = (lowering_platform or default_lowering_platform(),)
+      actual_lowering_platforms = (default_lowering_platform(),)
 
     # Do not include shape assertions if the version is < 7.
     enable_shape_assertions = (
         DisabledSafetyCheck.shape_assertions() not in disabled_checks and
-        version >= 7)  # type: ignore
+        version >= _VERSION_START_SUPPORT_SHAPE_ASSERTIONS)  # type: ignore
     try:
       prev_enable_shape_assertions = shape_poly.thread_local_state.enable_shape_assertions
       shape_poly.thread_local_state.enable_shape_assertions = enable_shape_assertions
+      replace_tokens_with_dummy = not _keep_main_tokens(version)
       lowered = wrapped_fun_jax.lower(
           *args_specs, **kwargs_specs,
-          _experimental_lowering_platform=lowering_platforms)
+          _experimental_lowering_parameters=mlir.LoweringParameters(
+            platforms=actual_lowering_platforms,
+            replace_tokens_with_dummy=replace_tokens_with_dummy,
+          ))
 
       lowering = lowered._lowering  # type: ignore
       _check_lowering(lowering)
@@ -436,12 +486,11 @@ def export(fun_jax: Callable,
       shape_poly_state = lowering.compile_args["shape_poly_state"]
       if (not all(core.is_constant_shape(a.shape) for a in args_avals_flat)
           or lowering.compile_args.get("ordered_effects", [])):
-        # All arguments are kept if we have dimension variables.
-        assert len(module_kept_var_idx) == len(args_avals_flat)
         mlir_module = _wrap_main_func(
             mlir_module, args_avals_flat, args_kwargs_tree=lowered.in_tree,
-            has_platform_index_argument=shape_poly_state.has_platform_index_argument
-        )
+            has_platform_index_argument=shape_poly_state.has_platform_index_argument,
+            module_kept_var_idx=module_kept_var_idx,
+            serialization_version=version)
     finally:
       shape_poly.thread_local_state.enable_shape_assertions = prev_enable_shape_assertions
 
@@ -465,7 +514,7 @@ def export(fun_jax: Callable,
     if logging.vlog_is_on(3):
       mlir_module_text = mlir.module_to_string(mlir_module)
       logmsg = (f"version={version} "
-                f"lowering_platforms={lowering_platforms} "
+                f"lowering_platforms={actual_lowering_platforms} "
                 f"disabled_checks={disabled_checks}")
       logging.info("Lowered JAX module: %s\n", logmsg)
       for l in mlir_module_text.splitlines():
@@ -475,6 +524,11 @@ def export(fun_jax: Callable,
                   allow_non_replicated_sharding=allow_non_replicated_sharding,
                   disabled_checks=disabled_checks)
 
+    ordered_effects = tuple(lowering.compile_args["ordered_effects"])
+    unordered_effects = tuple(lowering.compile_args["unordered_effects"])
+    if version < _VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+      ordered_effects = unordered_effects = ()
+
     return Exported(
         fun_name=fun_name,
         in_tree=lowered.in_tree,
@@ -483,8 +537,9 @@ def export(fun_jax: Callable,
         out_avals=tuple(out_avals_flat),
         in_shardings=lowering.compile_args["in_shardings"],
         out_shardings=lowering.compile_args["out_shardings"],
-        lowering_platform=lowering_platforms[0],  # TODO: remove
-        lowering_platforms=lowering_platforms,
+        lowering_platforms=actual_lowering_platforms,
+        ordered_effects=ordered_effects,
+        unordered_effects=unordered_effects,
         disabled_checks=tuple(disabled_checks),
         mlir_module_serialized=mlir_module_serialized,
         module_kept_var_idx=module_kept_var_idx,
@@ -528,6 +583,8 @@ def _wrap_main_func(
     *,
     args_kwargs_tree: tree_util.PyTreeDef,
     has_platform_index_argument: bool,
+    module_kept_var_idx: tuple[int, ...],
+    serialization_version: int
 ) -> ir.Module:
   """Wraps the lowered module with a new "main" handling dimension arguments.
 
@@ -540,6 +597,11 @@ def _wrap_main_func(
       which correspond to the array arguments of the `module`.
     args_kwargs_tree: the PyTreeDef corresponding to `(args, kwargs)`, for error
       messages.
+    has_platform_index_argument: whether the `module` has a first platform
+      index argument
+    module_kept_var_idx: a sorted tuple of integers with the indices of arguments
+      in `args_avals_flat` that are kept as `module` arguments.
+    serialization_version: the target serialization version
 
   Returns the wrapped module, without dimension and token arguments.
   """
@@ -554,7 +616,10 @@ def _wrap_main_func(
     symbol_table.set_symbol_name(orig_main, "_wrapped_jax_export_main")
     orig_main_name = ir.StringAttr(symbol_table.insert(orig_main)).value
 
-    def is_token(attrs):
+    def is_token(typ, attrs):
+      if typ == mlir.token_type()[0]:
+        return True
+      # TODO(b/302258959): in older versions we cannot use the token type
       try:
         return ir.BoolAttr(ir.DictAttr(attrs)["jax.token"]).value
       except KeyError:
@@ -565,51 +630,89 @@ def _wrap_main_func(
     # The order of args: platform_index_arg, dim args, token args, array args.
     nr_platform_index_args = 1 if has_platform_index_argument else 0
     nr_dim_args = len(dim_vars)
-    nr_token_args = sum(1 for attrs in arg_attrs if is_token(attrs))
-    nr_array_args = len(orig_input_types) - nr_platform_index_args - nr_dim_args - nr_token_args
+    token_arg_idxs = [i for i, (typ, attrs) in enumerate(zip(orig_input_types,
+                                                             arg_attrs))
+                      if is_token(typ, attrs)]
+    nr_token_args = len(token_arg_idxs)
+    if nr_token_args > 0:
+      assert min(token_arg_idxs) == nr_platform_index_args + nr_dim_args
+      assert token_arg_idxs == list(
+        range(nr_platform_index_args + nr_dim_args,
+              nr_platform_index_args + nr_dim_args + nr_token_args))
+    nr_array_args = (len(orig_input_types) - nr_platform_index_args
+                     - nr_dim_args - nr_token_args)
     assert nr_array_args >= 0
-    assert not any(is_token(attrs) for attrs in arg_attrs[-nr_array_args:])
+
     (platform_input_types, dim_var_input_types,
      token_input_types, array_input_types) = util.split_list(
       orig_input_types, [nr_platform_index_args, nr_dim_args, nr_token_args])
-    new_main_input_types = platform_input_types + array_input_types
+
+    # The order of results: tokens, array results
     orig_output_types = orig_main.type.results
     result_attrs = list(ir.ArrayAttr(orig_main.result_attrs))
-    nr_token_results = sum(1 for attrs in result_attrs if is_token(attrs))
+    token_result_idxs = [i for i, (typ, attrs) in enumerate(zip(orig_output_types,
+                                                                result_attrs))
+                         if is_token(typ, attrs)]
+    nr_token_results = len(token_result_idxs)
+    assert token_result_idxs == list(range(0, nr_token_results))
     nr_array_results = len(orig_output_types) - nr_token_results
     assert nr_array_results >= 0
-    assert not any(
-        is_token(attrs) for attrs in result_attrs[-nr_array_results:])
-    new_main_output_types = orig_output_types[-nr_array_results:]
+    if _keep_main_tokens(serialization_version):
+      new_main_arg_indices = (tuple(range(0, nr_platform_index_args)) +
+                              tuple(range(nr_platform_index_args + nr_dim_args,
+                                          len(orig_input_types))))
+      new_main_result_indices = tuple(range(0, len(orig_output_types)))
+    else:
+      new_main_arg_indices = (
+        tuple(range(0, nr_platform_index_args)) +
+        tuple(range(nr_platform_index_args + nr_dim_args + nr_token_args,
+                    len(orig_input_types))))
+      new_main_result_indices = tuple(range(nr_token_results, len(orig_output_types)))
+    new_main_input_types = [orig_input_types[idx] for idx in new_main_arg_indices]
+    new_main_output_types = [orig_output_types[idx] for idx in new_main_result_indices]
     new_main_ftype = ir.FunctionType.get(new_main_input_types, new_main_output_types)
     new_main_op = func_dialect.FuncOp(
         "main", new_main_ftype, ip=ir.InsertionPoint.at_block_begin(wrapped_module.body))
     new_main_op.attributes["sym_visibility"] = ir.StringAttr.get("public")
     try:
-      new_main_op.arg_attrs = ir.ArrayAttr.get(arg_attrs[0:nr_platform_index_args] + arg_attrs[-nr_array_args:])
+      new_main_op.arg_attrs = ir.ArrayAttr.get(
+        [arg_attrs[idx] for idx in new_main_arg_indices])
     except KeyError:
       pass  # TODO: better detection if orig_main.arg_attrs does not exist
     try:
       new_main_op.result_attrs = ir.ArrayAttr.get(
-          result_attrs[-nr_array_results:])
+          [result_attrs[idx] for idx in new_main_result_indices])
     except KeyError:
       pass
     symbol_table.insert(new_main_op)
     entry_block = new_main_op.add_entry_block()
     with ir.InsertionPoint(entry_block):
+      # Make a context just for lowering the dimension value computations
       module_context = mlir.ModuleContext(
-          "cpu", "cpu", sharding_impls.ShardingContext([]),
-          source_info_util.new_name_stack(),
-          [], itertools.count(1), [], module=wrapped_module, context=context)
+          backend_or_name="cpu", platforms=["cpu"],
+          axis_context=sharding_impls.ShardingContext([]),
+          name_stack=source_info_util.new_name_stack(),
+          keepalives=[], channel_iterator=itertools.count(1),
+          host_callbacks=[], module=wrapped_module, context=context,
+          lowering_parameters=mlir.LoweringParameters(
+            global_constant_computation=True
+          ))
       ctx = mlir.LoweringRuleContext(
         module_context=module_context, primitive=None,
         avals_in=args_avals_flat, avals_out=None,
         tokens_in=mlir.TokenSet(), tokens_out=None)
-      new_main_op_array_args = new_main_op.arguments[nr_platform_index_args:]
-      dim_values = mlir.lower_fun(
-          functools.partial(shape_poly.compute_dim_vars_from_arg_shapes,
-                            args_avals_flat, args_kwargs_tree=args_kwargs_tree),
-          multiple_results=True)(ctx, *new_main_op_array_args)
+      # We compute dim_values from the array arguments.
+      new_main_op_array_args = new_main_op.arguments[-nr_array_args:]
+      if shape_poly.all_dim_vars(args_avals_flat):
+        # TODO(necula): handle module_kept_var_idx in presence of shape
+        # polymorphism. For now we ensured upstream that we keep all variables.
+        assert len(set(module_kept_var_idx)) == len(args_avals_flat)
+        dim_values = mlir.lower_fun(
+            functools.partial(shape_poly.compute_dim_vars_from_arg_shapes,
+                              args_avals_flat, args_kwargs_tree=args_kwargs_tree),
+            multiple_results=True)(ctx, *new_main_op_array_args)
+      else:
+        dim_values = ()
       # The arguments to pass to the call to orig_main
       orig_main_args: list[ir.Value] = []
       # The platform index and the dimension variables
@@ -621,19 +724,26 @@ def _wrap_main_func(
         else:
           orig_main_args.append(arg)
       # Then the token arguments
-      orig_main_args.extend(list(mlir.dummy_token()) * nr_token_args)
+      if _keep_main_tokens(serialization_version):
+        orig_main_args.extend(
+          new_main_op.arguments[nr_platform_index_args: nr_platform_index_args + nr_token_args])
+      else:
+        orig_main_args.extend(list(mlir.dummy_token()) * nr_token_args)
       # Then the array arguments. We insert a ConvertOp as the only use of
       # an input argument. This helps the downstream shape refinement because
       # it will set the type of input arguments to static shapes, and this
       # can invalidate the module if the argument is used as the result of a
       # function, or if it appears as the input to a custom_call with
       # output_operand_alias attribute. See b/287386268.
-      for a in new_main_op_array_args:
-        orig_main_args.append(hlo.ConvertOp(a.type, a).result)
+      for arg, arg_type in zip(new_main_op_array_args, array_input_types):
+        if arg.type != arg_type:
+          orig_main_args.append(hlo.ConvertOp(arg_type, arg).result)
+        else:
+          orig_main_args.append(arg)
       call = func_dialect.CallOp(orig_output_types,
                                  ir.FlatSymbolRefAttr.get(orig_main_name),
                                  orig_main_args)
-      func_dialect.ReturnOp(call.results[-nr_array_results:])
+      func_dialect.ReturnOp([call.results[idx] for idx in new_main_result_indices])
     symbol_table.set_symbol_name(new_main_op, "main")
 
   return wrapped_module
@@ -653,7 +763,8 @@ def _check_lowering(lowering) -> None:
       "spmd_lowering", "auto_spmd_lowering",
       "tuple_args", "ordered_effects", "unordered_effects",
       "keepalive", "host_callbacks", "pmap_nreps", "committed",
-      "device_assignment", "jaxpr_debug_info", "shape_poly_state"]
+      "device_assignment", "jaxpr_debug_info", "shape_poly_state",
+      "all_default_mem_kind"]
   for compile_arg in lowering.compile_args.keys():
     if compile_arg not in allowed_compile_args:
       raise NotImplementedError(f"Unrecognized lowered.compile_args[{compile_arg}]")
@@ -671,8 +782,6 @@ def _check_lowering(lowering) -> None:
       # custom calls. The CallTfEffect is an exception, but we want to allow
       # that one.
       ("unordered_effects", lambda v: True, "N/A"),
-      # ordered_effects are allowed and we ensure that the calling convention is
-      # unmodified by passing dummy tokens in the main function wrapper.
       ("ordered_effects", lambda v: True, "N/A"),
       # used for TPU jax.debug, send/recv. Not supported yet.
       ("host_callbacks", lambda v: not v, "empty"),
@@ -809,73 +918,121 @@ def _check_module(mod: ir.Module, *,
            "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-lowering-supports-only-select-custom-calls")
     raise ValueError(msg)
 
+def expand_in_shardings(in_shardings: tuple[Sharding, ...],
+                        module_kept_var_idx: Sequence[int],
+                        nr_inputs: int) -> tuple[Sharding, ...]:
+  """Expands in_shardings with unspecified shardings for inputs not kept.
 
-def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
-  # Export the VJP of `primal_fun_jax`. See documentation for Exported.vjp
+  Assumes in_shardings corresponds to module_kept_var_idx.
+  """
+  assert len(in_shardings) == len(module_kept_var_idx)
+  assert nr_inputs >= len(module_kept_var_idx)
+  all_in_shardings: list[Sharding] = [sharding_impls.UNSPECIFIED] * nr_inputs
+  for idx, in_s in zip(sorted(module_kept_var_idx), in_shardings):
+    all_in_shardings[idx] = in_s
+  return tuple(all_in_shardings)
 
+# TODO(yashkatariya, necula): remove this function once we relax the checks
+# in the jit front-end.
+def canonical_shardings(
+    in_shardings: Sequence[Sharding],
+    out_shardings: Sequence[Sharding]
+    ) -> tuple[Union[pxla.UnspecifiedValue,
+                     Sequence[sharding.XLACompatibleSharding]],
+               Union[pxla.UnspecifiedValue,
+                     Sequence[sharding.XLACompatibleSharding]]]:
+  """Prepares canonical in_ and out_shardings for a jit invocation.
+
+  The pjit front-end is picky about what in- and out-shardings it accepts,
+  e.g., if all are unspecified then the whole sharding should be the
+  sharding_impls.UNSPECIFIED object, otherwise the unspecified shardings are
+  replaced with the replicated sharding.
+  """
+  # Prepare a replicated sharding, search in both the input and output shardings
+  specified_shardings = [
+      s for s in itertools.chain(in_shardings, out_shardings)
+      if not sharding_impls.is_unspecified(s)]
+  if specified_shardings:
+    in_s = specified_shardings[0]  # pjit will enforce that all have same devices
+    assert isinstance(in_s, sharding.XLACompatibleSharding)
+    replicated_s = sharding.GSPMDSharding.get_replicated(in_s._device_assignment)
+  else:
+    replicated_s = None
+
+  def canonicalize(
+    ss: Sequence[Sharding]) -> Union[pxla.UnspecifiedValue,
+                                     Sequence[sharding.XLACompatibleSharding]]:
+    if all(sharding_impls.is_unspecified(s) for s in ss):
+      return sharding_impls.UNSPECIFIED
+    return tuple(
+        s if not sharding_impls.is_unspecified(s) else replicated_s
+        for s in ss)
+  return (canonicalize(in_shardings), canonicalize(out_shardings))
+
+def _get_vjp_fun(primal_fun: Callable, *,
+                 in_tree: tree_util.PyTreeDef,
+                 in_avals: Sequence[core.AbstractValue],
+                 out_avals: Sequence[core.AbstractValue],
+                 module_kept_var_idx: tuple[int, ...],
+                 in_shardings: tuple[Sharding, ...],
+                 out_shardings: tuple[Sharding, ...],
+                 apply_jit: bool
+                 ) -> tuple[Callable, Sequence[core.AbstractValue]]:
   # Since jax.vjp does not handle kwargs, it is easier to do all the work
   # here with flattened functions.
   def fun_vjp_jax(*args_and_out_cts_flat_jax):
     # Takes a flat list of primals and output cotangents
     def flattened_primal_fun_jax(*args_flat):
-      args, kwargs = primal.in_tree.unflatten(args_flat)
-      res = primal_fun_jax(*args, **kwargs)
-      res_flat, res_tree = tree_util.tree_flatten(res)
-      assert res_tree == primal.out_tree
+      args, kwargs = in_tree.unflatten(args_flat)
+      res = primal_fun(*args, **kwargs)
+      res_flat, _ = tree_util.tree_flatten(res)
       return res_flat
 
     args_flat_jax, out_cts_flat_jax = util.split_list(args_and_out_cts_flat_jax,
-                                                      [len(primal.in_avals)])
+                                                      [len(in_avals)])
     _, pullback_jax = jax.vjp(flattened_primal_fun_jax, *args_flat_jax)
     return pullback_jax(out_cts_flat_jax)
 
   vjp_in_avals = list(
-      itertools.chain(primal.in_avals,
-                      map(lambda a: a.at_least_vspace(), primal.out_avals)))
+      itertools.chain(in_avals,
+                      map(lambda a: a.at_least_vspace(), out_avals)))
 
-  # Expand in_shardings to all in_avals even not kept ones.
-  all_in_shardings = [sharding_impls.UNSPECIFIED] * len(primal.in_avals)
-  for idx, in_s in zip(sorted(primal.module_kept_var_idx),
-                       primal.in_shardings):  # type: ignore
-    all_in_shardings[idx] = in_s  # type: ignore
-  all_shardings = all_in_shardings + list(primal.out_shardings)  # type: ignore
-  # Cannot mix unspecified and specified shardings. Make the unspecified
-  # ones replicated.
-  specified_shardings = [
-      s for s in all_shardings if not sharding_impls.is_unspecified(s)]
+  all_in_shardings = expand_in_shardings(in_shardings,
+                                         module_kept_var_idx, len(in_avals))
+  vjp_in_shardings, vjp_out_shardings = canonical_shardings(
+    tuple(itertools.chain(all_in_shardings, out_shardings)),
+    all_in_shardings)
 
-  vjp_in_shardings: Any  # The primal inputs followed by output cotangents
-  vjp_out_shardings: Any  # The primal output cotangents
-  if 0 == len(specified_shardings):
-    vjp_in_shardings = sharding_impls.UNSPECIFIED
-    vjp_out_shardings = sharding_impls.UNSPECIFIED
+  if apply_jit:
+    return pjit.pjit(fun_vjp_jax,
+                     in_shardings=vjp_in_shardings,
+                     out_shardings=vjp_out_shardings), vjp_in_avals
   else:
-    if len(specified_shardings) < len(all_shardings):
-      # There are some specified, but not all; pjit front-end does not liwk
-      in_s = specified_shardings[0]  # pjit will enforce that all have same devices
-      assert isinstance(in_s, sharding.XLACompatibleSharding)
-      replicated_s = sharding.GSPMDSharding.get_replicated(in_s._device_assignment)
-      all_shardings = [
-          s if not sharding_impls.is_unspecified(s) else replicated_s
-          for s in all_shardings]
+    assert vjp_in_shardings == sharding_impls.UNSPECIFIED
+    assert vjp_out_shardings == sharding_impls.UNSPECIFIED
+    return fun_vjp_jax, vjp_in_avals
 
-    vjp_in_shardings = tuple(all_shardings)
-    vjp_out_shardings = tuple(all_shardings[:len(primal.in_avals)])
-    if all(sharding_impls.is_unspecified(s) for s in vjp_out_shardings):
-      vjp_out_shardings = sharding_impls.UNSPECIFIED
-
-  fun_vjp_jax = pjit.pjit(fun_vjp_jax,
-                          in_shardings=vjp_in_shardings,
-                          out_shardings=vjp_out_shardings)
-
+def _export_native_vjp(primal_fun, primal: Exported) -> Exported:
+  # Export the VJP of `primal_fun_jax`. See documentation for Exported.vjp
+  fun_vjp_jax, vjp_in_avals = _get_vjp_fun(primal_fun,
+                                           in_tree=primal.in_tree,
+                                           module_kept_var_idx=primal.module_kept_var_idx,
+                                           in_avals=primal.in_avals,
+                                           in_shardings=primal.in_shardings,
+                                           out_avals=primal.out_avals,
+                                           out_shardings=primal.out_shardings,
+                                           apply_jit=True)
   return export(fun_vjp_jax,
-                lowering_platform=primal.lowering_platform,
+                lowering_platforms=primal.lowering_platforms,
                 disabled_checks=primal.disabled_checks)(*vjp_in_avals)
 
 ### Importing
 
 def call_exported(exported: Exported) -> Callable[..., jax.Array]:
-
+  if not isinstance(exported, Exported):
+    raise ValueError(
+      "The exported argument must be an export.Exported. "
+      f"Found {exported}.")
   @jax.custom_vjp
   def f_flat(*args_flat):
     return call_exported_p.bind(*args_flat, exported=exported)
@@ -923,8 +1080,10 @@ call_exported_p = core.Primitive("call_exported")
 call_exported_p.multiple_results = True
 
 @util.cache()
-def _call_exported_abstract_eval(*in_avals: core.AbstractValue,
-                                 exported: Exported) -> tuple[core.AbstractValue, ...]:
+def _call_exported_abstract_eval(
+    *in_avals: core.AbstractValue,
+    exported: Exported
+    ) -> tuple[tuple[core.AbstractValue, ...], set[effects.Effect]]:
   exported_dim_vars = shape_poly.all_dim_vars(exported.in_avals)
   assert len(in_avals) == len(exported.in_avals)  # since the pytrees have the same structure
   # Check that the expected shapes match the actual ones
@@ -960,7 +1119,7 @@ def _call_exported_abstract_eval(*in_avals: core.AbstractValue,
   # We discharge all the constraints statically. This results in much simpler
   # composability (because we do not have to worry about the constraints of the
   # Exported called recursively; we only need to worry about entry-point
-  # constraints). This also makes sense from a composibility point of view,
+  # constraints). This also makes sense from a composability point of view,
   # because we get the same errors if we invoke the exported module, or if we
   # trace the exported function. Consider for example, an exported module with
   # signature `f32[a, a] -> f32[a]`. If we invoke the module with an argument
@@ -971,15 +1130,16 @@ def _call_exported_abstract_eval(*in_avals: core.AbstractValue,
   shape_constraints.check_statically(synthetic_eval)
   exported_dim_values = [synthetic_eval.evaluate(solution[var])
                          for var in exported_dim_vars]
-  return tuple(
+  out_avals = tuple(
       core.ShapedArray(core.evaluate_shape(out_aval.shape, exported_dim_vars,
                                            *exported_dim_values),
                        dtype=out_aval.dtype, weak_type=out_aval.weak_type,
                        named_shape=out_aval.named_shape)
       for out_aval in exported.out_avals)
+  return out_avals, set(exported.ordered_effects + exported.unordered_effects)
 
 
-call_exported_p.def_abstract_eval(_call_exported_abstract_eval)
+call_exported_p.def_effectful_abstract_eval(_call_exported_abstract_eval)
 
 def _call_exported_impl(*args, exported: Exported):
   return dispatch.apply_primitive(call_exported_p, *args, exported=exported)
@@ -987,19 +1147,17 @@ def _call_exported_impl(*args, exported: Exported):
 call_exported_p.def_impl(_call_exported_impl)
 
 def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
-                            platform: str,
                             exported: Exported):
-  # TODO: implement true multi-platform lowering for call_exported
-  if (platform not in exported.lowering_platforms and
-      DisabledSafetyCheck.platform() not in exported.disabled_checks):
-    raise ValueError(
-        f"The exported function '{exported.fun_name}' was lowered for "
-        f"platforms '{exported.lowering_platforms}' but it is used "
-        f"on '{platform}'.")
-
   if exported.uses_shape_polymorphism:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
 
+  # Apply in_shardings
+  all_in_shardings = expand_in_shardings(exported.in_shardings,
+                                         exported.module_kept_var_idx,
+                                         len(args))
+  args = tuple(
+    wrap_with_sharding(ctx, exported, x, x_aval, x_sharding)
+    for x, x_aval, x_sharding in zip(args, ctx.avals_in, all_in_shardings))
   submodule = ir.Module.parse(exported.mlir_module())
   symtab = ir.SymbolTable(submodule.operation)
   # The called function may have been exported with polymorphic shapes and called
@@ -1017,30 +1175,113 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   fn = mlir.merge_mlir_modules(ctx.module_context.module,
                                f"call_exported_{exported.fun_name}",
                                submodule)
+
+  submodule_args = []
+  # All the platforms for the current lowering must be among the platforms
+  # for which the callee was lowered.
+  lowering_platforms = ctx.module_context.platforms
+
+  callee_lowering_platform_index: list[int] = []
+  for platform in lowering_platforms:
+    if platform in exported.lowering_platforms:
+      callee_lowering_platform_index.append(
+        exported.lowering_platforms.index(platform))
+    elif DisabledSafetyCheck.platform() in exported.disabled_checks:
+      callee_lowering_platform_index.append(0)
+    else:
+      raise ValueError(
+          f"The exported function '{exported.fun_name}' was lowered for "
+          f"platforms '{exported.lowering_platforms}' but it is used "
+          f"on '{lowering_platforms}'.")
+
+  if len(exported.lowering_platforms) > 1:
+    # The exported module takes a platform index argument
+    if len(lowering_platforms) > 1:
+      current_platform_idx = ctx.dim_var_values[0]
+    else:
+      current_platform_idx = mlir.ir_constant(np.int32(0))
+    # Compute the rule index based on the current platform
+    i32_type = mlir.aval_to_ir_types(core.ShapedArray((), dtype=np.int32))[0]
+    if current_platform_idx.type != i32_type:
+      current_platform_idx = hlo.ConvertOp(i32_type, current_platform_idx)
+    callee_platform_idx = hlo.CaseOp([i32_type],
+                                     index=current_platform_idx,
+                                     num_branches=len(lowering_platforms))
+    for i in range(len(lowering_platforms)):
+      branch = callee_platform_idx.regions[i].blocks.append()
+      with ir.InsertionPoint(branch):
+        hlo.ReturnOp(mlir.ir_constants(
+          np.int32(callee_lowering_platform_index[i])))
+    if callee_platform_idx.result.type != callee_type.inputs[0]:
+      callee_platform_idx = hlo.ConvertOp(callee_type.inputs[0],
+                                          callee_platform_idx)
+
+    submodule_args.append(callee_platform_idx)
+  else:
+    assert len(lowering_platforms) == 1
+
+  if _keep_main_tokens(exported.serialization_version):
+    ordered_effects = exported.ordered_effects
+  else:
+    ordered_effects = ()
+  for eff in ordered_effects:
+    token_in = ctx.tokens_in.get(eff)[0]
+    submodule_args.append(token_in)
   kept_args = [
       convert_shape(a, a_aval, exported_in_aval)
       for i, (a, a_aval, exported_in_aval) in enumerate(zip(args, ctx.avals_in, exported.in_avals))
       if i in exported.module_kept_var_idx]
-  if len(exported.lowering_platforms) > 1:
-    # The exported module takes a platform index argument
-    # TODO: implement proper handling of the platform_index when we are
-    # in a multi-platform lowering context.
-    platform_index = exported.lowering_platforms.index(platform)
-    arg_width = callee_type.inputs[0].element_type.width
-    assert arg_width in [32, 64]
-    platform_index = np.int32(platform_index) if arg_width == 32 else np.int64(platform_index)  # type: ignore
-    kept_args = [mlir.ir_constant(platform_index)] + kept_args
+  submodule_args = submodule_args + kept_args
+
   call = func_dialect.CallOp(callee_type.results,
                              ir.FlatSymbolRefAttr.get(fn),
-                             kept_args)
+                             submodule_args)
+  if ordered_effects:
+    tokens_out = {eff: (call.results[effect_idx],)
+                  for effect_idx, eff in enumerate(ordered_effects)}
+    ctx.set_tokens_out(mlir.TokenSet(tokens_out))
   # The ctx.avals_out already contain the abstract values refined by
   # _call_exported_abstract_eval.
-  return tuple(
+  results = tuple(
       convert_shape(out, out_aval, refined_out_aval)
-      for out, out_aval, refined_out_aval in zip(call.results, exported.out_avals, ctx.avals_out))
+      for out, out_aval, refined_out_aval in zip(call.results[len(ordered_effects):],
+                                                 exported.out_avals, ctx.avals_out))
+  # Apply out_shardings
+  results = tuple(
+    wrap_with_sharding(ctx, exported, x, x_aval, x_sharding)
+    for x, x_aval, x_sharding in zip(results, ctx.avals_out, exported.out_shardings)
+  )
+  return results
 
 
-for _p in ("cpu", "tpu", "cuda", "rocm"):
-  mlir.register_lowering(call_exported_p,
-                         functools.partial(_call_exported_lowering, platform=_p),
-                         platform=_p)
+# for _p in ("cpu", "tpu", "cuda", "rocm"):
+#   mlir.register_lowering(call_exported_p,
+#                          functools.partial(_call_exported_lowering, platform=_p),
+#                          platform=_p)
+mlir.register_lowering(call_exported_p, _call_exported_lowering)
+
+def wrap_with_sharding(ctx: mlir.LoweringRuleContext,
+                       exported: Exported,
+                       x: ir.Value,
+                       x_aval: core.AbstractValue,
+                       x_sharding: Sharding) -> ir.Value:
+  if sharding_impls.is_unspecified(x_sharding):
+    return x
+  axis_context = ctx.module_context.axis_context
+  if isinstance(axis_context, sharding_impls.ShardingContext):
+    ctx_device_assignment = axis_context.device_assignment
+  elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
+    ctx_device_assignment = list(axis_context.mesh.devices.flat)
+  else:
+    raise NotImplementedError(type(axis_context))
+  assert isinstance(x_sharding, sharding_impls.XLACompatibleSharding)
+  sharding_device_assignment = x_sharding._device_assignment
+  if len(ctx_device_assignment) != len(sharding_device_assignment):
+    raise NotImplementedError(
+      f"Exported module {exported.fun_name} was lowered for "
+      f"{len(sharding_device_assignment)} devices and is called in a context with "
+      f"{len(ctx_device_assignment)} devices"
+    )
+  return mlir.wrap_with_sharding_op(
+    ctx, x, x_aval,
+    x_sharding._to_xla_hlo_sharding(x_aval.ndim).to_proto())

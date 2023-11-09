@@ -60,7 +60,12 @@ setup(
     author_email='jax-dev@google.com',
     packages=['jaxlib', 'jaxlib.xla_extension'],
     python_requires='>=3.9',
-    install_requires=['scipy>=1.7', 'numpy>=1.22', 'ml_dtypes>=0.2.0'],
+    install_requires=[
+        'scipy>=1.9',
+        "scipy>=1.11.1; python_version>='3.12'",
+        'numpy>=1.22',
+        'ml_dtypes>=0.2.0',
+    ],
     extras_require={
       'cuda11_pip': [
         "nvidia-cublas-cu11>=11.11",

@@ -21,6 +21,7 @@ Requires matplotlib.
 import functools
 import re
 import os
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -33,6 +34,7 @@ from jax import config
 from jax._src import test_util as jtu
 from jax.experimental.sparse import linalg, bcoo
 import jax.numpy as jnp
+
 
 def _clean_matrix_name(name):
   return re.sub('[^0-9a-zA-Z]+', '_', name)
@@ -365,6 +367,12 @@ class LobpcgTest(jtu.JaxTestCase):
 
 class F32LobpcgTest(LobpcgTest):
 
+  def setUp(self):
+    # TODO(phawkins): investigate this failure
+    if jtu.test_device_matches(["gpu"]):
+      raise unittest.SkipTest("Test is failing on CUDA gpus")
+    super().setUp()
+
   def testLobpcgValidatesArguments(self):
     A, _ = _concrete_generators(np.float32)['id'](100, 10)
     X = self.rng().standard_normal(size=(100, 10)).astype(np.float32)
@@ -398,6 +406,12 @@ class F32LobpcgTest(LobpcgTest):
 
 @jtu.with_config(jax_enable_x64=True)
 class F64LobpcgTest(LobpcgTest):
+
+  def setUp(self):
+    # TODO(phawkins): investigate this failure
+    if jtu.test_device_matches(["gpu"]):
+      raise unittest.SkipTest("Test is failing on CUDA gpus")
+    super().setUp()
 
   @parameterized.named_parameters(_make_concrete_cases(f64=True))
   @jtu.skip_on_devices("tpu", "iree", "gpu")

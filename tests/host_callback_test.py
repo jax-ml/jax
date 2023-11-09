@@ -28,17 +28,17 @@ from absl.testing import absltest
 
 import jax
 from jax import ad_checkpoint
-from jax._src import core
 from jax import config
 from jax import dtypes
-from jax.experimental import host_callback as hcb
-from jax.sharding import PartitionSpec as P
-from jax.experimental import pjit
 from jax import lax
 from jax import numpy as jnp
-from jax._src import test_util as jtu
 from jax import tree_util
+from jax.experimental import host_callback as hcb
+from jax.experimental import pjit
+from jax.sharding import PartitionSpec as P
+from jax._src import core
 from jax._src import xla_bridge
+from jax._src import test_util as jtu
 from jax._src.lib import xla_client
 
 xops = xla_client.ops
@@ -46,7 +46,6 @@ xops = xla_client.ops
 import numpy as np
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 class _TestingOutputStream:
@@ -237,7 +236,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jtu.device_under_test() == "gpu" and jax.device_count() > 1:
+    if jtu.test_device_matches(["gpu"]) and jax.device_count() > 1:
       raise SkipTest("host_callback broken on multi-GPU platforms (#6447)")
     if xla_bridge.using_pjrt_c_api():
       raise SkipTest("host_callback not implemented in PJRT C API")
@@ -333,7 +332,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       ( 6.00 9.00 )""")
 
   def test_tap_eval_exception(self):
-    if not FLAGS.jax_host_callback_outfeed:
+    if not hcb._HOST_CALLBACK_OUTFEED.value:
       raise SkipTest("TODO: implement error handling for customcall")
     # Simulate a tap error
     def tap_err(*args, **kwargs):
@@ -540,7 +539,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
   @jtu.sample_product(concurrent=[True, False])
   def test_tap_multiple(self, concurrent=False):
     """Call id_tap multiple times, concurrently or in sequence. """
-    if concurrent and jtu.device_under_test() in ["cpu", "gpu"]:
+    if concurrent and jtu.test_device_matches(["cpu", "gpu"]):
       # TODO(necula): if there is device side concurrency, outfeeds from
       # different computations can be interleaved. For example, it seems that
       # on GPU if multiple host threads run a jit computation, the multiple
@@ -818,7 +817,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     self.assertEqual(100, count)
 
   def test_tap_jit_tap_exception(self):
-    if not FLAGS.jax_host_callback_outfeed:
+    if not hcb._HOST_CALLBACK_OUTFEED.value:
       raise SkipTest("TODO: implement error handling for customcall")
     # Simulate a tap error
     def tap_err(*args, **kwargs):
@@ -1541,8 +1540,8 @@ class HostCallbackTapTest(jtu.JaxTestCase):
   @jtu.sample_product(device_index=[0, 1])
   def test_tap_pjit(self, device_index=0):
     if (device_index != 0 and
-        not FLAGS.jax_host_callback_outfeed and
-        jtu.device_under_test() == "cpu"):
+        not hcb._HOST_CALLBACK_OUTFEED.value and
+        jtu.test_device_matches(["cpu"])):
       # See comment in host_callback.py.
       raise SkipTest("device_index works only with outfeed on CPU")
 
@@ -1868,7 +1867,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jtu.device_under_test() == "gpu" and jax.device_count() > 1:
+    if jtu.test_device_matches(["gpu"]) and jax.device_count() > 1:
       raise SkipTest("host_callback broken on multi-GPU platforms (#6447)")
     if xla_bridge.using_pjrt_c_api():
       raise SkipTest("host_callback not implemented in PJRT C API")
@@ -2231,17 +2230,17 @@ class HostCallbackCallTest(jtu.JaxTestCase):
                                    expected_exc_txt: str):
     """Calls thunk() and checks for expected exceptions.
     """
-    if jtu.device_under_test() == "cpu":
+    if jtu.test_device_matches(["cpu"]):
       # On CPU the runtime crashes, and the tests are all aborted
       raise SkipTest("TODO: CPU runtime crashes on unexpected infeed")
-    elif jtu.device_under_test() == "gpu":
+    elif jtu.test_device_matches(["gpu"]):
       # On GPU we get a nice error back to Python
       with self.assertRaisesRegex(
           RuntimeError,
           "(.* Mismatch between infeed source buffer shape s8.12345."
           "|.*The destination shape does not match the source shape.)"):
         thunk()
-    elif jtu.device_under_test() == "tpu":
+    elif jtu.test_device_matches(["tpu"]):
       # On TPU we get no error!!!
       raise SkipTest("TODO: TPU runtime does not check infeed, and just computes with garbage")
 
@@ -2323,12 +2322,12 @@ class CallJaxTest(jtu.JaxTestCase):
   """Tests using `call_jax_other_device`."""
 
   def setUp(self):
-    if jtu.device_under_test() == "gpu" and jax.device_count() > 1:
+    if jtu.test_device_matches(["gpu"]) and jax.device_count() > 1:
       raise SkipTest("host_callback broken on multi-GPU platforms (#6447)")
     if xla_bridge.using_pjrt_c_api():
       raise SkipTest("host_callback not implemented in PJRT C API")
 
-    if jtu.device_under_test() != "cpu":
+    if not jtu.test_device_matches(["cpu"]):
       assert jax.devices("cpu")
       self.outside_device = jax.devices("cpu")[0]
     else:
@@ -2398,7 +2397,7 @@ class CallJaxTest(jtu.JaxTestCase):
 class OutfeedRewriterTest(jtu.JaxTestCase):
 
   def setUp(self):
-    if jtu.device_under_test() == "gpu" and jax.device_count() > 1:
+    if jtu.test_device_matches(["gpu"]) and jax.device_count() > 1:
       raise SkipTest("host_callback broken on multi-GPU platforms (#6447)")
     if xla_bridge.using_pjrt_c_api():
       raise SkipTest("host_callback not implemented in PJRT C API")

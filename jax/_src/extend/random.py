@@ -12,12 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from typing import Callable, Hashable
+
+from jax import Array
 
 from jax._src import prng
 from jax._src import random
-from jax._src.typing import Array
 
-def wrap_key_data(key_bits_array: Array, *, impl: Optional[str] = None):
-  impl_obj = random.resolve_prng_impl(impl)
-  return prng.random_wrap(key_bits_array, impl=impl_obj)
+Shape = tuple[int, ...]
+
+def define_prng_impl(*,
+                     key_shape: Shape,
+                     seed: Callable[[Array], Array],
+                     split: Callable[[Array, Shape], Array],
+                     random_bits: Callable[[Array, int, Shape], Array],
+                     fold_in: Callable[[Array, int], Array],
+                     name: str = '<unnamed>',
+                     tag: str = '?') -> Hashable:
+  return random.PRNGSpec(prng.PRNGImpl(
+      key_shape, seed, split, random_bits, fold_in,
+      name=name, tag=tag))

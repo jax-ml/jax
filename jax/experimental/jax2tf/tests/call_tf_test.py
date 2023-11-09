@@ -29,6 +29,7 @@ from jax._src import test_util as jtu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax.experimental import jax2tf
+from jax.experimental.export import export
 from jax.experimental.jax2tf.tests import tf_test_util
 import numpy as np
 
@@ -64,6 +65,18 @@ _call_tf_non_compilable_error = "Error compiling TensorFlow function"
 _call_tf_dynamic_shape_error = "call_tf cannot call functions whose output has dynamic shape"
 
 class CallTfTest(tf_test_util.JaxToTfTestCase):
+
+  @classmethod
+  def setUpClass(cls):
+    # One TF device of each device_type
+    cls.tf_devices = []
+    for tf_device in tf.config.list_logical_devices():
+      if tf_device.device_type == "TPU_SYSTEM":
+        continue  # A virtual device
+      if all(tf_device.device_type != d.device_type for d in cls.tf_devices):
+        cls.tf_devices.append(tf_device)
+
+    super(CallTfTest, cls).setUpClass()
 
   def setUp(self):
     if tf is None:
@@ -350,7 +363,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
 
   @_parameterized_jit
   def test_with_multiple_capture(self, with_jit=True):
-    if jtu.device_under_test() == "gpu":
+    if jtu.test_device_matches(["gpu"]):
       raise unittest.SkipTest("Test fails on GPU")
     v2 = tf.Variable(2., dtype=np.float32)
     v3 = tf.Variable(3., dtype=np.float32)
@@ -737,6 +750,73 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     ):
       _ = fun_jax_3(x)
 
+  def test_multi_platform(self):
+    def tf_fun(x):
+      return tf.math.sin(x)
+
+    def f_jax(x):
+      return jnp.cos(jax2tf.call_tf(tf_fun)(jnp.cos(x)))
+    x = np.arange(12, dtype=np.float32).reshape((3, 4))
+
+    # Find platforms that are available for both JAX and TF
+    # Pick one device from each available platform
+    jax_platforms = []
+    for backend in ["cpu", "gpu", "tpu"]:
+      try:
+        devices = jax.devices(backend)
+      except RuntimeError:
+        devices = []
+      if devices:
+        jax_platforms.append(devices[0].platform)
+
+    jax_and_tf_platforms = (
+      set(jax_platforms) & {d.device_type.lower()
+                            for d in self.__class__.tf_devices})
+
+    # TODO(b/306753579): call_tf can only be lowered when we have a device
+    lowering_platforms = tuple(
+      p if p != "gpu" else "cuda"
+      for p in jax_and_tf_platforms)
+
+    exp = export.export(f_jax,
+                        lowering_platforms=lowering_platforms)(x)
+    for jax_platform in jax_and_tf_platforms:
+      with self.subTest(jax_platform):
+        jax_device = jax.devices(jax_platform)[0]
+        x_device = jax.device_put(x, jax_device)
+        logging.info("Running harness natively on %s", jax_device)
+        native_res = f_jax(x_device)
+        logging.info("Running exported harness on %s", jax_device)
+        exported_res = export.call_exported(exp)(x_device)
+        self.assertAllClose(native_res, exported_res)
+
+  def test_multi_platform_call_tf_graph(self):
+    def tf_fun(x):
+      return tf.math.sin(x)
+
+    def f_jax(x):
+      return jnp.cos(jax2tf.call_tf(tf_fun,
+                                    call_tf_graph=True,
+                                    ordered=True)(jnp.cos(x)))
+    x = np.arange(12, dtype=np.float32).reshape((3, 4))
+    # When we use call_tf_graph we can serialize for multiple platforms
+    lowering_platforms = ("tpu", "cpu", "cuda")
+    # We must use jax2tf.convert to run a call_tf(call_tf_graph)
+    # TODO(necula): if we remove the tf.function and we have multiple platforms
+    # then we attempt to lower call_tf multiple times and only the first
+    # lowering will have the proper side effects for the function_list.
+    f_tf = tf.function(jax2tf.convert(
+      f_jax,
+      native_serialization=True,
+      native_serialization_platforms=lowering_platforms))
+    for tf_device in self.__class__.tf_devices:
+      with self.subTest(tf_device.device_type):
+        logging.info(
+          f"Running on tf_device = {tf_device} of device_type = {tf_device.device_type}")
+        with tf.device(tf_device):
+          res = f_tf(x)
+        self.assertAllClose(res, f_jax(x))
+
 
 class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
   "Reloading output of jax2tf into JAX with call_tf"
@@ -944,7 +1024,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
       candidate = jax.tree_util.tree_map(conversion, candidate)
       tol = (
           1e-2
-          if jtu.device_under_test() == "tpu" and dtype == np.float16
+          if jtu.test_device_matches(["tpu"]) and dtype == np.float16
           else None
       )
       self.assertAllClose(baseline, candidate, atol=tol, rtol=tol)
@@ -1025,6 +1105,17 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     # bug in TensorFlow.
     _ = tf.add(1, 1)
     super().setUp()
+
+  def override_serialization_version(self, version_override: int):
+      version = config.jax_serialization_version
+      if version != version_override:
+        self.addCleanup(partial(config.update,
+                                "jax_serialization_version",
+                                version_override))
+        config.update("jax_serialization_version", version_override)
+      logging.info(
+        "Using JAX serialization version %s",
+        config.jax_serialization_version)
 
   def test_alternate(self):
     # Alternate sin/cos with sin in TF and cos in JAX
@@ -1295,6 +1386,12 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
   def test_several_round_trips(self,
                                f2_function=False, f2_saved_model=False,
                                f4_function=False, f4_saved_model=False):
+    if (f2_saved_model and
+        f4_saved_model and
+        not config.jax2tf_default_native_serialization):
+      # TODO: Getting error Found invalid capture Tensor("jax2tf_vjp/jax2tf_arg_0:0", shape=(), dtype=float32) when saving custom gradients
+      # when saving f4, but only with non-native serialization.
+      raise unittest.SkipTest("TODO: error invalid capture when saving custom gradients")
     x = np.array(.7, dtype=np.float32)
     # f(n)(x) = 2. * x^n
     def f(n):
@@ -1519,7 +1616,11 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     )
     _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt_2, input_args=[])
 
-  def test_call_tf_graph_ordered(self):
+  @jtu.parameterized_filterable(
+    kwargs=[dict(version=version) for version in [8, 9]]
+  )
+  def test_call_tf_graph_ordered(self, *, version: int):
+    self.override_serialization_version(version)
     @tf.function
     def tf_print(x):
       tf.print(x)
@@ -1582,11 +1683,35 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     )
     _, restored_model = tf_test_util.SaveAndLoadFunction(f_tf, input_args=[x])
 
-  @parameterized.named_parameters([
-    dict(testcase_name=f"{ordered=}", ordered=ordered)
-    for ordered in [True, False]
-  ])
-  def test_call_tf_graph_polymorphic(self, ordered: bool):
+  @jtu.parameterized_filterable(
+    kwargs=[dict(poly=poly, version=version)
+            for poly in [True, False]
+            for version in [8, 9]]
+  )
+  def test_call_tf_ordered_dead_inputs(self, *, poly: bool, version: int):
+    self.override_serialization_version(version)
+    def f_jax(x1, x_dead, x3):
+      return (x1, jax2tf.call_tf(lambda x: tf.math.sin(x), ordered=True,
+                                 call_tf_graph=True)(x3))
+    if poly:
+      polymorphic_shapes = ["b", None, None]
+    else:
+      polymorphic_shapes = None
+    f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes)
+    x1 = np.arange(3, dtype=np.float32)
+    x_dead = np.arange(4, dtype=np.float32)
+    x3 = np.arange(5, dtype=np.float32)
+    self.assertAllClose(f_jax(x1, x_dead, x3),
+                        f_tf(x1, x_dead, x3))
+
+  @jtu.parameterized_filterable(
+    kwargs=[dict(ordered=ordered, version=version)
+      for ordered in [True, False]
+      for version in [8, 9]
+    ]
+  )
+  def test_call_tf_graph_polymorphic(self, ordered: bool, version: int):
+    self.override_serialization_version(version)
     @tf.function(jit_compile=True, autograph=False)
     @partial(jax2tf.convert,
       with_gradient=False,
@@ -1647,6 +1772,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     loaded_model = tf.saved_model.load(saved_model_dir)
     res = loaded_model.call(*data_inputs)
     self.assertAllClose(jax_func(*data_inputs), res)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

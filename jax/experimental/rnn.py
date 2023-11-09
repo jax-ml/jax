@@ -17,7 +17,7 @@
 
 This module provides experimental support to CUDNN-backed LSTM.
 
-Currrently, the only supported RNN flavor is LSTM with double-bias. We use
+Currently, the only supported RNN flavor is LSTM with double-bias. We use
 notations and variable names similar to
 https://pytorch.org/docs/stable/generated/torch.nn.LSTM.html#torch.nn.LSTM
 
@@ -93,6 +93,7 @@ from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.custom_derivatives import custom_vjp
 from jax._src.typing import Array, Shape
+from jax._src.lax import lax
 import jax.numpy as jnp
 try:
   from jax._src.lib import gpu_rnn
@@ -217,10 +218,34 @@ def unpack_lstm_weights(
   return W_ih, W_hh, b_ih, b_hh
 
 
-@partial(custom_vjp, nondiff_argnums=(5, 6, 7, 8, 9))
+def _lstm_cudnn_allow_tf32(precision: lax.PrecisionLike) -> bool:
+  # the logic from canonicalize_precision that we require here boils down to:
+  #
+  #   if precision is None and config.jax_default_matmul_precision is not None:
+  #     precision = Precision(config.jax_default_matmul_precision)
+  #   else:
+  #     precision = None
+  #
+  # but we prefer to still invoke it here for consistency
+  precision = lax.canonicalize_precision(precision)
+  if precision is None:
+    return True
+  # cuDNN allows only one precision specifier per RNN op
+  precision, _ = precision
+  if precision == lax.Precision.HIGHEST:
+    return False
+  elif precision == lax.Precision.HIGH:
+    return True
+  elif precision == lax.Precision.DEFAULT: # bfloat16
+    raise NotImplementedError("bfloat16 support not implemented for LSTM")
+  else:
+    raise ValueError(f"Unexpected precision specifier value {precision}")
+
+
+@partial(custom_vjp, nondiff_argnums=(5, 6, 7, 8, 9, 10))
 def lstm(x: Array, h_0: Array, c_0: Array, weights: Array, seq_lengths: Array,
          input_size: int, hidden_size: int, num_layers: int, dropout: float,
-         bidirectional: bool) -> tuple[Array, Array, Array]:
+         bidirectional: bool, precision: lax.PrecisionLike = None) -> tuple[Array, Array, Array]:
   """LSTM via CuDNN or HIPDNN (not-yet-supported).
 
   Assume batch-first inputs.
@@ -246,7 +271,8 @@ def lstm(x: Array, h_0: Array, c_0: Array, weights: Array, seq_lengths: Array,
       hidden_size=hidden_size,
       num_layers=num_layers,
       dropout=dropout,
-      bidirectional=bidirectional)
+      bidirectional=bidirectional,
+      precision=precision)
   return y, h_n, c_n
 
 
@@ -367,11 +393,11 @@ def _flip_sequence(sequences: Array, seq_lengths: Array) -> Array:
 
 def lstm_fwd(x: Array, h_0: Array, c_0: Array, w: Array, seq_lengths: Array,
              input_size: int, hidden_size: int, num_layers: int, dropout: float,
-             bidirectional: bool):
+             bidirectional: bool, precision: lax.PrecisionLike):
   if seq_lengths.dtype != jnp.dtype("int32"):
     raise NotImplementedError("`seq_lengths` can only be int32.")
-  if jax._src.lib.version < (0, 4, 9):
-    y, h_n, c_n, workspace, reserve_space = rnn_fwd_p.bind(
+  cudnn_allow_tf32 = _lstm_cudnn_allow_tf32(precision)
+  y, h_n, c_n, reserve_space = rnn_fwd_p.bind(
       x,
       h_0,
       c_0,
@@ -381,113 +407,84 @@ def lstm_fwd(x: Array, h_0: Array, c_0: Array, w: Array, seq_lengths: Array,
       hidden_size=hidden_size,
       num_layers=num_layers,
       dropout=dropout,
-      bidirectional=bidirectional)
-    return (y, h_n, c_n), (x, h_0, c_0, w, seq_lengths, y, workspace,
-                          reserve_space)
-  else:
-    y, h_n, c_n, reserve_space = rnn_fwd_p.bind(
-        x,
-        h_0,
-        c_0,
-        w,
-        seq_lengths,
-        input_size=input_size,
-        hidden_size=hidden_size,
-        num_layers=num_layers,
-        dropout=dropout,
-        bidirectional=bidirectional)
-    return (y, h_n, c_n), (x, h_0, c_0, w, seq_lengths, y, reserve_space)
+      bidirectional=bidirectional,
+      cudnn_allow_tf32=cudnn_allow_tf32)
+  return (y, h_n, c_n), (x, h_0, c_0, w, seq_lengths, y, reserve_space)
 
 
 def rnn_abstract_eval(x_aval, h_0_aval, c_0_aval, w_aval, seq_lengths_aval,
                       input_size: int, hidden_size: int, num_layers: int,
-                      dropout: float, bidirectional: bool):
+                      dropout: float, bidirectional: bool,
+                      cudnn_allow_tf32: bool):
   batch_size, max_seq_length = x_aval.shape[0], x_aval.shape[1]
   num_directions = 2 if bidirectional else 1
   output_shape = (batch_size, max_seq_length, num_directions * hidden_size)
   output_aval = core.ShapedArray(output_shape, x_aval.dtype)
-  if jax._src.lib.version < (0, 4, 9):
-    workspace_size, reserve_space_size = (
-      gpu_rnn.compute_rnn_workspace_reserve_space_sizes(  # pytype: disable=attribute-error
-          input_size, hidden_size, num_layers, batch_size, max_seq_length,
-          dropout, bidirectional))
-    workspace_aval = core.ShapedArray((workspace_size,), jnp.float32)
-    reserve_space_aval = core.ShapedArray((reserve_space_size,), jnp.float32)
-    return output_aval, h_0_aval, c_0_aval, workspace_aval, reserve_space_aval
+  if jax._src.lib.version >= (0, 4, 17):
+    _, reserve_space_size = (
+        gpu_rnn.compute_rnn_workspace_reserve_space_sizes(  # pytype: disable=attribute-error
+            input_size, hidden_size, num_layers, batch_size, max_seq_length,
+            dropout, bidirectional, cudnn_allow_tf32))
   else:
     _, reserve_space_size = (
         gpu_rnn.compute_rnn_workspace_reserve_space_sizes(  # pytype: disable=attribute-error
             input_size, hidden_size, num_layers, batch_size, max_seq_length,
             dropout, bidirectional))
-    reserve_space_aval = core.ShapedArray((reserve_space_size,), jnp.float32)
-    return output_aval, h_0_aval, c_0_aval, reserve_space_aval
+  reserve_space_aval = core.ShapedArray((reserve_space_size,), jnp.float32)
+  return output_aval, h_0_aval, c_0_aval, reserve_space_aval
 
+
+def _gpu_lowering_strip_tf32(fn, *args, cudnn_allow_tf32, **kw):
+  del cudnn_allow_tf32
+  return fn(*args, **kw)
 
 rnn_fwd_p = core.Primitive('rnn_fwd')
 rnn_fwd_p.multiple_results = True
 rnn_fwd_p.def_impl(partial(xla.apply_primitive, rnn_fwd_p))
 rnn_fwd_p.def_abstract_eval(rnn_abstract_eval)
 if gpu_rnn:
-  mlir.register_lowering(rnn_fwd_p, gpu_rnn.cudnn_rnn_lowering, platform='cuda')
+  if jax._src.lib.version >= (0, 4, 17):
+    mlir.register_lowering(rnn_fwd_p, gpu_rnn.cudnn_rnn_lowering, platform='cuda')
+  else:
+    mlir.register_lowering(
+      rnn_fwd_p,
+      partial(_gpu_lowering_strip_tf32, gpu_rnn.cudnn_rnn_lowering),
+      platform='cuda'
+    )
 
 
 def lstm_bwd(input_size: int, hidden_size: int, num_layers: int, dropout: float,
-             bidirectional, residuals, gradients):
-  if jax._src.lib.version < (0, 4, 9):
-    x, h_0, c_0, w, seq_lengths, y, workspace, reserve_space = residuals
-    dy, dh_n, dc_n = gradients
-    dx, dh_0, dc_0, dw = rnn_bwd_p.bind(
-        dy,
-        dh_n,
-        dc_n,
-        x,
-        h_0,
-        c_0,
-        w,
-        y,
-        workspace,
-        reserve_space,
-        seq_lengths,
-        input_size=input_size,
-        hidden_size=hidden_size,
-        num_layers=num_layers,
-        dropout=dropout,
-        bidirectional=bidirectional)
-    return (dx, dh_0, dc_0, dw, jnp.zeros_like(seq_lengths))
-  else:
-    x, h_0, c_0, w, seq_lengths, y, reserve_space = residuals
-    dy, dh_n, dc_n = gradients
-    dx, dh_0, dc_0, dw = rnn_bwd_p.bind(
-        dy,
-        dh_n,
-        dc_n,
-        x,
-        h_0,
-        c_0,
-        w,
-        y,
-        reserve_space,
-        seq_lengths,
-        input_size=input_size,
-        hidden_size=hidden_size,
-        num_layers=num_layers,
-        dropout=dropout,
-        bidirectional=bidirectional)
-    return (dx, dh_0, dc_0, dw, jnp.zeros_like(seq_lengths))
+             bidirectional: bool, precision: lax.PrecisionLike,
+             residuals, gradients):
+  cudnn_allow_tf32 = _lstm_cudnn_allow_tf32(precision)
+  x, h_0, c_0, w, seq_lengths, y, reserve_space = residuals
+  dy, dh_n, dc_n = gradients
+  dx, dh_0, dc_0, dw = rnn_bwd_p.bind(
+      dy,
+      dh_n,
+      dc_n,
+      x,
+      h_0,
+      c_0,
+      w,
+      y,
+      reserve_space,
+      seq_lengths,
+      input_size=input_size,
+      hidden_size=hidden_size,
+      num_layers=num_layers,
+      dropout=dropout,
+      bidirectional=bidirectional,
+      cudnn_allow_tf32=cudnn_allow_tf32)
+  return (dx, dh_0, dc_0, dw, jnp.zeros_like(seq_lengths))
 
 
-if jax._src.lib.version < (0, 4, 9):
-  def rnn_bwd_abstract_eval(dy_aval, dhn_aval, dcn_aval, x_aval, h0_aval, c0_aval,
-                          w_aval, y_aval, workspace_aval, reserve_space_aval,
+def rnn_bwd_abstract_eval(dy_aval, dhn_aval, dcn_aval, x_aval, h0_aval, c0_aval,  # type: ignore
+                          w_aval, y_aval, reserve_space_aval,
                           seq_lengths_aval, input_size: int, hidden_size: int,
-                          num_layers: int, dropout: float, bidirectional: bool):
-    return x_aval, h0_aval, c0_aval, w_aval
-else:
-  def rnn_bwd_abstract_eval(dy_aval, dhn_aval, dcn_aval, x_aval, h0_aval, c0_aval,  # type: ignore
-                            w_aval, y_aval, reserve_space_aval,
-                            seq_lengths_aval, input_size: int, hidden_size: int,
-                            num_layers: int, dropout: float, bidirectional: bool):
-    return x_aval, h0_aval, c0_aval, w_aval
+                          num_layers: int, dropout: float, bidirectional: bool,
+                          cudnn_allow_tf32: bool):
+  return x_aval, h0_aval, c0_aval, w_aval
 
 
 rnn_bwd_p = core.Primitive('rnn_bwd')
@@ -495,7 +492,14 @@ rnn_bwd_p.multiple_results = True
 rnn_bwd_p.def_impl(partial(xla.apply_primitive, rnn_bwd_p))
 rnn_bwd_p.def_abstract_eval(rnn_bwd_abstract_eval)
 if gpu_rnn:
-  mlir.register_lowering(
-      rnn_bwd_p, gpu_rnn.cudnn_rnn_bwd_lowering, platform='cuda')
+  if jax._src.lib.version >= (0, 4, 17):
+    mlir.register_lowering(
+        rnn_bwd_p, gpu_rnn.cudnn_rnn_bwd_lowering, platform='cuda')
+  else:
+    mlir.register_lowering(
+      rnn_bwd_p,
+      partial(_gpu_lowering_strip_tf32, gpu_rnn.cudnn_rnn_bwd_lowering),
+      platform='cuda'
+    )
 
 lstm.defvjp(lstm_fwd, lstm_bwd)

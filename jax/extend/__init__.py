@@ -29,6 +29,8 @@ Breaking changes will be announced via the
 """
 
 from jax.extend import (
+    core as core,
     linear_util as linear_util,
     random as random,
+    source_info_util as source_info_util,
 )

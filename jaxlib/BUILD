@@ -34,6 +34,7 @@ py_library_providing_imports_info(
     name = "jaxlib",
     srcs = [
         "ducc_fft.py",
+        "gpu_common_utils.py",
         "gpu_linalg.py",
         "gpu_prng.py",
         "gpu_rnn.py",
@@ -178,6 +179,27 @@ pybind_extension(
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:inlined_vector",
         "@nanobind",
+    ],
+)
+
+pybind_extension(
+    name = "cuda_plugin_extension",
+    srcs = ["cuda_plugin_extension.cc"],
+    module_name = "cuda_plugin_extension",
+    deps = [
+        "@nanobind",
+        "//jaxlib:kernel_nanobind_helpers",
+        "@xla//third_party/python_runtime:headers",
+        "@xla//xla:status",
+        "@xla//xla:util",
+        "@xla//xla/pjrt/c:pjrt_c_api_gpu_extension_hdrs",
+        "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
+        "@xla//xla/pjrt/c:pjrt_c_api_helpers",
+        # TODO(jieying): move to jaxlib after py_client_gpu is separated from py_client
+        "@xla//xla/python:py_client_gpu",
+        "@xla//xla/python:status_casters",
+        "@tsl//tsl/cuda:cublas",
+        "@tsl//tsl/cuda:cudart",
     ],
 )
 

@@ -22,9 +22,9 @@ from typing import Any, Callable, Optional, TypeVar
 
 import jax
 import weakref
+from jax._src import config
 from jax._src import core
 from jax._src import linear_util as lu
-from jax import config  # type: ignore[no-redef]
 from jax._src.core import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            tree_map, tree_flatten_with_path, keystr)
@@ -52,19 +52,19 @@ from jax._src import state
 from jax._src.state import discharge as state_discharge
 from jax._src.numpy.ufuncs import logaddexp
 from jax._src.traceback_util import api_boundary
+from jax._src.typing import Array
 from jax._src.util import (partition_list, safe_map, safe_zip, split_list,
                            unzip2, weakref_lru_cache, merge_lists)
 import numpy as np
 
 from jax._src.lax.control_flow.common import (
     _abstractify, _avals_short, _check_tree_and_avals, _initial_style_jaxpr,
-    _make_closed_jaxpr, _prune_zeros, _typecheck_param, allowed_effects)
+    _make_closed_jaxpr, _prune_zeros, _typecheck_param)
 
 _map = safe_map
 zip = safe_zip
 
 T = TypeVar('T')
-Array = Any
 BooleanNumeric = Any  # A bool, or a Boolean array.
 
 ### Helper functions
@@ -214,7 +214,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     else:
       length, = unique_lengths
 
-  if config.jax_disable_jit:
+  if config.disable_jit.value:
     if length == 0:
       raise ValueError("zero-length scan is not supported in disable_jit() mode because the output type is unknown.")
     carry = init
@@ -258,7 +258,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   in_flat, jaxpr, consts, out_tree, out_tree_children = rest
 
   _check_scan_carry_type(f, init, out_tree_children[0], carry_avals_out)
-  disallowed_effects = allowed_effects.filter_not_in(jaxpr.effects)
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(jaxpr.effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `scan`: {disallowed_effects}')
@@ -859,7 +859,7 @@ def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
       used_carry_out = _map(operator.or_, used_carry_out, used_carry_in)
   else:
     assert False, "Fixpoint not reached"
-  if config.jax_enable_checks: core.check_jaxpr(jaxpr.jaxpr)
+  if config.enable_checks.value: core.check_jaxpr(jaxpr.jaxpr)
 
   new_linear = [l for l, u in zip(eqn.params['linear'], used_inputs) if u]
   new_params = dict(eqn.params, num_consts=sum(used_consts),
@@ -1049,8 +1049,8 @@ def _scan_pp_rule(eqn, context, settings):
     del printed_params['reverse']
   return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
 
-def _scan_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
-                         num_carry, linear, unroll, reverse, length):
+def _scan_state_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
+                               num_carry, linear, unroll, reverse, length):
   jaxpr, consts = jaxpr.jaxpr, jaxpr.consts
   if consts: raise NotImplementedError
   consts, carry, xs = split_list(args, [num_consts, num_carry])
@@ -1105,7 +1105,7 @@ def _scan_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
   return new_invals, [*carry_out, *ys_out]
 
 def scan_bind(*args, **params):
-  if config.jax_enable_checks:
+  if config.enable_checks.value:
     avals = _map(core.get_aval, args)
     in_atoms = [core.Var(0, '', a) for a in avals]  # dummies
     _scan_typecheck(True, *in_atoms, **params)
@@ -1129,7 +1129,7 @@ core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
 pe.padding_rules[scan_p] = _scan_padding_rule
 pe.dce_rules[scan_p] = _scan_dce_rule
-state_discharge.register_discharge_rule(scan_p)(_scan_discharge_rule)
+state_discharge.register_discharge_rule(scan_p)(_scan_state_discharge_rule)
 # TODO(mattjj,frostig): un-comment this pp rule
 # core.pp_eqn_rules[scan_p] = _scan_pp_rule
 
@@ -1190,7 +1190,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   """
   if not (callable(body_fun) and callable(cond_fun)):
     raise TypeError("lax.while_loop: body_fun and cond_fun arguments should be callable.")
-  if config.jax_disable_jit:
+  if config.disable_jit.value:
     try:
       val = init_val
       while cond_fun(val):
@@ -1235,8 +1235,8 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   _check_tree_and_avals("body_fun output and input",
                         body_tree, body_jaxpr.out_avals,
                         in_tree_children[0], init_avals)
-  effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
-  disallowed_effects = allowed_effects.filter_not_in(effects)
+  joined_effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `while`: {disallowed_effects}')
@@ -1268,7 +1268,7 @@ def _while_loop_abstract_eval(*avals, cond_jaxpr, body_jaxpr, body_nconsts,
   del avals
   joined_effects = _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts,
                                        cond_nconsts)
-  disallowed_effects = allowed_effects.filter_not_in(joined_effects)
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `while`: {disallowed_effects}')
@@ -1451,7 +1451,7 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   cond_jaxpr_known, _, cond_uk, _ = pe.partial_eval_jaxpr_nounits(  # type: ignore
       cond_jaxpr, cond_consts_uk + carry_uk, instantiate=False)
 
-  if cond_uk[0] or all([not uk for uk in unknowns]) or all(unknowns):
+  if cond_uk[0] or all(not uk for uk in unknowns) or all(unknowns):
     # If conditional is unknown, or all inputs are known, or all are unknown,
     # just do the default processing.
     return trace.default_process_primitive(while_p, tracers, params)
@@ -1698,7 +1698,7 @@ def _while_typecheck(_, *in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
   # TODO(frostig,mattjj): check cond_jaxpr, body_jaxpr types
   joined_effects = _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts,
                                        cond_nconsts)
-  disallowed_effects = allowed_effects.filter_not_in(joined_effects)
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `while`: {disallowed_effects}')
@@ -1931,7 +1931,7 @@ def fori_loop(lower, upper, body_fun, init_val):
     use_scan = False
 
   if use_scan:
-    if config.jax_disable_jit and upper_ == lower_:
+    if config.disable_jit.value and upper_ == lower_:
       # non-jit implementation of scan does not support length=0
       return init_val
 

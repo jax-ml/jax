@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Iterable, Sequence
 from contextlib import contextmanager, ExitStack
 import inspect
 import io
@@ -24,7 +24,7 @@ import re
 import os
 import tempfile
 import textwrap
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional
 import unittest
 import warnings
 import zlib
@@ -42,15 +42,13 @@ from jax._src.interpreters import mlir
 from jax.tree_util import tree_map, tree_all, tree_flatten, tree_unflatten
 from jax._src import api
 from jax._src import pjit as pjit_lib
-from jax._src import config as jax_config
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src import monitoring
+from jax._src import stages
 from jax._src.interpreters import pxla
-from jax._src.config import (bool_env, config,
-                             raise_persistent_cache_errors,
-                             persistent_cache_min_compile_time_secs)
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.util import unzip2
 from jax._src.public_test_util import (  # noqa: F401
@@ -63,18 +61,18 @@ from jax._src import xla_bridge
 # jax.test_util. Functionality appearing here is for internal use only, and
 # may be changed or removed at any time and without any deprecation cycle.
 
-_TEST_DUT = jax_config.DEFINE_string(
+_TEST_DUT = config.DEFINE_string(
     'jax_test_dut', '',
     help=
     'Describes the device under test in case special consideration is required.'
 )
 
-_NUM_GENERATED_CASES = jax_config.DEFINE_integer(
+NUM_GENERATED_CASES = config.DEFINE_integer(
   'jax_num_generated_cases',
   int(os.getenv('JAX_NUM_GENERATED_CASES', '10')),
   help='Number of generated cases to test')
 
-_MAX_CASES_SAMPLING_RETRIES = jax_config.DEFINE_integer(
+_MAX_CASES_SAMPLING_RETRIES = config.DEFINE_integer(
   'max_cases_sampling_retries',
   int(os.getenv('JAX_MAX_CASES_SAMPLING_RETRIES', '100')),
   'Number of times a failed test sample should be retried. '
@@ -82,25 +80,25 @@ _MAX_CASES_SAMPLING_RETRIES = jax_config.DEFINE_integer(
   'sampling process is terminated.'
 )
 
-_SKIP_SLOW_TESTS = jax_config.DEFINE_bool(
+_SKIP_SLOW_TESTS = config.DEFINE_bool(
     'jax_skip_slow_tests',
-    bool_env('JAX_SKIP_SLOW_TESTS', False),
+    config.bool_env('JAX_SKIP_SLOW_TESTS', False),
     help='Skip tests marked as slow (> 5 sec).'
 )
 
-_TEST_TARGETS = jax_config.DEFINE_string(
+_TEST_TARGETS = config.DEFINE_string(
   'test_targets', os.getenv('JAX_TEST_TARGETS', ''),
   'Regular expression specifying which tests to run, called via re.search on '
   'the test name. If empty or unspecified, run all tests.'
 )
-_EXCLUDE_TEST_TARGETS = jax_config.DEFINE_string(
+_EXCLUDE_TEST_TARGETS = config.DEFINE_string(
   'exclude_test_targets', os.getenv('JAX_EXCLUDE_TEST_TARGETS', ''),
   'Regular expression specifying which tests NOT to run, called via re.search '
   'on the test name. If empty or unspecified, run all tests.'
 )
-TEST_WITH_PERSISTENT_COMPILATION_CACHE = jax_config.DEFINE_bool(
+TEST_WITH_PERSISTENT_COMPILATION_CACHE = config.DEFINE_bool(
     'jax_test_with_persistent_compilation_cache',
-    bool_env('JAX_TEST_WITH_PERSISTENT_COMPILATION_CACHE', False),
+    config.bool_env('JAX_TEST_WITH_PERSISTENT_COMPILATION_CACHE', False),
     help='If enabled, the persistent compilation cache will be enabled for all '
     'test cases. This can be used to increase compilation cache coverage.')
 
@@ -241,6 +239,22 @@ def count_pjit_cpp_cache_miss():
 
 
 @contextmanager
+def count_aot_jit_cpp_cache_miss():
+  original_call = stages.Compiled.call
+  count = [0]
+
+  def compiled_call_count(*args, **kwargs):
+    count[0] += 1
+    return original_call(*args, **kwargs)
+
+  stages.Compiled.call = compiled_call_count
+  try:
+    yield count
+  finally:
+    stages.Compiled.call = original_call
+
+
+@contextmanager
 def count_jit_and_pmap_compiles():
   # No need to clear any caches since we generally jit and pmap fresh callables
   # in tests.
@@ -258,6 +272,27 @@ def count_jit_and_pmap_compiles():
   finally:
     mlir.lower_jaxpr_to_module = mlir_lower
 
+
+@contextmanager
+def count_subjaxpr_to_mhlo_conversion(fun_name: str):
+  # No need to clear any caches since we generally jit and pmap fresh callables
+  # in tests.
+
+  mlir_lower = mlir.lower_jaxpr_to_fun
+  count = [0]
+
+  def mlir_lower_and_count(ctx, name, *args, **kwargs):
+    if name == fun_name:
+      count[0] += 1
+    return mlir_lower(ctx, name, *args, **kwargs)
+
+  mlir.lower_jaxpr_to_fun = mlir_lower_and_count
+  try:
+    yield count
+  finally:
+    mlir.lower_jaxpr_to_fun = mlir_lower
+
+
 @contextmanager
 def assert_num_jit_and_pmap_compilations(times):
   with count_jit_and_pmap_compiles() as count:
@@ -269,16 +304,6 @@ def assert_num_jit_and_pmap_compilations(times):
 
 def device_under_test():
   return _TEST_DUT.value or xla_bridge.get_backend().platform
-
-
-def if_device_under_test(device_type: Union[str, Sequence[str]],
-                         if_true, if_false):
-  """Chooses `if_true` of `if_false` based on device_under_test."""
-  if device_under_test() in ([device_type] if isinstance(device_type, str)
-                             else device_type):
-    return if_true
-  else:
-    return if_false
 
 def supported_dtypes():
   if device_under_test() == "tpu":
@@ -292,7 +317,7 @@ def supported_dtypes():
              np.uint8, np.uint16, np.uint32, np.uint64,
              _dtypes.bfloat16, np.float16, np.float32, np.float64,
              np.complex64, np.complex128}
-  if not config.x64_enabled:
+  if not config.enable_x64.value:
     types -= {np.uint64, np.int64, np.float64, np.complex128}
   return types
 
@@ -300,18 +325,10 @@ def is_device_rocm():
   return xla_bridge.get_backend().platform_version.startswith('rocm')
 
 def is_device_cuda():
-  return xla_bridge.get_backend().platform_version.startswith('cuda')
+  return 'cuda' in xla_bridge.get_backend().platform_version
 
 def is_cloud_tpu():
   return 'libtpu' in xla_bridge.get_backend().platform_version
-
-
-def is_se_tpu():
-  return (
-      is_cloud_tpu() and not xla_bridge.using_pjrt_c_api()
-  ) or xla_bridge.get_backend().platform_version.startswith(
-      'StreamExecutor TPU'
-  )
 
 
 def is_device_tpu_v4():
@@ -327,19 +344,47 @@ def _get_device_tags():
     device_tags = {device_under_test()}
   return device_tags
 
-def skip_on_devices(*disabled_devices):
-  """A decorator for test methods to skip the test on certain devices."""
+def test_device_matches(device_types: Iterable[str]) -> bool:
+  assert not isinstance(
+      device_types, str
+  ), 'device_types should be a list of strings'
+  tags = _get_device_tags()
+  for device_type in device_types:
+    assert isinstance(device_type, str), device_type
+    if device_type in tags:
+      return True
+  return False
+
+test_device_matches.__test__ = False  # This isn't a test case, pytest.
+
+def _device_filter(predicate):
   def skip(test_method):
     @functools.wraps(test_method)
     def test_method_wrapper(self, *args, **kwargs):
       device_tags = _get_device_tags()
-      if device_tags & set(disabled_devices):
+      if not predicate():
         test_name = getattr(test_method, '__name__', '[unknown test]')
         raise unittest.SkipTest(
           f"{test_name} not supported on device with tags {device_tags}.")
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
+
+def skip_on_devices(*disabled_devices):
+  """A decorator for test methods to skip the test on certain devices."""
+  return _device_filter(lambda: not test_device_matches(disabled_devices))
+
+def run_on_devices(*enabled_devices):
+  """A decorator for test methods to run the test only on certain devices."""
+  return _device_filter(lambda: test_device_matches(enabled_devices))
+
+def device_supports_buffer_donation():
+  """A decorator for test methods to run the test only on devices that support
+  buffer donation."""
+  return _device_filter(
+      lambda: test_device_matches(mlir._platforms_with_donation)
+  )
+
 
 def set_host_platform_device_count(nr_devices: int):
   """Returns a closure that undoes the operation."""
@@ -358,19 +403,6 @@ def set_host_platform_device_count(nr_devices: int):
       os.environ["XLA_FLAGS"] = prev_xla_flags
     xla_bridge.get_backend.cache_clear()
   return undo
-
-
-def skip_on_xla_cpu_mlir(test_method):
-  """A decorator to skip tests when MLIR lowering is enabled."""
-  @functools.wraps(test_method)
-  def test_method_wrapper(self, *args, **kwargs):
-    xla_flags = os.getenv('XLA_FLAGS') or ''
-    if '--xla_cpu_use_xla_runtime' in xla_flags:
-      test_name = getattr(test_method, '__name__', '[unknown test]')
-      raise unittest.SkipTest(
-          f'{test_name} not supported on XLA:CPU MLIR')
-    return test_method(self, *args, **kwargs)
-  return test_method_wrapper
 
 
 def skip_on_flag(flag_name, skip_value):
@@ -518,7 +550,7 @@ def rand_fullrange(rng, standardize_nans=False):
       # leads to overflows in this case; sample from signed ints instead.
       if dtype == np.uint64:
         vals = vals.astype(np.int64)
-      elif dtype == np.uint32 and not config.x64_enabled:
+      elif dtype == np.uint32 and not config.enable_x64.value:
         vals = vals.astype(np.int32)
     vals = vals.reshape(shape)
     # Non-standard NaNs cause errors in numpy equality assertions.
@@ -741,10 +773,17 @@ def assert_dot_precision(expected_precision, fun, *args):
     else:
       assert precision == expected_precision, msg
 
+def assert_dot_preferred_element_type(expected, fun, *args, **kwargs):
+  jaxpr = api.make_jaxpr(partial(fun, **kwargs))(*args)
+  pref_eltypes = [eqn.params['preferred_element_type'] for eqn in iter_eqns(jaxpr.jaxpr)
+                   if eqn.primitive == lax.dot_general_p]
+  for pref_eltype in pref_eltypes:
+    msg = f"Unexpected preferred_element_type: {expected} != {pref_eltype}"
+    assert expected == pref_eltype, msg
 
 def cases_from_gens(*gens):
   sizes = [1, 3, 10]
-  cases_per_size = int(_NUM_GENERATED_CASES.value / len(sizes)) + 1
+  cases_per_size = int(NUM_GENERATED_CASES.value / len(sizes)) + 1
   for size in sizes:
     for i in range(cases_per_size):
       yield (f'_{size}_{i}',) + tuple(gen(size) for gen in gens)
@@ -757,7 +796,7 @@ def named_cases_from_sampler(gen):
     if not isinstance(x, (list, tuple)):
       x = list(x)
     return [x[rng.randint(len(x))]]
-  while (len(seen) < _NUM_GENERATED_CASES.value and
+  while (len(seen) < NUM_GENERATED_CASES.value and
          retries < _MAX_CASES_SAMPLING_RETRIES.value):
     retries += 1
     cases = list(gen(choose_one))
@@ -786,7 +825,7 @@ def sample_product_testcases(*args, **kw):
   kw = [(k, list(v)) for k, v in kw.items()]
   n = math.prod(len(a) for a in args) * math.prod(len(v) for _, v in kw)
   testcases = []
-  for i in _choice(n, min(n, _NUM_GENERATED_CASES.value)):
+  for i in _choice(n, min(n, NUM_GENERATED_CASES.value)):
     testcase = {}
     for a in args:
       testcase.update(a[i % len(a)])
@@ -894,8 +933,8 @@ class JaxTestCase(parameterized.TestCase):
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       cls._compilation_cache_exit_stack = ExitStack()
       stack = cls._compilation_cache_exit_stack
-      stack.enter_context(raise_persistent_cache_errors(True))
-      stack.enter_context(persistent_cache_min_compile_time_secs(0))
+      stack.enter_context(config.raise_persistent_cache_errors(True))
+      stack.enter_context(config.persistent_cache_min_compile_time_secs(0))
 
       tmp_dir = stack.enter_context(tempfile.TemporaryDirectory())
       compilation_cache.initialize_cache(tmp_dir)
@@ -910,10 +949,21 @@ class JaxTestCase(parameterized.TestCase):
   def rng(self):
     return self._rng
 
-  def assertArraysEqual(self, x, y, *, check_dtypes=True, err_msg=''):
+  def assertArraysEqual(self, x, y, *, check_dtypes=True, err_msg='', allow_object_dtype=False):
     """Assert that x and y arrays are exactly equal."""
     if check_dtypes:
       self.assertDtypesMatch(x, y)
+    x = np.asarray(x)
+    y = np.asarray(y)
+
+    if (not allow_object_dtype) and (x.dtype == object or y.dtype == object):
+      # See https://github.com/google/jax/issues/17867
+      raise TypeError(
+        "assertArraysEqual may be poorly behaved when np.asarray casts to dtype=object. "
+        "If comparing PRNG keys, consider random_test.KeyArrayTest.assertKeysEqual. "
+        "If comparing collections of arrays, consider using assertAllClose. "
+        "To let this test proceed anyway, pass allow_object_dtype=True.")
+
     # Work around https://github.com/numpy/numpy/issues/18992
     with np.errstate(over='ignore'):
       np.testing.assert_array_equal(x, y, err_msg=err_msg)
@@ -931,7 +981,7 @@ class JaxTestCase(parameterized.TestCase):
       self.assertDtypesMatch(x, y)
 
   def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
-    if not config.x64_enabled and canonicalize_dtypes:
+    if not config.enable_x64.value and canonicalize_dtypes:
       self.assertEqual(_dtypes.canonicalize_dtype(_dtype(x), allow_extended_dtype=True),
                        _dtypes.canonicalize_dtype(_dtype(y), allow_extended_dtype=True))
     else:
@@ -1101,26 +1151,6 @@ def with_and_without_mesh(f):
       ('Mesh', (('x', 2),), (('i', 'x'),))
     ))(with_mesh_from_kwargs(f))
 
-old_spmd_lowering_flag = None
-def set_spmd_lowering_flag(val: bool):
-  global old_spmd_lowering_flag
-  old_spmd_lowering_flag = config.experimental_xmap_spmd_lowering
-  config.update('experimental_xmap_spmd_lowering', val)
-
-def restore_spmd_lowering_flag():
-  if old_spmd_lowering_flag is None: return
-  config.update('experimental_xmap_spmd_lowering', old_spmd_lowering_flag)
-
-old_spmd_manual_lowering_flag = None
-def set_spmd_manual_lowering_flag(val: bool):
-  global old_spmd_manual_lowering_flag
-  old_spmd_manual_lowering_flag = config.experimental_xmap_spmd_lowering_manual
-  config.update('experimental_xmap_spmd_lowering_manual', val)
-
-def restore_spmd_manual_lowering_flag():
-  if old_spmd_manual_lowering_flag is None: return
-  config.update('experimental_xmap_spmd_lowering_manual', old_spmd_manual_lowering_flag)
-
 def create_global_mesh(mesh_shape, axis_names):
   size = math.prod(mesh_shape)
   if len(jax.devices()) < size:
@@ -1266,7 +1296,7 @@ def parameterized_filterable(*,
     for kw in kwargs:
       testcase_name = kw.get("testcase_name")
       if testcase_name is None:
-        testcase_name = "_".join(f"{k}={str(kw[k])}"  # type: ignore
+        testcase_name = "_".join(f"{k}={kw[k]}"  # type: ignore
                                  for k in sorted(kw.keys()))
       kw["testcase_name"] = sanitize_test_name(testcase_name)  # type: ignore
 
@@ -1274,7 +1304,10 @@ def parameterized_filterable(*,
   if one_containing is not None:
     filtered = tuple(kw for kw in kwargs_with_testcase_name
                      if one_containing in kw["testcase_name"])
-    assert filtered, f"No testcase_name contains '{one_containing}'"
+    assert filtered, (
+      f"No testcase_name contains '{one_containing}'. "
+      "The testcase_name values are\n  " +
+      "\n  ".join(kw["testcase_name"] for kw in kwargs_with_testcase_name))
     kw = filtered[0]
     kw["testcase_name"] = ""
     return parameterized.named_parameters([kw])
@@ -1319,3 +1352,9 @@ def set_env(**kwargs):
   finally:
     _ = [os.environ.pop(key, None) for key in kwargs]
     os.environ.update({k: v for k, v in original.items() if v is not None})
+
+def fwd_bwd_jaxprs(f, *example_args):
+  fwd_jaxpr, (y_shape, res_shape) = jax.make_jaxpr(
+      lambda *args: jax.vjp(f, *args), return_shape=True)(*example_args)
+  bwd_jaxpr = jax.make_jaxpr(lambda res, outs: res(outs))(res_shape, y_shape)
+  return fwd_jaxpr, bwd_jaxpr

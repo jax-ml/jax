@@ -449,11 +449,6 @@ def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
   del num_warps, num_stages, grid
   q, k, v, segment_ids, out, l, m = res
 
-  batch_size, seq_len, num_heads, head_dim = q.shape
-  block_q = min(block_q, seq_len)
-  block_k = min(block_k, seq_len)
-  do_scaled, delta = _preprocess_backward(out, do, l, block_q, debug, interpret)
-
   if backward_pass_impl == "xla":
     return jax.vjp(
         functools.partial(mha_reference, sm_scale=sm_scale, causal=causal),
@@ -463,6 +458,10 @@ def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
         segment_ids,
     )[1](do)
   elif backward_pass_impl == "triton":
+    batch_size, seq_len, num_heads, head_dim = q.shape
+    block_q = min(block_q, seq_len)
+    block_k = min(block_k, seq_len)
+    do_scaled, delta = _preprocess_backward(out, do, l, block_q, debug, interpret)
     # We accumulate into dq so we need to initialize it to zeros.
     dq = jnp.zeros(q.shape, jnp.float32)
     out_shapes = [

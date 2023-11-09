@@ -23,7 +23,6 @@ from jax._src import util
 from jax import config
 from jax._src.util import weakref_lru_cache
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 try:
   from jax._src.lib import utils as jaxlib_utils

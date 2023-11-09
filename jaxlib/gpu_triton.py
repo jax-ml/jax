@@ -11,21 +11,45 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import importlib
 
 from jaxlib import xla_client
 
-try:
-  from .cuda import _triton  # pytype: disable=import-error
+for cuda_module_name in [".cuda", "jax_cuda12_plugin", "jax_cuda11_plugin"]:
+  try:
+    _cuda_triton = importlib.import_module(
+        f"{cuda_module_name}._triton", package="jaxlib"
+    )
+  except ImportError:
+    _cuda_triton = None
+  else:
+    break
+
+if _cuda_triton:
   xla_client.register_custom_call_target(
-      "triton_kernel_call", _triton.get_custom_call(),
+      "triton_kernel_call", _cuda_triton.get_custom_call(),
       platform='CUDA')
-  TritonKernelCall = _triton.TritonKernelCall
-  TritonAutotunedKernelCall = _triton.TritonAutotunedKernelCall
-  TritonKernel = _triton.TritonKernel
-  create_array_parameter = _triton.create_array_parameter
-  create_scalar_parameter = _triton.create_scalar_parameter
-  get_compute_capability = _triton.get_compute_capability
-  get_custom_call = _triton.get_custom_call
-  get_serialized_metadata = _triton.get_serialized_metadata
+  TritonKernelCall = _cuda_triton.TritonKernelCall
+  TritonAutotunedKernelCall = _cuda_triton.TritonAutotunedKernelCall
+  TritonKernel = _cuda_triton.TritonKernel
+  create_array_parameter = _cuda_triton.create_array_parameter
+  create_scalar_parameter = _cuda_triton.create_scalar_parameter
+  get_compute_capability = _cuda_triton.get_compute_capability
+  get_custom_call = _cuda_triton.get_custom_call
+  get_serialized_metadata = _cuda_triton.get_serialized_metadata
+
+try:
+  from .rocm import _triton as _hip_triton # pytype: disable=import-error
+  xla_client.register_custom_call_target(
+      "triton_kernel_call", _hip_triton.get_custom_call(),
+      platform='ROCM')
+  TritonKernelCall = _hip_triton.TritonKernelCall
+  TritonAutotunedKernelCall = _hip_triton.TritonAutotunedKernelCall
+  TritonKernel = _hip_triton.TritonKernel
+  create_array_parameter = _hip_triton.create_array_parameter
+  create_scalar_parameter = _hip_triton.create_scalar_parameter
+  get_compute_capability = _hip_triton.get_compute_capability
+  get_custom_call = _hip_triton.get_custom_call
+  get_serialized_metadata = _hip_triton.get_serialized_metadata
 except ImportError:
-  _triton = None
+  _hip_triton = None

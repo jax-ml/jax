@@ -16,18 +16,18 @@
 import functools
 
 import jax
-from jax import config
 import jax.numpy as jnp
 import numpy as np
 import scipy.linalg as osp_linalg
-from jax._src.lax import qdwh
+from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.lax import qdwh
 
 from absl.testing import absltest
 
 
 config.parse_flags_with_absl()
-_JAX_ENABLE_X64_QDWH = config.x64_enabled
+_JAX_ENABLE_X64_QDWH = config.enable_x64.value
 
 # Input matrix data type for QdwhTest.
 _QDWH_TEST_DTYPE = np.float64 if _JAX_ENABLE_X64_QDWH else np.float32

@@ -62,7 +62,7 @@ class PgleTest(jtu.JaxTestCase):
       logging.info('rundir: %s', rundir)
       fdo_profile = exp_profiler.get_profiled_instructions_proto(rundir)
 
-    if jtu.device_under_test() == 'gpu' and jtu.is_device_cuda():
+    if jtu.test_device_matches(['gpu']) and jtu.is_device_cuda():
       self.assertIn(b'custom', fdo_profile)
 
     logging.info('fdo_profile: %s', fdo_profile)

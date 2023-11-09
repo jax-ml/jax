@@ -130,23 +130,6 @@ For more about jax_threefry_partitionable, see
 https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html#generating-random-numbers
 """
 
-from jax._src.prng import PRNGKeyArray as _PRNGKeyArray
-# TODO(frostig): remove this typechecking workaround. Our move away
-# from PRNGKeyArray as a pytree led to Python typechecker breakages in
-# several downstream annotations (e.g. annotations in jax-dependent
-# libraries that are violated by their callers). It may be that the
-# pytree registration decorator invalidated the checks. This will be
-# easier to handle after we always enable_custom_prng.
-import typing
-if typing.TYPE_CHECKING:
-  PRNGKeyArray = typing.Any
-  KeyArray = typing.Any
-else:
-  # TODO(frostig): replace with KeyArray from jax._src.random once we
-  # always enable_custom_prng
-  PRNGKeyArray = _PRNGKeyArray
-  KeyArray = PRNGKeyArray
-
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
@@ -160,7 +143,7 @@ from jax._src.random import (
   cauchy as cauchy,
   chisquare as chisquare,
   choice as choice,
-  default_prng_impl as default_prng_impl,
+  default_prng_impl as _deprecated_default_prng_impl,
   dirichlet as dirichlet,
   double_sided_maxwell as double_sided_maxwell,
   exponential as exponential,
@@ -172,6 +155,7 @@ from jax._src.random import (
   gumbel as gumbel,
   key as key,
   key_data as key_data,
+  key_impl as key_impl,
   laplace as laplace,
   logistic as logistic,
   loggamma as loggamma,
@@ -187,17 +171,90 @@ from jax._src.random import (
   randint as randint,
   random_gamma_p as random_gamma_p,
   rayleigh as rayleigh,
-  rbg_key as rbg_key,
-  shuffle as shuffle,
+  rbg_key as _deprecated_rbg_key,
+  shuffle as _deprecated_shuffle,
   split as split,
   t as t,
-  threefry_2x32 as threefry_2x32,
-  threefry2x32_key as threefry2x32_key,
-  threefry2x32_p as threefry2x32_p,
+  threefry2x32_key as _deprecated_threefry2x32_key,
   triangular as triangular,
   truncated_normal as truncated_normal,
   uniform as uniform,
-  unsafe_rbg_key as unsafe_rbg_key,
+  unsafe_rbg_key as _deprecated_unsafe_rbg_key,
   wald as wald,
   weibull_min as weibull_min,
+  wrap_key_data as wrap_key_data,
 )
+
+from jax._src.prng import (
+  threefry_2x32 as _deprecated_threefry_2x32,
+  threefry2x32_p as _deprecated_threefry2x32_p,
+)
+
+
+# Deprecations
+from jax._src.prng import PRNGKeyArray as _PRNGKeyArray
+
+_deprecations = {
+    # Added September 13, 2023:
+    "PRNGKeyArray": (
+        "jax.random.PRNGKeyArray is deprecated. Use jax.Array for annotations, and "
+        "jax.dtypes.issubdtype(arr.dtype, jax.dtypes.prng_key) for runtime detection of "
+        "typed prng keys (i.e. keys created with jax.random.key).\n"
+        "For more information, see https://jax.readthedocs.io/en/latest/jep/9263-typed-keys.html",
+        _PRNGKeyArray
+    ),
+    "KeyArray": (
+        "jax.random.KeyArray is deprecated. Use jax.Array for annotations, and "
+        "jax.dtypes.issubdtype(arr.dtype, jax.dtypes.prng_key) for runtime detection of "
+        "typed prng keys (i.e. keys created with jax.random.key).\n"
+        "For more information, see https://jax.readthedocs.io/en/latest/jep/9263-typed-keys.html",
+        _PRNGKeyArray
+    ),
+    # Added September 21, 2023
+    "threefry2x32_key": (
+        "jax.random.threefry2x32_key(seed) is deprecated. "
+        "Use jax.random.PRNGKey(seed, 'threefry2x32')", _deprecated_threefry2x32_key),
+    "rbg_key": (
+        "jax.random.rbg_key(seed) is deprecated. "
+        "Use jax.random.PRNGKey(seed, 'rbg')", _deprecated_rbg_key),
+    "unsafe_rbg_key": (
+        "jax.random.unsafe_rbg_key(seed) is deprecated. "
+        "Use jax.random.PRNGKey(seed, 'unsafe_rbg')", _deprecated_unsafe_rbg_key),
+    # Added October 18, 2023
+    "threefry_2x32": (  # Note: this has been raising a FutureWarning since 2021
+        "jax.random.threefry_2x32 is deprecated. Use jax.extend.random.threefry_2x32.",
+        _deprecated_threefry_2x32,
+    ),
+    "threefry2x32_p": (
+        "jax.random.threefry2x32_p is deprecated. Use jax.extend.random.threefry2x32_p.",
+        _deprecated_threefry2x32_p,
+    ),
+    # Added October 19. 2023
+    "default_prng_impl": (
+        "jax.random.default_prng_impl is deprecated. Typical uses can be replaced by "
+        "jax.random.key_impl(key), jax.eval_shape(jax.random.key, 0).dtype, or similar.",
+        _deprecated_default_prng_impl,
+    ),
+    # Added November 6, 2023; but has been raising a FutureWarning since JAX 0.1.66
+    "shuffle": (
+        "jax.random.shuffle is deprecated. Use jax.random.permutation with independent=True.",
+        _deprecated_shuffle,
+    )
+}
+
+import typing
+if typing.TYPE_CHECKING:
+  PRNGKeyArray = typing.Any
+  KeyArray = typing.Any
+  default_prng_impl = _deprecated_default_prng_impl
+  shuffle = _deprecated_shuffle
+  threefry_2x32 = _deprecated_threefry_2x32
+  threefry2x32_p = _deprecated_threefry2x32_p
+  threefry2x32_key = _deprecated_threefry2x32_key
+  rbg_key = _deprecated_rbg_key
+  unsafe_rbg_key = _deprecated_unsafe_rbg_key
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing

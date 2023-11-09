@@ -22,13 +22,13 @@ from setuptools import setup, find_packages
 
 project_name = 'jax'
 
-_current_jaxlib_version = '0.4.15'
+_current_jaxlib_version = '0.4.20'
 # The following should be updated with each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.4.15'
+_latest_jaxlib_version_on_pypi = '0.4.20'
 _available_cuda11_cudnn_versions = ['86']
 _default_cuda11_cudnn_version = '86'
 _default_cuda12_cudnn_version = '89'
-_libtpu_version = '0.1.dev20230830'
+_libtpu_version = '0.1.dev20231102'
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -75,8 +75,11 @@ setup(
     install_requires=[
         'ml_dtypes>=0.2.0',
         'numpy>=1.22',
+        "numpy>=1.23.2; python_version>='3.11'",
+        "numpy>=1.26.0; python_version>='3.12'",
         'opt_einsum',
-        'scipy>=1.7',
+        'scipy>=1.9',
+        "scipy>=1.11.1; python_version>='3.12'",
         # Required by xla_bridge.discover_pjrt_plugins for forwards compat with
         # Python versions < 3.10. Can be dropped when 3.10 is the minimum
         # required Python version.
@@ -119,18 +122,29 @@ setup(
           "nvidia-cufft-cu11>=10.9",
           "nvidia-cusolver-cu11>=11.4",
           "nvidia-cusparse-cu11>=11.7",
+          "nvidia-nccl-cu11>=2.18.3",
         ],
 
         'cuda12_pip': [
           f"jaxlib=={_current_jaxlib_version}+cuda12.cudnn{_default_cuda12_cudnn_version}",
-          "nvidia-cublas-cu12",
-          "nvidia-cuda-cupti-cu12",
-          "nvidia-cuda-nvcc-cu12",
-          "nvidia-cuda-runtime-cu12",
+          "nvidia-cublas-cu12>=12.2.5.6",
+          "nvidia-cuda-cupti-cu12>=12.2.142",
+          "nvidia-cuda-nvcc-cu12>=12.2.140",
+          "nvidia-cuda-runtime-cu12>=12.2.140",
           "nvidia-cudnn-cu12>=8.9",
-          "nvidia-cufft-cu12",
-          "nvidia-cusolver-cu12",
-          "nvidia-cusparse-cu12",
+          "nvidia-cufft-cu12>=11.0.8.103",
+          "nvidia-cusolver-cu12>=11.5.2",
+          "nvidia-cusparse-cu12>=12.1.2.141",
+          "nvidia-nccl-cu12>=2.18.3",
+
+          # nvjitlink is not a direct dependency of JAX, but it is a transitive
+          # dependency via, for example, cuSOLVER. NVIDIA's cuSOLVER packages
+          # do not have a version constraint on their dependencies, so the
+          # package doesn't get upgraded even though not doing that can cause
+          # problems (https://github.com/google/jax/issues/18027#issuecomment-1756305196)
+          # Until NVIDIA add version constraints, add an version constraint
+          # here.
+          "nvidia-nvjitlink-cu12>=12.2",
         ],
 
         # Target that does not depend on the CUDA pip wheels, for those who want

@@ -38,7 +38,6 @@ to fail. A Limitation is specific to a harness.
 """
 
 from collections.abc import Iterable, Sequence
-import itertools
 import operator
 import os
 from functools import partial
@@ -48,12 +47,12 @@ from absl import testing
 import numpy as np
 
 import jax
-from jax import config
 from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
 
 from jax._src import ad_util
+from jax._src import config
 from jax._src import dispatch
 from jax._src import prng
 from jax._src import test_util as jtu
@@ -68,7 +67,6 @@ from jax._src import random as jax_random
 # desired if the test file is outside of this project (we don't want a
 # dependency on jtu outside of jax repo).
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 Rng = Any  # A random number generator
 DType = Any
@@ -229,11 +227,11 @@ class Harness:
              include_jax_unimpl: bool = False,
              one_containing: Optional[str] = None) -> bool:
     if not include_jax_unimpl:
-      if any([
+      if any(
           device_under_test in l.devices
           for l in self.jax_unimplemented
           if l.filter(device=device_under_test, dtype=self.dtype)
-      ]):
+      ):
         return False
 
     if one_containing is not None and one_containing not in self.fullname:
@@ -248,32 +246,32 @@ def dtypes_to_str(dtype_list: Sequence[DType], empty_means_all=False) -> str:
 
   names = {np.dtype(dt).name for dt in dtype_list}
   signed = {"int8", "int16", "int32", "int64"}
-  if all([t in names for t in signed]):
+  if signed <= names:
     names = (names - signed) | {"signed"}
   integers = {"uint8", "uint16", "uint32", "uint64"}
-  if all([t in names for t in integers]):
+  if integers <= names:
     names = (names - integers) | {"unsigned"}
   integer = {"signed", "unsigned"}
-  if all([t in names for t in integer]):
+  if integer <= names:
     names = (names - integer) | {"integer"}
 
   floating = {"bfloat16", "float16", "float32", "float64"}
-  if all([t in names for t in floating]):
+  if floating <= names:
     names = (names - floating) | {"floating"}
 
   complex = {"complex64", "complex128"}
-  if all([t in names for t in complex]):
+  if complex <= names:
     names = (names - complex) | {"complex"}
 
   inexact = {"floating", "complex"}
-  if all([t in names for t in inexact]):
+  if inexact <= names:
     names = (names - inexact) | {"inexact"}
 
   all_types = {"integer", "inexact", "bool"}
-  if all([t in names for t in all_types]):
+  if all_types <= names:
     names = (names - all_types) | {"all"}
 
-  return ", ".join(sorted(list(names)))
+  return ", ".join(sorted(names))
 
 
 ##### All harnesses in this file.
@@ -2668,31 +2666,25 @@ for dtype in (np.float32, np.float64):
     define(
         "random_gamma",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        jax.jit(jax_random.gamma),
-        [np.array([42, 43], dtype=np.uint32),
-         RandArg(shape, dtype)],
+        jax.jit(lambda x: jax_random.gamma(jax.random.key(42), x)),
+        [RandArg(shape, dtype)],
         dtype=dtype)
 
-for key_i, key in enumerate([
-    np.array([0, 0], dtype=np.uint32),
-    np.array([42, 43], dtype=np.uint32),
-    np.array([0xFFFFFFFF, 0], dtype=np.uint32),
-    np.array([0, 0xFFFFFFFF], dtype=np.uint32),
-    np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)
-]):
-  if jax.config.jax_enable_custom_prng:
-    def wrap_and_split(key):
-      key = prng.random_wrap(key, impl=jax.random.default_prng_impl())
-      result = jax.random.split(key, 2)
-      return prng.random_unwrap(result)
-  else:
-    def wrap_and_split(key):
-      return jax.random.split(key, 2)
-  define(
-      "random_split",
-      f"i={key_i}",
-      jax.jit(wrap_and_split), [key],
-      dtype=key.dtype)
+
+
+def wrap_and_split():
+  key = jax.random.key(42)
+  if config.enable_custom_prng.value:
+    key = jax.random.wrap_key_data(key)
+  result = jax.random.split(key, 2)
+  return jax.random.key_data(result)
+
+define(
+    "random_split",
+    "",
+    jax.jit(wrap_and_split),
+    [],
+    dtype=np.uint32)
 
 # A few library functions from jax.random
 for dtype in jtu.dtypes.all_floating:
@@ -2701,8 +2693,9 @@ for dtype in jtu.dtypes.all_floating:
       define(
           "random_categorical",
           f"shape={jtu.format_shape_dtype_string(shape, dtype)}_{axis=}",
-          jax.random.categorical,
-          [np.array([42, 43], dtype=np.uint32), RandArg(shape, dtype),
+          lambda x, axis: jax.random.categorical(
+            jax.random.key(42), x, axis),
+          [RandArg(shape, dtype),
            StaticArg(axis)],
           dtype=dtype,
           axis=axis)
@@ -2712,9 +2705,9 @@ for dtype in jtu.dtypes.all_floating:
     define(
         "random_uniform",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        jax.random.uniform,
-        [np.array([42, 43], dtype=np.uint32),
-         StaticArg(shape), StaticArg(dtype)],
+        lambda shape, dtype: jax.random.uniform(
+          jax.random.key(42), shape, dtype),
+        [StaticArg(shape), StaticArg(dtype)],
         dtype=dtype)
 
 for dtype in jtu.dtypes.all_integer:
@@ -2725,9 +2718,9 @@ for dtype in jtu.dtypes.all_integer:
     define(
         "random_randint",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        jax.random.randint,
-        [np.array([42, 43], dtype=np.uint32),
-         StaticArg(shape),
+        lambda shape, minval, maxval, dtype: jax.random.randint(
+          jax.random.key(42), shape, minval, maxval, dtype),
+        [StaticArg(shape),
          StaticArg(-5),  # minval
          StaticArg(maxval),
          StaticArg(dtype)],
@@ -3319,7 +3312,7 @@ for padding, lhs_dilation, rhs_dilation in [
         rhs_dilation=rhs_dilation)
 
 key_types = [((4,), np.uint32)]
-if config.jax_enable_x64:
+if config.enable_x64.value:
   key_types.append(((2,), np.uint64))
 
 for algorithm in [lax.RandomAlgorithm.RNG_THREE_FRY,

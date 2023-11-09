@@ -21,6 +21,7 @@ import dataclasses
 import functools
 from typing import Any, Callable, Iterator
 
+from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import linear_util as lu
 from jax._src import state
@@ -122,6 +123,7 @@ class GridMapping:
   block_mappings: tuple[BlockMapping | None, ...]
   mapped_dims: tuple[int, ...]
   num_index_operands: int
+  num_scratch_operands: int
 
   replace = dataclasses.replace
 
@@ -136,26 +138,25 @@ def _preprocess_grid(grid: Grid | int | None) -> Grid:
 
 def _convert_block_spec_to_block_mapping(
     in_avals: list[jax_core.ShapedArray], block_spec: BlockSpec | None,
-    aval: jax_core.ShapedArray,
+    aval: jax_core.ShapedArray, in_tree: Any,
     ) -> BlockSpec | None:
   if block_spec is no_block_spec:
     return None
   if block_spec.index_map is None:
-    compute_index = lambda *args: (0,) * len(aval.shape)
+    compute_index = lambda *args, **kwargs: (0,) * len(aval.shape)
     block_shape = aval.shape
   else:
     compute_index = block_spec.compute_index
     block_shape = block_spec.block_shape
   block_shape = tuple(
       mapped if s is None else s for s in block_shape)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(compute_index), in_avals)
+  flat_fun, _ = api_util.flatten_fun(lu.wrap_init(compute_index), in_tree)
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
   return BlockMapping(block_shape, jax_core.ClosedJaxpr(jaxpr, consts),
                       block_spec.memory_space)
 
-
-def _tile_ref(ref: jax_core.AbstractRef, block_shape: tuple[int, ...] | None
-             ) -> jax_core.AbstractRef:
+def _tile_ref(ref: state.AbstractRef, block_shape: tuple[int, ...] | None
+             ) -> state.AbstractRef:
   if block_shape is None:
     return ref
   shape = tuple(s for s in block_shape if s is not None)
@@ -250,15 +251,17 @@ class GridSpec:
         self.grid, in_avals, flat_in_specs, out_avals,
         flat_out_specs)
     grid_avals = [jax_core.ShapedArray((), jnp.dtype("int32"))] * len(self.grid)
+    # Create args, kwargs pytree def
+    grid_tree = tree_util.tree_structure((tuple(grid_avals), {}))
     in_block_mappings = map(
-        partial(_convert_block_spec_to_block_mapping, grid_avals), in_specs,
-        in_ref_avals)
+        partial(_convert_block_spec_to_block_mapping, grid_avals,
+                in_tree=grid_tree), in_specs, in_ref_avals)
     out_block_mappings = map(
-        partial(_convert_block_spec_to_block_mapping, grid_avals), out_specs,
-        out_ref_avals)
+        partial(_convert_block_spec_to_block_mapping, grid_avals,
+                in_tree=grid_tree), out_specs, out_ref_avals)
     grid_mapping = GridMapping(
         self.grid, (*in_block_mappings, *out_block_mappings), (),
-        num_index_operands=0)
+        num_index_operands=0, num_scratch_operands=0)
     jaxpr_in_avals = tree_util.tree_unflatten(in_tree, in_ref_avals)
     jaxpr_out_avals = tree_util.tree_unflatten(out_tree, out_ref_avals)
     if not isinstance(jaxpr_out_avals, (tuple, list)):

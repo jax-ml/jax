@@ -214,13 +214,13 @@ class CompatTestBase(jtu.JaxTestCase):
 # Pasted from the test output (see back_compat_test_util.py module docstring)
 data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     testdata_version={CURRENT_TESTDATA_VERSION},
-    platform={repr(self.default_jax_backend())},
-    custom_call_targets={repr(current_custom_call_targets)},
-    serialized_date={repr(datetime.date.today())},
-    inputs={repr(data.inputs)},
-    expected_outputs={repr(res_run_current)},
+    platform={self.default_jax_backend()!r},
+    custom_call_targets={current_custom_call_targets!r},
+    serialized_date={datetime.date.today()!r},
+    inputs={data.inputs!r},
+    expected_outputs={res_run_current!r},
     mlir_module_text=r\"\"\"\n{module_str}\"\"\",
-    mlir_module_serialized={repr(serialized)},
+    mlir_module_serialized={serialized!r},
     xla_call_module_version={module_version},
 )  # End paste
 
@@ -284,7 +284,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     args_specs = export.poly_specs(data.inputs, polymorphic_shapes)
     exported = export.export(
       jax.jit(func),
-      lowering_platform=self.default_jax_backend(),
+      lowering_platforms=(self.default_jax_backend(),),
       disabled_checks=tuple(
         export.DisabledSafetyCheck.custom_call(target)
         for target in allow_unstable_custom_call_targets)
@@ -320,8 +320,9 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         out_avals=tuple(out_avals),
         in_shardings=(pxla.UNSPECIFIED,) * len(in_avals),
         out_shardings=(pxla.UNSPECIFIED,) * len(out_avals),
-        lowering_platform=data.platform,
         lowering_platforms=(data.platform,),
+        ordered_effects=(),
+        unordered_effects=(),
         disabled_checks=(),
         mlir_module_serialized=data.mlir_module_serialized,
         serialization_version=data.xla_call_module_version,

@@ -25,7 +25,7 @@ This enables many JAX programs to be traced with symbolic dimensions
 in some dimensions. A priority has been to enable the batch
 dimension in neural network examples to be polymorphic.
 
-This was built initially for jax2tf, but it is now customizeable to be
+This was built initially for jax2tf, but it is now customizable to be
 independent of TF. The best documentation at the moment is in the
 jax2tf.convert docstring, and the
 [README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md).
@@ -48,9 +48,9 @@ import numpy as np
 import opt_einsum
 
 import jax
-from jax import config
 from jax.interpreters import xla
 
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
@@ -539,7 +539,7 @@ class _DimExpr():
     try:
       power = int(power)
     except:
-      raise InconclusiveDimensionOperation(f"Symblic dimension cannot be raised to non-integer power '{self}' ^ '{power}'")
+      raise InconclusiveDimensionOperation(f"Symbolic dimension cannot be raised to non-integer power '{self}' ^ '{power}'")
     return functools.reduce(op.mul, [self] * power)
 
   def __floordiv__(self, divisor):
@@ -651,7 +651,7 @@ class _DimExpr():
           raise InconclusiveDimensionOperation("")
         remainder = 0
 
-      if config.jax_enable_checks:
+      if config.enable_checks.value:
         assert self == divisor * quotient + remainder
       return quotient, remainder
     except InconclusiveDimensionOperation:
@@ -910,7 +910,7 @@ class PolyShape(tuple):
   def __new__(cls, *dim_specs):
     for ds in dim_specs:
       if not isinstance(ds, (int, str)) and ds != ...:
-        msg = (f"Invalid polymorphic shape element: {repr(ds)}; must be a string "
+        msg = (f"Invalid polymorphic shape element: {ds!r}; must be a string "
                "representing a dimension variable, or an integer, or ...")
         raise ValueError(msg)
     return tuple.__new__(PolyShape, dim_specs)
@@ -1269,7 +1269,7 @@ class ShapeConstraint:
     """Forms the error_message and error message_inputs.
     See shape_assertion.
     """
-    # There is currenly a limitation in the shape assertion checker that
+    # There is currently a limitation in the shape assertion checker that
     # it supports at most 32 error_message_inputs. We try to stay within the
     # limit, reusing a format specifier if possible.
     if jaxlib_version <= (0, 4, 14):

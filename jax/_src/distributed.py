@@ -19,7 +19,8 @@ import os
 from typing import Any, Optional, Union
 
 from jax._src import clusters
-from jax._src.config import config
+from jax._src import config
+from jax._src import xla_bridge
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
 
@@ -165,7 +166,7 @@ def initialize(coordinator_address: Optional[str] = None,
 
   Example:
 
-  Suppose there are two GPU processs, and process 0 is the designated coordinator
+  Suppose there are two GPU processes, and process 0 is the designated coordinator
   with address ``10.0.0.1:1234``. To initialize the GPU cluster, run the
   following commands before anything else.
 
@@ -177,6 +178,9 @@ def initialize(coordinator_address: Optional[str] = None,
 
   >>> jax.distributed.initialize(coordinator_address='10.0.0.1:1234', num_processes=2, process_id=1)  # doctest: +SKIP
   """
+  if xla_bridge.backends_are_initialized():
+    raise RuntimeError("jax.distributed.initialize() must be called before "
+                        "any JAX computations are executed.")
   global_state.initialize(coordinator_address, num_processes, process_id,
                           local_device_ids, initialization_timeout)
   atexit.register(shutdown)

@@ -85,6 +85,7 @@ namespace; they are listed below.
     bartlett
     bincount
     bitwise_and
+    bitwise_count
     bitwise_not
     bitwise_or
     bitwise_xor
@@ -155,6 +156,7 @@ namespace; they are listed below.
     extract
     eye
     fabs
+    fill_diagonal
     finfo
     fix
     flatnonzero

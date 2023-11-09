@@ -26,6 +26,10 @@
 #
 # COMMAND: Command to be executed in the docker container
 #
+# ROCM_DEB_REPO_VERSION: ROCm debian repo version
+#
+# ROCM_PATH: ROCM path in the docker container
+#
 # Environment variables read by this script
 # WORKSPACE
 # XLA_REPO
@@ -44,6 +48,8 @@ DOCKERFILE_PATH="${SCRIPT_DIR}/Dockerfile.ms"
 DOCKER_CONTEXT_PATH="${SCRIPT_DIR}"
 KEEP_IMAGE="--rm"
 KEEP_CONTAINER="--rm"
+ROCM_DEB_REPO_VERSION="5.6" #default for now is 5.6
+ROCM_PATH="/opt/rocm-5.6.0"
 POSITIONAL_ARGS=()
 
 RUNTIME_FLAG=1
@@ -70,6 +76,14 @@ while [[ $# -gt 0 ]]; do
     --keep_container)
       KEEP_CONTAINER=""
       shift 1
+      ;;
+    --rocm_deb_repo_version)
+      ROCM_DEB_REPO_VERSION="$2"
+      shift 2
+      ;;
+    --rocm_path)
+      ROCM_PATH="$2"
+      shift 2
       ;;
 
     *)
@@ -119,7 +133,7 @@ echo "Python Version (${PYTHON_VERSION})"
 if [[ "${RUNTIME_FLAG}" -eq 1  ]]; then
   echo "Building (runtime) container (${DOCKER_IMG_NAME}) with Dockerfile($DOCKERFILE_PATH)..."
   docker build --target rt_build --tag ${DOCKER_IMG_NAME} \
-        --build-arg PYTHON_VERSION=$PYTHON_VERSION \
+        --build-arg PYTHON_VERSION=$PYTHON_VERSION --build-arg ROCM_DEB_REPO="http://repo.radeon.com/rocm/apt/"$ROCM_DEB_REPO_VERSION --build-arg ROCM_PATH=$ROCM_PATH\
       -f "${DOCKERFILE_PATH}" "${DOCKER_CONTEXT_PATH}"
 else
   echo "Building (CI) container (${DOCKER_IMG_NAME}) with Dockerfile($DOCKERFILE_PATH)..."

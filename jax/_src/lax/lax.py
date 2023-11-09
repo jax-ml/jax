@@ -36,6 +36,7 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import array
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -45,7 +46,6 @@ from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.abstract_arrays import array_types
-from jax._src.config import config
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
                            raise_to_shaped, abstract_token, canonicalize_shape)
 from jax._src.interpreters import ad
@@ -93,7 +93,7 @@ def _validate_shapes(shapes: Sequence[Shape]):
       raise TypeError(msg)
 
   assert shapes
-  if config.jax_dynamic_shapes:
+  if config.dynamic_shapes.value:
     # pass dynamic shapes through unchecked
     return
   else:
@@ -182,7 +182,7 @@ def _extract_tracers_dyn_shape(
     shape: Sequence[Union[int, core.Tracer]]
   ) -> tuple[list[core.Tracer], list[Optional[int]]]:
   # Given a sequence representing a shape, pull out Tracers, replacing with None
-  if config.jax_dynamic_shapes:
+  if config.dynamic_shapes.value:
     # We must gate this behavior under a flag because otherwise the errors
     # raised are different (and have worse source provenance information).
     dyn_shape = [d for d in shape if isinstance(d, core.Tracer)]
@@ -794,7 +794,7 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   """
   if np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and isinstance(operand, Array):
     return type_cast(Array, operand)
-  if config.jax_dynamic_shapes:
+  if config.dynamic_shapes.value:
     # We must gate this behavior under a flag because otherwise the errors
     # raised are different (and have worse source provenance information).
     dyn_shape, static_shape = _extract_tracers_dyn_shape(shape)
@@ -1117,12 +1117,12 @@ def _reduce_xor(operand: ArrayLike, axes: Sequence[int]) -> Array:
   return reduce_xor_p.bind(operand, axes=tuple(axes))
 
 @overload
-def sort(operand: Sequence[Array], dimension: int = -1,
-         is_stable: bool = True, num_keys: int = 1) -> tuple[Array, ...]: ...
-
-@overload
 def sort(operand: Array, dimension: int = -1,
          is_stable: bool = True, num_keys: int = 1) -> Array: ...
+
+@overload
+def sort(operand: Sequence[Array], dimension: int = -1,
+         is_stable: bool = True, num_keys: int = 1) -> tuple[Array, ...]: ...
 
 def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
          is_stable: bool = True, num_keys: int = 1) -> Union[Array, tuple[Array, ...]]:
@@ -1649,7 +1649,7 @@ def _unbroadcast(aval, x):
     return _reduce_sum(x, list(range(len(x_shape))))
   else:
     dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape)) if not core.definitely_equal(a, b)]
-    if config.jax_enable_checks: assert all(aval.shape[i] == 1 for i in dims)
+    if config.enable_checks.value: assert all(aval.shape[i] == 1 for i in dims)
     return reshape(_reduce_sum(x, dims), aval.shape)
 
 def _maybe_broadcast(target_shape, x):
@@ -1710,6 +1710,7 @@ _complex = {np.complexfloating}
 _complex_elem_types = {np.float32, np.float64}
 _int = {np.integer}
 _bool = {np.bool_}
+_signedint = {np.signedinteger}
 
 _num = _int | _float | _complex
 _any = _int | _float | _complex | _bool
@@ -1944,7 +1945,7 @@ def _conj_transpose_rule(t, x, *, input_dtype):
 ad.primitive_jvps[conj_p] = partial(ad.linear_jvp, conj_p)
 ad.primitive_transposes[conj_p] = _conj_transpose_rule
 
-abs_p = unop(_complex_basetype, _num, 'abs')
+abs_p = unop(_complex_basetype, _signedint | _float | _complex, 'abs')
 mlir.register_lowering(abs_p, partial(_nary_lower_hlo, hlo.AbsOp))
 
 def _abs_jvp_rule(g, ans, x):
@@ -1993,7 +1994,7 @@ def _pow_jvp_lhs(g, ans, x, y):
       shape = broadcast_shapes(x.shape, y.shape)
       x = _maybe_broadcast(shape, x)
       y = _maybe_broadcast(shape, y)
-    jac = select(eq(y, _const(y, 0)), _ones(y),
+    jac = select(eq(y, _const(y, 0)), _zeros(y),
                  mul(_replace_zero(y), pow(x, sub(y, _ones(y)))))
   else:
     jac = mul(y, pow(x, sub(y, _ones(y))))
@@ -2246,7 +2247,7 @@ def _opaque_comparison_hlo(direction, reduction_op, identity, ctx,
   base_aval_out = core.ShapedArray(base_aval_x.shape, aval_out.dtype)
   reduce_axes = tuple(range(aval_out.ndim, base_aval_out.ndim))
   res, = mlir.delegate_lowering(
-      ctx, partial(_compare_lower_hlo, direction),
+      ctx, partial(_compare_lower_hlo, direction, False),
       x, y, avals_in=[base_aval_x, base_aval_y], avals_out=[base_aval_out])
   return mlir.delegate_lowering(
       ctx, partial(_unary_reduce_lower, reduction_op, identity,
@@ -2269,14 +2270,16 @@ def _compare_lower_hlo_opaque(direction: str, ctx, avals_in, aval_out, x, y):
     raise NotImplementedError(
         f"HLO comparison {direction} for extended dtype {avals_in[0].dtype}")
 
-def _compare_lower_hlo(direction: str, ctx, x, y):
+
+def _compare_lower_hlo(direction: str, total_order: bool, ctx, x, y):
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
   x_dtype = avals_in[0].dtype
   x, y = mlir.multi_broadcast_in_dim(ctx, (x, y), avals_in, aval_out.shape)
   if dtypes.issubdtype(x_dtype, dtypes.extended):
+    assert not total_order
     return _compare_lower_hlo_opaque(direction, ctx, avals_in, aval_out, x, y)
   if dtypes.issubdtype(x_dtype, np.inexact):
-    compare_type = "FLOAT"
+    compare_type = "TOTALORDER" if total_order else "FLOAT"
   elif dtypes.issubdtype(x_dtype, np.signedinteger):
     compare_type = "SIGNED"
   else:
@@ -2285,27 +2288,39 @@ def _compare_lower_hlo(direction: str, ctx, x, y):
 
 eq_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'eq', allow_extended_dtype=True)
 ad.defjvp_zero(eq_p)
-mlir.register_lowering(eq_p, partial(_compare_lower_hlo, "EQ"))
+mlir.register_lowering(eq_p, partial(_compare_lower_hlo, "EQ", False))
 
 ne_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'ne', allow_extended_dtype=True)
 ad.defjvp_zero(ne_p)
-mlir.register_lowering(ne_p, partial(_compare_lower_hlo, "NE"))
+mlir.register_lowering(ne_p, partial(_compare_lower_hlo, "NE", False))
 
 ge_p = naryop(_fixed_dtype(np.bool_), [_ordered, _ordered], 'ge')
 ad.defjvp_zero(ge_p)
-mlir.register_lowering(ge_p, partial(_compare_lower_hlo, "GE"))
+mlir.register_lowering(ge_p, partial(_compare_lower_hlo, "GE", False))
 
 gt_p = naryop(_fixed_dtype(np.bool_), [_ordered, _ordered], 'gt')
 ad.defjvp_zero(gt_p)
-mlir.register_lowering(gt_p, partial(_compare_lower_hlo, "GT"))
+mlir.register_lowering(gt_p, partial(_compare_lower_hlo, "GT", False))
 
 le_p = naryop(_fixed_dtype(np.bool_), [_ordered, _ordered], 'le')
 ad.defjvp_zero(le_p)
-mlir.register_lowering(le_p, partial(_compare_lower_hlo, "LE"))
+mlir.register_lowering(le_p, partial(_compare_lower_hlo, "LE", False))
 
 lt_p = naryop(_fixed_dtype(np.bool_), [_ordered, _ordered], 'lt')
 ad.defjvp_zero(lt_p)
-mlir.register_lowering(lt_p, partial(_compare_lower_hlo, "LT"))
+mlir.register_lowering(lt_p, partial(_compare_lower_hlo, "LT", False))
+
+eq_to_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'eq_to')
+ad.defjvp_zero(eq_to_p)
+mlir.register_lowering(eq_to_p, partial(_compare_lower_hlo, "EQ", True))
+
+le_to_p = naryop(_fixed_dtype(np.bool_), [_ordered, _ordered], 'le_to')
+ad.defjvp_zero(le_to_p)
+mlir.register_lowering(le_to_p, partial(_compare_lower_hlo, "LE", True))
+
+lt_to_p = naryop(_fixed_dtype(np.bool_), [_ordered, _ordered], 'lt_to')
+ad.defjvp_zero(lt_to_p)
+mlir.register_lowering(lt_to_p, partial(_compare_lower_hlo, "LT", True))
 
 
 def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type):
@@ -2427,8 +2442,8 @@ def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
     if dim_size * old_dtype.itemsize != new_dtype.itemsize:
       raise ValueError(
         f"Attempting to convert array of shape {operand.shape} "
-        f"from {str(old_dtype)} of size {old_dtype.itemsize} "
-        f"to {str(new_dtype)} of size {new_dtype.itemsize}, "
+        f"from {old_dtype} of size {old_dtype.itemsize} "
+        f"to {new_dtype} of size {new_dtype.itemsize}, "
         f"but {dim_size} * {old_dtype.itemsize} != {new_dtype.itemsize}")
     return operand.shape[:-1]
 
@@ -2775,7 +2790,8 @@ def precision_attr(precision: PrecisionType) -> ir.ArrayAttr:
 
 
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
-                       precision, preferred_element_type: Optional[np.dtype]):
+                       precision, preferred_element_type: Optional[np.dtype],
+                       platform: str = "default"):
   del preferred_element_type  # Implied by the output aval
   lhs_aval, rhs_aval = ctx.avals_in
   lhs_dtype, rhs_dtype = lhs_aval.dtype, rhs_aval.dtype
@@ -2788,7 +2804,7 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
   # fail on codegen for different accepted cases. To handle those cases, we
   # insert ConvertOps on the input, in a platform-dependent way.
   if lhs_dtype != rhs_dtype:
-    if ctx.module_context.platform == "tpu":
+    if platform == "tpu":
       handled = lambda dt: (dtypes.issubdtype(dt, np.floating) or
                             dtypes.issubdtype(dt, np.integer))
       if not (handled(lhs_dtype) and handled(rhs_dtype)):
@@ -2805,7 +2821,7 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       lhs_dtype = rhs_dtype = aval_out.dtype
 
   # TODO(b/195364460): Work around slow XLA/CPU implementation of float16 matmul
-  if ctx.module_context.platform == "cpu":
+  if platform == "cpu":
     if lhs_dtype == np.float16:
       lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
                              core.ShapedArray(lhs_aval.shape, np.float32))
@@ -2830,6 +2846,11 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
   ]
 
 mlir.register_lowering(dot_general_p, _dot_general_lower)
+
+for platform in ["cpu", "tpu"]:
+  mlir.register_lowering(dot_general_p,
+                         partial(_dot_general_lower, platform=platform),
+                         platform=platform)
 
 
 def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
@@ -2858,7 +2879,7 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
         "shape; got operand of shape {}, target broadcast shape {}, "
         "broadcast_dimensions {} ")
     raise TypeError(msg.format(
-        tuple([core.replace_tracer_for_error_message(d) for d in operand.shape]),
+        tuple(core.replace_tracer_for_error_message(d) for d in operand.shape),
         shape, broadcast_dimensions))
   if (len(broadcast_dimensions) != len(set(broadcast_dimensions)) or
       tuple(broadcast_dimensions) != tuple(sorted(broadcast_dimensions))):
@@ -3286,7 +3307,7 @@ mlir.register_lowering(pad_p, _pad_lower)
 # For N > 1, we can match up the output array axis with the second axis of the
 # input. But for N = 1, it is not clear how axes match up: all we know from the
 # JAXpr is that we are reshaping from (1, 1) to (1,).
-# In constrast, squeeze[ dimensions=(0,) ] is unambiguous.
+# In contrast, squeeze[ dimensions=(0,) ] is unambiguous.
 
 
 def _squeeze_dtype_rule(operand, *, dimensions):
@@ -3351,7 +3372,7 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions):
     msg = 'reshape new_sizes must all be positive, got {}.'
     raise TypeError(msg.format(new_sizes))
   # TODO(necula): re-enable this check
-  if (not config.jax_dynamic_shapes and
+  if (not config.dynamic_shapes.value and
       not math.prod(np.shape(operand)) == math.prod(new_sizes)):
     msg = 'reshape total size must be unchanged, got new_sizes {} for shape {}.'
     raise TypeError(msg.format(new_sizes, np.shape(operand)))
@@ -3683,7 +3704,7 @@ def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr,
     raise NotImplementedError  # loop and stack
 
 def _reduce_jvp(reducer, init_values, primals, tangents, axes):
-  input_shape = np.array(primals[0].shape, dtype=np.int_)
+  input_shape = np.array(primals[0].shape, dtype=int)
 
   n = np.prod(input_shape[list(axes)])
   non_axes = np.delete(np.arange(len(input_shape)), axes)
@@ -3991,6 +4012,7 @@ reduce_precision_p = standard_primitive(
     _reduce_precision_shape_rule,
     partial(unop_dtype_rule, _identity, _float, 'reduce_precision'),
     name='reduce_precision')
+ad.deflinear(reduce_precision_p, lambda t, **kwargs: [reduce_precision_p.bind(t, **kwargs)])
 batching.defvectorized(reduce_precision_p)
 
 def _reduce_precision_lower(ctx, operand, *, exponent_bits, mantissa_bits):
@@ -4022,43 +4044,19 @@ def _sort_abstract_eval(*args, **kwargs):
   return args
 
 
-def _float_to_int_for_sort(x):
-  # Switch from a floating point value to a integer value in such a way that
-  # when using the integer value to compare, we get the same result for normal
-  # values, and -nan is treated as the smallest value, and nan is treated as
-  # the largest value.
-  # If f is a float, and
-  # x = bit_cast<int32>(f);
-  # y = x < 0 ? int32_max - x : x;
-  # then y is ordered as an int32 such that finite values have the obvious
-  # order. In this scheme, -0 would be before 0, and -NaN and NaN appear at
+def _canonicalize_float_for_sort(x):
+  # In the sort comparator, we are going to use a comparision operator where -0
+  # would be before 0, and -NaN and NaN appear at the beginning and end of the
+  # ordering. In this scheme, -0 would be before 0, and -NaN and NaN appear at
   # the beginning and end of the ordering. This causes issues for stable
   # sorts, so we avoid this by standardizing the representation of zeros
   # and NaNs in the output.
-  # Note that in order to avoid -x to overflow, we calculate
-  # int32_max - x as unsigned, and then convert back to signed.
-  if x.dtype == dtypes.bfloat16:
-    x = convert_element_type(x, np.float32)
-  nbits = np.finfo(x).bits
-  signed_dtype = _INT_DTYPES[nbits]
-  unsigned_dtype = _UINT_DTYPES[nbits]
 
-  signed = bitcast_convert_type(x, signed_dtype)
-  unsigned = bitcast_convert_type(x, unsigned_dtype)
+  result = select(eq(x, _zero(x)), _zeros(x), x)
+  result = select(_isnan(x), full_like(result, np.nan), result)
 
-  # We cannot standardize zeros in x because XLA elides this is some cases.
-  # We cannot standardize NaNs in x because it triggers jax.debug_nans
-  # So instead we do these replacements in the signed integer representation.
+  return result
 
-  # Standardize zeros:
-  signed = select(eq(x, _zero(x)), _zeros(signed), signed)
-  # Standardize nans:
-  signed_nan = x.dtype.type(np.nan).view(signed_dtype)
-  signed = select(_isnan(x), full_like(signed, signed_nan), signed)
-
-  flipped = bitcast_convert_type(
-    sub(unsigned_dtype.type(np.iinfo(signed_dtype).max), unsigned), signed_dtype)
-  return select(lt(signed, _zero(signed)), flipped, signed)
 
 # Default comparator that sorts the operands lexicographically on the
 # first `num_keys` arguments.
@@ -4073,8 +4071,8 @@ def _sort_lt_comparator(*operands, num_keys=1):
   x_keys, y_keys = _operands_to_keys(*operands, num_keys=num_keys)
   p = None
   for xk, yk in zip(x_keys[::-1], y_keys[::-1]):
-    p = (bitwise_or(lt(xk, yk), bitwise_and(eq(xk, yk), p)) if p is not None
-         else lt(xk, yk))
+    p = (bitwise_or(lt_to_p.bind(xk, yk), bitwise_and(eq_to_p.bind(xk, yk), p)) if p is not None
+         else lt_to_p.bind(xk, yk))
   return p
 
 # Similar to sort_lt_comparator, but implements less than or equal. Used by
@@ -4083,8 +4081,8 @@ def _sort_le_comparator(*operands, num_keys=1):
   x_keys, y_keys = _operands_to_keys(*operands, num_keys=num_keys)
   p = None
   for xk, yk in zip(x_keys[::-1], y_keys[::-1]):
-    p = (bitwise_or(lt(xk, yk), bitwise_and(eq(xk, yk), p)) if p is not None
-         else le(xk, yk))
+    p = (bitwise_or(lt_to_p.bind(xk, yk), bitwise_and(eq_to_p.bind(xk, yk), p)) if p is not None
+         else le_to_p.bind(xk, yk))
   return p
 
 def _operands_to_keys(*operands, num_keys=1):
@@ -4094,11 +4092,11 @@ def _operands_to_keys(*operands, num_keys=1):
   for x, y in zip(operands[:2*num_keys:2], operands[1:2*num_keys:2]):
     assert x.dtype == y.dtype, (x.dtype, y.dtype)
     if dtypes.issubdtype(x.dtype, np.complexfloating):
-      x_keys.extend([_float_to_int_for_sort(real(x)), _float_to_int_for_sort(imag(x))])
-      y_keys.extend([_float_to_int_for_sort(real(y)), _float_to_int_for_sort(imag(y))])
+      x_keys.extend([_canonicalize_float_for_sort(real(x)), _canonicalize_float_for_sort(imag(x))])
+      y_keys.extend([_canonicalize_float_for_sort(real(y)), _canonicalize_float_for_sort(imag(y))])
     elif dtypes.issubdtype(x.dtype, np.floating):
-      x_keys.append(_float_to_int_for_sort(x))
-      y_keys.append(_float_to_int_for_sort(y))
+      x_keys.append(_canonicalize_float_for_sort(x))
+      y_keys.append(_canonicalize_float_for_sort(y))
     else:
       x_keys.append(x)
       y_keys.append(y)
@@ -4575,6 +4573,8 @@ def _copy_impl(prim, *args, **kwargs):
   a, = args
   if isinstance(a, jax.Array) and isinstance(a.sharding, PmapSharding):
     sharded_dim = _which_dim_sharded(a.sharding)
+    if sharded_dim is None:
+      return dispatch.apply_primitive(prim, *args, **kwargs)
     return _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs)
   return dispatch.apply_primitive(prim, *args, **kwargs)
 
@@ -4840,7 +4840,7 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
   # bool(obj) for an ndarray raises an error, so we check len
   if not len(obj):  # pylint: disable=g-explicit-length-test
     return
-  if (config.jax_dynamic_shapes and isinstance(obj, (tuple, list)) and
+  if (config.dynamic_shapes.value and isinstance(obj, (tuple, list)) and
       any(isinstance(d, (core.Tracer, core.DArray)) for d in obj)):
     return  # TODO(mattjj): handle more checks in the dynamic shape case
   obj_arr = np.array(obj)
@@ -4903,17 +4903,17 @@ def canonicalize_precision(precision: PrecisionLike) -> Optional[tuple[Precision
   value to apply to both operands, or as a sequence of two values.
   """
   if precision is None:
-    if config.jax_default_matmul_precision is None:
+    if config.default_matmul_precision.value is None:
       return None
     try:
       return type_cast(
           tuple[PrecisionType, PrecisionType],
-          (Precision(config.jax_default_matmul_precision),
-           Precision(config.jax_default_matmul_precision)))
+          (Precision(config.default_matmul_precision.value),
+           Precision(config.default_matmul_precision.value)))
     except TypeError:
       raise ValueError(
           "jax_default_matmul_precision flag must be set to None or a value in "
-          f"{list(Precision._strings)}, but got {config.jax_default_matmul_precision}"
+          f"{list(Precision._strings)}, but got {config.default_matmul_precision.value}"
       ) from None
   elif isinstance(precision, str) and precision in Precision._strings:
     return type_cast(tuple[PrecisionType, PrecisionType],

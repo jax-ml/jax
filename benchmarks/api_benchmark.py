@@ -785,9 +785,9 @@ def batch_inplace_while(inplace_op, state):
 
   size = 100_000
   args = jnp.array([0]), jnp.zeros((1, size))
-  f(*args)  # compile
+  jax.block_until_ready(f(*args))  # compile
   while state:
-    f(*args)
+    jax.block_until_ready(f(*args))
 
 
 google_benchmark.register(
@@ -795,6 +795,26 @@ google_benchmark.register(
 google_benchmark.register(
     partial(batch_inplace_while, 'dynamic_update_slice'),
     name='batch_inplace_while_dynamic_update_slice')
+
+
+@google_benchmark.register
+def serial_dot_products(state):
+  SIZE = 50
+
+  @jax.jit
+  @jax.vmap
+  @jax.grad
+  def f(x):
+    out = 0
+    for i in range(SIZE):
+      y = x @ jnp.array([i, i + 1], dtype=jnp.float32)
+      out = out + y * x[0]
+    return out
+
+  x = jax.random.normal(jax.random.PRNGKey(0), (2, 2))
+  f(x).block_until_ready()  # compile
+  while state:
+    f(x).block_until_ready()
 
 
 @google_benchmark.register
@@ -813,6 +833,18 @@ def safe_zip(state):
   args = tuple(list(range(state.range(0))) for _ in range(state.range(1)))
   while state:
     jax.util.safe_zip(*args)
+
+
+@google_benchmark.register
+def bench_make_array_from_callback_fully_replicated_sharding(state):
+  mesh = jax.sharding.Mesh(
+      np.array(jax.devices()[:8]).reshape((4, 2)), ('x', 'y'))
+  shape = (8, 2)
+  np_arr = np.arange(16).reshape(shape)
+  s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+
+  while state:
+    jax.make_array_from_callback(shape, s, np_arr.__getitem__)
 
 
 if __name__ == "__main__":

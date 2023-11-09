@@ -82,6 +82,10 @@ version = check_jaxlib_version(
 import jaxlib.cpu_feature_guard as cpu_feature_guard
 cpu_feature_guard.check_cpu_features()
 
+try:
+  import jaxlib.cuda_plugin_extension as cuda_plugin_extension  # pytype: disable=import-error
+except ModuleNotFoundError:
+  cuda_plugin_extension = None
 import jaxlib.utils as utils
 import jaxlib.xla_client as xla_client
 import jaxlib.lapack as lapack
@@ -97,6 +101,11 @@ pmap_lib = xla_client._xla.pmap_lib
 def _xla_gc_callback(*args):
   xla_client._xla.collect_garbage()
 gc.callbacks.append(_xla_gc_callback)
+
+try:
+  import jaxlib.cuda._versions as cuda_versions  # pytype: disable=import-error
+except ImportError:
+  cuda_versions = None
 
 import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error
 import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error

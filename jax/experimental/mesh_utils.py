@@ -282,9 +282,11 @@ def create_device_mesh(
     devices: optionally, the devices to construct a mesh for. Defaults to
       jax.devices().
     contiguous_submeshes: if True, this function will attempt to create a mesh
-      where each process's local devices form a contiguous submesh. This is
-      required when passing host local inputs to `pjit`. A ValueError will be
-      raised if this function can't produce a suitable mesh.
+      where each process's local devices form a contiguous submesh. A ValueError
+      will be raised if this function can't produce a suitable mesh. This
+      setting was sometimes necessary before the introduction of jax.Array to
+      ensure non-ragged local arrays; if using jax.Arrays, it's better to keep
+      this set to False.
 
   Raises:
     ValueError: if the number of devices doesn't equal the product of

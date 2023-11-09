@@ -23,19 +23,17 @@ import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
-from jax import config
 from jax import lax
 from jax._src import cache_key
 from jax._src import compiler
+from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
-from jax._src.config import compilation_cache_include_metadata_in_key
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version
 
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 class CacheKeyTest(jtu.JaxTestCase):
@@ -130,6 +128,26 @@ class CacheKeyTest(jtu.JaxTestCase):
         cache_key._hash_serialized_compile_options, compile_options
     )
     self.assertEqual(hash1, hash2)
+
+  @unittest.skipIf(
+      xla_extension_version < 193, "Test requires jaxlib 0.4.15 or newer"
+  )
+  @jtu.skip_on_devices("cpu")
+  def test_hash_accelerator_devices(self):
+    if xla_extension_version < 209 and xla_bridge.using_pjrt_c_api():
+      raise unittest.SkipTest("PjRt C API not yet supported.")
+
+    devices = np.array([[jax.local_devices()[0]]])
+
+    dev_hash1 = self.get_hashed_value(cache_key._hash_devices, devices)
+    dev_hash2 = self.get_hashed_value(cache_key._hash_devices, devices)
+    self.assertEqual(dev_hash1, dev_hash2)
+
+    acc_hash1 = self.get_hashed_value(
+        cache_key._hash_accelerator_config, devices, xla_bridge.get_backend())
+    acc_hash2 = self.get_hashed_value(
+        cache_key._hash_accelerator_config, devices, xla_bridge.get_backend())
+    self.assertEqual(acc_hash1, acc_hash2)
 
   def test_hash_platform(self):
     hash1 = self.get_hashed_value(
@@ -226,7 +244,7 @@ class CacheKeyTest(jtu.JaxTestCase):
         num_replicas=1, num_partitions=1
     )
     backend = xla_bridge.get_backend()
-    with compilation_cache_include_metadata_in_key(include_metadata):
+    with config.compilation_cache_include_metadata_in_key(include_metadata):
       key1 = cache_key.get(computation1, devices, compile_options, backend)
       key2 = cache_key.get(computation2, devices, compile_options, backend)
     self.assertEqual(include_metadata, key1 != key2)
@@ -309,9 +327,13 @@ class CacheKeyTest(jtu.JaxTestCase):
     compile_options.executable_build_options.fdo_profile = b"test_profile"
     return compile_options
 
-  def get_hashed_value(self, hash_function, hash_function_input):
+  def get_hashed_value(
+      self, hash_function, hash_function_input1, hash_function_input2=None):
     hash_obj = hashlib.sha256()
-    hash_function(hash_obj, hash_function_input)
+    if hash_function_input2 is not None:
+      hash_function(hash_obj, hash_function_input1, hash_function_input2)
+    else:
+      hash_function(hash_obj, hash_function_input1)
     return hash_obj.digest().hex()
 
 

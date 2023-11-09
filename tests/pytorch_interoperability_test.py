@@ -17,13 +17,13 @@ import unittest
 from absl.testing import absltest
 
 import jax
-from jax import config
 import jax.dlpack
+from jax._src import config
+from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version
 import jax.numpy as jnp
-from jax._src import test_util as jtu
 
 config.parse_flags_with_absl()
 
@@ -50,12 +50,12 @@ all_shapes = nonempty_array_shapes + empty_array_shapes
 class DLPackTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
-    if jtu.device_under_test() == "tpu":
-      self.skipTest("DLPack not supported on TPU")
+    if not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("DLPack only supported on CPU and GPU")
 
   def testTorchToJaxFailure(self):
     x = torch.arange(6).reshape((2, 3))
-    x = x.cuda() if jtu.device_under_test() == "gpu" else x
+    x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
     y = torch.utils.dlpack.to_dlpack(x[:, :2])
 
     backend = xla_bridge.get_backend()
@@ -65,12 +65,15 @@ class DLPackTest(jtu.JaxTestCase):
                  r'striding are supported')
     with self.assertRaisesRegex(RuntimeError, regex_str):
       xla_client._xla.dlpack_managed_tensor_to_buffer(
-          y, client)
+          y, client, client)
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
   def testJaxToTorch(self, shape, dtype):
-    if not config.x64_enabled and dtype in [jnp.int64, jnp.float64,
-                                            jnp.complex128]:
+    if not config.enable_x64.value and dtype in [
+        jnp.int64,
+        jnp.float64,
+        jnp.complex128,
+    ]:
       self.skipTest("x64 types are disabled by jax_enable_x64")
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
@@ -89,7 +92,7 @@ class DLPackTest(jtu.JaxTestCase):
     if xla_extension_version < 186:
       self.skipTest("Need xla_extension_version >= 186")
 
-    if not config.x64_enabled and dtype in [
+    if not config.enable_x64.value and dtype in [
         jnp.int64,
         jnp.float64,
         jnp.complex128,
@@ -113,13 +116,16 @@ class DLPackTest(jtu.JaxTestCase):
     # See https://github.com/google/jax/issues/11895
     x = jax.dlpack.from_dlpack(
         torch.utils.dlpack.to_dlpack(torch.ones((2, 3), dtype=torch.int64)))
-    dtype_expected = jnp.int64 if config.x64_enabled else jnp.int32
+    dtype_expected = jnp.int64 if config.enable_x64.value else jnp.int32
     self.assertEqual(x.dtype, dtype_expected)
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
   def testTorchToJax(self, shape, dtype):
-    if not config.x64_enabled and dtype in [jnp.int64, jnp.float64,
-                                            jnp.complex128]:
+    if not config.enable_x64.value and dtype in [
+        jnp.int64,
+        jnp.float64,
+        jnp.complex128,
+    ]:
       self.skipTest("x64 types are disabled by jax_enable_x64")
 
     rng = jtu.rand_default(self.rng())
@@ -128,7 +134,7 @@ class DLPackTest(jtu.JaxTestCase):
       x = torch.tensor(x_np.view(jnp.int16)).view(torch.bfloat16)
     else:
       x = torch.tensor(x_np)
-    x = x.cuda() if jtu.device_under_test() == "gpu" else x
+    x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
     x = x.contiguous()
     y = jax.dlpack.from_dlpack(torch.utils.dlpack.to_dlpack(x))
     self.assertAllClose(x_np, y)
@@ -142,8 +148,11 @@ class DLPackTest(jtu.JaxTestCase):
     if xla_extension_version < 191:
       self.skipTest("Need xla_extension_version >= 191")
 
-    if not config.x64_enabled and dtype in [jnp.int64, jnp.float64,
-                                            jnp.complex128]:
+    if not config.enable_x64.value and dtype in [
+        jnp.int64,
+        jnp.float64,
+        jnp.complex128,
+    ]:
       self.skipTest("x64 types are disabled by jax_enable_x64")
 
     rng = jtu.rand_default(self.rng())
@@ -152,7 +161,7 @@ class DLPackTest(jtu.JaxTestCase):
       x = torch.tensor(x_np.view(jnp.int16)).view(torch.bfloat16)
     else:
       x = torch.tensor(x_np)
-    x = x.cuda() if jtu.device_under_test() == "gpu" else x
+    x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
     x = x.contiguous()
     y = jax.dlpack.from_dlpack(x)
     self.assertAllClose(x_np, y)
