@@ -17,10 +17,12 @@ import math
 import warnings
 from absl.testing import absltest
 from absl.testing import parameterized
+from absl import flags
 import unittest
 import jax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src import config
 from jax._src.lib import xla_extension_version
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
@@ -31,8 +33,8 @@ from jax._src.sharding_impls import (NamedSharding, PositionalSharding,
                                      common_devices_indices_map)
 import numpy as np
 
-from jax import config
 config.parse_flags_with_absl()
+FLAGS = flags.FLAGS
 
 
 def get_memory_kinds_from_executable(f, args):
@@ -64,6 +66,14 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Memories do not work on CPU and GPU backends yet.")
     super().setUp()
+    self.orig_memories_flag = config.enable_memories.value
+    jax.config.update('jax_enable_memories', True)
+    FLAGS.xla_tpu_enable_host_aware_passes = True
+
+  def tearDown(self):
+    jax.config.update('jax_enable_memories', self.orig_memories_flag)
+    FLAGS.xla_tpu_enable_host_aware_passes = False
+    super().tearDown()
 
   def _check_mem_kind(self, executable_kind, out_sharding, expected_kind):
     out_kind = out_sharding.memory_kind
