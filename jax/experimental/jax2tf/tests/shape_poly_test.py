@@ -21,7 +21,7 @@ from typing import Any, Callable, Optional, Union
 import unittest
 
 from absl import logging
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 import collections
 import functools
@@ -55,8 +55,8 @@ import tensorflow as tf  # type: ignore[import]
 config.parse_flags_with_absl()
 
 # Import after parsing flags
-from jax.experimental.jax2tf.tests import primitive_harness
-from jax.experimental.jax2tf.tests.primitive_harness import Harness, CustomArg, RandArg, StaticArg
+from jax._src.internal_test_util import test_harnesses
+from jax._src.internal_test_util.test_harnesses import Harness, CustomArg, RandArg, StaticArg
 from jax.experimental.jax2tf.tests.jax2tf_limitations import Jax2TfLimitation
 
 PS = jax2tf.PolyShape
@@ -495,7 +495,7 @@ class PolyHarness(Harness):
                group_name: str, name: str,
                fun: Callable,
                *,
-               arg_descriptors: Sequence[primitive_harness.ArgDescriptor] = (),
+               arg_descriptors: Sequence[test_harnesses.ArgDescriptor] = (),
                polymorphic_shapes: Sequence[Optional[str]] = (),
                input_signature: Optional[Sequence[tf.TensorSpec]] = None,
                expected_output_signature: Optional[tf.TensorSpec] = None,
@@ -652,7 +652,7 @@ class PolyHarness(Harness):
 
 
 def check_shape_poly(tst, f_jax: Callable, *,
-                     arg_descriptors: Sequence[primitive_harness.ArgDescriptor] = (),
+                     arg_descriptors: Sequence[test_harnesses.ArgDescriptor] = (),
                      skip_jax_run: bool = False,
                      polymorphic_shapes: Sequence[Optional[str]] = (),
                      input_signature: Optional[Sequence[tf.TensorSpec]] = None,
@@ -2945,7 +2945,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
 ]
 
 def _get_jax2tf_limitations(
-    device, h: primitive_harness.Harness) -> Sequence[Jax2TfLimitation]:
+    device, h: test_harnesses.Harness) -> Sequence[Jax2TfLimitation]:
   # And the jax2tf limitations
   def applicable_jax2tf_limitation(l: Jax2TfLimitation) -> bool:
     # The CheckShapePolymorphism uses tf.function, so we care about "graph"
@@ -2965,12 +2965,12 @@ def _make_vmap_primitive_harnesses() -> Sequence[PolyHarness]:
 
   Ignore harnesses that fail in graph mode in jax2tf.
   """
-  all_h = primitive_harness.all_harnesses
+  all_h = test_harnesses.all_harnesses
   res = []
 
   # Index by group
   harness_groups: dict[
-    str, Sequence[primitive_harness.Harness]] = collections.defaultdict(list)
+    str, Sequence[test_harnesses.Harness]] = collections.defaultdict(list)
   device = jtu.device_under_test()
 
   for h in all_h:
@@ -2998,7 +2998,7 @@ def _make_vmap_primitive_harnesses() -> Sequence[PolyHarness]:
       continue
 
     def make_batched_arg_descriptor(
-        ad: primitive_harness.ArgDescriptor) -> Optional[primitive_harness.ArgDescriptor]:
+        ad: test_harnesses.ArgDescriptor) -> Optional[test_harnesses.ArgDescriptor]:
       if isinstance(ad, RandArg):
         return RandArg((batch_size,) + ad.shape, ad.dtype)
       elif isinstance(ad, CustomArg):
@@ -3053,7 +3053,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # If you want to run this test for only one harness that includes "foo"
   # in the name (after test_harness), add parameter `one_containing="foo"`
   # to parameterized below.
-  @primitive_harness.parameterized(
+  @test_harnesses.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
       #one_containing="",
   )

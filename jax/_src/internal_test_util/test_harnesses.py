@@ -11,11 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Defines test inputs and invocations for JAX primitives.
+"""Defines test callables and inputs to cover the usage of JAX primitives.
 
-A primitive harness encodes one use case for one JAX numeric primitives. It
-describes how to generate the inputs and parameters and how to invoke the
-JAX primitive. A primitive harness can be used in multiple kinds of tests.
+A test harness encodes one use case for one JAX numeric primitives. It
+describes how to generate the inputs and parameters and a JAX callable to invoke
+on those inputs. A test harness can be used in multiple kinds of tests.
 For example, we can use the harnesses to check
 that each primitive is compiled correctly, or that we can apply a certain
 transformation, e.g., `vmap`.
@@ -29,8 +29,7 @@ for those cases too, but there is a mechanism to filter them out.
 Instead of writing this information as conditions inside one
 particular test, we write them as `Limitation` objects that can be reused in
 multiple tests and can also be used to generate documentation, e.g.,
-the report of [unsupported and
-partially-implemented JAX
+the report of [unsupported and partially-implemented JAX
 primitives](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md)
 
 The limitations are used to filter out from tests the harnesses that are known
@@ -101,7 +100,7 @@ ArgDescriptor = Union[RandArg, StaticArg, CustomArg, Any]
 
 
 class Harness:
-  """Specifies inputs and callable for a primitive.
+  """Specifies inputs and callable for a test harness.
 
   See the module docstring for an introduction to harnesses.
 
@@ -279,7 +278,7 @@ all_harnesses: list[Harness] = []
 
 
 def define(
-    group_name,  # Should be the primitive name, as much as possible
+    group_name,
     name,
     fun,
     arg_descriptors,

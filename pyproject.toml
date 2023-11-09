@@ -46,7 +46,7 @@ ignore_missing_imports = true
 module = [
     "jax.interpreters.autospmd",
     "jax.lax.lax_parallel",
-    "jax.experimental.jax2tf.tests.primitive_harness"
+    "jax._src.internal_test_util.test_harnesses",
 ]
 ignore_errors = true
 

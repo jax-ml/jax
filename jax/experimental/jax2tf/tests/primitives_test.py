@@ -14,7 +14,7 @@
 """Tests for JAX primitive coverage.
 
 The bulk of the testing is done by `test_prim`, which is parameterized by
-about 3500+ test harnesses. See `primitive_harness.py` docstring for a
+about 3500+ test harnesses. See `test_harnesses.py` docstring for a
 description of test harnesses. That module contains also the definitions
 of all the test harnesses, and a specification of which are only partially
 implemented for JAX.
@@ -77,7 +77,7 @@ config.parse_flags_with_absl()
 # Import after parsing flags
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.experimental.jax2tf.tests.jax2tf_limitations import Jax2TfLimitation
-from jax.experimental.jax2tf.tests import primitive_harness
+from jax._src.internal_test_util import test_harnesses
 
 DType = Any
 
@@ -99,14 +99,14 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   # See more details in the comment at top of file and in Jax2TfLimitation class.
   # If you want to run this test for only one harness, add parameter
   # `one_containing="foo"` to parameterized below.
-  @primitive_harness.parameterized(
-      primitive_harness.all_harnesses,
+  @test_harnesses.parameterized(
+      test_harnesses.all_harnesses,
       include_jax_unimpl=False,
       #one_containing="",
   )
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
-  def test_prim(self, harness: primitive_harness.Harness):
+  def test_prim(self, harness: test_harnesses.Harness):
     limitations = Jax2TfLimitation.limitations_for_harness(harness)
     device = jtu.device_under_test()
     limitations = tuple(filter(lambda l: l.filter(device=device,
@@ -195,16 +195,16 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     """
 
     harnesses = [
-        h for h in primitive_harness.all_harnesses
+        h for h in test_harnesses.all_harnesses
         if h.filter(h, include_jax_unimpl=True)
     ]
     print(f"Found {len(harnesses)} test harnesses that work in JAX")
 
-    def unique_hash(h: primitive_harness.Harness, l: Jax2TfLimitation):
+    def unique_hash(h: test_harnesses.Harness, l: Jax2TfLimitation):
       return (h.group_name, l.description, l.devices,
               tuple(np.dtype(d).name for d in l.dtypes), l.modes)
 
-    unique_limitations: dict[Any, tuple[primitive_harness.Harness, Jax2TfLimitation]] = {}
+    unique_limitations: dict[Any, tuple[test_harnesses.Harness, Jax2TfLimitation]] = {}
     for h in harnesses:
       for l in h.jax_unimplemented:
         if l.enabled:
@@ -247,7 +247,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
       to_table.append(
           f"| {h.group_name} | {description} | "
-          f"{primitive_harness.dtypes_to_str(l.dtypes, empty_means_all=True)} | {devices} | {modes} |"
+          f"{test_harnesses.dtypes_to_str(l.dtypes, empty_means_all=True)} | {devices} | {modes} |"
       )
 
     if not os.environ.get("JAX_OUTPUT_LIMITATIONS_DOC"):

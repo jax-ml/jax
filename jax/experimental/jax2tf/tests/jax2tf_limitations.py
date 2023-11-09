@@ -23,13 +23,13 @@ from jax import numpy as jnp
 from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
-from jax.experimental.jax2tf.tests import primitive_harness
+from jax._src.internal_test_util import test_harnesses
 import numpy as np
 
 DType = Any
 
 
-class Jax2TfLimitation(primitive_harness.Limitation):
+class Jax2TfLimitation(test_harnesses.Limitation):
   """Specific primitive limitations for jax2tf.
 
   See the primitive_test module docstring for details.
@@ -54,7 +54,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       skip_comparison=False,
       custom_assert: Optional[Callable] = None,
       tol=None):
-    """See the primitive_harness.Limitation common arguments.
+    """See the test_harnesses.Limitation common arguments.
 
     Args :
       modes: one of "eager", "graph", "compiled"
@@ -122,7 +122,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   @classmethod
   def limitations_for_harness(
-      cls, harness: primitive_harness.Harness) -> Sequence["Jax2TfLimitation"]:
+      cls, harness: test_harnesses.Harness) -> Sequence["Jax2TfLimitation"]:
     group_method = getattr(cls, harness.group_name, None)
     if harness.group_name in cls.harness_groups_no_limitations:
       assert group_method is None, (
@@ -172,19 +172,19 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         custom_assert=custom_assert)
 
   @classmethod
-  def random_seed(cls, handess: primitive_harness.Harness):
+  def random_seed(cls, handess: test_harnesses.Harness):
     return [custom_random_keys_output()]
 
   @classmethod
-  def random_split(cls, handess: primitive_harness.Harness):
+  def random_split(cls, handess: test_harnesses.Harness):
     return [custom_random_keys_output()]
 
   @classmethod
-  def random_fold_in(cls, handess: primitive_harness.Harness):
+  def random_fold_in(cls, handess: test_harnesses.Harness):
     return [custom_random_keys_output()]
 
   @classmethod
-  def acos(cls, harness: primitive_harness.Harness):
+  def acos(cls, harness: test_harnesses.Harness):
     return [
         custom_numeric(
             dtypes=[np.complex64],
@@ -199,7 +199,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def acosh(cls, harness: primitive_harness.Harness):
+  def acosh(cls, harness: test_harnesses.Harness):
     return [
         custom_numeric(dtypes=[np.complex64], devices=("cpu", "gpu", "tpu"),
                        tol=1e-3),
@@ -208,7 +208,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def approx_top_k(cls, harness: primitive_harness.Harness):
+  def approx_top_k(cls, harness: test_harnesses.Harness):
     supported_dtypes = jtu.supported_dtypes()
     def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
       del tol, err_msg
@@ -245,7 +245,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             custom_assert=custom_assert)]
 
   @classmethod
-  def argmax(cls, harness: primitive_harness.Harness):
+  def argmax(cls, harness: test_harnesses.Harness):
     return [
         Jax2TfLimitation(
             "different results when the input contains NaN and enable_xla=False",
@@ -258,11 +258,11 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def argmin(cls, harness: primitive_harness.Harness):
+  def argmin(cls, harness: test_harnesses.Harness):
     return cls.argmax(harness)
 
   @classmethod
-  def asin(cls, harness: primitive_harness.Harness):
+  def asin(cls, harness: test_harnesses.Harness):
     return [
         custom_numeric(dtypes=[np.complex64], devices=("cpu", "gpu"), tol=1e-4,
                        modes=("eager", "graph", "compiled")),
@@ -274,7 +274,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def asinh(cls, harness: primitive_harness.Harness):
+  def asinh(cls, harness: test_harnesses.Harness):
     return [
         custom_numeric(dtypes=[np.complex64], devices=("cpu", "gpu", "tpu"),
                        tol=1e-3),
@@ -283,7 +283,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def atan(cls, harness: primitive_harness.Harness):
+  def atan(cls, harness: test_harnesses.Harness):
     return [
         custom_numeric(dtypes=[np.complex64], devices=("cpu", "gpu"), tol=1e-5),
         custom_numeric(dtypes=[np.complex64], devices=("tpu"), tol=1e-3),
@@ -292,7 +292,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def atanh(cls, harness: primitive_harness.Harness):
+  def atanh(cls, harness: test_harnesses.Harness):
     return [
         custom_numeric(dtypes=[np.float64], tol=1e-14),
         custom_numeric(dtypes=[np.complex64], tol=1e-3),
@@ -301,7 +301,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def bessel_i0e(cls, harness: primitive_harness.Harness):
+  def bessel_i0e(cls, harness: test_harnesses.Harness):
     return [
         missing_tf_kernel(
             dtypes=[dtypes.bfloat16],
@@ -310,17 +310,17 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def bessel_i1e(cls, harness: primitive_harness.Harness):
+  def bessel_i1e(cls, harness: test_harnesses.Harness):
     return cls.bessel_i0e(harness)
 
   @classmethod
-  def cbrt(cls, harness: primitive_harness.Harness):
+  def cbrt(cls, harness: test_harnesses.Harness):
     return [
         custom_numeric(dtypes=[np.float32], devices=("tpu"), tol=1e-5),
     ]
 
   @classmethod
-  def cholesky(cls, harness: primitive_harness.Harness):
+  def cholesky(cls, harness: test_harnesses.Harness):
 
     def custom_assert(tst, result_jax, result_tf, *, tol, err_msg, **_):
       # cholesky_p returns garbage in the strictly upper triangular part of the
@@ -356,7 +356,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def conv_general_dilated(cls, harness: primitive_harness.Harness):
+  def conv_general_dilated(cls, harness: test_harnesses.Harness):
     prefer_elem = harness.params["preferred_element_type"]
     return [
         Jax2TfLimitation(
@@ -419,7 +419,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def custom_linear_solve(cls, harness: primitive_harness.Harness):
+  def custom_linear_solve(cls, harness: test_harnesses.Harness):
     return [
         Jax2TfLimitation(
             "TODO: large numerical discrepancy",
@@ -432,7 +432,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def digamma(cls, harness: primitive_harness.Harness):
+  def digamma(cls, harness: test_harnesses.Harness):
     dtype = harness.dtype
 
     # In the bfloat16 case, TF and lax both return NaN in undefined cases.
@@ -474,7 +474,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def div(cls, harness: primitive_harness.Harness):
+  def div(cls, harness: test_harnesses.Harness):
     return [
         Jax2TfLimitation(
             "TF integer division fails if divisor contains 0; JAX returns NaN",
@@ -487,7 +487,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def dot_general(cls, harness: primitive_harness.Harness):
+  def dot_general(cls, harness: test_harnesses.Harness):
     prefer_elem = harness.params["preferred_element_type"]
     return [
         missing_tf_kernel(dtypes=[np.bool_],),
@@ -548,7 +548,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def eig(cls, harness: primitive_harness.Harness):
+  def eig(cls, harness: test_harnesses.Harness):
     compute_left_eigenvectors = harness.params["compute_left_eigenvectors"]
     compute_right_eigenvectors = harness.params["compute_right_eigenvectors"]
     dtype = harness.dtype
@@ -615,7 +615,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def eigh(cls, harness: primitive_harness.Harness):
+  def eigh(cls, harness: test_harnesses.Harness):
     dtype = harness.dtype
 
     def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
@@ -687,15 +687,15 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def erf(cls, harness: primitive_harness.Harness):
+  def erf(cls, harness: test_harnesses.Harness):
     return []
 
   @classmethod
-  def erfc(cls, harness: primitive_harness.Harness):
+  def erfc(cls, harness: test_harnesses.Harness):
     return []
 
   @classmethod
-  def erf_inv(cls, harness: primitive_harness.Harness):
+  def erf_inv(cls, harness: test_harnesses.Harness):
     # erf_inv is not defined for arg <= -1 or arg >= 1
     def custom_assert(tst, result_jax, result_tf, *, args, tol,
                       err_msg):  # noqa: F811
@@ -726,7 +726,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def expm1(cls, harness: primitive_harness.Harness):
+  def expm1(cls, harness: test_harnesses.Harness):
     return [custom_numeric(dtypes=[np.float64], tol=1e-5)]
 
   @classmethod
@@ -749,7 +749,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def _pow_test_util(cls, harness: primitive_harness.Harness):
+  def _pow_test_util(cls, harness: test_harnesses.Harness):
 
     def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
       # NaNs are mismatched, but assertAllClose will also behave weirdly for
@@ -776,7 +776,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def igamma(cls, harness: primitive_harness.Harness):
+  def igamma(cls, harness: test_harnesses.Harness):
     dtype = harness.dtype
 
     # igamma is not defined when the first argument is <=0
@@ -815,7 +815,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def igammac(cls, harness: primitive_harness.Harness):
+  def igammac(cls, harness: test_harnesses.Harness):
     dtype = harness.dtype
 
     # igammac is not defined when the first argument is <=0
@@ -858,7 +858,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def integer_pow(cls, harness: primitive_harness.Harness):
+  def integer_pow(cls, harness: test_harnesses.Harness):
     y = harness.params["y"]
     return [
         # TODO: on TPU, for f16, we get different results with eager mode
@@ -884,11 +884,11 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ] + list(cls._pow_test_util(harness))
 
   @classmethod
-  def pow(cls, harness: primitive_harness.Harness):
+  def pow(cls, harness: test_harnesses.Harness):
     return cls._pow_test_util(harness)
 
   @classmethod
-  def lgamma(cls, harness: primitive_harness.Harness):
+  def lgamma(cls, harness: test_harnesses.Harness):
     return [
         missing_tf_kernel(
             dtypes=[dtypes.bfloat16],
@@ -899,7 +899,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def log1p(cls, harness: primitive_harness.Harness):
+  def log1p(cls, harness: test_harnesses.Harness):
     return [
         custom_numeric(dtypes=[np.complex128], tol=3e-14),
         custom_numeric(dtypes=[np.float64], tol=1e-10),
@@ -907,7 +907,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def lu(cls, harness: primitive_harness.Harness):
+  def lu(cls, harness: test_harnesses.Harness):
     dtype = harness.dtype
 
     def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
@@ -958,7 +958,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def max(cls, harness: primitive_harness.Harness):
+  def max(cls, harness: test_harnesses.Harness):
     # TODO(bchetioui): discrepancies between TF & JAX when comparing with NaN;
     # JAX always returns NaN, while TF returns the value NaN is compared with.
     def custom_assert(tst, result_jax, result_tf, err_msg, **_):
@@ -988,7 +988,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def min(cls, harness: primitive_harness.Harness):
+  def min(cls, harness: test_harnesses.Harness):
     # TODO(bchetioui): discrepancies between TF & JAX when comparing with NaN;
     # JAX always returns NaN, while TF returns the value NaN is compared with.
     def custom_assert(tst, result_jax, result_tf, *, err_msg, **_):
@@ -1018,11 +1018,11 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def nextafter(cls, harness: primitive_harness.Harness):
+  def nextafter(cls, harness: test_harnesses.Harness):
     return [missing_tf_kernel(dtypes=[np.float16, dtypes.bfloat16])]
 
   @classmethod
-  def qr(cls, harness: primitive_harness.Harness):
+  def qr(cls, harness: test_harnesses.Harness):
     # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
     #     # jit_compile=True breaks for complex types.
     # TODO: see https://github.com/google/jax/pull/3775#issuecomment-659407824.
@@ -1047,21 +1047,21 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def random_gamma(cls, harness: primitive_harness.Harness):
+  def random_gamma(cls, harness: test_harnesses.Harness):
     return [custom_numeric(devices="tpu", tol=1e-3)]
 
   @classmethod
-  def reduce_max(cls, harness: primitive_harness.Harness):
+  def reduce_max(cls, harness: test_harnesses.Harness):
     # Unlike reduce_window_max, we use a native TF op: tf.reduce_max, which
     # does not work for complex
     return [missing_tf_kernel(dtypes=[np.complex64, np.complex128])]
 
   @classmethod
-  def reduce_min(cls, harness: primitive_harness.Harness):
+  def reduce_min(cls, harness: test_harnesses.Harness):
     return cls.reduce_max(harness)
 
   @classmethod
-  def reduce_window_add(cls, harness: primitive_harness.Harness):
+  def reduce_window_add(cls, harness: test_harnesses.Harness):
     return [
         Jax2TfLimitation(
             "Small deviations on GPU for large inputs and enable_xla=False",
@@ -1087,14 +1087,14 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def regularized_incomplete_beta(cls, harness: primitive_harness.Harness):
+  def regularized_incomplete_beta(cls, harness: test_harnesses.Harness):
     return [
         custom_numeric(dtypes=[np.float64], tol=1e-14),
         missing_tf_kernel(dtypes=[np.float16, dtypes.bfloat16])
     ]
 
   @classmethod
-  def rem(cls, harness: primitive_harness.Harness):
+  def rem(cls, harness: test_harnesses.Harness):
     return [
         Jax2TfLimitation(
             "TF integer division fails if divisor contains 0; JAX returns NaN",
@@ -1116,11 +1116,11 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def rng_bit_generator(cls, harness: primitive_harness.Harness):
+  def rng_bit_generator(cls, harness: test_harnesses.Harness):
     return []
 
   @classmethod
-  def round(cls, harness: primitive_harness.Harness):
+  def round(cls, harness: test_harnesses.Harness):
     return [
         missing_tf_kernel(
             dtypes=[dtypes.bfloat16],
@@ -1176,7 +1176,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def sort(cls, harness: primitive_harness.Harness):
+  def sort(cls, harness: test_harnesses.Harness):
     return [
         Jax2TfLimitation(
             # I think that this is because TF is running on CPU even for GPU tests?
@@ -1189,7 +1189,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def svd(cls, harness: primitive_harness.Harness):
+  def svd(cls, harness: test_harnesses.Harness):
     # TODO: slow test
     compute_uv = harness.params["compute_uv"]
 
@@ -1429,7 +1429,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def triangular_solve(cls, harness: primitive_harness.Harness):
+  def triangular_solve(cls, harness: test_harnesses.Harness):
     return [
         missing_tf_kernel(
             dtypes=[dtypes.bfloat16],
@@ -1444,7 +1444,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def tridiagonal_solve(cls, harness: primitive_harness.Harness):
+  def tridiagonal_solve(cls, harness: test_harnesses.Harness):
     return []
 
 def custom_numeric(

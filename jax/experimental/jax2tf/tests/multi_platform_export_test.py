@@ -24,12 +24,10 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax._src import pjit
 from jax._src import test_util as jtu
 from jax.experimental.export import export
-# TODO(necula): Move the primitive harness out of jax2tf so that we can move
-# this whole test out of jax2tf.
-from jax.experimental.jax2tf.tests import primitive_harness
+# TODO(necula): This test does not depend on jax2tf, move it out.
+from jax._src.internal_test_util import test_harnesses
 
 
 def make_disjunction_regexp(*parts: str) -> re.Pattern[str]:
@@ -76,12 +74,12 @@ class PrimitiveTest(jtu.JaxTestCase):
   # code.
   # If you want to run this test for only one harness, add parameter
   # `one_containing="foo"` to parameterized below.
-  @primitive_harness.parameterized(
-      primitive_harness.all_harnesses,
+  @test_harnesses.parameterized(
+      test_harnesses.all_harnesses,
       include_jax_unimpl=False,
       #one_containing="",
   )
-  def test_prim(self, harness: primitive_harness.Harness):
+  def test_prim(self, harness: test_harnesses.Harness):
     if (jtu.device_under_test() == "gpu"
         and _known_failures_gpu.search(harness.fullname)):
       self.skipTest("failure to be investigated")

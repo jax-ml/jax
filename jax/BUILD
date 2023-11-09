@@ -20,6 +20,7 @@ load(
     "jax_extend_internal_users",
     "jax_extra_deps",
     "jax_internal_packages",
+    "jax_internal_test_harnesses_visibility",
     "jax_test_util_visibility",
     "jax_visibility",
     "mosaic_internal_users",
@@ -116,8 +117,21 @@ py_library(
 py_library(
     name = "internal_test_util",
     testonly = 1,
-    srcs = glob(["_src/internal_test_util/**/*.py"]),
+    srcs = glob(
+        ["_src/internal_test_util/**/*.py"],  # include
+        ["_src/internal_test_util/test_harnesses.py"],  # exclude
+    ),
     visibility = [":internal"],
+    deps = [
+        ":jax",
+    ] + py_deps("numpy"),
+)
+
+py_library(
+    name = "internal_test_harnesses",
+    testonly = 1,
+    srcs = ["_src/internal_test_util/test_harnesses.py"],
+    visibility = [":internal"] + jax_internal_test_harnesses_visibility,
     deps = [
         ":jax",
     ] + py_deps("numpy"),
