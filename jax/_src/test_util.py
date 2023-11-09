@@ -331,6 +331,13 @@ def is_cloud_tpu():
   return 'libtpu' in xla_bridge.get_backend().platform_version
 
 
+def pjrt_c_api_version_at_least(major_version: int, minor_version: int):
+  pjrt_c_api_versions = xla_bridge.backend_pjrt_c_api_version()
+  if pjrt_c_api_versions is None:
+    return True
+  return pjrt_c_api_versions >= (major_version, minor_version)
+
+
 def is_device_tpu_v4():
   return jax.devices()[0].device_kind == "TPU v4"
 

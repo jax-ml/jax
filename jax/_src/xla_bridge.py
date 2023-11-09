@@ -21,29 +21,29 @@ XLA. There are also a handful of related casting utilities.
 
 from collections.abc import Mapping
 import dataclasses
-from functools import partial, lru_cache
+from functools import lru_cache, partial
 import glob
 import importlib
 import json
 import logging
 import os
 import pathlib
-import platform as py_platform
 import pkgutil
+import platform as py_platform
 import sys
 import threading
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional, Tuple, Union
 import warnings
 
 from jax._src import config
 from jax._src import distributed
+from jax._src import traceback_util
+from jax._src import util
 from jax._src.cloud_tpu_init import maybe_import_libtpu
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
-from jax._src import traceback_util
-from jax._src import util
 
 logger = logging.getLogger(__name__)
 
@@ -855,6 +855,20 @@ def devices(
 def default_backend() -> str:
   """Returns the platform name of the default XLA backend."""
   return get_backend(None).platform
+
+
+def backend_pjrt_c_api_version(platform=None) -> Optional[Tuple[int, int]]:
+  """Returns the PJRT C API version of the backend.
+
+  Returns None if the backend does not use PJRT C API.
+  """
+  backend = get_backend(platform)
+  if hasattr(backend, "pjrt_c_api_major_version") and hasattr(
+      backend, "pjrt_c_api_minor_version"
+  ):
+    return (backend.pjrt_c_api_major_version, backend.pjrt_c_api_minor_version)
+  return None
+
 
 @lru_cache
 def local_devices(process_index: Optional[int] = None,
