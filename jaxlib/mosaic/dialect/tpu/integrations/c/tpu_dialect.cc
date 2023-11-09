@@ -129,7 +129,7 @@ llvm::ArrayRef<int64_t> mlirTpuI64ArrayRefToLlvmArrayRef(
 
 // We do not use the names wrap/unwrap for MlirTpuValueArray because it
 // allocates memory (i.e. they have side effects)
-static inline xla::Array<mlir::Value> MlirTpuValueArrayToXlaArray(
+xla::Array<mlir::Value> MlirTpuValueArrayToXlaArray(
     MlirTpuValueArray arr) {
   llvm::ArrayRef<int64_t> shape = mlirTpuI64ArrayRefToLlvmArrayRef(arr.shape);
   xla::Array<mlir::Value> res(shape);
@@ -139,7 +139,7 @@ static inline xla::Array<mlir::Value> MlirTpuValueArrayToXlaArray(
   }
   return res;
 }
-static inline MlirTpuValueArray MlirTpuValueArrayFromXlaArray(
+MlirTpuValueArray MlirTpuValueArrayFromXlaArray(
     const xla::Array<mlir::Value> &vals) {
   int64_t nd = vals.num_dimensions();
   int64_t *shape =
