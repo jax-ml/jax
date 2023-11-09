@@ -179,42 +179,43 @@ MLIR_CAPI_EXPORTED bool mlirTpuVectorLayoutEquivalentTo(
 MLIR_CAPI_EXPORTED void mlirTpuVregDataBoundsDestroy(
     MlirTpuVregDataBounds data_bounds);
 
-bool mlirTpuVregDataBoundsMaskVariesAlong(MlirTpuVregDataBounds data_bounds,
-                                          MlirTpuDirection direction,
-                                          MlirTpuI64TargetTuple target_shape);
+MLIR_CAPI_EXPORTED bool mlirTpuVregDataBoundsMaskVariesAlong(
+    MlirTpuVregDataBounds data_bounds, MlirTpuDirection direction,
+    MlirTpuI64TargetTuple target_shape);
 
-bool mlirTpuVregDataBoundsIsComplete(MlirTpuVregDataBounds data_bounds,
-                                     MlirTpuI64TargetTuple target_shape);
+MLIR_CAPI_EXPORTED bool mlirTpuVregDataBoundsIsComplete(
+    MlirTpuVregDataBounds data_bounds, MlirTpuI64TargetTuple target_shape);
 // Returns null on failure
-MlirValue mlirTpuVregDataBoundsGetVectorMask(
+MLIR_CAPI_EXPORTED MlirValue mlirTpuVregDataBoundsGetVectorMask(
     MlirTpuVregDataBounds data_bounds, MlirTpuInsertionPoint insertion_point,
     MlirLocation location, int generation, MlirTpuI64TargetTuple target_shape);
 
-MlirAttribute mlirTpuVregDataBoundsGetSublaneMask(
+MLIR_CAPI_EXPORTED MlirAttribute mlirTpuVregDataBoundsGetSublaneMask(
     MlirTpuVregDataBounds data_bounds, MlirContext ctx,
     MlirTpuI64TargetTuple target_shape);
 
 // vals are copied, ownership is not stolen.
-MlirOperation mlirTpuAssemble(MlirTpuInsertionPoint insertion_point,
-                              MlirType vector_type, MlirTpuVectorLayout layout,
-                              MlirTpuValueArray vals,
-                              MlirTpuI64TargetTuple target_shape);
+MLIR_CAPI_EXPORTED MlirOperation
+mlirTpuAssemble(MlirTpuInsertionPoint insertion_point, MlirType vector_type,
+                MlirTpuVectorLayout layout, MlirTpuValueArray vals,
+                MlirTpuI64TargetTuple target_shape);
 
 // Returns null on failure
 // Caller owns the returned object and is responsible for calling free on shape
 // and vals
-MlirTpuValueArray mlirTpuDisassemble(MlirTpuInsertionPoint insertion_point,
-                                     MlirTpuVectorLayout layout, MlirValue val,
-                                     MlirTpuI64TargetTuple target_shape);
+MLIR_CAPI_EXPORTED MlirTpuValueArray mlirTpuDisassemble(
+    MlirTpuInsertionPoint insertion_point, MlirTpuVectorLayout layout,
+    MlirValue val, MlirTpuI64TargetTuple target_shape);
 
-MlirLogicalResult mlirTpuApplyLayoutOp(int hardware_generation,
-                                       MlirOperation op,
-                                       MlirTpuI64TargetTuple target_shape);
+MLIR_CAPI_EXPORTED MlirLogicalResult
+mlirTpuApplyLayoutOp(int hardware_generation, MlirOperation op,
+                     MlirTpuI64TargetTuple target_shape);
 
 // Returns null on failure
-MlirValue mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
-                          MlirTpuVectorLayout src, MlirTpuVectorLayout dst,
-                          MlirTpuI64TargetTuple target_shape);
+MLIR_CAPI_EXPORTED MlirValue
+mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
+                MlirTpuVectorLayout src, MlirTpuVectorLayout dst,
+                MlirTpuI64TargetTuple target_shape);
 #ifdef __cplusplus
 }
 #endif
