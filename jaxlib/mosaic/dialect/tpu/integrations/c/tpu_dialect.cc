@@ -126,9 +126,6 @@ llvm::ArrayRef<int64_t> mlirTpuI64ArrayRefToLlvmArrayRef(
     MlirTpuI64ArrayRef tpu_array_ref) {
   return {tpu_array_ref.ptr, tpu_array_ref.size};
 }
-}  // namespace
-
-extern "C" {
 
 // We do not use the names wrap/unwrap for MlirTpuValueArray because it
 // allocates memory (i.e. they have side effects)
@@ -154,6 +151,10 @@ static inline MlirTpuValueArray MlirTpuValueArrayFromXlaArray(
   memcpy(elements, vals.data(), n * sizeof(MlirValue));
   return {{shape, static_cast<size_t>(nd)}, elements};
 }
+
+}  // namespace
+
+extern "C" {
 
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(TPU, tpu, mlir::tpu::TPUDialect);
 
