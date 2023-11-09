@@ -1370,15 +1370,13 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
   arr = atleast_1d(a)
   del a
   mask = arr if arr.dtype == bool else (arr != 0)
-  if size is None:
-    size = mask.sum()
-  size = core.concrete_dim_or_error(size,
+  size = core.concrete_dim_or_error(size if size is not None else mask.sum(),
     "The size argument of jnp.nonzero must be statically specified "
     "to use jnp.nonzero within JAX transformations.")
   if arr.size == 0 or size == 0:
     return tuple(zeros(size, int) for dim in arr.shape)
   flat_indices = reductions.cumsum(bincount(reductions.cumsum(mask), length=size))
-  strides = (np.cumprod(arr.shape[::-1])[::-1] // arr.shape).astype(int_)
+  strides: np.NDArray = (np.cumprod(arr.shape[::-1])[::-1] // arr.shape).astype(int_)
   out = tuple((flat_indices // stride) % size for stride, size in zip(strides, arr.shape))
   if size is not None and fill_value is not None:
     fill_value_tup = fill_value if isinstance(fill_value, tuple) else arr.ndim * (fill_value,)
@@ -1859,6 +1857,7 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
 @util._wraps(np.vstack)
 def vstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
+  arrs: Array | list[Array]
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(atleast_2d)(tup)
   else:
@@ -1871,6 +1870,7 @@ def vstack(tup: np.ndarray | Array | Sequence[ArrayLike],
 @util._wraps(np.hstack)
 def hstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
+  arrs: Array | list[Array]
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(atleast_1d)(tup)
     arr0_ndim = arrs.ndim - 1
@@ -1885,6 +1885,7 @@ def hstack(tup: np.ndarray | Array | Sequence[ArrayLike],
 @util._wraps(np.dstack)
 def dstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
+  arrs: Array | list[Array]
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(atleast_3d)(tup)
   else:
@@ -1896,6 +1897,7 @@ def dstack(tup: np.ndarray | Array | Sequence[ArrayLike],
 
 @util._wraps(np.column_stack)
 def column_stack(tup: np.ndarray | Array | Sequence[ArrayLike]) -> Array:
+  arrs: np.NDArray | Array | list[Array]
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(lambda x: atleast_2d(x).T)(tup) if tup.ndim < 3 else tup
   else:
@@ -1958,6 +1960,16 @@ def block(arrays: ArrayLike | list[ArrayLike]) -> Array:
   out, _ = _block(arrays)
   return out
 
+
+@overload
+def atleast_1d() -> list[Array]: ...
+
+@overload
+def atleast_1d(arys: ArrayLike, /) -> Array: ...
+
+@overload
+def atleast_1d(ary1: ArrayLike, ary2: ArrayLike, *arys: ArrayLike) -> list[Array]: ...
+
 @util._wraps(np.atleast_1d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
 def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
@@ -1968,6 +1980,16 @@ def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
     return arr if ndim(arr) >= 1 else reshape(arr, -1)
   else:
     return [atleast_1d(arr) for arr in arys]
+
+
+@overload
+def atleast_2d() -> list[Array]: ...
+
+@overload
+def atleast_2d(arys: ArrayLike, /) -> Array: ...
+
+@overload
+def atleast_2d(ary1: ArrayLike, ary2: ArrayLike, *arys: ArrayLike) -> list[Array]: ...
 
 
 @util._wraps(np.atleast_2d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
@@ -1985,6 +2007,16 @@ def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
       return expand_dims(arr, axis=(0, 1))
   else:
     return [atleast_2d(arr) for arr in arys]
+
+
+@overload
+def atleast_3d() -> list[Array]: ...
+
+@overload
+def atleast_3d(arys: ArrayLike, /) -> Array: ...
+
+@overload
+def atleast_3d(ary1: ArrayLike, ary2: ArrayLike, *arys: ArrayLike) -> list[Array]: ...
 
 
 @util._wraps(np.atleast_3d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
