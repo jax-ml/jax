@@ -586,19 +586,19 @@ deflinear2(zeros_like_p, lambda t, _: [Zero.from_value(t)])
 deflinear2(add_jaxvals_p, lambda t, *args: (t, t))
 
 def instantiate_zeros(tangent):
-  if type(tangent) is Zero:
-    return zeros_like_aval(tangent.aval)
-  else:
+  if type(tangent) is not Zero:
     return tangent
+  return instantiate_zeros_aval(tangent.aval, tangent)
 
 # This function seems similar to instantiate_zeros, but it is sometimes used
 # to instantiate zero abstract units with a different aval
 def instantiate_zeros_aval(aval, tangent):
-  if type(tangent) is Zero:
-    assert tangent.aval == aval
-    return zeros_like_aval(aval)
-  else:
+  if type(tangent) is not Zero:
     return tangent
+  assert tangent.aval == aval
+  if jax.dtypes.issubdtype(aval.dtype, jax.dtypes.extended):
+    return aval.dtype._rules.make_tangent(aval.shape, aval.dtype)
+  return zeros_like_aval(aval)
 
 @lu.transformation_with_aux
 def traceable(in_tree, *primals_and_tangents):
