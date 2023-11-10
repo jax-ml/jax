@@ -14,9 +14,6 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.21
 
-* Changes
-  * Released wheels are built now with clang instead of gcc.
-
 ## jax 0.4.20 (Nov 2, 2023)
 
 ## jaxlib 0.4.20 (Nov 2, 2023)
