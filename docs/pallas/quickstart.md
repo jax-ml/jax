@@ -147,7 +147,7 @@ To build intution, let's try to implement a matrix multiplication.
 
 A simple strategy for implementing a matrix multiplication in Pallas is to implement it recursively. We know our underlying hardware has support for small matrix multiplications (using GPU and TPU tensorcores), so we just express a big matrix multiplication in terms of smaller ones.
 
-Suppose we have input matrices $X$ and $Y$ and are computing $Z = XY$. We first express $X$ and $Y$ as block matrices. $X$ will "row" blocks and $Y$ will have "column" blocks.
+Suppose we have input matrices $X$ and $Y$ and are computing $Z = XY$. We first express $X$ and $Y$ as block matrices. $X$ will have "row" blocks and $Y$ will have "column" blocks.
 
 $$
 \begin{align*}
@@ -167,7 +167,7 @@ $$
 
 $$
 \begin{align*}
-Z &= 
+Z &=
 \begin{bmatrix}
 X_0 \\ X_1
 \end{bmatrix}
@@ -196,7 +196,7 @@ A visualization of a `BlockSpec`
 
 </center>
 
-For a concrete example, let's say we'd like to multiply two `(1024, 1024)` matrices together `x` and `y` to produce `z`and would like to parallelize the computation 4 ways. We split up `z` into 4 `(512, 512)` blocks where each block is computed with a `(512, 1024) x (1024, 512)` matrix multiplication. To express this, we'd first use a `(2, 2)` grid (one block for each program).
+For a concrete example, let's say we'd like to multiply two `(1024, 1024)` matrices `x` and `y` together to produce `z`, and would like to parallelize the computation 4 ways. We split up `z` into 4 `(512, 512)` blocks where each block is computed with a `(512, 1024) x (1024, 512)` matrix multiplication. To express this, we'd first use a `(2, 2)` grid (one block for each program).
 
 For `x`, we use `BlockSpec(lambda i, j: (i, 0), (512, 1024))`  -- this carves `x` up into "row" blocks. To see this see how both program instances `(1, 0)` and `(1, 1)` pick the `(1, 0)` block in `x`. For `y`, we use a transposed version `BlockSpec(lambda i, j: (0, j), (1024, 512))`. Finally, for `z` we use `BlockSpec(lambda i, j: (i, j), (512, 512))`.
 
