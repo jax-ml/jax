@@ -216,7 +216,6 @@ build:rbe_linux_cuda_base --repo_env=REMOTE_GPU_TESTING=1
 
 build:rbe_linux_cuda11.8_nvcc_base --config=rbe_linux_cuda_base
 build:rbe_linux_cuda11.8_nvcc_base --config=cuda_clang
-build:rbe_linux_cuda11.8_nvcc_base --action_env=TF_NVCC_CLANG="1"
 build:rbe_linux_cuda11.8_nvcc_base --action_env=TF_CUDA_VERSION=11
 build:rbe_linux_cuda11.8_nvcc_base --action_env=TF_CUDNN_VERSION=8
 build:rbe_linux_cuda11.8_nvcc_base --action_env=CUDA_TOOLKIT_PATH="/usr/local/cuda-11.8"
@@ -233,14 +232,16 @@ build:rbe_linux_cuda11.8_nvcc_py3.9 --config=rbe_linux_cuda11.8_nvcc_base --repo
 build:rbe_linux_cuda11.8_nvcc_py3.9 --python_path="/usr/local/bin/python3.9"
 build:rbe_linux_cuda11.8_nvcc_py3.10 --config=rbe_linux_cuda11.8_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.10"
 build:rbe_linux_cuda11.8_nvcc_py3.10 --python_path="/usr/local/bin/python3.10"
+build:rbe_linux_cuda11.8_nvcc_py3.10 --action_env=TF_NVCC_CLANG="1"
 build:rbe_linux_cuda11.8_nvcc_py3.11 --config=rbe_linux_cuda11.8_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.11"
 build:rbe_linux_cuda11.8_nvcc_py3.11 --python_path="/usr/local/bin/python3.11"
+build:rbe_linux_cuda11.8_nvcc_py3.11 --action_env=TF_NVCC_CLANG="1"
 build:rbe_linux_cuda11.8_nvcc_py3.12 --config=rbe_linux_cuda11.8_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.12"
 build:rbe_linux_cuda11.8_nvcc_py3.12 --python_path="/usr/local/bin/python3.12"
+build:rbe_linux_cuda11.8_nvcc_py3.12 --action_env=TF_NVCC_CLANG="1"
 
 build:rbe_linux_cuda12.2_nvcc_base --config=rbe_linux_cuda_base
 build:rbe_linux_cuda12.2_nvcc_base --config=cuda_clang
-build:rbe_linux_cuda12.2_nvcc_base --action_env=TF_NVCC_CLANG="1"
 build:rbe_linux_cuda12.2_nvcc_base --action_env=TF_CUDA_VERSION=12
 build:rbe_linux_cuda12.2_nvcc_base --action_env=TF_CUDNN_VERSION=8
 build:rbe_linux_cuda12.2_nvcc_base --action_env=CUDA_TOOLKIT_PATH="/usr/local/cuda-12"
@@ -257,10 +258,13 @@ build:rbe_linux_cuda12.2_nvcc_py3.9 --config=rbe_linux_cuda12.2_nvcc_base --repo
 build:rbe_linux_cuda12.2_nvcc_py3.9 --python_path="/usr/local/bin/python3.9"
 build:rbe_linux_cuda12.2_nvcc_py3.10 --config=rbe_linux_cuda12.2_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_python3.10"
 build:rbe_linux_cuda12.2_nvcc_py3.10 --python_path="/usr/local/bin/python3.10"
+build:rbe_linux_cuda12.2_nvcc_py3.10 --action_env=TF_NVCC_CLANG="1"
 build:rbe_linux_cuda12.2_nvcc_py3.11 --config=rbe_linux_cuda12.2_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_python3.11"
 build:rbe_linux_cuda12.2_nvcc_py3.11 --python_path="/usr/local/bin/python3.11"
+build:rbe_linux_cuda12.2_nvcc_py3.11 --action_env=TF_NVCC_CLANG="1"
 build:rbe_linux_cuda12.2_nvcc_py3.12 --config=rbe_linux_cuda12.2_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_python3.12"
 build:rbe_linux_cuda12.2_nvcc_py3.12 --python_path="/usr/local/bin/python3.12"
+build:rbe_linux_cuda12.2_nvcc_py3.12 --action_env=TF_NVCC_CLANG="1"
 
 # These you may need to change for your own GCP project.
 build:tensorflow_testing_rbe --project_id=tensorflow-testing
