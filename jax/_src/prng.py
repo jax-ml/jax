@@ -473,6 +473,23 @@ class KeyTyRules:
     return random_wrap(key_data, impl=dtype._impl)
 
   @staticmethod
+  def make_tangent(shape, dtype):
+    physical_shape = (*shape, *dtype._impl.key_shape)
+    def not_implemented(name):
+      def func(*args):
+        raise NotImplementedError(f"Cannot call {name} on tangent of PRNG key.")
+      return func
+    impl = PRNGImpl(
+      key_shape=dtype._impl.key_shape,
+      seed=not_implemented('seed'),
+      split=not_implemented('split'),
+      random_bits=not_implemented('random_bits'),
+      fold_in=not_implemented('fold_in'),
+      name=f"{dtype._impl.name}_tangent",
+      tag=f"{dtype._impl.tag}_t")
+    return random_wrap(jnp.zeros(physical_shape, dtype='uint32'), impl=impl)
+
+  @staticmethod
   def physical_element_aval(dtype) -> core.ShapedArray:
     return core.ShapedArray(dtype._impl.key_shape, jnp.dtype('uint32'))
 
@@ -592,6 +609,20 @@ class KeyTyRules:
     physical_sharding = make_key_array_phys_sharding(aval, sharding, False)
     physical_result = pxla.batched_device_put(physical_aval, physical_sharding, [physical_buf] * len(devices), devices)
     return random_wrap(physical_result, impl=aval.dtype._impl)
+
+
+class KeyTangentTy(dtypes.ExtendedDType):
+  """A dtype to use for the tangent of a PRNGKey"""
+  _impl: PRNGImpl
+  type = dtypes.prng_key
+
+  @property
+  def _rules(self):
+    raise ValueError("Cannot perform operations on the tangent of a PRNGKey.")
+
+  @property
+  def name(self) -> str:
+    return f'key_tangent<{self._impl.tag}>'
 
 
 class KeyTy(dtypes.ExtendedDType):
