@@ -84,6 +84,11 @@ class ProfilerTest(unittest.TestCase):
       jax.profiler.stop_server()
 
   def testProgrammaticProfiling(self):
+    # TODO(jieying): remove after 01/10/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 34):
+      raise unittest.SkipTest(
+          "Profiler is not supported on PJRT C API version < 0.34."
+      )
     with tempfile.TemporaryDirectory() as tmpdir:
       try:
         jax.profiler.start_trace(tmpdir)
@@ -107,6 +112,11 @@ class ProfilerTest(unittest.TestCase):
   def testProfilerGetFDOProfile(self):
     if xla_extension_version < 206:
       raise unittest.SkipTest("API version < 206")
+    # TODO(jieying): remove after 01/10/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 34):
+      raise unittest.SkipTest(
+          "Profiler is not supported on PJRT C API version < 0.34."
+      )
     # Tests stop_and_get_fod_profile could run.
     try:
       jax.profiler.start_trace("test")
@@ -119,6 +129,11 @@ class ProfilerTest(unittest.TestCase):
       self.assertIn(b"copy", fdo_profile)
 
   def testProgrammaticProfilingErrors(self):
+    # TODO(jieying): remove after 01/10/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 34):
+      raise unittest.SkipTest(
+          "Profiler is not supported on PJRT C API version < 0.34."
+      )
     with self.assertRaisesRegex(RuntimeError, "No profile started"):
       jax.profiler.stop_trace()
 
@@ -134,6 +149,11 @@ class ProfilerTest(unittest.TestCase):
       jax.profiler.stop_trace()
 
   def testProgrammaticProfilingContextManager(self):
+    # TODO(jieying): remove after 01/10/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 34):
+      raise unittest.SkipTest(
+          "Profiler is not supported on PJRT C API version < 0.34."
+      )
     with tempfile.TemporaryDirectory() as tmpdir:
       with jax.profiler.trace(tmpdir):
         jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
