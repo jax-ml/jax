@@ -147,6 +147,7 @@ jax.scipy.special
    gammainc
    gammaincc
    gammaln
+   hyp1f1
    i0
    i0e
    i1
@@ -159,6 +160,7 @@ jax.scipy.special
    multigammaln
    ndtr
    ndtri
+   poch
    polygamma
    spence
    sph_harm
