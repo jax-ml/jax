@@ -1719,3 +1719,22 @@ def bernoulli(n: int) -> Array:
   k = jnp.arange(2, 50, dtype=bn.dtype)  # Choose 50 because 2 ** -50 < 1E-15
   q2 = jnp.sum(k[:, None] ** -m[None, :], axis=0)
   return bn.at[4::2].set(q1 * (1 + q2))
+
+
+@jnp.vectorize
+@_wraps(osp_special.poch, module='scipy.special', lax_description="""\
+The JAX version only accepts positive and real inputs. It matches scipy's
+values for positive integer m inputs, but may differ for real m inputs as
+the implementation of the gamma function differs.""")
+@jit
+def poch(z: ArrayLike, m: ArrayLike) -> Array:
+  # Factorial definition when m is close to an integer, otherwise gamma definition.
+  z, m = promote_args_inexact("poch", z, m)
+
+  integer_branch = lambda x, n: lax.fori_loop(1,
+                                              lax.round(m).astype(jnp.int32),
+                                              lambda i, y: y * (z + i), z)
+
+  float_branch = lambda x, n: gamma(z + m) / gamma(z)
+
+  return lax.cond(lax.round(m)-m < 1e-10, integer_branch, float_branch, z, m)

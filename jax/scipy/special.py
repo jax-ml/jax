@@ -54,4 +54,5 @@ from jax._src.scipy.special import (
   zeta as zeta,
   kl_div as kl_div,
   rel_entr as rel_entr,
+  poch as poch,
 )
