@@ -331,9 +331,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
               "/jax/compilation_cache/original_compile_time_saved_sec",
               durations)
         else:
-          # TODO(b/293308239) Remove this skipping when pjrt c api is supported.
-          if xla_bridge.using_pjrt_c_api():
-            raise SkipTest("PJRT C API not supported yet.")
           self.assertNotIn(
               "/jax/compilation_cache/compile_time_saved_sec", durations)
 
@@ -427,9 +424,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
           - previous_counts["/jax/compilation_cache/cache_hits_original"],
           1)
     else:
-      # TODO(b/293308239) Remove this skipping when pjrt c api is supported.
-      if xla_bridge.using_pjrt_c_api():
-        raise SkipTest("PJRT C API not supported yet.")
       self.assertEqual(
           _counts["/jax/compilation_cache/cache_hits"]
           - previous_counts["/jax/compilation_cache/cache_hits"],
