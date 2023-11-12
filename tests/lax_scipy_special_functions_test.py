@@ -141,7 +141,8 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record(
         "rel_entr", 2, float_dtypes, jtu.rand_positive, True,
     ),
-
+    op_record("poch", 2, float_dtypes, jtu.rand_positive, True),
+    op_record("hyp1f1", 3, float_dtypes, jtu.rand_positive, True)
 ]
 
 

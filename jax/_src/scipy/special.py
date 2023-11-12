@@ -1721,13 +1721,13 @@ def bernoulli(n: int) -> Array:
   return bn.at[4::2].set(q1 * (1 + q2))
 
 
+@custom_derivatives.custom_jvp
 @jnp.vectorize
 @_wraps(osp_special.poch, module='scipy.special', lax_description="""\
-The JAX version only accepts positive and real inputs. It matches scipy's
-values for positive integer m inputs, but may differ for real m inputs as
-the implementation of the gamma function differs.""")
+The JAX version only accepts positive and real inputs.""")
 @jit
 def poch(z: ArrayLike, m: ArrayLike) -> Array:
+  # TODO : ensure that m=0 return 1
   # Factorial definition when m is close to an integer, otherwise gamma definition.
   z, m = promote_args_inexact("poch", z, m)
 
@@ -1737,4 +1737,161 @@ def poch(z: ArrayLike, m: ArrayLike) -> Array:
 
   float_branch = lambda x, n: gamma(z + m) / gamma(z)
 
-  return lax.cond(lax.round(m)-m < 1e-10, integer_branch, float_branch, z, m)
+  return lax.cond(lax.abs(lax.round(m)-m) < 1e-10, integer_branch, float_branch, z, m)
+
+
+@jnp.vectorize
+@jit
+def _poch_z_derivative(z, m):
+
+  return (digamma(z + m) - digamma(z)) * poch(z, m)
+
+
+@jnp.vectorize
+@jit
+def _poch_m_derivative(z, m):
+
+  return digamma(z + m) * poch(z, m)
+
+
+poch.defjvps(
+  lambda z_dot, primal_out, z, m:  _poch_z_derivative(z, m) * z_dot,
+  lambda m_dot, primal_out, z, m: _poch_m_derivative(z, m) * m_dot,
+)
+
+@jit
+def _hyp1f1_serie(a, b, x):
+  """
+  Compute the 1F1 hypergeometric function using the taylor expansion
+  See Eq. 3.2 and associated method (a) from PEARSON, OLVER & PORTER 2014
+  https://doi.org/10.48550/arXiv.1407.7786
+  """
+
+  def body(state):
+    serie, k, term = state
+    serie += term
+    term *= (a + k) / (b + k) * x / (k + 1)
+    k += 1
+
+    return serie, k, term
+
+  def cond(state):
+    serie, k, term = state
+
+    return (k < 150) & (lax.abs(term) / lax.abs(serie) > 1e-12)
+
+  init = 1, 1, a / b * x
+
+  return lax.while_loop(cond, body, init)[0]
+
+
+@jit
+def _hyp1f1_asymptotic(a, b, x):
+  """
+  Compute the 1F1 hypergeometric function using asymptotic expansion
+  See Eq. 3.8 and simplification for real inputs from PEARSON, OLVER & PORTER 2014
+  https://doi.org/10.48550/arXiv.1407.7786
+  """
+
+  def body(state):
+    serie, k, term = state
+    serie += term
+    term *= (b - a + k) * (1 - a + k) / (k + 1) / x
+    k += 1
+
+    return serie, k, term
+
+  def cond(state):
+    serie, k, term = state
+
+    return (k < 150) & (lax.abs(term) / lax.abs(serie) > 1e-12)
+
+  init = 1, 1, (b - a) * (1 - a) / x
+  serie = lax.while_loop(cond, body, init)[0]
+
+  return gamma(b) / gamma(a) * lax.exp(x) * x ** (a - b) * serie
+
+
+@jnp.vectorize
+@jit
+def _hyp1f1_a_derivative(a, b, x):
+  """
+  Define it as a serie using :
+  https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/01/
+  """
+
+  def body(state):
+    serie, k, term = state
+    serie += term * (digamma(a + k) - digamma(a))
+    term *= (a + k) / (b + k) * x / (k + 1)
+    k += 1
+
+    return serie, k, term
+
+  def cond(state):
+    serie, k, term = state
+
+    return (k < 150) & (lax.abs(term) / lax.abs(serie) > 1e-12)
+
+  init = 0, 1, a / b * x
+
+  return lax.while_loop(cond, body, init)[0]
+
+
+@jnp.vectorize
+@jit
+def _hyp1f1_b_derivative(a, b, x):
+  """
+  Define it as a serie using :
+  https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/02/
+  """
+
+  def body(state):
+    serie, k, term = state
+    serie += term * (digamma(b) - digamma(b + k))
+    term *= (a + k) / (b + k) * x / (k + 1)
+    k += 1
+
+    return serie, k, term
+
+  def cond(state):
+    serie, k, term = state
+
+    return (k < 150) & (lax.abs(term) / lax.abs(serie) > 1e-12)
+
+  init = 0, 1, a / b * x
+
+  return lax.while_loop(cond, body, init)[0]
+
+@jnp.vectorize
+@jit
+def _hyp1f1_x_derivative(a, b, x):
+  """
+  Define it as a serie using :
+  https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/04/
+  """
+
+  return a / b * hyp1f1(a + 1, b + 1, x)
+
+@custom_derivatives.custom_jvp
+@jnp.vectorize
+@_wraps(osp_special.hyp1f1, module='scipy.special', lax_description="""\
+The JAX version only accepts positive and real inputs.""")
+@jit
+def hyp1f1(a, b, x):
+  """
+  Implementation of the 1F1 hypergeometric function for real valued inputs
+  Backed by https://doi.org/10.48550/arXiv.1407.7786
+  There is room for improvement in the implementation using recursion to
+  evaluate lower values of hyp1f1 when a or b or both are > 60-80
+  """
+  a, b, x = promote_args_inexact('hyp1f1', a, b, x)
+
+  return lax.cond(lax.abs(x) < 70, _hyp1f1_serie, _hyp1f1_asymptotic, a, b, x)
+
+
+hyp1f1.defjvps(
+  lambda a_dot, primal_out, a, b, x: _hyp1f1_a_derivative(a, b, x) * a_dot,
+  lambda b_dot, primal_out, a, b, x: _hyp1f1_b_derivative(a, b, x) * b_dot,
+  lambda x_dot, primal_out, a, b, x: _hyp1f1_x_derivative(a, b, x) * x_dot
+)

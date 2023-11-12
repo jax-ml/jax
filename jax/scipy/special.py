@@ -55,4 +55,5 @@ from jax._src.scipy.special import (
   kl_div as kl_div,
   rel_entr as rel_entr,
   poch as poch,
+  hyp1f1 as hyp1f1,
 )
