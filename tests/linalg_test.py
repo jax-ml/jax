@@ -590,20 +590,26 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       jnp.linalg.norm(jnp.array([1.0, 2.0, 3.0]), ord="inf")
 
   @jtu.sample_product(
-    [dict(m=m, n=n, full_matrices=full_matrices, hermitian=hermitian)
-     for (m, n), full_matrices in (
-         list(itertools.product(itertools.product([0, 2, 7, 29, 53], repeat=2),
-                                [False, True])) +
-         # Test cases that ensure we are economical when computing the SVD and
-         # its gradient. If we form a 400kx400k matrix explicitly we will OOM.
-         [((400000, 2), False),
-          ((2, 400000), False)]
-     )
-     for hermitian in ([False, True] if m == n else [False])
-    ],
-    b=[(), (3,), (2, 3)],
-    dtype=float_types + complex_types,
-    compute_uv=[False, True],
+      [
+          dict(m=m, n=n, full_matrices=full_matrices, hermitian=hermitian)
+          for (m, n), full_matrices in (
+              list(
+                  itertools.product(
+                      itertools.product([0, 2, 7, 29, 32, 53], repeat=2),
+                      [False, True],
+                  )
+              )
+              +
+              # Test cases that ensure we are economical when computing the SVD
+              # and its gradient. If we form a 400kx400k matrix explicitly we
+              # will OOM.
+              [((400000, 2), False), ((2, 400000), False)]
+          )
+          for hermitian in ([False, True] if m == n else [False])
+      ],
+      b=[(), (3,), (2, 3)],
+      dtype=float_types + complex_types,
+      compute_uv=[False, True],
   )
   @jax.default_matmul_precision("float32")
   def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, hermitian):

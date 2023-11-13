@@ -14,6 +14,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.21
 
+* Changes
+  * On NVIDIA GPU, JAX now prefers a Jacobi SVD solver for matrices up to
+    1024x1024. The Jacobi solver appears faster than the non-Jacobi version.
+
 ## jax 0.4.20 (Nov 2, 2023)
 
 ## jaxlib 0.4.20 (Nov 2, 2023)
