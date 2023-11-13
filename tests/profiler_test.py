@@ -210,6 +210,11 @@ class ProfilerTest(unittest.TestCase):
   @unittest.skipIf(not (portpicker and profiler_client and tf_profiler),
     "Test requires tensorflow.profiler and portpicker")
   def testSingleWorkerSamplingMode(self, delay_ms=None):
+    # TODO(jieying): remove after 01/10/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 34):
+      raise unittest.SkipTest(
+          "Profiler is not supported on PJRT C API version < 0.34."
+      )
     def on_worker(port, worker_start):
       jax.profiler.start_server(port)
       worker_start.set()
@@ -255,6 +260,11 @@ class ProfilerTest(unittest.TestCase):
     "Test requires tensorflow.profiler, portpicker and "
     "tensorboard_profile_plugin")
   def test_remote_profiler(self):
+    # TODO(jieying): remove after 01/10/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 34):
+      raise unittest.SkipTest(
+          "Profiler is not supported on PJRT C API version < 0.34."
+      )
     port = portpicker.pick_unused_port()
     jax.profiler.start_server(port)
 
