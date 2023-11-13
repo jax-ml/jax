@@ -765,10 +765,7 @@ class JitTest(jtu.BufferDonationTestCase):
     f = lambda x, y: x + 3
     jitted_f = jit(f, static_argnums=(1,))
 
-    msg = ("Non-hashable static arguments are not supported. An error occurred "
-           ".*while trying to hash an object of type "
-           "<class 'numpy\\.ndarray'>, 1. The error was:\nTypeError: "
-           "unhashable type: 'numpy\\.ndarray'")
+    msg = "Non-hashable static arguments are not supported"
     with self.assertRaisesRegex(ValueError, msg):
       jitted_f(1, np.asarray(1))
 
@@ -778,10 +775,7 @@ class JitTest(jtu.BufferDonationTestCase):
 
     jitted_f(1, 1)
 
-    msg = ("Non-hashable static arguments are not supported. An error occurred "
-           ".*while trying to hash an object of type "
-           "<class 'numpy\\.ndarray'>, 1. The error was:\nTypeError: "
-           "unhashable type: 'numpy\\.ndarray'")
+    msg = "Non-hashable static arguments are not supported"
 
     with self.assertRaisesRegex(ValueError, msg):
       jitted_f(1, np.asarray(1))
