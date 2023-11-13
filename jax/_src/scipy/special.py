@@ -1727,7 +1727,6 @@ def bernoulli(n: int) -> Array:
 The JAX version only accepts positive and real inputs.""")
 @jit
 def poch(z: ArrayLike, m: ArrayLike) -> Array:
-  # TODO : ensure that m=0 return 1
   # Factorial definition when m is close to an integer, otherwise gamma definition.
   z, m = promote_args_inexact("poch", z, m)
 
@@ -1737,12 +1736,18 @@ def poch(z: ArrayLike, m: ArrayLike) -> Array:
 
   float_branch = lambda x, n: gamma(z + m) / gamma(z)
 
-  return lax.cond(lax.abs(lax.round(m)-m) < 1e-10, integer_branch, float_branch, z, m)
+  result = lax.cond(lax.abs(lax.round(m)-m) < 1e-10, integer_branch, float_branch, z, m)
+
+  return lax.select(m == 0., 1., result)
 
 
 @jnp.vectorize
 @jit
 def _poch_z_derivative(z, m):
+  """
+  Defined in :
+  https://functions.wolfram.com/GammaBetaErf/Pochhammer/20/01/01/
+  """
 
   return (digamma(z + m) - digamma(z)) * poch(z, m)
 
@@ -1750,6 +1755,10 @@ def _poch_z_derivative(z, m):
 @jnp.vectorize
 @jit
 def _poch_m_derivative(z, m):
+  """
+  Defined in :
+  https://functions.wolfram.com/GammaBetaErf/Pochhammer/20/01/02/
+  """
 
   return digamma(z + m) * poch(z, m)
 
@@ -1863,6 +1872,7 @@ def _hyp1f1_b_derivative(a, b, x):
 
   return lax.while_loop(cond, body, init)[0]
 
+
 @jnp.vectorize
 @jit
 def _hyp1f1_x_derivative(a, b, x):
@@ -1873,10 +1883,12 @@ def _hyp1f1_x_derivative(a, b, x):
 
   return a / b * hyp1f1(a + 1, b + 1, x)
 
+
 @custom_derivatives.custom_jvp
 @jnp.vectorize
 @_wraps(osp_special.hyp1f1, module='scipy.special', lax_description="""\
-The JAX version only accepts positive and real inputs.""")
+The JAX version only accepts positive and real inputs, and works for a,b ~<60.
+Convention for a = b = 0 is 1, unlike in scipy's implementation.""")
 @jit
 def hyp1f1(a, b, x):
   """
@@ -1887,7 +1899,10 @@ def hyp1f1(a, b, x):
   """
   a, b, x = promote_args_inexact('hyp1f1', a, b, x)
 
-  return lax.cond(lax.abs(x) < 70, _hyp1f1_serie, _hyp1f1_asymptotic, a, b, x)
+  result = lax.cond(lax.abs(x) < 70, _hyp1f1_serie, _hyp1f1_asymptotic, a, b, x)
+  index = (a==0)*1 + ((a == b) & (a != 0))*2 + ((b == 0) & (a != 0))*3
+
+  return lax.select_n(index, result, 1., jnp.exp(x), jnp.inf)
 
 
 hyp1f1.defjvps(
