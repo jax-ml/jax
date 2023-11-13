@@ -80,20 +80,12 @@ def _check_instance(self, x):
   self.assertIsInstance(x, array.ArrayImpl)
 
 
-class CPPJitTest(jtu.BufferDonationTestCase):
+class JitTest(jtu.BufferDonationTestCase):
   """Shared tests between the Python and the C++ jax,jit implementations.
 
   Because the Python implementation supports more features, we need to have the
   Python tests that extend the C++ tests (and not the other way around).
   """
-
-  @property
-  def use_cpp_jit(self) -> bool:
-    return True
-
-  @property
-  def jit(self):
-    return jax.jit
 
   def test_jit_repr(self):
     def my_function():
@@ -117,7 +109,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_jit_of_noncallable(self):
     self.assertRaisesRegex(TypeError, "Expected a callable value.*",
-                           lambda: self.jit(3))
+                           lambda: jit(3))
 
   def test_jit_of_generator(self):
 
@@ -126,7 +118,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     self.assertRaisesRegex(TypeError,
                            "Expected a function, got a generator function.*",
-                           lambda: self.jit(gen))
+                           lambda: jit(gen))
 
   @parameterized.parameters([
       # Integer support
@@ -149,7 +141,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       side.append(None)
       return 100 * x + 10 * y + z
 
-    f1 = self.jit(f, static_argnums=(3, 4))
+    f1 = jit(f, static_argnums=(3, 4))
     assert f1(one, two, three, True, False) == 123
     assert len(side) == 1
     assert f1(one, two, three, True, False) == 123
@@ -160,7 +152,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     assert len(side) == 2
 
     side[:] = []
-    f2 = self.jit(f, static_argnums=(0, 2, 3, 4))
+    f2 = jit(f, static_argnums=(0, 2, 3, 4))
     assert f2(1, 2, 3, True, False) == 123
     assert len(side) == 1
     assert f2(1, 3, 3, True, False) == 133
@@ -189,15 +181,14 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       side.append(None)
       return x * 100
 
-    f1 = self.jit(f, static_argnums=(1,))
+    f1 = jit(f, static_argnums=(1,))
 
     self.assertEqual(f1(1, A()), 100)
     self.assertLen(side, 1)
     self.assertEqual(f1(1, A()), 100)
     self.assertLen(side, 1)
-    if self.use_cpp_jit:
-      f1_cpp = getattr(f1, "_cpp_jitted_f", f1)
-      self.assertEqual(f1_cpp._cache_size(), 1)
+    f1_cpp = getattr(f1, "_cpp_jitted_f", f1)
+    self.assertEqual(f1_cpp._cache_size(), 1)
 
   @parameterized.parameters([
       (1, 2, 3),
@@ -211,14 +202,14 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     side = []
     # For the CPP jit, we need to clear the cache to prevent cache hits between
     # parameterized tests.
-    if hasattr(self.jit, "cache_clear"):
-      self.jit.cache_clear()
+    if hasattr(jit, "cache_clear"):
+      jit.cache_clear()
 
     def f(x, y, z):
       side.append(None)
       return 100 * x + 10 * y + z.astype(y.dtype)
 
-    f = self.jit(f)
+    f = jit(f)
     assert f(one, two, three) == 123
     assert len(side) == 1
     assert f(one, two, three) == 123
@@ -237,7 +228,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_jit_device(self):
     device = jax.devices()[-1]
-    x = self.jit(lambda x: x, device=device)(3.)
+    x = jit(lambda x: x, device=device)(3.)
     _check_instance(self, x)
     self.assertEqual(x.device(), device)
 
@@ -296,7 +287,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         jax.jit(lambda x: x + 1)(1)
 
   def test_complex_support(self):
-    self.assertEqual(self.jit(lambda x: x + 1)(1 + 1j), 2 + 1j)
+    self.assertEqual(jit(lambda x: x + 1)(1 + 1j), 2 + 1j)
 
   @parameterized.parameters("static_argnums", "donate_argnums")
   def test_jit_argnums_overflow_error(self, argnum_type: str):
@@ -313,34 +304,34 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       ...
 
     # Simplest cases
-    self.jit(f, **{argnum_type: (0, 1)})
-    self.jit(g, **{argnum_type: (0, 1)})
-    self.jit(f, **{argnum_type: (0, 1, -3)})
+    jit(f, **{argnum_type: (0, 1)})
+    jit(g, **{argnum_type: (0, 1)})
+    jit(f, **{argnum_type: (0, 1, -3)})
 
     # Out of bounds without *args
     # with self.assertRaises(ValueError):
     with self.assertWarns(SyntaxWarning):
-      self.jit(f, **{argnum_type: (0, 1, 3)})
+      jit(f, **{argnum_type: (0, 1, 3)})
 
     # with self.assertRaises(ValueError):
     with self.assertWarns(SyntaxWarning):
-      self.jit(f, **{argnum_type: (0, 1, -4)})
+      jit(f, **{argnum_type: (0, 1, -4)})
 
     # with self.assertRaises(ValueError):
     with self.assertWarns(SyntaxWarning):
-      self.jit(g, **{argnum_type: (0, 1, 3)})
+      jit(g, **{argnum_type: (0, 1, 3)})
 
     # with self.assertRaises(ValueError):
     with self.assertWarns(SyntaxWarning):
-      self.jit(g, **{argnum_type: (0, 1, -3)})
+      jit(g, **{argnum_type: (0, 1, -3)})
 
     # Out of bounds with *args
-    self.jit(h, **{argnum_type: (0, 999)})
-    self.jit(h, **{argnum_type: (0, -999)})
+    jit(h, **{argnum_type: (0, 999)})
+    jit(h, **{argnum_type: (0, -999)})
 
     # No positional arguments
-    self.jit(i, static_argnums=())
-    self.jit(i)
+    jit(i, static_argnums=())
+    jit(i)
 
   @parameterized.parameters("static_argnames", "donate_argnames")
   def test_jit_argnames_validation(self, argnum_type: str):
@@ -354,32 +345,32 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       ...
 
     # Simplest case
-    self.jit(f, **{argnum_type: ("b", "c")})
+    jit(f, **{argnum_type: ("b", "c")})
 
     # Undefined arg without **kwargs
     # with self.assertRaises(ValueError):
     with self.assertWarns(SyntaxWarning):
-      self.jit(f, **{argnum_type: ("b", "c", "not_defined")})
+      jit(f, **{argnum_type: ("b", "c", "not_defined")})
 
     # Undefined arg with **kwargs
-    self.jit(g, **{argnum_type: ("a", "b", "not_defined")})
+    jit(g, **{argnum_type: ("a", "b", "not_defined")})
 
-    self.jit(h, **{argnum_type: ("b", "c")})
-    self.jit(h, **{argnum_type: ("b", "c", "not_defined")})
+    jit(h, **{argnum_type: ("b", "c")})
+    jit(h, **{argnum_type: ("b", "c", "not_defined")})
 
     # Positional only
     # with self.assertRaises(ValueError):
     with self.assertWarns(SyntaxWarning):
-      self.jit(h, **{argnum_type: ("a", "c")})
+      jit(h, **{argnum_type: ("a", "c")})
 
     # Var positional
     # with self.assertRaises(ValueError):
     with self.assertWarns(SyntaxWarning):
-      self.jit(h, **{argnum_type: ("args", "c")})
+      jit(h, **{argnum_type: ("args", "c")})
 
   def test_jit_with_many_args_works(self):
 
-    @self.jit
+    @jit
     def f(args_list):
       return sum(args_list)
 
@@ -402,7 +393,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_jit_donate_warning_raised(self, argnum_type, argnum_val):
     x = jnp.array([1.0, 2.0], jnp.float32)
     y = jnp.array([1, 2], jnp.int32)
-    f = self.jit(lambda x, y: x.sum() + jnp.float32(y.sum()),
+    f = jit(lambda x, y: x.sum() + jnp.float32(y.sum()),
                  **{argnum_type: argnum_val})
     with warnings.catch_warnings(record=True) as w:
       warnings.simplefilter("always")
@@ -422,7 +413,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_jit_donate_invalidates_input(self, argnum_type, argnum_val):
     # We can't just use `lambda x: x` because JAX simplifies this away to an
     # empty XLA computation.
-    move = self.jit(lambda x: x + x - x, **{argnum_type: argnum_val})
+    move = jit(lambda x: x + x - x, **{argnum_type: argnum_val})
     x = jnp.ones([])
     y = move(x)
     self.assertDeleted(x)
@@ -434,7 +425,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   )
   @jtu.device_supports_buffer_donation()
   def test_jit_donate_static_argnums(self, argnum_type, argnum_val):
-    jit_fun = self.jit(
+    jit_fun = jit(
         lambda a, b, c, d: ((a + b + c), (a + b + d)),
         static_argnums=(0, 1),
         **{argnum_type: argnum_val})
@@ -449,7 +440,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   @jtu.device_supports_buffer_donation()
   def test_jit_donate_argnames_kwargs_static_argnums(self):
-    jit_fun = self.jit(
+    jit_fun = jit(
         lambda a, b, c, d, e: ((a + b + c), (a + b + d), (a + b + e)),
         static_argnums=(0, 1),
         donate_argnames=('d', 'e'))
@@ -472,7 +463,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   @jtu.device_supports_buffer_donation()
   def test_jit_donate_weak_type(self, argnum_type, argnum_val):
     # input has weak-type, output does not have weak-type
-    move = self.jit(lambda x: x.astype(int), **{argnum_type: argnum_val})
+    move = jit(lambda x: x.astype(int), **{argnum_type: argnum_val})
     x = jnp.broadcast_to(2, (3,))
     move(x)
     self.assertDeleted(x)
@@ -484,7 +475,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_jnp_array_copy(self, argnum_type, argnum_val):
     # https://github.com/google/jax/issues/3412
 
-    @partial(self.jit, **{argnum_type: argnum_val})
+    @partial(jit, **{argnum_type: argnum_val})
     def _test(array):
       return array.at[0].set(77)
 
@@ -583,12 +574,12 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       return x
 
     python_should_be_executing = True
-    self.jit(f)(2)
+    jit(f)(2)
     python_should_be_executing = False
-    self.jit(f)(3)
+    jit(f)(3)
 
   def test_jit_cache_clear(self):
-    @self.jit
+    @jit
     def f(x, y):
       return x + y
 
@@ -607,17 +598,17 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_jit_shallow_copy(self):
     def f(x):
       return copy.copy(x)
-    self.jit(f)(1)
+    jit(f)(1)
 
   def test_jit_deep_copy(self):
     def f(x):
       return copy.deepcopy(x)
-    self.jit(f)(1)
+    jit(f)(1)
 
   def test_disable_jit(self):
     effects = []
 
-    @self.jit
+    @jit
     def f(x):
       effects.append(1)
       return x
@@ -635,7 +626,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     class A:
 
-      @functools.partial(self.jit, static_argnums=(0,))
+      @functools.partial(jit, static_argnums=(0,))
       def my_func_jit(self, x):
         return x+2
 
@@ -646,7 +637,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
       class A:
 
-        @functools.partial(self.jit, static_argnums=(0,))
+        @functools.partial(jit, static_argnums=(0,))
         @classmethod
         def my_classmethod_jit(cls, x):
           return x+2
@@ -657,13 +648,13 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
       class A:
 
-        @functools.partial(self.jit)
+        @functools.partial(jit)
         @staticmethod
         def my_staticmethod_jit(x):
           return x + 2
 
   def test_concurrent_jit(self):
-    @self.jit
+    @jit
     def f(x):
       return x + x - 3.
 
@@ -676,20 +667,20 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_trivial_computations(self):
     x = jnp.array([1, 2, 3])
-    y = self.jit(lambda x: x)(x)
+    y = jit(lambda x: x)(x)
     self.assertNotEqual(x.unsafe_buffer_pointer(), y.unsafe_buffer_pointer())
 
-    z1, z2 = self.jit(lambda x: (x, x))(x)
+    z1, z2 = jit(lambda x: (x, x))(x)
     self.assertNotEqual(z1.unsafe_buffer_pointer(), z2.unsafe_buffer_pointer())
 
     x1, x2 = jnp.array([1, 2]), jnp.array([2, 3])
-    z1, z2, z3 = self.jit(lambda x, y: (y, 1, x))(x1, x2)
+    z1, z2, z3 = jit(lambda x, y: (y, 1, x))(x1, x2)
     self.assertNotEqual(z1.unsafe_buffer_pointer(), x2.unsafe_buffer_pointer())
     self.assertNotEqual(z3.unsafe_buffer_pointer(), x1.unsafe_buffer_pointer())
     self.assertEqual(z2, 1)
 
   def test_trivial_computations_with_tokens(self):
-    @self.jit
+    @jit
     def noop(arr, token):
       return arr, token
 
@@ -704,17 +695,17 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     with self.assertRaisesRegex(
         TypeError, r".* 'foo' of type <.*'str'> is not a valid JAX type"):
-      self.jit(f)("foo")
+      jit(f)("foo")
 
     # Jax type objects aren't valid data arguments.
     err_str = "JAX scalar type .*int32.* cannot be interpreted as a JAX array."
 
     with self.assertRaisesRegex(TypeError, err_str):
-      self.jit(f)(jnp.int32)
+      jit(f)(jnp.int32)
 
   def test_jit_masked_array(self):
     x = np.ma.array([1, 2, 3], mask=[True, False, True])
-    f = self.jit(lambda x: x)
+    f = jit(lambda x: x)
     with self.assertRaisesRegex(ValueError, "numpy masked arrays are not supported"):
       f(x)
 
@@ -722,13 +713,13 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     # Verifies we can run the same computation on every device present, even
     # if they are, for example, different models of GPU.
     data = self.rng().rand(1000).astype(np.float32)
-    f = self.jit(jnp.negative)
+    f = jit(jnp.negative)
     for device in jax.local_devices():
       x = device_put(data, device=device)
       np.testing.assert_array_equal(-data, f(x))
 
   def test_jit_nested_donate_ignored(self):
-    jit_fun = self.jit(lambda x: self.jit(lambda y: y**2, donate_argnums=0)(x))
+    jit_fun = jit(lambda x: jit(lambda y: y**2, donate_argnums=0)(x))
     a = jax.device_put(jnp.array(1))
 
     # NOTE(mattjj): stopped raising error here and instead just ignored
@@ -740,7 +731,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_jit_reference_dropping(self):
     x = jnp.ones(10)
     f = (lambda x: lambda: x)(x)  # reference to x in f's closure
-    g = self.jit(f)
+    g = jit(f)
     x = weakref.ref(x)      # no more strong ref to x in this scope
     assert x() is not None  # x is still around
     f()                     # f runs
@@ -764,7 +755,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     with self.assertRaisesRegex(TypeError, "cannot create weak reference.*"):
       weakref.ref(c)
     # Building a jit object does not crash.
-    f = self.jit(c)
+    f = jit(c)
     with self.assertRaisesRegex(TypeError, "cannot create weak reference.*"):
       # Calling the jit object will fail, but not because of the C++ JIT. The
       # Python-level jit cache requires weak reference support.
@@ -772,7 +763,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_jit_raises_on_first_invocation_on_non_hashable_static_argnum(self):
     f = lambda x, y: x + 3
-    jitted_f = self.jit(f, static_argnums=(1,))
+    jitted_f = jit(f, static_argnums=(1,))
 
     msg = ("Non-hashable static arguments are not supported. An error occurred "
            ".*while trying to hash an object of type "
@@ -782,11 +773,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       jitted_f(1, np.asarray(1))
 
   def test_cpp_jit_raises_on_non_hashable_static_argnum(self):
-    if not self.use_cpp_jit:
-      raise unittest.SkipTest("this test only applies to _cpp_jit")
-
     f = lambda x, y: x + 3
-    jitted_f = self.jit(f, static_argnums=[1])
+    jitted_f = jit(f, static_argnums=[1])
 
     jitted_f(1, 1)
 
@@ -827,10 +815,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       f(a)
 
   def test_cpp_jitted_function_returns_PyBuffer(self):
-    if not self.use_cpp_jit:
-      raise unittest.SkipTest("this test only applies to _cpp_jit")
-
-    jitted_f = self.jit(lambda a: a + 1)
+    jitted_f = jit(lambda a: a + 1)
     jitted_f(1)
     out = jitted_f(2)
     self.assertIsInstance(out.sharding, jax.sharding.SingleDeviceSharding)
@@ -901,7 +886,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     key_list[0] = wrap([2384771982, 3928867769])
     init()
-    self.jit(init)()
+    jit(init)()
     self.assertIsInstance(key_list[0], core.Tracer)
     del key_list[0]
 
@@ -910,7 +895,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       """docstring of f."""
       return x + 1
     f.some_value = 4
-    jf = self.jit(f)
+    jf = jit(f)
     for attr in ["doc", "name", "module", "qualname", "annotations"]:
       self.assertEqual(
         {attr: getattr(f, f"__{attr}__")},
@@ -920,7 +905,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def test_jit_python_builtin(self):
     x = jnp.array([1, 2])
     expected = x + 1
-    jit_add = self.jit(operator.add, static_argnums=(1,))
+    jit_add = jit(operator.add, static_argnums=(1,))
     actual = jit_add(x, 1)
     self.assertArraysEqual(expected, actual)
 
@@ -976,21 +961,21 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       assert x == 'foo'
       return 1
 
-    f_nums = self.jit(f, static_argnums=0)
+    f_nums = jit(f, static_argnums=0)
     assert f_nums('foo') == 1
     assert f_nums(x='foo') == 1
 
-    f_names = self.jit(f, static_argnames='x')
+    f_names = jit(f, static_argnames='x')
     assert f_names('foo') == 1
     assert f_names(x='foo') == 1
 
   def test_new_static_argnum_on_keyword_arguments(self):
-    f = self.jit(lambda x: x, static_argnums=0)
+    f = jit(lambda x: x, static_argnums=0)
     y = f(x=4)
     assert y == 4
 
   def test_new_static_argnum_with_default_arguments(self):
-    f = self.jit(lambda x=4: x, static_argnums=0)
+    f = jit(lambda x=4: x, static_argnums=0)
     y = f()
     assert y == 4
 
@@ -1003,19 +988,19 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     # If both static_argnums and static_argnames are provided, they are allowed
     # to disagree and `jit` will respect the user's choices.
-    f_nums = self.jit(f, static_argnums=1, static_argnames=())
+    f_nums = jit(f, static_argnums=1, static_argnames=())
     x_is_tracer, y_is_tracer = True, False
     assert f_nums(2, 'foo') == 1
     x_is_tracer, y_is_tracer = True, True
     assert f_nums(1, y=2) == 1
 
-    f_names = self.jit(f, static_argnums=(), static_argnames='y')
+    f_names = jit(f, static_argnums=(), static_argnames='y')
     x_is_tracer, y_is_tracer = True, True
     assert f_names(2, 3) == 1
     x_is_tracer, y_is_tracer = True, False
     assert f_names(1, y='foo') == 1
 
-    f_mixed = self.jit(f, static_argnums=(1,), static_argnames='x')
+    f_mixed = jit(f, static_argnums=(1,), static_argnames='x')
     x_is_tracer, y_is_tracer = True, False
     assert f_mixed(2, 'foo') == 1
     x_is_tracer, y_is_tracer = True, True
@@ -1030,7 +1015,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(*args):
       used = np.array(2)
       return args[1] + used
-    f_pruned = self.jit(f)
+    f_pruned = jit(f)
     args = range(num_args)
     with jtu.count_device_put() as count:
       np.testing.assert_allclose(f_pruned(*args), 3)
@@ -1039,7 +1024,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   def testBuffersAreFreedPromptly(self):
     # Regression test for a bug where garbage collection was delayed too long
     # for NumPy buffers that are aliased zero-copy by the runtime.
-    @self.jit
+    @jit
     def f(x):
       return x + 1
 
@@ -1060,7 +1045,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
-    f_jit = self.jit(f)
+    f_jit = jit(f)
     lowered = f_jit.lower(1.)
     compiled = lowered.compile()
     self.assertAllClose(compiled(1.), 2.)
@@ -1073,7 +1058,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.assertEqual(obj.in_tree, jax.tree_util.tree_flatten(((0,), {}))[1])
 
   def test_jit_lower_duck_typing(self):
-    f_jit = self.jit(lambda x: 2 * x)
+    f_jit = jit(lambda x: 2 * x)
     f_low = f_jit.lower(jax.ShapeDtypeStruct((), 'float32'))  # doesn't crash
     f_exe = f_low.compile()
     self.assertAllClose(f_exe(jnp.float32(1.)), jnp.float32(2.))
@@ -1082,7 +1067,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
-    f_jit = self.jit(f)
+    f_jit = jit(f)
     f_low = f_jit.lower(1.)
     f_exe = f_low.compile()
     self.assertRaisesRegex(
@@ -1091,18 +1076,18 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_jit_lower_compile_trivial(self):
     def f(x): return x
-    out = self.jit(f).lower(1.).compile()(4.)
+    out = jit(f).lower(1.).compile()(4.)
     self.assertAllClose(out, 4.)
 
   def test_jit_lower_compile_sharding_computation(self):
     s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     def f(x): return jax.lax.with_sharding_constraint(x, s)
-    out = self.jit(f).lower(1.).compile()(4.)
+    out = jit(f).lower(1.).compile()(4.)
     self.assertAllClose(out, 4.)
 
   def test_jit_lower_compile_trivial_in_tree_mismatch(self):
     def f(x): return x
-    f_exe = self.jit(f).lower(1.).compile()
+    f_exe = jit(f).lower(1.).compile()
     self.assertRaisesRegex(
         TypeError, "function compiled for .*, called with .*",
         lambda: f_exe([4.]))
@@ -1114,7 +1099,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     x = jnp.array(1, dtype=int)
     x_f32 = x.astype(jnp.float32)
     x_i32 = x.astype(jnp.int32)
-    f_exe = self.jit(f).lower(x_f32).compile()
+    f_exe = jit(f).lower(x_f32).compile()
     self.assertRaisesRegex(
         TypeError,
         r"Argument types differ .*"
@@ -1126,26 +1111,26 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(*args):
       x, *_ = args
       return jnp.sqrt(x ** 2) + 1.
-    f_exe = self.jit(f).lower(1., 1.).compile()
+    f_exe = jit(f).lower(1., 1.).compile()
     self.assertAllClose(f_exe(1., 1.), 2.)
 
   def test_jit_lower_compile_trivial_multi_arg(self):
     def f(*args):
       x, *_ = args
       return x
-    f_exe = self.jit(f).lower(1., 1.).compile()
+    f_exe = jit(f).lower(1., 1.).compile()
     self.assertAllClose(f_exe(1., 1.), 1.)
 
   def test_jit_lower_donate_argnums_available(self):
     def f(*args):
       x, *_ = args
       return x + 4.
-    f_low = self.jit(f, donate_argnums=(0,)).lower(1., 1.)
+    f_low = jit(f, donate_argnums=(0,)).lower(1., 1.)
     f_com = f_low.compile()
     f_low.donate_argnums == f_com.donate_argnums == (0,)
 
   def test_jit_lower_compile_vmap(self):
-    f = self.jit(lambda x: x + 4).lower(1.).compile()
+    f = jit(lambda x: x + 4).lower(1.).compile()
     def err():
       return jax.vmap(lambda x: f(x) + 2)(jnp.ones(3))
     self.assertRaisesRegex(
@@ -1155,61 +1140,61 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         err)
 
   def test_jit_lower_as_text(self):
-    f = self.jit(lambda x: x + 4).lower(1.)
+    f = jit(lambda x: x + 4).lower(1.)
     self.assertIsInstance(f.as_text(), str)
     self.assertIsInstance(f.as_text(dialect='hlo'), str)
     self.assertIsInstance(f.as_text(dialect='mhlo'), str)
     self.assertIsInstance(f.as_text(dialect="stablehlo"), str)
 
   def test_jit_lower_compiler_ir(self):
-    f = self.jit(lambda x: x + 4).lower(1.)
+    f = jit(lambda x: x + 4).lower(1.)
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
     self.assertIsNotNone(f.compiler_ir(dialect="stablehlo"))
 
   def test_jit_lower_trivial_compiler_ir(self):
-    f = self.jit(lambda x: x).lower(1.)
+    f = jit(lambda x: x).lower(1.)
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
     self.assertIsNotNone(f.compiler_ir(dialect="stablehlo"))
 
   def test_jit_replica_attributes(self):
-    hlo = self.jit(lambda x: x + 4).lower(1.).as_text("stablehlo")
+    hlo = jit(lambda x: x + 4).lower(1.).as_text("stablehlo")
     self.assertIn("mhlo.num_partitions = 1", hlo)
     self.assertIn("mhlo.num_replicas = 1", hlo)
 
   def test_jit_lower_no_pruning(self):
-    compiled = self.jit(lambda x, y: x + y).lower(1., 2.).compile()
+    compiled = jit(lambda x, y: x + y).lower(1., 2.).compile()
     self.assertEqual(compiled._executable._kept_var_idx, {0, 1})
     self.assertLen(compiled._executable.in_avals, 2)
 
-    compiled = self.jit(lambda x, y: x).lower(1., 2.).compile()
+    compiled = jit(lambda x, y: x).lower(1., 2.).compile()
     self.assertEqual(compiled._executable._kept_var_idx, {0})
     self.assertLen(compiled._executable.in_avals, 1)
 
-    compiled = self.jit(lambda x, y: x, keep_unused=True).lower(
+    compiled = jit(lambda x, y: x, keep_unused=True).lower(
         1., 2.).compile()
     self.assertEqual(compiled._executable._kept_var_idx, {0, 1})
     self.assertLen(compiled._executable.in_avals, 2)
     # Also works with jax.jit
-    jitted_f = self.jit(lambda x, y: x, keep_unused=True)
+    jitted_f = jit(lambda x, y: x, keep_unused=True)
     with jtu.count_pjit_cpp_cache_miss() as count:
       _ = jitted_f(1, 2)
     self.assertEqual(count[0], 1)
 
   def test_jit_lower_compile_compiler_ir(self):
-    f = self.jit(lambda x: x + 4).lower(1.).compile()
+    f = jit(lambda x: x + 4).lower(1.).compile()
     self.assertIsNotNone(f.runtime_executable())
 
   def test_jit_lower_trivial_compile_compiler_ir(self):
-    f = self.jit(lambda x: x).lower(1.).compile()
+    f = jit(lambda x: x).lower(1.).compile()
     self.assertIsNotNone(f.runtime_executable())
 
   def test_jit_lower_compile_as_text(self):
-    f = self.jit(lambda x: x).lower(1.).compile()
-    g = self.jit(lambda x: x + 4).lower(1.).compile()
+    f = jit(lambda x: x).lower(1.).compile()
+    g = jit(lambda x: x + 4).lower(1.).compile()
     self.assertIsInstance(f.as_text(), (str, type(None)))
     self.assertIsInstance(g.as_text(), (str, type(None)))
 
@@ -1217,26 +1202,26 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     # TODO(b/261771737): add support for uncompiled cost analysis in C API.
     if "PJRT C API" in xla_bridge.get_backend().platform_version:
       raise unittest.SkipTest("C API does not support uncompiled cost analysis")
-    f = self.jit(lambda x: x).lower(1.)
-    g = self.jit(lambda x: x + 4).lower(1.)
+    f = jit(lambda x: x).lower(1.)
+    g = jit(lambda x: x + 4).lower(1.)
     f.cost_analysis()  # doesn't raise
     g.cost_analysis()  # doesn't raise
 
   def test_jit_lower_compile_cost_analysis(self):
-    f = self.jit(lambda x: x).lower(1.).compile()
-    g = self.jit(lambda x: x + 4).lower(1.).compile()
+    f = jit(lambda x: x).lower(1.).compile()
+    g = jit(lambda x: x + 4).lower(1.).compile()
     self.assertIsNotNone(f.cost_analysis())
     self.assertIsNotNone(g.cost_analysis())
 
   def test_jit_lower_compile_memory_analysis(self):
-    f = self.jit(lambda x: x).lower(1.).compile()
-    g = self.jit(lambda x: x + 4).lower(1.).compile()
+    f = jit(lambda x: x).lower(1.).compile()
+    g = jit(lambda x: x + 4).lower(1.).compile()
     f.memory_analysis()  # doesn't raise
     g.memory_analysis()  # doesn't raise
 
   def test_jit_lower_compile_executable(self):
-    f = self.jit(lambda x: x).lower(1.).compile()
-    g = self.jit(lambda x: x + 4).lower(1.).compile()
+    f = jit(lambda x: x).lower(1.).compile()
+    g = jit(lambda x: x + 4).lower(1.).compile()
     self.assertIsNotNone(f.runtime_executable())
     self.assertIsNotNone(g.runtime_executable())
 
@@ -1301,7 +1286,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
-    f_jit = self.jit(f)
+    f_jit = jit(f)
     lowered = f_jit.lower(1.)
     lowered.compile(  # doesn't crash
         compiler_options={
@@ -1315,7 +1300,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
-    f_jit = self.jit(f)
+    f_jit = jit(f)
     lowered = f_jit.lower(1.)
 
     self.assertRaisesRegex(
@@ -1332,7 +1317,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
-    f_jit = self.jit(f)
+    f_jit = jit(f)
     lowered = f_jit.lower(1.)
 
     l1 = lowered.compile()
@@ -1359,7 +1344,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       A = 0
       B = 1
 
-    @self.jit
+    @jit
     def f(d) -> float:
       return d[E.A]
 
@@ -1368,7 +1353,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_jit_static_argnums_requires_type_equality(self):
     # See: https://github.com/google/jax/pull/9311
-    @partial(self.jit, static_argnums=(0,))
+    @partial(jit, static_argnums=(0,))
     def f(k):
       assert python_should_be_executing
       return k
@@ -1405,9 +1390,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_cache_key_defaults(self):
     # https://github.com/google/jax/discussions/11875
-    if not self.use_cpp_jit:
-      raise unittest.SkipTest("this test only applies to _cpp_jit")
-    f = self.jit(lambda x: (x ** 2).sum())
+    f = jit(lambda x: (x ** 2).sum())
     self.assertEqual(f._cache_size(), 0)
     x = jnp.arange(5.0)
     for _ in range(3):
@@ -1419,14 +1402,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(x):
       return 1 + x * 0
     self.assertAllClose(f(np.nan), np.nan)
-    self.assertAllClose(self.jit(f)(np.nan), np.nan)
+    self.assertAllClose(jit(f)(np.nan), np.nan)
 
-
-class PythonJitTest(CPPJitTest):
-
-  @property
-  def use_cpp_jit(self) -> bool:
-    return False
 
 class APITest(jtu.JaxTestCase):
 
