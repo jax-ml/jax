@@ -824,7 +824,7 @@ parallel_functions_output_gda = define_bool_state(
 
 pmap_shmap_merge = define_bool_state(
     name='jax_pmap_shmap_merge',
-    default=False,
+    default=True,
     upgrade=True,
     help='If True, pmap and shard_map API will be merged.')
 

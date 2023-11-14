@@ -1559,34 +1559,37 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
     for arg in p.flat_args:
       dispatch.check_arg(arg)
     mesh = Mesh(_get_devices(p, backend), (axis_name,))
-    _pmapped, in_specs, out_specs = _cached_shard_map(
+    _pmapped, in_specs, out_specs = _get_shmapped_fun(
         p.flat_fun, mesh, p.in_axes_flat, p.out_axes_thunk, axis_name)
-    flat_global_args = host_local_array_to_global_array(
-        p.flat_args, mesh, list(in_specs))
-    jitted_f = jax.jit(
-        _pmapped,
-        donate_argnums=(i for i, val in enumerate(p.donated_invars) if val))
-    return jitted_f, flat_global_args, p.out_tree, mesh, out_specs
+    # TODO(yashkatariya): Figure out how to pass out_shardings here via
+    # out_specs. Might require refactoring of jit.
+    jitted_f = jax.jit(_pmapped)
+    return jitted_f, p.flat_args, p.out_tree, mesh, in_specs, out_specs
 
+  @partial(jax.jit, donate_argnums=donate_argnums,
+           static_argnums=static_broadcasted_argnums)
   def wrapped(*args, **kwargs):
-    (jitted_f, flat_global_args, out_tree, mesh,
+    (jitted_f, flat_args, out_tree, mesh, in_specs,
      out_specs) = infer_params(*args, **kwargs)
+    flat_global_args = host_local_array_to_global_array(
+        flat_args, mesh, list(in_specs))
     with jax.spmd_mode('allow_all'):
       outs = jitted_f(*flat_global_args)
       outs = global_array_to_host_local_array(outs, mesh, out_specs())
     return tree_unflatten(out_tree(), outs)
 
   def lower(*args, **kwargs):
-    jitted_f, _, _, _, _ = infer_params(*args, **kwargs)
+    jitted_f, flat_args, _, mesh, in_specs, _ = infer_params(*args, **kwargs)
     with jax.spmd_mode('allow_all'):
-      return jitted_f.lower(*args, **kwargs)
-  wrapped.lower = lower
+      flat_global_args = host_local_array_to_global_array(
+          flat_args, mesh, list(in_specs))
+      return jitted_f.lower(*flat_global_args, **kwargs)
 
+  wrapped.lower = lower
   return wrapped
 
 
-@lu.cache
-def _cached_shard_map(flat_fun, mesh, in_axes_flat, out_axes_thunk, axis_name):
+def _get_shmapped_fun(flat_fun, mesh, in_axes_flat, out_axes_thunk, axis_name):
   in_specs = tuple(map(partial(_axis_to_spec, axis_name), in_axes_flat))
   out_specs = lambda: map(partial(_axis_to_spec, axis_name), out_axes_thunk())
   fun = _handle_reshapes(flat_fun, in_axes_flat, out_axes_thunk)
