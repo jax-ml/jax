@@ -90,10 +90,16 @@ _USE_MOCK_GPU_CLIENT = config.DEFINE_bool(
     help="If True, use a mock GPU client instead of a real one.",
 )
 
-_MOCK_NUM_GPUS = config.DEFINE_integer(
-    name="mock_num_gpus",
+_MOCK_NUM_GPU_NODES = config.DEFINE_integer(
+    name="mock_num_gpu_nodes",
     default=1,
-    help="Mock GPU client number of gpus.",
+    help="Mock GPU client number of nodes.",
+)
+
+_MOCK_NUM_GPUS_PER_NODE = config.DEFINE_integer(
+    name="mock_num_gpus_per_node",
+    default=1,
+    help="Mock GPU client number of gpus per node.",
 )
 
 
@@ -276,9 +282,13 @@ def make_gpu_client(
     )
   use_mock_gpu_client = _USE_MOCK_GPU_CLIENT.value
   num_nodes = (
-      _MOCK_NUM_GPUS.value
+      _MOCK_NUM_GPU_NODES.value
       if use_mock_gpu_client
       else distributed.global_state.num_processes
+  )
+
+  mock_num_gpus_per_node = (
+      _MOCK_NUM_GPUS_PER_NODE.value if use_mock_gpu_client else 1
   )
 
   return xla_client.make_gpu_client(
@@ -287,7 +297,8 @@ def make_gpu_client(
       num_nodes=num_nodes,
       platform_name=platform_name,
       allowed_devices=allowed_devices,
-      mock=use_mock_gpu_client,  # type: ignore[call-arg]
+      mock=use_mock_gpu_client,
+      mock_num_gpus_per_node=mock_num_gpus_per_node,  # type: ignore[call-arg]
   )
 
 

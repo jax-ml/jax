@@ -37,7 +37,8 @@ class MockGPUTest(jtu.JaxTestCase):
 
   def tearDown(self):
     jax.config.update('use_mock_gpu_client', False)
-    jax.config.update('mock_num_gpus', 1)
+    jax.config.update('mock_num_gpu_nodes', 1)
+    jax.config.update('mock_num_gpus_per_node', 1)
     super().tearDown()
 
   def testMockWithSharding(self):
