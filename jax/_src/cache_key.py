@@ -360,6 +360,9 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
   xla_flags_env_var = os.getenv("XLA_FLAGS")
   if xla_flags_env_var:
     xla_flags.extend(xla_flags_env_var.split())
+  libtpu_init_args_env_var = os.getenv("LIBTPU_INIT_ARGS")
+  if libtpu_init_args_env_var:
+    xla_flags.extend(libtpu_init_args_env_var.split())
 
   for arg in sys.argv:
     if arg.startswith("--xla") or any(

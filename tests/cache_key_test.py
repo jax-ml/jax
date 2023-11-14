@@ -295,6 +295,37 @@ class CacheKeyTest(jtu.JaxTestCase):
         del os.environ["XLA_FLAGS"]
       sys.argv = orig_argv
 
+  def test_libtpu_init_args(self):
+    if jtu.is_device_tpu_v4():
+      raise unittest.SkipTest("TODO(b/240151176)")
+
+    computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
+    devices = np.array([[jax.local_devices()[0]]])
+    compile_options = compiler.get_compile_options(
+        num_replicas=1, num_partitions=1
+    )
+    backend = xla_bridge.get_backend()
+
+    orig_libtpu_init_args = os.getenv("LIBTPU_INIT_ARGS")
+    orig_argv = sys.argv
+    try:
+      os.environ["LIBTPU_INIT_ARGS"] = (
+          "--xla_spmd_threshold_for_windowed_einsum_mib=0"
+      )
+      key1 = cache_key.get(computation, devices, compile_options, backend)
+      os.environ["LIBTPU_INIT_ARGS"] = (
+          "--xla_spmd_threshold_for_windowed_einsum_mib=1"
+      )
+      key2 = cache_key.get(computation, devices, compile_options, backend)
+      self.assertNotEqual(key1, key2)
+
+    finally:
+      if orig_libtpu_init_args is not None:
+        os.environ["LIBTPU_INIT_ARGS"] = orig_libtpu_init_args
+      elif os.getenv("LIBTPU_INIT_ARGS") is not None:
+        del os.environ["LIBTPU_INIT_ARGS"]
+      sys.argv = orig_argv
+
   def create_new_debug_options(self, debug_options_obj):
     debug_options_obj.xla_cpu_enable_fast_math = False
     debug_options_obj.xla_cpu_fast_math_honor_infs = False
