@@ -65,6 +65,9 @@ class MemoriesTest(jtu.BufferDonationTestCase):
   def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Memories do not work on CPU and GPU backends yet.")
+    # TODO(b/311021572)
+    if jtu.is_cloud_tpu():
+      self.skipTest("Experimental feature not yet implemented on Cloud TPU")
     super().setUp()
     self.orig_memories_flag = config.enable_memories.value
     jax.config.update('jax_enable_memories', True)
