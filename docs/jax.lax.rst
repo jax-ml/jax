@@ -197,8 +197,6 @@ Custom gradient operators
 Parallel operators
 ------------------
 
-Parallelism support is experimental.
-
 .. autosummary::
   :toctree: _autosummary
 
@@ -206,6 +204,7 @@ Parallelism support is experimental.
     all_to_all
     pdot
     psum
+    psum_scatter
     pmax
     pmin
     pmean
