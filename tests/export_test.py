@@ -671,6 +671,17 @@ class JaxExportTest(jtu.JaxTestCase):
           export.poly_spec(x.shape, x.dtype, poly_spec))
       export.call_exported(exp)(x)
 
+  def test_poly_booleans(self):
+    # For booleans we use a special case ConvertOp to cast to and from
+    # dynamic shapes arguments.
+    def f_jax(x):  # x: bool[b]
+      return jnp.logical_not(x)
+
+    x = np.array([True, False, True, False], dtype=np.bool_)
+    exp = export.export(f_jax)(export.poly_spec(x.shape, x.dtype, "b"))
+    res = export.call_exported(exp)(x)
+    self.assertAllClose(f_jax(x), res)
+
   def test_with_sharding(self):
     nr_devices = 2
     if len(jax.devices()) < nr_devices:

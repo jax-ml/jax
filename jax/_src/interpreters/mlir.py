@@ -1941,8 +1941,9 @@ def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
       compare_type = "SIGNED"
     else:
       compare_type = "UNSIGNED"
-    return compare_hlo(x, full_like_aval(ctx, 0, aval_in), "NE",
-                       compare_type).result
+    x = compare_hlo(x, full_like_aval(ctx, 0, aval_in), "NE",
+                    compare_type).result
+    # continue, to adjust the shape if needed
   return hlo.ConvertOp(aval_to_ir_type(aval_out), x).result
 
 def _wrap_with_spmd_op(name: str,
