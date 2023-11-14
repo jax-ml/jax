@@ -18,14 +18,6 @@ Remember to align the itemized text with the first line of an item within a list
   * On NVIDIA GPU, JAX now prefers a Jacobi SVD solver for matrices up to
     1024x1024. The Jacobi solver appears faster than the non-Jacobi version.
 
-* Bug fixes
-  * Distributed JAX programs will now receive a globally unique ID number for
-    CPU devices. Previously, in a distributed GPU or TPU job, the CPU devices
-    attached to each process did not receive unique global ID numbers.
-    In addition the `process_index` attached to each CPU device will now match
-    any GPU or TPU devices.
-
-
 ## jax 0.4.20 (Nov 2, 2023)
 
 ## jaxlib 0.4.20 (Nov 2, 2023)
