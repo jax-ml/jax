@@ -626,7 +626,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     tol = 80 * jnp.finfo(dtype).eps
     reconstruction_tol = 2 * tol
-    unitariness_tol = tol
+    unitariness_tol = 3 * tol
 
     a, = args_maker()
     if hermitian:

@@ -374,11 +374,10 @@ def _gesvd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
   # outperform gesvd for small-moderate matrices, e.g., see:
   # https://developer.download.nvidia.com/video/gputechconf/gtc/2019/presentation/s9226-fast-singular-value-decomposition-on-gpus-v2.pdf
   # slide 5.
-  if have_jacobi_solver and (
-      (b == 1 and m <= 1024 and n <= 1024) or (m <= 32 and n <= 32)
-  ):
-    # The batched kernel doesn't support "econ" mode.
-    econ = not full_matrices and b == 1
+  if have_jacobi_solver and m <= 1024 and n <= 1024:
+    # The gesvdjbatched kernel doesn't support "econ" mode. We will use that
+    # kernel only if b > 1 and m <= 32 and n <= 32.
+    econ = not full_matrices and (b <= 1 or m > 32 or n > 32)
     lwork, opaque = gpu_solver.build_gesvdj_descriptor(
         np.dtype(dtype), b, m, n, compute_uv, 1 if econ else 0)
     k = min(m, n)
