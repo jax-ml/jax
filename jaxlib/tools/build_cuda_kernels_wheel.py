@@ -71,12 +71,12 @@ def prepare_wheel(
   copy_runfiles = functools.partial(build_utils.copy_file, runfiles=r)
 
   copy_runfiles(
-      "__main__/plugins/cuda/plugin_pyproject.toml",
+      "__main__/jax_plugins/cuda/plugin_pyproject.toml",
       dst_dir=sources_path,
       dst_filename="pyproject.toml",
   )
   copy_runfiles(
-      "__main__/plugins/cuda/plugin_setup.py",
+      "__main__/jax_plugins/cuda/plugin_setup.py",
       dst_dir=sources_path,
       dst_filename="setup.py",
   )

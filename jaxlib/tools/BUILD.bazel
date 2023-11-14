@@ -56,9 +56,9 @@ py_binary(
     ] + if_cuda([
         "//jaxlib:version",
         "//jaxlib/cuda:cuda_gpu_support",
-        "//plugins/cuda:pyproject.toml",
-        "//plugins/cuda:setup.py",
-        "//plugins/cuda:__init__.py",
+        "//jax_plugins/cuda:pyproject.toml",
+        "//jax_plugins/cuda:setup.py",
+        "//jax_plugins/cuda:__init__.py",
         "@local_config_cuda//cuda:cuda-nvvm",
     ]),
     deps = [
@@ -75,8 +75,8 @@ py_binary(
     ] + if_cuda([
         "//jaxlib:version",
         "//jaxlib/cuda:cuda_gpu_support",
-        "//plugins/cuda:plugin_pyproject.toml",
-        "//plugins/cuda:plugin_setup.py",
+        "//jax_plugins/cuda:plugin_pyproject.toml",
+        "//jax_plugins/cuda:plugin_setup.py",
         "@local_config_cuda//cuda:cuda-nvvm",
     ]),
     deps = [

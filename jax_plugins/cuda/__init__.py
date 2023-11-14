@@ -37,6 +37,8 @@ def initialize():
         path,
         __package__,
     )
+    return
+
   # TODO(b/300099402): use the util method when it is ready.
   options = {}
   visible_devices = xb.CUDA_VISIBLE_DEVICES.value
