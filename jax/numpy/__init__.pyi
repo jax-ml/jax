@@ -831,19 +831,19 @@ def vstack(tup: Union[_np.ndarray, Array, Sequence[ArrayLike]],
 
 @overload
 def where(condition: ArrayLike, x: Literal[None] = ..., y: Literal[None] = ...,
-          *, size: Optional[int] = ...,
+          /, *, size: Optional[int] = ...,
           fill_value: Union[None, ArrayLike, tuple[ArrayLike, ...]] = ...
           ) -> tuple[Array, ...]: ...
 
 @overload
-def where(condition: ArrayLike, x: ArrayLike, y: ArrayLike, *,
+def where(condition: ArrayLike, x: ArrayLike, y: ArrayLike, /, *,
           size: Optional[int] = ...,
           fill_value: Union[None, ArrayLike, tuple[ArrayLike, ...]] = ...
           ) -> Array: ...
 
 @overload
 def where(condition: ArrayLike, x: Optional[ArrayLike] = ...,
-          y: Optional[ArrayLike] = ..., *, size: Optional[int] = ...,
+          y: Optional[ArrayLike] = ..., /, *, size: Optional[int] = ...,
           fill_value: Union[None, ArrayLike, tuple[ArrayLike, ...]] = ...
           ) -> Union[Array, tuple[Array, ...]]: ...
 
