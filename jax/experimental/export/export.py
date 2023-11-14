@@ -1126,7 +1126,7 @@ def _call_exported_abstract_eval(
   # `f32[c, d]` it is better to fail because `c == d` is inconclusive, than
   # succeed and add a compile-time check that `c == d`. In the latter case,
   # it would be ambiguous whether we should continue tracing with a result
-  # a type `f32[c]` or `f32[d]`.
+  # of type `f32[c]` or `f32[d]`.
   shape_constraints.check_statically(synthetic_eval)
   exported_dim_values = [synthetic_eval.evaluate(solution[var])
                          for var in exported_dim_vars]

@@ -682,6 +682,28 @@ class JaxExportTest(jtu.JaxTestCase):
     res = export.call_exported(exp)(x)
     self.assertAllClose(f_jax(x), res)
 
+  def test_poly_expressions(self):
+    # Calling an Exported module whose output shape contains symbolic
+    # expressions
+    def output_shape(b):
+      return (b + b, b - b, b * b,
+              (b + 13) // b, (b + 13) % b,
+              core.non_negative_dim(b - 5))
+    def f(x):  # x: f32[b]
+      b = x.shape[0]
+      return jnp.ones(output_shape(b), dtype=x.dtype)
+    x = np.arange(5, dtype=np.float32)
+    exp = export.export(f)(export.poly_spec(x.shape, x.dtype, "b"))
+    # Call with static shapes
+    res = export.call_exported(exp)(x)
+    self.assertAllClose(res, f(x))
+
+    # Now re-export with shape polymorphism
+    x_spec = export.poly_spec(x.shape, x.dtype, "a")
+    exp2 = export.export(export.call_exported(exp))(x_spec)
+    a = x_spec.shape[0]
+    self.assertEqual(exp2.out_avals[0].shape, output_shape(a))
+
   def test_with_sharding(self):
     nr_devices = 2
     if len(jax.devices()) < nr_devices:
