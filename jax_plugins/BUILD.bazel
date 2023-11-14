@@ -30,5 +30,6 @@ py_library(
       ":jax_plugins",
       ] + if_cuda_is_configured([
         "//jax_plugins/cuda:cuda_plugin",
+        "//jax_plugins/cuda:cuda_plugin_extension",
     ]),
 )

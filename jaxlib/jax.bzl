@@ -199,7 +199,9 @@ def jax_test(
                 "//jax",
                 "//jax:test_util",
             ] + deps + select({
-                "//jax:enable_jaxlib_build": ["//jaxlib/cuda:gpu_only_test_deps"],
+                "//jax:enable_jaxlib_build": [
+                    "//jaxlib/cuda:gpu_only_test_deps",
+                ],
                 "//conditions:default": [],
             }) + select({
                 "//jax:enable_build_cuda_plugin_from_source": ["//jax_plugins:gpu_plugin_only_test_deps"],

@@ -35,8 +35,6 @@ py_binary(
         "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi.dll",
     ]) + if_cuda([
         "//jaxlib/cuda:cuda_gpu_support",
-        # TODO(jieying): move it out from jaxlib
-        "//jaxlib:cuda_plugin_extension",
         "@local_config_cuda//cuda:cuda-nvvm",
     ]) + if_rocm([
         "//jaxlib/rocm:rocm_gpu_support",
@@ -75,6 +73,7 @@ py_binary(
     ] + if_cuda([
         "//jaxlib:version",
         "//jaxlib/cuda:cuda_gpu_support",
+        "//jax_plugins/cuda:cuda_plugin_extension",
         "//jax_plugins/cuda:plugin_pyproject.toml",
         "//jax_plugins/cuda:plugin_setup.py",
         "@local_config_cuda//cuda:cuda-nvvm",

@@ -100,6 +100,7 @@ def prepare_wheel(
           f"__main__/jaxlib/cuda/_triton.{pyext}",
           f"__main__/jaxlib/cuda/_versions.{pyext}",
           "__main__/jaxlib/version.py",
+          f"__main__/jax_plugins/cuda/cuda_plugin_extension.{pyext}",
       ],
   )
 

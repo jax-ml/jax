@@ -517,6 +517,5 @@ py_library(
     # `if_cuda_is_configured` will default to `[]`.
     deps = if_cuda_is_configured([
         ":cuda_gpu_support",
-        "//jaxlib:cuda_plugin_extension",
     ]),
 )
