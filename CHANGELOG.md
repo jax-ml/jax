@@ -8,6 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.21
 
+* New Features
+  * Added {obj}`jax.nn.squareplus`.
+
 * Deprecations
   * The previously-deprecated `sym_pos` argument has been removed from
     {func}`jax.scipy.linalg.solve`. Use `assume_a='pos'` instead.
