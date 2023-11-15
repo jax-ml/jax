@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 def initialize():
   path = pathlib.Path(__file__).resolve().parent / "xla_cuda_plugin.so"
   if not path.exists():
-    logger.warning(
+    logger.debug(
         "WARNING: Native library %s does not exist. This most likely indicates"
         " an issue with how %s was built or installed.",
         path,
