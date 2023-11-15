@@ -974,6 +974,30 @@ class IndexingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(IndexError, "boolean index did not match shape.*"):
       x[idx]
 
+  def testBooleanIndexingWithNone(self):
+    # Regression test for https://github.com/google/jax/issues/18542
+    x = jnp.arange(6).reshape(2, 3)
+    idx = (None, jnp.array([True, False]))
+    ans = x[idx]
+    expected = jnp.arange(3).reshape(1, 1, 3)
+    self.assertAllClose(ans, expected)
+
+  def testBooleanIndexingWithNoneAndEllipsis(self):
+    # Regression test for https://github.com/google/jax/issues/18542
+    x = jnp.arange(6).reshape(2, 3)
+    mask = jnp.array([True, False, False])
+    ans = x[None, ..., mask]
+    expected = jnp.array([0, 3]).reshape(1, 2, 1)
+    self.assertAllClose(ans, expected)
+
+  def testBooleanIndexingWithEllipsisAndNone(self):
+    # Regression test for https://github.com/google/jax/issues/18542
+    x = jnp.arange(6).reshape(2, 3)
+    mask = jnp.array([True, False, False])
+    ans = x[..., None, mask]
+    expected = jnp.array([0, 3]).reshape(2, 1, 1)
+    self.assertAllClose(ans, expected)
+
   def testNontrivialBooleanIndexing(self):
     # Test nontrivial corner case in boolean indexing shape validation
     rng = jtu.rand_default(self.rng())
