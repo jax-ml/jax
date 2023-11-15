@@ -1254,6 +1254,52 @@ LogicalResult tpu_store_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
+LogicalResult tpu_bitcast_rule(RewriteContext &ctx, Operation &op,
+                               const ArrayRef<Layout> layouts_in,
+                               const ArrayRef<Layout> layouts_out) {
+  CHECK_EQ(layouts_in.size(), 1);
+  CHECK_EQ(layouts_out.size(), 1);
+  if (!layouts_in.front().has_value()) {
+    return op.emitOpError("Expected non-null input layout");
+  }
+  if (!layouts_out.front().has_value()) {
+    return op.emitOpError("Expected non-null output layout");
+  }
+  const VectorLayout &layout_in = *layouts_in.front();
+  const VectorLayout &layout_out = *layouts_out.front();
+  if (!layout_in.hasNativeTiling(ctx.target_shape) ||
+      !layout_out.hasNativeTiling(ctx.target_shape)) {
+    return op.emitOpError("Not implemented: unsupported tiling");
+  }
+  if (layout_in.offsets() != LayoutOffsets{0, 0} ||
+      layout_out.offsets() != LayoutOffsets{0, 0}) {
+    return op.emitOpError("Not implemented: unsupported offsets");
+  }
+  if (layout_in.implicit_dim() != VectorLayout::ImplicitDim::kNone ||
+      layout_out.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
+    return op.emitOpError("Not implemented: unsupported implicit dim");
+  }
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
+  auto bitcast_op = cast<tpu::BitcastOp>(op);
+  const VectorType vty = bitcast_op.getResult().getType();
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const auto native_vreg_ty,
+      getNativeVregType(vty.getElementType(), ctx.target_shape));
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const xla::Array<Value> in_tiles,
+      disassemble(builder, layout_in, bitcast_op.getInput(), ctx.target_shape));
+  xla::Array<Value> out_tiles(in_tiles.dimensions());
+  out_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
+    const Value in_tile = in_tiles(idxs);
+    *v = builder.create<tpu::BitcastVregOp>(native_vreg_ty, in_tile);
+  });
+  bitcast_op.replaceAllUsesWith(
+      assemble(builder, vty, layout_out, out_tiles, ctx.target_shape)
+          .getOperation());
+  bitcast_op.erase();
+  return success();
+}
+
 LogicalResult tpu_trace_rule(RewriteContext &ctx, Operation &op,
                              const ArrayRef<Layout> layouts_in,
                              const ArrayRef<Layout> layouts_out) {
@@ -2701,12 +2747,12 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
                                              APInt(32, 0xFFFFFFFF))));
               auto masked_tile = builder.create<arith::AndIOp>(
                   store_op.getLoc(), mask,
-                  builder.create<tpu::BitcastOp>(mask.getType(), tile));
+                  builder.create<tpu::BitcastVregOp>(mask.getType(), tile));
               auto mask_neg = builder.create<arith::XOrIOp>(ones, mask);
               auto masked_data = builder.create<arith::AndIOp>(
                   mask_neg,
-                  builder.create<tpu::BitcastOp>(mask.getType(), data));
-              updated = builder.create<tpu::BitcastOp>(
+                  builder.create<tpu::BitcastVregOp>(mask.getType(), data));
+              updated = builder.create<tpu::BitcastVregOp>(
                   tile.getType(),
                   builder.create<arith::OrIOp>(masked_data, masked_tile));
             } else {
@@ -2917,6 +2963,7 @@ const llvm::StringMap<rule_type> &rules() {
       {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
       {tpu::RepeatOp::getOperationName(), tpu_repeat_rule},
       {tpu::StoreOp::getOperationName(), tpu_store_rule},
+      {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
       {tpu::TraceOp::getOperationName(), tpu_trace_rule},
       {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
       {vector::ContractionOp::getOperationName(), vector_contract_rule},
@@ -3541,7 +3588,7 @@ FailureOr<Value> relayout(OpBuilder &builder, Value v, VectorLayout src,
             DenseElementsAttr::get(bits_vreg_ty, shift_bits));
         dst_tiles.Each([&](absl::Span<const int64_t> /*idx*/, Value *tile) {
           auto bit_tile =
-              builder.create<tpu::BitcastOp>(v.getLoc(), bits_vreg_ty, *tile);
+              builder.create<tpu::BitcastVregOp>(v.getLoc(), bits_vreg_ty, *tile);
           Operation *shift_tile;
           if (subelem_diff > 0) {
             shift_tile =
@@ -3552,7 +3599,7 @@ FailureOr<Value> relayout(OpBuilder &builder, Value v, VectorLayout src,
                                                         shift_vreg);
           }
           *tile = builder
-                      .create<tpu::BitcastOp>(v.getLoc(), tile->getType(),
+                      .create<tpu::BitcastVregOp>(v.getLoc(), tile->getType(),
                                               shift_tile->getResult(0))
                       .getResult();
           return absl::OkStatus();

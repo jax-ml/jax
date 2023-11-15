@@ -241,6 +241,10 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::BitcastOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<tpu::RepeatOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -687,6 +691,50 @@ class VectorLayoutInferer {
   LogicalResult infer(tpu::GatherOp op) {
     auto src_layout = getLayout(op.getSource());
     setLayout(op, src_layout, src_layout);
+    return success();
+  }
+
+  LogicalResult infer(tpu::BitcastOp op) {
+    auto src_layout = getLayout(op.getInput());
+    LayoutOffsets src_offsets = src_layout->offsets();
+    if (src_offsets[0].value_or(0) || src_offsets[1].value_or(0)) {
+      NYI("unsupported bitcast with offsets");
+    }
+    if (src_layout->implicit_dim() != ImplicitDim::kNone) {
+      NYI("unsupported bitcast with an implicit dim");
+    }
+    // Check if input and output have same bit size.
+    auto in_ty = dyn_cast<VectorType>(op.getInput().getType());
+    auto out_ty = dyn_cast<VectorType>(op.getOutput().getType());
+    auto in_bitwidth = in_ty.getElementTypeBitWidth();
+    auto out_bitwidth = out_ty.getElementTypeBitWidth();
+    TPU_CHECK_OP(in_ty && out_ty && in_ty.getRank() == out_ty.getRank(),
+                 "Input and output have different rank");
+    if (out_ty.getRank() < 2) {
+      NYI("Support bitcast with 1D vector");
+    }
+    for (int i = 0; i < in_ty.getRank(); ++i) {
+      auto in_dim = in_ty.getDimSize(i);
+      auto out_dim = out_ty.getDimSize(i);
+
+      // The sublane dimension is scaled down by the ratio of input element
+      // bitwidth to output element bitwidth when bitcasting. For example,
+      // bitcasting a vector<16x128xbf16> to a vector<8x128xi32> packs every 2
+      // rows in the bf16 vector into 1 row in the i32 vector. This means the
+      // bit representation of one i32 element vector[i,j] is equal to
+      // concatenating bf16 elements vector[2*i+1,j] and vector[2*i,j].
+      if (i == in_ty.getRank() - 2) {
+        in_dim *= in_bitwidth;
+        out_dim *= out_bitwidth;
+      }
+      TPU_CHECK_OP(in_dim == out_dim,
+                   "Input and output have incompatible shape");
+    }
+    setLayout(op,
+              VectorLayout(in_bitwidth, src_offsets, nativeTiling(in_bitwidth),
+                           ImplicitDim::kNone),
+              VectorLayout(out_bitwidth, src_offsets,
+                           nativeTiling(out_bitwidth), ImplicitDim::kNone));
     return success();
   }
 

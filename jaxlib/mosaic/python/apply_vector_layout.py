@@ -1394,14 +1394,14 @@ def relayout(
             ),
         )
         for idx, tile in np.ndenumerate(dst_tiles):
-          bit_tile = tpu.BitcastOp(bits_vreg_ty, tile)
+          bit_tile = tpu.BitcastVregOp(bits_vreg_ty, tile)
           if subelem_diff > 0:
             shift_tile = arith.ShLIOp(bit_tile, shift_vreg)
           elif subelem_diff < 0:
             shift_tile = arith.ShRUIOp(bit_tile, shift_vreg)
           else:
             raise AssertionError("unexpected equal subelements")
-          dst_tiles[idx] = tpu.BitcastOp(tile.type, shift_tile).result
+          dst_tiles[idx] = tpu.BitcastVregOp(tile.type, shift_tile).result
 
     # Shifting columns.
     if src.offsets[1] is REPLICATED:
@@ -2200,6 +2200,28 @@ def _tpu_store_rule(  # pylint: disable=missing-function-docstring
   return ctx.erase(op)
 
 
+@_register_rule("tpu.bitcast")
+def _tpu_bitcast_rule(  # pylint: disable=missing-function-docstring
+    ctx: RewriteContext,
+    op: tpu.BitcastOp,
+    layout_in: VectorLayout,
+    layout_out: VectorLayout,
+):
+  if not layout_in.has_native_tiling or not layout_out.has_native_tiling:
+    raise NotImplementedError("unsupported tiling")
+  if layout_in.offsets != (0, 0) or layout_out.offsets != (0, 0):
+    raise NotImplementedError("unsupported offsets")
+  if layout_in.implicit_dim is not None or layout_out.implicit_dim is not None:
+    raise NotImplementedError("unsupported implicit dim")
+  ty = ir.VectorType(op.result.type)
+  vreg = native_vreg_ty(ty.element_type)
+  in_tiles = disassemble(layout_in, op.input)
+  out_tiles = np.empty_like(in_tiles, dtype=object)
+  for idx, tile in np.ndenumerate(in_tiles):
+    out_tiles[idx] = tpu.BitcastVregOp(vreg, tile)
+  return ctx.replace(op, assemble(ty, layout_out, out_tiles))
+
+
 @_register_rule("tpu.trace")
 def _tpu_trace_rule(ctx: RewriteContext, op: tpu.TraceOp,  # pylint: disable=missing-function-docstring
                     layout_in: Layout, layout_out: Layout):
@@ -2713,10 +2735,12 @@ def _vector_store_rule(  # pylint: disable=missing-function-docstring
                   mask.type, ir.IntegerAttr.get(i32(), 0xFFFFFFFF)
               ),
           )
-          masked_tile = arith.AndIOp(mask, tpu.BitcastOp(mask.type, tile))
+          masked_tile = arith.AndIOp(mask, tpu.BitcastVregOp(mask.type, tile))
           mask_neg = arith.XOrIOp(ones, mask)
-          masked_data = arith.AndIOp(mask_neg, tpu.BitcastOp(mask.type, data))
-          updated = tpu.BitcastOp(
+          masked_data = arith.AndIOp(
+              mask_neg, tpu.BitcastVregOp(mask.type, data)
+          )
+          updated = tpu.BitcastVregOp(
               tile.type, arith.OrIOp(masked_data, masked_tile))
         else:
           updated = arith.SelectOp(mask, tile, data)
