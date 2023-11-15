@@ -204,8 +204,20 @@ def register_backend_factory(name: str, factory: BackendFactory, *,
     factory, priority, fail_quietly, experimental)
 
 
+def make_cpu_client() -> xla_client.Client:
+  if xla_extension_version >= 216:
+    # TODO(phawkins): remove type: ignore after updating jaxlib version used for
+    # mypy checks.
+    return xla_client.make_cpu_client(  # type: ignore
+      distributed_client=distributed.global_state.client,
+      node_id=distributed.global_state.process_id,
+      num_nodes=distributed.global_state.num_processes,
+    )
+  return xla_client.make_cpu_client()
+
+
 register_backend_factory(
-    "cpu", xla_client.make_cpu_client, priority=0, fail_quietly=False
+    "cpu", make_cpu_client, priority=0, fail_quietly=False
 )
 
 

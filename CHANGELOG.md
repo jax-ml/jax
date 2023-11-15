@@ -18,8 +18,23 @@ Remember to align the itemized text with the first line of an item within a list
 ## jaxlib 0.4.21
 
 * Changes
+  * In preparation for adding distributed CPU support, JAX now treats CPU
+    devices identically to GPU and TPU devices, that is:
+
+    * `jax.devices()` includes all devices present in a distributed job, even
+      those not local to the current process. `jax.local_devices()` still only
+      includes devices local to the current process, so if the change to
+      `jax.devices()` breaks you, you most likely want to use
+      `jax.local_devices()` instead.
+    * CPU devices now receive a globally unique ID number within a distributed
+      job; previously CPU devices would receive a process-local ID number.
+    * The `process_index` of each CPU device will now match any GPU or TPU
+      devices within the same process; previously the `process_index` of a CPU
+      device was always 0.
+
   * On NVIDIA GPU, JAX now prefers a Jacobi SVD solver for matrices up to
     1024x1024. The Jacobi solver appears faster than the non-Jacobi version.
+
 
 ## jax 0.4.20 (Nov 2, 2023)
 
