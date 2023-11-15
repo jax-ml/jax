@@ -63,6 +63,26 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testSoftplusZero(self, dtype):
     self.assertEqual(jnp.log(dtype(2)), nn.softplus(dtype(0)))
 
+  def testSquareplusGrad(self):
+    check_grads(nn.squareplus, (1e-8,), order=4,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  def testSquareplusGradZero(self):
+    check_grads(nn.squareplus, (0.,), order=1,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  def testSquareplusGradNegInf(self):
+    check_grads(nn.squareplus, (-float('inf'),), order=1,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  def testSquareplusGradNan(self):
+    check_grads(nn.squareplus, (float('nan'),), order=1,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  @parameterized.parameters([float] + jtu.dtypes.floating)
+  def testSquareplusZero(self, dtype):
+    self.assertEqual(dtype(1), nn.squareplus(dtype(0), dtype(4)))
+
   def testReluGrad(self):
     rtol = 1e-2 if jtu.test_device_matches(["tpu"]) else None
     check_grads(nn.relu, (1.,), order=3, rtol=rtol)
@@ -80,6 +100,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testSoftplusValue(self):
     val = nn.softplus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
+
+  def testSquareplusValue(self):
+    val = nn.squareplus(1e3)
+    self.assertAllClose(val, 1e3, check_dtypes=False, atol=1e-3)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testEluGrad(self):
@@ -113,7 +137,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
       (jnp.float32, jnp.bfloat16, jnp.float16),
       (partial(nn.gelu, approximate=False),
        partial(nn.gelu, approximate=True),
-       nn.relu, nn.softplus, nn.sigmoid)))
+       nn.relu, nn.softplus, nn.sigmoid, nn.squareplus)))
   def testDtypeMatchesInput(self, dtype, fn):
     x = jnp.zeros((), dtype=dtype)
     out = fn(x)
