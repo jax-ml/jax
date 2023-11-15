@@ -48,6 +48,7 @@ from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src import monitoring
 from jax._src import stages
+from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import pxla
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.util import unzip2
@@ -328,8 +329,7 @@ def is_device_cuda():
   return 'cuda' in xla_bridge.get_backend().platform_version
 
 def is_cloud_tpu():
-  return 'libtpu' in xla_bridge.get_backend().platform_version
-
+  return running_in_cloud_tpu_vm
 
 def pjrt_c_api_version_at_least(major_version: int, minor_version: int):
   pjrt_c_api_versions = xla_bridge.backend_pjrt_c_api_version()
