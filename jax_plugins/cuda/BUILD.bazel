@@ -14,6 +14,14 @@
 
 licenses(["notice"])
 
+load("//jaxlib:symlink_files.bzl", "symlink_files")
+load(
+  "//jaxlib:jax.bzl",
+  "if_windows",
+  "py_library_providing_imports_info",
+  "pytype_library",
+)
+
 package(
     default_applicable_licenses = [],
     default_visibility = ["//:__subpackages__"],
@@ -26,3 +34,22 @@ exports_files([
     "pyproject.toml",
     "setup.py",
 ])
+
+symlink_files(
+    name = "pjrt_c_api_gpu_plugin",
+    srcs = if_windows(
+      ["@xla//xla/pjrt/c/pjrt_c_api_gpu_plugin.pyd"],
+      ["@xla//xla/pjrt/c:pjrt_c_api_gpu_plugin.so"],
+    ),
+    dst = ".",
+    flatten = True,
+)
+
+py_library_providing_imports_info(
+    name = "cuda_plugin",
+    srcs = [
+        "__init__.py",
+    ],
+    data = [":pjrt_c_api_gpu_plugin"],
+    lib_rule = pytype_library,
+)
