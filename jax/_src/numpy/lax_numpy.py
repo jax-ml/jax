@@ -4774,6 +4774,7 @@ def _expand_bool_indices(idx, shape):
     total_dims = sum(_ndim(e) if _is_boolean_index(e) else 1 for e in idx
                      if e is not None and e is not Ellipsis)
   ellipsis_offset = 0
+  newaxis_offset = 0
   for dim_number, i in enumerate(idx):
     try:
       abstract_i = core.get_aval(i)
@@ -4791,7 +4792,7 @@ def _expand_bool_indices(idx, shape):
         raise TypeError("JAX arrays do not support boolean scalar indices")
       else:
         i_shape = _shape(i)
-        start = len(out) + ellipsis_offset
+        start = len(out) + ellipsis_offset - newaxis_offset
         expected_shape = shape[start: start + _ndim(i)]
         if i_shape != expected_shape:
           raise IndexError("boolean index did not match shape of indexed array in index "
@@ -4801,6 +4802,8 @@ def _expand_bool_indices(idx, shape):
       out.append(i)
     if i is Ellipsis:
       ellipsis_offset = len(shape) - total_dims - 1
+    if i is None:
+      newaxis_offset += 1
   return tuple(out)
 
 
