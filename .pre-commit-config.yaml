@@ -21,10 +21,10 @@ repos:
     # only include python files
     files: \.py$
 
-- repo: https://github.com/pycqa/flake8
-  rev: '6.1.0'
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.1.5
   hooks:
-  - id: flake8
+  - id: ruff
 
 - repo: https://github.com/pre-commit/mirrors-mypy
   rev: 'v1.6.1'

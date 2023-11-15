@@ -94,7 +94,7 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
     dim_vars_tuple = tuple(dim_vars)
     # All combinations of values
     for dim_values in itertools.product(*([(1, 2, 5, 10)] * len(dim_vars_tuple))):
-      env = {d: dv for d, dv in zip(dim_vars_tuple, dim_values)}
+      env = dict(zip(dim_vars_tuple, dim_values))
       def eval(d: shape_poly.DimSize):
         return d.evaluate(env) if core.is_symbolic_dim(d) else d  # type: ignore
 

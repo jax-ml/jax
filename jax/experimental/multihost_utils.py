@@ -243,9 +243,9 @@ def host_local_array_to_global_array_impl(
     arrays = [x.data for x in arr.addressable_shards]
   else:
     arr = xla.canonicalize_dtype(arr)
-    arrays = list(
+    arrays = [
         arr[index]
-        for d, index in local_sharding.devices_indices_map(arr.shape).items())
+        for d, index in local_sharding.devices_indices_map(arr.shape).items()]
 
   global_aval = _local_to_global_aval(
       core.ShapedArray(arr.shape, arr.dtype), global_mesh, pspec)
@@ -350,9 +350,9 @@ def global_array_to_host_local_array_impl(
   else:
     # numpy array can show up here during AD.
     arr = xla.canonicalize_dtype(arr)
-    arrays = list(
+    arrays = [
         arr[index]
-        for d, index in local_sharding.devices_indices_map(arr.shape).items())
+        for d, index in local_sharding.devices_indices_map(arr.shape).items()]
     return pxla.batched_device_put(
         local_aval, local_sharding, arrays,
         list(global_mesh.local_mesh.devices.flat))

@@ -55,8 +55,8 @@ from jax._src import pjit
 from jax._src import xla_bridge as xb
 from jax._src.core import eval_jaxpr, ShapedArray
 from jax._src.api_util import (
-    flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
-    argnums_partial, argnums_partial_except, flatten_axes, donation_vector,
+    flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
+    argnums_partial_except, flatten_axes, donation_vector,
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
     shaped_abstractify, _ensure_str_tuple, apply_flat_fun_nokwargs,
     check_callable, debug_info, result_paths, flat_out_axes, debug_info_final)

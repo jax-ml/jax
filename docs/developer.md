@@ -339,20 +339,20 @@ pre-commit run mypy
 
 ## Linting
 
-JAX uses the [flake8](https://flake8.pycqa.org/) linter to ensure code quality. You can check
-your local changes by running:
+JAX uses the [ruff](https://docs.astral.sh/ruff/) linter to ensure code
+quality. You can check your local changes by running:
 
 ```
-pip install flake8
-flake8 jax
+pip install ruff
+ruff jax
 ```
 
 Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework to run this
-on all staged files in your git repository, automatically using the same flake8 version as
+on all staged files in your git repository, automatically using the same ruff version as
 the GitHub tests:
 
 ```
-pre-commit run flake8
+pre-commit run ruff
 ```
 
 ## Update documentation

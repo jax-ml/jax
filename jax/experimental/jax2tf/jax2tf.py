@@ -3244,13 +3244,13 @@ def _eig(operand: TfVal, compute_left_eigenvectors: bool,
            "to True.")
     raise NotImplementedError(msg)
   elif not (compute_left_eigenvectors or compute_right_eigenvectors):
-    return tuple([tf.linalg.eigvals(operand)])
+    return (tf.linalg.eigvals(operand),)
   elif compute_right_eigenvectors:
     return tuple(tf.linalg.eig(operand))
   else:  # compute_left_eigenvectors == True
     wH, vl = tf.linalg.eig(tf.linalg.adjoint(operand))
     wHH = tf.math.conj(wH)
-    return tuple([wHH, vl])
+    return (wHH, vl)
 
 
 tf_impl[lax.linalg.eig_p] = _eig

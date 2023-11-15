@@ -1125,7 +1125,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testLuBatching(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     args = [rng(shape, jnp.float32) for _ in range(10)]
-    expected = list(osp.linalg.lu(x) for x in args)
+    expected = [osp.linalg.lu(x) for x in args]
     ps = np.stack([out[0] for out in expected])
     ls = np.stack([out[1] for out in expected])
     us = np.stack([out[2] for out in expected])

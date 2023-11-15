@@ -50,11 +50,10 @@ def compute_recall(result_neighbors, ground_truth_neighbors) -> float:
             ) == 2, "shape = [num_queries, ground_truth_neighbors_per_query]"
   assert result_neighbors.shape[0] == ground_truth_neighbors.shape[0]
   gt_sets = [set(np.asarray(x)) for x in ground_truth_neighbors]
-  hits = sum(
-      len(list(x
-               for x in nn_per_q
-               if x.item() in gt_sets[q]))
-      for q, nn_per_q in enumerate(result_neighbors))
+  hits = sum(len([x
+                  for x in nn_per_q
+                  if x.item() in gt_sets[q]])
+             for q, nn_per_q in enumerate(result_neighbors))
   return hits / ground_truth_neighbors.size
 
 

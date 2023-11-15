@@ -62,7 +62,7 @@ class SparseArray:
     return self.data.shape[0]
 
   def __repr__(self):
-    return repr(list((tuple(ind), d) for ind, d in zip(self.indices, self.data)))
+    return repr([(tuple(ind), d) for ind, d in zip(self.indices, self.data)])
 
 
 class AbstractSparseArray(core.ShapedArray):

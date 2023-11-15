@@ -311,7 +311,7 @@ def _hoist_consts_to_refs(jaxpr: jax_core.Jaxpr) -> jax_core.Jaxpr:
   const_avals, const_ref_avals = partition_list(is_const_ref, all_const_avals)
   const_avals = map(state.AbstractRef, const_avals)
   merged_const_avals = merge_lists(is_const_ref, const_avals, const_ref_avals)
-  arg_avals = list(var.aval for var in jaxpr.invars)
+  arg_avals = [var.aval for var in jaxpr.invars]
   in_avals = [*merged_const_avals, *arg_avals]
   num_consts = len(merged_const_avals)
 

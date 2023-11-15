@@ -83,7 +83,7 @@ for effect in _testing_effects.values():
 # and just doubles its argument.
 testing_primitive_with_effect_p = core.Primitive("testing_primitive_with_effect")
 testing_primitive_with_effect_p.def_effectful_abstract_eval(
-  lambda aval, *x, effect_class_name: (aval, set([_testing_effects[effect_class_name]])))
+  lambda aval, *x, effect_class_name: (aval, {_testing_effects[effect_class_name]}))
 
 def lowering_testing_primitive_with_effect(ctx, a, *, effect_class_name: str):
   if "Ordered" in effect_class_name:

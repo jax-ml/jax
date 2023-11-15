@@ -152,4 +152,4 @@ class NDIndexer:
     is_int_indexing = [not isinstance(i, Slice) for i in self.indices]
     other_indexers, _ = partition_list(is_int_indexing, self.indices)
     other_shape = [s.size for s in other_indexers]  # type: ignore
-    return tuple((*self.int_indexer_shape, *other_shape))
+    return (*self.int_indexer_shape, *other_shape)

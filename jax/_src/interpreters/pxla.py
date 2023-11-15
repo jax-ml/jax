@@ -1469,8 +1469,9 @@ def manual_proto(
   mesh_shape = list(named_mesh_shape.values())
   axis_order = {axis: i for i, axis in enumerate(mesh.axis_names)}
 
-  manual_axes = list(sorted(manual_axes_set, key=str))
-  replicated_axes = list(axis for axis in mesh.axis_names if axis not in manual_axes_set)
+  manual_axes = sorted(manual_axes_set, key=str)
+  replicated_axes = [axis for axis in mesh.axis_names
+                     if axis not in manual_axes_set]
 
   tad_perm = ([axis_order[a] for a in replicated_axes] +
               [axis_order[a] for a in manual_axes])

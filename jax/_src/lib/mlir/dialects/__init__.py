@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
+# ruff: noqa: F401
 import jaxlib.mlir.dialects.builtin as builtin
 import jaxlib.mlir.dialects.chlo as chlo
 import jaxlib.mlir.dialects.mhlo as mhlo

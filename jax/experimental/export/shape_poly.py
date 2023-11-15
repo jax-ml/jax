@@ -1185,7 +1185,7 @@ def all_dim_vars(args_avals: Sequence[core.AbstractValue]) -> Sequence[str]:
     for d in a.shape:
       if is_poly_dim(d):
         dim_vars = dim_vars.union(d.get_vars())
-  return sorted(tuple(dim_vars))
+  return sorted(dim_vars)
 
 
 class CachingShapeEvaluator:
