@@ -223,6 +223,12 @@ jax_test(
 )
 
 jax_test(
+    name = "layout_test",
+    srcs = ["layout_test.py"],
+    tags = ["multiaccelerator"],
+)
+
+jax_test(
     name = "pgle_test",
     srcs = ["pgle_test.py"],
     disable_backends = [

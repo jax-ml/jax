@@ -180,8 +180,8 @@ def sharded_lowering(
   return pxla.lower_sharding_computation(
       fun, 'jit', name, in_shardings_unspec, UNSPECIFIED, donated_invars,
       in_avals, keep_unused=keep_unused, inline=inline,
-      devices_from_context=None,
-      lowering_parameters=lowering_parameters)
+      devices_from_context=None, lowering_parameters=lowering_parameters,
+      in_layouts=(None,) * len(in_avals), out_layouts=None)
 
 
 def simple_impl(prim):

@@ -228,6 +228,7 @@ py_library_providing_imports_info(
         ":effects",
         ":environment_info",
         ":jaxpr_util",
+        ":layout",
         ":lazy_loader",
         ":mesh",
         ":mlir",
@@ -478,6 +479,7 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
+        ":layout",
         ":op_shardings",
         ":partial_eval",
         ":pickle_util",
@@ -626,6 +628,16 @@ pytype_strict_library(
 pytype_strict_library(
     name = "sharding",
     srcs = ["_src/sharding.py"],
+    deps = [
+        ":util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
+    name = "layout",
+    srcs = ["_src/layout.py"],
     deps = [
         ":util",
         ":xla_bridge",

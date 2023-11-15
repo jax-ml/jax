@@ -304,13 +304,18 @@ def jit(
         static_argnums, static_argnames, device, backend, abstracted_axes)
 
   def infer_params(*args, **kwargs):
+    # TODO(yashkatariya): Remove this when it's added on jit. Also default to
+    # layout.DefaultLayout() when out of experimental.
+    in_layouts = kwargs.pop('_in_layouts', None)
+    out_layouts = kwargs.pop('_out_layouts', None)
     pjit_info_args = pjit.PjitInfo(
         fun=fun, in_shardings=in_shardings,
         out_shardings=out_shardings, static_argnums=static_argnums,
         static_argnames=static_argnames, donate_argnums=donate_argnums,
         donate_argnames=donate_argnames, device=device, backend=backend,
         keep_unused=keep_unused, inline=inline, resource_env=None,
-        abstracted_axes=abstracted_axes)
+        abstracted_axes=abstracted_axes, in_layouts=in_layouts,
+        out_layouts=out_layouts)
     return pjit.common_infer_params(pjit_info_args, *args, **kwargs)
 
   has_explicit_sharding = pjit._pjit_explicit_sharding(

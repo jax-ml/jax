@@ -41,6 +41,7 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
+from jax._src.layout import XLACompatibleLayout, LayoutRequest
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
@@ -691,6 +692,15 @@ def _to_logical_op_sharding(
   assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
   return sharding._to_xla_hlo_sharding(aval.ndim)
 
+
+def _to_xla_layout(layout: XLACompatibleLayout | None | LayoutRequest) -> str | None:
+  if layout is None:
+    return None
+  if isinstance(layout, LayoutRequest):
+    return "auto"
+  return layout._to_xla_layout()
+
+
 def _get_mem_kind(s: Optional[XLACompatibleSharding]) -> Optional[str]:
   if s is None:
     return None
@@ -711,6 +721,8 @@ def lower_jaxpr_to_module(
     replicated_args: Sequence[bool] | None = None,
     arg_shardings: Sequence[XLACompatibleSharding | None] | None = None,
     result_shardings: Sequence[XLACompatibleSharding | None] | None = None,
+    in_layouts: Sequence[XLACompatibleLayout | None | LayoutRequest] | None = None,
+    out_layouts: Sequence[XLACompatibleLayout | None | LayoutRequest] | None = None,
     arg_names: Sequence[str | None] | None = None,
     result_names: Sequence[str | None] | None = None,
     num_replicas: int = 1,
@@ -784,6 +796,11 @@ def lower_jaxpr_to_module(
       map(_to_logical_op_sharding, jaxpr.out_avals, result_shardings)
       if result_shardings is not None else result_shardings)
 
+  arg_layouts = (map(_to_xla_layout, in_layouts) if in_layouts is not None
+                 else in_layouts)
+  result_layouts = (map(_to_xla_layout, out_layouts) if out_layouts is not None
+                    else out_layouts)
+
   ctx = ModuleContext(backend_or_name=backend_or_name,
                       platforms=platforms, axis_context=axis_context,
                       name_stack=name_stack,
@@ -815,7 +832,9 @@ def lower_jaxpr_to_module(
         arg_names=arg_names,
         result_names=result_names,
         arg_memory_kinds=arg_memory_kinds,
-        result_memory_kinds=result_memory_kinds)
+        result_memory_kinds=result_memory_kinds,
+        arg_layouts=arg_layouts,
+        result_layouts=result_layouts)
 
   try:
     if not ctx.module.operation.verify():
@@ -969,6 +988,8 @@ def lower_jaxpr_to_fun(
     result_names: Sequence[str | None] | None = None,
     arg_memory_kinds: Sequence[str | None] | None = None,
     result_memory_kinds: Sequence[str | None] | None = None,
+    arg_layouts: Sequence[str | None] | None = None,
+    result_layouts: Sequence[str | None] | None = None,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -1055,6 +1076,12 @@ def lower_jaxpr_to_fun(
   if result_memory_kinds is not None:
     token_memory_kinds = [None] * (num_tokens + num_output_tokens)
     result_memory_kinds = [*token_memory_kinds, *result_memory_kinds]
+  if arg_layouts is not None:
+    token_layouts = [None] * (num_dim_vars + num_tokens)
+    arg_layouts = [*token_layouts, *arg_layouts]
+  if result_layouts is not None:
+    token_layouts = [None] * (num_tokens + num_output_tokens)
+    result_layouts = [*token_layouts, *result_layouts]
 
   flat_input_types = util.flatten(input_types)
   flat_output_types = util.flatten(output_types)
@@ -1077,6 +1104,11 @@ def lower_jaxpr_to_fun(
     ir_arg_memory_kinds = util.flatten(
         [[mk] * len(types) for mk, types in zip(arg_memory_kinds, input_types)])
 
+  ir_arg_layouts = None
+  if arg_layouts is not None:
+    ir_arg_layouts = util.flatten(
+        [[l] * len(types) for l, types in zip(arg_layouts, input_types)])
+
   ir_result_shardings = None
   if result_shardings is not None:
     out_avals = [None] * (num_tokens + num_output_tokens) + list(jaxpr.out_avals)
@@ -1090,9 +1122,15 @@ def lower_jaxpr_to_fun(
     ir_result_memory_kinds = util.flatten(
         [[mk] * len(types) for mk, types in zip(result_memory_kinds, output_types)])
 
+  ir_result_layouts = None
+  if result_layouts is not None:
+    ir_result_layouts = util.flatten(
+        [[l] * len(types) for l, types in zip(result_layouts, output_types)])
+
   if (
       replicated_args is not None
       or ir_arg_shardings is not None
+      or ir_arg_layouts is not None
       or input_output_aliases is not None
       or arg_names is not None
       or num_tokens > 0
@@ -1112,6 +1150,11 @@ def lower_jaxpr_to_fun(
       for attrs, sharding in zip(arg_attrs, ir_arg_shardings):
         if sharding is not None:
           attrs["mhlo.sharding"] = get_sharding_attr(sharding)
+
+    if ir_arg_layouts is not None:
+      for attrs, layout in zip(arg_attrs, ir_arg_layouts):
+        if layout is not None:
+          attrs["mhlo.layout_mode"] = ir.StringAttr.get(layout)
 
     if input_output_aliases is not None:
       output_ids = util.unflatten(list(range(len(flat_output_types))),
@@ -1161,6 +1204,11 @@ def lower_jaxpr_to_fun(
     for attrs, sharding in zip(result_attrs, ir_result_shardings):
       if sharding is not None:
         attrs['mhlo.sharding'] = get_sharding_attr(sharding)
+
+  if ir_result_layouts is not None:
+    for attrs, layout in zip(result_attrs, ir_result_layouts):
+      if layout is not None:
+        attrs['mhlo.layout_mode'] = ir.StringAttr.get(layout)
 
   func_op.result_attrs = ir.ArrayAttr.get(
       [ir.DictAttr.get(attrs) for attrs in result_attrs])

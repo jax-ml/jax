@@ -59,6 +59,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
+from jax._src.layout import XLACompatibleLayout, SpecifiedLayout, LayoutRequest
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
@@ -1768,7 +1769,7 @@ def _raise_warnings_or_errors_for_jit_of_pmap(
 @weakref_lru_cache
 def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             semantic_in_shardings, semantic_out_shardings,
-                            da_object,
+                            in_layouts, out_layouts, da_object,
                             donated_invars, name_stack, all_default_mem_kind,
                             lowering_parameters: mlir.LoweringParameters):
   jaxpr = closed_jaxpr.jaxpr
@@ -1842,6 +1843,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         replicated_args=replicated_args,
         arg_shardings=in_mlir_shardings,
         result_shardings=out_mlir_shardings,
+        in_layouts=in_layouts,
+        out_layouts=out_layouts,
         arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
         result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
         num_replicas=nreps,
@@ -1939,6 +1942,7 @@ def are_all_shardings_default_mem_kind(da_object, shardings):
       return False
   return True
 
+MaybeLayout = Sequence[Optional[Union[XLACompatibleLayout, LayoutRequest]]]
 
 @profiler.annotate_function
 def lower_sharding_computation(
@@ -1954,6 +1958,8 @@ def lower_sharding_computation(
     inline: bool,
     devices_from_context: Sequence[xc.Device] | None = None,
     lowering_parameters: mlir.LoweringParameters,
+    in_layouts: MaybeLayout,
+    out_layouts: Optional[MaybeLayout],
 ) -> MeshComputation:
   """Lowers a computation to XLA. It can take arbitrary shardings as input.
 
@@ -1973,12 +1979,16 @@ def lower_sharding_computation(
       donated_invars, auto_spmd_lowering)
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = tuple(s for i, s in enumerate(in_shardings) if i in kept_var_idx)
+  in_layouts = tuple(l for i, l in enumerate(in_layouts) if i in kept_var_idx)
 
   if is_unspecified(out_shardings):
     out_shardings = (UNSPECIFIED,) * len(global_out_avals)
+  if out_layouts is None:
+    out_layouts = (None,) * len(global_out_avals)
   assert isinstance(out_shardings, tuple)
-  assert len(out_shardings) == len(global_out_avals), (
-      len(out_shardings), len(global_out_avals))
+  assert isinstance(out_layouts, tuple)
+  assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (
+      len(out_shardings), len(out_layouts), len(global_out_avals))
 
   # Device assignment across all inputs, outputs and shardings inside jaxpr
   # should be the same.
@@ -2030,7 +2040,7 @@ def lower_sharding_computation(
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, api_name, fun_name, backend, semantic_in_shardings,
-       semantic_out_shardings, da_object,
+       semantic_out_shardings, in_layouts, out_layouts, da_object,
        donated_invars, name_stack, all_default_mem_kind,
        lowering_parameters=lowering_parameters)
 
@@ -2058,6 +2068,8 @@ def lower_sharding_computation(
       backend=backend,
       device_assignment=da_object,
       committed=committed,
+      in_layouts=in_layouts,
+      out_layouts=out_layouts,
       pmap_nreps=nreps,
       jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info,
       shape_poly_state=shape_poly_state,
@@ -2233,6 +2245,8 @@ def lower_mesh_computation(
       backend=backend,
       device_assignment=_create_da_object(tuple(mesh.devices.flat)),
       committed=True,
+      in_layouts=(None,) * len(global_in_avals),
+      out_layouts=(None,) * len(global_out_avals),
       jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info,
       shape_poly_state=lowering_result.shape_poly_state)
 
@@ -2447,6 +2461,42 @@ def maybe_get_orig_out_sharding(
   return out_shardings, are_out_shardings_from_xla
 
 
+def _get_layouts_from_executable(
+    xla_executable, in_layouts, out_layouts
+) -> Sequence[Sequence[XLACompatibleLayout | None], Sequence[XLACompatibleLayout | None]]:  # type: ignore
+  if all(i is None for i in in_layouts) and all(o is None for o in out_layouts):
+    return in_layouts, out_layouts  # type: ignore
+
+  in_layouts_xla = xla_executable.get_parameter_layouts()
+  out_layouts_xla = xla_executable.get_output_layouts()
+
+  new_in_layouts = []
+  for x, i in safe_zip(in_layouts_xla, in_layouts):
+    x = SpecifiedLayout._from_xla_layout(x)
+    if isinstance(i, SpecifiedLayout):
+      if i != x:
+        raise AssertionError(
+            f"Unexpected XLA layout override: (XLA) {x} != {i} (User sharding)")
+      new_in_layouts.append(i)
+    else:
+      new_in_layouts.append(x)
+
+  new_out_layouts = []
+  for x, o in safe_zip(out_layouts_xla, out_layouts):
+    x = SpecifiedLayout._from_xla_layout(x)
+    if isinstance(o, SpecifiedLayout):
+      if o != x:
+        raise AssertionError(
+            f"Unexpected XLA layout override: (XLA) {x} != {o} (User sharding)")
+      new_out_layouts.append(o)
+    else:
+      new_out_layouts.append(x)
+
+  assert all(isinstance(i, SpecifiedLayout) for i in new_in_layouts)
+  assert all(isinstance(o, SpecifiedLayout) for o in new_out_layouts)
+  return new_in_layouts, new_out_layouts
+
+
 @weakref_lru_cache
 def _cached_compilation(computation, name, mesh, spmd_lowering,
                         tuple_args, auto_spmd_lowering,
@@ -2534,6 +2584,8 @@ class UnloadedMeshExecutable:
   kept_var_idx: set[int]
   auto_spmd_lowering: bool
   jaxpr_debug_info: core.JaxprDebugInfo | None
+  in_layouts: Sequence[SpecifiedLayout | None]
+  out_layouts: Sequence[SpecifiedLayout | None]
 
   def build_unsafe_call(self):
     input_indices = _get_input_indices(self.input_avals, self.input_shardings,
@@ -2555,6 +2607,7 @@ class UnloadedMeshExecutable:
                           self.input_avals,
                           self.input_shardings, self.output_shardings,
                           self.auto_spmd_lowering, self.kept_var_idx,
+                          self.in_layouts, self.out_layouts,
                           self.jaxpr_debug_info, self)
 
   # May return a MeshExecutable in the compile_replicated case.
@@ -2577,6 +2630,8 @@ class UnloadedMeshExecutable:
                backend: xb.XlaBackend,
                device_assignment: _DeviceAssignment | Sequence[xc.Device],  # type: ignore
                committed: bool,
+               in_layouts: MaybeLayout,
+               out_layouts: MaybeLayout,
                pmap_nreps: int = 1,
                jaxpr_debug_info: core.JaxprDebugInfo | None = None,
                shape_poly_state: mlir.ShapePolyLoweringState | None = None,
@@ -2659,6 +2714,9 @@ class UnloadedMeshExecutable:
     else:
       are_out_shardings_from_xla = (False,) * len(global_out_avals)
 
+    in_layouts, out_layouts = _get_layouts_from_executable(
+        xla_executable, in_layouts, out_layouts)
+
     if pmap_nreps > 1:
       in_shardings, out_shardings, committed, da = _get_metadata_jit_pmap(
           xla_executable.local_devices(), len(in_shardings), len(out_shardings))
@@ -2684,7 +2742,9 @@ class UnloadedMeshExecutable:
         host_callbacks=host_callbacks,
         kept_var_idx=kept_var_idx,
         auto_spmd_lowering=auto_spmd_lowering,
-        jaxpr_debug_info=jaxpr_debug_info).load()
+        jaxpr_debug_info=jaxpr_debug_info,
+        in_layouts=in_layouts,  # type: ignore
+        out_layouts=out_layouts).load()  # type: ignore
 
 
 class MeshExecutableFastpathData(NamedTuple):
@@ -2709,12 +2769,13 @@ class MeshExecutable(stages.XlaExecutable):
   __slots__ = [
       "xla_executable", "_unsafe_call", "build_unsafe_call", "in_avals",
       "_in_shardings", "_out_shardings", "_auto_spmd_lowering", "_kept_var_idx",
-      "_jaxpr_debug_info", "_unloaded_executable",
+      "_in_layouts", "_out_layouts", "_jaxpr_debug_info", "_unloaded_executable",
   ]
 
   def __init__(self, xla_executable, build_unsafe_call, in_avals, in_shardings,
                out_shardings, auto_spmd_lowering, kept_var_idx,
-               jaxpr_debug_info=None, unloaded_executable=None):
+               in_layouts, out_layouts, jaxpr_debug_info=None,
+               unloaded_executable=None):
     self.xla_executable = xla_executable
     self.build_unsafe_call = build_unsafe_call
     # in_avals is a list of global and local avals. Aval is global if input
@@ -2725,6 +2786,8 @@ class MeshExecutable(stages.XlaExecutable):
     self._out_shardings = out_shardings
     self._auto_spmd_lowering = auto_spmd_lowering
     self._kept_var_idx = kept_var_idx
+    self._in_layouts = in_layouts
+    self._out_layouts = out_layouts
     self._jaxpr_debug_info = jaxpr_debug_info
     self._unloaded_executable = unloaded_executable
 
@@ -2754,6 +2817,12 @@ class MeshExecutable(stages.XlaExecutable):
 
   def output_shardings(self) -> Sequence[sharding_impls.XLACompatibleSharding]:
     return self._out_shardings
+
+  def input_layouts(self):
+    return self._in_layouts
+
+  def output_layouts(self):
+    return self._out_layouts
 
   def create_cpp_call(self, no_kwargs, in_tree, out_tree):
     if not (isinstance(self.unsafe_call, ExecuteReplicated) and
@@ -2886,7 +2955,8 @@ def _compile_replicated_mesh_executable_from_hlo(
   xla_executable = None
   return MeshExecutable(xla_executable, lambda: unsafe_call, global_in_avals,
                         in_shardings, out_shardings, auto_spmd_lowering,
-                        kept_var_idx, jaxpr_debug_info, None)
+                        kept_var_idx, (None,) * len(global_in_avals),
+                        (None,) * len(global_out_avals), jaxpr_debug_info, None)
 
 
 @lru_cache
