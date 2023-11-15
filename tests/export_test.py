@@ -770,28 +770,28 @@ class JaxExportTest(jtu.JaxTestCase):
     else:
       primal_out_sharding = "{replicated}"
 
-    main = re.search(
-      r"func.func public @main\(%arg0: tensor<10x20xf32>.*mhlo.sharding = \"([^\"]+)\""
-      r".*%arg1: tensor<20x10xf32>.*mhlo.sharding = \"([^\"]+)\""
+    main = re.compile(
+      r"func.func public @main\(%arg0: tensor<10x20xf32>.*"
+      "mhlo.sharding = \"" + re.escape(primal_in_sharding) + "\""
+      r".*%arg1: tensor<20x10xf32>.*"
+      "mhlo.sharding = \"" + re.escape(primal_out_sharding) + "\""
       # result
-      r".* -> \(tensor<10x20xf32>.*mhlo.sharding = \"([^\"]+)\"",
-      vjp_module_str)
-    self.assertEqual(
-      main.groups(),
-      (primal_in_sharding, primal_out_sharding, primal_in_sharding))
+      r".*->.*\(tensor<10x20xf32>.*"
+      "mhlo.sharding = \"" + re.escape(primal_in_sharding) + "\"")
+    self.assertRegex(vjp_module_str, main)
 
-    # Custom calls for the primal input shape
+    # Custom calls for the primal input shape all match primal_in_sharding
     primal_in_calls = re.findall(
-      r"custom_call @Sharding.* {mhlo.sharding = \"(.+)\"} : .*tensor<10x20xf32>",
+      r"custom_call @Sharding.*mhlo.sharding = \"(.+)\".*:.*tensor<10x20xf32>",
       vjp_module_str)
     self.assertTrue(
       all(s == primal_in_sharding for s in primal_in_calls),
       primal_in_calls
     )
 
-    # Custom calls for the primal output shape
+    # Custom calls for the primal output shape all match primal_out_sharding
     primal_out_calls = re.findall(
-      r"custom_call @Sharding.* {mhlo.sharding = \"(.+)\"} : .*tensor<20x10xf32>",
+      r"custom_call @Sharding.* {mhlo.sharding = \"(.+)\".*:.*tensor<20x10xf32>",
       vjp_module_str)
     self.assertTrue(
       all(s == primal_out_sharding for s in primal_out_calls),
@@ -806,8 +806,8 @@ class JaxExportTest(jtu.JaxTestCase):
     module_str = str(exp.mlir_module())
     expected_main_re = (
       r"@main\("
-      r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\"}.*, "
-      r"%arg1: tensor<8xf32>.* ->")
+      r"%arg0: tensor<i..>.*jax.global_constant = \"_platform_index\".*, "
+      r"%arg1: tensor<8xf32>.*->")
     self.assertRegex(module_str, expected_main_re)
 
     self.assertIn("jax.uses_shape_polymorphism = true",
