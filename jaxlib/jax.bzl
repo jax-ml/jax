@@ -202,8 +202,8 @@ def jax_test(
                 "//jax:enable_jaxlib_build": ["//jaxlib/cuda:gpu_only_test_deps"],
                 "//conditions:default": [],
             }) + select({
-                "//jax:enable_cuda_plugin_build_for_tests": [],
-                "//conditions:default": ["//jax_plugins:gpu_plugin_only_test_deps"],
+                "//jax:enable_build_cuda_plugin_from_source": ["//jax_plugins:gpu_plugin_only_test_deps"],
+                "//conditions:default": [],
             }),
             shard_count = test_shards,
             tags = test_tags,

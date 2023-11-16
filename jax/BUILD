@@ -52,18 +52,17 @@ config_setting(
     },
 )
 
-# When `build_cuda_plugin_for_tests` is true, it assumes `bazel build` for the cuda plugin will run
-# before `bazel test` for cuda plugin tests. Set it to false for the case of running `bazel test`
-# without `bazel build` for the cuda plugin.
+# When `build_cuda_plugin_from_source` is true, it assumes running `bazel test` without preinstalled
+# cuda plugin.
 bool_flag(
-    name = "build_cuda_plugin_for_tests",
-    build_setting_default = True,
+    name = "build_cuda_plugin_from_source",
+    build_setting_default = False,
 )
 
 config_setting(
-    name = "enable_cuda_plugin_build_for_tests",
+    name = "enable_build_cuda_plugin_from_source",
     flag_values = {
-        ":build_cuda_plugin_for_tests": "True",
+        ":build_cuda_plugin_from_source": "True",
     },
 )
 
