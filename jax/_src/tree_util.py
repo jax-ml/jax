@@ -823,7 +823,7 @@ def _generate_key_paths_(
     # handle namedtuple as a special case, based on heuristic
     key_children = [(GetAttrKey(s), getattr(tree, s)) for s in tree._fields]
     for k, c in key_children:
-      yield from _generate_key_paths_(tuple((*key_path, k)), c, is_leaf)
+      yield from _generate_key_paths_((*key_path, k), c, is_leaf)
   else:
     yield key_path, tree  # strict leaf type
 

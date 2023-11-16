@@ -95,7 +95,7 @@ def dctn(x: Array, type: int = 2,
     return dct(x, n=s[0] if s is not None else None, axis=axes[0], norm=norm)
 
   if s is not None:
-    ns = {a: n for a, n in zip(axes, s)}
+    ns = dict(zip(axes, s))
     pads = [(0, ns[a] - x.shape[a] if a in ns else 0, 0) for a in range(x.ndim)]
     x = lax.pad(x, jnp.array(0, x.dtype), pads)
 
@@ -153,7 +153,7 @@ def idctn(x: Array, type: int = 2,
     return idct(x, n=s[0] if s is not None else None, axis=axes[0], norm=norm)
 
   if s is not None:
-    ns = {a: n for a, n in zip(axes, s)}
+    ns = dict(zip(axes, s))
     pads = [(0, ns[a] - x.shape[a] if a in ns else 0, 0) for a in range(x.ndim)]
     x = lax.pad(x, jnp.array(0, x.dtype), pads)
 

@@ -631,11 +631,11 @@ def backends() -> dict[str, xla_client.Client]:
       platform_registrations = list(
         zip(platforms, priorities, fail_quietly_list))
     else:
-      platform_registrations = list(
+      platform_registrations = [
           (platform, registration.priority, registration.fail_quietly)
           for platform, registration
           in _backend_factories.items()
-      )
+      ]
     default_priority = -1000
     for platform, priority, fail_quietly in platform_registrations:
       try:

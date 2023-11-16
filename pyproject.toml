@@ -105,3 +105,85 @@ enable = "c-extension-no-member"
 
 [tool.pylint.format]
 indent-string=" "
+
+[tool.ruff]
+preview = true
+exclude = [
+    ".git",
+    "build",
+    "__pycache__",
+]
+ignore = [
+    # Unnecessary collection call
+    "C408",
+    # Unnecessary map usage
+    "C417",
+    # Object names too complex
+    "C901",
+    # Local variable is assigned to but never used
+    "F841",
+    # Raise with from clause inside except block
+    "B904",
+]
+line-length = 88
+indent-width = 2
+select = [
+    "B9",
+    "C",
+    "F",
+    "W",
+    "YTT",
+    "ASYNC",
+    "E225",
+    "E227",
+    "E228",
+]
+target-version = "py39"
+
+[tool.ruff.mccabe]
+max-complexity = 18
+
+[tool.ruff.per-file-ignores]
+# F811: Redefinition of unused name.
+"docs/autodidax.py" = ["F811"]
+# Note: we don't use jax/*.py because this matches contents of jax/_src
+"__init__.py" = ["F401"]
+"jax/abstract_arrays.py" = ["F401"]
+"jax/ad_checkpoint.py" = ["F401"]
+"jax/api_util.py" = ["F401"]
+"jax/cloud_tpu_init.py" = ["F401"]
+"jax/core.py" = ["F401"]
+"jax/custom_batching.py" = ["F401"]
+"jax/custom_derivatives.py" = ["F401"]
+"jax/custom_transpose.py" = ["F401"]
+"jax/debug.py" = ["F401"]
+"jax/distributed.py" = ["F401"]
+"jax/dlpack.py" = ["F401"]
+"jax/dtypes.py" = ["F401"]
+"jax/errors.py" = ["F401"]
+"jax/experimental/*.py" = ["F401"]
+"jax/extend/*.py" = ["F401"]
+"jax/flatten_util.py" = ["F401"]
+"jax/interpreters/ad.py" = ["F401"]
+"jax/interpreters/batching.py" = ["F401"]
+"jax/interpreters/mlir.py" = ["F401"]
+"jax/interpreters/partial_eval.py" = ["F401"]
+"jax/interpreters/pxla.py" = ["F401"]
+"jax/interpreters/xla.py" = ["F401"]
+"jax/lax/*.py" = ["F401"]
+"jax/linear_util.py" = ["F401"]
+"jax/monitoring.py" = ["F401"]
+"jax/nn/*.py" = ["F401"]
+"jax/numpy/*.py" = ["F401"]
+"jax/prng.py" = ["F401"]
+"jax/profiler.py" = ["F401"]
+"jax/random.py" = ["F401"]
+"jax/scipy/*.py" = ["F401"]
+"jax/sharding.py" = ["F401"]
+"jax/stages.py" = ["F401"]
+"jax/test_util.py" = ["F401"]
+"jax/tree_util.py" = ["F401"]
+"jax/typing.py" = ["F401"]
+"jax/util.py" = ["F401"]
+# F821: Undefined name.
+"jax/numpy/__init__.pyi" = ["F821"]

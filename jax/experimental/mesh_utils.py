@@ -358,7 +358,7 @@ def create_hybrid_device_mesh(mesh_shape: Sequence[int],
   granule_dict = collections.defaultdict(list)
   for dev in devices:
     granule_dict[getattr(dev, attr)].append(dev)
-  granules = list(granule_dict[key] for key in sorted(granule_dict.keys()))
+  granules = [granule_dict[key] for key in sorted(granule_dict.keys())]
   if np.prod(dcn_mesh_shape) != len(granules):
     raise ValueError(
         f'Number of slices {len(granules)} must equal the product of '

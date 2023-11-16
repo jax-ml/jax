@@ -206,7 +206,7 @@ class CompatTestBase(jtu.JaxTestCase):
 
     custom_call_re = r"stablehlo.custom_call\s*@([^\(]+)\("
     current_custom_call_targets = sorted(
-        list(set(re.findall(custom_call_re, module_str))))
+        set(re.findall(custom_call_re, module_str)))
 
     np.set_printoptions(threshold=sys.maxsize, floatmode="unique")
     # Print the current test data to simplify updating the test.

@@ -1306,9 +1306,9 @@ def _maybe_pattern_match_fori_loop(ctx: TritonLoweringRuleContext, *args,
   else:
     return None
   jaxpr = body_jaxpr.jaxpr
-  new_invars = tuple((*jaxpr.invars[:body_nconsts],
-                      jaxpr.invars[body_nconsts],
-                      *jaxpr.invars[body_nconsts + 2:]))
+  new_invars = (*jaxpr.invars[:body_nconsts],
+                jaxpr.invars[body_nconsts],
+                *jaxpr.invars[body_nconsts + 2:])
   new_outvars = tuple(jaxpr.outvars[2:])
   jaxpr = jaxpr.replace(
       eqns=jaxpr.eqns[:eqn_index] + jaxpr.eqns[eqn_index + 1:],
@@ -1551,7 +1551,7 @@ def pallas_call_lowering(
     print(grid_mapping)
   compilation_result = compile_jaxpr(
       jaxpr,
-      tuple((*in_shapes, *out_shapes)),
+      (*in_shapes, *out_shapes),
       grid_mapping,
       name,
       num_warps,

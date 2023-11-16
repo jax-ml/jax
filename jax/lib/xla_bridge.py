@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
+# ruff: noqa: F401
 from jax._src.xla_bridge import (
   default_backend as default_backend,
   get_backend as get_backend,

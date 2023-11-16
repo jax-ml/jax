@@ -870,7 +870,7 @@ def _ppermute_lowering(ctx, x, *, axis_name, perm):
 
   full_perm = np.zeros((len(replica_groups), len(perm), 2), np.int64)
   for i, grp in enumerate(replica_groups):
-    grp = list(sorted(grp))
+    grp = sorted(grp)
     for j, (src, dst) in enumerate(perm):
       full_perm[i, j, 0] = grp[src]
       full_perm[i, j, 1] = grp[dst]
