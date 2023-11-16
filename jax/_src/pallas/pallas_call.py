@@ -381,6 +381,7 @@ def pallas_call(
     input_output_aliases: Dict[int, int] = {},
     interpret: bool = False,
     name: str | None = None,
+    zeroize_outputs: Tuple[int] | None = None,
     **compiler_params: Any,
 ):
   name = _extract_function_name(f, name)
@@ -410,6 +411,7 @@ def pallas_call(
         interpret=interpret,
         grid_mapping=grid_mapping,
         input_output_aliases=tuple(input_output_aliases.items()),
+        zeroize_outputs=zeroize_outputs,
         **compiler_params)
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out
