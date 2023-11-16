@@ -5216,6 +5216,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         "but got first argument of"):
       jnp.rot90(jnp.ones(2))
 
+  @parameterized.named_parameters(
+      ('ones', jnp.ones),
+      ('zeros', jnp.zeros),
+      ('empty', jnp.empty))
+  def test_error_hint(self, fn):
+    with self.assertRaisesRegex(
+        TypeError,
+        r"Did you accidentally write `jax\.numpy\..*?\(2, 3\)` "
+        r"when you meant `jax\.numpy\..*?\(\(2, 3\)\)`"):
+      fn(2, 3)
+
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
