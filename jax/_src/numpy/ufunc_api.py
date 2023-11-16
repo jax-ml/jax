@@ -327,7 +327,7 @@ class ufunc:
     ind_end = jax.lax.slice_in_dim(ind, 1, ind.shape[axis], axis=axis)
     def loop_body(i, out):
       return _where((i > ind_start) & (i < ind_end),
-                    self._call(out, take(a, i.reshape(1), axis=axis)),
+                    self._call(out, take(a, jax.lax.expand_dims(i, (0,)), axis=axis)),
                     out)
     return jax.lax.fori_loop(0, a.shape[axis], loop_body, out)
 
