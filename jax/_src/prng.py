@@ -987,7 +987,7 @@ def _threefry_seed(seed: typing.Array) -> typing.Array:
     raise TypeError(f"PRNG key seed must be a scalar; got {seed!r}.")
   if not np.issubdtype(seed.dtype, np.integer):
     raise TypeError(f"PRNG key seed must be an integer; got {seed!r}")
-  convert = lambda k: lax.reshape(lax.convert_element_type(k, np.uint32), [1])
+  convert = lambda k: lax.expand_dims(lax.convert_element_type(k, np.uint32), [0])
   k1 = convert(
       lax.shift_right_logical(seed, lax_internal._const(seed, 32)))
   with config.numpy_dtype_promotion('standard'):
