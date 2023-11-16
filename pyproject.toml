@@ -57,6 +57,8 @@ markers = [
 ]
 filterwarnings = [
     "error",
+    "ignore:The numpy.array_api submodule is still experimental.:UserWarning",
+    "ignore:The hookimpl.*:DeprecationWarning",
     "ignore:No GPU/TPU found, falling back to CPU.:UserWarning",
     "ignore:xmap is an experimental feature and probably has bugs!",
     "ignore:the imp module is deprecated in favour of importlib.*:DeprecationWarning",

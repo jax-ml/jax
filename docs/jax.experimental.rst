@@ -14,6 +14,7 @@ Experimental Modules
 .. toctree::
     :maxdepth: 1
 
+    jax.experimental.array_api
     jax.experimental.checkify
     jax.experimental.host_callback
     jax.experimental.maps

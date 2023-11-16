@@ -842,6 +842,17 @@ pytype_library(
 )
 
 pytype_library(
+    name = "experimental_array_api",
+    srcs = glob(
+        [
+            "experimental/array_api/*.py",
+        ],
+    ),
+    visibility = [":internal"],
+    deps = [":jax"],
+)
+
+pytype_library(
     name = "experimental_sparse",
     srcs = glob(
         [
@@ -873,7 +884,7 @@ pytype_library(
         "example_libraries/optimizers.py",
     ],
     visibility = ["//visibility:public"],
-    deps = [":jax"],
+    deps = [":jax"] + py_deps("numpy"),
 )
 
 pytype_library(
