@@ -5209,6 +5209,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def test_rot90_error(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "rot90 requires its first argument to have ndim at least two, "
+        "but got first argument of"):
+      jnp.rot90(jnp.ones(2))
+
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.

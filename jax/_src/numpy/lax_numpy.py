@@ -582,6 +582,10 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
 @partial(jit, static_argnames=('k', 'axes'))
 def rot90(m: ArrayLike, k: int = 1, axes: tuple[int, int] = (0, 1)) -> Array:
   util.check_arraylike("rot90", m)
+  if np.ndim(m) < 2:
+    raise ValueError("rot90 requires its first argument to have ndim at least "
+                     f"two, but got first argument of shape {np.shape(m)}, "
+                     f"which has ndim {np.ndim(m)}")
   ax1, ax2 = axes
   ax1 = _canonicalize_axis(ax1, ndim(m))
   ax2 = _canonicalize_axis(ax2, ndim(m))
