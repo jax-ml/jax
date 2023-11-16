@@ -2981,15 +2981,31 @@ class APITest(jtu.JaxTestCase):
     out2 = api.vmap(f, [None, 0, 0])(dictionary, x, y)
     self.assertAllClose(out1, out2)
 
+  def test_vmap_in_axes_non_tuple_error(self):
+    # https://github.com/google/jax/issues/18548
+    with self.assertRaisesRegex(
+        TypeError,
+        re.escape("vmap in_axes must be an int, None, or a tuple of entries corresponding "
+                  "to the positional arguments passed to the function, but got {'a': 0}.")):
+      jax.vmap(lambda x: x['a'], in_axes={'a': 0})
+
+  def test_vmap_in_axes_wrong_length_tuple_error(self):
+    # https://github.com/google/jax/issues/18548
+    with self.assertRaisesRegex(
+        ValueError,
+        re.escape("vmap in_axes must be an int, None, or a tuple of entries corresponding to the "
+                  "positional arguments passed to the function, but got len(in_axes)=2, len(args)=1")):
+      jax.vmap(lambda x: x['a'], in_axes=(0, {'a': 0}))({'a': jnp.zeros((3, 3))})
+
   def test_vmap_in_axes_tree_prefix_error(self):
     # https://github.com/google/jax/issues/795
     value_tree = jnp.ones(3)
     self.assertRaisesRegex(
         ValueError,
         "vmap in_axes specification must be a tree prefix of the corresponding "
-        r"value, got specification \(0, 0\) for value tree "
+        r"value, got specification \(\[0\],\) for value tree "
         + re.escape(f"{tree_util.tree_structure((value_tree,))}."),
-        lambda: api.vmap(lambda x: x, in_axes=(0, 0))(value_tree)
+        lambda: api.vmap(lambda x: x, in_axes=([0],))(value_tree)
     )
 
   def test_vmap_in_axes_leaf_types(self):

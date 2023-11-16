@@ -404,7 +404,6 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
   # the given treedef, build a complete axis spec tree with the same structure
   # and return the flattened result
   # TODO(mattjj,phawkins): improve this implementation
-
   proxy = object()
   dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
   axes = []
