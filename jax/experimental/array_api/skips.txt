@@ -1,0 +1,46 @@
+# Known failures for the array api tests.
+
+# JAX doesn't yet support scalar boolean indexing
+array_api_tests/test_array_object.py::test_getitem_masking
+
+# Hypothesis warning
+array_api_tests/meta/test_hypothesis_helpers.py::test_symmetric_matrices
+
+# Test suite attempts in-place mutation:
+array_api_tests/test_special_cases.py::test_binary
+array_api_tests/test_special_cases.py::test_iop
+array_api_tests/test_special_cases.py::test_nan_propagation
+array_api_tests/test_special_cases.py::test_unary
+array_api_tests/test_array_object.py::test_setitem
+array_api_tests/test_creation_functions.py::test_asarray_arrays
+array_api_tests/test_linalg.py::test_matrix_power
+array_api_tests/test_linalg.py::test_solve
+
+# Overflow errors due to hypothesis generating integers that overflow int64
+array_api_tests/test_operators_and_elementwise_functions.py::test_multiply[__mul__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_square
+array_api_tests/test_operators_and_elementwise_functions.py::test_bitwise_and[__and__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_bitwise_and[__iand__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_bitwise_or[__or__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_bitwise_or[__ior__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_bitwise_left_shift[__lshift__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_bitwise_left_shift[__ilshift__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_bitwise_right_shift[__rshift__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_bitwise_right_shift[__irshift__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_bitwise_xor[__xor__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_bitwise_xor[__ixor__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_floor_divide[__floordiv__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_floor_divide[__ifloordiv__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_greater_equal[__ge__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_less[__lt__(x, s)]
+array_api_tests/test_operators_and_elementwise_functions.py::test_not_equal[__ne__(x, s)]
+
+# JAX's NaN sorting doesn't match specification
+array_api_tests/test_set_functions.py::test_unique_all
+array_api_tests/test_set_functions.py::test_unique_counts
+array_api_tests/test_set_functions.py::test_unique_inverse
+array_api_tests/test_set_functions.py::test_unique_values
+array_api_tests/test_sorting_functions.py::test_argsort
+
+# fft test suite is buggy as of 83f0bcdc
+array_api_tests/test_fft.py
