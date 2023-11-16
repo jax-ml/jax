@@ -3218,6 +3218,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(OverflowError, "Python int too large.*"):
       jnp.array([0, val])
 
+  def testArrayNoneWarning(self):
+    # TODO(jakevdp): make this an error after the deprecation period.
+    with self.assertWarnsRegex(FutureWarning, r"None encountered in jnp.array\(\)"):
+      jnp.array([0.0, None])
+
   def testIssue121(self):
     assert not np.isscalar(jnp.array(3))
 
