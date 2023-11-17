@@ -24,7 +24,7 @@ jobs:
       uses: actions/checkout@v3
       with:
         repository: data-apis/array-api-tests
-        ref: '83f0bcdcc5286250dbb26be5d37511702970b4dc'  # Latest commit as of 2023-11-15
+        ref: '9d7777bc60d45a35124b0de084ff8edbd284c06b'  # Latest commit as of 2023-11-17
         submodules: 'true'
         path: 'array-api-tests'
     - name: Fix array-apis bug
@@ -38,7 +38,6 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install .[cpu]
-        python -m pip install "hypothesis<6.88.4"  # 6.88.4 breaks with a Return-type annotation warning
         python -m pip install -r array-api-tests/requirements.txt
     - name: Run the test suite
       env:
