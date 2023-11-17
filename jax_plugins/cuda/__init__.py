@@ -13,15 +13,27 @@
 # limitations under the License.
 
 import functools
+import importlib
 import logging
 import os
 import pathlib
 import platform
 import sys
 
-from jax._src.lib import cuda_plugin_extension
 from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb
+
+# cuda_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
+# preinstalled jax cuda plugin packages.
+for pkg_name in ['jax_cuda12_plugin', 'jax_cuda11_plugin', 'jaxlib']:
+  try:
+    cuda_plugin_extension = importlib.import_module(
+        f'{pkg_name}.cuda_plugin_extension'
+    )
+  except ImportError:
+    cuda_plugin_extension = None
+  else:
+    break
 
 logger = logging.getLogger(__name__)
 

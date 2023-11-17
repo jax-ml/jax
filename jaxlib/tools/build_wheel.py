@@ -177,10 +177,6 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extensi
   copy_runfiles(
       "__main__/jaxlib/init.py", dst_dir=jaxlib_dir, dst_filename="__init__.py"
   )
-  if include_gpu_plugin_extension:
-    copy_runfiles(
-        dst_dir=jaxlib_dir, src_files=[f"__main__/jaxlib/cuda_plugin_extension.{pyext}"]
-    )
   copy_runfiles(
       dst_dir=jaxlib_dir,
       src_files=[
