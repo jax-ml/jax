@@ -110,6 +110,8 @@ set_printoptions = np.set_printoptions
 
 @util._wraps(np.iscomplexobj)
 def iscomplexobj(x: Any) -> bool:
+  if x is None:
+    return False
   try:
     typ = x.dtype.type
   except AttributeError:
@@ -2085,7 +2087,14 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     object = object.__jax_array__()
   object = tree_map(lambda leaf: leaf.__jax_array__()
                     if hasattr(leaf, "__jax_array__") else leaf, object)
-  leaves = tree_leaves(object)
+  leaves = tree_leaves(object, is_leaf=lambda x: x is None)
+  if any(leaf is None for leaf in leaves):
+    # Added Nov 16 2023
+    warnings.warn(
+      "None encountered in jnp.array(); this is currently treated as NaN. "
+      "In the future this will result in an error.",
+      FutureWarning, stacklevel=2)
+    leaves = tree_leaves(object)
   if dtype is None:
     # Use lattice_result_type rather than result_type to avoid canonicalization.
     # Otherwise, weakly-typed inputs would have their dtypes canonicalized.

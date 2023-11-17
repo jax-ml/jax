@@ -14,6 +14,10 @@ Remember to align the itemized text with the first line of an item within a list
 * Deprecations
   * The previously-deprecated `sym_pos` argument has been removed from
     {func}`jax.scipy.linalg.solve`. Use `assume_a='pos'` instead.
+  * Passing `None` to {func}`jax.array` or {func}`jax.asarray`, either directly or
+    within a list or tuple, is deprecated and now raises a {obj}`FutureWarning`.
+    It currently is converted to NaN, and in the future will raise a {obj}`TypeError`.
+   
 
 ## jaxlib 0.4.21
 
