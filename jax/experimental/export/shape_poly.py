@@ -242,7 +242,14 @@ class _DimAtom:
       elif self.operation == _DimAtom.MOD:
         return divmod(*operand_values)[1]  # type: ignore
       elif self.operation == _DimAtom.NON_NEGATIVE:
-        return lax.max(operand_values[0], 0)
+        operand = operand_values[0]
+        if core.is_constant_dim(operand):
+          return max(operand, 0)
+        if core.is_symbolic_dim(operand):
+          return core.non_negative_dim(operand)
+        # In the context of `evaluate` dimension variables may be mapped to
+        # JAX Tracers.
+        return lax.max(operand, 0)
       else:
         assert False, self.operation
 
