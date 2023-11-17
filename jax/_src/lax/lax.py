@@ -1784,7 +1784,7 @@ ad.defjvp(log_p, lambda g, x: div(g, x))
 mlir.register_lowering(log_p, partial(_nary_lower_hlo, hlo.LogOp))
 
 expm1_p = standard_unop(_float | _complex, 'expm1')
-ad.defjvp2(expm1_p, lambda g, ans, x: mul(g, add(ans, _one(ans))))
+ad.defjvp2(expm1_p, lambda g, ans, x: mul(g, exp(x)))  # ans + 1 is imprecise for large negative x
 mlir.register_lowering(expm1_p, partial(_nary_lower_hlo, hlo.Expm1Op))
 
 log1p_p = standard_unop(_float | _complex, 'log1p')
