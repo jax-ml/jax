@@ -2049,7 +2049,8 @@ def _fast_path_get_device_assignment(
   return da
 
 
-def _get_partition_spec(ppspec: Sequence[ParsedPartitionSpec]) -> Sequence[PartitionSpec]:
+def _get_partition_spec(
+    ppspec: Sequence[ParsedPartitionSpec]) -> Sequence[PartitionSpec]:
   return [get_single_pspec(p) for p in ppspec]
 
 
@@ -2068,7 +2069,9 @@ def get_op_sharding_from_executable(
   return in_op_shardings, out_op_shardings
 
 
-def _get_ppspec_from_executable(executable, mesh) -> tuple[Sequence[ParsedPartitionSpec], Sequence[ParsedPartitionSpec]]:
+def _get_ppspec_from_executable(
+    executable, mesh
+  ) -> tuple[Sequence[ParsedPartitionSpec], Sequence[ParsedPartitionSpec]]:
   input_op_shardings, output_op_sharding = get_op_sharding_from_executable(
       executable
   )
