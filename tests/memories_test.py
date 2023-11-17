@@ -60,7 +60,7 @@ def _create_inputs(shape, pspec, mem_kind=None):
 # * nested jit
 
 
-class MemoriesTest(jtu.BufferDonationTestCase):
+class ShardingMemoriesTest(jtu.JaxTestCase):
 
   def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
@@ -77,24 +77,6 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     jax.config.update('jax_enable_memories', self.orig_memories_flag)
     FLAGS.xla_tpu_enable_host_aware_passes = False
     super().tearDown()
-
-  def _check_mem_kind(self, executable_kind, out_sharding, expected_kind):
-    out_kind = out_sharding.memory_kind
-    self.assertEqual(executable_kind, out_kind)
-    self.assertEqual(out_kind, expected_kind)
-    self.assertEqual(executable_kind, expected_kind)
-
-  def _check_device_put_addressable_shards(
-      self, out, inp, expected_sharding, expected_mem_kind, index=True):
-    self.assertArraysEqual(out, inp)
-    self.assertEqual(out.sharding, expected_sharding)
-    self.assertEqual(out.sharding.memory_kind, expected_mem_kind)
-    for s in out.addressable_shards:
-      if index:
-        self.assertArraysEqual(s.data, inp[s.index])
-      else:
-        self.assertArraysEqual(s.data, inp)
-      self.assertEqual(s.data.sharding.memory_kind, expected_mem_kind)
 
   @parameterized.named_parameters(
       ("named_sharding", "named_sharding"),
@@ -214,6 +196,47 @@ class MemoriesTest(jtu.BufferDonationTestCase):
   def test_default_memory_kind(self):
     dev = jax.devices()[0]
     self.assertEqual(dev.default_memory().kind, "tpu_hbm")
+
+
+class MemoriesComputationTest(jtu.BufferDonationTestCase):
+
+  def setUp(self):
+    # TODO(yashkatariya): Enable all tests after memories XLA support is
+    # working.
+    self.skipTest('Enable after memories work with redesigned XLA support.')
+
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Memories do not work on CPU and GPU backends yet.")
+    # TODO(b/311021572)
+    if jtu.is_cloud_tpu():
+      self.skipTest("Experimental feature not yet implemented on Cloud TPU")
+    super().setUp()
+    self.orig_memories_flag = config.enable_memories.value
+    jax.config.update('jax_enable_memories', True)
+    FLAGS.xla_tpu_enable_host_aware_passes = True
+
+  def tearDown(self):
+    jax.config.update('jax_enable_memories', self.orig_memories_flag)
+    FLAGS.xla_tpu_enable_host_aware_passes = False
+    super().tearDown()
+
+  def _check_mem_kind(self, executable_kind, out_sharding, expected_kind):
+    out_kind = out_sharding.memory_kind
+    self.assertEqual(executable_kind, out_kind)
+    self.assertEqual(out_kind, expected_kind)
+    self.assertEqual(executable_kind, expected_kind)
+
+  def _check_device_put_addressable_shards(
+      self, out, inp, expected_sharding, expected_mem_kind, index=True):
+    self.assertArraysEqual(out, inp)
+    self.assertEqual(out.sharding, expected_sharding)
+    self.assertEqual(out.sharding.memory_kind, expected_mem_kind)
+    for s in out.addressable_shards:
+      if index:
+        self.assertArraysEqual(s.data, inp[s.index])
+      else:
+        self.assertArraysEqual(s.data, inp)
+      self.assertEqual(s.data.sharding.memory_kind, expected_mem_kind)
 
   def test_jit_memory_transfer_to_host_middle(self):
     _, s, np_inp, inp = _create_inputs((8, 2), P("x", "y"), mem_kind="tpu_hbm")
@@ -1065,6 +1088,60 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     # this after it is fixed.
     # self.assertDeleted(x)
 
+  def test_host_offload_in_custom_vjp(self):
+    if xb.using_pjrt_c_api():
+      raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x)
+
+    def f_fwd(x):
+      y = x * 2
+      z = jax.device_put(y, TransferToMemoryKind('unpinned_host'))
+      return y, (x, z)
+
+    def f_bwd(res, tx):
+      x, z = res
+      y = x * 2
+      z2 = jax.device_put(y, TransferToMemoryKind('unpinned_host'))
+      return ((z == z2).astype(jnp.float32),)
+
+    f.defvjp(f_fwd, f_bwd)
+    g = jax.jit(jax.grad(lambda x: f(x).sum()))
+
+    x = jnp.ones(3) * 4
+    all_true = jnp.ones(3)
+    self.assertArraysEqual(g(x), all_true)
+
+  def test_host_offload_in_custom_vjp_sharded(self):
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    s = NamedSharding(mesh, P('x'))
+
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x)
+
+    def f_fwd(x):
+      y = x * 2
+      z = jax.device_put(y, s.with_memory_kind('unpinned_host'))
+      return y, (x, z)
+
+    def f_bwd(res, tx):
+      x, z = res
+      y = x * 2
+      z2 = jax.device_put(y, s.with_memory_kind('unpinned_host'))
+      return ((z == z2).astype(jnp.float32),)
+
+    f.defvjp(f_fwd, f_bwd)
+    g = jax.jit(jax.grad(lambda x: f(x).sum()))
+
+    x = jax.device_put(jnp.ones(4) * 4, s)
+    all_true = jnp.ones(4)
+    self.assertArraysEqual(g(x), all_true)
+
+
+class ActivationOffloadingTest(jtu.JaxTestCase):
+
   def test_remat_jaxpr_offloadable(self):
     mesh = jtu.create_global_mesh((2,), ("x",))
     inp = jax.device_put(np.arange(16.), NamedSharding(mesh, P("x")))
@@ -1118,58 +1195,6 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     bwd_mem_kind_count = str(bwd_jaxpr).count(
         "TransferToMemoryKind(memory_kind='tpu_hbm')")
     self.assertEqual(bwd_mem_kind_count, 3)
-
-  def test_host_offload_in_custom_vjp(self):
-    if xb.using_pjrt_c_api():
-      raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
-    @jax.custom_vjp
-    def f(x):
-      return jnp.sin(x)
-
-    def f_fwd(x):
-      y = x * 2
-      z = jax.device_put(y, TransferToMemoryKind('unpinned_host'))
-      return y, (x, z)
-
-    def f_bwd(res, tx):
-      x, z = res
-      y = x * 2
-      z2 = jax.device_put(y, TransferToMemoryKind('unpinned_host'))
-      return ((z == z2).astype(jnp.float32),)
-
-    f.defvjp(f_fwd, f_bwd)
-    g = jax.jit(jax.grad(lambda x: f(x).sum()))
-
-    x = jnp.ones(3) * 4
-    all_true = jnp.ones(3)
-    self.assertArraysEqual(g(x), all_true)
-
-  def test_host_offload_in_custom_vjp_sharded(self):
-    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
-    s = NamedSharding(mesh, P('x'))
-
-    @jax.custom_vjp
-    def f(x):
-      return jnp.sin(x)
-
-    def f_fwd(x):
-      y = x * 2
-      z = jax.device_put(y, s.with_memory_kind('unpinned_host'))
-      return y, (x, z)
-
-    def f_bwd(res, tx):
-      x, z = res
-      y = x * 2
-      z2 = jax.device_put(y, s.with_memory_kind('unpinned_host'))
-      return ((z == z2).astype(jnp.float32),)
-
-    f.defvjp(f_fwd, f_bwd)
-    g = jax.jit(jax.grad(lambda x: f(x).sum()))
-
-    x = jax.device_put(jnp.ones(4) * 4, s)
-    all_true = jnp.ones(4)
-    self.assertArraysEqual(g(x), all_true)
-
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

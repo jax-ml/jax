@@ -137,10 +137,9 @@ class LayoutTest(jtu.JaxTestCase):
     def f(x):
       return x.T
 
-    compiled = jax.jit(f).lower(
-        arr,
-        _in_layouts=layout.DefaultLayout(),
-        _out_layouts=layout.DefaultLayout()).compile()
+    lowered = jax.jit(f).lower(arr, _in_layouts=None, _out_layouts=None)
+    self.assertIn("default", lowered.as_text())
+    compiled = lowered.compile()
     out = compiled(arr)
 
     self.assertTupleEqual(compiled._input_layouts()[0][0].minor_to_major, (2, 1, 0))
@@ -172,7 +171,7 @@ class LayoutTest(jtu.JaxTestCase):
   #       _in_layouts=(
   #           layout.SpecifiedLayout((0, 2, 1)),
   #           layout.AUTO,
-  #           layout.DefaultLayout()),
+  #           None),
   #       _out_layouts=layout.AUTO)
   #   compiled = lowered.compile()
 
@@ -198,8 +197,8 @@ class LayoutTest(jtu.JaxTestCase):
 
     def f(x):
       return x.T
-    compiled = jax.jit(f).lower(arr, _in_layouts=layout.DefaultLayout(),
-                                _out_layouts=layout.AUTO).compile()
+    compiled = jax.jit(f).lower(
+        arr, _in_layouts=None, _out_layouts=layout.AUTO).compile()
     self.assertTupleEqual(compiled._input_layouts()[0][0].minor_to_major, (1, 0))
     self.assertTupleEqual(compiled._output_layouts().minor_to_major, (0, 1))
 

@@ -2463,13 +2463,17 @@ def maybe_get_orig_out_sharding(
 
 
 def _get_layouts_from_executable(
-    xla_executable, in_layouts, out_layouts
-) -> Sequence[Sequence[XLACompatibleLayout | None], Sequence[XLACompatibleLayout | None]]:  # type: ignore
-  if all(i is None for i in in_layouts) and all(o is None for o in out_layouts):
-    return in_layouts, out_layouts  # type: ignore
+    xla_executable, in_layouts, out_layouts, num_ordered_effects
+) -> tuple[Sequence[SpecifiedLayout | None], Sequence[SpecifiedLayout | None]]:
+  try:
+    in_layouts_xla = xla_executable.get_parameter_layouts()
+    out_layouts_xla = xla_executable.get_output_layouts()
+  except:
+    return (None,) * len(in_layouts), (None,) * len(out_layouts)
 
-  in_layouts_xla = xla_executable.get_parameter_layouts()
-  out_layouts_xla = xla_executable.get_output_layouts()
+  if num_ordered_effects > 0:
+    in_layouts_xla = in_layouts_xla[num_ordered_effects:]
+    out_layouts_xla = out_layouts_xla[num_ordered_effects:]
 
   new_in_layouts = []
   for x, i in safe_zip(in_layouts_xla, in_layouts):
@@ -2495,7 +2499,7 @@ def _get_layouts_from_executable(
 
   assert all(isinstance(i, SpecifiedLayout) for i in new_in_layouts)
   assert all(isinstance(o, SpecifiedLayout) for o in new_out_layouts)
-  return new_in_layouts, new_out_layouts
+  return new_in_layouts, new_out_layouts  # type: ignore
 
 
 @weakref_lru_cache
@@ -2715,8 +2719,12 @@ class UnloadedMeshExecutable:
     else:
       are_out_shardings_from_xla = (False,) * len(global_out_avals)
 
-    in_layouts, out_layouts = _get_layouts_from_executable(
-        xla_executable, in_layouts, out_layouts)
+    if xla_extension_version >= 215:
+      in_layouts, out_layouts = _get_layouts_from_executable(
+          xla_executable, in_layouts, out_layouts, len(ordered_effects))
+    else:
+      assert all(i is None for i in in_layouts)
+      assert all(o is None for o in out_layouts)
 
     if pmap_nreps > 1:
       in_shardings, out_shardings, committed, da = _get_metadata_jit_pmap(

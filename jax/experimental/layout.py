@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from jax._src.layout import (
-    DefaultLayout as DefaultLayout,
     SpecifiedLayout as SpecifiedLayout,
     AUTO as AUTO,
 )

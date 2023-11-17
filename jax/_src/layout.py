@@ -55,21 +55,6 @@ class SpecifiedLayout(XLACompatibleLayout):
     return xc.Layout(self.minor_to_major).to_string()
 
 
-class DefaultLayout(XLACompatibleLayout):
-
-  def __repr__(self):
-    return 'DefaultLayout()'
-
-  def __hash__(self):
-    return hash(type(self))
-
-  def __eq__(self, other):
-    return isinstance(other, DefaultLayout) and type(self) == type(other)
-
-  def _to_xla_layout(self) -> str:
-    return "default"
-
-
 class LayoutRequest:
 
   def __repr__(self):

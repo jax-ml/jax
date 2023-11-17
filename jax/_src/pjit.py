@@ -328,8 +328,7 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
   def lower(*args, **kwargs):
     lowering_parameters = kwargs.pop(
         '_experimental_lowering_parameters', mlir.LoweringParameters())
-    # TODO(yashkatariya): Remove this when it's added on jit. Also default to
-    # layout.DefaultLayout() when out of experimental.
+    # TODO(yashkatariya): Remove this when it's added on jit.
     in_layouts = kwargs.pop('_in_layouts', None)
     out_layouts = kwargs.pop('_out_layouts', None)
     (args_flat, flat_global_in_avals, params, in_tree, out_tree,

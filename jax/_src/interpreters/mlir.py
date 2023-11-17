@@ -695,7 +695,7 @@ def _to_logical_op_sharding(
 
 def _to_xla_layout(layout: XLACompatibleLayout | None | LayoutRequest) -> str | None:
   if layout is None:
-    return None
+    return "default"
   if isinstance(layout, LayoutRequest):
     return "auto"
   return layout._to_xla_layout()
@@ -797,7 +797,7 @@ def lower_jaxpr_to_module(
       if result_shardings is not None else result_shardings)
 
   arg_layouts = (map(_to_xla_layout, in_layouts) if in_layouts is not None
-                 else in_layouts)
+                  else in_layouts)
   result_layouts = (map(_to_xla_layout, out_layouts) if out_layouts is not None
                     else out_layouts)
 

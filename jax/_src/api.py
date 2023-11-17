@@ -304,8 +304,7 @@ def jit(
         static_argnums, static_argnames, device, backend, abstracted_axes)
 
   def infer_params(*args, **kwargs):
-    # TODO(yashkatariya): Remove this when it's added on jit. Also default to
-    # layout.DefaultLayout() when out of experimental.
+    # TODO(yashkatariya): Remove this when it's added on jit.
     in_layouts = kwargs.pop('_in_layouts', None)
     out_layouts = kwargs.pop('_out_layouts', None)
     pjit_info_args = pjit.PjitInfo(
