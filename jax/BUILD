@@ -19,6 +19,7 @@ load(
     "//jaxlib:jax.bzl",
     "jax_extend_internal_users",
     "jax_extra_deps",
+    "jax_internal_export_back_compat_test_util_visibility",
     "jax_internal_packages",
     "jax_internal_test_harnesses_visibility",
     "jax_test_util_visibility",
@@ -128,12 +129,16 @@ py_library(
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
+# TODO(necula): break the internal_test_util into smaller build targets.
 py_library(
     name = "internal_test_util",
     testonly = 1,
     srcs = glob(
         ["_src/internal_test_util/**/*.py"],  # include
-        ["_src/internal_test_util/test_harnesses.py"],  # exclude
+        [
+            "_src/internal_test_util/test_harnesses.py",
+            "_src/internal_test_util/export_back_compat_test_util.py",
+        ],  # exclude
     ),
     visibility = [":internal"],
     deps = [
@@ -148,6 +153,19 @@ py_library(
     visibility = [":internal"] + jax_internal_test_harnesses_visibility,
     deps = [
         ":jax",
+    ] + py_deps("numpy"),
+)
+
+py_library(
+    name = "internal_export_back_compat_test_util",
+    testonly = 1,
+    srcs = ["_src/internal_test_util/export_back_compat_test_util.py"],
+    visibility = [
+        ":internal",
+    ] + jax_internal_export_back_compat_test_util_visibility,
+    deps = [
+        ":jax",
+        "//jax/experimental/export",
     ] + py_deps("numpy"),
 )
 

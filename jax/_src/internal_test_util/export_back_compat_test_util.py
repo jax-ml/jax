@@ -34,14 +34,17 @@ Write the JAX function `func` that exercises the custom call `foo_call` you
 want, then pick some inputs, and then add this to the new test to get started.
 
   import dataclasses
-  from jax.experimental.jax2tf.tests import back_compat_test_util as bctu
+  from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
-  def test_foo_call(self):
-    def func(...): ...
-    inputs = (...,)  # Tuple of nd.array, keep it small, perhaps generate the
-                     # inputs in `func`.
-    data = self.starter_data(inputs)  # This is temporary, just for starting.
-    self.run_one_test(func, data)
+  class BackCompatTest(bctu.CompatTestBase)
+    ...
+
+    def test_foo_call(self):
+      def func(...): ...
+      inputs = (...,)  # Tuple of nd.array, keep it small, perhaps generate the
+                      # inputs in `func`.
+      data = self.starter_data(inputs)  # This is temporary, just for starting.
+      self.run_one_test(func, data)
 
 The test will fail, but will save to a file the test data you will need. The
 file name will be printed in the logs. Create a new
@@ -211,7 +214,7 @@ class CompatTestBase(jtu.JaxTestCase):
     np.set_printoptions(threshold=sys.maxsize, floatmode="unique")
     # Print the current test data to simplify updating the test.
     updated_testdata = f"""
-# Pasted from the test output (see back_compat_test_util.py module docstring)
+# Pasted from the test output (see export_back_compat_test_util.py module docstring)
 data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     testdata_version={CURRENT_TESTDATA_VERSION},
     platform={self.default_jax_backend()!r},

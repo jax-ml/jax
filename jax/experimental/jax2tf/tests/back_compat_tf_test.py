@@ -27,9 +27,9 @@ from typing import Callable, Optional
 from absl.testing import absltest
 from jax import config
 from jax._src import test_util as jtu
+from jax._src.internal_test_util import export_back_compat_test_util as bctu
 from jax._src.lib import xla_extension
 from jax.experimental import jax2tf
-from jax.experimental.jax2tf.tests import back_compat_test_util as bctu
 from jax.experimental.jax2tf.tests.back_compat_testdata import tf_call_tf_function
 import jax.numpy as jnp
 import tensorflow as tf
