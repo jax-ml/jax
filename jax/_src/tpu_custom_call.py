@@ -52,9 +52,6 @@ _MOSAIC_USE_CPP_PASSES = config.define_bool_state(
     ),
 )
 
-# TODO(sharadmv): remove when minimum jaxlib version is bumped to >= 0.4.14.
-if tpu_mosaic is None:
-  raise ImportError("Cannot use Mosaic without a jaxlib >= 0.4.14.")
 tpu = tpu_mosaic.tpu
 apply_vector_layout = tpu_mosaic.apply_vector_layout
 infer_memref_layout = tpu_mosaic.infer_memref_layout

@@ -46,7 +46,6 @@ from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.util import NumpyComplexWarning
 
 config.parse_flags_with_absl()
@@ -2698,8 +2697,6 @@ class LaxTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.eqns, 1)
     self.assertEqual(jaxpr.eqns[0].primitive, lax.dynamic_slice_p)
 
-  @unittest.skipIf(xla_extension_version < 175,
-                   "Test requires jaxlib 0.4.15 or newer")
   def testDynamicSliceU8Index(self):
     # Regression test for u8 index in dynamic-slice (#6122)
     x = np.arange(200)

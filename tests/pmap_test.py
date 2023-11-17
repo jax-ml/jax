@@ -52,7 +52,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.util import safe_map, safe_zip
 
 config.parse_flags_with_absl()
@@ -579,10 +578,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     dtype=lax_test_util.all_dtypes,
   )
   def testAllToAll(self, split_axis, concat_axis, dtype):
-    if xla_extension_version < 207 and jnp.issubdtype(
-        dtype, jnp.complexfloating
-    ):
-      raise unittest.SkipTest('Test requires jaxlib 0.4.19')
     pmap_in_axis = 0
     shape = (jax.device_count(),) * 3
     rng = jtu.rand_default(self.rng())
@@ -1040,8 +1035,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     (('Gather', lax.all_gather), ('ReduceScatter', lax.psum_scatter))
   ))
   def testGradOf(self, prim, tiled, use_axis_index_groups):
-    if xla_extension_version < 197:
-      raise SkipTest("Test requires xla_extension_version >=197")
     axis_index_groups = None
     devices = jax.devices()
 

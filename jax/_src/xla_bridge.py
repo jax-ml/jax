@@ -135,13 +135,7 @@ def tpu_client_timer_callback(timer_secs: float) -> Optional[xla_client.Client]:
   t.start()
 
   try:
-    if xla_extension_version >= 205:
-      client = xla_client.make_tpu_client(_get_tpu_library_path())  # type: ignore
-    else:
-      libtpu_module = maybe_import_libtpu()
-      if libtpu_module is not None:
-        libtpu_module.configure_library_path()
-      client = xla_client.make_tpu_client()  # type: ignore
+    client = xla_client.make_tpu_client(_get_tpu_library_path())
   finally:
     t.cancel()
 
@@ -278,14 +272,6 @@ def make_gpu_client(
   if platform_name == "cuda":
     _check_cuda_versions()
 
-  if xla_extension_version <= 199:
-    return xla_client.make_gpu_client(
-        distributed_client=distributed.global_state.client,
-        node_id=distributed.global_state.process_id,
-        num_nodes=distributed.global_state.num_processes,
-        platform_name=platform_name,
-        allowed_devices=allowed_devices,
-    )
   use_mock_gpu_client = _USE_MOCK_GPU_CLIENT.value
   num_nodes = (
       _MOCK_NUM_GPUS.value
@@ -477,9 +463,8 @@ def register_plugin(
     options: Optional. It is used when creating a PJRT plugin client.
   """
   def factory():
-    if xla_extension_version >= 183:
-      if not xla_client.pjrt_plugin_initialized(plugin_name):
-        xla_client.initialize_pjrt_plugin(plugin_name)
+    if not xla_client.pjrt_plugin_initialized(plugin_name):
+      xla_client.initialize_pjrt_plugin(plugin_name)
 
     if distributed.global_state.client is None:
       return xla_client.make_c_api_client(plugin_name, options, None)
@@ -501,13 +486,9 @@ def register_plugin(
   register_backend_factory(plugin_name, factory, priority=priority,
                            fail_quietly=False, experimental=experimental)
   if library_path is not None:
-    if xla_extension_version >= 198:
-      c_api = xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)  # type: ignore
-      if xla_extension_version >= 203:
-        xla_client.profiler.register_plugin_profiler(c_api)
-      return c_api
-    else:
-      xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
+    c_api = xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)  # type: ignore
+    xla_client.profiler.register_plugin_profiler(c_api)
+    return c_api
   return None
 
 

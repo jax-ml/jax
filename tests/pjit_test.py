@@ -58,7 +58,6 @@ from jax.interpreters import mlir
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2, safe_zip
 
 config.parse_flags_with_absl()
@@ -402,10 +401,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     hlo = f.lower(np.ones(shape)).compiler_ir()
     # Annotation from with_sharding_constraint
-    if xla_extension_version >= 180:
-      self.assertIn('sharding = "{devices=[2,1]<=[2]}"', str(hlo))
-    else:
-      self.assertIn('sharding = "{devices=[2,1]0,1}"', str(hlo))
+    self.assertIn('sharding = "{devices=[2,1]<=[2]}"', str(hlo))
     # Annotation from pjit
     self.assertIn('sharding = "{replicated}"', str(hlo))
 
@@ -429,10 +425,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     hlo = f.lower(np.ones(shape)).compiler_ir(dialect="hlo")
     # Annotation from with_sharding_constraint
-    if xla_extension_version >= 180:
-      self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
-    else:
-      self.assertIn('sharding={devices=[2,1]0,1}', hlo.as_hlo_text())
+    self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
@@ -457,10 +450,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     hlo = f.lower(np.ones(shape)).compiler_ir(dialect="hlo")
     # Annotation from with_sharding_constraint
-    if xla_extension_version >= 180:
-      self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
-    else:
-      self.assertIn('sharding={devices=[2,1]0,1}', hlo.as_hlo_text())
+    self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
@@ -487,10 +477,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     hlo = f.lower(np.ones(shape)).compiler_ir(dialect="hlo")
     # Annotation from with_sharding_constraint
-    if xla_extension_version >= 180:
-      self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
-    else:
-      self.assertIn('sharding={devices=[2,1]0,1}', hlo.as_hlo_text())
+    self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
@@ -515,12 +502,8 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     hlo = f.lower(x).compiler_ir(dialect="hlo")
     # Annotations from with_sharding_constraint
-    if xla_extension_version >= 180:
-      self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
-      self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
-    else:
-      self.assertIn('sharding={devices=[2,1]0,1}', hlo.as_hlo_text())
-      self.assertIn('sharding={devices=[1,2]0,1}', hlo.as_hlo_text())
+    self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
+    self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
@@ -550,12 +533,8 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     hlo = f.lower(x).compiler_ir(dialect="hlo")
     # Annotations from with_sharding_constraint
-    if xla_extension_version >= 180:
-      self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
-      self.assertIn('sharding={devices=[1,2]<=[2]}', hlo.as_hlo_text())
-    else:
-      self.assertIn('sharding={devices=[2,1]0,1}', hlo.as_hlo_text())
-      self.assertIn('sharding={devices=[1,2]0,1}', hlo.as_hlo_text())
+    self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
+    self.assertIn('sharding={devices=[1,2]<=[2]}', hlo.as_hlo_text())
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 

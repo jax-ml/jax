@@ -19,7 +19,6 @@ from absl.testing import absltest
 import jax
 from jax import config
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version
 import jax.numpy as jnp
 from jax.sharding import NamedSharding
 from jax.sharding import PartitionSpec as P
@@ -41,8 +40,6 @@ class MockGPUTest(jtu.JaxTestCase):
     super().tearDown()
 
   def testMockWithSharding(self):
-    if xla_extension_version < 200:
-      return
     num_shards = 16
     jax.config.update('mock_num_gpus', num_shards)
     mesh = jtu.create_global_mesh((num_shards,), ('x',))

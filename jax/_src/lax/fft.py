@@ -31,7 +31,6 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version
 from jax._src.lib import ducc_fft
-from jax._src.lib import version as jaxlib_version
 from jax._src.numpy.util import promote_dtypes_complex, promote_dtypes_inexact
 
 __all__ = [
@@ -124,11 +123,6 @@ def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
 
 def _fft_lowering_cpu(ctx, x, *, fft_type, fft_lengths):
   x_aval, = ctx.avals_in
-  if jaxlib_version < (0, 4, 13):
-    if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
-      raise NotImplementedError("Shape polymorphism for custom call is not implemented (fft); b/261671778; try updating your jaxlib.")
-    return [ducc_fft.ducc_fft_hlo(x, x_aval.dtype, fft_type=fft_type,  # type: ignore
-                                  fft_lengths=fft_lengths)]
 
   in_shape = x_aval.shape
   dtype = x_aval.dtype

@@ -44,7 +44,6 @@ from jax._src.interpreters import xla
 from jax._src.layout import XLACompatibleLayout, LayoutRequest
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -2421,10 +2420,7 @@ def emit_python_callback(
       backend.get_emit_python_callback_descriptor(_wrapped_callback,
                                                   operand_shapes,
                                                   result_shapes))
-  if xla_extension_version >= 202:
-    ctx.module_context.add_host_callback(ifrt_callback)
-  else:
-    ctx.module_context.add_keepalive(ifrt_callback)
+  ctx.module_context.add_host_callback(ifrt_callback)
   descriptor_operand = ir_constant(callback_descriptor)
   callback_operands = [descriptor_operand, *operands]
   if operand_mlir_layouts is not None:

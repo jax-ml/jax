@@ -15,7 +15,6 @@
 import os
 import platform
 import time
-import unittest
 import warnings
 
 from absl import logging
@@ -26,7 +25,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import xla
-from jax._src.lib import xla_extension_version
 from jax._src.lib import xla_client as xc
 
 config.parse_flags_with_absl()
@@ -100,9 +98,6 @@ class XlaBridgeTest(jtu.JaxTestCase):
           no_profile_dont_retrieve,
       )
 
-  @unittest.skipIf(
-      xla_extension_version < 189, "Test requires jaxlib 0.4.15 or newer"
-  )
   def test_deterministic_serialization(self):
     c1 = compiler.get_compile_options(
         num_replicas=2,
@@ -174,23 +169,17 @@ class XlaBridgeTest(jtu.JaxTestCase):
           os.environ["PJRT_NAMES_AND_LIBRARY_PATHS"] = (
               "name1:path1,name2:path2,name3"
           )
-        if xla_extension_version < 203:
+        with mock.patch.object(
+            xc.profiler, "register_plugin_profiler", autospec=True
+        ):
           xb.register_pjrt_plugin_factories_from_env()
-        else:
-          with mock.patch.object(
-              xc.profiler, "register_plugin_profiler", autospec=True
-          ):
-            xb.register_pjrt_plugin_factories_from_env()
     registration = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
-      if xla_extension_version < 183:
-        registration.factory()
-      else:
-        with mock.patch.object(
-            xc, "pjrt_plugin_initialized", autospec=True, return_vale=True
-        ):
-          with mock.patch.object(xc, "initialize_pjrt_plugin", autospec=True):
-            registration.factory()
+      with mock.patch.object(
+          xc, "pjrt_plugin_initialized", autospec=True, return_vale=True
+      ):
+        with mock.patch.object(xc, "initialize_pjrt_plugin", autospec=True):
+          registration.factory()
 
     self.assertRegex(
         log_output[1][0],
@@ -213,23 +202,17 @@ class XlaBridgeTest(jtu.JaxTestCase):
         else f"name1:{test_json_file_path}"
     )
     with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
-      if xla_extension_version < 203:
+      with mock.patch.object(
+          xc.profiler, "register_plugin_profiler", autospec=True
+      ):
         xb.register_pjrt_plugin_factories_from_env()
-      else:
-        with mock.patch.object(
-            xc.profiler, "register_plugin_profiler", autospec=True
-        ):
-          xb.register_pjrt_plugin_factories_from_env()
     registration = xb._backend_factories["name1"]
     with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
-      if xla_extension_version < 183:
-        registration.factory()
-      else:
-        with mock.patch.object(
-            xc, "pjrt_plugin_initialized", autospec=True, return_vale=True
-        ):
-          with mock.patch.object(xc, "initialize_pjrt_plugin", autospec=True):
-            registration.factory()
+      with mock.patch.object(
+          xc, "pjrt_plugin_initialized", autospec=True, return_vale=True
+      ):
+        with mock.patch.object(xc, "initialize_pjrt_plugin", autospec=True):
+          registration.factory()
 
     self.assertIn("name1", xb._backend_factories)
     self.assertEqual(registration.priority, 400)

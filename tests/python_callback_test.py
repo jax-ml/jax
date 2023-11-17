@@ -30,7 +30,6 @@ from jax._src import maps
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax.experimental import io_callback
 from jax.experimental import pjit
 from jax.experimental.maps import xmap
@@ -773,7 +772,6 @@ class PureCallbackTest(jtu.JaxTestCase):
         out,
         np.arange(2 * jax.local_device_count()).reshape([-1, 2]) + 1.)
 
-  @unittest.skipIf(xla_extension_version < 202, "Test requires jaxlib 0.4.18")
   def test_callback_with_immediate_executable_destruction(self):
 
     def loop_body(i, x):

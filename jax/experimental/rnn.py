@@ -420,16 +420,10 @@ def rnn_abstract_eval(x_aval, h_0_aval, c_0_aval, w_aval, seq_lengths_aval,
   num_directions = 2 if bidirectional else 1
   output_shape = (batch_size, max_seq_length, num_directions * hidden_size)
   output_aval = core.ShapedArray(output_shape, x_aval.dtype)
-  if jax._src.lib.version >= (0, 4, 17):
-    _, reserve_space_size = (
-        gpu_rnn.compute_rnn_workspace_reserve_space_sizes(  # pytype: disable=attribute-error
-            input_size, hidden_size, num_layers, batch_size, max_seq_length,
-            dropout, bidirectional, cudnn_allow_tf32))
-  else:
-    _, reserve_space_size = (
-        gpu_rnn.compute_rnn_workspace_reserve_space_sizes(  # pytype: disable=attribute-error
-            input_size, hidden_size, num_layers, batch_size, max_seq_length,
-            dropout, bidirectional))
+  _, reserve_space_size = (
+      gpu_rnn.compute_rnn_workspace_reserve_space_sizes(  # pytype: disable=attribute-error
+          input_size, hidden_size, num_layers, batch_size, max_seq_length,
+          dropout, bidirectional, cudnn_allow_tf32))
   reserve_space_aval = core.ShapedArray((reserve_space_size,), jnp.float32)
   return output_aval, h_0_aval, c_0_aval, reserve_space_aval
 
@@ -443,14 +437,7 @@ rnn_fwd_p.multiple_results = True
 rnn_fwd_p.def_impl(partial(xla.apply_primitive, rnn_fwd_p))
 rnn_fwd_p.def_abstract_eval(rnn_abstract_eval)
 if gpu_rnn:
-  if jax._src.lib.version >= (0, 4, 17):
-    mlir.register_lowering(rnn_fwd_p, gpu_rnn.cudnn_rnn_lowering, platform='cuda')
-  else:
-    mlir.register_lowering(
-      rnn_fwd_p,
-      partial(_gpu_lowering_strip_tf32, gpu_rnn.cudnn_rnn_lowering),
-      platform='cuda'
-    )
+  mlir.register_lowering(rnn_fwd_p, gpu_rnn.cudnn_rnn_lowering, platform='cuda')
 
 
 def lstm_bwd(input_size: int, hidden_size: int, num_layers: int, dropout: float,
@@ -492,14 +479,7 @@ rnn_bwd_p.multiple_results = True
 rnn_bwd_p.def_impl(partial(xla.apply_primitive, rnn_bwd_p))
 rnn_bwd_p.def_abstract_eval(rnn_bwd_abstract_eval)
 if gpu_rnn:
-  if jax._src.lib.version >= (0, 4, 17):
-    mlir.register_lowering(
-        rnn_bwd_p, gpu_rnn.cudnn_rnn_bwd_lowering, platform='cuda')
-  else:
-    mlir.register_lowering(
-      rnn_bwd_p,
-      partial(_gpu_lowering_strip_tf32, gpu_rnn.cudnn_rnn_bwd_lowering),
-      platform='cuda'
-    )
+  mlir.register_lowering(
+      rnn_bwd_p, gpu_rnn.cudnn_rnn_bwd_lowering, platform='cuda')
 
 lstm.defvjp(lstm_fwd, lstm_bwd)

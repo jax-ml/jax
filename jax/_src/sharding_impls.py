@@ -35,7 +35,6 @@ from jax._src import util
 from jax._src import xla_bridge
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.partition_spec import PartitionSpec
 
 import numpy as np
@@ -217,8 +216,6 @@ class NamedSharding(XLACompatibleSharding):
   _memory_kind: str | None
   _parsed_pspec: ParsedPartitionSpec
   _manual_axes: frozenset[MeshAxisName]
-  if xla_extension_version < 188:
-    _manual_axes = frozenset()
 
   @use_cpp_method()
   def __init__(
@@ -257,10 +254,9 @@ class NamedSharding(XLACompatibleSharding):
             {'memory_kind': self.memory_kind,
              '_manual_axes': self._manual_axes})
 
-  if xla_extension_version >= 178:
-    @property
-    def memory_kind(self) -> str | None:
-      return self._memory_kind
+  @property
+  def memory_kind(self) -> str | None:
+    return self._memory_kind
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
@@ -293,13 +289,9 @@ class NamedSharding(XLACompatibleSharding):
   def _from_parsed_pspec(
       cls, mesh, parsed_pspec, *, memory_kind=None, _manual_axes=frozenset()
   ):
-    if xla_extension_version >= 188:
-      return cls(mesh, parsed_pspec.get_partition_spec(),
-                 memory_kind=memory_kind, _parsed_pspec=parsed_pspec,
-                 _manual_axes=_manual_axes)
-    else:
-      return cls(mesh, parsed_pspec.get_partition_spec(),
-                 memory_kind=memory_kind, _parsed_pspec=parsed_pspec)
+    return cls(mesh, parsed_pspec.get_partition_spec(),
+                memory_kind=memory_kind, _parsed_pspec=parsed_pspec,
+                _manual_axes=_manual_axes)
 
   @property
   def device_set(self) -> set[Device]:
@@ -350,20 +342,8 @@ class NamedSharding(XLACompatibleSharding):
         special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
     return sharding_spec, special_axes
 
-  if xla_extension_version >= 188:
-    def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
-      return named_sharding_to_xla_hlo_sharding(self, num_dimensions)
-  else:
-    def _to_xla_hlo_sharding(  # type: ignore
-        self, num_dimensions: int,
-        axis_ctx: SPMDAxisContext | ShardingContext | None = None
-    ) -> xc.HloSharding:
-      manual_axes = None
-      if axis_ctx is not None and isinstance(axis_ctx, SPMDAxisContext):
-        manual_axes = axis_ctx.manual_axes  # type: ignore
-      sharding_spec, special_axes = self._get_sharding_spec(
-          num_dimensions, manual_axes)
-      return sharding_spec.sharding_proto(special_axes=special_axes)
+  def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
+    return named_sharding_to_xla_hlo_sharding(self, num_dimensions)
 
 
 @functools.lru_cache
@@ -472,20 +452,13 @@ class PmapSharding(XLACompatibleSharding):
       return False
     if id(self) == id(other):
       return True
-    if xla_extension_version >= 185:
-      return (self.sharding_spec == other.sharding_spec and
-              self.devices.shape == other.devices.shape and
-              self._internal_device_list == other._internal_device_list)  # type: ignore
-    else:
-      return (self.sharding_spec == other.sharding_spec and
-              np.array_equal(self.devices, other.devices))
+    return (self.sharding_spec == other.sharding_spec and
+            self.devices.shape == other.devices.shape and
+            self._internal_device_list == other._internal_device_list)  # type: ignore
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      if xla_extension_version >= 185:
-        self._hash = hash((self._internal_device_list, self.sharding_spec))  # type: ignore
-      else:
-        self._hash = hash((tuple(self.devices.flat), self.sharding_spec))
+      self._hash = hash((self._internal_device_list, self.sharding_spec))  # type: ignore
     return self._hash
 
   def __str__(self):
@@ -551,12 +524,9 @@ class PmapSharding(XLACompatibleSharding):
 
   @property
   def memory_kind(self) -> str | None:
-    if xla_extension_version >= 182:
-      try:
-        return self._internal_device_list.default_memory_kind  # type: ignore
-      except:
-        return None
-    else:
+    try:
+      return self._internal_device_list.default_memory_kind  # type: ignore
+    except:
       return None
 
   def with_memory_kind(self, kind: str):
@@ -574,10 +544,7 @@ class PmapSharding(XLACompatibleSharding):
 
   @functools.cached_property
   def is_fully_addressable(self) -> bool:
-    if xla_extension_version >= 188:
-      return self._internal_device_list.is_fully_addressable  # type: ignore
-    else:
-      return len(self.device_set) == len(self.addressable_devices)  # type: ignore
+    return self._internal_device_list.is_fully_addressable  # type: ignore
 
   def shard_shape(self, global_shape: Shape) -> Shape:
     sharded_dim = None
@@ -665,10 +632,9 @@ class PositionalSharding(XLACompatibleSharding):
     name = self._devices[0].platform.upper()
     self._ids = np.array([DeviceIdSet(name, i) for i in range(devices.size)],
                          dtype='object').reshape(devices.shape)
-    if xla_extension_version >= 182:
-      self._internal_device_list = xc.DeviceList(self._devices)
-      self._memory_kind = xc.check_and_canonicalize_memory_kind(
-          self._memory_kind, self._internal_device_list)
+    self._internal_device_list = xc.DeviceList(self._devices)
+    self._memory_kind = xc.check_and_canonicalize_memory_kind(
+        self._memory_kind, self._internal_device_list)
 
   @property
   def shape(self):
@@ -707,22 +673,16 @@ class PositionalSharding(XLACompatibleSharding):
     self = cls.__new__(cls)
     self._devices = devices
     self._ids = ids
-    if xla_extension_version >= 182:
-      self._internal_device_list = xc.DeviceList(self._devices)
-      self._memory_kind = xc.check_and_canonicalize_memory_kind(
-          memory_kind, self._internal_device_list)
-    else:
-      self._memory_kind = memory_kind
+    self._internal_device_list = xc.DeviceList(self._devices)
+    self._memory_kind = xc.check_and_canonicalize_memory_kind(
+        memory_kind, self._internal_device_list)
     return self
 
   # Hashable
 
   def __hash__(self) -> int:
     if not hasattr(self, '_hash'):
-      if xla_extension_version >= 182:
-        self._hash = hash((self._internal_device_list, self.memory_kind))
-      else:
-        self._hash = hash((self._devices, self.memory_kind))
+      self._hash = hash((self._internal_device_list, self.memory_kind))
     return self._hash
 
   def __eq__(self, other) -> bool:
@@ -735,12 +695,8 @@ class PositionalSharding(XLACompatibleSharding):
     if (id(self._devices) == id(other._devices) and mem_kind_equal and
         all_ids_equal):
       return True
-    if xla_extension_version >= 182:
-      return (mem_kind_equal and all_ids_equal and
-              self._internal_device_list == other._internal_device_list)
-    else:
-      return (self._devices == other._devices and mem_kind_equal and
-              all_ids_equal)
+    return (mem_kind_equal and all_ids_equal and
+            self._internal_device_list == other._internal_device_list)
 
   # Sharding interface
 
@@ -770,10 +726,7 @@ class PositionalSharding(XLACompatibleSharding):
 
   @functools.cached_property
   def is_fully_addressable(self) -> bool:
-    if xla_extension_version >= 188:
-      return self._internal_device_list.is_fully_addressable
-    else:
-      return len(self.device_set) == len(self.addressable_devices)  # type: ignore
+    return self._internal_device_list.is_fully_addressable
 
 
 class DeviceIdSet:
@@ -831,14 +784,6 @@ class GSPMDSharding(XLACompatibleSharding):
       self._hlo_sharding = op_sharding
     self._memory_kind = memory_kind
 
-  if xla_extension_version < 182:
-    def _preprocess(self):
-      # Preprocessing is no longer necessary, but the method must exist for a
-      # previous release of jaxlib that calls back this method from C++>
-      # TODO(yashkatariya): Remove this method once jaxlib with
-      # xla_extension_version >= 182 is released.
-      pass
-
   def __reduce__(self):
     return (type(self), (self._devices, self._hlo_sharding.to_proto()),
             {'memory_kind': self._memory_kind})
@@ -852,23 +797,14 @@ class GSPMDSharding(XLACompatibleSharding):
       return False
     if id(self) == id(other):
       return True
-    if xla_extension_version >= 185:
-      return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
-              and self.memory_kind == other.memory_kind
-              and self._internal_device_list == other._internal_device_list)  # type: ignore
-    else:
-      return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
-              and self._devices == other._devices and
-              self.memory_kind == other.memory_kind)
+    return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
+            and self.memory_kind == other.memory_kind
+            and self._internal_device_list == other._internal_device_list)  # type: ignore
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      if xla_extension_version >= 185:
-        self._hash = hash((self._internal_device_list, self._hlo_sharding_hash,  # type: ignore
-                          self.memory_kind))
-      else:
-        self._hash = hash((self._devices, self._hlo_sharding_hash,
-                          self.memory_kind))
+      self._hash = hash((self._internal_device_list, self._hlo_sharding_hash,  # type: ignore
+                        self.memory_kind))
     return self._hash
 
   def __repr__(self):
@@ -910,10 +846,7 @@ class GSPMDSharding(XLACompatibleSharding):
 
   @functools.cached_property
   def is_fully_addressable(self) -> bool:
-    if xla_extension_version >= 188:
-      return self._internal_device_list.is_fully_addressable  # type: ignore
-    else:
-      return len(self.device_set) == len(self.addressable_devices)  # type: ignore
+    return self._internal_device_list.is_fully_addressable  # type: ignore
 
   @classmethod
   def get_replicated(cls, device_assignment, *, memory_kind: str | None = None):

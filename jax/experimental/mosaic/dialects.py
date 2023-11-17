@@ -15,7 +15,5 @@
 """Contains bindings for Mosaic MLIR dialects."""
 
 from jax._src.lib import tpu_mosaic
-# TODO(sharadmv): remove when minimum jaxlib version is bumped to >= 0.4.14.
-if tpu_mosaic is None:
-  raise ValueError("Cannot use Mosaic without a jaxlib >= 0.4.14.")
+
 tpu = tpu_mosaic.tpu

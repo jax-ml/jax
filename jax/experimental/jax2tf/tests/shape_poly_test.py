@@ -1053,8 +1053,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     def f_jax(x):  # x: f32[a + 2*b, a, a + b + c]
       return 0.
 
-    if shape == (8, 2, 6) and jaxlib_version <= (0, 4, 14):
-      raise unittest.SkipTest("Test requires jaxlib >= 0.4.14")
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     with contextlib.ExitStack() as stack:
       if expect_error is not None:

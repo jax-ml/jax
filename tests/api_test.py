@@ -57,7 +57,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -741,8 +740,6 @@ class JitTest(jtu.BufferDonationTestCase):
     assert x() is not None  # x is still around
     g()                     # g still runs
     del g                   # no more references to x
-    if jax._src.lib.xla_extension_version < 200:
-      gc.collect()            # garbage collect the executable.
     assert x() is None      # x is gone
 
   def test_jit_of_nonweakreferenceable_function(self):
@@ -1273,9 +1270,6 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertIn("jax.result_info = \"['a']\"", mhlo_str)
     self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
 
-  @unittest.skipIf(
-      xla_extension_version < 194, "Test requires xla_extension_version >= 194"
-  )
   def test_jit_lower_compile_with_compiler_options(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.

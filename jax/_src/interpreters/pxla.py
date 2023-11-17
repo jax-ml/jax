@@ -1860,59 +1860,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
           nreps, tuple_args, lowering_result.shape_poly_state)
 
 
-if xla_extension_version >= 181:
-  _DeviceAssignment = xc.DeviceList
-else:
-  @dataclasses.dataclass(frozen=True)
-  class _DeviceAssignment:  # type: ignore
-    _device_assignment: tuple[xc.Device, ...]
-
-    @cached_property
-    def _hash(self) -> int:
-      return hash(self._device_assignment)
-
-    def __hash__(self) -> int:
-      return self._hash
-
-    def __eq__(self, other: Any) -> bool:
-      if not isinstance(other, _DeviceAssignment):
-        return False
-      if id(self) == id(other):
-        return True
-      return (self._device_assignment == other._device_assignment)
-
-    def __len__(self) -> int:
-      return len(self._device_assignment)
-
-    def __getitem__(self, index: Any) -> Any:
-      return self._device_assignment[index]
-
-    def __iter__(self) -> Iterator[xc.Device]:
-      return iter(self._device_assignment)
-
-    @cached_property
-    def is_fully_addressable(self) -> bool:
-      return len(self._device_assignment) == len(
-          self.addressable_device_list._device_assignment
-      )
-
-    @cached_property
-    def addressable_device_list(self) -> _DeviceAssignment:  # type: ignore
-      return _create_da_object(
-          tuple(d for d in self._device_assignment
-              if d.process_index == d.client.process_index()))
-
-    @cached_property
-    def memory_kinds(self) -> tuple[str, ...]:
-      # Keep this method unimplemented as it will not be called if
-      # xla_extension_version is low.
-      raise NotImplementedError("memory_kinds is not supported")
-
-    @cached_property
-    def default_memory_kind(self) -> Optional[str]:
-      # Keep this method unimplemented as it will not be called if
-      # xla_extension_version is low.
-      raise NotImplementedError("default_memory_kind is not supported")
+_DeviceAssignment = xc.DeviceList
 
 
 @lru_cache(maxsize=2048)

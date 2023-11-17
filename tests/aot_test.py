@@ -21,7 +21,6 @@ from jax import config
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax.experimental import topologies
 from jax.experimental.pjit import pjit
 from jax.experimental.serialize_executable import (
@@ -100,7 +99,6 @@ class JaxAotTest(jtu.JaxTestCase):
         lower_and_load(ref_mesh).as_text(), lower_and_load(aot_mesh).as_text()
     )
 
-  @unittest.skipIf(xla_extension_version < 175, 'Test requires jaxlib 0.4.15')
   def test_get_topology_from_devices(self):
     try:
       aot_topo = topologies.get_topology_desc(

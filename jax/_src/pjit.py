@@ -54,7 +54,6 @@ from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.sharding_impls import (
     NamedSharding, XLACompatibleSharding, GSPMDSharding,
     XLADeviceAssignment, SingleDeviceSharding, PmapSharding,
@@ -1965,13 +1964,8 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding,
   if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
     mesh = resource_env.physical_mesh
     parsed_pspec = parse_flatten_op_sharding(sharding._hlo_sharding, mesh)[0]
-    if xla_extension_version >= 188:
-      sharding = NamedSharding._from_parsed_pspec(
-          mesh, parsed_pspec, _manual_axes=axis_ctx.manual_axes)
-    else:
-      mps = NamedSharding._from_parsed_pspec(mesh, parsed_pspec)
-      sharding = GSPMDSharding(
-          mps._device_assignment, mps._to_xla_hlo_sharding(aval.ndim, axis_ctx=axis_ctx))
+    sharding = NamedSharding._from_parsed_pspec(
+        mesh, parsed_pspec, _manual_axes=axis_ctx.manual_axes)
   return [
       mlir.wrap_with_sharding_op(ctx,
           x_node, out_aval,

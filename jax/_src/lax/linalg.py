@@ -44,7 +44,6 @@ from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -444,16 +443,9 @@ def _cholesky_cpu_lowering(ctx, operand):
   operand_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
-  if jaxlib_version < (0, 4, 13):
-    if not is_constant_shape(operand_aval.shape):
-      raise NotImplementedError(
-          "Shape polymorphism for native serialization for cholesky on CPU is "
-          f"not implemented; b/261671778; {operand_aval.shape}")
-    result, info = lapack.potrf_hlo(operand_aval.dtype, operand, lower=True)  # type: ignore
-  else:
-    op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-    result, info = lapack.potrf_hlo(operand_aval.dtype, operand, lower=True,
-                                    a_shape_vals=op_shape_vals)
+  op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
+  result, info = lapack.potrf_hlo(operand_aval.dtype, operand, lower=True,
+                                  a_shape_vals=op_shape_vals)
 
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
@@ -514,23 +506,11 @@ def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
   operand_aval, = ctx.avals_in
   out_aval = ctx.avals_out[0]
   batch_dims = operand_aval.shape[:-2]
-  if jaxlib_version < (0, 4, 13):
-    if any(not is_constant_shape(a.shape) for a in ctx.avals_in):
-      raise NotImplementedError(
-          "Shape polymorphism for eig is not implemented. "
-          "Try upgrading jaxlib")
-    w, vl, vr, info = lapack.geev_hlo(operand_aval.dtype, operand,  # type: ignore
-                                      jobvl=compute_left_eigenvectors,
-                                      jobvr=compute_right_eigenvectors)
-  else:
-    if jaxlib_version < (0, 4, 14):
-      op_shape_vals = mlir.eval_dynamic_shape_as_vals(ctx, operand_aval.shape)
-    else:
-      op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-    w, vl, vr, info = lapack.geev_hlo(operand_aval.dtype, operand,
-                                      input_shape_vals=op_shape_vals,
-                                      jobvl=compute_left_eigenvectors,
-                                      jobvr=compute_right_eigenvectors)
+  op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
+  w, vl, vr, info = lapack.geev_hlo(operand_aval.dtype, operand,
+                                    input_shape_vals=op_shape_vals,
+                                    jobvl=compute_left_eigenvectors,
+                                    jobvr=compute_right_eigenvectors)
 
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
@@ -732,21 +712,9 @@ def _eigh_cpu_gpu_lowering(
   if not (subset_by_index is None or subset_by_index == (0, n)):
     raise NotImplementedError("subset_by_index not implemented for CPU and GPU")
 
-  if jaxlib_version < (0, 4, 14):
-    batch_size_num = math.prod(batch_dims) if batch_dims else 1
-    batch_size = mlir.eval_dynamic_shape(ctx, (batch_size_num,))[0]
-    if isinstance(batch_size, int):
-      batch_size = mlir.ir_constant(np.int32(batch_size))
-    v_shape: ir.Value = mlir.eval_dynamic_shape_as_tensor(ctx, v_aval.shape)
-    w_shape: ir.Value = mlir.eval_dynamic_shape_as_tensor(ctx, w_aval.shape)
-    info_shape: ir.Value = mlir.eval_dynamic_shape_as_tensor(ctx, batch_dims)
-    v, w, info = syevd_impl(operand_aval.dtype, operand, batch_size,
-                            v_shape, w_shape, info_shape,
-                            lower=lower)
-  else:
-    op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-    v, w, info = syevd_impl(operand_aval.dtype, operand,
-                            a_shape_vals=op_shape_vals, lower=lower)
+  op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
+  v, w, info = syevd_impl(operand_aval.dtype, operand,
+                          a_shape_vals=op_shape_vals, lower=lower)
 
   zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
   ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")
@@ -1034,16 +1002,11 @@ def _triangular_solve_cpu_lower(
     conjugate_a = False
   if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
     alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
-    if jaxlib_version < (0, 4, 14):
-      return [lapack.trsm_hlo(
-        a_aval.dtype, alpha,
-        a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)]  # type: ignore
-    else:
-      b_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, b_aval.shape)
-      return [lapack.trsm_hlo(
-        a_aval.dtype, alpha,
-        a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal,
-        b_shape_vals=b_shape_vals)]
+    b_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, b_aval.shape)
+    return [lapack.trsm_hlo(
+      a_aval.dtype, alpha,
+      a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal,
+      b_shape_vals=b_shape_vals)]
   else:
     # Fall back to the HLO implementation for unsupported types or batching.
     # TODO: Consider swapping XLA for LAPACK in batched case
@@ -1322,7 +1285,7 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand, *,
   out_aval, pivot_aval, perm_aval = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   m = operand_aval.shape[-2]
-  if platform in ["cuda", "rocm"] or jaxlib_version < (0, 4, 14):
+  if platform in ["cuda", "rocm"]:
     # TODO(necula): remove the platform kwarg when we implement GPU support.
     if not is_constant_shape(operand_aval.shape):
       raise NotImplementedError(
@@ -1524,7 +1487,7 @@ def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a, *,
     return mlir.full_like_aval(ctx, 0, a_aval), mlir.full_like_aval(ctx, 0, taus_aval)
 
   if not is_constant_shape(a_aval.shape):
-    if platform in ["cuda", "rocm"] or jaxlib_version < (0, 4, 13):
+    if platform in ["cuda", "rocm"]:
       # TODO(necula): remove the platform kwarg when we implement GPU support.
       raise NotImplementedError(
           "Shape polymorphism for native serialization for QR is not "
@@ -1534,7 +1497,7 @@ def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a, *,
       n // batch <= 128):
     a_out, taus = batched_geqrf_impl(a_aval.dtype, a)
   else:
-    if platform in ["cuda", "rocm"] or jaxlib_version < (0, 4, 13):
+    if platform in ["cuda", "rocm"]:
       a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)  # type: ignore
     else:
       a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
@@ -1643,7 +1606,7 @@ def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus, *,
   if m == 0 or n == 0:
     return [mlir.full_like_aval(ctx, 0, a_aval)]
 
-  if platform in ["rocm", "cuda"] or jaxlib_version < (0, 4, 13):
+  if platform in ["rocm", "cuda"]:
     # TODO(necula): remove the platform kwarg when we implement GPU support.
     if not is_constant_shape(a_aval.shape):
       raise NotImplementedError(
@@ -1865,7 +1828,7 @@ def _svd_cpu_gpu_lowering(gesvd_impl, ctx, operand, *, full_matrices,
     return mlir.lower_fun(_empty_svd, multiple_results=True)(
       ctx, operand, full_matrices=full_matrices, compute_uv=compute_uv)
 
-  if platform in ["cuda", "rocm"] or jaxlib_version < (0, 4, 13):
+  if platform in ["cuda", "rocm"]:
     if not is_constant_shape(operand_aval.shape):
       # TODO(necula): remove the platform kwarg when we implement GPU support.
       raise NotImplementedError(
@@ -1973,13 +1936,9 @@ mlir.register_lowering(svd_p, _svd_tpu_lowering_rule)
 def _tridiagonal_solve_gpu_lowering(lowering, ctx, dl, d, du, b, *, m, n, ldb, t):
   _, _, _, b_aval = ctx.avals_in
   b_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, b_aval.shape)
-  if jaxlib_version >= (0, 4, 15):
-    return [lowering(
-        dl, d, du, b, m=m, n=n, ldb=ldb, t=dtypes.canonicalize_dtype(t),
-        b_shape_vals=b_shape_vals)]
-  else:
-    return [lowering(
-        dl, d, du, b, m=m, n=n, ldb=ldb, t=dtypes.canonicalize_dtype(t))]
+  return [lowering(
+      dl, d, du, b, m=m, n=n, ldb=ldb, t=dtypes.canonicalize_dtype(t),
+      b_shape_vals=b_shape_vals)]
 
 
 def _tridiagonal_solve_transpose_rule(cotangent, dl, d, du, b, *, m, n, ldb, t):
@@ -2184,18 +2143,12 @@ def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
   operand_aval, = ctx.avals_in
   batch_dims = operand_aval.shape[:-2]
 
-  if jaxlib_version < (0, 4, 14):
-    gees_result = lapack.gees_hlo(operand_aval.dtype, operand,
-                                  jobvs=compute_schur_vectors,
-                                  sort=sort_eig_vals,
-                                  select=select_callable)  # type: ignore
-  else:
-    a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-    gees_result = lapack.gees_hlo(operand_aval.dtype, operand,
-                                  jobvs=compute_schur_vectors,
-                                  sort=sort_eig_vals,
-                                  select=select_callable,
-                                  a_shape_vals=a_shape_vals)
+  a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
+  gees_result = lapack.gees_hlo(operand_aval.dtype, operand,
+                                jobvs=compute_schur_vectors,
+                                sort=sort_eig_vals,
+                                select=select_callable,
+                                a_shape_vals=a_shape_vals)
 
   # Number of return values depends on value of sort_eig_vals.
   T, vs, *_, info = gees_result

@@ -96,9 +96,6 @@ class CacheKeyTest(jtu.JaxTestCase):
     )
     self.assertNotEqual(hash1, hash3)
 
-  @unittest.skipIf(
-      xla_extension_version < 193, "Test requires jaxlib 0.4.15 or newer"
-  )
   def test_serialized_compile_options(self):
     compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
@@ -129,9 +126,6 @@ class CacheKeyTest(jtu.JaxTestCase):
     )
     self.assertEqual(hash1, hash2)
 
-  @unittest.skipIf(
-      xla_extension_version < 193, "Test requires jaxlib 0.4.15 or newer"
-  )
   @jtu.skip_on_devices("cpu")
   def test_hash_accelerator_devices(self):
     if xla_extension_version < 209 and xla_bridge.using_pjrt_c_api():

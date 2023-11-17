@@ -13,21 +13,20 @@
 # limitations under the License.
 
 # ruff: noqa: F401
+import jaxlib.mlir.dialects.arith as arith
 import jaxlib.mlir.dialects.builtin as builtin
 import jaxlib.mlir.dialects.chlo as chlo
+import jaxlib.mlir.dialects.math as math
+import jaxlib.mlir.dialects.memref as memref
 import jaxlib.mlir.dialects.mhlo as mhlo
 import jaxlib.mlir.dialects.func as func
 import jaxlib.mlir.dialects.ml_program as ml_program
+import jaxlib.mlir.dialects.scf as scf
 import jaxlib.mlir.dialects.sparse_tensor as sparse_tensor
+import jaxlib.mlir.dialects.vector as vector
 
 from jax._src import lib
-# TODO(sharadmv): remove guard when minimum jaxlib version is bumped
-if lib.version >= (0, 4, 15):
-  import jaxlib.mlir.dialects.arith as arith
-  import jaxlib.mlir.dialects.math as math
-  import jaxlib.mlir.dialects.memref as memref
-  import jaxlib.mlir.dialects.scf as scf
-  import jaxlib.mlir.dialects.vector as vector
+
 
 # Alias that is set up to abstract away the transition from MHLO to StableHLO.
 import jaxlib.mlir.dialects.stablehlo as hlo

@@ -36,7 +36,6 @@ from jax._src import util
 from jax._src.lax.control_flow import for_loop
 from jax._src.lib import gpu_triton as triton_kernel_call_lib
 from jax._src.lib import hlo_helpers
-from jax._src.lib import version
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import indexing
@@ -1599,10 +1598,7 @@ def pallas_call_lowering(
   if triton_params is None:
     triton_params = {}
   serialized_metadata = triton_params.get("serialized_metadata", b"")
-  if version >= (0, 4, 15):
-    kernel_call_proto = kernel_call.to_proto(name, serialized_metadata)
-  else:
-    kernel_call_proto = kernel_call.to_proto(serialized_metadata)
+  kernel_call_proto = kernel_call.to_proto(name, serialized_metadata)
   return hlo_helpers.custom_call(
       call_target_name="triton_kernel_call",
       result_types=out_types,

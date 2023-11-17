@@ -21,7 +21,6 @@ import jax.dlpack
 import jax.numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version
 
 import numpy as np
 
@@ -91,9 +90,6 @@ class DLPackTest(jtu.JaxTestCase):
     gpu=[False, True],
   )
   def testJaxArrayRoundTrip(self, shape, dtype, gpu):
-    if xla_extension_version < 191:
-      self.skipTest("Need xla_extension_version >= 191")
-
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
     if gpu and jax.default_backend() == "cpu":

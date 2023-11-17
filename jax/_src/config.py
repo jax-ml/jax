@@ -30,7 +30,6 @@ from jax._src.lib import jax_jit
 from jax._src.lib import transfer_guard_lib
 from jax._src.lib import xla_client
 from jax._src import logging_config
-from jax._src.lib import xla_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -829,12 +828,10 @@ pmap_shmap_merge = define_bool_state(
     help='If True, pmap and shard_map API will be merged.')
 
 def _update_jax_memories_global(val):
-  if xla_extension_version >= 190:
-    lib.jax_jit.global_state().enable_memories = val
+  lib.jax_jit.global_state().enable_memories = val
 
 def _update_jax_memories_thread_local(val):
-  if xla_extension_version >= 190:
-    lib.jax_jit.thread_local_state().enable_memories = val
+  lib.jax_jit.thread_local_state().enable_memories = val
 
 enable_memories = define_bool_state(
     'jax_enable_memories',

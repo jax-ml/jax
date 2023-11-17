@@ -46,7 +46,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.monitoring import record_event_duration_secs
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
@@ -151,15 +150,12 @@ def xla_primitive_callable(
       inline=True, in_avals=in_avals, in_shardings=orig_in_shardings.shardings,
       lowering_parameters=mlir.LoweringParameters())
   compiled = computation.compile()
-  if xla_extension_version >= 192:
-    if config.disable_jit.value:
-      call = compiled.unsafe_call
-    else:
-      call = compiled.create_cpp_call_for_apply_primitive(out_tree())
-      if call is None:
-        call = compiled.unsafe_call
-  else:
+  if config.disable_jit.value:
     call = compiled.unsafe_call
+  else:
+    call = compiled.create_cpp_call_for_apply_primitive(out_tree())
+    if call is None:
+      call = compiled.unsafe_call
   if not prim.multiple_results:
     return lambda *args, **kw: call(*args, **kw)[0]
   else:

@@ -63,7 +63,6 @@ from jax._src.api_util import (
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (PmapSharding, TransferToMemoryKind,
@@ -1745,13 +1744,10 @@ class _PmapFastpathData(NamedTuple):
   out_handler: Any
   out_pytree_def: Any
   # Data needed to handle the inputs.
-  input_sharding_specs: Sequence[sharding_specs.ShardingSpec] | None
   input_devices: Sequence[xc.Device]
   input_indices: Sequence[sharding_specs.Index]
   input_array_shardings: Sequence[Any]
   # Data needed to build the Array from C++.
-  out_sharding_specs: Sequence[sharding_specs.ShardingSpec] | None
-  out_indices: Sequence[sharding_specs.Index] | None
   out_avals: Sequence[Any]
   out_array_shardings: Sequence[Any]
   out_committed: Sequence[Any]
@@ -1829,36 +1825,15 @@ def _cpp_pmap(
 
       out_array_shardings = [out.sharding for out in out_flat]
       out_committed = [out._committed for out in out_flat]
-      input_sharding_specs = None
-      out_sharding_specs = None
-      out_indices = None
-      # TODO(phawkins): remove sharding specs once minimum jaxlib is 0.4.15.
-      if xla_extension_version < 176:
-        input_sharding_specs = [
-            i.sharding_spec for i in in_handler.in_shardings
-        ]
-        out_sharding_specs = [
-            s.sharding_spec for s in out_handler.out_shardings
-        ]
-        out_indices = [
-            tuple(s.devices_indices_map(a.shape).values())
-            for s, a in safe_zip(
-                out_handler.out_shardings, out_handler.out_avals
-            )
-        ]
-
       fastpath_data = _PmapFastpathData(
           version=1,
           xla_executable=execute_replicated.xla_executable,
           in_handler=in_handler,
           out_handler=out_handler,
           out_pytree_def=out_pytree_def,
-          input_sharding_specs=input_sharding_specs,
           input_devices=in_handler.local_devices,
           input_indices=in_handler.input_indices,
           input_array_shardings=in_handler.in_shardings,
-          out_sharding_specs=out_sharding_specs,
-          out_indices=out_indices,
           out_avals=out_handler.out_avals,
           out_array_shardings=out_array_shardings,
           out_committed=out_committed,

@@ -22,7 +22,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 import jax.numpy as jnp
 
 config.parse_flags_with_absl()
@@ -89,9 +88,6 @@ class DLPackTest(jtu.JaxTestCase):
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
   def testJaxArrayToTorch(self, shape, dtype):
-    if xla_extension_version < 186:
-      self.skipTest("Need xla_extension_version >= 186")
-
     if not config.enable_x64.value and dtype in [
         jnp.int64,
         jnp.float64,
@@ -145,9 +141,6 @@ class DLPackTest(jtu.JaxTestCase):
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
   def testTorchToJaxArray(self, shape, dtype):
-    if xla_extension_version < 191:
-      self.skipTest("Need xla_extension_version >= 191")
-
     if not config.enable_x64.value and dtype in [
         jnp.int64,
         jnp.float64,

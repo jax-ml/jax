@@ -27,7 +27,6 @@ import jax
 import jax.numpy as jnp
 import jax.profiler
 from jax import config
-from jax._src.lib import xla_extension_version
 import jax._src.test_util as jtu
 
 try:
@@ -110,8 +109,6 @@ class ProfilerTest(unittest.TestCase):
       self.assertIn(b"pxla.py", proto)
 
   def testProfilerGetFDOProfile(self):
-    if xla_extension_version < 206:
-      raise unittest.SkipTest("API version < 206")
     # TODO(jieying): remove after 01/10/2023.
     if not jtu.pjrt_c_api_version_at_least(0, 34):
       raise unittest.SkipTest(
