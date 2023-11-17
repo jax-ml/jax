@@ -46,7 +46,7 @@ def _roots_no_zeros(p: Array) -> Array:
 
 
 @jit
-def _roots_with_zeros(p: Array, num_leading_zeros: int) -> Array:
+def _roots_with_zeros(p: Array, num_leading_zeros: Array | int) -> Array:
   # Avoid lapack errors when p is all zero
   p = _where(len(p) == num_leading_zeros, 1.0, p)
   # Roll any leading zeros to the end & compute the roots
@@ -85,7 +85,7 @@ strip_zeros : bool, default=True
 """)
 def roots(p: ArrayLike, *, strip_zeros: bool = True) -> Array:
   check_arraylike("roots", p)
-  p_arr = atleast_1d(*promote_dtypes_inexact(p))
+  p_arr = atleast_1d(promote_dtypes_inexact(p)[0])
   if p_arr.ndim != 1:
     raise ValueError("Input must be a rank-1 array.")
   if p_arr.size < 2:
@@ -96,7 +96,7 @@ def roots(p: ArrayLike, *, strip_zeros: bool = True) -> Array:
     num_leading_zeros = core.concrete_or_error(int, num_leading_zeros,
       "The error occurred in the jnp.roots() function. To use this within a "
       "JIT-compiled context, pass strip_zeros=False, but be aware that leading zeros "
-      "will be result in some returned roots being set to NaN.")
+      "will result in some returned roots being set to NaN.")
     return _roots_no_zeros(p_arr[num_leading_zeros:])
   else:
     return _roots_with_zeros(p_arr, num_leading_zeros)
