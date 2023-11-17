@@ -1839,12 +1839,12 @@ def _gather_lower(ctx, operand, indices, *,
     return hlo.DynamicGatherOp.build_generic(
         results=results, operands=operands, attributes=attributes).results
   else:
-    return hlo.GatherOp(
+    return [hlo.gather(
         operand,
         indices,
         dnums,
         mlir.dense_int_elements(slice_sizes),
-        indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
+        indices_are_sorted=ir.BoolAttr.get(indices_are_sorted))]
 
 mlir.register_lowering(gather_p, _gather_lower)
 
@@ -2499,7 +2499,7 @@ def _scatter_lower(ctx, operand, indices, updates, *,
         update_ctx, update_jaxpr, mlir.TokenSet(), update_consts,
         (update.arguments[0],), (update.arguments[1],),
         dim_var_values=ctx.dim_var_values)
-    hlo.ReturnOp(util.flatten(out_nodes))
+    hlo.return_(util.flatten(out_nodes))
   return op.results
 
 mlir.register_lowering(scatter_p, _scatter_lower)
@@ -2555,12 +2555,12 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
     reducer = scatter.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer):
       add = hlo.AddOp(*reducer.arguments).result
-      hlo.ReturnOp([add])
+      hlo.return_([add])
     return scatter.result
 
-  real = _scatter(hlo.RealOp(operand).result, hlo.RealOp(updates).result)
-  imag = _scatter(hlo.ImagOp(operand).result, hlo.ImagOp(updates).result)
-  return hlo.ComplexOp(real, imag).results
+  real = _scatter(hlo.real(operand), hlo.real(updates))
+  imag = _scatter(hlo.imag(operand), hlo.imag(updates))
+  return [hlo.complex(real, imag)]
 
 mlir.register_lowering(scatter_add_p, _scatter_add_lower_gpu, platform="gpu")
 

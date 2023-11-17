@@ -91,15 +91,15 @@ def shape_tensor(sizes: Sequence[int | ir.RankedTensorType]
       return ir_constant(np.array([d], np.int32))
     else:
       if d.type != i32_type:
-        d = hlo.ConvertOp(i32_type, d)
-      return hlo.ReshapeOp(int1d, d).result
+        d = hlo.convert(i32_type, d)
+      return hlo.reshape(int1d, d)
   ds = map(lower_dim, sizes)
   if not ds:
     return ir_constant(np.array([], np.int32))
   elif len(ds) == 1:
     return ds[0]
   else:
-    return hlo.ConcatenateOp(ds, i64_attr(0)).result
+    return hlo.concatenate(ds, i64_attr(0))
 
 
 def delegate_lowering(ctx, lowering_fun, *args, **ctx_override_kwargs):
@@ -251,7 +251,7 @@ def _numpy_array_constant(x: np.ndarray) -> Sequence[ir.Value]:
     x = np.packbits(x, bitorder='little')
   x = np.ascontiguousarray(x)
   attr = ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
-  return (hlo.ConstantOp(attr).result,)
+  return (hlo.constant(attr),)
 
 
 def _masked_array_constant_handler(*args, **kwargs):
@@ -284,11 +284,11 @@ def _ndarray_constant_handler(val: np.ndarray) -> Sequence[ir.Value]:
     other_axes, = np.where(np.not_equal(0, val.strides))
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None) # type: ignore
                               for ax in range(val.ndim))]  # type: ignore
-    out = hlo.BroadcastInDimOp(
+    out = hlo.broadcast_in_dim(
         ir.RankedTensorType.get(
             val.shape, dtype_to_ir_type(collapsed_val.dtype)),
         _numpy_array_constant(collapsed_val)[0],
-        dense_int_elements(other_axes)).result
+        dense_int_elements(other_axes))
     return (out,)
   else:
     return _numpy_array_constant(val)
@@ -309,7 +309,7 @@ for ptype, dtype in dtypes.python_scalar_dtypes.items():
   register_constant_handler(ptype, partial(_python_scalar_handler, dtype))
 
 def _token_constant_handler(val):
-  return [hlo.CreateTokenOp().result]
+  return [hlo.create_token()]
 register_constant_handler(core.Token, _token_constant_handler)
 
 # Source locations
@@ -646,7 +646,7 @@ def eval_dynamic_shape_as_vals(ctx: LoweringRuleContext,
     else:
       i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
       if d.type != i32_type:  # type: ignore
-        return hlo.ConvertOp(i32_type, d).result
+        return hlo.convert(i32_type, d)
       else:
         return d
   return tuple(convert_dim(v) for v in eval_dynamic_shape(ctx, shape))
@@ -662,7 +662,7 @@ def eval_dynamic_shape_as_ivals(
     else:
       i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
       if d.type != i32_type:  # type: ignore
-        return hlo.ConvertOp(i32_type, d).result
+        return hlo.convert(i32_type, d)
       else:
         return d
   return tuple(convert_dim(v) for v in eval_dynamic_shape(ctx, shape))
@@ -912,7 +912,7 @@ def token_type() -> Sequence[ir.Type]:
   return [hlo.TokenType.get()]
 
 def create_token() -> Token:
-  return wrap_singleton_ir_values(hlo.CreateTokenOp().result)
+  return wrap_singleton_ir_values(hlo.create_token())
 
 class TokenSet:
   """An immutable container of tokens to be used to lower effectful jaxprs. When lowering
@@ -1252,7 +1252,7 @@ def lower_jaxpr_to_fun(
     args: list[list[ir.Value]] = []
     for aval, arg in zip(jaxpr.in_avals, unflattened_args):
       if replace_tokens_with_dummy and aval is core.abstract_token:
-        args.append(hlo.CreateTokenOp().results)
+        args.append([hlo.create_token()])
       else:
         args.append(arg)
     callee_name_stack = ctx.name_stack.extend(util.wrap_name(name, api_name))
@@ -1285,7 +1285,7 @@ def lower_jaxpr_to_fun(
           o if mk is None else wrap_with_memory_kind(o, mk, o_aval)
           for o, mk, o_aval in zip(flat_outputs, ir_result_memory_kinds, output_avals)]
 
-    func_dialect.ReturnOp(flat_outputs)
+    func_dialect.return_(flat_outputs)
 
   return func_op
 
@@ -1356,7 +1356,7 @@ def _emit_lowering_rule_as_fun(lowering_rule,
     outs = lowering_rule(sub_ctx, *_unwrap_singleton_ir_values(unflattened_args))
     if sub_ctx.tokens_out:
       outs = [*[sub_ctx.tokens_out.get(eff) for eff in effs], outs]
-    func_dialect.ReturnOp(util.flatten(map(wrap_singleton_ir_values, outs)))
+    func_dialect.return_(util.flatten(map(wrap_singleton_ir_values, outs)))
   return func_op
 
 def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
@@ -1500,7 +1500,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       out_nodes = tuple(map(wrap_singleton_ir_values, ans))
     except TypeError as e:
       raise ValueError("Output of translation rule must be iterable: "
-                       f"{eqn}, got output {ans} from {rule.__name__}") from e
+                       f"{eqn}, got output {ans}") from e
 
     assert all(isinstance(v, tuple) for v in out_nodes), (ans, eqn)
     assert all(isinstance(v, ir.Value) for w in out_nodes for v in w), (
@@ -1595,14 +1595,14 @@ def lower_multi_platform(ctx: LoweringRuleContext,
   # Compute the rule index based on the current platform
   i32_type = aval_to_ir_types(core.ShapedArray((), dtype=np.int32))[0]
   if current_platform_idx.type != i32_type:
-    current_platform_idx = hlo.ConvertOp(i32_type, current_platform_idx)
+    current_platform_idx = hlo.convert(i32_type, current_platform_idx)
   rule_idx_op = hlo.CaseOp([i32_type],
                            index=current_platform_idx,
                            num_branches=len(platforms))
   for i, p in enumerate(platforms):
     branch = rule_idx_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
-      hlo.ReturnOp(ir_constants(np.int32(platform_to_kept_rules_idx[p])))
+      hlo.return_(ir_constants(np.int32(platform_to_kept_rules_idx[p])))
   ordered_effects = effects_lib.ordered_effects.filter_in(effects)
   rule_out_avals = [core.abstract_token] * len(ordered_effects) + ctx.avals_out
   output_types = map(aval_to_ir_types, rule_out_avals)
@@ -1623,7 +1623,7 @@ def lower_multi_platform(ctx: LoweringRuleContext,
         assert len(ordered_effects) == len(inner_ctx.tokens_out)
         out_nodes = [inner_ctx.tokens_out.get(eff)
                      for eff in ordered_effects] + out_nodes
-      hlo.ReturnOp(util.flatten(map(wrap_singleton_ir_values, out_nodes)))
+      hlo.return_(util.flatten(map(wrap_singleton_ir_values, out_nodes)))
 
   results = case_op.results
   if ordered_effects:
@@ -1772,17 +1772,17 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
   else:
     if not core.is_constant_shape(aval_out.shape):  # type: ignore
       shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
-      return hlo.DynamicBroadcastInDimOp(
+      return hlo.dynamic_broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
           shape,
           dense_int_elements(broadcast_dimensions),
-      ).result
+      )
     else:
       assert all(d != ir.ShapedType.get_dynamic_size()
                  for d in aval_out.shape), aval_out  # type: ignore
-      return hlo.BroadcastInDimOp(
+      return hlo.broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
-          dense_int_elements(broadcast_dimensions)).result
+          dense_int_elements(broadcast_dimensions))
 
 def multi_broadcast_in_dim(ctx: LoweringRuleContext,
                            ops: Sequence[ir.Value],
@@ -1806,11 +1806,11 @@ def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Va
   aval_out = core.physical_aval(aval_out)
   if not core.is_constant_shape(aval_out.shape):  # type: ignore
     shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
-    return hlo.DynamicReshapeOp(
+    return hlo.dynamic_reshape(
         aval_to_ir_type(aval_out), op, shape,
-    ).result
+    )
   else:
-    return hlo.ReshapeOp(aval_to_ir_type(aval_out), op).result
+    return hlo.reshape(aval_to_ir_type(aval_out), op)
 
 def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
              start_indices, limit_indices, strides) -> ir.Value:
@@ -1830,14 +1830,14 @@ def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
       start_indices = eval_dynamic_shape_as_tensor(ctx, start_indices)
       limit_indices = eval_dynamic_shape_as_tensor(ctx, limit_indices)
       strides = eval_dynamic_shape_as_tensor(ctx, strides)
-      return hlo.RealDynamicSliceOp(
+      return hlo.real_dynamic_slice(
         aval_to_ir_type(aval_out),
-        x, start_indices, limit_indices, strides).result
+        x, start_indices, limit_indices, strides)
     else:
-      return hlo.SliceOp(x,
-                         dense_int_elements(start_indices),
-                         dense_int_elements(limit_indices),
-                         dense_int_elements(strides)).result
+      return hlo.slice(x,
+                       dense_int_elements(start_indices),
+                       dense_int_elements(limit_indices),
+                       dense_int_elements(strides))
 
 def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:
@@ -1859,21 +1859,20 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
     # lower to RealDynamicSliceOp, which is a version of SliceOp, and does
     # not have the clamping behavior. We clamp start ourselves.
     slice_sizes = eval_dynamic_shape_as_tensor(ctx, slice_sizes)
-    clamped_start = hlo.ClampOp(
+    clamped_start = hlo.clamp(
       shape_tensor([0] * len(start_indices)),
       shape_tensor(start_indices),
-      hlo.SubtractOp(
+      hlo.subtract(
         eval_dynamic_shape_as_tensor(ctx, x_aval.shape),  # type: ignore
         slice_sizes))
-    return hlo.RealDynamicSliceOp(
+    return hlo.real_dynamic_slice(
         aval_to_ir_type(aval_out), x,
         clamped_start,
-        hlo.AddOp(clamped_start, slice_sizes).result,
+        hlo.add(clamped_start, slice_sizes),
         shape_tensor([1] * len(start_indices))
-    ).result
+    )
   else:
-    return hlo.DynamicSliceOp(x, start_indices,
-                              dense_int_elements(slice_sizes)).result
+    return hlo.dynamic_slice(x, start_indices, dense_int_elements(slice_sizes))
 
 def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                          start_indices) -> ir.Value:
@@ -1890,36 +1889,35 @@ def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                                 start_indices=start_indices)
   else:
     # TODO(necula): handle dynamic shapes
-    return hlo.DynamicUpdateSliceOp(x, update, start_indices).result
+    return hlo.dynamic_update_slice(x, update, start_indices)
 
 def pad(ctx: LoweringRuleContext, aval_out,
         x, padding_value,
         padding_low, padding_high, padding_interior) -> ir.Value:
   if all(core.is_constant_shape(s) for s in (padding_low,
                                              padding_high, padding_interior)):
-    return hlo.PadOp(x, padding_value,
-                     dense_int_elements(padding_low),
-                     dense_int_elements(padding_high),
-                     dense_int_elements(padding_interior)).result
+    return hlo.pad(x, padding_value,
+                   dense_int_elements(padding_low),
+                   dense_int_elements(padding_high),
+                   dense_int_elements(padding_interior))
   else:
     padding_low = eval_dynamic_shape_as_tensor(ctx, padding_low)
     padding_high = eval_dynamic_shape_as_tensor(ctx, padding_high)
     padding_interior = eval_dynamic_shape_as_tensor(ctx, padding_interior)
-    return hlo.DynamicPadOp(
+    return hlo.dynamic_pad(
         aval_to_ir_type(aval_out),
-        x, padding_value, padding_low, padding_high, padding_interior).result
+        x, padding_value, padding_low, padding_high, padding_interior)
 
 def iota(ctx: LoweringRuleContext, aval_out, *, dimension: int):
   if not core.is_constant_shape(aval_out.shape):
     shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
-    return hlo.DynamicIotaOp(
+    return hlo.dynamic_iota(
         aval_to_ir_type(aval_out),
         shape,
         i64_attr(dimension),
-    ).result
+    )
   else:
-    return hlo.IotaOp(aval_to_ir_type(aval_out),
-                      i64_attr(dimension)).result
+    return hlo.iota(aval_to_ir_type(aval_out), i64_attr(dimension))
 
 def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
@@ -1933,7 +1931,7 @@ def zeros_like_lowering(ctx, x):
 register_lowering(ad_util.zeros_like_p, zeros_like_lowering)
 
 def add_jaxvals_lowering(ctx, x, y):
-  return hlo.AddOp(x, y).results
+  return [hlo.add(x, y)]
 register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 
 register_lowering(ad_util.stop_gradient_p, lambda ctx, x: [x])
@@ -1949,7 +1947,7 @@ def compare_hlo(x, y, direction: str, comparison_type: str | None = None):
     else:
       comparison_type = "FLOAT"
 
-  return hlo.CompareOp(
+  return hlo.compare(
       x,
       y,
       hlo.ComparisonDirectionAttr.get(direction),
@@ -1959,20 +1957,18 @@ def _minmax_hlo(op, cmp, x, y):
   """Min/max that compares complex values lexicographically as pairs."""
   tensor_type = ir.RankedTensorType(x.type)
   if ir.ComplexType.isinstance(tensor_type.element_type):
-    rx = hlo.RealOp(x).result
-    ry = hlo.RealOp(y).result
+    rx = hlo.real(x)
+    ry = hlo.real(y)
     real_eq = compare_hlo(rx, ry, "EQ", "FLOAT")
     real_cmp = compare_hlo(rx, ry, cmp, "FLOAT")
-    imag_cmp = compare_hlo(
-        hlo.ImagOp(x).result,
-        hlo.ImagOp(y).result, cmp, "FLOAT")
-    which = hlo.SelectOp(real_eq, imag_cmp, real_cmp).result
-    return hlo.SelectOp(which, x, y)
+    imag_cmp = compare_hlo(hlo.imag(x), hlo.imag(y), cmp, "FLOAT")
+    which = hlo.select(real_eq, imag_cmp, real_cmp)
+    return hlo.select(which, x, y)
   else:
     return op(x, y)
 
-min_hlo = partial(_minmax_hlo, hlo.MinOp, "LT")
-max_hlo = partial(_minmax_hlo, hlo.MaxOp, "GT")
+min_hlo = partial(_minmax_hlo, hlo.minimum, "LT")
+max_hlo = partial(_minmax_hlo, hlo.maximum, "GT")
 
 
 def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
@@ -1988,10 +1984,9 @@ def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
       compare_type = "SIGNED"
     else:
       compare_type = "UNSIGNED"
-    x = compare_hlo(x, full_like_aval(ctx, 0, aval_in), "NE",
-                    compare_type).result
+    x = compare_hlo(x, full_like_aval(ctx, 0, aval_in), "NE", compare_type)
     # continue, to adjust the shape if needed
-  return hlo.ConvertOp(aval_to_ir_type(aval_out), x).result
+  return hlo.convert(aval_to_ir_type(aval_out), x)
 
 def _wrap_with_spmd_op(name: str,
                        ctx: LoweringRuleContext,
@@ -2184,7 +2179,7 @@ def xla_fallback_lowering(prim: core.Primitive):
                                flatten_lowering_ir_args(args)).result
     if not prim.multiple_results:
       return [call]
-    flat_results = [hlo.GetTupleElementOp(call, i32_attr(i)).result
+    flat_results = [hlo.get_tuple_element(call, i32_attr(i))
                     for i in range(len(flat_output_types))]
 
     return util.unflatten(flat_results, map(len, output_types))
@@ -2267,7 +2262,7 @@ def _emit_tpu_python_callback(
     *,
     sharding: xc.OpSharding | None = None
 ) -> tuple[Sequence[ir.Value], Any]:
-  token = token or hlo.CreateTokenOp().result
+  token = token or hlo.create_token()
   _wrapped_callback = callback
 
   send_channels = []
@@ -2445,7 +2440,7 @@ def emit_python_callback(
   if sharding is not None:
     set_sharding(result, sharding)
   results = [
-      hlo.GetTupleElementOp(result, i32_attr(i)).result
+      hlo.get_tuple_element(result, i32_attr(i))
       for i in range(len(result_types))
   ]
   if token:
@@ -2603,9 +2598,8 @@ def reduce_window(
     int2d = aval_to_ir_type(core.ShapedArray((1, 2), np.int32))
     def prep_one_pad(pad_lo_hi: tuple[core.DimSize, core.DimSize]):
       pads = eval_dynamic_shape_as_tensor(ctx, pad_lo_hi)  # i32[2]
-      return hlo.ReshapeOp(int2d, pads)
-    d_padding = hlo.ConcatenateOp(list(map(prep_one_pad, padding)),
-                                  i64_attr(0)).result
+      return hlo.reshape(int2d, pads)
+    d_padding = hlo.concatenate(list(map(prep_one_pad, padding)), i64_attr(0))
     # Build the reducer
     reducer_type = ir.FunctionType.get(scalar_types + scalar_types,
                                        scalar_types)
@@ -2614,8 +2608,7 @@ def reduce_window(
     ctx.module_context.symbol_table.insert(reducer)
     entry_block = reducer.add_entry_block()
     with ir.InsertionPoint(entry_block):
-      res = reducer_body(entry_block)
-      hlo.ReturnOp(res)
+      hlo.return_(reducer_body(entry_block))
 
     rw = custom_call(
       "stablehlo.dynamic_reduce_window",
@@ -2641,8 +2634,7 @@ def reduce_window(
                                             shape=(len(padding), 2)))
     reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))
     with ir.InsertionPoint(reducer):
-      res = reducer_body(reducer)
-      hlo.ReturnOp(res)
+      hlo.return_(reducer_body(reducer))
   return rw.results
 
 

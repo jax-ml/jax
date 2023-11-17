@@ -625,14 +625,14 @@ ad.defjvp(regularized_incomplete_beta_p,
 
 lgamma_p = standard_unop(_float, 'lgamma')
 ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
-mlir.register_lowering(lgamma_p, partial(_nary_lower_hlo, chlo.LgammaOp))
+mlir.register_lowering(lgamma_p, partial(_nary_lower_hlo, chlo.lgamma))
 
 digamma_p = standard_unop(_float, 'digamma')
-mlir.register_lowering(digamma_p, partial(_nary_lower_hlo, chlo.DigammaOp))
+mlir.register_lowering(digamma_p, partial(_nary_lower_hlo, chlo.digamma))
 ad.defjvp(digamma_p, lambda g, x: mul(g, polygamma(_const(x, 1), x)))
 
 polygamma_p = standard_naryop([_float, _float], 'polygamma')
-mlir.register_lowering(polygamma_p, partial(_nary_lower_hlo, chlo.PolygammaOp))
+mlir.register_lowering(polygamma_p, partial(_nary_lower_hlo, chlo.polygamma))
 ad.defjvp(polygamma_p, polygamma_gradm, polygamma_gradx)
 
 igamma_p = standard_naryop([_float, _float], 'igamma')
@@ -659,7 +659,7 @@ mlir.register_lowering(random_gamma_grad_p,
                                       multiple_results=False))
 
 zeta_p = standard_naryop([_float, _float], 'zeta')
-mlir.register_lowering(zeta_p, partial(_nary_lower_hlo, chlo.ZetaOp))
+mlir.register_lowering(zeta_p, partial(_nary_lower_hlo, chlo.zeta))
 
 bessel_i0e_p = standard_unop(_float, 'bessel_i0e')
 mlir.register_lowering(bessel_i0e_p,
@@ -669,7 +669,7 @@ ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
 
 bessel_i1e_p = standard_unop(_float, 'bessel_i1e')
 mlir.register_lowering(bessel_i1e_p,
-                        partial(_nary_lower_hlo, chlo.BesselI1eOp))
+                        partial(_nary_lower_hlo, chlo.bessel_i1e))
 
 def _bessel_i1e_jvp(g, y, x):
   eps = dtypes.finfo(_dtype(x)).eps
@@ -683,14 +683,14 @@ ad.defjvp2(bessel_i1e_p, _bessel_i1e_jvp)
 erf_p = standard_unop(_float, 'erf')
 ad.defjvp(erf_p, lambda g, x: mul(_const(x, 2. / np.sqrt(np.pi)),
                                   mul(g, exp(neg(square(x))))))
-mlir.register_lowering(erf_p, partial(_nary_lower_hlo, chlo.ErfOp))
+mlir.register_lowering(erf_p, partial(_nary_lower_hlo, chlo.erf))
 
 erfc_p = standard_unop(_float, 'erfc')
 ad.defjvp(erfc_p, lambda g, x: mul(_const(x, -2. / np.sqrt(np.pi)),
                                    mul(g, exp(neg(square(x))))))
-mlir.register_lowering(erfc_p, partial(_nary_lower_hlo, chlo.ErfcOp))
+mlir.register_lowering(erfc_p, partial(_nary_lower_hlo, chlo.erfc))
 
 erf_inv_p = standard_unop(_float, 'erf_inv')
 ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, np.sqrt(np.pi) / 2.),
                                             mul(g, exp(square(ans)))))
-mlir.register_lowering(erf_inv_p, partial(_nary_lower_hlo, chlo.ErfInvOp))
+mlir.register_lowering(erf_inv_p, partial(_nary_lower_hlo, chlo.erf_inv))

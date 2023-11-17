@@ -681,8 +681,7 @@ def _bcsr_dot_general_gpu_lowering(
     dot_general_fn = csr_matmat_lowering
     x_dtype = 'B_dtype'
     if rhs_contract[0] == 1:
-      rhs = hlo.TransposeOp(
-          rhs, permutation=mlir.dense_int_elements([1, 0])).result
+      rhs = hlo.transpose(rhs, permutation=mlir.dense_int_elements([1, 0]))
   else:
     raise ValueError(f"rhs has to be 1d or 2d; get {rhs_aval.ndim}d.")
 

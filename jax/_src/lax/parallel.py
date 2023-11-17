@@ -775,7 +775,7 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
                                 avals_in=[scalar_aval] * 2, avals_out=[scalar_aval])
       out_nodes = lower_reducer(
           reducer_ctx, *([a] for a in reducer_block.arguments))
-      hlo.ReturnOp(util.flatten(out_nodes))
+      hlo.return_(util.flatten(out_nodes))
     return op.result
 
   return [all_reduce(aval, x) for aval, x in zip(ctx.avals_in, args)]
@@ -1191,7 +1191,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
       new_shape = list(x_aval.shape)
       new_shape.insert(all_gather_dimension, 1)
       broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
-      x = hlo.BroadcastInDimOp(
+      x = hlo.broadcast_in_dim(
           mlir.aval_to_ir_type(x_aval.update(shape=new_shape)), x,
           mlir.dense_int_elements(broadcast_dimensions))
     replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
@@ -1359,12 +1359,12 @@ def _reduce_scatter_lowering(
                               avals_out=[scalar_aval])
     out_nodes = lower_reducer(
         reducer_ctx, *([a] for a in reducer_block.arguments))
-    hlo.ReturnOp(util.flatten(out_nodes))
+    hlo.return_(util.flatten(out_nodes))
 
   if tiled:
     return op.results
   else:
-    return hlo.ReshapeOp(mlir.aval_to_ir_type(aval_out), op.result).results
+    return [hlo.reshape(mlir.aval_to_ir_type(aval_out), op.result)]
 
 def _reduce_scatter_lowering_via_reducer(
   prim, reducer, ctx, x,
@@ -1582,13 +1582,13 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
       (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
   )
   if is_spmd:
-    device_id = hlo.PartitionIdOp()
+    device_id = hlo.partition_id()
   else:
-    device_id = hlo.ReplicaIdOp()
-  unsigned_index = hlo.RemOp(hlo.DivOp(device_id, div), mod)
-  return hlo.ConvertOp(
+    device_id = hlo.replica_id()
+  unsigned_index = hlo.remainder(hlo.divide(device_id, div), mod)
+  return hlo.convert(
       ir.RankedTensorType.get([], ir.IntegerType.get_signless(32)),
-      unsigned_index).result
+      unsigned_index)
 
 def _axis_index_lowering(ctx, *, axis_name):
   return [

@@ -214,7 +214,7 @@ def _tpu_custom_call_lowering(
         base64.b64encode(kernel_regeneration_metadata)
     )
   if multiple_results:
-    results = [stablehlo.GetTupleElementOp(call, mlir.i32_attr(i)).result
+    results = [stablehlo.get_tuple_element(call, mlir.i32_attr(i))
                for i in range(len(out_avals))]
   else:
     results = call.results

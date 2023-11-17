@@ -1656,7 +1656,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           pred_ctx,
           pred,
           axes=tuple(range(len(pred_aval.shape))))
-    hlo.ReturnOp([pred])
+    hlo.return_([pred])
 
   # Loop body
   body_block = while_op.regions[1].blocks.append(*flat_loop_carry_types)
@@ -1687,8 +1687,8 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           partial(_pred_bcast_select_hlo, ctx, pred_aval, body_pred), new_z, z,
           body_jaxpr.out_avals)
 
-    hlo.ReturnOp([*util.flatten(out_tokens), *util.flatten(x),
-                  *util.flatten(y), *util.flatten(new_z)])
+    hlo.return_([*util.flatten(out_tokens), *util.flatten(x), *util.flatten(y),
+                  *util.flatten(new_z)])
 
   outputs = util.unflatten(while_op.results, _map(len, loop_carry_types))
   tokens, _, _, z = util.split_list(outputs, [num_tokens, cond_nconsts, body_nconsts])

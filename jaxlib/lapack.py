@@ -51,7 +51,7 @@ def trsm_hlo(dtype, alpha, a, b,
   num_bd = len(batch_dims_vals)
   batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
+    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
 
   if dtype == np.float32:
     fn = "blas_strsm"
@@ -119,7 +119,7 @@ def getrf_hlo(dtype, a: ir.Value, *,
 
   batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
+    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
 
   return custom_call(
       fn,
@@ -170,7 +170,7 @@ def geqrf_hlo(dtype, a: ir.Value, *,
 
   batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
+    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
   shape_type_pairs: Sequence[ShapeTypePair] = [
       (a_shape_vals, a_type.element_type),
       (batch_dims_vals + (min(m, n),), a_type.element_type),
@@ -211,7 +211,7 @@ def orgqr_hlo(dtype, a: ir.Value, tau, *,
   num_bd = len(batch_dims_vals)
   batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
+    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
 
   k = tau_shape_vals[-1]
   assert type(k) is int
@@ -281,7 +281,7 @@ def potrf_hlo(dtype, a: ir.Value, *, lower=False,
   num_bd = len(batch_dims_vals)
   batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
+    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
 
   scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
@@ -318,7 +318,7 @@ def gesdd_hlo(dtype, a: ir.Value, *, full_matrices=True, compute_uv=True,
   num_bd = len(batch_dims_vals)
   batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
+    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
 
   i32_type = ir.IntegerType.get_signless(32)
   workspace: list[ShapeTypePair]
@@ -445,7 +445,7 @@ def syevd_hlo(dtype, a: ir.Value,
 
   batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
+    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
 
   scalar_layout = []
   shape_layout = [0]
@@ -540,7 +540,7 @@ def geev_hlo(dtype, input, *,
 
   batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
+    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
 
   shape_type_pairs: Sequence[ShapeTypePair] = workspaces + eigvals + [
       (input_shape_vals, eigvecs_type),
@@ -560,7 +560,7 @@ def geev_hlo(dtype, input, *,
       result_shapes=result_shapes,
   ).results
   if real:
-    return (hlo.ComplexOp(out[3], out[4]).result, out[5], out[6], out[7])
+    return (hlo.complex(out[3], out[4]), out[5], out[6], out[7])
   else:
     return out[2:6]
 
@@ -615,7 +615,7 @@ def gees_hlo(dtype, a, *, jobvs=True, sort=False, select=None,
   scalar_layout = []
   batch_size_val = hlo_s32(1)
   for b_v in batch_dims_vals:
-    batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
+    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
   shape_type_pairs = workspaces + eigvals + [
       (a_shape_vals, etype),
       (batch_dims_vals, i32_type),

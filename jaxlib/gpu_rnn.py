@@ -89,9 +89,9 @@ def cudnn_rnn_lowering(ctx, input, h_0, c_0, weights, seq_lengths, *,
 
 
 def _hlo_zeros_f32(shape):
-  return hlo.ConstantOp(
+  return hlo.constant(
       ir.DenseElementsAttr.get(
-          np.zeros(shape, dtype=np.float32), type=ir.F32Type.get())).result
+          np.zeros(shape, dtype=np.float32), type=ir.F32Type.get()))
 
 
 def cudnn_rnn_bwd_lowering(ctx, dy, dhn, dcn, x, h0, c0, w, y,

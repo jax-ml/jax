@@ -707,7 +707,7 @@ def _conv_general_dilated_lower(
     raise NotImplementedError("Convolutions with non-static strides, dilation, feature_group_count, or batch_group_count")
   if all(core.is_constant_shape(p) for p in padding):
     return [
-        hlo.ConvolutionOp(
+        hlo.convolution(
           mlir.aval_to_ir_type(aval_out),
           lhs,
           rhs,
@@ -719,7 +719,7 @@ def _conv_general_dilated_lower(
           lhs_dilation=mlir.dense_int_elements(lhs_dilation),
           rhs_dilation=mlir.dense_int_elements(rhs_dilation),
           window_reversal=window_reversal,
-          precision_config=lax.precision_attr(precision)).result
+          precision_config=lax.precision_attr(precision))
     ]
   else:
     # d_padding will be an array i32[N, 2] with pad_lo and pad_hi for each
@@ -731,7 +731,7 @@ def _conv_general_dilated_lower(
     d_padding = hlo.ConcatenateOp(list(map(prep_one_pad, padding)),
                                   mlir.i64_attr(0))
     return [
-        hlo.DynamicConvOp(
+        hlo.dynamic_conv(
           mlir.aval_to_ir_type(aval_out),
           lhs,
           rhs,
@@ -743,7 +743,7 @@ def _conv_general_dilated_lower(
           lhs_dilation=mlir.dense_int_elements(lhs_dilation),
           rhs_dilation=mlir.dense_int_elements(rhs_dilation),
           window_reversal=window_reversal,
-          precision_config=lax.precision_attr(precision)).result
+          precision_config=lax.precision_attr(precision))
     ]
 
 mlir.register_lowering(conv_general_dilated_p, _conv_general_dilated_lower)

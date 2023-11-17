@@ -79,9 +79,9 @@ def dynamic_ducc_fft_hlo(
   assert 0 not in a_type.shape
 
   u8_type = ir.IntegerType.get_unsigned(8)
-  descriptor = hlo.ConstantOp(
+  descriptor = hlo.constant(
       ir.DenseElementsAttr.get(
-          np.frombuffer(descriptor_bytes, dtype=np.uint8), type=u8_type)).result
+          np.frombuffer(descriptor_bytes, dtype=np.uint8), type=u8_type))
   layout = tuple(range(ndims - 1, -1, -1))
   return custom_call(
       "dynamic_ducc_fft",

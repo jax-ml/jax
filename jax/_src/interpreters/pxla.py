@@ -1269,8 +1269,7 @@ def _unravel_index_hlo(axis_env):
   div = mlir.ir_constant(
       np.array(axis_env.nreps // math.prod(axis_env.sizes), np.uint32))
   mod = mlir.ir_constant(np.array(axis_env.sizes[-1], np.uint32))
-  return hlo.RemOp(
-      hlo.DivOp(hlo.ReplicaIdOp().result, div).result, mod).result
+  return hlo.remainder(hlo.divide(hlo.replica_id(), div), mod)
 
 def _hlo_shard(aval, axis_env, xs, in_axis):
   if aval is core.abstract_token:
@@ -1283,10 +1282,10 @@ def _hlo_shard(aval, axis_env, xs, in_axis):
     idxs.insert(in_axis, _unravel_index_hlo(axis_env))
     dims_unsqueezed = dims.copy()
     dims_unsqueezed.insert(in_axis, 1)
-    dynamic_slice_result = hlo.DynamicSliceOp(
-        x, idxs, mlir.dense_int_elements(dims_unsqueezed)).result
+    dynamic_slice_result = hlo.dynamic_slice(
+        x, idxs, mlir.dense_int_elements(dims_unsqueezed))
     return [
-      hlo.ReshapeOp(mlir.aval_to_ir_type(aval), dynamic_slice_result).result
+      hlo.reshape(mlir.aval_to_ir_type(aval), dynamic_slice_result)
     ]
   else:
     raise TypeError(aval)
@@ -1335,19 +1334,18 @@ def _hlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs):
     padded = mlir.full_like_aval(ctx, 0, padded_aval)
     zero = mlir.ir_constant(np.zeros((), dtype=np.uint32))
     idxs = [_unravel_index_hlo(axis_env)] + [zero] * len(dims)
-    broadcast_result = hlo.BroadcastOp(
-        x, mlir.dense_int_elements([1])).result
-    padded = hlo.DynamicUpdateSliceOp(padded, broadcast_result, idxs).result
+    broadcast_result = hlo.broadcast(x, mlir.dense_int_elements([1]))
+    padded = hlo.dynamic_update_slice(padded, broadcast_result, idxs)
     replica_groups = mlir.dense_int_elements(
       axis_groups(axis_env, axis_env.names[-1]))
-    out = hlo.CrossReplicaSumOp(padded, replica_groups).result
+    out = hlo.cross_replica_sum(padded, replica_groups)
     if out_axis != 0:
       # TODO(apaszke,mattjj): Change the indices to DynamicUpdateSlice instead
       perm = list(range(1, len(dims)))
       perm.insert(out_axis, 0)
       transposed_dims = list(dims)
       transposed_dims.insert(out_axis, axis_env.sizes[-1])
-      out = hlo.TransposeOp(out, mlir.dense_int_elements(perm)).result
+      out = hlo.transpose(out, mlir.dense_int_elements(perm))
 
     return out
   else:

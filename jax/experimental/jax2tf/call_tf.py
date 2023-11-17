@@ -570,7 +570,7 @@ def _call_tf_lowering(
                              ir.FlatSymbolRefAttr.get(fn),
                              tuple(args_op) + captured_ops)
   if result_shape.is_tuple():
-    flat_results = [hlo.GetTupleElementOp(call, mlir.i32_attr(i)).result
+    flat_results = [hlo.get_tuple_element(call, mlir.i32_attr(i))
                     for i in range(len(result_shapes))]
   else:
     flat_results = call.results

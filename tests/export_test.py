@@ -88,7 +88,7 @@ def lowering_testing_primitive_with_effect(ctx, a, *, effect_class_name: str):
   if "Ordered" in effect_class_name:
     token_in = ctx.tokens_in.get(_testing_effects[effect_class_name])[0]
     ctx.set_tokens_out(mlir.TokenSet({_testing_effects[effect_class_name]: (token_in,)}))
-  return mlir.hlo.AddOp(a, a).results
+  return [mlir.hlo.add(a, a)]
 
 mlir.register_lowering(testing_primitive_with_effect_p,
                        lowering_testing_primitive_with_effect)

@@ -720,7 +720,7 @@ def _wrap_main_func(
           list(new_main_op.arguments[0:nr_platform_index_args]) + util.flatten(dim_values),
           platform_input_types + dim_var_input_types):
         if arg.type != arg_type:
-          orig_main_args.append(hlo.ConvertOp(arg_type, arg).result)
+          orig_main_args.append(hlo.convert(arg_type, arg))
         else:
           orig_main_args.append(arg)
       # Then the token arguments
@@ -737,7 +737,7 @@ def _wrap_main_func(
       # output_operand_alias attribute. See b/287386268.
       for arg, arg_type in zip(new_main_op_array_args, array_input_types):
         if arg.type != arg_type:
-          orig_main_args.append(hlo.ConvertOp(arg_type, arg).result)
+          orig_main_args.append(hlo.convert(arg_type, arg))
         else:
           orig_main_args.append(arg)
       call = func_dialect.CallOp(orig_output_types,
@@ -1166,7 +1166,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   def convert_shape(x: ir.Value, x_aval: core.AbstractValue, new_aval: core.AbstractValue) -> ir.Value:
     new_ir_type = mlir.aval_to_ir_type(new_aval)
     if x.type != new_ir_type:
-      return hlo.ConvertOp(mlir.aval_to_ir_type(new_aval), x).result
+      return hlo.convert(mlir.aval_to_ir_type(new_aval), x)
     else:
       return x
 
@@ -1210,7 +1210,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     for i in range(len(lowering_platforms)):
       branch = callee_platform_idx.regions[i].blocks.append()
       with ir.InsertionPoint(branch):
-        hlo.ReturnOp(mlir.ir_constants(
+        hlo.return_(mlir.ir_constants(
           np.int32(callee_lowering_platform_index[i])))
     if callee_platform_idx.result.type != callee_type.inputs[0]:
       callee_platform_idx = hlo.ConvertOp(callee_type.inputs[0],

@@ -897,7 +897,7 @@ def _dim_as_value_lowering(ctx: mlir.LoweringRuleContext, *,
   res, = mlir.eval_dynamic_shape(ctx, (dim,))
   out_type = mlir.aval_to_ir_type(ctx.avals_out[0])
   if out_type != res.type:  # type: ignore
-    return mlir.hlo.ConvertOp(out_type, res).results
+    return [mlir.hlo.convert(out_type, res)]
   else:
     return [res]
 
@@ -1161,11 +1161,11 @@ def _dimension_size_impl(arg, *, dimension):
 dimension_size_p.def_impl(_dimension_size_impl)
 
 def _dimension_size_lowering_rule(ctx, arg, *, dimension):
-  dim_size = mlir.hlo.GetDimensionSizeOp(arg, dimension)
+  dim_size = mlir.hlo.get_dimension_size(arg, dimension)
   dim_type = mlir.aval_to_ir_type(core.dim_value_aval())
-  if dim_size.result.type != dim_type:
-    dim_size = mlir.hlo.ConvertOp(dim_type, dim_size)
-  return dim_size.results
+  if dim_size.type != dim_type:
+    dim_size = mlir.hlo.convert(dim_type, dim_size)
+  return [dim_size]
 
 mlir.register_lowering(dimension_size_p, _dimension_size_lowering_rule)
 

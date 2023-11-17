@@ -435,7 +435,7 @@ ad.primitive_jvps[cholesky_p] = _cholesky_jvp_rule
 batching.primitive_batchers[cholesky_p] = _cholesky_batching_rule
 
 def _cholesky_lowering(ctx, x):
-  return hlo.CholeskyOp(x, lower=ir.BoolAttr.get(True)).results
+  return [hlo.cholesky(x, lower=ir.BoolAttr.get(True))]
 
 mlir.register_lowering(cholesky_p, _cholesky_lowering)
 
@@ -621,7 +621,7 @@ def _eigh_jacobi_lowering_rule(ctx, operand, lower, sort_eigenvalues):
   if operand_aval.shape[-1] == 0:
     reshape_aval = operand_aval.update(shape=operand_aval.shape[:-1])
     return [
-        hlo.RealOp(mlir.reshape(ctx, operand, reshape_aval)).result,
+        hlo.real(mlir.reshape(ctx, operand, reshape_aval)),
         operand,
     ]
 
@@ -985,10 +985,10 @@ def _triangular_solve_lowering(
     transpose = "NO_TRANSPOSE"
   else:
     transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
-  return hlo.TriangularSolveOp(
+  return [hlo.triangular_solve(
       a, b, ir.BoolAttr.get(left_side),
       ir.BoolAttr.get(lower), ir.BoolAttr.get(unit_diagonal),
-      hlo.TransposeAttr.get(transpose)).results
+      hlo.TransposeAttr.get(transpose))]
 
 mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
 
@@ -998,7 +998,7 @@ def _triangular_solve_cpu_lower(
   a_aval, b_aval = ctx.avals_in
 
   if conjugate_a and not transpose_a:
-    a = chlo.ConjOp(a).result
+    a = chlo.conj(a)
     conjugate_a = False
   if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
     alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
@@ -1014,10 +1014,10 @@ def _triangular_solve_cpu_lower(
       transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
     else:
       transpose = "NO_TRANSPOSE"
-    return hlo.TriangularSolveOp(a, b, ir.BoolAttr.get(left_side),
-                                  ir.BoolAttr.get(lower),
-                                  ir.BoolAttr.get(unit_diagonal),
-                                  hlo.TransposeAttr.get(transpose)).results
+    return [hlo.triangular_solve(a, b, ir.BoolAttr.get(left_side),
+                                 ir.BoolAttr.get(lower),
+                                 ir.BoolAttr.get(unit_diagonal),
+                                 hlo.TransposeAttr.get(transpose))]
 
 mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
                        platform='cpu')
@@ -1297,7 +1297,7 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand, *,
     lu, pivot, info = getrf_impl(
         operand_aval.dtype, operand, a_shape_vals=op_shape_vals)
   # Subtract 1 from the pivot to get 0-based indices.
-  pivot = hlo.SubtractOp(pivot, mlir.full_like_aval(ctx, 1, pivot_aval)).result
+  pivot = hlo.subtract(pivot, mlir.full_like_aval(ctx, 1, pivot_aval))
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "GE", "SIGNED")
@@ -2380,4 +2380,4 @@ def _broadcasting_select_hlo(ctx, which, which_aval, x, x_aval, y, y_aval) -> ir
   which, x, y = mlir.multi_broadcast_in_dim(ctx, (which, x, y),
                                             (which_aval, x_aval, y_aval),
                                             out_shapes)
-  return hlo.SelectOp(which, x, y).result
+  return hlo.select(which, x, y)
