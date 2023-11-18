@@ -2433,7 +2433,7 @@ def _get_layouts_from_executable(
 
   new_in_layouts = []
   for x, i in safe_zip(in_layouts_xla, in_layouts):
-    x = SpecifiedLayout._from_xla_layout(x)
+    x = SpecifiedLayout(x)
     if isinstance(i, SpecifiedLayout):
       if i != x:
         raise AssertionError(
@@ -2444,7 +2444,7 @@ def _get_layouts_from_executable(
 
   new_out_layouts = []
   for x, o in safe_zip(out_layouts_xla, out_layouts):
-    x = SpecifiedLayout._from_xla_layout(x)
+    x = SpecifiedLayout(x)
     if isinstance(o, SpecifiedLayout):
       if o != x:
         raise AssertionError(
@@ -2692,7 +2692,7 @@ class UnloadedMeshExecutable:
             xla_executable.local_devices(), len(in_shardings), len(out_shardings))
         are_out_shardings_from_xla = (False,) * len(global_out_avals)
 
-    if xla_extension_version >= 215:
+    if xla_extension_version >= 217:
       in_layouts, out_layouts = _get_layouts_from_executable(
           xla_executable, in_layouts, out_layouts, len(ordered_effects))
     else:

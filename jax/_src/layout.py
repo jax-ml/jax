@@ -17,42 +17,38 @@ from __future__ import annotations
 from jax._src.lib import xla_client as xc
 
 
+# TODO(yashkatariya): Revist the 3 class hierarchy after ifrt::Layout lands.
 class Layout:
   pass
 
 
 class XLACompatibleLayout(Layout):
-  @classmethod
-  def _from_xla_layout(cls, xla_layout) -> XLACompatibleLayout:
-    raise NotImplementedError("Subclasses should implement this method.")
 
   def _to_xla_layout(self) -> str:
     raise NotImplementedError("Subclasses should implement this method.")
 
 
 class SpecifiedLayout(XLACompatibleLayout):
-  minor_to_major: tuple[int, ...]
+  layout: xc.Layout
 
-  def __init__(self, minor_to_major: tuple[int, ...]):
-    self.minor_to_major = minor_to_major
+  def __init__(self, layout: xc.Layout):
+    self._layout = layout
+    self._layout_str = self._layout.to_string()
+    self._minor_to_major = self._layout.minor_to_major()
 
   def __repr__(self):
-    return f'SpecifiedLayout(minor_to_major={self.minor_to_major})'
+    return f'SpecifiedLayout({self._layout_str})'
 
   def __hash__(self):
-    return hash(self.minor_to_major)
+    return hash(self._layout)
 
   def __eq__(self, other):
     if not isinstance(other, SpecifiedLayout):
       return False
-    return self.minor_to_major == other.minor_to_major
-
-  @classmethod
-  def _from_xla_layout(cls, xla_layout: xc.Layout) -> XLACompatibleLayout:
-    return cls(xla_layout.minor_to_major())
+    return self._layout == other._layout
 
   def _to_xla_layout(self) -> str:
-    return xc.Layout(self.minor_to_major).to_string()
+    return self._layout_str
 
 
 class LayoutRequest:
