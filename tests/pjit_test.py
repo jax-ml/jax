@@ -3666,6 +3666,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ' platform.*'):
       f(jnp.arange(8))
 
+  def test_no_output_multiple_devices(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+
+    @pjit
+    def f():
+      return
+
+    with mesh:
+      f()  # doesn't crash
+
 
 class TempSharding(Sharding):
 

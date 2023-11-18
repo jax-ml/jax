@@ -2303,6 +2303,11 @@ def get_gspmd_shardings_from_executable(
   if num_ordered_effects > 0:
     out_op_shardings = out_op_shardings[num_ordered_effects:]
 
+  # This means that there are no outputs for JAX but for XLA there is an empty
+  # tuple output which gets a replicated sharding.
+  if num_out_avals == 0 and len(out_op_shardings) == 1:
+    return None
+
   # This condition happens when all the elements in the output tuple have the
   # same sharding, so XLA decides to run the `FusionTupleDeduplicator` to
   # put the sharding on ROOT instead of the tuple.
