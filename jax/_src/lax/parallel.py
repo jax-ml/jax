@@ -462,9 +462,9 @@ def xeinsum(spec: str, *operands):
 
   if len(operands) != len(all_in_named):
     raise ValueError("Expecting the same number of argument specs in the "
-                     "subscript ({in_spec}) as the number of operands. But got "
-                     "{len(all_in_named)} argument specs for "
-                     "{len(operands)} operands")
+                     f"subscript ({in_spec}) as the number of operands. But got "
+                     f"{len(all_in_named)} argument specs for "
+                     f"{len(operands)} operands")
 
   if len(operands) > 2:
     raise NotImplementedError("Only one or two operands are supported. "
