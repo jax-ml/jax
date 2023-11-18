@@ -458,6 +458,30 @@ pybind_extension(
     ],
 )
 
+cc_library(
+    name = "versions_helpers",
+    srcs = ["versions_helpers.cc"],
+    hdrs = ["versions_helpers.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":cuda_vendor",
+        "//jaxlib:absl_status_casters",
+        "//jaxlib:kernel_nanobind_helpers",
+        "@tsl//tsl/cuda:cublas",
+        "@tsl//tsl/cuda:cudart",
+        "@tsl//tsl/cuda:cudnn",
+        "@tsl//tsl/cuda:cufft",
+        "@tsl//tsl/cuda:cupti",
+        "@tsl//tsl/cuda:cusolver",
+        "@tsl//tsl/cuda:cusparse",
+    ],
+)
+
 pybind_extension(
     name = "_versions",
     srcs = ["versions.cc"],
@@ -482,6 +506,7 @@ pybind_extension(
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
+        ":versions_helpers",
         "//jaxlib:absl_status_casters",
         "//jaxlib:kernel_nanobind_helpers",
         "@tsl//tsl/cuda:cublas",

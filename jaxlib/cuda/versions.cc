@@ -13,48 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "jaxlib/cuda/versions_helpers.h"
+
 #include "nanobind/nanobind.h"
-#include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 
 namespace jax::cuda {
 namespace {
 
 namespace nb = nanobind;
-
-#if CUDA_VERSION < 11080
-#error "JAX requires CUDA 11.8 or newer."
-#endif  // CUDA_VERSION < 11080
-
-int CudaRuntimeGetVersion() {
-  int version;
-  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cudaRuntimeGetVersion(&version)));
-  return version;
-}
-
-int CudaDriverGetVersion() {
-  int version;
-  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cudaDriverGetVersion(&version)));
-  return version;
-}
-
-uint32_t CuptiGetVersion() {
-  uint32_t version;
-  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cuptiGetVersion(&version)));
-  return version;
-}
-
-int CufftGetVersion() {
-  int version;
-  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cufftGetVersion(&version)));
-  return version;
-}
-
-int CusolverGetVersion() {
-  int version;
-  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusolverGetVersion(&version)));
-  return version;
-}
 
 NB_MODULE(_versions, m) {
   // Nanobind's leak checking sometimes returns false positives for this file.
@@ -70,14 +37,14 @@ NB_MODULE(_versions, m) {
   m.def("cusolver_build_version", []() { return CUSOLVER_VERSION; });
   m.def("cusparse_build_version", []() { return CUSPARSE_VERSION; });
 
-  // TODO(phawkins): annoyingly cublas and cusparse have "get version" APIs that
-  // require the library to be initialized.
   m.def("cuda_runtime_get_version", &CudaRuntimeGetVersion);
   m.def("cuda_driver_get_version", &CudaDriverGetVersion);
   m.def("cudnn_get_version", &cudnnGetVersion);
   m.def("cupti_get_version", &CuptiGetVersion);
   m.def("cufft_get_version", &CufftGetVersion);
   m.def("cusolver_get_version", &CusolverGetVersion);
+  m.def("cublas_get_version", &CublasGetVersion);
+  m.def("cusparse_get_version", &CusparseGetVersion);
 }
 
 }  // namespace

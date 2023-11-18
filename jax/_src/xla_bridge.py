@@ -216,10 +216,7 @@ register_backend_factory(
 
 
 def _check_cuda_versions():
-  # TODO(phawkins): remove the test for None cuda_versions after jaxlib 0.4.17
-  # is the minimum.
-  if cuda_versions is None:
-    return
+  assert cuda_versions is not None
 
   def _version_check(name, get_version, get_build_version,
                      scale_for_comparison=1):
@@ -256,9 +253,14 @@ def _check_cuda_versions():
                  scale_for_comparison=100)
   _version_check("cuPTI", cuda_versions.cupti_get_version,
                  cuda_versions.cupti_build_version)
-  # TODO(phawkins): ideally we'd check cublas and cusparse here also, but their
-  # "get version" APIs require initializing those libraries, which we don't want
-  # to do here.
+  _version_check("cuBLAS", cuda_versions.cublas_get_version,
+                 cuda_versions.cublas_build_version,
+                 # Ignore patch versions.
+                 scale_for_comparison=100)
+  _version_check("cuSPARSE", cuda_versions.cusparse_get_version,
+                 cuda_versions.cusparse_build_version,
+                 # Ignore patch versions.
+                 scale_for_comparison=100)
 
 
 def make_gpu_client(
