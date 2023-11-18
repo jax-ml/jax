@@ -11,11 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for multi-platform and cross-platform JAX export."""
+"""Tests for multi-platform and cross-platform JAX export.
+
+This module contains the tests parameterized by test_harnesses. These tests
+verify that the primitive lowering rules work properly in multi-platform and
+cross-platform lowering mode. The actual mechanism for multi-platform and
+cross-platform lowering is tested in export_test.py.
+"""
 
 import math
 import re
-from typing import Callable, Sequence
+from typing import Callable
 
 from absl import logging
 from absl.testing import absltest
@@ -26,7 +32,6 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax.experimental.export import export
-# TODO(necula): This test does not depend on jax2tf, move it out.
 from jax._src.internal_test_util import test_harnesses
 
 
@@ -79,6 +84,12 @@ class PrimitiveTest(jtu.JaxTestCase):
       include_jax_unimpl=False,
       #one_containing="",
   )
+  @jtu.ignore_warning(
+      category=UserWarning,
+      message=("Using reduced precision for gradient of reduce-window min/max "
+               "operator to work around missing XLA support for pair-reductions")
+  )
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_prim(self, harness: test_harnesses.Harness):
     if (jtu.device_under_test() == "gpu"
         and _known_failures_gpu.search(harness.fullname)):

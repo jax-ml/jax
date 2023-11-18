@@ -1287,6 +1287,26 @@ jax_test(
     ],
 )
 
+jax_test(
+    name = "export_harnesses_multi_platform_test",
+    srcs = ["export_harnesses_multi_platform_test.py"],
+    disable_configs = [
+        "gpu_a100",  # TODO(b/269593297): matmul precision issues
+    ],
+    shard_count = {
+        "cpu": 40,
+        "gpu": 20,
+        "tpu": 20,
+    },
+    tags = [
+        "nodebug",  # Times out.
+    ],
+    deps = [
+        "//jax:internal_test_harnesses",
+        "//jax/experimental/export",
+    ],
+)
+
 exports_files(
     [
         "api_test.py",

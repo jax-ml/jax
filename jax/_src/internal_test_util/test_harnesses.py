@@ -2673,8 +2673,6 @@ for dtype in (np.float32, np.float64):
 
 def wrap_and_split():
   key = jax.random.key(42)
-  if config.enable_custom_prng.value:
-    key = jax.random.wrap_key_data(key)
   result = jax.random.split(key, 2)
   return jax.random.key_data(result)
 
