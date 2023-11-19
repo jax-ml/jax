@@ -44,6 +44,9 @@ def initialize_cache(path):
 
   Will throw an assertion error if called a second time with a different path.
 
+  Only works for GPU and TPU backend as the CPU backend don't
+  implement yet the serialization API.
+
   Args:
     path: path for the cache directory.
   """
@@ -122,6 +125,8 @@ def get_cache_key(module: ir.Module, devices: np.ndarray, compile_options,
 
 
 def is_initialized():
+  """Return True is there is a cache initialized.
+  """
   return _cache is not None
 
 
