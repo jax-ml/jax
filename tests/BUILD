@@ -1288,6 +1288,27 @@ jax_test(
 )
 
 jax_test(
+    name = "shape_poly_test",
+    srcs = ["shape_poly_test.py"],
+    disable_configs = [
+        "gpu_a100",  # TODO(b/269593297): matmul precision issues
+    ],
+    enable_configs = [
+        "cpu",
+        "cpu_x32",
+    ],
+    shard_count = {
+        "cpu": 4,
+        "gpu": 4,
+        "tpu": 4,
+    },
+    deps = [
+        "//jax:internal_test_harnesses",
+        "//jax/experimental/export",
+    ],
+)
+
+jax_test(
     name = "export_harnesses_multi_platform_test",
     srcs = ["export_harnesses_multi_platform_test.py"],
     disable_configs = [

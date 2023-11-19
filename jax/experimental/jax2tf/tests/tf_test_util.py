@@ -153,6 +153,7 @@ def ComputeTfValueAndGrad(tf_f: Callable, tf_args: Sequence,
   return f1(*args1)
 
 
+# TODO(necula): clean up the test harnesses to not require these flags
 @jtu.with_config(jax_numpy_rank_promotion="allow",
                  jax_numpy_dtype_promotion='standard',
                  jax_legacy_prng_key="allow")
