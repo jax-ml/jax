@@ -3193,7 +3193,7 @@ def _vector_transpose_rule(  # pylint: disable=missing-function-docstring
   dst_ty = ir.VectorType(op.result.type)
   rank = src_ty.rank
   src_vregs = disassemble(layout_in, op.vector)
-  permutation = [i for i in ir.DenseI64ArrayAttr(op.attributes["permutation"])]
+  permutation = list(ir.DenseI64ArrayAttr(op.attributes["permutation"]))
   batch_perm, tile_perm = permutation[:-2], permutation[-2:]
   if set(batch_perm) != set(range(len(batch_perm))):
     raise NotImplementedError("Unsupported major permutation")
