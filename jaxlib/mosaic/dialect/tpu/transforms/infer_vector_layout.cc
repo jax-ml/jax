@@ -413,11 +413,10 @@ class VectorLayoutInferer {
         }
         if (auto transpose =
                 dyn_cast<vector::TransposeOp>(operand.getOwner())) {
-          auto perm_attrs = transpose.getTransp().getValue();
-          auto rank = perm_attrs.size();
-          if (rank >= 2 &&
-              cast<IntegerAttr>(perm_attrs[rank - 1]).getInt() == rank - 2 &&
-              cast<IntegerAttr>(perm_attrs[rank - 2]).getInt() == rank - 1) {
+          auto perm = transpose.getPermutation();
+          auto rank = perm.size();
+          if (rank >= 2 && perm[rank - 1] == rank - 2 &&
+              perm[rank - 2] == rank - 1) {
             continue;
           }
           // Fall through.
@@ -1321,12 +1320,12 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(vector::TransposeOp op) {
-    auto permutation_attrs = op.getTransp().getValue();
+    auto permutation = op.getPermutation();
     auto some_layout = getLayout(op.getVector());
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     auto &layout = *some_layout;
     auto src_ty = op.getSourceVectorType();
-    TPU_CHECK_OP(permutation_attrs.size() == src_ty.getRank(),
+    TPU_CHECK_OP(permutation.size() == src_ty.getRank(),
                  "Transpose permutation has incorrect rank");
     if (layout.implicit_dim() == ImplicitDim::kNone) {
       TPU_CHECK_OP((layout.offsets() == LayoutOffsets{0, 0}),
@@ -1335,23 +1334,22 @@ class VectorLayoutInferer {
       for (int64_t s : src_ty.getShape().take_back(2)) {
         TPU_CHECK_OP(s % xlu_width == 0, "Padded transposes unsupported");
       }
-      for (auto attr : permutation_attrs.drop_back(2)) {
+      for (auto dim : permutation.drop_back(2)) {
         TPU_CHECK_OP(
-            cast<IntegerAttr>(attr).getInt() < src_ty.getRank() - 2,
+            dim < src_ty.getRank() - 2,
             "Unsupported transpose permutation - minor dims into major");
       }
-      for (auto attr : permutation_attrs.take_back(2)) {
+      for (auto dim : permutation.take_back(2)) {
         TPU_CHECK_OP(
-            cast<IntegerAttr>(attr).getInt() >= src_ty.getRank() - 2,
+            dim >= src_ty.getRank() - 2,
             "Unsupported transpose permutation - major dims into minor");
       }
       Layout required_layout = some_layout;
-      if (permutation_attrs.size() < 2) {
+      if (permutation.size() < 2) {
         return failure();
       }
       // Require native tiling if we're going to use the XLU.
-      if (cast<IntegerAttr>(permutation_attrs[permutation_attrs.size() - 1])
-              .getInt() == permutation_attrs.size() - 2) {
+      if (permutation[permutation.size() - 1] == permutation.size() - 2) {
         auto native_tiling = nativeTiling(layout.bitwidth());
         required_layout = VectorLayout(layout.bitwidth(), layout.offsets(),
                                        native_tiling, ImplicitDim::kNone);

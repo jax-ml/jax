@@ -3193,10 +3193,7 @@ def _vector_transpose_rule(  # pylint: disable=missing-function-docstring
   dst_ty = ir.VectorType(op.result.type)
   rank = src_ty.rank
   src_vregs = disassemble(layout_in, op.vector)
-  permutation = [
-      ir.IntegerAttr(attr).value
-      for attr in ir.ArrayAttr(op.attributes["transp"])
-  ]
+  permutation = [i for i in ir.DenseI64ArrayAttr(op.attributes["permutation"])]
   batch_perm, tile_perm = permutation[:-2], permutation[-2:]
   if set(batch_perm) != set(range(len(batch_perm))):
     raise NotImplementedError("Unsupported major permutation")
@@ -3217,7 +3214,7 @@ def _vector_transpose_rule(  # pylint: disable=missing-function-docstring
   packing = layout_in.packing
   # Note that we checked for native tiling above.
   vregs_per_tile = transpose_unit_size // layout_in.tiling[0]
-  minor_perm = ir.ArrayAttr.get([ir.IntegerAttr.get(i64(), i) for i in (1, 0)])
+  minor_perm = [1, 0]
   tile_ty = ir.VectorType.get((transpose_unit_size,) * 2, src_ty.element_type)
   batch_tile_ty_in = ir.VectorType.get(
       (transpose_unit_size, transpose_unit_size * packing), src_ty.element_type

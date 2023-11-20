@@ -2809,11 +2809,8 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
       xla::Array<Value> src_vregs,
       disassemble(builder, layout_in, transpose_op.getVector(),
                   ctx.target_shape));
-  const SmallVector<int64_t> permutation =
-      llvm::map_to_vector(transpose_op.getTransp(), [&](const Attribute attr) {
-        return cast<IntegerAttr>(attr).getValue().getSExtValue();
-      });
-  const auto tile_perm = ArrayRef<int64_t>(permutation).take_back(2);
+  ArrayRef<int64_t> permutation = transpose_op.getPermutation();
+  const auto tile_perm = permutation.take_back(2);
   if (tile_perm != ArrayRef<int64_t>{rank - 2, rank - 1} &&
       tile_perm != ArrayRef<int64_t>{rank - 1, rank - 2}) {
     return transpose_op->emitOpError(
@@ -2851,8 +2848,7 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
   const int packing = layout_in.packing();
   // Note that we checked for native tiling above.
   const int64_t vregs_per_tile = transpose_unit_size / layout_in.tiling()[0];
-  const ArrayAttr minor_perm = builder.getArrayAttr(
-      {builder.getI64IntegerAttr(1), builder.getI64IntegerAttr(0)});
+  const SmallVector<int64_t> minor_perm{1, 0};
   const auto tile_ty = VectorType::get(
       {transpose_unit_size, transpose_unit_size}, src_ty.getElementType());
   const auto batch_tile_ty_in =
