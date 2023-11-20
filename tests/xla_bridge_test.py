@@ -59,15 +59,19 @@ class XlaBridgeTest(jtu.JaxTestCase):
     )
 
   def test_autofdo_profile(self):
+
+    class _DummyBackend:
+      platform: str = "tpu"
+
     # --jax_xla_profile_version takes precedence.
     jax_flag_profile = 1
     another_profile = 2
     with config.jax_xla_profile_version(jax_flag_profile):
       with mock.patch.object(compiler, "get_latest_profile_version",
-                             side_effect=lambda: another_profile):
+                             side_effect=lambda _: another_profile):
         self.assertEqual(
             compiler.get_compile_options(
-                num_replicas=3, num_partitions=4
+                num_replicas=3, num_partitions=4, backend=_DummyBackend(),
             ).profile_version,
             jax_flag_profile,
         )
@@ -76,10 +80,10 @@ class XlaBridgeTest(jtu.JaxTestCase):
     # returns if --jax_xla_profile_version is not set.
     profile_version = 1
     with mock.patch.object(compiler, "get_latest_profile_version",
-                           side_effect=lambda: profile_version):
+                           side_effect=lambda _: profile_version):
       self.assertEqual(
           compiler.get_compile_options(
-              num_replicas=3, num_partitions=4
+              num_replicas=3, num_partitions=4, backend=_DummyBackend(),
           ).profile_version,
           profile_version,
       )
@@ -90,10 +94,10 @@ class XlaBridgeTest(jtu.JaxTestCase):
     error_return = 0
     no_profile_dont_retrieve = -1
     with mock.patch.object(compiler, "get_latest_profile_version",
-                           side_effect=lambda: error_return):
+                           side_effect=lambda _: error_return):
       self.assertEqual(
           compiler.get_compile_options(
-              num_replicas=3, num_partitions=4
+              num_replicas=3, num_partitions=4, backend=_DummyBackend(),
           ).profile_version,
           no_profile_dont_retrieve,
       )
