@@ -121,7 +121,7 @@ jobs:
           cat logs/*.jsonl > pytest-logs.txt
           python .github/workflows/parse_logs.py pytest-logs.txt --outfile=parsed-logs.txt
       - name: Report failures
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
