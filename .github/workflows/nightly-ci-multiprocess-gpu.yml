@@ -32,7 +32,7 @@ jobs:
       CONFIG: "-F ${{ github.workspace }}/.ssh/config -o UserKnownHostsFile=${{ github.workspace }}/.ssh/known_hosts"
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
-      - uses: actions/setup-python@13ae5bb136fac2878aff31522b9efb785519f984 # ratchet:actions/setup-python@v4
+      - uses: actions/setup-python@b64ffcaf5b410884ad320a9cfac8866006a109aa # ratchet:actions/setup-python@v4
         with:
           python-version: "3.x"
 
@@ -119,7 +119,7 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
-      - uses: actions/setup-python@13ae5bb136fac2878aff31522b9efb785519f984 # ratchet:actions/setup-python@v4
+      - uses: actions/setup-python@b64ffcaf5b410884ad320a9cfac8866006a109aa # ratchet:actions/setup-python@v4
         with:
           python-version: "3.x"
       - uses: actions/download-artifact@9782bd6a9848b53b110e712e20e42d89988822b7 # ratchet:actions/download-artifact@v3
@@ -144,7 +144,7 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
-      - uses: actions/setup-python@13ae5bb136fac2878aff31522b9efb785519f984 # ratchet:actions/setup-python@v4
+      - uses: actions/setup-python@b64ffcaf5b410884ad320a9cfac8866006a109aa # ratchet:actions/setup-python@v4
         with:
           python-version: "3.x"
       - uses: actions/download-artifact@9782bd6a9848b53b110e712e20e42d89988822b7 # ratchet:actions/download-artifact@v3
