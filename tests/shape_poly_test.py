@@ -574,10 +574,6 @@ def check_shape_poly(tst, f_jax: Callable, *,
   return h.run_test(tst)
 
 
-# TODO(necula): clean up the test harnesses to not require these flags
-@jtu.with_config(jax_numpy_rank_promotion="allow",
-                 jax_numpy_dtype_promotion='standard',
-                 jax_legacy_prng_key="allow")
 class ShapePolyTest(jtu.JaxTestCase):
 
   def test_simple_unary(self):
@@ -772,8 +768,8 @@ class ShapePolyTest(jtu.JaxTestCase):
 
   def test_with_nested_jit(self):
     def f_jax(x):  # x: f32[w, h]
-      # x + (np.sin(x) + np.broadcast_to(np.arange(x.shape[1]), x.shape))
-      return jnp.sin(x) + jnp.arange(x.shape[1], dtype=x.dtype)
+      return jnp.sin(x) + jnp.arange(x.shape[0] * x.shape[1],
+                                     dtype=x.dtype).reshape(x.shape)
     check_shape_poly(self,
                      lambda x: x + jax.jit(f_jax)(x),
                      arg_descriptors=[RandArg((3, 4), _f32)],
@@ -1046,7 +1042,7 @@ class ShapePolyTest(jtu.JaxTestCase):
 
     check_shape_poly(self,
                      f_jax,
-                     arg_descriptors=[RandArg((3, 4), _f32)],
+                     arg_descriptors=[RandArg((3, 4), _i32)],
                      polymorphic_shapes=["b, _"])
 
   def test_dim_as_value_weak_type(self):
@@ -1102,11 +1098,13 @@ class ShapePolyTest(jtu.JaxTestCase):
 # List containing either harnesses, or lists of harnesses
 _POLY_SHAPE_TEST_HARNESSES = [
     PolyHarness("add", "",
-                jnp.add,
+                lambda x, y: jnp.add(jnp.expand_dims(x, axis=0), y),
                 arg_descriptors=[RandArg((3, 4), _f32), RandArg((2, 3, 4), _f32)],
-                polymorphic_shapes=["b, ...", "_, b, _"]),
+                polymorphic_shapes=["b, _", "_, b, _"]),
     PolyHarness("add_transpose", "",
-                jax.grad(lambda x: jnp.sum(jnp.sum(x, axis=0, keepdims=False) + jnp.sin(x))),
+                jax.grad(lambda x: jnp.sum(
+                  jnp.expand_dims(jnp.sum(x, axis=0, keepdims=False), axis=0)
+                  + jnp.sin(x))),
                 arg_descriptors=[RandArg((3, 4), _f32)],
                 polymorphic_shapes=["b, ..."]),
     [  # arange
@@ -1406,10 +1404,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda x, left, right: lax.linalg.eig(x, compute_left_eigenvectors=left, compute_right_eigenvectors=right),
                   arg_descriptors=[RandArg((3, 5, 5), dtype),
                                    StaticArg(left), StaticArg(right)],
-                  polymorphic_shapes=[poly],
-                  # In non-native serialization, we cannot check exact match,
-                  # we ought to check the invariants of the result.
-                  check_result=config.jax2tf_default_native_serialization.value)
+                  polymorphic_shapes=[poly])
       for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
       for poly in ["b, ...", "b, w, w"]
       for left in ([True, False] if dtype == np.float32 else [True])
@@ -1474,11 +1469,11 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 expect_error=(AssertionError,
                               "Incompatible reduction dimensions")),
     PolyHarness("eye", "N=poly_M=None",
-                lambda x: jnp.eye(x.shape[0]) + x,
+                lambda x: jnp.eye(x.shape[0], dtype=_f32) + x,
                 arg_descriptors=[RandArg((3, 1), _f32)],
                 polymorphic_shapes=["b, ..."]),
     PolyHarness("eye", "N=poly_M=poly",
-                lambda x: jnp.eye(x.shape[0], M=x.shape[0] + 2) + x,
+                lambda x: jnp.eye(x.shape[0], M=x.shape[0] + 2, dtype=_f32) + x,
                 arg_descriptors=[RandArg((3, 1), _f32)],
                 polymorphic_shapes=["b, ..."]),
     [
@@ -1711,8 +1706,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
           "qr", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}_{full_matrices=}",
           lambda x, full_matrices: lax.linalg.qr(x, full_matrices=full_matrices),
           arg_descriptors=[RandArg(shape, dtype), StaticArg(full_matrices)],
-          polymorphic_shapes=[poly],
-          tol=(None if config.jax2tf_default_native_serialization.value else 1e-5))
+          polymorphic_shapes=[poly])
       for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
       # m and n must be static for now
       for shape, poly, full_matrices in [
@@ -1731,56 +1725,72 @@ _POLY_SHAPE_TEST_HARNESSES = [
       # non-partitionable), and unsafe_rbg.
       [
         PolyHarness("random_gamma", f"{flags_name}",
-                    lambda key, a: jax.random.gamma(key, a),
-                    arg_descriptors=[RandArg((3, key_size), np.uint32), RandArg((3, 4, 5), _f32)],
+                    lambda key, a: jax.random.gamma(
+                      jax.random.wrap_key_data(key), a),
+                    arg_descriptors=[RandArg((3, key_size), np.uint32),
+                                     RandArg((3, 4, 5), _f32)],
                     polymorphic_shapes=["b, ...", "b, w, ..."], tol=1E-5,
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
         # The known dimensions product must be even.
         PolyHarness("random_categorical", f"axis=0_{flags_name}",
-                    lambda key, a: jax.random.categorical(key, a, axis=0),
-                    arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 8), _f32)],
+                    lambda key, a: jax.random.categorical(
+                      jax.random.wrap_key_data(key), a, axis=0),
+                    arg_descriptors=[RandArg((key_size,), np.uint32),
+                                     RandArg((3, 8), _f32)],
                     polymorphic_shapes=[None, "b0, ..."],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
         PolyHarness("random_categorical", f"axis=1_{flags_name}",
-                    lambda key, a: jax.random.categorical(key, a, axis=1),
-                    arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 5, 8), _f32)],
+                    lambda key, a: jax.random.categorical(
+                      jax.random.wrap_key_data(key), a, axis=1),
+                    arg_descriptors=[RandArg((key_size,), np.uint32),
+                                     RandArg((3, 5, 8), _f32)],
                     polymorphic_shapes=[None, "b0, b1, ..."],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
         PolyHarness("random_categorical", f"axis=1_then_reshape_{flags_name}",
-                    lambda key, a: jax.random.categorical(key, a, axis=1).reshape(-1),
-                    arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 5, 8), _f32)],
+                    lambda key, a: jax.random.categorical(
+                      jax.random.wrap_key_data(key), a, axis=1).reshape(-1),
+                    arg_descriptors=[RandArg((key_size,), np.uint32),
+                                     RandArg((3, 5, 8), _f32)],
                     polymorphic_shapes=[None, "b0, b1, ..."],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
         PolyHarness("random_categorical", f"0_dim_{flags_name}",  # One axis has 0 size
-                    lambda key, a: jax.random.categorical(key, a, axis=1),
-                    arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 5, 0), _f32)],
+                    lambda key, a: jax.random.categorical(
+                      jax.random.wrap_key_data(key), a, axis=1),
+                    arg_descriptors=[RandArg((key_size,), np.uint32),
+                                     RandArg((3, 5, 0), _f32)],
                     polymorphic_shapes=[None, "b0, b1, ..."],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
         PolyHarness("random_split", f"{flags_name}",
-                    lambda key, a: jax.random.key_data(jax.random.split(key, 2 * a.shape[0])),
+                    lambda key, a: jax.random.key_data(
+                      jax.random.split(jax.random.wrap_key_data(key),
+                                       2 * a.shape[0])),
                     arg_descriptors=[RandArg((key_size,), np.uint32),
                                      RandArg((3, 4), _f32)],
                     polymorphic_shapes=[None, "b0, ..."],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
         # Works when the known dimensions are known to be even or odd.
         PolyHarness("random_uniform", f"even_1_{flags_name}",
-                    lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
+                    lambda key, a: jax.random.uniform(jax.random.wrap_key_data(key),
+                                                      a.shape, dtype=_f32),
                     arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 4, 5), _f32)],
                     polymorphic_shapes=[None, "b0, ..."],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
         PolyHarness("random_uniform", f"even_2_{flags_name}",
-                    lambda key, a: jax.random.uniform(key, (2 * a.shape[0], a.shape[1]),
+                    lambda key, a: jax.random.uniform(jax.random.wrap_key_data(key),
+                                                      (2 * a.shape[0], a.shape[1]),
                                                       dtype=_f32),
                     arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 4), _f32)],
                     polymorphic_shapes=[None, "b0, b1, ..."],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
         PolyHarness("random_uniform", f"error_not_even_{flags_name}",
-                    lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
-                    arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 5), _f32)],
+                    lambda key, a: jax.random.uniform(jax.random.wrap_key_data(key),
+                                                      a.shape, dtype=_f32),
+                    arg_descriptors=[RandArg((key_size,), np.uint32),
+                                     RandArg((3, 5), _f32)],
                     polymorphic_shapes=[None, "b0, ..."],
                     expect_error=(
                         (core.InconclusiveDimensionOperation,
-                         "the product of the known dimensions must be even") if flags_name == "threefry_non_partitionable" else (None, None)),
+                         "the product of the known dimensions must be even") if flags_name == "threefry_non_partitionable" else None),
                     override_jax_config_flags=override_jax_config_flags)  # type: ignore
       ]
         for key_size, flags_name, override_jax_config_flags in [
@@ -1905,7 +1915,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 polymorphic_shapes=["b, ..."]),
     # Repeat f32 * b
     PolyHarness("repeat", "repeats=poly_axis=None_scalar",
-                lambda x, y: jnp.repeat(x, repeats=y.shape[0], axis=None) + y,
+                lambda x, y: jnp.expand_dims(jnp.repeat(x, repeats=y.shape[0], axis=None), axis=1) + y,
                 arg_descriptors=[RandArg((), _f32), RandArg((3, 1), _f32)],
                 polymorphic_shapes=[None, "b0, ..."]),
     PolyHarness("repeat", "repeats=poly_axis=None_total_repeat_length1",
@@ -2010,10 +2020,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     a, compute_schur_vectors=compute_schur_vectors),
                   arg_descriptors=[RandArg(shape, dtype),
                                    StaticArg(compute_schur_vectors)],
-                  polymorphic_shapes=[poly],
-                  # In non-native serialization, we cannot check exact match,
-                  # we ought to check the invariants of the result.
-                  check_result=config.jax2tf_default_native_serialization.value)
+                  polymorphic_shapes=[poly])
       for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
       for compute_schur_vectors in [True, False]
       for (shape, poly) in [
@@ -2130,9 +2137,10 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                    RandArg(b_shape, dtype),
                                    StaticArg(left_side)],
                   polymorphic_shapes=[a_poly, b_poly],
-                  # In non-native serialization, we cannot check exact match,
-                  # we ought to check the invariants of the result.
-                  check_result=config.jax2tf_default_native_serialization.value)
+                  # Some of the cases have batch dimensions for `a`, so the
+                  # "+" needs rank promotion.
+                  override_jax_config_flags={"jax_numpy_rank_promotion": "allow"})
+
       for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
       for (left_side, a_shape, b_shape, a_poly, b_poly) in [
           (True, (3, 4, 4), (3, 4, 5), "b, ...", "b, ..."),
@@ -2258,12 +2266,6 @@ def _flatten_harnesses(harnesses):
   return res
 
 
-# TODO(necula): clean up the test harnesses to not require these flags
-@jtu.ignore_warning(category=FutureWarning,
-                    message="Raw arrays as random keys to jax.random functions are deprecated")
-@jtu.with_config(jax_numpy_rank_promotion="allow",
-                 jax_numpy_dtype_promotion="standard",
-                 jax_legacy_prng_key="allow")
 class ShapePolyHarnessesTest(jtu.JaxTestCase):
   """This test runs for all _POLY_SHAPE_PRIMITIVE_HARNESSES."""
 
@@ -2276,11 +2278,9 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
       #one_containing="",
   )
   def test_harness(self, harness: PolyHarness):
-    if harness.expect_error == expect_error_associative_scan and (
-        not config.jax2tf_default_native_serialization.value
-        or jtu.test_device_matches(["tpu"])
-    ):
-      harness.expect_error = (None, None)
+    # We do not expect the associative scan error on TPUs
+    if harness.expect_error == expect_error_associative_scan and jtu.test_device_matches(["tpu"]):
+      harness.expect_error = None
 
     # Exclude some harnesses that are known to fail for native serialization
     # Set of harness.group_name:platform that are implemented with custom call
