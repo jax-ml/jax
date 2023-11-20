@@ -252,7 +252,6 @@ delta_theta_original_calculation # [1.2, 2.4, -1.2], same as `delta_theta`
 
 `jax.lax.stop_gradient` may also be useful in other settings, for instance if you want the gradient from some loss to only affect a subset of the parameters of the neural network (because, for instance, the other parameters are trained using a different loss).
 
-
 +++ {"id": "UMY0IyuOTKpG"}
 
 ## Straight-through estimator using `stop_gradient`
