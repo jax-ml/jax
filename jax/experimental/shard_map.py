@@ -640,20 +640,27 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
   args = map(partial(_unmatch_spec, mesh), in_names, args)
   in_rep = map(partial(_in_names_to_rep, mesh), in_names)
   with core.new_base_main(ShardMapTrace, mesh=mesh, check=check_rep) as main:
+    fun, out_rep = _shmap_subtrace(fun, main, in_rep)
     with core.new_sublevel(), core.extend_axis_env_nd(mesh.shape.items(), main):
-      t = main.with_cur_sublevel()
-      in_tracers = map(partial(ShardMapTracer, t), in_rep, args)
-      ans = fun.call_wrapped(*in_tracers)
-      out_tracers = map(t.full_raise, ans)
-      outs_, out_rep = unzip2((t.val, t.rep) for t in out_tracers)
-      del main, t, in_tracers, ans, out_tracers
-  out_avals = [core.mapped_aval(x.shape[0], 0, core.get_aval(x)) for x in outs_]
+      outs = fun.call_wrapped(*args)
+    del main
+  out_avals = [core.mapped_aval(x.shape[0], 0, core.get_aval(x)) for x in outs]
   _check_names(out_names_thunk(), out_avals)  # pytype: disable=wrong-arg-types
   if check_rep:
-    _check_reps(mesh, out_names_thunk(), out_rep)
-  return map(partial(_match_spec, mesh, check_rep), out_rep, out_names_thunk(),
-             outs_)
+    _check_reps(mesh, out_names_thunk(), out_rep())
+  return map(partial(_match_spec, mesh, check_rep),
+             out_rep(), out_names_thunk(), outs)
 core.EvalTrace.process_shard_map = _shard_map_impl
+
+@lu.transformation_with_aux
+def _shmap_subtrace(main, in_rep, *in_vals):
+  t = main.with_cur_sublevel()
+  in_tracers = map(partial(ShardMapTracer, t), in_rep, in_vals)
+  ans = yield in_tracers, {}
+  out_tracers = map(t.full_raise, ans)
+  outs, out_rep = unzip2((t.val, t.rep) for t in out_tracers)
+  del t, in_tracers, ans, out_tracers
+  yield outs, out_rep
 
 def _names_to_pspec(names: AxisNames) -> PartitionSpec:
   ndmin = max(names) + 1 if names else 0
@@ -747,33 +754,35 @@ class ShardMapTrace(core.Trace):
         "a feature request at https://github.com/google/jax/issues !")
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
-    raise NotImplementedError(
-        "Eager evaluation of a `custom_jvp` inside a `shard_map` isn't yet "
-        "supported. "
-        "Put a `jax.jit` around the `shard_map`-decorated function, and open "
-        "a feature request at https://github.com/google/jax/issues !")
+    # Since ShardMapTrace is only used as a base main, we can drop the jvp.
+    if symbolic_zeros:
+      msg = "Please open an issue at https://github.com/google/jax/issues !"
+      raise NotImplementedError(msg)
+    del prim, jvp, symbolic_zeros
+    in_vals, in_rep = unzip2((t.val, t.rep) for t in tracers)
+    fun, out_rep = _shmap_subtrace(fun, self.main, in_rep)
+    with core.new_sublevel():
+      out_vals = fun.call_wrapped(*in_vals)
+    return map(partial(ShardMapTracer, self), out_rep(), out_vals)
 
   def post_process_custom_jvp_call(self, out_tracers, _):
-    raise NotImplementedError(
-        "Eager evaluation of a `custom_jvp` inside a `shard_map` isn't yet "
-        "supported. "
-        "Put a `jax.jit` around the `shard_map`-decorated function, and open "
-        "a feature request at https://github.com/google/jax/issues !")
+    assert False  # unreachable
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
                               symbolic_zeros):
-    raise NotImplementedError(
-        "Eager evaluation of a `custom_vjp` inside a `shard_map` isn't yet "
-        "supported. "
-        "Put a `jax.jit` around the `shard_map`-decorated function, and open "
-        "a feature request at https://github.com/google/jax/issues !")
+    # Since ShardMapTrace is only used as a base main, we can drop the jvp.
+    if symbolic_zeros:
+      msg = "Please open an issue at https://github.com/google/jax/issues !"
+      raise NotImplementedError(msg)
+    del prim, fwd, bwd, out_trees, symbolic_zeros
+    in_vals, in_rep = unzip2((t.val, t.rep) for t in tracers)
+    fun, out_rep = _shmap_subtrace(fun, self.main, in_rep)
+    with core.new_sublevel():
+      out_vals = fun.call_wrapped(*in_vals)
+    return map(partial(ShardMapTracer, self), out_rep(), out_vals)
 
   def post_process_custom_vjp_call(self, out_tracers, _):
-    raise NotImplementedError(
-        "Eager evaluation of a `custom_vjp` inside a `shard_map` isn't yet "
-        "supported. "
-        "Put a `jax.jit` around the `shard_map`-decorated function, and open "
-        "a feature request at https://github.com/google/jax/issues !")
+    assert False  # unreachable
 
   def process_axis_index(self, frame):
     with core.eval_context(), jax.disable_jit(False):
