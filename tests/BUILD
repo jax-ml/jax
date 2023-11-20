@@ -1320,6 +1320,7 @@ jax_test(
         "tpu": 20,
     },
     tags = [
+        "noasan",  # Times out
         "nodebug",  # Times out.
     ],
     deps = [
