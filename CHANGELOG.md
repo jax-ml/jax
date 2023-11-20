@@ -13,6 +13,7 @@ Remember to align the itemized text with the first line of an item within a list
 
 * Changes
   * The minimum jaxlib version is now 0.4.19.
+  * Released wheels are built now with clang instead of gcc.
 
 * Deprecations
   * The previously-deprecated `sym_pos` argument has been removed from
