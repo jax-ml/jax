@@ -23,6 +23,7 @@ Experimental Modules
     jax.experimental.jet
     jax.experimental.custom_partitioning
     jax.experimental.multihost_utils
+    jax.experimental.compilation_cache
 
 Experimental APIs
 -----------------
