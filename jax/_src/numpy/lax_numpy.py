@@ -4891,7 +4891,7 @@ def _is_scalar(x):
 
 def _canonicalize_tuple_index(arr_ndim, idx, array_name='array'):
   """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""
-  len_without_none = sum(1 for e in idx if e is not None and e is not Ellipsis)
+  len_without_none = sum(e is not None and e is not Ellipsis for e in idx)
   if len_without_none > arr_ndim:
     raise IndexError(
         f"Too many indices for {array_name}: {len_without_none} "

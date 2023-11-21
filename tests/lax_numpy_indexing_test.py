@@ -1030,7 +1030,7 @@ class IndexingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, msg):
       jnp.zeros(2)['abc']
     with self.assertRaisesRegex(TypeError, msg):
-      jnp.zeros(2)[:, 'abc']
+      jnp.zeros((2, 3))[:, 'abc']
 
   def testIndexOutOfBounds(self):  # https://github.com/google/jax/issues/2245
     x = jnp.arange(5, dtype=jnp.int32) + 1
@@ -1131,6 +1131,13 @@ class IndexingTest(jtu.JaxTestCase):
       _check_raises(jnp.int32, jnp.complex64, msg)
       _check_raises(jnp.float16, jnp.float32, msg)
       _check_raises(jnp.float32, jnp.complex64, msg)
+
+  def testWrongNumberOfIndices(self):
+    with self.assertRaisesRegex(
+        IndexError,
+        "Too many indices for array: array has ndim of 1, "
+        "but was indexed with 2 non-None/Ellipsis indices"):
+      jnp.zeros(3)[:, 5]
 
 
 def _broadcastable_shapes(shape):
