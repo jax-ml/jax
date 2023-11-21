@@ -774,11 +774,8 @@ class ShardMapTrace(core.Trace):
         "a feature request at https://github.com/google/jax/issues !")
 
   def process_axis_index(self, frame):
-    raise NotImplementedError(
-        "Eager evaluation of an `axis_index` inside a `shard_map` isn't yet "
-        "supported. "
-        "Put a `jax.jit` around the `shard_map`-decorated function, and open "
-        "a feature request at https://github.com/google/jax/issues !")
+    with core.eval_context(), jax.disable_jit(False):
+      return jax.jit(lambda: jax.lax.axis_index(frame.name))()
 
 
 class ShardMapTracer(core.Tracer):
@@ -812,6 +809,7 @@ class ShardMapTracer(core.Tracer):
     return '\n'.join(
         f"On {device} at mesh coordinates {axis_names} = {idx}:\n{block}\n"
         for (idx, device), block in zip(np.ndenumerate(mesh.devices), blocks))
+  __repr__ = __str__  # for debuggers, like `p x`
 
 def _prim_applier(prim, params_tup, mesh, *args):
   def apply(*args):
@@ -1641,6 +1639,7 @@ class RewriteTracer(core.Tracer):
 
   def __str__(self) -> str:
     return str(self.val)  # TODO(mattjj): could show replication info here
+  __repr__ = __str__  # for debuggers, like `p x`
 
 class RewriteTrace(core.Trace):
   mesh: Mesh

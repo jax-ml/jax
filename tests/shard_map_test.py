@@ -524,11 +524,11 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertIn('out_names', e.params)
     self.assertEqual(e.params['out_names'], ({0: ('x', 'y',)},))
 
+  @parameterized.parameters([True, False])
   @jtu.run_on_devices('cpu', 'gpu', 'tpu')
-  def test_debug_print_jit(self):
+  def test_debug_print_jit(self, jit):
     mesh = Mesh(jax.devices(), ('i',))
 
-    @jax.jit  # NOTE: axis_index requires jit (at time of writing)
     @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
     def f(x):
       idx = jax.lax.axis_index('i')
@@ -536,6 +536,9 @@ class ShardMapTest(jtu.JaxTestCase):
       y = jnp.cos(x)
       jax.debug.print("instance {i} has value y={y}", i=idx, y=y)
       return y
+
+    if jit:
+      f = jax.jit(f)
 
     x = jnp.arange(2 * len(jax.devices()))
 
@@ -699,15 +702,50 @@ class ShardMapTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(NotImplementedError, 'custom_vjp'):
       g(x)
 
-  def test_eager_notimplemented_error_message_axis_index(self):
-    def foo(x):
-      return x + jax.lax.axis_index('x')
+  @parameterized.parameters([True, False])
+  def test_axis_index_basic(self, jit):
+    def foo():
+      return jax.lax.axis_index('x')[None]
+
+    if jit:
+      foo = jax.jit(foo)
 
     mesh = jtu.create_global_mesh((4,), ('x',))
-    g = shard_map(foo, mesh, in_specs=(P('x'),), out_specs=P('x'))
-    x = jnp.arange(4.)
-    with self.assertRaisesRegex(NotImplementedError, 'axis_index'):
-      g(x)
+    ans = shard_map(foo, mesh, in_specs=(), out_specs=P('x'))()
+    expected = jnp.arange(4.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @parameterized.parameters([True, False])
+  def test_axis_index_twoaxes(self, jit):
+    def foo():
+      out1 = jax.lax.axis_index('i')[None, None]
+      out2 = jax.lax.axis_index('j')[None, None]
+      out3 = jax.lax.axis_index(('i', 'j'))[None, None]
+      return out1, out2, out3
+
+    if jit:
+      foo = jax.jit(foo)
+
+    mesh = jtu.create_global_mesh((4, 2), ('i', 'j'))
+    ans1, ans2, ans3 = shard_map(foo, mesh, in_specs=(),
+                                 out_specs=P('i', 'j'))()
+    expected1 = jnp.arange(4.)[:, None] + jnp.zeros((4, 2))
+    expected2 = jnp.arange(2.)[None, :] + jnp.zeros((4, 2))
+    expected3 = jnp.arange(8.).reshape(4, 2)
+    self.assertAllClose(ans1, expected1, check_dtypes=False)
+    self.assertAllClose(ans2, expected2, check_dtypes=False)
+    self.assertAllClose(ans3, expected3, check_dtypes=False)
+
+  def test_axis_index_eager(self):
+    mesh = jtu.create_global_mesh((4,), ('x',))
+
+    @partial(shard_map, mesh=mesh, in_specs=(), out_specs=P())
+    def foo():
+      val = jax.lax.psum(jax.lax.axis_index('x'), 'x')
+      return 1. if val > 0 else -1.
+
+    out = foo()  # doesn't crash
+    self.assertEqual(out, 1.)
 
   def test_jaxpr_shardings_with_no_outputs(self):
     # https://github.com/google/jax/issues/15385
