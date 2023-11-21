@@ -576,7 +576,7 @@ PYBIND11_MODULE(_tpu_ext, m) {
           if constexpr (std::is_same_v<ssize_t, int64_t>) {
             // TODO(tlongeri): Find a way to avoid the const_cast
             return mlirTpuAssemble(getDefaultInsertionPoint(), ty, layout,
-                                   {{const_cast<int64_t*>(np_arr.shape()),
+                                   {{const_cast<ssize_t*>(np_arr.shape()),
                                      static_cast<size_t>(np_arr.ndim())},
                                     vals.data()},
                                    TARGET_SHAPE);
