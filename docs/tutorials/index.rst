@@ -26,7 +26,6 @@ JAX 101
    working-with-pytrees
    single-host-sharding
    stateful-computations
-   external-callbacks
    simple-neural-network
 
 
@@ -38,6 +37,7 @@ JAX 201
 
    parallelism
    advanced-autodiff
+   external-callbacks
    debugging
    profiling-and-performance
 
