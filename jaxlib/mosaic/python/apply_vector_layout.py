@@ -20,10 +20,8 @@ which should have been populated by an earlier inference pass.
 
 # mypy: ignore-errors
 import abc
-import collections
 from collections.abc import Sequence
 import dataclasses
-import enum
 import functools
 import math
 import re
@@ -39,49 +37,14 @@ import numpy as np
 
 from . import infer_memref_layout
 from . import tpu
+from .layout_defs import Direction, ImplicitDim, LANES, REPLICATED, SUBELEMENTS, SUBLANES, TargetTuple
 
 
 ValueLike = Union[ir.Value, ir.Operation, ir.OpView]
 
-TargetTuple = collections.namedtuple("TargetTuple", ["sublanes", "lanes"])
 TARGET_SHAPE = TargetTuple(8, 128)
 
-
-@enum.unique
-class Direction(enum.Enum):
-  SUBLANES = "sublanes"
-  LANES = "lanes"
-  SUBELEMENTS = "subelements"
-
-  def __repr__(self):
-    return self.name.lower()
-SUBLANES = Direction.SUBLANES
-LANES = Direction.LANES
-SUBELEMENTS = Direction.SUBELEMENTS
-
-
-class Replicated(enum.Enum):
-  REPLICATED = "*"
-
-  def __repr__(self):
-    return "*"
-  __str__ = __repr__
-
-  def __bool__(self):
-    return False  # Useful because we can then say `offset or 0`
-REPLICATED = Replicated.REPLICATED
-
-
 Offset = Union[int, Literal[REPLICATED]]
-
-
-class ImplicitDim(enum.IntEnum):
-  MINOR = -1
-  SECOND_MINOR = -2
-
-  def __repr__(self) -> str:
-    return str(int(self))
-
 
 @dataclasses.dataclass(frozen=True)
 class VectorLayout:

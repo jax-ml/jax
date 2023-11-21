@@ -53,7 +53,17 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         "//jaxlib/mlir",
-        "//jaxlib/mlir/_mlir_libs:_tpu_ext",
+        "//jaxlib/mlir/_mlir_libs:_tpu_ext_lib",
+    ],
+)
+
+py_library(
+    name = "layout_defs",
+    srcs = [
+        "layout_defs.py",
+    ],
+    visibility = [
+        "//visibility:public",
     ],
 )
 
@@ -67,6 +77,7 @@ py_library(
         "//visibility:public",
     ],
     deps = [
+        ":layout_defs",
         ":tpu_dialect",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:func_dialect",
