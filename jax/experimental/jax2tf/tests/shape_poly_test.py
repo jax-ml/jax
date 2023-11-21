@@ -3185,6 +3185,9 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       if harness.group_name == "eig" and "left_True_right_True" in harness.fullname:
         raise unittest.SkipTest("jax2tf graph serialization does not support both left and right.")
 
+      if harness.group_name == "vmap_eigh":
+        self.skipTest("b/312378994: error in TF eager execution for tf.linalg.eigh")
+
       if "conv_general_dilated_1d_stride_2_zero_output_enable_xla_False" in harness.fullname:
         raise unittest.SkipTest("incomplete support for conv_general_dilated in enable_xla=False")
 
