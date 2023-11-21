@@ -43,6 +43,10 @@ Remember to align the itemized text with the first line of an item within a list
   * On NVIDIA GPU, JAX now prefers a Jacobi SVD solver for matrices up to
     1024x1024. The Jacobi solver appears faster than the non-Jacobi version.
 
+* Bug fixes
+  * Fixed error/hang when an array with non-finite values is passed to a
+    non-symmetric eigendecomposition (#18226). Arrays with non-finite values now
+    produce arrays full of NaNs as outputs.
 
 ## jax 0.4.20 (Nov 2, 2023)
 
