@@ -418,5 +418,25 @@ class CliDebuggerTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertRegex(stdout.getvalue(), expected)
 
+  def test_debugger_vectorized(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
+    stdin, stdout = make_fake_stdin_stdout(["p x", "c"])
+
+    @jax.jit
+    @jax.vmap
+    def f(x):
+      y = jnp.sin(x)
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli", vectorized=True)
+      return y
+    expected = _format_multiline(r"""
+    Entering jdb:
+    (jdb) array([2., 3.], dtype=float32)
+    (jdb) """)
+    f(jnp.array([2., 3.], jnp.float32))
+    jax.effects_barrier()
+    self.assertEqual(stdout.getvalue(), expected)
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
