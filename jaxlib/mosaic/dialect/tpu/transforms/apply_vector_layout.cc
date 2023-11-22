@@ -1181,7 +1181,6 @@ LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
       auto new_acc_col = builder.create<tpu::MatmulOp>(
           op.getLoc(), acc_col_ty, lhs_cols[k], rhs_rolled_tile, acc_col,
           transpose_lhs, transpose_rhs, precision_attr);
-      new_acc_col->setAttr("out_layout", acc_layout_attr);
       auto new_acc_vregs = builder.create<tpu::UnrollVectorsOp>(
           op.getLoc(),
           TypeRange(ValueRange(XlaArrayToFlatArrayRef(acc_col_vregs))),
