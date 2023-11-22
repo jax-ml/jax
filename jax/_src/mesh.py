@@ -186,7 +186,8 @@ class Mesh(contextlib.ContextDecorator):
     axis_names = tuple(axis_names)
     assert devices.ndim == len(axis_names)
 
-    key = (axis_names, devices.shape, tuple(devices.flat))
+    lock = threading.Lock()
+    key = (axis_names, devices.shape, tuple(devices.flat), lock)
     val = _mesh_object_dict.get(key, None)
     if val is not None:
       return val
@@ -195,6 +196,7 @@ class Mesh(contextlib.ContextDecorator):
     self.devices = devices.copy()
     self.devices.flags.writeable = False
     self.axis_names = axis_names
+    self._lock = lock
     _mesh_object_dict[key] = self
     return self
 
@@ -213,20 +215,16 @@ class Mesh(contextlib.ContextDecorator):
             self._internal_device_list == other._internal_device_list)
 
   def __hash__(self):
-    if not hasattr(self, '_hash'):
-      self._hash = hash(
-          (self.axis_names, self._internal_device_list, self.devices.shape))
-    return self._hash
+    with self._lock:
+      if not hasattr(self, '_hash'):
+        self._hash = hash(
+            (self.axis_names, self._internal_device_list, self.devices.shape))
+      return self._hash
 
   def __setattr__(self, name, value):
     if hasattr(self, name):
-      if getattr(self, name) == value:
-        # This can to happen if two threads race, for example if two threads
-        # are trying to hash the same Mesh instance.
-        return
       raise RuntimeError(
-          f"Cannot reassign attributes ({name}) of immutable mesh objects"
-      )
+          f"Cannot reassign attributes ({name}) of immutable mesh objects")
     super().__setattr__(name, value)
 
   def __enter__(self):
