@@ -10,3 +10,4 @@ pytest-xdist
 wheel
 rich
 setuptools
+matplotlib
