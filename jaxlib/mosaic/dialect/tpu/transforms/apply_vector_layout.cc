@@ -1563,6 +1563,20 @@ LogicalResult tpu_gather_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
+LogicalResult tpu_region_rule(RewriteContext &ctx, Operation &op,
+                              const ArrayRef<Layout> layouts_in,
+                              const ArrayRef<Layout> layouts_out) {
+  if (op.getNumOperands() != 0 || op.getNumResults() != 0) {
+    return op.emitOpError(
+        "Not implemented: tpu.region_block with inputs or outputs");
+  }
+  CHECK_EQ(layouts_in.size(), 0);
+  CHECK_EQ(layouts_out.size(), 0);
+  auto region_op = cast<tpu::RegionOp>(op);
+  // We don't modify the op, but we do rewrite the branch bodies.
+  return applyLayoutBlock(ctx, region_op.getRegion().getBlocks().front());
+}
+
 LogicalResult tpu_repeat_rule(RewriteContext &ctx, Operation &op,
                               const ArrayRef<Layout> layouts_in,
                               const ArrayRef<Layout> layouts_out) {
@@ -2956,6 +2970,7 @@ const llvm::StringMap<rule_type> &rules() {
       {tpu::GatherOp::getOperationName(), tpu_gather_rule},
       {tpu::LoadOp::getOperationName(), tpu_load_rule},
       {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
+      {tpu::RegionOp::getOperationName(), tpu_region_rule},
       {tpu::RepeatOp::getOperationName(), tpu_repeat_rule},
       {tpu::StoreOp::getOperationName(), tpu_store_rule},
       {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
