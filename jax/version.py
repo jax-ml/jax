@@ -58,7 +58,7 @@ def _version_from_git_tree(base_version: str) -> str | None:
                          cwd=root_directory,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, _ = p.communicate()
-    commit_hash = stdout.decode().strip().rsplit('-', 1)[-1]
+    commit_hash = stdout.decode().strip().rsplit('-g', 1)[-1]
     assert commit_hash.isalnum()
   except:
     return None
