@@ -348,7 +348,7 @@ def trunc(x: ArrayLike) -> Array:
   return where(lax.lt(x, _lax_const(x, 0)), ufuncs.ceil(x), ufuncs.floor(x))
 
 
-_PREFERRED_ELEMENT_TYPE_DESCRIPTION = """
+_CONV_PREFERRED_ELEMENT_TYPE_DESCRIPTION = """
 preferred_element_type : dtype, optional
     If specified, accumulate results and return a result of the given data type.
     If not specified, the function instead follows the numpy convention of always
@@ -396,7 +396,7 @@ def _conv(x: Array, y: Array, mode: str, op: str, precision: PrecisionLike,
 
 
 @util._wraps(np.convolve, lax_description=_PRECISION_DOC,
-             extra_params=_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
+             extra_params=_CONV_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('mode', 'precision', 'preferred_element_type'))
 def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
              precision: PrecisionLike = None,
@@ -407,7 +407,7 @@ def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
 
 
 @util._wraps(np.correlate, lax_description=_PRECISION_DOC,
-             extra_params=_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
+             extra_params=_CONV_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('mode', 'precision', 'preferred_element_type'))
 def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
               precision: PrecisionLike = None,
@@ -3215,7 +3215,15 @@ def apply_over_axes(func: Callable[[ArrayLike, int], Array], a: ArrayLike,
 ### Tensor contraction operations
 
 
-@util._wraps(np.dot, lax_description=_PRECISION_DOC)
+_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION = """
+preferred_element_type : dtype, optional
+    If specified, accumulate results and return a result of the given data type.
+    If not specified, the accumulation dtype is determined from the type promotion
+    rules of the input array dtypes.
+"""
+
+@util._wraps(np.dot, lax_description=_PRECISION_DOC,
+             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def dot(a: ArrayLike, b: ArrayLike, *,
         precision: PrecisionLike = None,
@@ -3247,7 +3255,8 @@ def dot(a: ArrayLike, b: ArrayLike, *,
   return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
-@util._wraps(np.matmul, module='numpy', lax_description=_PRECISION_DOC)
+@util._wraps(np.matmul, module='numpy', lax_description=_PRECISION_DOC,
+             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def matmul(a: ArrayLike, b: ArrayLike, *,
            precision: PrecisionLike = None,
@@ -3319,7 +3328,8 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
   return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
-@util._wraps(np.vdot, lax_description=_PRECISION_DOC)
+@util._wraps(np.vdot, lax_description=_PRECISION_DOC,
+             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def vdot(
     a: ArrayLike, b: ArrayLike, *,
@@ -3333,7 +3343,8 @@ def vdot(
              preferred_element_type=preferred_element_type)
 
 
-@util._wraps(np.tensordot, lax_description=_PRECISION_DOC)
+@util._wraps(np.tensordot, lax_description=_PRECISION_DOC,
+             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 def tensordot(a: ArrayLike, b: ArrayLike,
               axes: int | Sequence[int] | Sequence[Sequence[int]] = 2,
               *, precision: PrecisionLike = None,
@@ -3629,7 +3640,8 @@ def _einsum(
   return lax_internal._convert_element_type(operands[0], preferred_element_type, output_weak_type)
 
 
-@util._wraps(np.inner, lax_description=_PRECISION_DOC)
+@util._wraps(np.inner, lax_description=_PRECISION_DOC,
+             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def inner(
     a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None,
