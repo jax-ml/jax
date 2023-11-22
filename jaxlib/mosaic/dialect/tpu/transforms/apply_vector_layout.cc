@@ -3664,12 +3664,6 @@ FailureOr<Value> relayout(OpBuilder &builder, Value v, VectorLayout src,
 // For example, we should verify that ops that were supposed to generate
 // replicated outputs satisfy that requirement.
 LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
-  // TODO(tlongeri): Once we support all ops, return failure instead.
-  if (!rules().contains(op.getName().getStringRef()) &&
-      !OpTrait::hasElementwiseMappableTraits(&op)) {
-    return success();
-  }
-
   // When an operation does not have any operands, the layout_in tuple is empty.
   // If one of the operands is not of vector type, the corresponding entry in
   // the layout_in tuple will be None. The same applies to the results of the
