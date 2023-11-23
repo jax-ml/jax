@@ -1290,6 +1290,13 @@ jax_test(
 jax_test(
     name = "shape_poly_test",
     srcs = ["shape_poly_test.py"],
+    backend_tags = {
+        "tpu": [
+            "noasan",
+            "nomsan",
+            "notsan",
+        ],  # Times out
+    },
     disable_configs = [
         "gpu_a100",  # TODO(b/269593297): matmul precision issues
     ],
