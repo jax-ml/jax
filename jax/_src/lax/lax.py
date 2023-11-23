@@ -65,6 +65,7 @@ from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir.dialects import mhlo
 from jax._src.sharding_impls import PmapSharding
 from jax._src.typing import Array, ArrayLike, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
@@ -4228,7 +4229,7 @@ top_k_p.def_impl(partial(dispatch.apply_primitive, top_k_p))
 top_k_p.def_abstract_eval(_top_k_abstract_eval)
 def _top_k_lower(ctx, operand, k):
   if core.is_constant_dim(k):
-    return chlo.TopKOp(operand, mlir.i64_attr(k)).results
+    return mhlo.TopKOp(operand, mlir.i64_attr(k)).results
   k_value, = mlir.eval_dynamic_shape_as_vals(ctx, (k,))
   out_values_aval, out_indices_aval, = ctx.avals_out
   return mlir.custom_call(
