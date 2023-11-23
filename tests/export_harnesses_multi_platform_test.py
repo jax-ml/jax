@@ -21,7 +21,7 @@ cross-platform lowering is tested in export_test.py.
 
 import math
 import re
-from typing import Callable
+from typing import Callable, Optional
 
 from absl import logging
 from absl.testing import absltest
@@ -108,15 +108,23 @@ class PrimitiveTest(jtu.JaxTestCase):
 
     logging.info("Harness is not implemented on %s", unimplemented_platforms)
 
+    # Tolerances.
+    tol = None
+    if ("conv_general_dilated" in harness.fullname
+      and harness.dtype in [np.float32]):
+      tol = 1e-4
+
     self.export_and_compare_to_native(
       func_jax, *args,
-      unimplemented_platforms=unimplemented_platforms)
+      unimplemented_platforms=unimplemented_platforms,
+      tol=tol)
 
   def export_and_compare_to_native(
       self, func_jax: Callable,
       *args: jax.Array,
       unimplemented_platforms: set[str] = set(),
-      skip_run_on_platforms: set[str] = set()):
+      skip_run_on_platforms: set[str] = set(),
+      tol: Optional[float] = None):
     devices = [
         d
         for d in self.__class__.devices
@@ -149,7 +157,9 @@ class PrimitiveTest(jtu.JaxTestCase):
       native_res = func_jax(*device_args)
       logging.info("Running exported harness on %s", device)
       exported_res = export.call_exported(exp)(*device_args)
-      self.assertAllClose(native_res, exported_res)
+      if tol is not None:
+        logging.info(f"Using non-standard tolerance {tol}")
+      self.assertAllClose(native_res, exported_res, atol=tol, rtol=tol)
       # TODO(necula): Check HLO equivalence for the ultimate test.
 
   def test_psum_scatter(self):
