@@ -94,19 +94,20 @@ class DimExprTest(jtu.JaxTestCase):
         f"{expected_sym=} {expected_concrete=} {compute_concrete=} {env=}")
 
   def test_parse_shape(self):
-    self.assertEqual((), shape_poly._parse_spec("", ()))
-    self.assertEqual((), shape_poly._parse_spec("()", ()))
-    self.assertEqual((2, 3), shape_poly._parse_spec(None, (2, 3)))
-    self.assertEqual((2, 3), shape_poly._parse_spec("2, 3,", (2, 3)))
-    self.assertEqual((2, 3), shape_poly._parse_spec("2, _", (2, 3)))
-    self.assertEqual((2, 3), shape_poly._parse_spec("2, ...", (2, 3)))
-    self.assertEqual((2, 3), shape_poly._parse_spec("...", (2, 3)))
-    self.assertEqual((2, 3), shape_poly._parse_spec(" ( 2 , 3 ) ", (2, 3)))
+    self.assertEqual((), shape_poly.symbolic_shape("", like=()))
+    self.assertEqual((), shape_poly.symbolic_shape("()", like=()))
+    self.assertEqual((2, 3), shape_poly.symbolic_shape(None, like=(2, 3)))
+    self.assertEqual((2, 3), shape_poly.symbolic_shape("2, 3,", like=(2, 3)))
+    self.assertEqual((2, 3), shape_poly.symbolic_shape("2, _", like=(2, 3)))
+    self.assertEqual((2, 3), shape_poly.symbolic_shape("2, ...", like=(2, 3)))
+    self.assertEqual((2,), shape_poly.symbolic_shape("2, ...", like=(2,)))
+    self.assertEqual((2, 3), shape_poly.symbolic_shape("...", like=(2, 3)))
+    self.assertEqual((2, 3), shape_poly.symbolic_shape(" ( 2 , 3 ) "))
 
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
-    self.assertEqual((a, 3), shape_poly._parse_spec("(a, ...) ", (None, 3)))
+    a, b = shape_poly.symbolic_shape("a, b")
+    self.assertEqual((a, 3), shape_poly.symbolic_shape("(a, ...) ", like=(None, 3)))
 
-  a, b = shape_poly._parse_spec("a, b", (2, 3))
+  a, b = shape_poly.symbolic_shape("a, b")
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -127,12 +128,12 @@ class DimExprTest(jtu.JaxTestCase):
   def test_parse_dim(self,
                      dim_spec="-2 * a^2 * b + b^2",
                      dim_poly=-2 * a * a * b + b * b):
-    self.assertEqual((dim_poly,), shape_poly._parse_spec(dim_spec, (None,)))
-    self.assertEqual((dim_poly,), shape_poly._parse_spec(str(dim_poly), (None,)))
+    self.assertEqual((dim_poly,), shape_poly.symbolic_shape(dim_spec))
+    self.assertEqual((dim_poly,), shape_poly.symbolic_shape(str(dim_poly)))
 
   @jtu.parameterized_filterable(
     kwargs=[
-      # sanitized shape_spec sometimes colide
+      # sanitized shape_spec sometimes collide
       dict(testcase_name=(
         f"_shape_spec={shape_spec}" +
         {"...": "name=ellipsis",
@@ -141,32 +142,38 @@ class DimExprTest(jtu.JaxTestCase):
          "'a'": "name=a_quotes"}.get(shape_spec, "")),
         shape_spec=shape_spec)
       for shape_spec in [
-          "2.5", "a + a a", "a ^ a", "a, a",
+          "2.5", "a + a a", "a ^ a", "a; a",
           "_", "...", "a ;", ")(", "2a", "a@", "'a'", "('a', ...)",
           "mod(a)", "floordiv(a, b, c)", "..., 3"
   ]])
   def test_parse_error(self,
                        shape_spec="a + a a"):
     with self.assertRaisesRegex(ValueError,
-                                "syntax error in polymorphic shape"):
-      shape_poly._parse_spec(shape_spec, (None,))
+                                "syntax error in symbolic shape"):
+      shape_poly.symbolic_shape(shape_spec)
 
   @jtu.parameterized_filterable(
     kwargs=[
       dict(testcase_name=f"_{shape_spec=}",
-           shape_spec=shape_spec, arg_shape=arg_shape)
-      for shape_spec, arg_shape in [
-          ("3", (4,)),
-          ("b, 3", (None, 4)),
+           shape_spec=shape_spec, arg_shape=arg_shape, error_msg=error_msg)
+      for shape_spec, arg_shape, error_msg in [
+          ("3", (4,), "different size"),
+          ("b, 3", (None, 4), "different size"),
+          ("b, ...", None, "no 'like' shape was given"),
+          ("b, 5, _", None, "no 'like' shape was given"),
+          ("b, 6, c, _", (4, 6, 7),
+           "because we parsed 3 already and 'like' shape has only 3 dimensions"),
+          ("b, 7, c, ...", (4, 7),
+           "because we parsed 3 already and 'like' shape has only 2 dimensions"),
   ]])
-  def test_parse_mismatch_error(self,
-                                shape_spec="3", arg_shape=(4,)):
+  def test_parse_mismatch_error(self, *,
+                                shape_spec, arg_shape, error_msg):
     with self.assertRaisesRegex(ValueError,
-                                "syntax error in polymorphic shape .* different size"):
-      shape_poly._parse_spec(shape_spec, arg_shape)
+                                "syntax error in symbolic shape .*" + error_msg):
+      shape_poly.symbolic_shape(shape_spec, like=arg_shape)
 
   def test_dim_vars(self):
-    a, b, a1 = shape_poly._parse_spec("a, b, a", (2, 3, 2))
+    a, b, a1 = shape_poly.symbolic_shape("a, b, a")
     self.assertEqual(True, a == a)
     self.assertEqual(True, a == a1)
     self.assertEqual(False, a != a)
@@ -181,20 +188,20 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertIn(b, [a, b])
 
   def test_get_vars(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
 
     self.assertEqual({"a"}, a.get_vars())
     self.assertEqual({"a", "b"}, (a * b * a).get_vars())
 
   def test_evaluate(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
 
     self.assertEqual(1, (a * a - b).evaluate(dict(a=2, b=3)))
     self.assertEqual(1, ((a * a) // b).evaluate(dict(a=2, b=3)))
     self.assertEqual(4, ((a * a) % b).evaluate(dict(a=5, b=7)))
 
   def test_dim_vars_symbolic_equal(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
     self.assertTrue(core.definitely_equal(a, a))
     self.assertFalse(core.definitely_equal(a, 1))
     self.assertFalse(core.definitely_equal(a, b))
@@ -211,7 +218,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertFalse(core.definitely_equal(1, "a"))
 
   def test_poly_bounds(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
     bounded_le4 = 5 - a
     bounded_ge2 = b + 1
     bounded_ge0_le4 = a % 5
@@ -294,7 +301,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual((core.non_negative_dim(15 - a) // 3).bounds(), (0, 4))
 
   def test_poly_equal(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
     poly3 = a + 3 - a
     self.assertEqual(poly3, 3)
     self.assertEqual(poly3, np.array(3, np.int64))
@@ -347,7 +354,7 @@ class DimExprTest(jtu.JaxTestCase):
                               lambda x: x, 3 * a - a % (2 * b))
 
   def test_poly_compare(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
     poly = 4 * a + b + 3
     self.assertTrue(poly.ge(0))
     self.assertTrue(poly.ge(8))
@@ -361,7 +368,7 @@ class DimExprTest(jtu.JaxTestCase):
       (4 * a - b).ge(0)
 
   def test_poly_compare_overload(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
     self.assertGreaterEqual(a, a)
     self.assertGreaterEqual(a, 0)
     self.assertGreaterEqual(a, 1)
@@ -390,7 +397,7 @@ class DimExprTest(jtu.JaxTestCase):
   def test_poly_int_results(self):
     # Whenever the result is an integer, it should be represented as an
     # Python integer, not a symbolic dimension.
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
     self.assertEqual(a + 2 - a, 2)
     self.assertIsInstance(a + 2 - a, int)
     self.assertEqual(a + (2 - a), 2)
@@ -428,7 +435,7 @@ class DimExprTest(jtu.JaxTestCase):
                                 dividend, divisor)
 
   def test_non_negative_dim(self):
-    a, = shape_poly._parse_spec("a,", (2,))
+    a, = shape_poly.symbolic_shape("a,")
 
     self.sampled_assert_equal(2, core.non_negative_dim, 2)
     self.sampled_assert_equal(0, core.non_negative_dim, 0)
@@ -440,7 +447,7 @@ class DimExprTest(jtu.JaxTestCase):
 
   def test_dilate_dim(self):
     """0 if d == 0 else 1 + dilation * (d - 1))"""
-    a, = shape_poly._parse_spec("a,", (2,))
+    a, = shape_poly.symbolic_shape("a,")
 
     self.sampled_assert_equal(4, core.dilate_dim, 2, 3)
     self.sampled_assert_equal(7, core.dilate_dim, 3, 3)
@@ -455,7 +462,7 @@ class DimExprTest(jtu.JaxTestCase):
 
     If d <  window_size, returns 0.
     """
-    a, stride = shape_poly._parse_spec("a, s", (2, 3))
+    a, stride = shape_poly.symbolic_shape("a, s")
     self.sampled_assert_equal(8, core.stride_dim, 10, 3, 1)
     self.sampled_assert_equal(9, core.stride_dim, 20, 3, 2)
     self.sampled_assert_equal(9, core.stride_dim, 20, 4, 2)
@@ -524,7 +531,7 @@ class PolyHarness(Harness):
 
     f_jax = self.dyn_fun
     args = self.dyn_args_maker(tst.rng())
-    args_specs = export.poly_specs(args, self.polymorphic_shapes)
+    args_specs = export.args_specs(args, self.polymorphic_shapes)
 
     if self.expect_error is not None:
       with tst.assertRaisesRegex(self.expect_error[0], self.expect_error[1]):
@@ -652,8 +659,9 @@ class ShapePolyTest(jtu.JaxTestCase):
       return x + jnp.sin(y)
 
     f_exported = export.call_exported(
-        export.export(f_jax)(export.poly_spec(x.shape, x.dtype, "b, ..."),
-                             y=export.poly_spec(y.shape, y.dtype, None)))
+        export.export(f_jax)(jax.ShapeDtypeStruct(export.symbolic_shape("b"),
+                                                  x.dtype),
+                             y=jax.ShapeDtypeStruct(y.shape, y.dtype)))
     self.assertAllClose(f_jax(x, y=y), f_exported(x, y=y))
 
   def test_arg_avals_errors(self):

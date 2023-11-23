@@ -59,7 +59,7 @@ DTypeLike = Union[
 
 # Shapes are tuples of dimension sizes, which are normally integers. We allow
 # modules to extend the set of dimension sizes to contain other types, e.g.,
-# symbolic dimensions in jax2tf.shape_poly.DimVar and masking.Poly.
+# symbolic dimensions in export.DimExpr.
 DimSize = Union[int, Any]  # extensible
 Shape = Sequence[DimSize]
 
