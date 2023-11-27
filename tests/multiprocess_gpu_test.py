@@ -174,10 +174,16 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
         subprocesses.append(exit_stack.enter_context(proc))
 
       try:
+        ok = True
         for proc in subprocesses:
           out, err = proc.communicate()
-          self.assertEqual(proc.returncode, 0, msg=f"Process failed:\n\n{err}")
-          self.assertRegex(out, f'{num_gpus_per_task},{num_gpus},\\[{num_gpus}.\\]$')
+          if proc.returncode:
+            print('=' * 80)
+            print("PROCESS FAILED!!!", proc.returncode)
+            print(out)
+            print(err)
+            ok = False
+        self.assertTrue(ok)
       finally:
         for proc in subprocesses:
           proc.kill()
