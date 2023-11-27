@@ -24,13 +24,9 @@ jobs:
       uses: actions/checkout@v3
       with:
         repository: data-apis/array-api-tests
-        ref: '9d7777bc60d45a35124b0de084ff8edbd284c06b'  # Latest commit as of 2023-11-17
+        ref: 'd264bad87c9448d22809aa84796b136dc75b0f81'  # Latest commit as of 2023-11-27
         submodules: 'true'
         path: 'array-api-tests'
-    - name: Fix array-apis bug
-      # Temporary workaround for https://github.com/data-apis/array-api/issues/631 
-      run: |
-        sed -i -e 's/\\/\\\\/g' array-api-tests/array-api/spec/API_specification/signatures/*.py
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@65d7f2d534ac1bc67fcd62888c5f4f3d2cb2b236 # ratchet:actions/setup-python@v4
       with:
