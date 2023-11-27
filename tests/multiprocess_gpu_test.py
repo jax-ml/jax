@@ -162,10 +162,16 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
           program = (
             'import jax, os; '
             f'jax.config.update("jax_cuda_visible_devices", "{visible_devices}"); '
+            'print("set visible devices"); '
             'jax.distributed.initialize('
             'f\'localhost:{os.environ["JAX_PORT"]}\', '
             'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
-            's = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(jax.numpy.ones(jax.local_device_count())); '
+            'print("distributed init ok"); '
+            'x = jax.numpy.ones(jax.local_device_count()); '
+            'print("have ones"); '
+            'f = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i"); '
+            'print("pmap ok"); '
+            's = f(x); '
             'print(f\'{jax.local_device_count()},{jax.device_count()},{s}\', end=""); '
           )
         args = [sys.executable, "-c", program]
