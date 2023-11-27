@@ -573,22 +573,15 @@ PYBIND11_MODULE(_tpu_ext, m) {
           for (int64_t i = 0; i < np_arr.size(); ++i) {
             vals.data()[i] = py::cast<MlirValue>(py::handle(np_arr.data()[i]));
           }
-          if constexpr (std::is_same_v<ssize_t, int64_t>) {
-            // TODO(tlongeri): Find a way to avoid the const_cast
-            return mlirTpuAssemble(getDefaultInsertionPoint(), ty, layout,
-                                   {{const_cast<ssize_t*>(np_arr.shape()),
-                                     static_cast<size_t>(np_arr.ndim())},
-                                    vals.data()},
-                                   TARGET_SHAPE);
-          } else {
-            llvm::SmallVector<int64_t> shape(np_arr.ndim());
-            for (int64_t i = 0; i < np_arr.ndim(); ++i) {
-              shape.data()[i] = np_arr.shape()[i];
-            }
-            return mlirTpuAssemble(getDefaultInsertionPoint(), ty, layout,
-                                   {{shape.data(), shape.size()}, vals.data()},
-                                   TARGET_SHAPE);
+          llvm::SmallVector<int64_t> shape(np_arr.ndim());
+          for (int64_t i = 0; i < np_arr.ndim(); ++i) {
+            shape.data()[i] = np_arr.shape()[i];
           }
+          return mlirTpuAssemble(getDefaultInsertionPoint(), ty, layout,
+                                 MlirTpuValueArray{
+                                   MlirTpuI64ArrayRef{shape.data(), shape.size()},
+                                   vals.data()},
+                                 TARGET_SHAPE);
         });
   m.def("disassemble", [](MlirTpuVectorLayout layout, MlirValue val) {
     NotImplementedDetector detector(getDefaultContext());
