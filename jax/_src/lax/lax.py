@@ -4055,7 +4055,8 @@ def _canonicalize_float_for_sort(x):
   # and NaNs in the output.
 
   result = select(eq(x, _zero(x)), _zeros(x), x)
-  result = select(_isnan(x), full_like(result, np.nan), result)
+  with jax.debug_nans(False):
+    result = select(_isnan(x), full_like(result, np.nan), result)
 
   return result
 
