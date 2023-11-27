@@ -48,6 +48,15 @@ jax_test(
     srcs = ["api_util_test.py"],
 )
 
+py_test(
+    name = "array_api_test",
+    srcs = ["array_api_test.py"],
+    deps = [
+        "//jax",
+        "//jax:experimental_array_api",
+    ] + py_deps("absl/testing"),
+)
+
 jax_test(
     name = "array_interoperability_test",
     srcs = ["array_interoperability_test.py"],
