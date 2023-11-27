@@ -45,7 +45,7 @@ import numpy as np
 FLAGS = flags.FLAGS
 _MOSAIC_USE_CPP_PASSES = config.define_bool_state(
     name="mosaic_use_cpp_passes",
-    default=False,
+    default=True,
     help=(
         "Use C++ implementation for apply-vector-layout and infer-memref-layout"
         " passes (still a WIP)"
