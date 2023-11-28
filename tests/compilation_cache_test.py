@@ -467,6 +467,16 @@ class CompilationCacheDisabledTest(jtu.JaxTestCase):
       files_in_directory = len(os.listdir(tmpdir))
       self.assertEqual(files_in_directory, 0)
 
+  def test_tasks_disable_cache_metric(self):
+    with config.enable_compilation_cache(False):
+      jit(lambda x: x + 1)(1)
+      jit(lambda x: x + 2)(1)
+
+    # Verify that the count is incremented only once per task.
+    self.assertEqual(
+        _counts["/jax/compilation_cache/tasks_disable_cache"], 1
+    )
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
