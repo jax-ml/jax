@@ -372,8 +372,8 @@ class JaxExportTest(jtu.JaxTestCase):
       return jnp.concatenate([a, b], axis=0)
 
     exp = export.export(f)(
-        export.poly_spec(a.shape, a.dtype, "(2*w, h)"),
-        export.poly_spec(a.shape, a.dtype, "(w, h)"))
+        jax.ShapeDtypeStruct(export.symbolic_shape("(2*w, h)"), a.dtype),
+        jax.ShapeDtypeStruct(export.symbolic_shape("(w, h)"), a.dtype))
     self.assertEqual("(2*w, h)", str(exp.in_avals[0].shape))
     self.assertEqual("(w, h)", str(exp.in_avals[1].shape))
     self.assertEqual("(3*w, h)", str(exp.out_avals[0].shape))
@@ -409,7 +409,7 @@ class JaxExportTest(jtu.JaxTestCase):
     def f(a0, a1, *, ak):
       return jnp.concatenate([a0, a1, ak], axis=0)
 
-    a_poly_spec = export.poly_spec(a.shape, a.dtype, "(w, h)")
+    a_poly_spec = jax.ShapeDtypeStruct(export.symbolic_shape("(w, h)"), a.dtype)
     exp = export.export(f)(a_poly_spec, a_poly_spec, ak=a_poly_spec)
     self.assertEqual("(w, h)", str(exp.in_avals[0].shape))
     self.assertEqual("(3*w, h)", str(exp.out_avals[0].shape))
@@ -429,7 +429,7 @@ class JaxExportTest(jtu.JaxTestCase):
           f"The requested jax_serialization version {v} is outside the range of supported versions"))
 
       exp = export.export(jnp.sin)(
-        export.poly_spec((3, 4), np.float32, "w, h"))
+          jax.ShapeDtypeStruct(export.symbolic_shape("w, h"), np.float32))
       x = np.arange(30, dtype=np.float32).reshape((5, 6))
       res = export.call_exported(exp)(x)
       self.assertAllClose(res, np.sin(x))
@@ -473,7 +473,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     disabled_checks = ()
     exp_f = export.export(f, disabled_checks=disabled_checks)(
-        export.poly_spec((3, 4, 12), np.float32, poly_spec))
+        jax.ShapeDtypeStruct(export.symbolic_shape(poly_spec), np.float32))
     self.assertEqual(exp_f.uses_shape_polymorphism, poly_spec != "3,4,12")
     arg = np.arange(np.prod(arg_shape),
                     dtype=arg_dtype).reshape(arg_shape)  # arg : f32[3,4,12]
@@ -575,7 +575,7 @@ class JaxExportTest(jtu.JaxTestCase):
     arg = np.arange(np.prod(arg_shape),
                     dtype=arg_dtype).reshape(arg_shape)  # x : f32[3,4,12]
     inner_exp = export.export(inner)(
-        export.poly_spec((3, 4, 12), np.float32, inner_poly_spec))
+        jax.ShapeDtypeStruct(export.symbolic_shape(inner_poly_spec), np.float32))
 
     self.assertEqual(inner_exp.uses_shape_polymorphism,
                      (inner_poly_spec != "3,4,12"))
@@ -590,7 +590,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
       # Call it after exporting again, with polymorphic shapes
       outer_exp = export.export(outer)(
-          export.poly_spec(arg.shape, arg.dtype, outer_poly_spec))
+          jax.ShapeDtypeStruct(export.symbolic_shape(outer_poly_spec), arg.dtype))
 
     if expect_error_outer_exp is not None:
       return
@@ -665,7 +665,7 @@ class JaxExportTest(jtu.JaxTestCase):
       if expect_error is not None:
         stack.push(self.assertRaisesRegex(Exception, re.escape(expect_error)))
       exp = export.export(f_jax)(
-          export.poly_spec(x.shape, x.dtype, poly_spec))
+          jax.ShapeDtypeStruct(export.symbolic_shape(poly_spec), x.dtype))
       export.call_exported(exp)(x)
 
   def test_poly_booleans(self):
@@ -675,7 +675,8 @@ class JaxExportTest(jtu.JaxTestCase):
       return jnp.logical_not(x)
 
     x = np.array([True, False, True, False], dtype=np.bool_)
-    exp = export.export(f_jax)(export.poly_spec(x.shape, x.dtype, "b"))
+    exp = export.export(f_jax)(jax.ShapeDtypeStruct(export.symbolic_shape("b"),
+                                                    x.dtype))
     res = export.call_exported(exp)(x)
     self.assertAllClose(f_jax(x), res)
 
@@ -690,13 +691,14 @@ class JaxExportTest(jtu.JaxTestCase):
       b = x.shape[0]
       return jnp.ones(output_shape(b), dtype=x.dtype)
     x = np.arange(5, dtype=np.float32)
-    exp = export.export(f)(export.poly_spec(x.shape, x.dtype, "b"))
+    exp = export.export(f)(jax.ShapeDtypeStruct(export.symbolic_shape("b"),
+                                                x.dtype))
     # Call with static shapes
     res = export.call_exported(exp)(x)
     self.assertAllClose(res, f(x))
 
     # Now re-export with shape polymorphism
-    x_spec = export.poly_spec(x.shape, x.dtype, "a")
+    x_spec = jax.ShapeDtypeStruct(export.symbolic_shape("a"), x.dtype)
     exp2 = export.export(export.call_exported(exp))(x_spec)
     a = x_spec.shape[0]
     self.assertEqual(exp2.out_avals[0].shape, output_shape(a))
@@ -886,7 +888,7 @@ class JaxExportTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Not intended for running on GPU")
     exp = export.export(lambda x: jnp.reshape(_testing_multi_platform_func(x), (-1,)),
                         lowering_platforms=("cpu", "tpu"))(
-        export.poly_spec((5, 6), np.float32, "b1, b2")
+        jax.ShapeDtypeStruct(export.symbolic_shape("b1, b2"), np.float32)
     )
     x = np.arange(12, dtype=np.float32).reshape((3, 4))
     res = export.call_exported(exp)(x)
@@ -1010,7 +1012,8 @@ class JaxExportTest(jtu.JaxTestCase):
     x = np.arange(12, dtype=np.float32).reshape((3, 4))
     def f_jax(x):  # x: f32[b1, b2]
       return 10. + testing_primitive_with_effect_p.bind(x, effect_class_name="TestingOrderedEffect1")
-    exp = export.export(f_jax)(export.poly_spec(x.shape, x.dtype, "b2, b1"))
+    exp = export.export(f_jax)(jax.ShapeDtypeStruct(
+        export.symbolic_shape("b2, b1"), x.dtype))
     mlir_module_str = str(exp.mlir_module())
     wrapped_main_expected_re = (
       r"@_wrapped_jax_export_main\("
@@ -1053,9 +1056,10 @@ class JaxExportTest(jtu.JaxTestCase):
     def f_jax(x):  # x: f32[b1, b2]
       return 10. + _testing_multi_platform_func(x,
                                                 effect_class_name="TestingOrderedEffect1")
-    exp = export.export(f_jax,
-                        lowering_platforms=("cpu", "tpu")
-                        )(export.poly_spec(x.shape, x.dtype, "b1, b2"))
+    exp = export.export(
+        f_jax,
+        lowering_platforms=("cpu", "tpu")
+        )(jax.ShapeDtypeStruct(export.symbolic_shape("b1, b2"), x.dtype))
     mlir_module_str = str(exp.mlir_module())
     wrapped_main_expected_re = (
       r"@_wrapped_jax_export_main\("

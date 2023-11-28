@@ -367,12 +367,12 @@ def convert(fun_jax: Callable,
       _, a_jax_dtype = _tfval_to_tensor_jax_dtype(a)
       return tf_arg_shape, a_jax_dtype
 
-    args_specs = export.poly_specs(args_tf,
+    args_specs = export.args_specs(args_tf,
                                    polymorphic_shapes=polymorphic_shapes,
                                    get_shape_and_dtype=shape_and_dtype_tf)
     # The polymorphic_shapes argument refers to positional arguments only.
     # We assume None for the kwargs.
-    kwargs_specs = export.poly_specs(kwargs_tf,
+    kwargs_specs = export.args_specs(kwargs_tf,
                                      polymorphic_shapes=None,
                                      get_shape_and_dtype=shape_and_dtype_tf)
     combined_args_tf = (args_tf, kwargs_tf)
@@ -652,7 +652,7 @@ def eval_polymorphic_shape(fun_jax: Callable,
   (c, a)
   """
   def do_eval_polymorphic_shape(*args_specs) -> Any:
-    args_poly_specs = export.poly_specs(
+    args_poly_specs = export.args_specs(
         args_specs, polymorphic_shapes=polymorphic_shapes)
     res_poly_spec = jax.eval_shape(fun_jax, *args_poly_specs)
     # TODO(necula): For now we export the polymorphic shapes using `str`.

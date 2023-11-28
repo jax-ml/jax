@@ -925,9 +925,11 @@ class PolyShape(tuple):
     return "(" + ", ".join(["..." if d is ... else str(d) for d in self]) + ")"
 
 
-def _parse_spec(shape_spec: Union[str, PolyShape, None],
-                arg_shape: Sequence[Optional[int]]) -> Sequence[DimSize]:
-  """Parses the shape polymorphic specification for one array argument.
+def symbolic_shape(shape_spec: Union[str, PolyShape, None],
+                   *,
+                   like: Optional[Sequence[Optional[int]]] = None
+                   ) -> Sequence[DimSize]:
+  """Parses the shape polymorphic specification into a symbolic shape.
 
   We have to be able to parse all strings produced by str(_DimExpr) because
   sometimes the output polymorphic shapes of one function become the input
@@ -935,10 +937,10 @@ def _parse_spec(shape_spec: Union[str, PolyShape, None],
 
   Args:
     shape_spec: a shape polymorphic specification. None stands for "...".
-    arg_shape: an actual shape, possibly containing unknown dimensions (None).
-      We use `arg_shape` to fill-in the placeholders `_` and `...` in
-      the `shape_spec`. The dimensions of `arg_shape` that are used for filling
-      must be known (not `None`). If a dimension in `arg_shape` is known and
+    like: when `shape_spec` contains placeholders ("_", "..."), use this
+      shape to fill in the placeholders.
+      The dimensions of `like` that are used for filling
+      must be known (not `None`). If a dimension in `like` is known and
       the corresponding dimension in `shape_spec` is a constant then they
       must be equal.
 
@@ -952,16 +954,16 @@ def _parse_spec(shape_spec: Union[str, PolyShape, None],
   elif not isinstance(shape_spec, str):
     raise ValueError("polymorphic shape spec should be None or a string. "
                      f"Found {shape_spec_repr}.")
-  return _Parser(shape_spec, arg_shape, shape_spec_repr).parse()
+  return _Parser(shape_spec, like, shape_spec_repr).parse()
 
 class _Parser:
   def __init__(self,
                shape_spec: str,
-               arg_shape: Sequence[Optional[int]],
+               like_shape: Optional[Sequence[Optional[int]]],
                shape_spec_repr: str):
     self.shape_spec = shape_spec
     self.shape_spec_repr = shape_spec_repr  # For error messages
-    self.arg_shape = arg_shape
+    self.like_shape = like_shape
     self.dimensions: list[DimSize] = []  # dimensions we have parsed
 
   def parse(self) -> Sequence[DimSize]:
@@ -975,19 +977,20 @@ class _Parser:
   def add_dim(self, expr: Optional[DimSize], tok: tokenize.TokenInfo):
     if expr is None:
       raise self.parse_err(tok,
-                           ("unexpected placeholder for unknown dimension "
-                            f"for argument shape {self.arg_shape}"))
-    arg_shape_dim = self.arg_shape[len(self.dimensions)]
-    if core.is_constant_dim(expr) and arg_shape_dim is not None:
-      if expr != arg_shape_dim:
+                           ("unexpected placeholder for unknown dimension; "
+                            f"like={self.like_shape}"))
+
+    if core.is_constant_dim(expr) and self.like_shape is not None:
+      like_shape_dim = self.like_shape[len(self.dimensions)]
+      if expr != like_shape_dim:
         raise self.parse_err(tok,
-                             (f"different size {expr} for known dimension "
-                              f"for argument shape {self.arg_shape}"))
+                             (f"different size {expr} for known dimension; "
+                              f"like={self.like_shape}"))
     self.dimensions.append(expr)
 
   def parse_err(self, tok: Optional[tokenize.TokenInfo], detail: str) -> Exception:
     msg = (
-        f"syntax error in polymorphic shape {self.shape_spec_repr} "
+        f"syntax error in symbolic shape {self.shape_spec_repr} "
         f"in dimension {len(self.dimensions)}: {detail}. ")
     if tok is not None:
       msg += f"Parsed '{tok.line[:tok.start[1]]}', remaining '{tok.line[tok.start[1]:]}'."
@@ -1033,17 +1036,31 @@ class _Parser:
     while True:
       if tok.exact_type in self.FOLLOW_SHAPE:
         break
+      # Error checking in presence of placeholders
+      if (tok.exact_type == tokenize.ELLIPSIS or
+          tok.exact_type == tokenize.NAME and tok.string == "_"):
+        if self.like_shape is None:
+          raise self.parse_err(tok,
+                               "spec contains ... but no 'like' shape was given")
+        if tok.exact_type == tokenize.ELLIPSIS:
+          min_len_like_shape = len(self.dimensions)
+        else:
+          min_len_like_shape = len(self.dimensions) + 1
+        if len(self.like_shape) < min_len_like_shape:
+          raise self.parse_err(
+            tok,
+            f"cannot resolve placeholder '{tok.string}' because we parsed "
+            f"{len(self.dimensions)} already and 'like' shape has "
+            f"only {len(self.like_shape)} dimensions")
       if tok.exact_type == tokenize.ELLIPSIS:
-        to_add = self.arg_shape[len(self.dimensions):]
+        to_add = self.like_shape[len(self.dimensions):]  # type: ignore[index]
         for ad in to_add:
           self.add_dim(ad, tok)
         tok = self.next_tok()
         break
-      if len(self.dimensions) >= len(self.arg_shape):
-        raise self.parse_err(tok,
-            f"too many dimensions, arg_shape has {len(self.arg_shape)}")
+
       if tok.exact_type == tokenize.NAME and tok.string == "_":
-        e = self.arg_shape[len(self.dimensions)]
+        e = self.like_shape[len(self.dimensions)]  # type: ignore[index]
         tok = self.next_tok()
       else:
         e, tok = self.expr(tok)
@@ -1169,21 +1186,6 @@ def _dimension_size_lowering_rule(ctx, arg, *, dimension):
 
 mlir.register_lowering(dimension_size_p, _dimension_size_lowering_rule)
 
-
-def arg_aval(
-    arg_shape: Sequence[Optional[int]],
-    arg_jax_dtype: DType,
-    polymorphic_shape: Optional[Union[str, PolyShape]]) -> core.ShapedArray:
-  """Computes abstract values.
-
-  Args:
-    arg_shape: the shape for the argument, possibly having None dimensions.
-    arg_dtype: the inferred JAX dtype for the arg.
-    polymorphic_shape: the polymorphic specification for the argument.
-  Returns: the JAX abstract value for the argument.
-  """
-  aval_shape = _parse_spec(polymorphic_shape, arg_shape)
-  return core.ShapedArray(aval_shape, arg_jax_dtype)
 
 def all_dim_vars(args_avals: Sequence[core.AbstractValue]) -> Sequence[str]:
   dim_vars: set[str] = set()

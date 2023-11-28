@@ -105,21 +105,21 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
         f"{expected_sym=} {expected_concrete=} {compute_concrete=} {env=}")
 
   def test_parse_shape(self):
-    self.assertEqual((), shape_poly._parse_spec("", ()))
-    self.assertEqual((), shape_poly._parse_spec("()", ()))
-    self.assertEqual((2, 3), shape_poly._parse_spec(None, (2, 3)))
-    self.assertEqual((2, 3), shape_poly._parse_spec("2, 3,", (2, 3)))
-    self.assertEqual((2, 3), shape_poly._parse_spec("2, _", (2, 3)))
-    self.assertEqual((2, 3), shape_poly._parse_spec("2, ...", (2, 3)))
-    self.assertEqual((2, 3), shape_poly._parse_spec("...", (2, 3)))
-    self.assertEqual((2, 3), shape_poly._parse_spec(" ( 2 , 3 ) ", (2, 3)))
+    self.assertEqual((), shape_poly.symbolic_shape(""))
+    self.assertEqual((), shape_poly.symbolic_shape("()"))
+    self.assertEqual((2, 3), shape_poly.symbolic_shape(None, like=(2, 3)))
+    self.assertEqual((2, 3), shape_poly.symbolic_shape("2, 3,"))
+    self.assertEqual((2, 3), shape_poly.symbolic_shape("2, _", like=(2, 3)))
+    self.assertEqual((2, 3), shape_poly.symbolic_shape("2, ...", like=(2, 3)))
+    self.assertEqual((2, 3), shape_poly.symbolic_shape("...", like=(2, 3)))
+    self.assertEqual((2, 3), shape_poly.symbolic_shape(" ( 2 , 3 ) "))
 
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
-    self.assertEqual((a, 3), shape_poly._parse_spec("(a, ...) ", (None, 3)))
+    a, b = shape_poly.symbolic_shape("a, b")
+    self.assertEqual((a, 3), shape_poly.symbolic_shape("(a, ...) ", like=(None, 3)))
     tshape = tf.TensorShape([None, 3])
-    self.assertEqual((a, 3), shape_poly._parse_spec("(a, ...) ", tshape))
+    self.assertEqual((a, 3), shape_poly.symbolic_shape("(a, ...) ", like=tshape))
 
-  a, b = shape_poly._parse_spec("a, b", (2, 3))
+  a, b = shape_poly.symbolic_shape("a, b")
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -140,8 +140,8 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
   def test_parse_dim(self,
                      dim_spec="-2 * a^2 * b + b^2",
                      dim_poly=-2 * a * a * b + b * b):
-    self.assertEqual((dim_poly,), shape_poly._parse_spec(dim_spec, (None,)))
-    self.assertEqual((dim_poly,), shape_poly._parse_spec(str(dim_poly), (None,)))
+    self.assertEqual((dim_poly,), shape_poly.symbolic_shape(dim_spec))
+    self.assertEqual((dim_poly,), shape_poly.symbolic_shape(str(dim_poly)))
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -154,15 +154,15 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
          "'a'": "name=a_quotes"}.get(shape_spec, "")),
         shape_spec=shape_spec)
       for shape_spec in [
-          "2.5", "a + a a", "a ^ a", "a, a",
+          "2.5", "a + a a", "a ^ a",
           "_", "...", "a ;", ")(", "2a", "a@", "'a'", "('a', ...)",
           "mod(a)", "floordiv(a, b, c)", "..., 3"
   ]])
   def test_parse_error(self,
                        shape_spec="a + a a"):
     with self.assertRaisesRegex(ValueError,
-                                "syntax error in polymorphic shape"):
-      shape_poly._parse_spec(shape_spec, (None,))
+                                "syntax error in symbolic shape"):
+      shape_poly.symbolic_shape(shape_spec)
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -175,12 +175,12 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
   def test_parse_mismatch_error(self,
                                 shape_spec="3", arg_shape=(4,)):
     with self.assertRaisesRegex(ValueError,
-                                "syntax error in polymorphic shape .* different size"):
-      shape_poly._parse_spec(shape_spec, arg_shape)
+                                "syntax error in symbolic shape .* different size"):
+      shape_poly.symbolic_shape(shape_spec, like=arg_shape)
 
 
   def test_dim_vars(self):
-    a, b, a1 = shape_poly._parse_spec("a, b, a", (2, 3, 2))
+    a, b, a1 = shape_poly.symbolic_shape("a, b, a")
     self.assertEqual(True, a == a)
     self.assertEqual(True, a == a1)
     self.assertEqual(False, a != a)
@@ -196,20 +196,20 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
     self.assertIn(b, [a, b])
 
   def test_get_vars(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
 
     self.assertEqual({"a"}, a.get_vars())
     self.assertEqual({"a", "b"}, (a * b * a).get_vars())
 
   def test_evaluate(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
 
     self.assertEqual(1, (a * a - b).evaluate(dict(a=2, b=3)))
     self.assertEqual(1, ((a * a) // b).evaluate(dict(a=2, b=3)))
     self.assertEqual(4, ((a * a) % b).evaluate(dict(a=5, b=7)))
 
   def test_dim_vars_symbolic_equal(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
     self.assertTrue(core.definitely_equal(a, a))
     self.assertFalse(core.definitely_equal(a, 1))
     self.assertFalse(core.definitely_equal(a, b))
@@ -226,7 +226,7 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
     self.assertFalse(core.definitely_equal(1, "a"))
 
   def test_poly_bounds(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
     bounded_le4 = 5 - a
     bounded_ge2 = b + 1
     bounded_ge0_le4 = a % 5
@@ -309,7 +309,7 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual((core.non_negative_dim(15 - a) // 3).bounds(), (0, 4))
 
   def test_poly_equal(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
     poly3 = a + 3 - a
     self.assertTrue(poly3 == 3)
     self.assertTrue(poly3 == np.array(3, np.int64))
@@ -362,7 +362,7 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
                               lambda x: x, 3 * a - a % (2 * b))
 
   def test_poly_compare(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
     poly = 4 * a + b + 3
     self.assertTrue(poly.ge(0))
     self.assertTrue(poly.ge(8))
@@ -376,7 +376,7 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
       (4 * a - b).ge(0)
 
   def test_poly_compare_overload(self):
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
     self.assertTrue(a >= a)
     self.assertTrue(a >= 0)
     self.assertTrue(a >= 1)
@@ -405,7 +405,7 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
   def test_poly_int_results(self):
     # Whenever the result is an integer, it should be represented as an
     # Python integer, not a symbolic dimension.
-    a, b = shape_poly._parse_spec("a, b", (2, 3))
+    a, b = shape_poly.symbolic_shape("a, b")
     self.assertEqual(a + 2 - a, 2)
     self.assertIsInstance(a + 2 - a, int)
     self.assertEqual(a + (2 - a), 2)
@@ -443,7 +443,7 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
                                 dividend, divisor)
 
   def test_non_negative_dim(self):
-    a, = shape_poly._parse_spec("a,", (2,))
+    a, = shape_poly.symbolic_shape("a,")
 
     self.sampled_assert_equal(2, core.non_negative_dim, 2)
     self.sampled_assert_equal(0, core.non_negative_dim, 0)
@@ -455,7 +455,7 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
 
   def test_dilate_dim(self):
     """0 if d == 0 else 1 + dilation * (d - 1))"""
-    a, = shape_poly._parse_spec("a,", (2,))
+    a, = shape_poly.symbolic_shape("a,")
 
     self.sampled_assert_equal(4, core.dilate_dim, 2, 3)
     self.sampled_assert_equal(7, core.dilate_dim, 3, 3)
@@ -470,7 +470,7 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
 
     If d <  window_size, returns 0.
     """
-    a, stride = shape_poly._parse_spec("a, s", (2, 3))
+    a, stride = shape_poly.symbolic_shape("a, s")
     self.sampled_assert_equal(8, core.stride_dim, 10, 3, 1)
     self.sampled_assert_equal(9, core.stride_dim, 20, 3, 2)
     self.sampled_assert_equal(9, core.stride_dim, 20, 4, 2)
@@ -581,7 +581,7 @@ class PolyHarness(Harness):
         len(polymorphic_shapes), len(args),
         f"polymorphic_shapes {polymorphic_shapes} of length "
         f"{len(polymorphic_shapes)} must match number of arguments {len(args)}")
-      args_specs = export.poly_specs(args, polymorphic_shapes)
+      args_specs = export.args_specs(args, polymorphic_shapes)
       input_signature = [
         tf.TensorSpec(
             [d if isinstance(d, int) else None for d in a.shape],
@@ -821,7 +821,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      expected_output_signature=tf.TensorSpec([3]))
 
   def test_forgot_polymorphic_shapes_error(self):
-    msg_re = "syntax error in polymorphic shape"
+    msg_re = "syntax error in symbolic shape"
     with self.assertRaisesRegex(ValueError, msg_re):
       check_shape_poly(self,
                        jnp.sin,
@@ -852,7 +852,11 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       # check expected_shapeenv.
       arg_dtypes = (_f32,) * len(arg_shapes)
       def f_tf(*args_tf):
-        avals = tuple(map(shape_poly.arg_aval, arg_shapes, arg_dtypes, polymorphic_shapes))
+        avals = tuple(map(
+            lambda s, dt, spec: core.ShapedArray(
+                shape_poly.symbolic_shape(spec, like=s),
+                dt),
+            arg_shapes, arg_dtypes, polymorphic_shapes))
         dim_vars = shape_poly.all_dim_vars(avals)
         dim_values, _ = jax2tf.jax2tf._interpret_fun_jax(
             partial(shape_poly.compute_dim_vars_from_arg_shapes,
@@ -878,7 +882,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     def shaped_array(shape_spec: str, actual_shape: core.Shape):
       return core.ShapedArray(
-          shape_poly._parse_spec(shape_spec, actual_shape), np.float32)
+          shape_poly.symbolic_shape(shape_spec, like=actual_shape), np.float32)
 
     # Known shapes for the arguments
     check_avals(
