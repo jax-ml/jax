@@ -1,3 +1,4 @@
+(advanced-autodiff)=
 # Advanced automatic differentiation
 
 ```{note}
@@ -9,3 +10,6 @@ For the time being, you may find some related content in the old documentation:
 - {doc}`../notebooks/autodiff_remat`
 - {doc}`../notebooks/Custom_derivative_rules_for_Python_code`.
 ```
+
+(defining-custom-derivative-rules)=
+## Defining custom derivative rules
