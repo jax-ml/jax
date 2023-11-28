@@ -139,8 +139,8 @@ def _trace_to_jaxpr(fun, in_avals, api_name, fun_name):
   with log_elapsed_time(
       "Finished tracing + transforming {fun_name} in {elapsed_time} sec",
       fun_name=util.wrap_name(fun_name, api_name), event=JAXPR_TRACE_EVENT):
-    jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, in_avals)
-  return core.ClosedJaxpr(jaxpr, consts)
+    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+  return core.ClosedJaxpr(jaxpr, consts), tuple(out_avals)
 
 
 @util.cache()
@@ -158,10 +158,11 @@ def xla_primitive_callable(
   donated_invars = (False,) * len(in_avals)
   wrapped_fun = lu.wrap_init(prim_fun)
   flat_fun, out_tree = api_util.flatten_fun_nokwargs(wrapped_fun, in_tree)
-  closed_jaxpr = _trace_to_jaxpr(flat_fun, in_avals, 'jit', prim.name)
+  closed_jaxpr, out_avals = _trace_to_jaxpr(flat_fun, in_avals, 'jit', prim.name)
   computation = sharded_lowering(
       closed_jaxpr, prim.name, donated_invars, keep_unused=False,
-      inline=True, in_avals=in_avals, in_shardings=orig_in_shardings.shardings,
+      inline=True, in_avals=in_avals, out_avals=out_avals,
+      in_shardings=orig_in_shardings.shardings,
       lowering_parameters=mlir.LoweringParameters())
   compiled = computation.compile()
   if config.disable_jit.value:
@@ -179,19 +180,17 @@ def xla_primitive_callable(
 def sharded_lowering(
     closed_jaxpr: core.ClosedJaxpr, name: str, donated_invars: Sequence[bool],
     keep_unused: bool, inline: bool, in_avals: tuple[core.AbstractValue, ...],
+    out_avals: tuple[core.AbstractValue, ...],
     in_shardings: Sequence[Sharding | None],
     lowering_parameters: mlir.LoweringParameters
 ) -> pxla.MeshComputation:
   in_shardings_unspec = [UNSPECIFIED if i is None else i for i in in_shardings]
-
-  # Pass in a singleton `UNSPECIFIED` for out_shardings because we don't know
-  # the number of output avals at this stage. lower_sharding_computation will
-  # apply it to all out_avals.
   return pxla.lower_sharding_computation(
-      closed_jaxpr, 'jit', name, in_shardings_unspec, UNSPECIFIED, donated_invars,
+      closed_jaxpr, 'jit', name, in_shardings_unspec,
+      (UNSPECIFIED,) * len(out_avals), donated_invars,
       in_avals, keep_unused=keep_unused, inline=inline,
       devices_from_context=None, lowering_parameters=lowering_parameters,
-      in_layouts=(None,) * len(in_avals), out_layouts=None)
+      in_layouts=(None,) * len(in_avals), out_layouts=(None,) * len(out_avals))
 
 
 def simple_impl(prim):
