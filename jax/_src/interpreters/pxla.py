@@ -1665,16 +1665,6 @@ def _get_and_check_device_assignment(
 
 MaybeSharding = Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue]
 
-def cache_wrap(fn):
-  _wrapped_with_lu_cache = lu.cache(fn)
-  _wrapped_with_weakref_lru_cache = weakref_lru_cache(fn)
-  def wrapped(f, *args, **kwargs):
-    if isinstance(f, lu.WrappedFun):
-      return _wrapped_with_lu_cache(f, *args, **kwargs)
-    else:
-      return _wrapped_with_weakref_lru_cache(f, *args, **kwargs)
-  return wrapped
-
 
 def prune_unused_inputs(
     jaxpr: core.Jaxpr,
@@ -1686,22 +1676,15 @@ def prune_unused_inputs(
   return new_jaxpr, kept_const_idx, kept_var_idx
 
 
-@cache_wrap
-def _trace_to_jaxpr_and_dce(fun_or_jaxpr, global_in_avals, api_name, fun_name,
-                            keep_unused, donated_invars, auto_spmd_lowering):
+@weakref_lru_cache
+def _dce_jaxpr(closed_jaxpr, global_in_avals, api_name, fun_name,
+               keep_unused, donated_invars, auto_spmd_lowering):
   name_stack = source_info_util.new_name_stack(wrap_name(fun_name, api_name))
 
-  if isinstance(fun_or_jaxpr, lu.WrappedFun):
-    with dispatch.log_elapsed_time(
-        "Finished tracing + transforming {fun_name} in {elapsed_time} sec",
-        fun_name=str(name_stack), event=dispatch.JAXPR_TRACE_EVENT):
-      jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(
-          fun_or_jaxpr, global_in_avals)
-  else:
-    assert isinstance(fun_or_jaxpr, core.ClosedJaxpr)
-    jaxpr = fun_or_jaxpr.jaxpr
-    global_out_avals = fun_or_jaxpr.out_avals
-    consts = fun_or_jaxpr.consts
+  assert isinstance(closed_jaxpr, core.ClosedJaxpr)
+  jaxpr = closed_jaxpr.jaxpr
+  global_out_avals = closed_jaxpr.out_avals
+  consts = closed_jaxpr.consts
 
   if (keep_unused or auto_spmd_lowering or
       any(hasattr(a, "shape") and not core.is_constant_shape(a.shape)
@@ -1894,7 +1877,7 @@ MaybeLayout = Sequence[Optional[Union[XLACompatibleLayout, LayoutRequest]]]
 
 @profiler.annotate_function
 def lower_sharding_computation(
-    fun_or_jaxpr: lu.WrappedFun | core.ClosedJaxpr,
+    closed_jaxpr: core.ClosedJaxpr,
     api_name: str,
     fun_name: str,
     in_shardings: Sequence[MaybeSharding],
@@ -1922,8 +1905,8 @@ def lower_sharding_computation(
       check_if_any_auto(it.chain.from_iterable([in_shardings, out_shardings])))  # type: ignore
 
   (closed_jaxpr, global_in_avals, global_out_avals, donated_invars,
-   kept_var_idx, name_stack) = _trace_to_jaxpr_and_dce(
-      fun_or_jaxpr, global_in_avals, api_name, fun_name, keep_unused,
+   kept_var_idx, name_stack) = _dce_jaxpr(
+      closed_jaxpr, global_in_avals, api_name, fun_name, keep_unused,
       donated_invars, auto_spmd_lowering)
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = tuple(s for i, s in enumerate(in_shardings) if i in kept_var_idx)

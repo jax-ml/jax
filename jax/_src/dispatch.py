@@ -45,6 +45,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client as xc
 from jax._src.monitoring import record_event_duration_secs
 from jax._src.partition_spec import PartitionSpec
@@ -131,6 +132,17 @@ def apply_primitive(prim, *args, **params):
   return compiled_fun(*args)
 
 
+# No need to cache here because there is a cache on xla_primitive_callable.
+# If that cache is broken, a new function will be created which will always
+# break the cache on this function.
+def _trace_to_jaxpr(fun, in_avals, api_name, fun_name):
+  with log_elapsed_time(
+      "Finished tracing + transforming {fun_name} in {elapsed_time} sec",
+      fun_name=util.wrap_name(fun_name, api_name), event=JAXPR_TRACE_EVENT):
+    jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, in_avals)
+  return core.ClosedJaxpr(jaxpr, consts)
+
+
 @util.cache()
 def xla_primitive_callable(
     prim: core.Primitive, in_avals: tuple[core.AbstractValue, ...], in_tree,
@@ -142,11 +154,13 @@ def xla_primitive_callable(
       return out
     else:
       return out,
+
   donated_invars = (False,) * len(in_avals)
   wrapped_fun = lu.wrap_init(prim_fun)
   flat_fun, out_tree = api_util.flatten_fun_nokwargs(wrapped_fun, in_tree)
+  closed_jaxpr = _trace_to_jaxpr(flat_fun, in_avals, 'jit', prim.name)
   computation = sharded_lowering(
-      flat_fun, prim.name, donated_invars, keep_unused=False,
+      closed_jaxpr, prim.name, donated_invars, keep_unused=False,
       inline=True, in_avals=in_avals, in_shardings=orig_in_shardings.shardings,
       lowering_parameters=mlir.LoweringParameters())
   compiled = computation.compile()
@@ -163,7 +177,7 @@ def xla_primitive_callable(
 
 
 def sharded_lowering(
-    fun: lu.WrappedFun, name: str, donated_invars: Sequence[bool],
+    closed_jaxpr: core.ClosedJaxpr, name: str, donated_invars: Sequence[bool],
     keep_unused: bool, inline: bool, in_avals: tuple[core.AbstractValue, ...],
     in_shardings: Sequence[Sharding | None],
     lowering_parameters: mlir.LoweringParameters
@@ -174,7 +188,7 @@ def sharded_lowering(
   # the number of output avals at this stage. lower_sharding_computation will
   # apply it to all out_avals.
   return pxla.lower_sharding_computation(
-      fun, 'jit', name, in_shardings_unspec, UNSPECIFIED, donated_invars,
+      closed_jaxpr, 'jit', name, in_shardings_unspec, UNSPECIFIED, donated_invars,
       in_avals, keep_unused=keep_unused, inline=inline,
       devices_from_context=None, lowering_parameters=lowering_parameters,
       in_layouts=(None,) * len(in_avals), out_layouts=None)
