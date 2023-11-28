@@ -503,7 +503,8 @@ class Compiled(Stage):
     assert all(isinstance(l, SpecifiedLayout) for l in layouts_flat)
     # Some input layouts got DCE'd
     if self.in_tree.num_leaves > len(layouts_flat):
-      layouts_flat = [layouts_flat[i] if i in self._executable._kept_var_idx
+      iter_layouts_flat = iter(layouts_flat)
+      layouts_flat = [next(iter_layouts_flat) if i in self._executable._kept_var_idx
                       else None for i in range(self.in_tree.num_leaves)]
     return tree_util.tree_unflatten(self.in_tree, layouts_flat)  # pytype: disable=attribute-error
 

@@ -166,23 +166,24 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, s)
 
   def test_dce_in_layouts(self):
-    def f(x, y):
-      return x * 2
+    def f(x, y, z, a, b, c):
+      return z * 2, b.T
 
     shape = (8, 2)
-    inp = np.arange(math.prod(shape)).reshape(shape)
-    compiled = jax.jit(f).lower(inp, inp, _in_layouts=layout.AUTO,
+    inps = [np.arange(math.prod(shape)).reshape(shape)] * 6
+    compiled = jax.jit(f).lower(*inps, _in_layouts=layout.AUTO,
                                 _out_layouts=layout.AUTO).compile()
     arg_layouts, _ = compiled._input_layouts()
-    out1 = compiled(inp, inp)
+    out1, out2 = compiled(*inps)
 
-    compiled2 = jax.jit(f).lower(inp, inp, _in_layouts=arg_layouts).compile()
-    out2 = compiled2(inp, inp)
+    compiled2 = jax.jit(f).lower(*inps, _in_layouts=arg_layouts).compile()
+    out3, out4 = compiled2(*inps)
 
     for l1, l2 in safe_zip(arg_layouts, compiled2._input_layouts()[0]):
       self.assertEqual(l1, l2)
 
-    self.assertArraysEqual(out1, out2)
+    self.assertArraysEqual(out1, out3)
+    self.assertArraysEqual(out2, out4)
 
     # TODO(yashkatariya, frostig): Also use the arg_layouts to create an Array
     # and then pass that back into compiled.
