@@ -625,6 +625,7 @@ class SparsifyTest(jtu.JaxTestCase):
       for fmt in ["BCSR", "BCOO"]
       for op, dtype, kwds in [
         (jnp.copy, jnp.float32, {}),
+        (lax.conj, jnp.complex64, {}),
         (lax.abs, jnp.float32, {}),
         (lax.asin, jnp.float32, {}),
         (lax.asinh, jnp.float32, {}),

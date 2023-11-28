@@ -16,7 +16,6 @@
 import abc
 from collections.abc import Sequence
 import math
-import operator
 
 import jax
 from jax._src import core
