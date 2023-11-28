@@ -2013,7 +2013,6 @@ def lower_sharding_computation(
       in_layouts=in_layouts,
       out_layouts=out_layouts,
       pmap_nreps=nreps,
-      jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info,
       shape_poly_state=shape_poly_state,
       all_default_mem_kind=all_default_mem_kind,
       all_args_info=all_args_info)
@@ -2192,7 +2191,6 @@ def lower_mesh_computation(
       committed=True,
       in_layouts=(None,) * len(global_in_avals),
       out_layouts=(None,) * len(global_out_avals),
-      jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info,
       shape_poly_state=lowering_result.shape_poly_state,
       all_args_info=all_args_info)
 
@@ -2580,7 +2578,6 @@ class UnloadedMeshExecutable:
   host_callbacks: Sequence[Any]
   kept_var_idx: set[int]
   auto_spmd_lowering: bool
-  jaxpr_debug_info: core.JaxprDebugInfo | None
   in_layouts: Sequence[SpecifiedLayout | None]
   out_layouts: Sequence[SpecifiedLayout | None]
   all_args_info: AllArgsInfo | None
@@ -2606,7 +2603,7 @@ class UnloadedMeshExecutable:
                           self.input_shardings, self.output_shardings,
                           self.auto_spmd_lowering, self.kept_var_idx,
                           self.in_layouts, self.out_layouts,
-                          self.jaxpr_debug_info, self.all_args_info, self)
+                          self.all_args_info, self)
 
   # May return a MeshExecutable in the compile_replicated case.
   @staticmethod
@@ -2631,7 +2628,6 @@ class UnloadedMeshExecutable:
                in_layouts: MaybeLayout,
                out_layouts: MaybeLayout,
                pmap_nreps: int = 1,
-               jaxpr_debug_info: core.JaxprDebugInfo | None = None,
                shape_poly_state: mlir.ShapePolyLoweringState | None = None,
                all_default_mem_kind: bool = True,
                all_args_info: AllArgsInfo | None = None,
@@ -2671,7 +2667,7 @@ class UnloadedMeshExecutable:
           semantics_in_shardings, semantics_out_shardings, auto_spmd_lowering,
           compile_options, tuple(host_callbacks), bool(unordered_effects),
           tuple(ordered_effects), tuple(kept_var_idx), backend, da, committed,
-          pmap_nreps, jaxpr_debug_info)
+          pmap_nreps)
 
     if auto_spmd_lowering:
       assert mesh is not None
@@ -2725,7 +2721,6 @@ class UnloadedMeshExecutable:
         host_callbacks=host_callbacks,
         kept_var_idx=kept_var_idx,
         auto_spmd_lowering=auto_spmd_lowering,
-        jaxpr_debug_info=jaxpr_debug_info,
         in_layouts=in_layouts,  # type: ignore
         out_layouts=out_layouts,  # type: ignore
         all_args_info=all_args_info).load()  # type: ignore
@@ -2753,13 +2748,12 @@ class MeshExecutable(stages.XlaExecutable):
   __slots__ = [
       "xla_executable", "_unsafe_call", "build_unsafe_call", "in_avals",
       "_in_shardings", "_out_shardings", "_auto_spmd_lowering", "_kept_var_idx",
-      "_in_layouts", "_out_layouts", "_jaxpr_debug_info",
-      "_all_args_info", "_unloaded_executable",
+      "_in_layouts", "_out_layouts", "_all_args_info", "_unloaded_executable",
   ]
 
   def __init__(self, xla_executable, build_unsafe_call, in_avals, in_shardings,
                out_shardings, auto_spmd_lowering, kept_var_idx,
-               in_layouts, out_layouts, jaxpr_debug_info=None,
+               in_layouts, out_layouts,
                all_args_info: AllArgsInfo | None = None,
                unloaded_executable=None):
     self.xla_executable = xla_executable
@@ -2774,7 +2768,6 @@ class MeshExecutable(stages.XlaExecutable):
     self._kept_var_idx = kept_var_idx
     self._in_layouts = in_layouts
     self._out_layouts = out_layouts
-    self._jaxpr_debug_info = jaxpr_debug_info
     self._all_args_info = all_args_info
     self._unloaded_executable = unloaded_executable
 
@@ -2794,7 +2787,7 @@ class MeshExecutable(stages.XlaExecutable):
       kept_args = [a for i, a in enumerate(args) if i in self._kept_var_idx]
       ref_avals = self.in_avals
       in_shardings = self._in_shardings
-      debug_info = self._jaxpr_debug_info
+      debug_info = None
     else:
       kept_args = args
       ref_avals = self._all_args_info.in_avals
@@ -2928,7 +2921,7 @@ def _compile_replicated_mesh_executable_from_hlo(
     computation, name, global_in_avals, global_out_avals, semantics_in_shardings,
     semantics_out_shardings, auto_spmd_lowering, compile_options,
     host_callbacks, has_unordered_effects, ordered_effects, kept_var_idx,
-    backend, da, committed, pmap_nreps, jaxpr_debug_info):
+    backend, da, committed, pmap_nreps):
   assert not auto_spmd_lowering
   in_shardings = semantics_in_shardings.shardings
   out_shardings = semantics_out_shardings.shardings
@@ -2953,8 +2946,7 @@ def _compile_replicated_mesh_executable_from_hlo(
   return MeshExecutable(xla_executable, lambda: unsafe_call, global_in_avals,
                         in_shardings, out_shardings, auto_spmd_lowering,
                         kept_var_idx, (None,) * len(global_in_avals),
-                        (None,) * len(global_out_avals), jaxpr_debug_info,
-                        None, None)
+                        (None,) * len(global_out_avals))
 
 
 @lru_cache
