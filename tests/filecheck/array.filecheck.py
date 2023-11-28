@@ -92,10 +92,11 @@ def main(_):
   print_ir(np.empty([2, 1, 7], np.int32))(
       partial(lax.squeeze, dimensions=(1,)))
 
-  # CHECK-LABEL: TEST: top_k int32[2,7]
-  # CHECK: chlo.top_k
-  # CHECK: tensor<2x7xi32>
-  print_ir(np.empty([2, 7], np.int32))(partial(lax.top_k, k=7))
+  # CHECK-LABEL: TEST: top_k float32[2,7]
+  # CHECK: mhlo.topk
+  # CHECK: tensor<2x7xf32>
+  # CHECK: tensor<2x4xf32>, tensor<2x4xi32>
+  print_ir(np.empty([2, 7], np.float32))(partial(lax.top_k, k=4))
 
   # CHECK-LABEL: TEST: transpose int32[2,7]
   # CHECK: hlo.transpose
