@@ -1,3 +1,4 @@
+(automatic-differentiation)=
 # Automatic differentiation
 
 ```{note}

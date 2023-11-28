@@ -13,7 +13,7 @@ kernelspec:
 ---
 
 (jit-compilation)=
-# Just In Time Compilation with JAX
+# Just-in-time compilation
 
 In this section, we will further explore how JAX works, and how we can make it performant.
 We will discuss the {func}`jax.jit` transformation, which will perform *Just In Time* (JIT)
