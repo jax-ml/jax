@@ -99,6 +99,7 @@ Automatic differentiation
     vjp
     custom_jvp
     custom_vjp
+    custom_gradient
     closure_convert
     checkpoint
 
