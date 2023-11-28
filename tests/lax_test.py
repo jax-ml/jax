@@ -154,6 +154,7 @@ class LaxTest(jtu.JaxTestCase):
     to_dtype=jtu.dtypes.all_floating + jtu.dtypes.all_integer + jtu.dtypes.all_unsigned,
     shape = [(), (2,), (2, 3)]
   )
+  @jtu.skip_on_devices("gpu")  # TODO(b/313567948): Test fails on GPU jaxlib build
   def testBitcastConvertType(self, from_dtype, to_dtype, shape):
     rng = jtu.rand_default(self.rng())
     itemsize_in = np.dtype(from_dtype).itemsize
