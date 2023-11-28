@@ -49,6 +49,7 @@ from jax.tree_util import tree_leaves, tree_flatten, tree_map
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
+from jax._src.custom_derivatives import custom_jvp
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.api_util import _ensure_index_tuple
@@ -2644,6 +2645,7 @@ def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
   return output
 
 
+@custom_jvp
 @util._wraps(np.i0)
 @jit
 def i0(x: ArrayLike) -> Array:
@@ -2652,6 +2654,11 @@ def i0(x: ArrayLike) -> Array:
     raise ValueError(f"Unsupported input type to jax.numpy.i0: {_dtype(x)}")
   x_arr = lax.abs(x_arr)
   return lax.mul(lax.exp(x_arr), lax.bessel_i0e(x_arr))
+
+@i0.defjvp
+def _i0_jvp(primals, tangents):
+  primal_out, tangent_out = jax.jvp(i0.fun, primals, tangents)
+  return primal_out, where(primals[0] == 0, 0.0, tangent_out)
 
 
 @util._wraps(np.ix_)
