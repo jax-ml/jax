@@ -302,8 +302,11 @@ def compile_or_get_cached(
                            host_callbacks)
 
   global _cache_used
+  logging.warning("_cache_used is: %s", _cache_used)
   if not _cache_used:
+    logging.warning("_cache_used is false. Set it to true.")
     _cache_used = True
+    logging.warning("_cache_used is: %s.", _cache_used)
     monitoring.record_event('/jax/compilation_cache/tasks_using_cache')
 
   monitoring.record_event('/jax/compilation_cache/compile_requests_use_cache')

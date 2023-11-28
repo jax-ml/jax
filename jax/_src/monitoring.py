@@ -21,6 +21,7 @@ A typical listener callback is to send an event to a metrics collector for
 aggregation/exporting.
 """
 from typing import Protocol, Union
+import logging
 
 
 class EventListenerWithMetadata(Protocol):
@@ -65,6 +66,7 @@ def register_event_listener(
     callback: EventListenerWithMetadata,
 ) -> None:
   """Register a callback to be invoked during record_event()."""
+  logging.warning('register_event_listener')
   _event_listeners.append(callback)
 
 
@@ -111,5 +113,6 @@ def _unregister_event_listener_by_callback(
 
   This function is supposed to be called for testing only.
   """
+  logging.warning('_unregister_event_listener_by_callback')
   assert callback in _event_listeners
   _event_listeners.remove(callback)
