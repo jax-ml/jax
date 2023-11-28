@@ -384,7 +384,10 @@ jax_test(
     name = "lax_numpy_test",
     srcs = ["lax_numpy_test.py"],
     backend_tags = {
-        "cpu": ["noasan"],  # Test times out.
+        "cpu": [
+            "noasan",
+            "notsan",
+        ],  # Test times out.
         "tpu": ["noasan"],  # Test times out.
     },
     shard_count = {
