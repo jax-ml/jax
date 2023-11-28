@@ -35,7 +35,7 @@ _R2C = 2
 
 def _dynamic_ducc_fft_descriptor(
     dtype, ndims: int, fft_type: FftType, fft_lengths: list[int]
-) -> tuple[bytes]:
+) -> bytes:
   assert len(fft_lengths) >= 1
   assert len(fft_lengths) <= ndims, (fft_lengths, ndims)
 
