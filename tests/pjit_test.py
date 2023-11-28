@@ -4018,6 +4018,52 @@ class PJitErrorTest(jtu.JaxTestCase):
       x.delete()
       _ = f(x)
 
+  def test_aot_error_on_dced_avals_mismatch(self):
+    x, y1, y2 = jnp.ones(4), jnp.ones(4), jnp.ones(1)
+
+    @jax.jit
+    def f(x, y):
+      return x + 1 if y.shape[0] > 2 else x + 2
+
+    f_out1 = f(x, y1)
+    f(x, y2)
+
+    g = f.lower(x, y1).compile()
+    g_out1 = g(x, y1)
+    self.assertArraysEqual(f_out1, g_out1)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        'Argument types differ from the types for which this computation was'
+        ' compiled'):
+      g(x, y2)
+
+  def test_aot_error_on_dced_shardings_mismatch(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    shape = (8, 2)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+
+    x = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+    y1 = jax.device_put(np_inp, NamedSharding(mesh, P('x')))
+    y2 = jax.device_put(np_inp, NamedSharding(mesh, P('y')))
+
+    @jax.jit
+    def f(x, y):
+      return x + 1
+
+    f_out1 = f(x, y1)
+    f(x, y2)
+
+    g = f.lower(x, y1).compile()
+    g_out1 = g(x, y1)
+    self.assertArraysEqual(f_out1, g_out1)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Compiled object called with input sharding.*does not match the "
+        r"sharding.*the computation was compiled with"):
+      g(x, y2)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class UtilTest(jtu.JaxTestCase):
