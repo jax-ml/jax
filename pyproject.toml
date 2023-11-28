@@ -57,7 +57,6 @@ markers = [
 ]
 filterwarnings = [
     "error",
-    "ignore:The numpy.array_api submodule is still experimental.:UserWarning",
     "ignore:The hookimpl.*:DeprecationWarning",
     "ignore:No GPU/TPU found, falling back to CPU.:UserWarning",
     "ignore:xmap is an experimental feature and probably has bugs!",
@@ -77,6 +76,13 @@ filterwarnings = [
     "ignore:np.find_common_type is deprecated.*:DeprecationWarning",
     "ignore:jax.numpy.in1d is deprecated.*:DeprecationWarning",
     "ignore:jax.numpy.trapz is deprecated.*:DeprecationWarning",
+    # TODO(jakevdp): remove when array_api_tests stabilize
+    # start array_api_tests-related warnings
+    "ignore:The numpy.array_api submodule is still experimental.*:UserWarning",
+    "ignore:case not machine-readable.*:UserWarning",
+    "ignore:not machine-readable.*:UserWarning",
+    "ignore:Special cases found for .* but none were parsed.*:UserWarning",
+    # end array_api_tests-related warnings
 ]
 doctest_optionflags = [
     "NUMBER",
