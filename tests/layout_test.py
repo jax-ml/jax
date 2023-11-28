@@ -22,6 +22,7 @@ from jax.sharding import NamedSharding, PartitionSpec as P
 from jax._src import config
 from jax._src import layout
 from jax._src import test_util as jtu
+from jax._src.util import safe_zip
 from jax._src import xla_bridge
 from jax._src.lib import xla_extension_version
 
@@ -163,6 +164,28 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertTupleEqual(compiled._output_layouts()._minor_to_major, (0, 1))
     self.assertArraysEqual(out, np_inp.T)
     self.assertEqual(out.sharding, s)
+
+  def test_dce_in_layouts(self):
+    def f(x, y):
+      return x * 2
+
+    shape = (8, 2)
+    inp = np.arange(math.prod(shape)).reshape(shape)
+    compiled = jax.jit(f).lower(inp, inp, _in_layouts=layout.AUTO,
+                                _out_layouts=layout.AUTO).compile()
+    arg_layouts, _ = compiled._input_layouts()
+    out1 = compiled(inp, inp)
+
+    compiled2 = jax.jit(f).lower(inp, inp, _in_layouts=arg_layouts).compile()
+    out2 = compiled2(inp, inp)
+
+    for l1, l2 in safe_zip(arg_layouts, compiled2._input_layouts()[0]):
+      self.assertEqual(l1, l2)
+
+    self.assertArraysEqual(out1, out2)
+
+    # TODO(yashkatariya, frostig): Also use the arg_layouts to create an Array
+    # and then pass that back into compiled.
 
 
 if __name__ == '__main__':
