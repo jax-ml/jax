@@ -237,6 +237,9 @@ MULTI_GPU="--run_under $PWD/build/parallel_accelerator_execute.sh --test_env=JAX
 bazel test //tests:gpu_tests //tests:backend_independent_tests --test_env=XLA_PYTHON_CLIENT_PREALLOCATE=false --test_tag_filters=-multiaccelerator $MULTI_GPU
 ```
 
+Some test targets, like a `//tests:logpcg_tests` optionally use matplotlib, so you may need to `pip
+install matplotlib` to run tests via bazel.
+
 ### Using `pytest`
 
 To run all the JAX tests using `pytest`, we recommend using `pytest-xdist`,
