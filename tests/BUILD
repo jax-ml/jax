@@ -172,7 +172,7 @@ jax_test(
     shard_count = {
         "cpu": 10,
         "gpu": 10,
-        "tpu": 20,
+        "tpu": 40,
     },
 )
 
@@ -403,7 +403,7 @@ jax_test(
     shard_count = {
         "cpu": 30,
         "gpu": 30,
-        "tpu": 20,
+        "tpu": 40,
     },
 )
 
@@ -1223,7 +1223,12 @@ jax_test(
         "gpu": 10,
         "tpu": 50,
     },
-    tags = ["multiaccelerator"],
+    tags = [
+        "multiaccelerator",
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],  # Times out under *SAN.
     deps = [
         "//jax:tree_util",
     ],
