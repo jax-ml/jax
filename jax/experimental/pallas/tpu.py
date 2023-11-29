@@ -26,6 +26,7 @@ from jax._src.pallas.mosaic import async_remote_copy
 from jax._src.pallas.mosaic import device_id
 from jax._src.pallas.mosaic import encode_kernel_regeneration_metadata
 from jax._src.pallas.mosaic import extract_kernel_regeneration_metadata
+from jax._src.pallas.mosaic import get_barrier_semaphore
 from jax._src.pallas.mosaic import make_async_copy
 from jax._src.pallas.mosaic import make_async_remote_copy
 from jax._src.pallas.mosaic import repeat

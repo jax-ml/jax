@@ -84,7 +84,11 @@ def pallas_call_tpu_lowering_rule(
         kernel_regeneration_metadata=kernel_regeneration_metadata,
         cost_estimate=mosaic_params.get("cost_estimate", None),
         flags=mosaic_params.get("flags", None),
-    )(*extra_args, *args)
+    )(
+        *extra_args,
+        *args,
+        collective_id=mosaic_params.get("collective_id", None),
+    )
   return mlir.lower_fun(_lower_fun, multiple_results=True)(
       ctx, *in_nodes)
 mlir.register_lowering(pallas_call_p, pallas_call_tpu_lowering_rule,

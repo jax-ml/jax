@@ -1727,7 +1727,10 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, semaphore,
                                   value):
   sem_aval = ctx.avals_in[0]
   assert isinstance(sem_aval, tpu_core.AbstractSemaphore)
-  assert sem_aval.sem_type is tpu_core.SemaphoreType.REGULAR
+  assert sem_aval.sem_type in {
+      tpu_core.SemaphoreType.REGULAR,
+      tpu_core.SemaphoreType.BARRIER,
+  }
   assert ctx.avals_in[1].dtype == jnp.dtype('int32')
   return tpu.SemaphoreWaitOp(semaphore, value).results
 lowering_rules[tpu_primitives.semaphore_wait_p] = _semaphore_wait_lowering_rule
@@ -1803,3 +1806,7 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: str):
   col = _make_index(axis_names.index(axis_name))
   return memref.LoadOp(l_to_m, [device_id, col]).result
 lowering_rules[lax.axis_index_p] = _axis_index_rule
+
+def _get_barrier_semaphore_rule(ctx: LoweringRuleContext):
+  return tpu.GetBarrierSemaphoreOp().result
+lowering_rules[tpu_primitives.get_barrier_semaphore_p] = _get_barrier_semaphore_rule

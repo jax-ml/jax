@@ -149,8 +149,11 @@ def _semaphore_signal_abstract_eval(
   del device_id_tree
   if not isinstance(sem_aval, tpu_core.AbstractSemaphore):
     raise ValueError(f"Cannot signal on a non-semaphore value: {sem_aval}")
-  if sem_aval.sem_type is not tpu_core.SemaphoreType.REGULAR:
-    raise ValueError("Must signal a REGULAR semaphore.")
+  if sem_aval.sem_type not in {
+      tpu_core.SemaphoreType.REGULAR,
+      tpu_core.SemaphoreType.BARRIER,
+  }:
+    raise ValueError("Must signal a REGULAR or BARRIER semaphore.")
   if value.dtype != jnp.dtype("int32"):
     raise ValueError("Must signal an int32 value.")
   if has_device_id:
@@ -171,8 +174,11 @@ def semaphore_wait(sem, dec: int | jax.Array = 1):
 def _semaphore_wait_abstract_eval(sem_aval: tpu_core.AbstractSemaphore, value):
   if not isinstance(sem_aval, tpu_core.AbstractSemaphore):
     raise ValueError(f"Cannot wait on a non-semaphore value: {sem_aval}")
-  if sem_aval.sem_type is not tpu_core.SemaphoreType.REGULAR:
-    raise ValueError("Must wait a REGULAR semaphore.")
+  if sem_aval.sem_type not in {
+      tpu_core.SemaphoreType.REGULAR,
+      tpu_core.SemaphoreType.BARRIER,
+  }:
+    raise ValueError("Must wait on a REGULAR or BARRIER semaphore.")
   if value.dtype != jnp.dtype("int32"):
     raise ValueError("Must signal an int32 value.")
   return []
@@ -389,3 +395,12 @@ def _device_id_abstract_eval():
   return jax_core.ShapedArray((), jnp.dtype("int32"))
 
 device_id = device_id_p.bind
+
+get_barrier_semaphore_p = jax_core.Primitive('get_barrier_semaphore')
+
+@get_barrier_semaphore_p.def_abstract_eval
+def _get_barrier_semaphore_abstract_eval():
+  return tpu_core.AbstractSemaphore(tpu_core.SemaphoreType.BARRIER)
+
+def get_barrier_semaphore():
+  return get_barrier_semaphore_p.bind()
