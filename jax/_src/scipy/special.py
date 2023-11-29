@@ -1905,39 +1905,17 @@ hyp1f1.defjvps(
 
 @_wraps(osp_special.comb, module='scipy.special')
 def comb(N: Array, k: Array, exact: bool =False, repetition: bool =False):
-  r"""The number of combinations of N things taken k at a time.
-
-  This is often expressed as "N choose k".
-
-  Args:
-    N: The number of things.
-    k: The number of elements taken.
-    exact: If `True`, the result is computed exactly and returned as an integer type.
-      Currently, vectorization is not supported for exact=True.
-    repetition: If `repetition` is True, then the number of combinations with
-      repetition is computed.
-    
-  Returns:
-    The number of combinations of N things taken k at a time.
-
-  Notes:
-  When exact=False, the result is approximately and efficiently computed using the following formula:
-
-  .. math::
-    \begin{equation}
-    \exp\left\{\ln{\Gamma(N+1)} - [\ln{\Gamma(k+1)} + \ln{\Gamma(N+1-k)}]\right\}
-    \end{equation}
-  
-  Where we use the Gamma function. 
-  """
+  #  Calculates N choose k, the number of ways to choose k items from N items, with and without repetition.
   if repetition:
     return comb(N + k - 1, k, exact=exact, repetition=False)
   
   if exact:
-    max_divisor = lax.max(k, N - k)
-    min_divisor = lax.min(k, N - k)
-    N_factorial_over_max_factorial = np.prod(np.arange(N, max_divisor, -1))
-    return lax.div(N_factorial_over_max_factorial, np.prod(np.arange(1, min_divisor + 1)))
+    raise NotImplementedError("exact=True is not yet supported.")
+    # The below implementation is not compatible with jit. 
+    # max_divisor = lax.max(k, N - k)
+    # min_divisor = lax.min(k, N - k)
+    # N_factorial_over_max_factorial = np.prod(np.arange(N, max_divisor, -1))
+    # return lax.div(N_factorial_over_max_factorial, np.prod(np.arange(1, min_divisor + 1)))
 
   one = _constant_like(N, 1)
   N_plus_1 = lax.add(N,one)

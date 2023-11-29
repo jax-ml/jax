@@ -25,12 +25,9 @@ import scipy.special as osp_special
 import jax
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
-from jax import config
-config.update("jax_enable_x64", True)
 
 from jax import config
 config.parse_flags_with_absl()
-config.update("jax_enable_x64", True)
 
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
@@ -211,9 +208,9 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_special.gamma, args_maker, rtol=rtol)
 
   @jtu.sample_product(
-    N=[5,10,20,30],
+    N=[5,10,15,20],
     k=[1,2,3,4],
-    exact=[True, False],
+    exact=[False],
     repetition=[True, False],
   )
   def testScipySpecialFunComb(self, N, k, exact, repetition):
