@@ -326,7 +326,7 @@ def compile_or_get_cached(
 
   if retrieved_executable is not None:
     assert retrieved_compile_time is not None
-    logger.info("Persistent compilation cache hit for '%s'", module_name)
+    logger.debug("Persistent compilation cache hit for '%s'", module_name)
 
     if config.use_original_compilation_cache_key_generation.value:
       # TODO(b/293308239) Remove metrics for the original cache after the new
@@ -389,7 +389,7 @@ def _cache_write(cache_key: str,
     return
 
   if host_callbacks:
-    logger.info(
+    logger.debug(
         "Not writing persistent cache entry for '%s' because it uses host "
         "callbacks (e.g. from jax.debug.print or breakpoint)", module_name)
     return

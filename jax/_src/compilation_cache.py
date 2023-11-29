@@ -63,13 +63,13 @@ def _initialize_cache() -> None:
   global _cache_initialized
   with _cache_initialized_mutex:
     if _cache_initialized:
-      logger.info("_initialize_cache: cache has already been initialized!")
+      logger.debug("_initialize_cache: cache has already been initialized!")
       return
     _cache_initialized = True
 
     # Nothing to do if the cache is disabled.
     if not _is_cache_enabled():
-      logger.warning("_initialize_cache: cache is disabled!")
+      logger.debug("_initialize_cache: cache is disabled!")
       return
 
     global _cache
@@ -80,7 +80,7 @@ def _initialize_cache() -> None:
       return
 
     _cache = get_file_cache(path)
-    logger.warning("Initialized persistent compilation cache at %s", path)
+    logger.debug("Initialized persistent compilation cache at %s", path)
 
 
 def _get_cache() -> Optional[CacheInterface]:
@@ -100,7 +100,7 @@ def get_executable_and_time(
   """
   cache = _get_cache()
   if cache is None:
-    logger.info("get_executable_and_time: cache is disabled/not initialized")
+    logger.debug("get_executable_and_time: cache is disabled/not initialized")
     return None, None
   executable_and_time = cache.get(cache_key)
   if not executable_and_time:
@@ -129,9 +129,9 @@ def put_executable_and_time(
   """
   cache = _get_cache()
   if cache is None:
-    logger.info("put_executable_and_time: cache is disabled/not initialized")
+    logger.debug("put_executable_and_time: cache is disabled/not initialized")
     return
-  logger.info(
+  logger.debug(
       "Writing %s to persistent compilation cache with key %s.",
       module_name,
       cache_key,
@@ -167,8 +167,8 @@ def reset_cache() -> None:
   """Get back to pristine, uninitialized state."""
   global _cache
   global _cache_initialized
-  logger.info("Resetting cache at %s.",
-              _cache._path if _cache is not None else "<empty>")
+  logger.debug("Resetting cache at %s.",
+               _cache._path if _cache is not None else "<empty>")
   _cache = None
   _cache_initialized = False
 
