@@ -2353,9 +2353,6 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     if harness.group_name == "eig" and not jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("JAX implements eig only on CPU.")
 
-    if harness.group_name == "indexing":
-      raise unittest.SkipTest("TODO(necula): fix the indexing tests")
-
     prev_jax_config_flags = {
       fname: getattr(jax.config, fname)
       for fname, fvalue in harness.override_jax_config_flags.items()
