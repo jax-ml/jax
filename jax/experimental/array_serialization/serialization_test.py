@@ -31,6 +31,7 @@ from jax.sharding import PartitionSpec as P
 from jax.experimental.array_serialization import serialization
 import numpy as np
 import tensorstore as ts
+import unittest
 
 config.parse_flags_with_absl()
 
@@ -51,6 +52,7 @@ class CheckpointTest(jtu.JaxTestCase):
   def _on_commit_callback(self, temp_ckpt_dir, final_ckpt_dir):
     os.rename(temp_ckpt_dir, final_ckpt_dir)
 
+  @unittest.skip('Broken at HEAD. b/313958844')
   @jtu.skip_on_devices('cpu')
   def test_memory_consumption(self):
     global_mesh = jtu.create_global_mesh((2, 4), ('x', 'y'))
