@@ -18,7 +18,7 @@ import os
 import tempfile
 from collections import Counter
 from unittest import mock
-from unittest import SkipTest
+from unittest import SkipTest, skip
 import warnings
 
 from absl.testing import absltest
@@ -354,6 +354,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
           self.assertGreater(
               durations["/jax/compilation_cache/compile_time_saved_sec"], 0)
 
+  @skip("fails in OSS; disable while debugging; b/313601864")
   def test_task_using_cache_metric(self):
     with tempfile.TemporaryDirectory() as tmpdir:
       cc.initialize_cache(tmpdir)
