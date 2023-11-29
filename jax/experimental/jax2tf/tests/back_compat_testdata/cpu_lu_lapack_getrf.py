@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa
+# ruff: noqa
 
 import datetime
 from numpy import array, int32, float32, complex64

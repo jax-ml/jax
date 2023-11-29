@@ -52,7 +52,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.util import safe_map, safe_zip
 
 config.parse_flags_with_absl()
@@ -579,10 +578,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     dtype=lax_test_util.all_dtypes,
   )
   def testAllToAll(self, split_axis, concat_axis, dtype):
-    if xla_extension_version < 207 and jnp.issubdtype(
-        dtype, jnp.complexfloating
-    ):
-      raise unittest.SkipTest('Test requires jaxlib 0.4.19')
     pmap_in_axis = 0
     shape = (jax.device_count(),) * 3
     rng = jtu.rand_default(self.rng())
@@ -624,6 +619,15 @@ class PythonPmapTest(jtu.JaxTestCase):
     ref = jnp.moveaxis(x, (pmap_in_axis, split_axis),
                           (concat_axis + 1, 0))
     self.assertAllClose(y, ref)
+
+  def testNestedPmapAxisSwap(self):
+    # Regression test for https://github.com/google/jax/issues/5757
+    if jax.device_count() < 8:
+      raise SkipTest("test requires at least 8 devices")
+    f = jax.pmap(jax.pmap(lambda x: x, in_axes=1, out_axes=0), in_axes=0,
+                 out_axes=0)
+    A = jnp.ones((2, 4, 3))
+    self.assertAllClose(A.transpose((0, 2, 1)), f(A))
 
   def testNestedBasic(self):
     f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
@@ -1031,8 +1035,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     (('Gather', lax.all_gather), ('ReduceScatter', lax.psum_scatter))
   ))
   def testGradOf(self, prim, tiled, use_axis_index_groups):
-    if xla_extension_version < 197:
-      raise SkipTest("Test requires xla_extension_version >=197")
     axis_index_groups = None
     devices = jax.devices()
 

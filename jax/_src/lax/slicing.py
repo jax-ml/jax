@@ -1839,12 +1839,12 @@ def _gather_lower(ctx, operand, indices, *,
     return hlo.DynamicGatherOp.build_generic(
         results=results, operands=operands, attributes=attributes).results
   else:
-    return hlo.GatherOp(
+    return [hlo.gather(
         operand,
         indices,
         dnums,
         mlir.dense_int_elements(slice_sizes),
-        indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
+        indices_are_sorted=ir.BoolAttr.get(indices_are_sorted))]
 
 mlir.register_lowering(gather_p, _gather_lower)
 
@@ -2322,10 +2322,14 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
 
   # a) attach a positive ID to each update in `updates`, and perform a scatter
   #    on the IDs.
-  ids_shape = np.array(updates.shape, dtype=np.int64)
-  ids_shape[dnums.update_window_dims,] = 1
+  ids_shape = list(updates.shape)
+  for update_dim in dnums.update_window_dims:
+    ids_shape[update_dim] = 1
   num_ids = math.prod(ids_shape)
-  id_dtype = np.uint32 if (num_ids + 1) < np.iinfo(np.uint32).max else np.uint64
+  if core.is_constant_dim(num_ids):
+    id_dtype = np.uint32 if (num_ids + 1) < np.iinfo(np.uint32).max else np.uint64
+  else:
+    id_dtype = np.uint64
   update_ids = lax.add(lax.reshape(lax.iota(id_dtype, num_ids), ids_shape),
                        lax._ones(updates, dtype=id_dtype))
 
@@ -2495,7 +2499,7 @@ def _scatter_lower(ctx, operand, indices, updates, *,
         update_ctx, update_jaxpr, mlir.TokenSet(), update_consts,
         (update.arguments[0],), (update.arguments[1],),
         dim_var_values=ctx.dim_var_values)
-    hlo.ReturnOp(util.flatten(out_nodes))
+    hlo.return_(util.flatten(out_nodes))
   return op.results
 
 mlir.register_lowering(scatter_p, _scatter_lower)
@@ -2551,12 +2555,12 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
     reducer = scatter.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer):
       add = hlo.AddOp(*reducer.arguments).result
-      hlo.ReturnOp([add])
+      hlo.return_([add])
     return scatter.result
 
-  real = _scatter(hlo.RealOp(operand).result, hlo.RealOp(updates).result)
-  imag = _scatter(hlo.ImagOp(operand).result, hlo.ImagOp(updates).result)
-  return hlo.ComplexOp(real, imag).results
+  real = _scatter(hlo.real(operand), hlo.real(updates))
+  imag = _scatter(hlo.imag(operand), hlo.imag(updates))
+  return [hlo.complex(real, imag)]
 
 mlir.register_lowering(scatter_add_p, _scatter_add_lower_gpu, platform="gpu")
 

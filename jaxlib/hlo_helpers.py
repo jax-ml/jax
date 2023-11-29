@@ -84,21 +84,21 @@ def shape_tensor(sizes: Sequence[Union[int, ir.Value]]) -> ir.Value:
       return hlo_const(np.array([d], dtype=np.int32))
     else:
       if d.type != i32_type:
-        d = hlo.ConvertOp(i32_type, d).result
-      return hlo.ReshapeOp(int1d, d).result
+        d = hlo.convert(i32_type, d)
+      return hlo.reshape(int1d, d)
   ds = [dim_to_i32x1(sz) for sz in sizes]
   if not ds:
     return hlo_const(np.array([], np.int32))
   elif len(ds) == 1:
     return ds[0]
   else:
-    return hlo.ConcatenateOp(
-        ds, ir.IntegerAttr.get(ir.IntegerType.get_signless(64), 0)).result
+    return hlo.concatenate(
+        ds, ir.IntegerAttr.get(ir.IntegerType.get_signless(64), 0))
 
 def hlo_const(x: np.ndarray) -> ir.Value:
   assert isinstance(x, np.ndarray)
-  return hlo.ConstantOp(
-      ir.DenseElementsAttr.get(x, type=dtype_to_ir_type(x.dtype))).result
+  return hlo.constant(
+      ir.DenseElementsAttr.get(x, type=dtype_to_ir_type(x.dtype)))
 
 def hlo_u8(x: int):
   return hlo_const(np.array(x, dtype=np.uint8))
@@ -116,7 +116,7 @@ def hlo_min(x: DimensionSize, y: DimensionSize) -> DimensionSize:
     x = hlo_s32(x)
   if type(y) is int:
     y = hlo_s32(y)
-  return hlo.MinOp(x, y).result
+  return hlo.minimum(x, y)
 
 
 def hlo_add(x: DimensionSize, y: DimensionSize) -> DimensionSize:
@@ -126,7 +126,7 @@ def hlo_add(x: DimensionSize, y: DimensionSize) -> DimensionSize:
     x = hlo_s32(x)
   if type(y) is int:
     y = hlo_s32(y)
-  return hlo.AddOp(x, y).result
+  return hlo.add(x, y)
 
 
 # TODO(necula): this is identical with mlir.custom_call, but meant for use

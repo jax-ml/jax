@@ -1245,8 +1245,9 @@ def _partial_eval_jaxpr_custom_cached(
       elif isinstance(policy, Offloadable):
         from jax._src.dispatch import device_put_p, TransferToMemoryKind  # type: ignore
         resvars = [newvar(v.aval) for v in eqn.outvars]
+        outvars_copy = list[Atom](eqn.outvars)
         offload_eqn = core.JaxprEqn(
-            eqn.outvars, resvars, device_put_p,
+            outvars_copy, resvars, device_put_p,
             dict(device=TransferToMemoryKind(policy.dst), src=None),
             set(), source_info_util.new_source_info())
         known_eqns.append(offload_eqn)
@@ -1808,15 +1809,18 @@ def _const_folding_and_forwarding(
   consts: dict[Var, Any] = dict(zip(jaxpr.constvars, constvals))
   var_subs: dict[Var, Var] = {}  # not Dict[Var, Atom] b/c literals not inlined
   new_eqns = []
+  def apply_var_sub(a: Atom) -> Atom:
+    return var_subs.get(a, a) if isinstance(a, Var) else a
   for eqn in jaxpr.eqns:
     # always apply invar substitutions
-    eqn = eqn.replace(invars=[var_subs.get(v, v) for v in eqn.invars])
+    eqn = eqn.replace(invars=[apply_var_sub(v) for v in eqn.invars])
     # if any inputs are constants and we have a constant-folding rule, apply it
     has_input_effect = any(isinstance(eff, effects.JaxprInputEffect)
                            for eff in eqn.effects)
     if (eqn.primitive in const_fold_rules and any(v in consts for v in eqn.invars)
         and not has_input_effect):
-      consts_in = [consts.get(v) for v in eqn.invars]
+      consts_in = [consts.get(v) if isinstance(v, Var) else None
+                   for v in eqn.invars]
       consts_out, new_eqn = const_fold_rules[eqn.primitive](consts_in, eqn)
       assert (new_eqn is None) == all(c is not None for c in consts_out)
       for v, c in zip(eqn.outvars, consts_out):
@@ -1833,7 +1837,7 @@ def _const_folding_and_forwarding(
       else: eqn = new_eqn
     new_eqns.append(eqn)
   new_constvars, new_constvals = unzip2(consts.items())
-  new_outvars = [var_subs.get(v, v) for v in jaxpr.outvars]
+  new_outvars = [apply_var_sub(v) for v in jaxpr.outvars]
   jaxpr_effects = make_jaxpr_effects(new_constvars, jaxpr.invars, new_outvars,
                                       new_eqns)
   new_jaxpr = Jaxpr(new_constvars, jaxpr.invars, new_outvars, new_eqns,
@@ -1861,7 +1865,8 @@ def _inline_literals(
   lits = {v: Literal(c, v.aval) for v, c, e in zip(jaxpr.constvars, constvals,
                                                    has_input_effect)
           if type(c) in core.literalable_types and not np.shape(c) and not e}
-  lit: Callable[[Var], Literal | None] = lits.get
+  def lit(a: Atom) -> Literal | None:
+      return lits.get(a) if isinstance(a, Var) else None
   newname: Callable[[AbstractValue], Var] = core.gensym()
   newvars: dict[Var, Var] = {}
   newvar = lambda aval: newname(_substitute_vars_in_type(lits, newvars, aval))

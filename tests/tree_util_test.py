@@ -652,7 +652,7 @@ class TreeTest(jtu.JaxTestCase):
     x = ((1, 2), [3, 4, 5])
     y = (([3], jnp.array(0)), ([0], 7, [5, 6]))
     out = tree_util.tree_map_with_path(
-        lambda kp, *xs: tuple((kp[0].idx, *xs)), x, y,
+        lambda kp, *xs: (kp[0].idx, *xs), x, y,
         is_leaf=lambda n: isinstance(n, list))
     self.assertEqual(out, (((0, 1, [3]),
                             (0, 2, jnp.array(0))),

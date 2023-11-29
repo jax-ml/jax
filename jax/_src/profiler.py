@@ -30,7 +30,6 @@ traceback_util.register_exclusion(__file__)
 
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 
 _profiler_server: Optional[xla_client.profiler.ProfilerServer] = None
 
@@ -201,11 +200,8 @@ def stop_trace():
   with _profile_state.lock:
     if _profile_state.profile_session is None:
       raise RuntimeError("No profile started")
-    if xla_extension_version > 205:
-      sess = _profile_state.profile_session
-      sess.export(sess.stop(), _profile_state.log_dir)
-    else:
-      _profile_state.profile_session.stop_and_export(_profile_state.log_dir)  # pytype: disable=attribute-error
+    sess = _profile_state.profile_session
+    sess.export(sess.stop(), _profile_state.log_dir)
     if _profile_state.create_perfetto_trace:
       abs_filename = _write_perfetto_trace_file(_profile_state.log_dir)
       if _profile_state.create_perfetto_link:
@@ -219,8 +215,6 @@ def stop_and_get_fdo_profile() -> bytes:
   Currently, this is only supported for GPU.
   Raises a RuntimeError if a trace hasn't been started.
   """
-  if xla_extension_version < 206:
-    raise NotImplementedError("stop and get fdo profile is not supported.")
   with _profile_state.lock:
     if _profile_state.profile_session is None:
       raise RuntimeError("No profile started")

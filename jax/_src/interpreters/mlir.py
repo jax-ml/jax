@@ -41,9 +41,9 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
+from jax._src.layout import XLACompatibleLayout, LayoutRequest
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -91,15 +91,15 @@ def shape_tensor(sizes: Sequence[int | ir.RankedTensorType]
       return ir_constant(np.array([d], np.int32))
     else:
       if d.type != i32_type:
-        d = hlo.ConvertOp(i32_type, d)
-      return hlo.ReshapeOp(int1d, d).result
+        d = hlo.convert(i32_type, d)
+      return hlo.reshape(int1d, d)
   ds = map(lower_dim, sizes)
   if not ds:
     return ir_constant(np.array([], np.int32))
   elif len(ds) == 1:
     return ds[0]
   else:
-    return hlo.ConcatenateOp(ds, i64_attr(0)).result
+    return hlo.concatenate(ds, i64_attr(0))
 
 
 def delegate_lowering(ctx, lowering_fun, *args, **ctx_override_kwargs):
@@ -251,7 +251,7 @@ def _numpy_array_constant(x: np.ndarray) -> Sequence[ir.Value]:
     x = np.packbits(x, bitorder='little')
   x = np.ascontiguousarray(x)
   attr = ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
-  return (hlo.ConstantOp(attr).result,)
+  return (hlo.constant(attr),)
 
 
 def _masked_array_constant_handler(*args, **kwargs):
@@ -284,11 +284,11 @@ def _ndarray_constant_handler(val: np.ndarray) -> Sequence[ir.Value]:
     other_axes, = np.where(np.not_equal(0, val.strides))
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None) # type: ignore
                               for ax in range(val.ndim))]  # type: ignore
-    out = hlo.BroadcastInDimOp(
+    out = hlo.broadcast_in_dim(
         ir.RankedTensorType.get(
             val.shape, dtype_to_ir_type(collapsed_val.dtype)),
         _numpy_array_constant(collapsed_val)[0],
-        dense_int_elements(other_axes)).result
+        dense_int_elements(other_axes))
     return (out,)
   else:
     return _numpy_array_constant(val)
@@ -309,7 +309,7 @@ for ptype, dtype in dtypes.python_scalar_dtypes.items():
   register_constant_handler(ptype, partial(_python_scalar_handler, dtype))
 
 def _token_constant_handler(val):
-  return [hlo.CreateTokenOp().result]
+  return [hlo.create_token()]
 register_constant_handler(core.Token, _token_constant_handler)
 
 # Source locations
@@ -646,7 +646,7 @@ def eval_dynamic_shape_as_vals(ctx: LoweringRuleContext,
     else:
       i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
       if d.type != i32_type:  # type: ignore
-        return hlo.ConvertOp(i32_type, d).result
+        return hlo.convert(i32_type, d)
       else:
         return d
   return tuple(convert_dim(v) for v in eval_dynamic_shape(ctx, shape))
@@ -662,7 +662,7 @@ def eval_dynamic_shape_as_ivals(
     else:
       i32_type = aval_to_ir_type(core.ShapedArray((), np.int32))
       if d.type != i32_type:  # type: ignore
-        return hlo.ConvertOp(i32_type, d).result
+        return hlo.convert(i32_type, d)
       else:
         return d
   return tuple(convert_dim(v) for v in eval_dynamic_shape(ctx, shape))
@@ -691,6 +691,15 @@ def _to_logical_op_sharding(
   assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
   return sharding._to_xla_hlo_sharding(aval.ndim)
 
+
+def _to_xla_layout(layout: XLACompatibleLayout | None | LayoutRequest) -> str | None:
+  if layout is None:
+    return "default"
+  if isinstance(layout, LayoutRequest):
+    return "auto"
+  return layout._to_xla_layout()
+
+
 def _get_mem_kind(s: Optional[XLACompatibleSharding]) -> Optional[str]:
   if s is None:
     return None
@@ -711,6 +720,8 @@ def lower_jaxpr_to_module(
     replicated_args: Sequence[bool] | None = None,
     arg_shardings: Sequence[XLACompatibleSharding | None] | None = None,
     result_shardings: Sequence[XLACompatibleSharding | None] | None = None,
+    in_layouts: Sequence[XLACompatibleLayout | None | LayoutRequest] | None = None,
+    out_layouts: Sequence[XLACompatibleLayout | None | LayoutRequest] | None = None,
     arg_names: Sequence[str | None] | None = None,
     result_names: Sequence[str | None] | None = None,
     num_replicas: int = 1,
@@ -784,6 +795,11 @@ def lower_jaxpr_to_module(
       map(_to_logical_op_sharding, jaxpr.out_avals, result_shardings)
       if result_shardings is not None else result_shardings)
 
+  arg_layouts = (map(_to_xla_layout, in_layouts) if in_layouts is not None
+                  else in_layouts)
+  result_layouts = (map(_to_xla_layout, out_layouts) if out_layouts is not None
+                    else out_layouts)
+
   ctx = ModuleContext(backend_or_name=backend_or_name,
                       platforms=platforms, axis_context=axis_context,
                       name_stack=name_stack,
@@ -815,7 +831,9 @@ def lower_jaxpr_to_module(
         arg_names=arg_names,
         result_names=result_names,
         arg_memory_kinds=arg_memory_kinds,
-        result_memory_kinds=result_memory_kinds)
+        result_memory_kinds=result_memory_kinds,
+        arg_layouts=arg_layouts,
+        result_layouts=result_layouts)
 
   try:
     if not ctx.module.operation.verify():
@@ -894,7 +912,7 @@ def token_type() -> Sequence[ir.Type]:
   return [hlo.TokenType.get()]
 
 def create_token() -> Token:
-  return wrap_singleton_ir_values(hlo.CreateTokenOp().result)
+  return wrap_singleton_ir_values(hlo.create_token())
 
 class TokenSet:
   """An immutable container of tokens to be used to lower effectful jaxprs. When lowering
@@ -969,6 +987,8 @@ def lower_jaxpr_to_fun(
     result_names: Sequence[str | None] | None = None,
     arg_memory_kinds: Sequence[str | None] | None = None,
     result_memory_kinds: Sequence[str | None] | None = None,
+    arg_layouts: Sequence[str | None] | None = None,
+    result_layouts: Sequence[str | None] | None = None,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -1055,6 +1075,12 @@ def lower_jaxpr_to_fun(
   if result_memory_kinds is not None:
     token_memory_kinds = [None] * (num_tokens + num_output_tokens)
     result_memory_kinds = [*token_memory_kinds, *result_memory_kinds]
+  if arg_layouts is not None:
+    token_layouts = [None] * (num_dim_vars + num_tokens)
+    arg_layouts = [*token_layouts, *arg_layouts]
+  if result_layouts is not None:
+    token_layouts = [None] * (num_tokens + num_output_tokens)
+    result_layouts = [*token_layouts, *result_layouts]
 
   flat_input_types = util.flatten(input_types)
   flat_output_types = util.flatten(output_types)
@@ -1077,6 +1103,11 @@ def lower_jaxpr_to_fun(
     ir_arg_memory_kinds = util.flatten(
         [[mk] * len(types) for mk, types in zip(arg_memory_kinds, input_types)])
 
+  ir_arg_layouts = None
+  if arg_layouts is not None:
+    ir_arg_layouts = util.flatten(
+        [[l] * len(types) for l, types in zip(arg_layouts, input_types)])
+
   ir_result_shardings = None
   if result_shardings is not None:
     out_avals = [None] * (num_tokens + num_output_tokens) + list(jaxpr.out_avals)
@@ -1090,9 +1121,15 @@ def lower_jaxpr_to_fun(
     ir_result_memory_kinds = util.flatten(
         [[mk] * len(types) for mk, types in zip(result_memory_kinds, output_types)])
 
+  ir_result_layouts = None
+  if result_layouts is not None:
+    ir_result_layouts = util.flatten(
+        [[l] * len(types) for l, types in zip(result_layouts, output_types)])
+
   if (
       replicated_args is not None
       or ir_arg_shardings is not None
+      or ir_arg_layouts is not None
       or input_output_aliases is not None
       or arg_names is not None
       or num_tokens > 0
@@ -1112,6 +1149,11 @@ def lower_jaxpr_to_fun(
       for attrs, sharding in zip(arg_attrs, ir_arg_shardings):
         if sharding is not None:
           attrs["mhlo.sharding"] = get_sharding_attr(sharding)
+
+    if ir_arg_layouts is not None:
+      for attrs, layout in zip(arg_attrs, ir_arg_layouts):
+        if layout is not None:
+          attrs["mhlo.layout_mode"] = ir.StringAttr.get(layout)
 
     if input_output_aliases is not None:
       output_ids = util.unflatten(list(range(len(flat_output_types))),
@@ -1162,6 +1204,11 @@ def lower_jaxpr_to_fun(
       if sharding is not None:
         attrs['mhlo.sharding'] = get_sharding_attr(sharding)
 
+  if ir_result_layouts is not None:
+    for attrs, layout in zip(result_attrs, ir_result_layouts):
+      if layout is not None:
+        attrs['mhlo.layout_mode'] = ir.StringAttr.get(layout)
+
   func_op.result_attrs = ir.ArrayAttr.get(
       [ir.DictAttr.get(attrs) for attrs in result_attrs])
 
@@ -1205,7 +1252,7 @@ def lower_jaxpr_to_fun(
     args: list[list[ir.Value]] = []
     for aval, arg in zip(jaxpr.in_avals, unflattened_args):
       if replace_tokens_with_dummy and aval is core.abstract_token:
-        args.append(hlo.CreateTokenOp().results)
+        args.append([hlo.create_token()])
       else:
         args.append(arg)
     callee_name_stack = ctx.name_stack.extend(util.wrap_name(name, api_name))
@@ -1238,7 +1285,7 @@ def lower_jaxpr_to_fun(
           o if mk is None else wrap_with_memory_kind(o, mk, o_aval)
           for o, mk, o_aval in zip(flat_outputs, ir_result_memory_kinds, output_avals)]
 
-    func_dialect.ReturnOp(flat_outputs)
+    func_dialect.return_(flat_outputs)
 
   return func_op
 
@@ -1309,7 +1356,7 @@ def _emit_lowering_rule_as_fun(lowering_rule,
     outs = lowering_rule(sub_ctx, *_unwrap_singleton_ir_values(unflattened_args))
     if sub_ctx.tokens_out:
       outs = [*[sub_ctx.tokens_out.get(eff) for eff in effs], outs]
-    func_dialect.ReturnOp(util.flatten(map(wrap_singleton_ir_values, outs)))
+    func_dialect.return_(util.flatten(map(wrap_singleton_ir_values, outs)))
   return func_op
 
 def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
@@ -1369,46 +1416,23 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
                                    ctx.name_stack)
     with source_info_util.user_context(eqn.source_info.traceback), loc:
       override_rule = get_override_lowering_rule(eqn.primitive)
-      if len(ctx.platforms) == 1:
-        # Classic, single-platform lowering
-        # TODO(necula): unify the code paths when multi-platform is finished
-        platform = ctx.platforms[0]
-        if override_rule is not None:
-          rule = override_rule
-        elif eqn.primitive in _platform_specific_lowerings[platform]:
-          rule = _platform_specific_lowerings[platform][eqn.primitive]
-        elif eqn.primitive in xla._backend_specific_translations[platform]:
-          rule = xla_fallback_lowering(eqn.primitive)
-        elif eqn.primitive in _lowerings:
-          rule = _lowerings[eqn.primitive]
-        elif eqn.primitive in xla._translations:
-          rule = xla_fallback_lowering(eqn.primitive)
-        else:
-          raise NotImplementedError(
-              f"MLIR translation rule for primitive '{eqn.primitive.name}' not "
-              f"found for platform {platform}")
+      platform_rules: dict[str, LoweringRule] = {}
+      default_rule: Optional[LoweringRule] = None
+      # See mlir.lower_per_platform for meaning of `platform_rules` and `default_rule`
+      if override_rule is not None:
+        default_rule = override_rule
       else:
-        rules: list[MultiPlatformLoweringRule]
-        # See mlir.lower_multi_platform for the `rules` format
-        if override_rule is not None:
-          rules = [(None, override_rule)]
-        else:
-          # First the platform-specific rules
-          rules = []
-          for p in ctx.platforms:
-            if eqn.primitive in _platform_specific_lowerings[p]:
-              rules.append(
-                  ([p], _platform_specific_lowerings[p][eqn.primitive]))
-            elif eqn.primitive in xla._backend_specific_translations[p]:
-              rules.append(
-                  ([p], xla_fallback_lowering(eqn.primitive)))
-          # Now the catch-all rules
-          if eqn.primitive in _lowerings:
-            rules.append(
-                (None, _lowerings[eqn.primitive]))  # type: ignore
-          elif eqn.primitive in xla._translations:
-            rules.append(
-                (None, xla_fallback_lowering(eqn.primitive)))  # type: ignore
+        # First the platform-specific rules
+        for p in ctx.platforms:
+          if eqn.primitive in _platform_specific_lowerings[p]:
+            platform_rules[p] = _platform_specific_lowerings[p][eqn.primitive]
+          elif eqn.primitive in xla._backend_specific_translations[p]:
+            platform_rules[p] = xla_fallback_lowering(eqn.primitive)
+        # Now the default rule
+        if eqn.primitive in _lowerings:
+          default_rule = _lowerings[eqn.primitive]
+        elif eqn.primitive in xla._translations:
+          default_rule = xla_fallback_lowering(eqn.primitive)
 
       eqn_ctx = ctx.replace(name_stack=source_info.name_stack)
       effects = list(effects_lib.ordered_effects.filter_in(eqn.effects))
@@ -1426,13 +1450,10 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
         rule_ctx = rule_ctx.replace(axis_size_env=axis_size_env)
 
       rule_inputs = map(_unwrap_singleton_ir_values, in_nodes)
-      if len(ctx.platforms) == 1:
-        # Classic, single-platform lowering
-        ans = rule(rule_ctx, *rule_inputs, **eqn.params)
-      else:
-        ans = lower_multi_platform(rule_ctx, str(eqn), rules,
-                                   eqn.effects,
-                                   *rule_inputs, **eqn.params)
+      ans = lower_per_platform(rule_ctx, str(eqn.primitive),
+                               platform_rules, default_rule,
+                               eqn.effects,
+                               *rule_inputs, **eqn.params)
 
       if effects:
         # If there were ordered effects in the primitive, there should be output
@@ -1463,82 +1484,82 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     core.clean_up_dead_vars(eqn, env, last_used)
   return map(read, jaxpr.outvars), tokens
 
-# See docstring for lower_multi_platform.
-MultiPlatformLoweringRule = tuple[Optional[Sequence[str]], Callable]
 
-def lower_multi_platform(ctx: LoweringRuleContext,
-                         description: str,
-                         rules: Sequence[MultiPlatformLoweringRule],
-                         effects: effects_lib.Effects,
-                         *rule_args: ir.Value,
-                         **rule_kwargs) -> ir.Value:
-  """Emits single- or multi-platform code for a primitive.
+
+def lower_per_platform(ctx: LoweringRuleContext,
+                       description: str,
+                       platform_rules: dict[str, LoweringRule],
+                       default_rule: Optional[LoweringRule],
+                       effects: effects_lib.Effects,
+                       *rule_args: ir.Value,
+                       **rule_kwargs) -> ir.Value:
+  """Emits code for a primitive for the current lowering platform(s).
 
   For example, given
-      ctx.module_context.lowering_parameters.platforms = ("cpu", "gpu", "tpu")
+      platform_rules = dict(tpu=rule0, cpu=rule0)
+      default_rule = rule1
+
   and
-      rules = [(["tpu", "cpu"], rule0),
-               (None, rule1)
+      ctx.module_context.lowering_parameters.platforms = ("cpu",)
+
+  emits:
+      rule0(ctx, *rule_args, **rule_kwargs)
+
+  In case of multi-platform lowering, e.g., if
+      ctx.module_context.lowering_parameters.platforms = ("cpu", "cuda", "tpu")
+
   emits:
     rule_idx = case current_platform_idx:
                    0: return 0  # cpu rule index
-                   1: return 1  # gpu rule index
+                   1: return 1  # cuda rule index
                    2: return 0  # tpu rule index
     output = case rule_idx
                0: return rule0(*rule_args, **rule_kwargs)
                1: return rule1(*rule_args, **rule_kwargs)
 
-  If the primitive has a single lowering rule for all platforms of interest,
-  skips the conditionals and emits the same code as for classic single-platform
-  lowering.
-
   Args:
    ctx: lowering context.
    description: a string to include in error messages.
-   rules: a sequence of per-platform rules. Each entry is a tuple, with the
-     first element specifying the platforms, either a sequence of applicable
-     platform names (maybe empty), or None to denote a default entry to use
-     when no other entry applies. The second element of the tuple is a
-     lowering rule, i.e., a function to invoke with a
-     LoweringRuleContext (a sub-context of `ctx`),
-     and `*rule_args` and `**rule_kwargs`.
+   platform_rules: map platform names, e.g., "cpu", "cuda", to
+     `LoweringRule`s, for the platforms that have non-default lowering.
+   default_rule: an optional rule to use for platforms not in `platform_rules`.
+   effects: the set of effects for the current primitive.
    rule_args: the args of the lowering rules.
    rule_kwargs: the kwargs of the lowering rules.
   """
   platforms: Sequence[str] = ctx.module_context.platforms
-  platforms_with_specific_rules: Sequence[str] = util.flatten(
-    [ps for ps, _ in rules if ps is not None])
-  platforms_with_default_rule = [p for p in platforms
-                                 if p not in platforms_with_specific_rules]
-  kept_rules: list[MultiPlatformLoweringRule] = []  # Only the rules for platforms of interest
+  # Special case the common case (single-platform lowering)
+  if len(platforms) == 1:
+    rule = platform_rules.get(platforms[0], default_rule)
+    if rule is None:
+      raise NotImplementedError(
+        f"MLIR translation rule for primitive '{description}' not "
+        f"found for platform {platforms[0]}")
+
+  # Multi-platform lowering
+  kept_rules: list[LoweringRule] = []  # Only the rules for the platforms of interest
   platform_to_kept_rules_idx: dict[str, int] = {}
-  for ps, r in rules:
-    rule_index = len(kept_rules)
-    if ps is not None:
-      # Keep only rules that mention the platforms of interest
-      interesting_ps = [p for p in platforms if p in ps]  # type: ignore
-      if interesting_ps:
-        for p in interesting_ps:
-          assert p not in platform_to_kept_rules_idx
-          platform_to_kept_rules_idx[p] = rule_index
-        kept_rules.append((interesting_ps, r))
-    elif platforms_with_default_rule:
-      for p in platforms_with_default_rule:
-        assert p not in platform_to_kept_rules_idx
-        platform_to_kept_rules_idx[p] = rule_index
-      kept_rules.append((platforms_with_default_rule, r))
+  for p, prule in platform_rules.items():
+    if p not in platforms:
+      continue
+    platform_to_kept_rules_idx[p] = len(kept_rules)
+    kept_rules.append(prule)
 
-  platforms_without_rules = [p for p in platforms
-                             if p not in platform_to_kept_rules_idx]
-  if platforms_without_rules:
-    raise ValueError(
-      f"MLIR translation rule for primitive '{description}' not "
-      f"found for platforms {platforms_without_rules}")
+  platforms_without_specific_rule = [p for p in platforms
+                                     if p not in platform_to_kept_rules_idx]
+  if platforms_without_specific_rule:
+    if default_rule is None:
+      raise NotImplementedError(
+        f"MLIR translation rule for primitive '{description}' not "
+        f"found for platforms {platforms_without_specific_rule}")
+    for p in platforms_without_specific_rule:
+      platform_to_kept_rules_idx[p] = len(kept_rules)
+    kept_rules.append(default_rule)
+
   assert kept_rules
-
-  # Maybe there is a single rule left, just apply the rule, no conditionals.
+  # If there is a single rule left just apply the rule, without conditionals.
   if len(kept_rules) == 1:
-   return kept_rules[0][1](ctx, *rule_args, **rule_kwargs)
+   return kept_rules[0](ctx, *rule_args, **rule_kwargs)
 
   assert len(platforms) > 1 and len(kept_rules) >= 2, (platforms, kept_rules)
   assert len(ctx.dim_var_values) >= 1, "Must have a platform_index variable"
@@ -1548,21 +1569,21 @@ def lower_multi_platform(ctx: LoweringRuleContext,
   # Compute the rule index based on the current platform
   i32_type = aval_to_ir_types(core.ShapedArray((), dtype=np.int32))[0]
   if current_platform_idx.type != i32_type:
-    current_platform_idx = hlo.ConvertOp(i32_type, current_platform_idx)
+    current_platform_idx = hlo.convert(i32_type, current_platform_idx)
   rule_idx_op = hlo.CaseOp([i32_type],
                            index=current_platform_idx,
                            num_branches=len(platforms))
   for i, p in enumerate(platforms):
     branch = rule_idx_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
-      hlo.ReturnOp(ir_constants(np.int32(platform_to_kept_rules_idx[p])))
+      hlo.return_(ir_constants(np.int32(platform_to_kept_rules_idx[p])))
   ordered_effects = effects_lib.ordered_effects.filter_in(effects)
   rule_out_avals = [core.abstract_token] * len(ordered_effects) + ctx.avals_out
   output_types = map(aval_to_ir_types, rule_out_avals)
   case_op = hlo.CaseOp(util.flatten(output_types),
                       index=rule_idx_op,
                       num_branches=len(kept_rules))
-  for i, (_, rule) in enumerate(kept_rules):
+  for i, rule in enumerate(kept_rules):
     inner_ctx = ctx.replace()
     branch = case_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
@@ -1576,7 +1597,7 @@ def lower_multi_platform(ctx: LoweringRuleContext,
         assert len(ordered_effects) == len(inner_ctx.tokens_out)
         out_nodes = [inner_ctx.tokens_out.get(eff)
                      for eff in ordered_effects] + out_nodes
-      hlo.ReturnOp(util.flatten(map(wrap_singleton_ir_values, out_nodes)))
+      hlo.return_(util.flatten(map(wrap_singleton_ir_values, out_nodes)))
 
   results = case_op.results
   if ordered_effects:
@@ -1725,17 +1746,17 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
   else:
     if not core.is_constant_shape(aval_out.shape):  # type: ignore
       shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
-      return hlo.DynamicBroadcastInDimOp(
+      return hlo.dynamic_broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
           shape,
           dense_int_elements(broadcast_dimensions),
-      ).result
+      )
     else:
       assert all(d != ir.ShapedType.get_dynamic_size()
                  for d in aval_out.shape), aval_out  # type: ignore
-      return hlo.BroadcastInDimOp(
+      return hlo.broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
-          dense_int_elements(broadcast_dimensions)).result
+          dense_int_elements(broadcast_dimensions))
 
 def multi_broadcast_in_dim(ctx: LoweringRuleContext,
                            ops: Sequence[ir.Value],
@@ -1759,11 +1780,11 @@ def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Va
   aval_out = core.physical_aval(aval_out)
   if not core.is_constant_shape(aval_out.shape):  # type: ignore
     shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
-    return hlo.DynamicReshapeOp(
+    return hlo.dynamic_reshape(
         aval_to_ir_type(aval_out), op, shape,
-    ).result
+    )
   else:
-    return hlo.ReshapeOp(aval_to_ir_type(aval_out), op).result
+    return hlo.reshape(aval_to_ir_type(aval_out), op)
 
 def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
              start_indices, limit_indices, strides) -> ir.Value:
@@ -1783,14 +1804,14 @@ def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
       start_indices = eval_dynamic_shape_as_tensor(ctx, start_indices)
       limit_indices = eval_dynamic_shape_as_tensor(ctx, limit_indices)
       strides = eval_dynamic_shape_as_tensor(ctx, strides)
-      return hlo.RealDynamicSliceOp(
+      return hlo.real_dynamic_slice(
         aval_to_ir_type(aval_out),
-        x, start_indices, limit_indices, strides).result
+        x, start_indices, limit_indices, strides)
     else:
-      return hlo.SliceOp(x,
-                         dense_int_elements(start_indices),
-                         dense_int_elements(limit_indices),
-                         dense_int_elements(strides)).result
+      return hlo.slice(x,
+                       dense_int_elements(start_indices),
+                       dense_int_elements(limit_indices),
+                       dense_int_elements(strides))
 
 def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:
@@ -1812,21 +1833,20 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
     # lower to RealDynamicSliceOp, which is a version of SliceOp, and does
     # not have the clamping behavior. We clamp start ourselves.
     slice_sizes = eval_dynamic_shape_as_tensor(ctx, slice_sizes)
-    clamped_start = hlo.ClampOp(
+    clamped_start = hlo.clamp(
       shape_tensor([0] * len(start_indices)),
       shape_tensor(start_indices),
-      hlo.SubtractOp(
+      hlo.subtract(
         eval_dynamic_shape_as_tensor(ctx, x_aval.shape),  # type: ignore
         slice_sizes))
-    return hlo.RealDynamicSliceOp(
+    return hlo.real_dynamic_slice(
         aval_to_ir_type(aval_out), x,
         clamped_start,
-        hlo.AddOp(clamped_start, slice_sizes).result,
+        hlo.add(clamped_start, slice_sizes),
         shape_tensor([1] * len(start_indices))
-    ).result
+    )
   else:
-    return hlo.DynamicSliceOp(x, start_indices,
-                              dense_int_elements(slice_sizes)).result
+    return hlo.dynamic_slice(x, start_indices, dense_int_elements(slice_sizes))
 
 def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                          start_indices) -> ir.Value:
@@ -1843,36 +1863,35 @@ def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                                 start_indices=start_indices)
   else:
     # TODO(necula): handle dynamic shapes
-    return hlo.DynamicUpdateSliceOp(x, update, start_indices).result
+    return hlo.dynamic_update_slice(x, update, start_indices)
 
 def pad(ctx: LoweringRuleContext, aval_out,
         x, padding_value,
         padding_low, padding_high, padding_interior) -> ir.Value:
   if all(core.is_constant_shape(s) for s in (padding_low,
                                              padding_high, padding_interior)):
-    return hlo.PadOp(x, padding_value,
-                     dense_int_elements(padding_low),
-                     dense_int_elements(padding_high),
-                     dense_int_elements(padding_interior)).result
+    return hlo.pad(x, padding_value,
+                   dense_int_elements(padding_low),
+                   dense_int_elements(padding_high),
+                   dense_int_elements(padding_interior))
   else:
     padding_low = eval_dynamic_shape_as_tensor(ctx, padding_low)
     padding_high = eval_dynamic_shape_as_tensor(ctx, padding_high)
     padding_interior = eval_dynamic_shape_as_tensor(ctx, padding_interior)
-    return hlo.DynamicPadOp(
+    return hlo.dynamic_pad(
         aval_to_ir_type(aval_out),
-        x, padding_value, padding_low, padding_high, padding_interior).result
+        x, padding_value, padding_low, padding_high, padding_interior)
 
 def iota(ctx: LoweringRuleContext, aval_out, *, dimension: int):
   if not core.is_constant_shape(aval_out.shape):
     shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
-    return hlo.DynamicIotaOp(
+    return hlo.dynamic_iota(
         aval_to_ir_type(aval_out),
         shape,
         i64_attr(dimension),
-    ).result
+    )
   else:
-    return hlo.IotaOp(aval_to_ir_type(aval_out),
-                      i64_attr(dimension)).result
+    return hlo.iota(aval_to_ir_type(aval_out), i64_attr(dimension))
 
 def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
@@ -1886,7 +1905,7 @@ def zeros_like_lowering(ctx, x):
 register_lowering(ad_util.zeros_like_p, zeros_like_lowering)
 
 def add_jaxvals_lowering(ctx, x, y):
-  return hlo.AddOp(x, y).results
+  return [hlo.add(x, y)]
 register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 
 register_lowering(ad_util.stop_gradient_p, lambda ctx, x: [x])
@@ -1902,7 +1921,7 @@ def compare_hlo(x, y, direction: str, comparison_type: str | None = None):
     else:
       comparison_type = "FLOAT"
 
-  return hlo.CompareOp(
+  return hlo.compare(
       x,
       y,
       hlo.ComparisonDirectionAttr.get(direction),
@@ -1912,20 +1931,18 @@ def _minmax_hlo(op, cmp, x, y):
   """Min/max that compares complex values lexicographically as pairs."""
   tensor_type = ir.RankedTensorType(x.type)
   if ir.ComplexType.isinstance(tensor_type.element_type):
-    rx = hlo.RealOp(x).result
-    ry = hlo.RealOp(y).result
+    rx = hlo.real(x)
+    ry = hlo.real(y)
     real_eq = compare_hlo(rx, ry, "EQ", "FLOAT")
     real_cmp = compare_hlo(rx, ry, cmp, "FLOAT")
-    imag_cmp = compare_hlo(
-        hlo.ImagOp(x).result,
-        hlo.ImagOp(y).result, cmp, "FLOAT")
-    which = hlo.SelectOp(real_eq, imag_cmp, real_cmp).result
-    return hlo.SelectOp(which, x, y)
+    imag_cmp = compare_hlo(hlo.imag(x), hlo.imag(y), cmp, "FLOAT")
+    which = hlo.select(real_eq, imag_cmp, real_cmp)
+    return hlo.select(which, x, y)
   else:
     return op(x, y)
 
-min_hlo = partial(_minmax_hlo, hlo.MinOp, "LT")
-max_hlo = partial(_minmax_hlo, hlo.MaxOp, "GT")
+min_hlo = partial(_minmax_hlo, hlo.minimum, "LT")
+max_hlo = partial(_minmax_hlo, hlo.maximum, "GT")
 
 
 def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
@@ -1941,9 +1958,9 @@ def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
       compare_type = "SIGNED"
     else:
       compare_type = "UNSIGNED"
-    return compare_hlo(x, full_like_aval(ctx, 0, aval_in), "NE",
-                       compare_type).result
-  return hlo.ConvertOp(aval_to_ir_type(aval_out), x).result
+    x = compare_hlo(x, full_like_aval(ctx, 0, aval_in), "NE", compare_type)
+    # continue, to adjust the shape if needed
+  return hlo.convert(aval_to_ir_type(aval_out), x)
 
 def _wrap_with_spmd_op(name: str,
                        ctx: LoweringRuleContext,
@@ -2136,7 +2153,7 @@ def xla_fallback_lowering(prim: core.Primitive):
                                flatten_lowering_ir_args(args)).result
     if not prim.multiple_results:
       return [call]
-    flat_results = [hlo.GetTupleElementOp(call, i32_attr(i)).result
+    flat_results = [hlo.get_tuple_element(call, i32_attr(i))
                     for i in range(len(flat_output_types))]
 
     return util.unflatten(flat_results, map(len, output_types))
@@ -2219,7 +2236,7 @@ def _emit_tpu_python_callback(
     *,
     sharding: xc.OpSharding | None = None
 ) -> tuple[Sequence[ir.Value], Any]:
-  token = token or hlo.CreateTokenOp().result
+  token = token or hlo.create_token()
   _wrapped_callback = callback
 
   send_channels = []
@@ -2372,10 +2389,7 @@ def emit_python_callback(
       backend.get_emit_python_callback_descriptor(_wrapped_callback,
                                                   operand_shapes,
                                                   result_shapes))
-  if xla_extension_version >= 202:
-    ctx.module_context.add_host_callback(ifrt_callback)
-  else:
-    ctx.module_context.add_keepalive(ifrt_callback)
+  ctx.module_context.add_host_callback(ifrt_callback)
   descriptor_operand = ir_constant(callback_descriptor)
   callback_operands = [descriptor_operand, *operands]
   if operand_mlir_layouts is not None:
@@ -2400,7 +2414,7 @@ def emit_python_callback(
   if sharding is not None:
     set_sharding(result, sharding)
   results = [
-      hlo.GetTupleElementOp(result, i32_attr(i)).result
+      hlo.get_tuple_element(result, i32_attr(i))
       for i in range(len(result_types))
   ]
   if token:
@@ -2558,9 +2572,8 @@ def reduce_window(
     int2d = aval_to_ir_type(core.ShapedArray((1, 2), np.int32))
     def prep_one_pad(pad_lo_hi: tuple[core.DimSize, core.DimSize]):
       pads = eval_dynamic_shape_as_tensor(ctx, pad_lo_hi)  # i32[2]
-      return hlo.ReshapeOp(int2d, pads)
-    d_padding = hlo.ConcatenateOp(list(map(prep_one_pad, padding)),
-                                  i64_attr(0)).result
+      return hlo.reshape(int2d, pads)
+    d_padding = hlo.concatenate(list(map(prep_one_pad, padding)), i64_attr(0))
     # Build the reducer
     reducer_type = ir.FunctionType.get(scalar_types + scalar_types,
                                        scalar_types)
@@ -2569,8 +2582,7 @@ def reduce_window(
     ctx.module_context.symbol_table.insert(reducer)
     entry_block = reducer.add_entry_block()
     with ir.InsertionPoint(entry_block):
-      res = reducer_body(entry_block)
-      hlo.ReturnOp(res)
+      hlo.return_(reducer_body(entry_block))
 
     rw = custom_call(
       "stablehlo.dynamic_reduce_window",
@@ -2596,8 +2608,7 @@ def reduce_window(
                                             shape=(len(padding), 2)))
     reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))
     with ir.InsertionPoint(reducer):
-      res = reducer_body(reducer)
-      hlo.ReturnOp(res)
+      hlo.return_(reducer_body(reducer))
   return rw.results
 
 

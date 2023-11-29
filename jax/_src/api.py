@@ -55,15 +55,14 @@ from jax._src import pjit
 from jax._src import xla_bridge as xb
 from jax._src.core import eval_jaxpr, ShapedArray
 from jax._src.api_util import (
-    flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
-    argnums_partial, argnums_partial_except, flatten_axes, donation_vector,
+    flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
+    argnums_partial_except, flatten_axes, donation_vector,
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
     shaped_abstractify, _ensure_str_tuple, apply_flat_fun_nokwargs,
     check_callable, debug_info, result_paths, flat_out_axes, debug_info_final)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (PmapSharding, TransferToMemoryKind,
@@ -304,13 +303,17 @@ def jit(
         static_argnums, static_argnames, device, backend, abstracted_axes)
 
   def infer_params(*args, **kwargs):
+    # TODO(yashkatariya): Remove this when it's added on jit.
+    in_layouts = kwargs.pop('_in_layouts', None)
+    out_layouts = kwargs.pop('_out_layouts', None)
     pjit_info_args = pjit.PjitInfo(
         fun=fun, in_shardings=in_shardings,
         out_shardings=out_shardings, static_argnums=static_argnums,
         static_argnames=static_argnames, donate_argnums=donate_argnums,
         donate_argnames=donate_argnames, device=device, backend=backend,
         keep_unused=keep_unused, inline=inline, resource_env=None,
-        abstracted_axes=abstracted_axes)
+        abstracted_axes=abstracted_axes, in_layouts=in_layouts,
+        out_layouts=out_layouts)
     return pjit.common_infer_params(pjit_info_args, *args, **kwargs)
 
   has_explicit_sharding = pjit._pjit_explicit_sharding(
@@ -1084,8 +1087,8 @@ def vmap(fun: F,
 
   Args:
     fun: Function to be mapped over additional axes.
-    in_axes: An integer, None, or (nested) standard Python container
-      (tuple/list/dict) thereof specifying which input array axes to map over.
+    in_axes: An integer, None, or sequence of values specifying which input
+      array axes to map over.
 
       If each positional argument to ``fun`` is an array, then ``in_axes`` can
       be an integer, a None, or a tuple of integers and Nones with length equal
@@ -1096,11 +1099,12 @@ def vmap(fun: F,
       range ``[-ndim, ndim)`` for each array, where ``ndim`` is the number of
       dimensions (axes) of the corresponding input array.
 
-      If the positional arguments to ``fun`` are container (pytree) types, the
-      corresponding element of ``in_axes`` can itself be a matching container,
-      so that distinct array axes can be mapped for different container
-      elements. ``in_axes`` must be a container tree prefix of the positional
-      argument tuple passed to ``fun``. See this link for more detail:
+      If the positional arguments to ``fun`` are container (pytree) types, ``in_axes``
+      must be a sequence with length equal to the number of positional arguments to
+      ``fun``, and for each argument the corresponding element of ``in_axes`` can
+      be a container with a matching pytree structure specifying the mapping of its
+      container elements. In other words, ``in_axes`` must be a container tree prefix
+      of the positional argument tuple passed to ``fun``. See this link for more detail:
       https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees
 
       Either ``axis_size`` must be provided explicitly, or at least one
@@ -1228,18 +1232,23 @@ def vmap(fun: F,
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axes = tuple(in_axes)
 
-  if not all(type(l) is int or type(l) in batching.spec_types
-             for l in tree_leaves(in_axes)):
+  if not (in_axes is None or type(in_axes) in {int, tuple, *batching.spec_types}):
+    raise TypeError("vmap in_axes must be an int, None, or a tuple of entries corresponding "
+                    f"to the positional arguments passed to the function, but got {in_axes}.")
+  if not all(type(l) in {int, *batching.spec_types} for l in tree_leaves(in_axes)):
     raise TypeError("vmap in_axes must be an int, None, or (nested) container "
                     f"with those types as leaves, but got {in_axes}.")
-  if not all(type(l) is int or type(l) in batching.spec_types
-               for l in tree_leaves(out_axes)):
+  if not all(type(l) in {int, *batching.spec_types} for l in tree_leaves(out_axes)):
     raise TypeError("vmap out_axes must be an int, None, or (nested) container "
                     f"with those types as leaves, but got {out_axes}.")
 
   @wraps(fun, docstr=docstr)
   @api_boundary
   def vmap_f(*args, **kwargs):
+    if isinstance(in_axes, tuple) and len(in_axes) != len(args):
+      raise ValueError("vmap in_axes must be an int, None, or a tuple of entries corresponding "
+                       "to the positional arguments passed to the function, "
+                       f"but got {len(in_axes)=}, {len(args)=}")
     args_flat, in_tree  = tree_flatten((args, kwargs), is_leaf=batching.is_vmappable)
     f = lu.wrap_init(fun)
     flat_fun, out_tree = batching.flatten_fun_for_vmap(f, in_tree)
@@ -1735,13 +1744,10 @@ class _PmapFastpathData(NamedTuple):
   out_handler: Any
   out_pytree_def: Any
   # Data needed to handle the inputs.
-  input_sharding_specs: Sequence[sharding_specs.ShardingSpec] | None
   input_devices: Sequence[xc.Device]
   input_indices: Sequence[sharding_specs.Index]
   input_array_shardings: Sequence[Any]
   # Data needed to build the Array from C++.
-  out_sharding_specs: Sequence[sharding_specs.ShardingSpec] | None
-  out_indices: Sequence[sharding_specs.Index] | None
   out_avals: Sequence[Any]
   out_array_shardings: Sequence[Any]
   out_committed: Sequence[Any]
@@ -1819,36 +1825,15 @@ def _cpp_pmap(
 
       out_array_shardings = [out.sharding for out in out_flat]
       out_committed = [out._committed for out in out_flat]
-      input_sharding_specs = None
-      out_sharding_specs = None
-      out_indices = None
-      # TODO(phawkins): remove sharding specs once minimum jaxlib is 0.4.15.
-      if xla_extension_version < 176:
-        input_sharding_specs = [
-            i.sharding_spec for i in in_handler.in_shardings
-        ]
-        out_sharding_specs = [
-            s.sharding_spec for s in out_handler.out_shardings
-        ]
-        out_indices = [
-            tuple(s.devices_indices_map(a.shape).values())
-            for s, a in safe_zip(
-                out_handler.out_shardings, out_handler.out_avals
-            )
-        ]
-
       fastpath_data = _PmapFastpathData(
           version=1,
           xla_executable=execute_replicated.xla_executable,
           in_handler=in_handler,
           out_handler=out_handler,
           out_pytree_def=out_pytree_def,
-          input_sharding_specs=input_sharding_specs,
           input_devices=in_handler.local_devices,
           input_indices=in_handler.input_indices,
           input_array_shardings=in_handler.in_shardings,
-          out_sharding_specs=out_sharding_specs,
-          out_indices=out_indices,
           out_avals=out_handler.out_avals,
           out_array_shardings=out_array_shardings,
           out_committed=out_committed,
@@ -2835,10 +2820,10 @@ def eval_shape(fun: Callable, *args, **kwargs):
 
 
 def named_call(
-    fun: Callable[..., Any],
+    fun: F,
     *,
     name: str | None = None,
-  ) -> Callable[..., Any]:
+) -> F:
   """Adds a user specified name to a function when staging out JAX computations.
 
   When staging out computations for just-in-time compilation to XLA (or other
@@ -2866,6 +2851,7 @@ def named_call(
     name = fun.__name__
 
   return source_info_util.extend_name_stack(name)(fun)
+
 
 @contextmanager
 def named_scope(

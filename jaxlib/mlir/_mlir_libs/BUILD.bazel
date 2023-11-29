@@ -98,9 +98,22 @@ py_extension(
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "//jaxlib/mosaic:tpu_dialect_capi_headers",
+        "@com_google_absl//absl/log:check",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
         "@pybind11",
+    ],
+)
+
+# This target contains the extension and it's Python dependencies, which are not
+# supported by the `py_extension`/`pybind_extension` macros.
+py_library(
+    name = "_tpu_ext_lib",
+    deps = [
+        ":_tpu_ext",
+        "//jaxlib/mlir:ir",
+        "//jaxlib/mosaic/python:layout_defs",
     ],
 )
 

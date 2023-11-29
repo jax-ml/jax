@@ -14,15 +14,21 @@
 
 licenses(["notice"])
 
-package(
-    default_applicable_licenses = [],
-    default_visibility = ["//:__subpackages__"],
+load(
+  "//jaxlib:jax.bzl",
+  "if_cuda_is_configured",
+  "py_library_providing_imports_info",
 )
 
-exports_files([
-    "__init__.py",
-    "plugin_pyproject.toml",
-    "plugin_setup.py",
-    "pyproject.toml",
-    "setup.py",
-])
+py_library_providing_imports_info(
+    name = "jax_plugins",
+)
+
+py_library(
+    name = "gpu_plugin_only_test_deps",
+    deps = [
+      ":jax_plugins",
+      ] + if_cuda_is_configured([
+        "//jax_plugins/cuda:cuda_plugin",
+    ]),
+)

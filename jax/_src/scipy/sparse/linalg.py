@@ -704,7 +704,7 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   x = lax.custom_linear_solve(A, b, solve=_solve, transpose_solve=_solve)
 
   failed = jnp.isnan(_norm(x))
-  info = jnp.where(failed, x=-1, y=0)
+  info = jnp.where(failed, -1, 0)
   return x, info
 
 

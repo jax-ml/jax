@@ -20,13 +20,13 @@ JAX 101
    installation
    quickstart
    jax-as-accelerated-numpy
-   automatic-differentiation
    jit-compilation
+   automatic-vectorization
+   automatic-differentiation
    random-numbers
    working-with-pytrees
    single-host-sharding
    stateful-computations
-   external-callbacks
    simple-neural-network
 
 
@@ -38,6 +38,7 @@ JAX 201
 
    parallelism
    advanced-autodiff
+   external-callbacks
    debugging
    profiling-and-performance
 

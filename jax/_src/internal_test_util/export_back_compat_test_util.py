@@ -34,14 +34,17 @@ Write the JAX function `func` that exercises the custom call `foo_call` you
 want, then pick some inputs, and then add this to the new test to get started.
 
   import dataclasses
-  from jax.experimental.jax2tf.tests import back_compat_test_util as bctu
+  from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
-  def test_foo_call(self):
-    def func(...): ...
-    inputs = (...,)  # Tuple of nd.array, keep it small, perhaps generate the
-                     # inputs in `func`.
-    data = self.starter_data(inputs)  # This is temporary, just for starting.
-    self.run_one_test(func, data)
+  class BackCompatTest(bctu.CompatTestBase)
+    ...
+
+    def test_foo_call(self):
+      def func(...): ...
+      inputs = (...,)  # Tuple of nd.array, keep it small, perhaps generate the
+                      # inputs in `func`.
+      data = self.starter_data(inputs)  # This is temporary, just for starting.
+      self.run_one_test(func, data)
 
 The test will fail, but will save to a file the test data you will need. The
 file name will be printed in the logs. Create a new
@@ -206,12 +209,12 @@ class CompatTestBase(jtu.JaxTestCase):
 
     custom_call_re = r"stablehlo.custom_call\s*@([^\(]+)\("
     current_custom_call_targets = sorted(
-        list(set(re.findall(custom_call_re, module_str))))
+        set(re.findall(custom_call_re, module_str)))
 
     np.set_printoptions(threshold=sys.maxsize, floatmode="unique")
     # Print the current test data to simplify updating the test.
     updated_testdata = f"""
-# Pasted from the test output (see back_compat_test_util.py module docstring)
+# Pasted from the test output (see export_back_compat_test_util.py module docstring)
 data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     testdata_version={CURRENT_TESTDATA_VERSION},
     platform={self.default_jax_backend()!r},
@@ -281,7 +284,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       a string (for debugging), and (c) the module serialization version.
     """
     # Use the native exporter, to make sure we get the proper serialization.
-    args_specs = export.poly_specs(data.inputs, polymorphic_shapes)
+    args_specs = export.args_specs(data.inputs, polymorphic_shapes)
     exported = export.export(
       jax.jit(func),
       lowering_platforms=(self.default_jax_backend(),),
@@ -297,7 +300,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
 
   def run_serialized(self, data: CompatTestData,
                      polymorphic_shapes: Optional[Sequence[str]] = None):
-    args_specs = export.poly_specs(data.inputs, polymorphic_shapes)
+    args_specs = export.args_specs(data.inputs, polymorphic_shapes)
     def ndarray_to_aval(a: np.ndarray) -> core.ShapedArray:
       return core.ShapedArray(a.shape, a.dtype)
     in_avals_tree = tree_util.tree_map(ndarray_to_aval, args_specs)

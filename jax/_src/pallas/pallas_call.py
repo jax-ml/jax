@@ -28,6 +28,7 @@ from jax._src import state
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src import ad_util
 from jax._src import core as jax_core
@@ -310,7 +311,7 @@ def _hoist_consts_to_refs(jaxpr: jax_core.Jaxpr) -> jax_core.Jaxpr:
   const_avals, const_ref_avals = partition_list(is_const_ref, all_const_avals)
   const_avals = map(state.AbstractRef, const_avals)
   merged_const_avals = merge_lists(is_const_ref, const_avals, const_ref_avals)
-  arg_avals = list(var.aval for var in jaxpr.invars)
+  arg_avals = [var.aval for var in jaxpr.invars]
   in_avals = [*merged_const_avals, *arg_avals]
   num_consts = len(merged_const_avals)
 
@@ -344,6 +345,32 @@ def _extract_function_name(f: Callable, name: str | None) -> str:
   if name is None:
     name = f.__name__ if hasattr(f, "__name__") and f.__name__ else "func"
   return name
+
+
+def _pallas_call_default_lowering(
+    ctx: mlir.LoweringRuleContext,
+    *in_nodes,
+    interpret: bool,
+    **params):
+  platforms = ctx.module_context.platforms
+  if len(platforms) > 1:
+    raise ValueError("Can only lower pallas_call on a single platform.")
+  platform = platforms[0]
+  if interpret:
+    # If we are in interpret mode, we don't care what platform we are on.
+    impl = partial(_pallas_call_impl, **params, interpret=True)
+    return mlir.lower_fun(impl, multiple_results=True)(ctx, *in_nodes)
+  if platform == "cpu":
+    # We only support interpret mode on the CPU backend.
+    raise ValueError("Only interpret mode is supported on CPU backend.")
+  # If we are actually using a specific backend (GPU or TPU), we should have
+  # already registered backend-specific lowerings. If we get this far, it means
+  # those backends aren't present.
+  raise ValueError(
+      f"Cannot lower pallas_call on platform: {platform}. "
+      "To use Pallas on GPU, please install Triton and JAX-Triton. "
+      "To use Pallas on TPU, please install Jaxlib TPU and libtpu.")
+mlir.register_lowering(pallas_call_p, _pallas_call_default_lowering)
 
 
 def pallas_call(

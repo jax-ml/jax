@@ -37,7 +37,6 @@ from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 
 
 _DISABLE_MOST_OPTIMIZATIONS = config.DEFINE_bool(
@@ -62,6 +61,9 @@ _COMPILER_DETAILED_LOGGING_MIN_OPS = config.DEFINE_integer(
     ),
 )
 
+# The special XLA-AutoFDO profile version that indicates that a profile is not
+# available and retrieval should not be attempted.
+_NO_PROFILE_DONT_RETRIEVE = -1
 
 traceback_util.register_exclusion(__file__)
 
@@ -77,7 +79,9 @@ _cache_used: bool = False
 
 # Will be monkeypatched with the function that gets the XLA-AutoFDO profile
 # version. The default (-1) takes care of errors.
-def get_latest_profile_version() -> int:
+# TODO(b/289098047): consider refactoring this interface.
+def get_latest_profile_version(backend: xc.Client) -> int:
+  del backend
   return -1
 
 
@@ -111,6 +115,7 @@ def get_compile_options(
     env_options_overrides: dict[str, str] | None = None,
     fdo_profile: bytes | None = None,
     detailed_logging: bool = True,
+    backend: xc.Client | None = None,
 ) -> xc.CompileOptions:
   """Returns the compile options to use, as derived from flag values.
 
@@ -134,6 +139,7 @@ def get_compile_options(
       XLA.
     detailed_logging: Is this an "interesting" computation about which XLA
       would be wise to log compilation information?
+    backend: the client, if available.
   """
   compile_options = xc.CompileOptions()
   compile_options.num_replicas = num_replicas
@@ -198,22 +204,22 @@ def get_compile_options(
                  "using JAX XLA profile version %d from flag",
                  jax_xla_profile_version)
   else:
-    fdo_profile_version = get_latest_profile_version()
-    if fdo_profile_version != 0:
-      compile_options.profile_version = fdo_profile_version
-      logger.debug("get_compile_options XLA-AutoFDO profile: " +
-                   "using XLA-AutoFDO profile version %d",
-                   fdo_profile_version)
+    compile_options.profile_version = _NO_PROFILE_DONT_RETRIEVE
+    if backend is None:
+      logging.info("get_compile_options: no backend supplied; "
+                   "disabling XLA-AutoFDO profile")
     else:
-      no_profile_dont_retrieve = -1
-      compile_options.profile_version = no_profile_dont_retrieve
-      logger.error("get_compile_options XLA-AutoFDO profile: " +
-                   "XLA-AutoFDO profile version is 0; this should not happen")
+      fdo_profile_version = get_latest_profile_version(backend)
+      if fdo_profile_version != 0:
+        compile_options.profile_version = fdo_profile_version
+        logger.debug("get_compile_options XLA-AutoFDO profile: " +
+                     "using XLA-AutoFDO profile version %d",
+                     fdo_profile_version)
+      else:
+        logger.error("get_compile_options XLA-AutoFDO profile: " +
+                     "XLA-AutoFDO profile version is 0; this should not happen")
 
-  if xla_extension_version >= 201:
-    debug_options.xla_detailed_logging = detailed_logging
-  else:
-    debug_options.xla_detailed_logging_and_dumping = detailed_logging
+  debug_options.xla_detailed_logging = detailed_logging
 
   return compile_options
 
@@ -389,19 +395,17 @@ def _cache_write(cache_key: str,
     return
 
   min_compile_time = config.persistent_cache_min_compile_time_secs.value
-  if min_compile_time:
-    if compile_time_secs < min_compile_time:
-      logger.debug(
-          "Not writing persistent cache entry for '%s' because it took < %.2f "
-          "seconds to compile (%.2fs)", module_name, min_compile_time,
-          compile_time_secs)
-      return
-    else:
-      logger.debug(
-          "'%s' took at least %.2f seconds to compile (%.2fs), writing "
-          "persistent cache entry", module_name, min_compile_time,
-          compile_time_secs)
-      monitoring.record_event('/jax/compilation_cache/cache_misses')
+  if compile_time_secs < min_compile_time:
+    logger.debug(
+        "Not writing persistent cache entry for '%s' because it took < %.2f "
+        "seconds to compile (%.2fs)", module_name, min_compile_time,
+        compile_time_secs)
+    return
+  else:
+    logger.debug(
+        "'%s' took at least %.2f seconds to compile (%.2fs), writing persistent"
+        " cache entry", module_name, min_compile_time, compile_time_secs)
+    monitoring.record_event('/jax/compilation_cache/cache_misses')
 
   try:
     compilation_cache.put_executable_and_time(

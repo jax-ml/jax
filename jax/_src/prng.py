@@ -473,6 +473,23 @@ class KeyTyRules:
     return random_wrap(key_data, impl=dtype._impl)
 
   @staticmethod
+  def make_tangent(shape, dtype):
+    physical_shape = (*shape, *dtype._impl.key_shape)
+    def not_implemented(name):
+      def func(*args):
+        raise NotImplementedError(f"Cannot call {name} on tangent of PRNG key.")
+      return func
+    impl = PRNGImpl(
+      key_shape=dtype._impl.key_shape,
+      seed=not_implemented('seed'),
+      split=not_implemented('split'),
+      random_bits=not_implemented('random_bits'),
+      fold_in=not_implemented('fold_in'),
+      name=f"{dtype._impl.name}_tangent",
+      tag=f"{dtype._impl.tag}_t")
+    return random_wrap(jnp.zeros(physical_shape, dtype='uint32'), impl=impl)
+
+  @staticmethod
   def physical_element_aval(dtype) -> core.ShapedArray:
     return core.ShapedArray(dtype._impl.key_shape, jnp.dtype('uint32'))
 
@@ -592,6 +609,20 @@ class KeyTyRules:
     physical_sharding = make_key_array_phys_sharding(aval, sharding, False)
     physical_result = pxla.batched_device_put(physical_aval, physical_sharding, [physical_buf] * len(devices), devices)
     return random_wrap(physical_result, impl=aval.dtype._impl)
+
+
+class KeyTangentTy(dtypes.ExtendedDType):
+  """A dtype to use for the tangent of a PRNGKey"""
+  _impl: PRNGImpl
+  type = dtypes.prng_key
+
+  @property
+  def _rules(self):
+    raise ValueError("Cannot perform operations on the tangent of a PRNGKey.")
+
+  @property
+  def name(self) -> str:
+    return f'key_tangent<{self._impl.tag}>'
 
 
 class KeyTy(dtypes.ExtendedDType):
@@ -956,7 +987,7 @@ def _threefry_seed(seed: typing.Array) -> typing.Array:
     raise TypeError(f"PRNG key seed must be a scalar; got {seed!r}.")
   if not np.issubdtype(seed.dtype, np.integer):
     raise TypeError(f"PRNG key seed must be an integer; got {seed!r}")
-  convert = lambda k: lax.reshape(lax.convert_element_type(k, np.uint32), [1])
+  convert = lambda k: lax.expand_dims(lax.convert_element_type(k, np.uint32), [0])
   k1 = convert(
       lax.shift_right_logical(seed, lax_internal._const(seed, 32)))
   with config.numpy_dtype_promotion('standard'):
@@ -1084,9 +1115,9 @@ def _threefry2x32_gpu_lowering(lowering_func, ctx, k1, k2, x1, x2):
   out_len = reduce(op.mul, aval_out.shape, 1)
   if not core.is_constant_dim(out_len):
     length = mlir.eval_dynamic_shape_as_tensor(ctx, [out_len])
-    length = mlir.hlo.ConvertOp(
+    length = mlir.hlo.convert(
         ir.RankedTensorType.get((1,), ir.IntegerType.get_signless(64)),
-        length).result
+        length)
     output_shape = mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
   else:
     length = int(out_len)  # will be passed statically
@@ -1190,20 +1221,20 @@ def iota_2x32_shape_lowering(ctx, *, shape):
   aval_u64 = core.ShapedArray(shape, np.dtype('uint64'))
 
   def _add(x: ir.Value, y: ir.Value) -> ir.Value:
-    return mlir.hlo.AddOp(x, y).result
+    return mlir.hlo.add(x, y)
 
   def _mul(x: core.DimSize, y: ir.Value) -> ir.Value:
     if core.is_constant_dim(x):
       x_const = mlir.ir_constant(np.array(x, np.dtype('uint64')))
     else:
       x_const, = mlir.eval_dynamic_shape(ctx, (x,))
-      x_const = hlo.ConvertOp(
+      x_const = hlo.convert(
           ir.RankedTensorType.get(
               (),
-              mlir.dtype_to_ir_type(np.dtype('uint64'))), x_const).result
+              mlir.dtype_to_ir_type(np.dtype('uint64'))), x_const)
     x_bcast = mlir.broadcast_in_dim(ctx, x_const, aval_u64,
                                     broadcast_dimensions=[])
-    return mlir.hlo.MulOp(x_bcast, y).result
+    return mlir.hlo.multiply(x_bcast, y)
 
   assert len(shape) > 0
 
@@ -1213,10 +1244,9 @@ def iota_2x32_shape_lowering(ctx, *, shape):
   shift = mlir.ir_constant(np.array(32, np.dtype('uint64')))
   shift = mlir.broadcast_in_dim(ctx, shift, aval_u64,
                                 broadcast_dimensions=[])
-  counts_shifted = mlir.hlo.ShiftRightLogicalOp(counts, shift).result
-  counts_lo = mlir.hlo.ConvertOp(mlir.aval_to_ir_type(aval_out), counts).result
-  counts_hi = mlir.hlo.ConvertOp(mlir.aval_to_ir_type(aval_out),
-                                  counts_shifted).result
+  counts_shifted = mlir.hlo.shift_right_logical(counts, shift)
+  counts_lo = mlir.hlo.convert(mlir.aval_to_ir_type(aval_out), counts)
+  counts_hi = mlir.hlo.convert(mlir.aval_to_ir_type(aval_out), counts_shifted)
   return counts_hi, counts_lo
 mlir.register_lowering(iota_2x32_shape_p, iota_2x32_shape_lowering)
 

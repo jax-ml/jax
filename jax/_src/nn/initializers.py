@@ -168,9 +168,9 @@ def truncated_normal(stddev: RealNumeric = 1e-2,
       the variancescaling initializers, and users are expected to apply this
       correction themselves via the stddev arg if they wish to employ it.
     dtype: optional; the initializer's default dtype.
-    min_val: Float representing the lower bound for truncation. Applied before
+    lower: Float representing the lower bound for truncation. Applied before
       the output is multiplied by the stddev.
-    max_val: Float representing the upper bound for truncation. Applied before
+    upper: Float representing the upper bound for truncation. Applied before
       the output is multiplied by the stddev.
 
   Returns:

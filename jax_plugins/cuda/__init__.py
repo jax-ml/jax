@@ -13,30 +13,68 @@
 # limitations under the License.
 
 import functools
+import importlib
 import logging
 import os
 import pathlib
 import platform
 import sys
 
+from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb
 
-from jax._src.lib import cuda_plugin_extension
-from jax._src.lib import xla_client
-
+# cuda_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
+# preinstalled jax cuda plugin packages.
+for pkg_name in ['jax_cuda12_plugin', 'jax_cuda11_plugin', 'jaxlib']:
+  try:
+    cuda_plugin_extension = importlib.import_module(
+        f'{pkg_name}.cuda_plugin_extension'
+    )
+  except ImportError:
+    cuda_plugin_extension = None
+  else:
+    break
 
 logger = logging.getLogger(__name__)
 
 
-def initialize():
-  path = pathlib.Path(__file__).resolve().parent / "xla_cuda_plugin.so"
-  if not path.exists():
-    logger.warning(
-        "WARNING: Native library %s does not exist. This most likely indicates"
-        " an issue with how %s was built or installed.",
-        path,
+def _get_library_path():
+  installed_path = (
+      pathlib.Path(__file__).resolve().parent / 'xla_cuda_plugin.so'
+  )
+  if installed_path.exists():
+    return installed_path
+
+  local_path = os.path.join(
+      os.path.dirname(__file__), 'pjrt_c_api_gpu_plugin.so'
+  )
+  if os.path.exists(local_path):
+    logger.debug(
+        'Native library %s does not exist. This most likely indicates an issue'
+        ' with how %s was built or installed. Fallback to local test'
+        ' library %s',
+        installed_path,
         __package__,
+        local_path,
     )
+    return local_path
+
+  logger.debug(
+      'WARNING: Native library %s and local test library path %s do not'
+      ' exist. This most likely indicates an issue with how %s was built or'
+      ' installed or missing src files.',
+      installed_path,
+      local_path,
+      __package__,
+  )
+  return None
+
+
+def initialize():
+  path = _get_library_path()
+  if path is None:
+    return
+
   # TODO(b/300099402): use the util method when it is ready.
   options = {}
   visible_devices = xb.CUDA_VISIBLE_DEVICES.value

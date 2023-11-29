@@ -15,3 +15,4 @@ as well as developer-focused resources such as Jax Enhancement Proposals.
    jax_internal_api
    autodidax
    jep/index
+   investigating_a_regression

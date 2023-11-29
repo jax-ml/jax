@@ -21,29 +21,29 @@ XLA. There are also a handful of related casting utilities.
 
 from collections.abc import Mapping
 import dataclasses
-from functools import partial, lru_cache
+from functools import lru_cache, partial
 import glob
 import importlib
 import json
 import logging
 import os
 import pathlib
-import platform as py_platform
 import pkgutil
+import platform as py_platform
 import sys
 import threading
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional, Tuple, Union
 import warnings
 
 from jax._src import config
 from jax._src import distributed
+from jax._src import traceback_util
+from jax._src import util
 from jax._src.cloud_tpu_init import maybe_import_libtpu
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
-from jax._src import traceback_util
-from jax._src import util
 
 logger = logging.getLogger(__name__)
 
@@ -108,10 +108,10 @@ def _get_tpu_library_path() -> Optional[str]:
   libtpu_module = maybe_import_libtpu()
   if libtpu_module is not None:
     if hasattr(libtpu_module, "get_library_path"):
-      # TODO(b/305803029): temporarily calls configure_library_path because the
-      # tpu_tracer still depends on it. The tpu_tracer dependenecy on it will be
-      # removed in the next two weeks.
-      libtpu_module.configure_library_path()
+      if xla_extension_version < 212:
+        # xla_extension_version < 212 uses tpu_tracer which requires calling
+        # configure_library_path.
+        libtpu_module.configure_library_path()
       return libtpu_module.get_library_path()
     else:
       # TODO(b/305803029): Remove this branch around 01/2024 after the oldest
@@ -135,13 +135,7 @@ def tpu_client_timer_callback(timer_secs: float) -> Optional[xla_client.Client]:
   t.start()
 
   try:
-    if xla_extension_version >= 205:
-      client = xla_client.make_tpu_client(_get_tpu_library_path())  # type: ignore
-    else:
-      libtpu_module = maybe_import_libtpu()
-      if libtpu_module is not None:
-        libtpu_module.configure_library_path()
-      client = xla_client.make_tpu_client()  # type: ignore
+    client = xla_client.make_tpu_client(_get_tpu_library_path())
   finally:
     t.cancel()
 
@@ -204,16 +198,25 @@ def register_backend_factory(name: str, factory: BackendFactory, *,
     factory, priority, fail_quietly, experimental)
 
 
+def make_cpu_client() -> xla_client.Client:
+  if xla_extension_version >= 216:
+    # TODO(phawkins): remove type: ignore after updating jaxlib version used for
+    # mypy checks.
+    return xla_client.make_cpu_client(  # type: ignore
+      distributed_client=distributed.global_state.client,
+      node_id=distributed.global_state.process_id,
+      num_nodes=distributed.global_state.num_processes,
+    )
+  return xla_client.make_cpu_client()
+
+
 register_backend_factory(
-    "cpu", xla_client.make_cpu_client, priority=0, fail_quietly=False
+    "cpu", make_cpu_client, priority=0, fail_quietly=False
 )
 
 
 def _check_cuda_versions():
-  # TODO(phawkins): remove the test for None cuda_versions after jaxlib 0.4.17
-  # is the minimum.
-  if cuda_versions is None:
-    return
+  assert cuda_versions is not None
 
   def _version_check(name, get_version, get_build_version,
                      scale_for_comparison=1):
@@ -250,9 +253,17 @@ def _check_cuda_versions():
                  scale_for_comparison=100)
   _version_check("cuPTI", cuda_versions.cupti_get_version,
                  cuda_versions.cupti_build_version)
-  # TODO(phawkins): ideally we'd check cublas and cusparse here also, but their
-  # "get version" APIs require initializing those libraries, which we don't want
-  # to do here.
+  # TODO(jakevdp) remove these checks when minimum jaxlib is v0.4.21
+  if hasattr(cuda_versions, "cublas_get_version"):
+    _version_check("cuBLAS", cuda_versions.cublas_get_version,
+                   cuda_versions.cublas_build_version,
+                   # Ignore patch versions.
+                   scale_for_comparison=100)
+  if hasattr(cuda_versions, "cusparse_get_version"):
+    _version_check("cuSPARSE", cuda_versions.cusparse_get_version,
+                   cuda_versions.cusparse_build_version,
+                   # Ignore patch versions.
+                   scale_for_comparison=100)
 
 
 def make_gpu_client(
@@ -266,14 +277,6 @@ def make_gpu_client(
   if platform_name == "cuda":
     _check_cuda_versions()
 
-  if xla_extension_version <= 199:
-    return xla_client.make_gpu_client(
-        distributed_client=distributed.global_state.client,
-        node_id=distributed.global_state.process_id,
-        num_nodes=distributed.global_state.num_processes,
-        platform_name=platform_name,
-        allowed_devices=allowed_devices,
-    )
   use_mock_gpu_client = _USE_MOCK_GPU_CLIENT.value
   num_nodes = (
       _MOCK_NUM_GPUS.value
@@ -465,9 +468,8 @@ def register_plugin(
     options: Optional. It is used when creating a PJRT plugin client.
   """
   def factory():
-    if xla_extension_version >= 183:
-      if not xla_client.pjrt_plugin_initialized(plugin_name):
-        xla_client.initialize_pjrt_plugin(plugin_name)
+    if not xla_client.pjrt_plugin_initialized(plugin_name):
+      xla_client.initialize_pjrt_plugin(plugin_name)
 
     if distributed.global_state.client is None:
       return xla_client.make_c_api_client(plugin_name, options, None)
@@ -489,13 +491,9 @@ def register_plugin(
   register_backend_factory(plugin_name, factory, priority=priority,
                            fail_quietly=False, experimental=experimental)
   if library_path is not None:
-    if xla_extension_version >= 198:
-      c_api = xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)  # type: ignore
-      if xla_extension_version >= 203:
-        xla_client.profiler.register_plugin_profiler(c_api)
-      return c_api
-    else:
-      xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
+    c_api = xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)  # type: ignore
+    xla_client.profiler.register_plugin_profiler(c_api)
+    return c_api
   return None
 
 
@@ -578,6 +576,13 @@ def expand_platform_alias(platform: str) -> list[str]:
 def is_gpu(platform):
   return platform in ("cuda", "rocm")
 
+
+def backends_are_initialized() -> bool:
+  "Returns true if backends have already been initialized."
+  with _backend_lock:
+    return len(_backends) != 0
+
+
 def backends() -> dict[str, xla_client.Client]:
   global _backends
   global _backend_errors
@@ -612,11 +617,11 @@ def backends() -> dict[str, xla_client.Client]:
       platform_registrations = list(
         zip(platforms, priorities, fail_quietly_list))
     else:
-      platform_registrations = list(
+      platform_registrations = [
           (platform, registration.priority, registration.fail_quietly)
           for platform, registration
           in _backend_factories.items()
-      )
+      ]
     default_priority = -1000
     for platform, priority, fail_quietly in platform_registrations:
       try:
@@ -848,6 +853,20 @@ def devices(
 def default_backend() -> str:
   """Returns the platform name of the default XLA backend."""
   return get_backend(None).platform
+
+
+def backend_pjrt_c_api_version(platform=None) -> Optional[Tuple[int, int]]:
+  """Returns the PJRT C API version of the backend.
+
+  Returns None if the backend does not use PJRT C API.
+  """
+  backend = get_backend(platform)
+  if hasattr(backend, "pjrt_c_api_major_version") and hasattr(
+      backend, "pjrt_c_api_minor_version"
+  ):
+    return (backend.pjrt_c_api_major_version, backend.pjrt_c_api_minor_version)
+  return None
+
 
 @lru_cache
 def local_devices(process_index: Optional[int] = None,

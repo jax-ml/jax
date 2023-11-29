@@ -16,6 +16,7 @@
 
 from functools import partial
 import itertools
+import unittest
 
 import numpy as np
 import scipy
@@ -29,6 +30,7 @@ from jax import jit, grad, jvp, vmap
 from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
+from jax._src.lib import version as jaxlib_version
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -244,6 +246,27 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     self._CompileAndCheck(partial(jnp.linalg.eig), args_maker,
                           rtol=1e-3)
+
+  @jtu.sample_product(
+    shape=[(4, 4), (5, 5), (50, 50), (2, 6, 6)],
+    dtype=float_types + complex_types,
+    compute_left_eigenvectors=[False, True],
+    compute_right_eigenvectors=[False, True],
+  )
+  # TODO(phawkins): enable when there is an eigendecomposition implementation
+  # for GPU/TPU.
+  @jtu.run_on_devices("cpu")
+  @unittest.skipIf(jaxlib_version < (0, 4, 21), "Test requires jaxlib 0.4.21")
+  def testEigHandlesNanInputs(self, shape, dtype, compute_left_eigenvectors,
+                              compute_right_eigenvectors):
+    """Verifies that `eig` fails gracefully if given non-finite inputs."""
+    a = jnp.full(shape, jnp.nan, dtype)
+    results = lax.linalg.eig(
+        a, compute_left_eigenvectors=compute_left_eigenvectors,
+        compute_right_eigenvectors=compute_right_eigenvectors)
+    for result in results:
+      self.assertTrue(np.all(np.isnan(result)))
+
 
   @jtu.sample_product(
     shape=[(4, 4), (5, 5), (8, 8), (7, 6, 6)],
@@ -590,20 +613,26 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       jnp.linalg.norm(jnp.array([1.0, 2.0, 3.0]), ord="inf")
 
   @jtu.sample_product(
-    [dict(m=m, n=n, full_matrices=full_matrices, hermitian=hermitian)
-     for (m, n), full_matrices in (
-         list(itertools.product(itertools.product([0, 2, 7, 29, 53], repeat=2),
-                                [False, True])) +
-         # Test cases that ensure we are economical when computing the SVD and
-         # its gradient. If we form a 400kx400k matrix explicitly we will OOM.
-         [((400000, 2), False),
-          ((2, 400000), False)]
-     )
-     for hermitian in ([False, True] if m == n else [False])
-    ],
-    b=[(), (3,), (2, 3)],
-    dtype=float_types + complex_types,
-    compute_uv=[False, True],
+      [
+          dict(m=m, n=n, full_matrices=full_matrices, hermitian=hermitian)
+          for (m, n), full_matrices in (
+              list(
+                  itertools.product(
+                      itertools.product([0, 2, 7, 29, 32, 53], repeat=2),
+                      [False, True],
+                  )
+              )
+              +
+              # Test cases that ensure we are economical when computing the SVD
+              # and its gradient. If we form a 400kx400k matrix explicitly we
+              # will OOM.
+              [((400000, 2), False), ((2, 400000), False)]
+          )
+          for hermitian in ([False, True] if m == n else [False])
+      ],
+      b=[(), (3,), (2, 3)],
+      dtype=float_types + complex_types,
+      compute_uv=[False, True],
   )
   @jax.default_matmul_precision("float32")
   def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, hermitian):
@@ -620,7 +649,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     tol = 80 * jnp.finfo(dtype).eps
     reconstruction_tol = 2 * tol
-    unitariness_tol = tol
+    unitariness_tol = 3 * tol
 
     a, = args_maker()
     if hermitian:
@@ -1119,7 +1148,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testLuBatching(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     args = [rng(shape, jnp.float32) for _ in range(10)]
-    expected = list(osp.linalg.lu(x) for x in args)
+    expected = [osp.linalg.lu(x) for x in args]
     ps = np.stack([out[0] for out in expected])
     ls = np.stack([out[1] for out in expected])
     us = np.stack([out[2] for out in expected])

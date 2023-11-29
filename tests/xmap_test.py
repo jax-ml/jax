@@ -47,7 +47,6 @@ from jax._src.core import NamedShape
 from jax._src.lax import parallel as lax_parallel
 from jax._src.lax.parallel import pgather
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src.nn import initializers as nn_initializers
 from jax._src.sharding_impls import NamedSharding
 from jax._src.util import unzip2
@@ -439,12 +438,9 @@ class XMapTest(XMapTestCase):
     if maps.SPMD_LOWERING.value:
       hlo = f.lower(x).compiler_ir(dialect="hlo").as_hlo_text()
       # Make sure that there are non-partial sharding specs in the HLO
-      if xla_extension_version >= 180:
-        self.assertRegex(
-            hlo, r'sharding={devices=\[[0-9,]+\]<=\[[0-9,]+\](T\([0-9,]+\))?}'
-        )
-      else:
-        self.assertRegex(hlo, r'sharding={devices=\[[0-9,]+\][0-9,]+}')
+      self.assertRegex(
+          hlo, r'sharding={devices=\[[0-9,]+\]<=\[[0-9,]+\](T\([0-9,]+\))?}'
+      )
 
   @jtu.with_and_without_mesh
   def testMultipleCalls(self, mesh, axis_resources):
@@ -834,12 +830,9 @@ class XMapTestSPMD(SPMDTestMixin, XMapTest):
     xshape = (8, 2, 4, 5)
     x = jnp.arange(math.prod(xshape), dtype=float).reshape(xshape)
     hlo = f.lower(x).compiler_ir(dialect="hlo").as_hlo_text()
-    if xla_extension_version >= 180:
-      match = re.search(
-          r'sharding={devices=\[([0-9,]+)\]<=\[[0-9,]+\](T\([0-9,]+\))?}', hlo
-      )
-    else:
-      match = re.search(r'sharding={devices=\[([0-9,]+)\][0-9,]+}', hlo)
+    match = re.search(
+        r'sharding={devices=\[([0-9,]+)\]<=\[[0-9,]+\](T\([0-9,]+\))?}', hlo
+    )
     self.assertIsNot(match, None)
     tile_factors = [int(s) for s in match.group(1).split(',')]
     self.assertEqual(set(tile_factors), {1, 2})

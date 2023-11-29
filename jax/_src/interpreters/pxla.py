@@ -59,6 +59,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
+from jax._src.layout import XLACompatibleLayout, SpecifiedLayout, LayoutRequest
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
@@ -914,7 +915,8 @@ class UnloadedPmapExecutable:
         device_assignment=device_assignment,
         use_spmd_partitioning=False,
         env_options_overrides=compiler_options,
-        detailed_logging=compiler.use_detailed_logging(hlo)
+        detailed_logging=compiler.use_detailed_logging(hlo),
+        backend=pci.backend,
     )
     compile_options.parameter_is_tupled_arguments = tuple_args
 
@@ -1268,8 +1270,7 @@ def _unravel_index_hlo(axis_env):
   div = mlir.ir_constant(
       np.array(axis_env.nreps // math.prod(axis_env.sizes), np.uint32))
   mod = mlir.ir_constant(np.array(axis_env.sizes[-1], np.uint32))
-  return hlo.RemOp(
-      hlo.DivOp(hlo.ReplicaIdOp().result, div).result, mod).result
+  return hlo.remainder(hlo.divide(hlo.replica_id(), div), mod)
 
 def _hlo_shard(aval, axis_env, xs, in_axis):
   if aval is core.abstract_token:
@@ -1282,10 +1283,10 @@ def _hlo_shard(aval, axis_env, xs, in_axis):
     idxs.insert(in_axis, _unravel_index_hlo(axis_env))
     dims_unsqueezed = dims.copy()
     dims_unsqueezed.insert(in_axis, 1)
-    dynamic_slice_result = hlo.DynamicSliceOp(
-        x, idxs, mlir.dense_int_elements(dims_unsqueezed)).result
+    dynamic_slice_result = hlo.dynamic_slice(
+        x, idxs, mlir.dense_int_elements(dims_unsqueezed))
     return [
-      hlo.ReshapeOp(mlir.aval_to_ir_type(aval), dynamic_slice_result).result
+      hlo.reshape(mlir.aval_to_ir_type(aval), dynamic_slice_result)
     ]
   else:
     raise TypeError(aval)
@@ -1334,19 +1335,18 @@ def _hlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs):
     padded = mlir.full_like_aval(ctx, 0, padded_aval)
     zero = mlir.ir_constant(np.zeros((), dtype=np.uint32))
     idxs = [_unravel_index_hlo(axis_env)] + [zero] * len(dims)
-    broadcast_result = hlo.BroadcastOp(
-        x, mlir.dense_int_elements([1])).result
-    padded = hlo.DynamicUpdateSliceOp(padded, broadcast_result, idxs).result
+    broadcast_result = hlo.broadcast(x, mlir.dense_int_elements([1]))
+    padded = hlo.dynamic_update_slice(padded, broadcast_result, idxs)
     replica_groups = mlir.dense_int_elements(
       axis_groups(axis_env, axis_env.names[-1]))
-    out = hlo.CrossReplicaSumOp(padded, replica_groups).result
+    out = hlo.cross_replica_sum(padded, replica_groups)
     if out_axis != 0:
       # TODO(apaszke,mattjj): Change the indices to DynamicUpdateSlice instead
       perm = list(range(1, len(dims)))
       perm.insert(out_axis, 0)
       transposed_dims = list(dims)
       transposed_dims.insert(out_axis, axis_env.sizes[-1])
-      out = hlo.TransposeOp(out, mlir.dense_int_elements(perm)).result
+      out = hlo.transpose(out, mlir.dense_int_elements(perm))
 
     return out
   else:
@@ -1469,8 +1469,9 @@ def manual_proto(
   mesh_shape = list(named_mesh_shape.values())
   axis_order = {axis: i for i, axis in enumerate(mesh.axis_names)}
 
-  manual_axes = list(sorted(manual_axes_set, key=str))
-  replicated_axes = list(axis for axis in mesh.axis_names if axis not in manual_axes_set)
+  manual_axes = sorted(manual_axes_set, key=str)
+  replicated_axes = [axis for axis in mesh.axis_names
+                     if axis not in manual_axes_set]
 
   tad_perm = ([axis_order[a] for a in replicated_axes] +
               [axis_order[a] for a in manual_axes])
@@ -1664,16 +1665,6 @@ def _get_and_check_device_assignment(
 
 MaybeSharding = Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue]
 
-def cache_wrap(fn):
-  _wrapped_with_lu_cache = lu.cache(fn)
-  _wrapped_with_weakref_lru_cache = weakref_lru_cache(fn)
-  def wrapped(f, *args, **kwargs):
-    if isinstance(f, lu.WrappedFun):
-      return _wrapped_with_lu_cache(f, *args, **kwargs)
-    else:
-      return _wrapped_with_weakref_lru_cache(f, *args, **kwargs)
-  return wrapped
-
 
 def prune_unused_inputs(
     jaxpr: core.Jaxpr,
@@ -1685,22 +1676,15 @@ def prune_unused_inputs(
   return new_jaxpr, kept_const_idx, kept_var_idx
 
 
-@cache_wrap
-def _trace_to_jaxpr_and_dce(fun_or_jaxpr, global_in_avals, api_name, fun_name,
-                            keep_unused, donated_invars, auto_spmd_lowering):
+@weakref_lru_cache
+def _dce_jaxpr(closed_jaxpr, global_in_avals, api_name, fun_name,
+               keep_unused, donated_invars, auto_spmd_lowering):
   name_stack = source_info_util.new_name_stack(wrap_name(fun_name, api_name))
 
-  if isinstance(fun_or_jaxpr, lu.WrappedFun):
-    with dispatch.log_elapsed_time(
-        "Finished tracing + transforming {fun_name} in {elapsed_time} sec",
-        fun_name=str(name_stack), event=dispatch.JAXPR_TRACE_EVENT):
-      jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(
-          fun_or_jaxpr, global_in_avals)
-  else:
-    assert isinstance(fun_or_jaxpr, core.ClosedJaxpr)
-    jaxpr = fun_or_jaxpr.jaxpr
-    global_out_avals = fun_or_jaxpr.out_avals
-    consts = fun_or_jaxpr.consts
+  assert isinstance(closed_jaxpr, core.ClosedJaxpr)
+  jaxpr = closed_jaxpr.jaxpr
+  global_out_avals = closed_jaxpr.out_avals
+  consts = closed_jaxpr.consts
 
   if (keep_unused or auto_spmd_lowering or
       any(hasattr(a, "shape") and not core.is_constant_shape(a.shape)
@@ -1768,7 +1752,7 @@ def _raise_warnings_or_errors_for_jit_of_pmap(
 @weakref_lru_cache
 def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             semantic_in_shardings, semantic_out_shardings,
-                            da_object,
+                            in_layouts, out_layouts, da_object,
                             donated_invars, name_stack, all_default_mem_kind,
                             lowering_parameters: mlir.LoweringParameters):
   jaxpr = closed_jaxpr.jaxpr
@@ -1842,6 +1826,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         replicated_args=replicated_args,
         arg_shardings=in_mlir_shardings,
         result_shardings=out_mlir_shardings,
+        in_layouts=in_layouts,
+        out_layouts=out_layouts,
         arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
         result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
         num_replicas=nreps,
@@ -1856,59 +1842,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
           nreps, tuple_args, lowering_result.shape_poly_state)
 
 
-if xla_extension_version >= 181:
-  _DeviceAssignment = xc.DeviceList
-else:
-  @dataclasses.dataclass(frozen=True)
-  class _DeviceAssignment:  # type: ignore
-    _device_assignment: tuple[xc.Device, ...]
-
-    @cached_property
-    def _hash(self) -> int:
-      return hash(self._device_assignment)
-
-    def __hash__(self) -> int:
-      return self._hash
-
-    def __eq__(self, other: Any) -> bool:
-      if not isinstance(other, _DeviceAssignment):
-        return False
-      if id(self) == id(other):
-        return True
-      return (self._device_assignment == other._device_assignment)
-
-    def __len__(self) -> int:
-      return len(self._device_assignment)
-
-    def __getitem__(self, index: Any) -> Any:
-      return self._device_assignment[index]
-
-    def __iter__(self) -> Iterator[xc.Device]:
-      return iter(self._device_assignment)
-
-    @cached_property
-    def is_fully_addressable(self) -> bool:
-      return len(self._device_assignment) == len(
-          self.addressable_device_list._device_assignment
-      )
-
-    @cached_property
-    def addressable_device_list(self) -> _DeviceAssignment:  # type: ignore
-      return _create_da_object(
-          tuple(d for d in self._device_assignment
-              if d.process_index == d.client.process_index()))
-
-    @cached_property
-    def memory_kinds(self) -> tuple[str, ...]:
-      # Keep this method unimplemented as it will not be called if
-      # xla_extension_version is low.
-      raise NotImplementedError("memory_kinds is not supported")
-
-    @cached_property
-    def default_memory_kind(self) -> Optional[str]:
-      # Keep this method unimplemented as it will not be called if
-      # xla_extension_version is low.
-      raise NotImplementedError("default_memory_kind is not supported")
+_DeviceAssignment = xc.DeviceList
 
 
 @lru_cache(maxsize=2048)
@@ -1939,10 +1873,19 @@ def are_all_shardings_default_mem_kind(da_object, shardings):
       return False
   return True
 
+MaybeLayout = Sequence[Optional[Union[XLACompatibleLayout, LayoutRequest]]]
+
+
+class AllArgsInfo(NamedTuple):
+  """Avals, shardings, layouts and debug_info for all arguments prior to DCE."""
+  in_avals: Sequence[core.ShapedArray]
+  in_shardings: Any
+  debug_info: core.JaxprDebugInfo | None
+
 
 @profiler.annotate_function
 def lower_sharding_computation(
-    fun_or_jaxpr: lu.WrappedFun | core.ClosedJaxpr,
+    closed_jaxpr: core.ClosedJaxpr,
     api_name: str,
     fun_name: str,
     in_shardings: Sequence[MaybeSharding],
@@ -1954,6 +1897,8 @@ def lower_sharding_computation(
     inline: bool,
     devices_from_context: Sequence[xc.Device] | None = None,
     lowering_parameters: mlir.LoweringParameters,
+    in_layouts: MaybeLayout,
+    out_layouts: Optional[MaybeLayout],
 ) -> MeshComputation:
   """Lowers a computation to XLA. It can take arbitrary shardings as input.
 
@@ -1967,18 +1912,25 @@ def lower_sharding_computation(
       check_if_any_auto(in_shardings) if is_unspecified(out_shardings) else
       check_if_any_auto(it.chain.from_iterable([in_shardings, out_shardings])))  # type: ignore
 
+  all_args_info = AllArgsInfo(global_in_avals, in_shardings,
+                              closed_jaxpr.jaxpr.debug_info)
+
   (closed_jaxpr, global_in_avals, global_out_avals, donated_invars,
-   kept_var_idx, name_stack) = _trace_to_jaxpr_and_dce(
-      fun_or_jaxpr, global_in_avals, api_name, fun_name, keep_unused,
+   kept_var_idx, name_stack) = _dce_jaxpr(
+      closed_jaxpr, global_in_avals, api_name, fun_name, keep_unused,
       donated_invars, auto_spmd_lowering)
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = tuple(s for i, s in enumerate(in_shardings) if i in kept_var_idx)
+  in_layouts = tuple(l for i, l in enumerate(in_layouts) if i in kept_var_idx)
 
   if is_unspecified(out_shardings):
     out_shardings = (UNSPECIFIED,) * len(global_out_avals)
+  if out_layouts is None:
+    out_layouts = (None,) * len(global_out_avals)
   assert isinstance(out_shardings, tuple)
-  assert len(out_shardings) == len(global_out_avals), (
-      len(out_shardings), len(global_out_avals))
+  assert isinstance(out_layouts, tuple)
+  assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (
+      len(out_shardings), len(out_layouts), len(global_out_avals))
 
   # Device assignment across all inputs, outputs and shardings inside jaxpr
   # should be the same.
@@ -2030,7 +1982,7 @@ def lower_sharding_computation(
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, api_name, fun_name, backend, semantic_in_shardings,
-       semantic_out_shardings, da_object,
+       semantic_out_shardings, in_layouts, out_layouts, da_object,
        donated_invars, name_stack, all_default_mem_kind,
        lowering_parameters=lowering_parameters)
 
@@ -2058,10 +2010,12 @@ def lower_sharding_computation(
       backend=backend,
       device_assignment=da_object,
       committed=committed,
+      in_layouts=in_layouts,
+      out_layouts=out_layouts,
       pmap_nreps=nreps,
-      jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info,
       shape_poly_state=shape_poly_state,
-      all_default_mem_kind=all_default_mem_kind)
+      all_default_mem_kind=all_default_mem_kind,
+      all_args_info=all_args_info)
 
 
 def _to_logical_sharding(
@@ -2146,6 +2100,8 @@ def lower_mesh_computation(
       jaxpr = fun_or_jaxpr.jaxpr
       out_jaxpr_avals = fun_or_jaxpr.out_avals
       consts = fun_or_jaxpr.consts
+
+  all_args_info = AllArgsInfo(global_in_avals, in_shardings, jaxpr.debug_info)
 
   assert len(out_shardings) == len(out_jaxpr_avals)
   if spmd_lowering:
@@ -2233,8 +2189,10 @@ def lower_mesh_computation(
       backend=backend,
       device_assignment=_create_da_object(tuple(mesh.devices.flat)),
       committed=True,
-      jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info,
-      shape_poly_state=lowering_result.shape_poly_state)
+      in_layouts=(None,) * len(global_in_avals),
+      out_layouts=(None,) * len(global_out_avals),
+      shape_poly_state=lowering_result.shape_poly_state,
+      all_args_info=all_args_info)
 
 class MeshComputation(stages.XlaLowering):
   _hlo: ir.Module | None
@@ -2312,18 +2270,21 @@ def get_gspmd_shardings_from_executable(
     num_out_avals: int,
     num_ordered_effects: int,
     all_default_mem_kind: bool,
-) -> Sequence[sharding_impls.XLACompatibleSharding]:
+) -> Sequence[sharding_impls.XLACompatibleSharding] | None:
   from jax._src import pjit
 
-  if all_default_mem_kind:
-    omk = [None] * num_out_avals
-  else:
-    try:
-      omk = xla_executable.get_output_memory_kinds()[0]
-      if num_ordered_effects > 0:
-        omk = omk[num_ordered_effects:]
-    except:
+  if config.enable_memories.value:
+    if all_default_mem_kind:
       omk = [None] * num_out_avals
+    else:
+      try:
+        omk = xla_executable.get_output_memory_kinds()[0]
+        if num_ordered_effects > 0:
+          omk = omk[num_ordered_effects:]
+      except:
+        omk = [None] * num_out_avals
+  else:
+    omk = [None] * num_out_avals
 
   assert len(omk) == num_out_avals, (len(omk), num_out_avals)
 
@@ -2336,6 +2297,16 @@ def get_gspmd_shardings_from_executable(
             for mk in omk]
 
   _, out_op_shardings = pjit.get_op_sharding_from_executable(xla_executable)
+  if not out_op_shardings:
+    return None
+
+  if num_ordered_effects > 0:
+    out_op_shardings = out_op_shardings[num_ordered_effects:]
+
+  # This means that there are no outputs for JAX but for XLA there is an empty
+  # tuple output which gets a replicated sharding.
+  if num_out_avals == 0 and len(out_op_shardings) == 1:
+    return None
 
   # This condition happens when all the elements in the output tuple have the
   # same sharding, so XLA decides to run the `FusionTupleDeduplicator` to
@@ -2447,6 +2418,46 @@ def maybe_get_orig_out_sharding(
   return out_shardings, are_out_shardings_from_xla
 
 
+def _get_layouts_from_executable(
+    xla_executable, in_layouts, out_layouts, num_ordered_effects
+) -> tuple[Sequence[SpecifiedLayout | None], Sequence[SpecifiedLayout | None]]:
+  try:
+    in_layouts_xla = xla_executable.get_parameter_layouts()
+    out_layouts_xla = xla_executable.get_output_layouts()
+  except:
+    return (None,) * len(in_layouts), (None,) * len(out_layouts)
+
+  if num_ordered_effects > 0:
+    in_layouts_xla = in_layouts_xla[num_ordered_effects:]
+    out_layouts_xla = out_layouts_xla[num_ordered_effects:]
+
+  new_in_layouts = []
+  for x, i in safe_zip(in_layouts_xla, in_layouts):
+    x = SpecifiedLayout(x)
+    if isinstance(i, SpecifiedLayout):
+      if i != x:
+        raise AssertionError(
+            f"Unexpected XLA layout override: (XLA) {x} != {i} (User sharding)")
+      new_in_layouts.append(i)
+    else:
+      new_in_layouts.append(x)
+
+  new_out_layouts = []
+  for x, o in safe_zip(out_layouts_xla, out_layouts):
+    x = SpecifiedLayout(x)
+    if isinstance(o, SpecifiedLayout):
+      if o != x:
+        raise AssertionError(
+            f"Unexpected XLA layout override: (XLA) {x} != {o} (User sharding)")
+      new_out_layouts.append(o)
+    else:
+      new_out_layouts.append(x)
+
+  assert all(isinstance(i, SpecifiedLayout) for i in new_in_layouts)
+  assert all(isinstance(o, SpecifiedLayout) for o in new_out_layouts)
+  return new_in_layouts, new_out_layouts  # type: ignore
+
+
 @weakref_lru_cache
 def _cached_compilation(computation, name, mesh, spmd_lowering,
                         tuple_args, auto_spmd_lowering,
@@ -2491,7 +2502,8 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
       use_auto_spmd_partitioning=auto_spmd_lowering,
       env_options_overrides=compiler_options,
       fdo_profile=fdo_profile,
-      detailed_logging=compiler.use_detailed_logging(computation)
+      detailed_logging=compiler.use_detailed_logging(computation),
+      backend=backend,
   )
 
   opts = compile_options.executable_build_options
@@ -2515,6 +2527,39 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
   return xla_executable, compile_options
 
 
+def _get_shardings_from_executable(
+    xla_executable, out_shardings, device_assignment, global_out_avals,
+    num_ordered_effects, all_default_mem_kind
+  ):
+  out_shardings_xla = get_gspmd_shardings_from_executable(  # type: ignore
+      xla_executable, device_assignment, len(global_out_avals),
+      num_ordered_effects, all_default_mem_kind)  # type: ignore
+  if out_shardings_xla is None:
+    return out_shardings, (False,) * len(global_out_avals)
+
+  orig_out_shardings = out_shardings
+  out_shardings, are_out_shardings_from_xla = [], []  # type: ignore
+  for xla_s, orig, aval in safe_zip(out_shardings_xla, orig_out_shardings,
+                                    global_out_avals):
+    if is_unspecified(orig):
+      out_shardings.append(xla_s)
+      are_out_shardings_from_xla.append(True)
+    else:
+      xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)  # type: ignore
+      orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)  # type: ignore
+      # MANUAL HloSharding comes from other partitioning frameworks.
+      if (not dtypes.issubdtype(aval.dtype, dtypes.extended) and
+          not xla_hlo_s.is_manual() and
+          (not op_shardings.are_op_shardings_equal(xla_hlo_s, orig_hlo_s) or
+           xla_s.memory_kind != orig.memory_kind)):  # type: ignore
+        raise AssertionError(
+            f"Unexpected XLA sharding override: (XLA) {xla_s} != {orig} "
+            "(User sharding)")
+      out_shardings.append(orig)
+      are_out_shardings_from_xla.append(False)
+  return out_shardings, are_out_shardings_from_xla
+
+
 @dataclasses.dataclass
 class UnloadedMeshExecutable:
   xla_executable: Any
@@ -2533,7 +2578,9 @@ class UnloadedMeshExecutable:
   host_callbacks: Sequence[Any]
   kept_var_idx: set[int]
   auto_spmd_lowering: bool
-  jaxpr_debug_info: core.JaxprDebugInfo | None
+  in_layouts: Sequence[SpecifiedLayout | None]
+  out_layouts: Sequence[SpecifiedLayout | None]
+  all_args_info: AllArgsInfo | None
 
   def build_unsafe_call(self):
     input_indices = _get_input_indices(self.input_avals, self.input_shardings,
@@ -2555,7 +2602,8 @@ class UnloadedMeshExecutable:
                           self.input_avals,
                           self.input_shardings, self.output_shardings,
                           self.auto_spmd_lowering, self.kept_var_idx,
-                          self.jaxpr_debug_info, self)
+                          self.in_layouts, self.out_layouts,
+                          self.all_args_info, self)
 
   # May return a MeshExecutable in the compile_replicated case.
   @staticmethod
@@ -2577,10 +2625,12 @@ class UnloadedMeshExecutable:
                backend: xb.XlaBackend,
                device_assignment: _DeviceAssignment | Sequence[xc.Device],  # type: ignore
                committed: bool,
+               in_layouts: MaybeLayout,
+               out_layouts: MaybeLayout,
                pmap_nreps: int = 1,
-               jaxpr_debug_info: core.JaxprDebugInfo | None = None,
                shape_poly_state: mlir.ShapePolyLoweringState | None = None,
                all_default_mem_kind: bool = True,
+               all_args_info: AllArgsInfo | None = None,
                compiler_options=None,
   ) -> MeshExecutable:
     if shape_poly_state is not None and shape_poly_state.uses_dim_vars:
@@ -2617,7 +2667,7 @@ class UnloadedMeshExecutable:
           semantics_in_shardings, semantics_out_shardings, auto_spmd_lowering,
           compile_options, tuple(host_callbacks), bool(unordered_effects),
           tuple(ordered_effects), tuple(kept_var_idx), backend, da, committed,
-          pmap_nreps, jaxpr_debug_info)
+          pmap_nreps)
 
     if auto_spmd_lowering:
       assert mesh is not None
@@ -2630,38 +2680,25 @@ class UnloadedMeshExecutable:
           for x, o in safe_zip(out_shardings_xla, out_shardings)
       ]
       out_shardings, are_out_shardings_from_xla = unzip2(out_shardings_tuple)
-    elif (out_shardings and any(is_unspecified(o) for o in out_shardings)
-          and pmap_nreps == 1):
-      assert mesh is None
-      # TODO(yashkatariya): Make da directly usable in the downstream code
-      # without tuple conversion.
-      device_assignment = tuple(da)
-      out_shardings_xla = get_gspmd_shardings_from_executable(  # type: ignore
-          xla_executable, device_assignment, len(global_out_avals),
-          len(ordered_effects), all_default_mem_kind)  # type: ignore
-      orig_out_shardings = out_shardings
-      out_shardings, are_out_shardings_from_xla = [], []  # type: ignore
-      for xla_s, orig, aval in safe_zip(out_shardings_xla, orig_out_shardings,
-                                        global_out_avals):
-        if is_unspecified(orig):
-          out_shardings.append(xla_s)
-          are_out_shardings_from_xla.append(True)
-        else:
-          xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)  # type: ignore
-          orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)  # type: ignore
-          if (not op_shardings.are_op_shardings_equal(xla_hlo_s, orig_hlo_s) or
-              xla_s.memory_kind != orig.memory_kind):  # type: ignore
-            raise AssertionError(
-                f"Unexpected XLA sharding override: (XLA) {xla_s} != {orig} "
-                "(User sharding)")
-          out_shardings.append(orig)
-          are_out_shardings_from_xla.append(False)
     else:
-      are_out_shardings_from_xla = (False,) * len(global_out_avals)
+      if pmap_nreps == 1:
+        assert mesh is None
+        # TODO(yashkatariya): Make da directly usable in the downstream code
+        # without tuple conversion.
+        out_shardings, are_out_shardings_from_xla = _get_shardings_from_executable(
+            xla_executable, out_shardings, tuple(da), global_out_avals,
+            len(ordered_effects), all_default_mem_kind)
+      else:
+        in_shardings, out_shardings, committed, da = _get_metadata_jit_pmap(
+            xla_executable.local_devices(), len(in_shardings), len(out_shardings))
+        are_out_shardings_from_xla = (False,) * len(global_out_avals)
 
-    if pmap_nreps > 1:
-      in_shardings, out_shardings, committed, da = _get_metadata_jit_pmap(
-          xla_executable.local_devices(), len(in_shardings), len(out_shardings))
+    if xla_extension_version >= 217:
+      in_layouts, out_layouts = _get_layouts_from_executable(
+          xla_executable, in_layouts, out_layouts, len(ordered_effects))
+    else:
+      assert all(i is None for i in in_layouts)
+      assert all(o is None for o in out_layouts)
 
     out_shardings, are_out_shardings_from_xla = maybe_get_orig_out_sharding(
         in_shardings, out_shardings, are_out_shardings_from_xla,
@@ -2684,7 +2721,9 @@ class UnloadedMeshExecutable:
         host_callbacks=host_callbacks,
         kept_var_idx=kept_var_idx,
         auto_spmd_lowering=auto_spmd_lowering,
-        jaxpr_debug_info=jaxpr_debug_info).load()
+        in_layouts=in_layouts,  # type: ignore
+        out_layouts=out_layouts,  # type: ignore
+        all_args_info=all_args_info).load()  # type: ignore
 
 
 class MeshExecutableFastpathData(NamedTuple):
@@ -2709,12 +2748,14 @@ class MeshExecutable(stages.XlaExecutable):
   __slots__ = [
       "xla_executable", "_unsafe_call", "build_unsafe_call", "in_avals",
       "_in_shardings", "_out_shardings", "_auto_spmd_lowering", "_kept_var_idx",
-      "_jaxpr_debug_info", "_unloaded_executable",
+      "_in_layouts", "_out_layouts", "_all_args_info", "_unloaded_executable",
   ]
 
   def __init__(self, xla_executable, build_unsafe_call, in_avals, in_shardings,
                out_shardings, auto_spmd_lowering, kept_var_idx,
-               jaxpr_debug_info=None, unloaded_executable=None):
+               in_layouts, out_layouts,
+               all_args_info: AllArgsInfo | None = None,
+               unloaded_executable=None):
     self.xla_executable = xla_executable
     self.build_unsafe_call = build_unsafe_call
     # in_avals is a list of global and local avals. Aval is global if input
@@ -2725,14 +2766,16 @@ class MeshExecutable(stages.XlaExecutable):
     self._out_shardings = out_shardings
     self._auto_spmd_lowering = auto_spmd_lowering
     self._kept_var_idx = kept_var_idx
-    self._jaxpr_debug_info = jaxpr_debug_info
+    self._in_layouts = in_layouts
+    self._out_layouts = out_layouts
+    self._all_args_info = all_args_info
     self._unloaded_executable = unloaded_executable
 
   @property
   def unsafe_call(self) -> Callable[..., Any]:
     if self._unsafe_call is None:
       self._unsafe_call = self.build_unsafe_call()
-    return self._unsafe_call
+    return self._unsafe_call  # type: ignore
 
   # -- stages.XlaExecutable overrides
 
@@ -2740,13 +2783,23 @@ class MeshExecutable(stages.XlaExecutable):
     return self.xla_executable
 
   def call(self, *args):
-    kept_args = [a for i, a in enumerate(args) if i in self._kept_var_idx]
+    if self._all_args_info is None:
+      kept_args = [a for i, a in enumerate(args) if i in self._kept_var_idx]
+      ref_avals = self.in_avals
+      in_shardings = self._in_shardings
+      debug_info = None
+    else:
+      kept_args = args
+      ref_avals = self._all_args_info.in_avals
+      iter_in_shardings = iter(self._in_shardings)
+      in_shardings = [next(iter_in_shardings) if i in self._kept_var_idx else s
+                      for i, s in enumerate(self._all_args_info.in_shardings)]
+      debug_info = self._all_args_info.debug_info
+
     arg_avals = map(xla.abstractify, kept_args)
-    ref_avals = self.in_avals
-    check_arg_avals_for_call(ref_avals, arg_avals, self._jaxpr_debug_info)
+    check_arg_avals_for_call(ref_avals, arg_avals, debug_info)
     # Check the GDA sharding and the input sharding.
-    check_gda_or_array_xla_sharding_match(kept_args, self._in_shardings,
-                                          self._jaxpr_debug_info)
+    check_gda_or_array_xla_sharding_match(kept_args, in_shardings, debug_info)
     return self.unsafe_call(*args)  # pylint: disable=not-callable
 
   def input_shardings(self) -> Sequence[sharding_impls.XLACompatibleSharding]:
@@ -2754,6 +2807,12 @@ class MeshExecutable(stages.XlaExecutable):
 
   def output_shardings(self) -> Sequence[sharding_impls.XLACompatibleSharding]:
     return self._out_shardings
+
+  def input_layouts(self):
+    return self._in_layouts
+
+  def output_layouts(self):
+    return self._out_layouts
 
   def create_cpp_call(self, no_kwargs, in_tree, out_tree):
     if not (isinstance(self.unsafe_call, ExecuteReplicated) and
@@ -2862,7 +2921,7 @@ def _compile_replicated_mesh_executable_from_hlo(
     computation, name, global_in_avals, global_out_avals, semantics_in_shardings,
     semantics_out_shardings, auto_spmd_lowering, compile_options,
     host_callbacks, has_unordered_effects, ordered_effects, kept_var_idx,
-    backend, da, committed, pmap_nreps, jaxpr_debug_info):
+    backend, da, committed, pmap_nreps):
   assert not auto_spmd_lowering
   in_shardings = semantics_in_shardings.shardings
   out_shardings = semantics_out_shardings.shardings
@@ -2886,7 +2945,8 @@ def _compile_replicated_mesh_executable_from_hlo(
   xla_executable = None
   return MeshExecutable(xla_executable, lambda: unsafe_call, global_in_avals,
                         in_shardings, out_shardings, auto_spmd_lowering,
-                        kept_var_idx, jaxpr_debug_info, None)
+                        kept_var_idx, (None,) * len(global_in_avals),
+                        (None,) * len(global_out_avals))
 
 
 @lru_cache
@@ -2919,6 +2979,8 @@ def check_gda_or_array_xla_sharding_match(
   num_errors = 5
   for arg, xs, name in safe_zip(args, in_xla_shardings, arg_names):
     if not isinstance(arg, ArrayImpl):
+      continue
+    if is_unspecified_or_auto(xs):
       continue
 
     db_xs = check_device_backend_on_shardings([xs])

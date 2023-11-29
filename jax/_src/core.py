@@ -90,12 +90,29 @@ class Jaxpr:
   _effects: Effects
   _debug_info: JaxprDebugInfo | None
 
-  constvars = property(lambda self: self._constvars)
-  invars = property(lambda self: self._invars)
-  outvars = property(lambda self: self._outvars)
-  eqns = property(lambda self: self._eqns)
-  effects = property(lambda self: self._effects)
-  debug_info = property(lambda self: self._debug_info)
+  @property
+  def constvars(self) -> list[Var]:
+    return self._constvars
+
+  @property
+  def invars(self) -> list[Var]:
+    return self._invars
+
+  @property
+  def outvars(self) -> list[Atom]:
+    return self._outvars
+
+  @property
+  def eqns(self) -> list[JaxprEqn]:
+    return self._eqns
+
+  @property
+  def effects(self) -> Effects:
+    return self._effects
+
+  @property
+  def debug_info(self) -> JaxprDebugInfo | None:
+    return self._debug_info
 
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],

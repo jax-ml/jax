@@ -33,6 +33,7 @@ Random Samplers
     ball
     bernoulli
     beta
+    binomial
     bits
     categorical
     cauchy
@@ -60,7 +61,6 @@ Random Samplers
     rademacher
     randint
     rayleigh
-    shuffle
     t
     triangular
     truncated_normal

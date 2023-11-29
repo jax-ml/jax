@@ -20,10 +20,8 @@ which should have been populated by an earlier inference pass.
 
 # mypy: ignore-errors
 import abc
-import collections
 from collections.abc import Sequence
 import dataclasses
-import enum
 import functools
 import math
 import re
@@ -39,49 +37,14 @@ import numpy as np
 
 from . import infer_memref_layout
 from . import tpu
+from .layout_defs import Direction, ImplicitDim, LANES, REPLICATED, SUBELEMENTS, SUBLANES, TargetTuple
 
 
 ValueLike = Union[ir.Value, ir.Operation, ir.OpView]
 
-TargetTuple = collections.namedtuple("TargetTuple", ["sublanes", "lanes"])
 TARGET_SHAPE = TargetTuple(8, 128)
 
-
-@enum.unique
-class Direction(enum.Enum):
-  SUBLANES = "sublanes"
-  LANES = "lanes"
-  SUBELEMENTS = "subelements"
-
-  def __repr__(self):
-    return self.name.lower()
-SUBLANES = Direction.SUBLANES
-LANES = Direction.LANES
-SUBELEMENTS = Direction.SUBELEMENTS
-
-
-class Replicated(enum.Enum):
-  REPLICATED = "*"
-
-  def __repr__(self):
-    return "*"
-  __str__ = __repr__
-
-  def __bool__(self):
-    return False  # Useful because we can then say `offset or 0`
-REPLICATED = Replicated.REPLICATED
-
-
 Offset = Union[int, Literal[REPLICATED]]
-
-
-class ImplicitDim(enum.IntEnum):
-  MINOR = -1
-  SECOND_MINOR = -2
-
-  def __repr__(self) -> str:
-    return str(int(self))
-
 
 @dataclasses.dataclass(frozen=True)
 class VectorLayout:
@@ -1394,14 +1357,14 @@ def relayout(
             ),
         )
         for idx, tile in np.ndenumerate(dst_tiles):
-          bit_tile = tpu.BitcastOp(bits_vreg_ty, tile)
+          bit_tile = tpu.BitcastVregOp(bits_vreg_ty, tile)
           if subelem_diff > 0:
             shift_tile = arith.ShLIOp(bit_tile, shift_vreg)
           elif subelem_diff < 0:
             shift_tile = arith.ShRUIOp(bit_tile, shift_vreg)
           else:
             raise AssertionError("unexpected equal subelements")
-          dst_tiles[idx] = tpu.BitcastOp(tile.type, shift_tile).result
+          dst_tiles[idx] = tpu.BitcastVregOp(tile.type, shift_tile).result
 
     # Shifting columns.
     if src.offsets[1] is REPLICATED:
@@ -1847,6 +1810,20 @@ def _arith_extsi_rule(  # pylint: disable=missing-function-docstring
   return _ext_op_rule(ctx, op, layout_in, layout_out)
 
 
+@_register_rule("arith.bitcast")
+def _arith_bitcast_rule(
+    ctx: RewriteContext,
+    op: arith.BitcastOp,
+    layout_in: VectorLayout,
+    layout_out: VectorLayout,
+):
+  def factory(inp):
+    return arith.BitcastOp(
+        native_vreg_ty(ir.VectorType(op.result.type).element_type), inp
+    )
+  return _elementwise_op_rule(factory, ctx, op, layout_in, layout_out)
+
+
 def _trunc_op_rule(  # pylint: disable=missing-function-docstring
     ctx: RewriteContext, op, layout_in: VectorLayout, layout_out: VectorLayout
 ):
@@ -2186,6 +2163,28 @@ def _tpu_store_rule(  # pylint: disable=missing-function-docstring
   return ctx.erase(op)
 
 
+@_register_rule("tpu.bitcast")
+def _tpu_bitcast_rule(  # pylint: disable=missing-function-docstring
+    ctx: RewriteContext,
+    op: tpu.BitcastOp,
+    layout_in: VectorLayout,
+    layout_out: VectorLayout,
+):
+  if not layout_in.has_native_tiling or not layout_out.has_native_tiling:
+    raise NotImplementedError("unsupported tiling")
+  if layout_in.offsets != (0, 0) or layout_out.offsets != (0, 0):
+    raise NotImplementedError("unsupported offsets")
+  if layout_in.implicit_dim is not None or layout_out.implicit_dim is not None:
+    raise NotImplementedError("unsupported implicit dim")
+  ty = ir.VectorType(op.result.type)
+  vreg = native_vreg_ty(ty.element_type)
+  in_tiles = disassemble(layout_in, op.input)
+  out_tiles = np.empty_like(in_tiles, dtype=object)
+  for idx, tile in np.ndenumerate(in_tiles):
+    out_tiles[idx] = tpu.BitcastVregOp(vreg, tile)
+  return ctx.replace(op, assemble(ty, layout_out, out_tiles))
+
+
 @_register_rule("tpu.trace")
 def _tpu_trace_rule(ctx: RewriteContext, op: tpu.TraceOp,  # pylint: disable=missing-function-docstring
                     layout_in: Layout, layout_out: Layout):
@@ -2501,6 +2500,24 @@ def _vector_broadcast_rule(ctx: RewriteContext, op: vector.BroadcastOp,  # pylin
     return ctx.replace(op, assemble(dst_ty, layout_out, dst_tiles))
 
 
+@_register_rule("vector.extract")
+def _vector_extract_rule(ctx: RewriteContext, op: vector.ExtractOp,  # pylint: disable=missing-function-docstring
+                         layout_in: Layout, layout_out: VectorLayout):
+  if layout_out is not None:
+    raise NotImplementedError("Vector results of extract unsupported")
+  if layout_in.bitwidth != 32:
+    raise NotImplementedError("Only 32-bit vector.extract supported")
+  if layout_in.offsets != (0, 0):
+    raise NotImplementedError("Unsupported layout")
+  if len(op.operands) > 1:
+    raise NotImplementedError("Dynamic indices not supported")
+  idx = ir.DenseI64ArrayAttr(op.attributes["static_position"])
+  if any(i != 0 for i in idx):
+    raise NotImplementedError("Only 0 indices supported")
+  vregs = disassemble(layout_in, op.vector)
+  ctx.replace(op, vector.ExtractOp(vregs.flat[0], [], [0, 0]))
+
+
 @_register_rule("vector.load")
 def _vector_load_rule(  # pylint: disable=missing-function-docstring
     ctx: RewriteContext, op: vector.LoadOp,
@@ -2681,10 +2698,12 @@ def _vector_store_rule(  # pylint: disable=missing-function-docstring
                   mask.type, ir.IntegerAttr.get(i32(), 0xFFFFFFFF)
               ),
           )
-          masked_tile = arith.AndIOp(mask, tpu.BitcastOp(mask.type, tile))
+          masked_tile = arith.AndIOp(mask, tpu.BitcastVregOp(mask.type, tile))
           mask_neg = arith.XOrIOp(ones, mask)
-          masked_data = arith.AndIOp(mask_neg, tpu.BitcastOp(mask.type, data))
-          updated = tpu.BitcastOp(
+          masked_data = arith.AndIOp(
+              mask_neg, tpu.BitcastVregOp(mask.type, data)
+          )
+          updated = tpu.BitcastVregOp(
               tile.type, arith.OrIOp(masked_data, masked_tile))
         else:
           updated = arith.SelectOp(mask, tile, data)
@@ -3137,10 +3156,7 @@ def _vector_transpose_rule(  # pylint: disable=missing-function-docstring
   dst_ty = ir.VectorType(op.result.type)
   rank = src_ty.rank
   src_vregs = disassemble(layout_in, op.vector)
-  permutation = [
-      ir.IntegerAttr(attr).value
-      for attr in ir.ArrayAttr(op.attributes["transp"])
-  ]
+  permutation = list(ir.DenseI64ArrayAttr(op.attributes["permutation"]))
   batch_perm, tile_perm = permutation[:-2], permutation[-2:]
   if set(batch_perm) != set(range(len(batch_perm))):
     raise NotImplementedError("Unsupported major permutation")
@@ -3161,7 +3177,7 @@ def _vector_transpose_rule(  # pylint: disable=missing-function-docstring
   packing = layout_in.packing
   # Note that we checked for native tiling above.
   vregs_per_tile = transpose_unit_size // layout_in.tiling[0]
-  minor_perm = ir.ArrayAttr.get([ir.IntegerAttr.get(i64(), i) for i in (1, 0)])
+  minor_perm = [1, 0]
   tile_ty = ir.VectorType.get((transpose_unit_size,) * 2, src_ty.element_type)
   batch_tile_ty_in = ir.VectorType.get(
       (transpose_unit_size, transpose_unit_size * packing), src_ty.element_type

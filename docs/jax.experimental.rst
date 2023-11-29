@@ -14,6 +14,7 @@ Experimental Modules
 .. toctree::
     :maxdepth: 1
 
+    jax.experimental.array_api
     jax.experimental.checkify
     jax.experimental.host_callback
     jax.experimental.maps
@@ -22,6 +23,7 @@ Experimental Modules
     jax.experimental.jet
     jax.experimental.custom_partitioning
     jax.experimental.multihost_utils
+    jax.experimental.compilation_cache
 
 Experimental APIs
 -----------------

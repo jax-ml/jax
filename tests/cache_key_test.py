@@ -96,9 +96,6 @@ class CacheKeyTest(jtu.JaxTestCase):
     )
     self.assertNotEqual(hash1, hash3)
 
-  @unittest.skipIf(
-      xla_extension_version < 193, "Test requires jaxlib 0.4.15 or newer"
-  )
   def test_serialized_compile_options(self):
     compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1
@@ -129,9 +126,6 @@ class CacheKeyTest(jtu.JaxTestCase):
     )
     self.assertEqual(hash1, hash2)
 
-  @unittest.skipIf(
-      xla_extension_version < 193, "Test requires jaxlib 0.4.15 or newer"
-  )
   @jtu.skip_on_devices("cpu")
   def test_hash_accelerator_devices(self):
     if xla_extension_version < 209 and xla_bridge.using_pjrt_c_api():
@@ -293,6 +287,37 @@ class CacheKeyTest(jtu.JaxTestCase):
         os.environ["XLA_FLAGS"] = orig_xla_flags
       elif os.getenv("XLA_FLAGS") is not None:
         del os.environ["XLA_FLAGS"]
+      sys.argv = orig_argv
+
+  def test_libtpu_init_args(self):
+    if jtu.is_device_tpu_v4():
+      raise unittest.SkipTest("TODO(b/240151176)")
+
+    computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
+    devices = np.array([[jax.local_devices()[0]]])
+    compile_options = compiler.get_compile_options(
+        num_replicas=1, num_partitions=1
+    )
+    backend = xla_bridge.get_backend()
+
+    orig_libtpu_init_args = os.getenv("LIBTPU_INIT_ARGS")
+    orig_argv = sys.argv
+    try:
+      os.environ["LIBTPU_INIT_ARGS"] = (
+          "--xla_spmd_threshold_for_windowed_einsum_mib=0"
+      )
+      key1 = cache_key.get(computation, devices, compile_options, backend)
+      os.environ["LIBTPU_INIT_ARGS"] = (
+          "--xla_spmd_threshold_for_windowed_einsum_mib=1"
+      )
+      key2 = cache_key.get(computation, devices, compile_options, backend)
+      self.assertNotEqual(key1, key2)
+
+    finally:
+      if orig_libtpu_init_args is not None:
+        os.environ["LIBTPU_INIT_ARGS"] = orig_libtpu_init_args
+      elif os.getenv("LIBTPU_INIT_ARGS") is not None:
+        del os.environ["LIBTPU_INIT_ARGS"]
       sys.argv = orig_argv
 
   def create_new_debug_options(self, debug_options_obj):

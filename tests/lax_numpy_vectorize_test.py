@@ -225,6 +225,22 @@ class VectorizeTest(jtu.JaxTestCase):
     self.assertAllClose(xx[1], x)
     self.assertIsInstance(xx, tuple)
 
+  def test_none_arg(self):
+    f = jnp.vectorize(lambda x, y: x if y is None else x + y)
+    x = jnp.arange(10)
+    self.assertAllClose(f(x, None), x)
+
+    y = jnp.arange(10, 20)
+    self.assertAllClose(f(x, y), x + y)
+
+  def test_none_arg_bad_signature(self):
+    f = jnp.vectorize(lambda x, y: x if y is None else x + y,
+                      signature='(k),(k)->(k)')
+    args = jnp.arange(10), None
+    msg = r"Cannot pass None at locations \{1\} with signature='\(k\),\(k\)->\(k\)'"
+    with self.assertRaisesRegex(ValueError, msg):
+      f(*args)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

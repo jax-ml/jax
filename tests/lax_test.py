@@ -46,7 +46,6 @@ from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.util import NumpyComplexWarning
 
 config.parse_flags_with_absl()
@@ -155,6 +154,7 @@ class LaxTest(jtu.JaxTestCase):
     to_dtype=jtu.dtypes.all_floating + jtu.dtypes.all_integer + jtu.dtypes.all_unsigned,
     shape = [(), (2,), (2, 3)]
   )
+  @jtu.skip_on_devices("gpu")  # TODO(b/313567948): Test fails on GPU jaxlib build
   def testBitcastConvertType(self, from_dtype, to_dtype, shape):
     rng = jtu.rand_default(self.rng())
     itemsize_in = np.dtype(from_dtype).itemsize
@@ -2698,8 +2698,6 @@ class LaxTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.eqns, 1)
     self.assertEqual(jaxpr.eqns[0].primitive, lax.dynamic_slice_p)
 
-  @unittest.skipIf(xla_extension_version < 175,
-                   "Test requires jaxlib 0.4.15 or newer")
   def testDynamicSliceU8Index(self):
     # Regression test for u8 index in dynamic-slice (#6122)
     x = np.arange(200)

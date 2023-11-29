@@ -770,8 +770,8 @@ well-defined gradients::
 The :mod:`jax.nn` submodule also has smooth versions of other common rank-based
 functions, for example :func:`jax.nn.softmax` can replace uses of
 :func:`jax.numpy.argmax`, :func:`jax.nn.soft_sign` can replace uses of
-:func:`jax.numpy.sign`, :func:`jax.nn.softplus` can replace uses of
-:func:`jax.nn.relu`, etc.
+:func:`jax.numpy.sign`, :func:`jax.nn.softplus` or :func:`jax.nn.squareplus`
+can replace uses of :func:`jax.nn.relu`, etc.
 
 How can I convert a JAX Tracer to a NumPy array?
 ------------------------------------------------

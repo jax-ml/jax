@@ -21,10 +21,10 @@ repos:
     # only include python files
     files: \.py$
 
-- repo: https://github.com/pycqa/flake8
-  rev: '6.1.0'
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.1.5
   hooks:
-  - id: flake8
+  - id: ruff
 
 - repo: https://github.com/pre-commit/mirrors-mypy
   rev: 'v1.6.1'
@@ -32,7 +32,7 @@ repos:
   - id: mypy
     files: (jax/|tests/typing_test\.py)
     exclude: jax/_src/basearray.py|jax/numpy/__init__.py  # Use pyi instead
-    additional_dependencies: [types-requests==2.31.0, jaxlib==0.4.16, ml_dtypes==0.2.0, numpy==1.26.0, scipy==1.11.2]
+    additional_dependencies: [types-requests==2.31.0, jaxlib==0.4.19, ml_dtypes==0.2.0, numpy==1.26.0, scipy==1.11.2]
     args: [--config=pyproject.toml]
 
 - repo: https://github.com/mwouts/jupytext

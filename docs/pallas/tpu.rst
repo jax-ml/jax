@@ -19,7 +19,7 @@ software emulation, and can slow down the computation.
   see a "not implemented" error while attempting to write TPU kernels. But, if
   a kernel is accepted by the compiler, it *must* return the expected results.
 
-  If you see unexpected outputs, please compare them against a kernel ran with
+  If you see unexpected outputs, please compare them against a kernel run with
   ``interpret=True`` passed in to ``pallas_call``. If the results diverge,
   please file a `bug report <https://github.com/google/jax/issues/new/choose>`_.
 
@@ -43,15 +43,15 @@ sequential machines with a very wide vector register (kind of like a CPU!).
 At the same time, they allow the software to schedule certain operations in the
 background, making them execute asynchronously with respect to the main
 instruction stream. This includes things like HBM memory accesses
-(which cannot be addressed directly, but instead has to be prefetched to
-lower levels of memory hierarchy by the DMA subunits), matrix multiplies
+(which cannot be issued directly, but instead have to be prefetched to
+lower levels of the memory hierarchy by the DMA subunits), matrix multiplies
 (supported by the MXU unit) or matrix transpositions and permutes (supported by
 the XLU unit).
 
 If you're interested in learning more about the TPU architecture
-in details, we recommend reading a collection of papers published over the
+in detail, we recommend reading a collection of papers published over the
 years. While many of them talk about specific TPU generations, many of the
-ideas described transfer to future generations as well.
+ideas described transfer to later generations as well.
 
 * `A Domain-Specific Supercomputer for Training Deep Neural Networks <https://dl.acm.org/doi/10.1145/3360307>`_
 * `The Design Process for Google's Training Chips: TPUv2 and TPUv3 <https://ieeexplore.ieee.org/document/9351692>`_
@@ -66,7 +66,7 @@ Noteworthy properties and restrictions
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 ``BlockSpec``\s generally behave as expected in Pallas --- every invocation of
-kernel body gets access to slices of inputs and is meant to initialize a slice
+the kernel body gets access to slices of the inputs and is meant to initialize a slice
 of the output.
 
 .. warning::
@@ -84,12 +84,12 @@ HBM (which has very high latency) is handled by the compiler and overlapped
 with compute.
 
 What's more, compared to GPUs, TPUs are actually highly sequential machines.
-That's why, the grid is generally not processed in parallel, but sequentially,
+Ergo, the grid is generally not processed in parallel, but sequentially,
 in lexicographic order (though see the `Multicore TPU configurations`_ section
 for exceptions). This unlocks some interesting capabilities:
 
 * When two (lexicographically) consecutive grid indices use the same slice of
-  an input, the HBM transfer in the second iteration is skipped, as the data is
+  an input, the HBM transfer for the second iteration is skipped, as the data is
   already available.
 
 * Multiple invocations of the kernel body can write to the same slice of the
@@ -111,9 +111,9 @@ The output reference can be then used as an accumulator for partial results.
 .. note::
   VMEM is fairly large for such a low-level memory hierarchy (16MB+), making it
   possible to use large window sizes. And, oftentimes, the larger the window
-  size, the better the eventual hardware utilization will be. However, if you
-  do end up specifying a window size that (together with space necessary to hold
-  spilled vector registers) exceeds the size of VMEM. You will likely see a
+  size, the better the eventual hardware utilization will be. However, it is possible to
+  specify a window size that (together with space necessary to hold
+  spilled vector registers) exceeds the size of VMEM. In this case, you will likely see a
   low-level compiler error message complaining about an out-of-memory error.
 
 Dimension ordering is meaningful
@@ -129,7 +129,7 @@ Pallas TPU will only ever consider mapping the last two dimensions of
 intermediate arrays to those vector register dimensions (sublanes and lanes
 respectively). An array of shape ``(n, 1, 1)`` is guaranteed to require at least
 ``n`` vector registers to represent. If ``n`` becomes too large, this can lead
-to spills, and potential VMEM OOM errors due to overly large memory footprint.
+to spills, and potential VMEM OOM errors due to an overly large memory footprint.
 But it also might not --- the low-level compiler is free to rearrange the
 instructions to lower the register pressure, and is in fact very good at it.
 Still, it is a good rule of thumb to keep the last two dimensions large
@@ -164,21 +164,21 @@ different instances of the body have highly varying cost. If all of the expensiv
 steps get mapped to one core, but all cheap steps are assigned to the other, the
 second core will be sitting idle until the first one completes its tasks.
 
-Pallas TPU generally favors partitioning axes of size that is a multiple of the
+Pallas TPU generally favors partitioning axes of a size that is a multiple of the
 number of TPU cores, and prefers to partition leading grid axes.
 
 Placing operands in SMEM
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
 Most of the compute on the TPU will happen on the vector unit. Still, there are
-many cases where it is useful to perform a number of scalar operations e.g. to
-perform control-flow operations. For that reason, TPUs come with a separate
+many cases where it is useful to perform a number of scalar operations, e.g., to
+carry out control-flow. For that reason, TPUs come with a separate
 scalar unit, and a separate scalar memory (SMEM) attached to it.
 As a rule of thumb, any data used to perform control-flow decisions should
 be placed in SMEM.
 
 SMEM is a low-latency memory that supports random access, but lets you only
-read and write 32-bit values within a single instruction (very small compared to
+read and write 32-bit values with a single instruction (very small compared to
 the 4KBi granularity of VMEM transactions, but much more flexible due to lack
 of alignment requirements!).
 
@@ -203,7 +203,7 @@ At the moment Pallas TPU only supports the following data types:
 
 * ``jnp.float32``
 * ``jnp.bfloat16``
-* ``jnp.int*```  (all precisions, except for ``jnp.int4``)
+* ``jnp.int*``  (all precisions, except for ``jnp.int4``)
 * ``jnp.uint*``  (all precisions)
 
 Computation placement
@@ -225,13 +225,13 @@ If your inputs are not float32, we recommend using ``lax.dot`` with
 
 When using ``lax.dot_general``, it is possible to fuse transpositions of
 the last two dimensions of matrix multiplication operands into the operation,
-which can improve the overall kernel performance.
+which can improve overall kernel performance.
 
 Precision control
 """""""""""""""""
 
 Pallas TPU lowering is aware of ``jax.default_matmul_precision``. For best
-performance (and lowest precision) requirest ``bfloat16``. If you care about
+performance (and lowest precision), use ``bfloat16``. If you care about
 numerical accuracy, you might want to set the precision to ``float32``.
 
 .. warning::
@@ -256,7 +256,7 @@ but only some slicing patterns are supported for narrower types. Reads and
 writes that are aligned to multiples of, and have a length that is a multiple
 of 8 and 128 respectively in the last two dimensions are always supported.
 
-Reads and write to vector memory generally happen on tiles of shape ``(8, 128)``.
+Reads and writes to vector memory generally happen on tiles of shape ``(8, 128)``.
 As such, when reading or writing to references that have at least two dimensions,
 the best performance is achieved when the base offset of the memory access
 has indices divisible by the tiling, and the size of the read region is a

@@ -65,7 +65,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "betainc", 3, float_dtypes, jtu.rand_positive, False
     ),
     op_record(
-        "gamma", 1, float_dtypes, jtu.rand_positive, True
+        "gamma", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
         "digamma", 1, float_dtypes, jtu.rand_positive, True
@@ -144,7 +144,8 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record(
         "rel_entr", 2, float_dtypes, jtu.rand_positive, True,
     ),
-
+    op_record("poch", 2, float_dtypes, jtu.rand_positive, True),
+    op_record("hyp1f1", 3, float_dtypes, functools.partial(jtu.rand_uniform, low=0.5, high=30), True)
 ]
 
 
@@ -201,6 +202,14 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_op, lax_op, args_maker, atol=0, rtol=1E-5)
     self._CompileAndCheck(lax_op, args_maker, atol=0, rtol=1E-5)
 
+  def testGammaSign(self):
+    # Test that the sign of `gamma` matches at integer-valued inputs.
+    dtype = jax.numpy.zeros(0).dtype  # default float dtype.
+    args_maker = lambda: [np.arange(-10, 10).astype(dtype)]
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(osp_special.gamma, lsp_special.gamma, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.gamma, args_maker, rtol=rtol)
+
   @jtu.sample_product(
     N=[5,10,20,30],
     k=[1,2,3,4],
@@ -214,7 +223,6 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_op, lax_op, args_maker, atol=0, rtol=1E-5)
     if exact == False:
         self._CompileAndCheck(lax_op, args_maker, atol=0, rtol=1E-5)
-
 
 
 if __name__ == "__main__":

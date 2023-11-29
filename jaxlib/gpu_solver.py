@@ -320,7 +320,7 @@ def _syevd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a, *,
   if dynamic_batch_dims:
     batch_size_val = hlo_s32(1)
     for b_v in batch_dims_vals:
-      batch_size_val = hlo.MulOp(batch_size_val, ensure_hlo_s32(b_v)).result
+      batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
     operands.append(batch_size_val)
     operand_layouts.append(())
 
@@ -369,9 +369,15 @@ def _gesvd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
   vector_layout = (num_bd,) + tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
 
-  if have_jacobi_solver and m < 32 and n < 32:
-    # The batched kernel doesn't support "econ" mode.
-    econ = not full_matrices and b == 1
+  # NVIDIA's batched Jacobi solver supports a maximum matrix size of 32x32, but
+  # the unbatched solver has no such limit. The unbatched solver appears to
+  # outperform gesvd for small-moderate matrices, e.g., see:
+  # https://developer.download.nvidia.com/video/gputechconf/gtc/2019/presentation/s9226-fast-singular-value-decomposition-on-gpus-v2.pdf
+  # slide 5.
+  if have_jacobi_solver and m <= 1024 and n <= 1024:
+    # The gesvdjbatched kernel doesn't support "econ" mode. We will use that
+    # kernel only if b > 1 and m <= 32 and n <= 32.
+    econ = not full_matrices and (b <= 1 or m > 32 or n > 32)
     lwork, opaque = gpu_solver.build_gesvdj_descriptor(
         np.dtype(dtype), b, m, n, compute_uv, 1 if econ else 0)
     k = min(m, n)
@@ -400,22 +406,22 @@ def _gesvd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
             [0],
         ],
         operand_output_aliases={0: 0}).results
-    vt = hlo.TransposeOp(
+    vt = hlo.transpose(
         v,
-        ir.DenseIntElementsAttr.get(np.array(tuple(range(num_bd)) + (num_bd + 1, num_bd)))).result
+        ir.DenseIntElementsAttr.get(np.array(tuple(range(num_bd)) + (num_bd + 1, num_bd))))
     if np.issubdtype(dtype, np.complexfloating):
-      vt = hlo.ComplexOp(hlo.RealOp(vt), hlo.NegOp(hlo.ImagOp(vt))).result
+      vt = hlo.complex(hlo.real(vt), hlo.negate(hlo.imag(vt)))
     if not full_matrices and not econ:
-      u = hlo.SliceOp(
+      u = hlo.slice(
           u,
           ir.DenseIntElementsAttr.get(np.zeros([len(dims)], np.int64)),
           ir.DenseIntElementsAttr.get(np.array(batch_dims + (m, min(m, n)))),
-          ir.DenseIntElementsAttr.get(np.ones([len(dims)], np.int64))).result
-      vt = hlo.SliceOp(
+          ir.DenseIntElementsAttr.get(np.ones([len(dims)], np.int64)))
+      vt = hlo.slice(
           vt,
           ir.DenseIntElementsAttr.get(np.zeros([len(dims)], np.int64)),
           ir.DenseIntElementsAttr.get(np.array(batch_dims + (min(m, n), n))),
-          ir.DenseIntElementsAttr.get(np.ones([len(dims)], np.int64))).result
+          ir.DenseIntElementsAttr.get(np.ones([len(dims)], np.int64)))
   elif m < n:
     lwork, opaque = gpu_solver.build_gesvd_descriptor(
         np.dtype(dtype), b, n, m, compute_uv, full_matrices)
@@ -532,15 +538,15 @@ def _sytrd_hlo(platform, gpu_solver, dtype, a, *, lower):
   if not lower and platform == "cu" and m > 1:
     start = (0,) * len(batch_dims) + (0,)
     end = batch_dims + (1,)
-    s = hlo.SliceOp(e, intattr(start), intattr(end), intattr([1] * len(start)))
+    s = hlo.slice(e, intattr(start), intattr(end), intattr([1] * len(start)))
     s_type = ir.RankedTensorType.get(batch_dims + (1, 1), diag_type)
-    s = hlo.BroadcastInDimOp(s_type, s, intattr(range(len(dims) - 1)))
+    s = hlo.broadcast_in_dim(s_type, s, intattr(range(len(dims) - 1)))
     # The diagonals are always real; convert to complex if needed.
-    s = hlo.ConvertOp(
+    s = hlo.convert(
         ir.RankedTensorType.get(s_type.shape, a_type.element_type), s)
-    offsets = tuple(hlo.ConstantOp(intattr(i))
+    offsets = tuple(hlo.constant(intattr(i))
                     for i in ((0,) * len(batch_dims) + (0, 1)))
-    a = hlo.DynamicUpdateSliceOp(a, s, offsets).result
+    a = hlo.dynamic_update_slice(a, s, offsets)
 
   return a, d, e, taus, info
 

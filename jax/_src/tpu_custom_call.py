@@ -23,9 +23,12 @@ from collections.abc import Sequence
 import dataclasses
 import functools
 import io
+import os
 import re
+import time
 from typing import Any, Callable
 
+from absl import flags
 import jax
 from jax import core
 from jax._src import config
@@ -39,18 +42,16 @@ from jaxlib.mlir.dialects import stablehlo
 from jaxlib.mlir.passmanager import PassManager
 import numpy as np
 
+FLAGS = flags.FLAGS
 _MOSAIC_USE_CPP_PASSES = config.define_bool_state(
     name="mosaic_use_cpp_passes",
-    default=False,
+    default=True,
     help=(
         "Use C++ implementation for apply-vector-layout and infer-memref-layout"
         " passes (still a WIP)"
     ),
 )
 
-# TODO(sharadmv): remove when minimum jaxlib version is bumped to >= 0.4.14.
-if tpu_mosaic is None:
-  raise ImportError("Cannot use Mosaic without a jaxlib >= 0.4.14.")
 tpu = tpu_mosaic.tpu
 apply_vector_layout = tpu_mosaic.apply_vector_layout
 infer_memref_layout = tpu_mosaic.infer_memref_layout
@@ -59,12 +60,6 @@ _MOSAIC_ALLOW_HLO = config.define_bool_state(
     name="jax_mosaic_allow_hlo",
     default=False,
     help="Allow hlo dialects in Mosaic",
-)
-
-_MOSAIC_DUMP_MLIR = config.define_bool_state(
-    name="jax_mosaic_dump_mlir",
-    default=False,
-    help="Print mlir module after each pass",
 )
 
 tpu_custom_call_p = core.Primitive("tpu_custom_call")
@@ -219,7 +214,7 @@ def _tpu_custom_call_lowering(
         base64.b64encode(kernel_regeneration_metadata)
     )
   if multiple_results:
-    results = [stablehlo.GetTupleElementOp(call, mlir.i32_attr(i)).result
+    results = [stablehlo.get_tuple_element(call, mlir.i32_attr(i))
                for i in range(len(out_avals))]
   else:
     results = call.results
@@ -236,7 +231,8 @@ Please report a bug at: https://github.com/google/jax/issues/new?assignees=apasz
 """
 _OP_ERROR_PATTERN = re.compile(r"'.*' op (.+)")
 
-def _run_pass_pipeline(passes: PassManager, module: ir.Module, what: str):
+
+def _run_pass_pipeline(passes: PassManager, module: ir.Module, pass_name: str):
   try:
     passes.run(module.operation)
     module.operation.verify()
@@ -264,7 +260,7 @@ def _run_pass_pipeline(passes: PassManager, module: ir.Module, what: str):
       raise RuntimeError("\n".join(msg)) from None
     else:
       raise RuntimeError("Unspecified internal compiler error") from e
-  dump_mlir(module, f"after {what} pass")
+  dump_mlir(module, pass_name)
 
 
 def _lower_tpu_kernel(
@@ -301,7 +297,7 @@ def _lower_tpu_kernel(
       module = ir.Module.parse(
           module.operation.get_asm(binary=True, enable_debug_info=True)
       )
-      dump_mlir(module, "initial module")
+      dump_mlir(module, "original")
 
       if _MOSAIC_ALLOW_HLO.value:
         # Run hlo dialect conversion: hlo -> linalg -> vector.
@@ -311,7 +307,7 @@ def _lower_tpu_kernel(
             "func.func(linalg-vectorization)",
         ]
         pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-        _run_pass_pipeline(pipeline, module, "hlo conversion")
+        _run_pass_pipeline(pipeline, module, "post-hlo-conversion")
 
       if _MOSAIC_USE_CPP_PASSES.value:
         pipeline = [
@@ -320,11 +316,11 @@ def _lower_tpu_kernel(
             ),
         ]
         pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-        _run_pass_pipeline(pipeline, module, "infer memref layout")
+        _run_pass_pipeline(pipeline, module, "post-infer-memref-layout")
       else:
         infer_memref_layout.infer_module(module, hardware_generation)
         module.operation.verify()
-        dump_mlir(module, "after infer memref layout pass")
+        dump_mlir(module, "post-infer-memref-layout")
 
       pipeline = [
           "canonicalize",
@@ -332,7 +328,7 @@ def _lower_tpu_kernel(
           "func.func(tpu-infer-vector-layout{sublane-count=8 lane-count=128})",
       ]
       pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-      _run_pass_pipeline(pipeline, module, "infer vector layout")
+      _run_pass_pipeline(pipeline, module, "post-infer-vector-layout")
 
       if _MOSAIC_USE_CPP_PASSES.value:
         pipeline = [
@@ -342,14 +338,14 @@ def _lower_tpu_kernel(
             ),
         ]
         pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-        _run_pass_pipeline(pipeline, module, "apply vector layout")
+        _run_pass_pipeline(pipeline, module, "post-apply-vector-layout")
       else:
         apply_vector_layout.apply(module, hardware_generation)
         module.operation.verify()
-        dump_mlir(module, "after apply vector layout pass")
+        dump_mlir(module, "post-apply-vector-layout")
 
       pipeline = PassManager.parse("builtin.module(canonicalize)")
-      _run_pass_pipeline(pipeline, module, "final canonicalize")
+      _run_pass_pipeline(pipeline, module, "pre-lower-to-llo")
 
       for f in module.body:
         if "vector_constants" not in f.attributes:
@@ -475,8 +471,15 @@ def _lowered_as_tpu_kernel(
   return jax.jit(apply_kernel, static_argnames=["collective_id"])
 
 
-def dump_mlir(module: ir.Module, msg: str):
-  """A helper function to print mlir module with a message."""
-  if _MOSAIC_DUMP_MLIR.value:
-    print(f"[jax_mosaic_dump_mlir] {msg}")
-    print(module)
+def dump_mlir(module: ir.Module, name: str):
+  """A helper function to dump mosaic mlir module"""
+  try:
+    should_dump = FLAGS["xla_mosaic_dump_to"].value
+  except KeyError:
+    return
+  if should_dump == "sponge":
+    outdir = os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR", None)
+    if outdir:
+      path = os.path.join(outdir, f"{time.time_ns()}-mosaic-dump-{name}.txt")
+      with open(path, "w") as f:
+        f.write(str(module))

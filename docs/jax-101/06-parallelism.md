@@ -298,7 +298,7 @@ replicated_params = jax.tree_map(lambda x: jnp.array([x] * n_devices), params)
 
 +++ {"id": "dmCMyLP9SV99"}
 
-So far, we've just constructed arrays with an additional leading dimension. The params are all still all on the host (CPU). `pmap` will communicate them to the devices when `update()` is first called, and each copy will stay on its own device subsequently.
+So far, we've just constructed arrays with an additional leading dimension. The params are all still on the host (CPU). `pmap` will communicate them to the devices when `update()` is first called, and each copy will stay on its own device subsequently.
 
 ```{code-cell} ipython3
 :id: YSCgHguTSdGW

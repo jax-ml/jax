@@ -14,8 +14,8 @@
 
 """Python bindings for the MLIR TPU dialect."""
 
-# flake8: noqa: F401
-# flake8: noqa: F403
+# ruff: noqa: F401
+# ruff: noqa: F403
 
 
 # pylint: disable=g-bad-import-order
@@ -32,7 +32,7 @@ _cext.globals.append_dialect_search_prefix("jax.jaxlib.mosaic.python")
 
 
 @_cext.register_operation(_Dialect, replace=True)
-class TraceOp(TraceOp):
+class TraceOp(TraceOp):  # noqa: F405
   """An extension to the automatically generated TraceOp bindings."""
 
   def __init__(self, results, message, level, *, loc=None, ip=None):
@@ -45,7 +45,7 @@ class TraceOp(TraceOp):
 
 
 @_cext.register_operation(_Dialect, replace=True)
-class RegionOp(RegionOp):
+class RegionOp(RegionOp):  # noqa: F405
   """An extension to the automatically generated RegionOp bindings."""
 
   def __init__(self, *, loc=None, ip=None):

@@ -137,6 +137,7 @@ from jax._src.random import (
   PRNGKey as PRNGKey,
   ball as ball,
   bernoulli as bernoulli,
+  binomial as binomial,
   beta as beta,
   bits as bits,
   categorical as categorical,
@@ -172,7 +173,7 @@ from jax._src.random import (
   random_gamma_p as random_gamma_p,
   rayleigh as rayleigh,
   rbg_key as _deprecated_rbg_key,
-  shuffle as shuffle,
+  shuffle as _deprecated_shuffle,
   split as split,
   t as t,
   threefry2x32_key as _deprecated_threefry2x32_key,
@@ -235,6 +236,11 @@ _deprecations = {
         "jax.random.key_impl(key), jax.eval_shape(jax.random.key, 0).dtype, or similar.",
         _deprecated_default_prng_impl,
     ),
+    # Added November 6, 2023; but has been raising a FutureWarning since JAX 0.1.66
+    "shuffle": (
+        "jax.random.shuffle is deprecated. Use jax.random.permutation with independent=True.",
+        _deprecated_shuffle,
+    )
 }
 
 import typing
@@ -242,6 +248,7 @@ if typing.TYPE_CHECKING:
   PRNGKeyArray = typing.Any
   KeyArray = typing.Any
   default_prng_impl = _deprecated_default_prng_impl
+  shuffle = _deprecated_shuffle
   threefry_2x32 = _deprecated_threefry_2x32
   threefry2x32_p = _deprecated_threefry2x32_p
   threefry2x32_key = _deprecated_threefry2x32_key

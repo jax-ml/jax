@@ -16,7 +16,6 @@
 
 from functools import partial
 import operator
-import warnings
 import numpy as np
 from typing import Any, Optional, Union
 
@@ -72,6 +71,28 @@ def relu(x: ArrayLike) -> Array:
   return jnp.maximum(x, 0)
 # For behavior at 0, see https://openreview.net/forum?id=urrcVI-_jRm
 relu.defjvps(lambda g, ans, x: lax.select(x > 0, g, lax.full_like(g, 0)))
+
+@jax.jit
+def squareplus(x: ArrayLike, b: ArrayLike = 4) -> Array:
+  r"""Squareplus activation function.
+
+  Computes the element-wise function
+
+  .. math::
+    \mathrm{squareplus}(x) = \frac{x + \sqrt{x^2 + b}}{2}
+
+  as described in https://arxiv.org/abs/2112.11687.
+
+  Args:
+    x : input array
+    b : smoothness parameter
+  """
+  numpy_util.check_arraylike("squareplus", x)
+  numpy_util.check_arraylike("squareplus", b)
+  x = jnp.asarray(x)
+  b = jnp.asarray(b)
+  y = x + jnp.sqrt(jnp.square(x) + b)
+  return y / 2
 
 @jax.jit
 def softplus(x: ArrayLike) -> Array:
@@ -508,16 +529,6 @@ def standardize(x: ArrayLike,
     variance = jnp.mean(
         jnp.square(x), axis, keepdims=True, where=where) - jnp.square(mean)
   return jnp.subtract(x, jnp.asarray(mean)) * lax.rsqrt(jnp.asarray(variance) + epsilon)
-
-def normalize(x: ArrayLike,
-            axis: Optional[Union[int, tuple[int, ...]]] = -1,
-            mean: Optional[ArrayLike] = None,
-            variance: Optional[ArrayLike] = None,
-            epsilon: ArrayLike = 1e-5,
-            where: Optional[ArrayLike] = None) -> Array:
-  r"""Normalizes an array by subtracting ``mean`` and dividing by :math:`\sqrt{\mathrm{variance}}`."""
-  warnings.warn("jax.nn.normalize will be deprecated. Use jax.nn.standardize instead.", DeprecationWarning)
-  return standardize(x, axis, mean, variance, epsilon, where)
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 @partial(jax.jit, static_argnames=("num_classes", "dtype", "axis"))

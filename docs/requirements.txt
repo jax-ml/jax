@@ -1,14 +1,13 @@
 absl-py
 ipython>=8.8.0  # 8.7.0 has ipython3 lexer error
-# TODO(jakevdp) Update to sphinx>=6 when myst-nb supports it.
-sphinx>=5
+sphinx>=6.0.0
 sphinx-autodoc-typehints
 sphinx-book-theme>=1.0.1  # Older versions fail to pin pydata-sphinx-theme
 sphinx-copybutton>=0.5.0
 sphinx-remove-toctrees
 jupyter-sphinx>=0.3.2
 sphinx-design
-myst-nb
+myst-nb>=1.0.0
 
 # Packages used for CI tests.
 pytest

@@ -11,10 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for backwards compatibility of custom calls.
+"""Tests for backwards compatibility of exporting code with custom calls.
 
-See the back_compat_test_util module docstring for how to setup and update
-these tests.
+See the export_back_compat_test_util module docstring for how to setup and
+update these tests.
 """
 import dataclasses
 from functools import partial
@@ -28,7 +28,7 @@ import numpy as np
 import jax
 from jax import lax
 from jax.experimental.export import export
-from jax.experimental.jax2tf.tests import back_compat_test_util as bctu
+from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_ducc_fft
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_cholesky_lapack_potrf

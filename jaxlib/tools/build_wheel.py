@@ -177,10 +177,6 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extensi
   copy_runfiles(
       "__main__/jaxlib/init.py", dst_dir=jaxlib_dir, dst_filename="__init__.py"
   )
-  if include_gpu_plugin_extension:
-    copy_runfiles(
-        dst_dir=jaxlib_dir, src_files=[f"__main__/jaxlib/cuda_plugin_extension.{pyext}"]
-    )
   copy_runfiles(
       dst_dir=jaxlib_dir,
       src_files=[
@@ -253,6 +249,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extensi
       src_files=[
           "__main__/jaxlib/mosaic/python/apply_vector_layout.py",
           "__main__/jaxlib/mosaic/python/infer_memref_layout.py",
+          "__main__/jaxlib/mosaic/python/layout_defs.py",
           "__main__/jaxlib/mosaic/python/tpu.py",
       ],
   )

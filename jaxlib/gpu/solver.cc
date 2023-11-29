@@ -355,7 +355,7 @@ std::pair<int, nb::bytes> BuildGesvdjDescriptor(const dtype& dtype, int batch,
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusolverDnCreateGesvdjInfo(&params)));
   std::unique_ptr<gesvdjInfo, void (*)(gesvdjInfo*)> params_cleanup(
       params, [](gesvdjInfo* p) { cusolverDnDestroyGesvdjInfo(p); });
-  if (batch == 1) {
+  if (batch <= 1 || m > 32 || n > 32 || econ) {
     switch (type) {
       case SolverType::F32:
         JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusolverDnSgesvdj_bufferSize(

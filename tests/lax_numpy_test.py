@@ -2025,7 +2025,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     dtype=default_dtypes,
     n=[0, 4],
     m=[None, 0, 1, 3, 4],
-    k=list(range(-4, 4)),
+    k=[*range(-4, 4), -2**100, 2**100],
+  )
+  def testEye(self, n, m, k, dtype):
+    np_fun = lambda: np.eye(n, M=m, k=k, dtype=dtype)
+    jnp_fun = lambda: jnp.eye(n, M=m, k=k, dtype=dtype)
+    args_maker = lambda: []
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    dtype=default_dtypes,
+    n=[0, 4],
+    m=[None, 0, 1, 3, 4],
+    k=range(-4, 4),
   )
   def testTri(self, m, n, k, dtype):
     np_fun = lambda: np.tri(n, M=m, k=k, dtype=dtype)
@@ -2808,7 +2821,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                           atol=tol, rtol=tol)
 
   @jtu.sample_product(
-    shape=[(5,), (5, 5)],
+    shape=[(5,), (4, 5)],
     dtype=default_dtypes,
     # We only test explicit integer-valued bin edges because in other cases
     # rounding errors lead to flaky tests.
@@ -2819,17 +2832,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testHistogram(self, shape, dtype, bins, density, weights):
     rng = jtu.rand_default(self.rng())
     _weights = lambda w: abs(w) if weights else None
-    np_fun = lambda a, w: np.histogram(a, bins=bins, density=density,
-                                         weights=_weights(w))
+    def np_fun(a, w):
+      # Numpy can't handle bfloat16
+      a = a.astype('float32') if a.dtype == jnp.bfloat16 else a
+      w = w.astype('float32') if w.dtype == jnp.bfloat16 else w
+      return np.histogram(a, bins=bins, density=density, weights=_weights(w))
     jnp_fun = lambda a, w: jnp.histogram(a, bins=bins, density=density,
                                          weights=_weights(w))
     args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
     tol = {jnp.bfloat16: 2E-2, np.float16: 1E-1}
-    # np.searchsorted errors on bfloat16 with
-    # "TypeError: invalid type promotion with custom data type"
-    if dtype != jnp.bfloat16:
-      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
-                              tol=tol)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+                            tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
@@ -3204,6 +3217,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     val = jnp.iinfo(jnp.int64).min - 1
     with self.assertRaisesRegex(OverflowError, "Python int too large.*"):
       jnp.array([0, val])
+
+  def testArrayNoneWarning(self):
+    # TODO(jakevdp): make this an error after the deprecation period.
+    with self.assertWarnsRegex(FutureWarning, r"None encountered in jnp.array\(\)"):
+      jnp.array([0.0, None])
 
   def testIssue121(self):
     assert not np.isscalar(jnp.array(3))
@@ -5195,6 +5213,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = partial(jnp.put, mode=mode, inplace=False)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  def test_rot90_error(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "rot90 requires its first argument to have ndim at least two, "
+        "but got first argument of"):
+      jnp.rot90(jnp.ones(2))
+
+  @parameterized.named_parameters(
+      ('ones', jnp.ones),
+      ('zeros', jnp.zeros),
+      ('empty', jnp.empty))
+  def test_error_hint(self, fn):
+    with self.assertRaisesRegex(
+        TypeError,
+        r"Did you accidentally write `jax\.numpy\..*?\(2, 3\)` "
+        r"when you meant `jax\.numpy\..*?\(\(2, 3\)\)`"):
+      fn(2, 3)
 
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here

@@ -82,10 +82,6 @@ version = check_jaxlib_version(
 import jaxlib.cpu_feature_guard as cpu_feature_guard
 cpu_feature_guard.check_cpu_features()
 
-try:
-  import jaxlib.cuda_plugin_extension as cuda_plugin_extension  # pytype: disable=import-error
-except ModuleNotFoundError:
-  cuda_plugin_extension = None
 import jaxlib.utils as utils
 import jaxlib.xla_client as xla_client
 import jaxlib.lapack as lapack
@@ -122,11 +118,7 @@ xla_extension_version: int = getattr(xla_client, '_version', 0)
 import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error
 import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error
 
-if version >= (0, 4, 14):
-  import jaxlib.tpu_mosaic as tpu_mosaic # pytype: disable=import-error
-else:
-  # Jaxlib doesn't contain Mosaic bindings
-  tpu_mosaic = None  # type: ignore
+import jaxlib.tpu_mosaic as tpu_mosaic # pytype: disable=import-error
 
 # Version number for MLIR:Python APIs, provided by jaxlib.
 mlir_api_version = xla_client.mlir_api_version

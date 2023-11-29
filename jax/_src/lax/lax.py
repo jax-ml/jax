@@ -84,6 +84,10 @@ T = TypeVar("T")
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
+def _clip_int_to_valid_range(val: int, dtype) -> int:
+  info = np.iinfo(dtype)
+  return builtins.max(info.min, builtins.min(int(val), info.max))
+
 def _validate_shapes(shapes: Sequence[Shape]):
   def _check_static_shape(shape: Shape):
     checked = canonicalize_shape(shape)
@@ -1242,7 +1246,7 @@ def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int) -> Array:
 
 def _eye(dtype: DTypeLike, shape: Shape, offset: int) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
-  offset = int(offset)
+  offset = _clip_int_to_valid_range(offset, np.int32)
   dtype = dtypes.canonicalize_dtype(dtype)
   bool_eye = eq(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
                 broadcasted_iota(np.int32, shape, 1))
@@ -1262,7 +1266,7 @@ def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
 
 def _tri(dtype: DTypeLike, shape: Shape, offset: int) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
-  offset = int(offset)
+  offset = _clip_int_to_valid_range(offset, np.int32)
   dtype = dtypes.canonicalize_dtype(dtype)
   bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
                 broadcasted_iota(np.int32, shape, 1))
@@ -1676,19 +1680,19 @@ def broadcast_hlo(
       dims = mlir.dense_int_elements(
           range(len(aval_out.shape) - len(aval.shape), len(aval_out.shape)))
       if any(isinstance(d, ir.Value) for d in aval_out.shape):
-        arg = hlo.DynamicBroadcastInDimOp(
+        arg = hlo.dynamic_broadcast_in_dim(
             mlir.aval_to_ir_type(aval_out), arg,
-            mlir.shape_tensor(aval_out.shape), dims).result
+            mlir.shape_tensor(aval_out.shape), dims)
       else:
-        arg = hlo.BroadcastInDimOp(
+        arg = hlo.broadcast_in_dim(
             mlir.aval_to_ir_type(aval.update(shape=aval_out.shape)), arg,
-            dims).result
+            dims)
     out.append(arg)
   return out
 
 def _nary_lower_hlo(op: Callable, ctx,
                     *args: Union[ir.Value, Sequence[ir.Value]],
-                    explicit_type=False, **params):
+                    explicit_type=False, **params) -> Sequence[ir.Value]:
   """Lowers an elementwise operator to its MLIR equivalent.
 
   Args:
@@ -1700,9 +1704,9 @@ def _nary_lower_hlo(op: Callable, ctx,
       ctx, args, avals_in, aval_out.shape)
 
   if explicit_type:
-    return op(mlir.aval_to_ir_type(aval_out), *broadcasted_args).results
+    return [op(mlir.aval_to_ir_type(aval_out), *broadcasted_args)]
   else:
-    return op(*broadcasted_args).results
+    return [op(*broadcasted_args)]
 
 
 _float = {np.floating}
@@ -1719,7 +1723,7 @@ _ordered = _int | _float | _bool
 
 neg_p = standard_unop(_num, 'neg')
 ad.deflinear2(neg_p, lambda t, operand: [neg(t)])
-mlir.register_lowering(neg_p, partial(_nary_lower_hlo, hlo.NegOp))
+mlir.register_lowering(neg_p, partial(_nary_lower_hlo, hlo.negate))
 
 sign_p = standard_unop(_num, 'sign')
 ad.defjvp_zero(sign_p)
@@ -1727,44 +1731,44 @@ ad.defjvp_zero(sign_p)
 def _sign_lower_hlo(ctx, x):
   x_aval, = ctx.avals_in
   if dtypes.issubdtype(x_aval.dtype, np.unsignedinteger):
-    return hlo.SelectOp(
+    return [hlo.select(
         mlir.compare_hlo(x, mlir.full_like_aval(ctx, 0, x_aval), 'EQ',
-                         'UNSIGNED').result,
+                         'UNSIGNED'),
         mlir.full_like_aval(ctx, 0, x_aval),
-        mlir.full_like_aval(ctx, 1, x_aval)).results
-  return hlo.SignOp(x).results
+        mlir.full_like_aval(ctx, 1, x_aval))]
+  return [hlo.sign(x)]
 
 mlir.register_lowering(sign_p, _sign_lower_hlo)
 
 nextafter_p = standard_naryop([_float, _float], 'nextafter')
-mlir.register_lowering(nextafter_p, partial(_nary_lower_hlo, chlo.NextAfterOp))
+mlir.register_lowering(nextafter_p, partial(_nary_lower_hlo, chlo.next_after))
 
 floor_p = standard_unop(_float, 'floor')
 ad.defjvp_zero(floor_p)
-mlir.register_lowering(floor_p, partial(_nary_lower_hlo, hlo.FloorOp))
+mlir.register_lowering(floor_p, partial(_nary_lower_hlo, hlo.floor))
 
 ceil_p = standard_unop(_float, 'ceil')
 ad.defjvp_zero(ceil_p)
-mlir.register_lowering(ceil_p, partial(_nary_lower_hlo, hlo.CeilOp))
+mlir.register_lowering(ceil_p, partial(_nary_lower_hlo, hlo.ceil))
 
 round_p = standard_unop(_float, 'round')
 ad.defjvp_zero(round_p)
 
 def _round_lower(ctx, x, *, rounding_method):
   if rounding_method is RoundingMethod.AWAY_FROM_ZERO:
-    return hlo.RoundOp(x).results
+    return [hlo.round_nearest_afz(x)]
   else:
     assert rounding_method is RoundingMethod.TO_NEAREST_EVEN
-    return hlo.RoundNearestEvenOp(x).results
+    return [hlo.round_nearest_even(x)]
 mlir.register_lowering(round_p, _round_lower)
 
 is_finite_p = unop(_fixed_dtype(np.bool_), _float, 'is_finite')
 ad.defjvp_zero(is_finite_p)
-mlir.register_lowering(is_finite_p, partial(_nary_lower_hlo, hlo.IsFiniteOp))
+mlir.register_lowering(is_finite_p, partial(_nary_lower_hlo, hlo.is_finite))
 
 exp_p = standard_unop(_float | _complex, 'exp')
 ad.defjvp2(exp_p, lambda g, ans, x: mul(g, ans))
-mlir.register_lowering(exp_p, partial(_nary_lower_hlo, hlo.ExpOp))
+mlir.register_lowering(exp_p, partial(_nary_lower_hlo, hlo.exponential))
 
 exp2_p = standard_unop(_float | _complex, 'exp2')
 ad.defjvp2(exp2_p, lambda g, ans, x: mul(log(_const(x, 2)), mul(g, ans)))
@@ -1772,30 +1776,31 @@ def _exp2_lower(ctx, x):
   x_aval, = ctx.avals_in
   log2 = mlir.ir_constant(np.array(np.log(2), x_aval.dtype))
   log2 = mlir.broadcast_in_dim(ctx, log2, x_aval, broadcast_dimensions=())
-  return hlo.ExpOp(hlo.MulOp(log2, x).result).results
+  return [hlo.exponential(hlo.multiply(log2, x))]
 mlir.register_lowering(exp2_p, _exp2_lower)
 
 log_p = standard_unop(_float | _complex, 'log')
 ad.defjvp(log_p, lambda g, x: div(g, x))
-mlir.register_lowering(log_p, partial(_nary_lower_hlo, hlo.LogOp))
+mlir.register_lowering(log_p, partial(_nary_lower_hlo, hlo.log))
 
 expm1_p = standard_unop(_float | _complex, 'expm1')
 ad.defjvp2(expm1_p, lambda g, ans, x: mul(g, add(ans, _one(ans))))
-mlir.register_lowering(expm1_p, partial(_nary_lower_hlo, hlo.Expm1Op))
+mlir.register_lowering(expm1_p,
+                       partial(_nary_lower_hlo, hlo.exponential_minus_one))
 
 log1p_p = standard_unop(_float | _complex, 'log1p')
 ad.defjvp(log1p_p, lambda g, x: div(g, add(x, _one(x))))
-mlir.register_lowering(log1p_p, partial(_nary_lower_hlo, hlo.Log1pOp))
+mlir.register_lowering(log1p_p, partial(_nary_lower_hlo, hlo.log_plus_one))
 
 tanh_p = standard_unop(_float | _complex, 'tanh')
 ad.defjvp2(tanh_p, lambda g, ans, x: mul(add(g, mul(g, ans)),
                                          sub(_one(x), ans)))
-mlir.register_lowering(tanh_p, partial(_nary_lower_hlo, hlo.TanhOp))
+mlir.register_lowering(tanh_p, partial(_nary_lower_hlo, hlo.tanh))
 
 logistic_p = standard_unop(_float | _complex, 'logistic')
 ad.defjvp2(logistic_p, lambda g, ans, x: mul(g, mul(ans, sub(_one(ans), ans))))
 # TODO(phawkins): switch to LogisticOp lowering; debug numerical problems.
-# mlir.register_lowering(logistic_p, partial(_nary_lower_hlo, hlo.LogisticOp))
+# mlir.register_lowering(logistic_p, partial(_nary_lower_hlo, hlo.logistic))
 
 def logistic_impl(x):
   one = _const(x, 1)
@@ -1806,11 +1811,11 @@ mlir.register_lowering(logistic_p,
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
-mlir.register_lowering(sin_p, partial(_nary_lower_hlo, hlo.SineOp))
+mlir.register_lowering(sin_p, partial(_nary_lower_hlo, hlo.sine))
 
 cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
-mlir.register_lowering(cos_p, partial(_nary_lower_hlo, hlo.CosineOp))
+mlir.register_lowering(cos_p, partial(_nary_lower_hlo, hlo.cosine))
 
 @_upcast_fp16_for_computation
 def _tan_impl(x):
@@ -1818,7 +1823,7 @@ def _tan_impl(x):
 
 tan_p = standard_unop(_float | _complex, 'tan')
 ad.defjvp2(tan_p, lambda g, ans, x: mul(g, _const(x, 1) + square(ans)))
-mlir.register_lowering(tan_p, partial(_nary_lower_hlo, chlo.TanOp))
+mlir.register_lowering(tan_p, partial(_nary_lower_hlo, chlo.tan))
 
 def asin_impl(x):
   if dtypes.issubdtype(_dtype(x), np.complexfloating):
@@ -1829,7 +1834,7 @@ def asin_impl(x):
 
 asin_p = standard_unop(_float | _complex, 'asin')
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(_const(x, 1) - square(x))))
-mlir.register_lowering(asin_p, partial(_nary_lower_hlo, chlo.AsinOp))
+mlir.register_lowering(asin_p, partial(_nary_lower_hlo, chlo.asin))
 
 def acos_impl(x):
   if dtypes.issubdtype(_dtype(x), np.complexfloating):
@@ -1858,43 +1863,43 @@ def atan_impl(x):
 
 atan_p = standard_unop(_float | _complex, 'atan')
 ad.defjvp(atan_p, lambda g, x: div(g, _const(x, 1) + square(x)))
-mlir.register_lowering(atan_p, partial(_nary_lower_hlo, chlo.AtanOp))
+mlir.register_lowering(atan_p, partial(_nary_lower_hlo, chlo.atan))
 
 atan2_p = standard_naryop([_float | _complex, _float | _complex], 'atan2')
 ad.defjvp(atan2_p,
           lambda g, x, y: g * (y / (square(x) + square(y))),
           lambda g, x, y: g * -x / (square(x) + square(y)))
-mlir.register_lowering(atan2_p, partial(_nary_lower_hlo, hlo.Atan2Op))
+mlir.register_lowering(atan2_p, partial(_nary_lower_hlo, hlo.atan2))
 
 sinh_p = standard_unop(_float | _complex, 'sinh')
 ad.defjvp(sinh_p, lambda g, x: mul(g, cosh(x)))
-mlir.register_lowering(sinh_p, partial(_nary_lower_hlo, chlo.SinhOp))
+mlir.register_lowering(sinh_p, partial(_nary_lower_hlo, chlo.sinh))
 
 cosh_p = standard_unop(_float | _complex, 'cosh')
 ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
-mlir.register_lowering(cosh_p, partial(_nary_lower_hlo, chlo.CoshOp))
+mlir.register_lowering(cosh_p, partial(_nary_lower_hlo, chlo.cosh))
 
 asinh_p = standard_unop(_float | _complex, 'asinh')
 ad.defjvp(asinh_p, lambda g, x: mul(g, rsqrt(square(x) + _one(x))))
-mlir.register_lowering(asinh_p, partial(_nary_lower_hlo, chlo.AsinhOp))
+mlir.register_lowering(asinh_p, partial(_nary_lower_hlo, chlo.asinh))
 
 acosh_p = standard_unop(_float | _complex, 'acosh')
 ad.defjvp(acosh_p,
           lambda g, x: mul(g, rsqrt((x - _one(x)) * (x + _one(x)))))
-mlir.register_lowering(acosh_p, partial(_nary_lower_hlo, chlo.AcoshOp))
+mlir.register_lowering(acosh_p, partial(_nary_lower_hlo, chlo.acosh))
 
 atanh_p = standard_unop(_float | _complex, 'atanh')
 ad.defjvp(atanh_p,
           lambda g, x: mul(reciprocal(_one(x) + x), div(g, (_one(x) - x))))
-mlir.register_lowering(atanh_p, partial(_nary_lower_hlo, chlo.AtanhOp))
+mlir.register_lowering(atanh_p, partial(_nary_lower_hlo, chlo.atanh))
 
 real_p = unop(_complex_basetype, _complex, 'real')
 ad.deflinear2(real_p, lambda t, _: [complex(t, np.zeros((), _dtype(t)))])
-mlir.register_lowering(real_p, partial(_nary_lower_hlo, hlo.RealOp))
+mlir.register_lowering(real_p, partial(_nary_lower_hlo, hlo.real))
 
 imag_p = unop(_complex_basetype, _complex, 'imag')
 ad.deflinear2(imag_p, lambda t, _: [complex(np.zeros((), _dtype(t)), neg(t))])
-mlir.register_lowering(imag_p, partial(_nary_lower_hlo, hlo.ImagOp))
+mlir.register_lowering(imag_p, partial(_nary_lower_hlo, hlo.imag))
 
 
 def _complex_transpose_rule(t, x, y):
@@ -1919,7 +1924,7 @@ _complex_dtype = lambda dtype, *args: (np.zeros((), dtype) + np.zeros((), np.com
 complex_p = naryop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
 ad.deflinear2(complex_p, _complex_transpose_rule)
-mlir.register_lowering(complex_p, partial(_nary_lower_hlo, hlo.ComplexOp))
+mlir.register_lowering(complex_p, partial(_nary_lower_hlo, hlo.complex))
 
 conj_p = unop(_complex_dtype, _complex_elem_types | _complex, 'conj')
 
@@ -1946,7 +1951,7 @@ ad.primitive_jvps[conj_p] = partial(ad.linear_jvp, conj_p)
 ad.primitive_transposes[conj_p] = _conj_transpose_rule
 
 abs_p = unop(_complex_basetype, _signedint | _float | _complex, 'abs')
-mlir.register_lowering(abs_p, partial(_nary_lower_hlo, hlo.AbsOp))
+mlir.register_lowering(abs_p, partial(_nary_lower_hlo, hlo.abs))
 
 def _abs_jvp_rule(g, ans, x):
   if _iscomplex(x):
@@ -1960,18 +1965,18 @@ _maybe_real = lambda x: real(x) if _iscomplex(x) else x
 
 sqrt_p = standard_unop(_float | _complex, 'sqrt')
 ad.defjvp2(sqrt_p, lambda g, ans, x: mul(g, div(_const(x, 0.5), ans)))
-mlir.register_lowering(sqrt_p, partial(_nary_lower_hlo, hlo.SqrtOp))
+mlir.register_lowering(sqrt_p, partial(_nary_lower_hlo, hlo.sqrt))
 
 rsqrt_p = standard_unop(_float | _complex, 'rsqrt')
 ad.defjvp2(rsqrt_p,
            lambda g, ans, x:
            mul(g, mul(_const(x, -0.5), div(ans, x))))
-mlir.register_lowering(rsqrt_p, partial(_nary_lower_hlo, hlo.RsqrtOp))
+mlir.register_lowering(rsqrt_p, partial(_nary_lower_hlo, hlo.rsqrt))
 
 cbrt_p = standard_unop(_float, 'cbrt')
 ad.defjvp2(cbrt_p,
            lambda g, ans, x: mul(g, mul(_const(x, 1/3), integer_pow(ans, -2))))
-mlir.register_lowering(cbrt_p, partial(_nary_lower_hlo, hlo.CbrtOp))
+mlir.register_lowering(cbrt_p, partial(_nary_lower_hlo, hlo.cbrt))
 
 def _pow_dtype_rule(x, y):
   if (dtypes.issubdtype(x.dtype, np.inexact) and
@@ -2016,7 +2021,7 @@ def _pow_lower(ctx, x, y):
   [(x_,)] = convert(ctx.replace(avals_in=[x_aval], avals_out=[x_aval_]), x)
   [(y_,)] = convert(ctx.replace(avals_in=[y_aval], avals_out=[y_aval_]), y)
   ctx_ = ctx.replace(avals_in=[x_aval_, y_aval_])
-  return _nary_lower_hlo(hlo.PowOp, ctx_, x_, y_)
+  return _nary_lower_hlo(hlo.power, ctx_, x_, y_)
 mlir.register_lowering(pow_p, _pow_lower)
 
 
@@ -2071,26 +2076,25 @@ _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
 not_p = standard_unop(_bool_or_int, 'not')
 ad.defjvp_zero(not_p)
-mlir.register_lowering(not_p, partial(_nary_lower_hlo, hlo.NotOp))
+mlir.register_lowering(not_p, partial(_nary_lower_hlo, hlo.not_))
 
 and_p = standard_naryop([_bool_or_int, _bool_or_int], 'and')
 ad.defjvp_zero(and_p)
-mlir.register_lowering(and_p, partial(_nary_lower_hlo, hlo.AndOp))
+mlir.register_lowering(and_p, partial(_nary_lower_hlo, hlo.and_))
 
 or_p = standard_naryop([_bool_or_int, _bool_or_int], 'or')
 ad.defjvp_zero(or_p)
-mlir.register_lowering(or_p, partial(_nary_lower_hlo, hlo.OrOp))
+mlir.register_lowering(or_p, partial(_nary_lower_hlo, hlo.or_))
 
 xor_p = standard_naryop([_bool_or_int, _bool_or_int], 'xor')
 ad.defjvp_zero(xor_p)
-mlir.register_lowering(xor_p, partial(_nary_lower_hlo, hlo.XorOp))
+mlir.register_lowering(xor_p, partial(_nary_lower_hlo, hlo.xor))
 
 population_count_p = standard_unop(_int, 'population_count')
-mlir.register_lowering(population_count_p,
-                       partial(_nary_lower_hlo, hlo.PopulationCountOp))
+mlir.register_lowering(population_count_p, partial(_nary_lower_hlo, hlo.popcnt))
 
 clz_p = standard_unop(_int, 'clz')
-mlir.register_lowering(clz_p, partial(_nary_lower_hlo, hlo.ClzOp))
+mlir.register_lowering(clz_p, partial(_nary_lower_hlo, hlo.count_leading_zeros))
 
 def _add_jvp(primals, tangents):
   x, y = primals
@@ -2126,7 +2130,7 @@ def _add_inverse(r, x, y):
 add_p: Primitive = standard_naryop([_num, _num], 'add')
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
-mlir.register_lowering(add_p, partial(_nary_lower_hlo, hlo.AddOp))
+mlir.register_lowering(add_p, partial(_nary_lower_hlo, hlo.add))
 
 def _sub_jvp(primals, tangents):
   x, y = primals
@@ -2155,7 +2159,7 @@ def _sub_transpose(t, x, y):
 sub_p = standard_naryop([_num, _num], 'sub')
 ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
-mlir.register_lowering(sub_p, partial(_nary_lower_hlo, hlo.SubtractOp))
+mlir.register_lowering(sub_p, partial(_nary_lower_hlo, hlo.subtract))
 
 
 def _mul_transpose(ct, x, y):
@@ -2181,7 +2185,7 @@ ad.defjvp(mul_p,
           lambda xdot, x, y: mul(xdot, y),
           lambda ydot, x, y: mul(x, ydot))
 ad.primitive_transposes[mul_p] = _mul_transpose
-mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.MulOp))
+mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.multiply))
 
 def _div_transpose_rule(cotangent, x, y):
   assert ad.is_undefined_primal(x) and not ad.is_undefined_primal(y)
@@ -2194,14 +2198,14 @@ ad.defjvp(div_p,
           lambda g, x, y: div(g, y),
           lambda g, x, y: mul(mul(neg(g), x), integer_pow(y, -2)))
 ad.primitive_transposes[div_p] = _div_transpose_rule
-mlir.register_lowering(div_p, partial(_nary_lower_hlo, hlo.DivOp))
+mlir.register_lowering(div_p, partial(_nary_lower_hlo, hlo.divide))
 
 rem_p = standard_naryop([_int | _float, _int | _float], 'rem')
 ad.defjvp(
     rem_p,
     lambda g, x, y: _maybe_broadcast(broadcast_shapes(np.shape(x), np.shape(y)), g),
     lambda g, x, y: mul(neg(g), mul(sign(div(x, y)), floor(abs(div(x, y))))))
-mlir.register_lowering(rem_p, partial(_nary_lower_hlo, hlo.RemOp))
+mlir.register_lowering(rem_p, partial(_nary_lower_hlo, hlo.remainder))
 
 def _minmax_complex_lowering(x, y, *, lax_cmp_pick_x):
   result_shape = broadcast_shapes(np.shape(x), np.shape(y))
@@ -2227,17 +2231,17 @@ mlir.register_lowering(min_p, partial(_nary_lower_hlo, mlir.min_hlo))
 
 shift_left_p = standard_naryop([_int, _int], 'shift_left')
 ad.defjvp_zero(shift_left_p)
-mlir.register_lowering(shift_left_p, partial(_nary_lower_hlo, hlo.ShiftLeftOp))
+mlir.register_lowering(shift_left_p, partial(_nary_lower_hlo, hlo.shift_left))
 
 shift_right_arithmetic_p = standard_naryop([_int, _int], 'shift_right_arithmetic')
 ad.defjvp_zero(shift_right_arithmetic_p)
 mlir.register_lowering(shift_right_arithmetic_p,
-                       partial(_nary_lower_hlo, hlo.ShiftRightArithmeticOp))
+                       partial(_nary_lower_hlo, hlo.shift_right_arithmetic))
 
 shift_right_logical_p = standard_naryop([_int, _int], 'shift_right_logical')
 ad.defjvp_zero(shift_right_logical_p)
 mlir.register_lowering(shift_right_logical_p,
-                       partial(_nary_lower_hlo, hlo.ShiftRightLogicalOp))
+                       partial(_nary_lower_hlo, hlo.shift_right_logical))
 
 def _opaque_comparison_hlo(direction, reduction_op, identity, ctx,
                            avals_in, aval_out, x, y):
@@ -2284,7 +2288,7 @@ def _compare_lower_hlo(direction: str, total_order: bool, ctx, x, y):
     compare_type = "SIGNED"
   else:
     compare_type = "UNSIGNED"
-  return mlir.compare_hlo(x, y, direction, compare_type).results
+  return [mlir.compare_hlo(x, y, direction, compare_type)]
 
 eq_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'eq', allow_extended_dtype=True)
 ad.defjvp_zero(eq_p)
@@ -2422,7 +2426,7 @@ def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type):
   aval_out, = ctx.avals_out
   if (dtypes.issubdtype(aval_in.dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
-    operand = hlo.RealOp(operand).result
+    operand = hlo.real(operand)
     aval_in = aval_in.update(dtype=_real_dtype(aval_in.dtype))
   return [mlir.convert_hlo(ctx, operand, aval_in, aval_out)]
 
@@ -2469,7 +2473,7 @@ batching.defvectorized(bitcast_convert_type_p)
 
 def _bitcast_convert_type_lower(ctx, operand, *, new_dtype):
   aval_out, = ctx.avals_out
-  return hlo.BitcastConvertOp(mlir.aval_to_ir_type(aval_out), operand).results
+  return [hlo.bitcast_convert(mlir.aval_to_ir_type(aval_out), operand)]
 
 mlir.register_lowering(bitcast_convert_type_p, _bitcast_convert_type_lower)
 
@@ -2837,12 +2841,12 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       lhs_contracting_dimensions=list(lhs_contracting),
       rhs_contracting_dimensions=list(rhs_contracting))
   return [
-      hlo.DotGeneralOp(
+      hlo.dot_general(
           mlir.aval_to_ir_type(aval_out),
           lhs,
           rhs,
           dot_dnums,
-          precision_config=precision_attr(precision)).result
+          precision_config=precision_attr(precision))
   ]
 
 mlir.register_lowering(dot_general_p, _dot_general_lower)
@@ -3139,8 +3143,7 @@ ad.defjvp(clamp_p,
           lambda g, min, operand, max:
           select(lt(max, operand), g, _zeros(operand)))
 batching.primitive_batchers[clamp_p] = _clamp_batch_rule
-mlir.register_lowering(
-    clamp_p, partial(_nary_lower_hlo, hlo.ClampOp))
+mlir.register_lowering(clamp_p, partial(_nary_lower_hlo, hlo.clamp))
 pe.def_trivial_padding(clamp_p)
 
 def _concatenate_shape_rule(*operands, **kwargs):
@@ -3218,7 +3221,7 @@ batching.primitive_batchers[concatenate_p] = _concatenate_batch_rule
 pe.padding_rules[concatenate_p] = _concatenate_pad_rule
 
 def _concatenate_lower(ctx, *xs, dimension):
-  return hlo.ConcatenateOp(xs, mlir.i64_attr(dimension)).results
+  return [hlo.concatenate(xs, mlir.i64_attr(dimension))]
 mlir.register_lowering(concatenate_p, _concatenate_lower)
 
 
@@ -3420,7 +3423,7 @@ def _reshape_batch_rule(batched_args, batch_dims, *, new_sizes, dimensions):
 def _reshape_lower(ctx, x, *dyn_shape, new_sizes, dimensions):
   aval_out, = ctx.avals_out
   if dimensions is not None:
-    x = hlo.TransposeOp(x, mlir.dense_int_elements(dimensions)).result
+    x = hlo.transpose(x, mlir.dense_int_elements(dimensions))
   if dyn_shape:
     aval_out = aval_out.update(shape=_merge_dyn_shape(new_sizes, dyn_shape))
   return [mlir.reshape(ctx, x, aval_out)]
@@ -3464,7 +3467,7 @@ ad.deflinear2(rev_p, lambda t, _, dimensions: [rev(t, dimensions)])
 batching.primitive_batchers[rev_p] = _rev_batch_rule
 
 def _rev_lower(ctx, x, *, dimensions):
-  return hlo.ReverseOp(x, mlir.dense_int_elements(dimensions)).results
+  return [hlo.reverse(x, mlir.dense_int_elements(dimensions))]
 mlir.register_lowering(rev_p, _rev_lower)
 
 
@@ -3496,7 +3499,7 @@ def _transpose_lower(ctx, x, *, permutation):
         aval_out.dtype).shape
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
     permutation = [*permutation, *trailing_dims]
-  return hlo.TransposeOp(x, mlir.dense_int_elements(permutation)).results
+  return [hlo.transpose(x, mlir.dense_int_elements(permutation))]
 
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
                                  'transpose')
@@ -3628,7 +3631,7 @@ def _select_hlo_lowering(ctx, which, *cases):
   if which_aval.dtype == np.dtype(np.bool_):
     assert len(cases) <= 2
     if len(cases) == 1: return cases
-    return hlo.SelectOp(which, cases[1], cases[0]).results
+    return [hlo.select(which, cases[1], cases[0])]
 
   if dtypes.issubdtype(which_aval.dtype, np.signedinteger):
     compare_type = 'SIGNED'
@@ -3644,8 +3647,8 @@ def _select_hlo_lowering(ctx, which, *cases):
     pred = mlir.compare_hlo(which,
                             mlir.full_like_aval(ctx, offset + mid, which_aval),
                             lt, compare_type)
-    return hlo.SelectOp(pred, _select(offset, cases[:mid]),
-                        _select(offset + mid, cases[mid:])).result
+    return hlo.select(pred, _select(offset, cases[:mid]),
+                      _select(offset + mid, cases[mid:]))
 
   return [_select(0, cases)]
 
@@ -3787,7 +3790,7 @@ def _reduce_lower(ctx, *values, computation, jaxpr, consts, dimensions):
     out_nodes, _ = mlir.jaxpr_subcomp(reducer_ctx, jaxpr, mlir.TokenSet(), consts,
                                       *([a] for a in reducer.arguments),
                                       dim_var_values=ctx.dim_var_values)
-    hlo.ReturnOp(util.flatten(out_nodes))
+    hlo.return_(util.flatten(out_nodes))
   return op.results
 
 mlir.register_lowering(reduce_p, _reduce_lower)
@@ -3978,8 +3981,7 @@ def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes):
   scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), dtype))
   reducer_region = op.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer_region):
-    add = reducer(*reducer_region.arguments)
-    hlo.ReturnOp(add.results)
+    hlo.return_([reducer(*reducer_region.arguments)])
   return op.results
 
 mlir.register_lowering(reduce_sum_p, partial(_unary_reduce_lower, hlo.AddOp,
@@ -4017,8 +4019,8 @@ batching.defvectorized(reduce_precision_p)
 
 def _reduce_precision_lower(ctx, operand, *, exponent_bits, mantissa_bits):
   aval_out, = ctx.avals_out
-  return hlo.ReducePrecisionOp(operand, mlir.i32_attr(exponent_bits),
-                               mlir.i32_attr(mantissa_bits)).results
+  return [hlo.reduce_precision(operand, mlir.i32_attr(exponent_bits),
+                               mlir.i32_attr(mantissa_bits))]
 
 mlir.register_lowering(reduce_precision_p, _reduce_precision_lower)
 
@@ -4053,7 +4055,8 @@ def _canonicalize_float_for_sort(x):
   # and NaNs in the output.
 
   result = select(eq(x, _zero(x)), _zeros(x), x)
-  result = select(_isnan(x), full_like(result, np.nan), result)
+  with jax.debug_nans(False):
+    result = select(_isnan(x), full_like(result, np.nan), result)
 
   return result
 
@@ -4159,7 +4162,7 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
 
     out = lower_comparator(sub_ctx, *[[a] for a in comparator.arguments],
                            num_keys=num_keys)
-    hlo.ReturnOp(util.flatten(out))
+    hlo.return_(util.flatten(out))
   return sort.results
 
 mlir.register_lowering(sort_p, _sort_lower)
@@ -4269,7 +4272,7 @@ create_token_p.def_abstract_eval(lambda *_: abstract_token)
 
 def _create_token_lowering(ctx, *operands):
   aval_out, = ctx.avals_out
-  return hlo.CreateTokenOp().results
+  return [hlo.create_token()]
 mlir.register_lowering(create_token_p, _create_token_lowering)
 
 
@@ -4291,7 +4294,7 @@ after_all_p.def_abstract_eval(_after_all_abstract_eval)
 
 def _after_all_lowering(ctx, *operands):
   aval_out, = ctx.avals_out
-  return hlo.AfterAllOp(operands).results
+  return [hlo.after_all(operands)]
 mlir.register_lowering(after_all_p, _after_all_lowering)
 
 
@@ -4430,8 +4433,7 @@ rng_uniform_p.def_abstract_eval(_rng_uniform_abstract_eval)
 def _rng_uniform_lowering(ctx, a, b, *, shape):
   aval_out, = ctx.avals_out
   shape, = mlir.ir_constants(np.array(aval_out.shape, np.int64))
-  return hlo.RngOp(a, b, shape,
-                   hlo.RngDistributionAttr.get('UNIFORM')).results
+  return [hlo.rng(a, b, shape, hlo.RngDistributionAttr.get('UNIFORM'))]
 
 mlir.register_lowering(rng_uniform_p, _rng_uniform_lowering)
 
@@ -4487,9 +4489,9 @@ def _rng_bit_generator_lowering(
     rbg_etype = u32_type
     rbg_dtype = np.uint32
   if key_etype == u32_type:
-    key = hlo.BitcastConvertOp(
+    key = hlo.bitcast_convert(
         ir.RankedTensorType.get([2], u64_type),
-        hlo.ReshapeOp(ir.RankedTensorType.get([2, 2], u32_type), key)).result
+        hlo.reshape(ir.RankedTensorType.get([2, 2], u32_type), key))
   algorithm_attr = _rng_algorithm(algorithm)
   _, out_vals_aval = ctx.avals_out
   if any(not core.is_constant_shape(a.shape) for a in ctx.avals_out):
@@ -4507,14 +4509,14 @@ def _rng_bit_generator_lowering(
         ir.RankedTensorType.get(shape, rbg_etype),
         algorithm_attr, key).results
   if key_etype == u32_type:
-    out_key = hlo.ReshapeOp(
+    out_key = hlo.reshape(
         ir.RankedTensorType.get([4], u32_type),
-        hlo.BitcastConvertOp(
-            ir.RankedTensorType.get([2, 2], u32_type), out_key)).result
+        hlo.bitcast_convert(
+            ir.RankedTensorType.get([2, 2], u32_type), out_key))
   if rbg_etype != etype:
-    out_vals = hlo.ConvertOp(
+    out_vals = hlo.convert(
       ir.RankedTensorType.get(ir.RankedTensorType(out_vals.type).shape, etype),
-      out_vals).result
+      out_vals)
   return [out_key, out_vals]
 
 

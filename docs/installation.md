@@ -267,3 +267,16 @@ for more details.
 
 ## Building JAX from source
 See [Building JAX from source](developer.md#building-from-source).
+
+## Installing older jaxlib wheels
+
+Due to storage limitations on the Python package index, we periodically remove
+older jaxlib wheels from the releases on http://pypi.org/project/jax. These can
+still be installed directly via the URLs here; for example:
+```
+# Install jaxlib on CPU via the wheel archive
+pip install jax[cpu]==0.3.25 -f https://storage.googleapis.com/jax-releases/jax_releases.html
+
+# Install the jaxlib 0.3.25 CPU wheel directly
+pip install jaxlib==0.3.25 -f https://storage.googleapis.com/jax-releases/jax_releases.html
+```

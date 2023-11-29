@@ -30,7 +30,6 @@ from jax._src.lib import jax_jit
 from jax._src.lib import transfer_guard_lib
 from jax._src.lib import xla_client
 from jax._src import logging_config
-from jax._src.lib import xla_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -829,16 +828,14 @@ pmap_shmap_merge = define_bool_state(
     help='If True, pmap and shard_map API will be merged.')
 
 def _update_jax_memories_global(val):
-  if xla_extension_version >= 190:
-    lib.jax_jit.global_state().enable_memories = val
+  lib.jax_jit.global_state().enable_memories = val
 
 def _update_jax_memories_thread_local(val):
-  if xla_extension_version >= 190:
-    lib.jax_jit.thread_local_state().enable_memories = val
+  lib.jax_jit.thread_local_state().enable_memories = val
 
 enable_memories = define_bool_state(
     'jax_enable_memories',
-    default=True,
+    default=False,
     upgrade=True,
     update_global_hook=_update_jax_memories_global,
     update_thread_local_hook=_update_jax_memories_thread_local,
@@ -972,11 +969,29 @@ include_full_tracebacks_in_locations = define_bool_state(
 
 use_original_compilation_cache_key_generation = define_bool_state(
     name='jax_use_original_compilation_cache_key_generation',
-    default=True,
+    default=False,
     help="If true, use the original cache-key generation algorithm. This is "
          "a transient flag; once the new cache-key generation algorithm is "
          "deployed, this flag and the original cache-key generation algorithm "
          "will be removed.")
+
+enable_compilation_cache = define_bool_state(
+    name='jax_enable_compilation_cache',
+    default=True,
+    help=('If set to False, the compilation cache will be disabled regardless '
+          'of whether initialize_cache() was called. If set to True, the '
+          'path could be set to a default value or via a call to '
+          'initialize_cache().'),
+)
+
+compilation_cache_dir = define_string_state(
+    name='jax_compilation_cache_dir',
+    default=None,
+    help=('Path for the cache. '
+          'Precedence: '
+          '1. A call to compilation_cache.initialize_cache(). '
+          '2. The value of this flag set in the command line or by default.'),
+)
 
 default_dtype_bits = define_enum_state(
     name='jax_default_dtype_bits',

@@ -58,7 +58,6 @@ from jax.interpreters import mlir
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2, safe_zip
 
 config.parse_flags_with_absl()
@@ -281,6 +280,17 @@ class PJitTest(jtu.BufferDonationTestCase):
     out = dec()
     self.assertArraysEqual(out, x)
 
+  def testMeshHashRace(self):
+    mesh = jtu.create_global_mesh((2, 1), ('a', 'testMeshHashRace'))
+    self.assertFalse(hasattr(mesh, '_hash'))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+      fs = []
+      for _ in range(5):
+        fs.append(pool.submit(lambda: hash(mesh)))
+      for f in concurrent.futures.as_completed(fs):
+        f.result()
+    self.assertTrue(hasattr(mesh, '_hash'))
+
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testTwoMeshAxisSharding(self):
     @partial(pjit,
@@ -402,10 +412,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     hlo = f.lower(np.ones(shape)).compiler_ir()
     # Annotation from with_sharding_constraint
-    if xla_extension_version >= 180:
-      self.assertIn('sharding = "{devices=[2,1]<=[2]}"', str(hlo))
-    else:
-      self.assertIn('sharding = "{devices=[2,1]0,1}"', str(hlo))
+    self.assertIn('sharding = "{devices=[2,1]<=[2]}"', str(hlo))
     # Annotation from pjit
     self.assertIn('sharding = "{replicated}"', str(hlo))
 
@@ -429,10 +436,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     hlo = f.lower(np.ones(shape)).compiler_ir(dialect="hlo")
     # Annotation from with_sharding_constraint
-    if xla_extension_version >= 180:
-      self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
-    else:
-      self.assertIn('sharding={devices=[2,1]0,1}', hlo.as_hlo_text())
+    self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
@@ -457,10 +461,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     hlo = f.lower(np.ones(shape)).compiler_ir(dialect="hlo")
     # Annotation from with_sharding_constraint
-    if xla_extension_version >= 180:
-      self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
-    else:
-      self.assertIn('sharding={devices=[2,1]0,1}', hlo.as_hlo_text())
+    self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
@@ -487,10 +488,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     hlo = f.lower(np.ones(shape)).compiler_ir(dialect="hlo")
     # Annotation from with_sharding_constraint
-    if xla_extension_version >= 180:
-      self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
-    else:
-      self.assertIn('sharding={devices=[2,1]0,1}', hlo.as_hlo_text())
+    self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
@@ -515,12 +513,8 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     hlo = f.lower(x).compiler_ir(dialect="hlo")
     # Annotations from with_sharding_constraint
-    if xla_extension_version >= 180:
-      self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
-      self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
-    else:
-      self.assertIn('sharding={devices=[2,1]0,1}', hlo.as_hlo_text())
-      self.assertIn('sharding={devices=[1,2]0,1}', hlo.as_hlo_text())
+    self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
+    self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
@@ -550,12 +544,8 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     hlo = f.lower(x).compiler_ir(dialect="hlo")
     # Annotations from with_sharding_constraint
-    if xla_extension_version >= 180:
-      self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
-      self.assertIn('sharding={devices=[1,2]<=[2]}', hlo.as_hlo_text())
-    else:
-      self.assertIn('sharding={devices=[2,1]0,1}', hlo.as_hlo_text())
-      self.assertIn('sharding={devices=[1,2]0,1}', hlo.as_hlo_text())
+    self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
+    self.assertIn('sharding={devices=[1,2]<=[2]}', hlo.as_hlo_text())
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
@@ -3687,6 +3677,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ' platform.*'):
       f(jnp.arange(8))
 
+  def test_no_output_multiple_devices(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+
+    @pjit
+    def f():
+      return
+
+    with mesh:
+      f()  # doesn't crash
+
 
 class TempSharding(Sharding):
 
@@ -4017,6 +4017,52 @@ class PJitErrorTest(jtu.JaxTestCase):
                                 '.*(Array|buffer|Buffer) has been deleted.*'):
       x.delete()
       _ = f(x)
+
+  def test_aot_error_on_dced_avals_mismatch(self):
+    x, y1, y2 = jnp.ones(4), jnp.ones(4), jnp.ones(1)
+
+    @jax.jit
+    def f(x, y):
+      return x + 1 if y.shape[0] > 2 else x + 2
+
+    f_out1 = f(x, y1)
+    f(x, y2)
+
+    g = f.lower(x, y1).compile()
+    g_out1 = g(x, y1)
+    self.assertArraysEqual(f_out1, g_out1)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        'Argument types differ from the types for which this computation was'
+        ' compiled'):
+      g(x, y2)
+
+  def test_aot_error_on_dced_shardings_mismatch(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    shape = (8, 2)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+
+    x = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+    y1 = jax.device_put(np_inp, NamedSharding(mesh, P('x')))
+    y2 = jax.device_put(np_inp, NamedSharding(mesh, P('y')))
+
+    @jax.jit
+    def f(x, y):
+      return x + 1
+
+    f_out1 = f(x, y1)
+    f(x, y2)
+
+    g = f.lower(x, y1).compile()
+    g_out1 = g(x, y1)
+    self.assertArraysEqual(f_out1, g_out1)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Compiled object called with input sharding.*does not match the "
+        r"sharding.*the computation was compiled with"):
+      g(x, y2)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

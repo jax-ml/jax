@@ -462,9 +462,9 @@ def xeinsum(spec: str, *operands):
 
   if len(operands) != len(all_in_named):
     raise ValueError("Expecting the same number of argument specs in the "
-                     "subscript ({in_spec}) as the number of operands. But got "
-                     "{len(all_in_named)} argument specs for "
-                     "{len(operands)} operands")
+                     f"subscript ({in_spec}) as the number of operands. But got "
+                     f"{len(all_in_named)} argument specs for "
+                     f"{len(operands)} operands")
 
   if len(operands) > 2:
     raise NotImplementedError("Only one or two operands are supported. "
@@ -775,7 +775,7 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
                                 avals_in=[scalar_aval] * 2, avals_out=[scalar_aval])
       out_nodes = lower_reducer(
           reducer_ctx, *([a] for a in reducer_block.arguments))
-      hlo.ReturnOp(util.flatten(out_nodes))
+      hlo.return_(util.flatten(out_nodes))
     return op.result
 
   return [all_reduce(aval, x) for aval, x in zip(ctx.avals_in, args)]
@@ -870,7 +870,7 @@ def _ppermute_lowering(ctx, x, *, axis_name, perm):
 
   full_perm = np.zeros((len(replica_groups), len(perm), 2), np.int64)
   for i, grp in enumerate(replica_groups):
-    grp = list(sorted(grp))
+    grp = sorted(grp)
     for j, (src, dst) in enumerate(perm):
       full_perm[i, j, 0] = grp[src]
       full_perm[i, j, 1] = grp[dst]
@@ -1191,7 +1191,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
       new_shape = list(x_aval.shape)
       new_shape.insert(all_gather_dimension, 1)
       broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
-      x = hlo.BroadcastInDimOp(
+      x = hlo.broadcast_in_dim(
           mlir.aval_to_ir_type(x_aval.update(shape=new_shape)), x,
           mlir.dense_int_elements(broadcast_dimensions))
     replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
@@ -1359,12 +1359,12 @@ def _reduce_scatter_lowering(
                               avals_out=[scalar_aval])
     out_nodes = lower_reducer(
         reducer_ctx, *([a] for a in reducer_block.arguments))
-    hlo.ReturnOp(util.flatten(out_nodes))
+    hlo.return_(util.flatten(out_nodes))
 
   if tiled:
     return op.results
   else:
-    return hlo.ReshapeOp(mlir.aval_to_ir_type(aval_out), op.result).results
+    return [hlo.reshape(mlir.aval_to_ir_type(aval_out), op.result)]
 
 def _reduce_scatter_lowering_via_reducer(
   prim, reducer, ctx, x,
@@ -1473,31 +1473,48 @@ core.axis_substitution_rules[reduce_scatter_p] = \
     partial(_subst_all_names_in_param, 'axis_name')
 
 
-def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None, tiled=False):
-  """Compute an all-reduce sum over the axis ``axis_name``, and scatter the result.
+def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
+                 tiled=False):
+  """
+  Like ``psum(x, axis_name)`` but each device retains only part of the result.
+
+  For example, ``psum_scatter(x, axis_name, scatter_dimension=0, tiled=False)``
+  computes the same value as ``psum(x, axis_name)[axis_index(axis_name)]``, but
+  it is more efficient. Thus the ``psum`` result is left scattered along the
+  mapped axis.
+
+  One efficient algorithm for computing ``psum(x, axis_name)`` is to perform a
+  ``psum_scatter`` followed by an ``all_gather``, essentially evaluating
+  ``all_gather(psum_scatter(x, axis_name))``. So we can think of
+  ``psum_scatter`` as "the first half" of a ``psum``.
 
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
-    axis_name: hashable Python object used to name a pmapped axis (see the
+    axis_name: hashable Python object used to name a mapped axis (see the
       :func:`jax.pmap` documentation for more details).
-    scatter_dimension: a positional axis into which the all reduce result along
+    scatter_dimension: a positional axis into which the all-reduce result along
       ``axis_name`` will be scattered.
-    axis_index_groups: optional list of lists containing axis indices (e.g. for
-      an axis of size 4, [[0, 1], [2, 3]] would run reduce-scatter over the
-      first two and the last two replicas). Groups must cover all axis indices
-      exactly once, and all groups must be the same size.
-    tiled: when ``False``, the size of dimension in ``scatter_dimension`` must
-      match the size of axis ``axis_name`` (or the group size if
-      ``axis_index_groups`` is given). After scattering the all reduce result
-      along ``scatter_dimension``, the output is sequeezed by removing
-      ``scatter_dimension``. When ``True``, the size of dimension in
-      ``scatter_dimension` must be dividible by the size of axis ``axis_name``
-      (or the group size if ``axis_index_groups`` is given),
-      and ``scatter_dimension`` is preserved.
+    axis_index_groups: optional list of lists of integers containing axis
+      indices. For example, for an axis of size 4,
+      ``axis_index_groups=[[0, 1], [2, 3]]`` would run reduce-scatter over the
+      first two and the last two axis indices. Groups must cover all axis
+      indices exactly once, and all groups must be the same size.
+    tiled: boolean representing whether to use rank-preserving 'tiled' behavior.
+      When ``False`` (the default value), the size of dimension in
+      ``scatter_dimension`` must match the size of axis ``axis_name`` (or the
+      group size if ``axis_index_groups`` is given). After scattering the
+      all-reduce result along ``scatter_dimension``, the output is sequeezed by
+      removing ``scatter_dimension``, so the result has lower rank than the
+      input. When ``True``, the size of dimension in ``scatter_dimension`` must
+      be dividible by the size of axis ``axis_name`` (or the group size if
+      ``axis_index_groups`` is given), and the ``scatter_dimension`` axis is
+      preserved (so the result has the same rank as the input).
 
   Returns:
     Array(s) with the similar shape as ``x``, except the size of dimension in
-    position``scatter_dimension`` is divided by the size of axis ``axis_name``.
+    position ``scatter_dimension`` is divided by the size of axis ``axis_name``
+    (when ``tiled=True``), or the dimension in position ``scatter_dimension`` is
+    eliminated (when ``tiled=False``).
 
   For example, with 4 XLA devices available:
 
@@ -1565,13 +1582,13 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
       (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
   )
   if is_spmd:
-    device_id = hlo.PartitionIdOp()
+    device_id = hlo.partition_id()
   else:
-    device_id = hlo.ReplicaIdOp()
-  unsigned_index = hlo.RemOp(hlo.DivOp(device_id, div), mod)
-  return hlo.ConvertOp(
+    device_id = hlo.replica_id()
+  unsigned_index = hlo.remainder(hlo.divide(device_id, div), mod)
+  return hlo.convert(
       ir.RankedTensorType.get([], ir.IntegerType.get_signless(32)),
-      unsigned_index).result
+      unsigned_index)
 
 def _axis_index_lowering(ctx, *, axis_name):
   return [

@@ -35,7 +35,7 @@ _R2C = 2
 
 def _dynamic_ducc_fft_descriptor(
     dtype, ndims: int, fft_type: FftType, fft_lengths: list[int]
-) -> tuple[bytes]:
+) -> bytes:
   assert len(fft_lengths) >= 1
   assert len(fft_lengths) <= ndims, (fft_lengths, ndims)
 
@@ -79,9 +79,9 @@ def dynamic_ducc_fft_hlo(
   assert 0 not in a_type.shape
 
   u8_type = ir.IntegerType.get_unsigned(8)
-  descriptor = hlo.ConstantOp(
+  descriptor = hlo.constant(
       ir.DenseElementsAttr.get(
-          np.frombuffer(descriptor_bytes, dtype=np.uint8), type=u8_type)).result
+          np.frombuffer(descriptor_bytes, dtype=np.uint8), type=u8_type))
   layout = tuple(range(ndims - 1, -1, -1))
   return custom_call(
       "dynamic_ducc_fft",

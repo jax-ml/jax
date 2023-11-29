@@ -162,9 +162,10 @@ possible. The `git rebase -i` command might be useful to this end.
 
 ### Linting and Type-checking
 
-JAX uses [mypy](https://mypy.readthedocs.io/) and [flake8](https://flake8.pycqa.org/)
-to statically test code quality; the easiest way to run these checks locally is via
-the [pre-commit](https://pre-commit.com/) framework:
+JAX uses [mypy](https://mypy.readthedocs.io/) and
+[ruff](https://docs.astral.sh/ruff/) to statically test code quality; the
+easiest way to run these checks locally is via the
+[pre-commit](https://pre-commit.com/) framework:
 
 ```bash
 pip install pre-commit

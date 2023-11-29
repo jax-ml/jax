@@ -515,7 +515,7 @@ def ldexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   x2 = lax.convert_element_type(x2, int_type)
 
   mask = (1 << info.nexp) - 1
-  bias = ((1 << info.nexp) - 1) >> 1
+  bias = 1 - info.minexp
   x, e = _normalize_float(x1)
   x2 += e + ((x >> info.nmant) & mask) - bias
 
@@ -555,7 +555,7 @@ def frexp(x: ArrayLike, /) -> tuple[Array, Array]:
   dtype = dtypes.dtype(x)
   info = dtypes.finfo(dtype)
   mask = (1 << info.nexp) - 1
-  bias = ((1 << info.nexp) - 1) >> 1
+  bias = 1 - info.minexp
 
   x1, x2 = _normalize_float(x)
   x2 += ((x1 >> info.nmant) & mask) - bias + 1

@@ -53,8 +53,12 @@ pybind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = True,
     features = ["-use_header_modules"],
     module_name = "_lapack",
+    pytype_srcs = [
+        "_lapack.pyi",
+    ],
     deps = [
         ":lapack_kernels",
         "//jaxlib:kernel_nanobind_helpers",
@@ -90,8 +94,12 @@ pybind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = True,
     features = ["-use_header_modules"],
     module_name = "_ducc_fft",
+    pytype_srcs = [
+        "_ducc_fft.pyi",
+    ],
     deps = [
         ":ducc_fft_flatbuffers_cc",
         ":ducc_fft_kernels",

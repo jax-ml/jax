@@ -702,9 +702,10 @@ def make_xmap_callable(fun: lu.WrappedFun,
         tiling_method=tiling_method,
         lowering_parameters=lowering_parameters)
   else:
+    closed_jaxpr = dispatch._trace_to_jaxpr(f, in_avals, 'jit', name)
     return dispatch.sharded_lowering(
-        f, name, donated_invars, True, False, in_avals, (None,) * len(in_avals),
-        lowering_parameters=lowering_parameters)
+        closed_jaxpr, name, donated_invars, True, False, in_avals,
+        (None,) * len(in_avals), lowering_parameters=lowering_parameters)
 
 
 class EvaluationPlan(NamedTuple):

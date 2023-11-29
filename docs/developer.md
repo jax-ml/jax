@@ -60,7 +60,7 @@ pip install dist/*.whl  # installs jaxlib (includes XLA)
 ```
 
 To build `jaxlib` with CUDA support, use `python build/build.py --enable_cuda`;
-to build with TPU support, use `python build/build.py --enable_tpu`.
+to build with TPU support, use `python build/build.py`.
 
 See `python build/build.py --help` for configuration options, including ways to
 specify the paths to CUDA and CUDNN, which you must have installed. Here
@@ -237,6 +237,9 @@ MULTI_GPU="--run_under $PWD/build/parallel_accelerator_execute.sh --test_env=JAX
 bazel test //tests:gpu_tests //tests:backend_independent_tests --test_env=XLA_PYTHON_CLIENT_PREALLOCATE=false --test_tag_filters=-multiaccelerator $MULTI_GPU
 ```
 
+Some test targets, like a `//tests:logpcg_tests` optionally use matplotlib, so you may need to `pip
+install matplotlib` to run tests via bazel.
+
 ### Using `pytest`
 
 To run all the JAX tests using `pytest`, we recommend using `pytest-xdist`,
@@ -339,20 +342,20 @@ pre-commit run mypy
 
 ## Linting
 
-JAX uses the [flake8](https://flake8.pycqa.org/) linter to ensure code quality. You can check
-your local changes by running:
+JAX uses the [ruff](https://docs.astral.sh/ruff/) linter to ensure code
+quality. You can check your local changes by running:
 
 ```
-pip install flake8
-flake8 jax
+pip install ruff
+ruff jax
 ```
 
 Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework to run this
-on all staged files in your git repository, automatically using the same flake8 version as
+on all staged files in your git repository, automatically using the same ruff version as
 the GitHub tests:
 
 ```
-pre-commit run flake8
+pre-commit run ruff
 ```
 
 ## Update documentation

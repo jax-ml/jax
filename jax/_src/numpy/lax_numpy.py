@@ -49,6 +49,7 @@ from jax.tree_util import tree_leaves, tree_flatten, tree_map
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
+from jax._src.custom_derivatives import custom_jvp
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.api_util import _ensure_index_tuple
@@ -110,6 +111,8 @@ set_printoptions = np.set_printoptions
 
 @util._wraps(np.iscomplexobj)
 def iscomplexobj(x: Any) -> bool:
+  if x is None:
+    return False
   try:
     typ = x.dtype.type
   except AttributeError:
@@ -346,7 +349,7 @@ def trunc(x: ArrayLike) -> Array:
   return where(lax.lt(x, _lax_const(x, 0)), ufuncs.ceil(x), ufuncs.floor(x))
 
 
-_PREFERRED_ELEMENT_TYPE_DESCRIPTION = """
+_CONV_PREFERRED_ELEMENT_TYPE_DESCRIPTION = """
 preferred_element_type : dtype, optional
     If specified, accumulate results and return a result of the given data type.
     If not specified, the function instead follows the numpy convention of always
@@ -394,7 +397,7 @@ def _conv(x: Array, y: Array, mode: str, op: str, precision: PrecisionLike,
 
 
 @util._wraps(np.convolve, lax_description=_PRECISION_DOC,
-             extra_params=_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
+             extra_params=_CONV_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('mode', 'precision', 'preferred_element_type'))
 def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
              precision: PrecisionLike = None,
@@ -405,7 +408,7 @@ def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
 
 
 @util._wraps(np.correlate, lax_description=_PRECISION_DOC,
-             extra_params=_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
+             extra_params=_CONV_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('mode', 'precision', 'preferred_element_type'))
 def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
               precision: PrecisionLike = None,
@@ -423,7 +426,7 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
   if isinstance(bins, str):
     raise NotImplementedError("string values for `bins` not implemented.")
   util.check_arraylike("histogram_bin_edges", a, bins)
-  arr = ravel(a)
+  arr = asarray(a)
   dtype = dtypes.to_inexact_dtype(arr.dtype)
   if _ndim(bins) == 1:
     return asarray(bins, dtype=dtype)
@@ -448,18 +451,18 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
               density: bool | None = None) -> tuple[Array, Array]:
   if weights is None:
     util.check_arraylike("histogram", a, bins)
-    a = ravel(*util.promote_dtypes_inexact(a))
+    a, = util.promote_dtypes_inexact(a)
     weights = ones_like(a)
   else:
     util.check_arraylike("histogram", a, bins, weights)
     if shape(a) != shape(weights):
       raise ValueError("weights should have the same shape as a.")
-    a, weights = map(ravel, util.promote_dtypes_inexact(a, weights))
+    a, weights = util.promote_dtypes_inexact(a, weights)
 
   bin_edges = histogram_bin_edges(a, bins, range, weights)
   bin_idx = searchsorted(bin_edges, a, side='right')
   bin_idx = where(a == bin_edges[-1], len(bin_edges) - 1, bin_idx)
-  counts = bincount(bin_idx, weights, length=len(bin_edges))[1:]
+  counts = zeros(len(bin_edges), weights.dtype).at[bin_idx].add(weights)[1:]
   if density:
     bin_widths = diff(bin_edges)
     counts = counts / bin_widths / counts.sum()
@@ -582,6 +585,10 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
 @partial(jit, static_argnames=('k', 'axes'))
 def rot90(m: ArrayLike, k: int = 1, axes: tuple[int, int] = (0, 1)) -> Array:
   util.check_arraylike("rot90", m)
+  if np.ndim(m) < 2:
+    raise ValueError("rot90 requires its first argument to have ndim at least "
+                     f"two, but got first argument of shape {np.shape(m)}, "
+                     f"which has ndim {np.ndim(m)}")
   ax1, ax2 = axes
   ax1 = _canonicalize_axis(ax1, ndim(m))
   ax2 = _canonicalize_axis(ax2, ndim(m))
@@ -780,12 +787,14 @@ def isrealobj(x: Any) -> bool:
 
 @util._wraps(np.reshape, lax_description=_ARRAY_VIEW_DOC)
 def reshape(a: ArrayLike, newshape: DimSize | Shape, order: str = "C") -> Array:
+  __tracebackhide__ = True
   util.check_arraylike("reshape", a)
   try:
     # forward to method for ndarrays
     return a.reshape(newshape, order=order)  # type: ignore[call-overload,union-attr]
   except AttributeError:
-    return asarray(a).reshape(newshape, order=order)
+    pass
+  return asarray(a).reshape(newshape, order=order)
 
 
 @util._wraps(np.ravel, lax_description=_ARRAY_VIEW_DOC)
@@ -1054,25 +1063,27 @@ def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
   return jitted_interp(x, xp, fp, left, right, period)
 
 
-@overload
-def where(condition: ArrayLike, x: Literal[None] = None, y: Literal[None] = None, *,
-          size: int | None = None,
+@overload  # type: ignore[no-overload-impl]
+def where(condition: ArrayLike, x: Literal[None] = None,
+          y: Literal[None] = None, /, *, size: int | None = None,
           fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
           ) -> tuple[Array, ...]: ...
 
 @overload
-def where(condition: ArrayLike, x: ArrayLike, y: ArrayLike, *,
+def where(condition: ArrayLike, x: ArrayLike, y: ArrayLike, / ,*,
           size: int | None = None,
           fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
           ) -> Array: ...
 
 @overload
 def where(condition: ArrayLike, x: ArrayLike | None = None,
-          y: ArrayLike | None = None, *, size: int | None = None,
+          y: ArrayLike | None = None, /, *, size: int | None = None,
           fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
           ) -> Array | tuple[Array, ...]: ...
 
-@util._wraps(np.where,
+_DEPRECATED_WHERE_ARG = object()
+
+@util._wraps(np.where,  # type: ignore[no-redef]
   lax_description=_dedent("""
     At present, JAX does not support JIT-compilation of the single-argument form
     of :py:func:`jax.numpy.where` because its output shape is data-dependent. The
@@ -1096,18 +1107,43 @@ def where(condition: ArrayLike, x: ArrayLike | None = None,
     fill_value : array_like, optional
         When ``size`` is specified and there are fewer than the indicated number of elements, the
         remaining elements will be filled with ``fill_value``, which defaults to zero."""))
-def where(condition: ArrayLike, x: ArrayLike | None = None,
-          y: ArrayLike | None = None, *, size: int | None = None,
-          fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
-    ) -> Array | tuple[Array, ...]:
-  if x is None and y is None:
-    util.check_arraylike("where", condition)
-    return nonzero(condition, size=size, fill_value=fill_value)
+def where(
+    acondition = None, if_true = None, if_false = None, /, *,
+    size=None, fill_value=None,
+    # Deprecated keyword-only names.
+    condition = _DEPRECATED_WHERE_ARG, x = _DEPRECATED_WHERE_ARG,
+    y = _DEPRECATED_WHERE_ARG
+) -> Array | tuple[Array, ...]:
+  if (condition is not _DEPRECATED_WHERE_ARG or x is not _DEPRECATED_WHERE_ARG
+      or y is not _DEPRECATED_WHERE_ARG):
+    # TODO(phawkins): deprecated Nov 17 2023, remove after deprecation expires.
+    warnings.warn(
+        "Passing condition, x, or y to jax.numpy.where via keyword arguments "
+        "is deprecated.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+  if condition is not _DEPRECATED_WHERE_ARG:
+    if acondition is not None:
+      raise ValueError("condition should be a positional-only argument")
+    acondition = condition
+  if x is not _DEPRECATED_WHERE_ARG:
+    if if_true is not None:
+      raise ValueError("x should be a positional-only argument")
+    if_true = x
+  if y is not _DEPRECATED_WHERE_ARG:
+    if if_false is not None:
+      raise ValueError("y should be a positional-only argument")
+    if_false = y
+
+  if if_true is None and if_false is None:
+    util.check_arraylike("where", acondition)
+    return nonzero(acondition, size=size, fill_value=fill_value)
   else:
-    util.check_arraylike("where", condition, x, y)
+    util.check_arraylike("where", acondition, if_true, if_false)
     if size is not None or fill_value is not None:
       raise ValueError("size and fill_value arguments cannot be used in three-term where function.")
-    return util._where(condition, x, y)
+    return util._where(acondition, if_true, if_false)
 
 
 @util._wraps(np.select)
@@ -1139,7 +1175,8 @@ Additionally, while ``np.bincount`` raises an error if the input array contains
 negative values, ``jax.numpy.bincount`` clips negative values to zero.
 """)
 def bincount(x: ArrayLike, weights: ArrayLike | None = None,
-             minlength: int = 0, *, length: int | None = None) -> Array:
+             minlength: int = 0, *, length: int | None = None
+             ) -> Array:
   util.check_arraylike("bincount", x)
   if not issubdtype(_dtype(x), integer):
     raise TypeError(f"x argument to bincount must have an integer type; got {_dtype(x)}")
@@ -1370,21 +1407,22 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
   arr = atleast_1d(a)
   del a
   mask = arr if arr.dtype == bool else (arr != 0)
-  if size is None:
-    size = mask.sum()
-  size = core.concrete_dim_or_error(size,
+  calculated_size = mask.sum() if size is None else size
+  calculated_size = core.concrete_dim_or_error(calculated_size,
     "The size argument of jnp.nonzero must be statically specified "
     "to use jnp.nonzero within JAX transformations.")
-  if arr.size == 0 or size == 0:
-    return tuple(zeros(size, int) for dim in arr.shape)
-  flat_indices = reductions.cumsum(bincount(reductions.cumsum(mask), length=size))
-  strides = (np.cumprod(arr.shape[::-1])[::-1] // arr.shape).astype(int_)
+  if arr.size == 0 or calculated_size == 0:
+    return tuple(zeros(calculated_size, int) for dim in arr.shape)
+  flat_indices = reductions.cumsum(
+      bincount(reductions.cumsum(mask),
+               length=calculated_size))  # type: ignore[arg-type]
+  strides: np.ndarray = (np.cumprod(arr.shape[::-1])[::-1] // arr.shape).astype(int_)
   out = tuple((flat_indices // stride) % size for stride, size in zip(strides, arr.shape))
-  if size is not None and fill_value is not None:
+  if fill_value is not None:
     fill_value_tup = fill_value if isinstance(fill_value, tuple) else arr.ndim * (fill_value,)
     if any(_shape(val) != () for val in fill_value_tup):
       raise ValueError(f"fill_value must be a scalar or a tuple of length {arr.ndim}; got {fill_value}")
-    fill_mask = arange(size) >= mask.sum()
+    fill_mask = arange(calculated_size) >= mask.sum()
     out = tuple(where(fill_mask, fval, entry) for fval, entry in safe_zip(fill_value_tup, out))
   return out
 
@@ -1859,6 +1897,7 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
 @util._wraps(np.vstack)
 def vstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
+  arrs: Array | list[Array]
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(atleast_2d)(tup)
   else:
@@ -1871,6 +1910,7 @@ def vstack(tup: np.ndarray | Array | Sequence[ArrayLike],
 @util._wraps(np.hstack)
 def hstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
+  arrs: Array | list[Array]
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(atleast_1d)(tup)
     arr0_ndim = arrs.ndim - 1
@@ -1885,6 +1925,7 @@ def hstack(tup: np.ndarray | Array | Sequence[ArrayLike],
 @util._wraps(np.dstack)
 def dstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
+  arrs: Array | list[Array]
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(atleast_3d)(tup)
   else:
@@ -1896,6 +1937,7 @@ def dstack(tup: np.ndarray | Array | Sequence[ArrayLike],
 
 @util._wraps(np.column_stack)
 def column_stack(tup: np.ndarray | Array | Sequence[ArrayLike]) -> Array:
+  arrs: Array | list[Array] | np.ndarray
   if isinstance(tup, (np.ndarray, Array)):
     arrs = jax.vmap(lambda x: atleast_2d(x).T)(tup) if tup.ndim < 3 else tup
   else:
@@ -1958,6 +2000,16 @@ def block(arrays: ArrayLike | list[ArrayLike]) -> Array:
   out, _ = _block(arrays)
   return out
 
+
+@overload
+def atleast_1d() -> list[Array]:
+  ...
+@overload
+def atleast_1d(x: ArrayLike, /) -> Array:
+  ...
+@overload
+def atleast_1d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
+  ...
 @util._wraps(np.atleast_1d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
 def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
@@ -1970,6 +2022,15 @@ def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
     return [atleast_1d(arr) for arr in arys]
 
 
+@overload
+def atleast_2d() -> list[Array]:
+  ...
+@overload
+def atleast_2d(x: ArrayLike, /) -> Array:
+  ...
+@overload
+def atleast_2d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
+  ...
 @util._wraps(np.atleast_2d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
 def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
@@ -1987,6 +2048,15 @@ def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
     return [atleast_2d(arr) for arr in arys]
 
 
+@overload
+def atleast_3d() -> list[Array]:
+  ...
+@overload
+def atleast_3d(x: ArrayLike, /) -> Array:
+  ...
+@overload
+def atleast_3d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
+  ...
 @util._wraps(np.atleast_3d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
 def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
@@ -2045,7 +2115,14 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     object = object.__jax_array__()
   object = tree_map(lambda leaf: leaf.__jax_array__()
                     if hasattr(leaf, "__jax_array__") else leaf, object)
-  leaves = tree_leaves(object)
+  leaves = tree_leaves(object, is_leaf=lambda x: x is None)
+  if any(leaf is None for leaf in leaves):
+    # Added Nov 16 2023
+    warnings.warn(
+      "None encountered in jnp.array(); this is currently treated as NaN. "
+      "In the future this will result in an error.",
+      FutureWarning, stacklevel=2)
+    leaves = tree_leaves(object)
   if dtype is None:
     # Use lattice_result_type rather than result_type to avoid canonicalization.
     # Otherwise, weakly-typed inputs would have their dtypes canonicalized.
@@ -2187,6 +2264,7 @@ def full_like(a: ArrayLike | DuckTypedArray,
 def zeros(shape: Any, dtype: DTypeLike | None = None) -> Array:
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
+  if (m := _check_forgot_shape_tuple("zeros", shape, dtype)): raise TypeError(m)
   dtypes.check_user_dtype_supported(dtype, "zeros")
   shape = canonicalize_shape(shape)
   return lax.full(shape, 0, _jnp_dtype(dtype))
@@ -2195,17 +2273,26 @@ def zeros(shape: Any, dtype: DTypeLike | None = None) -> Array:
 def ones(shape: Any, dtype: DTypeLike | None = None) -> Array:
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
+  if (m := _check_forgot_shape_tuple("ones", shape, dtype)): raise TypeError(m)
   shape = canonicalize_shape(shape)
   dtypes.check_user_dtype_supported(dtype, "ones")
   return lax.full(shape, 1, _jnp_dtype(dtype))
-
 
 @util._wraps(np.empty, lax_description="""\
 Because XLA cannot create uninitialized arrays, the JAX version will
 return an array initialized with zeros.""")
 def empty(shape: Any, dtype: DTypeLike | None = None) -> Array:
+  if (m := _check_forgot_shape_tuple("empty", shape, dtype)): raise TypeError(m)
   dtypes.check_user_dtype_supported(dtype, "empty")
   return zeros(shape, dtype)
+
+def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:  # type: ignore
+  if isinstance(dtype, int) and isinstance(shape, int):
+    return (f"Cannot interpret '{dtype}' as a data type."
+            f"\n\nDid you accidentally write "
+            f"`jax.numpy.{name}({shape}, {dtype})` "
+            f"when you meant `jax.numpy.{name}(({shape}, {dtype}))`, i.e. "
+            "with a single tuple argument for the shape?")
 
 
 @util._wraps(np.array_equal)
@@ -2558,6 +2645,7 @@ def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
   return output
 
 
+@custom_jvp
 @util._wraps(np.i0)
 @jit
 def i0(x: ArrayLike) -> Array:
@@ -2566,6 +2654,11 @@ def i0(x: ArrayLike) -> Array:
     raise ValueError(f"Unsupported input type to jax.numpy.i0: {_dtype(x)}")
   x_arr = lax.abs(x_arr)
   return lax.mul(lax.exp(x_arr), lax.bessel_i0e(x_arr))
+
+@i0.defjvp
+def _i0_jvp(primals, tangents):
+  primal_out, tangent_out = jax.jvp(i0.fun, primals, tangents)
+  return primal_out, where(primals[0] == 0, 0.0, tangent_out)
 
 
 @util._wraps(np.ix_)
@@ -3129,7 +3222,15 @@ def apply_over_axes(func: Callable[[ArrayLike, int], Array], a: ArrayLike,
 ### Tensor contraction operations
 
 
-@util._wraps(np.dot, lax_description=_PRECISION_DOC)
+_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION = """
+preferred_element_type : dtype, optional
+    If specified, accumulate results and return a result of the given data type.
+    If not specified, the accumulation dtype is determined from the type promotion
+    rules of the input array dtypes.
+"""
+
+@util._wraps(np.dot, lax_description=_PRECISION_DOC,
+             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def dot(a: ArrayLike, b: ArrayLike, *,
         precision: PrecisionLike = None,
@@ -3161,7 +3262,8 @@ def dot(a: ArrayLike, b: ArrayLike, *,
   return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
-@util._wraps(np.matmul, module='numpy', lax_description=_PRECISION_DOC)
+@util._wraps(np.matmul, module='numpy', lax_description=_PRECISION_DOC,
+             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def matmul(a: ArrayLike, b: ArrayLike, *,
            precision: PrecisionLike = None,
@@ -3233,7 +3335,8 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
   return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
-@util._wraps(np.vdot, lax_description=_PRECISION_DOC)
+@util._wraps(np.vdot, lax_description=_PRECISION_DOC,
+             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def vdot(
     a: ArrayLike, b: ArrayLike, *,
@@ -3247,7 +3350,8 @@ def vdot(
              preferred_element_type=preferred_element_type)
 
 
-@util._wraps(np.tensordot, lax_description=_PRECISION_DOC)
+@util._wraps(np.tensordot, lax_description=_PRECISION_DOC,
+             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 def tensordot(a: ArrayLike, b: ArrayLike,
               axes: int | Sequence[int] | Sequence[Sequence[int]] = 2,
               *, precision: PrecisionLike = None,
@@ -3543,7 +3647,8 @@ def _einsum(
   return lax_internal._convert_element_type(operands[0], preferred_element_type, output_weak_type)
 
 
-@util._wraps(np.inner, lax_description=_PRECISION_DOC)
+@util._wraps(np.inner, lax_description=_PRECISION_DOC,
+             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def inner(
     a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None,
@@ -4740,6 +4845,7 @@ def _expand_bool_indices(idx, shape):
     total_dims = sum(_ndim(e) if _is_boolean_index(e) else 1 for e in idx
                      if e is not None and e is not Ellipsis)
   ellipsis_offset = 0
+  newaxis_offset = 0
   for dim_number, i in enumerate(idx):
     try:
       abstract_i = core.get_aval(i)
@@ -4757,7 +4863,7 @@ def _expand_bool_indices(idx, shape):
         raise TypeError("JAX arrays do not support boolean scalar indices")
       else:
         i_shape = _shape(i)
-        start = len(out) + ellipsis_offset
+        start = len(out) + ellipsis_offset - newaxis_offset
         expected_shape = shape[start: start + _ndim(i)]
         if i_shape != expected_shape:
           raise IndexError("boolean index did not match shape of indexed array in index "
@@ -4767,6 +4873,8 @@ def _expand_bool_indices(idx, shape):
       out.append(i)
     if i is Ellipsis:
       ellipsis_offset = len(shape) - total_dims - 1
+    if i is None:
+      newaxis_offset += 1
   return tuple(out)
 
 
@@ -4802,7 +4910,7 @@ def _is_scalar(x):
 
 def _canonicalize_tuple_index(arr_ndim, idx, array_name='array'):
   """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""
-  len_without_none = sum(1 for e in idx if e is not None and e is not Ellipsis)
+  len_without_none = sum(e is not None and e is not Ellipsis for e in idx)
   if len_without_none > arr_ndim:
     raise IndexError(
         f"Too many indices for {array_name}: {len_without_none} "

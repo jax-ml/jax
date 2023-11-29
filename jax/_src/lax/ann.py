@@ -295,8 +295,8 @@ def _comparator_builder_mlir(ctx, op_type, is_max_k):
   with ir.InsertionPoint(entry_block):
     p0, p1, _, _ = entry_block.arguments
     direction = hlo.ComparisonDirectionAttr.get('GT' if is_max_k else 'LT')
-    cmp_result = hlo.CompareOp(p0, p1, comparison_direction=direction)
-    hlo.ReturnOp(cmp_result)
+    cmp_result = hlo.compare(p0, p1, comparison_direction=direction)
+    hlo.return_([cmp_result])
 
   return comparator
 
@@ -321,7 +321,7 @@ def _approx_top_k_lowering(ctx, operand, *, k,
   iota = mlir.iota(ctx, core.ShapedArray(ctx.avals_in[0].shape, np.int32),
                    dimension=reduction_dimension)
 
-  init_arg = hlo.ConstantOp(ir.DenseElementsAttr.get(np.int32(-1))).result
+  init_arg = hlo.constant(ir.DenseElementsAttr.get(np.int32(-1)))
   init_val_array = _get_init_val_literal(ctx.avals_in[0].dtype, is_max_k)
   init_val = mlir.ir_constant(init_val_array.reshape(()))
 

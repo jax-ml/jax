@@ -19,7 +19,9 @@ load(
     "//jaxlib:jax.bzl",
     "jax_extend_internal_users",
     "jax_extra_deps",
+    "jax_internal_export_back_compat_test_util_visibility",
     "jax_internal_packages",
+    "jax_internal_test_harnesses_visibility",
     "jax_test_util_visibility",
     "jax_visibility",
     "mosaic_internal_users",
@@ -48,6 +50,20 @@ config_setting(
     name = "enable_jaxlib_build",
     flag_values = {
         ":build_jaxlib": "True",
+    },
+)
+
+# When `build_cuda_plugin_from_source` is true, it assumes running `bazel test` without preinstalled
+# cuda plugin.
+bool_flag(
+    name = "build_cuda_plugin_from_source",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "enable_build_cuda_plugin_from_source",
+    flag_values = {
+        ":build_cuda_plugin_from_source": "True",
     },
 )
 
@@ -113,13 +129,43 @@ py_library(
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
+# TODO(necula): break the internal_test_util into smaller build targets.
 py_library(
     name = "internal_test_util",
     testonly = 1,
-    srcs = glob(["_src/internal_test_util/**/*.py"]),
+    srcs = glob(
+        ["_src/internal_test_util/**/*.py"],  # include
+        [
+            "_src/internal_test_util/test_harnesses.py",
+            "_src/internal_test_util/export_back_compat_test_util.py",
+        ],  # exclude
+    ),
     visibility = [":internal"],
     deps = [
         ":jax",
+    ] + py_deps("numpy"),
+)
+
+py_library(
+    name = "internal_test_harnesses",
+    testonly = 1,
+    srcs = ["_src/internal_test_util/test_harnesses.py"],
+    visibility = [":internal"] + jax_internal_test_harnesses_visibility,
+    deps = [
+        ":jax",
+    ] + py_deps("numpy"),
+)
+
+py_library(
+    name = "internal_export_back_compat_test_util",
+    testonly = 1,
+    srcs = ["_src/internal_test_util/export_back_compat_test_util.py"],
+    visibility = [
+        ":internal",
+    ] + jax_internal_export_back_compat_test_util_visibility,
+    deps = [
+        ":jax",
+        "//jax/experimental/export",
     ] + py_deps("numpy"),
 )
 
@@ -214,6 +260,7 @@ py_library_providing_imports_info(
         ":effects",
         ":environment_info",
         ":jaxpr_util",
+        ":layout",
         ":lazy_loader",
         ":mesh",
         ":mlir",
@@ -464,6 +511,7 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
+        ":layout",
         ":op_shardings",
         ":partial_eval",
         ":pickle_util",
@@ -612,6 +660,16 @@ pytype_strict_library(
 pytype_strict_library(
     name = "sharding",
     srcs = ["_src/sharding.py"],
+    deps = [
+        ":util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
+    name = "layout",
+    srcs = ["_src/layout.py"],
     deps = [
         ":util",
         ":xla_bridge",
@@ -802,6 +860,17 @@ pytype_library(
 )
 
 pytype_library(
+    name = "experimental_array_api",
+    srcs = glob(
+        [
+            "experimental/array_api/*.py",
+        ],
+    ),
+    visibility = [":internal"],
+    deps = [":jax"],
+)
+
+pytype_library(
     name = "experimental_sparse",
     srcs = glob(
         [
@@ -833,7 +902,7 @@ pytype_library(
         "example_libraries/optimizers.py",
     ],
     visibility = ["//visibility:public"],
-    deps = [":jax"],
+    deps = [":jax"] + py_deps("numpy"),
 )
 
 pytype_library(

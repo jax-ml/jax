@@ -41,6 +41,8 @@ mosaic_internal_users = []
 pallas_gpu_internal_users = []
 pallas_tpu_internal_users = []
 
+jax_internal_export_back_compat_test_util_visibility = []
+jax_internal_test_harnesses_visibility = []
 jax_test_util_visibility = []
 loops_visibility = []
 
@@ -199,6 +201,9 @@ def jax_test(
                 "//jax:test_util",
             ] + deps + select({
                 "//jax:enable_jaxlib_build": ["//jaxlib/cuda:gpu_only_test_deps"],
+                "//conditions:default": [],
+            }) + select({
+                "//jax:enable_build_cuda_plugin_from_source": ["//jax_plugins:gpu_plugin_only_test_deps"],
                 "//conditions:default": [],
             }),
             shard_count = test_shards,

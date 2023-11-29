@@ -11,11 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for multi-platform and cross-platform JAX export."""
+"""Tests for multi-platform and cross-platform JAX export.
+
+This module contains the tests parameterized by test_harnesses. These tests
+verify that the primitive lowering rules work properly in multi-platform and
+cross-platform lowering mode. The actual mechanism for multi-platform and
+cross-platform lowering is tested in export_test.py.
+"""
 
 import math
 import re
-from typing import Callable, Sequence
+from typing import Callable, Optional
 
 from absl import logging
 from absl.testing import absltest
@@ -24,12 +30,9 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax._src import pjit
 from jax._src import test_util as jtu
 from jax.experimental.export import export
-# TODO(necula): Move the primitive harness out of jax2tf so that we can move
-# this whole test out of jax2tf.
-from jax.experimental.jax2tf.tests import primitive_harness
+from jax._src.internal_test_util import test_harnesses
 
 
 def make_disjunction_regexp(*parts: str) -> re.Pattern[str]:
@@ -76,12 +79,18 @@ class PrimitiveTest(jtu.JaxTestCase):
   # code.
   # If you want to run this test for only one harness, add parameter
   # `one_containing="foo"` to parameterized below.
-  @primitive_harness.parameterized(
-      primitive_harness.all_harnesses,
+  @test_harnesses.parameterized(
+      test_harnesses.all_harnesses,
       include_jax_unimpl=False,
       #one_containing="",
   )
-  def test_prim(self, harness: primitive_harness.Harness):
+  @jtu.ignore_warning(
+      category=UserWarning,
+      message=("Using reduced precision for gradient of reduce-window min/max "
+               "operator to work around missing XLA support for pair-reductions")
+  )
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
+  def test_prim(self, harness: test_harnesses.Harness):
     if (jtu.device_under_test() == "gpu"
         and _known_failures_gpu.search(harness.fullname)):
       self.skipTest("failure to be investigated")
@@ -99,15 +108,23 @@ class PrimitiveTest(jtu.JaxTestCase):
 
     logging.info("Harness is not implemented on %s", unimplemented_platforms)
 
+    # Tolerances.
+    tol = None
+    if ("conv_general_dilated" in harness.fullname
+      and harness.dtype in [np.float32]):
+      tol = 1e-4
+
     self.export_and_compare_to_native(
       func_jax, *args,
-      unimplemented_platforms=unimplemented_platforms)
+      unimplemented_platforms=unimplemented_platforms,
+      tol=tol)
 
   def export_and_compare_to_native(
       self, func_jax: Callable,
       *args: jax.Array,
       unimplemented_platforms: set[str] = set(),
-      skip_run_on_platforms: set[str] = set()):
+      skip_run_on_platforms: set[str] = set(),
+      tol: Optional[float] = None):
     devices = [
         d
         for d in self.__class__.devices
@@ -140,7 +157,9 @@ class PrimitiveTest(jtu.JaxTestCase):
       native_res = func_jax(*device_args)
       logging.info("Running exported harness on %s", device)
       exported_res = export.call_exported(exp)(*device_args)
-      self.assertAllClose(native_res, exported_res)
+      if tol is not None:
+        logging.info(f"Using non-standard tolerance {tol}")
+      self.assertAllClose(native_res, exported_res, atol=tol, rtol=tol)
       # TODO(necula): Check HLO equivalence for the ultimate test.
 
   def test_psum_scatter(self):

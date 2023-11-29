@@ -17,11 +17,12 @@ import math
 import warnings
 from absl.testing import absltest
 from absl.testing import parameterized
+from absl import flags
 import unittest
 import jax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.lib import xla_extension_version
+from jax._src import config
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 from jax.ad_checkpoint import Offloadable, remat
@@ -31,8 +32,8 @@ from jax._src.sharding_impls import (NamedSharding, PositionalSharding,
                                      common_devices_indices_map)
 import numpy as np
 
-from jax import config
 config.parse_flags_with_absl()
+FLAGS = flags.FLAGS
 
 
 def get_memory_kinds_from_executable(f, args):
@@ -58,30 +59,23 @@ def _create_inputs(shape, pspec, mem_kind=None):
 # * nested jit
 
 
-class MemoriesTest(jtu.BufferDonationTestCase):
+class ShardingMemoriesTest(jtu.JaxTestCase):
 
   def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Memories do not work on CPU and GPU backends yet.")
+    # TODO(b/311021572)
+    if jtu.is_cloud_tpu():
+      self.skipTest("Experimental feature not yet implemented on Cloud TPU")
     super().setUp()
+    self.orig_memories_flag = config.enable_memories.value
+    jax.config.update('jax_enable_memories', True)
+    FLAGS.xla_tpu_enable_host_aware_passes = True
 
-  def _check_mem_kind(self, executable_kind, out_sharding, expected_kind):
-    out_kind = out_sharding.memory_kind
-    self.assertEqual(executable_kind, out_kind)
-    self.assertEqual(out_kind, expected_kind)
-    self.assertEqual(executable_kind, expected_kind)
-
-  def _check_device_put_addressable_shards(
-      self, out, inp, expected_sharding, expected_mem_kind, index=True):
-    self.assertArraysEqual(out, inp)
-    self.assertEqual(out.sharding, expected_sharding)
-    self.assertEqual(out.sharding.memory_kind, expected_mem_kind)
-    for s in out.addressable_shards:
-      if index:
-        self.assertArraysEqual(s.data, inp[s.index])
-      else:
-        self.assertArraysEqual(s.data, inp)
-      self.assertEqual(s.data.sharding.memory_kind, expected_mem_kind)
+  def tearDown(self):
+    jax.config.update('jax_enable_memories', self.orig_memories_flag)
+    FLAGS.xla_tpu_enable_host_aware_passes = False
+    super().tearDown()
 
   @parameterized.named_parameters(
       ("named_sharding", "named_sharding"),
@@ -201,6 +195,47 @@ class MemoriesTest(jtu.BufferDonationTestCase):
   def test_default_memory_kind(self):
     dev = jax.devices()[0]
     self.assertEqual(dev.default_memory().kind, "tpu_hbm")
+
+
+class MemoriesComputationTest(jtu.BufferDonationTestCase):
+
+  def setUp(self):
+    # TODO(yashkatariya): Enable all tests after memories XLA support is
+    # working.
+    self.skipTest('Enable after memories work with redesigned XLA support.')
+
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Memories do not work on CPU and GPU backends yet.")
+    # TODO(b/311021572)
+    if jtu.is_cloud_tpu():
+      self.skipTest("Experimental feature not yet implemented on Cloud TPU")
+    super().setUp()
+    self.orig_memories_flag = config.enable_memories.value
+    jax.config.update('jax_enable_memories', True)
+    FLAGS.xla_tpu_enable_host_aware_passes = True
+
+  def tearDown(self):
+    jax.config.update('jax_enable_memories', self.orig_memories_flag)
+    FLAGS.xla_tpu_enable_host_aware_passes = False
+    super().tearDown()
+
+  def _check_mem_kind(self, executable_kind, out_sharding, expected_kind):
+    out_kind = out_sharding.memory_kind
+    self.assertEqual(executable_kind, out_kind)
+    self.assertEqual(out_kind, expected_kind)
+    self.assertEqual(executable_kind, expected_kind)
+
+  def _check_device_put_addressable_shards(
+      self, out, inp, expected_sharding, expected_mem_kind, index=True):
+    self.assertArraysEqual(out, inp)
+    self.assertEqual(out.sharding, expected_sharding)
+    self.assertEqual(out.sharding.memory_kind, expected_mem_kind)
+    for s in out.addressable_shards:
+      if index:
+        self.assertArraysEqual(s.data, inp[s.index])
+      else:
+        self.assertArraysEqual(s.data, inp)
+      self.assertEqual(s.data.sharding.memory_kind, expected_mem_kind)
 
   def test_jit_memory_transfer_to_host_middle(self):
     _, s, np_inp, inp = _create_inputs((8, 2), P("x", "y"), mem_kind="tpu_hbm")
@@ -656,6 +691,10 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     self.assertEqual(cache_info2.misses, cache_info1.misses)
 
   def test_device_put_host_to_hbm(self):
+    # TODO(jieying): remove after 12/26/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 32):
+      raise unittest.SkipTest("CopyToMemorySpace is not supported on PJRT C API version < 0.32.")
+
     mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("y"), memory_kind="unpinned_host")
     np_inp = jnp.arange(16).reshape(8, 2)
@@ -673,6 +712,10 @@ class MemoriesTest(jtu.BufferDonationTestCase):
         out_on_hbm, np_inp, s_hbm, "tpu_hbm")
 
   def test_device_put_hbm_to_host(self):
+    # TODO(jieying): remove after 12/26/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 32):
+      raise unittest.SkipTest("CopyToMemorySpace is not supported on PJRT C API version < 0.32.")
+
     mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("y"), memory_kind="unpinned_host")
     inp = jnp.arange(16).reshape(8, 2)
@@ -689,6 +732,9 @@ class MemoriesTest(jtu.BufferDonationTestCase):
   def test_device_put_different_device_and_memory_host_to_hbm(self):
     if jax.device_count() < 3:
       raise unittest.SkipTest("Test requires >=3 devices")
+    # TODO(jieying): remove after 12/26/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 32):
+      raise unittest.SkipTest("CopyToMemorySpace is not supported on PJRT C API version < 0.32.")
 
     out_host0 = jax.device_put(
         jnp.arange(8),
@@ -706,6 +752,9 @@ class MemoriesTest(jtu.BufferDonationTestCase):
   def test_device_put_different_device_and_memory_hbm_to_host(self):
     if jax.device_count() < 3:
       raise unittest.SkipTest("Test requires >=3 devices")
+    # TODO(jieying): remove after 12/26/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 32):
+      raise unittest.SkipTest("CopyToMemorySpace is not supported on PJRT C API version < 0.32.")
 
     out_hbm0 = jnp.arange(8)
 
@@ -721,10 +770,11 @@ class MemoriesTest(jtu.BufferDonationTestCase):
         "unpinned_host")
 
   def test_device_put_on_different_device_with_the_same_memory_kind(self):
-    if xla_extension_version < 199:
-      raise unittest.SkipTest("Test requires xla_extension_version >= 199")
     if len(jax.devices()) < 2:
       raise unittest.SkipTest("Test requires >=2 devices.")
+    # TODO(jieying): remove after 12/26/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 32):
+      raise unittest.SkipTest("CopyToMemorySpace is not supported on PJRT C API version < 0.32.")
 
     np_inp = np.arange(16).reshape(8, 2)
 
@@ -743,6 +793,10 @@ class MemoriesTest(jtu.BufferDonationTestCase):
         out_host_dev_1, np_inp, s_host_dev_1, "unpinned_host")
 
   def test_device_put_resharding(self):
+    # TODO(jieying): remove after 12/26/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 32):
+      raise unittest.SkipTest("CopyToMemorySpace is not supported on PJRT C API version < 0.32.")
+
     mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("x", "y"), memory_kind="unpinned_host")
     s_hbm = s_host.with_memory_kind("tpu_hbm")
@@ -767,6 +821,10 @@ class MemoriesTest(jtu.BufferDonationTestCase):
         out_sharded_hbm, np_inp, s_hbm, "tpu_hbm")
 
   def test_jit_host_inputs_via_device_put_outside(self):
+    # TODO(jieying): remove after 12/26/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 32):
+      raise unittest.SkipTest("CopyToMemorySpace is not supported on PJRT C API version < 0.32.")
+
     mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("x", "y"), memory_kind="unpinned_host")
     s_hbm = s_host.with_memory_kind("tpu_hbm")
@@ -1027,6 +1085,60 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     # this after it is fixed.
     # self.assertDeleted(x)
 
+  def test_host_offload_in_custom_vjp(self):
+    if xb.using_pjrt_c_api():
+      raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x)
+
+    def f_fwd(x):
+      y = x * 2
+      z = jax.device_put(y, TransferToMemoryKind('unpinned_host'))
+      return y, (x, z)
+
+    def f_bwd(res, tx):
+      x, z = res
+      y = x * 2
+      z2 = jax.device_put(y, TransferToMemoryKind('unpinned_host'))
+      return ((z == z2).astype(jnp.float32),)
+
+    f.defvjp(f_fwd, f_bwd)
+    g = jax.jit(jax.grad(lambda x: f(x).sum()))
+
+    x = jnp.ones(3) * 4
+    all_true = jnp.ones(3)
+    self.assertArraysEqual(g(x), all_true)
+
+  def test_host_offload_in_custom_vjp_sharded(self):
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    s = NamedSharding(mesh, P('x'))
+
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x)
+
+    def f_fwd(x):
+      y = x * 2
+      z = jax.device_put(y, s.with_memory_kind('unpinned_host'))
+      return y, (x, z)
+
+    def f_bwd(res, tx):
+      x, z = res
+      y = x * 2
+      z2 = jax.device_put(y, s.with_memory_kind('unpinned_host'))
+      return ((z == z2).astype(jnp.float32),)
+
+    f.defvjp(f_fwd, f_bwd)
+    g = jax.jit(jax.grad(lambda x: f(x).sum()))
+
+    x = jax.device_put(jnp.ones(4) * 4, s)
+    all_true = jnp.ones(4)
+    self.assertArraysEqual(g(x), all_true)
+
+
+class ActivationOffloadingTest(jtu.JaxTestCase):
+
   def test_remat_jaxpr_offloadable(self):
     mesh = jtu.create_global_mesh((2,), ("x",))
     inp = jax.device_put(np.arange(16.), NamedSharding(mesh, P("x")))
@@ -1080,58 +1192,6 @@ class MemoriesTest(jtu.BufferDonationTestCase):
     bwd_mem_kind_count = str(bwd_jaxpr).count(
         "TransferToMemoryKind(memory_kind='tpu_hbm')")
     self.assertEqual(bwd_mem_kind_count, 3)
-
-  def test_host_offload_in_custom_vjp(self):
-    if xb.using_pjrt_c_api():
-      raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
-    @jax.custom_vjp
-    def f(x):
-      return jnp.sin(x)
-
-    def f_fwd(x):
-      y = x * 2
-      z = jax.device_put(y, TransferToMemoryKind('unpinned_host'))
-      return y, (x, z)
-
-    def f_bwd(res, tx):
-      x, z = res
-      y = x * 2
-      z2 = jax.device_put(y, TransferToMemoryKind('unpinned_host'))
-      return ((z == z2).astype(jnp.float32),)
-
-    f.defvjp(f_fwd, f_bwd)
-    g = jax.jit(jax.grad(lambda x: f(x).sum()))
-
-    x = jnp.ones(3) * 4
-    all_true = jnp.ones(3)
-    self.assertArraysEqual(g(x), all_true)
-
-  def test_host_offload_in_custom_vjp_sharded(self):
-    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
-    s = NamedSharding(mesh, P('x'))
-
-    @jax.custom_vjp
-    def f(x):
-      return jnp.sin(x)
-
-    def f_fwd(x):
-      y = x * 2
-      z = jax.device_put(y, s.with_memory_kind('unpinned_host'))
-      return y, (x, z)
-
-    def f_bwd(res, tx):
-      x, z = res
-      y = x * 2
-      z2 = jax.device_put(y, s.with_memory_kind('unpinned_host'))
-      return ((z == z2).astype(jnp.float32),)
-
-    f.defvjp(f_fwd, f_bwd)
-    g = jax.jit(jax.grad(lambda x: f(x).sum()))
-
-    x = jax.device_put(jnp.ones(4) * 4, s)
-    all_true = jnp.ones(4)
-    self.assertArraysEqual(g(x), all_true)
-
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

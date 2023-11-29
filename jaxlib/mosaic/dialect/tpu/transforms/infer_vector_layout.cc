@@ -241,6 +241,10 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::BitcastOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<tpu::RepeatOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -258,6 +262,10 @@ class VectorLayoutInferer {
           return failure();
         }
       } else if (auto op = dyn_cast<vector::ContractionOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
+      } else if (auto op = dyn_cast<vector::ExtractOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
         }
@@ -405,11 +413,10 @@ class VectorLayoutInferer {
         }
         if (auto transpose =
                 dyn_cast<vector::TransposeOp>(operand.getOwner())) {
-          auto perm_attrs = transpose.getTransp().getValue();
-          auto rank = perm_attrs.size();
-          if (rank >= 2 &&
-              cast<IntegerAttr>(perm_attrs[rank - 1]).getInt() == rank - 2 &&
-              cast<IntegerAttr>(perm_attrs[rank - 2]).getInt() == rank - 1) {
+          auto perm = transpose.getPermutation();
+          auto rank = perm.size();
+          if (rank >= 2 && perm[rank - 1] == rank - 2 &&
+              perm[rank - 2] == rank - 1) {
             continue;
           }
           // Fall through.
@@ -686,6 +693,50 @@ class VectorLayoutInferer {
     return success();
   }
 
+  LogicalResult infer(tpu::BitcastOp op) {
+    auto src_layout = getLayout(op.getInput());
+    LayoutOffsets src_offsets = src_layout->offsets();
+    if (src_offsets[0].value_or(0) || src_offsets[1].value_or(0)) {
+      NYI("unsupported bitcast with offsets");
+    }
+    if (src_layout->implicit_dim() != ImplicitDim::kNone) {
+      NYI("unsupported bitcast with an implicit dim");
+    }
+    // Check if input and output have same bit size.
+    auto in_ty = dyn_cast<VectorType>(op.getInput().getType());
+    auto out_ty = dyn_cast<VectorType>(op.getOutput().getType());
+    auto in_bitwidth = in_ty.getElementTypeBitWidth();
+    auto out_bitwidth = out_ty.getElementTypeBitWidth();
+    TPU_CHECK_OP(in_ty && out_ty && in_ty.getRank() == out_ty.getRank(),
+                 "Input and output have different rank");
+    if (out_ty.getRank() < 2) {
+      NYI("Support bitcast with 1D vector");
+    }
+    for (int i = 0; i < in_ty.getRank(); ++i) {
+      auto in_dim = in_ty.getDimSize(i);
+      auto out_dim = out_ty.getDimSize(i);
+
+      // The sublane dimension is scaled down by the ratio of input element
+      // bitwidth to output element bitwidth when bitcasting. For example,
+      // bitcasting a vector<16x128xbf16> to a vector<8x128xi32> packs every 2
+      // rows in the bf16 vector into 1 row in the i32 vector. This means the
+      // bit representation of one i32 element vector[i,j] is equal to
+      // concatenating bf16 elements vector[2*i+1,j] and vector[2*i,j].
+      if (i == in_ty.getRank() - 2) {
+        in_dim *= in_bitwidth;
+        out_dim *= out_bitwidth;
+      }
+      TPU_CHECK_OP(in_dim == out_dim,
+                   "Input and output have incompatible shape");
+    }
+    setLayout(op,
+              VectorLayout(in_bitwidth, src_offsets, nativeTiling(in_bitwidth),
+                           ImplicitDim::kNone),
+              VectorLayout(out_bitwidth, src_offsets,
+                           nativeTiling(out_bitwidth), ImplicitDim::kNone));
+    return success();
+  }
+
   LogicalResult infer(tpu::RepeatOp op) {
     auto src_layout = getLayout(op.getSource());
     setLayout(op, src_layout, src_layout);
@@ -831,6 +882,20 @@ class VectorLayoutInferer {
                      op.getIndexingMaps() == matmul_indexing_maps_transposed,
                  "Not a matmul");
     return inferMatmul(op);
+  }
+
+  LogicalResult infer(vector::ExtractOp op) {
+    TPU_CHECK_OP(!op.hasDynamicPosition(), "dynamic indices not supported");
+    TPU_CHECK_OP(
+        op.getSourceVectorType().getElementTypeBitWidth() == kNativeBitwidth,
+        "Only 32-bit types supported");
+    auto layout = getLayout(op.getVector());
+    TPU_CHECK_OP(layout.has_value(), "missing vector layout");
+    setLayout(op,
+              VectorLayout(kNativeBitwidth, {0, 0}, layout->tiling(),
+                           layout->implicit_dim()),
+              kNoLayout);
+    return success();
   }
 
   LogicalResult infer(vector::LoadOp op) {
@@ -1255,12 +1320,12 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(vector::TransposeOp op) {
-    auto permutation_attrs = op.getTransp().getValue();
+    auto permutation = op.getPermutation();
     auto some_layout = getLayout(op.getVector());
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     auto &layout = *some_layout;
     auto src_ty = op.getSourceVectorType();
-    TPU_CHECK_OP(permutation_attrs.size() == src_ty.getRank(),
+    TPU_CHECK_OP(permutation.size() == src_ty.getRank(),
                  "Transpose permutation has incorrect rank");
     if (layout.implicit_dim() == ImplicitDim::kNone) {
       TPU_CHECK_OP((layout.offsets() == LayoutOffsets{0, 0}),
@@ -1269,23 +1334,22 @@ class VectorLayoutInferer {
       for (int64_t s : src_ty.getShape().take_back(2)) {
         TPU_CHECK_OP(s % xlu_width == 0, "Padded transposes unsupported");
       }
-      for (auto attr : permutation_attrs.drop_back(2)) {
+      for (auto dim : permutation.drop_back(2)) {
         TPU_CHECK_OP(
-            cast<IntegerAttr>(attr).getInt() < src_ty.getRank() - 2,
+            dim < src_ty.getRank() - 2,
             "Unsupported transpose permutation - minor dims into major");
       }
-      for (auto attr : permutation_attrs.take_back(2)) {
+      for (auto dim : permutation.take_back(2)) {
         TPU_CHECK_OP(
-            cast<IntegerAttr>(attr).getInt() >= src_ty.getRank() - 2,
+            dim >= src_ty.getRank() - 2,
             "Unsupported transpose permutation - major dims into minor");
       }
       Layout required_layout = some_layout;
-      if (permutation_attrs.size() < 2) {
+      if (permutation.size() < 2) {
         return failure();
       }
       // Require native tiling if we're going to use the XLU.
-      if (cast<IntegerAttr>(permutation_attrs[permutation_attrs.size() - 1])
-              .getInt() == permutation_attrs.size() - 2) {
+      if (permutation[permutation.size() - 1] == permutation.size() - 2) {
         auto native_tiling = nativeTiling(layout.bitwidth());
         required_layout = VectorLayout(layout.bitwidth(), layout.offsets(),
                                        native_tiling, ImplicitDim::kNone);

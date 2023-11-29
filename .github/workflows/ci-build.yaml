@@ -26,13 +26,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Cancel previous
-        uses: styfle/cancel-workflow-action@0.11.0
+        uses: styfle/cancel-workflow-action@0.12.0
         with:
           access_token: ${{ github.token }}
         if: ${{github.ref != 'refs/heads/main'}}
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
       - name: Set up Python 3.11
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@65d7f2d534ac1bc67fcd62888c5f4f3d2cb2b236 # ratchet:actions/setup-python@v4
         with:
           python-version: 3.11
       - uses: pre-commit/action@v3.0.0
@@ -71,13 +71,13 @@ jobs:
             use-latest-jaxlib: false
     steps:
     - name: Cancel previous
-      uses: styfle/cancel-workflow-action@0.11.0
+      uses: styfle/cancel-workflow-action@0.12.0
       with:
         access_token: ${{ github.token }}
       if: ${{github.ref != 'refs/heads/main'}}
     - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@65d7f2d534ac1bc67fcd62888c5f4f3d2cb2b236 # ratchet:actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
     - name: Get pip cache dir
@@ -118,6 +118,7 @@ jobs:
         echo "JAX_ENABLE_CUSTOM_PRNG=$JAX_ENABLE_CUSTOM_PRNG"
         echo "JAX_THREEFRY_PARTITIONABLE=$JAX_THREEFRY_PARTITIONABLE"
         echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
+        echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
         pytest -n auto --tb=short --maxfail=20 tests examples
 
 
@@ -130,13 +131,13 @@ jobs:
         python-version: [3.9]
     steps:
     - name: Cancel previous
-      uses: styfle/cancel-workflow-action@0.11.0
+      uses: styfle/cancel-workflow-action@0.12.0
       with:
         access_token: ${{ github.token }}
       if: ${{github.ref != 'refs/heads/main'}}
     - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@65d7f2d534ac1bc67fcd62888c5f4f3d2cb2b236 # ratchet:actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
     - name: Get pip cache dir
@@ -171,13 +172,13 @@ jobs:
         python-version: [3.9]
     steps:
     - name: Cancel previous
-      uses: styfle/cancel-workflow-action@0.11.0
+      uses: styfle/cancel-workflow-action@0.12.0
       with:
         access_token: ${{ github.token }}
       if: ${{github.ref != 'refs/heads/main'}}
     - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@65d7f2d534ac1bc67fcd62888c5f4f3d2cb2b236 # ratchet:actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
     - name: Get pip cache dir

@@ -300,6 +300,12 @@ def TPU_BitcastOp : TPU_Op<"bitcast", [Pure]> {
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
 }
 
+def TPU_BitcastVregOp : TPU_Op<"bitcast_vreg", [Pure]> {
+  let arguments = (ins TPU_Vreg:$input);
+  let results = (outs TPU_Vreg:$output);
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+}
+
 def TPU_RollVectorsOp : TPU_Op<"roll_vectors", [Pure]> {
   let arguments = (ins Variadic<AnyType>:$input);
   let results = (outs AnyType:$output);

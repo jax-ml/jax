@@ -53,6 +53,7 @@ map = util.safe_map
 zip = util.safe_zip
 
 DType = Any
+Shape = jax._src.core.Shape
 
 class DisabledSafetyCheck:
   """A safety check should be skipped on (de)serialization.
@@ -307,52 +308,40 @@ def default_lowering_platform() -> str:
   # Canonicalize to turn 'gpu' into 'cuda' or 'rocm'
   return xb.canonicalize_platform(jax.default_backend())
 
-def poly_spec(
-    arg_shape: Sequence[Optional[int]],
-    arg_dtype: DType,
-    polymorphic_shape: Optional[str]) -> jax.ShapeDtypeStruct:
+def symbolic_shape(
+  shape_spec: Optional[str],
+  *,
+  like: Optional[Sequence[Optional[int]]] = None) -> Shape:
   """Constructs a jax.ShapeDtypeStruct with polymorphic shapes.
 
   Args:
-    arg_shape: the shape, with possibly some unspecified dimensions.
-    arg_dtype: the jax dtype.
-    polymorphic_shape: a string specifying the polymorphic shape.
+    shape_spec: a symbolic shape specification. None stands for "...".
+    like: when `shape_spec` contains placeholders ("_", "..."), use this
+      shape to fill in the placeholders.
+      The dimensions of `like` that are used for filling
+      must be known (not `None`). If a dimension in `like` is known and
+      the corresponding dimension in `shape_spec` is a constant then they
+      must be equal.
 
-      .. warning:: The shape-polymorphic lowering is an experimental feature.
-        It is meant to be sound, but it is known to reject some JAX programs
-        that are shape polymorphic. The details of this feature can change.
-
-      It should be either `None` (all dimensions are constant), or a string of
-      specification for one axis, and can be either a constant, `_` denoting
-      a constant dimension given by the `arg_shape`, or the name of a
-      dimension variable assumed to range over dimension greater than 0. For
-      convenience, zero or more trailing `_` can be abbreviated with `...`, and
-      the surrounding parentheses may be missing.
-
-      Note that this function does not ensure that the provided `arg_shape`
-      is compatible with `polymorphic_shape`. The `arg_shape` is used only
-      to fill-in placeholders from `polymorphic_shape`.
-
-      See [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
-      for more details.
+  See [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
+  for more details.
 
   Returns: a jax.ShapeDTypeStruct with shapes that may contain symbolic
       expressions involving dimension variables.
   """
-  aval_shape = shape_poly._parse_spec(polymorphic_shape, arg_shape)
-  return jax.ShapeDtypeStruct(aval_shape, arg_dtype)
+  return shape_poly.symbolic_shape(shape_spec, like=like)
 
 def shape_and_dtype_jax_array(a) -> tuple[Sequence[Optional[int]], DType]:
   """Returns the shape and dtype of a jax.Array."""
   aval = core.raise_to_shaped(core.get_aval(a))
   return aval.shape, aval.dtype
 
-def poly_specs(
+def args_specs(
     args,  # pytree of arguments
     polymorphic_shapes,  # prefix pytree of strings
     get_shape_and_dtype=shape_and_dtype_jax_array,
 ):
-  """Constructs a pytree of jax.ShapeDtypeSpec.
+  """Constructs a pytree of jax.ShapeDtypeSpec arguments specs for `export`.
 
   Args:
     args: a pytree of arguments
@@ -363,12 +352,14 @@ def poly_specs(
       arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
 
       Note that this function does not ensure that the provided `args` shapes
-      are compatible with `polymorphic_shapes`. The `args.shape` are used only
-      to fill-in placeholders from `polymorphic_shapes`.
+      are compatible with `polymorphic_shapes`. The `.shape` of the `args` are
+      used only to fill-in placeholders from `polymorphic_shapes`.
 
-      See docstring of `poly_spec` and
+      See docstring of `symbolic_shape` and
       [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
       for more details.
+    get_shape_and_dtype: a function that given an argument extracts a tuple
+      of a shape and a dtype.
 
   Returns: a pytree of jax.ShapeDTypeStruct matching `args`.
   """
@@ -394,8 +385,9 @@ def poly_specs(
     raise e("jax_export polymorphic_shapes") from None
 
   # Now add in the polymorphic shapes
-  args_specs_flat = tuple(
-      map(poly_spec, shapes, dtypes, polymorphic_shapes_flat))
+  args_specs_flat = (
+      jax.ShapeDtypeStruct(symbolic_shape(spec, like=s), t)
+      for s, t, spec in zip(shapes, dtypes, polymorphic_shapes_flat))
 
   return args_tree.unflatten(args_specs_flat)
 
@@ -720,7 +712,7 @@ def _wrap_main_func(
           list(new_main_op.arguments[0:nr_platform_index_args]) + util.flatten(dim_values),
           platform_input_types + dim_var_input_types):
         if arg.type != arg_type:
-          orig_main_args.append(hlo.ConvertOp(arg_type, arg).result)
+          orig_main_args.append(hlo.convert(arg_type, arg))
         else:
           orig_main_args.append(arg)
       # Then the token arguments
@@ -737,7 +729,7 @@ def _wrap_main_func(
       # output_operand_alias attribute. See b/287386268.
       for arg, arg_type in zip(new_main_op_array_args, array_input_types):
         if arg.type != arg_type:
-          orig_main_args.append(hlo.ConvertOp(arg_type, arg).result)
+          orig_main_args.append(hlo.convert(arg_type, arg))
         else:
           orig_main_args.append(arg)
       call = func_dialect.CallOp(orig_output_types,
@@ -764,7 +756,7 @@ def _check_lowering(lowering) -> None:
       "tuple_args", "ordered_effects", "unordered_effects",
       "keepalive", "host_callbacks", "pmap_nreps", "committed",
       "device_assignment", "jaxpr_debug_info", "shape_poly_state",
-      "all_default_mem_kind"]
+      "all_default_mem_kind", "in_layouts", "out_layouts", "all_args_info"]
   for compile_arg in lowering.compile_args.keys():
     if compile_arg not in allowed_compile_args:
       raise NotImplementedError(f"Unrecognized lowered.compile_args[{compile_arg}]")
@@ -1126,7 +1118,7 @@ def _call_exported_abstract_eval(
   # `f32[c, d]` it is better to fail because `c == d` is inconclusive, than
   # succeed and add a compile-time check that `c == d`. In the latter case,
   # it would be ambiguous whether we should continue tracing with a result
-  # a type `f32[c]` or `f32[d]`.
+  # of type `f32[c]` or `f32[d]`.
   shape_constraints.check_statically(synthetic_eval)
   exported_dim_values = [synthetic_eval.evaluate(solution[var])
                          for var in exported_dim_vars]
@@ -1166,7 +1158,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   def convert_shape(x: ir.Value, x_aval: core.AbstractValue, new_aval: core.AbstractValue) -> ir.Value:
     new_ir_type = mlir.aval_to_ir_type(new_aval)
     if x.type != new_ir_type:
-      return mlir.convert_hlo(ctx, x, x_aval, new_aval)
+      return hlo.convert(mlir.aval_to_ir_type(new_aval), x)
     else:
       return x
 
@@ -1210,7 +1202,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     for i in range(len(lowering_platforms)):
       branch = callee_platform_idx.regions[i].blocks.append()
       with ir.InsertionPoint(branch):
-        hlo.ReturnOp(mlir.ir_constants(
+        hlo.return_(mlir.ir_constants(
           np.int32(callee_lowering_platform_index[i])))
     if callee_platform_idx.result.type != callee_type.inputs[0]:
       callee_platform_idx = hlo.ConvertOp(callee_type.inputs[0],

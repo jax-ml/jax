@@ -58,7 +58,7 @@ def _version_from_git_tree(base_version: str) -> str | None:
                          cwd=root_directory,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, _ = p.communicate()
-    commit_hash = stdout.decode().strip().rsplit('-', 1)[-1]
+    commit_hash = stdout.decode().strip().rsplit('-g', 1)[-1]
     assert commit_hash.isalnum()
   except:
     return None
@@ -119,7 +119,7 @@ def _get_cmdclass(pkg_source_path):
 
 
 __version__ = _get_version_string()
-_minimum_jaxlib_version = "0.4.14"
+_minimum_jaxlib_version = "0.4.19"
 
 def _version_as_tuple(version_str):
   return tuple(int(i) for i in version_str.split(".") if i.isdigit())

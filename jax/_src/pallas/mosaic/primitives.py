@@ -124,16 +124,29 @@ def semaphore_signal(sem, inc: int | jax.Array = 1,
   inc = jnp.asarray(inc, dtype=jnp.int32)
   args = [sem, inc]
   has_device_id = device_id is not None
+  device_id_tree = None
   if has_device_id:
-    args = [*args, device_id]
-  semaphore_signal_p.bind(*args, has_device_id=has_device_id,
-                          device_id_type=device_id_type)
+    flat_device_id, device_id_tree = tree_util.tree_flatten(device_id)
+    args = [*args, *flat_device_id]
+  semaphore_signal_p.bind(
+      *args,
+      has_device_id=has_device_id,
+      device_id_type=device_id_type,
+      device_id_tree=device_id_tree,
+  )
+
 
 @semaphore_signal_p.def_abstract_eval
-def _semaphore_signal_abstract_eval(sem_aval: tpu_core.AbstractSemaphore, value,
-                                    *args, has_device_id: bool,
-                                    device_id_type: DeviceIdType):
+def _semaphore_signal_abstract_eval(
+    sem_aval: tpu_core.AbstractSemaphore,
+    value,
+    *args,
+    has_device_id: bool,
+    device_id_type: DeviceIdType,
+    device_id_tree,
+):
   del device_id_type
+  del device_id_tree
   if not isinstance(sem_aval, tpu_core.AbstractSemaphore):
     raise ValueError(f"Cannot signal on a non-semaphore value: {sem_aval}")
   if sem_aval.sem_type is not tpu_core.SemaphoreType.REGULAR:
@@ -141,10 +154,11 @@ def _semaphore_signal_abstract_eval(sem_aval: tpu_core.AbstractSemaphore, value,
   if value.dtype != jnp.dtype("int32"):
     raise ValueError("Must signal an int32 value.")
   if has_device_id:
-    (device_id,) = args
+    device_id = args[0]
     if device_id.dtype != jnp.dtype("int32"):
       raise ValueError("`device_id` must be an int32 value.")
   return []
+
 
 semaphore_wait_p = jax_core.Primitive('semaphore_wait')
 semaphore_wait_p.multiple_results = True

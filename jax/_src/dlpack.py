@@ -22,7 +22,6 @@ from jax import numpy as jnp
 from jax._src import array
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src.typing import Array
 
 
@@ -45,10 +44,8 @@ def to_dlpack(x: Array, take_ownership: bool = False,
 
   Args:
     x: a :class:`~jax.Array`, on either CPU or GPU.
-    take_ownership: Deprecated for xla_extension_version greater or equal than
-      204. It is a no-op to set take_ownership. Will be deleted in 01/2024. For
-      xla_extension_version less than 204, if ``True``, the JAX buffer acts as
-      if it were deleted.
+    take_ownership: Deprecated. It is a no-op to set take_ownership. Will be
+      deleted in 01/2024.
     stream: optional platform-dependent stream to wait on until the buffer is
       ready. This corresponds to the `stream` argument to ``__dlpack__``
       documented in https://dmlc.github.io/dlpack/latest/python_spec.html.
@@ -61,20 +58,9 @@ def to_dlpack(x: Array, take_ownership: bool = False,
     warnings.warn(
         "take_ownership in to_dlpack is deprecated and it is a no-op."
     )
-  if xla_extension_version >= 204:
-    return xla_client._xla.buffer_to_dlpack_managed_tensor(
-        x.addressable_data(0), stream=stream
-    )  # type: ignore
-  elif xla_extension_version >= 186:
-    return xla_client._xla.buffer_to_dlpack_managed_tensor(
-        x.addressable_data(0), take_ownership=take_ownership, stream=stream
-    )  # type: ignore
-  else:
-    if stream is not None:
-      raise ValueError(
-          "passing `stream` argument to to_dlpack requires jaxlib >= 0.4.15")
-    return xla_client._xla.buffer_to_dlpack_managed_tensor(
-        x.addressable_data(0), take_ownership=take_ownership)  # type: ignore
+  return xla_client._xla.buffer_to_dlpack_managed_tensor(
+      x.addressable_data(0), stream=stream
+  )  # type: ignore
 
 
 
@@ -90,7 +76,7 @@ def from_dlpack(external_array):
   Returns:
     A jax.Array
   """
-  if hasattr(external_array, "__dlpack__") and xla_extension_version >= 191:
+  if hasattr(external_array, "__dlpack__"):
     dl_device_type, device_id = external_array.__dlpack_device__()
     try:
       device_platform = {

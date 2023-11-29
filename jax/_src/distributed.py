@@ -20,8 +20,8 @@ from typing import Any, Optional, Union
 
 from jax._src import clusters
 from jax._src import config
+from jax._src import xla_bridge
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -72,25 +72,16 @@ class State:
       if self.service is not None:
         raise RuntimeError('distributed.initialize should only be called once.')
       logger.info('Starting JAX distributed service on %s', coordinator_address)
-      if xla_extension_version >= 179:
-        self.service = xla_extension.get_distributed_runtime_service(
-            coordinator_address, num_processes)
-      else:
-        self.service = xla_extension.get_distributed_runtime_service(
-            coordinator_address, num_processes, True)
+      self.service = xla_extension.get_distributed_runtime_service(
+          coordinator_address, num_processes)
 
     self.num_processes = num_processes
 
     if self.client is not None:
       raise RuntimeError('distributed.initialize should only be called once.')
 
-    if xla_extension_version >= 179:
-      self.client = xla_extension.get_distributed_runtime_client(
-          coordinator_address, process_id, init_timeout=initialization_timeout)
-    else:
-      self.client = xla_extension.get_distributed_runtime_client(
-          coordinator_address, process_id, True,
-          init_timeout=initialization_timeout)
+    self.client = xla_extension.get_distributed_runtime_client(
+        coordinator_address, process_id, init_timeout=initialization_timeout)
     logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
@@ -177,6 +168,9 @@ def initialize(coordinator_address: Optional[str] = None,
 
   >>> jax.distributed.initialize(coordinator_address='10.0.0.1:1234', num_processes=2, process_id=1)  # doctest: +SKIP
   """
+  if xla_bridge.backends_are_initialized():
+    raise RuntimeError("jax.distributed.initialize() must be called before "
+                        "any JAX computations are executed.")
   global_state.initialize(coordinator_address, num_processes, process_id,
                           local_device_ids, initialization_timeout)
   atexit.register(shutdown)

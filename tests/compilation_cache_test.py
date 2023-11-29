@@ -59,6 +59,7 @@ def increment_event_count(event):
 
 
 @jtu.with_config(
+    jax_enable_compilation_cache=True,
     jax_raise_persistent_cache_errors=True,
     jax_persistent_cache_min_compile_time_secs=0,
 )
@@ -245,7 +246,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
       with (
         config.raise_persistent_cache_errors(False),
-        mock.patch.object(cc._cache.__class__, "put") as mock_put,
+        mock.patch.object(cc._get_cache().__class__, "put") as mock_put,
         warnings.catch_warnings(record=True) as w,
       ):
         mock_put.side_effect = RuntimeError("test error")
@@ -266,7 +267,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
       with (
         config.raise_persistent_cache_errors(False),
-        mock.patch.object(cc._cache.__class__, "get") as mock_get,
+        mock.patch.object(cc._get_cache().__class__, "get") as mock_get,
         warnings.catch_warnings(record=True) as w,
       ):
         mock_get.side_effect = RuntimeError("test error")
@@ -331,9 +332,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
               "/jax/compilation_cache/original_compile_time_saved_sec",
               durations)
         else:
-          # TODO(b/293308239) Remove this skipping when pjrt c api is supported.
-          if xla_bridge.using_pjrt_c_api():
-            raise SkipTest("PJRT C API not supported yet.")
           self.assertNotIn(
               "/jax/compilation_cache/compile_time_saved_sec", durations)
 
@@ -385,11 +383,12 @@ class CompilationCacheTest(jtu.JaxTestCase):
         - previous_counts["/jax/compilation_cache/compile_requests_use_cache"],
         3)
 
-  def test_cache_misses_metric(self):
+  @parameterized.parameters(0, 2)
+  def test_cache_misses_metric(self, min_compile_time_secs):
     previous_counts = Counter(_counts)
     with (
       tempfile.TemporaryDirectory() as tmpdir,
-      config.persistent_cache_min_compile_time_secs(2),
+      config.persistent_cache_min_compile_time_secs(min_compile_time_secs),
     ):
       cc.initialize_cache(tmpdir)
 
@@ -426,13 +425,48 @@ class CompilationCacheTest(jtu.JaxTestCase):
           - previous_counts["/jax/compilation_cache/cache_hits_original"],
           1)
     else:
-      # TODO(b/293308239) Remove this skipping when pjrt c api is supported.
-      if xla_bridge.using_pjrt_c_api():
-        raise SkipTest("PJRT C API not supported yet.")
       self.assertEqual(
           _counts["/jax/compilation_cache/cache_hits"]
           - previous_counts["/jax/compilation_cache/cache_hits"],
           1)
+
+
+@jtu.with_config(
+    jax_enable_compilation_cache=False,
+    jax_persistent_cache_min_compile_time_secs=0,
+)
+class CompilationCacheDisabledTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+
+    # Reset cache if already initialized by JaxTestCase
+    if cc.is_initialized():
+      cc.reset_cache()
+
+  def tearDown(self):
+    if cc.is_initialized():
+      cc.reset_cache()
+    super().tearDown()
+
+  # If the cache is disabled, there should be no files in the cache directory.
+  # A call to initialize_cache() does not affect this.
+  def test_jit(self):
+    # Sequence of flag settings for config.jax_enable_compilation_cache:
+    # 1. Flag is disabled by @jtu.with_config() above.
+    # 2. Flag is enabled by JaxTestCase for some test configs
+    #    (see test_util.py).
+    # We need the flag disabled for this test, so disable it below.
+    with (
+        tempfile.TemporaryDirectory() as tmpdir,
+        config.enable_compilation_cache(False),
+    ):
+      cc.initialize_cache(tmpdir)
+      f = jit(lambda x: x * x)
+      f(1)
+      files_in_directory = len(os.listdir(tmpdir))
+      self.assertEqual(files_in_directory, 0)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

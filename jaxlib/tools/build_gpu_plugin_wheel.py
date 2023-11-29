@@ -80,8 +80,8 @@ def prepare_cuda_plugin_wheel(sources_path: pathlib.Path, *, cpu, cuda_version):
   copy_runfiles(
       dst_dir=sources_path,
       src_files=[
-          "__main__/plugins/cuda/pyproject.toml",
-          "__main__/plugins/cuda/setup.py",
+          "__main__/jax_plugins/cuda/pyproject.toml",
+          "__main__/jax_plugins/cuda/setup.py",
       ],
   )
   build_utils.update_setup_with_cuda_version(sources_path, cuda_version)
@@ -89,7 +89,7 @@ def prepare_cuda_plugin_wheel(sources_path: pathlib.Path, *, cpu, cuda_version):
   copy_runfiles(
       dst_dir=plugin_dir,
       src_files=[
-          "__main__/plugins/cuda/__init__.py",
+          "__main__/jax_plugins/cuda/__init__.py",
           "__main__/jaxlib/version.py",
       ],
   )

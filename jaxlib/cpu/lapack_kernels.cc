@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/cpu/lapack_kernels.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 
@@ -562,22 +563,35 @@ void RealGeev<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
   lwork = static_cast<int>(work_query);
   T* work = new T[lwork];
 
+  auto is_finite = [](T* a_work, int64_t n) {
+    for (int64_t j = 0; j < n; ++j) {
+      for (int64_t k = 0; k < n; ++k) {
+        if (!std::isfinite(a_work[j * n + k])) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
   for (int i = 0; i < b; ++i) {
     size_t a_size = n * n * sizeof(T);
     std::memcpy(a_work, a_in, a_size);
-    fn(&jobvl, &jobvr, &n_int, a_work, &n_int, wr_out, wi_out, vl_work, &n_int,
-       vr_work, &n_int, work, &lwork, info_out);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(a_work, a_size);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(wr_out, sizeof(T) * n);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(wi_out, sizeof(T) * n);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(vl_work, sizeof(T) * n * n);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(vr_work, sizeof(T) * n * n);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_out, sizeof(int));
-    if (info_out[0] == 0) {
-      UnpackEigenvectors(n, wi_out, vl_work, vl_out);
-      UnpackEigenvectors(n, wi_out, vr_work, vr_out);
+    if (is_finite(a_work, n)) {
+      fn(&jobvl, &jobvr, &n_int, a_work, &n_int, wr_out, wi_out, vl_work,
+         &n_int, vr_work, &n_int, work, &lwork, info_out);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(a_work, a_size);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(wr_out, sizeof(T) * n);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(wi_out, sizeof(T) * n);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(vl_work, sizeof(T) * n * n);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(vr_work, sizeof(T) * n * n);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_out, sizeof(int));
+      if (info_out[0] == 0) {
+        UnpackEigenvectors(n, wi_out, vl_work, vl_out);
+        UnpackEigenvectors(n, wi_out, vr_work, vr_out);
+      }
+    } else {
+      *info_out = -4;
     }
-
     a_in += n * n;
     wr_out += n;
     wi_out += n;
@@ -621,16 +635,32 @@ void ComplexGeev<T>::Kernel(void* out_tuple, void** data,
   lwork = static_cast<int>(work_query.real());
   T* work = new T[lwork];
 
+  auto is_finite = [](T* a_work, int64_t n) {
+    for (int64_t j = 0; j < n; ++j) {
+      for (int64_t k = 0; k < n; ++k) {
+        T v = a_work[j * n + k];
+        if (!std::isfinite(v.real()) || !std::isfinite(v.imag())) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+
   for (int i = 0; i < b; ++i) {
     size_t a_size = n * n * sizeof(T);
     std::memcpy(a_work, a_in, a_size);
-    fn(&jobvl, &jobvr, &n_int, a_work, &n_int, w_out, vl_out, &n_int, vr_out,
-       &n_int, work, &lwork, r_work, info_out);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(a_work, a_size);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(w_out, sizeof(T) * n);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(vl_out, sizeof(T) * n * n);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(vr_out, sizeof(T) * n * n);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_out, sizeof(int));
+    if (is_finite(a_work, n)) {
+      fn(&jobvl, &jobvr, &n_int, a_work, &n_int, w_out, vl_out, &n_int, vr_out,
+         &n_int, work, &lwork, r_work, info_out);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(a_work, a_size);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(w_out, sizeof(T) * n);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(vl_out, sizeof(T) * n * n);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(vr_out, sizeof(T) * n * n);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_out, sizeof(int));
+    } else {
+      *info_out = -4;
+    }
     a_in += n * n;
     w_out += n;
     vl_out += n * n;

@@ -504,7 +504,9 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       partition, to_mesh_pspec_sharding, in_tree, out_tree,
       infer_sharding_from_operands, ctx.module_context, mesh, static_args)
   key = str(id(sharding_callback_info))
+  # TODO(parkers): Remove bytes registration when xla_extension_version > 211
   _sharding_callbacks[key] = sharding_callback_info
+  _sharding_callbacks[bytes(key, 'utf8')] = sharding_callback_info
   # We need to make sure `sharding_callback_info` is still alive when the SPMD
   # partitioner runs so we keep it alive by attaching it to the executable.
   ctx.module_context.add_keepalive(sharding_callback_info)

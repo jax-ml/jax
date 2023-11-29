@@ -48,6 +48,15 @@ jax_test(
     srcs = ["api_util_test.py"],
 )
 
+py_test(
+    name = "array_api_test",
+    srcs = ["array_api_test.py"],
+    deps = [
+        "//jax",
+        "//jax:experimental_array_api",
+    ] + py_deps("absl/testing"),
+)
+
 jax_test(
     name = "array_interoperability_test",
     srcs = ["array_interoperability_test.py"],
@@ -223,6 +232,12 @@ jax_test(
 )
 
 jax_test(
+    name = "layout_test",
+    srcs = ["layout_test.py"],
+    tags = ["multiaccelerator"],
+)
+
+jax_test(
     name = "pgle_test",
     srcs = ["pgle_test.py"],
     disable_backends = [
@@ -369,7 +384,10 @@ jax_test(
     name = "lax_numpy_test",
     srcs = ["lax_numpy_test.py"],
     backend_tags = {
-        "cpu": ["noasan"],  # Test times out.
+        "cpu": [
+            "noasan",
+            "notsan",
+        ],  # Test times out.
         "tpu": ["noasan"],  # Test times out.
     },
     shard_count = {
@@ -1277,6 +1295,55 @@ jax_test(
     ],
     tags = [],
     deps = [
+        "//jax/experimental/export",
+    ],
+)
+
+jax_test(
+    name = "shape_poly_test",
+    srcs = ["shape_poly_test.py"],
+    backend_tags = {
+        "tpu": [
+            "noasan",
+            "nomsan",
+            "notsan",
+        ],  # Times out
+    },
+    disable_configs = [
+        "gpu_a100",  # TODO(b/269593297): matmul precision issues
+    ],
+    enable_configs = [
+        "cpu",
+        "cpu_x32",
+    ],
+    shard_count = {
+        "cpu": 4,
+        "gpu": 4,
+        "tpu": 4,
+    },
+    deps = [
+        "//jax:internal_test_harnesses",
+        "//jax/experimental/export",
+    ],
+)
+
+jax_test(
+    name = "export_harnesses_multi_platform_test",
+    srcs = ["export_harnesses_multi_platform_test.py"],
+    disable_configs = [
+        "gpu_a100",  # TODO(b/269593297): matmul precision issues
+    ],
+    shard_count = {
+        "cpu": 40,
+        "gpu": 20,
+        "tpu": 20,
+    },
+    tags = [
+        "noasan",  # Times out
+        "nodebug",  # Times out.
+    ],
+    deps = [
+        "//jax:internal_test_harnesses",
         "//jax/experimental/export",
     ],
 )

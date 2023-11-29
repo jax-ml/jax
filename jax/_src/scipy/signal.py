@@ -678,7 +678,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   xsubs *= win.sum()  # This takes care of the 'spectrum' scaling
 
   # make win broadcastable over xsubs
-  win = win.reshape((1, ) * (xsubs.ndim - 2) + win.shape + (1,))
+  win = lax.expand_dims(win, (*range(xsubs.ndim - 2), -1))
   x = _overlap_and_add((xsubs * win).swapaxes(-2, -1), nstep)
   win_squared = jnp.repeat((win * win), xsubs.shape[-1], axis=-1)
   norm = _overlap_and_add(win_squared.swapaxes(-2, -1), nstep)

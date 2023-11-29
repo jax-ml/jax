@@ -48,6 +48,7 @@ from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src import monitoring
 from jax._src import stages
+from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import pxla
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.util import unzip2
@@ -328,7 +329,13 @@ def is_device_cuda():
   return 'cuda' in xla_bridge.get_backend().platform_version
 
 def is_cloud_tpu():
-  return 'libtpu' in xla_bridge.get_backend().platform_version
+  return running_in_cloud_tpu_vm
+
+def pjrt_c_api_version_at_least(major_version: int, minor_version: int):
+  pjrt_c_api_versions = xla_bridge.backend_pjrt_c_api_version()
+  if pjrt_c_api_versions is None:
+    return True
+  return pjrt_c_api_versions >= (major_version, minor_version)
 
 
 def is_device_tpu_v4():
@@ -933,6 +940,7 @@ class JaxTestCase(parameterized.TestCase):
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       cls._compilation_cache_exit_stack = ExitStack()
       stack = cls._compilation_cache_exit_stack
+      stack.enter_context(config.enable_compilation_cache(True))
       stack.enter_context(config.raise_persistent_cache_errors(True))
       stack.enter_context(config.persistent_cache_min_compile_time_secs(0))
 

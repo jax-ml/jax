@@ -21,17 +21,11 @@ import struct
 import sys
 
 from jax._src import config
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version as xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager as pm
 import numpy as np
-
-if jaxlib_version < (0, 4, 14):
-  import jaxlib.mlir.jax as mlir_jax  # pytype: disable=import-error
-  assert mlir_jax is not None  # Imported for side effects only.
 
 
 logger = logging.getLogger(__name__)
@@ -105,9 +99,6 @@ def get(module: ir.Module,
         ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
     )
   else:
-    assert (
-        xla_extension_version >= 193
-    ), "new cache key generation requires jaxlib 0.4.15 or newer"
     entries.append(
         ("compile_options",
          lambda hash_obj: _hash_serialized_compile_options(
@@ -154,14 +145,9 @@ def _serialize_ir(m: ir.Module) -> bytes:
 def _canonicalize_ir(m_original: ir.Module) -> bytes:
   with m_original.context:
     m = m_original.operation.clone()
-    if jaxlib_version < (0, 4, 14):
-      passes = pm.PassManager.parse(
-          "builtin.module(func.func(jax-strip-locations))"
-      )
-    else:
-      passes = pm.PassManager.parse(
-          "builtin.module(strip-debuginfo)"
-      )
+    passes = pm.PassManager.parse(
+        "builtin.module(strip-debuginfo)"
+    )
     passes.run(m.operation)
     return _serialize_ir(m)
 
@@ -360,6 +346,9 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
   xla_flags_env_var = os.getenv("XLA_FLAGS")
   if xla_flags_env_var:
     xla_flags.extend(xla_flags_env_var.split())
+  libtpu_init_args_env_var = os.getenv("LIBTPU_INIT_ARGS")
+  if libtpu_init_args_env_var:
+    xla_flags.extend(libtpu_init_args_env_var.split())
 
   for arg in sys.argv:
     if arg.startswith("--xla") or any(
