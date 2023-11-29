@@ -1280,6 +1280,12 @@ class ShardMapTest(jtu.JaxTestCase):
     y = f(a, b)  # don't crash
     self.assertAllClose(y, a @ b, check_dtypes=False, atol=1e-2, rtol=1e-2)
 
+  def test_custom_jvp_inside_jit(self):
+    mesh = jtu.create_global_mesh((4,), ('batch',))
+    x = shard_map(jax.jit(jax.nn.relu),
+                  mesh=mesh, in_specs=P('batch'),
+                  out_specs=P('batch'))(jnp.arange(16.))  # don't crash
+
 
 class FunSpec(NamedTuple):
   name: str
