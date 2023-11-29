@@ -27,6 +27,11 @@ Remember to align the itemized text with the first line of an item within a list
     that cannot be converted to a JAX array is deprecated and now raises a
     {obj}`DeprecationWaning`. Currently the functions return False, in the future this
     will raise an exception.
+  * The `device_buffer` and `device_buffers` properties of JAX arrays are deprecated.
+    Explicit buffers have been replaced by the more flexible array sharding interface,
+    but the previous outputs can be recovered this way:
+    * `arr.device_buffer` becomes `arr.addressable_data(0)`
+    * `arr.device_buffers` becomes `[x.data for x in arr.addressable_shards]`
 
 
 ## jaxlib 0.4.21

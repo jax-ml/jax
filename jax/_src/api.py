@@ -102,8 +102,8 @@ def _nan_check_posthook(fun, args, kwargs, output):
   """Hook function called by the C++ jit/pmap to perform NaN checking."""
   buffers = []
   for leaf in tree_leaves(output):
-    if hasattr(leaf, "device_buffers"):
-      buffers.extend(leaf.device_buffers)
+    if hasattr(leaf, "addressable_shards"):
+      buffers.extend([shard.data for shard in leaf.addressable_shards])
 
   try:
     dispatch.check_special(pjit.pjit_p.name, buffers)
