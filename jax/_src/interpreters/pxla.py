@@ -67,9 +67,8 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding_impls import (
     ArrayMapping, ArrayMappingOrAutoOrUnspecified,
-    AUTO, UnspecifiedValue, UNSPECIFIED,
-    get_array_mapping as _get_array_mapping, is_auto, is_unspecified,
-    is_unspecified_or_auto
+    AUTO, UnspecifiedValue, get_array_mapping as _get_array_mapping, is_auto,
+    is_unspecified, is_unspecified_or_auto
 )
 from jax._src.util import (safe_map, safe_zip, partition_list,
                            wrap_name, tuple_delete, distributed_debug_log,
@@ -1889,7 +1888,7 @@ def lower_sharding_computation(
     api_name: str,
     fun_name: str,
     in_shardings: Sequence[MaybeSharding],
-    out_shardings: Sequence[MaybeSharding] | UnspecifiedValue,
+    out_shardings: Sequence[MaybeSharding],
     donated_invars: Sequence[bool],
     global_in_avals: Sequence[core.ShapedArray],
     *,
@@ -1898,7 +1897,7 @@ def lower_sharding_computation(
     devices_from_context: Sequence[xc.Device] | None = None,
     lowering_parameters: mlir.LoweringParameters,
     in_layouts: MaybeLayout,
-    out_layouts: Optional[MaybeLayout],
+    out_layouts: MaybeLayout,
 ) -> MeshComputation:
   """Lowers a computation to XLA. It can take arbitrary shardings as input.
 
@@ -1908,9 +1907,8 @@ def lower_sharding_computation(
   the singleton UNSPECIFIED to all out_avals.
   """
   # 1. Trace to jaxpr and preprocess/verify it
-  auto_spmd_lowering = (
-      check_if_any_auto(in_shardings) if is_unspecified(out_shardings) else
-      check_if_any_auto(it.chain.from_iterable([in_shardings, out_shardings])))  # type: ignore
+  auto_spmd_lowering = check_if_any_auto(
+      it.chain.from_iterable([in_shardings, out_shardings]))  # type: ignore
 
   all_args_info = AllArgsInfo(global_in_avals, in_shardings,
                               closed_jaxpr.jaxpr.debug_info)
@@ -1923,12 +1921,6 @@ def lower_sharding_computation(
   in_shardings = tuple(s for i, s in enumerate(in_shardings) if i in kept_var_idx)
   in_layouts = tuple(l for i, l in enumerate(in_layouts) if i in kept_var_idx)
 
-  if is_unspecified(out_shardings):
-    out_shardings = (UNSPECIFIED,) * len(global_out_avals)
-  if out_layouts is None:
-    out_layouts = (None,) * len(global_out_avals)
-  assert isinstance(out_shardings, tuple)
-  assert isinstance(out_layouts, tuple)
   assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (
       len(out_shardings), len(out_layouts), len(global_out_avals))
 
@@ -1978,7 +1970,7 @@ def lower_sharding_computation(
 
   # 2. Build up the HLO
   semantic_in_shardings = SemanticallyEqualShardings(in_shardings)  # type: ignore
-  semantic_out_shardings = SemanticallyEqualShardings(out_shardings)
+  semantic_out_shardings = SemanticallyEqualShardings(out_shardings)  # type: ignore
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, api_name, fun_name, backend, semantic_in_shardings,

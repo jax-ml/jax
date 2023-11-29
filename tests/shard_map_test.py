@@ -667,7 +667,7 @@ class ShardMapTest(jtu.JaxTestCase):
       shard_map(g, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
                 out_specs=[P(None), P(None), P(('x', 'y'))])(x, x, x)
 
-  def test_eager_notimplemented_error_message_custom_jvp(self):
+  def test_eager_custom_jvp_basic(self):
     @jax.custom_jvp
     def foo(x):
       return 2. * x
@@ -675,32 +675,32 @@ class ShardMapTest(jtu.JaxTestCase):
     @foo.defjvp
     def foo_jvp(primals, tangents):
       (x,), (x_dot,) = primals, tangents
-      return foo(x), 2. * x_dot
+      return foo(x), 3. * x_dot
 
     mesh = jtu.create_global_mesh((4,), ('x',))
     g = shard_map(foo, mesh, in_specs=(P('x'),), out_specs=P('x'))
-    x = jnp.arange(4.)
-    with self.assertRaisesRegex(NotImplementedError, 'custom_jvp'):
-      g(x)
+    y, x_bar = jax.value_and_grad(lambda x: g(x).sum())(jnp.arange(4.))
+    self.assertAllClose(y, (2. * jnp.arange(4.)).sum())
+    self.assertAllClose(x_bar, 3. * jnp.ones(4), check_dtypes=False)
 
-  def test_eager_notimplemented_error_message_custom_vjp(self):
+  def test_eager_custom_vjp_basic(self):
     @jax.custom_vjp
     def foo(x):
       return 2. * x
 
     def foo_fwd(x):
-      return x, None
+      return foo(x), None
 
     def foo_bwd(_, y_bar):
-      return 2. * y_bar,
+      return 3. * y_bar,
 
     foo.defvjp(foo_fwd, foo_bwd)
 
     mesh = jtu.create_global_mesh((4,), ('x',))
     g = shard_map(foo, mesh, in_specs=(P('x'),), out_specs=P('x'))
-    x = jnp.arange(4.)
-    with self.assertRaisesRegex(NotImplementedError, 'custom_vjp'):
-      g(x)
+    y, x_bar = jax.value_and_grad(lambda x: g(x).sum())(jnp.arange(4.))
+    self.assertAllClose(y, (2. * jnp.arange(4.)).sum())
+    self.assertAllClose(x_bar, 3. * jnp.ones(4), check_dtypes=False)
 
   @parameterized.parameters([True, False])
   def test_axis_index_basic(self, jit):
@@ -930,7 +930,8 @@ class ShardMapTest(jtu.JaxTestCase):
     y = f(x)
     self.assertAllClose(y, 2 * x * x, check_dtypes=True)
 
-  def test_rewrite_process_custom_jvp_call(self):
+  @parameterized.parameters([True, False])
+  def test_rewrite_process_custom_jvp_call(self, jit):
     @jax.custom_jvp
     def foo(x):
       return 2. * x
@@ -943,16 +944,19 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((4,), ('x',))
     g = shard_map(lambda x: foo(x) * x, mesh,
                   in_specs=(P('x'),), out_specs=P('x'))
-    x = jnp.arange(4.)
+    if jit:
+      g = jax.jit(g)
 
-    y = jax.jit(g)(x)
+    x = jnp.arange(4.)
+    y = g(x)
     self.assertAllClose(y, 2 * x * x, check_dtypes=True)
 
-    y2, y_dot = jax.jvp(jax.jit(g), (x,), (3 * x,))
+    y2, y_dot = jax.jvp(g, (x,), (3 * x,))
     self.assertAllClose(y2, 2 * x * x, check_dtypes=True)
     self.assertAllClose(y_dot, 2 * 2 * 3 * x * x, check_dtypes=True)
 
-  def test_rewrite_process_custom_vjp_call(self):
+  @parameterized.parameters([True, False])
+  def test_rewrite_process_custom_vjp_call(self, jit):
     @jax.custom_vjp
     def foo(x):
       return 2. * x
@@ -968,16 +972,19 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((4,), ('x',))
     g = shard_map(lambda x: foo(x) * x, mesh,
                   in_specs=(P('x'),), out_specs=P('x'))
+    if jit:
+      g = jax.jit(g)
 
     x = jnp.arange(4.)
-    y = jax.jit(g)(x)
+    y = g(x)
     self.assertAllClose(y, 2 * x * x, check_dtypes=True)
 
-    y_, x_bar = jax.value_and_grad(lambda x: jax.jit(g)(x).sum())(x)
+    y_, x_bar = jax.value_and_grad(lambda x: g(x).sum())(x)
     self.assertAllClose(y_, (2 * x * x).sum(), check_dtypes=True)
     self.assertAllClose(x_bar, 2 * 2 * x, check_dtypes=True)
 
-  def test_rewrite_process_custom_vjp_call_match_more_replicated(self):
+  @parameterized.parameters([True, False])
+  def test_rewrite_process_custom_vjp_call_match_more_replicated(self, jit):
     @jax.custom_vjp
     def foo(x):
       return 2. * x
@@ -993,16 +1000,19 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((4,), ('x',))
     g = shard_map(lambda x: foo(x) * x, mesh,
                   in_specs=(P('x'),), out_specs=P('x'))
-    x = jnp.arange(4.)
+    if jit:
+      g = jax.jit(g)
 
-    y = jax.jit(g)(x)
+    x = jnp.arange(4.)
+    y = g(x)
     self.assertAllClose(y, 2 * x * x, check_dtypes=True)
 
-    y_, x_bar = jax.value_and_grad(lambda x: jax.jit(g)(x).sum())(x)
+    y_, x_bar = jax.value_and_grad(lambda x: g(x).sum())(x)
     self.assertAllClose(y_, (2 * x * x).sum(), check_dtypes=True)
     self.assertAllClose(x_bar, jnp.ones_like(x) + 2 * x, check_dtypes=True)
 
-  def test_rewrite_process_custom_vjp_call_match_less_replicated(self):
+  @parameterized.parameters([True, False])
+  def test_rewrite_process_custom_vjp_call_match_less_replicated(self, jit):
     @jax.custom_vjp
     def foo(x, y):
       del y
@@ -1019,18 +1029,22 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((4,), ('x',))
     g = shard_map(lambda x, y: foo(x, y) * y, mesh,
                   in_specs=(P(), P('x')), out_specs=P('x'))
+    if jit:
+      g = jax.jit(g)
+
     x = jnp.arange(4.)
     y = jnp.arange(4 * 4.)
 
-    z = jax.jit(g)(x, y)
+    z = g(x, y)
     self.assertAllClose(z, 2 * jnp.tile(x, (4,)) * y, check_dtypes=False)
 
-    z_, x_bar = jax.value_and_grad(lambda x, y: jax.jit(g)(x, y).sum())(x, y)
+    z_, x_bar = jax.value_and_grad(lambda x, y: g(x, y).sum())(x, y)
     self.assertAllClose(z.sum(), z_, check_dtypes=False)
     self.assertAllClose(x_bar, jnp.arange(16).reshape(4, 4).sum(0),
                         check_dtypes=False)
 
-  def test_rewrite_custom_vjp_call_jaxpr(self):
+  @parameterized.parameters([True, False])
+  def test_rewrite_custom_vjp_call_jaxpr(self, jit):
     @jax.custom_vjp
     def foo(x):
       return 2. * x
@@ -1050,12 +1064,14 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((4,), ('x',))
     g = shard_map(lambda x: foo_scan(x) * x, mesh,
                   in_specs=(P('x'),), out_specs=P('x'))
+    if jit:
+      g = jax.jit(g)
 
     x = jnp.arange(4.)
-    y = jax.jit(g)(x)
+    y = g(x)
     self.assertAllClose(y, 2 * x * x, check_dtypes=True)
 
-    y_, x_bar = jax.value_and_grad(lambda x: jax.jit(g)(x).sum())(x)
+    y_, x_bar = jax.value_and_grad(lambda x: g(x).sum())(x)
     self.assertAllClose(y_, (2 * x * x).sum(), check_dtypes=True)
     self.assertAllClose(x_bar, 2 * 2 * x, check_dtypes=True)
 
@@ -1174,11 +1190,10 @@ class ShardMapTest(jtu.JaxTestCase):
 
     jtu.check_grads(f, (q, k, v), order=1, modes=['rev'], rtol=1e-2)
 
-
   def test_axis_env_extension_regression(self):
     def foo(x):
       i = jax.lax.axis_index('x')
-      return jnp.exp(x) + i.astype('float')
+      return jnp.exp(x) + i.astype(x.dtype)
 
     @partial(jax.remat, policy=lambda *args, **kwargs: True)
     def bar(x):
@@ -1232,6 +1247,21 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertLen(e2.invars, 4)   # two res and two cotangent inputs
     self.assertEqual(sum([e1.outvars[-1] is v for v in e2.invars]), 1)
 
+  @parameterized.parameters([True, False])
+  def test_check_rep_failure_inside_rule(self, jit):
+    mesh = jtu.create_global_mesh((4,), ('i',))
+
+    def loss(w, x):
+      @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P())
+      def f(x):
+        return jax.lax.psum(((w * x) ** 2).sum(), 'i')
+      return f(x)
+
+    if jit:
+      loss = jax.jit(loss)
+
+    jax.grad(loss)(3.0, jnp.arange(8.))  # don't crash
+
 
 class FunSpec(NamedTuple):
   name: str
@@ -1256,6 +1286,7 @@ fun_specs = [
         lambda r1, r2: r1 & r2,
         lambda x1, x2: (x1.shape and x2.shape and
                         x1.shape[-1] == x2.shape[-2 if x2.ndim > 1 else 0])),
+    FunSpec('relu', 1, lambda x: jax.nn.relu(x + 1) - 1, lambda r: r),
 ]
 
 input_shapes = [

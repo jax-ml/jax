@@ -44,7 +44,7 @@ class JAXSparse(abc.ABC):
     return len(self.shape)
 
   def __init__(self, args: tuple[Array, ...], *, shape: Sequence[int]):
-    self.shape = tuple(shape)
+    self.shape = core.canonicalize_shape(shape)
 
   def __repr__(self):
     name = self.__class__.__name__

@@ -77,6 +77,7 @@ sparse_rules_bcoo : dict[core.Primitive, Callable] = {}
 sparse_rules_bcsr : dict[core.Primitive, Callable] = {}
 
 _zero_preserving_linear_unary_primitives = [
+  lax.conj_p,
   lax.copy_p,
   lax.imag_p,
   lax.neg_p,

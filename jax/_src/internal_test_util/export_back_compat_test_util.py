@@ -87,7 +87,7 @@ from jax.experimental import pjit
 
 from jax._src import core
 from jax._src import test_util as jtu
-from jax._src.interpreters import pxla
+from jax._src.sharding_impls import UNSPECIFIED
 from jax._src import xla_bridge as xb
 
 
@@ -321,8 +321,8 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         in_avals=tuple(in_avals),
         out_tree=out_tree,
         out_avals=tuple(out_avals),
-        in_shardings=(pxla.UNSPECIFIED,) * len(in_avals),
-        out_shardings=(pxla.UNSPECIFIED,) * len(out_avals),
+        in_shardings=(UNSPECIFIED,) * len(in_avals),
+        out_shardings=(UNSPECIFIED,) * len(out_avals),
         lowering_platforms=(data.platform,),
         ordered_effects=(),
         unordered_effects=(),
