@@ -2299,7 +2299,12 @@ def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:  # type: ignore
 def array_equal(a1: ArrayLike, a2: ArrayLike, equal_nan: bool = False) -> Array:
   try:
     a1, a2 = asarray(a1), asarray(a2)
-  except Exception:
+  except Exception as err:
+    # TODO(jakevdp): Deprecated 2023-11-23; change to error.
+    warnings.warn("Inputs to array_equal() cannot be coerced to array. "
+                  "Returning False; in the future this will raise an exception.\n"
+                  f"{err!r}",
+                  DeprecationWarning, stacklevel=2)
     return bool_(False)
   if shape(a1) != shape(a2):
     return bool_(False)
@@ -2313,7 +2318,12 @@ def array_equal(a1: ArrayLike, a2: ArrayLike, equal_nan: bool = False) -> Array:
 def array_equiv(a1: ArrayLike, a2: ArrayLike) -> Array:
   try:
     a1, a2 = asarray(a1), asarray(a2)
-  except Exception:
+  except Exception as err:
+    # TODO(jakevdp): Deprecated 2023-11-23; change to error.
+    warnings.warn("Inputs to array_equiv() cannot be coerced to array. "
+                  "Returning False; in the future this will raise an exception.\n"
+                  f"{err!r}",
+                  DeprecationWarning, stacklevel=2)
     return bool_(False)
   try:
     eq = ufuncs.equal(a1, a2)

@@ -23,6 +23,10 @@ Remember to align the itemized text with the first line of an item within a list
     It currently is converted to NaN, and in the future will raise a {obj}`TypeError`.
   * Passing the `condition`, `x`, and `y` parameters to `jax.numpy.where` by
     keyword arguments has been deprecated, to match `numpy.where`.
+  * Passing arguments to {func}`jax.numpy.array_equal` and {func}`jax.numpy.array_equiv`
+    that cannot be converted to a JAX array is deprecated and now raises a
+    {obj}`DeprecationWaning`. Currently the functions return False, in the future this
+    will raise an exception.
 
 
 ## jaxlib 0.4.21
