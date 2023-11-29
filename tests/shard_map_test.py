@@ -1174,11 +1174,10 @@ class ShardMapTest(jtu.JaxTestCase):
 
     jtu.check_grads(f, (q, k, v), order=1, modes=['rev'], rtol=1e-2)
 
-
   def test_axis_env_extension_regression(self):
     def foo(x):
       i = jax.lax.axis_index('x')
-      return jnp.exp(x) + i.astype('float')
+      return jnp.exp(x) + i.astype(x.dtype)
 
     @partial(jax.remat, policy=lambda *args, **kwargs: True)
     def bar(x):
@@ -1231,6 +1230,21 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertLen(e1.outvars, 2)  # one primal and one res output
     self.assertLen(e2.invars, 4)   # two res and two cotangent inputs
     self.assertEqual(sum([e1.outvars[-1] is v for v in e2.invars]), 1)
+
+  @parameterized.parameters([True, False])
+  def test_check_rep_failure_inside_rule(self, jit):
+    mesh = jtu.create_global_mesh((4,), ('i',))
+
+    def loss(w, x):
+      @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P())
+      def f(x):
+        return jax.lax.psum(((w * x) ** 2).sum(), 'i')
+      return f(x)
+
+    if jit:
+      loss = jax.jit(loss)
+
+    jax.grad(loss)(3.0, jnp.arange(8.))  # don't crash
 
 
 class FunSpec(NamedTuple):

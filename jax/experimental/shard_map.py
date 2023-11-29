@@ -520,6 +520,8 @@ def _unshard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
 
 # Type-checking
 
+RepType = Optional[set[AxisName]]
+
 def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_names, out_names,
                          check_rep, rewrite, auto):
   del auto  # TODO(mattjj,parkers): check
@@ -544,14 +546,14 @@ core.custom_typechecks[shard_map_p] = _shard_map_typecheck
 def _in_names_to_rep(mesh: Mesh, names: AxisNames) -> set[AxisName]:
   return set(mesh.axis_names) - {n for ns in names.values() for n in ns}
 
-def _check_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[set[AxisName]],
-                ) -> Sequence[set[AxisName]]:
-  env: dict[core.Var, set[AxisName]] = {}
+def _check_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[RepType]
+               ) -> Sequence[RepType]:
+  env: dict[core.Var, RepType] = {}
 
-  def read(x: core.Atom) -> set[AxisName]:
-    return env[x] if type(x) is core.Var else set(mesh.axis_names)
+  def read(x: core.Atom) -> RepType:
+    return env[x] if type(x) is core.Var else None
 
-  def write(v: core.Var, val: set[AxisName]) -> None:
+  def write(v: core.Var, val: RepType) -> None:
     env[v] = val
 
   map(write, jaxpr.constvars, [set(mesh.axis_names)] * len(jaxpr.constvars))
@@ -568,8 +570,8 @@ def _check_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[set[AxisName]],
     core.clean_up_dead_vars(e, env, last_used)
   return map(read, jaxpr.outvars)
 
-def _valid_repeats(mesh: Mesh, rep: set[AxisName], dst: AxisNames) -> bool:
-  return set(_unmentioned(mesh, dst)).issubset(rep)
+def _valid_repeats(mesh: Mesh, rep: RepType, dst: AxisNames) -> bool:
+  return rep is None or set(_unmentioned(mesh, dst)).issubset(rep)
 
 # Lowering
 
@@ -685,7 +687,7 @@ def _check_reps2(mesh, reps_dest, reps):
   if any(f is not no_fail for f in fail): raise _RepError(fail)
 
 def _match_spec(mesh: Mesh, check_rep: bool,
-                rep: set[AxisName], dst: AxisNames, x: JaxType) -> JaxType:
+                rep: RepType, dst: AxisNames, x: JaxType) -> JaxType:
   fn = HashablePartial(_match, mesh, check_rep, tuple(dst.items()))
   with core.eval_context():
     return jax.jit(fn)(x)
@@ -710,7 +712,7 @@ class ShardMapTrace(core.Trace):
 
   def pure(self, val):
     val_ = _unmatch_spec(self.mesh, {}, val)
-    return ShardMapTracer(self, set(self.mesh.axis_names), val_)
+    return ShardMapTracer(self, None, val_)
 
   def sublift(self, tracer):
     return ShardMapTracer(self, tracer.rep, tracer.val)
@@ -779,7 +781,7 @@ class ShardMapTrace(core.Trace):
 
 
 class ShardMapTracer(core.Tracer):
-  rep: set[AxisName]
+  rep: RepType
   val: JaxType
 
   def __init__(self, trace, rep, val):
@@ -920,12 +922,14 @@ def _standard_rewrite_rule(prim, mesh, in_rep, *args, **params):
   return out_vals, out_rep
 
 def _standard_check(prim, mesh, *in_rep, **__):
-  # The standard check require args' and outputs' replications to be the same.
-  if in_rep and not in_rep[:-1] == in_rep[1:]:
+  # The standard check require args' and outputs' replications to be the same,
+  # except for Nones which correspond to constants.
+  in_rep_ = [r for r in in_rep if r is not None]
+  if in_rep_ and not in_rep_[:-1] == in_rep_[1:]:
     raise Exception(f"Primitive {prim} requires argument replication types "
                     f"to match, but got {in_rep}. Please open an issue at "
                     "https://github.com/google/jax/issues")
-  return in_rep[0] if in_rep else set(mesh.axis_names)
+  return in_rep_[0] if in_rep_ else None
 
 def register_standard_collective(prim):
   register_check(prim)(partial(_standard_collective_check, prim))
@@ -934,7 +938,7 @@ def register_standard_collective(prim):
 def _standard_collective_check(prim, mesh, x_rep, *, axis_name, **params):
   # The standard collective check is varying -> varying over axis_name.
   del mesh, params
-  if axis_name in x_rep:
+  if x_rep is None or axis_name in x_rep:
     raise Exception(f"Collective {prim} must be applied to a device-varying "
                     f"replication type, but got {x_rep} for collective acting "
                     f"over axis name {axis_name}. Please open an issue at "
@@ -978,26 +982,28 @@ def _psum_rewrite(_, in_rep, *args, axes, axis_index_groups):
 
 
 @register_check(psum2_p)
-def _psum2_check(_, *in_rep, axes, axis_index_groups):
+def _psum2_check(mesh, *in_rep, axes, axis_index_groups):
   assert type(axes) is tuple
-  if any(set(axes) & r for r in in_rep):
+  if any(set(axes) & r for r in in_rep if r is not None):
     raise Exception("Collective psum must be applied to a device-varying "
                     f"replication type, but got {in_rep} for collective acting "
                     f"over axis name {axes}. Please open an issue at "
                     "https://github.com/google/jax/issues")
+  in_rep = tuple(set(mesh.axis_names) if r is None else r for r in in_rep)
   return [r | set(axes) for r in in_rep]
 register_norewrite(psum2_p)
 
 
 @register_check(pbroadcast_p)
-def _pbroadcast_check(_, *in_rep, axes, axis_index_groups):
+def _pbroadcast_check(mesh, *in_rep, axes, axis_index_groups):
   assert type(axes) is tuple
-  if not all(set(axes) & r for r in in_rep):
+  if not all(r is None or set(axes) & r for r in in_rep):
     raise Exception("Collective pbroadcast must be applied to a "
                     "non-device-varying "
                     f"replication type, but got {in_rep} for collective acting "
                     f"over axis name {axes}. Please open an issue at "
                     "https://github.com/google/jax/issues")
+  in_rep = tuple(set(mesh.axis_names) if r is None else r for r in in_rep)
   return [r - set(axes) for r in in_rep]
 register_norewrite(pbroadcast_p)
 
