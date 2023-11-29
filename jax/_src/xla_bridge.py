@@ -894,7 +894,7 @@ def local_devices(process_index: Optional[int] = None,
     process_index = host_id
   if process_index is None:
     process_index = get_backend(backend).process_index()
-  if not (0 <= process_index < process_count()):
+  if not (0 <= process_index < process_count(backend)):
     raise ValueError(f"Unknown process_index {process_index}")
   return [d for d in devices(backend) if d.process_index == process_index]
 
