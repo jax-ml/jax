@@ -256,6 +256,19 @@ class MultiDeviceTest(jtu.JaxTestCase):
     z = lax.transpose(jax.device_put(x, devices[2]), (1, 0))
     self.assert_committed_to_device(z, devices[2])
 
+  def test_device_put_committed_check(self):
+    devices = self.get_devices()
+    x = jnp.array(1.)
+    y = jax.device_put(x, jax.sharding.SingleDeviceSharding(jax.devices()[0]))
+    self.assert_committed_to_device(y, devices[0])
+
+  def test_grad_device_put_src_inference(self):
+    devices = self.get_devices()
+    x = jax.device_put(2.0, devices[0])
+    y, x_bar = jax.value_and_grad(lambda x: jax.device_put(x, devices[1]))(x)
+    self.assert_committed_to_device(y, devices[1])
+    self.assert_committed_to_device(x_bar, devices[0])
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
