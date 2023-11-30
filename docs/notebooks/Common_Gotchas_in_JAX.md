@@ -1109,7 +1109,7 @@ There are a few ways to do this:
 
 Note that #2-#4 work for _any_ of JAX's configuration options.
 
-We can then confirm that `x64` mode is enabled:
+We can then confirm that `x64` mode is enabled (e.g., use #2):
 
 ```{code-cell} ipython3
 :id: HqGbBa9Rr-2g
@@ -1117,6 +1117,8 @@ We can then confirm that `x64` mode is enabled:
 
 import jax.numpy as jnp
 from jax import random
+from jax import config
+config.update("jax_enable_x64", True)
 x = random.uniform(random.PRNGKey(0), (1000,), dtype=jnp.float64)
 x.dtype # --> dtype('float64')
 ```
