@@ -27,6 +27,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec, Mesh
+from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import array
 from jax._src import callback
@@ -981,6 +982,19 @@ def _pjit_rewrite(mesh, in_rep, *args, jaxpr, **kwargs):
 @register_check(pjit.pjit_p)
 def _pjit_check(mesh, *in_rep, jaxpr, **kwargs):
   return _check_rep(mesh, jaxpr.jaxpr, in_rep)
+
+
+@register_rewrite(ad_checkpoint.remat_p)
+def _remat_rewrite(mesh, in_rep, *args, jaxpr, **kwargs):
+  jaxpr_ = pe.close_jaxpr(jaxpr)
+  jaxpr_, out_rep = _replication_rewrite_nomatch(mesh, jaxpr_, in_rep)
+  jaxpr, () = jaxpr_.jaxpr, jaxpr_.consts
+  out_vals = ad_checkpoint.remat_p.bind(*args, jaxpr=jaxpr, **kwargs)
+  return out_vals, out_rep
+
+@register_check(ad_checkpoint.remat_p)
+def _remat_check(mesh, *in_rep, jaxpr, **kwargs):
+  return _check_rep(mesh, jaxpr, in_rep)
 
 
 @register_check(core.call_p)
