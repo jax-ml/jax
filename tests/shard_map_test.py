@@ -90,6 +90,8 @@ def tearDownModule():
   xla_bridge.get_backend.cache_clear()
 
 
+@jtu.ignore_warning(category=DeprecationWarning,
+                    message="arr.device_buffers? is deprecated")
 class ShardMapTest(jtu.JaxTestCase):
 
   def test_identity(self):

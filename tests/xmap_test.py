@@ -929,7 +929,7 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
              in_axes=['i', None], out_axes=[None],
              axis_resources={'i': 'x'})
     h = pjit(f, in_shardings=P('x', None), out_shardings=P(None))(x)
-    assert (h.device_buffers[0] == x.reshape(8)).all()
+    self.assertArraysEqual(h.addressable_data(0), x.reshape(8))
 
   @parameterized.named_parameters(
   {'testcase_name': name, 'mesh': mesh}
@@ -949,7 +949,7 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
         out_shardings=P('x', None),
     )(x)
 
-    assert (h.device_buffers[0].reshape(4) == x[0, :]*2).all()
+    self.assertArraysEqual(h.addressable_data(0).reshape(4), x[0, :] * 2)
 
   @jtu.with_mesh([('x', 2)])
   def testBareXmapCollective(self):

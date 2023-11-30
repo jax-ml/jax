@@ -125,6 +125,8 @@ def check_1d_2d_mesh(f, set_mesh):
 
 
 # TODO(skye): make the buffer donation utils part of JaxTestCase
+@jtu.ignore_warning(category=DeprecationWarning,
+                    message="arr.device_buffers? is deprecated")
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitTest(jtu.BufferDonationTestCase):
 
