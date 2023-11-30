@@ -29,7 +29,7 @@ import inspect
 import math
 import typing
 from typing import (Any, Callable, Literal, NamedTuple, TypeVar, overload,
-                    cast)
+                    cast, Optional)
 import weakref
 
 import numpy as np
@@ -53,7 +53,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import pjit
 from jax._src import xla_bridge as xb
-from jax._src.core import eval_jaxpr, ShapedArray
+from jax._src.core import eval_jaxpr, ShapedArray, ConcreteArray
 from jax._src.api_util import (
     flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
     argnums_partial_except, flatten_axes, donation_vector,
@@ -2461,10 +2461,16 @@ def make_jaxpr(fun: Callable,
     make_jaxpr_f.__name__ = f"make_jaxpr({fun.__name__})"
   return make_jaxpr_f
 
-def _infer_src_sharding(src, x):
+def _infer_src_sharding(src, x) -> Optional[Sharding]:
   if src is not None:
     return src
-  return x.sharding if isinstance(x, array.ArrayImpl) else None
+  if isinstance(x, array.ArrayImpl):
+    return x.sharding
+  elif isinstance(x, core.Tracer):
+    aval = core.get_aval(x)
+    if isinstance(aval, ConcreteArray) and isinstance(aval.val, array.ArrayImpl):
+      return aval.val.sharding
+  return None
 
 
 # TODO(yashkatariya): Generalize is_compatible_aval (maybe renamed) and use that

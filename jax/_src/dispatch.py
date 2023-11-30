@@ -488,7 +488,7 @@ def _device_put_impl(
 
   if isinstance(device, Sharding):
     s = device
-    if getattr(x, 'sharding', None) == s:
+    if getattr(x, 'sharding', None) == s and getattr(x, '_committed', False):
       return x
     if (not s.is_fully_addressable and  # type: ignore
         isinstance(x, array.ArrayImpl) and not x.is_fully_addressable):
