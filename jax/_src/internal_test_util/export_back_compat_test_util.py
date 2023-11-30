@@ -298,7 +298,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
 
     module_str = str(exported.mlir_module())
     serialized = exported.mlir_module_serialized
-    module_version = exported.serialization_version
+    module_version = exported.mlir_module_serialization_version
     nr_devices = exported.nr_devices
     return serialized, module_str, module_version, nr_devices
 
@@ -330,9 +330,9 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         lowering_platforms=(data.platform,),
         ordered_effects=(),
         unordered_effects=(),
-        disabled_checks=(),
+        disabled_safety_checks=(),
         mlir_module_serialized=data.mlir_module_serialized,
-        serialization_version=data.xla_call_module_version,
+        mlir_module_serialization_version=data.xla_call_module_version,
         nr_devices=data.nr_devices,
         module_kept_var_idx=tuple(range(len(in_avals))),
         uses_shape_polymorphism=any(not core.is_constant_shape(a.shape)

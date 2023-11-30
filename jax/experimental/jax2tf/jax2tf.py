@@ -833,7 +833,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   kept_args_avals = [aval for i, aval in enumerate(exported.in_avals) if i in exported.module_kept_var_idx]
   kept_args_flat_tf = [atf for i, atf in enumerate(args_flat_tf) if i in exported.module_kept_var_idx]
 
-  version = exported.serialization_version
+  version = exported.mlir_module_serialization_version
 
   try:
     get_max_supported_version = tfxla.call_module_maximum_supported_version
@@ -870,10 +870,10 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   if version >= 6:
     call_module_attrs["disabled_checks"] = tuple(
         str(dc)
-        for dc in exported.disabled_checks)
+        for dc in exported.disabled_safety_checks)
   else:
     if version >= 3:
-      if DisabledSafetyCheck.platform() in exported.disabled_checks:
+      if DisabledSafetyCheck.platform() in exported.disabled_safety_checks:
         call_module_attrs["platforms"] = ()  # No platform checking
 
   if logging.vlog_is_on(3):

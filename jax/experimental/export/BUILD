@@ -32,6 +32,7 @@ py_library(
     name = "export",
     srcs = [
         "export.py",
+        "serialization_generated.py",
         "shape_poly.py",
     ],
     srcs_version = "PY3",
@@ -40,5 +41,5 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         "//jax",
-    ] + py_deps("numpy"),
+    ] + py_deps("numpy") + py_deps("flatbuffers"),
 )

@@ -21,10 +21,10 @@ import dataclasses
 import functools
 import itertools
 import re
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional, TypeVar, Union
 
 from absl import logging
-
+import flatbuffers
 import numpy as np
 
 import jax
@@ -33,6 +33,7 @@ from jax import sharding
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
+from jax._src import dtypes
 from jax._src import effects
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -48,6 +49,7 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 
 from jax.experimental.export import shape_poly
+from jax.experimental.export import serialization_generated as serialization
 
 map = util.safe_map
 zip = util.safe_zip
@@ -156,7 +158,7 @@ class Exported:
     unordered_effects: the unordered effects present in the serialized module.
         This is present from serialization version 9.
     mlir_module_serialized: the serialized lowered VHLO module.
-    serialization_version: a version number for the serialized module.
+    mlir_module_serialization_version: a version number for the serialized module.
         See more versioning details at https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions.
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
@@ -166,7 +168,7 @@ class Exported:
         variables, or due to inner calls of Exported modules that have
         dimension variables or platform index arguments. Such modules need
         shape refinement before XLA compilation.
-    disabled_checks: a list of descriptors of safety checks that have been
+    disabled_safety_checks: a list of descriptors of safety checks that have been
         disabled at export time. See docstring for `DisabledSafetyCheck`.
     _get_vjp: an optional function that takes the current exported function and
         returns the exported VJP function.
@@ -282,10 +284,10 @@ class Exported:
   lowering_platforms: tuple[str, ...]
   ordered_effects: tuple[effects.Effect, ...]
   unordered_effects: tuple[effects.Effect, ...]
-  disabled_checks: Sequence[DisabledSafetyCheck]
+  disabled_safety_checks: Sequence[DisabledSafetyCheck]
 
   mlir_module_serialized: bytes
-  serialization_version: int
+  mlir_module_serialization_version: int
   module_kept_var_idx: tuple[int, ...]
   uses_shape_polymorphism: bool
 
@@ -298,6 +300,9 @@ class Exported:
     # This is called to make a MLIR source location when we call an Exported, and we
     # do not want the entire serialized module to end up in locations.
     return f"Exported(fun_name={self.fun_name}, ...)"
+
+  def has_vjp(self) -> bool:
+    return self._get_vjp is not None
 
   def vjp(self) -> "Exported":
     """Gets the exported VJP.
@@ -496,7 +501,7 @@ def export(fun_jax: Callable,
       mlir_module_attrs["jax.uses_shape_polymorphism"] = (
           mlir.ir.BoolAttr.get(shape_poly_state.uses_dim_vars))
 
-    mlir_module_serialized = _serialize_module(mlir_module)
+    mlir_module_serialized = _module_to_bytecode(mlir_module)
 
     # Figure out the result types and shapes
     if "global_out_avals" in lowering.compile_args:
@@ -554,17 +559,17 @@ def export(fun_jax: Callable,
         lowering_platforms=actual_lowering_platforms,
         ordered_effects=ordered_effects,
         unordered_effects=unordered_effects,
-        disabled_checks=tuple(disabled_checks),
+        disabled_safety_checks=tuple(disabled_checks),
         mlir_module_serialized=mlir_module_serialized,
         module_kept_var_idx=module_kept_var_idx,
         uses_shape_polymorphism=shape_poly_state.uses_dim_vars,
-        serialization_version=version,  # type: ignore
+        mlir_module_serialization_version=version,  # type: ignore
         _get_vjp=lambda exported: _export_native_vjp(fun_jax, exported))
 
   return do_export
 
 
-def _serialize_module(module: ir.Module) -> bytes:
+def _module_to_bytecode(module: ir.Module) -> bytes:
   mlir_str = mlir.module_to_bytecode(module)
   if hlo.get_api_version() < 4:
     target_version = hlo.get_earliest_forward_compatible_version()
@@ -1042,9 +1047,9 @@ def _export_native_vjp(primal_fun, primal: Exported) -> Exported:
                                            apply_jit=True)
   return export(fun_vjp_jax,
                 lowering_platforms=primal.lowering_platforms,
-                disabled_checks=primal.disabled_checks)(*vjp_in_avals)
+                disabled_checks=primal.disabled_safety_checks)(*vjp_in_avals)
 
-### Importing
+### Calling the exported function
 
 def call_exported(exported: Exported) -> Callable[..., jax.Array]:
   if not isinstance(exported, Exported):
@@ -1215,7 +1220,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     if platform in exported.lowering_platforms:
       callee_lowering_platform_index.append(
         exported.lowering_platforms.index(platform))
-    elif DisabledSafetyCheck.platform() in exported.disabled_checks:
+    elif DisabledSafetyCheck.platform() in exported.disabled_safety_checks:
       callee_lowering_platform_index.append(0)
     else:
       raise ValueError(
@@ -1249,7 +1254,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   else:
     assert len(lowering_platforms) == 1
 
-  if _keep_main_tokens(exported.serialization_version):
+  if _keep_main_tokens(exported.mlir_module_serialization_version):
     ordered_effects = exported.ordered_effects
   else:
     ordered_effects = ()
@@ -1282,11 +1287,6 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   )
   return results
 
-
-# for _p in ("cpu", "tpu", "cuda", "rocm"):
-#   mlir.register_lowering(call_exported_p,
-#                          functools.partial(_call_exported_lowering, platform=_p),
-#                          platform=_p)
 mlir.register_lowering(call_exported_p, _call_exported_lowering)
 
 def wrap_with_sharding(ctx: mlir.LoweringRuleContext,
@@ -1297,3 +1297,380 @@ def wrap_with_sharding(ctx: mlir.LoweringRuleContext,
     return x
   return mlir.wrap_with_sharding_op(
     ctx, x, x_aval, x_sharding.to_proto())
+
+
+### Serialization and deserialization
+
+def serialize(exp: Exported, vjp_order: int = 0) -> bytearray:
+  """Serialize an Exported.
+
+  Args:
+    exp: the Exported to serialize.
+    vjp_order: The maximum vjp order to include.
+      E.g., the value 2 means that we serialize the primal functions and
+      two orders of the `vjp` function. This should allow 2nd order
+      reverse mode differentiation of the deserialized function.
+      i.e., `jax.grad(jax.grad(f)).`
+  """
+  builder = flatbuffers.Builder(65536)
+  exported = _serialize_exported(builder, exp, vjp_order)
+  builder.Finish(exported)
+  return builder.Output()
+
+def deserialize(ser: bytearray) -> Exported:
+  """Deserialize an Exported."""
+  exp = serialization.Exported.GetRootAsExported(ser)
+  return _deserialize_exported(exp)
+
+def _serialize_exported(builder: flatbuffers.Builder,
+                        exp: Exported,
+                        vjp_order: int) -> int:
+  # Serialize bottom-up
+  fun_name = builder.CreateString(exp.fun_name)
+  in_tree = _serialize_pytreedef(builder, exp.in_tree)
+  in_avals = _serialize_array(builder, _serialize_aval, exp.in_avals)
+  out_tree = _serialize_pytreedef(builder, exp.out_tree)
+  out_avals = _serialize_array(builder, _serialize_aval, exp.out_avals)
+  in_shardings = _serialize_array(builder, _serialize_sharding, exp.in_shardings)
+  out_shardings = _serialize_array(builder, _serialize_sharding, exp.out_shardings)
+  ordered_effects = _serialize_array(builder, _serialize_effect, exp.ordered_effects)
+  unordered_effects = _serialize_array(builder, _serialize_effect, exp.unordered_effects)
+  disabled_safety_checks = _serialize_array(builder,
+                                            _serialize_disabled_safety_check,
+                                            exp.disabled_safety_checks)
+  lowering_platforms = _serialize_array(builder,
+                                        lambda b, p: b.CreateString(p),
+                                        exp.lowering_platforms)
+  mlir_module_serialized = builder.CreateByteVector(exp.mlir_module_serialized)
+  module_kept_var_idx = builder.CreateNumpyVector(
+    np.array(exp.module_kept_var_idx, dtype=np.uint16))
+
+  vjp = None
+  if vjp_order > 0:
+    if not exp.has_vjp():
+      # TODO: add test
+      raise ValueError(
+        "serialization of an Exported that does not have vjps of high-enough "
+        "order")
+    vjp = _serialize_exported(builder, exp.vjp(), vjp_order - 1)
+
+  serialization.ExportedStart(builder)
+  serialization.ExportedAddSerializationVersion(builder, 1)
+  serialization.ExportedAddFunctionName(builder, fun_name)
+  serialization.ExportedAddInTree(builder, in_tree)
+  serialization.ExportedAddInAvals(builder, in_avals)
+  serialization.ExportedAddOutTree(builder, out_tree)
+  serialization.ExportedAddOutAvals(builder, out_avals)
+  serialization.ExportedAddNrDevices(builder, exp.nr_devices)
+  serialization.ExportedAddInShardings(builder, in_shardings)
+  serialization.ExportedAddOutShardings(builder, out_shardings)
+  serialization.ExportedAddLoweringPlatforms(builder, lowering_platforms)
+  serialization.ExportedAddOrderedEffects(builder, ordered_effects)
+  serialization.ExportedAddUnorderedEffects(builder, unordered_effects)
+  serialization.ExportedAddDisabledChecks(builder, disabled_safety_checks)
+  serialization.ExportedAddMlirModuleSerialized(builder, mlir_module_serialized)
+  serialization.ExportedAddMlirModuleSerializationVersion(
+    builder, exp.mlir_module_serialization_version)
+  serialization.ExportedAddModuleKeptVarIdx(builder, module_kept_var_idx)
+  serialization.ExportedAddUsesShapePolymorphism(
+    builder, exp.uses_shape_polymorphism)
+  if vjp is not None:
+    serialization.ExportedAddVjp(builder, vjp)
+  return serialization.ExportedEnd(builder)
+
+T = TypeVar("T")
+SerT = TypeVar("SerT")
+
+def _serialize_array(builder: flatbuffers.Builder,
+                     serialize_one: Callable[[flatbuffers.Builder, T], int],
+                     elements: Sequence[T]) -> int:
+  element_offsets = [serialize_one(builder, e) for e in elements]
+  serialization.PyTreeDefStartChildrenVector(builder, len(element_offsets))
+  for sc in reversed(element_offsets):
+    builder.PrependUOffsetTRelative(sc)
+  return builder.EndVector()
+
+
+def _deserialize_exported(exp: serialization.Exported) -> Exported:
+  serialization_version = exp.SerializationVersion()
+  if serialization_version != 1:
+    raise NotImplementedError(
+      f"deserialize unsupported version {serialization_version}")
+
+  fun_name = exp.FunctionName().decode("utf-8")
+  _, in_tree = tree_util.tree_flatten(
+    _deserialize_pytreedef_to_pytree(exp.InTree()))
+  in_avals = _deserialize_tuple(exp.InAvalsLength,
+                                exp.InAvals,
+                                _deserialize_aval)
+  _, out_tree = tree_util.tree_flatten(
+    _deserialize_pytreedef_to_pytree(exp.OutTree()))
+  out_avals = _deserialize_tuple(exp.OutAvalsLength,
+                                 exp.OutAvals, _deserialize_aval)
+  nr_devices = exp.NrDevices()
+  in_shardings = _deserialize_tuple(exp.InShardingsLength,
+                                    exp.InShardings,
+                                    _deserialize_sharding)
+  out_shardings = _deserialize_tuple(exp.OutShardingsLength, exp.OutShardings,
+                                     _deserialize_sharding)
+  lowering_platforms = _deserialize_tuple(exp.LoweringPlatformsLength,
+                                          exp.LoweringPlatforms,
+                                          lambda v: v.decode("utf-8"))
+  ordered_effects = _deserialize_tuple(exp.OrderedEffectsLength,
+                                       exp.OrderedEffects, _deserialize_effect)
+  unordered_effects = _deserialize_tuple(exp.UnorderedEffectsLength,
+                                         exp.UnorderedEffects,
+                                         _deserialize_effect)
+  disabled_safety_checks = _deserialize_tuple(exp.DisabledChecksLength,
+                                              exp.DisabledChecks,
+                                              _deserialize_disabled_safety_check)
+
+  mlir_module_serialized = exp.MlirModuleSerializedAsNumpy().tobytes()
+  mlir_module_serialization_version = exp.MlirModuleSerializationVersion()
+  module_kept_var_idx = tuple(exp.ModuleKeptVarIdxAsNumpy().tolist())
+  uses_shape_polymorphism = exp.UsesShapePolymorphism()
+
+  _get_vjp = None
+  if vjp := exp.Vjp():
+    _get_vjp = lambda _: _deserialize_exported(vjp)
+
+  return Exported(
+    fun_name=fun_name,
+    in_tree=in_tree,
+    in_avals=in_avals,
+    out_tree=out_tree,
+    out_avals=out_avals,
+    nr_devices=nr_devices,
+    in_shardings=in_shardings,
+    out_shardings=out_shardings,
+    lowering_platforms=lowering_platforms,
+    ordered_effects=ordered_effects,
+    unordered_effects=unordered_effects,
+    disabled_safety_checks=disabled_safety_checks,
+    mlir_module_serialized=mlir_module_serialized,
+    mlir_module_serialization_version=mlir_module_serialization_version,
+    module_kept_var_idx=module_kept_var_idx,
+    uses_shape_polymorphism=uses_shape_polymorphism,
+    _get_vjp=_get_vjp,
+  )
+
+def _deserialize_tuple(get_len: Callable[[], int],
+                       get_elem: Callable[[int], SerT],
+                       deserialize_one: Callable[[SerT], T]) -> tuple[T, ...]:
+  return tuple(deserialize_one(get_elem(i))
+               for i in range(get_len()))
+
+def _serialize_pytreedef(builder: flatbuffers.Builder,
+                         p: tree_util.PyTreeDef) -> int:
+  node_data = p.node_data()
+  children = p.children()
+
+  children_vector_offset = None
+  children_names_vector_offset = None
+  if children:
+    children_vector_offset = _serialize_array(builder, _serialize_pytreedef,
+                                              children)
+
+  if node_data is None:  # leaf
+    kind = serialization.PyTreeDefKind.leaf
+  elif node_data[0] is type(None):
+    kind = serialization.PyTreeDefKind.none
+  elif node_data[0] is tuple:
+    kind = serialization.PyTreeDefKind.tuple
+  elif node_data[0] is list:
+    kind = serialization.PyTreeDefKind.list
+  elif node_data[0] is dict:
+    kind = serialization.PyTreeDefKind.dict
+    assert len(node_data[1]) == len(children)
+    children_names_vector_offset = _serialize_array(builder,
+                                                    lambda b, s: b.CreateString(s),
+                                                    node_data[1])
+  else:
+    raise NotImplementedError(f"serializing PyTreeDef {node_data}")
+
+  serialization.PyTreeDefStart(builder)
+  serialization.PyTreeDefAddKind(builder, kind)
+  if children_vector_offset:
+    serialization.PyTreeDefAddChildren(builder, children_vector_offset)
+  if children_names_vector_offset:
+    serialization.PyTreeDefAddChildrenNames(builder,
+                                            children_names_vector_offset)
+  return serialization.PyTreeDefEnd(builder)
+
+
+def _deserialize_pytreedef_to_pytree(p: serialization.PyTreeDef):
+  # We construct a PyTree and later we'll flatten it to get the PyTreeDef.
+  # TODO: is there a more direct way to construct a PyTreeDef?
+  kind = p.Kind()
+  nr_children = p.ChildrenLength()
+  children = [_deserialize_pytreedef_to_pytree(p.Children(i))
+              for i in range(nr_children)]
+  if kind == serialization.PyTreeDefKind.leaf:
+    return 0.
+  elif kind == serialization.PyTreeDefKind.none:
+    return None
+  elif kind == serialization.PyTreeDefKind.tuple:
+    return tuple(children)
+  elif kind == serialization.PyTreeDefKind.list:
+    return list(children)
+  elif kind == serialization.PyTreeDefKind.dict:
+    assert p.ChildrenNamesLength() == nr_children
+    keys = [p.ChildrenNames(i).decode("utf-8") for i in range(nr_children)]
+    return dict(zip(keys, children))
+  else:
+    assert False, kind
+
+_dtype_to_dtype_kind = {
+  np.dtype("bool"): serialization.DType.bool,
+  np.dtype("int8"): serialization.DType.i8,
+  np.dtype("int16"): serialization.DType.i16,
+  np.dtype("int32"): serialization.DType.i32,
+  np.dtype("int64"): serialization.DType.i64,
+  np.dtype("uint8"): serialization.DType.ui8,
+  np.dtype("uint16"): serialization.DType.ui16,
+  np.dtype("uint32"): serialization.DType.ui32,
+  np.dtype("uint64"): serialization.DType.ui64,
+  np.dtype("float16"): serialization.DType.f16,
+  np.dtype("float32"): serialization.DType.f32,
+  np.dtype("float64"): serialization.DType.f64,
+  np.dtype("complex64"): serialization.DType.c64,
+  np.dtype("complex128"): serialization.DType.c128,
+
+  dtypes._bfloat16_dtype:  serialization.DType.bf16,
+  dtypes._int4_dtype: serialization.DType.i4,
+  dtypes._uint4_dtype: serialization.DType.ui4,
+
+  dtypes._float8_e4m3b11fnuz_dtype: serialization.DType.f8_e4m3b11fnuz,
+  dtypes._float8_e4m3fn_dtype: serialization.DType.f8_e4m3fn,
+  dtypes._float8_e4m3fnuz_dtype: serialization.DType.f8_e4m3fnuz,
+  dtypes._float8_e5m2_dtype: serialization.DType.f8_e5m2,
+  dtypes._float8_e5m2fnuz_dtype: serialization.DType.f8_e5m2fnuz,
+}
+
+
+_dtype_kind_to_dtype = {kind: dtype
+                        for dtype, kind in _dtype_to_dtype_kind.items()}
+
+
+def _serialize_aval(builder: flatbuffers.Builder,
+                    aval: core.AbstractValue) -> int:
+  aval_type = type(aval)
+  if aval_type is core.ShapedArray:
+    aval_kind = serialization.AbstractValueKind.shapedArray
+    shape_offsets = [builder.CreateString(str(d)) for d in aval.shape]
+    serialization.AbstractValueStartShapeVector(builder, len(aval.shape))
+    for d in reversed(shape_offsets):
+      builder.PrependUOffsetTRelative(d)
+    shape_vector_offset = builder.EndVector()
+
+    serialization.AbstractValueStart(builder)
+    serialization.AbstractValueAddKind(builder, aval_kind)
+    serialization.AbstractValueAddShape(builder, shape_vector_offset)
+    serialization.AbstractValueAddDtype(builder,
+                                        _dtype_to_dtype_kind[aval.dtype])
+    return serialization.AbstractValueEnd(builder)
+  else:
+    raise NotImplementedError(f"serializing AbstractValue: {aval}")
+
+def _deserialize_aval(aval: serialization.AbstractValue) -> core.AbstractValue:
+  aval_kind = aval.Kind()
+  if aval_kind == serialization.AbstractValueKind.shapedArray:
+    dtype = _dtype_kind_to_dtype[aval.Dtype()]
+    shape = symbolic_shape(",".join(aval.Shape(i).decode("utf-8")
+                                    for i in range(aval.ShapeLength())))
+    return core.ShapedArray(shape, dtype)
+  else:
+    assert False, aval_kind
+
+def _serialize_sharding(builder: flatbuffers.Builder,
+                        s: Sharding) -> int:
+  proto = None
+  if s is None:
+    kind = serialization.ShardingKind.unspecified
+  else:
+    kind = serialization.ShardingKind.hlo_sharding
+    proto_bytes = s.to_proto().SerializeToString()  # type: ignore[union-attr]
+    proto = builder.CreateByteVector(proto_bytes)
+
+  serialization.ShardingStart(builder)
+  serialization.ShardingAddKind(builder, kind)
+  if proto is not None:
+    serialization.ShardingAddHloShardingProto(builder, proto)
+  return serialization.ShardingEnd(builder)
+
+def _deserialize_sharding(s: serialization.Sharding) -> Sharding:
+  kind = s.Kind()
+  if kind == serialization.ShardingKind.unspecified:
+    return None
+
+  if kind == serialization.ShardingKind.hlo_sharding:
+    proto_str = s.HloShardingProtoAsNumpy().tobytes()
+    proto = xla_client.OpSharding()
+    proto.ParseFromString(proto_str)
+
+    return xla_client.HloSharding.from_proto(proto)
+
+  assert False, kind
+
+def _serialize_effect(builder: flatbuffers.Builder, eff: core.Effect) -> int:
+  # TODO(necula): for now serialize just the name of the class
+  try:
+    _ = eff.__class__()
+  except:
+    raise NotImplementedError(
+      f"serializing effect {eff} that does not have a nullary class constructor")
+  # TODO: fix the effects serialization and deserialization, to ensure that
+  # upon deserialization we reconstruct an effect that compares equal to the
+  # one that was serialized.
+
+  effect_type_name = str(eff.__class__)
+  effect_type_name_offset = builder.CreateString(effect_type_name)
+  serialization.EffectStart(builder)
+  serialization.EffectAddTypeName(builder, effect_type_name_offset)
+  return serialization.ExportedEnd(builder)
+
+def _deserialize_effect(eff: serialization.Effect) -> core.Effect:
+  effect_type_name = eff.TypeName().decode("utf-8")
+  for existing_effect_type in effects.lowerable_effects._effect_types:
+    if str(existing_effect_type) == effect_type_name:
+      try:
+        return existing_effect_type()
+      except:
+        # TODO: add test
+        raise NotImplementedError(
+          f"deserializing effect {effect_type_name} that does not have a nullary class constructor")
+
+  raise NotImplementedError(f"cannot deserialize effect type {effect_type_name}")
+
+def _serialize_disabled_safety_check(builder: flatbuffers.Builder,
+                                     check: DisabledSafetyCheck) -> int:
+  custom_call_target_str = check.is_custom_call()
+  custom_call_target = None
+  if custom_call_target_str is not None:
+    kind = serialization.DisabledSafetyCheckKind.custom_call
+    custom_call_target = builder.CreateString(custom_call_target_str)
+  elif check == DisabledSafetyCheck.platform():
+    kind = serialization.DisabledSafetyCheckKind.platform
+  elif check == DisabledSafetyCheck.shape_assertions():
+    kind = serialization.DisabledSafetyCheckKind.shape_assertions
+  else:
+    raise NotImplementedError(f"serializing DisabledSafetyCheck: {check}")
+
+  serialization.DisabledSafetyCheckStart(builder)
+  serialization.DisabledSafetyCheckAddKind(builder, kind)
+  if custom_call_target is not None:
+    serialization.DisabledSafetyCheckAddCustomCallTarget(builder,
+                                                         custom_call_target)
+  return serialization.DisabledSafetyCheckEnd(builder)
+
+
+def _deserialize_disabled_safety_check(
+    sc: serialization.DisabledSafetyCheck) -> DisabledSafetyCheck:
+  kind = sc.Kind()
+  if kind == serialization.DisabledSafetyCheckKind.custom_call:
+    return DisabledSafetyCheck.custom_call(sc.CustomCallTarget().decode("utf-8"))
+  if kind == serialization.DisabledSafetyCheckKind.platform:
+    return DisabledSafetyCheck.platform()
+  if kind == serialization.DisabledSafetyCheckKind.shape_assertions:
+    return DisabledSafetyCheck.shape_assertions()
+  assert False, kind

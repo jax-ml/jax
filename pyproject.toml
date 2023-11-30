@@ -21,6 +21,7 @@ module = [
     "iree.*",
     "rich.*",
     "optax.*",
+    "flatbuffers.*",
     "flax.*",
     "tensorflow.*",
     "tensorflowjs.*",
