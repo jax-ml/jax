@@ -25,7 +25,6 @@ import platform
 from typing import cast, Optional
 import unittest
 from unittest import SkipTest
-import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -4564,8 +4563,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertArraysEqual(np.r_['0,4,-2', [1,2,3], [4,5,6]], jnp.r_['0,4,-2', [1,2,3], [4,5,6]])
 
     # matrix directives
-    with warnings.catch_warnings():
-      warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+    with jtu.ignore_warning(category=PendingDeprecationWarning):
       self.assertArraysEqual(np.r_['r',[1,2,3], [4,5,6]], jnp.r_['r',[1,2,3], [4,5,6]])
       self.assertArraysEqual(np.r_['c', [1, 2, 3], [4, 5, 6]], jnp.r_['c', [1, 2, 3], [4, 5, 6]])
 
@@ -4613,8 +4611,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertArraysEqual(np.c_['0,4,-1', [1,2,3], [4,5,6]], jnp.c_['0,4,-1', [1,2,3], [4,5,6]])
     self.assertArraysEqual(np.c_['0,4,-2', [1,2,3], [4,5,6]], jnp.c_['0,4,-2', [1,2,3], [4,5,6]])
     # matrix directives, avoid numpy deprecation warning
-    with warnings.catch_warnings():
-      warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+    with jtu.ignore_warning(category=PendingDeprecationWarning):
       self.assertArraysEqual(np.c_['r',[1,2,3], [4,5,6]], jnp.c_['r',[1,2,3], [4,5,6]])
       self.assertArraysEqual(np.c_['c', [1, 2, 3], [4, 5, 6]], jnp.c_['c', [1, 2, 3], [4, 5, 6]])
 
@@ -5497,8 +5494,7 @@ def _dtypes_for_ufunc(name: str) -> Iterator[tuple[str, ...]]:
   for arg_dtypes in itertools.product(_available_numpy_dtypes, repeat=func.nin):
     args = (np.ones(1, dtype=dtype) for dtype in arg_dtypes)
     try:
-      with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", "divide by zero", RuntimeWarning)
+      with jtu.ignore_warning(category=RuntimeWarning, message="divide by zero"):
         _ = func(*args)
     except TypeError:
       pass

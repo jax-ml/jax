@@ -1040,9 +1040,9 @@ class JaxTestCase(parameterized.TestCase):
 
   @contextmanager
   def assertNoWarnings(self):
-    with warnings.catch_warnings(record=True) as caught_warnings:
+    with warnings.catch_warnings():
+      warnings.simplefilter("error")
       yield
-    self.assertEmpty(caught_warnings)
 
   def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True, tol=None,
                        rtol=None, atol=None, check_cache_misses=True):
@@ -1124,9 +1124,9 @@ class BufferDonationTestCase(JaxTestCase):
 
 
 @contextmanager
-def ignore_warning(**kw):
+def ignore_warning(*, message='', category=Warning, **kw):
   with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", **kw)
+    warnings.filterwarnings("ignore", message=message, category=category, **kw)
     yield
 
 # -------------------- Mesh parametrization helpers --------------------

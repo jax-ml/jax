@@ -24,7 +24,6 @@ import re
 from typing import Optional, cast
 import unittest
 from unittest import SkipTest
-import warnings
 import weakref
 
 import numpy as np
@@ -1848,13 +1847,8 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     def foo(x): return x
 
-    with warnings.catch_warnings(record=True) as w:
-      warnings.simplefilter("always")
+    with self.assertWarnsRegex(UserWarning, "The jitted function foo includes a pmap"):
       jit(self.pmap(foo))(jnp.arange(device_count))
-
-      self.assertGreaterEqual(len(w), 1)
-      self.assertIn("The jitted function foo includes a pmap",
-                    str(w[-1].message))
 
   def testJitOfPmapOutputSharding(self):
     device_count = jax.device_count()
