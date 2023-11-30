@@ -46,7 +46,8 @@ from jax._src import array
 from jax._src.core import Tracer
 from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
-                          windowed_reductions, fft, linalg, control_flow)
+                          windowed_reductions, convolution, fft, linalg,
+                          control_flow)
 from jax._src.util import (HashableFunction, HashablePartial, unzip2, unzip3,
                            as_hashable_function, memoize, partition_list,
                            merge_lists, split_list, subs_list2)
@@ -966,7 +967,8 @@ def _standard_collective_rewrite(prim, mesh, in_rep, x, axis_name, **params):
 
 
 for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
-                  windowed_reductions.__dict__.values(), fft.__dict__.values(),
+                  windowed_reductions.__dict__.values(),
+                  convolution.__dict__.values(), fft.__dict__.values(),
                   linalg.__dict__.values(), ops.__dict__.values(),
                   ad_util.__dict__.values(), prng.__dict__.values()):
   if isinstance(o, core.Primitive):

@@ -1264,6 +1264,22 @@ class ShardMapTest(jtu.JaxTestCase):
 
     jax.grad(loss)(3.0, jnp.arange(8.))  # don't crash
 
+  def test_conv_general_dilated(self):
+    mesh = jtu.create_global_mesh((4,), ('i',))
+
+    dot = partial(lax.conv_general_dilated, window_strides=(),
+                   padding='VALID', dimension_numbers=('NC', 'IO', 'NC'))
+
+    @partial(shard_map, mesh=mesh, in_specs=(P(None, 'i'), P('i', None)),
+             out_specs=P(None, None))
+    def f(x, y):
+      return lax.psum(dot(x, y), 'i')
+
+    a = jnp.ones((16, 32))
+    b = jnp.ones((32, 8))
+    y = f(a, b)  # don't crash
+    self.assertAllClose(y, a @ b, check_dtypes=False, atol=1e-2, rtol=1e-2)
+
 
 class FunSpec(NamedTuple):
   name: str
