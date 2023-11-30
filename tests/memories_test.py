@@ -14,7 +14,6 @@
 
 import functools
 import math
-import warnings
 from absl.testing import absltest
 from absl.testing import parameterized
 from absl import flags
@@ -929,13 +928,8 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
     def f(x):
       return x * 2
 
-    with warnings.catch_warnings(record=True) as w:
-      warnings.simplefilter("always")
+    with self.assertWarnsRegex(UserWarning, "Some donated buffers were not usable"):
       f(inp)
-
-      self.assertLen(w, 1)
-      self.assertTrue(issubclass(w[-1].category, UserWarning))
-      self.assertIn("Some donated buffers were not usable:", str(w[-1].message))
 
     lowered_text = f.lower(inp).as_text("hlo")
     self.assertNotIn("input_output_alias", lowered_text)

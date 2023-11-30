@@ -14,7 +14,6 @@
 import functools
 import threading
 import unittest
-import warnings
 
 from absl.testing import absltest
 import jax
@@ -535,8 +534,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     def f(x):
       effect_p.bind(effect=bar_effect)
       return x + 1
-    with warnings.catch_warnings():
-      warnings.simplefilter("ignore")
+    with jtu.ignore_warning():
       f(jnp.arange(jax.device_count()))  # doesn't crash
 
   def test_cant_jit_and_pmap_function_with_ordered_effects(self):

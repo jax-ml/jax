@@ -34,7 +34,6 @@ import sys
 import types
 from typing import Callable, NamedTuple, Optional
 import unittest
-import warnings
 import weakref
 
 from absl import logging
@@ -394,15 +393,8 @@ class JitTest(jtu.BufferDonationTestCase):
     y = jnp.array([1, 2], jnp.int32)
     f = jit(lambda x, y: x.sum() + jnp.float32(y.sum()),
                  **{argnum_type: argnum_val})
-    with warnings.catch_warnings(record=True) as w:
-      warnings.simplefilter("always")
+    with self.assertWarnsRegex(UserWarning, "Some donated buffers were not usable"):
       f(x, y)
-
-      self.assertLen(w, 1)
-      self.assertTrue(issubclass(w[-1].category, UserWarning))
-      self.assertIn(
-          "Some donated buffers were not usable:",
-          str(w[-1].message))
 
   @parameterized.named_parameters(
       ("argnums", "donate_argnums", 0),
@@ -480,8 +472,7 @@ class JitTest(jtu.BufferDonationTestCase):
 
     x = jnp.asarray([0, 1])
     x_copy = jnp.array(x, copy=True)
-    with warnings.catch_warnings():
-      warnings.simplefilter("ignore")
+    with jtu.ignore_warning():
       _test(x)  # donation
 
     # Gives: RuntimeError: Invalid argument: CopyToHostAsync() called on invalid buffer.
@@ -2879,10 +2870,9 @@ class APITest(jtu.JaxTestCase):
 
   def test_dtype_from_builtin_types(self):
     for dtype in [bool, int, float, complex]:
-      with warnings.catch_warnings(record=True) as caught_warnings:
+      with self.assertNoWarnings():
         x = jnp.array(0, dtype=dtype)
-      self.assertEmpty(caught_warnings)
-      assert x.dtype == dtypes.canonicalize_dtype(dtype)
+      self.assertEqual(x.dtype, dtypes.canonicalize_dtype(dtype))
 
   def test_dtype_warning(self):
     # cf. issue #1230
@@ -2890,24 +2880,10 @@ class APITest(jtu.JaxTestCase):
       raise unittest.SkipTest("test only applies when x64 is disabled")
 
     def check_warning(warn, nowarn):
-      with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-
-        nowarn()  # get rid of extra startup warning
-
-        prev_len = len(w)
-        nowarn()
-        assert len(w) == prev_len
-
+      with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype"):
         warn()
-        assert len(w) > 0
-        msg = str(w[-1].message)
-        expected_prefix = "Explicitly requested dtype "
-        self.assertEqual(expected_prefix, msg[:len(expected_prefix)])
-
-        prev_len = len(w)
+      with self.assertNoWarnings():
         nowarn()
-        assert len(w) == prev_len
 
     check_warning(lambda: jnp.array([1, 2, 3], dtype="float64"),
                   lambda: jnp.array([1, 2, 3], dtype="float32"))

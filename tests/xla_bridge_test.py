@@ -355,12 +355,8 @@ class GetBackendTest(jtu.JaxTestCase):
       xb.get_backend("none")
 
   def cpu_fallback_warning(self):
-    with warnings.catch_warnings(record=True) as w:
-      warnings.simplefilter("always")
+    with self.assertWarnsRegex(UserWarning, "No GPU/TPU found, falling back to CPU"):
       xb.get_backend()
-      self.assertLen(w, 1)
-      msg = str(w[-1].message)
-      self.assertIn("No GPU/TPU found, falling back to CPU", msg)
 
   def test_jax_platforms_flag(self):
     self._register_factory("platform_A", 20, assert_used_at_most_once=True)

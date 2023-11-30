@@ -18,7 +18,6 @@ from functools import partial
 import itertools
 import typing
 from typing import Any, Optional
-import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -1524,10 +1523,8 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   def testIndexDtypeError(self):
     # https://github.com/google/jax/issues/2795
     jnp.array(1)  # get rid of startup warning
-    with warnings.catch_warnings(record=True) as w:
-      warnings.simplefilter("error")
+    with self.assertNoWarnings():
       jnp.zeros(5).at[::2].set(1)
-      self.assertLen(w, 0)
 
   @jtu.sample_product(
     [dict(idx=idx, idx_type=idx_type)
