@@ -156,6 +156,8 @@ def _wraps(
     op.__np_wrapped__ = fun
     # Allows this pattern: @wraps(getattr(np, 'new_function', None))
     if fun is None:
+      if lax_description:
+        op.__doc__ = lax_description
       return op
     docstr = getattr(fun, "__doc__", None)
     name = getattr(fun, "__name__", getattr(op, "__name__", str(op)))

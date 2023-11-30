@@ -2179,6 +2179,20 @@ def _convert_to_array_if_dtype_fails(x: ArrayLike) -> ArrayLike:
     return x
 
 
+@util._wraps(getattr(np, "astype", None), lax_description="""
+This is implemented via :func:`jax.lax.convert_element_type`, which may
+have slightly different behavior than :func:`numpy.astype` in some cases.
+In particular, the details of float-to-int and int-to-float casts are
+implementation dependent.
+""")
+def astype(x: ArrayLike, dtype: DTypeLike | None, /, *, copy: bool = True) -> Array:
+  del copy  # unused in JAX
+  if dtype is None:
+    dtype = dtypes.canonicalize_dtype(float_)
+  dtypes.check_user_dtype_supported(dtype, "astype")
+  return lax.convert_element_type(x, dtype)
+
+
 @util._wraps(np.asarray, lax_description=_ARRAY_DOC)
 def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "asarray")

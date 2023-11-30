@@ -61,10 +61,7 @@ def _astype(arr: ArrayLike, dtype: DTypeLike) -> Array:
   some cases. In particular, the details of float-to-int and int-to-float
   casts are implementation dependent.
   """
-  if dtype is None:
-    dtype = dtypes.canonicalize_dtype(lax_numpy.float_)
-  dtypes.check_user_dtype_supported(dtype, "astype")
-  return lax.convert_element_type(arr, dtype)
+  return lax_numpy.astype(arr, dtype)
 
 
 def _nbytes(arr: ArrayLike) -> int:
