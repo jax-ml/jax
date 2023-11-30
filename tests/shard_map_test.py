@@ -90,13 +90,11 @@ def tearDownModule():
   xla_bridge.get_backend.cache_clear()
 
 
-@jtu.ignore_warning(category=DeprecationWarning,
-                    message="arr.device_buffers? is deprecated")
 class ShardMapTest(jtu.JaxTestCase):
 
   def test_identity(self):
     mesh, a, _ = create_inputs(P('z', ('x', 'y')), P(None, None))
-    assert a.device_buffers[0].shape == (4, 2)
+    assert a.addressable_data(0).shape == (4, 2)
 
     def identity(x):
       return x
@@ -111,11 +109,11 @@ class ShardMapTest(jtu.JaxTestCase):
       return c
 
     c = fwd(a)
-    self.assertEqual(c.device_buffers[0].shape, (4, 2))
+    self.assertEqual(c.addressable_data(0).shape, (4, 2))
 
   def test_all_gather(self):
     mesh, a, _ = create_inputs(P('z', ('x', 'y')), P(None, None))
-    assert a.device_buffers[0].shape == (4, 2)
+    assert a.addressable_data(0).shape == (4, 2)
 
     # NOTE(mattjj): to use out_specs=P(None, ('x', 'y')), we need to use
     # all_gather_invariant primitive, which differs in its output replication
@@ -127,13 +125,13 @@ class ShardMapTest(jtu.JaxTestCase):
       return lax.all_gather(a, 'z', axis=0, tiled=True)
 
     c = fwd(a)
-    self.assertEqual(c.device_buffers[0].shape, (8, 2))
+    self.assertEqual(c.addressable_data(0).shape, (8, 2))
 
   def test_matmul_partial(self):
     raise unittest.SkipTest("invalid replication asserted by out_spec?")
 
     mesh, a, b = create_inputs(P('z', 'y'), P('y', None))
-    assert a.device_buffers[0].shape == (4, 4)
+    assert a.addressable_data(0).shape == (4, 4)
 
     @jax.jit
     @partial(shard_map, mesh=mesh,
@@ -143,11 +141,11 @@ class ShardMapTest(jtu.JaxTestCase):
       return c
 
     c = fwd(a)
-    self.assertEqual(c.device_buffers[0].shape, (4, 8))
+    self.assertEqual(c.addressable_data(0).shape, (4, 8))
 
   def test_matmul_reduce_scatter(self):
     mesh, a, b = create_inputs(P('z', 'y'), P('y', None))
-    assert a.device_buffers[0].shape == (4, 4)
+    assert a.addressable_data(0).shape == (4, 4)
 
     @jax.jit
     @partial(shard_map, mesh=mesh,
@@ -158,7 +156,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return lax.psum_scatter(c, 'y', scatter_dimension=0, tiled=True)
 
     c = fwd(a, b)
-    self.assertEqual(c.device_buffers[0].shape, (2, 8))
+    self.assertEqual(c.addressable_data(0).shape, (2, 8))
 
   def test_collective_permute(self):
     devices = np.array(jax.devices()[:8]) # Take up to 8 devices
