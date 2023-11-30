@@ -1026,7 +1026,8 @@ class KeyArrayTest(jtu.JaxTestCase):
 
     self.assertEqual(key.is_fully_addressable, key._base_array.is_fully_addressable)
     self.assertEqual(key.is_fully_replicated, key._base_array.is_fully_replicated)
-    self.assertEqual(key.device(), key._base_array.device())
+    with jtu.ignore_warning(category=DeprecationWarning, message="arr.device"):
+      self.assertEqual(key.device(), key._base_array.device())
     self.assertEqual(key.devices(), key._base_array.devices())
     self.assertEqual(key.on_device_size_in_bytes, key._base_array.on_device_size_in_bytes)
     self.assertEqual(key.unsafe_buffer_pointer, key._base_array.unsafe_buffer_pointer)

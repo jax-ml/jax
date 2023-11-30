@@ -147,12 +147,12 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     view = jnp.array(buf, copy=False)
     self.assertArraysEqual(sda[-1], view)
-    self.assertEqual(buf.device(), view.device())
+    self.assertSetEqual(buf.devices(), view.devices())
     self.assertEqual(buf.unsafe_buffer_pointer(), view.unsafe_buffer_pointer())
 
     copy = jnp.array(buf, copy=True)
     self.assertArraysEqual(sda[-1], copy)
-    self.assertEqual(buf.device(), copy.device())
+    self.assertSetEqual(buf.devices(), copy.devices())
     self.assertNotEqual(buf.unsafe_buffer_pointer(), copy.unsafe_buffer_pointer())
 
   def _getMeshShape(self, device_mesh_shape):
@@ -869,7 +869,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     # test that we can handle device movement on dispatch
     bufs = y._arrays[::-1]
     sharding = jax.sharding.PmapSharding(
-        [b.device() for b in bufs], y.sharding.sharding_spec)
+        [list(b.devices())[0] for b in bufs], y.sharding.sharding_spec)
     y = jax.make_array_from_single_device_arrays(y.shape, sharding, bufs)
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
@@ -2769,7 +2769,7 @@ class ArrayTest(jtu.JaxTestCase):
       self.assertEqual(s.replica_id, 0)
     buffers = getattr(y, '_arrays')
     self.assertEqual(len(buffers), len(devices))
-    self.assertTrue(all(b.device() == d for b, d in zip(buffers, devices)))
+    self.assertTrue(all(b.devices() == {d} for b, d in zip(buffers, devices)))
     self.assertArraysEqual(y, jnp.stack(x))
 
   def test_device_put_sharded_pytree(self):
@@ -2781,12 +2781,12 @@ class ArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(y1, array.ArrayImpl)
     self.assertArraysEqual(y1, jnp.array([a for a, _ in x]))
     y1_buffers = getattr(y1, '_arrays')
-    self.assertTrue(all(b.device() == d for b, d in zip(y1_buffers, devices)))
+    self.assertTrue(all(b.devices() == {d} for b, d in zip(y1_buffers, devices)))
 
     self.assertIsInstance(y2, array.ArrayImpl)
     self.assertArraysEqual(y2, jnp.vstack([b for _, b in x]))
     y2_buffers = getattr(y2, '_arrays')
-    self.assertTrue(all(b.device() == d for b, d in zip(y2_buffers, devices)))
+    self.assertTrue(all(b.devices() == {d} for b, d in zip(y2_buffers, devices)))
 
   def test_device_put_replicated(self):
     devices = jax.local_devices()
@@ -2796,7 +2796,7 @@ class ArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(y, array.ArrayImpl)
     buffers = getattr(y, '_arrays')
     self.assertEqual(len(buffers), len(devices))
-    self.assertTrue(all(b.device() == d for b, d in zip(buffers, devices)))
+    self.assertTrue(all(b.devices() == {d} for b, d in zip(buffers, devices)))
     self.assertArraysEqual(y, np.stack([x for _ in devices]))
 
   def test_device_put_replicated_pytree(self):
@@ -2809,13 +2809,13 @@ class ArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(y1, array.ArrayImpl)
     y1_buffers = getattr(y1, '_arrays')
     self.assertEqual(len(y1_buffers), len(devices))
-    self.assertTrue(all(b.device() == d for b, d in zip(y1_buffers, devices)))
+    self.assertTrue(all(b.devices() == {d} for b, d in zip(y1_buffers, devices)))
     self.assertArraysEqual(y1, np.stack([xs['a'] for _ in devices]))
 
     self.assertIsInstance(y2, array.ArrayImpl)
     y2_buffers = getattr(y2, '_arrays')
     self.assertEqual(len(y2_buffers), len(devices))
-    self.assertTrue(all(b.device() == d for b, d in zip(y2_buffers, devices)))
+    self.assertTrue(all(b.devices() == {d} for b, d in zip(y2_buffers, devices)))
     self.assertArraysEqual(y2, np.stack([xs['b'] for _ in devices]))
 
   def test_repr(self):
@@ -3127,8 +3127,8 @@ class ArrayPmapTest(jtu.JaxTestCase):
       self.skipTest('Test requires >= 2 devices.')
 
     def amap(f, xs):
-      ys = [f(jax.device_put(x, x.device())) for x in xs]
-      return jax.device_put_sharded(ys, [y.device() for y in ys])
+      ys = [f(jax.device_put(x, list(x.devices())[0])) for x in xs]
+      return jax.device_put_sharded(ys, [list(y.devices())[0] for y in ys])
 
     # leading axis is batch dim (i.e. mapped/parallel dim), of size 2
     x = jnp.array([[1., 0., 0.],

@@ -228,7 +228,7 @@ class JitTest(jtu.BufferDonationTestCase):
     device = jax.devices()[-1]
     x = jit(lambda x: x, device=device)(3.)
     _check_instance(self, x)
-    self.assertEqual(x.device(), device)
+    self.assertEqual(x.devices(), {device})
 
   @parameterized.named_parameters(
       ('jit', jax.jit),
@@ -239,42 +239,44 @@ class JitTest(jtu.BufferDonationTestCase):
     if jax.device_count() == 1:
       raise unittest.SkipTest("Test requires multiple devices")
 
-    system_default_device = jnp.add(1, 1).device()
+    system_default_devices = jnp.add(1, 1).devices()
+    self.assertLen(system_default_devices, 1)
+    system_default_device = list(system_default_devices)[0]
     test_device = jax.devices()[-1]
     self.assertNotEqual(system_default_device, test_device)
 
     f = module(lambda x: x + 1)
-    self.assertEqual(f(1).device(), system_default_device)
+    self.assertEqual(f(1).devices(), system_default_devices)
 
     with jax.default_device(test_device):
-      self.assertEqual(jnp.add(1, 1).device(), test_device)
-      self.assertEqual(f(1).device(), test_device)
+      self.assertEqual(jnp.add(1, 1).devices(), {test_device})
+      self.assertEqual(f(1).devices(), {test_device})
 
-    self.assertEqual(jnp.add(1, 1).device(), system_default_device)
-    self.assertEqual(f(1).device(), system_default_device)
+    self.assertEqual(jnp.add(1, 1).devices(), system_default_devices)
+    self.assertEqual(f(1).devices(), system_default_devices)
 
     with jax.default_device(test_device):
       # Explicit `device` or `backend` argument to jit overrides default_device
       self.assertEqual(
-          module(f, device=system_default_device)(1).device(),
-          system_default_device)
+          module(f, device=system_default_device)(1).devices(),
+          system_default_devices)
       out = module(f, backend="cpu")(1)
-      self.assertEqual(out.device().platform, "cpu")
+      self.assertEqual(next(iter(out.devices())).platform, "cpu")
 
       # Sticky input device overrides default_device
       sticky = jax.device_put(1, system_default_device)
-      self.assertEqual(jnp.add(sticky, 1).device(), system_default_device)
-      self.assertEqual(f(sticky).device(), system_default_device)
+      self.assertEqual(jnp.add(sticky, 1).devices(), system_default_devices)
+      self.assertEqual(f(sticky).devices(), system_default_devices)
 
       # Test nested default_devices
       with jax.default_device(system_default_device):
-        self.assertEqual(f(1).device(), system_default_device)
-      self.assertEqual(f(1).device(), test_device)
+        self.assertEqual(f(1).devices(), system_default_devices)
+      self.assertEqual(f(1).devices(), {test_device})
 
     # Test a few more non-default_device calls for good luck
-    self.assertEqual(jnp.add(1, 1).device(), system_default_device)
-    self.assertEqual(f(sticky).device(), system_default_device)
-    self.assertEqual(f(1).device(), system_default_device)
+    self.assertEqual(jnp.add(1, 1).devices(), system_default_devices)
+    self.assertEqual(f(sticky).devices(), system_default_devices)
+    self.assertEqual(f(1).devices(), system_default_devices)
 
   # TODO(skye): make this work!
   def test_jit_default_platform(self):
@@ -815,8 +817,8 @@ class JitTest(jtu.BufferDonationTestCase):
 
     result = jitted_f(1.)
     result_cpu = jitted_f_cpu(1.)
-    self.assertEqual(result.device().platform, jtu.device_under_test())
-    self.assertEqual(result_cpu.device().platform, "cpu")
+    self.assertEqual(list(result.devices())[0].platform, jtu.device_under_test())
+    self.assertEqual(list(result_cpu.devices())[0].platform, "cpu")
 
   @parameterized.named_parameters(
       ('jit', jax.jit),
@@ -1697,7 +1699,7 @@ class APITest(jtu.JaxTestCase):
 
     u = jax.device_put(y, jax.devices()[0])
     self.assertArraysAllClose(u, y)
-    self.assertEqual(u.device(), jax.devices()[0])
+    self.assertEqual(u.devices(), {jax.devices()[0]})
 
   def test_device_put_sharding_tree(self):
     if jax.device_count() < 2:
@@ -1830,10 +1832,10 @@ class APITest(jtu.JaxTestCase):
     d1, d2 = jax.local_devices()[:2]
     data = self.rng().randn(*shape).astype(np.float32)
     x = api.device_put(data, device=d1)
-    self.assertEqual(x.device(), d1)
+    self.assertEqual(x.devices(), {d1})
 
     y = api.device_put(x, device=d2)
-    self.assertEqual(y.device(), d2)
+    self.assertEqual(y.devices(), {d2})
 
     np.testing.assert_array_equal(data, np.array(y))
     # Make sure these don't crash
@@ -1848,11 +1850,11 @@ class APITest(jtu.JaxTestCase):
     np_arr = np.array([1,2,3])
     scalar = 1
     device_arr = jnp.array([1,2,3])
-    assert device_arr.device() is default_device
+    assert device_arr.devices() == {default_device}
 
     for val in [np_arr, device_arr, scalar]:
       x = api.device_put(val, device=cpu_device)
-      self.assertEqual(x.device(), cpu_device)
+      self.assertEqual(x.devices(), {cpu_device})
 
   @jax.default_matmul_precision("float32")
   def test_jacobian(self):
@@ -3852,21 +3854,22 @@ class APITest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("cpu")
   def test_default_device(self):
-    system_default_device = jnp.zeros(2).device()
+    system_default_devices = jnp.add(1, 1).devices()
+    self.assertLen(system_default_devices, 1)
     test_device = jax.devices("cpu")[-1]
 
     # Sanity check creating array using system default device
-    self.assertEqual(jnp.ones(1).device(), system_default_device)
+    self.assertEqual(jnp.ones(1).devices(), system_default_devices)
 
     # Create array with default_device set
     with jax.default_device(test_device):
       # Hits cached primitive path
-      self.assertEqual(jnp.ones(1).device(), test_device)
+      self.assertEqual(jnp.ones(1).devices(), {test_device})
       # Uncached
-      self.assertEqual(jnp.zeros((1, 2)).device(), test_device)
+      self.assertEqual(jnp.zeros((1, 2)).devices(), {test_device})
 
     # Test that we can reset to system default device
-    self.assertEqual(jnp.ones(1).device(), system_default_device)
+    self.assertEqual(jnp.ones(1).devices(), system_default_devices)
 
   def test_dunder_jax_array(self):
     # https://github.com/google/jax/pull/4725

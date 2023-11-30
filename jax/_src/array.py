@@ -51,6 +51,11 @@ Device = xc.Device
 Index = tuple[slice, ...]
 PRNGKeyArrayImpl = Any  # TODO(jakevdp): fix cycles and import this.
 
+def _get_device(a: ArrayImpl) -> Device:
+  assert len(a.devices()) == 1
+  return next(iter(a.devices()))
+
+
 class Shard:
   """A single data shard of an Array.
 
@@ -128,7 +133,7 @@ def _create_copy_plan(arrays, s: Sharding, shape: Shape):
   di_map = _cached_index_calc(s, shape)
   copy_plan = []
   for a in arrays:
-    ind = di_map.get(a.device(), None)
+    ind = di_map.get(_get_device(a), None)
     if ind is not None:
       copy_plan.append((ind, a))
   return copy_plan
@@ -183,7 +188,7 @@ class ArrayImpl(basearray.Array):
             "Input buffers to `Array` must have matching dtypes. "
             f"Got {db.dtype}, expected {self.dtype} for buffer: {db}")
 
-    device_id_to_buffer = {db.device().id: db for db in self._arrays}
+    device_id_to_buffer = {_get_device(db).id: db for db in self._arrays}
 
     addressable_dev = self.sharding.addressable_devices
     if len(self._arrays) != len(addressable_dev):
@@ -324,7 +329,7 @@ class ArrayImpl(basearray.Array):
         if arr_idx is not None:
           a = self._arrays[arr_idx]
           return ArrayImpl(
-              a.aval, SingleDeviceSharding(a.device()), [a], committed=False,
+              a.aval, SingleDeviceSharding(_get_device(a)), [a], committed=False,
               _skip_checks=True)
       return lax_numpy._rewriting_take(self, idx)
     else:
@@ -400,7 +405,7 @@ class ArrayImpl(basearray.Array):
       return DLDeviceType.kDLCPU, 0
 
     elif self.platform() == "gpu":
-      platform_version = self.device().client.platform_version
+      platform_version = _get_device(self).client.platform_version
       if "cuda" in platform_version:
         dl_device_type = DLDeviceType.kDLCUDA
       elif "rocm" in platform_version:
@@ -409,7 +414,7 @@ class ArrayImpl(basearray.Array):
         raise ValueError("Unknown GPU platform for __dlpack__: "
                          f"{platform_version}")
 
-      local_hardware_id = self.device().local_hardware_id
+      local_hardware_id = _get_device(self).local_hardware_id
       if local_hardware_id is None:
         raise ValueError("Couldn't get local_hardware_id for __dlpack__")
 
@@ -451,6 +456,8 @@ class ArrayImpl(basearray.Array):
 
   # TODO(yashkatariya): Remove this method when everyone is using devices().
   def device(self) -> Device:
+    warnings.warn("arr.device() is deprecated. Use arr.devices() instead.",
+                  DeprecationWarning, stacklevel=2)
     self._check_if_deleted()
     device_set = self.sharding.device_set
     if len(device_set) == 1:
@@ -499,7 +506,7 @@ class ArrayImpl(basearray.Array):
     self._check_if_deleted()
     out = []
     for a in self._arrays:
-      out.append(Shard(a.device(), self.sharding, self.shape, a))
+      out.append(Shard(_get_device(a), self.sharding, self.shape, a))
     return out
 
   @property
@@ -514,7 +521,7 @@ class ArrayImpl(basearray.Array):
       return self.addressable_shards
 
     out = []
-    device_id_to_buffer = {a.device().id: a for a in self._arrays}
+    device_id_to_buffer = {_get_device(a).id: a for a in self._arrays}
     for global_d in self.sharding.device_set:
       if device_id_to_buffer.get(global_d.id, None) is not None:
         array = device_id_to_buffer[global_d.id]
@@ -835,7 +842,7 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
     # Try to find a candidate buffer already on the correct device,
     # otherwise copy one of them.
     for buf in candidates_list:
-      if buf.device() == device:
+      if buf.devices() == {device}:
         bufs.append(buf)
         break
     else:

@@ -424,7 +424,7 @@ class JaxArrayTest(jtu.JaxTestCase):
 
     x = jnp.array([[1., 0., 0.], [0., 2., 3.]])
     y = jax.pmap(jnp.sin)(x)
-    self.assertArraysEqual([a.device() for a in y],
+    self.assertArraysEqual([list(a.devices())[0] for a in y],
                            y.sharding._device_assignment,
                            allow_object_dtype=True)
 
@@ -550,7 +550,7 @@ class JaxArrayTest(jtu.JaxTestCase):
 
     for i, j in zip(arr, iter(input_data)):
       self.assertArraysEqual(i, j)
-      self.assertEqual(i.device(), single_dev[0])
+      self.assertEqual(i.devices(), {single_dev[0]})
 
   def test_array_shards_committed(self):
     if jax.device_count() < 2:

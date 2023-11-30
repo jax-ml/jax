@@ -2539,7 +2539,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertFalse(a._committed)
     out = f(a, a)
     self.assertFalse(out._committed)
-    self.assertEqual(out.device(), jax.devices()[0])
+    self.assertEqual(out.devices(), {jax.devices()[0]})
     self.assertArraysEqual(out, a * 2)
 
     with jax.default_device(jax.devices()[1]):
@@ -2547,7 +2547,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertFalse(b._committed)
       out2 = f(b, b)
       self.assertFalse(out2._committed)
-      self.assertEqual(out2.device(), jax.devices()[1])
+      self.assertEqual(out2.devices(), {jax.devices()[1]})
       self.assertArraysEqual(out2, b * 2)
 
   def test_pjit_with_static_argnames(self):
@@ -2590,7 +2590,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     if jax.device_count() <= 1:
       self.skipTest('Test requires more >1 device.')
 
-    system_default_device = jnp.add(1, 1).device()
+    system_default_device = list(jnp.add(1, 1).devices())[0]
     test_device = jax.devices()[-1]
 
     f = pjit(lambda x: x + 1)
@@ -2733,7 +2733,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x @ x.T
 
     def _check(out, expected_device, expected_out):
-      self.assertEqual(out.device(), expected_device)
+      self.assertEqual(out.devices(), {expected_device})
       self.assertLen(out.sharding.device_set, 1)
       self.assertArraysEqual(out, expected_out @ expected_out.T)
 
@@ -2776,14 +2776,14 @@ class ArrayPjitTest(jtu.JaxTestCase):
     expected_device = jax.devices()[2]
     final_out = pjit(lambda x: x * 3, device=expected_device)(out)
 
-    self.assertEqual(final_out.device(), expected_device)
+    self.assertEqual(final_out.devices(), {expected_device})
     self.assertLen(final_out.sharding.device_set, 1)
     self.assertArraysEqual(final_out, inp * 6)
 
   @jtu.run_on_devices("tpu")
   def test_pjit_with_backend_arg(self):
     def _check(out, expected_device, expected_out):
-      self.assertEqual(out.device(), expected_device)
+      self.assertEqual(out.devices(), {expected_device})
       self.assertLen(out.sharding.device_set, 1)
       self.assertArraysEqual(out, expected_out)
 
@@ -3403,7 +3403,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     y = jax.device_put(x, jax.devices()[1])
     out2 = jax.jit(lambda x: x)(y)
     self.assertIsInstance(out2.sharding, SingleDeviceSharding)
-    self.assertEqual(out2.device(), jax.devices()[1])
+    self.assertEqual(out2.devices(), {jax.devices()[1]})
 
     out3 = jax.jit(lambda x: x * 2)(x)
     self.assertIsInstance(out3.sharding, SingleDeviceSharding)
@@ -3411,7 +3411,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out4 = jax.jit(lambda x: x * 3,
                    out_shardings=SingleDeviceSharding(jax.devices()[1]))(x)
     self.assertIsInstance(out4.sharding, SingleDeviceSharding)
-    self.assertEqual(out4.device(), jax.devices()[1])
+    self.assertEqual(out4.devices(), {jax.devices()[1]})
 
   def test_none_out_sharding(self):
     mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
@@ -3449,7 +3449,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     arr4 = jax.device_put(jnp.arange(8), jax.devices()[1])
     out4 = jnp.copy(arr4)
     self.assertIsInstance(out4.sharding, SingleDeviceSharding)
-    self.assertEqual(out4.device(), jax.devices()[1])
+    self.assertEqual(out4.devices(), {jax.devices()[1]})
 
   def test_get_indices_cache(self):
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
@@ -3506,12 +3506,12 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # Fill up the to_gspmd_sharding cache so that the next jit will miss it.
     out = jax.jit(identity,
                   in_shardings=SingleDeviceSharding(jax.devices()[0]))(np_inp)
-    self.assertEqual(out.device(), jax.devices()[0])
+    self.assertEqual(out.devices(), {jax.devices()[0]})
     self.assertArraysEqual(out, np_inp)
 
     out2 = jax.jit(identity, device=jax.devices()[0])(
         jax.device_put(np_inp, NamedSharding(mesh, P('x'))))
-    self.assertEqual(out2.device(), jax.devices()[0])
+    self.assertEqual(out2.devices(), {jax.devices()[0]})
     self.assertArraysEqual(out2, np_inp)
 
   def test_jit_submhlo_cached(self):
