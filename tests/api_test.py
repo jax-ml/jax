@@ -5541,7 +5541,7 @@ class RematTest(jtu.JaxTestCase):
     identity = jax.remat(lambda x, y: jax.jit(lambda x: 2 * x if y else x)(x),
                          static_argnums=(1,))
     _, f_vjp = jax.vjp(identity, 1., True)
-    with jtu.count_pjit_cpp_cache_miss() as count:  # noqa: F841
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
     self.assertEqual(count[0], 2)  # fwd execute_trivial, backward_pass on bwd

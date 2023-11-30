@@ -32,11 +32,13 @@ config.parse_flags_with_absl()
 class DebugNaNsTest(jtu.JaxTestCase):
 
   def setUp(self):
+    super().setUp()
     self.cfg = config._read("jax_debug_nans")
     config.update("jax_debug_nans", True)
 
   def tearDown(self):
     config.update("jax_debug_nans", self.cfg)
+    super().tearDown()
 
   def testSinc(self):
     # Regression test for #6936
@@ -190,22 +192,29 @@ class DebugNaNsTest(jtu.JaxTestCase):
       return x / y
 
     with self.assertRaisesRegex(
-        FloatingPointError, r"invalid value \(nan\) encountered in jit\(div\)"):
+        FloatingPointError,
+        r"invalid value \(nan\) encountered in jit\(true_divide\)"):
       f(inp, inp)
 
+    # TODO(yashkatariya): Fix this and make true_divide appear in the name again.
+    # Instead of `f` showing up in the error, the name should be of the
+    # primitive (true_divide) in this case.
     with self.assertRaisesRegex(
-        FloatingPointError, r"invalid value \(nan\) encountered in jit\(div\)"):
+        FloatingPointError,
+        r"invalid value \(nan\) encountered in jit\(f\)"):
       jax.jit(f)(inp, inp)
 
 
 class DebugInfsTest(jtu.JaxTestCase):
 
   def setUp(self):
+    super().setUp()
     self.cfg = config._read("jax_debug_infs")
     config.update("jax_debug_infs", True)
 
   def tearDown(self):
     config.update("jax_debug_infs", self.cfg)
+    super().tearDown()
 
   def testSingleResultPrimitiveNoInf(self):
     A = jnp.array([[1., 2.], [2., 3.]])

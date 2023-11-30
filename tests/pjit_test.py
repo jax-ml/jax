@@ -3039,27 +3039,28 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_pjit_no_global_cache_hit_axis_resources(self):
     mesh = jtu.create_global_mesh((1,), ('x',))
     s = NamedSharding(mesh, P('x'))
+    inp = jnp.arange(8.0)
 
     with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
-        pjit(lambda x: x * 2, in_shardings=s, out_shardings=s)(jnp.arange(8.0))
+        pjit(lambda x: x * 2, in_shardings=s, out_shardings=s)(inp)
     self.assertEqual(count[0], 10)
 
     with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
-        pjit(lambda x: x * 2, device=jax.devices()[0])(jnp.arange(8.))
+        pjit(lambda x: x * 2, device=jax.devices()[0])(inp)
     self.assertEqual(count[0], 10)
 
     pf = pjit(lambda x: x * 2, in_shardings=s, out_shardings=s)
     with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
-        pf(jnp.arange(8.))
+        pf(inp)
     self.assertEqual(count[0], 1)
 
     pf1 = pjit(lambda x: x * 2, device=jax.devices()[0])
     with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
-        pf1(jnp.arange(8.))
+        pf1(inp)
     self.assertEqual(count[0], 1)
 
   def test_with_sharding_constraint_spmd_axis_name(self):
@@ -3176,9 +3177,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     arr2 = jax.device_put(np.arange(8), jax.devices()[1])
     with self.assertRaisesRegex(
         ValueError,
-        "Received incompatible devices for jitted computation. Got argument "
-        r"args\[0\] of concatenate with shape int.*\[8\].*and argument "
-        r"args\[1\].*"):
+        "Received incompatible devices for jitted computation. Got argument.*"
+        r"of concatenate with shape int.*\[8\].*and argument.*"):
       jnp.concatenate([arr, arr2])
 
   def test_device_put_grad(self):

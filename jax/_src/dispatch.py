@@ -18,7 +18,6 @@ from __future__ import annotations
 import atexit
 from collections.abc import Iterator, Sequence
 import contextlib
-import dataclasses
 from functools import partial
 import itertools
 import time
@@ -32,10 +31,8 @@ import jax
 from jax._src import basearray
 from jax._src import config
 from jax._src import core
+from jax._src import api
 from jax._src import dtypes
-from jax._src import linear_util as lu
-from jax._src import api_util
-from jax._src import tree_util
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
@@ -45,14 +42,15 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
-from jax._src.interpreters import partial_eval as pe
+from jax._src import lib
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.monitoring import record_event_duration_secs
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding, NamedSharding, XLACompatibleSharding,
-    UNSPECIFIED, GSPMDSharding, TransferToMemoryKind)
+    GSPMDSharding, TransferToMemoryKind)
 
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
@@ -78,119 +76,29 @@ _on_exit = False
 
 ### op-by-op execution
 
-class _ArgSpec(NamedTuple):
-  aval: core.AbstractValue
-  sharding: XLACompatibleSharding | None
-
-
-def _arg_spec(x: Any) -> _ArgSpec:
-  from jax._src import pjit
-
-  aval = xla.abstractify(x)
-  try:
-    if isinstance(x.sharding, PmapSharding):
-      return _ArgSpec(aval, None)
-    return _ArgSpec(aval, (pjit.to_gspmd_sharding(x.sharding, x.ndim)  # type: ignore
-                          if x._committed else None))
-  except:
-    return _ArgSpec(aval, None)
-
-
-@dataclasses.dataclass(frozen=True)
-class OrigShardings:
-  shardings: Sequence[GSPMDSharding | None]
-
-  def __hash__(self):
-    return hash(tuple(s for s in self.shardings))
-
-  def __eq__(self, other):
-    if not isinstance(other, OrigShardings):
-      return False
-    return all(getattr(s, "_original_sharding", s) == getattr(o, "_original_sharding", o)
-               for s, o in zip(self.shardings, other.shardings))
-
-
 def apply_primitive(prim, *args, **params):
   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
-  from jax._src import pjit
-
-  try:
-    in_avals, in_shardings = util.unzip2([_arg_spec(a) for a in args])
-    in_tree = tree_util.tree_structure(args)
-    compiled_fun = xla_primitive_callable(
-        prim, in_avals, in_tree, OrigShardings(in_shardings), **params)
-  except pxla.DeviceAssignmentMismatchError as e:
-    fails, = e.args
-    # TODO(yashkatariya): Thread through a signature_fun via every primitive
-    # using apply_primitive so that the error message has the right argument
-    # name instead of `args[0]`, etc.
-    arg_names = api_util._arg_names(prim.impl, args, {}, (), ())
-    msg = pjit._device_assignment_mismatch_error(
-        prim.name, fails, args, 'jit', arg_names)
-    raise ValueError(msg) from None
-
-  return compiled_fun(*args)
-
-
-# No need to cache here because there is a cache on xla_primitive_callable.
-# If that cache is broken, a new function will be created which will always
-# break the cache on this function.
-def _trace_to_jaxpr(fun, in_avals, api_name, fun_name):
-  with log_elapsed_time(
-      "Finished tracing + transforming {fun_name} in {elapsed_time} sec",
-      fun_name=util.wrap_name(fun_name, api_name), event=JAXPR_TRACE_EVENT):
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
-  return core.ClosedJaxpr(jaxpr, consts), tuple(out_avals)
-
+  fun = xla_primitive_callable(prim, **params)
+  # TODO(yashkatariya): Investigate adding is_primitive to jit and never
+  # triggering the disable jit path instead of messing around with it here.
+  if xla_extension_version >= 218:
+    prev = lib.jax_jit.swap_thread_local_state_disable_jit(False)
+    try:
+      outs = fun(*args)
+    finally:
+      lib.jax_jit.swap_thread_local_state_disable_jit(prev)
+  else:
+    with config.disable_jit(False):
+      outs = fun(*args)
+  return outs
 
 @util.cache()
-def xla_primitive_callable(
-    prim: core.Primitive, in_avals: tuple[core.AbstractValue, ...], in_tree,
-    orig_in_shardings: OrigShardings, **params,
-) -> Callable:
+def xla_primitive_callable(prim: core.Primitive, **params):
   def prim_fun(*args):
-    out = prim.bind(*args, **params)
-    if prim.multiple_results:
-      return out
-    else:
-      return out,
-
-  donated_invars = (False,) * len(in_avals)
-  wrapped_fun = lu.wrap_init(prim_fun)
-  flat_fun, out_tree = api_util.flatten_fun_nokwargs(wrapped_fun, in_tree)
-  closed_jaxpr, out_avals = _trace_to_jaxpr(flat_fun, in_avals, 'jit', prim.name)
-  computation = sharded_lowering(
-      closed_jaxpr, prim.name, donated_invars, keep_unused=False,
-      inline=True, in_avals=in_avals, out_avals=out_avals,
-      in_shardings=orig_in_shardings.shardings,
-      lowering_parameters=mlir.LoweringParameters())
-  compiled = computation.compile()
-  if config.disable_jit.value:
-    call = compiled.unsafe_call
-  else:
-    call = compiled.create_cpp_call_for_apply_primitive(out_tree())
-    if call is None:
-      call = compiled.unsafe_call
-  if not prim.multiple_results:
-    return lambda *args, **kw: call(*args, **kw)[0]
-  else:
-    return call
-
-
-def sharded_lowering(
-    closed_jaxpr: core.ClosedJaxpr, name: str, donated_invars: Sequence[bool],
-    keep_unused: bool, inline: bool, in_avals: tuple[core.AbstractValue, ...],
-    out_avals: tuple[core.AbstractValue, ...],
-    in_shardings: Sequence[Sharding | None],
-    lowering_parameters: mlir.LoweringParameters
-) -> pxla.MeshComputation:
-  in_shardings_unspec = [UNSPECIFIED if i is None else i for i in in_shardings]
-  return pxla.lower_sharding_computation(
-      closed_jaxpr, 'jit', name, in_shardings_unspec,
-      (UNSPECIFIED,) * len(out_avals), donated_invars,
-      in_avals, keep_unused=keep_unused, inline=inline,
-      devices_from_context=None, lowering_parameters=lowering_parameters,
-      in_layouts=(None,) * len(in_avals), out_layouts=(None,) * len(out_avals))
+    return prim.bind(*args, **params)
+  prim_fun.__name__ = prim.name
+  prim_fun.__qualname__ = prim.name
+  return api.jit(prim_fun)
 
 
 def simple_impl(prim):

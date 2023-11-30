@@ -1845,6 +1845,7 @@ class DArray:
     self._data = data
   shape = property(lambda self: self._aval.shape)
   dtype = property(lambda self: self._aval.dtype)
+  aval = property(lambda self: self._aval)
   def __repr__(self) -> str:
     if not self.shape and type(self.dtype) is bint:
       # special-case scalar bints

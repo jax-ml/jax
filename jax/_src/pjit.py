@@ -1176,15 +1176,15 @@ def _pjit_call_impl_python(
                           ("fingerprint", fingerprint))
   try:
     return compiled.unsafe_call(*args), compiled
-  except FloatingPointError:
+  except FloatingPointError as e:
     assert config.debug_nans.value or config.debug_infs.value  # compiled_fun can only raise in this case
 
-    _ = core.jaxpr_as_fun(jaxpr)(*args)  # may raise, not return
+    if len(jaxpr.eqns) > 1:
+      _ = core.jaxpr_as_fun(jaxpr)(*args)  # may raise, not return
 
     # If control reaches this line, we got a NaN on the output of `compiled`
     # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
-    msg = ("An invalid value was encountered in the output of the "
-           f"`jit`-decorated function {name}. Because "
+    msg = (f"{str(e)}. Because "
            "jax_config.debug_nans.value and/or config.jax_debug_infs is set, the "
            "de-optimized function (i.e., the function as if the `jit` "
            "decorator were removed) was called in an attempt to get a more "

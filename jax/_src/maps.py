@@ -55,7 +55,7 @@ from jax._src.pjit import (sharding_constraint_p, get_unconstrained_dims,
                            GSPMDSharding)
 from jax._src.sharding_impls import (
     ArrayMapping, NamedSharding, ParsedPartitionSpec,
-    array_mapping_to_axis_resources)
+    array_mapping_to_axis_resources, UNSPECIFIED)
 from jax._src.tree_util import (tree_flatten, tree_unflatten, all_leaves,
                                 tree_map, treedef_tuple)
 from jax._src.util import (safe_map, safe_zip, HashableFunction, unzip2, unzip3,
@@ -702,10 +702,13 @@ def make_xmap_callable(fun: lu.WrappedFun,
         tiling_method=tiling_method,
         lowering_parameters=lowering_parameters)
   else:
-    closed_jaxpr, out_avals = dispatch._trace_to_jaxpr(f, in_avals, 'jit', name)
-    return dispatch.sharded_lowering(
-        closed_jaxpr, name, donated_invars, True, False, in_avals, out_avals,
-        (None,) * len(in_avals), lowering_parameters=lowering_parameters)
+    jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(f, in_avals)
+    return pxla.lower_sharding_computation(
+        core.ClosedJaxpr(jaxpr, consts), 'jit', name,
+        (UNSPECIFIED,) * len(in_avals), (UNSPECIFIED,) * len(out_avals),
+        donated_invars, in_avals, keep_unused=True, inline=False,
+        devices_from_context=None, lowering_parameters=lowering_parameters,
+        in_layouts=(None,) * len(in_avals), out_layouts=(None,) * len(out_avals))
 
 
 class EvaluationPlan(NamedTuple):
