@@ -11,6 +11,10 @@ repos:
 - repo: https://github.com/pre-commit/pre-commit-hooks
   rev: v4.5.0
   hooks:
+  - id: check-ast
+  - id: check-merge-conflict
+  - id: check-toml
+  - id: check-yaml
   - id: end-of-file-fixer
     # only include python files
     files: \.py$
