@@ -77,7 +77,7 @@ class DLPackTest(jtu.JaxTestCase):
     x = jax.device_put(np, device)
     dlpack = jax.dlpack.to_dlpack(x)
     y = jax.dlpack.from_dlpack(dlpack)
-    self.assertEqual(y.device(), device)
+    self.assertEqual(y.devices(), {device})
     self.assertAllClose(np.astype(x.dtype), y)
 
     self.assertRaisesRegex(RuntimeError,
@@ -97,11 +97,11 @@ class DLPackTest(jtu.JaxTestCase):
     device = jax.devices("gpu" if gpu else "cpu")[0]
     x = jax.device_put(np, device)
     y = jax.dlpack.from_dlpack(x)
-    self.assertEqual(y.device(), device)
+    self.assertEqual(y.devices(), {device})
     self.assertAllClose(np.astype(x.dtype), y)
     # Test we can create multiple arrays
     z = jax.dlpack.from_dlpack(x)
-    self.assertEqual(z.device(), device)
+    self.assertEqual(z.devices(), {device})
     self.assertAllClose(np.astype(x.dtype), z)
 
 

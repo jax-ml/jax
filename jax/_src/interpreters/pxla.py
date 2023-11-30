@@ -179,7 +179,7 @@ def batched_device_put(aval: core.ShapedArray,
   bufs = [x for x, d in safe_zip(xs, devices)
           if (isinstance(x, array.ArrayImpl) and
               dispatch.is_single_device_sharding(x.sharding) and
-              x.device() == d)]
+              x.devices() == {d})]
   if len(bufs) == len(xs):
     return array.ArrayImpl(
         aval, sharding, bufs, committed=committed, _skip_checks=True)
