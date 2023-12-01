@@ -43,32 +43,20 @@ jobs:
     timeout-minutes: 60
     strategy:
       matrix:
+        # Test the oldest and newest supported Python versions here.
         include:
-          - name-prefix: "with numpy-dispatch"
+          - name-prefix: "with 3.9"
             python-version: "3.9"
             os: ubuntu-20.04-16core
             enable-x64: 1
             prng-upgrade: 1
-            # Test experimental NumPy dispatch
-            package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
             num_generated_cases: 1
-            use-latest-jaxlib: false
-          - name-prefix: "with 3.10"
-            python-version: "3.10"
+          - name-prefix: "with 3.12"
+            python-version: "3.12"
             os: ubuntu-20.04-16core
             enable-x64: 0
             prng-upgrade: 0
-            package-overrides: "none"
             num_generated_cases: 1
-            use-latest-jaxlib: false
-          - name-prefix: "with 3.11"
-            python-version: "3.11"
-            os: ubuntu-20.04-16core
-            enable-x64: 0
-            prng-upgrade: 0
-            package-overrides: "none"
-            num_generated_cases: 1
-            use-latest-jaxlib: false
     steps:
     - name: Cancel previous
       uses: styfle/cancel-workflow-action@0.12.0
@@ -92,15 +80,7 @@ jobs:
         key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
     - name: Install dependencies
       run: |
-        pip install -r build/test-requirements.txt
-        if [ "${{ matrix.package-overrides }}" != "none" ]; then
-          pip install ${{ matrix.package-overrides }}
-        fi
-        if [ "${{ matrix.use-latest-jaxlib }}" == "true" ]; then
-          pip install .[cpu]
-        else
-          pip install .[minimum-jaxlib]
-        fi
+        pip install .[minimum-jaxlib] -r build/test-requirements.txt
 
     - name: Run tests
       env:
