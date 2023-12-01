@@ -119,7 +119,8 @@ class CompatTensoflowTest(bctu.CompatTestBase):
         options=tf.saved_model.SaveOptions(experimental_custom_gradients=False),
     )
     serialized =  serialize_directory(saved_model_dir)
-    return serialized, module_str, module_version
+    nr_devices = 1
+    return serialized, module_str, module_version, nr_devices
 
   def run_serialized(
       self,

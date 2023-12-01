@@ -87,7 +87,6 @@ from jax.experimental import pjit
 
 from jax._src import core
 from jax._src import test_util as jtu
-from jax._src.sharding_impls import UNSPECIFIED
 from jax._src import xla_bridge as xb
 
 
@@ -104,6 +103,7 @@ class CompatTestData:
   mlir_module_text: str
   mlir_module_serialized: bytes
   xla_call_module_version: int  # The version of XlaCallModule to use for testing
+  nr_devices: int = 1
 
 
 # The dummy_data is used for getting started for adding a new test and for
@@ -187,6 +187,7 @@ class CompatTestBase(jtu.JaxTestCase):
         will fail when the serialization changes. Otherwise, when checking old
         serializations you can specify what custom calls are expected in the
         current serialization.
+      nr_devices: the number of devices for which the data was serialized.
     """
     if not isinstance(data, CompatTestData):
       raise ValueError(f"Expecting data: CompatTestData but got {data}. "
@@ -202,7 +203,7 @@ class CompatTestBase(jtu.JaxTestCase):
     res_run_current = tuple(np.array(a) for a in res_run_current)
     logging.info("Result of current version run is %s", res_run_current)
 
-    serialized, module_str, module_version = self.serialize(
+    serialized, module_str, module_version, nr_devices = self.serialize(
       func, data,
       polymorphic_shapes=polymorphic_shapes,
       allow_unstable_custom_call_targets=allow_unstable_custom_call_targets)
@@ -225,6 +226,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     mlir_module_text=r\"\"\"\n{module_str}\"\"\",
     mlir_module_serialized={serialized!r},
     xla_call_module_version={module_version},
+    nr_devices={nr_devices},
 )  # End paste
 
 """
@@ -271,7 +273,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
                 func: Callable, data: CompatTestData, *,
                 polymorphic_shapes: Optional[Sequence[str]] = None,
                 allow_unstable_custom_call_targets: Sequence[str] = ()
-                ) -> tuple[bytes, str, int]:
+                ) -> tuple[bytes, str, int, int]:
     """Serializes the test function.
 
     Args:
@@ -281,7 +283,8 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         custom call targets besides those known as stable.
 
     Returns: a tuple with the (a) serialization, (b) the module contents as
-      a string (for debugging), and (c) the module serialization version.
+      a string (for debugging), (c) the module serialization version,
+      (d) the number of devices for which the module was serialized.
     """
     # Use the native exporter, to make sure we get the proper serialization.
     args_specs = export.args_specs(data.inputs, polymorphic_shapes)
@@ -296,7 +299,8 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     module_str = str(exported.mlir_module())
     serialized = exported.mlir_module_serialized
     module_version = exported.serialization_version
-    return serialized, module_str, module_version
+    nr_devices = exported.nr_devices
+    return serialized, module_str, module_version, nr_devices
 
   def run_serialized(self, data: CompatTestData,
                      polymorphic_shapes: Optional[Sequence[str]] = None):
@@ -321,14 +325,15 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         in_avals=tuple(in_avals),
         out_tree=out_tree,
         out_avals=tuple(out_avals),
-        in_shardings=(UNSPECIFIED,) * len(in_avals),
-        out_shardings=(UNSPECIFIED,) * len(out_avals),
+        in_shardings=(None,) * len(in_avals),
+        out_shardings=(None,) * len(out_avals),
         lowering_platforms=(data.platform,),
         ordered_effects=(),
         unordered_effects=(),
         disabled_checks=(),
         mlir_module_serialized=data.mlir_module_serialized,
         serialization_version=data.xla_call_module_version,
+        nr_devices=data.nr_devices,
         module_kept_var_idx=tuple(range(len(in_avals))),
         uses_shape_polymorphism=any(not core.is_constant_shape(a.shape)
                                     for a in in_avals),

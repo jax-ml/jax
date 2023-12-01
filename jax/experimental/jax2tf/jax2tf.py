@@ -512,13 +512,13 @@ class NativeSerializationImpl(SerializationImpl):
   def get_vjp_fun(self) -> tuple[Callable,
                                  Sequence[core.AbstractValue]]:
     return export._get_vjp_fun(self.fun_jax,
-        in_tree=self.exported.in_tree,
-        module_kept_var_idx=self.exported.module_kept_var_idx,
-        in_avals=self.exported.in_avals,
-        in_shardings=self.exported.in_shardings,
-        out_avals=self.exported.out_avals,
-        out_shardings=self.exported.out_shardings,
-        apply_jit=True)
+                               in_tree=self.exported.in_tree,
+                               in_avals=self.exported.in_avals,
+                               in_shardings=self.exported.in_shardings,
+                               out_avals=self.exported.out_avals,
+                               out_shardings=self.exported.out_shardings,
+                               nr_devices=self.exported.nr_devices,
+                               apply_jit=True)
 
 class GraphSerializationImpl(SerializationImpl):
   def __init__(self, fun_jax, *,
@@ -584,13 +584,13 @@ class GraphSerializationImpl(SerializationImpl):
     # except we use unspecified shardings, and we do not apply a jit on the
     # VJP. This matches the older behavior of jax2tf for graph serialization.
     return export._get_vjp_fun(self.fun_jax,
-      in_tree=self.in_tree,
-      module_kept_var_idx=tuple(range(len(self.args_avals_flat))),
-      in_avals=self.args_avals_flat,
-      in_shardings=(sharding_impls.UNSPECIFIED,) * len(self.args_avals_flat),
-      out_avals=self.outs_avals,
-      out_shardings=(sharding_impls.UNSPECIFIED,) * len(self.outs_avals),
-      apply_jit=False)
+                               in_tree=self.in_tree,
+                               in_avals=self.args_avals_flat,
+                               in_shardings=(None,) * len(self.args_avals_flat),
+                               out_avals=self.outs_avals,
+                               out_shardings=(None,) * len(self.outs_avals),
+                               nr_devices=1,  # Does not matter for unspecified shardings
+                               apply_jit=False)
 
 
 def dtype_of_val(val: TfVal) -> DType:
@@ -890,10 +890,13 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   # Do not apply XlaSharding for REPLICATED, on inputs and outputs.
   # This is an agreed convention, and also improves usability under TF eager.
   # See b/255511660.
-  if exported.in_shardings is not None:
-    args_flat_tf = tuple(
-      map(partial(_shard_value, skip_replicated_sharding=tf.executing_eagerly()),
-          kept_args_flat_tf, kept_args_avals, exported.in_shardings))
+  kept_in_shardings = []
+  for i in exported.module_kept_var_idx:
+    kept_in_shardings.append(exported.in_shardings[i])
+  args_flat_tf = tuple(
+    map(partial(_shard_value,
+                skip_replicated_sharding=tf.executing_eagerly()),
+        kept_args_flat_tf, kept_in_shardings))
   res = tfxla.call_module(args_flat_tf, **call_module_attrs)
   # TODO(b/278940799): Replace the TF v1 API with public TF2 API.
   # Add the custom call tf.function into the default graph, so those functions
@@ -904,10 +907,9 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
           concrete_fn._inference_function
       )
 
-  if exported.out_shardings is not None:
-    res = list(map(partial(_shard_value, skip_replicated_sharding=tf.executing_eagerly()),
-                   res, exported.out_avals, exported.out_shardings))
-
+  res = list(map(partial(_shard_value,
+                         skip_replicated_sharding=tf.executing_eagerly()),
+                 res, exported.out_shardings))
   res = tuple(map(_convert_value, res, exported.out_avals))
   return res
 
@@ -3405,17 +3407,21 @@ def split_to_logical_devices(tensor: TfVal,
   return xla_sharding.tile(tensor, tile_assignment, use_sharding_op=True)
 
 
+def _xla_compatible_sharding_to_hlo_sharding(
+    s: sharding.XLACompatibleSharding,
+    aval: core.ShapedArray) -> Optional[xla_client.HloSharding]:
+  if sharding_impls.is_unspecified(s):
+    return None
+  return s._to_xla_hlo_sharding(aval.ndim)  # type: ignore[union-attr]
+
 def _shard_value(val: TfVal,
-                 aval: core.ShapedArray,
-                 sd: sharding.XLACompatibleSharding, *,
+                 sd: Optional[xla_client.HloSharding], *,
                  skip_replicated_sharding: bool) -> TfVal:
   """Apply sharding to a TfVal."""
-  if sharding_impls.is_unspecified(sd):
+  if sd is None:
     return val
 
-  sharding_proto: xla_client.OpSharding = cast(
-      xla_client.OpSharding, sd._to_xla_hlo_sharding(aval.ndim).to_proto())  # type: ignore
-
+  sharding_proto = sd.to_proto()
   if (skip_replicated_sharding and
       op_shardings.is_op_sharding_replicated(sharding_proto)):
     return val
@@ -3465,17 +3471,21 @@ def _pjit(*args: TfVal,
           _out_aval: Sequence[core.ShapedArray]) -> TfVal:
   del donated_invars
   # Apply sharding annotation to the arguments
+  in_hlo_shardings: Sequence[Optional[xla_client.HloSharding]] = map(
+    _xla_compatible_sharding_to_hlo_sharding, in_shardings, _in_avals)
   sharded_args: Sequence[TfVal] = tuple(
       map(partial(_shard_value,
                   skip_replicated_sharding=not _thread_local_state.enable_xla),
-          args, _in_avals, in_shardings))
+          args, in_hlo_shardings))
   results = _interpret_jaxpr(jaxpr, *sharded_args,
                               extra_name_stack=util.wrap_name(name, "pjit"),
                               fresh_constant_cache=False)
+  out_hlo_shardings: Sequence[Optional[xla_client.HloSharding]] = map(
+    _xla_compatible_sharding_to_hlo_sharding, out_shardings, _out_aval)
   sharded_results: Sequence[TfVal] = tuple(
       map(partial(_shard_value,
                   skip_replicated_sharding=not _thread_local_state.enable_xla),
-          results, _out_aval, out_shardings))
+          results, out_hlo_shardings))
   return tuple(sharded_results)
 
 
@@ -3483,12 +3493,14 @@ tf_impl_with_avals[pjit.pjit_p] = _pjit
 
 
 def _pjit_sharding_constraint(arg: TfVal, *,
-                              sharding: sharding.NamedSharding,
+                              sharding: sharding.XLACompatibleSharding,
                               resource_env: maps.ResourceEnv,
                               _in_avals: Sequence[core.ShapedArray],
                               _out_aval: core.ShapedArray,
                               **kwargs) -> TfVal:
-  return _shard_value(arg, _in_avals[0], sharding, skip_replicated_sharding=False)
+  hlo_sharding = _xla_compatible_sharding_to_hlo_sharding(sharding, _in_avals[0])
+  return _shard_value(arg, hlo_sharding,
+                      skip_replicated_sharding=False)
 
 
 tf_impl_with_avals[pjit.sharding_constraint_p] = _pjit_sharding_constraint
