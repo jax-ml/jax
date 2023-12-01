@@ -124,7 +124,7 @@ def soft_sign(x: ArrayLike) -> Array:
   x_arr = jnp.asarray(x)
   return x_arr / (jnp.abs(x_arr) + 1)
 
-@jax.jit
+@partial(jax.jit, inline=True)
 def sigmoid(x: ArrayLike) -> Array:
   r"""Sigmoid activation function.
 

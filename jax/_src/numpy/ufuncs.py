@@ -651,7 +651,7 @@ def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]:
 
 
 @_wraps(np.isfinite, module='numpy')
-@jit
+@partial(jit, inline=True)
 def isfinite(x: ArrayLike, /) -> Array:
   check_arraylike("isfinite", x)
   dtype = dtypes.dtype(x)
@@ -702,7 +702,7 @@ isneginf: UnOp = _wraps(np.isneginf, skip_params=['out'])(
 
 
 @_wraps(np.isnan, module='numpy')
-@jit
+@partial(jit, inline=True)
 def isnan(x: ArrayLike, /) -> Array:
   check_arraylike("isnan", x)
   return lax.ne(x, x)
