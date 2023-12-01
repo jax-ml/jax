@@ -224,7 +224,7 @@ def _check_cuda_versions():
     try:
       version = get_version()
     except Exception as e:
-      raise RuntimeError(f"Unable to load {name}.") from e
+      raise RuntimeError(f"Unable to load {name}. Is it installed?") from e
     if build_version // scale_for_comparison > version // scale_for_comparison:
       raise RuntimeError(
           f"Found {name} version {version}, but JAX was built against version "

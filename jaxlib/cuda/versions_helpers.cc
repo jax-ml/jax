@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "jaxlib/cuda/versions_helpers.h"
 
+#include <cstddef>
+#include <stdexcept>
+
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 
@@ -71,6 +74,15 @@ int CusparseGetVersion() {
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseGetProperty(MINOR_VERSION, &minor)));
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseGetProperty(PATCH_LEVEL, &patch)));
   return major * 1000 + minor * 100 + patch;
+}
+size_t CudnnGetVersion() {
+  size_t version = ::cudnnGetVersion();
+  // If the cudnn stub in TSL can't find the library, it will use a dummy stub
+  // that returns 0, since cudnnGetVersion() cannot fail.
+  if (version == 0) {
+    throw std::runtime_error("cuDNN not found.");
+  }
+  return version;
 }
 
 }  // namespace jax::cuda

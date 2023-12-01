@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef JAXLIB_CUDA_VERSIONS_HELPERS_H_
 #define JAXLIB_CUDA_VERSIONS_HELPERS_H_
 
+#include <cstddef>
 #include <cstdint>
 
 namespace jax::cuda {
@@ -27,6 +28,7 @@ int CufftGetVersion();
 int CusolverGetVersion();
 int CublasGetVersion();
 int CusparseGetVersion();
+size_t CudnnGetVersion();
 
 }  // namespace jax::cuda
 
