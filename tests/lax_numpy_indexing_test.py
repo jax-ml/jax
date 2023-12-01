@@ -96,7 +96,9 @@ STATIC_INDEXING_TESTS = [
   ("OneSliceIndexNegativeStride", [
     IndexSpec(shape=(10,), indexer=slice(3, 1, -1), out_shape=(2,)),
     IndexSpec(shape=(10,), indexer=slice(1, 8, -1), out_shape=(0,)),
+    IndexSpec(shape=(10,), indexer=slice(-1, -11, -1), out_shape=(10,)),
     IndexSpec(shape=(10,), indexer=slice(None, 1, -2), out_shape=(4,)),
+    IndexSpec(shape=(10,), indexer=slice(None, -11, -1), out_shape=(10,)),
     IndexSpec(shape=(10,), indexer=slice(None, None, -1), out_shape=(10,)),
     IndexSpec(shape=(10, 8), indexer=slice(3, 1, -1), out_shape=(2, 8)),
     IndexSpec(shape=(10, 8), indexer=slice(0, 8, -1), out_shape=(0, 8)),

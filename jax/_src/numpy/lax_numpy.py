@@ -4960,7 +4960,9 @@ def _preprocess_slice(
     if stop_ge_0:
       stop = axis_size - core.non_negative_dim(axis_size - stop)  # min(axis_size, stop)
     else:
-      stop = core.non_negative_dim(axis_size + stop)  # max(axis_size + stop, 0)
+      stop = (
+          core.non_negative_dim(axis_size + stop + 1) - 1
+      )  # max(axis_size + stop, -1)
 
   gap = step if step_gt_0 else - step
   distance = (stop - start) if step_gt_0 else (start - stop)
