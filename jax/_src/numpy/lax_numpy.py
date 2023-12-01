@@ -4390,13 +4390,18 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
     return None
   if any(i is None for i in idx):
     return None  # TODO(jakevdp): handle newaxis case
+  # For symbolic dimensions fallback to gather
+  if any(core.is_symbolic_dim(elt)
+         for i in idx if isinstance(i, slice)
+         for elt in (i.start, i.stop, i.step)):
+    return None
 
   simple_revs = {i for i, ind in enumerate(idx) if _is_simple_reverse_slice(ind)}
   int_indices = {i for i, (ind, size) in enumerate(zip(idx, arr.shape))
                  if _is_valid_integer_index_for_slice(ind, size, mode)}
   contiguous_slices = {i for i, ind in enumerate(idx) if _is_contiguous_slice(ind)}
 
-  # For sharded inputs, indexing (like x[0]) and partial slices (like x[:2] as
+  # For sharded inputs, indexing (like x[0]) and partial slices (like x[:2] as
   # opposed to x[:]) lead to incorrect sharding semantics when computed via
   # dynamic_slice, so we fall back to gather.
   # TODO(yashkatariya): fix dynamic_slice with sharding
@@ -4624,7 +4629,9 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
   collapsed_slice_dims: Sequence[int] = []
   start_index_map: Sequence[int] = []
 
-  use_64bit_index = any(not core.is_constant_dim(d) or d >= (1 << 31) for d in x_shape)
+  use_64bit_index = (
+    any(not core.is_constant_dim(d) or d >= (1 << 31) for d in x_shape) and
+    config.enable_x64.value)
   index_dtype = int64 if use_64bit_index else int32
 
   # Gather indices.
@@ -4699,75 +4706,45 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
       y_axis += 1
 
     elif isinstance(i, slice):
-      # Normalize the slice to use None when possible
-      start, stop, step = i.start, i.stop, i.step
-      try:
-        if step is None or core.definitely_equal(step, 1):
-          step = None
-        if step is None:
-          if start is None or core.definitely_equal(start, 0):
-            start = None
-          if stop is None or (not isinstance(stop, core.Tracer) and
-              stop >= x_shape[x_axis]):
-            stop = None
-        elif core.definitely_equal(step, -1):
-          step = -1
-      except (TypeError, core.InconclusiveDimensionOperation):
-        pass
-
-      # Handle slice(None) and slice(None, None, -1)
-      if start is None and stop is None and (
-          step is None or isinstance(step, int) and step == -1):
-        if step == -1:
-          reversed_y_dims.append(collapsed_y_axis)
-        slice_shape.append(x_shape[x_axis])
-        gather_slice_shape.append(x_shape[x_axis])
-        offset_dims.append(collapsed_y_axis)
-        collapsed_y_axis += 1
-        y_axis += 1
-        x_axis += 1
       # Handle slice index (only static, otherwise an error is raised)
+      if not all(_is_slice_element_none_or_constant_or_symbolic(elt)
+                 for elt in (i.start, i.stop, i.step)):
+        msg = ("Array slice indices must have static start/stop/step to be used "
+               "with NumPy indexing syntax. "
+               f"Found slice({i.start}, {i.stop}, {i.step}). "
+               "To index a statically sized "
+               "array at a dynamic position, try lax.dynamic_slice/"
+               "dynamic_update_slice (JAX does not support dynamically sized "
+               "arrays within JIT compiled functions).")
+        raise IndexError(msg)
+
+      start, step, slice_size = _preprocess_slice(i, x_shape[x_axis])
+      slice_shape.append(slice_size)
+
+      if core.definitely_equal(step, 1):
+        # Avoid generating trivial gather (an optimization)
+        if not core.definitely_equal(slice_size, x_shape[x_axis]):
+          gather_indices.append((lax.convert_element_type(start, index_dtype),
+                                len(gather_indices_shape)))
+          start_index_map.append(x_axis)
+        gather_slice_shape.append(slice_size)
+        offset_dims.append(collapsed_y_axis)
       else:
-        if not all(_is_slice_element_none_or_constant(elt)
-                   for elt in (start, stop, step)):
-          msg = ("Array slice indices must have static start/stop/step to be used "
-                 "with NumPy indexing syntax. "
-                 f"Found slice({start}, {stop}, {step}). "
-                 "To index a statically sized "
-                 "array at a dynamic position, try lax.dynamic_slice/"
-                 "dynamic_update_slice (JAX does not support dynamically sized "
-                 "arrays within JIT compiled functions).")
-          raise IndexError(msg)
-        if not core.is_constant_dim(x_shape[x_axis]):
-          msg = ("Cannot use NumPy slice indexing on an array dimension whose "
-                 f"size is not statically known ({x_shape[x_axis]}). "
-                 "Try using lax.dynamic_slice/dynamic_update_slice")
-          raise IndexError(msg)
-        start, limit, stride, needs_rev = _static_idx(slice(start, stop, step),
-                                                      x_shape[x_axis])
-        if needs_rev:
+        indices = (array(start, dtype=index_dtype) +
+                   array(step, dtype=index_dtype) * lax.iota(index_dtype, slice_size))
+        if step < 0:
           reversed_y_dims.append(collapsed_y_axis)
-        if stride == 1:
-          i = lax.convert_element_type(start, index_dtype)
-          gather_indices.append((i, len(gather_indices_shape)))
-          slice_shape.append(limit - start)
-          gather_slice_shape.append(limit - start)
-          offset_dims.append(collapsed_y_axis)
-          start_index_map.append(x_axis)
-        else:
-          i = arange(start, limit, stride, dtype=index_dtype)
-          size = i.shape[0]
-          slice_shape.append(size)
-          gather_slice_shape.append(1)
-          gather_indices.append((i, len(gather_indices_shape)))
-          gather_indices_shape.append(size)
+          indices = lax.rev(indices, dimensions=(0,))
 
-          start_index_map.append(x_axis)
-          collapsed_slice_dims.append(x_axis)
+        gather_slice_shape.append(1)
+        gather_indices.append((indices, len(gather_indices_shape)))
+        start_index_map.append(x_axis)
+        gather_indices_shape.append(slice_size)
+        collapsed_slice_dims.append(x_axis)
 
-        collapsed_y_axis += 1
-        y_axis += 1
-        x_axis += 1
+      collapsed_y_axis += 1
+      y_axis += 1
+      x_axis += 1
     else:
       if (abstract_i is not None and
           not (issubdtype(abstract_i.dtype, integer) or issubdtype(abstract_i.dtype, bool_))):
@@ -4888,9 +4865,10 @@ def _expand_bool_indices(idx, shape):
   return tuple(out)
 
 
-def _is_slice_element_none_or_constant(elt):
+def _is_slice_element_none_or_constant_or_symbolic(elt):
   """Return True if elt is a constant or None."""
   if elt is None: return True
+  if core.is_symbolic_dim(elt): return True
   try:
     return type(core.get_aval(elt)) is ConcreteArray
   except TypeError:
@@ -4938,21 +4916,56 @@ def _canonicalize_tuple_index(arr_ndim, idx, array_name='array'):
     idx = tuple(idx) + colons
   return idx
 
-def _static_idx(idx: slice, size: DimSize):
-  """Helper function to compute the static slice start/limit/stride values."""
-  if isinstance(size, int):
-    start, stop, step = idx.indices(size)
+def _preprocess_slice(
+    s: slice,
+    axis_size: core.DimSize
+  ) -> tuple[core.DimSize, core.DimSize, core.DimSize]:
+  """Computes the start index, step, and size of the slice `x[s]`."""
+  # See https://numpy.org/doc/stable/user/basics.indexing.html#slicing-and-striding
+  # Must resolve statically if step is {<0, ==0, >0}
+  step = s.step if s.step is not None else 1
+  try:
+    if step == 0:
+      raise ValueError("slice step cannot be zero")
+    step_gt_0 = (step > 0)
+  except core.InconclusiveDimensionOperation as e:
+    raise core.InconclusiveDimensionOperation(
+        f"In slice with non-constant elements the step ({step}) must " +
+        f"be resolved statically if it is > 0 or < 0.\nDetails: {e}")
+  if s.start is None:
+    start = 0 if step_gt_0 else axis_size - 1
   else:
-    raise TypeError(size)
+    start = s.start
+    try:
+      start_ge_0 = (start >= 0)
+    except core.InconclusiveDimensionOperation as e:
+      raise core.InconclusiveDimensionOperation(
+          f"In slice with non-constant elements the start ({start}) must " +
+          f"be resolved statically if it is >= 0.\nDetails: {e}")
+    if start_ge_0:
+      start = axis_size - core.non_negative_dim(axis_size - start)  # min(axis_size, start)
+    else:
+      start = core.non_negative_dim(axis_size + start)  # max(axis_size + start, 0)
 
-  if (step < 0 and stop >= start) or (step > 0 and start >= stop):
-    return 0, 0, 1, False  # sliced to size zero
-
-  if step > 0:
-    return start, stop, step, False
+  if s.stop is None:
+    stop = axis_size if step_gt_0 else -1
   else:
-    k  = (start - stop - 1) % (-step)
-    return stop + k + 1, start + 1, -step, True
+    stop = s.stop
+    try:
+      stop_ge_0 = (stop >= 0)
+    except core.InconclusiveDimensionOperation as e:
+      raise core.InconclusiveDimensionOperation(
+          f"In slice with non-constant elements the stop ({stop}) must " +
+          f"be resolved statically if it is >= 0.\nDetails: {e}")
+    if stop_ge_0:
+      stop = axis_size - core.non_negative_dim(axis_size - stop)  # min(axis_size, stop)
+    else:
+      stop = core.non_negative_dim(axis_size + stop)  # max(axis_size + stop, 0)
+
+  gap = step if step_gt_0 else - step
+  distance = (stop - start) if step_gt_0 else (start - stop)
+  slice_size = core.non_negative_dim(distance + gap - 1) // gap
+  return start, step, slice_size
 
 
 @util._wraps(np.blackman)
