@@ -278,6 +278,16 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertEqual(arr_float32.dtype, np.float32)
     self.assertArraysEqual(arr_float32, arr.astype(np.float32))
 
+  def test_array_delete_idempotent(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    arr = jax.device_put(np.arange(8), jax.sharding.NamedSharding(mesh, P('x')))
+
+    arr.delete()
+    self.assertTrue(arr.is_deleted())
+
+    arr.delete()  # Run delete again to check if it's idempotent.
+    self.assertTrue(arr.is_deleted())
+
   def test_sharded_add(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
