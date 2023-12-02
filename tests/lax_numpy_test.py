@@ -1916,7 +1916,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     xshape=one_dim_array_shapes,
     yshape=one_dim_array_shapes,
   )
-  @jtu.skip_on_devices("cuda", "tpu", "rocm")  # backends don't support all dtypes.
+  @jtu.skip_on_devices("cuda", "rocm")  # backends don't support all dtypes.
   def testConvolutionsPreferredElementType(self, xshape, yshape, dtype, mode, op):
     jnp_op = getattr(jnp, op)
     np_op = getattr(np, op)
@@ -2393,8 +2393,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     offset=list(range(-4, 4)),
   )
   def testTrace(self, shape, dtype, out_dtype, offset, axis1, axis2):
-    if out_dtype == np.uint16:
-      raise unittest.SkipTest("TPU compiler crashes (Google bug b/258450318)")
     rng = jtu.rand_default(self.rng())
     def np_fun(arg):
       if out_dtype == jnp.bfloat16:
@@ -4074,8 +4072,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     sparse=[True, False],
   )
   def testIndices(self, dimensions, dtype, sparse):
-    if jtu.test_device_matches(["tpu"]) and dtype in (np.int16, np.uint16):
-      raise unittest.SkipTest("Compilation failure on TPU ")
     def args_maker(): return []
     np_fun = partial(np.indices, dimensions=dimensions,
                      dtype=dtype, sparse=sparse)
@@ -4376,9 +4372,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for x in (np.nan, -np.inf, -100., -2., -1., 0., 1., 2., 100., np.inf,
               jnp.finfo(dtype).max, np.sqrt(jnp.finfo(dtype).max),
               np.sqrt(jnp.finfo(dtype).max) * 2.):
-      if (op in ("sin", "cos", "tan") and
-          jtu.test_device_matches(["tpu"])):
-        continue  # TODO(b/132196789): fix and reenable.
       x = dtype(x)
       expected = np_op(x)
       actual = jnp_op(x)
