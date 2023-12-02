@@ -2567,8 +2567,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertEqual(kwargs, {'x': 'foo'})
       return y * y
 
+    y = jnp.arange(8.)
     with jtu.count_pjit_cpp_cache_miss() as count:
-      y = jnp.arange(8.)
       f_names = pjit(f, static_argnames='x')
       f_names(y, x='foo')
       f_names(y, x='foo')
