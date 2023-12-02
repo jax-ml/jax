@@ -127,19 +127,6 @@ symlink_inputs(
 )
 
 symlink_inputs(
-    name = "ml_program_dialect",
-    rule = py_library,
-    symlinked_inputs = {"srcs": {"dialects": [
-        "@llvm-project//mlir/python:MLProgramOpsPyFiles",
-    ]}},
-    deps = [
-        ":core",
-        ":ir",
-        ":mlir",
-    ],
-)
-
-symlink_inputs(
     name = "builtin_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {"dialects": [

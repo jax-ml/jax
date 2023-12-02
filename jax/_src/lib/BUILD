@@ -48,7 +48,6 @@ py_library_providing_imports_info(
             "//jaxlib/mlir:math_dialect",
             "//jaxlib/mlir:memref_dialect",
             "//jaxlib/mlir:mhlo_dialect",
-            "//jaxlib/mlir:ml_program_dialect",
             "//jaxlib/mlir:pass_manager",
             "//jaxlib/mlir:scf_dialect",
             "//jaxlib/mlir:sparse_tensor_dialect",
