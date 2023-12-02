@@ -38,6 +38,7 @@ from jax import random
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
+from jax._src import tree_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lib import xla_client
@@ -531,6 +532,7 @@ class PolyHarness(Harness):
 
     f_jax = self.dyn_fun
     args = self.dyn_args_maker(tst.rng())
+    args = tree_util.tree_map(jnp.array, args)
     args_specs = export.args_specs(args, self.polymorphic_shapes)
 
     if self.expect_error is not None:
@@ -1199,21 +1201,26 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   arg_descriptors=[RandArg((16, 8), np.float32)],
                   polymorphic_shapes=["c, b"])
       # start, stop, step are functions that take the argument "b"
+      # "b" actual value is 8 and "c" is 16
       for start_name, start in [
         ("None", lambda b: None),
         ("0", lambda b: 0),
         ("2", lambda b: 2),
         ("b", lambda b: b),
+        ("2b2", lambda b: 2*b + 2),
         ("-2", lambda b: -2),
         ("-b", lambda b: -b),
+        ("-2b2", lambda b: -2*b - 2),
       ]
       for stop_name, stop in [
         ("None", lambda b: None),
         ("0", lambda b: 0),
         ("b", lambda b: b),
+        ("2b2", lambda b: 2*b + 2),
         ("4", lambda b: 4),
         ("-4", lambda b: -4),
         ("-b", lambda b: -b),
+        ("-2b2", lambda b: -2*b - 2),
       ]
       for step_name, step in [
         ("None", lambda b: None),
