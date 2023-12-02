@@ -474,10 +474,6 @@ class ArrayImpl(basearray.Array):
   # deleted.
   @property
   def device_buffer(self) -> ArrayImpl:
-    # Added 2023 Nov 29
-    warnings.warn(
-      "arr.device_buffer is deprecated. Use arr.addressable_data(0)",
-      DeprecationWarning, stacklevel=2)
     self._check_if_deleted()
     if len(self._arrays) == 1:
       return self._arrays[0]
@@ -488,10 +484,6 @@ class ArrayImpl(basearray.Array):
   # deleted.
   @property
   def device_buffers(self) -> Sequence[ArrayImpl]:
-    # Added 2023 Nov 29
-    warnings.warn(
-      "arr.device_buffers is deprecated. Use [x.data for x in arr.addressable_shards]",
-      DeprecationWarning, stacklevel=2)
     self._check_if_deleted()
     return cast(Sequence[ArrayImpl], self._arrays)
 

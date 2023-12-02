@@ -593,8 +593,6 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertNotEqual(a.data.unsafe_buffer_pointer(),
                           c.data.unsafe_buffer_pointer())
 
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message="arr.device_buffers? is deprecated")
   def test_array_device_buffer(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
