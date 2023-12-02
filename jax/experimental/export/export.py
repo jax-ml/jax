@@ -667,8 +667,19 @@ def _wrap_main_func(
         "main", new_main_ftype, ip=ir.InsertionPoint.at_block_begin(wrapped_module.body))
     new_main_op.attributes["sym_visibility"] = ir.StringAttr.get("public")
     try:
-      new_main_op.arg_attrs = ir.ArrayAttr.get(
-        [arg_attrs[idx] for idx in new_main_arg_indices])
+      new_arg_attrs = []
+      for idx in new_main_arg_indices:
+        new_arg_attr = {}
+        for attr in arg_attrs[idx]:
+          if attr.name == "tf.aliasing_output":
+            i = new_main_result_indices.index(attr.attr.value)
+            new_arg_attr[attr.name] = ir.IntegerAttr.get(
+                ir.IntegerType.get_signless(32), i
+            )
+          else:
+            new_arg_attr[attr.name] = attr.attr
+        new_arg_attrs.append(ir.DictAttr.get(new_arg_attr))
+      new_main_op.arg_attrs = ir.ArrayAttr.get(new_arg_attrs)
     except KeyError:
       pass  # TODO: better detection if orig_main.arg_attrs does not exist
     try:

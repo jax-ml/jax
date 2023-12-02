@@ -124,10 +124,10 @@ def _testing_multi_platform_fun_expected(x,
 class JaxExportTest(jtu.JaxTestCase):
 
   def override_serialization_version(self, version_override: int):
-      version = config.jax_serialization_version.value
-      if version != version_override:
-        self.enter_context(config.jax_serialization_version(version_override))
-      logging.info(
+    version = config.jax_serialization_version.value
+    if version != version_override:
+      self.enter_context(config.jax_serialization_version(version_override))
+    logging.info(
         "Using JAX serialization version %s",
         config.jax_serialization_version.value)
 
@@ -1089,6 +1089,30 @@ class JaxExportTest(jtu.JaxTestCase):
     res = export.call_exported(exp)(x)
     self.assertAllClose(10. + _testing_multi_platform_fun_expected(x),
                         res)
+
+  @jtu.parameterized_filterable(
+    kwargs=[
+      dict(v=v)
+      for v in range(export.minimum_supported_serialization_version,
+                     export.maximum_supported_serialization_version + 1)])
+  def test_ordered_effects_with_donation(self, *, v: int):
+    self.override_serialization_version(v)
+    x = np.arange(3, dtype=np.float32)
+
+    def f_jax(x):
+      return testing_primitive_with_effect_p.bind(
+          x, effect_class_name="TestingOrderedEffect1"
+      )
+
+    f_jax = jax.jit(f_jax, donate_argnums=(0,))
+    exp = export.export(f_jax)(x)
+    mlir_module_str = str(exp.mlir_module())
+    if exp.serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+      self.assertRegex(mlir_module_str, r"@main.*tf.aliasing_output = 0")
+      self.assertRegex(mlir_module_str, r"@_wrapped_jax_export_main.*tf.aliasing_output = 1")
+    else:
+      self.assertRegex(mlir_module_str, r"@main.*tf.aliasing_output = 1")
+      self.assertRegex(mlir_module_str, r"@_wrapped_jax_export_main.*tf.aliasing_output = 1")
 
 
 if __name__ == "__main__":
