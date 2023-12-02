@@ -3531,19 +3531,22 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  def testAstype(self):
+  @jtu.sample_product(
+    from_dtype=['int32', 'float32'],
+    to_dtype=['int32', 'float32', None],
+    use_method=[True, False],
+  )
+  def testAstype(self, from_dtype, to_dtype, use_method):
     rng = self.rng()
-    args_maker = lambda: [rng.randn(3, 4).astype("float32")]
-    np_op = lambda x: np.asarray(x).astype(jnp.int32)
-    jnp_op = lambda x: jnp.asarray(x).astype(jnp.int32)
-    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
-    self._CompileAndCheck(jnp_op, args_maker)
-
-  def testAstypeNone(self):
-    rng = self.rng()
-    args_maker = lambda: [rng.randn(3, 4).astype("int32")]
-    np_op = jtu.with_jax_dtype_defaults(lambda x: np.asarray(x).astype(None))
-    jnp_op = lambda x: jnp.asarray(x).astype(None)
+    args_maker = lambda: [rng.randn(3, 4).astype(from_dtype)]
+    if (not use_method) and hasattr(np, "astype"):  # Added in numpy 2.0
+      np_op = lambda x: np.astype(x, to_dtype)
+    else:
+      np_op = lambda x: np.asarray(x).astype(to_dtype)
+    if use_method:
+      jnp_op = lambda x: jnp.asarray(x).astype(to_dtype)
+    else:
+      jnp_op = lambda x: jnp.astype(x, to_dtype)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 

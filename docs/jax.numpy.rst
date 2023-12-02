@@ -78,6 +78,7 @@ namespace; they are listed below.
     array_split
     array_str
     asarray
+    astype
     atleast_1d
     atleast_2d
     atleast_3d

@@ -39,6 +39,7 @@ from jax._src.numpy.lax_numpy import (
     array_repr as array_repr,
     array_split as array_split,
     array_str as array_str,
+    astype as astype,
     asarray as asarray,
     atleast_1d as atleast_1d,
     atleast_2d as atleast_2d,
