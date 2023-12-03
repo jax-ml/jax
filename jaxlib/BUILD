@@ -66,6 +66,7 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:scf_dialect",
         "//jaxlib/mlir:sparse_tensor_dialect",
         "//jaxlib/mlir:stablehlo_dialect",
+        "//jaxlib/mlir/_mlir_libs:_mlirRegisterEverything",
         "//jaxlib/mosaic",
     ],
 )

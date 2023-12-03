@@ -53,6 +53,7 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         "//jaxlib/mlir",
+        "//jaxlib/mlir/_mlir_libs:_mlirRegisterEverything",
         "//jaxlib/mlir/_mlir_libs:_tpu_ext_lib",
     ],
 )
