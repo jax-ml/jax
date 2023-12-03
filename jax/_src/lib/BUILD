@@ -19,10 +19,7 @@ load(
     "pytype_strict_library",
 )
 
-package(
-    default_applicable_licenses = [],
-    default_visibility = ["//:__subpackages__"],
-)
+package(default_applicable_licenses = ["//jax:license"])
 
 py_library_providing_imports_info(
     name = "lib",
