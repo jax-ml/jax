@@ -106,7 +106,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
          xs: X,
          length: Optional[int] = None,
          reverse: bool = False,
-         unroll: int = 1) -> tuple[Carry, Y]:
+         unroll: int | bool = 1) -> tuple[Carry, Y]:
   """Scan a function over leading array axes while carrying along state.
 
   The `Haskell-like type signature`_ in brief is
@@ -175,9 +175,13 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     reverse: optional boolean specifying whether to run the scan iteration
       forward (the default) or in reverse, equivalent to reversing the leading
       axes of the arrays in both ``xs`` and in ``ys``.
-    unroll: optional positive int specifying, in the underlying operation of the
-      scan primitive, how many scan iterations to unroll within a single
-      iteration of a loop.
+    unroll: optional positive int or bool specifying, in the underlying
+      operation of the scan primitive, how many scan iterations to unroll within
+      a single iteration of a loop. If an integer is provided, it determines how
+      many unrolled loop iterations to run within a single rolled iteration of
+      the loop. If a boolean is provided, it will determine if the loop is
+      competely unrolled (i.e. `unroll=True`) or left completely unrolled (i.e.
+      `unroll=False`).
 
   Returns:
     A pair of type ``(c, [b])`` where the first element represents the final
@@ -264,6 +268,8 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     raise NotImplementedError(
         f'Effects not supported in `scan`: {disallowed_effects}')
 
+  if isinstance(unroll, bool):
+    unroll = length if unroll else 1
   out = scan_p.bind(*consts, *in_flat,
                     reverse=reverse, length=length, jaxpr=jaxpr,
                     num_consts=len(consts), num_carry=len(init_flat),
@@ -1844,7 +1850,7 @@ def _fori_scan_body_fun(body_fun):
 
 @api_boundary
 def fori_loop(lower, upper, body_fun, init_val,
-              *, unroll: int | None = None):
+              *, unroll: int | bool | None = None):
   """Loop from ``lower`` to ``upper`` by reduction to :func:`jax.lax.while_loop`.
 
   The `Haskell-like type signature`_ in brief is
@@ -1889,8 +1895,12 @@ def fori_loop(lower, upper, body_fun, init_val,
     upper: an integer representing the loop index upper bound (exclusive)
     body_fun: function of type ``(int, a) -> a``.
     init_val: initial loop carry value of type ``a``.
-    unroll: An optional integer that determines how much to unroll the loop.
-      Only applicable if the loop bounds are statically known.
+    unroll: An optional integer or boolean that determines how much to unroll
+      the loop. If an integer is provided, it determines how many unrolled
+      loop iterations to run within a single rolled iteration of the loop. If a
+      boolean is provided, it will determine if the loop is competely unrolled
+      (i.e. `unroll=True`) or left completely unrolled (i.e. `unroll=False`).
+      This argument is only applicable if the loop bounds are statically known.
 
   Returns:
     Loop value from the final iteration, of type ``a``.
@@ -1939,7 +1949,7 @@ def fori_loop(lower, upper, body_fun, init_val,
 
   if use_scan:
     if unroll is None:
-      unroll = 1
+      unroll = False
     if config.disable_jit.value and upper_ == lower_:
       # non-jit implementation of scan does not support length=0
       return init_val
