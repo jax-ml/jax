@@ -143,6 +143,7 @@ jax.scipy.special
    expi
    expit
    expn
+   factorial
    gamma
    gammainc
    gammaincc

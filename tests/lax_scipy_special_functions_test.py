@@ -90,6 +90,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "gammaln", 1, float_dtypes, jtu.rand_positive, False
     ),
     op_record(
+        "factorial", 1, float_dtypes, jtu.rand_default, True
+    ),
+    op_record(
         "i0", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
