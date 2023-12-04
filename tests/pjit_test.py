@@ -141,11 +141,11 @@ class PJitTest(jtu.BufferDonationTestCase):
     expected = x
     self.assertAllClose(actual, expected, check_dtypes=False)
     _check_instance(self, actual)
-    self.assertLen(actual.device_buffers, 1)
+    self.assertLen(actual.addressable_shards, 1)
     self.assertAllClose(
-        np.asarray(actual.device_buffers[0]), expected, check_dtypes=False)
-    # Repro for a bug on device_buffer aval
-    _ = repr(actual.device_buffers)
+        np.asarray(actual.addressable_shards[0].data), expected, check_dtypes=False)
+    # Repro for a bug on addressable_shards aval
+    _ = repr(actual.addressable_shards)
 
   @jtu.with_mesh([('x', 2)])
   def testBasic1D(self):
@@ -161,8 +161,8 @@ class PJitTest(jtu.BufferDonationTestCase):
     expected = x + (x + 1)
     self.assertAllClose(actual, expected, check_dtypes=False)
     _check_instance(self, actual)
-    self.assertLen(actual.device_buffers, 2)
-    self.assertAllClose(np.asarray(actual.device_buffers[0]), expected,
+    self.assertLen(actual.addressable_shards, 2)
+    self.assertAllClose(np.asarray(actual.addressable_shards[0].data), expected,
                         check_dtypes=False)
 
   @jtu.with_mesh([('x', 2)])
@@ -197,9 +197,9 @@ class PJitTest(jtu.BufferDonationTestCase):
     expected = x + (x + 1)
     self.assertAllClose(actual[:3], expected[:3], check_dtypes=False)
     _check_instance(self, actual)
-    self.assertLen(actual.device_buffers, 2)
-    self.assertAllClose(np.asarray(actual.device_buffers[0])[:3], expected[:3],
-                        check_dtypes=False)
+    self.assertLen(actual.addressable_shards, 2)
+    self.assertAllClose(np.asarray(actual.addressable_shards[0].data)[:3],
+                        expected[:3], check_dtypes=False)
 
   def testBasic1DWithMeshContextManager(self):
     @partial(pjit,
@@ -216,8 +216,8 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(mesh, jtu.create_global_mesh((2,), ('x')))
     self.assertAllClose(actual, expected, check_dtypes=False)
     _check_instance(self, actual)
-    self.assertLen(actual.device_buffers, 2)
-    self.assertAllClose(np.asarray(actual.device_buffers[0]), expected,
+    self.assertLen(actual.addressable_shards, 2)
+    self.assertAllClose(np.asarray(actual.addressable_shards[0].data), expected,
                         check_dtypes=False)
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
@@ -236,16 +236,16 @@ class PJitTest(jtu.BufferDonationTestCase):
     expected = x @ y
     self.assertAllClose(actual, expected, check_dtypes=False)
     _check_instance(self, actual)
-    self.assertLen(actual.device_buffers, 4)
+    self.assertLen(actual.addressable_shards, 4)
 
     split0, split1 = np.split(expected, 2)
-    self.assertAllClose(np.asarray(actual.device_buffers[0]), split0,
+    self.assertAllClose(np.asarray(actual.addressable_shards[0].data), split0,
                         check_dtypes=False)
-    self.assertAllClose(np.asarray(actual.device_buffers[1]), split0,
+    self.assertAllClose(np.asarray(actual.addressable_shards[1].data), split0,
                         check_dtypes=False)
-    self.assertAllClose(np.asarray(actual.device_buffers[2]), split1,
+    self.assertAllClose(np.asarray(actual.addressable_shards[2].data), split1,
                         check_dtypes=False)
-    self.assertAllClose(np.asarray(actual.device_buffers[3]), split1,
+    self.assertAllClose(np.asarray(actual.addressable_shards[3].data), split1,
                         check_dtypes=False)
 
   def testDifferentNestedMesh(self):
@@ -305,16 +305,16 @@ class PJitTest(jtu.BufferDonationTestCase):
     expected = x @ (x + 1)
     self.assertAllClose(actual, expected, check_dtypes=False)
     _check_instance(self, actual)
-    self.assertLen(actual.device_buffers, 4)
+    self.assertLen(actual.addressable_shards, 4)
 
     splits = np.split(expected, 4)
-    self.assertAllClose(np.asarray(actual.device_buffers[0]), splits[0],
+    self.assertAllClose(np.asarray(actual.addressable_shards[0].data), splits[0],
                         check_dtypes=False)
-    self.assertAllClose(np.asarray(actual.device_buffers[1]), splits[1],
+    self.assertAllClose(np.asarray(actual.addressable_shards[1].data), splits[1],
                         check_dtypes=False)
-    self.assertAllClose(np.asarray(actual.device_buffers[2]), splits[2],
+    self.assertAllClose(np.asarray(actual.addressable_shards[2].data), splits[2],
                         check_dtypes=False)
-    self.assertAllClose(np.asarray(actual.device_buffers[3]), splits[3],
+    self.assertAllClose(np.asarray(actual.addressable_shards[3].data), splits[3],
                         check_dtypes=False)
 
   @jtu.with_mesh([('x', 2)])
@@ -406,8 +406,8 @@ class PJitTest(jtu.BufferDonationTestCase):
     actual = f(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
     _check_instance(self, actual)
-    self.assertLen(actual.device_buffers, 2)
-    self.assertAllClose(np.asarray(actual.device_buffers[0]), expected,
+    self.assertLen(actual.addressable_shards, 2)
+    self.assertAllClose(np.asarray(actual.addressable_shards[0].data), expected,
                         check_dtypes=False)
 
     hlo = f.lower(np.ones(shape)).compiler_ir()
@@ -430,8 +430,8 @@ class PJitTest(jtu.BufferDonationTestCase):
     actual = f(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
     _check_instance(self, actual)
-    self.assertLen(actual.device_buffers, 2)
-    self.assertAllClose(np.asarray(actual.device_buffers[0]), expected,
+    self.assertLen(actual.addressable_shards, 2)
+    self.assertAllClose(np.asarray(actual.addressable_shards[0].data), expected,
                         check_dtypes=False)
 
     hlo = f.lower(np.ones(shape)).compiler_ir(dialect="hlo")
@@ -509,7 +509,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     expected = x.copy()
     expected[0]["a"] *= 2
     self.assertAllClose(actual, expected, check_dtypes=False)
-    self.assertLen(actual[0]["a"].device_buffers, 2)
+    self.assertLen(actual[0]["a"].addressable_shards, 2)
 
     hlo = f.lower(x).compiler_ir(dialect="hlo")
     # Annotations from with_sharding_constraint
@@ -569,7 +569,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     expected = x.copy()
     expected[0]['a'] *= 2
     self.assertAllClose(actual, expected, check_dtypes=False)
-    self.assertLen(actual[0]['a'].device_buffers, 4)
+    self.assertLen(actual[0]['a'].addressable_shards, 4)
 
     mlir_str = str(f.lower(x).compiler_ir())
     self.assertIn("unspecified_dims=[0]", mlir_str)
@@ -976,13 +976,13 @@ class PJitTest(jtu.BufferDonationTestCase):
         ((core.ShapedArray(x.shape, x.dtype, weak_type=False),) * 2, {}))
 
     splits = np.split(expected, 4)
-    self.assertAllClose(np.asarray(actual.device_buffers[0]), splits[0],
+    self.assertAllClose(np.asarray(actual.addressable_shards[0].data), splits[0],
                         check_dtypes=False)
-    self.assertAllClose(np.asarray(actual.device_buffers[1]), splits[1],
+    self.assertAllClose(np.asarray(actual.addressable_shards[1].data), splits[1],
                         check_dtypes=False)
-    self.assertAllClose(np.asarray(actual.device_buffers[2]), splits[2],
+    self.assertAllClose(np.asarray(actual.addressable_shards[2].data), splits[2],
                         check_dtypes=False)
-    self.assertAllClose(np.asarray(actual.device_buffers[3]), splits[3],
+    self.assertAllClose(np.asarray(actual.addressable_shards[3].data), splits[3],
                         check_dtypes=False)
 
     for obj in [lowered, compiled]:
