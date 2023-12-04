@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.21
+## jax 0.4.22
+
+## jaxlib 0.4.22
+
+## jax 0.4.21 (Dec 4 2023)
 
 * New Features
   * Added {obj}`jax.nn.squareplus`.
@@ -34,7 +38,7 @@ Remember to align the itemized text with the first line of an item within a list
     - {meth}`jax.Array.devices` returns the set of all devices used by the array.
     - {attr}`jax.Array.sharding` gives the sharding configuration used by the array.
 
-## jaxlib 0.4.21
+## jaxlib 0.4.21 (Dec 4 2023)
 
 * Changes
   * In preparation for adding distributed CPU support, JAX now treats CPU
