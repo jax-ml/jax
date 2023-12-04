@@ -28,6 +28,7 @@ from jax import numpy as jnp
 from jax import tree_util
 from jax.experimental.export import export
 from jax.experimental import pjit
+from jax.sharding import NamedSharding
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 
@@ -755,13 +756,16 @@ class JaxExportTest(jtu.JaxTestCase):
       )(a)
 
   @jtu.parameterized_filterable(
+    one_containing="in_shardings_None_out_shardings_P_with_mesh_False",
     kwargs=[
-      dict(testcase_name=f"_in_shardings={in_shardings}_out_shardings={out_shardings}",
-           in_shardings=in_shardings, out_shardings=out_shardings)
+      dict(in_shardings=in_shardings, out_shardings=out_shardings,
+           with_mesh=with_mesh)
       for in_shardings in ("missing", None, "P")
       for out_shardings in ("missing", None, "P")
+      for with_mesh in (True, False)
   ])
-  def test_grad_with_sharding(self, in_shardings="P", out_shardings=None):
+  def test_grad_with_sharding(self, in_shardings="P", out_shardings=None,
+                              with_mesh=False):
     if len(jax.devices()) < 2:
       self.skipTest("Test requires at least 2 devices")
     x_shape = (10, 20)
@@ -769,16 +773,33 @@ class JaxExportTest(jtu.JaxTestCase):
     def f_jax(x):  # x: f32[10,20] -> f32[20,10]
       return jnp.sin(x.T)
 
+    mesh = Mesh(jax.devices()[:2], "d")
     pjit_kwargs = {}
-    if in_shardings != "missing":
-      pjit_kwargs["in_shardings"] = (P(None, "x") if in_shardings == "P" else None)
-    if out_shardings != "missing":
-      pjit_kwargs["out_shardings"] = (P("x", None) if out_shardings == "P" else None)
-    f_jax = pjit.pjit(f_jax, **pjit_kwargs)
+    # Use NamedShardings if we don't have a mesh_context
+    if with_mesh:
+      sharding_None_d = P(None, "d")
+      sharding_d_None = P("d", None)
+    else:
+      sharding_None_d = NamedSharding(mesh, P(None, "d"))
+      sharding_d_None = NamedSharding(mesh, P("d", None))
 
-    with Mesh(jax.devices()[:2], "x"):
-      exp = export.export(f_jax)(x)
+    if in_shardings != "missing":
+      pjit_kwargs["in_shardings"] = (
+        sharding_None_d if in_shardings == "P" else None)
+    if out_shardings != "missing":
+      pjit_kwargs["out_shardings"] = (
+        sharding_d_None if out_shardings == "P" else None)
+    f_jax_pjit = pjit.pjit(f_jax, **pjit_kwargs)
+
+    with contextlib.ExitStack() as stack:
+      if with_mesh:
+        stack.enter_context(mesh)
+      # Serialize higher-order gradiends
+      exp = export.export(f_jax_pjit)(x)
+
       exp_vjp = exp.vjp()
+      # Try 2nd order grad as well
+      exp_vjp2 = exp_vjp.vjp()
 
     vjp_module_str = str(exp_vjp.mlir_module())
 
@@ -812,12 +833,40 @@ class JaxExportTest(jtu.JaxTestCase):
 
     # Custom calls for the primal output shape all match primal_out_sharding
     primal_out_calls = re.findall(
-      r"custom_call @Sharding.* {mhlo.sharding = \"(.+)\".*:.*tensor<20x10xf32>",
+      r"custom_call @Sharding.*mhlo.sharding = \"(.+)\".*:.*tensor<20x10xf32>",
       vjp_module_str)
     self.assertTrue(
       all(s == primal_out_sharding for s in primal_out_calls),
       primal_in_calls
     )
+
+    # Call the exported gradient functions. In order to set the device context
+    # we replicate the inputs. If we don't use a mesh context and there are
+    # no shardings on inputs or outputs, then we have serialized for one
+    # device.
+    if in_shardings != "P" and out_shardings != "P" and not with_mesh:
+      self.assertEqual(exp_vjp.nr_devices, 1)
+      self.assertEqual(exp_vjp2.nr_devices, 1)
+      call_mesh = Mesh(jax.devices()[:1], "e")
+    else:
+      self.assertEqual(exp_vjp.nr_devices, 2)
+      self.assertEqual(exp_vjp2.nr_devices, 2)
+      call_mesh = Mesh(jax.devices()[:2], "e")
+
+    g1 = pjit.pjit(export.call_exported(exp_vjp),
+                   in_shardings=(NamedSharding(call_mesh, None),
+                                 NamedSharding(call_mesh, None)))(x, x.T)
+    _, f_jax_vjp = jax.vjp(f_jax, x)
+    xbar = f_jax_vjp(x.T)
+    self.assertAllClose(xbar, g1)
+
+    g2 = pjit.pjit(export.call_exported(exp_vjp2),
+                   in_shardings=(NamedSharding(call_mesh, None),
+                                 NamedSharding(call_mesh, None),
+                                 NamedSharding(call_mesh, None)))(x, x.T, x)
+    _, f_jax_vjp2 = jax.vjp(f_jax_vjp, x.T)
+    xbar2, = f_jax_vjp2((x,))
+    self.assertAllClose(xbar2, g2[1])
 
   def test_multi_platform(self):
     x = np.arange(8, dtype=np.float32)
