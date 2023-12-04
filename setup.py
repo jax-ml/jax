@@ -22,13 +22,13 @@ from setuptools import setup, find_packages
 
 project_name = 'jax'
 
-_current_jaxlib_version = '0.4.20'
+_current_jaxlib_version = '0.4.21'
 # The following should be updated with each new jaxlib release.
 _latest_jaxlib_version_on_pypi = '0.4.20'
 _available_cuda11_cudnn_versions = ['86']
 _default_cuda11_cudnn_version = '86'
 _default_cuda12_cudnn_version = '89'
-_libtpu_version = '0.1.dev20231102'
+_libtpu_version = '0.1.dev20231204'
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
