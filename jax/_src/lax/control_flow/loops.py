@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for the loop primitives."""
+from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import partial
@@ -1842,7 +1843,8 @@ def _fori_scan_body_fun(body_fun):
   return scanned_fun
 
 @api_boundary
-def fori_loop(lower, upper, body_fun, init_val):
+def fori_loop(lower, upper, body_fun, init_val,
+              *, unroll: int | None = None):
   """Loop from ``lower`` to ``upper`` by reduction to :func:`jax.lax.while_loop`.
 
   The `Haskell-like type signature`_ in brief is
@@ -1887,6 +1889,8 @@ def fori_loop(lower, upper, body_fun, init_val):
     upper: an integer representing the loop index upper bound (exclusive)
     body_fun: function of type ``(int, a) -> a``.
     init_val: initial loop carry value of type ``a``.
+    unroll: An optional integer that determines how much to unroll the loop.
+      Only applicable if the loop bounds are statically known.
 
   Returns:
     Loop value from the final iteration, of type ``a``.
@@ -1934,18 +1938,23 @@ def fori_loop(lower, upper, body_fun, init_val):
     use_scan = False
 
   if use_scan:
+    if unroll is None:
+      unroll = 1
     if config.disable_jit.value and upper_ == lower_:
       # non-jit implementation of scan does not support length=0
       return init_val
 
     (_, result), _ = scan(_fori_scan_body_fun(body_fun), (lower_, init_val),
-                          None, length=upper_ - lower_)
+                          None, length=upper_ - lower_, unroll=unroll)
     return result
+  if unroll is not None:
+    raise ValueError("Can only use `unroll` in `fori_loop` if the loop bounds "
+                     "are statically known.")
 
   if lower_dtype != dtype:
-    lower = lax.convert_element_type(lower, dtype)
+    lower = lax.convert_element_type(lower, dtype)  # type: ignore
   if upper_dtype != dtype:
-    upper = lax.convert_element_type(upper, dtype)
+    upper = lax.convert_element_type(upper, dtype)  # type: ignore
   _, _, result = while_loop(_fori_cond_fun, _fori_body_fun(body_fun),
                             (lower, upper, init_val))
   return result

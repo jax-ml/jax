@@ -499,6 +499,32 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     result = lax.fori_loop(0, np.int16(10), body, init)
     self.assertEqual(result, init + 10)
 
+  def test_fori_loop_supports_unrolling(self):
+    """Test that we can unroll static fori_loops."""
+    body = lambda i, c: c + 1
+    init = jnp.float32(10)
+
+    result = lax.fori_loop(np.int16(0), 10, body, init,
+                           unroll=3)
+    self.assertEqual(result, init + 10)
+
+    result = lax.fori_loop(0, np.int16(10), body, init,
+                           unroll=2)
+    self.assertEqual(result, init + 10)
+
+  def test_fori_loop_with_dynamic_indices_cannot_unroll(self):
+    """Test that we can't unroll dynamic fori_loops."""
+    body = lambda i, c: c + 1
+    init = jnp.float32(10)
+
+    @jax.jit
+    def f(upper):
+      return lax.fori_loop(np.int16(0), upper, body, init,
+                           unroll=3)
+
+    with self.assertRaisesRegex(ValueError, "Can only use `unroll`"):
+      f(10)
+
   def testForiLoopBatched(self):
     def body_fun(i, loop_carry):
       x, y = loop_carry
