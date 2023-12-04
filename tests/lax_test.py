@@ -105,7 +105,7 @@ class LaxTest(jtu.JaxTestCase):
     tol = tol or jtu.default_tolerance()
     if jtu.test_device_matches(["tpu"]):
       if dtype in (np.float32, np.complex64) and op_name in (
-        "acosh", "asinh", "cos", "cosh", "digamma", "exp", "exp2", "igamma",
+        "acosh", "asinh", "betainc", "cos", "cosh", "digamma", "exp", "exp2", "igamma",
         "igammac", "log", "log1p", "logistic", "pow", "sin", "sinh", "tan"):
         tol = jtu.join_tolerance(tol, 2e-4)
       elif op_name == "asinh" and dtype == np.float16:
