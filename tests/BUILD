@@ -1344,8 +1344,10 @@ jax_test(
         "tpu": 20,
     },
     tags = [
-        "noasan",  # Times out
+        "noasan",  # Times out, TODO(b/314760446): test failures on Sapphire Rapids.
         "nodebug",  # Times out.
+        "nomsan",  # TODO(b/314760446): test failures on Sapphire Rapids.
+        "notsan",  # TODO(b/314760446): test failures on Sapphire Rapids.
     ],
     deps = [
         "//jax:internal_test_harnesses",
