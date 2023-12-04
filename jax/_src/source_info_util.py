@@ -18,6 +18,7 @@ import dataclasses
 import functools
 import itertools
 import os.path
+import sys
 import sysconfig
 import threading
 import types
@@ -141,8 +142,7 @@ def is_user_filename(filename: str) -> bool:
           not any(filename.startswith(p) for p in _exclude_paths) or
           any(filename.startswith(p) for p in _include_paths))
 
-if hasattr(xla_client.Traceback, "code_addr2location"):
-  # Python 3.11+
+if sys.version_info >= (3, 11):
   def raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
     loc = xla_client.Traceback.code_addr2location(code, lasti)
     start_line, start_column, end_line, end_column = loc
