@@ -1816,7 +1816,7 @@ def _resource_typing_pjit(avals, params, source_info, resource_env, named_axis_r
         s._original_sharding, '_parsed_pspec'):
       parsed_pspec = s._original_sharding._parsed_pspec
     else:
-      if resource_env is not None:
+      if resource_env is not None and not resource_env.physical_mesh.empty:
         parsed_pspec = parse_flatten_op_sharding(
             s._hlo_sharding, resource_env.physical_mesh)[0]
       else:
@@ -1838,7 +1838,7 @@ def _resource_typing_pjit(avals, params, source_info, resource_env, named_axis_r
         s._original_sharding, '_parsed_pspec'):
       parsed_pspec = s._original_sharding._parsed_pspec
     else:
-      if resource_env is not None:
+      if resource_env is not None and not resource_env.physical_mesh.empty:
         parsed_pspec = parse_flatten_op_sharding(
             s._hlo_sharding, resource_env.physical_mesh)[0]
       else:

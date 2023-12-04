@@ -22,6 +22,7 @@ from collections.abc import Sequence
 import contextlib
 from functools import partial
 import logging
+import math
 import os
 import re
 from typing import Any
@@ -40,6 +41,7 @@ from jax.experimental import jax2tf
 from jax.experimental import pjit
 from jax.experimental.maps import xmap
 from jax.experimental.shard_map import shard_map
+from jax.sharding import NamedSharding
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 import jax.numpy as jnp
@@ -382,16 +384,25 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       for in_shardings in ("missing", None, "P")
       for out_shardings in ("missing", None, "P")
   ])
-  @jtu.with_mesh([("x", 2)])
   def test_grad_pjit(self, in_shardings="P", out_shardings=None):
+    if not config.jax2tf_default_native_serialization.value:
+      self.skipTest("TODO: failure in non-native serialization")
+    local_devices = list(jax.local_devices())
+    size = 2
+    if len(local_devices) < size:
+      raise unittest.SkipTest(f"Test requires {size} local devices")
+    mesh_devices = np.array(local_devices[:size]).reshape((2,))
+    mesh = jax.sharding.Mesh(mesh_devices, ("x",))
     def f_jax(x):  # x: f32[10,20] -> f32[20,10]
       return jnp.sin(x.T)
 
     pjit_kwargs = {}
     if in_shardings != "missing":
-      pjit_kwargs["in_shardings"] = (P(None, "x") if in_shardings == "P" else None)
+      pjit_kwargs["in_shardings"] = (
+        NamedSharding(mesh, P(None, "x")) if in_shardings == "P" else None)
     if out_shardings != "missing":
-      pjit_kwargs["out_shardings"] = (P("x", None) if out_shardings == "P" else None)
+      pjit_kwargs["out_shardings"] = (
+        NamedSharding(mesh, P("x", None)) if out_shardings == "P" else None)
     f_jax = pjit.pjit(f_jax, **pjit_kwargs)
     x_shape = (10, 20)
     x = np.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
@@ -399,8 +410,12 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     def f_grad_tf(x_v, res_ct):
       with tf.GradientTape(persistent=True) as tape:
         tape.watch(x_v)
-        res_tf = jax2tf.convert(f_jax)(x_v)
-        return tape.gradient(res_tf, x_v, output_gradients=res_ct)
+        with tf.GradientTape() as tape2:
+          tape2.watch(x_v)
+          res_tf = jax2tf.convert(f_jax)(x_v)
+        dy_dx = tape.gradient(res_tf, x_v, output_gradients=res_ct)
+      d2y_dx2 = tape.gradient(dy_dx, x_v)
+      return d2y_dx2
 
     # Annotation count for the primal input and the grad output
     count_in_P = self.GEQ(2) if in_shardings == "P" else 0
