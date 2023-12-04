@@ -168,6 +168,16 @@ class JaxArrayTest(jtu.JaxTestCase):
     for i in range(len(arr)):
       self.assertArraysEqual(inp_data, arr.addressable_data(i))
 
+  def test_addressable_data_oob_index(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    shape = (8, 2)
+    s = jax.sharding.NamedSharding(global_mesh, P(None))
+    arr, inp_data = create_array(shape, s)
+    with self.assertRaisesRegex(ValueError, "addressable_data: index=.+ not in valid range.*"):
+      arr.addressable_data(len(arr))
+    with self.assertRaisesRegex(ValueError, "addressable_data: index=.+ not in valid range.*"):
+      arr.addressable_data(-1)
+
   def test_array_delete(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
