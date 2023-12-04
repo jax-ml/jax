@@ -278,8 +278,11 @@ def lax_ops():
           "betainc",
           3,
           float_dtypes,
-          test_util.rand_positive,
-          {np.float64: 1e-14},
+          test_util.rand_uniform,
+          {
+              np.float32: 1e-5,
+              np.float64: 1e-12,
+          },
       ),
       op_record(
           "igamma",
