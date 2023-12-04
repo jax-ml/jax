@@ -1488,10 +1488,10 @@ class JumbleTest(jtu.JaxTestCase):
 
   @parameterized.parameters((True,), (False,))
   def test_internal_jumble(self, disable_jit):
-    config.update('jax_disable_jit', disable_jit)
-    ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
-    xs = jax.vmap(lambda n: jax.lax.iota('int32', n).sum())(ins)
-    self.assertAllClose(xs, jnp.array([3, 0, 6]), check_dtypes=False)
+    with jax.disable_jit(disable_jit):
+      ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+      xs = jax.vmap(lambda n: jax.lax.iota('int32', n).sum())(ins)
+      self.assertAllClose(xs, jnp.array([3, 0, 6]), check_dtypes=False)
 
   def test_jumble_escapes(self):
     ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
@@ -1534,29 +1534,29 @@ class JumbleTest(jtu.JaxTestCase):
 
   @parameterized.parameters((True,), (False,))
   def test_jumble_map_matrix_dot_ragged_contract(self, disable_jit):
-    config.update('jax_disable_jit', disable_jit)
-    sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
-    p1 = jax.vmap(lambda n: jnp.ones((7, n)), out_axes=batching.jumble_axis
-                  )(sizes)
-    p2 = jax.vmap(lambda n: jnp.ones((n, 7)), out_axes=batching.jumble_axis
-                  )(sizes)
-    y = jax.vmap(jnp.dot, in_axes=batching.jumble_axis, out_axes=0,
-                 axis_size=3)(p1, p2)
-    self.assertAllClose(y, np.tile(np.array([3, 1, 4])[:, None, None], (7, 7)),
-                        check_dtypes=False)
+    with jax.disable_jit(disable_jit):
+      sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+      p1 = jax.vmap(lambda n: jnp.ones((7, n)), out_axes=batching.jumble_axis
+                    )(sizes)
+      p2 = jax.vmap(lambda n: jnp.ones((n, 7)), out_axes=batching.jumble_axis
+                    )(sizes)
+      y = jax.vmap(jnp.dot, in_axes=batching.jumble_axis, out_axes=0,
+                  axis_size=3)(p1, p2)
+      self.assertAllClose(y, np.tile(np.array([3, 1, 4])[:, None, None], (7, 7)),
+                          check_dtypes=False)
 
   @parameterized.parameters((True,), (False,))
   def test_jumble_map_matrix_dot_ragged_tensor(self, disable_jit):
-    config.update('jax_disable_jit', disable_jit)
-    sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
-    def func(size):
-      lhs_one_d = jnp.arange(size, dtype='int32') + 1
-      lhs_two_d = jax.lax.broadcast_in_dim(lhs_one_d, (size, 2), (0,))
-      rhs = jax.lax.broadcasted_iota('int32', (2, 4), 0) + 1
-      return jnp.dot(lhs_two_d, rhs)
-    p = jax.vmap(func, out_axes=batching.jumble_axis)(sizes)
-    self.assertIsInstance(p, batching.Jumble)
-    self.assertEqual(p.data.shape, (3, 5, 4))
+    with jax.disable_jit(disable_jit):
+      sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+      def func(size):
+        lhs_one_d = jnp.arange(size, dtype='int32') + 1
+        lhs_two_d = jax.lax.broadcast_in_dim(lhs_one_d, (size, 2), (0,))
+        rhs = jax.lax.broadcasted_iota('int32', (2, 4), 0) + 1
+        return jnp.dot(lhs_two_d, rhs)
+      p = jax.vmap(func, out_axes=batching.jumble_axis)(sizes)
+      self.assertIsInstance(p, batching.Jumble)
+      self.assertEqual(p.data.shape, (3, 5, 4))
 
   def test_broadcast_in_dim_while_ragged(self):
     ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
@@ -1664,18 +1664,18 @@ class JumbleTest(jtu.JaxTestCase):
 
   @parameterized.parameters((True,), (False,))
   def test_einsum_with_ragged_tensor_and_contract_dimensions(self, disable_jit):
-    config.update('jax_disable_jit', disable_jit)
-    ragged_sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
-    def fprop_layer(ragged_size):
-      one_d = jnp.arange(ragged_size, dtype='int32')
-      alpha = jax.lax.broadcast_in_dim(one_d, (ragged_size, ragged_size, 2), [1])
-      v = jax.lax.broadcast_in_dim(one_d, (ragged_size, 2, 7), [0])
-      inner = jnp.einsum('tsh,shq->thq', alpha, v)
-      return inner
-    p = jax.vmap(fprop_layer, out_axes=batching.jumble_axis)(ragged_sizes)
-    self.assertIsInstance(p, batching.Jumble)
-    self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[bint\{≤5\}\[3\] with value: \[3 1 4\]\.Var[0-9]+,2,7\]')
-    self.assertEqual(p.data.shape, (3, 5, 2, 7))
+    with jax.disable_jit(disable_jit):
+      ragged_sizes = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
+      def fprop_layer(ragged_size):
+        one_d = jnp.arange(ragged_size, dtype='int32')
+        alpha = jax.lax.broadcast_in_dim(one_d, (ragged_size, ragged_size, 2), [1])
+        v = jax.lax.broadcast_in_dim(one_d, (ragged_size, 2, 7), [0])
+        inner = jnp.einsum('tsh,shq->thq', alpha, v)
+        return inner
+      p = jax.vmap(fprop_layer, out_axes=batching.jumble_axis)(ragged_sizes)
+      self.assertIsInstance(p, batching.Jumble)
+      self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[bint\{≤5\}\[3\] with value: \[3 1 4\]\.Var[0-9]+,2,7\]')
+      self.assertEqual(p.data.shape, (3, 5, 2, 7))
 
   def test_split_while_ragged(self):
     ins = lax.convert_element_type(jnp.array([3, 1, 4]), core.bint(5))
@@ -1692,7 +1692,6 @@ class JumbleTest(jtu.JaxTestCase):
 
   @parameterized.parameters((True,), (False,))
   def test_jumble_map_end_to_end_fprop_layer(self, disable_jit):
-    config.update('jax_disable_jit', disable_jit)
 
     def fprop_layer(params, x):
       ((xnorm_scale, xnorm_bias), (wqkv, wqkv_bias), (wo, wo_bias),
@@ -1743,17 +1742,18 @@ class JumbleTest(jtu.JaxTestCase):
       xs_jumble = batching.Jumble(aval, xs_padded)
       return xs_jumble
 
-    xs_jumble = jumble_stack(xs)
+    with jax.disable_jit(disable_jit):
+      xs_jumble = jumble_stack(xs)
 
-    fprop_batched = jax.vmap(fprop_layer,
-                             in_axes=(None, batching.jumble_axis),
-                             out_axes=batching.jumble_axis,
-                             axis_size=3)
-    result_jumble = fprop_batched(params, xs_jumble)
-    self.assertIsInstance(result_jumble, batching.Jumble)
-    regex = r'Var[0-9]+:3 => (f32|f64)\[bint\{≤512\}\[3\] with value: \[512 386 420\]\.Var[0-9]+,128\]'
-    self.assertRegex(str(result_jumble.aval), regex)
-    self.assertAllClose(result_jumble.data.shape, (3, 512, 128))
+      fprop_batched = jax.vmap(fprop_layer,
+                              in_axes=(None, batching.jumble_axis),
+                              out_axes=batching.jumble_axis,
+                              axis_size=3)
+      result_jumble = fprop_batched(params, xs_jumble)
+      self.assertIsInstance(result_jumble, batching.Jumble)
+      regex = r'Var[0-9]+:3 => (f32|f64)\[bint\{≤512\}\[3\] with value: \[512 386 420\]\.Var[0-9]+,128\]'
+      self.assertRegex(str(result_jumble.aval), regex)
+      self.assertAllClose(result_jumble.data.shape, (3, 512, 128))
 
 def jumble_map(f):
   def mapped(*jumbles):
