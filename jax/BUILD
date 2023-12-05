@@ -82,6 +82,7 @@ package_group(
 
 package_group(
     name = "jax_extend_users",
+    includes = [":internal"],
     packages = [
         # Intentionally avoid jax dependencies on jax.extend.
         # See https://jax.readthedocs.io/en/latest/jep/15856-jex.html
@@ -968,11 +969,17 @@ pytype_library(
     ],
 )
 
-pytype_library(
+# TODO(phawkins): remove this target in favor of the finer-grained targets in jax/extend/...
+pytype_strict_library(
     name = "extend",
-    srcs = glob(["extend/**/*.py"]),
     visibility = [":jax_extend_users"],
-    deps = [":jax"],
+    deps = [
+        "//jax/extend",
+        "//jax/extend:core",
+        "//jax/extend:linear_util",
+        "//jax/extend:random",
+        "//jax/extend:source_info_util",
+    ],
 )
 
 pytype_library(
