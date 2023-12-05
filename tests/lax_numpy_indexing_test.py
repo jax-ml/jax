@@ -443,6 +443,22 @@ class IndexingTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testStaticIndexingWithJaxArray(self):
+    shape = (10,)
+    indexer = slice(jnp.array(2, dtype=np.int32),
+                    np.array(11, dtype=np.int32),
+                    jnp.array(1, dtype=np.int32))
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, np.int32)]
+    np_fun = lambda x: np.asarray(x)[indexer]
+    jnp_fun = lambda x: jnp.asarray(x)[indexer]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+    # Tests x.at[...].get(...) as well.
+    jnp_fun = lambda x: jnp.asarray(x).at[indexer].get()
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   @jtu.sample_product(
     funcname=["negative", "sin", "cos", "square", "sqrt", "log", "exp"],
   )
