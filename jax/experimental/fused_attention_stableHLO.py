@@ -20,20 +20,17 @@ import json
 import jax
 import jax.numpy as jnp
 from jax import core, dtypes
-from jax.interpreters import xla
-from jax.interpreters import mlir
+from jax.interpreters import mlir, xla
 from jax.interpreters.mlir import ir
 from jaxlib.hlo_helpers import custom_call
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.core import ShapedArray
 
-from jax.sharding import Mesh
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax.experimental.pjit import pjit
-from jax.sharding import PartitionSpec, NamedSharding
+from jax.sharding import Mesh, PartitionSpec, NamedSharding
 
 from jax._src.interpreters import batching
-P = PartitionSpec
 
 Array = jnp.ndarray
 DType = jnp.dtype

@@ -1,19 +1,21 @@
+import os
 import argparse
 from functools import partial
 from typing import Any, Optional
 from flax import linen as nn
+import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import lax
 from jax.experimental.fused_attention_stableHLO import dot_product_attention
-
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec, NamedSharding
+from jax.experimental.pjit import pjit
 from jax import core, vmap
-import os
 
 Array = jnp.ndarray
 DType = jnp.dtype
 PRNGKey = jnp.ndarray
-
 
 def f(input_q: Array,
     input_k: Array,
@@ -35,9 +37,9 @@ def f(input_q: Array,
 
     return output
 
-def train_step(input_q, input_k, input_v, bias, mask, grad):
+def train_step(scale, mask_type, input_q, input_k, input_v, bias, mask, grad):
     out, f_vjp = jax.vjp(
-        vmap(partial(f, scale=4.0, mask_type=""), in_axes=(0, 0, 0, 0, 0)),
+        vmap(partial(f, scale=scale, mask_type=mask_type), in_axes=(0, 0, 0, 0, 0)),
         input_q, input_k, input_v, bias, mask
     )
     input_q_grad, input_k_grad, input_v_grad, bias_grad, _ = f_vjp(grad)
@@ -58,12 +60,9 @@ def main():
     parser.add_argument("--fwd_only", dest='fwd_only', action="store_true")
     parser.add_argument("--xla_dump_to", dest="xla_dump_to", type=str, default=None)
     args = parser.parse_args()
-   
-    # Set XLA flags with additional flags when xla_dump_to is provided
-    xla_flags = '--xla_gpu_enable_triton_gemm=false --xla_gpu_simplify_all_fp_conversions --xla_gpu_fused_attention_use_cudnn_rng=true --xla_gpu_enable_cudnn_fmha=true --xla_gpu_enable_xla_runtime_executable=false --xla_gpu_fused_attention_use_cudnn_rng=true'
 
     if args.xla_dump_to:
-        xla_flags += f' --xla_dump_disable_metadata=true --xla_dump_hlo_pass_re=.* --xla_dump_hlo_as_text --xla_dump_to={args.xla_dump_to}'
+        xla_flags += f'--xla_dump_hlo_pass_re=.* --xla_dump_hlo_as_text --xla_dump_to={args.xla_dump_to}'
 
     os.environ['XLA_FLAGS'] = xla_flags
 
@@ -82,15 +81,10 @@ def main():
         out = jitted_fwd_step(input_q, input_k, input_v, bias, mask)
         return out
     else:
-        jitted_train_step = jax.jit(train_step)
-        # out, input_grad = jitted_train_step(args.mask_type, args.scale, input_q, input_k, input_v, bias, mask, grad)
+        jitted_train_step = jax.jit(partial(train_step, mask_type=args.mask_type, scale=args.scale))
         # out, input_grad = jitted_train_step(input_q, input_k, input_v, bias, mask, grad)
         # print(input_grad[0][0,0,0,:20])
         # return out, input_grad
-        import numpy as np
-        from jax.sharding import Mesh
-        from jax.sharding import PartitionSpec, NamedSharding
-        from jax.experimental.pjit import pjit
         devices = np.array(jax.local_devices())
         devices = devices.reshape((2, 4, 1, 1, 1))
         with Mesh(devices, ('p', 'b', 's', 'n', 'd')) as mesh:
