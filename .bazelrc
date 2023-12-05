@@ -201,14 +201,14 @@ build:rbe_cpu_linux_base --extra_execution_platforms="@ubuntu20.04-clang_manylin
 build:rbe_cpu_linux_base --host_platform="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_platform//:platform"
 build:rbe_cpu_linux_base --platforms="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_platform//:platform"
 
-build:rbe_cpu_linux_py39 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_python3.9"
-build:rbe_cpu_linux_py39 --python_path="/usr/local/bin/python3.9"
-build:rbe_cpu_linux_py310 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_python3.10"
-build:rbe_cpu_linux_py310 --python_path="/usr/local/bin/python3.10"
-build:rbe_cpu_linux_py311 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_python3.11"
-build:rbe_cpu_linux_py311 --python_path="/usr/local/bin/python3.11"
-build:rbe_cpu_linux_py312 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_python3.12"
-build:rbe_cpu_linux_py312 --python_path="/usr/local/bin/python3.12"
+build:rbe_cpu_linux_py3.9 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_python3.9"
+build:rbe_cpu_linux_py3.9 --python_path="/usr/local/bin/python3.9"
+build:rbe_cpu_linux_py3.10 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_python3.10"
+build:rbe_cpu_linux_py3.10 --python_path="/usr/local/bin/python3.10"
+build:rbe_cpu_linux_py3.11 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_python3.11"
+build:rbe_cpu_linux_py3.11 --python_path="/usr/local/bin/python3.11"
+build:rbe_cpu_linux_py3.12 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.2-cudnn8.9_config_python3.12"
+build:rbe_cpu_linux_py3.12 --python_path="/usr/local/bin/python3.12"
 
 build:rbe_linux_cuda_base --config=rbe_linux
 build:rbe_linux_cuda_base --config=cuda
