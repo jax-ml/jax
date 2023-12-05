@@ -118,9 +118,14 @@ class DeviceIdType(enum.Enum):
 semaphore_signal_p = jax_core.Primitive('semaphore_signal')
 semaphore_signal_p.multiple_results = True
 
-def semaphore_signal(sem, inc: int | jax.Array = 1,
-                     *, device_id: int | jax.Array | None = None,
-                     device_id_type: DeviceIdType = DeviceIdType.MESH):
+
+def semaphore_signal(
+    sem,
+    inc: int | jax.Array = 1,
+    *,
+    device_id: int | jax.Array | None | tuple[int | jax.Array, ...] = None,
+    device_id_type: DeviceIdType = DeviceIdType.MESH,
+):
   inc = jnp.asarray(inc, dtype=jnp.int32)
   args = [sem, inc]
   has_device_id = device_id is not None

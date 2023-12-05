@@ -102,6 +102,13 @@ jax_core.raise_to_shaped_mappings[AbstractMemoryRef] = _ref_raise_to_shaped
 class AbstractSemaphore(jax_core.AbstractValue):
   sem_type: SemaphoreType
 
+  def join(self, other):
+    if not isinstance(other, AbstractSemaphore):
+      raise ValueError
+    if other.sem_type != self.sem_type:
+      raise ValueError
+    return self
+
 jax_core.raise_to_shaped_mappings[AbstractSemaphore] = lambda aval, _: aval
 
 

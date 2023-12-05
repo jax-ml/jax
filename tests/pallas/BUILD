@@ -64,3 +64,17 @@ py_test(
         "//third_party/py/jax:pallas",
     ] + py_deps("absl/testing") + py_deps("hypothesis") + py_deps("numpy"),
 )
+
+jax_test(
+    name = "all_gather_test",
+    srcs = [
+        "all_gather_test.py",
+    ],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    deps = [
+        "//third_party/py/jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
+)
