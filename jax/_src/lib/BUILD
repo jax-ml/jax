@@ -14,6 +14,7 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "if_building_jaxlib",
     "jax_visibility",
     "py_library_providing_imports_info",
     "pytype_strict_library",
@@ -35,26 +36,23 @@ py_library_providing_imports_info(
     visibility = ["//jax:internal"] + jax_visibility("lib"),
     deps = [
         "//jax:version",
-    ] + select({
-        "//jax:enable_jaxlib_build": [
-            "//jaxlib",
-            "//jaxlib:cpu_feature_guard",
-            "//jaxlib:utils",
-            "//jaxlib/mlir:arithmetic_dialect",
-            "//jaxlib/mlir:builtin_dialect",
-            "//jaxlib/mlir:chlo_dialect",
-            "//jaxlib/mlir:func_dialect",
-            "//jaxlib/mlir:ir",
-            "//jaxlib/mlir:math_dialect",
-            "//jaxlib/mlir:memref_dialect",
-            "//jaxlib/mlir:mhlo_dialect",
-            "//jaxlib/mlir:pass_manager",
-            "//jaxlib/mlir:scf_dialect",
-            "//jaxlib/mlir:sparse_tensor_dialect",
-            "//jaxlib/mlir:stablehlo_dialect",
-            "//jaxlib/mlir:vector_dialect",
-            # xla_client
-        ],
-        "//conditions:default": [],
-    }),
+    ] + if_building_jaxlib([
+        "//jaxlib",
+        "//jaxlib:cpu_feature_guard",
+        "//jaxlib:utils",
+        "//jaxlib/mlir:arithmetic_dialect",
+        "//jaxlib/mlir:builtin_dialect",
+        "//jaxlib/mlir:chlo_dialect",
+        "//jaxlib/mlir:func_dialect",
+        "//jaxlib/mlir:ir",
+        "//jaxlib/mlir:math_dialect",
+        "//jaxlib/mlir:memref_dialect",
+        "//jaxlib/mlir:mhlo_dialect",
+        "//jaxlib/mlir:pass_manager",
+        "//jaxlib/mlir:scf_dialect",
+        "//jaxlib/mlir:sparse_tensor_dialect",
+        "//jaxlib/mlir:stablehlo_dialect",
+        "//jaxlib/mlir:vector_dialect",
+        # xla_client
+    ]),
 )

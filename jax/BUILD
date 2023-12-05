@@ -17,6 +17,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load(
     "//jaxlib:jax.bzl",
+    "if_building_jaxlib",
     "jax_extend_internal_users",
     "jax_extra_deps",
     "jax_internal_export_back_compat_test_util_visibility",
@@ -41,6 +42,8 @@ package(
 
 licenses(["notice"])
 
+# If this flag is true, jaxlib should be built by bazel. If false, then we do not build jaxlib and
+# assume it has been installed, e.g., by `pip`.
 bool_flag(
     name = "build_jaxlib",
     build_setting_default = True,
@@ -771,15 +774,12 @@ pytype_strict_library(
         ":core",
         ":jax",
         "//jax/_src/lib",
-    ] + select({
-        ":enable_jaxlib_build": [
-            "//jaxlib/mlir:ir",
-            "//jaxlib/mlir:mhlo_dialect",
-            "//jaxlib/mlir:pass_manager",
-            "//jaxlib/mlir:stablehlo_dialect",
-        ],
-        "//conditions:default": [],
-    }) + py_deps("numpy") + py_deps("absl/flags"),
+    ] + if_building_jaxlib([
+        "//jaxlib/mlir:ir",
+        "//jaxlib/mlir:mhlo_dialect",
+        "//jaxlib/mlir:pass_manager",
+        "//jaxlib/mlir:stablehlo_dialect",
+    ]) + py_deps("numpy") + py_deps("absl/flags"),
 )
 
 pytype_strict_library(

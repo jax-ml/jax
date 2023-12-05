@@ -155,6 +155,12 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = [], exported_sym
 
 ALL_BACKENDS = ["cpu", "gpu", "tpu"]
 
+def if_building_jaxlib(if_building, if_not_building = []):
+    return select({
+        "//jax:enable_jaxlib_build": if_building,
+        "//conditions:default": if_not_building,
+    })
+
 # buildifier: disable=function-docstring
 def jax_test(
         name,
@@ -199,10 +205,7 @@ def jax_test(
             deps = [
                 "//jax",
                 "//jax:test_util",
-            ] + deps + select({
-                "//jax:enable_jaxlib_build": ["//jaxlib/cuda:gpu_only_test_deps"],
-                "//conditions:default": [],
-            }) + select({
+            ] + deps + if_building_jaxlib(["//jaxlib/cuda:gpu_only_test_deps"]) + select({
                 "//jax:enable_build_cuda_plugin_from_source": ["//jax_plugins:gpu_plugin_only_test_deps"],
                 "//conditions:default": [],
             }),
