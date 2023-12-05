@@ -1111,7 +1111,7 @@ class VectorLayoutInferer {
         return success();
       }
       // Lane (un)tiling.
-      if (res_rank >= 2 && layout.offsets() == LayoutOffsets{0, 0} &&
+      if (layout.offsets() == LayoutOffsets{0, 0} &&
           layout.tiling()[1] == target_shape_[1] &&
           src_ty.getDimSize(src_ty.getRank() - 1) !=
               res_shape[res_shape.size() - 1] &&
@@ -1121,24 +1121,42 @@ class VectorLayoutInferer {
         if (src_ty.getElementTypeBitWidth() != kNativeBitwidth) {
           NYI("Shapecast along lane dimension when bitwidth is not 32");
         }
-        // Inferring in_layout to have tiling (1, 128) triggers any necessary
-        // relayout before shapecast.
-        setInLayout(op,
-                    {VectorLayout(layout.bitwidth(), layout.offsets(),
-                                  {1, target_shape_[1]}, ImplicitDim::kNone)});
-        //  If the input has tiling (1, target_shape_[1]) and the last two dims
-        //  of result shape are [n * target_shape_[0], target_shape_[1]], the
-        //  reshape becomes a no-op if only we change the tiling to match
-        //  target_shape_. For example, reshaping to layouts like the following
-        //  will not require any data movement:
-        //  8x8x128 (1, 128)
-        //  4x16x128 (1, 128)
-        //  8x8x128 (8, 128)
-        //  ....
-        if (res_shape[res_shape.size() - 1] == target_shape_[1] &&
-            res_shape[res_shape.size() - 2] % target_shape_[0] == 0) {
-          setOutLayout(op, VectorLayout(layout.bitwidth(), layout.offsets(),
-                                        default_tiling_, ImplicitDim::kNone));
+
+        // When we shapecast from input shape (..., m * target_shape_[1]) to
+        // output shape (..., target_shape_[1]), the reshape becomes no-op when
+        // input is densely packed with tiling (1, target_shape_[1]) and
+        // output has the native tiling.
+        if (*(res_shape.end() - 1) == target_shape_[1] &&
+            *(res_shape.end() - 2) % target_shape_[0] == 0 &&
+            *(src_shape.end() - 1) % (target_shape_[0] * target_shape_[1]) ==
+                0 &&
+            (*(src_shape.end() - 2) == 1 ||
+             *(src_shape.end() - 2) % target_shape_[0] == 0)) {
+          // Inferring in_layout to have tiling (1, 128) triggers any
+          // necessary relayout before shapecast.
+          setLayout(op,
+                    VectorLayout(layout.bitwidth(), layout.offsets(),
+                                 {1, target_shape_[1]}, ImplicitDim::kNone),
+                    VectorLayout(layout.bitwidth(), layout.offsets(),
+                                 default_tiling_, ImplicitDim::kNone));
+          return success();
+        }
+
+        // When we shapecast from input shape (..., target_shape_[1]) to
+        // output shape (..., m * target_shape_[1]), the reshape becomes no-op
+        // when input has the native tiling and output is densely packed with
+        // tiling (1, target_shape_[1]).
+        if (*(src_shape.end() - 1) == target_shape_[1] &&
+            *(src_shape.end() - 2) % target_shape_[0] == 0 &&
+            *(res_shape.end() - 1) % (target_shape_[0] * target_shape_[1]) ==
+                0 &&
+            (*(res_shape.end() - 2) == 1 ||
+             *(res_shape.end() - 2) % target_shape_[0] == 0)) {
+          setLayout(op,
+                    VectorLayout(layout.bitwidth(), layout.offsets(),
+                                 default_tiling_, ImplicitDim::kNone),
+                    VectorLayout(layout.bitwidth(), layout.offsets(),
+                                 {1, target_shape_[1]}, ImplicitDim::kNone));
           return success();
         }
 

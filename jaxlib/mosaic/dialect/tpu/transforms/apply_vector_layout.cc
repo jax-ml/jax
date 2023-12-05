@@ -2519,8 +2519,8 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
                // vregs.
       layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
       layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      layout_in.offsets() == layout_out.offsets() &&
       layout_in.offsets() == LayoutOffsets{0, 0} &&
+      layout_out.offsets() == LayoutOffsets{0, 0} &&
       layout_in.tiling() == layout_out.tiling() &&
       layout_in.tiling()[1] == ctx.target_shape[1] &&
       *(dst_shape.end() - 1) == *(src_shape.end() - 1) &&
@@ -2535,8 +2535,29 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
              layout_out.hasNaturalTopology(ctx.target_shape) &&
              *(dst_shape.end() - 1) != *(src_shape.end() - 1) &&
              *(dst_shape.end() - 1) == ctx.target_shape[1] &&
-             *(dst_shape.end() - 2) % layout_out.tiling()[0] == 0 &&
-             *(src_shape.end() - 1) % layout_in.tiling()[1] == 0) {
+             *(dst_shape.end() - 2) % ctx.target_shape[0] == 0 &&
+             *(src_shape.end() - 1) %
+                     (ctx.target_shape[0] * ctx.target_shape[1]) ==
+                 0 &&
+             (*(src_shape.end() - 2) == 1 ||
+              *(src_shape.end() - 2) % ctx.target_shape[0] == 0)) {
+    // Shapecast (..., m * 128) -> (..., 128).
+    no_op = true;
+  } else if (layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+             layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+             layout_in.offsets() == LayoutOffsets{0, 0} &&
+             layout_out.offsets() == LayoutOffsets{0, 0} &&
+             layout_in.hasNaturalTopology(ctx.target_shape) &&
+             layout_out.tiling() == Tiling{1, ctx.target_shape[1]} &&
+             *(src_shape.end() - 1) != *(dst_shape.end() - 1) &&
+             *(src_shape.end() - 1) == ctx.target_shape[1] &&
+             *(src_shape.end() - 2) % ctx.target_shape[0] == 0 &&
+             *(dst_shape.end() - 1) %
+                     (ctx.target_shape[0] * ctx.target_shape[1]) ==
+                 0 &&
+             (*(dst_shape.end() - 2) == 1 ||
+              *(dst_shape.end() - 2) % ctx.target_shape[0] == 0)) {
+    // Shapecast (..., 128) -> (..., m * 128).
     no_op = true;
   }
   FAILUREOR_ASSIGN_OR_RETURN(
@@ -3366,6 +3387,41 @@ bool isSupportedReducedSublanesRetile(
          llvm::isPowerOf2_64(dst.tiling()[0]);
 }
 
+// Copy one sublane from a vreg to another vreg.
+//
+// Arguments:
+//  src_vreg: The source vreg to copy a sublane from.
+//  src_sl_idx: The sublane index in src_vreg to copy.
+//  dst_vreg: The destination vreg to copy a sublane to.
+//  dst_sl_idx: The sublane index in dst_vreg to paste.
+//
+// Returns:
+//  A new dst_vreg with the copied sublane.
+Value copy_one_sublane(OpBuilder &builder, Value src_vreg, int src_sl_idx,
+                       Value dst_vreg, int dst_sl_idx,
+                       const std::array<int64_t, 2> target_shape) {
+  if (!dst_vreg) {
+    const DenseI32ArrayAttr gather_indices =
+        builder.getDenseI32ArrayAttr(SmallVector<int32_t>(8, src_sl_idx));
+    return builder.create<tpu::GatherOp>(src_vreg.getLoc(), src_vreg.getType(),
+                                         src_vreg, gather_indices,
+                                         /*dimension=*/0);
+  }
+  auto src_vreg_rot = builder.create<tpu::RotateOp>(
+      src_vreg.getLoc(), src_vreg,
+      /*amount=*/(dst_sl_idx - src_sl_idx + 8) % 8,
+      /*dimension=*/0);
+  auto boundIdxConst =
+      std::bind(IdxConst, std::placeholders::_1, builder, src_vreg.getLoc());
+  auto sublanes_mask = builder.create<tpu::CreateMaskOp>(
+      src_vreg.getLoc(), VectorType::get(target_shape, builder.getI1Type()),
+      ValueRange{boundIdxConst(dst_sl_idx), boundIdxConst(0)},
+      ValueRange{boundIdxConst(dst_sl_idx + 1),
+                 boundIdxConst(target_shape[1])});
+  return builder.create<arith::SelectOp>(src_vreg.getLoc(), sublanes_mask,
+                                         src_vreg_rot, dst_vreg);
+}
+
 // TODO(apaszke): Test this function properly
 FailureOr<Value> relayout(OpBuilder &builder, Value v, VectorLayout src,
                           const VectorLayout &dst,
@@ -3405,36 +3461,35 @@ FailureOr<Value> relayout(OpBuilder &builder, Value v, VectorLayout src,
     }
   }
 
+  // TODO(b/306692696) Generalize relayout from tiling (m, 128) to (8, 128).
   // Handle retiling from (1, 128) to (8, 128) for 32-bit data.
   if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
       dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
       src.bitwidth() == 32 && src.offsets() == LayoutOffsets{0, 0} &&
-      (dst.offsets() == LayoutOffsets{std::nullopt, 0} ||
-       dst.offsets() == LayoutOffsets{0, 0}) &&
-      src.tiling() == std::array<int64_t, 2>{1, 128} &&
-      dst.tiling() == std::array<int64_t, 2>{8, 128} &&
-      *(src_tiles.dimensions().end() - 2) == 1) {
-    xla::Array<Value> src_tiles_retiled(
+      (dst.offsets()[0] == 0 || (dst.offsets()[0] == std::nullopt &&
+                                 *(src_tiles.dimensions().end() - 2) == 1)) &&
+      dst.offsets()[1] == 0 && src.tiling() == std::array<int64_t, 2>{1, 128} &&
+      dst.tiling() == std::array<int64_t, 2>{8, 128}) {
+   xla::Array<Value> src_tiles_retiled(
         dst.tileArrayShape(vty.getShape(), target_shape));
-    src_tiles_retiled.Each(
-        [&](const absl::Span<const int64_t> idx, Value *const new_src_tile) {
-          const int64_t dst_col = idx.back();
-          const int64_t src_col = dst_col / 8;
-          const int64_t slane_idx = dst_col % 8;
-          const DenseI32ArrayAttr gather_indices =
-              builder.getDenseI32ArrayAttr(SmallVector<int32_t>(8, slane_idx));
-          SmallVector<int64_t> src_idx(toArrayRef(idx));
-          src_idx.back() = src_col;
-          Value src_tile = src_tiles(src_idx);
-          *new_src_tile = builder.create<tpu::GatherOp>(
-              v.getLoc(), src_tile.getType(), src_tile, gather_indices,
-              /*dimension=*/0);
-        });
+    src_tiles_retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
+      for (int dst_sl_idx = 0; dst_sl_idx < 8; ++dst_sl_idx) {
+        SmallVector<int64_t> src_idx(idx.begin(), idx.end());
+        src_idx[src_idx.size() - 2] = 8 * idx[idx.size() - 2] + dst_sl_idx;
+        if (src_idx[src_idx.size() - 2] >=
+            *(src_tiles.dimensions().end() - 2)) {
+          break;
+        }
+        src_idx[src_idx.size() - 1] = idx[idx.size() - 1] / 8;
+        const int64_t src_sl_idx = idx[idx.size() - 1] % 8;
+        *tile = copy_one_sublane(builder, src_tiles(src_idx), src_sl_idx, *tile,
+                                 dst_sl_idx, target_shape);
+      }
+    });
     src = dst;
     src_tiles = std::move(src_tiles_retiled);
-  }
-  // Handle retiling from (2, 128) to (8, 128) for 32-bit data.
-  if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+  } else if (  // Handle retiling from (2, 128) to (8, 128) for 32-bit data.
+      src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
       dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
       src.bitwidth() == 32 && src.offsets() == LayoutOffsets{0, 0} &&
       dst.offsets() == LayoutOffsets{0, 0} &&
@@ -3468,17 +3523,17 @@ FailureOr<Value> relayout(OpBuilder &builder, Value v, VectorLayout src,
         });
     src = dst;
     src_tiles = std::move(src_tiles_retiled);
-  }
-  // TODO(b/265133506): Generalize retiling to general 16-bit types (might
-  // need to use a different unpacking op).
-  VectorType vreg_f32 = VectorType::get(target_shape, builder.getF32Type());
-  // (8,128) -> (16,128) tiling change for packed 16-bit types.
-  if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+  } else if (  // TODO(b/265133506): Generalize retiling to general 16-bit types
+               // (might need to use a different unpacking op).
+               // (8,128) -> (16,128) tiling change for packed 16-bit types.
+      src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
       dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
       vty.getElementType() == builder.getBF16Type() &&
       src.offsets() == dst.offsets() &&
       src.tiling() == std::array<int64_t, 2>{8, 128} &&
       dst.tiling() == std::array<int64_t, 2>{16, 128}) {
+    VectorType vreg_f32 =
+        VectorType::get(target_shape, builder.getF32Type());
     const VectorLayout new_src(src.bitwidth(), src.offsets(), dst.tiling());
     xla::Array<Value> src_tiles_retiled(
         new_src.tileArrayShape(vty.getShape(), target_shape));
@@ -3502,10 +3557,8 @@ FailureOr<Value> relayout(OpBuilder &builder, Value v, VectorLayout src,
     });
     src = new_src;
     src_tiles = std::move(src_tiles_retiled);
-  }
-
-  // (8,128) -> (32,128) tiling change for packed 8-bit integers.
-  if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+  } else if (  // (8,128) -> (32,128) tiling change for packed 8-bit integers.
+      src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
       dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
       vty.getElementType() == builder.getI8Type() &&
       src.offsets() == dst.offsets() &&
