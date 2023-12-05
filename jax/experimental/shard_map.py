@@ -313,7 +313,10 @@ def _unmentioned(mesh: Mesh, names: AxisNames) -> list[AxisName]:
 def _try_infer_args(f, tree):
   dummy_args = tree_unflatten(tree, [False] * tree.num_leaves)
   try:
-    return inspect.signature(f).bind(*dummy_args)
+    signature = inspect.signature(f).bind(*dummy_args)
+    if len(signature.arguments) != len(dummy_args):
+      return None
+    return signature
   except (TypeError, ValueError):
     return None
 
