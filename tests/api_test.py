@@ -6197,6 +6197,14 @@ class JaxprTest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(lambda: cet(3.))()
     self.assertLen(jaxpr.eqns, 0)
 
+  def test_eqn_repr_with_no_lhs(self):
+    def f(x):
+      jax.debug.print("{}", x)
+      return x
+    jaxpr = jax.make_jaxpr(f)(np.int32(0))
+    self.assertEqual(jaxpr.eqns[0].primitive, jax._src.debugging.debug_callback_p)
+    self.assertStartsWith(str(jaxpr.eqns[0]), "debug_callback[", )
+
 
 class DCETest(jtu.JaxTestCase):
 

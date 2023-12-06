@@ -3086,7 +3086,10 @@ def _pp_eqn(eqn, context, settings) -> pp.Doc:
   rhs = [pp.text(eqn.primitive.name, annotation=name_stack_annotation),
          pp_kv_pairs(sorted(eqn.params.items()), context, settings),
          pp.text(" ") + pp_vars(eqn.invars, context)]
-  return pp.concat([lhs, pp.text(" = ", annotation=annotation), *rhs])
+  if lhs.format():
+    return pp.concat([lhs, pp.text(" = ", annotation=annotation), *rhs])
+  else:
+    return pp.concat(rhs)
 CustomPpEqnRule = Callable[[JaxprEqn, JaxprPpContext, JaxprPpSettings], pp.Doc]
 pp_eqn_rules: dict[Primitive, CustomPpEqnRule]  = {}
 
