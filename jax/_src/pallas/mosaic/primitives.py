@@ -61,20 +61,31 @@ trace_start_p = jax_core.Primitive('trace_start')
 trace_start_p.multiple_results = True
 
 
+@trace_start_p.def_impl
+def _trace_start_impl(*, message: str, level: int):
+  del message, level
+  return []
+
 @trace_start_p.def_abstract_eval
 def _trace_start_abstract_eval(*, message: str, level: int):
   del message, level
   return []
 
+mlir.register_lowering(trace_start_p, lambda ctx, **_: [])
+
 
 trace_stop_p = jax_core.Primitive('trace_stop')
 trace_stop_p.multiple_results = True
 
+@trace_stop_p.def_impl
+def _trace_stop_impl():
+  return []
 
 @trace_stop_p.def_abstract_eval
 def _trace_stop_abstract_eval():
   return []
 
+mlir.register_lowering(trace_stop_p, lambda ctx: [])
 
 @contextlib.contextmanager
 def trace(message: str, level: int = 10):

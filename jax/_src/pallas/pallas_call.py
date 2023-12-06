@@ -79,6 +79,13 @@ def _maybe_dynamic_update_slice(start_idx, block_shape, value, update,
   assert update.shape == block_shape
   return lax.dynamic_update_slice(value, update, start_idx)
 
+def _uninitialized_value(shape, dtype):
+  if jnp.issubdtype(dtype, jnp.floating):
+    return jnp.full(shape, jnp.nan, dtype)
+  elif jnp.issubdtype(dtype, jnp.integer):
+    return jnp.full(shape, jnp.iinfo(dtype).min, dtype)
+  raise NotImplementedError(dtype)
+
 def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
                       interpret, debug: bool,
                       in_shapes,
@@ -100,13 +107,33 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
       if i in oi_map:
         out.append(args[oi_map[i]])
       else:
+        # TODO(sharadmv): use unitialized values for outputs
         out.append(jnp.zeros(out_shape.shape, out_shape.dtype))
     scalars, args = split_list(args, [grid_mapping.num_index_operands])  # type: ignore
-    carry = [*args, *out]
+    # invars: [*scalar_prefetch, *inputs, *outputs, *scratch]
+    num_invars = len(jaxpr.invars)
+    num_inputs_outputs = (
+        num_invars
+        - grid_mapping.num_index_operands
+        - grid_mapping.num_scratch_operands
+    )
+    _, _, scratch_invars = split_list(
+        jaxpr.invars, [grid_mapping.num_index_operands, num_inputs_outputs]
+    )
+    scratch_avals = [v.aval for v in scratch_invars]
+    if not all(
+        hasattr(a, "shape") and hasattr(a, "dtype") for a in scratch_avals
+    ):
+      raise NotImplementedError(f"Cannot initialize scratch: {scratch_avals}")
+    scratch_values = [_uninitialized_value(a.shape, a.dtype)
+                      for a in scratch_avals]
+    carry = [*args, *out, *scratch_values]
+    num_carry = len(args) + len(out)
     def cond(carry):
       return carry[0] < loop_indices.shape[0]
     def body(carry):
       i, *carry = carry
+      carry, scratch = split_list(carry, [num_carry])
       loop_idx = loop_indices[i]
       start_indices = [
           None if bm is None else bm.compute_start_indices(loop_idx, *scalars)
@@ -130,14 +157,23 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
       local_grid_env, _ = partition_list(is_mapped_grid_dim,
                                          zip(loop_idx, grid_mapping.grid))
       with pallas_core.grid_env(tuple(local_grid_env)):
+        assert len(discharged_jaxpr.invars) == len(scalars) + len(blocks) + len(
+            scratch_values
+        ), (
+            len(discharged_jaxpr.invars),
+            len(scalars),
+            len(blocks),
+            len(scratch_values),
+        )
         blocks = jax.core.eval_jaxpr(discharged_jaxpr, consts, *scalars,
-                                     *blocks)
+                                     *blocks, *scratch)
       blocks = blocks[grid_mapping.num_index_operands:]
+      blocks, out_scratch = split_list(blocks, [num_carry])
       carry = map(_maybe_dynamic_update_slice, start_indices, block_shapes,
                   carry, blocks, is_indexing_dim)
-      return (i + 1, *carry)
+      return (i + 1, *carry, *out_scratch)
     (_, *carry) = lax.while_loop(cond, body, (0, *carry))
-    _, out = split_list(carry, [len(args)])
+    _, out, _ = split_list(carry, [len(args), len(out)])
     return out
   return xla.apply_primitive(pallas_call_p, *args, jaxpr=jaxpr, name=name,
                              in_shapes=in_shapes,
