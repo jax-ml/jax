@@ -783,6 +783,17 @@ class PallasCallTest(PallasTest):
 
     np.testing.assert_allclose(softmax_kernel(x), jax.nn.softmax(x), atol=1e-7)
 
+  def test_bitwise_count(self):
+    x = jnp.arange(8).astype(jnp.int32)
+    
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct(x.shape, jnp.uint8))
+    def bitwise_count(x_ref, o_ref):
+      o_ref[...] =  jnp.bitwise_count(x_ref[...])
+
+    expected = jnp.bitwise_count(x)
+    np.testing.assert_allclose(bitwise_count(x), expected)
+
 
 class PallasCallInterpreterTest(PallasCallTest):
   INTERPRET = True
