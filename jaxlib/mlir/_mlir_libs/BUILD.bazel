@@ -127,6 +127,7 @@ symlink_inputs(
     }},
     deps = [
         ":_mlir",
+        ":register_jax_dialects",
     ],
 )
 
