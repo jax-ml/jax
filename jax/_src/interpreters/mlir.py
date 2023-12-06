@@ -28,6 +28,8 @@ import typing
 from typing import Any, Callable, NamedTuple, Optional, Protocol, Union
 import warnings
 
+import numpy as np
+
 from jax._src import ad_util
 from jax._src import config
 from jax._src import core
@@ -48,9 +50,8 @@ from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir import register_jax_dialects
 from jax._src.sharding_impls import XLACompatibleSharding
-import numpy as np
-
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -364,11 +365,16 @@ def _source_info_to_location(
   # TODO(phawkins): also include primitive.name as the operator type.
   return loc
 
+upstream_dialects = ir.DialectRegistry()
+if register_jax_dialects:
+  register_jax_dialects.register_dialects(upstream_dialects)
 
 # Translation rules
 def make_ir_context() -> ir.Context:
   """Creates an MLIR context suitable for JAX IR."""
   context = ir.Context()
+  context.append_dialect_registry(upstream_dialects)
+  context.load_all_available_dialects()
 
   # If threading is enabled, each MLIR context will keep alive a thread pool.
   # Since we cache MLIR modules (and hence contexts), this means we might keep

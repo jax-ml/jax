@@ -22,7 +22,8 @@ import jax
 from jax import core as jax_core
 from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
-from jax.interpreters import mlir
+from jax._src import sharding_impls
+from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core
 from jax._src.pallas.mosaic import lowering
@@ -59,9 +60,11 @@ def pallas_call_tpu_lowering_rule(
   mesh = None
   axis_context = ctx.module_context.axis_context
   if axis_context is not None:
-    if isinstance(axis_context, mlir.SPMDAxisContext):
+    if isinstance(axis_context, sharding_impls.SPMDAxisContext):
       mesh = axis_context.mesh
   with ir.Context() as mlir_ctx, ir.Location.unknown(mlir_ctx):
+    mlir_ctx.append_dialect_registry(mlir.upstream_dialects)
+    mlir_ctx.load_all_available_dialects()
     tpu.register_dialect(mlir_ctx)
     if mosaic_params is None:
       mosaic_params = {}

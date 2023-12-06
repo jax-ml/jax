@@ -34,7 +34,7 @@ from jax import core
 from jax._src import config
 from jax._src.lib import tpu_mosaic
 from jax._src.lib import xla_client
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.interpreters import xla
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import mhlo
@@ -288,6 +288,8 @@ def _lower_tpu_kernel(
   with ir.Context() as ctx, ir.Location.unknown():
     vector_constants = []
 
+    ctx.append_dialect_registry(mlir.upstream_dialects)
+    ctx.load_all_available_dialects()
     tpu.register_dialect(ctx)
     mhlo.register_mhlo_dialect(ctx)
     mhlo.register_mhlo_passes()

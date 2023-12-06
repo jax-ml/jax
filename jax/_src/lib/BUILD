@@ -40,6 +40,7 @@ py_library_providing_imports_info(
         "//jaxlib",
         "//jaxlib:cpu_feature_guard",
         "//jaxlib:utils",
+        "//jaxlib/mlir/_mlir_libs:register_jax_dialects",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
         "//jaxlib/mlir:chlo_dialect",

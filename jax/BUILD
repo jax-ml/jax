@@ -773,6 +773,7 @@ pytype_strict_library(
         ":config",
         ":core",
         ":jax",
+        ":mlir",
         "//jax/_src/lib",
     ] + if_building_jaxlib([
         "//jaxlib/mlir:ir",

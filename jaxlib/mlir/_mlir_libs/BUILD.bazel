@@ -127,23 +127,22 @@ symlink_inputs(
     }},
     deps = [
         ":_mlir",
-        ":_site_initialize_0",
     ],
 )
 
 # JAX-specific registrations.
 py_extension(
-    name = "_site_initialize_0",
-    srcs = ["_site_initialize_0.cc"],
+    name = "register_jax_dialects",
+    srcs = ["register_jax_dialects.cc"],
     copts = COPTS,
     linkopts = LINKOPTS,
     deps = [
-        ":jax_dialects_capi_headers",
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIArithHeaders",
         "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:CAPIMathHeaders",
         "@llvm-project//mlir:CAPIMemRefHeaders",
+        "@llvm-project//mlir:CAPISCFHeaders",
         "@llvm-project//mlir:CAPITransformsHeaders",
         "@llvm-project//mlir:CAPIVectorHeaders",
         "@llvm-project//mlir:MLIRBindingsPythonHeaders",
@@ -231,33 +230,14 @@ cc_library(
 )
 
 cc_library(
-    name = "jax_dialects_capi",
-    srcs = ["jax_dialects.cc"],
-    hdrs = ["jax_dialects.h"],
-    deps = [
-        "@llvm-project//mlir:CAPIIRHeaders",
-        "@llvm-project//mlir:SCFDialect",
-    ],
-    alwayslink = 1,
-)
-
-cc_library(
-    name = "jax_dialects_capi_headers",
-    hdrs = ["jax_dialects.h"],
-    deps = [
-        "@llvm-project//mlir:CAPIIRHeaders",
-    ],
-)
-
-cc_library(
     name = "jaxlib_mlir_capi_objects",
     deps = [
-        ":jax_dialects_capi",
         "//jaxlib/mosaic:tpu_dialect_capi_objects",
         "@llvm-project//mlir:CAPIArithObjects",
         "@llvm-project//mlir:CAPIIRObjects",
         "@llvm-project//mlir:CAPIMathObjects",
         "@llvm-project//mlir:CAPIMemRefObjects",
+        "@llvm-project//mlir:CAPISCFObjects",
         "@llvm-project//mlir:CAPISparseTensorObjects",
         "@llvm-project//mlir:CAPITransformsObjects",
         "@llvm-project//mlir:CAPIVectorObjects",
