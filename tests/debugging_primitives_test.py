@@ -58,6 +58,18 @@ class DummyDevice:
     self.platform = platform
     self.id = id
 
+
+class DebugCallbackTest(jtu.JaxTestCase):
+
+  def tearDown(self):
+    super().tearDown()
+    dispatch.runtime_tokens.clear()
+
+  def test_error_with_non_callable(self):
+    with self.assertRaisesRegex(TypeError, "callable"):
+      jax.debug.callback("this is not debug.print!")
+
+
 class DebugPrintTest(jtu.JaxTestCase):
 
   def tearDown(self):

@@ -234,6 +234,9 @@ def debug_callback(callback: Callable[..., Any], *args: Any,
 
   .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
   """
+  if not callable(callback):
+    raise TypeError("first argument to jax.debug.callback must be callable, "
+                    f"but got an object of type {type(callback)}")
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
   effect = ordered_debug_effect if ordered else debug_effect
   def _flat_callback(*flat_args):
