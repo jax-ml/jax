@@ -252,5 +252,6 @@ Argument classes
 .. autoclass:: GatherDimensionNumbers
 .. autoclass:: GatherScatterMode
 .. autoclass:: Precision
+.. autoclass:: PrecisionLike
 .. autoclass:: RoundingMethod
 .. autoclass:: ScatterDimensionNumbers
