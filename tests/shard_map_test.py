@@ -1298,6 +1298,12 @@ class ShardMapTest(jtu.JaxTestCase):
                   mesh=mesh, in_specs=P('batch'),
                   out_specs=P('batch'))(jnp.arange(16.))  # don't crash
 
+  def test_random_normal_rules(self):
+    mesh = jtu.create_global_mesh((4,), ('i',))
+    keys = jax.random.split(jax.random.key(0), 4)
+    shard_map(lambda k: jax.random.normal(k[0], (1,)),
+              mesh=mesh, in_specs=P('i'), out_specs=P('i'))(keys)  # don't crash
+
 
 class FunSpec(NamedTuple):
   name: str
