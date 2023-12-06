@@ -606,6 +606,8 @@ def qr(a: ArrayLike, mode: str = "reduced") -> Union[Array, tuple[Array, Array]]
 def solve(a: ArrayLike, b: ArrayLike) -> Array:
   check_arraylike("jnp.linalg.solve", a, b)
   a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
+  if a.ndim >= 2 and b.ndim > a.ndim:
+    a = lax.expand_dims(a, tuple(range(b.ndim - a.ndim)))
   return lax_linalg._solve(a, b)
 
 
