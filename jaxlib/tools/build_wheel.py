@@ -316,7 +316,6 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extensi
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirSparseTensorPasses.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_tpu_ext.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_stablehlo.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_site_initialize_0.{pyext}",
       ],
   )
 
