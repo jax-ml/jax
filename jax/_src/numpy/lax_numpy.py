@@ -1404,8 +1404,13 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
             fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
     ) -> tuple[Array, ...]:
   util.check_arraylike("nonzero", a)
-  arr = atleast_1d(a)
+  arr = asarray(a)
   del a
+  if ndim(arr) == 0:
+    # Added 2023 Dec 6
+    warnings.warn("Calling nonzero on 0d arrays is deprecated. Use `atleast_1d(arr).nonzero()",
+                  DeprecationWarning, stacklevel=2)
+  arr = atleast_1d(arr)
   mask = arr if arr.dtype == bool else (arr != 0)
   calculated_size = mask.sum() if size is None else size
   calculated_size = core.concrete_dim_or_error(calculated_size,
