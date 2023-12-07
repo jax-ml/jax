@@ -337,9 +337,17 @@ def pjrt_c_api_version_at_least(major_version: int, minor_version: int):
     return True
   return pjrt_c_api_versions >= (major_version, minor_version)
 
-
-def is_device_tpu_v4():
-  return jax.devices()[0].device_kind == "TPU v4"
+def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
+  if device_under_test() != "tpu":
+    return False
+  if version is None:
+    return True
+  device_kind = jax.devices()[0].device_kind
+  expected_version = f"v{version}{variant}"
+  # Special case v5e until the name is updated in device_kind
+  if expected_version == "v5e":
+    return "v5 lite" in device_kind
+  return expected_version in device_kind
 
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""

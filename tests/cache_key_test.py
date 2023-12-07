@@ -244,7 +244,7 @@ class CacheKeyTest(jtu.JaxTestCase):
     self.assertEqual(include_metadata, key1 != key2)
 
   def test_xla_flags(self):
-    if jtu.is_device_tpu_v4():
+    if jtu.is_device_tpu(version=4):
       raise unittest.SkipTest("TODO(b/240151176)")
 
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
@@ -290,7 +290,7 @@ class CacheKeyTest(jtu.JaxTestCase):
       sys.argv = orig_argv
 
   def test_libtpu_init_args(self):
-    if jtu.is_device_tpu_v4():
+    if jtu.is_device_tpu(version=4):
       raise unittest.SkipTest("TODO(b/240151176)")
 
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
