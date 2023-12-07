@@ -184,7 +184,13 @@ class Mesh(contextlib.ContextDecorator):
     if isinstance(axis_names, str):
       axis_names = (axis_names,)
     axis_names = tuple(axis_names)
-    assert devices.ndim == len(axis_names)
+
+    if devices.ndim != len(axis_names):
+      raise ValueError(
+          "Mesh requires the ndim of its first argument (`devices`) to equal "
+          "the length of its second argument (`axis_names`), but got "
+          f"devices.ndim == {devices.ndim} and "
+          f"len(axis_names) == {len(axis_names)}.")
 
     key = (axis_names, devices.shape, tuple(devices.flat))
     val = _mesh_object_dict.get(key, None)
