@@ -18,6 +18,7 @@ import re
 from functools import partial, lru_cache
 import logging
 import math
+import textwrap
 import threading
 import unittest
 
@@ -1223,6 +1224,19 @@ class PJitTest(jtu.BufferDonationTestCase):
           r"spec=PartitionSpec\(None, \('mdl',\), None, None\).*\) is only "
           "valid for values of rank at least 4, but was applied to a value of rank 1"):
         pjit_f(jnp.array([1, 2, 3]))
+
+  def test_pretty_print(self):
+    f = pjit(lambda x: x)
+    x = jnp.array([4.2], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(f)(x)
+    self.assertEqual(
+        jaxpr.pretty_print(),
+        textwrap.dedent("""
+            { lambda ; a:f32[1]. let
+                b:f32[1] = pjit[name=<lambda> jaxpr={ lambda ; c:f32[1]. let  in (c,) }] a
+              in (b,) }
+        """).strip(),
+    )
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
