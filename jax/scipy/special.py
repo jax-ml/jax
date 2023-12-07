@@ -30,6 +30,7 @@ from jax._src.scipy.special import (
   expi as expi,
   expit as expit,
   expn as expn,
+  factorial as factorial,
   gammainc as gammainc,
   gammaincc as gammaincc,
   gammaln as gammaln,
