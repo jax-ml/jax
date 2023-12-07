@@ -4446,6 +4446,10 @@ class APITest(jtu.JaxTestCase):
     if (x_ptr & 15) != 0:
       self.assertTrue(np.shares_memory(out, x))
 
+  def test_mesh_creation_error_message(self):
+    with self.assertRaisesRegex(ValueError, "ndim of its first argument"):
+      jax.sharding.Mesh(jax.devices(), ("x", "y"))
+
 
 class RematTest(jtu.JaxTestCase):
 
