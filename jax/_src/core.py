@@ -2034,6 +2034,14 @@ def non_negative_dim(d: DimSize) -> DimSize:
   except InconclusiveDimensionOperation:
     return d.non_negative()  # type: ignore
 
+def min_dim(d1: DimSize, d2: DimSize) -> DimSize:
+  """Like min(d1, d2) but for both constant and symbolic dimensions."""
+  return d1 - non_negative_dim(d1 - d2)
+
+def max_dim(d1: DimSize, d2: DimSize) -> DimSize:
+  """Like max(d1, d2) but for both constant and symbolic dimensions."""
+  return d1 + non_negative_dim(d2 - d1)
+
 def dimension_as_value(d: DimSize):
   """Turns a dimension size into a JAX array.
      This is the identity function for constant dimensions.

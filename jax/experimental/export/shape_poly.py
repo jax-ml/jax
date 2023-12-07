@@ -477,27 +477,37 @@ class _DimExpr():
       return True
     if ub < 0:
       return False
-    # Attempt to handle non_negative
+    # Attempt to handle non_negative. For the decomposition:
+    #    e = factor * non_negative(operand)^exp * rest_monomial + rest_expr
+    # use the rule:
+    #    e >= 0 IF factor * operand^exp * rest_monomial + rest_expr >= 0 AND
+    #              (rest_expr >= 0 OR
+    #               exp is odd AND factor * rest_monomial >= 0  OR
+    #               exp is even AND factor * rest_monomial <= 0)
     for dec in _decompose_expr(self_minus_other, _DimAtom.NON_NEGATIVE):
       # e = factor * non_negative(operands)^exp * rest_monomial + rest_expr
-      e1 = dec.rest_expr
-      e2 = dec.rest_expr + dec.factor * (dec.operands[0] ** dec.exp) * dec.rest_monomial
-      try:
-        if (e1 >= 0) and (e2 >= 0):
-          return True
-      except InconclusiveDimensionOperation:
+      e2 = dec.rest_expr + dec.factor * (
+          dec.operands[0] ** dec.exp) * dec.rest_monomial
+      if not definitely_geq_0(e2):
         continue
+      if definitely_geq_0(dec.rest_expr):
+        return True
+      if dec.exp % 2 == 1:
+        if definitely_geq_0(dec.factor * dec.rest_monomial):
+          return True
+      else:
+        if definitely_geq_0(- dec.factor * dec.rest_monomial):
+          return True
+
     # Attempt to handle floordiv >= 0
     for dec in _decompose_expr(self_minus_other, _DimAtom.FLOORDIV,
                                with_exp=1, with_rest_monomial=1,
                                with_rest_expr=0):
       # e = factor * floordiv(op1, op2)^1 * 1 + 0
       if dec.factor > 0:
-        try:
-          if (dec.operands[0] >= 0) and (dec.operands[1] >= 0):
-            return True
-        except InconclusiveDimensionOperation:
-          continue
+        if definitely_geq_0(dec.operands[0]) and definitely_geq_0(dec.operands[1]):
+          return True
+
     raise self.inconclusive_comparison(">=", other)
 
   def __hash__(self):
@@ -826,6 +836,16 @@ def is_poly_dim(p: DimSize) -> bool:
   return isinstance(p, _DimExpr)
 
 dtypes.python_scalar_dtypes[_DimExpr] = dtypes.python_scalar_dtypes[int]
+
+def definitely_geq_0(d: DimSize) -> bool:
+  """Returns true when we can prove that d >=0, false otherwise.
+  Note that a result of False may mean that we cannot conclusively prove the
+  sign of `d`, it does not mean that `d < 0`.
+  """
+  try:
+    return d >= 0
+  except InconclusiveDimensionOperation:
+    return False
 
 def _einsum_contract_path(*operands, **kwargs):
   """Like opt_einsum.contract_path, with support for DimExpr shapes.

@@ -2504,7 +2504,7 @@ def _arange_dynamic(
         f"be resolved statically if it is > 0 or < 0.\nDetails: {e}")
   gap = step if step_gt_0 else - step
   distance = (stop - start) if step_gt_0 else (start - stop)
-  size = core.non_negative_dim(distance + gap - 1) // gap
+  size = core.max_dim(0, distance + gap - 1) // gap
   return (array(start, dtype=dtype) +
           array(step, dtype=dtype) * lax.iota(dtype, size))
 
@@ -4970,18 +4970,14 @@ def _preprocess_slice(
           f"be resolved statically if it is >= 0.\nDetails: {e}")
     if i_ge_0:
       if step_gt_0:
-        # min(i, axis_size)
-        return axis_size - core.non_negative_dim(axis_size - i)
+        return core.min_dim(axis_size, i)
       else:
-        # min(i, axis_size - 1)
-        return axis_size - 1 - core.non_negative_dim(axis_size - 1 - i)
+        return core.min_dim(axis_size - 1, i)
     else:
       if step_gt_0:
-        # max(axis_size + i, 0)
-        return core.non_negative_dim(axis_size + i)
+        return core.max_dim(0, axis_size + i)
       else:
-        # max(axis_size + i, -1)
-        return -1 + core.non_negative_dim(axis_size + i + 1)
+        return core.max_dim(-1, axis_size + i)
 
   if s.start is None:
     start = 0 if step_gt_0 else axis_size - 1
@@ -4995,7 +4991,7 @@ def _preprocess_slice(
 
   gap = step if step_gt_0 else - step
   distance = (stop - start) if step_gt_0 else (start - stop)
-  slice_size = core.non_negative_dim(distance + gap - 1) // gap
+  slice_size = core.max_dim(0, distance + gap - 1) // gap
   return start, step, slice_size
 
 

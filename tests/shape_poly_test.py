@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for the shape-polymorphic export."""
-
+import enum
 from collections.abc import Sequence
 import itertools
 import math
@@ -52,6 +52,7 @@ from jax._src.internal_test_util.test_harnesses import Harness, CustomArg, RandA
 
 _f32 = np.float32
 _i32 = np.int32
+DimSize = shape_poly.DimSize
 
 expect_error_associative_scan = (
     NotImplementedError,
@@ -61,22 +62,31 @@ expect_error_associative_scan = (
 
 class DimExprTest(jtu.JaxTestCase):
 
-  def sampled_assert_equal(self,
-                           expected_sym: shape_poly.DimSize,
-                           fun: Callable,
-                           *operands_sym: shape_poly.DimSize
-                           ):
-    """Checks `expected == fun(*operands)` with the `fun` invocation and the
-    equality check both done symbolically, and also concretely by replacing
-    several values for each of the dimension variables.
+  class AssertionType(enum.Enum):
+    EQ = 1,
+    GEQ = 2
+
+  def sampled_assertion(self,
+                        e: DimSize,
+                        fun: Callable,
+                        *operands_sym: shape_poly.DimSize,
+                        assertion: AssertionType = AssertionType.EQ
+                        ):
+    """Checks `assertion(e, fun(*operands))` symbolically and concretely.
+
+    For the concrete check, it will same the space of dimension variable
+    assignments for the dimension variables in `e`.
 
     This is useful when `fun` can operate both with polynomials and with
     concrete values, and we want to double-check that the behavior is sound.
     """
     computed_sym = fun(*operands_sym)
-    self.assertEqual(expected_sym, computed_sym)
+    assertion_fun = {
+      DimExprTest.AssertionType.EQ: self.assertEqual,
+      DimExprTest.AssertionType.GEQ: self.assertGreaterEqual}[assertion]
+    assertion_fun(e, computed_sym)
     dim_vars: set[str] = set()
-    for a in (expected_sym, computed_sym, *operands_sym):
+    for a in (e, computed_sym, *operands_sym):
       if core.is_symbolic_dim(a):
         dim_vars = dim_vars.union(a.get_vars())
     if not dim_vars:
@@ -89,10 +99,10 @@ class DimExprTest(jtu.JaxTestCase):
         return d.evaluate(env) if core.is_symbolic_dim(d) else d  # type: ignore
 
       compute_concrete = fun(*map(eval, operands_sym))
-      expected_concrete = eval(expected_sym)
-      self.assertEqual(
+      expected_concrete = eval(e)
+      assertion_fun(
         expected_concrete, compute_concrete,
-        f"{expected_sym=} {expected_concrete=} {compute_concrete=} {env=}")
+        f"{e=} {expected_concrete=} {compute_concrete=} {env=}")
 
   def test_parse_shape(self):
     self.assertEqual((), shape_poly.symbolic_shape("", like=()))
@@ -201,7 +211,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(1, ((a * a) // b).evaluate(dict(a=2, b=3)))
     self.assertEqual(4, ((a * a) % b).evaluate(dict(a=5, b=7)))
 
-  def test_dim_vars_symbolic_equal(self):
+  def test_dim_vars_definitely_equal(self):
     a, b = shape_poly.symbolic_shape("a, b")
     self.assertTrue(core.definitely_equal(a, a))
     self.assertFalse(core.definitely_equal(a, 1))
@@ -319,40 +329,40 @@ class DimExprTest(jtu.JaxTestCase):
 
     self.assertFalse((3 * a * b * a - 2).eq(a * b * a))
 
-    self.sampled_assert_equal(a % b,
-                              lambda x: x, a % b)
-    self.sampled_assert_equal(a % b - a % b,
-                              lambda x: x, 0)
-    self.sampled_assert_equal(a // b,
-                              lambda x: x, a // b)
-    self.sampled_assert_equal(a // b - a // b,
-                              lambda x: x, 0)
+    self.sampled_assertion(a % b,
+                           lambda x: x, a % b)
+    self.sampled_assertion(a % b - a % b,
+                           lambda x: x, 0)
+    self.sampled_assertion(a // b,
+                           lambda x: x, a // b)
+    self.sampled_assertion(a // b - a // b,
+                           lambda x: x, 0)
 
-    self.sampled_assert_equal(a % b,
-                              lambda x: x, (2 * a // 2) % (a + b - a))
-    self.sampled_assert_equal(a // b,
-                              lambda x: x, (2 * a // 2) // (a + b - a))
+    self.sampled_assertion(a % b,
+                           lambda x: x, (2 * a // 2) % (a + b - a))
+    self.sampled_assertion(a // b,
+                           lambda x: x, (2 * a // 2) // (a + b - a))
 
-    self.sampled_assert_equal(a, lambda x: x,
-                              a + (a + b) // b - (b + a) // b)
+    self.sampled_assertion(a, lambda x: x,
+                           a + (a + b) // b - (b + a) // b)
 
     # Test the normalization (a // b) * b == a - a % b
-    self.sampled_assert_equal((a // 2) * 2,
-                              lambda x: x, a - a % 2)
-    self.sampled_assert_equal((a // 2) + (a // 2),
-                              lambda x: x, a - a % 2)
-    self.sampled_assert_equal((a // 2) * 6,
-                              lambda x: x, 3 * a - 3 * (a % 2))
-    self.sampled_assert_equal((a // b) * b,
-                              lambda x: x, a - a % b)
-    self.sampled_assert_equal(2 * (a // b) * b * b,
-                              lambda x: x, 2 * b * a - 2 * b * (a % b))
-    self.sampled_assert_equal(a // (2 * b) * 2 * b,
-                              lambda x: x, a - a % (2 * b))
-    self.sampled_assert_equal(a // (2 * b) * 2 * b + 2 * a,
-                              lambda x: x, 3 * a - a % (2 * b))
-    self.sampled_assert_equal(a // (2 * b) * 2 * b + 2 * a,
-                              lambda x: x, 3 * a - a % (2 * b))
+    self.sampled_assertion((a // 2) * 2,
+                           lambda x: x, a - a % 2)
+    self.sampled_assertion((a // 2) + (a // 2),
+                           lambda x: x, a - a % 2)
+    self.sampled_assertion((a // 2) * 6,
+                           lambda x: x, 3 * a - 3 * (a % 2))
+    self.sampled_assertion((a // b) * b,
+                           lambda x: x, a - a % b)
+    self.sampled_assertion(2 * (a // b) * b * b,
+                           lambda x: x, 2 * b * a - 2 * b * (a % b))
+    self.sampled_assertion(a // (2 * b) * 2 * b,
+                           lambda x: x, a - a % (2 * b))
+    self.sampled_assertion(a // (2 * b) * 2 * b + 2 * a,
+                           lambda x: x, 3 * a - a % (2 * b))
+    self.sampled_assertion(a // (2 * b) * 2 * b + 2 * a,
+                           lambda x: x, 3 * a - a % (2 * b))
 
   def test_poly_compare(self):
     a, b = shape_poly.symbolic_shape("a, b")
@@ -396,7 +406,7 @@ class DimExprTest(jtu.JaxTestCase):
       (4 * a - b) >= 0
 
   def test_poly_int_results(self):
-    # Whenever the result is an integer, it should be represented as an
+    # Whenever the result is an integer, it should be represented as a
     # Python integer, not a symbolic dimension.
     a, b = shape_poly.symbolic_shape("a, b")
     self.assertEqual(a + 2 - a, 2)
@@ -430,33 +440,62 @@ class DimExprTest(jtu.JaxTestCase):
       d1, d2 = divmod(dividend, divisor)
       self.assertEqual((quotient, remainder), (str(d1), str(d2)))
     else:
-      self.sampled_assert_equal(quotient, lambda *args: divmod(*args)[0],
-                                dividend, divisor)
-      self.sampled_assert_equal(remainder, lambda *args: divmod(*args)[1],
-                                dividend, divisor)
+      self.sampled_assertion(quotient, lambda *args: divmod(*args)[0],
+                             dividend, divisor)
+      self.sampled_assertion(remainder, lambda *args: divmod(*args)[1],
+                             dividend, divisor)
 
   def test_non_negative_dim(self):
     a, = shape_poly.symbolic_shape("a,")
 
-    self.sampled_assert_equal(2, core.non_negative_dim, 2)
-    self.sampled_assert_equal(0, core.non_negative_dim, 0)
-    self.sampled_assert_equal(0, core.non_negative_dim, -1)
-    self.sampled_assert_equal(a, core.non_negative_dim, a)
-    self.sampled_assert_equal(2 * a - 1, core.non_negative_dim, 2 * a - 1)
-    self.sampled_assert_equal(core.non_negative_dim(a - 2),
-                              core.non_negative_dim, a - 2)
+    self.sampled_assertion(2, core.non_negative_dim, 2)
+    self.sampled_assertion(0, core.non_negative_dim, 0)
+    self.sampled_assertion(0, core.non_negative_dim, -1)
+    self.sampled_assertion(a, core.non_negative_dim, a)
+    self.sampled_assertion(2 * a - 1, core.non_negative_dim, 2 * a - 1)
+    self.sampled_assertion(core.non_negative_dim(a - 2),
+                           core.non_negative_dim, a - 2)
+
+  def test_min_dim(self):
+    a, b, c = shape_poly.symbolic_shape("a, b, c")
+
+    self.assertEqual(a, core.min_dim(a, a + 2))
+    self.assertEqual(a - 2, core.min_dim(a, a - 2))
+    self.assertGreaterEqual(a, core.min_dim(a, b))
+    self.assertGreaterEqual(a + c - 1, core.min_dim(a, b))
+    self.assertGreaterEqual(b, core.min_dim(a, b))
+    self.assertGreaterEqual(b + c - 1, core.min_dim(a, b))
+
+  def test_max_dim(self):
+    a, b, c = shape_poly.symbolic_shape("a, b, c")
+
+    self.assertEqual(a + 2, core.max_dim(a, a + 2))
+    self.assertEqual(a , core.max_dim(a, a - 2))
+    self.assertGreaterEqual(core.max_dim(a, b), a)
+    self.assertGreaterEqual(core.max_dim(a, b) + c - 1, a)
+    self.assertGreaterEqual(core.max_dim(a, b), b)
+    self.assertGreaterEqual(core.max_dim(a, b) + c - 1, b)
+
+    self.assertGreaterEqual(core.max_dim(a, b), core.min_dim(a, b))
+
+  def test_clamp_dim(self):
+    a, b = shape_poly.symbolic_shape("a, b")
+    # Clamping b <= a <= b + 10
+    clamp = core.max_dim(core.min_dim(a, b + 10), b)
+    self.assertLessEqual(b, clamp)
+    self.assertLessEqual(clamp, b + 10)
 
   def test_dilate_dim(self):
     """0 if d == 0 else 1 + dilation * (d - 1))"""
     a, = shape_poly.symbolic_shape("a,")
 
-    self.sampled_assert_equal(4, core.dilate_dim, 2, 3)
-    self.sampled_assert_equal(7, core.dilate_dim, 3, 3)
-    self.sampled_assert_equal(0, core.dilate_dim, 0, 3)
-    self.sampled_assert_equal(a, core.dilate_dim, a, 1)
-    self.sampled_assert_equal(2 * a - 1, core.dilate_dim, a, 2)
-    self.sampled_assert_equal(core.non_negative_dim(2 * a - 3),
-                              core.dilate_dim, a - 1, 2)
+    self.sampled_assertion(4, core.dilate_dim, 2, 3)
+    self.sampled_assertion(7, core.dilate_dim, 3, 3)
+    self.sampled_assertion(0, core.dilate_dim, 0, 3)
+    self.sampled_assertion(a, core.dilate_dim, a, 1)
+    self.sampled_assertion(2 * a - 1, core.dilate_dim, a, 2)
+    self.sampled_assertion(core.non_negative_dim(2 * a - 3),
+                           core.dilate_dim, a - 1, 2)
 
   def test_stride_dim(self):
     """(d - window_size) // window_stride + 1
@@ -464,16 +503,16 @@ class DimExprTest(jtu.JaxTestCase):
     If d <  window_size, returns 0.
     """
     a, stride = shape_poly.symbolic_shape("a, s")
-    self.sampled_assert_equal(8, core.stride_dim, 10, 3, 1)
-    self.sampled_assert_equal(9, core.stride_dim, 20, 3, 2)
-    self.sampled_assert_equal(9, core.stride_dim, 20, 4, 2)
-    self.sampled_assert_equal(a, core.stride_dim, a, 1, 1)
+    self.sampled_assertion(8, core.stride_dim, 10, 3, 1)
+    self.sampled_assertion(9, core.stride_dim, 20, 3, 2)
+    self.sampled_assertion(9, core.stride_dim, 20, 4, 2)
+    self.sampled_assertion(a, core.stride_dim, a, 1, 1)
 
-    self.sampled_assert_equal(a - 1, core.stride_dim, a, 2, 1)
-    self.sampled_assert_equal(a + 1, core.stride_dim, a * stride + 2, 2, stride)
-    self.sampled_assert_equal((a - 1) // 2 + 1, core.stride_dim, a, 1, 2)
-    self.sampled_assert_equal(core.non_negative_dim((a - 4) // 2 + 1),
-                              core.stride_dim, a, 4, 2)
+    self.sampled_assertion(a - 1, core.stride_dim, a, 2, 1)
+    self.sampled_assertion(a + 1, core.stride_dim, a * stride + 2, 2, stride)
+    self.sampled_assertion((a - 1) // 2 + 1, core.stride_dim, a, 1, 2)
+    self.sampled_assertion(core.non_negative_dim((a - 4) // 2 + 1),
+                           core.stride_dim, a, 4, 2)
 
 
 class PolyHarness(Harness):
