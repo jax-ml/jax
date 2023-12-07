@@ -1864,7 +1864,11 @@ def _pjit_pp_rule(eqn, context, settings):
   if (params['resource_env'] is None or
       params['resource_env'].physical_mesh.empty):
     del params['resource_env']
-  return core._pp_eqn(eqn.replace(params=params), context, settings)
+
+  # Move name= to the front to make the resulting equation easier to scan.
+  del params["name"]
+  return core._pp_eqn(eqn, context, settings, params=["name"] + sorted(params))
+
 core.pp_eqn_rules[pjit_p] = _pjit_pp_rule
 
 
