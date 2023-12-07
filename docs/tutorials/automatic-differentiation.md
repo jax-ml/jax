@@ -165,7 +165,7 @@ def loss2(params_dict):
 print(grad(loss2)({'W': W, 'b': b}))
 ```
 
-You can {ref}`custom-pytree-nodes` to work with not just {func}`jax.grad` but other JAX transformations ({func}`jax.jit`, {func}`jax.vmap`, and so on).
+You can {ref}`pytrees-custom-pytree-nodes` to work with not just {func}`jax.grad` but other JAX transformations ({func}`jax.jit`, {func}`jax.vmap`, and so on).
 
 ## Evaluate a function and its gradient using `value_and_grad`
 
