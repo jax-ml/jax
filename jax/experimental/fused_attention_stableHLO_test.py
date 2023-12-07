@@ -12,6 +12,7 @@ from jax.sharding import Mesh
 from jax.sharding import PartitionSpec, NamedSharding
 from jax.experimental.pjit import pjit
 from jax import core, vmap
+from jax import make_jaxpr
 
 Array = jnp.ndarray
 DType = jnp.dtype
@@ -22,8 +23,9 @@ def f(input_q: Array,
     input_v: Array,
     bias: Optional[Array] = None,
     mask: Optional[Array] = None,
-    mask_type: Optional[str] = None,
-    scale: float = 0.5) -> Array:
+    causal_mask: bool = False,
+    scale: float = 0.5,
+    dropout_rate: float = 0.1) -> Array:
 
     output = dot_product_attention(
         input_q,
@@ -32,14 +34,14 @@ def f(input_q: Array,
         scale=scale,
         bias=bias,
         mask=mask,
-        is_cauasl_mask=False,
-        dropout_rate=0.1)
+        is_cauasl_mask=causal_mask,
+        dropout_rate=dropout_rate)
 
     return output
 
-def train_step(scale, mask_type, input_q, input_k, input_v, bias, mask, grad):
+def train_step(input_q, input_k, input_v, bias, mask, grad, scale, causal_mask, dropout_rate):
     out, f_vjp = jax.vjp(
-        vmap(partial(f, scale=scale, mask_type=mask_type), in_axes=(0, 0, 0, 0, 0)),
+        vmap(partial(f, scale=scale, causal_mask=causal_mask, dropout_rate=dropout_rate), in_axes=(0, 0, 0, 0, 0)),
         input_q, input_k, input_v, bias, mask
     )
     input_q_grad, input_k_grad, input_v_grad, bias_grad, _ = f_vjp(grad)
@@ -48,21 +50,21 @@ def train_step(scale, mask_type, input_q, input_k, input_v, bias, mask, grad):
 def main():
     parser = argparse.ArgumentParser(description='T5X MHA Unit Test')
     parser.add_argument("--batch_size", dest="batch_size", type=int, default=16)
-    parser.add_argument("--q_seq_len", dest="q_seq_len", type=int, default=256)
-    parser.add_argument("--kv_seq_len", dest="kv_seq_len", type=int, default=256)
+    parser.add_argument("--q_seq_len", dest="q_seq_len", type=int, default=1024)
+    parser.add_argument("--kv_seq_len", dest="kv_seq_len", type=int, default=1024)
     parser.add_argument("--num_attn_heads", dest="num_attn_heads", type=int, default=16)
     parser.add_argument("--head_dim", dest="head_dim", type=int, default=64)
     parser.add_argument("--scale", dest="scale", type=float, default=1.0)
     parser.add_argument("--dropout_rate", dest="dropout_rate", type=float, default=0.)
     parser.add_argument("--bias", action="store_true")
     parser.add_argument("--mask", action="store_true")
-    parser.add_argument("--mask_type", dest="mask_type", type=str, default=None)
+    parser.add_argument("--causal_mask", action="store_true")
     parser.add_argument("--fwd_only", dest='fwd_only', action="store_true")
     parser.add_argument("--xla_dump_to", dest="xla_dump_to", type=str, default=None)
     args = parser.parse_args()
 
     if args.xla_dump_to:
-        xla_flags += f'--xla_dump_hlo_pass_re=.* --xla_dump_hlo_as_text --xla_dump_to={args.xla_dump_to}'
+        xla_flags = f'--xla_dump_hlo_pass_re=.* --xla_dump_hlo_as_text --xla_dump_to={args.xla_dump_to}'
 
     os.environ['XLA_FLAGS'] = xla_flags
 
@@ -77,11 +79,12 @@ def main():
     grad = jax.random.uniform(key2, (4, args.batch_size, args.q_seq_len, args.num_attn_heads, args.head_dim), dtype=dtype)
 
     if args.fwd_only:
-        jitted_fwd_step = jax.jit(partial(f, mask_type=args.mask_type, scale=args.scale))
+        jitted_fwd_step = jax.jit(vmap(partial(f, causal_mask=args.causal_mask, scale=args.scale, dropout_rate=0), in_axes=(0, 0, 0, 0, 0)))
         out = jitted_fwd_step(input_q, input_k, input_v, bias, mask)
+        print(out[0,0,0,0,:20])
         return out
     else:
-        jitted_train_step = jax.jit(partial(train_step, mask_type=args.mask_type, scale=args.scale))
+        jitted_train_step = jax.jit(partial(train_step, causal_mask=args.causal_mask, scale=args.scale, dropout_rate=args.dropout_rate))
         # out, input_grad = jitted_train_step(input_q, input_k, input_v, bias, mask, grad)
         # print(input_grad[0][0,0,0,:20])
         # return out, input_grad
@@ -112,6 +115,7 @@ def main():
             )
 
             out, grads = pjitter(input_q, input_k, input_v, bias, mask, grad)
+            # print(make_jaxpr(pjitter)(input_q, input_k, input_v, bias, mask, grad))
             print(grads[0][0,0,0,0,:20])
 
 if __name__ == "__main__":
