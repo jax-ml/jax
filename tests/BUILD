@@ -1365,6 +1365,7 @@ exports_files(
         "python_callback_test.py",
         "shard_map_test.py",
         "transfer_guard_test.py",
+        "layout_test.py",
     ],
     visibility = jax_test_file_visibility,
 )
