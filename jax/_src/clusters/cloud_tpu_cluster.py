@@ -20,6 +20,9 @@ from typing import Optional
 from jax._src import clusters
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 
+# We use an arbitrarily chosen port for the coordinator since we cannot
+# rely on communication to choose one in real time.
+coordinator_port = '8476'
 
 def get_metadata(key):
   import requests  # pytype: disable=import-error
@@ -85,7 +88,7 @@ class SingleSliceGceTpuCluster(clusters.ClusterEnv):
 
   @classmethod
   def get_coordinator_address(cls) -> str:
-    return get_gce_worker_endpoints()[0].split(':')[2] + ':8476'
+    return f"{get_gce_worker_endpoints()[0].split(':')[2]}:{coordinator_port}"
 
   @classmethod
   def get_process_count(cls) -> int:
@@ -128,8 +131,7 @@ class MultisliceGceTpuCluster(clusters.ClusterEnv):
 
     # Use a different port for the jax coordinator than the MXLA coordinator,
     # which is set to 8080 in multislice GCE.
-    coordinator_address = coordinator_address + ':8476'
-    return coordinator_address
+    return f'{coordinator_address}:{coordinator_port}'
 
   @classmethod
   def get_process_count(cls) -> int:
