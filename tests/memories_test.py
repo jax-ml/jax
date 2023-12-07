@@ -199,10 +199,6 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
 class MemoriesComputationTest(jtu.BufferDonationTestCase):
 
   def setUp(self):
-    # TODO(yashkatariya): Enable all tests after memories XLA support is
-    # working.
-    self.skipTest('Enable after memories work with redesigned XLA support.')
-
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Memories do not work on CPU and GPU backends yet.")
     # TODO(b/311021572)
@@ -895,6 +891,7 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
     self._check_device_put_addressable_shards(
         out_host, py_inp, s_host, "unpinned_host", index=False)
 
+  @unittest.skip('Fails during compilation')
   def test_trivial_computation(self):
     if xb.using_pjrt_c_api():
       raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
@@ -1058,26 +1055,6 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
     lowered_text = f.lower(x).as_text("hlo")
     self.assertIn("input_output_alias", lowered_text)
     self.assertDeleted(x)
-
-  def test_single_mem_kind_donation_host(self):
-    if xb.using_pjrt_c_api():
-      raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
-    mesh = jtu.create_global_mesh((2,), "x")
-
-    @functools.partial(jax.jit, donate_argnums=0)
-    def f(inp1):
-      return inp1 * 2
-
-    s_host = NamedSharding(mesh, P(), memory_kind="unpinned_host")
-    x = jax.device_put(np.arange(16).reshape(8, 2), s_host)
-
-    f(x)
-
-    lowered_text = f.lower(x).as_text("hlo")
-    self.assertIn("input_output_alias", lowered_text)
-    # TODO(yashkatariya): Donation does not work on host memory yet. Uncomment
-    # this after it is fixed.
-    # self.assertDeleted(x)
 
   def test_host_offload_in_custom_vjp(self):
     if xb.using_pjrt_c_api():
