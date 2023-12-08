@@ -54,7 +54,7 @@ import jax.numpy as jnp
 
 import tensorflow as tf
 
-from jax.experimental.jax2tf.shape_poly import InconclusiveDimensionOperation
+from jax.experimental.export.shape_poly import InconclusiveDimensionOperation
 from jax.experimental.jax2tf.tests.model_harness import ALL_HARNESSES
 from jax.experimental.jax2tf.tests.converters import ALL_CONVERTERS
 
