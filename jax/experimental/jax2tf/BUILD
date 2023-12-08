@@ -42,7 +42,6 @@ py_library(
         "impl_no_xla.py",
         "jax2tf.py",
         "jax_export.py",  # TODO(necula): remove stub
-        "shape_poly.py",  # TODO(necula): remove stub
     ],
     srcs_version = "PY3",
     # TODO: b/255503696: enable pytype
