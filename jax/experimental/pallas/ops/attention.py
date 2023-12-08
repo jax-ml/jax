@@ -173,7 +173,7 @@ def mha(
     block_q: int = 128,
     block_k: int = 128,
     backward_pass_impl: str = "triton",
-    num_warps: Optional[int] = None,
+    num_warps: int | None = None,
     num_stages: int = 2,
     grid: tuple[int, ...] | None = None,
     interpret: bool = False,
@@ -239,7 +239,7 @@ def _mha_forward(
     block_q: int,
     block_k: int,
     backward_pass_impl: str,
-    num_warps: Optional[int],
+    num_warps: int | None,
     num_stages: int,
     grid: Any,
     interpret: bool,
@@ -451,7 +451,7 @@ def mha_backward_kernel(
 
 
 def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
-                  backward_pass_impl: str, num_warps: Optional[int],
+                  backward_pass_impl: str, num_warps: int | None,
                   num_stages: int, grid: Any, interpret: bool,
                   debug: bool, res, do):
   del num_warps, num_stages, grid

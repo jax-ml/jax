@@ -31,7 +31,7 @@ def _array_namespace(self, /, *, api_version: None | str = None):
 
 
 def _to_device(self, device: xe.Device | Callable[[], xe.Device], /, *,
-               stream: Optional[Union[int, Any]] = None):
+               stream: int | Any | None = None):
   if stream is not None:
     raise NotImplementedError("stream argument of array.to_device()")
   # The type of device is defined by Array.device. In JAX, this is a callable that

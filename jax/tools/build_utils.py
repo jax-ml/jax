@@ -23,7 +23,7 @@ import shutil
 import sys
 import subprocess
 import glob
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def is_windows() -> bool:
@@ -88,7 +88,7 @@ def build_editable(
 
 def update_setup_with_cuda_version(file_dir: pathlib.Path, cuda_version: str):
   src_file = file_dir / "setup.py"
-  with open(src_file, "r") as f:
+  with open(src_file) as f:
     content = f.read()
   content = content.replace(
       "cuda_version = 0  # placeholder", f"cuda_version = {cuda_version}"

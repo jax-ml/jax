@@ -18,7 +18,8 @@ from __future__ import annotations
 import dataclasses
 import functools
 import operator
-from typing import Any, Callable, Dict, Sequence, Tuple
+from typing import Any, Callable
+from collections.abc import Sequence
 import zlib
 
 import jax
@@ -67,7 +68,7 @@ import triton.language as tl
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 partial = functools.partial
-Grid = Tuple[int, ...]
+Grid = tuple[int, ...]
 NDIndexer = indexing.NDIndexer
 GridMapping = pallas_core.GridMapping
 BlockMapping = pallas_core.BlockMapping
@@ -88,7 +89,7 @@ class TritonModuleContext:
 class BlockInfo:
   full_shape_dtype: jax.ShapeDtypeStruct
   start_indices: Sequence[Any]
-  block_shape: Tuple[int, ...]
+  block_shape: tuple[int, ...]
 
 
 @dataclasses.dataclass
@@ -111,7 +112,7 @@ class TritonLoweringResult:
   ir_context: tl_ir.context
   module: tl_ir.module
   builder: tl_ir.builder
-  grid: Tuple[int, ...]
+  grid: tuple[int, ...]
 
 
 @dataclasses.dataclass
@@ -610,7 +611,7 @@ def _compute_pointers_from_indices(
     root_ptr: tl.core.tensor,
     block_info: BlockInfo | None,
     nd_indexer: NDIndexer,
-    array_shape: Tuple[int, ...],
+    array_shape: tuple[int, ...],
     builder: tl_ir.builder,
 ) -> tl.core.tensor:
   if block_info is None:
@@ -1512,14 +1513,14 @@ def pallas_call_lowering(
     *in_nodes,
     jaxpr: jax_core.Jaxpr,
     name: str,
-    in_shapes: Tuple[jax.ShapeDtypeStruct, ...],
-    out_shapes: Tuple[jax.ShapeDtypeStruct, ...],
-    which_linear: Tuple[bool, ...],
+    in_shapes: tuple[jax.ShapeDtypeStruct, ...],
+    out_shapes: tuple[jax.ShapeDtypeStruct, ...],
+    which_linear: tuple[bool, ...],
     interpret: bool,
     debug: bool,
-    input_output_aliases: Tuple[Tuple[int, int], ...],
+    input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: GridMapping,
-    triton_params: Dict[str, Any] | None = None,
+    triton_params: dict[str, Any] | None = None,
     **compiler_params: Any,
 ):
   if interpret:

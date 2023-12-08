@@ -21,7 +21,7 @@ import functools
 from functools import partial
 import operator as op
 import textwrap
-from typing import Any, Callable, NamedTuple, Type, TypeVar, Union, overload
+from typing import Any, Callable, NamedTuple, TypeVar, Union, overload
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
@@ -737,7 +737,7 @@ def register_pytree_with_keys_class(cls: U) -> U:
   return cls
 
 
-def register_static(cls: Type[H]) -> Type[H]:
+def register_static(cls: type[H]) -> type[H]:
   """Registers `cls` as a pytree with no leaves.
 
   Instances are treated as static by `jax.jit`, `jax.pmap`, etc. This can be an

@@ -16,7 +16,8 @@
 
 import abc
 import numpy as np
-from typing import Any, Sequence, Union
+from typing import Any, Union
+from collections.abc import Sequence
 
 # TODO(jakevdp): fix import cycles and define these.
 Shard = Any

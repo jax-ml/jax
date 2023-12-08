@@ -19,7 +19,8 @@ from functools import partial
 import math
 from operator import index
 import typing
-from typing import Hashable, Optional, Union
+from typing import Union
+from collections.abc import Hashable
 import warnings
 
 import numpy as np
@@ -150,7 +151,7 @@ class PRNGSpec:
 PRNGSpecDesc = Union[str, PRNGSpec, PRNGImpl]
 
 
-def resolve_prng_impl(impl_spec: Optional[PRNGSpecDesc]) -> PRNGImpl:
+def resolve_prng_impl(impl_spec: PRNGSpecDesc | None) -> PRNGImpl:
   if impl_spec is None:
     return default_prng_impl()
   if type(impl_spec) is PRNGImpl:
@@ -174,7 +175,7 @@ def resolve_prng_impl(impl_spec: Optional[PRNGSpecDesc]) -> PRNGImpl:
 
 
 def _key(ctor_name: str, seed: int | ArrayLike,
-         impl_spec: Optional[PRNGSpecDesc]) -> KeyArray:
+         impl_spec: PRNGSpecDesc | None) -> KeyArray:
   impl = resolve_prng_impl(impl_spec)
   if hasattr(seed, 'dtype') and jnp.issubdtype(seed.dtype, dtypes.prng_key):
     raise TypeError(
@@ -186,7 +187,7 @@ def _key(ctor_name: str, seed: int | ArrayLike,
   return prng.random_seed(seed, impl=impl)
 
 def key(seed: int | ArrayLike, *,
-        impl: Optional[PRNGSpecDesc] = None) -> KeyArray:
+        impl: PRNGSpecDesc | None = None) -> KeyArray:
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
   The result is a scalar array with a key that indicates the default PRNG
@@ -205,7 +206,7 @@ def key(seed: int | ArrayLike, *,
   return _key('key', seed, impl)
 
 def PRNGKey(seed: int | ArrayLike, *,
-            impl: Optional[PRNGSpecDesc] = None) -> KeyArray:
+            impl: PRNGSpecDesc | None = None) -> KeyArray:
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
   The resulting key carries the default PRNG implementation, as
@@ -277,7 +278,7 @@ def fold_in(key: KeyArrayLike, data: IntegerArray) -> KeyArray:
   return _return_prng_keys(wrapped, key_out)
 
 
-def _split(key: KeyArray, num: Union[int, tuple[int, ...]] = 2) -> KeyArray:
+def _split(key: KeyArray, num: int | tuple[int, ...] = 2) -> KeyArray:
   # Alternative to split() to use within random samplers.
   # TODO(frostig): remove and use split(); we no longer need to wait
   # to always enable_custom_prng
@@ -288,7 +289,7 @@ def _split(key: KeyArray, num: Union[int, tuple[int, ...]] = 2) -> KeyArray:
   shape = tuple(num) if isinstance(num, Sequence) else (num,)
   return prng.random_split(key, shape=shape)
 
-def split(key: KeyArrayLike, num: Union[int, tuple[int, ...]] = 2) -> KeyArray:
+def split(key: KeyArrayLike, num: int | tuple[int, ...] = 2) -> KeyArray:
   """Splits a PRNG key into `num` new keys by adding a leading axis.
 
   Args:
@@ -324,7 +325,7 @@ def key_data(keys: KeyArrayLike) -> Array:
 
 
 def wrap_key_data(key_bits_array: Array, *,
-                  impl: Optional[PRNGSpecDesc] = None):
+                  impl: PRNGSpecDesc | None = None):
   """Wrap an array of key data bits into a PRNG key array.
 
   Args:
@@ -344,7 +345,7 @@ def wrap_key_data(key_bits_array: Array, *,
 ### random samplers
 
 
-def _check_shape(name: str, shape: Union[Shape, NamedShape], *param_shapes) -> None:
+def _check_shape(name: str, shape: Shape | NamedShape, *param_shapes) -> None:
   shape = core.as_named_shape(shape)
 
   if param_shapes:
@@ -358,7 +359,7 @@ def _check_shape(name: str, shape: Union[Shape, NamedShape], *param_shapes) -> N
 
 def bits(key: KeyArrayLike,
          shape: Shape = (),
-         dtype: Optional[DTypeLikeUInt] = None) -> Array:
+         dtype: DTypeLikeUInt | None = None) -> Array:
   """Sample uniform bits in the form of unsigned integers.
 
   Args:
@@ -386,7 +387,7 @@ def bits(key: KeyArrayLike,
 
 
 def uniform(key: KeyArrayLike,
-            shape: Union[Shape, NamedShape] = (),
+            shape: Shape | NamedShape = (),
             dtype: DTypeLikeFloat = float,
             minval: RealArray = 0.,
             maxval: RealArray = 1.) -> Array:
@@ -561,7 +562,7 @@ def shuffle(key: KeyArrayLike, x: ArrayLike, axis: int = 0) -> Array:
 
 
 def permutation(key: KeyArrayLike,
-                x: Union[int, ArrayLike],
+                x: int | ArrayLike,
                 axis: int = 0,
                 independent: bool = False) -> Array:
   """Returns a randomly permuted array or range.
@@ -620,10 +621,10 @@ def _shuffle(key, x, axis) -> Array:
 
 
 def choice(key: KeyArrayLike,
-           a: Union[int, ArrayLike],
+           a: int | ArrayLike,
            shape: Shape = (),
            replace: bool = True,
-           p: Optional[RealArray] = None,
+           p: RealArray | None = None,
            axis: int = 0) -> Array:
   """Generates a random sample from a given array.
 
@@ -697,7 +698,7 @@ def choice(key: KeyArrayLike,
 
 
 def normal(key: KeyArrayLike,
-           shape: Union[Shape, NamedShape] = (),
+           shape: Shape | NamedShape = (),
            dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample standard normal random values with given shape and float dtype.
 
@@ -752,8 +753,8 @@ def _normal_real(key, shape, dtype) -> Array:
 def multivariate_normal(key: KeyArrayLike,
                         mean: RealArray,
                         cov: RealArray,
-                        shape: Optional[Shape] = None,
-                        dtype: Optional[DTypeLikeFloat] = None,
+                        shape: Shape | None = None,
+                        dtype: DTypeLikeFloat | None = None,
                         method: str = 'cholesky') -> Array:
   r"""Sample multivariate normal random values with given mean and covariance.
 
@@ -835,7 +836,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:
 def truncated_normal(key: KeyArrayLike,
                      lower: RealArray,
                      upper: RealArray,
-                     shape: Optional[Union[Shape, NamedShape]] = None,
+                     shape: Shape | NamedShape | None = None,
                      dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample truncated standard normal random values with given shape and dtype.
 
@@ -900,7 +901,7 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
 
 def bernoulli(key: KeyArrayLike,
               p: RealArray = np.float32(0.5),
-              shape: Optional[Union[Shape, NamedShape]] = None) -> Array:
+              shape: Shape | NamedShape | None = None) -> Array:
   r"""Sample Bernoulli random values with given shape and mean.
 
   The values are distributed according to the probability mass function:
@@ -946,7 +947,7 @@ def _bernoulli(key, p, shape) -> Array:
 def beta(key: KeyArrayLike,
          a: RealArray,
          b: RealArray,
-         shape: Optional[Shape] = None,
+         shape: Shape | None = None,
          dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample Beta random values with given shape and float dtype.
 
@@ -1045,7 +1046,7 @@ def _cauchy(key, shape, dtype) -> Array:
 
 def dirichlet(key: KeyArrayLike,
               alpha: RealArray,
-              shape: Optional[Shape] = None,
+              shape: Shape | None = None,
               dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample Dirichlet random values with given shape and float dtype.
 
@@ -1284,7 +1285,7 @@ batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
 def gamma(key: KeyArrayLike,
           a: RealArray,
-          shape: Optional[Shape] = None,
+          shape: Shape | None = None,
           dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample Gamma random values with given shape and float dtype.
 
@@ -1331,7 +1332,7 @@ def gamma(key: KeyArrayLike,
 
 def loggamma(key: KeyArrayLike,
              a: RealArray,
-             shape: Optional[Shape] = None,
+             shape: Shape | None = None,
              dtype: DTypeLikeFloat = float) -> Array:
   """Sample log-gamma random values with given shape and float dtype.
 
@@ -1473,7 +1474,7 @@ def _poisson(key, lam, shape, dtype) -> Array:
 
 def poisson(key: KeyArrayLike,
             lam: RealArray,
-            shape: Optional[Shape] = None,
+            shape: Shape | None = None,
             dtype: DTypeLikeInt = int) -> Array:
   r"""Sample Poisson random values with given shape and integer dtype.
 
@@ -1555,7 +1556,7 @@ def _gumbel(key, shape, dtype) -> Array:
 def categorical(key: KeyArrayLike,
                 logits: RealArray,
                 axis: int = -1,
-                shape: Optional[Shape] = None) -> Array:
+                shape: Shape | None = None) -> Array:
   """Sample random values from categorical distributions.
 
   Args:
@@ -1669,7 +1670,7 @@ def _logistic(key, shape, dtype):
 
 def pareto(key: KeyArrayLike,
            b: RealArray,
-           shape: Optional[Shape] = None,
+           shape: Shape | None = None,
            dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample Pareto random values with given shape and float dtype.
 
@@ -1770,7 +1771,7 @@ def _t(key, df, shape, dtype) -> Array:
 
 def chisquare(key: KeyArrayLike,
               df: RealArray,
-              shape: Optional[Shape] = None,
+              shape: Shape | None = None,
               dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample Chisquare random values with given shape and float dtype.
 
@@ -1823,7 +1824,7 @@ def _chisquare(key, df, shape, dtype) -> Array:
 def f(key: KeyArrayLike,
       dfnum: RealArray,
       dfden: RealArray,
-      shape: Optional[Shape] = None,
+      shape: Shape | None = None,
       dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample F-distribution random values with given shape and float dtype.
 
@@ -2153,7 +2154,7 @@ def ball(
 
 def rayleigh(key: KeyArrayLike,
              scale: RealArray,
-             shape: Optional[Shape] = None,
+             shape: Shape | None = None,
              dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample Rayleigh random values with given shape and float dtype.
 
@@ -2206,7 +2207,7 @@ def _rayleigh(key, scale, shape, dtype) -> Array:
 
 def wald(key: KeyArrayLike,
          mean: RealArray,
-         shape: Optional[Shape] = None,
+         shape: Shape | None = None,
          dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample Wald random values with given shape and float dtype.
 
@@ -2264,7 +2265,7 @@ def _wald(key, mean, shape, dtype) -> Array:
 
 def geometric(key: KeyArrayLike,
               p: RealArray,
-              shape: Optional[Shape] = None,
+              shape: Shape | None = None,
               dtype: DTypeLikeInt = int) -> Array:
   r"""Sample Geometric random values with given shape and float dtype.
 
@@ -2319,7 +2320,7 @@ def triangular(key: KeyArrayLike,
                left: RealArray,
                mode: RealArray,
                right: RealArray,
-               shape: Optional[Shape] = None,
+               shape: Shape | None = None,
                dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample Triangular random values with given shape and float dtype.
 
@@ -2382,7 +2383,7 @@ def _triangular(key, left, mode, right, shape, dtype) -> Array:
 
 def lognormal(key: KeyArrayLike,
               sigma: RealArray = np.float32(1),
-              shape: Optional[Shape] = None,
+              shape: Shape | None = None,
               dtype: DTypeLikeFloat = float) -> Array:
   r""" Sample lognormal random values with given shape and float dtype.
 
@@ -2588,7 +2589,7 @@ def binomial(
     key: KeyArray,
     n: RealArray,
     p: RealArray,
-    shape: Optional[Shape] = None,
+    shape: Shape | None = None,
     dtype: DTypeLikeFloat = float,
 ) -> Array:
   r"""Sample Binomial random values with given shape and float dtype.

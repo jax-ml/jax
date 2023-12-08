@@ -25,7 +25,8 @@ import itertools as it
 import logging
 import math
 import threading
-from typing import (Any, Callable, NamedTuple, Iterator, Optional, Union, cast, TypeVar)
+from typing import (Any, Callable, NamedTuple, Optional, Union, cast, TypeVar)
+from collections.abc import Iterator
 import warnings
 
 import numpy as np
@@ -2914,8 +2915,8 @@ def _compile_replicated_mesh_executable_from_hlo(
 
 @lru_cache
 def create_mesh_pspec_sharding(
-    mesh: Mesh, pspec: Optional[PartitionSpec], parsed_pspec=None,
-    memory_kind: Optional[str] = None) -> sharding_impls.NamedSharding:
+    mesh: Mesh, pspec: PartitionSpec | None, parsed_pspec=None,
+    memory_kind: str | None = None) -> sharding_impls.NamedSharding:
   if pspec is None:
     pspec, parsed_pspec = PartitionSpec(), None
   return sharding_impls.NamedSharding(mesh, pspec, _parsed_pspec=parsed_pspec,

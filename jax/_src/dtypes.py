@@ -24,7 +24,7 @@ from __future__ import annotations
 import abc
 import builtins
 import functools
-from typing import cast, overload, Any, Literal, Optional, Union
+from typing import cast, overload, Any, Literal, Union
 import warnings
 
 import ml_dtypes
@@ -207,7 +207,7 @@ def to_complex_dtype(dtype: DTypeLike) -> DType:
 
 
 @functools.cache
-def _canonicalize_dtype(x64_enabled: bool, allow_extended_dtype: bool, dtype: Any) -> Union[DType, ExtendedDType]:
+def _canonicalize_dtype(x64_enabled: bool, allow_extended_dtype: bool, dtype: Any) -> DType | ExtendedDType:
   if issubdtype(dtype, extended):
     if not allow_extended_dtype:
       raise ValueError(f"Internal: canonicalize_dtype called on extended dtype {dtype} "
@@ -227,10 +227,10 @@ def _canonicalize_dtype(x64_enabled: bool, allow_extended_dtype: bool, dtype: An
 def canonicalize_dtype(dtype: Any, allow_extended_dtype: Literal[False] = False) -> DType: ...
 
 @overload
-def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False) -> Union[DType, ExtendedDType]: ...
+def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False) -> DType | ExtendedDType: ...
 
 @export
-def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False) -> Union[DType, ExtendedDType]:
+def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False) -> DType | ExtendedDType:
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
   return _canonicalize_dtype(config.enable_x64.value, allow_extended_dtype, dtype)  # pytype: disable=bad-return-type
 
@@ -292,7 +292,7 @@ def _scalar_type_to_dtype(typ: type, value: Any = None) -> DType:
   return dtype
 
 
-def coerce_to_array(x: Any, dtype: Optional[DTypeLike] = None) -> np.ndarray:
+def coerce_to_array(x: Any, dtype: DTypeLike | None = None) -> np.ndarray:
   """Coerces a scalar or NumPy array to an np.array.
 
   Handles Python scalar type promotion according to JAX's rules, not NumPy's
@@ -643,10 +643,10 @@ def result_type(*args: Any, return_weak_type_flag: Literal[True]) -> tuple[DType
 def result_type(*args: Any, return_weak_type_flag: Literal[False] = False) -> DType: ...
 
 @overload
-def result_type(*args: Any, return_weak_type_flag: bool = False) -> Union[DType, tuple[DType, bool]]: ...
+def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tuple[DType, bool]: ...
 
 @export
-def result_type(*args: Any, return_weak_type_flag: bool = False) -> Union[DType, tuple[DType, bool]]:
+def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tuple[DType, bool]:
   """Convenience function to apply JAX argument dtype promotion.
 
   Args:

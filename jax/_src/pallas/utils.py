@@ -15,7 +15,6 @@
 """Pallas utility functions."""
 import math
 import numpy as np
-from typing import Tuple
 
 from jax import lax
 from jax._src import core as jax_core
@@ -36,7 +35,7 @@ def cdiv(a: int, b: int) -> int:
   return (a + b - 1) // b
 
 
-def strides_from_shape(shape: Tuple[int, ...]) -> Tuple[int, ...]:
+def strides_from_shape(shape: tuple[int, ...]) -> tuple[int, ...]:
   size = np.prod(shape)
   strides = []
   for s in shape:

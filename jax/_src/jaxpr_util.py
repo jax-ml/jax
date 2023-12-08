@@ -202,7 +202,7 @@ def pprof_equation_profile(jaxpr: core.Jaxpr) -> bytes:
     pprof tool for visualization.
   """
   d: DefaultDict[tuple[Optional[xla_client.Traceback], core.Primitive], int]
-  d = collections.defaultdict(lambda: 0)
+  d = collections.defaultdict(int)
   for _, eqn in all_eqns(jaxpr):
     d[(eqn.source_info.traceback, eqn.primitive)] += 1
   return _pprof_profile(d)

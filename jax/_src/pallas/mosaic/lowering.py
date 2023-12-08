@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import dataclasses
 import functools
-from typing import Any, Callable, Sequence
+from typing import Any, Callable
+from collections.abc import Sequence
 
 from jax import core as jax_core
 from jax import lax

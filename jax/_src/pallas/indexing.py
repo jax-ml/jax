@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Tuple
+from typing import Any
 
 import jax
 from jax import core as jax_core
@@ -37,7 +37,7 @@ import numpy as np
 # to `tl.broadcast_to`.
 broadcast_to_p = jax_core.Primitive('broadcast_to')
 
-def broadcast_to(a: jax.Array, shape: Tuple[int, ...]) -> jax.Array:
+def broadcast_to(a: jax.Array, shape: tuple[int, ...]) -> jax.Array:
   if a.shape == shape:
     return a
   return broadcast_to_p.bind(a, shape=shape)
@@ -99,9 +99,9 @@ ds = dslice  # Handy alias
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass
 class NDIndexer:
-  indices: Tuple[int | Slice | jax.Array, ...]
-  shape: Tuple[int, ...]
-  int_indexer_shape: Tuple[int, ...]
+  indices: tuple[int | Slice | jax.Array, ...]
+  shape: tuple[int, ...]
+  int_indexer_shape: tuple[int, ...]
 
   def __post_init__(self):
     if len(self.indices) != len(self.shape):
@@ -148,7 +148,7 @@ class NDIndexer:
     indices = merge_lists(is_int_indexing, other_indexers, int_indexers)
     return NDIndexer(tuple(indices), shape, bcast_shape)
 
-  def get_indexer_shape(self) -> Tuple[int, ...]:
+  def get_indexer_shape(self) -> tuple[int, ...]:
     is_int_indexing = [not isinstance(i, Slice) for i in self.indices]
     other_indexers, _ = partition_list(is_int_indexing, self.indices)
     other_shape = [s.size for s in other_indexers]  # type: ignore

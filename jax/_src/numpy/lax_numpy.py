@@ -32,8 +32,7 @@ from functools import partial
 import math
 import operator
 import types
-from typing import (overload, Any, Callable, Literal, NamedTuple, Optional,
-                    Protocol, TypeVar, Union)
+from typing import (overload, Any, Callable, Literal, NamedTuple, Protocol, TypeVar, Union)
 from textwrap import dedent as _dedent
 import warnings
 
@@ -2443,7 +2442,7 @@ def identity(n: DimSize, dtype: DTypeLike | None = None) -> Array:
    ``(jnp.arange(-600, 600) * .01).astype(jnp.bfloat16)`` to generate a sequence in a higher precision
    and then convert it to the desired lower precision.
 """)
-def arange(start: DimSize, stop: Optional[DimSize] = None,
+def arange(start: DimSize, stop: DimSize | None = None,
            step: DimSize | None = None, dtype: DTypeLike | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "arange")
   if not config.dynamic_shapes.value:
@@ -2480,8 +2479,7 @@ def arange(start: DimSize, stop: Optional[DimSize] = None,
     return lax.iota(dtype, start)
   else:
     if step is None and start == 0 and stop is not None:
-      stop = np.ceil(stop).astype(int)
-      return lax.iota(dtype, stop)
+      return lax.iota(dtype, np.ceil(stop).astype(int))
     return array(np.arange(start, stop=stop, step=step, dtype=dtype))
 
 
@@ -2833,7 +2831,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
 
 
 @util._wraps(np.tri)
-def tri(N: int, M: int | None = None, k: int = 0, dtype: Optional[DTypeLike] = None) -> Array:
+def tri(N: int, M: int | None = None, k: int = 0, dtype: DTypeLike | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "tri")
   M = M if M is not None else N
   dtype = dtype or float32
@@ -3933,7 +3931,7 @@ def sort_complex(a: ArrayLike) -> Array:
 
 @util._wraps(np.lexsort)
 @partial(jit, static_argnames=('axis',))
-def lexsort(keys: Union[Array, np.ndarray, Sequence[ArrayLike]], axis: int = -1) -> Array:
+def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> Array:
   key_tuple = tuple(keys)
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
   util.check_arraylike("lexsort", *key_tuple, emit_warning=True)

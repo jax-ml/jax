@@ -25,7 +25,7 @@ import itertools
 import operator
 import re
 import typing
-from typing import Any, Callable, NamedTuple, Optional, Protocol, Union
+from typing import Any, Callable, NamedTuple, Protocol, Union
 import warnings
 
 import numpy as np
@@ -707,7 +707,7 @@ def _to_xla_layout(layout: XLACompatibleLayout | None | LayoutRequest) -> str | 
   return layout._to_xla_layout()
 
 
-def _get_mem_kind(s: Optional[XLACompatibleSharding]) -> Optional[str]:
+def _get_mem_kind(s: XLACompatibleSharding | None) -> str | None:
   if s is None:
     return None
   assert isinstance(s, sharding_impls.XLACompatibleSharding)
@@ -1454,7 +1454,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     with source_info_util.user_context(eqn.source_info.traceback), loc:
       override_rule = get_override_lowering_rule(eqn.primitive)
       platform_rules: dict[str, LoweringRule] = {}
-      default_rule: Optional[LoweringRule] = None
+      default_rule: LoweringRule | None = None
       # See mlir.lower_per_platform for meaning of `platform_rules` and `default_rule`
       if override_rule is not None:
         default_rule = override_rule
@@ -1525,7 +1525,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
 def lower_per_platform(ctx: LoweringRuleContext,
                        description: str,
                        platform_rules: dict[str, LoweringRule],
-                       default_rule: Optional[LoweringRule],
+                       default_rule: LoweringRule | None,
                        effects: effects_lib.Effects,
                        *rule_args: ir.Value,
                        **rule_kwargs) -> ir.Value:
@@ -1710,7 +1710,7 @@ def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects,
   return func_op
 
 
-def check_backend_matches(inner_backend: Optional[str],
+def check_backend_matches(inner_backend: str | None,
                           lowering_platforms: Sequence[str]):
   # For nested calls, the outermost call sets the backend for all inner calls;
   # it's an error if the inner call has a conflicting explicit backend spec.

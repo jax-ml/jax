@@ -19,7 +19,7 @@ from functools import partial
 import inspect
 import itertools
 import operator
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Callable, TypeVar
 
 import jax
 import weakref
@@ -104,7 +104,7 @@ Y = TypeVar('Y')
 def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
          init: Carry,
          xs: X,
-         length: Optional[int] = None,
+         length: int | None = None,
          reverse: bool = False,
          unroll: int | bool = 1) -> tuple[Carry, Y]:
   """Scan a function over leading array axes while carrying along state.

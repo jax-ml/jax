@@ -76,7 +76,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       if all(tf_device.device_type != d.device_type for d in cls.tf_devices):
         cls.tf_devices.append(tf_device)
 
-    super(CallTfTest, cls).setUpClass()
+    super().setUpClass()
 
   def setUp(self):
     if tf is None:
