@@ -59,6 +59,7 @@ from jax.interpreters import mlir
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2, safe_zip
 
 config.parse_flags_with_absl()
@@ -392,6 +393,74 @@ class PJitTest(jtu.BufferDonationTestCase):
     jax.tree_map(self.assertNotDeleted, x_tree)
     jax.tree_map(self.assertDeleted, y_tree)
     jax.tree_map(self.assertNotDeleted, z_tree)
+
+  @unittest.skipIf(xla_extension_version < 220, 'jaxlib version too old')
+  @jtu.run_on_devices('tpu', 'cpu', 'gpu')
+  def testBufferDonationWithOutputShardingInference(self):
+    mesh = jtu.create_global_mesh((2,), 'x')
+    s = NamedSharding(mesh, P('x'))
+    rs = NamedSharding(mesh, P())
+
+    @partial(pjit, donate_argnames=('inp2', 'inp3'))
+    def f(inp1, inp2, inp3):
+      return (
+          jax.lax.with_sharding_constraint(inp1, rs),
+          inp1,
+          jax.lax.with_sharding_constraint(inp2, rs),
+          inp2,
+          jax.lax.with_sharding_constraint(inp3, rs),
+          inp3,
+      )
+
+    x = np.ones((2, 5)) * 4
+    x_tree = jax.device_put({'a': {'b': x}, 'c': x}, s)
+
+    y = np.ones((2, 7)) * 2
+    y_tree = jax.device_put({'a': {'b': y}, 'c': y}, s)
+
+    z = np.ones((2, 11))
+    z_tree = jax.device_put({'a': {'b': z}, 'c': z}, s)
+
+    out = f(x_tree, y_tree, z_tree)
+    jax.tree_map(self.assertNotDeleted, x_tree)
+    jax.tree_map(self.assertDeleted, y_tree)
+    jax.tree_map(self.assertDeleted, z_tree)
+
+  @unittest.skipIf(xla_extension_version < 220, 'jaxlib version too old')
+  @jtu.run_on_devices('tpu')
+  def testBufferDonationWithOutputShardingInferenceAndTokens(self):
+    mesh = jtu.create_global_mesh((2,), 'x')
+    s = NamedSharding(mesh, P('x'))
+
+    def _callback(x):
+      self.assertIs(type(x), np.ndarray)
+
+    @partial(pjit, donate_argnames=('x'))
+    def f(x):
+      # Just to get tokens.
+      jax.experimental.io_callback(_callback, None, x, ordered=True)
+      jax.experimental.io_callback(_callback, None, x, ordered=True)
+      return x * x
+
+    x = np.ones((2, 5)) * 4
+    x = jax.device_put(x, s)
+    f(x)
+    jax.effects_barrier()
+    self.assertDeleted(x)
+
+  @unittest.skipIf(xla_extension_version < 220, 'jaxlib version too old')
+  @jtu.run_on_devices('tpu', 'cpu', 'gpu')
+  def testBufferDonationNotDonated(self):
+    mesh = jtu.create_global_mesh((2,), 'x')
+    s = NamedSharding(mesh, P('x'))
+
+    @partial(pjit, donate_argnames=('x'))
+    def f(x):
+      return x @ x.T
+
+    x = jax.device_put(np.arange(16).reshape(8, 2), s)
+    f(x)
+    self.assertNotDeleted(x)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingConstraintStablehlo(self):

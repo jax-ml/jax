@@ -1043,12 +1043,13 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
 
   def test_single_mem_kind_donation_default_mem_kind(self):
     mesh = jtu.create_global_mesh((2,), "x")
+    s = NamedSharding(mesh, P())
 
-    @functools.partial(jax.jit, donate_argnums=0)
+    @functools.partial(jax.jit, out_shardings=s, donate_argnums=0)
     def f(inp1):
       return inp1 * 2
 
-    x = jax.device_put(np.arange(16).reshape(8, 2), NamedSharding(mesh, P()))
+    x = jax.device_put(np.arange(16).reshape(8, 2), s)
 
     f(x)
 
