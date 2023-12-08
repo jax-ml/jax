@@ -1433,6 +1433,51 @@ def _for_lowering_rule(
 lowering_rules[for_loop.for_p] = _for_lowering_rule
 
 
+def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
+                             jaxpr: jax_core.Jaxpr, start: int,
+                             num_steps: int, consts, *args,
+                             has_loop_index: bool,
+                             unroll: int):
+  def _run_body(i, args):
+    if has_loop_index:
+      lowering_context = ctx.lowering_context.replace(
+          block_shapes=ctx.block_shapes)
+      args = jaxpr_subcomp(lowering_context, jaxpr, *consts, i, *args)
+    else:
+      del i
+      lowering_context = ctx.lowering_context.replace(
+          block_shapes=ctx.block_shapes[:len(consts)]
+          + ctx.block_shapes[len(consts) + 1:],
+      )
+      args = jaxpr_subcomp(lowering_context, jaxpr, *consts, *args)
+    return args
+  if num_steps == unroll:
+    # No need for an scf.For. We can just unroll completely
+    for i in range(start, start + num_steps):
+      args = _run_body(
+          ir_constant(i, mlir_type=mlir.dtype_to_ir_type(jnp.dtype("int32"))),
+          args,
+      )
+    return args
+  if unroll != 1:
+    raise NotImplementedError(
+        f"Only unroll={num_steps=} and unroll=1 supported. Got {unroll=}.")
+  if len(args) > 0:
+    raise NotImplementedError("Rolled loops don't support arguments")
+  lbd = ir_constant(0, mlir_type=mlir.dtype_to_ir_type(jnp.dtype("int32")))
+  ubd = ir_constant(
+      num_steps, mlir_type=mlir.dtype_to_ir_type(jnp.dtype("int32"))
+  )
+  step = ir_constant(1, mlir_type=mlir.dtype_to_ir_type(jnp.dtype("int32")))
+  for_op = scf.ForOp(lbd, ubd, step, args)
+  with ir.InsertionPoint(for_op.body):
+    iv = for_op.induction_variable
+    inner_args = for_op.inner_iter_args
+    inner_out = _run_body(iv, inner_args)
+    scf.YieldOp(inner_out)
+  return for_op.results
+
+
 def _lower_jaxpr_to_unrolled_for_loop(ctx: LoweringRuleContext,
                                       jaxpr: jax_core.Jaxpr, start: int,
                                       num_steps: int, consts, *args,
@@ -1469,7 +1514,7 @@ def _scan_lowering_rule(
   num_extensive = len(args) - num_consts - num_carry
   if num_extensive: raise NotImplementedError
   if reverse: raise NotImplementedError
-  del linear, num_extensive, unroll, reverse
+  del linear, num_extensive, reverse
 
   jaxpr, jaxpr_consts = jaxpr.jaxpr, jaxpr.consts
   if jaxpr_consts: raise NotImplementedError
@@ -1483,9 +1528,10 @@ def _scan_lowering_rule(
     loop_index_start, *args = args
   else:
     loop_index_start = 0
-  out = _lower_jaxpr_to_unrolled_for_loop(ctx, jaxpr, loop_index_start, length,
-                                          consts, *args,
-                                          has_loop_index=has_loop_index)
+  out = _lower_jaxpr_to_for_loop(
+      ctx, jaxpr, loop_index_start, length,
+      consts, *args, has_loop_index=has_loop_index,
+      unroll=unroll)
   if has_loop_index:
     out = [ir_constant(length,
                        mlir_type=mlir.dtype_to_ir_type(jnp.dtype('int32'))),

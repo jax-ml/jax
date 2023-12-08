@@ -366,7 +366,7 @@ def _flash_attention_kernel_single_batch(
   @pl.when(should_run)
   def run():
     @functools.partial(
-        lax.fori_loop, 0, block_k_major // block_k, init_val=None
+        lax.fori_loop, 0, block_k_major // block_k, init_val=None, unroll=True
     )
     def body(i, _):
       m_prev = m_scratch_ref[batch_idx]
