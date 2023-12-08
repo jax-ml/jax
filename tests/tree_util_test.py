@@ -578,6 +578,14 @@ class TreeTest(jtu.JaxTestCase):
     restored_d = tree_util.tree_unflatten(treedef, leaves)
     self.assertEqual(list(restored_d.keys()), ["a", "b", "c"])
 
+  def testFlattenDefaultDictKeyOrder(self):
+    d = collections.defaultdict(lambda: 0,
+                                {"b": 2, "a": 1, "c": {"b": 2, "a": 1}})
+    leaves, treedef = tree_util.tree_flatten(d)
+    self.assertEqual(leaves, [1, 2, 1, 2])
+    restored_d = tree_util.tree_unflatten(treedef, leaves)
+    self.assertEqual(list(restored_d.keys()), ["a", "b", "c"])
+
   def testWalk(self):
     d = {"b": 2, "a": 1, "c": {"b": 2, "a": 1}}
     leaves, treedef = tree_util.tree_flatten(d)

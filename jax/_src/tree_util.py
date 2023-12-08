@@ -337,9 +337,13 @@ register_pytree_node(
   lambda x: (tuple(x.values()), tuple(x.keys())),
   lambda keys, values: collections.OrderedDict(safe_zip(keys, values)))
 
+def _flatten_defaultdict(d):
+  keys = tuple(sorted(d))
+  return tuple(d[k] for k in keys), (d.default_factory, keys)
+
 register_pytree_node(
   collections.defaultdict,
-  lambda x: (tuple(x.values()), (x.default_factory, tuple(x.keys()))),
+  _flatten_defaultdict,
   lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)))  # type: ignore[index,call-overload]
 
 
