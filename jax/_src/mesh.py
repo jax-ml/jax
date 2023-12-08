@@ -197,7 +197,7 @@ class Mesh(contextlib.ContextDecorator):
     if val is not None:
       return val
 
-    self = super(Mesh, cls).__new__(cls)
+    self = super().__new__(cls)
     self.devices = devices.copy()
     self.devices.flags.writeable = False
     self.axis_names = axis_names

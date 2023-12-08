@@ -29,7 +29,7 @@ import inspect
 import math
 import typing
 from typing import (Any, Callable, Literal, NamedTuple, TypeVar, overload,
-                    cast, Optional)
+                    cast)
 import weakref
 
 import numpy as np
@@ -2461,7 +2461,7 @@ def make_jaxpr(fun: Callable,
     make_jaxpr_f.__name__ = f"make_jaxpr({fun.__name__})"
   return make_jaxpr_f
 
-def _infer_src_sharding(src, x) -> Optional[Sharding]:
+def _infer_src_sharding(src, x) -> Sharding | None:
   if src is not None:
     return src
   if isinstance(x, array.ArrayImpl):

@@ -32,7 +32,7 @@ import pkgutil
 import platform as py_platform
 import sys
 import threading
-from typing import Any, Callable, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Union
 import warnings
 
 from jax._src import config
@@ -855,7 +855,7 @@ def default_backend() -> str:
   return get_backend(None).platform
 
 
-def backend_pjrt_c_api_version(platform=None) -> Optional[Tuple[int, int]]:
+def backend_pjrt_c_api_version(platform=None) -> Optional[tuple[int, int]]:
   """Returns the PJRT C API version of the backend.
 
   Returns None if the backend does not use PJRT C API.

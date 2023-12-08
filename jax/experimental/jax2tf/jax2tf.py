@@ -2163,7 +2163,7 @@ tf_impl_with_avals[lax.dot_general_p] = _dot_general
 def _dot_general_convert_to_common_dtype(
   lhs: TfVal, lhs_aval: core.ShapedArray,
   rhs: TfVal, rhs_aval: core.ShapedArray,
-  out_aval: core.ShapedArray) -> Tuple[TfVal, TfVal, Callable[[TfVal], TfVal]]:
+  out_aval: core.ShapedArray) -> tuple[TfVal, TfVal, Callable[[TfVal], TfVal]]:
   # Returns the converted lhs, rhs, and the converter for the result.
   # tfxla.dot_general does not handle arguments of different types.
   # We convert the arguments and the result.

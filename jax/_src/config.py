@@ -22,7 +22,7 @@ import logging
 import os
 import sys
 import threading
-from typing import Any, Callable, Generic, NamedTuple, NoReturn, Optional, TypeVar
+from typing import Any, Callable, Generic, NamedTuple, NoReturn, TypeVar
 import warnings
 
 from jax._src import lib
@@ -134,7 +134,7 @@ class Config:
       raise AttributeError(f"Unrecognized config option: {name}")
 
   def add_option(self, name, default, opt_type, meta_args, meta_kwargs,
-                 update_hook: Optional[Callable[[Any], None]] = None):
+                 update_hook: Callable[[Any], None] | None = None):
     if name in self.values:
       raise Exception(f"Config option {name} already defined")
     self.values[name] = default
@@ -238,7 +238,7 @@ _thread_local_state = threading.local()
 
 class _StateContextManager(Generic[_T]):
   def __init__(self, name, help, update_thread_local_hook,
-               validate_new_val_hook: Optional[Callable[[Any], None]] = None,
+               validate_new_val_hook: Callable[[Any], None] | None = None,
                extra_description: str = "", default_value: Any = no_default):
     self._name = name
     self.__name__ = name[4:] if name.startswith('jax_') else name
@@ -302,8 +302,8 @@ def define_bool_state(
     default: bool,
     help: str,
     *,
-    update_global_hook: Optional[Callable[[bool], None]] = None,
-    update_thread_local_hook: Optional[Callable[[Optional[bool]], None]] = None,
+    update_global_hook: Callable[[bool], None] | None = None,
+    update_thread_local_hook: Callable[[bool | None], None] | None = None,
     upgrade: bool = False,
     extra_description: str = '',
 ) -> _StateContextManager[bool]:
@@ -375,11 +375,11 @@ def define_bool_state(
 def define_enum_state(
     name: str,
     enum_values: list[str],
-    default: Optional[str],
+    default: str | None,
     help: str,
     *,
-    update_global_hook: Optional[Callable[[str], None]] = None,
-    update_thread_local_hook: Optional[Callable[[Optional[str]], None]] = None,
+    update_global_hook: Callable[[str], None] | None = None,
+    update_thread_local_hook: Callable[[str | None], None] | None = None,
 ) -> _StateContextManager[str]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -420,11 +420,11 @@ def define_enum_state(
 
 def define_int_state(
     name: str,
-    default: Optional[int],
+    default: int | None,
     help: str,
     *,
-    update_global_hook: Optional[Callable[[str], None]] = None,
-    update_thread_local_hook: Optional[Callable[[Optional[str]], None]] = None,
+    update_global_hook: Callable[[str], None] | None = None,
+    update_thread_local_hook: Callable[[str | None], None] | None = None,
 ) -> _StateContextManager[int]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -463,11 +463,11 @@ def define_int_state(
 
 def define_float_state(
     name: str,
-    default: Optional[float],
+    default: float | None,
     help: str,
     *,
-    update_global_hook: Optional[Callable[[str], None]] = None,
-    update_thread_local_hook: Optional[Callable[[Optional[str]], None]] = None,
+    update_global_hook: Callable[[str], None] | None = None,
+    update_thread_local_hook: Callable[[str | None], None] | None = None,
 ) -> _StateContextManager[float]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -508,11 +508,11 @@ def define_float_state(
 
 def define_string_state(
     name: str,
-    default: Optional[str],
+    default: str | None,
     help: str,
     *,
-    update_global_hook: Optional[Callable[[str], None]] = None,
-    update_thread_local_hook: Optional[Callable[[Optional[str]], None]] = None,
+    update_global_hook: Callable[[str], None] | None = None,
+    update_thread_local_hook: Callable[[str | None], None] | None = None,
 ) -> _StateContextManager[str]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -552,9 +552,9 @@ def define_string_or_object_state(
     default: Any,
     help: str,
     *,
-    update_global_hook: Optional[Callable[[Any], None]] = None,
-    update_thread_local_hook: Optional[Callable[[Any], None]] = None,
-    validate_new_val_hook: Optional[Callable[[Any], None]] = None,
+    update_global_hook: Callable[[Any], None] | None = None,
+    update_thread_local_hook: Callable[[Any], None] | None = None,
+    validate_new_val_hook: Callable[[Any], None] | None = None,
 ) -> _StateContextManager[Any]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -651,9 +651,9 @@ already_configured_with_absl = False
 # a global/thread-local state. These methods allow updates to part of the
 # state when a configuration value changes.
 class _GlobalExtraJitContext(NamedTuple):
-  numpy_rank_promotion: Optional[str] = None
-  numpy_dtype_promotion: Optional[str] = None
-  default_matmul_precision: Optional[Any] = None
+  numpy_rank_promotion: str | None = None
+  numpy_dtype_promotion: str | None = None
+  default_matmul_precision: Any | None = None
   dynamic_shapes: bool = False
   threefry_partitionable: bool = False
   softmax_custom_jvp: bool = False
@@ -675,12 +675,12 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   The initialization, which uses both config.py and core.py is done using
   `_update_thread_local_jit_state` in core.py to prevent circular imports.
   """
-  dynamic_trace_state: Optional[Any] = None
+  dynamic_trace_state: Any | None = None
   axis_env_state: Hashable = ()
   mesh_context_manager: Hashable = ()
-  numpy_rank_promotion: Optional[str] = None
-  numpy_dtype_promotion: Optional[str] = None
-  default_matmul_precision: Optional[Any] = None
+  numpy_rank_promotion: str | None = None
+  numpy_dtype_promotion: str | None = None
+  default_matmul_precision: Any | None = None
   dynamic_shapes: bool = False
   threefry_partitionable: bool = False
   softmax_custom_jvp: bool = False
@@ -1320,7 +1320,7 @@ def transfer_guard(new_val: str) -> Iterator[None]:
     yield
 
 
-def _update_debug_log_modules(module_names_str: Optional[str]):
+def _update_debug_log_modules(module_names_str: str | None):
   logging_config.disable_all_debug_logging()
   if not module_names_str:
     return

@@ -25,7 +25,7 @@ chunk, splits it in two, and sends each of the half-chunks in each direction
 from __future__ import annotations
 import functools
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import jax
 from jax import lax

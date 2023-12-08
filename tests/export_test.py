@@ -18,7 +18,6 @@ import functools
 import logging
 import math
 import re
-from typing import Optional
 import unittest
 
 from absl.testing import absltest
@@ -98,7 +97,7 @@ mlir.register_lowering(testing_primitive_with_effect_p,
 _testing_multi_platform_to_add = dict(cpu=2., tpu=3., cuda=4., rocm=5.)
 
 def _testing_multi_platform_func(x, *,
-                                 effect_class_name: Optional[str] = None):
+                                 effect_class_name: str | None = None):
   # Behaves like x + 2 * _testing_multi_platform_to_add[platform]
   def for_platform(platform: str):
     if effect_class_name is None:
@@ -142,7 +141,7 @@ class JaxExportTest(jtu.JaxTestCase):
       except RuntimeError:
         continue
       cls.platforms.append(backend)
-    super(JaxExportTest, cls).setUpClass()
+    super().setUpClass()
 
   def setUp(self):
     super().setUp()

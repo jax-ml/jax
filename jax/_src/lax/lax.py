@@ -22,7 +22,7 @@ from functools import partial
 import itertools
 import math
 import operator
-from typing import (Any, Callable, Optional, TypeVar, Union,
+from typing import (Any, Callable, TypeVar, Union,
                     cast as type_cast, overload)
 import warnings
 
@@ -104,7 +104,7 @@ def _validate_shapes(shapes: Sequence[Shape]):
     map(_check_static_shape, shapes)
 
 def _try_broadcast_shapes(
-    shapes: Sequence[tuple[int, ...]]) -> Optional[tuple[int, ...]]:
+    shapes: Sequence[tuple[int, ...]]) -> tuple[int, ...] | None:
   if len(shapes) == 1: return shapes[0]
   ranks = {len(shape) for shape in shapes}
   if len(ranks) > 1: return None  # must have consistent rank
@@ -140,8 +140,8 @@ def asarray(x: ArrayLike) -> Array:
 def broadcast_shapes(*shapes: tuple[int, ...]) -> tuple[int, ...]: ...
 
 @overload
-def broadcast_shapes(*shapes: tuple[Union[int, core.Tracer], ...]
-                     ) -> tuple[Union[int, core.Tracer], ...]: ...
+def broadcast_shapes(*shapes: tuple[int | core.Tracer, ...]
+                     ) -> tuple[int | core.Tracer, ...]: ...
 
 def broadcast_shapes(*shapes):
   """Returns the shape that results from NumPy broadcasting of `shapes`."""
@@ -183,8 +183,8 @@ def _broadcast_ranks(s1, s2):
 def _identity(x): return x
 
 def _extract_tracers_dyn_shape(
-    shape: Sequence[Union[int, core.Tracer]]
-  ) -> tuple[list[core.Tracer], list[Optional[int]]]:
+    shape: Sequence[int | core.Tracer]
+  ) -> tuple[list[core.Tracer], list[int | None]]:
   # Given a sequence representing a shape, pull out Tracers, replacing with None
   if config.dynamic_shapes.value:
     # We must gate this behavior under a flag because otherwise the errors
@@ -196,9 +196,9 @@ def _extract_tracers_dyn_shape(
     return [], list(shape)  # type: ignore
 
 def _merge_dyn_shape(
-    static_shape: Sequence[Optional[int]],
+    static_shape: Sequence[int | None],
     dyn_shape: Sequence[Any],
-  ) -> tuple[Union[int, mlir.Value, core.Tracer], ...]:
+  ) -> tuple[int | mlir.Value | core.Tracer, ...]:
   # Replace Nones in static_shape with elements of dyn_shape, in order
   dyn_shape_it = iter(dyn_shape)
   shape = tuple(next(dyn_shape_it) if d is None else d for d in static_shape)
@@ -516,7 +516,7 @@ def convert_element_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
   """
   return _convert_element_type(operand, new_dtype, weak_type=False)
 
-def _convert_element_type(operand: ArrayLike, new_dtype: Optional[DTypeLike] = None,
+def _convert_element_type(operand: ArrayLike, new_dtype: DTypeLike | None = None,
                           weak_type: bool = False):
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()  # type: ignore
@@ -599,7 +599,7 @@ def clamp(min: ArrayLike, x: ArrayLike, max: ArrayLike) -> Array:
   """
   return clamp_p.bind(min, x, max)
 
-def concatenate(operands: Union[Array, Sequence[ArrayLike]], dimension: int) -> Array:
+def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
   """Concatenates a sequence of arrays along `dimension`.
 
   Wraps XLA's `Concatenate
@@ -677,7 +677,7 @@ PrecisionLike = Union[None, str, PrecisionType, tuple[str, str],
                       tuple[PrecisionType, PrecisionType]]
 
 def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
-        preferred_element_type: Optional[DTypeLike] = None) -> Array:
+        preferred_element_type: DTypeLike | None = None) -> Array:
   """Vector/vector, matrix/vector, and matrix/matrix multiplication.
 
   Wraps XLA's `Dot
@@ -714,7 +714,7 @@ DotDimensionNumbers = tuple[tuple[Sequence[int], Sequence[int]],
 
 def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionNumbers,
                 precision: PrecisionLike = None,
-                preferred_element_type: Optional[DTypeLike] = None) -> Array:
+                preferred_element_type: DTypeLike | None = None) -> Array:
   """General dot product/contraction operator.
 
   Wraps XLA's `DotGeneral
@@ -813,7 +813,7 @@ def broadcast_to_rank(x: Array, rank: int) -> Array:
   return broadcast(x, (1,) * (rank - x.ndim))
 
 def reshape(operand: ArrayLike, new_sizes: Shape,
-            dimensions: Optional[Sequence[int]] = None) -> Array:
+            dimensions: Sequence[int] | None = None) -> Array:
   """Wraps XLA's `Reshape
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
@@ -1042,7 +1042,7 @@ def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
   return jaxpr, tuple(consts), out_tree()
 
 def _get_monoid_reducer(monoid_op: Callable,
-                        xs: Sequence[Array]) -> Optional[Callable]:
+                        xs: Sequence[Array]) -> Callable | None:
   if len(xs) != 1:
     return None
   x, = xs
@@ -1128,8 +1128,8 @@ def sort(operand: Array, dimension: int = -1,
 def sort(operand: Sequence[Array], dimension: int = -1,
          is_stable: bool = True, num_keys: int = 1) -> tuple[Array, ...]: ...
 
-def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
-         is_stable: bool = True, num_keys: int = 1) -> Union[Array, tuple[Array, ...]]:
+def sort(operand: Array | Sequence[Array], dimension: int = -1,
+         is_stable: bool = True, num_keys: int = 1) -> Array | tuple[Array, ...]:
   """Wraps XLA's `Sort
   <https://www.tensorflow.org/xla/operation_semantics#sort>`_ operator.
 
@@ -1196,7 +1196,7 @@ def tie_in(x: Any, y: T) -> T:
   """Deprecated. Ignores ``x`` and returns ``y``."""
   return y
 
-def full(shape: Shape, fill_value: ArrayLike, dtype: Optional[DTypeLike] = None) -> Array:
+def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None) -> Array:
   """Returns an array of `shape` filled with `fill_value`.
 
   Args:
@@ -1303,7 +1303,7 @@ def stop_gradient(x: T) -> T:
       return x
   return tree_map(stop, x)
 
-def reduce_precision(operand: Union[float, ArrayLike],
+def reduce_precision(operand: float | ArrayLike,
                      exponent_bits: int,
                      mantissa_bits: int) -> Array:
   """Wraps XLA's `ReducePrecision
@@ -1342,9 +1342,9 @@ def expand_dims(array: ArrayLike, dimensions: Sequence[int]) -> Array:
 
 ### convenience wrappers around traceables
 
-def full_like(x: Union[ArrayLike, DuckTypedArray],
-              fill_value: ArrayLike, dtype: Optional[DTypeLike] = None,
-              shape: Optional[Shape] = None) -> Array:
+def full_like(x: ArrayLike | DuckTypedArray,
+              fill_value: ArrayLike, dtype: DTypeLike | None = None,
+              shape: Shape | None = None) -> Array:
   """Create a full array like np.full based on the example array `x`.
 
   Args:
@@ -1380,7 +1380,7 @@ def full_like(x: Union[ArrayLike, DuckTypedArray],
 
 
 def collapse(operand: Array, start_dimension: int,
-             stop_dimension: Optional[int] = None) -> Array:
+             stop_dimension: int | None = None) -> Array:
   """Collapses dimensions of an array into a single dimension.
 
   For example, if ``operand`` is an array with shape ``[2, 3, 4]``,
@@ -1691,7 +1691,7 @@ def broadcast_hlo(
   return out
 
 def _nary_lower_hlo(op: Callable, ctx,
-                    *args: Union[ir.Value, Sequence[ir.Value]],
+                    *args: ir.Value | Sequence[ir.Value],
                     explicit_type=False, **params) -> Sequence[ir.Value]:
   """Lowers an elementwise operator to its MLIR equivalent.
 
@@ -2516,7 +2516,7 @@ def _precision_config(precision):
 
 
 def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
-                            preferred_element_type: Optional[DTypeLike]):
+                            preferred_element_type: DTypeLike | None):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   if not all(np.all(np.greater_equal(d, 0)) and np.all(np.less(d, lhs.ndim))
              for d in (lhs_contracting, lhs_batch)):
@@ -2592,7 +2592,7 @@ def tuple_delete(tup, idx):
 
 
 def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
-                            preferred_element_type: Optional[DTypeLike]):
+                            preferred_element_type: DTypeLike | None):
   # We're mostly matching XLA's logic here, namely in shape_inference.cc and
   # primitive_util.h's HigherPrecisionType, e.g.
   # https://github.com/openxla/xla/blob/ea3a841768d0dcf192e5820c9b25c34c73f2226a/xla/primitive_util.h#L329
@@ -2636,7 +2636,7 @@ def _maybe_upcast(result_dtype, preferred_element_type):
   return preferred_element_type
 
 def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
-                               preferred_element_type: Optional[DTypeLike],
+                               preferred_element_type: DTypeLike | None,
                                swap_ans=False):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   x_ndim = x.aval.ndim
@@ -2657,7 +2657,7 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   return x_bar
 
 def _dot_general_transpose_rhs(g, x, y, *, dimension_numbers, precision,
-                               preferred_element_type: Optional[DTypeLike]):
+                               preferred_element_type: DTypeLike | None):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
   y_bar = _dot_general_transpose_lhs(
@@ -2670,7 +2670,7 @@ def _dot_general_transpose_rhs(g, x, y, *, dimension_numbers, precision,
 
 def _dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
                             precision,
-                            preferred_element_type: Optional[DTypeLike]):
+                            preferred_element_type: DTypeLike | None):
   lhs, rhs = batched_args
   lbd, rbd = batch_dims
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
@@ -2794,7 +2794,7 @@ def precision_attr(precision: PrecisionType) -> ir.ArrayAttr:
 
 
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
-                       precision, preferred_element_type: Optional[np.dtype],
+                       precision, preferred_element_type: np.dtype | None,
                        platform: str = "default"):
   del preferred_element_type  # Implied by the output aval
   lhs_aval, rhs_aval = ctx.avals_in
@@ -4540,7 +4540,7 @@ def _array_copy(arr: ArrayLike) -> Array:
   return copy_p.bind(arr)
 
 
-def _which_dim_sharded(s: PmapSharding) -> Optional[int]:
+def _which_dim_sharded(s: PmapSharding) -> int | None:
   sharded_dim = None
   for i, s in enumerate(s.sharding_spec.sharding):
     if isinstance(s, pxla.Unstacked):
@@ -4898,7 +4898,7 @@ def remaining(original, *removed_lists):
   return [i for i in original if i not in removed]
 
 
-def canonicalize_precision(precision: PrecisionLike) -> Optional[tuple[PrecisionType, PrecisionType]]:
+def canonicalize_precision(precision: PrecisionLike) -> tuple[PrecisionType, PrecisionType] | None:
   """Turns an API precision specification, into a pair of enumeration values.
 
   The API can take the precision as a string, or int, and either as a single

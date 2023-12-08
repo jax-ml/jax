@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from functools import partial
 import re
 import textwrap
-from typing import Any, Callable, NamedTuple, Optional, TypeVar
+from typing import Any, Callable, NamedTuple, TypeVar
 
 import warnings
 
@@ -50,14 +50,14 @@ class ParsedDoc(NamedTuple):
   front_matter: front matter before sections.
   sections: dictionary of section titles to section content.
   """
-  docstr: Optional[str]
+  docstr: str | None
   signature: str = ""
   summary: str = ""
   front_matter: str = ""
   sections: dict[str, str] = {}
 
 
-def _parse_numpydoc(docstr: Optional[str]) -> ParsedDoc:
+def _parse_numpydoc(docstr: str | None) -> ParsedDoc:
   """Parse a standard numpy-style docstring.
 
   Args:
@@ -118,13 +118,13 @@ def _parse_extra_params(extra_params: str) -> dict[str, str]:
 
 
 def _wraps(
-    fun: Optional[Callable[..., Any]],
+    fun: Callable[..., Any] | None,
     update_doc: bool = True,
     lax_description: str = "",
     sections: Sequence[str] = ('Parameters', 'Returns', 'References'),
     skip_params: Sequence[str] = (),
-    extra_params: Optional[str] = None,
-    module: Optional[str] = None,
+    extra_params: str | None = None,
+    module: str | None = None,
 ) -> Callable[[_T], _T]:
   """Specialized version of functools.wraps for wrapping numpy functions.
 

@@ -22,7 +22,7 @@ import enum
 import functools
 import itertools
 import math
-from typing import Any, NamedTuple, Union, cast, Optional
+from typing import Any, NamedTuple, Union, cast
 
 from jax._src import mesh as mesh_lib
 from jax._src.op_shardings import (
@@ -566,9 +566,9 @@ class PmapSharding(XLACompatibleSharding):
 
 
 def _op_sharding_to_pos_sharding(
-    op_sharding: Union[xc.OpSharding, xc.HloSharding],
+    op_sharding: xc.OpSharding | xc.HloSharding,
     device_assignment: Sequence[xc.Device],
-    memory_kind: Optional[str] = None) -> PositionalSharding:
+    memory_kind: str | None = None) -> PositionalSharding:
   if isinstance(op_sharding, xc.OpSharding):
     op_sharding = xc.HloSharding.from_proto(op_sharding)  # type: ignore
 

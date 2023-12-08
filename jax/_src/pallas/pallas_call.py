@@ -18,7 +18,8 @@ from __future__ import annotations
 from functools import partial
 import itertools as it
 
-from typing import Any, Callable, Dict, Sequence, Tuple
+from typing import Any, Callable
+from collections.abc import Sequence
 
 import jax
 from jax import api_util
@@ -89,7 +90,7 @@ def _uninitialized_value(shape, dtype):
 def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
                       interpret, debug: bool,
                       in_shapes,
-                      input_output_aliases: Tuple[Tuple[int, int], ...],
+                      input_output_aliases: tuple[tuple[int, int], ...],
                       grid_mapping: GridMapping,
                       **compiler_params: Any):
   if interpret:
@@ -189,7 +190,7 @@ def _pallas_call_abstract_eval(*avals, out_shapes, **_):
 pallas_call_p.def_abstract_eval(_pallas_call_abstract_eval)
 
 def _pallas_call_jvp_rule(primals, tangents, *, jaxpr, name, which_linear,
-    input_output_aliases: Tuple[Tuple[int, int], ...],
+    input_output_aliases: tuple[tuple[int, int], ...],
     in_shapes, out_shapes, grid_mapping, debug, interpret, **compiler_params: Any):
   if grid_mapping.num_index_operands:
     raise NotImplementedError
@@ -236,7 +237,7 @@ def _pallas_call_jvp_rule(primals, tangents, *, jaxpr, name, which_linear,
   return out_primals, out_tangents
 ad.primitive_jvps[pallas_call_p] = _pallas_call_jvp_rule
 
-def _batch_block_mapping(grid: Tuple[int, ...], aval: jax_core.ShapedArray,
+def _batch_block_mapping(grid: tuple[int, ...], aval: jax_core.ShapedArray,
                          dim: int | batching.NotMapped,
                          block_mapping: BlockMapping | None) -> BlockMapping:
   def _block_map_function(new_idx, *args):
@@ -271,13 +272,13 @@ def _batch_block_mapping(grid: Tuple[int, ...], aval: jax_core.ShapedArray,
 def _pallas_call_batching_rule(args, dims, *,
                                jaxpr: jax_core.Jaxpr,
                                name: str,
-                               in_shapes: Tuple[jax.ShapeDtypeStruct, ...],
-                               out_shapes: Tuple[jax.ShapeDtypeStruct, ...],
+                               in_shapes: tuple[jax.ShapeDtypeStruct, ...],
+                               out_shapes: tuple[jax.ShapeDtypeStruct, ...],
                                grid_mapping: GridMapping,
-                               input_output_aliases: Tuple[Tuple[int, int], ...],
+                               input_output_aliases: tuple[tuple[int, int], ...],
                                debug: bool,
                                interpret: bool,
-                               which_linear: Tuple[bool, ...],
+                               which_linear: tuple[bool, ...],
                                **compiler_params: Any):
   if grid_mapping.num_index_operands:
     scalar_batch_dims = dims[:grid_mapping.num_index_operands]
@@ -428,7 +429,7 @@ def pallas_call(
     in_specs: Sequence[BlockSpec | NoBlockSpec] | NoBlockSpec = no_block_spec,
     out_specs: BlockSpec | NoBlockSpec
     | Sequence[BlockSpec | NoBlockSpec] = no_block_spec,
-    input_output_aliases: Dict[int, int] = {},
+    input_output_aliases: dict[int, int] = {},
     interpret: bool = False,
     name: str | None = None,
     **compiler_params: Any,

@@ -19,7 +19,8 @@ from collections.abc import Sequence
 import contextlib
 import dataclasses
 import functools
-from typing import Any, Callable, Iterator
+from typing import Any, Callable
+from collections.abc import Iterator
 
 from jax._src import api_util
 from jax._src import core as jax_core

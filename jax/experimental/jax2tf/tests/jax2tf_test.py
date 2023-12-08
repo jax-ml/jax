@@ -69,7 +69,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       if all(tf_device.device_type != d.device_type for d in cls.tf_devices):
         cls.tf_devices.append(tf_device)
 
-    super(Jax2TfTest, cls).setUpClass()
+    super().setUpClass()
 
   def test_empty(self):
     f_jax = lambda x, y: x

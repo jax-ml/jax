@@ -266,7 +266,7 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
 
     expected_out = np_inp * 2
     self.assertArraysEqual(out, expected_out)
-    self.assertEqual(out.sharding, s.with_memory_kind(("unpinned_host")))
+    self.assertEqual(out.sharding, s.with_memory_kind("unpinned_host"))
     self._check_mem_kind(executable_mk[0], out.sharding, "unpinned_host")
     for s in out.addressable_shards:
       self.assertArraysEqual(s.data, expected_out[s.index])

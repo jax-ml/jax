@@ -72,7 +72,7 @@ class PrimitiveTest(jtu.JaxTestCase):
         if d.platform not in cls.platforms:
           cls.platforms.append(d.platform)
           cls.devices.append(d)
-    super(PrimitiveTest, cls).setUpClass()
+    super().setUpClass()
 
   # For each primitive we export for all platforms that are available and
   # compare the results of running the exported code and running the native

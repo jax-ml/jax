@@ -65,7 +65,7 @@ def mock_tpu_devices(x, y, z, dev_kind, one_device_per_chip, num_slices=1,
 
 # If this function raises, it's a bug in the test code!
 def _validate_mocked_process_indices(devices, one_device_per_chip):
-  process_to_devices = collections.defaultdict(lambda: [])
+  process_to_devices = collections.defaultdict(list)
   for d in devices:
     process_to_devices[d.process_index].append(d)
 

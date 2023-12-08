@@ -24,7 +24,7 @@ import re
 import os
 import tempfile
 import textwrap
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 import unittest
 import warnings
 import zlib
@@ -919,7 +919,7 @@ class JaxTestCase(parameterized.TestCase):
     'jax_legacy_prng_key': 'error',
   }
 
-  _compilation_cache_exit_stack: Optional[ExitStack] = None
+  _compilation_cache_exit_stack: ExitStack | None = None
 
   # TODO(mattjj): this obscures the error messages from failures, figure out how
   # to re-enable it
@@ -1275,8 +1275,8 @@ def numpy_version():
 
 def parameterized_filterable(*,
     kwargs: Sequence[dict[str, Any]],
-    testcase_name: Optional[Callable[[dict[str, Any]], str]] = None,
-    one_containing: Optional[str] = None,
+    testcase_name: Callable[[dict[str, Any]], str] | None = None,
+    one_containing: str | None = None,
 ):
   """
   Decorator for named parameterized tests, with filtering.
