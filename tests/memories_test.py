@@ -891,7 +891,6 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
     self._check_device_put_addressable_shards(
         out_host, py_inp, s_host, "unpinned_host", index=False)
 
-  @unittest.skip('Fails during compilation')
   def test_trivial_computation(self):
     if xb.using_pjrt_c_api():
       raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
