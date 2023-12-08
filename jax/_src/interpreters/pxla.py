@@ -1752,7 +1752,7 @@ def _raise_warnings_or_errors_for_jit_of_pmap(
 @weakref_lru_cache
 def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             semantic_in_shardings, semantic_out_shardings,
-                            in_layouts, out_layouts, da_object,
+                            in_layouts, out_layouts, num_devices, device_assignment,
                             donated_invars, name_stack, all_default_mem_kind,
                             lowering_parameters: mlir.LoweringParameters):
   jaxpr = closed_jaxpr.jaxpr
@@ -1760,9 +1760,6 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
   out_shardings = semantic_out_shardings.shardings
   global_in_avals = closed_jaxpr.in_avals
   global_out_avals = closed_jaxpr.out_avals
-  # TODO(yashkatariya): Make device_assignment directly usable in the downstream
-  # code without tuple conversion.
-  device_assignment = tuple(da_object)
 
   log_priority = logging.WARNING if config.log_compiles.value else logging.DEBUG
   if logger.isEnabledFor(log_priority):
@@ -1787,8 +1784,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
     in_mlir_shardings = map(_to_logical_sharding, global_in_avals, in_shardings)
     out_mlir_shardings = map(_to_logical_sharding, global_out_avals, out_shardings)
     replicated_args = [False] * len(global_in_avals)
-    axis_ctx = sharding_impls.ShardingContext(device_assignment)
-    num_partitions = len(device_assignment)
+    axis_ctx = sharding_impls.ShardingContext(num_devices, device_assignment)
+    num_partitions = num_devices
   else:
     # This path is triggered for `jit(pmap)` cases.
     replicated_args = None
@@ -1800,7 +1797,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
 
   module_name = f"{api_name}_{fun_name}"
 
-  if len(device_assignment) > 1:
+  if num_devices > 1:
     unsupported_effects = effects.ordered_effects.filter_in(closed_jaxpr.effects)
     unsupported_effects = effects.shardable_ordered_effects.filter_not_in(
         unsupported_effects)
@@ -1972,12 +1969,16 @@ def lower_sharding_computation(
   # 2. Build up the HLO
   semantic_in_shardings = SemanticallyEqualShardings(in_shardings)  # type: ignore
   semantic_out_shardings = SemanticallyEqualShardings(out_shardings)  # type: ignore
+  is_callback_p = (dispatch.jaxpr_has_primitive(jaxpr, 'inspect_sharding') or
+                   dispatch.jaxpr_has_primitive(jaxpr, 'custom_partitioning') or
+                   dispatch.jaxpr_has_primitive(jaxpr, 'pure_callback') or
+                   dispatch.jaxpr_has_primitive(jaxpr, 'io_callback'))
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, api_name, fun_name, backend, semantic_in_shardings,
-       semantic_out_shardings, in_layouts, out_layouts, da_object,
-       donated_invars, name_stack, all_default_mem_kind,
-       lowering_parameters=lowering_parameters)
+       semantic_out_shardings, in_layouts, out_layouts, len(da_object),
+       tuple(da_object) if is_callback_p else None, donated_invars, name_stack,
+       all_default_mem_kind, lowering_parameters=lowering_parameters)
 
   # backend and device_assignment is passed through to MeshExecutable because
   # if keep_unused=False and all in_shardings are pruned, then there is no way

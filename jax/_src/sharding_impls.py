@@ -1173,7 +1173,12 @@ class ShardingContext:
 
   This context also uses the GSPMD partitioner.
   """
-  device_assignment: Sequence[xc.Device]
+  num_devices: int
+  device_assignment: Sequence[xc.Device] | None = None
+
+  def __post_init__(self):
+    if self.device_assignment is not None:
+      assert self.num_devices == len(self.device_assignment)
 
   # Similar to SPMDContext as ShardingContext also uses the GSPMD partitioner.
   @property

@@ -191,6 +191,7 @@ def should_tuple_args(num_args: int, platform: str) -> bool:
   else:
     return False
 
+@util.weakref_lru_cache
 def jaxpr_has_primitive(jaxpr: core.Jaxpr, prim_name: str) -> bool:
   """Whether there is a primitive given by user anywhere inside a Jaxpr."""
   for eqn in jaxpr.eqns:

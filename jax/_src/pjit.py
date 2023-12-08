@@ -1400,12 +1400,12 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
                                     out_shardings, api_name):
   mod_ctx = ctx.module_context
   axis_ctx = ctx.module_context.axis_context
-  da = None
+  num_devices = None
   if isinstance(axis_ctx, sharding_impls.ShardingContext):
-    da = tuple(axis_ctx.device_assignment)
+    num_devices = axis_ctx.num_devices
   elif isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
-    da = axis_ctx.mesh._flat_devices_tuple
-  key = (pjit_p, name, jaxpr, effects, da,
+    num_devices = axis_ctx.mesh.size
+  key = (pjit_p, name, jaxpr, effects, num_devices,
          pxla.SemanticallyEqualShardings(in_shardings),
          pxla.SemanticallyEqualShardings(out_shardings), api_name)
 

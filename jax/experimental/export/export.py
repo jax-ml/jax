@@ -715,7 +715,7 @@ def _wrap_main_func(
       # Make a context just for lowering the dimension value computations
       module_context = mlir.ModuleContext(
           backend_or_name="cpu", platforms=["cpu"],
-          axis_context=sharding_impls.ShardingContext([]),
+          axis_context=sharding_impls.ShardingContext(0),
           name_stack=source_info_util.new_name_stack(),
           keepalives=[], channel_iterator=itertools.count(1),
           host_callbacks=[], module=wrapped_module, context=context,
@@ -1171,16 +1171,16 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
 
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.ShardingContext):
-    ctx_device_assignment = axis_context.device_assignment
+    num_devices = axis_context.num_devices
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
-    ctx_device_assignment = list(axis_context.mesh.devices.flat)
+    num_devices = axis_context.mesh.size
   else:
     raise NotImplementedError(type(axis_context))
-  if len(ctx_device_assignment) != exported.nr_devices:
+  if num_devices != exported.nr_devices:
     raise NotImplementedError(
       f"Exported module {exported.fun_name} was lowered for "
       f"{exported.nr_devices} devices and is called in a context with "
-      f"{len(ctx_device_assignment)} devices"
+      f"{num_devices} devices"
     )
 
   # Apply in_shardings

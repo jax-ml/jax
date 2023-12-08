@@ -3770,6 +3770,52 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with mesh:
       f()  # doesn't crash
 
+  def test_lowering_cache_hit_different_devices(self):
+    if jax.device_count() < 4:
+      self.skipTest('Requires >=4 devices')
+
+    mesh1 = jax.sharding.Mesh(jax.devices()[:2], 'x')
+    mesh2 = jax.sharding.Mesh(jax.devices()[2:4], 'y')
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    def g(a):
+      a = jax.device_put(a, NamedSharding(mesh1, P('x')))
+      out_a = f(a)  # lowering cached
+
+      # same num_devices but different devices.
+      b = jax.device_put(out_a, NamedSharding(mesh2, P('y')))
+      f(b)  # lowering cache *hit*
+
+    with jtu.count_jit_and_pmap_compiles() as count:
+      g(np.arange(8))
+    self.assertEqual(count[0], 1)
+
+  def test_lowering_cache_miss_different_devices_and_sharding(self):
+    if jax.device_count() < 4:
+      self.skipTest('Requires >=4 devices')
+
+    mesh1 = jax.sharding.Mesh(jax.devices()[:2], 'x')
+    mesh2 = jax.sharding.Mesh(jax.devices()[2:4], 'y')
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    def g(a):
+      a = jax.device_put(a, NamedSharding(mesh1, P('x')))
+      out_a = f(a)  # lowering cached
+
+      # same num_devices but different devices and sharding
+      b = jax.device_put(out_a, NamedSharding(mesh2, P()))
+      f(b)  # lowering cache *miss*
+
+    with jtu.count_jit_and_pmap_compiles() as count:
+      g(np.arange(8))
+    self.assertEqual(count[0], 2)
+
 
 class TempSharding(Sharding):
 

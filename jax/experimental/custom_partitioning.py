@@ -480,6 +480,9 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
 
   if isinstance(axis_context, sharding_impls.ShardingContext):
     devices = axis_context.device_assignment
+    if devices is None:
+      raise AssertionError(
+          'Please file a bug at https://github.com/google/jax/issues')
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     devices = list(axis_context.mesh.devices.flat)
   else:
