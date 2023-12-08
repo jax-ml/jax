@@ -516,7 +516,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
       out_shardings=canonicalized_out_shardings_flat,
       resource_env=resource_env,
       donated_invars=donated_invars,
-      name=getattr(flat_fun, '__name__', '<unnamed function>'),
+      name=getattr(flat_fun, '__name__', '<unknown>'),
       keep_unused=keep_unused,
       inline=inline,
   )

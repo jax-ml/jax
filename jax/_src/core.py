@@ -13,9 +13,10 @@
 # limitations under the License.
 from __future__ import annotations
 
-import collections
-from collections import namedtuple
-from collections.abc import Generator, Hashable, Iterable, Iterator, Sequence
+import collections  # noqa: F401
+from collections import Counter, defaultdict, deque, namedtuple
+from collections.abc import (Generator, Hashable, Iterable, Iterator, Sequence,
+                             MutableSet, MutableMapping)
 from contextlib import contextmanager
 from dataclasses import dataclass
 import functools
@@ -28,8 +29,8 @@ import operator
 from operator import attrgetter
 import threading
 import types
-from typing import (Any, Callable, ClassVar, DefaultDict, Generic, NamedTuple,
-                    TypeVar, Union, cast, overload)
+from typing import (Any, Callable, ClassVar, Generic, NamedTuple, TypeVar,
+                    Union, cast, overload)
 import warnings
 from weakref import ref
 
@@ -140,19 +141,58 @@ class Jaxpr:
             len(debug_info.result_paths) == len(outvars))
 
   def __str__(self):
-    return str(pp_jaxpr(self, JaxprPpContext(), JaxprPpSettings()))
+    return str(self.pretty_print())
+
   __repr__ = __str__
 
   def pretty_print(self, *, source_info=False, print_shapes=True,
                    custom_pp_eqn_rules=True, name_stack=False,
-                   print_effects: bool = False, **kw):
-    doc = pp_jaxpr(self, JaxprPpContext(),
-                   JaxprPpSettings(source_info=source_info,
-                                   print_shapes=print_shapes,
-                                   custom_pp_eqn_rules=custom_pp_eqn_rules,
-                                   name_stack=name_stack,
-                                   print_effects=print_effects))
-    return doc.format(**kw)
+                   print_effects: bool = False, **kwargs):
+    context = JaxprPpContext()
+    settings = JaxprPpSettings(
+        source_info=source_info,
+        print_shapes=print_shapes,
+        custom_pp_eqn_rules=custom_pp_eqn_rules,
+        name_stack=name_stack,
+        print_effects=print_effects)
+
+    # Compute how many times each jaxpr is used.
+    names = defaultdict[Jaxpr, str](lambda: "jaxpr")
+    jaxpr_counts = Counter[Jaxpr]()
+    s = deque([self])
+    while s:
+      jaxpr = s.popleft()
+      jaxpr_counts[jaxpr] += 1
+      for eqn in jaxpr.eqns:
+        # TODO(slebedev): Come up with a more elaborate heuristic for name=.
+        name = eqn.params.get("name")
+        if name is None:
+          s.extend(jaxprs_in_params(eqn.params))
+          continue
+        name = name.strip("<>")  # <lambda> -> lambda
+        for subjaxpr in jaxprs_in_params(eqn.params):
+          s.append(subjaxpr)
+          names.setdefault(subjaxpr, name)
+
+    # Pull jaxprs occurring more than once to the top-level, making sure
+    # that their names are unique.
+    docs = []
+    name_counts = Counter[str]()
+    for jaxpr, c in jaxpr_counts.items():
+      if c == 1:
+        continue
+      name = names[jaxpr]
+      if (count := name_counts[name]) > 0:
+        name_counts[name] += 1
+        name += str(count)
+        name_counts[name] += 1
+      else:
+        name_counts[name] += 1
+      docs.append(pp_top_level_jaxpr(name, jaxpr, context, settings))
+      context.used_names.add(name)
+      context.top_level_jaxprs[jaxpr] = name
+    docs.append(pp_jaxpr(self, context, settings))
+    return pp.concat(docs).format(**kwargs)
 
   def _repr_pretty_(self, p, cycle):
     return p.text(self.pretty_print(use_color=True))
@@ -182,7 +222,6 @@ def jaxprs_in_params(params) -> Iterator[Jaxpr]:
 
 def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
   """Generator for all subjaxprs found in the params of jaxpr.eqns.
-
   Does not descend recursively into the found subjaxprs.
   """
   for eqn in jaxpr.eqns:
@@ -236,12 +275,15 @@ class ClosedJaxpr:
   def __repr__(self): return repr(self.jaxpr)
 
   def pretty_print(self, *, source_info=False, print_shapes=True,
-                   name_stack=False, custom_pp_eqn_rules=True, **kw):
-    settings = JaxprPpSettings(source_info=source_info,
-                               print_shapes=print_shapes, name_stack=name_stack,
-                               custom_pp_eqn_rules=custom_pp_eqn_rules)
-    return pp_jaxpr(self.jaxpr, JaxprPpContext(), settings).format(**kw)
-
+                   name_stack=False, custom_pp_eqn_rules=True,
+                   print_effects=False, **kwargs):
+    return self.jaxpr.pretty_print(
+        source_info=source_info,
+        print_shapes=print_shapes,
+        name_stack=name_stack,
+        custom_pp_eqn_rules=custom_pp_eqn_rules,
+        print_effects=print_effects,
+        **kwargs)
 
   def _repr_pretty_(self, p, cycle):
     return p.text(self.pretty_print(use_color=True))
@@ -312,7 +354,7 @@ class Var:
   def __repr__(self):
     return _encode_digits_alphabetic(self.count) + self.suffix
 
-def _encode_digits_alphabetic(n):
+def _encode_digits_alphabetic(n: int) -> str:
   if n == -1:
     return '*'
   s = ''
@@ -321,12 +363,12 @@ def _encode_digits_alphabetic(n):
     s = chr(97 + i % 26) + s
   return s
 
-def _jaxpr_vars(jaxpr):
+def _jaxpr_vars(jaxpr) -> Iterable[Var]:
   return it.chain(
       jaxpr.invars, jaxpr.constvars,
       (v for eqn in jaxpr.eqns for v in eqn.outvars))
 
-def gensym(jaxprs: Sequence[Jaxpr] | None = None,
+def gensym(jaxprs: Iterable[Jaxpr] | None = None,
            suffix: str = '') -> Callable[[AbstractValue], Var]:
   """Produce distinct variables, printed with the optional suffix.
 
@@ -3024,15 +3066,24 @@ class JaxprPpSettings(NamedTuple):
 # A JaxprPpContext allows us to globally uniquify variable names within nested
 # Jaxprs.
 class JaxprPpContext:
-  var_ids: DefaultDict[Var, int]
+  var_names: defaultdict[Var, str]
+  used_names: MutableSet[str]
+  top_level_jaxprs: MutableMapping[Jaxpr, str]
 
-  def __init__(self):
-    self.var_ids = collections.defaultdict(it.count().__next__, {})
+  def __init__(self) -> None:
+    self.top_level_jaxprs = {}
+    self.used_names = set()
+    fresh_names: Iterator[str] = (
+        name
+        for i in it.count()
+        if (name := _encode_digits_alphabetic(i)) not in self.used_names
+    )
+    self.var_names = defaultdict(fresh_names.__next__)
 
 
 def pp_var(v: Var, context: JaxprPpContext) -> str:
   if isinstance(v, (Literal, DropVar)): return str(v)
-  return f"{_encode_digits_alphabetic(context.var_ids[v])}{v.suffix}"
+  return f"{context.var_names[v]}{v.suffix}"
 
 def pp_aval(a: AbstractValue, context: JaxprPpContext) -> str:
   if isinstance(a, DShapedArray):
@@ -3156,9 +3207,30 @@ def pp_jaxpr_skeleton(jaxpr, eqns_fn, context: JaxprPpContext,
   ])) + pp.text(" }"))
 
 
-def pp_jaxpr(jaxpr, context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
+def pp_top_level_jaxpr(
+    name: str,
+    jaxpr: Jaxpr,
+    context: JaxprPpContext,
+    settings: JaxprPpSettings,
+) -> pp.Doc:
+  return pp.concat([
+      pp.text("let " + name + " = "),
+      pp_jaxpr(jaxpr, context, settings),
+      pp.text(" in"),
+      pp.brk(),
+  ])
+
+
+def pp_jaxpr(
+    jaxpr: Jaxpr,
+    context: JaxprPpContext,
+    settings: JaxprPpSettings,
+) -> pp.Doc:
+  if name := context.top_level_jaxprs.get(jaxpr):
+    return pp.text(name)
   eqns_fn = lambda: pp_eqns(jaxpr.eqns, context, settings)
   return pp_jaxpr_skeleton(jaxpr, eqns_fn, context, settings)
+
 
 def pp_jaxprs(jaxprs, context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
   jaxprs = [j.jaxpr if isinstance(j, ClosedJaxpr) else j for j in jaxprs]
