@@ -28,6 +28,8 @@ def argmin(x, /, *, axis=None, keepdims=False):
 
 def nonzero(x, /):
   """Returns the indices of the array elements which are non-zero."""
+  if jax.numpy.ndim(x) == 0:
+    raise ValueError("inputs to nonzero() must have at least one dimension.")
   return jax.numpy.nonzero(x)
 
 
