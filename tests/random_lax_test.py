@@ -648,7 +648,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.floating,
   )
   def testGeneralizedNormal(self, p, shape, dtype):
-    key = self.make_key(2)
+    key = self.make_key(0)
     rand = lambda key, p: random.generalized_normal(key, p, shape, dtype)
     crand = jax.jit(rand)
     uncompiled_samples = rand(key, p)
