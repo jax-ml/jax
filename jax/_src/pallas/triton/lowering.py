@@ -1006,7 +1006,7 @@ def _argreduce_lowering(
     body, ctx: TritonLoweringRuleContext, a, *, axes, index_dtype
 ):
   if index_dtype != jnp.int32:
-    raise ValueError("`index_type` must be f32.")
+    raise ValueError("`index_type` must be i32.")
   if len(axes) != 1:
     raise ValueError("`pallas` reduce operations only support one reduce axis.")
   (axis,) = axes
