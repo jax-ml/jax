@@ -39,7 +39,26 @@ _cache: Optional[CacheInterface] = None
 
 _cache_initialized: bool = False
 
+_cache_used: bool = False
+
+# Mutex to protect _cache_initialized and _cache_used.
 _cache_initialized_mutex = threading.Lock()
+
+
+
+def set_once_cache_used(f) -> None:
+  """One-time setting of _cache_used.
+
+  If _cache_used is False, set it to True and execute the provided function
+  f. No action if _cache_used is True. This provides a mechanism to execute f
+  once per task. Note that reset_cache() will reset _cache_used also.
+  """
+  global _cache_used
+  with _cache_initialized_mutex:
+    if not _cache_used:
+      _cache_used = True
+      if f is not None:
+        f()
 
 
 def get_file_cache(path: str) -> CacheInterface:
@@ -167,10 +186,13 @@ def reset_cache() -> None:
   """Get back to pristine, uninitialized state."""
   global _cache
   global _cache_initialized
+  global _cache_used
   logger.debug("Resetting cache at %s.",
                _cache._path if _cache is not None else "<empty>")
   _cache = None
-  _cache_initialized = False
+  with _cache_initialized_mutex:
+    _cache_initialized = False
+    _cache_used = False
 
 
 def combine_executable_and_time(

@@ -18,7 +18,7 @@ import os
 import tempfile
 from collections import Counter
 from unittest import mock
-from unittest import SkipTest, skip
+from unittest import SkipTest
 import warnings
 
 from absl.testing import absltest
@@ -354,21 +354,21 @@ class CompilationCacheTest(jtu.JaxTestCase):
           self.assertGreater(
               durations["/jax/compilation_cache/compile_time_saved_sec"], 0)
 
-  @skip("fails in OSS; disable while debugging; b/313601864")
   def test_task_using_cache_metric(self):
     with tempfile.TemporaryDirectory() as tmpdir:
       cc.initialize_cache(tmpdir)
-
+      count_before_first_use = _counts[
+          "/jax/compilation_cache/tasks_using_cache"]
       jit(lambda x: x + 1)(1)
-      self.assertEqual(
-          _counts["/jax/compilation_cache/tasks_using_cache"], 1)
+      count_after_first_use = _counts[
+          "/jax/compilation_cache/tasks_using_cache"]
+      self.assertEqual(count_after_first_use, count_before_first_use + 1)
 
       # Verify that the count is incremented only once per task.
-      cc.reset_cache()
-      cc.initialize_cache(tmpdir)
       jit(lambda x: x + 3)(3)
-      self.assertEqual(
-          _counts["/jax/compilation_cache/tasks_using_cache"], 1)
+      count_after_second_use = _counts[
+          "/jax/compilation_cache/tasks_using_cache"]
+      self.assertEqual(count_after_second_use, count_after_first_use)
 
   def test_compile_requests_use_cache_metric(self):
     previous_counts = Counter(_counts)

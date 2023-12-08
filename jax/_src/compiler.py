@@ -71,11 +71,6 @@ CompileOptions = xc.CompileOptions
 
 logger = logging.getLogger(__name__)
 
-# This variable captures whether a process has ever used cache. It will be set
-# to true only once, regardless of how many times compile_or_get_cached() or
-# compilation_cache.reset_cache() is called.
-_cache_used: bool = False
-
 
 # Will be monkeypatched with the function that gets the XLA-AutoFDO profile
 # version. The default (-1) takes care of errors.
@@ -301,11 +296,9 @@ def compile_or_get_cached(
     return backend_compile(backend, computation, compile_options,
                            host_callbacks)
 
-  global _cache_used
-  if not _cache_used:
-    _cache_used = True
-    monitoring.record_event('/jax/compilation_cache/tasks_using_cache')
-
+  compilation_cache.set_once_cache_used(
+      lambda: monitoring.record_event(
+          "/jax/compilation_cache/tasks_using_cache"))
   monitoring.record_event('/jax/compilation_cache/compile_requests_use_cache')
 
   try:
