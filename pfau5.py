@@ -19,16 +19,12 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src import pjit
 from jax._src import linear_util as lu
 from jax._src.api_util import flatten_fun_nokwargs, shaped_abstractify
-from jax._src.util import safe_map, safe_zip, unzip3, weakref_lru_cache
+from jax._src.util import (safe_map, safe_zip, unzip3, weakref_lru_cache,
+                           partition_list, merge_lists)
 from jax._src.tree_util import tree_map, tree_flatten, tree_unflatten
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
-
-# TODO
-# [ ] put together basic boilerplate for a jax transformation
-# [ ] get toy example working by writing rules for dot_general and tanh
-# [ ] work out fully generic rule (in terms of jax.jvp, jax.hessian, jax.vmap)
 
 
 class LapTracer(core.Tracer):
@@ -51,8 +47,7 @@ class LapTracer(core.Tracer):
       return self
 
 class LapTrace(core.Trace):
-  # pure = lift = lambda self, val: LapTracer(self, val, None, None)
-  pure = lift = lambda self, val: LapTracer(self, val, jnp.zeros((*val.shape, 3), val.dtype), jnp.zeros_like(val))
+  pure = lift = lambda self, val: LapTracer(self, val, None, None)
   sublift = lambda self: LapTracer(self, val.primal, val.jacobian, val.lapvec)
 
   def process_primitive(self, prim, tracers, params):
@@ -69,11 +64,21 @@ rules = {}
 ## generic rule
 
 def generic_rule(prim, in_primals, in_jacs, in_lapvecs, **params):
-  f = partial(prim.bind, **params)
-  out_primals, f_jvp = jax.linearize(f, *in_primals)
-  out_jacs = jax.vmap(f_jvp, -1, -1)(*in_jacs)
-  out_lapvecs = add(trace(hqf2(f, in_primals, in_jacs)), f_jvp(*in_lapvecs))
+  merge, primals, nz_jacs, nz_laps = partition(in_primals, in_jacs, in_lapvecs)
+  def f(*primals): return prim.bind(*merge(primals), **params)
+  out_primals, f_jvp = jax.linearize(f, *primals)
+  out_jacs = jax.vmap(f_jvp, -1, -1)(*nz_jacs)
+  out_lapvecs = add(trace(hqf2(f, primals, nz_jacs)), f_jvp(*nz_laps))
   return out_primals, out_jacs, out_lapvecs
+
+def partition(primals, jacs, laps):
+  nones, nones_ = [j is None for j in jacs], [l is None for l in laps]
+  assert nones == nones_
+  new_primals, const_primals = partition_list(nones, primals)
+  nz_jacs, _ = partition_list(nones, jacs)
+  nz_laps, _ = partition_list(nones, laps)
+  merge = lambda new_primals: merge_lists(nones, new_primals, const_primals)
+  return merge, tuple(new_primals), tuple(nz_jacs), tuple(nz_laps)
 
 add = partial(tree_map, op.add)
 trace = partial(tree_map, partial(jnp.trace, axis1=-1, axis2=-2))
@@ -85,7 +90,7 @@ def hqf(f, xs, vs):
   return hbf(f, xs, vs, vs)
 
 def hbf(f, xs, vs1, vs2):
-  # TODO discarding output primals is wasteful, could at least get jacs
+  # TODO discarding output primals is wasteful, could get jacs here
   return jax.jvp(lambda *xs: jax.jvp(f, xs, vs1)[1], xs, vs2)[1]
 
 def hqf2(f, xs, vs):
