@@ -3469,8 +3469,6 @@ def einsum(
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.einsum is not supported.")
   spec = operands[0] if isinstance(operands[0], str) else None
-  if spec is not None and '{' in spec:
-    return jax.named_call(lax.xeinsum, name=spec)(*operands)
   optimize = 'optimal' if optimize is True else optimize
 
   # Allow handling of shape polymorphism
