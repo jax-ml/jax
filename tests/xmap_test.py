@@ -1491,7 +1491,7 @@ class PDotTests(XMapTestCase):
     rng = self.rng()
     x = rng.randn(3)
     y = rng.randn(3)
-    out = jnp.einsum('i,i->', x, y, _use_xeinsum=True)
+    out = jnp.einsum('i,i->', x, y)
     expected = np.einsum('i,i->', x, y)
     self.assertAllClose(out, expected, check_dtypes=False)
 
@@ -1499,7 +1499,7 @@ class PDotTests(XMapTestCase):
     rng = self.rng()
     x = rng.randn(3, 2)
     y = rng.randn(3, 2)
-    out = jnp.einsum('ij,ij->i', x, y, _use_xeinsum=True)
+    out = lax.xeinsum('ij,ij->i', x, y)
     expected = np.einsum('ij,ij->i', x, y)
     self.assertAllClose(out, expected, check_dtypes=True)
 
@@ -1508,7 +1508,7 @@ class PDotTests(XMapTestCase):
     rng = np.random.RandomState(0)
     x = rng.randn(3, 5, 4)
     y = rng.randn(3, 4, 2)
-    out = jnp.einsum('bij,bjk->bik', x, y, _use_xeinsum=True)
+    out = lax.xeinsum('bij,bjk->bik', x, y)
     expected = np.einsum('bij,bjk->bik', x, y)
     self.assertAllClose(out, expected, check_dtypes=True)
 
@@ -1516,7 +1516,7 @@ class PDotTests(XMapTestCase):
     rng = self.rng()
     x = rng.randn(3)
     y = rng.randn()
-    out = jnp.einsum('i,->', x, y, _use_xeinsum=True)
+    out = lax.xeinsum('i,->', x, y)
     expected = np.einsum('i,->', x, y)
     self.assertAllClose(out, expected, check_dtypes=True)
 
@@ -1526,7 +1526,7 @@ class PDotTests(XMapTestCase):
     rng = np.random.RandomState(0)
     x = rng.randn(3, 5, 4)
     y = rng.randn(2, 4, 2)
-    out = jnp.einsum('bij,cjk->ik', x, y, _use_xeinsum=True)
+    out = lax.xeinsum('bij,cjk->ik', x, y)
     expected = np.einsum('bij,cjk->ik', x, y)
     self.assertAllClose(out, expected, check_dtypes=True)
 
