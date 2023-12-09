@@ -30,6 +30,7 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import sharding_impls
+from jax._src import dispatch
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import ad
@@ -307,6 +308,7 @@ def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
 
 inspect_sharding_p = core.Primitive("inspect_sharding")
 inspect_sharding_p.multiple_results = True
+dispatch.prim_requires_devices_during_lowering.add(inspect_sharding_p)
 
 def _inspect_sharding_impl(value, *, callback):
   callback(value.sharding)
@@ -350,9 +352,10 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
       raise AssertionError(
           'Please file a bug at https://github.com/google/jax/issues')
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
-    devices = list(axis_context.mesh.devices.flat)
+    devices = axis_context.mesh._flat_devices_tuple
   else:
     raise NotImplementedError(type(axis_context))
+  assert devices is not None
 
   # If we have a nontrivial parallel computation, we need to wait until the SPMD
   # partitioner calls back with the `HloSharding.

@@ -37,6 +37,7 @@ from jax._src.sharding_impls import SingleDeviceSharding
 # `pure_callback_p` is the main primitive for staging out Python pure callbacks.
 pure_callback_p = core.Primitive("pure_callback")
 pure_callback_p.multiple_results = True
+dispatch.prim_requires_devices_during_lowering.add(pure_callback_p)
 
 map, unsafe_map = util.safe_map, map
 
@@ -348,6 +349,7 @@ def pure_callback_api(
 
 io_callback_p = core.Primitive("io_callback")
 io_callback_p.multiple_results = True
+dispatch.prim_requires_devices_during_lowering.add(io_callback_p)
 
 class IOEffect(effects.Effect):
   __str__ = lambda _: "IO"

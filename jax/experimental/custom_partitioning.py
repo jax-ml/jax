@@ -21,6 +21,7 @@ from jax._src import linear_util as lu
 from jax._src import sharding_impls
 from jax.errors import UnexpectedTracerError
 from jax._src import mesh as mesh_lib
+from jax._src import dispatch
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir import ir
 from jax._src.interpreters import mlir
@@ -210,6 +211,7 @@ def _custom_partitioning_infer_sharding_from_operands(arg_shapes, arg_shardings,
 
 custom_partitioning_p = core.Primitive("custom_partitioning")
 custom_partitioning_p.multiple_results = True
+dispatch.prim_requires_devices_during_lowering.add(custom_partitioning_p)
 
 
 def _custom_partitioning_abstract_eval(*avals, call, in_tree, out_tree,
@@ -484,7 +486,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       raise AssertionError(
           'Please file a bug at https://github.com/google/jax/issues')
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
-    devices = list(axis_context.mesh.devices.flat)
+    devices = axis_context.mesh._flat_devices_tuple
   else:
     devices = None
 
