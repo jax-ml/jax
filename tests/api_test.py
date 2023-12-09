@@ -56,6 +56,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -4449,6 +4450,17 @@ class APITest(jtu.JaxTestCase):
   def test_mesh_creation_error_message(self):
     with self.assertRaisesRegex(ValueError, "ndim of its first argument"):
       jax.sharding.Mesh(jax.devices(), ("x", "y"))
+
+  @unittest.skipIf(xla_extension_version < 222, 'jaxlib version too old')
+  def test_jit_boundmethod_reference_cycle(self):
+    class A:
+      def __init__(self):
+        self._foo = jax.jit(self.foo)
+      def foo(self):
+        pass
+    a = weakref.ref(A())
+    gc.collect()
+    assert a() is None
 
 
 class RematTest(jtu.JaxTestCase):
