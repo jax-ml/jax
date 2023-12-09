@@ -41,7 +41,6 @@ py_library(
         "call_tf.py",
         "impl_no_xla.py",
         "jax2tf.py",
-        "jax_export.py",  # TODO(necula): remove stub
         "shape_poly.py",  # TODO(necula): remove stub
     ],
     srcs_version = "PY3",
