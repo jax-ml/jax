@@ -56,7 +56,47 @@ from jax._src.tree_util import (
   treedef_children as treedef_children,
   treedef_is_leaf as treedef_is_leaf,
   treedef_tuple as treedef_tuple,
-  register_keypaths as register_keypaths,
-  AttributeKeyPathEntry as AttributeKeyPathEntry,
-  GetitemKeyPathEntry as GetitemKeyPathEntry,
+  register_pytree_with_keys as register_pytree_with_keys,
+  register_pytree_with_keys_class as register_pytree_with_keys_class,
+  tree_map_with_path as tree_map_with_path,
+  tree_flatten_with_path as tree_flatten_with_path,
+  tree_leaves_with_path as tree_leaves_with_path,
+  keystr as keystr,
+  SequenceKey as SequenceKey,
+  DictKey as DictKey,
+  GetAttrKey as GetAttrKey,
+  FlattenedIndexKey as FlattenedIndexKey,
+  register_static as register_static,
+  register_keypaths as _deprecated_register_keypaths,
+  AttributeKeyPathEntry as _DeprecatedAttributeKeyPathEntry,
+  GetitemKeyPathEntry as _DeprecatedGetitemKeyPathEntry,
 )
+
+
+_deprecations = {
+    # Added August 29, 2023; emitted warning since March 10, 2023
+    "register_keypaths": (
+        "jax.tree_util.register_keypaths is deprecated. Use register_pytree_with_keys instead",
+        _deprecated_register_keypaths,
+    ),
+    # Added August 29, 2023:
+    "AttributeKeyPathEntry": (
+        "jax.tree_util.AttributeKeyPathEntry is deprecated. Use `SequenceKey` or `DictKey` instead.",
+        _DeprecatedAttributeKeyPathEntry,
+    ),
+    "GetitemKeyPathEntry": (
+        "jax.tree_util.GetitemKeyPathEntry is deprecated. Use `SequenceKey` or `DictKey` instead.",
+        _DeprecatedGetitemKeyPathEntry,
+    ),
+}
+
+import typing
+if typing.TYPE_CHECKING:
+  register_keypaths = _deprecated_register_keypaths
+  AttributeKeyPathEntry = _DeprecatedAttributeKeyPathEntry
+  GetitemKeyPathEntry = _DeprecatedGetitemKeyPathEntry
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing

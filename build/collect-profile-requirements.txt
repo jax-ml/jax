@@ -1,0 +1,4 @@
+tensorflow
+tensorboard-plugin-profile
+# Needed for the profile plugin to work without error
+protobuf

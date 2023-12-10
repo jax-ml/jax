@@ -30,22 +30,22 @@ executable protocols described above.
 """
 from __future__ import annotations
 
-import warnings
-
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, List, NamedTuple, Optional, Protocol, Sequence, Tuple
+from typing import Any, NamedTuple, Protocol, Union
 
 import jax
-from jax import tree_util
-from jax.lib import xla_client as xc
 
 from jax._src import core
+from jax._src import config
 from jax._src import source_info_util
 from jax._src import traceback_util
+from jax._src import tree_util
 from jax._src import util
+from jax._src.layout import SpecifiedLayout
+from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
-from jax.interpreters import mlir
-from jax.interpreters import xla
+from jax._src.lib import xla_client as xc
 
 
 source_info_util.register_exclusion(__file__)
@@ -55,6 +55,8 @@ traceback_util.register_exclusion(__file__)
 xla_extension = xc._xla
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
+
+CompilerOptions = dict[str, Union[str, bool]]
 
 
 # -- Internal protocols
@@ -81,6 +83,14 @@ class Executable(Protocol):
     May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
     compiler, or runtime.
     """
+    raise NotImplementedError
+
+  # Layouts are exposed via jax.experimental.layouts
+  # TODO(frostig,yashkatariya): expose here when no longer experimental.
+  def _input_layouts(self):
+    raise NotImplementedError
+
+  def _output_layouts(self):
     raise NotImplementedError
 
   def as_text(self) -> str:
@@ -146,11 +156,12 @@ class Executable(Protocol):
 class Lowering(Protocol):
   """Protocol for lowerings, which a user-facing ``Lowered`` encapsulates."""
 
-  def compile(self) -> Executable:
+  def compile(
+      self, compiler_options: CompilerOptions | None = None) -> Executable:
     """Compile and return a corresponding ``Executable``."""
     raise NotImplementedError
 
-  def as_text(self, dialect: Optional[str] = None) -> str:
+  def as_text(self, dialect: str | None = None) -> str:
     """A human-readable text representation of this lowering.
 
     Intended for visualization and debugging purposes. This need not be a valid
@@ -158,7 +169,7 @@ class Lowering(Protocol):
     """
     raise NotImplementedError
 
-  def compiler_ir(self, dialect: Optional[str] = None) -> Any:
+  def compiler_ir(self, dialect: str | None = None) -> Any:
     """An arbitrary object representation of this lowering.
 
     Intended for debugging purposes. This need not be a valid nor reliable
@@ -169,8 +180,30 @@ class Lowering(Protocol):
     compiler.
 
     Args:
-      dialect: Optional string specifying a representation dialect (e.g. "mhlo")
+      dialect: Optional string specifying a representation dialect
+      (e.g. "stablehlo")
     """
+    raise NotImplementedError
+
+  def cost_analysis(self) -> Any:
+    """A summary of execution cost estimates.
+
+    Intended for visualization and debugging purposes. The object output by
+    this is some simple data structure that can easily be printed or serialized
+    (e.g. nested dicts, lists, and tuples with numeric leaves). However, its
+    structure can be arbitrary: it need not be consistent across versions of JAX
+    and jaxlib, or even across invocations. It is relayed directly to external
+    callers.
+
+    This function estimates execution cost in the absence of compiler
+    optimizations, which may drastically affect the cost. For execution cost
+    estimates after optimizations, compile this lowering and see
+    ``Compiled.cost_analysis``.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
+    compiler, or runtime.
+    """
+    # TODO(frostig): improve annotation (arbitrary pytree)
     raise NotImplementedError
 
 
@@ -178,7 +211,7 @@ class Lowering(Protocol):
 
 class XlaExecutable(Executable):
 
-  def xla_extension_executable(self) -> xla.XlaLoadedExecutable:
+  def xla_extension_executable(self) -> xc.LoadedExecutable:
     raise NotImplementedError("must override")
 
   def call(self, *args_flat) -> Sequence[Any]:
@@ -191,6 +224,14 @@ class XlaExecutable(Executable):
   def output_shardings(self) -> Sequence[jax.sharding.XLACompatibleSharding]:
     raise NotImplementedError(
         "compiled executable carries no output sharding information")
+
+  def _input_layouts(self):
+    raise NotImplementedError(
+        "compiled executable carries no input layout information")
+
+  def _output_layouts(self):
+    raise NotImplementedError(
+        "compiled executable carries no input layout information")
 
   def as_text(self) -> str:
     xla_ext_exe = self.xla_extension_executable()
@@ -207,11 +248,21 @@ class XlaExecutable(Executable):
       else:
         raise
 
-  def cost_analysis(self) -> List[Dict[str, float]]:
+    # TODO(skyewm): this should return a single dict (I think returning a list
+    # was to support MPMD executables, which never fully landed)
+  def cost_analysis(self) -> list[dict[str, float]]:
     xla_ext_exe = self.xla_extension_executable()
-    err_msg = ("cost analysis unsupported on current XLA backend: "
-               f"{type(xla_ext_exe)}")
+
     # TODO(b/259255524): Unify/merge the two cost_analysis calls below.
+    if hasattr(xla_ext_exe, "cost_analysis"):
+      try:
+        return [xla_ext_exe.cost_analysis()]
+      except xla_extension.XlaRuntimeError as e:
+        msg, *_ = e.args
+        if not (type(msg) is str and msg.startswith("UNIMPLEMENTED")):
+          raise
+
+    # Try client method if executable cost_analysis method is unimplemented
     if hasattr(xla_ext_exe, "client"):
       try:
         return [
@@ -220,21 +271,20 @@ class XlaExecutable(Executable):
         ]
       except xla_extension.XlaRuntimeError as e:
         msg, *_ = e.args
-        if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
-          raise NotImplementedError(err_msg) from e
-        else:
+        if not (type(msg) is str and msg.startswith("UNIMPLEMENTED")):
           raise
-    elif hasattr(xla_ext_exe, "cost_analysis"):
-      try:
-        return xla_ext_exe.cost_analysis()
-      except xla_extension.XlaRuntimeError as e:
-        msg, *_ = e.args
-        if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
-          raise NotImplementedError(err_msg) from e
-        else:
-          raise
-    else:
-      raise NotImplementedError(err_msg)
+
+    if (
+        xla_ext_exe is None
+        and hasattr(self, "unsafe_call")
+        and hasattr(self.unsafe_call, "compiled")
+        and hasattr(self.unsafe_call.compiled, "cost_analysis")
+    ):
+      return [self.unsafe_call.compiled.cost_analysis()]
+
+    raise NotImplementedError(
+        f"cost analysis unsupported on current XLA backend: {type(xla_ext_exe)}"
+    )
 
   def memory_analysis(self) -> Any:
     xla_ext_exe = self.xla_extension_executable()
@@ -258,26 +308,33 @@ class XlaExecutable(Executable):
 class XlaLowering(Lowering):
   """Adapts our various internal XLA-backed computations into a ``Lowering``."""
 
+  compile_args: dict[str, Any]
+
   def hlo(self) -> xc.XlaComputation:
     """Return an HLO representation of this computation."""
-    raise NotImplementedError("must override")
+    return xla_extension.mlir.mlir_module_to_xla_computation(
+        mlir.module_to_string(self.stablehlo()),
+        use_tuple_args=self.compile_args["tuple_args"])
 
   def mhlo(self) -> ir.Module:
     """Return an MHLO representation of this computation."""
-    raise NotImplementedError("must override")
+    module_str = xla_extension.mlir.stablehlo_to_mhlo(
+        mlir.module_to_bytecode(self.stablehlo()))
+    with self.stablehlo().context:
+      return ir.Module.parse(module_str)
 
   def stablehlo(self) -> ir.Module:
     """Return a StableHLO representation of this computation."""
-    module_str = xla_extension.mlir.mhlo_to_stablehlo(
-        mlir.module_to_string(self.mhlo()))
-    with mlir.make_ir_context():
-      return ir.Module.parse(module_str)
-
-  def compile(self) -> Executable:
     raise NotImplementedError("must override")
 
-  def as_text(self, dialect: Optional[str] = None) -> str:
-    if dialect is None or dialect == "mhlo":
+  def compile(
+      self, compiler_options: CompilerOptions | None = None) -> Executable:
+    raise NotImplementedError("must override")
+
+  def as_text(self, dialect: str | None = None) -> str:
+    if dialect is None:
+      dialect = "stablehlo"
+    if dialect == "mhlo":
       return str(self.mhlo())
     elif dialect == "stablehlo":
       return str(self.stablehlo())
@@ -286,8 +343,10 @@ class XlaLowering(Lowering):
     else:
       raise ValueError(f"unknown dialect: {dialect}")
 
-  def compiler_ir(self, dialect: Optional[str] = None) -> Any:
-    if dialect is None or dialect == "mhlo":
+  def compiler_ir(self, dialect: str | None = None) -> Any:
+    if dialect is None:
+      dialect = "stablehlo"
+    if dialect == "mhlo":
       return self.mhlo()
     elif dialect == "stablehlo":
       return self.stablehlo()
@@ -296,6 +355,8 @@ class XlaLowering(Lowering):
     else:
       raise ValueError(f"unknown dialect: {dialect}")
 
+  def cost_analysis(self) -> dict[str, float]:
+    raise NotImplementedError("must override")
 
 
 # -- Public-facing API, plus helpers
@@ -363,26 +424,9 @@ class Compiled(Stage):
     self.out_tree = out_tree
     self._params = CompiledCallParams(self._executable, self._no_kwargs,
                                       self.in_tree, self.out_tree)
-    self._cpp_call = self._executable.create_cpp_call(self._no_kwargs,
-                                                      self.in_tree,
-                                                      self.out_tree)
+    self._call = None
 
-  def compiler_ir(self):
-    """Post-compilation IR.
-
-    Compilation typically involves code transformation and
-    optimization. This method exists to reflect the compiler's
-    representation of the program after such passes, whenever
-    possible.
-    """
-    # TODO(frostig): remove (deprecated)
-    warnings.warn(
-        "compiler_ir() is deprecated, consider runtime_executable() instead",
-        DeprecationWarning)
-    exe = self.runtime_executable()
-    return exe.hlo_modules() if exe is not None else None
-
-  def as_text(self) -> Optional[str]:
+  def as_text(self) -> str | None:
     """A human-readable text representation of this executable.
 
     Intended for visualization and debugging purposes. This is not a valid nor
@@ -396,7 +440,7 @@ class Compiled(Stage):
     except NotImplementedError:
       return None
 
-  def cost_analysis(self) -> Optional[Any]:
+  def cost_analysis(self) -> Any | None:
     """A summary of execution cost estimates.
 
     Intended for visualization and debugging purposes. The object output by
@@ -414,7 +458,7 @@ class Compiled(Stage):
     except NotImplementedError:
       return None
 
-  def memory_analysis(self) -> Optional[Any]:
+  def memory_analysis(self) -> Any | None:
     """A summary of estimated memory requirements.
 
     Intended for visualization and debugging purposes. The object output by
@@ -432,7 +476,7 @@ class Compiled(Stage):
     except NotImplementedError:
       return None
 
-  def runtime_executable(self) -> Optional[Any]:
+  def runtime_executable(self) -> Any | None:
     """An arbitrary object representation of this executable.
 
     Intended for debugging purposes. This is not valid nor reliable
@@ -454,15 +498,30 @@ class Compiled(Stage):
     shardings_flat = self._executable.output_shardings()
     return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
 
+  def _input_layouts(self):
+    layouts_flat = self._executable.input_layouts()
+    assert all(isinstance(l, SpecifiedLayout) for l in layouts_flat)
+    # Some input layouts got DCE'd
+    if self.in_tree.num_leaves > len(layouts_flat):
+      iter_layouts_flat = iter(layouts_flat)
+      layouts_flat = [next(iter_layouts_flat) if i in self._executable._kept_var_idx
+                      else None for i in range(self.in_tree.num_leaves)]
+    return tree_util.tree_unflatten(self.in_tree, layouts_flat)  # pytype: disable=attribute-error
+
+  def _output_layouts(self):
+    layouts_flat = self._executable.output_layouts()
+    assert all(isinstance(l, SpecifiedLayout) for l in layouts_flat)
+    return tree_util.tree_unflatten(self.out_tree, layouts_flat)  # pytype: disable=attribute-error
+
   @staticmethod
   def call(*args, **kwargs):
     # This is because `__call__` passes in `self._params` as the first argument.
     # Instead of making the call signature `call(params, *args, **kwargs)`
     # extract it from args because `params` can be passed as a kwarg by users
-    # which might confict here.
+    # which might conflict here.
     params = args[0]
     args = args[1:]
-    if jax.config.jax_dynamic_shapes:
+    if config.dynamic_shapes.value:
       raise NotImplementedError
     if params.no_kwargs and kwargs:
       kws = ', '.join(kwargs.keys())
@@ -498,11 +557,16 @@ class Compiled(Stage):
     return outs, out_flat, args_flat
 
   def __call__(self, *args, **kwargs):
-    if self._cpp_call is not None:
-      return self._cpp_call(*args, **kwargs)
-
-    outs, _, _ = Compiled.call(self._params, *args, **kwargs)
-    return outs
+    if self._call is None:
+      self._call = self._executable.create_cpp_call(
+          self._no_kwargs, self.in_tree, self.out_tree)
+      if self._call is None:
+        params = self._params
+        def cpp_call_fallback(*args, **kwargs):
+          outs, _, _ = Compiled.call(params, *args, **kwargs)
+          return outs
+        self._call = cpp_call_fallback
+    return self._call(*args, **kwargs)
 
 
 class Lowered(Stage):
@@ -524,7 +588,7 @@ class Lowered(Stage):
   def __init__(
       self,
       lowering: XlaLowering,
-      args_info,  # PyTreee of ArgInfo
+      args_info,  # PyTree of ArgInfo
       out_tree: tree_util.PyTreeDef,
       no_kwargs: bool = False):
     self._lowering = lowering
@@ -537,7 +601,7 @@ class Lowered(Stage):
                      lowering: XlaLowering,
                      in_tree: tree_util.PyTreeDef,
                      in_avals,
-                     donate_argnums: Tuple[int, ...],
+                     donate_argnums: tuple[int, ...],
                      out_tree: tree_util.PyTreeDef,
                      no_kwargs: bool = False):
     """Initialize from flat info (``in_avals`` etc.) and an input PyTreeDef.
@@ -555,35 +619,29 @@ class Lowered(Stage):
         out_tree,
         no_kwargs=no_kwargs)
 
-  def compile(self) -> Compiled:
+  def compile(
+      self, compiler_options: CompilerOptions | None = None) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
-    from jax.interpreters import pxla
-
-    if (jax.config.jax_array and
-        isinstance(self._lowering, pxla.MeshComputation) and
-        all(pxla._is_unspecified(o) for o in self._lowering.compile_args['out_shardings'])):
-      kw = dict(_allow_propagation_to_outputs=True)
-    else:
-      kw = {}
-
+    kw: dict[str, Any] = {"compiler_options": compiler_options}
     return Compiled(
-        self._lowering.compile(**kw),
+        self._lowering.compile(**kw),  # pytype: disable=wrong-keyword-args
         self.args_info,
         self.out_tree,
-        no_kwargs=self._no_kwargs)
+        no_kwargs=self._no_kwargs,
+    )
 
-  def as_text(self, dialect: Optional[str] = None) -> str:
+  def as_text(self, dialect: str | None = None) -> str:
     """A human-readable text representation of this lowering.
 
     Intended for visualization and debugging purposes. This need not be a valid
     nor reliable serialization. It is relayed directly to external callers.
 
     Args:
-      dialect: Optional string specifying a lowering dialect (e.g. "mhlo")
+      dialect: Optional string specifying a lowering dialect (e.g. "stablehlo")
     """
     return self._lowering.as_text(dialect)
 
-  def compiler_ir(self, dialect: Optional[str] = None) -> Optional[Any]:
+  def compiler_ir(self, dialect: str | None = None) -> Any | None:
     """An arbitrary object representation of this lowering.
 
     Intended for debugging purposes. This is not a valid nor reliable
@@ -594,10 +652,28 @@ class Lowered(Stage):
     runtime.
 
     Args:
-      dialect: Optional string specifying a lowering dialect (e.g. "mhlo")
+      dialect: Optional string specifying a lowering dialect (e.g. "stablehlo")
     """
     try:
       return self._lowering.compiler_ir(dialect)
+    except NotImplementedError:
+      return None
+
+  def cost_analysis(self) -> Any | None:
+    """A summary of execution cost estimates.
+
+    Intended for visualization and debugging purposes. The object output by
+    this is some simple data structure that can easily be printed or serialized
+    (e.g. nested dicts, lists, and tuples with numeric leaves). However, its
+    structure can be arbitrary: it may be inconsistent across versions of JAX
+    and jaxlib, or even across invocations.
+
+    Returns ``None`` if unavailable, e.g. based on backend, compiler, or
+    runtime.
+    """
+    # TODO(frostig): improve annotation (basic pytree of arbitrary structure)
+    try:
+      return self._lowering.cost_analysis()
     except NotImplementedError:
       return None
 

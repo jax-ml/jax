@@ -22,13 +22,15 @@ limitations under the License.
 
 #if defined(JAX_GPU_CUDA)
 
-#include "third_party/gpus/cuda/include/cuComplex.h"
-#include "third_party/gpus/cuda/include/cublas_v2.h"
-#include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "third_party/gpus/cuda/include/cusolverDn.h"
-#include "third_party/gpus/cuda/include/cusparse.h"
-#include "third_party/gpus/cudnn/cudnn.h"
+#include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"  // IWYU pragma: export
+#include "third_party/gpus/cuda/include/cuComplex.h"  // IWYU pragma: export
+#include "third_party/gpus/cuda/include/cublas_v2.h"  // IWYU pragma: export
+#include "third_party/gpus/cuda/include/cuda.h"       // IWYU pragma: export
+#include "third_party/gpus/cuda/include/cuda_runtime_api.h"  // IWYU pragma: export
+#include "third_party/gpus/cuda/include/cufft.h"       // IWYU pragma: export
+#include "third_party/gpus/cuda/include/cusolverDn.h"  // IWYU pragma: export
+#include "third_party/gpus/cuda/include/cusparse.h"    // IWYU pragma: export
+#include "third_party/gpus/cudnn/cudnn.h"              // IWYU pragma: export
 
 // Some sparse functionality is only available in CUSPARSE 11.3 or newer.
 #define JAX_GPU_HAVE_SPARSE (CUSPARSE_VERSION >= 11300)
@@ -62,11 +64,17 @@ typedef cuDoubleComplex gpublasDoubleComplex;
 typedef cublasFillMode_t gpusolverFillMode_t;
 typedef cublasStatus_t gpublasStatus_t;
 typedef cublasHandle_t gpublasHandle_t;
+typedef CUcontext gpuContext_t;
 typedef cudaDataType gpuDataType;
+typedef CUdevice gpuDevice_t;
+typedef CUdeviceptr gpuDevicePtr_t;
 typedef cudaStream_t gpuStream_t;
 typedef cudaError_t gpuError_t;
+typedef CUevent gpuEvent_t;
+typedef CUfunction gpuFunction_t;
 typedef cudnnHandle_t gpudnnHandle_t;
 typedef cudnnStatus_t gpudnnStatus_t;
+typedef CUmodule gpuModule_t;
 typedef cusolverDnHandle_t gpusolverDnHandle_t;
 typedef cusolverStatus_t gpusolverStatus_t;
 typedef cusolverEigMode_t gpusolverEigMode_t;
@@ -226,7 +234,12 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUSPARSE_SPMV_COO_ALG CUSPARSE_SPMV_COO_ALG2
 #define GPUSPARSE_SPMV_CSR_ALG CUSPARSE_SPMV_CSR_ALG2
 #define GPUSPARSE_SPMM_COO_ALG CUSPARSE_SPMM_COO_ALG2
-#define GPUSPARSE_SPMM_CSR_ALG CUSPARSE_SPMM_CSR_ALG3
+// In general Cusparse does not support a fully general deterministic CSR SpMM
+// algorithm.
+// In CUDA versions before 12.2.1, we used ALG3, which is deterministic, but
+// does not cover all cases and silently fell back to other algorithms for cases
+// it did not cover. CUDA 12.2.1 removed the fallback behavior.
+#define GPUSPARSE_SPMM_CSR_ALG CUSPARSE_SPMM_ALG_DEFAULT
 #else
 #define GPUSPARSE_SPMV_COO_ALG CUSPARSE_MV_ALG_DEFAULT
 #define GPUSPARSE_SPMV_CSR_ALG CUSPARSE_MV_ALG_DEFAULT
@@ -239,6 +252,40 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUSPARSE_SPARSETODENSE_ALG_DEFAULT CUSPARSE_SPARSETODENSE_ALG_DEFAULT
 #define GPUSPARSE_STATUS_SUCCESS CUSPARSE_STATUS_SUCCESS
 
+#define gpuCtxGetDevice cuCtxGetDevice
+#define gpuCtxPopCurrent cuCtxPopCurrent
+#define gpuCtxPushCurrent cuCtxPushCurrent
+#define gpuDeviceGetAttribute cuDeviceGetAttribute
+#define gpuEventCreate cuEventCreate
+#define gpuEventRecord cuEventRecord
+#define gpuEventSynchronize cuEventSynchronize
+#define gpuEventElapsedTime cuEventElapsedTime
+#define gpuEventDestroy cuEventDestroy
+#define gpuFuncGetAttribute cuFuncGetAttribute
+#define gpuFuncSetCacheConfig cuFuncSetCacheConfig
+#define gpuInit cuInit
+#define gpuLaunchKernel cuLaunchKernel
+#define gpuMemcpyDtoHAsync cuMemcpyDtoHAsync
+#define gpuMemcpyHtoDAsync cuMemcpyHtoDAsync
+#define gpuMemsetD8Async cuMemsetD8Async
+#define gpuModuleLoadData cuModuleLoadData
+#define gpuModuleGetFunction cuModuleGetFunction
+#define gpuModuleUnload cuModuleUnload
+#define gpuStreamGetCtx cuStreamGetCtx
+
+#define GPU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR \
+  CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR
+#define GPU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR \
+  CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR
+#define GPU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN \
+  CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN
+#define GPU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR \
+  CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR
+#define GPU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES
+#define GPU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES \
+  CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES
+#define GPU_EVENT_DEFAULT CU_EVENT_DEFAULT
+
 #define gpuGetLastError cudaGetLastError
 #define gpuGetErrorString cudaGetErrorString
 #define gpuMemcpy cudaMemcpy
@@ -248,6 +295,12 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuMemcpyDeviceToHost cudaMemcpyDeviceToHost
 #define gpuStreamSynchronize cudaStreamSynchronize
 #define gpuSuccess cudaSuccess
+
+namespace jax::JAX_GPU_NAMESPACE {
+namespace {
+constexpr uint32_t kNumThreadsPerWarp = 32;
+}
+}  // namespace jax::JAX_GPU_NAMESPACE
 
 #elif defined(JAX_GPU_HIP)
 
@@ -272,9 +325,15 @@ typedef hipblasFillMode_t gpublasFillMode_t;
 typedef hipsolverFillMode_t gpusolverFillMode_t;
 typedef hipblasHandle_t gpublasHandle_t;
 typedef hipblasStatus_t gpublasStatus_t;
+typedef hipCtx_t gpuContext_t;
 typedef hipDataType gpuDataType;
+typedef hipDevice_t gpuDevice_t;
+typedef hipDeviceptr_t gpuDevicePtr_t;
 typedef hipStream_t gpuStream_t;
 typedef hipError_t gpuError_t;
+typedef hipEvent_t gpuEvent_t;
+typedef hipFunction_t gpuFunction_t;
+typedef hipModule_t gpuModule_t;
 typedef void gpuSyevjInfo;
 typedef hipsolverSyevjInfo_t gpuSyevjInfo_t;
 typedef hipsolverEigMode_t gpusolverEigMode_t;
@@ -437,6 +496,48 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuMemcpyDeviceToHost hipMemcpyDeviceToHost
 #define gpuStreamSynchronize hipStreamSynchronize
 #define gpuSuccess hipSuccess
+
+#define gpuCtxGetDevice hipCtxGetDevice
+#define gpuCtxPopCurrent hipCtxPopCurrent
+#define gpuCtxPushCurrent hipCtxPushCurrent
+#define gpuDeviceGet hipDeviceGet
+#define gpuDeviceGetAttribute hipDeviceGetAttribute
+#define gpuDevicePrimaryCtxRetain hipDevicePrimaryCtxRetain
+#define gpuEventCreate hipEventCreateWithFlags
+#define gpuEventRecord hipEventRecord
+#define gpuEventSynchronize hipEventSynchronize
+#define gpuEventElapsedTime hipEventElapsedTime
+#define gpuEventDestroy hipEventDestroy
+#define gpuFuncGetAttribute hipFuncGetAttribute
+#define gpuFuncSetCacheConfig hipFuncSetCacheConfig
+#define gpuGetStreamDeviceId hipGetStreamDeviceId
+#define gpuInit hipInit
+#define gpuLaunchKernel hipModuleLaunchKernel
+#define gpuModuleGetFunction hipModuleGetFunction
+#define gpuModuleLoadData hipModuleLoadData
+#define gpuModuleUnload hipModuleUnload
+#define gpuMemsetD8Async hipMemsetD8Async
+#define gpuMemcpyDtoHAsync hipMemcpyDtoHAsync
+#define gpuMemcpyHtoDAsync hipMemcpyHtoDAsync
+#define gpuMemsetD8Async hipMemsetD8Async
+
+#define GPU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR \
+  hipDeviceAttributeComputeCapabilityMajor
+#define GPU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR \
+  hipDeviceAttributeComputeCapabilityMinor
+#define GPU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN \
+  hipDeviceAttributeMaxSharedMemoryPerBlock
+#define GPU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR \
+  hipDeviceAttributeMaxBlocksPerMultiProcessor
+#define GPU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES \
+  HIP_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES
+#define GPU_EVENT_DEFAULT hipEventDefault
+
+namespace jax::JAX_GPU_NAMESPACE {
+namespace {
+constexpr uint32_t kNumThreadsPerWarp = 64;
+}
+}  // namespace jax::JAX_GPU_NAMESPACE
 
 #else  // defined(GPU vendor)
 #error "Either JAX_GPU_CUDA or JAX_GPU_HIP must be defined"

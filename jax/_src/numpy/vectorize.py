@@ -14,7 +14,7 @@
 
 import functools
 import re
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable
 
 from jax._src import api
 from jax import lax
@@ -30,13 +30,13 @@ _ARGUMENT_LIST = '{0:}(?:,{0:})*'.format(_ARGUMENT)
 _SIGNATURE = '^{0:}->{0:}$'.format(_ARGUMENT_LIST)
 
 
-CoreDims = Tuple[str, ...]
+CoreDims = tuple[str, ...]
 NDArray = Any
 
 
 def _parse_gufunc_signature(
     signature: str,
-) -> Tuple[List[CoreDims], List[CoreDims]]:
+) -> tuple[list[CoreDims], list[CoreDims]]:
   """Parse string signatures for a generalized universal function.
 
   Args:
@@ -56,8 +56,8 @@ def _parse_gufunc_signature(
 
 
 def _update_dim_sizes(
-    dim_sizes: Dict[str, int],
-    shape: Tuple[int, ...],
+    dim_sizes: dict[str, int],
+    shape: tuple[int, ...],
     core_dims: CoreDims,
     error_context: str = "",
     *,
@@ -94,10 +94,10 @@ def _update_dim_sizes(
 
 
 def _parse_input_dimensions(
-    args: Tuple[NDArray, ...],
-    input_core_dims: List[CoreDims],
+    args: tuple[NDArray, ...],
+    input_core_dims: list[CoreDims],
     error_context: str = "",
-) -> Tuple[Tuple[int, ...], Dict[str, int]]:
+) -> tuple[tuple[int, ...], dict[str, int]]:
   """Parse broadcast and core dimensions for vectorize with a signature.
 
   Args:
@@ -114,7 +114,7 @@ def _parse_input_dimensions(
         'wrong number of positional arguments: expected %r, got %r %s'
         % (len(input_core_dims), len(args), error_context))
   shapes = []
-  dim_sizes: Dict[str, int] = {}
+  dim_sizes: dict[str, int] = {}
   for arg, core_dims in zip(args, input_core_dims):
     _update_dim_sizes(dim_sizes, arg.shape, core_dims, error_context,
                       is_input=True)
@@ -127,8 +127,8 @@ def _parse_input_dimensions(
 
 def _check_output_dims(
     func: Callable,
-    dim_sizes: Dict[str, int],
-    expected_output_core_dims: List[CoreDims],
+    dim_sizes: dict[str, int],
+    expected_output_core_dims: list[CoreDims],
     error_context: str = "",
 ) -> Callable:
   """Check that output core dimensions match the signature."""
@@ -263,13 +263,21 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
     error_context = ("on vectorized function with excluded={!r} and "
                      "signature={!r}".format(excluded, signature))
     excluded_func, args = _apply_excluded(pyfunc, excluded, args)
-    args = tuple(map(jnp.asarray, args))
 
     if signature is not None:
       input_core_dims, output_core_dims = _parse_gufunc_signature(signature)
     else:
       input_core_dims = [()] * len(args)
       output_core_dims = None
+
+    none_args = {i for i, arg in enumerate(args) if arg is None}
+    if any(none_args):
+      if any(input_core_dims[i] != () for i in none_args):
+        raise ValueError(f"Cannot pass None at locations {none_args} with {signature=}")
+      excluded_func, args = _apply_excluded(excluded_func, none_args, args)
+      input_core_dims = [dim for i, dim in enumerate(input_core_dims) if i not in none_args]
+
+    args = tuple(map(jnp.asarray, args))
 
     broadcast_shape, dim_sizes = _parse_input_dimensions(
         args, input_core_dims, error_context)
@@ -278,36 +286,41 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
         excluded_func, dim_sizes, output_core_dims, error_context)
 
     # Rather than broadcasting all arguments to full broadcast shapes, prefer
-    # expanding dimensions using vmap when possible. By pushing broadcasting
+    # expanding dimensions using vmap. By pushing broadcasting
     # into vmap, we can make use of more efficient batching rules for
     # primitives where only some arguments are batched (e.g., for
-    # lax_linalg.triangular_solve).
+    # lax_linalg.triangular_solve), and avoid instantiating large broadcasted
+    # arrays.
 
-    vec_args = []
-    vmap_counts = []
+    squeezed_args = []
+    rev_filled_shapes = []
 
     for arg, core_dims in zip(args, input_core_dims):
-      # Explicitly broadcast the dimensions already found on each argument,
-      # because these dimensiosns might be of size 1, which vmap doesn't
-      # handle.
-      # TODO(shoyer): Consider squeezing out size 1 dimensions instead, and
-      # doing all vectorization with vmap? This *might* be a little more
-      # efficient but would require more careful book-keeping.
-      core_shape = tuple(dim_sizes[dim] for dim in core_dims)
-      full_shape = broadcast_shape + core_shape
-      vec_shape = full_shape[-arg.ndim:] if arg.ndim else ()
+      noncore_shape = arg.shape[:arg.ndim - len(core_dims)]
 
-      vec_arg = jnp.broadcast_to(arg, vec_shape)
-      vec_args.append(vec_arg)
+      pad_ndim = len(broadcast_shape) - len(noncore_shape)
+      filled_shape = pad_ndim * (1,) + noncore_shape
+      rev_filled_shapes.append(filled_shape[::-1])
 
-      vmap_count = len(vec_shape) - len(core_shape)
-      vmap_counts.append(vmap_count)
+      squeeze_indices = tuple(i for i, size in enumerate(noncore_shape) if size == 1)
+      squeezed_arg = jnp.squeeze(arg, axis=squeeze_indices)
+      squeezed_args.append(squeezed_arg)
 
     vectorized_func = checked_func
-    while any(vmap_counts):
-      in_axes = tuple(0 if c > 0 else None for c in vmap_counts)
-      vmap_counts = [max(c - 1, 0) for c in vmap_counts]
-      vectorized_func = api.vmap(vectorized_func, in_axes)
-    return vectorized_func(*vec_args)
+    dims_to_expand = []
+    for negdim, axis_sizes in enumerate(zip(*rev_filled_shapes)):
+      in_axes = tuple(None if size == 1 else 0 for size in axis_sizes)
+      if all(axis is None for axis in in_axes):
+        dims_to_expand.append(len(broadcast_shape) - 1 - negdim)
+      else:
+        vectorized_func = api.vmap(vectorized_func, in_axes)
+    result = vectorized_func(*squeezed_args)
+
+    if not dims_to_expand:
+      return result
+    elif isinstance(result, tuple):
+      return tuple(jnp.expand_dims(r, axis=dims_to_expand) for r in result)
+    else:
+      return jnp.expand_dims(result, axis=dims_to_expand)
 
   return wrapped

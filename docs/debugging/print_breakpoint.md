@@ -5,7 +5,7 @@ inside of JIT-ted functions.
 
 ## Debugging with `jax.debug.print` and other debugging callbacks
 
-**TL;DR** Use {func}`jax.debug.print` to print values to stdout in `jit`-,`pmap`-, and `pjit`-decorated functions:
+**TL;DR** Use {func}`jax.debug.print` to print traced array values to stdout in `jit`- and `pmap`-decorated functions:
 
 ```python
 import jax
@@ -17,7 +17,7 @@ def f(x):
   y = jnp.sin(x)
   jax.debug.print("🤯 {y} 🤯", y=y)
   return y
-  
+
 f(2.)
 # Prints:
 # 🤯 2.0 🤯
@@ -34,6 +34,14 @@ def debug.print(fmt: str, *args: PyTree[Array], **kwargs: PyTree[Array]) -> None
   print(fmt.format(*args, **kwargs))
 ```
 except that it can be staged out and transformed by JAX. See the {func}`API reference <jax.debug.print>` for more details.
+
+Note that `fmt` cannot be an f-string because f-strings are formatted immediately, whereas for `jax.debug.print`, we'd like to delay formatting until later.
+
+### When to use "_debug_" print?
+
+You should use `jax.debug.print` for dynamic (i.e. traced) array values within JAX transformations
+like `jit`, `vmap`, and others.
+For printing of static values (like array shapes or dtypes), you can use a normal Python `print` statement.
 
 ### Why "_debug_" print?
 In the name of debugging, `jax.debug.print` can reveal information about _how_ computations are evaluated:
@@ -223,7 +231,7 @@ Furthermore, when using `jax.debug.print` with `jax.pjit`, a global synchronizat
 #### Limitations
 * Adding print statements is a manual process
 * Can have performance impacts
-  
+
 ## Interactive inspection with `jax.debug.breakpoint()`
 
 **TL;DR** Use `jax.debug.breakpoint()` to pause the execution of your JAX program to inspect values:

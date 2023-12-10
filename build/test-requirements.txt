@@ -1,8 +1,12 @@
 absl-py
+build
 cloudpickle
 colorama>=0.4.4
-matplotlib
+hypothesis
+numpy>=1.22
 pillow>=9.1.0
+portpicker
 pytest-xdist
 wheel
 rich
+setuptools

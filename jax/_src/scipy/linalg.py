@@ -18,23 +18,21 @@ from functools import partial
 import numpy as np
 import scipy.linalg
 import textwrap
-import warnings
-from typing import cast, overload, Any, Literal, Optional, Tuple, Union
+from typing import cast, overload, Any, Literal, Optional, Union
 
 import jax
+import jax.numpy as jnp
 from jax import jit, vmap, jvp
 from jax import lax
 from jax._src import dtypes
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import qdwh
-from jax._src.numpy.lax_numpy import _check_arraylike
-from jax._src.numpy.util import _wraps, _promote_dtypes_inexact, _promote_dtypes_complex
-from jax._src.numpy import lax_numpy as jnp
-from jax._src.numpy import linalg as np_linalg
+from jax._src.numpy.util import (
+    check_arraylike, _wraps, promote_dtypes, promote_dtypes_inexact,
+    promote_dtypes_complex)
 from jax._src.typing import Array, ArrayLike
 
 
-_T = lambda x: jnp.swapaxes(x, -1, -2)
 _no_chkfinite_doc = textwrap.dedent("""
 Does not support the Scipy argument ``check_finite=True``,
 because compiled JAX code cannot perform checks of array values at runtime.
@@ -43,9 +41,9 @@ _no_overwrite_and_chkfinite_doc = _no_chkfinite_doc + "\nDoes not support the Sc
 
 @partial(jit, static_argnames=('lower',))
 def _cholesky(a: ArrayLike, lower: bool) -> Array:
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
-  l = lax_linalg.cholesky(a if lower else jnp.conj(_T(a)), symmetrize_input=False)
-  return l if lower else jnp.conj(_T(l))
+  a, = promote_dtypes_inexact(jnp.asarray(a))
+  l = lax_linalg.cholesky(a if lower else jnp.conj(a.mT), symmetrize_input=False)
+  return l if lower else jnp.conj(l.mT)
 
 @_wraps(scipy.linalg.cholesky,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
@@ -57,13 +55,13 @@ def cholesky(a: ArrayLike, lower: bool = False, overwrite_a: bool = False,
 @_wraps(scipy.linalg.cho_factor,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def cho_factor(a: ArrayLike, lower: bool = False, overwrite_a: bool = False,
-               check_finite: bool = True) -> Tuple[Array, bool]:
+               check_finite: bool = True) -> tuple[Array, bool]:
   del overwrite_a, check_finite  # Unused
   return (cholesky(a, lower=lower), lower)
 
 @partial(jit, static_argnames=('lower',))
 def _cho_solve(c: ArrayLike, b: ArrayLike, lower: bool) -> Array:
-  c, b = _promote_dtypes_inexact(jnp.asarray(c), jnp.asarray(b))
+  c, b = promote_dtypes_inexact(jnp.asarray(c), jnp.asarray(b))
   lax_linalg._check_solve_shapes(c, b)
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
                                   transpose_a=not lower, conjugate_a=not lower)
@@ -73,30 +71,30 @@ def _cho_solve(c: ArrayLike, b: ArrayLike, lower: bool) -> Array:
 
 @_wraps(scipy.linalg.cho_solve, update_doc=False,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_b', 'check_finite'))
-def cho_solve(c_and_lower: Tuple[ArrayLike, bool], b: ArrayLike,
+def cho_solve(c_and_lower: tuple[ArrayLike, bool], b: ArrayLike,
               overwrite_b: bool = False, check_finite: bool = True) -> Array:
   del overwrite_b, check_finite  # Unused
   c, lower = c_and_lower
   return _cho_solve(c, b, lower)
 
 @overload
-def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: Literal[True]) -> Tuple[Array, Array, Array]: ...
+def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: Literal[True]) -> tuple[Array, Array, Array]: ...
 
 @overload
 def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: Literal[False]) -> Array: ...
 
 @overload
-def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: bool) -> Union[Array, Tuple[Array, Array, Array]]: ...
+def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: bool) -> Union[Array, tuple[Array, Array, Array]]: ...
 
 @partial(jit, static_argnames=('full_matrices', 'compute_uv'))
-def _svd(a: ArrayLike, *, full_matrices: bool, compute_uv: bool) -> Union[Array, Tuple[Array, Array, Array]]:
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+def _svd(a: ArrayLike, *, full_matrices: bool, compute_uv: bool) -> Union[Array, tuple[Array, Array, Array]]:
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   return lax_linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
 
 @overload
 def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: Literal[True] = True,
         overwrite_a: bool = False, check_finite: bool = True,
-        lapack_driver: str = 'gesdd') -> Tuple[Array, Array, Array]: ...
+        lapack_driver: str = 'gesdd') -> tuple[Array, Array, Array]: ...
 
 @overload
 def svd(a: ArrayLike, full_matrices: bool, compute_uv: Literal[False],
@@ -111,13 +109,13 @@ def svd(a: ArrayLike, full_matrices: bool = True, *, compute_uv: Literal[False],
 @overload
 def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
         overwrite_a: bool = False, check_finite: bool = True,
-        lapack_driver: str = 'gesdd') -> Union[Array, Tuple[Array, Array, Array]]: ...
+        lapack_driver: str = 'gesdd') -> Union[Array, tuple[Array, Array, Array]]: ...
 
 @_wraps(scipy.linalg.svd,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite', 'lapack_driver'))
 def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
         overwrite_a: bool = False, check_finite: bool = True,
-        lapack_driver: str = 'gesdd') -> Union[Array, Tuple[Array, Array, Array]]:
+        lapack_driver: str = 'gesdd') -> Union[Array, tuple[Array, Array, Array]]:
   del overwrite_a, check_finite, lapack_driver  # unused
   return _svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
 
@@ -125,7 +123,7 @@ def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def det(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> Array:
   del overwrite_a, check_finite  # unused
-  return np_linalg.det(a)
+  return jnp.linalg.det(a)
 
 
 @overload
@@ -134,15 +132,15 @@ def _eigh(a: ArrayLike, b: Optional[ArrayLike], lower: bool, eigvals_only: Liter
 
 @overload
 def _eigh(a: ArrayLike, b: Optional[ArrayLike], lower: bool, eigvals_only: Literal[False],
-          eigvals: None, type: int) -> Tuple[Array, Array]: ...
+          eigvals: None, type: int) -> tuple[Array, Array]: ...
 
 @overload
 def _eigh(a: ArrayLike, b: Optional[ArrayLike], lower: bool, eigvals_only: bool,
-          eigvals: None, type: int) -> Union[Array, Tuple[Array, Array]]: ...
+          eigvals: None, type: int) -> Union[Array, tuple[Array, Array]]: ...
 
 @partial(jit, static_argnames=('lower', 'eigvals_only', 'eigvals', 'type'))
 def _eigh(a: ArrayLike, b: Optional[ArrayLike], lower: bool, eigvals_only: bool,
-          eigvals: None, type: int) -> Union[Array, Tuple[Array, Array]]:
+          eigvals: None, type: int) -> Union[Array, tuple[Array, Array]]:
   if b is not None:
     raise NotImplementedError("Only the b=None case of eigh is implemented")
   if type != 1:
@@ -151,7 +149,7 @@ def _eigh(a: ArrayLike, b: Optional[ArrayLike], lower: bool, eigvals_only: bool,
     raise NotImplementedError(
         "Only the eigvals=None case of eigh is implemented.")
 
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower)
 
   if eigvals_only:
@@ -163,7 +161,7 @@ def _eigh(a: ArrayLike, b: Optional[ArrayLike], lower: bool, eigvals_only: bool,
 def eigh(a: ArrayLike, b: Optional[ArrayLike] = None, lower: bool = True,
          eigvals_only: Literal[False] = False, overwrite_a: bool = False,
          overwrite_b: bool = False, turbo: bool = True, eigvals: None = None,
-         type: int = 1, check_finite: bool = True) -> Tuple[Array, Array]: ...
+         type: int = 1, check_finite: bool = True) -> tuple[Array, Array]: ...
 
 @overload
 def eigh(a: ArrayLike, b: Optional[ArrayLike] = None, lower: bool = True, *,
@@ -181,7 +179,7 @@ def eigh(a: ArrayLike, b: Optional[ArrayLike], lower: bool,
 def eigh(a: ArrayLike, b: Optional[ArrayLike] = None, lower: bool = True,
          eigvals_only: bool = False, overwrite_a: bool = False,
          overwrite_b: bool = False, turbo: bool = True, eigvals: None = None,
-         type: int = 1, check_finite: bool = True) -> Union[Array, Tuple[Array, Array]]: ...
+         type: int = 1, check_finite: bool = True) -> Union[Array, tuple[Array, Array]]: ...
 
 @_wraps(scipy.linalg.eigh,
         lax_description=_no_overwrite_and_chkfinite_doc,
@@ -189,18 +187,18 @@ def eigh(a: ArrayLike, b: Optional[ArrayLike] = None, lower: bool = True,
 def eigh(a: ArrayLike, b: Optional[ArrayLike] = None, lower: bool = True,
          eigvals_only: bool = False, overwrite_a: bool = False,
          overwrite_b: bool = False, turbo: bool = True, eigvals: None = None,
-         type: int = 1, check_finite: bool = True) -> Union[Array, Tuple[Array, Array]]:
+         type: int = 1, check_finite: bool = True) -> Union[Array, tuple[Array, Array]]:
   del overwrite_a, overwrite_b, turbo, check_finite  # unused
   return _eigh(a, b, lower, eigvals_only, eigvals, type)
 
 @partial(jit, static_argnames=('output',))
-def _schur(a: Array, output: str) -> Tuple[Array, Array]:
+def _schur(a: Array, output: str) -> tuple[Array, Array]:
   if output == "complex":
     a = a.astype(dtypes.to_complex_dtype(a.dtype))
   return lax_linalg.schur(a)
 
 @_wraps(scipy.linalg.schur)
-def schur(a: ArrayLike, output: str = 'real') -> Tuple[Array, Array]:
+def schur(a: ArrayLike, output: str = 'real') -> tuple[Array, Array]:
   if output not in ('real', 'complex'):
     raise ValueError(
       f"Expected 'output' to be either 'real' or 'complex', got {output=}.")
@@ -210,15 +208,15 @@ def schur(a: ArrayLike, output: str = 'real') -> Tuple[Array, Array]:
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def inv(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> Array:
   del overwrite_a, check_finite  # unused
-  return np_linalg.inv(a)
+  return jnp.linalg.inv(a)
 
 
 @_wraps(scipy.linalg.lu_factor,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 @partial(jit, static_argnames=('overwrite_a', 'check_finite'))
-def lu_factor(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> Tuple[Array, Array]:
+def lu_factor(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> tuple[Array, Array]:
   del overwrite_a, check_finite  # unused
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   lu, pivots, _ = lax_linalg.lu(a)
   return lu, pivots
 
@@ -226,7 +224,7 @@ def lu_factor(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True
 @_wraps(scipy.linalg.lu_solve,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_b', 'check_finite'))
 @partial(jit, static_argnames=('trans', 'overwrite_b', 'check_finite'))
-def lu_solve(lu_and_piv: Tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
+def lu_solve(lu_and_piv: tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
              overwrite_b: bool = False, check_finite: bool = True) -> Array:
   del overwrite_b, check_finite  # unused
   lu, pivots = lu_and_piv
@@ -235,17 +233,17 @@ def lu_solve(lu_and_piv: Tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
   return lax_linalg.lu_solve(lu, perm, b, trans)
 
 @overload
-def _lu(a: ArrayLike, permute_l: Literal[True]) -> Tuple[Array, Array]: ...
+def _lu(a: ArrayLike, permute_l: Literal[True]) -> tuple[Array, Array]: ...
 
 @overload
-def _lu(a: ArrayLike, permute_l: Literal[False]) -> Tuple[Array, Array, Array]: ...
+def _lu(a: ArrayLike, permute_l: Literal[False]) -> tuple[Array, Array, Array]: ...
 
 @overload
-def _lu(a: ArrayLike, permute_l: bool) -> Union[Tuple[Array, Array], Tuple[Array, Array, Array]]: ...
+def _lu(a: ArrayLike, permute_l: bool) -> Union[tuple[Array, Array], tuple[Array, Array, Array]]: ...
 
 @partial(jit, static_argnums=(1,))
-def _lu(a: ArrayLike, permute_l: bool) -> Union[Tuple[Array, Array], Tuple[Array, Array, Array]]:
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+def _lu(a: ArrayLike, permute_l: bool) -> Union[tuple[Array, Array], tuple[Array, Array, Array]]:
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   lu, _, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
   m, n = jnp.shape(a)
@@ -260,35 +258,35 @@ def _lu(a: ArrayLike, permute_l: bool) -> Union[Tuple[Array, Array], Tuple[Array
 
 @overload
 def lu(a: ArrayLike, permute_l: Literal[False] = False, overwrite_a: bool = False,
-       check_finite: bool = True) -> Tuple[Array, Array, Array]: ...
+       check_finite: bool = True) -> tuple[Array, Array, Array]: ...
 
 @overload
 def lu(a: ArrayLike, permute_l: Literal[True], overwrite_a: bool = False,
-       check_finite: bool = True) -> Tuple[Array, Array]: ...
+       check_finite: bool = True) -> tuple[Array, Array]: ...
 
 @overload
 def lu(a: ArrayLike, permute_l: bool = False, overwrite_a: bool = False,
-       check_finite: bool = True) -> Union[Tuple[Array, Array], Tuple[Array, Array, Array]]: ...
+       check_finite: bool = True) -> Union[tuple[Array, Array], tuple[Array, Array, Array]]: ...
 
 @_wraps(scipy.linalg.lu, update_doc=False,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 @partial(jit, static_argnames=('permute_l', 'overwrite_a', 'check_finite'))
 def lu(a: ArrayLike, permute_l: bool = False, overwrite_a: bool = False,
-       check_finite: bool = True) -> Union[Tuple[Array, Array], Tuple[Array, Array, Array]]:
+       check_finite: bool = True) -> Union[tuple[Array, Array], tuple[Array, Array, Array]]:
   del overwrite_a, check_finite  # unused
   return _lu(a, permute_l)
 
 @overload
-def _qr(a: ArrayLike, mode: Literal["r"], pivoting: bool) -> Tuple[Array]: ...
+def _qr(a: ArrayLike, mode: Literal["r"], pivoting: bool) -> tuple[Array]: ...
 
 @overload
-def _qr(a: ArrayLike, mode: Literal["full", "economic"], pivoting: bool) -> Tuple[Array, Array]: ...
+def _qr(a: ArrayLike, mode: Literal["full", "economic"], pivoting: bool) -> tuple[Array, Array]: ...
 
 @overload
-def _qr(a: ArrayLike, mode: str, pivoting: bool) -> Union[Tuple[Array], Tuple[Array, Array]]: ...
+def _qr(a: ArrayLike, mode: str, pivoting: bool) -> Union[tuple[Array], tuple[Array, Array]]: ...
 
 @partial(jit, static_argnames=('mode', 'pivoting'))
-def _qr(a: ArrayLike, mode: str, pivoting: bool) -> Union[Tuple[Array], Tuple[Array, Array]]:
+def _qr(a: ArrayLike, mode: str, pivoting: bool) -> Union[tuple[Array], tuple[Array, Array]]:
   if pivoting:
     raise NotImplementedError(
         "The pivoting=True case of qr is not implemented.")
@@ -298,7 +296,7 @@ def _qr(a: ArrayLike, mode: str, pivoting: bool) -> Union[Tuple[Array], Tuple[Ar
     full_matrices = False
   else:
     raise ValueError(f"Unsupported QR decomposition mode '{mode}'")
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   q, r = lax_linalg.qr(a, full_matrices=full_matrices)
   if mode == "r":
     return (r,)
@@ -307,24 +305,24 @@ def _qr(a: ArrayLike, mode: str, pivoting: bool) -> Union[Tuple[Array], Tuple[Ar
 
 @overload
 def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: Literal["full", "economic"] = "full",
-       pivoting: bool = False, check_finite: bool = True) -> Tuple[Array, Array]: ...
+       pivoting: bool = False, check_finite: bool = True) -> tuple[Array, Array]: ...
 
 @overload
 def qr(a: ArrayLike,  overwrite_a: bool, lwork: Any, mode: Literal["r"],
-       pivoting: bool = False, check_finite: bool = True) -> Tuple[Array]: ...
+       pivoting: bool = False, check_finite: bool = True) -> tuple[Array]: ...
 
 @overload
 def qr(a: ArrayLike,  overwrite_a: bool = False, lwork: Any = None, *, mode: Literal["r"],
-       pivoting: bool = False, check_finite: bool = True) -> Tuple[Array]: ...
+       pivoting: bool = False, check_finite: bool = True) -> tuple[Array]: ...
 
 @overload
 def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "full",
-       pivoting: bool = False, check_finite: bool = True) -> Union[Tuple[Array], Tuple[Array, Array]]: ...
+       pivoting: bool = False, check_finite: bool = True) -> Union[tuple[Array], tuple[Array, Array]]: ...
 
 @_wraps(scipy.linalg.qr,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite', 'lwork'))
 def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "full",
-       pivoting: bool = False, check_finite: bool = True) -> Union[Tuple[Array], Tuple[Array, Array]]:
+       pivoting: bool = False, check_finite: bool = True) -> Union[tuple[Array], tuple[Array, Array]]:
   del overwrite_a, lwork, check_finite  # unused
   return _qr(a, mode, pivoting)
 
@@ -332,9 +330,9 @@ def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "
 @partial(jit, static_argnames=('assume_a', 'lower'))
 def _solve(a: ArrayLike, b: ArrayLike, assume_a: str, lower: bool) -> Array:
   if assume_a != 'pos':
-    return np_linalg.solve(a, b)
+    return jnp.linalg.solve(a, b)
 
-  a, b = _promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
+  a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
   lax_linalg._check_solve_shapes(a, b)
 
   # With custom_linear_solve, we can reuse the same factorization when
@@ -354,20 +352,15 @@ def _solve(a: ArrayLike, b: ArrayLike, assume_a: str, lower: bool) -> Array:
 
 
 @_wraps(scipy.linalg.solve,
-        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'overwrite_b', 'debug', 'check_finite'))
-def solve(a: ArrayLike, b: ArrayLike, sym_pos: bool = False, lower: bool = False,
+        lax_description=_no_overwrite_and_chkfinite_doc,
+        skip_params=('overwrite_a', 'overwrite_b', 'debug', 'check_finite'))
+def solve(a: ArrayLike, b: ArrayLike, lower: bool = False,
           overwrite_a: bool = False, overwrite_b: bool = False, debug: bool = False,
           check_finite: bool = True, assume_a: str = 'gen') -> Array:
-  # TODO(jakevdp) remove sym_pos argument after October 2022
   del overwrite_a, overwrite_b, debug, check_finite  #unused
   valid_assume_a = ['gen', 'sym', 'her', 'pos']
   if assume_a not in valid_assume_a:
     raise ValueError(f"Expected assume_a to be one of {valid_assume_a}; got {assume_a!r}")
-  if sym_pos:
-    warnings.warn("The sym_pos argument to solve() is deprecated and will be removed "
-                  "in a future JAX release. Use assume_a='pos' instead.",
-                  category=FutureWarning, stacklevel=2)
-    assume_a = 'pos'
   return _solve(a, b, assume_a, lower)
 
 @partial(jit, static_argnames=('trans', 'lower', 'unit_diagonal'))
@@ -382,7 +375,7 @@ def _solve_triangular(a: ArrayLike, b: ArrayLike, trans: Union[int, str],
   else:
     raise ValueError(f"Invalid 'trans' value {trans}")
 
-  a, b = _promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
+  a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
 
   # lax_linalg.triangular_solve only supports matrix 'b's at the moment.
   b_is_vector = jnp.ndim(a) == jnp.ndim(b) + 1
@@ -433,7 +426,17 @@ where norm() denotes the L1 norm, and
 @_wraps(scipy.linalg.expm, lax_description=_expm_description)
 @partial(jit, static_argnames=('upper_triangular', 'max_squarings'))
 def expm(A: ArrayLike, *, upper_triangular: bool = False, max_squarings: int = 16) -> Array:
-  P, Q, n_squarings = _calc_P_Q(A)
+  A, = promote_dtypes_inexact(A)
+
+  if A.ndim < 2 or A.shape[-1] != A.shape[-2]:
+    raise ValueError(f"Expected A to be a (batched) square matrix, got {A.shape=}.")
+
+  if A.ndim > 2:
+    return jnp.vectorize(
+      partial(expm, upper_triangular=upper_triangular, max_squarings=max_squarings),
+      signature="(n,n)->(n,n)")(A)
+
+  P, Q, n_squarings = _calc_P_Q(jnp.asarray(A))
 
   def _nan(args):
     A, *_ = args
@@ -449,11 +452,10 @@ def expm(A: ArrayLike, *, upper_triangular: bool = False, max_squarings: int = 1
   return R
 
 @jit
-def _calc_P_Q(A: ArrayLike) -> Tuple[Array, Array, Array]:
-  A = jnp.asarray(A)
+def _calc_P_Q(A: Array) -> tuple[Array, Array, Array]:
   if A.ndim != 2 or A.shape[0] != A.shape[1]:
     raise ValueError('expected A to be a square matrix')
-  A_L1 = np_linalg.norm(A,1)
+  A_L1 = jnp.linalg.norm(A,1)
   n_squarings: Array
   U: Array
   V: Array
@@ -484,7 +486,7 @@ def _solve_P_Q(P: ArrayLike, Q: ArrayLike, upper_triangular: bool = False) -> Ar
   if upper_triangular:
     return solve_triangular(Q, P)
   else:
-    return np_linalg.solve(Q, P)
+    return jnp.linalg.solve(Q, P)
 
 def _precise_dot(A: ArrayLike, B: ArrayLike) -> Array:
   return jnp.dot(A, B, precision=lax.Precision.HIGHEST)
@@ -504,7 +506,7 @@ def _squaring(R: Array, n_squarings: Array, max_squarings: int) -> Array:
 
   return res
 
-def _pade3(A: Array) -> Tuple[Array, Array]:
+def _pade3(A: Array) -> tuple[Array, Array]:
   b = (120., 60., 12., 1.)
   M, N = A.shape
   ident = jnp.eye(M, N, dtype=A.dtype)
@@ -513,7 +515,7 @@ def _pade3(A: Array) -> Tuple[Array, Array]:
   V: Array = b[2]*A2 + b[0]*ident
   return U, V
 
-def _pade5(A: Array) -> Tuple[Array, Array]:
+def _pade5(A: Array) -> tuple[Array, Array]:
   b = (30240., 15120., 3360., 420., 30., 1.)
   M, N = A.shape
   ident = jnp.eye(M, N, dtype=A.dtype)
@@ -523,7 +525,7 @@ def _pade5(A: Array) -> Tuple[Array, Array]:
   V: Array = b[4]*A4 + b[2]*A2 + b[0]*ident
   return U, V
 
-def _pade7(A: Array) -> Tuple[Array, Array]:
+def _pade7(A: Array) -> tuple[Array, Array]:
   b = (17297280., 8648640., 1995840., 277200., 25200., 1512., 56., 1.)
   M, N = A.shape
   ident = jnp.eye(M, N, dtype=A.dtype)
@@ -534,7 +536,7 @@ def _pade7(A: Array) -> Tuple[Array, Array]:
   V = b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
   return U,V
 
-def _pade9(A: Array) -> Tuple[Array, Array]:
+def _pade9(A: Array) -> tuple[Array, Array]:
   b = (17643225600., 8821612800., 2075673600., 302702400., 30270240.,
        2162160., 110880., 3960., 90., 1.)
   M, N = A.shape
@@ -547,7 +549,7 @@ def _pade9(A: Array) -> Tuple[Array, Array]:
   V = b[8]*A8 + b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
   return U,V
 
-def _pade13(A: Array) -> Tuple[Array, Array]:
+def _pade13(A: Array) -> tuple[Array, Array]:
   b = (64764752532480000., 32382376266240000., 7771770303897600.,
        1187353796428800., 129060195264000., 10559470521600., 670442572800.,
        33522128640., 1323241920., 40840800., 960960., 16380., 182., 1.)
@@ -569,7 +571,7 @@ support the ``method='blockEnlarge'`` argument.
 
 @overload
 def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
-                 compute_expm: Literal[True] = True) -> Tuple[Array, Array]: ...
+                 compute_expm: Literal[True] = True) -> tuple[Array, Array]: ...
 
 @overload
 def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
@@ -577,25 +579,25 @@ def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
 
 @overload
 def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
-                 compute_expm: bool = True) -> Union[Array, Tuple[Array, Array]]: ...
+                 compute_expm: bool = True) -> Union[Array, tuple[Array, Array]]: ...
 
 @_wraps(scipy.linalg.expm_frechet, lax_description=_expm_frechet_description)
 @partial(jit, static_argnames=('method', 'compute_expm'))
 def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
-                 compute_expm: bool = True) -> Union[Array, Tuple[Array, Array]]:
-  A = jnp.asarray(A)
-  E = jnp.asarray(E)
-  if A.ndim != 2 or A.shape[0] != A.shape[1]:
+                 compute_expm: bool = True) -> Union[Array, tuple[Array, Array]]:
+  A_arr = jnp.asarray(A)
+  E_arr = jnp.asarray(E)
+  if A_arr.ndim != 2 or A_arr.shape[0] != A_arr.shape[1]:
     raise ValueError('expected A to be a square matrix')
-  if E.ndim != 2 or E.shape[0] != E.shape[1]:
+  if E_arr.ndim != 2 or E_arr.shape[0] != E_arr.shape[1]:
     raise ValueError('expected E to be a square matrix')
-  if A.shape != E.shape:
+  if A_arr.shape != E_arr.shape:
     raise ValueError('expected A and E to be the same shape')
   if method is None:
     method = 'SPS'
   if method == 'SPS':
     bound_fun = partial(expm, upper_triangular=False, max_squarings=16)
-    expm_A, expm_frechet_AE = jvp(bound_fun, (A,), (E,))
+    expm_A, expm_frechet_AE = jvp(bound_fun, (A_arr,), (E_arr,))
   else:
     raise ValueError('only method=\'SPS\' is supported')
   if compute_expm:
@@ -608,8 +610,8 @@ def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
 @jit
 def block_diag(*arrs: ArrayLike) -> Array:
   if len(arrs) == 0:
-    arrs = cast(Tuple[ArrayLike], (jnp.zeros((1, 0)),))
-  arrs = cast(Tuple[ArrayLike], jnp._promote_dtypes(*arrs))
+    arrs = cast(tuple[ArrayLike], (jnp.zeros((1, 0)),))
+  arrs = cast(tuple[ArrayLike], promote_dtypes(*arrs))
   bad_shapes = [i for i, a in enumerate(arrs) if jnp.ndim(a) > 2]
   if bad_shapes:
     raise ValueError("Arguments to jax.scipy.linalg.block_diag must have at "
@@ -629,7 +631,7 @@ def block_diag(*arrs: ArrayLike) -> Array:
 @_wraps(scipy.linalg.eigh_tridiagonal)
 @partial(jit, static_argnames=("eigvals_only", "select", "select_range"))
 def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
-                     select: str = 'a', select_range: Optional[Tuple[float, float]] = None,
+                     select: str = 'a', select_range: Optional[tuple[float, float]] = None,
                      tol: Optional[float] = None) -> Array:
   if not eigvals_only:
     raise NotImplementedError("Calculation of eigenvectors is not implemented")
@@ -785,7 +787,7 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
 @partial(jit, static_argnames=('side', 'method'))
 @jax.default_matmul_precision("float32")
 def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: Optional[float] = None,
-          max_iterations: Optional[int] = None) -> Tuple[Array, Array]:
+          max_iterations: Optional[int] = None) -> tuple[Array, Array]:
   r"""Computes the polar decomposition.
 
   Given the :math:`m \times n` matrix :math:`a`, returns the factors of the polar
@@ -838,29 +840,29 @@ def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: Optio
 
   .. _QDWH: https://epubs.siam.org/doi/abs/10.1137/090774999
   """
-  a = jnp.asarray(a)
-  if a.ndim != 2:
+  arr = jnp.asarray(a)
+  if arr.ndim != 2:
     raise ValueError("The input `a` must be a 2-D array.")
 
   if side not in ["right", "left"]:
     raise ValueError("The argument `side` must be either 'right' or 'left'.")
 
-  m, n = a.shape
+  m, n = arr.shape
   if method == "qdwh":
     # TODO(phawkins): return info also if the user opts in?
     if m >= n and side == "right":
-      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+      unitary, posdef, _, _ = qdwh.qdwh(arr, is_hermitian=False, eps=eps)
     elif m < n and side == "left":
-      a = a.T.conj()
-      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+      arr = arr.T.conj()
+      unitary, posdef, _, _ = qdwh.qdwh(arr, is_hermitian=False, eps=eps)
       posdef = posdef.T.conj()
       unitary = unitary.T.conj()
     else:
       raise NotImplementedError("method='qdwh' only supports mxn matrices "
                                 "where m < n where side='right' and m >= n "
-                                f"side='left', got {a.shape} with {side=}")
+                                f"side='left', got {arr.shape} with {side=}")
   elif method == "svd":
-    u_svd, s_svd, vh_svd = lax_linalg.svd(a, full_matrices=False)
+    u_svd, s_svd, vh_svd = lax_linalg.svd(arr, full_matrices=False)
     s_svd = s_svd.astype(u_svd.dtype)
     unitary = u_svd @ vh_svd
     if side == "right":
@@ -873,22 +875,6 @@ def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: Optio
     raise ValueError(f"Unknown polar decomposition method {method}.")
 
   return unitary, posdef
-
-
-def polar_unitary(a: ArrayLike, *, method: str = "qdwh", eps: Optional[float] = None,
-                  max_iterations: Optional[int] = None) -> Tuple[Array, Array]:
-  """ Computes the unitary factor u in the polar decomposition ``a = u p``
-  (or ``a = p u``).
-
-  .. warning::
-    This function is deprecated. Use :func:`jax.scipy.linalg.polar` instead.
-  """
-  # TODO(phawkins): delete this function after 2022/8/11.
-  warnings.warn("jax.scipy.linalg.polar_unitary is deprecated. Call "
-                "jax.scipy.linalg.polar instead.",
-                DeprecationWarning)
-  unitary, _ = polar(a, method, eps, max_iterations)
-  return unitary
 
 
 @jit
@@ -943,29 +929,29 @@ def sqrtm(A: ArrayLike, blocksize: int = 1) -> Array:
 
 @_wraps(scipy.linalg.rsf2csf, lax_description=_no_chkfinite_doc)
 @partial(jit, static_argnames=('check_finite',))
-def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> Tuple[Array, Array]:
+def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> tuple[Array, Array]:
   del check_finite  # unused
 
-  T = jnp.asarray(T)
-  Z = jnp.asarray(Z)
+  T_arr = jnp.asarray(T)
+  Z_arr = jnp.asarray(Z)
 
-  if T.ndim != 2 or T.shape[0] != T.shape[1]:
+  if T_arr.ndim != 2 or T_arr.shape[0] != T_arr.shape[1]:
     raise ValueError("Input 'T' must be square.")
-  if Z.ndim != 2 or Z.shape[0] != Z.shape[1]:
+  if Z_arr.ndim != 2 or Z_arr.shape[0] != Z_arr.shape[1]:
     raise ValueError("Input 'Z' must be square.")
-  if T.shape[0] != Z.shape[0]:
-    raise ValueError(f"Input array shapes must match: Z: {Z.shape} vs. T: {T.shape}")
+  if T_arr.shape[0] != Z_arr.shape[0]:
+    raise ValueError(f"Input array shapes must match: Z: {Z_arr.shape} vs. T: {T_arr.shape}")
 
-  T, Z = _promote_dtypes_complex(T, Z)
-  eps = jnp.finfo(T.dtype).eps
-  N = T.shape[0]
+  T_arr, Z_arr = promote_dtypes_complex(T_arr, Z_arr)
+  eps = jnp.finfo(T_arr.dtype).eps
+  N = T_arr.shape[0]
 
   if N == 1:
-    return T, Z
+    return T_arr, Z_arr
 
   def _update_T_Z(m, T, Z):
-    mu = np_linalg.eigvals(lax.dynamic_slice(T, (m-1, m-1), (2, 2))) - T[m, m]
-    r = np_linalg.norm(jnp.array([mu[0], T[m, m-1]])).astype(T.dtype)
+    mu = jnp.linalg.eigvals(lax.dynamic_slice(T, (m-1, m-1), (2, 2))) - T[m, m]
+    r = jnp.linalg.norm(jnp.array([mu[0], T[m, m-1]])).astype(T.dtype)
     c = mu[0] / r
     s = T[m, m-1] / r
     G = jnp.array([[c.conj(), s], [-s, c]], dtype=T.dtype)
@@ -1000,7 +986,7 @@ def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> Tuple[Arra
     T = T.at[m, m-1].set(0.0)
     return T, Z
 
-  return lax.fori_loop(1, N, _rsf2scf_iter, (T, Z))
+  return lax.fori_loop(1, N, _rsf2scf_iter, (T_arr, Z_arr))
 
 @overload
 def hessenberg(a: ArrayLike, *, calc_q: Literal[False], overwrite_a: bool = False,
@@ -1008,12 +994,12 @@ def hessenberg(a: ArrayLike, *, calc_q: Literal[False], overwrite_a: bool = Fals
 
 @overload
 def hessenberg(a: ArrayLike, *, calc_q: Literal[True], overwrite_a: bool = False,
-               check_finite: bool = True) -> Tuple[Array, Array]: ...
+               check_finite: bool = True) -> tuple[Array, Array]: ...
 
 @_wraps(scipy.linalg.hessenberg, lax_description=_no_overwrite_and_chkfinite_doc)
 @partial(jit, static_argnames=('calc_q', 'check_finite', 'overwrite_a'))
 def hessenberg(a: ArrayLike, *, calc_q: bool = False, overwrite_a: bool = False,
-               check_finite: bool = True) -> Union[Array, Tuple[Array, Array]]:
+               check_finite: bool = True) -> Union[Array, tuple[Array, Array]]:
   del overwrite_a, check_finite
   n = jnp.shape(a)[-1]
   if n == 0:
@@ -1036,22 +1022,23 @@ def hessenberg(a: ArrayLike, *, calc_q: bool = False, overwrite_a: bool = False,
 @_wraps(scipy.linalg.toeplitz)
 def toeplitz(c: ArrayLike, r: Optional[ArrayLike] = None) -> Array:
   if r is None:
-    _check_arraylike("toeplitz", c)
+    check_arraylike("toeplitz", c)
     r = jnp.conjugate(jnp.asarray(c))
   else:
-    _check_arraylike("toeplitz", c, r)
+    check_arraylike("toeplitz", c, r)
 
-  c = jnp.asarray(c).flatten()
-  r = jnp.asarray(r).flatten()
+  c_arr = jnp.asarray(c).flatten()
+  r_arr = jnp.asarray(r).flatten()
 
-  ncols, = c.shape
-  nrows, = r.shape
+  ncols, = c_arr.shape
+  nrows, = r_arr.shape
 
   if ncols == 0 or nrows == 0:
-    return jnp.empty((ncols, nrows), dtype=jnp.promote_types(c.dtype, r.dtype))
+    return jnp.empty((ncols, nrows),
+                     dtype=jnp.promote_types(c_arr.dtype, r_arr.dtype))
 
   nelems = ncols + nrows - 1
-  elems = jnp.concatenate((c[::-1], r[1:]))
+  elems = jnp.concatenate((c_arr[::-1], r_arr[1:]))
   patches = lax.conv_general_dilated_patches(
       elems.reshape((1, nelems, 1)),
       (nrows,), (1,), 'VALID', dimension_numbers=('NTC', 'IOT', 'NTC'),

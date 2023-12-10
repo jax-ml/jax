@@ -107,15 +107,26 @@ void LaunchThreeFry2x32Kernel(gpuStream_t stream, void** buffers,
   std::array<const std::uint32_t*, 2> data;
   data[0] = reinterpret_cast<const std::uint32_t*>(buffers[2]);
   data[1] = reinterpret_cast<const std::uint32_t*>(buffers[3]);
+  std::int64_t n = descriptor.n;
+  int output_idx = 4;
+  if (n < 0) {
+    // n is an operand in device memory.
+    gpuMemcpyAsync((void*)&n, reinterpret_cast<const std::int64_t*>(buffers[4]),
+                   sizeof(n), gpuMemcpyDeviceToHost,
+                   stream);
+    gpuStreamSynchronize(stream);
+    output_idx = 5;
+  }
+
   std::array<std::uint32_t*, 2> out;
-  out[0] = reinterpret_cast<std::uint32_t*>(buffers[4]);
-  out[1] = reinterpret_cast<std::uint32_t*>(buffers[5]);
+  out[0] = reinterpret_cast<std::uint32_t*>(buffers[output_idx]);
+  out[1] = reinterpret_cast<std::uint32_t*>(buffers[output_idx + 1]);
   const int block_dim = 128;
   const std::int64_t grid_dim =
-      std::min<std::int64_t>(1024, (descriptor.n + block_dim - 1) / block_dim);
+      std::min<std::int64_t>(1024, (n + block_dim - 1) / block_dim);
   ThreeFry2x32Kernel<<<grid_dim, block_dim, /*dynamic_shared_mem_bytes=*/0,
                        stream>>>(keys[0], keys[1], data[0], data[1], out[0],
-                                 out[1], descriptor.n);
+                                 out[1], n);
 }
 
 }  // namespace JAX_GPU_NAMESPACE

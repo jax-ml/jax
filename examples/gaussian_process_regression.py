@@ -16,18 +16,15 @@
 """
 
 from absl import app
-from absl import flags
 from functools import partial
 from jax import grad
 from jax import jit
 from jax import vmap
-from jax.config import config
+from jax import config
 import jax.numpy as jnp
 import jax.random as random
 import jax.scipy as scipy
 import matplotlib.pyplot as plt
-
-FLAGS = flags.FLAGS
 
 
 def main(unused_argv):
@@ -76,7 +73,7 @@ def main(unused_argv):
           -0.5 * jnp.dot(y.T, kinvy) -
           jnp.sum(jnp.log(jnp.diag(chol))) -
           (numpts / 2.) * log2pi)
-      ml -= jnp.sum(-0.5 * jnp.log(2 * 3.1415) - jnp.log(amp)**2) # lognormal prior
+      ml -= jnp.sum(-0.5 * jnp.log(2 * 3.1415) - jnp.log(amp) - 0.5 * jnp.log(amp)**2) # lognormal prior
       return -ml
 
     if xtest is not None:

@@ -1,5 +1,5 @@
 
-jax.nn package
+``jax.nn`` module
 =================
 
 .. currentmodule:: jax.nn
@@ -13,7 +13,7 @@ jax.nn package
 
 
 Activation functions
-------------------------
+--------------------
 
 .. autosummary::
   :toctree: _autosummary
@@ -36,6 +36,7 @@ Activation functions
     selu
     gelu
     glu
+    squareplus
 
 Other functions
 ---------------

@@ -1,6 +1,6 @@
 
-jax.debug package
-=================
+``jax.debug`` module
+====================
 
 .. currentmodule:: jax.debug
 

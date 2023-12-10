@@ -30,6 +30,13 @@ class Converter:
   compare_numerics: bool = True
 
 
+def jax2tf_convert(harness: ModelHarness, enable_xla: bool = True):
+  return jax2tf.convert(
+      harness.apply_with_vars,
+      enable_xla=enable_xla,
+      polymorphic_shapes=harness.polymorphic_shapes)
+
+
 def jax2tfjs(harness: ModelHarness):
   """Converts the given `test_case` using the TFjs converter."""
   with tempfile.TemporaryDirectory() as model_dir:
@@ -37,13 +44,14 @@ def jax2tfjs(harness: ModelHarness):
         apply_fn=harness.apply,
         params=harness.variables,
         input_signatures=harness.tf_input_signature,
+        polymorphic_shapes=harness.polymorphic_shapes,
         model_dir=model_dir)
 
 
 def jax2tflite(harness: ModelHarness, use_flex_ops: bool = False):
   """Returns a converter with Flex ops linked in iff `use_flex_ops==True`."""
   tf_fn = tf.function(
-      jax2tf.convert(harness.apply_with_vars, enable_xla=False),
+      jax2tf_convert(harness, enable_xla=False),
       input_signature=harness.tf_input_signature,
       autograph=False)
   apply_tf = tf_fn.get_concrete_function()
@@ -79,21 +87,16 @@ def jax2tflite(harness: ModelHarness, use_flex_ops: bool = False):
 
 ALL_CONVERTERS = [
     # jax2tf with XLA support (enable_xla=True).
-    Converter(
-        name='jax2tf_xla',
-        convert_fn=lambda h: jax2tf.convert(h.apply_with_vars, enable_xla=True)
-    ),
+    Converter(name='jax2tf_xla', convert_fn=jax2tf_convert),
     # jax2tf without XLA support (enable_xla=False).
     Converter(
         name='jax2tf_noxla',
-        convert_fn=lambda h: jax2tf.convert(
-            h.apply_with_vars, enable_xla=False)),
+        convert_fn=functools.partial(jax2tf_convert, enable_xla=False)),
     # Convert JAX to Tensorflow.JS.
-    Converter(
-        name='jax2tfjs', convert_fn=jax2tfjs, compare_numerics=False),
+    Converter(name='jax2tfjs', convert_fn=jax2tfjs, compare_numerics=False),
     # Convert JAX to TFLIte.
     Converter(name='jax2tflite', convert_fn=jax2tflite),
-    # Convert JAX to TFLIte with suppor for Flex ops.
+    # Convert JAX to TFLIte with support for Flex ops.
     Converter(
         name='jax2tflite+flex',
         convert_fn=functools.partial(jax2tflite, use_flex_ops=True))

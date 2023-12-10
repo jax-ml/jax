@@ -1,5 +1,5 @@
-jax.experimental.checkify module
-=====================================
+``jax.experimental.checkify`` module
+====================================
 
 
 .. automodule:: jax.experimental.checkify

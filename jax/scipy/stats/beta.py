@@ -16,6 +16,10 @@
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
 from jax._src.scipy.stats.beta import (
+  cdf as cdf,
+  logcdf as logcdf,
   logpdf as logpdf,
+  logsf as logsf,
   pdf as pdf,
+  sf as sf,
 )

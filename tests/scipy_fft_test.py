@@ -19,7 +19,7 @@ from jax._src import test_util as jtu
 import jax.scipy.fft as jsp_fft
 import scipy.fft as osp_fft
 
-from jax.config import config
+from jax import config
 
 config.parse_flags_with_absl()
 
@@ -75,6 +75,45 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     args_maker = lambda: (rng(shape, dtype),)
     jnp_fn = lambda a: jsp_fft.dctn(a, s=s, axes=axes, norm=norm)
     np_fn = lambda a: osp_fft.dctn(a, s=s, axes=axes, norm=norm)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+  @jtu.sample_product(
+    dtype=real_dtypes,
+    shape=[(10,), (2, 5)],
+    n=[None, 1, 7, 13, 20],
+    axis=[-1, 0],
+    norm=[None, 'ortho'],
+  )
+  # TODO(phawkins): these tests are failing on T4 GPUs in CI with a
+  # CUDA_ERROR_ILLEGAL_ADDRESS.
+  @jtu.skip_on_devices("cuda")
+  def testiDct(self, shape, dtype, n, axis, norm):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    jnp_fn = lambda a: jsp_fft.idct(a, n=n, axis=axis, norm=norm)
+    np_fn = lambda a: osp_fft.idct(a, n=n, axis=axis, norm=norm)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axes=axes, s=s)
+     for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5)]
+     for axes in _get_dctn_test_axes(shape)
+     for s in _get_dctn_test_s(shape, axes)],
+    dtype=real_dtypes,
+    norm=[None, 'ortho'],
+  )
+  # TODO(phawkins): these tests are failing on T4 GPUs in CI with a
+  # CUDA_ERROR_ILLEGAL_ADDRESS.
+  @jtu.skip_on_devices("cuda")
+  def testiDctn(self, shape, dtype, s, axes, norm):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    jnp_fn = lambda a: jsp_fft.idctn(a, s=s, axes=axes, norm=norm)
+    np_fn = lambda a: osp_fft.idctn(a, s=s, axes=axes, norm=norm)
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)

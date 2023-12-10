@@ -128,8 +128,7 @@ Sometimes it isn't obvious how to rewrite your code to avoid Python loops
 because your code makes use of many arrays with different shapes. The
 recommended solution in this case is to make use of functions like
 :func:`jax.numpy.where` to do your computation on padded arrays with fixed
-shape. The JAX team is exploring a "masking" transformation to make such code
-easier to write.
+shape.
 
 If your functions are slow to compile for another reason, please open an issue
 on GitHub.
@@ -233,15 +232,14 @@ subsequent method call may return an incorrect result::
     >>> print(c.calc(3))  # Should print 3
     6
 
-What's happening here? The issue is that ``static_argnums`` relies on the hash of the object
-to determine whether it has changed between calls, and the default ``__hash__`` method
-for a user-defined class will not take into account the values of class attributes. That means
-that on the second function call, JAX has no way of knowing that the class attributes have
-changed, and uses the cached static value from the previous compilation.
+Why is this? When you mark an object as static, it will effectively be used as a dictionary
+key in JIT's internal compilation cache, meaning its hash (i.e. ``hash(obj)``) equality
+(i.e. ``obj1 == obj2``) and object identity (i.e. ``obj1 is obj2``) will be assumed to have
+consistent behavior. The default ``__hash__`` for a custom object is its object ID, and so
+JAX has no way of knowing that a mutated object should trigger a re-compilation.
 
-For this reason, if you are marking ``self`` arguments as static, it is important that you
-define an appropriate ``__hash__`` method for your class.
-For example, you might proceed like this::
+You can partially address this by defining an appropriate ``__hash__`` and ``__eq__`` methods
+for your object; for example::
 
     >>> class CustomClass:
     ...   def __init__(self, x: jnp.ndarray, mul: bool):
@@ -261,32 +259,17 @@ For example, you might proceed like this::
     ...     return (isinstance(other, CustomClass) and
     ...             (self.x, self.mul) == (other.x, other.mul))
 
-Note that we've defined the ``__hash__`` method so that it depends on the hash of
-relevant class attributes, and we've also defined the ``__eq__`` method because it's
-good practice to do so any time you override ``__hash__`` (see
-`Python Data Model: __hash__ <https://docs.python.org/3/reference/datamodel.html#object.__hash__>`_
-for more information on this). With this addition, the example works correctly::
+(see the :meth:`object.__hash__` documentation for more discussion of the requirements
+when overriding ``__hash__``).
 
-    >>> c = CustomClass(2, True)
-    >>> print(c.calc(3))
-    6
-    >>> c.mul = False
-    >>> print(c.calc(3))
-    3
+This should work correctly with JIT and other transforms **so long as you never mutate
+your object**. Mutations of objects used as hash keys lead to several subtle problems,
+which is why for example mutable Python containers (e.g. :class:`dict`, :class:`list`)
+don't define ``__hash__``, while their immutable counterparts (e.g. :class:`tuple`) do.
 
-A downside of marking ``self`` as static is that it does not allow ``self`` to contain
-array-like attributes, since arrays are not hashable. For example, this will break because
-JAX arrays are not hashable::
-  
-    >>> c = CustomClass(jnp.array(2), True)
-    >>> c.calc(3)  # doctest: +SKIP
-    ---------------------------------------------------------------------------
-    ValueError                                Traceback (most recent call last)
-      File "<stdin>", line 1, in <module
-    ValueError: Non-hashable static arguments are not supported. An error occurred during a call to 'calc' while trying to hash an object of type <class '__main__.CustomClass'>
-  
-Additionally, this also has the downside that ``calc`` will be re-compiled any time the values
-within ``myfunc`` change, which could be costly depending on your program.
+If your class relies on in-place mutations (such as setting ```self.attr = ...`` within its
+methods), then your object is not really "static" and marking it as such may lead to problems.
+Fortunately, there's another option for this case.
 
 Strategy 3: Making ``CustomClass`` a PyTree
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -321,7 +304,7 @@ treated as dynamic. Here's how it might look::
     ...                                CustomClass._tree_unflatten)
 
 This is certainly more involved, but it solves all the issues associated with the simpler
-apporaches used above::
+approaches used above::
 
     >>> c = CustomClass(2, True)
     >>> print(c.calc(3))
@@ -361,8 +344,8 @@ or the absl flag ``--jax_platforms`` to "cpu", "gpu", or "tpu"
 platforms are available in priority order).
 
 >>> from jax import numpy as jnp
->>> print(jnp.ones(3).device_buffer.device())  # doctest: +SKIP
-gpu:0
+>>> print(jnp.ones(3).devices())  # doctest: +SKIP
+{CudaDevice(id=0)}
 
 Computations involving uncommitted data are performed on the default
 device and the results are uncommitted on the default device.
@@ -372,8 +355,9 @@ with a ``device`` parameter, in which case the data becomes **committed** to the
 
 >>> import jax
 >>> from jax import device_put
->>> print(device_put(1, jax.devices()[2]).device_buffer.device())  # doctest: +SKIP
-gpu:2
+>>> arr = device_put(1, jax.devices()[2])  # doctest: +SKIP
+>>> print(arr.devices())  # doctest: +SKIP
+{CudaDevice(id=2)}
 
 Computations involving some committed inputs will happen on the
 committed device and the result will be committed on the
@@ -388,10 +372,12 @@ device.
 Jitted functions behave like any other primitive operations—they will follow the
 data and will show errors if invoked on data committed on more than one device.
 
-``jax.device_put(jnp.zeros(...), jax.devices()[1])`` or similar will actually create the
-array of zeros on ``jax.devices()[1]``, instead of creating the array on the default
-device then moving it. This is thanks to some laziness in array creation, which holds
-for all the constant creation operations (``ones``, ``full``, ``eye``, etc).
+(Before `PR #6002 <https://github.com/google/jax/pull/6002>`_ in March 2021
+there was some laziness in creation of array constants, so that
+``jax.device_put(jnp.zeros(...), jax.devices()[1])`` or similar would actually
+create the array of zeros on ``jax.devices()[1]``, instead of creating the
+array on the default device then moving it. But this optimization was removed
+so as to simplify the implementation.)
 
 (As of April 2020, :func:`jax.jit` has a `device` parameter that affects the device
 placement. That parameter is experimental, is likely to be removed or changed,
@@ -414,7 +400,7 @@ speed of code using JAX:
 
 1. **JAX code is Just-In-Time (JIT) compiled.** Most code written in JAX can be
    written in such a way that it supports JIT compilation, which can make it run
-   *much faster* (see `To JIT or not to JIT`_). To get maximium performance from
+   *much faster* (see `To JIT or not to JIT`_). To get maximum performance from
    JAX, you should apply :func:`jax.jit` on your outer-most function calls.
 
    Keep in mind that the first time you run JAX code, it will be slower because
@@ -457,7 +443,7 @@ When run with a GPU in Colab_, we see:
 - JAX takes 193 ms to compile the function
 - JAX takes 485 µs per evaluation on the GPU
 
-In this case, we see that once the data is transfered and the function is
+In this case, we see that once the data is transferred and the function is
 compiled, JAX on the GPU is about 30x faster for repeated evaluations.
 
 Is this a fair comparison? Maybe. The performance that ultimately matters is for
@@ -561,22 +547,22 @@ of how often it arises in control flow.
 
 Here is how the transformations introduce abstract or concrete tracers:
 
-  * :func:`jax.jit`: introduces **abstract tracers** for all positional arguments
-    except those denoted by ``static_argnums``, which remain regular
-    values.
-  * :func:`jax.pmap`: introduces **abstract tracers** for all positional arguments
-    except those denoted by ``static_broadcasted_argnums``.
-  * :func:`jax.vmap`, :func:`jax.make_jaxpr`, :func:`xla_computation`:
-    introduce **abstract tracers** for all positional arguments.
-  * :func:`jax.jvp` and :func:`jax.grad` introduce **concrete tracers**
-    for all positional arguments. An exception is when these transformations
-    are within an outer transformation and the actual arguments are
-    themselves abstract tracers; in that case, the tracers introduced
-    by the autodiff transformations are also abstract tracers.
-  * All higher-order control-flow primitives (:func:`lax.cond`, :func:`lax.while_loop`,
-    :func:`lax.fori_loop`, :func:`lax.scan`) when they process the functionals
-    introduce **abstract tracers**, whether or not there is a JAX transformation
-    in progress.
+* :func:`jax.jit`: introduces **abstract tracers** for all positional arguments
+  except those denoted by ``static_argnums``, which remain regular
+  values.
+* :func:`jax.pmap`: introduces **abstract tracers** for all positional arguments
+  except those denoted by ``static_broadcasted_argnums``.
+* :func:`jax.vmap`, :func:`jax.make_jaxpr`, :func:`xla_computation`:
+  introduce **abstract tracers** for all positional arguments.
+* :func:`jax.jvp` and :func:`jax.grad` introduce **concrete tracers**
+  for all positional arguments. An exception is when these transformations
+  are within an outer transformation and the actual arguments are
+  themselves abstract tracers; in that case, the tracers introduced
+  by the autodiff transformations are also abstract tracers.
+* All higher-order control-flow primitives (:func:`lax.cond`, :func:`lax.while_loop`,
+  :func:`lax.fori_loop`, :func:`lax.scan`) when they process the functionals
+  introduce **abstract tracers**, whether or not there is a JAX transformation
+  in progress.
 
 All of this is relevant when you have code that can operate
 only on regular Python values, such as code that has conditional
@@ -785,20 +771,54 @@ well-defined gradients::
 The :mod:`jax.nn` submodule also has smooth versions of other common rank-based
 functions, for example :func:`jax.nn.softmax` can replace uses of
 :func:`jax.numpy.argmax`, :func:`jax.nn.soft_sign` can replace uses of
-:func:`jax.numpy.sign`, :func:`jax.nn.softplus` can replace uses of
-:func:`jax.nn.relu`, etc.
+:func:`jax.numpy.sign`, :func:`jax.nn.softplus` or :func:`jax.nn.squareplus`
+can replace uses of :func:`jax.nn.relu`, etc.
+
+How can I convert a JAX Tracer to a NumPy array?
+------------------------------------------------
+When inspecting a transformed JAX function at runtime, you'll find that array
+values are replaced by :class:`~jax.core.Tracer` objects::
+
+  @jax.jit
+  def f(x):
+    print(type(x))
+    return x
+
+  f(jnp.arange(5))
+
+This prints the following::
+
+  <class 'jax.interpreters.partial_eval.DynamicJaxprTracer'>
+
+A frequent question is how such a tracer can be converted back to a normal NumPy
+array. In short, **it is impossible to convert a Tracer to a NumPy array**, because
+a tracer is an abstract representation of *every possible* value with a given shape
+and dtype, while a numpy array is a concrete member of that abstract class.
+For more discussion of how tracers work within the context of JAX transformations,
+see `JIT mechanics`_.
+
+The question of converting Tracers back to arrays usually comes up within
+the context of another goal, related to accessing intermediate values in a
+computation at runtime. For example:
+
+- If you wish to print a traced value at runtime for debugging purposes, you might
+  consider using :func:`jax.debug.print`.
+- If you wish to call non-JAX code within a transformed JAX function, you might
+  consider using :func:`jax.pure_callback`, an example of which is available at
+  `Pure callback example`_.
+- If you wish to input or output array buffers at runtime (for example, load data
+  from file, or log the contents of the array to disk), you might consider using
+  :func:`jax.experimental.io_callback`, an example of which can be found at
+  `IO callback example`_.
+
+For more information on runtime callbacks and examples of their use,
+see `External callbacks in JAX`_.
 
 
-Additional Sections
--------------------
-
-.. comment We refer to the anchor below in JAX error messages
-
-``Abstract tracer value encountered where concrete value is expected`` error
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-See :class:`jax.errors.ConcretizationTypeError`
-
-
+.. _JIT mechanics: https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html#jit-mechanics-tracing-and-static-variables
+.. _External callbacks in JAX: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
+.. _Pure callback example: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html#example-pure-callback-with-custom-jvp
+.. _IO callback example: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html#exploring-jax-experimental-io-callback
 .. _Heaviside Step Function: https://en.wikipedia.org/wiki/Heaviside_step_function
 .. _Sigmoid Function: https://en.wikipedia.org/wiki/Sigmoid_function
 .. _algebraic_simplifier.cc: https://github.com/tensorflow/tensorflow/blob/v2.10.0/tensorflow/compiler/xla/service/algebraic_simplifier.cc#L3266

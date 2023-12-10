@@ -15,44 +15,68 @@
 """BCOO (Bached coordinate format) matrix object and associated primitives."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 import functools
 from functools import partial
+import math
 import operator
-from typing import Any, List, NamedTuple, Optional, Protocol, Sequence, Tuple, Union
+from typing import Any, NamedTuple, Protocol
 import warnings
 
 import numpy as np
 
 import jax
-from jax import core
 from jax import lax
 from jax import tree_util
 from jax import vmap
-from jax.config import config
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import (
-  _broadcasting_vmap, _count_stored_elements,
+  nfold_vmap, _count_stored_elements,
   _dot_general_validated_shape, CuSparseEfficiencyWarning,
   SparseEfficiencyError, SparseEfficiencyWarning, Shape,
   SparseInfo)
-from jax.interpreters import batching
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import mlir
+from jax.experimental.sparse._lowerings import coo_spmv_p, coo_spmm_p
+from jax._src.interpreters import mlir
 import jax.numpy as jnp
-from jax.interpreters import ad
 from jax.util import safe_zip, unzip2, split_list
 from jax._src import api_util
+from jax._src import config
+from jax._src import core
+from jax._src import dispatch
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.lax import (
-  _const, ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
-  DotDimensionNumbers)
+  _const, ranges_like, remaining, _dot_general_batch_dim_nums, DotDimensionNumbers)
 from jax._src.lax.slicing import GatherDimensionNumbers, GatherScatterMode
 from jax._src.lib.mlir import ir
-from jax._src.lib import xla_bridge
 from jax._src.lib import gpu_sparse
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.setops import _unique
-from jax._src.typing import Array, ArrayLike, DType, DTypeLike
+from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import canonicalize_axis
+
+
+CUSPARSE_DATA_DTYPES = [np.float32, np.float64, np.complex64, np.complex128]
+CUSPARSE_INDEX_DTYPES = [np.int32]
+
+
+def _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo, batch_size=None):
+  data, indices = batched_args
+  data_bdim, indices_bdim = batch_dims
+  n_batch = indices.ndim - 2 + bool(indices_bdim is None)
+  if not all(b is None or 0 <= b < n_batch for b in batch_dims):
+    raise NotImplementedError("batch_dims must be None or satisfy 0 < dim < n_batch. "
+                              f"Got {batch_dims=} for {n_batch=}.")
+  batched_data, batched_indices = (
+      lax.expand_dims(arg, [0]) if bdim is None else jnp.moveaxis(arg, bdim, 0)
+      for arg, bdim in [(data, data_bdim), (indices, indices_bdim)])
+  if batch_size is None:
+    batch_size = max(arg.shape[dim] for arg, dim in zip((data, indices), batch_dims) if dim is not None)
+  batched_spinfo = SparseInfo((batch_size, *spinfo.shape),
+                              indices_sorted=spinfo.indices_sorted,
+                              unique_indices=spinfo.unique_indices)
+  return batched_data, batched_indices, batched_spinfo
 
 
 #----------------------------------------------------------------------
@@ -83,7 +107,7 @@ def _bcoo_set_nse(mat: BCOO, nse: int) -> BCOO:
 # TODO(jakevdp) this can be problematic when used with autodiff; see
 # https://github.com/google/jax/issues/10163. Should this be a primitive?
 # Alternatively, maybe roll this into bcoo_sum_duplicates as an optional argument.
-def bcoo_eliminate_zeros(mat: BCOO, nse: Optional[int] = None) -> BCOO:
+def bcoo_eliminate_zeros(mat: BCOO, nse: int | None = None) -> BCOO:
   data, indices, shape = mat.data, mat.indices, mat.shape
   props = _validate_bcoo(data, indices, shape)
   mask = (data == 0).all(tuple(range(props.n_batch + 1, data.ndim)))
@@ -91,9 +115,7 @@ def bcoo_eliminate_zeros(mat: BCOO, nse: Optional[int] = None) -> BCOO:
   mask = mask.all(dims_to_contract, keepdims=True)
   fill_value = jnp.array(shape[props.n_batch:props.n_batch + props.n_sparse], dtype=indices.dtype)
   f = lambda i, m: jnp.where(m[:, None], fill_value[None, :], i)
-  for _ in range(props.n_batch):
-    f = vmap(f)
-  indices = f(indices, mask)
+  indices = nfold_vmap(f, props.n_batch)(indices, mask)
   return bcoo_sum_duplicates(BCOO((data, indices), shape=shape), nse=nse)
 
 
@@ -133,27 +155,6 @@ def _validate_bcoo_indices(indices: Buffer, shape: Sequence[int]) -> BCOOPropert
   if indices.shape[n_batch:] != (nse, n_sparse):
     raise ValueError(f"Invalid ={indices.shape=} for {nse=}, {n_batch=}, {n_dense=}")
   return BCOOProperties(n_batch=n_batch, n_sparse=n_sparse, n_dense=n_dense, nse=nse)
-
-
-def _bcoo_to_bcsr(indices: Array, *, shape: Sequence[int],
-                  index_dtype: DTypeLike = jnp.int32) -> Tuple[Array, Array]:
-  """Given BCOO (indices), return BCSR (indices, indptr)."""
-  n_batch, n_sparse, _, _ = _validate_bcoo_indices(indices, shape)
-
-  if n_sparse != 2:
-    raise ValueError("Must have 2 sparse dimensions to be converted to BCSR.")
-
-  n_rows = shape[n_batch]
-
-  def get_ptr(i):
-    indptr = jnp.zeros(n_rows + 1, index_dtype)
-    return indptr.at[1:].set(jnp.cumsum(
-        jnp.bincount(i, length=n_rows).astype(index_dtype)))
-
-  for _ in range(n_batch):
-    get_ptr = vmap(get_ptr)
-
-  return indices[..., 1], get_ptr(indices[..., 0])
 
 
 #----------------------------------------------------------------------
@@ -222,21 +223,11 @@ def _bcoo_todense_transpose(ct, data, indices, *, spinfo):
     raise ValueError("Cannot transpose with respect to sparse indices")
   assert ct.shape == shape
   assert ct.dtype == data.aval.dtype
-  return bcoo_extract(indices, ct), indices
+  return _bcoo_extract(indices, ct), indices
 
 def _bcoo_todense_batching_rule(batched_args, batch_dims, *, spinfo):
-  data, indices = batched_args
-  if any(b not in [0, None] for b in batch_dims):
-    raise NotImplementedError(f"{batch_dims=}. Only 0 and None are supported.")
-  if batch_dims[0] is None:
-    data = data[None, ...]
-  if batch_dims[1] is None:
-    indices = indices[None, ...]
-  new_spinfo = SparseInfo(
-      shape=(max(data.shape[0], indices.shape[0]), *spinfo.shape),
-      indices_sorted=spinfo.indices_sorted,
-      unique_indices=spinfo.unique_indices)
-  return _bcoo_todense(data, indices, spinfo=new_spinfo), 0
+  data, indices, spinfo = _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo)
+  return _bcoo_todense(data, indices, spinfo=spinfo), 0
 
 ad.defjvp(bcoo_todense_p, _bcoo_todense_jvp, None)
 ad.primitive_transposes[bcoo_todense_p] = _bcoo_todense_transpose
@@ -256,7 +247,7 @@ BCOO.fromdense() to be used in traced/compiled code, you must pass a concrete
 value to the nse (number of stored elements) argument.
 """
 
-def bcoo_fromdense(mat: Array, *, nse: Optional[int] = None, n_batch: int = 0,
+def bcoo_fromdense(mat: Array, *, nse: int | None = None, n_batch: int = 0,
                    n_dense: int = 0, index_dtype: DTypeLike = jnp.int32) -> BCOO:
   """Create BCOO-format sparse matrix from a dense matrix.
 
@@ -271,15 +262,16 @@ def bcoo_fromdense(mat: Array, *, nse: Optional[int] = None, n_batch: int = 0,
     mat_bcoo: BCOO representation of the matrix.
   """
   mat = jnp.asarray(mat)
-  if nse is None:
-    nse = _count_stored_elements(mat, n_batch, n_dense)
-  nse_int = core.concrete_or_error(operator.index, nse, _TRACED_NSE_ERROR)
+  nse_arr: int | Array | None = nse
+  if nse_arr is None:
+    nse_arr = _count_stored_elements(mat, n_batch, n_dense)
+  nse_int = core.concrete_or_error(operator.index, nse_arr, _TRACED_NSE_ERROR)
   return BCOO(_bcoo_fromdense(mat, nse=nse_int, n_batch=n_batch, n_dense=n_dense,
                               index_dtype=index_dtype),
               shape=mat.shape, indices_sorted=True, unique_indices=True)
 
 def _bcoo_fromdense(mat: Array, *, nse: int, n_batch: int = 0, n_dense: int = 0,
-                    index_dtype: DTypeLike = jnp.int32) -> Tuple[Array, Array]:
+                    index_dtype: DTypeLike = jnp.int32) -> tuple[Array, Array]:
   """Create BCOO-format sparse matrix from a dense matrix.
 
   Args:
@@ -306,18 +298,17 @@ def _bcoo_fromdense_impl(mat, *, nse, n_batch, n_dense, index_dtype):
   mask = (mat != 0)
   if n_dense > 0:
     mask = mask.any([-(i + 1) for i in range(n_dense)])
+  @partial(nfold_vmap, N=n_batch, broadcasted=False)
   def _nonzero(a):
     if a.ndim:
       return jnp.nonzero(a, size=nse, fill_value=a.shape[:n_sparse])
     return ()
-  for _ in range(n_batch):
-    _nonzero = vmap(_nonzero, 0)
   indices = _nonzero(mask)
   if not indices:
     indices = jnp.zeros(mask.shape[:n_batch] + (nse, 0), index_dtype)
   else:
     indices = jnp.moveaxis(jnp.array(indices, index_dtype), 0, n_batch + 1)
-  data = bcoo_extract(indices, mat)
+  data = _bcoo_extract(indices, mat)
 
   true_nse = mask.sum(list(range(n_batch, mask.ndim)))[..., None]
   true_nonzeros = lax.broadcasted_iota(true_nse.dtype, (1,) * n_batch + (nse,), n_batch) < true_nse
@@ -343,7 +334,7 @@ def _bcoo_fromdense_jvp(primals, tangents, *, nse, n_batch, n_dense, index_dtype
   if type(Mdot) is ad.Zero:
     data_dot = ad.Zero.from_value(data)
   else:
-    data_dot = bcoo_extract(indices, Mdot)
+    data_dot = _bcoo_extract(indices, Mdot)
 
   tangents_out = (data_dot, ad.Zero.from_value(indices))
 
@@ -362,9 +353,10 @@ def _bcoo_fromdense_transpose(ct, M, *, nse, n_batch, n_dense, index_dtype):
 
 def _bcoo_fromdense_batching_rule(batched_args, batch_dims, *, nse, n_batch, n_dense, index_dtype):
   M, = batched_args
-  if batch_dims != (0,):
-    raise NotImplementedError(f"{batch_dims=}")
-  return _bcoo_fromdense(M, nse=nse, n_batch=n_batch + 1, n_dense=n_dense, index_dtype=index_dtype), (0, 0)
+  bdim, = batch_dims
+  if not (0 <= bdim <= n_batch):
+    raise ValueError(f"Expected 0 < bdim <= n_batch; got {bdim=}, {n_batch=}")
+  return _bcoo_fromdense(M, nse=nse, n_batch=n_batch + 1, n_dense=n_dense, index_dtype=index_dtype), (bdim, bdim)
 
 ad.primitive_jvps[bcoo_fromdense_p] = _bcoo_fromdense_jvp
 ad.primitive_transposes[bcoo_fromdense_p] = _bcoo_fromdense_transpose
@@ -377,60 +369,109 @@ mlir.register_lowering(bcoo_fromdense_p, mlir.lower_fun(
 
 bcoo_extract_p = core.Primitive('bcoo_extract')
 
-def bcoo_extract(indices: Array, mat: Array) -> Array:
-  """Extract BCOO data values from a dense matrix at given BCOO indices.
+
+def bcoo_extract(sparr: BCOO, arr: ArrayLike, *, assume_unique: bool | None = None) -> BCOO:
+  """Extract values from a dense array according to the sparse array's indices.
+
+  Args:
+    sparr : BCOO array whose indices will be used for the output.
+    arr : ArrayLike with shape equal to self.shape
+    assume_unique : bool, defaults to sparr.unique_indices
+      If True, extract values for every index, even if index contains duplicates.
+      If False, duplicate indices will have their values summed and returned in
+      the position of the first index.
+
+  Returns:
+    extracted : a BCOO array with the same sparsity pattern as self.
+  """
+  if not isinstance(sparr, BCOO):
+    raise ValueError(f"First argument to bcoo_extract should be a BCOO array. Got {type(sparr)=}")
+  a = jnp.asarray(arr)
+  if a.shape != sparr.shape:
+    raise ValueError(f"shape mismatch: {sparr.shape=} {a.shape=}")
+  if assume_unique is None:
+    assume_unique = sparr.unique_indices
+  data = _bcoo_extract(sparr.indices, a, assume_unique=assume_unique)
+  return BCOO((data, sparr.indices), **sparr._info._asdict())
+
+
+def _bcoo_extract(indices: Array, arr: Array, *, assume_unique=True) -> Array:
+  """Extract BCOO data values from a dense array at given BCOO indices.
 
   Args:
     indices: An ndarray; see BCOO indices.
-    mat: A dense matrix.
+    arr: A dense array.
+    assume_unique: bool, default=True
+      If True, then indices will be assumed unique and a value will be extracted
+      from arr for each index. Otherwise, extra work will be done to de-duplicate
+      indices to zero-out duplicate extracted values.
 
   Returns:
     An ndarray; see BCOO data.
   """
-  return bcoo_extract_p.bind(indices, mat)
+  return bcoo_extract_p.bind(indices, arr, assume_unique=assume_unique)
 
 @bcoo_extract_p.def_impl
-def _bcoo_extract_impl(indices, mat):
-  mat = jnp.asarray(mat)
-  n_batch, n_sparse, _, nse = _validate_bcoo_indices(indices, mat.shape)
+def _bcoo_extract_impl(indices, arr, *, assume_unique):
+  arr = jnp.asarray(arr)
+  props = _validate_bcoo_indices(indices, arr.shape)
+  if not assume_unique:
+    indices, sort_ind = _unique_indices(indices, shape=arr.shape, return_index=True)
+    original_props = props
+    props = _validate_bcoo_indices(indices, arr.shape)
 
   ind_slices = tuple(np.zeros(s, int) if i_s == 1 else np.arange(s)
-                     for s, i_s in zip(mat.shape[:n_batch], indices.shape[:n_batch]))
+                     for s, i_s in zip(arr.shape[:props.n_batch], indices.shape[:props.n_batch]))
   grid = tuple(np.meshgrid(*ind_slices, indexing='ij', sparse=True))
-  sparse_ind = tuple(indices[grid + (slice(None), i)] for i in range(n_sparse))
+  sparse_ind = tuple(indices[grid + (slice(None), i)] for i in range(props.n_sparse))
 
-  batch_slices = tuple(np.arange(s) for s in mat.shape[:n_batch])
+  batch_slices = tuple(np.arange(s) for s in arr.shape[:props.n_batch])
   grid = np.meshgrid(*batch_slices, np.arange(1), indexing='ij', sparse=True)
   batch_ind = tuple(grid)[:-1]
 
   if not sparse_ind + batch_ind:
-    result = mat[None]
+    result = arr[None]
   else:
-    result = mat.at[batch_ind + sparse_ind].get(mode='fill', fill_value=0)
-  if n_sparse == 0 and nse != 1:
-    result = lax.broadcast_in_dim(
-      result, _tuple_replace(result.shape, n_batch, nse), range(result.ndim))
+    result = arr.at[batch_ind + sparse_ind].get(mode='fill', fill_value=0)
+  if props.n_sparse == 0 and props.nse != 1:
+    if assume_unique:
+      result = lax.broadcast_in_dim(
+        result, _tuple_replace(result.shape, props.n_batch, props.nse), range(result.ndim))
+    else:
+      out_shape = _tuple_replace(result.shape, props.n_batch, original_props.nse)
+      ind = props.n_batch * (slice(None),) + (slice(1),)
+      result = jnp.zeros_like(result, shape=out_shape).at[ind].set(result)
+  if not assume_unique:
+    unbatched_out_shape = (original_props.nse, *result.shape[props.n_batch + 1:])
+    def f(r, i):
+      return jnp.zeros_like(r, shape=unbatched_out_shape).at[i].add(r)
+    for _ in range(props.n_batch):
+      f = vmap(f)
+    result = f(result, sort_ind)
   return result
 
 @bcoo_extract_p.def_abstract_eval
-def _bcoo_extract_abstract_eval(indices, mat):
-  n_batch, _, n_dense, nse = _validate_bcoo_indices(indices, mat.shape)
-  out_shape = mat.shape[:n_batch] + (nse,) + mat.shape[mat.ndim - n_dense:]
-  return core.ShapedArray(out_shape, mat.dtype)
+def _bcoo_extract_abstract_eval(indices, arr, *, assume_unique):
+  _ = bool(assume_unique)
+  n_batch, _, n_dense, nse = _validate_bcoo_indices(indices, arr.shape)
+  out_shape = arr.shape[:n_batch] + (nse,) + arr.shape[arr.ndim - n_dense:]
+  return core.ShapedArray(out_shape, arr.dtype)
 
-def _bcoo_extract_jvp(mat_dot, indices, mat):
-  assert mat_dot.shape == mat.shape
-  return bcoo_extract(indices, mat_dot)
+def _bcoo_extract_jvp(arr_dot, indices, arr, *, assume_unique):
+  assert arr_dot.shape == arr.shape
+  return _bcoo_extract(indices, arr_dot, assume_unique=assume_unique)
 
-def _bcoo_extract_transpose(ct, indices, mat):
-  assert ad.is_undefined_primal(mat)
+def _bcoo_extract_transpose(ct, indices, arr, *, assume_unique):
+  if not assume_unique:
+    raise NotImplementedError("transpose of bcoo_extract with assume_unique=False")
+  assert ad.is_undefined_primal(arr)
   if ad.is_undefined_primal(indices):
     raise ValueError("Cannot transpose with respect to sparse indices")
-  assert ct.dtype == mat.aval.dtype
-  return indices, _bcoo_todense(ct, indices, spinfo=SparseInfo(mat.aval.shape))
+  assert ct.dtype == arr.aval.dtype
+  return indices, _bcoo_todense(ct, indices, spinfo=SparseInfo(arr.aval.shape))
 
-def _bcoo_extract_batching_rule(batched_args, batch_dims):
-  indices, mat = batched_args
+def _bcoo_extract_batching_rule(batched_args, batch_dims, *, assume_unique):
+  indices, arr = batched_args
   assert any(b is not None for b in batch_dims)
   if batch_dims[0] is None:
     bdim = batch_dims[1]
@@ -438,9 +479,9 @@ def _bcoo_extract_batching_rule(batched_args, batch_dims):
   elif batch_dims[1] is None:
     # TODO(jakevdp) can we handle this case without explicit broadcasting?
     bdim = batch_dims[0]
-    result_shape = list(mat.shape)
+    result_shape = list(arr.shape)
     result_shape.insert(bdim, indices.shape[bdim])
-    mat = lax.broadcast_in_dim(mat, result_shape, (bdim,))
+    arr = lax.broadcast_in_dim(arr, result_shape, (bdim,))
   else:
     if batch_dims[0] != batch_dims[1]:
       raise NotImplementedError("bcoo_extract with unequal batch dimensions.")
@@ -448,7 +489,7 @@ def _bcoo_extract_batching_rule(batched_args, batch_dims):
   n_batch = indices.ndim - 2
   if bdim >= n_batch:
     raise ValueError(f"{batch_dims=} out of range for indices with {n_batch=}")
-  return bcoo_extract(indices, mat), bdim
+  return _bcoo_extract(indices, arr, assume_unique=assume_unique), bdim
 
 ad.defjvp(bcoo_extract_p, None, _bcoo_extract_jvp)
 ad.primitive_transposes[bcoo_extract_p] = _bcoo_extract_transpose
@@ -483,7 +524,7 @@ def bcoo_transpose(mat: BCOO, *, permutation: Sequence[int]) -> BCOO:
   return BCOO(buffers, shape=out_shape, unique_indices=mat.unique_indices)
 
 def _bcoo_transpose(data: Array, indices: Array, *,
-                    permutation: Sequence[int], spinfo: SparseInfo) -> Tuple[Array, Array]:
+                    permutation: Sequence[int], spinfo: SparseInfo) -> tuple[Array, Array]:
   permutation = tuple(permutation)
   if permutation == tuple(range(len(spinfo.shape))):
     return data, indices
@@ -546,26 +587,13 @@ def _bcoo_transpose_transpose(ct, data, indices, *, permutation: Sequence[int], 
   return data_trans, indices_ct
 
 def _bcoo_transpose_batch_rule(batched_args, batch_dims, *, permutation: Sequence[int], spinfo: SparseInfo):
-  data, indices = batched_args
-  batch_dims = list(batch_dims)
-  batch_size = max(0 if dim is None else arg.shape[dim]
-                   for arg, dim in zip(batched_args, batch_dims))
-  if batch_dims[0] is None:
-    data = data[None]
-  else:
-    assert batch_dims[0] == 0
-  if batch_dims[1] is None:
-    indices = indices[None]
-  else:
-    assert batch_dims[1] == 0
-  batched_spinfo = SparseInfo((batch_size, *spinfo.shape))
+  data, indices, spinfo = _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo)
   batched_permutation = (0, *(p + 1 for p in permutation))
-  data, indices = _bcoo_transpose(data, indices, permutation=batched_permutation, spinfo=batched_spinfo)
-  if batch_dims[0] is None:
-    data = data[0]
-  if batch_dims[1] is None:
-    indices = indices[0]
-  return (data, indices), batch_dims
+  data, indices = _bcoo_transpose(data, indices, permutation=batched_permutation, spinfo=spinfo)
+  batch_dims_out = [None if bdim is None else 0 for bdim in batch_dims]
+  args_out = [lax.squeeze(arg, [0]) if bdim is None else arg
+              for arg, bdim in zip((data, indices), batch_dims_out)]
+  return args_out, batch_dims_out
 
 ad.primitive_jvps[bcoo_transpose_p] = _bcoo_transpose_jvp
 ad.primitive_transposes[bcoo_transpose_p] = _bcoo_transpose_transpose
@@ -580,8 +608,8 @@ mlir.register_lowering(bcoo_transpose_p, mlir.lower_fun(
 
 bcoo_dot_general_p = core.Primitive('bcoo_dot_general')
 
-def bcoo_dot_general(lhs: Union[BCOO, Array], rhs: Union[BCOO, Array], *, dimension_numbers: DotDimensionNumbers,
-                     precision: None = None, preferred_element_type: None = None) -> Union[BCOO, Array]:
+def bcoo_dot_general(lhs: BCOO | Array, rhs: BCOO | Array, *, dimension_numbers: DotDimensionNumbers,
+                     precision: None = None, preferred_element_type: None = None) -> BCOO | Array:
   """A general contraction operation.
 
   Args:
@@ -599,53 +627,65 @@ def bcoo_dot_general(lhs: Union[BCOO, Array], rhs: Union[BCOO, Array], *, dimens
     the result will be dense, of type ndarray.
   """
   # TODO(jakevdp) make use of these?
-  del precision, preferred_element_type  # unused
+  del precision  # unused
   if isinstance(lhs, BCOO) and isinstance(rhs, BCOO):
     shape = _dot_general_validated_shape(lhs.shape, rhs.shape,
                                          dimension_numbers)
     bufs = _bcoo_spdot_general(lhs.data, lhs.indices, rhs.data, rhs.indices,
                                lhs_spinfo=lhs._info, rhs_spinfo=rhs._info,
-                               dimension_numbers=dimension_numbers)
+                               dimension_numbers=dimension_numbers,
+                               preferred_element_type=preferred_element_type)
     return BCOO(bufs, shape=shape)
   elif isinstance(lhs, BCOO):
     return _bcoo_dot_general(lhs.data, lhs.indices, rhs, dimension_numbers=dimension_numbers,  # type: ignore[arg-type]
+                             preferred_element_type=preferred_element_type,
                              lhs_spinfo=lhs._info)
   elif isinstance(rhs, BCOO):
     return _bcoo_rdot_general(lhs, rhs.data, rhs.indices, dimension_numbers=dimension_numbers,  # type: ignore[arg-type]
+                              preferred_element_type=preferred_element_type,
                               rhs_spinfo=rhs._info)
   else:
-    return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
+    return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers,
+                           preferred_element_type=preferred_element_type)
 
 def _bcoo_dot_general(lhs_data: Array, lhs_indices: Array, rhs: Array, *,
-                      dimension_numbers: DotDimensionNumbers, lhs_spinfo: SparseInfo) -> Array:
+                      dimension_numbers: DotDimensionNumbers,
+                      preferred_element_type: Any,
+                      lhs_spinfo: SparseInfo) -> Array:
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   cdims = (api_util._ensure_index_tuple(lhs_contract),
            api_util._ensure_index_tuple(rhs_contract))
   bdims = (api_util._ensure_index_tuple(lhs_batch),
            api_util._ensure_index_tuple(rhs_batch))
+  if preferred_element_type is not None:
+    preferred_element_type = np.dtype(preferred_element_type)
   return bcoo_dot_general_p.bind(jnp.asarray(lhs_data), jnp.asarray(lhs_indices), jnp.asarray(rhs),
                                  dimension_numbers=(cdims, bdims),
+                                 preferred_element_type=preferred_element_type,
                                  lhs_spinfo=lhs_spinfo)
 
 def _bcoo_rdot_general(lhs: Array, rhs_data: Array, rhs_indices: Array, *,
-                       dimension_numbers: DotDimensionNumbers, rhs_spinfo: SparseInfo) -> Array:
+                       dimension_numbers: DotDimensionNumbers,
+                       preferred_element_type: Any, rhs_spinfo: SparseInfo) -> Array:
   # TODO(jakevdp): perhaps this should be part of the bcoo_dot_general primitive?
   dimension_numbers_reversed: DotDimensionNumbers = tuple(d[::-1] for d in dimension_numbers)  # type: ignore[assignment]
   result = _bcoo_dot_general(rhs_data, rhs_indices, lhs, lhs_spinfo=rhs_spinfo,
-                             dimension_numbers=dimension_numbers_reversed)
+                             dimension_numbers=dimension_numbers_reversed,
+                             preferred_element_type=preferred_element_type)
   n_contract, n_batch = (len(d[0]) for d in dimension_numbers)
   n_swap = len(rhs_spinfo.shape) - n_contract
-  permutation = tuple([*range(n_batch), *range(n_swap, result.ndim), *range(n_batch, n_swap)])
+  permutation = (*range(n_batch), *range(n_swap, result.ndim), *range(n_batch, n_swap))
   return lax.transpose(result, permutation)
 
-@bcoo_dot_general_p.def_impl
-def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinfo: SparseInfo):
+def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers,
+                           preferred_element_type, lhs_spinfo: SparseInfo):
   lhs_data = jnp.asarray(lhs_data)
   lhs_indices = jnp.asarray(lhs_indices)
   rhs = jnp.asarray(rhs)
   # Validate all inputs via abstract_eval
   out_aval = _bcoo_dot_general_abstract_eval(lhs_data.aval, lhs_indices.aval, rhs.aval,
                                              dimension_numbers=dimension_numbers,
+                                             preferred_element_type=preferred_element_type,
                                              lhs_spinfo=lhs_spinfo)
   n_sparse = lhs_indices.shape[-1]
   n_batch = lhs_indices.ndim - 2
@@ -684,28 +724,29 @@ def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs
       idx_right = (*idx_batch, *idx_right)
     batch_dims = list(range(len(lhs_contracting_b) + bool(lhs_contracting_s)))
     prod = lax.dot_general(lhs_data, rhs.at[idx_right].get(mode='fill', fill_value=0),
-                           (([], []), (batch_dims, batch_dims)))
+                           (([], []), (batch_dims, batch_dims)),
+                           preferred_element_type=preferred_element_type)
     if idx_out:
       return out_array.at[idx_out].add(prod)
     else:
       return prod.sum(tuple(range(prod.ndim - out_array.ndim)), dtype=out_array.dtype)
-  for _ in range(n_batch - len(lhs_contracting_b)):
-    result = _broadcasting_vmap(result)
+  result = nfold_vmap(result, n_batch - len(lhs_contracting_b))
   rhs = lax.expand_dims(rhs, range(len(rhs_batch), n_batch - len(lhs_contracting_b)))
   out_array = jnp.zeros(out_aval.shape, out_aval.dtype)
   return result(out_array, lhs_data, lhs_indices, rhs)
 
 @bcoo_dot_general_p.def_abstract_eval
-def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinfo: SparseInfo):
-  if lhs_data.dtype != rhs.dtype:
-    raise ValueError("bcoo_dot_general requires arguments to have matching dtypes; "
-                     f"got lhs.dtype={lhs_data.dtype}, rhs.dtype={rhs.dtype}")
+def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_numbers,
+                                    preferred_element_type, lhs_spinfo: SparseInfo):
+  out_aval = jax.eval_shape(
+    partial(lax.dot_general,
+            dimension_numbers=dimension_numbers,
+            preferred_element_type=preferred_element_type),
+    jax.ShapeDtypeStruct(lhs_spinfo.shape, lhs_data.dtype),
+    jax.ShapeDtypeStruct(rhs.shape, rhs.dtype))
 
   (lhs_contracting, _), (lhs_batch, _) = dimension_numbers
   n_batch, n_sparse, _, _ = _validate_bcoo(lhs_data, lhs_indices, lhs_spinfo.shape)
-  out_shape = _dot_general_validated_shape(lhs_spinfo.shape, rhs.shape,
-                                           dimension_numbers)
-
   if lhs_batch and max(lhs_batch) >= n_batch:
     raise NotImplementedError(
       "bcoo_dot_general batch dimensions must be among the batch dimensions in the sparse representtaion.\n"
@@ -715,245 +756,105 @@ def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_num
   if any(d >= n_batch + n_sparse for d in lhs_contracting):
     raise NotImplementedError("bcoo_dot_general: contracting over dense dimensions.")
 
-  return core.ShapedArray(out_shape, lhs_data.dtype)
+  return core.ShapedArray(out_aval.shape, out_aval.dtype)
 
 _bcoo_dot_general_default_lowering = mlir.lower_fun(
     _bcoo_dot_general_impl, multiple_results=False)
 
-def _collapse_hlo(x, start, end):
-  x_type = ir.RankedTensorType(x.type)
-  shape = x_type.shape
-  shape = (shape[:start]
-           + [functools.reduce(operator.mul, shape[start:end + 1])]
-           + shape[end + 1:])
-  return hlo.ReshapeOp(
-      ir.RankedTensorType.get(shape, x_type.element_type), x).result
 
-def _bcoo_dot_general_cuda_lowering(
-    coo_matvec_lowering, coo_matmat_lowering, ctx, lhs_data, lhs_indices, rhs,
-    *, dimension_numbers, lhs_spinfo: SparseInfo):
-  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
-  lhs_data_aval, lhs_indices_aval, rhs_aval, = ctx.avals_in
-  props = _validate_bcoo_indices(lhs_indices_aval, lhs_spinfo.shape)
-  rhs_ndim = len(ir.RankedTensorType(rhs.type).shape)
-
-  # Checks the shapes of lhs and rhs.
-  assert props.n_dense == 0
-  assert (props.n_batch, props.n_sparse, rhs_ndim) in [
-      (0, 1, 1), (0, 1, 2), (0, 2, 1), (0, 2, 2), (1, 2, 2)]
-
-  # Checks the operation dimensions.
-  assert len(lhs_batch) == 0
-  assert len(rhs_batch) == 0
-  assert len(lhs_contract) == 1
-
-  # Checks the dtype.
-  assert lhs_data_aval.dtype in [np.float32, np.float64, np.complex64,
-                                 np.complex128]
-  assert lhs_data_aval.dtype == rhs_aval.dtype
-  assert lhs_indices_aval.dtype == np.int32
-
-  if rhs_ndim == 1:
-    bcoo_dot_general_fn = coo_matvec_lowering
-  elif rhs_ndim == 2:
-    bcoo_dot_general_fn = coo_matmat_lowering
-    if rhs_contract[0] == 1:
-      rhs = hlo.TransposeOp(
-          rhs, permutation=mlir.dense_int_elements([1, 0])).result
-  else:
-    raise ValueError(f"rhs has to be 1d or 2d; get {rhs_ndim}d.")
-
-  if props.n_batch == 0:
-    # non-batch mode.
-    lhs_transpose = False
-    if props.n_sparse == 1:
-      # Converts lhs to a row vector.
-      col = _collapse_hlo(lhs_indices, start=0, end=1)
-      row = mlir.full_like_aval(
-          ctx, 0, core.ShapedArray(ir.RankedTensorType(col.type).shape,
-                              np.dtype(np.int32)))
-      lhs_shape = (1, lhs_spinfo.shape[0])
-      dot_product = bcoo_dot_general_fn(
-          lhs_data, row, col, rhs, shape=lhs_shape, transpose=lhs_transpose,
-          data_dtype=lhs_data_aval.dtype, index_dtype=lhs_indices_aval.dtype,
-          x_dtype=rhs_aval.dtype)
-
-      if rhs_ndim == 1:
-        # Transforms a single-element array to a scalar.
-        return [hlo.ReshapeOp(
-            ir.RankedTensorType.get(
-                [], ir.RankedTensorType(dot_product.type).element_type),
-            dot_product).result]
-      else:
-        return [_collapse_hlo(dot_product, start=0, end=1)]
-    elif props.n_sparse == 2:
-      lhs_indices_shape = ir.RankedTensorType(lhs_indices.type).shape
-      row = _collapse_hlo(
-          hlo.SliceOp(
-              lhs_indices,
-              start_indices=mlir.dense_int_elements([0, 0]),
-              limit_indices=mlir.dense_int_elements([lhs_indices_shape[0], 1]),
-              strides=mlir.dense_int_elements([1, 1])).result,
-          start=0, end=1)
-      col = _collapse_hlo(
-          hlo.SliceOp(
-              lhs_indices,
-              start_indices=mlir.dense_int_elements([0, 1]),
-              limit_indices=mlir.dense_int_elements([lhs_indices_shape[0], 2]),
-              strides=mlir.dense_int_elements([1, 1])).result,
-          start=0, end=1)
-
-      if lhs_contract[0] == 0:
-        lhs_transpose = True
-
-      return [bcoo_dot_general_fn(
-          lhs_data, row, col, rhs, shape=lhs_spinfo.shape,
-          transpose=lhs_transpose, data_dtype=lhs_data_aval.dtype,
-          index_dtype=lhs_indices_aval.dtype,
-          x_dtype=rhs_aval.dtype)]
-    else:
-      raise ValueError(f"lhs has to be 1d or 2d; get {props.n_sparse}d.")
-  elif props.n_batch == 1:
-    # batch mode.
-    lhs_indices_shape = ir.RankedTensorType(lhs_indices.type).shape
-    lhs_data_shape = ir.RankedTensorType(lhs_data.type).shape
-    batch_count, _, _ = lhs_indices_shape
-    rhs_shape = ir.RankedTensorType(rhs.type).shape
-
-    # Squeeze the batch dimension for both indices and data.
-    lhs_indices_2d_shape = (np.prod(np.array(lhs_indices_shape)[:-1]),
-                            lhs_indices_shape[-1])
-    lhs_data_1d_shape = (np.prod(np.array(lhs_data_shape)), )
-
-    lhs_indices_2d = hlo.ReshapeOp(
-        ir.RankedTensorType.get(
-            lhs_indices_2d_shape,
-            ir.RankedTensorType(lhs_indices.type).element_type),
-        lhs_indices).result
-
-    lhs_data_1d = hlo.ReshapeOp(
-        ir.RankedTensorType.get(
-            lhs_data_1d_shape,
-            ir.RankedTensorType(lhs_data.type).element_type),
-        lhs_data).result
-
-    row = _collapse_hlo(
-        hlo.SliceOp(
-            lhs_indices_2d,
-            start_indices=mlir.dense_int_elements([0, 0]),
-            limit_indices=mlir.dense_int_elements([lhs_indices_2d_shape[0], 1]),
-            strides=mlir.dense_int_elements([1, 1])).result,
-        start=0, end=1)
-
-    col = _collapse_hlo(
-        hlo.SliceOp(
-            lhs_indices_2d,
-            start_indices=mlir.dense_int_elements([0, 1]),
-            limit_indices=mlir.dense_int_elements([lhs_indices_2d_shape[0], 2]),
-            strides=mlir.dense_int_elements([1, 1])).result,
-        start=0, end=1)
-
-    # Broadcast rhs to have the same batch size as lhs.
-    # TODO(tianjianlu): remove broadcasting.
-    # Use batch_stride = 0 for non-batch.
-    # The issue (https://github.com/NVIDIA/CUDALibrarySamples/issues/81#issuecomment-1205562643)
-    # in cusparse library does not allow batch_stride = 0 for a non-batched rhs.
-    batched_rhs_shape = (batch_count,) + tuple(rhs_shape)
-    batched_rhs = hlo.BroadcastInDimOp(
-        ir.RankedTensorType.get(batched_rhs_shape,
-                                ir.RankedTensorType(rhs.type).element_type),
-        rhs,
-        broadcast_dimensions=mlir.dense_int_elements([1, 2])).result
-    batched_rhs_2d_shape = (np.prod(np.array(batched_rhs_shape)[:-1]), batched_rhs_shape[-1])
-    batched_rhs_2d = hlo.ReshapeOp(
-        ir.RankedTensorType.get(
-            batched_rhs_2d_shape,
-            ir.RankedTensorType(batched_rhs.type).element_type),
-        batched_rhs).result
-
-    lhs_transpose = True if lhs_contract[0] == props.n_batch else False
-
-    return [bcoo_dot_general_fn(
-        lhs_data_1d, row, col, batched_rhs_2d, shape=lhs_spinfo.shape,
-        transpose=lhs_transpose, data_dtype=lhs_data_aval.dtype,
-        index_dtype=lhs_indices_aval.dtype,
-        x_dtype=rhs_aval.dtype)]
-  else:
-    raise ValueError(f"n_batch has to be 0 or 1; get {props.n_batch}.")
-
-def _bcoo_dot_general_gpu_lowering(
-    coo_matvec_lowering, coo_matmat_lowering,
-    ctx, lhs_data, lhs_indices, rhs, *, dimension_numbers,
-    lhs_spinfo: SparseInfo):
-
-  if not config.jax_bcoo_cusparse_lowering:
-    return _bcoo_dot_general_default_lowering(
-      ctx, lhs_data, lhs_indices, rhs,
-      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
-
-  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
-  lhs_data_aval, lhs_indices_aval, rhs_aval, = ctx.avals_in
-  n_batch, n_sparse, n_dense, _ = _validate_bcoo(
-      lhs_data_aval, lhs_indices_aval, lhs_spinfo.shape)
-
-  dtype = lhs_data_aval.dtype
-  if dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
-    warnings.warn(f'bcoo_dot_general cusparse/hipsparse lowering not available '
-                  f'for {dtype=}. Falling back to default implementation.',
+def _bcoo_dot_general_fallback(data, indices, spinfo):
+  if data.dtype not in CUSPARSE_DATA_DTYPES:
+    warnings.warn('bcoo_dot_general cusparse/hipsparse lowering not available '
+                  f'for {data.dtype=}. Falling back to default implementation.',
                   CuSparseEfficiencyWarning)
-    return _bcoo_dot_general_default_lowering(
-      ctx, lhs_data, lhs_indices, rhs,
-      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
-
-  if (n_batch > 1 or n_dense or
-      n_sparse not in [1, 2] or rhs_aval.ndim not in [1, 2] or
-      lhs_batch or rhs_batch or len(lhs_contract) != 1):
-    return _bcoo_dot_general_default_lowering(
-      ctx, lhs_data, lhs_indices, rhs,
-      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+    return True
+  elif indices.dtype not in CUSPARSE_INDEX_DTYPES:
+    warnings.warn('bcoo_dot_general cusparse/hipsparse lowering not available '
+                  f'for {indices.dtype=}. Falling back to default implementation.',
+                  CuSparseEfficiencyWarning)
+    return True
+  elif not spinfo.indices_sorted:
+    warnings.warn("bcoo_dot_general GPU lowering requires matrices with "
+                  "sorted indices. To sort the rows in your matrix, use e.g. "
+                  "mat = mat.sort_indices(). Falling back to the default "
+                  "implementation.", CuSparseEfficiencyWarning)
+    return True
   else:
-    if not lhs_spinfo.indices_sorted:
-      warnings.warn("bcoo_dot_general GPU lowering requires matrices with "
-                    "sorted indices. To sort the rows in your matrix, use e.g. "
-                    "mat = mat.sort_indices(). Falling back to the default "
-                    "implementation.", CuSparseEfficiencyWarning)
-      return _bcoo_dot_general_default_lowering(
-        ctx, lhs_data, lhs_indices, rhs,
-        dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+    return False
 
-    if n_batch == 1:
-      # The support for batched computation in cusparseSpMM COO was added in
-      # 11.6.1: https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html#cusparse-11.6.1
-      cuda_version = int(xla_bridge.get_backend().platform_version.split()[-1])
+def _bcoo_dot_general_gpu_impl(lhs_data, lhs_indices, rhs, *,
+                               dimension_numbers, preferred_element_type,
+                               lhs_spinfo):
+  if not config.bcoo_cusparse_lowering.value:
+    return _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs,
+        dimension_numbers=dimension_numbers,
+        preferred_element_type=preferred_element_type,
+        lhs_spinfo=lhs_spinfo)
 
-      # TODO(tianjianlu): enable the batch mode of cusparseSpMv.
-      cuda_supported_batch_mode = (
-          n_sparse == 2 and rhs_aval.ndim == 2 and
-          len(lhs_contract) == 1 and lhs_contract[0] in [1, 2] and
-          len(rhs_contract) == 1 and rhs_contract[0] in [0, 1] and
-          cuda_version >= 11061)
-      if not cuda_supported_batch_mode:
-        warnings.warn("bcoo_dot_general GPU lowering currently does not "
-                      "support this batch-mode computation. Falling back to "
-                      "the default implementation.", CuSparseEfficiencyWarning)
-        return _bcoo_dot_general_default_lowering(
-          ctx, lhs_data, lhs_indices, rhs,
-          dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+  (lhs_contract, rhs_contract), (lhs_batch, _) = dimension_numbers
+  n_batch, n_sparse, n_dense, _ = _validate_bcoo(
+      lhs_data, lhs_indices, lhs_spinfo.shape)
+  coo_matmul_p = coo_spmv_p if rhs.ndim == 1 else coo_spmm_p
 
-    return _bcoo_dot_general_cuda_lowering(
-      coo_matvec_lowering, coo_matmat_lowering, ctx, lhs_data, lhs_indices, rhs,
-      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+  out_aval = _bcoo_dot_general_abstract_eval(
+    lhs_data, lhs_indices, rhs,
+    dimension_numbers=dimension_numbers,
+    preferred_element_type=preferred_element_type,
+    lhs_spinfo=lhs_spinfo)
 
-def _bcoo_dot_general_jvp_lhs(lhs_data_dot, lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinfo: SparseInfo):
-  return _bcoo_dot_general(lhs_data_dot, lhs_indices, rhs, dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+  if out_aval.dtype not in CUSPARSE_DATA_DTYPES:
+    return _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs,
+        dimension_numbers=dimension_numbers,
+        preferred_element_type=preferred_element_type,
+        lhs_spinfo=lhs_spinfo)
 
-def _bcoo_dot_general_jvp_rhs(rhs_dot, lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinfo: SparseInfo):
-  return _bcoo_dot_general(lhs_data, lhs_indices, rhs_dot, dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+  lhs_data = lhs_data.astype(out_aval.dtype)
+  rhs = rhs.astype(out_aval.dtype)
 
-def _bcoo_dot_general_transpose(ct, lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinfo: SparseInfo):
+  # TODO(jakevdp, tianjianlu): add support for batched lowerings
+  if (len(lhs_contract) == 1 and len(lhs_batch) == 0 and rhs.ndim in (1, 2)
+      and (n_batch, n_sparse, n_dense) == (0, 1, 0)
+      and not _bcoo_dot_general_fallback(lhs_data, lhs_indices, lhs_spinfo)):
+    row, col = jnp.zeros(lhs_indices.shape[0], lhs_indices.dtype), lhs_indices.ravel()
+    transpose = False
+    shape = (1, *lhs_spinfo.shape)
+    row, col, shape = _coo_correct_out_of_bound_indices(row, col, shape, transpose)
+    out = coo_matmul_p.bind(lhs_data, row, col,
+                            rhs.T if rhs_contract[0] == 1 else rhs,
+                            transpose=transpose, shape=shape)
+    return out[0]
+  elif (len(lhs_contract) == 1 and len(lhs_batch) == 0 and rhs.ndim in (1, 2)
+        and (n_batch, n_sparse, n_dense) == (0, 2, 0)
+        and not _bcoo_dot_general_fallback(lhs_data, lhs_indices, lhs_spinfo)):
+    row, col = lhs_indices[:, 0], lhs_indices[:, 1]
+    transpose = (lhs_contract[0] == 0)
+    shape = lhs_spinfo.shape
+    row, col, shape = _coo_correct_out_of_bound_indices(row, col, shape, transpose)
+    out = coo_matmul_p.bind(lhs_data, row, col,
+                            rhs.T if rhs_contract[0] == 1 else rhs,
+                            transpose=transpose, shape=shape)
+    return out[:-1]
+  else:
+    return _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs,
+        dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo,
+        preferred_element_type=preferred_element_type)
+
+_bcoo_dot_general_gpu_lowering = mlir.lower_fun(
+    _bcoo_dot_general_gpu_impl, multiple_results=False)
+
+def _bcoo_dot_general_jvp_lhs(lhs_data_dot, lhs_data, lhs_indices, rhs, *, dimension_numbers,
+                              preferred_element_type, lhs_spinfo: SparseInfo):
+  return _bcoo_dot_general(lhs_data_dot, lhs_indices, rhs, dimension_numbers=dimension_numbers,
+                           preferred_element_type=preferred_element_type, lhs_spinfo=lhs_spinfo)
+
+def _bcoo_dot_general_jvp_rhs(rhs_dot, lhs_data, lhs_indices, rhs, *, dimension_numbers,
+                              preferred_element_type, lhs_spinfo: SparseInfo):
+  return _bcoo_dot_general(lhs_data, lhs_indices, rhs_dot, dimension_numbers=dimension_numbers,
+                           preferred_element_type=preferred_element_type, lhs_spinfo=lhs_spinfo)
+
+def _bcoo_dot_general_transpose(ct, lhs_data, lhs_indices, rhs, *, dimension_numbers,
+                                preferred_element_type, lhs_spinfo: SparseInfo):
   assert not ad.is_undefined_primal(lhs_indices)
-  if type(ct) is ad.Zero:
-    return ad.Zero
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_ndim = len(lhs_spinfo.shape)
   rhs_ndim = rhs.aval.ndim if ad.is_undefined_primal(rhs) else rhs.ndim
@@ -966,65 +867,69 @@ def _bcoo_dot_general_transpose(ct, lhs_data, lhs_indices, rhs, *, dimension_num
     permutation = list(lhs_batch) + lhs_kept + lhs_contract_sorted_by_rhs
     out_axes = list(np.argsort(permutation))
 
-    # What follows is essentially this, but computed in terms of dot_general_sampled:
-    # out_dense_T = lax.dot_general(ct, rhs, dimension_numbers=dims)
-    # out_dense = lax.transpose(out_dense_T, out_axes)
-    # result = bcoo_extract(lhs_indices, out_dense)
+    # Determine whether efficient approach is possible:
+    placeholder_data = jnp.empty((lhs_indices.ndim - 2) * (1,) + (lhs_indices.shape[-2],))
+    placeholder_shape = tuple(lhs_indices.shape[:-2]) + lhs_indices.shape[-1] * (1,)
+    try:
+      _validate_permutation(placeholder_data, lhs_indices, permutation, placeholder_shape)
+    except NotImplementedError:
+      indices_can_be_untransposed = False
+    else:
+      indices_can_be_untransposed = True
 
-    # Instead we (1) un-transpose indices, (2) compute SDDMM, (3) re-transpose result
-    dummy_data = jnp.ones([1 for i in range(lhs_indices.ndim - 2)] + [lhs_indices.shape[-2]])
-    dummy_spinfo = SparseInfo(tuple(lhs_indices.shape[:-2]) + tuple(1 for i in range(lhs_indices.shape[-1])))
-    _, lhs_indices_T = _bcoo_transpose(dummy_data, lhs_indices, permutation=permutation, spinfo=dummy_spinfo)
-    result_T = bcoo_dot_general_sampled(ct, rhs, lhs_indices_T, dimension_numbers=dims)
-    result, _ = _bcoo_transpose(result_T, lhs_indices_T, permutation=out_axes, spinfo=dummy_spinfo)
+    # TODO(jakevdp): explore implementing the efficient approach without actually un-transposing
+    # the indices. Could this be done by un-permuting ct, rhs, and dims?
 
+    if indices_can_be_untransposed:
+      # Efficient approach: (1) un-transpose indices, (2) compute SDDMM, (3) re-transpose result.
+      _, lhs_indices_T = _bcoo_transpose(placeholder_data, lhs_indices, permutation=permutation,
+                                         spinfo=SparseInfo(placeholder_shape))
+      result_T_shape = tuple(placeholder_shape[i] for i in permutation)
+      result_T = bcoo_dot_general_sampled(ct, rhs, lhs_indices_T, dimension_numbers=dims)
+      result, _ = _bcoo_transpose(result_T, lhs_indices_T, permutation=out_axes,
+                                  spinfo=SparseInfo(result_T_shape))
+    else:
+      # Fallback to direct approach when above is not possible.
+      out_dense_T = lax.dot_general(ct, rhs, dimension_numbers=dims)
+      out_dense = lax.transpose(out_dense_T, out_axes)
+      result = _bcoo_extract(lhs_indices, out_dense)
     return result, lhs_indices, rhs
   else:
     dims = ((lhs_kept, ans_lhs), (lhs_batch, ans_batch))  # type: ignore[assignment]
     rhs_contract_sorted_by_lhs = list(np.take(rhs_contract, np.argsort(lhs_contract)))
     out_axes = list(np.argsort(list(rhs_batch) + rhs_contract_sorted_by_lhs + rhs_kept))
-    result = _bcoo_dot_general(lhs_data, lhs_indices, ct, lhs_spinfo=lhs_spinfo, dimension_numbers=dims)
+    result = _bcoo_dot_general(lhs_data, lhs_indices, ct, lhs_spinfo=lhs_spinfo,
+                               preferred_element_type=preferred_element_type,
+                               dimension_numbers=dims)
     return lhs_data, lhs_indices, lax.transpose(result, out_axes)
 
-def _bcoo_dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers, lhs_spinfo: SparseInfo):
-  lhs_data, lhs_indices, rhs = batched_args
-  batch_dims = list(batch_dims)
-  batch_size = max(0 if dim is None else arg.shape[dim]
-                   for arg, dim in zip(batched_args, batch_dims))
-  if batch_dims[0] is None:
-    lhs_data = lhs_data[None]
-    batch_dims[0] = 0
-  if batch_dims[1] is None:
-    lhs_indices = lhs_indices[None]
-    batch_dims[1] = 0
-  # TODO: handle different batchings between lhs_data and lhs_indices?
-  assert batch_dims[0] == batch_dims[1] == 0
+def _bcoo_dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
+                                 preferred_element_type, lhs_spinfo: SparseInfo):
+  _, _, rhs = batched_args
+  _, _, rhs_bdim = batch_dims
+  new_lhs_data, new_lhs_indices, new_lhs_spinfo = _bcoo_batch_dims_to_front(
+    batched_args[:2], batch_dims[:2], lhs_spinfo,
+    batch_size=None if rhs_bdim is None else rhs.shape[rhs_bdim])
   new_dimension_numbers, result_batch_dim = _dot_general_batch_dim_nums(
-      (len(lhs_spinfo.shape), rhs.ndim), (batch_dims[0], batch_dims[2]), dimension_numbers)
-  new_shape = (batch_size, *lhs_spinfo.shape)
-  batched_out = _bcoo_dot_general(lhs_data, lhs_indices, rhs, lhs_spinfo=SparseInfo(new_shape),
+      (len(lhs_spinfo.shape), rhs.ndim), (0, rhs_bdim), dimension_numbers)
+  batched_out = _bcoo_dot_general(new_lhs_data, new_lhs_indices, rhs, lhs_spinfo=new_lhs_spinfo,
+                                  preferred_element_type=preferred_element_type,
                                   dimension_numbers=new_dimension_numbers)
   return batched_out, result_batch_dim
 
 ad.defjvp(bcoo_dot_general_p, _bcoo_dot_general_jvp_lhs, None, _bcoo_dot_general_jvp_rhs)
 ad.primitive_transposes[bcoo_dot_general_p] = _bcoo_dot_general_transpose
 batching.primitive_batchers[bcoo_dot_general_p] = _bcoo_dot_general_batch_rule
-
-mlir.register_lowering(
-    bcoo_dot_general_p, _bcoo_dot_general_default_lowering)
+mlir.register_lowering(bcoo_dot_general_p, _bcoo_dot_general_default_lowering)
+dispatch.simple_impl(bcoo_dot_general_p)
 
 if gpu_sparse.cuda_is_supported:
-  mlir.register_lowering(bcoo_dot_general_p,
-                          partial(_bcoo_dot_general_gpu_lowering,
-                                  gpu_sparse.cuda_coo_matvec,
-                                  gpu_sparse.cuda_coo_matmat),
-                          platform='cuda')
+  mlir.register_lowering(
+      bcoo_dot_general_p, _bcoo_dot_general_gpu_lowering, platform='cuda')
 if gpu_sparse.rocm_is_supported:
-  mlir.register_lowering(bcoo_dot_general_p,
-                          partial(_bcoo_dot_general_gpu_lowering,
-                                  gpu_sparse.rocm_coo_matvec,
-                                  gpu_sparse.rocm_coo_matmat),
-                          platform='rocm')
+  mlir.register_lowering(
+      bcoo_dot_general_p, _bcoo_dot_general_gpu_lowering, platform='rocm')
+
 
 #----------------------------------------------------------------------
 # bcoo_dot_general_sampled
@@ -1055,16 +960,90 @@ def bcoo_dot_general_sampled(A: Array, B: Array, indices: Array, *, dimension_nu
   return bcoo_dot_general_sampled_p.bind(A, B, indices,
                                          dimension_numbers=(cdims, bdims))
 
+def _bcoo_dot_general_sampled_slow(A, B, indices, *, dimension_numbers, precision):
+  return _bcoo_extract(indices, lax.dot_general(A, B, dimension_numbers=dimension_numbers, precision=precision))
+
+def _bcoo_dot_general_sampled_simple(A, B, indices, *, dimension_numbers, precision):
+  # This case used in transpose of sparse matvec
+  # TODO(jakevdp) generalize this
+  del precision  # Unused here
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  assert not (lhs_contract or rhs_contract or lhs_batch or rhs_batch)
+  assert A.ndim == B.ndim == 1
+  n_batch = indices.ndim - 2
+  n_sparse = indices.shape[-1]
+  nse = indices.shape[-2]
+  assert n_batch + n_sparse == 2
+  if n_batch == 0:
+    return (A.at[indices[:, 0]].get(mode='fill', fill_value=0)
+            * B.at[indices[:, 1]].get(mode='fill', fill_value=0))
+  elif n_batch == 1:
+    return A[:, None] * B.at[indices[..., 0]].get(mode='fill', fill_value=0)
+  elif n_batch == 2:
+    out = A[:, None, None] * B[None, :, None]
+    return lax.broadcast_in_dim(out, (len(A), len(B), nse), (0, 1, 2))
+  else:
+    raise ValueError("too many batch dimensions.")
+
+def _bcoo_dot_general_sampled_simple2(A, B, indices, *, dimension_numbers, precision):
+  # This case used in transpose of sparse matmat
+  # TODO(jakevdp) generalize this
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  assert not (lhs_batch or rhs_batch)
+  assert len(lhs_contract) == len(rhs_contract) == 1
+  assert A.ndim == B.ndim == 2
+  n_batch = indices.ndim - 2
+  n_sparse = indices.shape[-1]
+  nse = indices.shape[-2]
+  assert n_batch + n_sparse == 2
+  if n_batch == 0:
+    lhs_batch = [1] if lhs_contract[0] == 0 else [0]
+    rhs_batch = [1] if rhs_contract[0] == 0 else [0]
+    A = A.at[_tuple_replace((slice(None), slice(None)), lhs_batch[0], indices[:, 0])].get(mode='fill', fill_value=0)
+    B = B.at[_tuple_replace((slice(None), slice(None)), rhs_batch[0], indices[:, 1])].get(mode='fill', fill_value=0)
+    return lax.dot_general(A, B, dimension_numbers=((lhs_contract, rhs_contract), (lhs_batch, rhs_batch)),
+                           precision=precision)
+  if n_batch == 1:
+    lhs_batch = [1] if lhs_contract[0] == 0 else [0]
+    rhs_batch = [1] if rhs_contract[0] == 0 else [0]
+    B = B.at[_tuple_replace((slice(None), slice(None)), rhs_batch[0], indices[..., 0])].get(mode='fill', fill_value=0)
+    if rhs_contract[0] == 1:
+      rhs_contract = [2]
+    return lax.dot_general(A, B, dimension_numbers=((lhs_contract, rhs_contract), (lhs_batch, rhs_batch)),
+                           precision=precision)
+  if n_batch == 2:
+    out = lax.dot_general(A, B, dimension_numbers=((lhs_contract, rhs_contract), (lhs_batch, rhs_batch)),
+                          precision=precision)
+    return lax.broadcast_in_dim(lax.expand_dims(out, (2,)), (*out.shape, nse), (0, 1, 2))
+  else:
+    raise ValueError("too many batch dimensions.")
+
+
 @bcoo_dot_general_sampled_p.def_impl
 def _bcoo_dot_general_sampled_impl(A, B, indices, *, dimension_numbers):
-  # TODO(jakevdp): use a more efficient implementation that avoids the full dot product.
-  dense_result = lax.dot_general(A, B, dimension_numbers=dimension_numbers)
-  return bcoo_extract(indices, dense_result)
+  A = jnp.asarray(A)
+  B = jnp.asarray(B)
+  indices = jnp.asarray(indices)
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  n_batch = indices.ndim - 2
+  n_sparse = indices.shape[-1]
+  precision = lax.Precision.HIGHEST
+
+  # TODO(jakevdp): add fast approach for more general cases / combine the following:
+  if (not (lhs_contract or rhs_contract or lhs_batch or rhs_batch)
+      and A.ndim == B.ndim == 1 and n_sparse + n_batch == 2):
+    return _bcoo_dot_general_sampled_simple(A, B, indices, dimension_numbers=dimension_numbers, precision=precision)
+  if len(lhs_contract) == 1 and not lhs_batch and A.ndim == B.ndim == 2 and n_sparse + n_batch == 2:
+    return _bcoo_dot_general_sampled_simple2(A, B, indices, dimension_numbers=dimension_numbers, precision=precision)
+
+
+  return _bcoo_dot_general_sampled_slow(A, B, indices, dimension_numbers=dimension_numbers, precision=precision)
+
 
 @bcoo_dot_general_sampled_p.def_abstract_eval
 def _bcoo_dot_general_sampled_abstract_eval(A, B, indices, *, dimension_numbers):
   dense_result, = pe.abstract_eval_fun(lambda *args: [lax.dot_general(*args, dimension_numbers=dimension_numbers)], A, B)
-  sparse_result, = pe.abstract_eval_fun(lambda *args: [bcoo_extract(*args)], indices, dense_result)
+  sparse_result, = pe.abstract_eval_fun(lambda *args: [_bcoo_extract(*args)], indices, dense_result)
   return sparse_result
 
 def _bcoo_dot_general_sampled_transpose(ct, A, B, indices, *, dimension_numbers):
@@ -1072,7 +1051,7 @@ def _bcoo_dot_general_sampled_transpose(ct, A, B, indices, *, dimension_numbers)
   B_shape = B.aval.shape if hasattr(B, 'aval') else B.shape
   mat_shape = _dot_general_validated_shape(A_shape, B_shape, dimension_numbers)
   mat = ad.UndefinedPrimal(core.ShapedArray(mat_shape, ct.dtype))
-  indices, ct = _bcoo_extract_transpose(ct, indices, mat)
+  indices, ct = _bcoo_extract_transpose(ct, indices, mat, assume_unique=True)
   kwds = {'dimension_numbers': dimension_numbers,
           'precision': None,
           'preferred_element_type': None}
@@ -1107,7 +1086,8 @@ bcoo_spdot_general_p = core.Primitive('bcoo_spdot_general')
 bcoo_spdot_general_p.multiple_results = True
 
 def _bcoo_spdot_general(lhs_data: Array, lhs_indices: Array, rhs_data: Array, rhs_indices: Array, *,
-                        lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo, dimension_numbers: DotDimensionNumbers) -> Tuple[Array, Array]:
+                        lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo, dimension_numbers: DotDimensionNumbers,
+                        preferred_element_type: Any) -> tuple[Array, Array]:
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   cdims = (api_util._ensure_index_tuple(lhs_contract),
            api_util._ensure_index_tuple(rhs_contract))
@@ -1115,9 +1095,10 @@ def _bcoo_spdot_general(lhs_data: Array, lhs_indices: Array, rhs_data: Array, rh
            api_util._ensure_index_tuple(rhs_batch))
   return bcoo_spdot_general_p.bind(lhs_data, lhs_indices, rhs_data, rhs_indices,
                                    lhs_spinfo=lhs_spinfo, rhs_spinfo=rhs_spinfo,
-                                   dimension_numbers=(cdims, bdims))
+                                   dimension_numbers=(cdims, bdims),
+                                   preferred_element_type=preferred_element_type)
 
-def _bcoo_spdot_general_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_spinfo, rhs_spinfo, lhs_contracting, rhs_contracting):
+def _bcoo_spdot_general_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_spinfo, rhs_spinfo, lhs_contracting, rhs_contracting, out_nse):
   lhs_shape = lhs_spinfo.shape
   rhs_shape = rhs_spinfo.shape
 
@@ -1159,25 +1140,24 @@ def _bcoo_spdot_general_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices, 
   out_indices = out_indices.at[:, :, :lhs_j.shape[-1]].set(lhs_j[:, None])
   out_indices = out_indices.at[:, :, lhs_j.shape[-1]:].set(rhs_j[None, :])
   out_indices = out_indices.reshape(len(out_data), out_indices.shape[-1])
-  out_nse = (lhs.nse if lhs_j.shape[1] else 1) * (rhs.nse if rhs_j.shape[1] else 1)
   # Note: we do not eliminate zeros here, because it can cause issues with autodiff.
   # See https://github.com/google/jax/issues/10163.
   return _bcoo_sum_duplicates(out_data, out_indices, spinfo=SparseInfo(shape=out_shape), nse=out_nse)
 
 @bcoo_spdot_general_p.def_impl
-def _bcoo_spdot_general_impl(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo, dimension_numbers):
+def _bcoo_spdot_general_impl(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo,
+                             dimension_numbers, preferred_element_type):
   lhs_shape = lhs_spinfo.shape
   rhs_shape = rhs_spinfo.shape
 
   lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
   rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
   assert lhs.n_dense == rhs.n_dense == 0
-  data_aval, indices_aval = _bcoo_spdot_general_abstract_eval(
+  data_aval, _ = _bcoo_spdot_general_abstract_eval(
     lhs_data.aval, lhs_indices.aval, rhs_data.aval, rhs_indices.aval,
-    lhs_spinfo=lhs_spinfo, rhs_spinfo=rhs_spinfo, dimension_numbers=dimension_numbers)
-  out_shape = _dot_general_validated_shape(lhs_shape, rhs_shape,
-                                           dimension_numbers)
-  _validate_bcoo(data_aval, indices_aval, out_shape)
+    lhs_spinfo=lhs_spinfo, rhs_spinfo=rhs_spinfo, dimension_numbers=dimension_numbers,
+    preferred_element_type=preferred_element_type)
+  out_nse = data_aval.shape[-1]
 
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
 
@@ -1194,28 +1174,29 @@ def _bcoo_spdot_general_impl(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lh
       lhs_spinfo=SparseInfo(lhs_shape[lhs.n_batch:]),
       rhs_spinfo=SparseInfo(rhs_shape[rhs.n_batch:]),
       lhs_contracting=[d - lhs.n_batch for d in lhs_contracting],
-      rhs_contracting=[d - rhs.n_batch for d in rhs_contracting])
+      rhs_contracting=[d - rhs.n_batch for d in rhs_contracting],
+      out_nse=out_nse)
 
-  for _ in reversed(range(len(rhs_batch), rhs.n_batch)):
-    func = _broadcasting_vmap(func, in_axes=(None, None, 0, 0))
-  for _ in reversed(range(len(lhs_batch), lhs.n_batch)):
-    func = _broadcasting_vmap(func, in_axes=(0, 0, None, None))
-  for _ in range(len(lhs_batch)):
-    func = _broadcasting_vmap(func, in_axes=0)
+  func = nfold_vmap(func, rhs.n_batch - len(rhs_batch), in_axes=(None, None, 0, 0))
+  func = nfold_vmap(func, lhs.n_batch - len(lhs_batch), in_axes=(0, 0, None, None))
+  func = nfold_vmap(func, len(lhs_batch))
   return func(lhs_data, lhs_indices, rhs_data, rhs_indices)
 
 @bcoo_spdot_general_p.def_abstract_eval
-def _bcoo_spdot_general_abstract_eval(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo, dimension_numbers):
+def _bcoo_spdot_general_abstract_eval(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo,
+                                      dimension_numbers, preferred_element_type):
   lhs_shape = lhs_spinfo.shape
   rhs_shape = rhs_spinfo.shape
+  out_aval = jax.eval_shape(
+    partial(lax.dot_general,
+            dimension_numbers=dimension_numbers,
+            preferred_element_type=preferred_element_type),
+    jax.ShapeDtypeStruct(lhs_shape, lhs_data.dtype),
+    jax.ShapeDtypeStruct(rhs_shape, rhs_data.dtype))
 
-  if lhs_data.dtype != rhs_data.dtype:
-    raise ValueError("bcoo_spdot_general requires inputs to have matching dtypes; "
-                     f"got lhs.dtype={lhs_data.dtype}, rhs.dtype={rhs_data.dtype}")
   lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
   rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
-  _ = _dot_general_validated_shape(lhs_shape, rhs_shape, dimension_numbers)
 
   if lhs.n_dense or rhs.n_dense:
     # TODO(jakevdp): handle dense dimensions
@@ -1238,6 +1219,11 @@ def _bcoo_spdot_general_abstract_eval(lhs_data, lhs_indices, rhs_data, rhs_indic
     (rhs.nse if rhs.n_sparse > len(rhs_contracting) else 1)
   )
 
+  # Ensure we're not storing more output elements than necessary.
+  # TODO(jakevdp): should we warn here if output is effectively dense?
+  out_n_batch = lhs.n_batch + rhs.n_batch - len(lhs_batch)
+  out_nse = min(out_nse, math.prod(out_aval.shape[out_n_batch:]))
+
   data_shape = (
     *(lhs_shape[dim] for dim in lhs_batch),
     *(lhs_data.shape[dim] for dim in range(lhs.n_batch) if dim not in lhs_batch),
@@ -1248,40 +1234,28 @@ def _bcoo_spdot_general_abstract_eval(lhs_data, lhs_indices, rhs_data, rhs_indic
     *(lhs_indices.shape[dim] for dim in range(lhs.n_batch) if dim not in lhs_batch),
     *(rhs_indices.shape[dim] for dim in range(rhs.n_batch) if dim not in rhs_batch),
     out_nse, lhs.n_sparse + rhs.n_sparse - 2 * len(lhs_contracting))
-  return core.ShapedArray(data_shape, lhs_data.dtype), core.ShapedArray(indices_shape, lhs_indices.dtype)
 
-def _bcoo_spdot_general_batch_rule(batched_args, batch_dims, *, lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo, dimension_numbers):
-  lhs_shape = lhs_spinfo.shape
-  rhs_shape = rhs_spinfo.shape
+  data_aval = core.ShapedArray(data_shape, out_aval.dtype)
+  indices_aval = core.ShapedArray(indices_shape, lhs_indices.dtype)
+  _validate_bcoo(data_aval, indices_aval, out_aval.shape)  # pytype: disable=wrong-arg-types  # always-use-return-annotations
 
-  lhs_data, lhs_indices, rhs_data, rhs_indices = batched_args
-  batch_dims = list(batch_dims)
-  batch_size = max(0 if dim is None else arg.shape[dim]
-                   for arg, dim in zip(batched_args, batch_dims))
-  if batch_dims[0] is None:
-    lhs_data = lhs_data[None]
-    batch_dims[0] = 0
-  if batch_dims[1] is None:
-    lhs_indices = lhs_indices[None]
-    batch_dims[1] = 0
-  assert batch_dims[0] == batch_dims[1] == 0
-  if batch_dims[2] is None:
-    rhs_data = rhs_data[None]
-    batch_dims[2] = 0
-  if batch_dims[3] is None:
-    rhs_indices = rhs_indices[None]
-    batch_dims[3] = 0
-  if any(dim != 0 for dim in batch_dims):
-    raise NotImplementedError("batching along non-leading dimension.")
-  assert all(dim == 0 for dim in batch_dims)
-  new_dimension_numbers, result_batch_dim = _dot_general_batch_dim_nums(
-      (len(lhs_shape), len(rhs_shape)), (batch_dims[0], batch_dims[2]), dimension_numbers)
-  new_lhs_shape = (batch_size, *lhs_shape)
-  new_rhs_shape = (batch_size, *rhs_shape)
+  return data_aval, indices_aval
+
+def _bcoo_spdot_general_batch_rule(batched_args, batch_dims, *, lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo,
+                                   preferred_element_type, dimension_numbers):
+  lhs_ndim = len(lhs_spinfo.shape)
+  rhs_ndim = len(rhs_spinfo.shape)
+  batch_size = max(arg.shape[dim] for arg, dim in zip(batched_args, batch_dims) if dim is not None)
+  lhs_data, lhs_indices, lhs_spinfo = _bcoo_batch_dims_to_front(
+    batched_args[:2], batch_dims[:2], lhs_spinfo, batch_size=batch_size)
+  rhs_data, rhs_indices, rhs_spinfo = _bcoo_batch_dims_to_front(
+    batched_args[2:], batch_dims[2:], rhs_spinfo, batch_size=batch_size)
+  dimension_numbers, result_batch_dim = _dot_general_batch_dim_nums(
+      (lhs_ndim, rhs_ndim), (0, 0), dimension_numbers)
   batched_out = _bcoo_spdot_general(lhs_data, lhs_indices, rhs_data, rhs_indices,
-                                    dimension_numbers=new_dimension_numbers,
-                                    lhs_spinfo=SparseInfo(new_lhs_shape),
-                                    rhs_spinfo=SparseInfo(new_rhs_shape))
+                                    dimension_numbers=dimension_numbers,
+                                    lhs_spinfo=lhs_spinfo, rhs_spinfo=rhs_spinfo,
+                                    preferred_element_type=preferred_element_type)
   return batched_out, (result_batch_dim, result_batch_dim)
 
 
@@ -1331,13 +1305,9 @@ def _bcoo_sort_indices_impl(data, indices, *, spinfo):
   props = _validate_bcoo(data, indices, spinfo.shape)
   if props.n_sparse == 0:
     return data, indices
-  f = _bcoo_sort_indices_unbatched
-  for _ in range(props.n_batch):
-    f = vmap(f)
+  f = nfold_vmap(_bcoo_sort_indices_unbatched, props.n_batch, broadcasted=False)
   indices, perm = f(indices)
-  permute = lambda d, p: d[p]
-  for _ in range(props.n_batch):
-    permute = _broadcasting_vmap(permute)
+  permute = nfold_vmap(lambda d, p: d[p], props.n_batch)
   data = permute(data, perm)
   return data, indices
 
@@ -1359,15 +1329,8 @@ def _bcoo_sort_indices_abstract_eval(data, indices, *, spinfo):
   return data_out, indices
 
 def _bcoo_sort_indices_batching_rule(batched_args, batch_dims, *, spinfo):
-  data, indices = batched_args
-  if any(b not in [0, None] for b in batch_dims):
-    raise NotImplementedError(f"{batch_dims=}. Only 0 and None are supported.")
-  if batch_dims[0] is None:
-    data = data[None, ...]
-  if batch_dims[1] is None:
-    indices = indices[None, ...]
-  new_spinfo = SparseInfo(shape=(max(data.shape[0], indices.shape[0]), *spinfo.shape))
-  data_out, indices_out = bcoo_sort_indices_p.bind(data, indices, spinfo=new_spinfo)
+  data, indices, spinfo = _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo)
+  data_out, indices_out = bcoo_sort_indices_p.bind(data, indices, spinfo=spinfo)
   out_axes = (0, 0)
   # Note: if data is unbatched on input, it will be batched on output.
   # However, if indices are unbatched on input, they will be unbatched on output.
@@ -1383,13 +1346,9 @@ def _bcoo_sort_indices_jvp(primals, tangents, *, spinfo):
 
   data, indices = primals
   data_dot, _ = tangents
-  f = _bcoo_sort_indices_unbatched
-  for _ in range(props.n_batch):
-    f = _broadcasting_vmap(f)
+  f = nfold_vmap(_bcoo_sort_indices_unbatched, props.n_batch)
   indices_out, perm = f(indices)
-  permute = lambda d, p: d[p]
-  for _ in range(props.n_batch):
-    permute = _broadcasting_vmap(permute)
+  permute = nfold_vmap(lambda d, p: d[p], props.n_batch)
   data_out = permute(data, perm)
 
   indices_dot_out = ad.Zero.from_value(indices)
@@ -1411,7 +1370,7 @@ mlir.register_lowering(bcoo_sort_indices_p, _bcoo_sort_indices_hlo)
 bcoo_sum_duplicates_p = core.Primitive("bcoo_sum_duplicates")
 bcoo_sum_duplicates_p.multiple_results = True
 
-def bcoo_sum_duplicates(mat: BCOO, nse: Optional[int] = None) -> BCOO:
+def bcoo_sum_duplicates(mat: BCOO, nse: int | None = None) -> BCOO:
   """Sums duplicate indices within a BCOO array, returning an array with sorted indices.
 
   Args:
@@ -1430,7 +1389,7 @@ def bcoo_sum_duplicates(mat: BCOO, nse: Optional[int] = None) -> BCOO:
   return BCOO((data, indices), shape=mat.shape, indices_sorted=True,
               unique_indices=True)
 
-def _bcoo_sum_duplicates(data: Array, indices: Array, *, spinfo: SparseInfo, nse: Optional[int]) -> Tuple[Array, Array]:
+def _bcoo_sum_duplicates(data: Array, indices: Array, *, spinfo: SparseInfo, nse: int | None) -> tuple[Array, Array]:
   if nse is not None:
     nse = core.concrete_or_error(operator.index, nse, "nse argument of bcoo_sum_duplicates.")
   return bcoo_sum_duplicates_p.bind(data, indices, spinfo=spinfo, nse=nse)
@@ -1438,10 +1397,8 @@ def _bcoo_sum_duplicates(data: Array, indices: Array, *, spinfo: SparseInfo, nse
 @bcoo_sum_duplicates_p.def_impl
 def _bcoo_sum_duplicates_impl(data, indices, *, spinfo, nse):
   props = _validate_bcoo(data, indices, spinfo.shape)
-  f = functools.partial(_bcoo_sum_duplicates_unbatched, shape=spinfo.shape[props.n_batch:])
-  for _ in range(props.n_batch):
-    f = vmap(f)
-  indices_out, mapping, nse_batched = f(indices)
+  indices_out, mapping, nse_batched = _unique_indices(
+    indices, shape=spinfo.shape, return_inverse=True, return_true_size=True)
   if nse is None:
     nse = 1 if props.n_sparse == 0 else nse_batched.max()
   indices_out = _adjust_indices_nse(indices_out, nse=nse, shape=spinfo.shape)
@@ -1450,8 +1407,7 @@ def _bcoo_sum_duplicates_impl(data, indices, *, spinfo, nse):
   data_out = jnp.empty((*map(max, indices.shape[:props.n_batch], data.shape[:props.n_batch]),
                         nse, *data.shape[props.n_batch + 1:]), dtype=data.dtype)
   permute = lambda d_out, m, d: d_out.at[m].add(d, mode='drop')
-  for _ in range(props.n_batch):
-    permute = _broadcasting_vmap(permute)
+  permute = nfold_vmap(permute, props.n_batch)
   data_out = permute(data_out, mapping, data)
   return data_out, indices_out
 
@@ -1468,22 +1424,61 @@ def _adjust_indices_nse(indices, *, nse, shape):
     indices = lax.concatenate([indices, fill], dimension=indices.ndim - 2)
   return indices
 
-def _bcoo_sum_duplicates_unbatched(indices, *, shape):
+def _unique_indices(indices, *, shape, return_inverse=False,
+                    return_index=False, return_true_size=False):
+  props = _validate_bcoo_indices(indices, shape)
+  f = partial(_unique_indices_unbatched, shape=shape[props.n_batch:],
+              return_inverse=return_inverse, return_index=return_index,
+              return_true_size=return_true_size)
+  f = nfold_vmap(f, props.n_batch, broadcasted=False)
+  return f(indices)
+
+def _unique_indices_unbatched(indices, *, shape, return_inverse=False,
+                              return_index=False, return_true_size=False):
   props = _validate_bcoo_indices(indices, shape)
   if props.n_sparse == 0:
     nse = 1
-    mapping = jnp.zeros(nse, dtype='int32')
-    indices_out = jnp.zeros_like(indices, shape=(nse, props.n_sparse))
-    return indices_out, mapping, nse
+    indices_out = jnp.zeros_like(indices, shape=(nse, 0))
+    out = (indices_out,)
+    if return_index:
+      out = (*out, jnp.zeros(nse, dtype='int32'))
+    if return_inverse:
+      out = (*out, jnp.zeros(nse, dtype='int32'))
+    if return_true_size:
+      out = (*out, nse)
+    return out[0] if len(out) == 1 else out
   fill_value = jnp.expand_dims(jnp.array(shape[:props.n_sparse], dtype=indices.dtype), (0,))
   out_of_bounds = (indices >= fill_value).any(-1, keepdims=True)
   indices = jnp.where(out_of_bounds, fill_value, indices)
   # TODO: check if `indices_sorted` is True.
-  indices_unique, inv_idx, nse = _unique(
-    indices, axis=0, return_inverse=True, return_true_size=True,
-    size=props.nse, fill_value=fill_value)
-  nse = nse - (indices == fill_value).any().astype(nse.dtype)
-  return indices_unique, inv_idx, nse
+  out = _unique(indices, axis=0, return_inverse=return_inverse, return_index=return_index,
+                return_true_size=return_true_size, size=props.nse, fill_value=fill_value)
+  if return_true_size:
+    nse = out[-1]
+    nse = nse - (indices == fill_value).any().astype(nse.dtype)
+    out = (*out[:-1], nse)
+  return out
+
+def _coo_correct_out_of_bound_indices(row, col, shape, transpose):
+  # Since cusparse does not have any well-tested support for padded indices,
+  # we push them into an extra row/col of the matrix, which will then be
+  # sliced away in the output.
+  assert row.ndim == col.ndim, f"{row.ndim} != {col.ndim}"
+  assert len(shape) == row.ndim + 1, f"{len(shape)} != {row.ndim + 1}"
+  if row.ndim > 1:
+    f = partial(_coo_correct_out_of_bound_indices,
+                shape=shape[row.ndim:], transpose=transpose)
+    return nfold_vmap(f, row.ndim)(row, col)
+  mask = (row >= shape[0]) | (col >= shape[1])
+  if transpose:
+    row = jnp.where(mask, 0, row)
+    col = jnp.where(mask, shape[1], col)
+    shape = (shape[0], shape[1] + 1)
+  else:
+    row = jnp.where(mask, shape[0], row)
+    col = jnp.where(mask, 0, col)
+    shape = (shape[0] + 1, shape[1])
+  return row, col, shape
 
 @bcoo_sum_duplicates_p.def_abstract_eval
 def _bcoo_sum_duplicates_abstract_eval(data, indices, *, spinfo, nse):
@@ -1499,32 +1494,24 @@ def _bcoo_sum_duplicates_abstract_eval(data, indices, *, spinfo, nse):
   return data_out, indices_out
 
 def _bcoo_sum_duplicates_batching_rule(batched_args, batch_dims, *, spinfo, nse):
-  data, indices = batched_args
-  if any(b not in [0, None] for b in batch_dims):
-    raise NotImplementedError(f"{batch_dims=}. Only 0 and None are supported.")
-  if batch_dims[0] is None:
-    data = data[None, ...]
-  if batch_dims[1] is None:
-    indices = indices[None, ...]
-  new_spinfo = SparseInfo(shape=(max(data.shape[0], indices.shape[0]), *spinfo.shape))
+  data, indices, new_spinfo = _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo)
   data_out, indices_out = bcoo_sum_duplicates_p.bind(data, indices, spinfo=new_spinfo, nse=nse)
-  out_axes = (0, 0)
   # Note: if data is unbatched on input, it will be batched on output.
   # However, if indices are unbatched on input, they will be unbatched on output.
   if batch_dims[1] is None:
-    indices_out = indices_out[0]
+    indices_out = lax.squeeze(indices_out, [0])
     out_axes = (0, None)
-  return (data_out, indices_out), tuple(out_axes)
+  else:
+    out_axes = (0, 0)
+  return (data_out, indices_out), out_axes
 
 def _bcoo_sum_duplicates_jvp(primals, tangents, *, spinfo, nse):
   props = _validate_bcoo(*primals, spinfo.shape)
 
   data, indices = primals
   data_dot, _ = tangents
-  f = functools.partial(_bcoo_sum_duplicates_unbatched, shape=spinfo.shape[props.n_batch:])
-  for _ in range(props.n_batch):
-    f = _broadcasting_vmap(f)
-  indices_out, mapping, nse_batched = f(indices)
+  indices_out, mapping, nse_batched = _unique_indices(
+    indices, shape=spinfo.shape, return_inverse=True, return_true_size=True)
   if nse is None:
     nse = jnp.sum(nse_batched)
   try:
@@ -1545,8 +1532,7 @@ def _bcoo_sum_duplicates_jvp(primals, tangents, *, spinfo, nse):
     permute = lambda x, i, y: x.at[i].add(y, mode='drop')
   else:
     permute = lambda x, i, y: x
-  for _ in range(props.n_batch):
-    permute = _broadcasting_vmap(permute)
+  permute = nfold_vmap(permute, props.n_batch)
   data_out = permute(data_out, mapping, data)
   indices_dot_out = ad.Zero.from_value(indices_out)
   data_dot_out = ad.Zero.from_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot_out, mapping, data_dot)
@@ -1562,8 +1548,8 @@ mlir.register_lowering(bcoo_sum_duplicates_p, _bcoo_sum_duplicates_hlo)
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
 
-def bcoo_update_layout(mat: BCOO, *, n_batch: Optional[int] = None, n_dense: Optional[int] = None,
-                       on_inefficient: Optional[str] = 'error') -> BCOO:
+def bcoo_update_layout(mat: BCOO, *, n_batch: int | None = None, n_dense: int | None = None,
+                       on_inefficient: str | None = 'error') -> BCOO:
   """Update the storage layout (i.e. n_batch & n_dense) of a BCOO matrix.
 
   In many cases this can be done without introducing undue storage overhead. However,
@@ -1639,52 +1625,50 @@ def bcoo_update_layout(mat: BCOO, *, n_batch: Optional[int] = None, n_dense: Opt
 
   if n_dense < current_n_dense:
     n = current_n_dense - n_dense
+    @partial(nfold_vmap, N=current_n_batch + 1)
     def _update(d, i):
-      new_d = d.reshape(np.prod(d.shape[:n]), *d.shape[n:])
+      new_d = d.reshape(math.prod(d.shape[:n]), *d.shape[n:])
       meshes = jnp.meshgrid(*(jnp.arange(s, dtype=i.dtype) for s in d.shape[:n]),
                             indexing='ij')
       new_i = jnp.column_stack([jnp.broadcast_to(i, (new_d.shape[0], i.size)),
                                 *map(jnp.ravel, meshes)])
       return new_d, new_i
-    for _ in range(current_n_batch + 1):
-      _update = _broadcasting_vmap(_update)
     new_data, new_indices = _update(new_data, new_indices)
     new_data = new_data.reshape(*new_data.shape[:current_n_batch],
-                                np.prod(new_data.shape[current_n_batch:current_n_batch + 2]),
+                                math.prod(new_data.shape[current_n_batch:current_n_batch + 2]),
                                 *new_data.shape[current_n_batch + 2:])
     new_indices = new_indices.reshape(*new_indices.shape[:current_n_batch],
-                                      np.prod(new_indices.shape[current_n_batch: current_n_batch + 2]),
+                                      math.prod(new_indices.shape[current_n_batch: current_n_batch + 2]),
                                       *new_indices.shape[current_n_batch + 2:])
     current_n_dense = n_dense
 
   if n_batch < current_n_batch:
     n = current_n_batch - n_batch
+    @partial(nfold_vmap, N=n_batch)
     def _update(d, i):
       nse = i.shape[-2]
-      new_d = d.reshape(np.prod(d.shape[:n + 1]), *d.shape[n + 1:])
+      new_d = d.reshape(math.prod(d.shape[:n + 1]), *d.shape[n + 1:])
       meshes = jnp.meshgrid(*(jnp.arange(d, dtype=i.dtype) for d in (*i.shape[:n], nse)),
                             indexing='ij')
-      new_i = i.reshape(np.prod(i.shape[:n + 1]), *i.shape[n + 1:])
+      new_i = i.reshape(math.prod(i.shape[:n + 1]), *i.shape[n + 1:])
       new_i = jnp.column_stack((*(m.ravel() for m in meshes[:-1]), new_i))
       return new_d, new_i
-    for _ in range(n_batch):  # type: ignore[arg-type]
-      _update = _broadcasting_vmap(_update)
     new_data, new_indices = _update(new_data, new_indices)
     current_n_batch = n_batch
 
   if n_dense > current_n_dense:
     n = n_dense - current_n_dense
+    @partial(nfold_vmap, N=current_n_batch + 1)
     def _update(d, i):
       new_d = jnp.zeros_like(d, shape=shape[-n_dense:]).at[tuple(i[-n:])].set(d)
       new_i = i[:-n]
       return new_d, new_i
-    for _ in range(current_n_batch + 1):
-      _update = _broadcasting_vmap(_update)
     new_data, new_indices = _update(new_data, new_indices)
     current_n_dense = n_dense
 
   if n_batch > current_n_batch:
     n = n_batch - current_n_batch
+    @partial(nfold_vmap, N=current_n_batch)
     def _update(d, i):
       nse = i.shape[-2]
       idx = tuple(i[:, j] for j in range(n)) + (jnp.arange(nse),)
@@ -1693,8 +1677,6 @@ def bcoo_update_layout(mat: BCOO, *, n_batch: Optional[int] = None, n_dense: Opt
       new_d_shape = (*shape[current_n_batch:n_batch], nse, *d.shape[d.ndim - n_dense:])
       new_d = jnp.zeros_like(d, shape=new_d_shape).at[idx].set(d)
       return new_d, new_i
-    for _ in range(current_n_batch):
-      _update = _broadcasting_vmap(_update)
     new_data, new_indices = _update(new_data, new_indices)
     current_n_batch = n_batch
 
@@ -1721,7 +1703,7 @@ def bcoo_broadcast_in_dim(mat: BCOO, *, shape: Shape, broadcast_dimensions: Sequ
               shape=shape)
 
 def _bcoo_broadcast_in_dim(data: Array, indices: Array, *, spinfo: SparseInfo, shape: Shape,
-                           broadcast_dimensions: Sequence[int]) -> Tuple[Array, Array]:
+                           broadcast_dimensions: Sequence[int]) -> tuple[Array, Array]:
   """BCOO equivalent of lax.broadcast_in_dim"""
   if len(spinfo.shape) != len(broadcast_dimensions):
     raise ValueError(f"{spinfo.shape=} and {broadcast_dimensions=} must have the same length")
@@ -1739,20 +1721,24 @@ def _bcoo_broadcast_in_dim(data: Array, indices: Array, *, spinfo: SparseInfo, s
   new_n_dense = props.n_dense and len(shape) - min(broadcast_dimensions[-props.n_dense:])
   new_n_sparse = len(shape) - new_n_batch - new_n_dense
 
-  if np.prod(spinfo.shape[props.n_batch: props.n_batch + props.n_sparse]) != np.prod(shape[new_n_batch:new_n_batch + new_n_sparse]):
+  if math.prod(spinfo.shape[props.n_batch: props.n_batch + props.n_sparse]) != math.prod(shape[new_n_batch:new_n_batch + new_n_sparse]):
     raise NotImplementedError("Adding sparse dimensions with lengths != 1")
-  nse = props.nse
+  new_data, new_indices = data, indices
+
   # batch & dense dimensions
-  new_data = lax.broadcast_in_dim(data,
-      shape=(*shape[:new_n_batch], nse, *shape[new_n_batch + new_n_sparse:]),
-      broadcast_dimensions=(*batch_dims, new_n_batch, *(b + 1 - new_n_sparse for b in dense_dims)))
-  new_indices = lax.broadcast_in_dim(indices,
-      shape=(*shape[:new_n_batch], nse, props.n_sparse),
-      broadcast_dimensions=(*batch_dims, new_n_batch, new_n_batch + 1))
+  if (new_n_batch, new_n_dense) != (props.n_batch, props.n_dense):
+    new_data = lax.broadcast_in_dim(new_data,
+        shape=(*shape[:new_n_batch], props.nse, *shape[new_n_batch + new_n_sparse:]),
+        broadcast_dimensions=(*batch_dims, new_n_batch, *(b + 1 - new_n_sparse for b in dense_dims)))
+    new_indices = lax.broadcast_in_dim(new_indices,
+        shape=(*shape[:new_n_batch], props.nse, props.n_sparse),
+        broadcast_dimensions=(*batch_dims, new_n_batch, new_n_batch + 1))
 
   # sparse dimensions
-  new_indices = (jnp.zeros_like(new_indices, shape=(*shape[:new_n_batch], nse, new_n_sparse))
-                   .at[..., jnp.array(sparse_dims, int) - new_n_batch].set(new_indices))
+  if new_n_sparse != props.n_sparse:
+    shape = (*shape[:new_n_batch], props.nse, new_n_sparse)
+    ind = jnp.array(sparse_dims, int) - new_n_batch
+    new_indices = (jnp.zeros_like(new_indices, shape=shape).at[..., ind].set(new_indices))
 
   return new_data, new_indices
 
@@ -1827,7 +1813,7 @@ def bcoo_concatenate(operands: Sequence[BCOO], *, dimension: int) -> BCOO:
   return BCOO((new_data, new_indices), shape=out_aval.shape)
 
 
-def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int], dimensions: Sequence[int]) -> BCOO:
+def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int], dimensions: Sequence[int] | None = None) -> BCOO:
   """Sparse implementation of {func}`jax.lax.reshape`.
 
   Args:
@@ -1845,13 +1831,13 @@ def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int], dimensions: Sequence[in
   """
   if (mat.indices.shape[:mat.n_batch] != mat.data.shape[:mat.n_batch] != mat.shape[:mat.n_batch]):
     # TODO(jakevdp) implement this case via broadcast_in_dim
-    raise NotImplementedError("reshape of arrays with broadacsted batch dimensions.")
+    raise NotImplementedError("reshape of arrays with broadcasted batch dimensions.")
 
   batch_shape, sparse_shape, dense_shape = split_list(mat.shape, [mat.n_batch, mat.n_sparse])
   batch_perm, sparse_perm, dense_perm = _validate_permutation(
     mat.data, mat.indices, dimensions or tuple(range(mat.ndim)), mat.shape)
-  batch_size = np.prod(batch_shape, dtype=int)
-  sparse_size = np.prod(sparse_shape, dtype=int)
+  batch_size = math.prod(batch_shape)
+  sparse_size = math.prod(sparse_shape)
 
   cuml_shape = np.cumprod(new_sizes)
   if batch_size != 1 and batch_size not in cuml_shape:
@@ -1863,7 +1849,7 @@ def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int], dimensions: Sequence[in
 
   i1 = cuml_shape.searchsorted(batch_size, side='right')
   i2 = cuml_shape.searchsorted(batch_size * sparse_size, side='right')
-  new_batch_shape, new_sparse_shape, new_dense_shape = split_list(new_sizes, [i1, i2])
+  new_batch_shape, new_sparse_shape, new_dense_shape = split_list(new_sizes, [int(i1), int(i2)])
 
   # Reshape batch & dense dimensions: this is accomplished via a standard reshape.
   data = lax.reshape(
@@ -1888,6 +1874,33 @@ def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int], dimensions: Sequence[in
     indices = jnp.where(oob_indices, jnp.array(new_sparse_shape, dtype=indices.dtype), indices)
 
   return BCOO((data, indices), shape=new_sizes)
+
+
+def bcoo_rev(operand, dimensions):
+  """Sparse implementation of {func}`jax.lax.rev`"""
+  # Check validity of dimensions via original implementation.
+  _ = jax.eval_shape(partial(lax.rev, dimensions=dimensions),
+                     jax.ShapeDtypeStruct(operand.shape, operand.dtype))
+  batch_dims = [d for d in dimensions if d < operand.n_batch]
+  sparse_dims = [d for d in dimensions if operand.n_batch <= d < operand.n_batch + operand.n_sparse]
+  dense_dims = [d for d in dimensions if d >= operand.n_batch + operand.n_sparse]
+
+  data, indices = operand.data, operand.indices
+
+  if batch_dims:
+    indices = lax.rev(indices, dimensions=batch_dims)
+  if batch_dims or dense_dims:
+    data = lax.rev(data, dimensions=batch_dims + [d + 1 - operand.n_sparse for d in dense_dims])
+
+  if sparse_dims:
+    sparse_shape = jnp.array(operand.shape[operand.n_batch: operand.n_batch + operand.n_sparse],
+                             dtype=indices.dtype)
+    spdims = jnp.array([d - operand.n_batch for d in sparse_dims])
+    indices = indices.at[..., spdims].mul(-1)
+    indices = indices.at[..., spdims].add(sparse_shape[spdims] - 1)
+    indices = jnp.where(indices < 0, sparse_shape, indices)
+
+  return BCOO((data, indices), shape=operand.shape)
 
 
 def bcoo_squeeze(arr: BCOO, *, dimensions: Sequence[int]) -> BCOO:
@@ -1919,7 +1932,7 @@ def bcoo_squeeze(arr: BCOO, *, dimensions: Sequence[int]) -> BCOO:
 
 
 def bcoo_slice(mat: BCOO, *, start_indices: Sequence[int], limit_indices: Sequence[int],
-               strides: Optional[Sequence[int]] = None) -> BCOO:
+               strides: Sequence[int] | None = None) -> BCOO:
   """Sparse implementation of {func}`jax.lax.slice`.
 
   Args:
@@ -1988,7 +2001,7 @@ def bcoo_slice(mat: BCOO, *, start_indices: Sequence[int], limit_indices: Sequen
     keep_data = lax.expand_dims(keep[..., 0], range(mat.n_batch + 1, mat.n_batch + 1 + mat.n_dense))
     new_data = jnp.where(keep_data, new_data, 0)
 
-    new_nse = int(np.prod(new_shape_sparse))
+    new_nse = math.prod(new_shape_sparse)
     if mat.nse > new_nse:
       new_data, new_indices = _bcoo_sum_duplicates(
         new_data, new_indices, spinfo=SparseInfo(shape=new_shape), nse=new_nse)
@@ -2068,8 +2081,8 @@ def bcoo_dynamic_slice(mat: BCOO, start_indices: Sequence[Any], slice_sizes: Seq
     keep_data = lax.expand_dims(keep[..., 0], range(mat.n_batch + 1, mat.n_batch + 1 + mat.n_dense))
     new_data = jnp.where(keep_data, new_data, 0)
 
-    if mat.nse > np.prod(size_sparse):
-      new_nse = int(np.prod(size_sparse))
+    if mat.nse > math.prod(size_sparse):
+      new_nse = math.prod(size_sparse)
       new_data, new_indices = _bcoo_sum_duplicates(
         new_data, new_indices, spinfo=SparseInfo(shape=new_shape), nse=new_nse)
 
@@ -2095,7 +2108,7 @@ def bcoo_reduce_sum(mat: BCOO, *, axes: Sequence[int]) -> BCOO:
       mat.data, mat.indices, spinfo=mat._info, axes=axes)
   return BCOO((out_data, out_indices), shape=out_shape)
 
-def _bcoo_reduce_sum(data: Array, indices: Array, *, spinfo: SparseInfo, axes: Sequence[int]) -> Tuple[Array, Array, Shape]:
+def _bcoo_reduce_sum(data: Array, indices: Array, *, spinfo: SparseInfo, axes: Sequence[int]) -> tuple[Array, Array, Shape]:
   shape = spinfo.shape
   assert all(0 <= a < len(shape) for a in axes)
   n_batch, n_sparse, _, nse = _validate_bcoo(data, indices, shape)
@@ -2138,7 +2151,7 @@ def _bcoo_reduce_sum(data: Array, indices: Array, *, spinfo: SparseInfo, axes: S
 
   new_batch_dims = tuple(sorted(set(range(n_batch)) - batch_axes))
   new_batch_shape = tuple(data.shape[i] for i in new_batch_dims)
-  new_nse = int(nse * np.prod([data.shape[i] for i in batch_axes]))
+  new_nse = nse * math.prod([data.shape[i] for i in batch_axes])
 
   data = lax.reshape(data,
                      (*new_batch_shape, new_nse, *data.shape[n_batch + 1:]),
@@ -2166,7 +2179,7 @@ def bcoo_multiply_sparse(lhs: BCOO, rhs: BCOO) -> BCOO:
   return BCOO((out_data, out_indices), shape=out_shape)
 
 def _bcoo_multiply_sparse(lhs_data: Array, lhs_indices: Array, rhs_data: Array, rhs_indices: Array, *,
-                          lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo) -> Tuple[Array, Array, Shape]:
+                          lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo) -> tuple[Array, Array, Shape]:
   lhs_shape = lhs_spinfo.shape
   rhs_shape = rhs_spinfo.shape
 
@@ -2183,8 +2196,7 @@ def _bcoo_multiply_sparse(lhs_data: Array, lhs_indices: Array, rhs_data: Array, 
   _mul = functools.partial(_bcoo_multiply_sparse_unbatched,
                            lhs_shape=lhs_shape[n_batch:],
                            rhs_shape=rhs_shape[n_batch:])
-  for _ in range(n_batch):
-    _mul = _broadcasting_vmap(_mul)
+  _mul = nfold_vmap(_mul, n_batch)
   data, indices = _mul(lhs_data, lhs_indices, rhs_data, rhs_indices)
   return data, indices, jnp.broadcast_shapes(lhs_shape, rhs_shape)
 
@@ -2238,7 +2250,7 @@ def _bcoo_multiply_dense(data: Array, indices: Array, v: Array, *, spinfo: Spars
     return lax.mul(data, v)
   if shape == v.shape:
     # Note: due to distributive property, no deduplication necessary!
-    return lax.mul(data, bcoo_extract(indices, v))
+    return lax.mul(data, _bcoo_extract(indices, v))
 
   if lax.broadcast_shapes(v.shape, shape) != shape:
     raise NotImplementedError(
@@ -2249,13 +2261,12 @@ def _bcoo_multiply_dense(data: Array, indices: Array, v: Array, *, spinfo: Spars
 
   props = _validate_bcoo(data, indices, shape)
 
+  @partial(nfold_vmap, N=props.n_batch)
   def _mul(data, indices, v):
     assert indices.shape[1] == v.ndim - props.n_dense
     ind = tuple(indices[:, i] for i in range(indices.shape[1]))
     ind = tuple(i if s != 1 else 0 for i, s in zip(ind, v.shape))
     return data * v[ind]
-  for _ in range(props.n_batch):
-    _mul = _broadcasting_vmap(_mul)
   return _mul(data, indices, v)
 
 def bcoo_gather(operand: BCOO, start_indices: Array,
@@ -2263,7 +2274,7 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
                 slice_sizes: Shape, *,
                 unique_indices: bool = False,
                 indices_are_sorted: bool = False,
-                mode: Optional[Union[str, GatherScatterMode]] = None,
+                mode: str | GatherScatterMode | None = None,
                 fill_value = None) -> BCOO:
   """BCOO version of lax.gather."""
   _validate_bcoo(operand.data, operand.indices, operand.shape)
@@ -2288,8 +2299,8 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
   start_index_map = dimension_numbers.start_index_map
 
   # Expand start_indices & slice_sizes to full rank & use bcoo_dynamic_slice
-  full_start_indices: List[ArrayLike] = [_const(start_indices, 0)] * operand.ndim
-  in_axes: List[Optional[int]] = [None for i in range(operand.ndim)]
+  full_start_indices: list[ArrayLike] = [_const(start_indices, 0)] * operand.ndim
+  in_axes: list[int | None] = [None for i in range(operand.ndim)]
   full_slice_sizes = list(operand.shape)
   for i, j in enumerate(start_index_map):
     full_start_indices[j] = start_indices[..., i].ravel()
@@ -2316,6 +2327,78 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
     result = bcoo_transpose(result, permutation=tuple(permutation))
 
   return result.reshape(out_aval.shape).astype(out_aval.dtype)
+
+def bcoo_conv_general_dilated(lhs, rhs, *, window_strides, padding,
+                              lhs_dilation=None, rhs_dilation=None, dimension_numbers=None,
+                              feature_group_count=1, batch_group_count=1, precision=None,
+                              preferred_element_type=None) -> BCOO:
+  # Validate and process parameters using lax.conv_general_dilated abstract evaluation.
+  func = functools.partial(
+      lax.conv_general_dilated,
+      window_strides=window_strides, padding=padding,
+      lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation, dimension_numbers=dimension_numbers,
+      feature_group_count=feature_group_count, batch_group_count=batch_group_count,
+      precision=precision, preferred_element_type=preferred_element_type)
+  jaxpr = jax.make_jaxpr(func)(jax.ShapeDtypeStruct(lhs.shape, lhs.dtype),
+                               jax.ShapeDtypeStruct(rhs.shape, rhs.dtype))
+  assert isinstance(jaxpr, core.ClosedJaxpr) and len(jaxpr.eqns) == 1
+  params = jaxpr.eqns[0].params
+
+  if params['lhs_dilation'] !=  (1,) * (lhs.ndim - 2):
+    raise NotImplementedError("bcoo convolution with lhs_dilation.")
+  if params['rhs_dilation'] != (1,) * (rhs.ndim - 2):
+    raise NotImplementedError("bcoo convolution with lhs_dilation.")
+  if params['window_strides'] != (1,) * (lhs.ndim - 2):
+    raise NotImplementedError("bcoo convolution with non-unit window_strides.")
+  if params['batch_group_count'] != params['feature_group_count'] != 1:
+    raise NotImplementedError("bcoo convolution with non-unit group counts.")
+
+  if lhs.shape[:2] != rhs.shape[:2] != (1, 1):
+    raise NotImplementedError("bcoo convolution with leading dimensions other than (1, 1)")
+
+  index_dtype = (lhs.indices.dtype if hasattr(lhs, 'indices')
+                 else rhs.indices.dtype if hasattr(rhs, 'indices')
+                 else 'int32')
+
+  padding, = params['padding']
+  return _bcoo_conv_1d(_convert_to_1d_for_conv(lhs, index_dtype),
+                       _convert_to_1d_for_conv(rhs, index_dtype),
+                       padding=padding)
+
+def _convert_to_1d_for_conv(mat, index_dtype):
+  if isinstance(mat, (jax.Array, np.ndarray)):
+    data = lax.squeeze(mat, (0, 1))
+    indices = lax.broadcasted_iota(index_dtype, (len(data), 1), 0)
+  elif isinstance(mat, BCOO):
+    mat = mat.update_layout(n_batch=2, n_dense=0)
+    data = lax.squeeze(mat.data, (0, 1))
+    indices = lax.squeeze(mat.indices, (0, 1))
+    # zero-out data at OOB indices, otherwise strange things happen.
+    data = jnp.where(lax.squeeze(indices, (1,)) < mat.shape[-1], data, 0)
+  else:
+    raise ValueError(f"bcoo_conv_general_dilated: input of type {type(mat)} not recognized.")
+  return BCOO((data, indices), shape=mat.shape[2:])
+
+def _bcoo_conv_1d(lhs: BCOO, rhs: BCOO, padding: Sequence[int]) -> BCOO:
+  assert lhs.ndim == lhs.n_sparse == rhs.ndim == rhs.n_sparse == 1
+  assert lhs.dtype == rhs.dtype
+  padding = tuple(map(int, padding))
+  assert len(padding) == 2
+
+  new_data = (lhs.data[:, None] * rhs.data[None, :]).ravel()
+
+  offset = padding[0] - rhs.indices
+  new_indices = (lhs.indices[:, None] + offset[None, :]).ravel()
+
+  mask = (new_indices < 0)
+  new_indices = jnp.where(mask, 0, new_indices)
+  new_data = jnp.where(mask, 0, new_data)
+  dimsize = max(0, lhs.shape[0] + padding[0] + padding[1] - rhs.shape[0] + 1)
+
+  new_data = lax.expand_dims(new_data, (0, 1))
+  new_indices = lax.expand_dims(new_indices, (0, 1, 3))
+  return BCOO((new_data, new_indices), shape=(1, 1, dimsize))
+
 
 @tree_util.register_pytree_node_class
 class BCOO(JAXSparse):
@@ -2384,10 +2467,8 @@ class BCOO(JAXSparse):
                                            self.unique_indices))
   _bufs = property(lambda self: (self.data, self.indices))
 
-  def __init__(self, args: Tuple[Array, Array], *, shape: Sequence[int],
+  def __init__(self, args: tuple[Array, Array], *, shape: Sequence[int],
                indices_sorted: bool = False, unique_indices: bool = False):
-    # JAX transforms will sometimes instantiate pytrees with null values, so we
-    # must catch that in the initialization of inputs.
     self.data, self.indices = map(jnp.asarray, args)
     self.indices_sorted = indices_sorted
     self.unique_indices = unique_indices
@@ -2424,14 +2505,14 @@ class BCOO(JAXSparse):
     raise NotImplementedError("BCOO.sum")
 
   @classmethod
-  def fromdense(cls, mat: Array, *, nse: Optional[int] = None, index_dtype: DTypeLike = np.int32,
+  def fromdense(cls, mat: Array, *, nse: int | None = None, index_dtype: DTypeLike = np.int32,
                 n_dense: int = 0, n_batch: int = 0) -> BCOO:
-    """Create a BCOO array from a (dense) :class:`DeviceArray`."""
+    """Create a BCOO array from a (dense) :class:`~jax.Array`."""
     return bcoo_fromdense(
       mat, nse=nse, index_dtype=index_dtype, n_dense=n_dense, n_batch=n_batch)
 
   @classmethod
-  def from_scipy_sparse(cls, mat, *, index_dtype: Optional[DTypeLike]=None,
+  def from_scipy_sparse(cls, mat, *, index_dtype: DTypeLike | None=None,
                         n_dense: int = 0, n_batch: int = 0) -> BCOO:
     """Create a BCOO array from a :mod:`scipy.sparse` array."""
     if n_dense != 0 or n_batch != 0:
@@ -2446,7 +2527,7 @@ class BCOO(JAXSparse):
                unique_indices=False)
 
   @classmethod
-  def _empty(cls, shape: Shape, *, dtype: Optional[DTypeLike] = None, index_dtype: DTypeLike = 'int32',
+  def _empty(cls, shape: Shape, *, dtype: DTypeLike | None = None, index_dtype: DTypeLike = 'int32',
              n_dense: int = 0, n_batch: int = 0, nse: int = 0) -> BCOO:
     """Create an empty BCOO instance. Public method is sparse.empty()."""
     shape = tuple(shape)
@@ -2460,7 +2541,7 @@ class BCOO(JAXSparse):
                unique_indices=True)
 
   @classmethod
-  def _eye(cls, N: int, M: int, k: int, *, dtype: Optional[DTypeLike] = None,
+  def _eye(cls, N: int, M: int, k: int, *, dtype: DTypeLike | None = None,
            index_dtype: DTypeLike = 'int32', n_batch: int = 0, n_dense: int = 0) -> BCOO:
     n_sparse = 2 - n_batch - n_dense
     if n_sparse < 0 or n_dense < 0 or n_batch < 0:
@@ -2505,7 +2586,7 @@ class BCOO(JAXSparse):
     return cls((data, indices), shape=(N, M), indices_sorted=True,
                unique_indices=True)
 
-  def update_layout(self, *, n_batch: Optional[int] = None, n_dense: Optional[int] = None,
+  def update_layout(self, *, n_batch: int | None = None, n_dense: int | None = None,
                     on_inefficient: str = 'error') -> BCOO:
     """Update the storage layout (i.e. n_batch & n_dense) of a BCOO matrix.
 
@@ -2532,7 +2613,7 @@ class BCOO(JAXSparse):
     """
     return bcoo_update_layout(self, n_batch=n_batch, n_dense=n_dense, on_inefficient=on_inefficient)
 
-  def sum_duplicates(self, nse: Optional[int] = None, remove_zeros: bool = True) -> BCOO:
+  def sum_duplicates(self, nse: int | None = None, remove_zeros: bool = True) -> BCOO:
     """Return a copy of the array with duplicate indices summed.
 
     Additionally, this operation will result in explicit zero entries removed, and
@@ -2566,9 +2647,9 @@ class BCOO(JAXSparse):
     """Create a dense version of the array."""
     return bcoo_todense(self)
 
-  def transpose(self, axes: Optional[Sequence[int]] = None) -> BCOO:
+  def transpose(self, axes: Sequence[int] | None = None) -> BCOO:
     """Create a new array containing the transpose."""
-    perm: List[int] = list(range(self.ndim)[::-1] if axes is None else axes)
+    perm: list[int] = list(range(self.ndim)[::-1] if axes is None else axes)
     mat_T = bcoo_transpose(self, permutation=perm)
     shape_T = tuple(self.shape[i] for i in perm)
     sparse_perm = [p - self.n_batch
@@ -2603,7 +2684,8 @@ def _bcoo_to_elt(cont, _, val, axis):
     raise ValueError(f"Cannot map in_axis={axis} for BCOO array with n_batch={val.n_batch}. "
                      "in_axes for batched BCOO operations must correspond to a batch dimension.")
   return BCOO((cont(val.data, axis), cont(val.indices, axis)),
-              shape=val.shape[:axis] + val.shape[axis + 1:])
+              shape=val.shape[:axis] + val.shape[axis + 1:],
+              indices_sorted=val.indices_sorted, unique_indices=val.unique_indices)
 
 def _bcoo_from_elt(cont, axis_size, elt, axis):
   if axis is None:
@@ -2612,6 +2694,7 @@ def _bcoo_from_elt(cont, axis_size, elt, axis):
     raise ValueError(f"BCOO: cannot add out_axis={axis} for BCOO array with n_batch={elt.n_batch}. "
                      "BCOO batch axes must be a contiguous block of leading dimensions.")
   return BCOO((cont(axis_size, elt.data, axis), cont(axis_size, elt.indices, axis)),
-              shape=elt.shape[:axis] + (axis_size,) + elt.shape[axis:])
+              shape=elt.shape[:axis] + (axis_size,) + elt.shape[axis:],
+              indices_sorted=elt.indices_sorted, unique_indices=elt.unique_indices)
 
 batching.register_vmappable(BCOO, int, int, _bcoo_to_elt, _bcoo_from_elt, None)

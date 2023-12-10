@@ -77,7 +77,7 @@ class HandlePool {
 
   // Borrows a handle from the pool. If 'stream' is non-null, sets the stream
   // associated with the handle.
-  static absl::StatusOr<Handle> Borrow(StreamType stream = nullptr);
+  static absl::StatusOr<Handle> Borrow(StreamType stream);
 
  private:
   static HandlePool<HandleType, StreamType>* Instance();

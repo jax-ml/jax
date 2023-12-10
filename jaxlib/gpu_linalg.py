@@ -14,23 +14,32 @@
 
 import functools
 from functools import partial
+import importlib
 import operator
 
 import jaxlib.mlir.ir as ir
 
 from .hlo_helpers import custom_call
+from .gpu_common_utils import GpuLibNotLinkedError
 
 from jaxlib import xla_client
 
-try:
-  from .cuda import _linalg as _cuda_linalg
+for cuda_module_name in [".cuda", "jax_cuda12_plugin", "jax_cuda11_plugin"]:
+  try:
+    _cuda_linalg = importlib.import_module(
+        f"{cuda_module_name}._linalg", package="jaxlib"
+    )
+  except ImportError:
+    _cuda_linalg = None
+  else:
+    break
+
+if _cuda_linalg:
   for _name, _value in _cuda_linalg.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
-except ImportError:
-  _cuda_linalg = None
 
 try:
-  from .rocm import _linalg as _hip_linalg
+  from .rocm import _linalg as _hip_linalg  # pytype: disable=import-error
   for _name, _value in _hip_linalg.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 except ImportError:
@@ -50,6 +59,9 @@ def _lu_pivots_to_permutation_hlo(platform, gpu_linalg, pivots, *, permutation_s
   batch_size = _prod(dims[:-1])
   pivot_size = dims[-1]
 
+  if not gpu_linalg:
+    raise GpuLibNotLinkedError()
+
   opaque = gpu_linalg.lu_pivots_to_permutation_descriptor(
       batch_size, pivot_size, permutation_size)
   pivots_layout = tuple(range(len(dims) - 1, -1, -1))
@@ -59,11 +71,11 @@ def _lu_pivots_to_permutation_hlo(platform, gpu_linalg, pivots, *, permutation_s
   permutations_type = ir.RankedTensorType.get(permutations_dims, i32_type)
   return custom_call(
       f"{platform}_lu_pivots_to_permutation",
-      [permutations_type],
-      [pivots],
+      result_types=[permutations_type],
+      operands=[pivots],
       backend_config=opaque,
       operand_layouts=[pivots_layout],
-      result_layouts=[permutations_layout])
+      result_layouts=[permutations_layout]).results
 
 cuda_lu_pivots_to_permutation = partial(_lu_pivots_to_permutation_hlo, "cu",
                                         _cuda_linalg)

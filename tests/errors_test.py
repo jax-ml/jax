@@ -13,23 +13,23 @@
 # limitations under the License.
 
 import re
+import sys
 import traceback
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
-from jax import core, grad, jit, vmap, lax
 import jax.numpy as jnp
-from jax._src import config as jax_config
-from jax._src import test_util as jtu
+from jax import grad, jit, vmap, lax
+from jax._src import config
+from jax._src import core
 from jax._src import source_info_util
+from jax._src import test_util as jtu
 from jax._src import traceback_util
 
 
-from jax.config import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 def get_exception(etype, f):
@@ -41,11 +41,16 @@ def get_exception(etype, f):
 
 def check_filtered_stack_trace(test, etype, f, frame_patterns=(),
                                filter_mode="remove_frames"):
-  with jax_config.traceback_filtering(filter_mode):
+  with config.traceback_filtering(filter_mode):
     test.assertRaises(etype, f)
     e = get_exception(etype, f)
   c = e.__cause__
-  if filter_mode == "remove_frames":
+  if filter_mode == "quiet_remove_frames":
+    if sys.version_info >= (3, 11):
+      assert any("For simplicity" in x for x in e.__notes__)
+    else:
+      test.assertIsInstance(c, jax.errors.SimplifiedTraceback)
+  elif filter_mode == "remove_frames":
     test.assertIsInstance(c, traceback_util.UnfilteredStackTrace)
   else:
     test.assertFalse(isinstance(c, traceback_util.UnfilteredStackTrace))
@@ -73,7 +78,7 @@ def check_filtered_stack_trace(test, etype, f, frame_patterns=(),
 @jtu.with_config(jax_traceback_filtering='auto')  # JaxTestCase defaults to off.
 @parameterized.named_parameters(
   {"testcase_name": f"_{f}", "filter_mode": f}
-  for f in ("tracebackhide", "remove_frames"))
+  for f in ("tracebackhide", "remove_frames", "quiet_remove_frames"))
 class FilteredTracebackTest(jtu.JaxTestCase):
 
   def test_nested_jit(self, filter_mode):
@@ -346,9 +351,13 @@ class FilteredTracebackTest(jtu.JaxTestCase):
     check_filtered_stack_trace(self, TypeError, f, [
         ('<lambda>', 'f = lambda: outer'),
         ('outer', 'raise TypeError')], filter_mode=filter_mode)
-    e = get_exception(TypeError, f)
-    self.assertIsInstance(e.__cause__, traceback_util.UnfilteredStackTrace)
-    self.assertIsInstance(e.__cause__.__cause__, ValueError)
+    e = get_exception(TypeError, f)  # Uses the default JAX_TRACEBACK_FILTERING=auto
+    if sys.version_info >= (3, 11):
+      assert any("For simplicity" in x for x in e.__notes__)
+      self.assertIsInstance(e.__cause__, ValueError)
+    else:
+      self.assertIsInstance(e.__cause__, jax.errors.SimplifiedTraceback)
+      self.assertIsInstance(e.__cause__.__cause__, ValueError)
 
   def test_null_traceback(self, filter_mode):
     class TestA: pass
@@ -374,9 +383,14 @@ class UserContextTracebackTest(jtu.JaxTestCase):
       e = exc
     self.assertIsNot(e, None)
     self.assertIn("invalid value", str(e))
-    self.assertIsInstance(
-        e.__cause__.__cause__,
-        source_info_util.JaxStackTraceBeforeTransformation)
+    if sys.version_info >= (3, 11):
+      self.assertIsInstance(
+          e.__cause__,
+          source_info_util.JaxStackTraceBeforeTransformation)
+    else:
+      self.assertIsInstance(
+          e.__cause__.__cause__,
+          source_info_util.JaxStackTraceBeforeTransformation)
 
 
 class CustomErrorsTest(jtu.JaxTestCase):

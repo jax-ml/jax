@@ -20,12 +20,12 @@ from jax._src.lax.control_flow.loops import (associative_scan, cummax, cummax_p,
                                              fori_loop, map,
                                              scan, scan_bind, scan_p,
                                              _scan_impl, while_loop, while_p)
-from jax._src.lax.control_flow.conditionals import cond, cond_p, switch
+from jax._src.lax.control_flow.conditionals import (cond, cond_p, switch,
+                                                    platform_dependent)
 from jax._src.lax.control_flow.solves import (custom_linear_solve, custom_root,
                                               _custom_linear_solve_impl,
                                               linear_solve_p)
 
-from jax._src.lax.control_flow.common import allowed_effects
 # Private utilities used elsewhere in JAX
 # TODO(sharadmv): lift them into a more common place
 from jax._src.lax.control_flow.common import (_initial_style_open_jaxpr,

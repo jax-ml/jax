@@ -1,0 +1,64 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+index b4f015a0..468dac6e 100644
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -1,5 +1,5 @@
+-load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
+-load("@npm//:defs.bzl", "npm_link_all_packages")
++# load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
++# load("@npm//:defs.bzl", "npm_link_all_packages")
+ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+ 
+ licenses(["notice"])
+@@ -8,12 +8,12 @@ package(
+     default_visibility = ["//visibility:public"],
+ )
+ 
+-npm_link_all_packages(name = "node_modules")
++# npm_link_all_packages(name = "node_modules")
+ 
+-npm_link_package(
+-    name = "node_modules/flatbuffers",
+-    src = "//ts:flatbuffers",
+-)
++# npm_link_package(
++#     name = "node_modules/flatbuffers",
++#     src = "//ts:flatbuffers",
++# )
+ 
+ exports_files([
+     "LICENSE",
+@@ -34,6 +34,13 @@ config_setting(
+     ],
+ )
+ 
++config_setting(
++    name = "platform_linux",
++    constraint_values = [
++        "@platforms//os:linux",
++    ],
++)
++
+ filegroup(
+     name = "distribution",
+     srcs = [
+diff --git a/src/BUILD.bazel b/src/BUILD.bazel
+index 1084e76b..73aaedba 100644
+--- a/src/BUILD.bazel
++++ b/src/BUILD.bazel
+@@ -55,6 +55,7 @@ cc_library(
+         # https://github.com/bazelbuild/bazel/issues/12023.
+         "//:platform_freebsd": ["-lm"],
+         "//:platform_openbsd": ["-lm"],
++        "//:platform_linux": ["-lm"],
+         "//conditions:default": [],
+     }),
+     strip_include_prefix = "/include",
+@@ -146,6 +147,7 @@ cc_library(
+     ],
+     strip_include_prefix = "/include",
+     visibility = ["//:__pkg__"],
++    alwayslink = 1,
+     deps = [
+         ":flatc_library",
+         "//grpc/src/compiler:cpp_generator",

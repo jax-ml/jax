@@ -23,7 +23,7 @@ limitations under the License.
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/handle_pool.h"
 #include "jaxlib/kernel_helpers.h"
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
+#include "xla/service/custom_call_status.h"
 
 namespace jax {
 
@@ -74,8 +74,9 @@ static absl::StatusOr<std::pair<int, int>>
 DoRnnComputeWorkspaceReserveSpaceSizes(int input_size, int hidden_size,
                                        int num_layers, int batch_size,
                                        int max_seq_length, float dropout,
-                                       bool bidirectional) {
-  auto h = DnnHandlePool::Borrow();
+                                       bool bidirectional,
+				       bool cudnn_allow_tf32) {
+  auto h = DnnHandlePool::Borrow(/*stream=*/nullptr);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
 
@@ -103,7 +104,7 @@ DoRnnComputeWorkspaceReserveSpaceSizes(int input_size, int hidden_size,
   cudnnRNNInputMode_t input_mode = CUDNN_LINEAR_INPUT;
   cudnnDataType_t data_type = CUDNN_DATA_FLOAT;
   cudnnDataType_t math_prec = CUDNN_DATA_FLOAT;
-  cudnnMathType_t math_type = CUDNN_DEFAULT_MATH;
+  cudnnMathType_t math_type = cudnn_allow_tf32? CUDNN_DEFAULT_MATH: CUDNN_FMA_MATH;
   int32_t proj_size = hidden_size;
   uint32_t aux_flags = CUDNN_RNN_PADDED_IO_ENABLED;
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnSetRNNDescriptor_v8(
@@ -145,10 +146,11 @@ DoRnnComputeWorkspaceReserveSpaceSizes(int input_size, int hidden_size,
 
 absl::StatusOr<std::pair<int, int>> RnnComputeWorkspaceReserveSpaceSizes(
     int input_size, int hidden_size, int num_layers, int batch_size,
-    int max_seq_length, float dropout, bool bidirectional) {
+    int max_seq_length, float dropout, bool bidirectional,
+    bool cudnn_allow_tf32) {
   return DoRnnComputeWorkspaceReserveSpaceSizes(
       input_size, hidden_size, num_layers, batch_size, max_seq_length, dropout,
-      bidirectional);
+      bidirectional, cudnn_allow_tf32);
 }
 
 static absl::Status DnnRNNForward_(gpuStream_t stream, void** buffers,
@@ -184,7 +186,7 @@ static absl::Status DnnRNNForward_(gpuStream_t stream, void** buffers,
   cudnnRNNInputMode_t input_mode = CUDNN_LINEAR_INPUT;
   cudnnDataType_t data_type = CUDNN_DATA_FLOAT;
   cudnnDataType_t math_prec = CUDNN_DATA_FLOAT;
-  cudnnMathType_t math_type = CUDNN_DEFAULT_MATH;
+  cudnnMathType_t math_type = d.cudnn_allow_tf32? CUDNN_DEFAULT_MATH: CUDNN_FMA_MATH;
   int32_t proj_size = d.hidden_size;
   uint32_t aux_flags = CUDNN_RNN_PADDED_IO_ENABLED;
 
@@ -201,9 +203,11 @@ static absl::Status DnnRNNForward_(gpuStream_t stream, void** buffers,
   auto seq_lengths_buf = buffers[4];
   std::vector<int32_t> seq_length_vector(d.batch_size, 0);
   int32_t* seq_length_array = &seq_length_vector[0];
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpy(
-      seq_length_array, seq_lengths_buf,
-      seq_length_vector.size() * sizeof(int32_t), gpuMemcpyDeviceToHost)));
+  JAX_RETURN_IF_ERROR(
+      JAX_AS_STATUS(gpuMemcpyAsync(seq_length_array, seq_lengths_buf,
+                                   seq_length_vector.size() * sizeof(int32_t),
+                                   gpuMemcpyDeviceToHost, stream)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
 
   cudnnRNNDataDescriptor_t input_data_desc;
   JAX_RETURN_IF_ERROR(
@@ -304,7 +308,7 @@ static absl::Status DnnRNNBackward_(gpuStream_t stream, void** buffers,
   cudnnRNNInputMode_t input_mode = CUDNN_LINEAR_INPUT;
   cudnnDataType_t data_type = CUDNN_DATA_FLOAT;
   cudnnDataType_t math_prec = CUDNN_DATA_FLOAT;
-  cudnnMathType_t math_type = CUDNN_DEFAULT_MATH;
+  cudnnMathType_t math_type = d.cudnn_allow_tf32? CUDNN_DEFAULT_MATH: CUDNN_FMA_MATH;
   int32_t proj_size = d.hidden_size;
   uint32_t aux_flags = CUDNN_RNN_PADDED_IO_ENABLED;
 
@@ -316,8 +320,14 @@ static absl::Status DnnRNNBackward_(gpuStream_t stream, void** buffers,
   cudnnRNNDataLayout_t layout = CUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED;
   float padding = 0.0f;
 
+  auto seq_lengths_buf = buffers[10];
   std::vector<int32_t> seq_length_vector(d.batch_size, d.max_seq_length);
   int32_t* seq_length_array = &seq_length_vector[0];
+  JAX_RETURN_IF_ERROR(
+      JAX_AS_STATUS(gpuMemcpyAsync(seq_length_array, seq_lengths_buf,
+                                   seq_length_vector.size() * sizeof(int32_t),
+                                   gpuMemcpyDeviceToHost, stream)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
 
   cudnnRNNDataDescriptor_t input_data_desc;
   JAX_RETURN_IF_ERROR(
@@ -364,14 +374,15 @@ static absl::Status DnnRNNBackward_(gpuStream_t stream, void** buffers,
   auto c_0_buf = buffers[5];
   auto w_buf = buffers[6];
   auto y_buf = buffers[7];
-  auto workspace_buf = buffers[8];
-  auto reserve_space_buf = buffers[9];
-  auto zeroed_dw_buf = buffers[10];
-  auto seq_lengths_buf = buffers[11];
-  auto dx_buf = buffers[12];
-  auto dh_0_buf = buffers[13];
-  auto dc_0_buf = buffers[14];
-  // auto dw_buf = buffers[15];
+  auto reserve_space_buf = buffers[8];
+  auto zeroed_dw_buf = buffers[9];
+  // auto seq_lengths_buf = buffers[10];
+
+  auto dx_buf = buffers[11];
+  auto dh_0_buf = buffers[12];
+  auto dc_0_buf = buffers[13];
+  // auto dw_buf = buffers[14];
+  auto workspace_buf = buffers[15];
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudnnRNNBackwardData_v8(
       handle.get(), rnn_desc, (const int32_t*)seq_lengths_buf, output_data_desc,

@@ -14,20 +14,19 @@
 
 """Bazel macros used by the JAX build."""
 
-load("@org_tensorflow//tensorflow/tsl/platform/default:build_config.bzl", _pyx_library = "pyx_library")
-load("@org_tensorflow//tensorflow:tensorflow.bzl", _if_windows = "if_windows", _pybind_extension = "pybind_extension")
+load("@com_github_google_flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
-load("@flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
-load("@org_tensorflow//tensorflow/core/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
+load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
+load("@tsl//tsl:tsl.bzl", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
+load("@tsl//tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
 
 # Explicitly re-exports names to avoid "unused variable" warnings from .bzl
 # lint tools.
+cc_proto_library = _cc_proto_library
 cuda_library = _cuda_library
 rocm_library = _rocm_library
-pytype_library = native.py_library
 pytype_test = native.py_test
-pyx_library = _pyx_library
 pybind_extension = _pybind_extension
 if_cuda_is_configured = _if_cuda_is_configured
 if_rocm_is_configured = _if_rocm_is_configured
@@ -37,6 +36,13 @@ tf_exec_properties = _tf_exec_properties
 tf_cuda_tests_tags = _tf_cuda_tests_tags
 
 jax_internal_packages = []
+jax_extend_internal_users = []
+mosaic_internal_users = []
+pallas_gpu_internal_users = []
+pallas_tpu_internal_users = []
+
+jax_internal_export_back_compat_test_util_visibility = []
+jax_internal_test_harnesses_visibility = []
 jax_test_util_visibility = []
 loops_visibility = []
 
@@ -48,14 +54,28 @@ def py_deps(_package):
     # dependencies from source with Bazel, but that's not something most people would want.
     return []
 
+def jax_visibility(_target):
+    """Returns the additional Bazel visibilities for `target`."""
+
+    # This is only useful as part of a larger Bazel repository.
+    return []
+
 jax_extra_deps = []
 jax2tf_deps = []
+
+def pytype_library(name, pytype_srcs = None, **kwargs):
+    _ = pytype_srcs  # @unused
+    native.py_library(name = name, **kwargs)
+
+def pytype_strict_library(name, pytype_srcs = None, **kwargs):
+    _ = pytype_srcs  # @unused
+    native.py_library(name = name, **kwargs)
 
 def py_library_providing_imports_info(*, name, lib_rule = native.py_library, pytype_srcs = [], **kwargs):
     lib_rule(name = name, **kwargs)
 
-def py_extension(name, srcs, copts, deps):
-    pybind_extension(name, srcs = srcs, copts = copts, deps = deps, module_name = name)
+def py_extension(name, srcs, copts, deps, linkopts = []):
+    pybind_extension(name, srcs = srcs, copts = copts, linkopts = linkopts, deps = deps, module_name = name)
 
 def windows_cc_shared_mlir_library(name, out, deps = [], srcs = [], exported_symbol_prefixes = []):
     """Workaround DLL building issue.
@@ -135,6 +155,13 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = [], exported_sym
 
 ALL_BACKENDS = ["cpu", "gpu", "tpu"]
 
+def if_building_jaxlib(if_building, if_not_building = []):
+    return select({
+        "//jax:enable_jaxlib_build": if_building,
+        "//conditions:default": if_not_building,
+    })
+
+# buildifier: disable=function-docstring
 def jax_test(
         name,
         srcs,
@@ -143,6 +170,7 @@ def jax_test(
         shard_count = None,
         deps = [],
         disable_backends = None,  # buildifier: disable=unused-variable
+        backend_variant_args = {},  # buildifier: disable=unused-variable
         backend_tags = {},  # buildifier: disable=unused-variable
         disable_configs = None,  # buildifier: disable=unused-variable
         enable_configs = None,  # buildifier: disable=unused-variable
@@ -177,8 +205,8 @@ def jax_test(
             deps = [
                 "//jax",
                 "//jax:test_util",
-            ] + deps + select({
-                "//jax:enable_jaxlib_build": ["//jaxlib/cuda:gpu_only_test_deps"],
+            ] + deps + if_building_jaxlib(["//jaxlib/cuda:gpu_only_test_deps"]) + select({
+                "//jax:enable_build_cuda_plugin_from_source": ["//jax_plugins:gpu_plugin_only_test_deps"],
                 "//conditions:default": [],
             }),
             shard_count = test_shards,

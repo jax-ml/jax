@@ -1,0 +1,22 @@
+root = true
+
+[*.{py,rst,md,yml}]
+indent_style = space
+end_of_line = lf
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.py]
+max_line_length = 79
+indent_size = 2
+
+[*.rst]
+max_line_length = 79
+indent_size = 2
+
+[*.md]
+max_line_length = 79
+indent_size = 2
+
+[*.yml]
+indent_size = 2

@@ -12,18 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from functools import partial
-from typing import Optional, Sequence
+import math
+from typing import Optional
 
 import scipy.fft as osp_fft
 from jax import lax
 import jax.numpy as jnp
 from jax._src.util import canonicalize_axis
-from jax._src.numpy.util import _wraps, _promote_dtypes_complex
+from jax._src.numpy.util import _wraps, promote_dtypes_complex
 from jax._src.typing import Array
 
 def _W4(N: int, k: Array) -> Array:
-  N_arr, k = _promote_dtypes_complex(N, k)
+  N_arr, k = promote_dtypes_complex(N, k)
   return jnp.exp(-.5j * jnp.pi * k / N_arr)
 
 def _dct_interleave(x: Array, axis: int) -> Array:
@@ -93,7 +95,7 @@ def dctn(x: Array, type: int = 2,
     return dct(x, n=s[0] if s is not None else None, axis=axes[0], norm=norm)
 
   if s is not None:
-    ns = {a: n for a, n in zip(axes, s)}
+    ns = dict(zip(axes, s))
     pads = [(0, ns[a] - x.shape[a] if a in ns else 0, 0) for a in range(x.ndim)]
     x = lax.pad(x, jnp.array(0, x.dtype), pads)
 
@@ -104,3 +106,78 @@ def dctn(x: Array, type: int = 2,
   for axes_block in [axes[i:i+2] for i in range(0, len(axes), 2)]:
     x = dctn(x, axes=axes_block, norm=norm)
   return x
+
+
+@_wraps(osp_fft.dct)
+def idct(x: Array, type: int = 2, n: Optional[int] = None,
+        axis: int = -1, norm: Optional[str] = None) -> Array:
+  if type != 2:
+    raise NotImplementedError('Only DCT type 2 is implemented.')
+
+  axis = canonicalize_axis(axis, x.ndim)
+  if n is not None:
+    x = lax.pad(x, jnp.array(0, x.dtype),
+                [(0, n - x.shape[axis] if a == axis else 0, 0)
+                 for a in range(x.ndim)])
+  N = x.shape[axis]
+  x = x.astype(jnp.float32)
+  if norm is None:
+    x = _dct_ortho_norm(x, axis)
+  x = _dct_ortho_norm(x, axis)
+
+
+  k = lax.expand_dims(jnp.arange(N, dtype=jnp.float32), [a for a in range(x.ndim) if a != axis])
+  # everything is complex from here...
+  w4 = _W4(N,k)
+  x = x.astype(w4.dtype)
+  x = x / (_W4(N, k))
+  x = x * 2 * N
+
+  x = jnp.fft.ifft(x, axis=axis)
+  # convert back to reals..
+  out = _dct_deinterleave(x.real, axis)
+  return out
+
+@_wraps(osp_fft.idctn)
+def idctn(x: Array, type: int = 2,
+         s: Optional[Sequence[int]]=None,
+         axes: Optional[Sequence[int]] = None,
+         norm: Optional[str] = None) -> Array:
+  if type != 2:
+    raise NotImplementedError('Only DCT type 2 is implemented.')
+
+  if axes is None:
+    axes = range(x.ndim)
+
+  if len(axes) == 1:
+    return idct(x, n=s[0] if s is not None else None, axis=axes[0], norm=norm)
+
+  if s is not None:
+    ns = dict(zip(axes, s))
+    pads = [(0, ns[a] - x.shape[a] if a in ns else 0, 0) for a in range(x.ndim)]
+    x = lax.pad(x, jnp.array(0, x.dtype), pads)
+
+  # compose high-D DCTs from 1D DCTs:
+  for axis in axes:
+    x = idct(x, axis=axis, norm=norm)
+  return x
+
+
+def _dct_deinterleave(x: Array, axis: int) -> Array:
+  empty_slice = slice(None, None, None)
+  ix0 = tuple(
+      slice(None, math.ceil(x.shape[axis]/2), 1) if i == axis else empty_slice
+      for i in range(len(x.shape)))
+  ix1  = tuple(
+      slice(math.ceil(x.shape[axis]/2), None, 1) if i == axis else empty_slice
+      for i in range(len(x.shape)))
+  v0 = x[ix0]
+  v1 = lax.rev(x[ix1], (axis,))
+  out = jnp.zeros(x.shape, dtype=x.dtype)
+  evens = tuple(
+      slice(None, None, 2) if i == axis else empty_slice for i in range(len(x.shape)))
+  odds = tuple(
+      slice(1, None, 2) if i == axis else empty_slice for i in range(len(x.shape)))
+  out =  out.at[evens].set(v0)
+  out = out.at[odds].set(v1)
+  return out

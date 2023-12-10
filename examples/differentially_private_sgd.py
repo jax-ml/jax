@@ -22,12 +22,9 @@ this setting by optimizing the minibatch-vectorized computation for
 convolutional architectures. Train time takes a few seconds per epoch on a
 commodity GPU.
 
-This code depends on tensorflow_privacy (https://github.com/tensorflow/privacy)
+This code depends on the `dp-accounting` package
   Install instructions:
-    $ pip install tensorflow
-    $ git clone https://github.com/tensorflow/privacy
-    $ cd privacy
-    $ pip install .
+    $ pip install dp-accounting
 
 The results match those in the reference TensorFlow baseline implementation:
   https://github.com/tensorflow/privacy/tree/master/tutorials
@@ -79,29 +76,28 @@ from jax.example_libraries import optimizers
 from jax.example_libraries import stax
 from jax.tree_util import tree_flatten, tree_unflatten
 import jax.numpy as jnp
-from jax.examples import datasets
+from examples import datasets
 import numpy.random as npr
 
 # https://github.com/google/differential-privacy
-from differential_privacy.python.accounting import dp_event
-from differential_privacy.python.accounting.rdp import rdp_privacy_accountant
+from dp_accounting import dp_event
+from dp_accounting import rdp
 
-FLAGS = flags.FLAGS
 
-flags.DEFINE_boolean(
+_DPSGD = flags.DEFINE_boolean(
     'dpsgd', True, 'If True, train with DP-SGD. If False, '
     'train with vanilla SGD.')
-flags.DEFINE_float('learning_rate', .15, 'Learning rate for training')
-flags.DEFINE_float('noise_multiplier', 1.1,
+_LEARNING_RATE = flags.DEFINE_float('learning_rate', .15, 'Learning rate for training')
+_NOISE_MULTIPLIER = flags.DEFINE_float('noise_multiplier', 1.1,
                    'Ratio of the standard deviation to the clipping norm')
-flags.DEFINE_float('l2_norm_clip', 1.0, 'Clipping norm')
-flags.DEFINE_integer('batch_size', 256, 'Batch size')
-flags.DEFINE_integer('epochs', 60, 'Number of epochs')
-flags.DEFINE_integer('seed', 0, 'Seed for jax PRNG')
-flags.DEFINE_integer(
+_L2_NORM_CLIP = flags.DEFINE_float('l2_norm_clip', 1.0, 'Clipping norm')
+_BATCH_SIZE = flags.DEFINE_integer('batch_size', 256, 'Batch size')
+_EPOCHS = flags.DEFINE_integer('epochs', 60, 'Number of epochs')
+_SEED = flags.DEFINE_integer('seed', 0, 'Seed for jax PRNG')
+_MICROBATCHES = flags.DEFINE_integer(
     'microbatches', None, 'Number of microbatches '
     '(must evenly divide batch_size)')
-flags.DEFINE_string('model_dir', None, 'Model directory')
+_MODEL_DIR = flags.DEFINE_string('model_dir', None, 'Model directory')
 
 
 init_random_params, predict = stax.serial(
@@ -137,7 +133,7 @@ def clipped_grad(params, l2_norm_clip, single_example_batch):
   grads = grad(loss)(params, single_example_batch)
   nonempty_grads, tree_def = tree_flatten(grads)
   total_grad_norm = jnp.linalg.norm(
-      [jnp.linalg.norm(neg.ravel()) for neg in nonempty_grads])
+      jnp.array([jnp.linalg.norm(neg.ravel()) for neg in nonempty_grads]))
   divisor = jnp.maximum(total_grad_norm / l2_norm_clip, 1.)
   normalized_nonempty_grads = [g / divisor for g in nonempty_grads]
   return tree_unflatten(tree_def, normalized_nonempty_grads)
@@ -166,39 +162,39 @@ def shape_as_image(images, labels, dummy_dim=False):
 def compute_epsilon(steps, num_examples=60000, target_delta=1e-5):
   if num_examples * target_delta > 1.:
     warnings.warn('Your delta might be too high.')
-  q = FLAGS.batch_size / float(num_examples)
+  q = _BATCH_SIZE.value / float(num_examples)
   orders = list(jnp.linspace(1.1, 10.9, 99)) + list(range(11, 64))
-  accountant = rdp_privacy_accountant.RdpAccountant(orders)
+  accountant = rdp.rdp_privacy_accountant.RdpAccountant(orders)
   accountant.compose(
       dp_event.PoissonSampledDpEvent(
-          q, dp_event.GaussianDpEvent(FLAGS.noise_multiplier)), steps)
+          q, dp_event.GaussianDpEvent(_NOISE_MULTIPLIER.value)), steps)
   return accountant.get_epsilon(target_delta)
 
 
 def main(_):
 
-  if FLAGS.microbatches:
+  if _MICROBATCHES.value:
     raise NotImplementedError(
         'Microbatches < batch size not currently supported'
     )
 
   train_images, train_labels, test_images, test_labels = datasets.mnist()
   num_train = train_images.shape[0]
-  num_complete_batches, leftover = divmod(num_train, FLAGS.batch_size)
+  num_complete_batches, leftover = divmod(num_train, _BATCH_SIZE.value)
   num_batches = num_complete_batches + bool(leftover)
-  key = random.PRNGKey(FLAGS.seed)
+  key = random.PRNGKey(_SEED.value)
 
   def data_stream():
-    rng = npr.RandomState(FLAGS.seed)
+    rng = npr.RandomState(_SEED.value)
     while True:
       perm = rng.permutation(num_train)
       for i in range(num_batches):
-        batch_idx = perm[i * FLAGS.batch_size:(i + 1) * FLAGS.batch_size]
+        batch_idx = perm[i * _BATCH_SIZE.value:(i + 1) * _BATCH_SIZE.value]
         yield train_images[batch_idx], train_labels[batch_idx]
 
   batches = data_stream()
 
-  opt_init, opt_update, get_params = optimizers.sgd(FLAGS.learning_rate)
+  opt_init, opt_update, get_params = optimizers.sgd(_LEARNING_RATE.value)
 
   @jit
   def update(_, i, opt_state, batch):
@@ -211,19 +207,19 @@ def main(_):
     rng = random.fold_in(rng, i)  # get new key for new random numbers
     return opt_update(
         i,
-        private_grad(params, batch, rng, FLAGS.l2_norm_clip,
-                     FLAGS.noise_multiplier, FLAGS.batch_size), opt_state)
+        private_grad(params, batch, rng, _L2_NORM_CLIP.value,
+                     _NOISE_MULTIPLIER.value, _BATCH_SIZE.value), opt_state)
 
   _, init_params = init_random_params(key, (-1, 28, 28, 1))
   opt_state = opt_init(init_params)
   itercount = itertools.count()
 
-  steps_per_epoch = 60000 // FLAGS.batch_size
+  steps_per_epoch = 60000 // _BATCH_SIZE.value
   print('\nStarting training...')
-  for epoch in range(1, FLAGS.epochs + 1):
+  for epoch in range(1, _EPOCHS.value + 1):
     start_time = time.time()
     for _ in range(num_batches):
-      if FLAGS.dpsgd:
+      if _DPSGD.value:
         opt_state = \
             private_update(
                 key, next(itercount), opt_state,
@@ -242,7 +238,7 @@ def main(_):
         test_loss, 100 * test_acc))
 
     # determine privacy loss so far
-    if FLAGS.dpsgd:
+    if _DPSGD.value:
       delta = 1e-5
       num_examples = 60000
       eps = compute_epsilon(epoch * steps_per_epoch, num_examples, delta)

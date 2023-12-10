@@ -25,7 +25,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/handle_pool.h"
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
+#include "xla/service/custom_call_status.h"
 
 namespace jax {
 
@@ -140,7 +140,7 @@ void CooMatmat(gpuStream_t stream, void** buffers, const char* opaque,
 #endif  // JAX_GPU_HAVE_SPARSE
 
 struct Gtsv2Descriptor {
-  int m, n, ldb;
+  int batch, m, n, ldb;
 };
 
 void gtsv2_f32(gpuStream_t stream, void** buffers, const char* opaque,

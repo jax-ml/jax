@@ -33,8 +33,9 @@ SIAM Journal on Matrix Analysis and Applications 31, no. 5 (2010): 2700-2720.
 https://epubs.siam.org/doi/abs/10.1137/090774999
 """
 
+from collections.abc import Sequence
 import functools
-from typing import Any, Sequence, Union
+from typing import Any, Union
 
 import jax
 import jax.numpy as jnp
@@ -42,21 +43,46 @@ from jax import lax
 from jax._src import core
 
 
-@functools.partial(jax.jit, static_argnums=(1, 2))
-def _zero_svd(a: Any,
-              full_matrices: bool,
-              compute_uv: bool = True) -> Union[Any, Sequence[Any]]:
+@functools.partial(jax.jit, static_argnums=(2, 3))
+def _constant_svd(
+    a: Any, return_nan: bool, full_matrices: bool, compute_uv: bool = True
+) -> Union[Any, Sequence[Any]]:
   """SVD on matrix of all zeros."""
   m, n = a.shape
   k = min(m, n)
-  s = jnp.zeros(shape=(k,), dtype=a.real.dtype)
+  s = jnp.where(
+      return_nan,
+      jnp.full(shape=(k,), fill_value=jnp.nan, dtype=a.real.dtype),
+      jnp.zeros(shape=(k,), dtype=a.real.dtype),
+  )
   if compute_uv:
+    fill_value = (
+        jnp.nan + 1j * jnp.nan
+        if jnp.issubdtype(a.dtype, jnp.complexfloating)
+        else jnp.nan
+    )
     if full_matrices:
-      u = jnp.eye(m, m, dtype=a.dtype)
-      vh = jnp.eye(n, n, dtype=a.dtype)
+      u = jnp.where(
+          return_nan,
+          jnp.full((m, m), fill_value, dtype=a.dtype),
+          jnp.eye(m, m, dtype=a.dtype),
+      )
+      vh = jnp.where(
+          return_nan,
+          jnp.full((n, n), fill_value, dtype=a.dtype),
+          jnp.eye(n, n, dtype=a.dtype),
+      )
     else:
-      u = jnp.eye(m, k, dtype=a.dtype)
-      vh = jnp.eye(k, n, dtype=a.dtype)
+      u = jnp.where(
+          return_nan,
+          jnp.full((m, k), fill_value, dtype=a.dtype),
+          jnp.eye(m, k, dtype=a.dtype),
+      )
+      vh = jnp.where(
+          return_nan,
+          jnp.full((k, n), fill_value, dtype=a.dtype),
+          jnp.eye(k, n, dtype=a.dtype),
+      )
     return (u, s, vh)
   else:
     return s
@@ -86,6 +112,9 @@ def _svd_tall_and_square_input(
 
   # TODO: Uses `eigvals_only=True` if `compute_uv=False`.
   v, s = lax.linalg.eigh(h)
+  # Singular values are non-negative by definition. But eigh could return small
+  # negative values, so we clamp them to zero.
+  s = jnp.maximum(s, 0.0)
 
   # Flips the singular values in descending order.
   s_out = jnp.flip(s)
@@ -228,11 +257,22 @@ def svd(a: Any,
   # X_{k+1} = X_k(a_k I + b_k {X_k}^H X_k)(I + c_k {X_k}^H X_k)^{−1} and
   # X_0 = A/alpha, where alpha = ||A||_2, the triplet (a_k, b_k, c_k) are
   # weighting parameters, and X_k denotes the k^{th} iterate.
-  return jax.lax.cond(jnp.all(a == 0),
-                      functools.partial(_zero_svd, full_matrices=full_matrices,
-                                        compute_uv=compute_uv),
-                      functools.partial(_qdwh_svd, full_matrices=full_matrices,
-                                        compute_uv=compute_uv,
-                                        hermitian=hermitian,
-                                        max_iterations=max_iterations),
-                      operand=(a))
+  all_zero = jnp.all(a == 0)
+  non_finite = jnp.logical_not(jnp.all(jnp.isfinite(a)))
+  return lax.cond(
+      jnp.logical_or(all_zero, non_finite),
+      functools.partial(
+          _constant_svd,
+          return_nan=non_finite,
+          full_matrices=full_matrices,
+          compute_uv=compute_uv,
+      ),
+      functools.partial(
+          _qdwh_svd,
+          full_matrices=full_matrices,
+          compute_uv=compute_uv,
+          hermitian=hermitian,
+          max_iterations=max_iterations,
+      ),
+      operand=(a),
+  )

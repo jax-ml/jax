@@ -12,18 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
+# ruff: noqa: F401
+import jaxlib.mlir.dialects.arith as arith
 import jaxlib.mlir.dialects.builtin as builtin
 import jaxlib.mlir.dialects.chlo as chlo
+import jaxlib.mlir.dialects.math as math
+import jaxlib.mlir.dialects.memref as memref
 import jaxlib.mlir.dialects.mhlo as mhlo
 import jaxlib.mlir.dialects.func as func
-import jaxlib.mlir.dialects.ml_program as ml_program
+import jaxlib.mlir.dialects.scf as scf
 import jaxlib.mlir.dialects.sparse_tensor as sparse_tensor
+import jaxlib.mlir.dialects.vector as vector
 
-from jax.lib import xla_client
-import jaxlib.mlir.dialects.stablehlo as stablehlo
+from jax._src import lib
+
 
 # Alias that is set up to abstract away the transition from MHLO to StableHLO.
-# At the moment, it points to MHLO, but in the future it will start to
-# conditionally and then unconditionally point to StableHLO.
-import jaxlib.mlir.dialects.mhlo as hlo
+import jaxlib.mlir.dialects.stablehlo as hlo

@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.14.1
+    jupytext_version: 1.15.2
 kernelspec:
   display_name: Python 3
   language: python
@@ -16,7 +16,7 @@ kernelspec:
 
 # Training a Simple Neural Network, with PyTorch Data Loading
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/Neural_Network_and_Data_Loading.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/Neural_Network_and_Data_Loading.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/notebooks/Neural_Network_and_Data_Loading.ipynb)
 
 **Copyright 2018 The JAX Authors.**
 
@@ -189,17 +189,12 @@ JAX is laser-focused on program transformations and accelerator-backed NumPy, so
 :id: 94PjXZ8y3dVF
 
 import numpy as np
+from jax.tree_util import tree_map
 from torch.utils import data
 from torchvision.datasets import MNIST
 
 def numpy_collate(batch):
-  if isinstance(batch[0], np.ndarray):
-    return np.stack(batch)
-  elif isinstance(batch[0], (tuple,list)):
-    transposed = zip(*batch)
-    return [numpy_collate(samples) for samples in transposed]
-  else:
-    return np.array(batch)
+  return tree_map(np.asarray, data.default_collate(batch))
 
 class NumpyLoader(data.DataLoader):
   def __init__(self, dataset, batch_size=1,

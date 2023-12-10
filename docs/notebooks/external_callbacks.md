@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.14.1
+    jupytext_version: 1.15.2
 kernelspec:
   display_name: Python 3
   name: python3
@@ -17,11 +17,349 @@ kernelspec:
 
 +++ {"id": "h6lXo6bSUYGq"}
 
-This guide is a work-in-progress outlining the uses of various callback functions, which allow JAX code to execute certain commands on the host, even while running under `jit`, `vmap`, `grad`, or another transformation.
+This guide outlines the uses of various callback functions, which allow JAX runtimes to execute Python code on the host, even while running under `jit`, `vmap`, `grad`, or another transformation.
 
-This is a work-in-progress, and will be updated soon.
++++ {"id": "Xi_nhfpnlmbm"}
 
-*TODO(jakevdp, sharadmv): fill-in some simple examples of {func}`jax.pure_callback`, {func}`jax.debug.callback`, {func}`jax.debug.print`, and others.*
+## Why callbacks?
+
+A callback routine is a way to perform **host-side** execution of code at runtime.
+As a simple example, suppose you'd like to print the *value* of some variable during the course of a computation.
+Using a simple Python `print` statement, it looks like this:
+
+```{code-cell}
+:id: lz8rEL1Amb4r
+:outputId: bbd37102-19f2-46d2-b794-3d4952c6fe97
+
+import jax
+
+@jax.jit
+def f(x):
+  y = x + 1
+  print("intermediate value: {}".format(y))
+  return y * 2
+
+result = f(2)
+```
+
++++ {"id": "yEy41sFAmxOp"}
+
+What is printed is not the runtime value, but the trace-time abstract value (if you're not famililar with *tracing* in JAX, a good primer can be found in [How To Think In JAX](https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html)).
+
+To print the value at runtime we need a callback, for example `jax.debug.print`:
+
+```{code-cell}
+:id: wFfHmoQxnKDF
+:outputId: 6bea21d9-9bb1-4d4d-f3ec-fcf1c691a46a
+
+@jax.jit
+def f(x):
+  y = x + 1
+  jax.debug.print("intermediate value: {}", y)
+  return y * 2
+
+result = f(2)
+```
+
++++ {"id": "CvWv3pudn9X5"}
+
+This works by passing the runtime value represented by `y` back to the host process, where the host can print the value.
+
++++ {"id": "X0vR078znuT-"}
+
+## Flavors of Callback
+
+In earlier versions of JAX, there was only one kind of callback available, implemented in `jax.experimental.host_callback`. The `host_callback` routines had some deficiencies, and are now deprecated in favor of several callbacks designed for different situations:
+
+- {func}`jax.pure_callback`: appropriate for pure functions: i.e. functions with no side effect.
+- {func}`jax.experimental.io_callback`: appropriate for impure functions: e.g. functions which read or write data to disk.
+- {func}`jax.debug.callback`: appropriate for functions that should reflect the execution behavior of the compiler.
+
+(The {func}`jax.debug.print` function we used above is a wrapper around {func}`jax.debug.callback`).
+
+From the user perspective, these three flavors of callback are mainly distinguished by what transformations and compiler optimizations they allow.
+
+|callback function | supports return value | `jit` | `vmap` | `grad` | `scan`/`while_loop` | guaranteed execution |
+|-------------------------------------|----|----|----|----|----|----|
+|`jax.pure_callback`            | ✅ | ✅ | ✅ | ❌¹ | ✅ | ❌ |
+|`jax.experimental.io_callback` | ✅ | ✅ | ✅/❌² | ❌ | ✅³ | ✅ |
+|`jax.debug.callback`           | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+
+¹ `jax.pure_callback` can be used with `custom_jvp` to make it compatible with autodiff
+
+² `jax.experimental.io_callback` is compatible with `vmap` only if `ordered=False`.
+
+³ Note that `vmap` of `scan`/`while_loop` of `io_callback` has complicated semantics, and its behavior may change in future releases.
+
++++ {"id": "hE_M8DaPvoym"}
+
+### Exploring `jax.pure_callback`
+
+`jax.pure_callback` is generally the callback function you should reach for when you want host-side execution of a pure function: i.e. a function that has no side-effects (such as printing values, reading data from disk, updating a global state, etc.).
+
+The function you pass to `jax.pure_callback` need not actually be pure, but it will be assumed pure by JAX's transformations and higher-order functions, which means that it may be silently elided or called multiple times.
+
+```{code-cell}
+:id: 4lQDzXy6t_-k
+:outputId: 279e4daf-0540-4eab-f535-d3bcbac74c44
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+
+def f_host(x):
+  # call a numpy (not jax.numpy) operation:
+  return np.sin(x).astype(x.dtype)
+
+def f(x):
+  result_shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
+  return jax.pure_callback(f_host, result_shape, x)
+
+x = jnp.arange(5.0)
+f(x)
+```
+
++++ {"id": "q7YCIr8qMrDs"}
+
+Because `pure_callback` can be elided or duplicated, it is compatible out-of-the-box with transformations like `jit` and `vmap`, as well as higher-order primitives like `scan` and `while_loop`:"
+
+```{code-cell}
+:id: bgoZ0fxsuoWV
+:outputId: 901443bd-5cb4-4923-ce53-6f832ac22ca9
+
+jax.jit(f)(x)
+```
+
+```{code-cell}
+:id: ajBRGWGfupu2
+:outputId: b28e31ee-7457-4b92-872b-52d819f53ddf
+
+jax.vmap(f)(x)
+```
+
+```{code-cell}
+:id: xe7AOGexvC13
+:outputId: 8fa77977-1f2b-41c5-cc5e-11993ee5aa3e
+
+def body_fun(_, x):
+  return _, f(x)
+jax.lax.scan(body_fun, None, jnp.arange(5.0))[1]
+```
+
++++ {"id": "tMzAVs2VNj5G"}
+
+However, because there is no way for JAX to introspect the content of the callback, `pure_callback` has undefined autodiff semantics:
+
+```{code-cell}
+:id: 4QAF4VhUu5bb
+:outputId: f8a06d02-47e9-4240-8077-d7be81e5a480
+
+%xmode minimal
+```
+
+```{code-cell}
+:id: qUpKPxlOurfY
+:outputId: 11a665e8-40eb-4b0e-dc2e-a544a25fc57e
+:tags: [raises-exception]
+
+jax.grad(f)(x)
+```
+
++++ {"id": "y9DAibV4Nwpo"}
+
+For an example of using `pure_callback` with `jax.custom_jvp`, see *Example: `pure_callback` with `custom_jvp`* below.
+
++++ {"id": "LrvdAloMZbIe"}
+
+By design functions passed to `pure_callback` are treated as if they have no side-effects: one consequence of this is that if the output of the function is not used, the compiler may eliminate the callback entirely:
+
+```{code-cell}
+:id: mmFc_zawZrBq
+:outputId: a4df7568-3f64-4b2f-9a2c-7adb2e0815e0
+
+def print_something():
+  print('printing something')
+  return np.int32(0)
+
+@jax.jit
+def f1():
+  return jax.pure_callback(print_something, np.int32(0))
+f1();
+```
+
+```{code-cell}
+:id: tTwE4kpmaNei
+
+@jax.jit
+def f2():
+  jax.pure_callback(print_something, np.int32(0))
+  return 1.0
+f2();
+```
+
++++ {"id": "qfyGYbw4Z5U3"}
+
+In `f1`, the output of the callback is used in the return value of the function, so the callback is executed and we see the printed output.
+In `f2` on the other hand, the output of the callback is unused, and so the compiler notices this and eliminates the function call. These are the correct semantics for a callback to a function with no side-effects.
+
++++ {"id": "JHcJybr7OEBM"}
+
+### Exploring `jax.experimental.io_callback`
+
+In contrast to {func}`jax.pure_callback`, {func}`jax.experimental.io_callback` is explicitly meant to be used with impure functions, i.e. functions that do have side-effects.
+
+As an example, here is a callback to a global host-side numpy random generator. This is an impure operation because a side-effect of generating a random number in numpy is that the random state is updated (Please note that this is meant as a toy example of `io_callback` and not necessarily a recommended way of generating random numbers in JAX!).
+
+```{code-cell}
+:id: eAg5xIhrOiWV
+:outputId: e3cfec21-d843-4852-a49d-69a69fba9fc1
+
+from jax.experimental import io_callback
+from functools import partial
+
+global_rng = np.random.default_rng(0)
+
+def host_side_random_like(x):
+  """Generate a random array like x using the global_rng state"""
+  # We have two side-effects here:
+  # - printing the shape and dtype
+  # - calling global_rng, thus updating its state
+  print(f'generating {x.dtype}{list(x.shape)}')
+  return global_rng.uniform(size=x.shape).astype(x.dtype)
+
+@jax.jit
+def numpy_random_like(x):
+  return io_callback(host_side_random_like, x, x)
+
+x = jnp.zeros(5)
+numpy_random_like(x)
+```
+
++++ {"id": "mAIF31MlXj33"}
+
+The `io_callback` is compatible with `vmap` by default:
+
+```{code-cell}
+:id: NY3o5dG6Vg6u
+:outputId: a67a8a98-214e-40ca-ad98-a930cd3db85e
+
+jax.vmap(numpy_random_like)(x)
+```
+
++++ {"id": "XXvSeeOXXquZ"}
+
+Note, however, that this may execute the mapped callbacks in any order. So, for example, if you ran this on a GPU, the order of the mapped outputs might differ from run to run.
+
+If it is important that the order of callbacks be preserved, you can set `ordered=True`, in which case attempting to `vmap` will raise an error:
+
+```{code-cell}
+:id: 3aNmRsDrX3-2
+:outputId: a8ff4b77-f4cb-442f-8cfb-ea7251c66274
+:tags: [raises-exception]
+
+@jax.jit
+def numpy_random_like_ordered(x):
+  return io_callback(host_side_random_like, x, x, ordered=True)
+
+jax.vmap(numpy_random_like_ordered)(x)
+```
+
++++ {"id": "fD2FTHlUYAZH"}
+
+On the other hand, `scan` and `while_loop` work with `io_callback` regardless of whether ordering is enforced:
+
+```{code-cell}
+:id: lMVzZlIEWL7F
+:outputId: f9741c18-a30d-4d46-b706-8102849286b5
+
+def body_fun(_, x):
+  return _, numpy_random_like_ordered(x)
+jax.lax.scan(body_fun, None, jnp.arange(5.0))[1]
+```
+
++++ {"id": "w_sf8mCbbo8K"}
+
+Like `pure_callback`, `io_callback` fails under automatic differentiation if it is passed a differentiated variable:
+
+```{code-cell}
+:id: Cn6_RG4JcKZm
+:outputId: 336ae5d2-e35b-4fe5-cbfb-14a7aef28c07
+:tags: [raises-exception]
+
+jax.grad(numpy_random_like)(x)
+```
+
++++ {"id": "plvfn9lWcKu4"}
+
+However, if the callback is not dependent on a differentiated variable, it will execute:
+
+```{code-cell}
+:id: wxgfDmDfb5bx
+:outputId: d8c0285c-cd04-4b4d-d15a-1b07f778882d
+
+@jax.jit
+def f(x):
+  io_callback(lambda: print('hello'), None)
+  return x
+
+jax.grad(f)(1.0);
+```
+
++++ {"id": "STLI40EZcVIY"}
+
+Unlike `pure_callback`, the compiler will not remove the callback execution in this case, even though the output of the callback is unused in the subsequent computation.
+
++++ {"id": "pkkM1ZmqclV-"}
+
+### Exploring `debug.callback`
+
+Both `pure_callback` and `io_callback` enforce some assumptions about the purity of the function they're calling, and limit in various ways what JAX transforms and compilation machinery may do. `debug.callback` essentially assumes *nothing* about the callback function, such that the action of the callback reflects exactly what JAX is doing during the course of a program. Further, `debug.callback` *cannot* return any value to the program.
+
+```{code-cell}
+:id: 74TdWyu9eqBa
+:outputId: d8551dab-2e61-492e-9ac3-dc3db51b2c18
+
+from jax import debug
+
+def log_value(x):
+  # This could be an actual logging call; we'll use
+  # print() for demonstration
+  print("log:", x)
+
+@jax.jit
+def f(x):
+  debug.callback(log_value, x)
+  return x
+
+f(1.0);
+```
+
++++ {"id": "P848STlsfzmW"}
+
+The debug callback is compatible with `vmap`:
+
+```{code-cell}
+:id: 2sSNsPB-fGVI
+:outputId: fff58575-d94c-48fb-b88a-c1c395595fd0
+
+x = jnp.arange(5.0)
+jax.vmap(f)(x);
+```
+
++++ {"id": "VDMacqpXf3La"}
+
+And is also compatible with `grad` and other autodiff transformations
+
+```{code-cell}
+:id: wkFRle-tfTDe
+:outputId: 4e8a81d0-5012-4c51-d843-3fbdc498df31
+
+jax.grad(f)(1.0);
+```
+
++++ {"id": "w8t-SDZ3gRzE"}
+
+This can make `debug.callback` more useful for general-purpose debugging than either `pure_callback` or `io_callback`.
 
 +++ {"id": "dF7hoWGQUneJ"}
 

@@ -35,6 +35,7 @@ from jax._src.nn.initializers import (
   normal as normal,
   ones as ones,
   orthogonal as orthogonal,
+  truncated_normal as truncated_normal,
   uniform as uniform,
   variance_scaling as variance_scaling,
   xavier_normal as xavier_normal,

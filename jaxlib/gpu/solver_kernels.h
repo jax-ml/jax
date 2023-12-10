@@ -19,7 +19,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/handle_pool.h"
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
+#include "xla/service/custom_call_status.h"
 
 #ifdef JAX_GPU_CUDA
 #include "third_party/gpus/cuda/include/cusolverSp.h"
@@ -103,7 +103,7 @@ void Orgqr(gpuStream_t stream, void** buffers, const char* opaque,
 struct SyevdDescriptor {
   SolverType type;
   gpusolverFillMode_t uplo;
-  int batch, n;
+  int batch, n;  // batch may be -1 in which case it is passed as operand.
   int lwork;
 };
 

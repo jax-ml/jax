@@ -1,5 +1,5 @@
-jax.numpy package
-=================
+``jax.numpy`` module
+====================
 
 .. currentmodule:: jax.numpy
 
@@ -35,7 +35,7 @@ namespace; they are listed below.
 
 .. Generate the list below as follows:
    >>> import jax.numpy, numpy
-   >>> fns = set(dir(numpy)) & set(dir(jax.numpy)) - set(jax.numpy._NOT_IMPLEMENTED)
+   >>> fns = set(dir(numpy)) & set(dir(jax.numpy))
    >>> print('\n'.join('    ' + x for x in fns if callable(getattr(jax.numpy, x))))  # doctest: +SKIP
 
    # Finally, sort the list using sort(1), which is different than Python's
@@ -50,7 +50,6 @@ namespace; they are listed below.
     add
     all
     allclose
-    alltrue
     amax
     amin
     angle
@@ -68,6 +67,7 @@ namespace; they are listed below.
     arctanh
     argmax
     argmin
+    argpartition
     argsort
     argwhere
     around
@@ -78,6 +78,7 @@ namespace; they are listed below.
     array_split
     array_str
     asarray
+    astype
     atleast_1d
     atleast_2d
     atleast_3d
@@ -85,6 +86,7 @@ namespace; they are listed below.
     bartlett
     bincount
     bitwise_and
+    bitwise_count
     bitwise_not
     bitwise_or
     bitwise_xor
@@ -124,7 +126,6 @@ namespace; they are listed below.
     cross
     csingle
     cumprod
-    cumproduct
     cumsum
     deg2rad
     degrees
@@ -156,6 +157,7 @@ namespace; they are listed below.
     extract
     eye
     fabs
+    fill_diagonal
     finfo
     fix
     flatnonzero
@@ -179,6 +181,7 @@ namespace; they are listed below.
     fromfile
     fromfunction
     fromiter
+    frompyfunc
     fromstring
     from_dlpack
     full
@@ -232,7 +235,6 @@ namespace; they are listed below.
     isrealobj
     isscalar
     issubdtype
-    issubsctype
     iterable
     ix_
     kaiser
@@ -258,6 +260,7 @@ namespace; they are listed below.
     logspace
     mask_indices
     matmul
+    matrix_transpose
     max
     maximum
     mean
@@ -269,7 +272,6 @@ namespace; they are listed below.
     mod
     modf
     moveaxis
-    msort
     multiply
     nan_to_num
     nanargmax
@@ -300,6 +302,7 @@ namespace; they are listed below.
     outer
     packbits
     pad
+    partition
     percentile
     piecewise
     place
@@ -316,7 +319,6 @@ namespace; they are listed below.
     power
     printoptions
     prod
-    product
     promote_types
     ptp
     put
@@ -341,7 +343,6 @@ namespace; they are listed below.
     rot90
     round
     round_
-    row_stack
     s_
     save
     savez
@@ -359,7 +360,6 @@ namespace; they are listed below.
     single
     sinh
     size
-    sometrue
     sort
     sort_complex
     split
@@ -390,6 +390,7 @@ namespace; they are listed below.
     triu_indices_from
     true_divide
     trunc
+    ufunc
     uint
     uint16
     uint32
@@ -467,43 +468,32 @@ jax.numpy.linalg
   tensorinv
   tensorsolve
 
-JAX DeviceArray
----------------
-The JAX :class:`~jax.numpy.DeviceArray` is the core array object in JAX: you can
-think of it as the equivalent of a :class:`numpy.ndarray` backed by a memory buffer
-on a single device. Like :class:`numpy.ndarray`, most users will not need to
-instantiate :class:`DeviceArray` objects manually, but rather will create them via
+JAX Array
+---------
+The JAX :class:`~jax.Array` (along with its alias, :class:`jax.numpy.ndarray`) is
+the core array object in JAX: you can think of it as JAX's equivalent of a
+:class:`numpy.ndarray`. Like :class:`numpy.ndarray`, most users will not need to
+instantiate :class:`~jax.Array` objects manually, but rather will create them via
 :mod:`jax.numpy` functions like :func:`~jax.numpy.array`, :func:`~jax.numpy.arange`,
 :func:`~jax.numpy.linspace`, and others listed above.
 
 Copying and Serialization
 ~~~~~~~~~~~~~~~~~~~~~~~~~
-:class:`~jax.numpy.DeviceArray`` objects are designed to work seamlessly with Python
+JAX :class:`~jax.Array` objects are designed to work seamlessly with Python
 standard library tools where appropriate.
 
 With the built-in :mod:`copy` module, when :func:`copy.copy` or :func:`copy.deepcopy`
-encounder a :class:`~jax.numpy.DeviceArray`, it is equivalent to calling the
-:meth:`~jaxlib.xla_extension.DeviceArray.copy` method, which will create a copy of
+encounder an :class:`~jax.Array`, it is equivalent to calling the
+:meth:`~jax.Array.copy` method, which will create a copy of
 the buffer on the same device as the original array. This will work correctly within
 traced/JIT-compiled code, though copy operations may be elided by the compiler
 in this context.
 
-When the built-in :mod:`pickle` module encounters a :class:`~jax.numpy.DeviceArray`,
+When the built-in :mod:`pickle` module encounters an :class:`~jax.Array`,
 it will be serialized via a compact bit representation in a similar manner to pickled
 :class:`numpy.ndarray` objects. When unpickled, the result will be a new
-:class:`~jax.numpy.DeviceArray` object *on the default device.*
+:class:`~jax.Array` object *on the default device.*
 This is because in general, pickling and unpickling may take place in different runtime
 environments, and there is no general way to map the device IDs of one runtime
 to the device IDs of another. If :mod:`pickle` is used in traced/JIT-compiled code,
 it will result in a :class:`~jax.errors.ConcretizationTypeError`.
-
-Class Reference
-~~~~~~~~~~~~~~~
-
-.. autoclass:: jax.numpy.DeviceArray
-
-.. autoclass:: jaxlib.xla_extension.DeviceArrayBase
-
-.. autoclass:: jaxlib.xla_extension.DeviceArray
-   :members:
-   :inherited-members:

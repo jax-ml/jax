@@ -12,30 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for the `for_loop` primitive."""
+
+from collections.abc import Sequence
 import functools
 import operator
+from typing import Any, Callable, Generic, Optional, TypeVar, Union
 
-from typing import Any, Callable, Generic, List, Optional, Sequence, Set, Tuple, TypeVar, Union
-
-from jax import core
+import jax.numpy as jnp
 from jax import lax
-from jax import linear_util as lu
 from jax.api_util import flatten_fun_nokwargs
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import (tree_flatten, tree_structure, tree_unflatten,
                            treedef_tuple, tree_map, tree_leaves, PyTreeDef)
+
 from jax._src import ad_util
+from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import linear_util as lu
 from jax._src import source_info_util
-from jax._src import state
+from jax._src.state.types import (ReadEffect, AbstractRef, StateEffect)
+from jax._src.state import discharge as state_discharge
+from jax._src.state import primitives as state_primitives
+from jax._src.state import utils as state_utils
+from jax._src.state import types as state_types
+from jax._src.typing import Array
 from jax._src.util import (partition_list, merge_lists, safe_map, safe_zip,
                            split_list, split_dict)
-import jax.numpy as jnp
-
 from jax._src.lax.control_flow import loops
 from jax._src.lax.control_flow.common import _abstractify, _initial_style_jaxpr
 
@@ -48,17 +54,11 @@ zip, unsafe_zip = safe_zip, zip
 S = TypeVar('S')
 T = TypeVar('T')
 class Ref(Generic[T]): pass
-Array = Any
 
-ReadEffect = state.ReadEffect
-WriteEffect = state.WriteEffect
-AccumEffect = state.AccumEffect
-StateEffect = state.StateEffect
-ShapedArrayRef = state.ShapedArrayRef
-ref_set = state.ref_set
-ref_get = state.ref_get
-ref_addupdate = state.ref_addupdate
-discharge_state = state.discharge_state
+ref_set = state_primitives.ref_set
+ref_get = state_primitives.ref_get
+ref_addupdate = state_primitives.ref_addupdate
+discharge_state = state_discharge.discharge_state
 
 
 ## `for_loop` implementation
@@ -70,12 +70,12 @@ for_p.multiple_results = True
 
 def _hoist_consts_to_refs(jaxpr: core.Jaxpr) -> core.Jaxpr:
   all_const_avals = [var.aval for var in jaxpr.constvars]
-  is_const_ref = [isinstance(var.aval, ShapedArrayRef) for var in
+  is_const_ref = [isinstance(var.aval, AbstractRef) for var in
                   jaxpr.constvars]
   const_avals, const_ref_avals = partition_list(is_const_ref, all_const_avals)
-  const_avals = [ShapedArrayRef(aval.shape, aval.dtype) for aval in const_avals]  # pytype: disable=attribute-error
+  const_avals = map(AbstractRef, const_avals)
   merged_const_avals = merge_lists(is_const_ref, const_avals, const_ref_avals)
-  i_aval, *arg_avals = [var.aval for var in jaxpr.invars]
+  i_aval, *arg_avals = (var.aval for var in jaxpr.invars)
   in_avals = [i_aval, *merged_const_avals, *arg_avals]
   num_consts = len(merged_const_avals)
 
@@ -93,18 +93,12 @@ def _hoist_consts_to_refs(jaxpr: core.Jaxpr) -> core.Jaxpr:
 
 def _trace_to_jaxpr_with_refs(f, state_tree: PyTreeDef,
                               state_avals: Sequence[core.AbstractValue]
-                              ) -> Tuple[core.Jaxpr, List[Any], PyTreeDef]:
+                              ) -> tuple[core.Jaxpr, list[Any], PyTreeDef]:
   f, out_tree_thunk = flatten_fun_nokwargs(
       lu.wrap_init(f), treedef_tuple((tree_structure(0), state_tree)))
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       f, state_avals)
   return jaxpr, consts, out_tree_thunk()
-
-def val_to_ref_aval(x) -> ShapedArrayRef:
-  aval = core.raise_to_shaped(core.get_aval(x))
-  if type(aval) is not core.ShapedArray:
-    raise Exception(f"can't make ref from {x}")
-  return ShapedArrayRef(aval.shape, aval.dtype)
 
 def for_loop(nsteps: Union[int, Sequence[int]],
              body: Callable[[Array, Ref[S]], None], init_state: S,
@@ -151,14 +145,14 @@ def for_loop(nsteps: Union[int, Sequence[int]],
   if len(nsteps) > 1:
     outer_step, *rest_steps = nsteps
     def wrapped_body(i, refs):
-      vals = tree_map(lambda ref: state.ref_get(ref, ()), refs)
+      vals = tree_map(lambda ref: ref_get(ref, ()), refs)
       vals = for_loop(
           rest_steps, functools.partial(body, i), vals, unroll=unroll)
-      tree_map(lambda ref, val: state.ref_set(ref, (), val), refs, vals)
+      tree_map(lambda ref, val: ref_set(ref, (), val), refs, vals)
     return for_loop(outer_step, wrapped_body, init_state, unroll=unroll)
   nsteps, = nsteps
   flat_state, state_tree = tree_flatten(init_state)
-  state_avals = map(val_to_ref_aval, flat_state)
+  state_avals = map(state_utils.val_to_ref_aval, flat_state)
   idx_aval = core.ShapedArray((), jnp.dtype("int32"))
   jaxpr, consts, out_tree = _trace_to_jaxpr_with_refs(
       body, state_tree, [idx_aval, *state_avals])
@@ -179,12 +173,12 @@ Carry = TypeVar('Carry')
 X = TypeVar('X')
 Y = TypeVar('Y')
 
-def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
+def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
          init: Carry,
          xs: X,
          length: Optional[int] = None,
          reverse: bool = False,
-         unroll: int = 1) -> Tuple[Carry, Y]:
+         unroll: int = 1) -> tuple[Carry, Y]:
   if not callable(f):
     raise TypeError("scan: f argument should be a callable.")
   if unroll < 1:
@@ -247,25 +241,26 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
 @for_p.def_effectful_abstract_eval
 def _for_abstract_eval(*avals, jaxpr, **__):
   # Find out for each of the `Ref`s in our jaxpr what effects they have.
-  jaxpr_aval_effects = state.get_ref_state_effects(
+  jaxpr_aval_effects = state_types.get_ref_state_effects(
       [v.aval for v in jaxpr.invars], jaxpr.effects)[1:]
-  aval_effects = [set(eff.replace(ref_aval=aval) for eff in effs) for aval, effs
+  aval_effects = [{eff.replace(input_index=eff.input_index - 1)
+                      for eff in effs} for aval, effs
                   in zip(avals, jaxpr_aval_effects)
-                  if isinstance(aval, ShapedArrayRef)]
+                  if isinstance(aval, AbstractRef)]
   nonlocal_state_effects = core.join_effects(*aval_effects)
   return list(avals), nonlocal_state_effects
 
-@state.register_discharge_rule(for_p)
+@state_discharge.register_discharge_rule(for_p)
 def _for_discharge_rule(in_avals, _, *args: Any, jaxpr: core.Jaxpr,
                         reverse: bool, which_linear: Sequence[bool],
                         nsteps: int, unroll: int
-                        ) -> Tuple[Sequence[Optional[Any]], Sequence[Any]]:
+                        ) -> tuple[Sequence[Optional[Any]], Sequence[Any]]:
   out_vals = for_p.bind(*args, jaxpr=jaxpr, reverse=reverse,
                         which_linear=which_linear, nsteps=nsteps,
                         unroll=unroll)
   new_invals = []
   for aval, out_val in zip(in_avals, out_vals):
-    new_invals.append(out_val if isinstance(aval, ShapedArrayRef) else None)
+    new_invals.append(out_val if isinstance(aval, AbstractRef) else None)
   return new_invals, out_vals
 
 def _for_impl(*args, jaxpr, nsteps, reverse, which_linear, unroll):
@@ -298,9 +293,9 @@ def _for_impl_unrolled(body, nsteps, unroll, *args):
   return state
 
 mlir.register_lowering(for_p, mlir.lower_fun(_for_impl, multiple_results=True))
-for_p.def_impl(functools.partial(xla.apply_primitive, for_p))
+for_p.def_impl(functools.partial(dispatch.apply_primitive, for_p))
 
-def _for_vmap(axis_size, axis_name, main_type, args, dims, *,
+def _for_vmap(spmd_axis_name, axis_size, axis_name, main_type, args, dims, *,
               jaxpr, nsteps, reverse, which_linear, unroll):
   init_batched = [d is not batching.not_mapped for d in dims]
   discharged_jaxpr, body_consts = discharge_state(jaxpr, ())
@@ -309,7 +304,7 @@ def _for_vmap(axis_size, axis_name, main_type, args, dims, *,
     _, out_batched = batching.batch_jaxpr(
         core.ClosedJaxpr(discharged_jaxpr, body_consts),
         axis_size, [False] + batched, instantiate=batched,
-        axis_name=axis_name, main_type=main_type)
+        axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
     if out_batched == batched:
       break
     batched = map(operator.or_, batched, out_batched)
@@ -320,13 +315,14 @@ def _for_vmap(axis_size, axis_name, main_type, args, dims, *,
           for x, d, was_bat, now_bat in zip(args, dims, init_batched, batched)]
   batched_jaxpr_, _ = batching.batch_jaxpr(
       core.ClosedJaxpr(jaxpr, []), axis_size, [False] + batched, [],
-      axis_name=axis_name, main_type=main_type)
+      axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
   batched_jaxpr, () = batched_jaxpr_.jaxpr, batched_jaxpr_.consts  # TODO consts
   out_flat = for_p.bind(*args, jaxpr=batched_jaxpr, nsteps=nsteps,
                         reverse=reverse, which_linear=which_linear,
                         unroll=unroll)
   return out_flat, [0 if b else batching.not_mapped for b in batched]
-batching.axis_primitive_batchers[for_p] = _for_vmap
+batching.axis_primitive_batchers[for_p] = functools.partial(_for_vmap, None)
+batching.spmd_axis_primitive_batchers[for_p] = _for_vmap
 
 def _for_jvp(primals, tangents, *, jaxpr, nsteps, reverse, which_linear,
              unroll):
@@ -376,7 +372,7 @@ def _partial_eval_jaxpr_custom(jaxpr, in_unknowns, policy):
 
 _save_everything = lambda *_, **__: True
 
-def _is_read_only(ref_effects: Set[StateEffect]) -> bool:
+def _is_read_only(ref_effects: set[StateEffect]) -> bool:
   assert len(ref_effects) > 0
   if len(ref_effects) > 1:
     # Means we must have a write or accum effect so not read-only
@@ -384,9 +380,9 @@ def _is_read_only(ref_effects: Set[StateEffect]) -> bool:
   eff, = ref_effects
   return isinstance(eff, ReadEffect)
 
-def _loop_invariant_outputs(jaxpr: core.Jaxpr) -> List[bool]:
+def _loop_invariant_outputs(jaxpr: core.Jaxpr) -> list[bool]:
   # Get effects for each of the jaxpr inputs and remove the loop index.
-  ref_effects = state.get_ref_state_effects(
+  ref_effects = state_types.get_ref_state_effects(
       [v.aval for v in jaxpr.invars], jaxpr.effects)[1:]
   # We first assume that *read-only `Ref`s* are loop-invariant. We can safely do
   # this because the only way something can be loop-varying is if we write to it
@@ -411,8 +407,8 @@ def _loop_invariant_outputs(jaxpr: core.Jaxpr) -> List[bool]:
 
 def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
                       jaxpr: core.Jaxpr, nsteps: int, reverse: bool,
-                      which_linear: Tuple[bool, ...],
-                      unroll: int) -> List[pe.JaxprTracer]:
+                      which_linear: tuple[bool, ...],
+                      unroll: int) -> list[pe.JaxprTracer]:
   num_inputs = len(tracers)
   assert num_inputs == len(jaxpr.invars) - 1
   in_unknowns = [not t.pval.is_known() for t in tracers]
@@ -641,7 +637,7 @@ pe.partial_eval_jaxpr_custom_rules[for_p] = _for_partial_eval_custom
 
 def _convert_outputs_to_writes(
     nsteps: int, jaxpr: core.Jaxpr, loop_invar_res: Sequence[bool]
-    ) -> Tuple[core.Jaxpr, List[core.ShapedArray]]:
+    ) -> tuple[core.Jaxpr, list[core.ShapedArray]]:
   assert not jaxpr.constvars, "Jaxpr shouldn't have constvars."
 
   in_avals = [v.aval for v in jaxpr.invars]  # [i, *orig_ref_avals]
@@ -659,14 +655,15 @@ def _convert_outputs_to_writes(
         res_ref[i] = res_val
     return []
   # TODO(mattjj, sharadmv): better handling of tokens, which don't have shape/dtype
-  res_ref_avals = [ShapedArrayRef(v.aval.shape, v.aval.dtype)  # pytype: disable=attribute-error
-                   if loop_invar else
-                   ShapedArrayRef((nsteps, *v.aval.shape), v.aval.dtype)  # pytype: disable=attribute-error
-                   for v, loop_invar in zip(jaxpr.outvars, loop_invar_res)]
+  res_ref_avals: list[core.AbstractValue] = [
+      AbstractRef(v.aval) if loop_invar else  # pytype: disable=attribute-error
+      AbstractRef(core.ShapedArray((nsteps, *v.aval.shape),  # pytype: disable=attribute-error
+                  v.aval.dtype))  # pytype: disable=attribute-error
+      for v, loop_invar in zip(jaxpr.outvars, loop_invar_res)]
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       eval_jaxpr, [*in_avals, *res_ref_avals])
   assert not consts
-  return jaxpr, [core.ShapedArray(a.shape, a.dtype) for a in res_ref_avals]
+  return jaxpr, [core.ShapedArray(a.shape, a.dtype) for a in res_ref_avals]  # pytype: disable=attribute-error
 
 def _convert_inputs_to_reads(
     nsteps: int, num_res: int, jaxpr: core.Jaxpr,
@@ -683,15 +680,17 @@ def _convert_inputs_to_reads(
 
   res_val_avals, (i_aval,), orig_ref_avals = \
       split_list([v.aval for v in jaxpr.invars], [num_res, 1])
-  res_ref_avals = [ShapedArrayRef(aval.shape, aval.dtype) if loop_invar else
-                   ShapedArrayRef((nsteps, *aval.shape), aval.dtype)  # pytype: disable=attribute-error
-                   for aval, loop_invar in zip(res_val_avals, loop_invar_res)]
+  res_ref_avals: list[core.AbstractValue] = [
+      AbstractRef(aval) if loop_invar else  # pytype: disable=attribute-error
+      AbstractRef(core.ShapedArray((nsteps, *aval.shape),  # pytype: disable=attribute-error
+                  aval.dtype))  # pytype: disable=attribute-error
+      for aval, loop_invar in zip(res_val_avals, loop_invar_res)]
 
   jaxpr, _, () = pe.trace_to_jaxpr_dynamic(
       eval_jaxpr, [i_aval, *res_ref_avals, *orig_ref_avals])
   return jaxpr
 
-def transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: List[bool]) -> core.Jaxpr:
+def transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: list[bool]) -> core.Jaxpr:
   def trans(i, *args):
     # First we want to run the computation to read all the residual refs. We can
     # do that by using partial evaluation with all linear inputs unknown.
@@ -720,7 +719,7 @@ def transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: List[bool]) -> core.Jaxpr:
 
 def _for_transpose(in_cts, *args, jaxpr, nsteps, reverse, which_linear, unroll):
   # if any in_ct is nonzero, we definitely want it in args_ (and the
-  # corresponding x in args could be an undefined primal, but doesnt have to be)
+  # corresponding x in args could be an undefined primal, but doesn't have to be)
   # for non-res stuff:
   #   getting and setting => (nonzero ct, UndefinedPrimal arg)
   #   just setting =>        (nonzero ct, not UndefinedPrimal, dummy value)
@@ -766,7 +765,7 @@ def discharged_for_loop(nsteps, body, init_state, *, reverse: bool = False):
   Potentially useful for testing and benchmarking.
   """
   flat_state, state_tree = tree_flatten(init_state)
-  state_avals = map(val_to_ref_aval, flat_state)
+  state_avals = map(state_utils.val_to_ref_aval, flat_state)
   idx_aval = core.ShapedArray((), jnp.dtype("int32"))
   jaxpr, consts, out_tree = _trace_to_jaxpr_with_refs(
       body, state_tree, [idx_aval, *state_avals])

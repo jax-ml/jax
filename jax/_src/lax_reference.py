@@ -45,6 +45,7 @@ nextafter = np.nextafter
 is_finite = np.isfinite
 
 exp = np.exp
+exp2 = np.exp2
 expm1 = np.expm1
 log = np.log
 log1p = np.log1p
@@ -339,12 +340,19 @@ def _conv(lhs, rhs, window_strides, pads):
       view, view_axes, rhs, rhs_axes, out_axes, use_blas=True)
 
 def padtype_to_pads(in_shape, filter_shape, window_strides, padding):
-  if padding.upper() == 'SAME':
+  if padding.upper() == 'SAME' or padding.upper() == 'SAME_LOWER':
     out_shape = np.ceil(np.true_divide(in_shape, window_strides)).astype(int)
     pad_sizes = [_max((out_size - 1) * stride + filter_size - in_size, 0)
                  for out_size, stride, filter_size, in_size
                  in zip(out_shape, window_strides, filter_shape, in_shape)]
-    return [(pad_size // 2, pad_size - pad_size // 2) for pad_size in pad_sizes]
+    if padding.upper() == 'SAME':
+      return [
+          (pad_size // 2, pad_size - pad_size // 2) for pad_size in pad_sizes
+      ]
+    else:
+      return [
+          (pad_size - pad_size // 2, pad_size // 2) for pad_size in pad_sizes
+      ]
   else:
     return [(0, 0)] * len(in_shape)
 

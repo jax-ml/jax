@@ -14,7 +14,7 @@
 
 import os
 from typing import Optional
-from jax._src.clusters import ClusterEnv
+from jax._src import clusters
 
 _JOBID_PARAM = 'SLURM_JOB_ID'
 _NODE_LIST = 'SLURM_STEP_NODELIST'
@@ -23,7 +23,7 @@ _PROCESS_ID = 'SLURM_PROCID'
 _LOCAL_PROCESS_ID = 'SLURM_LOCALID'
 _NUM_NODES = 'SLURM_STEP_NUM_NODES'
 
-class SlurmCluster(ClusterEnv):
+class SlurmCluster(clusters.ClusterEnv):
   @classmethod
   def is_env_present(cls) -> bool:
     return _JOBID_PARAM in os.environ

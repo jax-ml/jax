@@ -37,45 +37,48 @@ import numpy as np
 import tensorflow as tf  # type: ignore
 import tensorflow_datasets as tfds  # type: ignore
 
-flags.DEFINE_enum("model", "mnist_flax", ["mnist_flax", "mnist_pure_jax"],
-                  "Which model to use.")
-flags.DEFINE_boolean("model_classifier_layer", True,
+_MODEL = flags.DEFINE_enum(
+    "model", "mnist_flax", ["mnist_flax", "mnist_pure_jax"],
+    "Which model to use.")
+_MODEL_CLASSIFIER_LAYER = flags.DEFINE_boolean("model_classifier_layer", True,
                      ("The model should include the classifier layer, or just "
                       "the last layer of logits. Set this to False when you "
                       "want to reuse the classifier-less model in a larger "
                       "model. See keras_reuse_main.py and README.md."))
-flags.DEFINE_string("model_path", "/tmp/jax2tf/saved_models",
+_MODEL_PATH = flags.DEFINE_string("model_path", "/tmp/jax2tf/saved_models",
                     "Path under which to save the SavedModel.")
-flags.DEFINE_integer("model_version", 1,
+_MODEL_VERSION = flags.DEFINE_integer("model_version", 1,
                      ("The version number for the SavedModel. Needed for "
                       "serving, larger versions will take precedence"),
                      lower_bound=1)
-flags.DEFINE_integer("serving_batch_size", 1,
+_SERVING_BATCH_SIZE = flags.DEFINE_integer("serving_batch_size", 1,
                      "For what batch size to prepare the serving signature. "
                      "Use -1 for converting and saving with batch polymorphism.")
 flags.register_validator(
     "serving_batch_size",
-    lambda serving_batch_size: serving_batch_size > 0 or serving_batch_size == -1,
-    message="--serving_batch_size must be either -1 or a positive integer.")
+    lambda serving_batch_size: serving_batch_size > 0
+    or serving_batch_size == -1,
+    message="--serving_batch_size must be either -1 or a positive integer.",
+)
 
-flags.DEFINE_integer("num_epochs", 3, "For how many epochs to train.",
-                     lower_bound=1)
-flags.DEFINE_boolean(
+_NUM_EPOCHS = flags.DEFINE_integer("num_epochs", 3,
+                                   "For how many epochs to train.",
+                                   lower_bound=1)
+_GENERATE_MODEL = flags.DEFINE_boolean(
     "generate_model", True,
     "Train and save a new model. Otherwise, use an existing SavedModel.")
-flags.DEFINE_boolean(
+_COMPILE_MODEL = flags.DEFINE_boolean(
     "compile_model", True,
     "Enable TensorFlow jit_compiler for the SavedModel. This is "
     "necessary if you want to use the model for TensorFlow serving.")
-flags.DEFINE_boolean("show_model", True, "Show details of saved SavedModel.")
-flags.DEFINE_boolean(
+_SHOW_MODEL = flags.DEFINE_boolean("show_model", True,
+                                   "Show details of saved SavedModel.")
+SHOW_IMAGES = flags.DEFINE_boolean(
     "show_images", False,
     "Plot some sample images with labels and inference results.")
-flags.DEFINE_boolean(
+_TEST_SAVEDMODEL = flags.DEFINE_boolean(
     "test_savedmodel", True,
     "Test TensorFlow inference using the SavedModel w.r.t. the JAX model.")
-
-FLAGS = flags.FLAGS
 
 
 def train_and_save():
@@ -85,22 +88,22 @@ def train_and_save():
   test_ds = mnist_lib.load_mnist(
       tfds.Split.TEST, batch_size=mnist_lib.test_batch_size)
 
-  if FLAGS.show_images:
+  if SHOW_IMAGES.value:
     mnist_lib.plot_images(train_ds, 1, 5, "Training images", inference_fn=None)
 
   the_model_class = pick_model_class()
   model_dir = savedmodel_dir(with_version=True)
 
-  if FLAGS.generate_model:
+  if _GENERATE_MODEL.value:
     model_descr = model_description()
     logging.info("Generating model for %s", model_descr)
     (predict_fn, predict_params) = the_model_class.train(
         train_ds,
         test_ds,
-        FLAGS.num_epochs,
-        with_classifier=FLAGS.model_classifier_layer)
+        num_epochs=_NUM_EPOCHS.value,
+        with_classifier=_MODEL_CLASSIFIER_LAYER.value)
 
-    if FLAGS.serving_batch_size == -1:
+    if _SERVING_BATCH_SIZE.value == -1:
       # Batch-polymorphic SavedModel
       input_signatures = [
           tf.TensorSpec((None,) + mnist_lib.input_shape, tf.float32),
@@ -109,7 +112,7 @@ def train_and_save():
     else:
       input_signatures = [
           # The first one will be the serving signature
-          tf.TensorSpec((FLAGS.serving_batch_size,) + mnist_lib.input_shape,
+          tf.TensorSpec((_SERVING_BATCH_SIZE.value,) + mnist_lib.input_shape,
                         tf.float32),
           tf.TensorSpec((mnist_lib.train_batch_size,) + mnist_lib.input_shape,
                         tf.float32),
@@ -126,15 +129,15 @@ def train_and_save():
         with_gradient=True,
         input_signatures=input_signatures,
         polymorphic_shapes=polymorphic_shapes,
-        compile_model=FLAGS.compile_model)
+        compile_model=_COMPILE_MODEL.value)
 
-    if FLAGS.test_savedmodel:
+    if _TEST_SAVEDMODEL.value:
       tf_accelerator, tolerances = tf_accelerator_and_tolerances()
       with tf.device(tf_accelerator):
         logging.info("Testing savedmodel")
         pure_restored_model = tf.saved_model.load(model_dir)
 
-        if FLAGS.show_images and FLAGS.model_classifier_layer:
+        if SHOW_IMAGES.value and _MODEL_CLASSIFIER_LAYER.value:
           mnist_lib.plot_images(
               test_ds,
               1,
@@ -149,7 +152,7 @@ def train_and_save():
             pure_restored_model(tf.convert_to_tensor(test_input)),
             predict_fn(predict_params, test_input), **tolerances)
 
-  if FLAGS.show_model:
+  if _SHOW_MODEL.value:
     def print_model(model_dir: str):
       cmd = f"saved_model_cli show --all --dir {model_dir}"
       print(cmd)
@@ -160,18 +163,18 @@ def train_and_save():
 
 def pick_model_class():
   """Picks one of PureJaxMNIST or FlaxMNIST."""
-  if FLAGS.model == "mnist_pure_jax":
+  if _MODEL.value == "mnist_pure_jax":
     return mnist_lib.PureJaxMNIST
-  elif FLAGS.model == "mnist_flax":
+  elif _MODEL.value == "mnist_flax":
     return mnist_lib.FlaxMNIST
   else:
-    raise ValueError(f"Unrecognized model: {FLAGS.model}")
+    raise ValueError(f"Unrecognized model: {_MODEL.value}")
 
 
 def model_description() -> str:
   """A short description of the picked model."""
   res = pick_model_class().name
-  if not FLAGS.model_classifier_layer:
+  if not _MODEL_CLASSIFIER_LAYER.value:
     res += " (features_only)"
   return res
 
@@ -179,11 +182,11 @@ def model_description() -> str:
 def savedmodel_dir(with_version: bool = True) -> str:
   """The directory where we save the SavedModel."""
   model_dir = os.path.join(
-      FLAGS.model_path,
-      FLAGS.model + ('' if FLAGS.model_classifier_layer else '_features')
+      _MODEL_PATH.value,
+      _MODEL.value + ('' if _MODEL_CLASSIFIER_LAYER.value else '_features')
   )
   if with_version:
-    model_dir = os.path.join(model_dir, str(FLAGS.model_version))
+    model_dir = os.path.join(model_dir, str(_MODEL_VERSION.value))
   return model_dir
 
 

@@ -20,7 +20,7 @@ from jax._src import api_util
 from jax import numpy as jnp
 from jax._src import test_util as jtu
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 
@@ -42,7 +42,8 @@ class ApiUtilTest(jtu.JaxTestCase):
           if kwargs:
             expected += (False,)
           self.assertEqual(
-              expected, api_util.donation_vector(donate_argnums, args, kwargs))
+              expected,
+              api_util.donation_vector(donate_argnums, (), args, kwargs))
 
   @parameterized.parameters(
       ((0,), (0,)),

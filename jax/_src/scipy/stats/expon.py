@@ -15,18 +15,18 @@
 import scipy.stats as osp_stats
 
 from jax import lax
-from jax._src.numpy.util import _wraps
-from jax._src.numpy.lax_numpy import _promote_args_inexact, where, inf
+import jax.numpy as jnp
+from jax._src.numpy.util import _wraps, promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 
 
 @_wraps(osp_stats.expon.logpdf, update_doc=False)
 def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  x, loc, scale = _promote_args_inexact("expon.logpdf", x, loc, scale)
+  x, loc, scale = promote_args_inexact("expon.logpdf", x, loc, scale)
   log_scale = lax.log(scale)
   linear_term = lax.div(lax.sub(x, loc), scale)
   log_probs = lax.neg(lax.add(linear_term, log_scale))
-  return where(lax.lt(x, loc), -inf, log_probs)
+  return jnp.where(lax.lt(x, loc), -jnp.inf, log_probs)
 
 @_wraps(osp_stats.expon.pdf, update_doc=False)
 def pdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:

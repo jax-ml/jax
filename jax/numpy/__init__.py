@@ -18,13 +18,10 @@
 from jax.numpy import fft as fft
 from jax.numpy import linalg as linalg
 
-from jax._src.device_array import DeviceArray as DeviceArray
+from jax._src.basearray import Array as ndarray
 
 from jax._src.numpy.lax_numpy import (
     ComplexWarning as ComplexWarning,
-    NINF as NINF,
-    NZERO as NZERO,
-    PZERO as PZERO,
     allclose as allclose,
     angle as angle,
     append as append,
@@ -42,6 +39,7 @@ from jax._src.numpy.lax_numpy import (
     array_repr as array_repr,
     array_split as array_split,
     array_str as array_str,
+    astype as astype,
     asarray as asarray,
     atleast_1d as atleast_1d,
     atleast_2d as atleast_2d,
@@ -97,6 +95,7 @@ from jax._src.numpy.lax_numpy import (
     expand_dims as expand_dims,
     extract as extract,
     eye as eye,
+    fill_diagonal as fill_diagonal,
     finfo as finfo,
     fix as fix,
     flatnonzero as flatnonzero,
@@ -107,6 +106,11 @@ from jax._src.numpy.lax_numpy import (
     float16 as float16,
     float32 as float32,
     float64 as float64,
+    float8_e4m3b11fnuz as float8_e4m3b11fnuz,
+    float8_e4m3fn as float8_e4m3fn,
+    float8_e4m3fnuz as float8_e4m3fnuz,
+    float8_e5m2 as float8_e5m2,
+    float8_e5m2fnuz as float8_e5m2fnuz,
     float_ as float_,
     floating as floating,
     fmax as fmax,
@@ -140,10 +144,11 @@ from jax._src.numpy.lax_numpy import (
     inf as inf,
     inner as inner,
     insert as insert,
+    int4 as int4,
+    int8 as int8,
     int16 as int16,
     int32 as int32,
     int64 as int64,
-    int8 as int8,
     int_ as int_,
     integer as integer,
     interp as interp,
@@ -154,7 +159,6 @@ from jax._src.numpy.lax_numpy import (
     isrealobj as isrealobj,
     isscalar as isscalar,
     issubdtype as issubdtype,
-    issubsctype as issubsctype,
     iterable as iterable,
     ix_ as ix_,
     kaiser as kaiser,
@@ -166,18 +170,14 @@ from jax._src.numpy.lax_numpy import (
     logspace as logspace,
     mask_indices as mask_indices,
     matmul as matmul,
-    median as median,
+    matrix_transpose as matrix_transpose,
     meshgrid as meshgrid,
     moveaxis as moveaxis,
-    msort as msort,
     nan as nan,
     nan_to_num as nan_to_num,
     nanargmax as nanargmax,
     nanargmin as nanargmin,
-    nanmedian as nanmedian,
-    nanpercentile as nanpercentile,
-    nanquantile as nanquantile,
-    ndarray as ndarray,
+    argpartition as argpartition,
     ndim as ndim,
     newaxis as newaxis,
     nonzero as nonzero,
@@ -188,14 +188,13 @@ from jax._src.numpy.lax_numpy import (
     outer as outer,
     packbits as packbits,
     pad as pad,
-    percentile as percentile,
+    partition as partition,
     pi as pi,
     piecewise as piecewise,
     place as place,
     printoptions as printoptions,
     promote_types as promote_types,
     put as put,
-    quantile as quantile,
     ravel as ravel,
     ravel_multi_index as ravel_multi_index,
     repeat as repeat,
@@ -207,7 +206,6 @@ from jax._src.numpy.lax_numpy import (
     rot90 as rot90,
     round as round,
     round_ as round_,
-    row_stack as row_stack,
     save as save,
     savez as savez,
     searchsorted as searchsorted,
@@ -228,7 +226,7 @@ from jax._src.numpy.lax_numpy import (
     tensordot as tensordot,
     tile as tile,
     trace as trace,
-    trapz as trapz,
+    trapz as _deprecated_trapz,
     transpose as transpose,
     tri as tri,
     tril as tril,
@@ -240,10 +238,11 @@ from jax._src.numpy.lax_numpy import (
     triu_indices_from as triu_indices_from,
     trunc as trunc,
     uint as uint,
+    uint4 as uint4,
+    uint8 as uint8,
     uint16 as uint16,
     uint32 as uint32,
     uint64 as uint64,
-    uint8 as uint8,
     unpackbits as unpackbits,
     unravel_index as unravel_index,
     unsignedinteger as unsignedinteger,
@@ -255,7 +254,6 @@ from jax._src.numpy.lax_numpy import (
     where as where,
     zeros as zeros,
     zeros_like as zeros_like,
-    _NOT_IMPLEMENTED,
 )
 
 from jax._src.numpy.index_tricks import (
@@ -281,7 +279,6 @@ from jax._src.numpy.polynomial import (
 )
 
 from jax._src.numpy.reductions import (
-    alltrue as alltrue,
     amin as amin,
     amax as amax,
     any as any,
@@ -290,30 +287,33 @@ from jax._src.numpy.reductions import (
     count_nonzero as count_nonzero,
     cumsum as cumsum,
     cumprod as cumprod,
-    cumproduct as cumproduct,
     max as max,
     mean as mean,
+    median as median,
     min as min,
     nancumsum as nancumsum,
     nancumprod as nancumprod,
     nanmax as nanmax,
     nanmean as nanmean,
+    nanmedian as nanmedian,
     nanmin as nanmin,
+    nanpercentile as nanpercentile,
     nanprod as nanprod,
+    nanquantile as nanquantile,
     nanstd as nanstd,
     nansum as nansum,
     nanvar as nanvar,
+    percentile as percentile,
     prod as prod,
-    product as product,
     ptp as ptp,
-    sometrue as sometrue,
+    quantile as quantile,
     std as std,
     sum as sum,
     var as var,
 )
 
 from jax._src.numpy.setops import (
-    in1d as in1d,
+    in1d as _deprecated_in1d,
     intersect1d as intersect1d,
     isin as isin,
     setdiff1d as setdiff1d,
@@ -334,6 +334,7 @@ from jax._src.numpy.ufuncs import (
     arctan2 as arctan2,
     arctanh as arctanh,
     bitwise_and as bitwise_and,
+    bitwise_count as bitwise_count,
     bitwise_not as bitwise_not,
     bitwise_or as bitwise_or,
     bitwise_xor as bitwise_xor,
@@ -413,19 +414,74 @@ from jax._src.numpy.ufuncs import (
     true_divide as true_divide,
 )
 
+from jax._src.numpy.ufunc_api import (
+    frompyfunc as frompyfunc,
+    ufunc as ufunc,
+)
+
 from jax._src.numpy.vectorize import vectorize as vectorize
 
-# Module initialization is encapsulated in a function to avoid accidental
-# namespace pollution.
-def _init():
-  import numpy as np
-  from jax._src.numpy import lax_numpy
-  from jax._src import util
-  # Builds a set of all unimplemented NumPy functions.
-  for name, func in util.get_module_functions(np).items():
-    if name not in globals():
-      _NOT_IMPLEMENTED.append(name)
-      globals()[name] = lax_numpy._not_implemented(func, module='numpy')
+# Dynamically register numpy-style methods on JAX arrays.
+from jax._src.numpy.array_methods import register_jax_array_methods
+register_jax_array_methods()
+del register_jax_array_methods
 
-_init()
-del _init
+try:
+  from numpy import issubsctype as _deprecated_issubsctype
+except ImportError:
+  _deprecated_issubsctype = None
+
+# Deprecations
+
+_deprecations = {
+    # Added August 10, 2023:
+    "NINF": (
+        "jax.numpy.NINF is deprecated. Use -jax.numpy.inf instead.",
+        -inf,
+    ),
+    "NZERO": (
+        "jax.numpy.NZERO is deprecated. Use -0.0 instead.",
+        -0.0,
+    ),
+    "PZERO": (
+        "jax.numpy.PZERO is deprecated. Use 0.0 instead.",
+        0.0,
+    ),
+    # Added Aug 17, 2023:
+    "issubsctype": (
+        "jax.numpy.issubsctype is deprecated. In most cases, jax.numpy.issubdtype can be used instead.",
+        _deprecated_issubsctype,
+    ),
+    # Added Aug 22, 2023
+    "row_stack": (
+        "jax.numpy.row_stack is deprecated. Use jax.numpy.vstack instead.",
+        vstack,
+    ),
+    # Added Aug 23, 2023
+    "in1d": (
+        "jax.numpy.in1d is deprecated. Use jax.numpy.isin instead.",
+        _deprecated_in1d,
+    ),
+    # Added Aug 24, 2023
+    "trapz": (
+        "jax.numpy.trapz is deprecated. Use jax.scipy.integrate.trapezoid instead.",
+        _deprecated_trapz,
+    ),
+}
+
+import typing
+if typing.TYPE_CHECKING:
+  row_stack = vstack
+  NINF = -inf
+  NZERO = -0.0
+  PZERO = 0.0
+  issubsctype = _deprecated_issubsctype
+  in1d = _deprecated_in1d
+  trapz = _deprecated_trapz
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing
+del _deprecated_in1d
+del _deprecated_trapz

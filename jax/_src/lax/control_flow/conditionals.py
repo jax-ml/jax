@@ -12,34 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for conditional control flow primitives."""
+from __future__ import annotations
+
 import collections
+from collections.abc import Sequence
 import functools
 from functools import partial
 import inspect
 import itertools
 import operator
+from typing import Any, Callable, TypeVar
 
-from typing import Callable, Sequence, List, Tuple
-
-from jax import core
-from jax import linear_util as lu
-from jax.config import config
-from jax.core import ConcreteArray, raise_to_shaped
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
+from jax._src import config
+from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import effects
+from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import util
-from jax._src import state
+from jax._src.state.discharge import register_discharge_rule, discharge_state
+from jax._src.state.types import AbstractRef, RefEffect
+from jax._src.core import ConcreteArray, raise_to_shaped, replace_jaxpr_effects
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import xla
 from jax._src.lax import lax
 from jax._src.traceback_util import api_boundary
-from jax._src.util import (safe_map, extend_name_stack, split_list,
-                           partition_list)
+from jax._src.util import (safe_map, split_list, partition_list)
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 import numpy as np
@@ -52,7 +56,6 @@ from jax._src.lax.control_flow.common import (
     _make_closed_jaxpr,
     _prune_zeros,
     _typecheck_param,
-    allowed_effects,
     )
 
 map, unsafe_map = safe_map, map
@@ -75,6 +78,11 @@ def switch(index, branches: Sequence[Callable], *operands,
     def switch(index, branches, *operands):
       index = clamp(0, index, len(branches) - 1)
       return branches[index](*operands)
+
+  Internally this wraps XLA's `Conditional
+  <https://www.tensorflow.org/xla/operation_semantics#conditional>`_
+  operator. However, when transformed with :func:`~jax.vmap` to operate over a
+  batch of predicates, ``cond`` is converted to :func:`~jax.lax.select`.
 
   Args:
     index: Integer scalar type, indicating which branch function to apply.
@@ -122,7 +130,7 @@ def switch(index, branches: Sequence[Callable], *operands,
   hi = np.array(len(branches) - 1, np.int32)
   index = lax.clamp(lo, index, hi)
 
-  if (config.jax_disable_jit and
+  if (config.disable_jit.value and
       isinstance(core.get_aval(index), ConcreteArray)):
     return branches[int(index)](*operands)
 
@@ -136,7 +144,7 @@ def switch(index, branches: Sequence[Callable], *operands,
                           out_trees[0], jaxprs[0].out_avals,
                           out_tree, jaxpr.out_avals)
   joined_effects = core.join_effects(*(jaxpr.effects for jaxpr in jaxprs))
-  disallowed_effects = joined_effects - allowed_effects
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `switch`: {disallowed_effects}')
@@ -155,8 +163,13 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
           operand=_no_operand_sentinel, linear=None):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
+  Wraps XLA's `Conditional
+  <https://www.tensorflow.org/xla/operation_semantics#conditional>`_
+  operator.
+
   Provided arguments are correctly typed, ``cond()`` has equivalent
-  semantics to this Python implementation::
+  semantics to this Python implementation, where ``pred`` must be a
+  scalar type::
 
     def cond(pred, true_fun, false_fun, *operands):
       if pred:
@@ -164,7 +177,11 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
       else:
         return false_fun(*operands)
 
-  ``pred`` must be a scalar type.
+
+  In contrast with :func:`jax.lax.select`, using ``cond`` indicates that only one of
+  the two branches is executed (up to compiler rewrites and optimizations).
+  However, when transformed with :func:`~jax.vmap` to operate over a batch of
+  predicates, ``cond`` is converted to :func:`~jax.lax.select`.
 
   Args:
     pred: Boolean scalar type, indicating which branch function to apply.
@@ -210,7 +227,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
       msg = ("Pred type must be either boolean or number, got {}.")
       raise TypeError(msg.format(pred_dtype))
 
-  if config.jax_disable_jit and isinstance(core.get_aval(pred), ConcreteArray):
+  if config.disable_jit.value and isinstance(core.get_aval(pred), ConcreteArray):
     if pred:
       return true_fun(*operands)
     else:
@@ -227,16 +244,19 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       (true_fun, false_fun), ops_tree, ops_avals, 'cond')
-  if any(isinstance(op_aval, state.ShapedArrayRef) for op_aval in ops_avals):
+  if any(isinstance(op_aval, AbstractRef) for op_aval in ops_avals):
     raise ValueError("Cannot pass `Ref`s into `cond`.")
   true_jaxpr, false_jaxpr = jaxprs
   out_tree, false_out_tree = out_trees
+  if any(isinstance(out_aval, AbstractRef) for out_aval in
+         true_jaxpr.out_avals + false_jaxpr.out_avals):
+    raise ValueError("Cannot return `Ref`s from `cond`.")
 
   _check_tree_and_avals("true_fun and false_fun output",
                         out_tree, true_jaxpr.out_avals,
                         false_out_tree, false_jaxpr.out_avals)
   joined_effects = core.join_effects(true_jaxpr.effects, false_jaxpr.effects)
-  disallowed_effects = joined_effects - allowed_effects
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
@@ -246,10 +266,8 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     # Raise index in case of effects to allow data-dependence-based discharging
     # of those effects (even if they don't have an explicit data dependence).
     index = core.raise_as_much_as_possible(index)
-  false_jaxpr = false_jaxpr.replace(
-      jaxpr=false_jaxpr.jaxpr.replace(effects=joined_effects))
-  true_jaxpr = true_jaxpr.replace(
-      jaxpr=true_jaxpr.jaxpr.replace(effects=joined_effects))
+  false_jaxpr = replace_jaxpr_effects(false_jaxpr, joined_effects)
+  true_jaxpr = replace_jaxpr_effects(true_jaxpr, joined_effects)
 
   linear = [False] * len(consts) + linear_ops
   out = cond_p.bind(
@@ -267,8 +285,11 @@ def cond(*args, **kwargs):
     pass
   else:
     assert not ba.kwargs  # no catch-all **kwargs in _cond_with_per_branch
-    _, _, maybe_true_fun, _, maybe_false_fun = ba.args
-    if callable(maybe_true_fun) and callable(maybe_false_fun):
+    _, true_operand, true_fun, false_operand, false_fun = ba.args
+    if callable(true_operand) and callable(true_fun):
+      # treat this as modern cond (with two operands)
+      return _cond(*args, **kwargs)
+    if callable(true_fun) and callable(false_fun):
       return _cond_with_per_branch_args(*ba.args)
 
   return _cond(*args, **kwargs)
@@ -295,23 +316,23 @@ def _cond_with_per_branch_args(pred,
                lambda op: false_fun(op[1]),
                (true_operand, false_operand))
 
+def _join_cond_effects(branches: Sequence[core.Jaxpr]) -> effects.Effects:
+  joined_effects = set()
+  for b in branches:
+    for eff in b.effects:
+      if isinstance(eff, effects.JaxprInputEffect):
+        # Offset index to handle predicate
+        eff = eff.replace(input_index=eff.input_index + 1)
+      joined_effects.add(eff)
+  return joined_effects
+
 def _cond_abstract_eval(*avals, branches, **_):
-  joined_effects = core.join_effects(*(b.effects for b in branches))
-  disallowed_effects = joined_effects - allowed_effects
+  joined_effects = _join_cond_effects(branches)
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
-  joined_effects = core.join_effects(*(b.effects for b in branches))
-  state_effects = {eff for eff in joined_effects if isinstance(eff,
-    state.RefEffect)}
-  jaxpr_aval_effects = state.get_ref_state_effects(
-      [v.aval for v in branches[0].jaxpr.invars], joined_effects)
-  aval_effects = [set(eff.replace(ref_aval=aval) for eff in effs) for aval, effs
-      in zip(avals[1:], jaxpr_aval_effects)
-      if isinstance(aval, state.ShapedArrayRef)]
-  nonlocal_state_effects = core.join_effects(*aval_effects)
-  all_effects = (joined_effects - state_effects) | nonlocal_state_effects
-  return map(raise_to_shaped, branches[0].out_avals), all_effects
+  return map(raise_to_shaped, branches[0].out_avals), joined_effects
 
 def _bcast_select(pred, on_true, on_false):
   if np.ndim(pred) != np.ndim(on_true):
@@ -325,13 +346,21 @@ def _bcast_select_n(pred, *cases):
     pred = lax.broadcast_in_dim(pred, np.shape(cases[0]), idx)
   return lax.select_n(pred, *cases)
 
-def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, linear):
+def _cond_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
+                        dims, branches, linear):
   index, *ops = args
   index_dim, *op_dims = dims
-  if any(isinstance(eff, state.RefEffect) for branch in branches for eff in
+  # TODO(sharadmv): clean this up by adding a specific blocklist
+  if any(isinstance(eff, RefEffect) for branch in branches for eff in
       branch.jaxpr.effects):
     raise NotImplementedError(
-        "State effect not supported in cond vmap.")
+        "State effect not supported in vmap-of-cond.")
+  from jax._src.callback import _IOEffect, _OrderedIOEffect
+  if any(eff in branch.effects for eff in [_IOEffect, _OrderedIOEffect]
+      for branch in branches):
+    raise NotImplementedError(
+        "IO effect not supported in vmap-of-cond.")
+
 
   if index_dim is not batching.not_mapped:
     # Convert to a lax.select. While we could get away with not broadcasting
@@ -347,7 +376,8 @@ def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, l
 
     branches_batched = [
         batching.batch_jaxpr(
-            jaxpr, axis_size, in_batched, out_batched, axis_name, main_type)[0]
+            jaxpr, axis_size, in_batched, out_batched, axis_name, spmd_axis_name,
+            main_type)[0]
         for jaxpr in branches]
 
     branch_outs = []
@@ -365,11 +395,13 @@ def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, l
            for b, x, d in zip(ops_bat, ops, op_dims)]
 
     branches_out_bat = [
-        batching.batch_jaxpr(jaxpr, axis_size, ops_bat, False, axis_name, main_type)[1]
+        batching.batch_jaxpr(jaxpr, axis_size, ops_bat, False, axis_name,
+                             spmd_axis_name, main_type)[1]
         for jaxpr in branches]
     out_bat = [any(bat) for bat in zip(*branches_out_bat)]
     branches_batched = tuple(
-        batching.batch_jaxpr(jaxpr, axis_size, ops_bat, out_bat, axis_name, main_type)[0]
+        batching.batch_jaxpr(jaxpr, axis_size, ops_bat, out_bat, axis_name,
+                             spmd_axis_name, main_type)[0]
         for jaxpr in branches)
 
     out_dims = [0 if b else batching.not_mapped for b in out_bat]
@@ -407,7 +439,7 @@ def _cond_jvp(primals, tangents, branches, linear):
 def _cond_partial_eval(trace, *tracers, branches, linear):
   in_unknowns = [t.pval[0] is not None for t in tracers]
   index_uk, *ops_uk = in_unknowns
-  if any(isinstance(eff, state.RefEffect) for branch in branches for eff in
+  if any(isinstance(eff, RefEffect) for branch in branches for eff in
       branch.jaxpr.effects):
     raise NotImplementedError(
         "State effect not supported in cond partial-eval.")
@@ -486,7 +518,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 
   # First, compute output unknowns (unks_out), where an output of the cond is
   # unknown if it would be unknown on any of the branches.
-  unks_out: List[bool] = [False] * len(eqn.outvars)
+  unks_out: list[bool] = [False] * len(eqn.outvars)
   for jaxpr in branches:
     _, _, unks_out_, _, _ = pe.partial_eval_jaxpr_custom(
         jaxpr.jaxpr, in_unknowns=ops_uk, in_inst=True,
@@ -495,9 +527,9 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 
   # Next, use the computed output unknowns to build a known jaxpr and a staged
   # jaxpr for each branch.
-  branches_known_ : List[core.ClosedJaxpr] = []
-  branches_staged_: List[core.ClosedJaxpr] = []
-  branch_res_avals: List[core.AbstractValue] = []
+  branches_known_ : list[core.ClosedJaxpr] = []
+  branches_staged_: list[core.ClosedJaxpr] = []
+  branch_res_avals: list[core.AbstractValue] = []
   for jaxpr in branches:
     jaxpr_known, jaxpr_staged, _, inst_out, num_res = \
         pe.partial_eval_jaxpr_custom(
@@ -529,7 +561,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
   linear_known = [l for l, uk in zip(eqn.params['linear'], ops_uk) if not uk]
   params_known = dict(branches=branches_known, linear=tuple(linear_known))
-  effects_known = core.join_effects(*(b.effects for b in branches_known))
+  effects_known = _join_cond_effects(branches_known)
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*out_binders_known, *res_binders], cond_p, params_known,
       effects_known, eqn.source_info)
@@ -538,7 +570,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   linear_staged = [False] * len(res_binders) + list(eqn.params['linear'])
   params_staged = dict(branches=branches_staged, linear=tuple(linear_staged))
-  effects_staged = core.join_effects(*(b.effects for b in branches_staged))
+  effects_staged = _join_cond_effects(branches_staged)
   eqn_staged = pe.new_jaxpr_eqn(
       [eqn.invars[0], *res_binders, *eqn.invars[1:]], out_binders_staged,
       cond_p, params_staged, effects_staged, eqn.source_info)
@@ -628,13 +660,13 @@ def _ordered_unique(xs):
   d = collections.OrderedDict((x, None) for x in xs)
   return list(d.keys())
 
-def _cond_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn,
-                   ) -> Tuple[List[bool], core.JaxprEqn]:
+def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
+                   ) -> tuple[list[bool], core.JaxprEqn]:
   closed_branches = eqn.params['branches']
   branches = [closed_jaxpr.jaxpr for closed_jaxpr in closed_branches]
 
   # First, compute which inputs are used in any branch (not including `pred`).
-  used_inputs: List[bool] = [False] * (len(eqn.invars) - 1)  # -1 for pred
+  used_inputs: list[bool] = [False] * (len(eqn.invars) - 1)  # -1 for pred
   for jaxpr in branches:
     _, used_inputs_ = pe.dce_jaxpr(jaxpr, used_outputs, instantiate=False)
     used_inputs = map(operator.or_, used_inputs, used_inputs_)
@@ -650,6 +682,7 @@ def _cond_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn,
   new_params = dict(eqn.params, branches=tuple(dce_branches),
                     linear=tuple(dce_linear))
   new_effects = core.join_effects(*(b.effects for b in dce_branches))
+  new_effects = _join_cond_effects(dce_branches_)
   new_eqn = pe.new_jaxpr_eqn(
       [v for v, used in zip(eqn.invars, [True, *used_inputs]) if used],
       [v for v, used in zip(eqn.outvars, used_outputs) if used],
@@ -678,10 +711,12 @@ def _transpose_cond_jaxpr(jaxpr, num_res, reduce_axes):
   return _make_closed_jaxpr(transposed, res_avals + jaxpr.out_avals)
 
 def _cond_transpose(reduce_axes, cts, *args, branches, linear):
+  del linear  # could use for error checking, but see #14026
   index, *ops = args
+  linear = [type(x) is ad.UndefinedPrimal for x in ops]
   in_avals = map(raise_to_shaped, branches[0].in_avals)
   num_res = len(ops) - sum(linear)
-  if any(isinstance(eff, state.RefEffect) for branch in branches for eff in
+  if any(isinstance(eff, RefEffect) for branch in branches for eff in
       branch.jaxpr.effects):
     raise NotImplementedError("State effect not supported in cond transpose.")
 
@@ -712,7 +747,9 @@ def _cond_axis_substitution(params, subst, traverse):
   branches = tuple(core.subst_axis_names_jaxpr(jaxpr, subst) for jaxpr in params['branches'])
   return dict(params, branches=branches)
 
-def _cond_typecheck(*in_atoms, branches, linear):
+def _cond_typecheck(bind_time, *in_atoms, branches, linear):
+  if not bind_time:
+    _, *in_atoms = in_atoms
   avals = [x.aval for x in in_atoms]
   tc = partial(_typecheck_param, 'cond')
   tc(branches, 'branches', 'tuple of ClosedJaxpr',
@@ -730,8 +767,8 @@ def _cond_typecheck(*in_atoms, branches, linear):
   jaxpr0 = branches[0]
   jaxpr0_in_avals_str = _avals_short(jaxpr0.in_avals)
   jaxpr0_out_avals_str = _avals_short(jaxpr0.out_avals)
-  joined_effects = core.join_effects(*(b.effects for b in branches))
-  disallowed_effects = joined_effects - allowed_effects
+  joined_effects = _join_cond_effects(branches)
+  disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
@@ -767,29 +804,29 @@ def _cond_typecheck(*in_atoms, branches, linear):
     raise core.JaxprTypeError(
       f'cond branches take input types {jaxpr0_in_avals_str}, '
       f'called with operands of type {_avals_short(op_avals)}')
-  joined_effects = core.join_effects(*(b.effects for b in branches))
   return jaxpr0.out_avals, joined_effects
 
 def cond_bind(*args, branches, linear):
-  if config.jax_enable_checks:
+  if config.enable_checks.value:
     avals = map(core.get_aval, args)
     in_atoms = [core.Var(0, '', a) for a in avals]  # dummies
-    _cond_typecheck(*in_atoms, branches=branches, linear=linear)
+    _cond_typecheck(True, *in_atoms, branches=branches, linear=linear)
     for jaxpr in branches:
       core.check_jaxpr(jaxpr.jaxpr)
   return core.AxisPrimitive.bind(cond_p, *args, branches=branches, linear=linear)
 
 cond_p = core.AxisPrimitive('cond')
 cond_p.multiple_results = True
-cond_p.def_impl(partial(xla.apply_primitive, cond_p))
+cond_p.def_impl(partial(dispatch.apply_primitive, cond_p))
 cond_p.def_effectful_abstract_eval(_cond_abstract_eval)
 cond_p.def_custom_bind(cond_bind)
 ad.primitive_jvps[cond_p] = _cond_jvp
 ad.reducing_transposes[cond_p] = _cond_transpose
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
-batching.axis_primitive_batchers[cond_p] = _cond_batching_rule
+batching.spmd_axis_primitive_batchers[cond_p] = _cond_batching_rule
+batching.axis_primitive_batchers[cond_p] = partial(_cond_batching_rule, None)
 xla.register_initial_style_primitive(cond_p)
-core.custom_typechecks[cond_p] = _cond_typecheck
+core.custom_typechecks[cond_p] = partial(_cond_typecheck, False)
 core.axis_substitution_rules[cond_p] = _cond_axis_substitution
 pe.partial_eval_jaxpr_custom_rules[cond_p] = _cond_partial_eval_custom
 pe.dce_rules[cond_p] = _cond_dce_rule
@@ -797,8 +834,7 @@ pe.dce_rules[cond_p] = _cond_dce_rule
 def _cond_lowering(ctx, index, *args, branches, linear):
   del linear  # Unused.
   joined_effects = core.join_effects(*(branch.effects for branch in branches))
-  ordered_effects = [eff for eff in joined_effects
-                     if eff in core.ordered_effects]
+  ordered_effects = list(effects.ordered_effects.filter_in(joined_effects))
   num_tokens = len(ordered_effects)
   tokens_in = ctx.tokens_in.subset(ordered_effects)
   output_token_types = [mlir.token_type() for _ in ordered_effects]
@@ -811,20 +847,20 @@ def _cond_lowering(ctx, index, *args, branches, linear):
   # captures.
   case_op = hlo.CaseOp(flat_output_types, index=index,
                        num_branches=len(branches))
-  name_stack = extend_name_stack(ctx.module_context.name_stack, 'cond')
+  name_stack = ctx.module_context.name_stack.extend('cond')
   for i, jaxpr in enumerate(branches):
     branch = case_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
       sub_ctx = ctx.module_context.replace(
-          name_stack=xla.extend_name_stack(name_stack, f'branch_{i}_fun'))
+          name_stack=name_stack.extend(f'branch_{i}_fun'))
+      consts = [mlir.ir_constants(xla.canonicalize_dtype(x)) for x in jaxpr.consts]
       out_vals, tokens_out = mlir.jaxpr_subcomp(
           sub_ctx, jaxpr.jaxpr, tokens_in,
-          map(mlir.ir_constants, jaxpr.consts),
-          *map(mlir.wrap_singleton_ir_values, args),
+          consts, *map(mlir.wrap_singleton_ir_values, args),
           dim_var_values=ctx.dim_var_values)
       out_tokens = [tokens_out.get(eff) for eff in ordered_effects]
       out_vals = [*out_tokens, *out_vals]
-      hlo.ReturnOp(util.flatten(out_vals))
+      hlo.return_(util.flatten(out_vals))
 
   tokens_and_outputs = util.unflatten(case_op.results, map(len, output_types))
   tokens, outputs = util.split_list(tokens_and_outputs, [num_tokens])
@@ -833,17 +869,127 @@ def _cond_lowering(ctx, index, *args, branches, linear):
 
 mlir.register_lowering(cond_p, _cond_lowering)
 
-@state.register_discharge_rule(cond_p)
+@register_discharge_rule(cond_p)
 def _cond_state_discharge_rule(in_avals, out_avals, *args, branches, linear):
   discharged_branches = tuple(
-      core.ClosedJaxpr(state.discharge_state(branch.jaxpr, ())[0], ())
+      core.ClosedJaxpr(discharge_state(branch.jaxpr, ())[0], ())
       for branch in branches)
   out_vals = cond_p.bind(*args, branches=discharged_branches, linear=linear)
-  out_ref_vals, out_vals = util.split_list(
-      out_vals, [len(out_vals) - len(out_avals)])
+  out_vals, out_ref_vals = util.split_list(
+      out_vals, [len(out_avals)])
   ref_val_iter = iter(out_ref_vals)
   new_invals = []
   for aval in in_avals:
     new_invals.append(
-        next(ref_val_iter) if isinstance(aval, state.ShapedArrayRef) else None)
+        next(ref_val_iter) if isinstance(aval, AbstractRef) else None)
   return new_invals, out_vals
+
+
+_T = TypeVar("_T")
+def platform_dependent(*args: Any,
+                       default: Callable[..., _T] | None = None,
+                       **per_platform: Callable[..., _T]):
+  """Stages out platform-specific code.
+
+  In JAX the actual platform on which a computation is run is determined
+  very late, e.g., based on where the data is located. When using AOT
+  lowering or serialization, the computation may be compiled and executed
+  on a different machine, or even on a platform that is not available at
+  lowering time. This means that it is not safe to write platform-dependent
+  code using Python conditionals, e.g., based on the current default
+  JAX platform. Instead, one can use ``platform_dependent``:
+
+  Usage::
+
+      def cpu_code(*args): ...
+      def tpu_code(*args): ...
+      def other_platforms_code(*args): ...
+      res = platform_dependent(*args, cpu=cpu_code, tpu=tpu_code,
+                               default=other_platforms_code)
+
+  When the staged out code is executed on a CPU, this is equivalent to
+  ``cpu_code(*args)``, on a TPU is equivalent to ``tpu_code(*args)`` and on
+  any other platform to ``other_platforms_code(*args)``.
+  Unlike a Python conditional, all alternatives are traced
+  and staged out to Jaxpr. This is similar to, and is implemented in terms of,
+  :func:`~switch`, from which it inherits the behavior
+  under transformations.
+
+  Unlike a :func:`~switch` the choice of what gets executed is made earlier:
+  in most cases during lowering when the lowering platform is known; in the
+  rare case of multi-platform lowering and serialization, the StableHLO code
+  will contain a conditional on the actual platform. This conditional is
+  resolved just in time prior to compilation when the compilation platform is
+  known. This means that the compiler actually never sees a conditional.
+
+  Args:
+    *args: JAX arrays passed to each of the branches. May be PyTrees.
+    **per_platform: branches to use for different platforms. The branches are
+      JAX callables invoked with ``*args``. The keywords are platform names,
+      e.g., 'cpu', 'tpu', 'cuda', 'rocm'.
+    default: optional default branch to use for a platform not mentioned in
+      ``per_platform``. If there is no ``default`` there will be an error when
+      the code is lowered for a platform not mentioned in ``per_platform``.
+
+  Returns:
+    The value ``per_platform[execution_platform](*args)``.
+  """
+  # Join identical branches
+  platform_branches: list[tuple[list[str], Callable]] = []
+  for pname, pbranch in per_platform.items():
+    if pname == "gpu":
+      raise ValueError("Use 'cuda' or 'rocm' for lax.platform_dependent.")
+    for ps, b in platform_branches:
+      if b == pbranch:
+        ps.append(pname)
+        break
+    else:
+      platform_branches.append(([pname], pbranch))
+
+  platforms_lists, branches = util.unzip2(platform_branches)
+  platform_index = platform_index_p.bind(
+    platforms=tuple(tuple(ps) for ps in platforms_lists),
+    has_default=(default is not None))
+  if default is not None:
+    branches = branches + (default,)
+  # Use a switch, to get the proper transformation rules for free. Since
+  # platform index has no dependence on the input data, it won't be vectorized
+  # under vmap.
+  return switch(platform_index, branches, *args)
+
+# A primitive to compute the index of a platform into a list of platforms.
+# Args:
+#   platforms: Sequence[Sequence[str]]: a sequence of sequences of platform
+#     names. If the current lowering platform is in one of the inner sequences
+#     returns the index of that inner sequence in the outer sequence.
+#   has_default: if True, and if the lowering platform is not found in
+#     `platforms` then return `len(platforms)`. Otherwise, raise an error.
+platform_index_p = core.Primitive("platform_index")
+platform_index_p.multiple_results = False
+platform_index_p.def_impl(functools.partial(dispatch.apply_primitive,
+                                            platform_index_p))
+
+@platform_index_p.def_abstract_eval
+def _platform_index_aval(*_, **__):
+  return core.ShapedArray((), np.int32)
+
+def _platform_index_lowering(ctx: mlir.LoweringRuleContext,
+                             *,
+                             platforms: Sequence[Sequence[str]],
+                             has_default: bool):
+  def lower_constant(ctx: mlir.LoweringRuleContext, *, i: int) -> mlir.ir.Value:
+    return mlir.ir_constants(np.int32(i))
+  platform_rules: dict[str, mlir.LoweringRule] = {}
+  for i, ps in enumerate(platforms):
+    rule = partial(lower_constant, i=i)
+    for p in ps:
+      platform_rules[p] = rule
+
+  default_rule = (
+    partial(lower_constant, i=len(platforms)) if has_default else None)
+  return mlir.lower_per_platform(
+    ctx,
+    f"platform_index(platforms={platforms}, has_default={has_default})",
+    platform_rules, default_rule, effects.no_effects)
+
+mlir.register_lowering(platform_index_p, _platform_index_lowering)

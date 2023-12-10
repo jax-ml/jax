@@ -18,11 +18,12 @@ moving parts, at the expense of code size), and another using Flax.
 
 See README.md for how these are used.
 """
+from collections.abc import Sequence
 import functools
 import logging
 import re
 import time
-from typing import Any, Callable, Optional, Sequence, Tuple
+from typing import Any, Callable, Optional
 from absl import flags
 
 import flax  # type: ignore[import]
@@ -37,8 +38,8 @@ import optax
 import tensorflow as tf  # type: ignore
 import tensorflow_datasets as tfds  # type: ignore
 
-flags.DEFINE_boolean("mock_data", False, "Use fake data, for testing.")
-FLAGS = flags.FLAGS
+_MOCK_DATA = flags.DEFINE_boolean("mock_data", False,
+                                  "Use fake data, for testing.")
 
 #### Model parameters
 
@@ -63,7 +64,7 @@ def load_mnist(split: tfds.Split, batch_size: int):
     an iterator with pairs (images, labels). The images have shape
     (B, 28, 28, 1) and the labels have shape (B, 10), where B is the batch_size.
   """
-  if FLAGS.mock_data:
+  if _MOCK_DATA.value:
     with tfds.testing.mock_data(num_examples=batch_size):
       try:
         ds = tfds.load("mnist", split=split)
@@ -102,7 +103,7 @@ class PureJaxMNIST:
   name = "mnist_pure_jax"
 
   @staticmethod
-  def predict(params: Sequence[Tuple[Any, Any]], inputs, with_classifier=True):
+  def predict(params: Sequence[tuple[Any, Any]], inputs, with_classifier=True):
     """The prediction function.
 
     Args:

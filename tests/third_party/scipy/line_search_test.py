@@ -3,7 +3,7 @@ import scipy.optimize
 
 import jax
 from jax import grad
-from jax.config import config
+from jax import config
 import jax.numpy as jnp
 import jax._src.test_util as jtu
 from jax._src.scipy.optimize.line_search import line_search

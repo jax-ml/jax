@@ -13,23 +13,27 @@
 # limitations under the License.
 
 from functools import partial
+import math
 import operator
 from textwrap import dedent as _dedent
-from typing import Optional, Tuple, Union
+from typing import Optional, Union, cast
 
+import numpy as np
+
+from jax import jit
+from jax import lax
+
+from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.lax_numpy import (
-    any, append, arange, array, asarray, concatenate, cumsum, diff,
-    empty, full_like, isnan, lexsort, moveaxis, nonzero, ones, ravel,
+    append, arange, array, asarray, concatenate, diff,
+    empty, full_like, lexsort, moveaxis, nonzero, ones, ravel,
     sort, where, zeros)
-from jax._src.numpy.util import _check_arraylike, _wraps
+from jax._src.numpy.reductions import any, cumsum
+from jax._src.numpy.ufuncs import isnan
+from jax._src.numpy.util import check_arraylike, _wraps
 from jax._src.typing import Array, ArrayLike
-from jax._src.util import prod as _prod
-from jax import core
-from jax import jit
-from jax import lax
-import numpy as np
 
 
 _lax_const = lax_internal._const
@@ -44,7 +48,7 @@ def in1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False, invert: bo
 
 @partial(jit, static_argnames=('invert',))
 def _in1d(ar1: ArrayLike, ar2: ArrayLike, invert: bool) -> Array:
-  _check_arraylike("in1d", ar1, ar2)
+  check_arraylike("in1d", ar1, ar2)
   ar1_flat = ravel(ar1)
   ar2_flat = ravel(ar2)
   # Note: an algorithm based on searchsorted has better scaling, but in practice
@@ -76,7 +80,7 @@ def _in1d(ar1: ArrayLike, ar2: ArrayLike, invert: bool) -> Array:
         remaining elements will be filled with ``fill_value``, which defaults to zero."""))
 def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
               *, size: Optional[int] = None, fill_value: Optional[ArrayLike] = None) -> Array:
-  _check_arraylike("setdiff1d", ar1, ar2)
+  check_arraylike("setdiff1d", ar1, ar2)
   if size is None:
     ar1 = core.concrete_or_error(None, ar1, "The error arose in setdiff1d()")
   else:
@@ -86,7 +90,7 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
   if arr1.size == 0:
     return full_like(arr1, fill_value, shape=size or 0)
   if not assume_unique:
-    arr1 = unique(arr1, size=size and arr1.size)
+    arr1 = cast(Array, unique(arr1, size=size and arr1.size))
   mask = in1d(arr1, ar2, invert=True)
   if size is None:
     return arr1[mask]
@@ -114,13 +118,15 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
         value of the union."""))
 def union1d(ar1: ArrayLike, ar2: ArrayLike,
             *, size: Optional[int] = None, fill_value: Optional[ArrayLike] = None) -> Array:
-  _check_arraylike("union1d", ar1, ar2)
+  check_arraylike("union1d", ar1, ar2)
   if size is None:
     ar1 = core.concrete_or_error(None, ar1, "The error arose in union1d()")
     ar2 = core.concrete_or_error(None, ar2, "The error arose in union1d()")
   else:
     size = core.concrete_or_error(operator.index, size, "The error arose in union1d()")
-  return unique(concatenate((ar1, ar2), axis=None), size=size, fill_value=fill_value)
+  out = unique(concatenate((ar1, ar2), axis=None), size=size,
+               fill_value=fill_value)
+  return cast(Array, out)
 
 
 @_wraps(np.setxor1d, lax_description="""
@@ -128,7 +134,7 @@ In the JAX version, the input arrays are explicitly flattened regardless
 of assume_unique value.
 """)
 def setxor1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False) -> Array:
-  _check_arraylike("setxor1d", ar1, ar2)
+  check_arraylike("setxor1d", ar1, ar2)
   ar1 = core.concrete_or_error(None, ar1, "The error arose in setxor1d()")
   ar2 = core.concrete_or_error(None, ar2, "The error arose in setxor1d()")
 
@@ -149,7 +155,7 @@ def setxor1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False) -> Arr
 
 
 @partial(jit, static_argnames=['return_indices'])
-def _intersect1d_sorted_mask(ar1: ArrayLike, ar2: ArrayLike, return_indices: bool = False) -> Tuple[Array, ...]:
+def _intersect1d_sorted_mask(ar1: ArrayLike, ar2: ArrayLike, return_indices: bool = False) -> tuple[Array, ...]:
   """
     Helper function for intersect1d which is jit-able
     """
@@ -169,8 +175,8 @@ def _intersect1d_sorted_mask(ar1: ArrayLike, ar2: ArrayLike, return_indices: boo
 
 @_wraps(np.intersect1d)
 def intersect1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
-                return_indices: bool = False) -> Union[Array, Tuple[Array, Array, Array]]:
-  _check_arraylike("intersect1d", ar1, ar2)
+                return_indices: bool = False) -> Union[Array, tuple[Array, Array, Array]]:
+  check_arraylike("intersect1d", ar1, ar2)
   ar1 = core.concrete_or_error(None, ar1, "The error arose in intersect1d()")
   ar2 = core.concrete_or_error(None, ar2, "The error arose in intersect1d()")
 
@@ -220,7 +226,7 @@ UNIQUE_SIZE_HINT = (
   "a concrete value for the size argument, which will determine the output size.")
 
 @partial(jit, static_argnums=1)
-def _unique_sorted_mask(ar: Array, axis: int) -> Tuple[Array, Array, Array]:
+def _unique_sorted_mask(ar: Array, axis: int) -> tuple[Array, Array, Array]:
   aux = moveaxis(ar, axis, 0)
   if np.issubdtype(aux.dtype, np.complexfloating):
     # Work around issue in sorting of complex numbers with Nan only in the
@@ -228,11 +234,11 @@ def _unique_sorted_mask(ar: Array, axis: int) -> Tuple[Array, Array, Array]:
     # is fixed to match numpy.
     aux = where(isnan(aux), _lax_const(aux, np.nan), aux)
   size, *out_shape = aux.shape
-  if _prod(out_shape) == 0:
+  if math.prod(out_shape) == 0:
     size = 1
     perm = zeros(1, dtype=int)
   else:
-    perm = lexsort(aux.reshape(size, _prod(out_shape)).T[::-1])
+    perm = lexsort(aux.reshape(size, math.prod(out_shape)).T[::-1])
   aux = aux[perm]
   if aux.size:
     if dtypes.issubdtype(aux.dtype, np.inexact):
@@ -249,7 +255,7 @@ def _unique_sorted_mask(ar: Array, axis: int) -> Tuple[Array, Array, Array]:
 def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bool = False,
             return_counts: bool = False, size: Optional[int] = None,
             fill_value: Optional[ArrayLike] = None, return_true_size: bool = False
-            ) -> Union[Array, Tuple[Array, ...]]:
+            ) -> Union[Array, tuple[Array, ...]]:
   """
   Find the unique elements of an array along a particular axis.
   """
@@ -264,9 +270,8 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
   else:
     ind = nonzero(mask, size=size)[0]
   result = aux[ind] if aux.size else aux
-  if fill_value is not None:
-    fill_value = asarray(fill_value, dtype=result.dtype)
   if size is not None and fill_value is not None:
+    fill_value = asarray(fill_value, dtype=result.dtype)
     if result.shape[0]:
       valid = lax.expand_dims(arange(size) < mask.sum(), tuple(range(1, result.ndim)))
       result = where(valid, result, fill_value)
@@ -274,7 +279,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
       result = full_like(result, fill_value, shape=(size, *result.shape[1:]))
   result = moveaxis(result, 0, axis)
 
-  ret: Tuple[Array, ...] = (result,)
+  ret: tuple[Array, ...] = (result,)
   if return_index:
     if aux.size:
       ret += (perm[ind],)
@@ -322,7 +327,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
 def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = False,
            return_counts: bool = False, axis: Optional[int] = None,
            *, size: Optional[int] = None, fill_value: Optional[ArrayLike] = None):
-  _check_arraylike("unique", ar)
+  check_arraylike("unique", ar)
   if size is None:
     ar = core.concrete_or_error(None, ar,
         "The error arose for the first argument of jnp.unique(). " + UNIQUE_SIZE_HINT)

@@ -23,19 +23,27 @@ expressions requiring rank promotion can lead to a warning, error, or can be
 allowed just like regular NumPy. The configuration option is named
 :code:`jax_numpy_rank_promotion` and it can take on string values
 :code:`allow`, :code:`warn`, and :code:`raise`. The default setting is
-:code:`warn`, which raises a warning on the first occurrence of rank promotion.
-The :code:`raise` setting raises an error on rank promotion, and :code:`allow`
-allows rank promotion without warning or error.
+:code:`allow`, which allows rank promotion without warning or error.
+The :code:`raise` setting raises an error on rank promotion, and :code:`warn`
+raises a warning on the first occurrence of rank promotion.
 
-As with most other JAX configuration options, you can set this option in
-several ways. One is by using :code:`jax.config` in your code:
+Rank promotion can be enabled or disabled locally with the :func:`jax.numpy_rank_promotion`
+context manager:
 
 .. code-block:: python
 
-  from jax.config import config
-  config.update("jax_numpy_rank_promotion", "allow")
+   with jax.numpy_rank_promotion("warn"):
+     z = x + y
+
+This configuration can also be set globally in several ways.
+One is by using :code:`jax.config` in your code:
+
+.. code-block:: python
+
+  from jax import config
+  config.update("jax_numpy_rank_promotion", "warn")
 
 You can also set the option using the environment variable
 :code:`JAX_NUMPY_RANK_PROMOTION`, for example as
-:code:`JAX_NUMPY_RANK_PROMOTION='raise'`. Finally, when using :code:`absl-py`
+:code:`JAX_NUMPY_RANK_PROMOTION='warn'`. Finally, when using :code:`absl-py`
 the option can be set with a command-line flag.

@@ -14,12 +14,15 @@
 
 
 import threading
+from unittest import SkipTest
 
 from absl.testing import absltest
 import jax
 from jax import lax, numpy as jnp
 from jax import config
 from jax.experimental import host_callback as hcb
+from jax._src import core
+from jax._src import xla_bridge
 from jax._src.lib import xla_client
 import jax._src.test_util as jtu
 import numpy as np
@@ -29,6 +32,11 @@ config.parse_flags_with_absl()
 
 class InfeedTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    if xla_bridge.using_pjrt_c_api():
+      raise SkipTest("infeed not implemented in PJRT C API")
+    super().setUp()
+
   @jax.numpy_rank_promotion("allow")  # Test explicitly exercises implicit rank promotion.
   def testInfeed(self):
 
@@ -36,9 +44,9 @@ class InfeedTest(jtu.JaxTestCase):
     def f(x):
       token = lax.create_token(x)
       (y,), token = lax.infeed(
-          token, shape=(jax.ShapedArray((3, 4), jnp.float32),))
+          token, shape=(core.ShapedArray((3, 4), jnp.float32),))
       (z,), _ = lax.infeed(
-          token, shape=(jax.ShapedArray((3, 1, 1), jnp.float32),))
+          token, shape=(core.ShapedArray((3, 1, 1), jnp.float32),))
       return x + y + z
 
     x = np.float32(1.5)
@@ -54,8 +62,8 @@ class InfeedTest(jtu.JaxTestCase):
     x = np.float32(1.5)
     y = np.reshape(np.arange(12, dtype=np.int16), (3, 4))
     to_infeed = dict(a=x, b=y)
-    to_infeed_shape = dict(a=jax.ShapedArray((), dtype=np.float32),
-                           b=jax.ShapedArray((3, 4), dtype=np.int16))
+    to_infeed_shape = dict(a=core.ShapedArray((), dtype=np.float32),
+                           b=core.ShapedArray((3, 4), dtype=np.int16))
     @jax.jit
     def f(x):
       token = lax.create_token(x)
@@ -76,7 +84,7 @@ class InfeedTest(jtu.JaxTestCase):
     def f(x):
       token = lax.create_token(x)
       y, token = lax.infeed(
-          token, shape=jax.ShapedArray((3, 4), jnp.float32))
+          token, shape=core.ShapedArray((3, 4), jnp.float32))
       token = lax.outfeed(token, y + np.float32(1))
       return x - 1
 
@@ -96,7 +104,7 @@ class InfeedTest(jtu.JaxTestCase):
 
     def doubler(_, token):
       y, token = lax.infeed(
-          token, shape=jax.ShapedArray((3, 4), jnp.float32))
+          token, shape=core.ShapedArray((3, 4), jnp.float32))
       return lax.outfeed(token, y * np.float32(2))
 
     @jax.jit

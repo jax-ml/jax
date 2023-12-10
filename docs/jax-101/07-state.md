@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.14.1
+    jupytext_version: 1.15.2
 kernelspec:
   display_name: Python 3
   name: python3
@@ -15,7 +15,7 @@ kernelspec:
 
 # Stateful Computations in JAX
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/07-state.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/07-state.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/jax-101/07-state.ipynb)
 
 *Authors: Vladimir Mikulik*
 
@@ -102,13 +102,11 @@ Part of the problem with our counter was that the returned value didn't depend o
 :id: 53pSdK4KoOEZ
 :outputId: 5ac72b9c-7029-4bf2-de8d-1d412bd74c79
 
-from typing import Tuple
-
 CounterState = int
 
 class CounterV2:
 
-  def count(self, n: CounterState) -> Tuple[int, CounterState]:
+  def count(self, n: CounterState) -> tuple[int, CounterState]:
     # You could just return n+1, but here we separate its role as 
     # the output and as the counter state for didactic purposes.
     return n+1, n+1

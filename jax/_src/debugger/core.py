@@ -13,19 +13,18 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Hashable
 import dataclasses
 import inspect
 import threading
+from typing import Any, Protocol
 
-from typing import Any, Dict, Hashable, List, Optional, Protocol, Tuple
-
-import jax.numpy as jnp
-from jax import core
+import jax
 from jax import tree_util
+from jax._src import core
 from jax._src import debugging
 from jax._src import traceback_util
 from jax._src import util
-import numpy as np
 
 
 @tree_util.register_pytree_node_class
@@ -72,21 +71,18 @@ def _safe_flatten_dict(dct: dict[Any, Any]
 class DebuggerFrame:
   """Encapsulates Python frame information."""
   filename: str
-  locals: Dict[str, Any]
-  globals: Dict[str, Any]
+  locals: dict[str, Any]
+  globals: dict[str, Any]
   code_context: str
-  source: List[str]
+  source: list[str]
   lineno: int
-  offset: Optional[int]
+  offset: int | None
 
   def tree_flatten(self):
     flat_locals, locals_tree = _safe_flatten_dict(self.locals)
     flat_globals, globals_tree = _safe_flatten_dict(self.globals)
     flat_vars = flat_locals + flat_globals
-    is_valid = [
-        isinstance(l, (core.Tracer, jnp.ndarray, np.ndarray))
-        for l in flat_vars
-    ]
+    is_valid = [isinstance(l, core.Tracer) for l in flat_vars]
     invalid_vars, valid_vars = util.partition_list(is_valid, flat_vars)
     return valid_vars, (is_valid, invalid_vars, locals_tree, globals_tree,
                         len(flat_locals), self.filename, self.code_context,
@@ -131,13 +127,13 @@ class DebuggerFrame:
 
 class Debugger(Protocol):
 
-  def __call__(self, frames: List[DebuggerFrame], thread_id: Optional[int],
+  def __call__(self, frames: list[DebuggerFrame], thread_id: int | None,
       **kwargs: Any) -> None:
     ...
-_debugger_registry: Dict[str, Tuple[int, Debugger]] = {}
+_debugger_registry: dict[str, tuple[int, Debugger]] = {}
 
 
-def get_debugger(backend: Optional[str] = None) -> Debugger:
+def get_debugger(backend: str | None = None) -> Debugger:
   if backend is not None and backend in _debugger_registry:
     return _debugger_registry[backend][1]
   debuggers = sorted(_debugger_registry.values(), key=lambda x: -x[0])
@@ -155,9 +151,9 @@ def register_debugger(name: str, debugger: Debugger, priority: int) -> None:
 debug_lock = threading.Lock()
 
 
-def breakpoint(*, backend: Optional[str] = None, filter_frames: bool = True,
-               num_frames: Optional[int] = None, ordered: bool = False,
-               **kwargs):  # pylint: disable=redefined-builtin
+def breakpoint(*, backend: str | None = None, filter_frames: bool = True,
+               num_frames: int | None = None, ordered: bool = False,
+               token = None, **kwargs):  # pylint: disable=redefined-builtin
   """Enters a breakpoint at a point in a program.
 
   Args:
@@ -171,17 +167,26 @@ def breakpoint(*, backend: Optional[str] = None, filter_frames: bool = True,
     num_frames: The number of frames above the current stack frame to make
       available for inspection in the interactive debugger.
     ordered: A keyword only argument used to indicate whether or not the
-      staged out computation will enforce ordering of this ``debug_print``
-      with respect to other ordered ``debug_print`` calls.
+      staged out computation will enforce ordering of this ``jax.debug.breakpoint``
+      with respect to other ordered ``jax.debug.breakpoint`` and ``jax.debug.print``
+      calls.
+    token: A keyword only argument; an alternative to ``ordered``. If used then a JAX
+      array (or pytree of JAX arrays) should be passed, and the breakpoint will be run
+      once its value is computed.
+      This is returned unchanged, and should be passed back to the computation.
+      If the return value is unused in the later computation, then the whole computation
+      will be pruned and this breakpoint will not be run.
 
   Returns:
-    None.
+    If `token` is passed, then its value is returned unchanged. Otherwise, returns
+    `None`.
   """
+  if token is not None:
+    if ordered:
+      raise ValueError("`ordered` and `token` are mutually exclusive arguments.")
   frame_infos = inspect.stack()
   # Throw out first frame corresponding to this function
   frame_infos = frame_infos[1:]
-  if num_frames is not None:
-    frame_infos = frame_infos[:num_frames]
   # Filter out internal frames
   if filter_frames:
     frames = [
@@ -194,6 +199,8 @@ def breakpoint(*, backend: Optional[str] = None, filter_frames: bool = True,
         DebuggerFrame.from_frameinfo(frame_info)
         for frame_info in frame_infos
     ]
+  if num_frames is not None:
+    frames = frames[:num_frames]
   flat_args, frames_tree = tree_util.tree_flatten(frames)
 
   def _breakpoint_callback(*flat_args):
@@ -207,4 +214,11 @@ def breakpoint(*, backend: Optional[str] = None, filter_frames: bool = True,
     with debug_lock:
       debugger(frames, thread_id, **kwargs)
 
-  debugging.debug_callback(_breakpoint_callback, *flat_args, ordered=ordered)
+  if token is None:
+    debugging.debug_callback(_breakpoint_callback, *flat_args, ordered=ordered)
+  else:
+    def _breakpoint_callback_wrapper(x, *flat_args):
+      _breakpoint_callback(*flat_args)
+      return x
+    token, flat_args = jax.lax.stop_gradient((token, flat_args))
+    return jax.pure_callback(_breakpoint_callback_wrapper, token, token, *flat_args)

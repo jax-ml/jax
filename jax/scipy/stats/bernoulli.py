@@ -18,4 +18,6 @@
 from jax._src.scipy.stats.bernoulli import (
   logpmf as logpmf,
   pmf as pmf,
+  cdf as cdf,
+  ppf as ppf
 )

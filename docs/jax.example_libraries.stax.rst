@@ -1,5 +1,5 @@
-jax.example_libraries.stax module
-=================================
+``jax.example_libraries.stax`` module
+=====================================
 
 .. automodule:: jax.example_libraries.stax
     :members:

@@ -14,12 +14,14 @@
 # ==============================================================================
 """Utils for building a device mesh."""
 
+import collections
+from collections.abc import Sequence
 import itertools
 import logging
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Optional
 
-import jax
 import numpy as np
+from jax._src import xla_bridge as xb
 
 logger = logging.getLogger(__name__)
 
@@ -30,36 +32,27 @@ _TPU_V4 = 'TPU v4'
 # Maps physical topology -> mesh shape -> transpose to use for jekbradbury's
 # famous contiguous mesh trick.
 #
-# The trick only works for certain topologies and mesh shapes, which are chosen
-# to be representative of large language model workloads (the three axes are
-# [replica, data, model]).
-_TRANSPOSE_TRICKS: Dict[Tuple[int, ...],
-                        Dict[Tuple[int, ...], Tuple[int, ...]]] = {
+# The trick only works for certain topologies and mesh shapes. Trivial dims of
+# size 1 can be added to the shapes listed, and they are also supported.
+_TRANSPOSE_TRICKS: dict[tuple[int, ...],
+                        dict[tuple[int, ...], tuple[int, ...]]] = {
     (2, 2, 1): {
-        (1, 2, 2): (0, 1, 2),
         (2, 2): (0, 1, 2),
     },
     (2, 2, 4): {
-        (1, 4, 4): (0, 1, 2),
         (4, 4): (0, 1, 2),
     },
     (4, 4, 4): {
-        (1, 16, 4): (0, 2, 1),
         (16, 4): (0, 2, 1),
     },
     (4, 8, 8): {
-        (1, 64, 4): (0, 2, 1),
-        (1, 4, 64): (0, 2, 1),
         (64, 4): (0, 2, 1),
         (4, 64): (0, 2, 1),
     },
     (8, 8, 8): {
-        (1, 64, 8): (0, 2, 1),
         (64, 8): (0, 2, 1),
     },
     (8, 16, 16): {
-        (1, 256, 8): (0, 2, 1),
-        (1, 8, 256): (0, 2, 1),
         (256, 8): (0, 2, 1),
         (8, 256): (0, 2, 1),
     },
@@ -69,9 +62,49 @@ _TRANSPOSE_TRICKS: Dict[Tuple[int, ...],
 _TRAY_RING_ORDER = (0, 1, 2, 3, 6, 7, 4, 5)
 
 
+def _tpu_v2_v3_create_device_mesh(
+    mesh_shape: Sequence[int],
+    devices: Sequence[Any],
+    **unused_kwargs,
+) -> np.ndarray:
+  if len(devices) == 8:
+    logger.info(
+        'Reordering mesh to physical ring order on single-tray TPU v2/v3.'
+    )
+    device_mesh = np.asarray(devices)
+    device_mesh = device_mesh[np.array(_TRAY_RING_ORDER)]
+    device_mesh = device_mesh.reshape(mesh_shape)
+    return device_mesh
+  elif mesh_shape[-1] == 8:
+    device_mesh = np.asarray(devices).reshape(mesh_shape)
+    logger.info(
+        'Reordering mesh to physical ring order on each TPU v2/v3 tray.'
+    )
+    perm = np.array(_TRAY_RING_ORDER)
+    device_mesh = device_mesh[..., perm]
+    return device_mesh
+  else:
+    # TODO(skye): implement 2D mesh_shape logic here:
+    # https://github.com/tensorflow/lingvo/blob/0df40cf604dfcd14e28f7087d73687a0bd2fe5c6/lingvo/core/gshard_utils.py#L187
+    # (possibly replaces above mesh_shape[-1] == 8 case)
+    return np.asarray(devices).reshape(mesh_shape)
+
+
+# Registers functions to create device mesh for specific device kinds. Takes
+# precedence over the more general logic in create_device_mesh(). Handler may
+# return None; in that case, it will fall back to using the default logic.
+device_kind_handler_dict: dict[
+    str,
+    Callable[..., Optional[np.ndarray]],
+] = {
+    _TPU_V2: _tpu_v2_v3_create_device_mesh,
+    _TPU_V3: _tpu_v2_v3_create_device_mesh,
+}
+
+
 def _create_device_mesh_for_nd_torus(
     physical_mesh: np.ndarray, mesh_shape: Sequence[int],
-) -> Tuple[np.ndarray, List[Tuple[int, ...]]]:
+) -> tuple[np.ndarray, list[tuple[int, ...]]]:
   """Assigns logical parallelism axes to physical axes of an N-D torus network.
 
   Given logical parallelism axes with sizes in `mesh_shape` and devices in an
@@ -104,8 +137,6 @@ def _create_device_mesh_for_nd_torus(
       physical topology.
     mesh_shape: shape of the logical mesh (size of the various logical
       parallelism axes), with axes ordered by increasing network intensity.
-    prefer_symmetric: whether to prefer to assign a logical axis to multiple
-      physical axes of the same size rather than axes of different sizes.
 
   Returns:
     An np.ndarray of devices in the shape of the logical mesh (mesh_shape), with
@@ -116,7 +147,7 @@ def _create_device_mesh_for_nd_torus(
   # Remaining physical axes to be assigned to logical axes.
   assignable_physical_mesh = list(physical_mesh.shape)
   # Map each logical axis to a subset of physical axes.
-  assignment: List[Tuple[int, ...]] = [() for _ in mesh_shape]
+  assignment: list[tuple[int, ...]] = [() for _ in mesh_shape]
 
   # Assign logical axes from highest network intensity to lowest.
   # `mesh_shape` is assumed to ordered by lowest network intensity first, so
@@ -136,7 +167,7 @@ def _create_device_mesh_for_nd_torus(
         # 4x8 or a single axis. If XLA 2D collectives support non-square plane
         # soon, we can continue to preferentially map to 2D plane in general,
         # otherwise, we should treat non-square 2D plane and 1D submesh equally.
-        if np.product(c_axes) == logical_axis_size:
+        if np.prod(c_axes) == logical_axis_size:
           assignment[logical_axis_index] = c_indices
           # Zero the assigned physical axes.
           assignable_physical_mesh = [
@@ -151,10 +182,16 @@ def _create_device_mesh_for_nd_torus(
       # If the num_axes for loop did not break, i.e. none of the candidates work
       # goto here with this while-else construct.
       if logical_axis_size > 1:
-        raise NotImplementedError(f'Failed to find assignment for '
-                                  f'logical_axis_index {logical_axis_index}')
+        raise NotImplementedError(
+            'Failed to find assignment for logical_axis_index'
+            f' {logical_axis_index} of size {logical_axis_size} with remaining'
+            f' assignable mesh {assignable_physical_mesh}. The size of each'
+            ' axis in your logical mesh must be equal to the product of'
+            ' some subset of the physical mesh axis sizes. E.g logical mesh (4,'
+            ' 16) is compatible with physical mesh 4x4x4 since 4=4 and 16=4x4.'
+        )
   # Flatten the assignment, e.g., [(), (2,), (0, 1)] -> (2, 0, 1).
-  transpose: List[int] = []
+  transpose: list[int] = []
   for x in assignment:
     for y in x:
       transpose.append(int(y))
@@ -183,20 +220,26 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
       v2 and v3, global_z is instead cores_per_chip (i.e., 2).
   """
   device_kind = jax_devices[0].device_kind
-  def sort_key(device):
-    x, y, z = device.coords
-    core = device.core_on_chip
-    if device_kind in (_TPU_V2, _TPU_V3):
-      assert z == 0
-      return (x, y, core)
-    else:
-      if core != 0:
-        raise ValueError(
-            'Creating meshes for TPU >v3 requires one device per chip')
-      return (x, y, z)
-  sorted_devices = sorted(jax_devices, key=sort_key)
-  x, y, *_ = _bounds_from_last_device(sorted_devices[-1])
-  return np.array(sorted_devices).reshape((x, y, -1))
+  device_coords = [d.coords for d in jax_devices]
+  dims = tuple(d + 1 for d in max(device_coords))
+  assert len(dims) == 3, dims
+  if device_kind in (_TPU_V2, _TPU_V3):
+    cores_per_chip = max(d.core_on_chip for d in jax_devices) + 1
+    out = np.empty(dims[:2] + (cores_per_chip,), dtype=object)
+    for coords, d in zip(device_coords, jax_devices):
+      assert coords[2] == 0, d
+      out[coords[0], coords[1], d.core_on_chip] = d
+  else:
+    out = np.empty(dims, dtype=object)
+    for coords, d in zip(device_coords, jax_devices):
+      if d.core_on_chip != 0:
+        raise AssertionError(
+            'Creating meshes for TPU >v3 requires one device per chip'
+            f' ("megacore" mode). Got device id {d.core_on_chip} for a device'
+            f' of kind {device_kind}: {d}.'
+        )
+      out[coords[0], coords[1], coords[2]] = d
+  return out
 
 
 # jekbradbury's famous trick for creating contiguous submeshes (where available)
@@ -209,20 +252,26 @@ def _transpose_trick(physical_mesh: np.ndarray,
         f"create_device_mesh cannot create contiguous submeshes for "
         f"physical mesh topology {topology}")
 
-  if mesh_shape not in _TRANSPOSE_TRICKS[topology]:
+  mesh_shape_no_trivial_dims: tuple[int, ...] = ()
+  for dim_size in mesh_shape:
+    if dim_size != 1:
+      mesh_shape_no_trivial_dims += (dim_size,)
+
+  if mesh_shape_no_trivial_dims not in _TRANSPOSE_TRICKS[topology]:
     raise ValueError(
         f"create_device_mesh cannot create contiguous submeshes for "
         f"mesh_shape {mesh_shape} and physical mesh topology {topology}. "
         f"Available mesh_shapes: {list(_TRANSPOSE_TRICKS[topology].keys())}")
 
-  return physical_mesh.transpose(*_TRANSPOSE_TRICKS[topology][mesh_shape])
+  return physical_mesh.transpose(
+      *_TRANSPOSE_TRICKS[topology][mesh_shape_no_trivial_dims])
 
 
 def create_device_mesh(
     mesh_shape: Sequence[int],
     devices: Optional[Sequence[Any]] = None, *,
     contiguous_submeshes: bool = False) -> np.ndarray:
-  """Creates a performant device mesh for jax.experimental.maps.Mesh.
+  """Creates a performant device mesh for jax.sharding.Mesh.
 
   Args:
     mesh_shape: shape of logical mesh, ordered by increasing network-intensity
@@ -231,42 +280,36 @@ def create_device_mesh(
     devices: optionally, the devices to construct a mesh for. Defaults to
       jax.devices().
     contiguous_submeshes: if True, this function will attempt to create a mesh
-      where each process's local devices form a contiguous submesh. This is
-      required when passing non-GlobalDeviceArrays to `pjit` (see the
-      "Multi-process platforms" note of the [pjit
-      documentation](https://jax.readthedocs.io/en/latest/jax.experimental.pjit.html)
-      for more information on this constraint). A ValueError will be raised if
-      this function can't produce a suitable mesh.
+      where each process's local devices form a contiguous submesh. A ValueError
+      will be raised if this function can't produce a suitable mesh. This
+      setting was sometimes necessary before the introduction of jax.Array to
+      ensure non-ragged local arrays; if using jax.Arrays, it's better to keep
+      this set to False.
+
+  Raises:
+    ValueError: if the number of devices doesn't equal the product of
+      `mesh_shape`.
 
   Returns:
     A np.ndarray of JAX devices with mesh_shape as its shape that can be fed
-    into jax.experimental.maps.Mesh with good collective performance.
+    into jax.sharding.Mesh with good collective performance.
   """
   if devices is None:
-    devices = jax.devices()
+    devices = xb.devices()
   if np.prod(mesh_shape) != len(devices):
     raise ValueError(f'Number of devices {len(devices)} must equal the product '
                      f'of mesh_shape {mesh_shape}')
   last_device = devices[-1]
-  if last_device.device_kind in (_TPU_V2, _TPU_V3):
-    if len(devices) == 8:
-      logger.info('Reordering mesh to physical ring order on single-tray TPU v2/v3.')
-      device_mesh = np.asarray(devices)
-      device_mesh = device_mesh[np.array(_TRAY_RING_ORDER)]
-      device_mesh = device_mesh.reshape(mesh_shape)
-      return device_mesh
-    elif mesh_shape[-1] == 8:
-      device_mesh = np.asarray(devices).reshape(mesh_shape)
-      logger.info('Reordering mesh to physical ring order on each TPU v2/v3 tray.')
-      perm = np.array(_TRAY_RING_ORDER)
-      device_mesh = device_mesh[..., perm]
-      return device_mesh
-    else:
-      # TODO(skye): implement 2D mesh_shape logic here:
-      # https://github.com/tensorflow/lingvo/blob/0df40cf604dfcd14e28f7087d73687a0bd2fe5c6/lingvo/core/gshard_utils.py#L187
-      # (possibly replaces above mesh_shape[-1] == 8 case)
-      return np.asarray(devices).reshape(mesh_shape)
-  elif last_device.platform == 'tpu':
+
+  handler = device_kind_handler_dict.get(last_device.device_kind, None)
+  if handler is not None:
+    result = handler(
+        mesh_shape, devices, contiguous_submeshes=contiguous_submeshes
+    )
+    if result is not None:
+      return result
+
+  if last_device.platform == 'tpu':
     physical_mesh = _get_physical_tpu_mesh(devices)
     if contiguous_submeshes:
       physical_mesh = _transpose_trick(physical_mesh, mesh_shape)
@@ -288,8 +331,8 @@ def create_hybrid_device_mesh(mesh_shape: Sequence[int],
     mesh_shape: shape of the logical mesh for the faster/inner network, ordered
       by increasing network intensity, e.g. [replica, data, mdl] where mdl has
       the most network communication requirements.
-    dcn_mesh_shape: shape of the logical mesh for the slower/outer network,
-      in the same order as mesh_shape.
+    dcn_mesh_shape: shape of the logical mesh for the slower/outer network, in
+      the same order as mesh_shape.
     devices: optionally, the devices to construct a mesh for. Defaults to
       jax.devices().
     process_is_granule: if True, this function will treat processes as the units
@@ -297,25 +340,27 @@ def create_hybrid_device_mesh(mesh_shape: Sequence[int],
       attributes on devices and use slices as the units. Enabling this is meant
       as a fallback for platforms (e.g., GPU) that don't set slice_index.
 
+  Raises:
+    ValueError: if the number of slices to which the `devices` belong doesn't
+      equal the product of `dcn_mesh_shape`, or if the number of devices
+      belonging to any single slice does not equal the product of `mesh_shape`.
+
   Returns:
     A np.ndarray of JAX devices with mesh_shape * dcn_mesh_shape as its shape
-    that can be fed into jax.experimental.maps.Mesh for hybrid parallelism.
+    that can be fed into jax.sharding.Mesh for hybrid parallelism.
   """
   if devices is None:
-    devices = jax.devices()
+    devices = xb.devices()
   attr = 'process_index' if process_is_granule else 'slice_index'
   assert hasattr(devices[0], attr)
-  granule_id, granules = 0, []
-  while True:
-    granule = [dev for dev in devices if getattr(dev, attr) == granule_id]
-    if granule:
-      granules.append(granule)
-      granule_id += 1
-    else:
-      break
+  granule_dict = collections.defaultdict(list)
+  for dev in devices:
+    granule_dict[getattr(dev, attr)].append(dev)
+  granules = [granule_dict[key] for key in sorted(granule_dict.keys())]
   if np.prod(dcn_mesh_shape) != len(granules):
     raise ValueError(
-        'Number of slices must equal the product of dcn_mesh_shape')
+        f'Number of slices {len(granules)} must equal the product of '
+        f'dcn_mesh_shape {dcn_mesh_shape}')
   per_granule_meshes = [create_device_mesh(mesh_shape, granule)
                         for granule in granules]
   # TODO(jekbradbury): handle non-uniform DCN topologies

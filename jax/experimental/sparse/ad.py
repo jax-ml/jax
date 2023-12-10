@@ -12,90 +12,167 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Callable, Sequence, Tuple, Union
-
-import numpy as np
+from collections.abc import Sequence
+import itertools
+from typing import Any, Callable, Union
 
 import jax
-from jax import core
+from jax._src import core
 from jax import tree_util
 from jax._src.api_util import _ensure_index, _ensure_index_tuple
 from jax.util import safe_zip
-from jax._src.util import wraps
+from jax._src.util import split_list, wraps
 from jax._src.traceback_util import api_boundary
-from jax.experimental.sparse.bcoo import BCOO
+from jax.experimental.sparse._base import JAXSparse
 
 
-def value_and_grad(fun: Callable,
-                   argnums: Union[int, Sequence[int]] = 0,
-                   **kwargs) -> Callable[..., Tuple[Any, Any]]:
+is_sparse = lambda x: isinstance(x, JAXSparse)
+
+
+def flatten_fun_for_sparse_ad(fun, argnums: Union[int, tuple[int]], args: tuple[Any]):
+  argnums_tup = _ensure_index_tuple(argnums)
+  assert all(0 <= argnum < len(args) for argnum in argnums_tup)
+
+  # We do a two-step flattening to figure out how argnums maps to args_flat.
+  # First, flatten arguments to a list containing sparse and dense objects.
+  args_flat1, tree1 = tree_util.tree_flatten(args, is_leaf=is_sparse)
+  *leaf_argnums1, end = split_list(range(tree1.num_leaves),
+                                   [child.num_leaves for child in tree1.children()])
+  assert not end
+  argnums_flat1 = list(itertools.chain.from_iterable(
+      nums for i, nums in enumerate(leaf_argnums1) if i in argnums_tup))
+
+  # Next, fully flatten to a list of dense buffers.
+  args_flat, tree2 = tree_util.tree_flatten(args_flat1)
+  *leaf_argnums2, end = split_list(range(tree2.num_leaves),
+                                   [child.num_leaves for child in tree2.children()])
+  assert not end
+  # For sparse args, we only mark the first buffer (the data) for differentiation.
+  leaf_argnums2 = [nums[:1] if is_sparse(arg) else nums
+                   for arg, nums in safe_zip(args_flat1, leaf_argnums2)]
+  argnums_flat = tuple(itertools.chain.from_iterable(
+      nums for i, nums in enumerate(leaf_argnums2) if i in argnums_flat1))
+
+  def fun_flat(*args_flat, **kwargs):
+    args = tree_util.tree_unflatten(tree1, tree_util.tree_unflatten(tree2, args_flat))
+    return fun(*args, **kwargs)
+
+  def reconstruct(i, grad_out):
+    bufs, tree = tree_util.tree_flatten(args_flat1[i])
+    f_recons = lambda g: tree_util.tree_unflatten(tree, [g, *bufs[1:]])
+    for _ in range(grad_out.ndim - bufs[0].ndim):
+      f_recons = jax.vmap(f_recons)
+    return f_recons(grad_out)
+
+  def postprocess_gradients(grads_out):
+    out = [reconstruct(*args) for args in safe_zip(argnums_flat1, grads_out)]
+    return out[0] if isinstance(argnums, int) else out
+
+  return fun_flat, argnums_flat, args_flat, postprocess_gradients
+
+
+def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
+                   has_aux=False, **kwargs) -> Callable[..., tuple[Any, Any]]:
   """Sparse-aware version of :func:`jax.value_and_grad`
 
   Arguments and return values are the same as :func:`jax.value_and_grad`, but when
-  taking the gradient with respect to a BCOO matrix, the matrix indices are ignored.
-  """
-  # The approach here is to set allow_int=True (so that gradients of indices don't raise an error)
-  # and then at the end replace the float0 outputs with the input indices.
-  allow_int = kwargs.pop('allow_int', False)
-  kwargs['allow_int'] = True
-  raw_value_and_grad_fun = jax.value_and_grad(fun, argnums=argnums, **kwargs)
-  argnums = core.concrete_or_error(_ensure_index, argnums)
+  taking the gradient with respect to a :class:`jax.experimental.sparse` array, the
+  gradient is computed in the subspace defined by the array's sparsity pattern.
 
-  def maybe_copy_index(arg_in, arg_out):
-    if isinstance(arg_in, BCOO) and isinstance(arg_out, BCOO):
-      assert arg_in.indices.shape == arg_out.indices.shape
-      return BCOO((arg_out.data, arg_in.indices), shape=arg_out.shape)
-    else:
-      return arg_out
+  Example:
+
+    >>> from jax.experimental import sparse
+    >>> X = sparse.BCOO.fromdense(jnp.arange(6.))
+    >>> y = jnp.ones(6)
+    >>> sparse.value_and_grad(lambda X, y: X @ y)(X, y)
+    (Array(15., dtype=float32), BCOO(float32[6], nse=5))
+  """
+  raw_value_and_grad_fun = jax.value_and_grad(fun, argnums=argnums, has_aux=has_aux, **kwargs)
+  argnums = core.concrete_or_error(_ensure_index, argnums)
 
   @wraps(fun, docstr=raw_value_and_grad_fun.__doc__, argnums=argnums)
   @api_boundary
   def value_and_grad_fun(*args, **kwargs):
-    if not allow_int:
-      dyn_args = [args[i] for i in _ensure_index_tuple(argnums)]
-      dyn_args_flat, _ = tree_util.tree_flatten(dyn_args, is_leaf=lambda arg: isinstance(arg, BCOO))
-      for arg in dyn_args_flat:
-        dtype = np.dtype(arg)
-        if not (np.issubdtype(arg, np.floating) or np.issubdtype(arg, np.complexfloating)):
-          raise TypeError("grad requires real- or complex-valued inputs (input dtype that "
-                          "is a sub-dtype of np.floating or np.complexfloating), "
-                          f"but got {dtype.name}. If you want to use integer-valued "
-                          "inputs, set allow_int to True.")
-    value, grad = raw_value_and_grad_fun(*args, **kwargs)
-    if isinstance(argnums, int):
-      grad = maybe_copy_index(args[argnums], grad)
-    else:
-      grad = tuple(maybe_copy_index(args[argnum], g) for argnum, g in safe_zip(argnums, grad))
-    return value, grad
-
+    fun_flat, argnums_flat, args_flat, postprocess_gradients = flatten_fun_for_sparse_ad(fun, argnums, args)
+    val_out, grad_out = jax.value_and_grad(fun_flat, argnums=argnums_flat, has_aux=has_aux, **kwargs)(*args_flat)
+    return val_out, postprocess_gradients(grad_out)
   return value_and_grad_fun
 
 
-def grad(fun: Callable,
-         argnums: Union[int, Sequence[int]] = 0,
+def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
          has_aux=False, **kwargs) -> Callable:
-  """Sparse-aware version of jax.grad
+  """Sparse-aware version of :func:`jax.grad`
 
   Arguments and return values are the same as :func:`jax.grad`, but when taking
-  the gradient with respect to a BCOO matrix, the matrix indices are ignored.
+  the gradient with respect to a :class:`jax.experimental.sparse` array, the
+  gradient is computed in the subspace defined by the array's sparsity pattern.
+
+  Example:
+
+    >>> from jax.experimental import sparse
+    >>> X = sparse.BCOO.fromdense(jnp.arange(6.))
+    >>> y = jnp.ones(6)
+    >>> sparse.grad(lambda X, y: X @ y)(X, y)
+    BCOO(float32[6], nse=5)
   """
-  value_and_grad_f = value_and_grad(fun, argnums, has_aux=has_aux, **kwargs)
+  raw_grad_fun = jax.grad(fun, argnums=argnums, **kwargs)
+  argnums = core.concrete_or_error(_ensure_index, argnums)
 
-  docstr = ("Gradient of {fun} with respect to positional argument(s) "
-            "{argnums}. Takes the same arguments as {fun} but returns the "
-            "gradient, which has the same shape as the arguments at "
-            "positions {argnums}.")
-
-  @wraps(fun, docstr=docstr, argnums=argnums)
+  @wraps(fun, docstr=raw_grad_fun.__doc__, argnums=argnums)
   @api_boundary
-  def grad_f(*args, **kwargs):
-    _, g = value_and_grad_f(*args, **kwargs)
-    return g
+  def grad_fun(*args, **kwargs):
+    fun_flat, argnums_flat, args_flat, postprocess_gradients = flatten_fun_for_sparse_ad(fun, argnums, args)
+    out = jax.grad(fun_flat, argnums=argnums_flat, has_aux=has_aux, **kwargs)(*args_flat)
+    if has_aux:
+      return postprocess_gradients(out[0]), out[1]
+    return postprocess_gradients(out)
+  return grad_fun
 
-  @wraps(fun, docstr=docstr, argnums=argnums)
+
+def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
+           has_aux: bool = False, **kwargs) -> Callable:
+  """Sparse-aware version of :func:`jax.jacfwd`
+
+  Arguments and return values are the same as :func:`jax.jacfwd`, but when taking
+  the gradient with respect to a :class:`jax.experimental.sparse` array, the
+  gradient is computed in the subspace defined by the array's sparsity pattern.
+  Currently this is only implemented for dense outputs.
+  """
+  raw_jacfwd_fun = jax.jacfwd(fun, argnums=argnums, **kwargs)
+  argnums = core.concrete_or_error(_ensure_index, argnums)
+
+  @wraps(fun, docstr=raw_jacfwd_fun.__doc__, argnums=argnums)
   @api_boundary
-  def grad_f_aux(*args, **kwargs):
-    (_, aux), g = value_and_grad_f(*args, **kwargs)
-    return g, aux
+  def jacfwd_fun(*args, **kwargs):
+    fun_flat, argnums_flat, args_flat, postprocess_gradients = flatten_fun_for_sparse_ad(fun, argnums, args)
+    out = jax.jacfwd(fun_flat, argnums=argnums_flat, has_aux=has_aux, **kwargs)(*args_flat)
+    if has_aux:
+      return postprocess_gradients(out[0]), out[1]
+    return postprocess_gradients(out)
+  return jacfwd_fun
 
-  return grad_f_aux if has_aux else grad_f
+
+def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
+           has_aux: bool = False, **kwargs) -> Callable:
+  """Sparse-aware version of :func:`jax.jacrev`
+
+  Arguments and return values are the same as :func:`jax.jacrev`, but when taking
+  the gradient with respect to a :class:`jax.experimental.sparse` array, the
+  gradient is computed in the subspace defined by the array's sparsity pattern.
+  Currently this is only implemented for dense outputs.
+  """
+  raw_jacrev_fun = jax.jacrev(fun, argnums=argnums, **kwargs)
+  argnums = core.concrete_or_error(_ensure_index, argnums)
+
+  @wraps(fun, docstr=raw_jacrev_fun.__doc__, argnums=argnums)
+  @api_boundary
+  def jacrev_fun(*args, **kwargs):
+    fun_flat, argnums_flat, args_flat, postprocess_gradients = flatten_fun_for_sparse_ad(fun, argnums, args)
+    out = jax.jacrev(fun_flat, argnums=argnums_flat, has_aux=has_aux, **kwargs)(*args_flat)
+    if has_aux:
+      return postprocess_gradients(out[0]), out[1]
+    return postprocess_gradients(out)
+  return jacrev_fun
+
+
+jacobian = jacrev

@@ -26,6 +26,8 @@ For more, see the `AOT walkthrough <https://jax.readthedocs.io/en/latest/aot.htm
 
 from jax._src.stages import (
   Compiled as Compiled,
+  CompilerOptions as CompilerOptions,
   Lowered as Lowered,
   Wrapped as Wrapped,
+  ArgInfo as ArgInfo,
 )

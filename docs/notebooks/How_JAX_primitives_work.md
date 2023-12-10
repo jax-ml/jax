@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.14.1
+    jupytext_version: 1.15.2
 kernelspec:
   display_name: Python 3
   name: python3
@@ -15,7 +15,7 @@ kernelspec:
 
 # How JAX primitives work
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/How_JAX_primitives_work.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/How_JAX_primitives_work.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/notebooks/How_JAX_primitives_work.ipynb)
 
 *necula@google.com*, October 2019.
 
@@ -118,7 +118,7 @@ def trace(name):
     def pp(v):
         """Print certain values more succinctly"""
         vtype = str(type(v))
-        if "jax._src.lib.xla_bridge._JaxComputationBuilder" in vtype:
+        if "jax._src.xla_bridge._JaxComputationBuilder" in vtype:
             return "<JaxComputationBuilder>"
         elif "jaxlib.xla_extension.XlaOp" in vtype:
             return "<XlaOp at 0x{:x}>".format(id(v))
@@ -308,7 +308,7 @@ In the latter case, JAX uses the actual concrete value wrapped as an abstract va
 :id: ctQmEeckIbdo
 :outputId: e751d0cc-460e-4ffd-df2e-fdabf9cffdc2
 
-from jax._src import abstract_arrays
+from jax import core
 @trace("multiply_add_abstract_eval")
 def multiply_add_abstract_eval(xs, ys, zs):
   """Abstract evaluation of the primitive.
@@ -322,7 +322,7 @@ def multiply_add_abstract_eval(xs, ys, zs):
   """
   assert xs.shape == ys.shape
   assert xs.shape == zs.shape
-  return abstract_arrays.ShapedArray(xs.shape, xs.dtype)
+  return core.ShapedArray(xs.shape, xs.dtype)
 
 # Now we register the abstract evaluation with JAX
 multiply_add_p.def_abstract_eval(multiply_add_abstract_eval)
@@ -354,22 +354,23 @@ for most of them. However, XLA includes a `CustomCall` operation that can be use
 ```{code-cell} ipython3
 :id: FYQWSSjKJaWP
 
-from jax._src.lib import xla_client
-@trace("multiply_add_xla_translation")
-def multiply_add_xla_translation(ctx, avals_in, avals_out, xc, yc, zc):
+from jax._src.lib.mlir.dialects import hlo
+@trace("multiply_add_lowering")
+def multiply_add_lowering(ctx, xc, yc, zc):
   """The compilation to XLA of the primitive.
 
-  Given an XlaBuilder and XlaOps for each argument, return the XlaOp for the
-  result of the function.
+  Given an mlir.ir.Value for each argument, return the mlir.ir.Values for
+  the results of the function.
 
   Does not need to be a JAX-traceable function.
   """
-  return [xla_client.ops.Add(xla_client.ops.Mul(xc, yc), zc)]
+  return [hlo.AddOp(hlo.MulOp(xc, yc), zc).result]
 
-# Now we register the XLA compilation rule with JAX
-# TODO: for GPU? and TPU?
-from jax.interpreters import xla
-xla.register_translation(multiply_add_p, multiply_add_xla_translation, platform='cpu')
+# Now we register the lowering rule with JAX
+# For GPU see the [Custom operations for GPUs](https://jax.readthedocs.io/en/latest/Custom_Operation_for_GPUs.html)
+# TODO: TPU?
+from jax.interpreters import mlir
+mlir.register_lowering(multiply_add_p, multiply_add_lowering, platform='cpu')
 ```
 
 +++ {"id": "K98LX-VaJkFu"}
@@ -452,7 +453,7 @@ def multiply_add_value_and_jvp(arg_values, arg_tangents):
   xt, yt, zt = arg_tangents
   _trace("Primal evaluation:")
   # Now we have a JAX-traceable computation of the output. 
-  # Normally, we can use the ma primtive itself to compute the primal output. 
+  # Normally, we can use the ma primitive itself to compute the primal output. 
   primal_out = multiply_add_prim(x, y, z)
   
   _trace("Tangent evaluation:")

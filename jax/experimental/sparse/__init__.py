@@ -125,17 +125,22 @@ this function that does accept sparse matrices:
     >>> f_sp(M_sp, y)
     Array([17.635532,  5.158883, 17.09438 ,  7.591674], dtype=float32)
 
-Currently support for :func:`sparsify` is limited to a couple dozen primitives, including:
+Support for :func:`sparsify` includes a large number of the most common primitives, including:
 
-- generalized matrix-matrix products (:obj:`~jax.lax.dot_general_p`)
-- generalized array transpose (:obj:`~jax.lax.transpose_p`)
-- zero-preserving elementwise binary operations (:obj:`~jax.lax.add_p`, :obj:`~jax.lax.mul_p`)
-- zero-preserving elementwise unary operations (:obj:`~jax.lax.abs_p`, :obj:`jax.lax.neg_p`, etc.)
-- summation reductions (:obj:`lax.reduce_sum_p`)
-- some higher-order functions (:obj:`lax.cond_p`, :obj:`lax.while_p`, :obj:`lax.scan_p`)
+- generalized (batched) matrix products & einstein summations (:obj:`~jax.lax.dot_general_p`)
+- zero-preserving elementwise binary operations (e.g. :obj:`~jax.lax.add_p`, :obj:`~jax.lax.mul_p`, etc.)
+- zero-preserving elementwise unary operations (e.g. :obj:`~jax.lax.abs_p`, :obj:`jax.lax.neg_p`, etc.)
+- summation reductions (:obj:`~jax.lax.reduce_sum_p`)
+- general indexing operations (:obj:`~jax.lax.slice_p`, `lax.dynamic_slice_p`, `lax.gather_p`)
+- concatenation and stacking (:obj:`~jax.lax.concatenate_p`)
+- transposition & reshaping ((:obj:`~jax.lax.transpose_p`, :obj:`~jax.lax.reshape_p`,
+  :obj:`~jax.lax.squeeze_p`, :obj:`~jax.lax.broadcast_in_dim_p`)
+- some higher-order functions (:obj:`~jax.lax.cond_p`, :obj:`~jax.lax.while_p`, :obj:`~jax.lax.scan_p`)
+- some simple 1D convolutions (:obj:`~jax.lax.conv_general_dilated_p`)
 
-This initial support is enough to enable some surprisingly sophisticated workflows, as the
-next section will show.
+Nearly any :mod:`jax.numpy` function that lowers to these supported primitives can be used
+within a sparsify transform to operate on sparse arrays. This set of primitives is enough
+to enable relatively sophisticated sparse workflows, as the next section will show.
 
 Example: sparse logistic regression
 -----------------------------------
@@ -187,12 +192,16 @@ To fit the same model on sparse data, we can apply the :func:`sparsify` transfor
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
 from jax.experimental.sparse.ad import (
+    jacfwd as jacfwd,
+    jacobian as jacobian,
+    jacrev as jacrev,
     grad as grad,
     value_and_grad as value_and_grad,
 )
 from jax.experimental.sparse.bcoo import (
     bcoo_broadcast_in_dim as bcoo_broadcast_in_dim,
     bcoo_concatenate as bcoo_concatenate,
+    bcoo_conv_general_dilated as bcoo_conv_general_dilated,
     bcoo_dot_general as bcoo_dot_general,
     bcoo_dot_general_p as bcoo_dot_general_p,
     bcoo_dot_general_sampled as bcoo_dot_general_sampled,
@@ -208,6 +217,7 @@ from jax.experimental.sparse.bcoo import (
     bcoo_update_layout as bcoo_update_layout,
     bcoo_reduce_sum as bcoo_reduce_sum,
     bcoo_reshape as bcoo_reshape,
+    bcoo_rev as bcoo_rev,
     bcoo_slice as bcoo_slice,
     bcoo_sort_indices as bcoo_sort_indices,
     bcoo_sort_indices_p as bcoo_sort_indices_p,
@@ -223,12 +233,15 @@ from jax.experimental.sparse.bcoo import (
 )
 
 from jax.experimental.sparse.bcsr import (
+    bcsr_broadcast_in_dim as bcsr_broadcast_in_dim,
+    bcsr_concatenate as bcsr_concatenate,
     bcsr_dot_general as bcsr_dot_general,
     bcsr_dot_general_p as bcsr_dot_general_p,
     bcsr_extract as bcsr_extract,
     bcsr_extract_p as bcsr_extract_p,
     bcsr_fromdense as bcsr_fromdense,
     bcsr_fromdense_p as bcsr_fromdense_p,
+    bcsr_sum_duplicates as bcsr_sum_duplicates,
     bcsr_todense as bcsr_todense,
     bcsr_todense_p as bcsr_todense_p,
     BCSR as BCSR,
@@ -282,4 +295,4 @@ from jax.experimental.sparse.transform import (
     SparseTracer as SparseTracer,
 )
 
-from jax.experimental.sparse import linalg
+from jax.experimental.sparse import linalg as linalg

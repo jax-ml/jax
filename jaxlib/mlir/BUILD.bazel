@@ -62,10 +62,62 @@ symlink_inputs(
 )
 
 symlink_inputs(
-    name = "ml_program_dialect",
+    name = "vector_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {"dialects": [
-        "@llvm-project//mlir/python:MLProgramOpsPyFiles",
+        "@llvm-project//mlir/python:VectorOpsPyFiles",
+    ]}},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+    ],
+)
+
+symlink_inputs(
+    name = "math_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {"dialects": [
+        "@llvm-project//mlir/python:MathOpsPyFiles",
+    ]}},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+    ],
+)
+
+symlink_inputs(
+    name = "arithmetic_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {"dialects": [
+        "@llvm-project//mlir/python:ArithOpsPyFiles",
+    ]}},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+    ],
+)
+
+symlink_inputs(
+    name = "memref_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {"dialects": [
+        "@llvm-project//mlir/python:MemRefOpsPyFiles",
+    ]}},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+    ],
+)
+
+symlink_inputs(
+    name = "scf_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {"dialects": [
+        "@llvm-project//mlir/python:SCFPyFiles",
     ]}},
     deps = [
         ":core",
@@ -120,7 +172,7 @@ symlink_inputs(
     name = "mhlo_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {"dialects": [
-        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo:MhloOpsPyFiles",
+        "@xla//xla/mlir_hlo:MhloOpsPyFiles",
     ]}},
     deps = [
         ":core",

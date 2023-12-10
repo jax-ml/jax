@@ -1,5 +1,5 @@
-jax.experimental.pjit module
-============================
+``jax.experimental.pjit`` module
+================================
 
 .. automodule:: jax.experimental.pjit
 

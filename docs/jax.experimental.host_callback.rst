@@ -1,5 +1,5 @@
-jax.experimental.host_callback module
-=====================================
+``jax.experimental.host_callback`` module
+=========================================
 
 
 .. automodule:: jax.experimental.host_callback

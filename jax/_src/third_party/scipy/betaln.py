@@ -1,7 +1,7 @@
 from jax import lax
 import jax.numpy as jnp
 from jax._src.typing import Array, ArrayLike
-from jax._src.numpy.lax_numpy import _promote_args_inexact
+from jax._src.numpy.util import promote_args_inexact
 
 # Note: for mysterious reasons, annotating this leads to very slow mypy runs.
 # def algdiv(a: ArrayLike, b: ArrayLike) -> Array:
@@ -10,7 +10,7 @@ def algdiv(a, b):
     """
     Compute ``log(gamma(a))/log(gamma(a + b))`` when ``b >= 8``.
 
-    Derived from scipy's implmentation of `algdiv`_.
+    Derived from scipy's implementation of `algdiv`_.
 
     This differs from the scipy implementation in that it assumes a <= b
     because recomputing ``a, b = jnp.minimum(a, b), jnp.maximum(a, b)`` might
@@ -58,7 +58,7 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     .. _betaln:
         https://github.com/scipy/scipy/blob/ef2dee592ba8fb900ff2308b9d1c79e4d6a0ad8b/scipy/special/cdflib/betaln.f
     """
-    a, b = _promote_args_inexact("betaln", a, b)
+    a, b = promote_args_inexact("betaln", a, b)
     a, b = jnp.minimum(a, b), jnp.maximum(a, b)
     small_b = lax.lgamma(a) + (lax.lgamma(b) - lax.lgamma(a + b))
     large_b = lax.lgamma(a) + algdiv(a, b)

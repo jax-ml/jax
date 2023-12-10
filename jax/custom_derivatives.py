@@ -27,5 +27,11 @@ from jax._src.custom_derivatives import (
   custom_vjp as custom_vjp,
   custom_vjp_call_p as custom_vjp_call_p,
   custom_vjp_call_jaxpr_p as custom_vjp_call_jaxpr_p,
+  custom_vjp_primal_tree_values as custom_vjp_primal_tree_values,
+  CustomVJPPrimal as CustomVJPPrimal,
   linear_call as linear_call,
+)
+
+from jax._src.ad_util import (
+  SymbolicZero as SymbolicZero
 )

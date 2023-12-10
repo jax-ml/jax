@@ -12,26 +12,86 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from functools import partial
+import math
 import operator
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, Optional, Union
 import warnings
 
 import numpy as np
 import scipy.signal as osp_signal
+from scipy.fft import next_fast_len as osp_fft_next_fast_len
 
 import jax
 import jax.numpy.fft
+import jax.numpy as jnp
 from jax import lax
+from jax._src.api_util import _ensure_index_tuple
 from jax._src import dtypes
 from jax._src.lax.lax import PrecisionLike
-from jax._src.numpy.lax_numpy import _check_arraylike
-from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import linalg
-from jax._src.numpy.util import _wraps, _promote_dtypes_inexact, _promote_dtypes_complex
+from jax._src.numpy.util import (
+    check_arraylike, _wraps, promote_dtypes_inexact, promote_dtypes_complex)
 from jax._src.third_party.scipy import signal_helper
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import canonicalize_axis, tuple_delete, tuple_insert
+
+
+@_wraps(osp_signal.fftconvolve)
+def fftconvolve(in1: ArrayLike, in2: ArrayLike, mode: str = "full",
+                axes: Optional[Sequence[int]] = None) -> Array:
+  check_arraylike('fftconvolve', in1, in2)
+  in1, in2 = promote_dtypes_inexact(in1, in2)
+  if in1.ndim != in2.ndim:
+    raise ValueError("in1 and in2 should have the same dimensionality")
+  if mode not in ["same", "full", "valid"]:
+    raise ValueError("mode must be one of ['same', 'full', 'valid']")
+  _fftconvolve = partial(_fftconvolve_unbatched, mode=mode)
+  if axes is None:
+    return _fftconvolve(in1, in2)
+  axes = _ensure_index_tuple(axes)
+  axes = tuple(canonicalize_axis(ax, in1.ndim) for ax in axes)
+  mapped_axes = set(range(in1.ndim)) - set(axes)
+  if any(in1.shape[i] != in2.shape[i] for i in mapped_axes):
+    raise ValueError(f"mapped axes must have same shape; got {in1.shape=} {in2.shape=} {axes=}")
+  for ax in sorted(mapped_axes):
+    _fftconvolve = jax.vmap(_fftconvolve, in_axes=ax, out_axes=ax)
+  return _fftconvolve(in1, in2)
+
+def _fftconvolve_unbatched(in1: Array, in2: Array, mode: str) -> Array:
+  full_shape = tuple(s1 + s2 - 1 for s1, s2 in zip(in1.shape, in2.shape))
+  fft_shape = tuple(osp_fft_next_fast_len(s) for s in full_shape)
+
+  if mode == 'valid':
+    no_swap = all(s1 >= s2 for s1, s2 in zip(in1.shape, in2.shape))
+    swap = all(s1 <= s2 for s1, s2 in zip(in1.shape, in2.shape))
+    if not (no_swap or swap):
+      raise ValueError("For 'valid' mode, One input must be at least as "
+                       "large as the other in every dimension.")
+    if swap:
+      in1, in2 = in2, in1
+
+  if jnp.iscomplexobj(in1):
+    fft, ifft = jnp.fft.fftn, jnp.fft.ifftn
+  else:
+    fft, ifft = jnp.fft.rfftn, jnp.fft.irfftn
+  sp1 = fft(in1, fft_shape)
+  sp2 = fft(in2, fft_shape)
+  conv = ifft(sp1 * sp2, fft_shape)
+
+  if mode == "full":
+    out_shape = full_shape
+  elif mode == "same":
+    out_shape = in1.shape
+  elif mode == "valid":
+    out_shape = tuple(s1 - s2 + 1 for s1, s2 in zip(in1.shape, in2.shape))
+  else:
+    raise ValueError(f"Unrecognized {mode=}")
+
+  start_indices = tuple((full_size - out_size) // 2
+                        for full_size, out_size in zip(full_shape, out_shape))
+  return lax.dynamic_slice(conv, start_indices, out_shape)
 
 
 # Note: we do not re-use the code from jax.numpy.convolve here, because the handling
@@ -44,7 +104,7 @@ def _convolve_nd(in1: Array, in2: Array, mode: str, *, precision: PrecisionLike)
     raise ValueError("in1 and in2 must have the same number of dimensions")
   if in1.size == 0 or in2.size == 0:
     raise ValueError(f"zero-size arrays not supported in convolutions, got shapes {in1.shape} and {in2.shape}.")
-  in1, in2 = _promote_dtypes_inexact(in1, in2)
+  in1, in2 = promote_dtypes_inexact(in1, in2)
 
   no_swap = all(s1 >= s2 for s1, s2 in zip(in1.shape, in2.shape))
   swap = all(s1 <= s2 for s1, s2 in zip(in1.shape, in2.shape))
@@ -74,9 +134,12 @@ def _convolve_nd(in1: Array, in2: Array, mode: str, *, precision: PrecisionLike)
 @_wraps(osp_signal.convolve)
 def convolve(in1: Array, in2: Array, mode: str = 'full', method: str = 'auto',
              precision: PrecisionLike = None) -> Array:
-  if method != 'auto':
-    warnings.warn("convolve() ignores method argument")
-  return _convolve_nd(in1, in2, mode, precision=precision)
+  if method == 'fft':
+    return fftconvolve(in1, in2, mode=mode)
+  elif method in ['direct', 'auto']:
+    return _convolve_nd(in1, in2, mode, precision=precision)
+  else:
+    raise ValueError(f"Got {method=}; expected 'auto', 'fft', or 'direct'.")
 
 
 @_wraps(osp_signal.convolve2d)
@@ -92,9 +155,7 @@ def convolve2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fill
 @_wraps(osp_signal.correlate)
 def correlate(in1: Array, in2: Array, mode: str = 'full', method: str = 'auto',
               precision: PrecisionLike = None) -> Array:
-  if method != 'auto':
-    warnings.warn("correlate() ignores method argument")
-  return _convolve_nd(in1, jnp.flip(in2.conj()), mode, precision=precision)
+  return convolve(in1, jnp.flip(in2.conj()), mode, precision=precision, method=method)
 
 
 @_wraps(osp_signal.correlate2d)
@@ -135,7 +196,7 @@ def detrend(data: ArrayLike, axis: int = -1, type: str = 'linear', bp: int = 0,
     raise NotImplementedError("overwrite_data argument not implemented.")
   if type not in ['constant', 'linear']:
     raise ValueError("Trend type must be 'linear' or 'constant'.")
-  data_arr, = _promote_dtypes_inexact(jnp.asarray(data))
+  data_arr, = promote_dtypes_inexact(jnp.asarray(data))
   if type == 'constant':
     return data_arr - data_arr.mean(axis, keepdims=True)
   else:
@@ -173,7 +234,7 @@ def _fft_helper(x: Array, win: Array, detrend_func: Callable[[Array], Array],
   else:
     step = nperseg - noverlap
     batch_shape = list(batch_shape)
-    x = x.reshape((int(np.prod(batch_shape)), signal_length))[..., np.newaxis]
+    x = x.reshape((math.prod(batch_shape), signal_length, 1))
     result = jax.lax.conv_general_dilated_patches(
         x, (nperseg,), (step,),
         'VALID',
@@ -185,7 +246,7 @@ def _fft_helper(x: Array, win: Array, detrend_func: Callable[[Array], Array],
 
   # Apply window by multiplication
   if jnp.iscomplexobj(win):
-    result, = _promote_dtypes_complex(result)
+    result, = promote_dtypes_complex(result)
   result = win.reshape((1,) * len(batch_shape) + (1, nperseg)) * result
 
   # Perform the fft on last axis. Zero-pads automatically
@@ -229,7 +290,7 @@ def _spectral_helper(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0,
                      detrend_type: Union[bool, str, Callable[[Array], Array]] = 'constant',
                      return_onesided: bool = True, scaling: str = 'density',
                      axis: int = -1, mode: str = 'psd', boundary: Optional[str] = None,
-                     padded: bool = False) -> Tuple[Array, Array, Array]:
+                     padded: bool = False) -> tuple[Array, Array, Array]:
   """LAX-backend implementation of `scipy.signal._spectral_helper`.
 
   Unlike the original helper function, `y` can be None for explicitly
@@ -267,15 +328,15 @@ def _spectral_helper(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0,
   axis = canonicalize_axis(axis, x.ndim)
 
   if y is None:
-    _check_arraylike('spectral_helper', x)
-    x, = _promote_dtypes_inexact(x)
+    check_arraylike('spectral_helper', x)
+    x, = promote_dtypes_inexact(x)
     y_arr = x  # place-holder for type checking
     outershape = tuple_delete(x.shape, axis)
   else:
     if mode != 'psd':
       raise ValueError("two-argument mode is available only when mode=='psd'")
-    _check_arraylike('spectral_helper', x, y)
-    x, y_arr = _promote_dtypes_inexact(x, y)
+    check_arraylike('spectral_helper', x, y)
+    x, y_arr = promote_dtypes_inexact(x, y)
     if x.ndim != y_arr.ndim:
       raise ValueError("two-arguments must have the same rank ({x.ndim} vs {y.ndim}).")
     # Check if we can broadcast the outer axes together
@@ -384,7 +445,7 @@ def _spectral_helper(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0,
     raise ValueError(f'Unknown scaling: {scaling}')
   if mode == 'stft':
     scale = jnp.sqrt(scale)
-  scale, = _promote_dtypes_complex(scale)
+  scale, = promote_dtypes_complex(scale)
 
   # Determine onesided/ two-sided
   if return_onesided:
@@ -439,8 +500,8 @@ def _spectral_helper(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0,
 @_wraps(osp_signal.stft)
 def stft(x: Array, fs: ArrayLike = 1.0, window: str = 'hann', nperseg: int = 256,
          noverlap: Optional[int] = None, nfft: Optional[int] = None,
-         detrend: bool = False, return_onesided: bool = True, boundary: str = 'zeros',
-         padded: bool = True, axis: int = -1) -> Tuple[Array, Array, Array]:
+         detrend: bool = False, return_onesided: bool = True, boundary: Optional[str] = 'zeros',
+         padded: bool = True, axis: int = -1) -> tuple[Array, Array, Array]:
   return _spectral_helper(x, None, fs, window, nperseg, noverlap,
                           nfft, detrend, return_onesided,
                           scaling='spectrum', axis=axis,
@@ -460,7 +521,7 @@ def csd(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0, window: str = 'ha
         nperseg: Optional[int] = None, noverlap: Optional[int] = None,
         nfft: Optional[int] = None, detrend: str = 'constant',
         return_onesided: bool = True, scaling: str = 'density',
-        axis: int = -1, average: str = 'mean') -> Tuple[Array, Array]:
+        axis: int = -1, average: str = 'mean') -> tuple[Array, Array]:
   freqs, _, Pxy = _spectral_helper(x, y, fs, window, nperseg, noverlap, nfft,
                                   detrend, return_onesided, scaling, axis,
                                   mode='psd')
@@ -493,7 +554,7 @@ def welch(x: Array, fs: ArrayLike = 1.0, window: str = 'hann',
           nperseg: Optional[int] = None, noverlap: Optional[int] = None,
           nfft: Optional[int] = None, detrend: str = 'constant',
           return_onesided: bool = True, scaling: str = 'density',
-          axis: int = -1, average: str = 'mean') -> Tuple[Array, Array]:
+          axis: int = -1, average: str = 'mean') -> tuple[Array, Array]:
   freqs, Pxx = csd(x, None, fs=fs, window=window, nperseg=nperseg,
                    noverlap=noverlap, nfft=nfft, detrend=detrend,
                    return_onesided=return_onesided, scaling=scaling,
@@ -513,14 +574,14 @@ def _overlap_and_add(x: Array, step_size: int) -> Array:
   Returns:
     An array with `(..., output_size)`-shape containing overlapped signal.
   """
-  _check_arraylike("_overlap_and_add", x)
+  check_arraylike("_overlap_and_add", x)
   step_size = jax.core.concrete_or_error(int, step_size,
                                         "step_size for overlap_and_add")
   if x.ndim < 2:
     raise ValueError('Input must have (..., frames, frame_length) shape.')
 
   *batch_shape, nframes, segment_len = x.shape
-  flat_batchsize = np.prod(batch_shape, dtype=np.int64)
+  flat_batchsize = math.prod(batch_shape)
   x = x.reshape((flat_batchsize, nframes, segment_len))
   output_size = step_size * (nframes - 1) + segment_len
   nstep_per_segment = 1 + (segment_len - 1) // step_size
@@ -555,9 +616,9 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
           nperseg: Optional[int] = None, noverlap: Optional[int] = None,
           nfft: Optional[int] = None, input_onesided: bool = True,
           boundary: bool = True, time_axis: int = -1,
-          freq_axis: int = -2) -> Tuple[Array, Array]:
+          freq_axis: int = -2) -> tuple[Array, Array]:
   # Input validation
-  _check_arraylike("istft", Zxx)
+  check_arraylike("istft", Zxx)
   if Zxx.ndim < 2:
     raise ValueError('Input stft must be at least 2d!')
   freq_axis = canonicalize_axis(freq_axis, Zxx.ndim)
@@ -617,7 +678,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   xsubs *= win.sum()  # This takes care of the 'spectrum' scaling
 
   # make win broadcastable over xsubs
-  win = win.reshape((1, ) * (xsubs.ndim - 2) + win.shape + (1,))
+  win = lax.expand_dims(win, (*range(xsubs.ndim - 2), -1))
   x = _overlap_and_add((xsubs * win).swapaxes(-2, -1), nstep)
   win_squared = jnp.repeat((win * win), xsubs.shape[-1], axis=-1)
   norm = _overlap_and_add(win_squared.swapaxes(-2, -1), nstep)

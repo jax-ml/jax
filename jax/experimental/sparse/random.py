@@ -12,17 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import operator
 
+from jax import dtypes
 from jax import vmap
 from jax import random
 from jax.util import split_list
-import numpy as np
 import jax.numpy as jnp
 from jax.experimental import sparse
 
 
-def random_bcoo(key, shape, *, dtype=jnp.float_, indices_dtype=jnp.int_,
+def random_bcoo(key, shape, *, dtype=jnp.float_, indices_dtype=None,
                 nse=0.2, n_batch=0, n_dense=0, unique_indices=True,
                 sorted_indices=False, generator=random.uniform, **kwds):
   """Generate a random BCOO matrix.
@@ -31,7 +32,7 @@ def random_bcoo(key, shape, *, dtype=jnp.float_, indices_dtype=jnp.int_,
     key : random.PRNGKey to be passed to ``generator`` function.
     shape : tuple specifying the shape of the array to be generated.
     dtype : dtype of the array to be generated.
-    indices_dtype: dtype of the BCOO indicies.
+    indices_dtype: dtype of the BCOO indices.
     nse : number of specified elements in the matrix, or if 0 < nse < 1, a
       fraction of sparse dimensions to be specified (default: 0.2).
     n_batch : number of batch dimensions. must satisfy ``n_batch >= 0`` and
@@ -57,27 +58,32 @@ def random_bcoo(key, shape, *, dtype=jnp.float_, indices_dtype=jnp.int_,
     raise ValueError(f"Invalid {n_batch=}, {n_dense=} for {shape=}")
   n_sparse = len(shape) - n_batch - n_dense
   batch_shape, sparse_shape, dense_shape = map(tuple, split_list(shape, [n_batch, n_sparse]))
-  batch_size = np.prod(batch_shape)
-  sparse_size = np.prod(sparse_shape)
+  batch_size = math.prod(batch_shape)
+  sparse_size = math.prod(sparse_shape)
   if not 0 <= nse < sparse_size:
     raise ValueError(f"got {nse=}, expected to be between 0 and {sparse_size}")
   if 0 < nse < 1:
-    nse = int(np.ceil(nse * sparse_size))
+    nse = int(math.ceil(nse * sparse_size))
   nse = operator.index(nse)
 
   data_shape = batch_shape + (nse,) + dense_shape
   indices_shape = batch_shape + (nse, n_sparse)
-
+  if indices_dtype is None:
+    indices_dtype = dtypes.canonicalize_dtype(jnp.int_)
+  if sparse_size > jnp.iinfo(indices_dtype).max:
+    raise ValueError(f"{indices_dtype=} does not have enough range to generate "
+                     f"sparse indices of size {sparse_size}.")
   @vmap
   def _indices(key):
     if not sparse_shape:
-      return jnp.empty((nse, n_sparse), dtype=int)
-    flat_ind = random.choice(key, sparse_size, shape=(nse,), replace=not unique_indices)
+      return jnp.empty((nse, n_sparse), dtype=indices_dtype)
+    flat_ind = random.choice(key, sparse_size, shape=(nse,),
+                             replace=not unique_indices).astype(indices_dtype)
     return jnp.column_stack(jnp.unravel_index(flat_ind, sparse_shape))
 
   keys = random.split(key, batch_size + 1)
   data_key, index_keys = keys[0], keys[1:]
   data = generator(data_key, shape=data_shape, dtype=dtype, **kwds)
-  indices = _indices(index_keys).reshape(indices_shape).astype(indices_dtype)
+  indices = _indices(index_keys).reshape(indices_shape)
   mat = sparse.BCOO((data, indices), shape=shape)
   return mat.sort_indices() if sorted_indices else mat

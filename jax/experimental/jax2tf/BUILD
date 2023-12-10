@@ -12,15 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "jax2tf_deps",
+    "jax_visibility",
     "py_deps",
 )
 
 licenses(["notice"])
 
 package(
+    default_applicable_licenses = [],
     default_visibility = ["//visibility:private"],
 )
 
@@ -38,12 +41,14 @@ py_library(
         "call_tf.py",
         "impl_no_xla.py",
         "jax2tf.py",
-        "shape_poly.py",
+        "shape_poly.py",  # TODO(necula): remove stub
     ],
     srcs_version = "PY3",
     # TODO: b/255503696: enable pytype
     tags = ["pytype_unchecked_annotations"],
+    visibility = jax_visibility("jax2tf_internal"),
     deps = [
         "//jax",
-    ] + py_deps("numpy") + py_deps("tensorflow") + jax2tf_deps,
+        "//jax/experimental/export",
+    ] + py_deps("numpy") + py_deps("tensorflow_core") + jax2tf_deps,
 )

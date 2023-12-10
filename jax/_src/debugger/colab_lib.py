@@ -20,7 +20,7 @@ import functools
 import sys
 import uuid
 
-from typing import Any, Dict, List, Union
+from typing import Any, Union
 
 IS_COLAB_ENABLED = "google.colab" in sys.modules
 if IS_COLAB_ENABLED:
@@ -66,7 +66,7 @@ class DynamicDiv(DynamicDOMElement):
   """A `div` that can be edited."""
   _uuid: str = dataclasses.field(init=False)
   _root_elem: DOMElement = dataclasses.field(init=False)
-  elem: Union[DOMElement, str]
+  elem: DOMElement | str
 
   def __post_init__(self):
     self._uuid = str(uuid.uuid4())
@@ -106,8 +106,8 @@ class StaticDOMElement(DOMElement):
   """An immutable DOM element."""
   _uuid: str = dataclasses.field(init=False)
   name: str
-  children: List[Union[str, DOMElement]]
-  attrs: Dict[str, str]
+  children: list[str | DOMElement]
+  attrs: dict[str, str]
 
   def html(self):
     attr_str = ""
@@ -137,7 +137,7 @@ class StaticDOMElement(DOMElement):
     return dataclasses.replace(self, **kwargs)
 
 
-def _style_dict_to_str(style_dict: Dict[str, Any]) -> str:
+def _style_dict_to_str(style_dict: dict[str, Any]) -> str:
   return " ".join([f"{k}: {v};" for k, v in style_dict.items()])
 
 

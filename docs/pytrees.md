@@ -280,9 +280,12 @@ class RegisteredSpecial2(Special):
 show_example(RegisteredSpecial2(1., 2.))
 ```
 
-JAX sometimes needs to compare `treedef` for equality. Therefore, care must be
-taken to ensure that the auxiliary data specified in the flattening recipe
-supports a meaningful equality comparison.
+When defining an unflattening functions, in general `children` should contain all the
+dynamic elements of the data structure (arrays, dynamic scalars, and pytrees), while
+`aux_data` should contain all the static elements that will be rolled into the `treedef`
+structure. JAX sometimes needs to compare `treedef` for equality, or compute its hash
+for use in the JIT cache, and so care must be taken to ensure that the auxiliary data
+specified in the flattening recipe supports meaningful hashing and equality comparisons.
 
 The whole set of functions for operating on pytrees are in {mod}`jax.tree_util`.
 
@@ -320,3 +323,14 @@ class MyTree:
       a = jnp.asarray(a)
     self.a = a
 ```
+Another possibility is to structure your `tree_unflatten` function so that it avoids
+calling `__init__`; for example:
+```{code-cell}
+def tree_unflatten(aux_data, children):
+  del aux_data  # unused in this class
+  obj = object.__new__(MyTree)
+  obj.a = a
+  return obj
+```
+If you go this route, make sure that your `tree_unflatten` function stays in-sync with 
+`__init__` if and when the code is updated.

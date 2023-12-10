@@ -2,8 +2,9 @@
 *.so
 *.egg-info
 *.whl
-build/bazel*
-dist/
+/build/lib
+/build/bazel*
+/dist/
 .ipynb_checkpoints
 /bazel-*
 .jax_configure.bazelrc
@@ -11,18 +12,19 @@ dist/
 .DS_Store
 .mypy_cache/
 .pytype/
-docs/build
+/docs/build
 *_pb2.py
-docs/notebooks/.ipynb_checkpoints/
-docs/_autosummary
+/docs/notebooks/.ipynb_checkpoints/
+/docs/_autosummary
 .idea
 .vscode
 .envrc
 jax.iml
+.bazelrc.user
 
 # virtualenv/venv directories
-venv/
-bin/
-include/
-lib/
-share/
+/venv/
+/bin/
+/include/
+/lib/
+/share/

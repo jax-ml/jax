@@ -22,7 +22,10 @@ load(
 
 licenses(["notice"])
 
-package(default_visibility = ["//:__subpackages__"])
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//:__subpackages__"],
+)
 
 # LAPACK
 
@@ -31,7 +34,7 @@ cc_library(
     srcs = ["lapack_kernels.cc"],
     hdrs = ["lapack_kernels.h"],
     deps = [
-        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@xla//xla/service:custom_call_status",
         "@com_google_absl//absl/base:dynamic_annotations",
     ],
 )
@@ -50,12 +53,16 @@ pybind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = True,
     features = ["-use_header_modules"],
     module_name = "_lapack",
+    pytype_srcs = [
+        "_lapack.pyi",
+    ],
     deps = [
         ":lapack_kernels",
-        "//jaxlib:kernel_pybind11_helpers",
-        "@pybind11",
+        "//jaxlib:kernel_nanobind_helpers",
+        "@nanobind",
     ],
 )
 
@@ -74,9 +81,9 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":ducc_fft_flatbuffers_cc",
-        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
-        "@ducc",
-        "@flatbuffers//:runtime_cc",
+        "@xla//xla/service:custom_call_status",
+        "@com_github_google_flatbuffers//:flatbuffers",
+        "@ducc//:fft",
     ],
 )
 
@@ -87,14 +94,18 @@ pybind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    enable_stub_generation = True,
     features = ["-use_header_modules"],
     module_name = "_ducc_fft",
+    pytype_srcs = [
+        "_ducc_fft.pyi",
+    ],
     deps = [
         ":ducc_fft_flatbuffers_cc",
         ":ducc_fft_kernels",
-        "//jaxlib:kernel_pybind11_helpers",
-        "@flatbuffers//:runtime_cc",
-        "@pybind11",
+        "//jaxlib:kernel_nanobind_helpers",
+        "@com_github_google_flatbuffers//:flatbuffers",
+        "@nanobind",
     ],
 )
 
@@ -106,7 +117,7 @@ cc_library(
         ":ducc_fft_kernels",
         ":lapack_kernels",
         ":lapack_kernels_using_lapack",
-        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_target_registry",
+        "@xla//xla/service:custom_call_target_registry",
     ],
     alwayslink = 1,
 )

@@ -21,47 +21,39 @@ import jax
 from jax._src.lib import xla_client as xc
 
 
-def compile_and_serialize(lowered: jax.stages.Lowered):
-  """Compiles a lowered executable, and then serializes the resulting binary.
+def serialize(compiled: jax.stages.Compiled):
+  """Serializes a compiled binary.
 
   Because pytrees are not serializable, they are returned so that
   the user can handle them properly.
   """
-
-  from jax.interpreters import pxla
-
-  if (jax.config.jax_array and
-      isinstance(lowered._lowering, pxla.MeshComputation) and all(
-          pxla._is_unspecified(o)
-          for o in lowered._lowering.compile_args['out_shardings'])):
-    kw = dict(_allow_propagation_to_outputs=True)
-  else:
-    kw = {}
-
-  unloaded_compilation = lowered._lowering._compile_unloaded(**kw)
-  args_info_flat, in_tree = jax.tree_util.tree_flatten(lowered.args_info)
+  unloaded_executable = getattr(compiled._executable,
+                                '_unloaded_executable', None)
+  if unloaded_executable is None:
+    raise ValueError("Compilation does not support serialization")
+  args_info_flat, in_tree = jax.tree_util.tree_flatten(compiled.args_info)
 
   with io.BytesIO() as file:
     _JaxPjrtPickler(file).dump(
-        (unloaded_compilation, args_info_flat, lowered._no_kwargs))
-    return file.getvalue(), in_tree, lowered.out_tree
+        (unloaded_executable, args_info_flat, compiled._no_kwargs))
+    return file.getvalue(), in_tree, compiled.out_tree
 
 
-def load_compiled(serialized,
-                  in_tree,
-                  out_tree,
-                  backend: Optional[Union[str, xc.Client]] = None):
+def deserialize_and_load(serialized,
+                         in_tree,
+                         out_tree,
+                         backend: Optional[Union[str, xc.Client]] = None):
   """Constructs a jax.stages.Compiled from a serialized executable."""
 
   if backend is None or isinstance(backend, str):
     backend = jax.devices(backend)[0].client
 
-  (unloaded_compilation, args_info_flat,
+  (unloaded_executable, args_info_flat,
    no_kwargs) = _JaxPjrtUnpickler(io.BytesIO(serialized), backend).load()
 
   args_info = in_tree.unflatten(args_info_flat)
 
-  loaded_compiled_obj = unloaded_compilation.load()
+  loaded_compiled_obj = unloaded_executable.load()
 
   return jax.stages.Compiled(
       loaded_compiled_obj, args_info, out_tree, no_kwargs=no_kwargs)
@@ -73,10 +65,9 @@ class _JaxPjrtPickler(pickle.Pickler):
 
   def persistent_id(self, obj):
     if isinstance(obj, xc.LoadedExecutable):
-      return ('exec', obj.client.serialize_executable(obj),
-              obj.compile_options())
+      return ('exec', obj.client.serialize_executable(obj))
     if isinstance(obj, xc._xla.Executable):
-      return ('exec', obj.serialize(), obj.compile_options())
+      return ('exec', obj.serialize())
     if isinstance(obj, self.device_types):
       return ('device', obj.id)
     if isinstance(obj, self.client_types):
@@ -92,7 +83,7 @@ class _JaxPjrtUnpickler(pickle.Unpickler):
 
   def persistent_load(self, pid):
     if pid[0] == 'exec':
-      return self.backend.deserialize_executable(pid[1], pid[2])
+      return self.backend.deserialize_executable(pid[1])
     if pid[0] == 'device':
       return self.devices_by_id[pid[1]]
     if pid[0] == 'client':

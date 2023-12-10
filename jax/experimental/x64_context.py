@@ -24,7 +24,7 @@
 # uniformity
 
 from contextlib import contextmanager
-from jax._src.config import enable_x64 as _jax_enable_x64
+from jax._src import config
 
 @contextmanager
 def enable_x64(new_val: bool = True):
@@ -42,7 +42,7 @@ def enable_x64(new_val: bool = True):
   --------
   jax.experimental.enable_x64 : temporarily enable X64 mode.
   """
-  with _jax_enable_x64(new_val):
+  with config.enable_x64(new_val):
     yield
 
 @contextmanager
@@ -61,5 +61,5 @@ def disable_x64():
   --------
   jax.experimental.enable_x64 : temporarily enable X64 mode.
   """
-  with _jax_enable_x64(False):
+  with config.enable_x64(False):
     yield

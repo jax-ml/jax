@@ -23,20 +23,22 @@ from unittest import SkipTest
 from jax._src import api
 from jax._src import test_util as jtu
 from jax import numpy as jnp
-from jax.experimental import pjit
+from jax.experimental import pjit, maps
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 
 class DebugNaNsTest(jtu.JaxTestCase):
 
   def setUp(self):
+    super().setUp()
     self.cfg = config._read("jax_debug_nans")
     config.update("jax_debug_nans", True)
 
   def tearDown(self):
     config.update("jax_debug_nans", self.cfg)
+    super().tearDown()
 
   def testSinc(self):
     # Regression test for #6936
@@ -96,7 +98,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
       f(1)
 
   def testPmap(self):
-    pmap_funcs = [api._python_pmap, api._cpp_pmap]
+    pmap_funcs = [api._cpp_pmap]
 
     for pmap in pmap_funcs:
       f = pmap(lambda x: 0. / x)
@@ -123,13 +125,13 @@ class DebugNaNsTest(jtu.JaxTestCase):
   @jtu.ignore_warning(message=".*is an experimental.*")
   def testXmap(self):
 
-    f = jax.experimental.maps.xmap(
+    f = maps.xmap(
         lambda x: 0. / x,
-        in_axes=['i'],
-        out_axes=['i'],
-        axis_resources={'i': 'x'})
+        in_axes=["i"],
+        out_axes=["i"],
+        axis_resources={"i": "x"})
 
-    with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:1]), ('x',)):
+    with jax.sharding.Mesh(np.array(jax.local_devices()[:1]), ('x',)):
       with self.assertRaisesRegex(
           FloatingPointError,
           r"invalid value \(nan\) encountered in xmap"):
@@ -137,7 +139,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
         ans.block_until_ready()
 
     if jax.device_count() >= 2:
-      with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
+      with jax.sharding.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
         with self.assertRaises(FloatingPointError):
           ans = f(jnp.array([1., 0.]))
           ans.block_until_ready()
@@ -147,12 +149,10 @@ class DebugNaNsTest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise SkipTest("test requires >=2 devices")
 
-    p = pjit.PartitionSpec('x')
-    f = pjit.pjit(lambda x: 0. / x,
-                  in_axis_resources=p,
-                  out_axis_resources=p)
+    p = jax.sharding.PartitionSpec('x')
+    f = pjit.pjit(lambda x: 0. / x, in_shardings=p, out_shardings=p)
 
-    with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
+    with jax.sharding.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
       with self.assertRaises(FloatingPointError):
         ans = f(jnp.array([0., 1.]))
         ans.block_until_ready()
@@ -175,27 +175,46 @@ class DebugNaNsTest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise SkipTest("test requires >=2 devices")
 
-    p = pjit.PartitionSpec('x')
+    p = jax.sharding.PartitionSpec('x')
     f = pjit.pjit(lambda x: 0. / x,
-                  in_axis_resources=p,
-                  out_axis_resources=p,
+                  in_shardings=p,
+                  out_shardings=p,
                   donate_argnums=(0,))
 
-    with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
+    with jax.sharding.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
       with self.assertRaises(FloatingPointError):
         ans = f(jnp.array([0., 1.]))
         ans.block_until_ready()
 
-  # TODO(skye): add parallel inf tests, ideally by factoring out test logic
+  def testDebugNansZeroDiv(self):
+    inp = jnp.zeros(())
+    def f(x, y):
+      return x / y
+
+    with self.assertRaisesRegex(
+        FloatingPointError,
+        r"invalid value \(nan\) encountered in jit\(true_divide\)"):
+      f(inp, inp)
+
+    # TODO(yashkatariya): Fix this and make true_divide appear in the name again.
+    # Instead of `f` showing up in the error, the name should be of the
+    # primitive (true_divide) in this case.
+    with self.assertRaisesRegex(
+        FloatingPointError,
+        r"invalid value \(nan\) encountered in jit\(f\)"):
+      jax.jit(f)(inp, inp)
+
 
 class DebugInfsTest(jtu.JaxTestCase):
 
   def setUp(self):
+    super().setUp()
     self.cfg = config._read("jax_debug_infs")
     config.update("jax_debug_infs", True)
 
   def tearDown(self):
     config.update("jax_debug_infs", self.cfg)
+    super().tearDown()
 
   def testSingleResultPrimitiveNoInf(self):
     A = jnp.array([[1., 2.], [2., 3.]])
@@ -241,8 +260,8 @@ class DebugInfsTest(jtu.JaxTestCase):
 
     for _ in range(2):
       try:
-       with jax.debug_nans(True):
-         jax.grad(f)(0.)
+        with jax.debug_nans(True):
+          jax.grad(f)(0.)
       except FloatingPointError:
         pass
 

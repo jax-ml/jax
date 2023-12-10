@@ -22,9 +22,9 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from jax._src import test_util as jtu
-from jax._src.lib import xla_bridge
+from jax._src import xla_bridge
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 prev_xla_flags = None
@@ -60,21 +60,13 @@ class MultiDeviceTest(jtu.JaxTestCase):
 
   def assert_committed_to_device(self, data, device):
     """Asserts that the data is committed to the device."""
-    if config.jax_array:
-      self.assertTrue(data._committed)
-      self.assertEqual(data.device(), device)
-    else:
-      self.assertIsNotNone(data._device)
-      self.assertEqual(data.device_buffer.device(), device)
+    self.assertTrue(data._committed)
+    self.assertEqual(data.devices(), {device})
 
   def assert_uncommitted_to_device(self, data, device):
     """Asserts that the data is on the device but not committed to it."""
-    if config.jax_array:
-      self.assertFalse(data._committed)
-      self.assertEqual(data.device(), device)
-    else:
-      self.assertIsNone(data._device)
-      self.assertEqual(data.device_buffer.device(), device)
+    self.assertFalse(data._committed)
+    self.assertEqual(data.devices(), {device})
 
   def test_computation_follows_data(self):
     if jax.device_count() < 5:
@@ -102,8 +94,9 @@ class MultiDeviceTest(jtu.JaxTestCase):
 
     # A computation with inputs committed to multiple devices will result
     # in an error
-    with self.assertRaisesRegex(ValueError,
-                                "primitive arguments must be colocated on the same device"):
+
+    err_msg = "Received incompatible devices for jitted computation"
+    with self.assertRaisesRegex(ValueError, err_msg):
       jax.device_put(x, devices[2]) + jax.device_put(x, devices[3])
 
     # A jitted-computation without a device specification behave like any
@@ -112,8 +105,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
     self.assert_uncommitted_to_device(jit_add(1, 2), devices[0])
     self.assert_committed_to_device(jit_add(1, jax.device_put(2, devices[2])),
                                     devices[2])
-    with self.assertRaisesRegex(ValueError,
-                                "primitive arguments must be colocated on the same device"):
+    with self.assertRaisesRegex(ValueError, err_msg):
       jit_add(jax.device_put(x, devices[2]), jax.device_put(x, devices[3]))
 
     # Even jit of trivial computations leaves the result uncommitted
@@ -124,7 +116,8 @@ class MultiDeviceTest(jtu.JaxTestCase):
     z1, z2 = jax.jit(lambda x: (x, x))(x_uncommitted)
     self.assert_uncommitted_to_device(z1, devices[0])
     self.assert_uncommitted_to_device(z2, devices[0])
-    self.assertEqual(z1.unsafe_buffer_pointer(), z2.unsafe_buffer_pointer())
+    # trivial computation does not exist in JAX anymore.
+    self.assertNotEqual(z1.unsafe_buffer_pointer(), z2.unsafe_buffer_pointer())
 
     x2_uncommitted = jnp.array([2, 3])
     z1, z2, z3 = jax.jit(lambda x, y: (y, 1, x))(x_uncommitted, x2_uncommitted)
@@ -145,6 +138,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
                                                 jax.device_put(x_uncommitted, devices[3])),
                                     devices[4])
 
+  @jax.legacy_prng_key('allow')
   def test_computation_follows_data_prng(self):
     _, device, *_ = self.get_devices()
     rng = jax.device_put(jax.random.PRNGKey(0), device)
@@ -261,6 +255,19 @@ class MultiDeviceTest(jtu.JaxTestCase):
     self.assert_uncommitted_to_device(y, devices[0])
     z = lax.transpose(jax.device_put(x, devices[2]), (1, 0))
     self.assert_committed_to_device(z, devices[2])
+
+  def test_device_put_committed_check(self):
+    devices = self.get_devices()
+    x = jnp.array(1.)
+    y = jax.device_put(x, jax.sharding.SingleDeviceSharding(jax.devices()[0]))
+    self.assert_committed_to_device(y, devices[0])
+
+  def test_grad_device_put_src_inference(self):
+    devices = self.get_devices()
+    x = jax.device_put(2.0, devices[0])
+    y, x_bar = jax.value_and_grad(lambda x: jax.device_put(x, devices[1]))(x)
+    self.assert_committed_to_device(y, devices[1])
+    self.assert_committed_to_device(x_bar, devices[0])
 
 
 if __name__ == '__main__':

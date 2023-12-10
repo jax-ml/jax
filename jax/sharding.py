@@ -15,18 +15,16 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
-from jax._src.sharding import (
-    Sharding as Sharding,
+from jax._src.sharding import Sharding as Sharding
+from jax._src.sharding_impls import (
     XLACompatibleSharding as XLACompatibleSharding,
-    # TODO(yashkatariya): Deprecate MeshPspecSharding in 3 months.
-    MeshPspecSharding as MeshPspecSharding,
-    # New name of MeshPspecSharding to match PositionalSharding below.
     NamedSharding as NamedSharding,
-    PartitionSpec as PartitionSpec,
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as PmapSharding,
-    OpShardingSharding as OpShardingSharding,
+    GSPMDSharding as GSPMDSharding,
     PositionalSharding as PositionalSharding,
 )
-
-from jax.interpreters.pxla import Mesh as Mesh
+from jax._src.partition_spec import (
+    PartitionSpec as PartitionSpec,
+)
+from jax._src.interpreters.pxla import Mesh as Mesh

@@ -1,5 +1,5 @@
-jax.dlpack module
-=================
+``jax.dlpack`` module
+=====================
 
 .. currentmodule:: jax.dlpack
 

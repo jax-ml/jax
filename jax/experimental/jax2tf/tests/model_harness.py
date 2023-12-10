@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """All the models to convert."""
+
+from collections.abc import Sequence
 import dataclasses
 import functools
-from typing import Any, Callable, Dict, List, Sequence
+from typing import Any, Callable, Optional, Union
+import re
 
 import numpy as np
 import jraph
@@ -30,6 +33,7 @@ from jax.experimental.jax2tf.tests.flax_models import transformer_nlp_seq as nlp
 from jax.experimental.jax2tf.tests.flax_models import transformer_wmt as wmt
 from jax.experimental.jax2tf.tests.flax_models import vae
 
+import jax
 from jax import random
 
 import tensorflow as tf
@@ -39,28 +43,65 @@ import tensorflow as tf
 class ModelHarness:
   name: str
   apply: Callable[..., Any]
-  variables: Dict[str, Any]
+  variables: dict[str, Any]
   inputs: Sequence[np.ndarray]
   rtol: float = 1e-4
+  polymorphic_shapes: Optional[Sequence[Union[str, None]]] = None
+  tensor_spec: Optional[Sequence[tf.TensorSpec]] = None
+
+  def __post_init__(self):
+    # When providing polymorphic shapes, tensor_spec should be provided as well.
+    assert bool(self.polymorphic_shapes) == bool(self.tensor_spec)
 
   @property
   def tf_input_signature(self):
-    return [
-        tf.TensorSpec(x.shape, tf.dtypes.as_dtype(x.dtype)) for x in self.inputs
-    ]
+    def _to_tensorspec(x):
+      return tf.TensorSpec(x.shape, tf.dtypes.as_dtype(x.dtype))
+
+    if self.tensor_spec:
+      return self.tensor_spec
+    else:
+      return jax.tree_util.tree_map(_to_tensorspec, self.inputs)
 
   def apply_with_vars(self, *args, **kwargs):
     return self.apply(self.variables, *args, **kwargs)
 
 
-def _actor_critic_harness():
+##### All harnesses in this file.
+ALL_HARNESSES: dict[str, Callable[[str], ModelHarness]] = {}
+
+
+def _make_harness(harness_fn, name, poly_shapes=None, tensor_specs=None):
+  """Partially apply harness in order to create variables lazily.
+
+  Note: quotes and commas are stripped from `name` to ensure they can be passed
+        through the command-line.
+  """
+  if poly_shapes:
+    name += "_" + re.sub(r"(?:'|\"|,)", "", str(poly_shapes))
+  if tensor_specs:
+    tensor_specs = [tf.TensorSpec(spec, dtype) for spec, dtype in tensor_specs]
+  partial_fn = functools.partial(
+      harness_fn,
+      name=name,
+      polymorphic_shapes=poly_shapes,
+      tensor_spec=tensor_specs)
+  if name in ALL_HARNESSES:
+    raise ValueError(f"Harness {name} exists already")
+  ALL_HARNESSES[name] = partial_fn
+
+
+######################## Model Harness Definitions #############################
+
+
+def _actor_critic_harness(name, **kwargs):
   model = actor_critic.ActorCritic(num_outputs=8)
   x = np.zeros((1, 84, 84, 4), np.float32)
   variables = model.init(random.PRNGKey(0), x)
-  return ModelHarness('flax/actor_critic', model.apply, variables, [x])
+  return ModelHarness(name, model.apply, variables, [x], **kwargs)
 
 
-def _bilstm_harness():
+def _bilstm_harness(name, **kwargs):
   model = bilstm_classifier.TextClassifier(
       # TODO(marcvanzee): This fails when
       # `embedding_size != hidden_size`. I suppose some arrays are
@@ -76,14 +117,14 @@ def _bilstm_harness():
   lengths = np.array([2, 3], np.int32)
   variables = model.init(random.PRNGKey(0), x, lengths, deterministic=True)
   apply = functools.partial(model.apply, deterministic=True)
-  return ModelHarness('flax/bilstm', apply, variables, [x, lengths])
+  return ModelHarness(name, apply, variables, [x, lengths], **kwargs)
 
 
-def _cnn_harness():
+def _cnn_harness(name, **kwargs):
   model = cnn.CNN()
   x = np.zeros((1, 28, 28, 1), np.float32)
   variables = model.init(random.PRNGKey(0), x)
-  return ModelHarness('flax/cnn', model.apply, variables, [x])
+  return ModelHarness(name, model.apply, variables, [x], **kwargs)
 
 
 def _get_gnn_graphs():
@@ -105,7 +146,7 @@ def _get_gnn_graphs():
   return graphs
 
 
-def _gnn_harness():
+def _gnn_harness(name, **kwargs):
   # Setting taken from flax/examples/ogbg_molpcba/models_test.py.
   rngs = {
       'params': random.PRNGKey(0),
@@ -118,11 +159,12 @@ def _gnn_harness():
       message_passing_steps=2,
       output_globals_size=15,
       use_edge_model=True)
-  variables = lambda: model.init(rngs, graphs)
-  return ModelHarness('flax/gnn', model.apply, variables, [graphs])
+  variables = model.init(rngs, graphs)
+  return ModelHarness(name, model.apply, variables, [graphs], rtol=2e-4,
+                      **kwargs)
 
 
-def _gcn_harness():
+def _gnn_conv_harness(name, **kwargs):
   # Setting taken from flax/examples/ogbg_molpcba/models_test.py.
   rngs = {
       'params': random.PRNGKey(0),
@@ -135,27 +177,29 @@ def _gcn_harness():
       message_passing_steps=2,
       output_globals_size=5)
   variables = model.init(rngs, graphs)
-  return ModelHarness('flax/gnn_conv', model.apply, variables, [graphs])
+  return ModelHarness(name, model.apply, variables, [graphs], **kwargs)
 
 
-def _resnet50_harness():
+def _resnet50_harness(name, **kwargs):
   model = resnet.ResNet50(num_classes=2, dtype=np.float32)
-  x = np.zeros((8, 244, 244, 3), np.float32)
+  x = np.zeros((8, 16, 16, 3), np.float32)
   variables = model.init(random.PRNGKey(0), x)
   apply = functools.partial(model.apply, train=False, mutable=False)
-  return ModelHarness('flax/resnet50', apply, variables, [x])
+  return ModelHarness(name, apply, variables, [x], **kwargs)
 
 
-def _seq2seq_lstm_harness():
+def _seq2seq_lstm_harness(name, **kwargs):
   model = seq2seq_lstm.Seq2seq(teacher_force=True, hidden_size=2, vocab_size=4)
-  x = np.zeros((1, 2, 4), np.float32)
+  encoder_inputs = np.zeros((1, 2, 4), np.float32)  # [batch, inp_len, vocab]
+  decoder_inputs = np.zeros((1, 3, 4), np.float32)  # [batch, outp_len, vocab]
   rngs = {
       'params': random.PRNGKey(0),
       'lstm': random.PRNGKey(1),
   }
-  variables = model.init(rngs, x, x)
+  xs = [encoder_inputs, decoder_inputs]
+  variables = model.init(rngs, *xs)
   apply = functools.partial(model.apply, rngs={'lstm': random.PRNGKey(2)})
-  return ModelHarness('flax/seq2seq', apply, variables, [x, x])
+  return ModelHarness(name, apply, variables, xs, **kwargs)
 
 
 def _min_transformer_kwargs():
@@ -181,7 +225,7 @@ def _full_transformer_kwargs():
   return {**kwargs, **_min_transformer_kwargs()}
 
 
-def _transformer_lm1b_harness():
+def _transformer_lm1b_harness(name, **kwargs):
   config = lm1b.TransformerConfig(**_full_transformer_kwargs())
   model = lm1b.TransformerLM(config=config)
   x = np.zeros((2, 1), np.float32)
@@ -193,19 +237,19 @@ def _transformer_lm1b_harness():
     output, _ = model.apply(*args, rngs={'cache': rng2}, mutable=['cache'])
     return output
 
-  return ModelHarness('flax/lm1b', apply, variables, [x])
+  return ModelHarness(name, apply, variables, [x], **kwargs)
 
 
-def _transformer_nlp_seq_harness():
+def _transformer_nlp_seq_harness(name, **kwargs):
   config = nlp_seq.TransformerConfig(**_min_transformer_kwargs())
   model = nlp_seq.Transformer(config=config)
   x = np.zeros((2, 1), np.float32)
   variables = model.init(random.PRNGKey(0), x, train=False)
   apply = functools.partial(model.apply, train=False)
-  return ModelHarness('flax/nlp_seq', apply, variables, [x])
+  return ModelHarness(name, apply, variables, [x], **kwargs)
 
 
-def _transformer_wmt_harness():
+def _transformer_wmt_harness(name, **kwargs):
   config = wmt.TransformerConfig(**_full_transformer_kwargs())
   model = wmt.Transformer(config=config)
   x = np.zeros((2, 1), np.float32)
@@ -216,32 +260,160 @@ def _transformer_wmt_harness():
     output, _ = model.apply(*args, mutable=['cache'])
     return output
 
-  return ModelHarness('flax/wmt', apply, variables, [x, x])
+  return ModelHarness(name, apply, variables, [x, x], **kwargs)
 
 
-def _vae_harness():
+def _vae_harness(name, **kwargs):
   model = vae.VAE(latents=3)
   x = np.zeros((1, 8, 8, 3), np.float32)
   rng1, rng2 = random.split(random.PRNGKey(0))
   variables = model.init(rng1, x, rng2)
   generate = lambda v, x: model.apply(v, x, method=model.generate)
-  return ModelHarness('flax/vae', generate, variables, [x])
+  return ModelHarness(name, generate, variables, [x], **kwargs)
 
 
-##### All harnesses in this file.
-# Note: we store the functions and not their instantiation to avoid creating all
-# parameters of all models at once.
-ALL_HARNESS_FNS: List[Callable[[], ModelHarness]] = [
-    _actor_critic_harness,
-    _bilstm_harness,
-    # TODO(marcvanzee): GNNs currently do not work since their __call__
-    # function takes a jraph.GraphsTuple as an argument, which we don't support.
-    # 'flax/gnn': _gnn_harness,
-    # 'flax/gnn_conv': _gnn_conv_harness,
-    _resnet50_harness,
-    _seq2seq_lstm_harness,
-    _transformer_lm1b_harness,
-    _transformer_nlp_seq_harness,
-    _transformer_wmt_harness,
-    _vae_harness
-]
+####################### Model Harness Construction #############################
+
+
+# actor_critic input spec: [((1, 84, 84, 4), np.float32)].
+for poly_shapes, tensor_specs in [
+    (None, None),  # No polymorphism.
+    # batch polymorphism.
+    (["(b, ...)"], [((None, 84, 84, 4), tf.float32)]),
+    # Dependent shapes for spatial dims.
+    # TODO(marcvanzee): Figure out the right multiple for these dimensions.
+    (["(_, 4*b, 4*b, _)"], [((1, None, None, 4), tf.float32)]),
+]:
+  _make_harness(
+      harness_fn=_actor_critic_harness,
+      name="flax/actor_critic",
+      poly_shapes=poly_shapes,
+      tensor_specs=tensor_specs)
+
+# bilstm input specs: [((2, 3), np.int32), ((2,), np.int32)] = [inputs, lengths]
+for poly_shapes, tensor_specs in [  # type: ignore
+    (None, None),
+    # batch polymorphism
+    (["(b, _)", "(_,)"], [((None, 3), tf.int32), ((2,), tf.int32)]),
+    # dynamic input lengths
+    (["(_, _)", "(b,)"], [((2, 3), tf.int32), ((None,), tf.int32)]),
+]:
+  _make_harness(
+      harness_fn=_bilstm_harness,
+      name="flax/bilstm",
+      poly_shapes=poly_shapes,
+      tensor_specs=tensor_specs)
+
+# cnn input spec: [((1, 28, 28, 1), np.float32)].
+for poly_shapes, tensor_specs in [
+    (None, None),  # No polymorphism.
+    # batch polymorphism.
+    (["(b, ...)"], [((None, 28, 28, 1), tf.float32)]),
+    # Dependent shapes for spatial dims.
+    # TODO(marcvanzee): Figure out the right multiple for these dimensions.
+    (["(_, b, b, _)"], [((1, None, None, 1), tf.float32)]),
+]:
+  _make_harness(
+      harness_fn=_cnn_harness,
+      name="flax/cnn",
+      poly_shapes=poly_shapes,
+      tensor_specs=tensor_specs)
+
+# We do not support polymorphism for the GNN examples since they use GraphTuples
+# as input rather than regular arrays.
+_make_harness(harness_fn=_gnn_harness, name="flax/gnn")
+_make_harness(harness_fn=_gnn_conv_harness, name="flax/gnn_conv")
+
+# resnet50 input spec: [((8, 16, 16, 3), np.float32)]
+for poly_shapes, tensor_specs in [
+    (None, None),  # No polymorphism.
+    # batch polymorphism.
+    (["(b, ...)"], [((None, 16, 16, 3), tf.float32)]),
+    # Dependent shapes for spatial dims.
+    # TODO(marcvanzee): Figure out the right multiple for these dimensions.
+    (["(_, 4*b, 4*b, _)"], [((8, None, None, 3), tf.float32)]),
+]:
+  _make_harness(
+      harness_fn=_resnet50_harness,
+      name="flax/resnet50",
+      poly_shapes=poly_shapes,
+      tensor_specs=tensor_specs)
+
+
+# seq2seq input specs (we use the same input and output lengths for now):
+# [
+#   ((1, 2, 4), np.float32),  # encoder inp: [batch, max_input_len, vocab_size]
+#   ((1, 3, 4), np.float32),  # decoder_inp: [batch, max_output_len, vocab_size]
+# ]
+for poly_shapes, tensor_specs in [  # type: ignore
+    (None, None),
+    # batch polymorphism
+    (
+        ["(b, _, _)",                "(b, _, _)"],
+        [((None, 2, 4), tf.float32), ((None, 3, 4), tf.float32)],
+    ),
+    # dynamic input lengths
+    (
+        ["(_, b, _)",                "(_, _, _)"],
+        [((1, None, 4), tf.float32), ((1, 3, 4), tf.float32)],
+    ),
+    # dynamic output lengths
+    (
+        ["(_, _, _)",                 "(_, b, _)"],
+        [((1, 2, 4), tf.float32),     ((1, None, 4), tf.float32)],
+    ),
+]:
+  _make_harness(
+      harness_fn=_seq2seq_lstm_harness,
+      name="flax/seq2seq_lstm",
+      poly_shapes=poly_shapes,
+      tensor_specs=tensor_specs)
+
+# lm1b/nlp_seq input spec: [((2, 1), np.float32)]  [batch, seq_len]
+for poly_shapes, tensor_specs in [  # type: ignore
+    (None, None),
+    # batch polymorphism.
+    (["(b, _)"], [((None, 1), tf.float32)]),
+]:
+  for name, harness_fn in [
+      ("flax/lm1b", _transformer_lm1b_harness),
+      ("flax/nlp_seq", _transformer_nlp_seq_harness)
+  ]:
+    _make_harness(
+        harness_fn=harness_fn,
+        name=name,
+        poly_shapes=poly_shapes,
+        tensor_specs=tensor_specs)
+
+# wmt input spec (both inputs have the same shape):
+# [
+#   ((1, 2), np.float32),  # inputs:  [batch, max_target_len]
+#   ((1, 2), np.float32),  # targets: [batch, max_target_len]
+# ]
+for poly_shapes, tensor_specs in [  # type: ignore
+    (None, None),
+    # batch polymorphism.
+    (["(b, _)"] * 2, [((None, 1), tf.float32)] * 2),
+    # dynamic lengths.
+    (["(_, b)"] * 2, [((1, None), tf.float32)] * 2),
+]:
+  _make_harness(
+      harness_fn=_transformer_wmt_harness,
+      name="flax/wmt",
+      poly_shapes=poly_shapes,
+      tensor_specs=tensor_specs)
+
+# vae input spec: [((1, 8, 8, 3), np.float32)].
+for poly_shapes, tensor_specs in [
+    (None, None),  # No polymorphism.
+    # batch polymorphism.
+    (["(b, ...)"], [((None, 8, 8, 3), tf.float32)]),
+    # Dependent shapes for spatial dims.
+    # TODO(marcvanzee): Figure out the right multiple for these dimensions.
+    (["(_, b, b, _)"], [((1, None, None, 3), tf.float32)]),
+]:
+  _make_harness(
+      harness_fn=_vae_harness,
+      name="flax/vae",
+      poly_shapes=poly_shapes,
+      tensor_specs=tensor_specs)

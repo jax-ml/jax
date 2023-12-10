@@ -24,7 +24,7 @@ import numpy as np
 import jax
 from jax import lax
 from jax import random
-from jax.config import config
+from jax import config
 from jax.experimental import enable_x64, disable_x64
 import jax.numpy as jnp
 import jax._src.test_util as jtu
@@ -62,8 +62,8 @@ class X64ContextTests(jtu.JaxTestCase):
     with disable_x64():
       self.assertEqual(func().dtype, "float32")
 
-  @unittest.skipIf(jtu.device_under_test() != "cpu", "Test presumes CPU precision")
   @jtu.sample_product(jit=jtu.JIT_IMPLEMENTATION)
+  @jtu.run_on_devices("cpu")  # Test presumes CPU precision
   def test_near_singular_inverse(self, jit):
     rng = jtu.rand_default(self.rng())
 
@@ -111,8 +111,11 @@ class X64ContextTests(jtu.JaxTestCase):
       self.assertEqual(x64.result(), jnp.int64)
       self.assertEqual(x32.result(), jnp.int32)
 
+  @jax.legacy_prng_key('allow')
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype float64  is not available")
   def test_jit_cache(self):
-    if jtu.device_under_test() == "tpu":
+    if jtu.test_device_matches(["tpu"]):
       self.skipTest("64-bit random not available on TPU")
 
     f = partial(random.uniform, random.PRNGKey(0), (1,), 'float64', -1, 1)

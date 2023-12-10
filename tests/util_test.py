@@ -12,15 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import operator
+
 from absl.testing import absltest
 
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax._src import test_util as jtu
+from jax._src import util
 
-from jax.config import config
+from jax import config
 from jax._src.util import weakref_lru_cache
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
+
+try:
+  from jax._src.lib import utils as jaxlib_utils
+except:
+  jaxlib_utils = None
 
 class UtilTest(jtu.JaxTestCase):
 
@@ -55,7 +62,6 @@ class UtilTest(jtu.JaxTestCase):
       yield (results[0:len(args)],
              dict(zip(kwargs_keys, results[len(args):]))), aux_output
 
-
     wf = lu.wrap_init(f)  # Wraps `f` as a `WrappedFun`.
     wf, out_thunk = kw_to_positional(wf, 2)
     # Call the transformed function.
@@ -87,6 +93,108 @@ class UtilTest(jtu.JaxTestCase):
 
     for _ in range(4097):
       reference_loop_generator(lambda x: x)
+
+
+class SafeMapTest(jtu.JaxTestCase):
+
+  def test_safe_map(self):
+    def unreachable(*args, **kwargs):
+      raise RuntimeError("unreachable")
+
+    self.assertEqual([], util.safe_map(unreachable, []))
+    self.assertEqual([], util.safe_map(unreachable, (), []))
+    self.assertEqual([], util.safe_map(unreachable, [], [], []))
+    self.assertEqual([], util.safe_map(unreachable, [], iter([]), [], []))
+
+    def double(x):
+      return x * 2
+
+    self.assertEqual([14], util.safe_map(double, (7,)))
+    self.assertEqual([0, 2, 4, 6], util.safe_map(double, range(4)))
+
+    def make_tuple(*args):
+      return args
+
+    self.assertEqual(
+        [(0, 4), (1, 5), (2, 6), (3, 7)],
+        util.safe_map(make_tuple, range(4), range(4, 8)),
+    )
+
+  def test_safe_map_errors(self):
+    with self.assertRaisesRegex(
+        TypeError, "safe_map requires at least 2 arguments"
+    ):
+      util.safe_map()
+
+    with self.assertRaisesRegex(
+        TypeError, "safe_map requires at least 2 arguments"
+    ):
+      util.safe_map(lambda x: x)
+
+    with self.assertRaisesRegex(TypeError, "'int' object is not callable"):
+      util.safe_map(7, range(6))
+
+    def error(*args, **kwargs):
+      raise RuntimeError("hello")
+
+    with self.assertRaisesRegex(RuntimeError, "hello"):
+      util.safe_map(error, range(6))
+
+    with self.assertRaisesRegex(
+        ValueError, r"safe_map\(\) argument 2 is longer than argument 1"
+    ):
+      util.safe_map(operator.add, range(3), range(4))
+
+    with self.assertRaisesRegex(
+        ValueError, r"safe_map\(\) argument 2 is shorter than argument 1"
+    ):
+      util.safe_map(operator.add, range(7), range(2))
+
+    with self.assertRaisesRegex(
+        ValueError, r"safe_map\(\) argument 2 is longer than argument 1"
+    ):
+      util.safe_map(operator.add, (), range(3))
+
+
+class SafeZipTest(jtu.JaxTestCase):
+
+  def test_safe_zip(self):
+    self.assertEqual([], util.safe_zip([]))
+    self.assertEqual([], util.safe_zip((), []))
+    self.assertEqual([], util.safe_zip([], [], []))
+    self.assertEqual([], util.safe_zip([], iter([]), [], []))
+    self.assertEqual([(7,)], util.safe_zip((7,)))
+    self.assertEqual([(0,), (1,), (2,), (3,)], util.safe_zip(range(4)))
+    self.assertEqual(
+        [(0, 4), (1, 5), (2, 6), (3, 7)],
+        util.safe_zip(range(4), range(4, 8)),
+    )
+
+  def test_safe_zip_errors(self):
+    with self.assertRaisesRegex(
+        TypeError, "safe_zip requires at least 1 argument"
+    ):
+      util.safe_zip()
+
+    with self.assertRaisesRegex(
+        TypeError, "'function' object is not iterable"
+    ):
+      util.safe_zip(lambda x: x)
+
+    with self.assertRaisesRegex(
+        ValueError, r"safe_zip\(\) argument 2 is longer than argument 1"
+    ):
+      util.safe_zip(range(3), range(4))
+
+    with self.assertRaisesRegex(
+        ValueError, r"safe_zip\(\) argument 2 is shorter than argument 1"
+    ):
+      util.safe_zip(range(7), range(2))
+
+    with self.assertRaisesRegex(
+        ValueError, r"safe_zip\(\) argument 2 is longer than argument 1"
+    ):
+      util.safe_zip((), range(3))
 
 
 if __name__ == "__main__":

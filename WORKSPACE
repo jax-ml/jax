@@ -1,44 +1,28 @@
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+# The XLA commit is determined by third_party/xla/workspace.bzl.
+load("//third_party/xla:workspace.bzl", jax_xla_workspace = "repo")
+jax_xla_workspace()
 
-# To update TensorFlow to a new revision,
-# a) update URL and strip_prefix to the new git commit hash
-# b) get the sha256 hash of the commit by running:
-#    curl -L https://github.com/tensorflow/tensorflow/archive/<git hash>.tar.gz | sha256sum
-#    and update the sha256 with the result.
-http_archive(
-    name = "org_tensorflow",
-    sha256 = "9379bf81d201afa483bee61fe481fddd6809c05116529d7bbbc98566f9f10f83",
-    strip_prefix = "tensorflow-48cedda6908b7c31457dc7c8a297a62b2c273504",
-    urls = [
-        "https://github.com/tensorflow/tensorflow/archive/48cedda6908b7c31457dc7c8a297a62b2c273504.tar.gz",
-    ],
-)
+load("@xla//:workspace4.bzl", "xla_workspace4")
+xla_workspace4()
 
-# For development, one often wants to make changes to the TF repository as well
-# as the JAX repository. You can override the pinned repository above with a
-# local checkout by either:
-# a) overriding the TF repository on the build.py command line by passing a flag
-#    like:
-#    python build/build.py --bazel_options=--override_repository=org_tensorflow=/path/to/tensorflow
-#    or
-# b) by commenting out the http_archive above and uncommenting the following:
-# local_repository(
-#    name = "org_tensorflow",
-#    path = "/path/to/tensorflow",
-# )
+load("@xla//:workspace3.bzl", "xla_workspace3")
+xla_workspace3()
 
-load("//third_party/ducc:workspace.bzl", ducc = "repo")
-ducc()
+load("@xla//:workspace2.bzl", "xla_workspace2")
+xla_workspace2()
 
-# Initialize TensorFlow's external dependencies.
-load("@org_tensorflow//tensorflow:workspace3.bzl", "tf_workspace3")
-tf_workspace3()
+load("@xla//:workspace1.bzl", "xla_workspace1")
+xla_workspace1()
 
-load("@org_tensorflow//tensorflow:workspace2.bzl", "tf_workspace2")
-tf_workspace2()
+load("@xla//:workspace0.bzl", "xla_workspace0")
+xla_workspace0()
 
-load("@org_tensorflow//tensorflow:workspace1.bzl", "tf_workspace1")
-tf_workspace1()
+load("//third_party/flatbuffers:workspace.bzl", flatbuffers = "repo")
+flatbuffers()
 
-load("@org_tensorflow//tensorflow:workspace0.bzl", "tf_workspace0")
-tf_workspace0()
+load("//third_party/robin_map:workspace.bzl", robin_map = "repo")
+robin_map()
+
+load("//third_party/nanobind:workspace.bzl", nanobind = "repo")
+nanobind()
+

@@ -19,9 +19,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "pybind11/numpy.h"
-#include "pybind11/pybind11.h"
-#include "pybind11/stl.h"
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/pair.h"
 #include "absl/base/casts.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
@@ -30,15 +29,16 @@ limitations under the License.
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/sparse_kernels.h"
 #include "jaxlib/gpu/vendor.h"
-#include "jaxlib/kernel_pybind11_helpers.h"
+#include "jaxlib/kernel_nanobind_helpers.h"
+#include "tsl/python/lib/core/numpy.h"
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 namespace {
 
-gpusparseIndexType_t DtypeToCuSparseIndexType(const py::dtype& np_type) {
+gpusparseIndexType_t DtypeToCuSparseIndexType(const dtype& np_type) {
   static auto* types =
       new absl::flat_hash_map<std::pair<char, int>, gpusparseIndexType_t>({
           {{'u', 2}, GPUSPARSE_INDEX_16U},
@@ -47,13 +47,14 @@ gpusparseIndexType_t DtypeToCuSparseIndexType(const py::dtype& np_type) {
       });
   auto it = types->find({np_type.kind(), np_type.itemsize()});
   if (it == types->end()) {
+    nb::str repr = nb::repr(np_type);
     throw std::invalid_argument(
-        absl::StrFormat("Unsupported index dtype: %s", py::repr(np_type)));
+        absl::StrFormat("Unsupported index dtype: %s", repr.c_str()));
   }
   return it->second;
 }
 
-gpuDataType DtypeToCudaDataType(const py::dtype& np_type) {
+gpuDataType DtypeToCudaDataType(const dtype& np_type) {
   static auto* types =
       new absl::flat_hash_map<std::pair<char, int>, gpuDataType>({
         {{'f', 2}, GPU_R_16F}, {{'c', 4}, GPU_C_16F}, {{'f', 4}, GPU_R_32F},
@@ -69,14 +70,15 @@ gpuDataType DtypeToCudaDataType(const py::dtype& np_type) {
       });
   auto it = types->find({np_type.kind(), np_type.itemsize()});
   if (it == types->end()) {
+    nb::str repr = nb::repr(np_type);
     throw std::invalid_argument(
-        absl::StrFormat("Unsupported data dtype: %s", py::repr(np_type)));
+        absl::StrFormat("Unsupported data dtype: %s", repr.c_str()));
   }
   return it->second;
 }
 // Returns the descriptor for a Sparse matrix.
-SparseMatDescriptor BuildSparseMatDescriptor(const py::dtype& data_dtype,
-                                             const py::dtype& index_dtype,
+SparseMatDescriptor BuildSparseMatDescriptor(const dtype& data_dtype,
+                                             const dtype& index_dtype,
                                              int rows, int cols, int nnz,
                                              int batch_count,
                                              int batch_stride) {
@@ -87,7 +89,7 @@ SparseMatDescriptor BuildSparseMatDescriptor(const py::dtype& data_dtype,
 }
 
 // Returns the descriptor for a Dense matrix.
-DenseMatDescriptor BuildDenseMatDescriptor(const py::dtype& data_dtype,
+DenseMatDescriptor BuildDenseMatDescriptor(const dtype& data_dtype,
                                            int rows, int cols, int batch_count,
                                            int batch_stride) {
   gpuDataType value_type = DtypeToCudaDataType(data_dtype);
@@ -95,7 +97,7 @@ DenseMatDescriptor BuildDenseMatDescriptor(const py::dtype& data_dtype,
 }
 
 // Returns the descriptor for a Dense vector.
-DenseVecDescriptor BuildDenseVecDescriptor(const py::dtype& data_dtype,
+DenseVecDescriptor BuildDenseVecDescriptor(const dtype& data_dtype,
                                            int size) {
   gpuDataType value_type = DtypeToCudaDataType(data_dtype);
   return DenseVecDescriptor{value_type, size};
@@ -105,10 +107,10 @@ DenseVecDescriptor BuildDenseVecDescriptor(const py::dtype& data_dtype,
 // CsrToDense: Convert CSR matrix to dense matrix
 
 // Returns the descriptor for a Sparse matrix.
-std::pair<size_t, py::bytes> BuildCsrToDenseDescriptor(
-    const py::dtype& data_dtype, const py::dtype& index_dtype, int rows,
+std::pair<size_t, nb::bytes> BuildCsrToDenseDescriptor(
+    const dtype& data_dtype, const dtype& index_dtype, int rows,
     int cols, int nnz) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor d =
@@ -120,7 +122,7 @@ std::pair<size_t, py::bytes> BuildCsrToDenseDescriptor(
 
   // buffer_size does not reference these pointers, but does error on NULL.
   // TODO(jakevdp): check whether this is documented.
-  int val = 0;
+  int val alignas(16) = 0;
   void* empty = &val;
 
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseCreateCsr(
@@ -182,10 +184,10 @@ void CsrToDense(gpuStream_t stream, void** buffers, const char* opaque,
 // CsrFromDense: Convert dense matrix to CSR matrix
 
 // Returns the descriptor for a CsrFromDense operation.
-std::pair<size_t, py::bytes> BuildCsrFromDenseDescriptor(
-    const py::dtype& data_dtype, const py::dtype& index_dtype, int rows,
+std::pair<size_t, nb::bytes> BuildCsrFromDenseDescriptor(
+    const dtype& data_dtype, const dtype& index_dtype, int rows,
     int cols, int nnz) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor d =
@@ -196,7 +198,7 @@ std::pair<size_t, py::bytes> BuildCsrFromDenseDescriptor(
   gpusparseSpMatDescr_t mat_b = 0;
 
   // bufferSize does not reference these pointers, but does error on NULL.
-  int val = 0;
+  int val alignas(16) = 0;
   void* empty = &val;
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
       &mat_a, d.rows, d.cols,
@@ -258,11 +260,11 @@ void CsrFromDense(gpuStream_t stream, void** buffers, const char* opaque,
 // CsrMatvec: Product of CSR matrix and dense vector.
 
 // Returns the descriptor for a CsrMatvec operation.
-std::pair<size_t, py::bytes> BuildCsrMatvecDescriptor(
-    const py::dtype& data_dtype, const py::dtype& x_dtype,
-    const py::dtype& compute_dtype, const py::dtype& index_dtype, int rows,
+std::pair<size_t, nb::bytes> BuildCsrMatvecDescriptor(
+    const dtype& data_dtype, const dtype& x_dtype,
+    const dtype& compute_dtype, const dtype& index_dtype, int rows,
     int cols, int nnz, bool transpose) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor A =
@@ -280,7 +282,7 @@ std::pair<size_t, py::bytes> BuildCsrMatvecDescriptor(
                                       : GPUSPARSE_OPERATION_NON_TRANSPOSE;
 
   // bufferSize does not reference these pointers, but does error on NULL.
-  int val = 0;
+  int val alignas(16) = 0;
   void* empty = &val;
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseCreateCsr(
       &mat_a, A.rows, A.cols, A.nnz, empty, empty, empty, A.index_type,
@@ -306,11 +308,11 @@ std::pair<size_t, py::bytes> BuildCsrMatvecDescriptor(
 // CsrMatmat: Product of CSR matrix and dense matrix.
 
 // Returns the descriptor for a CsrMatmat operation.
-std::pair<size_t, py::bytes> BuildCsrMatmatDescriptor(
-    const py::dtype& data_dtype, const py::dtype& b_dtype,
-    const py::dtype& compute_dtype, const py::dtype& index_dtype, int rows,
+std::pair<size_t, nb::bytes> BuildCsrMatmatDescriptor(
+    const dtype& data_dtype, const dtype& b_dtype,
+    const dtype& compute_dtype, const dtype& index_dtype, int rows,
     int cols, int BCcols, int nnz, bool transpose) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor A =
@@ -330,7 +332,7 @@ std::pair<size_t, py::bytes> BuildCsrMatmatDescriptor(
   gpusparseDnMatDescr_t mat_c = 0;
 
   // bufferSize does not reference these pointers, but does error on NULL.
-  int val = 0;
+  int val alignas(16) = 0;
   void* empty = &val;
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseCreateCsr(
       &mat_a, A.rows, A.cols, A.nnz, empty, empty, empty, A.index_type,
@@ -358,10 +360,10 @@ std::pair<size_t, py::bytes> BuildCsrMatmatDescriptor(
 // CooToDense: Convert COO matrix to dense matrix
 
 // Returns the descriptor for a CooToDense operation.
-std::pair<size_t, py::bytes> BuildCooToDenseDescriptor(
-    const py::dtype& data_dtype, const py::dtype& index_dtype, int rows,
+std::pair<size_t, nb::bytes> BuildCooToDenseDescriptor(
+    const dtype& data_dtype, const dtype& index_dtype, int rows,
     int cols, int nnz) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor d =
@@ -372,7 +374,7 @@ std::pair<size_t, py::bytes> BuildCooToDenseDescriptor(
   gpusparseDnMatDescr_t mat_b = 0;
 
   // bufferSize does not reference these pointers, but does error on NULL.
-  int val = 0;
+  int val alignas(16) = 0;
   void* empty = &val;
 
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseCreateCoo(
@@ -395,10 +397,10 @@ std::pair<size_t, py::bytes> BuildCooToDenseDescriptor(
 // CooFromDense: Convert dense matrix to COO matrix
 
 // Returns the descriptor for a CooFromDense operation.
-std::pair<size_t, py::bytes> BuildCooFromDenseDescriptor(
-    const py::dtype& data_dtype, const py::dtype& index_dtype, int rows,
+std::pair<size_t, nb::bytes> BuildCooFromDenseDescriptor(
+    const dtype& data_dtype, const dtype& index_dtype, int rows,
     int cols, int nnz) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor d =
@@ -409,7 +411,7 @@ std::pair<size_t, py::bytes> BuildCooFromDenseDescriptor(
   gpusparseSpMatDescr_t mat_b = 0;
 
   // bufferSize does not reference these pointers, but does error on NULL.
-  int val = 0;
+  int val alignas(16) = 0;
   void* empty = &val;
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
       &mat_a, d.rows, d.cols,
@@ -431,11 +433,11 @@ std::pair<size_t, py::bytes> BuildCooFromDenseDescriptor(
 // CooMatvec: Product of COO matrix and dense vector.
 
 // Returns the descriptor for a CooMatvec operation.
-std::pair<size_t, py::bytes> BuildCooMatvecDescriptor(
-    const py::dtype& data_dtype, const py::dtype& x_dtype,
-    const py::dtype& compute_dtype, const py::dtype& index_dtype, int rows,
+std::pair<size_t, nb::bytes> BuildCooMatvecDescriptor(
+    const dtype& data_dtype, const dtype& x_dtype,
+    const dtype& compute_dtype, const dtype& index_dtype, int rows,
     int cols, int nnz, bool transpose) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   SparseMatDescriptor A =
@@ -453,7 +455,7 @@ std::pair<size_t, py::bytes> BuildCooMatvecDescriptor(
                                       : GPUSPARSE_OPERATION_NON_TRANSPOSE;
 
   // bufferSize does not reference these pointers, but does error on NULL.
-  int val = 0;
+  int val alignas(16) = 0;
   void* empty = &val;
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseCreateCoo(
       &mat_a, A.rows, A.cols, A.nnz, empty, empty, empty, A.index_type,
@@ -479,9 +481,9 @@ std::pair<size_t, py::bytes> BuildCooMatvecDescriptor(
 // CooMatmat: Product of COO matrix and dense matrix.
 
 // Returns the descriptor for a CooMatmat operation.
-std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
-    const py::dtype& data_dtype, const py::dtype& b_dtype,
-    const py::dtype& compute_dtype, const py::dtype& index_dtype, int rows,
+std::pair<size_t, nb::bytes> BuildCooMatmatDescriptor(
+    const dtype& data_dtype, const dtype& b_dtype,
+    const dtype& compute_dtype, const dtype& index_dtype, int rows,
     int cols, int BCcols, int nnz, bool transpose, int batch_count,
     int lhs_batch_stride, int rhs_batch_stride) {
   // Three batch modes are supported, C_i = A_i B, C_i = A B_i, and
@@ -489,7 +491,7 @@ std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
   // All three matrices A, B, and C must have the same batch count.
   // Use batch stride to trigger individual mode, e.g.,
   // `rhs_batch_stride = 0` for C_i = A_i B.
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
 
@@ -515,7 +517,7 @@ std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
   gpusparseDnMatDescr_t mat_c = 0;
 
   // bufferSize does not reference these pointers, but does error on NULL.
-  int val = 0;
+  int val alignas(16) = 0;
   void* empty = &val;
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseCreateCoo(
       &mat_a, A.rows, A.cols, A.nnz, empty, empty, empty, A.index_type,
@@ -548,13 +550,13 @@ std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
 
 #endif  // if JAX_GPU_HAVE_SPARSE
 
-py::bytes BuildGtsv2Descriptor(int m, int n, int ldb) {
-  return PackDescriptor(Gtsv2Descriptor{m, n, ldb});
+nb::bytes BuildGtsv2Descriptor(int b, int m, int n, int ldb) {
+  return PackDescriptor(Gtsv2Descriptor{b, m, n, ldb});
 }
 
 template <typename F>
 size_t Gtsv2BufferSize(F f, int m, int n, int ldb) {
-  auto h = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow(/*stream=*/nullptr);
   JAX_THROW_IF_ERROR(h.status());
   auto& handle = *h;
   size_t size;
@@ -572,8 +574,8 @@ size_t Gtsv2BufferSizeF64(int m, int n, int ldb) {
   return Gtsv2BufferSize(gpusparseDgtsv2_bufferSizeExt, m, n, ldb);
 }
 
-py::dict Registrations() {
-  py::dict dict;
+nb::dict Registrations() {
+  nb::dict dict;
 #if JAX_GPU_HAVE_SPARSE
   dict[JAX_GPU_PREFIX "sparse_csr_todense"] = EncapsulateFunction(CsrToDense);
   dict[JAX_GPU_PREFIX "sparse_csr_fromdense"] =
@@ -592,8 +594,9 @@ py::dict Registrations() {
   return dict;
 }
 
-PYBIND11_MODULE(_sparse, m) {
-  m.attr("sparse_supported") = py::bool_(JAX_GPU_HAVE_SPARSE);
+NB_MODULE(_sparse, m) {
+  tsl::ImportNumpy();
+  m.attr("sparse_supported") = nb::cast(JAX_GPU_HAVE_SPARSE);
   m.def("registrations", &Registrations);
 #if JAX_GPU_HAVE_SPARSE
   m.def("build_csr_todense_descriptor", &BuildCsrToDenseDescriptor);

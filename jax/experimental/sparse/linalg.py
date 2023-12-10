@@ -20,19 +20,23 @@ import functools
 import jax
 import jax.numpy as jnp
 
-from jax import core
+from jax.experimental import sparse
 from jax.interpreters import mlir
 from jax.interpreters import xla
 
+from jax._src import core
+from jax._src.interpreters import ad
 from jax._src.lib import gpu_solver
 
 import numpy as np
+from scipy.sparse import csr_matrix, linalg
+
 
 def lobpcg_standard(
-    A: Union[jnp.ndarray, Callable[[jnp.ndarray], jnp.ndarray]],
-    X: jnp.ndarray,
+    A: Union[jax.Array, Callable[[jax.Array], jax.Array]],
+    X: jax.Array,
     m: int = 100,
-    tol: Union[jnp.ndarray, float, None] = None):
+    tol: Union[jax.Array, float, None] = None):
   """Compute the top-k standard eigenvalues using the LOBPCG routine.
 
   LOBPCG [1] stands for Locally Optimal Block Preconditioned Conjugate Gradient.
@@ -93,16 +97,16 @@ def lobpcg_standard(
                  large (only `k * 5 < n` supported), or `k == 0`.
   """
   # Jit-compile once per matrix shape if possible.
-  if isinstance(A, (jnp.ndarray, np.ndarray)):
+  if isinstance(A, (jax.Array, np.ndarray)):
     return _lobpcg_standard_matrix(A, X, m, tol, debug=False)
   return _lobpcg_standard_callable(A, X, m, tol, debug=False)
 
 @functools.partial(jax.jit, static_argnames=['m', 'debug'])
 def _lobpcg_standard_matrix(
-    A: jnp.ndarray,
-    X: jnp.ndarray,
+    A: jax.Array,
+    X: jax.Array,
     m: int,
-    tol: Union[jnp.ndarray, float, None],
+    tol: Union[jax.Array, float, None],
     debug: bool = False):
   """Computes lobpcg_standard(), possibly with debug diagnostics."""
   return _lobpcg_standard_callable(
@@ -110,10 +114,10 @@ def _lobpcg_standard_matrix(
 
 @functools.partial(jax.jit, static_argnames=['A', 'm', 'debug'])
 def _lobpcg_standard_callable(
-    A: Callable[[jnp.ndarray], jnp.ndarray],
-    X: jnp.ndarray,
+    A: Callable[[jax.Array], jax.Array],
+    X: jax.Array,
     m: int,
-    tol: Union[jnp.ndarray, float, None],
+    tol: Union[jax.Array, float, None],
     debug: bool = False):
   """Supports generic lobpcg_standard() callable interface."""
 
@@ -195,7 +199,7 @@ def _lobpcg_standard_callable(
     # I tried many variants of hard and soft locking [3]. All of them seemed
     # to worsen performance relative to no locking.
     #
-    # Further, I found a more expermental convergence formula compared to what
+    # Further, I found a more experimental convergence formula compared to what
     # is suggested in the literature, loosely based on floating-point
     # expectations.
     #
@@ -447,7 +451,7 @@ def _rayleigh_ritz_orth(A, S):
 
   SAS = _mm(S.T, A(S))
 
-  # Solve the projected subsytem.
+  # Solve the projected subsystem.
   # If we could tell to eigh to stop after first k, we would.
   return _eigh_ascending(SAS)
 
@@ -510,24 +514,86 @@ def _extend_basis(X, m):
 
 
 # Sparse direct solve via QR factorization
+def _spsolve_abstract_eval(data, indices, indptr, b, *, tol, reorder):
+  if data.dtype != b.dtype:
+    raise ValueError(f"data types do not match: {data.dtype=} {b.dtype=}")
+  if not (jnp.issubdtype(indices.dtype, jnp.integer) and jnp.issubdtype(indptr.dtype, jnp.integer)):
+    raise ValueError(f"index arrays must be integer typed; got {indices.dtype=} {indptr.dtype=}")
+  if not data.ndim == indices.ndim == indptr.ndim == b.ndim == 1:
+    raise ValueError("Arrays must be one-dimensional. "
+                     f"Got {data.shape=} {indices.shape=} {indptr.shape=} {b.shape=}")
+  if indptr.size != b.size + 1 or  data.shape != indices.shape:
+    raise ValueError(f"Invalid CSR buffer sizes: {data.shape=} {indices.shape=} {indptr.shape=}")
+  if reorder not in [0, 1, 2, 3]:
+    raise ValueError(f"{reorder=} not valid, must be one of [1, 2, 3, 4]")
+  tol = float(tol)
+  return b
 
 
-def _spsolve_abstract_eval(data, indices, indptr, b, tol, reorder):
-  del data, indices, indptr, tol, reorder
-  return core.raise_to_shaped(b)
-
-
-def _spsolve_gpu_lowering(ctx, data, indices, indptr, b, tol, reorder):
+def _spsolve_gpu_lowering(ctx, data, indices, indptr, b, *, tol, reorder):
   data_aval, _, _, _, = ctx.avals_in
-
   return gpu_solver.cuda_csrlsvqr(data_aval.dtype, data, indices,
                                   indptr, b, tol, reorder)
+
+
+def _spsolve_cpu_lowering(ctx, data, indices, indptr, b, tol, reorder):
+  del tol, reorder
+  args = [data, indices, indptr, b]
+
+  def _callback(data, indices, indptr, b, **kwargs):
+    A = csr_matrix((data, indices, indptr), shape=(b.size, b.size))
+    return (linalg.spsolve(A, b).astype(b.dtype),)
+
+  result, _, _ = mlir.emit_python_callback(
+      ctx, _callback, None, args, ctx.avals_in, ctx.avals_out,
+      has_side_effect=False)
+  return result
+
+
+def _spsolve_jvp_lhs(data_dot, data, indices, indptr, b, **kwds):
+    # d/dM M^-1 b = M^-1 M_dot M^-1 b
+    p = spsolve(data, indices, indptr, b, **kwds)
+    q = sparse.csr_matvec_p.bind(data_dot, indices, indptr, p,
+                                 shape=(indptr.size - 1, len(b)),
+                                 transpose=False)
+    return -spsolve(data, indices, indptr, q, **kwds)
+
+
+def _spsolve_jvp_rhs(b_dot, data, indices, indptr, b, **kwds):
+    # d/db M^-1 b = M^-1 b_dot
+    return spsolve(data, indices, indptr, b_dot, **kwds)
+
+
+def _csr_transpose(data, indices, indptr):
+  # Transpose of a square CSR matrix
+  m = indptr.size - 1
+  row = jnp.cumsum(jnp.zeros_like(indices).at[indptr].add(1)) - 1
+  row_T, indices_T, data_T = jax.lax.sort((indices, row, data), num_keys=2)
+  indptr_T = jnp.zeros_like(indptr).at[1:].set(
+      jnp.cumsum(jnp.bincount(row_T, length=m)).astype(indptr.dtype))
+  return data_T, indices_T, indptr_T
+
+
+def _spsolve_transpose(ct, data, indices, indptr, b, **kwds):
+  assert not ad.is_undefined_primal(indices)
+  assert not ad.is_undefined_primal(indptr)
+  if ad.is_undefined_primal(b):
+    # TODO(jakevdp): can we do this without an explicit transpose?
+    data_T, indices_T, indptr_T = _csr_transpose(data, indices, indptr)
+    ct_out = spsolve(data_T, indices_T, indptr_T, ct, **kwds)
+    return data, indices, indptr, ct_out
+  else:
+    # Should never reach here, because JVP is linear wrt data.
+    raise NotImplementedError("spsolve transpose with respect to data")
 
 
 spsolve_p = core.Primitive('spsolve')
 spsolve_p.def_impl(functools.partial(xla.apply_primitive, spsolve_p))
 spsolve_p.def_abstract_eval(_spsolve_abstract_eval)
+ad.defjvp(spsolve_p, _spsolve_jvp_lhs, None, None, _spsolve_jvp_rhs)
+ad.primitive_transposes[spsolve_p] = _spsolve_transpose
 mlir.register_lowering(spsolve_p, _spsolve_gpu_lowering, platform='cuda')
+mlir.register_lowering(spsolve_p, _spsolve_cpu_lowering, platform='cpu')
 
 
 def spsolve(data, indices, indptr, b, tol=1e-6, reorder=1):
@@ -543,8 +609,8 @@ def spsolve(data, indices, indptr, b, tol=1e-6, reorder=1):
     b : The right hand side of the linear system.
     tol : Tolerance to decide if singular or not. Defaults to 1e-6.
     reorder : The reordering scheme to use to reduce fill-in. No reordering if
-        `reorder=0'. Otherwise, symrcm, symamd, or csrmetisnd (`reorder=1,2,3'),
-        respectively. Defaults to symrcm.
+      ``reorder=0``. Otherwise, symrcm, symamd, or csrmetisnd (``reorder=1,2,3``),
+      respectively. Defaults to symrcm.
 
   Returns:
     An array with the same dtype and size as b representing the solution to

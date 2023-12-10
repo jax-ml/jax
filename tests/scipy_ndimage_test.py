@@ -14,6 +14,7 @@
 
 
 from functools import partial
+import math
 
 import numpy as np
 
@@ -24,9 +25,8 @@ from jax import grad
 from jax._src import test_util as jtu
 from jax import dtypes
 from jax.scipy import ndimage as lsp_ndimage
-from jax._src.util import prod
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 
@@ -80,7 +80,7 @@ class NdimageTest(jtu.JaxTestCase):
                          mode, cval, impl, round_, rng_factory):
 
     def args_maker():
-      x = np.arange(prod(shape), dtype=dtype).reshape(shape)
+      x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
       coords = [(size - 1) * rng(coords_shape, coords_dtype) for size in shape]
       if round_:
         coords = [c.round().astype(int) for c in coords]

@@ -20,7 +20,7 @@ import jax
 from jax import numpy as jnp
 from jax._src import test_util as jtu
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 
@@ -32,6 +32,7 @@ class VectorizeTest(jtu.JaxTestCase):
       for left_shape, right_shape, result_shape in [
           ((2, 3), (3, 4), (2, 4)),
           ((2, 3), (1, 3, 4), (1, 2, 4)),
+          ((1, 2, 3), (1, 3, 4), (1, 2, 4)),
           ((5, 2, 3), (1, 3, 4), (5, 2, 4)),
           ((6, 5, 2, 3), (3, 4), (6, 5, 2, 4)),
       ]
@@ -215,6 +216,30 @@ class VectorizeTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, r"inconsistent size for core dimension 'n'"):
       f(jnp.zeros((2, 3)), jnp.zeros((3, 4)))
+
+  def test_expand_dims_multiple_outputs_no_signature(self):
+    f = jnp.vectorize(lambda x: (x, x))
+    x = jnp.arange(1)
+    xx = f(x)
+    self.assertAllClose(xx[0], x)
+    self.assertAllClose(xx[1], x)
+    self.assertIsInstance(xx, tuple)
+
+  def test_none_arg(self):
+    f = jnp.vectorize(lambda x, y: x if y is None else x + y)
+    x = jnp.arange(10)
+    self.assertAllClose(f(x, None), x)
+
+    y = jnp.arange(10, 20)
+    self.assertAllClose(f(x, y), x + y)
+
+  def test_none_arg_bad_signature(self):
+    f = jnp.vectorize(lambda x, y: x if y is None else x + y,
+                      signature='(k),(k)->(k)')
+    args = jnp.arange(10), None
+    msg = r"Cannot pass None at locations \{1\} with signature='\(k\),\(k\)->\(k\)'"
+    with self.assertRaisesRegex(ValueError, msg):
+      f(*args)
 
 
 if __name__ == "__main__":

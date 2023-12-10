@@ -15,20 +15,24 @@
 
 from functools import partial
 import operator
-from typing import Optional, Tuple, Union
+from typing import Optional, Union
 
-from jax import core
+import numpy as np
+
 from jax import jit
 from jax import lax
 from jax._src import dtypes
+from jax._src import core
 from jax._src.numpy.lax_numpy import (
-    all, arange, argmin, array, asarray, atleast_1d, concatenate, convolve, diag, dot,
-    finfo, full, maximum, ones, outer, roll, sqrt, trim_zeros, trim_zeros_tol, true_divide,
-    vander, zeros)
+    arange, argmin, array, asarray, atleast_1d, concatenate, convolve,
+    diag, dot, finfo, full, ones, outer, roll, trim_zeros,
+    trim_zeros_tol, vander, zeros)
+from jax._src.numpy.ufuncs import maximum, true_divide, sqrt
+from jax._src.numpy.reductions import all
 from jax._src.numpy import linalg
-from jax._src.numpy.util import _check_arraylike, _promote_dtypes, _promote_dtypes_inexact, _where, _wraps
+from jax._src.numpy.util import (
+    check_arraylike, promote_dtypes, promote_dtypes_inexact, _where, _wraps)
 from jax._src.typing import Array, ArrayLike
-import numpy as np
 
 
 @jit
@@ -80,8 +84,8 @@ strip_zeros : bool, default=True
     :func:`jax.jit` and other JAX transformations.
 """)
 def roots(p: ArrayLike, *, strip_zeros: bool = True) -> Array:
-  _check_arraylike("roots", p)
-  p_arr = atleast_1d(*_promote_dtypes_inexact(p))
+  check_arraylike("roots", p)
+  p_arr = atleast_1d(*promote_dtypes_inexact(p))
   if p_arr.ndim != 1:
     raise ValueError("Input must be a rank-1 array.")
   if p_arr.size < 2:
@@ -106,8 +110,8 @@ Also, it works best on rcond <= 10e-3 values.
 @partial(jit, static_argnames=('deg', 'rcond', 'full', 'cov'))
 def polyfit(x: Array, y: Array, deg: int, rcond: Optional[float] = None,
             full: bool = False, w: Optional[Array] = None, cov: bool = False
-            ) -> Union[Array, Tuple[Array, ...]]:
-  _check_arraylike("polyfit", x, y)
+            ) -> Union[Array, tuple[Array, ...]]:
+  check_arraylike("polyfit", x, y)
   deg = core.concrete_or_error(int, deg, "deg must be int")
   order = deg + 1
   # check arguments
@@ -132,8 +136,8 @@ def polyfit(x: Array, y: Array, deg: int, rcond: Optional[float] = None,
 
   # apply weighting
   if w is not None:
-    _check_arraylike("polyfit", w)
-    w, = _promote_dtypes_inexact(w)
+    check_arraylike("polyfit", w)
+    w, = promote_dtypes_inexact(w)
     if w.ndim != 1:
       raise TypeError("expected a 1-d array for weights")
     if w.shape[0] != y.shape[0]:
@@ -186,8 +190,8 @@ jax returns an array with a complex dtype in such cases.
 @_wraps(np.poly, lax_description=_POLY_DOC)
 @jit
 def poly(seq_of_zeros: Array) -> Array:
-  _check_arraylike('poly', seq_of_zeros)
-  seq_of_zeros, = _promote_dtypes_inexact(seq_of_zeros)
+  check_arraylike('poly', seq_of_zeros)
+  seq_of_zeros, = promote_dtypes_inexact(seq_of_zeros)
   seq_of_zeros = atleast_1d(seq_of_zeros)
 
   sh = seq_of_zeros.shape
@@ -220,8 +224,8 @@ compilation time.
 """)
 @partial(jit, static_argnames=['unroll'])
 def polyval(p: Array, x: Array, *, unroll: int = 16) -> Array:
-  _check_arraylike("polyval", p, x)
-  p, x = _promote_dtypes_inexact(p, x)
+  check_arraylike("polyval", p, x)
+  p, x = promote_dtypes_inexact(p, x)
   shape = lax.broadcast_shapes(p.shape[1:], x.shape)
   y = lax.full_like(x, 0, shape=shape, dtype=x.dtype)
   y, _ = lax.scan(lambda y, p: (y * x + p, None), y, p, unroll=unroll)
@@ -230,8 +234,8 @@ def polyval(p: Array, x: Array, *, unroll: int = 16) -> Array:
 @_wraps(np.polyadd)
 @jit
 def polyadd(a1: Array, a2: Array) -> Array:
-  _check_arraylike("polyadd", a1, a2)
-  a1, a2 = _promote_dtypes(a1, a2)
+  check_arraylike("polyadd", a1, a2)
+  a1, a2 = promote_dtypes(a1, a2)
   if a2.shape[0] <= a1.shape[0]:
     return a1.at[-a2.shape[0]:].add(a2)
   else:
@@ -243,8 +247,8 @@ def polyadd(a1: Array, a2: Array) -> Array:
 def polyint(p: Array, m: int = 1, k: Optional[int] = None) -> Array:
   m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyint")
   k = 0 if k is None else k
-  _check_arraylike("polyint", p, k)
-  p, k_arr = _promote_dtypes_inexact(p, k)
+  check_arraylike("polyint", p, k)
+  p, k_arr = promote_dtypes_inexact(p, k)
   if m < 0:
     raise ValueError("Order of integral must be positive (see polyder)")
   k_arr = atleast_1d(k_arr)
@@ -264,9 +268,9 @@ def polyint(p: Array, m: int = 1, k: Optional[int] = None) -> Array:
 @_wraps(np.polyder)
 @partial(jit, static_argnames=('m',))
 def polyder(p: Array, m: int = 1) -> Array:
-  _check_arraylike("polyder", p)
+  check_arraylike("polyder", p)
   m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyder")
-  p, = _promote_dtypes_inexact(p)
+  p, = promote_dtypes_inexact(p)
   if m < 0:
     raise ValueError("Order of derivative must be positive")
   if m == 0:
@@ -286,8 +290,8 @@ JAX backends. The result may lead to inconsistent output shapes when trim_leadin
 
 @_wraps(np.polymul, lax_description=_LEADING_ZEROS_DOC)
 def polymul(a1: ArrayLike, a2: ArrayLike, *, trim_leading_zeros: bool = False) -> Array:
-  _check_arraylike("polymul", a1, a2)
-  a1_arr, a2_arr = _promote_dtypes_inexact(a1, a2)
+  check_arraylike("polymul", a1, a2)
+  a1_arr, a2_arr = promote_dtypes_inexact(a1, a2)
   if trim_leading_zeros and (len(a1_arr) > 1 or len(a2_arr) > 1):
     a1_arr, a2_arr = trim_zeros(a1_arr, trim='f'), trim_zeros(a2_arr, trim='f')
   if len(a1_arr) == 0:
@@ -297,9 +301,9 @@ def polymul(a1: ArrayLike, a2: ArrayLike, *, trim_leading_zeros: bool = False) -
   return convolve(a1_arr, a2_arr, mode='full')
 
 @_wraps(np.polydiv, lax_description=_LEADING_ZEROS_DOC)
-def polydiv(u: ArrayLike, v: ArrayLike, *, trim_leading_zeros: bool = False) -> Tuple[Array, Array]:
-  _check_arraylike("polydiv", u, v)
-  u_arr, v_arr = _promote_dtypes_inexact(u, v)
+def polydiv(u: ArrayLike, v: ArrayLike, *, trim_leading_zeros: bool = False) -> tuple[Array, Array]:
+  check_arraylike("polydiv", u, v)
+  u_arr, v_arr = promote_dtypes_inexact(u, v)
   m = len(u_arr) - 1
   n = len(v_arr) - 1
   scale = 1. / v_arr[0]
@@ -316,6 +320,6 @@ def polydiv(u: ArrayLike, v: ArrayLike, *, trim_leading_zeros: bool = False) -> 
 @_wraps(np.polysub)
 @jit
 def polysub(a1: Array, a2: Array) -> Array:
-  _check_arraylike("polysub", a1, a2)
-  a1, a2 = _promote_dtypes(a1, a2)
+  check_arraylike("polysub", a1, a2)
+  a1, a2 = promote_dtypes(a1, a2)
   return polyadd(a1, -a2)

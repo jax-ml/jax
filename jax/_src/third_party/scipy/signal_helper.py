@@ -1,15 +1,15 @@
 """Utility functions adopted from scipy.signal."""
 
 import scipy.signal as osp_signal
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Union
 import warnings
 
-from jax._src.numpy import lax_numpy as jnp
+import jax.numpy as jnp
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
 
-def _triage_segments(window: Union[ArrayLike, str, Tuple[Any, ...]], nperseg: Optional[int],
-                     input_length: int, dtype: DTypeLike) -> Tuple[Array, int]:
+def _triage_segments(window: Union[ArrayLike, str, tuple[Any, ...]], nperseg: Optional[int],
+                     input_length: int, dtype: DTypeLike) -> tuple[Array, int]:
   """
   Parses window and nperseg arguments for spectrogram and _spectral_helper.
   This is a helper function, not meant to be called externally.

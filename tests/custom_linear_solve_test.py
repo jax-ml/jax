@@ -29,7 +29,7 @@ from jax import tree_util
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 
@@ -240,7 +240,7 @@ class CustomLinearSolveTest(jtu.JaxTestCase):
     a = rng.randn(2, 2)
     b = rng.randn(2)
 
-    tol = {np.float32: 1E-3 if jtu.device_under_test() == "tpu" else 2E-4,
+    tol = {np.float32: 1E-3 if jtu.test_device_matches(["tpu"]) else 2E-4,
            np.float64: 1E-12}
     expected = jnp.linalg.solve(np.asarray(posify(a)), b)
     actual = positive_definite_solve(posify(a), b)
@@ -466,6 +466,23 @@ class CustomLinearSolveTest(jtu.JaxTestCase):
     def linear_solve(a, b):
       return matrix_free_solve(partial(high_precision_dot, a), b)
     jtu.check_grads(linear_solve, (a, b), order=1, rtol=3e-3, modes=['rev'])
+
+  def test_custom_linear_solve_batching_with_aux(self):
+    def solve(mv, b):
+      aux = (np.array(1.), True, 0)
+      return mv(b), aux
+
+    def solve_aux(x):
+      matvec = lambda y: tree_util.tree_map(partial(jnp.dot, A), y)
+      return lax.custom_linear_solve(matvec, (x, x), solve, solve, symmetric=True, has_aux=True)
+
+    rng = self.rng()
+    A = rng.randn(3, 3)
+    A = A + A.T
+    b = rng.randn(3, 3)
+
+    # doesn't crash
+    jax.vmap(solve_aux)(b)
 
 
 if __name__ == '__main__':

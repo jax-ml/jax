@@ -21,8 +21,9 @@ limitations under the License.
 #include "jaxlib/gpu/prng_kernels.h"
 #include "jaxlib/gpu/solver_kernels.h"
 #include "jaxlib/gpu/sparse_kernels.h"
+#include "jaxlib/gpu/triton_kernels.h"
 #include "jaxlib/gpu/vendor.h"
-#include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
+#include "xla/service/custom_call_target_registry.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
@@ -64,6 +65,9 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_coo_matmat", CooMatmat,
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_gtsv2_f32", gtsv2_f32,
                                          "CUDA");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_gtsv2_f64", gtsv2_f64,
+                                         "CUDA");
+
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("triton_kernel_call", TritonKernelCall,
                                          "CUDA");
 
 }  // namespace

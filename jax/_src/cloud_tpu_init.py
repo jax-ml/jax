@@ -13,10 +13,30 @@
 # limitations under the License.
 
 import os
+import warnings
 
-running_in_cloud_tpu_vm = False
+running_in_cloud_tpu_vm: bool = False
 
-def cloud_tpu_init():
+
+def maybe_import_libtpu():
+  try:
+    # pylint: disable=import-outside-toplevel
+    # pytype: disable=import-error
+    import libtpu
+
+    # pytype: enable=import-error
+    # pylint: enable=import-outside-toplevel
+  except ImportError:
+    return None
+  else:
+    return libtpu
+
+
+def jax_force_tpu_init() -> bool:
+  return 'JAX_FORCE_TPU_INIT' in os.environ
+
+
+def cloud_tpu_init() -> None:
   """Automatically sets Cloud TPU topology and other env vars.
 
   **This must be called before the TPU runtime is loaded, which happens as soon
@@ -33,84 +53,27 @@ def cloud_tpu_init():
   set.
   """
   global running_in_cloud_tpu_vm
-  try:
-    # pylint: disable=import-outside-toplevel
-    # pytype: disable=import-error
-    import libtpu
-    # pytype: enable=import-error
-    # pylint: enable=import-outside-toplevel
-  except ImportError:
-    # We assume libtpu is installed iff we're in a correctly-configured Cloud
-    # TPU environment. Exit early if we're not running on Cloud TPU.
+
+  # We assume we are in a correctly-configured Cloud TPU environment
+  # if the following hold: a) libtpu is installed b) JAX_FORCE_TPU_INIT is set
+  # Exit early if we're not running on Cloud TPU.
+  libtpu_module = maybe_import_libtpu()
+  if libtpu_module is None and not jax_force_tpu_init():
     return
 
   running_in_cloud_tpu_vm = True
 
-  libtpu.configure_library_path()
   os.environ.setdefault('GRPC_VERBOSITY', 'ERROR')
   os.environ.setdefault('JAX_PLATFORMS', 'tpu,cpu')
   os.environ['TPU_ML_PLATFORM'] = 'JAX'
 
-  # If the user has set any topology-related env vars, don't set any
-  # automatically.
-  if any([
-      os.environ.get('CLOUD_TPU_TASK_ID', None),
-      os.environ.get('TPU_CHIPS_PER_HOST_BOUNDS', None),
-      os.environ.get('TPU_HOST_BOUNDS', None),
-      os.environ.get('TPU_MESH_CONTROLLER_ADDRESS', None),
-      os.environ.get('TPU_MESH_CONTROLLER_PORT', None),
-      os.environ.get('TPU_VISIBLE_DEVICES', None),
-  ]):
-    return
+  # TODO(skyewm): remove this warning at some point, say around Sept 2023.
+  use_pjrt_c_api = os.environ.get('JAX_USE_PJRT_C_API_ON_TPU', None)
+  if use_pjrt_c_api:
+    warnings.warn(
+        "JAX_USE_PJRT_C_API_ON_TPU no longer has an effect (the new TPU "
+        "runtime is always enabled now). Unset the environment variable "
+        "to disable this warning.")
 
-  worker_id = get_metadata('agent-worker-number')
-  accelerator_type = get_metadata('accelerator-type')
-
-  accelerator_type_to_host_bounds = {
-      'v2-8': '1,1,1',
-      'v2-32': '2,2,1',
-      'v2-128': '4,4,1',
-      'v2-256': '4,8,1',
-      'v2-512': '8,8,1',
-      'v3-8': '1,1,1',
-      'v3-32': '2,2,1',
-      'v3-64': '2,4,1',
-      'v3-128': '4,4,1',
-      'v3-256': '4,8,1',
-      'v3-512': '8,8,1',
-      'v3-1024': '8,16,1',
-      'v3-2048': '16,16,1',
-  }
-
-  os.environ['CLOUD_TPU_TASK_ID'] = worker_id
-
-  # If v4 TPU don't set any topology related flags, libtpu will set these values.
-  if not accelerator_type.startswith('v4-'):
-    os.environ['TPU_CHIPS_PER_HOST_BOUNDS'] = '2,2,1'
-    os.environ['TPU_HOST_BOUNDS'] = accelerator_type_to_host_bounds[
-        accelerator_type]
-
-
-def get_metadata(key):
-  import requests  # pytype: disable=import-error
-  import time  # pytype: disable=import-error
-  # Based on https://github.com/tensorflow/tensorflow/pull/40317
-  gce_metadata_endpoint = 'http://' + os.environ.get(
-      'GCE_METADATA_IP', 'metadata.google.internal')
-
-  retry_count = 0
-  retrySeconds = 0.500
-  api_resp = None
-
-  while retry_count < 6:
-    api_resp = requests.get(
-        f'{gce_metadata_endpoint}/computeMetadata/v1/instance/attributes/{key}',
-        headers={'Metadata-Flavor': 'Google'})
-    if api_resp.status_code == 200:
-      break
-    retry_count += 1
-    time.sleep(retrySeconds)
-
-  if api_resp is None:
-    raise RuntimeError(f"Getting metadata['{key}'] failed for 6 tries")
-  return api_resp.text
+  # Remove when minimum jaxlib version is >= 0.4.15
+  os.environ['JAX_USE_PJRT_C_API_ON_TPU'] = "true"

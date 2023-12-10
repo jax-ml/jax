@@ -1,13 +1,13 @@
 import numpy as np
 
-from jax._src.numpy import lax_numpy as jnp
-from jax._src.numpy import linalg as la
-from jax._src.numpy.util import _check_arraylike, _wraps
+import jax.numpy as jnp
+import jax.numpy.linalg as la
+from jax._src.numpy.util import check_arraylike, _wraps
 
 
 def _isEmpty2d(arr):
   # check size first for efficiency
-  return arr.size == 0 and np.product(arr.shape[-2:]) == 0
+  return arr.size == 0 and np.prod(arr.shape[-2:]) == 0
 
 
 def _assertNoEmpty2d(*arrays):
@@ -41,7 +41,7 @@ def _assert2d(*arrays):
 
 @_wraps(np.linalg.cond)
 def cond(x, p=None):
-  _check_arraylike('jnp.linalg.cond', x)
+  check_arraylike('jnp.linalg.cond', x)
   _assertNoEmpty2d(x)
   if p in (None, 2):
     s = la.svd(x, compute_uv=False)
@@ -64,7 +64,7 @@ def cond(x, p=None):
 
 @_wraps(np.linalg.tensorinv)
 def tensorinv(a, ind=2):
-  _check_arraylike('jnp.linalg.tensorinv', a)
+  check_arraylike('jnp.linalg.tensorinv', a)
   a = jnp.asarray(a)
   oldshape = a.shape
   prod = 1
@@ -81,7 +81,7 @@ def tensorinv(a, ind=2):
 
 @_wraps(np.linalg.tensorsolve)
 def tensorsolve(a, b, axes=None):
-  _check_arraylike('jnp.linalg.tensorsolve', a, b)
+  check_arraylike('jnp.linalg.tensorsolve', a, b)
   a = jnp.asarray(a)
   b = jnp.asarray(b)
   an = a.ndim
@@ -110,7 +110,7 @@ def tensorsolve(a, b, axes=None):
 
 @_wraps(np.linalg.multi_dot)
 def multi_dot(arrays, *, precision=None):
-  _check_arraylike('jnp.linalg.multi_dot', *arrays)
+  check_arraylike('jnp.linalg.multi_dot', *arrays)
   n = len(arrays)
   # optimization only makes sense for len(arrays) > 2
   if n < 2:

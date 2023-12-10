@@ -13,23 +13,27 @@
 # limitations under the License.
 
 from absl.testing import absltest
+import math
+import unittest
 
 import numpy as np
 
-from jax._src import test_util as jtu
 import jax.numpy as jnp
-from jax import core, jit, lax, make_jaxpr
-from jax._src import device_array
-from jax._src import dispatch
-from jax._src import dtypes
+from jax import jit, lax, make_jaxpr
+from jax import config
 from jax.interpreters import mlir
 from jax.interpreters import xla
+
+from jax._src import core
+from jax._src import dtypes
+from jax._src import test_util as jtu
+from jax._src import xla_bridge
 from jax._src.lib.mlir import ir
-from jax._src.lib import xla_bridge, xla_client
+from jax._src.lib import xla_client
+
 xc = xla_client
 xb = xla_bridge
 
-from jax.config import config
 config.parse_flags_with_absl()
 
 # TODO(jakevdp): use a setup/teardown method to populate and unpopulate all the
@@ -58,7 +62,7 @@ class SparseArray:
     return self.data.shape[0]
 
   def __repr__(self):
-    return repr(list((tuple(ind), d) for ind, d in zip(self.indices, self.data)))
+    return repr([(tuple(ind), d) for ind, d in zip(self.indices, self.data)])
 
 
 class AbstractSparseArray(core.ShapedArray):
@@ -107,12 +111,6 @@ class AbstractSparseArray(core.ShapedArray):
 class ConcreteSparseArray(AbstractSparseArray):
   pass
 
-def sparse_array_result_handler(device, aval):
-  def build_sparse_array(_, data_buf, indices_buf):
-    data = device_array.make_device_array(aval.data_aval, device, data_buf)
-    indices = device_array.make_device_array(aval.indices_aval, device, indices_buf)
-    return SparseArray(aval, data, indices)
-  return build_sparse_array
 
 def sparse_array_shape_handler(a):
   return (
@@ -120,17 +118,11 @@ def sparse_array_shape_handler(a):
     xc.Shape.array_shape(a.indices_aval.dtype, a.indices_aval.shape),
   )
 
-def sparse_array_device_put_handler(a, device):
-  return (*dispatch.device_put(a.data, device), *dispatch.device_put(a.indices, device))
 
 core.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 core.raise_to_shaped_mappings[AbstractSparseArray] = lambda aval, _: aval
 xla.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 xla.canonicalize_dtype_handlers[SparseArray] = lambda x: x
-dispatch.device_put_handlers[SparseArray] = sparse_array_device_put_handler
-dispatch.result_handlers[AbstractSparseArray] = sparse_array_result_handler
-dispatch.num_buffers_handlers[AbstractSparseArray] = lambda _: 2
-xla.xla_shape_handlers[AbstractSparseArray] = sparse_array_shape_handler
 
 def sparse_array_mlir_type_handler(a):
   return (
@@ -214,7 +206,7 @@ mlir.register_lowering(
 
 def make_sparse_array(rng, shape, dtype, nnz=0.2):
   mat = rng(shape, dtype)
-  size = int(np.prod(shape))
+  size = math.prod(shape)
   if 0 < nnz < 1:
     nnz = nnz * size
   nnz = int(nnz)
@@ -265,14 +257,9 @@ core.pytype_aval_mappings[Empty] = lambda x: ConcreteEmpty()
 core.raise_to_shaped_mappings[AbstractEmpty] = lambda aval, _: aval
 xla.pytype_aval_mappings[Empty] = lambda x: AbstractEmpty()
 xla.canonicalize_dtype_handlers[Empty] = lambda x: x
-dispatch.device_put_handlers[Empty] = lambda _, __: ()
-dispatch.result_handlers[AbstractEmpty] = lambda _, __: lambda: Empty(AbstractEmpty())
-dispatch.num_buffers_handlers[AbstractEmpty] = lambda _: 0
-xla.xla_shape_handlers[AbstractEmpty] = lambda _: ()
 
 
-# TODO(https://github.com/google/jax/issues/12104): Enable this
-@jtu.with_config(jax_array=False)
+@unittest.skip("Test does not work with jax.Array")
 class CustomObjectTest(jtu.JaxTestCase):
 
   @jtu.sample_product(

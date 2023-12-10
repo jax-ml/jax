@@ -75,20 +75,10 @@ def main(_):
   # CHECK-SAME: tensor<f64>
   print_ir(np.float64(1), np.float64(2))(lax.atan2)
 
-  # CHECK-LABEL: TEST: bessel_i0e float32[]
-  # CHECK: xla_fallback_bessel_i0e
-  # CHECK-SAME: tensor<f32>
-  print_ir(np.float32(0))(lax.bessel_i0e)
-
   # CHECK-LABEL: TEST: bessel_i1e float32[]
   # CHECK: chlo.bessel_i1e
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.bessel_i1e)
-
-  # CHECK-LABEL: TEST: betainc float32[] float32[] float32[]
-  # CHECK: xla_fallback_regularized_incomplete_beta
-  # CHECK-SAME: tensor<f32>
-  print_ir(np.float32(0), np.float32(0), np.float32(0))(lax.betainc)
 
   # CHECK-LABEL: TEST: bitcast_convert_type uint32[7]
   # CHECK: hlo.bitcast_convert
@@ -231,7 +221,7 @@ def main(_):
   print_ir(np.float32(0))(lax.erfc)
 
   # CHECK-LABEL: TEST: erf_inv float32[]
-  # CHECK: xla_fallback_erf_inv
+  # CHECK: chlo.erf_inv
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.erf_inv)
 
@@ -261,21 +251,6 @@ def main(_):
   # CHECK-SAME: FLOAT
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1), np.float32(2))(lax.gt)
-
-  # CHECK-LABEL: TEST: igamma float32[] float32[]
-  # CHECK: xla_fallback_igamma
-  # CHECK-SAME: tensor<f32>
-  print_ir(np.float32(0), np.float32(0))(lax.igamma)
-
-  # CHECK-LABEL: TEST: igammac float32[] float32[]
-  # CHECK: xla_fallback_igammac
-  # CHECK-SAME: tensor<f32>
-  print_ir(np.float32(0), np.float32(0))(lax.igammac)
-
-  # CHECK-LABEL: TEST: igamma_grad_a float32[] float32[]
-  # CHECK: xla_fallback_igamma_grad_a
-  # CHECK-SAME: tensor<f32>
-  print_ir(np.float32(0), np.float32(0))(lax.igamma_grad_a)
 
   # CHECK-LABEL: TEST: imag complex64[]
   # CHECK: hlo.imag
@@ -370,11 +345,6 @@ def main(_):
   # CHECK: hlo.power
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1), np.float32(2))(lax.pow)
-
-  # CHECK-LABEL: TEST: random_gamma_grad float32[] float32[]
-  # CHECK: xla_fallback_random_gamma_grad
-  # CHECK-SAME: tensor<f32>
-  print_ir(np.float32(0), np.float32(0))(lax.random_gamma_grad)
 
   # CHECK-LABEL: TEST: real complex128[]
   # CHECK: hlo.real

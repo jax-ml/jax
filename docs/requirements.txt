@@ -1,13 +1,13 @@
 absl-py
-# TODO(sharadmv,jakevdp): fix IPython3 issue and remove pinned version
-ipython<=8.6.0
-sphinx >=3
+ipython>=8.8.0  # 8.7.0 has ipython3 lexer error
+sphinx>=6.0.0
 sphinx-autodoc-typehints
-sphinx-book-theme>=0.3.3
+sphinx-book-theme>=1.0.1  # Older versions fail to pin pydata-sphinx-theme
 sphinx-copybutton>=0.5.0
 sphinx-remove-toctrees
 jupyter-sphinx>=0.3.2
-myst-nb
+sphinx-design
+myst-nb>=1.0.0
 
 # Packages used for CI tests.
 pytest

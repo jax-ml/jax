@@ -1,0 +1,68 @@
+name: CI - Windows CPU
+on:
+  schedule:
+    - cron: "0 12 * * *" # Daily at 12:00 UTC
+  workflow_dispatch: # allows triggering the workflow run manually
+
+env:
+  DISTUTILS_USE_SDK: 1
+  MSSdk: 1
+
+jobs:
+  win-wheels:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [win-2019-16core]
+        arch: [AMD64]
+        pyver: ['3.9']
+    name: ${{ matrix.os }} CI build
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Cancel Previous Runs
+        uses: styfle/cancel-workflow-action@0.12.0
+        with:
+          access_token: ${{ github.token }}
+
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
+        with:
+          path: jax
+
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
+        with:
+          repository: openxla/xla
+          path: xla
+
+      - uses: actions/setup-python@65d7f2d534ac1bc67fcd62888c5f4f3d2cb2b236 # ratchet:actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.pyver }}
+          cache: 'pip'
+
+      - name: Build wheels
+        env:
+          BAZEL_VC: "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise\\VC"
+          JAXLIB_NIGHTLY: true  # Tag the wheels as dev versions
+        run: |
+          cd jax
+          python -m pip install -r build/test-requirements.txt
+          "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
+          python.exe build\build.py ('--bazel_options=--override_repository=xla=${{ github.workspace }}\xla' -replace '\\','\\') --bazel_options=--color=yes
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: ${{ github.workspace }}\jax\dist\*.whl
+          retention-days: 5
+
+      - name: Run tests
+        env:
+          JAX_ENABLE_CHECKS: true
+          JAX_SKIP_SLOW_TESTS: true
+          PY_COLORS: 1
+        run: |
+          cd jax
+          python -m pip install -e ${{ github.workspace }}\jax
+          python -m pip install --no-index --find-links ${{ github.workspace }}\jax\dist jaxlib
+          echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
+          pytest -n auto --tb=short tests examples

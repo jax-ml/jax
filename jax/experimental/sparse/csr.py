@@ -13,26 +13,33 @@
 # limitations under the License.
 
 """CSR (compressed sparse row) matrix object and associated primitives."""
+from __future__ import annotations
 
 from functools import partial
 import operator
-from typing import Tuple
+from typing import Optional
 import warnings
 
 import numpy as np
 
-from jax import core
-from jax.interpreters import ad
+import jax
 from jax.interpreters import mlir
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.coo import _coo_matmat, _coo_matvec, _coo_todense, COOInfo
 from jax.experimental.sparse.util import _csr_to_coo, _csr_extract, CuSparseEfficiencyWarning
 from jax import lax
 from jax import tree_util
+from jax._src import core
+from jax._src import dispatch
+from jax._src.interpreters import ad
 from jax._src.lax.lax import _const
 from jax._src.lib import gpu_sparse
-from jax._src.numpy.lax_numpy import _promote_dtypes
+from jax._src.numpy.util import promote_dtypes
+from jax._src.typing import Array, ArrayLike, DTypeLike
 import jax.numpy as jnp
+
+
+Shape = tuple[int, ...]
 
 
 @tree_util.register_pytree_node_class
@@ -42,13 +49,18 @@ class CSR(JAXSparse):
   Note: this class has minimal compatibility with JAX transforms such as
   grad and autodiff, and offers very little functionality. In general you
   should prefer :class:`jax.experimental.sparse.BCOO`.
+
+  Additionally, there are known failures in the case that `nse` is larger
+  than the true number of nonzeros in the represented matrix. This situation
+  is better handled in BCOO.
   """
-  data: jnp.ndarray
-  indices: jnp.ndarray
-  indptr: jnp.ndarray
-  shape: Tuple[int, int]
+  data: jax.Array
+  indices: jax.Array
+  indptr: jax.Array
+  shape: tuple[int, int]
   nse = property(lambda self: self.data.size)
   dtype = property(lambda self: self.data.dtype)
+  _bufs = property(lambda self: (self.data, self.indices, self.indptr))
 
   def __init__(self, args, *, shape):
     self.data, self.indices, self.indptr = map(jnp.asarray, args)
@@ -58,7 +70,7 @@ class CSR(JAXSparse):
   def fromdense(cls, mat, *, nse=None, index_dtype=np.int32):
     if nse is None:
       nse = (mat != 0).sum()
-    return cls(csr_fromdense(mat, nse=nse, index_dtype=index_dtype), shape=mat.shape)
+    return csr_fromdense(mat, nse=nse, index_dtype=index_dtype)
 
   @classmethod
   def _empty(cls, shape, *, dtype=None, index_dtype='int32'):
@@ -95,7 +107,7 @@ class CSR(JAXSparse):
     return cls((data, indices, indptr), shape=(N, M))
 
   def todense(self):
-    return csr_todense(self.data, self.indices, self.indptr, shape=self.shape)
+    return csr_todense(self)
 
   def transpose(self, axes=None):
     assert axes is None
@@ -105,11 +117,11 @@ class CSR(JAXSparse):
     if isinstance(other, JAXSparse):
       raise NotImplementedError("matmul between two sparse objects.")
     other = jnp.asarray(other)
-    data, other = _promote_dtypes(self.data, other)
+    data, other = promote_dtypes(self.data, other)
     if other.ndim == 1:
-      return csr_matvec(data, self.indices, self.indptr, other, shape=self.shape)
+      return _csr_matvec(data, self.indices, self.indptr, other, shape=self.shape)
     elif other.ndim == 2:
-      return csr_matmat(data, self.indices, self.indptr, other, shape=self.shape)
+      return _csr_matmat(data, self.indices, self.indptr, other, shape=self.shape)
     else:
       raise NotImplementedError(f"matmul with object of shape {other.shape}")
 
@@ -129,10 +141,10 @@ class CSR(JAXSparse):
 @tree_util.register_pytree_node_class
 class CSC(JAXSparse):
   """Experimental CSC matrix implemented in JAX; API subject to change."""
-  data: jnp.ndarray
-  indices: jnp.ndarray
-  indptr: jnp.ndarray
-  shape: Tuple[int, int]
+  data: jax.Array
+  indices: jax.Array
+  indptr: jax.Array
+  shape: tuple[int, int]
   nse = property(lambda self: self.data.size)
   dtype = property(lambda self: self.data.dtype)
 
@@ -144,7 +156,7 @@ class CSC(JAXSparse):
   def fromdense(cls, mat, *, nse=None, index_dtype=np.int32):
     if nse is None:
       nse = (mat != 0).sum()
-    return cls(csr_fromdense(mat.T, nse=nse, index_dtype=index_dtype), shape=mat.shape)
+    return csr_fromdense(mat.T, nse=nse, index_dtype=index_dtype).T
 
   @classmethod
   def _empty(cls, shape, *, dtype=None, index_dtype='int32'):
@@ -162,7 +174,7 @@ class CSC(JAXSparse):
     return CSR._eye(M, N, -k, dtype=dtype, index_dtype=index_dtype).T
 
   def todense(self):
-    return csr_todense(self.data, self.indices, self.indptr, shape=self.shape[::-1]).T
+    return csr_todense(self.T).T
 
   def transpose(self, axes=None):
     assert axes is None
@@ -172,11 +184,13 @@ class CSC(JAXSparse):
     if isinstance(other, JAXSparse):
       raise NotImplementedError("matmul between two sparse objects.")
     other = jnp.asarray(other)
-    data, other = _promote_dtypes(self.data, other)
+    data, other = promote_dtypes(self.data, other)
     if other.ndim == 1:
-      return csr_matvec(data, self.indices, self.indptr, other, shape=self.shape[::-1], transpose=True)
+      return _csr_matvec(data, self.indices, self.indptr, other,
+                         shape=self.shape[::-1], transpose=True)
     elif other.ndim == 2:
-      return csr_matmat(data, self.indices, self.indptr, other, shape=self.shape[::-1], transpose=True)
+      return _csr_matmat(data, self.indices, self.indptr, other,
+                         shape=self.shape[::-1], transpose=True)
     else:
       raise NotImplementedError(f"matmul with object of shape {other.shape}")
 
@@ -198,7 +212,17 @@ class CSC(JAXSparse):
 
 csr_todense_p = core.Primitive('csr_todense')
 
-def csr_todense(data, indices, indptr, *, shape):
+def csr_todense(mat: CSR) -> Array:
+  """Convert a CSR-format sparse matrix to a dense matrix.
+
+  Args:
+    mat : CSR matrix
+  Returns:
+    mat_dense: dense version of ``mat``
+  """
+  return _csr_todense(mat.data, mat.indices, mat.indptr, shape=mat.shape)
+
+def _csr_todense(data: Array, indices: Array, indptr: Array, *, shape: Shape) -> Array:
   """Convert CSR-format sparse matrix to a dense matrix.
 
   Args:
@@ -212,7 +236,6 @@ def csr_todense(data, indices, indptr, *, shape):
   """
   return csr_todense_p.bind(data, indices, indptr, shape=shape)
 
-@csr_todense_p.def_impl
 def _csr_todense_impl(data, indices, indptr, *, shape):
   return _coo_todense(data, *_csr_to_coo(indices, indptr), spinfo=COOInfo(shape=shape))
 
@@ -241,7 +264,7 @@ def _csr_todense_gpu_lowering(csr_todense_hlo, ctx, data, indices, indptr, *,
 
 
 def _csr_todense_jvp(data_dot, data, indices, indptr, *, shape):
-  return csr_todense(data_dot, indices, indptr, shape=shape)
+  return _csr_todense(data_dot, indices, indptr, shape=shape)
 
 def _csr_todense_transpose(ct, data, indices, indptr, *, shape):
   # Note: we assume that transpose has the same sparsity pattern.
@@ -257,6 +280,8 @@ def _csr_todense_transpose(ct, data, indices, indptr, *, shape):
 ad.defjvp(csr_todense_p, _csr_todense_jvp, None, None)
 ad.primitive_transposes[csr_todense_p] = _csr_todense_transpose
 mlir.register_lowering(csr_todense_p, _csr_todense_lowering)
+dispatch.simple_impl(csr_todense_p)
+
 if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(
       csr_todense_p,
@@ -275,7 +300,24 @@ if gpu_sparse.rocm_is_supported:
 csr_fromdense_p = core.Primitive('csr_fromdense')
 csr_fromdense_p.multiple_results = True
 
-def csr_fromdense(mat, *, nse, index_dtype=np.int32):
+def csr_fromdense(mat: Array, *, nse: int | None = None, index_dtype: DTypeLike = np.int32) -> CSR:
+  """Create a CSR-format sparse matrix from a dense matrix.
+
+  Args:
+    mat : array to be converted to CSR.
+    nse : number of specified entries in ``mat``. If not specified,
+      it will be computed from the input matrix.
+    index_dtype : dtype of sparse indices
+
+  Returns:
+    mat_coo : CSR representation of the matrix.
+  """
+  if nse is None:
+    nse = int((mat != 0).sum())
+  nse_int = core.concrete_or_error(operator.index, nse, "coo_fromdense nse argument")
+  return CSR(_csr_fromdense(mat, nse=nse_int, index_dtype=index_dtype), shape=mat.shape)
+
+def _csr_fromdense(mat: Array, *, nse: int, index_dtype: DTypeLike = np.int32) -> tuple[Array, Array, Array]:
   """Create CSR-format sparse matrix from a dense matrix.
 
   Args:
@@ -292,7 +334,6 @@ def csr_fromdense(mat, *, nse, index_dtype=np.int32):
   nse = core.concrete_or_error(operator.index, nse, "nse argument of csr_fromdense()")
   return csr_fromdense_p.bind(mat, nse=nse, index_dtype=np.dtype(index_dtype))
 
-@csr_fromdense_p.def_impl
 def _csr_fromdense_impl(mat, *, nse, index_dtype):
   mat = jnp.asarray(mat)
   assert mat.ndim == 2
@@ -335,7 +376,7 @@ def _csr_fromdense_jvp(primals, tangents, *, nse, index_dtype):
   M, = primals
   Mdot, = tangents
 
-  primals_out = csr_fromdense(M, nse=nse, index_dtype=index_dtype)
+  primals_out = _csr_fromdense(M, nse=nse, index_dtype=index_dtype)
   data, indices, indptr = primals_out
 
   if type(Mdot) is ad.Zero:
@@ -354,11 +395,13 @@ def _csr_fromdense_transpose(ct, M, *, nse, index_dtype):
   if isinstance(indices, ad.Zero) or isinstance(indptr, ad.Zero):
     raise ValueError("Cannot transpose with respect to sparse indices")
   assert ad.is_undefined_primal(M)
-  return csr_todense(data, indices, indptr, shape=M.aval.shape)
+  return _csr_todense(data, indices, indptr, shape=M.aval.shape)
 
 ad.primitive_jvps[csr_fromdense_p] = _csr_fromdense_jvp
 ad.primitive_transposes[csr_fromdense_p] = _csr_fromdense_transpose
 mlir.register_lowering(csr_fromdense_p, _csr_fromdense_lowering)
+dispatch.simple_impl(csr_fromdense_p)
+
 if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(
       csr_fromdense_p,
@@ -375,7 +418,24 @@ if gpu_sparse.rocm_is_supported:
 
 csr_matvec_p = core.Primitive('csr_matvec')
 
-def csr_matvec(data, indices, indptr, v, *, shape, transpose=False):
+def csr_matvec(mat: CSR, v: Array, transpose: bool = False) -> Array:
+  """Product of CSR sparse matrix and a dense vector.
+
+  Args:
+    mat : CSR matrix
+    v : one-dimensional array of size ``(shape[0] if transpose else shape[1],)`` and
+      dtype ``mat.dtype``
+    transpose : boolean specifying whether to transpose the sparse matrix
+      before computing.
+
+  Returns:
+    y : array of shape ``(mat.shape[1] if transpose else mat.shape[0],)`` representing
+      the matrix vector product.
+  """
+  data, indices, indptr = mat._bufs
+  return _csr_matvec(data, indices, indptr, v, shape=mat.shape, transpose=transpose)
+
+def _csr_matvec(data, indices, indptr, v, *, shape, transpose=False):
   """Product of CSR sparse matrix and a dense vector.
 
   Args:
@@ -394,7 +454,6 @@ def csr_matvec(data, indices, indptr, v, *, shape, transpose=False):
   """
   return csr_matvec_p.bind(data, indices, indptr, v, shape=shape, transpose=transpose)
 
-@csr_matvec_p.def_impl
 def _csr_matvec_impl(data, indices, indptr, v, *, shape, transpose):
   return _coo_matvec(data, *_csr_to_coo(indices, indptr), v, spinfo=COOInfo(shape=shape), transpose=transpose)
 
@@ -427,17 +486,17 @@ def _csr_matvec_gpu_lowering(csr_matvec_hlo, ctx, data, indices, indptr, v, *,
 
 
 def _csr_matvec_jvp_mat(data_dot, data, indices, indptr, v, *, shape, transpose):
-  return csr_matvec(data_dot, indices, indptr, v, shape=shape, transpose=transpose)
+  return _csr_matvec(data_dot, indices, indptr, v, shape=shape, transpose=transpose)
 
 def _csr_matvec_jvp_vec(v_dot, data, indices, indptr, v, *, shape, transpose):
-  return csr_matvec(data, indices, indptr, v_dot, shape=shape, transpose=transpose)
+  return _csr_matvec(data, indices, indptr, v_dot, shape=shape, transpose=transpose)
 
 def _csr_matvec_transpose(ct, data, indices, indptr, v, *, shape, transpose):
   assert not ad.is_undefined_primal(indices)
   assert not ad.is_undefined_primal(indptr)
 
   if ad.is_undefined_primal(v):
-    return data, indices, indptr, csr_matvec(data, indices, indptr, ct, shape=shape, transpose=not transpose)
+    return data, indices, indptr, _csr_matvec(data, indices, indptr, ct, shape=shape, transpose=not transpose)
   else:
     v = jnp.asarray(v)
     # The following lines do this, but more efficiently.
@@ -448,6 +507,7 @@ def _csr_matvec_transpose(ct, data, indices, indptr, v, *, shape, transpose):
 ad.defjvp(csr_matvec_p, _csr_matvec_jvp_mat, None, None, _csr_matvec_jvp_vec)
 ad.primitive_transposes[csr_matvec_p] = _csr_matvec_transpose
 mlir.register_lowering(csr_matvec_p, _csr_matvec_lowering)
+dispatch.simple_impl(csr_matvec_p)
 
 if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(
@@ -466,7 +526,25 @@ if gpu_sparse.rocm_is_supported:
 
 csr_matmat_p = core.Primitive('csr_matmat')
 
-def csr_matmat(data, indices, indptr, B, *, shape, transpose=False):
+def csr_matmat(mat: CSR, B: Array, *, transpose: bool = False) -> Array:
+  """Product of CSR sparse matrix and a dense matrix.
+
+  Args:
+    mat : CSR matrix
+    B : array of shape ``(mat.shape[0] if transpose else mat.shape[1], cols)`` and
+      dtype ``mat.dtype``
+    transpose : boolean specifying whether to transpose the sparse matrix
+      before computing.
+
+  Returns:
+    C : array of shape ``(mat.shape[1] if transpose else mat.shape[0], cols)``
+      representing the matrix vector product.
+  """
+  data, indices, indptr = mat._bufs
+  return _csr_matmat(data, indices, indptr, B, shape=mat.shape, transpose=transpose)
+
+def _csr_matmat(data: Array, indices: Array, indptr: Array, B: Array,
+                *, shape: Shape, transpose: bool = False) -> Array:
   """Product of CSR sparse matrix and a dense matrix.
 
   Args:
@@ -485,7 +563,6 @@ def csr_matmat(data, indices, indptr, B, *, shape, transpose=False):
   """
   return csr_matmat_p.bind(data, indices, indptr, B, shape=shape, transpose=transpose)
 
-@csr_matmat_p.def_impl
 def _csr_matmat_impl(data, indices, indptr, B, *, shape, transpose):
   return _coo_matmat(data, *_csr_to_coo(indices, indptr), B, spinfo=COOInfo(shape=shape), transpose=transpose)
 
@@ -520,17 +597,17 @@ def _csr_matmat_gpu_lowering(csr_matmat_hlo, ctx, data, indices, indptr, B, *,
 
 
 def _csr_matmat_jvp_left(data_dot, data, indices, indptr, B, *, shape, transpose):
-  return csr_matmat(data_dot, indices, indptr, B, shape=shape, transpose=transpose)
+  return _csr_matmat(data_dot, indices, indptr, B, shape=shape, transpose=transpose)
 
 def _csr_matmat_jvp_right(B_dot, data, indices, indptr, B, *, shape, transpose):
-  return csr_matmat(data, indices, indptr, B_dot, shape=shape, transpose=transpose)
+  return _csr_matmat(data, indices, indptr, B_dot, shape=shape, transpose=transpose)
 
 def _csr_matmat_transpose(ct, data, indices, indptr, B, *, shape, transpose):
   assert not ad.is_undefined_primal(indices)
   assert not ad.is_undefined_primal(indptr)
 
   if ad.is_undefined_primal(B):
-    return data, indices, indptr, csr_matmat(data, indices, indptr, ct, shape=shape, transpose=not transpose)
+    return data, indices, indptr, _csr_matmat(data, indices, indptr, ct, shape=shape, transpose=not transpose)
   else:
     B = jnp.asarray(B)
     row, col = _csr_to_coo(indices, indptr)
@@ -539,6 +616,7 @@ def _csr_matmat_transpose(ct, data, indices, indptr, B, *, shape, transpose):
 ad.defjvp(csr_matmat_p, _csr_matmat_jvp_left, None, None, _csr_matmat_jvp_right)
 ad.primitive_transposes[csr_matmat_p] = _csr_matmat_transpose
 mlir.register_lowering(csr_matmat_p, _csr_matmat_lowering)
+dispatch.simple_impl(csr_matmat_p)
 
 if gpu_sparse:
   if gpu_sparse.cuda_is_supported:

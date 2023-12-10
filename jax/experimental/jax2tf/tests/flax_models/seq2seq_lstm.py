@@ -20,7 +20,7 @@ https://github.com/google/flax/tree/main/examples/seq2seq
 # pytype: disable=wrong-keyword-args
 
 import functools
-from typing import Any, Tuple
+from typing import Any
 
 from flax import linen as nn
 import jax
@@ -42,11 +42,13 @@ class EncoderLSTM(nn.Module):
       out_axes=1,
       split_rngs={'params': False})
   @nn.compact
-  def __call__(self, carry: Tuple[Array, Array],
-               x: Array) -> Tuple[Tuple[Array, Array], Array]:
+  def __call__(self, carry: tuple[Array, Array],
+               x: Array) -> tuple[tuple[Array, Array], Array]:
     """Applies the module."""
     lstm_state, is_eos = carry
-    new_lstm_state, y = nn.LSTMCell()(lstm_state, x)
+    new_lstm_state, y = nn.LSTMCell(features=lstm_state[0].shape[-1])(
+        lstm_state, x
+    )
     # Pass forward the previous state if EOS has already been reached.
     def select_carried_state(new_state, old_state):
       return jnp.where(is_eos[:, np.newaxis], old_state, new_state)
@@ -60,8 +62,9 @@ class EncoderLSTM(nn.Module):
   @staticmethod
   def initialize_carry(batch_size: int, hidden_size: int):
     # Use a dummy key since the default state init fn is just zeros.
-    return nn.LSTMCell.initialize_carry(
-        jax.random.PRNGKey(0), (batch_size,), hidden_size)
+    return nn.LSTMCell(hidden_size, parent=None).initialize_carry(
+        jax.random.PRNGKey(0), (batch_size, 1)
+    )
 
 
 class Encoder(nn.Module):
@@ -100,12 +103,12 @@ class DecoderLSTM(nn.Module):
       out_axes=1,
       split_rngs={'params': False, 'lstm': True})
   @nn.compact
-  def __call__(self, carry: Tuple[Array, Array], x: Array) -> Array:
+  def __call__(self, carry: tuple[Array, Array], x: Array) -> Array:
     """Applies the DecoderLSTM model."""
     lstm_state, last_prediction = carry
     if not self.teacher_force:
       x = last_prediction
-    lstm_state, y = nn.LSTMCell()(lstm_state, x)
+    lstm_state, y = nn.LSTMCell(features=lstm_state[0].shape[-1])(lstm_state, x)
     logits = nn.Dense(features=self.vocab_size)(y)
     # Sample the predicted token using a categorical distribution over the
     # logits.
@@ -127,12 +130,12 @@ class Decoder(nn.Module):
     teacher_force: See docstring on Seq2seq module.
     vocab_size: Size of the vocabulary.
   """
-  init_state: Tuple[Any, ...]
+  init_state: tuple[Any, ...]
   teacher_force: bool
   vocab_size: int
 
   @nn.compact
-  def __call__(self, inputs: Array) -> Tuple[Array, Array]:
+  def __call__(self, inputs: Array) -> tuple[Array, Array]:
     """Applies the decoder model.
 
     Args:
@@ -171,7 +174,7 @@ class Seq2seq(nn.Module):
 
   @nn.compact
   def __call__(self, encoder_inputs: Array,
-               decoder_inputs: Array) -> Tuple[Array, Array]:
+               decoder_inputs: Array) -> tuple[Array, Array]:
     """Applies the seq2seq model.
 
     Args:

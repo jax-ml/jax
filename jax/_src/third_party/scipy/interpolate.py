@@ -1,11 +1,10 @@
 from itertools import product
 import scipy.interpolate as osp_interpolate
 
+from jax.numpy import (asarray, broadcast_arrays, can_cast,
+                       empty, nan, searchsorted, where, zeros)
 from jax._src.tree_util import register_pytree_node
-from jax._src.numpy.lax_numpy import (_check_arraylike, _promote_dtypes_inexact,
-                                      asarray, broadcast_arrays, can_cast,
-                                      empty, nan, searchsorted, where, zeros)
-from jax._src.numpy.util import _wraps
+from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact, _wraps
 
 
 def _ndim_coords_from_arrays(points, ndim=None):
@@ -22,7 +21,7 @@ def _ndim_coords_from_arrays(points, ndim=None):
     for j, item in enumerate(p):
       points = points.at[..., j].set(item)
   else:
-    _check_arraylike("_ndim_coords_from_arrays", points)
+    check_arraylike("_ndim_coords_from_arrays", points)
     points = asarray(points)  # SciPy: asanyarray(points)
     if points.ndim == 1:
       if ndim is None:
@@ -57,15 +56,15 @@ class RegularGridInterpolator:
     if self.bounds_error:
       raise NotImplementedError("`bounds_error` takes no effect under JIT")
 
-    _check_arraylike("RegularGridInterpolator", values)
+    check_arraylike("RegularGridInterpolator", values)
     if len(points) > values.ndim:
       ve = f"there are {len(points)} point arrays, but values has {values.ndim} dimensions"
       raise ValueError(ve)
 
-    values, = _promote_dtypes_inexact(values)
+    values, = promote_dtypes_inexact(values)
 
     if fill_value is not None:
-      _check_arraylike("RegularGridInterpolator", fill_value)
+      check_arraylike("RegularGridInterpolator", fill_value)
       fill_value = asarray(fill_value)
       if not can_cast(fill_value.dtype, values.dtype, casting='same_kind'):
         ve = "fill_value must be either 'None' or of a type compatible with values"
@@ -73,7 +72,7 @@ class RegularGridInterpolator:
     self.fill_value = fill_value
 
     # TODO: assert sanity of `points` similar to SciPy but in a JIT-able way
-    _check_arraylike("RegularGridInterpolator", *points)
+    check_arraylike("RegularGridInterpolator", *points)
     self.grid = tuple(asarray(p) for p in points)
     self.values = values
 

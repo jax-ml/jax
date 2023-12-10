@@ -12,30 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterable, Sequence
 import inspect
 import operator
 from functools import partial
-from typing import (Any, Callable, Dict, Iterable, List, Optional, Sequence,
-                    Set, Tuple, Union)
+from typing import Any, Callable, Optional, Union
 import warnings
 
 import numpy as np
 
 from jax._src import core
 from jax._src import dtypes
+from jax._src.abstract_arrays import numpy_scalar_types
+from jax._src.core import ShapedArray
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_map, tree_structure,
-    treedef_children, treedef_is_leaf)
+    treedef_children, generate_key_paths, keystr, broadcast_prefix,
+    prefix_errors)
 from jax._src.tree_util import _replace_nones
-from jax import linear_util as lu
-from jax._src.util import safe_map, WrapKwArgs, Hashable, Unhashable
-
+from jax._src import linear_util as lu
+from jax._src.linear_util import TracingDebugInfo
+from jax._src.util import (safe_map, WrapKwArgs, Hashable, HashableFunction,
+                           Unhashable)
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 map = safe_map
 
-def _ensure_index(x: Any) -> Union[int, Tuple[int, ...]]:
+def _ensure_index(x: Any) -> Union[int, tuple[int, ...]]:
   """Ensure x is either an index or a tuple of indices."""
   x = core.concrete_or_error(None, x, "expected a static index or sequence of indices.")
   try:
@@ -43,7 +47,7 @@ def _ensure_index(x: Any) -> Union[int, Tuple[int, ...]]:
   except TypeError:
     return tuple(map(operator.index, x))
 
-def _ensure_index_tuple(x: Any) -> Tuple[int, ...]:
+def _ensure_index_tuple(x: Any) -> tuple[int, ...]:
   """Convert x to a tuple of indices."""
   x = core.concrete_or_error(None, x, "expected a static index or sequence of indices.")
   try:
@@ -56,7 +60,7 @@ def _ensure_str(x: str) -> str:
     raise TypeError(f"argument is not a string: {x}")
   return x
 
-def _ensure_str_tuple(x: Union[str, Iterable[str]]) -> Tuple[str, ...]:
+def _ensure_str_tuple(x: Union[str, Iterable[str]]) -> tuple[str, ...]:
   """Convert x to a tuple of strings."""
   if isinstance(x, str):
     return (x,)
@@ -91,7 +95,9 @@ def apply_flat_fun_nokwargs(fun, io_tree, py_args):
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
-def flattened_fun_in_tree(fn: lu.WrappedFun) -> Optional[Tuple[PyTreeDef, bool]]:
+def flattened_fun_in_tree(
+    fn: lu.WrappedFun
+  ) -> Optional[tuple[PyTreeDef, Callable[[], PyTreeDef], bool]]:
   # This implementation relies on internal details of linear_util.py's
   # WrappedFun, but it's for the worthy cause of better user error messages.
   # It can fail (i.e. return None) if its WrappedFun argument is not transformed
@@ -101,14 +107,15 @@ def flattened_fun_in_tree(fn: lu.WrappedFun) -> Optional[Tuple[PyTreeDef, bool]]
   assert isinstance(flatten_fun, partial) and len(flatten_fun.args) == 1
   assert (isinstance(flatten_fun_nokwargs, partial) and
           len(flatten_fun_nokwargs.args) == 1)
-  flat_xforms = {flatten_fun.args[0], flatten_fun_nokwargs.args[0]}
+  flattens = {flatten_fun.args[0], flatten_fun_nokwargs.args[0]}
   try:
-    (in_tree, has_kwargs), = ((args[0], f is flatten_fun.args[0])
-                              for f, args in fn.transforms if f in flat_xforms)
+    ((in_tree,), out_tree_store, has_kwargs), = (
+        (args, store, f is flatten_fun.args[0])
+        for (f, args), store in zip(fn.transforms, fn.stores) if f in flattens)
   except ValueError:
     return None
   else:
-    return in_tree, has_kwargs
+    return in_tree, lambda: out_tree_store.val, has_kwargs
 
 @lu.transformation_with_aux
 def flatten_fun_nokwargs2(in_tree, *args_flat):
@@ -116,7 +123,7 @@ def flatten_fun_nokwargs2(in_tree, *args_flat):
   pair = yield py_args, {}
   if not isinstance(pair, (list, tuple)) or len(pair) != 2:
     raise TypeError("expected function with aux output to return a two-element "
-                    f"tuple, but got type {type(pair)} with value {repr(pair)}")
+                    f"tuple, but got type {type(pair)} with value {pair!r}")
   ans, aux = pair
   ans_flat, ans_tree = tree_flatten(ans)
   aux_flat, aux_tree = tree_flatten(aux)
@@ -142,7 +149,7 @@ _POSITIONAL_ARGUMENTS = (
   inspect.Parameter.POSITIONAL_OR_KEYWORD
 )
 
-def validate_argnums(sig: inspect.Signature, argnums: Tuple[int, ...], argnums_name: str) -> None:
+def validate_argnums(sig: inspect.Signature, argnums: tuple[int, ...], argnums_name: str) -> None:
   """
   Validate that the argnums are sensible for a given function.
 
@@ -176,7 +183,7 @@ _KEYWORD_ARGUMENTS = (
   inspect.Parameter.POSITIONAL_OR_KEYWORD,
   inspect.Parameter.KEYWORD_ONLY,
 )
-def validate_argnames(sig: inspect.Signature, argnames: Tuple[str, ...], argnames_name: str) -> None:
+def validate_argnames(sig: inspect.Signature, argnames: tuple[str, ...], argnames_name: str) -> None:
   """
   Validate that the argnames are sensible for a given function.
 
@@ -185,8 +192,8 @@ def validate_argnames(sig: inspect.Signature, argnames: Tuple[str, ...], argname
   marked as position-only (`f(pos_only, /, ...)`).
   """
   var_kwargs = False
-  valid_kwargs: Set[str] = set()
-  invalid_kwargs: Set[str] = set()
+  valid_kwargs: set[str] = set()
+  invalid_kwargs: set[str] = set()
   for param_name, param in sig.parameters.items():
     if param.kind in _KEYWORD_ARGUMENTS:
       valid_kwargs.add(param_name)
@@ -246,12 +253,8 @@ def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
   return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
 
 def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
-                     ) -> Tuple[int, ...]:
-  """
-  Ensure argnum is within bounds.
-
-  Also resolves negative argnums
-  """
+                     ) -> tuple[int, ...]:
+  """Ensure argnum is within bounds. Also resolves negative argnums."""
   result = []
   for i in argnums:
     if i >= num_args and allow_invalid: continue
@@ -264,9 +267,9 @@ def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
   return tuple(result)
 
 
-def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
-                           args: Tuple[Any, ...], *, allow_invalid: bool):
-  """Version of ``argnums_partial`` that checks hashability of static_argnums."""
+def argnums_partial_except(f: lu.WrappedFun, static_argnums: tuple[int, ...],
+                           args: tuple[Any, ...], *, allow_invalid: bool):
+  "Version of ``argnums_partial`` that checks hashability of static_argnums."
   if not static_argnums:
     return f, args
   static_argnums = _ensure_inbounds(allow_invalid, len(args), static_argnums)
@@ -302,13 +305,13 @@ def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
   yield ans
 
 
-def argnames_partial_except(f: lu.WrappedFun, static_argnames: Tuple[str, ...],
-                            kwargs: Dict[str, Any]):
+def argnames_partial_except(f: lu.WrappedFun, static_argnames: tuple[str, ...],
+                            kwargs: dict[str, Any]):
   if not static_argnames:
     return f, kwargs
   dyn_kwargs = {k: v for k, v in kwargs.items() if k not in static_argnames}
 
-  fixed_kwargs: Dict[str, Any] = {}
+  fixed_kwargs: dict[str, Any] = {}
   for k, arg in kwargs.items():
     if k not in dyn_kwargs:
       try:
@@ -330,16 +333,29 @@ def _argnames_partial(fixed_kwargs: WrapKwArgs, *args, **dyn_kwargs):
   yield ans
 
 
-def donation_vector(donate_argnums, args, kwargs) -> Tuple[bool, ...]:
-  """Returns a tuple with a boolean value for each leaf in args."""
-  res: List[bool] = []
+def donation_vector(donate_argnums, donate_argnames, args, kwargs) -> tuple[bool, ...]:
+  """Returns a tuple with a boolean value for each leaf in args and kwargs.
+
+  What if a user specifies donate_argnums but calls the function with kwargs
+  or vice-versa? In that case, in `resolve_argnums` using the signature of the
+  function, the counterpart (donate_argnames or donate_argnums respectively) is
+  calculated so when this function is called both donate_argnums and
+  donate_argnames are available. This allows JAX to donate kwargs when only
+  donate_argnums is specified and vice-versa.
+
+  When both donate_argnums and donate_argnames are specified, only the args and
+  kwargs specified are donated.
+  """
+  res: list[bool] = []
   for i, arg in enumerate(args):
     donate = bool(i in donate_argnums)
     res.extend((donate,) * tree_structure(arg).num_leaves)
-  res.extend((False,) * tree_structure(kwargs).num_leaves)
+  for key, val in kwargs.items():
+    donate = key in donate_argnames
+    res.extend((donate,) * tree_structure(val).num_leaves)
   return tuple(res)
 
-def rebase_donate_argnums(donate_argnums, static_argnums) -> Tuple[int, ...]:
+def rebase_donate_argnums(donate_argnums, static_argnums) -> tuple[int, ...]:
   """Shifts donate to account for static.
 
   >>> rebase_donate_argnums((3, 4), (0, 1))
@@ -388,7 +404,6 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
   # the given treedef, build a complete axis spec tree with the same structure
   # and return the flattened result
   # TODO(mattjj,phawkins): improve this implementation
-
   proxy = object()
   dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
   axes = []
@@ -399,8 +414,7 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
     if kws:
       # if keyword arguments are included in the tree, we make adapt the error
       # message only to be about the positional arguments
-      treedef, leaf = treedef_children(treedef)
-      assert treedef_is_leaf(leaf)
+      treedef, _ = treedef_children(treedef)
       axis_tree, _ = axis_tree
     hint = ""
     if tupled_args:
@@ -422,6 +436,122 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
   assert len(axes) == treedef.num_leaves
   return axes
 
+def flat_out_axes(
+    f: lu.WrappedFun, out_spec: Any
+) -> tuple[lu.WrappedFun, Callable]:
+  leaves, treedef = tree_flatten(out_spec)
+  f, out_axes = _flat_out_axes(f, tuple(leaves), treedef)
+  return f, HashableFunction(out_axes, closure=(tuple(leaves), treedef))
+
+@lu.transformation_with_aux
+def _flat_out_axes(leaves, treedef, *args, **kwargs):
+  ans = yield args, kwargs
+  spec = tree_unflatten(treedef, leaves)
+  try:
+    spec_flat = tuple(broadcast_prefix(spec, ans, is_leaf=lambda x: x is None))
+  except ValueError:
+    e, *_ = prefix_errors(spec, ans)
+    # TODO(mattjj): currently hardcoded for pmap; generalize to vmap in followup
+    msg, = e('pmap out_axes').args
+    msg += ("\n\nThe full pytree is the output of the pmapped function. Ensure "
+            "that the `out_axes` argument to `pmap` is a pytree prefix of the "
+            "pmapped function's output.")
+    raise ValueError(msg) from None
+  yield ans, spec_flat
+
+def check_callable(fun):
+  # In Python 3.10+, the only thing stopping us from supporting staticmethods
+  # is that we can't take weak references to them, which the C++ JIT requires.
+  if isinstance(fun, staticmethod):
+    raise TypeError(f"staticmethod arguments are not supported, got {fun}")
+  if not callable(fun):
+    raise TypeError(f"Expected a callable value, got {fun}")
+  if inspect.isgeneratorfunction(fun):
+    raise TypeError(f"Expected a function, got a generator function: {fun}")
+
+_POSITIONAL_OR_KEYWORD = inspect.Parameter.POSITIONAL_OR_KEYWORD
+
+def infer_argnums_and_argnames(
+    sig: inspect.Signature,
+    argnums: Union[int, Iterable[int], None],
+    argnames: Union[str, Iterable[str], None],
+  ) -> tuple[tuple[int, ...], tuple[str, ...]]:
+  """Infer missing argnums and argnames for a function with inspect."""
+  if argnums is None and argnames is None:
+    return (), ()
+
+  if argnums is not None and argnames is not None:
+    argnums = _ensure_index_tuple(argnums)
+    argnames = _ensure_str_tuple(argnames)
+    return argnums, argnames
+
+  parameters = sig.parameters
+  if argnums is None:
+    assert argnames is not None
+    argnames = _ensure_str_tuple(argnames)
+    argnums = tuple(
+        i for i, (k, param) in enumerate(parameters.items())
+        if param.kind == _POSITIONAL_OR_KEYWORD and k in argnames
+    )
+  else:
+    argnums = _ensure_index_tuple(argnums)
+    argnames = tuple(
+        k for i, (k, param) in enumerate(parameters.items())
+        if param.kind == _POSITIONAL_OR_KEYWORD and i in argnums
+    )
+
+  return argnums, argnames
+
+
+def resolve_argnums(
+    fun, donate_argnums, donate_argnames, static_argnums, static_argnames
+) -> tuple[tuple[int, ...], tuple[str, ...], tuple[int, ...], tuple[str, ...]]:
+  try:
+    sig = inspect.signature(fun)
+  except ValueError as e:
+    # Some built-in functions don't support signature.
+    # See: https://github.com/python/cpython/issues/73485
+    # In this case no validation is done
+    static_argnums = () if static_argnums is None else _ensure_index_tuple(
+        static_argnums)
+    static_argnames = () if static_argnames is None else _ensure_str_tuple(
+        static_argnames)
+    donate_argnums = () if donate_argnums is None else _ensure_index_tuple(
+        donate_argnums)
+    if donate_argnames is not None:
+      raise ValueError(f"Getting the signature of function {fun} failed. "
+                       "Pass donate_argnums instead of donate_argnames.") from e
+    assert donate_argnames is None
+    donate_argnames = ()
+  else:
+    # Infer argnums and argnames according to docstring
+    # If nums is None and names is not None, then nums are inferred from the
+    # names and vice-versa.
+    static_argnums, static_argnames = infer_argnums_and_argnames(
+        sig, static_argnums, static_argnames)
+    donate_argnums, donate_argnames = infer_argnums_and_argnames(
+        sig, donate_argnums, donate_argnames)
+
+    # Validation
+    validate_argnums(sig, static_argnums, "static_argnums")
+    validate_argnames(sig, static_argnames, "static_argnames")
+    validate_argnums(sig, donate_argnums, "donate_argnums")
+    validate_argnames(sig, donate_argnames, "donate_argnames")
+
+  # Compensate for static argnums absorbing args
+  assert_no_intersection(static_argnames, donate_argnames)
+  donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
+  return donate_argnums, donate_argnames, static_argnums, static_argnames
+
+
+def assert_no_intersection(static_argnames, donate_argnames):
+  out = set(static_argnames).intersection(set(donate_argnames))
+  if out:
+    raise ValueError(
+        "static_argnames and donate_argnames cannot intersect. Argument names "
+        f"{out} appear in both static_argnames and donate_argnames")
+
+
 def _dtype(x):
   try:
     return dtypes.result_type(x)
@@ -438,9 +568,11 @@ def _shaped_abstractify_slow(x):
   weak_type = getattr(x, 'weak_type', False)
   named_shape = getattr(x, 'named_shape', {})
   if hasattr(x, 'dtype'):
-    dtype = dtypes.canonicalize_dtype(x.dtype, allow_opaque_dtype=True)
+    dtype = dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True)
   else:
-    dtype = dtypes.result_type(x)  # TODO(frostig,mattjj): why this case?
+    raise TypeError(
+        f"Cannot interpret value of type {type(x)} as an abstract array; it "
+        "does not have a dtype attribute")
   return core.ShapedArray(np.shape(x), dtype, weak_type=weak_type,
                           named_shape=named_shape)
 
@@ -450,9 +582,93 @@ def shaped_abstractify(x):
     return _shaped_abstractify_handlers[type(x)](x)
   except KeyError:
     return _shaped_abstractify_slow(x)
-_shaped_abstractify_handlers: Dict[Any, Callable[[Any], core.ShapedArray]] = {}
+_shaped_abstractify_handlers: dict[Any, Callable[[Any], core.ShapedArray]] = {}
+
+
+def _str_abstractify(x):
+  raise TypeError(f"Argument '{x}' of type {type(x)} is not a valid JAX type")
+_shaped_abstractify_handlers[str] = _str_abstractify
+
+def _numpy_array_abstractify(x: np.ndarray) -> ShapedArray:
+  dtype = x.dtype
+  dtypes.check_valid_dtype(dtype)
+  return ShapedArray(x.shape,
+      dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True))
+_shaped_abstractify_handlers[np.ndarray] = _numpy_array_abstractify
+
+def _np_scalar_abstractify(x: np.generic) -> ShapedArray:
+  dtype = np.dtype(x)
+  dtypes.check_valid_dtype(dtype)
+  return ShapedArray(np.shape(x),
+      dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True))
+_shaped_abstractify_handlers.update((t, _np_scalar_abstractify)
+                                    for t in numpy_scalar_types)
 
 # This decorator exists to make it easier to monkey-patch APIs in JAX.
 # By default it does nothing, but it can be monkey-patched to do other things.
 def api_hook(fun, tag: str):
   return fun
+
+
+def debug_info(traced_for: str, fun: Callable, args: tuple[Any],
+               kwargs: dict[str, Any], static_argnums: tuple[int, ...],
+               static_argnames: tuple[str, ...]) -> Optional[TracingDebugInfo]:
+  """Try to build trace-time debug info for fun when applied to args/kwargs."""
+  src = fun_sourceinfo(fun)
+  arg_names = _arg_names(fun, args, kwargs, static_argnums, static_argnames)
+  if src is None or arg_names is None: return None
+  return TracingDebugInfo(traced_for, src, arg_names, None)
+
+# TODO(mattjj): make this function internal to this module
+def fun_sourceinfo(fun: Callable) -> Optional[str]:
+  while isinstance(fun, partial):
+    fun = fun.func
+  fun = inspect.unwrap(fun)
+  try:
+    filename = fun.__code__.co_filename
+    lineno = fun.__code__.co_firstlineno
+    return f"{fun.__name__} at {filename}:{lineno}"
+  except AttributeError:
+    return None
+
+def _arg_names(fn, args, kwargs, static_argnums, static_argnames,
+               ) -> Optional[tuple[str, ...]]:
+  static = object()
+  static_argnums_ = _ensure_inbounds(True, len(args), static_argnums)
+  static_argnames_ = set(static_argnames)
+  args_ = [static if i in static_argnums_ else x for i, x in enumerate(args)]
+  kwargs = {k:static if k in static_argnames_ else x for k, x in kwargs.items()}
+  try:
+    ba = inspect.signature(fn).bind(*args_, **kwargs)
+  except (ValueError, TypeError):
+    return None
+  return tuple(f'{name}{keystr(path)}' for name, x in ba.arguments.items()
+               for path, l in generate_key_paths(x) if l is not static)
+
+@lu.transformation_with_aux
+def result_paths(*args, **kwargs):
+  "linear_util transform to get output pytree paths of pre-flattened function."
+  ans = yield args, kwargs
+  yield ans, [keystr(path) for path, _ in generate_key_paths(ans)]
+
+def jaxpr_debug_info(jaxpr: core.Jaxpr, trace_debug: Optional[TracingDebugInfo],
+                     result_paths: Optional[tuple[Optional[str], ...]] = None,
+                     ) -> core.Jaxpr:
+  """Add debug info to jaxpr, given trace-time debug info and result paths."""
+  if trace_debug is None:
+    return jaxpr
+  assert (result_paths is not None) ^ (trace_debug.result_paths is not None)
+  if result_paths is None:
+    result_paths = trace_debug.result_paths()  # type: ignore
+  debug_info = core.JaxprDebugInfo(
+      trace_debug.traced_for, trace_debug.func_src_info,
+      trace_debug.arg_names, tuple(result_paths))
+  return jaxpr.replace(debug_info=debug_info)
+
+def debug_info_final(f: lu.WrappedFun, dbg: Optional[TracingDebugInfo],
+                     res_paths: Callable[[], tuple[str, ...]]) -> lu.WrappedFun:
+  "Attach trace-time debug info and result paths lazy thunk to an lu.WrappedFun"
+  if dbg is None: return f
+  assert dbg.result_paths is None
+  res_paths_ = HashableFunction(res_paths, closure=())
+  return lu.add_debug_info(f, dbg._replace(result_paths=res_paths_))

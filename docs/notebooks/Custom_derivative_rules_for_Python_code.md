@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.14.1
+    jupytext_version: 1.15.2
 kernelspec:
   display_name: Python 3
   name: python3
@@ -15,7 +15,7 @@ kernelspec:
 
 # Custom derivative rules for JAX-transformable Python functions
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb)
 
 *mattjj@ Mar 19 2020, last updated Oct 14 2020*
 
@@ -270,7 +270,7 @@ A related application is to enforce a differentiation convention, perhaps at a b
 
 +++ {"id": "l_6tdb-QGK-H"}
 
-Consider the function $f : \mathbb{R}_+ \mapsto \mathbb{R}_+$ with $f(x) = \frac{x}{1 + \sqrt{x}}$, where we take $\mathbb{R}_+ = [0, \infty)$. We might implement $f$ as a program like this:
+Consider the function $f : \mathbb{R}_+ \to \mathbb{R}_+$ with $f(x) = \frac{x}{1 + \sqrt{x}}$, where we take $\mathbb{R}_+ = [0, \infty)$. We might implement $f$ as a program like this:
 
 ```{code-cell} ipython3
 :id: AfF5P7x_GaSe
@@ -1036,9 +1036,9 @@ jax.grad(foo)(3.)
 > <ipython-input-113-b19a2dc1abf7>(12)debug_bwd()
 -> return g
 (Pdb) p x
-DeviceArray(9., dtype=float32)
+Array(9., dtype=float32)
 (Pdb) p g
-DeviceArray(-0.91113025, dtype=float32)
+Array(-0.91113025, dtype=float32)
 (Pdb) q
 ```
 

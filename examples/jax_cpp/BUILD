@@ -12,28 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load(
-    "@org_tensorflow//tensorflow:tensorflow.bzl",
-    "tf_cc_binary",
-)
+package(default_applicable_licenses = ["//third_party/py/jax:license"])
 
 licenses(["notice"])
 
-tf_cc_binary(
+cc_binary(
     name = "main",
     srcs = ["main.cc"],
     tags = ["manual"],
     deps = [
-        "@org_tensorflow//tensorflow/compiler/xla:literal",
-        "@org_tensorflow//tensorflow/compiler/xla:literal_util",
-        "@org_tensorflow//tensorflow/compiler/xla:shape_util",
-        "@org_tensorflow//tensorflow/compiler/xla:status",
-        "@org_tensorflow//tensorflow/compiler/xla:statusor",
-        "@org_tensorflow//tensorflow/compiler/xla/pjrt:pjrt_client",
-        "@org_tensorflow//tensorflow/compiler/xla/pjrt:tfrt_cpu_pjrt_client",
-        "@org_tensorflow//tensorflow/compiler/xla/service:hlo_proto_cc",
-        "@org_tensorflow//tensorflow/compiler/xla/tools:hlo_module_loader",
-        "@org_tensorflow//tensorflow/core/platform:logging",
-        "@org_tensorflow//tensorflow/core/platform:platform_port",
+        "@xla//xla:literal",
+        "@xla//xla:literal_util",
+        "@xla//xla:shape_util",
+        "@xla//xla:status",
+        "@xla//xla:statusor",
+        "@xla//xla/pjrt:pjrt_client",
+        "@xla//xla/pjrt:tfrt_cpu_pjrt_client",
+        "@xla//xla/service:hlo_proto_cc",
+        "@xla//xla/tools:hlo_module_loader",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:platform_port",
     ],
 )

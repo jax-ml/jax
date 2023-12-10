@@ -12,4 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.flatten_util import ravel_pytree
+from jax._src.flatten_util import ravel_pytree as ravel_pytree

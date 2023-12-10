@@ -14,7 +14,7 @@
 """Tests for JAX primitive coverage.
 
 The bulk of the testing is done by `test_prim`, which is parameterized by
-about 2000+ test harnesses. See `primitive_harness.py` docstring for a
+about 3500+ test harnesses. See `test_harnesses.py` docstring for a
 description of test harnesses. That module contains also the definitions
 of all the test harnesses, and a specification of which are only partially
 implemented for JAX.
@@ -53,7 +53,7 @@ not need limitations, then it must be listed in the
 
 import datetime
 import os
-from typing import Any, Dict, Tuple
+from typing import Any
 import unittest
 
 from absl import logging
@@ -63,11 +63,11 @@ from absl.testing import parameterized
 import jax
 from jax import dtypes
 from jax import numpy as jnp
+from jax._src import config
 from jax._src import test_util as jtu
-from jax.config import config
 from jax.experimental import jax2tf
 from jax.interpreters import mlir
-from jax.interpreters import xla
+from jax._src.interpreters import xla
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -77,7 +77,7 @@ config.parse_flags_with_absl()
 # Import after parsing flags
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.experimental.jax2tf.tests.jax2tf_limitations import Jax2TfLimitation
-from jax.experimental.jax2tf.tests import primitive_harness
+from jax._src.internal_test_util import test_harnesses
 
 DType = Any
 
@@ -99,14 +99,14 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   # See more details in the comment at top of file and in Jax2TfLimitation class.
   # If you want to run this test for only one harness, add parameter
   # `one_containing="foo"` to parameterized below.
-  @primitive_harness.parameterized(
-      primitive_harness.all_harnesses,
+  @test_harnesses.parameterized(
+      test_harnesses.all_harnesses,
       include_jax_unimpl=False,
-      #one_containing="scatter_modes_out_of_bounds_shape=float32[1,5]",
+      #one_containing="",
   )
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
-  def test_prim(self, harness: primitive_harness.Harness):
+  def test_prim(self, harness: test_harnesses.Harness):
     limitations = Jax2TfLimitation.limitations_for_harness(harness)
     device = jtu.device_under_test()
     limitations = tuple(filter(lambda l: l.filter(device=device,
@@ -114,17 +114,42 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     func_jax = harness.dyn_fun
     args = harness.dyn_args_maker(self.rng())
     enable_xla = harness.params.get("enable_xla", True)
-    if config.jax2tf_default_experimental_native_lowering and not enable_xla:
-      return
+    if config.jax2tf_default_native_serialization.value and not enable_xla:
+      raise unittest.SkipTest("native_serialization not supported with enable_xla=False")
+
+    if ("eigh" == harness.group_name and
+        np.complex64 == harness.dtype and
+        device == "tpu"):
+      raise unittest.SkipTest("b/264716764: error on tf.cast from c64 to f32")
+
+    if (config.jax2tf_default_native_serialization.value and
+        device == "gpu" and
+        "lu" in harness.fullname):
+      raise unittest.SkipTest("b/269388847: lu failures on GPU")
+
+    def skipCustomCallTest(target: str):
+      raise unittest.SkipTest(
+          f"TODO(b/272239584): custom call target not guaranteed stable: {target}")
+    if config.jax2tf_default_native_serialization.value:
+      if device == "gpu":
+        if "custom_linear_solve_" in harness.fullname:
+          skipCustomCallTest("cusolver_geqrf, cublas_geqrf_batched")
+        if "svd_shape" in harness.fullname:
+          skipCustomCallTest("cusolver_gesvdj")
+        if "tridiagonal_solve_shape" in harness.fullname:
+          skipCustomCallTest("cusparse_gtsv2_f32, cusparse_gtsv2_f64")
+
     associative_scan_reductions = harness.params.get("associative_scan_reductions", False)
     try:
       with jax.jax2tf_associative_scan_reductions(associative_scan_reductions):
         self.ConvertAndCompare(func_jax, *args, limitations=limitations,
                                enable_xla=enable_xla)
     except Exception as e:
-      if (config.jax2tf_default_experimental_native_lowering and
+      # TODO(b/264596006): custom calls are not registered properly with TF in OSS
+      if (config.jax2tf_default_native_serialization.value and
           "does not work with custom calls" in str(e)):
-        logging.warning("Supressing error %s", e)
+        logging.warning("Suppressing error %s", e)
+        raise unittest.SkipTest("b/264596006: custom calls in native serialization fail in TF")
       else:
         raise e
 
@@ -149,8 +174,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     for p in all_primitives:
       if p.name == "axis_index":
         continue
-      # TODO: remove once we delete sharded_jit.py
-      if p.name in ["sharded_call", "sharding_constraint"]:
+      if p.name == "sharding_constraint":
         continue
       # TODO: Remove once tensorflow is 2.10.0 everywhere.
       if p.name == "optimization_barrier":
@@ -171,16 +195,16 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     """
 
     harnesses = [
-        h for h in primitive_harness.all_harnesses
+        h for h in test_harnesses.all_harnesses
         if h.filter(h, include_jax_unimpl=True)
     ]
     print(f"Found {len(harnesses)} test harnesses that work in JAX")
 
-    def unique_hash(h: primitive_harness.Harness, l: Jax2TfLimitation):
+    def unique_hash(h: test_harnesses.Harness, l: Jax2TfLimitation):
       return (h.group_name, l.description, l.devices,
               tuple(np.dtype(d).name for d in l.dtypes), l.modes)
 
-    unique_limitations: Dict[Any, Tuple[primitive_harness.Harness, Jax2TfLimitation]] = {}
+    unique_limitations: dict[Any, tuple[test_harnesses.Harness, Jax2TfLimitation]] = {}
     for h in harnesses:
       for l in h.jax_unimplemented:
         if l.enabled:
@@ -223,7 +247,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
       to_table.append(
           f"| {h.group_name} | {description} | "
-          f"{primitive_harness.dtypes_to_str(l.dtypes, empty_means_all=True)} | {devices} | {modes} |"
+          f"{test_harnesses.dtypes_to_str(l.dtypes, empty_means_all=True)} | {devices} | {modes} |"
       )
 
     if not os.environ.get("JAX_OUTPUT_LIMITATIONS_DOC"):
@@ -233,7 +257,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     # The CPU has more supported types, and harnesses
     self.assertEqual("cpu", jtu.device_under_test())
     self.assertTrue(
-        config.x64_enabled,
+        config.enable_x64.value,
         "Documentation generation must be run with JAX_ENABLE_X64=1")
 
     with open(
@@ -275,10 +299,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     y = np.int32(3)
     self.ConvertAndCompare(jnp.floor_divide, x, y)
     expected = jnp.floor_divide(x, y)
-    # Try it with TF 1 as well (#5831)
-    with tf.compat.v1.Session() as sess:
-      tf1_res = sess.run(jax2tf.convert(jnp.floor_divide)(x, y))
-      self.assertAllClose(expected, tf1_res)
+    if not config.jax2tf_default_native_serialization.value:
+      # With native serialization TF1 seems to want to run the converted code
+      # on the CPU even when the default backend is the TPU.
+      # Try it with TF 1 as well (#5831)
+      with tf.compat.v1.Session() as sess:
+        tf1_res = sess.run(jax2tf.convert(jnp.floor_divide)(x, y))
+        self.assertAllClose(expected, tf1_res)
 
   def test_boolean_gather(self):
     values = np.array([[True, True], [False, True], [False, False]],

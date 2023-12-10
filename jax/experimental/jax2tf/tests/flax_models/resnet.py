@@ -19,8 +19,9 @@ https://github.com/google/flax/tree/main/examples/imagenet
 # See issue #620.
 # pytype: disable=wrong-arg-count
 
+from collections.abc import Sequence
 from functools import partial
-from typing import Any, Callable, Sequence, Tuple
+from typing import Any, Callable
 
 from flax import linen as nn
 import jax.numpy as jnp
@@ -34,7 +35,7 @@ class ResNetBlock(nn.Module):
   conv: ModuleDef
   norm: ModuleDef
   act: Callable
-  strides: Tuple[int, int] = (1, 1)
+  strides: tuple[int, int] = (1, 1)
 
   @nn.compact
   def __call__(self, x,):
@@ -59,7 +60,7 @@ class BottleneckResNetBlock(nn.Module):
   conv: ModuleDef
   norm: ModuleDef
   act: Callable
-  strides: Tuple[int, int] = (1, 1)
+  strides: tuple[int, int] = (1, 1)
 
   @nn.compact
   def __call__(self, x):

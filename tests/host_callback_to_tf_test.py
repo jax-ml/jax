@@ -25,9 +25,10 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
-from jax.config import config
+from jax import config
 from jax import numpy as jnp
 from jax._src import test_util as jtu
+from jax._src import xla_bridge
 from jax.experimental import host_callback as hcb
 
 import numpy as np
@@ -38,7 +39,6 @@ except ImportError:
   tf = None
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 def call_tf_no_ad(tf_fun: Callable, arg, *, result_shape):
@@ -162,6 +162,8 @@ class CallToTFTest(jtu.JaxTestCase):
   def setUp(self):
     if tf is None:
       raise unittest.SkipTest("Test requires tensorflow")
+    if xla_bridge.using_pjrt_c_api():
+      raise unittest.SkipTest("host_callback not implemented in PJRT C API")
     super().setUp()
 
   @parameterized.named_parameters(

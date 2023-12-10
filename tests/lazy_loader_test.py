@@ -12,26 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import sys
 
 from absl.testing import absltest
 from jax._src import test_util as jtu
+from jax._src.internal_test_util import lazy_loader_module as l
 
 
 class LazyLoaderTest(absltest.TestCase):
 
   def testLazyLoader(self):
     self.assertEmpty([m for m in sys.modules if "lazy_test_submodule" in m])
-
-    # This manipulation of sys.path exists to make this test work in Google's
-    # Hermetic Python environment: it ensures the module is resolvable.
-    saved_path = sys.path[0]
-    try:
-      sys.path[0] = os.path.dirname(__file__)
-      import lazy_loader_module as l
-    finally:
-      sys.path[0] = saved_path
 
     self.assertEqual(["lazy_test_submodule"], l.__all__)
     self.assertEqual(["lazy_test_submodule"], dir(l))

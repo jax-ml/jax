@@ -13,22 +13,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -eux
+# Environment Var Notes
+# XLA_CLONE_DIR	-
+#	Specifies filepath to where XLA repo is cloned. 
+#	NOTE:, if this is set then XLA repo is not cloned. Must clone repo before running this script. 
+#	Also, if this is set then setting XLA_REPO and XLA_BRANCH have no effect.
+# XLA_REPO 
+#	XLA repo to clone from. Default is https://github.com/ROCmSoftwarePlatform/tensorflow-upstream
+# XLA_BRANCH
+#	XLA branch in the XLA repo. Default is develop-upstream-jax
+#
 
-ROCM_TF_FORK_REPO="https://github.com/ROCmSoftwarePlatform/tensorflow-upstream"
-ROCM_TF_FORK_BRANCH="develop-upstream"
-rm -rf /tmp/tensorflow-upstream || true
-git clone -b ${ROCM_TF_FORK_BRANCH} ${ROCM_TF_FORK_REPO} /tmp/tensorflow-upstream
-if [ ! -v TENSORFLOW_ROCM_COMMIT ]; then
-    echo "The TENSORFLOW_ROCM_COMMIT environment variable is not set, using top of branch"
-elif [ ! -z "$TENSORFLOW_ROCM_COMMIT" ]
-then
-      echo "Using tensorflow-rocm at commit: $TENSORFLOW_ROCM_COMMIT"
-      cd /tmp/tensorflow-upstream
-      git checkout $TENSORFLOW_ROCM_COMMIT
-      cd -
+set -eux
+python -V
+
+#If XLA_REPO is not set, then use default
+if [ ! -v XLA_REPO ]; then
+	XLA_REPO="https://github.com/openxla/xla.git"
+	XLA_BRANCH="main"
+elif [ -z "$XLA_REPO" ]; then
+	XLA_REPO="https://github.com/openxla/xla.git"
+	XLA_BRANCH="main"
 fi
 
-python3 ./build/build.py --enable_rocm --rocm_path=${ROCM_PATH} --bazel_options=--override_repository=org_tensorflow=/tmp/tensorflow-upstream
+#If XLA_CLONE_PATH is not set, then use default path. 
+#Note, setting XLA_CLONE_PATH makes setting XLA_REPO and XLA_BRANCH a no-op
+#Set this when XLA repository has been already clone. This is useful in CI
+#environments and when doing local development
+if [ ! -v XLA_CLONE_DIR ]; then
+	XLA_CLONE_DIR=/tmp/xla
+	rm -rf /tmp/xla || true
+	git clone -b ${XLA_BRANCH} ${XLA_REPO} /tmp/xla
+elif [ -z "$XLA_CLONE_DIR" ]; then
+	XLA_CLONE_DIR=/tmp/xla
+	rm -rf /tmp/xla || true
+	git clone -b ${XLA_BRANCH} ${XLA_REPO} /tmp/xla
+fi
+
+
+#Export JAX_ROCM_VERSION so that it is appened in the wheel name
+rocm_version=$(cat /opt/rocm/.info/version | cut -d "-" -f 1)
+export JAX_ROCM_VERSION=${rocm_version//./}
+
+#Build and install wheel
+python3 ./build/build.py --enable_rocm --rocm_path=${ROCM_PATH} --bazel_options=--override_repository=xla=${XLA_CLONE_DIR}
 pip3 install --force-reinstall dist/*.whl  # installs jaxlib (includes XLA)
 pip3 install --force-reinstall .  # installs jax
+
+#This is for CI to read without having to start the container again
+if [ -v CI_RUN ]; then
+	pip3 list | grep jaxlib | tr -s ' ' | cut -d " " -f 2 | cut -d "+" -f 1 > jax_version_installed 
+	cat /opt/rocm/.info/version | cut -d "-" -f 1 > jax_rocm_version
+fi

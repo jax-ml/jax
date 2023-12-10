@@ -19,6 +19,9 @@ from jax._src.scipy.stats.norm import (
   cdf as cdf,
   logcdf as logcdf,
   logpdf as logpdf,
+  logsf as logsf,
   pdf as pdf,
   ppf as ppf,
+  sf as sf,
+  isf as isf,
 )

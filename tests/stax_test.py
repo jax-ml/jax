@@ -23,13 +23,13 @@ from jax import random
 from jax.example_libraries import stax
 from jax import dtypes
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 
 def random_inputs(rng, input_shape):
   if type(input_shape) is tuple:
-    return rng.randn(*input_shape).astype(dtypes.canonicalize_dtype(np.float_))
+    return rng.randn(*input_shape).astype(dtypes.canonicalize_dtype(float))
   elif type(input_shape) is list:
     return [random_inputs(rng, shape) for shape in input_shape]
   else:
@@ -48,7 +48,8 @@ def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
 
 
 # stax makes use of implicit rank promotion, so we allow it in the tests.
-@jtu.with_config(jax_numpy_rank_promotion="allow")
+@jtu.with_config(jax_numpy_rank_promotion="allow",
+                 jax_legacy_prng_key="allow")
 class StaxTest(jtu.JaxTestCase):
 
   @jtu.sample_product(shape=[(2, 3), (5,)])

@@ -19,7 +19,7 @@ limitations under the License.
 
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/kernel_helpers.h"
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
+#include "xla/service/custom_call_status.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {

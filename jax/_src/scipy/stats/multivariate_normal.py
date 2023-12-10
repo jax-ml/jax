@@ -19,8 +19,7 @@ import scipy.stats as osp_stats
 
 from jax import lax
 from jax import numpy as jnp
-from jax._src.numpy.util import _wraps
-from jax._src.numpy.lax_numpy import _promote_dtypes_inexact
+from jax._src.numpy.util import _wraps, promote_dtypes_inexact
 from jax._src.typing import Array, ArrayLike
 
 
@@ -30,7 +29,7 @@ In the JAX version, the `allow_singular` argument is not implemented.
 def logpdf(x: ArrayLike, mean: ArrayLike, cov: ArrayLike, allow_singular: None = None) -> ArrayLike:
   if allow_singular is not None:
     raise NotImplementedError("allow_singular argument of multivariate_normal.logpdf")
-  x, mean, cov = _promote_dtypes_inexact(x, mean, cov)
+  x, mean, cov = promote_dtypes_inexact(x, mean, cov)
   if not mean.shape:
     return (-1/2 * jnp.square(x - mean) / cov
             - 1/2 * (jnp.log(2*np.pi) + jnp.log(cov)))

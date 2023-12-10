@@ -30,18 +30,20 @@ import numpy as np
 import tensorflow as tf
 import tensorflowjs as tfjs
 
-import input_pipeline
+import input_pipeline  # type: ignore[import]
 
 
-flags.DEFINE_integer("num_epochs", 5,
-                     ("Number of epochs to train for."))
-flags.DEFINE_integer("num_classes", 100, "Number of classification classes.")
+_NUM_EPOCHS = flags.DEFINE_integer(
+    "num_epochs", 5, "Number of epochs to train for."
+)
+_NUM_CLASSES = flags.DEFINE_integer(
+    "num_classes", 100, "Number of classification classes."
+)
 
 flags.register_validator("num_classes",
                          lambda value: value >= 1 and value <= 100,
                          message="--num_classes must be in range [1, 100]")
 
-FLAGS = flags.FLAGS
 
 # The code below is an adaptation for Flax from the work published here:
 # https://blog.tensorflow.org/2018/07/train-model-in-tfkeras-with-colab-and-run-in-browser-tensorflowjs.html
@@ -65,7 +67,7 @@ class QuickDraw(nn.Module):
     x = nn.Dense(features=128)(x)
     x = nn.relu(x)
 
-    x = nn.Dense(features=FLAGS.num_classes)(x)
+    x = nn.Dense(features=_NUM_CLASSES.value)(x)
 
     return x
 
@@ -75,7 +77,7 @@ def apply_model(state, inputs, labels):
   """Computes gradients, loss and accuracy for a single batch."""
   def loss_fn(params):
     logits = state.apply_fn({'params': params}, inputs)
-    one_hot = jax.nn.one_hot(labels, FLAGS.num_classes)
+    one_hot = jax.nn.one_hot(labels, _NUM_CLASSES.value)
     loss = jnp.mean(optax.softmax_cross_entropy(logits=logits, labels=one_hot))
     return loss, logits
   grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
@@ -113,7 +115,7 @@ def create_train_state(rng):
 
 
 def train(state, train_ds, test_ds):
-  for epoch in range(1, FLAGS.num_epochs+1):
+  for epoch in range(1, _NUM_EPOCHS.value+1):
     start_time = time.time()
 
     state, train_loss, train_accuracy = run_epoch(state, train_ds)
@@ -136,12 +138,12 @@ def main(argv):
 
   base_model_path = "/tmp/jax2tf/tf_js_quickdraw"
   dataset_path = os.path.join(base_model_path, "data")
-  classes = input_pipeline.download_dataset(dataset_path, FLAGS.num_classes)
-  assert len(classes) == FLAGS.num_classes, "Incorrect number of classes"
+  classes = input_pipeline.download_dataset(dataset_path, _NUM_CLASSES.value)
+  assert len(classes) == _NUM_CLASSES.value, "Incorrect number of classes"
   print(f"Classes are: {classes}")
   print("Loading dataset into memory...")
   train_ds, test_ds = input_pipeline.get_datasets(dataset_path, classes)
-  print(f"Starting training for {FLAGS.num_epochs} epochs...")
+  print(f"Starting training for {_NUM_EPOCHS.value} epochs...")
 
   state = create_train_state(jax.random.PRNGKey(0))
   state = train(state, train_ds, test_ds)

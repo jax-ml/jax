@@ -12,17 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from functools import partial
 import enum
-from typing import Callable, Sequence, Union
+from typing import Callable, Union
 
-from jax import core
+import numpy as np
+
 from jax import jit
 from jax import lax
 from jax import numpy as jnp
+from jax._src import core
 from jax._src.util import canonicalize_axis
-from jax._src.numpy.util import _promote_dtypes_inexact
-import numpy as np
+from jax._src.numpy.util import promote_dtypes_inexact
 
 
 def _fill_lanczos_kernel(radius, x):
@@ -119,7 +121,7 @@ class ResizeMethod(enum.Enum):
   LANCZOS3:
     `Lanczos resampling`_, using a kernel of radius 3.
 
-  LANCZOS3:
+  LANCZOS5:
     `Lanczos resampling`_, using a kernel of radius 5.
 
   CUBIC:
@@ -242,8 +244,8 @@ def scale_and_translate(image, shape: core.Shape,
   assert isinstance(method, ResizeMethod)
 
   kernel = _kernels[method]
-  image, = _promote_dtypes_inexact(image)
-  scale, translation = _promote_dtypes_inexact(scale, translation)
+  image, = promote_dtypes_inexact(image)
+  scale, translation = promote_dtypes_inexact(scale, translation)
   return _scale_and_translate(image, shape, spatial_dims, scale, translation,
                               kernel, antialias, precision)
 
@@ -252,7 +254,7 @@ def _resize_nearest(x, output_shape: core.Shape):
   input_shape = x.shape
   assert len(input_shape) == len(output_shape)
   spatial_dims = tuple(i for i in range(len(input_shape))
-                       if not core.symbolic_equal_dim(input_shape[i], output_shape[i]))
+                       if not core.definitely_equal(input_shape[i], output_shape[i]))
   for d in spatial_dims:
     m = input_shape[d]
     n = output_shape[d]
@@ -280,13 +282,13 @@ def _resize(image, shape: core.Shape, method: Union[str, ResizeMethod],
   assert isinstance(method, ResizeMethod)
   kernel = _kernels[method]
 
-  image, = _promote_dtypes_inexact(image)
+  image, = promote_dtypes_inexact(image)
   # Skip dimensions that have scale=1 and translation=0, this is only possible
   # since all of the current resize methods (kernels) are interpolating, so the
   # output = input under an identity warp.
   spatial_dims = tuple(i for i in range(len(shape))
-                       if not core.symbolic_equal_dim(image.shape[i], shape[i]))
-  scale = [1.0 if core.symbolic_equal_dim(shape[d], 0) else core.dimension_as_value(shape[d]) / core.dimension_as_value(image.shape[d])
+                       if not core.definitely_equal(image.shape[i], shape[i]))
+  scale = [1.0 if core.definitely_equal(shape[d], 0) else core.dimension_as_value(shape[d]) / core.dimension_as_value(image.shape[d])
            for d in spatial_dims]
   return _scale_and_translate(image, shape, spatial_dims,
                               scale, [0.] * len(spatial_dims), kernel,

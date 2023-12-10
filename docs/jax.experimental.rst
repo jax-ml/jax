@@ -1,7 +1,7 @@
 .. currentmodule:: jax.experimental
 
-jax.experimental package
-========================
+``jax.experimental`` module
+===========================
 
 ``jax.experimental.optix`` has been moved into its own Python package
 (https://github.com/deepmind/optax).
@@ -14,13 +14,16 @@ Experimental Modules
 .. toctree::
     :maxdepth: 1
 
+    jax.experimental.array_api
     jax.experimental.checkify
-    jax.experimental.global_device_array
     jax.experimental.host_callback
     jax.experimental.maps
     jax.experimental.pjit
     jax.experimental.sparse
     jax.experimental.jet
+    jax.experimental.custom_partitioning
+    jax.experimental.multihost_utils
+    jax.experimental.compilation_cache
 
 Experimental APIs
 -----------------

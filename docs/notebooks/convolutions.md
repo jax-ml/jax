@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.14.1
+    jupytext_version: 1.15.2
 kernelspec:
   display_name: Python 3
   language: python
@@ -14,9 +14,9 @@ kernelspec:
 
 +++ {"id": "TVT_MVvc02AA"}
 
-# Convolutions in JAX
+# Generalized Convolutions in JAX
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/convolutions.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/convolutions.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/notebooks/convolutions.ipynb)
 
 JAX provides a number of interfaces to compute convolutions across data, including:
 
@@ -83,7 +83,7 @@ image = jnp.array(misc.face().mean(-1))
 ax[0].imshow(image, cmap='binary_r')
 ax[0].set_title('original')
 
-# Create a noisy version by adding random Gausian noise
+# Create a noisy version by adding random Gaussian noise
 key = random.PRNGKey(1701)
 noisy_image = image + 50 * random.normal(key, image.shape)
 ax[1].imshow(noisy_image, cmap='binary_r')
@@ -196,7 +196,7 @@ The important argument is the 3-tuple of axis layout arguments:
 (Input Layout, Kernel Layout, Output Layout)
  - __N__ - batch dimension
  - __H__ - spatial height
- - __W__ - spatial height
+ - __W__ - spatial width
  - __C__ - channel dimension
  - __I__ - kernel _input_ channel dimension
  - __O__ - kernel _output_ channel dimension
@@ -330,7 +330,7 @@ We can use the last to, for instance, implement _transposed convolutions_:
 # N,H,W,C = img.shape
 # out = tf.nn.conv2d_transpose(img, kernel, (N,2*H,2*W,C), (1,2,2,1))
 
-# transposed conv = 180deg kernel roation plus LHS dilation
+# transposed conv = 180deg kernel rotation plus LHS dilation
 # rotate kernel 180deg:
 kernel_rot = jnp.rot90(jnp.rot90(kernel, axes=(0,1)), axes=(0,1))
 # need a custom output padding:

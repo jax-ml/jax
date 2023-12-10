@@ -1,5 +1,5 @@
-jax.example_libraries package
-=============================
+``jax.example_libraries`` module
+================================
 
 JAX provides some small, experimental libraries for machine learning. These
 libraries are in part about providing tools and in part about serving as

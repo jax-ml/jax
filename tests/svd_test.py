@@ -16,18 +16,18 @@
 import functools
 
 import jax
-from jax.config import config
 import jax.numpy as jnp
 import numpy as np
 import scipy.linalg as osp_linalg
-from jax._src.lax import svd
+from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.lax import svd
 
 from absl.testing import absltest
 
 
 config.parse_flags_with_absl()
-_JAX_ENABLE_X64 = config.x64_enabled
+_JAX_ENABLE_X64 = config.enable_x64.value
 
 # Input matrix data type for SvdTest.
 _SVD_TEST_DTYPE = np.float64 if _JAX_ENABLE_X64 else np.float32
@@ -173,32 +173,54 @@ class SvdTest(jtu.JaxTestCase):
         np.testing.assert_array_less(actual_diff, np.zeros_like(actual_diff))
 
   @jtu.sample_product(
-    [dict(m=m, n=n) for m, n in zip([2, 4, 8], [4, 4, 6])],
-    full_matrices=[True, False],
-    compute_uv=[True, False],
-    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+      [dict(m=m, n=n) for m, n in zip([2, 4, 8], [4, 4, 6])],
+      full_matrices=[True, False],
+      compute_uv=[True, False],
+      dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
-  def testSvdOnZero(self, m, n, full_matrices, compute_uv, dtype):
-    """Tests SVD on matrix of all zeros."""
-    osp_fun = functools.partial(osp_linalg.svd, full_matrices=full_matrices,
-                                compute_uv=compute_uv)
-    lax_fun = functools.partial(svd.svd, full_matrices=full_matrices,
-                                compute_uv=compute_uv)
+  def testSvdAllZero(self, m, n, full_matrices, compute_uv, dtype):
+    """Tests SVD on matrix of all zeros, +/-infinity or NaN."""
+    osp_fun = functools.partial(
+        osp_linalg.svd, full_matrices=full_matrices, compute_uv=compute_uv
+    )
+    lax_fun = functools.partial(
+        svd.svd, full_matrices=full_matrices, compute_uv=compute_uv
+    )
     args_maker_svd = lambda: [jnp.zeros((m, n), dtype=dtype)]
     self._CheckAgainstNumpy(osp_fun, lax_fun, args_maker_svd)
     self._CompileAndCheck(lax_fun, args_maker_svd)
 
+  @jtu.sample_product(
+      [dict(m=m, n=n) for m, n in zip([2, 4, 8], [4, 4, 6])],
+      fill_value=[-np.inf, np.inf, np.nan],
+      full_matrices=[True, False],
+      compute_uv=[True, False],
+      dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+  )
+  def testSvdNonFiniteValues(
+      self, m, n, fill_value, full_matrices, compute_uv, dtype
+  ):
+    """Tests SVD on matrix of all zeros, +/-infinity or NaN."""
+    lax_fun = functools.partial(
+        svd.svd, full_matrices=full_matrices, compute_uv=compute_uv
+    )
+    args_maker_svd = lambda: [
+        jnp.full((m, n), fill_value=fill_value, dtype=dtype)
+    ]
+    result = lax_fun(args_maker_svd()[0])
+    for r in result:
+      self.assertTrue(jnp.all(jnp.isnan(r)))
+    self._CompileAndCheck(lax_fun, args_maker_svd)
 
   @jtu.sample_product(
     [dict(m=m, n=n, r=r, c=c)
      for m, n, r, c in zip([2, 4, 8], [4, 4, 6], [1, 0, 1], [1, 0, 1])],
     dtype=jtu.dtypes.floating,
   )
-  @jtu.skip_on_devices("rocm")
   def testSvdOnTinyElement(self, m, n, r, c, dtype):
     """Tests SVD on matrix of zeros and close-to-zero entries."""
     a = jnp.zeros((m, n), dtype=dtype)
-    tiny_element = jnp.finfo(a).tiny
+    tiny_element = jnp.finfo(a.dtype).tiny
     a = a.at[r, c].set(tiny_element)
 
     @jax.jit

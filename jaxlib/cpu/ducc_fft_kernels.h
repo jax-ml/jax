@@ -16,11 +16,15 @@ limitations under the License.
 #ifndef JAXLIB_CPU_DUCC_FFT_KERNELS_H_
 #define JAXLIB_CPU_DUCC_FFT_KERNELS_H_
 
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
+#include "xla/service/custom_call_status.h"
 
 namespace jax {
 
+// TODO(b/287702203): this must be kept until EOY 2023 for backwards
+// of serialized functions using fft.
 void DuccFft(void* out, void** in, XlaCustomCallStatus*);
+
+void DynamicDuccFft(void* out, void** in, XlaCustomCallStatus*);
 
 }  // namespace jax
 

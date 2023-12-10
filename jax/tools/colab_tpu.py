@@ -14,34 +14,26 @@
 
 """Utilities for running JAX on Cloud TPUs via Colab."""
 
-import requests
-import os
+import textwrap
 
-from jax.config import config
+message = """
+As of JAX 0.4.0, JAX only supports TPU VMs, not the older Colab TPUs.
 
-TPU_DRIVER_MODE = 0
+We recommend trying Kaggle Notebooks
+(https://www.kaggle.com/code, click on "New Notebook" near the top) which offer
+TPU VMs. You have to create an account, log in, and verify your account to get
+accelerator support.
+Once you do that, there's a new "TPU 1VM v3-8" accelerator option. This gives
+you a TPU notebook environment similar to Colab, but using the newer TPU VM
+architecture. This should be a less buggy, more performant, and overall better
+experience than the older TPU node architecture.
 
+It is also possible to use Colab together with a self-hosted Jupyter kernel
+running on a Cloud TPU VM. See
+https://research.google.com/colaboratory/local-runtimes.html
+for details.
+"""
 
-def setup_tpu(tpu_driver_version='tpu_driver_20221212'):
-  """Sets up Colab to run on TPU.
-
-  Note: make sure the Colab Runtime is set to Accelerator: TPU.
-
-  Args
-  ----
-  tpu_driver_version : (str) specify the version identifier for the tpu driver.
-    Set to "tpu_driver_nightly" to use the nightly tpu driver build.
-  """
-  global TPU_DRIVER_MODE
-
-  if not TPU_DRIVER_MODE:
-    colab_tpu_addr = os.environ['COLAB_TPU_ADDR'].split(':')[0]
-    url = f'http://{colab_tpu_addr}:8475/requestversion/{tpu_driver_version}'
-    requests.post(url)
-    TPU_DRIVER_MODE = 1
-
-  # The following is required to use TPU Driver as JAX's backend.
-  config.FLAGS.jax_xla_backend = "tpu_driver"
-  config.FLAGS.jax_backend_target = "grpc://" + os.environ['COLAB_TPU_ADDR']
-  # TODO(skyewm): Remove this after SPMD is supported for colab tpu.
-  config.update('jax_array', False)
+def setup_tpu(tpu_driver_version=None):
+  """Returns an error. Do not use."""
+  raise RuntimeError(textwrap.dedent(message))

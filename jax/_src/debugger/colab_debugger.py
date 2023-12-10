@@ -18,8 +18,6 @@ import html
 import inspect
 import traceback
 
-from typing import List
-
 import uuid
 
 from jax._src.debugger import colab_lib
@@ -42,7 +40,7 @@ except ImportError:
 class CodeViewer(colab_lib.DynamicDOMElement):
   """A mutable DOM element that displays code as HTML."""
 
-  def __init__(self, code_: str, highlights: List[int], linenostart: int = 1):
+  def __init__(self, code_: str, highlights: list[int], linenostart: int = 1):
     self._code = code_
     self._highlights = highlights
     self._view = colab_lib.dynamic(colab_lib.div())
@@ -141,7 +139,7 @@ class FramePreview(colab_lib.DynamicDOMElement):
     if inspect.getmodulename(filename):
       if filename not in self._file_cache:
         try:
-          with open(filename, "r") as fp:
+          with open(filename) as fp:
             self._file_cache[filename] = fp.read()
           source = self._file_cache[filename]
           highlight = lineno
@@ -226,7 +224,7 @@ class ColabDebugger(cli_debugger.CliDebugger):
   """A JAX debugger for a Colab environment."""
 
   def __init__(self,
-               frames: List[debugger_core.DebuggerFrame],
+               frames: list[debugger_core.DebuggerFrame],
                thread_id: int):
     super().__init__(frames, thread_id)
     self._debugger_view = DebuggerView(self.current_frame())

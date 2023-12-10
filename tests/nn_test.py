@@ -17,21 +17,23 @@
 import collections
 from functools import partial
 import itertools
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import scipy.stats
 
-from jax import core
+from jax._src import config
+from jax._src import core
 from jax._src import test_util as jtu
+from jax._src import ad_checkpoint
 from jax.test_util import check_grads
 from jax import nn
 from jax import random
 import jax
 import jax.numpy as jnp
 
-from jax.config import config
 config.parse_flags_with_absl()
 
 
@@ -39,11 +41,11 @@ class NNFunctionsTest(jtu.JaxTestCase):
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), order=4,
-                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
   def testSoftplusGradZero(self):
     check_grads(nn.softplus, (0.,), order=1,
-                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
   def testSoftplusGradInf(self):
     self.assertAllClose(
@@ -51,26 +53,57 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   def testSoftplusGradNegInf(self):
     check_grads(nn.softplus, (-float('inf'),), order=1,
-                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
   def testSoftplusGradNan(self):
     check_grads(nn.softplus, (float('nan'),), order=1,
-                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
   @parameterized.parameters([int, float] + jtu.dtypes.floating + jtu.dtypes.integer)
   def testSoftplusZero(self, dtype):
     self.assertEqual(jnp.log(dtype(2)), nn.softplus(dtype(0)))
 
+  def testSquareplusGrad(self):
+    check_grads(nn.squareplus, (1e-8,), order=4,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  def testSquareplusGradZero(self):
+    check_grads(nn.squareplus, (0.,), order=1,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  def testSquareplusGradNegInf(self):
+    check_grads(nn.squareplus, (-float('inf'),), order=1,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  def testSquareplusGradNan(self):
+    check_grads(nn.squareplus, (float('nan'),), order=1,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  @parameterized.parameters([float] + jtu.dtypes.floating)
+  def testSquareplusZero(self, dtype):
+    self.assertEqual(dtype(1), nn.squareplus(dtype(0), dtype(4)))
+
   def testReluGrad(self):
-    rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
+    rtol = 1e-2 if jtu.test_device_matches(["tpu"]) else None
     check_grads(nn.relu, (1.,), order=3, rtol=rtol)
     check_grads(nn.relu, (-1.,), order=3, rtol=rtol)
     jaxpr = jax.make_jaxpr(jax.grad(nn.relu))(0.)
     self.assertGreaterEqual(len(jaxpr.jaxpr.eqns), 2)
 
+  def testRelu6Grad(self):
+    rtol = 1e-2 if jtu.test_device_matches(["tpu"]) else None
+    check_grads(nn.relu6, (1.,), order=3, rtol=rtol)
+    check_grads(nn.relu6, (-1.,), order=3, rtol=rtol)
+    self.assertAllClose(jax.grad(nn.relu6)(0.), 0., check_dtypes=False)
+    self.assertAllClose(jax.grad(nn.relu6)(6.), 0., check_dtypes=False)
+
   def testSoftplusValue(self):
     val = nn.softplus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
+
+  def testSquareplusValue(self):
+    val = nn.squareplus(1e3)
+    self.assertAllClose(val, 1e3, check_dtypes=False, atol=1e-3)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testEluGrad(self):
@@ -104,7 +137,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
       (jnp.float32, jnp.bfloat16, jnp.float16),
       (partial(nn.gelu, approximate=False),
        partial(nn.gelu, approximate=True),
-       nn.relu, nn.softplus, nn.sigmoid)))
+       nn.relu, nn.softplus, nn.sigmoid, nn.squareplus)))
   def testDtypeMatchesInput(self, dtype, fn):
     x = jnp.zeros((), dtype=dtype)
     out = fn(x)
@@ -124,13 +157,44 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testSoftmaxWhereMask(self, fn):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
     m = jnp.array([True, False, True, True])
-    x_filtered = jnp.take(x, jnp.array([0, 2, 3]))
 
-    out_masked = jnp.take(
-        fn(x, where=m, initial=-jnp.inf), jnp.array([0, 2, 3]))
-    out_filtered = fn(x_filtered)
+    out = fn(x, where=m, initial=-jnp.inf)
+    self.assertAllClose(out[m], fn(x[m]))
 
-    self.assertAllClose(out_masked, out_filtered)
+    probs = out if fn is nn.softmax else jnp.exp(out)
+    self.assertAllClose(probs.sum(), 1.0)
+
+    # TODO(mattjj): include log_softmax in these extra tests if/when we add a
+    # custom_jvp rule for it (since otherwise it doesn't pass the numerical
+    # checks below).
+    if fn is nn.softmax and config.softmax_custom_jvp.value:
+      g_fun = lambda x: jnp.take(fn(x, where=m, initial=-jnp.inf),
+                                jnp.array([0, 2, 3]))
+      jtu.check_grads(g_fun, (x,), order=2)
+
+  def testSoftmaxGrad(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    jtu.check_grads(nn.softmax, (x,), order=2, atol=5e-3)
+
+  def testSoftmaxGradResiduals(self):
+    if not config.softmax_custom_jvp.value:
+      raise unittest.SkipTest("only applies when upgrade flag enabled")
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    res = ad_checkpoint.saved_residuals(nn.softmax, x)
+    self.assertLen(res, 1)
+
+  def testSoftmaxGradFlag(self):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+
+    with jax.softmax_custom_jvp(False):
+      res = ad_checkpoint.saved_residuals(nn.softmax, x)
+    self.assertLen(res, 3)
+    self.assertEqual(sum(a.size for a, _ in res), 6)
+
+    with jax.softmax_custom_jvp(True):
+      res = ad_checkpoint.saved_residuals(nn.softmax, x)
+    self.assertLen(res, 1)
+    self.assertEqual(sum(a.size for a, _ in res), 4)
 
   def testStandardizeWhereMask(self):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
@@ -258,10 +322,12 @@ INITIALIZER_RECS = [
     initializer_record("lecun_normal", nn.initializers.lecun_normal, jtu.dtypes.inexact),
     initializer_record("lecun_uniform", nn.initializers.lecun_uniform, jtu.dtypes.inexact),
     initializer_record("orthogonal", nn.initializers.orthogonal, jtu.dtypes.floating, 2, 2),
+    initializer_record("truncated_normal", nn.initializers.truncated_normal, jtu.dtypes.floating, 1),
     initializer_record("delta_orthogonal", nn.initializers.delta_orthogonal, jtu.dtypes.floating, 4, 4)
 ]
 
 
+@jtu.with_config(jax_legacy_prng_key="allow")
 class NNInitializersTest(jtu.JaxTestCase):
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
@@ -313,6 +379,19 @@ class NNInitializersTest(jtu.JaxTestCase):
     val = initializer(rng, shape)
 
     self.assertEqual(shape, jnp.shape(val))
+
+  def testVarianceScalingError(self):
+    rng = random.PRNGKey(0)
+    shape = (5,)
+    initializer = nn.initializers.variance_scaling(
+      scale=1.0, mode='fan_avg', distribution='truncated_normal')
+
+    with self.assertRaisesRegex(
+      ValueError,
+      "Can't compute input and output sizes of a 1"
+      "-dimensional weights tensor. Must be at least 2D."
+    ):
+      initializer(rng, shape)
 
 
 if __name__ == "__main__":

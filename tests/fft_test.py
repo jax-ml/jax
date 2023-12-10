@@ -23,11 +23,11 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax import numpy as jnp
+from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
-from jax._src.numpy.util import _promote_dtypes_complex
+from jax._src.numpy.util import promote_dtypes_complex
 
-from jax.config import config
 config.parse_flags_with_absl()
 
 FFT_NORMS = [None, "ortho", "forward", "backward"]
@@ -93,12 +93,6 @@ def _zero_for_irfft(z, axes):
 
 class FftTest(jtu.JaxTestCase):
 
-  def testNotImplemented(self):
-    for name in jnp.fft._NOT_IMPLEMENTED:
-      func = getattr(jnp.fft, name)
-      with self.assertRaises(NotImplementedError):
-        func()
-
   def testLaxFftAcceptsStringTypes(self):
     rng = jtu.rand_default(self.rng())
     x = rng((10,), np.complex64)
@@ -108,30 +102,34 @@ class FftTest(jtu.JaxTestCase):
                         lax.fft(x, "fft", fft_lengths=(10,)))
 
   def testLaxFftErrors(self):
-    with self.assertRaises(
-      ValueError,
-      msg="FFT input shape (14, 15) must have at least as many input "
-          "dimensions as fft_lengths (4, 5, 6)"):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"FFT input shape \(14, 15\) must have at least as many input "
+        r"dimensions as fft_lengths \(4, 5, 6\)"):
       lax.fft(np.ones((14, 15)), fft_type="fft", fft_lengths=(4, 5, 6))
-    with self.assertRaises(
-      ValueError,
-      msg="FFT input shape (14, 15) minor dimensions must be equal to "
-          "fft_lengths (17,)"):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"FFT input shape \(14, 15\) minor dimensions must be equal to "
+        r"fft_lengths \(17,\)"):
       lax.fft(np.ones((14, 15)), fft_type="fft", fft_lengths=(17,))
-    with self.assertRaises(
-      ValueError,
-      msg="RFFT input shape (14, 15) minor dimensions must be equal to "
-          "fft_lengths (14, 15,)"):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"RFFT input shape \(2, 14, 15\) minor dimensions must be equal to "
+        r"fft_lengths \(14, 12\)"):
       lax.fft(np.ones((2, 14, 15)), fft_type="rfft", fft_lengths=(14, 12))
-    with self.assertRaises(
-      ValueError,
-      msg="IRFFT input shape (14, 15) minor dimensions must be equal to "
-          "all except the last fft_length, got fft_lengths=(14, 15,)"):
+    with self.assertRaisesRegex(
+        ValueError,
+        r"IRFFT input shape \(2, 14, 15\) minor dimensions must be equal to "
+        r"all except the last fft_length, got fft_lengths=\(13, 15\)"):
       lax.fft(np.ones((2, 14, 15)), fft_type="irfft", fft_lengths=(13, 15))
+    with self.assertRaisesRegex(
+        ValueError, "RFFT input must be float32 or float64, got bfloat16"):
+      lax.fft(np.ones((14, 15), jnp.bfloat16), fft_type="rfft",
+              fft_lengths=(5, 6))
 
   @parameterized.parameters((np.float32,), (np.float64,))
   def testLaxIrfftDoesNotMutateInputs(self, dtype):
-    if dtype == np.float64 and not config.x64_enabled:
+    if dtype == np.float64 and not config.enable_x64.value:
       raise self.skipTest("float64 requires jax_enable_x64=true")
     x = (1 + 1j) * jnp.array([[1.0, 2.0], [3.0, 4.0]],
                              dtype=dtypes.to_complex_dtype(dtype))
@@ -164,7 +162,7 @@ class FftTest(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker)
     # Test gradient for differentiable types.
-    if (config.x64_enabled and
+    if (config.enable_x64.value and
         dtype in (float_dtypes if real and not inverse else inexact_dtypes)):
       # TODO(skye): can we be more precise?
       tol = 0.15
@@ -181,7 +179,7 @@ class FftTest(jtu.JaxTestCase):
       return jax.vmap(linear_func)(jnp.eye(size, size))
 
     def func(x):
-      x, = _promote_dtypes_complex(x)
+      x, = promote_dtypes_complex(x)
       return jnp.fft.irfft(jnp.concatenate([jnp.zeros_like(x, shape=1),
                                             x[:2] + 1j*x[2:]]))
 

@@ -5,6 +5,10 @@
 
 ## TL;DR
 
+JAX switched its default array implementation to the new `jax.Array` as of version 0.4.1.
+This guide explains the reasoning behind this, the impact it might have on your code,
+and how to (temporarily) switch back to the old behavior.
+
 ### What’s going on?
 
 `jax.Array` is a unified array type that subsumes `DeviceArray`, `ShardedDeviceArray`,
@@ -84,18 +88,19 @@ Example:
 ```
 import jax
 import jax.numpy as jnp
-
+from jax.sharding import PartitionSpec as P
+import numpy as np
 x = jnp.arange(8)
 
 # Let's say there are 8 devices in jax.devices()
-mesh = maps.Mesh(jax.devices().reshape(4, 2), ('x', 'y'))
+mesh = jax.sharding.Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
 sharding = jax.sharding.NamedSharding(mesh, P('x'))
 
 sharded_x = jax.device_put(x, sharding)
 
-# `mul_sharded_x` and `sin_sharded_x` are sharded. `jit` is able to operate over a 
+# `matmul_sharded_x` and `sin_sharded_x` are sharded. `jit` is able to operate over a
 # sharded array without copying data to a single device.
-mul_sharded_x = sharded_x @ sharded_x.T
+matmul_sharded_x = sharded_x @ sharded_x.T
 sin_sharded_x = jnp.sin(sharded_x)
 
 # Even jnp.copy preserves the sharding on the output.
@@ -191,7 +196,7 @@ Running **multi-process pjit computation** and passing host-local inputs when
 
 Example:
 
-Mesh = `{'x': 2, 'y': 2, 'z': 3}` and host local input shape == `(4,)` and
+Mesh = `{'x': 2, 'y': 2, 'z': 2}` and host local input shape == `(4,)` and
 pspec = `P(('x', 'y', 'z'))`
 
 Since `pjit` doesn’t lift host local shapes to global shapes with `jax.Array`,
@@ -222,8 +227,8 @@ from jax.experimental import multihost_utils
 global_inps = multihost_utils.host_local_array_to_global_array(
     local_inputs, mesh, in_pspecs)
 
-global_outputs = pjit(f, in_axis_resources=in_pspecs,
-                      out_axis_resources=out_pspecs)(global_inps)
+global_outputs = pjit(f, in_shardings=in_pspecs,
+                      out_shardings=out_pspecs)(global_inps)
 
 local_outs = multihost_utils.global_array_to_host_local_array(
     global_outputs, mesh, out_pspecs)
@@ -243,13 +248,13 @@ key = jax.random.PRNGKey(1)
 
 # As you can see, using host_local_array_to_global_array is not required since in_axis_resources says
 # that the input is fully replicated via P(None)
-pjit(f, in_axis_resources=None, out_axis_resources=None)(key)
+pjit(f, in_shardings=None, out_shardings=None)(key)
 
 # Mixing inputs
 global_inp = multihost_utils.host_local_array_to_global_array(
     local_inp, mesh, P('data'))
-global_out = pjit(f, in_axis_resources=(P(None), P('data')),
-                  out_axis_resources=...)(key, global_inp)
+global_out = pjit(f, in_shardings=(P(None), P('data')),
+                  out_shardings=...)(key, global_inp)
 ```
 
 ### FROM_GDA and jax.Array
@@ -261,7 +266,7 @@ with `jax.Array` there is no need to pass anything to `in_axis_resources` as
 For example:
 
 ```
-pjit(f, in_axis_resources=FROM_GDA, out_axis_resources=...) can be replaced by pjit(f, out_axis_resources=...)
+pjit(f, in_shardings=FROM_GDA, out_shardings=...) can be replaced by pjit(f, out_shardings=...)
 ```
 
 If you have PartitionSpecs mixed in with `FROM_GDA` for inputs like numpy
@@ -274,8 +279,8 @@ If you had this:
 
 ```
 pjitted_f = pjit(
-    f, in_axis_resources=(FROM_GDA, P('x'), FROM_GDA, P(None)),
-    out_axis_resources=...)
+    f, in_shardings=(FROM_GDA, P('x'), FROM_GDA, P(None)),
+    out_shardings=...)
 pjitted_f(gda1, np_array1, gda2, np_array2)
 ```
 
@@ -283,7 +288,7 @@ then you can replace it with:
 
 ```
 
-pjitted_f = pjit(f, out_axis_resources=...)
+pjitted_f = pjit(f, out_shardings=...)
 
 array2, array3 = multihost_utils.host_local_array_to_global_array(
     (np_array1, np_array2), mesh, (P('x'), P(None)))

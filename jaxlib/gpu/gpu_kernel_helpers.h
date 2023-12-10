@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <memory>
 
+#include "absl/base/optimization.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "jaxlib/gpu/vendor.h"
@@ -25,17 +26,25 @@ limitations under the License.
 #define JAX_AS_STATUS(expr) \
   jax::JAX_GPU_NAMESPACE::AsStatus(expr, __FILE__, __LINE__, #expr)
 
-#define JAX_THROW_IF_ERROR(expr)                                           \
-  {                                                                        \
-    auto s___ = (expr);                                                    \
-    if (!s___.ok()) throw std::runtime_error(std::string(s___.message())); \
+#define JAX_THROW_IF_ERROR(expr)                             \
+  {                                                          \
+    auto s___ = (expr);                                      \
+    if (ABSL_PREDICT_FALSE(!s___.ok()))                      \
+      throw std::runtime_error(std::string(s___.message())); \
   }
 
-#define JAX_RETURN_IF_ERROR(expr) \
-  {                               \
-    auto s___ = (expr);           \
-    if (!s___.ok()) return s___;  \
+#define JAX_RETURN_IF_ERROR(expr)                    \
+  {                                                  \
+    auto s___ = (expr);                              \
+    if (ABSL_PREDICT_FALSE(!s___.ok())) return s___; \
   }
+
+#define JAX_ASSIGN_OR_RETURN(lhs, expr) \
+  auto s___ = (expr);                   \
+  if (ABSL_PREDICT_FALSE(!s___.ok())) { \
+    return s___.status();               \
+  }                                     \
+  lhs = (*std::move(s___))
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
@@ -49,6 +58,14 @@ absl::Status AsStatus(gpusparseStatus_t status, const char* file,
                       std::int64_t line, const char* expr);
 absl::Status AsStatus(gpublasStatus_t status, const char* file,
                       std::int64_t line, const char* expr);
+#ifdef JAX_GPU_CUDA
+absl::Status AsStatus(CUresult error, const char* file, std::int64_t line,
+                      const char* expr);
+absl::Status AsStatus(CUptiResult error, const char* file, std::int64_t line,
+                      const char* expr);
+absl::Status AsStatus(cufftResult error, const char* file, std::int64_t line,
+                      const char* expr);
+#endif
 
 // Builds an array of pointers to each array in a batch, in device memory.
 // Caution: the return value must be kept alive (e.g., via a stream

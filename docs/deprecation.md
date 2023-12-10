@@ -1,11 +1,22 @@
 (version-support-policy)=
 # Python and NumPy version support policy
 
+For NumPy and SciPy version support, JAX follows the Python scientific community's
+[SPEC 0](https://scientific-python.org/specs/spec-0000/).
 
-JAX follows NumPy's [NEP-29 deprecation policy](https://numpy.org/neps/nep-0029-deprecation_policy.html). JAX supports at least:
+For Python version support, we have heard from users that a 36-month support window can
+be too short, for example due to the delays in propagation of new CPython releases
+to Linux vendor releases. For this reason JAX supports Python versions for at least
+nine months longer than SPEC-0 recommends.
 
-* All minor versions of Python released 42 months prior to the project, and at minimum the two latest minor versions.
+This means we support at least:
 
-* All minor versions of numpy released in the 24 months prior to the project, and at minimum the last three minor versions.
+* All minor Python releases in the 45 months prior to each JAX release.
 
-JAX may support older versions of Python and NumPy, but support for older versions may be dropped at any time.
+* All minor NumPy releases in the 24 months prior to each JAX release.
+
+* All minor SciPy releases in the 24 months prior to each JAX release, starting
+  with SciPy version 1.9
+
+JAX releases may support older versions of Python, NumPy, and SciPy, but support
+for older versions may be dropped at any time.

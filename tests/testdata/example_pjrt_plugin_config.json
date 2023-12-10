@@ -1,0 +1,9 @@
+{
+  "library_path": "/path/pjrt_plugin_name1.so",
+  "create_options": {
+    "int_option": 64,
+    "int_list_option": [32, 64],
+    "string_option": "string",
+    "float_option": 1.0
+  }
+}

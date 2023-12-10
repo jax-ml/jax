@@ -1,3 +1,4 @@
+(building-from-source)=
 # Building from source
 
 First, obtain the JAX source code:
@@ -30,7 +31,7 @@ guidance on pip installation (e.g., for GPU and TPU support).
 
 To build `jaxlib` from source, you must also install some prerequisites:
 
-* a C++ compiler (g++, clang, or MSVC)
+- a C++ compiler (g++, clang, or MSVC)
 
   On Ubuntu or Debian you can install the necessary prerequisites with:
 
@@ -42,12 +43,13 @@ To build `jaxlib` from source, you must also install some prerequisites:
   are installed.
 
   See below for Windows build instructions.
-* Python packages: `numpy`, `wheel`.
+
+- Python packages: `numpy`, `wheel`, `build`.
 
 You can install the necessary Python dependencies using `pip`:
 
 ```
-pip install numpy wheel
+pip install numpy wheel build
 ```
 
 To build `jaxlib` without CUDA GPU or TPU support (CPU only), you can run:
@@ -58,7 +60,7 @@ pip install dist/*.whl  # installs jaxlib (includes XLA)
 ```
 
 To build `jaxlib` with CUDA support, use `python build/build.py --enable_cuda`;
-to build with TPU support, use `python build/build.py --enable_tpu`.
+to build with TPU support, use `python build/build.py`.
 
 See `python build/build.py --help` for configuration options, including ways to
 specify the paths to CUDA and CUDNN, which you must have installed. Here
@@ -66,24 +68,25 @@ specify the paths to CUDA and CUDNN, which you must have installed. Here
 may need to use `python3` instead. By default, the wheel is written to the
 `dist/` subdirectory of the current directory.
 
-### Building jaxlib from source with a modified TensorFlow repository.
+### Building jaxlib from source with a modified XLA repository.
 
 JAX depends on XLA, whose source code is in the
-[Tensorflow GitHub repository](https://github.com/tensorflow/tensorflow).
-By default JAX uses a pinned copy of the TensorFlow repository, but we often
+[XLA GitHub repository](https://github.com/openxla/xla).
+By default JAX uses a pinned copy of the XLA repository, but we often
 want to use a locally-modified copy of XLA when working on JAX. There are two
 ways to do this:
 
-* use Bazel's `override_repository` feature, which you can pass as a command
+- use Bazel's `override_repository` feature, which you can pass as a command
   line flag to `build.py` as follows:
 
   ```
-  python build/build.py --bazel_options=--override_repository=org_tensorflow=/path/to/tensorflow
+  python build/build.py --bazel_options=--override_repository=xla=/path/to/xla
   ```
-* modify the `WORKSPACE` file in the root of the JAX source tree to point to
-  a different TensorFlow tree.
 
-To contribute changes back to XLA, send PRs to the TensorFlow repository.
+- modify the `WORKSPACE` file in the root of the JAX source tree to point to
+  a different XLA tree.
+
+To contribute changes back to XLA, send PRs to the XLA repository.
 
 The version of XLA pinned by JAX is regularly updated, but is updated in
 particular before each `jaxlib` release.
@@ -112,6 +115,7 @@ for more details. Install the following packages:
 ```
 pacman -S patch coreutils
 ```
+
 Once coreutils is installed, the realpath command should be present in your shell's path.
 
 Once everything is installed. Open PowerShell, and make sure MSYS2 is in the
@@ -133,27 +137,37 @@ To build with debug information, add the flag `--bazel_options='--copt=/Z7'`.
 ### Additional notes for building a ROCM `jaxlib` for AMD GPUs
 
 You need several ROCM/HIP libraries installed to build for ROCM. For
-example, on a Ubuntu machine with AMD's `apt` repositories available, you need
-a number of packages installed:
+example, on a Ubuntu machine with
+[AMD's `apt` repositories available](https://rocm.docs.amd.com/en/latest/deploy/linux/quick_start.html),
+you need a number of packages installed:
 
 ```
 sudo apt install miopen-hip hipfft-dev rocrand-dev hipsparse-dev hipsolver-dev \
     rccl-dev rccl hip-dev rocfft-dev roctracer-dev hipblas-dev rocm-device-libs
 ```
 
-AMD's fork of the XLA (TensorFlow) repository may include fixes
-not present in the upstream repository. To use AMD's fork, you should clone
-their repository:
-```
-git clone https://github.com/ROCmSoftwarePlatform/tensorflow-upstream.git
-```
-
 To build jaxlib with ROCM support, you can run the following build command,
 suitably adjusted for your paths and ROCM version.
+
 ```
-python build/build.py --enable_rocm --rocm_path=/opt/rocm-5.3.0 \
-  --bazel_options=--override_repository=org_tensorflow=/path/to/tensorflow-upstream
+python build/build.py --enable_rocm --rocm_path=/opt/rocm-5.7.0
 ```
+
+AMD's fork of the XLA repository may include fixes not present in the upstream
+XLA repository. If you experience problems with the upstream repository, you can
+try AMD's fork, by cloning their repository:
+
+```
+git clone https://github.com/ROCmSoftwarePlatform/xla.git
+```
+
+and override the XLA repository with which JAX is built:
+
+```
+python build/build.py --enable_rocm --rocm_path=/opt/rocm-5.7.0 \
+  --bazel_options=--override_repository=xla=/path/to/xla-rocm
+```
+
 
 ## Installing `jax`
 
@@ -170,14 +184,17 @@ sets up symbolic links from site-packages into the repository.
 
 (running-tests)=
 
-# Running the tests
+## Running the tests
+
+First, install the dependencies by running `pip install -r build/test-requirements.txt`.
 
 There are two supported mechanisms for running the JAX tests, either using Bazel
 or using pytest.
 
-## Using Bazel
+### Using Bazel
 
 First, configure the JAX build by running:
+
 ```
 python build/build.py --configure_only
 ```
@@ -200,7 +217,6 @@ To use a preinstalled `jaxlib` instead of building `jaxlib` from source, run
 bazel test --//jax:build_jaxlib=false //tests:cpu_tests //tests:backend_independent_tests
 ```
 
-
 A number of test behaviors can be controlled using environment variables (see
 below). Environment variables may be passed to JAX tests using the
 `--test_env=FLAG=value` flag to Bazel.
@@ -208,7 +224,7 @@ below). Environment variables may be passed to JAX tests using the
 Some of JAX tests are for multiple accelerators (i.e. GPUs, TPUs). When JAX is already installed, you can run GPUs tests like this:
 
 ```
-bazel test //tests:gpu_tests --jobs=4 --test_tag_filters=multiaccelerator --//jax:build_jaxlib=false --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform
+bazel test //tests:gpu_tests --local_test_jobs=4 --test_tag_filters=multiaccelerator --//jax:build_jaxlib=false --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform
 ```
 
 You can speed up single accelerator tests by running them in parallel on multiple accelerators. This also triggers multiple concurrent tests per accelerator. For GPUs, you can do it like this:
@@ -217,22 +233,26 @@ You can speed up single accelerator tests by running them in parallel on multipl
 NB_GPUS=2
 JOBS_PER_ACC=4
 J=$((NB_GPUS * JOBS_PER_ACC))
-MULTI_GPU="--run_under $PWD/build/parallel_accelerator_execute.sh --test_env=JAX_ACCELERATOR_COUNT=${NB_GPUS} --test_env=JAX_TESTS_PER_ACCELERATOR=${JOBS_PER_ACC} --jobs=$J"
+MULTI_GPU="--run_under $PWD/build/parallel_accelerator_execute.sh --test_env=JAX_ACCELERATOR_COUNT=${NB_GPUS} --test_env=JAX_TESTS_PER_ACCELERATOR=${JOBS_PER_ACC} --local_test_jobs=$J"
 bazel test //tests:gpu_tests //tests:backend_independent_tests --test_env=XLA_PYTHON_CLIENT_PREALLOCATE=false --test_tag_filters=-multiaccelerator $MULTI_GPU
 ```
 
-## Using pytest
+Some test targets, like a `//tests:logpcg_tests` optionally use matplotlib, so you may need to `pip
+install matplotlib` to run tests via bazel.
+
+### Using `pytest`
 
 To run all the JAX tests using `pytest`, we recommend using `pytest-xdist`,
-which can run tests in parallel. First, install `pytest-xdist` and
-`pytest-benchmark` by running `pip install -r build/test-requirements.txt`.
-Then, from the repository root directory run:
+which can run tests in parallel. It is installed as a part of
+`pip install -r build/test-requirements.txt` command.
+
+From the repository root directory run:
 
 ```
 pytest -n auto tests
 ```
 
-## Controlling test behavior
+### Controlling test behavior
 
 JAX generates test cases combinatorially, and you can control the number of
 cases that are generated and checked for each test (default is 10) using the
@@ -240,11 +260,14 @@ cases that are generated and checked for each test (default is 10) using the
 currently use 25 by default.
 
 For example, one might write
+
 ```
 # Bazel
 bazel test //tests/... --test_env=JAX_NUM_GENERATED_CASES=25`
 ```
+
 or
+
 ```
 # pytest
 JAX_NUM_GENERATED_CASES=25 pytest -n auto tests
@@ -279,29 +302,34 @@ python tests/lax_numpy_test.py --test_targets="testPad"
 
 The Colab notebooks are tested for errors as part of the documentation build.
 
-## Doctests
+### Doctests
+
 JAX uses pytest in doctest mode to test the code examples within the documentation.
 You can run this using
+
 ```
 pytest docs
 ```
+
 Additionally, JAX runs pytest in `doctest-modules` mode to ensure code examples in
 function docstrings will run correctly. You can run this locally using, for example:
+
 ```
 pytest --doctest-modules jax/_src/numpy/lax_numpy.py
 ```
+
 Keep in mind that there are several files that are marked to be skipped when the
 doctest command is run on the full package; you can see the details in
 [`ci-build.yaml`](https://github.com/google/jax/blob/main/.github/workflows/ci-build.yaml)
 
-# Type checking
+## Type checking
 
 We use `mypy` to check the type hints. To check types locally the same way
 as the CI checks them:
 
 ```
 pip install mypy
-mypy --config=mypy.ini --show-error-codes jax
+mypy --config=pyproject.toml --show-error-codes jax
 ```
 
 Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework to run this
@@ -312,39 +340,45 @@ in the GitHub CI:
 pre-commit run mypy
 ```
 
-# Linting
+## Linting
 
-JAX uses the [flake8](https://flake8.pycqa.org/) linter to ensure code quality. You can check
-your local changes by running:
+JAX uses the [ruff](https://docs.astral.sh/ruff/) linter to ensure code
+quality. You can check your local changes by running:
 
 ```
-pip install flake8
-flake8 jax
+pip install ruff
+ruff jax
 ```
 
 Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework to run this
-on all staged files in your git repository, automatically using the same flake8 version as
+on all staged files in your git repository, automatically using the same ruff version as
 the GitHub tests:
 
 ```
-pre-commit run flake8
+pre-commit run ruff
 ```
 
-# Update documentation
+## Update documentation
 
 To rebuild the documentation, install several packages:
+
 ```
 pip install -r docs/requirements.txt
 ```
+
 And then run:
+
 ```
 sphinx-build -b html docs docs/build/html -j auto
 ```
+
 This can take a long time because it executes many of the notebooks in the documentation source;
 if you'd prefer to build the docs without executing the notebooks, you can run:
+
 ```
 sphinx-build -b html -D nb_execution_mode=off docs docs/build/html -j auto
 ```
+
 You can then see the generated documentation in `docs/build/html/index.html`.
 
 The `-j auto` option controls the parallelism of the build. You can use a number
@@ -352,14 +386,14 @@ in place of `auto` to control how many CPU cores to use.
 
 (update-notebooks)=
 
-## Update notebooks
+### Update notebooks
 
 We use [jupytext](https://jupytext.readthedocs.io/) to maintain two synced copies of the notebooks
 in `docs/notebooks`: one in `ipynb` format, and one in `md` format. The advantage of the former
 is that it can be opened and executed directly in Colab; the advantage of the latter is that
 it makes it much easier to track diffs within version control.
 
-### Editing ipynb
+#### Editing `ipynb`
 
 For making large changes that substantially modify code and outputs, it is easiest to
 edit the notebooks in Jupyter or in Colab. To edit notebooks in the Colab interface,
@@ -367,19 +401,19 @@ open <http://colab.research.google.com> and `Upload` from your local repo.
 Update it as needed, `Run all cells` then `Download ipynb`.
 You may want to test that it executes properly, using `sphinx-build` as explained above.
 
-### Editing md
+#### Editing `md`
 
 For making smaller changes to the text content of the notebooks, it is easiest to edit the
 `.md` versions using a text editor.
 
-### Syncing notebooks
+#### Syncing notebooks
 
 After editing either the ipynb or md versions of the notebooks, you can sync the two versions
 using [jupytext](https://jupytext.readthedocs.io/) by running `jupytext --sync` on the updated
 notebooks; for example:
 
 ```
-pip install jupytext==1.13.8
+pip install jupytext==1.15.2
 jupytext --sync docs/notebooks/quickstart.ipynb
 ```
 
@@ -395,7 +429,7 @@ git add docs -u  # pre-commit runs on files in git staging.
 pre-commit run jupytext
 ```
 
-### Creating new notebooks
+#### Creating new notebooks
 
 If you are adding a new notebook to the documentation and would like to use the `jupytext --sync`
 command discussed here, you can set up your notebook for jupytext by using the following command:
@@ -407,7 +441,7 @@ jupytext --set-formats ipynb,md:myst path/to/the/notebook.ipynb
 This works by adding a `"jupytext"` metadata field to the notebook file which specifies the
 desired formats, and which the `jupytext --sync` command recognizes when invoked.
 
-### Notebooks within the sphinx build
+#### Notebooks within the Sphinx build
 
 Some of the notebooks are built automatically as part of the pre-submit checks and
 as part of the [Read the docs](https://jax.readthedocs.io/en/latest) build.
@@ -419,7 +453,7 @@ re-saves the notebook.
 We exclude some notebooks from the build, e.g., because they contain long computations.
 See `exclude_patterns` in [conf.py](https://github.com/google/jax/blob/main/docs/conf.py).
 
-## Documentation building on readthedocs.io
+### Documentation building on `readthedocs.io`
 
 JAX's auto-generated documentation is at <https://jax.readthedocs.io/>.
 
@@ -456,5 +490,3 @@ python -m pip install --exists-action=w --no-cache-dir -r docs/requirements.txt
 cd docs
 python `which sphinx-build` -T -E -b html -d _build/doctrees-readthedocs -D language=en . _build/html
 ```
-
-

@@ -1,5 +1,5 @@
-jax.experimental.jet module
-===========================
+``jax.experimental.jet`` module
+===============================
 
 .. automodule:: jax.experimental.jet
 

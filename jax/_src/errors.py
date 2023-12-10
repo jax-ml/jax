@@ -14,6 +14,10 @@
 from __future__ import annotations
 
 from jax._src import core
+from jax._src.util import set_module
+
+export = set_module('jax.errors')
+
 
 class _JAXErrorMixin:
   """Mixin for JAX-specific errors"""
@@ -29,49 +33,27 @@ class _JAXErrorMixin:
     super().__init__(error_msg)  # type: ignore
 
 
+@export
 class JAXTypeError(_JAXErrorMixin, TypeError):
   pass
 
 
+@export
 class JAXIndexError(_JAXErrorMixin, IndexError):
   pass
 
 
+@export
 class ConcretizationTypeError(JAXTypeError):
   """
   This error occurs when a JAX Tracer object is used in a context where a
-  concrete value is required. In some situations, it can be easily fixed by
+  concrete value is required (see :ref:`faq-different-kinds-of-jax-values`
+  for more on what a Tracer is). In some situations, it can be easily fixed by
   marking problematic values as static; in others, it may indicate that your
   program is doing operations that are not directly supported by JAX's JIT
   compilation model.
 
-  Using non-JAX aware functions
-    One common cause of this error is using non-JAX aware functions within JAX
-    code. For example:
-
-      >>> from jax import jit
-      >>> import jax.numpy as jnp
-      >>> @jit
-      ... def func(x):
-      ...   return min(x, 0)
-
-      >>> func(2)  # doctest: +IGNORE_EXCEPTION_DETAIL
-      Traceback (most recent call last):
-          ...
-      ConcretizationTypeError: Abstract tracer value encountered where concrete
-      value is expected:
-      The problem arose with the `bool` function.
-
-    In this case, the error occurs because Python's built-in ``min`` function is not
-    compatible with JAX transforms. This can be fixed by replacing it with
-    ``jnp.minumum``:
-
-      >>> @jit
-      ... def func(x):
-      ...   return jnp.minimum(x, 0)
-
-      >>> print(func(2))
-      0
+  Examples:
 
   Traced value where static value is expected
     One common cause of this error is using a traced value where a static value
@@ -98,34 +80,6 @@ class ConcretizationTypeError(JAXTypeError):
 
         >>> func(jnp.arange(4), 0)
         Array(0, dtype=int32)
-
-  Traced value used in control flow
-    Another case where this often arises is when a traced value is used in
-    Python control flow. For example::
-
-      >>> @jit
-      ... def func(x, y):
-      ...   return x if x.sum() < y.sum() else y
-
-      >>> func(jnp.ones(4), jnp.zeros(4))  # doctest: +IGNORE_EXCEPTION_DETAIL
-      Traceback (most recent call last):
-          ...
-      ConcretizationTypeError: Abstract tracer value encountered where concrete
-      value is expected: [...]
-
-    We could mark both inputs ``x`` and ``y`` as static, but that would defeat
-    the purpose of using :func:`jax.jit` here. Another option is to re-express
-    the if statement in terms of :func:`jax.numpy.where`::
-
-      >>> @jit
-      ... def func(x, y):
-      ...   return jnp.where(x.sum() < y.sum(), x, y)
-
-      >>> func(jnp.ones(4), jnp.zeros(4))
-      Array([0., 0., 0., 0.], dtype=float32)
-
-    For more complicated control flow including loops, see
-    :ref:`lax-control-flow`.
 
   Shape depends on Traced Value
     Such an error may also arise when a shape in your JIT-compiled computation
@@ -177,9 +131,10 @@ class ConcretizationTypeError(JAXTypeError):
   def __init__(self, tracer: core.Tracer, context: str = ""):
     super().__init__(
         "Abstract tracer value encountered where concrete value is expected: "
-        f"{tracer}\n{context}{tracer._origin_msg()}\n")
+        f"{tracer._error_repr()}\n{context}{tracer._origin_msg()}\n")
 
 
+@export
 class NonConcreteBooleanIndexError(JAXIndexError):
   """
   This error occurs when a program attempts to use non-concrete boolean indices
@@ -271,33 +226,35 @@ class NonConcreteBooleanIndexError(JAXIndexError):
         f"Array boolean indices must be concrete; got {tracer}\n")
 
 
+@export
 class TracerArrayConversionError(JAXTypeError):
   """
   This error occurs when a program attempts to convert a JAX Tracer object into
-  a standard NumPy array. It typically occurs in one of a few situations.
+  a standard NumPy array (see :ref:`faq-different-kinds-of-jax-values` for more
+  on what a Tracer is). It typically occurs in one of a few situations.
 
-  Using `numpy` rather than `jax.numpy` functions
-    This error can occur when a JAX Tracer object is passed to a raw numpy
-    function, or a method on a numpy.ndarray object. For example::
+  Using non-JAX functions in JAX transformations
+    This error can occur if you attempt to use a non-JAX library like ``numpy``
+    or ``scipy`` inside a JAX transformation (:func:`~jax.jit`, :func:`~jax.grad`,
+    :func:`jax.vmap`, etc.). For example::
 
-      >>> from functools import partial
       >>> from jax import jit
       >>> import numpy as np
-      >>> import jax.numpy as jnp
 
       >>> @jit
       ... def func(x):
       ...   return np.sin(x)
 
-      >>> func(jnp.arange(4))  # doctest: +IGNORE_EXCEPTION_DETAIL
+      >>> func(np.arange(4))  # doctest: +IGNORE_EXCEPTION_DETAIL
       Traceback (most recent call last):
           ...
       TracerArrayConversionError: The numpy.ndarray conversion method
-      __array__() was called on the JAX Tracer object
+      __array__() was called on traced array with shape int32[4]
 
-    In this case, check that you are using `jax.numpy` methods rather than
-    `numpy` methods::
+    In this case, you can fix the issue by using :func:`jax.numpy.sin` in place of
+    :func:`numpy.sin`::
 
+      >>> import jax.numpy as jnp
       >>> @jit
       ... def func(x):
       ...   return jnp.sin(x)
@@ -305,10 +262,13 @@ class TracerArrayConversionError(JAXTypeError):
       >>> func(jnp.arange(4))
       Array([0.        , 0.84147096, 0.9092974 , 0.14112   ], dtype=float32)
 
+    See also `External Callbacks`_ for options for calling back to host-side computations
+    from transformed JAX code.
+
   Indexing a numpy array with a tracer
     If this error arises on a line that involves array indexing, it may be that
-    the array being indexed `x` is a raw numpy.ndarray while the indices `idx`
-    are traced. For example::
+    the array being indexed ``x`` is a standard numpy.ndarray while the indices
+    ``idx`` are traced JAX arrays. For example::
 
       >>> x = np.arange(10)
 
@@ -320,7 +280,7 @@ class TracerArrayConversionError(JAXTypeError):
       Traceback (most recent call last):
           ...
       TracerArrayConversionError: The numpy.ndarray conversion method
-      __array__() was called on the JAX Tracer object
+      __array__() was called on traced array with shape int32[0]
 
     Depending on the context, you may fix this by converting the numpy array
     into a JAX array::
@@ -334,6 +294,7 @@ class TracerArrayConversionError(JAXTypeError):
 
     or by declaring the index as a static argument::
 
+      >>> from functools import partial
       >>> @partial(jit, static_argnums=(0,))
       ... def func(i):
       ...   return x[i]
@@ -344,23 +305,26 @@ class TracerArrayConversionError(JAXTypeError):
   To understand more subtleties having to do with tracers vs. regular values,
   and concrete vs. abstract values, you may want to read
   :ref:`faq-different-kinds-of-jax-values`.
+
+  .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
   """
   def __init__(self, tracer: core.Tracer):
     super().__init__(
         "The numpy.ndarray conversion method __array__() was called on "
-        f"the JAX Tracer object {tracer}{tracer._origin_msg()}")
+        f"{tracer._error_repr()}{tracer._origin_msg()}")
 
 
+@export
 class TracerIntegerConversionError(JAXTypeError):
   """
   This error can occur when a JAX Tracer object is used in a context where a
-  Python integer is expected. It typically occurs in a few situations.
+  Python integer is expected (see :ref:`faq-different-kinds-of-jax-values` for
+  more on what a Tracer is). It typically occurs in a few situations.
 
   Passing a tracer in place of an integer
-    This error can occur if you attempt to pass a tracer to a function that
-    requires an integer argument; for example::
+    This error can occur if you attempt to pass a traced value to a function
+    that requires a static integer argument; for example::
 
-      >>> from functools import partial
       >>> from jax import jit
       >>> import numpy as np
 
@@ -371,12 +335,13 @@ class TracerIntegerConversionError(JAXTypeError):
       >>> func(np.arange(4), 0)  # doctest: +IGNORE_EXCEPTION_DETAIL
       Traceback (most recent call last):
           ...
-      TracerIntegerConversionError: The __index__() method was called on the JAX
-      Tracer object
+      TracerIntegerConversionError: The __index__() method was called on
+      traced array with shape int32[0]
 
     When this happens, the solution is often to mark the problematic argument as
     static::
 
+      >>> from functools import partial
       >>> @partial(jit, static_argnums=1)
       ... def func(x, axis):
       ...   return np.split(x, 2, axis)
@@ -400,7 +365,6 @@ class TracerIntegerConversionError(JAXTypeError):
     quantity.
     For example::
 
-      >>> from functools import partial
       >>> import jax.numpy as jnp
       >>> from jax import jit
 
@@ -413,7 +377,8 @@ class TracerIntegerConversionError(JAXTypeError):
       >>> func(0)  # doctest: +IGNORE_EXCEPTION_DETAIL
       Traceback (most recent call last):
           ...
-      TracerIntegerConversionError: The __index__() method was called on the JAX Tracer object
+      TracerIntegerConversionError: The __index__() method was called on
+      traced array with shape int32[0]
 
     Depending on the context, you can generally fix this either by converting
     the list to a JAX array::
@@ -427,6 +392,7 @@ class TracerIntegerConversionError(JAXTypeError):
 
     or by declaring the index as a static argument::
 
+      >>> from functools import partial
       >>> @partial(jit, static_argnums=0)
       ... def func(i):
       ...   return L[i]
@@ -440,9 +406,123 @@ class TracerIntegerConversionError(JAXTypeError):
   """
   def __init__(self, tracer: core.Tracer):
     super().__init__(
-        f"The __index__() method was called on the JAX Tracer object {tracer}")
+        f"The __index__() method was called on {tracer._error_repr()}"
+        f"{tracer._origin_msg()}")
 
 
+@export
+class TracerBoolConversionError(ConcretizationTypeError):
+  """
+  This error occurs when a traced value in JAX is used in a context where a
+  boolean value is expected (see :ref:`faq-different-kinds-of-jax-values`
+  for more on what a Tracer is).
+
+  The boolean cast may be an explicit (e.g. ``bool(x)``) or implicit, through use of
+  control flow (e.g. ``if x > 0`` or ``while x``), use of Python boolean
+  operators (e.g. ``z = x and y``, ``z = x or y``, ``z = not x``) or functions
+  that use them (e.g. ``z = max(x, y)``, ``z = min(x, y)`` etc.).
+
+  In some situations, this problem can be easily fixed by marking traced values as
+  static; in others, it may indicate that your program is doing operations that are
+  not directly supported by JAX's JIT compilation model.
+
+  Examples:
+
+  Traced value used in control flow
+    One case where this often arises is when a traced value is used in
+    Python control flow. For example::
+
+      >>> from jax import jit
+      >>> import jax.numpy as jnp
+      >>> @jit
+      ... def func(x, y):
+      ...   return x if x.sum() < y.sum() else y
+
+      >>> func(jnp.ones(4), jnp.zeros(4))  # doctest: +IGNORE_EXCEPTION_DETAIL
+      Traceback (most recent call last):
+          ...
+      TracerBoolConversionError: Attempted boolean conversion of JAX Tracer [...]
+
+    We could mark both inputs ``x`` and ``y`` as static, but that would defeat
+    the purpose of using :func:`jax.jit` here. Another option is to re-express
+    the if statement in terms of the three-term :func:`jax.numpy.where`::
+
+      >>> @jit
+      ... def func(x, y):
+      ...   return jnp.where(x.sum() < y.sum(), x, y)
+
+      >>> func(jnp.ones(4), jnp.zeros(4))
+      Array([0., 0., 0., 0.], dtype=float32)
+
+    For more complicated control flow including loops, see
+    :ref:`lax-control-flow`.
+
+  Control flow on traced values
+    Another common cause of this error is if you inadvertently trace over a boolean
+    flag. For example::
+
+      >>> @jit
+      ... def func(x, normalize=True):
+      ...   if normalize:
+      ...     return x / x.sum()
+      ...   return x
+
+      >>> func(jnp.arange(5), True)  # doctest: +IGNORE_EXCEPTION_DETAIL
+      Traceback (most recent call last):
+          ...
+      TracerBoolConversionError: Attempted boolean conversion of JAX Tracer ...
+
+    Here because the flag ``normalize`` is traced, it cannot be used in Python
+    control flow. In this situation, the best solution is probably to mark this
+    value as static::
+
+      >>> from functools import partial
+      >>> @partial(jit, static_argnames=['normalize'])
+      ... def func(x, normalize=True):
+      ...   if normalize:
+      ...     return x / x.sum()
+      ...   return x
+
+      >>> func(jnp.arange(5), True)
+      Array([0. , 0.1, 0.2, 0.3, 0.4], dtype=float32)
+
+    For more on ``static_argnums``, see the documentation of :func:`jax.jit`.
+
+  Using non-JAX aware functions
+    Another common cause of this error is using non-JAX aware functions within JAX
+    code. For example:
+
+      >>> @jit
+      ... def func(x):
+      ...   return min(x, 0)
+
+      >>> func(2)  # doctest: +IGNORE_EXCEPTION_DETAIL
+      Traceback (most recent call last):
+          ...
+      TracerBoolConversionError: Attempted boolean conversion of JAX Tracer ...
+
+    In this case, the error occurs because Python's built-in ``min`` function is not
+    compatible with JAX transforms. This can be fixed by replacing it with
+    ``jnp.minumum``:
+
+      >>> @jit
+      ... def func(x):
+      ...   return jnp.minimum(x, 0)
+
+      >>> print(func(2))
+      0
+
+  To understand more subtleties having to do with tracers vs. regular values,
+  and concrete vs. abstract values, you may want to read
+  :ref:`faq-different-kinds-of-jax-values`.
+  """
+  def __init__(self, tracer: core.Tracer):
+    JAXTypeError.__init__(self,
+        f"Attempted boolean conversion of {tracer._error_repr()}."
+        f"{tracer._origin_msg()}")
+
+
+@export
 class UnexpectedTracerError(JAXTypeError):
   """
   This error occurs when you use a JAX value that has leaked out of a function.
@@ -455,7 +535,7 @@ class UnexpectedTracerError(JAXTypeError):
   JAX detects leaks when you then use the leaked value in another
   operation later on, at which point it raises an ``UnexpectedTracerError``.
   To fix this, avoid side effects: if a function computes a value needed
-  in an outer scope, return that value from the transformed function explictly.
+  in an outer scope, return that value from the transformed function explicitly.
 
   Specifically, a ``Tracer`` is JAX's internal representation of a function's
   intermediate values during transformations, e.g. within :func:`~jax.jit`,

@@ -16,6 +16,7 @@ from functools import partial
 import glob
 import os
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -25,7 +26,7 @@ from absl.testing import absltest
 import jax
 import jax.numpy as jnp
 import jax.profiler
-from jax.config import config
+from jax import config
 import jax._src.test_util as jtu
 
 try:
@@ -82,6 +83,11 @@ class ProfilerTest(unittest.TestCase):
       jax.profiler.stop_server()
 
   def testProgrammaticProfiling(self):
+    # TODO(jieying): remove after 01/10/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 34):
+      raise unittest.SkipTest(
+          "Profiler is not supported on PJRT C API version < 0.34."
+      )
     with tempfile.TemporaryDirectory() as tmpdir:
       try:
         jax.profiler.start_trace(tmpdir)
@@ -98,11 +104,33 @@ class ProfilerTest(unittest.TestCase):
       # Sanity check that serialized proto contains host, device, and
       # Python traces without deserializing.
       self.assertIn(b"/host:CPU", proto)
-      if jtu.device_under_test() == "tpu":
+      if jtu.test_device_matches(["tpu"]):
         self.assertIn(b"/device:TPU", proto)
       self.assertIn(b"pxla.py", proto)
 
+  def testProfilerGetFDOProfile(self):
+    # TODO(jieying): remove after 01/10/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 34):
+      raise unittest.SkipTest(
+          "Profiler is not supported on PJRT C API version < 0.34."
+      )
+    # Tests stop_and_get_fod_profile could run.
+    try:
+      jax.profiler.start_trace("test")
+      jax.pmap(lambda x: jax.lax.psum(x + 1, "i"), axis_name="i")(
+          jnp.ones(jax.local_device_count())
+      )
+    finally:
+      fdo_profile = jax._src.profiler.stop_and_get_fdo_profile()
+    if jtu.test_device_matches(["gpu"]) and jtu.is_device_cuda():
+      self.assertIn(b"copy", fdo_profile)
+
   def testProgrammaticProfilingErrors(self):
+    # TODO(jieying): remove after 01/10/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 34):
+      raise unittest.SkipTest(
+          "Profiler is not supported on PJRT C API version < 0.34."
+      )
     with self.assertRaisesRegex(RuntimeError, "No profile started"):
       jax.profiler.stop_trace()
 
@@ -118,6 +146,11 @@ class ProfilerTest(unittest.TestCase):
       jax.profiler.stop_trace()
 
   def testProgrammaticProfilingContextManager(self):
+    # TODO(jieying): remove after 01/10/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 34):
+      raise unittest.SkipTest(
+          "Profiler is not supported on PJRT C API version < 0.34."
+      )
     with tempfile.TemporaryDirectory() as tmpdir:
       with jax.profiler.trace(tmpdir):
         jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
@@ -131,7 +164,7 @@ class ProfilerTest(unittest.TestCase):
       # Sanity check that serialized proto contains host and device traces
       # without deserializing.
       self.assertIn(b"/host:CPU", proto)
-      if jtu.device_under_test() == "tpu":
+      if jtu.test_device_matches(["tpu"]):
         self.assertIn(b"/device:TPU", proto)
 
   def testTraceAnnotation(self):
@@ -174,6 +207,11 @@ class ProfilerTest(unittest.TestCase):
   @unittest.skipIf(not (portpicker and profiler_client and tf_profiler),
     "Test requires tensorflow.profiler and portpicker")
   def testSingleWorkerSamplingMode(self, delay_ms=None):
+    # TODO(jieying): remove after 01/10/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 34):
+      raise unittest.SkipTest(
+          "Profiler is not supported on PJRT C API version < 0.34."
+      )
     def on_worker(port, worker_start):
       jax.profiler.start_server(port)
       worker_start.set()
@@ -219,23 +257,28 @@ class ProfilerTest(unittest.TestCase):
     "Test requires tensorflow.profiler, portpicker and "
     "tensorboard_profile_plugin")
   def test_remote_profiler(self):
+    # TODO(jieying): remove after 01/10/2023.
+    if not jtu.pjrt_c_api_version_at_least(0, 34):
+      raise unittest.SkipTest(
+          "Profiler is not supported on PJRT C API version < 0.34."
+      )
     port = portpicker.pick_unused_port()
+    jax.profiler.start_server(port)
 
     logdir = absltest.get_default_test_tmpdir()
     # Remove any existing log files.
     shutil.rmtree(logdir, ignore_errors=True)
     def on_profile():
       os.system(
-          f"python -m jax.collect_profile {port} 500 --log_dir {logdir} "
-          "--no_perfetto_link")
+          f"{sys.executable} -m jax.collect_profile {port} 500 "
+          f"--log_dir {logdir} --no_perfetto_link")
 
     thread_profiler = threading.Thread(
         target=on_profile, args=())
     thread_profiler.start()
-    jax.profiler.start_server(port)
     start_time = time.time()
     y = jnp.zeros((5, 5))
-    while time.time() - start_time < 3:
+    while time.time() - start_time < 10:
       y = jnp.dot(y, y)
     jax.profiler.stop_server()
     thread_profiler.join()

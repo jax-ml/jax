@@ -14,30 +14,33 @@
 
 # Helpers for indexed updates.
 
+from collections.abc import Sequence
 import sys
-from typing import Any, Callable, Optional, Sequence, Tuple, Union
+from typing import Callable, Optional, Union
 import warnings
 
 import numpy as np
 
-from jax import core
 from jax import lax
 
+from jax._src import config
+from jax._src import core
 from jax._src import dtypes
 from jax._src import util
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy import reductions
+from jax._src.numpy.util import check_arraylike, promote_dtypes
+from jax._src.typing import Array, ArrayLike
 
 
-Array = Any
 if sys.version_info >= (3, 10):
     from types import EllipsisType
     SingleIndex = Union[None, int, slice, Sequence[int], Array, EllipsisType]
 else:
     SingleIndex = Union[None, int, slice, Sequence[int], Array]
-Index = Union[SingleIndex, Tuple[SingleIndex, ...]]
+Index = Union[SingleIndex, tuple[SingleIndex, ...]]
 Scalar = Union[complex, float, int, np.number]
-Numeric = Union[Array, Scalar]
 
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
@@ -62,9 +65,13 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
   Returns:
     An ndarray representing an updated `x` after performing the scatter-update.
   """
-
   x = jnp.asarray(x)
-  y = jnp.asarray(y)
+  if (isinstance(y, int) and np.issubdtype(x.dtype, np.integer) and
+      np.iinfo(x.dtype).min <= y <= np.iinfo(x.dtype).max):
+    y = jnp.asarray(y, dtype=x.dtype)
+  else:
+    y = jnp.asarray(y)
+
   # XLA gathers and scatters are very similar in structure; the scatter logic
   # is more or less a transpose of the gather equivalent.
   treedef, static_idx, dynamic_idx = jnp._split_index_for_jit(idx, x.shape)
@@ -82,12 +89,14 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   dtype = lax.dtype(x)
   weak_type = dtypes.is_weakly_typed(x)
 
-  if dtype != lax.dtype(y) and dtype != dtypes.result_type(x, y):
+  if not dtypes.safe_to_cast(y, x):
     # TODO(jakevdp): change this to an error after the deprecation period.
-    warnings.warn("scatter inputs have incompatible types: cannot safely cast "
-                  f"value from dtype={lax.dtype(y)} to dtype={lax.dtype(x)}. "
-                  "In future JAX releases this will result in an error.",
-                  FutureWarning)
+    warnings.warn(
+      "scatter inputs have incompatible types: cannot safely cast value "
+      f"from dtype={lax.dtype(y)} to dtype={lax.dtype(x)} with "
+      f"jax_numpy_dtype_promotion={config.numpy_dtype_promotion.value!r}. "
+      "In future JAX releases this will result in an error.",
+      FutureWarning)
 
   idx = jnp._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = jnp._index_to_gather(jnp.shape(x), idx,
@@ -98,7 +107,7 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   if core.is_empty_shape(indexer.slice_shape):
     return x
 
-  x, y = jnp._promote_dtypes(x, y)
+  x, y = promote_dtypes(x, y)
 
   # Broadcast `y` to the slice output shape.
   y = jnp.broadcast_to(y, tuple(indexer.slice_shape))
@@ -146,8 +155,8 @@ def _get_identity(op, dtype):
 
 
 def _segment_update(name: str,
-                    data: Array,
-                    segment_ids: Array,
+                    data: ArrayLike,
+                    segment_ids: ArrayLike,
                     scatter_op: Callable,
                     num_segments: Optional[int] = None,
                     indices_are_sorted: bool = False,
@@ -155,7 +164,7 @@ def _segment_update(name: str,
                     bucket_size: Optional[int] = None,
                     reducer: Optional[Callable] = None,
                     mode: Optional[lax.GatherScatterMode] = None) -> Array:
-  jnp._check_arraylike(name, data, segment_ids)
+  check_arraylike(name, data, segment_ids)
   mode = lax.GatherScatterMode.FILL_OR_DROP if mode is None else mode
   data = jnp.asarray(data)
   segment_ids = jnp.asarray(segment_ids)
@@ -187,8 +196,8 @@ def _segment_update(name: str,
   return reducer(out, axis=0).astype(dtype)
 
 
-def segment_sum(data: Array,
-                segment_ids: Array,
+def segment_sum(data: ArrayLike,
+                segment_ids: ArrayLike,
                 num_segments: Optional[int] = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
@@ -239,11 +248,11 @@ def segment_sum(data: Array,
   """
   return _segment_update(
       "segment_sum", data, segment_ids, lax.scatter_add, num_segments,
-      indices_are_sorted, unique_indices, bucket_size, jnp.sum, mode=mode)
+      indices_are_sorted, unique_indices, bucket_size, reductions.sum, mode=mode)
 
 
-def segment_prod(data: Array,
-                 segment_ids: Array,
+def segment_prod(data: ArrayLike,
+                 segment_ids: ArrayLike,
                  num_segments: Optional[int] = None,
                  indices_are_sorted: bool = False,
                  unique_indices: bool = False,
@@ -295,11 +304,11 @@ def segment_prod(data: Array,
   """
   return _segment_update(
       "segment_prod", data, segment_ids, lax.scatter_mul, num_segments,
-      indices_are_sorted, unique_indices, bucket_size, jnp.prod, mode=mode)
+      indices_are_sorted, unique_indices, bucket_size, reductions.prod, mode=mode)
 
 
-def segment_max(data: Array,
-                segment_ids: Array,
+def segment_max(data: ArrayLike,
+                segment_ids: ArrayLike,
                 num_segments: Optional[int] = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
@@ -350,11 +359,11 @@ def segment_max(data: Array,
   """
   return _segment_update(
       "segment_max", data, segment_ids, lax.scatter_max, num_segments,
-      indices_are_sorted, unique_indices, bucket_size, jnp.max, mode=mode)
+      indices_are_sorted, unique_indices, bucket_size, reductions.max, mode=mode)
 
 
-def segment_min(data: Array,
-                segment_ids: Array,
+def segment_min(data: ArrayLike,
+                segment_ids: ArrayLike,
                 num_segments: Optional[int] = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
@@ -405,4 +414,4 @@ def segment_min(data: Array,
   """
   return _segment_update(
       "segment_min", data, segment_ids, lax.scatter_min, num_segments,
-      indices_are_sorted, unique_indices, bucket_size, jnp.min, mode=mode)
+      indices_are_sorted, unique_indices, bucket_size, reductions.min, mode=mode)

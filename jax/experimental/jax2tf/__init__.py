@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax.experimental.jax2tf.jax2tf import (convert, dtype_of_val,
-                                            split_to_logical_devices, PolyShape)
-from jax.experimental.jax2tf.call_tf import call_tf
+from jax.experimental.jax2tf.jax2tf import (
+  convert as convert,
+  eval_polymorphic_shape as eval_polymorphic_shape,
+  dtype_of_val as dtype_of_val,
+  split_to_logical_devices as split_to_logical_devices,
+  DisabledSafetyCheck as DisabledSafetyCheck,
+  PolyShape as PolyShape
+)
+from jax.experimental.jax2tf.call_tf import call_tf as call_tf
+# Needed by maths.qec.
+from jax.experimental.jax2tf import shape_poly

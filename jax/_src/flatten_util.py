@@ -16,12 +16,12 @@ import warnings
 
 import numpy as np
 
-from jax._src.tree_util import tree_flatten, tree_unflatten
-from jax._src.util import safe_zip, unzip2
-
-import jax.numpy as jnp
-from jax._src import dtypes
 from jax import lax
+import jax.numpy as jnp
+
+from jax._src import dtypes
+from jax._src.tree_util import tree_flatten, tree_unflatten
+from jax._src.util import safe_zip, unzip2, HashablePartial
 
 zip = safe_zip
 
@@ -47,39 +47,43 @@ def ravel_pytree(pytree):
   """
   leaves, treedef = tree_flatten(pytree)
   flat, unravel_list = _ravel_list(leaves)
-  unravel_pytree = lambda flat: tree_unflatten(treedef, unravel_list(flat))
-  return flat, unravel_pytree
+  return flat, HashablePartial(unravel_pytree, treedef, unravel_list)
+
+def unravel_pytree(treedef, unravel_list, flat):
+  return tree_unflatten(treedef, unravel_list(flat))
 
 def _ravel_list(lst):
   if not lst: return jnp.array([], jnp.float32), lambda _: []
-  from_dtypes = [dtypes.dtype(l) for l in lst]
+  from_dtypes = tuple(dtypes.dtype(l) for l in lst)
   to_dtype = dtypes.result_type(*from_dtypes)
   sizes, shapes = unzip2((jnp.size(x), jnp.shape(x)) for x in lst)
-  indices = np.cumsum(sizes)
+  indices = tuple(np.cumsum(sizes))
 
   if all(dt == to_dtype for dt in from_dtypes):
     # Skip any dtype conversion, resulting in a dtype-polymorphic `unravel`.
     # See https://github.com/google/jax/issues/7809.
     del from_dtypes, to_dtype
-    def unravel(arr):
-      chunks = jnp.split(arr, indices[:-1])
-      return [chunk.reshape(shape) for chunk, shape in zip(chunks, shapes)]
     raveled = jnp.concatenate([jnp.ravel(e) for e in lst])
-    return raveled, unravel
+    return raveled, HashablePartial(_unravel_list_single_dtype, indices, shapes)
 
   # When there is more than one distinct input dtype, we perform type
   # conversions and produce a dtype-specific unravel function.
-  def unravel(arr):
-    arr_dtype = dtypes.dtype(arr)
-    if arr_dtype != to_dtype:
-      raise TypeError(f"unravel function given array of dtype {arr_dtype}, "
-                      f"but expected dtype {to_dtype}")
-    chunks = jnp.split(arr, indices[:-1])
-    with warnings.catch_warnings():
-      warnings.simplefilter("ignore")  # ignore complex-to-real cast warning
-      return [lax.convert_element_type(chunk.reshape(shape), dtype)
-              for chunk, shape, dtype in zip(chunks, shapes, from_dtypes)]
-
   ravel = lambda e: jnp.ravel(lax.convert_element_type(e, to_dtype))
   raveled = jnp.concatenate([ravel(e) for e in lst])
-  return raveled, unravel
+  unrav = HashablePartial(_unravel_list, indices, shapes, from_dtypes, to_dtype)
+  return raveled, unrav
+
+def _unravel_list_single_dtype(indices, shapes, arr):
+  chunks = jnp.split(arr, indices[:-1])
+  return [chunk.reshape(shape) for chunk, shape in zip(chunks, shapes)]
+
+def _unravel_list(indices, shapes, from_dtypes, to_dtype, arr):
+  arr_dtype = dtypes.dtype(arr)
+  if arr_dtype != to_dtype:
+    raise TypeError(f"unravel function given array of dtype {arr_dtype}, "
+                    f"but expected dtype {to_dtype}")
+  chunks = jnp.split(arr, indices[:-1])
+  with warnings.catch_warnings():
+    warnings.simplefilter("ignore")  # ignore complex-to-real cast warning
+    return [lax.convert_element_type(chunk.reshape(shape), dtype)
+            for chunk, shape, dtype in zip(chunks, shapes, from_dtypes)]

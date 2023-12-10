@@ -17,20 +17,23 @@ Common neural network layer initializers, consistent with definitions
 used in Keras and Sonnet.
 """
 
-
-from typing import Any, Literal, Protocol, Sequence, Tuple, Union
+from collections.abc import Sequence
+import math
+from typing import Any, Literal, Protocol, Union
 
 import numpy as np
 
 import jax.numpy as jnp
 from jax import lax
 from jax import random
-from jax import core
-from jax._src.util import prod
+from jax._src import core
 from jax._src import dtypes
+from jax._src.typing import Array, ArrayLike
+from jax._src.util import set_module
 
-KeyArray = random.KeyArray
-Array = Any
+export = set_module('jax.nn.initializers')
+
+KeyArray = Array
 # TODO: Import or define these to match
 # https://github.com/numpy/numpy/blob/main/numpy/typing/_dtype_like.py.
 DTypeLikeFloat = Any
@@ -38,13 +41,15 @@ DTypeLikeComplex = Any
 DTypeLikeInexact = Any  # DTypeLikeFloat | DTypeLikeComplex
 RealNumeric = Any  # Scalar jnp array or float
 
+@export
 class Initializer(Protocol):
   @staticmethod
   def __call__(key: KeyArray,
                shape: core.Shape,
                dtype: DTypeLikeInexact = jnp.float_) -> Array:
-    ...
+    raise NotImplementedError
 
+@export
 def zeros(key: KeyArray,
           shape: core.Shape,
           dtype: DTypeLikeInexact = jnp.float_) -> Array:
@@ -59,6 +64,7 @@ def zeros(key: KeyArray,
   """
   return jnp.zeros(shape, dtypes.canonicalize_dtype(dtype))
 
+@export
 def ones(key: KeyArray,
          shape: core.Shape,
          dtype: DTypeLikeInexact = jnp.float_) -> Array:
@@ -74,7 +80,8 @@ def ones(key: KeyArray,
   """
   return jnp.ones(shape, dtypes.canonicalize_dtype(dtype))
 
-def constant(value: Array,
+@export
+def constant(value: ArrayLike,
              dtype: DTypeLikeInexact = jnp.float_
              ) -> Initializer:
   """Builds an initializer that returns arrays full of a constant ``value``.
@@ -96,6 +103,7 @@ def constant(value: Array,
     return jnp.full(shape, value, dtype=dtype)
   return init
 
+@export
 def uniform(scale: RealNumeric = 1e-2,
             dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
   """Builds an initializer that returns real uniformly-distributed random arrays.
@@ -121,6 +129,7 @@ def uniform(scale: RealNumeric = 1e-2,
     return random.uniform(key, shape, dtype) * scale
   return init
 
+@export
 def normal(stddev: RealNumeric = 1e-2,
            dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
   """Builds an initializer that returns real normally-distributed random arrays.
@@ -138,7 +147,7 @@ def normal(stddev: RealNumeric = 1e-2,
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
   Array([[ 3.0613258 ,  5.6129413 ,  5.6866574 ],
          [-4.063663  , -4.4520254 ,  0.63115686]], dtype=float32)
-   """
+  """
   def init(key: KeyArray,
            shape: core.Shape,
            dtype: DTypeLikeInexact = dtype) -> Array:
@@ -146,29 +155,71 @@ def normal(stddev: RealNumeric = 1e-2,
     return random.normal(key, shape, dtype) * stddev
   return init
 
+@export
+def truncated_normal(stddev: RealNumeric = 1e-2,
+                     dtype: DTypeLikeInexact = jnp.float_,
+                     lower: RealNumeric = -2.0,
+                     upper: RealNumeric = 2.0) -> Initializer:
+  r"""Builds an initializer that returns truncated-normal random arrays.
+
+  Args:
+    stddev: optional; the standard deviation of the untruncated distribution.
+      Note that this function does not apply the stddev correction as is done in
+      the variancescaling initializers, and users are expected to apply this
+      correction themselves via the stddev arg if they wish to employ it.
+    dtype: optional; the initializer's default dtype.
+    lower: Float representing the lower bound for truncation. Applied before
+      the output is multiplied by the stddev.
+    upper: Float representing the upper bound for truncation. Applied before
+      the output is multiplied by the stddev.
+
+  Returns:
+    An initializer that returns arrays whose values follow the truncated normal
+    distribution with mean ``0`` and standard deviation ``stddev``, and range
+    :math:`\rm{lower * stddev} < x < \rm{upper * stddev}`.
+
+  >>> import jax, jax.numpy as jnp
+  >>> initializer = jax.nn.initializers.truncated_normal(5.0)
+  >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
+  Array([[ 2.9047365,  5.2338114,  5.29852  ],
+         [-3.836303 , -4.192359 ,  0.6022964]], dtype=float32)
+  """
+
+  def init(key: KeyArray,
+           shape: core.Shape,
+           dtype: DTypeLikeInexact = dtype) -> Array:
+    dtype = dtypes.canonicalize_dtype(dtype)
+    return random.truncated_normal(key, lower, upper, shape, dtype) * stddev
+  return init
+
+@export
 def _compute_fans(shape: core.NamedShape,
                   in_axis: Union[int, Sequence[int]] = -2,
                   out_axis: Union[int, Sequence[int]] = -1,
                   batch_axis: Union[int, Sequence[int]] = ()
-                  ) -> Tuple[Array, Array]:
+                  ) -> tuple[Array, Array]:
   """
   Compute effective input and output sizes for a linear or convolutional layer.
 
   Axes not in in_axis, out_axis, or batch_axis are assumed to constitute the
   "receptive field" of a convolution (kernel spatial dimensions).
   """
+  if shape.rank <= 1:
+    raise ValueError(f"Can't compute input and output sizes of a {shape.rank}"
+                     "-dimensional weights tensor. Must be at least 2D.")
+
   if isinstance(in_axis, int):
     in_size = shape[in_axis]
   else:
-    in_size = int(np.prod([shape[i] for i in in_axis]))
+    in_size = math.prod([shape[i] for i in in_axis])
   if isinstance(out_axis, int):
     out_size = shape[out_axis]
   else:
-    out_size = int(np.prod([shape[i] for i in out_axis]))
+    out_size = math.prod([shape[i] for i in out_axis])
   if isinstance(batch_axis, int):
     batch_size = shape[batch_axis]
   else:
-    batch_size = int(np.prod([shape[i] for i in batch_axis]))
+    batch_size = math.prod([shape[i] for i in batch_axis])
   receptive_field_size = shape.total / in_size / out_size / batch_size
   fan_in = in_size * receptive_field_size
   fan_out = out_size * receptive_field_size
@@ -188,7 +239,7 @@ def _complex_uniform(key: KeyArray,
   theta = 2 * jnp.pi * random.uniform(key_theta, shape, real_dtype).astype(dtype)
   return r * jnp.exp(1j * theta)
 
-def _complex_truncated_normal(key: KeyArray, upper: Array,
+def _complex_truncated_normal(key: KeyArray, upper: ArrayLike,
                               shape: Union[Sequence[int], core.NamedShape],
                               dtype: DTypeLikeInexact) -> Array:
   """
@@ -205,6 +256,7 @@ def _complex_truncated_normal(key: KeyArray, upper: Array,
   theta = 2 * jnp.pi * random.uniform(key_theta, shape, real_dtype).astype(dtype)
   return r * jnp.exp(1j * theta)
 
+@export
 def variance_scaling(
   scale: RealNumeric,
   mode: Union[Literal["fan_in"], Literal["fan_out"], Literal["fan_avg"]],
@@ -292,6 +344,7 @@ def variance_scaling(
 
   return init
 
+@export
 def glorot_uniform(in_axis: Union[int, Sequence[int]] = -2,
                    out_axis: Union[int, Sequence[int]] = -1,
                    batch_axis: Sequence[int] = (),
@@ -329,7 +382,7 @@ def glorot_uniform(in_axis: Union[int, Sequence[int]] = -2,
 
 xavier_uniform = glorot_uniform
 
-
+@export
 def glorot_normal(in_axis: Union[int, Sequence[int]] = -2,
                   out_axis: Union[int, Sequence[int]] = -1,
                   batch_axis: Sequence[int] = (),
@@ -367,6 +420,7 @@ def glorot_normal(in_axis: Union[int, Sequence[int]] = -2,
 
 xavier_normal = glorot_normal
 
+@export
 def lecun_uniform(in_axis: Union[int, Sequence[int]] = -2,
                   out_axis: Union[int, Sequence[int]] = -1,
                   batch_axis: Sequence[int] = (),
@@ -402,6 +456,7 @@ def lecun_uniform(in_axis: Union[int, Sequence[int]] = -2,
   return variance_scaling(1.0, "fan_in", "uniform", in_axis=in_axis,
                           out_axis=out_axis, batch_axis=batch_axis, dtype=dtype)
 
+@export
 def lecun_normal(in_axis: Union[int, Sequence[int]] = -2,
                  out_axis: Union[int, Sequence[int]] = -1,
                  batch_axis: Sequence[int] = (),
@@ -437,7 +492,7 @@ def lecun_normal(in_axis: Union[int, Sequence[int]] = -2,
   return variance_scaling(1.0, "fan_in", "truncated_normal", in_axis=in_axis,
                           out_axis=out_axis, batch_axis=batch_axis, dtype=dtype)
 
-
+@export
 def he_uniform(in_axis: Union[int, Sequence[int]] = -2,
                out_axis: Union[int, Sequence[int]] = -1,
                batch_axis: Sequence[int] = (),
@@ -463,7 +518,7 @@ def he_uniform(in_axis: Union[int, Sequence[int]] = -2,
   Example:
 
   >>> import jax, jax.numpy as jnp
-  >>> initializer = jax.nn.initializers.kaiming_uniform()
+  >>> initializer = jax.nn.initializers.he_uniform()
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
   Array([[ 0.79611576,  1.2789248 ,  1.2896855 ],
          [-1.0108745 , -1.0855657 ,  0.17398663]], dtype=float32)
@@ -475,7 +530,7 @@ def he_uniform(in_axis: Union[int, Sequence[int]] = -2,
 
 kaiming_uniform = he_uniform
 
-
+@export
 def he_normal(in_axis: Union[int, Sequence[int]] = -2,
               out_axis: Union[int, Sequence[int]] = -1,
               batch_axis: Sequence[int] = (),
@@ -501,7 +556,7 @@ def he_normal(in_axis: Union[int, Sequence[int]] = -2,
   Example:
 
   >>> import jax, jax.numpy as jnp
-  >>> initializer = jax.nn.initializers.kaiming_normal()
+  >>> initializer = jax.nn.initializers.he_normal()
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
   Array([[ 0.6604483 ,  1.1900088 ,  1.2047218 ],
          [-0.87225807, -0.95321447,  0.1369438 ]], dtype=float32)
@@ -513,7 +568,7 @@ def he_normal(in_axis: Union[int, Sequence[int]] = -2,
 
 kaiming_normal = he_normal
 
-
+@export
 def orthogonal(scale: RealNumeric = 1.0,
                column_axis: int = -1,
                dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
@@ -545,7 +600,7 @@ def orthogonal(scale: RealNumeric = 1.0,
     dtype = dtypes.canonicalize_dtype(dtype)
     if len(shape) < 2:
       raise ValueError("orthogonal initializer requires at least a 2D shape")
-    n_rows, n_cols = prod(shape) // shape[column_axis], shape[column_axis]
+    n_rows, n_cols = math.prod(shape) // shape[column_axis], shape[column_axis]
     matrix_shape = (n_cols, n_rows) if n_rows < n_cols else (n_rows, n_cols)
     A = random.normal(key, matrix_shape, dtype)
     Q, R = jnp.linalg.qr(A)
@@ -557,7 +612,7 @@ def orthogonal(scale: RealNumeric = 1.0,
     return scale * Q
   return init
 
-
+@export
 def delta_orthogonal(
   scale: RealNumeric = 1.0,
   column_axis: int = -1,

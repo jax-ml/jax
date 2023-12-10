@@ -25,7 +25,7 @@ import jax
 import jax._src.test_util as jtu
 import jax.numpy as jnp
 
-from jax.config import config
+from jax import config
 
 config.parse_flags_with_absl()
 

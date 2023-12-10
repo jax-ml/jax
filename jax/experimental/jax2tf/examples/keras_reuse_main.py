@@ -65,7 +65,7 @@ def main(_):
       tfds.Split.TEST, batch_size=mnist_lib.test_batch_size)
   keras_model.fit(train_ds, epochs=FLAGS.num_epochs, validation_data=test_ds)
 
-  if FLAGS.show_images:
+  if saved_model_main.SHOW_IMAGES.value:
     mnist_lib.plot_images(
         test_ds,
         1,

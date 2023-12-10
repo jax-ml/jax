@@ -16,8 +16,10 @@
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
 from jax._src.scipy.special import (
+  bernoulli as bernoulli,
   betainc as betainc,
   betaln as betaln,
+  beta as beta,
   bessel_jn as bessel_jn,
   digamma as digamma,
   entr as entr,
@@ -28,9 +30,11 @@ from jax._src.scipy.special import (
   expi as expi,
   expit as expit,
   expn as expn,
+  factorial as factorial,
   gammainc as gammainc,
   gammaincc as gammaincc,
   gammaln as gammaln,
+  gamma as gamma,
   i0 as i0,
   i0e as i0e,
   i1 as i1,
@@ -44,8 +48,13 @@ from jax._src.scipy.special import (
   ndtr as ndtr,
   ndtri as ndtri,
   polygamma as polygamma,
+  spence as spence,
   sph_harm as sph_harm,
   xlogy as xlogy,
   xlog1py as xlog1py,
   zeta as zeta,
+  kl_div as kl_div,
+  rel_entr as rel_entr,
+  poch as poch,
+  hyp1f1 as hyp1f1,
 )

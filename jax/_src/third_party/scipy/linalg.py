@@ -1,9 +1,11 @@
-from typing import Callable, Tuple
+from __future__ import annotations
+
+from typing import Callable
 
 import scipy.linalg
 
 from jax import jit, lax
-from jax._src.numpy import lax_numpy as jnp
+import jax.numpy as jnp
 from jax._src.numpy.linalg import norm
 from jax._src.numpy.util import _wraps
 from jax._src.scipy.linalg import rsf2csf, schur
@@ -11,7 +13,7 @@ from jax._src.typing import ArrayLike, Array
 
 
 @jit
-def _algorithm_11_1_1(F: Array, T: Array) -> Tuple[Array, Array]:
+def _algorithm_11_1_1(F: Array, T: Array) -> tuple[Array, Array]:
   # Algorithm 11.1.1 from Golub and Van Loan "Matrix Computations"
   N = T.shape[0]
   minden = jnp.abs(T[0, 0])
@@ -50,12 +52,13 @@ will be printed if the error in the array output is estimated to be large.
 """
 
 @_wraps(scipy.linalg.funm, lax_description=_FUNM_LAX_DESCRIPTION)
-def funm(A: ArrayLike, func: Callable[[Array], Array], disp: bool = True) -> Tuple[Array, Array]:
-  A = jnp.asarray(A)
-  if A.ndim != 2 or A.shape[0] != A.shape[1]:
+def funm(A: ArrayLike, func: Callable[[Array], Array],
+         disp: bool = True) -> Array | tuple[Array, Array]:
+  A_arr = jnp.asarray(A)
+  if A_arr.ndim != 2 or A_arr.shape[0] != A_arr.shape[1]:
     raise ValueError('expected square array_like input')
 
-  T, Z = schur(A)
+  T, Z = schur(A_arr)
   T, Z = rsf2csf(T, Z)
 
   F = jnp.diag(func(jnp.diag(T)))

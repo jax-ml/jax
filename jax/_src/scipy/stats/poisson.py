@@ -16,16 +16,16 @@
 import scipy.stats as osp_stats
 
 from jax import lax
+import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.util import _wraps
-from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy.util import _wraps, promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 from jax.scipy.special import xlogy, gammaln, gammaincc
 
 
 @_wraps(osp_stats.poisson.logpmf, update_doc=False)
 def logpmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
-  k, mu, loc = jnp._promote_args_inexact("poisson.logpmf", k, mu, loc)
+  k, mu, loc = promote_args_inexact("poisson.logpmf", k, mu, loc)
   zero = _lax_const(k, 0)
   x = lax.sub(k, loc)
   log_probs = xlogy(x, mu) - gammaln(x + 1) - mu
@@ -37,7 +37,7 @@ def pmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
 
 @_wraps(osp_stats.poisson.cdf, update_doc=False)
 def cdf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
-  k, mu, loc = jnp._promote_args_inexact("poisson.logpmf", k, mu, loc)
+  k, mu, loc = promote_args_inexact("poisson.logpmf", k, mu, loc)
   zero = _lax_const(k, 0)
   x = lax.sub(k, loc)
   p = gammaincc(jnp.floor(1 + x), mu)

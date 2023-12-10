@@ -17,11 +17,10 @@ Typing tests
 This test is meant to be both a runtime test and a static type annotation test,
 so it should be checked with pytype/mypy as well as being run with pytest.
 """
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, TYPE_CHECKING
 
 import jax
-from jax import core
-from jax._src import config as jax_config
+from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import typing
 from jax import lax
@@ -52,7 +51,6 @@ class HasDType:
     self.dtype = np.dtype(dt)
 
 float32_dtype = np.dtype("float32")
-
 
 # Avoid test parameterization because we want to statically check these annotations.
 class TypingTest(jtu.JaxTestCase):
@@ -116,18 +114,68 @@ class TypingTest(jtu.JaxTestCase):
   def testAnnotations(self):
     # This test is mainly meant for static type checking: we want to ensure that
     # Tracer and ArrayImpl are valid as array.Array.
-    with jax_config.jax_array(True):
-      def f(x: Any) -> Optional[typing.Array]:
-        if isinstance(x, core.Tracer):
-          return x
-        elif isinstance(x, ArrayImpl):
-          return x
-        else:
-          return None
+    def f(x: Any) -> Optional[typing.Array]:
+      if isinstance(x, core.Tracer):
+        return x
+      elif isinstance(x, ArrayImpl):
+        return x
+      else:
+        return None
 
-      x = jnp.arange(10)
-      y = f(x)
-      self.assertArraysEqual(x, y)
+    x = jnp.arange(10)
+    y = f(x)
+    self.assertArraysEqual(x, y)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
+
+
+if TYPE_CHECKING:
+  # Here we do a number of static type assertions. We purposely don't cover the
+  # entire public API here, but rather spot-check some potentially problematic
+  # areas. The goals are:
+  #
+  # - Confirm the correctness of a few basic APIs
+  # - Confirm that types from *.pyi files are correctly pulled-in
+  # - Confirm that non-trivial overloads are behaving as expected.
+  #
+  import sys
+  if sys.version_info >= (3, 11):
+    from typing import assert_type  # pytype: disable=not-supported-yet  # py311-upgrade
+  else:
+    from typing_extensions import assert_type  # pytype: disable=not-supported-yet
+
+  mat = jnp.zeros((2, 5))
+  vals = jnp.arange(5)
+  mask = jnp.array([True, False, True, False])
+
+  assert_type(mat, jax.Array)
+  assert_type(vals, jax.Array)
+  assert_type(mask, jax.Array)
+
+  # Functions with non-trivial typing overloads:
+  # jnp.linspace
+  assert_type(jnp.linspace(0, 10), jax.Array)
+  assert_type(jnp.linspace(0, 10, retstep=False), jax.Array)
+  assert_type(jnp.linspace(0, 10, retstep=True), tuple[jax.Array, jax.Array])
+
+  # jnp.where
+  assert_type(mask, jax.Array)
+  assert_type(jnp.where(mask, 0, 1), jax.Array)
+  assert_type(jnp.where(mask), tuple[jax.Array, ...])
+
+  # jnp.einsum
+  assert_type(jnp.einsum('ij', mat), jax.Array)
+  assert_type(jnp.einsum('ij,j->i', mat, vals), jax.Array)
+  assert_type(jnp.einsum(mat, (0, 0)), jax.Array)
+
+  # jnp.indices
+  assert_type(jnp.indices([2, 3]), jax.Array)
+  assert_type(jnp.indices([2, 3], sparse=False), jax.Array)
+  assert_type(jnp.indices([2, 3], sparse=True), tuple[jax.Array, ...])
+
+  # jnp.average
+  assert_type(jnp.average(vals), jax.Array)
+  assert_type(jnp.average(vals, returned=False), jax.Array)
+  assert_type(jnp.average(vals, returned=True), tuple[jax.Array, jax.Array])

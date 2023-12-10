@@ -16,9 +16,9 @@
 from absl.testing import absltest
 
 import jax
-from jax.config import config
+from jax import config
 from jax._src import test_util as jtu
-from jax._src.lib import xla_bridge as xb
+from jax._src import xla_bridge as xb
 
 config.parse_flags_with_absl()
 

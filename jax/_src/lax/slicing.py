@@ -12,37 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 import enum
+import operator
 from functools import partial
-from typing import Callable, List, NamedTuple, Optional, Sequence, Tuple, Union
+import math
+from typing import Callable, NamedTuple, Optional, Union
 import weakref
 
 import numpy as np
 
 import jax
+
 from jax._src import ad_util
+from jax._src import config
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
+from jax._src import source_info_util
+from jax._src import util
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
+from jax._src.lax import lax
 from jax._src.lax.utils import (
     _argnum_weak_type,
     _input_dtype,
     standard_primitive,
 )
-from jax._src.lax import lax
-from jax._src import util
-from jax._src.util import safe_map, safe_zip
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.lib import xla_bridge
-from jax._src.lib import xla_client
 from jax._src.typing import Array, ArrayLike, Shape
-
-xb = xla_bridge
-xc = xla_client
+from jax._src.util import safe_map, safe_zip
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -56,13 +58,61 @@ def slice(operand: ArrayLike, start_indices: Sequence[int],
   """Wraps XLA's `Slice
   <https://www.tensorflow.org/xla/operation_semantics#slice>`_
   operator.
+
+  Args:
+    operand: an array to slice
+    start_indices: a sequence of ``operand.ndim`` start indices.
+    limit_indices: a sequence of ``operand.ndim`` limit indices.
+    strides: an optional sequence of ``operand.ndim`` strides.
+
+  Returns:
+    The sliced array
+
+  Examples:
+    Here are some examples of simple two-dimensional slices:
+
+    >>> x = jnp.arange(12).reshape(3, 4)
+    >>> x
+    Array([[ 0,  1,  2,  3],
+           [ 4,  5,  6,  7],
+           [ 8,  9, 10, 11]], dtype=int32)
+
+    >>> lax.slice(x, (1, 0), (3, 2))
+    Array([[4, 5],
+           [8, 9]], dtype=int32)
+
+    >>> lax.slice(x, (0, 0), (3, 4), (1, 2))
+    Array([[ 0,  2],
+           [ 4,  6],
+           [ 8, 10]], dtype=int32)
+
+    These two examples are equivalent to the following Python slicing syntax:
+
+    >>> x[1:3, 0:2]
+    Array([[4, 5],
+           [8, 9]], dtype=int32)
+
+    >>> x[0:3, 0:4:2]
+    Array([[ 0,  2],
+           [ 4,  6],
+           [ 8, 10]], dtype=int32)
+
+  See Also:
+    - :attr:`jax.numpy.ndarray.at`
+    - :func:`jax.lax.slice_in_dim`
+    - :func:`jax.lax.index_in_dim`
+    - :func:`jax.lax.dynamic_slice`
   """
   return slice_p.bind(operand, start_indices=tuple(start_indices),
                       limit_indices=tuple(limit_indices),
                       strides=None if strides is None else tuple(strides))
 
-def dynamic_slice(operand: Array, start_indices: Union[Array, Sequence[ArrayLike]],
-                  slice_sizes: Shape) -> Array:
+
+def dynamic_slice(
+    operand: Union[Array, np.ndarray],
+    start_indices: Union[Union[Array, np.ndarray], Sequence[ArrayLike]],
+    slice_sizes: Shape,
+) -> Array:
   """Wraps XLA's `DynamicSlice
   <https://www.tensorflow.org/xla/operation_semantics#dynamicslice>`_
   operator.
@@ -99,9 +149,15 @@ def dynamic_slice(operand: Array, start_indices: Union[Array, Sequence[ArrayLike
     >>> dynamic_slice(x, (1, 1), (2, 4))
     Array([[ 4,  5,  6,  7],
            [ 8,  9, 10, 11]], dtype=int32)
+
+  See Also:
+    - :attr:`jax.numpy.ndarray.at`
+    - :func:`jax.lax.slice`
+    - :func:`jax.lax.dynamic_slice_in_dim`
+    - :func:`jax.lax.dynamic_index_in_dim`
   """
   start_indices = _dynamic_slice_indices(operand, start_indices)
-  if jax.config.jax_dynamic_shapes:
+  if config.dynamic_shapes.value:
     dynamic_sizes, static_sizes = lax._extract_tracers_dyn_shape(slice_sizes)
   else:
     dynamic_sizes = []
@@ -109,7 +165,8 @@ def dynamic_slice(operand: Array, start_indices: Union[Array, Sequence[ArrayLike
   return dynamic_slice_p.bind(operand, *start_indices, *dynamic_sizes,
                               slice_sizes=tuple(static_sizes))
 
-def dynamic_update_slice(operand: Array, update: ArrayLike,
+
+def dynamic_update_slice(operand: Union[Array, np.ndarray], update: ArrayLike,
                          start_indices: Union[Array, Sequence[ArrayLike]]) -> Array:
   """Wraps XLA's `DynamicUpdateSlice
   <https://www.tensorflow.org/xla/operation_semantics#dynamicupdateslice>`_
@@ -148,6 +205,11 @@ def dynamic_update_slice(operand: Array, update: ArrayLike,
            [0., 0., 1., 1.],
            [0., 0., 1., 1.],
            [0., 0., 0., 0.]], dtype=float32)
+
+  See Also:
+    - :attr:`jax.numpy.ndarray.at`
+    - :attr:`lax.dynamic_update_index_in_dim`
+    - :attr:`lax.dynamic_update_slice_in_dim`
   """
   start_indices = _dynamic_slice_indices(operand, start_indices)
   return dynamic_update_slice_p.bind(operand, update, *start_indices)
@@ -175,9 +237,9 @@ class GatherDimensionNumbers(NamedTuple):
   implicit; there is always an index vector dimension and it must always be the
   last dimension. To gather scalar indices, add a trailing dimension of size 1.
   """
-  offset_dims: Tuple[int, ...]
-  collapsed_slice_dims: Tuple[int, ...]
-  start_index_map: Tuple[int, ...]
+  offset_dims: tuple[int, ...]
+  collapsed_slice_dims: tuple[int, ...]
+  start_index_map: tuple[int, ...]
 
 
 class GatherScatterMode(enum.Enum):
@@ -338,7 +400,7 @@ def scatter_add(
       update in `updates` should be applied.
     updates: the updates that should be scattered onto `operand`.
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
-      how dimensions of `operand`, `start_indices`, `updates` and the output
+      how dimensions of `operand`, `scatter_indices`, `updates` and the output
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
@@ -511,6 +573,7 @@ def scatter_apply(
   operand: Array, scatter_indices: Array,
   func: Callable[[Array], Array],
   dimension_numbers: ScatterDimensionNumbers, *,
+  update_shape: Shape = (),
   indices_are_sorted: bool = False, unique_indices: bool = False,
   mode: Optional[Union[str, GatherScatterMode]] = None) -> Array:
   """Scatter-apply operator.
@@ -536,6 +599,7 @@ def scatter_apply(
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
+    update_shape: the shape of the updates at the given indices.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
     unique_indices: whether the elements to be updated in ``operand`` are
@@ -552,7 +616,7 @@ def scatter_apply(
     An array containing the result of applying `func` to `operand` at the given indices.
   """
   # TODO: can we implement this without a placeholder?
-  unused = lax.full(scatter_indices.shape[:1], 0, operand.dtype)
+  unused = lax.full(update_shape, 0, operand.dtype)
   _apply = lambda x, _: func(x)
   try:
     _apply = _scatter_apply_cache.setdefault(func, _apply)
@@ -611,11 +675,9 @@ def scatter(
   Returns:
     An array containing the sum of `operand` and the scattered updates.
   """
-  jaxpr, consts = lax._reduction_jaxpr(_scatter_reduction_computation,
-                                       lax._abstractify(lax._const(operand, 0)))
   return scatter_p.bind(
-      operand, scatter_indices, updates, update_jaxpr=jaxpr,
-      update_consts=consts, dimension_numbers=dimension_numbers,
+      operand, scatter_indices, updates, update_jaxpr=None,
+      update_consts=(), dimension_numbers=dimension_numbers,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
       mode=GatherScatterMode.from_any(mode))
 
@@ -638,10 +700,56 @@ def index_take(src: Array, idxs: Array, axes: Sequence[int]) -> Array:
 
 ### convenience wrappers around traceables
 
-def slice_in_dim(operand: Array, start_index: Optional[int],
+def slice_in_dim(operand: Union[Array, np.ndarray], start_index: Optional[int],
                  limit_index: Optional[int],
                  stride: int = 1, axis: int = 0) -> Array:
-  """Convenience wrapper around slice applying to only one dimension."""
+  """Convenience wrapper around :func:`lax.slice` applying to only one dimension.
+
+  This is effectively equivalent to ``operand[..., start_index:limit_index:stride]``
+  with the indexing applied on the specified axis.
+
+  Args:
+    operand: an array to slice.
+    start_index: an optional start index (defaults to zero)
+    limit_index: an optional end index (defaults to operand.shape[axis])
+    stride: an optional stride (defaults to 1)
+    axis: the axis along which to apply the slice (defaults to 0)
+
+  Returns:
+    An array containing the slice.
+
+  Examples:
+    Here is a one-dimensional example:
+
+    >>> x = jnp.arange(4)
+    >>> lax.slice_in_dim(x, 1, 3)
+    Array([1, 2], dtype=int32)
+
+    Here are some two-dimensional examples:
+
+    >>> x = jnp.arange(12).reshape(4, 3)
+    >>> x
+    Array([[ 0,  1,  2],
+           [ 3,  4,  5],
+           [ 6,  7,  8],
+           [ 9, 10, 11]], dtype=int32)
+
+    >>> lax.slice_in_dim(x, 1, 3)
+    Array([[3, 4, 5],
+           [6, 7, 8]], dtype=int32)
+
+    >>> lax.slice_in_dim(x, 1, 3, axis=1)
+    Array([[ 1,  2],
+           [ 4,  5],
+           [ 7,  8],
+           [10, 11]], dtype=int32)
+
+  See Also:
+    - :attr:`jax.numpy.ndarray.at`
+    - :func:`jax.lax.slice`
+    - :func:`jax.lax.index_in_dim`
+    - :func:`jax.lax.dynamic_slice_in_dim`
+  """
   start_indices = [0] * operand.ndim
   limit_indices = list(operand.shape)
   strides = [1] * operand.ndim
@@ -667,9 +775,53 @@ def slice_in_dim(operand: Array, start_index: Optional[int],
   return slice(operand, start_indices, limit_indices, strides)
 
 
-def index_in_dim(operand: Array, index: int, axis: int = 0,
+def index_in_dim(operand: Union[Array, np.ndarray], index: int, axis: int = 0,
                  keepdims: bool = True) -> Array:
-  """Convenience wrapper around slice to perform int indexing."""
+  """Convenience wrapper around :func:`lax.slice` to perform int indexing.
+
+  This is effectively equivalent to ``operand[..., start_index:limit_index:stride]``
+  with the indexing applied on the specified axis.
+
+  Args:
+    operand: an array to index.
+    index: integer index
+    axis: the axis along which to apply the index (defaults to 0)
+    keepdims: boolean specifying whether the output array should preserve the
+      rank of the input (default=True)
+
+  Returns:
+    The subarray at the specified index.
+
+  Examples:
+    Here is a one-dimensional example:
+
+    >>> x = jnp.arange(4)
+    >>> lax.index_in_dim(x, 2)
+    Array([2], dtype=int32)
+
+    >>> lax.index_in_dim(x, 2, keepdims=False)
+    Array(2, dtype=int32)
+
+    Here are some two-dimensional examples:
+
+    >>> x = jnp.arange(12).reshape(3, 4)
+    >>> x
+    Array([[ 0,  1,  2,  3],
+           [ 4,  5,  6,  7],
+           [ 8,  9, 10, 11]], dtype=int32)
+
+    >>> lax.index_in_dim(x, 1)
+    Array([[4, 5, 6, 7]], dtype=int32)
+
+    >>> lax.index_in_dim(x, 1, axis=1, keepdims=False)
+    Array([1, 5, 9], dtype=int32)
+
+  See Also:
+    - :attr:`jax.numpy.ndarray.at`
+    - :func:`jax.lax.slice`
+    - :func:`jax.lax.slice_in_dim`
+    - :func:`jax.lax.dynamic_index_in_dim`
+  """
   index, axis = core._canonicalize_dimension(index), int(axis)
   axis_size = operand.shape[axis]
   wrapped_index = index + axis_size if index < 0 else index
@@ -683,10 +835,56 @@ def index_in_dim(operand: Array, index: int, axis: int = 0,
     return lax.squeeze(result, (axis,))
 
 
-def dynamic_slice_in_dim(operand: Array, start_index: ArrayLike,
+def dynamic_slice_in_dim(operand: Union[Array, np.ndarray],
+                         start_index: ArrayLike,
                          slice_size: int, axis: int = 0) -> Array:
-  """Convenience wrapper around dynamic_slice applying to one dimension."""
-  start_indices: List[ArrayLike] = [lax._const(start_index, 0)] * operand.ndim
+  """Convenience wrapper around :func:`lax.dynamic_slice` applied to one dimension.
+
+  This is roughly equivalent to the following Python indexing syntax applied
+  along the specified axis: ``operand[..., start_index:start_index + slice_size]``.
+
+  Args:
+    operand: an array to slice.
+    start_index: the (possibly dynamic) start index
+    slice_size: the static slice size
+    axis: the axis along which to apply the slice (defaults to 0)
+
+  Returns:
+    An array containing the slice.
+
+  Examples:
+    Here is a one-dimensional example:
+
+    >>> x = jnp.arange(5)
+    >>> dynamic_slice_in_dim(x, 1, 3)
+    Array([1, 2, 3], dtype=int32)
+
+    Like `jax.lax.dynamic_slice`, out-of-bound slices will be clipped to the
+    valid range:
+
+    >>> dynamic_slice_in_dim(x, 4, 3)
+    Array([2, 3, 4], dtype=int32)
+
+    Here is a two-dimensional example:
+
+    >>> x = jnp.arange(12).reshape(3, 4)
+    >>> x
+    Array([[ 0,  1,  2,  3],
+           [ 4,  5,  6,  7],
+           [ 8,  9, 10, 11]], dtype=int32)
+
+    >>> dynamic_slice_in_dim(x, 1, 2, axis=1)
+    Array([[ 1,  2],
+           [ 5,  6],
+           [ 9, 10]], dtype=int32)
+
+  See Also:
+    - :attr:`jax.numpy.ndarray.at`
+    - :func:`jax.lax.slice_in_dim`
+    - :func:`jax.lax.dynamic_slice`
+    - :func:`jax.lax.dynamic_index_in_dim`
+  """
+  start_indices: list[ArrayLike] = [lax._const(start_index, 0)] * operand.ndim
   slice_sizes = list(operand.shape)
 
   axis = int(axis)
@@ -695,9 +893,51 @@ def dynamic_slice_in_dim(operand: Array, start_index: ArrayLike,
   return dynamic_slice(operand, start_indices, slice_sizes)
 
 
-def dynamic_index_in_dim(operand: Array, index: Array, axis: int = 0,
-                         keepdims: bool = True) -> Array:
-  """Convenience wrapper around dynamic_slice to perform int indexing."""
+def dynamic_index_in_dim(operand: Union[Array, np.ndarray],
+                         index: Union[int, Array],
+                         axis: int = 0, keepdims: bool = True) -> Array:
+  """Convenience wrapper around dynamic_slice to perform int indexing.
+
+  This is roughly equivalent to the following Python indexing syntax applied
+  along the specified axis: ``operand[..., index]``.
+
+  Args:
+    operand: an array to slice.
+    index: the (possibly dynamic) start index
+    axis: the axis along which to apply the slice (defaults to 0)
+    keepdims: boolean specifying whether the output should have the same rank as
+      the input (default = True)
+
+  Returns:
+    An array containing the slice.
+
+  Examples:
+    Here is a one-dimensional example:
+
+    >>> x = jnp.arange(5)
+    >>> dynamic_index_in_dim(x, 1)
+    Array([1], dtype=int32)
+
+    >>> dynamic_index_in_dim(x, 1, keepdims=False)
+    Array(1, dtype=int32)
+
+    Here is a two-dimensional example:
+
+    >>> x = jnp.arange(12).reshape(3, 4)
+    >>> x
+    Array([[ 0,  1,  2,  3],
+           [ 4,  5,  6,  7],
+           [ 8,  9, 10, 11]], dtype=int32)
+
+    >>> dynamic_index_in_dim(x, 1, axis=1, keepdims=False)
+    Array([1, 5, 9], dtype=int32)
+
+  See Also:
+    - :attr:`jax.numpy.ndarray.at`
+    - :func:`jax.lax.index_in_dim`
+    - :func:`jax.lax.dynamic_slice`
+    - :func:`jax.lax.dynamic_slice_in_dim`
+  """
   result = dynamic_slice_in_dim(operand, index, 1, axis)
   if keepdims:
     return result
@@ -705,21 +945,125 @@ def dynamic_index_in_dim(operand: Array, index: Array, axis: int = 0,
     return lax.squeeze(result, (axis,))
 
 
-def dynamic_update_slice_in_dim(operand: Array, update: ArrayLike,
+def dynamic_update_slice_in_dim(operand: Union[Array, np.ndarray],
+                                update: ArrayLike,
                                 start_index: ArrayLike, axis: int) -> Array:
-  """Convenience wrapper around :func:`dynamic_update_slice` to update a slice
-     in a single ``axis``.
+  """Convenience wrapper around :func:`dynamic_update_slice` to update
+  a slice in a single ``axis``.
+
+  Args:
+    operand: an array to slice.
+    update: an array containing the new values to write onto `operand`.
+    start_index: a single scalar index
+    axis: the axis of the update.
+
+  Returns:
+    The updated array
+
+  Examples:
+
+    >>> x = jnp.zeros(6)
+    >>> y = jnp.ones(3)
+    >>> dynamic_update_slice_in_dim(x, y, 2, axis=0)
+    Array([0., 0., 1., 1., 1., 0.], dtype=float32)
+
+    If the update slice is too large to fit in the array, the start
+    index will be adjusted to make it fit:
+
+    >>> dynamic_update_slice_in_dim(x, y, 3, axis=0)
+    Array([0., 0., 0., 1., 1., 1.], dtype=float32)
+    >>> dynamic_update_slice_in_dim(x, y, 5, axis=0)
+    Array([0., 0., 0., 1., 1., 1.], dtype=float32)
+
+    Here is an example of a two-dimensional slice update:
+
+    >>> x = jnp.zeros((4, 4))
+    >>> y = jnp.ones((2, 4))
+    >>> dynamic_update_slice_in_dim(x, y, 1, axis=0)
+    Array([[0., 0., 0., 0.],
+           [1., 1., 1., 1.],
+           [1., 1., 1., 1.],
+           [0., 0., 0., 0.]], dtype=float32)
+
+    Note that the shape of the additional axes in ``update`` need not
+    match the associated dimensions of the ``operand``:
+
+    >>> y = jnp.ones((2, 3))
+    >>> dynamic_update_slice_in_dim(x, y, 1, axis=0)
+    Array([[0., 0., 0., 0.],
+           [1., 1., 1., 0.],
+           [1., 1., 1., 0.],
+           [0., 0., 0., 0.]], dtype=float32)
+
+  See Also:
+    - :attr:`jax.numpy.ndarray.at`
+    - :func:`jax.lax.dynamic_update_slice`
+    - :func:`jax.lax.dynamic_update_index_in_dim`
+    - :func:`jax.lax.dynamic_slice_in_dim`
   """
   axis = int(axis)
-  start_indices: List[ArrayLike] = [lax._const(start_index, 0)] * lax._ndim(operand)
+  start_indices: list[ArrayLike] = [lax._const(start_index, 0)] * lax._ndim(operand)
   start_indices[axis] = start_index
   return dynamic_update_slice(operand, update, start_indices)
 
 
-def dynamic_update_index_in_dim(operand: Array, update: ArrayLike, index: ArrayLike,
+def dynamic_update_index_in_dim(operand: Union[Array, np.ndarray],
+                                update: ArrayLike, index: ArrayLike,
                                 axis: int) -> Array:
   """Convenience wrapper around :func:`dynamic_update_slice` to update a slice
-     of size 1 in a single ``axis``.
+  of size 1 in a single ``axis``.
+
+  Args:
+    operand: an array to slice.
+    update: an array containing the new values to write onto `operand`.
+    index: a single scalar index
+    axis: the axis of the update.
+
+  Returns:
+    The updated array
+
+  Examples:
+
+    >>> x = jnp.zeros(6)
+    >>> y = 1.0
+    >>> dynamic_update_index_in_dim(x, y, 2, axis=0)
+    Array([0., 0., 1., 0., 0., 0.], dtype=float32)
+
+    >>> y = jnp.array([1.0])
+    >>> dynamic_update_index_in_dim(x, y, 2, axis=0)
+    Array([0., 0., 1., 0., 0., 0.], dtype=float32)
+
+    If the specified index is out of bounds, the index will be clipped to the
+    valid range:
+
+    >>> dynamic_update_index_in_dim(x, y, 10, axis=0)
+    Array([0., 0., 0., 0., 0., 1.], dtype=float32)
+
+    Here is an example of a two-dimensional dynamic index update:
+
+    >>> x = jnp.zeros((4, 4))
+    >>> y = jnp.ones(4)
+    >>> dynamic_update_index_in_dim(x, y, 1, axis=0)
+    Array([[0., 0., 0., 0.],
+          [1., 1., 1., 1.],
+          [0., 0., 0., 0.],
+          [0., 0., 0., 0.]], dtype=float32)
+
+    Note that the shape of the additional axes in ``update`` need not
+    match the associated dimensions of the ``operand``:
+
+    >>> y = jnp.ones((1, 3))
+    >>> dynamic_update_index_in_dim(x, y, 1, 0)
+    Array([[0., 0., 0., 0.],
+           [1., 1., 1., 0.],
+           [0., 0., 0., 0.],
+           [0., 0., 0., 0.]], dtype=float32)
+
+  See Also:
+    - :attr:`jax.numpy.ndarray.at`
+    - :func:`jax.lax.dynamic_update_slice`
+    - :func:`jax.lax.dynamic_update_index_in_dim`
+    - :func:`jax.lax.dynamic_index_in_dim`
   """
   axis = int(axis)
   if lax._ndim(update) != lax._ndim(operand):
@@ -739,34 +1083,33 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
     msg = ("slice limit_indices must have the same length as start_indices, "
            "got start_indices {} and limit_indices {}.")
     raise TypeError(msg.format(start_indices, limit_indices))
-  if not core.greater_equal_shape(operand.shape, limit_indices):
+  if not all(map(operator.ge, operand.shape, limit_indices)):
     msg = ("slice limit_indices must be less than or equal to operand shape, "
            "got limit_indices {} for operand shape {}.")
     raise TypeError(msg.format(limit_indices, operand.shape))
-  if not all(core.greater_equal_dim(si, 0) for si in start_indices):
+  if not all(si >= 0 for si in start_indices):
     msg = ("slice start_indices must be greater than or equal to zero, "
            "got start_indices of {}.")
     raise TypeError(msg.format(start_indices))
-  if not jax.config.jax_dynamic_shapes:
-    if not core.greater_equal_shape(limit_indices, start_indices):
+  if not config.dynamic_shapes.value:
+    if not all(map(operator.ge, limit_indices, start_indices)):
       msg = ("slice limit_indices must be greater than or equal to start_indices,"
             " got start_indices {} and limit_indices {}.")
       raise TypeError(msg.format(start_indices, limit_indices))
+  diff = tuple(map(operator.sub, limit_indices, start_indices))
   if strides is None or tuple(strides) == (1,) * len(operand.shape):
-    shape = [limit if type(start) is int and start == 0 else limit - start
-             for start, limit in zip(start_indices, limit_indices)]
-    return tuple(shape)
+    return diff
 
   lax._check_shapelike("slice", "strides", strides)
   if len(strides) != operand.ndim:
     msg = ("slice strides must have length equal to the number of dimensions "
             "of the operand, got strides {} for operand shape {}.")
     raise TypeError(msg.format(strides, operand.shape))
-  if not core.greater_equal_shape(strides, (0,) * len(strides)):
+  if not all(s >= 0 for s in strides):
     msg = "slice strides must be positive, got {}"
     raise TypeError(msg.format(strides))
-  diff = core.diff_shape(limit_indices, start_indices)
-  return core.stride_shape(diff, (1,) * len(diff), strides)
+  return tuple(core.stride_dim(d, window_size=1, window_stride=s)
+               for d, s in zip(diff, strides))
 
 def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
   assert ad.is_undefined_primal(operand)
@@ -810,6 +1153,21 @@ slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice')
 ad.deflinear2(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 
+# Override the standard impl to defer to dynamic_slice whenever possible.
+# This lets us reuse the same program for many applications of slicing for as
+# long as they have the same output shape. Note that this only applies in
+# op-by-op mode and inside larger computations we still lower to static slices.
+@slice_p.def_impl
+def _slice_impl(x, start_indices, limit_indices, strides):
+  if strides is not None:
+    return dispatch.apply_primitive(
+      slice_p, x, start_indices=start_indices,
+      limit_indices=limit_indices, strides=strides)
+  slice_sizes = tuple(np.array(limit_indices) - np.array(start_indices))
+  return dispatch.apply_primitive(dynamic_slice_p, x, *start_indices,
+                                  slice_sizes=slice_sizes)
+
+
 def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   strides = strides or [1] * len(start_indices)
   aval_out, = ctx.avals_out
@@ -819,7 +1177,9 @@ def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
 mlir.register_lowering(slice_p, _slice_lower)
 
 
-def _dynamic_slice_shape_rule(operand, *start_indices, slice_sizes):
+def _dynamic_slice_shape_rule(
+    operand, *starts_and_dyn_sizes, slice_sizes):
+  start_indices, dyn = util.split_list(starts_and_dyn_sizes, [operand.ndim])
   if operand.ndim != len(start_indices):
     msg = ("dynamic_slice start_indices must have length equal to the number "
            "of dimensions of the operand, got indices {} for operand shape {}.")
@@ -828,20 +1188,21 @@ def _dynamic_slice_shape_rule(operand, *start_indices, slice_sizes):
     msg = ("dynamic_slice slice_sizes must have the same length as "
            "start_indices, got start_indices length {} and slice_sizes {}.")
     raise TypeError(msg.format(len(start_indices), slice_sizes))
-  if not core.greater_equal_shape(operand.shape, slice_sizes):
+  if not dyn and not all(map(operator.ge, operand.shape, slice_sizes)):
     msg = ("slice slice_sizes must be less than or equal to operand shape, "
            "got slice_sizes {} for operand shape {}.")
     raise TypeError(msg.format(slice_sizes, operand.shape))
-  if not all(core.greater_equal_dim(ssz, 0) for ssz in slice_sizes):
+  if not dyn and not all(ssz >= 0 for ssz in slice_sizes):
     msg = ("slice slice_sizes must be greater than or equal to zero, "
            "got slice_sizes of {}.")
     raise TypeError(msg.format(slice_sizes))
   if any(idx.ndim != 0 for idx in start_indices):
     raise TypeError("start_indices arguments to dynamic_slice must be scalars, "
                     f" got indices {start_indices}")
-  return tuple(slice_sizes)
+  return tuple(lax._merge_dyn_shape(slice_sizes, dyn))
 
-def _dynamic_slice_dtype_rule(operand, *start_indices, slice_sizes):
+def _dynamic_slice_dtype_rule(operand, *starts_and_dyn_sizes, slice_sizes):
+  start_indices, dyn = util.split_list(starts_and_dyn_sizes, [operand.ndim])
   if any(i.dtype != start_indices[0].dtype or
          not dtypes.issubdtype(i.dtype, np.integer) for i in start_indices):
     msg = ("index arguments to dynamic_slice must be integers of the same "
@@ -886,16 +1247,20 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
   # batching rule.
   # TODO(phawkins): consider removing dynamic_slice entirely and using gather
   # always.
-  operand, *start_indices = batched_args
-  operand_bd, *start_idx_bds = batch_dims
-  operand_shape = (operand.shape if operand_bd is batching.not_mapped
-                   else tuple(np.delete(operand.shape, operand_bd)))
-  dims = tuple(range(len(operand_shape)))
+  # TODO(mattjj): Alternately, we could add jnp.unstack and an unstack_p,
+  # since it should have easier rules (especially compared to gather).
+  operand, *start_indices_and_dyn = batched_args
+  operand_bd, *start_idx_and_dyn_bds = batch_dims
+  ndims = operand.ndim - (0 if operand_bd is batching.not_mapped else 1)
+  dims = tuple(range(ndims))
+  start_indices, dyn_slice_sizes = util.split_list(start_indices_and_dyn, [ndims])
+  start_idx_bds, dyn_slice_size_bds = util.split_list(start_idx_and_dyn_bds, [ndims])
   dnums = GatherDimensionNumbers(offset_dims=dims, collapsed_slice_dims=(),
                                  start_index_map=dims)
   index, index_bdim = _batch_dynamic_slice_indices(start_indices, start_idx_bds)
   return _gather_batching_rule(
-    [operand, index], [operand_bd, index_bdim], dimension_numbers=dnums,
+    [operand, index, *dyn_slice_sizes],
+    [operand_bd, index_bdim, *dyn_slice_size_bds], dimension_numbers=dnums,
     slice_sizes=slice_sizes, unique_indices=True, indices_are_sorted=True,
     mode=GatherScatterMode.PROMISE_IN_BOUNDS, fill_value=None)
 
@@ -910,7 +1275,7 @@ def _dynamic_slice_staging_rule(trace, x, *starts_and_dyn_sizes, slice_sizes):
                                      *starts_and_dyn_sizes,
                                      slice_sizes=slice_sizes)
 
-def _dynamic_slice_typecheck_rule(x, *starts_and_dyn_sizes, slice_sizes):
+def _dynamic_slice_typecheck_rule(_, x, *starts_and_dyn_sizes, slice_sizes):
   start_indices, dyn = util.split_list(starts_and_dyn_sizes, [x.aval.ndim])
   if not dyn:
     out_aval, effects = dynamic_slice_p.abstract_eval(
@@ -972,7 +1337,7 @@ def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
     msg = ("dynamic_update_slice start_indices must have length equal to the "
            "rank of operand, got indices {} for operand shape {}.")
     raise TypeError(msg.format(start_indices, operand.shape))
-  if not core.greater_equal_shape(operand.shape, update.shape):
+  if not all(map(operator.ge, operand.shape, update.shape)):
     msg = ("dynamic_update_slice update shape must be smaller than operand "
            "shape, got update shape {} for operand shape {}.")
     raise TypeError(msg.format(update.shape, operand.shape))
@@ -982,8 +1347,7 @@ def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
   return operand.shape
 
 def _dynamic_update_slice_dtype_rule(operand, update, *start_indices):
-  lax._check_same_dtypes("dynamic_update_slice", False, operand.dtype,
-                         update.dtype)
+  lax.check_same_dtypes("dynamic_update_slice", operand, update)
   if any(i.dtype != start_indices[0].dtype or
          not dtypes.issubdtype(i.dtype, np.integer) for i in start_indices):
     msg = ("index arguments to dynamic_update_slice must be integers of the "
@@ -1035,11 +1399,12 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
                                   inserted_window_dims=(),
                                   scatter_dims_to_operand_dims=dims)
   index, index_bdim = _batch_dynamic_slice_indices(start_idx, start_idx_bd)
-  return _scatter_batching_rule(
-    scatter, (operand, index, update), (operand_bd, index_bdim, update_bd),
-    update_jaxpr=None, update_consts=None, dimension_numbers=dnums,
-    indices_are_sorted=True, unique_indices=True,
-    mode=GatherScatterMode.CLIP)
+  return jax.vmap(
+    partial(scatter, dimension_numbers=dnums,
+            indices_are_sorted=True, unique_indices=True,
+            mode=GatherScatterMode.CLIP),
+    in_axes=(operand_bd, index_bdim, update_bd),
+    out_axes=0)(operand, index, update), 0
 
 
 dynamic_update_slice_p = standard_primitive(
@@ -1059,22 +1424,10 @@ def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
 mlir.register_lowering(dynamic_update_slice_p, _dynamic_update_slice_lower)
 
 
-def _gather_dimensions_proto(
-    indices_shape: Sequence[int], dimension_numbers: GatherDimensionNumbers
-) -> xla_client.GatherDimensionNumbers:
-  assert type(dimension_numbers) is GatherDimensionNumbers
-  proto = xla_client.GatherDimensionNumbers()
-  proto.offset_dims.extend(dimension_numbers.offset_dims)
-  proto.collapsed_slice_dims.extend(dimension_numbers.collapsed_slice_dims)
-  proto.start_index_map.extend(dimension_numbers.start_index_map)
-  assert len(indices_shape) > 0, indices_shape
-  proto.index_vector_dim = len(indices_shape) - 1
-  return proto
-
 def _gather_dtype_rule(operand, indices, *, fill_value, **kwargs):
   if not dtypes.issubdtype(indices.dtype, np.integer):
     raise ValueError("indices must have an integer type")
-  return dtypes.canonicalize_dtype(operand.dtype, allow_opaque_dtype=True)
+  return dtypes.canonicalize_dtype(operand.dtype, allow_extended_dtype=True)
 
 _rank = lambda arr: len(arr.shape)
 
@@ -1124,13 +1477,6 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
     raise TypeError(f"Gather index leaf dimension must be within [0, rank("
                     f"indices) + 1). rank(indices) is {_rank(indices)} and "
                     f"gather index leaf dimension is {index_vector_dim}.")
-
-  expanded_indices_shape = list(indices.shape)
-
-  # This case should never happen in JAX, due to the implicit construction of
-  # index_vector_dim, but is included for completeness.
-  if len(expanded_indices_shape) == index_vector_dim:
-    expanded_indices_shape.append(1)
 
   # Start ValidateGatherDimensions
   # In the error messages output by XLA, "offset_dims" is called "Output window
@@ -1192,8 +1538,8 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
     slice_size = slice_sizes[i]
     corresponding_input_size = operand.shape[i]
 
-    if not (core.greater_equal_dim(slice_size, 0) and
-            core.greater_equal_dim(corresponding_input_size, slice_size)):
+    if not (slice_size >= 0 and
+            corresponding_input_size >= slice_size):
       raise TypeError(f"Slice size at index {i} in gather op is out of range, "
                       f"must be within [0, {corresponding_input_size} + 1), "
                       f"got {slice_size}.")
@@ -1205,13 +1551,31 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
                       f"but bound is {bound} for index "
                       f"{collapsed_slice_dims[i]} at position {i}.")
 
-  expanded_indices_shape.pop(index_vector_dim)
-  indices_shape = iter(expanded_indices_shape)
+  return _gather_shape_computation(indices, dimension_numbers, slice_sizes)
 
-  slice_sizes = (s for i, s in enumerate(slice_sizes)
-                 if i not in collapsed_slice_dims)
-  return tuple(next(slice_sizes) if i in offset_dims
-               else next(indices_shape) for i in range(output_shape_rank))
+
+def _gather_shape_computation(indices, dimension_numbers, slice_sizes):
+  offset_dims = dimension_numbers.offset_dims
+  collapsed_slice_dims = dimension_numbers.collapsed_slice_dims
+  output_shape_rank = len(offset_dims) + _rank(indices) - 1
+
+  index_vector_dim = _rank(indices) - 1
+  expanded_indices_shape = list(indices.shape)
+
+  # This case should never happen in JAX, due to the implicit construction of
+  # index_vector_dim, but is included for completeness.
+  if len(expanded_indices_shape) == index_vector_dim:
+    expanded_indices_shape.append(1)
+
+  expanded_indices_shape.pop(index_vector_dim)
+
+  indices_shape_gen = iter(expanded_indices_shape)
+
+  slice_sizes_gen = (s for i, s in enumerate(slice_sizes)
+                     if i not in collapsed_slice_dims)
+  ans = tuple(next(slice_sizes_gen) if i in offset_dims
+              else next(indices_shape_gen) for i in range(output_shape_rank))
+  return ans
 
 
 def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
@@ -1278,11 +1642,12 @@ def _gather_transpose_rule(t, operand, indices, *, dimension_numbers,
 def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
                           slice_sizes, unique_indices, indices_are_sorted,
                           mode, fill_value):
-  operand, indices = batched_args
-  operand_bdim, indices_bdim = batch_dims
+  operand, indices, *dyn_slice_sizes = batched_args
+  operand_bdim, indices_bdim, *dyn_slice_size_bds = batch_dims
+  dyn_slice_size_bounds = [b.dtype.bound for b in dyn_slice_sizes]
 
   if operand_bdim is not None and indices_bdim is None:
-    operand = batching.moveaxis(operand, operand_bdim, 0)
+    operand, operand_bdim = batching.move_stacked_axis(operand, operand_bdim, 0)
     slice_sizes = (operand.shape[0],) + slice_sizes
     offset_dims = (0,) + tuple(np.add(1, dimension_numbers.offset_dims))
     collapsed_slice_dims = tuple(np.add(1, dimension_numbers.collapsed_slice_dims))
@@ -1291,10 +1656,32 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
         offset_dims=offset_dims,
         collapsed_slice_dims=collapsed_slice_dims,
         start_index_map=start_index_map)
-    return gather(operand, indices, dimension_numbers=dnums,
-                  slice_sizes=slice_sizes, unique_indices=unique_indices,
-                  indices_are_sorted=indices_are_sorted, mode=mode,
-                  fill_value=fill_value), 0
+    if isinstance(operand_bdim, batching.RaggedAxis):
+      ragged_slice_sizes = batching.bdim_as_shape(operand_bdim, slice_sizes)
+      for orig, fabricated in zip(
+          lax._merge_dyn_shape(slice_sizes, dyn_slice_sizes),
+          ragged_slice_sizes):
+        if isinstance(fabricated, batching.IndexedAxisSize):
+          if not core.same_referent(orig, fabricated.lengths):
+            # Don't know what to do when slicing a ragged dimension with a
+            # different size.  To wit, if the client tries to index outside the
+            # ragged size, the resulting element should be determined by the
+            # out of bounds `mode`, but the underlying gather will only do that
+            # if the client tries to index outside the _padded_ array.  I guess
+            # we should read the mode and apply a mask that writes the correct
+            # fill element into all out-of-bounds locations?
+            raise NotImplementedError
+      bdim_out = batching.shape_as_bdim(
+          operand_bdim.stacked_axis,
+          _gather_shape_computation(indices, dnums, ragged_slice_sizes))
+    else:
+      bdim_out = operand_bdim
+    return gather(
+        operand, indices, dimension_numbers=dnums,
+        slice_sizes=lax._merge_dyn_shape(slice_sizes, dyn_slice_size_bounds),
+        unique_indices=unique_indices,
+        indices_are_sorted=indices_are_sorted, mode=mode,
+        fill_value=fill_value), bdim_out
 
   elif operand_bdim is None and indices_bdim is not None:
     indices = batching.moveaxis(indices, indices_bdim, 0)
@@ -1319,7 +1706,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
     # the number of slices is zero. Likely the best fix would be to change the
     # definition of gather() so it can be batched without the construction of
     # an explicit iota of size-1 slices.
-    if core.symbolic_equal_dim(operand.shape[0], 0):
+    if core.definitely_equal(operand.shape[0], 0):
       output_shape = _gather_shape_rule(
           core.ShapedArray(operand.shape[1:], operand.dtype),
           core.ShapedArray(indices.shape[1:],
@@ -1333,10 +1720,12 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
     # indices shape (7, 3, 4, 5). We transform that to indices of shape
     # (7, 3, 4, 6) where we concatenated an iota that counts along our batch
     # dimension to the front of the ndindex.
+    index_dtype = _promote_dtype_for_size(indices.dtype, indices.shape[0])
     count_shape = list(indices.shape)
     count_shape[-1] = 1
-    counts = lax.broadcasted_iota(indices.dtype, tuple(count_shape), 0)
-    indices = lax.concatenate([counts, indices], len(count_shape) - 1)
+    counts = lax.broadcasted_iota(index_dtype, tuple(count_shape), 0)
+    indices = lax.concatenate([counts, indices.astype(index_dtype)],
+                              len(count_shape) - 1)
 
     slice_sizes = (1,) + slice_sizes
     collapsed_slice_dims = (0,) + tuple(np.add(1, dimension_numbers.collapsed_slice_dims))
@@ -1351,6 +1740,21 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
                   slice_sizes=slice_sizes, unique_indices=unique_indices,
                   indices_are_sorted=indices_are_sorted, mode=mode,
                   fill_value=fill_value), 0
+
+def _promote_dtype_for_size(dtype, size):
+  if not dtypes.issubdtype(dtype, np.integer):
+    return dtype
+  # size may be a dynamic shape, in which case we return at least int32
+  try:
+    size = int(size)
+  except:
+    return dtype if np.iinfo(dtype).bits >= 32 else np.dtype('int32')
+  if size <= np.iinfo(dtype).max:
+    return dtype
+  elif size <= np.iinfo(np.int32).max:
+    return np.dtype('int32')
+  else:
+    return dtypes.canonicalize_dtype(np.int64)
 
 def _gather_pad_rule(in_avals, out_avals, operand, indices, *,
                      dimension_numbers, slice_sizes, unique_indices,
@@ -1373,15 +1777,36 @@ batching.primitive_batchers[gather_p] = _gather_batching_rule
 pe.padding_rules[gather_p] = _gather_pad_rule
 
 
+def _gather_lower_opaque(ctx, operand, indices, *,
+                         dimension_numbers, slice_sizes, unique_indices,
+                         indices_are_sorted, mode, fill_value) -> ir.Value:
+  aval_x, aval_indices = ctx.avals_in
+  aval_y, = ctx.avals_out
+  elt_shape = aval_x.dtype._rules.physical_element_aval(aval_x.dtype).shape
+  trailing_offset_dims = [aval_y.ndim + i for i in range(len(elt_shape))]
+  dimension_numbers = dimension_numbers._replace(
+      offset_dims=(*dimension_numbers.offset_dims, *trailing_offset_dims))
+  slice_sizes = (*slice_sizes, *elt_shape)
+  gather_lower = partial(
+      _gather_lower, dimension_numbers=dimension_numbers,
+      slice_sizes=slice_sizes, unique_indices=unique_indices,
+      indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
+  res, = mlir.delegate_lowering(
+      ctx, gather_lower, operand, indices,
+      avals_in=[core.physical_aval(aval_x), aval_indices],
+      avals_out=[core.physical_aval(aval_y)])
+  return res
+
 def _gather_lower(ctx, operand, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
                   indices_are_sorted, mode, fill_value):
   aval_out, = ctx.avals_out
-  if core.is_opaque_dtype(aval_out.dtype):
-    return [aval_out.dtype._rules.gather_mlir(
-        ctx, ctx.avals_in, aval_out, operand, indices, dimension_numbers=dimension_numbers,
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
+    return [_gather_lower_opaque(
+        ctx, operand, indices, dimension_numbers=dimension_numbers,
         slice_sizes=slice_sizes, unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)]
+        indices_are_sorted=indices_are_sorted, mode=mode,
+        fill_value=fill_value)]
 
   if mode == GatherScatterMode.FILL_OR_DROP:
     gather_fill_fn = mlir.lower_fun(_gather_fill, multiple_results=False)
@@ -1399,14 +1824,14 @@ def _gather_lower(ctx, operand, indices, *,
     offset_dims=list(dimension_numbers.offset_dims),
     start_index_map=list(dimension_numbers.start_index_map))
   if not core.is_constant_shape(slice_sizes):
-    slice_sizes = mlir.eval_dynamic_shape(ctx, slice_sizes)
+    slice_sizes = mlir.eval_dynamic_shape_as_tensor(ctx, slice_sizes)
     # TODO(burmako): Fix overly conservative type inference of DynamicGatherOp.
     # For now use the build_generic so that we can specify the result type.
     # return hlo.DynamicGatherOp(
     #     operand, indices, mlir.shape_tensor(slice_sizes),
     #     dnums, indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
     results = [mlir.aval_to_ir_type(aval_out)]
-    operands = [operand, indices, mlir.shape_tensor(slice_sizes)]
+    operands = [operand, indices, slice_sizes]
     attributes = {
         "dimension_numbers": dnums,
         "indices_are_sorted": ir.BoolAttr.get(indices_are_sorted)
@@ -1414,33 +1839,20 @@ def _gather_lower(ctx, operand, indices, *,
     return hlo.DynamicGatherOp.build_generic(
         results=results, operands=operands, attributes=attributes).results
   else:
-    return hlo.GatherOp(
+    return [hlo.gather(
         operand,
         indices,
         dnums,
         mlir.dense_int_elements(slice_sizes),
-        indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
+        indices_are_sorted=ir.BoolAttr.get(indices_are_sorted))]
 
 mlir.register_lowering(gather_p, _gather_lower)
-
-def _scatter_dimensions_proto(
-    indices_shape: Sequence[int], dimension_numbers: ScatterDimensionNumbers
-) -> xla_client.ScatterDimensionNumbers:
-  assert type(dimension_numbers) is ScatterDimensionNumbers
-  proto = xla_client.ScatterDimensionNumbers()
-  proto.update_window_dims.extend(dimension_numbers.update_window_dims)
-  proto.inserted_window_dims.extend(dimension_numbers.inserted_window_dims)
-  proto.scatter_dims_to_operand_dims.extend(
-      dimension_numbers.scatter_dims_to_operand_dims)
-  assert len(indices_shape) > 0, indices_shape
-  proto.index_vector_dim = len(indices_shape) - 1
-  return proto
 
 def _scatter_dtype_rule(operand, indices, updates, **kwargs):
   if not dtypes.issubdtype(indices.dtype, np.integer):
     raise ValueError("indices must have an integer type")
-  lax._check_same_dtypes("scatter", False, operand.dtype, updates.dtype)
-  return dtypes.canonicalize_dtype(operand.dtype)
+  lax.check_same_dtypes("scatter", operand, updates)
+  return dtypes.canonicalize_dtype(operand.dtype, allow_extended_dtype=True)
 
 def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
                         update_consts, dimension_numbers, indices_are_sorted,
@@ -1522,7 +1934,7 @@ def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
 
   for i in range(len(update_window_dims)):
     update_window_dim = update_window_dims[i]
-    if not core.greater_equal_dim(max_update_slice_sizes[i], updates.shape[update_window_dim]):
+    if max_update_slice_sizes[i] < updates.shape[update_window_dim]:
       raise TypeError(f"Bounds of the window dimensions of updates must not "
                       f"exceed the bounds of the corresponding dimensions of "
                       f"operand. For dimension {update_window_dim}, updates "
@@ -1536,7 +1948,7 @@ def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
   for i in update_scatter_dims:
     if scatter_dims_seen == index_vector_dim:
       scatter_dims_seen += 1
-    if not core.symbolic_equal_dim(updates.shape[i], expanded_indices_shape[scatter_dims_seen]):
+    if not core.definitely_equal(updates.shape[i], expanded_indices_shape[scatter_dims_seen]):
       raise TypeError(f"Bounds of the scatter dimensions of updates must be "
                       f"the same as the bounds of the corresponding dimensions "
                       f"of scatter indices. For scatter dimension {i}, updates "
@@ -1562,7 +1974,11 @@ def _clamp_scatter_indices(operand, indices, updates, *, dnums):
                                    for i in dnums.scatter_dims_to_operand_dims)
   # Stack upper_bounds into a Array[n]
   upper_bound = lax.shape_as_value(upper_bounds)
-  upper_bound = lax.min(upper_bound, np.iinfo(indices.dtype).max)
+  # This fix fails lax_test_no_jax_array
+  upper_bound = lax.min(upper_bound,
+                        lax.convert_element_type(np.uint64(np.iinfo(indices.dtype).max),
+                                                  np.int64))
+
   upper_bound = lax.broadcast_in_dim(upper_bound, indices.shape,
                                      (len(indices.shape) - 1,))
   return lax.clamp(np.int64(0), lax.convert_element_type(indices, np.int64),
@@ -1669,7 +2085,6 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
                            indices_are_sorted, unique_indices, mode):
   operand, indices, updates = batched_args
   operand_bdim, indices_bdim, updates_bdim = batch_dims
-  del update_jaxpr, update_consts  # Unused.
 
   # move the operand batch dim to the front if it is not None, otherwise create
   # it at the front (so that we can scatter into it)
@@ -1688,10 +2103,10 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
         update_window_dims=update_window_dims,
         inserted_window_dims=inserted_window_dims,
         scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
-    return scatter_op(
-      operand, indices, updates, dnums,
+    return scatter_op.bind(
+      operand, indices, updates, dimension_numbers=dnums,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=mode), 0
+      mode=mode, update_jaxpr=update_jaxpr, update_consts=update_consts), 0
 
 
   # see the third case in _gather_batching_rule for comparison and comments
@@ -1710,10 +2125,10 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
       update_window_dims=update_window_dims,
       inserted_window_dims=inserted_window_dims,
       scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
-  return scatter_op(
-      operand, indices, updates, dnums,
+  return scatter_op.bind(
+      operand, indices, updates, dimension_numbers=dnums,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
-      mode=mode), 0
+      mode=mode, update_jaxpr=update_jaxpr, update_consts=update_consts), 0
 
 scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
@@ -1721,7 +2136,7 @@ scatter_add_p = standard_primitive(
 ad.primitive_jvps[scatter_add_p] = _scatter_add_jvp
 ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
 batching.primitive_batchers[scatter_add_p] = (
-  partial(_scatter_batching_rule, scatter_add))
+  partial(_scatter_batching_rule, scatter_add_p))
 
 scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
@@ -1743,7 +2158,7 @@ ad.defjvp(scatter_mul_p,
           _scatter_mul_jvp_rhs)
 ad.primitive_transposes[scatter_mul_p] = _scatter_mul_transpose_rule
 batching.primitive_batchers[scatter_mul_p] = (
-  partial(_scatter_batching_rule, scatter_mul))
+  partial(_scatter_batching_rule, scatter_mul_p))
 
 def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
                           update_consts, dimension_numbers,
@@ -1850,19 +2265,21 @@ scatter_min_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-min',
     weak_type_rule=_argnum_weak_type(0))
 batching.primitive_batchers[scatter_min_p] = (
-  partial(_scatter_batching_rule, scatter_min))
+  partial(_scatter_batching_rule, scatter_min_p))
 ad.primitive_jvps[scatter_min_p] = partial(_scatter_extremal_jvp, scatter_min_p)
 
 scatter_max_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-max',
     weak_type_rule=_argnum_weak_type(0))
 batching.primitive_batchers[scatter_max_p] = (
-  partial(_scatter_batching_rule, scatter_max))
+  partial(_scatter_batching_rule, scatter_max_p))
 ad.primitive_jvps[scatter_max_p] = partial(_scatter_extremal_jvp, scatter_max_p)
 
 def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
                  dimension_numbers, indices_are_sorted, unique_indices,
                  mode):
+  if update_jaxpr is not None:
+    raise NotImplementedError("scatter_apply JVP not implemented")
   operand, indices, updates = primals
   g_operand, g_indices, g_updates = tangents
   dnums = dimension_numbers
@@ -1905,10 +2322,14 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
 
   # a) attach a positive ID to each update in `updates`, and perform a scatter
   #    on the IDs.
-  ids_shape = np.array(updates.shape, dtype=np.int64)
-  ids_shape[dnums.update_window_dims,] = 1
-  num_ids = np.prod(ids_shape)
-  id_dtype = np.uint32 if (num_ids + 1) < np.iinfo(np.uint32).max else np.uint64
+  ids_shape = list(updates.shape)
+  for update_dim in dnums.update_window_dims:
+    ids_shape[update_dim] = 1
+  num_ids = math.prod(ids_shape)
+  if core.is_constant_dim(num_ids):
+    id_dtype = np.uint32 if (num_ids + 1) < np.iinfo(np.uint32).max else np.uint64
+  else:
+    id_dtype = np.uint64
   update_ids = lax.add(lax.reshape(lax.iota(id_dtype, num_ids), ids_shape),
                        lax._ones(updates, dtype=id_dtype))
 
@@ -1973,12 +2394,10 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
     operand_t = update_t = None
     if ad.is_undefined_primal(operand):
       # Zero out gradient entries that correspond to updated indices.
-      mask = scatter(lax._ones(t, dtype=np.bool_), indices,
-                     lax.full(updates_shape, False),
-                     dimension_numbers=dimension_numbers,
-                     indices_are_sorted=indices_are_sorted,
-                     unique_indices=True, mode=mode)
-      operand_t = lax.select(mask, t, lax._zeros(t))
+      operand_t = scatter(t, indices, lax.full(updates_shape, 0, dtype=t.dtype),
+                          dimension_numbers=dimension_numbers,
+                          indices_are_sorted=indices_are_sorted,
+                          unique_indices=True, mode=mode)
 
     if ad.is_undefined_primal(updates):
       gather_dnums = GatherDimensionNumbers(
@@ -2005,19 +2424,53 @@ scatter_p = standard_primitive(
 ad.primitive_jvps[scatter_p] = _scatter_jvp
 ad.primitive_transposes[scatter_p] = _scatter_transpose_rule
 batching.primitive_batchers[scatter_p] = (
-  partial(_scatter_batching_rule, scatter))
+  partial(_scatter_batching_rule, scatter_p))
 
+
+def _scatter_lower_opaque(ctx, operand, indices, updates, *,
+                          update_jaxpr, update_consts, dimension_numbers,
+                          unique_indices, indices_are_sorted, mode):
+  aval_x, aval_indices, aval_updates = ctx.avals_in
+  aval_y, = ctx.avals_out
+  elt_shape = aval_x.dtype._rules.physical_element_aval(aval_x.dtype).shape
+  trailing_window_dims = [aval_updates.ndim + i for i in range(len(elt_shape))]
+  dimension_numbers = dimension_numbers._replace(
+      update_window_dims=(*dimension_numbers.update_window_dims,
+                          *trailing_window_dims))
+  scatter_lower = partial(
+      _scatter_lower, update_jaxpr=update_jaxpr, update_consts=update_consts,
+      dimension_numbers=dimension_numbers, unique_indices=unique_indices,
+      indices_are_sorted=indices_are_sorted, mode=mode)
+  res, = mlir.delegate_lowering(
+      ctx, scatter_lower, operand, indices, updates,
+      avals_in=[core.physical_aval(aval_x), aval_indices,
+                core.physical_aval(aval_updates)],
+      avals_out=[core.physical_aval(aval_y)])
+  return res
 
 
 def _scatter_lower(ctx, operand, indices, updates, *,
                    update_jaxpr, update_consts, dimension_numbers,
                    indices_are_sorted, unique_indices, mode):
+  if update_jaxpr is None:
+    assert not update_consts
+    operand_dtype = ctx.avals_in[0].dtype
+    update_jaxpr, update_consts = lax._reduction_jaxpr(
+        _scatter_reduction_computation, core.ShapedArray((), operand_dtype))
+
+  aval_out, = ctx.avals_out
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
+    return [_scatter_lower_opaque(
+        ctx, operand, indices, updates,
+        update_jaxpr=update_jaxpr, update_consts=update_consts,
+        dimension_numbers=dimension_numbers, unique_indices=unique_indices,
+        indices_are_sorted=indices_are_sorted, mode=mode)]
+
   if mode == GatherScatterMode.CLIP:
     clip_fn = mlir.lower_fun(_clamp_scatter_indices, multiple_results=False)
     (indices,), = clip_fn(ctx.replace(avals_out=None), operand, indices,
                           updates, dnums=dimension_numbers)
 
-  aval_out, = ctx.avals_out
   dnums = dimension_numbers
   scatter_dnums = hlo.ScatterDimensionNumbers.get(
     update_window_dims=list(dnums.update_window_dims),
@@ -2038,14 +2491,15 @@ def _scatter_lower(ctx, operand, indices, updates, *,
   scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), aval_out.dtype))
   update = op.update_computation.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(update):
-    update_ctx = ctx.module_context.replace(name_stack=util.new_name_stack())
+    update_ctx = ctx.module_context.replace(
+        name_stack=source_info_util.new_name_stack())
     if update_jaxpr.effects:
       raise NotImplementedError('Cannot lower effectful `scatter`.')
     out_nodes, _ = mlir.jaxpr_subcomp(
         update_ctx, update_jaxpr, mlir.TokenSet(), update_consts,
         (update.arguments[0],), (update.arguments[1],),
         dim_var_values=ctx.dim_var_values)
-    hlo.ReturnOp(util.flatten(out_nodes))
+    hlo.return_(util.flatten(out_nodes))
   return op.results
 
 mlir.register_lowering(scatter_p, _scatter_lower)
@@ -2101,20 +2555,20 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
     reducer = scatter.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer):
       add = hlo.AddOp(*reducer.arguments).result
-      hlo.ReturnOp([add])
+      hlo.return_([add])
     return scatter.result
 
-  real = _scatter(hlo.RealOp(operand).result, hlo.RealOp(updates).result)
-  imag = _scatter(hlo.ImagOp(operand).result, hlo.ImagOp(updates).result)
-  return hlo.ComplexOp(real, imag).results
+  real = _scatter(hlo.real(operand), hlo.real(updates))
+  imag = _scatter(hlo.imag(operand), hlo.imag(updates))
+  return [hlo.complex(real, imag)]
 
 mlir.register_lowering(scatter_add_p, _scatter_add_lower_gpu, platform="gpu")
 
 
 def _dynamic_slice_indices(
-    operand: Array,
-    start_indices: Union[Array, Sequence[ArrayLike]]
-  ) -> List[ArrayLike]:
+    operand: Union[Array, np.ndarray],
+    start_indices: Union[Union[Array, np.ndarray], Sequence[ArrayLike]]
+  ) -> list[ArrayLike]:
   # Normalize the start_indices w.r.t. operand.shape
   if len(start_indices) != operand.ndim:
     msg = ("Length of slice indices must match number of operand dimensions ({} "
@@ -2125,9 +2579,14 @@ def _dynamic_slice_indices(
       raise ValueError("Slice indices must be a 1D sequence, got {}"
                        .format(start_indices.shape))  # type: ignore[union-attr]
     start_indices = list(start_indices)
-  result: List[ArrayLike] = []
+  result: list[ArrayLike] = []
+  # Loop to correct for negative indices.
   for i, d in zip(start_indices, operand.shape):
-    # We test whether i and d are static to avoid unnecessary staging.
+    # If i is unsigned, then it cannot be negative.
+    if dtypes.issubdtype(_dtype(i), np.unsignedinteger):
+      result.append(i)
+      continue
+    # Test whether i and d are static to avoid unnecessary staging.
     if isinstance(i, (int, np.integer)) and core.is_constant_dim(d):
       result.append(lax.convert_element_type(i + d if i < 0 else i, _dtype(i)))
       continue

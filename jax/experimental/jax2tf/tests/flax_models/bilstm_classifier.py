@@ -170,13 +170,14 @@ class SimpleLSTM(nn.Module):
       split_rngs={'params': False})
   @nn.compact
   def __call__(self, carry, x):
-    return nn.OptimizedLSTMCell()(carry, x)
+    return nn.OptimizedLSTMCell(features=carry[0].shape[-1])(carry, x)
 
   @staticmethod
   def initialize_carry(batch_dims, hidden_size):
     # Use fixed random key since default state init fn is just zeros.
-    return nn.OptimizedLSTMCell.initialize_carry(
-        jax.random.PRNGKey(0), batch_dims, hidden_size)
+    return nn.OptimizedLSTMCell(hidden_size, parent=None).initialize_carry(
+        jax.random.PRNGKey(0), (batch_dims, 1)
+    )
 
 
 class SimpleBiLSTM(nn.Module):

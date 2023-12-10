@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+from collections.abc import Sequence
 import functools
 import itertools
 import operator
 import textwrap
-from typing import Callable, Dict, List, Sequence, Tuple
+from typing import Callable
 
 import scipy.ndimage
 
 from jax._src import api
 from jax._src import util
 from jax import lax
-from jax._src.numpy import lax_numpy as jnp
+import jax.numpy as jnp
 from jax._src.numpy.util import _wraps
 from jax._src.typing import ArrayLike, Array
 from jax._src.util import safe_zip as zip
@@ -44,7 +44,7 @@ def _mirror_index_fixer(index: Array, size: int) -> Array:
 def _reflect_index_fixer(index: Array, size: int) -> Array:
     return jnp.floor_divide(_mirror_index_fixer(2*index+1, 2*size+1) - 1, 2)
 
-_INDEX_FIXERS: Dict[str, Callable[[Array, int], Array]] = {
+_INDEX_FIXERS: dict[str, Callable[[Array, int], Array]] = {
     'constant': lambda index, size: index,
     'nearest': lambda index, size: jnp.clip(index, 0, size - 1),
     'wrap': lambda index, size: index % size,
@@ -57,13 +57,13 @@ def _round_half_away_from_zero(a: Array) -> Array:
   return a if jnp.issubdtype(a.dtype, jnp.integer) else lax.round(a)
 
 
-def _nearest_indices_and_weights(coordinate: Array) -> List[Tuple[Array, ArrayLike]]:
+def _nearest_indices_and_weights(coordinate: Array) -> list[tuple[Array, ArrayLike]]:
   index = _round_half_away_from_zero(coordinate).astype(jnp.int32)
   weight = coordinate.dtype.type(1)
   return [(index, weight)]
 
 
-def _linear_indices_and_weights(coordinate: Array) -> List[Tuple[Array, ArrayLike]]:
+def _linear_indices_and_weights(coordinate: Array) -> list[tuple[Array, ArrayLike]]:
   lower = jnp.floor(coordinate)
   upper_weight = coordinate - lower
   lower_weight = 1 - upper_weight

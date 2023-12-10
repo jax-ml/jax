@@ -25,7 +25,7 @@ from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax._src import test_util as jtu
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 
@@ -166,7 +166,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
 
     model = tf.Module()
     model._variables = tf.nest.flatten(params_vars)
-    model.f = tf.function(prediction_tf, jit_compile=True)
+    model.f = tf.function(prediction_tf, jit_compile=True, autograph=False)
 
     x = np.array(0.7, dtype=jnp.float32)
     self.assertAllClose(model.f(x), model_jax(params, x))
@@ -291,8 +291,8 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
   # Test does not work on GPU/TPU; would need something like TPU inference
   # converter to separate the model on what needs to run on CPU or accelerator.
   @jtu.skip_on_devices("gpu", "tpu")
-  def test_tf_mix_jax_with_uncompileable(self):
-    """Show how to combine TF-uncompileable code with compiled JAX-converted code."""
+  def test_tf_mix_jax_with_uncompilableble(self):
+    """Show how to combine TF-uncompilableble code with compiled JAX-converted code."""
     def tf_fn(x_str, compute_tf_fn=lambda x: x):
       # Some TF preprocessing code that cannot be compiled with XLA because it
       # uses strings.
@@ -306,13 +306,13 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(
         Exception,
         "Detected unsupported operations when trying to compile graph"):
-      tf.function(tf_fn, jit_compile=True)(x_str)
+      tf.function(tf_fn, jit_compile=True, autograph=False)(x_str)
 
     # Plug in the TF-compiled JAX-converted `compute_jax_fn`.
     composed_fn = lambda x_str: tf_fn(
         x_str,
         compute_tf_fn=tf.function(jax2tf.convert(jnp.sin),
-                                  autograph=True,
+                                  autograph=False,
                                   jit_compile=True))
     res_tf = composed_fn(x_str)
     self.assertAllClose(res_tf.numpy(),

@@ -14,6 +14,7 @@
 
 import contextlib
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -25,25 +26,19 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax import experimental
-from jax.config import config
+from jax import config
+from jax._src import core
 from jax._src import distributed
-import jax.numpy as jnp
+from jax._src import maps
 from jax._src import test_util as jtu
 from jax._src import util
-from jax.experimental import global_device_array
-from jax.experimental import maps
 from jax.experimental import pjit
+import jax.numpy as jnp
 
 try:
   import portpicker
 except ImportError:
   portpicker = None
-
-try:
-  import pytest
-except ImportError:
-  pytest = None
 
 config.parse_flags_with_absl()
 
@@ -54,7 +49,7 @@ class DistributedTest(jtu.JaxTestCase):
   # is fixed.
   @unittest.SkipTest
   def testInitializeAndShutdown(self):
-    if jtu.device_under_test() != 'gpu':
+    if not jtu.test_device_matches(['gpu']):
       self.skipTest('Test only works with GPUs.')
     # Tests the public APIs. Since they use global state, we cannot use
     # concurrency to simulate multiple tasks.
@@ -67,7 +62,7 @@ class DistributedTest(jtu.JaxTestCase):
 
   @parameterized.parameters([1, 2, 4])
   def testConcurrentInitializeAndShutdown(self, n):
-    if jtu.device_under_test() != 'gpu':
+    if not jtu.test_device_matches(['gpu']):
       self.skipTest('Test only works with GPUs.')
     port = portpicker.pick_unused_port()
     def task(i):
@@ -89,7 +84,7 @@ class DistributedTest(jtu.JaxTestCase):
 class MultiProcessGpuTest(jtu.JaxTestCase):
 
   def test_gpu_distributed_initialize(self):
-    if jtu.device_under_test() != 'gpu':
+    if not jtu.test_device_matches(['gpu']):
       raise unittest.SkipTest('Tests only for GPU.')
 
     port = portpicker.pick_unused_port()
@@ -135,7 +130,7 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
 
   def test_distributed_jax_visible_devices(self):
     """Test jax_visible_devices works in distributed settings."""
-    if jtu.device_under_test() != 'gpu':
+    if not jtu.test_device_matches(['gpu']):
       raise unittest.SkipTest('Tests only for GPU.')
 
     port = portpicker.pick_unused_port()
@@ -180,21 +175,57 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
 
       try:
         for proc in subprocesses:
-          out, _ = proc.communicate()
-          self.assertEqual(proc.returncode, 0)
+          out, err = proc.communicate()
+          self.assertEqual(proc.returncode, 0, msg=f"Process failed:\n\n{err}")
           self.assertRegex(out, f'{num_gpus_per_task},{num_gpus},\\[{num_gpus}.\\]$')
       finally:
         for proc in subprocesses:
           proc.kill()
 
+  def test_gpu_ompi_distributed_initialize(self):
+    if not jtu.test_device_matches(['gpu']):
+      raise unittest.SkipTest('Tests only for GPU.')
+    if shutil.which('mpirun') is None:
+      raise unittest.SkipTest('Tests only for MPI (mpirun not found).')
+
+    num_gpus = 4
+    num_gpus_per_task = 1
+
+    with contextlib.ExitStack() as exit_stack:
+      args = [
+          'mpirun',
+          '--oversubscribe',
+          '--allow-run-as-root',
+          '-n',
+          str(num_gpus),
+          sys.executable,
+          '-c',
+          ('import jax, os; '
+          'jax.distributed.initialize(); '
+          'print(f\'{jax.local_device_count()},{jax.device_count()}\' if jax.process_index() == 0 else \'\', end="")'
+          )
+      ]
+      env = os.environ.copy()
+      # In case the job was launched via Slurm,
+      # prevent OpenMPI from detecting Slurm environment
+      env.pop('SLURM_JOBID', None)
+      proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, universal_newlines=True)
+      proc = exit_stack.enter_context(proc)
+
+      try:
+        out, _ = proc.communicate()
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
+      finally:
+        proc.kill()
+
+
 @unittest.skipIf(
     os.environ.get("SLURM_JOB_NUM_NODES", None) != "2",
     "Slurm environment with at least two nodes needed!")
-@unittest.skipIf(not pytest, "Test requires pytest markers")
+@jtu.pytest_mark_if_available('SlurmMultiNodeGpuTest')
 class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
-
-  if pytest is not None:
-    pytestmark = pytest.mark.SlurmMultiNodeGpuTest
 
   def sorted_devices(self):
     devices = sorted(jax.devices(), key=lambda d: (d.id, d.host_id))
@@ -224,19 +255,16 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     #   13 15
     assert [d.id for d in device_mesh.flat
            ] == [0, 2, 4, 6, 1, 3, 5, 7, 8, 10, 12, 14, 9, 11, 13, 15]
-    return maps.Mesh(device_mesh, ("x", "y"))
+    return jax.sharding.Mesh(device_mesh, ("x", "y"))
 
   def setUp(self):
     super().setUp()
-    self.xmap_spmd_lowering_enabled = jax.config.experimental_xmap_spmd_lowering
+    self.xmap_spmd_lowering_enabled = maps.SPMD_LOWERING.value
     jax.config.update("experimental_xmap_spmd_lowering", True)
-    self.gda_enabled = jax.config.jax_parallel_functions_output_gda
-    jax.config.update('jax_parallel_functions_output_gda', True)
 
   def tearDown(self):
     jax.config.update("experimental_xmap_spmd_lowering",
                       self.xmap_spmd_lowering_enabled)
-    jax.config.update('jax_parallel_functions_output_gda', self.gda_enabled)
     super().tearDown()
 
   def test_gpu_multi_node_initialize_and_psum(self):
@@ -293,8 +321,6 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     self.assertEqual(y[0], jax.device_count())
     print(y)
 
-  # TODO(sudhakarsingh27): To change/omit test in favor of using `Array`
-  # since `GlobalDeviceArray` is going to be deprecated in the future
   def test_pjit_gda_multi_input_multi_output(self):
     jax.distributed.initialize()
     global_mesh = jtu.create_global_mesh((8, 2), ("x", "y"))
@@ -305,52 +331,44 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     def cb(index):
       return global_input_data[index]
 
-    mesh_axes1 = experimental.PartitionSpec("x", "y")
-    gda1 = global_device_array.GlobalDeviceArray.from_callback(
-        global_input_shape, global_mesh, mesh_axes1, cb)
-    mesh_axes2 = experimental.PartitionSpec("x")
-    gda2 = global_device_array.GlobalDeviceArray.from_callback(
-        global_input_shape, global_mesh, mesh_axes2, cb)
-    mesh_axes3 = experimental.PartitionSpec(("x", "y"))
-    gda3 = global_device_array.GlobalDeviceArray.from_callback(
-        global_input_shape, global_mesh, mesh_axes3, cb)
+    mesh_axes1 = jax.sharding.PartitionSpec("x", "y")
+    gda1 = jax.make_array_from_callback(
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes1), cb)
+    mesh_axes2 = jax.sharding.PartitionSpec("x")
+    gda2 = jax.make_array_from_callback(
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes2), cb)
+    mesh_axes3 = jax.sharding.PartitionSpec(("x", "y"))
+    gda3 = jax.make_array_from_callback(
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes3), cb)
 
-    with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
+    with jax.sharding.Mesh(global_mesh.devices, global_mesh.axis_names):
 
       @functools.partial(
           pjit.pjit,
-          # `FROM_GDA` will be replicated for all the inputs.
-          in_axis_resources=pjit.FROM_GDA,
-          out_axis_resources=(mesh_axes1, None, mesh_axes2))
+          out_shardings=(mesh_axes1, None, mesh_axes2))
       def f(x, y, z):
         return x @ x.T, y, z
 
       out1, out2, out3 = f(gda1, gda2, gda3)
 
-      self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
       self.assertEqual(out1.shape, (16, 16))
       self.assertEqual(out1.addressable_shards[0].data.shape, (2, 8))
-      self.assertDictEqual(out1.mesh.shape, {"x": 8, "y": 2})
       expected_matrix_mul = global_input_data @ global_input_data.T
       for s in out1.addressable_shards:
         np.testing.assert_array_equal(np.asarray(s.data),
                                       expected_matrix_mul[s.index])
 
-      self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
       self.assertEqual(out2.shape, (16, 2))
       self.assertEqual(out2.addressable_shards[0].data.shape, (16, 2))
       for s in out2.addressable_shards:
         np.testing.assert_array_equal(np.asarray(s.data), global_input_data)
 
-      self.assertIsInstance(out3, global_device_array.GlobalDeviceArray)
       self.assertEqual(out3.shape, (16, 2))
       self.assertEqual(out3.addressable_shards[0].data.shape, (2, 2))
       for s in out3.addressable_shards:
         np.testing.assert_array_equal(np.asarray(s.data),
                                       global_input_data[s.index])
 
-  # TODO(sudhakarsingh27): To change/omit test in favor of using `Array`
-  # since `GlobalDeviceArray` is going to be deprecated in the future
   def test_pjit_gda_non_contiguous_mesh(self):
     jax.distributed.initialize()
     devices = self.sorted_devices()
@@ -362,17 +380,17 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     #   The process-gpu mapping is random: @sudhakarsingh27 to figure out why so
     # and the data is:
     #   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
-    global_mesh = maps.Mesh(mesh_devices, ("x",))
+    global_mesh = jax.sharding.Mesh(mesh_devices, ("x",))
     global_input_shape = (16,)
-    mesh_axes = experimental.PartitionSpec("x")
+    mesh_axes = jax.sharding.PartitionSpec("x")
     global_input_data = np.arange(
         util.prod(global_input_shape)).reshape(global_input_shape)
 
     def cb(index):
       return global_input_data[index]
 
-    gda1 = global_device_array.GlobalDeviceArray.from_callback(
-        global_input_shape, global_mesh, mesh_axes, cb)
+    gda1 = jax.make_array_from_callback(
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes), cb)
 
     # device_id -> (index, replica_id)
     expected_idx_rid = {
@@ -394,10 +412,8 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
         15: ((slice(15, 16),), 0),
     }
 
-    with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
-      f = pjit.pjit(lambda x: x,
-                    in_axis_resources=pjit.FROM_GDA,
-                    out_axis_resources=mesh_axes)
+    with jax.sharding.Mesh(global_mesh.devices, global_mesh.axis_names):
+      f = pjit.pjit(lambda x: x, out_shardings=mesh_axes)
       out = f(gda1)
       for s in out.addressable_shards:
         device_id = s.device.id
@@ -409,21 +425,19 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
         np.testing.assert_array_equal(np.asarray(s.data),
                                       global_input_data[expected_index])
 
-  # TODO(sudhakarsingh27): To change/omit test in favor of using `Array`
-  # since `GlobalDeviceArray` is going to be deprecated in the future
   def test_pjit_gda_non_contiguous_mesh_2d(self):
     jax.distributed.initialize()
     global_mesh = self.create_2d_non_contiguous_mesh()
     global_input_shape = (16, 2)
-    mesh_axes = experimental.PartitionSpec("x", "y")
+    mesh_axes = jax.sharding.PartitionSpec("x", "y")
     global_input_data = np.arange(
         util.prod(global_input_shape)).reshape(global_input_shape)
 
     def cb(index):
       return global_input_data[index]
 
-    gda1 = global_device_array.GlobalDeviceArray.from_callback(
-        global_input_shape, global_mesh, mesh_axes, cb)
+    gda1 = jax.make_array_from_callback(
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes), cb)
 
     # device_id -> (index, replica_id)
     expected_idx_rid = {
@@ -446,9 +460,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     }
 
     with global_mesh:
-      f = pjit.pjit(lambda x: x,
-                    in_axis_resources=pjit.FROM_GDA,
-                    out_axis_resources=mesh_axes)
+      f = pjit.pjit(lambda x: x, out_shardings=mesh_axes)
       out = f(gda1)
 
       for s in out.addressable_shards:
@@ -462,70 +474,64 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
                                       global_input_data[expected_index])
 
     with global_mesh:
-      f = pjit.pjit(lambda x: x,
-                    in_axis_resources=experimental.PartitionSpec(None),
-                    out_axis_resources=mesh_axes)
+      f = pjit.pjit(
+          lambda x: x,
+          in_shardings=jax.sharding.PartitionSpec(None),
+          out_shardings=mesh_axes,
+      )
       # Fully replicated values allows a non-contiguous mesh.
       out = f(global_input_data)
-      self.assertIsInstance(out, global_device_array.GlobalDeviceArray)
 
     with global_mesh:
-      f = pjit.pjit(lambda x: x,
-                    in_axis_resources=None,
-                    out_axis_resources=mesh_axes)
+      f = pjit.pjit(lambda x: x, in_shardings=None, out_shardings=mesh_axes)
       # Fully replicated values allows a non-contiguous mesh.
       out = f(global_input_data)
-      self.assertIsInstance(out, global_device_array.GlobalDeviceArray)
 
-    gda2 = global_device_array.GlobalDeviceArray.from_callback(
-        global_input_shape, global_mesh, experimental.PartitionSpec(None), cb)
+    gda2 = jax.make_array_from_callback(
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, jax.sharding.PartitionSpec(None)), cb)
 
     with global_mesh:
-      f = pjit.pjit(lambda x, y: (x, y),
-                    in_axis_resources=(None, None),
-                    out_axis_resources=(mesh_axes, mesh_axes))
+      f = pjit.pjit(
+          lambda x, y: (x, y),
+          in_shardings=(None, None),
+          out_shardings=(mesh_axes, mesh_axes),
+      )
       # Fully replicated values + GDA allows a non-contiguous mesh.
       out1, out2 = f(global_input_data, gda2)
-      self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
-      self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
 
-  # TODO(sudhakarsingh27): To change/omit test in favor of using `Array`
-  # since `GlobalDeviceArray` is going to be deprecated in the future
   def test_pjit_gda_non_contiguous_mesh_2d_aot(self):
     jax.distributed.initialize()
     global_mesh = self.create_2d_non_contiguous_mesh()
     global_input_shape = (8, 2)
-    mesh_axes = experimental.PartitionSpec("x", "y")
+    mesh_axes = jax.sharding.PartitionSpec("x", "y")
     global_input_data = np.arange(
         util.prod(global_input_shape)).reshape(global_input_shape)
-    gda1 = global_device_array.GlobalDeviceArray.from_callback(
-        global_input_shape, global_mesh, mesh_axes,
+    gda1 = jax.make_array_from_callback(
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes),
         lambda idx: global_input_data[idx])
 
     with global_mesh:
-      f = pjit.pjit(lambda x, y: (x, y),
-                    in_axis_resources=experimental.PartitionSpec("x", "y"),
-                    out_axis_resources=experimental.PartitionSpec("x", "y"))
-      inp_aval = jax.ShapedArray((8, 2), jnp.int32)
+      f = pjit.pjit(
+          lambda x, y: (x, y),
+          in_shardings=jax.sharding.PartitionSpec("x", "y"),
+          out_shardings=jax.sharding.PartitionSpec("x", "y"),
+      )
+      inp_aval = core.ShapedArray((8, 2), jnp.int32)
       # `ShapedArray` is considered global when lowered and compiled.
       # Hence it can bypass the contiguous mesh restriction.
-      compiled = f.lower(inp_aval, gda1, _global_avals=True).compile()
+      compiled = f.lower(inp_aval, gda1).compile()
       out1, out2 = compiled(gda1, gda1)
-      self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
       self.assertEqual(out1.shape, (8, 2))
-      self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
       self.assertEqual(out2.shape, (8, 2))
 
-  # TODO(sudhakarsingh27): To change/omit test in favor of using `Array`
-  # since `GlobalDeviceArray` is going to be deprecated in the future
   def test_pjit_gda_eval_shape(self):
     jax.distributed.initialize()
 
     with jtu.create_global_mesh((16,), ("x")):
 
       @functools.partial(pjit.pjit,
-                         in_axis_resources=experimental.PartitionSpec(None),
-                         out_axis_resources=experimental.PartitionSpec("x"))
+                         in_shardings=jax.sharding.PartitionSpec(None),
+                         out_shardings=jax.sharding.PartitionSpec("x"))
       def f():
         return jnp.zeros([32, 10])
 

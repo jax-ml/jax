@@ -1,7 +1,7 @@
 .. currentmodule:: jax.profiler
 
-jax.profiler module
-===================
+``jax.profiler`` module
+=======================
 
 .. automodule:: jax.profiler
 

@@ -21,8 +21,7 @@ import scipy.stats as osp_stats
 
 import jax.numpy as jnp
 from jax import jit, lax, random, vmap
-from jax._src.numpy.lax_numpy import _check_arraylike, _promote_dtypes_inexact
-from jax._src.numpy.util import _wraps
+from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact, _wraps
 from jax._src.tree_util import register_pytree_node_class
 from jax.scipy import linalg, special
 
@@ -38,7 +37,7 @@ class gaussian_kde:
   inv_cov: Any
 
   def __init__(self, dataset, bw_method=None, weights=None):
-    _check_arraylike("gaussian_kde", dataset)
+    check_arraylike("gaussian_kde", dataset)
     dataset = jnp.atleast_2d(dataset)
     if jnp.issubdtype(lax.dtype(dataset), jnp.complexfloating):
       raise NotImplementedError("gaussian_kde does not support complex data")
@@ -47,8 +46,8 @@ class gaussian_kde:
 
     d, n = dataset.shape
     if weights is not None:
-      _check_arraylike("gaussian_kde", weights)
-      dataset, weights = _promote_dtypes_inexact(dataset, weights)
+      check_arraylike("gaussian_kde", weights)
+      dataset, weights = promote_dtypes_inexact(dataset, weights)
       weights = jnp.atleast_1d(weights)
       weights /= jnp.sum(weights)
       if weights.ndim != 1:
@@ -56,7 +55,7 @@ class gaussian_kde:
       if len(weights) != n:
         raise ValueError("`weights` input should be of length n")
     else:
-      dataset, = _promote_dtypes_inexact(dataset)
+      dataset, = promote_dtypes_inexact(dataset)
       weights = jnp.full(n, 1.0 / n, dtype=dataset.dtype)
 
     self._setattr("dataset", dataset)
@@ -116,7 +115,7 @@ class gaussian_kde:
 
   @_wraps(osp_stats.gaussian_kde.evaluate, update_doc=False)
   def evaluate(self, points):
-    _check_arraylike("evaluate", points)
+    check_arraylike("evaluate", points)
     points = self._reshape_points(points)
     result = _gaussian_kernel_eval(False, self.dataset.T, self.weights[:, None],
                                    points.T, self.inv_cov)
@@ -132,9 +131,9 @@ class gaussian_kde:
     cov = jnp.atleast_2d(cov)
 
     if mean.shape != (self.d,):
-      raise ValueError("mean does not have dimension {}".format(self.d))
+      raise ValueError(f"mean does not have dimension {self.d}")
     if cov.shape != (self.d, self.d):
-      raise ValueError("covariance does not have dimension {}".format(self.d))
+      raise ValueError(f"covariance does not have dimension {self.d}")
 
     chol = linalg.cho_factor(self.covariance + cov)
     norm = jnp.sqrt(2 * np.pi)**self.d * jnp.prod(jnp.diag(chol[0]))
@@ -196,7 +195,7 @@ class gaussian_kde:
 
   @_wraps(osp_stats.gaussian_kde.logpdf, update_doc=False)
   def logpdf(self, x):
-    _check_arraylike("logpdf", x)
+    check_arraylike("logpdf", x)
     x = self._reshape_points(x)
     result = _gaussian_kernel_eval(True, self.dataset.T, self.weights[:, None],
                                    x.T, self.inv_cov)
@@ -239,7 +238,7 @@ def _gaussian_kernel_convolve(chol, norm, target, weights, mean):
 
 @partial(jit, static_argnums=0)
 def _gaussian_kernel_eval(in_log, points, values, xi, precision):
-  points, values, xi, precision = _promote_dtypes_inexact(
+  points, values, xi, precision = promote_dtypes_inexact(
       points, values, xi, precision)
   d = points.shape[1]
 

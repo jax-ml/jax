@@ -7,31 +7,54 @@ Subpackages
 -----------
 
 .. toctree::
-    :maxdepth: 1
+   :maxdepth: 1
 
-    jax.numpy
-    jax.scipy
-    jax.sharding
-    jax.config
-    jax.debug
-    jax.dlpack
-    jax.distributed
-    jax.example_libraries
-    jax.experimental
-    jax.flatten_util
-    jax.image
-    jax.lax
-    jax.nn
-    jax.ops
-    jax.profiler
-    jax.random
-    jax.stages
-    jax.tree_util
+   jax.numpy
+   jax.scipy
+   jax.lax
+   jax.random
+   jax.sharding
+   jax.debug
+   jax.dlpack
+   jax.distributed
+   jax.dtypes
+   jax.flatten_util
+   jax.image
+   jax.nn
+   jax.ops
+   jax.profiler
+   jax.stages
+   jax.tree_util
+   jax.typing
+   jax.extend
+   jax.example_libraries
+   jax.experimental
 
 .. toctree::
    :hidden:
 
    jax.lib
+
+Configuration
+-------------
+
+.. autosummary::
+   :toctree: _autosummary
+
+   config
+   check_tracer_leaks
+   checking_leaks
+   debug_nans
+   debug_infs
+   default_device
+   default_matmul_precision
+   default_prng_impl
+   enable_checks
+   enable_custom_prng
+   enable_custom_vjp_by_custom_transpose
+   log_compiles
+   numpy_rank_promotion
+   transfer_guard
 
 .. _jax-jit:
 
@@ -47,6 +70,7 @@ Just-in-time compilation (:code:`jit`)
     xla_computation
     make_jaxpr
     eval_shape
+    ShapeDtypeStruct
     device_put
     device_put_replicated
     device_put_sharded
@@ -75,6 +99,7 @@ Automatic differentiation
     vjp
     custom_jvp
     custom_vjp
+    custom_gradient
     closure_convert
     checkpoint
 
@@ -84,6 +109,7 @@ jax.Array (:code:`jax.Array`)
 .. autosummary::
   :toctree: _autosummary
 
+    Array
     make_array_from_callback
     make_array_from_single_device_arrays
 
@@ -117,7 +143,9 @@ Callbacks
   :toctree: _autosummary
 
     pure_callback
+    experimental.io_callback
     debug.callback
+    debug.print
 
 Miscellaneous
 -------------
@@ -125,4 +153,7 @@ Miscellaneous
 .. autosummary::
   :toctree: _autosummary
 
+    Device
     print_environment_info
+    live_arrays
+    clear_caches

@@ -17,6 +17,8 @@ from functools import partial
 import operator
 
 import numpy as np
+
+import jax
 import jax.numpy as jnp
 from jax import device_put
 from jax import lax
@@ -87,7 +89,7 @@ def _normalize_matvec(f):
   """Normalize an argument for computing matrix-vector products."""
   if callable(f):
     return f
-  elif isinstance(f, (np.ndarray, jnp.ndarray)):
+  elif isinstance(f, (np.ndarray, jax.Array)):
     if f.ndim != 2 or f.shape[0] != f.shape[1]:
       raise ValueError(
           f'linear operator must be a square matrix, but has shape: {f.shape}')
@@ -702,7 +704,7 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   x = lax.custom_linear_solve(A, b, solve=_solve, transpose_solve=_solve)
 
   failed = jnp.isnan(_norm(x))
-  info = jnp.where(failed, x=-1, y=0)
+  info = jnp.where(failed, -1, 0)
   return x, info
 
 

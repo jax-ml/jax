@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.14.1
+    jupytext_version: 1.15.2
 kernelspec:
   display_name: Python 3
   name: python3
@@ -15,7 +15,7 @@ kernelspec:
 
 # Parallel Evaluation in JAX
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/06-parallelism.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/06-parallelism.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/jax-101/06-parallelism.ipynb)
 
 *Authors: Vladimir Mikulik & Roman Ring*
 
@@ -27,18 +27,9 @@ Conceptually, this is not very different from vectorisation, where the same oper
 
 +++ {"id": "7mCgBzix2fd3"}
 
-## Colab TPU Setup
+## TPU Setup
 
-If you're running this code in Google Colab, be sure to choose *Runtime*→*Change Runtime Type* and choose **TPU** from the Hardware Accelerator menu.
-
-Once this is done, you can run the following to set up the Colab TPU for use with JAX:
-
-```{code-cell} ipython3
-:id: hn7HtC2QS92b
-
-import jax.tools.colab_tpu
-jax.tools.colab_tpu.setup_tpu()
-```
+This notebook requires multiple accelerators and we recommend running it using Kaggle TPU VMs.
 
 +++ {"id": "gN6VbcdRTcdE"}
 
@@ -123,7 +114,7 @@ jax.pmap(convolve)(xs, ws)
 
 +++ {"id": "E69cVxQPksxe"}
 
-Note that the parallelized `convolve` returns a `ShardedDeviceArray`. That is because the elements of this array are sharded across all of the devices used in the parallelism. If we were to run another parallel computation, the elements would stay on their respective devices, without incurring cross-device communication costs.
+Note that the parallelized `convolve` returns a `jax.Array`. That is because the elements of this array are sharded across all of the devices used in the parallelism. If we were to run another parallel computation, the elements would stay on their respective devices, without incurring cross-device communication costs.
 
 ```{code-cell} ipython3
 :id: P9dUyk-ciquy
@@ -228,7 +219,7 @@ If this example is too confusing, you can find the same example, but without par
 ```{code-cell} ipython3
 :id: cI8xQqzRrc-4
 
-from typing import NamedTuple, Tuple
+from typing import NamedTuple
 import functools
 
 class Params(NamedTuple):
@@ -258,7 +249,7 @@ LEARNING_RATE = 0.005
 # to later tell `jax.lax.pmean` which axis to reduce over. Here, we call it
 # 'num_devices', but could have used anything, so long as `pmean` used the same.
 @functools.partial(jax.pmap, axis_name='num_devices')
-def update(params: Params, xs: jnp.ndarray, ys: jnp.ndarray) -> Tuple[Params, jnp.ndarray]:
+def update(params: Params, xs: jnp.ndarray, ys: jnp.ndarray) -> tuple[Params, jnp.ndarray]:
   """Performs one SGD update step on params using the given data."""
 
   # Compute the gradients on the given minibatch (individually on each device).
@@ -307,7 +298,7 @@ replicated_params = jax.tree_map(lambda x: jnp.array([x] * n_devices), params)
 
 +++ {"id": "dmCMyLP9SV99"}
 
-So far, we've just constructed arrays with an additional leading dimension. The params are all still all on the host (CPU). `pmap` will communicate them to the devices when `update()` is first called, and each copy will stay on its own device subsequently. You can tell because they are a DeviceArray, not a ShardedDeviceArray:
+So far, we've just constructed arrays with an additional leading dimension. The params are all still on the host (CPU). `pmap` will communicate them to the devices when `update()` is first called, and each copy will stay on its own device subsequently.
 
 ```{code-cell} ipython3
 :id: YSCgHguTSdGW
@@ -318,7 +309,7 @@ type(replicated_params.weight)
 
 +++ {"id": "90VtjPbeY-hD"}
 
-The params will become a ShardedDeviceArray when they are returned by our pmapped `update()` (see further down).
+The params will become a jax.Array when they are returned by our pmapped `update()` (see further down).
 
 +++ {"id": "eGVKxk1CV-m1"}
 
@@ -356,7 +347,7 @@ for i in range(1000):
   # This is where the params and data gets communicated to devices:
   replicated_params, loss = update(replicated_params, x_split, y_split)
 
-  # The returned `replicated_params` and `loss` are now both ShardedDeviceArrays,
+  # The returned `replicated_params` and `loss` are now both jax.Arrays,
   # indicating that they're on the devices.
   # `x_split`, of course, remains a NumPy array on the host.
   if i == 0:

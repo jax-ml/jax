@@ -12,5 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
+# ruff: noqa: F401
+
 import jaxlib.mlir.ir as ir
+import jaxlib.mlir.passmanager as passmanager
+
+# TODO(phawkins): make this unconditional after jaxlib 0.4.22 is the minimum
+try:
+  from jaxlib.mlir._mlir_libs import register_jax_dialects  # type: ignore
+except ImportError:
+  register_jax_dialects = None

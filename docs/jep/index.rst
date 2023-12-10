@@ -41,11 +41,16 @@ Then create a pull request that adds a file named
   2026: Custom JVP/VJP rules for JAX-transformable functions <2026-custom-derivatives>
   4008: Custom VJP and `nondiff_argnums` update <4008-custom-vjp-update>
   4410: Omnistaging <4410-omnistaging>
+  9263: Typed keys & pluggable RNGs <9263-typed-keys>
   9407: Design of Type Promotion Semantics for JAX <9407-type-promotion>
   9419: Jax and Jaxlib versioning <9419-jax-versioning>
   10657: Sequencing side-effects in JAX <10657-sequencing-effects>
   11830: `jax.remat` / `jax.checkpoint` new implementation <11830-new-remat-checkpoint>
   12049: Type Annotation Roadmap for JAX <12049-type-annotations>
+  14273: `shard_map` (`shmap`) for simple per-device code <14273-shard-map>
+  15856: `jax.extend`, an extensions module <15856-jex>
+  17111: Efficient transposition of `shard_map` (and other maps) <17111-shmap-transpose>
+  18137: Scope of JAX NumPy & SciPy Wrappers <18137-numpy-scipy-scope>
 
 
 Several early JEPs were converted in hindsight from other documentation,

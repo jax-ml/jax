@@ -16,9 +16,12 @@
 https://github.com/google/flax/tree/main/examples/ogbg_molpcba
 """
 
-from typing import Callable, Sequence
+from collections.abc import Sequence
+from typing import Callable
 
 from flax import linen as nn
+
+import jax
 import jax.numpy as jnp
 import jraph
 
@@ -38,7 +41,7 @@ class MLP(nn.Module):
   feature_sizes: Sequence[int]
   dropout_rate: float = 0
   deterministic: bool = True
-  activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.relu
+  activation: Callable[[jax.Array], jax.Array] = nn.relu
 
   @nn.compact
   def __call__(self, inputs):
@@ -131,8 +134,8 @@ class GraphConvNet(nn.Module):
   skip_connections: bool = True
   layer_norm: bool = True
   deterministic: bool = True
-  pooling_fn: Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray],
-                       jnp.ndarray] = jraph.segment_mean
+  pooling_fn: Callable[[jax.Array, jax.Array, jax.Array],
+                       jax.Array] = jraph.segment_mean
 
   def pool(self, graphs: jraph.GraphsTuple) -> jraph.GraphsTuple:
     """Pooling operation, taken from Jraph."""

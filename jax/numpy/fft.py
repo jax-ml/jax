@@ -35,19 +35,3 @@ from jax._src.numpy.fft import (
   rfftfreq as rfftfreq,
   rfftn as rfftn,
 )
-
-# Module initialization is encapsulated in a function to avoid accidental
-# namespace pollution.
-_NOT_IMPLEMENTED = []
-def _init():
-  import numpy as np
-  from jax._src.numpy import lax_numpy
-  from jax._src import util
-  # Builds a set of all unimplemented NumPy functions.
-  for name, func in util.get_module_functions(np.fft).items():
-    if name not in globals():
-      _NOT_IMPLEMENTED.append(name)
-      globals()[name] = lax_numpy._not_implemented(func)
-
-_init()
-del _init

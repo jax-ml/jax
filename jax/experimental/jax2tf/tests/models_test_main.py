@@ -20,61 +20,70 @@ file.
 Run this as follows:
 
 ```
-# Run all converters on all suites and regenerate the table.
+# Test all converters on all suites and regenerate the table.
 python3 models_test_main.py
 
-# Run only CNN and Resnet50 with the TFjs converter and don't write Markdown.
+# Test only CNN and Resnet50 with the TFjs converter and don't write Markdown.
 python3 models_test_main.py \
     --examples=flax/cnn,flax/resnet50 \
     --converters=jax2tf_noxla_tfjs \
     --write_markdown=False
+
+# Execute all CNN tests (including the tests for shape polymorphism):
+python3 models_test_main.py --example_prefix=flax/cnn
+
+# Execute only a specific CNN test for shape polymorphism (NOTE: quotes and
+# commas are stripped from the example names).
+python3 models_test_main.py --examples="flax/cnn_[(b ...)]"
 ```
 """
-from absl import app
-from absl import flags
 
+from collections.abc import Sequence
+import datetime
 import functools
 import numpy as np
+import os
 import re
 import jax
 
-from jax.config import config
-
-config.parse_flags_with_absl()
+from absl import app
+from absl import flags
 
 from jax._src import dtypes
 import jax.numpy as jnp
 
-import datetime
-import os
-from typing import Dict, List, Sequence, Tuple
+import tensorflow as tf
 
-from jax.experimental.jax2tf.tests.model_harness import ALL_HARNESS_FNS
+from jax.experimental.jax2tf.shape_poly import InconclusiveDimensionOperation
+from jax.experimental.jax2tf.tests.model_harness import ALL_HARNESSES
 from jax.experimental.jax2tf.tests.converters import ALL_CONVERTERS
 
-flags.DEFINE_list("converters", [x.name for x in ALL_CONVERTERS],
+_CONVERTERS = flags.DEFINE_list("converters", [x.name for x in ALL_CONVERTERS],
                   "Which converters to test.")
 
-flags.DEFINE_list("examples", [],
+_EXAMPLES = flags.DEFINE_list("examples", [],
                   ("List of examples to test, e.g.: 'flax/mnist,flax/seq2seq'. "
                    "If empty, will test all examples."))
 
-flags.DEFINE_bool(
+_EXAMPLE_PREFIX = flags.DEFINE_string("example_prefix", "",
+                    ("Prefix for filtering tests. For instance 'flax/mnist' "
+                     "will test all examples starting with 'flax/mnist' "
+                     "(including all polymorphic tests)."))
+
+_WRITE_MARKDOWN = flags.DEFINE_bool(
     "write_markdown", True,
     "If true, write results as Markdown. Otherwise, only output to stdout.")
 
-flags.DEFINE_bool(
+_FAIL_ON_ERROR = flags.DEFINE_bool(
     "fail_on_error", False,
     ("If true, exit with an error when a conversion fails. Useful for "
      "debugging because it will show the entire stack trace."))
 
-FLAGS = flags.FLAGS
 
-
-def _write_markdown(results: Dict[str, List[Tuple[str, str,]]]) -> None:
+def _write_markdown(results: dict[str, list[tuple[str, str,]]]) -> None:
   """Writes all results to Markdown file."""
   table_lines = []
-  converters = FLAGS.converters
+  converters = _CONVERTERS.value
 
   table_lines.append("| Example | " + " ".join([f"{c} |" for c in converters]))
   table_lines.append("|" + (" --- |" * (len(converters) + 1)))
@@ -89,28 +98,38 @@ def _write_markdown(results: Dict[str, List[Tuple[str, str,]]]) -> None:
   for example_name, converter_results in results.items():
     # Make sure the converters are in the right order.
     assert [c[0] for c in converter_results] == converters
-    line = f"| {example_name} |"
-    error_lines.append(f"## `{example_name}`")
+    line = f"| `{example_name}` |"
+    example_error_lines = []
     for converter_name, error_msg in converter_results:
       if not error_msg:
         line += " YES |"
       else:
         error_header = (f"Example: `{example_name}` | "
                         f"Converter: `{converter_name}`")
-        error_lines.append("### " + error_header)
-        error_lines.append(f"```\n{error_msg}\n```")
-        error_lines.append("[Back to top](#summary-table)\n")
-        line += f" [NO]({_header2anchor(error_header)}) | "
+        example_error_lines.append("### " + error_header)
+        example_error_lines.append(f"```\n{error_msg}\n```")
+        example_error_lines.append("[Back to top](#summary-table)\n")
+        line += f" [NO]({_header2anchor(error_header)}) |"
     table_lines.append(line)
 
-  output_path = os.path.join(
-      os.path.dirname(__file__), "../g3doc/convert_models_results.md")
-  with open(output_path + ".template") as f_in, open(output_path, "w") as f_out:
-    template = f_in.read()
-    template = template.replace("{{generation_date}}",
-                                str(datetime.date.today()))
+    if example_error_lines:
+      error_lines.append(f"## `{example_name}`")
+      error_lines.extend(example_error_lines)
+
+  g3doc_path = "../g3doc"
+  output_path = os.path.join(g3doc_path, "convert_models_results.md")
+  template_path = output_path + ".template"
+
+  if (workdir := "BUILD_WORKING_DIRECTORY") in os.environ:
+    os.chdir(os.path.dirname(os.environ[workdir]))
+
+  with tf.io.gfile.GFile(template_path, "r") as f_in, \
+       tf.io.gfile.GFile(output_path, "w") as f_out:
+    template = "".join(f_in.readlines())
+    template = template.replace("{{generation_date}}", str(datetime.date.today()))
     template = template.replace("{{table}}", "\n".join(table_lines))
     template = template.replace("{{errors}}", "\n".join(error_lines))
+
     f_out.write(template)
 
   print("Written converter results to", output_path)
@@ -132,7 +151,7 @@ def _crop_convert_error(msg: str) -> str:
   return msg
 
 
-def _get_random_data(x: jnp.ndarray) -> np.ndarray:
+def _get_random_data(x: jax.Array) -> np.ndarray:
   dtype = dtypes.canonicalize_dtype(x.dtype)
   if np.issubdtype(dtype, np.integer):
     return np.random.randint(0, 100, size=x.shape, dtype=dtype)
@@ -146,19 +165,35 @@ def _get_random_data(x: jnp.ndarray) -> np.ndarray:
 
 def test_converters():
   """Tests all converters and write output."""
-  results = {}
-  converters = list(
-      filter(lambda x: x.name in FLAGS.converters, ALL_CONVERTERS))
+  def _exit_if_empty(x, name):
+    if not x:
+      print(f"WARNING: No {name} found to test! Exiting")
+      exit()
 
   def _maybe_reraise(e):
-    if FLAGS.fail_on_error:
+    if _FAIL_ON_ERROR.value:
       raise e
 
-  for harness_fn in ALL_HARNESS_FNS:
+  def _format(e):
+    # InvalidArgumentError output is shown differently.
+    msg = str(e) if repr(e).strip() == "InvalidArgumentError()" else repr(e)
+    msg = msg.replace("\n\n", "\n")  # Output newlines correctly.
+    return msg
+
+  converters = list(
+      filter(lambda x: x.name in _CONVERTERS.value, ALL_CONVERTERS))
+  _exit_if_empty(converters, "converters")
+
+  harnesses_to_test = {
+      name: fn for name, fn in ALL_HARNESSES.items()
+      if (not _EXAMPLES.value or name in _EXAMPLES.value) and
+         (not _EXAMPLE_PREFIX.value or name.startswith(_EXAMPLE_PREFIX.value))
+  }
+  _exit_if_empty(harnesses_to_test, "harness")
+
+  results = {}
+  for name, harness_fn in harnesses_to_test.items():
     harness = harness_fn()  # This will create the variables.
-    if FLAGS.examples and harness.name not in FLAGS.examples:
-      print(f"==== Skipping example {harness.name}")
-      continue
     np_assert_allclose = functools.partial(
         np.testing.assert_allclose, rtol=harness.rtol)
     converter_results = []
@@ -177,26 +212,36 @@ def test_converters():
         if not converter.compare_numerics:
           print("=== Skipping numerical comparison.")
         else:
-          xs = [_get_random_data(x) for x in harness.inputs]
+          xs = [jax.tree_util.tree_map(_get_random_data, x) for x in harness.inputs]
           jax_result = harness.apply_with_vars(*xs)
           try:
             tf_result = apply_tf(*xs)
             jax.tree_map(np_assert_allclose, jax_result, tf_result)
             print("=== Numerical comparison OK!")
           except AssertionError as e:
-            error_msg = repr(e).replace("\n\n", "\n")  # Output newlines.
-            error_msg = "Numerical comparison error:\n" + error_msg
-            print(f"=== {error_msg}")
+            error_msg = "Numerical comparison error:\n" + _format(e)
+            print("===", error_msg)
             _maybe_reraise(e)
-          except RuntimeError as e:
-            # TFLite sometimes throws a runtime error during inference.
-            error_msg = repr(e).replace("\n\n", "\n")  # Output newlines.
-            print(f"=== {error_msg}")
+          # Catch remaining but expected errors (we still want to fail on
+          # unexpected errors).
+          except (
+              # TFLite runtime error
+              RuntimeError,
+              # TF error
+              tf.errors.InvalidArgumentError,
+              # jax2tf poly shape errors.
+              InconclusiveDimensionOperation,
+              TypeError,
+              IndexError,
+              ValueError) as e:
+            error_msg = _format(e)
+            print("=== ", error_msg)
             _maybe_reraise(e)
+
       converter_results.append((converter.name, error_msg))
     results[harness.name] = converter_results
 
-  if FLAGS.write_markdown:
+  if _WRITE_MARKDOWN:
     _write_markdown(results)
   else:
     print("=== NOT writing results to Markdown.")

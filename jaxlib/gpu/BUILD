@@ -14,9 +14,14 @@
 
 # Shared CUDA/ROCM GPU kernels.
 
+load("//jaxlib:jax.bzl", "cc_proto_library")
+
 licenses(["notice"])
 
-package(default_visibility = ["//:__subpackages__"])
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//:__subpackages__"],
+)
 
 exports_files(srcs = [
     "blas.cc",
@@ -42,5 +47,20 @@ exports_files(srcs = [
     "sparse.cc",
     "sparse_kernels.cc",
     "sparse_kernels.h",
+    "triton.cc",
+    "triton_kernels.cc",
+    "triton_kernels.h",
+    "triton_utils.cc",
+    "triton_utils.h",
     "vendor.h",
 ])
+
+proto_library(
+    name = "triton_proto",
+    srcs = ["triton.proto"],
+)
+
+cc_proto_library(
+    name = "triton_cc_proto",
+    deps = [":triton_proto"],
+)

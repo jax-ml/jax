@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import overload, Literal, Optional, Tuple, Union
+from typing import overload, Literal, Optional, Union
 
 import jax
 from jax import lax
 from jax import numpy as jnp
-from jax._src.numpy.lax_numpy import _reduction_dims, _promote_args_inexact
+from jax._src.numpy.reductions import _reduction_dims, Axis
+from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 import numpy as np
 
@@ -26,19 +27,19 @@ import numpy as np
 # unnecessary scipy dependencies.
 
 @overload
-def logsumexp(a: ArrayLike, axis: Optional[int] = None, b: Optional[ArrayLike] = None,
+def logsumexp(a: ArrayLike, axis: Axis = None, b: Optional[ArrayLike] = None,
               keepdims: bool = False, return_sign: Literal[False] = False) -> Array: ...
 
 @overload
-def logsumexp(a: ArrayLike, axis: Optional[int] = None, b: Optional[ArrayLike] = None,
-              keepdims: bool = False, *, return_sign: Literal[True]) -> Tuple[Array, Array]: ...
+def logsumexp(a: ArrayLike, axis: Axis = None, b: Optional[ArrayLike] = None,
+              keepdims: bool = False, *, return_sign: Literal[True]) -> tuple[Array, Array]: ...
 
 @overload
-def logsumexp(a: ArrayLike, axis: Optional[int] = None, b: Optional[ArrayLike] = None,
-              keepdims: bool = False, return_sign: bool = False) -> Union[Array, Tuple[Array, Array]]: ...
+def logsumexp(a: ArrayLike, axis: Axis = None, b: Optional[ArrayLike] = None,
+              keepdims: bool = False, return_sign: bool = False) -> Union[Array, tuple[Array, Array]]: ...
 
-def logsumexp(a: ArrayLike, axis: Optional[int] = None, b: Optional[ArrayLike] = None,
-              keepdims: bool = False, return_sign: bool = False) -> Union[Array, Tuple[Array, Array]]:
+def logsumexp(a: ArrayLike, axis: Axis = None, b: Optional[ArrayLike] = None,
+              keepdims: bool = False, return_sign: bool = False) -> Union[Array, tuple[Array, Array]]:
   r"""Log-sum-exp reduction.
 
   Computes
@@ -66,10 +67,10 @@ def logsumexp(a: ArrayLike, axis: Optional[int] = None, b: Optional[ArrayLike] =
     on the value of the ``return_sign`` argument.
   """
   if b is not None:
-    a_arr, b_arr = _promote_args_inexact("logsumexp", a, b)
+    a_arr, b_arr = promote_args_inexact("logsumexp", a, b)
     a_arr = jnp.where(b_arr != 0, a_arr, -jnp.inf)
   else:
-    a_arr, = _promote_args_inexact("logsumexp", a)
+    a_arr, = promote_args_inexact("logsumexp", a)
     b_arr = a_arr  # for type checking
   pos_dims, dims = _reduction_dims(a_arr, axis)
   amax = jnp.max(a_arr, axis=dims, keepdims=keepdims)

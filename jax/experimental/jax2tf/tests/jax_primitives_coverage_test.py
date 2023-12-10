@@ -19,39 +19,43 @@ too many or too few limitations.
 """
 
 import collections
+from collections.abc import Sequence
 import datetime
 import logging
 import os
-from typing import Any, Dict, Sequence, Tuple
+from typing import Any
 import unittest
 
 from absl.testing import absltest
 
+import jax
+from jax._src import config
 from jax._src import test_util as jtu
-from jax.config import config
+from jax._src import maps  # Needed for config flags.
 
 import numpy as np
 
 config.parse_flags_with_absl()
 
 # Import after parsing flags
-from jax.experimental.jax2tf.tests import primitive_harness
+from jax._src.internal_test_util import test_harnesses
 
 
+@jtu.with_config(jax_legacy_prng_key='allow')
 class JaxPrimitiveTest(jtu.JaxTestCase):
 
   # This test runs for all primitive harnesses. For each primitive "xxx" the
   # test will be called "test_jax_implemented_xxx_...". The test harnesses,
   # including which dtypes are expected to fail, are defined in the
-  # file primitive_harness.py.
+  # file test_harnesses.py.
   # If you want to run this test for only one harness, add parameter
   # `one_containing="foo"` to parameterized below.
-  @primitive_harness.parameterized(primitive_harness.all_harnesses,
-                                   #one_containing="gather_from_slicing_name",
-                                   include_jax_unimpl=True)
+  @test_harnesses.parameterized(test_harnesses.all_harnesses,
+                                #one_containing="",
+                                include_jax_unimpl=True)
   @jtu.ignore_warning(category=UserWarning,
                       message="Using reduced precision for gradient.*")
-  def test_jax_implemented(self, harness: primitive_harness.Harness):
+  def test_jax_implemented(self, harness: test_harnesses.Harness):
     """Runs all harnesses just with JAX to verify the jax_unimplemented field.
 
     Runs also harnesses that have jax_unimplemented but ignores their errors.
@@ -59,7 +63,7 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
     jax_unimpl = [l for l in harness.jax_unimplemented
                   if l.filter(device=jtu.device_under_test(),
                               dtype=harness.dtype)]
-    if any([lim.skip_run for lim in jax_unimpl]):
+    if any(lim.skip_run for lim in jax_unimpl):
       logging.info(
           "Skipping run with expected JAX limitations: %s in harness %s",
           [u.description for u in jax_unimpl], harness.fullname)
@@ -87,17 +91,17 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
       #                  f"{[u.description for u in jax_unimpl]} in harness: {harness.fullname}"))
 
   def test_generate_primitives_coverage_doc(self):
-    harnesses = primitive_harness.all_harnesses
+    harnesses = test_harnesses.all_harnesses
     print(f"Found {len(harnesses)} harnesses")
 
-    harness_groups: Dict[str, Sequence[primitive_harness.Harness]] = collections.defaultdict(list)
+    harness_groups: dict[str, Sequence[test_harnesses.Harness]] = collections.defaultdict(list)
 
-    def unique_hash(h: primitive_harness.Harness, l: primitive_harness.Limitation):
+    def unique_hash(h: test_harnesses.Harness, l: test_harnesses.Limitation):
       return (h.group_name, l.description, l.devices,
               tuple(np.dtype(d).name for d in l.dtypes))
 
-    unique_limitations: Dict[Any, Tuple[primitive_harness.Harness,
-                                        primitive_harness.Limitation]] = {}
+    unique_limitations: dict[Any, tuple[test_harnesses.Harness,
+                                        test_harnesses.Limitation]] = {}
 
     for h in harnesses:
       harness_groups[h.group_name].append(h)
@@ -118,8 +122,8 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
 
       primitive_coverage_table.append(
         f"| {group_name} | {len(hlist)} | "
-        f"{primitive_harness.dtypes_to_str(dtypes_tested)} | "
-        f"{primitive_harness.dtypes_to_str(all_dtypes - dtypes_tested)} |")
+        f"{test_harnesses.dtypes_to_str(dtypes_tested)} | "
+        f"{test_harnesses.dtypes_to_str(all_dtypes - dtypes_tested)} |")
 
     print(f"Found {len(unique_limitations)} unique limitations")
     primitive_unimpl_table = ["""
@@ -130,13 +134,13 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
       devices = ", ".join(l.devices)
       primitive_unimpl_table.append(
         f"|{h.group_name}|{l.description}|"
-        f"{primitive_harness.dtypes_to_str(l.dtypes, empty_means_all=True)}|{devices}|")
+        f"{test_harnesses.dtypes_to_str(l.dtypes, empty_means_all=True)}|{devices}|")
 
     if not os.environ.get("JAX_OUTPUT_LIMITATIONS_DOC"):
       raise unittest.SkipTest("Set JAX_OUTPUT_LIMITATIONS_DOC=1 to enable the generation of the documentation")
     # The CPU/GPU have more supported types than TPU.
     self.assertEqual("cpu", jtu.device_under_test(), "The documentation can be generated only on CPU")
-    self.assertTrue(config.x64_enabled, "The documentation must be generated with JAX_ENABLE_X64=1")
+    self.assertTrue(config.enable_x64.value, "The documentation must be generated with JAX_ENABLE_X64=1")
 
     with open(os.path.join(os.path.dirname(__file__),
                            '../g3doc/jax_primitives_coverage.md.template')) as f:

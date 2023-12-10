@@ -412,18 +412,18 @@ which the computation should run. For example
 ...     return x + arg * jnp.ones(1)  # Include a constant in the inner function
 ...   return arg + inner(arg - 2.)
 ...
->>> print(make_jaxpr(func12)(1.))
+>>> print(make_jaxpr(func12)(1.))  # doctest:+ELLIPSIS
 { lambda ; a:f32[]. let
     b:f32[] = sub a 2.0
-    c:f32[1] = xla_call[
-      call_jaxpr={ lambda ; d:f32[] e:f32[]. let
+    c:f32[1] = pjit[
+      name=inner
+      jaxpr={ lambda ; d:f32[] e:f32[]. let
           f:f32[1] = broadcast_in_dim[broadcast_dimensions=() shape=(1,)] 1.0
           g:f32[] = convert_element_type[new_dtype=float32 weak_type=False] d
           h:f32[1] = mul g f
           i:f32[] = convert_element_type[new_dtype=float32 weak_type=False] e
           j:f32[1] = add i h
         in (j,) }
-      name=inner
     ] a b
     k:f32[] = convert_element_type[new_dtype=float32 weak_type=False] a
     l:f32[1] = add k c
@@ -460,9 +460,9 @@ captured using the ``xla_pmap`` primitive. Consider this example
         in (k,) }
       devices=None
       donated_invars=(False, False)
-      global_arg_shapes=(None,)
-      global_axis_size=None
+      global_axis_size=1
       in_axes=(None, 0)
+      is_explicit_global_axis_size=False
       name=inner
       out_axes=(0,)
     ] b a

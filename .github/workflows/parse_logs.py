@@ -48,7 +48,7 @@ def parse_line(line):
 def main(logfile, outfile):
   logging.info("Parsing %s", logfile)
   try:
-    with open(logfile, 'r') as f:
+    with open(logfile) as f:
       reports = (parse_line(line) for line in f)
       failures = (r for r in reports if r.outcome == "failed")
       summary = "\n".join(f"{f.nodeid}: {f.longrepr.chain[0][1].message}"
