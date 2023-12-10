@@ -62,9 +62,9 @@ rules = {}
 def generic_rule(prim, in_primals, in_jacs, in_lapvecs, **params):
   merge, primals, nz_jacs, nz_laps = partition(in_primals, in_jacs, in_lapvecs)
   def f(*primals): return prim.bind(*merge(primals), **params)
-  out_primals, f_jvp = jax.linearize(f, *primals)
+  out_primals, jac_term = jax.jvp(f, primals, nz_laps)
   out_jacs, hess_term = hqf2(f, primals, nz_jacs)
-  out_lapvecs = tree_map(op.add, trace(hess_term), f_jvp(*nz_laps))
+  out_lapvecs = tree_map(op.add, trace(hess_term), jac_term)
   return out_primals, out_jacs, out_lapvecs
 
 def partition(primals, jacs, laps):
