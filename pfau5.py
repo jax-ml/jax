@@ -1,9 +1,3 @@
-import pdb, sys, traceback
-def info(type, value, tb):
-    traceback.print_exception(type, value, tb)
-    pdb.pm()
-sys.excepthook = info
-
 from functools import partial
 import operator as op
 
@@ -27,6 +21,7 @@ from jax._src.tree_util import (tree_map, tree_flatten, tree_unflatten,
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
+## tracer definition
 
 class LapTracer(core.Tracer):
   __slots__ = ['primal', 'jacobian', 'lapvec']
@@ -105,10 +100,6 @@ def _fwdlap(primals, jacobians, lapvecs):
   with core.new_main(LapTrace) as main:
     out_primals, out_jacs, out_laps = yield (main, primals, jacobians, lapvecs), {}
     del main
-  out_jacs_ = [J if J is not None else jnp.zeros(*p.shape, *p.shape)
-               for p, J in zip(out_primals, out_jacs)]
-  out_laps_ = [l if l is not None else jnp.zeros(p.shape)
-               for p, l in zip(out_primals, out_laps)]
   yield out_primals, out_jacs, out_laps
 
 @lu.transformation
