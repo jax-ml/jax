@@ -1,8 +1,8 @@
-# import pdb, sys, traceback
-# def info(type, value, tb):
-#     traceback.print_exception(type, value, tb)
-#     pdb.pm()
-# sys.excepthook = info
+import pdb, sys, traceback
+def info(type, value, tb):
+    traceback.print_exception(type, value, tb)
+    pdb.pm()
+sys.excepthook = info
 
 from functools import partial
 import operator as op
@@ -21,7 +21,8 @@ from jax._src import linear_util as lu
 from jax._src.api_util import flatten_fun_nokwargs, shaped_abstractify
 from jax._src.util import (safe_map, safe_zip, unzip3, weakref_lru_cache,
                            partition_list, merge_lists)
-from jax._src.tree_util import tree_map, tree_flatten, tree_unflatten
+from jax._src.tree_util import (tree_map, tree_flatten, tree_unflatten,
+                                tree_leaves)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -67,35 +68,25 @@ def generic_rule(prim, in_primals, in_jacs, in_lapvecs, **params):
   merge, primals, nz_jacs, nz_laps = partition(in_primals, in_jacs, in_lapvecs)
   def f(*primals): return prim.bind(*merge(primals), **params)
   out_primals, f_jvp = jax.linearize(f, *primals)
-  out_jacs = jax.vmap(f_jvp, -1, -1)(*nz_jacs)
-  out_lapvecs = add(trace(hqf2(f, primals, nz_jacs)), f_jvp(*nz_laps))
+  out_jacs, hess_term = hqf2(f, primals, nz_jacs)
+  out_lapvecs = tree_map(op.add, trace(hess_term), f_jvp(*nz_laps))
   return out_primals, out_jacs, out_lapvecs
 
 def partition(primals, jacs, laps):
   nones, nones_ = [j is None for j in jacs], [l is None for l in laps]
   assert nones == nones_
   new_primals, const_primals = partition_list(nones, primals)
-  nz_jacs, _ = partition_list(nones, jacs)
-  nz_laps, _ = partition_list(nones, laps)
   merge = lambda new_primals: merge_lists(nones, new_primals, const_primals)
-  return merge, tuple(new_primals), tuple(nz_jacs), tuple(nz_laps)
+  return merge, (*new_primals,), (*tree_leaves(jacs),), (*tree_leaves(laps),)
 
-add = partial(tree_map, op.add)
 trace = partial(tree_map, partial(jnp.trace, axis1=-1, axis2=-2))
 
-def jjp(f, xs, js):
-  return jax.vmap(lambda vs: jax.jvp(f, xs, vs), -1, (None, -1))(js)
-
-def hqf(f, xs, vs):
-  return hbf(f, xs, vs, vs)
-
 def hbf(f, xs, vs1, vs2):
-  # TODO discarding output primals is wasteful, could get jacs here
-  return jax.jvp(lambda *xs: jax.jvp(f, xs, vs1)[1], xs, vs2)[1]
+  return jax.jvp(lambda *xs: jax.jvp(f, xs, vs1)[1], xs, vs2)
 
 def hqf2(f, xs, vs):
-  h = jax.vmap(jax.vmap(partial(hbf, f, xs), (-1, None), -1), (None, -1), -1)
-  return h(vs, vs)
+  return jax.vmap(jax.vmap(partial(hbf, f, xs), (-1, None), -1),
+                  (None, -1), (None, -1))(vs, vs)
 
 ## internal transformation machinery
 
