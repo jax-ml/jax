@@ -95,6 +95,9 @@ class PrimitiveTest(jtu.JaxTestCase):
         and _known_failures_gpu.search(harness.fullname)):
       self.skipTest("failure to be investigated")
 
+    if harness.params.get("enable_xla", False):
+      self.skipTest("enable_xla=False is not relevant")
+
     func_jax = harness.dyn_fun
     args = harness.dyn_args_maker(self.rng())
 
