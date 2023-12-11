@@ -60,6 +60,7 @@ expect_error_associative_scan = (
 )
 
 
+@jtu.with_config(jax_enable_key_reuse_checks=False)
 class DimExprTest(jtu.JaxTestCase):
 
   class AssertionType(enum.Enum):
@@ -622,6 +623,7 @@ def check_shape_poly(tst, f_jax: Callable, *,
   return h.run_test(tst)
 
 
+@jtu.with_config(jax_enable_key_reuse_checks=False)
 class ShapePolyTest(jtu.JaxTestCase):
 
   def test_simple_unary(self):
@@ -2329,6 +2331,7 @@ def _flatten_harnesses(harnesses):
   return res
 
 
+@jtu.with_config(jax_enable_key_reuse_checks=False)
 class ShapePolyHarnessesTest(jtu.JaxTestCase):
   """This test runs for all _POLY_SHAPE_PRIMITIVE_HARNESSES."""
 

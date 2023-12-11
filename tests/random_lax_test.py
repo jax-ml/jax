@@ -1043,8 +1043,11 @@ class LaxRandomTest(jtu.JaxTestCase):
       return random.uniform(
           self.make_key(3), (308000000, 128), dtype=jnp.bfloat16)
 
-    # just lower, don't run, takes too long
-    jax.jit(f).lower()
+    # TODO(jakevdp): key reuse checks for this OOM because of slice masking.
+    # Can we fix this?
+    with jax.enable_key_reuse_checks(False):
+      # just lower, don't run, takes too long
+      jax.jit(f).lower()
 
   @jtu.sample_product(shape=[(3, 4)],
                       logits_shape_base=[(3, 4), (3, 1), (1, 4)],

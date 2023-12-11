@@ -1113,6 +1113,11 @@ jax_test(
 )
 
 jax_test(
+    name = "key_reuse_test",
+    srcs = ["key_reuse_test.py"],
+)
+
+jax_test(
     name = "x64_context_test",
     srcs = ["x64_context_test.py"],
     deps = [
