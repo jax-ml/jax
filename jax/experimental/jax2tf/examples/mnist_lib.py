@@ -18,6 +18,9 @@ moving parts, at the expense of code size), and another using Flax.
 
 See README.md for how these are used.
 """
+
+from __future__ import annotations
+
 from collections.abc import Sequence
 import functools
 import logging
@@ -288,7 +291,7 @@ def plot_images(ds,
                 nr_rows: int,
                 nr_cols: int,
                 title: str,
-                inference_fn: Optional[Callable] = None):
+                inference_fn: Callable | None = None):
   """Plots a grid of images with their predictions.
 
   Params:

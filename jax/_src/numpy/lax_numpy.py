@@ -32,7 +32,7 @@ from functools import partial
 import math
 import operator
 import types
-from typing import (overload, Any, Callable, Literal, NamedTuple, Protocol, TypeVar, Union)
+from typing import (overload, Any, Callable, Literal, NamedTuple, Protocol, TypeVar, TypeAlias)
 from textwrap import dedent as _dedent
 import warnings
 
@@ -1465,7 +1465,7 @@ def unwrap(p: ArrayLike, discont: ArrayLike | None = None,
 
 ### Padding
 
-PadValueLike = Union[T, Sequence[T], Sequence[Sequence[T]]]
+PadValueLike: TypeAlias = T | Sequence[T] | Sequence[Sequence[T]]
 PadValue = tuple[tuple[T, T], ...]
 
 class PadStatFunc(Protocol):

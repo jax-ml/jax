@@ -13,6 +13,8 @@
 # limitations under the License.
 """Provides JAX and TensorFlow interoperation APIs."""
 
+from __future__ import annotations
+
 from collections.abc import Iterable, Sequence
 from functools import partial
 import contextlib
@@ -203,11 +205,11 @@ class _ThreadLocalState(threading.local):
     # A dict collecting all tf concrete_functions called by stablehlo.custom_call
     # This is used only by native serialization (unlike all the other
     # thread-local state).
-    self.call_tf_concrete_function_list: Optional[list[Any]] = None
+    self.call_tf_concrete_function_list: list[Any] | None = None
 
 _thread_local_state = _ThreadLocalState()
 
-def _get_current_name_stack() -> Union[NameStack, str]:
+def _get_current_name_stack() -> NameStack | str:
   return source_info_util.current_name_stack()
 
 @contextlib.contextmanager
@@ -222,7 +224,7 @@ def inside_call_tf():
 
 
 def get_thread_local_state_call_tf_concrete_function_list() -> (
-    Optional[list[Any]]
+    list[Any] | None
 ):
   return _thread_local_state.call_tf_concrete_function_list
 
@@ -230,11 +232,11 @@ def get_thread_local_state_call_tf_concrete_function_list() -> (
 @partial(api_util.api_hook, tag="jax2tf_convert")
 def convert(fun_jax: Callable,
             *,
-            polymorphic_shapes: Optional[str] = None,
+            polymorphic_shapes: str | None = None,
             with_gradient: bool = True,
             enable_xla: bool = True,
-            native_serialization: Union[bool, _DefaultNativeSerialization] = DEFAULT_NATIVE_SERIALIZATION,
-            native_serialization_platforms: Optional[Sequence[str]] = None,
+            native_serialization: bool | _DefaultNativeSerialization = DEFAULT_NATIVE_SERIALIZATION,
+            native_serialization_platforms: Sequence[str] | None = None,
             native_serialization_disabled_checks: Sequence[DisabledSafetyCheck] = (),
             ) -> Callable:
   """Allows calling a JAX function from a TensorFlow program.
@@ -359,7 +361,7 @@ def convert(fun_jax: Callable,
       source_info_util.register_exclusion(os.path.dirname(tf.__file__))
       _has_registered_tf_source_path = True
 
-    def shape_and_dtype_tf(a: TfVal) -> tuple[Sequence[Optional[int]], DType]:
+    def shape_and_dtype_tf(a: TfVal) -> tuple[Sequence[int | None], DType]:
       # The shape and JAX dtype for a TF argument
       tf_arg_shape = np.shape(a)
       # Fix the shape for TF1
@@ -475,7 +477,7 @@ class SerializationImpl:
 class NativeSerializationImpl(SerializationImpl):
   def __init__(self, fun_jax, *,
                args_specs, kwargs_specs,
-               native_serialization_platforms: Optional[Sequence[str]],
+               native_serialization_platforms: Sequence[str] | None,
                native_serialization_disabled_checks: Sequence[DisabledSafetyCheck]):
     self.convert_kwargs = dict(native_serialization=True,
                                native_serialization_platforms=native_serialization_platforms,
@@ -772,7 +774,7 @@ def _make_custom_gradient_fn_tf(fun_jax,
   return grad_fn_tf
 
 @contextlib.contextmanager
-def _extended_name_stack(extra_name_stack: Optional[str]):
+def _extended_name_stack(extra_name_stack: str | None):
   name_ctx = (source_info_util.extend_name_stack(extra_name_stack)
       if extra_name_stack
       else contextlib.nullcontext())
@@ -785,7 +787,7 @@ def _interpret_fun_jax(
     fun_jax: Callable,
     args_tf: Sequence[TfVal],
     args_avals: Sequence[core.ShapedArray],
-    extra_name_stack: Optional[str],
+    extra_name_stack: str | None,
     fresh_constant_cache: bool = False,
 ) -> tuple[tuple[TfVal, ...], tuple[core.ShapedArray, ...]]:
   with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
@@ -942,7 +944,7 @@ def _call_wrapped_with_new_constant_cache(fun: lu.WrappedFun,
 def _convert_jax_impl(impl_jax: Callable, *,
                       multiple_results=True,
                       with_physical_avals=False,
-                      extra_name_stack: Optional[str] = None) -> Callable:
+                      extra_name_stack: str | None = None) -> Callable:
   """Convert the JAX implementation of a primitive.
 
   Args:
@@ -996,7 +998,7 @@ def _interpret_subtrace(main: core.MainTrace,
 
 
 def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args_tf: TfVal,
-                     extra_name_stack: Optional[str],
+                     extra_name_stack: str | None,
                      fresh_constant_cache: bool = True) -> Sequence[TfVal]:
   """Evaluates a Jaxpr with tf.Tensor arguments.
 
@@ -1031,7 +1033,7 @@ def _jax_physical_dtype(dtype):
   return _jax_physical_aval(core.ShapedArray((), dtype)).dtype
 
 
-def _aval_to_tf_shape(aval: core.ShapedArray) -> tuple[Optional[int], ...]:
+def _aval_to_tf_shape(aval: core.ShapedArray) -> tuple[int | None, ...]:
 
   """Generate a TF shape, possibly containing None for polymorphic dimensions."""
   aval = _jax_physical_aval(aval)
@@ -1067,7 +1069,7 @@ def _to_jax_dtype(tf_dtype):
 
 
 def _tfval_to_tensor_jax_dtype(val: TfVal,
-                               jax_dtype: Optional[DType] = None,
+                               jax_dtype: DType | None = None,
                                memoize_constants=False) -> tuple[TfVal, DType]:
   """Converts a scalar, ndarray, or tf.Tensor to a tf.Tensor with proper type.
 
@@ -1154,7 +1156,7 @@ def _assert_matching_abstract_shape(x: TfVal, shape: Sequence[shape_poly.DimSize
   """Asserts that shape matches x.shape in the known dimensions and has
   dimension polynomials elsewhere."""
   # Ensures that the shape does not contain None; it should contain symbolic expressions.
-  def check_one(xd: Optional[int], sd: Any):
+  def check_one(xd: int | None, sd: Any):
     if core.is_constant_dim(sd):
       return xd == sd
     else:
@@ -1189,7 +1191,7 @@ class TensorFlowTracer(core.Tracer):
   # _aval: core.ShapedArray
   __slots__ = ["val", "_aval"]
 
-  def __init__(self, trace: "TensorFlowTrace", val: TfVal,
+  def __init__(self, trace: TensorFlowTrace, val: TfVal,
                aval: core.AbstractValue):
     self._trace = trace
     self._aval = aval
@@ -2030,8 +2032,8 @@ def _conv_general_dimension_numbers_proto(dimension_numbers):
   return proto
 
 
-def _precision_config_proto(precision: Optional[tuple[PrecisionType,
-                                                      PrecisionType]]):
+def _precision_config_proto(precision: None | (tuple[PrecisionType,
+                                                      PrecisionType])):
   """Convert an integer to an XLA.PrecisionConfig."""
   if precision is None:
     return None
@@ -2048,8 +2050,8 @@ def _conv_general_dilated(lhs, rhs, *,
                           dimension_numbers: lax.ConvDimensionNumbers,
                           feature_group_count: int,
                           batch_group_count: int,
-                          precision: Optional[tuple[PrecisionType, PrecisionType]],
-                          preferred_element_type: Optional[DType],
+                          precision: tuple[PrecisionType, PrecisionType] | None,
+                          preferred_element_type: DType | None,
                           _in_avals: Sequence[core.ShapedArray],
                           _out_aval: core.ShapedArray):
   """Implementation of lax.conv_general_dilated_p using XlaConv."""
@@ -2057,7 +2059,7 @@ def _conv_general_dilated(lhs, rhs, *,
   dnums_proto = _conv_general_dimension_numbers_proto(dimension_numbers)
   precision_config_proto = _precision_config_proto(precision)
 
-  def gen_conv(lhs, rhs, preferred_element_type: Optional[DType]):
+  def gen_conv(lhs, rhs, preferred_element_type: DType | None):
     tf_version = tuple(int(v) for v in tf.__version__.split(".")[:2])
     if tf_version >= (2, 8):
       # TODO(necula): remove when 2.8.0 is the stable TF version (and supports
@@ -2093,7 +2095,7 @@ def _conv_general_dilated(lhs, rhs, *,
   # Follow the lowering for complex convolutions from
   # lax._conv_general_dilated_translation. We can use the same conversion on all
   # platforms because on XLA:TPU the compiler does the same as a rewrite.
-  preferred_float_et: Optional[Any]
+  preferred_float_et: Any | None
   if np.issubdtype(_in_avals[0].dtype, np.complexfloating):
     if preferred_element_type is not None:
       # Convert complex dtype to types used for real and imaginary parts
@@ -2117,8 +2119,8 @@ tf_impl_with_avals[lax.conv_general_dilated_p] = _conv_general_dilated
 
 
 def _dot_general(lhs, rhs, *, dimension_numbers,
-                 precision: Optional[tuple[PrecisionType, PrecisionType]],
-                 preferred_element_type: Optional[DType],
+                 precision: tuple[PrecisionType, PrecisionType] | None,
+                 preferred_element_type: DType | None,
                  _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray):
   """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""
@@ -3376,7 +3378,7 @@ def _custom_lin(*args: TfVal, **_) -> Sequence[TfVal]:
 tf_impl[ad.custom_lin_p] = _custom_lin
 
 
-PartitionsOrReplicated = Optional[tuple[int, ...]]
+PartitionsOrReplicated = tuple[int, ...] | None
 
 def split_to_logical_devices(tensor: TfVal,
                              partition_dimensions: PartitionsOrReplicated):
@@ -3409,13 +3411,13 @@ def split_to_logical_devices(tensor: TfVal,
 
 def _xla_compatible_sharding_to_hlo_sharding(
     s: sharding.XLACompatibleSharding,
-    aval: core.ShapedArray) -> Optional[xla_client.HloSharding]:
+    aval: core.ShapedArray) -> xla_client.HloSharding | None:
   if sharding_impls.is_unspecified(s):
     return None
   return s._to_xla_hlo_sharding(aval.ndim)  # type: ignore[union-attr]
 
 def _shard_value(val: TfVal,
-                 sd: Optional[xla_client.HloSharding], *,
+                 sd: xla_client.HloSharding | None, *,
                  skip_replicated_sharding: bool) -> TfVal:
   """Apply sharding to a TfVal."""
   if sd is None:
@@ -3471,7 +3473,7 @@ def _pjit(*args: TfVal,
           _out_aval: Sequence[core.ShapedArray]) -> TfVal:
   del donated_invars
   # Apply sharding annotation to the arguments
-  in_hlo_shardings: Sequence[Optional[xla_client.HloSharding]] = map(
+  in_hlo_shardings: Sequence[xla_client.HloSharding | None] = map(
     _xla_compatible_sharding_to_hlo_sharding, in_shardings, _in_avals)
   sharded_args: Sequence[TfVal] = tuple(
       map(partial(_shard_value,
@@ -3480,7 +3482,7 @@ def _pjit(*args: TfVal,
   results = _interpret_jaxpr(jaxpr, *sharded_args,
                               extra_name_stack=util.wrap_name(name, "pjit"),
                               fresh_constant_cache=False)
-  out_hlo_shardings: Sequence[Optional[xla_client.HloSharding]] = map(
+  out_hlo_shardings: Sequence[xla_client.HloSharding | None] = map(
     _xla_compatible_sharding_to_hlo_sharding, out_shardings, _out_aval)
   sharded_results: Sequence[TfVal] = tuple(
       map(partial(_shard_value,

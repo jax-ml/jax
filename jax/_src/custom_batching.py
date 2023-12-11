@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import functools
 import operator
-from typing import Callable, Optional
+from typing import Callable
 
 from jax import lax
 from jax._src import api
@@ -47,7 +49,7 @@ zip, unsafe_zip = util.safe_zip, zip
 @custom_api_util.register_custom_decorator_type
 class custom_vmap:
   fun: Callable
-  vmap_rule: Optional[Callable]
+  vmap_rule: Callable | None
 
   def __init__(self, fun: Callable):
     functools.update_wrapper(self, fun)

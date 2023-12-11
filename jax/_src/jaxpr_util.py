@@ -14,12 +14,14 @@
 
 """Utilities for the Jaxpr IR."""
 
-import collections
+from __future__ import annotations
+
+from collections import Counter, defaultdict
 import gzip
 import itertools
 import json
 import types
-from typing import Any, Callable, DefaultDict, Optional
+from typing import Any, Callable
 
 from jax._src import core
 from jax._src import util
@@ -37,7 +39,7 @@ def all_eqns(jaxpr: core.Jaxpr):
     yield from all_eqns(subjaxpr)
 
 def collect_eqns(jaxpr: core.Jaxpr, key: Callable):
-  d = collections.defaultdict(list)
+  d = defaultdict(list)
   for _, eqn in all_eqns(jaxpr):
     d[key(eqn)].append(eqn)
   return dict(d)
@@ -68,7 +70,7 @@ def source_locations(jaxpr: core.Jaxpr):
     return source_info_util.summarize(eqn.source_info)
   return histogram(jaxpr, key)
 
-MaybeEqn = Optional[core.JaxprEqn]
+MaybeEqn = core.JaxprEqn | None
 
 def var_defs_and_refs(jaxpr: core.Jaxpr):
   defs: dict[core.Var, MaybeEqn] = {}
@@ -128,19 +130,19 @@ def print_histogram(histogram: dict[Any, int]):
 
 
 def _pprof_profile(
-    profile: dict[tuple[Optional[xla_client.Traceback], core.Primitive], int]
+    profile: dict[tuple[xla_client.Traceback | None, core.Primitive], int]
 ) -> bytes:
   """Converts a profile into a compressed pprof protocol buffer.
 
   The input profile is a map from (traceback, primitive) pairs to counts.
   """
-  s: DefaultDict[str, int]
-  func: DefaultDict[types.CodeType, int]
-  loc: DefaultDict[tuple[types.CodeType, int], int]
+  s: defaultdict[str, int]
+  func: defaultdict[types.CodeType, int]
+  loc: defaultdict[tuple[types.CodeType, int], int]
 
-  s = collections.defaultdict(itertools.count(1).__next__)
-  func = collections.defaultdict(itertools.count(1).__next__)
-  loc = collections.defaultdict(itertools.count(1).__next__)
+  s = defaultdict(itertools.count(1).__next__)
+  func = defaultdict(itertools.count(1).__next__)
+  loc = defaultdict(itertools.count(1).__next__)
   s[""] = 0
   primitive_key = s["primitive"]
   samples = []
@@ -201,8 +203,8 @@ def pprof_equation_profile(jaxpr: core.Jaxpr) -> bytes:
     A gzip-compressed pprof Profile protocol buffer, suitable for passing to
     pprof tool for visualization.
   """
-  d: DefaultDict[tuple[Optional[xla_client.Traceback], core.Primitive], int]
-  d = collections.defaultdict(int)
-  for _, eqn in all_eqns(jaxpr):
-    d[(eqn.source_info.traceback, eqn.primitive)] += 1
+  d = Counter(
+      (eqn.source_info.traceback, eqn.primitive)
+      for _, eqn in all_eqns(jaxpr)
+  )
   return _pprof_profile(d)

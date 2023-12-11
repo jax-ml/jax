@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import overload, Literal, Optional, Union
+from __future__ import annotations
+
+from typing import overload, Literal
 
 import jax
 from jax import lax
@@ -27,19 +29,19 @@ import numpy as np
 # unnecessary scipy dependencies.
 
 @overload
-def logsumexp(a: ArrayLike, axis: Axis = None, b: Optional[ArrayLike] = None,
+def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
               keepdims: bool = False, return_sign: Literal[False] = False) -> Array: ...
 
 @overload
-def logsumexp(a: ArrayLike, axis: Axis = None, b: Optional[ArrayLike] = None,
+def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
               keepdims: bool = False, *, return_sign: Literal[True]) -> tuple[Array, Array]: ...
 
 @overload
-def logsumexp(a: ArrayLike, axis: Axis = None, b: Optional[ArrayLike] = None,
-              keepdims: bool = False, return_sign: bool = False) -> Union[Array, tuple[Array, Array]]: ...
+def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
+              keepdims: bool = False, return_sign: bool = False) -> Array | tuple[Array, Array]: ...
 
-def logsumexp(a: ArrayLike, axis: Axis = None, b: Optional[ArrayLike] = None,
-              keepdims: bool = False, return_sign: bool = False) -> Union[Array, tuple[Array, Array]]:
+def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
+              keepdims: bool = False, return_sign: bool = False) -> Array | tuple[Array, Array]:
   r"""Log-sum-exp reduction.
 
   Computes

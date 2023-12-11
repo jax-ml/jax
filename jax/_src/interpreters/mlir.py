@@ -25,7 +25,7 @@ import itertools
 import operator
 import re
 import typing
-from typing import Any, Callable, NamedTuple, Protocol, Union
+from typing import Any, Callable, NamedTuple, Protocol
 import warnings
 
 import numpy as np
@@ -390,11 +390,11 @@ def make_ir_context() -> ir.Context:
   return context
 
 
-AxisContext = Union[
-    sharding_impls.SPMDAxisContext,
-    sharding_impls.ReplicaAxisContext,
-    sharding_impls.ShardingContext,
-]
+AxisContext = (
+    sharding_impls.SPMDAxisContext |
+    sharding_impls.ReplicaAxisContext |
+    sharding_impls.ShardingContext
+)
 
 class ShapePolyLoweringState:
   # The names of the dimension variables, sorted by name. This is the order in
@@ -942,7 +942,7 @@ class TokenSet:
   primitives. A `TokenSet` encapsulates a set of HLO tokens that will be
   used by the lowering rules.
   """
-  _tokens: typing.OrderedDict[core.Effect, Token]
+  _tokens: collections.OrderedDict[core.Effect, Token]
 
   def __init__(self, *args, **kwargs):
     self._tokens = collections.OrderedDict(*args, **kwargs)

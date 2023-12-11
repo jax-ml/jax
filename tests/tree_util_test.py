@@ -579,7 +579,7 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(list(restored_d.keys()), ["a", "b", "c"])
 
   def testFlattenDefaultDictKeyOrder(self):
-    d = collections.defaultdict(lambda: 0,
+    d = collections.defaultdict(int,
                                 {"b": 2, "a": 1, "c": {"b": 2, "a": 1}})
     leaves, treedef = tree_util.tree_flatten(d)
     self.assertEqual(leaves, [1, 2, 1, 2])

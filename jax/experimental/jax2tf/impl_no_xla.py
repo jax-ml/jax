@@ -13,6 +13,8 @@
 # limitations under the License.
 """Workarounds for jax2tf transforms when XLA is not linked in."""
 
+from __future__ import annotations
+
 import builtins
 from collections.abc import Sequence
 import dataclasses
@@ -250,8 +252,8 @@ def _conv_general_dilated(
     lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers: lax.ConvDimensionNumbers, feature_group_count: int,
     batch_group_count: int,
-    precision: Optional[tuple[PrecisionType, PrecisionType]],
-    preferred_element_type: Optional[DType],
+    precision: tuple[PrecisionType, PrecisionType] | None,
+    preferred_element_type: DType | None,
     _in_avals: Sequence[core.ShapedArray], _out_aval: core.ShapedArray):
   """Implementation of lax.conv_general_dilated_p using XlaConv."""
   # In presence of shape polymorphism, lhs.shape and rhs.shape may contain
@@ -360,8 +362,8 @@ tf_impl_no_xla[lax.conv_general_dilated_p] = _conv_general_dilated
 
 
 def _dot_general(lhs, rhs, *, dimension_numbers,
-                 precision: Optional[tuple[PrecisionType, PrecisionType]],
-                 preferred_element_type: Optional[DType],
+                 precision: tuple[PrecisionType, PrecisionType] | None,
+                 preferred_element_type: DType | None,
                  _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray):
   """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""

@@ -14,6 +14,8 @@
 
 """Sparse linear algebra routines."""
 
+from __future__ import annotations
+
 from typing import Union, Callable
 import functools
 
@@ -33,10 +35,10 @@ from scipy.sparse import csr_matrix, linalg
 
 
 def lobpcg_standard(
-    A: Union[jax.Array, Callable[[jax.Array], jax.Array]],
+    A: jax.Array | Callable[[jax.Array], jax.Array],
     X: jax.Array,
     m: int = 100,
-    tol: Union[jax.Array, float, None] = None):
+    tol: jax.Array | float | None = None):
   """Compute the top-k standard eigenvalues using the LOBPCG routine.
 
   LOBPCG [1] stands for Locally Optimal Block Preconditioned Conjugate Gradient.
@@ -106,7 +108,7 @@ def _lobpcg_standard_matrix(
     A: jax.Array,
     X: jax.Array,
     m: int,
-    tol: Union[jax.Array, float, None],
+    tol: jax.Array | float | None,
     debug: bool = False):
   """Computes lobpcg_standard(), possibly with debug diagnostics."""
   return _lobpcg_standard_callable(
@@ -117,7 +119,7 @@ def _lobpcg_standard_callable(
     A: Callable[[jax.Array], jax.Array],
     X: jax.Array,
     m: int,
-    tol: Union[jax.Array, float, None],
+    tol: jax.Array | float | None,
     debug: bool = False):
   """Supports generic lobpcg_standard() callable interface."""
 

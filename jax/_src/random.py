@@ -19,7 +19,6 @@ from functools import partial
 import math
 from operator import index
 import typing
-from typing import Union
 from collections.abc import Hashable
 import warnings
 
@@ -148,7 +147,7 @@ class PRNGSpec:
 
 # TODO(frostig,vanderplas): remove PRNGImpl from this union when it's
 # no longer in the public API because `default_prng_impl` is gone
-PRNGSpecDesc = Union[str, PRNGSpec, PRNGImpl]
+PRNGSpecDesc = str | PRNGSpec | PRNGImpl
 
 
 def resolve_prng_impl(impl_spec: PRNGSpecDesc | None) -> PRNGImpl:

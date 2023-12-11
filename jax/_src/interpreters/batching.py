@@ -17,7 +17,7 @@ import collections
 from collections.abc import Iterable, Sequence
 import dataclasses
 from functools import partial
-from typing import Any, Callable, Union
+from typing import Any, Callable
 
 import numpy as np
 
@@ -966,7 +966,7 @@ def _matchaxis_symbolic_zeros(axis_name, sz, name, src, dst, x, sum_match=False)
 
 ### utilities for defining primitives' batching rules
 
-BatchingRule = Callable[..., tuple[Any, Union[None, int, tuple[Union[None, int], ...]]]]
+BatchingRule = Callable[..., tuple[Any, int | tuple[int | None, ...] | None]]
 primitive_batchers : dict[core.Primitive, BatchingRule] = {}
 axis_primitive_batchers: dict[core.Primitive, Callable] = {}
 spmd_axis_primitive_batchers: dict[core.Primitive, Callable] = {}

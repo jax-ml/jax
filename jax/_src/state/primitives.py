@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for state primitives."""
-from functools import partial
+from __future__ import annotations
 
-from typing import Any, Union
+from functools import partial
+from typing import Any
 
 import numpy as np
 
@@ -55,7 +56,7 @@ def _get_impl(ref: AbstractRef, *idx: int, **_):
   raise ValueError("Cannot run stateful primitive.")
 get_p.def_impl(_get_impl)
 
-Indexer = tuple[Union[int, slice, Array], ...]
+Indexer = tuple[int | slice | Array, ...]
 # or Ellipsis, but that can't be annotated until Python 3.10? (types.EllipsisType)
 
 def _is_trivial_indexer(idx: Indexer) -> bool:

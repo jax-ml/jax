@@ -24,7 +24,7 @@ from __future__ import annotations
 import abc
 import builtins
 import functools
-from typing import cast, overload, Any, Literal, Union
+from typing import cast, overload, Any, Literal
 import warnings
 
 import ml_dtypes
@@ -364,7 +364,7 @@ def issubdtype(a: DTypeLike | None, b: DTypeLike | None) -> bool:
 
 can_cast = np.can_cast
 
-JAXType = Union[type, DType]
+JAXType = type | DType
 
 # Enumeration of all valid JAX types in order.
 _weak_types: list[JAXType] = [int, float, complex]

@@ -19,9 +19,11 @@ cross-platform lowering mode. The actual mechanism for multi-platform and
 cross-platform lowering is tested in export_test.py.
 """
 
+from __future__ import annotations
+
 import math
 import re
-from typing import Callable, Optional
+from typing import Callable
 
 from absl import logging
 from absl.testing import absltest
@@ -124,7 +126,7 @@ class PrimitiveTest(jtu.JaxTestCase):
       *args: jax.Array,
       unimplemented_platforms: set[str] = set(),
       skip_run_on_platforms: set[str] = set(),
-      tol: Optional[float] = None):
+      tol: float | None = None):
     devices = [
         d
         for d in self.__class__.devices

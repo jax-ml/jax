@@ -27,7 +27,7 @@ https://github.com/google/jax/pull/11859/.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Protocol, Union
+from typing import Any, Protocol
 import numpy as np
 
 from jax._src.basearray import (
@@ -50,17 +50,17 @@ class SupportsDType(Protocol):
 # Unlike np.typing.DTypeLike, we exclude None, and instead require
 # explicit annotations when None is acceptable.
 # TODO(jakevdp): consider whether to add ExtendedDtype to the union.
-DTypeLike = Union[
-  str,            # like 'float32', 'int32'
-  type[Any],      # like np.float32, np.int32, float, int
-  np.dtype,       # like np.dtype('float32'), np.dtype('int32')
-  SupportsDType,  # like jnp.float32, jnp.int32
-]
+DTypeLike = (
+  str |          # like 'float32', 'int32'
+  type[Any] |    # like np.float32, np.int32, float, int
+  np.dtype |     # like np.dtype('float32'), np.dtype('int32')
+  SupportsDType  # like jnp.float32, jnp.int32
+)
 
 # Shapes are tuples of dimension sizes, which are normally integers. We allow
 # modules to extend the set of dimension sizes to contain other types, e.g.,
 # symbolic dimensions in export.DimExpr.
-DimSize = Union[int, Any]  # extensible
+DimSize = int | Any  # extensible
 Shape = Sequence[DimSize]
 
 class DuckTypedArray(Protocol):

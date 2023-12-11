@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
 
 import functools
 from functools import partial
 import importlib
 import itertools
 import operator
-from typing import Optional, Union
 
 import jaxlib.mlir.ir as ir
 
@@ -51,8 +51,8 @@ except ImportError:
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 def _threefry2x32_lowering(prng, platform, keys, data,
-                           length: Optional[Union[int, ir.Value]] = None,
-                           output_shape: Optional[ir.Value] = None):
+                           length: int | ir.Value | None = None,
+                           output_shape: ir.Value | None = None):
   """ThreeFry2x32 kernel for GPU.
 
   In presence of dynamic shapes, `length` is an `ir.Value` and `output_shape`

@@ -13,6 +13,8 @@
 # limitations under the License.
 """Pickling support for precompiled binaries."""
 
+from __future__ import annotations
+
 import pickle
 import io
 from typing import Optional, Union
@@ -42,7 +44,7 @@ def serialize(compiled: jax.stages.Compiled):
 def deserialize_and_load(serialized,
                          in_tree,
                          out_tree,
-                         backend: Optional[Union[str, xc.Client]] = None):
+                         backend: str | xc.Client | None = None):
   """Constructs a jax.stages.Compiled from a serialized executable."""
 
   if backend is None or isinstance(backend, str):

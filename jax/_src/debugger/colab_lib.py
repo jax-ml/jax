@@ -20,7 +20,7 @@ import functools
 import sys
 import uuid
 
-from typing import Any, Union
+from typing import Any
 
 IS_COLAB_ENABLED = "google.colab" in sys.modules
 if IS_COLAB_ENABLED:
@@ -39,7 +39,7 @@ class DOMElement(metaclass=abc.ABCMeta):
     pass
 
 
-Element = Union[DOMElement, str]
+Element = DOMElement | str
 
 
 class DynamicDOMElement(DOMElement):

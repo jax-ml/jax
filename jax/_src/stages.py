@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, NamedTuple, Protocol, Union
+from typing import Any, NamedTuple, Protocol
 
 import jax
 
@@ -56,7 +56,7 @@ xla_extension = xc._xla
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
-CompilerOptions = dict[str, Union[str, bool]]
+CompilerOptions = dict[str, str | bool]
 
 
 # -- Internal protocols

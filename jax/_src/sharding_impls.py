@@ -22,7 +22,7 @@ import enum
 import functools
 import itertools
 import math
-from typing import Any, NamedTuple, Union, cast
+from typing import Any, NamedTuple, cast
 
 from jax._src import mesh as mesh_lib
 from jax._src.op_shardings import (
@@ -894,7 +894,7 @@ mesh devices without any modifications. If the mapping was {'y': 1, 'x': 1}, the
 mesh devices ndarray would have to be transposed before flattening and assignment.
 """
 ArrayMapping = OrderedDict[MeshAxisName, int]
-ArrayMappingOrAutoOrUnspecified = Union[ArrayMapping, AUTO, UnspecifiedValue]
+ArrayMappingOrAutoOrUnspecified = ArrayMapping | AUTO | UnspecifiedValue
 
 def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
   if not array_mapping:

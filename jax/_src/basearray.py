@@ -14,9 +14,11 @@
 
 # Note that type annotations for this file are defined in basearray.pyi
 
+from __future__ import annotations
+
 import abc
 import numpy as np
-from typing import Any, Union
+from typing import Any
 from collections.abc import Sequence
 
 # TODO(jakevdp): fix import cycles and define these.
@@ -73,7 +75,7 @@ class Array(abc.ABC):
 
   # Documentation for sharding-related methods and properties defined on ArrayImpl:
   @abc.abstractmethod
-  def addressable_data(self, index: int) -> "Array":
+  def addressable_data(self, index: int) -> Array:
     """Return an array of the addressable data at a particular index."""
 
   @property
@@ -118,10 +120,10 @@ Array.__module__ = "jax"
 # standard JAX array (i.e. not including future non-standard array types like
 # KeyArray and BInt). It's different than np.typing.ArrayLike in that it doesn't
 # accept arbitrary sequences, nor does it accept string data.
-ArrayLike = Union[
-  Array,  # JAX array type
-  np.ndarray,  # NumPy array type
-  np.bool_, np.number,  # NumPy scalar types
-  bool, int, float, complex,  # Python scalar types
-]
+ArrayLike = (
+  Array |  # JAX array type
+  np.ndarray |  # NumPy array type
+  np.bool_ | np.number |  # NumPy scalar types
+  bool | int | float | complex  # Python scalar types
+)
 ArrayLike.__doc__ = "Type annotation for JAX array-like objects."

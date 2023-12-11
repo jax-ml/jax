@@ -13,6 +13,8 @@
 # limitations under the License.
 """Array serialization and deserialization."""
 
+from __future__ import annotations
+
 import abc
 import asyncio
 from collections.abc import Awaitable, Sequence
@@ -257,10 +259,10 @@ def estimate_read_memory_footprint(t: ts.TensorStore,
 
 async def async_deserialize(
     in_sharding: sharding_impls.XLACompatibleSharding,
-    tensorstore_spec: Union[ts.Spec, dict[str, Any]],
-    global_shape: Optional[Sequence[int]] = None,
+    tensorstore_spec: ts.Spec | dict[str, Any],
+    global_shape: Sequence[int] | None = None,
     dtype=None,
-    byte_limiter: Optional[_LimitInFlightBytes] = None,
+    byte_limiter: _LimitInFlightBytes | None = None,
     context=TS_CONTEXT,
     assume_metadata: bool = False,
 ):
@@ -310,8 +312,8 @@ async def async_deserialize(
 
 def run_deserialization(shardings: Sequence[sharding.Sharding],
                         tensorstore_specs: Sequence[dict[str, Any]],
-                        global_shapes: Optional[Sequence[array.Shape]] = None,
-                        dtypes: Optional[Sequence[typing.DTypeLike]] = None,
+                        global_shapes: Sequence[array.Shape] | None = None,
+                        dtypes: Sequence[typing.DTypeLike] | None = None,
                         concurrent_gb: int = 32):
   concurrent_bytes = concurrent_gb * 10**9
 
@@ -392,8 +394,8 @@ class GlobalAsyncCheckpointManagerBase(metaclass=abc.ABCMeta):
   @abc.abstractmethod
   def deserialize(self, shardings: Sequence[sharding.Sharding],
                   tensorstore_specs: Sequence[dict[str, Any]],
-                  global_shapes: Optional[Sequence[array.Shape]] = None,
-                  dtypes: Optional[Sequence[typing.DTypeLike]] = None):
+                  global_shapes: Sequence[array.Shape] | None = None,
+                  dtypes: Sequence[typing.DTypeLike] | None = None):
     """Deserializes GDAs from TensorStore."""
 
 
@@ -548,8 +550,8 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
 
   def deserialize(self, shardings: Sequence[sharding.Sharding],
                   tensorstore_specs: Sequence[dict[str, Any]],
-                  global_shapes: Optional[Sequence[array.Shape]] = None,
-                  dtypes: Optional[Sequence[typing.DTypeLike]] = None,
+                  global_shapes: Sequence[array.Shape] | None = None,
+                  dtypes: Sequence[typing.DTypeLike] | None = None,
                   concurrent_gb: int = 32):
     self.wait_until_finished()
     return run_deserialization(shardings, tensorstore_specs,
@@ -558,8 +560,8 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
   def deserialize_with_paths(
       self, shardings: Sequence[sharding.Sharding],
       paths: Sequence[str],
-      global_shapes: Optional[Sequence[array.Shape]] = None,
-      dtypes: Optional[Sequence[typing.DTypeLike]] = None,
+      global_shapes: Sequence[array.Shape] | None = None,
+      dtypes: Sequence[typing.DTypeLike] | None = None,
       concurrent_gb: int = 32):
     tspecs = jax.tree_map(get_tensorstore_spec, paths)
     return self.deserialize(shardings, tspecs, global_shapes, dtypes,

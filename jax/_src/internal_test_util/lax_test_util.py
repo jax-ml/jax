@@ -17,9 +17,11 @@
 # only, and may be changed or removed at any time and without any deprecation
 # cycle.
 
+from __future__ import annotations
+
 import collections
 import itertools
-from typing import Optional, cast
+from typing import cast
 
 from jax import lax
 from jax._src import dtypes
@@ -355,7 +357,7 @@ def lax_ops():
 
 
 def all_bdims(*shapes):
-  bdims = (itertools.chain([cast(Optional[int], None)],
+  bdims = (itertools.chain([cast(int | None, None)],
                            range(len(shape) + 1)) for shape in shapes)
   return (t for t in itertools.product(*bdims) if not all(e is None for e in t))
 

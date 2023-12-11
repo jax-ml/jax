@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for state types."""
+
 from __future__ import annotations
 
 from collections.abc import Sequence
 import dataclasses
 import math
-from typing import Any, Generic, TypeVar, Union
+from typing import Any, Generic, TypeVar
 
 from jax._src import core
 from jax._src import effects
@@ -68,7 +69,7 @@ class AccumEffect(RefEffect):
 
 effects.control_flow_allowed_effects.add_type(RefEffect)
 
-StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
+StateEffect = ReadEffect | WriteEffect | AccumEffect
 
 # ## `Ref`s
 

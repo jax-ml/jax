@@ -13,8 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-import collections
-from collections import namedtuple
+from collections import defaultdict, namedtuple
 from collections.abc import Generator, Hashable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -28,8 +27,8 @@ import operator
 from operator import attrgetter
 import threading
 import types
-from typing import (Any, Callable, ClassVar, DefaultDict, Generic, NamedTuple,
-                    TypeVar, Union, cast, overload)
+from typing import (Any, Callable, ClassVar, Generic, NamedTuple, TypeVar,
+                    cast, overload)
 import warnings
 from weakref import ref
 
@@ -379,7 +378,7 @@ class Literal:
 
 literalable_types: set[type] = set()
 
-Atom = Union[Var, Literal]
+Atom = Var | Literal
 
 class Primitive:
   name: str
@@ -1887,7 +1886,7 @@ class bint(dtypes.ExtendedDType):
   def __str__(self) -> str:
     return self.name
 
-AxisSize = Union[int, DArray, Tracer, Var, DBIdx, InDBIdx, OutDBIdx]
+AxisSize = int | DArray | Tracer | Var | DBIdx | InDBIdx | OutDBIdx
 
 
 class AbstractToken(AbstractValue):
@@ -3024,10 +3023,10 @@ class JaxprPpSettings(NamedTuple):
 # A JaxprPpContext allows us to globally uniquify variable names within nested
 # Jaxprs.
 class JaxprPpContext:
-  var_ids: DefaultDict[Var, int]
+  var_ids: defaultdict[Var, int]
 
   def __init__(self):
-    self.var_ids = collections.defaultdict(it.count().__next__, {})
+    self.var_ids = defaultdict(it.count().__next__, {})
 
 
 def pp_var(v: Var, context: JaxprPpContext) -> str:

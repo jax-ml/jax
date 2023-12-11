@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import dataclasses
 from functools import update_wrapper, reduce, partial
 import inspect
-from typing import Any, Callable, Generic, Optional, TypeVar
+from typing import Any, Callable, Generic, TypeVar
 
 from jax._src import config
 from jax._src import core
@@ -136,7 +138,7 @@ class custom_jvp(Generic[ReturnValue]):
   """
   fun: Callable[..., ReturnValue]
   nondiff_argnums: tuple[int, ...]
-  jvp: Optional[Callable[..., tuple[ReturnValue, ReturnValue]]] = None
+  jvp: Callable[..., tuple[ReturnValue, ReturnValue]] | None = None
   symbolic_zeros: bool = False
 
   def __init__(self,
@@ -194,7 +196,7 @@ class custom_jvp(Generic[ReturnValue]):
     self.symbolic_zeros = symbolic_zeros
     return jvp
 
-  def defjvps(self, *jvps: Optional[Callable[..., ReturnValue]]):
+  def defjvps(self, *jvps: Callable[..., ReturnValue] | None):
     """Convenience wrapper for defining JVPs for each argument separately.
 
     This convenience wrapper cannot be used together with ``nondiff_argnums``.
@@ -493,8 +495,8 @@ class custom_vjp(Generic[ReturnValue]):
     update_wrapper(self, fun)
     self.fun = fun
     self.nondiff_argnums = nondiff_argnums
-    self.fwd: Optional[Callable[..., tuple[ReturnValue, Any]]] = None
-    self.bwd: Optional[Callable[..., tuple[Any, ...]]] = None
+    self.fwd: Callable[..., tuple[ReturnValue, Any]] | None = None
+    self.bwd: Callable[..., tuple[Any, ...]] | None = None
     self.symbolic_zeros = False
 
   __getattr__ = custom_api_util.forward_attr

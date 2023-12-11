@@ -89,7 +89,9 @@ Example Usage:
 .. _Optax: https://github.com/deepmind/optax
 """
 
-from typing import Any, Callable, NamedTuple, Union
+from __future__ import annotations
+
+from typing import Any, Callable, NamedTuple
 
 from collections import namedtuple
 import functools
@@ -550,7 +552,7 @@ def piecewise_constant(boundaries: Any, values: Any):
     return values[jnp.sum(i > boundaries)]
   return schedule
 
-def make_schedule(scalar_or_schedule: Union[float, Schedule]) -> Schedule:
+def make_schedule(scalar_or_schedule: float | Schedule) -> Schedule:
   if callable(scalar_or_schedule):
     return scalar_or_schedule
   elif jnp.ndim(scalar_or_schedule) == 0:

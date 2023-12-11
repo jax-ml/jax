@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import functools
 import re
 import typing
@@ -74,14 +76,14 @@ class Rotation(typing.NamedTuple):
     return cls(_from_rotvec(rotvec, degrees))
 
   @classmethod
-  def identity(cls, num: typing.Optional[int] = None, dtype=float):
+  def identity(cls, num: int | None = None, dtype=float):
     """Get identity rotation(s)."""
     assert num is None
     quat = jnp.array([0., 0., 0., 1.], dtype=dtype)
     return cls(quat)
 
   @classmethod
-  def random(cls, random_key: jax.Array, num: typing.Optional[int] = None):
+  def random(cls, random_key: jax.Array, num: int | None = None):
     """Generate uniformly distributed rotations."""
     # Need to implement scipy.stats.special_ortho_group for this to work...
     raise NotImplementedError
@@ -147,7 +149,7 @@ class Rotation(typing.NamedTuple):
     """Get the magnitude(s) of the rotation(s)."""
     return _magnitude(self.quat)
 
-  def mean(self, weights: typing.Optional[jax.Array] = None):
+  def mean(self, weights: jax.Array | None = None):
     """Get the mean of the rotations."""
     w = jnp.ones(self.quat.shape[0], dtype=self.quat.dtype) if weights is None else jnp.asarray(weights, dtype=self.quat.dtype)
     if w.ndim != 1:

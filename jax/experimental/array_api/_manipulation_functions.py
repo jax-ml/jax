@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import operator
 from typing import List, Optional, Tuple, Union
 
@@ -30,7 +32,7 @@ def broadcast_to(x: Array, /, shape: tuple[int]) -> Array:
   return jax.numpy.broadcast_to(x, shape=shape)
 
 
-def concat(arrays: Union[tuple[Array, ...], list[Array]], /, *, axis: Optional[int] = 0) -> Array:
+def concat(arrays: tuple[Array, ...] | list[Array], /, *, axis: int | None = 0) -> Array:
   """Joins a sequence of arrays along an existing axis."""
   dtype = _result_type(*arrays)
   if axis is None:
@@ -46,7 +48,7 @@ def expand_dims(x: Array, /, *, axis: int = 0) -> Array:
   return jax.numpy.expand_dims(x, axis=axis)
 
 
-def flip(x: Array, /, *, axis: Optional[Union[int, tuple[int, ...]]] = None) -> Array:
+def flip(x: Array, /, *, axis: int | tuple[int, ...] | None = None) -> Array:
   """Reverses the order of elements in an array along the given axis."""
   return jax.numpy.flip(x, axis=axis)
 
@@ -56,24 +58,24 @@ def permute_dims(x: Array, /, axes: tuple[int, ...]) -> Array:
   return jax.lax.transpose(x, axes)
 
 
-def reshape(x: Array, /, shape: tuple[int, ...], *, copy: Optional[bool] = None) -> Array:
+def reshape(x: Array, /, shape: tuple[int, ...], *, copy: bool | None = None) -> Array:
   """Reshapes an array without changing its data."""
   del copy  # unused
   return jax.numpy.reshape(x, shape)
 
 
-def roll(x: Array, /, shift: Union[int, tuple[int]], *, axis: Optional[Union[int, tuple[int, ...]]] = None) -> Array:
+def roll(x: Array, /, shift: int | tuple[int], *, axis: int | tuple[int, ...] | None = None) -> Array:
   """Rolls array elements along a specified axis."""
   return jax.numpy.roll(x, shift=shift, axis=axis)
 
 
-def squeeze(x: Array, /, axis: Union[int, tuple[int, ...]]) -> Array:
+def squeeze(x: Array, /, axis: int | tuple[int, ...]) -> Array:
   """Removes singleton dimensions (axes) from x."""
   dimensions = axis if isinstance(axis, tuple) else (axis,)
   return jax.lax.squeeze(x, dimensions=dimensions)
 
 
-def stack(arrays: Union[tuple[Array, ...], list[Array]], /, *, axis: int = 0) -> Array:
+def stack(arrays: tuple[Array, ...] | list[Array], /, *, axis: int = 0) -> Array:
   """Joins a sequence of arrays along a new axis."""
   dtype = _result_type(*arrays)
   return jax.numpy.stack(arrays, axis=axis, dtype=dtype)

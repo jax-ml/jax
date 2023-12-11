@@ -25,12 +25,14 @@
 # Annotations. https://ayazhafiz.com/articles/21/strictly-annotated
 #
 
+from __future__ import annotations
+
 import abc
 from collections.abc import Sequence
 import enum
 from functools import partial
 import sys
-from typing import NamedTuple, Optional, Union
+from typing import NamedTuple
 
 from jax._src import config
 
@@ -67,7 +69,7 @@ CAN_USE_COLOR = _can_use_color()
 class Doc(abc.ABC):
   __slots__ = ()
 
-  def format(self, width: int = 80, use_color: Optional[bool] = None,
+  def format(self, width: int = 80, use_color: bool | None = None,
              annotation_prefix=" # ") -> str:
     if use_color is None:
       use_color = CAN_USE_COLOR and _PPRINT_USE_COLOR.value
@@ -77,7 +79,7 @@ class Doc(abc.ABC):
   def __str__(self):
     return self.format()
 
-  def __add__(self, other: 'Doc') -> 'Doc':
+  def __add__(self, other: Doc) -> Doc:
     return concat([self, other])
 
 class _NilDoc(Doc):
@@ -88,9 +90,9 @@ _nil = _NilDoc()
 class _TextDoc(Doc):
   __slots__ = ("text", "annotation")
   text: str
-  annotation: Optional[str]
+  annotation: str | None
 
-  def __init__(self, text: str, annotation: Optional[str] = None):
+  def __init__(self, text: str, annotation: str | None = None):
     assert isinstance(text, str), text
     assert annotation is None or isinstance(annotation, str), annotation
     self.text = text
@@ -151,14 +153,14 @@ Intensity = enum.Enum("_Intensity", ["DIM", "NORMAL", "BRIGHT"])
 
 class _ColorDoc(Doc):
   __slots__ = ("foreground", "background", "intensity", "child")
-  foreground: Optional[Color]
-  background: Optional[Color]
-  intensity: Optional[Intensity]
+  foreground: Color | None
+  background: Color | None
+  intensity: Intensity | None
   child: Doc
 
-  def __init__(self, child: Doc, *, foreground: Optional[Color] = None,
-               background: Optional[Color] = None,
-               intensity: Optional[Intensity] = None):
+  def __init__(self, child: Doc, *, foreground: Color | None = None,
+               background: Color | None = None,
+               intensity: Intensity | None = None):
     assert isinstance(child, Doc), child
     self.child = child
     self.foreground = foreground
@@ -243,7 +245,7 @@ class _State(NamedTuple):
 class _Line(NamedTuple):
   text: str
   width: int
-  annotations: Union[Optional[str], list[str]]
+  annotations: str | None | list[str]
 
 
 def _update_color(use_color: bool, state: _ColorState, update: _ColorState
@@ -359,7 +361,7 @@ def nil() -> Doc:
   """An empty document."""
   return _nil
 
-def text(s: str, annotation: Optional[str] = None) -> Doc:
+def text(s: str, annotation: str | None = None) -> Doc:
   """Literal text."""
   return _TextDoc(s, annotation)
 
@@ -391,9 +393,9 @@ def nest(n: int, doc: Doc) -> Doc:
   return _NestDoc(n, doc)
 
 
-def color(doc: Doc, *, foreground: Optional[Color] = None,
-          background: Optional[Color] = None,
-          intensity: Optional[Intensity] = None):
+def color(doc: Doc, *, foreground: Color | None = None,
+          background: Color | None = None,
+          intensity: Intensity | None = None):
   """ANSI colors.
 
   Overrides the foreground/background/intensity of the text for the child doc.

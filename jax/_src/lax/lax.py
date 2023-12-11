@@ -22,8 +22,7 @@ from functools import partial
 import itertools
 import math
 import operator
-from typing import (Any, Callable, TypeVar, Union,
-                    cast as type_cast, overload)
+from typing import (Any, Callable, TypeVar, cast as type_cast, overload)
 import warnings
 
 import numpy as np
@@ -673,8 +672,13 @@ class Precision(xla_client.PrecisionConfig.Precision):  # type: ignore
 
 
 PrecisionType = Precision
-PrecisionLike = Union[None, str, PrecisionType, tuple[str, str],
-                      tuple[PrecisionType, PrecisionType]]
+PrecisionLike = (
+    str |
+    PrecisionType |
+    tuple[str, str] |
+    tuple[PrecisionType, PrecisionType] |
+    None
+)
 
 def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
         preferred_element_type: DTypeLike | None = None) -> Array:

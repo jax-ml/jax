@@ -13,9 +13,10 @@
 # limitations under the License.
 """Sharding utilities"""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import itertools
-from typing import Union
 
 import numpy as np
 
@@ -43,7 +44,7 @@ def get_num_ways_dim_sharded(
   return partitions, num_replicas
 
 
-def is_op_sharding_replicated(op: Union[xc.OpSharding, xc.HloSharding]) -> bool:
+def is_op_sharding_replicated(op: xc.OpSharding | xc.HloSharding) -> bool:
   if isinstance(op, xc.OpSharding):
     op = xc.HloSharding.from_proto(op)
   if op.num_devices() == 1:
@@ -51,8 +52,8 @@ def is_op_sharding_replicated(op: Union[xc.OpSharding, xc.HloSharding]) -> bool:
   return op.is_replicated()  # type: ignore
 
 
-def are_op_shardings_equal(op1: Union[xc.OpSharding, xc.HloSharding],
-                           op2: Union[xc.OpSharding, xc.HloSharding]) -> bool:
+def are_op_shardings_equal(op1: xc.OpSharding | xc.HloSharding,
+                           op2: xc.OpSharding | xc.HloSharding) -> bool:
   if id(op1) == id(op2):
     return True
   if is_op_sharding_replicated(op1) and is_op_sharding_replicated(op2):
@@ -62,7 +63,7 @@ def are_op_shardings_equal(op1: Union[xc.OpSharding, xc.HloSharding],
   return hc1 == hc2
 
 
-_Index = Union[int, slice, tuple[Union[int, slice], ...]]
+_Index = int | slice | tuple[int | slice, ...]
 
 
 def op_sharding_to_numpy_indices(

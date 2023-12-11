@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import contextlib
 import functools
 import itertools as it
 from functools import partial
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
 import jax
 from jax._src import config
@@ -46,7 +48,7 @@ def identity(x): return x
 
 def _update_annotation(
     f: lu.WrappedFun,
-    orig_type: Optional[tuple[tuple[core.AbstractValue, bool], ...]],
+    orig_type: tuple[tuple[core.AbstractValue, bool], ...] | None,
     explicit_nonzeros: list[bool]
   ) -> lu.WrappedFun:
   if orig_type is None:
@@ -694,7 +696,7 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
 
 
 def jvp_jaxpr(jaxpr: core.ClosedJaxpr, nonzeros: Sequence[bool],
-              instantiate: Union[bool, Sequence[bool]]
+              instantiate: bool | Sequence[bool]
               ) -> tuple[core.ClosedJaxpr, list[bool]]:
   if type(instantiate) is bool:
     instantiate = (instantiate,) * len(jaxpr.out_avals)

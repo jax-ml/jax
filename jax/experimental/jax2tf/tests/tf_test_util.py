@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import contextlib
 import dataclasses
-import functools
 import re
 import os
 from typing import Any, Callable, Optional
@@ -91,8 +92,8 @@ def SaveAndLoadModel(model: tf.Module,
   return restored_model
 
 def SaveAndLoadFunction(f_tf: Callable, *,
-                        input_signature: Optional[Sequence[tf.TensorSpec]] = None,
-                        input_args: Optional[Sequence[Any]] = None,
+                        input_signature: Sequence[tf.TensorSpec] | None = None,
+                        input_args: Sequence[Any] | None = None,
                         variables: Sequence[tf.Variable] = (),
                         save_gradients=True) -> tuple[Callable, tf.train.Checkpoint]:
   # Roundtrip through saved model on disk. Return the Checkpoint also
@@ -364,7 +365,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     return result_jax, result_tf
 
   def TransformConvertAndCompare(self, func: Callable, arg,
-                                 transform: Optional[str]):
+                                 transform: str | None):
     """Like ConvertAndCompare but first applies a transformation.
 
     `func` must be a function from one argument to one result. `arg` is

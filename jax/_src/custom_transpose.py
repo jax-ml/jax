@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import functools
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from jax._src import ad_util
 from jax._src import api_util
@@ -65,7 +67,7 @@ flatten_fun_nokwargs = transformation_with_aux(
 @custom_api_util.register_custom_decorator_type
 class custom_transpose:
   fun: Callable
-  transpose: Optional[Callable] = None
+  transpose: Callable | None = None
 
   def __init__(self, fun: Callable):
     functools.update_wrapper(self, fun)

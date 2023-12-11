@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence, Iterable, Iterator, Generator
 from functools import partial
 import itertools as it
@@ -19,7 +21,7 @@ import math
 import operator as op
 import os
 from types import SimpleNamespace
-from typing import Any, NamedTuple, Callable, Optional, TypeVar, Union
+from typing import Any, NamedTuple, Callable, TypeVar
 import unittest
 
 from absl.testing import absltest
@@ -819,7 +821,7 @@ class ShardMapTest(jtu.JaxTestCase):
   # TODO(mattjj): consider moving this method to be a helper in jtu
   def assert_dce_result(self, jaxpr: core.Jaxpr, used_outputs: list[bool],
                         expected_used_inputs: list[bool],
-                        expected_num_eqns: Optional[int] = None,
+                        expected_num_eqns: int | None = None,
                         check_diff: bool = True):
     jaxpr_dce, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs)
     core.check_jaxpr(jaxpr_dce)
@@ -1310,7 +1312,7 @@ class FunSpec(NamedTuple):
   num_inputs: int
   fun: Callable
   out_rep: Callable
-  valid_types: Optional[Callable] = None
+  valid_types: Callable | None = None
 
 fun_specs = [
     FunSpec('id', 1, lambda x: x, lambda r: r),
@@ -1476,8 +1478,8 @@ def dilate(mesh: Mesh, spec: P, shape: ShapeDtypeDuck) -> ShapeDtypeDuck:
   return jax.ShapeDtypeStruct(new_shape, shape.dtype)
 
 def make_out_specs(
-    mesh: MeshDuck, out_types: Union[ShapeDtypeDuck, Sequence[ShapeDtypeDuck]],
-    out_reps: Union[set[core.AxisName], Sequence[set[core.AxisName]]]
+    mesh: MeshDuck, out_types: ShapeDtypeDuck | Sequence[ShapeDtypeDuck],
+    out_reps: set[core.AxisName] | Sequence[set[core.AxisName]]
   ) -> Chooser:
   if type(out_types) is not tuple:
     out_spec = yield from make_out_spec(mesh, out_types, out_reps)  # type: ignore
@@ -1522,11 +1524,11 @@ def sample_shmap_batched(bdim_size: int) -> Chooser:
   return name + f'_vmap_{bdims}', bdims, *shmap_specs, batch_args, ref
 
 def all_bdims(*shapes: tuple[int, ...]
-              ) -> Iterator[Sequence[Optional[int]]]:
+              ) -> Iterator[Sequence[int | None]]:
   bdims = ((None, *range(len(shape) + 1)) for shape in shapes)
   return (t for t in it.product(*bdims) if not all(e is None for e in t))
 
-def batchify_arg(size: int, bdim: Optional[int], x: Arr) -> Arr:
+def batchify_arg(size: int, bdim: int | None, x: Arr) -> Arr:
   if bdim is None:
     return x
   else:
@@ -1534,7 +1536,7 @@ def batchify_arg(size: int, bdim: Optional[int], x: Arr) -> Arr:
         [1 if i != bdim else -1 for i in range(len(x.shape) + 1)])
     return np.expand_dims(x, bdim) * iota
 
-def args_slicer(args: Sequence[Arr], bdims: Sequence[Optional[int]]
+def args_slicer(args: Sequence[Arr], bdims: Sequence[int | None]
                 ) -> Callable[[int], Sequence[Arr]]:
   def slicer(x, bdim):
     if bdim is None:

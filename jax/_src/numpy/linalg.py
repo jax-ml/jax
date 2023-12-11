@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
 
 from functools import partial
 
 import numpy as np
 import textwrap
 import operator
-from typing import Literal, Optional, Union, cast, overload
+from typing import Literal, cast, overload
 
 import jax
 from jax import jit, custom_jvp
@@ -61,12 +62,12 @@ def svd(a: ArrayLike, full_matrices: bool, compute_uv: Literal[False],
         hermitian: bool = False) -> Array: ...
 @overload
 def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
-        hermitian: bool = False) -> Union[Array, tuple[Array, Array, Array]]: ...
+        hermitian: bool = False) -> Array | tuple[Array, Array, Array]: ...
 
 @_wraps(np.linalg.svd)
 @partial(jit, static_argnames=('full_matrices', 'compute_uv', 'hermitian'))
 def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
-        hermitian: bool = False) -> Union[Array, tuple[Array, Array, Array]]:
+        hermitian: bool = False) -> Array | tuple[Array, Array, Array]:
   check_arraylike("jnp.linalg.svd", a)
   a, = promote_dtypes_inexact(jnp.asarray(a))
   if hermitian:
@@ -129,7 +130,7 @@ def matrix_power(a: ArrayLike, n: int) -> Array:
 
 @_wraps(np.linalg.matrix_rank)
 @jit
-def matrix_rank(M: ArrayLike, tol: Optional[ArrayLike] = None) -> Array:
+def matrix_rank(M: ArrayLike, tol: ArrayLike | None = None) -> Array:
   check_arraylike("jnp.linalg.matrix_rank", M)
   M, = promote_dtypes_inexact(jnp.asarray(M))
   if M.ndim < 2:
@@ -193,7 +194,7 @@ def _slogdet_qr(a: Array) -> tuple[Array, Array]:
         LU decomposition if ``None``.
     """))
 @partial(jit, static_argnames=('method',))
-def slogdet(a: ArrayLike, *, method: Optional[str] = None) -> tuple[Array, Array]:
+def slogdet(a: ArrayLike, *, method: str | None = None) -> tuple[Array, Array]:
   check_arraylike("jnp.linalg.slogdet", a)
   a, = promote_dtypes_inexact(jnp.asarray(a))
   a_shape = jnp.shape(a)
@@ -382,7 +383,7 @@ def eigvals(a: ArrayLike) -> Array:
 
 @_wraps(np.linalg.eigh)
 @partial(jit, static_argnames=('UPLO', 'symmetrize_input'))
-def eigh(a: ArrayLike, UPLO: Optional[str] = None,
+def eigh(a: ArrayLike, UPLO: str | None = None,
          symmetrize_input: bool = True) -> tuple[Array, Array]:
   check_arraylike("jnp.linalg.eigh", a)
   if UPLO is None or UPLO == "L":
@@ -400,7 +401,7 @@ def eigh(a: ArrayLike, UPLO: Optional[str] = None,
 
 @_wraps(np.linalg.eigvalsh)
 @partial(jit, static_argnames=('UPLO',))
-def eigvalsh(a: ArrayLike, UPLO: Optional[str] = 'L') -> Array:
+def eigvalsh(a: ArrayLike, UPLO: str | None = 'L') -> Array:
   check_arraylike("jnp.linalg.eigvalsh", a)
   w, _ = eigh(a, UPLO)
   return w
@@ -413,7 +414,7 @@ def eigvalsh(a: ArrayLike, UPLO: Optional[str] = 'L') -> Array:
     `10. * max(num_rows, num_cols) * jnp.finfo(dtype).eps`.
     """))
 @partial(jit, static_argnames=('hermitian',))
-def pinv(a: ArrayLike, rcond: Optional[ArrayLike] = None,
+def pinv(a: ArrayLike, rcond: ArrayLike | None = None,
          hermitian: bool = False) -> Array:
   # Uses same algorithm as
   # https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
@@ -481,8 +482,8 @@ def inv(a: ArrayLike) -> Array:
 
 @_wraps(np.linalg.norm)
 @partial(jit, static_argnames=('ord', 'axis', 'keepdims'))
-def norm(x: ArrayLike, ord: Union[int, str, None] = None,
-         axis: Union[None, tuple[int, ...], int] = None,
+def norm(x: ArrayLike, ord: int | str | None = None,
+         axis: None | tuple[int, ...] | int = None,
          keepdims: bool = False) -> Array:
   check_arraylike("jnp.linalg.norm", x)
   x, = promote_dtypes_inexact(jnp.asarray(x))
@@ -579,11 +580,11 @@ def norm(x: ArrayLike, ord: Union[int, str, None] = None,
 @overload
 def qr(a: ArrayLike, mode: Literal["r"]) -> Array: ...
 @overload
-def qr(a: ArrayLike, mode: str = "reduced") -> Union[Array, tuple[Array, Array]]: ...
+def qr(a: ArrayLike, mode: str = "reduced") -> Array | tuple[Array, Array]: ...
 
 @_wraps(np.linalg.qr)
 @partial(jit, static_argnames=('mode',))
-def qr(a: ArrayLike, mode: str = "reduced") -> Union[Array, tuple[Array, Array]]:
+def qr(a: ArrayLike, mode: str = "reduced") -> Array | tuple[Array, Array]:
   check_arraylike("jnp.linalg.qr", a)
   a, = promote_dtypes_inexact(jnp.asarray(a))
   if mode == "raw":
@@ -611,7 +612,7 @@ def solve(a: ArrayLike, b: ArrayLike) -> Array:
   return lax_linalg._solve(a, b)
 
 
-def _lstsq(a: ArrayLike, b: ArrayLike, rcond: Optional[float], *,
+def _lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None, *,
            numpy_resid: bool = False) -> tuple[Array, Array, Array, Array]:
   # TODO: add lstsq to lax_linalg and implement this function via those wrappers.
   # TODO: add custom jvp rule for more robust lstsq differentiation
@@ -671,7 +672,7 @@ _jit_lstsq = jit(partial(_lstsq, numpy_resid=False))
     The lstsq function does not currently have a custom JVP rule, so the gradient is
     poorly behaved for some inputs, particularly for low-rank `a`.
     """))
-def lstsq(a: ArrayLike, b: ArrayLike, rcond: Optional[float] = None, *,
+def lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None = None, *,
           numpy_resid: bool = False) -> tuple[Array, Array, Array, Array]:
   check_arraylike("jnp.linalg.lstsq", a, b)
   if numpy_resid:

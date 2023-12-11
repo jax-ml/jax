@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Iterator
 import contextlib
 import dataclasses
@@ -22,7 +24,7 @@ import sys
 import sysconfig
 import threading
 import types
-from typing import Optional, NamedTuple, Union
+from typing import NamedTuple
 
 import jax.version
 from jax._src.lib import xla_client
@@ -80,9 +82,9 @@ class Transform(NamedTuple):
 
 @dataclasses.dataclass(frozen=True)
 class NameStack:
-  stack: tuple[Union[Scope, Transform], ...] = ()
+  stack: tuple[Scope | Transform, ...] = ()
 
-  def extend(self, name: Union[tuple[str, ...], str]) -> 'NameStack':
+  def extend(self, name: tuple[str, ...] | str) -> NameStack:
     if not isinstance(name, tuple):
       name = (name,)
     scopes = tuple(map(Scope, name))
@@ -93,19 +95,19 @@ class NameStack:
       return name
     return f'{self}/{name}'
 
-  def transform(self, transform_name: str) -> 'NameStack':
+  def transform(self, transform_name: str) -> NameStack:
     return NameStack((*self.stack, Transform(transform_name)))
 
-  def __getitem__(self, idx: slice) -> 'NameStack':
+  def __getitem__(self, idx: slice) -> NameStack:
     return NameStack(self.stack[idx])
 
   def __len__(self):
     return len(self.stack)
 
-  def __add__(self, other: 'NameStack') -> 'NameStack':
+  def __add__(self, other: NameStack) -> NameStack:
     return NameStack(self.stack + other.stack)
 
-  def __radd__(self, other: 'NameStack') -> 'NameStack':
+  def __radd__(self, other: NameStack) -> NameStack:
     return NameStack(other.stack + self.stack)
 
   def __str__(self) -> str:
@@ -123,11 +125,11 @@ def new_name_stack(name: str = '') -> NameStack:
 
 
 class SourceInfo(NamedTuple):
-  traceback: Optional[Traceback]
+  traceback: Traceback | None
   name_stack: NameStack
 
-  def replace(self, *, traceback: Optional[Traceback] = None,
-      name_stack: Optional[NameStack] = None) -> 'SourceInfo':
+  def replace(self, *, traceback: Traceback | None = None,
+      name_stack: NameStack | None = None) -> SourceInfo:
     return SourceInfo(
         self.traceback if traceback is None else traceback,
         self.name_stack if name_stack is None else name_stack
@@ -172,7 +174,7 @@ def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
           if is_user_filename(code[i].co_filename))
 
 @functools.lru_cache(maxsize=64)
-def user_frame(source_info: SourceInfo) -> Optional[Frame]:
+def user_frame(source_info: SourceInfo) -> Frame | None:
   return next(user_frames(source_info), None)
 
 def _summarize_frame(frame: Frame) -> str:
@@ -217,7 +219,7 @@ def has_user_context(e):
   return False
 
 @contextlib.contextmanager
-def user_context(c: Optional[Traceback], *, name_stack: Optional[NameStack] = None):
+def user_context(c: Traceback | None, *, name_stack: NameStack | None = None):
   prev = _source_info_context.context
   _source_info_context.context = _source_info_context.context.replace(
       traceback=c, name_stack=name_stack)

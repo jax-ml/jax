@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -21,7 +22,7 @@ import math
 import os
 from random import shuffle
 import re
-from typing import Optional, cast
+from typing import cast
 import unittest
 from unittest import SkipTest
 import weakref
@@ -60,7 +61,7 @@ prev_xla_flags = None
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
 def all_bdims(*shapes, pmap):
-  bdims = (it.chain([cast(Optional[int], None)], range(len(shape) + 1))
+  bdims = (it.chain([cast(int | None, None)], range(len(shape) + 1))
            for shape in shapes)
   return (t for t in it.product(*bdims) if not all(e is None for e in t))
 

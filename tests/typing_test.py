@@ -17,7 +17,10 @@ Typing tests
 This test is meant to be both a runtime test and a static type annotation test,
 so it should be checked with pytype/mypy as well as being run with pytest.
 """
-from typing import Any, Optional, Union, TYPE_CHECKING
+
+from __future__ import annotations
+
+from typing import Any, TYPE_CHECKING
 
 import jax
 from jax._src import core
@@ -100,7 +103,7 @@ class TypingTest(jtu.JaxTestCase):
     self.assertArraysEqual(out9, jnp.float32(0))
 
   def testArrayInstanceChecks(self):
-    def is_array(x: typing.ArrayLike) -> Union[bool, typing.Array]:
+    def is_array(x: typing.ArrayLike) -> bool | typing.Array:
       return isinstance(x, typing.Array)
 
     x = jnp.arange(5)
@@ -114,7 +117,7 @@ class TypingTest(jtu.JaxTestCase):
   def testAnnotations(self):
     # This test is mainly meant for static type checking: we want to ensure that
     # Tracer and ArrayImpl are valid as array.Array.
-    def f(x: Any) -> Optional[typing.Array]:
+    def f(x: Any) -> typing.Array | None:
       if isinstance(x, core.Tracer):
         return x
       elif isinstance(x, ArrayImpl):

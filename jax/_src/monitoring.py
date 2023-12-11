@@ -20,19 +20,22 @@ during program execution, the registered listeners will be invoked.
 A typical listener callback is to send an event to a metrics collector for
 aggregation/exporting.
 """
-from typing import Protocol, Union
+
+from __future__ import annotations
+
+from typing import Protocol
 
 
 class EventListenerWithMetadata(Protocol):
 
-  def __call__(self, event: str, **kwargs: Union[str, int]) -> None:
+  def __call__(self, event: str, **kwargs: str | int) -> None:
     ...
 
 
 class EventDurationListenerWithMetadata(Protocol):
 
   def __call__(self, event: str, duration_secs: float,
-               **kwargs: Union[str, int]) -> None:
+               **kwargs: str | int) -> None:
     ...
 
 
@@ -40,7 +43,7 @@ _event_listeners: list[EventListenerWithMetadata] = []
 _event_duration_secs_listeners: list[EventDurationListenerWithMetadata] = []
 
 
-def record_event(event: str, **kwargs: Union[str, int]) -> None:
+def record_event(event: str, **kwargs: str | int) -> None:
   """Record an event.
 
   If **kwargs are specified, all of the named arguments have to be passed in the
@@ -51,7 +54,7 @@ def record_event(event: str, **kwargs: Union[str, int]) -> None:
 
 
 def record_event_duration_secs(event: str, duration: float,
-                               **kwargs: Union[str, int]) -> None:
+                               **kwargs: str | int) -> None:
   """Record an event duration in seconds (float).
 
   If **kwargs are specified, all of the named arguments have to be passed in the

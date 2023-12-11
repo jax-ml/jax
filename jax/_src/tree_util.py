@@ -21,7 +21,7 @@ import functools
 from functools import partial
 import operator as op
 import textwrap
-from typing import Any, Callable, NamedTuple, TypeVar, Union, overload
+from typing import Any, Callable, NamedTuple, TypeVar, overload
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
@@ -603,7 +603,7 @@ class FlattenedIndexKey():
   def __str__(self):
     return f'[<flat index {self.key}>]'
 
-BuiltInKeyEntry = Union[SequenceKey, DictKey, GetAttrKey, FlattenedIndexKey]
+BuiltInKeyEntry = SequenceKey | DictKey | GetAttrKey | FlattenedIndexKey
 
 KeyEntry = TypeVar("KeyEntry", bound=Hashable)
 KeyPath = tuple[KeyEntry, ...]

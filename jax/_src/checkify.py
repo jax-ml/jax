@@ -17,7 +17,7 @@ from collections.abc import Sequence
 import dataclasses
 import functools
 import itertools as it
-from typing import Union, Callable, TypeVar, Any
+from typing import Callable, TypeVar, Any
 
 import numpy as np
 
@@ -55,10 +55,10 @@ traceback_util.register_exclusion(__file__)
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
-Bool = Union[bool, Array]
-Int = Union[int, Array]
+Bool = bool | Array
+Int = int | Array
 ErrorCategory = type['JaxException']
-Payload = list[Union[np.ndarray, Array]]
+Payload = list[np.ndarray | Array]
 PyTreeDef = jtu.PyTreeDef
 Out = TypeVar('Out')
 

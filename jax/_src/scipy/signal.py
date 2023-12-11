@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from functools import partial
 import math
 import operator
-from typing import Callable, Optional, Union
+from typing import Callable
 import warnings
 
 import numpy as np
@@ -40,7 +42,7 @@ from jax._src.util import canonicalize_axis, tuple_delete, tuple_insert
 
 @_wraps(osp_signal.fftconvolve)
 def fftconvolve(in1: ArrayLike, in2: ArrayLike, mode: str = "full",
-                axes: Optional[Sequence[int]] = None) -> Array:
+                axes: Sequence[int] | None = None) -> Array:
   check_arraylike('fftconvolve', in1, in2)
   in1, in2 = promote_dtypes_inexact(in1, in2)
   if in1.ndim != in2.ndim:
@@ -221,7 +223,7 @@ def detrend(data: ArrayLike, axis: int = -1, type: str = 'linear', bp: int = 0,
 
 
 def _fft_helper(x: Array, win: Array, detrend_func: Callable[[Array], Array],
-                nperseg: int, noverlap: int, nfft: Optional[int], sides: str) -> Array:
+                nperseg: int, noverlap: int, nfft: int | None, sides: str) -> Array:
   """Calculate windowed FFT in the same way the original SciPy does.
   """
   if x.dtype.kind == 'i':
@@ -284,12 +286,12 @@ def odd_ext(x: Array, n: int, axis: int = -1) -> Array:
   return ext
 
 
-def _spectral_helper(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0,
-                     window: str = 'hann', nperseg: Optional[int] = None,
-                     noverlap: Optional[int] = None, nfft: Optional[int] = None,
-                     detrend_type: Union[bool, str, Callable[[Array], Array]] = 'constant',
+def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
+                     window: str = 'hann', nperseg: int | None = None,
+                     noverlap: int | None = None, nfft: int | None = None,
+                     detrend_type: bool | str | Callable[[Array], Array] = 'constant',
                      return_onesided: bool = True, scaling: str = 'density',
-                     axis: int = -1, mode: str = 'psd', boundary: Optional[str] = None,
+                     axis: int = -1, mode: str = 'psd', boundary: str | None = None,
                      padded: bool = False) -> tuple[Array, Array, Array]:
   """LAX-backend implementation of `scipy.signal._spectral_helper`.
 
@@ -499,8 +501,8 @@ def _spectral_helper(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0,
 
 @_wraps(osp_signal.stft)
 def stft(x: Array, fs: ArrayLike = 1.0, window: str = 'hann', nperseg: int = 256,
-         noverlap: Optional[int] = None, nfft: Optional[int] = None,
-         detrend: bool = False, return_onesided: bool = True, boundary: Optional[str] = 'zeros',
+         noverlap: int | None = None, nfft: int | None = None,
+         detrend: bool = False, return_onesided: bool = True, boundary: str | None = 'zeros',
          padded: bool = True, axis: int = -1) -> tuple[Array, Array, Array]:
   return _spectral_helper(x, None, fs, window, nperseg, noverlap,
                           nfft, detrend, return_onesided,
@@ -517,9 +519,9 @@ function as `csd(x, None)`."""
 
 
 @_wraps(osp_signal.csd, lax_description=_csd_description)
-def csd(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0, window: str = 'hann',
-        nperseg: Optional[int] = None, noverlap: Optional[int] = None,
-        nfft: Optional[int] = None, detrend: str = 'constant',
+def csd(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0, window: str = 'hann',
+        nperseg: int | None = None, noverlap: int | None = None,
+        nfft: int | None = None, detrend: str = 'constant',
         return_onesided: bool = True, scaling: str = 'density',
         axis: int = -1, average: str = 'mean') -> tuple[Array, Array]:
   freqs, _, Pxy = _spectral_helper(x, y, fs, window, nperseg, noverlap, nfft,
@@ -551,8 +553,8 @@ def csd(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0, window: str = 'ha
 
 @_wraps(osp_signal.welch)
 def welch(x: Array, fs: ArrayLike = 1.0, window: str = 'hann',
-          nperseg: Optional[int] = None, noverlap: Optional[int] = None,
-          nfft: Optional[int] = None, detrend: str = 'constant',
+          nperseg: int | None = None, noverlap: int | None = None,
+          nfft: int | None = None, detrend: str = 'constant',
           return_onesided: bool = True, scaling: str = 'density',
           axis: int = -1, average: str = 'mean') -> tuple[Array, Array]:
   freqs, Pxx = csd(x, None, fs=fs, window=window, nperseg=nperseg,
@@ -613,8 +615,8 @@ def _overlap_and_add(x: Array, step_size: int) -> Array:
 
 @_wraps(osp_signal.istft)
 def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
-          nperseg: Optional[int] = None, noverlap: Optional[int] = None,
-          nfft: Optional[int] = None, input_onesided: bool = True,
+          nperseg: int | None = None, noverlap: int | None = None,
+          nfft: int | None = None, input_onesided: bool = True,
           boundary: bool = True, time_axis: int = -1,
           freq_axis: int = -2) -> tuple[Array, Array]:
   # Input validation

@@ -13,10 +13,12 @@
 # limitations under the License.
 """Module for the common control flow utilities."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import os
 from functools import partial
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from jax._src import core
 from jax._src import linear_util as lu
@@ -52,7 +54,7 @@ def _typecheck_param(prim, param, name, msg_required, pred):
 
 @weakref_lru_cache
 def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
-                              primitive_name: Optional[str] = None):
+                              primitive_name: str | None = None):
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   debug = pe.debug_info(fun, in_tree, out_tree, False,
                         primitive_name or "<unknown>")
@@ -61,7 +63,7 @@ def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
 
 @weakref_lru_cache
 def _initial_style_jaxpr(fun: Callable, in_tree, in_avals,
-                         primitive_name: Optional[str] = None):
+                         primitive_name: str | None = None):
   jaxpr, consts, out_tree = _initial_style_open_jaxpr(
       fun, in_tree, in_avals, primitive_name)
   closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())

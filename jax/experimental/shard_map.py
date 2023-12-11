@@ -332,7 +332,7 @@ def _iter_paths(tree: PyTreeDef, specs: Specs, fails: list[T | NoFail]
 # Primitive
 
 JaxType = Any
-MaybeTracer = Union[JaxType, Tracer]
+MaybeTracer = JaxType | Tracer
 
 class ShardMapPrimitive(core.Primitive):
   multiple_results = True
@@ -456,7 +456,7 @@ def _unshard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
 
 # Type-checking
 
-RepType = Optional[set[AxisName]]
+RepType = set[AxisName] | None
 
 def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_names, out_names,
                          check_rep, rewrite, auto):

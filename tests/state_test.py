@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from functools import partial
 import itertools as it
-from typing import Any, Callable, NamedTuple, Optional, Union
+from typing import Any, Callable, NamedTuple
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -709,8 +711,8 @@ if CAN_USE_HYPOTHESIS:
 
   class VmappableIndexParam(NamedTuple):
     index_param: IndexParam
-    ref_bdim: Optional[int]
-    non_slice_idx_bdims: tuple[Optional[int], ...]
+    ref_bdim: int | None
+    non_slice_idx_bdims: tuple[int | None, ...]
     slice_bdim: int
     bat_ref_aval: shaped_array_ref
     bat_ref_shape: Shape
@@ -719,7 +721,7 @@ if CAN_USE_HYPOTHESIS:
     bat_slice_aval: core.ShapedArray
     bat_slice_shape: Shape
 
-  def maybe_tuple_insert(t: tuple[Any, ...], idx: Optional[int],
+  def maybe_tuple_insert(t: tuple[Any, ...], idx: int | None,
                          val: Any) -> tuple[Any, ...]:
     if idx is None:
       return t
@@ -812,15 +814,15 @@ if CAN_USE_HYPOTHESIS:
     bat_val = draw(hnp.arrays(np.float32, vmap_index_param.bat_slice_shape))
     return SetVmapParams(vmap_index_param, bat_ref, bat_val, bat_idxs)
 
-  Indexer = tuple[Union[int, slice, np.ndarray]]
+  Indexer = tuple[int | slice | np.ndarray]
 
   def _unpack_idx(idx: Indexer
-      ) -> tuple[Sequence[Union[int, np.ndarray]], Sequence[bool]]:
+      ) -> tuple[Sequence[int | np.ndarray], Sequence[bool]]:
     indexed_dims = [type(i) != slice for i in idx]
     non_slice_idx = [i for i, b in zip(idx, indexed_dims) if b]
     return non_slice_idx, indexed_dims
 
-  def _pack_idx(non_slice_idx: Sequence[Union[int, np.ndarray]],
+  def _pack_idx(non_slice_idx: Sequence[int | np.ndarray],
       indexed_dims: Sequence[bool]) -> Indexer:
     idx_ = iter(non_slice_idx)
     idx = tuple(next(idx_) if b else slice(None) for b in indexed_dims)

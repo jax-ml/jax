@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import logging
 import threading
-from typing import Optional
 import zlib
 
 import numpy as np
@@ -35,7 +36,7 @@ from jax._src.lib.mlir import ir
 
 logger = logging.getLogger(__name__)
 
-_cache: Optional[CacheInterface] = None
+_cache: CacheInterface | None = None
 
 _cache_initialized: bool = False
 
@@ -102,7 +103,7 @@ def _initialize_cache() -> None:
     logger.debug("Initialized persistent compilation cache at %s", path)
 
 
-def _get_cache() -> Optional[CacheInterface]:
+def _get_cache() -> CacheInterface | None:
   # TODO(b/289098047): consider making this an API and changing the callers of
   # get_executable_and_time() and put_executable_and_time() to call get_cache()
   # and passing the result to them.
@@ -113,7 +114,7 @@ def _get_cache() -> Optional[CacheInterface]:
 
 def get_executable_and_time(
     cache_key: str, compile_options, backend
-) -> tuple[Optional[xla_client.LoadedExecutable], Optional[int]]:
+) -> tuple[xla_client.LoadedExecutable | None, int | None]:
   """Returns the cached executable and its compilation time if present, or None
   otherwise.
   """

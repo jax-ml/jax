@@ -25,7 +25,7 @@ import itertools as it
 import logging
 import math
 import threading
-from typing import (Any, Callable, NamedTuple, Optional, Union, cast, TypeVar)
+from typing import (Any, Callable, NamedTuple, cast, TypeVar)
 from collections.abc import Iterator
 import warnings
 
@@ -87,7 +87,7 @@ unsafe_map, map = map, safe_map  # type: ignore
 
 logger = logging.getLogger(__name__)
 
-Index = Union[int, slice, tuple[Union[int, slice], ...]]
+Index = int | slice | tuple[int | slice, ...]
 
 NoSharding = sharding_specs.NoSharding
 Chunked = sharding_specs.Chunked
@@ -96,10 +96,10 @@ Unstacked = sharding_specs.Unstacked
 ShardedAxis = sharding_specs.ShardedAxis
 Replicated = sharding_specs.Replicated
 
-AvalDimSharding = Union[Unstacked, Chunked, NoSharding]
+AvalDimSharding = Unstacked | Chunked | NoSharding
 Mesh = mesh_lib.Mesh
 MeshAxisName = sharding_impls.MeshAxisName
-MeshDimAssignment = Union[ShardedAxis, Replicated]
+MeshDimAssignment = ShardedAxis | Replicated
 ShardingSpec = sharding_specs.ShardingSpec
 
 
@@ -1541,7 +1541,7 @@ class TileVectorize:
 class TileManual:
   manual_axes: frozenset[sharding_impls.MeshAxisName]
 
-TilingMethod = Union[TileVectorize, TileManual]
+TilingMethod = TileVectorize | TileManual
 
 
 def check_if_any_auto(
@@ -1608,8 +1608,10 @@ class DeviceAssignmentMismatchError(Exception):
 
 
 ShardingInfo = tuple[
-    Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue, AUTO],
-    MismatchType, Optional[Any]]  # Any is dispatch.SourceInfo to avoid circular imports
+    sharding_impls.XLACompatibleSharding | UnspecifiedValue | AUTO,
+    MismatchType,
+    Any | None,  # Any is dispatch.SourceInfo to avoid circular imports
+]
 
 
 def _get_default_device() -> xc.Device:
@@ -1663,7 +1665,7 @@ def _get_and_check_device_assignment(
     final_device_assignment = first_sharding_info[0]
   return xb.get_device_backend(final_device_assignment[0]), final_device_assignment
 
-MaybeSharding = Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue]
+MaybeSharding = sharding_impls.XLACompatibleSharding | UnspecifiedValue
 
 
 def prune_unused_inputs(
@@ -1870,7 +1872,7 @@ def are_all_shardings_default_mem_kind(da_object, shardings):
       return False
   return True
 
-MaybeLayout = Sequence[Optional[Union[XLACompatibleLayout, LayoutRequest]]]
+MaybeLayout = Sequence[XLACompatibleLayout | LayoutRequest | None]
 
 
 class AllArgsInfo(NamedTuple):

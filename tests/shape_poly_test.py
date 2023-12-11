@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for the shape-polymorphic export."""
+
+from __future__ import annotations
+
 import enum
 from collections.abc import Sequence
 import itertools
 import math
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 import unittest
 
 from absl import logging
@@ -526,10 +529,10 @@ class PolyHarness(Harness):
                fun: Callable[..., Any],
                *,
                arg_descriptors: Sequence[test_harnesses.ArgDescriptor] = (),
-               polymorphic_shapes: Sequence[Optional[str]] = (),
-               expect_error: Optional[tuple[Any, str]] = None,
+               polymorphic_shapes: Sequence[str | None] = (),
+               expect_error: tuple[Any, str] | None = None,
                check_result: bool = True,
-               tol: Optional[float] = None,
+               tol: float | None = None,
                limitations: Sequence[test_harnesses.Limitation] = (),
                override_jax_config_flags: dict[str, Any] = {}):
     """Args:
@@ -560,7 +563,7 @@ class PolyHarness(Harness):
     self.limitations = limitations
     self.override_jax_config_flags = override_jax_config_flags
 
-  def run_test(self, tst: jtu.JaxTestCase) -> Optional[jax.Array]:
+  def run_test(self, tst: jtu.JaxTestCase) -> jax.Array | None:
     def log_message(extra: str):
       return f"[{tst._testMethodName}]: {extra}"
 
@@ -612,8 +615,8 @@ class PolyHarness(Harness):
 
 def check_shape_poly(tst, f_jax: Callable, *,
                      arg_descriptors: Sequence[test_harnesses.ArgDescriptor] = (),
-                     polymorphic_shapes: Sequence[Optional[str]] = (),
-                     expect_error=None) -> Optional[jax.Array]:
+                     polymorphic_shapes: Sequence[str | None] = (),
+                     expect_error=None) -> jax.Array | None:
   # Builds a PolyHarness and runs the test. See PolyHarness documentation.
   h = PolyHarness("", "", f_jax,
                   arg_descriptors=arg_descriptors,
@@ -2288,7 +2291,7 @@ def _make_vmap_primitive_harnesses() -> Sequence[PolyHarness]:
       continue
 
     def make_batched_arg_descriptor(
-        ad: test_harnesses.ArgDescriptor) -> Optional[test_harnesses.ArgDescriptor]:
+        ad: test_harnesses.ArgDescriptor) -> test_harnesses.ArgDescriptor | None:
       if isinstance(ad, RandArg):
         return RandArg((batch_size,) + ad.shape, ad.dtype)
       elif isinstance(ad, CustomArg):

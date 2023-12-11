@@ -24,8 +24,9 @@ SIAM Journal on Matrix Analysis and Applications 31, no. 5 (2010): 2700-2720.
 https://epubs.siam.org/doi/abs/10.1137/090774999
 """
 
+from __future__ import annotations
+
 import functools
-from typing import Optional
 
 import jax
 import jax.numpy as jnp
@@ -196,7 +197,7 @@ def _qdwh(x, m, n, is_hermitian, max_iterations, eps):
 # TODO: Add pivoting.
 @functools.partial(jax.jit, static_argnames=('is_hermitian',))
 def qdwh(x, *, is_hermitian=False, max_iterations=None, eps=None,
-         dynamic_shape: Optional[tuple[int, int]] = None):
+         dynamic_shape: tuple[int, int] | None = None):
   """QR-based dynamically weighted Halley iteration for polar decomposition.
 
   Args:

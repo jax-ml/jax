@@ -23,6 +23,9 @@ If a saved file already exists produced on a different backend, then compare the
 currently saved file with the saved one.
 
 """
+
+from __future__ import annotations
+
 from collections.abc import Sequence
 import contextlib
 import dataclasses
@@ -173,7 +176,7 @@ def write_and_check_harness(harness: primitive_harness.Harness,
 def write_and_check_harnesses(io: Io,
                               save_directory: str,
                               *,
-                              filter_harness: Optional[Callable[[str], bool]] = None,
+                              filter_harness: Callable[[str], bool] | None = None,
                               for_platforms: Sequence[str] = ("cpu", "tpu"),
                               verbose = False):
   logging.info("Writing and checking harnesses at %s", save_directory)

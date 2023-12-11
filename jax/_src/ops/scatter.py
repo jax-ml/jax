@@ -14,9 +14,11 @@
 
 # Helpers for indexed updates.
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import sys
-from typing import Callable, Optional, Union
+from typing import Callable
 import warnings
 
 import numpy as np
@@ -36,11 +38,11 @@ from jax._src.typing import Array, ArrayLike
 
 if sys.version_info >= (3, 10):
     from types import EllipsisType
-    SingleIndex = Union[None, int, slice, Sequence[int], Array, EllipsisType]
+    SingleIndex = int | slice | Sequence[int] | Array | EllipsisType | None
 else:
-    SingleIndex = Union[None, int, slice, Sequence[int], Array]
-Index = Union[SingleIndex, tuple[SingleIndex, ...]]
-Scalar = Union[complex, float, int, np.number]
+    SingleIndex = int | slice | Sequence[int] | Array | None
+Index = SingleIndex | tuple[SingleIndex, ...]
+Scalar = complex | float | int | np.number
 
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
@@ -158,12 +160,12 @@ def _segment_update(name: str,
                     data: ArrayLike,
                     segment_ids: ArrayLike,
                     scatter_op: Callable,
-                    num_segments: Optional[int] = None,
+                    num_segments: int | None = None,
                     indices_are_sorted: bool = False,
                     unique_indices: bool = False,
-                    bucket_size: Optional[int] = None,
-                    reducer: Optional[Callable] = None,
-                    mode: Optional[lax.GatherScatterMode] = None) -> Array:
+                    bucket_size: int | None = None,
+                    reducer: Callable | None = None,
+                    mode: lax.GatherScatterMode | None = None) -> Array:
   check_arraylike(name, data, segment_ids)
   mode = lax.GatherScatterMode.FILL_OR_DROP if mode is None else mode
   data = jnp.asarray(data)
@@ -198,11 +200,11 @@ def _segment_update(name: str,
 
 def segment_sum(data: ArrayLike,
                 segment_ids: ArrayLike,
-                num_segments: Optional[int] = None,
+                num_segments: int | None = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
-                bucket_size: Optional[int] = None,
-                mode: Optional[lax.GatherScatterMode] = None) -> Array:
+                bucket_size: int | None = None,
+                mode: lax.GatherScatterMode | None = None) -> Array:
   """Computes the sum within segments of an array.
 
   Similar to TensorFlow's `segment_sum
@@ -253,11 +255,11 @@ def segment_sum(data: ArrayLike,
 
 def segment_prod(data: ArrayLike,
                  segment_ids: ArrayLike,
-                 num_segments: Optional[int] = None,
+                 num_segments: int | None = None,
                  indices_are_sorted: bool = False,
                  unique_indices: bool = False,
-                 bucket_size: Optional[int] = None,
-                 mode: Optional[lax.GatherScatterMode] = None) -> Array:
+                 bucket_size: int | None = None,
+                 mode: lax.GatherScatterMode | None = None) -> Array:
   """Computes the product within segments of an array.
 
   Similar to TensorFlow's `segment_prod
@@ -309,11 +311,11 @@ def segment_prod(data: ArrayLike,
 
 def segment_max(data: ArrayLike,
                 segment_ids: ArrayLike,
-                num_segments: Optional[int] = None,
+                num_segments: int | None = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
-                bucket_size: Optional[int] = None,
-                mode: Optional[lax.GatherScatterMode] = None) -> Array:
+                bucket_size: int | None = None,
+                mode: lax.GatherScatterMode | None = None) -> Array:
   """Computes the maximum within segments of an array.
 
   Similar to TensorFlow's `segment_max
@@ -364,11 +366,11 @@ def segment_max(data: ArrayLike,
 
 def segment_min(data: ArrayLike,
                 segment_ids: ArrayLike,
-                num_segments: Optional[int] = None,
+                num_segments: int | None = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
-                bucket_size: Optional[int] = None,
-                mode: Optional[lax.GatherScatterMode] = None) -> Array:
+                bucket_size: int | None = None,
+                mode: lax.GatherScatterMode | None = None) -> Array:
   """Computes the minimum within segments of an array.
 
   Similar to TensorFlow's `segment_min
