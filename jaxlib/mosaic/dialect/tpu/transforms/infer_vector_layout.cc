@@ -63,8 +63,9 @@ static constexpr int kLayoutLog = 10;
 
 class Print {
  public:
-  explicit Print(Operation* t) : payload_(t) {}
-  Operation* payload_;
+  explicit Print(Operation *t) : payload_(t) {}
+  Operation *payload_;
+
  private:
   friend std::ostream &operator<<(std::ostream &, Print);
 };
@@ -482,10 +483,12 @@ class VectorLayoutInferer {
     auto &layout = *some_layout;
     if (layout.implicit_dim() == ImplicitDim::kNone) {
       // TODO(apaszke): Support native layouts here.
+      auto src_layout = VectorLayout(32, layout.offsets(), default_tiling_,
+                                     ImplicitDim::kNone);
       auto dst_layout =
           VectorLayout(dst_ty.getElementTypeBitWidth(), layout.offsets(),
                        default_tiling_, ImplicitDim::kNone);
-      setLayout(op, some_layout, dst_layout);
+      setLayout(op, src_layout, dst_layout);
       return success();
     }
     return failure();
@@ -661,17 +664,14 @@ class VectorLayoutInferer {
     return success();
   }
 
-  LogicalResult infer(tpu::MatmulOp op) {
-    return inferMatmul(op);
-  }
+  LogicalResult infer(tpu::MatmulOp op) { return inferMatmul(op); }
 
   LogicalResult infer(tpu::StoreOp op) {
     auto store_ty = op.getValueToStore().getType();
     int8_t bitwidth = store_ty.getElementTypeBitWidth();
 
     // We expect the value to store is already a native-sized vreg.
-    TPU_CHECK_OP(bitwidth == 32 &&
-                     store_ty.getShape()[0] == target_shape_[0] &&
+    TPU_CHECK_OP(bitwidth == 32 && store_ty.getShape()[0] == target_shape_[0] &&
                      store_ty.getShape()[1] == target_shape_[1],
                  "Only 32-bit stores supported");
     auto store_layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
@@ -853,11 +853,11 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(op.getKind() == vector::CombiningKind::ADD,
                  "Only ADD supported");
     auto ctx = op.getContext();
-    const auto matmul_iterator_types = mlir::ArrayAttr::get(ctx, {
-      vector::IteratorTypeAttr::get(ctx, vector::IteratorType::parallel),
-      vector::IteratorTypeAttr::get(ctx, vector::IteratorType::parallel),
-      vector::IteratorTypeAttr::get(ctx, vector::IteratorType::reduction)
-    });
+    const auto matmul_iterator_types = mlir::ArrayAttr::get(
+        ctx,
+        {vector::IteratorTypeAttr::get(ctx, vector::IteratorType::parallel),
+         vector::IteratorTypeAttr::get(ctx, vector::IteratorType::parallel),
+         vector::IteratorTypeAttr::get(ctx, vector::IteratorType::reduction)});
     TPU_CHECK_OP(op.getIteratorTypes() == matmul_iterator_types,
                  "Not a matmul");
     const auto matmul_indexing_maps = mlir::ArrayAttr::get(
@@ -1219,8 +1219,7 @@ class VectorLayoutInferer {
       }
     } else {
       // Nothing changes in the last dim.
-      if (res_ty.getRank() >= 1 &&
-          src_shape.back() == res_shape.back()) {
+      if (res_ty.getRank() >= 1 && src_shape.back() == res_shape.back()) {
         setLayout(op, layout, layout);
         return success();
       }
@@ -1463,7 +1462,7 @@ class VectorLayoutInferer {
     return success();
   }
 
-  LogicalResult inferMatmul(Operation* op) {
+  LogicalResult inferMatmul(Operation *op) {
     auto get_unpadded_layout =
         [&](Value v, std::optional<int64_t> major_multiple = std::nullopt,
             std::optional<int64_t> minor_multiple =
