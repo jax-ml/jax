@@ -149,20 +149,28 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
 ]
 
 
+def _pretty_special_fun_name(case):
+  shapes_str = "_".join("x".join(map(str, shape)) if shape else "s"
+                        for shape in case["shapes"])
+  dtypes_str = "_".join(np.dtype(d).name for d in case["dtypes"])
+  name = f"_{case['op']}_{shapes_str}_{dtypes_str}"
+  return dict(**case, testcase_name=name)
+
+
 class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
 
   def _GetArgsMaker(self, rng, shapes, dtypes):
     return lambda: [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
 
-  @parameterized.parameters(itertools.chain.from_iterable(
-    jtu.sample_product_testcases(
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+    map(_pretty_special_fun_name, jtu.sample_product_testcases(
       [dict(op=rec.name, rng_factory=rec.rng_factory,
             test_autodiff=rec.test_autodiff,
             nondiff_argnums=rec.nondiff_argnums)],
       shapes=itertools.combinations_with_replacement(all_shapes, rec.nargs),
       dtypes=(itertools.combinations_with_replacement(rec.dtypes, rec.nargs)
         if isinstance(rec.dtypes, list) else itertools.product(*rec.dtypes)),
-    )
+    ))
     for rec in JAX_SPECIAL_FUNCTION_RECORDS
   ))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
