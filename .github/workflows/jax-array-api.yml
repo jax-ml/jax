@@ -19,9 +19,9 @@ jobs:
 
     steps:
     - name: Checkout jax
-      uses: actions/checkout@v3
+      uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet: actions/checkout@v4
     - name: Checkout array-api-tests
-      uses: actions/checkout@v3
+      uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet: actions/checkout@v4
       with:
         repository: data-apis/array-api-tests
         ref: '7c89cf1a42eb18d4fadecda1cac8769d0138753c'  # Latest commit as of 2023-12-07
