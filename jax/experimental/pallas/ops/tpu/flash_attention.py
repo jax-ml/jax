@@ -876,7 +876,7 @@ def _flash_attention_dkv_kernel(
       pl.store(dk_scratch_ref, (pl.ds(start_k, block_k), slice(None)),
                pl.load(dk_scratch_ref, (pl.ds(start_k, block_k), slice(None)))
                + dk.astype(dk_scratch_ref.dtype))
-    lax.fori_loop(0, block_k_major // block_k, k_body, None)
+    lax.fori_loop(0, block_k_major // block_k, k_body, None, unroll=True)
 
   if causal:
     should_run = below_or_on_diag(
@@ -887,7 +887,7 @@ def _flash_attention_dkv_kernel(
 
   @pl.when(should_run)
   def run():
-    lax.fori_loop(0, block_q_major // block_q, q_body, None)
+    lax.fori_loop(0, block_q_major // block_q, q_body, None, unroll=True)
 
   @pl.when(q_seq_index == q_seq_len // block_q_major - 1)
   def end_of_q_sequence():
@@ -1234,7 +1234,7 @@ def _flash_attention_dq_kernel(
 
   @pl.when(should_run)
   def run():
-    lax.fori_loop(0, block_k_major // block_k, body, None)
+    lax.fori_loop(0, block_k_major // block_k, body, None, unroll=True)
 
   @pl.when(should_not_run)
   def zero_out_ds():
