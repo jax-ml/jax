@@ -21,5 +21,3 @@ from jax.experimental.jax2tf.jax2tf import (
   PolyShape as PolyShape
 )
 from jax.experimental.jax2tf.call_tf import call_tf as call_tf
-# Needed by maths.qec.
-from jax.experimental.jax2tf import shape_poly
