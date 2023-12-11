@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Generator
 from contextlib import contextmanager
 from functools import wraps
 import glob
@@ -21,6 +22,7 @@ import json
 import logging
 import os
 import socketserver
+import tempfile
 import threading
 
 from typing import Callable, Optional
@@ -225,7 +227,9 @@ def stop_and_get_fdo_profile() -> bytes:
 
 
 @contextmanager
-def trace(log_dir, create_perfetto_link=False, create_perfetto_trace=False):
+def trace(log_dir: Optional[str] = None,
+          create_perfetto_link: bool = False,
+          create_perfetto_trace: bool = False) -> Generator[None, None, None]:
   """Context manager to take a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
@@ -239,7 +243,8 @@ def trace(log_dir, create_perfetto_link=False, create_perfetto_trace=False):
 
   Args:
     log_dir: The directory to save the profiler trace to (usually the
-      TensorBoard log directory).
+      TensorBoard log directory).  If log_dir is none, a temporary directory is
+      created.
     create_perfetto_link: A boolean which, if true, creates and prints link to
       the Perfetto trace viewer UI (https://ui.perfetto.dev). The program will
       block until the link is opened and Perfetto loads the trace.
@@ -250,11 +255,15 @@ def trace(log_dir, create_perfetto_link=False, create_perfetto_trace=False):
       want to generate a Perfetto-compatible trace without blocking the
       process.
   """
+  if log_dir is None:
+    temp_log_dir = tempfile.TemporaryDirectory(prefix='jax')
+    log_dir = temp_log_dir.name
   start_trace(log_dir, create_perfetto_link, create_perfetto_trace)
   try:
     yield
   finally:
     stop_trace()
+    # temp_log_dir.cleanup() is not called so that the trace remains available.
 
 
 class TraceAnnotation(xla_client.profiler.TraceMe):
