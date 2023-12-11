@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
 
 import collections
 import collections.abc
@@ -32,7 +33,7 @@ import re
 import subprocess
 import sys
 import types
-from typing import Callable, NamedTuple, Optional
+from typing import Callable, NamedTuple
 import unittest
 import weakref
 
@@ -6226,7 +6227,7 @@ class DCETest(jtu.JaxTestCase):
 
   def assert_dce_result(self, jaxpr: core.Jaxpr, used_outputs: list[bool],
                         expected_used_inputs: list[bool],
-                        expected_num_eqns: Optional[int] = None,
+                        expected_num_eqns: int | None = None,
                         check_diff: bool = True):
     jaxpr_dce, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs)
     core.check_jaxpr(jaxpr_dce)

@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
 
 from functools import partial
 import operator
-from typing import Optional, Union
 
 import numpy as np
 
@@ -108,9 +108,9 @@ Also, it works best on rcond <= 10e-3 values.
 """
 @_wraps(np.polyfit, lax_description=_POLYFIT_DOC)
 @partial(jit, static_argnames=('deg', 'rcond', 'full', 'cov'))
-def polyfit(x: Array, y: Array, deg: int, rcond: Optional[float] = None,
-            full: bool = False, w: Optional[Array] = None, cov: bool = False
-            ) -> Union[Array, tuple[Array, ...]]:
+def polyfit(x: Array, y: Array, deg: int, rcond: float | None = None,
+            full: bool = False, w: Array | None = None, cov: bool = False
+            ) -> Array | tuple[Array, ...]:
   check_arraylike("polyfit", x, y)
   deg = core.concrete_or_error(int, deg, "deg must be int")
   order = deg + 1
@@ -244,7 +244,7 @@ def polyadd(a1: Array, a2: Array) -> Array:
 
 @_wraps(np.polyint)
 @partial(jit, static_argnames=('m',))
-def polyint(p: Array, m: int = 1, k: Optional[int] = None) -> Array:
+def polyint(p: Array, m: int = 1, k: int | None = None) -> Array:
   m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyint")
   k = 0 if k is None else k
   check_arraylike("polyint", p, k)

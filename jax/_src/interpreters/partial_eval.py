@@ -20,8 +20,7 @@ from functools import partial
 import inspect
 import itertools as it
 import operator as op
-from typing import (Any, Callable, NamedTuple, Optional,
-                    Union)
+from typing import Any, Callable, NamedTuple, Union
 from weakref import ref
 
 import numpy as np
@@ -670,8 +669,9 @@ def abstract_eval_fun(fun, *avals, debug_info=None, **params):
   return avals_out
 
 
-JaxprTracerRecipe = Union['JaxprEqnRecipe', 'LambdaBinding', 'FreeVar',
-                          'ConstVar', Literal]
+JaxprTracerRecipe = Union[
+    'JaxprEqnRecipe', 'LambdaBinding', 'FreeVar', 'ConstVar', Literal,
+]
 
 class JaxprTracer(Tracer):
   __slots__ = ['pval', 'recipe']
@@ -1330,7 +1330,7 @@ def ensure_enum(case: bool | RematCases) -> RematCases:
 #  * a list of Var instances representing residuals to be added (i.e. to be
 #    plumbed as outputs of the 'known' side jaxpr and added as input binders to
 #    the 'unknown' jaxpr).
-PartialEvalCustomResult = tuple[Optional[JaxprEqn], Optional[JaxprEqn],
+PartialEvalCustomResult = tuple[Union[JaxprEqn, None], Union[JaxprEqn, None],
                                 Sequence[bool], Sequence[bool], list[Var]]
 PartialEvalCustomRule = Callable[
     [Callable[..., RematCases_], Sequence[bool], Sequence[bool], JaxprEqn],
@@ -1566,7 +1566,8 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
 
   return new_jaxpr, used_inputs
 
-DCERule = Callable[[list[bool], JaxprEqn], tuple[list[bool], Optional[JaxprEqn]]]
+DCERule = Callable[[list[bool], JaxprEqn],
+                   tuple[list[bool], Union[JaxprEqn, None]]]
 
 def _default_dce_rule(
     used_outs: list[bool], eqn: JaxprEqn
@@ -1844,12 +1845,16 @@ def _const_folding_and_forwarding(
                     jaxpr_effects, jaxpr.debug_info)
   return new_jaxpr, new_constvals
 
-ConstFoldRule = Callable[[list[Optional[Any]], JaxprEqn],
-                         tuple[list[Optional[Any]], Optional[JaxprEqn]]]
+ConstFoldRule = Callable[
+    [list[Union[Any, None]], JaxprEqn],
+    tuple[list[Union[Any, None]], Union[JaxprEqn, None]],
+]
 const_fold_rules: dict[Primitive, ConstFoldRule] = {}
 
-ForwardingRule = Callable[[JaxprEqn],
-                          tuple[list[Optional[Var]], Optional[JaxprEqn]]]
+ForwardingRule = Callable[
+    [JaxprEqn],
+    tuple[list[Union[Var, None]], Union[JaxprEqn, None]]
+]
 forwarding_rules: dict[Primitive, ForwardingRule] = {}
 
 
@@ -2377,8 +2382,12 @@ def trace_to_jaxpr_final2(
 
 
 AbstractedAxisName = Hashable
-AbstractedAxesSpec = Union[dict[int, AbstractedAxisName],
-                           tuple[AbstractedAxisName, ...]]
+AbstractedAxesSpec = Union[
+    dict[int, AbstractedAxisName],
+    tuple[AbstractedAxisName, ...],
+]
+
+
 def infer_lambda_input_type(
     axes_specs: Sequence[AbstractedAxesSpec] | None,
     args: Sequence[Any]

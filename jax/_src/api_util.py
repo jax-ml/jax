@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Iterable, Sequence
 import inspect
 import operator
 from functools import partial
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 import warnings
 
 import numpy as np
@@ -39,7 +41,7 @@ traceback_util.register_exclusion(__file__)
 
 map = safe_map
 
-def _ensure_index(x: Any) -> Union[int, tuple[int, ...]]:
+def _ensure_index(x: Any) -> int | tuple[int, ...]:
   """Ensure x is either an index or a tuple of indices."""
   x = core.concrete_or_error(None, x, "expected a static index or sequence of indices.")
   try:
@@ -60,7 +62,7 @@ def _ensure_str(x: str) -> str:
     raise TypeError(f"argument is not a string: {x}")
   return x
 
-def _ensure_str_tuple(x: Union[str, Iterable[str]]) -> tuple[str, ...]:
+def _ensure_str_tuple(x: str | Iterable[str]) -> tuple[str, ...]:
   """Convert x to a tuple of strings."""
   if isinstance(x, str):
     return (x,)
@@ -97,7 +99,7 @@ def apply_flat_fun_nokwargs(fun, io_tree, py_args):
 
 def flattened_fun_in_tree(
     fn: lu.WrappedFun
-  ) -> Optional[tuple[PyTreeDef, Callable[[], PyTreeDef], bool]]:
+  ) -> tuple[PyTreeDef, Callable[[], PyTreeDef], bool] | None:
   # This implementation relies on internal details of linear_util.py's
   # WrappedFun, but it's for the worthy cause of better user error messages.
   # It can fail (i.e. return None) if its WrappedFun argument is not transformed
@@ -473,8 +475,8 @@ _POSITIONAL_OR_KEYWORD = inspect.Parameter.POSITIONAL_OR_KEYWORD
 
 def infer_argnums_and_argnames(
     sig: inspect.Signature,
-    argnums: Union[int, Iterable[int], None],
-    argnames: Union[str, Iterable[str], None],
+    argnums: int | Iterable[int] | None,
+    argnames: str | Iterable[str] | None,
   ) -> tuple[tuple[int, ...], tuple[str, ...]]:
   """Infer missing argnums and argnames for a function with inspect."""
   if argnums is None and argnames is None:
@@ -612,7 +614,7 @@ def api_hook(fun, tag: str):
 
 def debug_info(traced_for: str, fun: Callable, args: tuple[Any],
                kwargs: dict[str, Any], static_argnums: tuple[int, ...],
-               static_argnames: tuple[str, ...]) -> Optional[TracingDebugInfo]:
+               static_argnames: tuple[str, ...]) -> TracingDebugInfo | None:
   """Try to build trace-time debug info for fun when applied to args/kwargs."""
   src = fun_sourceinfo(fun)
   arg_names = _arg_names(fun, args, kwargs, static_argnums, static_argnames)
@@ -620,7 +622,7 @@ def debug_info(traced_for: str, fun: Callable, args: tuple[Any],
   return TracingDebugInfo(traced_for, src, arg_names, None)
 
 # TODO(mattjj): make this function internal to this module
-def fun_sourceinfo(fun: Callable) -> Optional[str]:
+def fun_sourceinfo(fun: Callable) -> str | None:
   while isinstance(fun, partial):
     fun = fun.func
   fun = inspect.unwrap(fun)
@@ -632,7 +634,7 @@ def fun_sourceinfo(fun: Callable) -> Optional[str]:
     return None
 
 def _arg_names(fn, args, kwargs, static_argnums, static_argnames,
-               ) -> Optional[tuple[str, ...]]:
+               ) -> tuple[str, ...] | None:
   static = object()
   static_argnums_ = _ensure_inbounds(True, len(args), static_argnums)
   static_argnames_ = set(static_argnames)
@@ -651,8 +653,8 @@ def result_paths(*args, **kwargs):
   ans = yield args, kwargs
   yield ans, [keystr(path) for path, _ in generate_key_paths(ans)]
 
-def jaxpr_debug_info(jaxpr: core.Jaxpr, trace_debug: Optional[TracingDebugInfo],
-                     result_paths: Optional[tuple[Optional[str], ...]] = None,
+def jaxpr_debug_info(jaxpr: core.Jaxpr, trace_debug: TracingDebugInfo | None,
+                     result_paths: tuple[str | None, ...] | None = None,
                      ) -> core.Jaxpr:
   """Add debug info to jaxpr, given trace-time debug info and result paths."""
   if trace_debug is None:
@@ -665,7 +667,7 @@ def jaxpr_debug_info(jaxpr: core.Jaxpr, trace_debug: Optional[TracingDebugInfo],
       trace_debug.arg_names, tuple(result_paths))
   return jaxpr.replace(debug_info=debug_info)
 
-def debug_info_final(f: lu.WrappedFun, dbg: Optional[TracingDebugInfo],
+def debug_info_final(f: lu.WrappedFun, dbg: TracingDebugInfo | None,
                      res_paths: Callable[[], tuple[str, ...]]) -> lu.WrappedFun:
   "Attach trace-time debug info and result paths lazy thunk to an lu.WrappedFun"
   if dbg is None: return f

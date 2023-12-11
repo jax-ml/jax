@@ -24,6 +24,8 @@ control over what metadata is saved in the SavedModel. Please copy and
 customize this function as needed.
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from typing import Any, Callable, Optional, Union
 
@@ -37,11 +39,11 @@ def convert_and_save_model(
     model_dir: str,
     *,
     input_signatures: Sequence[tf.TensorSpec],
-    polymorphic_shapes: Optional[Union[str, jax2tf.PolyShape]] = None,
+    polymorphic_shapes: str | jax2tf.PolyShape | None = None,
     with_gradient: bool = False,
     enable_xla: bool = True,
     compile_model: bool = True,
-    saved_model_options: Optional[tf.saved_model.SaveOptions] = None):
+    saved_model_options: tf.saved_model.SaveOptions | None = None):
   """Convert a JAX function and saves a SavedModel.
 
   This is an example, we do not promise backwards compatibility for this code.

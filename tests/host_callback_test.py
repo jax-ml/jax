@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from functools import partial
 import itertools
@@ -20,7 +22,7 @@ import os
 import re
 import threading
 import time
-from typing import Callable, Optional
+from typing import Callable
 import unittest
 from unittest import skip, SkipTest
 
@@ -102,7 +104,7 @@ def fun1_equiv(a):  # Numerical equivalent of fun1
 def maybe_print(do_print: bool,
                 arg,
                 what: str,
-                tap_with_device: Optional[bool] = False,
+                tap_with_device: bool | None = False,
                 device_index: int = 0):
   """Conditionally print on testing_string"""
   if do_print:

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import abc
 from collections.abc import Iterable
 from typing import Any, Union
@@ -74,7 +76,7 @@ class _Mgrid:
             [0, 1, 2]]], dtype=int32)
   """
 
-  def __getitem__(self, key: Union[slice, tuple[slice, ...]]) -> Array:
+  def __getitem__(self, key: slice | tuple[slice, ...]) -> Array:
     if isinstance(key, slice):
       return _make_1d_grid_from_slice(key, op_name="mgrid")
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="mgrid") for k in key)
@@ -118,8 +120,8 @@ class _Ogrid:
   """
 
   def __getitem__(
-      self, key: Union[slice, tuple[slice, ...]]
-  ) -> Union[Array, list[Array]]:
+      self, key: slice | tuple[slice, ...]
+  ) -> Array | list[Array]:
     if isinstance(key, slice):
       return _make_1d_grid_from_slice(key, op_name="ogrid")
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="ogrid") for k in key)
@@ -141,7 +143,7 @@ class _AxisConcat(abc.ABC):
   trans1d: int
   op_name: str
 
-  def __getitem__(self, key: Union[_IndexType, tuple[_IndexType, ...]]) -> Array:
+  def __getitem__(self, key: _IndexType | tuple[_IndexType, ...]) -> Array:
     key_tup: tuple[_IndexType, ...] = key if isinstance(key, tuple) else (key,)
 
     params = [self.axis, self.ndmin, self.trans1d, -1]

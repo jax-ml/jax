@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import functools
 import os
 import sys
 import traceback
 import types
-from typing import Any, Callable, Optional, TypeVar, cast
+from typing import Any, Callable, TypeVar, cast
 
 from jax._src import config
 from jax._src import util
@@ -67,7 +69,7 @@ def _add_tracebackhide_to_hidden_frames(tb: types.TracebackType):
     if not include_frame(f):
       f.f_locals["__tracebackhide__"] = True
 
-def filter_traceback(tb: types.TracebackType) -> Optional[types.TracebackType]:
+def filter_traceback(tb: types.TracebackType) -> types.TracebackType | None:
   out = None
   # Scan the traceback and collect relevant frames.
   frames = list(traceback.walk_tb(tb))

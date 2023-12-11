@@ -13,6 +13,8 @@
 # limitations under the License.
 """See primitives_test docstring for how the Jax2TfLimitations are used."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import itertools
 from typing import Any, Callable, Optional, Union
@@ -43,7 +45,7 @@ class Jax2TfLimitation(test_harnesses.Limitation):
       self,
       description: str,
       *,
-      devices: Union[str, Sequence[str]] = ("cpu", "gpu", "tpu"),
+      devices: str | Sequence[str] = ("cpu", "gpu", "tpu"),
       dtypes: Sequence[DType] = (),
       enabled: bool = True,
       # jax2tf specific
@@ -52,7 +54,7 @@ class Jax2TfLimitation(test_harnesses.Limitation):
       skip_tf_run=False,
       expect_tf_error: bool = True,
       skip_comparison=False,
-      custom_assert: Optional[Callable] = None,
+      custom_assert: Callable | None = None,
       tol=None):
     """See the test_harnesses.Limitation common arguments.
 
@@ -92,8 +94,8 @@ class Jax2TfLimitation(test_harnesses.Limitation):
     self.skip_comparison = skip_comparison
 
   def get_max_tolerance_limitation(
-      self, limitations: Sequence["Jax2TfLimitation"]
-  ) -> Optional["Jax2TfLimitation"]:
+      self, limitations: Sequence[Jax2TfLimitation]
+  ) -> Jax2TfLimitation | None:
     """Pick the tolerance limitation that establishes the maximum tolerance."""
     # TODO: it would be best if the limitations with tolerance are mutually exclusive
     # and we don't have to compute the maximum
@@ -108,9 +110,9 @@ class Jax2TfLimitation(test_harnesses.Limitation):
 
   def filter(  # type: ignore[override]
       self,
-      dtype: Optional[DType] = None,
-      device: Optional[str] = None,
-      mode: Optional[str] = None) -> bool:
+      dtype: DType | None = None,
+      device: str | None = None,
+      mode: str | None = None) -> bool:
     """Checks if this limitation is enabled for dtype and device and mode."""
     native_serialization_mask = (
         Jax2TfLimitation.FOR_NATIVE
@@ -122,7 +124,7 @@ class Jax2TfLimitation(test_harnesses.Limitation):
 
   @classmethod
   def limitations_for_harness(
-      cls, harness: test_harnesses.Harness) -> Sequence["Jax2TfLimitation"]:
+      cls, harness: test_harnesses.Harness) -> Sequence[Jax2TfLimitation]:
     group_method = getattr(cls, harness.group_name, None)
     if harness.group_name in cls.harness_groups_no_limitations:
       assert group_method is None, (

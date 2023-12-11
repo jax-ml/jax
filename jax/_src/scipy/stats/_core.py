@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections import namedtuple
 from functools import partial
 import math
-from typing import Optional
 
 import jax
 import jax.numpy as jnp
@@ -34,7 +35,7 @@ ModeResult = namedtuple('ModeResult', ('mode', 'count'))
 Currently the only supported nan_policy is 'propagate'
 """)
 @partial(jit, static_argnames=['axis', 'nan_policy', 'keepdims'])
-def mode(a: ArrayLike, axis: Optional[int] = 0, nan_policy: str = "propagate", keepdims: bool = False) -> ModeResult:
+def mode(a: ArrayLike, axis: int | None = 0, nan_policy: str = "propagate", keepdims: bool = False) -> ModeResult:
   check_arraylike("mode", a)
   x = jnp.atleast_1d(a)
 
@@ -97,7 +98,7 @@ def rankdata(
   a: ArrayLike,
   method: str = "average",
   *,
-  axis: Optional[int] = None,
+  axis: int | None = None,
   nan_policy: str = "propagate",
 ) -> Array:
 

@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import NamedTuple, Union
+from __future__ import annotations
+
+from typing import NamedTuple
 from functools import partial
 
 from jax._src.numpy.util import promote_dtypes_inexact
@@ -57,23 +59,23 @@ def _binary_replace(replace_bit, original_dict, new_dict, keys=None):
 
 
 class _ZoomState(NamedTuple):
-  done: Union[bool, jax.Array]
-  failed: Union[bool, jax.Array]
-  j: Union[int, jax.Array]
-  a_lo: Union[float, jax.Array]
-  phi_lo: Union[float, jax.Array]
-  dphi_lo: Union[float, jax.Array]
-  a_hi: Union[float, jax.Array]
-  phi_hi: Union[float, jax.Array]
-  dphi_hi: Union[float, jax.Array]
-  a_rec: Union[float, jax.Array]
-  phi_rec: Union[float, jax.Array]
-  a_star: Union[float, jax.Array]
-  phi_star: Union[float, jax.Array]
-  dphi_star: Union[float, jax.Array]
-  g_star: Union[float, jax.Array]
-  nfev: Union[int, jax.Array]
-  ngev: Union[int, jax.Array]
+  done: bool | jax.Array
+  failed: bool | jax.Array
+  j: int | jax.Array
+  a_lo: float | jax.Array
+  phi_lo: float | jax.Array
+  dphi_lo: float | jax.Array
+  a_hi: float | jax.Array
+  phi_hi: float | jax.Array
+  dphi_hi: float | jax.Array
+  a_rec: float | jax.Array
+  phi_rec: float | jax.Array
+  a_star: float | jax.Array
+  phi_star: float | jax.Array
+  dphi_star: float | jax.Array
+  g_star: float | jax.Array
+  nfev: int | jax.Array
+  ngev: int | jax.Array
 
 
 def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
@@ -213,17 +215,17 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
 
 
 class _LineSearchState(NamedTuple):
-  done: Union[bool, jax.Array]
-  failed: Union[bool, jax.Array]
-  i: Union[int, jax.Array]
-  a_i1: Union[float, jax.Array]
-  phi_i1: Union[float, jax.Array]
-  dphi_i1: Union[float, jax.Array]
-  nfev: Union[int, jax.Array]
-  ngev: Union[int, jax.Array]
-  a_star: Union[float, jax.Array]
-  phi_star: Union[float, jax.Array]
-  dphi_star: Union[float, jax.Array]
+  done: bool | jax.Array
+  failed: bool | jax.Array
+  i: int | jax.Array
+  a_i1: float | jax.Array
+  phi_i1: float | jax.Array
+  dphi_i1: float | jax.Array
+  nfev: int | jax.Array
+  ngev: int | jax.Array
+  a_star: float | jax.Array
+  phi_star: float | jax.Array
+  dphi_star: float | jax.Array
   g_star: jax.Array
 
 
@@ -241,15 +243,15 @@ class _LineSearchResults(NamedTuple):
     g_k: final gradient value
     status: integer end status
   """
-  failed: Union[bool, jax.Array]
-  nit: Union[int, jax.Array]
-  nfev: Union[int, jax.Array]
-  ngev: Union[int, jax.Array]
-  k: Union[int, jax.Array]
-  a_k: Union[int, jax.Array]
+  failed: bool | jax.Array
+  nit: int | jax.Array
+  nfev: int | jax.Array
+  ngev: int | jax.Array
+  k: int | jax.Array
+  a_k: int | jax.Array
   f_k: jax.Array
   g_k: jax.Array
-  status: Union[bool, jax.Array]
+  status: bool | jax.Array
 
 
 def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,

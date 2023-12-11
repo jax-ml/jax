@@ -13,6 +13,8 @@
 # limitations under the License.
 """Utilities for synchronizing and communication across multiple hosts."""
 
+from __future__ import annotations
+
 from functools import partial, lru_cache
 from typing import Optional
 import zlib
@@ -41,7 +43,7 @@ def _psum(x: Any) -> Any:
   return jax.tree_map(partial(jnp.sum, axis=0), x)
 
 
-def broadcast_one_to_all(in_tree: Any, is_source: Optional[bool] = None) -> Any:
+def broadcast_one_to_all(in_tree: Any, is_source: bool | None = None) -> Any:
   """Broadcast data from a source host (host 0 by default) to all other hosts.
 
   Args:

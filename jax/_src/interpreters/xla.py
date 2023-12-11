@@ -14,6 +14,8 @@
 
 # Lowering of jaxprs into XLA (HLO) computations.
 
+from __future__ import annotations
+
 from collections import defaultdict
 from collections.abc import Sequence
 import dataclasses
@@ -21,7 +23,7 @@ import functools
 from functools import partial
 import itertools as it
 import operator
-from typing import Any, Callable, Optional, Protocol, Union
+from typing import Any, Callable, Protocol, Union
 
 import numpy as np
 
@@ -78,9 +80,8 @@ def parameter(builder, num, shape, name=None, replicated=None):
 # arbitrary tuple nesting, but JAX only uses one level of tupling (and our type
 # checkers don't support recursive types), so we only represent one level of
 # nesting in this type definition.
-SpatialSharding = Union[Shape,
-                        None,
-                        tuple[Optional[Shape], ...]]
+SpatialSharding = Union[Shape, None, tuple[Union[Shape, None], ...]]
+
 
 def sharding_to_proto(sharding: SpatialSharding):
   """Converts a SpatialSharding to an OpSharding.
@@ -204,7 +205,7 @@ pytype_aval_mappings.update(
     (t, partial(_make_abstract_python_scalar, t)) for t in _scalar_types)
 
 
-def primitive_subcomputation(platform: str, axis_env: 'AxisEnv',
+def primitive_subcomputation(platform: str, axis_env: AxisEnv,
                              prim: core.Primitive,
                              avals_in: Sequence[core.AbstractValue],
                              avals_out: Sequence[core.AbstractValue],
@@ -237,9 +238,9 @@ class TranslationContext:
   builder: xc.XlaBuilder
   # TODO(phawkins): make platform non-optional. We should always be translating
   # with a specific platform in mind.
-  platform: Optional[str]
+  platform: str | None
   axis_env: AxisEnv
-  name_stack: Union[str, source_info_util.NameStack]
+  name_stack: str | source_info_util.NameStack
 
   def replace(self, **kw): return dataclasses.replace(self, **kw)
 
@@ -272,7 +273,7 @@ def register_initial_style_primitive(prim: core.Primitive):
   initial_style_primitives.add(prim)
 
 def register_translation(prim: core.Primitive, rule: TranslationRule, *,
-                         platform: Optional[str] = None) -> None:
+                         platform: str | None = None) -> None:
   if platform is None:
     _translations[prim] = rule
   else:

@@ -14,15 +14,12 @@
 
 """Tools to create numpy-style ufuncs."""
 
-_AT_INPLACE_WARNING = """\
-Because JAX arrays are immutable, jnp.ufunc.at() cannot operate inplace like
-np.ufunc.at(). Instead, you can pass inplace=False and capture the result; e.g.
->>> arr = jnp.add.at(arr, ind, val, inplace=False)
-"""
+from __future__ import annotations
+
 from functools import partial
 import math
 import operator
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import jax
 from jax._src.typing import Array, ArrayLike, DTypeLike
@@ -36,7 +33,14 @@ from jax._src.util import canonicalize_axis, set_module
 import numpy as np
 
 
-def get_if_single_primitive(fun: Callable[..., Any], *args: Any) -> Optional[jax.core.Primitive]:
+_AT_INPLACE_WARNING = """\
+Because JAX arrays are immutable, jnp.ufunc.at() cannot operate inplace like
+np.ufunc.at(). Instead, you can pass inplace=False and capture the result; e.g.
+>>> arr = jnp.add.at(arr, ind, val, inplace=False)
+"""
+
+
+def get_if_single_primitive(fun: Callable[..., Any], *args: Any) -> jax.core.Primitive | None:
   """
   If fun(*args) lowers to a single primitive with inputs and outputs matching
   function inputs and outputs, return that primitive. Otherwise return None.
@@ -78,8 +82,8 @@ class ufunc:
   """
   def __init__(self, func: Callable[..., Any], /,
                nin: int, nout: int, *,
-               name: Optional[str] = None,
-               nargs: Optional[int] = None,
+               name: str | None = None,
+               nargs: int | None = None,
                identity: Any = None, update_doc=False):
     # We want ufunc instances to work properly when marked as static,
     # and for this reason it's important that their properties not be
@@ -129,9 +133,9 @@ class ufunc:
 
   @_wraps(np.ufunc.reduce, module="numpy.ufunc")
   @partial(jax.jit, static_argnames=['self', 'axis', 'dtype', 'out', 'keepdims'])
-  def reduce(self, a: ArrayLike, axis: int = 0, dtype: Optional[DTypeLike] = None,
-             out: None = None, keepdims: bool = False, initial: Optional[ArrayLike] = None,
-             where: Optional[ArrayLike] = None) -> Array:
+  def reduce(self, a: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
+             out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
+             where: ArrayLike | None = None) -> Array:
     check_arraylike(f"{self.__name__}.reduce", a)
     if self.nin != 2:
       raise ValueError("reduce only supported for binary ufuncs")
@@ -155,9 +159,9 @@ class ufunc:
       reducer = _primitive_reducers.get(primitive, self._reduce_via_scan)
     return reducer(a, axis=axis, dtype=dtype, keepdims=keepdims, initial=initial, where=where)
 
-  def _reduce_via_scan(self, arr: ArrayLike, axis: int = 0, dtype: Optional[DTypeLike] = None,
-                       keepdims: bool = False, initial: Optional[ArrayLike] = None,
-                       where: Optional[ArrayLike] = None) -> Array:
+  def _reduce_via_scan(self, arr: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
+                       keepdims: bool = False, initial: ArrayLike | None = None,
+                       where: ArrayLike | None = None) -> Array:
     assert self.nin == 2 and self.nout == 1
     arr = lax_internal.asarray(arr)
     if initial is None:
@@ -217,7 +221,7 @@ class ufunc:
 
   @_wraps(np.ufunc.accumulate, module="numpy.ufunc")
   @partial(jax.jit, static_argnames=['self', 'axis', 'dtype'])
-  def accumulate(self, a: ArrayLike, axis: int = 0, dtype: Optional[DTypeLike] = None,
+  def accumulate(self, a: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
                  out: None = None) -> Array:
     if self.nin != 2:
       raise ValueError("accumulate only supported for binary ufuncs")
@@ -233,7 +237,7 @@ class ufunc:
     return accumulator(a, axis=axis, dtype=dtype)
 
   def _accumulate_via_scan(self, arr: ArrayLike, axis: int = 0,
-                           dtype: Optional[DTypeLike] = None) -> Array:
+                           dtype: DTypeLike | None = None) -> Array:
     assert self.nin == 2 and self.nout == 1
     check_arraylike(f"{self.__name__}.accumulate", arr)
     arr = lax_internal.asarray(arr)
@@ -255,7 +259,7 @@ class ufunc:
 
   @_wraps(np.ufunc.accumulate, module="numpy.ufunc")
   @partial(jax.jit, static_argnums=[0], static_argnames=['inplace'])
-  def at(self, a: ArrayLike, indices: Any, b: Optional[ArrayLike] = None, /, *,
+  def at(self, a: ArrayLike, indices: Any, b: ArrayLike | None = None, /, *,
          inplace: bool = True) -> Array:
     if inplace:
       raise NotImplementedError(_AT_INPLACE_WARNING)
@@ -295,7 +299,7 @@ class ufunc:
   @_wraps(np.ufunc.reduceat, module="numpy.ufunc")
   @partial(jax.jit, static_argnames=['self', 'axis', 'dtype'])
   def reduceat(self, a: ArrayLike, indices: Any, axis: int = 0,
-               dtype: Optional[DTypeLike] = None, out: None = None) -> Array:
+               dtype: DTypeLike | None = None, out: None = None) -> Array:
     if self.nin != 2:
       raise ValueError("reduceat only supported for binary ufuncs")
     if self.nout != 1:
@@ -305,7 +309,7 @@ class ufunc:
     return self._reduceat_via_scan(a, indices, axis=axis, dtype=dtype)
 
   def _reduceat_via_scan(self, a: ArrayLike, indices: Any, axis: int = 0,
-                         dtype: Optional[DTypeLike] = None) -> Array:
+                         dtype: DTypeLike | None = None) -> Array:
     check_arraylike(f"{self.__name__}.reduceat", a, indices)
     a = lax_internal.asarray(a)
     idx_tuple = _eliminate_deprecated_list_indexing(indices)

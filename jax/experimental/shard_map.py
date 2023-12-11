@@ -456,7 +456,7 @@ def _unshard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
 
 # Type-checking
 
-RepType = Optional[set[AxisName]]
+RepType = Union[set[AxisName], None]
 
 def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_names, out_names,
                          check_rep, rewrite, auto):

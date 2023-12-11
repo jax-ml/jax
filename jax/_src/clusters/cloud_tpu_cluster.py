@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import os
 import re
 import socket
 import time
-from typing import Optional
 from jax._src import clusters
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 
@@ -99,7 +100,7 @@ class SingleSliceGceTpuCluster(clusters.ClusterEnv):
     return int(get_metadata('agent-worker-number'))
 
   @classmethod
-  def get_local_process_id(cls) -> Optional[int]:
+  def get_local_process_id(cls) -> int | None:
     return None
 
 class MultisliceGceTpuCluster(clusters.ClusterEnv):
@@ -147,7 +148,7 @@ class MultisliceGceTpuCluster(clusters.ClusterEnv):
     return process_id_in_slice + slice_id * processes_per_slice
 
   @classmethod
-  def get_local_process_id(cls) -> Optional[int]:
+  def get_local_process_id(cls) -> int | None:
     return None
 
   @staticmethod

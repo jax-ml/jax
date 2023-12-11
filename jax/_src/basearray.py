@@ -14,6 +14,8 @@
 
 # Note that type annotations for this file are defined in basearray.pyi
 
+from __future__ import annotations
+
 import abc
 import numpy as np
 from typing import Any, Union
@@ -73,7 +75,7 @@ class Array(abc.ABC):
 
   # Documentation for sharding-related methods and properties defined on ArrayImpl:
   @abc.abstractmethod
-  def addressable_data(self, index: int) -> "Array":
+  def addressable_data(self, index: int) -> Array:
     """Return an array of the addressable data at a particular index."""
 
   @property

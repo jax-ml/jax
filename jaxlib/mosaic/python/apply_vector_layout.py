@@ -19,13 +19,16 @@ which should have been populated by an earlier inference pass.
 """
 
 # mypy: ignore-errors
+
+from __future__ import annotations
+
 import abc
 from collections.abc import Sequence
 import dataclasses
 import functools
 import math
 import re
-from typing import Any, Callable, Literal, Optional, Union, overload
+from typing import Any, Callable, Literal, Union, overload
 
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -139,7 +142,7 @@ class VectorLayout:
   bitwidth: int
   offsets: tuple[Offset, Offset]  # Replication applies only within a tile.
   tiling: tuple[int, int]
-  implicit_dim: Optional[ImplicitDim]
+  implicit_dim: ImplicitDim | None
 
   def __post_init__(self):
     # TODO(b/275751535): Allow more bitwidths.
@@ -252,8 +255,8 @@ class VectorLayout:
     else:
       raise AssertionError(f"Invalid implicit dim: {self.implicit_dim}")
 
-  def generalizes(self, other: "VectorLayout",
-                  shape: Optional[tuple[int, ...]] = None) -> bool:
+  def generalizes(self, other: VectorLayout,
+                  shape: tuple[int, ...] | None = None) -> bool:
     """Returns True if the other layout is a special case of this one.
 
     In here, other is considered "a special case" when the set of vector
@@ -318,8 +321,8 @@ class VectorLayout:
         return False
     return True
 
-  def equivalent_to(self, other: "VectorLayout",
-                    shape: Optional[tuple[int, ...]] = None) -> bool:
+  def equivalent_to(self, other: VectorLayout,
+                    shape: tuple[int, ...] | None = None) -> bool:
     """Returns True if the two layouts are equivalent.
 
     That is, when all potential vector entries where the value can be stored
@@ -338,8 +341,8 @@ class VectorLayout:
       self,
       full_shape: tuple[int, ...],
       ixs: tuple[int, ...],
-      allow_replicated: Union[bool, TargetTuple] = False,
-  ) -> "VRegDataBounds":
+      allow_replicated: bool | TargetTuple = False,
+  ) -> VRegDataBounds:
     """Returns the bounds of the given tile that hold useful data.
 
     Arguments:
@@ -786,7 +789,7 @@ class TiledRectangularVRegBounds(VRegDataBounds):
     return ir.DenseBoolArrayAttr.get(mask)
 
 
-Layout = Optional[VectorLayout]
+Layout = Union[VectorLayout, None]
 
 PATTERN = re.compile(
     r'#tpu.vpad<"([0-9]+),{([*0-9]+),([*0-9]+)},\(([0-9]+),([0-9]+)\)(,-1|,-2)?">'
@@ -1147,7 +1150,7 @@ def is_supported_reduced_sublanes_retile(
 def copy_one_sublane(
     src_vreg: ir.Value,
     src_sl_idx: int,
-    dst_vreg: Optional[ir.Value],
+    dst_vreg: ir.Value | None,
     dst_sl_idx: int,
 ) -> ir.Value:
   """Copy one sublane from a vreg to another vreg.
@@ -1459,17 +1462,17 @@ class RewriteContext:
   func: func.FuncOp
   hardware_generation: int
 
-  def erase(self, op: Union[ir.Operation, ir.OpView]):
+  def erase(self, op: ir.Operation | ir.OpView):
     if isinstance(op, ir.OpView):
       op = op.operation
     op.erase()
 
-  def replace(self, old: Union[ir.Operation, ir.OpView], new: ValueLike):
+  def replace(self, old: ir.Operation | ir.OpView, new: ValueLike):
     self.replace_all_uses_with(old, new)
     self.erase(old)
 
   def replace_all_uses_with(
-      self, old: Union[ir.Operation, ir.OpView], new: ValueLike
+      self, old: ir.Operation | ir.OpView, new: ValueLike
   ):
     if isinstance(new, (ir.Operation, ir.OpView)):
       new = new.results
@@ -1686,7 +1689,7 @@ def _arith_constant_rule(ctx: RewriteContext, op: arith.ConstantOp,  # pylint: d
 
 def _elementwise_op_rule(factory,  # pylint: disable=missing-function-docstring
                          ctx: RewriteContext, op: ir.Operation,
-                         layout_in: Union[Layout, tuple[Layout, ...]],
+                         layout_in: Layout | tuple[Layout, ...],
                          layout_out: Layout):
   if not isinstance(layout_in, tuple):
     layout_in = (layout_in,)
@@ -1988,7 +1991,7 @@ def _scf_if_rule(  # pylint: disable=missing-function-docstring
     ctx: RewriteContext,
     op: scf.IfOp,
     layout_in: None,  # pylint: disable=unused-argument
-    layout_out: Union[Layout, tuple[Layout, ...]],
+    layout_out: Layout | tuple[Layout, ...],
 ):
   if len(op.results) == 1:
     layout_out = (layout_out,)
@@ -2066,7 +2069,7 @@ def _scf_if_rule(  # pylint: disable=missing-function-docstring
 def _scf_yield_rule(  # pylint: disable=missing-function-docstring
     ctx: RewriteContext,
     op: scf.YieldOp,
-    layout_in: Union[Layout, tuple[Layout, ...]],
+    layout_in: Layout | tuple[Layout, ...],
     layout_out: None,  # pylint: disable=unused-argument
 ):
   if not op.operands:
@@ -2094,8 +2097,8 @@ def _scf_yield_rule(  # pylint: disable=missing-function-docstring
 def _scf_for_rule(  # pylint: disable=missing-function-docstring
     ctx: RewriteContext,
     op: scf.ForOp,
-    layout_in: Union[Layout, tuple[Layout, ...]],
-    layout_out: Union[Layout, tuple[Layout, ...]],
+    layout_in: Layout | tuple[Layout, ...],
+    layout_out: Layout | tuple[Layout, ...],
 ):
   # TODO(b/286175570) Support inputs and outputs in scf.for.
   assert layout_in and len(layout_in) == 3
@@ -3488,7 +3491,7 @@ def type_bitwidth(ty: ir.Type) -> int:
   raise NotImplementedError(ty)
 
 
-def get_constant(ty: ir.Type, value: Union[int, float]) -> ir.Attribute:
+def get_constant(ty: ir.Type, value: int | float) -> ir.Attribute:
   if ir.IntegerType.isinstance(ty):
     return ir.IntegerAttr.get(ty, value)
   elif ty == ir.IndexType.get():

@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections import OrderedDict, abc
 from collections.abc import Iterable, Sequence, Mapping
 import contextlib
 from functools import wraps, partial, partialmethod, lru_cache
 import itertools as it
 import math
-from typing import (Callable, Optional, Any,
-                    NamedTuple, Union)
+from typing import Callable, Any, NamedTuple, Union
 
 import numpy as np
 
@@ -205,7 +206,7 @@ def fresh_resource_name(tag=None):
 # pytree instance for it, so that it is treated as a leaf.
 class AxisNamePos(FrozenDict):
   user_repr: str
-  expected_rank: Optional[int] = None
+  expected_rank: int | None = None
 
   def __init__(self, *args, user_repr, **kwargs):
     super().__init__(*args, **kwargs)
@@ -278,10 +279,10 @@ def xmap(fun: Callable,
          in_axes,
          out_axes,
          *,
-         axis_sizes: Optional[Mapping[AxisName, int]] = None,
-         axis_resources: Optional[Mapping[AxisName, ResourceSet]] = None,
-         donate_argnums: Union[int, Sequence[int]] = (),
-         backend: Optional[str] = None) -> stages.Wrapped:
+         axis_sizes: Mapping[AxisName, int] | None = None,
+         axis_resources: Mapping[AxisName, ResourceSet] | None = None,
+         donate_argnums: int | Sequence[int] = (),
+         backend: str | None = None) -> stages.Wrapped:
   """Assign a positional signature to a program that uses named array axes.
 
   .. warning::
@@ -717,7 +718,7 @@ class EvaluationPlan(NamedTuple):
   physical_axis_resources: dict[AxisName, tuple[ResourceAxisName, ...]]
   loop_axis_resources: dict[AxisName, tuple[ResourceAxisName, ...]]
   axis_subst_dict: dict[AxisName, tuple[ResourceAxisName, ...]]
-  axis_vmap_size: dict[AxisName, Optional[int]]
+  axis_vmap_size: dict[AxisName, int | None]
 
   @property
   def axis_subst(self) -> core.AxisSubst:
@@ -743,7 +744,7 @@ class EvaluationPlan(NamedTuple):
     axis_resource_count = _get_axis_resource_count(
         axis_resources, resource_env)
     axis_subst_dict = dict(axis_resources)
-    axis_vmap_size: dict[AxisName, Optional[int]] = {}
+    axis_vmap_size: dict[AxisName, int | None] = {}
     for naxis, raxes in sorted(axis_resources.items(), key=lambda x: str(x[0])):
       num_resources = axis_resource_count[naxis]
       assert global_axis_sizes[naxis] % num_resources.nglobal == 0
@@ -1402,7 +1403,7 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   # XXX: We modify mesh_in_axes and mesh_out_axes here
   def add_spmd_axes(
       flat_mesh_axes: Sequence[ArrayMapping],
-      flat_extra_axes: Optional[Sequence[Sequence[Sequence[MeshAxisName]]]]):
+      flat_extra_axes: Sequence[Sequence[Sequence[MeshAxisName]]] | None):
     if flat_extra_axes is None:
       return
     for axes, extra in zip(flat_mesh_axes, flat_extra_axes):
@@ -1562,7 +1563,7 @@ def _insert_aval_axes(aval, axes: AxisNamePos, local_axis_sizes):
 
 class ResourceCount(NamedTuple):
   nglobal: int
-  nlocal: Optional[int]
+  nlocal: int | None
   distributed: bool
 
   def to_local(self, global_size):
@@ -1673,7 +1674,7 @@ def _to_resource_axes(axes_specs: Sequence[AxisNamePos],
                for axes in axes_specs)
 
 
-def _merge_leading_axis(x, axis: Optional[int]):
+def _merge_leading_axis(x, axis: int | None):
   if axis is None:
     # We assume that the output does not vary along the leading axis
     return lax.index_in_dim(x, 0, axis=0, keepdims=False)
@@ -1684,7 +1685,7 @@ def _merge_leading_axis(x, axis: Optional[int]):
     return x_moved.reshape(shape)
 
 
-def _slice_tile(x, dim: Optional[int], i, n: int):
+def _slice_tile(x, dim: int | None, i, n: int):
   """Selects an `i`th (out of `n`) tiles of `x` along `dim`."""
   if dim is None: return x
   (tile_size, rem) = divmod(x.shape[dim], n)

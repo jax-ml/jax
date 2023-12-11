@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Generator, Iterator
 import functools
 import itertools as it
+from itertools import product, permutations
 import math
 import os
 import re
-from itertools import product, permutations
-from typing import Union, Optional
 from unittest import SkipTest
+from typing import Union
 
 import numpy as np
 from absl.testing import absltest
@@ -1912,7 +1914,7 @@ class NamedAutodiffTests(jtu.JaxTestCase):
 
     # lax.psum has the wrong transpose, so test with a corrected version for now
     @functools.partial(jax.custom_vjp, nondiff_argnums=(1,))
-    def psum_idrev(x, axis_name: Optional[AxisNames] = None):
+    def psum_idrev(x, axis_name: AxisNames | None = None):
       if axis_name is None:
         return x
       return jax.lax.psum(x, axis_name)

@@ -15,11 +15,11 @@
 # This module is largely a wrapper around `jaxlib` that performs version
 # checking on import.
 
-import datetime
+from __future__ import annotations
+
 import gc
 import pathlib
 import re
-from typing import Optional
 
 try:
   import jaxlib as jaxlib
@@ -125,7 +125,7 @@ mlir_api_version = xla_client.mlir_api_version
 
 # TODO(rocm): check if we need the same for rocm.
 
-def _cuda_path() -> Optional[str]:
+def _cuda_path() -> str | None:
   _jaxlib_path = pathlib.Path(jaxlib.__file__).parent
   # If the pip package nvidia-cuda-nvcc-cu11 is installed, it should have
   # both of the things XLA looks for in the cuda path, namely bin/ptxas and

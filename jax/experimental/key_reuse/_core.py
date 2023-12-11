@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Callable, Optional, Union
+from __future__ import annotations
+
+from typing import Any, Callable
 
 from jax import core
 from jax.experimental.key_reuse import _forwarding
@@ -39,7 +41,7 @@ def check_key_reuse_jaxpr(jaxpr: core.Jaxpr, *, use_forwarding: bool = True):
 
 def get_jaxpr_type_signature(
     jaxpr: core.Jaxpr, *,
-    consumed_inputs: Optional[list[Union[bool, np.ndarray]]] = None,
+    consumed_inputs: list[bool | np.ndarray] | None = None,
     use_forwarding: bool = True,
     ) -> KeyReuseSignature:
   """Parse the jaxpr to determine key reuse signature"""

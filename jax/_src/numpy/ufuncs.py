@@ -16,10 +16,12 @@
 Implements ufuncs for jax.numpy.
 """
 
+from __future__ import annotations
+
 from functools import partial
 import operator
 from textwrap import dedent
-from typing import Any, Callable, Union, overload
+from typing import Any, Callable, overload
 
 import numpy as np
 
@@ -124,9 +126,9 @@ def _logical_op(np_op: Callable[..., Any], bitwise_op: UnOp) -> UnOp: ...
 @overload
 def _logical_op(np_op: Callable[..., Any], bitwise_op: BinOp) -> BinOp: ...
 @overload
-def _logical_op(np_op: Callable[..., Any], bitwise_op: Union[UnOp, BinOp]) -> Union[UnOp, BinOp]: ...
+def _logical_op(np_op: Callable[..., Any], bitwise_op: UnOp | BinOp) -> UnOp | BinOp: ...
 
-def _logical_op(np_op: Callable[..., Any], bitwise_op: Union[UnOp, BinOp]) -> Union[UnOp, BinOp]:
+def _logical_op(np_op: Callable[..., Any], bitwise_op: UnOp | BinOp) -> UnOp | BinOp:
   @_wraps(np_op, update_doc=False, module='numpy')
   @partial(jit, inline=True)
   def op(*args):

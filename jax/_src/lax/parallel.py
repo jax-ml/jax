@@ -15,12 +15,13 @@
 Parallelization primitives.
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from functools import partial
 import itertools
 import math
 import string
-from typing import Union
 
 import numpy as np
 
@@ -606,7 +607,7 @@ class XeinsumSpecParser:
     return arg_specs
 
 
-def pgather(src, idx, axes: Union[int, AxisName]):
+def pgather(src, idx, axes: int | AxisName):
   """Uses the last positional axis of idx to index into src's axes."""
   if not isinstance(axes, (tuple, list)):
     axes = (axes,)

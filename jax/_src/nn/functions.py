@@ -14,10 +14,12 @@
 
 """Shared neural network activations and other functions."""
 
+from __future__ import annotations
+
 from functools import partial
 import operator
 import numpy as np
-from typing import Any, Optional, Union
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -401,9 +403,9 @@ logsumexp = _logsumexp
 
 @partial(jax.jit, static_argnames=("axis",))
 def log_softmax(x: ArrayLike,
-                axis: Optional[Union[int, tuple[int, ...]]] = -1,
-                where: Optional[ArrayLike] = None,
-                initial: Optional[ArrayLike] = None) -> Array:
+                axis: int | tuple[int, ...] | None = -1,
+                where: ArrayLike | None = None,
+                initial: ArrayLike | None = None) -> Array:
   r"""Log-Softmax function.
 
   Computes the logarithm of the :code:`softmax` function, which rescales
@@ -442,9 +444,9 @@ def log_softmax(x: ArrayLike,
 # TODO(phawkins): this jit was found to change numerics in a test. Debug this.
 #@partial(jax.jit, static_argnames=("axis",))
 def softmax(x: ArrayLike,
-            axis: Optional[Union[int, tuple[int, ...]]] = -1,
-            where: Optional[ArrayLike] = None,
-            initial: Optional[ArrayLike] = None) -> Array:
+            axis: int | tuple[int, ...] | None = -1,
+            where: ArrayLike | None = None,
+            initial: ArrayLike | None = None) -> Array:
   r"""Softmax function.
 
   Computes the function which rescales elements to the range :math:`[0, 1]`
@@ -480,9 +482,9 @@ def softmax(x: ArrayLike,
 @partial(jax.custom_jvp, nondiff_argnums=(1,))
 def _softmax(
     x: ArrayLike,
-    axis: Optional[Union[int, tuple[int, ...]]] = -1,
-    where: Optional[ArrayLike] = None,
-    initial: Optional[ArrayLike] = None) -> Array:
+    axis: int | tuple[int, ...] | None = -1,
+    where: ArrayLike | None = None,
+    initial: ArrayLike | None = None) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   unnormalized = jnp.exp(x - x_max)
   result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
@@ -498,9 +500,9 @@ def _softmax_jvp(axis, primals, tangents):
 
 def _softmax_deprecated(
     x: ArrayLike,
-    axis: Optional[Union[int, tuple[int, ...]]] = -1,
-    where: Optional[ArrayLike] = None,
-    initial: Optional[ArrayLike] = None) -> Array:
+    axis: int | tuple[int, ...] | None = -1,
+    where: ArrayLike | None = None,
+    initial: ArrayLike | None = None) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
   result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
@@ -511,11 +513,11 @@ def _softmax_deprecated(
 
 @partial(jax.jit, static_argnames=("axis",))
 def standardize(x: ArrayLike,
-              axis: Optional[Union[int, tuple[int, ...]]] = -1,
-              mean: Optional[ArrayLike] = None,
-              variance: Optional[ArrayLike] = None,
+              axis: int | tuple[int, ...] | None = -1,
+              mean: ArrayLike | None = None,
+              variance: ArrayLike | None = None,
               epsilon: ArrayLike = 1e-5,
-              where: Optional[ArrayLike] = None) -> Array:
+              where: ArrayLike | None = None) -> Array:
   r"""Normalizes an array by subtracting ``mean`` and dividing by :math:`\sqrt{\mathrm{variance}}`."""
   numpy_util.check_arraylike("standardize", x)
   numpy_util.check_arraylike_or_none("standardize", mean, variance, where)
@@ -533,7 +535,7 @@ def standardize(x: ArrayLike,
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 @partial(jax.jit, static_argnames=("num_classes", "dtype", "axis"))
 def _one_hot(x: Any, num_classes: int, *,
-             dtype: Any, axis: Union[int, AxisName]) -> Array:
+             dtype: Any, axis: int | AxisName) -> Array:
   num_classes = core.concrete_dim_or_error(
       num_classes,
       "The error arose in jax.nn.one_hot argument `num_classes`.")
@@ -557,7 +559,7 @@ def _one_hot(x: Any, num_classes: int, *,
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
 def one_hot(x: Any, num_classes: int, *,
-            dtype: Any = jnp.float_, axis: Union[int, AxisName] = -1) -> Array:
+            dtype: Any = jnp.float_, axis: int | AxisName = -1) -> Array:
   """One-hot encodes the given indices.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length

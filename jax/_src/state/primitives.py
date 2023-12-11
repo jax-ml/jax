@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for state primitives."""
-from functools import partial
+from __future__ import annotations
 
+from functools import partial
 from typing import Any, Union
 
 import numpy as np

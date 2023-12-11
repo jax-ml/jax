@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import functools
 from functools import partial
 import logging
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 import types
 
 import numpy as np
@@ -131,8 +133,8 @@ checkpoint_policies = types.SimpleNamespace(
 
 @api_boundary
 def checkpoint(fun: Callable, *, prevent_cse: bool = True,
-               policy: Optional[Callable[..., bool]] = None,
-               static_argnums: Union[int, tuple[int, ...]] = (),
+               policy: Callable[..., bool] | None = None,
+               static_argnums: int | tuple[int, ...] = (),
                ) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
@@ -574,8 +576,8 @@ def remat_transpose(reduce_axes, out_cts, *in_primals, jaxpr, **params):
 ad.reducing_transposes[remat_p] = remat_transpose
 
 # TODO(mattjj): move this to ad.py
-def transpose_jaxpr(jaxpr: core.ClosedJaxpr, in_linear: Union[bool, Sequence[bool]],
-                    out_zeros: Union[bool, Sequence[bool]],
+def transpose_jaxpr(jaxpr: core.ClosedJaxpr, in_linear: bool | Sequence[bool],
+                    out_zeros: bool | Sequence[bool],
                     reduce_axes: Sequence[core.AxisName],
                     ) -> tuple[core.ClosedJaxpr, list[bool]]:
   if type(in_linear) is bool:
@@ -639,7 +641,7 @@ batching.spmd_axis_primitive_batchers[remat_p] = remat_vmap
 
 # TODO(mattjj,sharadmv): de-duplicate with pe.dce_jaxpr_call_rule
 def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn
-              ) -> tuple[list[bool], Optional[core.JaxprEqn]]:
+              ) -> tuple[list[bool], core.JaxprEqn | None]:
   new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
   new_params = dict(eqn.params, jaxpr=new_jaxpr)
   if not any(used_inputs) and not any(used_outputs) and not new_jaxpr.effects:
@@ -779,8 +781,8 @@ def checkpoint_wrapper(
     *,
     concrete: bool = False,
     prevent_cse: bool = True,
-    static_argnums: Union[int, tuple[int, ...]] = (),
-    policy: Optional[Callable[..., bool]] = None,
+    static_argnums: int | tuple[int, ...] = (),
+    policy: Callable[..., bool] | None = None,
 ) -> Callable:
   if concrete:
     msg = ("The 'concrete' option to jax.checkpoint / jax.remat is deprecated; "

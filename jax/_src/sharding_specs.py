@@ -27,12 +27,14 @@
 # This encoding is assumed by various parts of the system, e.g. generating
 # replica groups for collective operations.
 
+from __future__ import annotations
+
 import collections
 from collections.abc import Mapping, Sequence
 import functools
 import itertools
 import math
-from typing import Any, Optional, Union, cast
+from typing import Any, Union, cast
 
 import numpy as np
 
@@ -82,7 +84,7 @@ def get_logical_mesh_ids(mesh_shape):
 _MeshAxisName = Any
 
 def sharding_spec_sharding_proto(
-    self, special_axes: Optional[Mapping[int, OpShardingType]] = None
+    self, special_axes: Mapping[int, OpShardingType] | None = None
 ) -> xc.HloSharding:
   """Converts a ShardingSpec to an OpSharding proto.
 
@@ -273,7 +275,7 @@ def new_mesh_sharding_specs(axis_sizes, axis_names):
   return functools.partial(make_sharding_spec, axis_sizes, mesh_axis_pos)
 
 def pmap_sharding_spec(nrep, axis_size, sharded_shape: Sequence[int],
-                       map_axis: Optional[int]) -> ShardingSpec:
+                       map_axis: int | None) -> ShardingSpec:
   """Sharding spec for arguments or results of a pmap.
   Args:
     nrep: number of local XLA replicas (product of local axis sizes)
@@ -310,7 +312,7 @@ def pmap_sharding_spec(nrep, axis_size, sharded_shape: Sequence[int],
 
 
 def create_pmap_sharding_spec(shape: tuple[int, ...], sharded_dim: int = 0,
-                              sharded_dim_size: Optional[int] = None):
+                              sharded_dim_size: int | None = None):
   if sharded_dim is not None:
     sharded_shape = shape[:sharded_dim] + shape[sharded_dim+1:]
     if sharded_dim_size is None:

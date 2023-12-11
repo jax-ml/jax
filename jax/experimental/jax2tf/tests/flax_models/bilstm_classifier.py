@@ -16,6 +16,8 @@
 https://github.com/google/flax/tree/main/examples/sst2
 """
 
+from __future__ import annotations
+
 import functools
 from typing import Any, Callable, Optional
 
@@ -88,10 +90,10 @@ class WordDropout(nn.Module):
   """
   dropout_rate: float
   unk_idx: int
-  deterministic: Optional[bool] = None
+  deterministic: bool | None = None
 
   @nn.compact
-  def __call__(self, inputs: Array, deterministic: Optional[bool] = None):
+  def __call__(self, inputs: Array, deterministic: bool | None = None):
     deterministic = nn.module.merge_param(
         'deterministic', self.deterministic, deterministic)
     if deterministic or self.dropout_rate == 0.:
@@ -120,8 +122,8 @@ class Embedder(nn.Module):
   frozen: bool = False
   dropout_rate: float = 0.
   word_dropout_rate: float = 0.
-  unk_idx: Optional[int] = None
-  deterministic: Optional[bool] = None
+  unk_idx: int | None = None
+  deterministic: bool | None = None
   dtype: jnp.dtype = jnp.dtype('float32')
 
   def setup(self):
@@ -137,7 +139,7 @@ class Embedder(nn.Module):
         unk_idx=self.unk_idx)
 
   def __call__(self, inputs: Array,
-               deterministic: Optional[bool] = None) -> Array:
+               deterministic: bool | None = None) -> Array:
     """Embeds the input sequences and applies word dropout and dropout.
 
     Args:
@@ -222,14 +224,14 @@ class MLP(nn.Module):
   activation: Callable[..., Any] = nn.tanh
   dropout_rate: float = 0.0
   output_bias: bool = False
-  deterministic: Optional[bool] = None
+  deterministic: bool | None = None
 
   def setup(self):
     self.intermediate_layer = nn.Dense(self.hidden_size)
     self.output_layer = nn.Dense(self.output_size, use_bias=self.output_bias)
     self.dropout_layer = nn.Dropout(rate=self.dropout_rate)
 
-  def __call__(self, inputs: Array, deterministic: Optional[bool] = None):
+  def __call__(self, inputs: Array, deterministic: bool | None = None):
     """Applies the MLP to the last dimension of the inputs.
 
     Args:
@@ -306,7 +308,7 @@ class AttentionClassifier(nn.Module):
   hidden_size: int
   output_size: int
   dropout_rate: float = 0.
-  deterministic: Optional[bool] = None
+  deterministic: bool | None = None
 
   def setup(self):
     self.dropout_layer = nn.Dropout(rate=self.dropout_rate)
@@ -319,7 +321,7 @@ class AttentionClassifier(nn.Module):
         dropout_rate=self.dropout_rate)
 
   def __call__(self, encoded_inputs: Array, lengths: Array,
-               deterministic: Optional[bool] = None) -> Array:
+               deterministic: bool | None = None) -> Array:
     """Applies model to the encoded inputs.
 
     Args:
@@ -362,7 +364,7 @@ class TextClassifier(nn.Module):
   dropout_rate: float
   word_dropout_rate: float
   unk_idx: int = 1
-  deterministic: Optional[bool] = None
+  deterministic: bool | None = None
 
   def setup(self):
     self.embedder = Embedder(
@@ -378,14 +380,14 @@ class TextClassifier(nn.Module):
         dropout_rate=self.dropout_rate)
 
   def embed_token_ids(self, token_ids: Array,
-                      deterministic: Optional[bool] = None) -> Array:
+                      deterministic: bool | None = None) -> Array:
     deterministic = nn.module.merge_param(
         'deterministic', self.deterministic, deterministic)
     return self.embedder(token_ids, deterministic=deterministic)
 
   def logits_from_embedded_inputs(
       self, embedded_inputs: Array, lengths: Array,
-      deterministic: Optional[bool] = None) -> Array:
+      deterministic: bool | None = None) -> Array:
     deterministic = nn.module.merge_param(
         'deterministic', self.deterministic, deterministic)
     encoded_inputs = self.encoder(embedded_inputs, lengths)
@@ -393,7 +395,7 @@ class TextClassifier(nn.Module):
         encoded_inputs, lengths, deterministic=deterministic)
 
   def __call__(self, token_ids: Array, lengths: Array,
-               deterministic: Optional[bool] = None) -> Array:
+               deterministic: bool | None = None) -> Array:
     """Embeds the token IDs, encodes them, and classifies with attention."""
     embedded_inputs = self.embed_token_ids(
         token_ids, deterministic=deterministic)

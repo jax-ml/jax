@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import copy
 import enum
 from functools import partial
 import math
 from unittest import skipIf
-from typing import Any, NamedTuple, Optional
+from typing import Any, NamedTuple
 import zlib
 
 from absl.testing import absltest
@@ -59,8 +61,8 @@ class RandomValuesCase(NamedTuple):
   params: dict
   expected: np.ndarray
   on_x64: OnX64 = OnX64.ALSO
-  atol: Optional[float] = None
-  rtol: Optional[float] = None
+  atol: float | None = None
+  rtol: float | None = None
 
   def _testname(self):
     if self.dtype is None:

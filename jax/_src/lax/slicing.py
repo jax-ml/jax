@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import enum
 import operator
 from functools import partial
 import math
-from typing import Callable, NamedTuple, Optional, Union
+from typing import Callable, NamedTuple
 import weakref
 
 import numpy as np
@@ -54,7 +56,7 @@ _dtype = partial(dtypes.dtype, canonicalize=True)
 
 def slice(operand: ArrayLike, start_indices: Sequence[int],
           limit_indices: Sequence[int],
-          strides: Optional[Sequence[int]] = None) -> Array:
+          strides: Sequence[int] | None = None) -> Array:
   """Wraps XLA's `Slice
   <https://www.tensorflow.org/xla/operation_semantics#slice>`_
   operator.
@@ -109,8 +111,8 @@ def slice(operand: ArrayLike, start_indices: Sequence[int],
 
 
 def dynamic_slice(
-    operand: Union[Array, np.ndarray],
-    start_indices: Union[Union[Array, np.ndarray], Sequence[ArrayLike]],
+    operand: Array | np.ndarray,
+    start_indices: Array | np.ndarray | Sequence[ArrayLike],
     slice_sizes: Shape,
 ) -> Array:
   """Wraps XLA's `DynamicSlice
@@ -166,8 +168,8 @@ def dynamic_slice(
                               slice_sizes=tuple(static_sizes))
 
 
-def dynamic_update_slice(operand: Union[Array, np.ndarray], update: ArrayLike,
-                         start_indices: Union[Array, Sequence[ArrayLike]]) -> Array:
+def dynamic_update_slice(operand: Array | np.ndarray, update: ArrayLike,
+                         start_indices: Array | Sequence[ArrayLike]) -> Array:
   """Wraps XLA's `DynamicUpdateSlice
   <https://www.tensorflow.org/xla/operation_semantics#dynamicupdateslice>`_
   operator.
@@ -268,7 +270,7 @@ class GatherScatterMode(enum.Enum):
   PROMISE_IN_BOUNDS = enum.auto()
 
   @staticmethod
-  def from_any(s: Optional[Union[str, 'GatherScatterMode']]):
+  def from_any(s: str | GatherScatterMode | None):
     if isinstance(s, GatherScatterMode):
       return s
     if s == "clip":
@@ -287,7 +289,7 @@ def gather(operand: ArrayLike, start_indices: ArrayLike,
            *,
            unique_indices: bool = False,
            indices_are_sorted: bool = False,
-           mode: Optional[Union[str, GatherScatterMode]] = None,
+           mode: str | GatherScatterMode | None = None,
            fill_value = None) -> Array:
   """Gather operator.
 
@@ -382,7 +384,7 @@ def scatter_add(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
   indices_are_sorted: bool = False, unique_indices: bool = False,
-  mode: Optional[Union[str, GatherScatterMode]] = None) -> Array:
+  mode: str | GatherScatterMode | None = None) -> Array:
   """Scatter-add operator.
 
   Wraps `XLA's Scatter operator
@@ -429,7 +431,7 @@ def scatter_mul(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
   indices_are_sorted: bool = False, unique_indices: bool = False,
-  mode: Optional[Union[str, GatherScatterMode]] = None) -> Array:
+  mode: str | GatherScatterMode | None = None) -> Array:
   """Scatter-multiply operator.
 
   Wraps `XLA's Scatter operator
@@ -476,7 +478,7 @@ def scatter_min(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
   indices_are_sorted: bool = False, unique_indices: bool = False,
-  mode: Optional[Union[str, GatherScatterMode]] = None) -> Array:
+  mode: str | GatherScatterMode | None = None) -> Array:
   """Scatter-min operator.
 
   Wraps `XLA's Scatter operator
@@ -523,7 +525,7 @@ def scatter_max(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
   indices_are_sorted: bool = False, unique_indices: bool = False,
-  mode: Optional[Union[str, GatherScatterMode]] = None) -> Array:
+  mode: str | GatherScatterMode | None = None) -> Array:
   """Scatter-max operator.
 
   Wraps `XLA's Scatter operator
@@ -575,7 +577,7 @@ def scatter_apply(
   dimension_numbers: ScatterDimensionNumbers, *,
   update_shape: Shape = (),
   indices_are_sorted: bool = False, unique_indices: bool = False,
-  mode: Optional[Union[str, GatherScatterMode]] = None) -> Array:
+  mode: str | GatherScatterMode | None = None) -> Array:
   """Scatter-apply operator.
 
   Wraps `XLA's Scatter operator
@@ -637,7 +639,7 @@ def scatter(
   operand: ArrayLike, scatter_indices: ArrayLike, updates: ArrayLike,
   dimension_numbers: ScatterDimensionNumbers, *,
   indices_are_sorted: bool = False, unique_indices: bool = False,
-  mode: Optional[Union[str, GatherScatterMode]] = None) -> Array:
+  mode: str | GatherScatterMode | None = None) -> Array:
   """Scatter-update operator.
 
   Wraps `XLA's Scatter operator
@@ -700,8 +702,8 @@ def index_take(src: Array, idxs: Array, axes: Sequence[int]) -> Array:
 
 ### convenience wrappers around traceables
 
-def slice_in_dim(operand: Union[Array, np.ndarray], start_index: Optional[int],
-                 limit_index: Optional[int],
+def slice_in_dim(operand: Array | np.ndarray, start_index: int | None,
+                 limit_index: int | None,
                  stride: int = 1, axis: int = 0) -> Array:
   """Convenience wrapper around :func:`lax.slice` applying to only one dimension.
 
@@ -775,7 +777,7 @@ def slice_in_dim(operand: Union[Array, np.ndarray], start_index: Optional[int],
   return slice(operand, start_indices, limit_indices, strides)
 
 
-def index_in_dim(operand: Union[Array, np.ndarray], index: int, axis: int = 0,
+def index_in_dim(operand: Array | np.ndarray, index: int, axis: int = 0,
                  keepdims: bool = True) -> Array:
   """Convenience wrapper around :func:`lax.slice` to perform int indexing.
 
@@ -835,7 +837,7 @@ def index_in_dim(operand: Union[Array, np.ndarray], index: int, axis: int = 0,
     return lax.squeeze(result, (axis,))
 
 
-def dynamic_slice_in_dim(operand: Union[Array, np.ndarray],
+def dynamic_slice_in_dim(operand: Array | np.ndarray,
                          start_index: ArrayLike,
                          slice_size: int, axis: int = 0) -> Array:
   """Convenience wrapper around :func:`lax.dynamic_slice` applied to one dimension.
@@ -893,8 +895,8 @@ def dynamic_slice_in_dim(operand: Union[Array, np.ndarray],
   return dynamic_slice(operand, start_indices, slice_sizes)
 
 
-def dynamic_index_in_dim(operand: Union[Array, np.ndarray],
-                         index: Union[int, Array],
+def dynamic_index_in_dim(operand: Array | np.ndarray,
+                         index: int | Array,
                          axis: int = 0, keepdims: bool = True) -> Array:
   """Convenience wrapper around dynamic_slice to perform int indexing.
 
@@ -945,7 +947,7 @@ def dynamic_index_in_dim(operand: Union[Array, np.ndarray],
     return lax.squeeze(result, (axis,))
 
 
-def dynamic_update_slice_in_dim(operand: Union[Array, np.ndarray],
+def dynamic_update_slice_in_dim(operand: Array | np.ndarray,
                                 update: ArrayLike,
                                 start_index: ArrayLike, axis: int) -> Array:
   """Convenience wrapper around :func:`dynamic_update_slice` to update
@@ -1007,7 +1009,7 @@ def dynamic_update_slice_in_dim(operand: Union[Array, np.ndarray],
   return dynamic_update_slice(operand, update, start_indices)
 
 
-def dynamic_update_index_in_dim(operand: Union[Array, np.ndarray],
+def dynamic_update_index_in_dim(operand: Array | np.ndarray,
                                 update: ArrayLike, index: ArrayLike,
                                 axis: int) -> Array:
   """Convenience wrapper around :func:`dynamic_update_slice` to update a slice
@@ -2566,8 +2568,8 @@ mlir.register_lowering(scatter_add_p, _scatter_add_lower_gpu, platform="gpu")
 
 
 def _dynamic_slice_indices(
-    operand: Union[Array, np.ndarray],
-    start_indices: Union[Union[Array, np.ndarray], Sequence[ArrayLike]]
+    operand: Array | np.ndarray,
+    start_indices: Array | np.ndarray | Sequence[ArrayLike]
   ) -> list[ArrayLike]:
   # Normalize the start_indices w.r.t. operand.shape
   if len(start_indices) != operand.ndim:

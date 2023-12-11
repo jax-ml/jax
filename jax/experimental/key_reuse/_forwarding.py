@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from functools import reduce
-from typing import Any, Callable, NamedTuple, Optional, Union
+from typing import Any, Callable, NamedTuple
 
 import jax
 from jax import core
@@ -83,11 +83,11 @@ def unknown_signature(eqn, args_consumed):
 
 def get_jaxpr_type_signature(
     jaxpr: core.Jaxpr,
-    consumed_inputs: Optional[list[Union[bool, np.ndarray]]] = None,
-    forwarded_inputs: Optional[dict[int, int]] = None,
+    consumed_inputs: list[bool | np.ndarray] | None = None,
+    forwarded_inputs: dict[int, int] | None = None,
     ) -> KeyReuseSignatureWithForwards:
   """Parse the jaxpr to determine key reuse signature"""
-  consumed: dict[core.Atom, Union[bool, np.ndarray]] = {}
+  consumed: dict[core.Atom, bool | np.ndarray] = {}
   forwards: dict[core.Atom, core.Atom] = {}  # map forwarded outputs to inputs.
 
   def resolve_forwards(var: core.Atom) -> core.Atom:
@@ -221,8 +221,8 @@ key_reuse_signatures_dynamic[assert_consumed_value_p] = _assert_consumed_value_k
 def _cond_key_type_signature(eqn, args_consumed):
   signatures = [get_jaxpr_type_signature(branch.jaxpr, consumed_inputs=args_consumed[1:])
                 for branch in eqn.params['branches']]
-  sinks = defaultdict(lambda: [])
-  sources = defaultdict(lambda: [])
+  sinks = defaultdict(list)
+  sources = defaultdict(list)
   for sig in signatures:
     for sink in sig.sinks:
       sinks[sink.idx].append(sink.mask)

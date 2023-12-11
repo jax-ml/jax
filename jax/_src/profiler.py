@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from contextlib import contextmanager
 from functools import wraps
 import glob
@@ -23,7 +25,7 @@ import os
 import socketserver
 import threading
 
-from typing import Callable, Optional
+from typing import Callable
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
@@ -31,7 +33,7 @@ traceback_util.register_exclusion(__file__)
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
 
-_profiler_server: Optional[xla_client.profiler.ProfilerServer] = None
+_profiler_server: xla_client.profiler.ProfilerServer | None = None
 
 logger = logging.getLogger(__name__)
 
@@ -300,7 +302,7 @@ class StepTraceAnnotation(TraceAnnotation):
     super().__init__(name, _r=1, **kwargs)
 
 
-def annotate_function(func: Callable, name: Optional[str] = None,
+def annotate_function(func: Callable, name: str | None = None,
                       **decorator_kwargs):
   """Decorator that generates a trace event for the execution of a function.
 
@@ -336,7 +338,7 @@ def annotate_function(func: Callable, name: Optional[str] = None,
   return wrapper
 
 
-def device_memory_profile(backend: Optional[str] = None) -> bytes:
+def device_memory_profile(backend: str | None = None) -> bytes:
   """Captures a JAX device memory profile as ``pprof``-format protocol buffer.
 
   A device memory profile is a snapshot of the state of memory, that describes the JAX
@@ -364,7 +366,7 @@ def device_memory_profile(backend: Optional[str] = None) -> bytes:
   return xla_client.heap_profile(xla_bridge.get_backend(backend))
 
 
-def save_device_memory_profile(filename, backend: Optional[str] = None) -> None:
+def save_device_memory_profile(filename, backend: str | None = None) -> None:
   """Collects a device memory profile and writes it to a file.
 
   :func:`save_device_memory_profile` is a convenience wrapper around :func:`device_memory_profile`

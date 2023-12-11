@@ -25,7 +25,7 @@ import itertools as it
 import logging
 import math
 import threading
-from typing import (Any, Callable, NamedTuple, Optional, Union, cast, TypeVar)
+from typing import Any, Callable, NamedTuple, TypeVar, Union, cast
 from collections.abc import Iterator
 import warnings
 
@@ -1614,7 +1614,9 @@ class DeviceAssignmentMismatchError(Exception):
 
 ShardingInfo = tuple[
     Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue, AUTO],
-    MismatchType, Optional[Any]]  # Any is dispatch.SourceInfo to avoid circular imports
+    MismatchType,
+    Union[Any, None],  # Any is dispatch.SourceInfo to avoid circular imports
+]
 
 
 def _get_default_device() -> xc.Device:
@@ -1875,7 +1877,7 @@ def are_all_shardings_default_mem_kind(da_object, shardings):
       return False
   return True
 
-MaybeLayout = Sequence[Optional[Union[XLACompatibleLayout, LayoutRequest]]]
+MaybeLayout = Sequence[Union[XLACompatibleLayout, LayoutRequest, None]]
 
 
 class AllArgsInfo(NamedTuple):

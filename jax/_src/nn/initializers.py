@@ -17,9 +17,11 @@ Common neural network layer initializers, consistent with definitions
 used in Keras and Sonnet.
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import math
-from typing import Any, Literal, Protocol, Union
+from typing import Any, Literal, Protocol
 
 import numpy as np
 
@@ -194,9 +196,9 @@ def truncated_normal(stddev: RealNumeric = 1e-2,
 
 @export
 def _compute_fans(shape: core.NamedShape,
-                  in_axis: Union[int, Sequence[int]] = -2,
-                  out_axis: Union[int, Sequence[int]] = -1,
-                  batch_axis: Union[int, Sequence[int]] = ()
+                  in_axis: int | Sequence[int] = -2,
+                  out_axis: int | Sequence[int] = -1,
+                  batch_axis: int | Sequence[int] = ()
                   ) -> tuple[Array, Array]:
   """
   Compute effective input and output sizes for a linear or convolutional layer.
@@ -226,7 +228,7 @@ def _compute_fans(shape: core.NamedShape,
   return fan_in, fan_out
 
 def _complex_uniform(key: KeyArray,
-                     shape: Union[Sequence[int], core.NamedShape],
+                     shape: Sequence[int] | core.NamedShape,
                      dtype: DTypeLikeInexact) -> Array:
   """
   Sample uniform random values within a disk on the complex plane,
@@ -240,7 +242,7 @@ def _complex_uniform(key: KeyArray,
   return r * jnp.exp(1j * theta)
 
 def _complex_truncated_normal(key: KeyArray, upper: ArrayLike,
-                              shape: Union[Sequence[int], core.NamedShape],
+                              shape: Sequence[int] | core.NamedShape,
                               dtype: DTypeLikeInexact) -> Array:
   """
   Sample random values from a centered normal distribution on the complex plane,
@@ -259,11 +261,11 @@ def _complex_truncated_normal(key: KeyArray, upper: ArrayLike,
 @export
 def variance_scaling(
   scale: RealNumeric,
-  mode: Union[Literal["fan_in"], Literal["fan_out"], Literal["fan_avg"]],
-  distribution: Union[Literal["truncated_normal"], Literal["normal"],
-                      Literal["uniform"]],
-  in_axis: Union[int, Sequence[int]] = -2,
-  out_axis: Union[int, Sequence[int]] = -1,
+  mode: Literal["fan_in"] | Literal["fan_out"] | Literal["fan_avg"],
+  distribution: (Literal["truncated_normal"] | Literal["normal"] |
+                      Literal["uniform"]),
+  in_axis: int | Sequence[int] = -2,
+  out_axis: int | Sequence[int] = -1,
   batch_axis: Sequence[int] = (),
   dtype: DTypeLikeInexact = jnp.float_
 ) -> Initializer:
@@ -345,8 +347,8 @@ def variance_scaling(
   return init
 
 @export
-def glorot_uniform(in_axis: Union[int, Sequence[int]] = -2,
-                   out_axis: Union[int, Sequence[int]] = -1,
+def glorot_uniform(in_axis: int | Sequence[int] = -2,
+                   out_axis: int | Sequence[int] = -1,
                    batch_axis: Sequence[int] = (),
                    dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
   """Builds a Glorot uniform initializer (aka Xavier uniform initializer).
@@ -383,8 +385,8 @@ def glorot_uniform(in_axis: Union[int, Sequence[int]] = -2,
 xavier_uniform = glorot_uniform
 
 @export
-def glorot_normal(in_axis: Union[int, Sequence[int]] = -2,
-                  out_axis: Union[int, Sequence[int]] = -1,
+def glorot_normal(in_axis: int | Sequence[int] = -2,
+                  out_axis: int | Sequence[int] = -1,
                   batch_axis: Sequence[int] = (),
                   dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
   """Builds a Glorot normal initializer (aka Xavier normal initializer).
@@ -421,8 +423,8 @@ def glorot_normal(in_axis: Union[int, Sequence[int]] = -2,
 xavier_normal = glorot_normal
 
 @export
-def lecun_uniform(in_axis: Union[int, Sequence[int]] = -2,
-                  out_axis: Union[int, Sequence[int]] = -1,
+def lecun_uniform(in_axis: int | Sequence[int] = -2,
+                  out_axis: int | Sequence[int] = -1,
                   batch_axis: Sequence[int] = (),
                   dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
   """Builds a Lecun uniform initializer.
@@ -457,8 +459,8 @@ def lecun_uniform(in_axis: Union[int, Sequence[int]] = -2,
                           out_axis=out_axis, batch_axis=batch_axis, dtype=dtype)
 
 @export
-def lecun_normal(in_axis: Union[int, Sequence[int]] = -2,
-                 out_axis: Union[int, Sequence[int]] = -1,
+def lecun_normal(in_axis: int | Sequence[int] = -2,
+                 out_axis: int | Sequence[int] = -1,
                  batch_axis: Sequence[int] = (),
                  dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
   """Builds a Lecun normal initializer.
@@ -493,8 +495,8 @@ def lecun_normal(in_axis: Union[int, Sequence[int]] = -2,
                           out_axis=out_axis, batch_axis=batch_axis, dtype=dtype)
 
 @export
-def he_uniform(in_axis: Union[int, Sequence[int]] = -2,
-               out_axis: Union[int, Sequence[int]] = -1,
+def he_uniform(in_axis: int | Sequence[int] = -2,
+               out_axis: int | Sequence[int] = -1,
                batch_axis: Sequence[int] = (),
                dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
   """Builds a He uniform initializer (aka Kaiming uniform initializer).
@@ -531,8 +533,8 @@ def he_uniform(in_axis: Union[int, Sequence[int]] = -2,
 kaiming_uniform = he_uniform
 
 @export
-def he_normal(in_axis: Union[int, Sequence[int]] = -2,
-              out_axis: Union[int, Sequence[int]] = -1,
+def he_normal(in_axis: int | Sequence[int] = -2,
+              out_axis: int | Sequence[int] = -1,
               batch_axis: Sequence[int] = (),
               dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
   """Builds a He normal initializer (aka Kaiming normal initializer).

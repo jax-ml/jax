@@ -14,7 +14,8 @@
 
 # Serialization and deserialization of export.Exported
 
-from typing import Callable, Sequence, TypeVar
+from typing import Callable, TypeVar
+from collections.abc import Sequence
 
 try:
   import flatbuffers

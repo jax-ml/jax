@@ -20,6 +20,8 @@ XLA. There are also a handful of related casting utilities.
 """
 from __future__ import annotations
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 import dataclasses
 from functools import lru_cache, partial
@@ -33,7 +35,7 @@ import pkgutil
 import platform as py_platform
 import sys
 import threading
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Union
 import warnings
 
 from jax._src import config
@@ -48,7 +50,7 @@ from jax._src.lib import xla_extension_version
 
 logger = logging.getLogger(__name__)
 
-jax_plugins: Optional[Any]
+jax_plugins: Any | None
 try:
   import jax_plugins  # type: ignore
 except ModuleNotFoundError:
@@ -107,7 +109,7 @@ _CPU_ENABLE_GLOO_COLLECTIVES = config.DEFINE_bool(
 # Backends
 
 
-def _get_tpu_library_path() -> Optional[str]:
+def _get_tpu_library_path() -> str | None:
   path_from_env = os.getenv("TPU_LIBRARY_PATH")
   if path_from_env is not None:
     return path_from_env
@@ -129,7 +131,7 @@ def _get_tpu_library_path() -> Optional[str]:
   return None
 
 
-def tpu_client_timer_callback(timer_secs: float) -> Optional[xla_client.Client]:
+def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
   def _log_warning():
     warnings.warn(
       f'TPU backend initialization is taking more than {timer_secs} seconds. '
@@ -155,7 +157,7 @@ def tpu_client_timer_callback(timer_secs: float) -> Optional[xla_client.Client]:
 # example, there could be multiple backends that provide the same kind of
 # device.
 
-BackendFactory = Callable[[], Optional[xla_client.Client]]
+BackendFactory = Callable[[], Union[xla_client.Client, None]]
 
 @dataclasses.dataclass
 class BackendRegistration:
@@ -177,7 +179,7 @@ class BackendRegistration:
   experimental: bool = False
 
 _backend_factories: dict[str, BackendRegistration] = {}
-_default_backend: Optional[xla_client.Client] = None
+_default_backend: xla_client.Client | None = None
 _backends : dict[str, xla_client.Client] = {}
 _backend_errors : dict[str, str] = {}
 _backend_lock = threading.Lock()
@@ -377,7 +379,7 @@ def _get_pjrt_plugin_names_and_library_paths(
 def _get_pjrt_plugin_config(
     json_path: str,
 ) -> tuple[
-    str, Optional[Mapping[str, Union[str, int, list[int], float, bool]]]
+    str, Mapping[str, str | int | list[int] | float | bool] | None
 ]:
   """Gets PJRT plugin configuration from a json file.
 
@@ -474,8 +476,8 @@ def register_plugin(
     plugin_name: str,
     *,
     priority: int = 400,
-    library_path: Optional[str] = None,
-    options: Optional[Mapping[str, Union[str, int, list[int], float, bool]]] = None,
+    library_path: str | None = None,
+    options: Mapping[str, str | int | list[int] | float | bool] | None = None,
 ) -> None:
   """Registers a backend factory for the PJRT plugin.
 
@@ -772,7 +774,7 @@ def _init_backend(platform: str) -> xla_client.Client:
 
 
 def _get_backend_uncached(
-    platform: Union[None, str, xla_client.Client] = None
+    platform: None | str | xla_client.Client = None
 ) -> xla_client.Client:
   # TODO(mattjj,skyewm): remove this input polymorphism after we clean up how
   # 'backend' values are handled
@@ -799,13 +801,13 @@ def _get_backend_uncached(
 
 @lru_cache(maxsize=None)  # don't use util.memoize because there is no X64 dependence.
 def get_backend(
-    platform: Union[None, str, xla_client.Client] = None
+    platform: None | str | xla_client.Client = None
 ) -> xla_client.Client:
   return _get_backend_uncached(platform)
 
 
 def get_device_backend(
-    device: Optional[xla_client.Device] = None,
+    device: xla_client.Device | None = None,
 ) -> xla_client.Client:
   """Returns the Backend associated with `device`, or the default Backend."""
   if device is not None:
@@ -814,7 +816,7 @@ def get_device_backend(
 
 
 def device_count(
-    backend: Optional[Union[str, xla_client.Client]] = None
+    backend: str | xla_client.Client | None = None
 ) -> int:
   """Returns the total number of devices.
 
@@ -836,14 +838,14 @@ def device_count(
 
 
 def local_device_count(
-    backend: Optional[Union[str, xla_client.Client]] = None
+    backend: str | xla_client.Client | None = None
 ) -> int:
   """Returns the number of devices addressable by this process."""
   return int(get_backend(backend).local_device_count())
 
 
 def devices(
-    backend: Optional[Union[str, xla_client.Client]] = None
+    backend: str | xla_client.Client | None = None
 ) -> list[xla_client.Device]:
   """Returns a list of all devices for a given backend.
 
@@ -875,7 +877,7 @@ def default_backend() -> str:
   return get_backend(None).platform
 
 
-def backend_pjrt_c_api_version(platform=None) -> Optional[tuple[int, int]]:
+def backend_pjrt_c_api_version(platform=None) -> tuple[int, int] | None:
   """Returns the PJRT C API version of the backend.
 
   Returns None if the backend does not use PJRT C API.
@@ -889,9 +891,9 @@ def backend_pjrt_c_api_version(platform=None) -> Optional[tuple[int, int]]:
 
 
 @lru_cache
-def local_devices(process_index: Optional[int] = None,
-                  backend: Optional[Union[str, xla_client.Client]] = None,
-                  host_id: Optional[int] = None) -> list[xla_client.Device]:
+def local_devices(process_index: int | None = None,
+                  backend: str | xla_client.Client | None = None,
+                  host_id: int | None = None) -> list[xla_client.Device]:
   """Like :py:func:`jax.devices`, but only returns devices local to a given process.
 
   If ``process_index`` is ``None``, returns devices local to this process.
@@ -920,7 +922,7 @@ def local_devices(process_index: Optional[int] = None,
 
 
 def process_index(
-    backend: Optional[Union[str, xla_client.Client]] = None
+    backend: str | xla_client.Client | None = None
 ) -> int:
   """Returns the integer process index of this process.
 
@@ -939,7 +941,7 @@ def process_index(
 
 
 # TODO: remove this sometime after jax 0.2.13 is released
-def host_id(backend: Optional[Union[str, xla_client.Client]] = None) -> int:
+def host_id(backend: str | xla_client.Client | None = None) -> int:
   warnings.warn(
       "jax.host_id has been renamed to jax.process_index. This alias "
       "will eventually be removed; please update your code.")
@@ -948,14 +950,14 @@ def host_id(backend: Optional[Union[str, xla_client.Client]] = None) -> int:
 
 @lru_cache
 def process_count(
-    backend: Optional[Union[str, xla_client.Client]] = None
+    backend: str | xla_client.Client | None = None
 ) -> int:
   """Returns the number of JAX processes associated with the backend."""
   return max(d.process_index for d in devices(backend)) + 1
 
 
 # TODO: remove this sometime after jax 0.2.13 is released
-def host_count(backend: Optional[Union[str, xla_client.Client]] = None) -> int:
+def host_count(backend: str | xla_client.Client | None = None) -> int:
   warnings.warn(
       "jax.host_count has been renamed to jax.process_count. This alias "
       "will eventually be removed; please update your code.")
@@ -964,7 +966,7 @@ def host_count(backend: Optional[Union[str, xla_client.Client]] = None) -> int:
 
 # TODO: remove this sometime after jax 0.2.13 is released
 def host_ids(
-    backend: Optional[Union[str, xla_client.Client]] = None
+    backend: str | xla_client.Client | None = None
 ) -> list[int]:
   warnings.warn(
       "jax.host_ids has been deprecated; please use range(jax.process_count()) "

@@ -13,11 +13,13 @@
 # limitations under the License.
 """Module for JAX debugging primitives and related functionality."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import functools
 import string
 import sys
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Union
 import weakref
 
 import numpy as np
@@ -434,7 +436,7 @@ def _slice_to_chunk_idx(size: int, slc: slice) -> int:
   assert size % slice_size == 0
   return slc.start // slice_size
 
-def _raise_to_slice(slc: Union[slice, int]):
+def _raise_to_slice(slc: slice | int):
   if isinstance(slc, int):
     return slice(slc, slc + 1)
   return slc
@@ -465,7 +467,7 @@ def make_color_iter(color_map, num_rows, num_cols):
 def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
                        use_color: bool = True, scale: float = 1.,
                        min_width: int = 9, max_width: int = 80,
-                       color_map: Optional[ColorMap] = None):
+                       color_map: ColorMap | None = None):
   """Visualizes a ``Sharding`` using ``rich``."""
   if not RICH_ENABLED:
     raise ValueError("`visualize_sharding` requires `rich` to be installed.")
@@ -491,7 +493,7 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
 
   device_indices_map = sharding.devices_indices_map(tuple(shape))
   slices: dict[tuple[int, ...], set[int]] = {}
-  heights: dict[tuple[int, ...], Optional[float]] = {}
+  heights: dict[tuple[int, ...], float | None] = {}
   widths: dict[tuple[int, ...], float] = {}
 
   for i, (dev, slcs) in enumerate(device_indices_map.items()):

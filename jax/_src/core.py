@@ -30,7 +30,7 @@ from operator import attrgetter
 import threading
 import types
 from typing import (Any, Callable, ClassVar, Generic, NamedTuple, TypeVar,
-                    Union, cast, overload)
+                    cast, overload, Union)
 import warnings
 from weakref import ref
 
