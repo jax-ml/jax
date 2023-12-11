@@ -21,6 +21,7 @@ import jax.dlpack
 import jax.numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src import xla_bridge as xb
 from jax._src.lib import xla_extension_version
 
 import numpy as np
@@ -70,6 +71,8 @@ class DLPackTest(jtu.JaxTestCase):
     gpu=[False, True],
   )
   def testJaxRoundTrip(self, shape, dtype, gpu):
+    if xb.using_pjrt_c_api():
+      self.skipTest("DLPack support is incomplete in the PJRT C API")  # TODO(skyewm)
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
     if gpu and jtu.test_device_matches(["cpu"]):
