@@ -3423,7 +3423,7 @@ def _reshape_batch_rule(batched_args, batch_dims, *, new_sizes, dimensions):
 def _reshape_lower(ctx, x, *dyn_shape, new_sizes, dimensions):
   aval_out, = ctx.avals_out
   if dimensions is not None:
-    x = hlo.transpose(x, mlir.dense_int_elements(dimensions))
+    x = hlo.transpose(x, mlir.dense_int_array(dimensions))
   if dyn_shape:
     aval_out = aval_out.update(shape=_merge_dyn_shape(new_sizes, dyn_shape))
   return [mlir.reshape(ctx, x, aval_out)]
@@ -3467,7 +3467,7 @@ ad.deflinear2(rev_p, lambda t, _, dimensions: [rev(t, dimensions)])
 batching.primitive_batchers[rev_p] = _rev_batch_rule
 
 def _rev_lower(ctx, x, *, dimensions):
-  return [hlo.reverse(x, mlir.dense_int_elements(dimensions))]
+  return [hlo.reverse(x, mlir.dense_int_array(dimensions))]
 mlir.register_lowering(rev_p, _rev_lower)
 
 
@@ -3499,7 +3499,7 @@ def _transpose_lower(ctx, x, *, permutation):
         aval_out.dtype).shape
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
     permutation = [*permutation, *trailing_dims]
-  return [hlo.transpose(x, mlir.dense_int_elements(permutation))]
+  return [hlo.transpose(x, mlir.dense_int_array(permutation))]
 
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
                                  'transpose')

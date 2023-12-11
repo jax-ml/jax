@@ -229,7 +229,7 @@ def _coo_todense_gpu_lowering(coo_todense_hlo, ctx, data, row, col, *, spinfo):
   result = coo_todense_hlo(
       data, row, col, shape=shape, data_dtype=dtype, index_dtype=row_aval.dtype)
   return (
-      [hlo.transpose(result, mlir.dense_int_elements([1, 0]))]
+      [hlo.transpose(result, mlir.dense_int_array([1, 0]))]
       if transpose else [result])
 
 
