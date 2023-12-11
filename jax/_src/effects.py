@@ -52,14 +52,14 @@ https://jax.readthedocs.io/en/latest/jep/10657-sequencing-effects.html.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Set
 from typing import Any
 
 
 class Effect:
   """A generic side-effect."""
 
-Effects = set[Effect]
+Effects = Set[Effect]
 
 class JaxprInputEffect(Effect):
   """A side-effect associated with the input of a jaxpr.
@@ -104,7 +104,7 @@ class EffectTypeSet:
     return [eff for eff in effects if not self.contains(eff)]
 
 
-no_effects: Effects = set()
+no_effects: Effects = frozenset()
 ordered_effects: EffectTypeSet = EffectTypeSet()
 
 # By default, ordered effects are not allowed in multi-device computations,

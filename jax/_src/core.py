@@ -168,7 +168,7 @@ class Jaxpr:
                  effects=effects, debug_info=debug_info)
 
 def join_effects(*effects: Effects) -> Effects:
-  return set.union(*effects) if effects else no_effects
+  return set().union(*effects) if effects else no_effects
 
 def jaxprs_in_params(params) -> Iterator[Jaxpr]:
   for val in params.values():
