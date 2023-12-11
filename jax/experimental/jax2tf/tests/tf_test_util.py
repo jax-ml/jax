@@ -156,7 +156,8 @@ def ComputeTfValueAndGrad(tf_f: Callable, tf_args: Sequence,
 # TODO(necula): clean up the test harnesses to not require these flags
 @jtu.with_config(jax_numpy_rank_promotion="allow",
                  jax_numpy_dtype_promotion='standard',
-                 jax_legacy_prng_key="allow")
+                 jax_legacy_prng_key="allow",
+                 jax_enable_key_reuse_checks=False)
 class JaxToTfTestCase(jtu.JaxTestCase):
   # We want most tests to use the maximum available version, from the locally
   # installed tfxla module and export.

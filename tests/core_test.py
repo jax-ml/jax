@@ -784,6 +784,18 @@ class DynamicShapesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "inconsistently typed as"):
       core.check_jaxpr(jaxpr)
 
+  def test_check_jaxpr_key_reuse(self):
+    try:
+      from jax.experimental.key_reuse import KeyReuseError
+    except ImportError:
+      self.skipTest("Test requires jax.experimental.key_reuse")
+    def f(seed):
+      key = jax.random.key(seed)
+      return jax.random.uniform(key) + jax.random.normal(key)
+    with jax.enable_checks(True):
+      with self.assertRaises(KeyReuseError):
+        jax.jit(f)(0)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

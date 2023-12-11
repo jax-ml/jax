@@ -2766,6 +2766,13 @@ def check_jaxpr(jaxpr: Jaxpr):
     msg = "\n\n".join([msg, "while checking jaxpr:", jaxpr_str])
     raise JaxprTypeError(msg) from None
 
+  # Run key reuse checker after validating jaxpr:
+  if config.enable_key_reuse_checks.value:
+    # Import here to avoid circular imports
+    from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pytype: disable=import-error
+    check_key_reuse_jaxpr(jaxpr)
+
+
 def _check_jaxpr(
     ctx_factory: Callable[[], tuple[JaxprPpContext, JaxprPpSettings]],
     jaxpr: Jaxpr

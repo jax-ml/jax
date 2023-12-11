@@ -212,6 +212,7 @@ py_library_providing_imports_info(
             "_src/scipy/**/*.py",
             "_src/state/**/*.py",
             "_src/third_party/**/*.py",
+            "experimental/key_reuse/**/*.py",
             "image/**/*.py",
             "interpreters/**/*.py",
             "lax/**/*.py",

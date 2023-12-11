@@ -775,6 +775,12 @@ enable_checks = define_bool_state(
     default=False,
     help='Turn on invariant checking for JAX internals. Makes things slower.')
 
+enable_key_reuse_checks = define_bool_state(
+    name='jax_enable_key_reuse_checks',
+    default=False,
+    help="Turn on experimental key reuse checking."
+)
+
 check_tracer_leaks = define_bool_state(
     name='jax_check_tracer_leaks',
     default=False,

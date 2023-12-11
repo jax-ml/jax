@@ -52,6 +52,7 @@ from jax import typing as typing
 from jax._src.config import (
   config as config,
   enable_checks as enable_checks,
+  enable_key_reuse_checks as enable_key_reuse_checks,
   check_tracer_leaks as check_tracer_leaks,
   checking_leaks as checking_leaks,
   enable_custom_prng as enable_custom_prng,

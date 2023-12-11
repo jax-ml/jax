@@ -937,6 +937,11 @@ def _create_pjit_jaxpr(fun, in_type, debug_info, out_paths):
   if not config.dynamic_shapes.value:
     jaxpr = jaxpr_debug_info(jaxpr, debug_info, out_paths())
 
+  if config.enable_key_reuse_checks.value:
+    # Import here to avoid circular imports
+    from jax.experimental.key_reuse._core import check_key_reuse_jaxpr
+    check_key_reuse_jaxpr(jaxpr)
+
   if any(isinstance(c, core.Tracer) for c in consts):
     closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
     final_consts = consts
