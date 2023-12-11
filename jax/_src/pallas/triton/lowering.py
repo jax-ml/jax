@@ -158,6 +158,8 @@ def _convert_dtype(dtype: jnp.dtype) -> tl.dtype:
     return tl.int32
   elif dtype == jnp.int64:
     return tl.int64
+  elif dtype == jnp.dtype("bool"):
+    return tl.int1
   raise ValueError(f"Unhandled dtype: {dtype}")
 
 

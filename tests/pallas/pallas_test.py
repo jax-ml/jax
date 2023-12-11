@@ -783,6 +783,17 @@ class PallasCallTest(PallasTest):
 
     np.testing.assert_allclose(softmax_kernel(x), jax.nn.softmax(x), atol=1e-7)
 
+  def test_bool_cast(self):
+    x = jnp.arange(8).astype(jnp.int32)
+    
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct(x.shape, jnp.dtype("bool")))
+    def bool_cast(x_ref, o_ref):
+      o_ref[...] =  jnp.bool_(x_ref[...])
+
+    expected = jnp.bool_(x)
+    np.testing.assert_allclose(bool_cast(x), expected)
+
 
 class PallasCallInterpreterTest(PallasCallTest):
   INTERPRET = True
