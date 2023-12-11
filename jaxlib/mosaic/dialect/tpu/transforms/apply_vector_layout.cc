@@ -3115,9 +3115,10 @@ Value selectTilesFromRotatedRowVregs(
 
   const IntegerType i1 = builder.getI1Type();
   const auto mask_vreg_ty =
-      dst_layout.packing() == 2
-          ? VectorType::get(
-                ArrayRef<int64_t>{target_shape[0], target_shape[1], 2}, i1)
+      dst_layout.packing() > 1
+          ? VectorType::get(ArrayRef<int64_t>{target_shape[0], target_shape[1],
+                                              dst_layout.packing()},
+                            i1)
           : VectorType::get(target_shape, i1);
 
   auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1, builder,
@@ -3528,12 +3529,9 @@ FailureOr<Value> relayout(OpBuilder &builder, Value v, VectorLayout src,
                // (8,128) -> (16,128) tiling change for packed 16-bit types.
       src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
       dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      vty.getElementType() == builder.getBF16Type() &&
-      src.offsets() == dst.offsets() &&
+      vty.getElementTypeBitWidth() == 16 && src.offsets() == dst.offsets() &&
       src.tiling() == std::array<int64_t, 2>{8, 128} &&
       dst.tiling() == std::array<int64_t, 2>{16, 128}) {
-    VectorType vreg_f32 =
-        VectorType::get(target_shape, builder.getF32Type());
     const VectorLayout new_src(src.bitwidth(), src.offsets(), dst.tiling());
     xla::Array<Value> src_tiles_retiled(
         new_src.tileArrayShape(vty.getShape(), target_shape));
@@ -3548,10 +3546,15 @@ FailureOr<Value> relayout(OpBuilder &builder, Value v, VectorLayout src,
       }
       Value src_row2 = src_tiles(src_idx);
       const int vreg_part = idx[idx.size() - 1] % 2;
+
+      VectorType vreg_x32 =
+          vty.getElementType().isSignlessInteger()
+              ? VectorType::get(target_shape, builder.getI32Type())
+              : VectorType::get(target_shape, builder.getF32Type());
       auto half_row1 = builder.create<tpu::UnpackSubelementsOp>(
-          v.getLoc(), vreg_f32, src_row1, vreg_part);
+          v.getLoc(), vreg_x32, src_row1, vreg_part);
       auto half_row2 = builder.create<tpu::UnpackSubelementsOp>(
-          v.getLoc(), vreg_f32, src_row2, vreg_part);
+          v.getLoc(), vreg_x32, src_row2, vreg_part);
       *tile = builder.create<tpu::PackSubelementsOp>(
           v.getLoc(), src_row1.getType(), ValueRange{half_row1, half_row2});
     });
