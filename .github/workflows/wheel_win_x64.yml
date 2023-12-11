@@ -19,7 +19,7 @@ jobs:
 
     steps:
       - name: Cancel Previous Runs
-        uses: styfle/cancel-workflow-action@0.12.0
+        uses: styfle/cancel-workflow-action@01ce38bf961b4e243a6342cbade0dbc8ba3f0432 # ratchet: styfle/cancel-workflow-action@0.12.0
         with:
           access_token: ${{ github.token }}
 
@@ -39,7 +39,7 @@ jobs:
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
           python.exe build\build.py --bazel_options=--color=yes --verbose
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@a8a3f3ad30e3422c9c7b888a15615d19a852ae32 # ratchet: actions/upload_artifact@v3
         with:
           name: wheels
           path: ${{ github.workspace }}\dist\*.whl

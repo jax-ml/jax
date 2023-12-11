@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Cancel previous
-        uses: styfle/cancel-workflow-action@0.12.0
+        uses: styfle/cancel-workflow-action@01ce38bf961b4e243a6342cbade0dbc8ba3f0432 # ratchet: styfle/cancel-workflow-action@0.12.0
         with:
           access_token: ${{ github.token }}
         if: ${{github.ref != 'refs/heads/main'}}
@@ -35,7 +35,7 @@ jobs:
         uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # ratchet:actions/setup-python@v5
         with:
           python-version: 3.11
-      - uses: pre-commit/action@v3.0.0
+      - uses: pre-commit/action@646c83fcd040023954eafda54b4db0192ce70507  # ratchet: pre-commit/action@v3.0.0
 
   build:
     name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ${{ matrix.os }}, x64=${{ matrix.enable-x64}})"
@@ -59,7 +59,7 @@ jobs:
             num_generated_cases: 1
     steps:
     - name: Cancel previous
-      uses: styfle/cancel-workflow-action@0.12.0
+      uses: styfle/cancel-workflow-action@01ce38bf961b4e243a6342cbade0dbc8ba3f0432 # ratchet: styfle/cancel-workflow-action@0.12.0
       with:
         access_token: ${{ github.token }}
       if: ${{github.ref != 'refs/heads/main'}}
@@ -74,7 +74,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
     - name: pip cache
-      uses: actions/cache@v3
+      uses: actions/cache@704facf57e6136b1bc63b828d79edcd491f0ee84 # ratchet: actions/cache@v3
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
@@ -111,7 +111,7 @@ jobs:
         python-version: [3.9]
     steps:
     - name: Cancel previous
-      uses: styfle/cancel-workflow-action@0.12.0
+      uses: styfle/cancel-workflow-action@01ce38bf961b4e243a6342cbade0dbc8ba3f0432 # ratchet: styfle/cancel-workflow-action@0.12.0
       with:
         access_token: ${{ github.token }}
       if: ${{github.ref != 'refs/heads/main'}}
@@ -126,7 +126,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
     - name: pip cache
-      uses: actions/cache@v3
+      uses: actions/cache@704facf57e6136b1bc63b828d79edcd491f0ee84 # ratchet: actions/cache@v3
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-pip-docs-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
@@ -152,7 +152,7 @@ jobs:
         python-version: [3.9]
     steps:
     - name: Cancel previous
-      uses: styfle/cancel-workflow-action@0.12.0
+      uses: styfle/cancel-workflow-action@01ce38bf961b4e243a6342cbade0dbc8ba3f0432 # ratchet: styfle/cancel-workflow-action@0.12.0
       with:
         access_token: ${{ github.token }}
       if: ${{github.ref != 'refs/heads/main'}}
@@ -167,7 +167,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
     - name: pip cache
-      uses: actions/cache@v3
+      uses: actions/cache@704facf57e6136b1bc63b828d79edcd491f0ee84 # ratchet: actions/cache@v3
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-pip-docs-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
