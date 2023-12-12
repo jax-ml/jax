@@ -321,10 +321,13 @@ def create_device_mesh(
     device_mesh = np.asarray(devices).reshape(mesh_shape)
     return device_mesh
 
-def create_hybrid_device_mesh(mesh_shape: Sequence[int],
-                              dcn_mesh_shape: Sequence[int],
-                              devices: Optional[Sequence[Any]] = None, *,
-                              process_is_granule: bool = False) -> np.ndarray:
+def create_hybrid_device_mesh(
+    mesh_shape: Sequence[int],
+    dcn_mesh_shape: Sequence[int],
+    devices: Optional[Sequence[Any]] = None, *,
+    process_is_granule: bool = False,
+    should_sort_granules_by_key: bool = True,
+) -> np.ndarray:
   """Creates a device mesh for hybrid (e.g., ICI and DCN) parallelism.
 
   Args:
@@ -339,6 +342,9 @@ def create_hybrid_device_mesh(mesh_shape: Sequence[int],
       of the slower/outer network. Otherwise it will look for slice_index
       attributes on devices and use slices as the units. Enabling this is meant
       as a fallback for platforms (e.g., GPU) that don't set slice_index.
+    should_sort_granules_by_key: Whether device granules should be sorted by the
+      granule key, either slice or process index, depending on
+      process_is_granule.
 
   Raises:
     ValueError: if the number of slices to which the `devices` belong doesn't
@@ -356,7 +362,10 @@ def create_hybrid_device_mesh(mesh_shape: Sequence[int],
   granule_dict = collections.defaultdict(list)
   for dev in devices:
     granule_dict[getattr(dev, attr)].append(dev)
-  granules = [granule_dict[key] for key in sorted(granule_dict.keys())]
+  granules = (
+      [granule_dict[key] for key in sorted(granule_dict.keys())]
+      if should_sort_granules_by_key
+      else granule_dict.values())
   if np.prod(dcn_mesh_shape) != len(granules):
     raise ValueError(
         f'Number of slices {len(granules)} must equal the product of '
