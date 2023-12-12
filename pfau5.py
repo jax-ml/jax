@@ -21,6 +21,13 @@ from jax._src.tree_util import (tree_map, tree_flatten, tree_unflatten,
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
+import pdb, sys, traceback
+def info(type, value, tb):
+    traceback.print_exception(type, value, tb)
+    pdb.pm()
+sys.excepthook = info
+
+
 ## tracer definition
 
 class LapTracer(core.Tracer):
@@ -50,20 +57,34 @@ class LapTrace(core.Trace):
     if all(t.jacobian is t.lapvec is None for t in tracers):
       return prim.bind(*(t.primal for t in tracers), **params)
     xs, jacs, laps = unzip3((t.primal, t.jacobian, t.lapvec) for t in tracers)
-    rule = rules.get(prim, partial(generic_rule, prim))
+    rule = rules.get(prim, partial(generic_rule, prim.bind))
     ys, out_jacs, out_laps = rule(xs, jacs, laps, **params)
     if prim.multiple_results:
       return map(partial(LapTracer, self), ys, out_jacs, out_laps)
     else:
       return LapTracer(self, ys, out_jacs, out_laps)
 
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers, *,
+                              symbolic_zeros):
+    if all(t.jacobian is t.lapvec is None for t in tracers):
+      return fun.call_wrapped(*(t.primal for t in tracers))
+    if symbolic_zeros: raise NotImplementedError
+    ndim, = {t.jacobian.shape[-1] for t in tracers if t.jacobian is not None}
+    xs, jacs, laps = unzip3(
+        (t.primal, t.jacobian, t.lapvec) if t.jacobian is not None else
+        (t.primal, jnp.zeros((*t.primal.shape, ndim)), jnp.zeros_like(t.primal))
+        for t in tracers)
+    ys, out_jacs, out_laps = generic_rule(partial(prim.bind, fun, jvp),
+                                          xs, jacs, laps, symbolic_zeros=False)
+    return map(partial(LapTracer, self), ys, out_jacs, out_laps)
+
 rules = {}
 
 ## generic rule
 
-def generic_rule(prim, in_primals, in_jacs, in_lapvecs, **params):
+def generic_rule(bind, in_primals, in_jacs, in_lapvecs, **params):
   merge, primals, nz_jacs, nz_laps = partition(in_primals, in_jacs, in_lapvecs)
-  def f(*primals): return prim.bind(*merge(primals), **params)
+  def f(*primals): return bind(*merge(primals), **params)
   out_primals, jac_term = jax.jvp(f, primals, nz_laps)
   out_jacs, hess_term = hqf2(f, primals, nz_jacs)
   out_lapvecs = tree_map(op.add, trace(hess_term), jac_term)
@@ -157,7 +178,7 @@ def _eye_like(x): return jnp.eye(x.size).reshape(*x.shape, x.size)
 def f(x):
   n, = x.shape
   A = jax.random.normal(jax.random.key(0), (n, n))
-  return jnp.tanh(A @ x)
+  return jax.nn.relu(A @ x)
 
 x = jnp.arange(3.)
 lap = fwdlap(f)(x)
