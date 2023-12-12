@@ -449,6 +449,7 @@ jax.numpy.linalg
 
   cholesky
   cond
+  cross
   det
   eig
   eigh
@@ -460,6 +461,7 @@ jax.numpy.linalg
   matrix_rank
   multi_dot
   norm
+  outer
   pinv
   qr
   slogdet

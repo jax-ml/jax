@@ -1092,6 +1092,45 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     cube_func = jax.jacfwd(hess_func)
     self.assertFalse(np.any(np.isnan(cube_func(a))))
 
+  @jtu.sample_product(
+    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape, axis=axis)
+      for lhs_shape, rhs_shape, axis in [
+          [(3,), (3,), -1],
+          [(2, 3), (2, 3), -1],
+          [(3, 4), (3, 4), 0],
+          [(3, 5), (3, 4, 5), 0]
+      ]],
+    lhs_dtype=jtu.dtypes.numeric,
+    rhs_dtype=jtu.dtypes.numeric,
+  )
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def testCross(self, lhs_shape, rhs_shape, lhs_dtype, rhs_dtype, axis):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
+    lax_fun = partial(jnp.linalg.cross, axis=axis)
+    np_fun = jtu.promote_like_jnp(partial(
+      np.cross if jtu.numpy_version() < (2, 0, 0) else np.linalg.cross,
+      axis=axis))
+    with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
+      self._CheckAgainstNumpy(np_fun, lax_fun, args_maker)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @jtu.sample_product(
+      lhs_shape=[(0,), (3,), (5,)],
+      rhs_shape=[(0,), (3,), (5,)],
+      lhs_dtype=jtu.dtypes.numeric,
+      rhs_dtype=jtu.dtypes.numeric,
+  )
+  def testOuter(self, lhs_shape, rhs_shape, lhs_dtype, rhs_dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
+    lax_fun = jnp.linalg.outer
+    np_fun = jtu.promote_like_jnp(
+      np.outer if jtu.numpy_version() < (2, 0, 0) else np.linalg.outer)
+    with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
+      self._CheckAgainstNumpy(np_fun, lax_fun, args_maker)
+      self._CompileAndCheck(lax_fun, args_maker)
+
 
 class ScipyLinalgTest(jtu.JaxTestCase):
 

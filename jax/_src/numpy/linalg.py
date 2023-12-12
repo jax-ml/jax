@@ -677,3 +677,24 @@ def lstsq(a: ArrayLike, b: ArrayLike, rcond: Optional[float] = None, *,
   if numpy_resid:
     return _lstsq(a, b, rcond, numpy_resid=True)
   return _jit_lstsq(a, b, rcond)
+
+
+@_wraps(getattr(np.linalg, "cross", None))
+def cross(x1: ArrayLike, x2: ArrayLike, /, *, axis=-1):
+  check_arraylike("jnp.linalg.outer", x1, x2)
+  x1, x2 = jnp.asarray(x1), jnp.asarray(x2)
+  if x1.shape[axis] != 3 or x2.shape[axis] != 3:
+    raise ValueError(
+        "Both input arrays must be (arrays of) 3-dimensional vectors, "
+        f"but they have {x1.shape[axis]=} and {x2.shape[axis]=}"
+    )
+  return jnp.cross(x1, x2, axis=axis)
+
+
+@_wraps(getattr(np.linalg, "outer", None))
+def outer(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  check_arraylike("jnp.linalg.outer", x1, x2)
+  x1, x2 = jnp.asarray(x1), jnp.asarray(x2)
+  if x1.ndim != 1 or x2.ndim != 1:
+    raise ValueError(f"Input arrays must be one-dimensional, but they are {x1.ndim=} {x2.ndim=}")
+  return x1[:, None] * x2[None, :]

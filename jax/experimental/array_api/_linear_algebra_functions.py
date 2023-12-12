@@ -47,7 +47,7 @@ def cross(x1, x2, /, *, axis=-1):
   """
   Returns the cross product of 3-element vectors.
   """
-  return jax.numpy.cross(x1, x2, axis=axis)
+  return jax.numpy.linalg.cross(x1, x2, axis=axis)
 
 def det(x, /):
   """
@@ -115,7 +115,7 @@ def outer(x1, x2, /):
   """
   Returns the outer product of two vectors x1 and x2.
   """
-  return jax.numpy.outer(x1, x2)
+  return jax.numpy.linalg.outer(x1, x2)
 
 def pinv(x, /, *, rtol=None):
   """

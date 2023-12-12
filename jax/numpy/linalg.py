@@ -17,6 +17,7 @@
 
 from jax._src.numpy.linalg import (
   cholesky as cholesky,
+  cross as cross,
   det as det,
   eig as eig,
   eigh as eigh,
@@ -27,6 +28,7 @@ from jax._src.numpy.linalg import (
   matrix_power as matrix_power,
   matrix_rank as matrix_rank,
   norm as norm,
+  outer as outer,
   pinv as pinv,
   qr as qr,
   slogdet as slogdet,
