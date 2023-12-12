@@ -648,7 +648,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.floating,
   )
   def testGeneralizedNormal(self, p, shape, dtype):
-    key = self.make_key(2)
+    key = self.make_key(0)
     rand = lambda key, p: random.generalized_normal(key, p, shape, dtype)
     crand = jax.jit(rand)
     uncompiled_samples = rand(key, p)
@@ -1083,7 +1083,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       dfden = [1. ,2., 10., 100.],
       dtype=jtu.dtypes.floating)
   def testF(self, dfnum, dfden, dtype):
-    key = self.make_key(9)
+    key = self.make_key(1)
     rand = lambda key: random.f(key, dfnum, dfden, shape = (10000, ), dtype = dtype)
     crand = jax.jit(rand)
 
@@ -1172,7 +1172,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       p= [0.1, 0.3, 0.5, 0.7, 0.9],
       dtype= jtu.dtypes.floating)
   def testBinomialSample(self, n, p, dtype):
-    key = self.make_key(12)
+    key = self.make_key(3)
     rand = lambda key: random.binomial(key, n, p, shape=(12000, ), dtype=dtype)
     crand = jax.jit(rand)
     uncompiled_samples = rand(key)
