@@ -21,10 +21,9 @@ import dataclasses
 import functools
 import itertools
 import re
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional, TypeVar, Union
 
 from absl import logging
-
 import numpy as np
 
 import jax
@@ -156,7 +155,7 @@ class Exported:
     unordered_effects: the unordered effects present in the serialized module.
         This is present from serialization version 9.
     mlir_module_serialized: the serialized lowered VHLO module.
-    serialization_version: a version number for the serialized module.
+    mlir_module_serialization_version: a version number for the serialized module.
         See more versioning details at https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions.
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
@@ -166,7 +165,7 @@ class Exported:
         variables, or due to inner calls of Exported modules that have
         dimension variables or platform index arguments. Such modules need
         shape refinement before XLA compilation.
-    disabled_checks: a list of descriptors of safety checks that have been
+    disabled_safety_checks: a list of descriptors of safety checks that have been
         disabled at export time. See docstring for `DisabledSafetyCheck`.
     _get_vjp: an optional function that takes the current exported function and
         returns the exported VJP function.
@@ -282,10 +281,10 @@ class Exported:
   lowering_platforms: tuple[str, ...]
   ordered_effects: tuple[effects.Effect, ...]
   unordered_effects: tuple[effects.Effect, ...]
-  disabled_checks: Sequence[DisabledSafetyCheck]
+  disabled_safety_checks: Sequence[DisabledSafetyCheck]
 
   mlir_module_serialized: bytes
-  serialization_version: int
+  mlir_module_serialization_version: int
   module_kept_var_idx: tuple[int, ...]
   uses_shape_polymorphism: bool
 
@@ -298,6 +297,9 @@ class Exported:
     # This is called to make a MLIR source location when we call an Exported, and we
     # do not want the entire serialized module to end up in locations.
     return f"Exported(fun_name={self.fun_name}, ...)"
+
+  def has_vjp(self) -> bool:
+    return self._get_vjp is not None
 
   def vjp(self) -> "Exported":
     """Gets the exported VJP.
@@ -496,7 +498,7 @@ def export(fun_jax: Callable,
       mlir_module_attrs["jax.uses_shape_polymorphism"] = (
           mlir.ir.BoolAttr.get(shape_poly_state.uses_dim_vars))
 
-    mlir_module_serialized = _serialize_module(mlir_module)
+    mlir_module_serialized = _module_to_bytecode(mlir_module)
 
     # Figure out the result types and shapes
     if "global_out_avals" in lowering.compile_args:
@@ -554,17 +556,17 @@ def export(fun_jax: Callable,
         lowering_platforms=actual_lowering_platforms,
         ordered_effects=ordered_effects,
         unordered_effects=unordered_effects,
-        disabled_checks=tuple(disabled_checks),
+        disabled_safety_checks=tuple(disabled_checks),
         mlir_module_serialized=mlir_module_serialized,
         module_kept_var_idx=module_kept_var_idx,
         uses_shape_polymorphism=shape_poly_state.uses_dim_vars,
-        serialization_version=version,  # type: ignore
+        mlir_module_serialization_version=version,  # type: ignore
         _get_vjp=lambda exported: _export_native_vjp(fun_jax, exported))
 
   return do_export
 
 
-def _serialize_module(module: ir.Module) -> bytes:
+def _module_to_bytecode(module: ir.Module) -> bytes:
   mlir_str = mlir.module_to_bytecode(module)
   if hlo.get_api_version() < 4:
     target_version = hlo.get_earliest_forward_compatible_version()
@@ -1042,9 +1044,9 @@ def _export_native_vjp(primal_fun, primal: Exported) -> Exported:
                                            apply_jit=True)
   return export(fun_vjp_jax,
                 lowering_platforms=primal.lowering_platforms,
-                disabled_checks=primal.disabled_checks)(*vjp_in_avals)
+                disabled_checks=primal.disabled_safety_checks)(*vjp_in_avals)
 
-### Importing
+### Calling the exported function
 
 def call_exported(exported: Exported) -> Callable[..., jax.Array]:
   if not isinstance(exported, Exported):
@@ -1215,7 +1217,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     if platform in exported.lowering_platforms:
       callee_lowering_platform_index.append(
         exported.lowering_platforms.index(platform))
-    elif DisabledSafetyCheck.platform() in exported.disabled_checks:
+    elif DisabledSafetyCheck.platform() in exported.disabled_safety_checks:
       callee_lowering_platform_index.append(0)
     else:
       raise ValueError(
@@ -1249,7 +1251,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   else:
     assert len(lowering_platforms) == 1
 
-  if _keep_main_tokens(exported.serialization_version):
+  if _keep_main_tokens(exported.mlir_module_serialization_version):
     ordered_effects = exported.ordered_effects
   else:
     ordered_effects = ()
@@ -1282,11 +1284,6 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   )
   return results
 
-
-# for _p in ("cpu", "tpu", "cuda", "rocm"):
-#   mlir.register_lowering(call_exported_p,
-#                          functools.partial(_call_exported_lowering, platform=_p),
-#                          platform=_p)
 mlir.register_lowering(call_exported_p, _call_exported_lowering)
 
 def wrap_with_sharding(ctx: mlir.LoweringRuleContext,

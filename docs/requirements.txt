@@ -10,6 +10,7 @@ sphinx-design
 myst-nb>=1.0.0
 
 # Packages used for CI tests.
+flatbuffers
 pytest
 pytest-xdist
 

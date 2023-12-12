@@ -2,6 +2,7 @@ absl-py
 build
 cloudpickle
 colorama>=0.4.4
+flatbuffers
 hypothesis
 numpy>=1.22
 pillow>=9.1.0

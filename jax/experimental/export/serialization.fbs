@@ -1,0 +1,129 @@
+// Copyright 2023 The JAX Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// To regenerate the serialization_generated.py, install flatc (e.g.,
+// from Homebrew) and then:
+//
+//  1.  Run flatc --python --gen-onefile serialization.fbs
+//  2.  Delete the trailing newlines at the end
+//  3.  Add back the licence comment at the start
+//
+
+namespace jax.experimental.export.serialization;
+
+enum PyTreeDefKind: byte {
+  leaf = 0,
+  none = 1,
+  tuple = 2,
+  list = 3,
+  dict = 4,
+}
+
+table PyTreeDef {
+  kind: PyTreeDefKind;
+  children: [PyTreeDef];
+  children_names: [string];  // only for "dict"
+}
+
+enum AbstractValueKind: byte {
+  shapedArray = 0,
+  abstractToken = 1,
+}
+
+enum DType: byte {
+  bool,
+  i8,
+  i16,
+  i32,
+  i64,
+  ui8,
+  ui16,
+  ui32,
+  ui64,
+  f16,
+  f32,
+  f64,
+  c64,
+  c128,
+
+  bf16,
+
+  i4,
+  ui4,
+
+  f8_e4m3b11fnuz,
+  f8_e4m3fn,
+  f8_e4m3fnuz,
+  f8_e5m2,
+  f8_e5m2fnuz,
+}
+
+table AbstractValue {
+  kind: AbstractValueKind;
+  shape: [string];  // we support shape polymorphism
+  dtype: DType;
+}
+
+enum ShardingKind: byte {
+  unspecified,
+  hlo_sharding,
+}
+
+table Sharding {
+  kind: ShardingKind;
+  hlo_sharding_proto: [byte];
+}
+
+table Effect {
+  type_name: string;
+}
+
+enum DisabledSafetyCheckKind: byte {
+  platform,
+  custom_call,
+  shape_assertions,
+}
+
+table DisabledSafetyCheck {
+  kind: DisabledSafetyCheckKind;
+  custom_call_target: string;
+}
+
+table Exported {
+  serialization_version: uint16;
+
+  function_name: string;
+  in_tree: PyTreeDef;
+  in_avals: [AbstractValue];
+  out_tree: PyTreeDef;
+  out_avals: [AbstractValue];
+  nr_devices: short;
+  in_shardings: [Sharding];
+  out_shardings: [Sharding];
+
+  lowering_platforms: [string];
+
+  ordered_effects: [Effect];
+  unordered_effects: [Effect];
+  disabled_checks: [DisabledSafetyCheck];
+
+  mlir_module_serialized: [byte];
+  mlir_module_serialization_version: uint16;
+  module_kept_var_idx: [uint16];
+  uses_shape_polymorphism: bool;
+
+  vjp: Exported;
+}
+
+root_type Exported;
