@@ -18,6 +18,7 @@ This module wraps the XLA client(s) and builders to standardize their interfaces
 and provide some automatic type mapping logic for converting between Numpy and
 XLA. There are also a handful of related casting utilities.
 """
+from __future__ import annotations
 
 from collections.abc import Mapping
 import dataclasses
