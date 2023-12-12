@@ -8,13 +8,14 @@ jax.config.update('jax_platforms', 'cpu')
 from jax import core
 from jax import lax
 from jax._src import sharding_impls
+from jax._src.dtypes import dtype, float0
 from jax._src.interpreters import partial_eval as pe
 
 from jax._src import pjit
 from jax._src import linear_util as lu
 from jax._src.api_util import flatten_fun_nokwargs, shaped_abstractify
 from jax._src.util import (safe_map, safe_zip, unzip3, weakref_lru_cache,
-                           partition_list, merge_lists)
+                           partition_list, merge_lists, split_list)
 from jax._src.tree_util import (tree_map, tree_flatten, tree_unflatten,
                                 tree_leaves)
 
@@ -38,6 +39,7 @@ class LapTracer(core.Tracer):
     self.primal = primal
     self.jacobian = jacobian
     self.lapvec = lapvec
+    assert (jacobian is None) == (lapvec is None)
 
   @property
   def aval(self):
@@ -68,15 +70,23 @@ class LapTrace(core.Trace):
                               symbolic_zeros):
     if all(t.jacobian is t.lapvec is None for t in tracers):
       return fun.call_wrapped(*(t.primal for t in tracers))
+    del fun
     if symbolic_zeros: raise NotImplementedError
     ndim, = {t.jacobian.shape[-1] for t in tracers if t.jacobian is not None}
     xs, jacs, laps = unzip3(
         (t.primal, t.jacobian, t.lapvec) if t.jacobian is not None else
         (t.primal, jnp.zeros((*t.primal.shape, ndim)), jnp.zeros_like(t.primal))
         for t in tracers)
-    ys, out_jacs, out_laps = generic_rule(partial(prim.bind, fun, jvp),
-                                          xs, jacs, laps, symbolic_zeros=False)
-    return map(partial(LapTracer, self), ys, out_jacs, out_laps)
+    in_avals = map(shaped_abstractify, (*xs, *laps))
+    jaxpr, _, consts = pe.trace_to_jaxpr_final(jvp, in_avals)
+    jvp_ = partial(core.eval_jaxpr, jaxpr, consts)
+    outs = jvp_(*xs, *laps)
+    out_primals, jac_term = split_list(_replace_float0(outs), [len(outs) // 2])
+    outs = jax.vmap(jax.vmap(lambda v1, v2: jax.jvp(lambda *xs: jvp_(*xs, *v1)[1], xs, v2),
+                             (-1, None), -1), (None, -1), (None, -1))(jacs, jacs)
+    out_jacs, hess_term = split_list(_replace_float0(outs), [len(outs) // 2])
+    out_laps = tree_map(op.add, _trace(hess_term), jac_term)
+    return map(partial(LapTracer, self), out_primals, out_jacs, out_laps)
 
 rules = {}
 
@@ -87,7 +97,8 @@ def generic_rule(bind, in_primals, in_jacs, in_lapvecs, **params):
   def f(*primals): return bind(*merge(primals), **params)
   out_primals, jac_term = jax.jvp(f, primals, nz_laps)
   out_jacs, hess_term = hqf2(f, primals, nz_jacs)
-  out_lapvecs = tree_map(op.add, trace(hess_term), jac_term)
+  out_jacs, jac_term, hess_term = _replace_float0((out_jacs, jac_term, hess_term))
+  out_lapvecs = tree_map(op.add, _trace(hess_term), jac_term)
   return out_primals, out_jacs, out_lapvecs
 
 def partition(primals, jacs, laps):
@@ -97,7 +108,8 @@ def partition(primals, jacs, laps):
   merge = lambda new_primals: merge_lists(nones, new_primals, const_primals)
   return merge, (*new_primals,), (*tree_leaves(jacs),), (*tree_leaves(laps),)
 
-trace = partial(tree_map, partial(jnp.trace, axis1=-1, axis2=-2))
+_trace = partial(tree_map, partial(jnp.trace, axis1=-1, axis2=-2))
+_replace_float0 = partial(tree_map, lambda x: None if dtype(x) == float0 else x)
 
 def hbf(f, xs, vs1, vs2):
   return jax.jvp(lambda *xs: jax.jvp(f, xs, vs1)[1], xs, vs2)
@@ -178,9 +190,9 @@ def _eye_like(x): return jnp.eye(x.size).reshape(*x.shape, x.size)
 def f(x):
   n, = x.shape
   A = jax.random.normal(jax.random.key(0), (n, n))
-  return jax.nn.relu(A @ x)
+  return jax.nn.selu(A @ x)
 
-x = jnp.arange(3.)
+x = jnp.arange(5.) - 2.
 lap = fwdlap(f)(x)
 print(lap)
 print(jnp.trace(jax.hessian(f)(x), 0, -1, -2))
