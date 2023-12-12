@@ -3859,9 +3859,14 @@ class ArrayPjitTest(jtu.JaxTestCase):
       b = jax.device_put(out_a, NamedSharding(mesh2, P('y')))
       f(b)  # lowering cache *hit*
 
-    with jtu.count_jit_and_pmap_compiles() as count:
-      g(np.arange(8))
-    self.assertEqual(count[0], 1)
+    prev_value = pxla._JAX_REQUIRE_DEVICES_DURING_LOWERING.value
+    try:
+      jax.config.update('jax_require_devices_during_lowering', False)
+      with jtu.count_jit_and_pmap_compiles() as count:
+        g(np.arange(8))
+      self.assertEqual(count[0], 1)
+    finally:
+      jax.config.update('jax_require_devices_during_lowering', prev_value)
 
   def test_lowering_cache_miss_different_devices_and_sharding(self):
     if jax.device_count() < 4:
