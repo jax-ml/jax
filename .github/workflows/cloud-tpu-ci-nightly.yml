@@ -31,7 +31,7 @@ jobs:
       LIBTPU_OLDEST_VERSION_DATE: 20230915
       ENABLE_PJRT_COMPATIBILITY: ${{ matrix.jaxlib-version == 'nightly+oldest_supported_libtpu' }}
     runs-on: ["self-hosted", "tpu", "${{ matrix.tpu-type }}"]
-    timeout-minutes: 60
+    timeout-minutes: 120
     defaults:
       run:
         shell: bash -ex {0}
