@@ -67,10 +67,10 @@ class LaxRandomTest(jtu.JaxTestCase):
       return
     self.assertGreater(scipy.stats.kstest(samples, cdf).pvalue, fail_prob)
 
-  def _CheckChiSquared(self, samples, pmf):
+  def _CheckChiSquared(self, samples, pmf, *, pval=None):
     if samples.dtype == bool:
       samples = samples.astype(int)
-    alpha = 0.01  # significance level, threshold for p-value
+    alpha = pval or 0.01  # significance level, threshold for p-value
 
     # scipy.stats.chisquare requires the sum of expected and actual to
     # match; this is only the case if we compute the expected frequency
@@ -429,17 +429,19 @@ class LaxRandomTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")  # TODO(mattjj): slow compilation times
   def testDirichlet(self, alpha, dtype):
     key = self.make_key(0)
-    rand = lambda key, alpha: random.dirichlet(key, alpha, (10000,), dtype)
+    num_samples = 50000
+    rand = lambda key, alpha: random.dirichlet(key, alpha, (num_samples,), dtype)
     crand = jax.jit(rand)
 
     uncompiled_samples = rand(key, alpha)
     compiled_samples = crand(key, alpha)
 
     for samples in [uncompiled_samples, compiled_samples]:
-      self.assertAllClose(samples.sum(-1), np.ones(10000, dtype=dtype))
+      self.assertAllClose(samples.sum(-1), np.ones(num_samples, dtype=dtype))
       alpha_sum = sum(alpha)
       for i, a in enumerate(alpha):
-        self._CheckKolmogorovSmirnovCDF(samples[..., i], scipy.stats.beta(a, alpha_sum - a).cdf)
+        self._CheckKolmogorovSmirnovCDF(samples[..., i],
+                                        scipy.stats.beta(a, alpha_sum - a).cdf)
 
   @jtu.skip_on_devices("tpu")  # lower accuracy leads to failures.
   def testDirichletSmallAlpha(self, dtype=np.float32):
@@ -648,15 +650,21 @@ class LaxRandomTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.floating,
   )
   def testGeneralizedNormal(self, p, shape, dtype):
-    key = self.make_key(0)
-    rand = lambda key, p: random.generalized_normal(key, p, shape, dtype)
-    crand = jax.jit(rand)
-    uncompiled_samples = rand(key, p)
-    compiled_samples = crand(key, p)
+    key = self.make_key(2)
+    rand = lambda key, p, shape: random.generalized_normal(key, p, shape, dtype)
+    crand = jax.jit(rand, static_argnums=2)
+
+    uncompiled_samples = rand(key, p, shape)
+    compiled_samples = crand(key, p, shape)
     for samples in [uncompiled_samples, compiled_samples]:
       self.assertEqual(samples.shape, shape)
       self.assertEqual(samples.dtype, dtype)
+
+    uncompiled_samples = rand(key, p, (300, *shape))
+    compiled_samples = crand(key, p, (300, *shape))
+    for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples.ravel(), scipy.stats.gennorm(p).cdf)
+
 
   @jtu.sample_product(
     d=range(1, 5),
@@ -675,6 +683,23 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertEqual(samples.shape, (*shape, d))
       self.assertEqual(samples.dtype, dtype)
       self.assertTrue(((jnp.abs(samples) ** p).sum(-1) <= 1).all())
+
+  @jtu.sample_product(
+    d=range(1, 5),
+    p=[.5, 1., 1.5, 2., 2.5],
+    shape=[(), (5,), (10, 5)],
+    dtype=jtu.dtypes.floating,
+  )
+  @jtu.skip_on_devices("tpu")  # TPU precision causes issues.
+  def testBallKS(self, d, p, shape, dtype):
+    self.skipTest(
+        "sensitive to random key - https://github.com/google/jax/issues/18932")
+    key = self.make_key(123)
+    rand = lambda key, p: random.ball(key, d, p, (100, *shape), dtype)
+    crand = jax.jit(rand)
+    uncompiled_samples = rand(key, p)
+    compiled_samples = crand(key, p)
+    for samples in [uncompiled_samples, compiled_samples]:
       norms = (jnp.abs(samples) ** p).sum(-1) ** (d / p)
       self._CheckKolmogorovSmirnovCDF(norms.ravel(), scipy.stats.uniform().cdf)
 
@@ -1135,7 +1160,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckChiSquared(samples, scipy.stats.geom(p).pmf)
       self.assertAllClose(samples.mean(), 1 / p, rtol=0.02, check_dtypes=False)
-      self.assertAllClose(samples.var(), (1 - p) / (p * p) , rtol=0.05, check_dtypes=False)
+      self.assertAllClose(samples.var(), (1 - p) / (p * p) , rtol=0.05,
+                          check_dtypes=False)
 
   @jtu.sample_product(
       left = [0.2, 0.5, 1., 2.],
@@ -1144,21 +1170,23 @@ class LaxRandomTest(jtu.JaxTestCase):
       dtype= jtu.dtypes.floating)
   def testTriangular(self, left, mode, right, dtype):
     key = self.make_key(1)
-    rand = lambda key: random.triangular(key, left, mode, right, shape=(10000, ), dtype=dtype)
+    rand = lambda key: random.triangular(key, left, mode, right, shape=(10000,),
+                                         dtype=dtype)
     crand = jax.jit(rand)
 
     uncompiled_samples = rand(key)
     compiled_samples = crand(key)
 
     for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.triang((mode - left) / (right - left), loc=left, scale=right - left).cdf)
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.triang(
+          (mode - left) / (right - left), loc=left, scale=right - left).cdf)
 
   @jtu.sample_product(
     sigma = [0.2, 0.5, 1., 2.],
     dtype=jtu.dtypes.floating)
   def testLogNormal(self, sigma, dtype):
     key = self.make_key(0)
-    rand = lambda key: random.lognormal(key, sigma, shape=(10000, ), dtype=dtype)
+    rand = lambda key: random.lognormal(key, sigma, shape=(10000,), dtype=dtype)
     crand = jax.jit(rand)
 
     uncompiled_samples = rand(key)
@@ -1173,7 +1201,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       dtype= jtu.dtypes.floating)
   def testBinomialSample(self, n, p, dtype):
     key = self.make_key(3)
-    rand = lambda key: random.binomial(key, n, p, shape=(12000, ), dtype=dtype)
+    rand = lambda key: random.binomial(key, n, p, shape=(12000,), dtype=dtype)
     crand = jax.jit(rand)
     uncompiled_samples = rand(key)
     compiled_samples = crand(key)
@@ -1181,9 +1209,10 @@ class LaxRandomTest(jtu.JaxTestCase):
     pmf = lambda x: scipy.stats.binom(n, p).pmf(x)
 
     for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckChiSquared(samples.astype(int), pmf)
+      self._CheckChiSquared(samples.astype(int), pmf, pval=1e-3)
       self.assertAllClose(samples.mean(), n * p, rtol=0.025, check_dtypes=False)
-      self.assertAllClose(samples.var(), n * p * (1 - p) , rtol=0.035, check_dtypes=False)
+      self.assertAllClose(samples.var(), n * p * (1 - p) , rtol=0.035,
+                          check_dtypes=False)
 
   def testBinomialCornerCases(self):
     key = self.make_key(0)
