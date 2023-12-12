@@ -1295,16 +1295,86 @@ class PJitTest(jtu.BufferDonationTestCase):
         pjit_f(jnp.array([1, 2, 3]))
 
   def test_pretty_print(self):
-    f = pjit(lambda x: x)
+    f = pjit(lambda x: x**2)
+    g = pjit(lambda x: f(x) + f(x))
     x = jnp.array([4.2], dtype=jnp.float32)
-    jaxpr = jax.make_jaxpr(f)(x)
+    jaxpr = jax.make_jaxpr(g)(x)
     self.assertEqual(
         jaxpr.pretty_print(),
         textwrap.dedent("""
-            { lambda ; a:f32[1]. let
-                b:f32[1] = pjit[name=<lambda> jaxpr={ lambda ; c:f32[1]. let  in (c,) }] a
-              in (b,) }
+            let lambda = { lambda ; a:f32[1]. let b:f32[1] = integer_pow[y=2] a in (b,) } in
+            { lambda ; c:f32[1]. let
+                d:f32[1] = pjit[
+                  name=<lambda>
+                  jaxpr={ lambda ; e:f32[1]. let
+                      f:f32[1] = pjit[name=<lambda> jaxpr=lambda] e
+                      g:f32[1] = pjit[name=<lambda> jaxpr=lambda] e
+                      h:f32[1] = add f g
+                    in (h,) }
+                ] c
+              in (d,) }
         """).strip(),
+    )
+
+  def test_pretty_print_with_closure(self):
+    @pjit
+    def g(x, y):
+      @pjit
+      def f(x):
+        return x * y
+      return f(x) + f(y)
+
+    x = jnp.array([4.2], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(g)(x, x)
+    self.assertEqual(
+        jaxpr.pretty_print(),
+        textwrap.dedent("""
+            let f = { lambda ; a:f32[1] b:f32[1]. let c:f32[1] = mul b a in (c,) } in
+            { lambda ; d:f32[1] e:f32[1]. let
+                g:f32[1] = pjit[
+                  name=g
+                  jaxpr={ lambda ; h:f32[1] i:f32[1]. let
+                      j:f32[1] = pjit[name=f jaxpr=f] i h
+                      k:f32[1] = pjit[name=f jaxpr=f] i i
+                      l:f32[1] = add j k
+                    in (l,) }
+                ] d e
+              in (g,) }
+        """).strip(),
+    )
+
+  def test_pretty_print_with_name_clash(self):
+    @pjit
+    def g(x, y):
+      @pjit
+      def f(x):
+        return x
+
+      return f(x)*f(x) + f(y)*f(y)
+
+    x = jnp.array([4.2], dtype=jnp.float32)
+    y = jnp.array([4.2, 2.4], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(g)(x, y)
+    self.assertEqual(
+        jaxpr.pretty_print(),
+        textwrap.dedent("""
+            let f = { lambda ; a:f32[1]. let  in (a,) } in
+            let f1 = { lambda ; b:f32[2]. let  in (b,) } in
+            { lambda ; c:f32[1] d:f32[2]. let
+                e:f32[2] = pjit[
+                  name=g
+                  jaxpr={ lambda ; g:f32[1] h:f32[2]. let
+                      i:f32[1] = pjit[name=f jaxpr=f] g
+                      j:f32[1] = pjit[name=f jaxpr=f] g
+                      k:f32[1] = mul i j
+                      l:f32[2] = pjit[name=f jaxpr=f1] h
+                      m:f32[2] = pjit[name=f jaxpr=f1] h
+                      n:f32[2] = mul l m
+                      o:f32[2] = add k n
+                    in (o,) }
+                ] c d
+              in (e,) }
+            """).strip(),
     )
 
 
