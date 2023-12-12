@@ -621,6 +621,14 @@ class DynamicShapeStagingTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(lambda x: x.reshape(-1, 12), abstracted_axes={0: 'n'})(x)
     self.assertLessEqual(len(jaxpr.jaxpr.eqns), 3)
 
+  def test_shape_validation(self):
+    # Regression test for https://github.com/google/jax/issues/18937
+    msg = r"Shapes must be 1D sequences of integer scalars, got .+"
+    with self.assertRaisesRegex(TypeError, msg):
+      jax.make_jaxpr(jnp.ones)(5.0)
+    with self.assertRaisesRegex(TypeError, msg):
+      jax.make_jaxpr(jnp.ones)(jnp.ones((2, 2)))
+
 @unittest.skip("Test does not work with jax.Array")
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
 class DynamicShapeAutodiffTest(jtu.JaxTestCase):

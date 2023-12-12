@@ -2102,6 +2102,9 @@ def _canonicalize_dimension(dim: DimSize) -> DimSize:
   except TypeError as e:
     type_error = e
   if isinstance(dim, Tracer) and config.dynamic_shapes.value:
+    if not (dim.ndim == 0 and (dtypes.issubdtype(dim.dtype, np.integer)
+                               or isinstance(dim.dtype, bint))):
+      raise TypeError(f"Dimensions must be integer scalars; got {dim.ndim=} {dim.dtype=}")
     return dim
   elif (config.dynamic_shapes.value and isinstance(dim, DArray) and
         type(dim._aval.dtype) is bint and not dim._aval.shape):
@@ -2138,11 +2141,16 @@ def canonicalize_dim(d: DimSize, context: str="") -> DimSize:
   return canonicalize_shape((d,), context)[0]
 
 def _invalid_shape_error(shape: Shape, context: str=""):
-  msg = ("Shapes must be 1D sequences of concrete values of integer type, "
-         f"got {shape}.")
+  if config.dynamic_shapes.value:
+    msg = ("Shapes must be 1D sequences of integer scalars, "
+           f"got {shape}")
+  else:
+    msg = ("Shapes must be 1D sequences of concrete values of integer type, "
+           f"got {shape}.")
   if context:
     msg += f" {context}."
-  if any(isinstance(x, Tracer) and isinstance(get_aval(x), ShapedArray)
+  if not config.dynamic_shapes.value and any(
+         isinstance(x, Tracer) and isinstance(get_aval(x), ShapedArray)
          and not isinstance(get_aval(x), ConcreteArray) for x in shape):
     msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
             "smaller subfunctions.")
