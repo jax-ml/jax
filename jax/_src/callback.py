@@ -157,17 +157,14 @@ def _callback_op_sharding(axis_context, sharding: SingleDeviceSharding | None):
             f" {type(sharding)}"
         )
       device = next(iter(sharding.device_set))
-      device_assignment = axis_context.device_assignment
-      if device_assignment is None:
-        raise AssertionError(
-            "Please file a bug at https://github.com/google/jax/issues")
       try:
-        device_index = device_assignment.index(device)
+        device_index = axis_context.device_assignment.index(device)
       except IndexError as e:
         raise ValueError(
             "Sharding provided to pure_callback specifies a device"
             f" {device} that is not in the device assignment"
-            f" ({device_assignment})") from e
+            f" ({axis_context.device_assignment})"
+        ) from e
     else:
       device_index = 0
 

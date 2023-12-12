@@ -182,7 +182,7 @@ def _tpu_custom_call_lowering(
           " call in a shard_map or xmap."
       )
   elif isinstance(axis_context, sharding_impls.ShardingContext):
-    if axis_context.num_devices != 1:
+    if len(axis_context.device_assignment) != 1:
       raise NotImplementedError(
           "Mosaic kernels cannot be automatically partitioned. Please wrap the"
           " call in a shard_map or xmap."

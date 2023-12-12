@@ -834,7 +834,8 @@ def lower_jaxpr_to_module(
                       host_callbacks=host_callbacks,
                       lowering_parameters=lowering_parameters,
                       shape_poly_state=ShapePolyLoweringState(
-                          dim_vars, lowering_parameters.platforms))
+                        dim_vars,
+                        lowering_parameters.platforms))
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
