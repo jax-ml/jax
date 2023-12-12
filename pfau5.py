@@ -47,6 +47,8 @@ class LapTrace(core.Trace):
   sublift = lambda self: LapTracer(self, val.primal, val.jacobian, val.lapvec)
 
   def process_primitive(self, prim, tracers, params):
+    if all(t.jacobian is t.lapvec is None for t in tracers):
+      return prim.bind(*(t.primal for t in tracers), **params)
     xs, jacs, laps = unzip3((t.primal, t.jacobian, t.lapvec) for t in tracers)
     rule = rules.get(prim, partial(generic_rule, prim))
     ys, out_jacs, out_laps = rule(xs, jacs, laps, **params)
