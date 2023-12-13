@@ -386,17 +386,24 @@ def _deserialize_sharding(s: ser_flatbuf.Sharding) -> export.Sharding:
 
 
 def _serialize_effect(builder: flatbuffers.Builder, eff: core.Effect) -> int:
-  # TODO(necula): for now serialize just the name of the class
   try:
-    _ = eff.__class__()
-  except:
+    eff_replica = eff.__class__()
+  except Exception:
     raise NotImplementedError(
-        f"serializing effect {eff} that does not have a nullary class"
-        " constructor"
+        f"Effect {eff} must have a nullary constructor to be serializable"
     )
-  # TODO: fix the effects serialization and deserialization, to ensure that
-  # upon deserialization we reconstruct an effect that compares equal to the
-  # one that was serialized.
+  try:
+    hash_eff = hash(eff)
+    hash_eff_replica = hash(eff_replica)
+  except Exception:
+    raise NotImplementedError(
+        f"Effect {eff} must be hashable to be serializable"
+    )
+  if eff != eff_replica or hash_eff != hash_eff_replica:
+    raise NotImplementedError(
+      f"Effect {eff} must have a nullary class constructor that produces an "
+      "equal effect object."
+    )
   effect_type_name = str(eff.__class__)
   effect_type_name_offset = builder.CreateString(effect_type_name)
   ser_flatbuf.EffectStart(builder)
