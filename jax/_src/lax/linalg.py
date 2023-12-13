@@ -723,7 +723,7 @@ def _eigh_cpu_gpu_lowering(
   # Therefore, we cannot yet support dynamic non-batch dimensions.
   if not is_constant_shape(operand_aval.shape[-2:]):
     raise NotImplementedError(
-        "Shape polymorphism for for native lowering for eigh is implemented "
+        "Shape polymorphism for native lowering for eigh is implemented "
         f"only for the batch dimensions: {operand_aval.shape}")
 
   if not (subset_by_index is None or subset_by_index == (0, n)):
@@ -760,7 +760,7 @@ def _eigh_tpu_impl(x, *, lower, sort_eigenvalues, subset_by_index):
   if not is_constant_dim(m):
     # TODO: maybe we can relax the check below for shape polymorphism?
     raise NotImplementedError(
-        "Shape polymorphism for for native lowering for eigh is implemented "
+        "Shape polymorphism for native lowering for eigh is implemented "
         f"only for the batch dimensions: {x.shape}")
   if m <= termination_size and (
       subset_by_index is None or subset_by_index == (0, n)

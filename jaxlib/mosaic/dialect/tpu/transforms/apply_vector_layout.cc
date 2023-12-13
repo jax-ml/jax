@@ -3189,7 +3189,7 @@ xla::Array<Value> retileToReducedSublanes(
   xla::Array<Value> dst_vreg_array(
       dst_layout.tileArrayShape(value_shape, target_shape));
 
-  // We need to rotate each src tile in each src vreg once so that that they can
+  // We need to rotate each src tile in each src vreg once so that they can
   // be merged to form new vregs. If a src vreg contains more than one src tile,
   // it will be rotated once per src tile. Consider (8,512) tensor stored with
   // layout (8,128) in a vreg array of shape (1, 4). Each src vreg

@@ -384,7 +384,7 @@ class custom_partitioning:
         -1.6937828  +0.8402481j  15.999859   -4.0156755j]]
 
     Because of the logic in ``supported_sharding``, ``my_fft`` also works on 1-dimensional arrays.
-    However, in this case, the HLO of ``my_fft`` does show a a dynamic-slice, since the last dimension
+    However, in this case, the HLO of ``my_fft`` does show a dynamic-slice, since the last dimension
     is the dimension along which FFTs are calculated and needs to be replicated on all devices before
     the computation can be done.
 

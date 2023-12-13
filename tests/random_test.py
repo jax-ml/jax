@@ -593,7 +593,7 @@ class KeyArrayTest(jtu.JaxTestCase):
   # lax_tests.py as an example. If you add a test here (e.g. testing
   # lowering of a key-dtyped shaped array), consider whether it
   # might also be a more general test of opaque element types. If
-  # so, add a corresponding test to to CustomElementTypesTest as well.
+  # so, add a corresponding test to CustomElementTypesTest as well.
 
   def assertKeysEqual(self, key1, key2):
     self.assertEqual(key1.dtype, key2.dtype)

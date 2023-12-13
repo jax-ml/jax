@@ -8083,7 +8083,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
   def test_nondiff_arg_tracer_error(self):
     # This is similar to the old (now skipped) test_nondiff_arg_tracer, except
-    # we're testing for the error message that that usage pattern now raises.
+    # we're testing for the error message that usage pattern now raises.
 
     @partial(jax.custom_vjp, nondiff_argnums=(0,))
     def f(x, y):

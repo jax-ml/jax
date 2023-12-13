@@ -1165,7 +1165,7 @@ class Jax2TfLimitation(test_harnesses.Limitation):
   @classmethod
   def select_and_gather_add(cls, harness):
     return [
-        # This JAX primitives is not not exposed directly in the JAX API
+        # This JAX primitives is not exposed directly in the JAX API
         # but arises from JVP of `lax.reduce_window` for reducers
         # `lax.max` or `lax.min`. It also arises from second-order
         # VJP of the same. Implemented using XlaReduceWindow.

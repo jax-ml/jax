@@ -1028,7 +1028,7 @@ def dirichlet(key: KeyArrayLike,
               dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample Dirichlet random values with given shape and float dtype.
 
-  The values are distributed according the probability density function:
+  The values are distributed according to the probability density function:
 
   .. math::
      f(\{x_i\}; \{\alpha_i\}) = \propto \prod_{i=1}^k x_i^{\alpha_i - 1}
@@ -1099,7 +1099,7 @@ def exponential(key: KeyArrayLike,
                 dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample Exponential random values with given shape and float dtype.
 
-  The values are distributed according the probability density function:
+  The values are distributed according to the probability density function:
 
   .. math::
      f(x) = e^{-x}
@@ -1267,7 +1267,7 @@ def gamma(key: KeyArrayLike,
           dtype: DTypeLikeFloat = float) -> Array:
   r"""Sample Gamma random values with given shape and float dtype.
 
-  The values are distributed according the probability density function:
+  The values are distributed according to the probability density function:
 
   .. math::
      f(x;a) \propto x^{a - 1} e^{-x}
