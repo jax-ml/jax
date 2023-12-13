@@ -17,7 +17,6 @@ import hashlib
 import io
 import logging
 import os
-import struct
 import sys
 
 from jax._src import config
@@ -56,8 +55,7 @@ def get(module: ir.Module,
         devices: np.ndarray,
         compile_options: xla_client.CompileOptions,
         backend: xla_client.Client,
-        compression_algorithm: str = "zstandard",
-        produce_original_cache_key: bool = True) -> str:
+        compression_algorithm: str = "zstandard") -> str:
   """Creates a hashed string to use as a key to the compilation cache.
 
   Creates a cache key that is a hex-encoded string of a unique hash based on
@@ -70,10 +68,6 @@ def get(module: ir.Module,
     backend: description of the platform (e.g., TPU version)
     compression_algorithm: a string representing the compression algorithm used
       for the executable before persisting in the cache
-    produce_original_cache_key: if True, the original cache-key generation
-      algorithm is run, else the new one. This is transient; once the migration
-      is complete, this parameter and the original algorithm will be removed.
-      (New one not implemented as yet.)
 
   Typical return value example:
    'jit__psum-14ac577cdb2ef6d986078b4054cc9893a9a14a16dbb0d8f37b89167c1f1aacdf'
@@ -85,29 +79,14 @@ def get(module: ir.Module,
            bytes(jaxlib_version_str.encode("utf-8")))),
       ("XLA flags",
        lambda hash_obj: _hash_xla_flags(hash_obj, get_flag_prefixes())),
+      ("compile_options",
+       lambda hash_obj: _hash_serialized_compile_options(
+           hash_obj, compile_options)),
+      ("accelerator_config",
+         lambda hash_obj: _hash_accelerator_config(hash_obj, devices, backend)),
       ("compression",
        lambda hash_obj: _hash_string(hash_obj, compression_algorithm)),
   ]
-  if produce_original_cache_key:
-    entries.append(
-        ("compile_options",
-         lambda hash_obj: _hash_compile_options(hash_obj, compile_options)),
-    )
-    entries.append(
-        ("devices", lambda hash_obj: _hash_devices(hash_obj, devices)))
-    entries.append(
-        ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
-    )
-  else:
-    entries.append(
-        ("compile_options",
-         lambda hash_obj: _hash_serialized_compile_options(
-             hash_obj, compile_options)),
-    )
-    entries.append(
-        ("accelerator_config",
-         lambda hash_obj: _hash_accelerator_config(hash_obj, devices, backend)),
-    )
 
   hash_obj = hashlib.sha256()
   for name, hashfn in entries:
@@ -217,98 +196,6 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj):
   return hash_obj.update(compile_options_copy.SerializeAsString())
 
 
-def _hash_compile_options(hash_obj, compile_options_obj):
-  expected_num_compile_options = 12
-  # Ignore private and built-in methods. These can unexpectedly change and lead
-  # to false positives, e.g. when different Python versions include different
-  # built-ins.
-  num_actual_options = len(
-      [x for x in dir(compile_options_obj) if not x.startswith("_")]
-  )
-  assert num_actual_options == expected_num_compile_options, (
-      "Unexpected number of CompileOption fields: "
-      f"{num_actual_options}. This likely: means that an extra "
-      "field was added, and this function needs to be updated."
-  )
-
-  if compile_options_obj.argument_layouts is not None:
-    map(
-        lambda shape: hash_obj.update(shape.to_serialized_proto()),
-        compile_options_obj.argument_layouts,
-    )
-  _hash_int(hash_obj, compile_options_obj.parameter_is_tupled_arguments)
-  _hash_executable_build_options(
-      hash_obj, compile_options_obj.executable_build_options
-  )
-  _hash_bool(hash_obj, compile_options_obj.tuple_arguments)
-  _hash_int(hash_obj, compile_options_obj.num_replicas)
-  _hash_int(hash_obj, compile_options_obj.num_partitions)
-  _hash_signed_int(hash_obj, compile_options_obj.profile_version)
-  if compile_options_obj.device_assignment is not None:
-    hash_obj.update(compile_options_obj.device_assignment.serialize())
-  _hash_bool(hash_obj, compile_options_obj.compile_portable_executable)
-  _hash_int(hash_obj, len(compile_options_obj.env_option_overrides))
-  for kv in compile_options_obj.env_option_overrides:
-    _hash_string(hash_obj, kv[0])
-    if isinstance(kv[1], str):
-      _hash_string(hash_obj, kv[1])
-    elif isinstance(kv[1], bool):
-      _hash_bool(hash_obj, kv[1])
-    elif isinstance(kv[1], int):
-      _hash_int(hash_obj, kv[1])
-    elif isinstance(kv[1], float):
-      _hash_float(hash_obj, kv[1])
-    else:
-      raise RuntimeError("Invalid type: %s" % repr(type(kv[1])))
-
-
-def _hash_executable_build_options(hash_obj, executable_obj):
-  expected_options = 11
-  # Ignore private and built-in methods. These can unexpectedly change and lead
-  # to false positives, e.g. when different Python versions include different
-  # built-ins.
-  actual_options = len(
-      [x for x in dir(executable_obj) if not x.startswith("_")]
-  )
-  assert actual_options == expected_options, (
-      "Unexpected number of executable_build_options fields: "
-      f"{actual_options}, expected: {expected_options}. This likely means "
-      "that an extra field was added, and this function needs to be updated."
-  )
-  if executable_obj.result_layout is not None:
-    hash_obj.update(executable_obj.result_layout.to_serialized_proto())
-  _hash_int(hash_obj, executable_obj.num_replicas)
-  _hash_int(hash_obj, executable_obj.num_partitions)
-  _hash_debug_options(hash_obj, executable_obj.debug_options)
-  if executable_obj.device_assignment is not None:
-    hash_obj.update(executable_obj.device_assignment.serialize())
-  _hash_bool(hash_obj, executable_obj.use_spmd_partitioning)
-  _hash_bool(hash_obj, executable_obj.use_auto_spmd_partitioning)
-  if executable_obj.use_auto_spmd_partitioning:
-    if executable_obj.auto_spmd_partitioning_mesh_shape is not None:
-      _hash_int_list(hash_obj, executable_obj.auto_spmd_partitioning_mesh_shape)
-    if executable_obj.auto_spmd_partitioning_mesh_ids is not None:
-      _hash_int_list(hash_obj, executable_obj.auto_spmd_partitioning_mesh_ids)
-  _hash_bool_list(
-      hash_obj, executable_obj.allow_spmd_sharding_propagation_to_output
-  )
-  if executable_obj.fdo_profile is not None:
-    _hash_string(hash_obj, executable_obj.fdo_profile)
-
-
-def _hash_debug_options(hash_obj, debug_obj):
-  _hash_bool(hash_obj, debug_obj.xla_cpu_enable_fast_math)
-  _hash_bool(hash_obj, debug_obj.xla_cpu_fast_math_honor_infs)
-  _hash_bool(hash_obj, debug_obj.xla_cpu_fast_math_honor_nans)
-  _hash_bool(hash_obj, debug_obj.xla_cpu_fast_math_honor_division)
-  _hash_bool(hash_obj, debug_obj.xla_cpu_fast_math_honor_functions)
-  _hash_bool(hash_obj, debug_obj.xla_gpu_enable_fast_min_max)
-  _hash_int(hash_obj, debug_obj.xla_backend_optimization_level)
-  _hash_bool(hash_obj, debug_obj.xla_cpu_enable_xprof_traceme)
-  _hash_bool(hash_obj, debug_obj.xla_llvm_disable_expensive_passes)
-  _hash_bool(hash_obj, debug_obj.xla_test_all_input_layouts)
-
-
 def _hash_platform(hash_obj, backend):
   _hash_string(hash_obj, backend.platform)
   _hash_string(hash_obj, backend.platform_version)
@@ -366,33 +253,5 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
     _hash_string(hash_obj, flag)
 
 
-def _hash_int(hash_obj, int_var):
-  hash_obj.update(int_var.to_bytes(8, byteorder="big"))
-
-
-def _hash_float(hash_obj, float_var):
-  hash_obj.update(struct.pack("d", float_var))
-
-
-def _hash_signed_int(hash_obj, int_var):
-  hash_obj.update(int_var.to_bytes(8, byteorder="big", signed=True))
-
-
-def _hash_bool(hash_obj, bool_var):
-  hash_obj.update(bool_var.to_bytes(1, byteorder="big"))
-
-
 def _hash_string(hash_obj, str_var):
   hash_obj.update(str_var.encode("utf-8").strip())
-
-
-def _hash_bool_list(hash_obj, bool_list):
-  for b in bool_list:
-    _hash_bool(hash_obj, b)
-  _hash_int(hash_obj, len(bool_list))
-
-
-def _hash_int_list(hash_obj, int_list):
-  for i in int_list:
-    _hash_int(hash_obj, i)
-  _hash_int(hash_obj, len(int_list))

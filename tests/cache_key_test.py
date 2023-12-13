@@ -14,7 +14,6 @@
 
 import hashlib
 import os
-import random
 import sys
 import unittest
 
@@ -37,64 +36,6 @@ config.parse_flags_with_absl()
 
 
 class CacheKeyTest(jtu.JaxTestCase):
-
-  def test_compile_options(self):
-    compile_options_not_filled = compiler.get_compile_options(
-        num_replicas=1, num_partitions=1
-    )
-    compile_options_filled = self.filled_compile_options()
-    filled_hash1 = self.get_hashed_value(
-        cache_key._hash_compile_options, compile_options_filled
-    )
-    filled_hash2 = self.get_hashed_value(
-        cache_key._hash_compile_options, compile_options_filled
-    )
-    not_filled_hash3 = self.get_hashed_value(
-        cache_key._hash_compile_options, compile_options_not_filled
-    )
-    self.assertEqual(filled_hash1, filled_hash2)
-    self.assertNotEqual(filled_hash1, not_filled_hash3)
-
-  def test_executable_build_options(self):
-    compile_options_not_filled = compiler.get_compile_options(
-        num_replicas=1, num_partitions=1
-    )
-    compile_options_filled = self.filled_compile_options()
-    filled_hash1 = self.get_hashed_value(
-        cache_key._hash_executable_build_options,
-        compile_options_filled.executable_build_options,
-    )
-    filled_hash2 = self.get_hashed_value(
-        cache_key._hash_executable_build_options,
-        compile_options_filled.executable_build_options,
-    )
-    not_filled_hash3 = self.get_hashed_value(
-        cache_key._hash_executable_build_options,
-        compile_options_not_filled.executable_build_options,
-    )
-    self.assertEqual(filled_hash1, filled_hash2)
-    self.assertNotEqual(filled_hash1, not_filled_hash3)
-
-  def test_debug_options(self):
-    compile_options = compiler.get_compile_options(
-        num_replicas=1, num_partitions=1
-    )
-    hash1 = self.get_hashed_value(
-        cache_key._hash_debug_options,
-        compile_options.executable_build_options.debug_options,
-    )
-    hash2 = self.get_hashed_value(
-        cache_key._hash_debug_options,
-        compile_options.executable_build_options.debug_options,
-    )
-    self.assertEqual(hash1, hash2)
-    new_debug_options = self.create_new_debug_options(
-        compile_options.executable_build_options.debug_options
-    )
-    hash3 = self.get_hashed_value(
-        cache_key._hash_debug_options, new_debug_options
-    )
-    self.assertNotEqual(hash1, hash3)
 
   def test_serialized_compile_options(self):
     compile_options = compiler.get_compile_options(
@@ -155,29 +96,6 @@ class CacheKeyTest(jtu.JaxTestCase):
       cpu_backend = xla_bridge.get_backend("cpu")
       hash3 = self.get_hashed_value(cache_key._hash_platform, cpu_backend)
       self.assertNotEqual(hash1, hash3)
-
-  def test_hash_int(self):
-    hash1 = self.get_hashed_value(cache_key._hash_int, 90)
-    hash2 = self.get_hashed_value(cache_key._hash_int, 8)
-    hash3 = self.get_hashed_value(cache_key._hash_int, 8)
-    self.assertEqual(hash2, hash3)
-    self.assertNotEqual(hash1, hash2)
-
-  def test_hash_signed_int(self):
-    hash1 = self.get_hashed_value(cache_key._hash_signed_int, 90)
-    hash2 = self.get_hashed_value(cache_key._hash_signed_int, -90)
-    hash3 = self.get_hashed_value(cache_key._hash_signed_int, -8)
-    hash4 = self.get_hashed_value(cache_key._hash_signed_int, -8)
-    self.assertEqual(hash3, hash4)
-    self.assertNotEqual(hash1, hash2)
-    self.assertNotEqual(hash1, hash3)
-
-  def test_hash_bool(self):
-    hash1 = self.get_hashed_value(cache_key._hash_bool, False)
-    hash2 = self.get_hashed_value(cache_key._hash_bool, True)
-    hash3 = self.get_hashed_value(cache_key._hash_bool, True)
-    self.assertEqual(hash2, hash3)
-    self.assertNotEqual(hash1, hash2)
 
   def test_hash_string(self):
     hash1 = self.get_hashed_value(cache_key._hash_string, "foo")
@@ -319,19 +237,6 @@ class CacheKeyTest(jtu.JaxTestCase):
       elif os.getenv("LIBTPU_INIT_ARGS") is not None:
         del os.environ["LIBTPU_INIT_ARGS"]
       sys.argv = orig_argv
-
-  def create_new_debug_options(self, debug_options_obj):
-    debug_options_obj.xla_cpu_enable_fast_math = False
-    debug_options_obj.xla_cpu_fast_math_honor_infs = False
-    debug_options_obj.xla_cpu_fast_math_honor_nans = False
-    debug_options_obj.xla_cpu_fast_math_honor_division = False
-    debug_options_obj.xla_cpu_fast_math_honor_functions = False
-    debug_options_obj.xla_gpu_enable_fast_min_max = False
-    debug_options_obj.xla_backend_optimization_level = random.randint(0, 10)
-    debug_options_obj.xla_cpu_enable_xprof_traceme = False
-    debug_options_obj.xla_llvm_disable_expensive_passes = False
-    debug_options_obj.xla_test_all_input_layouts = False
-    return debug_options_obj
 
   def filled_compile_options(self):
     compile_options = xla_client.CompileOptions()

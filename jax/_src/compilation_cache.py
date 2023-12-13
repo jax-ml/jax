@@ -167,10 +167,9 @@ def put_executable_and_time(
 
 
 def get_cache_key(module: ir.Module, devices: np.ndarray, compile_options,
-                  backend, produce_original_cache_key: bool = True) -> str:
+                  backend) -> str:
   return cache_key.get(module, devices, compile_options, backend,
-                       "zstandard" if zstandard is not None else "zlib",
-                       produce_original_cache_key)
+                       "zstandard" if zstandard is not None else "zlib")
 
 
 def is_initialized() -> bool:
