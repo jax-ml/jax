@@ -53,7 +53,7 @@ class LapTracer(core.Tracer):
 
 class LapTrace(core.Trace):
   pure = lift = lambda self, val: LapTracer(self, val, None, None)
-  sublift = lambda self: LapTracer(self, val.primal, val.jacobian, val.lapvec)
+  sublift = lambda self, val: LapTracer(self, val.primal, val.jacobian, val.lapvec)
 
   def process_primitive(self, prim, tracers, params):
     if all(t.jacobian is t.lapvec is None for t in tracers):
@@ -79,12 +79,13 @@ class LapTrace(core.Trace):
         for t in tracers)
     in_avals = map(shaped_abstractify, (*xs, *laps))
     jaxpr, _, consts = pe.trace_to_jaxpr_final(jvp, in_avals)
-    jvp_ = partial(core.eval_jaxpr, jaxpr, consts)
-    outs = jvp_(*xs, *laps)
-    out_primals, jac_term = split_list(_replace_float0(outs), [len(outs) // 2])
-    outs = jax.vmap(jax.vmap(lambda v1, v2: jax.jvp(lambda *xs: jvp_(*xs, *v1)[1], xs, v2),
-                             (-1, None), -1), (None, -1), (None, -1))(jacs, jacs)
-    out_jacs, hess_term = split_list(_replace_float0(outs), [len(outs) // 2])
+    def jvp_(primals, tangents):
+      outs = core.eval_jaxpr(jaxpr, consts, *primals, *tangents)
+      return split_list(_replace_float0(outs), [len(outs) // 2])
+    out_primals, jac_term = jvp_(xs, laps)
+    out_jacs, hess_term = jax.vmap(jax.vmap(
+      lambda v1, v2: jax.jvp(lambda *xs: jvp_(xs, v1)[1], xs, v2),
+      (-1, None), -1), (None, -1), (None, -1))(jacs, jacs)
     out_laps = tree_map(op.add, _trace(hess_term), jac_term)
     return map(partial(LapTracer, self), out_primals, out_jacs, out_laps)
 
@@ -175,12 +176,15 @@ rules[pjit.pjit_p] = pjit_rule
 
 # api
 
-def fwdlap(fun):
+def fwdlap(fun, return_grad=False):
   def lapfun(*args):
     jacs = tree_map(_eye_like, args)
     lapvecs = tree_map(jnp.zeros_like, args)
-    _, _, lapvecs = fwdlap3(fun, args, jacs, lapvecs)
-    return lapvecs
+    _, grad, lapvecs = fwdlap3(fun, args, jacs, lapvecs)
+    if return_grad:
+      return lapvecs, grad
+    else:
+      return lapvecs
   return lapfun
 
 def _eye_like(x): return jnp.eye(x.size).reshape(*x.shape, x.size)
