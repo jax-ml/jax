@@ -733,6 +733,8 @@ def random_seed(seeds: int | typing.ArrayLike, impl: PRNGImpl) -> PRNGKeyArrayIm
     seeds_arr = jnp.asarray(np.int64(seeds))
   else:
     seeds_arr = jnp.asarray(seeds)
+  if config.random_seed_offset.value:
+    seeds_arr += config.random_seed_offset.value
   return random_seed_p.bind(seeds_arr, impl=impl)
 
 random_seed_p = core.Primitive('random_seed')
