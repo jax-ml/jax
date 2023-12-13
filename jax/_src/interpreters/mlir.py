@@ -72,7 +72,7 @@ lowerable_effects: effects_lib.EffectTypeSet = effects_lib.lowerable_effects
 def dense_int_elements(xs) -> ir.DenseIntElementsAttr:
   return ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
 
-def dense_int_array(xs) -> Union[ir.DenseIntElementsAttr, ir.DenseI64ArrayAttr]:
+def dense_int_array(xs) -> ir.DenseIntElementsAttr | ir.DenseI64ArrayAttr:
   if hlo.get_api_version() < 5:
     return dense_int_elements(xs)
   return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))
@@ -947,7 +947,7 @@ class TokenSet:
   primitives. A `TokenSet` encapsulates a set of HLO tokens that will be
   used by the lowering rules.
   """
-  _tokens: typing.OrderedDict[core.Effect, Token]
+  _tokens: collections.OrderedDict[core.Effect, Token]
 
   def __init__(self, *args, **kwargs):
     self._tokens = collections.OrderedDict(*args, **kwargs)

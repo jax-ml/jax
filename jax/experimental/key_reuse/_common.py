@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import NamedTuple, Union
+from __future__ import annotations
+
+from typing import NamedTuple
 from jax import core
 from jax.interpreters import batching, mlir
 import numpy as np
@@ -20,12 +22,12 @@ import numpy as np
 
 class Sink(NamedTuple):
   idx: int
-  mask: Union[bool, np.ndarray] = True
+  mask: bool | np.ndarray = True
 
 
 class Source(NamedTuple):
   idx: int
-  mask: Union[bool, np.ndarray] = True
+  mask: bool | np.ndarray = True
 
 
 class KeyReuseSignature(NamedTuple):

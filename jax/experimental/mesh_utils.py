@@ -14,6 +14,8 @@
 # ==============================================================================
 """Utils for building a device mesh."""
 
+from __future__ import annotations
+
 import collections
 from collections.abc import Sequence
 import itertools
@@ -95,7 +97,7 @@ def _tpu_v2_v3_create_device_mesh(
 # return None; in that case, it will fall back to using the default logic.
 device_kind_handler_dict: dict[
     str,
-    Callable[..., Optional[np.ndarray]],
+    Callable[..., np.ndarray | None],
 ] = {
     _TPU_V2: _tpu_v2_v3_create_device_mesh,
     _TPU_V3: _tpu_v2_v3_create_device_mesh,
@@ -269,7 +271,7 @@ def _transpose_trick(physical_mesh: np.ndarray,
 
 def create_device_mesh(
     mesh_shape: Sequence[int],
-    devices: Optional[Sequence[Any]] = None, *,
+    devices: Sequence[Any] | None = None, *,
     contiguous_submeshes: bool = False) -> np.ndarray:
   """Creates a performant device mesh for jax.sharding.Mesh.
 
@@ -324,7 +326,7 @@ def create_device_mesh(
 def create_hybrid_device_mesh(
     mesh_shape: Sequence[int],
     dcn_mesh_shape: Sequence[int],
-    devices: Optional[Sequence[Any]] = None, *,
+    devices: Sequence[Any] | None = None, *,
     process_is_granule: bool = False,
     should_sort_granules_by_key: bool = True,
 ) -> np.ndarray:

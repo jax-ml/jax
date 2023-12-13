@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """The Broyden-Fletcher-Goldfarb-Shanno minimization algorithm."""
+
+from __future__ import annotations
+
 from functools import partial
-from typing import Callable, NamedTuple, Optional, Union
+from typing import Callable, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -45,19 +48,19 @@ class _BFGSResults(NamedTuple):
     line_search_status: int describing line search end state (only means
       something if line search fails).
   """
-  converged: Union[bool, jax.Array]
-  failed: Union[bool, jax.Array]
-  k: Union[int, jax.Array]
-  nfev: Union[int, jax.Array]
-  ngev: Union[int, jax.Array]
-  nhev: Union[int, jax.Array]
+  converged: bool | jax.Array
+  failed: bool | jax.Array
+  k: int | jax.Array
+  nfev: int | jax.Array
+  ngev: int | jax.Array
+  nhev: int | jax.Array
   x_k: jax.Array
   f_k: jax.Array
   g_k: jax.Array
   H_k: jax.Array
   old_old_fval: jax.Array
-  status: Union[int, jax.Array]
-  line_search_status: Union[int, jax.Array]
+  status: int | jax.Array
+  line_search_status: int | jax.Array
 
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
@@ -67,7 +70,7 @@ _einsum = partial(jnp.einsum, precision=lax.Precision.HIGHEST)
 def minimize_bfgs(
     fun: Callable,
     x0: jax.Array,
-    maxiter: Optional[int] = None,
+    maxiter: int | None = None,
     norm=jnp.inf,
     gtol: float = 1e-5,
     line_search_maxiter: int = 10,

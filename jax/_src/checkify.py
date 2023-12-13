@@ -17,7 +17,7 @@ from collections.abc import Sequence
 import dataclasses
 import functools
 import itertools as it
-from typing import Union, Callable, TypeVar, Any
+from typing import Callable, TypeVar, Any, Union
 
 import numpy as np
 

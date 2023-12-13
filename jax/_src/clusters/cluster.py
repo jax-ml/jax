@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import logging
-from typing import Optional
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ class ClusterEnv:
   :class:`ClusterEnv` subclasses are automatically detected when imported.
   """
 
-  _cluster_types: list[type['ClusterEnv']] = []
+  _cluster_types: list[type[ClusterEnv]] = []
 
   def __init_subclass__(cls, **kwargs):
     super().__init_subclass__(**kwargs)
@@ -38,12 +39,12 @@ class ClusterEnv:
   @classmethod
   # pytype: disable=bad-return-type
   def auto_detect_unset_distributed_params(cls,
-                                           coordinator_address: Optional[str],
-                                           num_processes: Optional[int],
-                                           process_id: Optional[int],
-                                           local_device_ids: Optional[Sequence[int]]
-                                          ) -> tuple[Optional[str], Optional[int], Optional[int],
-                                                     Optional[Sequence[int]]]:
+                                           coordinator_address: str | None,
+                                           num_processes: int | None,
+                                           process_id: int | None,
+                                           local_device_ids: Sequence[int] | None
+                                          ) -> tuple[str | None, int | None, int | None,
+                                                     Sequence[int] | None]:
     if all(p is not None for p in (coordinator_address, num_processes,
       process_id, local_device_ids)):
       return (coordinator_address, num_processes, process_id,
@@ -100,7 +101,7 @@ class ClusterEnv:
     raise NotImplementedError("ClusterEnv subclasses must implement get_process_id")
 
   @classmethod
-  def get_local_process_id(cls) -> Optional[int]:
+  def get_local_process_id(cls) -> int | None:
     """ Get index of current process inside a host.
 
     The method is only useful to support single device per process.

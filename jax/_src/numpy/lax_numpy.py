@@ -32,7 +32,8 @@ from functools import partial
 import math
 import operator
 import types
-from typing import (overload, Any, Callable, Literal, NamedTuple, Protocol, TypeVar, Union)
+from typing import (overload, Any, Callable, Literal, NamedTuple, Protocol,
+                    TypeVar, Union)
 from textwrap import dedent as _dedent
 import warnings
 

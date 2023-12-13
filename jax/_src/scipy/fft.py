@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from functools import partial
 import math
-from typing import Optional
 
 import scipy.fft as osp_fft
 from jax import lax
@@ -42,8 +43,8 @@ def _dct_ortho_norm(out: Array, axis: int) -> Array:
 # John Makhoul: A Fast Cosine Transform in One and Two Dimensions (1980)
 
 @_wraps(osp_fft.dct)
-def dct(x: Array, type: int = 2, n: Optional[int] = None,
-        axis: int = -1, norm: Optional[str] = None) -> Array:
+def dct(x: Array, type: int = 2, n: int | None = None,
+        axis: int = -1, norm: str | None = None) -> Array:
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
 
@@ -64,7 +65,7 @@ def dct(x: Array, type: int = 2, n: Optional[int] = None,
   return out
 
 
-def _dct2(x: Array, axes: Sequence[int], norm: Optional[str]) -> Array:
+def _dct2(x: Array, axes: Sequence[int], norm: str | None) -> Array:
   axis1, axis2 = map(partial(canonicalize_axis, num_dims=x.ndim), axes)
   N1, N2 = x.shape[axis1], x.shape[axis2]
   v = _dct_interleave(_dct_interleave(x, axis1), axis2)
@@ -82,9 +83,9 @@ def _dct2(x: Array, axes: Sequence[int], norm: Optional[str]) -> Array:
 
 @_wraps(osp_fft.dctn)
 def dctn(x: Array, type: int = 2,
-         s: Optional[Sequence[int]]=None,
-         axes: Optional[Sequence[int]] = None,
-         norm: Optional[str] = None) -> Array:
+         s: Sequence[int] | None=None,
+         axes: Sequence[int] | None = None,
+         norm: str | None = None) -> Array:
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
 
@@ -109,8 +110,8 @@ def dctn(x: Array, type: int = 2,
 
 
 @_wraps(osp_fft.dct)
-def idct(x: Array, type: int = 2, n: Optional[int] = None,
-        axis: int = -1, norm: Optional[str] = None) -> Array:
+def idct(x: Array, type: int = 2, n: int | None = None,
+        axis: int = -1, norm: str | None = None) -> Array:
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
 
@@ -140,9 +141,9 @@ def idct(x: Array, type: int = 2, n: Optional[int] = None,
 
 @_wraps(osp_fft.idctn)
 def idctn(x: Array, type: int = 2,
-         s: Optional[Sequence[int]]=None,
-         axes: Optional[Sequence[int]] = None,
-         norm: Optional[str] = None) -> Array:
+         s: Sequence[int] | None=None,
+         axes: Sequence[int] | None = None,
+         norm: str | None = None) -> Array:
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
 

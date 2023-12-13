@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from functools import partial
 import enum
-from typing import Callable, Union
+from typing import Callable
 
 import numpy as np
 
@@ -171,7 +173,7 @@ _kernels = {
 def scale_and_translate(image, shape: core.Shape,
                         spatial_dims: Sequence[int],
                         scale, translation,
-                        method: Union[str, ResizeMethod],
+                        method: str | ResizeMethod,
                         antialias: bool = True,
                         precision=lax.Precision.HIGHEST):
   """Apply a scale and translation to an image.
@@ -269,7 +271,7 @@ def _resize_nearest(x, output_shape: core.Shape):
 
 
 @partial(jit, static_argnums=(1, 2, 3, 4))
-def _resize(image, shape: core.Shape, method: Union[str, ResizeMethod],
+def _resize(image, shape: core.Shape, method: str | ResizeMethod,
             antialias: bool, precision):
   if len(shape) != image.ndim:
     msg = ('shape must have length equal to the number of dimensions of x; '
@@ -295,7 +297,7 @@ def _resize(image, shape: core.Shape, method: Union[str, ResizeMethod],
                               antialias, precision)
 
 
-def resize(image, shape: core.Shape, method: Union[str, ResizeMethod],
+def resize(image, shape: core.Shape, method: str | ResizeMethod,
            antialias: bool = True,
            precision = lax.Precision.HIGHEST):
   """Image resize.

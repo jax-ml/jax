@@ -494,6 +494,9 @@ Still to do:
   * Explore implementation with XLA CustomCall for CPU and GPU.
 
 """
+
+from __future__ import annotations
+
 import atexit
 from collections.abc import Sequence
 import functools
@@ -1699,7 +1702,7 @@ class _CallbackHandlerData:
   initialized: bool
   on_exit: bool
   lock: threading.Lock
-  last_callback_exception: Optional[tuple[Exception, str]]
+  last_callback_exception: tuple[Exception, str] | None
   clients: tuple[XlaLocalClient, ...]
   devices: tuple[XlaDevice, ...]
   consumer_registry: dict[Callable, int]
@@ -1818,7 +1821,7 @@ def _initialize_outfeed_receiver(
     _callback_handler_data.initialized = True
 
 
-def barrier_wait(logging_name: Optional[str] = None):
+def barrier_wait(logging_name: str | None = None):
   """Blocks the calling thread until all current outfeed is processed.
 
   Waits until all callbacks from computations already running on all devices

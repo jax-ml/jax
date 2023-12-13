@@ -17,6 +17,8 @@ See the back_compat_test_util module docstring for how to setup and update
 these tests.
 """
 
+from __future__ import annotations
+
 import base64
 from collections.abc import Sequence
 import io
@@ -82,7 +84,7 @@ class CompatTensoflowTest(bctu.CompatTestBase):
       self,
       func: Callable,
       data: bctu.CompatTestData,
-      polymorphic_shapes: Optional[Sequence[str]] = None,
+      polymorphic_shapes: Sequence[str] | None = None,
       allow_unstable_custom_call_targets: Sequence[str] = (),
   ):
     # We serialize as a tf.Graph
@@ -125,7 +127,7 @@ class CompatTensoflowTest(bctu.CompatTestBase):
   def run_serialized(
       self,
       data: bctu.CompatTestData,
-      polymorphic_shapes: Optional[Sequence[str]] = None,
+      polymorphic_shapes: Sequence[str] | None = None,
   ):
     root_dir = self.create_tempdir()
     deserialize_directory(data.mlir_module_serialized, root_dir)

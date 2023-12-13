@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """The Limited-Memory Broyden-Fletcher-Goldfarb-Shanno minimization algorithm."""
-from typing import Callable, NamedTuple, Optional, Union
+
+from __future__ import annotations
+
+from typing import Callable, NamedTuple
 from functools import partial
 
 import jax
@@ -50,32 +53,32 @@ class LBFGSResults(NamedTuple):
       5 = line search failed
     ls_status: integer describing the end status of the last line search
   """
-  converged: Union[bool, Array]
-  failed: Union[bool, Array]
-  k: Union[int, Array]
-  nfev: Union[int, Array]
-  ngev: Union[int, Array]
+  converged: bool | Array
+  failed: bool | Array
+  k: int | Array
+  nfev: int | Array
+  ngev: int | Array
   x_k: Array
   f_k: Array
   g_k: Array
   s_history: Array
   y_history: Array
   rho_history: Array
-  gamma: Union[float, Array]
-  status: Union[int, Array]
-  ls_status: Union[int, Array]
+  gamma: float | Array
+  status: int | Array
+  ls_status: int | Array
 
 
 def _minimize_lbfgs(
     fun: Callable,
     x0: Array,
-    maxiter: Optional[float] = None,
+    maxiter: float | None = None,
     norm=jnp.inf,
     maxcor: int = 10,
     ftol: float = 2.220446049250313e-09,
     gtol: float = 1e-05,
-    maxfun: Optional[float] = None,
-    maxgrad: Optional[float] = None,
+    maxfun: float | None = None,
+    maxgrad: float | None = None,
     maxls: int = 20,
 ):
   """

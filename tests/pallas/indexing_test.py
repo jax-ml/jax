@@ -13,7 +13,9 @@
 # limitations under the License.
 
 """Tests for Pallas indexing logic and abstractions."""
-from typing import Union
+
+from __future__ import annotations
+
 import unittest
 
 from absl.testing import absltest
@@ -45,7 +47,7 @@ def int_indexer_strategy(dim) -> hps.SearchStrategy[int]:
 
 
 @hps.composite
-def slice_indexer_strategy(draw, dim) -> Union[Slice, slice]:
+def slice_indexer_strategy(draw, dim) -> Slice | slice:
   start = draw(int_indexer_strategy(dim))
   size = draw(hps.integers(min_value=0, max_value=np.iinfo(np.int32).max))
   return draw(
@@ -64,7 +66,7 @@ def array_indexer_strategy(draw, shape) -> jax.Array:
 
 @hps.composite
 def indexer_strategy(draw, dim, int_indexer_shape
-                     ) -> Union[int, Slice, jax.Array]:
+                     ) -> int | Slice | jax.Array:
   return draw(hps.one_of(
       int_indexer_strategy(dim),
       slice_indexer_strategy(dim),

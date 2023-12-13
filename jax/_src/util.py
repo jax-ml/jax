@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Iterable, Iterator, Sequence
 import functools
 from functools import partial
 import itertools as it
 import logging
 import operator
-from typing import (Any, Callable, Generic, Optional, TypeVar, overload, TYPE_CHECKING, cast)
+from typing import (Any, Callable, Generic, TypeVar, overload, TYPE_CHECKING, cast)
 import weakref
 
 import numpy as np
@@ -144,7 +146,7 @@ def merge_lists(bs: Sequence[bool], l0: Sequence[T], l1: Sequence[T]) -> list[T]
   return out
 
 def subs_list(
-    subs: Sequence[Optional[int]], src: Sequence[T], base: Sequence[T],
+    subs: Sequence[int | None], src: Sequence[T], base: Sequence[T],
 ) -> list[T]:
   base_ = iter(base)
   out = [src[i] if i is not None else next(base_) for i in subs]
@@ -153,7 +155,7 @@ def subs_list(
   return out
 
 def subs_list2(
-    subs1: Sequence[Optional[int]], subs2: Sequence[Optional[int]],
+    subs1: Sequence[int | None], subs2: Sequence[int | None],
     src1: Sequence[T], src2: Sequence[T], base: Sequence[T],
 ) -> list[T]:
   assert len(subs1) == len(subs2)
@@ -374,8 +376,8 @@ def ceil_of_ratio(x, y):
 
 def wraps(
     wrapped: Callable,
-    namestr: Optional[str] = None,
-    docstr: Optional[str] = None,
+    namestr: str | None = None,
+    docstr: str | None = None,
     **kwargs,
 ) -> Callable[[T], T]:
   """
@@ -533,7 +535,7 @@ class OrderedSet(Generic[T]):
 
 class HashableWrapper:
   x: Any
-  hash: Optional[int]
+  hash: int | None
   def __init__(self, x):
     self.x = x
     try: self.hash = hash(x)

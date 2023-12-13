@@ -22,6 +22,9 @@ For examples and details, see
 https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax.
 
 """
+
+from __future__ import annotations
+
 from collections.abc import Sequence
 import functools
 from typing import Any, Callable, Optional
@@ -271,7 +274,7 @@ def call_tf(
   return util.wraps(callable_tf)(make_call)
 
 
-def check_tf_result(idx: int, r_tf: TfVal, r_aval: Optional[core.ShapedArray]) -> TfVal:
+def check_tf_result(idx: int, r_tf: TfVal, r_aval: core.ShapedArray | None) -> TfVal:
   # Check that the TF function returns values of expected types. This
   # improves error reporting, preventing hard-to-diagnose errors downstream
   try:

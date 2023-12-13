@@ -14,13 +14,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from functools import partial
 import math
 from operator import index
 import typing
 from typing import Union
-from collections.abc import Hashable
 import warnings
 
 import numpy as np

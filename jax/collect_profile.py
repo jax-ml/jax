@@ -11,13 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from __future__ import annotations
+
 import argparse
 import gzip
 import os
 import pathlib
 import tempfile
-
-from typing import Optional
 
 # pytype: disable=import-error
 from jax._src import profiler as jax_profiler
@@ -65,7 +66,7 @@ parser.add_argument("--python_tracer_level", default=1,
                     help="Profiler Python tracer level", type=int)
 
 def collect_profile(port: int, duration_in_ms: int, host: str,
-                    log_dir: Optional[str], host_tracer_level: int,
+                    log_dir: str | None, host_tracer_level: int,
                     device_tracer_level: int, python_tracer_level: int,
                     no_perfetto_link: bool):
   options = profiler.ProfilerOptions(

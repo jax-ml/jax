@@ -31,6 +31,8 @@ jax2tf.convert docstring, and the
 [README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md).
 """
 
+from __future__ import annotations
+
 import collections
 from collections.abc import Iterable, Sequence
 import dataclasses
@@ -111,9 +113,9 @@ class _DimAtom:
   MOD = "mod"
   NON_NEGATIVE = "non_negative"  # The max of the operand and 0
 
-  def __init__(self, *operands: '_DimExpr',
-               var: Optional[str] = None,
-               operation: Optional[str] = None):
+  def __init__(self, *operands: _DimExpr,
+               var: str | None = None,
+               operation: str | None = None):
     if var is not None:
       assert operation is None
       assert not operands
@@ -124,10 +126,10 @@ class _DimAtom:
     self.operands = operands
 
   @classmethod
-  def from_var(cls, v: str) -> '_DimAtom':
+  def from_var(cls, v: str) -> _DimAtom:
     return _DimAtom(var=v)
 
-  def to_var(self) -> Optional[str]:
+  def to_var(self) -> str | None:
     return self.var
 
   def get_vars(self) -> set[str]:
@@ -141,7 +143,7 @@ class _DimAtom:
       return acc
 
   @classmethod
-  def from_operation(cls, operation: str, *operands: '_DimExpr') -> '_DimAtom':
+  def from_operation(cls, operation: str, *operands: _DimExpr) -> _DimAtom:
     return _DimAtom(*operands, operation=operation)
 
   def __str__(self):
@@ -161,7 +163,7 @@ class _DimAtom:
     if self.var is not None:
       return self.var == other.var
     else:
-      def symbolic_equal(e1: '_DimExpr', e2: '_DimExpr') -> bool:
+      def symbolic_equal(e1: _DimExpr, e2: _DimExpr) -> bool:
         try:
           return e1 == e2
         except InconclusiveDimensionOperation:
@@ -170,7 +172,7 @@ class _DimAtom:
               all(symbolic_equal(self_o, other_o)
                   for self_o, other_o in zip(self.operands, other.operands)))
 
-  def __lt__(self, other: '_DimAtom'):
+  def __lt__(self, other: _DimAtom):
     """
     Comparison to another atom in graded reverse lexicographic order.
     Used only for determining a sorting order, does not relate to the
@@ -266,14 +268,14 @@ class _DimMon(dict):
                     for key, exponent in sorted(self.items()))
 
   @classmethod
-  def from_var(cls, v: str) -> '_DimMon':
+  def from_var(cls, v: str) -> _DimMon:
     return _DimMon({_DimAtom.from_var(v): 1})
 
   @classmethod
   def from_atom(clscls, a: _DimAtom, aexp: int):
     return _DimMon({a: aexp})
 
-  def to_var(self) -> Optional[str]:
+  def to_var(self) -> str | None:
     """Extract the variable name "x", from a monomial "x".
      Return None, if the monomial is not a single variable."""
     items = self.items()
@@ -292,14 +294,14 @@ class _DimMon(dict):
     return acc
 
   @classmethod
-  def from_operation(cls, operation: str, *operands: '_DimExpr') -> '_DimMon':
+  def from_operation(cls, operation: str, *operands: _DimExpr) -> _DimMon:
     return _DimMon({_DimAtom.from_operation(operation, *operands): 1})
 
   @property
   def degree(self):
     return sum(self.values())
 
-  def __lt__(self, other: '_DimMon'):
+  def __lt__(self, other: _DimMon):
     """
     Comparison to another monomial in graded reverse lexicographic order.
     Used only for determining a sorting order, does not relate to the
@@ -309,13 +311,13 @@ class _DimMon(dict):
     other_key = -other.degree, tuple(sorted(other))
     return self_key > other_key
 
-  def mul(self, other: '_DimMon') -> '_DimMon':
+  def mul(self, other: _DimMon) -> _DimMon:
     """
     Returns the product with another monomial. Example: (n^2*m) * n == n^3 * m.
     """
     return _DimMon(collections.Counter(self) + collections.Counter(other))
 
-  def divide(self, divisor: '_DimMon') -> '_DimMon':
+  def divide(self, divisor: _DimMon) -> _DimMon:
     """
     Divides by another monomial. Raises a InconclusiveDimensionOperation
     if the result is not a monomial.
@@ -432,14 +434,14 @@ class _DimExpr():
     return _DimExpr.normalize({mon: exp})
 
   @classmethod
-  def from_var(cls, v: str) -> '_DimExpr':
+  def from_var(cls, v: str) -> _DimExpr:
     return _DimExpr({_DimMon.from_var(v): 1})
 
   @classmethod
-  def from_operation(cls, operation: str, *operands: '_DimExpr') -> '_DimExpr':
+  def from_operation(cls, operation: str, *operands: _DimExpr) -> _DimExpr:
     return _DimExpr.from_monomial(_DimMon.from_operation(operation, *operands), 1)
 
-  def to_var(self) -> Optional[str]:
+  def to_var(self) -> str | None:
     """Extract the variable name "x", from a symbolic expression."""
     items = self.monomials()
     if len(items) != 1:  # type: ignore
@@ -552,7 +554,7 @@ class _DimExpr():
       return self.__jax_array__().__rsub__(other)
     return _ensure_poly(other, "sub").__sub__(self)
 
-  def __neg__(self) -> '_DimExpr':
+  def __neg__(self) -> _DimExpr:
     return _DimExpr({mon: -coeff for mon, coeff in self.monomials()})
 
   def __mul__(self, other):
@@ -648,7 +650,7 @@ class _DimExpr():
     except InconclusiveDimensionOperation as e:
       raise self.inconclusive_comparison("<", other) from e
 
-  def divmod(self, divisor: "_DimExpr") -> tuple[DimSize, int]:
+  def divmod(self, divisor: _DimExpr) -> tuple[DimSize, int]:
     """
     Floor division with remainder (divmod) generalized to polynomials.
     If the `divisor` is not a constant, the remainder must be 0.
@@ -742,11 +744,11 @@ class _DimExpr():
              for mon, coeff in self.monomials()]
     return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
-  def non_negative(self) -> "_DimExpr":
+  def non_negative(self) -> _DimExpr:
     return _DimExpr.from_operation(_DimAtom.NON_NEGATIVE, self)
 
   @staticmethod
-  def get_aval(dim: "_DimExpr"):
+  def get_aval(dim: _DimExpr):
     return core.dim_value_aval()
 
   def dimension_as_value(self):
@@ -773,10 +775,10 @@ class _Decomposition:
 
 
 def _decompose_expr(e: _DimExpr, operation: str, *,
-                    with_factor: Optional[int] = None,
-                    with_exp: Optional[int] = None,
-                    with_rest_monomial: Optional[Union[_DimExpr, int]] = None,
-                    with_rest_expr: Optional[Union[_DimExpr, int]] = None,
+                    with_factor: int | None = None,
+                    with_exp: int | None = None,
+                    with_rest_monomial: _DimExpr | int | None = None,
+                    with_rest_expr: _DimExpr | int | None = None,
                     ) -> Iterable[_Decomposition]:
   """Computes the decompositions of `e` into `_Decomposition`.
 
@@ -994,9 +996,9 @@ class PolyShape(tuple):
     return "(" + ", ".join(["..." if d is ... else str(d) for d in self]) + ")"
 
 
-def symbolic_shape(shape_spec: Union[str, PolyShape, None],
+def symbolic_shape(shape_spec: str | PolyShape | None,
                    *,
-                   like: Optional[Sequence[Optional[int]]] = None
+                   like: Sequence[int | None] | None = None
                    ) -> Sequence[DimSize]:
   """Parses the shape polymorphic specification into a symbolic shape.
 
@@ -1028,7 +1030,7 @@ def symbolic_shape(shape_spec: Union[str, PolyShape, None],
 class _Parser:
   def __init__(self,
                shape_spec: str,
-               like_shape: Optional[Sequence[Optional[int]]],
+               like_shape: Sequence[int | None] | None,
                shape_spec_repr: str):
     self.shape_spec = shape_spec
     self.shape_spec_repr = shape_spec_repr  # For error messages
@@ -1043,7 +1045,7 @@ class _Parser:
     self.expect_token(tok, [tokenize.ENDMARKER])
     return sh
 
-  def add_dim(self, expr: Optional[DimSize], tok: tokenize.TokenInfo):
+  def add_dim(self, expr: DimSize | None, tok: tokenize.TokenInfo):
     if expr is None:
       raise self.parse_err(tok,
                            ("unexpected placeholder for unknown dimension; "
@@ -1057,7 +1059,7 @@ class _Parser:
                               f"like={self.like_shape}"))
     self.dimensions.append(expr)
 
-  def parse_err(self, tok: Optional[tokenize.TokenInfo], detail: str) -> Exception:
+  def parse_err(self, tok: tokenize.TokenInfo | None, detail: str) -> Exception:
     msg = (
         f"syntax error in symbolic shape {self.shape_spec_repr} "
         f"in dimension {len(self.dimensions)}: {detail}. ")
@@ -1289,7 +1291,7 @@ class ShapeConstraint:
   right: DimSize
   # `error_message_pieces` is a list of strings and DimSize. The error message
   # is formed by evaluating the DimSize and concatenating the sequence.
-  error_message_pieces: Sequence[Union[str, DimSize]]
+  error_message_pieces: Sequence[str | DimSize]
 
   def check_statically(self, eval: CachingShapeEvaluator) -> None:
     """Evaluates a constraint statically."""
@@ -1307,7 +1309,7 @@ class ShapeConstraint:
     if not ok:
       raise self.make_error(eval)
 
-  def compute(self, eval: CachingShapeEvaluator) -> Optional[jax.Array]:
+  def compute(self, eval: CachingShapeEvaluator) -> jax.Array | None:
     """Computes if the constraint is satisfied.
 
     If the constraint can be resolved statically returns None
@@ -1383,7 +1385,7 @@ class ShapeConstraints:
   def add_constraint(self,
                      comp: ShapeConstraint.Comparator,
                      left: DimSize, right: DimSize,
-                     error_message_pieces: Sequence[Union[str, DimSize]]):
+                     error_message_pieces: Sequence[str | DimSize]):
     c = ShapeConstraint(comp, left, right, error_message_pieces)
     self.constraints.append(c)
 
@@ -1445,7 +1447,7 @@ def _cached_pretty_print_dimension_descriptor(
 
 def pretty_print_dimension_descriptor(
     args_kwargs_tree: tree_util.PyTreeDef,
-    flat_arg_idx: int, dim_idx: Optional[int]) -> str:
+    flat_arg_idx: int, dim_idx: int | None) -> str:
   arg_str = _cached_pretty_print_dimension_descriptor(args_kwargs_tree, flat_arg_idx)
   if dim_idx is not None:
     arg_str += f".shape[{dim_idx}]"
@@ -1551,7 +1553,7 @@ def _solve_dim_equations(
   # Returns a shape environment and the shape constraints if it can solve all
   # dimension variables. Raises an exception if it cannot.
   shapeenv: DimVarEnv = {}
-  solution_error_message_pieces: list[Union[str, _DimExpr]] = [
+  solution_error_message_pieces: list[str | _DimExpr] = [
     " Obtained dimension variables: "
   ]  # Error message describing the solution
   # Prepare error message piece describing the polymorphic shape specs

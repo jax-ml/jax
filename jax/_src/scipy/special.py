@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from functools import partial
 import operator
-from typing import cast, Any, Optional
+from typing import cast, Any
 
 import numpy as np
 import scipy.special as osp_special
@@ -267,7 +269,7 @@ _BERNOULLI_COEFS = [
 
 @custom_derivatives.custom_jvp
 @_wraps(osp_special.zeta, module='scipy.special')
-def zeta(x: ArrayLike, q: Optional[ArrayLike] = None) -> Array:
+def zeta(x: ArrayLike, q: ArrayLike | None = None) -> Array:
   if q is None:
     raise NotImplementedError(
       "Riemann zeta function not implemented; pass q != None to compute the Hurwitz Zeta function.")
@@ -277,7 +279,7 @@ def zeta(x: ArrayLike, q: Optional[ArrayLike] = None) -> Array:
 
 # There is no general closed-form derivative for the zeta function, so we compute
 # derivatives via a series expansion
-def _zeta_series_expansion(x: ArrayLike, q: Optional[ArrayLike] = None) -> Array:
+def _zeta_series_expansion(x: ArrayLike, q: ArrayLike | None = None) -> Array:
   if q is None:
     raise NotImplementedError(
       "Riemann zeta function not implemented; pass q != None to compute the Hurwitz Zeta function.")
@@ -1199,7 +1201,7 @@ def sph_harm(m: Array,
              n: Array,
              theta: Array,
              phi: Array,
-             n_max: Optional[int] = None) -> Array:
+             n_max: int | None = None) -> Array:
   r"""Computes the spherical harmonics.
 
   The JAX version has one extra argument `n_max`, the maximum value in `n`.

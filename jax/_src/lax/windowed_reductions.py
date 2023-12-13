@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from functools import partial
-from typing import Callable, Optional, Union
+from typing import Callable
 import warnings
 
 import numpy as np
@@ -44,9 +46,9 @@ zip = util.safe_zip
 
 def reduce_window(operand, init_value, computation: Callable,
                   window_dimensions: core.Shape, window_strides: Sequence[int],
-                  padding: Union[str, Sequence[tuple[int, int]]],
-                  base_dilation: Optional[Sequence[int]] = None,
-                  window_dilation: Optional[Sequence[int]] = None) -> Array:
+                  padding: str | Sequence[tuple[int, int]],
+                  base_dilation: Sequence[int] | None = None,
+                  window_dilation: Sequence[int] | None = None) -> Array:
   """Wraps XLA's `ReduceWindowWithGeneralPadding
   <https://www.tensorflow.org/xla/operation_semantics#reducewindow>`_
   operator.
@@ -94,7 +96,7 @@ def reduce_window(operand, init_value, computation: Callable,
     return tree_util.tree_unflatten(out_tree, out_flat)
 
 def _get_monoid_window_reducer(monoid_op: Callable,
-                               xs: Sequence[Array]) -> Optional[Callable]:
+                               xs: Sequence[Array]) -> Callable | None:
   if len(xs) != 1:
     return None
   x, = xs
@@ -113,8 +115,8 @@ def _get_monoid_window_reducer(monoid_op: Callable,
 def _reduce_window_sum(operand: Array, window_dimensions: core.Shape,
                        window_strides: Sequence[int],
                        padding: Sequence[tuple[int, int]],
-                       base_dilation: Optional[Sequence[int]] = None,
-                       window_dilation: Optional[Sequence[int]] = None) -> Array:
+                       base_dilation: Sequence[int] | None = None,
+                       window_dilation: Sequence[int] | None = None) -> Array:
   if base_dilation is None:
     base_dilation = (1,) * len(window_dimensions)
   if window_dilation is None:
@@ -128,8 +130,8 @@ def _reduce_window_sum(operand: Array, window_dimensions: core.Shape,
 def _reduce_window_prod(operand: Array, window_dimensions: core.Shape,
                         window_strides: Sequence[int],
                         padding: Sequence[tuple[int, int]],
-                        base_dilation: Optional[Sequence[int]] = None,
-                        window_dilation: Optional[Sequence[int]] = None) -> Array:
+                        base_dilation: Sequence[int] | None = None,
+                        window_dilation: Sequence[int] | None = None) -> Array:
   init_value = lax._const(operand, 1)
   jaxpr, consts = lax._reduction_jaxpr(lax.mul, lax._abstractify(init_value))
   if base_dilation is None:
@@ -147,8 +149,8 @@ def _reduce_window_prod(operand: Array, window_dimensions: core.Shape,
 def _reduce_window_max(operand: Array, window_dimensions: core.Shape,
                        window_strides: Sequence[int],
                        padding: Sequence[tuple[int, int]],
-                       base_dilation: Optional[Sequence[int]] = None,
-                       window_dilation: Optional[Sequence[int]] = None) -> Array:
+                       base_dilation: Sequence[int] | None = None,
+                       window_dilation: Sequence[int] | None = None) -> Array:
   if base_dilation is None:
     base_dilation = (1,) * len(window_dimensions)
   if window_dilation is None:
@@ -162,8 +164,8 @@ def _reduce_window_max(operand: Array, window_dimensions: core.Shape,
 def _reduce_window_min(operand: Array, window_dimensions: core.Shape,
                        window_strides: Sequence[int],
                        padding: Sequence[tuple[int, int]],
-                       base_dilation: Optional[Sequence[int]] = None,
-                       window_dilation: Optional[Sequence[int]] = None) -> Array:
+                       base_dilation: Sequence[int] | None = None,
+                       window_dilation: Sequence[int] | None = None) -> Array:
   if base_dilation is None:
     base_dilation = (1,) * len(window_dimensions)
   if window_dilation is None:
@@ -178,8 +180,8 @@ def _reduce_window_logaddexp(
     operand: Array, window_dimensions: core.Shape,
     window_strides: Sequence[int],
     padding: Sequence[tuple[int, int]],
-    base_dilation: Optional[Sequence[int]] = None,
-    window_dilation: Optional[Sequence[int]] = None) -> Array:
+    base_dilation: Sequence[int] | None = None,
+    window_dilation: Sequence[int] | None = None) -> Array:
   init_value = lax._const(operand, -np.inf)
   jaxpr, consts = lax._reduction_jaxpr(logaddexp, lax._abstractify(init_value))
   if base_dilation is None:

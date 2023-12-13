@@ -15,6 +15,8 @@
 
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import copy
 import dataclasses
@@ -68,7 +70,7 @@ class DisabledSafetyCheck:
   _impl: str
 
   @classmethod
-  def platform(cls) -> "DisabledSafetyCheck":
+  def platform(cls) -> DisabledSafetyCheck:
     """Allows the execution platform to differ from the serialization platform.
 
     Has effect only on deserialization.
@@ -76,7 +78,7 @@ class DisabledSafetyCheck:
     return DisabledSafetyCheck("platform")
 
   @classmethod
-  def custom_call(cls, target_name: str) -> "DisabledSafetyCheck":
+  def custom_call(cls, target_name: str) -> DisabledSafetyCheck:
     """Allows the serialization of a call target not known to be stable.
 
     Has effect only on serialization.
@@ -86,7 +88,7 @@ class DisabledSafetyCheck:
     return DisabledSafetyCheck(f"custom_call:{target_name}")
 
   @classmethod
-  def shape_assertions(cls) -> "DisabledSafetyCheck":
+  def shape_assertions(cls) -> DisabledSafetyCheck:
     """Allows invocations with shapes that do not meet the constraints.
 
     Has effect on serialization (to suppress the generation of the assertions)
@@ -94,7 +96,7 @@ class DisabledSafetyCheck:
     """
     return DisabledSafetyCheck("shape_assertions")
 
-  def is_custom_call(self) -> Optional[str]:
+  def is_custom_call(self) -> str | None:
     """Returns the custom call target allowed by this directive."""
     m = re.match(r'custom_call:(.+)$', self._impl)
     return m.group(1) if m else None
@@ -125,7 +127,7 @@ _VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS = 9
 LoweringSharding = Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]
 
 # None means unspecified sharding
-Sharding = Optional[xla_client.HloSharding]
+Sharding = Union[xla_client.HloSharding, None]
 
 @dataclasses.dataclass(frozen=True)
 class Exported:
@@ -288,7 +290,7 @@ class Exported:
   module_kept_var_idx: tuple[int, ...]
   uses_shape_polymorphism: bool
 
-  _get_vjp: Optional[Callable[["Exported"], "Exported"]]
+  _get_vjp: Callable[[Exported], Exported] | None
 
   def mlir_module(self) -> ir.Module:
     return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
@@ -301,7 +303,7 @@ class Exported:
   def has_vjp(self) -> bool:
     return self._get_vjp is not None
 
-  def vjp(self) -> "Exported":
+  def vjp(self) -> Exported:
     """Gets the exported VJP.
 
     Returns None if not available, which can happen if the Exported has been
@@ -316,9 +318,9 @@ def default_lowering_platform() -> str:
   return xb.canonicalize_platform(jax.default_backend())
 
 def symbolic_shape(
-  shape_spec: Optional[str],
+  shape_spec: str | None,
   *,
-  like: Optional[Sequence[Optional[int]]] = None) -> Shape:
+  like: Sequence[int | None] | None = None) -> Shape:
   """Constructs a jax.ShapeDtypeStruct with polymorphic shapes.
 
   Args:
@@ -338,7 +340,7 @@ def symbolic_shape(
   """
   return shape_poly.symbolic_shape(shape_spec, like=like)
 
-def shape_and_dtype_jax_array(a) -> tuple[Sequence[Optional[int]], DType]:
+def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
   """Returns the shape and dtype of a jax.Array."""
   aval = core.raise_to_shaped(core.get_aval(a))
   return aval.shape, aval.dtype
@@ -404,7 +406,7 @@ def _keep_main_tokens(serialization_version: int) -> bool:
 
 def export(fun_jax: Callable,
            *,
-           lowering_platforms: Optional[Sequence[str]] = None,
+           lowering_platforms: Sequence[str] | None = None,
            disabled_checks: Sequence[DisabledSafetyCheck] = (),
            ) -> Callable[..., Exported]:
   """Exports native serialization for a JAX function.
@@ -965,10 +967,10 @@ def canonical_shardings(
     device_assignment: Sequence[jax.Device],
     in_shardings: Sequence[Sharding],
     out_shardings: Sequence[Sharding]
-    ) -> tuple[Union[pxla.UnspecifiedValue,
-                     Sequence[sharding.XLACompatibleSharding]],
-               Union[pxla.UnspecifiedValue,
-                     Sequence[sharding.XLACompatibleSharding]]]:
+    ) -> tuple[(pxla.UnspecifiedValue |
+                     Sequence[sharding.XLACompatibleSharding]),
+               (pxla.UnspecifiedValue |
+                     Sequence[sharding.XLACompatibleSharding])]:
   """Prepares canonical in_ and out_shardings for a pjit invocation.
 
   The pjit front-end is picky about what in- and out-shardings it accepts,
@@ -980,8 +982,8 @@ def canonical_shardings(
   """
   replicated_s = sharding.GSPMDSharding.get_replicated(device_assignment)
   def canonicalize(
-    ss: Sequence[Sharding]) -> Union[pxla.UnspecifiedValue,
-                                     Sequence[sharding.XLACompatibleSharding]]:
+    ss: Sequence[Sharding]) -> (pxla.UnspecifiedValue |
+                                     Sequence[sharding.XLACompatibleSharding]):
     if all(s is None for s in ss):
       return sharding_impls.UNSPECIFIED
     return tuple(
@@ -1108,7 +1110,7 @@ def _call_exported_abstract_eval(
   assert len(in_avals) == len(exported.in_avals)  # since the pytrees have the same structure
   # Check that the expected shapes match the actual ones
   for arg_idx, (exp_aval, actual_aval) in enumerate(zip(exported.in_avals, in_avals)):
-    def pp_arg_dim(dim_idx: Optional[int]) -> str:
+    def pp_arg_dim(dim_idx: int | None) -> str:
       return shape_poly.pretty_print_dimension_descriptor(exported.in_tree,
                                                           arg_idx, dim_idx)
     if len(exp_aval.shape) != len(actual_aval.shape):

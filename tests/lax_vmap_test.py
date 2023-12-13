@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
 
 from functools import partial
 import itertools
 import math
-from typing import Optional, cast
+from typing import Union, cast
 import unittest
 
 from absl.testing import absltest
@@ -73,8 +74,8 @@ class LaxVmapTest(jtu.JaxTestCase):
      for lhs_shape in [(b * batch_group_count, i * feature_group_count, 6, 7)]
      for rhs_shape in [(j * batch_group_count * feature_group_count, i, 1, 2)]],
     [dict(lhs_bdim=lhs_bdim, rhs_bdim=rhs_bdim)
-        for lhs_bdim in itertools.chain([cast(Optional[int], None)], range(5))
-        for rhs_bdim in itertools.chain([cast(Optional[int], None)], range(5))
+        for lhs_bdim in itertools.chain([cast(Union[int, None], None)], range(5))
+        for rhs_bdim in itertools.chain([cast(Union[int, None], None)], range(5))
         if (lhs_bdim, rhs_bdim) != (None, None)
     ],
     [dict(dimension_numbers=dim_nums, perms=perms)

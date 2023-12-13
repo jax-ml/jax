@@ -14,6 +14,8 @@
 
 """Module containing rms forward and backward pass."""
 
+from __future__ import annotations
+
 import functools
 
 from typing import Optional
@@ -58,8 +60,8 @@ def rms_norm_forward_kernel(
 
 def rms_norm_forward(
     x, weight, bias,
-    num_warps: Optional[int] = None,
-    num_stages: Optional[int] = 3,
+    num_warps: int | None = None,
+    num_stages: int | None = 3,
     eps: float = 1e-5,
     backward_pass_impl: str = 'triton',
     interpret: bool = False):
@@ -161,8 +163,8 @@ def rms_norm_backward_kernel_dw_db(
 
 
 def rms_norm_backward(
-    num_warps: Optional[int],
-    num_stages: Optional[int],
+    num_warps: int | None,
+    num_stages: int | None,
     eps: float,
     backward_pass_impl: str,
     interpret: bool,
@@ -227,8 +229,8 @@ def rms_norm_backward(
                                              "interpret"])
 def rms_norm(
     x, weight, bias,
-    num_warps: Optional[int] = None,
-    num_stages: Optional[int] = 3,
+    num_warps: int | None = None,
+    num_stages: int | None = 3,
     eps: float = 1e-5,
     backward_pass_impl: str = 'triton',
     interpret: bool = False):

@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import math
-from typing import Any, Optional, Union, cast as type_cast
+from typing import Any, Union, cast as type_cast
 
 import jax
 from jax._src.numpy import lax_numpy as jnp
@@ -27,12 +29,12 @@ def conv_general_dilated_patches(
     lhs: jax.typing.ArrayLike,
     filter_shape: Sequence[int],
     window_strides: Sequence[int],
-    padding: Union[str, Sequence[tuple[int, int]]],
-    lhs_dilation: Optional[Sequence[int]] = None,
-    rhs_dilation: Optional[Sequence[int]] = None,
-    dimension_numbers: Optional[convolution.ConvGeneralDilatedDimensionNumbers] = None,
-    precision: Optional[lax.PrecisionType] = None,
-    preferred_element_type: Optional[DType] = None,
+    padding: str | Sequence[tuple[int, int]],
+    lhs_dilation: Sequence[int] | None = None,
+    rhs_dilation: Sequence[int] | None = None,
+    dimension_numbers: convolution.ConvGeneralDilatedDimensionNumbers | None = None,
+    precision: lax.PrecisionType | None = None,
+    preferred_element_type: DType | None = None,
 ) -> jax.Array:
   """Extract patches subject to the receptive field of `conv_general_dilated`.
 
@@ -123,11 +125,11 @@ def conv_general_dilated_local(
     lhs: jax.typing.ArrayLike,
     rhs: jax.typing.ArrayLike,
     window_strides: Sequence[int],
-    padding: Union[str, Sequence[tuple[int, int]]],
+    padding: str | Sequence[tuple[int, int]],
     filter_shape: Sequence[int],
-    lhs_dilation: Optional[Sequence[int]] = None,
-    rhs_dilation: Optional[Sequence[int]] = None,
-    dimension_numbers: Optional[convolution.ConvGeneralDilatedDimensionNumbers] = None,
+    lhs_dilation: Sequence[int] | None = None,
+    rhs_dilation: Sequence[int] | None = None,
+    dimension_numbers: convolution.ConvGeneralDilatedDimensionNumbers | None = None,
     precision: lax.PrecisionLike = None
 ) -> jax.Array:
   """General n-dimensional unshared convolution operator with optional dilation.
@@ -202,7 +204,7 @@ def conv_general_dilated_local(
 
   c_precision = lax.canonicalize_precision(precision)
   lhs_precision = type_cast(
-      Optional[lax.PrecisionType],
+      Union[lax.PrecisionType, None],
       (c_precision[0]
        if (isinstance(c_precision, tuple) and len(c_precision) == 2)
        else c_precision))

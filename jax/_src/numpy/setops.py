@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from functools import partial
 import math
 import operator
 from textwrap import dedent as _dedent
-from typing import Optional, Union, cast
+from typing import cast
 
 import numpy as np
 
@@ -79,7 +81,7 @@ def _in1d(ar1: ArrayLike, ar2: ArrayLike, invert: bool) -> Array:
         When ``size`` is specified and there are fewer than the indicated number of elements, the
         remaining elements will be filled with ``fill_value``, which defaults to zero."""))
 def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
-              *, size: Optional[int] = None, fill_value: Optional[ArrayLike] = None) -> Array:
+              *, size: int | None = None, fill_value: ArrayLike | None = None) -> Array:
   check_arraylike("setdiff1d", ar1, ar2)
   if size is None:
     ar1 = core.concrete_or_error(None, ar1, "The error arose in setdiff1d()")
@@ -117,7 +119,7 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
         remaining elements will be filled with ``fill_value``, which defaults to the minimum
         value of the union."""))
 def union1d(ar1: ArrayLike, ar2: ArrayLike,
-            *, size: Optional[int] = None, fill_value: Optional[ArrayLike] = None) -> Array:
+            *, size: int | None = None, fill_value: ArrayLike | None = None) -> Array:
   check_arraylike("union1d", ar1, ar2)
   if size is None:
     ar1 = core.concrete_or_error(None, ar1, "The error arose in union1d()")
@@ -175,7 +177,7 @@ def _intersect1d_sorted_mask(ar1: ArrayLike, ar2: ArrayLike, return_indices: boo
 
 @_wraps(np.intersect1d)
 def intersect1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
-                return_indices: bool = False) -> Union[Array, tuple[Array, Array, Array]]:
+                return_indices: bool = False) -> Array | tuple[Array, Array, Array]:
   check_arraylike("intersect1d", ar1, ar2)
   ar1 = core.concrete_or_error(None, ar1, "The error arose in intersect1d()")
   ar2 = core.concrete_or_error(None, ar2, "The error arose in intersect1d()")
@@ -253,9 +255,9 @@ def _unique_sorted_mask(ar: Array, axis: int) -> tuple[Array, Array, Array]:
   return aux, mask, perm
 
 def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bool = False,
-            return_counts: bool = False, size: Optional[int] = None,
-            fill_value: Optional[ArrayLike] = None, return_true_size: bool = False
-            ) -> Union[Array, tuple[Array, ...]]:
+            return_counts: bool = False, size: int | None = None,
+            fill_value: ArrayLike | None = None, return_true_size: bool = False
+            ) -> Array | tuple[Array, ...]:
   """
   Find the unique elements of an array along a particular axis.
   """
@@ -325,8 +327,8 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
         remaining elements will be filled with ``fill_value``. The default is the minimum value
         along the specified axis of the input."""))
 def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = False,
-           return_counts: bool = False, axis: Optional[int] = None,
-           *, size: Optional[int] = None, fill_value: Optional[ArrayLike] = None):
+           return_counts: bool = False, axis: int | None = None,
+           *, size: int | None = None, fill_value: ArrayLike | None = None):
   check_arraylike("unique", ar)
   if size is None:
     ar = core.concrete_or_error(None, ar,

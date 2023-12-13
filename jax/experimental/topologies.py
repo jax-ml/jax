@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import abc
 from collections.abc import Sequence
 from typing import Optional
@@ -34,7 +36,7 @@ def get_attached_topology(platform=None) -> TopologyDescription:
 
 
 def get_topology_desc(
-    topology_name: str = "", platform: Optional[str] = None, **kwargs
+    topology_name: str = "", platform: str | None = None, **kwargs
 ) -> TopologyDescription:
   if platform == "tpu" or platform is None:
     return TopologyDescription(

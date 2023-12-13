@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
 
 import enum
 from functools import partial
 import itertools
 import typing
-from typing import Any, Optional
+from typing import Any
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -54,7 +55,7 @@ all_dtypes = default_dtypes + jtu.dtypes.boolean
 class IndexSpec(typing.NamedTuple):
   shape: tuple[int, ...]
   indexer: Any
-  out_shape: Optional[tuple[int, ...]] = None
+  out_shape: tuple[int, ...] | None = None
 
 
 def check_grads(f, args, order, atol=None, rtol=None, eps=None):

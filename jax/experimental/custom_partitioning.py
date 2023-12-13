@@ -12,9 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import jax
+from __future__ import annotations
+
 import inspect
 from typing import Optional
+import weakref
+
+import jax
 from jax._src import core
 from jax import tree_util
 from jax._src import linear_util as lu
@@ -31,8 +35,6 @@ from jax._src import custom_api_util
 from jax._src.lib import xla_client as xc
 from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.api_util import argnums_partial
-
-import weakref
 
 
 def _resolve_kwargs(fun, args, kwargs):
@@ -494,7 +496,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
     return mlir.lower_fun(
         core.jaxpr_as_fun(call), multiple_results=True)(ctx, *values)
 
-  def to_mesh_pspec_sharding(hlo_sharding: Optional[xc.HloSharding], ndim):
+  def to_mesh_pspec_sharding(hlo_sharding: xc.HloSharding | None, ndim):
     if hlo_sharding is None:
       return hlo_sharding
     if mesh.empty or not decode_shardings:

@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from contextlib import contextmanager
 from functools import partial
 import itertools as it
-from typing import Any, Optional, Callable, Union, TypeVar
+from typing import Any, Callable, TypeVar, Union
 
 import numpy as np
 from absl.testing import absltest
@@ -1348,10 +1350,10 @@ class NamedArray:
     return f'NamedArray(names={self.names}, data={self.data})'
 
 class NamedMapSpec:
-  name: Optional[str]
-  axis: Optional[int]
+  name: str | None
+  axis: int | None
 
-  def __init__(self, name: str, axis: Optional[int]):
+  def __init__(self, name: str, axis: int | None):
     assert (name is None) == (axis is None)
     self.name = name
     self.axis = axis
@@ -1366,7 +1368,7 @@ register_pytree_node(NamedArray,
                      lambda names, xs: NamedArray(names, xs[0]))
 
 
-def named_to_elt(cont: Callable[[Array, Optional[int]], ArrayElt],
+def named_to_elt(cont: Callable[[Array, int | None], ArrayElt],
                  _: Int, val: NamedArray, spec: NamedMapSpec) -> NamedArray:
   if spec.name is None:
     return val
@@ -1376,7 +1378,7 @@ def named_to_elt(cont: Callable[[Array, Optional[int]], ArrayElt],
     elt = cont(val.data, spec.axis)
     return NamedArray(elt_names, elt)
 
-def named_from_elt(cont: Callable[[int, ArrayElt, Optional[int]], Array],
+def named_from_elt(cont: Callable[[int, ArrayElt, int | None], Array],
                    axis_size: int, elt: NamedArray, annotation: NamedMapSpec
                    ) -> NamedArray:
   data = cont(axis_size, elt.data, annotation.axis)

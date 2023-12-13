@@ -13,6 +13,8 @@
 # limitations under the License.
 """Tests for the shape-polymorphic jax2tf conversion."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import contextlib
 import math
@@ -80,14 +82,14 @@ class PolyHarness(Harness):
                fun: Callable,
                *,
                arg_descriptors: Sequence[test_harnesses.ArgDescriptor] = (),
-               polymorphic_shapes: Sequence[Optional[str]] = (),
-               input_signature: Optional[Sequence[tf.TensorSpec]] = None,
-               expected_output_signature: Optional[tf.TensorSpec] = None,
+               polymorphic_shapes: Sequence[str | None] = (),
+               input_signature: Sequence[tf.TensorSpec] | None = None,
+               expected_output_signature: tf.TensorSpec | None = None,
                enable_xla: bool = True,
-               expect_error: tuple[Optional[Any], Optional[str]] = (None, None),
+               expect_error: tuple[Any | None, str | None] = (None, None),
                skip_jax_run: bool = False,
                check_result: bool = True,
-               tol: Optional[float] = None,
+               tol: float | None = None,
                limitations: Sequence[Jax2TfLimitation] = (),
                override_jax_config_flags: dict[str, Any] = {}):
     """Args:
@@ -129,7 +131,7 @@ class PolyHarness(Harness):
     self.override_jax_config_flags = override_jax_config_flags
 
   # Replicate the harness for both enable and disable xla
-  def both_enable_and_disable_xla(self) -> tuple["PolyHarness", "PolyHarness"]:
+  def both_enable_and_disable_xla(self) -> tuple[PolyHarness, PolyHarness]:
     assert self.enable_xla
     other = PolyHarness(self.group_name,
                         f"{self.name}_enable_xla_False",
@@ -144,7 +146,7 @@ class PolyHarness(Harness):
     self.name = f"{self.name}_enable_xla_True"
     return (self, other)
 
-  def run_test(self, tst: tf_test_util.JaxToTfTestCase) -> Optional[jax.Array]:
+  def run_test(self, tst: tf_test_util.JaxToTfTestCase) -> jax.Array | None:
     def log_message(extra: str):
       return f"[{tst._testMethodName}]: {extra}"
 
@@ -243,10 +245,10 @@ class PolyHarness(Harness):
 def check_shape_poly(tst, f_jax: Callable, *,
                      arg_descriptors: Sequence[test_harnesses.ArgDescriptor] = (),
                      skip_jax_run: bool = False,
-                     polymorphic_shapes: Sequence[Optional[str]] = (),
-                     input_signature: Optional[Sequence[tf.TensorSpec]] = None,
-                     expected_output_signature: Optional[tf.TensorSpec] = None,
-                     expect_error=(None, None)) -> Optional[jax.Array]:
+                     polymorphic_shapes: Sequence[str | None] = (),
+                     input_signature: Sequence[tf.TensorSpec] | None = None,
+                     expected_output_signature: tf.TensorSpec | None = None,
+                     expect_error=(None, None)) -> jax.Array | None:
   # Makes and tests a harness. See PolyHarness documentation.
   h = PolyHarness("", "", f_jax,
                   arg_descriptors=arg_descriptors,
@@ -427,10 +429,10 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
   def test_arg_avals_non_native(self):
     """Test conversion of actual arguments to abstract values."""
 
-    def check_avals(*, arg_shapes: Sequence[Sequence[Optional[int]]],
-                    polymorphic_shapes: Sequence[Optional[Union[str, PS]]],
-                    expected_avals: Optional[Sequence[core.ShapedArray]] = None,
-                    expected_shapeenv: Optional[dict[str, int]] = None,
+    def check_avals(*, arg_shapes: Sequence[Sequence[int | None]],
+                    polymorphic_shapes: Sequence[str | PS | None],
+                    expected_avals: Sequence[core.ShapedArray] | None = None,
+                    expected_shapeenv: dict[str, int] | None = None,
                     eager_mode: bool = False):
       # Use eager mode only for when all arg_shapes are known, in order to
       # check expected_shapeenv.
@@ -637,7 +639,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
            )),
   ])
   def test_shape_constraints_errors(self, *,
-      shape, poly_spec: str, expect_error: Optional[str] = None):
+      shape, poly_spec: str, expect_error: str | None = None):
     def f_jax(x):  # x: f32[a + 2*b, a, a + b + c]
       return 0.
 
@@ -2622,7 +2624,7 @@ def _make_vmap_primitive_harnesses() -> Sequence[PolyHarness]:
       continue
 
     def make_batched_arg_descriptor(
-        ad: test_harnesses.ArgDescriptor) -> Optional[test_harnesses.ArgDescriptor]:
+        ad: test_harnesses.ArgDescriptor) -> test_harnesses.ArgDescriptor | None:
       if isinstance(ad, RandArg):
         return RandArg((batch_size,) + ad.shape, ad.dtype)
       elif isinstance(ad, CustomArg):

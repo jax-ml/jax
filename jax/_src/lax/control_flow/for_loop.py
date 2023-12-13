@@ -13,10 +13,12 @@
 # limitations under the License.
 """Module for the `for_loop` primitive."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import functools
 import operator
-from typing import Any, Callable, Generic, Optional, TypeVar, Union
+from typing import Any, Callable, Generic, TypeVar
 
 import jax.numpy as jnp
 from jax import lax
@@ -100,7 +102,7 @@ def _trace_to_jaxpr_with_refs(f, state_tree: PyTreeDef,
       f, state_avals)
   return jaxpr, consts, out_tree_thunk()
 
-def for_loop(nsteps: Union[int, Sequence[int]],
+def for_loop(nsteps: int | Sequence[int],
              body: Callable[[Array, Ref[S]], None], init_state: S,
              *, reverse: bool = False, unroll: int = 1) -> S:
   """A for-loop combinator that allows read/write semantics in the loop body.
@@ -176,7 +178,7 @@ Y = TypeVar('Y')
 def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
          init: Carry,
          xs: X,
-         length: Optional[int] = None,
+         length: int | None = None,
          reverse: bool = False,
          unroll: int = 1) -> tuple[Carry, Y]:
   if not callable(f):
@@ -254,7 +256,7 @@ def _for_abstract_eval(*avals, jaxpr, **__):
 def _for_discharge_rule(in_avals, _, *args: Any, jaxpr: core.Jaxpr,
                         reverse: bool, which_linear: Sequence[bool],
                         nsteps: int, unroll: int
-                        ) -> tuple[Sequence[Optional[Any]], Sequence[Any]]:
+                        ) -> tuple[Sequence[Any | None], Sequence[Any]]:
   out_vals = for_p.bind(*args, jaxpr=jaxpr, reverse=reverse,
                         which_linear=which_linear, nsteps=nsteps,
                         unroll=unroll)

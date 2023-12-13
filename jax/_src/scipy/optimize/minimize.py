@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
 import jax
 from jax._src.scipy.optimize.bfgs import minimize_bfgs
@@ -39,14 +41,14 @@ class OptimizeResults(NamedTuple):
     nit: integer number of iterations of the optimization algorithm.
   """
   x: jax.Array
-  success: Union[bool, jax.Array]
-  status: Union[int, jax.Array]
+  success: bool | jax.Array
+  status: int | jax.Array
   fun: jax.Array
   jac: jax.Array
-  hess_inv: Optional[jax.Array]
-  nfev: Union[int, jax.Array]
-  njev: Union[int, jax.Array]
-  nit: Union[int, jax.Array]
+  hess_inv: jax.Array | None
+  nfev: int | jax.Array
+  njev: int | jax.Array
+  nit: int | jax.Array
 
 
 def minimize(
@@ -55,8 +57,8 @@ def minimize(
     args: tuple = (),
     *,
     method: str,
-    tol: Optional[float] = None,
-    options: Optional[Mapping[str, Any]] = None,
+    tol: float | None = None,
+    options: Mapping[str, Any] | None = None,
 ) -> OptimizeResults:
   """Minimization of scalar function of one or more variables.
 

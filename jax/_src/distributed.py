@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import atexit
 from collections.abc import Sequence
 import logging
 import os
-from typing import Any, Optional, Union
+from typing import Any
 
 from jax._src import clusters
 from jax._src import config
@@ -29,16 +31,16 @@ logger = logging.getLogger(__name__)
 class State:
   process_id: int = 0
   num_processes: int = 1
-  service: Optional[Any] = None
-  client: Optional[Any] = None
-  preemption_sync_manager: Optional[Any] = None
-  coordinator_address: Optional[str] = None
+  service: Any | None = None
+  client: Any | None = None
+  preemption_sync_manager: Any | None = None
+  coordinator_address: str | None = None
 
   def initialize(self,
-                 coordinator_address: Optional[str] = None,
-                 num_processes: Optional[int] = None,
-                 process_id: Optional[int] = None,
-                 local_device_ids: Optional[Union[int, Sequence[int]]] = None,
+                 coordinator_address: str | None = None,
+                 num_processes: int | None = None,
+                 process_id: int | None = None,
+                 local_device_ids: int | Sequence[int] | None = None,
                  initialization_timeout: int = 300):
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS', None))
@@ -108,10 +110,10 @@ class State:
 global_state = State()
 
 
-def initialize(coordinator_address: Optional[str] = None,
-               num_processes: Optional[int] = None,
-               process_id: Optional[int] = None,
-               local_device_ids: Optional[Union[int, Sequence[int]]] = None,
+def initialize(coordinator_address: str | None = None,
+               num_processes: int | None = None,
+               process_id: int | None = None,
+               local_device_ids: int | Sequence[int] | None = None,
                initialization_timeout: int = 300):
   """Initializes the JAX distributed system.
 

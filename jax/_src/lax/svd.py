@@ -33,9 +33,11 @@ SIAM Journal on Matrix Analysis and Applications 31, no. 5 (2010): 2700-2720.
 https://epubs.siam.org/doi/abs/10.1137/090774999
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import functools
-from typing import Any, Union
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -46,7 +48,7 @@ from jax._src import core
 @functools.partial(jax.jit, static_argnums=(2, 3))
 def _constant_svd(
     a: Any, return_nan: bool, full_matrices: bool, compute_uv: bool = True
-) -> Union[Any, Sequence[Any]]:
+) -> Any | Sequence[Any]:
   """SVD on matrix of all zeros."""
   m, n = a.shape
   k = min(m, n)
@@ -91,7 +93,7 @@ def _constant_svd(
 @functools.partial(jax.jit, static_argnums=(1, 2, 3))
 def _svd_tall_and_square_input(
     a: Any, hermitian: bool, compute_uv: bool, max_iterations: int
-) -> Union[Any, Sequence[Any]]:
+) -> Any | Sequence[Any]:
   """Singular value decomposition for m x n matrix and m >= n.
 
   Args:
@@ -151,7 +153,7 @@ def _qdwh_svd(a: Any,
               full_matrices: bool,
               compute_uv: bool = True,
               hermitian: bool = False,
-              max_iterations: int = 10) -> Union[Any, Sequence[Any]]:
+              max_iterations: int = 10) -> Any | Sequence[Any]:
   """Singular value decomposition.
 
   Args:
@@ -217,7 +219,7 @@ def svd(a: Any,
         full_matrices: bool,
         compute_uv: bool = True,
         hermitian: bool = False,
-        max_iterations: int = 10) -> Union[Any, Sequence[Any]]:
+        max_iterations: int = 10) -> Any | Sequence[Any]:
   """Singular value decomposition.
 
   Args:

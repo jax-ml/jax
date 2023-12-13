@@ -13,6 +13,8 @@
 # limitations under the License.
 """All the models to convert."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 import dataclasses
 import functools
@@ -46,8 +48,8 @@ class ModelHarness:
   variables: dict[str, Any]
   inputs: Sequence[np.ndarray]
   rtol: float = 1e-4
-  polymorphic_shapes: Optional[Sequence[Union[str, None]]] = None
-  tensor_spec: Optional[Sequence[tf.TensorSpec]] = None
+  polymorphic_shapes: Sequence[str | None] | None = None
+  tensor_spec: Sequence[tf.TensorSpec] | None = None
 
   def __post_init__(self):
     # When providing polymorphic shapes, tensor_spec should be provided as well.

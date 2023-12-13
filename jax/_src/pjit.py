@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Sequence, Iterable
 import dataclasses
 from functools import partial, lru_cache
@@ -19,7 +21,7 @@ import inspect
 import itertools as it
 import logging
 import weakref
-from typing import Callable, Union, cast, Optional, NamedTuple, Any
+from typing import Callable, cast, NamedTuple, Any, Union
 import threading
 import warnings
 
@@ -384,12 +386,12 @@ class PjitInfo(NamedTuple):
   static_argnames: tuple[str, ...]
   donate_argnums: tuple[int, ...]
   donate_argnames: tuple[str, ...]
-  device: Optional[xc.Device]
-  backend: Optional[str]
+  device: xc.Device | None
+  backend: str | None
   keep_unused: bool
   inline: bool
   resource_env: Any
-  abstracted_axes: Optional[Any]
+  abstracted_axes: Any | None
   in_layouts: Any  # pytree[XlaCompatibleLayout] | None
   out_layouts: Any  # pytree[XlaCompatibleLayout] | None
 
@@ -554,7 +556,7 @@ def _extract_implicit_args(
   return [x for x, (_, e) in zip(args, in_type) if not e]  # type: ignore
 
 def _flat_axes_specs(abstracted_axes, *args, **kwargs
-                     ) -> Optional[list[pe.AbstractedAxesSpec]]:
+                     ) -> list[pe.AbstractedAxesSpec] | None:
   if abstracted_axes is None: return None
   if kwargs: raise NotImplementedError
   def ax_leaf(l):
@@ -569,15 +571,15 @@ def pjit(
     fun: Callable,
     in_shardings=UNSPECIFIED,
     out_shardings=UNSPECIFIED,
-    static_argnums: Union[int, Sequence[int], None] = None,
-    static_argnames: Union[str, Iterable[str], None] = None,
-    donate_argnums: Union[int, Sequence[int], None] = None,
-    donate_argnames: Union[str, Iterable[str], None] = None,
+    static_argnums: int | Sequence[int] | None = None,
+    static_argnames: str | Iterable[str] | None = None,
+    donate_argnums: int | Sequence[int] | None = None,
+    donate_argnames: str | Iterable[str] | None = None,
     keep_unused: bool = False,
-    device: Optional[xc.Device] = None,
-    backend: Optional[str] = None,
+    device: xc.Device | None = None,
+    backend: str | None = None,
     inline: bool = False,
-    abstracted_axes: Optional[Any] = None,
+    abstracted_axes: Any | None = None,
 ) -> stages.Wrapped:
   """Makes ``fun`` compiled and automatically partitioned across multiple devices.
 
@@ -1001,7 +1003,7 @@ def _pjit_jaxpr(fun, out_shardings_thunk, out_layouts_thunk, in_type, debug_info
 
 
 def pjit_check_aval_sharding(
-    shardings, flat_avals, names: Optional[tuple[str, ...]],
+    shardings, flat_avals, names: tuple[str, ...] | None,
     what_aval: str, allow_uneven_sharding: bool):
   new_names = [''] * len(shardings) if names is None else names
   for aval, s, name in zip(flat_avals, shardings, new_names):
@@ -1045,7 +1047,7 @@ pjit_p.multiple_results = True
 def _resolve_in_shardings(
     args, pjit_in_shardings: Sequence[PjitSharding],
     out_shardings: Sequence[PjitSharding],
-    pjit_mesh: Optional[pxla.Mesh]) -> Sequence[PjitSharding]:
+    pjit_mesh: pxla.Mesh | None) -> Sequence[PjitSharding]:
   # If True, means that device or backend is set by the user on pjit and it
   # has the same semantics as device_put i.e. doesn't matter which device the
   # arg is on, reshard it to the device mentioned. So don't do any of the
@@ -1253,7 +1255,7 @@ class SameDeviceAssignmentTuple:
   # device_assignment is Optional because shardings can contain `AUTO` and in
   # that case `mesh` is compulsory to be used. So in that case
   # `_pjit_lower_cached` cache, resource_env will check against the devices.
-  device_assignment: Optional[XLADeviceAssignment]
+  device_assignment: XLADeviceAssignment | None
 
   def __hash__(self):
     shardings_hash = tuple(
@@ -1303,8 +1305,8 @@ def _pjit_lower_cached(
     inline: bool,
     *,
     lowering_parameters: mlir.LoweringParameters,
-    in_layouts: Optional[pxla.MaybeLayout] = None,
-    out_layouts: Optional[pxla.MaybeLayout] = None):
+    in_layouts: pxla.MaybeLayout | None = None,
+    out_layouts: pxla.MaybeLayout | None = None):
   in_shardings: tuple[PjitShardingMinusUnspecified, ...] = cast(
       tuple[PjitShardingMinusUnspecified, ...], sdat_in_shardings.shardings)
   out_shardings: tuple[PjitSharding, ...] = sdat_out_shardings.shardings
@@ -1504,7 +1506,7 @@ batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False, None)
 pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True, None)
 
 def _pjit_batcher_for_sharding(
-    s: Union[GSPMDSharding, UnspecifiedValue],
+    s: GSPMDSharding | UnspecifiedValue,
     dim: int, val: tuple[str, ...], mesh, ndim: int):
   if is_unspecified(s):
     return s
@@ -1574,7 +1576,7 @@ ad.primitive_jvps[pjit_p] = _pjit_jvp
 
 @weakref_lru_cache
 def _known_jaxpr_fwd(known_jaxpr: core.ClosedJaxpr,
-                     in_fwd: tuple[Optional[int]]) -> core.ClosedJaxpr:
+                     in_fwd: tuple[int | None]) -> core.ClosedJaxpr:
   updated_jaxpr = known_jaxpr.jaxpr.replace(
       outvars=[x for x, i in zip(known_jaxpr.jaxpr.outvars, in_fwd)
                if i is None])
@@ -1766,7 +1768,7 @@ def _dce_jaxpr_pjit(
 
 
 def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
-                        ) -> tuple[list[bool], Optional[core.JaxprEqn]]:
+                        ) -> tuple[list[bool], core.JaxprEqn | None]:
   dced_jaxpr, used_inputs = _dce_jaxpr_pjit(
       eqn.params['jaxpr'], tuple(used_outputs))
 
@@ -2047,7 +2049,7 @@ def get_unconstrained_dims(sharding: NamedSharding):
 
 
 def _fast_path_get_device_assignment(
-    shardings: Iterable[PjitSharding]) -> Optional[XLADeviceAssignment]:
+    shardings: Iterable[PjitSharding]) -> XLADeviceAssignment | None:
   da = None
   for i in shardings:
     if is_unspecified(i):

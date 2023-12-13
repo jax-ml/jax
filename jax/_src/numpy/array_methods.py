@@ -19,12 +19,14 @@
 This is done dynamically in order to avoid circular imports.
 """
 
+from __future__ import annotations
+
 __all__ = ['register_jax_array_methods']
 
 import abc
 from functools import partial, wraps
 import math
-from typing import Any, Optional, Union
+from typing import Any
 
 import numpy as np
 import jax
@@ -89,7 +91,7 @@ def _itemsize(arr: ArrayLike) -> int:
 
 
 def _clip(number: ArrayLike,
-          min: Optional[ArrayLike] = None, max: Optional[ArrayLike] = None,
+          min: ArrayLike | None = None, max: ArrayLike | None = None,
           out: None = None) -> Array:
   """Return an array whose values are limited to a specified range.
 
@@ -111,7 +113,7 @@ def _transpose(a: Array, *args: Any) -> Array:
   return lax_numpy.transpose(a, axis)
 
 
-def _compute_newshape(a: ArrayLike, newshape: Union[DimSize, Shape]) -> Shape:
+def _compute_newshape(a: ArrayLike, newshape: DimSize | Shape) -> Shape:
   """Fixes a -1 value in newshape, if present."""
   orig_newshape = newshape  # for error messages
   try:
@@ -162,7 +164,7 @@ def _reshape(a: Array, *args: Any, order: str = "C") -> Array:
     raise ValueError(f"Unexpected value for 'order' argument: {order}.")
 
 
-def _view(arr: Array, dtype: Optional[DTypeLike] = None, type: None = None) -> Array:
+def _view(arr: Array, dtype: DTypeLike | None = None, type: None = None) -> Array:
   """Return a bitwise copy of the array, viewed as a new dtype.
 
   This is fuller-featured wrapper around :func:`jax.lax.bitcast_convert_type`.
@@ -282,7 +284,7 @@ def _unimplemented_setitem(self, i, x):
          "https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html")
   raise TypeError(msg.format(type(self)))
 
-def _operator_round(number: ArrayLike, ndigits: Optional[int] = None) -> Array:
+def _operator_round(number: ArrayLike, ndigits: int | None = None) -> Array:
   out = lax_numpy.round(number, decimals=ndigits or 0)
   # If `ndigits` is None, for a builtin float round(7.5) returns an integer.
   return out.astype(int) if ndigits is None else out
@@ -308,7 +310,7 @@ def __array_module__(self, types):
 
 
 def _compress_method(a: ArrayLike, condition: ArrayLike,
-                     axis: Optional[int] = None, out: None = None) -> Array:
+                     axis: int | None = None, out: None = None) -> Array:
   """Return selected slices of this array along given axis.
 
   Refer to :func:`jax.numpy.compress` for full documentation."""

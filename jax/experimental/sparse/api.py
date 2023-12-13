@@ -29,6 +29,9 @@ computed efficiently via cusparse/hipsparse.
 Further down are some examples of potential high-level wrappers for sparse objects.
 (API should be considered unstable and subject to change).
 """
+
+from __future__ import annotations
+
 from functools import partial
 import operator
 from typing import Optional, Union
@@ -56,7 +59,7 @@ from jax._src.typing import Array, DTypeLike, Shape
 todense_p = core.Primitive('todense')
 todense_p.multiple_results = False
 
-def todense(arr: Union[JAXSparse, Array]) -> Array:
+def todense(arr: JAXSparse | Array) -> Array:
   """Convert input to a dense matrix. If input is already dense, pass through."""
   bufs, tree = tree_util.tree_flatten(arr)
   return todense_p.bind(*bufs, tree=tree)
@@ -113,7 +116,7 @@ mlir.register_lowering(todense_p, mlir.lower_fun(
     _todense_impl, multiple_results=False))
 
 
-def empty(shape: Shape, dtype: Optional[DTypeLike]=None, index_dtype: DTypeLike = 'int32',
+def empty(shape: Shape, dtype: DTypeLike | None=None, index_dtype: DTypeLike = 'int32',
           sparse_format: str = 'bcoo', **kwds) -> JAXSparse:
   """Create an empty sparse array.
 
@@ -134,7 +137,7 @@ def empty(shape: Shape, dtype: Optional[DTypeLike]=None, index_dtype: DTypeLike 
   return cls._empty(shape, dtype=dtype, index_dtype=index_dtype, **kwds)
 
 
-def eye(N: int, M: Optional[int] = None, k: int = 0, dtype: Optional[DTypeLike] = None,
+def eye(N: int, M: int | None = None, k: int = 0, dtype: DTypeLike | None = None,
         index_dtype: DTypeLike = 'int32', sparse_format: str = 'bcoo', **kwds) -> JAXSparse:
   """Create 2D sparse identity matrix.
 
