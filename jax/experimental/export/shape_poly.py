@@ -117,7 +117,10 @@ class _DimAtom:
   #
   FLOORDIV = "floordiv"
   MOD = "mod"
-  NON_NEGATIVE = "non_negative"  # The max of the operand and 0
+  MAX = "max"
+  MIN = "min"
+  NON_NEGATIVE = "non_negative"  # The max of the operand and 0. Replaced with
+                                 # max but kept here for backwards compatibility.
 
   def __init__(self, *operands: _DimExpr,
                var: str | None = None,
@@ -231,9 +234,13 @@ class _DimAtom:
       else:
         return (-np.inf, np.inf)
 
-    elif self.operation == _DimAtom.NON_NEGATIVE:
-      (b_l, b_h), = opnd_bounds
-      return (max(0, b_l), max(0, b_h))
+    elif self.operation == _DimAtom.MAX:
+      (a_l, a_h), (b_l, b_h) = opnd_bounds
+      return (max(a_l, b_l), max(a_h, b_h))
+
+    elif self.operation == _DimAtom.MIN:
+      (a_l, a_h), (b_l, b_h) = opnd_bounds
+      return (min(a_l, b_l), min(a_h, b_h))
 
     else:
       assert False
@@ -253,15 +260,24 @@ class _DimAtom:
         return divmod(*operand_values)[0]  # type: ignore
       elif self.operation == _DimAtom.MOD:
         return divmod(*operand_values)[1]  # type: ignore
-      elif self.operation == _DimAtom.NON_NEGATIVE:
-        operand = operand_values[0]
-        if core.is_constant_dim(operand):
-          return max(operand, 0)
-        if core.is_symbolic_dim(operand):
-          return core.non_negative_dim(operand)
+      elif self.operation == _DimAtom.MAX:
+        op1, op2 = operand_values
+        if core.is_constant_dim(op1) and core.is_constant_dim(op2):
+          return max(op1, op2)
+        if core.is_symbolic_dim(op1) or core.is_symbolic_dim(op2):
+          return core.max_dim(op1, op2)
         # In the context of `evaluate` dimension variables may be mapped to
         # JAX Tracers.
-        return lax.max(operand, 0)
+        return lax.max(op1, op2)
+      elif self.operation == _DimAtom.MIN:
+        op1, op2 = operand_values
+        if core.is_constant_dim(op1) and core.is_constant_dim(op2):
+          return min(op1, op2)
+        if core.is_symbolic_dim(op1) or core.is_symbolic_dim(op2):
+          return core.min_dim(op1, op2)
+        # In the context of `evaluate` dimension variables may be mapped to
+        # JAX Tracers.
+        return lax.min(op1, op2)
       else:
         assert False, self.operation
 
@@ -489,7 +505,12 @@ class _DimExpr():
 
   @classmethod
   def from_operation(cls, operation: str, *operands: DimSize) -> _DimExpr:
-    return _DimExpr.from_monomial(_DimMon.from_operation(operation, *operands), 1)
+    if operation == _DimAtom.NON_NEGATIVE:  # For parsing
+      return _DimExpr.from_monomial(_DimMon.from_operation(_DimAtom.MAX,
+                                                           *operands,
+                                                           0), 1)
+    return _DimExpr.from_monomial(_DimMon.from_operation(operation,
+                                                         *operands), 1)
 
   def to_monomial(self) -> _DimMon | None:
     """Extract the single monomial from a symbolic expression.
@@ -566,26 +587,42 @@ class _DimExpr():
       return True
     if ub < 0:
       return False
-    # Attempt to handle non_negative. For the decomposition:
-    #    e = factor * non_negative(operand)^exp * rest_monomial + rest_expr
-    # use the rule:
-    #    e >= 0 IF factor * operand^exp * rest_monomial + rest_expr >= 0 AND
-    #              (rest_expr >= 0 OR
-    #               exp is odd AND factor * rest_monomial >= 0  OR
-    #               exp is even AND factor * rest_monomial <= 0)
-    for dec in _decompose_expr(self_minus_other, _DimAtom.NON_NEGATIVE):
-      # e = factor * non_negative(operands)^exp * rest_monomial + rest_expr
-      e2 = dec.rest_expr + dec.factor * (
-          dec.operands[0] ** dec.exp) * dec.rest_monomial
-      if not definitely_geq_0(e2):
-        continue
-      if definitely_geq_0(dec.rest_expr):
-        return True
-      if dec.exp % 2 == 1:
-        if definitely_geq_0(dec.factor * dec.rest_monomial):
+    # Attempt to handle max. For the decomposition
+    #    e = factor * max(op1, op2) + rest_expr
+    # use the rule
+    #    e >= 0 IF (factor > 0 AND
+    #                (factor * op1 + rest_expr >= 0 OR
+    #                 factor * op2 + rest_expr >= 0))
+    #              OR
+    #              (factor < 0 AND
+    #                (factor * op1 + rest_expr >= 0 AND
+    #                 factor * op2 + rest_expr >= 0))
+    for dec in _decompose_expr(self_minus_other, _DimAtom.MAX,
+                               with_exp=1, with_rest_monomial=1):
+      op1, op2 = dec.operands
+      if dec.factor > 0:
+        if (definitely_geq_0(dec.factor * op1 + dec.rest_expr) or
+            definitely_geq_0(dec.factor * op2 + dec.rest_expr)):
           return True
       else:
-        if definitely_geq_0(- dec.factor * dec.rest_monomial):
+        if (definitely_geq_0(dec.factor * op1 + dec.rest_expr) and
+            definitely_geq_0(dec.factor * op2 + dec.rest_expr)):
+          return True
+
+    # Attempt to handle min. For the decomposition
+    #    e = factor * min(op1, op2) + rest_expr
+    # use the same rule as for
+    #    e = max(factor * op1, factor * op2) + rest_expr
+    for dec in _decompose_expr(self_minus_other, _DimAtom.MIN,
+                               with_exp=1, with_rest_monomial=1):
+      op1, op2 = dec.operands
+      if dec.factor > 0:
+        if (definitely_geq_0(dec.factor * op1 + dec.rest_expr) and
+            definitely_geq_0(dec.factor * op2 + dec.rest_expr)):
+          return True
+      else:
+        if (definitely_geq_0(dec.factor * op1 + dec.rest_expr) or
+            definitely_geq_0(dec.factor * op2 + dec.rest_expr)):
           return True
 
     # Attempt to handle floordiv >= 0
@@ -837,8 +874,17 @@ class _DimExpr():
              for mon, coeff in self.monomials()]
     return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
-  def non_negative(self) -> _DimExpr:
-    return _DimExpr.from_operation(_DimAtom.NON_NEGATIVE, self)
+  def max(self, other: DimSize) -> _DimExpr:
+    return _DimExpr.from_operation(_DimAtom.MAX, self, other)
+
+  def rmax(self, other: DimSize) -> _DimExpr:
+    return _DimExpr.from_operation(_DimAtom.MAX, other, self)
+
+  def min(self, other: DimSize) -> _DimExpr:
+    return _DimExpr.from_operation(_DimAtom.MIN, self, other)
+
+  def rmin(self, other: DimSize) -> _DimExpr:
+    return _DimExpr.from_operation(_DimAtom.MIN, other, self)
 
   @staticmethod
   def get_aval(dim: _DimExpr):
@@ -1285,11 +1331,9 @@ class _Parser:
 
   def atom(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
     if tok.exact_type == tokenize.NAME:
-      if tok.string == _DimAtom.MOD:
-        return self.atom_binary_op(_DimAtom.MOD, self.next_tok())
-      if tok.string == _DimAtom.FLOORDIV:
-        return self.atom_binary_op(_DimAtom.FLOORDIV, self.next_tok())
-      if tok.string == _DimAtom.NON_NEGATIVE:
+      if tok.string in (_DimAtom.MOD, _DimAtom.FLOORDIV, _DimAtom.MAX, _DimAtom.MIN):
+        return self.atom_binary_op(tok.string, self.next_tok())
+      if tok.string == _DimAtom.NON_NEGATIVE:  # We still parse this for backwards compatibility
         return self.atom_unary_op(_DimAtom.NON_NEGATIVE, self.next_tok())
       return _DimExpr.from_var(tok.string), self.next_tok()
     number_sign = 1

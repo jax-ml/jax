@@ -775,7 +775,7 @@ class JaxExportTest(jtu.JaxTestCase):
     def output_shape(b):
       return (b + b, b - b, b * b,
               (b + 13) // b, (b + 13) % b,
-              core.non_negative_dim(b - 5))
+              core.max_dim(b - 5, 0))
     def f(x):  # x: f32[b]
       b = x.shape[0]
       return jnp.ones(output_shape(b), dtype=x.dtype)

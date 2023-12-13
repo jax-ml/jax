@@ -140,11 +140,20 @@ class DimExprTest(jtu.JaxTestCase):
           ("a + -1", a - 1),
           ("3 * a * mod(a + 2, b + 2)", 3 * a * ((a + 2) % (b + 2))),
           ("3 * floordiv(a + 2, b + 2) * 2", 3 * ((a + 2) // (b + 2)) * 2),
-          ("non_negative(a - 2)", "build_inside"),
+          # Keep for backwards compatibility. We ought to be able to parse
+          # non_negative
+          ("non_negative(a - 2)", core.max_dim(a - 2, 0)),
+          ("max(a, b)", "build_inside"),
+          ("min(a, b)", "build_inside"),
   ]])
   def test_parse_dim(self, dim_spec, dim_poly):
     if dim_spec == "non_negative(a - 2)":
       dim_poly = core.non_negative_dim(DimExprTest.a - 2)
+    elif dim_spec == "max(a, b)":
+      dim_poly = core.max_dim(DimExprTest.a, DimExprTest.b)
+    elif dim_spec == "min(a, b)":
+      dim_poly = core.min_dim(DimExprTest.a, DimExprTest.b)
+
     self.assertEqual((dim_poly,), shape_poly.symbolic_shape(dim_spec))
     self.assertEqual((dim_poly,), shape_poly.symbolic_shape(str(dim_poly)))
 
@@ -397,6 +406,13 @@ class DimExprTest(jtu.JaxTestCase):
   def test_min_dim(self):
     a, b, c = shape_poly.symbolic_shape("a, b, c")
 
+    self.assertEqual(core.min_dim(a, b).bounds(), (1, np.inf))
+    self.assertEqual(core.min_dim(2, b).bounds(), (1, 2))
+    self.assertEqual(core.min_dim(a, -2), -2)
+    self.assertEqual(core.min_dim(a - 5, 1).bounds(), (-4, 1))
+    self.assertEqual(core.min_dim(15 - a, 10).bounds(), (-np.inf, 10))
+    self.assertEqual(core.min_dim(15 - a, 20).bounds(), (-np.inf, 14))
+
     self.assertEqual(a, core.min_dim(a, a + 2))
     self.assertEqual(a - 2, core.min_dim(a, a - 2))
     self.assertGreaterEqual(a, core.min_dim(a, b))
@@ -404,8 +420,19 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertGreaterEqual(b, core.min_dim(a, b))
     self.assertGreaterEqual(b + c - 1, core.min_dim(a, b))
 
+    self.sampled_assertion(core.min_dim(a, 5),
+                           core.min_dim, a, 5)
+    self.sampled_assertion(core.min_dim(5, a),
+                           core.min_dim, 5, a)
   def test_max_dim(self):
     a, b, c = shape_poly.symbolic_shape("a, b, c")
+
+    self.assertEqual(core.max_dim(a, b).bounds(), (1, np.inf))
+    self.assertEqual(core.max_dim(2, b).bounds(), (2, np.inf))
+    self.assertEqual(core.max_dim(a, 2).bounds(), (2, np.inf))
+    self.assertEqual(core.max_dim(a - 5, 1).bounds(), (1, np.inf))
+    self.assertEqual(core.max_dim(15 - a, 0).bounds(), (0, 14))
+    self.assertEqual((core.max_dim(15 - a, 0) // 3).bounds(), (0, 4))
 
     self.assertEqual(a + 2, core.max_dim(a, a + 2))
     self.assertEqual(a , core.max_dim(a, a - 2))
@@ -415,6 +442,10 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertGreaterEqual(core.max_dim(a, b) + c - 1, b)
 
     self.assertGreaterEqual(core.max_dim(a, b), core.min_dim(a, b))
+    self.sampled_assertion(core.max_dim(a, 5),
+                           core.max_dim, a, 5)
+    self.sampled_assertion(core.max_dim(5, a),
+                           core.max_dim, 5, a)
 
   def test_clamp_dim(self):
     a, b = shape_poly.symbolic_shape("a, b")
@@ -583,7 +614,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.sampled_assertion(0, core.dilate_dim, 0, 3)
     self.sampled_assertion(a, core.dilate_dim, a, 1)
     self.sampled_assertion(2 * a - 1, core.dilate_dim, a, 2)
-    self.sampled_assertion(core.non_negative_dim(2 * a - 3),
+    self.sampled_assertion(core.max_dim(2 * a - 3, 0),
                            core.dilate_dim, a - 1, 2)
 
   def test_stride_dim(self):
@@ -600,7 +631,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.sampled_assertion(a - 1, core.stride_dim, a, 2, 1)
     self.sampled_assertion(a + 1, core.stride_dim, a * stride + 2, 2, stride)
     self.sampled_assertion((a - 1) // 2 + 1, core.stride_dim, a, 1, 2)
-    self.sampled_assertion(core.non_negative_dim((a - 4) // 2 + 1),
+    self.sampled_assertion(core.max_dim((a - 4) // 2 + 1, 0),
                            core.stride_dim, a, 4, 2)
 
 
