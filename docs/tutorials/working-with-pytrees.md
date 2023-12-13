@@ -155,7 +155,7 @@ def update(params, x, y):
 (pytrees-custom-pytree-nodes)=
 ## Custom pytree nodes
 
-This section explains how in JAX you can extend the set of Python types that will be considered _internal nodes_ in pytrees (pytree nodes) by using {meth}`jax.tree_util.register_pytree_node` with {func}`jax.tree_map`.
+This section explains how in JAX you can extend the set of Python types that will be considered _internal nodes_ in pytrees (pytree nodes) by using {func}`jax.tree_util.register_pytree_node` with {func}`jax.tree_map`.
 
 Why would you need this? In the previous examples, pytrees were shown as lists, tuples, and dicts, with everything else as pytree leaves. This is because if you define your own container class, it will be considered to be a pytree leaf unless you _register_ it with JAX. This is also the case even if your container class has trees inside it. For example:
 
@@ -186,7 +186,7 @@ except TypeError as e:
 
 As a solution, JAX allows to extend the set of types to be considered internal pytree nodes through a global registry of types. Additionally, the values of registered types are traversed recursively.
 
-First, register a new type using {meth}`jax.tree_util.register_pytree_node`:
+First, register a new type using {func}`jax.tree_util.register_pytree_node`:
 
 ```{code-cell}
 from jax.tree_util import register_pytree_node
@@ -269,11 +269,11 @@ Notice that the `name` field now appears as a leaf, because all tuple elements a
 (pytree-and-jax-transformations)=
 ## Pytree and JAX's transformations
 
-Many JAX functions, like {meth}`jax.lax.scan`, operate over pytrees of arrays. In addition, all JAX function transformations can be applied to functions that accept as input and produce as output pytrees of arrays.
+Many JAX functions, like {func}`jax.lax.scan`, operate over pytrees of arrays. In addition, all JAX function transformations can be applied to functions that accept as input and produce as output pytrees of arrays.
 
-Some JAX function transformations take optional parameters that specify how certain input or output values should be treated (such as the `in_axes` and `out_axes` arguments to {func}`jax,vmap`). These parameters can also be pytrees, and their structure must correspond to the pytree structure of the corresponding arguments. In particular, to be able to “match up” leaves in these parameter pytrees with values in the argument pytrees, the parameter pytrees are often constrained to be tree prefixes of the argument pytrees.
+Some JAX function transformations take optional parameters that specify how certain input or output values should be treated (such as the `in_axes` and `out_axes` arguments to {func}`jax.vmap`). These parameters can also be pytrees, and their structure must correspond to the pytree structure of the corresponding arguments. In particular, to be able to “match up” leaves in these parameter pytrees with values in the argument pytrees, the parameter pytrees are often constrained to be tree prefixes of the argument pytrees.
 
-For example, if you pass the following input to {func}`jax,vmap` (note that the input arguments to a function are considered a tuple):
+For example, if you pass the following input to {func}`jax.vmap` (note that the input arguments to a function are considered a tuple):
 
 ```
 (a1, {"k1": a2, "k2": a3})
@@ -287,7 +287,7 @@ then you can use the following `in_axes` pytree to specify that only the `k2` ar
 
 The optional parameter pytree structure must match that of the main input pytree. However, the optional parameters can optionally be specified as a “prefix” pytree, meaning that a single leaf value can be applied to an entire sub-pytree.
 
-For example, if you have the same {func}`jax,vmap` input as above, but wish to only map over the dictionary argument, you can use:
+For example, if you have the same {func}`jax.vmap` input as above, but wish to only map over the dictionary argument, you can use:
 
 ```
 (None, 0)  # equivalent to (None, {"k1": 0, "k2": 0})
@@ -299,7 +299,7 @@ Alternatively, if you want every argument to be mapped, you can write a single l
 0
 ```
 
-This happens to be the default `in_axes` value for {func}`jax,vmap`.
+This happens to be the default `in_axes` value for {func}`jax.vmap`.
 
 The same logic applies to other optional parameters that refer to specific input or output values of a transformed function, such as `out_axes` in {func}`jax.vmap`.
 
@@ -312,9 +312,9 @@ For built-in pytree node types, the set of keys for any pytree node instance is 
 
 JAX has the following `jax.tree_util.*` methods for working with key paths:
 
-- {meth}`jax.tree_util.tree_flatten_with_path`: Works similarly to {meth}`jax.tree_util.tree_flatten`, but returns key paths.
-- {meth}`jax.tree_util.tree_map_with_path``: Works similarly to {meth}`jax.tree_util.tree_map`, but the function also takes key paths as arguments.
-- {meth}`jax.tree_util.keystr`: Given a general key path, returns a reader-friendly string expression.
+- {func}`jax.tree_util.tree_flatten_with_path`: Works similarly to {func}`jax.tree_util.tree_flatten`, but returns key paths.
+- {func}`jax.tree_util.tree_map_with_path``: Works similarly to {func}`jax.tree_util.tree_map`, but the function also takes key paths as arguments.
+- {func}`jax.tree_util.keystr`: Given a general key path, returns a reader-friendly string expression.
 
 For example, one use case is to print debugging information related to a certain leaf value:
 
@@ -336,7 +336,7 @@ To express key paths, JAX provides a few default key types for the built-in pytr
 *  `DictKey(key: Hashable)`: For dictionaries.
 *  `GetAttrKey(name: str)`: For `namedtuple`s and preferably custom pytree nodes (more in the next section)
 
-You are free to define your own key types for your custom nodes. They will work with {meth}`jax.tree_util.keystr` as long as their `__str__()` method is also overridden with a reader-friendly expression.
+You are free to define your own key types for your custom nodes. They will work with {func}`jax.tree_util.keystr` as long as their `__str__()` method is also overridden with a reader-friendly expression.
 
 ```{code-cell}
 for key_path, _ in flattened:

@@ -45,7 +45,7 @@ y_jnp = 2 * jnp.sin(x_jnp) * jnp.cos(x_jnp)
 plt.plot(x_jnp, y_jnp);
 ```
 
-The code blocks are identical aside from replacing `np` with `jnp`, and the results are the same. JAX arrays can often be used directly in place of NumPy arrays for things like plotting.
+The code blocks are identical aside from replacing NumPy (`np`) with JAX NumPy (`jnp`), and the results are the same. JAX arrays can often be used directly in place of NumPy arrays for things like plotting.
 
 The arrays themselves are implemented as different Python types:
 
@@ -99,7 +99,7 @@ print(y)
 
 - `jax.Array` is the default array implementation in JAX.
 - The JAX array is a unified distributed datatype for representing arrays, even with physical storage spanning multiple devices
-- Automatic parallelization: You can operate over sharded `jax.Array`s without copying data onto a device using the `jax.jit` transformation. You can also replicate a `jax.Array` to every device on a mesh.
+- Automatic parallelization: You can operate over sharded `jax.Array`s without copying data onto a device using the {func}`jax.jit` transformation. You can also replicate a `jax.Array` to every device on a mesh.
 
 Consider this simple example:
 
@@ -127,7 +127,7 @@ The `jax.Array` type also helps make parallelism a core feature of JAX.
 
 JAX has built-in support for objects that look like dictionaries (dicts) of arrays, or lists of lists of dicts, or other nested structures — they are called JAX pytrees (also known as nests, or just trees). In the context of machine learning, a pytree can contain model parameters, dataset entries, and reinforcement learning agent observations.
 
-Below is an example of a simple pytree. In JAX, you can use `jax.tree_*`, to extract the flattened leaves from the trees, as demonstrated here:
+Below is an example of a simple pytree. In JAX, you can use {func}`jax.tree_util.tree_leaves`, to extract the flattened leaves from the trees, as demonstrated here:
 
 ```{code-cell}
 example_trees = [
@@ -153,8 +153,8 @@ You can learn more in the {ref}`working-with-pytrees` tutorial.
 
 **Key concepts:**
 
-- `jax.numpy` is a high-level wrapper that provides a familiar interface.
-- `jax.lax` is a lower-level API that is stricter and often more powerful.
+- {mod}`jax.numpy` is a high-level wrapper that provides a familiar interface.
+- {mod}`jax.lax` is a lower-level API that is stricter and often more powerful.
 - All JAX operations are implemented in terms of operations in [XLA](https://www.tensorflow.org/xla/) — the Accelerated Linear Algebra compiler.
 
 If you look at the source of {mod}`jax.numpy`, you'll see that all the operations are eventually expressed in terms of functions defined in {mod}`jax.lax`. You can think of {mod}`jax.lax` as a stricter, but often more powerful, API for working with multi-dimensional arrays.
@@ -218,7 +218,7 @@ Every JAX operation is eventually expressed in terms of these fundamental XLA op
 
 The fact that all JAX operations are expressed in terms of XLA allows JAX to use the XLA compiler to execute blocks of code very efficiently.
 
-For example, consider this function that normalizes the rows of a 2D matrix, expressed in terms of `jax.numpy` operations:
+For example, consider this function that normalizes the rows of a 2D matrix, expressed in terms of {mod}`jax.numpy` operations:
 
 ```{code-cell}
 import jax.numpy as jnp
@@ -281,7 +281,7 @@ This is because the function generates an array whose shape is not known at comp
 
 - Variables that you don't want to be traced can be marked as *static*
 
-To use `jax.jit` effectively, it is useful to understand how it works. Let's put a few `print()` statements within a JIT-compiled function and then call the function:
+To use {func}`jax.jit` effectively, it is useful to understand how it works. Let's put a few `print()` statements within a JIT-compiled function and then call the function:
 
 ```{code-cell}
 @jit
@@ -300,7 +300,7 @@ f(x, y)
 
 Notice that the print statements execute, but rather than printing the data you passed to the function, though, it prints *tracer* objects that stand-in for them.
 
-These tracer objects are what `jax.jit` uses to extract the sequence of operations specified by the function. Basic tracers are stand-ins that encode the **shape** and **dtype** of the arrays, but are agnostic to the values. This recorded sequence of computations can then be efficiently applied within XLA to new inputs with the same shape and dtype, without having to re-execute the Python code.
+These tracer objects are what {func}`jax.jit` uses to extract the sequence of operations specified by the function. Basic tracers are stand-ins that encode the **shape** and **dtype** of the arrays, but are agnostic to the values. This recorded sequence of computations can then be efficiently applied within XLA to new inputs with the same shape and dtype, without having to re-execute the Python code.
 
 When you call the compiled function again on matching inputs, no recompilation is required and nothing is printed because the result is computed in compiled XLA rather than in Python:
 
@@ -310,7 +310,7 @@ y2 = np.random.randn(4)
 f(x2, y2)
 ```
 
-The extracted sequence of operations is encoded in a JAX expression, or *jaxpr* for short. You can view the jaxpr using the `jax.make_jaxpr` transformation:
+The extracted sequence of operations is encoded in a JAX expression, or *jaxpr* for short. You can view the jaxpr using the {func}`jax.make_jaxpr` transformation:
 
 ```python
 from jax import make_jaxpr
@@ -395,7 +395,12 @@ f(x)
 
 Notice that although `x` is traced, `x.shape` is a static value. However, when you use {func}`jnp.array` and {func}`jnp.prod` on this static value, it becomes a traced value, at which point it cannot be used in a function like `reshape()` that requires a static input (recall: array shapes must be static).
 
-A useful pattern is to use `numpy` for operations that should be static (i.e. done at compile-time), and use `jax.numpy` for operations that should be traced (i.e. compiled and executed at run-time). For this function, it might look like this:
+A useful pattern is to:
+
+- Use NumPy (`numpy`) for operations that should be static (i.e., done at compile-time); and
+- Use JAX NumPy (`jax.numpy`) for operations that should be traced (i.e. compiled and executed at run-time).
+
+For this function, it might look like this:
 
 ```{code-cell}
 from jax import jit
