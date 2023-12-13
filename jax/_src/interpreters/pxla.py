@@ -102,12 +102,6 @@ MeshAxisName = sharding_impls.MeshAxisName
 MeshDimAssignment = Union[ShardedAxis, Replicated]
 ShardingSpec = sharding_specs.ShardingSpec
 
-# TODO(yashkatariya): Remove this flag when nvidia's use cases are fixed.
-_JAX_REQUIRE_DEVICES_DURING_LOWERING = config.DEFINE_bool(
-    "jax_require_devices_during_lowering",
-    True,
-    help="Forces physical devices to be passed during lowering to stablehlo.")
-
 ### util
 
 def identity(x): return x
@@ -1977,17 +1971,13 @@ def lower_sharding_computation(
   semantic_in_shardings = SemanticallyEqualShardings(in_shardings)  # type: ignore
   semantic_out_shardings = SemanticallyEqualShardings(out_shardings)  # type: ignore
   prim_requires_devices = dispatch.jaxpr_has_prim_requiring_devices(jaxpr)
-  materialized_da = (
-      tuple(da_object)
-      if prim_requires_devices or _JAX_REQUIRE_DEVICES_DURING_LOWERING.value
-      else None)
 
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, api_name, fun_name, backend, semantic_in_shardings,
        semantic_out_shardings, in_layouts, out_layouts, len(da_object),
-       materialized_da, donated_invars, name_stack, all_default_mem_kind,
-       lowering_parameters=lowering_parameters)
+       tuple(da_object) if prim_requires_devices else None, donated_invars,
+       name_stack, all_default_mem_kind, lowering_parameters=lowering_parameters)
 
   # backend and device_assignment is passed through to MeshExecutable because
   # if keep_unused=False and all in_shardings are pruned, then there is no way
