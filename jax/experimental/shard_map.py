@@ -917,6 +917,12 @@ for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
     register_standard_check(o)
     register_standard_rewrite(o)
 
+for p in [control_flow.loops.cumsum_p, control_flow.loops.cumlogsumexp_p,
+          control_flow.loops.cumprod_p, control_flow.loops.cummax_p,
+          control_flow.loops.cummin_p]:
+  register_standard_check(p)
+  register_standard_rewrite(p)
+
 
 @register_check(lax_parallel.psum_p)
 def _psum_check(_, *in_rep, axes, axis_index_groups):

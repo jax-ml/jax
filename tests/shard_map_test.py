@@ -1294,6 +1294,12 @@ class ShardMapTest(jtu.JaxTestCase):
     y = f(a, b)  # don't crash
     self.assertAllClose(y, a @ b, check_dtypes=False, atol=1e-2, rtol=1e-2)
 
+  def test_cumsum(self):
+    mesh = jtu.create_global_mesh((4,), ('i',))
+    x = jnp.arange(8.)
+    shard_map(jnp.cumsum, mesh=mesh, in_specs=P('i'), out_specs=P('i')
+              )(x)  # don't crash
+
   def test_custom_jvp_inside_jit(self):
     mesh = jtu.create_global_mesh((4,), ('batch',))
     x = shard_map(jax.jit(jax.nn.relu),
