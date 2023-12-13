@@ -400,6 +400,14 @@ class PrngTest(jtu.JaxTestCase):
         np.array([2285895361,  433833334], dtype='uint32'))
 
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
+  def test_random_seed_offset(self, make_key):
+    k1 = make_key(17)
+    with config.random_seed_offset(3):
+      k2 = make_key(17)
+    eq = k1 == k2 if k2.ndim == 0 else all(k1 == k2)
+    self.assertFalse(eq)
+
+  @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def test_random_bits_error(self, make_key):
     msg = 'dtype argument .* must be an unsigned int dtype'
     with self.assertRaisesRegex(ValueError, msg):

@@ -210,6 +210,7 @@ class Config:
             self.jax_numpy_rank_promotion, self.jax_default_matmul_precision,
             self.jax_dynamic_shapes, self.jax_numpy_dtype_promotion,
             self.jax_default_device,
+            self.jax_random_seed_offset,
             self.jax_threefry_partitionable,
             self.jax_softmax_custom_jvp,
             self.jax_enable_memories,
@@ -655,6 +656,7 @@ class _GlobalExtraJitContext(NamedTuple):
   numpy_dtype_promotion: str | None = None
   default_matmul_precision: Any | None = None
   dynamic_shapes: bool = False
+  random_seed_offset: int = 0
   threefry_partitionable: bool = False
   softmax_custom_jvp: bool = False
   xla_profile_version: int = 0
@@ -682,6 +684,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   numpy_dtype_promotion: str | None = None
   default_matmul_precision: Any | None = None
   dynamic_shapes: bool = False
+  random_seed_offset: int = 0
   threefry_partitionable: bool = False
   softmax_custom_jvp: bool = False
   xla_profile_version: int = 0
@@ -867,6 +870,16 @@ distributed_debug = define_bool_state(
     help=('Enable logging useful for debugging multi-process distributed '
           'computations. Logging is performed with `logging` at WARNING '
           'level.'))
+
+random_seed_offset = define_int_state(
+    name='jax_random_seed_offset',
+    default=0,
+    help=('Offset to all random seeds (e.g. argument to jax.random.key()).'),
+    update_global_hook=lambda val: _update_global_jit_state(
+        random_seed_offset=val),
+    update_thread_local_hook=lambda val: update_thread_local_jit_state(
+        random_seed_offset=val)
+)
 
 legacy_prng_key = define_enum_state(
     name='jax_legacy_prng_key',
