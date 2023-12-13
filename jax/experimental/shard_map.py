@@ -209,18 +209,26 @@ def _spec_rank_error(
     prefix, base = 'out', f'{fun_name}(*args)'
   msgs = []
   for (spec_key, spec), (fail_key, aval) in _iter_paths(tree, specs, fails):
+    extra = ""
     if error_type == SpecErrorType.input and ba is not None:
       arg_key, *_ = fail_key
-      extra = (f", where {base}[{arg_key}] is bound to {fun_name}'s "
-               f"parameter '{list(ba.arguments.keys())[arg_key.idx]}',")
-    else:
-      extra = ""
+      if arg_key.idx < len(ba.arguments):
+        param_name = list(ba.arguments.keys())[arg_key.idx]
+        extra = (f", where {base}{arg_key} is bound to {fun_name}'s "
+                 f"parameter '{param_name}',")
+      else:
+        param = list(ba.signature.parameters.values())[-1]
+        assert param.kind == inspect.Parameter.VAR_POSITIONAL
+        extra = (f", where {base}{arg_key} is the index "
+                 f"{arg_key.idx - len(ba.signature.parameters) + 1} component "
+                 f"of {fun_name}'s varargs parameter '{param.name}',")
     msgs.append(
         f"* {prefix}_specs{keystr(spec_key)} is {spec} which has length "
         f"{len(spec)}, but "
         f"{base}{keystr(fail_key)}{extra} has shape {aval.str_short()}, "
         f"which has rank {aval.ndim} (and {aval.ndim} < {len(spec)})")
   assert msgs
+  if len(msgs) == 1: msgs = [msgs[0][2:]]  # remove the bullet point
   msg = (f"shard_map applied to the function '{fun_name}' was given an "
          f"{prefix}_specs entry which is too long to be compatible with the "
          f"corresponding {prefix}put value from the function:\n\n"
@@ -241,10 +249,19 @@ def _spec_divisibility_error(
   fun_name = getattr(f, '__name__', str(f))
   msgs = []
   for (spec_key, spec), (fail_key, aval) in _iter_paths(tree, specs, fails):
+    extra = ""
     if ba is not None:
       arg_key, *_ = fail_key
-      extra = (f", where args[{arg_key}] is bound to {fun_name}'s "
-               f"parameter '{list(ba.arguments.keys())[arg_key.idx]}',")
+      if arg_key.idx < len(ba.arguments):
+        param_name = list(ba.arguments.keys())[arg_key.idx]
+        extra = (f", where args{arg_key} is bound to {fun_name}'s "
+                 f"parameter '{param_name}',")
+      else:
+        param = list(ba.signature.parameters.values())[-1]
+        assert param.kind == inspect.Parameter.VAR_POSITIONAL
+        extra = (f", where args{arg_key} is the index "
+                 f"{arg_key.idx - len(ba.signature.parameters) + 1} component "
+                 f"of {fun_name}'s varargs parameter '{param.name}',")
     names = _canonicalize_spec(spec)
     for d, ns in names.items():
       if aval.shape[d] % prod(mesh.shape[n] for n in ns):
@@ -258,6 +275,7 @@ def _spec_divisibility_error(
             f"{axis} (of {total}size {sz}), but {sz} does not evenly divide "
             f"{aval.shape[d]}")
   assert msgs
+  if len(msgs) == 1: msgs = [msgs[0][2:]]  # remove the bullet point
   msg = (f"shard_map applied to the function '{fun_name}' was given argument "
          f"arrays with axis sizes that are not evenly divisible by the "
          f"corresponding mesh axis sizes:\n\n"
@@ -294,6 +312,7 @@ def _inout_rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
           f"corresponding output value is replicated across mesh axis "
           f"'{need_rep_}', but could not infer replication over any axes")
   assert msgs
+  if len(msgs) == 1: msgs = [msgs[0][2:]]  # remove the bullet point
   msg = (f"shard_map applied to the function '{fun_name}' was given "
          f"out_specs which require replication which can't be statically "
          f"inferred given the mesh:\n\n"

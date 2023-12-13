@@ -1306,6 +1306,18 @@ class ShardMapTest(jtu.JaxTestCase):
     shard_map(lambda k: jax.random.normal(k[0], (1,)),
               mesh=mesh, in_specs=P('i'), out_specs=P('i'))(keys)  # don't crash
 
+  def test_error_for_variable_num_args(self):
+    mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))
+
+    def f(*args):
+      return args[0] @ args[1]
+
+    shard_f = shard_map(
+      f, mesh, in_specs=(P('x', 'y', None), P('x', 'y', None)), out_specs=P('x', 'y'))
+
+    with self.assertRaisesRegex(ValueError, "shard_map applied to the function 'f'"):
+      shard_f(jnp.ones((8, 8)), jnp.ones((8, 8)))
+
 
 class FunSpec(NamedTuple):
   name: str
