@@ -15,7 +15,7 @@ kernelspec:
 (external-callbacks)=
 # External callbacks
 
-This guide outlines the uses of various callback functions, which allow JAX runtimes to execute Python code on the host, even while running under {func}`~jax.jit`, {func}`~jax.vmap`, {func}`~jax.grad`, or another transformation.
+This tutorial outlines how you can use various callback functions, which allow JAX runtimes to execute Python code on the host. Examples of JAX callbacks are {func}`jax.pure_callback`, {func}`jax.experimental.io_callback` and {func}`jax.debug.callback`. You can use them even while running under JAX transformations, including {func}`~jax.jit`, {func}`~jax.vmap`, {func}`~jax.grad`.
 
 ## Why callbacks?
 
@@ -35,9 +35,9 @@ def f(x):
 result = f(2)
 ```
 
-What is printed is not the runtime value, but the trace-time abstract value (if you're not famililar with *tracing* in JAX, a good primer can be found in [How To Think In JAX](https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html)).
+What is printed is not the runtime value, but the trace-time abstract value (if you're not familiar with *tracing* in JAX, a good primer can be found in {ref}`thinking-in-jax`.
 
-To print the value at runtime we need a callback, for example {func}`jax.debug.print`:
+To print the value at runtime, you need a callback, for example {func}`jax.debug.print` (you can learn more about debugging in {ref}`debugging`):
 
 ```{code-cell}
 @jax.jit
@@ -51,15 +51,16 @@ result = f(2)
 
 This works by passing the runtime value represented by `y` back to the host process, where the host can print the value.
 
-## Flavors of Callback
+(external-callbacks-flavors-of-callback)=
+## Flavors of callback
 
 In earlier versions of JAX, there was only one kind of callback available, implemented in {func}`jax.experimental.host_callback`. The `host_callback` routines had some deficiencies, and are now deprecated in favor of several callbacks designed for different situations:
 
-- {func}`jax.pure_callback`: appropriate for pure functions: i.e. functions with no side effect.
+- {func}`jax.pure_callback`: appropriate for pure functions: i.e. functions with no side effects.
 - {func}`jax.experimental.io_callback`: appropriate for impure functions: e.g. functions which read or write data to disk.
 - {func}`jax.debug.callback`: appropriate for functions that should reflect the execution behavior of the compiler.
 
-(The {func}`jax.debug.print` function we used above is a wrapper around {func}`jax.debug.callback`).
+(The {func}`jax.debug.print` function you used previously is a wrapper around {func}`jax.debug.callback`).
 
 From the user perspective, these three flavors of callback are mainly distinguished by what transformations and compiler optimizations they allow.
 
@@ -232,7 +233,7 @@ jax.grad(f)(1.0);
 Unlike `pure_callback`, the compiler will not remove the callback execution in this case, even though the output of the callback is unused in the subsequent computation.
 
 
-
+(external-callbacks-exploring-debug-callback)=
 ### Exploring `debug.callback`
 
 Both `pure_callback` and `io_callback` enforce some assumptions about the purity of the function they're calling, and limit in various ways what JAX transforms and compilation machinery may do. `debug.callback` essentially assumes *nothing* about the callback function, such that the action of the callback reflects exactly what JAX is doing during the course of a program. Further, `debug.callback` *cannot* return any value to the program.
@@ -270,11 +271,12 @@ This can make `debug.callback` more useful for general-purpose debugging than ei
 
 ## Example: `pure_callback` with `custom_jvp`
 
-One powerful way to take advantage of {func}`jax.pure_callback` is to combine it with {class}`jax.custom_jvp` (see [Custom derivative rules](https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html) for more details on `custom_jvp`).
-Suppose we want to create a JAX-compatible wrapper for a scipy or numpy function that is not yet available in the {mod}`jax.scipy` or {mod}`jax.numpy` wrappers.
+One powerful way to take advantage of {func}`jax.pure_callback` is to combine it with {class}`jax.custom_jvp`. (Refer to {ref}`advanced-autodiff-custom-derivative-rules` for more details on {func}`jax.custom_jvp`).
+
+Suppose you want to create a JAX-compatible wrapper for a scipy or numpy function that is not yet available in the {mod}`jax.scipy` or {mod}`jax.numpy` wrappers.
 
 Here, we'll consider creating a wrapper for the Bessel function of the first kind, available in {mod}`scipy.special.jv`.
-We can start by defining a straightforward {func}`~jax.pure_callback`:
+You can start by defining a straightforward {func}`~jax.pure_callback`:
 
 ```{code-cell}
 import jax
@@ -300,7 +302,7 @@ def jv(v, z):
       shape=jnp.broadcast_shapes(v.shape, z.shape),
       dtype=z.dtype)
 
-  # We use vectorize=True because scipy.special.jv handles broadcasted inputs.
+  # You use vectorize=True because scipy.special.jv handles broadcasted inputs.
   return jax.pure_callback(_scipy_jv, result_shape_dtype, v, z, vectorized=True)
 ```
 
@@ -328,7 +330,7 @@ And here is the same result again with {func}`~jax.vmap`:
 print(jax.vmap(j1)(z))
 ```
 
-However, if we call {func}`~jax.grad`, we see an error because there is no autodiff rule defined for this function:
+However, if you call {func}`~jax.grad`, you will get an error because there is no autodiff rule defined for this function:
 
 ```{code-cell}
 :tags: [raises-exception]
@@ -336,7 +338,7 @@ However, if we call {func}`~jax.grad`, we see an error because there is no autod
 jax.grad(j1)(z)
 ```
 
-Let's define a custom gradient rule for this. Looking at the definition of the [Bessel Function of the First Kind](https://en.wikipedia.org/?title=Bessel_function_of_the_first_kind), we find that there is a relatively straightforward recurrence relationship for the derivative with respect to the argument `z`:
+Let's define a custom gradient rule for this. Looking at the definition of the [Bessel Function of the First Kind](https://en.wikipedia.org/?title=Bessel_function_of_the_first_kind), you find that there is a relatively straightforward recurrence relationship for the derivative with respect to the argument `z`:
 
 $$
 d J_\nu(z) = \left\{
@@ -346,9 +348,9 @@ d J_\nu(z) = \left\{
 \end{eqnarray}\right.
 $$
 
-The gradient with respect to $\nu$ is more complicated, but since we've restricted the `v` argument to integer types we don't need to worry about its gradient for the sake of this example.
+The gradient with respect to $\nu$ is more complicated, but since we've restricted the `v` argument to integer types you don't need to worry about its gradient for the sake of this example.
 
-We can use {func}`jax.custom_jvp` to define this automatic differentiation rule for our callback function:
+You can use {func}`jax.custom_jvp` to define this automatic differentiation rule for your callback function:
 
 ```{code-cell}
 jv = jax.custom_jvp(jv)
@@ -362,19 +364,21 @@ def _jv_jvp(primals, tangents):
   return jv(v, z), z_dot * djv_dz
 ```
 
-Now computing the gradient of our function will work correctly:
+Now computing the gradient of your function will work correctly:
 
 ```{code-cell}
 j1 = partial(jv, 1)
 print(jax.grad(j1)(2.0))
 ```
 
-Further, since we've defined our gradient in terms of `jv` itself, JAX's architecture means that we get second-order and higher derivatives for free:
+Further, since we've defined your gradient in terms of `jv` itself, JAX's architecture means that you get second-order and higher derivatives for free:
 
 ```{code-cell}
 jax.hessian(j1)(2.0)
 ```
 
-Keep in mind that although this all works correctly with JAX, each call to our callback-based `jv` function will result in passing the input data from the device to the host, and passing the output of {func}`scipy.special.jv` from the host back to the device.
+Keep in mind that although this all works correctly with JAX, each call to your callback-based `jv` function will result in passing the input data from the device to the host, and passing the output of {func}`scipy.special.jv` from the host back to the device.
+
 When running on accelerators like GPU or TPU, this data movement and host synchronization can lead to significant overhead each time `jv` is called.
-However, if you are running JAX on a single CPU (where the "host" and "device" are on the same hardware), JAX will generally do this data transfer in a fast, zero-copy fashion, making this pattern is a relatively straightforward way extend JAX's capabilities.
+
+However, if you are running JAX on a single CPU (where the "host" and "device" are on the same hardware), JAX will generally do this data transfer in a fast, zero-copy fashion, making this pattern a relatively straightforward way to extend JAX's capabilities.
