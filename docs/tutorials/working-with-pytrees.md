@@ -31,7 +31,7 @@ In the context of machine learning (ML), a pytree can contain:
 
 When working with datasets, you can often come across pytrees (such as lists of lists of dicts).
 
-Below is an example of a simple pytree. In JAX, you can use `jax.tree_*`, to extract the flattened leaves from the trees, as demonstrated here:
+Below is an example of a simple pytree. In JAX, you can use {func}`jax.tree_util.tree_leaves`, to extract the flattened leaves from the trees, as demonstrated here:
 
 ```{code-cell}
 import jax
@@ -64,7 +64,7 @@ JAX will use these functions to canonicalize any tree of registered container ob
 (pytrees-common-pytree-functions)=
 ## Common pytree functions
 
-JAX provides a number of utilities to operate over pytrees. These can be found in the `jax.tree_util` subpackage.
+JAX provides a number of utilities to operate over pytrees. These can be found in the {mod}`jax.tree_util` subpackage.
 
 ### Common function: `jax.tree_map`
 
@@ -82,14 +82,14 @@ list_of_lists = [
 jax.tree_map(lambda x: x*2, list_of_lists)
 ```
 
-`jax.tree_map` also allows to map a [N-ary](https://en.wikipedia.org/wiki/N-ary) function over multiple arguments. For example:
+{func}`jax.tree_map` also allows to map a [N-ary](https://en.wikipedia.org/wiki/N-ary) function over multiple arguments. For example:
 
 ```{code-cell}
 another_list_of_lists = list_of_lists
 jax.tree_map(lambda x, y: x+y, list_of_lists, another_list_of_lists)
 ```
 
-When using multiple arguments with `jax.tree_map`, the structure of the inputs must exactly match. That is, lists must have the same number of elements, dicts must have the same keys, etc.
+When using multiple arguments with {func}`jax.tree_map`, the structure of the inputs must exactly match. That is, lists must have the same number of elements, dicts must have the same keys, etc.
 
 (pytrees-example-jax-tree-map-ml)=
 ### Example of `jax.tree_map` with ML model parameters
@@ -301,7 +301,7 @@ Alternatively, if you want every argument to be mapped, you can write a single l
 
 This happens to be the default `in_axes` value for {func}`jax,vmap`.
 
-The same logic applies to other optional parameters that refer to specific input or output values of a transformed function, such as `out_axes` in {func}`jax,vmap`.
+The same logic applies to other optional parameters that refer to specific input or output values of a transformed function, such as `out_axes` in {func}`jax.vmap`.
 
 (pytrees-explicity-key-paths)=
 ## Explicit key paths
@@ -429,11 +429,11 @@ def tree_unflatten(aux_data, children):
 
 This section covers some of the most common patterns with JAX pytrees.
 
-### Transposing pytrees with `jax.tree_map` and `jax.tree_transpose`
+### Transposing pytrees with `jax.tree_map` and `jax.tree_util.tree_transpose`
 
-To transpose a pytree (turn a list of trees into a tree of lists), JAX has two functions: `jax.tree_map` (more basic) and `jax.tree_transpose` (more flexible, complex and verbose).
+To transpose a pytree (turn a list of trees into a tree of lists), JAX has two functions: {func} `jax.tree_map` (more basic) and {func}`jax.tree_util.tree_transpose` (more flexible, complex and verbose).
 
-**Option 1:** Use `jax.tree_map`. Here's an example:
+**Option 1:** Use {func}`jax.tree_map`. Here's an example:
 
 ```{code-cell}
 def tree_transpose(list_of_trees):
@@ -447,12 +447,12 @@ episode_steps = [dict(t=1, obs=3), dict(t=2, obs=4)]
 tree_transpose(episode_steps)
 ```
 
-**Option 2:** For more complex transposes, use {func}`jax.tree_transpose`, which is more verbose, but allows you specify the structure of the inner and outer pytree for more flexibility. For example:
+**Option 2:** For more complex transposes, use {func}`jax.tree_util.tree_transpose`, which is more verbose, but allows you specify the structure of the inner and outer pytree for more flexibility. For example:
 
 ```{code-cell}
-jax.tree_transpose(
-  outer_treedef = jax.tree_structure([0 for e in episode_steps]),
-  inner_treedef = jax.tree_structure(episode_steps[0]),
+jax.tree_util.tree_transpose(
+  outer_treedef = jax.tree_util.tree_structure([0 for e in episode_steps]),
+  inner_treedef = jax.tree_util.tree_structure(episode_steps[0]),
   pytree_to_transpose = episode_steps
 )
 ```
