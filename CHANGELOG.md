@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.22
+## jax 0.4.23
+
+## jaxlib 0.4.23
+
+## jax 0.4.22 (Dec 13, 2023)
 
 * Deprecations
   * The `device_buffer` and `device_buffers` properties of JAX arrays are deprecated.
@@ -15,7 +19,7 @@ Remember to align the itemized text with the first line of an item within a list
     * `arr.device_buffer` becomes `arr.addressable_data(0)`
     * `arr.device_buffers` becomes `[x.data for x in arr.addressable_shards]`
 
-## jaxlib 0.4.22
+## jaxlib 0.4.22 (Dec 13, 2023)
 
 ## jax 0.4.21 (Dec 4 2023)
 
