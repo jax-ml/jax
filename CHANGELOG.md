@@ -8,6 +8,16 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.24
 
+* Changes
+  * JAX lowering to StableHLO does not depend on physical devices anymore.
+    If your primitive wraps custom_paritioning or JAX callbacks in the lowering
+    rule i.e. function passed to `rule` parameter of `mlir.register_lowering` then add your
+    primitive to `jax._src.dispatch.prim_requires_devices_during_lowering` set.
+    This is needed because custom_partitioning and JAX callbacks need physical
+    devices to create `Sharding`s during lowering.
+    This is a temporary state until we can create `Sharding`s without physical
+    devices.
+
 ## jaxlib 0.4.24
 
 ## jax 0.4.23 (Dec 13, 2023)
