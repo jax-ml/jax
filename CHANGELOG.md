@@ -6,9 +6,13 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.23
+## jax 0.4.24
 
-## jaxlib 0.4.23
+## jaxlib 0.4.24
+
+## jax 0.4.23 (Dec 13, 2023)
+
+## jaxlib 0.4.23 (Dec 13, 2023)
 
 * Fixed a bug that caused verbose logging from the GPU compiler during
   compilation.
