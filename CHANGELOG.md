@@ -10,6 +10,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.23
 
+* Fixed a bug that caused verbose logging from the GPU compiler during
+  compilation.
+
 ## jax 0.4.22 (Dec 13, 2023)
 
 * Deprecations
