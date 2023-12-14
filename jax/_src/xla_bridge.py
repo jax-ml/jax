@@ -106,6 +106,16 @@ _CPU_ENABLE_GLOO_COLLECTIVES = config.DEFINE_bool(
 )
 
 
+# Warn the user if they call fork(), because it's not going to go well for them.
+def _at_fork():
+  warnings.warn(
+    "os.fork() was called. os.fork() is incompatible with multithreaded code, "
+    "and JAX is multithreaded, so this will likely lead to a deadlock.",
+    RuntimeWarning, stacklevel=2)
+
+os.register_at_fork(before=_at_fork)
+
+
 # Backends
 
 
