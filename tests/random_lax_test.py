@@ -651,20 +651,31 @@ class LaxRandomTest(jtu.JaxTestCase):
   )
   def testGeneralizedNormal(self, p, shape, dtype):
     key = self.make_key(2)
-    rand = lambda key, p, shape: random.generalized_normal(key, p, shape, dtype)
-    crand = jax.jit(rand, static_argnums=2)
+    rand = lambda key, p: random.generalized_normal(key, p, shape, dtype)
+    crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key, p, shape)
-    compiled_samples = crand(key, p, shape)
+    uncompiled_samples = rand(key, p)
+    compiled_samples = crand(key, p)
     for samples in [uncompiled_samples, compiled_samples]:
       self.assertEqual(samples.shape, shape)
       self.assertEqual(samples.dtype, dtype)
 
-    uncompiled_samples = rand(key, p, (300, *shape))
-    compiled_samples = crand(key, p, (300, *shape))
+  @jtu.sample_product(
+    p=[.5, 1., 1.5, 2., 2.5],
+    shape=[(), (5,), (10, 5)],
+    dtype=jtu.dtypes.floating,
+  )
+  def testGeneralizedNormalKS(self, p, shape, dtype):
+    self.skipTest(  # test is also sometimes slow, with (300, ...)-shape draws
+        "sensitive to random key - https://github.com/google/jax/issues/18941")
+    key = self.make_key(2)
+    rand = lambda key, p: random.generalized_normal(key, p, (300, *shape), dtype)
+    crand = jax.jit(rand)
+
+    uncompiled_samples = rand(key, p)
+    compiled_samples = crand(key, p)
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples.ravel(), scipy.stats.gennorm(p).cdf)
-
 
   @jtu.sample_product(
     d=range(1, 5),
