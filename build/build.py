@@ -383,6 +383,15 @@ def main():
           "plugin is still experimental and is not ready for use yet."
       ),
   )
+  add_boolean_argument(
+      parser,
+      "build_pjrt_plugin",
+      default=False,
+      help_str=(
+          "Are we building the pjrt plugin in addition to jaxlib? The "
+          "plugin is still experimental and is not ready for use yet."
+      ),
+  )
   parser.add_argument(
       "--gpu_plugin_cuda_version",
       choices=["11", "12"],
@@ -584,16 +593,23 @@ def main():
     print(" ".join(build_cuda_kernels_command))
     shell(build_cuda_kernels_command)
 
-    build_pjrt_plugin_command = ([bazel_path] + args.bazel_startup_options +
-      ["run", "--verbose_failures=true"] +
-      ["//jaxlib/tools:build_gpu_plugin_wheel", "--",
-      f"--output_path={output_path}",
-      f"--cpu={wheel_cpu}",
-      f"--cuda_version={args.gpu_plugin_cuda_version}"])
-    if args.editable:
-      command.append("--editable")
-    print(" ".join(build_pjrt_plugin_command))
-    shell(build_pjrt_plugin_command)
+    if args.build_pjrt_plugin:
+      build_pjrt_plugin_command = (
+          [bazel_path]
+          + args.bazel_startup_options
+          + ["run", "--verbose_failures=true"]
+          + [
+              "//jaxlib/tools:build_gpu_plugin_wheel",
+              "--",
+              f"--output_path={output_path}",
+              f"--cpu={wheel_cpu}",
+              f"--cuda_version={args.gpu_plugin_cuda_version}",
+          ]
+      )
+      if args.editable:
+        command.append("--editable")
+      print(" ".join(build_pjrt_plugin_command))
+      shell(build_pjrt_plugin_command)
 
   shell([bazel_path] + args.bazel_startup_options + ["shutdown"])
 
