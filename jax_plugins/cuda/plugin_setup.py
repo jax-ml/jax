@@ -33,10 +33,6 @@ _version_module = load_version_module(package_name)
 __version__ = _version_module._get_version_for_build()
 _cmdclass = _version_module._get_cmdclass(package_name)
 
-cudnn_version = os.environ.get("JAX_CUDNN_VERSION")
-if cudnn_version:
-  __version__ += f"+cudnn{cudnn_version.replace('.', '')}"
-
 class BinaryDistribution(Distribution):
   """This class makes 'bdist_wheel' include an ABI tag on the wheel."""
 

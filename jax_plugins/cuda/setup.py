@@ -31,10 +31,6 @@ def load_version_module(pkg_path):
 _version_module = load_version_module(f"jax_plugins/xla_cuda{cuda_version}")
 __version__ = _version_module._get_version_for_build()
 
-cudnn_version = os.environ.get("JAX_CUDNN_VERSION")
-if cudnn_version:
-  __version__ += f"+cudnn{cudnn_version.replace('.', '')}"
-
 packages = find_namespace_packages(
     include=[
         package_name,
