@@ -22,7 +22,7 @@ from setuptools import setup, find_packages
 
 project_name = 'jax'
 
-_current_jaxlib_version = '0.4.22'
+_current_jaxlib_version = '0.4.23'
 # The following should be updated with each new jaxlib release.
 _latest_jaxlib_version_on_pypi = '0.4.22'
 _available_cuda11_cudnn_versions = ['86']
