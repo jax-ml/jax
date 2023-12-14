@@ -29,8 +29,10 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import tree_util
 from jax._src.lib import xla_client
-from jax.experimental.export import export
 from jax.experimental.export import serialization_generated as ser_flatbuf
+from jax.experimental.export import _export
+from jax.experimental import export
+
 import numpy as np
 
 T = TypeVar("T")
@@ -353,7 +355,7 @@ def _deserialize_aval(aval: ser_flatbuf.AbstractValue) -> core.AbstractValue:
 
 
 def _serialize_sharding(
-    builder: flatbuffers.Builder, s: export.Sharding
+    builder: flatbuffers.Builder, s: _export.Sharding
 ) -> int:
   proto = None
   if s is None:
@@ -370,7 +372,7 @@ def _serialize_sharding(
   return ser_flatbuf.ShardingEnd(builder)
 
 
-def _deserialize_sharding(s: ser_flatbuf.Sharding) -> export.Sharding:
+def _deserialize_sharding(s: ser_flatbuf.Sharding) -> _export.Sharding:
   kind = s.Kind()
   if kind == ser_flatbuf.ShardingKind.unspecified:
     return None

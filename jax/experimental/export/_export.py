@@ -24,6 +24,7 @@ import functools
 import itertools
 import re
 from typing import Any, Callable, Optional, TypeVar, Union
+import warnings
 
 from absl import logging
 import numpy as np
@@ -55,6 +56,20 @@ zip = util.safe_zip
 
 DType = Any
 Shape = jax._src.core.Shape
+# The values of input and output sharding from the lowering.
+LoweringSharding = Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]
+
+# None means unspecified sharding
+Sharding = Union[xla_client.HloSharding, None]
+
+# See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions
+# for a description of the different versions.
+minimum_supported_serialization_version = 6
+maximum_supported_serialization_version = 9
+
+_VERSION_START_SUPPORT_SHAPE_ASSERTIONS = 7
+_VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS = 9
+
 
 class DisabledSafetyCheck:
   """A safety check should be skipped on (de)serialization.
@@ -115,19 +130,6 @@ class DisabledSafetyCheck:
   def __hash__(self) -> int:
     return hash(self._impl)
 
-# See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions
-# for a description of the different versions.
-minimum_supported_serialization_version = 6
-maximum_supported_serialization_version = 9
-
-_VERSION_START_SUPPORT_SHAPE_ASSERTIONS = 7
-_VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS = 9
-
-# The values of input and output sharding from the lowering.
-LoweringSharding = Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]
-
-# None means unspecified sharding
-Sharding = Union[xla_client.HloSharding, None]
 
 @dataclasses.dataclass(frozen=True)
 class Exported:
@@ -1050,7 +1052,7 @@ def _export_native_vjp(primal_fun, primal: Exported) -> Exported:
 
 ### Calling the exported function
 
-def call_exported(exported: Exported) -> Callable[..., jax.Array]:
+def call(exported: Exported) -> Callable[..., jax.Array]:
   if not isinstance(exported, Exported):
     raise ValueError(
       "The exported argument must be an export.Exported. "
@@ -1096,6 +1098,7 @@ def call_exported(exported: Exported) -> Callable[..., jax.Array]:
     return exported.out_tree.unflatten(res_flat)
   return f_imported
 
+call_exported = call
 
 # A JAX primitive for invoking a serialized JAX function.
 call_exported_p = core.Primitive("call_exported")
@@ -1296,3 +1299,30 @@ def wrap_with_sharding(ctx: mlir.LoweringRuleContext,
     return x
   return mlir.wrap_with_sharding_op(
     ctx, x, x_aval, x_sharding.to_proto())
+
+# TODO(necula): Previously, we had `from jax.experimental.export import export`
+# Now we want to simplify the usage, and export the public APIs directly
+# from `jax.experimental.export` and now `jax.experimental.export.export`
+# refers to the `export` function. Since there may still be users of the
+# old API in other packages, we add the old public API as attributes of the
+# exported function. We will clean this up after a deprecation period.
+def wrap_with_deprecation_warning(f):
+  msg = (f"You are using function `{f.__name__}` from "
+         "`jax.experimental.export.export`. You should instead use it directly "
+         "from `jax.experimental.export`. Instead of "
+         "`from jax.experimental.export import export` you should use "
+         "`from jax.experimental import export`.")
+  def wrapped_f(*args, **kwargs):
+    warnings.warn(msg, DeprecationWarning)
+    return f(*args, **kwargs)
+  return wrapped_f
+
+export.export = wrap_with_deprecation_warning(export)
+export.Exported = Exported
+export.call_exported = wrap_with_deprecation_warning(call_exported)
+export.DisabledSafetyCheck = DisabledSafetyCheck
+export.default_lowering_platform = wrap_with_deprecation_warning(default_lowering_platform)
+export.symbolic_shape = wrap_with_deprecation_warning(symbolic_shape)
+export.args_specs = wrap_with_deprecation_warning(args_specs)
+export.minimum_supported_serialization_version = minimum_supported_serialization_version
+export.maximum_supported_serialization_version = maximum_supported_serialization_version
