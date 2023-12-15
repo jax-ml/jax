@@ -25,12 +25,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 import dataclasses
 from functools import lru_cache, partial
-import glob
 import importlib
 import json
 import logging
 import os
-import pathlib
 import pkgutil
 import platform as py_platform
 import sys
@@ -42,6 +40,7 @@ from jax._src import config
 from jax._src import distributed
 from jax._src import traceback_util
 from jax._src import util
+from jax._src import hardware_utils
 from jax._src.cloud_tpu_init import maybe_import_libtpu
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
@@ -60,7 +59,6 @@ except ImportError as e:
   jax_plugins = None
 
 traceback_util.register_exclusion(__file__)
-
 
 XlaBackend = xla_client.Client
 
@@ -670,40 +668,11 @@ def backends() -> dict[str, xla_client.Client]:
       _suggest_missing_backends()
     return _backends
 
-
 # Code to suggest plugins that should be installed.
 #
 # Plugin vendors are welcome to add code to this list, assuming there's a
 # lightweight way to determine if hardware is present without requiring
 # the relevant plugin be installed.
-
-_GOOGLE_PCI_VENDOR_ID = '0x1ae0'
-_TPU_PCI_DEVICE_IDS = [
-    # TPU v2, v3
-    '0x0027',
-    # TPU v4
-    '0x005e',
-    # TPU v5e
-    '0x0063',
-    # Testing only
-    '0x0056',
-    '0x0062',
-]
-
-def _num_available_tpu_chips() -> int:
-  """Returns the number of TPU chips attached through PCI."""
-  num_chips = 0
-  for vendor_path in glob.glob('/sys/bus/pci/devices/*/vendor'):
-    vendor_id = pathlib.Path(vendor_path).read_text().strip()
-    if vendor_id != _GOOGLE_PCI_VENDOR_ID:
-      continue
-
-    device_path = os.path.join(os.path.dirname(vendor_path), 'device')
-    device_id = pathlib.Path(device_path).read_text().strip()
-    if device_id in _TPU_PCI_DEVICE_IDS:
-      num_chips += 1
-
-  return num_chips
 
 def _suggest_missing_backends():
   if py_platform.system() != "Linux":
@@ -727,7 +696,7 @@ def _suggest_missing_backends():
       logger.warning("An NVIDIA GPU may be present on this machine, but a "
                      "CUDA-enabled jaxlib is not installed. Falling back to "
                      f"{default_platform}.")
-  elif "tpu" not in _backends and _num_available_tpu_chips() > 0:
+  elif "tpu" not in _backends and hardware_utils.num_available_tpu_chips_and_device_id()[0] > 0:
     logger.warning("A Google TPU may be present on this machine, but either a "
                     "TPU-enabled jaxlib or libtpu is not installed. Falling "
                     f"back to {default_platform}.")

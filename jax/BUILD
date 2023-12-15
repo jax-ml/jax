@@ -342,6 +342,9 @@ pytype_strict_library(
 pytype_strict_library(
     name = "cloud_tpu_init",
     srcs = ["_src/cloud_tpu_init.py"],
+    deps = [
+        ":hardware_utils",
+    ]
 )
 
 pytype_strict_library(
@@ -468,6 +471,11 @@ pytype_strict_library(
         ":compilation_cache_interface",
         ":path",
     ],
+)
+
+pytype_strict_library(
+    name = "hardware_utils",
+    srcs = ["_src/hardware_utils.py"],
 )
 
 pytype_library(
@@ -831,6 +839,7 @@ pytype_strict_library(
     deps = [
         ":cloud_tpu_init",
         ":config",
+	":hardware_utils",
         ":traceback_util",
         ":util",
         "//jax/_src/lib",
