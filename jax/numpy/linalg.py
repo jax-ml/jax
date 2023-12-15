@@ -25,8 +25,10 @@ from jax._src.numpy.linalg import (
   eigvalsh as eigvalsh,
   inv as inv,
   lstsq as lstsq,
+  matrix_norm as matrix_norm,
   matrix_power as matrix_power,
   matrix_rank as matrix_rank,
+  matrix_transpose as matrix_transpose,
   norm as norm,
   outer as outer,
   pinv as pinv,
@@ -34,6 +36,8 @@ from jax._src.numpy.linalg import (
   slogdet as slogdet,
   solve as solve,
   svd as svd,
+  vector_norm as vector_norm,
+  vecdot as vecdot,
 )
 from jax._src.third_party.numpy.linalg import (
   cond as cond,

@@ -699,3 +699,52 @@ def outer(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   if x1.ndim != 1 or x2.ndim != 1:
     raise ValueError(f"Input arrays must be one-dimensional, but they are {x1.ndim=} {x2.ndim=}")
   return x1[:, None] * x2[None, :]
+
+
+@_wraps(getattr(np.linalg, "matrix_norm", None))
+def matrix_norm(x: ArrayLike, /, *, keepdims: bool = False, ord: str = 'fro') -> Array:
+  """
+  Computes the matrix norm of a matrix (or a stack of matrices) x.
+  """
+  check_arraylike('jnp.linalg.matrix_norm', x)
+  return norm(x, ord=ord, keepdims=keepdims, axis=(-2, -1))
+
+
+@_wraps(getattr(np.linalg, "matrix_transpose", None))
+def matrix_transpose(x: ArrayLike, /) -> Array:
+  """Transposes a matrix (or a stack of matrices) x."""
+  check_arraylike('jnp.linalg.matrix_transpose', x)
+  x_arr = jnp.asarray(x)
+  ndim = x_arr.ndim
+  if ndim < 2:
+    raise ValueError(f"matrix_transpose requres at least 2 dimensions; got {ndim=}")
+  return jax.lax.transpose(x_arr, (*range(ndim - 2), ndim - 1, ndim - 2))
+
+
+@_wraps(getattr(np.linalg, "vector_norm", None))
+def vector_norm(x: ArrayLike, /, *, axis: int | None = None, keepdims: bool = False,
+                ord: int | str = 2) -> Array:
+  """Computes the vector norm of a vector (or batch of vectors) x."""
+  check_arraylike('jnp.linalg.vector_norm', x)
+  if axis is None:
+    result = norm(jnp.ravel(x), ord=ord)
+    if keepdims:
+      result = lax.expand_dims(result, range(jnp.ndim(x)))
+    return result
+  return norm(x, axis=axis, keepdims=keepdims, ord=ord)
+
+
+@_wraps(getattr(np.linalg, "vecdot", None))
+def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1) -> Array:
+  """Computes the (vector) dot product of two arrays."""
+  check_arraylike("jnp.linalg.vecdot", x1, x2)
+  x1_arr, x2_arr = jnp.asarray(x1), jnp.asarray(x2)
+  rank = max(x1_arr.ndim, x2_arr.ndim)
+  x1_arr = jax.lax.broadcast_to_rank(x1_arr, rank)
+  x2_arr = jax.lax.broadcast_to_rank(x2_arr, rank)
+  if x1_arr.shape[axis] != x2_arr.shape[axis]:
+    raise ValueError("x1 and x2 must have the same size along specified axis.")
+  x1_arr = jax.numpy.moveaxis(x1_arr, axis, -1)
+  x2_arr = jax.numpy.moveaxis(x2_arr, axis, -1)
+  # TODO(jakevdp): call lax.dot_general directly
+  return jax.numpy.matmul(x1_arr[..., None, :], x2_arr[..., None])[..., 0, 0]

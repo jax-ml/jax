@@ -91,7 +91,7 @@ def matrix_norm(x, /, *, keepdims=False, ord='fro'):
   """
   Computes the matrix norm of a matrix (or a stack of matrices) x.
   """
-  return jax.numpy.linalg.norm(x, ord=ord, keepdims=keepdims, axis=(-1, -2))
+  return jax.numpy.linalg.matrix_norm(x, ord=ord, keepdims=keepdims)
 
 def matrix_power(x, n, /):
   """
@@ -107,9 +107,7 @@ def matrix_rank(x, /, *, rtol=None):
 
 def matrix_transpose(x, /):
   """Transposes a matrix (or a stack of matrices) x."""
-  if x.ndim < 2:
-    raise ValueError(f"matrix_transpose requres at least 2 dimensions; got {x.ndim=}")
-  return jax.lax.transpose(x, (*range(x.ndim - 2), x.ndim - 1, x.ndim - 2))
+  return jax.numpy.linalg.matrix_transpose(x)
 
 def outer(x1, x2, /):
   """
@@ -177,16 +175,8 @@ def trace(x, /, *, offset=0, dtype=None):
 
 def vecdot(x1, x2, /, *, axis=-1):
   """Computes the (vector) dot product of two arrays."""
-  rank = max(x1.ndim, x2.ndim)
-  x1 = jax.lax.broadcast_to_rank(x1, rank)
-  x2 = jax.lax.broadcast_to_rank(x2, rank)
-  if x1.shape[axis] != x2.shape[axis]:
-    raise ValueError("x1 and x2 must have the same size along specified axis.")
-  x1, x2 = jax.numpy.broadcast_arrays(x1, x2)
-  x1 = jax.numpy.moveaxis(x1, axis, -1)
-  x2 = jax.numpy.moveaxis(x2, axis, -1)
-  return jax.numpy.matmul(x1[..., None, :], x2[..., None])[..., 0, 0]
+  return jax.numpy.linalg.vecdot(x1, x2, axis=axis)
 
 def vector_norm(x, /, *, axis=None, keepdims=False, ord=2):
   """Computes the vector norm of a vector (or batch of vectors) x."""
-  return jax.numpy.linalg.norm(x, axis=axis, keepdims=keepdims, ord=ord)
+  return jax.numpy.linalg.vector_norm(x, axis=axis, keepdims=keepdims, ord=ord)
