@@ -52,13 +52,15 @@ fi
 
 
 #Export JAX_ROCM_VERSION so that it is appened in the wheel name
+export JAXLIB_RELEASE=1
 rocm_version=$(cat /opt/rocm/.info/version | cut -d "-" -f 1)
 export JAX_ROCM_VERSION=${rocm_version//./}
 
 #Build and install wheel
 python3 ./build/build.py --enable_rocm --rocm_path=${ROCM_PATH} --bazel_options=--override_repository=xla=${XLA_CLONE_DIR}
+
+JAX_RELEASE=1 python -m build
 pip3 install --force-reinstall dist/*.whl  # installs jaxlib (includes XLA)
-pip3 install --force-reinstall .  # installs jax
 
 #This is for CI to read without having to start the container again
 if [ -v CI_RUN ]; then
