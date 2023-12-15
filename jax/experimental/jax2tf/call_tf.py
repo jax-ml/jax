@@ -26,6 +26,7 @@ https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#callin
 from __future__ import annotations
 
 from collections.abc import Sequence
+import dataclasses
 import functools
 from typing import Any, Callable, Optional
 
@@ -35,20 +36,16 @@ from jax import dlpack
 from jax import dtypes
 from jax import numpy as jnp
 from jax import tree_util
-from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import core
-from jax._src import custom_derivatives
 from jax._src import effects
 from jax._src import util
-from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
 from jax.experimental.jax2tf import jax2tf as jax2tf_internal
 from jax.interpreters import mlir
-from jax.interpreters import xla
 import numpy as np
 import tensorflow as tf
 
@@ -376,6 +373,7 @@ def _get_concrete_function_tf(function_flat_tf, args_flat_sig_tf):  # -> tf.Conc
 
 
 # Mark the effectful instances of call_tf
+@dataclasses.dataclass(frozen=True)
 class CallTfEffect(effects.Effect):
   __str__ = lambda _: "CallTfEffect"
 
