@@ -8244,10 +8244,10 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         TypeError,
         re.escape(
-            "Custom VJP rule must produce an output with the same container "
+            "Custom VJP bwd rule must produce an output with the same container "
             "(pytree) structure as the args tuple of the primal function, "
             "and in particular must produce a tuple of length equal to the "
-            "number of arguments to the primal function, but got VJP output "
+            "number of arguments to the primal function, but got bwd output "
             "structure {} for primal input structure {}.".format(
                 jax.tree.structure((1, 1)),
                 jax.tree.structure((1,)))
@@ -8266,7 +8266,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       return 2. * g  # Should be a tuple
 
     f.defvjp(foo_fwd, foo_bwd)
-    with self.assertRaisesRegex(TypeError, "Custom VJP rule .* must produce a tuple"):
+    with self.assertRaisesRegex(TypeError, "Custom VJP bwd rule .* must produce a tuple"):
       api.grad(f)(3.)
 
   def test_fwd_rule_primal_out_type_doesnt_match_primal_error_message(self):
@@ -8996,6 +8996,26 @@ class CustomVJPTest(jtu.JaxTestCase):
     gx, = vjp(x)
     self.assertArraysAllClose(gx, zero)
 
+  def test_symbolic_zero_custom_vjp_bwd_shape_error(self):
+    @jax.custom_vjp
+    def f(x, y, z):
+      return x, y, z
+
+    def fwd(x, y, z):
+      return f(x.value, y.value, z.value), None
+
+    def bwd(_, gs):
+      x_bar, y_bar, z_bar = gs
+      return y_bar, x_bar, z_bar  # swapped!
+
+    f.defvjp(fwd, bwd, symbolic_zeros=True)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Consider just returning a None here'):
+      jax.grad(lambda x, y, z: f(x, y, z)[2].sum())(
+        jnp.ones(1), jnp.ones(2), jnp.ones(3))
+
   @parameterized.named_parameters(
       ('jit_vmap', True, True),
       ('jit', True, False),
@@ -9250,6 +9270,24 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(f_fwd, f_bwd)
 
     jax.grad(f)((1.0, (2.0, None)))  # don't crash
+
+  def test_bwd_rule_shape_mismatch(self):
+    @jax.custom_vjp
+    def foo(x, y):
+      return x
+
+    def foo_fwd(x, y):
+      return x, None
+
+    def foo_bwd(_, g):
+      return jnp.zeros(3), jnp.zeros(3)
+
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'output\[1\] the bwd rule produced an output of shape/dtype float..\[3\]'):
+      jax.grad(lambda x, y: foo(x, y * y).sum(), 1)(jnp.ones(3), jnp.ones(4))
 
 
 def transpose_unary(f, x_example):
