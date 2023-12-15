@@ -613,6 +613,70 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       jnp.linalg.norm(jnp.array([1.0, 2.0, 3.0]), ord="inf")
 
   @jtu.sample_product(
+      shape=[(2, 3), (4, 2, 3), (2, 3, 4, 5)],
+      dtype=float_types + complex_types,
+      keepdims=[True, False],
+      ord=[1, -1, 2, -2, np.inf, -np.inf, 'fro', 'nuc'],
+  )
+  def testMatrixNorm(self, shape, dtype, keepdims, ord):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    if jtu.numpy_version() < (2, 0, 0):
+      np_fn = partial(np.linalg.norm, ord=ord, keepdims=keepdims, axis=(-2, -1))
+    else:
+      np_fn = partial(np.linalg.matrix_norm, ord=ord, keepdims=keepdims)
+    jnp_fn = partial(jnp.linalg.matrix_norm, ord=ord, keepdims=keepdims)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=1e-3)
+    self._CompileAndCheck(jnp_fn, args_maker)
+
+  @jtu.sample_product(
+      shape=[(3,), (3, 4), (2, 3, 4, 5)],
+      dtype=float_types + complex_types,
+      keepdims=[True, False],
+      axis=[0, None],
+      ord=[1, -1, 2, -2, np.inf, -np.inf],
+  )
+  def testVectorNorm(self, shape, dtype, keepdims, axis, ord):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    if jtu.numpy_version() < (2, 0, 0):
+      def np_fn(x, *, ord, keepdims, axis):
+        x = np.asarray(x)
+        if axis is None:
+          result = np_fn(x.ravel(), ord=ord, keepdims=False, axis=0)
+          return np.reshape(result, (1,) * x.ndim) if keepdims else result
+        return np.linalg.norm(x, ord=ord, keepdims=keepdims, axis=axis)
+    else:
+      np_fn = np.linalg.vector_norm
+    np_fn = partial(np_fn, ord=ord, keepdims=keepdims, axis=axis)
+    jnp_fn = partial(jnp.linalg.vector_norm, ord=ord, keepdims=keepdims, axis=axis)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=1e-3)
+    self._CompileAndCheck(jnp_fn, args_maker)
+
+  @jtu.sample_product(
+      [dict(lhs_shape=(2, 3, 4), rhs_shape=(1, 4), axis=-1),
+       dict(lhs_shape=(2, 3, 4), rhs_shape=(2, 1, 1), axis=0),
+       dict(lhs_shape=(2, 3, 4), rhs_shape=(3, 4), axis=1)],
+      dtype=float_types + complex_types,
+  )
+  def testVecDot(self, lhs_shape, rhs_shape, axis, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+    if jtu.numpy_version() < (2, 0, 0):
+      def np_fn(x, y, axis=axis):
+        x, y = np.broadcast_arrays(x, y)
+        x = np.moveaxis(x, axis, -1)
+        y = np.moveaxis(y, axis, -1)
+        return np.matmul(x[..., None, :], y[..., None])[..., 0, 0]
+    else:
+      np_fn = partial(np.linalg.vecdot, axis=axis)
+    np_fn = jtu.promote_like_jnp(np_fn, inexact=True)
+    jnp_fn = partial(jnp.linalg.vecdot, axis=axis)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=1e-3)
+    self._CompileAndCheck(jnp_fn, args_maker)
+
+
+  @jtu.sample_product(
       [
           dict(m=m, n=n, full_matrices=full_matrices, hermitian=hermitian)
           for (m, n), full_matrices in (
@@ -1904,6 +1968,21 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
     Ts, Ss = vmap(lax.linalg.schur)(args)
     self.assertAllClose(reconstruct(Ss, Ts), args, atol=1e-4)
+
+  @jtu.sample_product(
+    shape=[(2, 3), (2, 3, 4), (2, 3, 4, 5)],
+    dtype=float_types + complex_types,
+  )
+  def testMatrixTranspose(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    jnp_fun = jnp.linalg.matrix_transpose
+    if jtu.numpy_version() < (2, 0, 0):
+      np_fun = lambda x: np.swapaxes(x, -1, -2)
+    else:
+      np_fun = np.linalg.matrix_transpose
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
 
 if __name__ == "__main__":

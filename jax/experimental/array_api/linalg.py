@@ -20,7 +20,6 @@ from jax.experimental.array_api._linear_algebra_functions import (
   eigh as eigh,
   eigvalsh as eigvalsh,
   inv as inv,
-  jax as jax,
   matmul as matmul,
   matrix_norm as matrix_norm,
   matrix_power as matrix_power,

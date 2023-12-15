@@ -175,7 +175,6 @@ LINALG_NAMESPACE = {
   'eigh',
   'eigvalsh',
   'inv',
-  'jax',
   'matmul',
   'matrix_norm',
   'matrix_power',

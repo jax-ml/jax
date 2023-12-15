@@ -457,8 +457,10 @@ jax.numpy.linalg
   eigvalsh
   inv
   lstsq
+  matrix_norm
   matrix_power
   matrix_rank
+  matrix_transpose
   multi_dot
   norm
   outer
@@ -469,6 +471,8 @@ jax.numpy.linalg
   svd
   tensorinv
   tensorsolve
+  vector_norm
+  vecdot
 
 JAX Array
 ---------
