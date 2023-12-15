@@ -432,8 +432,6 @@ _TRITON_FN_MAPPING = {
     lax.ge_p: tl.semantic.greater_equal,
     lax.lt_p: tl.semantic.less_than,
     lax.le_p: tl.semantic.less_equal,
-    lax.max_p: tl.math.max,
-    lax.min_p: tl.math.min,
     lax.shift_left_p: tl.semantic.shl,
     lax.shift_right_arithmetic_p: tl.semantic.ashr,
     lax.shift_right_logical_p: tl.semantic.lshr,
@@ -493,6 +491,24 @@ _JAX_FN_MAPPING = {
 
 for primitive, fn in _JAX_FN_MAPPING.items():
   triton_lowering_rules[primitive] = lower_fun(fn, multiple_results=False)
+
+
+def _min_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
+  return tl.math.min(
+      a, b, propagate_nan=tl.PropagateNan.NONE,  _builder=ctx.builder
+  )
+
+
+triton_lowering_rules[lax.min_p] = _min_lowering_rule
+
+
+def _max_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
+  return tl.math.max(
+      a, b, propagate_nan=tl.PropagateNan.NONE,  _builder=ctx.builder
+  )
+
+
+triton_lowering_rules[lax.max_p] = _max_lowering_rule
 
 
 def _div_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
@@ -1490,7 +1506,7 @@ def compile_jaxpr(
   arch = triton_kernel_call_lib.get_compute_capability(device)
   target = ("cuda", arch)
   cuda_backend = cb.CUDABackend(target)
-  cuda_options = cuda_backend.parse_compiler_options(
+  cuda_options = cuda_backend.parse_options(
       dict(
           num_warps=num_warps,
           num_stages=num_stages,
