@@ -25,6 +25,7 @@ for cuda_module_name in [".cuda", "jax_cuda12_plugin", "jax_cuda11_plugin"]:
   else:
     break
 
+get_compute_capability = None
 if _cuda_triton:
   xla_client.register_custom_call_target(
       "triton_kernel_call", _cuda_triton.get_custom_call(),
