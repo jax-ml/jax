@@ -31,7 +31,7 @@ from jax._src import test_util as jtu
 from jax import tree_util
 
 from jax.experimental import jax2tf
-from jax.experimental import export
+from jax.experimental.export import export
 from jax._src import config
 from jax._src import xla_bridge
 import numpy as np

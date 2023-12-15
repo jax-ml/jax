@@ -22,6 +22,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 
 licenses(["notice"])
 
+# Please add new users to :australis_users.
 package(
     default_applicable_licenses = [],
     default_visibility = ["//visibility:private"],
@@ -30,8 +31,7 @@ package(
 py_library(
     name = "export",
     srcs = [
-        "__init__.py",
-        "_export.py",
+        "export.py",
         "serialization.py",
         "serialization_generated.py",
         "shape_poly.py",

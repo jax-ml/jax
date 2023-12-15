@@ -29,7 +29,7 @@ from jax._src import test_util as jtu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax.experimental import jax2tf
-from jax.experimental import export
+from jax.experimental.export import export
 from jax.experimental.jax2tf.tests import tf_test_util
 import numpy as np
 
