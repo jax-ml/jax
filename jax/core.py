@@ -68,7 +68,7 @@ from jax._src.core import (
   call_bind_with_continuation as call_bind_with_continuation,
   call_impl as call_impl,
   call_p as call_p,
-  canonicalize_shape as canonicalize_shape,  # TODO(necula): remove this API
+  canonicalize_shape as _deprecated_canonicalize_shape,
   check_eqn as check_eqn,
   check_jaxpr as check_jaxpr,
   check_type as check_type,
@@ -80,8 +80,8 @@ from jax._src.core import (
   cur_sublevel as cur_sublevel,
   custom_typechecks as custom_typechecks,
   dedup_referents as dedup_referents,
-  definitely_equal as definitely_equal,  # TODO(necula): remove this API
-  dimension_as_value as dimension_as_value,  # TODO(necula): remove this API
+  definitely_equal as _deprecated_definitely_equal,
+  dimension_as_value as _deprecated_dimension_as_value,
   do_subst_axis_names_jaxpr as do_subst_axis_names_jaxpr,
   ensure_compile_time_eval as ensure_compile_time_eval,
   escaped_tracer_error as escaped_tracer_error,
@@ -160,7 +160,6 @@ from jax._src.core import (
   valid_jaxtype as valid_jaxtype,
 )
 
-symbolic_equal_dim = definitely_equal  # TODO(necula): remove this API
 
 from jax._src import core as _src_core
 _deprecations = {
@@ -253,6 +252,19 @@ _deprecations = {
         "jax.core.zip is deprecated. Use the built-in zip function.",
         _src_core.zip,
     ),
+    # Added Dec 15, 2023
+    "canonicalize_shape": (
+      "jax.core.canonicalize_shape is deprecated.", _deprecated_canonicalize_shape,
+    ),
+    "dimension_as_value": (
+      "jax.core.dimension_as_value is deprecated.", _deprecated_dimension_as_value,
+    ),
+    "definitely_equal": (
+      "jax.core.definitely_equal is deprecated.", _deprecated_definitely_equal,
+    ),
+    "symbolic_equal_dim": (
+      "jax.core.symbolic_equal_dim is deprecated.", _deprecated_definitely_equal,
+    ),
 }
 
 import typing
@@ -263,7 +275,10 @@ if typing.TYPE_CHECKING:
   TracerIntegerConversionError = _src_core.TracerIntegerConversionError
   UnexpectedTracerError = _src_core.UnexpectedTracerError
   as_hashable_function = _src_core.as_hashable_function
+  canonicalize_shape = _deprecated_canonicalize_shape
   collections = _src_core.collections
+  dimension_as_value = _deprecated_dimension_as_value
+  definitely_equal = _deprecated_definitely_equal
   dtypes = _src_core.dtypes
   lu = _src_core.lu
   map = _src_core.map
@@ -274,6 +289,7 @@ if typing.TYPE_CHECKING:
   safe_map = _src_core.safe_map
   safe_zip = _src_core.safe_zip
   source_info_util = _src_core.source_info_util
+  symbolic_equal_dim = _deprecated_definitely_equal
   total_ordering = _src_core.total_ordering
   traceback_util = _src_core.traceback_util
   tuple_delete = _src_core.tuple_delete
