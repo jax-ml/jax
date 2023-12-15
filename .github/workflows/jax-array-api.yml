@@ -24,7 +24,8 @@ jobs:
       uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet: actions/checkout@v4
       with:
         repository: data-apis/array-api-tests
-        ref: '7c89cf1a42eb18d4fadecda1cac8769d0138753c'  # Latest commit as of 2023-12-07
+        # TODO(jakevdp) update this to a stable release/tag when available.
+        ref: '8d4ccd63d860ba7202cb5ae1282aaf37d5578b10'  # Latest commit as of 2023-12-15
         submodules: 'true'
         path: 'array-api-tests'
     - name: Set up Python ${{ matrix.python-version }}
