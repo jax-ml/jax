@@ -83,7 +83,7 @@ from numpy import array, float32
 
 import jax
 from jax import tree_util
-from jax.experimental.export import export
+from jax.experimental import export
 
 from jax.experimental import pjit
 

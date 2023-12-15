@@ -32,7 +32,7 @@ import operator as op
 import re
 
 import jax
-from jax.experimental.export import export
+from jax.experimental import export
 from jax.experimental.export import shape_poly
 from jax.experimental import pjit
 from jax import lax

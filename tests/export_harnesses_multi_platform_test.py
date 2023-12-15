@@ -33,7 +33,7 @@ import numpy as np
 import jax
 from jax import lax
 from jax._src import test_util as jtu
-from jax.experimental.export import export
+from jax.experimental import export
 from jax._src.internal_test_util import test_harnesses
 
 

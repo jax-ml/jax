@@ -26,8 +26,8 @@ import jax
 from jax import lax
 from jax import numpy as jnp
 from jax import tree_util
-from jax.experimental.export import export
-from jax.experimental.export import serialization
+from jax.experimental import export
+from jax.experimental.export import _export
 from jax.experimental import pjit
 from jax.sharding import NamedSharding
 from jax.sharding import Mesh
@@ -145,8 +145,8 @@ def get_exported(fun, max_vjp_orders=0,
   """Like export.export but with serialization + deserialization."""
   def serde_exported(*fun_args, **fun_kwargs):
     exp = export.export(fun, **export_kwargs)(*fun_args, **fun_kwargs)
-    serialized = serialization.serialize(exp, vjp_order=max_vjp_orders)
-    return serialization.deserialize(serialized)
+    serialized = export.serialize(exp, vjp_order=max_vjp_orders)
+    return export.deserialize(serialized)
   return serde_exported
 
 class JaxExportTest(jtu.JaxTestCase):
@@ -704,7 +704,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     x = np.array([True, False, True, False], dtype=np.bool_)
     exp = get_exported(f_jax)(jax.ShapeDtypeStruct(export.symbolic_shape("b"),
-                                                    x.dtype))
+                                                   x.dtype))
     res = export.call_exported(exp)(x)
     self.assertAllClose(f_jax(x), res)
 
@@ -1042,7 +1042,7 @@ class JaxExportTest(jtu.JaxTestCase):
       )
 
     exp = get_exported(f_jax)(x)
-    if exp.mlir_module_serialization_version >= export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+    if exp.mlir_module_serialization_version >= _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
       self.assertEqual(["ForTestingOrderedEffect1()", "ForTestingOrderedEffect2()"],
                        sorted(str(e) for e in exp.ordered_effects))
       self.assertEqual(["ForTestingUnorderedEffect1()"],
@@ -1072,11 +1072,11 @@ class JaxExportTest(jtu.JaxTestCase):
       # Results
       r"!stablehlo.token .*jax.token = true.*"
       r"!stablehlo.token .*jax.token = true.*")
-    if exp.mlir_module_serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
       wrapped_main_expected_re = wrapped_main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
     self.assertRegex(mlir_module_str, wrapped_main_expected_re)
 
-    if exp.mlir_module_serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
       # The main function does not have tokens
       self.assertNotRegex(mlir_module_str, r"@main.*token")
     else:
@@ -1094,7 +1094,7 @@ class JaxExportTest(jtu.JaxTestCase):
         export.call_exported(exp)(x))
 
     lowered_outer = jax.jit(f_outer).lower(x)
-    if exp.mlir_module_serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
       self.assertEqual(["ForTestingOrderedEffect2()"],
                        [str(e) for e in lowered_outer._lowering.compile_args["ordered_effects"]])
     else:
@@ -1104,7 +1104,7 @@ class JaxExportTest(jtu.JaxTestCase):
                      sorted([str(e) for e in lowered_outer._lowering.compile_args["unordered_effects"]]))
 
     mlir_outer_module_str = str(lowered_outer.compiler_ir())
-    if exp.mlir_module_serialization_version >= export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+    if exp.mlir_module_serialization_version >= _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
       main_expected_re = main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
       self.assertRegex(mlir_outer_module_str, main_expected_re)
 
@@ -1132,11 +1132,11 @@ class JaxExportTest(jtu.JaxTestCase):
       r"%arg3: tensor<\?x\?xf32>.*\) -> \("
       # Results
       r"!stablehlo.token {jax.token = true}, tensor<\?x\?xf32>.*\)")
-    if exp.mlir_module_serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
       wrapped_main_expected_re = wrapped_main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
     self.assertRegex(mlir_module_str, wrapped_main_expected_re)
 
-    if exp.mlir_module_serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
       # The main function does not have tokens
       self.assertNotRegex(mlir_module_str, r"@main.*token")
     else:
@@ -1179,11 +1179,11 @@ class JaxExportTest(jtu.JaxTestCase):
       r"%arg4: tensor<\?x\?xf32>.*\) -> \("
       # Results
       r"!stablehlo.token {jax.token = true}, tensor<\?x\?xf32>.*\)")
-    if exp.mlir_module_serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
       wrapped_main_expected_re = wrapped_main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
     self.assertRegex(mlir_module_str, wrapped_main_expected_re)
 
-    if exp.mlir_module_serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
       # The main function does not have tokens
       self.assertNotRegex(mlir_module_str, r"@main.*token")
     else:
@@ -1216,7 +1216,7 @@ class JaxExportTest(jtu.JaxTestCase):
     f_jax = jax.jit(f_jax, donate_argnums=(0,))
     exp = export.export(f_jax)(x)
     mlir_module_str = str(exp.mlir_module())
-    if exp.mlir_module_serialization_version < export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
+    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
       self.assertRegex(mlir_module_str, r"@main.*tf.aliasing_output = 0")
       self.assertRegex(mlir_module_str, r"@_wrapped_jax_export_main.*tf.aliasing_output = 1")
     else:
