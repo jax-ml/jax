@@ -141,12 +141,12 @@ def _testing_multi_platform_fun_expected(x,
   ]
 
 
-def get_exported(fun, max_vjp_orders=0,
+def get_exported(fun, vjp_order=0,
                  **export_kwargs):
   """Like export.export but with serialization + deserialization."""
   def serde_exported(*fun_args, **fun_kwargs):
     exp = export.export(fun, **export_kwargs)(*fun_args, **fun_kwargs)
-    serialized = serialization.serialize(exp, vjp_order=max_vjp_orders)
+    serialized = serialization.serialize(exp, vjp_order=vjp_order)
     return serialization.deserialize(serialized)
   return serde_exported
 
@@ -343,7 +343,7 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_grad(self):
     f = lambda x: jnp.sum(jnp.sin(x))
     x = np.arange(4, dtype=np.float32)
-    exp_f = get_exported(f, max_vjp_orders=1)(x)
+    exp_f = get_exported(f, vjp_order=1)(x)
 
     f1 = export.call_exported(exp_f)
     self.assertAllClose(jax.grad(f)(x), jax.grad(f1)(x))
@@ -351,7 +351,7 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_higher_order_grad(self):
     f = lambda x: x ** 3
     x = np.float32(4.)
-    exp_f = get_exported(f, max_vjp_orders=3)(x)
+    exp_f = get_exported(f, vjp_order=3)(x)
 
     f1 = export.call_exported(exp_f)
     self.assertAllClose(jax.grad(f)(x),
@@ -361,6 +361,45 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertAllClose(jax.grad(jax.grad(jax.grad(f)))(x),
                         jax.grad(jax.grad(jax.grad(f1)))(x))
 
+  def test_grad_int(self):
+    def f(xi, xf):
+      return (2 * xi.T, xf.T * xf.T)
+
+    xi = np.arange(6, dtype=np.int32).reshape((2, 3))
+    xf = np.arange(12, dtype=np.float32).reshape((3, 4))
+
+    # Native JAX 1st order vjp
+    (f_outi, f_outf), f_vjp = jax.vjp(f, xi, xf)
+    f_outi_ct = np.ones(f_outi.shape, dtype=f_outi.dtype)
+    f_outf_ct = np.ones(f_outf.shape, dtype=f_outf.dtype)
+    xi_ct, xf_ct = f_vjp((f_outi_ct, f_outf_ct))
+
+    # Native JAX 2nd order vjp
+    res, f_vjp2 = jax.vjp(f_vjp, (f_outi_ct, f_outf_ct))
+    self.assertAllClose(res, (xi_ct, xf_ct))
+    (f_outi_ct2, f_outf_ct2), = f_vjp2((xi_ct, xf_ct))
+
+    exp = get_exported(f, vjp_order=2)(xi, xf)
+    fr = export.call_exported(exp)
+
+    res = fr(xi, xf)
+    self.assertAllClose(res, (f_outi, f_outf))
+
+    # Reloaded 1st order vjp
+    (fr_outi, fr_outf), fr_vjp = jax.vjp(fr, xi, xf)
+    self.assertAllClose(fr_outi, f_outi)
+    self.assertAllClose(fr_outf, f_outf)
+    xri_ct, xrf_ct = fr_vjp((f_outi_ct, f_outf_ct))
+    self.assertAllClose(xri_ct, xi_ct)
+    self.assertAllClose(xrf_ct, xf_ct)
+
+    # Reloaded 2nd order vjp
+    res, f_vjp2 = jax.vjp(fr_vjp, (f_outi_ct, f_outf_ct))
+    self.assertAllClose(res, (xi_ct, xf_ct))
+    (fr_outi_ct2, fr_outf_ct2), = f_vjp2((xi_ct, xf_ct))
+    self.assertAllClose(fr_outi_ct2, f_outi_ct2)
+    self.assertAllClose(fr_outf_ct2, f_outf_ct2)
+
   def test_pytree_vjp(self):
     def f(a_b_pair, *, a, b):
       return (dict(res=a_b_pair, a=2. * a, b=3. * b),
@@ -368,7 +407,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     a = np.arange(4, dtype=np.float32)
     b = np.arange(6, dtype=np.float32)
-    exp_f = get_exported(f, max_vjp_orders=1)((a, b), a=a, b=b)
+    exp_f = get_exported(f, vjp_order=1)((a, b), a=a, b=b)
 
     out_ct = f((a, b), a=a, b=b)  # The output has the right structure as the cotangent
     def f1_jax(a, b):  # For VJP, make a function without kwargs
@@ -902,7 +941,7 @@ class JaxExportTest(jtu.JaxTestCase):
       if with_mesh:
         stack.enter_context(mesh)
       # Serialize higher-order gradiends
-      exp = get_exported(f_jax_pjit, max_vjp_orders=2)(x)
+      exp = get_exported(f_jax_pjit, vjp_order=2)(x)
       exp_vjp = exp.vjp()
       # Try 2nd order grad as well
       exp_vjp2 = exp_vjp.vjp()

@@ -31,9 +31,11 @@ import numpy as np
 import jax
 from jax import sharding
 
+from jax._src import ad_util
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
+from jax._src import dtypes
 from jax._src import effects
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -1067,7 +1069,16 @@ def call_exported(exported: Exported) -> Callable[..., jax.Array]:
   def f_flat_vjp_bwd(residual, ct_res_flat):
     args_flat = residual  # residual is the primal argument flat tuple
     exp_vjp = exported.vjp()
-    in_ct_flat = call_exported(exp_vjp)(*args_flat, *ct_res_flat)
+    # ct_res_flat may contain arrays of zeros where exp_vjp expect float0.
+    # We make the proper arrays of float0 to invoke exp_vjp.
+    def fix_float0_ct(ct_res, expected_aval):
+      if expected_aval.dtype != dtypes.float0:
+        return ct_res
+      return ad_util.zeros_like_aval(expected_aval)
+
+    ct_res_fixed = map(fix_float0_ct,
+                       ct_res_flat, exp_vjp.in_avals[len(args_flat):])
+    in_ct_flat = call_exported(exp_vjp)(*args_flat, *ct_res_fixed)
     return in_ct_flat
 
   f_flat.defvjp(f_flat_vjp_fwd, f_flat_vjp_bwd)

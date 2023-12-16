@@ -42,36 +42,38 @@ enum AbstractValueKind: byte {
 }
 
 enum DType: byte {
-  bool,
-  i8,
-  i16,
-  i32,
-  i64,
-  ui8,
-  ui16,
-  ui32,
-  ui64,
-  f16,
-  f32,
-  f64,
-  c64,
-  c128,
+  // Last used id: 22
+  bool = 0,
+  i8 = 1,
+  i16 = 2,
+  i32 = 3,
+  i64 = 4,
+  ui8 = 5,
+  ui16 = 6,
+  ui32 = 7,
+  ui64 = 8,
+  f0 = 22,  // Used in JAX to represent float0
+  f16 = 9,
+  f32 = 10,
+  f64 = 11,
+  c64 = 12,
+  c128 = 13,
 
-  bf16,
+  bf16 = 14,
 
-  i4,
-  ui4,
+  i4 = 15,
+  ui4 = 16,
 
-  f8_e4m3b11fnuz,
-  f8_e4m3fn,
-  f8_e4m3fnuz,
-  f8_e5m2,
-  f8_e5m2fnuz,
+  f8_e4m3b11fnuz = 17,
+  f8_e4m3fn = 18,
+  f8_e4m3fnuz = 19,
+  f8_e5m2 = 20,
+  f8_e5m2fnuz = 21,
 }
 
 table AbstractValue {
   kind: AbstractValueKind;
-  shape: [string];  // we support shape polymorphism
+  shape: [string];  // Support shape polymorphism
   dtype: DType;
 }
 
@@ -101,6 +103,11 @@ table DisabledSafetyCheck {
 }
 
 table Exported {
+  /// We increment the serialization version every time we change the
+  /// schema, even if the change is backwards compatible.
+  /// Note that this field has different semantics and purpose from
+  /// `mlir_module_serialization_version`, which encodes
+  /// the calling convention of the `mlir_module_serialized`.
   serialization_version: uint16;
 
   function_name: string;
