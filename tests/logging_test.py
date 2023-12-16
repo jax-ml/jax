@@ -68,7 +68,9 @@ class LoggingTest(jtu.JaxTestCase):
     """)
     python = sys.executable
     assert "python" in python
-    proc = subprocess.run([python, "-c", program], capture_output=True)
+    # Make sure C++ logging is at default level for the test process.
+    proc = subprocess.run([python, "-c", program], capture_output=True,
+                          env={"TF_CPP_MIN_LOG_LEVEL": "1"})
 
     lines = proc.stdout.split(b"\n")
     lines.extend(proc.stderr.split(b"\n"))
