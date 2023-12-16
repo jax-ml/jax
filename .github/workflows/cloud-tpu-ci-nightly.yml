@@ -88,6 +88,9 @@ jobs:
             --maxfail=20 -m "not multiaccelerator" tests examples
           # Run multi-accelerator across all chips
           python3 -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
+          # This test needs to be run by itself because it starts a subprocess
+          # that needs to access the TPU (only one process can use the TPU at a time)
+          python3 tests/logging_test.py LoggingTest.test_no_log_spam
       - name: Send chat on failure
         # Don't notify when testing the workflow from a branch.
         if: ${{ (failure() || cancelled()) && github.ref_name == 'main' && matrix.jaxlib-version != 'nightly+oldest_supported_libtpu' }}
