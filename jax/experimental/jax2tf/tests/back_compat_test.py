@@ -31,26 +31,26 @@ from jax.experimental.export import export
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_ducc_fft
-from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_cholesky_lapack_potrf
-from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_eig_lapack_geev
-from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_eigh_cusolver_syev
-from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_eigh_lapack_syev
-from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_lu_lapack_getrf
-from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_qr_cusolver_geqrf
-from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_qr_lapack_geqrf
-from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_schur_lapack_gees
-from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_svd_lapack_gesdd
-from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_triangular_solve_blas_trsm
-from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_threefry2x32
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_cholesky_lapack_potrf
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_eigh_lapack_syev
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_lu_lapack_getrf
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_qr_cusolver_geqrf
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_qr_lapack_geqrf
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_schur_lapack_gees
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_svd_lapack_gesdd
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_triangular_solve_blas_trsm
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_threefry2x32
 from jax.experimental.jax2tf.tests.back_compat_testdata import tf_call_tf_function
-from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Eigh
-from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Lu
-from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_ApproxTopK
-from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Qr
-from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Sharding
-from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_stablehlo_dynamic_reduce_window
-from jax.experimental.jax2tf.tests.back_compat_testdata import stablehlo_dynamic_rng_bit_generator
-from jax.experimental.jax2tf.tests.back_compat_testdata import stablehlo_dynamic_top_k
+from jax._src.internal_test_util.export_back_compat_test_data import tpu_Eigh
+from jax._src.internal_test_util.export_back_compat_test_data import tpu_Lu
+from jax._src.internal_test_util.export_back_compat_test_data import tpu_ApproxTopK
+from jax._src.internal_test_util.export_back_compat_test_data import tpu_Qr
+from jax._src.internal_test_util.export_back_compat_test_data import tpu_Sharding
+from jax._src.internal_test_util.export_back_compat_test_data import tpu_stablehlo_dynamic_reduce_window
+from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_rng_bit_generator
+from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_top_k
 
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
