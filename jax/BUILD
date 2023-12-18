@@ -137,12 +137,13 @@ py_library(
 py_library(
     name = "internal_test_util",
     testonly = 1,
-    srcs = glob(
-        ["_src/internal_test_util/**/*.py"],  # include
+    srcs = [
+        "_src/internal_test_util/deprecation_module.py",
+        "_src/internal_test_util/lax_test_util.py",
+    ] + glob(
         [
-            "_src/internal_test_util/test_harnesses.py",
-            "_src/internal_test_util/export_back_compat_test_util.py",
-        ],  # exclude
+            "_src/internal_test_util/lazy_loader_module/*.py",
+        ],
     ),
     visibility = [":internal"],
     deps = [
@@ -171,6 +172,16 @@ py_library(
         ":jax",
         "//jax/experimental/export",
     ] + py_deps("numpy"),
+)
+
+py_library(
+    name = "internal_export_back_compat_test_data",
+    testonly = 1,
+    srcs = glob(["_src/internal_test_util/export_back_compat_test_data/*.py"]),
+    visibility = [
+        ":internal",
+    ],
+    deps = py_deps("numpy"),
 )
 
 py_library_providing_imports_info(

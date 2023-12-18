@@ -30,7 +30,7 @@ from jax import lax
 from jax.experimental.export import export
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
-from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_ducc_fft
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_ducc_fft
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_cholesky_lapack_potrf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_eig_lapack_geev
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_eigh_cusolver_syev
