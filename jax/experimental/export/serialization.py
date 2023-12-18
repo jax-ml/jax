@@ -36,6 +36,11 @@ import numpy as np
 T = TypeVar("T")
 SerT = TypeVar("SerT")
 
+# The _SERIALIZATION_VERSION changes when we change the serialization schema
+# even if the change is backwards compatible.
+# Version 1, Nov 2023, first version.
+# Version 2, Dec 16th, 2023, adds the f0 dtype.
+_SERIALIZATION_VERSION = 2
 
 def serialize(exp: export.Exported, vjp_order: int = 0) -> bytearray:
   """Serialize an Exported.
@@ -102,7 +107,7 @@ def _serialize_exported(
     vjp = _serialize_exported(builder, exp.vjp(), vjp_order - 1)
 
   ser_flatbuf.ExportedStart(builder)
-  ser_flatbuf.ExportedAddSerializationVersion(builder, 1)
+  ser_flatbuf.ExportedAddSerializationVersion(builder, _SERIALIZATION_VERSION)
   ser_flatbuf.ExportedAddFunctionName(builder, fun_name)
   ser_flatbuf.ExportedAddInTree(builder, in_tree)
   ser_flatbuf.ExportedAddInAvals(builder, in_avals)
@@ -142,7 +147,7 @@ def _serialize_array(
 
 def _deserialize_exported(exp: ser_flatbuf.Exported) -> export.Exported:
   serialization_version = exp.SerializationVersion()
-  if serialization_version != 1:
+  if serialization_version != _SERIALIZATION_VERSION:
     raise NotImplementedError(
         f"deserialize unsupported version {serialization_version}"
     )
@@ -296,6 +301,7 @@ _dtype_to_dtype_kind = {
     np.dtype("uint16"): ser_flatbuf.DType.ui16,
     np.dtype("uint32"): ser_flatbuf.DType.ui32,
     np.dtype("uint64"): ser_flatbuf.DType.ui64,
+    dtypes.float0: ser_flatbuf.DType.f0,
     np.dtype("float16"): ser_flatbuf.DType.f16,
     np.dtype("float32"): ser_flatbuf.DType.f32,
     np.dtype("float64"): ser_flatbuf.DType.f64,

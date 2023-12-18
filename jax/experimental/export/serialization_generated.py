@@ -20,7 +20,7 @@ import flatbuffers
 from flatbuffers.compat import import_numpy
 np = import_numpy()
 
-class PyTreeDefKind:
+class PyTreeDefKind(object):
     leaf = 0
     none = 1
     tuple = 2
@@ -28,12 +28,12 @@ class PyTreeDefKind:
     dict = 4
 
 
-class AbstractValueKind:
+class AbstractValueKind(object):
     shapedArray = 0
     abstractToken = 1
 
 
-class DType:
+class DType(object):
     bool = 0
     i8 = 1
     i16 = 2
@@ -56,20 +56,21 @@ class DType:
     f8_e4m3fnuz = 19
     f8_e5m2 = 20
     f8_e5m2fnuz = 21
+    f0 = 22
 
 
-class ShardingKind:
+class ShardingKind(object):
     unspecified = 0
     hlo_sharding = 1
 
 
-class DisabledSafetyCheckKind:
+class DisabledSafetyCheckKind(object):
     platform = 0
     custom_call = 1
     shape_assertions = 2
 
 
-class PyTreeDef:
+class PyTreeDef(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -161,7 +162,7 @@ def PyTreeDefEnd(builder):
 
 
 
-class AbstractValue:
+class AbstractValue(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -233,7 +234,7 @@ def AbstractValueEnd(builder):
 
 
 
-class Sharding:
+class Sharding(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -302,7 +303,7 @@ def ShardingEnd(builder):
 
 
 
-class Effect:
+class Effect(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -338,7 +339,7 @@ def EffectEnd(builder):
 
 
 
-class DisabledSafetyCheck:
+class DisabledSafetyCheck(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -384,7 +385,7 @@ def DisabledSafetyCheckEnd(builder):
 
 
 
-class Exported:
+class Exported(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -402,6 +403,11 @@ class Exported:
     def Init(self, buf, pos):
         self._tab = flatbuffers.table.Table(buf, pos)
 
+    # We increment the serialization version every time we change the
+    # schema, even if the change is backwards compatible.
+    # Note that this field has different semantics and purpose from
+    # `mlir_module_serialization_version`, which encodes
+    # the calling convention of the `mlir_module_serialized`.
     # Exported
     def SerializationVersion(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
