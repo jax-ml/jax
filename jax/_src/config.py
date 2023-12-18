@@ -980,7 +980,7 @@ hlo_source_file_canonicalization_regex = define_string_state(
 
 include_full_tracebacks_in_locations = define_bool_state(
     name='jax_include_full_tracebacks_in_locations',
-    default=False,
+    default=True,
     help=(
         'Include full Python tracebacks in MLIR locations in IR emitted by JAX.'
     ),
