@@ -207,7 +207,6 @@ namespace; they are listed below.
     identity
     iinfo
     imag
-    in1d
     index_exp
     indices
     inexact

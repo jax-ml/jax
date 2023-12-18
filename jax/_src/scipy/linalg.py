@@ -399,16 +399,6 @@ def solve_triangular(a: ArrayLike, b: ArrayLike, trans: int | str = 0, lower: bo
   del overwrite_b, debug, check_finite  # unused
   return _solve_triangular(a, b, trans, lower, unit_diagonal)
 
-
-@_wraps(scipy.linalg.tril)
-def tril(m: ArrayLike, k: int = 0) -> Array:
-  return jnp.tril(m, k)
-
-
-@_wraps(scipy.linalg.triu)
-def triu(m: ArrayLike, k: int = 0) -> Array:
-  return jnp.triu(m, k)
-
 _expm_description = textwrap.dedent("""
 In addition to the original NumPy argument(s) listed below,
 also supports the optional boolean argument ``upper_triangular``

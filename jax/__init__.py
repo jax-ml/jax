@@ -163,7 +163,6 @@ from jax import dtypes as dtypes
 from jax import errors as errors
 from jax import image as image
 from jax import lax as lax
-from jax import linear_util as _deprecated_linear_util
 from jax import monitoring as monitoring
 from jax import nn as nn
 from jax import numpy as numpy
@@ -208,16 +207,10 @@ _deprecations = {
     "jax.tree_unflatten is deprecated: use jax.tree_util.tree_unflatten.",
     _deprecated_tree_unflatten
   ),
-  # Added Aug 29 2023
-  "linear_util": (
-    "jax.linear_util is deprecated: use jax.extend.linear_util.",
-    _deprecated_linear_util,
-  ),
 }
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  from jax import linear_util as linear_util
   from jax._src.tree_util import treedef_is_leaf as treedef_is_leaf
   from jax._src.tree_util import tree_flatten as tree_flatten
   from jax._src.tree_util import tree_leaves as tree_leaves

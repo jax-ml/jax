@@ -5397,7 +5397,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'eye': ['order', 'like'],
       'hstack': ['casting'],
       'identity': ['like'],
-      'in1d': ['kind'],
       'isin': ['kind'],
       'full': ['order', 'like'],
       'full_like': ['subok', 'order'],

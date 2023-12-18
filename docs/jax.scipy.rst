@@ -57,8 +57,6 @@ jax.scipy.linalg
    sqrtm
    svd
    toeplitz
-   tril
-   triu
 
 jax.scipy.ndimage
 -----------------

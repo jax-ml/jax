@@ -17,6 +17,23 @@ Remember to align the itemized text with the first line of an item within a list
     devices to create `Sharding`s during lowering.
     This is a temporary state until we can create `Sharding`s without physical
     devices.
+* Deprecations
+  * A number of previously deprecated functions have been removed, following a
+    standard 3+ month deprecation cycle (see {ref}`api-compatibility`).
+    This includes:
+    * The `jax.linear_util` submodule and all its contents.
+    * The `jax.prng` submodule and all its contents.
+    * From {mod}`jax.random`: `PRNGKeyArray`, `KeyArray`, `threefry2x32_key`,
+      `rbg_key`, and `unsafe_rbg_key`.
+    * From {mod}`jax.tree_util`: `register_keypaths`, `AttributeKeyPathEntry`, and
+      `GetItemKeyPathEntry`.
+    * from {mod}`jax.interpreters.xla`: `backend_specific_translations`, `translations`,
+      `register_translation`, `xla_destructure`, `TranslationRule`, `TranslationContext`,
+      `axis_groups`, `ShapedArray`, `ConcreteArray`, `AxisEnv`, `backend_compile`,
+      and `XLAOp`.
+    * from {mod}`jax.numpy`: `NINF`, `NZERO`, `PZERO`, `row_stack`, `issubsctype`,
+      and `in1d`.
+    * from {mod}`jax.scipy.linalg`: `tril` and `triu`.
 
 ## jaxlib 0.4.24
 

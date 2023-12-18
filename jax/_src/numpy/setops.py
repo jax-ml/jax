@@ -41,13 +41,6 @@ from jax._src.typing import Array, ArrayLike
 _lax_const = lax_internal._const
 
 
-@_wraps(np.in1d, lax_description="""
-In the JAX version, the `assume_unique` argument is not referenced.
-""")
-def in1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False, invert: bool = False) -> Array:
-  del assume_unique  # unused
-  return _in1d(ar1, ar2, invert)
-
 @partial(jit, static_argnames=('invert',))
 def _in1d(ar1: ArrayLike, ar2: ArrayLike, invert: bool) -> Array:
   check_arraylike("in1d", ar1, ar2)
@@ -93,7 +86,7 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
     return full_like(arr1, fill_value, shape=size or 0)
   if not assume_unique:
     arr1 = cast(Array, unique(arr1, size=size and arr1.size))
-  mask = in1d(arr1, ar2, invert=True)
+  mask = _in1d(arr1, ar2, invert=True)
   if size is None:
     return arr1[mask]
   else:
@@ -217,7 +210,9 @@ In the JAX version, the `assume_unique` argument is not referenced.
 """)
 def isin(element: ArrayLike, test_elements: ArrayLike,
          assume_unique: bool = False, invert: bool = False) -> Array:
-  result = in1d(element, test_elements, assume_unique=assume_unique, invert=invert)
+  del assume_unique  # unused
+  check_arraylike("isin", element, test_elements)
+  result = _in1d(element, test_elements, invert=invert)
   return result.reshape(np.shape(element))
 
 

@@ -572,7 +572,6 @@ class PrngTest(jtu.JaxTestCase):
 
 class ThreefryPrngTest(jtu.JaxTestCase):
   @parameterized.parameters([{'make_key': ctor} for ctor in [
-      jax_random.threefry2x32_key,
       partial(random.PRNGKey, impl='threefry2x32'),
       partial(random.key, impl='threefry2x32')]])
   def test_seed_no_implicit_transfers(self, make_key):
@@ -592,7 +591,7 @@ class KeyArrayTest(jtu.JaxTestCase):
   #
   # A handful of these tests follow CustomElementTypesTest in
   # lax_tests.py as an example. If you add a test here (e.g. testing
-  # lowering of an key-dtyped shaped array), consider whether it
+  # lowering of a key-dtyped shaped array), consider whether it
   # might also be a more general test of opaque element types. If
   # so, add a corresponding test to to CustomElementTypesTest as well.
 

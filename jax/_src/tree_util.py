@@ -561,24 +561,6 @@ def _equality_errors(path, t1, t2, is_leaf):
     yield from _equality_errors((*path, k), c1, c2, is_leaf)
 
 
-class _DeprecatedKeyPathEntry(NamedTuple):
-  key: Any
-
-  def pprint(self) -> str:
-    assert False  # must override
-
-class GetitemKeyPathEntry(_DeprecatedKeyPathEntry):
-  def pprint(self) -> str:
-    return f'[{self.key!r}]'
-  def __str__(self):
-    return self.pprint()
-
-class AttributeKeyPathEntry(_DeprecatedKeyPathEntry):
-  def pprint(self) -> str:
-    return f'.{self.key}'
-  def __str__(self):
-    return self.pprint()
-
 @dataclass(frozen=True)
 class SequenceKey():
   idx: int
@@ -623,18 +605,6 @@ def keystr(keys: KeyPath):
 class _RegistryWithKeypathsEntry(NamedTuple):
   flatten_with_keys: Callable[..., Any]
   unflatten_func: Callable[..., Any]
-
-
-def register_keypaths(
-    ty: type[T], handler: Callable[[T], tuple[KeyEntry, ...]]
-) -> None:
-  """[Deprecated] Register the method to get keypaths for type.
-
-  Please use ``register_pytree_with_keys`` instead.
-
-  Only works if the type was already registered with ``register_pytree_node``.
-  """
-  _register_keypaths(ty, handler)
 
 
 def _register_keypaths(

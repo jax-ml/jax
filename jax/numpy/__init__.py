@@ -313,7 +313,6 @@ from jax._src.numpy.reductions import (
 )
 
 from jax._src.numpy.setops import (
-    in1d as _deprecated_in1d,
     intersect1d as intersect1d,
     isin as isin,
     setdiff1d as setdiff1d,
@@ -434,34 +433,6 @@ except ImportError:
 # Deprecations
 
 _deprecations = {
-    # Added August 10, 2023:
-    "NINF": (
-        "jax.numpy.NINF is deprecated. Use -jax.numpy.inf instead.",
-        -inf,
-    ),
-    "NZERO": (
-        "jax.numpy.NZERO is deprecated. Use -0.0 instead.",
-        -0.0,
-    ),
-    "PZERO": (
-        "jax.numpy.PZERO is deprecated. Use 0.0 instead.",
-        0.0,
-    ),
-    # Added Aug 17, 2023:
-    "issubsctype": (
-        "jax.numpy.issubsctype is deprecated. In most cases, jax.numpy.issubdtype can be used instead.",
-        _deprecated_issubsctype,
-    ),
-    # Added Aug 22, 2023
-    "row_stack": (
-        "jax.numpy.row_stack is deprecated. Use jax.numpy.vstack instead.",
-        vstack,
-    ),
-    # Added Aug 23, 2023
-    "in1d": (
-        "jax.numpy.in1d is deprecated. Use jax.numpy.isin instead.",
-        _deprecated_in1d,
-    ),
     # Added Aug 24, 2023
     "trapz": (
         "jax.numpy.trapz is deprecated. Use jax.scipy.integrate.trapezoid instead.",
@@ -471,17 +442,10 @@ _deprecations = {
 
 import typing
 if typing.TYPE_CHECKING:
-  row_stack = vstack
-  NINF = -inf
-  NZERO = -0.0
-  PZERO = 0.0
-  issubsctype = _deprecated_issubsctype
-  in1d = _deprecated_in1d
   trapz = _deprecated_trapz
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
-del _deprecated_in1d
 del _deprecated_trapz
