@@ -481,6 +481,9 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
                                        static_args):
   mesh = mesh_lib.thread_resources.env.physical_mesh
   axis_context = ctx.module_context.axis_context
+  if (isinstance(axis_context, sharding_impls.SPMDAxisContext) and
+      set(axis_context.manual_axes) == set(axis_context.mesh.axis_names)):
+    return mlir.lower_fun(core.jaxpr_as_fun(call), multiple_results=True)(ctx, *values)
 
   if isinstance(axis_context, sharding_impls.ShardingContext):
     devices = axis_context.device_assignment

@@ -1235,6 +1235,7 @@ jax_test(
         "notsan",
     ],  # Times out under *SAN.
     deps = [
+        "//jax:experimental",
         "//jax:tree_util",
     ],
 )
