@@ -30,11 +30,11 @@ def trapezoid(y: ArrayLike, x: ArrayLike | None = None, dx: ArrayLike = 1.0,
   # TODO(phawkins): remove this annotation after fixing jnp types.
   dx_array: Array
   if x is None:
-    util.check_arraylike('trapz', y)
+    util.check_arraylike('trapezoid', y)
     y_arr, = util.promote_dtypes_inexact(y)
     dx_array = jnp.asarray(dx)
   else:
-    util.check_arraylike('trapz', y, x)
+    util.check_arraylike('trapezoid', y, x)
     y_arr, x_arr = util.promote_dtypes_inexact(y, x)
     if x_arr.ndim == 1:
       dx_array = jnp.diff(x_arr)
