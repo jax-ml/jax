@@ -39,7 +39,7 @@ jobs:
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
           python.exe build\build.py --bazel_options=--color=yes --verbose
 
-      - uses: actions/upload-artifact@a8a3f3ad30e3422c9c7b888a15615d19a852ae32 # ratchet: actions/upload_artifact@v3
+      - uses: actions/upload-artifact@c7d193f32edcb7bfad88892161225aeda64e9392 # ratchet: actions/upload_artifact@v3
         with:
           name: wheels
           path: ${{ github.workspace }}\dist\*.whl
