@@ -93,8 +93,14 @@ def _assert_numpy_allclose(a, b, atol=None, rtol=None, err_msg=''):
     np.testing.assert_array_equal(a, b, err_msg=err_msg)
     return
 
-  custom_float_dtypes = [_dtypes.float8_e4m3b11fnuz, _dtypes.float8_e4m3fn,
-                         _dtypes.float8_e5m2, _dtypes.bfloat16]
+  custom_float_dtypes = [
+    _dtypes.float8_e4m3b11fnuz,
+    _dtypes.float8_e4m3fn,
+    _dtypes.float8_e4m3fnuz,
+    _dtypes.float8_e5m2,
+    _dtypes.float8_e5m2fnuz,
+    _dtypes.bfloat16,
+  ]
   def maybe_upcast(x):
     if x.dtype in custom_float_dtypes:
       return x.astype(np.float32)

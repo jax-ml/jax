@@ -46,6 +46,7 @@ nonzerodim_shapes = nonempty_nonscalar_array_shapes + empty_array_shapes
 nonempty_shapes = scalar_shapes + nonempty_array_shapes
 all_shapes = scalar_shapes + array_shapes
 
+custom_float_dtypes = jtu.dtypes.custom_floats
 float_dtypes = jtu.dtypes.all_floating
 complex_dtypes = jtu.dtypes.complex
 int_dtypes = jtu.dtypes.all_integer
@@ -113,8 +114,8 @@ JAX_REDUCER_INITIAL_RECORDS = [
     op_record("prod", 1, all_dtypes, all_shapes, jtu.rand_small_positive, []),
     op_record("sum", 1, all_dtypes, all_shapes, jtu.rand_default, [],
               tolerance={jnp.bfloat16: 2e-2}),
-    op_record("max", 1, all_dtypes, all_shapes, jtu.rand_default, []),
-    op_record("min", 1, all_dtypes, all_shapes, jtu.rand_default, []),
+    op_record("max", 1, all_dtypes + custom_float_dtypes, all_shapes, jtu.rand_default, []),
+    op_record("min", 1, all_dtypes + custom_float_dtypes, all_shapes, jtu.rand_default, []),
     op_record("nanprod", 1, inexact_dtypes, all_shapes, jtu.rand_small_positive, []),
     op_record("nansum", 1, inexact_dtypes, all_shapes, jtu.rand_default, [],
               tolerance={jnp.bfloat16: 3e-2}),
