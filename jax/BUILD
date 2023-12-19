@@ -405,8 +405,8 @@ pytype_strict_library(
     deps = [
         ":compilation_cache_internal",
         ":config",
+        ":mlir",
         ":monitoring",
-        ":path",
         ":profiler",
         ":traceback_util",
         "//jax/_src/lib",
@@ -530,6 +530,7 @@ pytype_strict_library(
         ":layout",
         ":op_shardings",
         ":partial_eval",
+        ":path",
         ":pickle_util",
         ":sharding_impls",
         ":source_info_util",

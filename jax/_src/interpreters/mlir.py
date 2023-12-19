@@ -23,6 +23,7 @@ from functools import partial
 import io
 import itertools
 import operator
+import os
 import re
 import typing
 from typing import Any, Callable, NamedTuple, Protocol, Union
@@ -36,6 +37,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import linear_util as lu
+from jax._src import path
 from jax._src import pickle_util
 from jax._src import sharding_impls
 from jax._src import source_info_util
@@ -63,6 +65,13 @@ Value = Any  # = ir.Value
 
 # mypy implicitly sets this variable to true when type checking.
 MYPY = False
+
+_JAX_DUMP_IR_TO = config.DEFINE_string(
+    'jax_dump_ir_to', os.getenv('JAX_DUMP_IR_TO', ''),
+    help="Path to which the IR that is emitted by JAX should be dumped as "
+         "text files. If omitted, JAX will not dump IR. "
+         "Supports the special value 'sponge' to pick the path from the "
+         "environment variable TEST_UNDECLARED_OUTPUTS_DIR.")
 
 lowerable_effects: effects_lib.EffectTypeSet = effects_lib.lowerable_effects
 
@@ -374,6 +383,64 @@ def _source_info_to_location(
 upstream_dialects = ir.DialectRegistry()
 if register_jax_dialects:
   register_jax_dialects.register_dialects(upstream_dialects)
+
+# Dumping MLIR modules
+_ir_dump_counter = itertools.count()
+
+def dump_module_to_file(module: ir.Module, stage_name: str) -> str | None:
+  """Dumps the `module` IR to a file.
+
+  Dumps the module if JAX_DUMP_IR_TO is defined.
+
+  Args:
+    module: The module to dump
+    stage_name: A name to distinguish different stages of a module, will be
+      appended to the `module.name`.
+
+  Returns:
+    The name of the file containing the dump if JAX_DUMP_IR_TO is defined and
+    the module was dumped, `None` otherwise.
+  """
+  out_dir_name = _JAX_DUMP_IR_TO.value
+  if not out_dir_name:
+    return None
+  if out_dir_name == "sponge":
+    out_dir_name = os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR", "")
+    if not out_dir_name:
+      raise ValueError("JAX_DUMP_IR_TO='sponge' but "
+                       "TEST_UNDECLARED_OUTPUTS_DIR is not defined")
+
+  id = next(_ir_dump_counter)
+  sym_name = module.operation.attributes['sym_name']
+  module_name = ir.StringAttr(sym_name).value
+
+  name = f"jax_ir{id}_{_make_string_safe_for_filename(module_name)}_{stage_name}.mlir"
+
+  out_dir = path.Path(out_dir_name)
+  out_dir.mkdir(parents=True, exist_ok=True)
+  full_path = out_dir / name
+  full_path.write_text(module_to_string(module))
+  return name
+
+def dump_module_message(module: ir.Module, stage_name: str) -> str:
+  dumped_to = dump_module_to_file(module, stage_name)
+  if dumped_to:
+    return f"The module was dumped to {dumped_to}."
+  else:
+    return "Define JAX_DUMP_IR_TO to dump the module."
+
+def _make_string_safe_for_filename(s: str) -> str:
+  return re.sub(r'[^\w.)( -]', '', s)
+
+def module_to_string(module: ir.Module) -> str:
+  output = io.StringIO()
+  module.operation.print(file=output, enable_debug_info=True)
+  return output.getvalue()
+
+def module_to_bytecode(module: ir.Module) -> bytes:
+  output = io.BytesIO()
+  module.operation.write_bytecode(file=output)
+  return output.getvalue()
 
 # Translation rules
 def make_ir_context() -> ir.Context:
@@ -863,9 +930,9 @@ def lower_jaxpr_to_module(
 
   try:
     if not ctx.module.operation.verify():
-      module_string = module_to_string(ctx.module)
       raise ValueError(
-          f"Cannot lower jaxpr with verifier errors: {module_string}")
+          "Cannot lower jaxpr with verifier errors." +
+          dump_module_message(ctx.module, "verification"))
   except ir.MLIRError as e:
     msg_lines = ["Cannot lower jaxpr with verifier errors:"]
     def emit_diagnostic_info(d):
@@ -875,23 +942,11 @@ def lower_jaxpr_to_module(
         emit_diagnostic_info(n)
     for d in e.error_diagnostics:
       emit_diagnostic_info(d)
-    msg_lines.append("Module string:")
-    msg_lines.append(module_to_string(ctx.module))
-    raise ValueError("\n".join(msg_lines)) from e
+    raise ValueError("\n".join(msg_lines) +
+                     dump_module_message(ctx.module, "verification")) from e
 
   return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks,
                         ctx.shape_poly_state)
-
-def module_to_string(module: ir.Module) -> str:
-  output = io.StringIO()
-  module.operation.print(file=output, enable_debug_info=True)
-  return output.getvalue()
-
-def module_to_bytecode(module: ir.Module) -> bytes:
-  output = io.BytesIO()
-  module.operation.write_bytecode(file=output)
-  return output.getvalue()
-
 
 def _set_up_aliases(avals_in, avals_out, donated_args, arg_memory_kinds,
                     result_memory_kinds):
@@ -2659,9 +2714,14 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
   shape polymorphism, runs shape refinement to resolve all the dynamic shapes.
   Then verifies that there are no more dynamic shapes in the module.
   """
-  refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
-    module_to_bytecode(module), enable_shape_assertions=True,
-    validate_static_shapes=True)
+  try:
+    refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
+      module_to_bytecode(module), enable_shape_assertions=True,
+      validate_static_shapes=True)
+  except Exception as e:
+    raise ValueError(
+        "Error refining shapes. " +
+        dump_module_message(module, "before_refine_polymorphic_shapes")) from e
 
   context = make_ir_context()
   with context:

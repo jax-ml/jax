@@ -515,13 +515,12 @@ def export(fun_jax: Callable,
 
     # Log and then check the module.
     if logging.vlog_is_on(3):
-      mlir_module_text = mlir.module_to_string(mlir_module)
       logmsg = (f"version={version} "
                 f"lowering_platforms={actual_lowering_platforms} "
                 f"disabled_checks={disabled_checks}")
       logging.info("Lowered JAX module: %s\n", logmsg)
-      for l in mlir_module_text.splitlines():
-        logging.info(l)
+      if dumped_to := mlir.dump_module_to_file(mlir_module, "export"):
+        logging.info("Dumped the exported MLIR module to %s", dumped_to)
 
     _check_module(mlir_module,
                   allow_non_replicated_sharding=allow_non_replicated_sharding,
