@@ -138,6 +138,14 @@ def _logical_op(np_op: Callable[..., Any], bitwise_op: UnOp | BinOp) -> UnOp | B
     return bitwise_op(*promote_args(np_op.__name__, *args))
   return op
 
+@jit
+def _arccosh(x: ArrayLike, /) -> Array:
+  # Note: arccosh is multi-valued for complex input, and lax.acosh uses a different
+  # convention than np.arccosh.
+  out = lax.acosh(*promote_args_inexact("arccosh", x))
+  if dtypes.issubdtype(out.dtype, np.complexfloating):
+    out = _where(real(out) < 0, lax.neg(out), out)
+  return out
 
 fabs = _one_to_one_unop(np.fabs, lax.abs, True)
 bitwise_not = _one_to_one_unop(np.bitwise_not, lax.bitwise_not)
@@ -159,6 +167,7 @@ arctan = _one_to_one_unop(np.arctan, lax.atan, True)
 sinh = _one_to_one_unop(np.sinh, lax.sinh, True)
 cosh = _one_to_one_unop(np.cosh, lax.cosh, True)
 arcsinh = _one_to_one_unop(np.arcsinh, lax.asinh, True)
+arccosh = _one_to_one_unop(np.arccosh, _arccosh, True)
 tanh = _one_to_one_unop(np.tanh, lax.tanh, True)
 arctanh = _one_to_one_unop(np.arctanh, lax.atanh, True)
 sqrt = _one_to_one_unop(np.sqrt, lax.sqrt, True)
@@ -189,15 +198,16 @@ logical_not: UnOp = _logical_op(np.logical_not, lax.bitwise_not)
 logical_or: BinOp = _logical_op(np.logical_or, lax.bitwise_or)
 logical_xor: BinOp = _logical_op(np.logical_xor, lax.bitwise_xor)
 
-@_wraps(np.arccosh, module='numpy')
-@jit
-def arccosh(x: ArrayLike, /) -> Array:
-  # Note: arccosh is multi-valued for complex input, and lax.acosh uses a different
-  # convention than np.arccosh.
-  out = lax.acosh(*promote_args_inexact("arccosh", x))
-  if dtypes.issubdtype(out.dtype, np.complexfloating):
-    out = _where(real(out) < 0, lax.neg(out), out)
-  return out
+# Array API aliases
+# TODO(jakevdp): directly reference np_fun when minimum numpy version is 2.0
+acos = _one_to_one_unop(getattr(np, "acos", np.arccos), lax.acos, True)
+acosh = _one_to_one_unop(getattr(np, "acosh", np.arccosh), _arccosh, True)
+asin = _one_to_one_unop(getattr(np, "asin", np.arcsin), lax.asin, True)
+asinh = _one_to_one_unop(getattr(np, "asinh", np.arcsinh), lax.asinh, True)
+atan = _one_to_one_unop(getattr(np, "atan", np.arctan), lax.atan, True)
+atanh = _one_to_one_unop(getattr(np, "atanh", np.arctanh), lax.atanh, True)
+atan2 = _one_to_one_binop(getattr(np, "atan2", np.arctan2), lax.atan2, True)
+
 
 @_wraps(getattr(np, 'bitwise_count', None), module='numpy')
 @jit
