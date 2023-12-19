@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import partial
 
 import numpy as np
@@ -748,3 +749,18 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1) -> Array:
   x2_arr = jax.numpy.moveaxis(x2_arr, axis, -1)
   # TODO(jakevdp): call lax.dot_general directly
   return jax.numpy.matmul(x1_arr[..., None, :], x2_arr[..., None])[..., 0, 0]
+
+
+@_wraps(getattr(np.linalg, "matmul", None))
+def matmul(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  return jnp.matmul(x1, x2)
+
+
+@_wraps(getattr(np.linalg, "tensordot", None))
+def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
+              axes: int | tuple[Sequence[int], Sequence[int]] = 2) -> Array:
+  return jnp.tensordot(x1, x2, axes=axes)
+
+@_wraps(getattr(np.linalg, "svdvals", None))
+def svdvals(x: ArrayLike, /) -> Array:
+  return svd(x, compute_uv=False, hermitian=False)

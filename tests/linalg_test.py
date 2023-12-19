@@ -675,6 +675,50 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=1e-3)
     self._CompileAndCheck(jnp_fn, args_maker)
 
+  # jnp.linalg.matmul is an alias of jnp.matmul; do a minimal test here.
+  @jtu.sample_product(
+      [
+        dict(lhs_shape=(3,), rhs_shape=(3,)), # vec-vec
+        dict(lhs_shape=(2, 3), rhs_shape=(3,)), # mat-vec
+        dict(lhs_shape=(3,), rhs_shape=(3, 4)), # vec-mat
+        dict(lhs_shape=(2, 3), rhs_shape=(3, 4)), # mat-mat
+      ],
+      dtype=float_types + complex_types
+  )
+  @jax.default_matmul_precision("float32")
+  def testMatmul(self, lhs_shape, rhs_shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+    np_fn = jtu.promote_like_jnp(
+        np.matmul if jtu.numpy_version() < (2, 0, 0) else np.linalg.matmul)
+    jnp_fn = jnp.linalg.matmul
+    tol = {np.float16: 1e-2, np.float32: 2e-2, np.float64: 1e-12,
+           np.complex128: 1e-12}
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
+
+  # jnp.linalg.tensordot is an alias of jnp.tensordot; do a minimal test here.
+  @jtu.sample_product(
+      [
+        dict(lhs_shape=(2, 2, 2), rhs_shape=(2, 2), axes=0),
+        dict(lhs_shape=(2, 2, 2), rhs_shape=(2, 2), axes=1),
+        dict(lhs_shape=(2, 2, 2), rhs_shape=(2, 2), axes=2),
+      ],
+      dtype=float_types + complex_types
+  )
+  @jax.default_matmul_precision("float32")
+  def testTensordot(self, lhs_shape, rhs_shape, axes, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+    np_fn = jtu.promote_like_jnp(
+      partial(
+        np.tensordot if jtu.numpy_version() < (2, 0, 0) else np.linalg.tensordot,
+        axes=axes))
+    jnp_fn = partial(jnp.linalg.tensordot, axes=axes)
+    tol = {np.float16: 1e-2, np.float32: 2e-2, np.float64: 1e-12,
+           np.complex128: 1e-12}
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
 
   @jtu.sample_product(
       [

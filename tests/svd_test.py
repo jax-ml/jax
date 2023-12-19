@@ -45,6 +45,22 @@ _MAX_LOG_CONDITION_NUM = 9 if _JAX_ENABLE_X64 else 4
 class SvdTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
+      shape=[(4, 5), (3, 4, 5), (2, 3, 4, 5)],
+      dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+  )
+  @jax.default_matmul_precision('float32')
+  def testSvdvals(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    jnp_fun = jax.numpy.linalg.svdvals
+    if jtu.numpy_version() < (2, 0, 0):
+      np_fun = lambda x: np.linalg.svd(x, compute_uv=False)
+    else:
+      np_fun = np.linalg.svdvals
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=_SVD_RTOL, atol=1E-5)
+    self._CompileAndCheck(jnp_fun, args_maker, rtol=_SVD_RTOL)
+
+  @jtu.sample_product(
     [dict(m=m, n=n) for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])],
     log_cond=np.linspace(1, _MAX_LOG_CONDITION_NUM, 4),
     full_matrices=[True, False],
