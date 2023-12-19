@@ -153,6 +153,31 @@ jax_test(
 )
 
 jax_test(
+    name = "gpu_memory_flags_test_no_preallocation",
+    srcs = ["gpu_memory_flags_test.py"],
+    disable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    env = {
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "0",
+    },
+    main = "gpu_memory_flags_test.py",
+)
+
+jax_test(
+    name = "gpu_memory_flags_test",
+    srcs = ["gpu_memory_flags_test.py"],
+    disable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    env = {
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "1",
+    },
+)
+
+jax_test(
     name = "lobpcg_test",
     srcs = ["lobpcg_test.py"],
     env = {"LOBPCG_EMIT_DEBUG_PLOTS": "1"},
