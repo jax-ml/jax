@@ -31,6 +31,7 @@ from jax.experimental.pjit import pjit
 from jax.sharding import Mesh, PartitionSpec, NamedSharding
 
 from jax._src.interpreters import batching
+from jax._src import dispatch
 
 Array = jnp.ndarray
 DType = jnp.dtype
@@ -232,7 +233,7 @@ def _dot_product_attention_fwd_cuda_lowering(ctx, query, key, value, bias, mask,
 
     output_shape = (batch, num_heads, q_seq_len, head_dim)
     output_layout = (3, 1, 2, 0)
-    output_transpose_perm = mlir.dense_int_elements((0, 2, 1, 3))
+    output_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
     activation_shape = (batch, num_heads, q_seq_len, kv_seq_len)
     softmax_stat_shape = (batch, num_heads, q_seq_len)
     scratch_shape = (0,)
@@ -276,7 +277,7 @@ def _dot_product_attention_fwd_cuda_lowering(ctx, query, key, value, bias, mask,
     )
     # dropout scratch memory
     # output should be (batch, q_seq_len, num_heads, head_dim) instead of (batch, num_heads, q_seq_len, head_dim)
-    return [hlo.TransposeOp(out.results[0], output_transpose_perm).result, out.results[2]]
+    return [hlo.transpose(out.results[0], output_transpose_perm), out.results[2]]
 
 def _dot_product_attention_bwd_cuda_lowering(ctx, query, key, value, bias, mask, activation, fwd_output, grad_output,
     scale, seed, dropout_rate, variadic_args, is_flash_attention, is_causal_mask):
@@ -301,7 +302,7 @@ def _dot_product_attention_bwd_cuda_lowering(ctx, query, key, value, bias, mask,
     grad_value_shape = (batch, num_heads, kv_seq_len, head_dim)
     softmax_sum_shape = (batch, num_heads, q_seq_len)
     grad_layout = (3, 1, 2, 0)
-    grad_transpose_perm = mlir.dense_int_elements((0, 2, 1, 3))
+    grad_transpose_perm = mlir.dense_int_array((0, 2, 1, 3))
     backend_config = create_dot_product_attention_backend_config(batch, num_heads, q_seq_len, kv_seq_len, query_type.element_type, scale, seed, dropout_rate, is_flash_attention, is_causal_mask, True)
     # {Q, K, V, activation, dO, mask*, bias*, O*}
     # {dQ, dK, dV, d_S*, softmax_sum*, d_Q_accum*, scratch, dbias*}
@@ -348,9 +349,9 @@ def _dot_product_attention_bwd_cuda_lowering(ctx, query, key, value, bias, mask,
         result_layouts=result_layouts,
     )
     # Only keep dQ, dK and dV here
-    return [hlo.TransposeOp(out.results[0], grad_transpose_perm).result, 
-            hlo.TransposeOp(out.results[1], grad_transpose_perm).result,
-            hlo.TransposeOp(out.results[2], grad_transpose_perm).result]
+    return [hlo.transpose(out.results[0], grad_transpose_perm),
+            hlo.transpose(out.results[1], grad_transpose_perm),
+            hlo.transpose(out.results[2], grad_transpose_perm)]
 
 # batcher
 def _check_valid_batch_dims(bdims):
@@ -561,6 +562,11 @@ _dot_product_attention_bwd_lower.def_partition(
 mlir.register_lowering(_dot_product_attention_bwd_p_wrapper,
                         mlir.lower_fun(_dot_product_attention_bwd_lower, multiple_results=True))
 
+dispatch.prim_requires_devices_during_lowering.add(_dot_product_attention_fwd_p)
+dispatch.prim_requires_devices_during_lowering.add(_dot_product_attention_fwd_p_wrapper)
+dispatch.prim_requires_devices_during_lowering.add(_dot_product_attention_bwd_p)
+dispatch.prim_requires_devices_during_lowering.add(_dot_product_attention_bwd_p_wrapper)
+
 @partial(jax.custom_vjp, nondiff_argnums=(5, 6, 7, 8, 9, 10))
 def _dot_product_attention(query: Array,
                             key: Array,
@@ -621,6 +627,10 @@ def dot_product_attention(query: Array,
         bias = jnp.zeros(0, dtype=query.dtype)
     if mask is None:
         mask = jnp.zeros(0, dtype=query.dtype)
+    # TODO: remove this once scale behavior is fixed
+    if scale != 1.0:
+        query = query * scale
+        scale = 1.0
     output = _dot_product_attention(
         query, key, value, bias, mask, 
         scale, seed, dropout_rate, variadic_args, 
