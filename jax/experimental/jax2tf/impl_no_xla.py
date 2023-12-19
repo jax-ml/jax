@@ -459,7 +459,7 @@ tf_impl_no_xla[lax.dot_general_p] = _dot_general
 def _interior_padding(operand, padding_value, padding_config, operand_shape):
   # Used only when enable_xla=False
   # Applies only the interior padding from the padding_config.
-  # We do this somewhat inefficiently, as as a scatter.
+  # We do this somewhat inefficiently, as a scatter.
   # For each dimension we compute the indices_by_dim as [0, f, 2f, 3f, ...] where
   # f is the dilation factor for the dimension, i.e., 1 + interior_padding.
   # Then we compute the cartesian production of the indices (using broadcast

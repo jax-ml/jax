@@ -74,7 +74,7 @@ before `"hello"`. The reordering of the print side-effects breaks the illusion
 of a single-threaded execution model.
 
 Another example of where side-effects can "reveal" out-of-order execution is
-when we we compile JAX programs. Consider the following JAX code:
+when we compile JAX programs. Consider the following JAX code:
 ```python
 @jax.jit
 def f(x):

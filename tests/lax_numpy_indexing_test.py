@@ -1445,7 +1445,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     expected = jnp.array([5, 2, 3, 3])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    # test with negative segment ids and without without explicit num_segments
+    # test with negative segment ids and without explicit num_segments
     # such as num_segments is defined by the smaller index.
     segment_ids = jnp.array([3, 3, 3, 4, 5, 5, -7, -6])
     ans = ops.segment_sum(data, segment_ids)

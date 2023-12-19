@@ -47,7 +47,7 @@ def convert_and_save_model(
   """Convert a JAX function and saves a SavedModel.
 
   This is an example, we do not promise backwards compatibility for this code.
-  For serious uses, please copy and and expand it as needed (see note at the top
+  For serious uses, please copy and expand it as needed (see note at the top
   of the module).
 
   Use this function if you have a trained ML model that has both a prediction

@@ -559,7 +559,7 @@ def _csr_matmat(data: Array, indices: Array, indptr: Array, B: Array,
 
   Returns:
     C : array of shape ``(shape[1] if transpose else shape[0], cols)``
-      representing the matrix-matrix product product.
+      representing the matrix-matrix product.
   """
   return csr_matmat_p.bind(data, indices, indptr, B, shape=shape, transpose=transpose)
 

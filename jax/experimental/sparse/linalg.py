@@ -345,7 +345,7 @@ def _svqb(X):
   tau = jnp.finfo(X.dtype).eps * w[0]
   padded = jnp.maximum(w, tau)
 
-  # Note the the tau == 0 edge case where X was all zeros.
+  # Note the tau == 0 edge case where X was all zeros.
   sqrted = jnp.where(tau > 0, padded, 1.0) ** (-0.5)
 
   # X^T X = V diag(w) V^T, so
@@ -391,7 +391,7 @@ def _project_out(basis, U):
   #
   # Interspersing with orthonormalization isn't directly grounded in the
   # original analysis, but taken from Algorithm 5 of [3]. In practice, due to
-  # normalization, I have noticed that that the orthonormalized basis
+  # normalization, I have noticed that the orthonormalized basis
   # does not always end up as a subspace of the starting basis in practice.
   # There may be room to refine this procedure further, but the adjustment
   # in the subsequent block handles this edge case well enough for now.

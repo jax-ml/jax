@@ -87,7 +87,7 @@ training on Nvidia GPUs](https://github.com/NVIDIA/JAX-Toolbox/blob/main/rosetta
   These flags tune when to combine multiple small
   `AllGather`/`ReduceScatter`/`AllReduce` into one big
   `AllGather`/`ReduceScatter`/`AllReduce` to reduce time spent on cross-device
-  communication. For example, for the the `AllGather`/`ReduceScatter` thresholds
+  communication. For example, for the `AllGather`/`ReduceScatter` thresholds
   on a Transformer-based workload, consider tuning them high enough so as to
   combine at least a Transformer Layer's weight `AllGather`/`ReduceScatter`. By
   default, the `combine_threshold_bytes` is set to 256.

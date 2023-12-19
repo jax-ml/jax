@@ -135,7 +135,7 @@ def with_jax_dtype_defaults(func, use_defaults=True):
   Args:
     use_defaults : whether to convert any given output to the default dtype. May be
       a single boolean, in which case it specifies the conversion for all outputs,
-      or may be a a pytree with the same structure as the function output.
+      or may be a pytree with the same structure as the function output.
   """
   @functools.wraps(func)
   def wrapped(*args, **kwargs):
