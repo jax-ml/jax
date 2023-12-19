@@ -226,7 +226,6 @@ from jax._src.numpy.lax_numpy import (
     tensordot as tensordot,
     tile as tile,
     trace as trace,
-    trapz as _deprecated_trapz,
     transpose as transpose,
     tri as tri,
     tril as tril,
@@ -429,23 +428,3 @@ try:
   from numpy import issubsctype as _deprecated_issubsctype
 except ImportError:
   _deprecated_issubsctype = None
-
-# Deprecations
-
-_deprecations = {
-    # Added Aug 24, 2023
-    "trapz": (
-        "jax.numpy.trapz is deprecated. Use jax.scipy.integrate.trapezoid instead.",
-        _deprecated_trapz,
-    ),
-}
-
-import typing
-if typing.TYPE_CHECKING:
-  trapz = _deprecated_trapz
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del typing
-del _deprecated_trapz

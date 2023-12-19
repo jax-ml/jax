@@ -378,7 +378,6 @@ namespace; they are listed below.
     tile
     trace
     transpose
-    trapz
     tri
     tril
     tril_indices

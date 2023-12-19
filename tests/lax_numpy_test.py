@@ -1992,36 +1992,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @jtu.sample_product(
-    [dict(yshape=yshape, xshape=xshape, dx=dx, axis=axis)
-      for yshape, xshape, dx, axis in [
-        ((10,), None, 1.0, -1),
-        ((3, 10), None, 2.0, -1),
-        ((3, 10), None, 3.0, -0),
-        ((10, 3), (10,), 1.0, -2),
-        ((3, 10), (10,), 1.0, -1),
-        ((3, 10), (3, 10), 1.0, -1),
-        ((2, 3, 10), (3, 10), 1.0, -2),
-      ]
-    ],
-    dtype=default_dtypes,
-  )
-  @jtu.skip_on_devices("tpu")  # TODO(jakevdp): fix and reenable this test.
-  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
-  def testTrapz(self, yshape, xshape, dtype, dx, axis):
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(yshape, dtype), rng(xshape, dtype) if xshape is not None else None]
-    # TODO(jakevdp): numpy.trapz is removed in numpy 2.0
-    np_fun = jtu.ignore_warning(category=DeprecationWarning)(
-      partial(np.trapz, dx=dx, axis=axis))
-    jnp_fun = partial(jnp.trapz, dx=dx, axis=axis)
-    tol = jtu.tolerance(dtype, {np.float16: 2e-3, np.float64: 1e-12,
-                                dtypes.bfloat16: 4e-2})
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol,
-                            check_dtypes=False)
-    self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol,
-                          check_dtypes=False)
-
-  @jtu.sample_product(
     dtype=default_dtypes,
     n=[0, 4],
     m=[None, 0, 1, 3, 4],

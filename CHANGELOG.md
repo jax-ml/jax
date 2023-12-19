@@ -32,7 +32,7 @@ Remember to align the itemized text with the first line of an item within a list
       `axis_groups`, `ShapedArray`, `ConcreteArray`, `AxisEnv`, `backend_compile`,
       and `XLAOp`.
     * from {mod}`jax.numpy`: `NINF`, `NZERO`, `PZERO`, `row_stack`, `issubsctype`,
-      and `in1d`.
+      `trapz`, and `in1d`.
     * from {mod}`jax.scipy.linalg`: `tril` and `triu`.
 
 ## jaxlib 0.4.24

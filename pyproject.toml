@@ -76,7 +76,6 @@ filterwarnings = [
     "ignore:JAX_USE_PJRT_C_API_ON_TPU=false will no longer be supported.*:UserWarning",
     "ignore:np.find_common_type is deprecated.*:DeprecationWarning",
     "ignore:jax.numpy.in1d is deprecated.*:DeprecationWarning",
-    "ignore:jax.numpy.trapz is deprecated.*:DeprecationWarning",
     # TODO(jakevdp): remove when array_api_tests stabilize
     # start array_api_tests-related warnings
     "ignore:The numpy.array_api submodule is still experimental.*:UserWarning",
