@@ -37,6 +37,7 @@ from jax.experimental.export import shape_poly
 from jax.experimental import pjit
 from jax import lax
 import jax.numpy as jnp
+from jax import ops
 from jax import random
 from jax._src import config
 from jax._src import core
@@ -2081,6 +2082,27 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                  StaticArg(lax.ScatterDimensionNumbers((1,), (0,), (0, 1))),
                                  ],
                 polymorphic_shapes=["b, ...", "b, ...", "b, ..."]),
+    [
+      PolyHarness("segment", f"{name}_bucket_size_{bucket_size}",
+                  lambda x, segment_ids: op(
+                    x,  # f32[b, s, buckets]
+                    segment_ids,  # i32[b]
+                    num_segments=x.shape[1],
+                    bucket_size=(x.shape[2]
+                                 if bucket_size == "poly" else bucket_size)),
+                  arg_descriptors=[RandArg((8, 5, 2), _f32),
+                                   np.array([0, 0, 0, 1, 1, 3, 3, 3],
+                                            dtype=np.int32)
+                  ],
+                  polymorphic_shapes=["b, s, buckets", "b"])
+      for name, op in [
+        ("max", ops.segment_max),
+        ("min", ops.segment_min),
+        ("sum", ops.segment_sum),
+        ("prod", ops.segment_prod),
+      ]
+      for bucket_size in [None, 2, "poly"]
+    ],
     [
       PolyHarness("schur",
                   f"shape={jtu.format_shape_dtype_string(shape, dtype)}_{poly=}_{compute_schur_vectors=}",
