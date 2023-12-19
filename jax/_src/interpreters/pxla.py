@@ -2745,6 +2745,8 @@ class MeshExecutableFastpathData(NamedTuple):
   out_avals: Sequence[ShapedArray]
   out_committed: Sequence[bool]
   kept_var_bitvec: Iterable[bool]
+  arg_handler_devices: Sequence[xc.Device]
+  arg_handler_indices: Sequence[tuple[Index | None, ...]]
 
 
 def reflatten_outputs_for_dispatch(out_tree, out_flat):
@@ -2845,13 +2847,19 @@ class MeshExecutable(stages.XlaExecutable):
                            for i in range(len(args_flat))]
         fastpath_data = MeshExecutableFastpathData(
             self.xla_executable, out_tree_dispatch, self._in_shardings,
-            self._out_shardings, out_avals, out_committed, kept_var_bitvec)
+            self._out_shardings, out_avals, out_committed, kept_var_bitvec,
+            self.unsafe_call.in_handler.local_devices,
+            self.unsafe_call.in_handler.input_indices)
       else:
         fastpath_data = None
       return outs, fastpath_data
 
-    return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [],
-                        tree_util.dispatch_registry)
+    if xla_extension_version >= 226:
+      return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [],
+                          tree_util.dispatch_registry, shard_arg)
+    else:
+      return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [],  # type: ignore
+                          tree_util.dispatch_registry)
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,

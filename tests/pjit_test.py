@@ -4206,6 +4206,17 @@ class PJitErrorTest(jtu.JaxTestCase):
         r"sharding.*the computation was compiled with"):
       g(x, y2)
 
+  def test_dce_no_array(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    arr = jax.device_put(np.arange(8.), NamedSharding(mesh, P('x')))
+
+    @jax.jit
+    def f(a, b, c):
+      return a, c
+
+    f(arr, 2., 3.)
+    f(arr, 2., 3.)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class UtilTest(jtu.JaxTestCase):
