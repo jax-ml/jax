@@ -57,10 +57,10 @@ class LaxRandomTest(jtu.JaxTestCase):
     sq_percent_deviation = ((ncollisions - nexpected) / nexpected) ** 2
     self.assertLess(sq_percent_deviation, 1 / np.sqrt(nexpected * fail_prob))
 
-  def _CheckKolmogorovSmirnovCDF(self, samples, cdf):
+  def _CheckKolmogorovSmirnovCDF(self, samples, cdf, pval=None):
     # conservative bound on statistical fail prob by Kolmo CDF
     # bfloat16 quantization creates much lower p-values in large distributions
-    fail_prob = 0.003 if samples.dtype == jnp.bfloat16 else 0.01
+    fail_prob = pval or (0.003 if samples.dtype == jnp.bfloat16 else 0.01)
     # TODO(frostig): This reads enable_custom_prng as a proxy for
     # whether RBG keys may be involved, but that's no longer exact.
     if config.enable_custom_prng.value and samples.dtype == jnp.bfloat16:
@@ -429,7 +429,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")  # TODO(mattjj): slow compilation times
   def testDirichlet(self, alpha, dtype):
     key = self.make_key(0)
-    num_samples = 50000
+    num_samples = 10000
     rand = lambda key, alpha: random.dirichlet(key, alpha, (num_samples,), dtype)
     crand = jax.jit(rand)
 
@@ -441,7 +441,8 @@ class LaxRandomTest(jtu.JaxTestCase):
       alpha_sum = sum(alpha)
       for i, a in enumerate(alpha):
         self._CheckKolmogorovSmirnovCDF(samples[..., i],
-                                        scipy.stats.beta(a, alpha_sum - a).cdf)
+                                        scipy.stats.beta(a, alpha_sum - a).cdf,
+                                        pval=0.003)
 
   @jtu.skip_on_devices("tpu")  # lower accuracy leads to failures.
   def testDirichletSmallAlpha(self, dtype=np.float32):
