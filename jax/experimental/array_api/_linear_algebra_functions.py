@@ -85,7 +85,7 @@ def inv(x, /):
 
 def matmul(x1, x2, /):
   """Computes the matrix product."""
-  return jax.numpy.matmul(x1, x2)
+  return jax.numpy.linalg.matmul(x1, x2)
 
 def matrix_norm(x, /, *, keepdims=False, ord='fro'):
   """
@@ -160,11 +160,11 @@ def svdvals(x, /):
   """
   Returns the singular values of a matrix (or a stack of matrices) x.
   """
-  return jax.numpy.linalg.svd(x, compute_uv=False)
+  return jax.numpy.linalg.svdvals(x)
 
 def tensordot(x1, x2, /, *, axes=2):
   """Returns a tensor contraction of x1 and x2 over specific axes."""
-  return jax.numpy.tensordot(x1, x2, axes=axes)
+  return jax.numpy.linalg.tensordot(x1, x2, axes=axes)
 
 def trace(x, /, *, offset=0, dtype=None):
   """

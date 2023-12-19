@@ -455,6 +455,7 @@ jax.numpy.linalg
   eigvalsh
   inv
   lstsq
+  matmul
   matrix_norm
   matrix_power
   matrix_rank
@@ -467,6 +468,8 @@ jax.numpy.linalg
   slogdet
   solve
   svd
+  svdvals
+  tensordot
   tensorinv
   tensorsolve
   vector_norm
