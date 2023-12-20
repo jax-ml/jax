@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import sys
 import unittest
 
 from absl.testing import absltest
@@ -28,7 +29,7 @@ class GpuMemoryAllocationTest(absltest.TestCase):
 
   # This test must be run in its own subprocess.
   @unittest.skipIf(
-      "PYTEST_CURRENT_TEST" in os.environ,
+      "pytest" in sys.modules,
       "Test must run in an isolated process",
   )
   @unittest.skipIf(
