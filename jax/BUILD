@@ -209,6 +209,7 @@ py_library_providing_imports_info(
         "_src/prng.py",
         "_src/public_test_util.py",
         "_src/random.py",
+        "_src/shard_alike.py",
         "_src/stages.py",
     ] + glob(
         [

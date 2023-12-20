@@ -1508,6 +1508,7 @@ tf_not_yet_impl = [
     "platform_index",
     "assert_consumed_value",
     "consume",
+    "shard_alike",
 ]
 
 tf_impl[unconsumed_copy_p] = lambda x: x

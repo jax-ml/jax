@@ -263,6 +263,14 @@ jax_test(
 )
 
 jax_test(
+    name = "shard_alike_test",
+    srcs = ["shard_alike_test.py"],
+    deps = [
+        "//jax:experimental",
+    ],
+)
+
+jax_test(
     name = "pgle_test",
     srcs = ["pgle_test.py"],
     disable_backends = [

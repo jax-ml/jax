@@ -2062,7 +2062,8 @@ def _wrap_with_spmd_op(name: str,
                        x: ir.Value,
                        aval_out: core.AbstractValue,
                        sharding_proto: xc.OpSharding,
-                       unspecified_dims: set[int] | None = None):
+                       unspecified_dims: set[int] | None = None,
+                       has_side_effect: bool = False):
   # unspecified_dims indicate dimensions whose shardings are not specified and
   # XLA sharding propagation can change them.
   if unspecified_dims:
@@ -2080,7 +2081,8 @@ def _wrap_with_spmd_op(name: str,
   op = custom_call(name, result_types=[result_type], operands=[x],
                    backend_config=backend_config,
                    api_version=1,
-                   result_shapes=result_shapes)
+                   result_shapes=result_shapes,
+                   has_side_effect=has_side_effect)
   set_sharding(op, sharding_proto)
   return op.result
 

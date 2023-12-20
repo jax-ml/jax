@@ -880,6 +880,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "shape_assertion",  # Used by shape_poly to evaluate assertions
 }
 
+check_sharding_pattern = re.compile(r"^({replicated}|{unknown shard_as.*}|"")$")
 
 def _check_module(mod: ir.Module, *,
                   allow_non_replicated_sharding: bool,
@@ -910,7 +911,7 @@ def _check_module(mod: ir.Module, *,
       except KeyError:
         pass
       else:
-        if ir.StringAttr(sharding).value not in ["{replicated}", ""]:
+        if not re.match(check_sharding_pattern, ir.StringAttr(sharding).value):
           raise ValueError(
               "Lowered function does not have a top-level pjit but it has"
               f" non-replicated sharding annotations, e.g., {op} at {loc}.\nSee"
