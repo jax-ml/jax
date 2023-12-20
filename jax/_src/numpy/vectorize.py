@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
+from collections.abc import Collection, Sequence
 import functools
 import re
 from typing import Any, Callable
@@ -158,25 +160,27 @@ def _check_output_dims(
   return wrapped
 
 
-def _apply_excluded(func, excluded, args):
+def _apply_excluded(func: Callable[..., Any],
+                    excluded: Collection[int | str],
+                    args: Sequence[Any],
+                    kwargs: dict[str, Any]) -> tuple[Callable[..., Any], Sequence[Any], dict[str, Any]]:
   """Partially apply positional arguments in `excluded` to a function."""
   if not excluded:
-    return func, args
-
-  if max(excluded) >= len(args):
-    raise ValueError("excluded={!r} is invalid for {!r} argument(s)"
-                     .format(excluded, len(args)))
+    return func, args, kwargs
 
   dynamic_args = [arg for i, arg in enumerate(args) if i not in excluded]
-  static_args = [(i, args[i]) for i in sorted(excluded)]
+  dynamic_kwargs = {key: val for key, val in kwargs.items() if key not in excluded}
+  static_args = [(i, args[i]) for i in sorted(e for e in excluded if isinstance(e, int))
+                 if i < len(args)]
+  static_kwargs = {key: val for key, val in kwargs.items() if key in excluded}
 
-  def new_func(*args):
+  def new_func(*args, **kwargs):
     args = list(args)
     for i, arg in static_args:
       args.insert(i, arg)
-    return func(*args)
+    return func(*args, **kwargs, **static_kwargs)
 
-  return new_func, dynamic_args
+  return new_func, dynamic_args, dynamic_kwargs
 
 
 def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
@@ -252,17 +256,17 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
   Traceback (most recent call last):
   TypeError: dot_general requires contracting dimensions to have the same shape, got [3] and [4].
   """
-  if any(not isinstance(exclude, int) for exclude in excluded):
-    raise TypeError("jax.numpy.vectorize can only exclude integer arguments, "
+  if any(not isinstance(exclude, (str, int)) for exclude in excluded):
+    raise TypeError("jax.numpy.vectorize can only exclude integer or string arguments, "
                     "but excluded={!r}".format(excluded))
-  if excluded and min(excluded) < 0:
+  if any(isinstance(e, int) and e < 0 for e in excluded):
     raise ValueError(f"excluded={excluded!r} contains negative numbers")
 
   @functools.wraps(pyfunc)
-  def wrapped(*args):
+  def wrapped(*args, **kwargs):
     error_context = ("on vectorized function with excluded={!r} and "
                      "signature={!r}".format(excluded, signature))
-    excluded_func, args = _apply_excluded(pyfunc, excluded, args)
+    excluded_func, args, kwargs = _apply_excluded(pyfunc, excluded, args, kwargs)
 
     if signature is not None:
       input_core_dims, output_core_dims = _parse_gufunc_signature(signature)
@@ -274,7 +278,7 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
     if any(none_args):
       if any(input_core_dims[i] != () for i in none_args):
         raise ValueError(f"Cannot pass None at locations {none_args} with {signature=}")
-      excluded_func, args = _apply_excluded(excluded_func, none_args, args)
+      excluded_func, args, _ = _apply_excluded(excluded_func, none_args, args, {})
       input_core_dims = [dim for i, dim in enumerate(input_core_dims) if i not in none_args]
 
     args = tuple(map(jnp.asarray, args))
