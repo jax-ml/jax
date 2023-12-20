@@ -1299,17 +1299,8 @@ def _aval_is_empty(aval) -> bool:
   return math.prod(aval.shape) == 0
 
 def _instantiate_zeros(tan, arg):
-  """Turn special ad.zero tangents into arrays of 0s for sending to host.
-  Args:
-    tan: the tangent.
-    arg: the argument for which we need to instantiate the tangent
-
-  Returns: tan if it is not ad.Zero, otherwise a 0 array of appropriate type
-    and shape
-  """
-  if type(tan) is not ad.Zero:
-    return tan
-  return ad.instantiate_zeros_aval(tan.aval, tan)
+  del arg
+  return ad.instantiate_zeros(tan)
 
 def _outside_call_jvp_rule(primals, tangents, **params):
   assert "has_token" not in params
