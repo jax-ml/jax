@@ -17,7 +17,6 @@ from __future__ import annotations
 from collections.abc import Sequence, Iterable
 import dataclasses
 from functools import partial, lru_cache
-import inspect
 import itertools as it
 import logging
 import weakref
@@ -67,8 +66,7 @@ from jax._src.state import discharge as state_discharge
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
-    treedef_tuple, broadcast_prefix, all_leaves,
-    prefix_errors, generate_key_paths)
+    broadcast_prefix, all_leaves, treedef_children, prefix_errors)
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, weakref_lru_cache,
@@ -85,14 +83,6 @@ MeshSharding = Union[NamedSharding, UnspecifiedValue, AUTO]
 MeshShardingMinusUnspecified = Union[NamedSharding, AUTO]
 
 logger = logging.getLogger(__name__)
-
-
-def _try_infer_args(f, tree):
-  dummy_args = tree_unflatten(tree, [False] * tree.num_leaves)
-  try:
-    return inspect.signature(f).bind(*dummy_args)
-  except (TypeError, ValueError):
-    return None
 
 
 def _find_arg_mismatch(arg_list, fails, fun_name):
@@ -115,30 +105,12 @@ def _find_arg_mismatch(arg_list, fails, fun_name):
         break
   return mismatched_args_msg
 
-# TODO(yashkatariya): Try to use debug_info that is populated in
-# common_infer_params.
-def _get_arg_names(fun, in_tree, args_flat):
-  sig = _try_infer_args(fun, in_tree)
-  args_aug = generate_key_paths(tree_unflatten(in_tree, args_flat))
-
-  arg_names = []
-  for arg_key, val in args_aug:
-    ak, *rem_keys = arg_key
-    if sig is not None:
-      loc = ''.join(str(k) for k in rem_keys)
-      try:
-        arg_name = f'{list(sig.arguments.keys())[ak.idx]}{loc}'
-      except IndexError:
-        arg_name = ''  # E.g. variadic positional argument.
-    else:
-      arg_name = ''
-    arg_names.append(arg_name)
-  return arg_names
-
 
 def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
                                       arg_names):
   arg_list = []
+  if arg_names is None:
+    arg_names = [''] * len(args_flat)
   for a, n in zip(args_flat, arg_names):
     da = a.sharding._device_assignment if hasattr(a, 'sharding') else None
     arg_list.append((n, da, shaped_abstractify(a)))
@@ -161,7 +133,7 @@ def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
 
 
 def _python_pjit_helper(fun, infer_params_fn, *args, **kwargs):
-  args_flat, _, params, in_tree, out_tree, _, _, _ = infer_params_fn(
+  args_flat, _, params, _, out_tree, _, _, _, arg_names = infer_params_fn(
       *args, **kwargs)
   for arg in args_flat:
     dispatch.check_arg(arg)
@@ -170,7 +142,6 @@ def _python_pjit_helper(fun, infer_params_fn, *args, **kwargs):
   except pxla.DeviceAssignmentMismatchError as e:
     fails, = e.args
     api_name = 'jit' if params['resource_env'] is None else 'pjit'
-    arg_names = _get_arg_names(fun, in_tree, args_flat)
     fun_name = getattr(fun, '__qualname__', getattr(fun, '__name__', str(fun)))
     msg = _device_assignment_mismatch_error(
         fun_name, fails, args_flat, api_name, arg_names)
@@ -343,7 +314,8 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
     in_layouts = kwargs.pop('_in_layouts', None)
     out_layouts = kwargs.pop('_out_layouts', None)
     (args_flat, flat_global_in_avals, params, in_tree, out_tree,
-     donated_invars, in_layouts_flat, out_layouts_flat) = infer_params_fn(
+     donated_invars, in_layouts_flat, out_layouts_flat,
+     arg_names) = infer_params_fn(
          *args, **kwargs, _in_layouts=in_layouts, _out_layouts=out_layouts)
     resource_env = params['resource_env']
     mesh = None if resource_env is None else resource_env.physical_mesh
@@ -358,20 +330,14 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
     except pxla.DeviceAssignmentMismatchError as e:
       fails, = e.args
       api_name = 'jit' if params['resource_env'] is None else 'pjit'
-      arg_names = _get_arg_names(fun, in_tree, args_flat)
       fun_name = getattr(fun, '__qualname__', getattr(fun, '__name__', str(fun)))
       msg = _device_assignment_mismatch_error(
           fun_name, fails, args_flat, api_name, arg_names)
       raise ValueError(msg) from None
 
-    if kwargs:
-      args_kwargs_in_tree = in_tree
-    else:
-      args_kwargs_in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
-
     donate_argnums = tuple(i for i, d in enumerate(donated_invars) if d)
     return stages.Lowered.from_flat_info(
-        lowering, args_kwargs_in_tree, flat_global_in_avals, donate_argnums,
+        lowering, in_tree, flat_global_in_avals, donate_argnums,
         out_tree)
 
   wrapped.lower = lower
@@ -436,18 +402,9 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
                                        allow_invalid=True)
   del args
 
-  # TODO(yashkatariya): Merge the nokwargs and kwargs path. One blocker is
-  # flatten_axes which if kwargs are present in the treedef (even empty {}),
-  # leads to wrong expansion.
-  if kwargs:
-    f, dyn_kwargs = argnames_partial_except(f, static_argnames, kwargs)
-    explicit_args, in_tree = tree_flatten((dyn_args, dyn_kwargs))
-    flat_fun, out_tree = flatten_fun(f, in_tree)
-  else:
-    explicit_args, in_tree = tree_flatten(dyn_args)
-    flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-    dyn_kwargs = {}
-  del kwargs
+  f, dyn_kwargs = argnames_partial_except(f, static_argnames, kwargs)
+  explicit_args, in_tree = tree_flatten((dyn_args, dyn_kwargs))
+  flat_fun, out_tree = flatten_fun(f, in_tree)
 
   if (donate_argnums or donate_argnames) and not config.debug_nans.value:
     donated_invars = donation_vector(
@@ -498,7 +455,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
 
   canonicalized_in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
       hashable_pytree(in_shardings), hashable_pytree(in_layouts), in_avals,
-      in_tree, resource_env, dbg, device_or_backend_set)
+      in_tree, resource_env, dbg, device_or_backend_set, True if kwargs else False)
 
   jaxpr, consts, canonicalized_out_shardings_flat, out_layouts_flat = _pjit_jaxpr(
       flat_fun, hashable_pytree(out_shardings), hashable_pytree(out_layouts),
@@ -533,7 +490,8 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
       inline=inline,
   )
   return (consts + args_flat, in_type, params, in_tree, out_tree(),
-          donated_invars, in_layouts_flat, out_layouts_flat)
+          donated_invars, in_layouts_flat, out_layouts_flat,
+          dbg.arg_names if dbg else None)
 
 def _extract_implicit_args(
   in_type: Sequence[tuple[core.AbstractValue, bool]],
@@ -905,7 +863,10 @@ class PytreeLeaf:
 @lru_cache(maxsize=4096)
 def _process_in_axis_resources(in_shardings_thunk, in_layouts_thunk, in_avals,
                                in_tree, resource_env, debug_info,
-                               device_or_backend_set):
+                               device_or_backend_set, kws):
+  if not kws:
+    in_tree, _ = treedef_children(in_tree)
+
   orig_in_shardings = in_shardings_thunk()
   # Only do this if original in_shardings are unspecified. If it is AUTO, go
   # via flatten_axis_resources.

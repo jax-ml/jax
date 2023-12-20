@@ -2250,8 +2250,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "Received incompatible devices for pjitted computation. Got argument "
-        r"x of.*\<lambda\> with shape int.*\[3\] and device ids \[0\].*and "
-        r"argument  of.*\<lambda\> with shape int.*\[3\] and device ids \[1\].*"):
+        r"x\[0\] of.*\<lambda\> with shape int.*\[3\] and device ids \[0\].*and "
+        r"argument x\[1\] of.*\<lambda\> with shape int.*\[3\] and device ids "
+        r"\[1\].*"):
       pjit(lambda *x: x)(a, b)
 
   def test_pjit_pytree_inp_device_assignment_mismatch(self):
