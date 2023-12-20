@@ -740,7 +740,7 @@ def _scan_transpose(reduce_axes, cts, *args, reverse, length, num_consts,
 
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
   ct_carry, ct_ys = split_list(cts, [num_carry])
-  ct_carry = _map(ad.instantiate_zeros_aval, carry_avals, ct_carry)
+  ct_carry = _map(ad.instantiate_zeros, ct_carry)
   ct_ys_is_zeros = [type(ct_y) is ad.Zero for ct_y in ct_ys]
   ct_ys = [x for x in ct_ys if type(x) is not ad.Zero]
 
@@ -797,9 +797,8 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr, reduce_axes,
     cbar_abar = ad.backward_pass(
         jaxpr.jaxpr, reduce_axes, False, jaxpr.consts, primals, b_bar + ys_bar)
     _, new_c_bar, a_bar, _ = split_list(cbar_abar, [num_res1, num_c, num_a])
-    a_bar = _map(ad.instantiate_zeros_aval, a_avals, a_bar)
-    c_bar = _map(ad.instantiate_zeros_aval, c_avals,
-                _map(ad.add_tangents, c_bar, new_c_bar))
+    a_bar = _map(ad.instantiate_zeros, a_bar)
+    c_bar = _map(ad.instantiate_zeros, _map(ad.add_tangents, c_bar, new_c_bar))
     return c_bar + a_bar
   return _make_closed_jaxpr(transposed,
       res1_avals + c_avals + b_carry_avals + b_ys_avals_stripped + res2_avals)

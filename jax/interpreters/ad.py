@@ -43,7 +43,6 @@ from jax._src.interpreters.ad import (
   f_jvp_traceable as f_jvp_traceable,
   get_primitive_transpose as get_primitive_transpose,
   instantiate_zeros as instantiate_zeros,
-  instantiate_zeros_aval as instantiate_zeros_aval,
   is_undefined_primal as is_undefined_primal,
   jvp as jvp,
   jvp_jaxpr as jvp_jaxpr,

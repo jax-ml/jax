@@ -706,7 +706,7 @@ def _transpose_cond_jaxpr(jaxpr, num_res, reduce_axes):
     cts_in = ad.backward_pass(
         jaxpr.jaxpr, reduce_axes, False, jaxpr.consts, primals, cts_out)
     _, cts_in = split_list(cts_in, [num_res])
-    return map(ad.instantiate_zeros_aval, primal_avals, cts_in)
+    return map(ad.instantiate_zeros, cts_in)
 
   return _make_closed_jaxpr(transposed, res_avals + jaxpr.out_avals)
 
@@ -729,7 +729,7 @@ def _cond_transpose(reduce_axes, cts, *args, branches, linear):
              for out_aval, lin_in_aval in zip(jaxpr.out_avals, lin_in_avals))
 
   res = ops[:num_res]
-  cts = map(ad.instantiate_zeros_aval, branches[0].out_avals, cts)
+  cts = map(ad.instantiate_zeros, cts)
   linear_trans = (False,) * num_res + (True,) * len(cts)
 
   out = cond_p.bind(

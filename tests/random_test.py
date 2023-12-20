@@ -1125,8 +1125,8 @@ class KeyArrayTest(jtu.JaxTestCase):
     def _f_fwd(_, state):
       return state, None
     def _f_bwd(_, state_bar):
-      assert state_bar[1].dtype.name == "key<fry_t>"  # key tangent type
-      return state_bar
+      assert state_bar[1].dtype == dtypes.float0  # key tangent type
+      return state_bar[0], state_bar
     f.defvjp(_f_fwd, _f_bwd)
     state = (8.0, jax.random.key(123))
     result = jax.grad(lambda theta: f(theta, state)[0])(3.0)
@@ -1139,9 +1139,9 @@ class KeyArrayTest(jtu.JaxTestCase):
     def _f_fwd(_, state):
       return tree_util.tree_map(lambda x: x.value, state), None
     def _f_bwd(_, state_bar):
-      self.assertTrue(dtypes.issubdtype(state_bar[1].dtype, dtypes.prng_key))
+      self.assertTrue(state_bar[1].dtype == dtypes.float0)
       self.assertIsInstance(state_bar[1], jax.custom_derivatives.SymbolicZero)
-      return state_bar
+      return state_bar[0], state_bar
     f.defvjp(_f_fwd, _f_bwd, symbolic_zeros=True)
     state = (8.0, jax.random.key(123))
     result = jax.grad(lambda theta: f(theta, state)[0])(3.0)

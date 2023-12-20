@@ -338,6 +338,9 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
     # The following avoids copies to the host on CPU, always for Array
     # and even for ndarray if they are sufficiently aligned.
     # TODO(necula): on TPU this copies to the host!
+    if getattr(arg_jax, 'dtype', None) == dtypes.float0:
+      return tf.zeros(shape=arg_jax.shape,
+                      dtype=jax2tf_internal._tf_np_dtype_for_float0)
     return tf.constant(np.asarray(arg_jax))
 
   args_tf_flat = tuple(map(_arg_jax_to_tf, args_jax_flat))

@@ -208,7 +208,7 @@ def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack,
     #   assert v.aval.strip_weak_type().strip_named_shape() == joined_aval, (prim, v.aval, ct_aval)
 
   def read_cotangent(v):
-    return ct_env.pop(v, Zero(v.aval))
+    return ct_env.pop(v, Zero(v.aval.at_least_vspace()))
 
   def read_primal(v):
     if type(v) is Literal:
@@ -588,19 +588,7 @@ deflinear2(zeros_like_p, lambda t, _: [Zero.from_value(t)])
 deflinear2(add_jaxvals_p, lambda t, *args: (t, t))
 
 def instantiate_zeros(tangent):
-  if type(tangent) is not Zero:
-    return tangent
-  return instantiate_zeros_aval(tangent.aval, tangent)
-
-# This function seems similar to instantiate_zeros, but it is sometimes used
-# to instantiate zero abstract units with a different aval
-def instantiate_zeros_aval(aval, tangent):
-  if type(tangent) is not Zero:
-    return tangent
-  assert tangent.aval == aval
-  if jax.dtypes.issubdtype(aval.dtype, jax.dtypes.extended):
-    return aval.dtype._rules.make_tangent(aval.shape, aval.dtype)
-  return zeros_like_aval(aval)
+  return zeros_like_aval(tangent.aval) if type(tangent) is Zero else tangent
 
 @lu.transformation_with_aux
 def traceable(in_tree, *primals_and_tangents):
@@ -760,7 +748,7 @@ def _custom_lin_transpose(cts_out, *invals, num_res, bwd, out_avals,
   if symbolic_zeros:
     cts_out = map(replace_internal_symbolic_zeros, cts_out)
   else:
-    cts_out = map(instantiate_zeros_aval, out_avals, cts_out)
+    cts_out = map(instantiate_zeros, cts_out)
   cts_in = bwd(*res, *cts_out)
   cts_in = map(replace_rule_output_symbolic_zeros, cts_in)
   return [None] * num_res + list(cts_in)
