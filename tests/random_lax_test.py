@@ -1120,7 +1120,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       dfden = [1. ,2., 10., 100.],
       dtype=jtu.dtypes.floating)
   def testF(self, dfnum, dfden, dtype):
-    key = self.make_key(1)
+    key = self.make_key(9)
     rand = lambda key: random.f(key, dfnum, dfden, shape = (10000, ), dtype = dtype)
     crand = jax.jit(rand)
 
@@ -1212,7 +1212,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       p= [0.1, 0.3, 0.5, 0.7, 0.9],
       dtype= jtu.dtypes.floating)
   def testBinomialSample(self, n, p, dtype):
-    key = self.make_key(3)
+    key = self.make_key(12)
     rand = lambda key: random.binomial(key, n, p, shape=(12000,), dtype=dtype)
     crand = jax.jit(rand)
     uncompiled_samples = rand(key)
