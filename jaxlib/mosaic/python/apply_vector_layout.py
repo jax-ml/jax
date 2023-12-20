@@ -3128,7 +3128,7 @@ def _vector_multi_reduction_rule(  # pylint: disable=missing-function-docstring
         f"only fp32 reductions supported, but got {src_type}")
   if op.attributes["kind"] == ir.Attribute.parse("#vector.kind<add>"):
     neutral = ir.FloatAttr.get_f32(0.)
-  elif op.attributes["kind"] == ir.Attribute.parse("#vector.kind<maxf>"):
+  elif op.attributes["kind"] == ir.Attribute.parse("#vector.kind<maxnumf>"):
     neutral = ir.FloatAttr.get_f32(-math.inf)
   else:
     raise NotImplementedError(op.attributes["kind"])
@@ -3179,7 +3179,7 @@ def _vector_multi_reduction_rule(  # pylint: disable=missing-function-docstring
   src_vregs = disassemble(src_layout, op.source)
   dst_vregs = np.empty(
       layout_out.tile_array_shape(res_type.shape), dtype=object)
-  if op.attributes["kind"] == ir.Attribute.parse("#vector.kind<maxf>"):
+  if op.attributes["kind"] == ir.Attribute.parse("#vector.kind<maxnumf>"):
     tpu_kind = ir.Attribute.parse("#tpu.reduction_kind<max>")
     pointwise = arith.MaximumFOp
   elif op.attributes["kind"] == ir.Attribute.parse("#vector.kind<add>"):

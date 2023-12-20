@@ -2284,7 +2284,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     case vector::CombiningKind::ADD:
       neutral = builder.getF32FloatAttr(0);
       break;
-    case vector::CombiningKind::MAXF: {
+    case vector::CombiningKind::MAXNUMF: {
       neutral = builder.getFloatAttr(
           builder.getF32Type(),
           APFloat::getInf(APFloat::IEEEsingle(), /*Negative=*/true));
@@ -2376,7 +2376,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     case vector::CombiningKind::ADD:
       tpu_kind = tpu::ReductionKind::SUM;
       break;
-    case vector::CombiningKind::MAXF:
+    case vector::CombiningKind::MAXNUMF:
       tpu_kind = tpu::ReductionKind::MAX;
       break;
     default:
