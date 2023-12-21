@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import types
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, Callable, TypeVar
 
 from jax._src import core
 from jax._src import traceback_util
@@ -49,9 +49,9 @@ def add_abstract(xs, ys):
 jaxval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 
 def instantiate(z: Zero | Array) -> Array:
-  if type(z) is Zero:
+  if isinstance(z, Zero):
     return zeros_like_aval(z.aval)
-  return cast(Array, z)
+  return z
 
 def zeros_like_aval(aval: core.AbstractValue) -> Array:
   return aval_zeros_likers[type(aval)](aval)
