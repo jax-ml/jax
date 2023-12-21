@@ -1514,14 +1514,12 @@ tf_not_yet_impl = [
 tf_impl[unconsumed_copy_p] = lambda x: x
 
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
-tf_impl[ad_util.zeros_like_p] = tf.zeros_like
 
 
 def _add(x: TfVal, y: TfVal) -> TfVal:
   return tf.raw_ops.AddV2(x=x, y=y)
 
 
-tf_impl[ad_util.add_jaxvals_p] = _add
 tf_impl[dispatch.device_put_p] = lambda x, device=None, src=None: x
 tf_impl[lax_internal.copy_p] = lambda x: x
 

@@ -28,7 +28,6 @@ from jax import lax
 from jax import numpy as jnp
 from jax import tree_util
 
-from jax._src import ad_util
 from jax._src import api_util
 from jax._src import api
 from jax._src import basearray
@@ -409,7 +408,6 @@ _set_array_base_attributes(PRNGKeyArrayImpl, include=[
 basearray.Array.register(PRNGKeyArrayImpl)
 
 api_util._shaped_abstractify_handlers[PRNGKeyArrayImpl] = op.attrgetter('aval')
-ad_util.jaxval_zeros_likers[PRNGKeyArrayImpl] = jnp.zeros_like  # type: ignore[has-type]
 
 def prngkeyarrayimpl_flatten(x):
   return (x._base_array,), x._impl
@@ -593,8 +591,16 @@ class KeyTyRules:
     physical_result = pxla.batched_device_put(physical_aval, physical_sharding, [physical_buf] * len(devices), devices)
     return random_wrap(physical_result, impl=aval.dtype._impl)
 
+  @staticmethod
   def tangent_dtype(_):
     return dtypes.float0
+
+  # TODO(mattjj,frostig): even though the key dtype shouldn't appear in
+  # tangents, our ad.replace_float0s in custom_jvp/vjp means passing in zeros
+  # like the primal to user rules
+  @staticmethod
+  def zero(aval):
+    return lax_internal.zeros_like_shaped_array(aval.update(dtype=dtypes.float0))
 
 
 class KeyTy(dtypes.ExtendedDType):

@@ -27,7 +27,6 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
-from jax._src.lax import lax
 from jax._src.traceback_util import api_boundary
 from jax._src.util import split_list, safe_map
 import numpy as np
@@ -152,7 +151,7 @@ def _root_jvp(const_lengths, jaxprs, primals, tangents):
       operator.neg, linearize_and_solve(*solution, *rhs))
   # append aux, create symbolic zero tangents for the aux values
   solution += aux
-  solution_dot += _map(lax.zeros_like_array, aux)
+  solution_dot += _map(ad_util.zeros_like_jaxval, aux)
 
   return solution, solution_dot
 
