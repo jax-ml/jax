@@ -595,7 +595,7 @@ def dot_product_attention(query: Array,
                           scale: float = 1.0,
                           bias: Optional[Array] = None,
                           mask: Optional[Array] = None,
-                          is_cauasl_mask: bool = False,
+                          is_causal_mask: bool = False,
                           seed: int = 42,
                           dropout_rate: float = 0.):
     """Computes dot-product attention given query, key, and value.
@@ -634,5 +634,5 @@ def dot_product_attention(query: Array,
     output = _dot_product_attention(
         query, key, value, bias, mask, 
         scale, seed, dropout_rate, variadic_args, 
-        is_flash_attention, is_cauasl_mask)
+        is_flash_attention, is_causal_mask)
     return output
