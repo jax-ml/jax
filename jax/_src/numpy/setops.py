@@ -18,7 +18,7 @@ from functools import partial
 import math
 import operator
 from textwrap import dedent as _dedent
-from typing import cast
+from typing import cast, NamedTuple
 
 import numpy as np
 
@@ -338,3 +338,50 @@ def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = Fal
   axis_int: int = core.concrete_or_error(operator.index, axis, "axis argument of jnp.unique()")
   return _unique(arr, axis_int, return_index, return_inverse,
                  return_counts, equal_nan=equal_nan, size=size, fill_value=fill_value)
+
+
+class _UniqueAllResult(NamedTuple):
+  values: Array
+  indices: Array
+  inverse_indices: Array
+  counts: Array
+
+
+class _UniqueCountsResult(NamedTuple):
+    values: Array
+    counts: Array
+
+
+class _UniqueInverseResult(NamedTuple):
+    values: Array
+    inverse_indices: Array
+
+
+@_wraps(getattr(np, "unique_all", None))
+def unique_all(x: ArrayLike, /) -> _UniqueAllResult:
+  check_arraylike("unique_all", x)
+  values, indices, inverse_indices, counts = unique(
+    x, return_index=True, return_inverse=True, return_counts=True, equal_nan=False)
+  inverse_indices = inverse_indices.reshape(np.shape(x))
+  return _UniqueAllResult(values=values, indices=indices, inverse_indices=inverse_indices, counts=counts)
+
+
+@_wraps(getattr(np, "unique_counts", None))
+def unique_counts(x: ArrayLike, /) -> _UniqueCountsResult:
+  check_arraylike("unique_counts", x)
+  values, counts = unique(x, return_counts=True, equal_nan=False)
+  return _UniqueCountsResult(values=values, counts=counts)
+
+
+@_wraps(getattr(np, "unique_inverse", None))
+def unique_inverse(x: ArrayLike, /) -> _UniqueInverseResult:
+  check_arraylike("unique_inverse", x)
+  values, inverse_indices = unique(x, return_inverse=True, equal_nan=False)
+  inverse_indices = inverse_indices.reshape(np.shape(x))
+  return _UniqueInverseResult(values=values, inverse_indices=inverse_indices)
+
+
+@_wraps(getattr(np, "unique_values", None))
+def unique_values(x: ArrayLike, /) -> Array:
+  check_arraylike("unique_values", x)
+  return cast(Array, unique(x, equal_nan=False))

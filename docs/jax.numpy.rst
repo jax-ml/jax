@@ -403,6 +403,10 @@ namespace; they are listed below.
     uint8
     union1d
     unique
+    unique_all
+    unique_counts
+    unique_inverse
+    unique_values
     unpackbits
     unravel_index
     unsignedinteger

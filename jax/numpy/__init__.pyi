@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-from typing import Any, Callable, Literal, Optional, Sequence, TypeVar, Union, overload
+from typing import Any, Callable, Literal, NamedTuple, Optional, Sequence, TypeVar, Union, overload
 
 from jax._src import core as _core
 from jax._src import dtypes as _dtypes
@@ -792,11 +792,26 @@ def union1d(
     size: Optional[int] = ...,
     fill_value: Optional[ArrayLike] = ...,
 ) -> Array: ...
+class _UniqueAllResult(NamedTuple):
+  values: Array
+  indices: Array
+  inverse_indices: Array
+  counts: Array
+class _UniqueCountsResult(NamedTuple):
+    values: Array
+    counts: Array
+class _UniqueInverseResult(NamedTuple):
+    values: Array
+    inverse_indices: Array
 def unique(ar: ArrayLike, return_index: bool = ..., return_inverse: bool = ...,
            return_counts: bool = ..., axis: Optional[int] = ...,
            *, equal_nan: bool = ..., size: Optional[int] = ...,
            fill_value: Optional[ArrayLike] = ...
 ): ...
+def unique_all(x: ArrayLike, /) -> _UniqueAllResult: ...
+def unique_counts(x: ArrayLike, /) -> _UniqueCountsResult: ...
+def unique_inverse(x: ArrayLike, /) -> _UniqueInverseResult: ...
+def unique_values(x: ArrayLike, /) -> Array: ...
 def unpackbits(
     a: ArrayLike,
     axis: Optional[int] = ...,
