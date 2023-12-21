@@ -47,6 +47,8 @@ namespace; they are listed below.
     ndarray.at
     abs
     absolute
+    acos
+    acosh
     add
     all
     allclose
@@ -78,7 +80,12 @@ namespace; they are listed below.
     array_split
     array_str
     asarray
+    asin
+    asinh
     astype
+    atan
+    atanh
+    atan2
     atleast_1d
     atleast_2d
     atleast_3d
