@@ -20,7 +20,6 @@ from collections.abc import Sequence
 import time
 from typing import Any
 import logging
-import os
 import warnings
 
 import numpy as np
@@ -250,9 +249,6 @@ def compile_or_get_cached(
   # Persistent compilation cache only implemented on TPU and GPU.
   # TODO(skye): add warning when initializing cache on unsupported default platform
   supported_platforms = ["tpu", "gpu"]
-  # (b/233850967) CPU caching can be enabled if XLA Runtime is enabled.
-  if "--xla_cpu_use_xla_runtime=true" in os.environ.get("XLA_FLAGS", ""):
-    supported_platforms.append("cpu")
   use_compilation_cache = (compilation_cache.is_initialized() and
                            backend.platform in supported_platforms)
 

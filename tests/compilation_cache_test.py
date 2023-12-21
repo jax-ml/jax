@@ -69,9 +69,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
     super().setUp()
     supported_platforms = ["tpu", "gpu"]
 
-    if "--xla_cpu_use_xla_runtime=true" in os.environ.get("XLA_FLAGS", ""):
-      supported_platforms.append("cpu")
-
     if not jtu.test_device_matches(supported_platforms):
       raise SkipTest(
           "serialize executable only works on " + ",".join(supported_platforms)
