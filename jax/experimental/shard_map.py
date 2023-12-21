@@ -609,8 +609,8 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
   _check_names(out_names_thunk(), out_avals)  # pytype: disable=wrong-arg-types
   if check_rep:
     _check_reps(mesh, out_names_thunk(), out_rep())
-  return map(partial(_match_spec, mesh, check_rep),
-             out_rep(), out_names_thunk(), outs)
+  pspecs = map(_names_to_pspec, out_names_thunk())
+  return map(partial(_match_spec, mesh, check_rep), pspecs, outs)
 core.EvalTrace.process_shard_map = _shard_map_impl
 
 @lu.transformation_with_aux
@@ -655,16 +655,15 @@ def _check_reps2(mesh, reps_dest, reps):
   if any(f is not no_fail for f in fail): raise _RepError(fail)
 
 def _match_spec(mesh: Mesh, check_rep: bool,
-                rep: RepType, dst: AxisNames, x: JaxType) -> JaxType:
-  fn = HashablePartial(_match, mesh, check_rep, tuple(dst.items()))
+                pspec: PartitionSpec, x: JaxType) -> JaxType:
+  fn = HashablePartial(_match, mesh, check_rep, pspec)
   with core.eval_context():
-    return jax.jit(fn)(x)
+    return jax.jit(fn, out_shardings=NamedSharding(mesh, pspec))(x)
 
-def _match(mesh, check_rep, dst_tup, x):
+def _match(mesh, check_rep, pspec, x):
   src = P(mesh.axis_names)
-  dst = _names_to_pspec(dict(dst_tup))
   # TODO put back (?) needed for rep checking in eager? for now test rewrite
-  return shard_map(_rem_singleton, mesh, (src,), dst, check_rep=False)(x)
+  return shard_map(_rem_singleton, mesh, (src,), pspec, check_rep=False)(x)
 
 def _rem_singleton(x): return x.reshape(x.shape[1:])
 def _add_singleton(x): return x.reshape(1, *x.shape)

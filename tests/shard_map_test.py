@@ -31,7 +31,7 @@ import numpy as np
 import jax
 import jax.ad_checkpoint
 from jax import lax
-from jax.sharding import Mesh
+from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import core
@@ -845,6 +845,14 @@ class ShardMapTest(jtu.JaxTestCase):
     if check_diff and expected_num_eqns != 0:
       f = lambda *args: core.eval_jaxpr(jaxpr_dce, consts, *args)
       jtu.check_grads(f, inputs_dce, order=2, modes=['rev'])
+
+  def test_returned_out_sharding(self):
+    mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    inp = jax.device_put(jnp.zeros((2, 2)), s)
+    out = shard_map(lambda x: x, mesh, P('x', 'y'), P('x', 'y'))(inp)
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, inp)
 
   def test_dce(self):
     mesh = jtu.create_global_mesh((4, 2), ('i', 'j'))
