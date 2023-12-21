@@ -221,10 +221,10 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
 
 def lower_jaxpr_to_triton_module(
     jaxpr: jax_core.Jaxpr, in_shapes, grid_mapping: GridMapping, name: str,
-    cuda_options: cb.CUDAOptions
+    cuda_backend: cb.CUDABackend, cuda_options: cb.CUDAOptions
 ) -> tc.module:
   jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), instantiate=True)
-  with tc.new_builder(cuda_options) as builder:
+  with tc.new_builder(cuda_backend, cuda_options) as builder:
     module = builder.create_module()
     arg_types = [
         code_gen.str_to_ty(get_triton_type(var.aval)) for var in jaxpr.invars
@@ -1519,7 +1519,7 @@ def compile_jaxpr(
   )
 
   lowering_result = lower_jaxpr_to_triton_module(
-      jaxpr, in_shapes, grid_mapping, name, cuda_options
+      jaxpr, in_shapes, grid_mapping, name, cuda_backend, cuda_options
   )
 
   ttir = str(lowering_result.module)
