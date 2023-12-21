@@ -126,7 +126,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=float_dtypes)
   def testRngUniform(self, dtype):
-    key = self.make_key(0)
+    key = self.make_key(2)
     rand = lambda key: random.uniform(key, (10000,), dtype)
     crand = jax.jit(rand)
 
@@ -155,7 +155,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=float_dtypes)
   def testNormal(self, dtype):
-    key = self.make_key(0)
+    key = self.make_key(2)
     rand = lambda key: random.normal(key, (10000,), dtype)
     crand = jax.jit(rand)
 
@@ -188,7 +188,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=float_dtypes)
   def testTruncatedNormal(self, dtype):
-    key = self.make_key(0)
+    key = self.make_key(3)
     rand = lambda key: random.truncated_normal(key, -0.3, 0.3, (10000,), dtype)
     crand = jax.jit(rand)
 
@@ -412,7 +412,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=float_dtypes)
   def testCauchy(self, dtype):
-    key = self.make_key(0)
+    key = self.make_key(1)
     rand = lambda key: random.cauchy(key, (10000,), dtype)
     crand = jax.jit(rand)
 
@@ -462,7 +462,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=float_dtypes)
   def testExponential(self, dtype):
-    key = self.make_key(0)
+    key = self.make_key(3)
     rand = lambda key: random.exponential(key, (10000,), dtype)
     crand = jax.jit(rand)
 
@@ -495,7 +495,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.floating,
   )
   def testGamma(self, a, dtype):
-    key = self.make_key(1)
+    key = self.make_key(2)
     rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
     crand = jax.jit(rand)
 
@@ -594,7 +594,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=jtu.dtypes.floating)
   def testGumbel(self, dtype):
-    key = self.make_key(0)
+    key = self.make_key(1)
     rand = lambda key: random.gumbel(key, (10000,), dtype)
     crand = jax.jit(rand)
 
@@ -606,7 +606,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=float_dtypes)
   def testLaplace(self, dtype):
-    key = self.make_key(0)
+    key = self.make_key(2)
     rand = lambda key: random.laplace(key, (10000,), dtype)
     crand = jax.jit(rand)
 
@@ -618,7 +618,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=float_dtypes)
   def testLogistic(self, dtype):
-    key = self.make_key(0)
+    key = self.make_key(1)
     rand = lambda key: random.logistic(key, (10000,), dtype)
     crand = jax.jit(rand)
 
@@ -720,7 +720,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.floating,
   )
   def testPareto(self, b, dtype):
-    key = self.make_key(0)
+    key = self.make_key(1)
     rand = lambda key, b: random.pareto(key, b, (10000,), dtype)
     crand = jax.jit(rand)
 
@@ -763,7 +763,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     cov_factor = r.randn(dim, dim)
     cov = np.dot(cov_factor, cov_factor.T) + dim * np.eye(dim)
 
-    key = self.make_key(0)
+    key = self.make_key(2)
     rand = partial(random.multivariate_normal, mean=mean, cov=cov,
                    shape=(10000,), method=method)
     crand = jax.jit(rand)
@@ -905,7 +905,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def testMaxwellSample(self):
     num_samples = 10**5
-    rng = self.make_key(0)
+    rng = self.make_key(1)
 
     rand = lambda x: random.maxwell(x, (num_samples, ))
     crand = jax.jit(rand)
@@ -1103,7 +1103,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       df = [0.2, 1., 10., 100.],
       dtype=jtu.dtypes.floating)
   def testChisquare(self, df, dtype):
-    key = self.make_key(1)
+    key = self.make_key(2)
 
     def rand(key, df):
       return random.chisquare(key, df, shape=(10000,), dtype=dtype)
@@ -1134,7 +1134,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       scale= [0.2, 1., 2., 10. ,100.],
       dtype=jtu.dtypes.floating)
   def testRayleigh(self, scale, dtype):
-    key = self.make_key(0)
+    key = self.make_key(1)
     rand = lambda key: random.rayleigh(key, scale, shape = (10000, ), dtype = dtype)
     crand = jax.jit(rand)
 
@@ -1197,7 +1197,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     sigma = [0.2, 0.5, 1., 2.],
     dtype=jtu.dtypes.floating)
   def testLogNormal(self, sigma, dtype):
-    key = self.make_key(0)
+    key = self.make_key(1)
     rand = lambda key: random.lognormal(key, sigma, shape=(10000,), dtype=dtype)
     crand = jax.jit(rand)
 
@@ -1212,7 +1212,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       p= [0.1, 0.3, 0.5, 0.7, 0.9],
       dtype= jtu.dtypes.floating)
   def testBinomialSample(self, n, p, dtype):
-    key = self.make_key(12)
+    key = self.make_key(1)
     rand = lambda key: random.binomial(key, n, p, shape=(12000,), dtype=dtype)
     crand = jax.jit(rand)
     uncompiled_samples = rand(key)
