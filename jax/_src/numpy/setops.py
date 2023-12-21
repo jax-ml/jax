@@ -222,8 +222,8 @@ UNIQUE_SIZE_HINT = (
   "To make jnp.unique() compatible with JIT and other transforms, you can specify "
   "a concrete value for the size argument, which will determine the output size.")
 
-@partial(jit, static_argnums=1)
-def _unique_sorted_mask(ar: Array, axis: int) -> tuple[Array, Array, Array]:
+@partial(jit, static_argnames=['axis', 'equal_nan'])
+def _unique_sorted_mask(ar: Array, axis: int, equal_nan: bool) -> tuple[Array, Array, Array]:
   aux = moveaxis(ar, axis, 0)
   if np.issubdtype(aux.dtype, np.complexfloating):
     # Work around issue in sorting of complex numbers with Nan only in the
@@ -238,7 +238,7 @@ def _unique_sorted_mask(ar: Array, axis: int) -> tuple[Array, Array, Array]:
     perm = lexsort(aux.reshape(size, math.prod(out_shape)).T[::-1])
   aux = aux[perm]
   if aux.size:
-    if dtypes.issubdtype(aux.dtype, np.inexact):
+    if dtypes.issubdtype(aux.dtype, np.inexact) and equal_nan:
       # This is appropriate for both float and complex due to the documented behavior of np.unique:
       # See https://github.com/numpy/numpy/blob/v1.22.0/numpy/lib/arraysetops.py#L212-L220
       neq = lambda x, y: lax.ne(x, y) & ~(isnan(x) & isnan(y))
@@ -250,7 +250,7 @@ def _unique_sorted_mask(ar: Array, axis: int) -> tuple[Array, Array, Array]:
   return aux, mask, perm
 
 def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bool = False,
-            return_counts: bool = False, size: int | None = None,
+            return_counts: bool = False, equal_nan: bool = True, size: int | None = None,
             fill_value: ArrayLike | None = None, return_true_size: bool = False
             ) -> Array | tuple[Array, ...]:
   """
@@ -260,7 +260,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
     raise ValueError(
       "jnp.unique: for zero-sized input with nonzero size argument, fill_value must be specified")
 
-  aux, mask, perm = _unique_sorted_mask(ar, axis)
+  aux, mask, perm = _unique_sorted_mask(ar, axis, equal_nan)
   if size is None:
     ind = core.concrete_or_error(None, mask,
         "The error arose in jnp.unique(). " + UNIQUE_SIZE_HINT)
@@ -323,7 +323,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
         along the specified axis of the input."""))
 def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = False,
            return_counts: bool = False, axis: int | None = None,
-           *, size: int | None = None, fill_value: ArrayLike | None = None):
+           *, equal_nan: bool = True, size: int | None = None, fill_value: ArrayLike | None = None):
   check_arraylike("unique", ar)
   if size is None:
     ar = core.concrete_or_error(None, ar,
@@ -337,4 +337,4 @@ def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = Fal
     arr = arr.flatten()
   axis_int: int = core.concrete_or_error(operator.index, axis, "axis argument of jnp.unique()")
   return _unique(arr, axis_int, return_index, return_inverse,
-                 return_counts, size=size, fill_value=fill_value)
+                 return_counts, equal_nan=equal_nan, size=size, fill_value=fill_value)

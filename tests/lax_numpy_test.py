@@ -1820,6 +1820,22 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return (u.astype(dtype), *rest)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
+  @jtu.sample_product(dtype=inexact_dtypes, equal_nan=[True, False])
+  def testUniqueEqualNan(self, dtype, equal_nan):
+    if numpy_version < (1, 24, 0):
+      self.skipTest("np.unique equal_nan requires NumPy 1.24 or newer.")
+    shape = (20,)
+    rng = jtu.rand_some_nan(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    def np_fun(x):
+      dtype = x.dtype
+      # numpy unique fails for bfloat16 NaNs, so we cast to float64
+      if x.dtype == jnp.bfloat16:
+        x = x.astype('float64')
+      return np.unique(x, equal_nan=equal_nan).astype(dtype)
+    jnp_fun = partial(jnp.unique, equal_nan=equal_nan)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
   @jtu.sample_product(fixed_size=[False, True])
   def testNonScalarRepeats(self, fixed_size):
     '''
@@ -5383,7 +5399,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'stack': ['casting'],
       'std': ['mean'],
       'tri': ['like'],
-      'unique': ['equal_nan'],
       'var': ['mean'],
       'vstack': ['casting'],
       'zeros_like': ['subok', 'order']
