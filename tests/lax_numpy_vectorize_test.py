@@ -15,6 +15,7 @@
 from functools import partial
 
 from absl.testing import absltest
+import numpy as np
 
 import jax
 from jax import numpy as jnp
@@ -166,19 +167,32 @@ class VectorizeTest(jtu.JaxTestCase):
     self.assertAllClose(x, f(x, 'foo'))
     self.assertAllClose(x, jax.jit(f, static_argnums=1)(x, 'foo'))
 
+  def test_exclude_kwargs(self):
+    @partial(np.vectorize, excluded=(2, 'func'))
+    def f_np(x, y, func=np.add):
+      assert np.ndim(x) == np.ndim(y) == 0
+      return func(x, y)
+
+    @partial(jnp.vectorize, excluded=(2, 'func'))
+    def f_jnp(x, y, func=jnp.add):
+      assert x.ndim == y.ndim == 0
+      return func(x, y)
+
+    x = np.arange(4, dtype='int32')
+    y = np.int32(2)
+
+    self.assertArraysEqual(f_np(x, y), f_jnp(x, y))
+    self.assertArraysEqual(f_np(x, y, np.power), f_jnp(x, y, jnp.power))
+    self.assertArraysEqual(f_np(x, y, func=np.power), f_jnp(x, y, func=jnp.power))
+
   def test_exclude_errors(self):
     with self.assertRaisesRegex(
         TypeError, "jax.numpy.vectorize can only exclude"):
-      jnp.vectorize(lambda x: x, excluded={'foo'})
+      jnp.vectorize(lambda x: x, excluded={1.5})
 
     with self.assertRaisesRegex(
         ValueError, r"excluded=\{-1\} contains negative numbers"):
       jnp.vectorize(lambda x: x, excluded={-1})
-
-    f = jnp.vectorize(lambda x: x, excluded={1})
-    with self.assertRaisesRegex(
-        ValueError, r"excluded=\{1\} is invalid for 1 argument\(s\)"):
-      f(1.0)
 
   def test_bad_inputs(self):
     matmat = jnp.vectorize(jnp.dot, signature='(n,m),(m,k)->(n,k)')
