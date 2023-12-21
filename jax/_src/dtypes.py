@@ -100,6 +100,13 @@ _float8_e4m3fnuz_dtype: np.dtype = np.dtype(float8_e4m3fnuz)
 _float8_e5m2_dtype: np.dtype = np.dtype(float8_e5m2)
 _float8_e5m2fnuz_dtype: np.dtype = np.dtype(float8_e5m2fnuz)
 
+def supports_inf(dtype: DTypeLike) -> bool:
+  """Return true if the dtype supports infinity, else return False."""
+  typ = np.dtype(dtype).type
+  if typ in {float8_e4m3b11fnuz, float8_e4m3fn, float8_e4m3fnuz, float8_e5m2fnuz}:
+    return False
+  return issubdtype(dtype, np.inexact)
+
 # bfloat16 support
 bfloat16: type[np.generic] = ml_dtypes.bfloat16
 _bfloat16_dtype: np.dtype = np.dtype(bfloat16)

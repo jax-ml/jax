@@ -1085,7 +1085,8 @@ def _get_prod_identity(dtype: DTypeLike) -> np.ndarray:
 
 def _get_max_identity(dtype: DTypeLike) -> np.ndarray:
   if dtypes.issubdtype(dtype, np.inexact):
-    return np.array(-np.inf, dtype)
+    return np.array(-np.inf if dtypes.supports_inf(dtype) else dtypes.finfo(dtype).min,
+                    dtype=dtype)
   elif dtypes.issubdtype(dtype, np.integer):
     return np.array(dtypes.iinfo(dtype).min, dtype)
   elif dtypes.issubdtype(dtype, np.bool_):
@@ -1095,7 +1096,8 @@ def _get_max_identity(dtype: DTypeLike) -> np.ndarray:
 
 def _get_min_identity(dtype: DTypeLike) -> np.ndarray:
   if dtypes.issubdtype(dtype, np.inexact):
-    return np.array(np.inf, dtype)
+    return np.array(np.inf if dtypes.supports_inf(dtype) else dtypes.finfo(dtype).max,
+                    dtype=dtype)
   elif dtypes.issubdtype(dtype, np.integer):
     return np.array(dtypes.iinfo(dtype).max, dtype)
   elif dtypes.issubdtype(dtype, np.bool_):
