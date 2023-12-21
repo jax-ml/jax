@@ -40,6 +40,7 @@ JAX 201
 
    parallelism
    advanced-autodiff
+   gradient-checkpointing
    advanced-debugging
    external-callbacks
    profiling-and-performance
