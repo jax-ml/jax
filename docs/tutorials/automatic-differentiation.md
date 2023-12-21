@@ -15,15 +15,22 @@ kernelspec:
 (automatic-differentiation)=
 # Automatic differentiation 101
 
-JAX has a pretty general automatic differentiation (autodiff) system. Computing gradients is a critical part of modern machine learning methods, and this tutorial will walk you through a few introductory autodiff topics.
+In this tutorial, you will learn about fundamental applications of automatic differentiation (autodiff) in JAX. JAX has a pretty general automatic differentiation (autodiff) system. Computing gradients is a critical part of modern machine learning methods, and this tutorial will walk you through a few introductory autodiff topics, such as:
+
+- {ref}`automatic-differentiation-taking-gradients`
+- {ref}`automatic-differentiation-linear logistic regression`
+- {ref}`automatic-differentiation-nested-lists-tuples-and-dicts`
+- {ref}`automatic-differentiation-evaluating-using-jax-value_and_grad`
+- {ref}`automatic-differentiation-checking-against-numerical-differences`
+
+Make sure to also check out the {ref}`advanced-autodiff` tutorial for more advanced topics.
 
 While understanding how automatic differentiation works "under the hood" isn't crucial for using JAX in most contexts, you are encouraged to check out this quite accessible [video](https://www.youtube.com/watch?v=wG_nF1awSSY) to get a deeper sense of what's going on.
 
-And if you are looking for more advanced material, refer to {ref}`advanced-autodiff`.
+(automatic-differentiation-taking-gradients)=
+## 1.Taking gradients with `jax.grad`
 
-## Gradients
-
-In JAX, you can differentiate a function with the {func}`jax.grad` transform:
+In JAX, you can differentiate a function with the {func}`jax.grad` transformation:
 
 ```{code-cell}
 import jax
@@ -92,7 +99,8 @@ print(d3fdx(1.))
 print(d4fdx(1.))
 ```
 
-## Linear logistic regression
+(automatic-differentiation-linear logistic regression)=
+## 2. Computing gradients in a linear logistic regression
 
 The next example shows how to compute gradients with {func}`jax.grad` in a linear logistic regression model. First, the setup:
 
@@ -150,7 +158,9 @@ The {func}`jax.grad` API has a direct correspondence to the excellent notation i
 
 Essentially, when using the `argnums` argument, if `f` is a Python function for evaluating the mathematical function $f$, then the Python expression `jax.grad(f, i)` evaluates to a Python function for evaluating $\partial_i f$.
 
-## Differentiating with respect to nested lists, tuples, and dicts
+
+(automatic-differentiation-nested-lists-tuples-and-dicts)=
+## 3. Differentiating with respect to nested lists, tuples, and dicts
 
 Differentiating with respect to standard Python containers just works, so use tuples, lists, and dicts (and arbitrary nesting) however you like.
 
@@ -167,7 +177,9 @@ print(grad(loss2)({'W': W, 'b': b}))
 
 You can {ref}`pytrees-custom-pytree-nodes` to work with not just {func}`jax.grad` but other JAX transformations ({func}`jax.jit`, {func}`jax.vmap`, and so on).
 
-## Evaluate a function and its gradient using `value_and_grad`
+
+(automatic-differentiation-evaluating-using-jax-value_and_grad)=
+## 4. Evaluating a function and its gradient using `jax.value_and_grad`
 
 Another convenient function is {func}`jax.value_and_grad` for efficiently computing both a function's value as well as its gradient's value.
 
@@ -179,7 +191,8 @@ print('loss value', loss_value)
 print('loss value', loss(W, b))
 ```
 
-## Checking against numerical differences
+(automatic-differentiation-checking-against-numerical-differences)=
+## 5. Checking against numerical differences
 
 A great thing about derivatives is that they're straightforward to check with finite differences.
 
