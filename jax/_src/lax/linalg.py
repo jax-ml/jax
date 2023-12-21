@@ -1159,13 +1159,13 @@ def _lu_unblocked(a):
     else:
       magnitude = ufuncs.abs(a[:, k])
     i = jnp.argmax(jnp.where(m_idx >= k, magnitude, -jnp.inf))
-    pivot = pivot.at[k].set(i)
+    pivot = pivot.at[k].set(i.astype(pivot.dtype))
     a = a.at[[k, i],].set(a[[i, k],])
     perm = perm.at[[i, k],].set(perm[[k, i],])
 
     # a[k+1:, k] /= a[k, k], adapted for loop-invariant shapes
     x = a[k, k]
-    a = a.at[:, k].set(jnp.where(m_idx > k, a[:, k] / x, a[:, k]))
+    a = a.at[:, k].set(jnp.where((m_idx > k) & (x != 0), a[:, k] / x, a[:, k]))
 
     # a[k+1:, k+1:] -= jnp.outer(a[k+1:, k], a[k, k+1:])
     a = a - jnp.where((m_idx[:, None] > k) & (n_idx[None, :] > k),

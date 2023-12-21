@@ -23,7 +23,7 @@ import scipy
 import scipy.linalg
 import scipy as osp
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 import jax
 from jax import jit, grad, jvp, vmap
@@ -32,6 +32,7 @@ from jax import numpy as jnp
 from jax import scipy as jsp
 from jax._src.lib import version as jaxlib_version
 from jax._src import config
+from jax._src.lax import linalg as lax_linalg
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.numpy.util import promote_dtypes_inexact
@@ -109,7 +110,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     jtu.check_grads(jnp.linalg.det, (a,), 2, atol=1e-1, rtol=1e-1)
     # make sure there are no NaNs when a matrix is zero
     if len(shape) == 2:
-      pass
       jtu.check_grads(
         jnp.linalg.det, (jnp.zeros_like(a),), 1, atol=1e-1, rtol=1e-1)
     else:
@@ -1278,6 +1278,13 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     x = jnp.array([[-1., 3./2], [2./3, -1.]], dtype=np.float32)
     p, l, u = jsp.linalg.lu(x)
     self.assertAllClose(x, np.matmul(p, np.matmul(l, u)))
+
+  @parameterized.parameters(lax_linalg.lu, lax_linalg._lu_python)
+  def testLuOnZeroMatrix(self, lu):
+    # Regression test for https://github.com/google/jax/issues/19076
+    x = jnp.zeros((2, 2), dtype=np.float32)
+    x_lu, _, _ = lu(x)
+    self.assertArraysEqual(x_lu, x)
 
   @jtu.sample_product(
     shape=[(1, 1), (4, 5), (10, 5), (10, 10), (6, 7, 7)],
