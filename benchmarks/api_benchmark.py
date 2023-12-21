@@ -846,6 +846,37 @@ def bench_make_array_from_callback_fully_replicated_sharding(state):
   while state:
     jax.make_array_from_callback(shape, s, np_arr.__getitem__)
 
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def benchmark_lorentz63_cache_hits(state):
+  @jax.jit
+  def lorentz63(state, dt=0.01, sigma=10, beta=8/3, rho=28):
+    x, y, z = state
+    x_t = sigma * (y - x)
+    y_t = (rho - z) * x - y
+    z_t = x * y - beta * z
+    return jnp.array([x + x_t * dt, y + y_t * dt, z + z_t * dt])
+
+  def training_step(initial_conditions, steps=1, unroll=False):
+    def forward_sim(x0):
+      if unroll:
+        x = x0
+        for _ in range(steps):
+          x = lorentz63(x)
+        return x
+      else:
+        return jax.lax.fori_loop(0, steps, lambda _, x: lorentz63(x), x0)
+
+    def loss(x0):
+      out = jax.vmap(jax.remat(forward_sim))(x0)
+      return jnp.square(out).sum()
+
+    return jax.value_and_grad(loss)(initial_conditions)
+
+  x = jnp.ones((8, 3))
+  while state:
+    jax.make_jaxpr(lambda x: training_step(x, 100, unroll=True))(x)
+
 
 if __name__ == "__main__":
   google_benchmark.main()
