@@ -2261,28 +2261,6 @@ DEVICE_TO_DEVICE_TYPE = 1
 SEND_TO_HOST_TYPE = 2
 RECV_FROM_HOST_TYPE = 3
 
-_dtype_to_xla_type_string_map = {
-    np.dtype("bool"): "pred",
-    np.dtype("float16"): "f16",
-    np.dtype("float32"): "f32",
-    np.dtype("float64"): "f64",
-    np.dtype("int8"): "s8",
-    np.dtype("uint8"): "u8",
-    np.dtype("int16"): "s16",
-    np.dtype("uint16"): "u16",
-    np.dtype("int32"): "s32",
-    np.dtype("uint32"): "u32",
-    np.dtype("int64"): "s64",
-    np.dtype("uint64"): "u64",
-    dtypes._bfloat16_dtype: "bf16",
-    np.dtype("complex64"): "c64",
-    np.dtype("complex128"): "c128",
-}
-
-def _dtype_to_xla_type_string(dtype: np.dtype) -> str:
-  if dtype not in _dtype_to_xla_type_string_map:
-    raise NotImplementedError(dtype)
-  return _dtype_to_xla_type_string_map[dtype]
 
 def is_empty_shape(s: core.Shape) -> bool:
   return any(d == 0 for d in s)
