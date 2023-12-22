@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import types
-from typing import Any, Callable, Type, TypeVar
+from typing import Any, Callable, TypeVar
 
 from jax._src import core
 from jax._src import traceback_util
@@ -30,9 +30,20 @@ T = TypeVar('T')
 map = safe_map
 
 def add_jaxvals(x: ArrayLike, y: ArrayLike) -> Array:
-  aval = core.raise_to_shaped(core.get_aval(x))
-  return aval_adders[type(aval)](x, y)
-aval_adders: dict[Type[core.AbstractValue], Callable] = {}
+  dtype = core.get_aval(x).dtype
+  return add_jaxvals_p.bind(x, y)
+
+add_jaxvals_p = Primitive('add_any')
+add_any_p = add_jaxvals_p
+
+@add_jaxvals_p.def_impl
+def add_impl(x, y):
+  return raw_jaxval_adders[type(x)](x, y)
+raw_jaxval_adders = {}  # type: ignore
+
+@add_jaxvals_p.def_abstract_eval
+def add_abstract(x, y):
+  return core.lattice_join(x, y)
 
 def zeros_like_aval(aval: core.AbstractValue) -> Array:
   return aval_zeros_likers[type(aval)](aval)
@@ -109,6 +120,4 @@ def replace_rule_output_symbolic_zeros(
 
 
 # TODO(mattjj): remove these after fixing downstream users relying on them
-add_jaxvals_p: Primitive = Primitive('add_any')
-add_any_p = add_jaxvals_p
 zeros_like_p: Primitive = Primitive('zeros_like')

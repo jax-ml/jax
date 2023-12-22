@@ -27,7 +27,8 @@ from jax._src import core
 from jax._src import source_info_util
 from jax._src import linear_util as lu
 from jax._src.ad_util import (Zero, instantiate, SymbolicZero,
-                              replace_rule_output_symbolic_zeros)
+                              replace_rule_output_symbolic_zeros,
+                              add_jaxvals, add_jaxvals_p)
 from jax._src.core import raise_to_shaped, Trace, Tracer, AxisName
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_unflatten, tree_flatten,
@@ -1125,3 +1126,20 @@ def bdim_at_front(x, bdim, size):
     return broadcast(x, size, 0)
   else:
     return moveaxis(x, bdim, 0)
+
+
+def add_batched(batched_args, batch_dims):
+  bdx, bdy = batch_dims
+  x, y = batched_args
+  if bdx == bdy:
+    return add_jaxvals(x, y), bdx
+  elif bdx is not_mapped:
+    x = broadcast(x, y.shape[bdy], bdy)
+    return add_jaxvals(x, y), bdy
+  elif bdy is not_mapped:
+    y = broadcast(y, x.shape[bdx], bdx)
+    return add_jaxvals(x, y), bdx
+  else:
+    x = moveaxis(x, bdx, bdy)
+    return add_jaxvals(x, y), bdy
+primitive_batchers[add_jaxvals_p] = add_batched

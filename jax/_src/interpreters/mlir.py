@@ -1993,6 +1993,10 @@ def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> i
   zero = ir_constant(np.array(value, dtypes.canonicalize_dtype(aval.dtype)))
   return broadcast_in_dim(ctx, zero, aval, broadcast_dimensions=())
 
+def add_jaxvals_lowering(ctx, x, y):
+  return [hlo.add(x, y)]
+register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
+
 register_lowering(ad_util.stop_gradient_p, lambda ctx, x: [x])
 
 

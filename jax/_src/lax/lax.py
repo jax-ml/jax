@@ -44,6 +44,7 @@ from jax._src import linear_util as lu
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import util
+from jax._src.abstract_arrays import array_types
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
                            raise_to_shaped, abstract_token, canonicalize_shape)
 from jax._src.interpreters import ad
@@ -1231,13 +1232,6 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
     scalar_zero = _convert_element_type(0, aval.dtype, aval.weak_type)
   return broadcast(scalar_zero, aval.shape)
 
-def add_shaped_arrays(x, y) -> Array:
-  aval = core.raise_to_shaped(core.get_aval(x))
-  if dtypes.issubdtype(aval.dtype, dtypes.extended):
-    return aval.dtype._rules.add(aval.dtype, x, y)  # type: ignore
-  return add(x, y)
-
-ad_util.aval_adders[ShapedArray] = add_shaped_arrays
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
 def iota(dtype: DTypeLike, size: int) -> Array:
@@ -1517,6 +1511,11 @@ core.DShapedArray._iter = staticmethod(_iter)
 
 def zeros_like_array(x: ArrayLike) -> Array:
   return full_like(x, 0)
+
+
+for t in itertools.chain(
+    dtypes.python_scalar_dtypes.keys(), array_types, [array.ArrayImpl]):
+  ad_util.raw_jaxval_adders[t] = add
 
 
 ### primitives

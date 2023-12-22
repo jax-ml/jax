@@ -702,6 +702,18 @@ for dtype in jtu.dtypes.all:
     _make_bitcast_convert_type_harness(
         "dtypes_to_new_dtypes", dtype=dtype, new_dtype=new_dtype)
 
+def _make_add_any_harness(name, *, shapes=((2,), (2,)), dtype=np.float32):
+  define(
+      ad_util.add_any_p,
+      f"{name}_lhs={jtu.format_shape_dtype_string(shapes[0], dtype)}_rhs={jtu.format_shape_dtype_string(shapes[1], dtype)}",
+      ad_util.add_jaxvals_p.bind,
+      list(map(lambda s: RandArg(s, dtype), shapes)),
+      dtype=dtype,
+      shapes=shapes)
+
+for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
+  _make_add_any_harness("dtypes", dtype=dtype)
+
 
 for dtype in jtu.dtypes.all:
   shape: tuple[int, ...] = (20, 20)

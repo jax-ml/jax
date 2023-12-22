@@ -1520,6 +1520,7 @@ def _add(x: TfVal, y: TfVal) -> TfVal:
   return tf.raw_ops.AddV2(x=x, y=y)
 
 
+tf_impl[ad_util.add_jaxvals_p] = _add
 tf_impl[dispatch.device_put_p] = lambda x, device=None, src=None: x
 tf_impl[lax_internal.copy_p] = lambda x: x
 
