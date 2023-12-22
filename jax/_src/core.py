@@ -1911,7 +1911,7 @@ pytype_aval_mappings[DArray] = \
     lambda x: DConcreteArray(x._aval.shape, x._aval.dtype, x._aval.weak_type,
                              x._data)
 
-@dataclass(frozen=True, eq=True)
+@dataclass(frozen=True)
 class bint(dtypes.ExtendedDType):
   bound: int
 

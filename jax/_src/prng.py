@@ -599,8 +599,16 @@ class KeyTyRules:
   # tangents, our ad.replace_float0s in custom_jvp/vjp means passing in zeros
   # like the primal to user rules
   @staticmethod
-  def zero(aval):
-    return lax_internal.zeros_like_shaped_array(aval.update(dtype=dtypes.float0))
+  def zero(_):
+    return np.zeros((), dtypes.float0)
+
+  @staticmethod
+  def convert_from(key_dtype, other_dtype) -> bool:
+    return False
+
+  @staticmethod
+  def convert_to(other_dtype, key_dtype) -> bool:
+    return False
 
 
 class KeyTy(dtypes.ExtendedDType):

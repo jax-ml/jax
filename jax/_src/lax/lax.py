@@ -1224,14 +1224,20 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None) ->
 def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   assert isinstance(aval, ShapedArray)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
-    scalar_zero = aval.dtype._rules.zero(aval)
+    scalar_zero = aval.dtype._rules.zero(aval.dtype)
   elif aval.dtype == dtypes.float0:
     scalar_zero = np.zeros((), dtype=aval.dtype)
   else:
     scalar_zero = _convert_element_type(0, aval.dtype, aval.weak_type)
   return broadcast(scalar_zero, aval.shape)
 
-ad_util.aval_adders[ShapedArray] = add
+def add_shaped_arrays(x, y) -> Array:
+  aval = core.raise_to_shaped(core.get_aval(x))
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+    return aval.dtype._rules.add(aval.dtype, x, y)  # type: ignore
+  return add(x, y)
+
+ad_util.aval_adders[ShapedArray] = add_shaped_arrays
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
 def iota(dtype: DTypeLike, size: int) -> Array:
@@ -2332,15 +2338,14 @@ def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type):
   return operand.shape
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type):
-  if operand.dtype != new_dtype:
-    if (dtypes.issubdtype(operand.dtype, dtypes.extended) and
-        not isinstance(operand.dtype, core.bint)):
-      raise ValueError(
-          f"Cannot call convert_element_type on dtype {dtype_to_string(operand.dtype)}")
-    if (dtypes.issubdtype(new_dtype, dtypes.extended) and
-        not isinstance(new_dtype, core.bint)):
-      raise ValueError(
-          f"Cannot convert_element_type to dtype={dtype_to_string(new_dtype)}")
+  if (operand.dtype != new_dtype and
+      ((dtypes.issubdtype(operand.dtype, dtypes.extended) and
+        not operand.dtype._rules.convert_from(operand.dtype, new_dtype)) or  # type: ignore
+       (dtypes.issubdtype(new_dtype, dtypes.extended) and
+        not new_dtype._rules.convert_to(operand.dtype, new_dtype)))):  # type: ignore
+    raise ValueError(
+        f"Cannot convert_element_type from {dtype_to_string(operand.dtype)} "
+        f"to {dtype_to_string(new_dtype)}")
   return new_dtype
 
 def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type):
@@ -5014,5 +5019,13 @@ class BIntRules:
   @staticmethod
   def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
     return hlo_sharding
+
+  @staticmethod
+  def convert_from(bint_dtype, other_dtype) -> bool:
+    return other_dtype in (np.dtype('int32'), np.dtype('int64'))
+
+  @staticmethod
+  def convert_to(other_dtype, bint_dtype) -> bool:
+    return other_dtype in (np.dtype('int32'), np.dtype('int64'))
 
 core.bint._rules = BIntRules
