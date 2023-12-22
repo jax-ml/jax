@@ -6072,6 +6072,7 @@ class RematTest(jtu.JaxTestCase):
     self.assertTrue(any(' cos ' in line for line in l.output))
 
 
+@jtu.with_config(jax_pprint_use_color=False)
 class JaxprTest(jtu.JaxTestCase):
 
   def test_scalar_literals(self):

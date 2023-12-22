@@ -392,8 +392,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                          atol=tol, rtol=tol)
     # check that precision config is preserved
     result, pullback = jax.vjp(dot, lhs, rhs)
-    gresult = lax.zeros_like_array(result)
-    s = str(jax.make_jaxpr(pullback)(gresult))
+    s = str(jax.make_jaxpr(pullback)(result))
     assert "Precision.HIGHEST" in s
 
   @jtu.sample_product(
@@ -422,8 +421,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                          modes=["fwd", "rev"], atol=atol)
     # check that precision config is preserved
     result, pullback = jax.vjp(dot_general, lhs, rhs)
-    gresult = lax.zeros_like_array(result)
-    s = str(jax.make_jaxpr(pullback)(gresult))
+    s = str(jax.make_jaxpr(pullback)(result))
     assert "Precision.HIGHEST" in s
 
   def testDotPreferredElementType(self):

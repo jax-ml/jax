@@ -14,12 +14,11 @@
 from __future__ import annotations
 
 import types
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Type, TypeVar
 
 from jax._src import core
 from jax._src import traceback_util
-from jax._src.core import (lattice_join, Primitive, valid_jaxtype,
-                           raise_to_shaped, get_aval)
+from jax._src.core import Primitive, valid_jaxtype, raise_to_shaped, get_aval
 from jax._src.tree_util import register_pytree_node
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import safe_map
@@ -30,44 +29,23 @@ T = TypeVar('T')
 
 map = safe_map
 
-jaxval_adders: dict[type, Callable[[ArrayLike, ArrayLike], Array]] = {}
-
 def add_jaxvals(x: ArrayLike, y: ArrayLike) -> Array:
-  return add_jaxvals_p.bind(x, y)
+  aval = core.raise_to_shaped(core.get_aval(x))
+  return aval_adders[type(aval)](x, y)
+aval_adders: dict[Type[core.AbstractValue], Callable] = {}
 
-add_jaxvals_p: Primitive = Primitive('add_any')
-add_any_p = add_jaxvals_p
+def zeros_like_aval(aval: core.AbstractValue) -> Array:
+  return aval_zeros_likers[type(aval)](aval)
+aval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 
-@add_jaxvals_p.def_impl
-def add_impl(xs, ys):
-  return jaxval_adders[type(xs)](xs, ys)
-
-@add_jaxvals_p.def_abstract_eval
-def add_abstract(xs, ys):
-  return lattice_join(xs, ys)
-
-jaxval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
+def zeros_like_jaxval(val):
+  return zeros_like_aval(core.raise_to_shaped(core.get_aval(val)))
 
 def instantiate(z: Zero | Array) -> Array:
   if isinstance(z, Zero):
     return zeros_like_aval(z.aval)
   return z
 
-def zeros_like_aval(aval: core.AbstractValue) -> Array:
-  return aval_zeros_likers[type(aval)](aval)
-
-aval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
-
-def zeros_like_jaxval(val: ArrayLike) -> Array:
-  return zeros_like_p.bind(val)
-
-zeros_like_p: Primitive = Primitive('zeros_like')
-
-@zeros_like_p.def_impl
-def zeros_like_impl(example):
-  return jaxval_zeros_likers[type(example)](example)
-
-zeros_like_p.def_abstract_eval(lambda x: x)
 
 class Zero:
   __slots__ = ['aval']
@@ -128,3 +106,9 @@ def replace_internal_symbolic_zeros(
 def replace_rule_output_symbolic_zeros(
     x: JaxTypeOrTracer | SymbolicZero) -> JaxTypeOrTracer | Zero:
   return Zero(x.aval) if type(x) is SymbolicZero else x
+
+
+# TODO(mattjj): remove these after fixing downstream users relying on them
+add_jaxvals_p: Primitive = Primitive('add_any')
+add_any_p = add_jaxvals_p
+zeros_like_p: Primitive = Primitive('zeros_like')

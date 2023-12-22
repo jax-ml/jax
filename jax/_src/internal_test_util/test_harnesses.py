@@ -703,19 +703,6 @@ for dtype in jtu.dtypes.all:
         "dtypes_to_new_dtypes", dtype=dtype, new_dtype=new_dtype)
 
 
-def _make_add_any_harness(name, *, shapes=((2,), (2,)), dtype=np.float32):
-  define(
-      ad_util.add_any_p,
-      f"{name}_lhs={jtu.format_shape_dtype_string(shapes[0], dtype)}_rhs={jtu.format_shape_dtype_string(shapes[1], dtype)}",
-      ad_util.add_jaxvals_p.bind,
-      list(map(lambda s: RandArg(s, dtype), shapes)),
-      dtype=dtype,
-      shapes=shapes)
-
-
-for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
-  _make_add_any_harness("dtypes", dtype=dtype)
-
 for dtype in jtu.dtypes.all:
   shape: tuple[int, ...] = (20, 20)
   define(
@@ -764,15 +751,6 @@ for op_name, op in _LAX_COMPARATORS.items():
     _make_comparator_harness(
         "broadcasting", lhs_shape=lhs_shape, rhs_shape=rhs_shape,
         op=op, op_name=op_name)
-
-for dtype in jtu.dtypes.all:
-  shape = (3, 4, 5)
-  define(
-      "zeros_like",
-      f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-      ad_util.zeros_like_p.bind, [RandArg(shape, dtype)],
-      shape=shape,
-      dtype=dtype)
 
 for dtype in jtu.dtypes.all_integer + jtu.dtypes.all_unsigned:
   if np.issubdtype(dtype, np.unsignedinteger):
