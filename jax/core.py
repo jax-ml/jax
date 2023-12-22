@@ -257,13 +257,13 @@ _deprecations = {
       "jax.core.canonicalize_shape is deprecated.", _deprecated_canonicalize_shape,
     ),
     "dimension_as_value": (
-      "jax.core.dimension_as_value is deprecated.", _deprecated_dimension_as_value,
+      "jax.core.dimension_as_value is deprecated. Use jnp.array.", _deprecated_dimension_as_value,
     ),
     "definitely_equal": (
-      "jax.core.definitely_equal is deprecated.", _deprecated_definitely_equal,
+      "jax.core.definitely_equal is deprecated. Use ==.", _deprecated_definitely_equal,
     ),
     "symbolic_equal_dim": (
-      "jax.core.symbolic_equal_dim is deprecated.", _deprecated_definitely_equal,
+      "jax.core.symbolic_equal_dim is deprecated. Use ==.", _deprecated_definitely_equal,
     ),
 }
 
