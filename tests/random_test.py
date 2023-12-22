@@ -995,7 +995,8 @@ class KeyArrayTest(jtu.JaxTestCase):
     custom_result = jax.grad(f)(0.0, key)
 
     self.assertAllClose(default_result, custom_result)
-    self.assertEqual(key_dot.dtype, dtypes.float0)
+    self.assertIsInstance(key_dot, prng_internal.PRNGKeyArray)
+    self.assertArraysEqual(random.key_data(key_dot), np.uint32(0))
 
   def test_key_array_indexing_0d(self):
     key = self.make_keys()

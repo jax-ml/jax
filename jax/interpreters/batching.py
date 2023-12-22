@@ -36,6 +36,7 @@ from jax._src.interpreters.batching import (
   Vmappable as Vmappable,
   Zero as Zero,
   ZeroIfMapped as ZeroIfMapped,
+  add_batched as add_batched,
   axis_primitive_batchers as axis_primitive_batchers,
   batch as batch,
   batch_custom_jvp_subtrace as batch_custom_jvp_subtrace,
@@ -72,4 +73,6 @@ from jax._src.interpreters.batching import (
   vmappables as vmappables,
   vtile as vtile,
   zero_if_mapped as zero_if_mapped,
+  zeros_like_batched as zeros_like_batched,
+  zeros_like_p as zeros_like_p,
 )
