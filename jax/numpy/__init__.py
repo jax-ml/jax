@@ -318,6 +318,10 @@ from jax._src.numpy.setops import (
     setxor1d as setxor1d,
     union1d as union1d,
     unique as unique,
+    unique_all as unique_all,
+    unique_counts as unique_counts,
+    unique_inverse as unique_inverse,
+    unique_values as unique_values,
 )
 
 from jax._src.numpy.ufuncs import (

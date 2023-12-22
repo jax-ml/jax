@@ -1745,6 +1745,51 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp.unique(x, *extra_args, axis=axis)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
+  @jtu.sample_product(shape=all_shapes, dtype=number_dtypes)
+  def testUniqueAll(self, shape, dtype):
+    rng = jtu.rand_some_equal(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    if jtu.numpy_version() < (2, 0, 0):
+      def np_fun(x):
+        values, indices, inverse_indices, counts = np.unique(
+          x, return_index=True, return_inverse=True, return_counts=True)
+        return values, indices, inverse_indices.reshape(np.shape(x)), counts
+    else:
+      np_fun = np.unique_all
+    self._CheckAgainstNumpy(jnp.unique_all, np_fun, args_maker)
+
+  @jtu.sample_product(shape=all_shapes, dtype=number_dtypes)
+  def testUniqueCounts(self, shape, dtype):
+    rng = jtu.rand_some_equal(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    if jtu.numpy_version() < (2, 0, 0):
+      np_fun = lambda x: np.unique(x, return_counts=True)
+    else:
+      np_fun = np.unique_counts
+    self._CheckAgainstNumpy(jnp.unique_counts, np_fun, args_maker)
+
+  @jtu.sample_product(shape=all_shapes, dtype=number_dtypes)
+  def testUniqueInverse(self, shape, dtype):
+    rng = jtu.rand_some_equal(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    if jtu.numpy_version() < (2, 0, 0):
+      def np_fun(x):
+        values, inverse_indices = np.unique(x, return_inverse=True)
+        return values, inverse_indices.reshape(np.shape(x))
+    else:
+      np_fun = np.unique_inverse
+    self._CheckAgainstNumpy(jnp.unique_inverse, np_fun, args_maker)
+
+  @jtu.sample_product(shape=all_shapes, dtype=number_dtypes)
+  def testUniqueValues(self, shape, dtype):
+    rng = jtu.rand_some_equal(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    if jtu.numpy_version() < (2, 0, 0):
+      np_fun = np.unique
+    else:
+      np_fun = np.unique_values
+    self._CheckAgainstNumpy(jnp.unique_values, np_fun, args_maker)
+
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
       for shape in nonempty_array_shapes
