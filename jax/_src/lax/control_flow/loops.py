@@ -741,7 +741,7 @@ def _scan_transpose(reduce_axes, cts, *args, reverse, length, num_consts,
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
   ct_carry, ct_ys = split_list(cts, [num_carry])
   ct_carry = _map(ad.instantiate_zeros, ct_carry)
-  ct_ys_is_zeros = [type(ct_y) is ad.Zero for ct_y in ct_ys]
+  ct_ys_is_zeros = tuple(type(ct_y) is ad.Zero for ct_y in ct_ys)
   ct_ys = [x for x in ct_ys if type(x) is not ad.Zero]
 
   ct_consts = _map(ad_util.zeros_like_aval, jaxpr.in_avals[num_ires:num_consts])
@@ -749,7 +749,7 @@ def _scan_transpose(reduce_axes, cts, *args, reverse, length, num_consts,
   #       jaxpr :: [ires, T d] -> [T c] -> [T a, eres] -> ([T c], [T b])
   # jaxpr_trans :: [ires] -> [CT d, CT c] -> [CT b, eres] -> ([CT d, CT c], [CT a])
   jaxpr_trans = _transpose_scan_jaxpr(
-      num_ires, num_consts - num_ires, num_eres, jaxpr, reduce_axes,
+      jaxpr, num_ires, num_consts - num_ires, num_eres, reduce_axes,
       ct_ys_is_zeros)
   linear_trans = ([False] * num_ires +
                   [True] * (len(ct_consts) + len(ct_carry) + len(ct_ys)) +
@@ -766,8 +766,9 @@ def _scan_transpose(reduce_axes, cts, *args, reverse, length, num_consts,
 
 # transpose_scan_jaxpr :: ([res1, c, a, res2] -> b)
 #                         -> ([res1, CT c, CT b, res2] -> [CT c, CT a])
-def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr, reduce_axes,
-    ct_ys_is_zeros):
+@weakref_lru_cache
+def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2, reduce_axes,
+                          ct_ys_is_zeros):
   num_a = len(jaxpr.in_avals) - num_res1 - num_c - num_res2
   # TODO: allow input cotangent avals to be batched relative to jaxpr.in_avals
   # if an axis isn't reduced
@@ -800,8 +801,9 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr, reduce_axes,
     a_bar = _map(ad.instantiate_zeros, a_bar)
     c_bar = _map(ad.instantiate_zeros, _map(ad.add_tangents, c_bar, new_c_bar))
     return c_bar + a_bar
-  return _make_closed_jaxpr(transposed,
-      res1_avals + c_avals + b_carry_avals + b_ys_avals_stripped + res2_avals)
+  return _make_closed_jaxpr(
+      transposed, tuple(res1_avals + c_avals + b_carry_avals +
+                        b_ys_avals_stripped + res2_avals))
 
 
 def _scan_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
@@ -852,9 +854,12 @@ def _scan_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
   ys_bdims = [1 if b else batching.not_mapped for b in ys_batched]
   return outs, carry_bdims + ys_bdims
 
+@weakref_lru_cache
+def _cached_scan_pad_jaxpr(jaxpr):
+  return core.ClosedJaxpr(*pe.pad_jaxpr(jaxpr.jaxpr, jaxpr.consts))
+
 def _scan_padding_rule(in_avals, out_avals, *args, jaxpr, **params):
-  padded_jaxpr = core.ClosedJaxpr(*pe.pad_jaxpr(jaxpr.jaxpr, jaxpr.consts))
-  return scan_p.bind(*args, jaxpr=padded_jaxpr, **params)
+  return scan_p.bind(*args, jaxpr=_cached_scan_pad_jaxpr(jaxpr), **params)
 
 def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
                    ) -> tuple[list[bool], core.JaxprEqn]:

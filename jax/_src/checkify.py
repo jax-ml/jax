@@ -834,7 +834,7 @@ def checkify_while_body_jaxpr(
   c_consts_avals = cond_jaxpr.in_avals[:c_consts_num]
   jaxpr, _, () = pe.trace_to_jaxpr_dynamic(new_body_f_, [*c_consts_avals,
                                                          *body_jaxpr.in_avals])
-  closed_jaxpr = core.ClosedJaxpr(jaxpr, ())
+  closed_jaxpr = pe.close_jaxpr(jaxpr)
   err_vals, err_tree = jtu.tree_flatten(error)
   err_vals = map(get_shaped_aval, err_vals)
   flat_err_and_in_vals = [*err_vals, *c_consts_avals, *body_jaxpr.in_avals]
@@ -842,7 +842,9 @@ def checkify_while_body_jaxpr(
       closed_jaxpr, enabled_errors, err_tree, *flat_err_and_in_vals)
   return jaxpr, out_tree, error_effects
 
-def ignore_error_output_jaxpr(jaxpr, num_error_vals):
+
+@weakref_lru_cache
+def ignore_error_output_jaxpr(jaxpr, num_error_vals: int):
   """Constructs a checked jaxpr which does not output its error value."""
   consts = jaxpr.consts
   jaxpr = jaxpr.jaxpr

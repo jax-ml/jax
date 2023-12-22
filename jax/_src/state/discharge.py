@@ -235,16 +235,20 @@ def _dynamic_update_index(x, idx, val, indexed_dims):
   sizes = [1 if b else size for b, size in zip(indexed_dims, x.shape)]
   return lax_slicing.dynamic_update_slice(x, val.reshape(sizes), starts)
 
+@weakref_lru_cache
+def _cached_closed_jaxpr_discharge(closed_jaxpr):
+  jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
+  num_outs = len(jaxpr.outvars)
+  discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
+  discharged_closed_jaxpr = core.ClosedJaxpr(discharged_jaxpr, discharged_consts)
+  fun = lu.wrap_init(core.jaxpr_as_fun(discharged_closed_jaxpr))
+  return discharged_closed_jaxpr, num_outs, fun
+
 @register_discharge_rule(core.closed_call_p)
 def _closed_call_discharge_rule(
     in_avals: Sequence[core.AbstractValue], _,*args,
     call_jaxpr: core.ClosedJaxpr):
-  jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
-  num_outs = len(jaxpr.outvars)
-  discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
-  discharged_closed_jaxpr = core.ClosedJaxpr(discharged_jaxpr,
-                                             discharged_consts)
-  fun = lu.wrap_init(core.jaxpr_as_fun(discharged_closed_jaxpr))
+  discharged_closed_jaxpr, num_outs, fun = _cached_closed_jaxpr_discharge(call_jaxpr)
   out_and_ref_vals = core.closed_call_p.bind(fun, *args,
                                              call_jaxpr=discharged_closed_jaxpr)
   out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
@@ -309,7 +313,7 @@ def _run_state_jvp(primals: Sequence[Any], tangents: Sequence[Any], *,
   tangents = [ad.instantiate_zeros(t) if inst else t
               for t, inst in zip(tangents, nonzero_tangents)]
   tangents = [t for t in tangents if type(t) is not ad_util.Zero]
-  closed_jvp_jaxpr, _ = ad.jvp_jaxpr(core.ClosedJaxpr(jaxpr, ()),
+  closed_jvp_jaxpr, _ = ad.jvp_jaxpr(pe.close_jaxpr(jaxpr),
                                      nonzero_tangents, [])
   jvp_jaxpr_, jvp_consts = closed_jvp_jaxpr.jaxpr, closed_jvp_jaxpr.consts
   jvp_jaxpr = hoist_consts_to_refs(jvp_jaxpr_)
@@ -569,7 +573,7 @@ def _run_state_partial_eval_custom(
     eqn_staged = pe.new_jaxpr_eqn(res_staged_invars,
                                   staged_outvars,
                                   core.closed_call_p,
-                                  dict(call_jaxpr=core.ClosedJaxpr(staged_call_jaxpr, ())),
+                                  dict(call_jaxpr=pe.close_jaxpr(staged_call_jaxpr)),
                                   staged_effects, eqn.source_info)
     assert len(res_staged_invars) == len(staged_call_jaxpr.invars)
     assert len(staged_outvars) == len(staged_call_jaxpr.outvars)

@@ -43,7 +43,7 @@ from jax._src.state import utils as state_utils
 from jax._src.state import types as state_types
 from jax._src.typing import Array
 from jax._src.util import (partition_list, merge_lists, safe_map, safe_zip,
-                           split_list, split_dict)
+                           split_list, split_dict, weakref_lru_cache)
 from jax._src.lax.control_flow import loops
 from jax._src.lax.control_flow.common import _abstractify, _initial_style_jaxpr
 
@@ -297,14 +297,19 @@ def _for_impl_unrolled(body, nsteps, unroll, *args):
 mlir.register_lowering(for_p, mlir.lower_fun(_for_impl, multiple_results=True))
 for_p.def_impl(functools.partial(dispatch.apply_primitive, for_p))
 
+@weakref_lru_cache
+def _cached_for_jaxpr(jaxpr):
+  discharged_jaxpr, body_consts = discharge_state(jaxpr, ())
+  return core.ClosedJaxpr(discharged_jaxpr, body_consts)
+
 def _for_vmap(spmd_axis_name, axis_size, axis_name, main_type, args, dims, *,
               jaxpr, nsteps, reverse, which_linear, unroll):
   init_batched = [d is not batching.not_mapped for d in dims]
-  discharged_jaxpr, body_consts = discharge_state(jaxpr, ())
+  closed_jaxpr = _cached_for_jaxpr(jaxpr)
   batched = init_batched
   for _ in range(len(batched)):
     _, out_batched = batching.batch_jaxpr(
-        core.ClosedJaxpr(discharged_jaxpr, body_consts),
+        closed_jaxpr,
         axis_size, [False] + batched, instantiate=batched,
         axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
     if out_batched == batched:
@@ -316,7 +321,7 @@ def _for_vmap(spmd_axis_name, axis_size, axis_name, main_type, args, dims, *,
           else batching.moveaxis(x, d, 0) if now_bat else x
           for x, d, was_bat, now_bat in zip(args, dims, init_batched, batched)]
   batched_jaxpr_, _ = batching.batch_jaxpr(
-      core.ClosedJaxpr(jaxpr, []), axis_size, [False] + batched, [],
+      pe.close_jaxpr(jaxpr), axis_size, [False] + batched, [],
       axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
   batched_jaxpr, () = batched_jaxpr_.jaxpr, batched_jaxpr_.consts  # TODO consts
   out_flat = for_p.bind(*args, jaxpr=batched_jaxpr, nsteps=nsteps,
@@ -335,10 +340,10 @@ def _for_jvp(primals, tangents, *, jaxpr, nsteps, reverse, which_linear,
   # the state effect from the jaxpr and we will now have a "symmetric" jaxpr
   # where the inputs line up with the outputs. We use this discharged jaxpr
   # for the fixed point.
-  discharged_jaxpr, body_consts = discharge_state(jaxpr, ())
+  closed_jaxpr = _cached_for_jaxpr(jaxpr)
   for _ in range(len(nonzero_tangents)):
     _, out_nonzero_tangents = ad.jvp_jaxpr(
-        core.ClosedJaxpr(discharged_jaxpr, body_consts),
+        closed_jaxpr,
         [False] + nonzero_tangents, instantiate=nonzero_tangents)
     if out_nonzero_tangents == nonzero_tangents:
       break
@@ -348,7 +353,7 @@ def _for_jvp(primals, tangents, *, jaxpr, nsteps, reverse, which_linear,
   tangents = [ad.instantiate_zeros(t) if inst else t
               for t, inst in zip(tangents, nonzero_tangents)]
   tangents = [t for t in tangents if type(t) is not ad_util.Zero]
-  closed_jaxpr = core.ClosedJaxpr(jaxpr, ())
+  closed_jaxpr = pe.close_jaxpr(jaxpr)
   jvp_jaxpr_, _ = ad.jvp_jaxpr(closed_jaxpr, [False] + nonzero_tangents, [])
   jvp_jaxpr, () = jvp_jaxpr_.jaxpr, jvp_jaxpr_.consts  # TODO consts
   jvp_which_linear = which_linear + (True,) * len(tangents)

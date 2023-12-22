@@ -33,8 +33,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.sharding_impls import _op_sharding_to_pos_sharding
 from jax._src import custom_api_util
 from jax._src.lib import xla_client as xc
-from jax._src.api_util import flatten_fun_nokwargs
-from jax._src.api_util import argnums_partial
+from jax._src.api_util import flatten_fun_nokwargs, argnums_partial
 
 
 def _resolve_kwargs(fun, args, kwargs):

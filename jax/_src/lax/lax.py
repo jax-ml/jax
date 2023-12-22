@@ -1007,10 +1007,10 @@ def reduce(operands: Any,
                                  weak_type=weak_type)
   else:
     flat_init_avals = safe_map(_abstractify, flat_init_values)
-    jaxpr, consts, out_tree = _variadic_reduction_jaxpr(
+    closed_jaxpr, out_tree = _variadic_reduction_jaxpr(
         computation, tuple(flat_init_avals), init_value_tree)
     out = reduce_p.bind(*flat_operands, *flat_init_values, computation=computation,
-                        jaxpr=jaxpr, consts=consts, dimensions=tuple(dimensions))
+                        jaxpr=closed_jaxpr, dimensions=tuple(dimensions))
     return tree_util.tree_unflatten(out_tree, out)
 
 @cache()
@@ -1042,7 +1042,7 @@ def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
         "at https://github.com/google/jax.")
-  return jaxpr, tuple(consts), out_tree()
+  return core.ClosedJaxpr(jaxpr, consts), out_tree()
 
 def _get_monoid_reducer(monoid_op: Callable,
                         xs: Sequence[Array]) -> Callable | None:
@@ -3665,14 +3665,14 @@ mlir.register_lowering(select_n_p, _select_hlo_lowering)
 pe.def_trivial_padding(select_n_p)
 
 
-def _reduce_shape_rule(*avals, computation, jaxpr, consts, dimensions):
+def _reduce_shape_rule(*avals, computation, jaxpr, dimensions):
   operand_avals, init_val_avals = split_list(avals, [len(avals) // 2])
   if any(arg.shape != () for arg in init_val_avals):
     init_val_shapes = [a.shape for a in init_val_avals]
     raise ValueError(f'reduce found non-scalar initial value: {init_val_shapes}')
   return [tuple(np.delete(op.shape, dimensions)) for op in operand_avals]
 
-def _reduce_dtype_rule(*avals, computation, jaxpr, consts, dimensions):
+def _reduce_dtype_rule(*avals, computation, jaxpr, dimensions):
   operand_avals, init_val_avals = split_list(avals, [len(avals) // 2])
   operand_dtypes = [dtypes.canonicalize_dtype(op.dtype) for op in operand_avals]
   init_val_dtypes = [dtypes.canonicalize_dtype(init.dtype) for init in init_val_avals]
@@ -3682,13 +3682,13 @@ def _reduce_dtype_rule(*avals, computation, jaxpr, consts, dimensions):
         f"got operands={operand_avals} and initial_values={init_val_avals}")
   return operand_dtypes
 
-def _reduce_weak_type_rule(*avals, computation, jaxpr, consts, dimensions):
+def _reduce_weak_type_rule(*avals, computation, jaxpr, dimensions):
   operand_avals, init_val_avals = split_list(avals, [len(avals) // 2])
   return [op.weak_type and init_val.weak_type
           for op, init_val in safe_zip(operand_avals, init_val_avals)]
 
 def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr,
-                       consts, dimensions):
+                       dimensions):
   # TODO(mattjj,frostig): use batch_jaxpr, delete computation (assumes poly??)
   num_operands = len(batched_args) // 2
   operands, init_values = split_list(batched_args, [num_operands])
@@ -3704,7 +3704,6 @@ def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr,
     return reduce_p.bind(*(operands + init_values),
                          computation=computation,
                          dimensions=tuple(new_dimensions),
-                         consts=consts,
                          jaxpr=jaxpr), new_operand_bdims
   else:
     raise NotImplementedError  # loop and stack
@@ -3742,8 +3741,7 @@ def _reduce_jvp(reducer, init_values, primals, tangents, axes):
 
   return api.jvp(_reduce_tree, primals, tangents)
 
-def _reduce_jvp_rule(primals, tangents, *, computation, jaxpr,
-                     consts, dimensions):
+def _reduce_jvp_rule(primals, tangents, *, computation, jaxpr, dimensions):
   primal_xs, init_values = split_list(primals, [len(primals) // 2])
   tangent_xs, tangent_init = split_list(tangents, [len(tangents) // 2])
   # This test may be too strict, if a value is actually zero but we cannot prove
@@ -3752,10 +3750,10 @@ def _reduce_jvp_rule(primals, tangents, *, computation, jaxpr,
     raise NotImplementedError(
       "Gradient of general lax.reduce with non-zero tangents for "
       "initial values to reduction not implemented")
-  reducer = core.jaxpr_as_fun(core.ClosedJaxpr(jaxpr, consts))
+  reducer = core.jaxpr_as_fun(jaxpr)
   return _reduce_jvp(reducer, init_values, primal_xs, tangent_xs, dimensions)
 
-def _reduce_named_shape_rule(*avals, computation, jaxpr, consts, dimensions):
+def _reduce_named_shape_rule(*avals, computation, jaxpr, dimensions):
   # TODO(mattjj,frostig): see the TODOs noting limitations/assumptions in
   # _reduce_batching_rule. We're making the same assumptions here for now.
   num_operands = len(avals) // 2
@@ -3777,7 +3775,7 @@ reduce_p.def_abstract_eval(
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
-def _reduce_lower(ctx, *values, computation, jaxpr, consts, dimensions):
+def _reduce_lower(ctx, *values, computation, jaxpr, dimensions):
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
   operands, init_values = util.split_list(values, [len(values) // 2])
   init_value_avals = ctx.avals_in[len(values) // 2:]
@@ -3790,7 +3788,8 @@ def _reduce_lower(ctx, *values, computation, jaxpr, consts, dimensions):
         name_stack=source_info_util.new_name_stack())
     if jaxpr.effects:
       raise NotImplementedError('Cannot lower effectful `reduce`.')
-    out_nodes, _ = mlir.jaxpr_subcomp(reducer_ctx, jaxpr, mlir.TokenSet(), consts,
+    out_nodes, _ = mlir.jaxpr_subcomp(reducer_ctx, jaxpr.jaxpr, mlir.TokenSet(),
+                                      jaxpr.consts,
                                       *([a] for a in reducer.arguments),
                                       dim_var_values=ctx.dim_var_values)
     hlo.return_(util.flatten(out_nodes))

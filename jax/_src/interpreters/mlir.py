@@ -1793,7 +1793,7 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend,
                    arg_names=None, result_names=None):
   del stack_name, avals_in
   if isinstance(call_jaxpr, core.Jaxpr):
-    call_jaxpr = core.ClosedJaxpr(call_jaxpr, ())
+    call_jaxpr = pe.close_jaxpr(call_jaxpr)
   check_backend_matches(backend, ctx.platforms)
   effects = list(tokens_in.effects())
   output_types = map(aval_to_ir_types, avals_out)

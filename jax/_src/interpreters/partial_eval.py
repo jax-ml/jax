@@ -1606,17 +1606,23 @@ def dce_jaxpr_call_rule(used_outputs: list[bool], eqn: JaxprEqn
 dce_rules[core.call_p] = dce_jaxpr_call_rule
 
 
+@weakref_lru_cache
+def _cached_closed_call_dce(jaxpr_, used_outputs: tuple[bool, ...]
+                            ) -> tuple[core.ClosedJaxpr, list[bool]]:
+  jaxpr, consts = jaxpr_.jaxpr, jaxpr_.consts
+  new_jaxpr, used_inputs = dce_jaxpr(jaxpr, used_outputs)
+  return core.ClosedJaxpr(new_jaxpr, consts), used_inputs
+
 def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
                                ) -> tuple[list[bool], JaxprEqn]:
   # TODO(mattjj): de-duplicate with above rule?
   jaxpr_ = eqn.params['call_jaxpr']
-  jaxpr, consts = jaxpr_.jaxpr, jaxpr_.consts
-  new_jaxpr, used_inputs = dce_jaxpr(jaxpr, used_outputs)
-  new_params = dict(eqn.params, call_jaxpr=core.ClosedJaxpr(new_jaxpr, consts))
+  closed_jaxpr, used_inputs = _cached_closed_call_dce(jaxpr_, tuple(used_outputs))
+  new_params = dict(eqn.params, call_jaxpr=closed_jaxpr)
   new_eqn = new_jaxpr_eqn(
       [v for v, used in zip(eqn.invars, used_inputs) if used],
       [v for v, used in zip(eqn.outvars, used_outputs) if used],
-      eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
+      eqn.primitive, new_params, closed_jaxpr.effects, eqn.source_info)
   return used_inputs, new_eqn
 dce_rules[core.closed_call_p] = dce_jaxpr_closed_call_rule
 

@@ -2558,13 +2558,12 @@ tf_impl_with_avals[lax.reduce_window_p] = _reduce_window
 
 def _reduce(*operands: TfVal,
             computation: Callable,
-            jaxpr: core.Jaxpr,
-            consts:  Sequence[Any],
+            jaxpr: core.ClosedJaxpr,
             dimensions: Sequence[int],
             _in_avals: Sequence[core.ShapedArray],
             _out_aval: core.ShapedArray) -> Sequence[TfVal]:
   del computation
-  assert not consts
+  assert not jaxpr.consts
   assert len(operands) % 2 == 0
   # operands: op1, op2, ..., init_val1, init_val2, ...
   # reducer takes op1[i], op2[i], ..., init_val1, init_val2, ...
@@ -2575,8 +2574,7 @@ def _reduce(*operands: TfVal,
   reducer_arg_spec = tuple([tf.TensorSpec((), op.dtype) for op in init_vals] * 2)
 
   def reducer_computation(*args: TfVal) -> TfVal:
-    closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
-    res = _interpret_jaxpr(closed_jaxpr, *args, extra_name_stack=None)
+    res = _interpret_jaxpr(jaxpr, *args, extra_name_stack=None)
     return res
 
   xla_reducer_computation = (

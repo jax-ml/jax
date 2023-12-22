@@ -70,7 +70,7 @@ def _initial_style_jaxpr(fun, in_avals):
   return jaxpr, consts
 
 def _close_jaxpr(jaxpr):
-  return core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+  return pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
 
 def _sum_tangents(_, x, *xs):
   return reduce(ad.add_tangents, xs, x)
