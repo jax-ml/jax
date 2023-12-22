@@ -167,10 +167,10 @@ class Jaxpr:
         # TODO(slebedev): Come up with a more elaborate heuristic for name=.
         name = eqn.params.get("name")
         if name is None:
-          s.extend(jaxprs_in_params(eqn.params))
+          s.extend(jaxprs_in_params_closed(eqn.params))
           continue
         name = name.strip("<>")  # <lambda> -> lambda
-        for subjaxpr in jaxprs_in_params(eqn.params):
+        for subjaxpr in jaxprs_in_params_closed(eqn.params):
           s.append(subjaxpr)
           names.setdefault(subjaxpr, name)
 
@@ -218,6 +218,16 @@ def jaxprs_in_params(params) -> Iterator[Jaxpr]:
         yield v
       elif isinstance(v, ClosedJaxpr):
         yield v.jaxpr
+
+
+def jaxprs_in_params_closed(params) -> Iterator[Jaxpr]:
+  for val in params.values():
+    vals = val if isinstance(val, tuple) else (val,)
+    for v in vals:
+      if isinstance(v, Jaxpr):
+        yield v
+      elif isinstance(v, ClosedJaxpr):
+        yield v
 
 
 def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
