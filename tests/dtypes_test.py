@@ -13,8 +13,10 @@
 # limitations under the License.
 
 
+import dataclasses
 import enum
 import functools
+from functools import partial
 import itertools
 import operator
 
@@ -375,6 +377,79 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.uint, np.uint32 if precision == '32' else np.uint64)
     self.assertEqual(dtypes.float_, np.float32 if precision == '32' else np.float64)
     self.assertEqual(dtypes.complex_, np.complex64 if precision == '32' else np.complex128)
+
+  def test_custom_tangent_dtype(self):
+    from jax._src import core
+
+    class scale(dtypes.extended):
+      pass
+
+    class ScalesTyRules:
+      @staticmethod
+      def physical_element_aval(dtype) -> core.ShapedArray:
+        return core.ShapedArray((), dtype.float_dtype)
+
+      @staticmethod
+      def global_sharded_result_handler(aval, sharding, committed, is_from_xla):
+        raise NotImplementedError("convert back under the jit")
+
+      @staticmethod
+      def add(dt, x, y):
+        fromscale = partial(jax.lax.convert_element_type, new_dtype=dt.float_dtype)
+        toscale = partial(jax.lax.convert_element_type, new_dtype=dt)
+        return toscale(jax.lax.max(fromscale(x), fromscale(y)))
+
+      @staticmethod
+      def zero(dt):
+        neginf = np.array(-np.inf if dtypes.supports_inf(dt.float_dtype)
+                          else dtypes.finfo(dt.float_dtype).min, dt.float_dtype)
+        return jax.lax.convert_element_type(neginf, dt)
+
+      @staticmethod
+      def convert_from(dtype, other_dtype) -> bool:
+        return dtype.float_dtype == other_dtype
+
+      @staticmethod
+      def convert_to(other_dtype, dtype) -> bool:
+        return dtype.float_dtype == other_dtype
+
+    @dataclasses.dataclass(frozen=True)
+    class ScaleTy(dtypes.ExtendedDType):
+      float_dtype: dtypes.DType
+      name: str = 'scale'
+      _rules: type = ScalesTyRules
+      type: type = scale
+
+    @jax.custom_vjp
+    def g(x):
+      return x
+    def g_fwd(x):
+      return x, None
+    def g_bwd(_, ct):
+      ct = jax.lax.convert_element_type(ct, ScaleTy(dtypes.float8_e5m2))
+      return ct,
+    g.defvjp(g_fwd, g_bwd)
+
+    @jax.custom_vjp
+    def convert(x):
+      return x
+    def convert_fwd(x):
+      return x, None
+    def convert_bwd(_, ct):
+      ct = jax.lax.convert_element_type(ct, ct.dtype.float_dtype)
+      return ct,
+    convert.defvjp(convert_fwd, convert_bwd)
+
+    @jax.jit
+    def f(x):
+      x = convert(x)
+      x = g(x) + g(x)
+      return x
+
+    x = jnp.array(3., dtypes.float8_e5m2)
+    out = jax.grad(f)(x)
+    self.assertAllClose(out, 1., check_dtypes=False)
+    self.assertTrue(dtypes.issubdtype(ScaleTy(dtypes.float8_e5m2), scale))
 
 
 class TestPromotionTables(jtu.JaxTestCase):
