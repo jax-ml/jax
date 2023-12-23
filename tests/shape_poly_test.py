@@ -443,10 +443,18 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertTrue(poly.ge(poly))
     self.assertTrue(poly.ge(poly - 1))
 
-    with self.assertRaisesRegex(core.InconclusiveDimensionOperation, "inconclusive"):
+    with self.assertRaisesRegex(
+        core.InconclusiveDimensionOperation,
+        re.escape("comparison 'b + 4*a + 3' >= '9' is inconclusive")):
       poly.ge(9)
 
-    with self.assertRaisesRegex(core.InconclusiveDimensionOperation, "inconclusive"):
+    with self.assertRaisesRegex(
+        core.InconclusiveDimensionOperation,
+        "comparison the_comp is inconclusive"):
+      poly.ge(9, lambda: "the_comp")
+
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                "inconclusive"):
       (4 * a - b).ge(0)
 
   def test_poly_compare_overload(self):
@@ -1866,7 +1874,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                      RandArg((3, 4, 5), _f32)],
                     polymorphic_shapes=["b, ...", "b, w, ..."], tol=1E-5,
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
-        # The known dimensions product must be even.
+        # TODO(necula): The known dimensions product must be even.
         PolyHarness("random_categorical", f"axis=0_{flags_name}",
                     lambda key, a: jax.random.categorical(
                       jax.random.wrap_key_data(key), a, axis=0),
