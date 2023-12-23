@@ -1513,9 +1513,15 @@ def zeros_like_array(x: ArrayLike) -> Array:
   return full_like(x, 0)
 
 
+def _add_arrays(x, y):
+  if (isinstance(a := core.get_aval(x), ShapedArray) and
+      dtypes.issubdtype(a.dtype, dtypes.extended)):
+    return dtype._rules.add(dtype, x, y)  # type: ignore
+  return add(x, y)
+
 for t in itertools.chain(
     dtypes.python_scalar_dtypes.keys(), array_types, [array.ArrayImpl]):
-  ad_util.raw_jaxval_adders[t] = add
+  ad_util.raw_jaxval_adders[t] = _add_arrays
 
 
 ### primitives
