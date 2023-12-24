@@ -451,6 +451,88 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertAllClose(out, 1., check_dtypes=False)
     self.assertTrue(dtypes.issubdtype(ScaleTy(dtypes.float8_e5m2), scale))
 
+  def test_custom_tangent_dtype_with_scan(self):
+    from jax._src import core
+
+    class ScalesTyRules:
+      # tell JAX how to lower this dtype to an HLO dtype
+      @staticmethod
+      def physical_element_aval(dtype) -> core.ShapedArray:
+        return core.ShapedArray((), dtype.float_dtype)
+
+      # allow conversions to and from the corresponding float type
+      @staticmethod
+      def convert_from(scale_dtype, other_dtype) -> bool:
+        return scale_dtype.float_dtype == other_dtype
+
+      @staticmethod
+      def convert_to(other_dtype, scale_dtype) -> bool:
+        return scale_dtype.float_dtype == other_dtype
+
+      # define how autodiff should accumulate these values
+      @staticmethod
+      def add(dt, x, y):
+        fromscale = partial(jax.lax.convert_element_type, new_dtype=dt.float_dtype)
+        toscale = partial(jax.lax.convert_element_type, new_dtype=dt)
+        return toscale(jax.lax.max(fromscale(x), fromscale(y)))
+
+      @staticmethod
+      def zero(dt):
+        neginf = np.array(-np.inf if dtypes.supports_inf(dt.float_dtype)
+                          else dtypes.finfo(dt.float_dtype).min, dt.float_dtype)
+        return jax.lax.convert_element_type(neginf, dt)
+
+      @staticmethod
+      def tangent_dtype(dtype):
+        return dtype
+
+      # NOTE: by skipping some rules, this dtype can only be used underneath jit
+
+    # class to use as second argument to jax.dtypes.issubdtype
+    class scale_dtype(dtypes.extended): pass
+
+    # parameterized datatype for use in e.g. jax.lax.convert_element_type
+    @dataclasses.dataclass(frozen=True)
+    class scale_dtype(dtypes.ExtendedDType):
+      float_dtype: dtypes.DType
+      _rules: type = ScalesTyRules
+      type: type = scale_dtype
+
+      def __repr__(self) -> str:
+        nbits = dtypes.finfo(self.float_dtype).bits
+        return f'scale{nbits}'
+      name = property(__repr__)
+
+    f32 = jnp.dtype('float32')
+    sc32 = scale_dtype(f32)
+
+    def outer(x, scale_f32):
+      scale = jax.lax.convert_element_type(scale_f32, sc32)
+      def body_fun(carry, _):
+        carry = inner(carry, scale)
+        return carry, None
+      x, _ = jax.lax.scan(body_fun, x, None, length=3)
+      return x
+
+    @jax.custom_vjp
+    def inner(carry, scale):
+      del scale  # only used under autodiff
+      return carry
+    def inner_fwd(carry, scale):
+      return inner(carry, scale), scale
+    def inner_bwd(prev_scale, grads):
+      # convert sc32->f32 so we can do math
+      prev_scale_f32 = jax.lax.convert_element_type(prev_scale, f32)
+      new_scale_f32 = 1./2 * (prev_scale_f32 + jnp.max(grads))
+      # convert f32->sc32 so the autodiff system accumulates scales correctly
+      new_scale = jax.lax.convert_element_type(new_scale_f32, sc32)
+      return grads, new_scale
+    inner.defvjp(inner_fwd, inner_bwd)
+
+    scale = jnp.float32(1.)
+    _, new_scale = jax.jit(jax.grad(outer, (0, 1)))(jnp.float32(3.14), scale)
+    self.assertAllClose(new_scale, jnp.float32(1.0))
+
 
 class TestPromotionTables(jtu.JaxTestCase):
 

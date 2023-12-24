@@ -793,6 +793,7 @@ def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2, reduce_axes,
         ad.Zero(aval) if is_zero else next(ys_bar_stripped_iter)
         for aval, is_zero in zip(b_ys_avals, ct_ys_is_zeros)
     ]
+    # TODO(mattjj): c_avals should be _tangent_ types here...
     primals = (res1 + [ad.UndefinedPrimal(aval) for aval in c_avals] +
                [ad.UndefinedPrimal(aval) for aval in a_avals] + res2)
     cbar_abar = ad.backward_pass(
