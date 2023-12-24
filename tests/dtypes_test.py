@@ -379,7 +379,6 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.complex_, np.complex64 if precision == '32' else np.complex128)
 
   def test_custom_tangent_dtype(self):
-    self.skipTest("blocked on fix to downstream user of jax internals")
     from jax._src import core
 
     class scale(dtypes.extended):
