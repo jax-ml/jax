@@ -40,6 +40,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import shard_alike
 from jax._src import linear_util as lu
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
@@ -1371,19 +1372,10 @@ def full_like(x: ArrayLike | DuckTypedArray,
   if dtypes.issubdtype(dtype, dtypes.extended):
     return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type))
-  # If the sharding is SingleDeviceSharding then don't take the `if` branch
-  # because `val` is already an array with SingleDeviceSharding making this an
-  # optimization.
-  # TODO(yashkatariya,mattjj): `x` and `val` should have the same sharding,
-  # probably in the form of a primitive like `val = match_sharding_p.bind(x, val)`
-  # (so it works in staged-out code as well as 'eager' code). Related to
-  # equi-sharding.
+  # TODO(yashkatariya): Use shard_like in tracing mode too i.e. remove the
+  # ArrayImpl check.
   if shape is None and isinstance(x, array.ArrayImpl):
-    sharding = x.sharding  # type: ignore[union-attr]
-    if (not dispatch.is_single_device_sharding(sharding) and
-        not isinstance(sharding, PmapSharding)):
-      return array.make_array_from_callback(
-          type_cast(array.Shape, fill_shape), sharding, lambda idx: val[idx])
+    return shard_alike.shard_alike(x, val)[1]
   return val
 
 
