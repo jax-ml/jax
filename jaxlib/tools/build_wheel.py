@@ -296,6 +296,12 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extensi
           "__main__/jaxlib/mlir/dialects/vector.py",
       ],
   )
+  copy_runfiles(
+      dst_dir=jaxlib_dir / "mlir" / "extras",
+      src_files=[
+          "__main__/jaxlib/mlir/extras/meta.py",
+      ],
+  )
 
   if build_utils.is_windows():
     capi_so = "__main__/jaxlib/mlir/_mlir_libs/jaxlib_mlir_capi.dll"

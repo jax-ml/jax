@@ -108,6 +108,7 @@ setup(
             'mosaic/python/*.so',
             'mlir/*.py',
             'mlir/dialects/*.py',
+            'mlir/extras/*.py',
             'mlir/_mlir_libs/*.dll',
             'mlir/_mlir_libs/*.dylib',
             'mlir/_mlir_libs/*.so',
