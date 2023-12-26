@@ -15,15 +15,11 @@ import jax.numpy as jnp
 jax.config.update('jax_platforms', 'cpu')
 jax.config.update('jax_traceback_filtering', 'off')
 
-# TODO a verbose mode can say what was the _same_, but let's focus on what was
-# the _difference_
-
-# TODO only print for things that are not inline=True?
-
 @jax.jit
 def f(x, y):
-  return
   return jnp.sin(x) + y['hi']
+
+f(1, {'hi': np.arange(3)})
 
 f(1, {'hi': np.arange(3)})
 f(1, {'hi': np.arange(3)})
@@ -32,6 +28,15 @@ f(1, {'hi': np.arange(4)})
 f(1, y={'hi': np.arange(4)})
 f(x=1, y={'hi': np.arange(4)})
 # # f(1, {'hi': np.arange(4), 'bye': np.arange(5)})
+
+# for _ in range(2):
+#   jax.jit(lambda x: 2 * x)(3)
+
+# with jax.numpy_rank_promotion('warn'):
+#   f(1, {'hi': np.arange(3)})
+
+
+
 
 
 # @jax.jit

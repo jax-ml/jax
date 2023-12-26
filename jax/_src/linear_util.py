@@ -333,8 +333,7 @@ def cache(call: Callable, *, explain: Optional[Callable] = None):
   fun_caches: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
   def memoized_fun(fun: WrappedFun, *args):
-    a_new_cache = {}
-    cache = fun_caches.setdefault(fun.f, a_new_cache)
+    cache = fun_caches.setdefault(fun.f, new_cache := {})
     if config.check_tracer_leaks.value:
       key = (_copy_main_traces(fun.transforms), fun.params, fun.in_type, args,
              config.enable_x64.value, config.default_device.value,
@@ -348,8 +347,7 @@ def cache(call: Callable, *, explain: Optional[Callable] = None):
       fun.populate_stores(stores)
     else:
       ans = call(fun, *args)
-      if explain:
-        explain(fun.f, cache is a_new_cache, cache, key, ans)
+      if explain: explain(fun.f, cache is new_cache, cache, key, ans)
       cache[key] = (ans, fun.stores)
 
     return ans

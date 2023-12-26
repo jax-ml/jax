@@ -457,7 +457,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
   jaxpr, consts, canonicalized_out_shardings_flat, out_layouts_flat = _pjit_jaxpr(
       flat_fun, hashable_pytree(out_shardings), hashable_pytree(out_layouts),
       in_type, dbg, device_or_backend_set, HashableFunction(out_tree, closure=()),
-      HashableFunction(res_paths, closure=()))
+      HashableFunction(res_paths, closure=()), inline)
 
   assert len(explicit_args) == len(canonicalized_in_shardings_flat) == len(in_layouts_flat)
 
@@ -890,22 +890,25 @@ def _process_in_axis_resources(in_shardings_thunk, in_layouts_thunk, in_avals,
       for i, aval in zip(in_shardings_flat, in_avals))
   return canonicalized_shardings, tuple(in_layouts_flat)
 
-# TODO maybe don't report misses for sub-jitted functions
-# TODO maybe also don't report for internal jits
-# TODO somehow indicate when we're recompiling a function from the same source
-# line
+callsites: set[str] = set()
+
 def explain_cache_miss(f: Callable, unseen_f: bool, cache: dict, key: tuple,
                        result: tuple):
   if config.check_tracer_leaks.value: return
-  callsite = source_info_util.summarize(source_info_util.current())
-  print(f"TRACING CACHE MISS at {callsite} because:")
+
+  priority = logging.WARNING if config.explain_cache_misses.value else logging.DEBUG
+  if not logger.isEnabledFor(priority): return
+  p = lambda msg: logger.log(priority, msg)
 
   def unpack(key):
-    transforms, (), _, (in_type, debug_info, _), *_ = key
+    transforms, (), _, (in_type, debug_info, _, inline), *_, ctx = key
     (_, (in_tree,)), (_, ()) = transforms
-    return in_tree, in_type, debug_info
+    return in_tree, in_type, debug_info, inline.val, ctx
+  in_tree, in_type, debug_info, inline, ctx = unpack(key)
+  if inline: return
 
-  in_tree, in_type, debug_info = unpack(key)
+  callsite = source_info_util.summarize(source_info_util.current())
+  p(f"TRACING CACHE MISS at {callsite} because:")
 
   # have we seen this function before at all?
   fun_name = getattr(f, '__qualname__', f)
@@ -915,12 +918,14 @@ def explain_cache_miss(f: Callable, unseen_f: bool, cache: dict, key: tuple,
   else:
     src_info = ''
   if unseen_f:
-    print(f"  never seen function:\n    {fun_name}{src_info}")
+    p(f"  never seen function:\n    {fun_name}{src_info}")
+    if callsite in callsites:
+      p("  but seen another function defined on the same line; maybe the function is\n"
+        "  being re-defined repeatedly, preventing caching?")
+    callsites.add(callsite)
     return
   else:
-    print(f"  for {fun_name}{src_info}")
-
-  # TODO check trace context too
+    p(f"  for {fun_name}{src_info}")
 
   seen_keys = map(unpack, cache.keys())
 
@@ -932,36 +937,49 @@ def explain_cache_miss(f: Callable, unseen_f: bool, cache: dict, key: tuple,
   if not args_kwargs_match:
     num_args = len(treedef_children(args_tree))
     _, kwarg_keys = kwargs_tree.node_data()
-    print(f"  never seen passing {num_args} positional args and "
-          f"{len(kwarg_keys)} keyword args with keys:\n"
-          f"    {', '.join(map(repr, kwarg_keys))}")
+    p(f"  never seen passing {num_args} positional args and {len(kwarg_keys)} "
+      "keyword args with keys:\n"
+      f"    {', '.join(map(repr, kwarg_keys))}")
     dont_match = [set(t[1].node_data()[1]) for t in args_kwargs_trees
                   if t != [args_tree, kwargs_tree]]
     close_kwargs = min(dont_match, key=set(kwarg_keys).symmetric_difference)
     if not close_kwargs:
-      print("  closest seen is passing no keyword args")
+      p("  closest seen is passing no keyword args")
     else:
-      print(f"  closest seen passes {len(close_kwargs)} keyword args with keys:\n"
-            f"    {', '.join(map(repr, close_kwargs))}")
+      p(f"  closest seen passes {len(close_kwargs)} keyword args with keys:\n"
+        f"    {', '.join(map(repr, close_kwargs))}")
+    return
+
+  # have we never seen this tracing context before?
+  ctxs_match = [c for *_, c in seen_keys if c == ctx]
+  if not ctxs_match:
+    p("  tracing context doesn't match, e.g. due to config or context manager")
+    dont_match = [c for *_, c in seen_keys if c != ctx]
+    closest_ctx = min(dont_match, key=lambda c: sum(map(op.ne, c, ctx)))
+    idxs = [i for i, (c1, c2) in enumerate(zip(ctx, closest_ctx)) if c1 != c2]
+    p("  closest seen context tuple differs at positions:\n"
+      f"    {', '.join(map(str, idxs))}\n"
+      "  compare to tuple returned by config._trace_context() in jax/_src/config.py.")
     return
 
   # have we never seen this input pytree before?
   trees_match = [k for k in seen_keys if k[0] == in_tree]
   if not trees_match:
     in_tree_str = f':\n    {in_tree}' if len(str(in_tree)) < 76 else ''
-    print(f"  never seen input pytree{in_tree_str}")
-    dont_match = [t for t, _, _ in seen_keys if t != in_tree]
+    p(f"  never seen input pytree{in_tree_str}")
+    dont_match = [t for t, *_ in seen_keys if t != in_tree]
     closest_tree = min(dont_match, key=lambda t: abs(t.num_leaves - in_tree.num_leaves))
+    # TODO(mattjj): make equality_errors not print type name, avoid metaclass
     leaf = type('LeafMeta', (type,), dict(__repr__=lambda _: 'leaf'))('Leaf', (), {})()
     this_dummy = tree_unflatten(in_tree, [leaf] * in_tree.num_leaves)
     close_dummy = tree_unflatten(closest_tree, [leaf] * closest_tree.num_leaves)
     errs = list(tree_util.equality_errors(this_dummy, close_dummy))
-    print(f"  closest seen input pytree has {len(errs)} mismatches, including:")
+    p(f"  closest seen input pytree has {len(errs)} mismatches, including:")
     for path, thing1, thing2, explanation in errs:
       fst, *path = path
       base = ['args', 'kwargs'][fst.idx]
-      print(f"    * at {base}{keystr(path)}, seen {thing2} but now given {thing1},")
-      print(f"      so {explanation}")
+      p(f"    * at {base}{keystr(path)}, seen {thing2} but now given {thing1},"
+        f"      so {explanation}")
     return
 
   # have we never seen these input types (eg shapes, dtypes) before?
@@ -972,25 +990,23 @@ def explain_cache_miss(f: Callable, unseen_f: bool, cache: dict, key: tuple,
           f'{n}: {ty.str_short()}' for n, ty in zip(debug_info.arg_names, in_type)))
     else:
       in_type_str = ''
-    print(f"  never seen input type signature{in_type_str}")
-    dont_match = [t for _, t, _ in trees_match if t != in_type]
+    p(f"  never seen input type signature{in_type_str}")
+    dont_match = [t for _, t, *_ in trees_match if t != in_type]
     closest_ty = min(dont_match, key=lambda t: sum(map(op.ne, t, in_type)))
     num_mismatch = sum(map(op.ne, closest_ty, in_type))
-    print(f"  closest seen input type signature has {num_mismatch} mismatches, "
-          "including:")
+    p(f"  closest seen input type signature has {num_mismatch} mismatches, including:")
     for name, ty1, ty2 in zip(debug_info.arg_names, closest_ty, in_type):
       if ty1 != ty2:
-        print(f"    * at {name}, seen {ty1.str_short()} "
-              f"but now given {ty2.str_short()}")
+        p(f"    * at {name}, seen {ty1.str_short()}, but now given {ty2.str_short()}")
     return
 
   # we think this is unreachable...
-  print("cache miss explanation unavailable! please try again later.\n"
-        "actually please open an issue at https://github.com/google/jax")
+  p("explanation unavailable! please open an issue at https://github.com/google/jax")
 
 
 @partial(lu.cache, explain=explain_cache_miss)
-def _create_pjit_jaxpr(fun, in_type, debug_info, out_paths):
+def _create_pjit_jaxpr(fun, in_type, debug_info, out_paths, inline):
+  del inline  # just for explain_cache_miss
   with dispatch.log_elapsed_time(
       "Finished tracing + transforming {fun_name} for pjit in {elapsed_time} sec",
       fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
@@ -1058,14 +1074,23 @@ def _check_and_canonicalize_out_shardings(
 
 
 def _pjit_jaxpr(fun, out_shardings_thunk, out_layouts_thunk, in_type, debug_info,
-                device_or_backend_set, out_tree, result_paths):
+                device_or_backend_set, out_tree, result_paths, inline):
   jaxpr, final_consts, out_type = _create_pjit_jaxpr(
-      fun, in_type, debug_info, result_paths)
+      fun, in_type, debug_info, result_paths, IgnoreKey(inline))
   canonicalized_out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_thunk, out_layouts_thunk, out_tree, tuple(out_type),
       jaxpr.jaxpr.debug_info, device_or_backend_set)
   # lu.cache needs to be able to create weakrefs to outputs, so we can't return a plain tuple
   return jaxpr, final_consts, canonicalized_out_shardings_flat, out_layouts_flat
+
+
+@dataclasses.dataclass(frozen=True)
+class IgnoreKey:
+  val: Any
+  def __hash__(self):
+    return hash(self.__class__)
+  def __eq__(self, other):
+    return type(other) is IgnoreKey  # ignore self.val!
 
 
 def pjit_check_aval_sharding(
@@ -1374,7 +1399,7 @@ def explain_cache_miss2(
   def check(this_val, getter, miss_msg, hit_msg):
     if not any(this_val == getter(key) for key in all_keys):
       print(miss_msg)
-      # TODO find the closest thing to a match
+      # TODO(mattjj,yashkatariya): find the closest thing to a match
       return True
 
   # have we seen this jaxpr before at all?
