@@ -58,6 +58,7 @@ from jax._src import prng
 from jax._src import random as random_internal
 from jax._src import source_info_util
 from jax._src import util
+from jax._src import shard_alike
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.lax import control_flow as lax_control_flow
@@ -1508,7 +1509,6 @@ tf_not_yet_impl = [
     "platform_index",
     "assert_consumed_value",
     "consume",
-    "shard_alike",
 ]
 
 tf_impl[unconsumed_copy_p] = lambda x: x
@@ -1523,6 +1523,10 @@ def _add(x: TfVal, y: TfVal) -> TfVal:
 tf_impl[ad_util.add_jaxvals_p] = _add
 tf_impl[dispatch.device_put_p] = lambda x, device=None, src=None: x
 tf_impl[lax_internal.copy_p] = lambda x: x
+
+def _shard_alike(*args: TfVal, **_):
+  return tuple(args)
+tf_impl[shard_alike.shard_alike_p] = _shard_alike
 
 def _neg(x: TfVal) -> TfVal:
   if x.dtype.is_unsigned:
