@@ -818,6 +818,14 @@ log_compiles = define_bool_state(
           'option is set, the log level is WARNING; otherwise the level is '
           'DEBUG.'))
 
+explain_cache_misses = define_bool_state(
+    name='jax_explain_cache_misses',
+    default=False,
+    help=('Each time there is a miss on one of the main caches (e.g. the '
+          'tracing cache), log an explanation.. Logging is performed with '
+          '`logging`. When this option is set, the log level is WARNING; '
+          'otherwise the level is DEBUG.'))
+
 log_checkpoint_residuals = define_bool_state(
     name='jax_log_checkpoint_residuals',
     default=False,
