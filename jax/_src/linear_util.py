@@ -319,7 +319,7 @@ def add_debug_info(f: WrappedFun, debug_info: TracingDebugInfo | None
   return WrappedFun(f.f, f.transforms, f.stores, f.params, f.in_type, debug_info)
 
 
-def cache(call: Callable):
+def cache(call: Callable, *, explain: Callable | None = None):
   """Memoization decorator for functions taking a WrappedFun as first argument.
 
   Args:
@@ -333,7 +333,7 @@ def cache(call: Callable):
   fun_caches: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
   def memoized_fun(fun: WrappedFun, *args):
-    cache = fun_caches.setdefault(fun.f, {})
+    cache = fun_caches.setdefault(fun.f, new_cache := {})  # type: ignore
     if config.check_tracer_leaks.value:
       key = (_copy_main_traces(fun.transforms), fun.params, fun.in_type, args,
              config.enable_x64.value, config.default_device.value,
@@ -347,6 +347,8 @@ def cache(call: Callable):
       fun.populate_stores(stores)
     else:
       ans = call(fun, *args)
+      if explain and config.explain_cache_misses.value:
+        explain(fun.f, cache is new_cache, cache, key, ans)
       cache[key] = (ans, fun.stores)
 
     return ans
