@@ -33,9 +33,13 @@ _tls = threading.local()
 
 
 @contextmanager
-def new_builder(cuda_options: cb.CUDAOptions) -> builder:
+def new_builder(
+    cuda_backend: cb.CUDABackend, cuda_options: cb.CUDAOptions
+) -> builder:
   context = tl_ir.context()
-  context.load_triton()
+  tl_ir.load_dialects(context)
+  cuda_backend.load_dialects(context)
+
   builder = tl_ir.builder(context)
   builder.options = cuda_options
   _tls.context = context
