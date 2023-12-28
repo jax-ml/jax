@@ -43,7 +43,7 @@ def _fft_norm(s: Array, func_name: str, norm: str) -> Array:
 def _fft_core(func_name: str, fft_type: xla_client.FftType, a: ArrayLike,
               s: Shape | None, axes: Sequence[int] | None,
               norm: str | None) -> Array:
-  full_name = "jax.numpy.fft." + func_name
+  full_name = f"jax.numpy.fft.{func_name}"
   check_arraylike(full_name, a)
   arr = jnp.asarray(a)
 
@@ -134,7 +134,7 @@ def irfftn(a: ArrayLike, s: Shape | None = None,
 
 
 def _axis_check_1d(func_name: str, axis: int | None):
-  full_name = "jax.numpy.fft." + func_name
+  full_name = f"jax.numpy.fft.{func_name}"
   if isinstance(axis, (list, tuple)):
     raise ValueError(
         "%s does not support multiple axes. Please use %sn. "
@@ -197,7 +197,7 @@ def ihfft(a: ArrayLike, n: int | None = None,
 def _fft_core_2d(func_name: str, fft_type: xla_client.FftType, a: ArrayLike,
                  s: Shape | None, axes: Sequence[int],
                  norm: str | None) -> Array:
-  full_name = "jax.numpy.fft." + func_name
+  full_name = f"jax.numpy.fft.{func_name}"
   if len(axes) != 2:
     raise ValueError(
         "%s only supports 2 axes. Got axes = %r."
