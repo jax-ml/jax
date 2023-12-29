@@ -1028,6 +1028,13 @@ class ShardingTest(jtu.JaxTestCase):
     str(out.sharding)  # doesn't crash
     repr(out.sharding)  # doesn't crash
 
+  def test_positional_sharding_repr(self):
+    if jax.device_count() < 2:
+      self.skipTest('Test needs >= 2 devices.')
+    s = jax.sharding.PositionalSharding(jax.devices()).reshape(jax.device_count(), 1)
+    repr(s)  # doesn't crash
+    str(s)  # doesn't crash
+
   @parameterized.named_parameters(
       ('sharded_dim_0', (4, 2), 0),
       ('sharded_dim_1_0', (4, 2), 1),

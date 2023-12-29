@@ -653,7 +653,7 @@ class PositionalSharding(XLACompatibleSharding):
     body = np.array2string(ids, prefix=cls_name + '(', suffix=')',
                            max_line_width=100)
     mem = '' if self._memory_kind is None else f', memory_kind={self._memory_kind}'
-    return f'{cls_name}({body}{mem})'
+    return f'{cls_name}({body}{mem}, shape={self.shape})'
 
   def reshape(self, *shape) -> PositionalSharding:
     return self._remake(self._devices, self._ids.reshape(*shape))
