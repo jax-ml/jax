@@ -122,7 +122,8 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual((2, 3), shape_poly.symbolic_shape(" ( 2 , 3 ) "))
 
     a, b = shape_poly.symbolic_shape("a, b")
-    self.assertEqual((a, 3), shape_poly.symbolic_shape("(a, ...) ", like=(None, 3)))
+    self.assertEqual((a, 3), shape_poly.symbolic_shape("(a, ...) ", like=(None, 3),
+                                                       scope=a.scope))
 
   a, b = shape_poly.symbolic_shape("a, b")
 
@@ -154,8 +155,10 @@ class DimExprTest(jtu.JaxTestCase):
     elif dim_spec == "min(a, b)":
       dim_poly = core.min_dim(DimExprTest.a, DimExprTest.b)
 
-    self.assertEqual((dim_poly,), shape_poly.symbolic_shape(dim_spec))
-    self.assertEqual((dim_poly,), shape_poly.symbolic_shape(str(dim_poly)))
+    self.assertEqual((dim_poly,), shape_poly.symbolic_shape(dim_spec,
+                                                            scope=dim_poly.scope))
+    self.assertEqual((dim_poly,), shape_poly.symbolic_shape(str(dim_poly),
+                                                            scope=dim_poly.scope))
 
   @jtu.parameterized_filterable(
       kwargs=[
@@ -294,13 +297,13 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertTrue((a * a * b).to_monomial() < (a * b * b).to_monomial())
     e1 = 2 + a * a * b + a * b * b + a * b + a * a + a + b
 
-    sorted_e1 = [shape_poly._DimExpr.from_monomial(m, m_count)
+    sorted_e1 = [shape_poly._DimExpr.from_monomial(m, m_count, a.scope)
                  for m, m_count in e1.monomials()]
     self.assertSequenceEqual(sorted_e1,
                              [a * b * b, a * a * b, a * b, a * a, b, a, 2])
 
     e2 = a * (a // 4) + (a // 4) + b * (a // 4) + b * (a % 4) + a * a + b + 15
-    sorted_e2 = [shape_poly._DimExpr.from_monomial(m, m_count)
+    sorted_e2 = [shape_poly._DimExpr.from_monomial(m, m_count, a.scope)
                  for m, m_count in e2.monomials()]
     self.assertSequenceEqual(sorted_e2,
                              [b * (a % 4), b * (a // 4), a * (a // 4), a // 4,
@@ -308,9 +311,11 @@ class DimExprTest(jtu.JaxTestCase):
 
     # This failed with a previous implementation of atom equality
     self.assertNotEqual(shape_poly._DimMon.from_operation(shape_poly._DimAtom.NON_NEGATIVE,
-                                                          a - b - 1),
+                                                          a - b - 1,
+                                                          scope=a.scope),
                         shape_poly._DimMon.from_operation(shape_poly._DimAtom.NON_NEGATIVE,
-                                                          a - 2*b - 1))
+                                                          a - 2 * b - 1,
+                                                          scope=a.scope))
 
   def test_poly_bounds_arithmetic(self):
     a, b = shape_poly.symbolic_shape("a, b")
@@ -642,6 +647,124 @@ class DimExprTest(jtu.JaxTestCase):
     self.sampled_assertion(core.max_dim((a - 4) // 2 + 1, 0),
                            core.stride_dim, a, 4, 2)
 
+  def test_constraints_basic(self):
+    a, b = shape_poly.symbolic_shape("a, b",
+                                     constraints=("a >= 5", "b <= 16"))
+    self.assertEqual(a.bounds(), (5, np.inf))
+    self.assertEqual(b.bounds(), (1, 16))
+
+  def test_constraints_trivial(self):
+    a, = shape_poly.symbolic_shape("a",
+                                   # Trivial, is dropped
+                                   constraints=("a <= a + 1",))
+    self.assertSequenceEqual(a.scope._explicit_constraints, ())
+    with self.assertRaisesRegex(ValueError,
+                                "Unsatisfiable.*a <= a - 1"):
+      _ = shape_poly.symbolic_shape("a, b",
+                                    constraints=("a <= a - 1",))
+
+    with self.assertRaisesRegex(ValueError,
+                                "Unsatisfiable.*a <= 0"):
+      _ = shape_poly.symbolic_shape("a, b",
+                                    # Contradicts the default a >= 1
+                                    constraints=("a <= 0",))
+
+  def test_constraints_errors(self):
+    with self.assertRaisesRegex(ValueError,
+                                "The symbolic constraints should be a sequence of strings"):
+      _ = shape_poly.symbolic_shape("a, b",
+                                    constraints="a <= a - 1")
+
+    with self.assertRaisesRegex(ValueError,
+                                "Constraint parsing error: must contain one of '>=' or '<='"):
+      _ = shape_poly.symbolic_shape("a, b",
+                                    # Contradicts the default a >= 1
+                                    constraints=("a == 0",))
+
+  def test_constraints_monomial(self):
+    a, b = shape_poly.symbolic_shape(
+        "a, b",
+        constraints=("max(a, b) >= 8", "min(a, b) <= 2",
+                     "floordiv(a, 4) >= 2",
+                     "mod(a, b) >= 2",
+                     "mod(max(a, b), 4) >= 2"))
+    self.assertGreaterEqual(core.max_dim(a, b), 6)
+    self.assertLessEqual(core.min_dim(a, b), 6)
+    self.assertGreaterEqual(a // 4, 1)
+    self.assertGreaterEqual(a % b, 1)
+    self.assertGreaterEqual(core.max_dim(a, b) % 4, 2)
+
+  def test_constraints_monomial_derived(self):
+    a, b = shape_poly.symbolic_shape(
+        "a, b",
+        constraints=("a >= 4", "3 >= b"))
+    self.assertGreaterEqual(a, b)
+    self.assertEqual(core.max_dim(a, b), a)
+    self.assertEqual(core.min_dim(a, b), b)
+    self.assertGreaterEqual(a // 3, 1)
+
+  def test_constraints_not_monomial(self):
+    a, b = shape_poly.symbolic_shape("a, b",
+                                        constraints=("a >= b",))
+    self.assertGreaterEqual(a, b)
+
+  def test_constraints_override(self):
+    a, b = shape_poly.symbolic_shape("a, b",
+                                     constraints=("a >= 5", "b <= 16",
+                                                  "a >= 10", "b <= 10"))
+    self.assertEqual(a.bounds(), (10, np.inf))
+    self.assertEqual(b.bounds(), (1, 10))
+
+  def test_constraints_error_msg(self):
+    a, b = shape_poly.symbolic_shape("a, b",
+                                     constraints=("a >= 5",))
+    with self.assertRaisesRegex(
+        core.InconclusiveDimensionOperation,
+        re.compile("with constraints.*"
+                   r"a >= 5", re.DOTALL)):
+      self.assertGreaterEqual(a, 6)
+
+  def test_scope_sharing(self):
+    a, b = shape_poly.symbolic_shape("a, b",
+                                     constraints=("a >= 5", "a <= 10"))
+    self.assertIs(a.scope, b.scope)
+    self.assertEqual(a.bounds(), (5, 10))
+    # The constraints order does not matter, and they are canonicalized
+    a1, = shape_poly.symbolic_shape("a",
+                                    constraints=("2*a + 5 <= a + 15", "a >= 5"))
+    self.assertNotEqual(a, a1)  # Two separate scopes are not equal
+    self.assertNotEqual(hash(a), hash(a1))  # Different hash because of different scopes
+    self.assertIsNot(a.scope, a1.scope)
+
+  def test_constraints_different_scope(self):
+    a, = shape_poly.symbolic_shape("a",
+                                   constraints=("a >= 5", "a <= 10"))
+    self.assertEqual(a.bounds(), (5, 10))
+    a1, = shape_poly.symbolic_shape("a",
+                                    constraints=("a <= 10",))
+    self.assertNotEqual(a, a1)
+    self.assertNotEqual(hash(a), hash(a1))  # Hope there is no collision
+    self.assertIsNot(a.scope, a1.scope)
+
+    # Test the error message
+    with self.subTest(msg="error_message"):
+      with self.assertRaisesRegex(ValueError,
+                                  re.compile(
+                                      "Invalid mixing of symbolic scopes.*"
+                                      "with constraints.*"
+                                      "a >= 5.*a <= 10.*"
+                                      "and found.*with constraints.*"
+                                      "a <= 10",
+                                      re.DOTALL)):
+        a + a1
+
+    for o in (op.add, op.sub, op.mul, op.mod, op.floordiv,
+              op.ge, op.gt, op.le, op.lt, core.max_dim, core.min_dim):
+      with self.subTest(o=str(o)):
+        with self.assertRaisesRegex(ValueError,
+                                    "Invalid mixing of symbolic scopes"):
+          o(a, a1)
+
 
 class PolyHarness(Harness):
   """Tests a function with shape polymorphism.
@@ -655,6 +778,7 @@ class PolyHarness(Harness):
                *,
                arg_descriptors: Sequence[test_harnesses.ArgDescriptor] = (),
                polymorphic_shapes: Sequence[str | None] = (),
+               symbolic_constraints: Sequence[str] = (),
                expect_error: tuple[Any, str] | None = None,
                check_result: bool = True,
                tol: float | None = None,
@@ -665,7 +789,8 @@ class PolyHarness(Harness):
       group_name, name: The name for the harness. See `Harness.__init__`.
       fun: the function to be converted. See `Harness.__init__`.
       arg_descriptors: The argument descriptors. See `Harness.__init__`.
-      polymorphic_shapes: For `export.poly_specs`.
+      polymorphic_shapes: For `export.args_specs`.
+      symbolic_constraints: For `export.args_specs`.
       expect_error: an optional pair of an Exception type and a regular
         expression to match the expected exception string.
         We expect this error during tracing and exporting with shape
@@ -682,6 +807,7 @@ class PolyHarness(Harness):
     super().__init__(group_name, name, fun, arg_descriptors,
                      dtype=np.float32)
     self.polymorphic_shapes = polymorphic_shapes
+    self.symbolic_constraints = symbolic_constraints
     self.expect_error = expect_error
     self.tol = tol
     self.check_result = check_result
@@ -700,7 +826,8 @@ class PolyHarness(Harness):
     f_jax = self.dyn_fun
     args = self.dyn_args_maker(tst.rng())
     args = tree_util.tree_map(jnp.array, args)
-    args_specs = export.symbolic_args_specs(args, self.polymorphic_shapes)
+    args_specs = export.symbolic_args_specs(args, self.polymorphic_shapes,
+                                   symbolic_constraints=self.symbolic_constraints)
 
     if self.expect_error is not None:
       with tst.assertRaisesRegex(self.expect_error[0], self.expect_error[1]):
@@ -741,11 +868,13 @@ class PolyHarness(Harness):
 def check_shape_poly(tst, f_jax: Callable, *,
                      arg_descriptors: Sequence[test_harnesses.ArgDescriptor] = (),
                      polymorphic_shapes: Sequence[str | None] = (),
+                     symbolic_constraints: Sequence[str] = (),
                      expect_error=None) -> jax.Array | None:
   # Builds a PolyHarness and runs the test. See PolyHarness documentation.
   h = PolyHarness("", "", f_jax,
                   arg_descriptors=arg_descriptors,
                   polymorphic_shapes=polymorphic_shapes,
+                  symbolic_constraints=symbolic_constraints,
                   expect_error=expect_error)
   return h.run_test(tst)
 
@@ -760,7 +889,7 @@ class ShapePolyTest(jtu.JaxTestCase):
       return x + jnp.sin(x)
 
     for polymorphic_shapes in [None, "_, h", "h, h"]:
-      with self.subTest(polymorphic_shapes):
+      with self.subTest(shapes=polymorphic_shapes):
         check_shape_poly(self,
                          f_jax,
                          arg_descriptors=[RandArg((3, 3), _f32)],
@@ -972,6 +1101,85 @@ class ShapePolyTest(jtu.JaxTestCase):
         lambda x: 2 * x.shape[0] + 3 * x.shape[1] + 4 * x.shape[2],
         arg_descriptors=[RandArg((16, 24, 32), _f32)],
         polymorphic_shapes=[polymorphic_shapes])
+
+  def test_constraints_basic(self):
+    def f(x):  # x: i32[a], with a >= 8
+      assert x.shape[0] >= 6
+    check_shape_poly(self, f,
+                     arg_descriptors=[RandArg((16,), _i32)],
+                     polymorphic_shapes=["a"],
+                     symbolic_constraints=["a >= 8"])
+
+  def test_constraints_slice_in_dim(self):
+    def f(x):  # x: i32[a], with a >= 8
+      return lax.dynamic_slice_in_dim(x, 0, 8, 0)
+    check_shape_poly(self, f,
+                     arg_descriptors=[RandArg((16,), _i32)],
+                     polymorphic_shapes=["a"],
+                     symbolic_constraints=["a >= 8"])
+
+  def test_constraints_compile_time_check(self):
+    def f(x):  # x: i32[a]
+      a = x.shape[0]
+      assert a.bounds() == (2, 4)
+      return lax.dynamic_slice_in_dim(x, 1, 2, 0)
+
+    x_spec = jax.ShapeDtypeStruct(
+        export.symbolic_shape("a",
+                              constraints=["a >= 2", "a <= 4"]), np.int32)
+    exp = export.export(f)(x_spec)
+
+    x_2 = np.arange(2, dtype=np.int32)
+    res_2 = export.call_exported(exp)(x_2)
+    self.assertAllClose(x_2[0:2], res_2)
+
+    x_4 = np.arange(4, dtype=np.int32)
+    res_4 = export.call_exported(exp)(x_4)
+    self.assertAllClose(x_4[1:3], res_4)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        re.escape("Expected 'a - 2' to be greater or equal to 0, but found -1")):
+      export.call_exported(exp)(np.arange(1, dtype=np.int32))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        re.escape("Expected '-1*a + 4' to be greater or equal to 0, but found -1")):
+      export.call_exported(exp)(np.arange(5, dtype=np.int32))
+
+  def test_caching_with_scopes(self):
+    f_tracing_count = 0
+    expected_a_bounds = (1, np.inf)
+    def f(x):  # x: i32[a]
+      nonlocal f_tracing_count
+      f_tracing_count += 1
+      a = x.shape[0]
+      assert a.bounds() == expected_a_bounds
+
+    x_spec = jax.ShapeDtypeStruct(export.symbolic_shape("a"), np.int32)
+    _ = export.export(f)(x_spec)
+    self.assertEqual(1, f_tracing_count)
+    _ = export.export(f)(x_spec)  # This hits the tracing cache
+    self.assertEqual(1, f_tracing_count)
+
+    # Recreate x_spec, with the same symbolic expressions, and the same scope
+    x_spec = jax.ShapeDtypeStruct(export.symbolic_shape("a",
+                                                        scope=x_spec.shape[0].scope), np.int32)
+    _ = export.export(f)(x_spec)  # This hits the tracing cache
+    self.assertEqual(1, f_tracing_count)
+
+    # Recreate x_spec, with the same symbolic expressisions with a fresh scope
+    x_spec = jax.ShapeDtypeStruct(export.symbolic_shape("a"), np.int32)
+    _ = export.export(f)(x_spec)  # This is a cache miss
+    self.assertEqual(2, f_tracing_count)
+
+    # Now with constraints
+    x_spec = jax.ShapeDtypeStruct(export.symbolic_shape("a",
+                                                        constraints=["a >= 2"]),
+                                  np.int32)
+    expected_a_bounds = (2, np.inf)
+    _ = export.export(f)(x_spec)  # Cache miss
+    self.assertEqual(3, f_tracing_count)
 
   def test_unused_args(self):
     # Tests with functions that do not use their inputs.

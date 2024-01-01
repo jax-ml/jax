@@ -437,9 +437,10 @@ class JaxExportTest(jtu.JaxTestCase):
     def f(a, b):  # a: f32[2w,h]  b: f32[w,h]
       return jnp.concatenate([a, b], axis=0)
 
+    scope = export.SymbolicScope()
     exp = get_exported(f)(
-        jax.ShapeDtypeStruct(export.symbolic_shape("(2*w, h)"), a.dtype),
-        jax.ShapeDtypeStruct(export.symbolic_shape("(w, h)"), a.dtype))
+        jax.ShapeDtypeStruct(export.symbolic_shape("(2*w, h)", scope=scope), a.dtype),
+        jax.ShapeDtypeStruct(export.symbolic_shape("(w, h)", scope=scope), a.dtype))
     self.assertEqual("(2*w, h)", str(exp.in_avals[0].shape))
     self.assertEqual("(w, h)", str(exp.in_avals[1].shape))
     self.assertEqual("(3*w, h)", str(exp.out_avals[0].shape))
@@ -479,6 +480,22 @@ class JaxExportTest(jtu.JaxTestCase):
     exp = get_exported(f)(a_poly_spec, a_poly_spec, ak=a_poly_spec)
     self.assertEqual("(w, h)", str(exp.in_avals[0].shape))
     self.assertEqual("(3*w, h)", str(exp.out_avals[0].shape))
+
+  def test_poly_export_error_symbolic_scope(self):
+    a = np.arange(12, dtype=np.float32).reshape((3, 4))
+    def f(x, y):
+      return jnp.concatenate([x, y], axis=1)
+
+    x_poly_spec = jax.ShapeDtypeStruct(export.symbolic_shape("(w, h1)"), a.dtype)
+    y_poly_spec = jax.ShapeDtypeStruct(export.symbolic_shape("(w, h2)"), a.dtype)
+    with self.assertRaisesRegex(
+        ValueError,
+        re.compile(
+            "Invalid mixing of symbolic scopes when exporting f.*"
+            r"Expected current \(from args\[0\]\) scope .*"
+            r"and found for 'w' \(args\[1\]\) scope .*", re.DOTALL)):
+      get_exported(f)(x_poly_spec, y_poly_spec)
+
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -787,7 +804,7 @@ class JaxExportTest(jtu.JaxTestCase):
     # Now re-export with shape polymorphism
     x_spec = jax.ShapeDtypeStruct(export.symbolic_shape("a"), x.dtype)
     exp2 = get_exported(export.call_exported(exp))(x_spec)
-    a = x_spec.shape[0]
+    a = exp2.in_avals[0].shape[0]
     self.assertEqual(exp2.out_avals[0].shape, output_shape(a))
 
   def test_with_sharding(self):

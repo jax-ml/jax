@@ -60,6 +60,7 @@ from jax._src import effects
 from jax._src.lax import lax
 from jax._src.interpreters import mlir
 from jax._src.numpy import lax_numpy
+from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src import util
 
@@ -77,12 +78,12 @@ This error arises for comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a boolean value for all values of the symbolic dimensions involved.
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison_of_symbolic_dimensions_is_partially_supported
 for more details.
 """
 
   def __init__(self, message: str):
-    error_msg = f"{message}\n{InconclusiveDimensionOperation._help_msg}"
+    error_msg = f"{message}{InconclusiveDimensionOperation._help_msg}"
     # https://github.com/python/mypy/issues/5887
     super().__init__(error_msg)  # type: ignore
 
@@ -147,8 +148,10 @@ class _DimAtom:
     return _DimAtom(var=v)
 
   @classmethod
-  def from_operation(cls, operation: str, *operands: DimSize) -> _DimAtom:
-    return _DimAtom(*(_ensure_poly(o, operation) for o in operands),
+  @functools.cache  # use caching to ensure we can compare _DimAtom by id
+  def from_operation(cls, operation: str, *operands: DimSize,
+                     scope: SymbolicScope) -> _DimAtom:
+    return _DimAtom(*(_ensure_poly(o, operation, scope) for o in operands),
                     operation=operation)
 
   def to_var(self) -> str | None:
@@ -313,8 +316,10 @@ class _DimMon(dict):
     return _DimMon({a: aexp})
 
   @classmethod
-  def from_operation(cls, operation: str, *operands: DimSize) -> _DimMon:
-    return _DimMon({_DimAtom.from_operation(operation, *operands): 1})
+  def from_operation(cls, operation: str, *operands: DimSize,
+                     scope: SymbolicScope) -> _DimMon:
+    return _DimMon({_DimAtom.from_operation(operation, *operands,
+                                            scope=scope): 1})
 
   def to_var(self) -> str | None:
     """Extract the variable name from a monomial.
@@ -396,7 +401,7 @@ class _DimMon(dict):
       elif diff > 0: d[key] = diff
     return _DimMon(d)
 
-  def bounds(self) -> tuple[float, float]:
+  def bounds(self, scope: SymbolicScope) -> tuple[float, float]:
     """Returns the lower and upper bounds, or -+inf."""
     # The bounds of a product are among the product of bounds.
     bounds = []
@@ -406,7 +411,10 @@ class _DimMon(dict):
       bounds.append((a_l ** exp, a_u ** exp))
 
     candidates = [math.prod(atom_bounds) for atom_bounds in itertools.product(*bounds)]
-    return (min(*candidates), max(*candidates))  # type: ignore
+    calculated_bounds = (min(*candidates), max(*candidates))  # type: ignore
+    constrained_bounds = scope._monomial_bounds.get(self, (- np.inf, np.inf))
+    return (max(calculated_bounds[0], constrained_bounds[0]),
+            min(calculated_bounds[1], constrained_bounds[1]))
 
   def evaluate(self, env: DimVarEnv):
     prod = lambda xs: functools.reduce(_evaluate_multiply, xs) if xs else core.dim_constant(1)
@@ -430,15 +438,21 @@ class _DimExpr():
   free integer coefficient of the expression.
   """
   __array_priority__ = 1000   # Same as tracer, for __radd__ and others on ndarray
-  def __init__(self, coeffs: dict[_DimMon, int]):
+  def __init__(self, coeffs: dict[_DimMon, int],
+               scope: SymbolicScope):
     # Do not construct _DimExpr directly, unless you are sure that coeffs is
     # normalized; Use _DimExpr.normalize.
     # Takes ownership of coeffs
     self._coeffs = coeffs or {_DimMon(): 0}
+    self._scope = scope
     self._monomials_sorted = tuple(sorted(self._coeffs.items(), reverse=True))
-    self._hash = hash(self._monomials_sorted)
+    self._hash = hash((self._monomials_sorted, self.scope))
     self._size = sum((1 + m._size)
                      for m, m_count in self._monomials_sorted)
+  @property
+  def scope(self):
+    # We make the expression scope visible, but read-only.
+    return self._scope
 
   def monomials(self) -> Iterable[tuple[_DimMon, int]]:
     """The monomials in sorted reverse lexicographic order.
@@ -465,7 +479,8 @@ class _DimExpr():
         coeffs[mon] = new_c
 
   @classmethod
-  def normalize(cls, coeffs: dict[_DimMon, int]) -> DimSize:
+  def normalize(cls, coeffs: dict[_DimMon, int],
+                scope: SymbolicScope) -> DimSize:
     """The main constructor for _DimExpr.
 
     Ensures that the symbolic dimension is normalized, e.g.,
@@ -485,40 +500,52 @@ class _DimExpr():
       new_coeffs[mon] = new_coeffs.get(mon, 0) + coeff
 
     if has_non_zero_degree:
-      return _DimExpr(new_coeffs)
+      return _DimExpr(new_coeffs, scope)
     else:
       return int(free_const)
 
   @classmethod
-  def normalize_floordiv_times_divisor(cls, coeffs: dict[_DimMon, int]) -> DimSize:
+  def normalize_floordiv_times_divisor(cls, coeffs: dict[_DimMon, int],
+                                       scope: SymbolicScope) -> DimSize:
     # Look for floordiv(E, M) * M and turn into E - mod(E, M). This comes
     # up when handling strided convolution.
-    for dec in _decompose_expr(_DimExpr(coeffs), _DimAtom.FLOORDIV,
+    for dec in _decompose_expr(_DimExpr(coeffs, scope), _DimAtom.FLOORDIV,
                                with_exp=1):
       # e = factor * floordiv(operands)^exp * rest_monomial + rest_expr
       if dec.rest_monomial == 1 and dec.factor == 1:
         continue
       m_trimmed, m_remainder = divmod(dec.factor * dec.rest_monomial, dec.operands[1])
       if m_remainder == 0:
-        return m_trimmed * (dec.operands[0] - _DimExpr.from_operation(_DimAtom.MOD, *dec.operands)) + dec.rest_expr
-    return _DimExpr.normalize(coeffs)
+        return m_trimmed * (
+            dec.operands[0] -
+            _DimExpr.from_operation(_DimAtom.MOD, *dec.operands,
+                                    scope=scope)) + dec.rest_expr
+    return _DimExpr.normalize(coeffs, scope)
 
   @classmethod
-  def from_monomial(cls, mon: _DimMon, count: int):
-    return _DimExpr.normalize({mon: count})
+  def from_constant(cls, c: int, scope: SymbolicScope):
+    return _DimExpr({_DimMon(): op.index(c)}, scope)
 
   @classmethod
-  def from_var(cls, v: str) -> _DimExpr:
-    return _DimExpr({_DimMon.from_var(v): 1})
+  def from_var(cls, v: str, scope: SymbolicScope) -> _DimExpr:
+    return _DimExpr({_DimMon.from_var(v): 1}, scope)
 
   @classmethod
-  def from_operation(cls, operation: str, *operands: DimSize) -> _DimExpr:
+  def from_operation(cls, operation: str, *operands: DimSize,
+                     scope: SymbolicScope) -> _DimExpr:
     if operation == _DimAtom.NON_NEGATIVE:  # For parsing
-      return _DimExpr.from_monomial(_DimMon.from_operation(_DimAtom.MAX,
-                                                           *operands,
-                                                           0), 1)
-    return _DimExpr.from_monomial(_DimMon.from_operation(operation,
-                                                         *operands), 1)
+      return _DimExpr.from_monomial(
+          _DimMon.from_operation(_DimAtom.MAX, *operands, 0,
+                                 scope=scope), 1,
+          scope=scope)
+    return _DimExpr.from_monomial(
+        _DimMon.from_operation(operation, *operands,
+                               scope=scope), 1,
+        scope=scope)
+
+  @classmethod
+  def from_monomial(cls, mon: _DimMon, exp: int, scope: SymbolicScope):
+    return _DimExpr.normalize({mon: exp}, scope)
 
   def to_monomial(self) -> _DimMon | None:
     """Extract the single monomial from a symbolic expression.
@@ -542,6 +569,16 @@ class _DimExpr():
     Returns None if the expression is not a single variable."""
     mon = self.to_atom()
     return mon.to_var() if mon is not None else None
+
+  def to_constant(self) -> int | None:
+    """Extract the constant from a symbolic expression.
+    Returns None if the expression is not a single constant."""
+    m, m_c = self.leading_term
+    return m_c if m.degree == 0 else None
+
+  @property
+  def is_constant(self):
+    return self.to_constant() is not None
 
   def get_vars(self) -> set[str]:
     """The variables that appear in a symbolic dimension."""
@@ -589,7 +626,7 @@ class _DimExpr():
     Uses `cmp_str()` as a description of the comparison in the exception
     string.
     """
-    self_minus_other = _ensure_poly(self - other, "ge")
+    self_minus_other = _ensure_poly(self - other, "ge", self.scope)
     lb, ub = self_minus_other.bounds()
     if lb >= 0:
       return True
@@ -646,9 +683,13 @@ class _DimExpr():
       msg = cmp_str()
     else:
       msg = f"'{self}' >= '{other}'"
+
+    if self.scope._explicit_constraints:
+      describe_scope = f"\nUsing symbolic scope {self.scope}"
+    else:
+      describe_scope = ""
     raise InconclusiveDimensionOperation(
-      f"Symbolic dimension comparison {msg} is inconclusive.\n"
-      "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic-dimensions-is-partially-supported.")
+      f"Symbolic dimension comparison {msg} is inconclusive.{describe_scope}")
 
   def __hash__(self):
     return self._hash
@@ -674,45 +715,46 @@ class _DimExpr():
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__add__(other)
 
-    other = _ensure_poly(other, "add")
+    other = _ensure_poly(other, "add", self.scope)
     coeffs = self._coeffs.copy()
     for mon, coeff in other.monomials():
       _DimExpr._add_coeffs(coeffs, mon, coeff)
-    return _DimExpr.normalize_floordiv_times_divisor(coeffs)
+    return _DimExpr.normalize_floordiv_times_divisor(coeffs, self.scope)
 
   def __radd__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__radd__(other)
-    return _ensure_poly(other, "add").__add__(self)
+    return _ensure_poly(other, "add", self.scope).__add__(self)
 
   def __sub__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__sub__(other)
-    return self + -_ensure_poly(other, "sub")
+    return self + -_ensure_poly(other, "sub", self.scope)
 
   def __rsub__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__rsub__(other)
-    return _ensure_poly(other, "sub").__sub__(self)
+    return _ensure_poly(other, "sub", self.scope).__sub__(self)
 
   def __neg__(self) -> _DimExpr:
-    return _DimExpr({mon: -coeff for mon, coeff in self.monomials()})
+    return _DimExpr({mon: -coeff for mon, coeff in self.monomials()},
+                    self.scope)
 
   def __mul__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__mul__(other)
-    other = _ensure_poly(other, "mul")
+    other = _ensure_poly(other, "mul", self.scope)
     coeffs: dict[_DimMon, int] = {}
     for mon1, coeff1 in self.monomials():
       for mon2, coeff2 in other.monomials():
         mon = mon1.mul(mon2)
         _DimExpr._add_coeffs(coeffs, mon, coeff1 * coeff2)
-    return _DimExpr.normalize_floordiv_times_divisor(coeffs)
+    return _DimExpr.normalize_floordiv_times_divisor(coeffs, self.scope)
 
   def __rmul__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__rmul__(other)
-    return _ensure_poly(other, "mul").__mul__(self)
+    return _ensure_poly(other, "mul", self.scope).__mul__(self)
 
   def __pow__(self, power, modulo=None):
     assert modulo is None
@@ -725,12 +767,12 @@ class _DimExpr():
   def __floordiv__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__floordiv__(divisor)
-    return self.divmod(_ensure_poly(divisor, "floordiv"))[0]
+    return self.divmod(_ensure_poly(divisor, "floordiv", self.scope))[0]
 
   def __rfloordiv__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__rfloordiv__(other)
-    return _ensure_poly(other, "floordiv").__floordiv__(self)
+    return _ensure_poly(other, "floordiv", self.scope).__floordiv__(self)
 
   def __truediv__(self, divisor):
     # Used for "/", which always returns a float
@@ -743,22 +785,22 @@ class _DimExpr():
   def __mod__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__mod__(divisor)
-    return self.divmod(_ensure_poly(divisor, "mod"))[1]
+    return self.divmod(_ensure_poly(divisor, "mod", self.scope))[1]
 
   def __rmod__(self, dividend):
     if isinstance(dividend, core.Tracer) or not _convertible_to_poly(dividend):
       return self.__jax_array__().__rmod__(dividend)
-    return _ensure_poly(dividend, "mod").__mod__(self)
+    return _ensure_poly(dividend, "mod", self.scope).__mod__(self)
 
   def __divmod__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__divmod__(divisor)
-    return self.divmod(_ensure_poly(divisor, "divmod"))
+    return self.divmod(_ensure_poly(divisor, "divmod", self.scope))
 
   def __rdivmod__(self, dividend):
     if isinstance(dividend, core.Tracer) or not _convertible_to_poly(dividend):
       return self.__jax_array__().__rdivmod__(dividend)
-    return _ensure_poly(dividend, "divmod").__divmod__(self)
+    return _ensure_poly(dividend, "divmod", self.scope).__divmod__(self)
 
   def __int__(self):
     if self.is_constant:
@@ -768,10 +810,13 @@ class _DimExpr():
 
   # We must overload __eq__ and __ne__, or else we get unsound defaults.
   def __eq__(self, other: Any) -> bool:
-    if not isinstance(other, _DimExpr) and not core.is_constant_dim(other):
+    if isinstance(other, _DimExpr):
+      if self.scope is not other.scope:
+        return False
+    elif not core.is_constant_dim(other):
       return False
     else:
-      other = _ensure_poly(other, "eq")
+      other = _ensure_poly(other, "eq", self.scope)
     return self.eq(other)
 
   def __ne__(self, other: Any) -> bool:
@@ -782,11 +827,11 @@ class _DimExpr():
       other, lambda: f"'{self}' >= '{other}'")
 
   def __le__(self, other: DimSize):
-    return _ensure_poly(other, "le").ge(
+    return _ensure_poly(other, "le", self.scope).ge(
       self, lambda: f"'{self}' <= '{other}'")
 
   def __gt__(self, other: DimSize):
-    return not _ensure_poly(other, "le").ge(
+    return not _ensure_poly(other, "le", self.scope).ge(
       self, lambda: f"'{self}' > '{other}'")
 
   def __lt__(self, other: DimSize):
@@ -819,7 +864,7 @@ class _DimExpr():
         if rcount != 0:
           raise InconclusiveDimensionOperation("")
 
-        q = _DimExpr.from_monomial(qmon, qcount)
+        q = _DimExpr.from_monomial(qmon, qcount, self.scope)
         quotient += q
         dividend -= q * divisor  # type: ignore[assignment]
 
@@ -834,23 +879,31 @@ class _DimExpr():
         remainder = 0
 
       if config.enable_checks.value:
-        assert self == divisor * quotient + remainder
+        v1 = divisor * quotient
+        v2 = v1 + remainder
+        assert self == v2, (self, v2, type(self), type(v2))
+        assert self == divisor * quotient + remainder, (self, divisor, quotient, remainder)
       return quotient, remainder
     except InconclusiveDimensionOperation:
-      return (_DimExpr.from_operation(_DimAtom.FLOORDIV, self, divisor),  # type: ignore
-              _DimExpr.from_operation(_DimAtom.MOD, self, divisor))
+      return (_DimExpr.from_operation(_DimAtom.FLOORDIV, self, divisor,
+                                      scope=self.scope),  # type: ignore
+              _DimExpr.from_operation(_DimAtom.MOD, self, divisor,
+                                      scope=self.scope))
 
   def bounds(self) -> tuple[float, float]:
     """Returns the lower and upper bounds, or -+inf."""
     lb = ub = self._coeffs.get(_DimMon(), 0)  # The free coefficient
     for mon, coeff in self.monomials():
       if mon.degree == 0: continue  # We already included the free coefficient
-      m_l, m_u = mon.bounds()
+      m_l, m_u = mon.bounds(self.scope)
       assert m_l <= m_u and coeff != 0
       item_l, item_u = coeff * m_l, coeff * m_u
       lb = lb + min(item_l, item_u)  # type: ignore
       ub = ub + max(item_l, item_u)  # type: ignore
 
+    bounds_from_constraints = self.scope._expr_bounds.get(self, (- np.inf, np.inf))
+    lb = max(lb, bounds_from_constraints[0])  # type: ignore
+    ub = min(ub, bounds_from_constraints[1])  # type: ignore
     if lb != -np.inf or ub != np.inf:
       return lb, ub
     # Watch for special-case: ct*a - ct*mod(b, a) >= 1 when ct >= 0 and a >= 0
@@ -872,10 +925,6 @@ class _DimExpr():
 
     return lb, ub
 
-  @property
-  def is_constant(self):
-    return len(self._coeffs) == 1 and next(iter(self._coeffs)).degree == 0
-
   def evaluate(self, env: DimVarEnv):
     # Evaluates as a value of dtype=core.dim_value_dtype()
     terms = [_evaluate_multiply(mon.evaluate(env), core.dim_constant(coeff))
@@ -883,28 +932,28 @@ class _DimExpr():
     return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
   def max(self, other: DimSize) -> DimSize:
-    lb, ub = _ensure_poly(self - other, "max").bounds()
+    lb, ub = _ensure_poly(self - other, "max", self.scope).bounds()
     if 0 <= lb: return self
     if ub <= 0: return other
-    return _DimExpr.from_operation(_DimAtom.MAX, self, other)
+    return _DimExpr.from_operation(_DimAtom.MAX, self, other, scope=self.scope)
 
   def rmax(self, other: DimSize) -> DimSize:
-    lb, ub = _ensure_poly(self - other, "max").bounds()
+    lb, ub = _ensure_poly(self - other, "max", self.scope).bounds()
     if 0 <= lb: return self
     if ub <= 0: return other
-    return _DimExpr.from_operation(_DimAtom.MAX, other, self)
+    return _DimExpr.from_operation(_DimAtom.MAX, other, self, scope=self.scope)
 
   def min(self, other: DimSize) -> DimSize:
-    lb, ub = _ensure_poly(self - other, "min").bounds()
+    lb, ub = _ensure_poly(self - other, "min", self.scope).bounds()
     if 0 <= lb: return other
     if ub <= 0: return self
-    return _DimExpr.from_operation(_DimAtom.MIN, self, other)
+    return _DimExpr.from_operation(_DimAtom.MIN, self, other, scope=self.scope)
 
   def rmin(self, other: DimSize) -> DimSize:
-    lb, ub = _ensure_poly(self - other, "min").bounds()
+    lb, ub = _ensure_poly(self - other, "min", self.scope).bounds()
     if 0 <= lb: return other
     if ub <= 0: return self
-    return _DimExpr.from_operation(_DimAtom.MIN, other, self)
+    return _DimExpr.from_operation(_DimAtom.MIN, other, self, scope=self.scope)
 
   @staticmethod
   def get_aval(dim: _DimExpr):
@@ -931,6 +980,120 @@ def cmp_sequence(s1, s2, elem_cmp) -> int:
     if c := elem_cmp(e1, s2[i]): return c
   if len(s1) < l2: return -1
   return 0
+
+
+class SymbolicScope:
+  """Indentifies a scope for symbolic expressions.
+
+  All symbolic expressions that interact (e.g., appear in the argument shapes
+  for one JAX function invocation, or are involved in arithmetic operations)
+  must be from the same scope and must share the same SymbolicScope object.
+
+  Holds the constraints on symbolic expressions.
+
+  See [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints)
+  for more details.
+
+  Args:
+    constraints_str: A sequence of constraints on symbolic dimension expressions,
+      of the form `e1 >= e2` or `e1 <= e2`.
+  """
+  def __init__(self,
+               constraints_str: Sequence[str] = ()):
+    self._location_frame = source_info_util.user_frame(source_info_util.current())
+    self._explicit_constraints: list[tuple[_DimExpr, str]] = []
+
+    # Keep an efficient representation of
+    # the explicit constraints for use during reasoning.
+    self._monomial_bounds: dict[_DimMon, tuple[float, float]] = {}
+    self._expr_bounds: dict[_DimExpr, tuple[float, float]] = {}
+
+    constraints = self._parse_constraints(constraints_str)
+    for c, c_str in zip(constraints, constraints_str):
+      if (const := c.to_constant()) is not None:
+        if const < 0:
+          raise ValueError(f"Unsatisfiable explicit constraint: {c_str}")
+        continue
+      self._explicit_constraints.append((c, c_str))
+      self._process_constraint(c, c_str)
+
+  def __str__(self) -> str:
+    extras = []
+    if self._explicit_constraints:
+      extras.append(" with constraints:")
+      for _, c_str in self._explicit_constraints:
+        extras.append(f"  {c_str}")
+    loc = source_info_util._summarize_frame(self._location_frame) if self._location_frame else "unknown"
+    return (
+        f"{id(self)} created at {loc}" +
+        "\n".join(extras))
+  __repr__ = __str__
+
+  def _parse_constraints(self, constraints_str: Sequence[str]) -> Sequence[_DimExpr]:
+    # Parse some contraints into the current scope.
+    def parse_one(cs: str) -> _DimExpr:
+      if not isinstance(cs, str):
+        raise ValueError(
+            f"symbolic_scope must be invoked with a string: got {repr(cs)}")
+      eq_pos = cs.find("=")
+      if eq_pos <= 0 or cs[eq_pos - 1] not in [">", "<"]:
+        raise ValueError("Constraint parsing error: must contain one of '>=' or '<='")
+      e1_str = cs[:eq_pos - 1]
+      e1, = _Parser(e1_str, None, repr(e1_str), self).parse()
+      e2_str = cs[eq_pos + 1:]
+      e2, = _Parser(e2_str, None, repr(e2_str), self).parse()
+      diff = e1 - e2 if cs[eq_pos - 1] == ">" else e2 - e1
+      return _ensure_poly(diff, "symbolic_scope", self)
+
+    if isinstance(constraints_str, str):
+      raise ValueError(
+          "The symbolic constraints should be a sequence of strings. "
+          f"Got {repr(constraints_str)}")
+    return tuple(parse_one(cs) for cs in constraints_str)
+
+  def _process_constraint(self, e: _DimExpr, e_str: str):
+    # Look for the special case m*mon + n >= 0.
+    # Then assert mon >= ceil(n / m) or mon <= floor(n / m)
+    n = m = 0
+    mon = None
+    nr_non_trivial_monomials = 0
+    for _mon, count in e.monomials():
+      if _mon.degree == 0:
+        n = count
+        continue
+      nr_non_trivial_monomials += 1
+      mon = _mon
+      m = count
+
+    if nr_non_trivial_monomials > 1:
+      # The general case, we just remember this constraint in _expr_bounds.
+      self._expr_bounds[e] = (0, np.inf)
+      return
+
+    # A single non-trivial monomial
+    assert isinstance(mon, _DimMon)
+    bounds = mon.bounds(self)  # This considers default internal constraints, and
+                           # previous external constraints
+    if m > 0:  # mon >= ceil(-n / m)
+      ge = int(np.ceil(- n / m))
+      new_bounds = (max(ge, bounds[0]), bounds[1])
+    else:  # mon <= floor(-n / m)
+      le = int(np.floor(-n / m))
+      new_bounds = (bounds[0], min(le, bounds[1]))
+    if new_bounds[0] > new_bounds[1]:
+      raise ValueError(f"Unsatisfiable constraints: {e_str}")
+    self._monomial_bounds[mon] = new_bounds
+
+  def _check_same_scope(self, other: _DimExpr,
+                        when: str = "",
+                        self_descr: str = " ",
+                        other_descr: str = "unknown"):
+    if self is not other.scope:
+      raise ValueError(
+          f"Invalid mixing of symbolic scopes {when}.\n"
+          f"Expected {self_descr}scope {self}\n"
+          f"and found for '{other}' ({other_descr}) scope {other.scope}\n"
+          f"See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.")
 
 
 @dataclasses.dataclass
@@ -972,11 +1135,11 @@ def _decompose_expr(e: _DimExpr, operation: str, *,
         continue
       if with_exp is not None and with_exp != aexp:
         continue
-      rest_monomial = _DimExpr({m.divide(_DimMon.from_atom(a, aexp)): 1})
+      rest_monomial = _DimExpr({m.divide(_DimMon.from_atom(a, aexp)): 1}, e.scope)
       if (with_rest_monomial is not None and
           not core.definitely_equal(with_rest_monomial, rest_monomial)):
         continue
-      rest_expr = _DimExpr(e_minus_m_coeffs)
+      rest_expr = _DimExpr(e_minus_m_coeffs, e.scope)
       if (with_rest_expr is not None and
           not core.definitely_equal(with_rest_expr, rest_expr)):
         continue
@@ -999,10 +1162,13 @@ def _convertible_to_int(p: DimSize) -> bool:
     return False
 
 def _ensure_poly(p: DimSize,
-                 operation_name: str) -> _DimExpr:
-  if isinstance(p, _DimExpr): return p
+                 operation_name: str,
+                 scope: SymbolicScope) -> _DimExpr:
+  if isinstance(p, _DimExpr):
+    scope._check_same_scope(p, when=f"for operation {operation_name}")
+    return p
   if _convertible_to_int(p):
-    return _DimExpr({_DimMon(): op.index(p)})
+    return _DimExpr.from_constant(p, scope)
   raise TypeError(f"Symnbolic dimension {operation_name} not supported for {p}.")
 
 def _convertible_to_poly(p: DimSize) -> bool:
@@ -1182,24 +1348,30 @@ class PolyShape(tuple):
 
 def symbolic_shape(shape_spec: str | None,
                    *,
+                   constraints: Sequence[str] = (),
+                   scope: SymbolicScope | None = None,
                    like: Sequence[int | None] | None = None
                    ) -> Sequence[DimSize]:
-  """Parses the shape polymorphic specification into a symbolic shape.
-
-  We have to be able to parse all strings produced by str(_DimExpr) because
-  sometimes the output polymorphic shapes of one function become the input
-  polymorphic shapes of another.
+  """Constructs a jax.ShapeDtypeStruct with polymorphic shapes.
 
   Args:
-    shape_spec: a shape polymorphic specification. None stands for "...".
+    shape_spec: a symbolic shape specification. None stands for "...".
     like: when `shape_spec` contains placeholders ("_", "..."), use this
       shape to fill in the placeholders.
       The dimensions of `like` that are used for filling
       must be known (not `None`). If a dimension in `like` is known and
       the corresponding dimension in `shape_spec` is a constant then they
       must be equal.
+    scope: optionally, you can specify that the parsed symbolic expressions
+      be created in a given scope. You cannot specify `constraints` in this case.
+    constraints: a sequence of constraints on symbolic dimension expressions, of
+      the form `e1 >= e2` or `e1 <= e2`. This is used to create a new SymbolicScope
+      shared by all symbolic expressions created.
+      See [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints)
+      for more details.
 
-  See the README.md for usage.
+  Returns: a jax.ShapeDTypeStruct with shapes that may contain symbolic
+      expressions involving dimension variables.
   """
   shape_spec_repr = repr(shape_spec)
   if shape_spec is None:
@@ -1209,11 +1381,18 @@ def symbolic_shape(shape_spec: str | None,
   elif not isinstance(shape_spec, str):
     raise ValueError("polymorphic shape spec should be None or a string. "
                      f"Found {shape_spec_repr}.")
-  return _Parser(shape_spec, like, shape_spec_repr).parse()
+  if scope is None:
+    scope = SymbolicScope(constraints)
+  elif constraints:
+    raise ValueError("Cannot specify both a `scope` and `constraints`.")
+  dimensions = _Parser(shape_spec, like, shape_spec_repr, scope).parse()
+  return dimensions
 
 def symbolic_args_specs(
     args,  # pytree of arguments
     polymorphic_shapes,  # prefix pytree of strings
+    symbolic_scope: SymbolicScope | None = None,
+    symbolic_constraints: Sequence[str] = (),
 ):
   """Constructs a pytree of jax.ShapeDtypeSpec arguments specs for `export`.
 
@@ -1238,6 +1417,12 @@ def symbolic_args_specs(
       of the `args`.
       See [how optional parameters are matched to
       arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
+    symbolic_scope: optionally, you can specify that the parsed symbolic expressions
+      be created in a given scope. You cannot specify `symbolic_constraints` in this case.
+    symbolic_constraints: a sequence of constraints on symbolic dimension expressions, of
+      the form `e1 >= e2` or `e1 <= e2`. This is used to create a new SymbolicScope
+      shared by all symbolic expressions created.
+      See more details at https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.
 
   Returns: a pytree of jax.ShapeDTypeStruct matching the `args` with the shapes
     replaced with symbolic dimensions as specified by `polymorphic_shapes`.
@@ -1264,8 +1449,12 @@ def symbolic_args_specs(
     raise e("jax_export polymorphic_shapes") from None
 
   # Now add in the polymorphic shapes
+  if symbolic_scope is None:
+    symbolic_scope = SymbolicScope(symbolic_constraints)
+  elif symbolic_constraints:
+    raise ValueError("Cannot have both `symbolic_scope` and `symbolic_constraints`")
   args_specs_flat = (
-      jax.ShapeDtypeStruct(symbolic_shape(spec, like=s), t)
+      jax.ShapeDtypeStruct(symbolic_shape(spec, like=s, scope=symbolic_scope), t)
       for s, t, spec in zip(shapes, dtypes, polymorphic_shapes_flat))
 
   return args_tree.unflatten(args_specs_flat)
@@ -1281,11 +1470,13 @@ class _Parser:
   def __init__(self,
                shape_spec: str,
                like_shape: Sequence[int | None] | None,
-               shape_spec_repr: str):
+               shape_spec_repr: str,
+               scope: SymbolicScope):
     self.shape_spec = shape_spec
     self.shape_spec_repr = shape_spec_repr  # For error messages
     self.like_shape = like_shape
     self.dimensions: list[DimSize] = []  # dimensions we have parsed
+    self.scope = scope
 
   def parse(self) -> Sequence[DimSize]:
     self.tokstream = tokenize.tokenize(
@@ -1431,7 +1622,7 @@ class _Parser:
         return self.atom_binary_op(tok.string, self.next_tok())
       if tok.string == _DimAtom.NON_NEGATIVE:  # We still parse this for backwards compatibility
         return self.atom_unary_op(_DimAtom.NON_NEGATIVE, self.next_tok())
-      return _DimExpr.from_var(tok.string), self.next_tok()
+      return _DimExpr.from_var(tok.string, self.scope), self.next_tok()
     number_sign = 1
     if tok.exact_type == tokenize.MINUS:  # -k are negative constants
       number_sign = -1
@@ -1443,11 +1634,12 @@ class _Parser:
     self.expect_token(tok, [tokenize.NAME, tokenize.MINUS, tokenize.NUMBER])
     assert False
 
-  def atom_unary_op(self, op: str, tok) -> tuple[DimSize, tokenize.TokenInfo]:
+  def atom_unary_op(self, op: str, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
     tok = self.consume_token(tok, tokenize.LPAR)
     e1, tok = self.expr(tok)
     tok = self.consume_token(tok, tokenize.RPAR)
-    return _DimExpr.from_operation(op, e1), tok  # type: ignore
+    return _DimExpr.from_operation(op, e1,
+                                   scope=self.scope), tok  # type: ignore
 
   def atom_binary_op(self, op: str, tok) -> tuple[DimSize, tokenize.TokenInfo]:
     tok = self.consume_token(tok, tokenize.LPAR)
@@ -1455,7 +1647,8 @@ class _Parser:
     tok = self.consume_token(tok, tokenize.COMMA)
     e2, tok = self.expr(tok)
     tok = self.consume_token(tok, tokenize.RPAR)
-    return _DimExpr.from_operation(op, e1, e2), tok  # type: ignore
+    return _DimExpr.from_operation(op, e1, e2,
+                                   scope=self.scope), tok  # type: ignore
 
 
 def _evaluate_add(v1, v2):
@@ -1759,7 +1952,7 @@ def solve_dim_vars(
                                                           arg_idx, dim_idx)
         synth_dimension_vars.append((synth_dim_var, arg_idx, dim_idx))
         dim_equations.append(
-            _DimEquation(aval_dim_expr=_ensure_poly(aval_d, "solve_dim_vars"),
+            _DimEquation(aval_dim_expr=aval_d,
                          dim_name=synth_dim_var))
 
   solution, shape_constraints = _solve_dim_equations(dim_equations,
@@ -1800,7 +1993,7 @@ def _solve_dim_equations(
 ) -> tuple[DimVarEnv, ShapeConstraints]:
   # Returns a shape environment and the shape constraints if it can solve all
   # dimension variables. Raises an exception if it cannot.
-  shapeenv: DimVarEnv = {}
+  shape_env: DimVarEnv = {}
   solution_error_message_pieces: list[str | _DimExpr] = [
     " Obtained dimension variables: "
   ]  # Error message describing the solution
@@ -1812,23 +2005,30 @@ def _solve_dim_equations(
   solution_err_msg_trailer_errors = ". Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
 
   shape_constraints = ShapeConstraints()  # accumulate shape constraints
+  scope: SymbolicScope | None = None
 
   def process_one_eqn(eqn: _DimEquation) -> bool:
     # We start with a DimEquation of the form `dim_expr = dim_value`
     # Try to rewrite the equation as `var * factor_var = dim_value_2` (a linear
     # uni-variate equation). Returns `False` if this rewrite fails.
     # Otherwise, compute the `var` value as `dim_value_2 // factor`, add it to
-    # `shapeenv` and return `True`.
+    # `shape_env` and return `True`.
     #
     # Invariant:
     #     var * factor_var + remaining_monomials_from_dim_expr = dim_value
     var, factor_var = None, None
-    dim_value = _DimExpr.from_var(eqn.dim_name)
+    nonlocal scope
+    if scope is None:
+      scope = eqn.aval_dim_expr.scope
+    elif config.enable_checks.value:
+      scope._check_same_scope(eqn.aval_dim_expr, when=f"solving equation {eqn}")
+
+    dim_value = _DimExpr.from_var(eqn.dim_name, scope)
 
     for mon, factor in eqn.aval_dim_expr.monomials():
       # Perhaps we can already evaluate this monomial (all vars solved)
       try:
-        mon_value = mon.evaluate(shapeenv)
+        mon_value = mon.evaluate(shape_env)
       except KeyError:
         # `mon` still uses some variables not yet solved. We handle only the
         # case when `mon` is a single variable.
@@ -1857,11 +2057,12 @@ def _solve_dim_equations(
 
       if not isinstance(var_value, _DimExpr):
         assert var_value.dtype == core.dim_value_dtype()
-      shapeenv[var] = var_value  # type: ignore
+      shape_env[var] = var_value  # type: ignore
       solution_error_message_pieces.extend([
         f"'{var}' = ", var_value,
         f" from specification '{eqn.aval_dim_expr}' "
-        f"for dimension {eqn.dim_name} (= ", _DimExpr.from_var(eqn.dim_name),
+        f"for dimension {eqn.dim_name} (= ",
+        _DimExpr.from_var(eqn.dim_name, eqn.aval_dim_expr.scope),
         "), "])
 
       shape_constraints.add_constraint(
@@ -1878,24 +2079,41 @@ def _solve_dim_equations(
       # All variables are resolved for this equation, we emit an assertion
       shape_constraints.add_constraint(
           ShapeConstraint.Comparator.EQ,
-          _DimExpr.from_var(eqn.dim_name),
-          eqn.aval_dim_expr.evaluate(shapeenv),
+          _DimExpr.from_var(eqn.dim_name, eqn.aval_dim_expr.scope),
+          eqn.aval_dim_expr.evaluate(shape_env),
           error_message_pieces=([
             "Input shapes do not match the polymorphic shapes specification. "
             f"Found inconsistency between dimension size {eqn.dim_name} (= ",
-            _DimExpr.from_var(eqn.dim_name),
+            _DimExpr.from_var(eqn.dim_name, eqn.aval_dim_expr.scope),
             f") and the specification '{eqn.aval_dim_expr}' (= ",
-            eqn.aval_dim_expr.evaluate(shapeenv),
+            eqn.aval_dim_expr.evaluate(shape_env),
             ")." + poly_specs_err_msg] + solution_error_message_pieces +
             [solution_err_msg_trailer_errors])
       )
       return True
 
+  def add_explicit_symbolic_constraints(shape_env: DimVarEnv):
+    if not shape_env: return
+    assert scope is not None
+    for c, c_str in scope._explicit_constraints:
+      c_value = c.evaluate(shape_env)
+      shape_constraints.add_constraint(
+          ShapeConstraint.Comparator.GEQ, c_value, 0,
+          error_message_pieces=[
+                f"Input shapes do not match the symbolic shape constraint {c_str}. "
+                f"Expected '{c}' to be greater or equal to 0, but found ",
+                c_value,
+                ". " + poly_specs_err_msg
+              ] + solution_error_message_pieces + [
+              solution_err_msg_trailer_errors])
+
+
   while True:
     nr_eqns = len(eqns)
     eqns = [eqn for eqn in eqns if not process_one_eqn(eqn)]
     if not eqns:
-      return shapeenv, shape_constraints  # SUCCESS
+      add_explicit_symbolic_constraints(shape_env)
+      return shape_env, shape_constraints  # SUCCESS
     elif len(eqns) >= nr_eqns:
       break
 
@@ -1905,7 +2123,7 @@ def _solve_dim_equations(
   for eqn in eqns:
     unsolved_vars = unsolved_vars.union(eqn.aval_dim_expr.get_vars())
     unsolved_polys.append(eqn.aval_dim_expr)
-  unsolved_vars = unsolved_vars.difference(shapeenv.keys())
+  unsolved_vars = unsolved_vars.difference(shape_env.keys())
   err_msg = (
       f"Cannot solve for values of dimension variables {unsolved_vars}. "
       "We can only solve linear uni-variate constraints." + poly_specs_err_msg +

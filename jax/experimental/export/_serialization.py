@@ -16,6 +16,7 @@
 
 from typing import Callable, TypeVar
 from collections.abc import Sequence
+from functools import partial
 
 try:
   import flatbuffers
@@ -158,14 +159,16 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> export.Exported:
   _, in_tree = tree_util.tree_flatten(
       _deserialize_pytreedef_to_pytree(exp.InTree())
   )
+  scope = export.SymbolicScope(())  # TODO: serialize the constraints
+  deser_aval = partial(_deserialize_aval, scope=scope)
   in_avals = _deserialize_tuple(
-      exp.InAvalsLength, exp.InAvals, _deserialize_aval
+      exp.InAvalsLength, exp.InAvals, deser_aval
   )
   _, out_tree = tree_util.tree_flatten(
       _deserialize_pytreedef_to_pytree(exp.OutTree())
   )
   out_avals = _deserialize_tuple(
-      exp.OutAvalsLength, exp.OutAvals, _deserialize_aval
+      exp.OutAvalsLength, exp.OutAvals, deser_aval
   )
   nr_devices = exp.NrDevices()
   in_shardings = _deserialize_tuple(
@@ -346,14 +349,16 @@ def _serialize_aval(
     raise NotImplementedError(f"serializing AbstractValue: {aval}")
 
 
-def _deserialize_aval(aval: ser_flatbuf.AbstractValue) -> core.AbstractValue:
+def _deserialize_aval(aval: ser_flatbuf.AbstractValue,
+                      scope) -> core.AbstractValue:
   aval_kind = aval.Kind()
   if aval_kind == ser_flatbuf.AbstractValueKind.shapedArray:
     dtype = _dtype_kind_to_dtype[aval.Dtype()]
     shape = export.symbolic_shape(
         ",".join(
             aval.Shape(i).decode("utf-8") for i in range(aval.ShapeLength())
-        )
+        ),
+        scope=scope
     )
     return core.ShapedArray(shape, dtype)
   else:
