@@ -1159,6 +1159,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=5e-4)
       self._CompileAndCheck(lax_fun, args_maker, rtol=tol, atol=tol)
 
+  def testBinomPmfOutOfRange(self):
+    # Regression test for https://github.com/google/jax/issues/19150
+    self.assertEqual(lsp_stats.binom.pmf(k=6.5, n=5, p=0.8), 0.0)
+
   def testIssue972(self):
     self.assertAllClose(
       np.ones((4,), np.float32),

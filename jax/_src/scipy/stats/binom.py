@@ -33,7 +33,7 @@ def logpmf(k: ArrayLike, n: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Arra
     )
     log_linear_term = lax.add(xlogy(y, p), xlog1py(lax.sub(n, y), lax.neg(p)))
     log_probs = lax.add(comb_term, log_linear_term)
-    return jnp.where(lax.lt(k, loc), -jnp.inf, log_probs)
+    return jnp.where(lax.ge(k, loc) & lax.lt(k, loc + n + 1), log_probs, -jnp.inf)
 
 
 @_wraps(osp_stats.nbinom.pmf, update_doc=False)
