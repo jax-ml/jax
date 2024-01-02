@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Mapping, Sequence
-import functools
 import itertools
 import math
 from typing import Any, Union, cast
@@ -269,10 +268,6 @@ def make_sharding_spec(axis_sizes, mesh_axis_pos, num_dimensions, aval_axes):
     next_sharded_axis += 1
   return ShardingSpec(sharding, mesh_mapping)
 
-
-def new_mesh_sharding_specs(axis_sizes, axis_names):
-  mesh_axis_pos = {name: i for i, name in enumerate(axis_names)}
-  return functools.partial(make_sharding_spec, axis_sizes, mesh_axis_pos)
 
 def pmap_sharding_spec(nrep, axis_size, sharded_shape: Sequence[int],
                        map_axis: int | None) -> ShardingSpec:
