@@ -19,7 +19,6 @@ from functools import partial, reduce
 import math
 import operator as op
 from typing import Any, Callable, NamedTuple
-import warnings
 
 import numpy as np
 
@@ -307,13 +306,6 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   is_deleted = property(op.attrgetter('_base_array.is_deleted'))  # type: ignore[assignment]
   on_device_size_in_bytes = property(op.attrgetter('_base_array.on_device_size_in_bytes'))  # type: ignore[assignment]
   unsafe_buffer_pointer = property(op.attrgetter('_base_array.unsafe_buffer_pointer'))  # type: ignore[assignment]
-
-  def unsafe_raw_array(self):
-    # deprecated on 13 Sept 2023
-    raise warnings.warn(
-        'The `unsafe_raw_array` method of PRNG key arrays is deprecated. '
-        'Use `jax.random.key_data` instead.', DeprecationWarning, stacklevel=2)
-    return self._base_array
 
   def addressable_data(self, index: int) -> PRNGKeyArrayImpl:
     return PRNGKeyArrayImpl(self._impl, self._base_array.addressable_data(index))
