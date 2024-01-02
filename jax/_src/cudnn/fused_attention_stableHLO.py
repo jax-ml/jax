@@ -32,6 +32,7 @@ from jax.sharding import Mesh, PartitionSpec, NamedSharding
 
 from jax._src.interpreters import batching
 from jax._src import dispatch
+from jax._src.lib import cuda_versions
 
 Array = jnp.ndarray
 DType = jnp.dtype
@@ -120,6 +121,50 @@ def get_custom_call_name(has_bias, has_mask, has_dropout, is_bwd):
     ]
     return _custom_name_maps[index]
 
+def check_qkv_layout(query, key, value):
+    assert len(query.shape) == len(key.shape) == len(value.shape) == 4, \
+        "query, key and value should have rank 4."
+    
+    # Only support fp16 and bf16 here
+    query_dtype = query.dtype
+    key_dtype = key.dtype
+    value_dtype = value.dtype
+    assert query_dtype == key_dtype == value_dtype and query_dtype in [jnp.float16, jnp.bfloat16], \
+        "query, key and value should have same dtype and should be float16 or bfloat16"
+
+    q_batch, q_seq_len, q_num_heads, q_head_dim = query.shape
+    k_batch, k_seq_len, k_num_heads, k_head_dim = key.shape
+    v_batch, v_seq_len, v_num_heads, v_head_dim = value.shape
+    assert (q_batch == k_batch == v_batch) \
+        and (k_seq_len == v_seq_len) \
+        and (q_num_heads == k_num_heads == v_num_heads) \
+        and (q_head_dim == k_head_dim == v_head_dim), \
+        "query should have layout [batch, q_seq, num_heads, head_dim], " \
+        "key and value should have layout [batch, kv_seq, num_heads, head_dim]."
+
+def check_is_flash_attention(query, key):
+    batch, q_seq_len, num_heads, head_dim = query.shape
+    _, kv_sqe_len, _, _ = key.shape
+    # check if attention pattern is supported by flash attention or fused attention
+    if q_seq_len > 512 and q_seq_len == kv_sqe_len and head_dim in [64, 128]:
+        # check if flash attention is supported
+        is_flash_attention = True
+    elif q_seq_len <= 512 and kv_sqe_len <= 512 and head_dim == 64:
+        # check if regular fused attention is supported
+        is_flash_attention = False
+    else:
+        raise NotImplementedError("Unsupported sequence length and head dim.")
+    return is_flash_attention
+
+def check_cuDNN_version(is_flash_attention):
+    # check if cuDNN is installed and if cuDNN version contraint is satisfied
+    if cuda_versions is None:
+        raise RuntimeError("cuDNN is not detected.")
+    elif is_flash_attention and cuda_versions.cudnn_get_version() < 8903:
+        raise RuntimeError("Require cuDNN at lease 8.9.3 to run flash attention.")
+    elif not is_flash_attention and cuda_versions.cudnn_get_version() < 8901:
+        raise RuntimeError("Require cuDNN at lease 8.9.1 to run fused attention.")
+
 def _dot_product_attention_fwd(query, key, value, bias, mask,
     scale, seed, dropout_rate, variadic_args, is_flash_attention, is_causal_mask):
     output, _ = _dot_product_attention_fwd_p_wrapper.bind(
@@ -170,15 +215,6 @@ def _dot_product_attention_bwd_impl(query, key, value, bias, mask, activation, f
 def _dot_product_attention_fwd_abstract(query, key, value, bias, mask,
     *, scale, seed, dropout_rate, variadic_args, is_flash_attention, is_causal_mask):
     query_dtype = dtypes.canonicalize_dtype(query.dtype)
-    key_dtype = dtypes.canonicalize_dtype(key.dtype)
-    value_dtype = dtypes.canonicalize_dtype(value.dtype)
-    # Q, K and V must have the same data type
-    assert query_dtype == key_dtype == value_dtype
-    # Only support fp16 and bf16 here
-    assert query_dtype in [jnp.float16, jnp.bfloat16]
-    # Q, K and V must be 4-D tensors
-    assert len(query.shape) == len(key.shape) == len(value.shape) == 4
- 
     batch, q_seq_len, num_heads, head_dim = query.shape
     _, kv_seq_len, _, _ = key.shape
     output_shape = (batch, q_seq_len, num_heads, head_dim)
@@ -201,12 +237,7 @@ def _dot_product_attention_bwd_abstract(query, key, value, bias, mask, activatio
     query_dtype = dtypes.canonicalize_dtype(query.dtype)
     key_dtype = dtypes.canonicalize_dtype(key.dtype)
     value_dtype = dtypes.canonicalize_dtype(value.dtype)
-    # Q, K and V must have the same data type
-    assert query_dtype == key_dtype == value_dtype
-    # Only support fp16 and bf16 here
-    assert query_dtype in [jnp.float16, jnp.bfloat16]
-    # Q, K and V must be 4-D tensors
-    assert len(query.shape) == len(key.shape) == len(value.shape) == 4
+
     return (
         ShapedArray(
             query.shape, query_dtype
@@ -587,7 +618,7 @@ def _dot_product_attention(query: Array,
 
 # _dot_product_attention_fwd must have the same func signature as _dot_product_attention
 _dot_product_attention.defvjp(_dot_product_attention_fwd_rule, _dot_product_attention_bwd_rule)
-
+    
 # User interface
 def dot_product_attention(query: Array,
                           key: Array,
@@ -618,10 +649,13 @@ def dot_product_attention(query: Array,
     Returns:
         Output of shape `[batch, length, num_heads, v_depth_per_head]`.
     """
-    batch, q_seq_len, num_heads, head_dim = query.shape
-    is_flash_attention = False
-    if q_seq_len > 512:
-        is_flash_attention = True
+    # check if query, key and value layout meets cuDNN layout requirement
+    check_qkv_layout(query, key, value)
+    # check if flash attention is supported for this attention pattern
+    is_flash_attention = check_is_flash_attention(query, key)
+    # check if cuDNN is installed and if cuDNN version is sufficient 
+    check_cuDNN_version(is_flash_attention)
+
     variadic_args = (bias is not None, mask is not None)
     if bias is None:
         bias = jnp.zeros(0, dtype=query.dtype)
