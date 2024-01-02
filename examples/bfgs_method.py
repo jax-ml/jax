@@ -27,4 +27,5 @@ def bfgs(fun: Callable,
         else:
             break
 
-bfgs(g, ini, True)
+if __name__ =='__main__':
+    bfgs(g, ini, True)

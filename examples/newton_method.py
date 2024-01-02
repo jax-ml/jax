@@ -67,4 +67,5 @@ def newton(fun: Callable,
         else:
             break
 
-newton(g, ini, True)
+if __name__ =='__main__':
+    newton(g, ini, True)
