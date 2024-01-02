@@ -34,9 +34,11 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
+from jax._src.state import indexing
 from jax._src.state.types import AbstractRef, RefEffect
 from jax._src.state.primitives import get_p, swap_p, addupdate_p
 from jax._src.state.utils import hoist_consts_to_refs
+from jax._src.typing import Array
 from jax._src.util import (safe_map, safe_zip, split_list, weakref_lru_cache,
                            partition_list, merge_lists, split_dict)
 
@@ -144,33 +146,111 @@ def _eval_jaxpr_discharge_state(
       env.read, [v for v in jaxpr.invars if id(v.aval) in refs_to_discharge])
   return out_vals + ref_vals
 
+def _is_trivial_indexer(indexer: indexing.NDIndexer):
+  for s, idx in zip(indexer.shape, indexer.indices):
+    if not isinstance(idx, indexing.Slice):
+      return False
+    if not isinstance(idx.start, int):
+      return False
+    if idx.start:
+      return False
+    if idx.size != s:
+      return False
+  return True
+
+def _convert_to_array_indexer(indexer: indexing.NDIndexer
+                              ) -> tuple[int | Array, ...]:
+  # This is the general gather case. We need to create the gather arrays.
+  is_integer_indexer, _, integer_indexer = (
+      indexing.unpack_ndindexer(indexer)
+  )
+  total_shape = indexer.get_indexer_shape()
+  int_indexer_shape = indexer.int_indexer_shape
+  slice_shape = total_shape[len(int_indexer_shape):]
+  slice_dims = tuple(
+      i + len(int_indexer_shape) for i in range(len(slice_shape))
+  )
+  slice_dim_iter = iter(slice_dims)
+  slice_indexer: list[Array] = []
+  for idx, is_int_index in zip(indexer.indices, is_integer_indexer):
+    if not is_int_index:
+      assert isinstance(idx, indexing.Slice)
+      slice_indices = lax.broadcasted_iota(
+          np.dtype("int32"), total_shape, next(slice_dim_iter)
+      ) + idx.start
+      slice_indexer.append(slice_indices)
+      integer_indexer = tuple(
+          lax.expand_dims(idx, (-1,)) for idx in integer_indexer
+      )
+      continue
+  assert next(slice_dim_iter, None) is None
+  return tuple(merge_lists(is_integer_indexer, slice_indexer, integer_indexer))
+
+
+def _maybe_convert_to_dynamic_slice(
+    indexer: indexing.NDIndexer,
+) -> tuple[tuple[Array | int, ...], tuple[int, ...], tuple[int, ...]] | None:
+  # An NDIndexer only corresponds to a `dynamic_slice` or `dynamic_update_slice`
+  # if each of the indexers is a `Slice` or a ()-shaped value.
+  if not all(isinstance(i, indexing.Slice) or not np.shape(i)
+             for i in indexer.indices):
+    return None
+  _convert_i32 = lambda x: lax.convert_element_type(x, np.dtype("int32"))
+  starts = tuple(
+      _convert_i32(i.start) if isinstance(i, indexing.Slice)
+      else _convert_i32(i) for i in indexer.indices
+  )
+  sizes = tuple(
+      i.size if isinstance(i, indexing.Slice) else 1 for i in indexer.indices
+  )
+  squeeze_dims = tuple(
+      i
+      for i, idx in enumerate(indexer.indices)
+      if not isinstance(idx, indexing.Slice)
+  )
+  return starts, sizes, squeeze_dims
+
+
 @register_discharge_rule(get_p)
 def _get_discharge_rule(
     in_avals: Sequence[core.AbstractValue],
-    out_avals: Sequence[core.AbstractValue], x, *non_slice_idx,
-    indexed_dims: Sequence[bool]):
+    out_avals: Sequence[core.AbstractValue], x, *idx,
+    tree):
   del in_avals, out_avals
-  y = _get_discharge(x, non_slice_idx, indexed_dims)
-  return (None,) * (len(non_slice_idx) + 1), y
+  y = _get_discharge(x, idx, tree)
+  return (None,) * (len(idx) + 1), y
 
-def _get_discharge(x, idx, indexed_dims):
-  if not any(indexed_dims):
-    return x
-  if all(not i.shape for i in idx):
-    return _dynamic_index(x, idx, indexed_dims)
-  else:
-    return _prepend_gather(x, idx, indexed_dims)
-
-def _prepend_gather(x, idx, indexed_dims):
-  indexer = _indexer(idx, indexed_dims)
+def _prepend_gather(x, indexer):
   # NumPy advanced int indexing won't prepend w/ only one dim, so add dummy.
   return x[None][(np.array(0, 'int32'), *indexer)]
 
-def _prepend_scatter(x, idx, indexed_dims, val, *, add=False):
-  indexer = _indexer(idx, indexed_dims)
+def _prepend_scatter(x, indexer, val, *, add=False):
+  # NumPy advanced int indexing won't prepend w/ only one dim, so add dummy.
+  # However, since this is scatter, we need to remove the 1-sized dimension
+  # we added at the front.
   if add:
     return x[None].at[(0, *indexer)].add(val)[0]
   return x[None].at[(0, *indexer)].set(val)[0]
+
+
+def _get_discharge(x, idx, tree):
+  indexers = tree_util.tree_unflatten(tree, idx)
+  if len(indexers) > 1:
+    raise NotImplementedError("Only single indexer is supported.")
+  indexer = indexers[0]
+  if _is_trivial_indexer(indexer):
+    return x
+  # If everything in the indexer is a slice or ()-shaped, we can also
+  # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
+  # We need to squeeze out the the 1-sized slices at the end.
+  if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
+    starts, sizes, squeeze_dims = maybe_slice
+    y = lax_slicing.dynamic_slice(x, starts, sizes)
+    return lax.squeeze(y, squeeze_dims)
+  indexer = _convert_to_array_indexer(indexer)
+  if indexer is None:
+    return x
+  return x[None][(np.array(0, 'int32'), *indexer)]
 
 def _indexer(idx, indexed_dims):
   idx_ = iter(idx)
@@ -181,59 +261,59 @@ def _indexer(idx, indexed_dims):
 @register_discharge_rule(swap_p)
 def _swap_discharge_rule(
     in_avals: Sequence[core.AbstractValue],
-    out_avals: Sequence[core.AbstractValue], x, val, *non_slice_idx,
-    indexed_dims: Sequence[bool]):
+    out_avals: Sequence[core.AbstractValue], x, val, *idx,
+    tree):
   del in_avals, out_avals
-  if not any(indexed_dims):
-    z, x_new = x, val
-  z, x_new = _swap_discharge(x, val, non_slice_idx, indexed_dims)
-  return (x_new, None) + (None,) * len(non_slice_idx), z
+  z, x_new = _swap_discharge(x, val, idx, tree)
+  return (x_new, None) + (None,) * len(idx), z
 
-def _swap_discharge(x, val, idx, indexed_dims):
-  if not any(indexed_dims):
-    z, x_new = x, val
-  elif all(not i.shape for i in idx):
-    z = _dynamic_index(x, idx, indexed_dims)
-    x_new = _dynamic_update_index(x, idx, val, indexed_dims)
-  else:
-    z = _prepend_gather(x, idx, indexed_dims)
-    x_new = _prepend_scatter(x, idx, indexed_dims, val)
-  return z, x_new
+def _swap_discharge(x, val, idx, tree):
+  indexers = tree_util.tree_unflatten(tree, idx)
+  if len(indexers) > 1:
+    raise NotImplementedError("Only single indexer is supported.")
+  indexer = indexers[0]
+  if _is_trivial_indexer(indexer):
+    return x, val
+  # If everything in the indexer is a slice or ()-shaped, we can also
+  # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
+  # We need to squeeze out the the 1-sized slices at the end.
+  if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
+    starts, sizes, squeeze_dims = maybe_slice
+    x_old = lax_slicing.dynamic_slice(x, starts, sizes)
+    val = lax.expand_dims(val, squeeze_dims)
+    y = lax_slicing.dynamic_update_slice(x, val, starts)
+    return lax.squeeze(x_old, squeeze_dims), y
+  indexer = _convert_to_array_indexer(indexer)
+  x_old = _prepend_gather(x, indexer)
+  return x_old, _prepend_scatter(x, indexer, val)
 
 @register_discharge_rule(addupdate_p)
 def _addupdate_discharge_rule(
     in_avals: Sequence[core.AbstractValue],
-    out_avals: Sequence[core.AbstractValue], x, val, *non_slice_idx,
-    indexed_dims: Sequence[bool]):
+    out_avals: Sequence[core.AbstractValue], x, val, *idx,
+    tree):
   del in_avals, out_avals
-  ans = _addupdate_discharge(x, val, non_slice_idx, indexed_dims)
-  return (ans, None) + (None,) * len(non_slice_idx), []
+  ans = _addupdate_discharge(x, val, idx, tree)
+  return (ans, None) + (None,) * len(idx), []
 
-def _addupdate_discharge(x, val, idx, indexed_dims):
-  if not any(indexed_dims):
+def _addupdate_discharge(x, val, idx, tree):
+  indexers = tree_util.tree_unflatten(tree, idx)
+  if len(indexers) > 1:
+    raise NotImplementedError("Only single indexer is supported.")
+  indexer = indexers[0]
+  if _is_trivial_indexer(indexer):
     return x + val
-  if all(not i.shape for i in idx):
-    y = val + _dynamic_index(x, idx, indexed_dims)
-    return _dynamic_update_index(x, idx, y, indexed_dims)
-  else:
-    return _prepend_scatter(x, idx, indexed_dims, val, add=True)
-
-def _dynamic_index(x, idx, indexed_dims):
-  assert isinstance(idx, (list, tuple)) and idx
-  idx_ = iter(idx)
-  starts = [next(idx_) if b else np.int32(0) for b in indexed_dims]
-  assert next(idx_, None) is None
-  sizes = [1 if b else size for b, size in zip(indexed_dims, x.shape)]
-  out = lax_slicing.dynamic_slice(x, starts, sizes)
-  return lax.squeeze(out, [i for i, b in enumerate(indexed_dims) if b])
-
-def _dynamic_update_index(x, idx, val, indexed_dims):
-  assert isinstance(idx, (list, tuple)) and idx
-  idx_ = iter(idx)
-  starts = [next(idx_) if b else np.int32(0) for b in indexed_dims]
-  assert next(idx_, None) is None
-  sizes = [1 if b else size for b, size in zip(indexed_dims, x.shape)]
-  return lax_slicing.dynamic_update_slice(x, val.reshape(sizes), starts)
+  # If everything in the indexer is a slice or ()-shaped, we can also
+  # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
+  # We need to squeeze out the the 1-sized slices at the end.
+  if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
+    starts, sizes, squeeze_dims = maybe_slice
+    x_old = lax_slicing.dynamic_slice(x, starts, sizes)
+    val = lax.expand_dims(val, squeeze_dims)
+    y = lax_slicing.dynamic_update_slice(x, x_old + val, starts)
+    return y
+  indexer = _convert_to_array_indexer(indexer)
+  return _prepend_scatter(x, indexer, val, add=True)
 
 @weakref_lru_cache
 def _cached_closed_jaxpr_discharge(closed_jaxpr):

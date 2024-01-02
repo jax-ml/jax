@@ -39,12 +39,12 @@ from jax._src.lib import gpu_triton as triton_kernel_call_lib
 from jax._src.lib import hlo_helpers
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import indexing
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.pallas_call import pallas_call_p
 from jax._src.state import AbstractRef
 from jax._src.state import discharge
+from jax._src.state import indexing
 from jax._src.state import primitives as sp
 from jax._src.util import merge_lists
 from jax._src.util import partition_list
@@ -438,7 +438,7 @@ _TRITON_FN_MAPPING = {
     lax.nextafter_p: tl.math.nextafter,
     ad_util.add_any_p: tl.semantic.add,
     # Other ops.
-    indexing.broadcast_to_p: tl.broadcast_to,
+    sp.broadcast_to_p: tl.broadcast_to,
     primitives.atomic_cas_p: tl.atomic_cas,
     primitives.max_contiguous_p: tl.max_contiguous,
     primitives.multiple_of_p: tl.multiple_of,
@@ -727,28 +727,16 @@ def _pack_indices(non_slice_idx, indexed_dims):
 
 
 def _get_lowering_rule(
-    ctx: TritonLoweringRuleContext, ptr, *non_slice_idx, indexed_dims
+    ctx: TritonLoweringRuleContext, ptr, *idx, tree
 ):
+  indexers = tree_util.tree_unflatten(tree, idx)
   if not isinstance(ptr.type, tl.pointer_type):
-    assert not non_slice_idx
+    assert len(indexers) == 0
     return ptr
-
-  ref_aval, *idx_avals = ctx.avals_in
-  idx_avals = _pack_indices(idx_avals, indexed_dims)
-  if non_slice_idx:
-    (int_indexer_shape,) = {
-        i.shape for i in idx_avals if not isinstance(i, slice)
-    }
-  else:
-    int_indexer_shape = ()
-
-  idx = _pack_indices(non_slice_idx, indexed_dims)
-  idx = tuple(
-      primitives.Slice.from_slice(slc, s) if isinstance(slc, slice) else slc
-      for s, slc in zip(ref_aval.shape, idx)
-  )
-  idx = NDIndexer(idx, ref_aval.shape, int_indexer_shape)
-  args_flat, args_tree = tree_util.tree_flatten((ptr, idx, None, None))
+  if len(indexers) > 1:
+    raise NotImplementedError("No support for multiple indexers yet.")
+  indexer = indexers[0]
+  args_flat, args_tree = tree_util.tree_flatten((ptr, indexer, None, None))
   return _masked_load_lowering_rule(
       ctx,
       *args_flat,
@@ -794,24 +782,16 @@ triton_lowering_rules[primitives.load_p] = _masked_load_lowering_rule
 
 
 def _swap_lowering_rule(
-    ctx: TritonLoweringRuleContext, ptr, value, *non_slice_idx, indexed_dims
+    ctx: TritonLoweringRuleContext, ptr, value, *idx, tree
 ):
-  ref_aval, _, *idx_avals = ctx.avals_in
-  idx_avals = _pack_indices(idx_avals, indexed_dims)
-  if non_slice_idx:
-    (int_indexer_shape,) = {
-        i.shape for i in idx_avals if not isinstance(i, slice)
-    }
-  else:
-    int_indexer_shape = ()
-
-  idx = _pack_indices(non_slice_idx, indexed_dims)
-  idx = tuple(
-      primitives.Slice.from_slice(slc, s) if isinstance(slc, slice) else slc
-      for s, slc in zip(ref_aval.shape, idx)
-  )
-  idx = NDIndexer(idx, ref_aval.shape, int_indexer_shape)
-  args_flat, args_tree = tree_util.tree_flatten((ptr, idx, value, None))
+  indexers = tree_util.tree_unflatten(tree, idx)
+  if not isinstance(ptr.type, tl.pointer_type):
+    assert len(indexers) == 0
+    return ptr
+  if len(indexers) > 1:
+    raise NotImplementedError("No support for multiple indexers yet.")
+  indexer = indexers[0]
+  args_flat, args_tree = tree_util.tree_flatten((ptr, indexer, value, None))
   return _masked_swap_lowering_rule(
       ctx, *args_flat, args_tree=args_tree, eviction_policy=None
   )
@@ -850,24 +830,17 @@ triton_lowering_rules[primitives.swap_p] = _masked_swap_lowering_rule
 
 
 def _addupdate_lowering_rule(
-    ctx: TritonLoweringRuleContext, ptr, value, *non_slice_idx, indexed_dims
+    ctx: TritonLoweringRuleContext, ptr, value, *idx, tree
 ):
-  ref_block_info, *_ = ctx.block_infos
-  avals_in = ctx.avals_in
-  idx = _pack_indices(non_slice_idx, indexed_dims)
-  if non_slice_idx:
-    (int_indexer_shape,) = {
-        tuple(map(lambda x: x.value, i.shape)) for i in non_slice_idx
-    }
-  else:
-    int_indexer_shape = ()
-  idx = tuple(
-      primitives.Slice.from_slice(slc, s) if isinstance(slc, slice) else slc
-      for s, slc in zip(avals_in[0].shape, idx)
-  )
-  idx = primitives.NDIndexer(idx, avals_in[0].shape, int_indexer_shape)
+  indexers = tree_util.tree_unflatten(tree, idx)
+  if not isinstance(ptr.type, tl.pointer_type):
+    assert len(indexers) == 0
+    return ptr
+  if len(indexers) > 1:
+    raise NotImplementedError("No support for multiple indexers yet.")
+  indexer = indexers[0]
   ptr = _compute_pointers_from_indices(
-      ptr, ref_block_info, idx, avals_in[0].shape, ctx.builder
+      ptr, ctx.block_infos[0], indexer, ctx.avals_in[0].shape, ctx.builder
   )
   tl.atomic_add(ptr, value, _builder=ctx.builder)
   return []

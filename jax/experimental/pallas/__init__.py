@@ -17,10 +17,6 @@
 from jax._src import pallas
 from jax._src.pallas.core import BlockSpec
 from jax._src.pallas.core import no_block_spec
-from jax._src.pallas.indexing  import broadcast_to
-from jax._src.pallas.indexing import ds
-from jax._src.pallas.indexing  import dslice
-from jax._src.pallas.indexing import Slice
 from jax._src.pallas.pallas_call import pallas_call
 from jax._src.pallas.pallas_call import pallas_call_p
 from jax._src.pallas.primitives import atomic_add
@@ -42,6 +38,10 @@ from jax._src.pallas.utils import cdiv
 from jax._src.pallas.utils import next_power_of_2
 from jax._src.pallas.utils import strides_from_shape
 from jax._src.pallas.utils import when
+from jax._src.state.primitives import broadcast_to
+from jax._src.state.indexing import ds
+from jax._src.state.indexing  import dslice
+from jax._src.state.indexing import Slice
 
 try:
   from jax.experimental.pallas import gpu # pytype: disable=import-error

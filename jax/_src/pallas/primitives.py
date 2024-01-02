@@ -27,15 +27,15 @@ from jax._src import core as jax_core
 from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src.util import (safe_map, safe_zip)
-from jax._src.state import primitives as state_primitives
 from jax._src.state import discharge as state_discharge
+from jax._src.state import indexing
+from jax._src.state import primitives as sp
 from jax.interpreters import ad
 from jax.interpreters import mlir
 from jax.interpreters import xla
 import jax.numpy as jnp
 
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import indexing
 
 # TODO(sharadmv): enable type checking
 # mypy: ignore-errors
@@ -224,44 +224,13 @@ def _load_abstract_eval(*avals_flat, args_tree, **_):
 
 load_p.def_effectful_abstract_eval(_load_abstract_eval)
 
-def _pp_dslice(dim: int, slice: Slice, context):
-  size = pp.text(str(slice.size))
-  if isinstance(slice.start, int):
-    if slice.start == 0:
-      start = pp.text("")
-    else:
-      start = pp.text(str(slice.start))
-    if slice.size == dim:
-      end = pp.text("")
-    else:
-      end = pp.text(str(slice.start + slice.size))
-  else:
-    start = pp.text(jax_core.pp_var(slice.start, context))
-    end = pp.concat([start, pp.text("+"), size])
-  return pp.concat([start, pp.text(":"), end])
-
-def _pp_idx(ref_aval, idx: NDIndexer, context):
-  docs = [
-      _pp_dslice(d, s, context) if isinstance(s, Slice)
-      else pp.text(jax_core.pp_var(s, context))
-      for s, d in zip(idx.indices, ref_aval.shape)]
-  if not docs:
-    return pp.text("")
-  doc = [docs[0]]
-  for d in docs[1:]:
-    doc.append(pp.text(","))
-    doc.append(d)
-  return pp.concat(doc)
-
 def _load_pp_rule(eqn, context, settings):
   # Pretty prints `a = load x i` as `x[i] <- a`
   y, = eqn.outvars
   x, idx, _, _ = eqn.params["args_tree"].unflatten(eqn.invars)
-  idx = _pp_idx(eqn.invars[0].aval, idx, context)
   lhs = jax_core.pp_vars([y], context, print_shapes=settings.print_shapes)
-  return pp.concat([lhs, pp.text(' <- '), state_primitives.pp_ref(pp.concat([
-    pp.text(jax_core.pp_var(x, context)), pp.text('['), idx, pp.text(']')
-    ]))])
+  return pp.concat([
+      lhs, pp.text(' <- '), sp.pp_ref_indexers(context, x, (idx,))])
 jax_core.pp_eqn_rules[load_p] = _load_pp_rule
 
 
@@ -339,15 +308,14 @@ def _swap_pp_rule(eqn, context, settings):
   # Pretty prints `_ = swap x v i` as `x[i] <- v`
   y, = eqn.outvars
   x, idx, val, _ = eqn.params["args_tree"].unflatten(eqn.invars)
-  idx = _pp_idx(eqn.invars[0].aval, idx, context)
-  x_i = pp.concat([pp.text(jax_core.pp_var(x, context)),
-                   pp.text('['), idx, pp.text(']')])
+  x_i = sp.pp_ref_indexers(context, x, (idx,))
   if isinstance(y, jax_core.DropVar):
-    return pp.concat([state_primitives.pp_ref(
-      x_i), pp.text(" <- "), pp.text(jax_core.pp_var(val, context))])
+    return pp.concat([
+        x_i,
+        pp.text(" <- "), pp.text(jax_core.pp_var(val, context))])
   y = jax_core.pp_vars([y], context, print_shapes=settings.print_shapes)
-  return pp.concat([y, pp.text(', '), state_primitives.pp_ref(x_i),
-                    pp.text(' <- '), state_primitives.pp_ref(x_i),
+  return pp.concat([y, pp.text(', '), x_i,
+                    pp.text(' <- '), x_i,
                     pp.text(', '), pp.text(jax_core.pp_var(val, context))])
 jax_core.pp_eqn_rules[swap_p] = _swap_pp_rule
 

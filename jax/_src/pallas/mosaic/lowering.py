@@ -42,12 +42,12 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core
-from jax._src.pallas import indexing
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.state import discharge as state_discharge
+from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.util import safe_map
 from jax._src.util import safe_zip
@@ -610,12 +610,16 @@ def _convert_flat_indexing_to_indexer(ref_aval, non_slice_idx,
 
 
 def _get_lowering_rule(
-    ctx: LoweringRuleContext, ref, *non_slice_idx, indexed_dims: Sequence[bool]
+    ctx: LoweringRuleContext, ref, *idx, tree,
 ):
+  indexers = tree_util.tree_unflatten(tree, idx)
+  indexers_avals = tree_util.tree_unflatten(tree, ctx.avals_in[1:])
+  if len(indexers) > 1:
+    raise NotImplementedError("Only one indexer currently supported.")
   # Call _load_lowering_rule (since it's more general)
   ref_aval, *non_slice_idx_avals = ctx.avals_in
-  nd_indexer, nd_indexer_avals = _convert_flat_indexing_to_indexer(
-      ref_aval, non_slice_idx, non_slice_idx_avals, indexed_dims)
+  nd_indexer = indexers[0]
+  nd_indexer_avals = indexers_avals[0]
   args_flat, args_tree = tree_util.tree_flatten((ref, nd_indexer, None, None))
   avals_flat = tree_util.tree_leaves((ref_aval, nd_indexer_avals, None, None))
   ctx = ctx.replace(avals_in=avals_flat)
@@ -630,13 +634,17 @@ def _swap_lowering_rule(
     ctx: LoweringRuleContext,
     ref,
     val,
-    *non_slice_idx,
-    indexed_dims: Sequence[bool],
+    *idx,
+    tree
 ):
+  indexers = tree_util.tree_unflatten(tree, idx)
+  indexers_avals = tree_util.tree_unflatten(tree, ctx.avals_in[2:])
+  if len(indexers) > 1:
+    raise NotImplementedError("Only one indexer currently supported.")
   # Call _masked_swap_lowering_rule (since it's more general)
-  ref_aval, val_aval, *non_slice_idx_avals = ctx.avals_in
-  nd_indexer, nd_indexer_avals = _convert_flat_indexing_to_indexer(
-      ref_aval, non_slice_idx, non_slice_idx_avals, indexed_dims)
+  ref_aval, val_aval, *_ = ctx.avals_in
+  nd_indexer = indexers[0]
+  nd_indexer_avals = indexers_avals[0]
   args_flat, args_tree = tree_util.tree_flatten((ref, nd_indexer, val, None))
   avals_flat = tree_util.tree_leaves(
       (ref_aval, nd_indexer_avals, val_aval, None)

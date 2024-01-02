@@ -23,6 +23,7 @@ from typing import Any, Generic, TypeVar, Union
 from jax._src import core
 from jax._src import effects
 from jax._src import pretty_printer as pp
+from jax._src.state import indexing
 from jax._src.util import safe_map, safe_zip
 from jax._src.typing import Array
 
@@ -77,21 +78,34 @@ Aval = TypeVar("Aval", bound=core.AbstractValue)
 
 @dataclasses.dataclass
 class RefIndexer:
-  ref: Any
+  ref_or_view: Any
 
   def __getitem__(self, slc):
     if not isinstance(slc, tuple):
       slc = (slc,)
-    return RefView(self.ref, slc)
+    indexer = indexing.NDIndexer.from_indices_shape(slc, self.ref_or_view.shape)
+    if isinstance(self.ref_or_view, RefView):
+      view = self.ref_or_view
+      return RefView(view.ref, (*view.indexers, indexer))
+    return RefView(self.ref_or_view, (indexer,))
+
+Indexer = Any
 
 @dataclasses.dataclass
 class RefView:
   ref: Any
-  indexer: Any
+  indexers: tuple[indexing.NDIndexer, ...]
 
   @property
-  def at(self):
-    raise NotImplementedError("Can't call `.at` multiple times.")
+  def shape(self) -> tuple[int, ...]:
+    assert (
+        len(self.indexers) > 0
+    ), "Should not be able to create a trivial RefView"
+    return self.indexers[-1].get_indexer_shape()
+
+  @property
+  def at(self) -> RefIndexer:
+    return RefIndexer(self)
 
 
 # We need an aval for `Ref`s so we can represent `get` and `swap` in Jaxprs.
@@ -137,14 +151,10 @@ class AbstractRef(core.AbstractValue, Generic[Aval]):
     return ref_set(tracer, idx, value)
 
   def _getitem(self, tracer, idx) -> Array:
-    if not isinstance(idx, tuple):
-      idx = idx,
     from jax._src.state.primitives import ref_get  # pytype: disable=import-error
     return ref_get(tracer, idx)
 
   def _setitem(self, tracer, idx, value) -> None:
-    if not isinstance(idx, tuple):
-      idx = idx,
     from jax._src.state.primitives import ref_set  # pytype: disable=import-error
     return ref_set(tracer, idx, value)
 

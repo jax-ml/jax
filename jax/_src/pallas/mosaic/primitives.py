@@ -29,10 +29,10 @@ from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
-from jax._src.state import primitives as state_primitives
+from jax._src.state import indexing
+from jax._src.state import primitives as sp
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.pallas import indexing
 from jax._src.pallas.mosaic import core as tpu_core
 import jax.numpy as jnp
 
@@ -264,38 +264,6 @@ def _dma_start_abstract_eval(*args, tree, device_id_type):
   del args, tree, device_id_type
   return []
 
-def _pp_slice(slc: indexing.Slice, dim: int, context: jax_core.JaxprPpContext
-              ) -> str:
-  start, size = slc.start, slc.size
-  if isinstance(start, jax_core.Var):
-    start_str = jax_core.pp_var(start, context)
-    end_str = f'{start_str}+{size}'
-  else:
-    start_str = '' if start == 0 else str(start)
-    end = start + size
-    end_str = '' if end == dim else str(end)
-  return f'{start_str}:{end_str}'
-
-def _pp_indexer(indexer: indexing.NDIndexer,
-                context: jax_core.JaxprPpContext) -> pp.Doc:
-  indices = []
-  for idx, dim in zip(indexer.indices, indexer.shape):
-    if isinstance(idx, indexing.Slice):
-      indices.append(_pp_slice(idx, dim, context))
-    else:
-      indices.append(jax_core.pp_var(idx, context))  # type: ignore
-  return pp.text(','.join(indices))
-
-def _pp_ref(ref, indexer, context):
-  return state_primitives.pp_ref(
-      pp.concat([
-          pp.text(jax_core.pp_var(ref, context)),
-          pp.text("["),
-          _pp_indexer(indexer, context),
-          pp.text("]"),
-      ])
-  )
-
 def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
                       context: jax_core.JaxprPpContext,
                       settings: jax_core.JaxprPpSettings):
@@ -309,9 +277,9 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
   return pp.concat([
       pp.text('dma_start'),
       pp.text(' '),
-      _pp_ref(src_ref, src_indexer, context),
+      sp.pp_ref_indexers(context, src_ref, (src_indexer,)),
       pp.text(' -> '),
-      _pp_ref(dst_ref, dst_indexer, context),
+      sp.pp_ref_indexers(context, dst_ref, (dst_indexer,)),
       pp.text(' '),
       pp.text(jax_core.pp_var(dst_sem, context)),
   ])
@@ -358,13 +326,14 @@ def _dma_wait_abstract_eval(*args, tree, device_id_type):
 def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
                      context: jax_core.JaxprPpContext,
                      settings: jax_core.JaxprPpSettings):
+  del settings
   invars = eqn.invars
   tree = eqn.params["tree"]
   sem, ref, indexer = tree_util.tree_unflatten(tree, invars)
   return pp.concat([
       pp.text('dma_wait'),
       pp.text(' '),
-      _pp_ref(ref, indexer, context),
+      sp.pp_ref_indexers(context, ref, (indexer,)),
       pp.text(' '),
       pp.text(jax_core.pp_var(sem, context)),
   ])
@@ -373,7 +342,10 @@ jax_core.pp_eqn_rules[dma_wait_p] = _dma_wait_pp_eqn
 
 def _get_ref_and_indexer(ref):
   if isinstance(ref, state.RefView):
-    return ref.ref, ref.indexer
+    indexers = ref.indexers
+    if len(indexers) > 1:
+      raise NotImplementedError("Only one indexer supported.")
+    return ref.ref, ref.indexers[0].indices
   return ref, (slice(None),) * len(ref.shape)
 
 def make_async_copy(src_ref, dst_ref, sem):
