@@ -2475,6 +2475,10 @@ def _get_layouts_from_executable(
   return new_in_layouts, new_out_layouts  # type: ignore
 
 
+def get_logical_mesh_ids(mesh_shape):
+  return np.arange(math.prod(mesh_shape)).reshape(mesh_shape)
+
+
 @weakref_lru_cache
 def _cached_compilation(computation, name, mesh, spmd_lowering,
                         tuple_args, auto_spmd_lowering,
@@ -2528,7 +2532,7 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
     assert mesh is not None
     opts.auto_spmd_partitioning_mesh_shape = list(mesh.shape.values())
     opts.auto_spmd_partitioning_mesh_ids = (
-        sharding_specs.get_logical_mesh_ids(list(mesh.shape.values()))
+        get_logical_mesh_ids(list(mesh.shape.values()))
         .reshape(-1))
   compile_options.parameter_is_tupled_arguments = tuple_args
   opts.allow_spmd_sharding_propagation_to_output = list(_allow_propagation_to_outputs)

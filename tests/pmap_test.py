@@ -2988,25 +2988,12 @@ class ShardArgsTest(jtu.JaxTestCase):
           # unsharded
           [(4, 8), pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.NoSharding()),
                                      mesh_mapping=())],
-          # partitioned, 1 axis
-          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked([2]), pxla.NoSharding()),
-                                     mesh_mapping=(pxla.ShardedAxis(0),))],
-          # partitioned, 2 axes
-          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked([2]), pxla.Chunked([2])),
-                                     mesh_mapping=map(pxla.ShardedAxis, (0, 1)))],
-          # partitioned, 2 axes, permuted
-          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked([2]), pxla.Chunked([2])),
-                                     mesh_mapping=map(pxla.ShardedAxis, (1, 0)))],
           # replication + sharding
           [(2, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.NoSharding()),
                                      mesh_mapping=(pxla.ShardedAxis(0), pxla.Replicated(3)))],
           # replication, no sharding
           [(2, 8), pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.NoSharding()),
                                      mesh_mapping=(pxla.Replicated(3),))],
-          # multiple replicated axes
-          [(1, 8), pxla.ShardingSpec(sharding=(pxla.Chunked([1]), pxla.Chunked([2])),
-                                     mesh_mapping=(pxla.Replicated(2), pxla.ShardedAxis(0),
-                                                   pxla.Replicated(2), pxla.ShardedAxis(1)))],
           # replicated scalar
           [(), pxla.ShardingSpec(sharding=(),
                                  mesh_mapping=(pxla.Replicated(2), pxla.Replicated(3)))],
@@ -3018,14 +3005,7 @@ class ShardArgsTest(jtu.JaxTestCase):
       raise SkipTest
     x = np.arange(math.prod(shape)).reshape(shape)
     arg = make_arg(x)
-    sharding = None
-    if any(isinstance(s, pxla.Unstacked) for s in spec.sharding):
-      sharding = jax.sharding.PmapSharding(jax.devices()[:nshards], spec)
-    else:
-      sharding = jax.sharding.GSPMDSharding(
-          jax.devices()[:nshards],
-          sharding_specs.sharding_spec_sharding_proto(spec))
-
+    sharding = jax.sharding.PmapSharding(jax.devices()[:nshards], spec)
     results = pxla.shard_args(
         jax.devices()[:nshards], [indices], [sharding], [arg]
     )
