@@ -1333,6 +1333,25 @@ class ShardMapTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "shard_map applied to the function 'f'"):
       shard_f(jnp.ones((8, 8)), jnp.ones((8, 8)))
 
+  def test_custom_vjp_replication_error_message_hint(self):
+    mesh = Mesh(np.array(jax.devices()[:4]), ('i',))
+
+    @jax.custom_vjp
+    def f(x):
+      return jax.lax.psum(x, 'i')
+    def f_fwd(x):
+      return f(x), None
+    def f_bwd(_, g):
+      return jax.lax.psum(g, 'i'),
+    f.defvjp(f_fwd, f_bwd)
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P())
+    def g(x):
+      return f(f(x))
+
+    with self.assertRaisesRegex(Exception, r"check_rep=False"):
+      jax.grad(lambda x: g(x).sum())(jnp.ones(4))
+
 
 class FunSpec(NamedTuple):
   name: str
