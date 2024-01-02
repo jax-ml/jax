@@ -33,7 +33,7 @@ def wolfe(fun: Callable,
         x = x_0 + (alpha*dk)[0]
         f1 = fun(x)
         if f1 <= f0 + c1*alpha*res0.dot(dk.T):
-            res1 = jax.grad(fun)(jax.numpy.array(x))
+            res1 = jax.grad(fun)(x)
             if res1.dot(dk.T) >= c2*res0.dot(dk.T):
                 break
             else:
@@ -48,17 +48,18 @@ def wolfe(fun: Callable,
 
 
 def newton(fun: Callable, 
-           x_0: Iterable, 
-           alpha: float=0.02, 
+           x_0: Iterable,
+           verbose: bool=False, 
            epsilon: float=1e-6, 
            k: int=0):
     assert all(list(map(is_float, x_0)))
     x_0 = jax.numpy.array(x_0)
     while 1:
-        gradient = jax.grad(fun)(jax.numpy.array(x_0))
-        hessian = jax.hessian(fun)(jax.numpy.array(x_0))
+        gradient = jax.grad(fun)(x_0)
+        hessian = jax.hessian(fun)(x_0)
         dk = -jax.numpy.linalg.inv(hessian).dot(gradient.T).reshape(1, -1)
-        print('{}\t{}\t{}'.format(x_0, fun(x_0), k))
+        if verbose:
+            print('{}\t{}\t{}'.format(x_0, fun(x_0), k))
         if jax.numpy.linalg.norm(dk) >= epsilon:
             alpha = wolfe(fun, gradient, x_0, dk)
             x_0 += alpha * dk[0]
@@ -66,4 +67,4 @@ def newton(fun: Callable,
         else:
             break
 
-newton(g, ini)
+newton(g, ini, True)
