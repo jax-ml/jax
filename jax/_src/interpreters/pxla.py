@@ -69,7 +69,7 @@ from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding_impls import (
     ArrayMapping, ArrayMappingOrAutoOrUnspecified,
     AUTO, UnspecifiedValue, get_array_mapping as _get_array_mapping, is_auto,
-    is_unspecified, is_unspecified_or_auto
+    is_unspecified, is_unspecified_or_auto, array_mapping_to_axis_resources
 )
 from jax._src.util import (safe_map, safe_zip, partition_list,
                            wrap_name, tuple_delete, distributed_debug_log,
@@ -1510,12 +1510,15 @@ def _full_to_shard_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh,
   # TODO: Can we short-circuit for replicated values? Probably not.
   aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
-  sharding_proto = mesh_sharding_specs(
-      mesh.shape, mesh.axis_names)(aval_in, axes).sharding_proto().to_proto()
+  sharding_proto = (
+      sharding_impls.NamedSharding(mesh, array_mapping_to_axis_resources(axes))
+      ._to_xla_hlo_sharding(aval_in.ndim).to_proto())
   unspecified_dims = set(range(aval_in.ndim)) - set(axes.values())
-  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, sharding_proto, unspecified_dims=unspecified_dims)
+  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, sharding_proto,
+                                  unspecified_dims=unspecified_dims)
   proto = manual_proto(aval_in, manual_axes, mesh)
-  return mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, proto, unspecified_dims=unspecified_dims),
+  return (mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, proto,
+                                          unspecified_dims=unspecified_dims),)
 
 shard_to_full_p = core.Primitive('shard_to_full')
 
@@ -1531,10 +1534,13 @@ def _shard_to_full_lowering(ctx: mlir.LoweringRuleContext, x, *, axes: ArrayMapp
   aval_out, = ctx.avals_out
   proto = manual_proto(aval_in, manual_axes, mesh)  # type: ignore
   unspecified_dims = set(range(aval_in.ndim)) - set(axes.values())  # type: ignore
-  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, proto, unspecified_dims=unspecified_dims)
-  sharding_proto = mesh_sharding_specs(
-      mesh.shape, mesh.axis_names)(aval_out, axes).sharding_proto().to_proto()
-  return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, sharding_proto, unspecified_dims),
+  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, proto,
+                                  unspecified_dims=unspecified_dims)
+  sharding_proto = (
+      sharding_impls.NamedSharding(mesh, array_mapping_to_axis_resources(axes))
+      ._to_xla_hlo_sharding(aval_out.ndim).to_proto())
+  return (mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, sharding_proto,
+                                          unspecified_dims),)
 
 @lu.transformation
 def vtile_manual(manual_axes: frozenset[sharding_impls.MeshAxisName],
@@ -3066,30 +3072,6 @@ def resource_typecheck(jaxpr, resource_env, axis_resources, what_jaxpr_thunk):
                                  eqn.params)
     for v in eqn.outvars:
       _check_aval(v.aval, what_thunk)
-
-
-def mesh_sharding_specs(axis_sizes, axis_names, allow_uneven_axes=False):
-  mesh_axis_pos = {name: i for i, name in enumerate(axis_names)}
-  # NOTE: This takes in the non-sharded avals!
-  def mk_sharding_spec(aval, aval_axes):
-    if aval is core.abstract_token:
-      assert not aval_axes
-      return ShardingSpec([], [Replicated(axis_size) for axis_size in axis_sizes.values()])
-    aval_shape = list(aval.shape)
-    # NOTE: sorted is stable, which is important when multiple resources
-    #       map to the same axis.
-    for name, axis in sorted(aval_axes.items(), key=lambda x: x[1]):
-      if not allow_uneven_axes:
-        if aval_shape[axis] % axis_sizes[name] != 0:
-          raise ValueError(
-            f'The aval shape on dimension {axis} is {aval_shape[axis]} and '
-            f'the size of axis {name} is {axis_sizes[name]}. The aval shape % '
-            'axis size should be zero but got '
-            f'{aval_shape[axis] % axis_sizes[name]}')
-      aval_shape[axis] //= axis_sizes[name]
-    return sharding_specs.make_sharding_spec(
-        axis_sizes, mesh_axis_pos, len(aval.shape), aval_axes)
-  return mk_sharding_spec
 
 
 @contextmanager

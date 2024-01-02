@@ -1417,11 +1417,11 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   global_in_avals = ctx.avals_in
   vectorized_jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
 
-  global_sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)
   sharded_global_in_nodes = [
     [mlir.wrap_with_sharding_op(
         ctx, node, aval,
-        global_sharding_spec(aval, aval_axes).sharding_proto().to_proto())]
+        NamedSharding(mesh, array_mapping_to_axis_resources(aval_axes)
+                      )._to_xla_hlo_sharding(aval.ndim).to_proto())]
     if aval_axes else [node]
     for node, aval, aval_axes in zip(global_in_nodes, global_in_avals, mesh_in_axes)
   ]
@@ -1441,7 +1441,8 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   sharded_global_out_nodes = [
     mlir.wrap_with_sharding_op(
         ctx, node, aval,
-        global_sharding_spec(aval, aval_axes).sharding_proto().to_proto())
+        NamedSharding(mesh, array_mapping_to_axis_resources(aval_axes)
+                      )._to_xla_hlo_sharding(aval.ndim).to_proto())
     if aval_axes else node
     for (node,), aval, aval_axes in zip(global_out_nodes, global_out_avals, mesh_out_axes)
   ]

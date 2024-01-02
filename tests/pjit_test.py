@@ -4281,17 +4281,6 @@ class UtilTest(jtu.JaxTestCase):
     self.assertTrue(all(i == (slice(None),) * aval.ndim
                     for out, aval in safe_zip(out_indices, in_avals) for i in out))
 
-  def test_mesh_sharding_spec(self):
-    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    array_mapping = pxla.get_array_mapping(P('x', 'y'))
-    aval = core.ShapedArray((1, 1), jnp.int32)
-    with self.assertRaisesRegex(
-        ValueError,
-        'The aval shape on dimension 0 is 1 and the size of axis x is 4. The '
-        'aval shape % axis size should be zero but got 1'
-    ):
-      pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval, array_mapping)
-
   @parameterized.named_parameters(
       ("all_unspecified", (UNSPECIFIED, UNSPECIFIED), AssertionError),
       ("only_unspecified", UNSPECIFIED),
