@@ -63,6 +63,8 @@ createLogicalToPhysicalDeviceIdPass(int64_t total_devices);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createLinalgVectorizationPass();
 
+std::unique_ptr<OperationPass<func::FuncOp>> createDebugAssertInsertionPass();
+
 // Changes the memory space of the value and propagates it through the program.
 LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
                                     MemorySpace memory_space);

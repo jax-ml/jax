@@ -51,6 +51,14 @@ _MOSAIC_USE_CPP_PASSES = config.define_bool_state(
         " passes (still a WIP)"
     ),
 )
+_MOSAIC_ON_DEVICE_CHECKS = config.define_string_state(
+    name="mosaic_on_device_checks",
+    default="",
+    help=(
+        "If True, additional on-device asserts are inserted into the program,"
+        " to verify operation invariants (accesses in-bounds, etc.)"
+    ),
+)
 
 tpu = tpu_mosaic.tpu
 apply_vector_layout = tpu_mosaic.apply_vector_layout
@@ -327,6 +335,24 @@ def _lower_tpu_kernel(
       pipeline = [
           "canonicalize",
           "cse",
+      ]
+      pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
+      _run_pass_pipeline(pipeline, module, "post-simplify")
+
+      if checks := _MOSAIC_ON_DEVICE_CHECKS.value:
+        checks = set(checks.split(","))
+        if checks == {"bounds"}:  # We only support one kind of checks now.
+          pipeline = PassManager.parse(
+              "builtin.module(func.func(debug-assert-insertion))"
+          )
+          _run_pass_pipeline(pipeline, module, "post-assert-insertion")
+        elif checks:
+          checks.discard("bounds")
+          raise ValueError(
+              f"Unrecognized on-device check categories: {', '.join(checks)}"
+          )
+
+      pipeline = [
           "func.func(tpu-infer-vector-layout{sublane-count=8 lane-count=128})",
       ]
       pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
