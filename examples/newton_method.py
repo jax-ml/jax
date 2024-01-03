@@ -52,6 +52,9 @@ def newton(fun: Callable,
            verbose: bool=False, 
            epsilon: float=1e-6, 
            k: int=0):
+    '''
+    Newton Method Updated by Hessian and Gradient.
+    '''
     assert all(list(map(is_float, x_0)))
     x_0 = jax.numpy.array(x_0)
     while 1:

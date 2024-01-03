@@ -7,6 +7,9 @@ def bfgs(fun: Callable,
          verbose: bool=False,
          epsilon: float=1e-6, 
          k: int=0):
+    '''
+    Hessian-based BFGS Method.
+    '''
     assert all(list(map(is_float, x_0)))
     x_0 = jax.numpy.array(x_0)
     while 1:
