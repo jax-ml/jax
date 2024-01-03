@@ -36,6 +36,8 @@ Remember to align the itemized text with the first line of an item within a list
     * from {mod}`jax.scipy.linalg`: `tril` and `triu`.
   * The previously-deprecated method `PRNGKeyArray.unsafe_raw_array` has been
     removed. Use {func}`jax.random.key_data` instead.
+  * `bool(empty_array)` now raises an error rather than returning `False`. This
+    previously raised a deprecation warning, and follows a similar change in NumPy.
 
 ## jaxlib 0.4.24
 

@@ -262,9 +262,7 @@ class ArrayImpl(basearray.Array):
       raise TypeError("len() of unsized object") from err  # same as numpy error
 
   def __bool__(self):
-    # deprecated 2023 September 18.
-    # TODO(jakevdp) change to warn_on_empty=False
-    core.check_bool_conversion(self, warn_on_empty=True)
+    core.check_bool_conversion(self)
     return bool(self._value)
 
   def __float__(self):
