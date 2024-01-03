@@ -49,6 +49,15 @@ def to_dlpack(x: Array, take_ownership: bool = False,
     stream: optional platform-dependent stream to wait on until the buffer is
       ready. This corresponds to the `stream` argument to ``__dlpack__``
       documented in https://dmlc.github.io/dlpack/latest/python_spec.html.
+
+  Returns:
+    A dlpack PyCapsule object.
+
+  Note:
+    While JAX arrays are always immutable, dlpack buffers cannot be marked as
+    immutable, and it is possible for processes external to JAX to mutate them
+    in-place. If a dlpack buffer derived from a JAX array is mutated, it may
+    lead to undefined behavior when using the associated JAX array.
   """
   if not isinstance(x, array.ArrayImpl):
     raise TypeError("Argument to to_dlpack must be a jax.Array, "
@@ -75,6 +84,13 @@ def from_dlpack(external_array):
 
   Returns:
     A jax.Array
+
+  Note:
+    While JAX arrays are always immutable, dlpack buffers cannot be marked as
+    immutable, and it is possible for processes external to JAX to mutate them
+    in-place. If a jax Array is constructed from a dlpack buffer and the buffer
+    is later modified in-place, it may lead to undefined behavior when using
+    the associated JAX array.
   """
   if hasattr(external_array, "__dlpack__"):
     dl_device_type, device_id = external_array.__dlpack_device__()
