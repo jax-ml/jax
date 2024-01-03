@@ -53,6 +53,7 @@ from jax._src.util import safe_map
 from jax._src.util import safe_zip
 from jax._src.util import split_list
 from jax._src.util import unzip2
+from jax._src.util import unzip3
 from jax.experimental.mosaic.dialects import tpu
 import jax.numpy as jnp
 import numpy as np
@@ -427,7 +428,14 @@ def lower_jaxpr_to_transform_func(
                          *scalar_prefetch)
   body_func.__name__ = name
   body = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
-  body.func_op.verify()
+  try:
+    body.func_op.verify()
+  except Exception as e:
+    raise LoweringException(
+        f"Body failed to verify: {body.func_op}.\nThis is an internal error."
+        " Please report a bug at:"
+        " https://github.com/google/jax/issues/new?assignees=sharadmv."
+    ) from e
   return body.func_op
 
 
@@ -476,7 +484,14 @@ def lower_jaxpr_to_func(
     )
   body_func.__name__ = name
   body = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
-  body.func_op.verify()
+  try:
+    body.func_op.verify()
+  except Exception as e:
+    raise LoweringException(
+        f"Body failed to verify: {body.func_op}.\nThis is an internal error."
+        " Please report a bug at:"
+        " https://github.com/google/jax/issues/new?assignees=sharadmv."
+    ) from e
   return body.func_op
 
 
@@ -614,15 +629,14 @@ def _get_lowering_rule(
 ):
   indexers = tree_util.tree_unflatten(tree, idx)
   indexers_avals = tree_util.tree_unflatten(tree, ctx.avals_in[1:])
-  if len(indexers) > 1:
-    raise NotImplementedError("Only one indexer currently supported.")
   # Call _load_lowering_rule (since it's more general)
-  ref_aval, *non_slice_idx_avals = ctx.avals_in
-  nd_indexer = indexers[0]
-  nd_indexer_avals = indexers_avals[0]
-  args_flat, args_tree = tree_util.tree_flatten((ref, nd_indexer, None, None))
-  avals_flat = tree_util.tree_leaves((ref_aval, nd_indexer_avals, None, None))
-  ctx = ctx.replace(avals_in=avals_flat)
+  ref_aval, *_ = ctx.avals_in
+  args_flat, args_tree = tree_util.tree_flatten((ref, indexers, None, None))
+  avals_flat = tree_util.tree_leaves((ref_aval, indexers_avals, None, None))
+  ctx = ctx.replace(
+      avals_in=avals_flat,
+      block_shapes=[ctx.block_shapes[0], *[None] * (len(avals_flat) - 1)],
+  )
   return _load_lowering_rule(ctx, *args_flat, args_tree=args_tree)
 
 
@@ -639,17 +653,16 @@ def _swap_lowering_rule(
 ):
   indexers = tree_util.tree_unflatten(tree, idx)
   indexers_avals = tree_util.tree_unflatten(tree, ctx.avals_in[2:])
-  if len(indexers) > 1:
-    raise NotImplementedError("Only one indexer currently supported.")
   # Call _masked_swap_lowering_rule (since it's more general)
   ref_aval, val_aval, *_ = ctx.avals_in
-  nd_indexer = indexers[0]
-  nd_indexer_avals = indexers_avals[0]
-  args_flat, args_tree = tree_util.tree_flatten((ref, nd_indexer, val, None))
+  args_flat, args_tree = tree_util.tree_flatten((ref, indexers, val, None))
   avals_flat = tree_util.tree_leaves(
-      (ref_aval, nd_indexer_avals, val_aval, None)
+      (ref_aval, indexers_avals, val_aval, None)
   )
-  ctx = ctx.replace(avals_in=avals_flat)
+  ctx = ctx.replace(
+      avals_in=avals_flat,
+      block_shapes=[ctx.block_shapes[0], *[None] * (len(avals_flat) - 1)],
+  )
   return _masked_swap_lowering_rule(ctx, *args_flat, args_tree=args_tree)
 
 lowering_rules[state_primitives.swap_p] = _swap_lowering_rule
@@ -664,18 +677,97 @@ def _make_index(s):
   return arith.IndexCastOp(ir.IndexType.get(), s).result
 
 
+def _maybe_cast_to_index(cast_to_index, x):
+  if cast_to_index:
+    return _make_index(x)
+  return _ensure_mlir_value(x, aval=jax_core.ShapedArray((), jnp.int32))
+
+def _index_to_start_size(idx: tuple[indexing.Slice | int | ir.Value],
+                         cast_to_index: bool) -> tuple[ir.Value, int, bool]:
+  assert not isinstance(idx, slice)
+  if isinstance(idx, indexing.Slice):
+    start = _maybe_cast_to_index(cast_to_index, idx.start)
+    size = idx.size
+    squeeze = False
+  elif isinstance(idx, int):
+    start = _maybe_cast_to_index(cast_to_index, idx)
+    size = 1
+    squeeze = True
+  else:
+    if np.shape(idx):
+      raise ValueError(f"Can only use ()-shaped and slice indexing: {idx}")
+    start = _maybe_cast_to_index(cast_to_index, idx)
+    size = 1
+    squeeze = True
+  return start, size, squeeze
+
+
+def _indexer_to_start_size(
+    indexer: NDIndexer, ref_block_shape: tuple[int | core.Mapped, ...], *,
+    cast_to_index: bool,
+) -> tuple[tuple[ir.Value, ...], tuple[int, ...], tuple[bool, ...],
+           tuple[int | core.Mapped, ...]]:
+  indices_iter = iter(indexer.indices)
+  starts, sizes, squeeze_dims = unzip3(
+      (
+          _maybe_cast_to_index(cast_to_index, 0),
+          1,
+          True,
+      )
+      if s is core.mapped
+      else _index_to_start_size(next(indices_iter), cast_to_index)
+      for s in ref_block_shape
+  )
+  assert next(indices_iter, None) is None
+  new_ref_block_shape = tuple(s for s, squeeze in zip(sizes, squeeze_dims)
+                              if not squeeze)
+  return tuple(starts), tuple(sizes), tuple(squeeze_dims), new_ref_block_shape
+
+
+def _slice_memref(ref: ir.Value, ref_aval: state.AbstractRef,
+                  indexer: NDIndexer,
+                  ref_block_shape: tuple[int | core.Mapped, ...]
+                  ) -> tuple[ir.Value, state.AbstractRef, tuple[int | core.Mapped, ...],
+                             tuple[int | core.Mapped, ...]]:
+  assert ref_block_shape is not None
+  target_shape = indexer.get_indexer_shape()
+  starts, sizes, squeeze_dims, ref_block_shape = _indexer_to_start_size(
+      indexer, ref_block_shape, cast_to_index=False,
+  )
+  target_ref_ty = ir.MemRefType.get(
+      tuple(sizes), mlir.dtype_to_ir_type(ref_aval.dtype),
+      memory_space=ref.type.memory_space)
+  inner_aval = ref_aval.inner_aval
+  out_aval = ref_aval.update(inner_aval=inner_aval.update(shape=target_shape))
+  out = tpu.MemRefSliceOp(target_ref_ty, ref, starts).result
+  if any(squeeze_dims):
+    # We need to squeeze out some dimensions
+    squeezed_ref_ty = ir.MemRefType.get(
+        tuple(target_shape), mlir.dtype_to_ir_type(ref_aval.dtype),
+        memory_space=ref.type.memory_space)
+    out = tpu.MemRefSqueezeOp(squeezed_ref_ty, out).result
+  return out, out_aval, ref_block_shape
+
+
 def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
-  ref, idx, mask, _ = args_tree.unflatten(args_flat)
-  _, idx_aval, _, _ = args_tree.unflatten(ctx.avals_in)
+  ref, indexers, mask, _ = args_tree.unflatten(args_flat)
+  ref_aval, indexers_avals, _, _ = args_tree.unflatten(ctx.avals_in)
+  (*slice_indexers, idx) = indexers
+  # Select last aval, which is the one that will be used for the load.
+  (*_, idx_aval) = indexers_avals
 
   if mask is not None:
     raise NotImplementedError
+
+  ref_block_shape, *_ = ctx.block_shapes
+  for indexer in slice_indexers:
+    ref, ref_aval, ref_block_shape = _slice_memref(ref, ref_aval, indexer,
+                                                   ref_block_shape)
 
   ref_type = ir.MemRefType(ref.type)
   is_smem_load = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
   ref_aval, *_ = ctx.avals_in
   (aval_out,) = ctx.avals_out
-  ref_block_shape, *_ = ctx.block_shapes
   if not is_smem_load and not ref_block_shape:
     raise NotImplementedError(
         "Indexing into a ()-shaped Ref not yet supported on TPU.")
@@ -684,35 +776,16 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
       for a in idx_aval.indices
   ):
     raise ValueError("Cannot do int indexing on TPU")
-  starts = tuple(
-      i.start if isinstance(i, primitives.Slice) else i for i in idx.indices
+  starts, sizes, _, _ = _indexer_to_start_size(
+      idx, ref_block_shape, cast_to_index=True,
   )
-  mlir_indices = [
-      s if isinstance(s, primitives.Slice) else _make_index(s) for s in starts
-  ]
-  # Need to now insert indexing the 0-th element for mapped dimensions
-  idx_iter = iter(mlir_indices)
-  mlir_indices = [
-      _make_index(0) if b is core.mapped else next(idx_iter)
-      for b in ref_block_shape
-  ]
-  assert len(mlir_indices) == len(ref_block_shape)
-  load_shape = list(aval_out.shape)
-  for i, a in enumerate(idx_aval.indices):
-    if not isinstance(a, primitives.Slice):
-      load_shape.insert(i, 1)
-  assert len(load_shape) == len(ref_aval.shape)
-  load_shape_iter = iter(load_shape)
-  load_shape = [
-      1 if b is core.mapped else next(load_shape_iter) for b in ref_block_shape
-  ]
-  load_aval = aval_out.update(shape=tuple(load_shape))
+  load_aval = jax_core.ShapedArray(sizes, dtype=ref_aval.dtype)
   if is_smem_load:
     if ctx.avals_out[0].shape:
       raise ValueError("Can only load scalars from SMEM")
-    return memref.LoadOp(ref, mlir_indices).result
+    return memref.LoadOp(ref, starts).result
   else:
-    load_val = vector.LoadOp(aval_to_ir_type(load_aval), ref, mlir_indices).result
+    load_val = vector.LoadOp(aval_to_ir_type(load_aval), ref, starts).result
   if load_aval == aval_out:
     return load_val
   vec_type = ir.VectorType.get(aval_out.shape,
@@ -727,16 +800,21 @@ skip_mlir_conversions.add(primitives.load_p)
 def _masked_swap_lowering_rule(
     ctx: LoweringRuleContext, *args_flat, args_tree, **_
 ):
-  ref, idx, val, mask = args_tree.unflatten(args_flat)
-  _, idx_aval, _, _ = args_tree.unflatten(ctx.avals_in)
+  ref, indexers, val, mask = args_tree.unflatten(args_flat)
+  ref_aval, indexers_avals, val_aval, _ = args_tree.unflatten(ctx.avals_in)
+  (*slice_indexers, idx) = indexers
+  (*_, idx_aval) = indexers_avals
 
   if mask is not None:
     raise NotImplementedError
 
+  ref_block_shape, *_ = ctx.block_shapes
+  for indexer in slice_indexers:
+    ref, ref_aval, ref_block_shape = _slice_memref(ref, ref_aval, indexer,
+                                                   ref_block_shape)
+
   ref_type = ir.MemRefType(ref.type)
   is_smem_store = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
-  ref_block_shape, *_ = ctx.block_shapes
-  _, val_aval, *_ = ctx.avals_in
   (aval_out,) = ctx.avals_out
   if not isinstance(val, ir.Value):
     val = ir_constant(val, mlir_type=mlir.dtype_to_ir_type(val_aval.dtype))
@@ -748,24 +826,16 @@ def _masked_swap_lowering_rule(
   if not is_smem_store and not ref_block_shape:
     raise NotImplementedError(
         "Indexing into a ()-shaped Ref not yet supported on TPU.")
-  starts = tuple(
-      i.start if isinstance(i, primitives.Slice) else i for i in idx.indices
+
+  starts, _, _, _ = _indexer_to_start_size(
+      idx, ref_block_shape, cast_to_index=True,
   )
-  mlir_indices = [
-      s if isinstance(s, primitives.Slice) else _make_index(s) for s in starts
-  ]
-  # Need to now insert indexing the 0-th element for mapped dimensions
-  idx_iter = iter(mlir_indices)
-  mlir_indices = [
-      _make_index(0) if b is core.mapped else next(idx_iter)
-      for b in ref_block_shape
-  ]
-  assert len(mlir_indices) == len(ref_block_shape)
+
   if is_smem_store:
     if val_aval.shape:
       raise ValueError("Can only store scalars to SMEM")
-    result = memref.LoadOp(ref, mlir_indices).result
-    memref.StoreOp(val, ref, mlir_indices)
+    result = memref.LoadOp(ref, starts).result
+    memref.StoreOp(val, ref, starts)
     return result
   mem_slice_shape = list(aval_out.shape)
   for i, a in enumerate(idx_aval.indices):
@@ -779,7 +849,7 @@ def _masked_swap_lowering_rule(
   mem_aval = aval_out.update(shape=tuple(mem_slice_shape))
   mem_aval_vec_type = ir.VectorType.get(mem_aval.shape,
                                         mlir.dtype_to_ir_type(mem_aval.dtype))
-  result = vector.LoadOp(mem_aval_vec_type, ref, mlir_indices).result
+  result = vector.LoadOp(mem_aval_vec_type, ref, starts).result
   if mem_aval != aval_out:
     # We are slicing a scalar so provided dummy 1 indices
     result_vec_type = ir.VectorType.get(aval_out.shape,
@@ -788,7 +858,7 @@ def _masked_swap_lowering_rule(
     val_vec_type = ir.VectorType.get(mem_aval.shape,
                                      mlir.dtype_to_ir_type(mem_aval.dtype))
     val = vector.ShapeCastOp(val_vec_type, val).result
-  vector.StoreOp(val, ref, mlir_indices)
+  vector.StoreOp(val, ref, starts)
   return result
 
 
@@ -1794,52 +1864,28 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, semaphore,
   return tpu.SemaphoreWaitOp(semaphore, value).results
 lowering_rules[tpu_primitives.semaphore_wait_p] = _semaphore_wait_lowering_rule
 
-def _indexer_to_start_size(indexer: NDIndexer):
-  starts = [
-      i.start if isinstance(i, primitives.Slice) else i
-      for i in indexer.indices
-  ]
-  if any(jnp.shape(i) for i in starts):
-    raise ValueError(f"Can only use integer and slice indexing: {starts}")
-  starts = map(
-      partial(_ensure_mlir_value, aval=jax_core.ShapedArray((), jnp.int32)),
-      starts,
-  )
-  sizes = [
-      s.size if isinstance(s, primitives.Slice) else 1 for s in indexer.indices
-  ]
-  return tuple(starts), tuple(sizes)
-
-def _slice_memref(ref: ir.Value, ref_aval: state.AbstractRef, indexer: NDIndexer
-                  ) -> ir.Value:
-  target_shape = indexer.get_indexer_shape()
-  starts, sizes = _indexer_to_start_size(indexer)
-  target_ref_ty = ir.MemRefType.get(
-      tuple(sizes), mlir.dtype_to_ir_type(ref_aval.dtype),
-      memory_space=ref.type.memory_space)
-  out = tpu.MemRefSliceOp(target_ref_ty, ref, starts).result
-  if sizes != target_shape:
-    # We need to squeeze out some dimensions
-    squeezed_ref_ty = ir.MemRefType.get(
-        tuple(target_shape), mlir.dtype_to_ir_type(ref_aval.dtype),
-        memory_space=ref.type.memory_space)
-    out = tpu.MemRefSqueezeOp(squeezed_ref_ty, out).result
-  return out
 
 def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                              device_id_type: tpu_primitives.DeviceIdType):
-  (src_ref, src_idx, dst_ref, dst_idx, sem, src_sem, device_id) = (
+  (src_ref, src_indexers, dst_ref, dst_indexers, sem, src_sem, device_id) = (
       tree_util.tree_unflatten(tree, args)
   )
-  (src_ref_aval, src_idx_aval, dst_ref_aval, *_) = (
+  (src_ref_aval, _, dst_ref_aval, *_) = (
       tree_util.tree_unflatten(tree, ctx.avals_in)
   )
-  del src_idx_aval
-  src = _slice_memref(src_ref, src_ref_aval, src_idx)
-  dst = _slice_memref(dst_ref, dst_ref_aval, dst_idx)
+  block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
+  src_ref_block_shape, dst_ref_block_shape = block_shapes[0], block_shapes[2]
+  for indexer in src_indexers:
+    src_ref, src_ref_aval, src_ref_block_shape = _slice_memref(
+        src_ref, src_ref_aval, indexer, src_ref_block_shape
+    )
+  for indexer in dst_indexers:
+    dst_ref, dst_ref_aval, dst_ref_block_shape = _slice_memref(
+        dst_ref, dst_ref_aval, indexer, dst_ref_block_shape
+    )
   if device_id is not None:
     device_id = _device_id_to_logical(ctx, device_id, device_id_type)
-  return tpu.EnqueueDMAOp(src, dst, sem, source_semaphore=src_sem,
+  return tpu.EnqueueDMAOp(src_ref, dst_ref, sem, source_semaphore=src_sem,
                           device_id=device_id).results
 lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 
@@ -1847,11 +1893,13 @@ lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: tpu_primitives.DeviceIdType):
   del device_id_type
-  sem, ref, idx = tree_util.tree_unflatten(tree, args)
-  sem_aval, ref_aval, idx_aval = tree_util.tree_unflatten(tree, ctx.avals_in)
-  del sem_aval, idx_aval
-  ref_slc = _slice_memref(ref, ref_aval, idx)
-  return tpu.WaitDMAOp(sem, ref_slc).results
+  sem, ref, indexers = tree_util.tree_unflatten(tree, args)
+  _, ref_aval, _ = tree_util.tree_unflatten(tree, ctx.avals_in)
+  ref_block_shape = ctx.block_shapes[1]
+  for indexer in indexers:
+    ref, ref_aval, ref_block_shape = _slice_memref(ref, ref_aval, indexer,
+                                                   ref_block_shape)
+  return tpu.WaitDMAOp(sem, ref).results
 lowering_rules[tpu_primitives.dma_wait_p] = _dma_wait_lowering_rule
 
 def _device_id_lowering_rule(ctx: LoweringRuleContext):

@@ -87,7 +87,10 @@ def _atomic_rmw_discharge_rule(
     in_avals, out_avals, *args_flat, args_tree, atomic_type: AtomicOpType
 ):
   del out_avals  # Unused.
-  ref, idx, val, mask = args_tree.unflatten(args_flat)
+  ref, indexers, val, mask = args_tree.unflatten(args_flat)
+  if len(indexers) > 1:
+    raise NotImplementedError("Only one indexer is supported.")
+  idx = indexers[0]
 
   if mask is not None:
     raise NotImplementedError
@@ -142,10 +145,10 @@ def _atomic_abstract_eval(*avals_flat, args_tree, atomic_type: AtomicOpType):
 
 atomic_rmw_p.def_effectful_abstract_eval(_atomic_abstract_eval)
 
-def atomic_rmw(x_ref, idx, val, *, mask: Any | None = None,
+def atomic_rmw(x_ref_or_view, idx, val, *, mask: Any | None = None,
                atomic_type: AtomicOpType):
-  idx = NDIndexer.from_indices_shape(idx, x_ref.shape)
-  args_flat, args_tree = tree_util.tree_flatten((x_ref, idx, val, mask))
+  x_ref, indexers = sp.get_ref_and_indexers(x_ref_or_view, idx, "atomic_rmw")
+  args_flat, args_tree = tree_util.tree_flatten((x_ref, indexers, val, mask))
   return atomic_rmw_p.bind(
       *args_flat, args_tree=args_tree, atomic_type=atomic_type
   )
@@ -215,9 +218,9 @@ load_p = jax_core.Primitive('masked_load')
 
 
 def _load_abstract_eval(*avals_flat, args_tree, **_):
-  ref, idx, _, _ = args_tree.unflatten(avals_flat)
+  ref, indexers, _, _ = args_tree.unflatten(avals_flat)
   return (
-      jax_core.ShapedArray(idx.get_indexer_shape(), ref.dtype),
+      jax_core.ShapedArray(indexers[-1].get_indexer_shape(), ref.dtype),
       {state.ReadEffect(0)},
   )
 
@@ -227,26 +230,44 @@ load_p.def_effectful_abstract_eval(_load_abstract_eval)
 def _load_pp_rule(eqn, context, settings):
   # Pretty prints `a = load x i` as `x[i] <- a`
   y, = eqn.outvars
-  x, idx, _, _ = eqn.params["args_tree"].unflatten(eqn.invars)
+  x, indexers, mask, other  = tree_util.tree_unflatten(eqn.params["args_tree"],
+                                                       eqn.invars)
+  # TODO(sharadmv): pretty print mask and other
   lhs = jax_core.pp_vars([y], context, print_shapes=settings.print_shapes)
-  return pp.concat([
-      lhs, pp.text(' <- '), sp.pp_ref_indexers(context, x, (idx,))])
+  result = [
+      lhs,
+      pp.text(' <- '),
+      sp.pp_ref_indexers(context, x, indexers)
+  ]
+  if mask is not None:
+    result += [
+        pp.text(" "),
+        pp.text("mask="),
+        pp.text(jax_core.pp_var(mask, context)),
+    ]
+  if other is not None:
+    result += [
+        pp.text(" "),
+        pp.text("other="),
+        pp.text(jax_core.pp_var(other, context)),
+    ]
+  return pp.concat(result)
 jax_core.pp_eqn_rules[load_p] = _load_pp_rule
 
 
 def _load_jvp(primals, tangents, args_tree, **params):
-  ref_primal, idx, mask, other_primal = args_tree.unflatten(primals)
+  ref_primal, indexers, mask, other_primal = args_tree.unflatten(primals)
   ref_tangent, _, _, other_tangent = args_tree.unflatten(tangents)
   if other_tangent is not None:
     other_tangent = ad_util.instantiate(other_tangent)
   return (
       load_p.bind(
-          *tree_util.flatten(ref_primal, idx, mask, other_primal),
+          *tree_util.flatten(ref_primal, indexers, mask, other_primal),
           args_tree=args_tree,
           **params,
       ),
       load_p.bind(
-          *tree_util.flatten(ref_tangent, idx, mask, other_tangent),
+          *tree_util.flatten(ref_tangent, indexers, mask, other_tangent),
           args_tree=args_tree,
           **params,
       ),
@@ -258,10 +279,14 @@ ad.primitive_jvps[load_p] = _load_jvp
 
 def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   del out_avals  # Unused.
-  ref, idx, mask, other = args_tree.unflatten(args_flat)
+  ref, indexers, mask, other = args_tree.unflatten(args_flat)
+  # TODO(sharadmv): add support for multiple indexers
+  if len(indexers) > 1:
+    raise NotImplementedError("Only one indexer supported in discharge rule.")
+  idx = indexers[0]
   if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
     indices = idx.indices
-    scalar_dims = [not isinstance(s, Slice) and s.shape == () for s in indices]
+    scalar_dims = [not isinstance(s, Slice) and not s.shape for s in indices]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
     slice_sizes = tuple(s.size if isinstance(s, Slice) else 1 for s in indices)
     out_ones = lax.dynamic_slice(ref, slice_starts, slice_sizes=slice_sizes)
@@ -282,12 +307,12 @@ swap_p = jax_core.Primitive('masked_swap')
 
 
 def _swap_abstract_eval(*avals_flat, args_tree, **_):
-  ref, idx, val, _ = args_tree.unflatten(avals_flat)
-  expected_output_shape = idx.get_indexer_shape()
+  ref, indexers, val, _ = args_tree.unflatten(avals_flat)
+  expected_output_shape = indexers[-1].get_indexer_shape()
   if expected_output_shape != val.shape:
     raise ValueError(
         f"Invalid shape for `swap`. Ref shape: {ref.shape}. "
-        f"Value shape: {val.shape}. Indices: {idx}. "
+        f"Value shape: {val.shape}. Indices: {indexers}. "
     )
   if ref.dtype != val.dtype:
     raise ValueError(
@@ -307,31 +332,44 @@ def _swap_pp_rule(eqn, context, settings):
   # or:
   # Pretty prints `_ = swap x v i` as `x[i] <- v`
   y, = eqn.outvars
-  x, idx, val, _ = eqn.params["args_tree"].unflatten(eqn.invars)
-  x_i = sp.pp_ref_indexers(context, x, (idx,))
+  x, indexers, val, mask = eqn.params["args_tree"].unflatten(eqn.invars)
+  x_i = sp.pp_ref_indexers(context, x, indexers)
   if isinstance(y, jax_core.DropVar):
     return pp.concat([
         x_i,
         pp.text(" <- "), pp.text(jax_core.pp_var(val, context))])
   y = jax_core.pp_vars([y], context, print_shapes=settings.print_shapes)
-  return pp.concat([y, pp.text(', '), x_i,
-                    pp.text(' <- '), x_i,
-                    pp.text(', '), pp.text(jax_core.pp_var(val, context))])
+  result = [
+      y,
+      pp.text(", "),
+      x_i,
+      pp.text(" <- "),
+      x_i,
+      pp.text(", "),
+      pp.text(jax_core.pp_var(val, context)),
+  ]
+  if mask is not None:
+    result += [
+        pp.text(" "),
+        pp.text("mask="),
+        pp.text(jax_core.pp_var(mask, context)),
+    ]
+  return pp.concat(result)
 jax_core.pp_eqn_rules[swap_p] = _swap_pp_rule
 
 
 def _swap_jvp(primals, tangents, *, args_tree, **params):
-  ref_primal, idx, val_primal, mask = args_tree.unflatten(primals)
+  ref_primal, indexers, val_primal, mask = args_tree.unflatten(primals)
   ref_tangent, _, val_tangent, _ = args_tree.unflatten(tangents)
   val_tangent = ad_util.instantiate(val_tangent)
   return (
       swap_p.bind(
-          *tree_util.flatten(ref_primal, idx, val_primal, mask),
+          *tree_util.flatten(ref_primal, indexers, val_primal, mask),
           args_tree=args_tree,
           **params,
       ),
       swap_p.bind(
-          *tree_util.flatten(ref_tangent, idx, val_tangent, mask),
+          *tree_util.flatten(ref_tangent, indexers, val_tangent, mask),
           args_tree=args_tree,
           **params,
       ),
@@ -343,7 +381,10 @@ ad.primitive_jvps[swap_p] = _swap_jvp
 
 def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   del out_avals  # Unused.
-  ref, idx, val, mask = args_tree.unflatten(args_flat)
+  ref, indexers, val, mask = args_tree.unflatten(args_flat)
+  if len(indexers) > 1:
+    raise NotImplementedError("Only one indexer supported in discharge rule.")
+  idx = indexers[0]
   if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
     indices = idx.indices
     scalar_dims = [
@@ -376,10 +417,10 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
 state_discharge.register_discharge_rule(swap_p)(_swap_discharge_rule)
 
 
-def load(x_ref, idx, *, mask=None, other=None, cache_modifier="",
+def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier="",
          eviction_policy="", volatile=False):
-  idx = NDIndexer.from_indices_shape(idx, x_ref.shape)
-  args_flat, args_tree = tree_util.tree_flatten((x_ref, idx, mask, other))
+  x_ref, indexers = sp.get_ref_and_indexers(x_ref_or_view, idx, "load")
+  args_flat, args_tree = tree_util.tree_flatten((x_ref, indexers, mask, other))
   return load_p.bind(
       *args_flat,
       args_tree=args_tree,
@@ -388,15 +429,17 @@ def load(x_ref, idx, *, mask=None, other=None, cache_modifier="",
       is_volatile=volatile,
   )
 
-def swap(x_ref, idx, val, *, mask=None, eviction_policy="") -> Any:
-  idx = NDIndexer.from_indices_shape(idx, x_ref.shape)
-  args_flat, args_tree = tree_util.tree_flatten((x_ref, idx, val, mask))
+def swap(x_ref_or_view, idx, val, *, mask=None, eviction_policy="",
+         _function_name="swap") -> Any:
+  x_ref, indexers = sp.get_ref_and_indexers(x_ref_or_view, idx, _function_name)
+  args_flat, args_tree = tree_util.tree_flatten((x_ref, indexers, val, mask))
   return swap_p.bind(
       *args_flat, args_tree=args_tree, eviction_policy=eviction_policy
   )
 
-def store(x_ref, idx, val, *, mask=None, eviction_policy="") -> None:
-  _ = swap(x_ref, idx, val, mask=mask, eviction_policy=eviction_policy)
+def store(x_ref_or_view, idx, val, *, mask=None, eviction_policy="") -> None:
+  _ = swap(x_ref_or_view, idx, val, mask=mask, eviction_policy=eviction_policy,
+           _function_name="store")
 
 def dot(a, b, trans_a: bool = False, trans_b: bool = False,
         allow_tf32: bool | None = None, precision=None):

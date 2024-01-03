@@ -148,10 +148,10 @@ class NDIndexer:
 
   @classmethod
   def from_indices_shape(cls, indices, shape) -> NDIndexer:
-    if indices == ...:
-      indices = (slice(None),) * len(shape)
     if not isinstance(indices, tuple):
       indices = (indices,)
+    if len(indices) == 1 and indices[0] is ...:
+      indices = (slice(None),) * len(shape)
     if any(idx is ... for idx in indices):
       # TODO(sharadmv,mattjj): support patterns that include ellipsis in them
       #                        e.g. x[0, ..., 1].

@@ -107,6 +107,14 @@ class RefView:
   def at(self) -> RefIndexer:
     return RefIndexer(self)
 
+  def __getitem__(self, slc):
+    from jax._src.state.primitives import ref_get  # pytype: disable=import-error
+    return ref_get(self, slc)
+
+  def __setitem__(self, slc, value):
+    from jax._src.state.primitives import ref_set # pytype: disable=import-error
+    return ref_set(self, slc, value)
+
 
 # We need an aval for `Ref`s so we can represent `get` and `swap` in Jaxprs.
 class AbstractRef(core.AbstractValue, Generic[Aval]):
@@ -114,6 +122,11 @@ class AbstractRef(core.AbstractValue, Generic[Aval]):
 
   def __init__(self, inner_aval: core.AbstractValue):
     self.inner_aval = inner_aval
+
+  def update(self, inner_aval=None):
+    if inner_aval is None:
+      return AbstractRef(self.inner_aval)
+    return AbstractRef(inner_aval)
 
   def join(self, other):
     assert isinstance(other, AbstractRef)

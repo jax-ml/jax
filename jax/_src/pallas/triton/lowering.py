@@ -374,7 +374,10 @@ def _atomic_lowering_rule(
     args_tree,
     atomic_type: primitives.AtomicOpType,
 ):
-  ptr, idx, value, mask = args_tree.unflatten(args_flat)
+  ptr, indexers, value, mask = args_tree.unflatten(args_flat)
+  if len(indexers) != 1:
+    raise NotImplementedError("Only single indexer is supported.")
+  idx = indexers[0]
   ptr = _compute_pointers_from_indices(
       ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape, ctx.builder
   )
@@ -736,7 +739,7 @@ def _get_lowering_rule(
   if len(indexers) > 1:
     raise NotImplementedError("No support for multiple indexers yet.")
   indexer = indexers[0]
-  args_flat, args_tree = tree_util.tree_flatten((ptr, indexer, None, None))
+  args_flat, args_tree = tree_util.tree_flatten((ptr, (indexer,), None, None))
   return _masked_load_lowering_rule(
       ctx,
       *args_flat,
@@ -758,7 +761,10 @@ def _masked_load_lowering_rule(
     cache_modifier,
     is_volatile,
 ):
-  ptr, idx, mask, other = args_tree.unflatten(args_flat)
+  ptr, indexers, mask, other = args_tree.unflatten(args_flat)
+  if len(indexers) > 1:
+    raise NotImplementedError("No support for multiple indexers yet.")
+  idx = indexers[0]
   if not isinstance(ptr.type, tl.pointer_type):
     assert len(ctx.avals_in) == 1
     return ptr
@@ -791,7 +797,7 @@ def _swap_lowering_rule(
   if len(indexers) > 1:
     raise NotImplementedError("No support for multiple indexers yet.")
   indexer = indexers[0]
-  args_flat, args_tree = tree_util.tree_flatten((ptr, indexer, value, None))
+  args_flat, args_tree = tree_util.tree_flatten((ptr, (indexer,), value, None))
   return _masked_swap_lowering_rule(
       ctx, *args_flat, args_tree=args_tree, eviction_policy=None
   )
@@ -803,7 +809,10 @@ triton_lowering_rules[sp.swap_p] = _swap_lowering_rule
 def _masked_swap_lowering_rule(
     ctx: TritonLoweringRuleContext, *args_flat, args_tree, eviction_policy
 ):
-  ptr, idx, value, mask = args_tree.unflatten(args_flat)
+  ptr, indexers, value, mask = args_tree.unflatten(args_flat)
+  if len(indexers) > 1:
+    raise NotImplementedError("No support for multiple indexers yet.")
+  idx = indexers[0]
   ptr_type = (
       ptr.type.element_ty.element_ty
       if ptr.type.is_block()

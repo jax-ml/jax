@@ -72,7 +72,7 @@ def _get_slice_output_shape(in_shape: tuple[int, ...],
   return shape
 
 
-def _get_indexer(
+def get_ref_and_indexers(
     ref_or_view: Any, idx: Indexer | None, function_name: str
 ) -> tuple[Any, tuple[indexing.NDIndexer, ...]]:
   if isinstance(ref_or_view, RefView):
@@ -92,7 +92,7 @@ def _get_indexer(
 
 def ref_get(ref_or_view: Any, idx: Indexer | None = None) -> Array:
   """Reads a value from a `Ref`, a.k.a. value <- ref[idx]."""
-  ref, indexers = _get_indexer(ref_or_view, idx, "ref_get")
+  ref, indexers = get_ref_and_indexers(ref_or_view, idx, "ref_get")
   flat_indexers, tree = tree_util.tree_flatten(indexers)
   return get_p.bind(ref, *flat_indexers, tree=tree)
 
@@ -119,16 +119,16 @@ def _swap_impl(ref: AbstractRef, value: Array, *idx: Any, tree):
   raise ValueError("Cannot run stateful primitive.")
 swap_p.def_impl(_swap_impl)
 
-def ref_swap(ref_or_view: AbstractRef, idx: Indexer | None, value: Array,
-             *, _function_name: str = "ref_swap") -> Array:
+def ref_swap(ref_or_view: AbstractRef | RefView, idx: Indexer | None, value: Array,
+             _function_name: str = "ref_swap") -> Array:
   """Sets a `Ref`'s value and returns the original value."""
-  ref, indexers = _get_indexer(ref_or_view, idx, _function_name)
+  ref, indexers = get_ref_and_indexers(ref_or_view, idx, _function_name)
   flat_indexers, tree = tree_util.tree_flatten(indexers)
   return swap_p.bind(ref, value, *flat_indexers, tree=tree)
 
-def ref_set(ref: AbstractRef, idx: Indexer | None, value: Array) -> None:
+def ref_set(ref_or_view: AbstractRef | RefView, idx: Indexer | None, value: Array) -> None:
   """Sets a `Ref`'s value, a.k.a. ref[idx] <- value."""
-  ref_swap(ref, idx, value, _function_name="ref_set")
+  ref_swap(ref_or_view, idx, value, _function_name="ref_set")
 
 # `addupdate_p` mutates a `Ref`, adding a value to its existing value.
 # Semantically,
@@ -151,7 +151,7 @@ addupdate_p.def_impl(_addupdate_impl)
 
 def ref_addupdate(ref_or_view: AbstractRef, idx: Indexer | None, x: Array) -> None:
   """Mutates a ref with an additive update i.e. `ref[idx] += x`."""
-  ref, indexers = _get_indexer(ref_or_view, idx, "ref_addupdate")
+  ref, indexers = get_ref_and_indexers(ref_or_view, idx, "ref_addupdate")
   flat_indexers, tree = tree_util.tree_flatten(indexers)
   return addupdate_p.bind(ref, x, *flat_indexers, tree=tree)
 
@@ -270,6 +270,8 @@ def pp_indexer(context: core.JaxprPpContext,indexer: indexing.NDIndexer
 def _pp_indexers(
     context: core.JaxprPpContext, indexers: tuple[indexing.NDIndexer, ...],
 ):
+  if not indexers:
+    return pp.text("[...]")
   return pp.concat(
       [pp_indexer(context, indexer) for indexer in indexers]
   )
