@@ -156,6 +156,7 @@ Remember to align the itemized text with the first line of an item within a list
     automatically. Currently, NCCL 2.16 or newer is required.
   * We now provide Linux aarch64 wheels, both with and without NVIDIA GPU
     support.
+  * {meth}`jax.Array.item` now supports optional index arguments.
 
 * Deprecations
   * A number of internal utilities and inadvertent exports in {mod}`jax.lax` have
