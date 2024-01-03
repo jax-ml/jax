@@ -2063,6 +2063,15 @@ def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
     return [atleast_3d(arr) for arr in arys]
 
 
+def _supports_buffer_protocol(obj):
+  try:
+    view = memoryview(obj)
+  except TypeError:
+    return False
+  else:
+    return True
+
+
 _ARRAY_DOC = """
 This function will create arrays on JAX's default device. For control of the
 device placement of data, see :func:`jax.device_put`. More information is
@@ -2141,14 +2150,9 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
       out = stack([asarray(elt, dtype=dtype) for elt in object])
     else:
       out = np.array([], dtype=dtype)  # type: ignore[arg-type]
+  elif _supports_buffer_protocol(object):
+    out = np.array(memoryview(object), copy=copy)
   else:
-    try:
-      view = memoryview(object)
-    except TypeError:
-      pass  # `object` does not support the buffer interface.
-    else:
-      return array(np.asarray(view), dtype, copy, ndmin=ndmin)
-
     raise TypeError(f"Unexpected input type for array: {type(object)}")
 
   out_array: Array = lax_internal._convert_element_type(
@@ -2182,11 +2186,21 @@ def astype(x: ArrayLike, dtype: DTypeLike | None, /, *, copy: bool = True) -> Ar
 
 
 @util._wraps(np.asarray, lax_description=_ARRAY_DOC)
-def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None) -> Array:
+def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
+            *, copy: bool | None = None) -> Array:
+  # For copy=False, the array API specifies that we raise a ValueError if the input supports
+  # the buffer protocol but a copy is required. Since array() supports the buffer protocol
+  # via numpy, this is only the case when the default device is not 'cpu'
+  if (copy is False and not isinstance(a, Array)
+      and jax.default_backend() != 'cpu'
+      and _supports_buffer_protocol(a)):
+    raise ValueError(f"jnp.asarray: cannot convert object of type {type(a)} to JAX Array "
+                     f"on backend={jax.default_backend()!r} with copy=False. "
+                      "Consider using copy=None or copy=True instead.")
   dtypes.check_user_dtype_supported(dtype, "asarray")
   if dtype is not None:
     dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)  # type: ignore[assignment]
-  return array(a, dtype=dtype, copy=False, order=order)  # type: ignore
+  return array(a, dtype=dtype, copy=bool(copy), order=order)  # type: ignore
 
 
 @util._wraps(np.copy, lax_description=_ARRAY_DOC)
