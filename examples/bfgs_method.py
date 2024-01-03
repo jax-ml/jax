@@ -26,6 +26,7 @@ def bfgs(fun: Callable,
             k += 1
         else:
             break
+    return x_0
 
 if __name__ =='__main__':
-    bfgs(g, ini, True)
+    print(bfgs(g, ini, True))

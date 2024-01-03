@@ -66,6 +66,7 @@ def newton(fun: Callable,
             k += 1
         else:
             break
+    return x_0
 
 if __name__ =='__main__':
-    newton(g, ini, True)
+    print(newton(g, ini, True))
