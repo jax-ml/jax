@@ -164,12 +164,13 @@ class PickleTest(jtu.JaxTestCase):
     self.assertEqual(pickle.loads(pickle.dumps(sharding)), sharding)
 
   def testPickleOpSharding(self):
-    sharding = pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked((2, 2))),
-                                 (pxla.ShardedAxis(0), pxla.ShardedAxis(1)))
-    op_sharding = sharding.sharding_proto().to_proto()
+    op = xc.OpSharding()
+    op.type = xc.OpSharding.Type.OTHER
+    op.tile_assignment_dimensions = [4, 2]
+    op.tile_assignment_devices = [0, 1, 2, 3, 4, 5, 6, 7]
     self.assertTrue(
-        xc.HloSharding.from_proto(pickle.loads(pickle.dumps(op_sharding))),
-        xc.HloSharding.from_proto(op_sharding))
+        xc.HloSharding.from_proto(pickle.loads(pickle.dumps(op))),
+        xc.HloSharding.from_proto(op))
 
   def test_pickle_single_device_sharding(self):
     s = jax.sharding.SingleDeviceSharding(jax.devices()[0])

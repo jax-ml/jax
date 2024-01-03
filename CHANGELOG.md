@@ -17,7 +17,7 @@ Remember to align the itemized text with the first line of an item within a list
     devices to create `Sharding`s during lowering.
     This is a temporary state until we can create `Sharding`s without physical
     devices.
-* Deprecations
+* Deprecations & Removals
   * A number of previously deprecated functions have been removed, following a
     standard 3+ month deprecation cycle (see {ref}`api-compatibility`).
     This includes:
@@ -34,6 +34,10 @@ Remember to align the itemized text with the first line of an item within a list
     * from {mod}`jax.numpy`: `NINF`, `NZERO`, `PZERO`, `row_stack`, `issubsctype`,
       `trapz`, and `in1d`.
     * from {mod}`jax.scipy.linalg`: `tril` and `triu`.
+  * The previously-deprecated method `PRNGKeyArray.unsafe_raw_array` has been
+    removed. Use {func}`jax.random.key_data` instead.
+  * `bool(empty_array)` now raises an error rather than returning `False`. This
+    previously raised a deprecation warning, and follows a similar change in NumPy.
 
 ## jaxlib 0.4.24
 

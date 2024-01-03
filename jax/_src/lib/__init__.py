@@ -20,6 +20,7 @@ from __future__ import annotations
 import gc
 import pathlib
 import re
+from typing import Any
 
 try:
   import jaxlib as jaxlib
@@ -119,6 +120,12 @@ import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error
 import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error
 
 import jaxlib.tpu_mosaic as tpu_mosaic # pytype: disable=import-error
+
+triton_dialect: Any
+try:
+  import jaxlib.triton.dialect as triton_dialect  # pytype: disable=import-error
+except ImportError:
+  triton_dialect = None
 
 # Version number for MLIR:Python APIs, provided by jaxlib.
 mlir_api_version = xla_client.mlir_api_version

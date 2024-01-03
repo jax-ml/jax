@@ -29,10 +29,10 @@ from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
-from jax._src.state import primitives as state_primitives
+from jax._src.state import indexing
+from jax._src.state import primitives as sp
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.pallas import indexing
 from jax._src.pallas.mosaic import core as tpu_core
 import jax.numpy as jnp
 
@@ -203,9 +203,9 @@ def _semaphore_wait_abstract_eval(sem_aval: tpu_core.AbstractSemaphore, value):
 @dataclasses.dataclass
 class AsyncCopyDescriptor:
   src_ref: Any
-  src_indexer: indexing.NDIndexer
+  src_indexers: tuple[indexing.NDIndexer, ...]
   dst_ref: Any
-  dst_indexer: indexing.NDIndexer
+  dst_indexers: tuple[indexing.NDIndexer, ...]
   dst_sem: int | jax.Array
   src_sem: int | jax.Array | None
   device_id: int | jax.Array | None
@@ -223,9 +223,9 @@ class AsyncCopyDescriptor:
   def start(self):
     flat_args, tree = tree_util.tree_flatten((
         self.src_ref,
-        self.src_indexer,
+        self.src_indexers,
         self.dst_ref,
-        self.dst_indexer,
+        self.dst_indexers,
         self.dst_sem,
         self.src_sem,
         self.device_id,
@@ -239,7 +239,7 @@ class AsyncCopyDescriptor:
 
   def wait_recv(self):
     wait_args, tree = tree_util.tree_flatten(
-        (self.dst_sem, self.dst_ref, self.dst_indexer)
+        (self.dst_sem, self.dst_ref, self.dst_indexers)
     )
     dma_wait_p.bind(
         *wait_args, tree=tree, device_id_type=self.device_id_type
@@ -249,7 +249,7 @@ class AsyncCopyDescriptor:
     if not self.is_remote:
       raise ValueError("Cannot `wait_send` on a local copy.")
     wait_args, tree = tree_util.tree_flatten(
-        (self.src_sem, self.src_ref, self.src_indexer)
+        (self.src_sem, self.src_ref, self.src_indexers)
     )
     dma_wait_p.bind(
         *wait_args, tree=tree, device_id_type=self.device_id_type
@@ -264,44 +264,12 @@ def _dma_start_abstract_eval(*args, tree, device_id_type):
   del args, tree, device_id_type
   return []
 
-def _pp_slice(slc: indexing.Slice, dim: int, context: jax_core.JaxprPpContext
-              ) -> str:
-  start, size = slc.start, slc.size
-  if isinstance(start, jax_core.Var):
-    start_str = jax_core.pp_var(start, context)
-    end_str = f'{start_str}+{size}'
-  else:
-    start_str = '' if start == 0 else str(start)
-    end = start + size
-    end_str = '' if end == dim else str(end)
-  return f'{start_str}:{end_str}'
-
-def _pp_indexer(indexer: indexing.NDIndexer,
-                context: jax_core.JaxprPpContext) -> pp.Doc:
-  indices = []
-  for idx, dim in zip(indexer.indices, indexer.shape):
-    if isinstance(idx, indexing.Slice):
-      indices.append(_pp_slice(idx, dim, context))
-    else:
-      indices.append(jax_core.pp_var(idx, context))  # type: ignore
-  return pp.text(','.join(indices))
-
-def _pp_ref(ref, indexer, context):
-  return state_primitives.pp_ref(
-      pp.concat([
-          pp.text(jax_core.pp_var(ref, context)),
-          pp.text("["),
-          _pp_indexer(indexer, context),
-          pp.text("]"),
-      ])
-  )
-
 def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
                       context: jax_core.JaxprPpContext,
                       settings: jax_core.JaxprPpSettings):
   invars = eqn.invars
   tree = eqn.params["tree"]
-  src_ref, src_indexer, dst_ref, dst_indexer, dst_sem, src_sem, device_id = (
+  src_ref, src_indexers, dst_ref, dst_indexers, dst_sem, src_sem, device_id = (
       tree_util.tree_unflatten(tree, invars)
   )
   if src_sem or device_id:
@@ -309,43 +277,14 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
   return pp.concat([
       pp.text('dma_start'),
       pp.text(' '),
-      _pp_ref(src_ref, src_indexer, context),
+      sp.pp_ref_indexers(context, src_ref, src_indexers),
       pp.text(' -> '),
-      _pp_ref(dst_ref, dst_indexer, context),
+      sp.pp_ref_indexers(context, dst_ref, dst_indexers),
       pp.text(' '),
       pp.text(jax_core.pp_var(dst_sem, context)),
   ])
 
 jax_core.pp_eqn_rules[dma_start_p] = _dma_start_pp_eqn
-
-
-def _make_copy_descriptor(
-    src_ref,
-    src_indices,
-    dst_ref,
-    dst_indices,
-    dst_sem,
-    src_sem,
-    device_id,
-    device_id_type,
-) -> AsyncCopyDescriptor:
-  src_indexer = indexing.NDIndexer.from_indices_shape(
-      src_indices, src_ref.shape
-  )
-  dst_indexer = indexing.NDIndexer.from_indices_shape(
-      dst_indices, dst_ref.shape
-  )
-  return AsyncCopyDescriptor(
-      src_ref,
-      src_indexer,
-      dst_ref,
-      dst_indexer,
-      dst_sem,
-      src_sem,
-      device_id,
-      device_id_type=device_id_type,
-  )
-
 
 dma_wait_p = jax_core.Primitive('dma_wait')
 dma_wait_p.multiple_results = True
@@ -358,30 +297,31 @@ def _dma_wait_abstract_eval(*args, tree, device_id_type):
 def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
                      context: jax_core.JaxprPpContext,
                      settings: jax_core.JaxprPpSettings):
+  del settings
   invars = eqn.invars
   tree = eqn.params["tree"]
-  sem, ref, indexer = tree_util.tree_unflatten(tree, invars)
+  sem, ref, indexers = tree_util.tree_unflatten(tree, invars)
   return pp.concat([
       pp.text('dma_wait'),
       pp.text(' '),
-      _pp_ref(ref, indexer, context),
+      sp.pp_ref_indexers(context, ref, indexers),
       pp.text(' '),
       pp.text(jax_core.pp_var(sem, context)),
   ])
 
 jax_core.pp_eqn_rules[dma_wait_p] = _dma_wait_pp_eqn
 
-def _get_ref_and_indexer(ref):
+def _get_ref_and_indexers(ref):
   if isinstance(ref, state.RefView):
-    return ref.ref, ref.indexer
-  return ref, (slice(None),) * len(ref.shape)
+    return ref.ref, ref.indexers
+  return ref, ()
 
 def make_async_copy(src_ref, dst_ref, sem):
   """Issues a DMA copying from src_ref to dst_ref."""
-  src_ref, src_indices = _get_ref_and_indexer(src_ref)
-  dst_ref, dst_indices = _get_ref_and_indexer(dst_ref)
-  return _make_copy_descriptor(src_ref, src_indices, dst_ref, dst_indices, sem,
-                               None, None, DeviceIdType.MESH)
+  src_ref, src_indexers = _get_ref_and_indexers(src_ref)
+  dst_ref, dst_indexers = _get_ref_and_indexers(dst_ref)
+  return AsyncCopyDescriptor(src_ref, src_indexers, dst_ref, dst_indexers,
+                             sem, None, None, DeviceIdType.MESH)
 
 def async_copy(src_ref, dst_ref, sem):
   """Issues a DMA copying from src_ref to dst_ref."""
@@ -391,10 +331,10 @@ def async_copy(src_ref, dst_ref, sem):
 
 def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
                            device_id_type: DeviceIdType = DeviceIdType.MESH):
-  src_ref, src_indices = _get_ref_and_indexer(src_ref)
-  dst_ref, dst_indices = _get_ref_and_indexer(dst_ref)
-  return _make_copy_descriptor(
-      src_ref, src_indices, dst_ref, dst_indices, recv_sem,
+  src_ref, src_indexers = _get_ref_and_indexers(src_ref)
+  dst_ref, dst_indexers = _get_ref_and_indexers(dst_ref)
+  return AsyncCopyDescriptor(
+      src_ref, src_indexers, dst_ref, dst_indexers, recv_sem,
       send_sem, device_id, device_id_type=device_id_type)
 
 def async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,

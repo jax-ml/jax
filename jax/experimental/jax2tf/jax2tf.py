@@ -1472,6 +1472,7 @@ tf_not_yet_impl = [
     "for",
     "inspect_sharding",
     "io_callback",
+    "broadcast_to",
     "shard_map",
     "global_array_to_host_local_array",
     "host_local_array_to_global_array",

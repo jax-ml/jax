@@ -1471,7 +1471,7 @@ class PallasPrimitivesTest(PallasTest):
   @parameterized.parameters(*[
     (lambda: (pl.dslice(0, 4), slice(None), slice(None)), "<- a[:,:,:]"),
     (lambda: (pl.dslice(0, 3), slice(None), slice(None)), "<- a[:3,:,:]"),
-    (lambda: (pl.dslice(1, 3), slice(None), pl.dslice(0, 4)), "<- a[1:4,:,:4]"),
+    (lambda: (pl.dslice(1, 3), slice(None), pl.dslice(0, 4)), "<- a[1:,:,:4]"),
     (lambda: (jnp.arange(5), slice(None), pl.dslice(0, 4)), "<- a[b,:,:4]"),
     (lambda: (jnp.arange(5)[:, None], jnp.arange(3)[None], pl.ds(4)), "<- a[f,g,:4]"),
   ])
@@ -1486,7 +1486,7 @@ class PallasPrimitivesTest(PallasTest):
   @parameterized.parameters(*[
     (lambda: (pl.dslice(0, 4), slice(None), slice(None)), "a[:,:,:] <-"),
     (lambda: (pl.dslice(0, 3), slice(None), slice(None)), "a[:3,:,:] <-"),
-    (lambda: (pl.dslice(1, 3), slice(None), pl.dslice(0, 4)), "a[1:4,:,:4] <-"),
+    (lambda: (pl.dslice(1, 3), slice(None), pl.dslice(0, 4)), "a[1:,:,:4] <-"),
     (lambda: (jnp.arange(5), slice(None), pl.dslice(0, 4)), "a[b,:,:4] <-"),
     (lambda: (jnp.arange(5)[:, None], jnp.arange(3)[None], pl.dslice(4)), "a[m,n,:4] <-"),
   ])
@@ -1504,7 +1504,7 @@ class PallasPrimitivesTest(PallasTest):
     (lambda: (pl.dslice(0, 3), slice(None), slice(None)),
      "c:i32[3,3,2], a[:3,:,:] <-"),
     (lambda: (pl.dslice(1, 3), slice(None), pl.dslice(0, 4)),
-     "c:i32[3,3,4], a[1:4,:,:4] <-"),
+     "c:i32[3,3,4], a[1:,:,:4] <-"),
     (lambda: (jnp.arange(5), slice(None), pl.dslice(0, 4)),
      "e:i32[5,3,4], a[b,:,:4] <-"),
     (lambda: (jnp.arange(5)[:, None], jnp.arange(3)[None], pl.dslice(4)),

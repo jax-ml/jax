@@ -738,15 +738,17 @@ pytype_strict_library(
     name = "state_types",
     srcs = [
         "_src/state/__init__.py",
+        "_src/state/indexing.py",
         "_src/state/types.py",
     ],
     deps = [
         ":core",
         ":effects",
         ":pretty_printer",
+        ":tree_util",
         ":typing",
         ":util",
-    ],
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
