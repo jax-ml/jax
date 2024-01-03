@@ -3623,6 +3623,34 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker)
 
   @jtu.sample_product(
+    shape=nonempty_array_shapes,
+    dtype=all_dtypes,
+    num_args=[0, 1, "all"],
+    use_tuple=[True, False]
+  )
+  def testItem(self, shape, dtype, num_args, use_tuple):
+    rng = jtu.rand_default(self.rng())
+    size = math.prod(shape)
+
+    if num_args == 0:
+      args = ()
+    elif num_args == 1:
+      args = (self.rng().randint(0, size),)
+    else:
+      args = tuple(self.rng().randint(0, s) for s in shape)
+    args = (args,) if use_tuple else args
+
+    np_op = lambda x: np.asarray(x).item(*args)
+    jnp_op = lambda x: jnp.asarray(x).item(*args)
+    args_maker = lambda: [rng(shape, dtype)]
+
+    if size != 1 and num_args == 0:
+      with self.assertRaises(ValueError):
+        jnp_op(*args_maker())
+    else:
+      self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+
+  @jtu.sample_product(
     # Final dimension must be a multiple of 16 to ensure compatibilty of all dtype pairs.
     shape=[(0,), (32,), (2, 16)],
     a_dtype=all_dtypes,

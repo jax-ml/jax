@@ -71,19 +71,12 @@ def _nbytes(arr: ArrayLike) -> int:
   return np.size(arr) * dtypes.dtype(arr, canonicalize=True).itemsize
 
 
-def _item(a: Array) -> Any:
+def _item(a: Array, *args) -> bool | int | float | complex:
   """Copy an element of an array to a standard Python scalar and return it."""
-  if dtypes.issubdtype(a.dtype, np.complexfloating):
-    return complex(a)
-  elif dtypes.issubdtype(a.dtype, np.floating):
-    return float(a)
-  elif dtypes.issubdtype(a.dtype, np.integer):
-    return int(a)
-  elif dtypes.issubdtype(a.dtype, np.bool_):
-    return bool(a)
-  else:
-    raise TypeError(a.dtype)
-
+  arr = core.concrete_or_error(np.asarray, a, context="This occurred in the item() method of jax.Array")
+  if dtypes.issubdtype(a.dtype, dtypes.extended):
+    raise TypeError(f"No Python scalar type for {a.dtype=}")
+  return arr.item(*args)
 
 def _itemsize(arr: ArrayLike) -> int:
   """Length of one array element in bytes."""
