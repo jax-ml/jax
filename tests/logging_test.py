@@ -15,6 +15,7 @@
 import contextlib
 import io
 import logging
+import os
 import subprocess
 import sys
 import textwrap
@@ -69,8 +70,10 @@ class LoggingTest(jtu.JaxTestCase):
     python = sys.executable
     assert "python" in python
     # Make sure C++ logging is at default level for the test process.
+    new_env = dict(os.environ)
+    new_env["TF_CPP_MIN_LOG_LEVEL"] = "1"
     proc = subprocess.run([python, "-c", program], capture_output=True,
-                          env={"TF_CPP_MIN_LOG_LEVEL": "1"})
+                          env=new_env)
 
     lines = proc.stdout.split(b"\n")
     lines.extend(proc.stderr.split(b"\n"))
