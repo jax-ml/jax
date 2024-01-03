@@ -1244,7 +1244,8 @@ def _make_op_metadata(primitive: core.Primitive,
   return xla_client.OpMetadata(
         op_type=primitive.name,
         op_name=eqn_str,
-        source_file=mlir.get_canonical_source_file(frame) if frame else None,
+        source_file=mlir.get_canonical_source_file(
+            frame.file_name if frame else "", mlir.TracebackCaches()),
         source_line=frame.start_line if frame else None)
 
 

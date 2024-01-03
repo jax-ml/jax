@@ -86,6 +86,8 @@ class LoweringContext:
   name_stack: source_info_util.NameStack
   mesh_context: MeshContext | None
   replace = dataclasses.replace
+  traceback_caches: mlir.TracebackCaches
+
 
 
 @dataclasses.dataclass
@@ -423,6 +425,7 @@ def lower_jaxpr_to_transform_func(
         arg_block_shapes,
         source_info_util.NameStack(),
         mesh_context=mesh_context,
+        traceback_caches=mlir.TracebackCaches(),
     )
     return jaxpr_subcomp(lowering_context, jaxpr, *jaxpr_indices,
                          *scalar_prefetch)
@@ -478,6 +481,7 @@ def lower_jaxpr_to_func(
         arg_block_shapes,
         source_info_util.NameStack(),
         mesh_context=mesh_context,
+        traceback_caches=mlir.TracebackCaches(),
     )
     return jaxpr_subcomp(
         lowering_context, jaxpr, *scalar_prefetch, *operands_and_scratch
@@ -546,7 +550,7 @@ def jaxpr_subcomp(
         name_stack=ctx.name_stack + eqn.source_info.name_stack
     )
     loc = mlir._source_info_to_location(
-        eqn.primitive, eqn.params, source_info, ctx.name_stack
+        ctx, eqn.primitive, eqn.params, source_info
     )
     with source_info_util.user_context(eqn.source_info.traceback), loc:
       if eqn.primitive in lowering_rules:
