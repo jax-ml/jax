@@ -990,7 +990,17 @@ include_full_tracebacks_in_locations = define_bool_state(
     name='jax_include_full_tracebacks_in_locations',
     default=True,
     help=(
-        'Include full Python tracebacks in MLIR locations in IR emitted by JAX.'
+        'Include Python tracebacks in MLIR locations in IR emitted by JAX.'
+    ),
+)
+
+traceback_in_locations_limit = define_int_state(
+    name='jax_traceback_in_locations_limit',
+    default=10,
+    help=(
+        'Limit the number of frames at the Python traceback frames included in '
+        'MLIR locations. If set to the negative value, traceback will not be '
+        'limited.'
     ),
 )
 

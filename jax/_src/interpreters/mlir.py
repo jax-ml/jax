@@ -362,6 +362,10 @@ def _raw_frame_to_frame(ctx: ModuleContext,
 def _traceback_to_location(ctx: ModuleContext, tb: xc.Traceback) -> ir.Location:
   """Converts a full traceback to a callsite() MLIR location."""
   frame_locs = []
+  frames_limit = config.traceback_in_locations_limit.value
+  if frames_limit == 0:
+    return ir.Location.unknown()
+
   for code, lasti in zip(*tb.raw_frames()):
     if not _is_user_file(ctx, code.co_filename):
       continue
@@ -374,6 +378,8 @@ def _traceback_to_location(ctx: ModuleContext, tb: xc.Traceback) -> ir.Location:
     )
     name_loc = ir.Location.name(frame.function_name, childLoc=file_loc)
     frame_locs.append(name_loc)
+    if frames_limit > 0 and len(frame_locs) >= frames_limit:
+      break
 
   if len(frame_locs) == 0:
     return ir.Location.unknown()
