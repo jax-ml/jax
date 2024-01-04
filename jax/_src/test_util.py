@@ -952,6 +952,7 @@ class JaxTestCase(parameterized.TestCase):
       stack.enter_context(config.enable_compilation_cache(True))
       stack.enter_context(config.raise_persistent_cache_errors(True))
       stack.enter_context(config.persistent_cache_min_compile_time_secs(0))
+      stack.enter_context(config.persistent_cache_min_entry_size_bytes(0))
 
       tmp_dir = stack.enter_context(tempfile.TemporaryDirectory())
       compilation_cache.initialize_cache(tmp_dir)

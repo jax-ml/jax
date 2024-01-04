@@ -62,6 +62,7 @@ def increment_event_count(event):
     jax_enable_compilation_cache=True,
     jax_raise_persistent_cache_errors=True,
     jax_persistent_cache_min_compile_time_secs=0,
+    jax_persistent_cache_min_entry_size_bytes=0,
 )
 class CompilationCacheTest(jtu.JaxTestCase):
 
@@ -280,10 +281,23 @@ class CompilationCacheTest(jtu.JaxTestCase):
             str(w[0].message),
         )
 
+  def test_min_entry_size(self):
+    with (
+      tempfile.TemporaryDirectory() as tmpdir,
+      config.persistent_cache_min_compile_time_secs(0),
+      config.persistent_cache_min_entry_size_bytes(1048576),  # 1MiB
+    ):
+      cc.initialize_cache(tmpdir)
+
+      jit(lambda x: x + 1)(1)
+      files_in_cache = len(os.listdir(tmpdir))
+      self.assertEqual(files_in_cache, 0)
+
   def test_min_compile_time(self):
     with (
       tempfile.TemporaryDirectory() as tmpdir,
       config.persistent_cache_min_compile_time_secs(2),
+      config.persistent_cache_min_entry_size_bytes(0),
     ):
       cc.initialize_cache(tmpdir)
 
@@ -303,6 +317,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
     with (
       tempfile.TemporaryDirectory() as tmpdir,
       config.persistent_cache_min_compile_time_secs(2),
+      config.persistent_cache_min_entry_size_bytes(0),
     ):
       cc.initialize_cache(tmpdir)
 
@@ -388,6 +403,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
     with (
       tempfile.TemporaryDirectory() as tmpdir,
       config.persistent_cache_min_compile_time_secs(2),
+      config.persistent_cache_min_entry_size_bytes(0),
     ):
       cc.initialize_cache(tmpdir)
 
@@ -405,6 +421,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
 @jtu.with_config(
     jax_enable_compilation_cache=False,
     jax_persistent_cache_min_compile_time_secs=0,
+    jax_persistent_cache_min_entry_size_bytes=0,
 )
 class CompilationCacheDisabledTest(jtu.JaxTestCase):
 

@@ -964,6 +964,17 @@ persistent_cache_min_compile_time_secs = define_float_state(
           'persistent compilation cache. This threshold can be raised to '
           'decrease the number of entries written to the cache.'))
 
+persistent_cache_min_entry_size_bytes = define_int_state(
+    name='jax_persistent_cache_min_entry_size_bytes',
+    default=0,
+    help=('The minimum size (in bytes) of an entry that will be cached in the '
+          'persistent compilation cache: '
+          '* -1: disable the size restriction and prevent overrides. '
+          '* Leave at default (0) to allow for overrides. The override will '
+          '  typically ensure that the minimum size is optimal for the '
+          '  filesystem being used for the cache. '
+          '* > 0: the actual minimum size desired; no overrides.'))
+
 compilation_cache_include_metadata_in_key = define_bool_state(
     name='jax_compilation_cache_include_metadata_in_key',
     default=False,

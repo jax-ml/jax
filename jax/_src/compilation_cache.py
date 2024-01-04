@@ -28,7 +28,7 @@ except ImportError:
 
 from jax._src import cache_key
 from jax._src.compilation_cache_interface import CacheInterface
-from jax._src.config import config
+from jax._src import config
 from jax._src.gfile_cache import GFileCache
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
@@ -44,7 +44,6 @@ _cache_used: bool = False
 
 # Mutex to protect _cache_initialized and _cache_used.
 _cache_initialized_mutex = threading.Lock()
-
 
 
 def set_once_cache_used(f) -> None:
@@ -71,11 +70,16 @@ def initialize_cache(path) -> None:
   Set the path. To take effect, should be called prior to any calls to
   get_executable_and_time() and put_executable_and_time().
   """
-  config.update("jax_compilation_cache_dir", path)
+  config.config.update("jax_compilation_cache_dir", path)
+
+
+def default_min_cache_entry_size() -> int:
+  """Returns the minimum size below which the entry should not be cached."""
+  return 0
 
 
 def _is_cache_enabled() -> bool:
-  return config.jax_enable_compilation_cache
+  return config.enable_compilation_cache.value
 
 
 def _initialize_cache() -> None:
@@ -92,9 +96,15 @@ def _initialize_cache() -> None:
       logger.debug("_initialize_cache: cache is disabled!")
       return
 
+    # Set the minimum cache size entry only if the flag
+    # --jax_persistent_cache_min_entry_size_bytes has not been set.
+    if config.persistent_cache_min_entry_size_bytes.value == 0:
+      config.config.update("jax_persistent_cache_min_entry_size_bytes",
+                           default_min_cache_entry_size())
+
     global _cache
     assert _cache is None, "The cache has already been initialized!"
-    path: str = config.jax_compilation_cache_dir
+    path: str = config.compilation_cache_dir.value
     # If the path is not set, the cache will not be enabled.
     if not path:
       return
@@ -164,7 +174,19 @@ def put_executable_and_time(
     executable_and_time = compressor.compress(executable_and_time)
   else:
     executable_and_time = zlib.compress(executable_and_time)
-  cache.put(cache_key, executable_and_time)
+
+  min_entry_size = config.persistent_cache_min_entry_size_bytes.value
+  entry_size = len(executable_and_time)
+  if entry_size < min_entry_size:
+    logger.info(
+        "Not writing cache entry with key %s since its size (%d bytes) "
+        "is less than threshold (%d bytes)",
+        cache_key,
+        entry_size,
+        min_entry_size,
+    )
+  else:
+    cache.put(cache_key, executable_and_time)
 
 
 def get_cache_key(module: ir.Module, devices: np.ndarray, compile_options,
