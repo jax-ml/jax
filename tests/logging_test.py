@@ -15,10 +15,11 @@
 import contextlib
 import io
 import logging
+import platform
 import subprocess
 import sys
 import textwrap
-
+import unittest
 
 import jax
 from jax import config
@@ -50,6 +51,8 @@ def capture_jax_logs():
 
 class LoggingTest(jtu.JaxTestCase):
 
+  @unittest.skipIf(platform.system() == "Windows",
+                   "Subprocess test doesn't work on Windows")
   def test_no_log_spam(self):
     if jtu.is_cloud_tpu() and xla_bridge._backends:
       raise self.skipTest(

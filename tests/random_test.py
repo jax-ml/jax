@@ -1399,7 +1399,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
       jnp.negative(key)
     with self.assertRaisesRegex(TypeError, "neg does not accept dtype key<fry>"):
       -key
-    with self.assertRaisesRegex(ValueError, "Cannot convert_element_type from key<fry> to int64"):
+    with self.assertRaisesRegex(ValueError, "Cannot convert_element_type from key<fry> to int(32|64)"):
       lax.convert_element_type(key, int)
     with self.assertRaisesRegex(ValueError, "Cannot convert_element_type from int32 to key<fry>"):
       lax.convert_element_type(np.int32(0), key.dtype)
