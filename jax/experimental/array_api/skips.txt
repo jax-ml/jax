@@ -13,8 +13,5 @@ array_api_tests/test_creation_functions.py::test_asarray_arrays
 array_api_tests/test_linalg.py::test_matrix_power
 array_api_tests/test_linalg.py::test_solve
 
-# JAX's NaN sorting doesn't match specification
-array_api_tests/test_sorting_functions.py::test_argsort
-
 # fft test suite is buggy as of 83f0bcdc
 array_api_tests/test_fft.py

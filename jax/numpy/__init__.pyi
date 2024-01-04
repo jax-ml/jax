@@ -74,9 +74,12 @@ def argmin(
 def argpartition(a: ArrayLike, kth: int, axis: int = ...) -> Array: ...
 def argsort(
     a: ArrayLike,
-    axis: Optional[int] = -1,
-    kind: str = "stable",
+    axis: Optional[int] = ...,
+    kind: None = ...,
     order: None = ...,
+    *,
+    stable: bool = ...,
+    descending: bool = ...,
 ) -> Array: ...
 def argwhere(
     a: ArrayLike,
@@ -701,8 +704,11 @@ sometrue = any
 def sort(
     a: ArrayLike,
     axis: Optional[int] = ...,
-    kind: str = ...,
+    kind: None = ...,
     order: None = ...,
+    *,
+    stable: bool = ...,
+    descending: bool = ...,
 ) -> Array: ...
 def sort_complex(a: ArrayLike) -> Array: ...
 def split(
