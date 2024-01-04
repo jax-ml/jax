@@ -79,6 +79,7 @@ inexact_dtypes = float_dtypes + complex_dtypes
 number_dtypes = float_dtypes + complex_dtypes + int_dtypes + unsigned_dtypes
 all_dtypes = number_dtypes + bool_dtypes
 
+NO_VALUE = object()
 
 python_scalar_dtypes = [jnp.bool_, jnp.int_, jnp.float_, jnp.complex_]
 
@@ -3771,20 +3772,40 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
       for shape in nonzerodim_shapes
-      for axis in (None, *range(len(shape)))
+      for axis in (NO_VALUE, None, *range(-len(shape), len(shape)))
     ],
+    stable=[True, False],
     dtype=all_dtypes,
   )
-  def testSort(self, dtype, shape, axis):
-    rng = jtu.rand_some_equal(self.rng())
+  def testSort(self, dtype, shape, axis, stable):
+    rng = jtu.rand_some_equal(self.rng()) if stable else jtu.rand_some_inf_and_nan(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    jnp_fun = jnp.sort
-    np_fun = np.sort
-    if axis is not None:
-      jnp_fun = partial(jnp_fun, axis=axis)
-      np_fun = partial(np_fun, axis=axis)
+    kwds = {} if axis is NO_VALUE else {'axis': axis}
+
+    def np_fun(arr):
+      # Note: numpy sort fails on NaN and Inf values with bfloat16
+      dtype = arr.dtype
+      if arr.dtype == jnp.bfloat16:
+        arr = arr.astype('float32')
+      # TODO(jakevdp): switch to stable=stable when supported by numpy.
+      result = np.sort(arr, kind='stable' if stable else None, **kwds)
+      with jtu.ignore_warning(category=RuntimeWarning, message='invalid value'):
+        return result.astype(dtype)
+    jnp_fun = partial(jnp.sort, stable=stable, **kwds)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  def testSortStableDescending(self):
+    # TODO(jakevdp): test directly against np.sort when descending is supported.
+    x = jnp.array([0, 1, jnp.nan, 0, 2, jnp.nan, -jnp.inf, jnp.inf])
+    x_sorted = jnp.array([-jnp.inf, 0, 0, 1, 2, jnp.inf, jnp.nan, jnp.nan])
+    argsorted_stable = jnp.array([6, 0, 3, 1, 4, 7, 2, 5])
+    argsorted_rev_stable = jnp.array([2, 5, 7, 4, 1, 0, 3, 6])
+
+    self.assertArraysEqual(jnp.sort(x), x_sorted)
+    self.assertArraysEqual(jnp.sort(x, descending=True), lax.rev(x_sorted, [0]))
+    self.assertArraysEqual(jnp.argsort(x), argsorted_stable)
+    self.assertArraysEqual(jnp.argsort(x, descending=True), argsorted_rev_stable)
 
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
@@ -3819,20 +3840,47 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
       for shape in nonzerodim_shapes
-      for axis in (None, *range(len(shape)))
+      for axis in (NO_VALUE, None, *range(-len(shape), len(shape)))
     ],
     dtype=all_dtypes,
   )
   def testArgsort(self, dtype, shape, axis):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    jnp_fun = jnp.argsort
-    np_fun = jtu.with_jax_dtype_defaults(np.argsort)
-    if axis is not None:
-      jnp_fun = partial(jnp_fun, axis=axis)
-      np_fun = partial(np_fun, axis=axis)
+    kwds = {} if axis is NO_VALUE else {'axis': axis}
+
+    @jtu.with_jax_dtype_defaults
+    def np_fun(arr):
+      # Note: numpy sort fails on NaN and Inf values with bfloat16
+      if arr.dtype == jnp.bfloat16:
+        arr = arr.astype('float32')
+      # TODO(jakevdp): switch to stable=True when supported by numpy.
+      return np.argsort(arr, kind='stable', **kwds)
+    jnp_fun = partial(jnp.argsort, stable=True, **kwds)
+
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+      for shape in nonempty_nonscalar_array_shapes
+      for axis in (NO_VALUE, None, *range(-len(shape), len(shape)))
+    ],
+    descending=[True, False],
+    dtype=all_dtypes,
+  )
+  def testArgsortUnstable(self, dtype, shape, axis, descending):
+    # We cannot directly compare unstable argsorts, so instead check that indexed values match.
+    rng = jtu.rand_some_equal(self.rng())
+    x = rng(shape, dtype)
+    kwds = {} if axis is NO_VALUE else {'axis': axis}
+    expected = jnp.sort(x, descending=descending, stable=False, **kwds)
+    indices = jnp.argsort(x, descending=descending, stable=False, **kwds)
+    if axis is None:
+      actual = jnp.ravel(x)[indices]
+    else:
+      actual = jnp.take_along_axis(x, indices, axis=-1 if axis is NO_VALUE else axis)
+    self.assertArraysEqual(actual, expected)
 
   @jtu.sample_product(
     [{'shape': shape, 'axis': axis, 'kth': kth}
