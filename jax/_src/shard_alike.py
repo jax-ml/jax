@@ -67,18 +67,18 @@ ad.deflinear(shard_alike_p, shard_alike_transpose)
 
 def _shard_alike_batcher(batched_args, batch_dims):
   x, y = batched_args
-  bdx, bdy = batch_dims
-  if bdx == bdy:
-    return shard_alike(x, y), (bdx, bdy)
-  elif bdx is batching.not_mapped:
-    x = batching.broadcast(x, y.shape[bdy], bdy)
-    return shard_alike(x, y), (bdy, bdy)
-  elif bdy is batching.not_mapped:
-    y = batching.broadcast(y, x.shape[bdx], bdx)
-    return shard_alike(x, y), (bdx, bdx)
+  xd, yd = batch_dims
+  if xd == yd:
+    return shard_alike(x, y), (xd, yd)
+  elif xd is batching.not_mapped:
+    x = batching.broadcast(x, y.shape[yd], yd)
+    return shard_alike(x, y), (yd, yd)
+  elif yd is batching.not_mapped:
+    y = batching.broadcast(y, x.shape[xd], xd)
+    return shard_alike(x, y), (xd, xd)
   else:
-    y = batching.moveaxis(y, bdy, bdx)
-    return shard_alike(x, y), (bdx, bdx)
+    y = batching.moveaxis(y, yd, xd)
+    return shard_alike(x, y), (xd, xd)
 batching.primitive_batchers[shard_alike_p] = _shard_alike_batcher
 
 
