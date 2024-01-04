@@ -26,6 +26,9 @@ _version = "0.4.24"
 # releases. Do not modify this manually, or jax/jaxlib build will fail.
 _release_version: str | None = None
 
+# The following line is overwritten by build scripts in distributions &
+# releases. Do not modify this manually, or jax/jaxlib build will fail.
+_git_hash: str | None = None
 
 def _get_version_string() -> str:
   # The build/source distribution for jax & jaxlib overwrites _release_version.
@@ -94,6 +97,14 @@ def _write_version(fname: str) -> None:
   if contents.count(old_version_string) != 2:
     raise RuntimeError(f"Build: could not find {old_version_string!r} in {fname}")
   contents = contents.replace(old_version_string, new_version_string)
+
+  githash = os.environ.get("JAX_GIT_HASH")
+  if githash:
+    old_githash_string = "_git_hash: str | None = None"
+    new_githash_string = f"_git_hash: str = {githash!r}"
+    if contents.count(old_githash_string) != 2:
+      raise RuntimeError(f"Build: could not find {old_githash_string!r} in {fname}")
+    contents = contents.replace(old_githash_string, new_githash_string)
   fhandle.write_text(contents)
 
 

@@ -93,6 +93,15 @@ def check_numpy_version(python_bin_path):
     sys.exit(-1)
   return version
 
+def get_githash():
+  try:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        encoding='utf-8',
+        capture_output=True).stdout.strip()
+  except OSError:
+    return ""
+
 # Bazel
 
 BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/6.1.2/"
@@ -583,6 +592,7 @@ def main():
       ["run", "--verbose_failures=true"] +
       ["//jaxlib/tools:build_wheel", "--",
       f"--output_path={output_path}",
+      f"--jaxlib_git_hash={get_githash()}",
       f"--cpu={wheel_cpu}"])
     if args.build_gpu_plugin:
       command.append("--include_gpu_plugin_extension")
@@ -596,6 +606,7 @@ def main():
       ["run", "--verbose_failures=true"] +
       ["//jaxlib/tools:build_cuda_kernels_wheel", "--",
       f"--output_path={output_path}",
+      f"--jaxlib_git_hash={get_githash()}",
       f"--cpu={wheel_cpu}",
       f"--cuda_version={args.gpu_plugin_cuda_version}"])
     if args.editable:
@@ -608,6 +619,7 @@ def main():
       ["run", "--verbose_failures=true"] +
       ["//jaxlib/tools:build_gpu_plugin_wheel", "--",
       f"--output_path={output_path}",
+      f"--jaxlib_git_hash={get_githash()}",
       f"--cpu={wheel_cpu}",
       f"--cuda_version={args.gpu_plugin_cuda_version}"])
     if args.editable:

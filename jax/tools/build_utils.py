@@ -63,10 +63,15 @@ def platform_tag(cpu: str) -> str:
   return f"{platform_name}_{cpu_name}"
 
 
-def build_wheel(sources_path: str, output_path: str, package_name: str) -> None:
+def build_wheel(
+    sources_path: str, output_path: str, package_name: str, git_hash: str = ""
+) -> None:
   """Builds a wheel in `output_path` using the source tree in `sources_path`."""
+  env = dict(os.environ)
+  if git_hash:
+    env["JAX_GIT_HASH"] = git_hash
   subprocess.run([sys.executable, "-m", "build", "-n", "-w"],
-                 check=True, cwd=sources_path)
+                 check=True, cwd=sources_path, env=env)
   for wheel in glob.glob(os.path.join(sources_path, "dist", "*.whl")):
     output_file = os.path.join(output_path, os.path.basename(wheel))
     sys.stderr.write(f"Output wheel: {output_file}\n\n")
