@@ -1415,10 +1415,10 @@ def pmap(
       Operations that only depend on static arguments will be constant-folded.
       Calling the pmapped function with different values for these constants
       will trigger recompilation. If the pmapped function is called with fewer
-      positional arguments than indicated by ``static_argnums`` then an error is
-      raised. Each of the static arguments will be broadcasted to all devices.
-      Arguments that are not arrays or containers thereof must be marked as
-      static. Defaults to ().
+      positional arguments than indicated by ``static_broadcasted_argnums`` then
+      an error is raised. Each of the static arguments will be broadcasted to
+      all devices. Arguments that are not arrays or containers thereof must be
+      marked as static. Defaults to ().
 
       Static arguments must be hashable, meaning both ``__hash__`` and
       ``__eq__`` are implemented, and should be immutable.
