@@ -5,7 +5,6 @@ sphinx-autodoc-typehints
 sphinx-book-theme>=1.0.1  # Older versions fail to pin pydata-sphinx-theme
 sphinx-copybutton>=0.5.0
 sphinx-remove-toctrees
-jupyter-sphinx>=0.3.2
 sphinx-design
 myst-nb>=1.0.0
 
