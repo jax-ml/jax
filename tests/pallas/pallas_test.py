@@ -663,6 +663,37 @@ class PallasCallTest(PallasTest):
       y_ref = op(x, axis=axis)
       np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2, err_msg=i)
 
+  @parameterized.named_parameters(*[
+      (f"{dtype}_{axis}", dtype, axis)
+      for axis in [0, 1]
+      for dtype in ["float16", "float32", "int32", "uint32"]
+      if isinstance(axis, int)
+  ])
+  def test_cumsum(self, dtype, axis):
+    m, n = 32, 8
+    out_dtype = dtype
+    def make_x(key):
+      if jnp.issubdtype(dtype, jnp.integer):
+        return random.permutation(
+          key, jnp.arange(m * n, dtype=dtype), independent=True
+        ).reshape(m, n)
+      else:
+        return random.normal(key, (m, n), dtype=dtype)
+    out_shape = jax.ShapeDtypeStruct((m, n), out_dtype)
+    grid = ()
+    @functools.partial(
+        self.pallas_call,
+        out_shape=out_shape,
+        grid=grid)
+    def reduce(x_ref, y_ref):
+      x = x_ref[...]
+      y_ref[...] = jnp.cumsum(x, axis=axis)
+    for i, key in enumerate(random.split(random.key(0), 20)):
+      x = make_x(key)
+      y = reduce(x)
+      y_ref = jnp.cumsum(x, axis=axis)
+      np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2, err_msg=i)
+
   def test_using_pallas_slice(self):
     m, n = 32, 4
     out_shape = jax.ShapeDtypeStruct((4, n), jnp.float32)
