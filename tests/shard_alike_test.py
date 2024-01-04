@@ -243,6 +243,44 @@ class ShardAlikeTest(jtu.JaxTestCase):
     self.assertEqual(out1.sharding, s)
     self.assertEqual(out2.sharding, s)
 
+  def test_vmap_one_mapped(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(2)
+    s = NamedSharding(mesh, P('y'))
+    inp = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def f(x):
+      def _shard_slice_like_arg(s):
+        sharded_s, _ = shard_alike(s, x)
+        return sharded_s
+
+      replicated_x = jnp.tile(x, [8, 1])  # shape == (8, 2)
+      return jax.vmap(_shard_slice_like_arg, in_axes=0)(replicated_x)
+
+    out = f(inp)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'y')))
+    self.assertArraysEqual(out, np.tile(np_inp, [8, 1]))
+
+  def test_vmap_both_mapped(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    inp1 = jax.device_put(np_inp, s)
+
+    np_inp2 = np.arange(16).reshape(2, 8)
+    inp2 = jax.device_put(np_inp2, NamedSharding(mesh, P('y', 'x')))
+
+    @jax.jit
+    def f(x, y):
+      return jax.vmap(shard_alike, in_axes=(0, 1))(x, y)
+
+    out1, out2 = f(inp1, inp2)
+    self.assertEqual(out1.sharding, s)
+    self.assertEqual(out2.sharding, s)
+    self.assertArraysEqual(out1, np_inp)
+    self.assertArraysEqual(out2, np_inp2.T)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
