@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from array import array as make_python_array
 import collections
 from collections.abc import Iterator
 import copy
@@ -3113,6 +3114,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
                             canonicalize_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(copy=[None, True, False])
+  def testAsarrayCopy(self, copy):
+    x_jax = jnp.arange(4)
+    x_np = np.arange(4)
+    x_list = [0, 1, 2, 3]
+    x_buf = make_python_array('l', x_list)
+
+    func = partial(jnp.asarray, copy=copy)
+    self.assertArraysEqual(x_jax, func(x_jax))
+    self.assertArraysEqual(x_jax, func(x_list), check_dtypes=False)
+
+    if copy is False and jax.default_backend() != 'cpu':
+      # copy=False is strict: it must raise if the input supports the buffer protocol
+      # but a copy is still required.
+      self.assertRaises(ValueError, func, x_np)
+      self.assertRaises(ValueError, func, x_buf)
+    else:
+      self.assertArraysEqual(x_jax, func(x_np), check_dtypes=False)
+      self.assertArraysEqual(x_jax, func(x_buf), check_dtypes=False)
 
   @jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*")
   def testArrayDtypeInference(self):
