@@ -113,7 +113,9 @@ def _at_fork():
     "and JAX is multithreaded, so this will likely lead to a deadlock.",
     RuntimeWarning, stacklevel=2)
 
-os.register_at_fork(before=_at_fork)
+# os.register_at_fork only exists on Unix.
+if hasattr(os, "register_at_fork"):
+  os.register_at_fork(before=_at_fork)
 
 
 # Backends
