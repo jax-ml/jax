@@ -45,7 +45,7 @@ parser.add_argument(
 parser.add_argument(
     "--jaxlib_git_hash",
     default="",
-    required=True,
+    required=False,
     help="Git hash. Empty if unknown. Optional.",
 )
 parser.add_argument(
