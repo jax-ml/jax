@@ -15,11 +15,11 @@
 """Module for lowering JAX primitives to Triton IR."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 import dataclasses
 import functools
 import operator
 from typing import Any, Callable
-from collections.abc import Sequence
 import zlib
 
 import jax
@@ -57,7 +57,7 @@ from jax_triton import triton_lib
 from jax_triton.triton_lib import compile_ttir_to_ptx_inplace
 from jax_triton.triton_lib import get_triton_type
 import numpy as np
-from triton._C.libtriton.triton import ir as tl_ir
+from triton._C.libtriton import ir as tl_ir
 from triton.compiler import code_generator as code_gen
 import triton.compiler.backends.cuda as cb
 import triton.language as tl
