@@ -75,7 +75,7 @@ def argpartition(a: ArrayLike, kth: int, axis: int = ...) -> Array: ...
 def argsort(
     a: ArrayLike,
     axis: Optional[int] = ...,
-    kind: None = ...,
+    kind: str | None = ...,
     order: None = ...,
     *,
     stable: bool = ...,
@@ -704,7 +704,7 @@ sometrue = any
 def sort(
     a: ArrayLike,
     axis: Optional[int] = ...,
-    kind: None = ...,
+    kind: str | None = ...,
     order: None = ...,
     *,
     stable: bool = ...,
