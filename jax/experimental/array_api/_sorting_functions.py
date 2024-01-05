@@ -19,10 +19,18 @@ from jax import Array
 def argsort(x: Array, /, *, axis: int = -1, descending: bool = False,
             stable: bool = True) -> Array:
   """Returns the indices that sort an array x along a specified axis."""
-  return jax.numpy.argsort(x, axis=axis, descending=descending, stable=stable)
+  del stable  # unused
+  if descending:
+    return jax.numpy.argsort(-x, axis=axis)
+  else:
+    return jax.numpy.argsort(x, axis=axis)
 
 
 def sort(x: Array, /, *, axis: int = -1, descending: bool = False,
          stable: bool = True) -> Array:
   """Returns a sorted copy of an input array x."""
-  return jax.numpy.sort(x, axis=axis, descending=descending, stable=stable)
+  del stable  # unused
+  result = jax.numpy.sort(x, axis=axis)
+  if descending:
+    return jax.lax.rev(result, dimensions=[axis + x.ndim if axis < 0 else axis])
+  return result

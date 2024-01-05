@@ -17,8 +17,6 @@ Remember to align the itemized text with the first line of an item within a list
     devices to create `Sharding`s during lowering.
     This is a temporary state until we can create `Sharding`s without physical
     devices.
-  * {func}`jax.numpy.argsort` and {func}`jax.numpy.sort` now support the `stable`
-    and `descending` arguments.
 * Deprecations & Removals
   * A number of previously deprecated functions have been removed, following a
     standard 3+ month deprecation cycle (see {ref}`api-compatibility`).

@@ -3901,28 +3901,23 @@ def _nanargmin(a, axis: int | None = None, keepdims : bool = False):
 
 
 @util._wraps(np.sort)
-@partial(jit, static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
+@partial(jit, static_argnames=('axis', 'kind', 'order'))
 def sort(
     a: ArrayLike,
     axis: int | None = -1,
-    kind: None = None,
-    order: None = None, *,
-    stable: bool = True,
-    descending: bool = False,
+    kind: str = "quicksort",
+    order: None = None,
 ) -> Array:
   util.check_arraylike("sort", a)
-  if kind is not None:
+  if kind != 'quicksort':
     warnings.warn("'kind' argument to sort is ignored.")
   if order is not None:
     raise ValueError("'order' argument to sort is not supported.")
+
   if axis is None:
-    arr = ravel(a)
-    axis = 0
+    return lax.sort(ravel(a), dimension=0)
   else:
-    arr = asarray(a)
-  dimension = _canonicalize_axis(axis, arr.ndim)
-  result = lax.sort(arr, dimension=dimension, is_stable=stable)
-  return lax.rev(result, dimensions=[dimension]) if descending else result
+    return lax.sort(asarray(a), dimension=_canonicalize_axis(axis, ndim(a)))
 
 
 @util._wraps(np.sort_complex)
@@ -3958,37 +3953,29 @@ a warning and be treated as if they were :code:`'stable'`.
 
 
 @util._wraps(np.argsort, lax_description=_ARGSORT_DOC)
-@partial(jit, static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
+@partial(jit, static_argnames=('axis', 'kind', 'order'))
 def argsort(
     a: ArrayLike,
     axis: int | None = -1,
-    kind: None = None,
+    kind: str = "stable",
     order: None = None,
-    *, stable: bool = True,
-    descending: bool = False,
 ) -> Array:
   util.check_arraylike("argsort", a)
   arr = asarray(a)
-  if kind is not None:
-    warnings.warn("'kind' argument to argsort is ignored.")
+  if kind != 'stable':
+    warnings.warn("'kind' argument to argsort is ignored; only 'stable' sorts "
+                  "are supported.")
   if order is not None:
     raise ValueError("'order' argument to argsort is not supported.")
+
   if axis is None:
-    arr = ravel(arr)
-    axis = 0
+    return argsort(arr.ravel(), 0)
   else:
-    arr = asarray(a)
-  dimension = _canonicalize_axis(axis, arr.ndim)
-  use_64bit_index = not core.is_constant_dim(arr.shape[dimension]) or arr.shape[dimension] >= (1 << 31)
-  iota = lax.broadcasted_iota(int64 if use_64bit_index else int_, arr.shape, dimension)
-  # For stable descending sort, we reverse the array and indices to ensure that
-  # duplicates remain in their original order when the final indices are reversed.
-  # For non-stable descending sort, we can avoid these extra operations.
-  if descending and stable:
-    arr = lax.rev(arr, dimensions=[dimension])
-    iota = lax.rev(iota, dimensions=[dimension])
-  _, indices = lax.sort_key_val(arr, iota, dimension=dimension, is_stable=stable)
-  return lax.rev(indices, dimensions=[dimension]) if descending else indices
+    axis_num = _canonicalize_axis(axis, arr.ndim)
+    use_64bit_index = not core.is_constant_dim(arr.shape[axis_num]) or arr.shape[axis_num] >= (1 << 31)
+    iota = lax.broadcasted_iota(int64 if use_64bit_index else int_, arr.shape, axis_num)
+    _, perm = lax.sort_key_val(arr, iota, dimension=axis_num)
+    return perm
 
 
 @util._wraps(np.partition, lax_description="""
