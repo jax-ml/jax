@@ -68,7 +68,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    supported_platforms = ["tpu", "gpu"]
+    supported_platforms = ["tpu", "gpu", "cpu"]
 
     if not jtu.test_device_matches(supported_platforms):
       raise SkipTest(

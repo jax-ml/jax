@@ -248,7 +248,7 @@ def compile_or_get_cached(
 
   # Persistent compilation cache only implemented on TPU and GPU.
   # TODO(skye): add warning when initializing cache on unsupported default platform
-  supported_platforms = ["tpu", "gpu"]
+  supported_platforms = ["tpu", "gpu", "cpu"]
   use_compilation_cache = (compilation_cache.is_initialized() and
                            backend.platform in supported_platforms)
 
