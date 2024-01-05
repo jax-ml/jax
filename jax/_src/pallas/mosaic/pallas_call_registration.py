@@ -73,8 +73,8 @@ def pallas_call_tpu_lowering_rule(
         "kernel_regeneration_metadata"
     )
     mosaic_module, extra_args = lowering.lower_jaxpr_to_module(
-        mlir_ctx, grid_mapping, jaxpr, dimension_semantics=dimension_semantics,
-        mesh=mesh)
+        mlir_ctx, grid_mapping, in_shapes, out_shapes, jaxpr,
+        dimension_semantics=dimension_semantics, mesh=mesh)
     if debug:
       print(mosaic_module)
   out_avals = [jax_core.ShapedArray(s.shape, s.dtype) for s in out_shapes]

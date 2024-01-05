@@ -20,6 +20,7 @@ import functools
 from typing import Any, Callable
 from collections.abc import Sequence
 
+import jax
 from jax import core as jax_core
 from jax import lax
 from jax import tree_util
@@ -335,6 +336,8 @@ class MeshInfo:
 def lower_jaxpr_to_module(
     ctx: ir.Context,
     grid_mapping: core.GridMapping,
+    in_shapes: tuple[jax.ShapeDtypeStruct, ...],
+    out_shapes: tuple[jax.ShapeDtypeStruct, ...],
     jaxpr: jax_core.Jaxpr,
     dimension_semantics: tuple[str | None, ...] | None,
     mesh: mesh_lib.Mesh | None = None
@@ -351,17 +354,33 @@ def lower_jaxpr_to_module(
   window_params = []
   grid = mosaic_grid_mapping.grid
   if grid:
-    for i, bm in enumerate(grid_mapping.block_mappings):
-      # TODO(sharadmv): generate default block mapping if left as no_block_spec
-      if bm is None:
-        raise NotImplementedError("Please specify block mappings if "
-                                  "grid is specified.")
-      if bm.index_map_jaxpr  is None:
-        raise NotImplementedError("Please specify index_maps if "
-                                  "grid is specified.")
+    block_operand_shapes = (
+        *in_shapes[len(mosaic_grid_mapping.scalar_prefetch_types) :],
+        *out_shapes,
+    )
+    assert len(block_operand_shapes) == len(grid_mapping.block_mappings)
+    for i, (full_ty, bm) in enumerate(
+        zip(block_operand_shapes, grid_mapping.block_mappings)
+    ):
       func_name = f"transform_{i}"
       if bm.index_map_jaxpr.consts:
         raise NotImplementedError("Index map jaxpr with consts not supported.")
+      # ANY operands don't support windowing and require empty window_params.
+      if bm.memory_space == tpu_core.TPUMemorySpace.ANY:
+        requires_windowing = bm.block_shape != full_ty.shape
+        for atom in bm.index_map_jaxpr.jaxpr.outvars:
+          if requires_windowing:
+            break
+          requires_windowing = not (
+              isinstance(atom, jax_core.Literal) and atom.val == 0
+          )
+        if requires_windowing:
+          raise NotImplementedError(
+              "Operands in placed in the TPUMemorySpace.ANY memory space don't"
+              " support windowing (i.e. non-trivial block_shape or index_map)."
+          )
+        window_params.append(ir.DictAttr.get())
+        continue
       mlir_func = lower_jaxpr_to_transform_func(
           ctx,
           bm.index_map_jaxpr.jaxpr,
