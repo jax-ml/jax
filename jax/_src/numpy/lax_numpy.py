@@ -3905,7 +3905,7 @@ def _nanargmin(a, axis: int | None = None, keepdims : bool = False):
 def sort(
     a: ArrayLike,
     axis: int | None = -1,
-    kind: None = None,
+    kind: str | None = None,
     order: None = None, *,
     stable: bool = True,
     descending: bool = False,
@@ -3962,7 +3962,7 @@ a warning and be treated as if they were :code:`'stable'`.
 def argsort(
     a: ArrayLike,
     axis: int | None = -1,
-    kind: None = None,
+    kind: str | None = None,
     order: None = None,
     *, stable: bool = True,
     descending: bool = False,
