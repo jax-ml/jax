@@ -109,11 +109,15 @@ def _memory_space_to_tpu_memspace(memory_space: TPUMemorySpace | None
 
 def aval_to_ir_type(aval, shape=None, memory_space: TPUMemorySpace | None = None):
   if isinstance(aval, tpu_core.AbstractSemaphore):
-    if aval.sem_type == tpu_core.SemaphoreType.DMA:
-      return ir.Type.parse("!tpu.dma_semaphore")
-    elif aval.sem_type == tpu_core.SemaphoreType.REGULAR:
-      return ir.Type.parse("!tpu.semaphore")
-    raise NotImplementedError(aval.sem_type)
+    if aval.sem_type is tpu_core.SemaphoreType.DMA:
+      sem_type = ir.Type.parse("!tpu.dma_semaphore")
+    elif aval.sem_type is tpu_core.SemaphoreType.REGULAR:
+      sem_type = ir.Type.parse("!tpu.semaphore")
+    elif aval.sem_type is tpu_core.SemaphoreType.BARRIER:
+      sem_type = ir.Type.parse("!tpu.semaphore")
+    else:
+      raise ValueError(f"Cannot allocate {aval.sem_type}.")
+    return ir.MemRefType.get((), sem_type)
   if isinstance(aval, state.AbstractRef):
     if shape is None:
       shape = aval.shape
@@ -1782,13 +1786,8 @@ def _alloc_value(aval: jax_core.AbstractValue) -> ir.Value:
         aval.shape, mlir.dtype_to_ir_type(aval.dtype), memory_space=memspace)
     return memref.AllocaOp(out_type, [], []).result
   elif isinstance(aval, tpu_core.AbstractSemaphore):
-    if aval.sem_type is tpu_core.SemaphoreType.DMA:
-      sem_type = ir.Type.parse("!tpu.dma_semaphore")
-      return tpu.AllocaSemaphoreOp(sem_type).result
-    elif aval.sem_type is tpu_core.SemaphoreType.REGULAR:
-      sem_type = ir.Type.parse("!tpu.semaphore")
-      return tpu.AllocaSemaphoreOp(sem_type).result
-    raise ValueError(f"Cannot allocate {aval.sem_type}.")
+    memref_type = aval_to_ir_type(aval)
+    return tpu.AllocaSemaphoreOp(memref_type).result
   raise NotImplementedError(f"Cannot allocate {type(aval)}.")
 
 
@@ -1842,7 +1841,7 @@ def _semaphore_signal_lowering_rule(
     device_id_tree,
 ):
   device_id = None
-  assert semaphore.type == ir.Type.parse("!tpu.semaphore")
+  assert semaphore.type == ir.MemRefType.get((), ir.Type.parse("!tpu.semaphore")), semaphore.type
   if has_device_id:
     if len(args) == 1:
       device_id = args[0]
@@ -1859,6 +1858,7 @@ lowering_rules[tpu_primitives.semaphore_signal_p] = (
 def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, semaphore,
                                   value):
   sem_aval = ctx.avals_in[0]
+  assert semaphore.type == ir.MemRefType.get((), ir.Type.parse("!tpu.semaphore")), semaphore.type
   assert isinstance(sem_aval, tpu_core.AbstractSemaphore)
   assert sem_aval.sem_type in {
       tpu_core.SemaphoreType.REGULAR,
@@ -1919,5 +1919,6 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: str):
 lowering_rules[lax.axis_index_p] = _axis_index_rule
 
 def _get_barrier_semaphore_rule(ctx: LoweringRuleContext):
-  return tpu.GetBarrierSemaphoreOp().result
+  memref_type = aval_to_ir_type(ctx.avals_out[0])
+  return tpu.GetBarrierSemaphoreOp(memref_type).result
 lowering_rules[tpu_primitives.get_barrier_semaphore_p] = _get_barrier_semaphore_rule

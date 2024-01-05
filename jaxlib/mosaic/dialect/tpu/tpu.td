@@ -19,6 +19,7 @@ limitations under the License.
 include "mlir/IR/OpBase.td"
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/BuiltinAttributeInterfaces.td"
+include "mlir/IR/BuiltinTypeInterfaces.td"
 include "mlir/IR/EnumAttr.td"
 include "mlir/Pass/PassBase.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
@@ -56,8 +57,8 @@ class TPU_Type<string name, string mnemonic_, list<Trait> traits = []>
   let mnemonic = mnemonic_;
 }
 
-def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore">;
-def TPU_DMASemaphoreType : TPU_Type<"DMASemaphore", "dma_semaphore">;
+def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]>;
+def TPU_DMASemaphoreType : TPU_Type<"DMASemaphore", "dma_semaphore", [MemRefElementTypeInterface]>;
 def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>;
 
 def TPU_DimensionSemantics : I32EnumAttr<"DimensionSemantics", "Dimension semantics", [
@@ -117,7 +118,8 @@ def TPU_MemorySpace : I32EnumAttr<"MemorySpace", "Memory space", [
   I32EnumAttrCase<"vmem", 0, "vmem">,
   I32EnumAttrCase<"smem", 1, "smem">,
   I32EnumAttrCase<"kHbm", 2, "hbm">,
-  I32EnumAttrCase<"kCmem", 3, "cmem">
+  I32EnumAttrCase<"kCmem", 3, "cmem">,
+  I32EnumAttrCase<"kSemaphoreMem", 4, "semaphore_mem">
 ]> {
     let genSpecializedAttr = 0;
     let cppNamespace = "::mlir::tpu";
@@ -392,7 +394,7 @@ def TPU_DeviceIdOp : TPU_Op<"device_id", [Pure]> {
 
 def TPU_SemaphoreWaitOp : TPU_Op<"sem_wait"> {
   let arguments = (ins
-    TPU_SemaphoreType:$semaphore,
+    MemRefOf<[TPU_SemaphoreType]>:$semaphore,
     I32:$amount
   );
   let results = (outs);
@@ -401,42 +403,45 @@ def TPU_SemaphoreWaitOp : TPU_Op<"sem_wait"> {
 
 def TPU_AllocaSemaphoreOp : TPU_Op<"sem_alloc"> {
   let arguments = (ins);
-  let results = (outs TPU_SomeSemaphoreType:$result);
+  let results = (outs MemRefOf<[TPU_SomeSemaphoreType]>:$result);
   let assemblyFormat = [{ attr-dict `:` type($result) }];
 }
 
 def TPU_GetBarrierSemaphoreOp : TPU_Op<"sem_barrier"> {
   let arguments = (ins);
-  let results = (outs TPU_SemaphoreType:$semaphore);
+  let results = (outs MemRefOf<[TPU_SemaphoreType]>:$semaphore);
   let assemblyFormat = [{ attr-dict `:` type($semaphore) }];
 }
 
 def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal"> {
   let arguments = (ins
-    TPU_SemaphoreType:$semaphore,
+    MemRefOf<[TPU_SemaphoreType]>:$semaphore,
     I32:$amount,
     Optional<I32>:$device_id // For remote DMAs
   );
   let assemblyFormat = [{
-    $semaphore `,` $amount (`,` $device_id^)? attr-dict
+    $semaphore `,` $amount (`,` $device_id^)? attr-dict `:` type($semaphore)
   }];
+  let hasVerifier = 1;
 }
 
 def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [SameVariadicOperandSize]> {
   let arguments = (ins
     AnyMemRef:$source,
-    Optional<TPU_DMASemaphoreType>:$source_semaphore, // For remote DMAs
+    Optional<MemRefOf<[TPU_DMASemaphoreType]>>:$source_semaphore, // For remote DMAs
     AnyMemRef:$target,
-    TPU_DMASemaphoreType:$target_semaphore,
+    MemRefOf<[TPU_DMASemaphoreType]>:$target_semaphore,
     Optional<I32>:$device_id // For remote DMAs
   );
+  let hasVerifier = 1;
 }
 
 def TPU_WaitDMAOp : TPU_Op<"wait_dma"> {
   let arguments = (ins
-    TPU_DMASemaphoreType:$semaphore,
+    MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
     AnyMemRef:$ref
   );
+  let hasVerifier = 1;
 }
 
 def TPU_RegionOp : TPU_Op<"region", [RecursiveMemoryEffects, SingleBlockImplicitTerminator<"tpu::YieldOp">]> {

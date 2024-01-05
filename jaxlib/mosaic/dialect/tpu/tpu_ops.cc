@@ -234,6 +234,41 @@ LogicalResult MaskCastOp::verify() {
   return success();
 }
 
+LogicalResult SemaphoreSignalOp::verify() {
+  auto sem_type = getMemRefType(getSemaphore());
+  if (sem_type.getRank() != 0) {
+    emitOpError("Semaphore reference must be rank 0");
+    return failure();
+  }
+  return success();
+}
+
+LogicalResult EnqueueDMAOp::verify() {
+  auto source_sem = getSourceSemaphore();
+  if (source_sem) {
+    auto source_sem_type = getMemRefType(getSourceSemaphore());
+    if (source_sem_type.getRank() != 0) {
+      emitOpError("Source semaphore must be rank 0");
+      return failure();
+    }
+  }
+  auto target_sem_type = getMemRefType(getTargetSemaphore());
+  if (target_sem_type.getRank() != 0) {
+    emitOpError("target semaphore must be rank 0");
+    return failure();
+  }
+  return success();
+}
+
+LogicalResult WaitDMAOp::verify() {
+  auto sem_type = getMemRefType(getSemaphore());
+  if (sem_type.getRank() != 0) {
+    emitOpError("Semaphore must be rank 0");
+    return failure();
+  }
+  return success();
+}
+
 }  // namespace tpu
 }  // namespace mlir
 

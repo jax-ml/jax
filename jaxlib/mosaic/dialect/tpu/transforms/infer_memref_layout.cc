@@ -150,6 +150,13 @@ LogicalResult checkTiles(MLIRContext *mlir_ctx,
 
 FailureOr<MemRefType> inferMemref(MemRefType memref,
                                   const int hardware_generation) {
+  if (isa<SemaphoreType, DMASemaphoreType>(memref.getElementType())) {
+    const Attribute kSemaphoreMem = tpu::MemorySpaceAttr::get(
+        memref.getContext(), MemorySpace::kSemaphoreMem);
+    auto layout = TiledLayoutAttr::get(memref.getContext(), {}, {});
+    return MemRefType::get(memref.getShape(), memref.getElementType(), layout,
+                           kSemaphoreMem);
+  }
   const Attribute vmem =
       tpu::MemorySpaceAttr::get(memref.getContext(), MemorySpace::vmem);
   const Attribute memory_space =

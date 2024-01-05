@@ -59,6 +59,14 @@ def infer_memref(
   Returns:
     A memref type with layout and memory space filled in.
   """
+
+  if memref.element_type in {
+      ir.Type.parse("!tpu.dma_semaphore"),
+      ir.Type.parse("!tpu.semaphore"),
+  }:
+    sem_mem = ir.Attribute.parse("#tpu.memory_space<semaphore_mem>")
+    layout = ir.Attribute.parse("#tpu.tiled<,[]>")
+    return ir.MemRefType.get(memref.shape, memref.element_type, layout, sem_mem)
   vmem = ir.Attribute.parse("#tpu.memory_space<vmem>")
   if tpu.private_has_no_memory_space(memref):
     memory_space = vmem
