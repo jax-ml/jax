@@ -139,13 +139,33 @@ class DimExprTest(jtu.JaxTestCase):
           ("a + -1", a - 1),
           ("3 * a * mod(a + 2, b + 2)", 3 * a * ((a + 2) % (b + 2))),
           ("3 * floordiv(a + 2, b + 2) * 2", 3 * ((a + 2) // (b + 2)) * 2),
-          ("non_negative(a - 2)", core.non_negative_dim(a - 2)),
+          ("non_negative(a - 2)", "build_inside"),
   ]])
-  def test_parse_dim(self,
-                     dim_spec="-2 * a^2 * b + b^2",
-                     dim_poly=-2 * a * a * b + b * b):
+  def test_parse_dim(self, dim_spec, dim_poly):
+    if dim_spec == "non_negative(a - 2)":
+      dim_poly = core.non_negative_dim(DimExprTest.a - 2)
     self.assertEqual((dim_poly,), shape_poly.symbolic_shape(dim_spec))
     self.assertEqual((dim_poly,), shape_poly.symbolic_shape(str(dim_poly)))
+
+  @jtu.parameterized_filterable(
+      kwargs=[
+          dict(dim_spec=dim_spec)
+          for dim_spec in [
+              "b + a",
+              "a*b + a^2 + b + a",
+              "mod(a, 4) + floordiv(a, 4) + a",
+              "2*a^2 - 3*a - 1",
+              "a^2 + 3*a - 1",
+              "-1*a + 3",
+              "-1*mod(a, 4) + 3",
+              "-2*a + 3",
+              "a*floordiv(b, 8)*mod(b, 4)",
+          ]
+      ]
+  )
+  def test_print_dim(self, *, dim_spec: str):
+    e, = shape_poly.symbolic_shape(dim_spec)
+    self.assertEqual(str(e), dim_spec)
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -232,6 +252,50 @@ class DimExprTest(jtu.JaxTestCase):
 
     self.assertTrue(core.definitely_equal(1, jnp.add(0, 1)))  # An Array
     self.assertFalse(core.definitely_equal(1, "a"))
+
+  def test_atoms_ordering(self):
+    a, b = shape_poly.symbolic_shape("a, b")
+
+    self.assertTrue(a.to_atom() < b.to_atom())
+    self.assertFalse(a.to_atom() >= b.to_atom())
+    self.assertTrue(a.to_atom() <= b.to_atom())
+    self.assertTrue(a.to_atom() != b.to_atom())
+
+    self.assertTrue(a.to_atom() < (a % 4).to_atom())
+    self.assertFalse(a.to_atom() > (a % 4).to_atom())
+    # FLOORDIV comes before MON because we compare operations alphabetically
+    self.assertTrue((a // 4).to_atom() < (a % 4).to_atom())
+
+    self.assertEqual(hash((a // 4).to_atom()), hash((a // 4).to_atom()))
+
+  def test_monomial_ordering(self):
+    a, b = shape_poly.symbolic_shape("a, b")
+    self.assertTrue(a.to_monomial() < b.to_monomial())
+    self.assertTrue(a.to_monomial() <= b.to_monomial())
+    self.assertTrue(b.to_monomial() >= a.to_monomial())
+    self.assertTrue(b.to_monomial() > a.to_monomial())
+
+    self.assertTrue(a.to_monomial() < (a * a).to_monomial())
+    self.assertTrue(b.to_monomial() < (a * a).to_monomial())
+    self.assertTrue((a * a * b).to_monomial() < (a * b * b).to_monomial())
+    e1 = a * a * b + a * b * b + a * b + a * a + a + b
+
+    sorted_e1 = [shape_poly._DimExpr.from_monomial(m, m_count)
+                 for m, m_count in e1.monomials_sorted()]
+    self.assertSequenceEqual(sorted_e1,
+                             [a, b, a * a, a * b, a * a * b, a * b * b])
+
+    e2 = a * (a // 4) + (a // 4) + b * (a // 4) + b * (a % 4) + a * a + b
+    sorted_e2 = [shape_poly._DimExpr.from_monomial(m, m_count)
+                 for m, m_count in e2.monomials_sorted()]
+    self.assertSequenceEqual(sorted_e2,
+                             [b, a // 4, a * a, a * (a // 4), b * (a // 4), b * (a % 4)])
+
+    # This failed with a previous implementation of atom equality
+    self.assertNotEqual(shape_poly._DimMon.from_operation(shape_poly._DimAtom.NON_NEGATIVE,
+                                                          a - b - 1),
+                        shape_poly._DimMon.from_operation(shape_poly._DimAtom.NON_NEGATIVE,
+                                                          a - 2*b - 1))
 
   def test_poly_bounds(self):
     a, b = shape_poly.symbolic_shape("a, b")
@@ -437,7 +501,7 @@ class DimExprTest(jtu.JaxTestCase):
           (a * a - b * b, a + b, a - b, 0),
           (a, b, "floordiv(a, b)", "mod(a, b)"),
           (3 * a, 2, "floordiv(3*a, 2)", "mod(3*a, 2)"),
-          (2 * a * b + b * b, a + b, "floordiv(2*a*b + b^2, a + b)", "mod(2*a*b + b^2, a + b)"),
+          (2 * a * b + b * b, a + b, "floordiv(b^2 + 2*a*b, b + a)", "mod(b^2 + 2*a*b, b + a)"),
           (3, a, "floordiv(3, a)", "mod(3, a)"),
   ]])
   def test_poly_divmod(self, *, dividend, quotient, divisor, remainder):

@@ -1143,7 +1143,7 @@ def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfV
       partial(core.evaluate_shape, shape, dim_vars),
       dim_values, [core.dim_value_aval()] * len(dim_values), "")  # type: ignore
   # Keep only the non-constant dimensions
-  return tuple(operator.index(d) if core.is_constant_dim(d) else d_tf
+  return tuple(operator.index(d) if core.is_constant_dim(d) else d_tf  # type: ignore
                for d, d_tf in zip(shape, shape_values_tf))
 
 
