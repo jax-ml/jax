@@ -318,17 +318,16 @@ class ArrayImpl(basearray.Array):
         cidx = (idx,) + (slice(None),) * (len(self.shape) - 1)
       else:
         cidx = idx + (slice(None),) * (len(self.shape) - len(idx))
-      if self._npy_value is None:
-        indices = tuple(self.sharding.devices_indices_map(self.shape).values())
-        try:
-          arr_idx = indices.index(cidx)
-        except ValueError:
-          arr_idx = None
-        if arr_idx is not None:
-          a = self._arrays[arr_idx]
-          return ArrayImpl(
-              a.aval, SingleDeviceSharding(_get_device(a)), [a], committed=False,
-              _skip_checks=True)
+      indices = tuple(self.sharding.devices_indices_map(self.shape).values())
+      try:
+        arr_idx = indices.index(cidx)
+      except ValueError:
+        arr_idx = None
+      if arr_idx is not None:
+        a = self._arrays[arr_idx]
+        return ArrayImpl(
+            a.aval, SingleDeviceSharding(_get_device(a)), [a], committed=False,
+            _skip_checks=True)
       return lax_numpy._rewriting_take(self, idx)
     else:
       return lax_numpy._rewriting_take(self, idx)
