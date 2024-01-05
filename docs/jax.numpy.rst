@@ -310,6 +310,7 @@ namespace; they are listed below.
     pad
     partition
     percentile
+    permute_dims
     piecewise
     place
     poly

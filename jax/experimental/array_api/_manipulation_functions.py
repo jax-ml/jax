@@ -55,7 +55,7 @@ def flip(x: Array, /, *, axis: int | tuple[int, ...] | None = None) -> Array:
 
 def permute_dims(x: Array, /, axes: tuple[int, ...]) -> Array:
   """Permutes the axes (dimensions) of an array x."""
-  return jax.lax.transpose(x, axes)
+  return jax.numpy.permute_dims(x, axes=axes)
 
 
 def reshape(x: Array, /, shape: tuple[int, ...], *, copy: bool | None = None) -> Array:

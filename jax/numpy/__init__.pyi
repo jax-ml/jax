@@ -611,6 +611,7 @@ def percentile(a: ArrayLike, q: ArrayLike,
                axis: Optional[Union[int, tuple[int, ...]]] = ...,
                out: None = ..., overwrite_input: bool = ..., method: str = ...,
                keepdims: bool = ..., interpolation: None = ...) -> Array: ...
+def permute_dims(x: ArrayLike, /, axes: tuple[int, ...]) -> Array: ...
 pi: float
 def piecewise(x: ArrayLike, condlist: Union[Array, Sequence[ArrayLike]],
               funclist: Sequence[Union[ArrayLike, Callable[..., Array]]],

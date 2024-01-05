@@ -189,6 +189,7 @@ from jax._src.numpy.lax_numpy import (
     packbits as packbits,
     pad as pad,
     partition as partition,
+    permute_dims as permute_dims,
     pi as pi,
     piecewise as piecewise,
     place as place,

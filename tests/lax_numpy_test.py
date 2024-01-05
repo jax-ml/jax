@@ -1241,6 +1241,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @jtu.sample_product(
+    shape=array_shapes,
+    dtype=default_dtypes,
+  )
+  def testPermuteDims(self, shape, dtype):
+    rng = jtu.rand_some_zero(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    axes = self.rng().permutation(len(shape))
+    np_fun = partial(getattr(np, "permute_dims", np.transpose), axes=axes)
+    jnp_fun = partial(jnp.permute_dims, axes=axes)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+  @jtu.sample_product(
     shape=[s for s in array_shapes if len(s) >= 2],
     dtype=default_dtypes,
     use_property=[True, False]
