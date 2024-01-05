@@ -1021,6 +1021,20 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.linalg.solve, args_maker)
 
   @jtu.sample_product(
+      lhs_shape=[(2, 2), (2, 2, 2), (2, 2, 2, 2), (2, 2, 2, 2, 2)],
+      rhs_shape=[(2,), (2, 2), (2, 2, 2), (2, 2, 2, 2)]
+  )
+  def testSolveBroadcasting(self, lhs_shape, rhs_shape):
+    # Batched solve can involve some ambiguities; this test checks
+    # that we match NumPy's convention in all cases.
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(lhs_shape, 'float32'), rng(rhs_shape, 'float32')]
+    # As of numpy 1.26.3, np.linalg.solve fails when this condition is not met.
+    if len(lhs_shape) == 2 or len(rhs_shape) > 1:
+      self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker, tol=1E-3)
+    self._CompileAndCheck(jnp.linalg.solve, args_maker)
+
+  @jtu.sample_product(
     shape=[(1, 1), (4, 4), (2, 5, 5), (100, 100), (5, 5, 5), (0, 0)],
     dtype=float_types,
   )
