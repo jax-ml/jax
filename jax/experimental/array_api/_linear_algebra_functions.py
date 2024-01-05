@@ -140,13 +140,10 @@ def solve(x1, x2, /):
   Returns the solution of a square system of linear equations with a unique solution.
   """
   if x2.ndim == 1:
-    x2 = x2.reshape(*x1.shape[:-2], *x2.shape, 1)
-    return jax.numpy.linalg.solve(x1, x2)[..., 0]
-  if x2.ndim > x1.ndim:
-    x1 = x1.reshape(*x2.shape[:-2], *x1.shape)
-  elif x1.ndim > x2.ndim:
-    x2 = x2.reshape(*x1.shape[:-2], *x2.shape)
-  return jax.numpy.linalg.solve(x1, x2)
+    signature = "(m,m),(m)->(m)"
+  else:
+    signature = "(m,m),(m,n)->(m,n)"
+  return jax.numpy.vectorize(jax.numpy.linalg.solve, signature=signature)(x1, x2)
 
 
 def svd(x, /, *, full_matrices=True):
