@@ -3900,7 +3900,15 @@ def _nanargmin(a, axis: int | None = None, keepdims : bool = False):
   return where(reductions.all(nan_mask, axis=axis, keepdims=keepdims), -1, res)
 
 
-@util._wraps(np.sort)
+@util._wraps(np.sort,
+             extra_params="""
+kind : deprecated; specify sort algorithm using stable=True or stable=False
+order : not supported
+stable : bool, default=True
+    Specify whether to use a stable sort.
+descending : bool, default=False
+    Specify whether to do a descending sort.
+    """)
 @partial(jit, static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
 def sort(
     a: ArrayLike,
@@ -3912,7 +3920,10 @@ def sort(
 ) -> Array:
   util.check_arraylike("sort", a)
   if kind is not None:
-    warnings.warn("'kind' argument to sort is ignored.")
+    # Deprecated 2024-01-05
+    warnings.warn("The 'kind' argument to sort has no effect, and is deprecated. "
+                  "Use stable=True or stable=False to specify sort stability.",
+                  category=DeprecationWarning, stacklevel=2)
   if order is not None:
     raise ValueError("'order' argument to sort is not supported.")
   if axis is None:
@@ -3951,13 +3962,15 @@ def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> A
   return lax.sort((*key_arrays[::-1], iota), dimension=axis, num_keys=len(key_arrays))[-1]
 
 
-_ARGSORT_DOC = """
-Only :code:`kind='stable'` is supported. Other :code:`kind` values will produce
-a warning and be treated as if they were :code:`'stable'`.
-"""
-
-
-@util._wraps(np.argsort, lax_description=_ARGSORT_DOC)
+@util._wraps(np.argsort,
+             extra_params="""
+kind : deprecated; specify sort algorithm using stable=True or stable=False
+order : not supported
+stable : bool, default=True
+    Specify whether to use a stable sort.
+descending : bool, default=False
+    Specify whether to do a descending sort.
+    """)
 @partial(jit, static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
 def argsort(
     a: ArrayLike,
@@ -3970,7 +3983,10 @@ def argsort(
   util.check_arraylike("argsort", a)
   arr = asarray(a)
   if kind is not None:
-    warnings.warn("'kind' argument to argsort is ignored.")
+    # Deprecated 2024-01-05
+    warnings.warn("The 'kind' argument to argsort has no effect, and is deprecated. "
+                  "Use stable=True or stable=False to specify sort stability.",
+                  category=DeprecationWarning, stacklevel=2)
   if order is not None:
     raise ValueError("'order' argument to argsort is not supported.")
   if axis is None:
