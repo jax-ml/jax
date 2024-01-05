@@ -234,7 +234,8 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
       getattr(fun, "__name__", "<unnamed function>"),
       fun, cache_miss, static_argnums, static_argnames,
       donate_argnums, tree_util.dispatch_registry,
-      pxla.shard_arg, _get_cpp_global_cache(pjit_has_explicit_sharding))  # type: ignore
+      pxla.shard_arg if xla_extension_version >= 229 else pxla.temp_shard_arg,  # type: ignore
+      _get_cpp_global_cache(pjit_has_explicit_sharding))  # type: ignore
   else:
     cpp_pjit_f = xc._xla.pjit(  # type: ignore
       getattr(fun, "__name__", "<unnamed function>"),
@@ -1348,9 +1349,11 @@ def _pjit_call_impl(*args, jaxpr,
   has_explicit_sharding = _pjit_explicit_sharding(
       in_shardings, out_shardings, None, None)
   if xla_extension_version >= 226:
-    return xc._xla.pjit(name, f, call_impl_cache_miss, [], [], donated_argnums,
-                        tree_util.dispatch_registry, pxla.shard_arg,
-                        _get_cpp_global_cache(has_explicit_sharding))(*args)
+    return xc._xla.pjit(
+        name, f, call_impl_cache_miss, [], [], donated_argnums,
+        tree_util.dispatch_registry,
+        pxla.shard_arg if xla_extension_version >= 229 else pxla.temp_shard_arg,  # type: ignore
+        _get_cpp_global_cache(has_explicit_sharding))(*args)
   else:
     return xc._xla.pjit(name, f, call_impl_cache_miss, [], [], donated_argnums,  # type: ignore
                         tree_util.dispatch_registry,

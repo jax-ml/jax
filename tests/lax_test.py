@@ -3042,8 +3042,8 @@ class FooArray:
   size = property(lambda self: self.data.size // 2)
   ndim = property(lambda self: self.data.ndim - 1)
 
-def shard_foo_array_handler(x, devices, indices, sharding):
-  device, = devices
+def shard_foo_array_handler(x, sharding):
+  device, = sharding._addressable_device_assignment
   aval = core.raise_to_shaped(core.get_aval(x.data))
   return pxla.batched_device_put(
       aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device])

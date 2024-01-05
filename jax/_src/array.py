@@ -834,8 +834,7 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
     if not candidates_list:
       # This array isn't sharded correctly. Reshard it via host roundtrip.
       # TODO(skye): more efficient reshard?
-      return pxla.shard_arg(x._value, devices, indices, sharding,
-                            canonicalize=False)
+      return pxla.shard_arg(x._value, sharding, canonicalize=False)
     # Try to find a candidate buffer already on the correct device,
     # otherwise copy one of them.
     for buf in candidates_list:
@@ -848,10 +847,11 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
   return pxla.batched_device_put(x.aval, sharding, bufs, devices)
 
 
-def _array_shard_arg(x, devices, indices, sharding):
+def _array_shard_arg(x, sharding):
   x._check_if_deleted()
 
   x_indices = x.sharding.addressable_devices_indices_map(x.shape).values()
+  indices = sharding.addressable_devices_indices_map(x.shape).values()
   if not x.is_fully_addressable:
     if tuple(x_indices) == tuple(indices):
       return x
@@ -859,15 +859,14 @@ def _array_shard_arg(x, devices, indices, sharding):
       raise NotImplementedError(
           "Cannot reshard an input that is not fully addressable")
   else:
+    devices = pxla.get_addressable_devices_for_shard_arg(sharding)
     if tuple(x_indices) == tuple(indices):
-      return xc.copy_array_to_devices_with_sharding(
-          x, list(devices), sharding)
+      return xc.copy_array_to_devices_with_sharding(x, list(devices), sharding)
     # Resharding starts here:
     if dispatch.is_single_device_sharding(x.sharding):
       return shard_device_array(x, devices, indices, sharding)
     else:
       return shard_sharded_device_array_slow_path(x, devices, indices, sharding)
-
 
 pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 

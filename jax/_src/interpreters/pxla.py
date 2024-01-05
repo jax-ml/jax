@@ -106,60 +106,46 @@ ShardingSpec = sharding_specs.ShardingSpec
 
 def identity(x): return x
 
-def shard_arg(arg, devices, arg_indices, sharding, canonicalize=True):
-  """Returns a list of size len(devices) containing per-device buffers.
-
-  For the C++ pmap path, we fallback to Python (this function) to shard
-  arguments that are not supported by the C++ `ShardArg`.
-
-  Args:
-    arg: The Python argument.
-    devices: The list of devices to shard over.
-    arg_indices: A list of `len(devices)` indices to use to shard the argument.
-  """
+def shard_arg(arg, sharding, canonicalize=True):
   if canonicalize:
     arg = xla.canonicalize_dtype(arg)
-  return shard_arg_handlers[type(arg)](arg, devices, arg_indices, sharding)
+  return shard_arg_handlers[type(arg)](arg, sharding)
 
 
 @profiler.annotate_function
 def shard_args(
-    devices: Sequence[xb.xla_client.Device],
-    indices: Sequence[Sequence[Index]],
-    shardings: Sequence[sharding_impls.XLACompatibleSharding],
-    args,
+    shardings: Sequence[sharding_impls.XLACompatibleSharding], args,
 ) -> Sequence[jax.Array]:
-  """Shard each argument data array along its leading axis.
+  return [shard_arg(arg, shardings[i]) for i, arg in enumerate(args)]
 
-  Args:
-    devices: sequence of Devices mapping replica index to a physical device.
-    indices: sequence of the same length as `args` describing how each arg
-      should be sharded/replicated across `devices`. Each element in `indices`
-      is the same length as `devices`.
-    args: a sequence of JaxTypes representing arguments to be sharded according
-      to `indices` and placed on `devices`.
+shard_arg_handlers: dict[Any, Callable[[Any, Any], Any]] = {}
 
-  Returns:
-    A list of length matching args, containing lists of per-device buffers
-    for each argument.
-  """
-  return [shard_arg(arg, devices, indices[i], shardings[i])
-          for i, arg in enumerate(args)]
 
-shard_arg_handlers: dict[Any, Callable[[Any, Any, Any, Any], Any]] = {}
+@lru_cache(maxsize=1024)
+def get_addressable_devices_for_shard_arg(
+    s: sharding_impls.XLACompatibleSharding) -> tuple[xc.Device, ...]:
+  return s._addressable_device_assignment
 
-def _shard_token(x, devices, indices, sharding):
+@lru_cache(maxsize=1024)
+def _get_replicated_slices(num_addressable_devices: int):
+  return ((slice(None),),) * num_addressable_devices
+
+def _shard_token(x, sharding):
+  devices = get_addressable_devices_for_shard_arg(sharding)
+  indices = _get_replicated_slices(len(devices))
   zeros = np.zeros((), dtype=np.dtype(np.bool_))
   aval = api_util.shaped_abstractify(zeros)
-  return batched_device_put(aval, sharding, [zeros for i in indices], devices)
+  return batched_device_put(aval, sharding, [zeros for _ in indices], devices)
 shard_arg_handlers[core.Token] = _shard_token
 
-def _masked_array_error(x, devices, indices, sharding):
+def _masked_array_error(x, sharding):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
                    "Use arr.filled() to convert the value to a standard numpy array.")
 shard_arg_handlers[np.ma.MaskedArray] = _masked_array_error
 
-def _shard_array(x, devices, indices, sharding):
+def _shard_array(x, sharding):
+  indices = tuple(sharding.addressable_devices_indices_map(x.shape).values())
+  devices = get_addressable_devices_for_shard_arg(sharding)
   if x.dtype == dtypes.float0:
     x = np.zeros(x.shape, dtype=np.dtype(bool))
   aval = api_util.shaped_abstractify(x)
@@ -167,8 +153,8 @@ def _shard_array(x, devices, indices, sharding):
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
-def _shard_darray(x, devices, indices, sharding):
-  return shard_arg(x._data, devices, indices, sharding)
+def _shard_darray(x, sharding):
+  return shard_arg(x._data, sharding)
 shard_arg_handlers[core.DArray] = _shard_darray
 
 def batched_device_put(aval: core.ShapedArray,
@@ -183,7 +169,7 @@ def batched_device_put(aval: core.ShapedArray,
   if len(bufs) == len(xs):
     return array.ArrayImpl(
         aval, sharding, bufs, committed=committed, _skip_checks=True)
-  return xc.batched_device_put(aval, sharding, xs, devices, committed)  # type: ignore
+  return xc.batched_device_put(aval, sharding, xs, list(devices), committed)  # type: ignore
 
 def shard_aval(size, axis: int, aval):
   try:
@@ -849,8 +835,8 @@ class UnloadedPmapExecutable:
           if spec.sharding_spec is not None else None)
     handle_outs = local_avals_to_results_handler(self.local_output_avals,
                                                  self.output_shardings)
-    handle_args = InputsHandler(self.compiled.local_devices(),
-                                self.input_shardings, input_indices)
+    handle_args = InputsHandler(self.input_shardings,
+                                self.compiled.local_devices(), input_indices)
     execute_fun = ExecuteReplicated(self.compiled, "parallel computation",
                                     self.backend, handle_args, handle_outs,
                                     self.unordered_effects,
@@ -1054,9 +1040,8 @@ def _get_pmap_sharding(devices, specs):
 class InputsHandler:
   __slots__ = ("handler", "local_devices", "in_shardings", "input_indices")
 
-  def __init__(self, local_devices, in_shardings, input_indices):
-    self.handler = partial(
-        shard_args, local_devices, input_indices, in_shardings)
+  def __init__(self, in_shardings, local_devices=None, input_indices=None):
+    self.handler = partial(shard_args, in_shardings)
     self.local_devices = local_devices
     self.in_shardings = in_shardings
     self.input_indices = input_indices
@@ -2248,37 +2233,36 @@ class MeshComputation(stages.XlaLowering):
     return xe.hlo_module_cost_analysis(backend, self.hlo().as_hlo_module())
 
 
-@lru_cache(maxsize=1024)
-def _get_replicated_slices(num_addressable_devices: int, ndim: int | None):
-  if ndim is None:
-    return ((slice(None),),) * num_addressable_devices
-  else:
-    return ((slice(None),) * ndim,) * num_addressable_devices
+if xla_extension_version < 229:
+  def _get_input_indices(
+      avals: Sequence[ShapedArray],
+      shardings: Sequence[sharding_impls.XLACompatibleSharding],
+      da_object: _DeviceAssignment | Sequence[xc.Device],  # type: ignore
+  ) -> Sequence[tuple[Index | None, ...]]:
 
+    input_indices = []
+    if not isinstance(da_object, _DeviceAssignment):
+      da_object = _create_da_object(tuple(da_object))
+    num_addressable_devices = len(da_object.addressable_device_list)
 
-def _get_input_indices(
-    avals: Sequence[ShapedArray],
-    shardings: Sequence[sharding_impls.XLACompatibleSharding],
-    da_object: _DeviceAssignment | Sequence[xc.Device],  # type: ignore
-) -> Sequence[tuple[Index | None, ...]]:
-
-  input_indices = []
-  if not isinstance(da_object, _DeviceAssignment):
-    da_object = _create_da_object(tuple(da_object))
-  num_addressable_devices = len(da_object.addressable_device_list)
-
-  for aval, sharding in zip(avals, shardings):
-    if aval is core.abstract_token:
-      index = _get_replicated_slices(num_addressable_devices, None)
-    else:
-      if sharding.is_fully_replicated:
-        index = _get_replicated_slices(num_addressable_devices, aval.ndim)
+    def _get_replicated_slices(num_addressable_devices: int, ndim: int | None):
+      if ndim is None:
+        return ((slice(None),),) * num_addressable_devices
       else:
-        index = tuple(
-            sharding.addressable_devices_indices_map(aval.shape).values())  # type: ignore
-    input_indices.append(index)
+        return ((slice(None),) * ndim,) * num_addressable_devices
 
-  return input_indices
+    for aval, sharding in zip(avals, shardings):
+      if aval is core.abstract_token:
+        index = _get_replicated_slices(num_addressable_devices, None)
+      else:
+        if sharding.is_fully_replicated:
+          index = _get_replicated_slices(num_addressable_devices, aval.ndim)
+        else:
+          index = tuple(
+              sharding.addressable_devices_indices_map(aval.shape).values())  # type: ignore
+      input_indices.append(index)
+
+    return input_indices
 
 
 def get_gspmd_shardings_from_executable(
@@ -2604,10 +2588,13 @@ class UnloadedMeshExecutable:
   all_args_info: AllArgsInfo | None
 
   def build_unsafe_call(self):
-    input_indices = _get_input_indices(self.input_avals, self.input_shardings,
-                                       self.device_assignment)
-    handle_args = InputsHandler(self.xla_executable.local_devices(),
-                                self.input_shardings, input_indices)
+    if xla_extension_version >= 229:
+      handle_args = InputsHandler(self.input_shardings)
+    else:
+      input_indices = _get_input_indices(self.input_avals, self.input_shardings,
+                                         self.device_assignment)
+      handle_args = InputsHandler(
+          self.input_shardings, self.xla_executable.local_devices(), input_indices)
     handle_outs = global_avals_to_results_handler(
         self.output_avals, self.output_shardings, self.committed,
         self.are_out_shardings_from_xla)  # type: ignore  # arg-type
@@ -2755,6 +2742,7 @@ class MeshExecutableFastpathData(NamedTuple):
   out_avals: Sequence[ShapedArray]
   out_committed: Sequence[bool]
   kept_var_bitvec: Iterable[bool]
+  # TODO(yashkatariya): Remove once minimum jaxlib version is 0.4.24
   arg_handler_devices: Sequence[xc.Device]
   arg_handler_indices: Sequence[tuple[Index | None, ...]]
 
@@ -2865,11 +2853,18 @@ class MeshExecutable(stages.XlaExecutable):
       return outs, fastpath_data
 
     if xla_extension_version >= 226:
-      return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [],
-                          tree_util.dispatch_registry, shard_arg)
+      return xc._xla.pjit(
+          self.unsafe_call.name, None, aot_cache_miss, [], [], [],
+          tree_util.dispatch_registry,
+          shard_arg if xla_extension_version >= 229 else temp_shard_arg)  # type: ignore
     else:
       return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [],  # type: ignore
                           tree_util.dispatch_registry)
+
+
+# TODO(yashkatariya): Remove once minimum jaxlib version is 0.4.24
+def temp_shard_arg(arg, devices, arg_indices, sharding, canonicalize=True):
+  return shard_arg(arg, sharding)
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,
@@ -2926,20 +2921,15 @@ def _compile_replicated_mesh_executable_from_hlo(
   in_shardings = semantics_in_shardings.shardings
   out_shardings = semantics_out_shardings.shardings
 
-  input_indices = _get_input_indices(global_in_avals, in_shardings, da)  # type: ignore
-  if pmap_nreps > 1:
-    # For a jit wrapping a pmap, replicate each input index to match the
-    # devices of the replicated jit computation.
-    input_indices = [index * pmap_nreps for index in input_indices]
   kept_var_idx = set(kept_var_idx)
   # Will compute out_handler with executable information.
   unsafe_call = backend.compile_replicated(
       is_trivial=False, name=name, computation=computation,
       compile_options=compile_options, host_callbacks=host_callbacks,
       has_unordered_effects=has_unordered_effects,
-      ordered_effects=ordered_effects, in_avals=global_in_avals,
-      in_indices=input_indices, in_shardings=in_shardings,
-      kept_var_idx=kept_var_idx,
+      device_assignment=da, ordered_effects=ordered_effects,
+      in_avals=global_in_avals,
+      in_shardings=in_shardings, kept_var_idx=kept_var_idx,
       out_avals=global_out_avals, out_shardings=out_shardings,
       committed=committed, pmap_nreps=pmap_nreps)
   xla_executable = None

@@ -45,7 +45,7 @@ from jax.experimental.maps import xmap
 from jax.experimental import multihost_utils
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
-from jax._src.sharding import Sharding, _addressable_devices_indices_map
+from jax._src.sharding import Sharding
 from jax._src import op_shardings
 from jax._src import sharding_impls
 from jax._src.sharding_impls import (
@@ -60,7 +60,7 @@ from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
-from jax._src.util import curry, unzip2, safe_zip
+from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
 
@@ -3546,32 +3546,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertIsInstance(out4.sharding, SingleDeviceSharding)
     self.assertEqual(out4.devices(), {jax.devices()[1]})
 
-  def test_get_indices_cache(self):
-    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
-    ns = NamedSharding(mesh, P('x'))
-    ns2 = NamedSharding(mesh, P('x', 'y'))
-
-    np_inp = np.arange(16).reshape(8, 2)
-    arr1 = jax.device_put(np_inp, ns)
-    arr2 = jax.device_put(np_inp, ns2)
-    arr3 = jax.device_put(np_inp, ns)
-
-    _addressable_devices_indices_map.cache_clear()
-
-    cache_info1 = _addressable_devices_indices_map.cache_info()
-    out = pjit(lambda x, y, z: x + y + z)(arr1, arr2, arr3)
-    cache_info2 = _addressable_devices_indices_map.cache_info()
-    self.assertArraysEqual(out, np_inp * 3)
-
-    # arr3 and arr1 should have the same GSPMDSharding objects internally.
-    # So there will be 2 hits in _addressable_devices_indices_map,
-    # One in `pxla._get_input_indices` and second in `_array_shard_arg`.
-    self.assertEqual(cache_info2.hits, cache_info1.hits + 2)
-    # There will double the amount of misses as hits because arr1 and arr2's
-    # sharding are not the same. So 2 misses in _addressable_devices_indices_map
-    # and 2 in _array_shard_arg.
-    self.assertEqual(cache_info2.misses, cache_info1.misses + 4)
-
   def test_same_named_sharding_pspec_on_eager_ops(self):
     mesh = jtu.create_global_mesh((1, 8, 1), ('x', 'y', 'z'))
     sharding = jax.sharding.NamedSharding(mesh, P('x', 'y', 'z'))
@@ -4260,26 +4234,6 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(
         sharding_impls.array_mapping_to_axis_resources(inp), expected_out
     )
-
-  def test_get_input_indices_fully_replicated(self):
-    global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
-    global_in_aval1 = core.ShapedArray((4, 4), jnp.int32)
-    global_in_aval2 = core.ShapedArray((4, 4, 4), jnp.int32)
-    global_in_aval3 = core.ShapedArray((), jnp.int32)
-    in_avals = [global_in_aval1, global_in_aval2, global_in_aval3]
-
-    mp = NamedSharding(global_mesh, P(None))
-
-    out_indices = pxla._get_input_indices(in_avals, [mp, mp, mp],
-                                          list(global_mesh.devices.flat))
-
-    self.assertLen(out_indices, len(in_avals))
-    self.assertTrue(all(len(out) == len(global_mesh.local_devices)
-                    for out in out_indices))
-    self.assertTrue(all(len(i) == aval.ndim
-                    for out, aval in safe_zip(out_indices, in_avals) for i in out))
-    self.assertTrue(all(i == (slice(None),) * aval.ndim
-                    for out, aval in safe_zip(out_indices, in_avals) for i in out))
 
   @parameterized.named_parameters(
       ("all_unspecified", (UNSPECIFIED, UNSPECIFIED), AssertionError),
