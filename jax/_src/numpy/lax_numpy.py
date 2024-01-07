@@ -53,13 +53,14 @@ from jax._src import core
 from jax._src.custom_derivatives import custom_jvp
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import xla_bridge
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
 from jax._src.core import ShapedArray, ConcreteArray
 from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
                               _sort_le_comparator, PrecisionLike)
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_client as xc, xla_extension_version
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
@@ -2121,9 +2122,25 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   # to be used for type inference below.
   if isinstance(object, (bool, int, float, complex)):
     _ = dtypes.coerce_to_array(object, dtype)
+  elif not isinstance(object, Array):
+    # Check if object supports any of the data exchange protocols
+    # (except dlpack, see data-apis/array-api#301). If it does,
+    # consume the object as jax array and continue (but not return) so
+    # that other array() arguments get processed against the input
+    # object.
+    #
+    # Notice that data exchange protocols define dtype in the
+    # corresponding data structures and it may not be available as
+    # object.dtype. So, we'll resolve the protocols here before
+    # evaluating object.dtype.
+    if hasattr(object, '__jax_array__'):
+      object = object.__jax_array__()
+    elif hasattr(object, '__cuda_array_interface__'):
+      if xla_extension_version >= 237:
+        cai = object.__cuda_array_interface__
+        backend = xla_bridge.get_backend("cuda")
+        object = xc._xla.cuda_array_interface_to_buffer(cai, backend)
 
-  if hasattr(object, '__jax_array__'):
-    object = object.__jax_array__()
   object = tree_map(lambda leaf: leaf.__jax_array__()
                     if hasattr(leaf, "__jax_array__") else leaf, object)
   leaves = tree_leaves(object, is_leaf=lambda x: x is None)
