@@ -590,10 +590,10 @@ class JaxExportTest(jtu.JaxTestCase):
       dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,4,c",
            expect_error_outer_exp=re.escape(
              "Expected value >= 1 for dimension variable 'b'. "
-             "Using the following polymorphic shapes specifications: args[0].shape = (3, a, a + b). "
+             "Using the following polymorphic shapes specifications: args[0].shape = (3, a, b + a). "
              "Obtained dimension variables: 'a' = 4 from specification "
              "'a' for dimension args[0].shape[1] (= 4), "
-             "'b' = c + -4 from specification 'a + b' for dimension args[0].shape[2] (= c),")),
+             "'b' = c - 4 from specification 'b + a' for dimension args[0].shape[2] (= c),")),
       dict(inner_poly_spec="3,a,a", outer_poly_spec="3,4,c",
            expect_error_outer_exp=re.escape(
              "Found inconsistency between dimension size "
@@ -610,10 +610,10 @@ class JaxExportTest(jtu.JaxTestCase):
       dict(inner_poly_spec="3,a,a+b", outer_poly_spec="3,c,c",
            expect_error_outer_exp=re.escape(
                "Expected value >= 1 for dimension variable 'b'. "
-               "Using the following polymorphic shapes specifications: args[0].shape = (3, a, a + b). "
+               "Using the following polymorphic shapes specifications: args[0].shape = (3, a, b + a). "
                "Obtained dimension variables: 'a' = c from "
                "specification 'a' for dimension args[0].shape[1] (= c), "
-               "'b' = 0 from specification 'a + b' for dimension args[0].shape[2] (= c)")),
+               "'b' = 0 from specification 'b + a' for dimension args[0].shape[2] (= c)")),
       dict(inner_poly_spec="3,a,a+b", outer_poly_spec="c,4,12",
            expect_error_outer_exp=re.escape(
                "Shape mismatch for args[0].shape[0] (expected same constant)")),
@@ -689,9 +689,9 @@ class JaxExportTest(jtu.JaxTestCase):
            expect_error=(
              "Input shapes do not match the polymorphic shapes specification. "
              "Expected value >= 1 for dimension variable 'b'. "
-             "Using the following polymorphic shapes specifications: args[0].shape = (a + 2*b, a, a + b + c). "
+             "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
-             "'b' = 0 from specification 'a + 2*b' for dimension args[0].shape[0] (= 2), . "
+             "'b' = 0 from specification '2*b + a' for dimension args[0].shape[0] (= 2), . "
              "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
            )),
       dict(shape=(3, 2, 6),  # a = 2, b = 0.5, c = 4 - b is not integer
@@ -699,7 +699,7 @@ class JaxExportTest(jtu.JaxTestCase):
            expect_error=(
              "Input shapes do not match the polymorphic shapes specification. "
              "Division had remainder 1 when computing the value of 'b'. "
-             "Using the following polymorphic shapes specifications: args[0].shape = (a + 2*b, a, a + b + c). "
+             "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), . "
              "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
            )),
@@ -707,10 +707,10 @@ class JaxExportTest(jtu.JaxTestCase):
            poly_spec="(a + 2*b, a, a + b)",
            expect_error=(
              "Input shapes do not match the polymorphic shapes specification. "
-             "Found inconsistency between dimension size args[0].shape[0] (= 8) and the specification 'a + 2*b' (= 10). "
-             "Using the following polymorphic shapes specifications: args[0].shape = (a + 2*b, a, a + b). "
+             "Found inconsistency between dimension size args[0].shape[0] (= 8) and the specification '2*b + a' (= 10). "
+             "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
-             "'b' = 4 from specification 'a + b' for dimension args[0].shape[2] (= 6), . "
+             "'b' = 4 from specification 'b + a' for dimension args[0].shape[2] (= 6), . "
              "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
            )),
       dict(shape=(7, 2, 36),  # a = 2, b = 3, c = 6 - cannot solve c
@@ -718,7 +718,7 @@ class JaxExportTest(jtu.JaxTestCase):
            expect_error=(
              "Cannot solve for values of dimension variables {'c'}. "
              "We can only solve linear uni-variate constraints. "
-             "Using the following polymorphic shapes specifications: args[0].shape = (2*a + b, a, c^2). "
+             "Using the following polymorphic shapes specifications: args[0].shape = (b + 2*a, a, c^2). "
              "Unprocessed specifications: 'c^2' for dimension size args[0].shape[2]. "
              "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
            )),

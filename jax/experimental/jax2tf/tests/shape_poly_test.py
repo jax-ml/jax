@@ -604,9 +604,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
            expect_error=(
              "Input shapes do not match the polymorphic shapes specification. "
              "Expected value >= 1 for dimension variable 'b'. "
-             "Using the following polymorphic shapes specifications: args[0].shape = (a + 2*b, a, a + b + c). "
+             "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
-             "'b' = 0 from specification 'a + 2*b' for dimension args[0].shape[0] (= 2), . "
+             "'b' = 0 from specification '2*b + a' for dimension args[0].shape[0] (= 2), . "
              "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
            )),
       dict(shape=(3, 2, 6),  # a = 2, b = 0.5, c = 4 - b is not integer
@@ -614,7 +614,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
            expect_error=(
              "Input shapes do not match the polymorphic shapes specification. "
              "Division had remainder 1 when computing the value of 'b'. "
-             "Using the following polymorphic shapes specifications: args[0].shape = (a + 2*b, a, a + b + c). "
+             "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), . "
              "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
            )),
@@ -622,10 +622,10 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
            poly_spec="(a + 2*b, a, a + b)",
            expect_error=(
              "Input shapes do not match the polymorphic shapes specification. "
-             "Found inconsistency between dimension size args[0].shape[0] (= 8) and the specification 'a + 2*b' (= 10). "
-             "Using the following polymorphic shapes specifications: args[0].shape = (a + 2*b, a, a + b). "
+             "Found inconsistency between dimension size args[0].shape[0] (= 8) and the specification '2*b + a' (= 10). "
+             "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
-             "'b' = 4 from specification 'a + b' for dimension args[0].shape[2] (= 6), . "
+             "'b' = 4 from specification 'b + a' for dimension args[0].shape[2] (= 6), . "
              "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-assertion-errors for more details."
            )),
       dict(shape=(7, 2, 36),  # a = 2, b = 3, c = 6 - cannot solve c
@@ -633,7 +633,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
            expect_error=(
              "Cannot solve for values of dimension variables {'c'}. "
              "We can only solve linear uni-variate constraints. "
-             "Using the following polymorphic shapes specifications: args[0].shape = (2*a + b, a, c^2). "
+             "Using the following polymorphic shapes specifications: args[0].shape = (b + 2*a, a, c^2). "
              "Unprocessed specifications: 'c^2' for dimension size args[0].shape[2]. "
              "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
            )),
@@ -1501,7 +1501,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         polymorphic_shapes=[x_polymorphic_shape, y_polymorphic_shape])(x, y)
     self.assertEqual(np.float32, zw_specs[0].dtype)
     self.assertEqual(np.float32, zw_specs[1].dtype)
-    self.assertEqual(("(a, 5)", "(a + b, 5)"), zw_polymorphic_shapes)
+    self.assertEqual(("(a, 5)", "(b + a, 5)"), zw_polymorphic_shapes)
 
     # We can use the zw_polymorphic_shapes for jax2tf.convert
     z, w = jax2tf.convert(
