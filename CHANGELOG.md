@@ -19,6 +19,13 @@ Remember to align the itemized text with the first line of an item within a list
     devices.
   * {func}`jax.numpy.argsort` and {func}`jax.numpy.sort` now support the `stable`
     and `descending` arguments.
+  * Several changes to the handling of shape polymorphism (for
+    {mod}`jax.experimental.jax2tf` and {mod}`jax.experimental.export`): cleaner
+    pretty-printing of symbolic expressions ({jax-issue}`#19227`); simplified
+    and faster equality comparisons, where we consider two symbolic dimensions
+    to be equal if the normalized form of their difference reduces to 0
+    ({jax-issue}`#19231`; note that this may result in user-visible behavior
+    changes).
 * Deprecations & Removals
   * A number of previously deprecated functions have been removed, following a
     standard 3+ month deprecation cycle (see {ref}`api-compatibility`).
