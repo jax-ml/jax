@@ -19,6 +19,7 @@ import enum
 from collections.abc import Sequence
 import itertools
 import math
+import os
 from typing import Any, Callable
 import unittest
 
@@ -278,18 +279,19 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertTrue(a.to_monomial() < (a * a).to_monomial())
     self.assertTrue(b.to_monomial() < (a * a).to_monomial())
     self.assertTrue((a * a * b).to_monomial() < (a * b * b).to_monomial())
-    e1 = a * a * b + a * b * b + a * b + a * a + a + b
+    e1 = 2 + a * a * b + a * b * b + a * b + a * a + a + b
 
     sorted_e1 = [shape_poly._DimExpr.from_monomial(m, m_count)
-                 for m, m_count in e1.monomials_sorted()]
+                 for m, m_count in e1.monomials()]
     self.assertSequenceEqual(sorted_e1,
-                             [a, b, a * a, a * b, a * a * b, a * b * b])
+                             [a * b * b, a * a * b, a * b, a * a, b, a, 2])
 
     e2 = a * (a // 4) + (a // 4) + b * (a // 4) + b * (a % 4) + a * a + b
     sorted_e2 = [shape_poly._DimExpr.from_monomial(m, m_count)
-                 for m, m_count in e2.monomials_sorted()]
+                 for m, m_count in e2.monomials()]
     self.assertSequenceEqual(sorted_e2,
-                             [b, a // 4, a * a, a * (a // 4), b * (a // 4), b * (a % 4)])
+                             [b * (a % 4), b * (a // 4), a * (a // 4), a * a,
+                              a // 4, b])
 
     # This failed with a previous implementation of atom equality
     self.assertNotEqual(shape_poly._DimMon.from_operation(shape_poly._DimAtom.NON_NEGATIVE,
@@ -2423,6 +2425,23 @@ def _flatten_harnesses(harnesses):
 @jtu.with_config(jax_enable_key_reuse_checks=False)
 class ShapePolyHarnessesTest(jtu.JaxTestCase):
   """This test runs for all _POLY_SHAPE_PRIMITIVE_HARNESSES."""
+
+  def setUp(self):
+    self.prof = None
+    if os.getenv("JAX_PROFILE_TEST", False):
+      import cProfile
+      self.prof = cProfile.Profile()
+      self.prof.enable()
+    super().setUp()
+
+  def tearDown(self):
+    super().tearDown()
+    if self.prof is not None:
+      from pstats import Stats
+      p = Stats(self.prof)
+      p.strip_dirs()
+      p.sort_stats("cumtime").print_stats(.2)
+      p.print_callers(.2)
 
   # For each primitive "xxx" the test will be called "test_harness_xxx_...".
   # If you want to run this test for only one harness that includes "foo"

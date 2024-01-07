@@ -124,6 +124,7 @@ class _DimAtom:
     self.var = var
     self.operation = operation
     self.operands = operands
+    self._hash = hash((self.var, self.operation, *self.operands))
 
   @classmethod
   def from_var(cls, v: str) -> _DimAtom:
@@ -155,7 +156,7 @@ class _DimAtom:
   __repr__ = __str__
 
   def __hash__(self):
-    return hash((self.var, self.operation, *self.operands))
+    return self._hash
 
   def _syntactic_cmp(self, other: _DimAtom) -> int:
     """Returns -1 if self < other, 0 if self == other, 1 if self > other.
@@ -264,8 +265,13 @@ class _DimMon(dict):
   The representation is a dictionary mapping _DimAtom to exponent.
   The exponents are integers >= 1.
   """
+
   def __hash__(self):
-    return hash(frozenset(self.items()))
+    h = getattr(self, "_hash", None)
+    if h is not None: return h
+    h = hash(frozenset(self.items()))
+    self._hash = h
+    return h
 
   def __str__(self):
     return "*".join(f"{key}^{exponent}" if exponent != 1 else str(key)
@@ -401,14 +407,19 @@ class _DimExpr():
     # normalized; Use _DimExpr.normalize.
     # Takes ownership of coeffs
     self._coeffs = coeffs or {_DimMon(): 0}
+    self._monomials_sorted = tuple(sorted(self._coeffs.items(), reverse=True))
+    self._hash = hash(self._monomials_sorted)
 
   def monomials(self) -> Iterable[tuple[_DimMon, int]]:
-    return self._coeffs.items()
+    """The monomials in sorted reverse lexicographic order.
+    Higher-degree monomials come earlier in the order.
+    """
+    return self._monomials_sorted
 
-  def monomials_sorted(self, reverse=False):
-    """The monomials in sorted lexicographic order.
-    Higher-degree monomials come later in the order."""
-    return sorted(self.monomials(), reverse=reverse)
+  @property
+  def leading_term(self) -> tuple[_DimMon, int]:
+    """Returns the highest degree term that comes first lexicographically."""
+    return self._monomials_sorted[0]
 
   @classmethod
   def _add_coeffs(cls, coeffs: dict[_DimMon, int], mon: _DimMon, coeff: int):
@@ -509,8 +520,8 @@ class _DimExpr():
     The comparison is done lexicographically (syntactic), to be used for sorting.
     The result is not related to the semantic value.
     """
-    s_mons = self.monomials_sorted()
-    o_mons = other.monomials_sorted()
+    s_mons = self._monomials_sorted
+    o_mons = other._monomials_sorted
     def cmp_mon(s_mon: tuple[_DimMon, int], o_mon: tuple[_DimMon, int]) -> int:
       if c := s_mon[0]._syntactic_cmp(o_mon[0]): return c
       return cmp_comparable(s_mon[1], o_mon[1])
@@ -571,7 +582,7 @@ class _DimExpr():
     raise self.inconclusive_comparison(">=", other)
 
   def __hash__(self):
-    return hash(tuple(sorted(self.monomials())))
+    return self._hash
 
   def __str__(self):
     def _one_monomial(mon, c):
@@ -582,7 +593,7 @@ class _DimExpr():
       return f"{c}*{mon}"
     # We print first the "larger" monomials, so that the constant is last.
     res = " + ".join(_one_monomial(mon, c)
-                     for mon, c in self.monomials_sorted(reverse=True))
+                     for mon, c in self._monomials_sorted)
     res = res.replace(" + -", " - ")
     return res
 
@@ -793,11 +804,6 @@ class _DimExpr():
   @property
   def is_constant(self):
     return len(self._coeffs) == 1 and next(iter(self._coeffs)).degree == 0
-
-  @property
-  def leading_term(self) -> tuple[_DimMon, int]:
-    """Returns the highest degree term that comes first lexicographically."""
-    return max(self.monomials())
 
   def evaluate(self, env: DimVarEnv):
     # Evaluates as a value of dtype=core.dim_value_dtype()
