@@ -25,7 +25,8 @@ Remember to align the itemized text with the first line of an item within a list
     and faster equality comparisons, where we consider two symbolic dimensions
     to be equal if the normalized form of their difference reduces to 0
     ({jax-issue}`#19231`; note that this may result in user-visible behavior
-    changes).
+    changes); improved the error messages for inconclusive inequality comparisons
+    ({jax-issue}`#19235`).
 * Deprecations & Removals
   * A number of previously deprecated functions have been removed, following a
     standard 3+ month deprecation cycle (see {ref}`api-compatibility`).
