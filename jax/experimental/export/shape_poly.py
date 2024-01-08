@@ -44,7 +44,7 @@ import math
 import operator as op
 import threading
 import tokenize
-from typing import Any, Union
+from typing import Any, Callable, Union
 
 import numpy as np
 import opt_einsum
@@ -109,6 +109,12 @@ class _DimAtom:
     * operands: the operands to which the operation is applied.
   """
   # The supported operations
+  # FLOORDIV(e1, e2) and MOD(e1, e2) have the same semantics as in Python:
+  # FLOORDIV(e1, e2) = e1 // e2 = floor(e1 / e2)
+  # if e2 > 0 then 0 <= MOD(e1, e2) < e2
+  # if e2 < 0 then e2 < MOD(e1, e2) <= 0
+  # e1 = e2 * FLOORDIV(e1, e2) + MOD(e1, e2)
+  #
   FLOORDIV = "floordiv"
   MOD = "mod"
   NON_NEGATIVE = "non_negative"  # The max of the operand and 0
@@ -546,12 +552,14 @@ class _DimExpr():
 
     return diff == 0
 
-  def inconclusive_comparison(self, operation: str, op: Any) -> Exception:
-    return InconclusiveDimensionOperation(
-      f"Symbolic dimension comparison '{self}' {operation} '{op}' is inconclusive.\n"
-      "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic-dimensions-is-partially-supported.")
+  def ge(self, other: DimSize,
+         cmp_str: Callable[[], str] | None = None) -> bool:
+    """Implements `self >= other`.
 
-  def ge(self, other: DimSize) -> bool:
+    Raises InconclusiveDimensionOperation if the result is not conclusive.
+    Uses `cmp_str()` as a description of the comparison in the exception
+    string.
+    """
     self_minus_other = _ensure_poly(self - other, "ge")
     lb, ub = self_minus_other.bounds()
     if lb >= 0:
@@ -584,12 +592,18 @@ class _DimExpr():
     for dec in _decompose_expr(self_minus_other, _DimAtom.FLOORDIV,
                                with_exp=1, with_rest_monomial=1,
                                with_rest_expr=0):
-      # e = factor * floordiv(op1, op2)^1 * 1 + 0
+      # e = factor * floordiv(op0, op1)^1 * 1 + 0
       if dec.factor > 0:
         if definitely_geq_0(dec.operands[0]) and definitely_geq_0(dec.operands[1]):
           return True
 
-    raise self.inconclusive_comparison(">=", other)
+    if cmp_str is not None:
+      msg = cmp_str()
+    else:
+      msg = f"'{self}' >= '{other}'"
+    raise InconclusiveDimensionOperation(
+      f"Symbolic dimension comparison {msg} is inconclusive.\n"
+      "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic-dimensions-is-partially-supported.")
 
   def __hash__(self):
     return self._hash
@@ -718,25 +732,21 @@ class _DimExpr():
   def __ne__(self, other: Any) -> bool:
     return not self.__eq__(other)
 
-  __ge__ = ge
+  def __ge__(self, other: DimSize) -> bool:
+    return self.ge(
+      other, lambda: f"'{self}' >= '{other}'")
 
   def __le__(self, other: DimSize):
-    try:
-      return _ensure_poly(other, "le").__ge__(self)
-    except InconclusiveDimensionOperation as e:
-      raise self.inconclusive_comparison("<=", other) from e
+    return _ensure_poly(other, "le").ge(
+      self, lambda: f"'{self}' <= '{other}'")
 
   def __gt__(self, other: DimSize):
-    try:
-      return not _ensure_poly(other, "gt").__ge__(self)
-    except InconclusiveDimensionOperation as e:
-      raise self.inconclusive_comparison(">", other) from e
+    return not _ensure_poly(other, "le").ge(
+      self, lambda: f"'{self}' > '{other}'")
 
   def __lt__(self, other: DimSize):
-    try:
-      return not self.__ge__(other)
-    except InconclusiveDimensionOperation as e:
-      raise self.inconclusive_comparison("<", other) from e
+    return not self.ge(
+      other, lambda: f"'{self}' < '{other}'")
 
   def divmod(self, divisor: _DimExpr) -> tuple[DimSize, int]:
     """
