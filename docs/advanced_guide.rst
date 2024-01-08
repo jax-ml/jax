@@ -18,6 +18,7 @@ This section contains examples and tutorials on more advanced topics, such as Mu
 
    multi_process
    notebooks/Distributed_arrays_and_automatic_parallelization
+   notebooks/shard_map
    notebooks/xmap_tutorial
 
 .. toctree::
