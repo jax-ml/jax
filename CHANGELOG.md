@@ -9,6 +9,7 @@ Remember to align the itemized text with the first line of an item within a list
 ## jax 0.4.24
 
 * Changes
+
   * JAX lowering to StableHLO does not depend on physical devices anymore.
     If your primitive wraps custom_paritioning or JAX callbacks in the lowering
     rule i.e. function passed to `rule` parameter of `mlir.register_lowering` then add your
@@ -27,6 +28,10 @@ Remember to align the itemized text with the first line of an item within a list
     ({jax-issue}`#19231`; note that this may result in user-visible behavior
     changes); improved the error messages for inconclusive inequality comparisons
     ({jax-issue}`#19235`).
+  * Refactored the API for `jax.experimental.export`. Instead of
+    `from jax.experimental.export import export` you should use now
+    `from jax.experimental import export`. The old way of importing will
+    continue to work for a deprecation period of 3 months.
 * Deprecations & Removals
   * A number of previously deprecated functions have been removed, following a
     standard 3+ month deprecation cycle (see {ref}`api-compatibility`).

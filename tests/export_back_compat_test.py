@@ -27,7 +27,8 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax.experimental.export import export
+from jax.experimental import export
+from jax.experimental.export import _export
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_ducc_fft
@@ -97,7 +98,7 @@ class CompatTest(bctu.CompatTestBase):
 
   def test_custom_call_coverage(self):
     """Tests that the back compat tests cover all the targets declared stable."""
-    targets_to_cover = set(export._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
+    targets_to_cover = set(_export._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
     # Add here all the testdatas that should cover the targets guaranteed
     # stable
     covering_testdatas = [

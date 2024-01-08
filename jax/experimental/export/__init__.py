@@ -12,3 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
+
+from jax.experimental.export._export import (
+    minimum_supported_serialization_version,
+    maximum_supported_serialization_version,
+    Exported,
+    export,
+    call_exported,  # TODO: deprecate
+    call,
+    DisabledSafetyCheck,
+    default_lowering_platform,
+
+    symbolic_shape,
+    args_specs,
+)
+from jax.experimental.export.serialization import (
+    serialize,
+    deserialize,
+)

@@ -38,7 +38,8 @@ from jax import tree_util
 from jax import sharding
 from jax.experimental import maps
 from jax.experimental.export import shape_poly
-from jax.experimental.export import export
+from jax.experimental.export import _export
+from jax.experimental import export
 from jax.experimental.jax2tf import impl_no_xla
 from jax.interpreters import xla
 
@@ -515,14 +516,14 @@ class NativeSerializationImpl(SerializationImpl):
 
   def get_vjp_fun(self) -> tuple[Callable,
                                  Sequence[core.AbstractValue]]:
-    return export._get_vjp_fun(self.fun_jax,
-                               in_tree=self.exported.in_tree,
-                               in_avals=self.exported.in_avals,
-                               in_shardings=self.exported.in_shardings,
-                               out_avals=self.exported.out_avals,
-                               out_shardings=self.exported.out_shardings,
-                               nr_devices=self.exported.nr_devices,
-                               apply_jit=True)
+    return _export._get_vjp_fun(self.fun_jax,
+                                in_tree=self.exported.in_tree,
+                                in_avals=self.exported.in_avals,
+                                in_shardings=self.exported.in_shardings,
+                                out_avals=self.exported.out_avals,
+                                out_shardings=self.exported.out_shardings,
+                                nr_devices=self.exported.nr_devices,
+                                apply_jit=True)
 
 class GraphSerializationImpl(SerializationImpl):
   def __init__(self, fun_jax, *,
@@ -587,14 +588,14 @@ class GraphSerializationImpl(SerializationImpl):
     # We reuse the code for native serialization to get the VJP functions,
     # except we use unspecified shardings, and we do not apply a jit on the
     # VJP. This matches the older behavior of jax2tf for graph serialization.
-    return export._get_vjp_fun(self.fun_jax,
-                               in_tree=self.in_tree,
-                               in_avals=self.args_avals_flat,
-                               in_shardings=(None,) * len(self.args_avals_flat),
-                               out_avals=self.outs_avals,
-                               out_shardings=(None,) * len(self.outs_avals),
-                               nr_devices=1,  # Does not matter for unspecified shardings
-                               apply_jit=False)
+    return _export._get_vjp_fun(self.fun_jax,
+                                in_tree=self.in_tree,
+                                in_avals=self.args_avals_flat,
+                                in_shardings=(None,) * len(self.args_avals_flat),
+                                out_avals=self.outs_avals,
+                                out_shardings=(None,) * len(self.outs_avals),
+                                nr_devices=1,  # Does not matter for unspecified shardings
+                                apply_jit=False)
 
 
 def dtype_of_val(val: TfVal) -> DType:
