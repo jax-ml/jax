@@ -4747,8 +4747,9 @@ def padtype_to_pads(in_shape, window_shape, window_strides, padding):
 
   if padding == PaddingType.SAME or padding == PaddingType.SAME_LOWER:
     out_shape = _ceil_divide(in_shape, window_strides)
-    pad_sizes = np.maximum(0, (out_shape - 1) * window_strides +
-                                window_shape - in_shape)
+    pad_sizes = (core.max_dim(d, 0)
+                 for d in (out_shape - 1) * window_strides +
+                          window_shape - in_shape)
     if padding == PaddingType.SAME:
       return [
           (pad_size // 2, pad_size - pad_size // 2) for pad_size in pad_sizes

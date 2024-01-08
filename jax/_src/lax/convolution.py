@@ -142,7 +142,7 @@ def conv_general_dilated(
   if isinstance(padding, str):
     lhs_perm, rhs_perm, _ = dnums
     rhs_shape = np.take(rhs.shape, rhs_perm)[2:]  # type: ignore[index]
-    effective_rhs_shape = [(k-1) * r + 1 for k, r in zip(rhs_shape, rhs_dilation)]
+    effective_rhs_shape = [core.dilate_dim(k, r) for k, r in zip(rhs_shape, rhs_dilation)]
     padding = lax.padtype_to_pads(
         np.take(lhs.shape, lhs_perm)[2:], effective_rhs_shape,  # type: ignore[index]
         window_strides, padding)
@@ -334,7 +334,7 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
   if isinstance(padding, str) and padding in {'SAME', 'VALID'}:
     if rhs_dilation is None:
       rhs_dilation = (1,) * (rhs.ndim - 2)
-    effective_k_size = map(lambda k, r: (k-1) * r + 1, k_sdims, rhs_dilation)
+    effective_k_size = map(lambda k, r: core.dilate_dim(k, r), k_sdims, rhs_dilation)
     pads = [_conv_transpose_padding(k, s, padding)
             for k,s in zip(effective_k_size, strides)]
   else:
