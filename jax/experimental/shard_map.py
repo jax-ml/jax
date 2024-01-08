@@ -625,7 +625,8 @@ def _shmap_subtrace(main, in_rep, *in_vals):
 
 def _names_to_pspec(names: AxisNames) -> PartitionSpec:
   ndmin = max(names) + 1 if names else 0
-  return PartitionSpec(*(names.get(i) for i in range(ndmin)))
+  unpack = lambda t: t[0] if t is not None and len(t) == 1 else t
+  return PartitionSpec(*(unpack(names.get(i)) for i in range(ndmin)))
 
 def _unmatch_spec(mesh: Mesh, src: AxisNames, x: JaxType) -> JaxType:
   with core.eval_context():

@@ -1036,6 +1036,22 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(y_, (2 * x * x).sum(), check_dtypes=True)
     self.assertAllClose(x_bar, jnp.ones_like(x) + 2 * x, check_dtypes=True)
 
+  def test_same_pspec_eager_shard_map(self):
+    # This behavior is not guaranteed by JAX and this test can be changed if
+    # the behavior changes.
+    mesh = jtu.create_global_mesh((1, 4, 1), ('data', 'seq', 'model'))
+
+    def f(x):
+      return x * x + 2
+
+    x = jnp.ones([2, 16, 4])
+    x_spec = jax.sharding.PartitionSpec("data", "seq", "model")
+    x = jax.device_put(x, jax.sharding.NamedSharding(mesh, x_spec))
+    shard_f = shard_map(f, mesh=mesh, in_specs=x_spec, out_specs=x_spec)
+
+    y = shard_f(x)
+    self.assertEqual(x_spec, y.sharding.spec)
+
   @parameterized.parameters([True, False])
   def test_rewrite_process_custom_vjp_call_match_less_replicated(self, jit):
     @jax.custom_vjp
