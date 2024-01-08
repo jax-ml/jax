@@ -547,7 +547,11 @@ def _validate_reduce_window_inputs(operand_shape, computation_name, dtype,
     # tf.math.reduce_min.
     raise _reduce_error(f"Min pool does not support operands of type {dtype}")
   if computation_name == "add" and dtype not in [
-      tf.float16, tf.float32, tf.float64
+      tf.float16,
+      tf.float32,
+      tf.float64,
+      tf.int16,
+      tf.int32,
   ]:
     raise _reduce_error("Add pooling does not support operands of type "
                         f"{dtype}")
@@ -653,6 +657,13 @@ def _reduce_monoid(operand, window_dimensions, window_strides, padding,
       raise NotImplementedError(
           f"TODO: use tf.nn.pool with dynamic shapes¨{window_dimensions=} "
           f" {window_strides=} {dilations=}")
+    # tf.nn.pool() currently does not suport tf.int32 and so we cast back and
+    # forth in order to be able to convert.
+    if (inputs.dtype in [tf.int16, tf.int32]) and computation_name == "add":
+      original_dtype = inputs.dtype
+      inputs = tf.cast(inputs, dtype=tf.float32)
+    else:
+      original_dtype = None
     result = tf.nn.pool(
         inputs,
         window_shape=window_dimensions,
@@ -660,6 +671,8 @@ def _reduce_monoid(operand, window_dimensions, window_strides, padding,
         padding=padding_type,
         strides=window_strides,
         dilations=dilations)
+    if original_dtype:
+      result = tf.cast(result, dtype=original_dtype)
 
     if has_only_spatial_dims:
       # If the input only had spatial dimensions we need to contract the batch
