@@ -5601,7 +5601,8 @@ _available_numpy_dtypes: list[str] = [dtype.__name__ for dtype in jtu.dtypes.all
                                       if dtype != dtypes.bfloat16]
 
 # TODO(jakevdp): implement missing ufuncs
-UNIMPLEMENTED_UFUNCS = {'spacing'}
+UNIMPLEMENTED_UFUNCS = {'spacing', 'bitwise_invert', 'bitwise_left_shift',
+                        'bitwise_right_shift', 'pow', 'vecdot'}
 
 
 def _all_numpy_ufuncs() -> Iterator[str]:
@@ -5644,11 +5645,6 @@ class NumpyUfuncTests(jtu.JaxTestCase):
     args_maker = lambda: tuple(np.ones(1, dtype=dtype) for dtype in arg_dtypes)
 
     with jtu.strict_promotion_if_dtypes_match(arg_dtypes):
-      try:
-        jnp_op(*args_maker())
-      except NotImplementedError:
-        self.skipTest(f"jtu.{name} is not yet implemented.")
-
       # large tol comes from the fact that numpy returns float16 in places
       # that jnp returns float32. e.g. np.cos(np.uint8(0))
       self._CheckAgainstNumpy(np_op, jnp_op, args_maker, check_dtypes=False, tol=1E-2)
