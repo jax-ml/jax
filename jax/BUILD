@@ -365,6 +365,7 @@ pytype_strict_library(
         ":compilation_cache_interface",
         ":config",
         ":gfile_cache",
+        ":monitoring",
         ":path",
         "//jax/_src/lib",
     ] + py_deps("numpy") + py_deps("zstandard"),

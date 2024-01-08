@@ -379,12 +379,13 @@ class CompilationCacheTest(jtu.JaxTestCase):
         - previous_counts["/jax/compilation_cache/compile_requests_use_cache"],
         3)
 
-  @parameterized.parameters(0, 2)
-  def test_cache_misses_metric(self, min_compile_time_secs):
+  @parameterized.parameters(0, 1048576)  # 0 byte, 1 MiB
+  def test_cache_misses_metric(self, min_entry_size):
     previous_counts = Counter(_counts)
     with (
       tempfile.TemporaryDirectory() as tmpdir,
-      config.persistent_cache_min_compile_time_secs(min_compile_time_secs),
+      config.persistent_cache_min_compile_time_secs(2),
+      config.persistent_cache_min_entry_size_bytes(min_entry_size),
     ):
       cc.initialize_cache(tmpdir)
 
@@ -393,10 +394,16 @@ class CompilationCacheTest(jtu.JaxTestCase):
         jit(lambda x: x + 1)(1)
         jit(lambda x: x + 2)(1)
 
-    self.assertEqual(
-        _counts["/jax/compilation_cache/cache_misses"]
-        - previous_counts["/jax/compilation_cache/cache_misses"],
-        2)
+    if min_entry_size <= 0:
+      self.assertEqual(
+          _counts["/jax/compilation_cache/cache_misses"]
+          - previous_counts["/jax/compilation_cache/cache_misses"],
+          2)
+    else:
+      self.assertEqual(
+          _counts["/jax/compilation_cache/cache_misses"]
+          - previous_counts["/jax/compilation_cache/cache_misses"],
+          0)
 
   def test_cache_hits_metric(self):
     previous_counts = Counter(_counts)

@@ -346,9 +346,8 @@ def _cache_write(cache_key: str,
     return
   else:
     logger.debug(
-        "'%s' took at least %.2f seconds to compile (%.2fs), writing persistent"
-        " cache entry", module_name, min_compile_time, compile_time_secs)
-    monitoring.record_event('/jax/compilation_cache/cache_misses')
+        "'%s' took at least %.2f seconds to compile (%.2fs)",
+        module_name, min_compile_time, compile_time_secs)
 
   try:
     compilation_cache.put_executable_and_time(

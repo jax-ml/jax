@@ -29,6 +29,7 @@ except ImportError:
 from jax._src import cache_key
 from jax._src.compilation_cache_interface import CacheInterface
 from jax._src import config
+from jax._src import monitoring
 from jax._src.gfile_cache import GFileCache
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
@@ -161,11 +162,7 @@ def put_executable_and_time(
   if cache is None:
     logger.debug("put_executable_and_time: cache is disabled/not initialized")
     return
-  logger.debug(
-      "Writing %s to persistent compilation cache with key %s.",
-      module_name,
-      cache_key,
-  )
+
   serialized_executable = backend.serialize_executable(executable)
   executable_and_time = combine_executable_and_time(
       serialized_executable, compile_time)
@@ -186,6 +183,12 @@ def put_executable_and_time(
         min_entry_size,
     )
   else:
+    logger.debug(
+        "Writing %s to persistent compilation cache with key %s.",
+        module_name,
+        cache_key
+    )
+    monitoring.record_event('/jax/compilation_cache/cache_misses')
     cache.put(cache_key, executable_and_time)
 
 
