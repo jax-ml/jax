@@ -27,7 +27,6 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax.experimental import export
 from jax.experimental.export import _export
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
