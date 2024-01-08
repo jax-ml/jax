@@ -97,6 +97,8 @@ class CustomCallBackendConfig:
   collective_id: int | None
   device_type: str | None
   cost_estimate: CostEstimate | None
+  needs_hlo_passes: bool
+  needs_layout_passes: bool
   flags: dict[str, bool | int | float] | None
 
   # We omit the body while printing, because primitive params get embedded
@@ -120,6 +122,12 @@ class CustomCallBackendConfig:
     if self.cost_estimate is not None:
       config.write(b', "cost_estimate": ')
       config.write(self.cost_estimate.to_json())
+    if self.needs_hlo_passes:
+      config.write(b', "needs_hlo_passes": ')
+      config.write(str(self.needs_hlo_passes).lower().encode("ascii"))
+    if self.needs_layout_passes:
+      config.write(b', "needs_layout_passes": ')
+      config.write(str(self.needs_layout_passes).lower().encode("ascii"))
     config.write(b"}")
     if self.device_type is not None:
       config.write(b', "device_type": ')
@@ -275,8 +283,10 @@ def _lower_tpu_kernel(
     module: ir.Module,
     hardware_generation: int,
     device_type: str | None,
-) -> ir.Module:
+) -> tuple[bytes, tuple[np.ndarray, ...]]:
   """Runs MLIR passes lowering the given module to an MLIR module.
+
+  Uses Python versions of infer-memref-layout and apply-vector-layout.
 
   Args:
     module: The MLIR module to lower.
@@ -319,18 +329,9 @@ def _lower_tpu_kernel(
         pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
         _run_pass_pipeline(pipeline, module, "post-hlo-conversion")
 
-      if _MOSAIC_USE_CPP_PASSES.value:
-        pipeline = [
-            (
-                f"func.func(tpu-infer-memref-layout{{hardware-generation={hardware_generation}}})"
-            ),
-        ]
-        pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-        _run_pass_pipeline(pipeline, module, "post-infer-memref-layout")
-      else:
-        infer_memref_layout.infer_module(module, hardware_generation)
-        module.operation.verify()
-        dump_mlir(module, "post-infer-memref-layout")
+      infer_memref_layout.infer_module(module, hardware_generation)
+      module.operation.verify()
+      dump_mlir(module, "post-infer-memref-layout")
 
       pipeline = [
           "canonicalize",
@@ -358,19 +359,9 @@ def _lower_tpu_kernel(
       pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
       _run_pass_pipeline(pipeline, module, "post-infer-vector-layout")
 
-      if _MOSAIC_USE_CPP_PASSES.value:
-        pipeline = [
-            (
-                "func.func(tpu-apply-vector-layout{sublane-count=8"
-                f" lane-count=128 hardware-generation={hardware_generation}}})"
-            ),
-        ]
-        pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-        _run_pass_pipeline(pipeline, module, "post-apply-vector-layout")
-      else:
-        apply_vector_layout.apply(module, hardware_generation)
-        module.operation.verify()
-        dump_mlir(module, "post-apply-vector-layout")
+      apply_vector_layout.apply(module, hardware_generation)
+      module.operation.verify()
+      dump_mlir(module, "post-apply-vector-layout")
 
       pipeline = PassManager.parse("builtin.module(canonicalize)")
       _run_pass_pipeline(pipeline, module, "pre-lower-to-llo")
@@ -429,16 +420,26 @@ def as_tpu_kernel(
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
-  lowered_module_asm, constants = _lower_tpu_kernel(
-      module, hardware_generation, device_type=device_type
-  )
+  if _MOSAIC_USE_CPP_PASSES.value:
+    bytecode_buffer = io.BytesIO()
+    module.operation.write_bytecode(bytecode_buffer, desired_version=0)
+    asm = bytecode_buffer.getvalue()
+    constants = ()
+    needs_layout_passes = not device_type
+  else:
+    asm, constants = _lower_tpu_kernel(
+        module, hardware_generation, device_type=device_type
+    )
+    needs_layout_passes = False
   # TODO(amagni): Kernel name and regeneration metadata could alternatively be
   # added as a custom attribute to the MLIR call op rather than including them
   # in the backend_config.
   return _lowered_as_tpu_kernel(
-      lowered_module_asm,
+      asm,
       out_type,
       constants,
+      needs_hlo_passes=_MOSAIC_ALLOW_HLO.value,
+      needs_layout_passes=needs_layout_passes,
       device_type=device_type,
       has_communication=has_communication,
       has_custom_barrier=has_custom_barrier,
@@ -455,6 +456,8 @@ def _lowered_as_tpu_kernel(
     constants: Sequence[Any] = (),
     *,
     cost_estimate: CostEstimate | None = None,
+    needs_hlo_passes: bool = False,
+    needs_layout_passes: bool = False,
     device_type: str | None = None,
     has_communication: bool = False,
     has_custom_barrier: bool = False,
@@ -485,6 +488,8 @@ def _lowered_as_tpu_kernel(
         collective_id,
         device_type,
         cost_estimate,
+        needs_hlo_passes,
+        needs_layout_passes,
         flags,
     )
     result = tpu_custom_call_p.bind(

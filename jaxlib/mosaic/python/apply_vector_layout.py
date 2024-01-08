@@ -1750,6 +1750,8 @@ _register_rule("arith.xori")(
     functools.partial(_elementwise_op_rule, arith.XOrIOp))
 _register_rule("arith.shli")(
     functools.partial(_elementwise_op_rule, arith.ShLIOp))
+_register_rule("arith.shrsi")(
+    functools.partial(_elementwise_op_rule, arith.ShRSIOp))
 _register_rule("arith.shrui")(
     functools.partial(_elementwise_op_rule, arith.ShRUIOp))
 _register_rule("math.absf")(

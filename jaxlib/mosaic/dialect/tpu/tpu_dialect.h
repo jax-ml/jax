@@ -51,13 +51,13 @@ namespace tpu {
 std::pair<bool, bool> mightCommunicateBetweenChips(Operation* op);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
-    int hardware_generation);
+    int hardware_generation = -1);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
     int lane_count = 128, int sublane_count = 8);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
-    int hardware_generation, int lane_count = 128, int sublane_count = 8);
+    int hardware_generation = -1, int lane_count = 128, int sublane_count = 8);
 
 std::unique_ptr<OperationPass<func::FuncOp>>
 createLogicalToPhysicalDeviceIdPass(int64_t total_devices);
