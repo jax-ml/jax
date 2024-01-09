@@ -40,7 +40,7 @@ repos:
     args: [--config=pyproject.toml]
 
 - repo: https://github.com/mwouts/jupytext
-  rev: v1.15.2
+  rev: v1.16.0
   hooks:
   - id: jupytext
     args: [--sync]
