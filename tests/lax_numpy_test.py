@@ -62,6 +62,7 @@ nonempty_nonscalar_array_shapes = [(4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
 one_dim_array_shapes = [(1,), (6,), (12,)]
 empty_array_shapes = [(0,), (0, 4), (3, 0),]
+broadcast_compatible_shapes = [(), (1,), (3,), (1, 3), (4, 1), (4, 3)]
 
 scalar_shapes = [jtu.NUMPY_SCALAR_SHAPE, jtu.PYTHON_SCALAR_SHAPE]
 array_shapes = nonempty_array_shapes + empty_array_shapes
@@ -553,6 +554,39 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       self._CheckAgainstNumpy(np_fun, jnp.matmul, args_maker, tol=tol)
       self._CompileAndCheck(jnp.matmul, args_maker, atol=tol, rtol=tol)
+
+  @jtu.sample_product(
+      lhs_batch=broadcast_compatible_shapes,
+      rhs_batch=broadcast_compatible_shapes,
+      axis_size=[2, 4],
+      axis=range(-2, 2),
+      dtype=number_dtypes,
+  )
+  @jax.default_matmul_precision("float32")
+  def testVecdot(self, lhs_batch, rhs_batch, axis_size, axis, dtype):
+    # Construct vecdot-compatible shapes.
+    size = min(len(lhs_batch), len(rhs_batch))
+    axis = int(np.clip(axis, -size - 1, size))
+    if axis >= 0:
+      lhs_shape = (*lhs_batch[:axis], axis_size, *lhs_batch[axis:])
+      rhs_shape = (*rhs_batch[:axis], axis_size, *rhs_batch[axis:])
+    else:
+      laxis = axis + len(lhs_batch) + 1
+      lhs_shape = (*lhs_batch[:laxis], axis_size, *lhs_batch[laxis:])
+      raxis = axis + len(rhs_batch) + 1
+      rhs_shape = (*rhs_batch[:raxis], axis_size, *rhs_batch[raxis:])
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+    @jtu.promote_like_jnp
+    def np_fn(x, y, axis=axis):
+      f = jtu.numpy_vecdot if jtu.numpy_version() < (2, 0, 0) else np.vecdot
+      return f(x, y, axis=axis).astype(x.dtype)
+    jnp_fn = partial(jnp.vecdot, axis=axis)
+    tol = {np.float16: 1e-2, np.float32: 1E-3, np.float64: 1e-12,
+           np.complex64: 1E-3, np.complex128: 1e-12}
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape, axes=axes)
@@ -5052,6 +5086,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         ones_1d, ones_1d)
     jtu.assert_dot_precision(
         HIGHEST,
+        partial(jnp.vecdot, precision=HIGHEST),
+        ones_1d, ones_1d)
+    jtu.assert_dot_precision(
+        HIGHEST,
         partial(jnp.tensordot, axes=2, precision=HIGHEST),
         ones_2d, ones_2d)
     jtu.assert_dot_precision(
@@ -5076,7 +5114,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         ones_1d, ones_1d)
 
   @jtu.sample_product(
-      funcname=['inner', 'matmul', 'dot', 'vdot', 'tensordot']
+      funcname=['inner', 'matmul', 'dot', 'vdot', 'tensordot', 'vecdot']
   )
   def testPreferredElementType(self, funcname):
     func = getattr(jnp, funcname)
@@ -5615,7 +5653,7 @@ _available_numpy_dtypes: list[str] = [dtype.__name__ for dtype in jtu.dtypes.all
 
 # TODO(jakevdp): implement missing ufuncs
 UNIMPLEMENTED_UFUNCS = {'spacing', 'bitwise_invert', 'bitwise_left_shift',
-                        'bitwise_right_shift', 'pow', 'vecdot'}
+                        'bitwise_right_shift', 'pow'}
 
 
 def _all_numpy_ufuncs() -> Iterator[str]:

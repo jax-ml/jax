@@ -839,6 +839,9 @@ def var(a: ArrayLike, axis: _Axis = ..., dtype: DTypeLike = ...,
 def vdot(
     a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = ...,
     preferred_element_type: Optional[DTypeLike] = ...) -> Array: ...
+def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = ...,
+           precision: PrecisionLike = ...,
+           preferred_element_type: Optional[DTypeLike] = ...) -> Array: ...
 def vsplit(
     ary: ArrayLike, indices_or_sections: Union[int, ArrayLike]
 ) -> list[Array]: ...

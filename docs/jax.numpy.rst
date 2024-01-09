@@ -415,6 +415,7 @@ namespace; they are listed below.
     vander
     var
     vdot
+    vecdot
     vectorize
     vsplit
     vstack
