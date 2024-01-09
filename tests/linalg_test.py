@@ -43,7 +43,7 @@ scipy_version = tuple(map(int, scipy.version.version.split('.')[:3]))
 
 T = lambda x: np.swapaxes(x, -1, -2)
 
-
+broadcast_compatible_shapes = [(), (1,), (3,), (1, 3), (4, 1), (4, 3)]
 float_types = jtu.dtypes.floating
 complex_types = jtu.dtypes.complex
 int_types = jtu.dtypes.all_integer
@@ -654,26 +654,42 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fn, args_maker)
 
   @jtu.sample_product(
-      [dict(lhs_shape=(2, 3, 4), rhs_shape=(1, 4), axis=-1),
-       dict(lhs_shape=(2, 3, 4), rhs_shape=(2, 1, 1), axis=0),
-       dict(lhs_shape=(2, 3, 4), rhs_shape=(3, 4), axis=1)],
+      lhs_batch=broadcast_compatible_shapes,
+      rhs_batch=broadcast_compatible_shapes,
+      axis_size=[2, 4],
+      axis=range(-2, 2),
       dtype=float_types + complex_types,
   )
-  def testVecDot(self, lhs_shape, rhs_shape, axis, dtype):
+  @jax.default_matmul_precision("float32")
+  def testVecDot(self, lhs_batch, rhs_batch, axis_size, axis, dtype):
+    # Construct vecdot-compatible shapes.
+    size = min(len(lhs_batch), len(rhs_batch))
+    axis = int(np.clip(axis, -size - 1, size))
+    if axis >= 0:
+      lhs_shape = (*lhs_batch[:axis], axis_size, *lhs_batch[axis:])
+      rhs_shape = (*rhs_batch[:axis], axis_size, *rhs_batch[axis:])
+    else:
+      laxis = axis + len(lhs_batch) + 1
+      lhs_shape = (*lhs_batch[:laxis], axis_size, *lhs_batch[laxis:])
+      raxis = axis + len(rhs_batch) + 1
+      rhs_shape = (*rhs_batch[:raxis], axis_size, *rhs_batch[raxis:])
+
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
     if jtu.numpy_version() < (2, 0, 0):
       def np_fn(x, y, axis=axis):
-        x, y = np.broadcast_arrays(x, y)
         x = np.moveaxis(x, axis, -1)
         y = np.moveaxis(y, axis, -1)
-        return np.matmul(x[..., None, :], y[..., None])[..., 0, 0]
+        x, y = np.broadcast_arrays(x, y)
+        return np.matmul(np.conj(x[..., None, :]), y[..., None])[..., 0, 0]
     else:
       np_fn = partial(np.linalg.vecdot, axis=axis)
     np_fn = jtu.promote_like_jnp(np_fn, inexact=True)
     jnp_fn = partial(jnp.linalg.vecdot, axis=axis)
-    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=1e-3)
-    self._CompileAndCheck(jnp_fn, args_maker)
+    tol = {np.float16: 1e-2, np.float32: 1E-3, np.float64: 1e-12,
+           np.complex64: 1E-3, np.complex128: 1e-12}
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
 
   # jnp.linalg.matmul is an alias of jnp.matmul; do a minimal test here.
   @jtu.sample_product(
