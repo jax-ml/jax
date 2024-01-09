@@ -133,7 +133,13 @@ class _DimAtom:
     self.var = var
     self.operation = operation
     self.operands = operands
+    # Precompute the hash (used extensively because these are kept in
+    # dictionaries) and the size (used for sorting, which is important for
+    # some of the reasoning). It is important for the size of _DimAtom,
+    # _DimMon, or _DimExpr, to be strictly larger than the size of any
+    # constituent sub-item.
     self._hash = hash((self.var, self.operation, *self.operands))
+    self._size = 1 if var is not None else 1 + sum(o._size for o in operands)
 
   @classmethod
   def from_var(cls, v: str) -> _DimAtom:
@@ -172,12 +178,9 @@ class _DimAtom:
     The comparison is done lexicographically (syntactic), to be used for sorting.
     The result is not related to the semantic value.
     """
+    if c := cmp_comparable(self._size, other._size): return c
     if self.var is not None:
-      if other.var is not None:
-        return cmp_comparable(self.var, other.var)
-      else:
-        return -1
-    if other.var is not None: return 1
+      return cmp_comparable(self.var, other.var)
     if c := cmp_comparable(self.operation, other.operation): return c  # type: ignore
     return cmp_sequence(self.operands, other.operands,
                         lambda s_o, o_o: s_o._syntactic_cmp(o_o))
@@ -288,12 +291,13 @@ class _DimMon(dict):
   The exponents are integers >= 1.
   """
 
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self._hash = hash(frozenset(self.items()))
+    self._size = sum((1 + a._size) for a, a_exp in self.items())
+
   def __hash__(self):
-    h = getattr(self, "_hash", None)
-    if h is not None: return h
-    h = hash(frozenset(self.items()))
-    self._hash = h
-    return h
+    return self._hash
 
   def __str__(self):
     return "*".join(f"{key}^{exponent}" if exponent != 1 else str(key)
@@ -344,6 +348,7 @@ class _DimMon(dict):
     The comparison is done lexicographically (syntactic), to be used for sorting.
     The result is not related to the semantic value.
     """
+    if c := cmp_comparable(self._size, other._size): return c
     if c := cmp_comparable(self.degree, other.degree): return c
     def cmp_atom(s_a: tuple[_DimAtom, int], o_a: tuple[_DimAtom, int]) -> int:
       if c := s_a[0]._syntactic_cmp(o_a[0]): return c
@@ -431,6 +436,8 @@ class _DimExpr():
     self._coeffs = coeffs or {_DimMon(): 0}
     self._monomials_sorted = tuple(sorted(self._coeffs.items(), reverse=True))
     self._hash = hash(self._monomials_sorted)
+    self._size = sum((1 + m._size)
+                     for m, m_count in self._monomials_sorted)
 
   def monomials(self) -> Iterable[tuple[_DimMon, int]]:
     """The monomials in sorted reverse lexicographic order.
@@ -655,7 +662,7 @@ class _DimExpr():
     # We print first the "larger" monomials, so that the constant is last.
     res = " + ".join(_one_monomial(mon, c)
                      for mon, c in self._monomials_sorted)
-    res = res.replace(" + -", " - ")
+    res = res.replace(" + -", " - ").replace(" - 1*", " - ")
     return res
 
   def __repr__(self):
