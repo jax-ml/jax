@@ -2051,7 +2051,7 @@ def dilate_dim(d: DimSize, dilation: DimSize) -> DimSize:
   """
   if definitely_equal(dilation, 1):  # fast path
     return d
-  return non_negative_dim(1 + dilation * (d - 1))
+  return max_dim(1 + dilation * (d - 1), 0)
 
 def stride_dim(d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
   """max(0, (d - window_size) // window_stride + 1)
@@ -2060,26 +2060,40 @@ def stride_dim(d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimS
   We assume window_size >= 1 and window_stride >= 1.
   """
   # If d < window_size then (d - window_size) // window_stride < 0
-  return non_negative_dim((d - window_size) // window_stride + 1)
+  return max_dim((d - window_size) // window_stride + 1, 0)
 
+# TODO(necula): Deprecated Jan 2024, to be removed.
 def non_negative_dim(d: DimSize) -> DimSize:
   """max(d, 0)."""
-  if is_constant_dim(d):
-    return max(0, d)
-  assert is_symbolic_dim(d)
-  try:
-    d_ge_0 = (d >= 0)
-    return d if d_ge_0 else 0
-  except InconclusiveDimensionOperation:
-    return d.non_negative()  # type: ignore
+  return max_dim(d, 0)
 
 def min_dim(d1: DimSize, d2: DimSize) -> DimSize:
   """Like min(d1, d2) but for both constant and symbolic dimensions."""
-  return d1 - non_negative_dim(d1 - d2)
+  d1_is_constant = is_constant_dim(d1)
+  if d1_is_constant and is_constant_dim(d2):
+    return min(d1, d2)
+  try:
+    d2_ge_d1 = (d2 >= d1)
+    return d1 if d2_ge_d1 else d2
+  except InconclusiveDimensionOperation:
+    if d1_is_constant:
+      return d2.rmin(d1)  # type: ignore[union-attr]
+    else:
+      return d1.min(d2)  # type: ignore[union-attr]
 
 def max_dim(d1: DimSize, d2: DimSize) -> DimSize:
   """Like max(d1, d2) but for both constant and symbolic dimensions."""
-  return d1 + non_negative_dim(d2 - d1)
+  d1_is_constant = is_constant_dim(d1)
+  if d1_is_constant and is_constant_dim(d2):
+      return max(d1, d2)
+  try:
+    d1_ge_d2 = (d1 >= d2)
+    return d1 if d1_ge_d2 else d2
+  except InconclusiveDimensionOperation:
+    if d1_is_constant:
+      return d2.rmax(d1)  # type: ignore[union-attr]
+    else:
+      return d1.max(d2)  # type: ignore[union-attr]
 
 def dimension_as_value(d: DimSize):
   """Turns a dimension size into a JAX array.

@@ -116,7 +116,7 @@ from jax._src.core import (
   new_sublevel as new_sublevel,
   no_axis_name as no_axis_name,
   no_effects as no_effects,
-  non_negative_dim as non_negative_dim,
+  non_negative_dim as _deprecated_non_negative_dim,
   outfeed_primitives as outfeed_primitives,
   pp_aval as pp_aval,
   pp_eqn as pp_eqn,
@@ -265,6 +265,10 @@ _deprecations = {
     "symbolic_equal_dim": (
       "jax.core.symbolic_equal_dim is deprecated. Use ==.", _deprecated_definitely_equal,
     ),
+    # Added Jan 8, 2024
+    "non_negative_dim": (
+      "jax.core.non_negative_dim is deprecated. Use max_dim(..., 0).", _deprecated_non_negative_dim,
+    ),
 }
 
 import typing
@@ -279,6 +283,7 @@ if typing.TYPE_CHECKING:
   collections = _src_core.collections
   dimension_as_value = _deprecated_dimension_as_value
   definitely_equal = _deprecated_definitely_equal
+  non_negative_dim = _deprecated_non_negative_dim
   dtypes = _src_core.dtypes
   lu = _src_core.lu
   map = _src_core.map
