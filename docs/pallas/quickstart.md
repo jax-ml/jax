@@ -238,15 +238,15 @@ def matmul_kernel(x_ref, y_ref, z_ref, *, activation):
 def matmul(x: jax.Array, y: jax.Array, *, activation):
   return pl.pallas_call(
     partial(matmul_kernel, activation=activation),
-    out_shape=[jax.ShapeDtypeStruct((x.shape[0], y.shape[1]), x.dtype)],
+    out_shape=jax.ShapeDtypeStruct((x.shape[0], y.shape[1]), x.dtype),
     grid=(2, 2),
     in_specs=[
       pl.BlockSpec(lambda i, j: (i, 0), (x.shape[0] // 2, x.shape[1])),
       pl.BlockSpec(lambda i, j: (0, j), (y.shape[0], y.shape[1] // 2))
     ],
-    out_specs=[
-      pl.BlockSpec(lambda i, j: (i, j), (x.shape[0] // 2, y.shape[1] // 2))
-    ],
+    out_specs=pl.BlockSpec(
+      lambda i, j: (i, j), (x.shape[0] // 2, y.shape[1] // 2)
+    ),
   )(x, y)
 k1, k2 = jax.random.split(jax.random.PRNGKey(0))
 x = jax.random.normal(k1, (1024, 1024))
