@@ -121,6 +121,94 @@ class RectangularVregBounds : public VRegDataBounds {
   std::array<int64_t, 2> ends_;
 };
 
+// VectorLayout describes a mapping of an arbitrarily sized values into vregs.
+//
+// First, let us consider the simplest case, when implicit_dim is None, bitwidth
+// is 32, and tiling matches the vreg shape. Then, the two last dimensions of a
+// vector are tiled over sublanes and lanes respectively. If a value is too
+// large to fit within a single vreg, then it continues in another vector
+// register. For example purposes, we assume that vregs have 4 sublanes and 5
+// lanes from now on. A matrix with elements:
+//
+//   a b c d e
+//   f g h i j
+//   k l m n o
+//   p q r s t
+//
+// laid out with offsets (1, 2) will use four vregs as follows:
+//
+//   vreg 1      vreg 2
+// . . . . .    . . . . .
+// . . a b c    d e . . .
+// . . f g h    i j . . .
+// . . . . .    . . . . .
+//
+//   vreg 3      vreg 4
+// . . k l m    n o . . .
+// . . p q r    s t . . .
+// . . . . .    . . . . .
+// . . . . .    . . . . .
+//
+// The dot character indicates padding. Nothing should be assumed about the
+// value of those entries.
+//
+// If a value with this layout has rank >2, the leading dimensions will be
+// unrolled over vregs. That is, the total number of vregs used to represent
+// a value is equal to the product of all leading dimension sizes, and the
+// number of vregs necessary to lay out the last two dimensions (as in the
+// example).
+//
+// ---
+//
+// The implicit_dim attribute makes it possible to tile only the last dimension
+// of a value, by implicitly inserting a singleton dimension that is tiled over
+// sublanes (when implicit_dim is kMinor) or lanes (when implicit_dim is
+// kSecondMinor).
+//
+// When the value has only one dimension, implicit_dim must be specified.
+//
+// ---
+//
+// The tiling attribute makes it possible to subdivide a single vector register
+// into multiple subtiles that traverse the last dimension of a value. For
+// example, consider vregs of shape (4, 5) an array:
+//
+//   a b c d e f g h i j
+//   k l m n o p q r s t
+//
+// If we used a tiling of (4, 5), we would need two vregs to store this value,
+// with the lower half of every register containing padding. But, if we use a
+// tiling of (2, 5), both tiles fit into a single vreg:
+//
+//   vreg 0
+// a b c d e | tile 0
+// k l m n o |
+// f g h i j    | tile 1
+// p q r s t    |
+//
+// Tiling is especially useful for compact storage of 1D values. Without it,
+// we could use at most one sublane of every vector register. But, with a tiling
+// of (1, 128) and implicit_dim being kSecondMinor, we can use all entries in a
+// register to store long vectors.
+//
+// ---
+//
+// Finally, when the element bitwidth becomes smaller than 32, we use a two
+// level tiling scheme, where elements of consecutive rows are packed into
+// subelements. In TPU documentation this is often called a compressed layout.
+// Note that this puts restrictions on the tile sizes, as they cannot have fewer
+// rows than the packing factor (32 / bitwidth).
+//
+// Attributes:
+//   bitwidth: The bitwidth of the stored values.
+//   offsets: The coordinates of the first valid element. If an offset is
+//     replicated (nullopt), then any offset is valid as the value does not vary
+//     across sublanes or lanes respectively.
+//   tiling: The tiling used to lay out values (see the XLA docs). For values of
+//     bitwidth < 32, an implicit (32 / bitwidth, 1) tiling is appended to the
+//     one specified as an attribute.
+//   implicit_dim: If specified, the value has an implicit dim inserted in
+//     either minormost or second minormost position.
 class VectorLayout {
  public:
   enum class ImplicitDim {
