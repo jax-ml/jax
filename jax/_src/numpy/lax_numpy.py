@@ -542,6 +542,12 @@ def transpose(a: ArrayLike, axes: Sequence[int] | None = None) -> Array:
   return lax.transpose(a, axes_)
 
 
+@util._wraps(getattr(np, "permute_dims", None))
+def permute_dims(x: ArrayLike, /, axes: tuple[int, ...]) -> Array:
+  util.check_arraylike("permute_dims", x)
+  return lax.transpose(x, axes)
+
+
 @util._wraps(getattr(np, 'matrix_transpose', None))
 def matrix_transpose(x: ArrayLike, /) -> Array:
   """Transposes the last two dimensions of x.
