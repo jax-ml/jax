@@ -744,15 +744,11 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1) -> Array:
   """Computes the (vector) dot product of two arrays."""
   check_arraylike("jnp.linalg.vecdot", x1, x2)
   x1_arr, x2_arr = jnp.asarray(x1), jnp.asarray(x2)
-  rank = max(x1_arr.ndim, x2_arr.ndim)
-  x1_arr = jax.lax.broadcast_to_rank(x1_arr, rank)
-  x2_arr = jax.lax.broadcast_to_rank(x2_arr, rank)
   if x1_arr.shape[axis] != x2_arr.shape[axis]:
-    raise ValueError("x1 and x2 must have the same size along specified axis.")
+    raise ValueError(f"axes must match; got shapes {x1_arr.shape} and {x2_arr.shape} with {axis=}")
   x1_arr = jax.numpy.moveaxis(x1_arr, axis, -1)
   x2_arr = jax.numpy.moveaxis(x2_arr, axis, -1)
-  # TODO(jakevdp): call lax.dot_general directly
-  return jax.numpy.matmul(x1_arr[..., None, :], x2_arr[..., None])[..., 0, 0]
+  return jax.numpy.vectorize(jnp.vdot, signature="(n),(n)->()")(x1_arr, x2_arr)
 
 
 @_wraps(getattr(np.linalg, "matmul", None))
