@@ -121,11 +121,15 @@ import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error
 
 import jaxlib.tpu_mosaic as tpu_mosaic # pytype: disable=import-error
 
-triton_dialect: Any
+triton_compat: Any = None
+triton_dialect: Any = None
 try:
+  import jaxlib.triton.compat as triton_compat  # pytype: disable=import-error
   import jaxlib.triton.dialect as triton_dialect  # pytype: disable=import-error
-except ImportError:
-  triton_dialect = None
+except ImportError as e:
+  # TODO(slebedev): Switch to a jaxlib version guard, once Triton bindings
+  # are bundled with jaxlib.
+  pass
 
 # Version number for MLIR:Python APIs, provided by jaxlib.
 mlir_api_version = xla_client.mlir_api_version
