@@ -39,11 +39,22 @@ pytype_strict_library(
 
 genrule(
     name = "_triton_gen",
-    srcs = [":_triton_gen_raw"],
-    outs = ["_triton_gen.py"],
+    srcs = [
+        "_triton_ops_gen_raw.py",
+        "_triton_enum_gen_raw.py",
+    ],
+    outs = [
+        "_triton_ops_gen.py",
+        "_triton_enum_gen.py",
+    ],
     cmd = """
-    echo '# pytype: skip-file' > $@ && \
-        cat $(location :_triton_gen_raw) | sed -e 's/^from \\./from mlir\\.dialects\\./g' >> $@
+    for src in $(SRCS); do
+      out=$${src//_raw/}
+      echo '# pytype: skip-file' > $${out} && \
+          cat $${src} |
+          sed -e 's/^from \\.\\./from mlir\\./g' |
+          sed -e 's/^from \\./from mlir\\.dialects\\./g' >> $${out}
+    done
     """,
 )
 
@@ -52,10 +63,17 @@ gentbl_filegroup(
     tbl_outs = [
         (
             [
+                "-gen-python-enum-bindings",
+                "-bind-dialect=tt",
+            ],
+            "_triton_enum_gen_raw.py",
+        ),
+        (
+            [
                 "-gen-python-op-bindings",
                 "-bind-dialect=tt",
             ],
-            "_triton_gen_raw.py",
+            "_triton_ops_gen_raw.py",
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
