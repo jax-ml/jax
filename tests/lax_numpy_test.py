@@ -5648,7 +5648,7 @@ class NumpyUfuncTests(jtu.JaxTestCase):
     for name in _all_numpy_ufuncs()
   ))
   def testUfuncInputTypes(self, name, arg_dtypes):
-    if name == 'arctanh' and jnp.issubdtype(arg_dtypes[0], jnp.complexfloating):
+    if name in ['arctanh', 'atanh'] and jnp.issubdtype(arg_dtypes[0], jnp.complexfloating):
       self.skipTest("np.arctanh & jnp.arctanh have mismatched NaNs for complex input.")
 
     jnp_op = getattr(jnp, name)
