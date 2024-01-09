@@ -162,6 +162,8 @@ class DimExprTest(jtu.JaxTestCase):
           dict(dim_spec=dim_spec)
           for dim_spec in [
               "b + a",
+              "b - a",
+              "b + 3*a",
               "a*b + a^2 + b + a",
               "mod(a, 4) + floordiv(a, 4) + a",
               "2*a^2 - 3*a - 1",
@@ -285,6 +287,8 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertTrue(b.to_monomial() >= a.to_monomial())
     self.assertTrue(b.to_monomial() > a.to_monomial())
 
+    self.assertTrue(((3 * b) // a).to_monomial() >= ((2 * b) // a).to_monomial())
+    self.assertTrue(((3 * b) // a).to_monomial() >= ((4 * a) // b).to_monomial())
     self.assertTrue(a.to_monomial() < (a * a).to_monomial())
     self.assertTrue(b.to_monomial() < (a * a).to_monomial())
     self.assertTrue((a * a * b).to_monomial() < (a * b * b).to_monomial())
@@ -295,12 +299,12 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertSequenceEqual(sorted_e1,
                              [a * b * b, a * a * b, a * b, a * a, b, a, 2])
 
-    e2 = a * (a // 4) + (a // 4) + b * (a // 4) + b * (a % 4) + a * a + b
+    e2 = a * (a // 4) + (a // 4) + b * (a // 4) + b * (a % 4) + a * a + b + 15
     sorted_e2 = [shape_poly._DimExpr.from_monomial(m, m_count)
                  for m, m_count in e2.monomials()]
     self.assertSequenceEqual(sorted_e2,
-                             [b * (a % 4), b * (a // 4), a * (a // 4), a * a,
-                              a // 4, b])
+                             [b * (a % 4), b * (a // 4), a * (a // 4), a // 4,
+                              a * a, b, 15])
 
     # This failed with a previous implementation of atom equality
     self.assertNotEqual(shape_poly._DimMon.from_operation(shape_poly._DimAtom.NON_NEGATIVE,
@@ -581,7 +585,7 @@ class DimExprTest(jtu.JaxTestCase):
           (a * a - b * b, a + b, a - b, 0),
           (a, b, "floordiv(a, b)", "mod(a, b)"),
           (3 * a, 2, "floordiv(3*a, 2)", "mod(3*a, 2)"),
-          (2 * a * b + b * b, a + b, "floordiv(b^2 + 2*a*b, b + a)", "mod(b^2 + 2*a*b, b + a)"),
+          (2 * a * b + b * b, a + b, "floordiv(2*a*b + b^2, b + a)", "mod(2*a*b + b^2, b + a)"),
           (3, a, "floordiv(3, a)", "mod(3, a)"),
   ]])
   def test_poly_divmod(self, *, dividend, quotient, divisor, remainder):
