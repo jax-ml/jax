@@ -407,6 +407,7 @@ from jax._src.numpy.ufuncs import (
     nextafter as nextafter,
     not_equal as not_equal,
     positive as positive,
+    pow as pow,
     power as power,
     rad2deg as rad2deg,
     radians as radians,

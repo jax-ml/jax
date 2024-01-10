@@ -326,6 +326,7 @@ namespace; they are listed below.
     polysub
     polyval
     positive
+    pow
     power
     printoptions
     prod

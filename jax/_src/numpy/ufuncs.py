@@ -365,6 +365,9 @@ def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   # Handle cases #2 and #3 under a jit:
   return _power(x1, x2)
 
+# Array API alias
+pow = power
+
 @partial(jit, inline=True)
 def _power(x1: ArrayLike, x2: ArrayLike) -> Array:
   x1, x2 = promote_shapes("power", x1, x2)  # not dtypes
