@@ -149,6 +149,8 @@ def _arccosh(x: ArrayLike, /) -> Array:
   return out
 
 fabs = _one_to_one_unop(np.fabs, lax.abs, True)
+bitwise_invert = _one_to_one_unop(getattr(np, 'bitwise_invert', np.invert), lax.bitwise_not)
+bitwise_invert = _one_to_one_unop(getattr(np, 'bitwise_invert', np.invert), lax.bitwise_not)
 bitwise_not = _one_to_one_unop(np.bitwise_not, lax.bitwise_not)
 invert = _one_to_one_unop(np.invert, lax.bitwise_not)
 negative = _one_to_one_unop(np.negative, lax.neg)
@@ -176,6 +178,7 @@ cbrt = _one_to_one_unop(np.cbrt, lax.cbrt, True)
 
 add = _maybe_bool_binop(np.add, lax.add, lax.bitwise_or)
 bitwise_and = _one_to_one_binop(np.bitwise_and, lax.bitwise_and)
+bitwise_left_shift = _one_to_one_binop(getattr(np, "bitwise_left_shift", np.left_shift), lax.shift_left, promote_to_numeric=True)
 bitwise_or = _one_to_one_binop(np.bitwise_or, lax.bitwise_or)
 bitwise_xor = _one_to_one_binop(np.bitwise_xor, lax.bitwise_xor)
 left_shift = _one_to_one_binop(np.left_shift, lax.shift_left, promote_to_numeric=True)
@@ -225,6 +228,13 @@ def right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     np.issubdtype(x1.dtype, np.unsignedinteger) else lax.shift_right_arithmetic
   return lax_fn(x1, x2)
 
+@_wraps(getattr(np, "bitwise_right_shift", np.right_shift), module='numpy')
+@partial(jit, inline=True)
+def bitwise_right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  x1, x2 = promote_args_numeric("bitwise_right_shift", x1, x2)
+  lax_fn = lax.shift_right_logical if \
+    np.issubdtype(x1.dtype, np.unsignedinteger) else lax.shift_right_arithmetic
+  return lax_fn(x1, x2)
 
 @_wraps(np.absolute, module='numpy')
 @partial(jit, inline=True)

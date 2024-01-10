@@ -94,8 +94,11 @@ namespace; they are listed below.
     bincount
     bitwise_and
     bitwise_count
+    bitwise_invert
+    bitwise_left_shift
     bitwise_not
     bitwise_or
+    bitwise_right_shift
     bitwise_xor
     blackman
     block
