@@ -255,6 +255,8 @@ JAX_COMPOUND_OP_RECORDS = [
               tolerance={dtypes.bfloat16: 4e-2, np.float16: 2e-2,
                          np.float64: 1e-12}),
     op_record("positive", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
+    op_record("pow", 2, number_dtypes, all_shapes, jtu.rand_positive, ["rev"],
+              tolerance={np.complex128: 1e-14}, check_dtypes=False, alias="power"),
     op_record("power", 2, number_dtypes, all_shapes, jtu.rand_positive, ["rev"],
               tolerance={np.complex128: 1e-14}, check_dtypes=False),
     op_record("rad2deg", 1, float_dtypes, all_shapes, jtu.rand_default, []),
@@ -460,8 +462,8 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     tol = max(jtu.tolerance(dtype, tolerance) for dtype in dtypes)
     if jtu.test_device_matches(["tpu"]) and op_name in (
         "arccosh", "arcsinh", "sinh", "cosh", "tanh", "sin", "cos", "tan",
-        "log", "log1p", "log2", "log10", "exp", "expm1", "exp2", "power",
-        "logaddexp", "logaddexp2", "i0", "acosh", "asinh"):
+        "log", "log1p", "log2", "log10", "exp", "expm1", "exp2", "pow",
+        "power", "logaddexp", "logaddexp2", "i0", "acosh", "asinh"):
       tol = jtu.join_tolerance(tol, 1e-4)
     tol = functools.reduce(jtu.join_tolerance,
                            [tolerance, tol, jtu.default_tolerance()])

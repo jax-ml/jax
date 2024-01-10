@@ -311,7 +311,7 @@ def positive(x, /):
 def pow(x1, x2, /):
   """Calculates an implementation-dependent approximation of exponentiation by raising each element x1_i (the base) of the input array x1 to the power of x2_i (the exponent), where x2_i is the corresponding element of the input array x2."""
   x1, x2 = _promote_dtypes("pow", x1, x2)
-  return jax.numpy.power(x1, x2)
+  return jax.numpy.pow(x1, x2)
 
 
 def real(x, /):
