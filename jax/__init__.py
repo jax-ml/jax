@@ -225,5 +225,3 @@ else:
 del _typing
 
 import jax.lib  # TODO(phawkins): remove this export.
-
-# trailer
