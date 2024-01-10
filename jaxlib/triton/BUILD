@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//jaxlib:jax.bzl", "py_deps", "pybind_extension", "pytype_strict_library")
+load("//jaxlib:jax.bzl", "pybind_extension", "pytype_strict_library")
 load("@rules_python//python:defs.bzl", "py_library")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
 
@@ -23,11 +23,12 @@ package(
     default_visibility = ["//:__subpackages__"],
 )
 
-# TODO(slebedev): Make this at least a py_strict_library.
 py_library(
     name = "compat",
     srcs = ["compat.py"],
-    deps = py_deps("triton"),
+    deps = [
+        # Users must add a Triton dependency manually.
+    ],
 )
 
 pytype_strict_library(
