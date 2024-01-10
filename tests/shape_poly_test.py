@@ -696,7 +696,7 @@ class PolyHarness(Harness):
     f_jax = self.dyn_fun
     args = self.dyn_args_maker(tst.rng())
     args = tree_util.tree_map(jnp.array, args)
-    args_specs = export.args_specs(args, self.polymorphic_shapes)
+    args_specs = export.symbolic_args_specs(args, self.polymorphic_shapes)
 
     if self.expect_error is not None:
       with tst.assertRaisesRegex(self.expect_error[0], self.expect_error[1]):

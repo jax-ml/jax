@@ -33,10 +33,13 @@ Remember to align the itemized text with the first line of an item within a list
       was deprecated and `core.max_dim` and `core.min_dim` were introduced
       ({jax-issue}`#18953`) to express `max` and `min` for symbolic dimensions.
       You can use `core.max_dim(d, 0)` instead of `core.non_negative_dim(d)`.
-    * the `shape_poly.is_poly_dim` is deprecated in favor if `export.is_symbolic_dim`
+    * the `shape_poly.is_poly_dim` is deprecated in favor of `export.is_symbolic_dim`
       ({jax-issue}`#19282`).
+    * the `export.args_specs` is deprecated in favor of `export.symbolic_args_specs
+      ({jax-issue}`#19283`).
     * the `shape_poly.PolyShape` and `jax2tf.PolyShape` are deprecated, use
       strings for polymorphic shapes specifications ({jax-issue}`#19284`).
+
   * Refactored the API for `jax.experimental.export`. Instead of
     `from jax.experimental.export import export` you should use now
     `from jax.experimental import export`. The old way of importing will

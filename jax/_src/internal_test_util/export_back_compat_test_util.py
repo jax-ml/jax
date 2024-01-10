@@ -289,7 +289,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       (d) the number of devices for which the module was serialized.
     """
     # Use the native exporter, to make sure we get the proper serialization.
-    args_specs = export.args_specs(data.inputs, polymorphic_shapes)
+    args_specs = export.symbolic_args_specs(data.inputs, polymorphic_shapes)
     exported = export.export(
       jax.jit(func),
       lowering_platforms=(self.default_jax_backend(),),
@@ -306,7 +306,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
 
   def run_serialized(self, data: CompatTestData,
                      polymorphic_shapes: Sequence[str] | None = None):
-    args_specs = export.args_specs(data.inputs, polymorphic_shapes)
+    args_specs = export.symbolic_args_specs(data.inputs, polymorphic_shapes)
     def ndarray_to_aval(a: np.ndarray) -> core.ShapedArray:
       return core.ShapedArray(a.shape, a.dtype)
     in_avals_tree = tree_util.tree_map(ndarray_to_aval, args_specs)
