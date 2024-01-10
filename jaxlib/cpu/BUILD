@@ -37,6 +37,8 @@ cc_library(
         "@xla//xla/service:custom_call_status",
         "@com_google_absl//absl/base:dynamic_annotations",
     ],
+    copts = ["-fexceptions"],
+    features = ["-use_header_modules"],
 )
 
 cc_library(
