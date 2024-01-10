@@ -729,47 +729,62 @@ class VectorLayoutInferer {
   }
 
   LogicalResult infer(tpu::BitcastOp op) {
-    auto src_layout = getLayout(op.getInput());
-    LayoutOffsets src_offsets = src_layout->offsets();
-    if (src_offsets[0].value_or(0) || src_offsets[1].value_or(0)) {
-      NYI("unsupported bitcast with offsets");
-    }
-    if (src_layout->implicit_dim() != ImplicitDim::kNone) {
-      NYI("unsupported bitcast with an implicit dim");
-    }
-    // Check if input and output have same bit size.
-    auto in_ty = dyn_cast<VectorType>(op.getInput().getType());
-    auto out_ty = dyn_cast<VectorType>(op.getOutput().getType());
-    auto in_bitwidth = in_ty.getElementTypeBitWidth();
-    auto out_bitwidth = out_ty.getElementTypeBitWidth();
-    TPU_CHECK_OP(in_ty && out_ty && in_ty.getRank() == out_ty.getRank(),
-                 "Input and output have different rank");
-    if (out_ty.getRank() < 2) {
-      NYI("Support bitcast with 1D vector");
-    }
-    for (int i = 0; i < in_ty.getRank(); ++i) {
-      auto in_dim = in_ty.getDimSize(i);
-      auto out_dim = out_ty.getDimSize(i);
+    const auto in_ty = op.getInput().getType();
+    const auto out_ty = op.getOutput().getType();
+    const auto in_vty = dyn_cast<VectorType>(in_ty);
+    const auto out_vty = dyn_cast<VectorType>(out_ty);
 
-      // The sublane dimension is scaled down by the ratio of input element
-      // bitwidth to output element bitwidth when bitcasting. For example,
-      // bitcasting a vector<16x128xbf16> to a vector<8x128xi32> packs every 2
-      // rows in the bf16 vector into 1 row in the i32 vector. This means the
-      // bit representation of one i32 element vector[i,j] is equal to
-      // concatenating bf16 elements vector[2*i+1,j] and vector[2*i,j].
-      if (i == in_ty.getRank() - 2) {
-        in_dim *= in_bitwidth;
-        out_dim *= out_bitwidth;
+    if (in_vty && out_vty) {
+      auto src_layout = getLayout(op.getInput());
+      LayoutOffsets src_offsets = src_layout->offsets();
+      if (src_offsets[0].value_or(0) || src_offsets[1].value_or(0)) {
+        NYI("unsupported bitcast with offsets");
       }
-      TPU_CHECK_OP(in_dim == out_dim,
-                   "Input and output have incompatible shape");
+      if (src_layout->implicit_dim() != ImplicitDim::kNone) {
+        NYI("unsupported bitcast with an implicit dim");
+      }
+      // Check if input and output have same bit size.
+      auto in_bitwidth = in_vty.getElementTypeBitWidth();
+      auto out_bitwidth = out_vty.getElementTypeBitWidth();
+      TPU_CHECK_OP(in_vty.getRank() == out_vty.getRank(),
+                   "Input and output have different rank");
+      if (out_vty.getRank() < 2) {
+        NYI("Support bitcast with 1D vector");
+      }
+      for (int i = 0; i < in_vty.getRank(); ++i) {
+        auto in_dim = in_vty.getDimSize(i);
+        auto out_dim = out_vty.getDimSize(i);
+
+        // The sublane dimension is scaled by the ratio of input element
+        // bitwidth to output element bitwidth when bitcasting. For example,
+        // bitcasting src_vector<16x128xbf16> to dst_vector<8x128xi32> packs
+        // every 2 rows in the bf16 vector into 1 row in the i32 vector. This
+        // means the bit representation of one i32 element dst_vector[i,j] is
+        // equal to concatenating bf16 elements src_vector[2*i+1,j] and
+        // vector[2*i,j].
+        if (i == in_vty.getRank() - 2) {
+          in_dim *= in_bitwidth;
+          out_dim *= out_bitwidth;
+        }
+        TPU_CHECK_OP(in_dim == out_dim,
+                     "Input and output have incompatible shape");
+      }
+      setLayout(op,
+                VectorLayout(in_bitwidth, src_offsets,
+                             nativeTiling(in_bitwidth), ImplicitDim::kNone),
+                VectorLayout(out_bitwidth, src_offsets,
+                             nativeTiling(out_bitwidth), ImplicitDim::kNone));
+      return success();
     }
-    setLayout(op,
-              VectorLayout(in_bitwidth, src_offsets, nativeTiling(in_bitwidth),
-                           ImplicitDim::kNone),
-              VectorLayout(out_bitwidth, src_offsets,
-                           nativeTiling(out_bitwidth), ImplicitDim::kNone));
-    return success();
+
+    if (!in_vty && !out_vty) {
+      setLayout(op, kNoLayout, kNoLayout);
+      return success();
+    }
+
+    op.emitOpError("Failed to infer vector layout for tpu::bitcast")
+        << in_ty << " to " << out_ty;
+    return failure();
   }
 
   LogicalResult infer(tpu::RepeatOp op) {

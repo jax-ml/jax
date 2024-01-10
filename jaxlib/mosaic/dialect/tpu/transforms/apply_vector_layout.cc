@@ -1386,45 +1386,67 @@ LogicalResult tpu_bitcast_rule(RewriteContext &ctx, Operation &op,
                                const ArrayRef<Layout> layouts_out) {
   CHECK_EQ(layouts_in.size(), 1);
   CHECK_EQ(layouts_out.size(), 1);
-  if (!layouts_in.front().has_value()) {
-    return op.emitOpError("Expected non-null input layout");
-  }
-  if (!layouts_out.front().has_value()) {
-    return op.emitOpError("Expected non-null output layout");
-  }
-  const VectorLayout &layout_in = *layouts_in.front();
-  const VectorLayout &layout_out = *layouts_out.front();
-  if (!layout_in.hasNativeTiling(ctx.target_shape) ||
-      !layout_out.hasNativeTiling(ctx.target_shape)) {
-    return op.emitOpError("Not implemented: unsupported tiling");
-  }
-  if (layout_in.offsets() != LayoutOffsets{0, 0} ||
-      layout_out.offsets() != LayoutOffsets{0, 0}) {
-    return op.emitOpError("Not implemented: unsupported offsets");
-  }
-  if (layout_in.implicit_dim() != VectorLayout::ImplicitDim::kNone ||
-      layout_out.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
-    return op.emitOpError("Not implemented: unsupported implicit dim");
-  }
+
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
   auto bitcast_op = cast<tpu::BitcastOp>(op);
-  const VectorType vty = bitcast_op.getResult().getType();
-  FAILUREOR_ASSIGN_OR_RETURN(
-      const auto native_vreg_ty,
-      getNativeVregType(vty.getElementType(), ctx.target_shape));
-  FAILUREOR_ASSIGN_OR_RETURN(
-      const xla::Array<Value> in_tiles,
-      disassemble(builder, layout_in, bitcast_op.getInput(), ctx.target_shape));
-  xla::Array<Value> out_tiles(in_tiles.dimensions());
-  out_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
-    const Value in_tile = in_tiles(idxs);
-    *v = builder.create<tpu::BitcastVregOp>(native_vreg_ty, in_tile);
-  });
-  bitcast_op.replaceAllUsesWith(
-      assemble(builder, vty, layout_out, out_tiles, ctx.target_shape)
-          .getOperation());
-  bitcast_op.erase();
-  return success();
+  const auto in_ty = bitcast_op.getInput().getType();
+  const auto out_ty = bitcast_op.getOutput().getType();
+  const auto in_vty = dyn_cast<VectorType>(in_ty);
+  const auto out_vty = dyn_cast<VectorType>(out_ty);
+
+  if (in_vty && out_vty) {
+    if (!layouts_in.front().has_value()) {
+      return op.emitOpError("Expected non-null input layout");
+    }
+    if (!layouts_out.front().has_value()) {
+      return op.emitOpError("Expected non-null output layout");
+    }
+    const VectorLayout &layout_in = *layouts_in.front();
+    const VectorLayout &layout_out = *layouts_out.front();
+    if (!layout_in.hasNativeTiling(ctx.target_shape) ||
+        !layout_out.hasNativeTiling(ctx.target_shape)) {
+      return op.emitOpError("Not implemented: unsupported tiling");
+    }
+    if (layout_in.offsets() != LayoutOffsets{0, 0} ||
+        layout_out.offsets() != LayoutOffsets{0, 0}) {
+      return op.emitOpError("Not implemented: unsupported offsets");
+    }
+    if (layout_in.implicit_dim() != VectorLayout::ImplicitDim::kNone ||
+        layout_out.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
+      return op.emitOpError("Not implemented: unsupported implicit dim");
+    }
+
+    FAILUREOR_ASSIGN_OR_RETURN(
+        const auto native_vreg_ty,
+        getNativeVregType(out_vty.getElementType(), ctx.target_shape));
+    FAILUREOR_ASSIGN_OR_RETURN(
+        const xla::Array<Value> in_tiles,
+        disassemble(builder, layout_in, bitcast_op.getInput(),
+                    ctx.target_shape));
+    xla::Array<Value> out_tiles(in_tiles.dimensions());
+    out_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
+      const Value in_tile = in_tiles(idxs);
+      *v = builder.create<tpu::BitcastVregOp>(native_vreg_ty, in_tile);
+    });
+    op.replaceAllUsesWith(
+        assemble(builder, out_vty, layout_out, out_tiles, ctx.target_shape));
+    op.erase();
+    return success();
+  }
+
+  if (!in_vty && !out_vty) {
+    if (layouts_in.front().has_value()) {
+      return op.emitOpError("Expected null input layout");
+    }
+    if (layouts_out.front().has_value()) {
+      return op.emitOpError("Expected null output layout");
+    }
+    return success();
+  }
+
+  op.emitOpError("Failed to apply vector layout for tpu::bitcast")
+      << in_ty << " to " << out_ty;
+  return failure();
 }
 
 LogicalResult tpu_trace_rule(RewriteContext &ctx, Operation &op,

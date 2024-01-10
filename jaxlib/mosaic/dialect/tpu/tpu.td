@@ -297,8 +297,8 @@ def TPU_ConcatenateOp : TPU_Op<"concatenate", [Pure]> {
 }
 
 def TPU_BitcastOp : TPU_Op<"bitcast", [Pure]> {
-  let arguments = (ins AnyVector:$input);
-  let results = (outs AnyVector:$output);
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$output);
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
 }
 
