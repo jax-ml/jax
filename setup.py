@@ -135,7 +135,7 @@ setup(
           "nvidia-cufft-cu12>=11.0.8.103",
           "nvidia-cusolver-cu12>=11.5.2",
           "nvidia-cusparse-cu12>=12.1.2.141",
-          "nvidia-nccl-cu12>=2.18.3",
+          "nvidia-nccl-cu12>=2.19.3",
 
           # nvjitlink is not a direct dependency of JAX, but it is a transitive
           # dependency via, for example, cuSOLVER. NVIDIA's cuSOLVER packages
@@ -158,7 +158,7 @@ setup(
           "nvidia-cufft-cu12>=11.0.8.103",
           "nvidia-cusolver-cu12>=11.5.2",
           "nvidia-cusparse-cu12>=12.1.2.141",
-          "nvidia-nccl-cu12>=2.18.3",
+          "nvidia-nccl-cu12>=2.19.3",
 
           # nvjitlink is not a direct dependency of JAX, but it is a transitive
           # dependency via, for example, cuSOLVER. NVIDIA's cuSOLVER packages
