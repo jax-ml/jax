@@ -308,6 +308,8 @@ JAX_COMPOUND_OP_RECORDS = [
 JAX_BITWISE_OP_RECORDS = [
     op_record("bitwise_and", 2, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_fullrange, []),
+    op_record("bitwise_invert", 1, int_dtypes + unsigned_dtypes, all_shapes,
+              jtu.rand_fullrange, [], alias='bitwise_not'),
     op_record("bitwise_not", 1, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_fullrange, []),
     op_record("invert", 1, int_dtypes + unsigned_dtypes, all_shapes,
@@ -574,7 +576,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory)],
+      [dict(name=rec.name, rng_factory=rec.rng_factory, alias=rec.alias)],
       shapes=filter(
         _shapes_are_broadcast_compatible,
         itertools.combinations_with_replacement(rec.shapes, rec.nargs)),
@@ -584,8 +586,8 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     )
     for rec in JAX_BITWISE_OP_RECORDS))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
-  def testBitwiseOp(self, name, rng_factory, shapes, dtypes):
-    np_op = getattr(np, name)
+  def testBitwiseOp(self, name, rng_factory, shapes, dtypes, alias):
+    np_op = getattr(np, name) if hasattr(np, name) else getattr(np, alias)
     jnp_op = getattr(jnp, name)
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
@@ -617,7 +619,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
       for dtypes in itertools.product(
         *(_valid_dtypes_for_shape(s, int_dtypes_no_uint64) for s in shapes))
     ],
-    op=[jnp.left_shift, jnp.right_shift],
+    op=[jnp.left_shift, jnp.bitwise_left_shift, jnp.right_shift, jnp.bitwise_right_shift],
   )
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testShiftOpAgainstNumpy(self, op, dtypes, shapes):

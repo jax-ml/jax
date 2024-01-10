@@ -92,13 +92,13 @@ def bitwise_and(x1, x2, /):
 def bitwise_left_shift(x1, x2, /):
   """Shifts the bits of each element x1_i of the input array x1 to the left by appending x2_i (i.e., the respective element in the input array x2) zeros to the right of x1_i."""
   x1, x2 = _promote_dtypes("bitwise_left_shift", x1, x2)
-  return jax.numpy.left_shift(x1, x2)
+  return jax.numpy.bitwise_left_shift(x1, x2)
 
 
 def bitwise_invert(x, /):
   """Inverts (flips) each bit for each element x_i of the input array x."""
   x, = _promote_dtypes("bitwise_invert", x)
-  return jax.numpy.bitwise_not(x)
+  return jax.numpy.bitwise_invert(x)
 
 
 def bitwise_or(x1, x2, /):
@@ -110,7 +110,7 @@ def bitwise_or(x1, x2, /):
 def bitwise_right_shift(x1, x2, /):
   """Shifts the bits of each element x1_i of the input array x1 to the right according to the respective element x2_i of the input array x2."""
   x1, x2 = _promote_dtypes("bitwise_right_shift", x1, x2)
-  return jax.numpy.right_shift(x1, x2)
+  return jax.numpy.bitwise_right_shift(x1, x2)
 
 
 def bitwise_xor(x1, x2, /):
