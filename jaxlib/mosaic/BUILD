@@ -28,7 +28,6 @@ py_library(
     name = "mosaic",
     deps = [
         "//jaxlib/mosaic/python:tpu_dialect",
-        "//jaxlib/mosaic/python:tpu_passes",
     ],
 )
 

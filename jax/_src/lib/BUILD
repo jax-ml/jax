@@ -38,6 +38,7 @@ py_library_providing_imports_info(
         "//jax:version",
     ] + if_building_jaxlib([
         "//jaxlib",
+        "//jaxlib/mosaic/python:tpu_dialect",
         "//jaxlib:cpu_feature_guard",
         "//jaxlib:utils",
         "//jaxlib/triton",

@@ -119,7 +119,7 @@ xla_extension_version: int = getattr(xla_client, '_version', 0)
 import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error
 import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error
 
-import jaxlib.tpu_mosaic as tpu_mosaic # pytype: disable=import-error
+import jaxlib.mosaic.python.tpu as tpu # pytype: disable=import-error
 
 triton_compat: Any = None
 triton_dialect: Any = None

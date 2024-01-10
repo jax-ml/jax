@@ -794,8 +794,6 @@ pytype_strict_library(
         "//jax/_src/lib",
     ] + if_building_jaxlib([
         "//jaxlib/mlir:ir",
-        "//jaxlib/mlir:mhlo_dialect",
-        "//jaxlib/mlir:pass_manager",
         "//jaxlib/mlir:stablehlo_dialect",
     ]) + py_deps("numpy") + py_deps("absl/flags"),
 )

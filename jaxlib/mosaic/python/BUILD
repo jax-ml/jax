@@ -15,7 +15,6 @@
 # Mosaic Python bindings
 
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
-load("//jaxlib:jax.bzl", "py_deps")
 load("@rules_python//python:defs.bzl", "py_library")
 
 gentbl_filegroup(
@@ -65,28 +64,4 @@ py_library(
     visibility = [
         "//visibility:public",
     ],
-)
-
-py_library(
-    name = "tpu_passes",
-    srcs = [
-        "apply_vector_layout.py",
-        "infer_memref_layout.py",
-    ],
-    visibility = [
-        "//visibility:public",
-    ],
-    deps = [
-        ":layout_defs",
-        ":tpu_dialect",
-        "//jaxlib/mlir:arithmetic_dialect",
-        "//jaxlib/mlir:func_dialect",
-        "//jaxlib/mlir:ir",
-        "//jaxlib/mlir:math_dialect",
-        "//jaxlib/mlir:memref_dialect",
-        "//jaxlib/mlir:pass_manager",
-        "//jaxlib/mlir:scf_dialect",
-        "//jaxlib/mlir:stablehlo_dialect",
-        "//jaxlib/mlir:vector_dialect",
-    ] + py_deps("numpy"),
 )

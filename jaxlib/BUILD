@@ -44,7 +44,6 @@ py_library_providing_imports_info(
         "hlo_helpers.py",
         "init.py",
         "lapack.py",
-        "tpu_mosaic.py",
         ":version",
         ":xla_client",
     ],
@@ -66,7 +65,6 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:scf_dialect",
         "//jaxlib/mlir:sparse_tensor_dialect",
         "//jaxlib/mlir:stablehlo_dialect",
-        "//jaxlib/mosaic",
     ],
 )
 

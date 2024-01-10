@@ -19,12 +19,10 @@ from __future__ import annotations
 
 import base64
 import collections.abc
-from collections.abc import Sequence
 import dataclasses
 import functools
 import io
 import os
-import re
 import time
 from typing import Any, Callable
 
@@ -32,25 +30,15 @@ from absl import flags
 import jax
 from jax import core
 from jax._src import config
-from jax._src.lib import tpu_mosaic
+from jax._src.lib import tpu
 from jax._src.lib import xla_client
 from jax._src.interpreters import mlir
 from jax.interpreters import xla
 from jaxlib.mlir import ir
-from jaxlib.mlir.dialects import mhlo
 from jaxlib.mlir.dialects import stablehlo
-from jaxlib.mlir.passmanager import PassManager
 import numpy as np
 
 FLAGS = flags.FLAGS
-_MOSAIC_USE_CPP_PASSES = config.define_bool_state(
-    name="mosaic_use_cpp_passes",
-    default=True,
-    help=(
-        "Use C++ implementation for apply-vector-layout and infer-memref-layout"
-        " passes (still a WIP)"
-    ),
-)
 _MOSAIC_ON_DEVICE_CHECKS = config.define_string_state(
     name="mosaic_on_device_checks",
     default="",
@@ -59,10 +47,6 @@ _MOSAIC_ON_DEVICE_CHECKS = config.define_string_state(
         " to verify operation invariants (accesses in-bounds, etc.)"
     ),
 )
-
-tpu = tpu_mosaic.tpu
-apply_vector_layout = tpu_mosaic.apply_vector_layout
-infer_memref_layout = tpu_mosaic.infer_memref_layout
 
 _MOSAIC_ALLOW_HLO = config.define_bool_state(
     name="jax_mosaic_allow_hlo",
@@ -241,164 +225,6 @@ mlir.register_lowering(tpu_custom_call_p, _tpu_custom_call_lowering,
                        platform="tpu")
 
 
-_LOCATION_REGEX = re.compile(r'loc\("([a-zA-Z/]+)"\("(.*)":([0-9]+):[0-9]+\)\)')
-_BUG_PROMPT = """
-Please report a bug at: https://github.com/google/jax/issues/new?assignees=apaszke
-"""
-_OP_ERROR_PATTERN = re.compile(r"'.*' op (.+)")
-
-
-def _run_pass_pipeline(passes: PassManager, module: ir.Module, pass_name: str):
-  try:
-    passes.run(module.operation)
-    module.operation.verify()
-  except ir.MLIRError as e:
-    if e.error_diagnostics:
-      d = e.error_diagnostics[0]
-      diag_msg = d.message
-      if match := re.match(_OP_ERROR_PATTERN, diag_msg):
-        diag_msg = match.group(1)
-      msg = ["Internal TPU kernel compiler error: " + diag_msg, '']
-      # TODO(apaszke): Expose MLIR Location APIs instead of parsing
-      if match := re.match(_LOCATION_REGEX, str(d.location)):
-        name_stack, file, line = match.group(1), match.group(2), match.group(3)
-        jax_func_name = name_stack[name_stack.rfind("/") + 1:]
-        msg.append("The error was caused by:")
-        msg.append(f"  `{jax_func_name}` called at {file}:{line}")
-      for note in d.notes:
-        note_msg = note.message
-        if (op := note_msg.lstrip("see current operation: ")) is not note_msg:
-          msg.append("The MLIR operation involved:")
-          msg.append("  " + op)
-      if len(e.error_diagnostics) > 1:
-        msg.append("... additional diagnostics were skipped.")
-      msg.append(_BUG_PROMPT)
-      raise RuntimeError("\n".join(msg)) from None
-    else:
-      raise RuntimeError("Unspecified internal compiler error") from e
-  dump_mlir(module, pass_name)
-
-
-def _lower_tpu_kernel(
-    module: ir.Module,
-    hardware_generation: int,
-    device_type: str | None,
-) -> tuple[bytes, tuple[np.ndarray, ...]]:
-  """Runs MLIR passes lowering the given module to an MLIR module.
-
-  Uses Python versions of infer-memref-layout and apply-vector-layout.
-
-  Args:
-    module: The MLIR module to lower.
-    hardware_generation: The TPU hardware generation to target.
-
-  Returns:
-    A pair containing an MLIR module implementing the kernel specified by the
-    argument and a tuple of additional constant arguments that should be
-    appended to the kernel invocation.
-
-  """
-  try:
-    module.operation.verify()
-  except ir.MLIRError as e:
-    raise ValueError("The compiled module fails MLIR verification") from e
-
-  with ir.Context() as ctx, ir.Location.unknown():
-    vector_constants = []
-
-    ctx.append_dialect_registry(mlir.upstream_dialects)
-    ctx.load_all_available_dialects()
-    tpu.register_dialect(ctx)
-    mhlo.register_mhlo_dialect(ctx)
-    mhlo.register_mhlo_passes()
-
-    if not device_type:
-      # We'll mutate the module, so clone it.
-      module = ir.Module.parse(
-          module.operation.get_asm(binary=True, enable_debug_info=True)
-      )
-      dump_mlir(module, "original")
-
-      if _MOSAIC_ALLOW_HLO.value:
-        # Run hlo dialect conversion: hlo -> linalg -> vector.
-        pipeline = [
-            "hlo-legalize-to-arithmetic",
-            "func.func(hlo-legalize-to-linalg)",
-            "func.func(linalg-vectorization)",
-        ]
-        pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-        _run_pass_pipeline(pipeline, module, "post-hlo-conversion")
-
-      infer_memref_layout.infer_module(module, hardware_generation)
-      module.operation.verify()
-      dump_mlir(module, "post-infer-memref-layout")
-
-      pipeline = [
-          "canonicalize",
-          "cse",
-      ]
-      pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-      _run_pass_pipeline(pipeline, module, "post-simplify")
-
-      if checks := _MOSAIC_ON_DEVICE_CHECKS.value:
-        checks = set(checks.split(","))
-        if checks == {"bounds"}:  # We only support one kind of checks now.
-          pipeline = PassManager.parse(
-              "builtin.module(func.func(debug-assert-insertion))"
-          )
-          _run_pass_pipeline(pipeline, module, "post-assert-insertion")
-        elif checks:
-          checks.discard("bounds")
-          raise ValueError(
-              f"Unrecognized on-device check categories: {', '.join(checks)}"
-          )
-
-      pipeline = [
-          "func.func(tpu-infer-vector-layout{sublane-count=8 lane-count=128})",
-      ]
-      pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-      _run_pass_pipeline(pipeline, module, "post-infer-vector-layout")
-
-      apply_vector_layout.apply(module, hardware_generation)
-      module.operation.verify()
-      dump_mlir(module, "post-apply-vector-layout")
-
-      pipeline = PassManager.parse("builtin.module(canonicalize)")
-      _run_pass_pipeline(pipeline, module, "pre-lower-to-llo")
-
-      for f in module.body:
-        if "vector_constants" not in f.attributes:
-          continue
-        if f.name.value != "main":
-          raise NotImplementedError(
-              "Only the main function can have non-splat vector constants"
-          )
-        constant_attrs = ir.ArrayAttr(f.attributes["vector_constants"])
-        del f.attributes["vector_constants"]
-        for c in constant_attrs:
-          c = ir.DenseElementsAttr(c)
-          constant_type = ir.VectorType(c.type)
-          if constant_type.element_type == ir.IntegerType.get_signless(32):
-            dtype = np.int32
-          elif ir.F32Type.isinstance(constant_type.element_type):
-            dtype = np.float32
-          else:
-            raise NotImplementedError(constant_type.element_type)
-          if np.issubdtype(dtype, np.integer):
-            c = ir.DenseIntElementsAttr(c)
-          elif np.issubdtype(dtype, np.floating):
-            c = ir.DenseFPElementsAttr(c)
-          else:
-            raise NotImplementedError(dtype)
-          vector_constants.append(
-              np.asarray(c, dtype=dtype).reshape(constant_type.shape)
-          )
-
-    bytecode_buffer = io.BytesIO()
-    module.operation.write_bytecode(bytecode_buffer, desired_version=0)
-    return bytecode_buffer.getvalue(), tuple(vector_constants)
-
-
 def as_tpu_kernel(
     module: ir.Module,
     out_type: Any,
@@ -420,26 +246,18 @@ def as_tpu_kernel(
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
-  if _MOSAIC_USE_CPP_PASSES.value:
-    bytecode_buffer = io.BytesIO()
-    module.operation.write_bytecode(bytecode_buffer, desired_version=0)
-    asm = bytecode_buffer.getvalue()
-    constants = ()
-    needs_layout_passes = not device_type
-  else:
-    asm, constants = _lower_tpu_kernel(
-        module, hardware_generation, device_type=device_type
-    )
-    needs_layout_passes = False
+  bytecode_buffer = io.BytesIO()
+  module.operation.write_bytecode(bytecode_buffer, desired_version=0)
+  asm = bytecode_buffer.getvalue()
+
   # TODO(amagni): Kernel name and regeneration metadata could alternatively be
   # added as a custom attribute to the MLIR call op rather than including them
   # in the backend_config.
   return _lowered_as_tpu_kernel(
       asm,
       out_type,
-      constants,
       needs_hlo_passes=_MOSAIC_ALLOW_HLO.value,
-      needs_layout_passes=needs_layout_passes,
+      needs_layout_passes=not device_type,
       device_type=device_type,
       has_communication=has_communication,
       has_custom_barrier=has_custom_barrier,
@@ -453,7 +271,6 @@ def as_tpu_kernel(
 def _lowered_as_tpu_kernel(
     lowered_module_asm: bytes,
     out_type: Any,
-    constants: Sequence[Any] = (),
     *,
     cost_estimate: CostEstimate | None = None,
     needs_hlo_passes: bool = False,
@@ -494,7 +311,6 @@ def _lowered_as_tpu_kernel(
     )
     result = tpu_custom_call_p.bind(
         *args,
-        *constants,
         config=config,
         kernel_name=kernel_name,
         kernel_regeneration_metadata=kernel_regeneration_metadata,

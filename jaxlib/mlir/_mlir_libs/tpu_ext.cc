@@ -607,19 +607,18 @@ PYBIND11_MODULE(_tpu_ext, m) {
     free(val_arr.vals);
     return np_vals;
   });
-  m.def("apply_layout_op", [](py::object py_ctx, const MlirOperation c_op) {
-    NotImplementedDetector detector(getDefaultContext());
-    const int hardware_generation =
-        py::cast<int>(py_ctx.attr("hardware_generation"));
-    MlirLogicalResult res =
-        mlirTpuApplyLayoutOp(hardware_generation, c_op, TARGET_SHAPE);
-    if (mlirLogicalResultIsFailure(res)) {
-      if (detector.detected()) {
-        throw NotImplementedException();
-      }
-      throw std::runtime_error("applyLayoutOp failed");
-    }
-  });
+  m.def("apply_layout_op",
+        [](int hardware_generation, const MlirOperation c_op) {
+          NotImplementedDetector detector(getDefaultContext());
+          MlirLogicalResult res =
+              mlirTpuApplyLayoutOp(hardware_generation, c_op, TARGET_SHAPE);
+          if (mlirLogicalResultIsFailure(res)) {
+            if (detector.detected()) {
+              throw NotImplementedException();
+            }
+            throw std::runtime_error("applyLayoutOp failed");
+          }
+        });
   m.def("relayout",
         [](MlirValue v, MlirTpuVectorLayout src, MlirTpuVectorLayout dst) {
           NotImplementedDetector detector(getDefaultContext());
