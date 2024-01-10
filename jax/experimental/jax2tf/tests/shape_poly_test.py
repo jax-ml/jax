@@ -59,7 +59,6 @@ from jax._src.internal_test_util import test_harnesses
 from jax._src.internal_test_util.test_harnesses import Harness, CustomArg, RandArg, StaticArg
 from jax.experimental.jax2tf.tests.jax2tf_limitations import Jax2TfLimitation
 
-PS = jax2tf.PolyShape
 _f32 = np.float32
 _i32 = np.int32
 
@@ -430,7 +429,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     """Test conversion of actual arguments to abstract values."""
 
     def check_avals(*, arg_shapes: Sequence[Sequence[int | None]],
-                    polymorphic_shapes: Sequence[str | PS | None],
+                    polymorphic_shapes: Sequence[str | None],
                     expected_avals: Sequence[core.ShapedArray] | None = None,
                     expected_shapeenv: dict[str, int] | None = None,
                     eager_mode: bool = False):
@@ -488,25 +487,10 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     check_avals(
         arg_shapes=[(2, 3)],
-        polymorphic_shapes=[PS("_", 3)],
-        expected_avals=(shaped_array("2, 3", [2, 3]),))
-
-    check_avals(
-        arg_shapes=[(2, 3)],
         polymorphic_shapes=["..."],
         expected_avals=(shaped_array("2, 3", [2, 3]),))
 
-    check_avals(
-        arg_shapes=[(2, 3)],
-        polymorphic_shapes=[PS(...)],
-        expected_avals=(shaped_array("2, 3", [2, 3]),))
-
     # Partially known shapes for the arguments
-    check_avals(
-        arg_shapes=[(None, 3)],
-        polymorphic_shapes=[PS("b", ...)],
-        expected_avals=(shaped_array("(b, 3)", (2, 3)),))
-
     check_avals(
         arg_shapes=[(None, None)],
         polymorphic_shapes=["h, h"],
@@ -526,25 +510,25 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # Check cases when the specifications are polynomials
     check_avals(
         arg_shapes=[(2, 3)],
-        polymorphic_shapes=[PS("a + 1", "b + 2")],
+        polymorphic_shapes=["a + 1, b + 2"],
         eager_mode=True,
         expected_shapeenv=dict(a=1, b=1))
 
     check_avals(
         arg_shapes=[(7, 5)],
-        polymorphic_shapes=[PS("2 * a + b", "b + 2")],
+        polymorphic_shapes=["2 * a + b, b + 2"],
         eager_mode=True,
         expected_shapeenv=dict(a=2, b=3))
 
     check_avals(
         arg_shapes=[(7, 11, 4)],
-        polymorphic_shapes=[PS("2 * a + b", "b * b + 2", "b + 1")],
+        polymorphic_shapes=["2 * a + b, b * b + 2, b + 1"],
         eager_mode=True,
         expected_shapeenv=dict(a=2, b=3))
 
     check_avals(
         arg_shapes=[(7, 11, 19, 7)],
-        polymorphic_shapes=[PS("2 * a + b", "b * b + 2", "b + c * c", "2 * c + -1")],
+        polymorphic_shapes=["2 * a + b, b * b + 2, b + c * c, 2 * c + -1"],
         eager_mode=True,
         expected_shapeenv=dict(a=2, b=3, c=4))
 

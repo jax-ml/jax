@@ -28,13 +28,15 @@ Remember to align the itemized text with the first line of an item within a list
       ({jax-issue}`#19231`; note that this may result in user-visible behavior
         changes)
     * improved the error messages for inconclusive inequality comparisons
-      ({jax-issue}`#19235`)
+      ({jax-issue}`#19235`).
     * the `core.non_negative_dim` API (introduced recently)
       was deprecated and `core.max_dim` and `core.min_dim` were introduced
       ({jax-issue}`#18953`) to express `max` and `min` for symbolic dimensions.
       You can use `core.max_dim(d, 0)` instead of `core.non_negative_dim(d)`.
     * the `shape_poly.is_poly_dim` is deprecated in favor if `export.is_symbolic_dim`
       ({jax-issue}`#19282`).
+    * the `shape_poly.PolyShape` and `jax2tf.PolyShape` are deprecated, use
+      strings for polymorphic shapes specifications ({jax-issue}`#19284`).
   * Refactored the API for `jax.experimental.export`. Instead of
     `from jax.experimental.export import export` you should use now
     `from jax.experimental import export`. The old way of importing will
