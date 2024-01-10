@@ -39,7 +39,7 @@ def convert_and_save_model(
     model_dir: str,
     *,
     input_signatures: Sequence[tf.TensorSpec],
-    polymorphic_shapes: str | jax2tf.PolyShape | None = None,
+    polymorphic_shapes: str | None = None,
     with_gradient: bool = False,
     enable_xla: bool = True,
     compile_model: bool = True,

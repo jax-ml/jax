@@ -21,16 +21,20 @@ Remember to align the itemized text with the first line of an item within a list
   * {func}`jax.numpy.argsort` and {func}`jax.numpy.sort` now support the `stable`
     and `descending` arguments.
   * Several changes to the handling of shape polymorphism (used in
-    {mod}`jax.experimental.jax2tf` and {mod}`jax.experimental.export`): cleaner
-    pretty-printing of symbolic expressions ({jax-issue}`#19227`); simplified
-    and faster equality comparisons, where we consider two symbolic dimensions
-    to be equal if the normalized form of their difference reduces to 0
-    ({jax-issue}`#19231`; note that this may result in user-visible behavior
-    changes); improved the error messages for inconclusive inequality comparisons
-    ({jax-issue}`#19235`); the `core.non_negative_dim` API (introduced recently)
-    was deprecated and `core.max_dim` and `core.min_dim` were introduced
-    ({jax-issue}`#18953`) to express `max` and `min` for symbolic dimensions.
-    You can use `core.max_dim(d, 0)` instead of `core.non_negative_dim(d)`.
+    {mod}`jax.experimental.jax2tf` and {mod}`jax.experimental.export`):
+    * cleaner pretty-printing of symbolic expressions ({jax-issue}`#19227`)
+    * simplified and faster equality comparisons, where we consider two symbolic dimensions
+      to be equal if the normalized form of their difference reduces to 0
+      ({jax-issue}`#19231`; note that this may result in user-visible behavior
+        changes)
+    * improved the error messages for inconclusive inequality comparisons
+      ({jax-issue}`#19235`)
+    * the `core.non_negative_dim` API (introduced recently)
+      was deprecated and `core.max_dim` and `core.min_dim` were introduced
+      ({jax-issue}`#18953`) to express `max` and `min` for symbolic dimensions.
+      You can use `core.max_dim(d, 0)` instead of `core.non_negative_dim(d)`.
+    * the `shape_poly.is_poly_dim` is deprecated in favor if `export.is_symbolic_dim`
+      ({jax-issue}`#19282`).
   * Refactored the API for `jax.experimental.export`. Instead of
     `from jax.experimental.export import export` you should use now
     `from jax.experimental import export`. The old way of importing will
