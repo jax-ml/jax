@@ -741,14 +741,7 @@ def vector_norm(x: ArrayLike, /, *, axis: int | None = None, keepdims: bool = Fa
 
 @_wraps(getattr(np.linalg, "vecdot", None))
 def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1) -> Array:
-  """Computes the (vector) dot product of two arrays."""
-  check_arraylike("jnp.linalg.vecdot", x1, x2)
-  x1_arr, x2_arr = jnp.asarray(x1), jnp.asarray(x2)
-  if x1_arr.shape[axis] != x2_arr.shape[axis]:
-    raise ValueError(f"axes must match; got shapes {x1_arr.shape} and {x2_arr.shape} with {axis=}")
-  x1_arr = jax.numpy.moveaxis(x1_arr, axis, -1)
-  x2_arr = jax.numpy.moveaxis(x2_arr, axis, -1)
-  return jax.numpy.vectorize(jnp.vdot, signature="(n),(n)->()")(x1_arr, x2_arr)
+  return jnp.vecdot(x1, x2, axis=axis)
 
 
 @_wraps(getattr(np.linalg, "matmul", None))

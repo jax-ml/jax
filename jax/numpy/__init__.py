@@ -249,6 +249,7 @@ from jax._src.numpy.lax_numpy import (
     unwrap as unwrap,
     vander as vander,
     vdot as vdot,
+    vecdot as vecdot,
     vsplit as vsplit,
     vstack as vstack,
     where as where,
