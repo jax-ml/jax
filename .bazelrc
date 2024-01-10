@@ -151,6 +151,13 @@ build:linux --copt=-Wno-array-parameter
 
 build:macos --config=posix
 
+# Public cache for macOS builds. The "oct2023" in the URL is just the
+# date when the bucket was created and can be disregarded. It still contains the
+# latest cache that is being used.
+build:macos_cache --remote_cache="https://storage.googleapis.com/tensorflow-macos-bazel-cache/oct2023" --remote_upload_local_results=false
+# Cache pushes are limited to Jax's CI system.
+build:macos_cache_push --config=macos_cache --remote_upload_local_results=true --google_default_credentials
+
 # Suppress all warning messages.
 build:short_logs --output_filter=DONT_MATCH_ANYTHING
 
