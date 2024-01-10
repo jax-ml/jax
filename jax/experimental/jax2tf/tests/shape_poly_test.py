@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import contextlib
 import math
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 import unittest
 
 from absl import logging
@@ -32,7 +32,7 @@ import re
 
 import jax
 from jax.experimental import jax2tf
-from jax.experimental.export import export
+from jax.experimental import export
 from jax.experimental.export import shape_poly
 from jax.experimental import pjit
 from jax import lax
@@ -440,7 +440,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       def f_tf(*args_tf):
         avals = tuple(map(
             lambda s, dt, spec: core.ShapedArray(
-                shape_poly.symbolic_shape(spec, like=s),
+                export.symbolic_shape(spec, like=s),
                 dt),
             arg_shapes, arg_dtypes, polymorphic_shapes))
         dim_vars = shape_poly.all_dim_vars(avals)
@@ -468,7 +468,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     def shaped_array(shape_spec: str, actual_shape: core.Shape):
       return core.ShapedArray(
-          shape_poly.symbolic_shape(shape_spec, like=actual_shape), np.float32)
+          export.symbolic_shape(shape_spec, like=actual_shape), np.float32)
 
     # Known shapes for the arguments
     check_avals(
@@ -1443,7 +1443,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     traced = False
     # If we get_concrete_function we trace once
     f_tf = tf.function(
-        jax2tf.convert(f_jax, polymorphic_shapes=[PS("b", ...)]),
+        jax2tf.convert(f_jax, polymorphic_shapes=["b, ..."]),
         autograph=False,
         jit_compile=True).get_concrete_function(
             tf.TensorSpec([None, 2, 3], x.dtype))

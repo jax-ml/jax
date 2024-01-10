@@ -23,8 +23,11 @@ from jax.experimental.export._export import (
     DisabledSafetyCheck,
     default_lowering_platform,
 
+    args_specs,  # TODO: move to shape_poly
+)
+from jax.experimental.export.shape_poly import (
+    is_symbolic_dim,
     symbolic_shape,
-    args_specs,
 )
 from jax.experimental.export.serialization import (
     serialize,

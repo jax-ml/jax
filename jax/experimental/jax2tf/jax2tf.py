@@ -23,7 +23,7 @@ import operator
 import os
 import re
 import threading
-from typing import Any, Callable, Optional, Tuple, Union, cast
+from typing import Any, Callable, Union
 import warnings
 
 from absl import logging
@@ -37,9 +37,9 @@ from jax import numpy as jnp
 from jax import tree_util
 from jax import sharding
 from jax.experimental import maps
-from jax.experimental.export import shape_poly
-from jax.experimental.export import _export
 from jax.experimental import export
+from jax.experimental.export import _export
+from jax.experimental.export import shape_poly
 from jax.experimental.jax2tf import impl_no_xla
 from jax.interpreters import xla
 
@@ -88,7 +88,7 @@ from tensorflow.python.eager import context as tf_context  # type: ignore[import
 # pylint: enable=g-direct-tensorflow-import
 
 NameStack = source_info_util.NameStack
-PolyShape = shape_poly.PolyShape
+PolyShape = shape_poly.PolyShape  # TODO: deprecate
 DType = Any
 
 DisabledSafetyCheck = export.DisabledSafetyCheck
@@ -1040,7 +1040,7 @@ def _aval_to_tf_shape(aval: core.ShapedArray) -> tuple[int | None, ...]:
 
   """Generate a TF shape, possibly containing None for polymorphic dimensions."""
   aval = _jax_physical_aval(aval)
-  return tuple(map(lambda d: None if shape_poly.is_poly_dim(d) else d,
+  return tuple(map(lambda d: None if export.is_symbolic_dim(d) else d,
                    aval.shape))  # type: ignore[attr-defined]
 
 # In the TF world, we represent float0 as zeros of this type.
@@ -1163,7 +1163,7 @@ def _assert_matching_abstract_shape(x: TfVal, shape: Sequence[shape_poly.DimSize
     if core.is_constant_dim(sd):
       return xd == sd
     else:
-      assert isinstance(sd, shape_poly._DimExpr)
+      assert export.is_symbolic_dim(sd)
       return True
   assert (len(x.shape) == len(shape) and
           all(check_one(xd, sd)
@@ -1213,8 +1213,8 @@ class TensorFlowTracer(core.Tracer):
 
         for aval_dim, val_dim in zip(phys_aval.shape, val_shape):  # type: ignore[attr-defined]
           if val_dim is None:
-            assert shape_poly.is_poly_dim(aval_dim), f"expected {phys_aval.shape} == {val_shape}"  # type: ignore[attr-defined]
-          elif not shape_poly.is_poly_dim(aval_dim):
+            assert export.is_symbolic_dim(aval_dim), f"expected {phys_aval.shape} == {val_shape}"  # type: ignore[attr-defined]
+          elif not export.is_symbolic_dim(aval_dim):
             assert aval_dim == val_dim, f"expected {phys_aval.shape} == {val_shape}"  # type: ignore[attr-defined]
           else:
             # We have a TF value with known shape, and the abstract shape is a shape variable.

@@ -45,6 +45,7 @@ import operator as op
 import threading
 import tokenize
 from typing import Any, Callable, Union
+import warnings
 
 import numpy as np
 import opt_einsum
@@ -571,7 +572,7 @@ class _DimExpr():
 
     # We look for `self - other == k`, and we rely on the fact that when we
     # normalize _DimExpr that represent integers as ints.
-    if is_poly_dim(diff):
+    if is_symbolic_dim(diff):
       # Here we really ought to raise InconclusiveDimensionOperation, but __eq__
       # cannot raise exceptions, because it is used indirectly when hashing.
       # So, we say that the expressions are disequal, which is really unsound.
@@ -808,7 +809,7 @@ class _DimExpr():
       # invariant: self = dividend + divisor * quotient
       # quotient and dividend are changed in the loop; the leading term of
       # dividend decreases at each iteration.
-      while is_poly_dim(dividend) and not dividend.is_constant:
+      while is_symbolic_dim(dividend) and not dividend.is_constant:
         mon, count = dividend.leading_term
         try:
           qmon = mon.divide(dmon)
@@ -995,8 +996,14 @@ def _ensure_poly(p: DimSize,
 def _convertible_to_poly(p: DimSize) -> bool:
   return isinstance(p, _DimExpr) or _convertible_to_int(p)
 
-def is_poly_dim(p: DimSize) -> bool:
+def is_symbolic_dim(p: DimSize) -> bool:
   return isinstance(p, _DimExpr)
+
+def is_poly_dim(p: DimSize) -> bool:
+  # TODO: deprecated January 2024, remove June 2024.
+  warnings.warn("is_poly_dim is deprecated, use export.is_symbolic_dim",
+                DeprecationWarning, stacklevel=2)
+  return is_symbolic_dim(p)
 
 dtypes.python_scalar_dtypes[_DimExpr] = dtypes.python_scalar_dtypes[int]
 
@@ -1421,7 +1428,7 @@ def all_dim_vars(args_avals: Sequence[core.AbstractValue]) -> Sequence[str]:
   dim_vars: set[str] = set()
   for a in args_avals:
     for d in a.shape:
-      if is_poly_dim(d):
+      if is_symbolic_dim(d):
         dim_vars = dim_vars.union(d.get_vars())
   return sorted(dim_vars)
 
@@ -1659,13 +1666,13 @@ def solve_dim_vars(
   # tuples with argument name and its polymorphic shape ('args[0]', '(a, a + b'))
   polymorphic_shape_specs: list[tuple[str, str]] = []
   for arg_idx, aval in enumerate(args_avals):
-    if all(not is_poly_dim(d) for d in aval.shape):
+    if all(not is_symbolic_dim(d) for d in aval.shape):
       continue
     polymorphic_shape_specs.append(
       (pretty_print_dimension_descriptor(args_kwargs_tree, arg_idx, None),
        str(aval.shape)))
     for dim_idx, aval_d in enumerate(aval.shape):
-      if is_poly_dim(aval_d):
+      if is_symbolic_dim(aval_d):
         synth_dim_var = pretty_print_dimension_descriptor(args_kwargs_tree,
                                                           arg_idx, dim_idx)
         synth_dimension_vars.append((synth_dim_var, arg_idx, dim_idx))
