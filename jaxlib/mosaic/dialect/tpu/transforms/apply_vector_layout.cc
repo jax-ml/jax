@@ -816,14 +816,126 @@ LogicalResult scf_for_rule(RewriteContext &ctx, Operation &op,
                            const ArrayRef<Layout> layouts_in,
                            const ArrayRef<Layout> layouts_out) {
   scf::ForOp for_op = cast<scf::ForOp>(op);
-  CHECK_EQ(layouts_in.size(), 3 + for_op.getInitArgs().size());
-  CHECK_EQ(layouts_out.size(), for_op.getResults().size());
-  if (!for_op.getInitArgs().empty() || !for_op.getResults().empty()) {
-    return for_op.emitOpError("Not implemented: inputs and outputs in scf.for");
+  CHECK_EQ(layouts_in.size(), for_op->getNumOperands());
+  CHECK_EQ(layouts_out.size(), for_op->getNumResults());
+  if (!llvm::equal(layouts_in.drop_front(3), layouts_out)) {
+    return op.emitOpError(
+        "Expected matched layouts in scf.for's inputs and outputs");
   }
-  // It is an invariant that scf::ForOp should have a single region with a
-  // single block (checked by MLIR verifier).
-  return applyLayoutBlock(ctx, for_op.getRegion().getBlocks().front());
+  FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> yield_in_layouts,
+                             getInLayout(*for_op.getBody()->getTerminator()));
+  if (!llvm::equal(ArrayRef<Layout>(yield_in_layouts), layouts_out)) {
+    return op.emitOpError(
+        "Expected matched layouts in scf.yield operands and scf.for's results");
+  }
+
+  if (failed(applyLayoutBlock(ctx, *for_op.getBody()))) {
+    return failure();
+  }
+
+  if (op.getNumResults() == 0) {
+    return success();
+  }
+
+  OpBuilder builder(&op);
+  SmallVector<Value> unrolled_args;
+  for (int i = 0; i < layouts_in.size(); ++i) {
+    auto layout = layouts_in[i];
+    auto operand = for_op.getOperand(i);
+    if (i < 3) {
+      if (layout.has_value()) {
+        return op.emitOpError("Expected no layout for bounds and step");
+      }
+      continue;
+    }
+    if (auto vty = dyn_cast<VectorType>(operand.getType())) {
+      if (!layout.has_value()) {
+        return op.emitOpError("Expected layout for vector operand");
+      }
+      FAILUREOR_ASSIGN_OR_RETURN(
+          const xla::Array<Value> tiles,
+          disassemble(builder, *layout, operand, ctx.target_shape));
+      unrolled_args.append(tiles.begin(), tiles.end());
+    } else {
+      if (layout.has_value()) {
+        return op.emitOpError("Expected no layout for scalar operand");
+      }
+      unrolled_args.push_back(operand);
+    }
+  }
+
+  // Create a new scf::ForOp with unrolled args.
+  auto new_op = builder.create<scf::ForOp>(
+      for_op->getLoc(), for_op.getLowerBound(), for_op.getUpperBound(),
+      for_op.getStep(), unrolled_args);
+
+  int num_old_args = for_op.getBody()->getNumArguments();
+  SmallVector<Location> locs(new_op.getBody()->getNumArguments(),
+                             for_op.getLoc());
+  for_op.getBody()->addArguments(TypeRange(new_op.getBody()->getArguments()),
+                                 locs);
+  builder.setInsertionPointToStart(for_op.getBody());
+  auto arg_idx = num_old_args;
+  // Block also has an induction variable that should have no layout,
+  // which conveniently matches the in layouts.
+  for (auto [old_arg, layout] : llvm::zip_equal(
+           for_op.getBody()->getArguments().take_front(num_old_args),
+           layouts_in.drop_front(2))) {
+    if (const auto vty = dyn_cast<VectorType>(old_arg.getType())) {
+      CHECK(layout.has_value());
+      const SmallVector<int64_t> tiles_shape =
+          layout->tileArrayShape(vty.getShape(), ctx.target_shape);
+      const int64_t num_vectors = ShapedType::getNumElements(tiles_shape);
+      xla::Array<Value> tiles(tiles_shape);
+      CHECK_LE(arg_idx + num_vectors, for_op.getBody()->getNumArguments());
+      tiles.SetValues(llvm::make_range(
+          for_op.getBody()->getArguments().begin() + arg_idx,
+          for_op.getBody()->getArguments().begin() + arg_idx + num_vectors));
+      arg_idx += num_vectors;
+      RollVectorsOp rolled_op =
+          assemble(builder, vty, *layout, tiles, ctx.target_shape);
+      old_arg.replaceUsesWithIf(rolled_op, [&](OpOperand &operand) {
+        return operand.getOwner() != rolled_op;
+      });
+    } else {
+      CHECK(!layout.has_value());
+      old_arg.replaceAllUsesWith(for_op.getBody()->getArgument(arg_idx));
+      ++arg_idx;
+    }
+  }
+  for_op.getBody()->eraseArguments(0, num_old_args);
+  new_op.getRegion().takeBody(for_op.getRegion());
+
+  // Roll the results back to the original shapes.
+  builder.setInsertionPointAfter(new_op);
+  int64_t res_idx = 0;
+  SmallVector<Value> rolled_results;
+  for (auto [result, layout] :
+       llvm::zip_equal(for_op.getResults(), layouts_out)) {
+    if (const auto vty = dyn_cast<VectorType>(result.getType())) {
+      CHECK(layout.has_value());
+      const SmallVector<int64_t> tiles_shape =
+          layout->tileArrayShape(vty.getShape(), ctx.target_shape);
+      const int64_t num_vectors = ShapedType::getNumElements(tiles_shape);
+      xla::Array<Value> tiles(tiles_shape);
+      CHECK_LE(res_idx + num_vectors, new_op.getResults().size());
+      tiles.SetValues(llvm::make_range(
+          new_op.getResults().begin() + res_idx,
+          new_op.getResults().begin() + res_idx + num_vectors));
+      res_idx += num_vectors;
+      RollVectorsOp rolled_op =
+          assemble(builder, vty, *layout, tiles, ctx.target_shape);
+      rolled_results.push_back(rolled_op);
+    } else {
+      CHECK(!layout.has_value());
+      rolled_results.push_back(new_op.getResult(res_idx));
+      ++res_idx;
+    }
+  }
+
+  for_op.replaceAllUsesWith(rolled_results);
+  for_op.erase();
+  return success();
 }
 
 LogicalResult scf_if_rule(RewriteContext &ctx, Operation &op,
@@ -1314,6 +1426,38 @@ LogicalResult tpu_trace_rule(RewriteContext &ctx, Operation &op,
   CHECK(region.hasOneBlock());
   Block &block = region.front();
   return applyLayoutBlock(ctx, block);
+}
+
+LogicalResult tpu_assume_layout_rule(RewriteContext &ctx, Operation &op,
+                                     const ArrayRef<Layout> layouts_in,
+                                     const ArrayRef<Layout> layouts_out) {
+  CHECK_EQ(op.getNumOperands(), 1);
+  CHECK_EQ(op.getNumResults(), 1);
+  CHECK_EQ(layouts_in.size(), 1);
+  CHECK_EQ(layouts_out.size(), 1);
+  if (layouts_in[0] !=layouts_out[0]) {
+    return op.emitOpError("Expected same input and output layout");
+  }
+  OpBuilder builder(&op);
+  auto val = op.getOperand(0);
+  auto layout = layouts_in[0];
+  const auto vty = cast<VectorType>(val.getType());
+  SmallVector<int64_t> layout_shape =
+      layout->tileArrayShape(vty.getShape(), ctx.target_shape);
+  const int64_t num_vectors = ShapedType::getNumElements(layout_shape);
+  FAILUREOR_ASSIGN_OR_RETURN(
+      VectorType vreg_ty,
+      getNativeVregType(vty.getElementType(), ctx.target_shape));
+  // We can not use disassemble here because the val is block argument.
+  auto unrolled_op = builder.create<tpu::UnrollVectorsOp>(
+      val.getLoc(), SmallVector<Type>(num_vectors, vreg_ty), val);
+
+  op.replaceAllUsesWith(assemble(builder, vty, *layout,
+                                 XlaArrayFromShapeAndValues<Value>(
+                                     layout_shape, unrolled_op->getResults()),
+                                 ctx.target_shape));
+  op.erase();
+  return success();
 }
 
 LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
@@ -2996,6 +3140,7 @@ const llvm::StringMap<rule_type> &rules() {
       {tpu::StoreOp::getOperationName(), tpu_store_rule},
       {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
       {tpu::TraceOp::getOperationName(), tpu_trace_rule},
+      {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
       {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
       {vector::ContractionOp::getOperationName(), vector_contract_rule},
       {vector::ExtractOp::getOperationName(), vector_extract_rule},
@@ -3743,7 +3888,7 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
                              getOutLayout(op));
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> layout_in,
                              getInLayout(op));
-  if (!layout_in.empty()) {
+  if (!layout_in.empty() && !isa<tpu::AssumeLayoutOp>(op)) {
     // Relayout the operands, if their requested input layouts don't match the
     // layouts in which they were produced.
     for (auto [idx, tup] :

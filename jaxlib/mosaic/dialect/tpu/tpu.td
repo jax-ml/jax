@@ -378,6 +378,14 @@ def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure]> {
   let hasVerifier = 1;
 }
 
+def TPU_AssumeLayoutOp : TPU_Op<"assume_layout", [Pure]> {
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($result)
+  }];
+}
+
 def TPU_EraseLayoutOp : TPU_Op<"erase_memref_layout", [Pure]> {
   let arguments = (ins AnyMemRef:$operand);
   let results = (outs AnyMemRef:$result);
