@@ -13,6 +13,8 @@
 # limitations under the License.
 """Utilities for tracing stateful functions."""
 
+from collections.abc import Sequence
+
 from jax.interpreters import partial_eval as pe
 from jax._src import core
 from jax._src import linear_util as lu
@@ -29,7 +31,7 @@ def hoist_consts_to_refs(jaxpr: core.Jaxpr) -> core.Jaxpr:
   is_const_ref = [isinstance(var.aval, AbstractRef) for var in
                   jaxpr.constvars]
   const_avals_, const_ref_avals = partition_list(is_const_ref, all_const_avals)
-  const_avals = map(AbstractRef, const_avals_)
+  const_avals: Sequence[AbstractRef]  = map(AbstractRef, const_avals_)
   merged_const_avals = merge_lists(is_const_ref, const_avals, const_ref_avals)
   arg_avals = [var.aval for var in jaxpr.invars]
   in_avals = [*merged_const_avals, *arg_avals]
