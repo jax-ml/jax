@@ -64,6 +64,12 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.24
 
+* Changes
+
+  * `cost_analysis` now works with cross-compiled `Compiled` objects (i.e. when
+    using `.lower().compile()` with a topology object, e.g., to compile for
+    Cloud TPU from a non-TPU computer).
+
 ## jax 0.4.23 (Dec 13, 2023)
 
 ## jaxlib 0.4.23 (Dec 13, 2023)
