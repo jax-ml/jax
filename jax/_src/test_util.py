@@ -967,7 +967,8 @@ class JaxTestCase(parameterized.TestCase):
   def rng(self):
     return self._rng
 
-  def assertArraysEqual(self, x, y, *, check_dtypes=True, err_msg='', allow_object_dtype=False):
+  def assertArraysEqual(self, x, y, *, check_dtypes=True, err_msg='',
+                        allow_object_dtype=False, verbose=True):
     """Assert that x and y arrays are exactly equal."""
     if check_dtypes:
       self.assertDtypesMatch(x, y)
@@ -984,7 +985,8 @@ class JaxTestCase(parameterized.TestCase):
 
     # Work around https://github.com/numpy/numpy/issues/18992
     with np.errstate(over='ignore'):
-      np.testing.assert_array_equal(x, y, err_msg=err_msg)
+      np.testing.assert_array_equal(x, y, err_msg=err_msg,
+                                    verbose=verbose)
 
   def assertArraysAllClose(self, x, y, *, check_dtypes=True, atol=None,
                            rtol=None, err_msg=''):
