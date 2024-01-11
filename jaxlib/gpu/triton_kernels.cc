@@ -251,15 +251,31 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3], void** params)
     gpuDevice_t device;
     GPU_RETURN_IF_ERROR(gpuDeviceGet(&device, device_id));
     GPU_RETURN_IF_ERROR(gpuDevicePrimaryCtxRetain(&context, device));
-  #else //JAX_GPU_CUDA
-    GPU_RETURN_IF_ERROR(gpuStreamGetCtx(stream, &context)); 
-  #endif
+    JAX_ASSIGN_OR_RETURN(gpuFunction_t kernel,
+                         module_image_->GetFunctionForContext(context));
+    return JAX_AS_STATUS(gpuLaunchKernel(
+        kernel, grid[0], grid[1], grid[2], block_dim_x_,
+        /*blockDimY=*/1, /*blockDimZ=*/1, shared_mem_bytes_, stream, params,
+        /*extra=*/nullptr));
+#else //JAX_GPU_CUDA
+  GPU_RETURN_IF_ERROR(gpuStreamGetCtx(stream, &context));
   JAX_ASSIGN_OR_RETURN(gpuFunction_t kernel,
                        module_image_->GetFunctionForContext(context));
-  return JAX_AS_STATUS(gpuLaunchKernel(
-      kernel, grid[0], grid[1], grid[2], block_dim_x_,
-      /*blockDimY=*/1, /*blockDimZ=*/1, shared_mem_bytes_, stream, params,
-      /*extra=*/nullptr));
+  CUlaunchConfig launch_config = {
+      /*gridDimX=*/grid[0],
+      /*gridDimY=*/grid[1],
+      /*gridDimZ=*/grid[2],
+      /*blockDimX=*/block_dim_x_,
+      /*blockDimY=*/1,
+      /*blockDimZ=*/1,
+      /*sharedMemBytes=*/shared_mem_bytes_,
+      /*hStream=*/stream,
+      /**attrs=*/nullptr,  // TODO(giorgioa): Add attrs for block clusters.
+      /*numAttrs=*/0,
+  };
+  return JAX_AS_STATUS(
+      cuLaunchKernelEx(&launch_config, kernel, params, /*extra=*/nullptr));
+#endif
 }
 
 /*static*/ Kernel Kernel::FromProto(const jax_triton::TritonKernel& proto) {
