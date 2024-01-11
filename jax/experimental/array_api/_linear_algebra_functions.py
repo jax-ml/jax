@@ -59,10 +59,7 @@ def diagonal(x, /, *, offset=0):
   """
   Returns the specified diagonals of a matrix (or a stack of matrices) x.
   """
-  f = partial(jax.numpy.diagonal, offset=offset)
-  for _ in range(x.ndim - 2):
-    f = jax.vmap(f)
-  return f(x)
+  return jax.numpy.linalg.diagonal(x, offset=offset)
 
 def eigh(x, /):
   """

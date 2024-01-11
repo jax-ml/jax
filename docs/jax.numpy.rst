@@ -466,6 +466,7 @@ jax.numpy.linalg
   cond
   cross
   det
+  diagonal
   eig
   eigh
   eigvals

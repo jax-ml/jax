@@ -1251,6 +1251,22 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_fun, lax_fun, args_maker)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @jtu.sample_product(
+    shape = [(2, 3), (3, 2), (3, 3, 4), (4, 3, 3), (2, 3, 4, 5)],
+    dtype = jtu.dtypes.all,
+    offset=range(-2, 3)
+  )
+  def testDiagonal(self, shape, dtype, offset):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    lax_fun = partial(jnp.linalg.diagonal, offset=offset)
+    if jtu.numpy_version() >= (2, 0, 0):
+      np_fun = partial(np.linalg.diagonal, offset=offset)
+    else:
+      np_fun = partial(np.diagonal, offset=offset, axis1=-2, axis2=-1)
+    self._CheckAgainstNumpy(np_fun, lax_fun, args_maker)
+    self._CompileAndCheck(lax_fun, args_maker)
+
 
 class ScipyLinalgTest(jtu.JaxTestCase):
 
