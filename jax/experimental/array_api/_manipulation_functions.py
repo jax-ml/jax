@@ -14,9 +14,6 @@
 
 from __future__ import annotations
 
-import operator
-from typing import List, Optional, Tuple, Union
-
 import jax
 from jax import Array
 from jax.experimental.array_api._data_type_functions import result_type as _result_type
@@ -71,8 +68,7 @@ def roll(x: Array, /, shift: int | tuple[int], *, axis: int | tuple[int, ...] | 
 
 def squeeze(x: Array, /, axis: int | tuple[int, ...]) -> Array:
   """Removes singleton dimensions (axes) from x."""
-  dimensions = axis if isinstance(axis, tuple) else (axis,)
-  return jax.lax.squeeze(x, dimensions=dimensions)
+  return jax.numpy.squeeze(x, axis=axis)
 
 
 def stack(arrays: tuple[Array, ...] | list[Array], /, *, axis: int = 0) -> Array:

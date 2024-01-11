@@ -31,20 +31,18 @@ def _promote_dtypes(name, *args):
 def abs(x, /):
   """Calculates the absolute value for each element x_i of the input array x."""
   x, = _promote_dtypes("abs", x)
-  if _isdtype(x.dtype, "unsigned integer"):
-    return x
-  return jax.lax.abs(x)
+  return jax.numpy.abs(x)
 
 
 def acos(x, /):
   """Calculates an implementation-dependent approximation of the principal value of the inverse cosine for each element x_i of the input array x."""
   x, = _promote_dtypes("acos", x)
-  return jax.lax.acos(x)
+  return jax.numpy.acos(x)
 
 def acosh(x, /):
   """Calculates an implementation-dependent approximation to the inverse hyperbolic cosine for each element x_i of the input array x."""
   x, = _promote_dtypes("acos", x)
-  return jax.lax.acosh(x)
+  return jax.numpy.acosh(x)
 
 
 def add(x1, x2, /):
@@ -56,19 +54,19 @@ def add(x1, x2, /):
 def asin(x, /):
   """Calculates an implementation-dependent approximation of the principal value of the inverse sine for each element x_i of the input array x."""
   x, = _promote_dtypes("asin", x)
-  return jax.lax.asin(x)
+  return jax.numpy.asin(x)
 
 
 def asinh(x, /):
   """Calculates an implementation-dependent approximation to the inverse hyperbolic sine for each element x_i in the input array x."""
   x, = _promote_dtypes("asinh", x)
-  return jax.lax.asinh(x)
+  return jax.numpy.asinh(x)
 
 
 def atan(x, /):
   """Calculates an implementation-dependent approximation of the principal value of the inverse tangent for each element x_i of the input array x."""
   x, = _promote_dtypes("atan", x)
-  return jax.lax.atan(x)
+  return jax.numpy.atan(x)
 
 
 def atan2(x1, x2, /):
@@ -80,7 +78,7 @@ def atan2(x1, x2, /):
 def atanh(x, /):
   """Calculates an implementation-dependent approximation to the inverse hyperbolic tangent for each element x_i of the input array x."""
   x, = _promote_dtypes("atanh", x)
-  return jax.lax.atanh(x)
+  return jax.numpy.atanh(x)
 
 
 def bitwise_and(x1, x2, /):
@@ -124,25 +122,25 @@ def ceil(x, /):
   x, = _promote_dtypes("ceil", x)
   if _isdtype(x.dtype, "integral"):
     return x
-  return jax.lax.ceil(x)
+  return jax.numpy.ceil(x)
 
 
 def conj(x, /):
   """Returns the complex conjugate for each element x_i of the input array x."""
   x, = _promote_dtypes("conj", x)
-  return jax.lax.conj(x)
+  return jax.numpy.conj(x)
 
 
 def cos(x, /):
   """Calculates an implementation-dependent approximation to the cosine for each element x_i of the input array x."""
   x, = _promote_dtypes("cos", x)
-  return jax.lax.cos(x)
+  return jax.numpy.cos(x)
 
 
 def cosh(x, /):
   """Calculates an implementation-dependent approximation to the hyperbolic cosine for each element x_i in the input array x."""
   x, = _promote_dtypes("cosh", x)
-  return jax.lax.cosh(x)
+  return jax.numpy.cosh(x)
 
 
 def divide(x1, x2, /):
@@ -160,13 +158,13 @@ def equal(x1, x2, /):
 def exp(x, /):
   """Calculates an implementation-dependent approximation to the exponential function for each element x_i of the input array x (e raised to the power of x_i, where e is the base of the natural logarithm)."""
   x, = _promote_dtypes("exp", x)
-  return jax.lax.exp(x)
+  return jax.numpy.exp(x)
 
 
 def expm1(x, /):
   """Calculates an implementation-dependent approximation to exp(x)-1 for each element x_i of the input array x."""
   x, = _promote_dtypes("expm1", x)
-  return jax.lax.expm1(x)
+  return jax.numpy.expm1(x)
 
 
 def floor(x, /):
@@ -174,7 +172,7 @@ def floor(x, /):
   x, = _promote_dtypes("floor", x)
   if _isdtype(x.dtype, "integral"):
     return x
-  return jax.lax.floor(x)
+  return jax.numpy.floor(x)
 
 
 def floor_divide(x1, x2, /):
@@ -198,7 +196,7 @@ def greater_equal(x1, x2, /):
 def imag(x, /):
   """Returns the imaginary component of a complex number for each element x_i of the input array x."""
   x, = _promote_dtypes("imag", x)
-  return jax.lax.imag(x)
+  return jax.numpy.imag(x)
 
 
 def isfinite(x, /):
@@ -234,24 +232,25 @@ def less_equal(x1, x2, /):
 def log(x, /):
   """Calculates an implementation-dependent approximation to the natural (base e) logarithm for each element x_i of the input array x."""
   x, = _promote_dtypes("log", x)
-  return jax.lax.log(x)
+  return jax.numpy.log(x)
+
 
 def log1p(x, /):
   """Calculates an implementation-dependent approximation to log(1+x), where log refers to the natural (base e) logarithm, for each element x_i of the input array x."""
   x, = _promote_dtypes("log", x)
-  return jax.lax.log1p(x)
+  return jax.numpy.log1p(x)
 
 
 def log2(x, /):
   """Calculates an implementation-dependent approximation to the base 2 logarithm for each element x_i of the input array x."""
   x, = _promote_dtypes("log2", x)
-  return jax.lax.div(jax.lax.log(x), jax.lax.log(np.array(2, dtype=x.dtype)))
+  return jax.numpy.log2(x)
 
 
 def log10(x, /):
   """Calculates an implementation-dependent approximation to the base 10 logarithm for each element x_i of the input array x."""
-  x, = _promote_dtypes("log2", x)
-  return jax.lax.div(jax.lax.log(x), jax.lax.log(np.array(10, dtype=x.dtype)))
+  x, = _promote_dtypes("log10", x)
+  return jax.numpy.log10(x)
 
 
 def logaddexp(x1, x2, /):
@@ -293,7 +292,7 @@ def multiply(x1, x2, /):
 def negative(x, /):
   """Computes the numerical negative of each element x_i (i.e., y_i = -x_i) of the input array x."""
   x, = _promote_dtypes("negative", x)
-  return jax.lax.neg(x)
+  return jax.numpy.negative(x)
 
 
 def not_equal(x1, x2, /):
@@ -317,7 +316,7 @@ def pow(x1, x2, /):
 def real(x, /):
   """Returns the real component of a complex number for each element x_i of the input array x."""
   x, = _promote_dtypes("real", x)
-  return jax.lax.real(x)
+  return jax.numpy.real(x)
 
 
 def remainder(x1, x2, /):
@@ -335,31 +334,33 @@ def round(x, /):
 def sign(x, /):
   """Returns an indication of the sign of a number for each element x_i of the input array x."""
   x, = _promote_dtypes("sign", x)
-  return jax.lax.sign(x)
+  if _isdtype(x.dtype, "complex floating"):
+    return x / abs(x)
+  return jax.numpy.sign(x)
 
 
 def sin(x, /):
   """Calculates an implementation-dependent approximation to the sine for each element x_i of the input array x."""
   x, = _promote_dtypes("sin", x)
-  return jax.lax.sin(x)
+  return jax.numpy.sin(x)
 
 
 def sinh(x, /):
   """Calculates an implementation-dependent approximation to the hyperbolic sine for each element x_i of the input array x."""
   x, = _promote_dtypes("sin", x)
-  return jax.lax.sinh(x)
+  return jax.numpy.sinh(x)
 
 
 def square(x, /):
   """Squares each element x_i of the input array x."""
   x, = _promote_dtypes("square", x)
-  return jax.lax.integer_pow(x, 2)
+  return jax.numpy.square(x)
 
 
 def sqrt(x, /):
   """Calculates the principal square root for each element x_i of the input array x."""
   x, = _promote_dtypes("sqrt", x)
-  return jax.lax.sqrt(x)
+  return jax.numpy.sqrt(x)
 
 
 def subtract(x1, x2, /):
@@ -371,13 +372,13 @@ def subtract(x1, x2, /):
 def tan(x, /):
   """Calculates an implementation-dependent approximation to the tangent for each element x_i of the input array x."""
   x, = _promote_dtypes("tan", x)
-  return jax.lax.tan(x)
+  return jax.numpy.tan(x)
 
 
 def tanh(x, /):
   """Calculates an implementation-dependent approximation to the hyperbolic tangent for each element x_i of the input array x."""
   x, = _promote_dtypes("tanh", x)
-  return jax.lax.tanh(x)
+  return jax.numpy.tanh(x)
 
 
 def trunc(x, /):
