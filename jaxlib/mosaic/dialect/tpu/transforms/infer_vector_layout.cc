@@ -416,30 +416,13 @@ class VectorLayoutInferer {
                  "Only 32-bit to 16-bit truncation supported");
     auto &layout = *some_layout;
     if (layout.implicit_dim() == ImplicitDim::kNone) {
-      bool only_feeds_into_matrix_ops = true;
-      for (OpOperand &operand : op->getUses()) {
-        if (isa<vector::ContractionOp>(operand.getOwner())) {
-          continue;
-        }
-        if (auto transpose =
-                dyn_cast<vector::TransposeOp>(operand.getOwner())) {
-          auto perm = transpose.getPermutation();
-          auto rank = perm.size();
-          if (rank >= 2 && perm[rank - 1] == rank - 2 &&
-              perm[rank - 2] == rank - 1) {
-            continue;
-          }
-          // Fall through.
-        }
-        only_feeds_into_matrix_ops = false;
-        break;
-      }
+      bool select_native = allUsersRequireNativeTiling(op.getResult());
       auto src_layout = VectorLayout(32, layout.offsets(), default_tiling_,
                                      ImplicitDim::kNone);
-      auto dst_layout = VectorLayout(
-          16, layout.offsets(),
-          only_feeds_into_matrix_ops ? nativeTiling(16) : default_tiling_,
-          ImplicitDim::kNone);
+      auto dst_layout =
+          VectorLayout(16, layout.offsets(),
+                       select_native ? nativeTiling(16) : default_tiling_,
+                       ImplicitDim::kNone);
       setLayout(op, src_layout, dst_layout);
       return success();
     }
@@ -491,12 +474,14 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     auto &layout = *some_layout;
     if (layout.implicit_dim() == ImplicitDim::kNone) {
-      // TODO(apaszke): Support native layouts here.
       auto src_layout = VectorLayout(32, layout.offsets(), default_tiling_,
                                      ImplicitDim::kNone);
-      auto dst_layout =
-          VectorLayout(dst_ty.getElementTypeBitWidth(), layout.offsets(),
-                       default_tiling_, ImplicitDim::kNone);
+      bool select_native = allUsersRequireNativeTiling(op.getResult());
+      auto dst_layout = VectorLayout(
+          dst_ty.getElementTypeBitWidth(), layout.offsets(),
+          select_native ? nativeTiling(dst_ty.getElementTypeBitWidth())
+                        : default_tiling_,
+          ImplicitDim::kNone);
       setLayout(op, src_layout, dst_layout);
       return success();
     }
@@ -1560,6 +1545,26 @@ class VectorLayoutInferer {
               VectorLayout(kNativeBitwidth, {0, 0}, default_tiling_,
                            ImplicitDim::kNone));
     return success();
+  }
+
+  bool allUsersRequireNativeTiling(Value x) {
+    for (OpOperand &operand : x.getUses()) {
+      if (isa<vector::ContractionOp, tpu::MatmulOp>(operand.getOwner())) {
+        continue;
+      }
+      if (auto transpose = dyn_cast<vector::TransposeOp>(operand.getOwner())) {
+        auto perm = transpose.getPermutation();
+        auto rank = perm.size();
+        // Only permutations that actually swap the last two dims need it.
+        if (rank >= 2 && perm[rank - 1] == rank - 2 &&
+            perm[rank - 2] == rank - 1) {
+          continue;
+        }
+        // Fall through.
+      }
+      return false;
+    }
+    return true;
   }
 
   void setInLayout(Operation *op, ArrayRef<Layout> in) {

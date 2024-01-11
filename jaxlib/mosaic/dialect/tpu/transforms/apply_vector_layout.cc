@@ -736,30 +736,30 @@ LogicalResult trunc_op_rule_impl(RewriteContext &ctx, OpTy op,
         *v = builder.create<PackSubelementsOp>(res_vreg_ty, parts);
       });
 
-    } else if (layout_out.bitwidth() == 16 &&
-               layout_out.tiling() ==
-                   std::array<int64_t, 2>{2 * ctx.target_shape[0],
-                                          ctx.target_shape[1]}) {
+    } else if (layout_out.hasNativeTiling(ctx.target_shape)) {
+      int packing = layout_out.packing();
+      SmallVector<Value> parts;
+      parts.reserve(packing);
       output_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
-        // TODO(tlongeri): should probably express as a multiple of target_shape
-        // instead of (16, 128)
         CHECK_GE(idxs.size(), 2);
         SmallVector<int64_t> idxs_local(toArrayRef(idxs));
-        idxs_local[idxs.size() - 2] *= 2;
-        const Value first = input_vregs(idxs_local);
-        Value second;
-        if (idxs[idxs.size() - 2] * 2 + 1 ==
-            input_vregs.dim(input_vregs.num_dimensions() - 2)) {
-          second = first;
-        } else {
-          idxs_local[idxs.size() - 2] += 1;
-          second = input_vregs(idxs_local);
+        idxs_local[idxs.size() - 2] *= packing;
+        parts.push_back(input_vregs(idxs_local));
+        idxs_local[idxs.size() - 2]++;
+        while (parts.size() < packing) {
+          if (*(idxs_local.end() - 2) < *(input_vregs.dimensions().end() - 2)) {
+            parts.push_back(input_vregs(idxs_local));
+            idxs_local[idxs.size() - 2]++;
+          } else {
+            // Once we run out of tiles, we can pick any one we like.
+            parts.push_back(parts.back());
+          }
         }
-        *v = builder.create<PackSubelementsOp>(res_vreg_ty,
-                                               ArrayRef<Value>{first, second});
+        *v = builder.create<PackSubelementsOp>(res_vreg_ty, parts);
+        parts.clear();
       });
     } else {
-      return op.emitOpError("Not implemented");
+      return op.emitOpError("Not implemented: unsupported output tiling");
     }
     op.replaceAllUsesWith(assemble(builder, result_ty, layout_out,
                                    std::move(output_vregs), ctx.target_shape)
