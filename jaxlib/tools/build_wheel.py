@@ -252,8 +252,6 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extensi
   copy_runfiles(
       dst_dir=mosaic_python_dir,
       src_files=[
-          "__main__/jaxlib/mosaic/python/apply_vector_layout.py",
-          "__main__/jaxlib/mosaic/python/infer_memref_layout.py",
           "__main__/jaxlib/mosaic/python/layout_defs.py",
           "__main__/jaxlib/mosaic/python/tpu.py",
       ],
