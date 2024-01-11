@@ -746,14 +746,24 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1) -> Array:
 
 @_wraps(getattr(np.linalg, "matmul", None))
 def matmul(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  check_arraylike('jnp.linalg.matmul', x1, x2)
   return jnp.matmul(x1, x2)
 
 
 @_wraps(getattr(np.linalg, "tensordot", None))
 def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
               axes: int | tuple[Sequence[int], Sequence[int]] = 2) -> Array:
+  check_arraylike('jnp.linalg.tensordot', x1, x2)
   return jnp.tensordot(x1, x2, axes=axes)
+
 
 @_wraps(getattr(np.linalg, "svdvals", None))
 def svdvals(x: ArrayLike, /) -> Array:
+  check_arraylike('jnp.linalg.svdvals', x)
   return svd(x, compute_uv=False, hermitian=False)
+
+
+@_wraps(getattr(np.linalg, "diagonal", None))
+def diagonal(x: ArrayLike, /, *, offset: int = 0) -> Array:
+  check_arraylike('jnp.linalg.diagonal', x)
+  return jnp.diagonal(x, offset=offset, axis1=-2, axis2=-1)

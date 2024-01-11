@@ -19,6 +19,7 @@ from jax._src.numpy.linalg import (
   cholesky as cholesky,
   cross as cross,
   det as det,
+  diagonal as diagonal,
   eig as eig,
   eigh as eigh,
   eigvals as eigvals,
