@@ -76,7 +76,10 @@ pyext = "pyd" if build_utils.is_windows() else "so"
 
 
 def exists(src_file):
-  return r.Rlocation(src_file) is not None
+  path = r.Rlocation(src_file)
+  if path is None:
+    return False
+  return os.path.exists(path)
 
 
 def patch_copy_mlir_import(src_file, dst_dir):

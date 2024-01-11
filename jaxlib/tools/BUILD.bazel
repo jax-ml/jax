@@ -46,6 +46,15 @@ py_binary(
     ],
 )
 
+py_test(
+    name = "build_wheel_test",
+    srcs = ["build_wheel_test.py"],
+    data = [":build_wheel"],
+    deps = [
+      "@bazel_tools//tools/python/runfiles",
+    ],
+)
+
 py_binary(
     name = "build_gpu_plugin_wheel",
     srcs = ["build_gpu_plugin_wheel.py"],
