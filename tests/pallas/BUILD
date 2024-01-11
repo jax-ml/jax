@@ -78,3 +78,32 @@ jax_test(
         "//third_party/py/jax:pallas_tpu_ops",
     ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
 )
+
+jax_test(
+    name = "splash_attention_kernel_test",
+    srcs = [
+        "splash_attention_kernel_test.py",
+    ],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    shard_count = 18,
+    deps = [
+        "//third_party/py/jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
+)
+
+jax_test(
+    name = "splash_attention_mask_test",
+    srcs = [
+        "splash_attention_mask_test.py",
+    ],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    deps = [
+        "//third_party/py/jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
+)
