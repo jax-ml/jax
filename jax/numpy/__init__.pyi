@@ -186,6 +186,7 @@ complex_: Any
 complexfloating = _np.complexfloating
 def compress(condition: ArrayLike, a: ArrayLike, axis: Optional[int] = ...,
              out: None = ...) -> Array: ...
+def concat(arrays: Sequence[ArrayLike], /, *, axis: int | None = 0) -> Array: ...
 def concatenate(
     arrays: Union[_np.ndarray, Array, Sequence[ArrayLike]],
     axis: Optional[int] = ...,

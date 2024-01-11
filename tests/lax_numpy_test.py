@@ -1471,7 +1471,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     [dict(base_shape=base_shape, axis=axis)
       for base_shape in [(4,), (3, 4), (2, 3, 4)]
-      for axis in range(-len(base_shape)+1, len(base_shape))
+      for axis in (None, *range(-len(base_shape)+1, len(base_shape)))
     ],
     arg_dtypes=[
       arg_dtypes
@@ -1482,7 +1482,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   )
   def testConcatenate(self, axis, dtype, base_shape, arg_dtypes):
     rng = jtu.rand_default(self.rng())
-    wrapped_axis = axis % len(base_shape)
+    wrapped_axis = 0 if axis is None else axis % len(base_shape)
     shapes = [base_shape[:wrapped_axis] + (size,) + base_shape[wrapped_axis+1:]
               for size, _ in zip(itertools.cycle([3, 1, 4]), arg_dtypes)]
     @jtu.promote_like_jnp
@@ -1520,6 +1520,34 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     a = jnp.array([[1, 2], [3, 4]])
     b = jnp.array([[5]])
     jnp.concatenate((a, b), axis=None)
+
+  def testConcatenateScalarAxisNone(self):
+    arrays = [np.int32(0), np.int32(1)]
+    self.assertArraysEqual(jnp.concatenate(arrays, axis=None),
+                           np.concatenate(arrays, axis=None))
+
+  @jtu.sample_product(
+    [dict(base_shape=base_shape, axis=axis)
+      for base_shape in [(), (4,), (3, 4), (2, 3, 4)]
+      for axis in (None, *range(-len(base_shape)+1, len(base_shape)))
+    ],
+    dtype=default_dtypes,
+  )
+  def testConcat(self, axis, base_shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    wrapped_axis = 0 if axis is None else axis % len(base_shape)
+    shapes = [base_shape[:wrapped_axis] + (size,) + base_shape[wrapped_axis+1:]
+              for size in [3, 1, 4]]
+    @jtu.promote_like_jnp
+    def np_fun(*args):
+      if jtu.numpy_version() >= (2, 0, 0):
+        return np.concat(args, axis=axis)
+      else:
+        return np.concatenate(args, axis=axis)
+    jnp_fun = lambda *args: jnp.concat(args, axis=axis)
+    args_maker = lambda: [rng(shape, dtype) for shape in shapes]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
     [dict(base_shape=base_shape, axis=axis)
