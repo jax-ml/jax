@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <optional>
+
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/PybindAdaptors.h"
 #include "pybind11/detail/common.h"
@@ -52,4 +54,19 @@ PYBIND11_MODULE(_triton_ext, m) {
       .def_property_readonly("pointee_type", [](MlirType self) {
         return mlirTritonPointerTypeGetPointeeType(self);
       });
+
+  //
+  // Attributes.
+  //
+
+  m.def("infer_reduce_op_encoding",
+        [](MlirAttribute operandEncoding,
+           int axis) -> std::optional<MlirAttribute> {
+          auto encoding =
+              mlirTritonInferReduceOpEncoding(operandEncoding, axis);
+          if (mlirAttributeIsNull(encoding)) {
+            return std::nullopt;
+          }
+          return encoding;
+        });
 }

@@ -14,9 +14,7 @@
 
 from mlir import ir  # type: ignore
 
-
-def register_dialect(context: ir.Context, load: bool = ...): ...
-
+def register_dialect(context: ir.Context, load: bool = ...) -> None: ...
 
 class PointerType(ir.Type):
   @classmethod
@@ -27,3 +25,8 @@ class PointerType(ir.Type):
 
   @property
   def pointee_type(self) -> ir.Type: ...
+
+def infer_reduce_op_encoding(
+    op_attribute: ir.Attribute,
+    axis: int,
+) -> ir.Attribute: ...

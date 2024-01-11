@@ -19,6 +19,8 @@ limitations under the License.
 #include "mlir/include/mlir-c/IR.h"
 #include "mlir/include/mlir/CAPI/IR.h"
 #include "mlir/include/mlir/CAPI/Registration.h"
+#include "mlir/include/mlir/IR/Attributes.h"
+#include "mlir/include/mlir/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
 
@@ -39,6 +41,18 @@ bool mlirTritonIsAPointerType(MlirType type) {
 MlirType mlirTritonPointerTypeGetPointeeType(MlirType pointerType) {
   return wrap(llvm::cast<mlir::triton::PointerType>(unwrap(pointerType))
                   .getPointeeType());
+}
+
+MlirAttribute mlirTritonInferReduceOpEncoding(MlirAttribute operandEncoding,
+                                              int axis) {
+  auto opEncoding = unwrap(operandEncoding);
+  mlir::Dialect &dialect = opEncoding.getDialect();
+  auto inferLayoutInterface =
+      llvm::dyn_cast<mlir::triton::DialectInferLayoutInterface>(&dialect);
+  mlir::Attribute retEncoding;
+  (void)inferLayoutInterface->inferReduceOpEncoding(opEncoding, axis,
+                                                    retEncoding);
+  return wrap(retEncoding);
 }
 
 }  // extern "C"

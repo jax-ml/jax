@@ -28,6 +28,9 @@ MlirType mlirTritonPointerTypeGet(MlirType pointeeType, int addressSpace);
 bool mlirTritonIsAPointerType(MlirType type);
 MlirType mlirTritonPointerTypeGetPointeeType(MlirType pointerType);
 
+MlirAttribute mlirTritonInferReduceOpEncoding(MlirAttribute operandEncoding,
+                                              int axis);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

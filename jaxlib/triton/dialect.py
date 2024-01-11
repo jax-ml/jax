@@ -17,5 +17,9 @@
 """Python bindings for the MLIR Triton dialect."""
 
 from ._triton_enum_gen import *  # pylint: disable=wildcard-import
-from ._triton_ext import register_dialect, PointerType
+from ._triton_ext import (
+    register_dialect,
+    PointerType,
+    infer_reduce_op_encoding,
+)
 from ._triton_ops_gen import *  # pylint: disable=wildcard-import

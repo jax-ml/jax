@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//jaxlib:jax.bzl", "pybind_extension", "pytype_strict_library")
+load("//jaxlib:jax.bzl", "py_deps", "pybind_extension", "pytype_strict_library")
 load("@rules_python//python:defs.bzl", "py_library")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
 
@@ -27,8 +27,15 @@ py_library(
     name = "compat",
     srcs = ["compat.py"],
     deps = [
+        ":triton",
+        "//jaxlib/mlir:arithmetic_dialect",
+        "//jaxlib/mlir:ir",
+        "//jaxlib/mlir:math_dialect",
+        "//jaxlib/mlir:scf_dialect",
+    ] + py_deps(
+        "numpy",
         # Users must add a Triton dependency manually.
-    ],
+    ),
 )
 
 pytype_strict_library(
