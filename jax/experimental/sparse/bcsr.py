@@ -166,7 +166,7 @@ def _bcoo_to_bcsr(indices: Array, *, shape: Sequence[int],
   return indices[..., 1], get_ptr(indices[..., 0])
 
 
-#--------------------------------------------------------------------
+# --------------------------------------------------------------------
 # bcsr_fromdense
 bcsr_fromdense_p = core.Primitive('bcsr_fromdense')
 bcsr_fromdense_p.multiple_results = True
@@ -302,7 +302,7 @@ mlir.register_lowering(bcsr_fromdense_p, mlir.lower_fun(
     _bcsr_fromdense_impl, multiple_results=True))
 
 
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # bcsr_todense
 bcsr_todense_p = core.Primitive('bcsr_todense')
 
@@ -379,7 +379,7 @@ mlir.register_lowering(bcsr_todense_p, mlir.lower_fun(
     _bcsr_todense_impl, multiple_results=False))
 
 
-#--------------------------------------------------------------------
+# --------------------------------------------------------------------
 # bcsr_extract
 bcsr_extract_p = core.Primitive('bcsr_extract')
 
@@ -453,7 +453,7 @@ mlir.register_lowering(bcsr_extract_p, mlir.lower_fun(
     _bcsr_extract_impl, multiple_results=False))
 
 
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # bcsr_dot_general
 
 
@@ -681,7 +681,7 @@ def _bcsr_dot_general_gpu_lowering(
     dot_general_fn = csr_matmat_lowering
     x_dtype = 'B_dtype'
     if rhs_contract[0] == 1:
-      rhs = hlo.transpose(rhs, permutation=mlir.dense_int_array([1, 0]))
+      rhs = hlo.transpose(rhs, permutation=mlir.dense_int_elements([1, 0]))
   else:
     raise ValueError(f"rhs has to be 1d or 2d; get {rhs_aval.ndim}d.")
 
@@ -711,7 +711,7 @@ if gpu_sparse.rocm_is_supported:
                           platform='rocm')
 
 
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
 
 def bcsr_broadcast_in_dim(mat: BCSR, *, shape: Shape, broadcast_dimensions: Sequence[int]) -> BCSR:
@@ -884,7 +884,7 @@ class BCSR(JAXSparse):
     indptr = jnp.asarray(mat.indptr).astype(index_dtype or jnp.int32)
     return cls((data, indices, indptr), shape=mat.shape)
 
-#--------------------------------------------------------------------
+# --------------------------------------------------------------------
 # vmappable handlers
 def _bcsr_to_elt(cont, _, val, axis):
   if axis is None:

@@ -110,11 +110,6 @@ def hlo_s32(x: int):
 def ensure_hlo_s32(x: DimensionSize):
   return hlo_s32(x) if isinstance(x, int) else x
 
-def dense_int_array(xs) -> ir.DenseIntElementsAttr | ir.DenseI64ArrayAttr:
-  if hlo.get_api_version() < 5:
-    return ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
-  return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))
-
 def hlo_min(x: DimensionSize, y: DimensionSize) -> DimensionSize:
   if type(x) is int:
     if type(y) is int:

@@ -35,7 +35,6 @@ from jax._src.interpreters.mlir import (
   core_call_lowering as core_call_lowering,
   custom_call as custom_call,
   dense_bool_elements as dense_bool_elements,
-  dense_int_array as dense_int_array,
   dense_int_elements as dense_int_elements,
   dtype_to_ir_type as dtype_to_ir_type,
   emit_python_callback as emit_python_callback,

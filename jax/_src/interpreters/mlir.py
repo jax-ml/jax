@@ -81,11 +81,6 @@ lowerable_effects: effects_lib.EffectTypeSet = effects_lib.lowerable_effects
 def dense_int_elements(xs) -> ir.DenseIntElementsAttr:
   return ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
 
-def dense_int_array(xs) -> ir.DenseIntElementsAttr | ir.DenseI64ArrayAttr:
-  if hlo.get_api_version() < 5:
-    return dense_int_elements(xs)
-  return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))
-
 def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
   a = np.packbits(np.array(xs, np.bool_), bitorder='little')
   # TODO(b/209005197): Work around for MLIR crash for non-splat single element
@@ -1949,10 +1944,12 @@ def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
         aval_to_ir_type(aval_out),
         x, start_indices, limit_indices, strides)
     else:
-      return hlo.slice(x,
-                       dense_int_array(start_indices),
-                       dense_int_array(limit_indices),
-                       dense_int_array(strides))
+      return hlo.slice(
+          x,
+          dense_int_elements(start_indices),
+          dense_int_elements(limit_indices),
+          dense_int_elements(strides),
+      )
 
 def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:
@@ -1987,7 +1984,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
         shape_tensor([1] * len(start_indices))
     )
   else:
-    return hlo.dynamic_slice(x, start_indices, dense_int_array(slice_sizes))
+    return hlo.dynamic_slice(x, start_indices, dense_int_elements(slice_sizes))
 
 def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                          start_indices) -> ir.Value:
@@ -2011,10 +2008,13 @@ def pad(ctx: LoweringRuleContext, aval_out,
         padding_low, padding_high, padding_interior) -> ir.Value:
   if all(core.is_constant_shape(s) for s in (padding_low,
                                              padding_high, padding_interior)):
-    return hlo.pad(x, padding_value,
-                   dense_int_array(padding_low),
-                   dense_int_array(padding_high),
-                   dense_int_array(padding_interior))
+    return hlo.pad(
+        x,
+        padding_value,
+        dense_int_elements(padding_low),
+        dense_int_elements(padding_high),
+        dense_int_elements(padding_interior),
+    )
   else:
     padding_low = eval_dynamic_shape_as_tensor(ctx, padding_low)
     padding_high = eval_dynamic_shape_as_tensor(ctx, padding_high)

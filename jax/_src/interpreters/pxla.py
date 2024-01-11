@@ -1286,7 +1286,8 @@ def _hlo_shard(aval, axis_env, xs, in_axis):
     dims_unsqueezed = dims.copy()
     dims_unsqueezed.insert(in_axis, 1)
     dynamic_slice_result = hlo.dynamic_slice(
-        x, idxs, mlir.dense_int_array(dims_unsqueezed))
+        x, idxs, mlir.dense_int_elements(dims_unsqueezed)
+    )
     return [
       hlo.reshape(mlir.aval_to_ir_type(aval), dynamic_slice_result)
     ]
@@ -1337,7 +1338,7 @@ def _hlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs):
     padded = mlir.full_like_aval(ctx, 0, padded_aval)
     zero = mlir.ir_constant(np.zeros((), dtype=np.uint32))
     idxs = [_unravel_index_hlo(axis_env)] + [zero] * len(dims)
-    broadcast_result = hlo.broadcast(x, mlir.dense_int_array([1]))
+    broadcast_result = hlo.broadcast(x, mlir.dense_int_elements([1]))
     padded = hlo.dynamic_update_slice(padded, broadcast_result, idxs)
     replica_groups = mlir.dense_int_elements(
       axis_groups(axis_env, axis_env.names[-1]))
@@ -1348,7 +1349,7 @@ def _hlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs):
       perm.insert(out_axis, 0)
       transposed_dims = list(dims)
       transposed_dims.insert(out_axis, axis_env.sizes[-1])
-      out = hlo.transpose(out, mlir.dense_int_array(perm))
+      out = hlo.transpose(out, mlir.dense_int_elements(perm))
 
     return out
   else:

@@ -17,18 +17,21 @@ from functools import partial
 import importlib
 import math
 
-import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
-
+import jaxlib.mlir.ir as ir
 import numpy as np
-
-from .gpu_common_utils import GpuLibNotLinkedError
 
 from jaxlib import xla_client
 
+from .gpu_common_utils import GpuLibNotLinkedError
 from .hlo_helpers import (
-    DimensionSize, ShapeTypePair, mk_result_types_and_shapes,
-    custom_call, ensure_hlo_s32, hlo_s32, dense_int_array)
+    DimensionSize,
+    ShapeTypePair,
+    custom_call,
+    ensure_hlo_s32,
+    hlo_s32,
+    mk_result_types_and_shapes,
+)
 
 try:
   from .cuda import _blas as _cublas  # pytype: disable=import-error
@@ -408,20 +411,25 @@ def _gesvd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
         operand_output_aliases={0: 0}).results
     vt = hlo.transpose(
         v,
-        dense_int_array(np.array(tuple(range(num_bd)) + (num_bd + 1, num_bd))))
+        ir.DenseIntElementsAttr.get(
+            np.array(tuple(range(num_bd)) + (num_bd + 1, num_bd))
+        ),
+    )
     if np.issubdtype(dtype, np.complexfloating):
       vt = hlo.complex(hlo.real(vt), hlo.negate(hlo.imag(vt)))
     if not full_matrices and not econ:
       u = hlo.slice(
           u,
-          dense_int_array(np.zeros([len(dims)], np.int64)),
-          dense_int_array(np.array(batch_dims + (m, min(m, n)))),
-          dense_int_array(np.ones([len(dims)], np.int64)))
+          ir.DenseIntElementsAttr.get(np.zeros([len(dims)], np.int64)),
+          ir.DenseIntElementsAttr.get(np.array(batch_dims + (m, min(m, n)))),
+          ir.DenseIntElementsAttr.get(np.ones([len(dims)], np.int64)),
+      )
       vt = hlo.slice(
           vt,
-          dense_int_array(np.zeros([len(dims)], np.int64)),
-          dense_int_array(np.array(batch_dims + (min(m, n), n))),
-          dense_int_array(np.ones([len(dims)], np.int64)))
+          ir.DenseIntElementsAttr.get(np.zeros([len(dims)], np.int64)),
+          ir.DenseIntElementsAttr.get(np.array(batch_dims + (min(m, n), n))),
+          ir.DenseIntElementsAttr.get(np.ones([len(dims)], np.int64)),
+      )
   elif m < n:
     lwork, opaque = gpu_solver.build_gesvd_descriptor(
         np.dtype(dtype), b, n, m, compute_uv, full_matrices)
@@ -535,12 +543,10 @@ def _sytrd_hlo(platform, gpu_solver, dtype, a, *, lower):
   # lower=False case. The correct result is returned in the `e` vector so we can
   # simply copy it back to where it needs to be:
   intattr = lambda xs: ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
-  intarrattr = lambda xs: dense_int_array(np.asarray(xs, np.int64))
   if not lower and platform == "cu" and m > 1:
     start = (0,) * len(batch_dims) + (0,)
     end = batch_dims + (1,)
-    s = hlo.slice(
-        e, intarrattr(start), intarrattr(end),intarrattr([1] * len(start)))
+    s = hlo.slice(e, intattr(start), intattr(end), intattr([1] * len(start)))
     s_type = ir.RankedTensorType.get(batch_dims + (1, 1), diag_type)
     s = hlo.broadcast_in_dim(s_type, s, intattr(range(len(dims) - 1)))
     # The diagonals are always real; convert to complex if needed.

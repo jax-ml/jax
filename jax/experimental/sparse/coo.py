@@ -166,7 +166,7 @@ class COO(JAXSparse):
     else:
       raise NotImplementedError(f"matmul with object of shape {other.shape}")
 
-#--------------------------------------------------------------------
+# --------------------------------------------------------------------
 # coo_todense
 
 coo_todense_p = core.Primitive('coo_todense')
@@ -229,8 +229,10 @@ def _coo_todense_gpu_lowering(coo_todense_hlo, ctx, data, row, col, *, spinfo):
   result = coo_todense_hlo(
       data, row, col, shape=shape, data_dtype=dtype, index_dtype=row_aval.dtype)
   return (
-      [hlo.transpose(result, mlir.dense_int_array([1, 0]))]
-      if transpose else [result])
+      [hlo.transpose(result, mlir.dense_int_elements([1, 0]))]
+      if transpose
+      else [result]
+  )
 
 
 def _coo_todense_jvp(data_dot, data, row, col, *, spinfo):
@@ -263,7 +265,7 @@ if gpu_sparse.rocm_is_supported:
       partial(_coo_todense_gpu_lowering, gpu_sparse.rocm_coo_todense),
       platform='rocm')
 
-#--------------------------------------------------------------------
+# --------------------------------------------------------------------
 # coo_fromdense
 
 coo_fromdense_p = core.Primitive('coo_fromdense')
@@ -381,7 +383,7 @@ if gpu_sparse.rocm_is_supported:
       partial(_coo_fromdense_gpu_lowering, gpu_sparse.rocm_coo_fromdense),
       platform='rocm')
 
-#--------------------------------------------------------------------
+# --------------------------------------------------------------------
 # coo_matvec
 
 coo_matvec_p = core.Primitive('coo_matvec')
@@ -506,7 +508,7 @@ if gpu_sparse.rocm_is_supported:
       platform='rocm')
 
 
-#--------------------------------------------------------------------
+# --------------------------------------------------------------------
 # coo_matmat
 
 coo_matmat_p = core.Primitive('coo_matmat')
