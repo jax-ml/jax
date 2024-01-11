@@ -171,9 +171,14 @@ Z &=
 \begin{bmatrix}
 X_0 \\ X_1
 \end{bmatrix}
+\begin{matrix}
 \begin{bmatrix}
 Y_0 & Y_1
-\end{bmatrix} \\
+\end{bmatrix}
+\\
+~
+\end{matrix}
+\\
 &=
 \begin{bmatrix}
 X_0 Y_0 & X_0 Y_1 \\
