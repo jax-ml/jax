@@ -272,38 +272,54 @@ FailureOr<int64_t> getIntConst(Value v, bool silent = false) {
 }
 
 FailureOr<SmallVector<int64_t>> getIntConstsFromOperandRange(
-    OperandRange vals) {
+    ValueRange vals, bool silent = false) {
   SmallVector<int64_t> res(vals.size());
   for (int i = 0; i < vals.size(); ++i) {
-    FAILUREOR_ASSIGN_OR_RETURN(res[i], getIntConst(vals[i]));
+    FAILUREOR_ASSIGN_OR_RETURN(res[i], getIntConst(vals[i], silent));
   }
   return res;
 }
 
-SmallVector<std::vector<Value>> getDimIndices(OperandRange indices,
-                                              ArrayRef<int64_t> shape,
-                                              ImplicitLocOpBuilder& builder) {
-  CHECK_EQ(indices.size(), shape.size());
-  SmallVector<std::vector<Value>> result(indices.size());
-  for (int dim = 0; dim < indices.size(); ++dim) {
-    auto& dim_idx = result[dim];
-    dim_idx.reserve(shape[dim]);
-    if (auto idx_const = getIntConst(indices[dim], /*silent=*/true);
-        succeeded(idx_const)) {
-      int64_t cst = idx_const.value();
-      for (int64_t off = 0; off < shape[dim]; ++off) {
-        dim_idx.push_back(IdxConst(cst + off, builder, builder.getLoc()));
-      }
-    } else {
-      for (int64_t off = 0; off < shape[dim]; ++off) {
-        dim_idx.push_back(builder.create<arith::AddIOp>(
-            indices[dim], IdxConst(off, builder, builder.getLoc())));
-      }
-    }
-  }
-  return result;
-}
+FailureOr<std::pair<Value, SmallVector<int64_t>>> sliceRef(
+    ImplicitLocOpBuilder &builder, TypedValue<MemRefType> base_ref,
+    ArrayRef<int64_t> slice_shape, ValueRange indices,
+    ArrayRef<int64_t> tiling) {
+  IntegerType i32 = builder.getI32Type();
 
+  // MemRefSliceOp only allows tile-aligned slices. We pad the shape up
+  // accordingly with the padding, and we don't include the tiled indices
+  // in the slice since they can be arbitrary.
+  // TODO(apaszke): Allow tile-aligned dynamic slicing on tiled dimensions.
+  SmallVector<int64_t> pad_slice_shape(slice_shape);
+  CHECK_LE(tiling.size(), slice_shape.size());
+  for (int i = 1; i <= tiling.size(); ++i) {
+    auto &dim = *(pad_slice_shape.end() - i);
+    dim = xla::RoundUpTo(dim, *(tiling.end() - i));
+  }
+  MemRefType ref_ty = base_ref.getType();
+  SmallVector<Value> slice_base_indices;
+  slice_base_indices.reserve(ref_ty.getRank());
+  for (auto idx : indices.drop_back(tiling.size())) {
+    slice_base_indices.push_back(builder.create<arith::IndexCastOp>(i32, idx));
+  }
+  slice_base_indices.append(
+      tiling.size(),
+      builder.create<arith::ConstantOp>(i32, builder.getI32IntegerAttr(0)));
+  Value sliced_ref = builder.create<tpu::MemRefSliceOp>(
+      MemRefType::get(pad_slice_shape, ref_ty.getElementType(),
+                      ref_ty.getLayout(), ref_ty.getMemorySpace()),
+      base_ref, slice_base_indices);
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      auto const_tiling_indices,
+      getIntConstsFromOperandRange(indices.take_back(tiling.size()),
+                                   /*silent=*/false));
+  SmallVector<int64_t> indices_within_slice(indices.size() - tiling.size(), 0);
+  indices_within_slice.append(const_tiling_indices.begin(),
+                              const_tiling_indices.end());
+
+  return std::make_pair(sliced_ref, indices_within_slice);
+}
 
 // Returns the first-level tiling of a (packed and tiled) memref value.
 FailureOr<std::array<int64_t, 2>> getMemRefTiling(
@@ -1810,9 +1826,28 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
     }
   }
   // TODO(apaszke): Check that loads are from vmem!
-  FAILUREOR_ASSIGN_OR_RETURN(
-      const SmallVector<int64_t> tile_indices,
-      getIntConstsFromOperandRange(load_op.getIndices().take_back(2 - is_1d)));
+
+  int tiled_dims = is_1d ? 1 : 2;
+  Value base_addr;
+  SmallVector<int64_t> base_indices;
+  if (auto const_indices =
+          getIntConstsFromOperandRange(load_op.getIndices(), /*silent=*/true);
+      succeeded(const_indices)) {
+    base_addr = load_op.getBase();
+    base_indices = std::move(*const_indices);
+  } else {
+    auto slice_result =
+        sliceRef(builder, load_op.getBase(), load_op.getVectorType().getShape(),
+                 load_op.getIndices(),
+                 ArrayRef<int64_t>(memref_tiling).take_back(tiled_dims));
+    if (failed(slice_result)) {
+      return failure();
+    }
+    std::tie(base_addr, base_indices) = *slice_result;
+  }
+  auto tile_base_idxs = ArrayRef<int64_t>(base_indices).take_back(tiled_dims);
+  auto batch_base_idxs = ArrayRef<int64_t>(base_indices).drop_back(tiled_dims);
+
   const SmallVector<int64_t> implicit_shape =
       layout_out.implicitShape(vty.getShape());
   const int64_t ss = implicit_shape[implicit_shape.size() - 2];
@@ -1849,31 +1884,29 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
     padding =
         builder.create<arith::ConstantOp>(vty.getElementType(), zero_attr);
   }
+
   xla::Array<Value> tiles(
       layout_out.tileArrayShape(vty.getShape(), ctx.target_shape));
   const std::array<int64_t, 2> vreg_slice =
       layout_out.vregSlice(ctx.target_shape);
   const int64_t num_dims = vty.getRank();
   const int64_t num_batch_dims = num_dims - (is_1d ? 1 : 2);
-  SmallVector<std::vector<Value>> base_batch =
-      getDimIndices(load_op.getIndices().take_front(num_batch_dims),
-                    vty.getShape().take_front(num_batch_dims),
-                    builder);
   const absl::Status status =
       tiles.EachStatus([&](absl::Span<const int64_t> tile_idxs, Value * /*v*/) {
         CHECK_EQ(num_dims, tile_idxs.size());
         SmallVector<Value> idxs(tile_idxs.size());
         for (int64_t i = 0; i < num_batch_dims; ++i) {
-          idxs[i] = base_batch[i][tile_idxs[i]];
+          idxs[i] = IdxConst(batch_base_idxs[i] + tile_idxs[i], builder,
+                             load_op->getLoc());
         }
-        const int64_t base_l = tile_indices.back();
+        const int64_t base_l = tile_base_idxs.back();
         const int64_t lidx = tile_idxs[num_dims - 1];
         idxs[num_dims - 1] =
             IdxConst(base_l + lidx * vreg_slice[1] - *offsets[1], builder,
                      load_op->getLoc());
         if (!is_1d) {
-          CHECK_EQ(tile_indices.size(), 2);
-          const int64_t base_s = tile_indices.front();
+          CHECK_EQ(tile_base_idxs.size(), 2);
+          const int64_t base_s = tile_base_idxs.front();
           const int64_t sidx = tile_idxs[num_dims - 2];
           idxs[num_dims - 2] =
               IdxConst(base_s + sidx * vreg_slice[0] - offsets[0].value_or(0),
@@ -1888,7 +1921,7 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
         if (bounds->maskVariesAlong(Direction::kSublanes, ctx.target_shape)) {
           CHECK(offsets[0].has_value());
           tile = builder.create<tpu::LoadOp>(
-              target_ty, load_op.getBase(), idxs,
+              target_ty, base_addr, idxs,
               bounds->getSublaneMask(mlir_ctx, ctx.target_shape),
               builder.getI32IntegerAttr(sublane_stride));
         } else {
@@ -1899,14 +1932,14 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
               return absl::UnimplementedError("");
             }
             tile = builder.create<vector::TransferReadOp>(
-                target_ty, load_op.getBase(), idxs, load_map, padding,
-                nullptr, nullptr);
+                target_ty, base_addr, idxs, load_map, padding, nullptr,
+                nullptr);
           } else {
             const SmallVector<bool> sublane_mask(ctx.target_shape[0], true);
             const auto sublane_mask_attr =
                 DenseBoolArrayAttr::get(mlir_ctx, sublane_mask);
             tile = builder.create<tpu::LoadOp>(
-                target_ty, load_op.getBase(), idxs, sublane_mask_attr,
+                target_ty, base_addr, idxs, sublane_mask_attr,
                 builder.getI32IntegerAttr(sublane_stride));
           }
         }
@@ -2837,25 +2870,39 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
       return op.emitOpError("Not implemented");
     }
   }
-  FAILUREOR_ASSIGN_OR_RETURN(
-      const SmallVector<int64_t> tile_indices,
-      getIntConstsFromOperandRange(store_op.getIndices().take_back(2 - is_1d)));
+
+  int tiled_dims = is_1d ? 1 : 2;
+  Value base_addr;
+  SmallVector<int64_t> base_indices;
+  if (auto const_indices =
+          getIntConstsFromOperandRange(store_op.getIndices(), /*silent=*/true);
+      succeeded(const_indices)) {
+    base_addr = store_op.getBase();
+    base_indices = std::move(*const_indices);
+  } else {
+    auto slice_result =
+        sliceRef(builder, store_op.getBase(),
+                 store_op.getVectorType().getShape(), store_op.getIndices(),
+                 ArrayRef<int64_t>(memref_tiling).take_back(tiled_dims));
+    if (failed(slice_result)) {
+      return failure();
+    }
+    std::tie(base_addr, base_indices) = *slice_result;
+  }
+  auto tile_base_idxs = ArrayRef<int64_t>(base_indices).take_back(tiled_dims);
+  auto batch_base_idxs = ArrayRef<int64_t>(base_indices).drop_back(tiled_dims);
+
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> tiles,
       disassemble(builder, to_store_layout, store_op.getValueToStore(),
                   ctx.target_shape));
   const int64_t ndims = ty.getRank();
-  const int64_t nbatchdims = is_1d ? ndims - 1 : ndims - 2;
-  const int64_t base_s = is_1d ? 0 : tile_indices.front();
-  const int64_t base_l = tile_indices.back();
+  const int64_t base_s = is_1d ? 0 : tile_base_idxs.front();
+  const int64_t base_l = tile_base_idxs.back();
   if (is_1d) {
     tiles.Reshape(
         to_store_layout.implicitShape(toArrayRef(tiles.dimensions())));
   }
-  SmallVector<std::vector<Value>> base_batch =
-      getDimIndices(store_op.getIndices().take_front(nbatchdims),
-                    ty.getShape().take_front(nbatchdims),
-                    builder);
   const LayoutOffset sublane_offset = to_store_layout.offsets()[0];
   const LayoutOffset lane_offset = to_store_layout.offsets()[1];
   if (!sublane_offset.has_value() || !lane_offset.has_value()) {
@@ -2884,8 +2931,8 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
         SmallVector<Value> indices(ndims);
         auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1, builder,
                                        store_op->getLoc());
-        for (int64_t i = 0; i < nbatchdims; ++i) {
-          indices[i] = base_batch[i][idx[i]];
+        for (int64_t i = 0; i < batch_base_idxs.size(); ++i) {
+          indices[i] = boundIdxConst(batch_base_idxs[i] + idx[i]);
         }
         if (!is_1d) {
           *(indices.end() - 2) =
@@ -2909,9 +2956,9 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
           // Vmem stores don't support masking below 32-bit granularity, so we
           // need to load and blend explicitly if needed.
           if (masks_subelements) {
-            auto data = builder.create<tpu::LoadOp>(
-                tile.getType(), store_op.getBase(), indices, sublane_mask,
-                /*sublane_stride=*/nullptr);
+            auto data = builder.create<tpu::LoadOp>(tile.getType(), base_addr,
+                                                    indices, sublane_mask,
+                                                    /*sublane_stride=*/nullptr);
             const bool mask_is_a_bitmask =
                 cast<IntegerType>(mask.getType().getElementType()).getWidth() ==
                 32;
@@ -2937,18 +2984,18 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
               updated = builder.create<arith::SelectOp>(mask, tile, data);
             }
             builder.create<tpu::StoreOp>(
-                updated, store_op.getBase(), indices, sublane_mask,
+                updated, base_addr, indices, sublane_mask,
                 /*mask=*/nullptr,
                 /*sublane_stride=*/builder.getI32IntegerAttr(sublane_stride));
           } else {
             builder.create<tpu::StoreOp>(
-                tile, store_op.getBase(), indices, sublane_mask,
+                tile, base_addr, indices, sublane_mask,
                 /*mask=*/mask,
                 /*sublane_stride=*/builder.getI32IntegerAttr(sublane_stride));
           }
         } else {
           builder.create<tpu::StoreOp>(
-              tile, store_op.getBase(), indices, sublane_mask,
+              tile, base_addr, indices, sublane_mask,
               /*mask=*/nullptr,
               /*sublane_stride=*/builder.getI32IntegerAttr(sublane_stride));
         }
