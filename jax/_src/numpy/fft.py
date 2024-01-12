@@ -20,6 +20,7 @@ import numpy as np
 
 from jax import dtypes
 from jax import lax
+from jax._src import config
 from jax._src.lib import xla_client
 from jax._src.util import safe_zip
 from jax._src.numpy.util import check_arraylike, _wraps
@@ -32,7 +33,18 @@ Shape = Sequence[int]
 def _fft_norm(s: Array, func_name: str, norm: str) -> Array:
   if norm == "backward":
     return jnp.array(1)
-  elif norm == "ortho":
+
+  INT32_MAX_LOG = 31 * ufuncs.log(2)
+  # Avoid integer-overflow when 64-bit mode is disabled
+  if not config.enable_x64.value and reductions.sum(ufuncs.log(s)) >= INT32_MAX_LOG:
+    raise ValueError(
+      "Integer overflow encountered while calculating FFT. To avoid, please enable "
+      "64-bit mode by setting the jax_enable_x64 configuration option or the "
+      "JAX_ENABLE_X64 shell environment variable. "
+      "See https://github.com/google/jax#current-gotchas for more."
+    )
+
+  if norm == "ortho":
     return ufuncs.sqrt(reductions.prod(s)) if func_name.startswith('i') else 1/ufuncs.sqrt(reductions.prod(s))
   elif norm == "forward":
     return reductions.prod(s) if func_name.startswith('i') else 1/reductions.prod(s)
