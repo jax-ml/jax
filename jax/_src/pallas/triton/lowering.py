@@ -62,6 +62,7 @@ from jax_triton.triton_lib import get_triton_type
 import numpy as np
 from triton.compiler import code_generator as code_gen
 import triton.compiler.backends.cuda as cb
+from triton._C.libtriton import ir as tl_ir
 
 # TODO(sharadmv): Enable type checking.
 # mypy: ignore-errors
@@ -1503,6 +1504,9 @@ def compile_jaxpr(
           debug=debug,
       )
   )
+  context = tl_ir.context()
+  tl_ir.load_dialects(context)
+  cuda_backend.load_dialects(context)
 
   lowering_result = lower_jaxpr_to_triton_module(
       jaxpr, in_shapes, grid_mapping, name, cuda_options
@@ -1511,6 +1515,7 @@ def compile_jaxpr(
   ttir = str(lowering_result.module)
   ptx, name, shared_mem_bytes, compute_capability = compile_ttir_to_ptx_inplace(
       lowering_result.module,
+      context,
       cuda_backend,
       cuda_options,
       device=device,
