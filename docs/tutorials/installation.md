@@ -312,3 +312,7 @@ pip install jax[cpu]==0.3.25 -f https://storage.googleapis.com/jax-releases/jax_
 # Install the jaxlib 0.3.25 CPU wheel directly
 pip install jaxlib==0.3.25 -f https://storage.googleapis.com/jax-releases/jax_releases.html
 ```
+For specific older GPU wheels, be sure to use the `jax_cuda_releases.html` URL; for example
+```bash
+pip install jaxlib==0.3.25+cuda11.cudnn82 -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+```
