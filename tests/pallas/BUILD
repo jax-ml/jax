@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_python//python:defs.bzl", "py_test")
 load(
     "//jaxlib:jax.bzl",
     "jax_test",
     "py_deps",
 )
+load("@rules_python//python:defs.bzl", "py_test")
 
 licenses(["notice"])
 
@@ -31,6 +31,9 @@ jax_test(
     srcs = [
         "pallas_test.py",
     ],
+    backend_tags = {
+        "gpu": ["noasan"],  # https://github.com/openai/triton/issues/2918
+    },
     config_tags_overrides = {
         "gpu_x32": {
             "ondemand": False,  # Include in presubmit.

@@ -214,6 +214,9 @@ jax_test(
     name = "xmap_test",
     srcs = ["xmap_test.py"],
     backend_tags = {
+        "gpu": [
+            "noasan",  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
+        ],
         "tpu": [
             "noasan",  # Times out.
             "nomsan",  # Times out.
@@ -244,6 +247,7 @@ jax_test(
     srcs = ["pjit_test.py"],
     backend_tags = {
         "tpu": ["notsan"],  # Times out under tsan.
+        "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
     shard_count = {
         "cpu": 5,
@@ -273,6 +277,9 @@ jax_test(
 jax_test(
     name = "pgle_test",
     srcs = ["pgle_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
+    },
     disable_backends = [
         "cpu",
         "tpu",
@@ -1191,6 +1198,9 @@ jax_test(
 jax_test(
     name = "jaxpr_effects_test",
     srcs = ["jaxpr_effects_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
+    },
     enable_configs = [
         "gpu",
         "cpu",
@@ -1210,6 +1220,9 @@ jax_test(
 jax_test(
     name = "python_callback_test",
     srcs = ["python_callback_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
+    },
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
