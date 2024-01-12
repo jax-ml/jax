@@ -64,6 +64,7 @@ from jax._src.numpy.lax_numpy import (
     complex_ as complex_,
     complexfloating as complexfloating,
     compress as compress,
+    concat as concat,
     concatenate as concatenate,
     convolve as convolve,
     copy as copy,

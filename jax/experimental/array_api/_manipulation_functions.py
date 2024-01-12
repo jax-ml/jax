@@ -32,10 +32,7 @@ def broadcast_to(x: Array, /, shape: tuple[int]) -> Array:
 def concat(arrays: tuple[Array, ...] | list[Array], /, *, axis: int | None = 0) -> Array:
   """Joins a sequence of arrays along an existing axis."""
   dtype = _result_type(*arrays)
-  if axis is None:
-    arrays = [reshape(arr, (arr.size,)) for arr in arrays]
-    axis = 0
-  return jax.numpy.concatenate(arrays, axis=axis, dtype=dtype)
+  return jax.numpy.concat([arr.astype(dtype) for arr in arrays], axis=axis)
 
 
 def expand_dims(x: Array, /, *, axis: int = 0) -> Array:
