@@ -87,7 +87,7 @@ NB_MODULE(cuda_plugin_extension, m) {
                                      fn_name, std::move(fn), api_version));
       },
       nb::arg("c_api"), nb::arg("fn_name"), nb::arg("fn"),
-      nb::arg("xla_platform_name"), nb::arg("api_version") = 1);
+      nb::arg("xla_platform_name"), nb::arg("api_version") = 0);
   m.def("registrations", &Registrations);
 }
 }  // namespace xla
