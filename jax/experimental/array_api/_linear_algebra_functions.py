@@ -12,30 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
-from typing import NamedTuple
-
 import jax
 from jax.experimental.array_api._data_type_functions import (
     _promote_to_default_dtype,
 )
-
-class EighResult(NamedTuple):
-  eigenvalues: jax.Array
-  eigenvectors: jax.Array
-
-class QRResult(NamedTuple):
-  Q: jax.Array
-  R: jax.Array
-
-class SlogdetResult(NamedTuple):
-  sign: jax.Array
-  logabsdet: jax.Array
-
-class SVDResult(NamedTuple):
-  U: jax.Array
-  S: jax.Array
-  Vh: jax.Array
 
 def cholesky(x, /, *, upper=False):
   """
@@ -65,8 +45,7 @@ def eigh(x, /):
   """
   Returns an eigenvalue decomposition of a complex Hermitian or real symmetric matrix (or a stack of matrices) x.
   """
-  eigenvalues, eigenvectors = jax.numpy.linalg.eigh(x)
-  return EighResult(eigenvalues=eigenvalues, eigenvectors=eigenvectors)
+  return jax.numpy.linalg.eigh(x)
 
 def eigvalsh(x, /):
   """
@@ -122,15 +101,13 @@ def qr(x, /, *, mode='reduced'):
   """
   Returns the QR decomposition of a full column rank matrix (or a stack of matrices).
   """
-  Q, R = jax.numpy.linalg.qr(x, mode=mode)
-  return QRResult(Q=Q, R=R)
+  return jax.numpy.linalg.qr(x, mode=mode)
 
 def slogdet(x, /):
   """
   Returns the sign and the natural logarithm of the absolute value of the determinant of a square matrix (or a stack of square matrices) x.
   """
-  sign, logabsdet = jax.numpy.linalg.slogdet(x)
-  return SlogdetResult(sign, logabsdet)
+  return jax.numpy.linalg.slogdet(x)
 
 def solve(x1, x2, /):
   """
@@ -147,8 +124,7 @@ def svd(x, /, *, full_matrices=True):
   """
   Returns a singular value decomposition (SVD) of a matrix (or a stack of matrices) x.
   """
-  U, S, Vh = jax.numpy.linalg.svd(x, full_matrices=full_matrices)
-  return SVDResult(U=U, S=S, Vh=Vh)
+  return jax.numpy.linalg.svd(x, full_matrices=full_matrices)
 
 def svdvals(x, /):
   """
