@@ -29,7 +29,7 @@ from jax import config
 
 config.parse_flags_with_absl()
 
-scipy_version = tuple(map(int, scipy.version.version.split('.')[:3]))
+scipy_version = jtu.parse_version(scipy.version.version)
 
 float_dtypes = jtu.dtypes.floating
 real_dtypes = float_dtypes + jtu.dtypes.integer + jtu.dtypes.boolean

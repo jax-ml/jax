@@ -39,7 +39,7 @@ from jax._src.numpy.util import promote_dtypes_inexact
 
 config.parse_flags_with_absl()
 
-scipy_version = tuple(map(int, scipy.version.version.split('.')[:3]))
+scipy_version = jtu.parse_version(scipy.version.version)
 
 T = lambda x: np.swapaxes(x, -1, -2)
 
