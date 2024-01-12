@@ -31,6 +31,7 @@ limitations under the License.
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep.
 #include "mlir/Support/LogicalResult.h"
 #include "absl/hash/hash.h"
+#include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.cc.inc"
 #include "jaxlib/mosaic/dialect/tpu/tpu_enums.cc.inc"
 #include "xla/layout.h"
@@ -181,6 +182,23 @@ MemRefType getMemRefType(Value value) {
     value = erase_op.getOperand();
   }
   return cast<MemRefType>(value.getType());
+}
+
+bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
+  if (fuel <= 0) {
+    return false;
+  }
+  if (auto assume_op = value.getDefiningOp<tpu::AssumeMultipleOp>()) {
+    return assume_op.getMultiple() % divisor == 0;
+  }
+  if (auto cst_op = value.getDefiningOp<arith::ConstantOp>()) {
+    auto int_attr = dyn_cast<IntegerAttr>(cst_op.getValue());
+    return int_attr && int_attr.getInt() % divisor == 0;
+  }
+  if (auto cast_op = value.getDefiningOp<arith::IndexCastOp>()) {
+    return isGuaranteedDivisible(cast_op.getOperand(), divisor, fuel - 1);
+  }
+  return false;
 }
 
 }  // namespace mlir::tpu
