@@ -341,7 +341,8 @@ def convert(fun_jax: Callable,
           "for all platforms without native_serialization.")
 
     if (not isinstance(native_serialization_platforms, (list, tuple)) or
-        not all(p in ["cpu", "cuda", "rocm", "tpu"] for p in native_serialization_platforms)):
+        not all(p in ["cpu", "cuda", "rocm", "tpu"]
+                for p in native_serialization_platforms)):
       raise ValueError(
           "native_serialization_platforms must be a sequence "
           "containing a subset of {'cpu', 'cuda', 'rocm', 'tpu'}. "
@@ -364,22 +365,26 @@ def convert(fun_jax: Callable,
       source_info_util.register_exclusion(os.path.dirname(tf.__file__))
       _has_registered_tf_source_path = True
 
-    def shape_and_dtype_tf(a: TfVal) -> tuple[Sequence[int | None], DType]:
+    def jax_arg_spec_from_tf(a: TfVal) -> jax.ShapeDtypeStruct:
       # The shape and JAX dtype for a TF argument
       tf_arg_shape = np.shape(a)
       # Fix the shape for TF1
-      tf_arg_shape = tuple(d.value if isinstance(d, tf.compat.v1.Dimension) else d for d in tf_arg_shape)
+      tf_arg_shape = tuple(d.value
+                           if isinstance(d, tf.compat.v1.Dimension) else d
+                           for d in tf_arg_shape)
       _, a_jax_dtype = _tfval_to_tensor_jax_dtype(a)
-      return tf_arg_shape, a_jax_dtype
+      # We count on the fact that jax.ShapeDtypeStruct allows shapes that
+      # contain None.
+      return jax.ShapeDtypeStruct(tf_arg_shape, a_jax_dtype)
 
-    args_specs = export.args_specs(args_tf,
-                                   polymorphic_shapes=polymorphic_shapes,
-                                   get_shape_and_dtype=shape_and_dtype_tf)
+    args_jax_specs = tree_util.tree_map(jax_arg_spec_from_tf, args_tf)
+    args_specs = export.symbolic_args_specs(
+        args_jax_specs, polymorphic_shapes=polymorphic_shapes)
     # The polymorphic_shapes argument refers to positional arguments only.
     # We assume None for the kwargs.
-    kwargs_specs = export.args_specs(kwargs_tf,
-                                     polymorphic_shapes=None,
-                                     get_shape_and_dtype=shape_and_dtype_tf)
+    kwargs_jax_specs = tree_util.tree_map(jax_arg_spec_from_tf, kwargs_tf)
+    kwargs_specs = export.symbolic_args_specs(
+        kwargs_jax_specs, polymorphic_shapes=None)
     combined_args_tf = (args_tf, kwargs_tf)
     args_flat_tf: Sequence[TfVal]
     args_flat_tf, args_kwargs_tree = tree_util.tree_flatten(combined_args_tf)
@@ -657,7 +662,7 @@ def eval_polymorphic_shape(fun_jax: Callable,
   (c, a)
   """
   def do_eval_polymorphic_shape(*args_specs) -> Any:
-    args_poly_specs = export.args_specs(
+    args_poly_specs = export.symbolic_args_specs(
         args_specs, polymorphic_shapes=polymorphic_shapes)
     res_poly_spec = jax.eval_shape(fun_jax, *args_poly_specs)
     # TODO(necula): For now we export the polymorphic shapes using `str`.

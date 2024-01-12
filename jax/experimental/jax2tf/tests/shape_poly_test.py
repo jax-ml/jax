@@ -166,7 +166,7 @@ class PolyHarness(Harness):
         len(polymorphic_shapes), len(args),
         f"polymorphic_shapes {polymorphic_shapes} of length "
         f"{len(polymorphic_shapes)} must match number of arguments {len(args)}")
-      args_specs = export.args_specs(args, polymorphic_shapes)
+      args_specs = export.symbolic_args_specs(args, polymorphic_shapes)
       input_signature = [
         tf.TensorSpec(
             [d if isinstance(d, int) else None for d in a.shape],

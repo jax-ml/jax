@@ -1199,6 +1199,72 @@ def symbolic_shape(shape_spec: str | None,
                      f"Found {shape_spec_repr}.")
   return _Parser(shape_spec, like, shape_spec_repr).parse()
 
+def symbolic_args_specs(
+    args,  # pytree of arguments
+    polymorphic_shapes,  # prefix pytree of strings
+):
+  """Constructs a pytree of jax.ShapeDtypeSpec arguments specs for `export`.
+
+  Note that this function does not ensure that the provided `args` shapes
+  are compatible with `polymorphic_shapes`. The `.shape` of the `args` are
+  used only to fill-in placeholders from `polymorphic_shapes`.
+
+  See docstring of `symbolic_shape` and
+  [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
+  for more details.
+
+  Args:
+    args: a pytree of arguments. These can be jax.Array, or jax.ShapeDTypeSpec.
+      This is used to learn the pytree structure of the arguments, their dtypes,
+      and to fill-in the actual shapes where the `polymorphic_shapes` contains
+      placeholders. Note that only the shape dimensions for which
+      `polymorphic_shapes` is a placeholder are used from `args`.
+      The unused dimensions can be `None`, which jax2tf uses when the TF
+      shapes are not known.
+    polymorphic_shapes: should be `None` (all arguments have static shapes),
+      a single string (applies to all arguments), or a pytree matching a prefix
+      of the `args`.
+      See [how optional parameters are matched to
+      arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
+
+  Returns: a pytree of jax.ShapeDTypeStruct matching the `args` with the shapes
+    replaced with symbolic dimensions as specified by `polymorphic_shapes`.
+  """
+  args_flat, args_tree = tree_util.tree_flatten(args)
+
+  shapes_and_dtypes = tuple(map(shape_and_dtype_jax_array, args_flat))
+  shapes, dtypes = util.unzip2(shapes_and_dtypes)
+
+  if isinstance(args, tuple) and isinstance(polymorphic_shapes, list):
+    # TODO: Remove backward-compatibility workaround
+    polymorphic_shapes_ = tuple(polymorphic_shapes)
+  else:
+    polymorphic_shapes_ = polymorphic_shapes
+
+  try:
+    polymorphic_shapes_flat = tree_util.broadcast_prefix(
+        polymorphic_shapes_, args,
+        is_leaf=lambda x: x is None)
+  except ValueError:
+    e, *_ = tree_util.prefix_errors(
+        polymorphic_shapes_, args,
+        is_leaf=lambda x: x is None)
+    raise e("jax_export polymorphic_shapes") from None
+
+  # Now add in the polymorphic shapes
+  args_specs_flat = (
+      jax.ShapeDtypeStruct(symbolic_shape(spec, like=s), t)
+      for s, t, spec in zip(shapes, dtypes, polymorphic_shapes_flat))
+
+  return args_tree.unflatten(args_specs_flat)
+
+def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
+  """Returns the shape and dtype of a jax.Array or a j"""
+  if isinstance(a, jax.ShapeDtypeStruct):
+    return a.shape, a.dtype
+  aval = core.raise_to_shaped(core.get_aval(a))
+  return aval.shape, aval.dtype
+
 class _Parser:
   def __init__(self,
                shape_spec: str,

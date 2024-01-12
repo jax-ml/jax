@@ -868,7 +868,7 @@ class JaxExportTest(jtu.JaxTestCase):
       perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
       return lax.ppermute(b, "x", perm=perm)
 
-    args_specs = export.args_specs((a,), polymorphic_shapes=poly)
+    args_specs = export.symbolic_args_specs((a,), polymorphic_shapes=poly)
     exp = get_exported(f_jax)(*args_specs)
 
     # Test JAX native execution
