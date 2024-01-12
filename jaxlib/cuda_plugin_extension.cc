@@ -55,7 +55,7 @@ Status RegisterCustomCallTarget(const PJRT_Api* c_api, nb::str fn_name,
     return Unimplemented("The plugin does not have a custom call extension.");
   }
 
-  PJRT_Gpu_Register_Custom_Call_Args args;
+  PJRT_Gpu_Register_Custom_Call_Args args = {};
   args.struct_size = PJRT_Gpu_Register_Custom_Call_Args_STRUCT_SIZE;
   args.function_name = fn_name.c_str();
   args.function_name_size = nb::len(fn_name);
