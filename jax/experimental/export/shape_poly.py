@@ -1150,9 +1150,13 @@ class PolyShape(tuple):
   """
 
   def __init__(self, *dim_specs):
+    warnings.warn("PolyShape is deprecated, use string specifications for symbolic shapes",
+                  DeprecationWarning, stacklevel=2)
     tuple.__init__(dim_specs)
 
   def __new__(cls, *dim_specs):
+    warnings.warn("PolyShape is deprecated, use string specifications for symbolic shapes",
+                  DeprecationWarning, stacklevel=2)
     for ds in dim_specs:
       if not isinstance(ds, (int, str)) and ds != ...:
         msg = (f"Invalid polymorphic shape element: {ds!r}; must be a string "
@@ -1164,7 +1168,7 @@ class PolyShape(tuple):
     return "(" + ", ".join(["..." if d is ... else str(d) for d in self]) + ")"
 
 
-def symbolic_shape(shape_spec: str | PolyShape | None,
+def symbolic_shape(shape_spec: str | None,
                    *,
                    like: Sequence[int | None] | None = None
                    ) -> Sequence[DimSize]:
@@ -1188,7 +1192,7 @@ def symbolic_shape(shape_spec: str | PolyShape | None,
   shape_spec_repr = repr(shape_spec)
   if shape_spec is None:
     shape_spec = "..."
-  elif isinstance(shape_spec, PolyShape):
+  elif isinstance(shape_spec, PolyShape):  # TODO: deprecate
     shape_spec = str(shape_spec)
   elif not isinstance(shape_spec, str):
     raise ValueError("polymorphic shape spec should be None or a string. "
