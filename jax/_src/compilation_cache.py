@@ -123,6 +123,20 @@ def _get_cache() -> CacheInterface | None:
   return _cache
 
 
+def compress_executable(executable):
+  if zstandard:
+    compressor = zstandard.ZstdCompressor()
+    return compressor.compress(executable)
+  else:
+    return zlib.compress(executable)
+
+def decompress_executable(executable):
+  if zstandard:
+    decompressor = zstandard.ZstdDecompressor()
+    return decompressor.decompress(executable)
+  else:
+    return zlib.decompress(executable)
+
 def get_executable_and_time(
     cache_key: str, compile_options, backend
 ) -> tuple[xla_client.LoadedExecutable | None, int | None]:
@@ -136,11 +150,8 @@ def get_executable_and_time(
   executable_and_time = cache.get(cache_key)
   if not executable_and_time:
     return None, None
-  if zstandard:
-    decompressor = zstandard.ZstdDecompressor()
-    executable_and_time = decompressor.decompress(executable_and_time)
-  else:
-    executable_and_time = zlib.decompress(executable_and_time)
+
+  executable_and_time = decompress_executable(executable_and_time)
   serialized_executable, compile_time = extract_executable_and_time(
       executable_and_time)
   xla_executable_deserialized = backend.deserialize_executable(
@@ -166,11 +177,7 @@ def put_executable_and_time(
   serialized_executable = backend.serialize_executable(executable)
   executable_and_time = combine_executable_and_time(
       serialized_executable, compile_time)
-  if zstandard:
-    compressor = zstandard.ZstdCompressor()
-    executable_and_time = compressor.compress(executable_and_time)
-  else:
-    executable_and_time = zlib.compress(executable_and_time)
+  executable_and_time = compress_executable(executable_and_time)
 
   min_entry_size = config.persistent_cache_min_entry_size_bytes.value
   entry_size = len(executable_and_time)

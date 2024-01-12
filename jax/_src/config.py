@@ -1015,6 +1015,21 @@ traceback_in_locations_limit = define_int_state(
     ),
 )
 
+share_binary_between_hosts = define_bool_state(
+    name='jax_share_binary_between_hosts',
+    default=False,
+    help=(
+        'If set to True, the compiled module will be shared between hosts '
+        'directly.'
+    ),
+)
+
+share_binary_between_hosts_timeout_ms = define_int_state(
+    name='jax_share_binary_between_hosts_timeout_ms',
+    default=10 * 60 * 1000,
+    help='Timeout for the compiled module share.',
+)
+
 enable_compilation_cache = define_bool_state(
     name='jax_enable_compilation_cache',
     default=True,

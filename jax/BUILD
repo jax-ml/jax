@@ -411,6 +411,7 @@ pytype_strict_library(
         ":monitoring",
         ":profiler",
         ":traceback_util",
+        ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )

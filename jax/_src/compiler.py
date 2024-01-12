@@ -25,8 +25,10 @@ import warnings
 import numpy as np
 
 from jax._src import lib
+from jax._src import distributed
 from jax._src import compilation_cache
 from jax._src import config as config
+from jax._src.xla_bridge import process_count
 from jax._src import monitoring
 from jax._src import profiler
 from jax._src import traceback_util
@@ -291,6 +293,41 @@ def compile_or_get_cached(
         "/jax/compilation_cache/cache_retrieval_time_sec", cache_retrieval_time)
 
     return retrieved_executable
+  elif (
+      process_count() > 1
+      and config.share_binary_between_hosts.value
+      and distributed.global_state.client is not None
+  ):
+    share_timeout = config.share_binary_between_hosts_timeout_ms.value
+    global_client = distributed.global_state.client
+
+    # TODO: Using module name as a cache key might lead to issues when the
+    # the module with the same name should be recompiled. This cache should be
+    # replaced with proper cache eviction logic based on barriers.
+    if module_name in compile_or_get_cached.cached_modules:
+      return compile_or_get_cached.cached_modules[module_name]
+
+    # The coordinator host should compile the module and write it to the K-V
+    # storage.
+    # TODO: In case when coordinator process is not participating in the
+    # computation we need to choose another host to compile the module.
+    if distributed.global_state.service is None:
+      serialized_executable = global_client.blocking_key_value_get_bytes(
+          module_name, share_timeout)
+      serialized_executable = compilation_cache.decompress_executable(
+          serialized_executable)
+      executable = backend.deserialize_executable(
+          serialized_executable, compile_options)
+    else:
+      executable = backend_compile(backend, computation,
+                                   compile_options, host_callbacks)
+      serialized_executable = backend.serialize_executable(executable)
+      serialized_executable = compilation_cache.compress_executable(
+          serialized_executable)
+      global_client.key_value_set(module_name, serialized_executable)
+
+    compile_or_get_cached.cached_modules[module_name] = executable
+    return executable
   else:
     start_time = time.monotonic()
     executable = backend_compile(backend, computation,
@@ -300,6 +337,7 @@ def compile_or_get_cached(
                  host_callbacks)
     return executable
 
+compile_or_get_cached.cached_modules = {}
 
 def _cache_read(
     module_name: str, cache_key: str, compile_options: xc.CompileOptions,
