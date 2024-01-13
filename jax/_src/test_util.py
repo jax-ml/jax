@@ -898,7 +898,7 @@ def promote_like_jnp(fun, inexact=False):
   """Decorator that promotes the arguments of `fun` to `jnp.result_type(*args)`.
 
   jnp and np have different type promotion semantics; this decorator allows
-  tests make an np reference implementation act more like an jnp
+  tests make an np reference implementation act more like a jnp
   implementation.
   """
   _promote = promote_dtypes_inexact if inexact else promote_dtypes
@@ -955,9 +955,8 @@ class JaxTestCase(parameterized.TestCase):
       stack.enter_context(config.persistent_cache_min_entry_size_bytes(0))
 
       tmp_dir = stack.enter_context(tempfile.TemporaryDirectory())
-      compilation_cache.initialize_cache(tmp_dir)
-      stack.callback(lambda: compilation_cache.reset_cache()
-                     if compilation_cache.is_initialized() else None)
+      compilation_cache.set_cache_dir(tmp_dir)
+      stack.callback(lambda: compilation_cache.reset_cache())
 
   @classmethod
   def tearDownClass(cls):

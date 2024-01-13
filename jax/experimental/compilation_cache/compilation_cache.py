@@ -13,7 +13,8 @@
 # limitations under the License.
 
 from jax._src.compilation_cache import (
-  is_initialized as is_initialized,
-  initialize_cache as initialize_cache,
+  is_initialized as is_initialized,  # deprecated
+  initialize_cache as initialize_cache,  # deprecated; use set_cache_dir instead
+  set_cache_dir as set_cache_dir,
   reset_cache as reset_cache,
 )

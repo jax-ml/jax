@@ -1034,9 +1034,9 @@ enable_compilation_cache = define_bool_state(
     name='jax_enable_compilation_cache',
     default=True,
     help=('If set to False, the compilation cache will be disabled regardless '
-          'of whether initialize_cache() was called. If set to True, the '
+          'of whether set_cache_dir() was called. If set to True, the '
           'path could be set to a default value or via a call to '
-          'initialize_cache().'),
+          'set_cache_dir().'),
 )
 
 compilation_cache_dir = define_string_state(
@@ -1044,7 +1044,7 @@ compilation_cache_dir = define_string_state(
     default=None,
     help=('Path for the cache. '
           'Precedence: '
-          '1. A call to compilation_cache.initialize_cache(). '
+          '1. A call to compilation_cache.set_cache_dir(). '
           '2. The value of this flag set in the command line or by default.'),
 )
 

@@ -78,18 +78,15 @@ class CompilationCacheTest(jtu.JaxTestCase):
           "serialize executable only works on " + ",".join(supported_platforms)
       )
 
-    # Reset cache if already initialized by JaxTestCase
-    if cc.is_initialized():
-      cc.reset_cache()
+    cc.reset_cache()
 
   def tearDown(self):
-    if cc.is_initialized():
-      cc.reset_cache()
+    cc.reset_cache()
     super().tearDown()
 
   def test_get_no_executable(self):
     with tempfile.TemporaryDirectory() as tmpdir:
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
       computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
       devices = np.array([[jax.local_devices()[0]]])
       compile_options = compiler.get_compile_options(
@@ -104,7 +101,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def test_diff_executables(self):
     with tempfile.TemporaryDirectory() as tmpdir:
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
       computation1 = str(jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir())
       computation2 = str(jax.jit(lambda x, y: x * y).lower(2, 2).compiler_ir())
       compile_options = compiler.get_compile_options(
@@ -124,7 +121,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def test_put_executable(self):
     with tempfile.TemporaryDirectory() as tmpdir:
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
       computation = (
           jax.jit(lambda x, y: x + y)
           .lower(np.int32(1), np.int32(1))
@@ -156,7 +153,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def test_pmap(self):
     with tempfile.TemporaryDirectory() as tmpdir:
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
       f = pmap(lambda x: x - lax.psum(x, "i"), axis_name="i")
       x = np.arange(jax.device_count(), dtype=np.int64)
       f(x)
@@ -170,7 +167,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def test_jit(self):
     with tempfile.TemporaryDirectory() as tmpdir:
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
       f = jit(lambda x: x * x)
       f(1)
       files_in_directory = len(os.listdir(tmpdir))
@@ -183,7 +180,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
     original_profile_version = config.jax_xla_profile_version.value
     with (tempfile.TemporaryDirectory() as tmpdir,
           config.jax_xla_profile_version(original_profile_version + 1)):
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
       f = jit(lambda x: x * x)
       f(1)
       files_in_cache_directory = os.listdir(tmpdir)
@@ -200,7 +197,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
   @jtu.with_mesh([("x", 2)])
   def test_pjit(self):
     with tempfile.TemporaryDirectory() as tmpdir:
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
 
       @partial(pjit, in_shardings=(P("x"), P("x")), out_shardings=None)
       def f(x, y):
@@ -219,7 +216,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
   @jtu.with_mesh([("x", 2)])
   def test_xmap(self):
     with tempfile.TemporaryDirectory() as tmpdir:
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
 
       def f(x):
         return x * 2
@@ -242,7 +239,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def test_cache_write_warning(self):
     with tempfile.TemporaryDirectory() as tmpdir:
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
       f = jit(lambda x: x * x)
 
       with (
@@ -263,7 +260,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def test_cache_read_warning(self):
     with tempfile.TemporaryDirectory() as tmpdir:
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
       f = jit(lambda x: x * x)
 
       with (
@@ -290,7 +287,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
       config.persistent_cache_min_compile_time_secs(0),
       config.persistent_cache_min_entry_size_bytes(1048576),  # 1MiB
     ):
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
 
       jit(lambda x: x + 1)(1)
       files_in_cache = len(os.listdir(tmpdir))
@@ -302,7 +299,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
       config.persistent_cache_min_compile_time_secs(2),
       config.persistent_cache_min_entry_size_bytes(0),
     ):
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
 
       # Mock time to progress in small intervals so compilation time is small.
       with mock.patch("time.monotonic", side_effect=np.arange(0, 10, 0.1)):
@@ -322,7 +319,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
       config.persistent_cache_min_compile_time_secs(2),
       config.persistent_cache_min_entry_size_bytes(0),
     ):
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
 
       durations = Counter()  # Map metric name to time duration.
       def append_metric_duration(metric, duration):
@@ -354,7 +351,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def test_task_using_cache_metric(self):
     with tempfile.TemporaryDirectory() as tmpdir:
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
       count_before_first_use = _counts[
           "/jax/compilation_cache/tasks_using_cache"]
       jit(lambda x: x + 1)(1)
@@ -371,7 +368,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
   def test_compile_requests_use_cache_metric(self):
     previous_counts = Counter(_counts)
     with tempfile.TemporaryDirectory() as tmpdir:
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
 
       jit(lambda x: x + 1)(1)
       jit(lambda x: x + 2)(1)
@@ -390,7 +387,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
       config.persistent_cache_min_compile_time_secs(2),
       config.persistent_cache_min_entry_size_bytes(min_entry_size),
     ):
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
 
       # Mock time to create a long compilation time and make cache misses.
       with mock.patch("time.monotonic", side_effect=np.arange(0, 100, 10)):
@@ -415,7 +412,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
       config.persistent_cache_min_compile_time_secs(2),
       config.persistent_cache_min_entry_size_bytes(0),
     ):
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
 
       # Mock time to create a long compilation time, cache saved.
       with mock.patch("time.monotonic", side_effect=np.arange(0, 100, 10)):
@@ -438,17 +435,14 @@ class CompilationCacheDisabledTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
 
-    # Reset cache if already initialized by JaxTestCase
-    if cc.is_initialized():
-      cc.reset_cache()
+    cc.reset_cache()
 
   def tearDown(self):
-    if cc.is_initialized():
-      cc.reset_cache()
+    cc.reset_cache()
     super().tearDown()
 
   # If the cache is disabled, there should be no files in the cache directory.
-  # A call to initialize_cache() does not affect this.
+  # A call to set_cache_dir() does not affect this.
   def test_jit(self):
     # Sequence of flag settings for config.jax_enable_compilation_cache:
     # 1. Flag is disabled by @jtu.with_config() above.
@@ -459,7 +453,7 @@ class CompilationCacheDisabledTest(jtu.JaxTestCase):
         tempfile.TemporaryDirectory() as tmpdir,
         config.enable_compilation_cache(False),
     ):
-      cc.initialize_cache(tmpdir)
+      cc.set_cache_dir(tmpdir)
       f = jit(lambda x: x * x)
       f(1)
       files_in_directory = len(os.listdir(tmpdir))
