@@ -23,7 +23,7 @@ import dataclasses
 import functools
 import itertools
 import re
-from typing import Any, Callable, Optional, TypeVar, Union
+from typing import Any, Callable, Union
 import warnings
 
 from absl import logging
@@ -51,7 +51,7 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 
-from jax.experimental.export import shape_poly
+from jax.experimental.export import _shape_poly
 
 map = util.safe_map
 zip = util.safe_zip
@@ -342,7 +342,7 @@ def symbolic_shape(
   Returns: a jax.ShapeDTypeStruct with shapes that may contain symbolic
       expressions involving dimension variables.
   """
-  return shape_poly.symbolic_shape(shape_spec, like=like)
+  return _shape_poly.symbolic_shape(shape_spec, like=like)
 
 def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
   """Returns the shape and dtype of a jax.Array or a j"""
@@ -364,7 +364,7 @@ def args_specs(
     # This was needed in some older jax2tf implementations
     args = tree_util.tree_map(lambda a: jax.ShapeDtypeStruct(* get_shape_and_dtype(a)),
                               args)
-  return shape_poly.symbolic_args_specs(args, polymorphic_shapes)
+  return _shape_poly.symbolic_args_specs(args, polymorphic_shapes)
 
 
 def _keep_main_tokens(serialization_version: int) -> bool:
@@ -430,8 +430,8 @@ def export(fun_jax: Callable,
         DisabledSafetyCheck.shape_assertions() not in disabled_checks and
         version >= _VERSION_START_SUPPORT_SHAPE_ASSERTIONS)  # type: ignore
     try:
-      prev_enable_shape_assertions = shape_poly.thread_local_state.enable_shape_assertions
-      shape_poly.thread_local_state.enable_shape_assertions = enable_shape_assertions
+      prev_enable_shape_assertions = _shape_poly.thread_local_state.enable_shape_assertions
+      _shape_poly.thread_local_state.enable_shape_assertions = enable_shape_assertions
       replace_tokens_with_dummy = not _keep_main_tokens(version)
       lowered = wrapped_fun_jax.lower(
           *args_specs, **kwargs_specs,
@@ -459,7 +459,7 @@ def export(fun_jax: Callable,
             module_kept_var_idx=module_kept_var_idx,
             serialization_version=version)
     finally:
-      shape_poly.thread_local_state.enable_shape_assertions = prev_enable_shape_assertions
+      _shape_poly.thread_local_state.enable_shape_assertions = prev_enable_shape_assertions
 
     with mlir_module.context:
       mlir_module_attrs = mlir_module.operation.attributes
@@ -588,7 +588,7 @@ def _wrap_main_func(
 
   Returns the wrapped module, without dimension and token arguments.
   """
-  dim_vars = shape_poly.all_dim_vars(args_avals_flat)
+  dim_vars = _shape_poly.all_dim_vars(args_avals_flat)
   context = mlir.make_ir_context()
   with context, ir.Location.unknown(context):
     # Make a copy, do not mutate because it may be cached
@@ -697,12 +697,12 @@ def _wrap_main_func(
         tokens_in=mlir.TokenSet(), tokens_out=None)
       # We compute dim_values from the array arguments.
       new_main_op_array_args = new_main_op.arguments[-nr_array_args:]
-      if shape_poly.all_dim_vars(args_avals_flat):
+      if _shape_poly.all_dim_vars(args_avals_flat):
         # TODO(necula): handle module_kept_var_idx in presence of shape
         # polymorphism. For now we ensured upstream that we keep all variables.
         assert len(set(module_kept_var_idx)) == len(args_avals_flat)
         dim_values = mlir.lower_fun(
-            functools.partial(shape_poly.compute_dim_vars_from_arg_shapes,
+            functools.partial(_shape_poly.compute_dim_vars_from_arg_shapes,
                               args_avals_flat, args_kwargs_tree=args_kwargs_tree),
             multiple_results=True)(ctx, *new_main_op_array_args)
       else:
@@ -1061,7 +1061,7 @@ def call(exported: Exported) -> Callable[..., jax.Array]:
           f"as when the function '{exported.fun_name}' was exported, but they "
           "have the following structural differences:\n" +
           ("\n".join(
-             f"   - {shape_poly.args_kwargs_path_to_str(path)} is a {thing1} in the invocation and a "
+             f"   - {_shape_poly.args_kwargs_path_to_str(path)} is a {thing1} in the invocation and a "
              f"{thing2} when exported, so {explanation}.\n"
              for path, thing1, thing2, explanation
              in tree_util.equality_errors(in_args, exp_in_args))))
@@ -1082,12 +1082,12 @@ def _call_exported_abstract_eval(
     *in_avals: core.AbstractValue,
     exported: Exported
     ) -> tuple[tuple[core.AbstractValue, ...], set[effects.Effect]]:
-  exported_dim_vars = shape_poly.all_dim_vars(exported.in_avals)
+  exported_dim_vars = _shape_poly.all_dim_vars(exported.in_avals)
   assert len(in_avals) == len(exported.in_avals)  # since the pytrees have the same structure
   # Check that the expected shapes match the actual ones
   for arg_idx, (exp_aval, actual_aval) in enumerate(zip(exported.in_avals, in_avals)):
     def pp_arg_dim(dim_idx: int | None) -> str:
-      return shape_poly.pretty_print_dimension_descriptor(exported.in_tree,
+      return _shape_poly.pretty_print_dimension_descriptor(exported.in_tree,
                                                           arg_idx, dim_idx)
     if len(exp_aval.shape) != len(actual_aval.shape):
       raise ValueError(
@@ -1109,11 +1109,11 @@ def _call_exported_abstract_eval(
               f"expected {exp_aval.shape} and called with {actual_aval.shape}")
 
   # Must express the exported_dim_vars in terms of the shapes in in_avals.
-  solution, shape_constraints, synth_dim_vars = shape_poly.solve_dim_vars(
+  solution, shape_constraints, synth_dim_vars = _shape_poly.solve_dim_vars(
       exported.in_avals, args_kwargs_tree=exported.in_tree)
   synthetic_env = {vname: in_avals[arg_idx].shape[dim_idx]
                    for (vname, arg_idx, dim_idx) in synth_dim_vars}
-  synthetic_eval = shape_poly.CachingShapeEvaluator(**synthetic_env)
+  synthetic_eval = _shape_poly.CachingShapeEvaluator(**synthetic_env)
   # We discharge all the constraints statically. This results in much simpler
   # composability (because we do not have to worry about the constraints of the
   # Exported called recursively; we only need to worry about entry-point

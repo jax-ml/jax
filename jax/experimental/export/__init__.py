@@ -25,12 +25,12 @@ from jax.experimental.export._export import (
 
     args_specs,  # TODO: deprecate
 )
-from jax.experimental.export.shape_poly import (
+from jax.experimental.export._shape_poly import (
     is_symbolic_dim,
     symbolic_shape,
     symbolic_args_specs,
 )
-from jax.experimental.export.serialization import (
+from jax.experimental.export._serialization import (
     serialize,
     deserialize,
 )
