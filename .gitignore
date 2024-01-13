@@ -21,6 +21,7 @@
 .envrc
 jax.iml
 .bazelrc.user
+.hypothesis/
 
 # virtualenv/venv directories
 /venv/

@@ -425,6 +425,8 @@ jax.scipy.stats.uniform
 
    logpdf
    pdf
+   cdf
+   ppf
 
 jax.scipy.stats.gaussian_kde
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
