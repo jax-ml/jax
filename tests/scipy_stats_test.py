@@ -1585,5 +1585,27 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             tol=tol)
     self._CompileAndCheck(lax_fun, args_maker, rtol=tol)
 
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis, ddof=ddof, nan_policy=nan_policy)
+      for shape in [(5,), (5, 6), (5, 6, 7)]
+      for axis in [None, *range(len(shape))]
+      for ddof in [0, 1, 2, 3]
+      for nan_policy in ["propagate", "omit"]
+    ],
+    dtype=jtu.dtypes.integer + jtu.dtypes.floating,
+  )
+  def testSEM(self, shape, dtype, axis, ddof, nan_policy):
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    scipy_fun = partial(osp_stats.sem, axis=axis, ddof=ddof, nan_policy=nan_policy)
+    lax_fun = partial(lsp_stats.sem, axis=axis, ddof=ddof, nan_policy=nan_policy)
+    tol_spec = {np.float32: 2e-4, np.float64: 5e-6}
+    tol = jtu.tolerance(dtype, tol_spec)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            atol=tol)
+    self._CompileAndCheck(lax_fun, args_maker, atol=tol)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

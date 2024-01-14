@@ -23,7 +23,7 @@ import jax.numpy as jnp
 from jax import jit
 from jax._src import dtypes
 from jax._src.api import vmap
-from jax._src.numpy.util import check_arraylike, _wraps
+from jax._src.numpy.util import check_arraylike, _wraps, promote_args_inexact
 from jax._src.typing import ArrayLike, Array
 from jax._src.util import canonicalize_axis
 
@@ -147,3 +147,20 @@ def rankdata(
   if method == "average":
     return .5 * (count[dense] + count[dense - 1] + 1).astype(dtypes.canonicalize_dtype(jnp.float_))
   raise ValueError(f"unknown method '{method}'")
+
+@_wraps(scipy.stats.sem, lax_description="""\
+Currently the only supported nan_policies are 'propagate' and 'omit'
+""")
+@partial(jit, static_argnames=['axis', 'nan_policy', 'keepdims'])
+def sem(a: ArrayLike, axis: int | None = 0, ddof: int = 1, nan_policy: str = "propagate", *, keepdims: bool = False) -> Array:
+  b, = promote_args_inexact("sem", a)
+  if axis is None:
+    b = b.ravel()
+    axis = 0
+  if nan_policy == "propagate":
+    return b.std(axis, ddof=ddof) / jnp.sqrt(b.shape[axis]).astype(b.dtype)
+  elif nan_policy == "omit":
+    count = (~jnp.isnan(b)).sum(axis)
+    return jnp.nanstd(b, axis, ddof=ddof) / jnp.sqrt(count).astype(b.dtype)
+  else:
+    raise ValueError(f"{nan_policy} is not supported")

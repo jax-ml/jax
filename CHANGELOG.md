@@ -39,6 +39,7 @@ Remember to align the itemized text with the first line of an item within a list
     `from jax.experimental.export import export` you should use now
     `from jax.experimental import export`. The old way of importing will
     continue to work for a deprecation period of 3 months.
+  * Added {func}`jax.scipy.stats.sem`.
 
 * Deprecations & Removals
   * A number of previously deprecated functions have been removed, following a
