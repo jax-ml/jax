@@ -244,6 +244,10 @@ def _get_mask_info_for_shard(
     mask_next = np.zeros(output_shape, dtype=np.int32)
   data_next = np.zeros(output_shape, dtype=np.int32)
 
+  # If the mask is completelly zero'd out return freshly initialized outputs.
+  if not data_coords:
+    return data_next, mask_next
+
   data_coords_iter = iter(data_coords)
   first_j = coord_j = next(data_coords_iter)
   if mask_next is not None and mask_coords:
@@ -777,12 +781,13 @@ def _shrink_mask_info(
   assert mask_next is None or mask_next.ndim == 3
 
   head_block_mask = block_mask[0]
-  non_zero_rows, non_zero_cols = np.nonzero(head_block_mask)
-  # Group non-zero columns based on which row they belong to.
-  unique_row_indices = np.unique(non_zero_rows, return_index=True)[1]
-  grouped_non_zero_cols = np.split(non_zero_cols, unique_row_indices)[1:]
 
-  assert all(len(x) != 0 for x in grouped_non_zero_cols)
+  grouped_non_zero_cols = []
+  # Group non-zero columns based on which row they belong to.
+  for row_index in range(head_block_mask.shape[0]):
+    head_block_mask_row = head_block_mask[row_index, :]
+    non_zero_cols = np.nonzero(head_block_mask_row)[0]
+    grouped_non_zero_cols.append(non_zero_cols)
 
   # Pad each row in the non-zero indices to match the width of the longest
   # row. This avoids having jagged rows.
