@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import math
+import typing
 from typing import Any, Literal, Protocol
 
 import numpy as np
@@ -44,6 +45,7 @@ DTypeLikeInexact = Any  # DTypeLikeFloat | DTypeLikeComplex
 RealNumeric = Any  # Scalar jnp array or float
 
 @export
+@typing.runtime_checkable
 class Initializer(Protocol):
   @staticmethod
   def __call__(key: KeyArray,
