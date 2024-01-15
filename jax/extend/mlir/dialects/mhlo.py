@@ -14,4 +14,9 @@
 
 # ruff: noqa: F403
 
+import warnings
+warnings.warn("jax.extend.mlir.dialects.mhlo is deprecated and will be removed "
+              "from a future release of JAX. Use stablehlo instead.",
+              DeprecationWarning)
+
 from jaxlib.mlir.dialects.mhlo import *

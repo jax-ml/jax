@@ -2538,7 +2538,7 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
         harness.check_result = False
 
     if harness.group_name == "vmap_tan":
-      # Tan (b/274462307) require support for custom call mhlo.tan.
+      # Tan (b/274462307) require support for custom call stablehlo.tan.
       raise unittest.SkipTest(
           "native lowering with shape polymorphism requires additional StableHLO feature support")
 

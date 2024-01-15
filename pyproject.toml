@@ -83,6 +83,7 @@ filterwarnings = [
     "ignore:not machine-readable.*:UserWarning",
     "ignore:Special cases found for .* but none were parsed.*:UserWarning",
     # end array_api_tests-related warnings
+    "ignore:jax.extend.mlir.dialects.mhlo is deprecated.*:DeprecationWarning",
 ]
 doctest_optionflags = [
     "NUMBER",

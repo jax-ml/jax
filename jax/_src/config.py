@@ -216,7 +216,7 @@ class Config:
             self.jax_enable_memories,
             self.jax_disable_jit,
             self.jax_xla_profile_version,
-            # Technically this affects jaxpr->MHLO lowering, not tracing.
+            # Technically this affects jaxpr->stablehlo lowering, not tracing.
             self.jax_hlo_source_file_canonicalization_regex)
 
 

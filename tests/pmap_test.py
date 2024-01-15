@@ -271,7 +271,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = f.lower(x)
     self.assertIsInstance(f.as_text(), str)
     self.assertIsInstance(f.as_text(dialect='hlo'), str)
-    self.assertIsInstance(f.as_text(dialect='mhlo'), str)
     self.assertIsInstance(f.as_text(dialect='stablehlo'), str)
 
   def testLowerCompilerIR(self):
@@ -281,7 +280,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = f.lower(x)
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
-    self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='stablehlo'))
 
   def testLowerCompileCompilerIR(self):
@@ -2130,13 +2128,13 @@ class PythonPmapTest(jtu.JaxTestCase):
     lowered = jax.pmap(f).lower(
       {'hi': jnp.array([1.])}, {'hi': jnp.array([2.])}, jnp.array([3.]),
       jnp.array([4.]), z=jnp.array([5.]), w=jnp.array([6.]))
-    mhlo_str = mlir.module_to_string(lowered.compiler_ir('mhlo'))
-    self.assertNotIn("\"x\"", mhlo_str)
-    self.assertIn("y['hi']", mhlo_str)
-    self.assertIn("args[0]", mhlo_str)
-    self.assertIn("args[1]", mhlo_str)
-    self.assertIn("kwargs['z']", mhlo_str)
-    self.assertIn("kwargs['w']", mhlo_str)
+    hlo_str = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
+    self.assertNotIn("\"x\"", hlo_str)
+    self.assertIn("y['hi']", hlo_str)
+    self.assertIn("args[0]", hlo_str)
+    self.assertIn("args[1]", hlo_str)
+    self.assertIn("kwargs['z']", hlo_str)
+    self.assertIn("kwargs['w']", hlo_str)
 
   def test_pmap_lower_result_info(self):
     def f(x, y, z):
@@ -2144,9 +2142,9 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     lowered = jax.pmap(f).lower(jnp.array([1.]), (jnp.array([2]),),
                                 [jnp.array([3])])
-    mhlo_str = mlir.module_to_string(lowered.compiler_ir('mhlo'))
-    self.assertIn("jax.result_info = \"['a']\"", mhlo_str)
-    self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
+    hlo_str = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
+    self.assertIn("jax.result_info = \"['a']\"", hlo_str)
+    self.assertIn("jax.result_info = \"['b'][0][0]\"", hlo_str)
 
   def test_axis_name_shadowing_with_vmap(self):
     # vmap-of-pmap with mismatched axis sizes

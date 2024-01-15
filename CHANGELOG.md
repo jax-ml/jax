@@ -66,6 +66,9 @@ Remember to align the itemized text with the first line of an item within a list
     removed. Use {func}`jax.random.key_data` instead.
   * `bool(empty_array)` now raises an error rather than returning `False`. This
     previously raised a deprecation warning, and follows a similar change in NumPy.
+  * Support for the mhlo MLIR dialect has been deprecated. JAX no longer uses
+    the mhlo dialect, in favor of stablehlo. APIs that refer to "mhlo" will be
+    removed in the future. Use the "stablehlo" dialect instead.
 
 ## jaxlib 0.4.24
 

@@ -154,7 +154,7 @@ def f(runtime_token, x):
 ```
 Notice how the runtime tokens are only used at the JIT boundary and the compiler tokens
 are only within the compiled code. Compiler tokens are created during
-"lowering" (we convert Python code to a lower level representation like HLO or MHLO)
+"lowering" (we convert Python code to a lower level representation like HLO or StableHLO)
 but runtime tokens need to be managed in Python since they're being threaded in and out
 of JIT-ted functions.
 
@@ -200,7 +200,7 @@ this copy is not necessary.
 
 ## Adding compiler tokens
 
-When we lower Python code to HLO or MHLO we need to create a token at the start of the computation and
+When we lower Python code to HLO or StableHLO we need to create a token at the start of the computation and
 ensure they are available when we have side-effecting computations that need to be ordered. The side-effecting
 computations will take the token as input and return it as an output.
 

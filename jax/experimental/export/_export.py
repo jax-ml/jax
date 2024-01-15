@@ -888,7 +888,7 @@ def _check_module(mod: ir.Module, *,
     if op_name == "func.func":
       check_sharding(op.operation, op.location)
 
-    elif op_name == "stablehlo.custom_call" or op_name == "mhlo.custom_call":
+    elif op_name == "stablehlo.custom_call":
       call_target_name_attr = op.operation.attributes["call_target_name"]
       if (call_target_name_attr not in allowed_custom_call_targets_attrs):
         disallowed_custom_call_ops.append(f"{op} at {op.location}")

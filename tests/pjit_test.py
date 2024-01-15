@@ -1064,7 +1064,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     f = f.lower(x, x + 1)
     self.assertIsInstance(f.as_text(), str)
     self.assertIsInstance(f.as_text(dialect='hlo'), str)
-    self.assertIsInstance(f.as_text(dialect='mhlo'), str)
     self.assertIsInstance(f.as_text(dialect='stablehlo'), str)
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
@@ -1080,7 +1079,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     f = f.lower(x, x + 1)
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
-    self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='stablehlo'))
 
   @jtu.with_mesh([('x', 2)])
@@ -3217,13 +3215,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     lowered = pjit(f, in_shardings=P(), out_shardings=P()).lower(
         {'hi': 1.}, {'hi': 2.}, 3., 4.)
-    mhlo_str = mlir.module_to_string(lowered.compiler_ir('mhlo'))
-    self.assertNotIn("\"x\"", mhlo_str)
-    self.assertIn("y['hi']", mhlo_str)
+    hlo_str = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
+    self.assertNotIn("\"x\"", hlo_str)
+    self.assertIn("y['hi']", hlo_str)
     # TODO(yashkatariya): Add keep_unused support to lower_mesh_computation
     # and then uncomment the below line.
-    # self.assertNotIn("args[0]", mhlo_str)
-    self.assertIn("args[1]", mhlo_str)
+    # self.assertNotIn("args[0]", hlo_str)
+    self.assertIn("args[1]", hlo_str)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def test_jit_nested_xmap_lower_result_info(self):
@@ -3234,9 +3232,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     lowered = pjit(f, in_shardings=P(), out_shardings=P()).lower(
         1., (2.,), [3.])
-    mhlo_str = mlir.module_to_string(lowered.compiler_ir('mhlo'))
-    self.assertIn("jax.result_info = \"['a']\"", mhlo_str)
-    self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
+    hlo_str = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
+    self.assertIn("jax.result_info = \"['a']\"", hlo_str)
+    self.assertIn("jax.result_info = \"['b'][0][0]\"", hlo_str)
 
   def test_with_sharding_constraint_with_two_meshes(self):
     if jax.device_count() < 4:
@@ -3596,7 +3594,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       b = nest(a)
       return b
 
-    with jtu.count_subjaxpr_to_mhlo_conversion(fun_name='nest') as count:
+    with jtu.count_subjaxpr_to_hlo_conversion(fun_name='nest') as count:
       top(jnp.arange(8))
 
     # The count should be 1 because `nest`'s lowering to MHLO should be cached.

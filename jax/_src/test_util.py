@@ -275,7 +275,7 @@ def count_jit_and_pmap_compiles():
 
 
 @contextmanager
-def count_subjaxpr_to_mhlo_conversion(fun_name: str):
+def count_subjaxpr_to_hlo_conversion(fun_name: str):
   # No need to clear any caches since we generally jit and pmap fresh callables
   # in tests.
 
