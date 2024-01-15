@@ -93,6 +93,7 @@ jax_test(
     ],
     shard_count = 18,
     tags = [
+        "noasan",  # Times out.
         "nomsan",  # Times out.
         "notsan",  # Times out.
     ],

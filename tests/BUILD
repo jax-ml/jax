@@ -337,6 +337,7 @@ jax_test(
         "tpu": 10,
         "iree": 10,
     },
+    tags = ["noasan"],  # Linking TF causes a linker OOM.
     deps = py_deps("pil") + py_deps("tensorflow_core"),
 )
 
@@ -1150,6 +1151,7 @@ jax_test(
 jax_test(
     name = "host_callback_to_tf_test",
     srcs = ["host_callback_to_tf_test.py"],
+    tags = ["noasan"],  # Linking TF causes a linker OOM.
     deps = [
         "//jax:experimental_host_callback",
         "//jax:ode",
