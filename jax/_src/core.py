@@ -2072,28 +2072,20 @@ def min_dim(d1: DimSize, d2: DimSize) -> DimSize:
   d1_is_constant = is_constant_dim(d1)
   if d1_is_constant and is_constant_dim(d2):
     return min(d1, d2)
-  try:
-    d2_ge_d1 = (d2 >= d1)
-    return d1 if d2_ge_d1 else d2
-  except InconclusiveDimensionOperation:
-    if d1_is_constant:
-      return d2.rmin(d1)  # type: ignore[union-attr]
-    else:
-      return d1.min(d2)  # type: ignore[union-attr]
+  if d1_is_constant:
+    return d2.rmin(d1)  # type: ignore[union-attr]
+  else:
+    return d1.min(d2)  # type: ignore[union-attr]
 
 def max_dim(d1: DimSize, d2: DimSize) -> DimSize:
   """Like max(d1, d2) but for both constant and symbolic dimensions."""
   d1_is_constant = is_constant_dim(d1)
   if d1_is_constant and is_constant_dim(d2):
       return max(d1, d2)
-  try:
-    d1_ge_d2 = (d1 >= d2)
-    return d1 if d1_ge_d2 else d2
-  except InconclusiveDimensionOperation:
-    if d1_is_constant:
-      return d2.rmax(d1)  # type: ignore[union-attr]
-    else:
-      return d1.max(d2)  # type: ignore[union-attr]
+  if d1_is_constant:
+    return d2.rmax(d1)  # type: ignore[union-attr]
+  else:
+    return d1.max(d2)  # type: ignore[union-attr]
 
 def dimension_as_value(d: DimSize):
   """Turns a dimension size into a JAX array.

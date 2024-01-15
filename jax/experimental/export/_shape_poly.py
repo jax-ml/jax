@@ -882,16 +882,28 @@ class _DimExpr():
              for mon, coeff in self.monomials()]
     return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
-  def max(self, other: DimSize) -> _DimExpr:
+  def max(self, other: DimSize) -> DimSize:
+    lb, ub = _ensure_poly(self - other, "max").bounds()
+    if 0 <= lb: return self
+    if ub <= 0: return other
     return _DimExpr.from_operation(_DimAtom.MAX, self, other)
 
-  def rmax(self, other: DimSize) -> _DimExpr:
+  def rmax(self, other: DimSize) -> DimSize:
+    lb, ub = _ensure_poly(self - other, "max").bounds()
+    if 0 <= lb: return self
+    if ub <= 0: return other
     return _DimExpr.from_operation(_DimAtom.MAX, other, self)
 
-  def min(self, other: DimSize) -> _DimExpr:
+  def min(self, other: DimSize) -> DimSize:
+    lb, ub = _ensure_poly(self - other, "min").bounds()
+    if 0 <= lb: return other
+    if ub <= 0: return self
     return _DimExpr.from_operation(_DimAtom.MIN, self, other)
 
-  def rmin(self, other: DimSize) -> _DimExpr:
+  def rmin(self, other: DimSize) -> DimSize:
+    lb, ub = _ensure_poly(self - other, "min").bounds()
+    if 0 <= lb: return other
+    if ub <= 0: return self
     return _DimExpr.from_operation(_DimAtom.MIN, other, self)
 
   @staticmethod
