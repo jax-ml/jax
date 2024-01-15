@@ -419,6 +419,8 @@ class DimExprTest(jtu.JaxTestCase):
 
     self.assertEqual(a, core.min_dim(a, a + 2))
     self.assertEqual(a - 2, core.min_dim(a, a - 2))
+    self.assertEqual(core.min_dim(a % 2 - 1, -1), -1)
+    self.assertEqual(core.min_dim(-1, a % 2 - 1), -1)
     self.assertGreaterEqual(a, core.min_dim(a, b))
     self.assertGreaterEqual(a + c - 1, core.min_dim(a, b))
     self.assertGreaterEqual(b, core.min_dim(a, b))
@@ -440,6 +442,8 @@ class DimExprTest(jtu.JaxTestCase):
 
     self.assertEqual(a + 2, core.max_dim(a, a + 2))
     self.assertEqual(a , core.max_dim(a, a - 2))
+    self.assertEqual(core.max_dim(a % 2 - 1, 0), 0)
+    self.assertEqual(core.max_dim(0, a % 2 - 1), 0)
     self.assertGreaterEqual(core.max_dim(a, b), a)
     self.assertGreaterEqual(core.max_dim(a, b) + c - 1, a)
     self.assertGreaterEqual(core.max_dim(a, b), b)
