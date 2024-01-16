@@ -18,4 +18,6 @@
 from jax._src.scipy.stats.uniform import (
   logpdf as logpdf,
   pdf as pdf,
+  cdf as cdf,
+  ppf as ppf,
 )
