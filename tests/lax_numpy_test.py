@@ -2548,10 +2548,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if config.enable_x64.value:
       out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
       self.assertEqual(out_int64.dtype, np.int64)
-    else:
+    elif jtu.numpy_version() < (2, 0, 0):
       with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype int64"):
         with jtu.ignore_warning(category=DeprecationWarning,
                                 message="NumPy will stop allowing conversion.*"):
+          out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
+    else:
+      with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype int64"):
+        with self.assertRaisesRegex(OverflowError, "Python integer 2147483648 out of bounds.*"):
           out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
 
   @jtu.sample_product(
