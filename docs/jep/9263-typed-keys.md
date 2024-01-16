@@ -116,9 +116,10 @@ A PRNG key is distinguished from other arrays based on its `dtype`, and it is no
 currently possible to specify dtypes of JAX arrays within a type annotation.
 Previously it was possible to use `jax.random.KeyArray` or `jax.random.PRNGKeyArray`
 as type annotations, but these have always been aliased to `Any` under type checking,
-and so `jax.Array` has much more specificity. In a future JAX release, we will
-deprecate and remove `jax.random.KeyArray` and `jax.random.PRNGKeyArray` from the
-public API.
+and so `jax.Array` has much more specificity.
+
+*Note: `jax.random.KeyArray` and `jax.random.PRNGKeyArray` were deprecated in JAX
+version 0.4.16, and removed in JAX version 0.4.24*.
 
 ### Notes for JAX library authors
 If you maintain a JAX-based library, your users are also JAX users. Know that JAX
