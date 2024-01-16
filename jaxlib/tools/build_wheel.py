@@ -332,6 +332,24 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extensi
       ],
   )
 
+  triton_dir = jaxlib_dir / "triton"
+  copy_runfiles(
+      dst_dir=triton_dir,
+      src_files=[
+          "__main__/jaxlib/triton/__init__.py",
+          "__main__/jaxlib/triton/compat.py",
+          "__main__/jaxlib/triton/dialect.py",
+          f"__main__/jaxlib/triton/_triton_ext.{pyext}",
+          "__main__/jaxlib/triton/_triton_ext.pyi",
+      ],
+  )
+  patch_copy_mlir_import(
+      "__main__/jaxlib/triton/_triton_enum_gen.py", dst_dir=triton_dir
+  )
+  patch_copy_mlir_import(
+      "__main__/jaxlib/triton/_triton_ops_gen.py", dst_dir=triton_dir
+  )
+
 
 tmpdir = None
 sources_path = args.sources_path
