@@ -35,6 +35,7 @@ from jax._src.numpy.lax_numpy import (
 from jax._src.numpy.reductions import any, cumsum
 from jax._src.numpy.ufuncs import isnan
 from jax._src.numpy.util import check_arraylike, _wraps
+from jax._src.util import canonicalize_axis
 from jax._src.typing import Array, ArrayLike
 
 
@@ -256,6 +257,8 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
   """
   Find the unique elements of an array along a particular axis.
   """
+  axis = canonicalize_axis(axis, ar.ndim)
+
   if ar.shape[axis] == 0 and size and fill_value is None:
     raise ValueError(
       "jnp.unique: for zero-sized input with nonzero size argument, fill_value must be specified")
@@ -289,6 +292,8 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
       inv_idx = inv_idx.at[perm].set(imask)
     else:
       inv_idx = zeros(ar.shape[axis], dtype=int)
+    if ar.ndim > 1:
+      inv_idx = lax.expand_dims(inv_idx, [i for i in range(ar.ndim) if i != axis],)
     ret += (inv_idx,)
   if return_counts:
     if aux.size:
@@ -332,12 +337,18 @@ def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = Fal
     size = core.concrete_or_error(operator.index, size,
          "The error arose for the size argument of jnp.unique(). " + UNIQUE_SIZE_HINT)
   arr = asarray(ar)
+  arr_shape = arr.shape
   if axis is None:
-    axis = 0
+    axis_int: int = 0
     arr = arr.flatten()
-  axis_int: int = core.concrete_or_error(operator.index, axis, "axis argument of jnp.unique()")
-  return _unique(arr, axis_int, return_index, return_inverse,
-                 return_counts, equal_nan=equal_nan, size=size, fill_value=fill_value)
+  else:
+    axis_int = canonicalize_axis(axis, arr.ndim)
+  result = _unique(arr, axis_int, return_index, return_inverse, return_counts,
+                   equal_nan=equal_nan, size=size, fill_value=fill_value)
+  if return_inverse and axis is None:
+    idx = 2 if return_index else 1
+    result = (*result[:idx], result[idx].reshape(arr_shape), *result[idx + 1:])
+  return result
 
 
 class _UniqueAllResult(NamedTuple):
@@ -362,7 +373,6 @@ def unique_all(x: ArrayLike, /) -> _UniqueAllResult:
   check_arraylike("unique_all", x)
   values, indices, inverse_indices, counts = unique(
     x, return_index=True, return_inverse=True, return_counts=True, equal_nan=False)
-  inverse_indices = inverse_indices.reshape(np.shape(x))
   return _UniqueAllResult(values=values, indices=indices, inverse_indices=inverse_indices, counts=counts)
 
 
@@ -377,7 +387,6 @@ def unique_counts(x: ArrayLike, /) -> _UniqueCountsResult:
 def unique_inverse(x: ArrayLike, /) -> _UniqueInverseResult:
   check_arraylike("unique_inverse", x)
   values, inverse_indices = unique(x, return_inverse=True, equal_nan=False)
-  inverse_indices = inverse_indices.reshape(np.shape(x))
   return _UniqueInverseResult(values=values, inverse_indices=inverse_indices)
 
 

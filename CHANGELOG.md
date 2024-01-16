@@ -45,6 +45,9 @@ Remember to align the itemized text with the first line of an item within a list
     `from jax.experimental import export`. The old way of importing will
     continue to work for a deprecation period of 3 months.
   * Added {func}`jax.scipy.stats.sem`.
+  * {func}`jax.numpy.unique` with `return_inverse = True` returns inverse indices
+    reshaped to the dimension of the input, following a similar change to
+    {func}`numpy.unique` in NumPy 2.0.
 
 * Deprecations & Removals
   * A number of previously deprecated functions have been removed, following a
