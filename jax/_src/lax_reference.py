@@ -70,7 +70,7 @@ asinh = np.arcsinh
 acosh = np.arccosh
 atanh = np.arctanh
 
-def logistic(x): return 1 / (1 + np.exp(-x))
+def logistic(x): return (1 / (1 + np.exp(-x))).astype(x.dtype)
 def betainc(a, b, x): return scipy.special.betainc(a, b, x).astype(x.dtype)
 def lgamma(x): return scipy.special.gammaln(x).astype(x.dtype)
 def digamma(x): return scipy.special.digamma(x).astype(x.dtype)
