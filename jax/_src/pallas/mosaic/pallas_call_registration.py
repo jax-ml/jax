@@ -86,6 +86,7 @@ def pallas_call_tpu_lowering_rule(
         kernel_name=name,
         kernel_regeneration_metadata=kernel_regeneration_metadata,
         cost_estimate=mosaic_params.get("cost_estimate", None),
+        vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes", None),
         flags=mosaic_params.get("flags", None),
     )(
         *extra_args,
