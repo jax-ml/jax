@@ -1368,6 +1368,12 @@ class ShardMapTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(Exception, r"check_rep=False"):
       jax.grad(lambda x: g(x).sum())(jnp.ones(4))
 
+  def test_approx_top_k(self):
+    mesh = Mesh(np.array(jax.devices()[:2]), ('i',))
+
+    x = jnp.array([3.0, 1.0, 4.0, 2.0])
+    _ = shard_map(lambda x: lax.approx_max_k(x, 2), mesh, P('i'), P('i'))(x)
+
 
 class FunSpec(NamedTuple):
   name: str
