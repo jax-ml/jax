@@ -670,7 +670,7 @@ def diff(a: ArrayLike, n: int = 1, axis: int = -1,
   combined: list[Array] = []
   if prepend is not None:
     util.check_arraylike("diff", prepend)
-    if isscalar(prepend):
+    if not ndim(prepend):
       shape = list(arr.shape)
       shape[axis] = 1
       prepend = broadcast_to(prepend, tuple(shape))
@@ -680,7 +680,7 @@ def diff(a: ArrayLike, n: int = 1, axis: int = -1,
 
   if append is not None:
     util.check_arraylike("diff", append)
-    if isscalar(append):
+    if not ndim(append):
       shape = list(arr.shape)
       shape[axis] = 1
       append = broadcast_to(append, tuple(shape))

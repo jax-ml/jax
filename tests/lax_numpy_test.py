@@ -2744,6 +2744,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testDiffPrepoendScalar(self):
+    # Regression test for https://github.com/google/jax/issues/19362
+    x = jnp.arange(10)
+    result_jax = jnp.diff(x, prepend=x[0], append=x[-1])
+
+    x = np.array(x)
+    result_numpy = np.diff(x, prepend=x[0], append=x[-1])
+
+    self.assertArraysEqual(result_jax, result_numpy)
+
   @jtu.sample_product(
     op=["zeros", "ones"],
     shape=[2, (), (2,), (3, 0), np.array((4, 5, 6), dtype=np.int32),
