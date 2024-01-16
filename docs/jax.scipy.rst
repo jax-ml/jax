@@ -180,6 +180,7 @@ jax.scipy.stats
 
    mode
    rankdata
+   sem
 
 jax.scipy.stats.bernoulli
 ~~~~~~~~~~~~~~~~~~~~~~~~~
