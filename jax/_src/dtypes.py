@@ -376,14 +376,18 @@ JAXType = Union[type, DType]
 # Enumeration of all valid JAX types in order.
 _weak_types: list[JAXType] = [int, float, complex]
 _bool_types: list[JAXType] = [np.dtype(bool)]
+_signed_types: list[JAXType]
+_unsigned_types: list[JAXType]
 _int_types: list[JAXType]
 if int4 is not None:
-  _int_types = [
+  _unsigned_types = [
       np.dtype(uint4),
       np.dtype('uint8'),
       np.dtype('uint16'),
       np.dtype('uint32'),
       np.dtype('uint64'),
+  ]
+  _signed_types = [
       np.dtype(int4),
       np.dtype('int8'),
       np.dtype('int16'),
@@ -391,16 +395,20 @@ if int4 is not None:
       np.dtype('int64'),
   ]
 else:
-  _int_types = [
+  _unsigned_types = [
       np.dtype('uint8'),
       np.dtype('uint16'),
       np.dtype('uint32'),
       np.dtype('uint64'),
+  ]
+  _signed_types = [
       np.dtype('int8'),
       np.dtype('int16'),
       np.dtype('int32'),
       np.dtype('int64'),
   ]
+
+_int_types = _unsigned_types + _signed_types
 
 _float_types: list[JAXType] = [
     *_custom_float_dtypes,
@@ -414,6 +422,56 @@ _complex_types: list[JAXType] = [
 ]
 _jax_types = _bool_types + _int_types + _float_types + _complex_types
 _jax_dtype_set = {float0, *_bool_types, *_int_types, *_float_types, *_complex_types}
+
+
+_dtype_kinds: dict[str, set] = {
+  'bool': {*_bool_types},
+  'signed integer': {*_signed_types},
+  'unsigned integer': {*_unsigned_types},
+  'integral': {*_signed_types, *_unsigned_types},
+  'real floating': {*_float_types},
+  'complex floating': {*_complex_types},
+  'numeric': {*_signed_types, *_unsigned_types, *_float_types, *_complex_types},
+}
+
+
+def isdtype(dtype: DTypeLike, kind: str | DType | tuple[str | DType]) -> bool:
+  """Returns a boolean indicating whether a provided dtype is of a specified kind.
+
+  Args:
+    dtype : the input dtype
+    kind : the data type kind.
+      If ``kind`` is dtype-like, return ``dtype = kind``.
+      If ``kind`` is a string, then return True if the dtype is in the specified category:
+
+      - ``'bool'``: ``{bool}``
+      - ``'signed integer'``: ``{int4, int8, int16, int32, int64}``
+      - ``'unsigned integer'``: ``{uint4, uint8, uint16, uint32, uint64}``
+      - ``'integral'``: shorthand for ``('signed integer', 'unsigned integer')``
+      - ``'real floating'``: ``{float8_*, float16, bfloat16, float32, float64}``
+      - ``'complex floating'``: ``{complex64, complex128}``
+      - ``'numeric'``: shorthand for ``('integral', 'real floating', 'complex floating')``
+
+      If ``kind`` is a tuple, then return True if dtype matches any entry of the tuple.
+
+  Returns:
+    True or False
+  """
+  the_dtype = np.dtype(dtype)
+  kind_tuple: tuple[DType | str] = kind if isinstance(kind, tuple) else (kind,)
+  options: set[DType] = set()
+  for kind in kind_tuple:
+    if isinstance(kind, str):
+      if kind not in _dtype_kinds:
+        raise ValueError(f"Unrecognized {kind=} expected one of {list(_dtype_kinds.keys())}")
+      options.update(_dtype_kinds[kind])
+    elif isinstance(kind, np.dtype):
+      options.add(kind)
+    else:
+      # TODO(jakevdp): should we handle scalar types or ScalarMeta here?
+      raise TypeError(f"Expected kind to be a dtype, string, or tuple; got {kind=}")
+  return the_dtype in options
+
 
 def _jax_type(dtype: DType, weak_type: bool) -> JAXType:
   """Return the jax type for a dtype and weak type."""

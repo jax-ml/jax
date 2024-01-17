@@ -235,6 +235,7 @@ namespace; they are listed below.
     isclose
     iscomplex
     iscomplexobj
+    isdtype
     isfinite
     isin
     isinf

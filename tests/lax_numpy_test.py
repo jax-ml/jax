@@ -5460,6 +5460,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         r"when you meant `jax\.numpy\..*?\(\(2, 3\)\)`"):
       fn(2, 3)
 
+  @jtu.sample_product(
+      dtype=jtu.dtypes.all,
+      kind=['bool', 'signed integer', 'unsigned integer', 'integral',
+            'real floating', 'complex floating', 'numeric']
+  )
+  def test_isdtype(self, dtype, kind):
+    # Full tests also in dtypes_test.py; here we just compare against numpy
+    jax_result = jnp.isdtype(dtype, kind)
+    if jtu.numpy_version() < (2, 0, 0) or dtype == dtypes.bfloat16:
+      # just a smoke test
+      self.assertIsInstance(jax_result, bool)
+    else:
+      numpy_result = np.isdtype(dtype, kind)
+      self.assertEqual(jax_result, numpy_result)
+
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.

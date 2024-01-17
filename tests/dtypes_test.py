@@ -71,6 +71,16 @@ scalar_types = [jnp.bool_, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
                 jnp.complex64, jnp.complex128]
 
+dtype_kinds = {
+  'bool': bool_dtypes,
+  'signed integer': signed_dtypes,
+  'unsigned integer': unsigned_dtypes,
+  'integral': signed_dtypes + unsigned_dtypes,
+  'real floating': float_dtypes,
+  'complex floating': complex_dtypes,
+  'numeric': signed_dtypes + unsigned_dtypes + float_dtypes + complex_dtypes,
+}
+
 python_scalar_types = [bool, int, float, complex]
 
 _EXPECTED_CANONICALIZE_X64 = {value: value for value in scalar_types}
@@ -324,6 +334,17 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertFalse(dtypes.issubdtype(dt, object))
       self.assertFalse(dtypes.issubdtype(dt, np.int64))
       self.assertFalse(dtypes.issubdtype(np.generic, dt))
+
+  @jtu.sample_product(
+      dtype=all_dtypes,
+      kind=(*dtype_kinds, *all_dtypes)
+  )
+  def testIsDtype(self, dtype, kind):
+    if isinstance(kind, np.dtype):
+      expected = (dtype == kind)
+    else:
+      expected = (dtype in dtype_kinds[kind])
+    self.assertEqual(expected, dtypes.isdtype(dtype, kind))
 
   def testArrayCasts(self):
     for t in [jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64]:
