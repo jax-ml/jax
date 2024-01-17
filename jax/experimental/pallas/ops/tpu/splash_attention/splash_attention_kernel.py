@@ -1071,7 +1071,8 @@ def _splash_attention_forward(
 
   mosaic_params.update(
       dimension_semantics=("parallel", "arbitrary", "arbitrary"),
-      flags={"XLA_TPU_FORCE_LP_LLO_SCHEDULER": True},
+      # TODO(sharadmv,apaszke): enable this when it's part of libtpu
+      # flags={"XLA_TPU_FORCE_LP_LLO_SCHEDULER": True},
   )
 
   kernel_name = get_kernel_name(
@@ -1544,7 +1545,8 @@ def _splash_attention_bwd_dq(
   mosaic_params = pltpu.encode_kernel_regeneration_metadata(metadata_dict)
   mosaic_params.update(
       dimension_semantics=("arbitrary", "arbitrary", "arbitrary"),
-      flags={"XLA_TPU_FORCE_LP_LLO_SCHEDULER": True},
+      # TODO(sharadmv,apaszke): enable this when it's part of libtpu
+      # flags={"XLA_TPU_FORCE_LP_LLO_SCHEDULER": True},
   )
 
   kernel_name = get_kernel_name(is_mqa, False, segment_ids is not None, "dq")
@@ -2097,7 +2099,8 @@ def _splash_attention_bwd_dkv(
   # 3) for q_seq_len, we are reducing over it to compute dkv
   mosaic_params.update(
       dimension_semantics=("arbitrary", "arbitrary", "arbitrary"),
-      flags={"XLA_TPU_FORCE_LP_LLO_SCHEDULER": True},
+      # TODO(sharadmv,apaszke): enable this when it's part of libtpu
+      # flags={"XLA_TPU_FORCE_LP_LLO_SCHEDULER": True},
   )
 
   kernel_name = get_kernel_name(is_mqa, False, segment_ids is not None, "dkv")
