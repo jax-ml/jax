@@ -53,6 +53,7 @@ from jax._src.numpy.lax_numpy import (
     bincount as bincount,
     blackman as blackman,
     block as block,
+    bool_ as bool,  # Array API alias for bool_
     bool_ as bool_,
     broadcast_arrays as broadcast_arrays,
     broadcast_shapes as broadcast_shapes,

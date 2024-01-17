@@ -175,7 +175,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     return f
 
   @parameterized.parameters(
-    [dtype for dtype in [jnp.bool_, jnp.uint8, jnp.uint16, jnp.uint32,
+    [dtype for dtype in [jnp.bool, jnp.uint8, jnp.uint16, jnp.uint32,
                          jnp.uint64, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                          jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
                          jnp.complex64, jnp.complex128]
@@ -190,6 +190,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(dtype)(0)
     prims = [eqn.primitive for eqn in jaxpr.eqns]
     self.assertEqual(prims, [lax.convert_element_type_p])  # No copy generated.
+
+  def testBoolDtypeAlias(self):
+    self.assertIs(jnp.bool, jnp.bool_)
 
   @jtu.sample_product(
       dtype=float_dtypes + [object],
