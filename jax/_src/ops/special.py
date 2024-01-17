@@ -75,33 +75,22 @@ def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
     a_arr, = promote_args_inexact("logsumexp", a)
     b_arr = a_arr  # for type checking
   pos_dims, dims = _reduction_dims(a_arr, axis)
-  amax = jnp.max(a_arr, axis=dims, keepdims=keepdims)
+  amax = jnp.max(a_arr.real, axis=dims, keepdims=keepdims)
   amax = lax.stop_gradient(lax.select(jnp.isfinite(amax), amax, lax.full_like(amax, 0)))
   amax_with_dims = amax if keepdims else lax.expand_dims(amax, pos_dims)
-  # fast path if the result cannot be negative.
-  if b is None and not np.issubdtype(a_arr.dtype, np.complexfloating):
-    out = lax.add(lax.log(jnp.sum(lax.exp(lax.sub(a_arr, amax_with_dims)),
-                                  axis=dims, keepdims=keepdims)),
-                  amax)
-    sign = jnp.where(jnp.isnan(out), out, 1.0)
-    sign = jnp.where(jnp.isneginf(out), 0.0, sign).astype(out.dtype)
-  else:
-    expsub = lax.exp(lax.sub(a_arr, amax_with_dims))
-    if b is not None:
-      expsub = lax.mul(expsub, b_arr)
-    sumexp = jnp.sum(expsub, axis=dims, keepdims=keepdims)
 
-    sign = lax.stop_gradient(jnp.sign(sumexp))
-    if np.issubdtype(sumexp.dtype, np.complexfloating):
-      if return_sign:
-        sumexp = sign*sumexp
-      out = lax.add(lax.log(sumexp), amax)
-    else:
-      out = lax.add(lax.log(lax.abs(sumexp)), amax)
+  exp_a = lax.exp(lax.sub(a_arr, amax_with_dims.astype(a_arr.dtype)))
+  if b is not None:
+    exp_a = lax.mul(exp_a, b_arr)
+  sumexp = exp_a.sum(axis=dims, keepdims=keepdims)
+  sign = lax.sign(sumexp)
+  if return_sign or not np.issubdtype(a_arr.dtype, np.complexfloating):
+    sumexp = abs(sumexp)
+  out = lax.add(lax.log(sumexp), amax.astype(sumexp.dtype))
+
   if return_sign:
     return (out, sign)
-  if b is not None:
-    if not np.issubdtype(out.dtype, np.complexfloating):
-      with jax.debug_nans(False):
-        out = jnp.where(sign < 0, jnp.array(np.nan, dtype=out.dtype), out)
+  if b is not None and not np.issubdtype(out.dtype, np.complexfloating):
+    with jax.debug_nans(False):
+      out = jnp.where(sign < 0, jnp.array(np.nan, dtype=out.dtype), out)
   return out
