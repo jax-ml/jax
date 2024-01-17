@@ -176,33 +176,8 @@ def iinfo(type, /) -> IInfo:
   return IInfo(bits=info.bits, max=info.max, min=info.min, dtype=jnp.dtype(type))
 
 
-_dtype_kinds = {
-  'bool': {bool},
-  'signed integer': {int8, int16, int32, int64},
-  'unsigned integer': {uint8, uint16, uint32, uint64},
-  'integral': {int8, int16, int32, int64, uint8, uint16, uint32, uint64},
-  'real floating': {float32, float64},
-  'complex floating': {complex64, complex128},
-  'numeric': {int8, int16, int32, int64, uint8, uint16, uint32, uint64,
-              float32, float64, complex64, complex128},
-}
-
 def isdtype(dtype, kind):
-  if not _is_valid_dtype(dtype):
-    raise ValueError(f"{dtype} is not a valid dtype.")
-  if isinstance(kind, tuple):
-    return any(_isdtype(dtype, k) for k in kind)
-  return _isdtype(dtype, kind)
-
-def _isdtype(dtype, kind):
-  if isinstance(kind, jnp.dtype):
-    return dtype == kind
-  elif isinstance(kind, str):
-    if kind not in _dtype_kinds:
-      raise ValueError(f"Unrecognized {kind=!r}")
-    return dtype in _dtype_kinds[kind]
-  else:
-    raise ValueError(f"Invalid kind with {kind}. Expected string or dtype.")
+  return jax.numpy.isdtype(dtype, kind)
 
 
 def result_type(*arrays_and_dtypes):

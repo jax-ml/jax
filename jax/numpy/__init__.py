@@ -20,6 +20,10 @@ from jax.numpy import linalg as linalg
 
 from jax._src.basearray import Array as ndarray
 
+from jax._src.dtypes import (
+    isdtype as isdtype,
+)
+
 from jax._src.numpy.lax_numpy import (
     ComplexWarning as ComplexWarning,
     allclose as allclose,
