@@ -773,10 +773,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       set(jax_platforms) & {d.device_type.lower()
                             for d in self.__class__.tf_devices})
 
-    # TODO(b/306753579): call_tf can only be lowered when we have a device
-    lowering_platforms = tuple(
-      p if p != "gpu" else "cuda"
-      for p in jax_and_tf_platforms)
+    lowering_platforms = ("tpu", "cpu", "cuda")
 
     exp = export.export(f_jax,
                         lowering_platforms=lowering_platforms)(x)
