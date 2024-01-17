@@ -173,6 +173,7 @@ arcsinh = _one_to_one_unop(np.arcsinh, lax.asinh, True)
 arccosh = _one_to_one_unop(np.arccosh, _arccosh, True)
 tanh = _one_to_one_unop(np.tanh, lax.tanh, True)
 arctanh = _one_to_one_unop(np.arctanh, lax.atanh, True)
+sign = _one_to_one_unop(np.sign, lax.sign)
 sqrt = _one_to_one_unop(np.sqrt, lax.sqrt, True)
 cbrt = _one_to_one_unop(np.cbrt, lax.cbrt, True)
 
@@ -255,18 +256,6 @@ def rint(x: ArrayLike, /) -> Array:
   if dtypes.issubdtype(dtype, np.complexfloating):
     return lax.complex(rint(lax.real(x)), rint(lax.imag(x)))
   return lax.round(x, lax.RoundingMethod.TO_NEAREST_EVEN)
-
-
-@_wraps(np.sign, module='numpy')
-@jit
-def sign(x: ArrayLike, /) -> Array:
-  check_arraylike('sign', x)
-  dtype = dtypes.dtype(x)
-  if dtypes.issubdtype(dtype, np.complexfloating):
-    re = lax.real(x)
-    return lax.complex(
-      lax.sign(_where(re != 0, re, lax.imag(x))), _constant_like(re, 0))
-  return lax.sign(x)
 
 
 @_wraps(np.copysign, module='numpy')

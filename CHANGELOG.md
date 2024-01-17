@@ -48,9 +48,11 @@ Remember to align the itemized text with the first line of an item within a list
   * {func}`jax.numpy.unique` with `return_inverse = True` returns inverse indices
     reshaped to the dimension of the input, following a similar change to
     {func}`numpy.unique` in NumPy 2.0.
+  * {func}`jax.numpy.sign` now returns `x / abs(x)` for nonzero complex inputs. This is
+    consistent with the behavior of {func}`numpy.sign` in NumPy version 2.0.
   * {func}`jax.scipy.special.logsumexp` with `return_sign=True` now uses the NumPy 2.0
     convention for the complex sign, `x / abs(x)`. This is consistent with the behavior
-    of the function in SciPy v1.13.
+    of {func}`scipy.special.logsumexp` in SciPy v1.13.
 
   * JAX now supports the bool DLPack type for both import and export.
     Previously bool values could not be imported and were exported as integers.

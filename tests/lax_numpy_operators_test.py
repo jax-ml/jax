@@ -56,6 +56,7 @@ bool_dtypes = jtu.dtypes.boolean
 default_dtypes = float_dtypes + int_dtypes
 inexact_dtypes = float_dtypes + complex_dtypes
 number_dtypes = float_dtypes + complex_dtypes + int_dtypes + unsigned_dtypes
+real_dtypes = float_dtypes + int_dtypes + unsigned_dtypes
 all_dtypes = number_dtypes + bool_dtypes
 
 
@@ -272,7 +273,9 @@ JAX_COMPOUND_OP_RECORDS = [
               []),
     op_record("rint", 1, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_default, [], check_dtypes=False),
-    op_record("sign", 1, number_dtypes, all_shapes, jtu.rand_some_inf_and_nan, []),
+    # numpy < 2.0.0 has a different convention for complex sign.
+    op_record("sign", 1, real_dtypes if jtu.numpy_version() < (2, 0, 0) else number_dtypes,
+              all_shapes, jtu.rand_some_inf_and_nan, []),
     # numpy 1.16 has trouble mixing uint and bfloat16, so we test these separately.
     op_record("copysign", 2, default_dtypes + unsigned_dtypes,
               all_shapes, jtu.rand_some_inf_and_nan, [], check_dtypes=False),
@@ -645,6 +648,22 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CompileAndCheck(op, args_maker)
       self._CheckAgainstNumpy(np_op, op, args_maker)
+
+  # This test can be deleted once we test against NumPy 2.0.
+  @jtu.sample_product(
+      shape=all_shapes,
+      dtype=complex_dtypes
+  )
+  def testSignComplex(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    if jtu.numpy_version() >= (2, 0, 0):
+      np_fun = np.sign
+    else:
+      np_fun = lambda x: (x / np.where(x == 0, 1, abs(x))).astype(np.result_type(x))
+    jnp_fun = jnp.sign
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   def testDeferToNamedTuple(self):
     class MyArray(NamedTuple):
