@@ -1247,6 +1247,34 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertArraysAllClose(samples2, jnp.array([jnp.nan, 0., jnp.nan, jnp.nan]), check_dtypes=False)
     self.assertArraysAllClose(samples3, jnp.array([jnp.nan, jnp.nan, jnp.nan]), check_dtypes=False)
 
+  def test_batched_key_warnings(self):
+    keys = jax.random.split(self.make_key(0))
+    msg = "{} accepts a single key, but was given a key array of shape.*"
+
+    # Check a handful of functions that are expected to warn.
+    with self.assertWarnsRegex(FutureWarning, msg.format('bits')):
+      jax.random.bits(keys, shape=(2,))
+    with self.assertWarnsRegex(FutureWarning, msg.format('chisquare')):
+      jax.random.chisquare(keys, 1.0, shape=(2,))
+    with self.assertWarnsRegex(FutureWarning, msg.format('dirichlet')):
+      jax.random.dirichlet(keys, jnp.arange(2.0), shape=(2,))
+    with self.assertWarnsRegex(FutureWarning, msg.format('gamma')):
+      jax.random.gamma(keys, 1.0, shape=(2,))
+    with self.assertWarnsRegex(FutureWarning, msg.format('loggamma')):
+      jax.random.loggamma(keys, 1.0, shape=(2,))
+
+    # Other functions should error; test a few cases.
+    with self.assertRaisesRegex(ValueError, msg.format('fold_in')):
+      jax.random.fold_in(keys, 0)
+    with self.assertRaisesRegex(ValueError, msg.format('split')):
+      jax.random.split(keys)
+
+    # Some shouldn't error or warn
+    with self.assertNoWarnings():
+      jax.random.key_data(keys)
+      jax.random.key_impl(keys)
+
+
 threefry_seed = prng_internal.threefry_seed
 threefry_split = prng_internal.threefry_split
 threefry_random_bits = prng_internal.threefry_random_bits

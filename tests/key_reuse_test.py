@@ -616,7 +616,7 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
     def f():
       key = jax.random.key(0)
       key2 = key[None]
-      return jax.random.bits(key) + jax.random.bits(key2)
+      return jax.random.bits(key) + jax.vmap(jax.random.bits)(key2)
 
     with self.assertRaisesRegex(KeyReuseError, self.random_bits_error):
       self.check_key_reuse(f)
