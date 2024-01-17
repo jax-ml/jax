@@ -104,40 +104,48 @@ def get_githash():
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/6.1.2/"
+BAZEL_VERSION = "6.5.0rc1"
+BAZEL_BASE_URI = (
+    "https://github.com/bazelbuild/bazel/releases/download/%s/" % BAZEL_VERSION
+)
 BazelPackage = collections.namedtuple("BazelPackage",
                                       ["base_uri", "file", "sha256"])
 bazel_packages = {
-    ("Linux", "x86_64"):
-        BazelPackage(
-            base_uri=None,
-            file="bazel-6.1.2-linux-x86_64",
-            sha256=
-            "e89747d63443e225b140d7d37ded952dacea73aaed896bca01ccd745827c6289"),
-    ("Linux", "aarch64"):
-        BazelPackage(
-            base_uri=None,
-            file="bazel-6.1.2-linux-arm64",
-            sha256=
-            "1c9b249e315601c3703c41668a1204a8fdf0eba7f0f2b7fc38253bad1d1969c7"),
-    ("Darwin", "x86_64"):
-        BazelPackage(
-            base_uri=None,
-            file="bazel-6.1.2-darwin-x86_64",
-            sha256=
-            "22d4b605ce6a7aad92d4f387458cc68de9907a2efa08f9b8bda244c2b6010561"),
-    ("Darwin", "arm64"):
-        BazelPackage(
-            base_uri=None,
-            file="bazel-6.1.2-darwin-arm64",
-            sha256=
-            "30cdf85af055ca8fdab7de592b1bd64f940955e3f63ed5c503c4e93d0112bd9d"),
-    ("Windows", "AMD64"):
-        BazelPackage(
-            base_uri=None,
-            file="bazel-6.1.2-windows-x86_64.exe",
-            sha256=
-            "47e7f65a3bfa882910f76e2107b4298b28ace33681bd0279e25a8f91551913c0"),
+    ("Linux", "x86_64"): BazelPackage(
+        base_uri=None,
+        file="bazel-%s-linux-x86_64" % BAZEL_VERSION,
+        sha256=(
+            "6f59b0917a05d029e5f3280403c91cc2cee3e5030d814ef34a9f20691751aba1"
+        ),
+    ),
+    ("Linux", "aarch64"): BazelPackage(
+        base_uri=None,
+        file="bazel-%s-linux-arm64" % BAZEL_VERSION,
+        sha256=(
+            "be07dfb9ac53d7af30b15776a0337a8ae8072c7caf5e818239d5212c0cc64731"
+        ),
+    ),
+    ("Darwin", "x86_64"): BazelPackage(
+        base_uri=None,
+        file="bazel-%s-darwin-x86_64" % BAZEL_VERSION,
+        sha256=(
+            "8455ecdb72a95ba50b963debdc2a2f43e72220fa46750f5cead7c6b6c92b6346"
+        ),
+    ),
+    ("Darwin", "arm64"): BazelPackage(
+        base_uri=None,
+        file="bazel-%s-darwin-arm64" % BAZEL_VERSION,
+        sha256=(
+            "b3a24cf76574268906ab43b79943cacb98d13836c4d81d5b278780fd146973fb"
+        ),
+    ),
+    ("Windows", "AMD64"): BazelPackage(
+        base_uri=None,
+        file="bazel-%s-windows-x86_64.exe" % BAZEL_VERSION,
+        sha256=(
+            "f60071ab3699b51882a7711e4cd9a09572f8354d2b95d065779eaf8475df39f0"
+        ),
+    ),
 }
 
 
