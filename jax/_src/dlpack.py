@@ -22,6 +22,7 @@ from jax import numpy as jnp
 from jax._src import array
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax._src.typing import Array
 
 
@@ -29,6 +30,9 @@ SUPPORTED_DTYPES = frozenset({
     jnp.int8, jnp.int16, jnp.int32, jnp.int64, jnp.uint8, jnp.uint16,
     jnp.uint32, jnp.uint64, jnp.float16, jnp.bfloat16, jnp.float32,
     jnp.float64, jnp.complex64, jnp.complex128})
+
+if xla_extension_version >= 231:
+  SUPPORTED_DTYPES = SUPPORTED_DTYPES | frozenset({jnp.bool_})
 
 
 # Mirror of dlpack.h enum

@@ -52,6 +52,9 @@ Remember to align the itemized text with the first line of an item within a list
     convention for the complex sign, `x / abs(x)`. This is consistent with the behavior
     of the function in SciPy v1.13.
 
+  * JAX now supports the bool DLPack type for both import and export.
+    Previously bool values could not be imported and were exported as integers.
+
 * Deprecations & Removals
   * A number of previously deprecated functions have been removed, following a
     standard 3+ month deprecation cycle (see {ref}`api-compatibility`).
