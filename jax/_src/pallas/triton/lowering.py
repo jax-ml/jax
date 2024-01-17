@@ -1532,6 +1532,7 @@ def pallas_call_lowering(
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: GridMapping,
+    zeroize_outputs: tuple[int] | None,
     triton_params: dict[str, Any] | None = None,
     **compiler_params: Any,
 ):
@@ -1548,6 +1549,7 @@ def pallas_call_lowering(
         debug=debug,
         input_output_aliases=input_output_aliases,
         grid_mapping=grid_mapping,
+        zeroize_outputs=zeroize_outputs,
         **compiler_params
     )
   num_warps = compiler_params.get("num_warps", 4)
@@ -1591,12 +1593,23 @@ def pallas_call_lowering(
   )
 
   kernel_params = []
-  for _ in range(len(in_shapes) + len(out_shapes)):
+  for _ in range(len(in_shapes)):
     kernel_params.append(
         triton_kernel_call_lib.create_array_parameter(
-            0,  # bytes to zero  # TODO(cjfj): Expose through user API.
+            0,  # bytes to zero
             16,  # divisible by 16
         )
+    )
+
+  if zeroize_outputs is None:
+    zeroize_outputs = ()
+
+  for i, out_shape in enumerate(out_shapes):
+    kernel_params.append(
+      triton_kernel_call_lib.create_array_parameter(
+        out_shape.dtype.itemsize * out_shape.size if i in zeroize_outputs else 0,  # bytes to zeroize
+        16,  # divisible by 16
+      )
     )
 
   kernel_call = triton_kernel_call_lib.TritonKernelCall(
